@@ -119,6 +119,41 @@ set "PY=.private\retail-work\tools\python-3.12-env\Scripts\python.exe"
 Other factions: `--faction elves`, `dwarves`, `isengard`, `mordor`, `wild`,
 or `--game rotwk --faction angmar`.
 
+### Exit codes you will actually see
+
+The importer separates "this broke" from "I refuse to ship this", because they
+need different reactions.
+
+| Exit | Meaning | What to do |
+|---|---|---|
+| `0` | Success | Nothing |
+| `3` | The pack was built but failed its own audit | Real failure — read the audit output |
+| `6` | A **convert** step is reporting its own gaps | Some objects did not convert. The publish step will refuse this coverage (see 7) |
+| `7` | A **publish gate refused** — nothing was published | Not a crash. Fix and re-run; see below |
+
+**Exit 7 is a deliberate refusal.** `publish-faction-to-slice`, `build`, and
+`import-unit` all run the same gates, and any of three things triggers one:
+
+- **incomplete coverage** — the conversion report records converter gaps, so
+  the cook would ship a known-short faction;
+- **stale coverage** — the report is clean but does not describe the tree being
+  cooked (its catalog identity or its compiler identity token disagrees with
+  what is on disk), so it cannot vouch for this cook;
+- **roster regression** — the cook drops playable-unit ids that the already
+  published bundle of the same pack id ships. Checked by *name*, so swapping
+  one unit for another refuses too.
+
+The reason list is always printed to stderr. The normal fix is to re-run the
+conversion and publish again:
+
+```bat
+%PY% tools\openbfme_import.py import-faction --install "C:\Path\To\BFME2" --faction men --convert
+```
+
+Each gate has an override, and each one means "I know this ships something
+worse": `--allow-incomplete-coverage`, `--allow-stale-coverage`,
+`--allow-fewer-playable-units`. They print what they let through.
+
 ## If something breaks
 
 | Symptom | What to do |

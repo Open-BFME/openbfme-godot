@@ -4,6 +4,7 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -14,6 +15,33 @@ from openbfme_importer.faction_census import PlayableFaction
 
 
 class CliTests(unittest.TestCase):
+    def test_rotwk_catalog_reuses_matching_layered_install(self) -> None:
+        args = mock.Mock(
+            state_root="C:/state", install="D:/Games/RotWK", game="rotwk"
+        )
+        state = Path("C:/state").resolve()
+        layered = state / "editions" / "rotwk" / "layered-install"
+        layer_rotwk = layered / "layer-0-rotwk"
+        layer_bfme2 = layered / "layer-1-bfme2"
+        original_resolve = Path.resolve
+
+        def fake_resolve(path: Path, *args: object, **kwargs: object) -> Path:
+            if path == Path("D:/Games/RotWK") or path == layer_rotwk:
+                return Path("D:/Games/RotWK")
+            return original_resolve(path, *args, **kwargs)
+
+        def fake_is_file(path: Path) -> bool:
+            return path in {
+                layer_rotwk / "game.dat",
+                layer_bfme2 / "game.dat",
+            }
+
+        with (
+            mock.patch.object(Path, "resolve", fake_resolve),
+            mock.patch.object(Path, "is_file", fake_is_file),
+        ):
+            self.assertEqual(cli._catalog_install_root(args), layered)
+
     def test_bootstrap_tools_returns_success_without_faction_summary(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             with mock.patch.object(
@@ -23,6 +51,55 @@ class CliTests(unittest.TestCase):
                     ["--state-root", raw, "bootstrap-tools"]
                 )
         self.assertEqual(result, 0)
+
+    def test_main_restores_the_state_root_environment_it_exported(
+        self,
+    ) -> None:
+        """A CLI run may not repoint `default_state_root()` for its caller.
+
+        `main()` exports OPENBFME_IMPORT_ROOT so helpers that never see
+        `args` (pinned tool discovery, above all) resolve against the
+        requested state root. That export has to be scoped to the run: left
+        set, one in-process CLI call against a temporary root silently
+        redirects every later `default_state_root()` consumer in the same
+        process at a directory that no longer exists.
+        """
+
+        from openbfme_importer.paths import default_state_root
+
+        sentinel = Path(tempfile.gettempdir()).resolve() / "openbfme-prior"
+        observed: list[Path] = []
+
+        def record(*_args: object, **_kwargs: object) -> dict[str, object]:
+            observed.append(default_state_root())
+            return {"ready": True}
+
+        with mock.patch.dict(
+            os.environ, {"OPENBFME_IMPORT_ROOT": str(sentinel)}, clear=False
+        ):
+            with tempfile.TemporaryDirectory() as raw:
+                with mock.patch.object(cli, "bootstrap_tools", record):
+                    self.assertEqual(
+                        cli.main(["--state-root", raw, "bootstrap-tools"]), 0
+                    )
+                # Exported for the duration of the run...
+                self.assertEqual(observed, [Path(raw).resolve()])
+            # ...and handed back afterwards.
+            self.assertEqual(
+                os.environ.get("OPENBFME_IMPORT_ROOT"), str(sentinel)
+            )
+
+        # An absent variable is restored as absent, not as an empty string.
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("OPENBFME_IMPORT_ROOT", None)
+            with tempfile.TemporaryDirectory() as raw:
+                with mock.patch.object(
+                    cli, "bootstrap_tools", return_value={"ready": True}
+                ):
+                    self.assertEqual(
+                        cli.main(["--state-root", raw, "bootstrap-tools"]), 0
+                    )
+            self.assertNotIn("OPENBFME_IMPORT_ROOT", os.environ)
 
     def test_incomplete_faction_plan_writes_report_and_returns_six(self) -> None:
         plan = {

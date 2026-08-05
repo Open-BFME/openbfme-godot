@@ -53,19 +53,49 @@ def test_m2_gate_is_final_identity_bound_retail_gate() -> None:
 
 
 def test_m2_gate_requires_the_documented_capture_matrix() -> None:
+    """The 47-capture matrix stays whole and stays wired to the gate.
+
+    Re-pinned 2026-08-04. This test used to read the matrix out of
+    `docs/MILESTONE_CURRENT.md`. That doc no longer owns it and is not stale
+    for lacking it: `a6f9ad3` ("Docs: rewrite public surface to match code")
+    deliberately re-pointed the current objective at systems-first RotWK, and
+    `c77b18f` deleted `docs/M2_MEN_FORDS_DOD.md` in the public cleanup. The
+    doc now demotes these ids in writing — "Legacy tooling … do not define
+    product completion" — so asserting it enumerates all 47 would re-impose a
+    milestone the project has moved off.
+
+    `tools/m2-oracle-common.ps1` is the surviving source of truth, so the
+    coupling is pinned there: the list is exactly 47 unique ids, the count
+    baked into its own failure message agrees with it, the gate consumes the
+    shared list rather than a private copy, and the doc still points at the
+    legacy entry point instead of dropping it silently.
+    """
+
     gate = GATE.read_text(encoding="utf-8")
     common = ORACLE_COMMON.read_text(encoding="utf-8")
-    document = DOC.read_text(encoding="utf-8")
-    required = {
-        line.strip()
-        for line in document.splitlines()
-        if line.startswith(("map-", "ford-", "player-", "enemy-", "unit-", "structure-", "hud-"))
-    }
+    declaration = re.search(
+        r"\$script:M2OracleCaptureIds\s*=\s*@\((.*?)\n\)", common, re.S
+    )
+    assert declaration is not None
+    required = re.findall(r'"([a-z][a-z0-9-]*)"', declaration.group(1))
     assert len(required) == 47
-    for capture_id in required:
-        assert f'"{capture_id}"' in common
+    assert len(set(required)) == 47
+    assert {capture_id.split("-", 1)[0] for capture_id in required} == {
+        "map",
+        "ford",
+        "player",
+        "enemy",
+        "unit",
+        "structure",
+        "hud",
+    }
+    # The manifest check counts rows against this list; its message must not
+    # drift into claiming a number the list no longer has.
+    assert "exactly 47 rows" in common
+    assert "$rows.Count -eq $script:M2OracleCaptureIds.Count" in common
     assert "$script:M2OracleCaptureIds" in gate
     assert "Compare-Object $requiredCaptureIds $actualCaptureIds" in gate
+    assert "run_m2_acceptance.bat" in DOC.read_text(encoding="utf-8")
 
 
 def test_m2_wrapper_only_dispatches_the_final_gate() -> None:

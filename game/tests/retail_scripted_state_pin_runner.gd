@@ -39,6 +39,30 @@ const PIN_TICKS := 1500
 ## Minted 2026-07-27 from the frozen scenario below (Godot 4.7-stable,
 ## Windows); proven identical across repeated runs and across two
 ## independently constructed sims in the same run.
+##
+## DELIBERATELY NOT RE-MINTED, 2026-08-04 (round 18). This pin was ALREADY RED
+## before round 18 for an undiagnosed reason: on this tree it measured
+## 269127f3...9cdf against the pinned b0acc61e...3774, and the round-17 report
+## recorded that same pre-existing mismatch. Round 18's eviction fix moved it
+## again, 269127f3... -> 0ae2055f..., from the SAME single cause as the sibling
+## `retail_state_pin_runner` (bisected there: reverting `_step_structure_eviction`
+## alone restores the previous value exactly;
+## .private/scratch/opus25-retail_scripted_state_pin_runner-REVERT-*.out.log).
+##
+## Re-minting to 0ae2055f... would bury the OLDER drift under a fresh green,
+## and that older drift has never been explained. The honest state is: this pin
+## is red, it is red for two stacked reasons, one of them is named above and one
+## is not, and it stays red until the unnamed one is diagnosed on its own.
+##
+## ROUND 19: STILL NOT RE-MINTED, and this round did NOT move it. Measured, not
+## assumed: round 19's four structure-pathing hunks were each reverted alone on
+## this tree and this runner re-run, and the value is 0ae2055f...14c2 in all six
+## variants — new, revert-slide, revert-prodexit, revert-engaged, revert-budget,
+## revert-all (.private/scratch/opus26-pin-scripted-*.out.log). So the red is
+## unchanged and still has exactly the two stacked causes named above; round 19
+## added no third. See the sibling runner's round-19 note for why this fixture
+## does not exercise the new pathing at its sampled tick, and for the coverage
+## gap that follows from a pin that only ever samples the final state.
 const EXPECTED_HASH := "b0acc61e2a60c4b8e810986b168db12055e8a42ae92bc551dd8df01135c33774"
 
 const PLAYER := "PinPlayer"

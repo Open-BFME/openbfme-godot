@@ -53,7 +53,115 @@ const PIN_TICKS := 3000
 ## A DIFFERING HASH IS A DEFECT, NEVER A NEW BASELINE. Re-minting this value is
 ## the owner's decision alone and must be stated explicitly as minting a new pin,
 ## exactly as the frozen-fixture note above requires.
-const EXPECTED_HASH := "b177804c0457caccc670a6c8e3aa7f2cb74f76f8a1feeef93e3d0128feac0301"
+##
+## ---------------------------------------------------------------------------
+## PIN RE-MINTED 2026-08-04 (Round 12 "retail rebase"). THIS IS A CONSCIOUS MINT.
+##
+## Superseded value: b177804c0457caccc670a6c8e3aa7f2cb74f76f8a1feeef93e3d0128feac0301
+## New value:        e5ba939111c0efad0d5d2b581b3fc86bae900a142782126334a33957e00a9f4d
+##
+## WHY, measured (bisect logs: .private/scratch/opus18-pin-*.log):
+##
+## 1. The old value was minted against `retail_slice_sim.gd` at 55f0d874
+##    (2026-07-27 07:32) and is exactly reproducible from that file today - the
+##    original mint was honest and this harness still measures what it claims.
+## 2. It has been RED on `main` itself since the public snapshot a1d207a
+##    (2026-08-01): a1d207a's sim.gd hashes faa2b500..., and HEAD c9ca840's
+##    hashes e5ba9391.... The red is NOT the working tree - reverting
+##    retail_slice_sim.gd to HEAD reproduces e5ba9391 byte for byte, so every
+##    uncommitted Round-12 runtime change is pin-NEUTRAL.
+## 3. It moved MANY times, not once. Probing the pre-squash checkpoint history
+##    yields at least four distinct intermediate values
+##    (b177804c -> 425f94ac -> 7ce4e2dd -> faa2b500 -> e5ba9391) across a week in
+##    which this file grew 11,696 -> 17,135 lines and gained ~100 functions.
+##    That is authored feature work landing, not one regression.
+## 4. Part of the drift is STRUCTURAL and unavoidable: the hashed state grew new
+##    keys. `unit_damage_components` was added to `_authoritative_state()` and
+##    `_state_hash_static_keys()` before a1d207a; `unit_banner_carriers` in
+##    c9ca840. Any growth of the hashed state moves this hash even at identical
+##    behaviour. (Removing both keys again yields e25bd4a3..., still not the old
+##    value, so authored behaviour moved too - both causes are real.)
+## 5. Root cause of the SILENCE, now fixed: this runner was CI-only. It was never
+##    invoked by `tools/gate-retail.ps1`, so a week of local development never
+##    saw it fail. It is wired into that gate as of this change, which is what
+##    stops the next week of drift from going unnoticed.
+##
+## The re-mint records the CURRENT authored behaviour of the simulation. It does
+## not endorse the drift retroactively; it restores a live, enforced baseline.
+## ---------------------------------------------------------------------------
+## ---------------------------------------------------------------------------
+## RE-MINT 2026-08-04 (round 18) - ONE cause, bisected, not a blanket refresh.
+##
+## Superseded value: e5ba939111c0efad0d5d2b581b3fc86bae900a142782126334a33957e00a9f4d
+## New value:        a436bb5989a026ee0be6674ac514c1035784dbe6fc92281ddfbb78cc79e0a05a
+##
+## WHY, measured. Round 18 made two changes to structure pathing. Each was
+## reverted ALONE on this tree and this runner re-run
+## (.private/scratch/opus25-retail_state_pin_runner-REVERT-{evict,corridor,all}.out.log):
+##
+##   revert the bounded-castle CORRIDOR only  -> a436bb59... (unchanged)
+##       The corridor is pin-NEUTRAL. Neither pinned scenario issues an attack
+##       order onto a castle group inside its tick window.
+##   revert the EVICTION only                 -> e5ba9391... (the old value, exactly)
+##   revert BOTH                              -> e5ba9391... (the old value, exactly)
+##
+## So the entire move is `_step_structure_eviction` plus the bounded
+## displacement in `_deflect_around_structures`, and it is the pinned SCENARIO
+## that moved, not the harness: the old hash was recording battalions clipped
+## INSIDE structure footprints. Two defects put them there and kept them there —
+## deflection ran only for units with a live route, so a stopped or attacking
+## unit was never pushed out at all, and a unit standing exactly on a footprint
+## centre was skipped outright by a `distance > 0.001` guard. The new value
+## records those units standing outside the walls instead of inside them.
+##
+## Reproducible: the new hash was measured twice on this tree, identical both
+## times (same log). This re-mint changes ONE constant and names the one hunk
+## that earned it; nothing else in the pin moved.
+## ---------------------------------------------------------------------------
+## ---------------------------------------------------------------------------
+## ROUND 19: NOT RE-MINTED, and that is a MEASURED result, not an assumption.
+##
+## Round 19 changed structure pathing again — tangential slide on the travel
+## path, a total (rather than per-structure) eviction push budget, and three new
+## eviction exemptions (production exit, live engagement, hoisted id list).
+## Every hunk was reverted ALONE on this tree and this runner re-run
+## (.private/scratch/opus26-pin-{state,scripted}-{new,revert-*}.out.log):
+##
+##   revert the tangential SLIDE      -> a436bb59… (unchanged)
+##   revert the production-exit SKIP  -> a436bb59… (unchanged)
+##   revert the ENGAGEMENT skip       -> a436bb59… (unchanged)
+##   revert the total push BUDGET     -> a436bb59… (unchanged)
+##   revert ALL FOUR                  -> a436bb59… (unchanged)
+##
+## WHY IT DID NOT MOVE — measured, because "pin-neutral" is a claim about
+## coverage as much as about correctness, and a green pin that never exercised
+## the change proves nothing. `OPENBFME_PIN_DUMP` (below) dumps the
+## authoritative positions; `OPENBFME_PIN_DUMP_TICK` adds earlier samples.
+##
+##   AT THE PIN TICK: 4 entities, 0 moved, 0 inside any footprint, in every one
+##   of the six variants. The fixture keeps exactly two structures — barracks
+##   1003 at (-39, 11) r 2.8 and the constructed farm 3000 at (-28, -8) r 2.6 —
+##   and no unit is standing in either at t=3000.
+##
+##   MID-RUN IT *IS* EXERCISED, and the difference is exactly one eviction step.
+##   The queued horde (entity 10) emerges from barracks 1003 around t=210 and
+##   its authored doorway is INSIDE that barracks. Against `revert-prodexit`:
+##     t=211  penetration 1.7851 vs 1.4351   (0.3500 = STRUCTURE_EVICTION_STEP)
+##     t=214  penetration 1.2681 vs 0.9181   (0.3500)
+##     t=217  penetration 0.5030 vs 0.1530   (0.3500)
+##     t=220  byte-identical, and identical at every later sample
+##   The nudge does not accumulate: _step_production_exit rewrites the position
+##   from its authored lerp on the next tick, so the trajectory reconverges and
+##   the FINAL state — the only state this pin hashes — is untouched.
+##
+## NAMED COVERAGE GAP, not a clean bill of health. This pin samples t=3000 only,
+## so a defect whose whole effect is transient is invisible to it by
+## construction. The production-exit defect above was caught by
+## banner_castle_sim_runner (`a unit mid production-exit follows the authored
+## doorway lerp exactly`, deviation 0.349998 before the fix), not here. Reading
+## "the pin did not move" as "nothing changed" would be wrong.
+## ---------------------------------------------------------------------------
+const EXPECTED_HASH := "a436bb5989a026ee0be6674ac514c1035784dbe6fc92281ddfbb78cc79e0a05a"
 const SUBMIT_THROUGH_TICK := 1500
 
 
@@ -72,10 +180,23 @@ func _run() -> void:
 		quit(1)
 		return
 
-	for _tick in range(1, PIN_TICKS + 1):
+	# OPT-IN, HASH-NEUTRAL: an extra positions dump at an arbitrary earlier tick.
+	# The pin only ever samples the FINAL state, so a change whose effect is
+	# transient — a perturbation that a fixed rally or waypoint later erases —
+	# leaves the hash untouched and is invisible here. Measuring the intermediate
+	# tick is what turns "the pin did not move" into a statement about WHY.
+	var early_ticks: Dictionary = {}
+	for value in OS.get_environment("OPENBFME_PIN_DUMP_TICK").strip_edges().split(",", false):
+		var early_tick := int(String(value).strip_edges())
+		if early_tick > 0:
+			early_ticks[early_tick] = true
+	for tick in range(1, PIN_TICKS + 1):
 		sim.tick()
+		if early_ticks.has(tick):
+			_dump_positions(sim, ".tick%d" % tick)
 
 	var hash := String(sim.state_hash())
+	_dump_positions(sim)
 	# Emitted BEFORE the assertion so CI's cross-platform comparison job still
 	# has a line to read even on a behavioural failure - the two checks answer
 	# different questions and a failure of one must not blind the other.
@@ -92,6 +213,71 @@ func _run() -> void:
 		return
 	print("RETAIL_STATE_PIN OK hash matches the pinned value")
 	quit(0)
+
+
+func _dump_positions(sim, suffix: String = "") -> void:
+	## OPT-IN, HASH-NEUTRAL. Writes the authoritative entity positions at the pin
+	## tick to `OPENBFME_PIN_DUMP` so a re-mint can be MEASURED — which entities
+	## moved, by how far, and whether they were inside a structure footprint
+	## before and after — instead of asserted in a comment. Reading state cannot
+	## change it; with the variable unset this function does nothing at all.
+	var out_path := OS.get_environment("OPENBFME_PIN_DUMP").strip_edges()
+	if out_path == "":
+		return
+	out_path += suffix
+	var rows: Array = []
+	for id in sim.entity_ids():
+		var row: Dictionary = sim.entities[id]
+		var position := Vector2(row.get("position", Vector2.ZERO))
+		var deepest := 0.0
+		var inside_id := 0
+		for structure_id in sim.structure_ids():
+			var structure_row: Dictionary = sim.structures[structure_id]
+			if int(structure_row.get("health", 0)) <= 0:
+				continue
+			if float(structure_row.get("construction_progress", 1.0)) < 1.0:
+				continue
+			var radius := float(SimScript.STRUCTURE_BLOCK_RADIUS.get(
+				String(structure_row.get("structure_kind", "")), 2.8))
+			var penetration := radius - position.distance_to(
+				Vector2(structure_row.get("position", Vector2.ZERO)))
+			if penetration > deepest:
+				deepest = penetration
+				inside_id = structure_id
+		rows.append({
+			"id": id,
+			"team": int(row.get("team", -1)),
+			"x": position.x,
+			"y": position.y,
+			"state": String(row.get("state", "")),
+			"health": int(row.get("health", 0)),
+			"inside_structure": inside_id,
+			"penetration": deepest,
+		})
+	# The structures are dumped too, because "no entity is inside a footprint" is
+	# only meaningful alongside where the footprints actually are — see the
+	# coverage note at the pin constant.
+	var structure_rows: Array = []
+	for structure_id in sim.structure_ids():
+		var structure_row: Dictionary = sim.structures[structure_id]
+		var at := Vector2(structure_row.get("position", Vector2.ZERO))
+		structure_rows.append({
+			"id": structure_id,
+			"team": int(structure_row.get("team", -1)),
+			"kind": String(structure_row.get("structure_kind", "")),
+			"x": at.x,
+			"y": at.y,
+			"health": int(structure_row.get("health", 0)),
+			"construction_progress": float(structure_row.get("construction_progress", 1.0)),
+			"block_radius": float(SimScript.STRUCTURE_BLOCK_RADIUS.get(
+				String(structure_row.get("structure_kind", "")), 2.8)),
+		})
+	var file := FileAccess.open(out_path, FileAccess.WRITE)
+	if file != null:
+		file.store_string(JSON.stringify(
+			{"ticks": int(sim.tick_index), "entities": rows, "structures": structure_rows}, "\t"))
+		file.close()
+		print("RETAIL_STATE_PIN dumped positions to ", out_path)
 
 
 func _make_sim():

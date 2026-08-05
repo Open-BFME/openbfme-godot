@@ -31,8 +31,17 @@ function Test-ProofInteger {
 
 function Resolve-ProofGodot {
     param([string]$RequestedPath, [string]$RepoRoot)
+    # `resolve-godot.ps1` has its own `param($RequestedPath, $RepoRoot, ...)`.
+    # Dot-sourcing runs it in THIS function's scope, so that param block
+    # redeclares both variables and wipes the arguments this function was
+    # called with. Effect: `-GodotPath` was silently ignored by every proof
+    # gate, and a machine whose Godot is neither on PATH, nor in .tools\godot,
+    # nor named by an env var failed with "Godot 4.7 was not found" while
+    # holding a perfectly good explicit path. Capture before dot-sourcing.
+    $requested = $RequestedPath
+    $root = $RepoRoot
     . (Join-Path $PSScriptRoot "resolve-godot.ps1")
-    return Resolve-OpenBfmeGodot -RequestedPath $RequestedPath -RepoRoot $RepoRoot -PreferConsole
+    return Resolve-OpenBfmeGodot -RequestedPath $requested -RepoRoot $root -PreferConsole
 }
 
 function Get-ProofWorkingTreeIdentity {

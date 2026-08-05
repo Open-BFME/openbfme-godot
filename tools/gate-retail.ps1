@@ -2,7 +2,11 @@
 param(
     [string]$Install = "$env:BFME2_INSTALL",
     [string]$GodotPath = "",
-    [switch]$IntegrationOwnerPublish
+    [switch]$IntegrationOwnerPublish,
+    # Run only SECTION A (the deterministic BFME2 proof-pack gate). SECTION B
+    # asserts about a maintainer's private multi-pack selection and cannot run
+    # on a machine that does not have one.
+    [switch]$SkipPrivateSelection
 )
 
 Set-StrictMode -Version Latest
@@ -21,9 +25,42 @@ $expectedPackId = "bfme2-men-vslice"
 # This gate is the BFME2 lane end to end ($env:BFME2_INSTALL, bfme2-men-vslice),
 # so its importer calls name --game bfme2 rather than riding the CLI default,
 # which is now rotwk (the content baseline).
-$minimumImporterTestCount = 999
-$maximumImporterSkipCount = 5
+# Measured with the collector this gate actually runs (pytest), not with
+# `unittest discover`, which could not see 949 of these tests. See the
+# importer_tests step below.
+$minimumImporterTestCount = 2491
+$maximumImporterSkipCount = 86
 $publishRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot ".private\content-packs"))
+
+# ---------------------------------------------------------------------------
+# SECTION B PIN - the private multi-pack selection.
+#
+# SECTION B (below) runs a set of runners that assert about the MOUNTED
+# SELECTION as a whole rather than about this gate's freshly built bfme2
+# bundle. Until this pin existed, that made the gate's result depend on
+# whichever packs happened to be installed on the maintainer's machine - a
+# stale pack could turn a red run green, or a green run red, with no signal
+# that the INPUT had changed rather than the code.
+#
+# These constants pin the selection document byte-for-byte plus every pack
+# id/bundle-hash it names. Changing the local selection is allowed; doing so
+# SILENTLY is not. When the selection legitimately moves, re-measure and update
+# these constants in the same change that moves it, and say so - the same
+# conscious-update pattern the state pins use.
+$expectedSelectionSha256 = "4c328f95a6be70b2fa0c4feb6adf899bf2ae5fa9a39ecb4b44e9c9c1fde005c5"
+$expectedSelectionActivePack = "rotwk-men-vslice/544b84ebe0d8e6a84a13eaf218efe639a0cb3d3743213da95d7aa0f06ba777fa"
+$expectedSelectionSupplementalPacks = @(
+    "bfme2-men-vslice/ce02105e952ce91faa2b2cab429e2be01200c939e6553ef8be5b2deb8e591383",
+    "bfme2-skirmish-maps-private/f9c14cfa4c25e68509373390741fc82e5892f050a2305a19fa3efaca0f39a5b0",
+    "rotwk-skirmish-maps-private/goal-official-72",
+    "rotwk-elves-vslice/7309cdd1889139bbf4aa2b3f3a34a80cb3f79e7e613275012cf4a472001e6558",
+    "rotwk-dwarves-vslice/1b1ada8e16b2bfd8bd4d0694f70facc6752ec366d7d7b067f94d2ae7c43caf29",
+    "rotwk-isengard-vslice/cad2fc6c98f13dc60a20a4356f9f703ee0c729410ec8fb5a16c189c76c3850cc",
+    "rotwk-mordor-vslice/7ee7a0d23f31a92d687889aab3da7f5e2173071b5a02013ad130855b9b14a841",
+    "rotwk-wild-vslice/3d14447d1fc106c3a63bdf8437ffe49da87d9ae2e5387c4b362b3d98e4daa0ed",
+    "rotwk-angmar-vslice/44a84a32ab6d639bb1052429e629192b2c0e826de90c2b260041a764a1a50fcf",
+    "rotwk-music-vslice/f10d95389a1ab51a7a20b3f549fc6b90291db51f7e68693e4d157f1a67eada8d"
+)
 $stateRoot = if (-not [string]::IsNullOrWhiteSpace($env:OPENBFME_IMPORT_ROOT)) {
     [IO.Path]::GetFullPath($env:OPENBFME_IMPORT_ROOT)
 } else {
@@ -37,11 +74,47 @@ $forbiddenDiagnostics = '(?i)\b(?:ERROR|WARNING|leak(?:ed|s|ing)?|orphan(?:ed|s)
 
 function Invoke-ImporterJson {
     param([string]$Name, [string[]]$Arguments)
-    $output = @(& $python $cli --json @Arguments 2>&1 | ForEach-Object { $_.ToString() })
-    $exitCode = $LASTEXITCODE
+    # `2>&1` on a NATIVE command under `$ErrorActionPreference = 'Stop'` (set at
+    # the top of this script) is a trap: Windows PowerShell 5.1 wraps every
+    # stderr line in a NativeCommandError ErrorRecord, and `Stop` turns the
+    # FIRST one into a terminating error - thrown before the pipeline finishes,
+    # so before the logging loop below and before any parsing.
+    #
+    # The importer writes its progress ticker to stderr unconditionally
+    # (`openbfme_importer/progress.py`). So every step that emits a ticker died
+    # instantly with the ticker line itself as the exception message. That is
+    # what stopped this gate at its `plan` step: the run looked like an importer
+    # failure and never printed a single `plan` line, because the throw happened
+    # before the first Write-Host. Steps that emit no ticker (bootstrap, doctor)
+    # sailed through, which made it look step-specific rather than systemic.
+    #
+    # `Invoke-ProofChecked` in proof-gate-common.ps1 already guards its own
+    # native calls this way; this helper had simply never been given the same
+    # treatment. Exit code is still the authority on success.
+    $oldPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = @(& $python $cli --json @Arguments 2>&1 | ForEach-Object { $_.ToString() })
+        $exitCode = $LASTEXITCODE
+    }
+    finally { $ErrorActionPreference = $oldPreference }
     foreach ($line in $output) { Write-Host "$gate $Name $line" }
     if ($exitCode -ne 0) { throw "$Name failed with exit code $exitCode" }
-    return (($output -join "`n") | ConvertFrom-Json)
+    # The importer writes its human progress ticker to STDERR
+    # (`openbfme_importer/progress.py` prints "[progress] ..." there
+    # unconditionally) while the `--json` document goes to stdout. This helper
+    # merges the two streams with `2>&1` so the whole run is logged - which
+    # means the text handed to ConvertFrom-Json can begin with a progress line
+    # and fail to parse. That is what it did: the gate could not get past its
+    # `plan` step, and the thrown error was the progress line itself rather
+    # than anything about JSON, which made it look like an importer failure.
+    #
+    # Drop only the ticker lines before parsing. They are still written to the
+    # log above, so nothing is hidden; and a real non-JSON diagnostic on stderr
+    # still reaches ConvertFrom-Json and still fails the step, which is the
+    # behaviour worth keeping.
+    $jsonLines = @($output | Where-Object { $_ -notmatch '^\[progress\] ' })
+    return (($jsonLines -join "`n") | ConvertFrom-Json)
 }
 
 function Invoke-GodotPassedFloor {
@@ -54,6 +127,49 @@ function Invoke-GodotPassedFloor {
     $output = Invoke-ProofChecked $gate $Name $godot @("--headless", "--path", $gameRoot, "--script", "res://tests/$Runner") $CountPattern $forbiddenDiagnostics
     $countMatch = [regex]::Match($output, $CountPattern)
     Assert-ProofTrue ($countMatch.Success -and [int]$countMatch.Groups[1].Value -ge $MinimumPassed) "$Name passed fewer than the protected baseline of $MinimumPassed checks."
+}
+
+# ---------------------------------------------------------------------------
+# The SCRIPTED state pin is DELIBERATELY RED and is NOT re-minted here.
+#
+# `game/tests/retail_scripted_state_pin_runner.gd` carries EXPECTED_HASH
+# b0acc61e... (minted 2026-07-27) and exits non-zero because the scenario now
+# hashes to something else. Its header explains why re-minting it needs owner
+# approval. Two bad options were rejected: leaving it out of every gate (which
+# is what let it rot red and unnoticed for a week), and re-minting it to make
+# the gate green (which buries the drift).
+#
+# This is the third option, the same observed-values ratchet the battle
+# signatures use: assert the OBSERVED hash against the value this tree is
+# documented to produce. The pin stays red and honest; any NEW movement of the
+# scripted scenario fails this gate immediately instead of hiding behind an
+# already-failing runner.
+#
+# Observed value measured on this tree 2026-08-05, twice, identical.
+$expectedScriptedStatePinObserved = "0ae2055fc76eac2348e4b519c5f5ba10370a4d96dec12e3c2e757c7defee14c2"
+$scriptedStatePinAuthoredExpectation = "b0acc61e2a60c4b8e810986b168db12055e8a42ae92bc551dd8df01135c33774"
+
+function Assert-ScriptedStatePinObserved {
+    param([string]$Godot)
+    $oldPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $lines = @(& $Godot "--headless" "--path" $gameRoot "--script" "res://tests/retail_scripted_state_pin_runner.gd" 2>&1 | ForEach-Object { $_.ToString() })
+    }
+    finally { $ErrorActionPreference = $oldPreference }
+    $output = $lines -join [Environment]::NewLine
+    $script:ProofGateFailureOutput = $output
+    $observed = [regex]::Match($output, '(?m)^RETAIL_SCRIPTED_STATE_PIN ticks=([0-9]+) hash=([0-9a-f]{64})\s*$')
+    Assert-ProofTrue ($observed.Success) "retail_scripted_state_pin did not emit its hash line at all; the runner is broken, not merely red."
+    $hash = $observed.Groups[2].Value
+    Assert-ProofTrue ($hash -eq $expectedScriptedStatePinObserved) "retail_scripted_state_pin MOVED: observed $hash, this tree is documented to produce $expectedScriptedStatePinObserved. The scripted scenario changed. Diagnose it; do not update this constant to match a run."
+    # The runner's own authored expectation must still be the un-re-minted 2026-07-27
+    # value. If it ever matches, someone re-minted the pin - which is an owner
+    # decision and must not arrive silently through this gate.
+    $stillRed = $output -match [regex]::Escape($scriptedStatePinAuthoredExpectation)
+    Assert-ProofTrue ($stillRed) "retail_scripted_state_pin no longer reports the 2026-07-27 authored expectation. A re-mint is an explicit owner decision; update this gate in the same change."
+    $script:ProofGateFailureOutput = ""
+    Write-Host "$gate retail_scripted_state_pin EXPECTED-STATE PASS observed=$hash authored_pin=$scriptedStatePinAuthoredExpectation (still red by design, ratcheted)"
 }
 
 try {
@@ -75,13 +191,35 @@ try {
 
     & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $pythonBootstrap -StateRoot $stateRoot
     if ($LASTEXITCODE -ne 0) { throw "Importer Python bootstrap failed." }
-    $importerTestOutput = Invoke-ProofChecked $gate "importer_tests" $python @("-m", "unittest", "discover", "-s", (Join-Path $repoRoot "importer\tests"), "-v") '(?m)^OK(?: \(skipped=\d+\))?\s*$'
-    $testCountMatch = [regex]::Match($importerTestOutput, '(?m)^Ran ([1-9][0-9]*) tests? in ')
+    # `python -m unittest discover` cannot collect a module-level `def test_*`,
+    # and 73 files in this suite define nothing else -- 949 test functions,
+    # including the four largest compiler modules
+    # (test_playable_unit_compiler 139, test_playable_unit_pack_compiler 67,
+    # test_playable_structure_compiler 64, test_playable_structure_pack_compiler
+    # 42) were silently outside this gate. Reproduce the old blind spot with:
+    #   python -m unittest discover -s importer/tests -p "test_playable_structure_compiler.py" -v
+    #   -> "Ran 0 tests"
+    # pytest is a hash-pinned, version-verified bootstrap dependency
+    # (importer\requirements-win.txt), so this step adds no new tool.
+    # Run from $repoRoot on purpose: `python -m` puts the working directory on
+    # sys.path, which is how the suite's `importer.tests.*` cross-module
+    # fixture imports resolve.
+    Push-Location $repoRoot
+    try {
+        # Success-only marker. pytest's summary line leads with the failure
+        # counts when anything fails ("7 failed, 2396 passed, ..."), so
+        # anchoring "<n> passed" to the start of the line cannot match a run
+        # that had failures, errors or xpasses.
+        $importerTestOutput = Invoke-ProofChecked $gate "importer_tests" $python @("-m", "pytest", (Join-Path $repoRoot "importer\tests"), "-q") '(?m)^[1-9][0-9]* passed(?:, [0-9]+ [a-z ]+)* in '
+    }
+    finally { Pop-Location }
+    $testCountMatch = [regex]::Match($importerTestOutput, '(?m)^([1-9][0-9]*) passed[, ]')
     Assert-ProofTrue ($testCountMatch.Success) "Importer suite did not report an executed test count."
-    $executedTestCount = [int]$testCountMatch.Groups[1].Value
-    Assert-ProofTrue ($executedTestCount -ge $minimumImporterTestCount) "Importer suite executed fewer than the protected baseline of $minimumImporterTestCount tests."
-    $skipCountMatch = [regex]::Match($importerTestOutput, '(?m)^OK \(skipped=([0-9]+)\)\s*$')
+    $skipCountMatch = [regex]::Match($importerTestOutput, '(?m)^[1-9][0-9]* passed, ([0-9]+) skipped')
     $skippedTestCount = if ($skipCountMatch.Success) { [int]$skipCountMatch.Groups[1].Value } else { 0 }
+    # Match the old semantic: "executed" counted skips too (unittest's "Ran N").
+    $executedTestCount = [int]$testCountMatch.Groups[1].Value + $skippedTestCount
+    Assert-ProofTrue ($executedTestCount -ge $minimumImporterTestCount) "Importer suite executed fewer than the protected baseline of $minimumImporterTestCount tests."
     Assert-ProofTrue ($skippedTestCount -le $maximumImporterSkipCount) "Importer suite skipped more than the approved maximum of $maximumImporterSkipCount tests."
 
     $bootstrap = Invoke-ImporterJson "bootstrap" @("bootstrap-tools")
@@ -110,10 +248,28 @@ try {
         $buildArguments += "--no-publish"
         Write-Host "$gate proof builds are non-publishing"
     }
+    # A/B REPRODUCIBILITY: build B runs COLD (2026-08-04).
+    #
+    # Both builds used to share the W3D conversion cache, so build B never
+    # re-ran the converter - it copied A's converted artefacts back out of the
+    # cache and re-assembled them. Equal bundle hashes therefore only proved
+    # ASSEMBLE-stage determinism; a non-deterministic converter (unstable
+    # iteration order, embedded timestamps, float drift) was invisible to this
+    # gate by construction, because its output was only ever produced once.
+    #
+    # `--no-conversion-cache` (importer/openbfme_importer/cli.py, registered on
+    # the `build` subparser) forces B to convert from the retail bytes again
+    # without reading or populating the cache. A == B now means the CONVERTER is
+    # deterministic too, which is what "byte-reproducible" is claimed to mean.
+    #
+    # Cost: B no longer gets the cache hit, so this gate is slower by a full
+    # cold W3D conversion of the profile. That is the price of the claim; do not
+    # "fix" a slow gate by putting the cache back, because that silently
+    # downgrades what the assertion below proves.
     $first = Invoke-ImporterJson "build_a" $buildArguments
-    $second = Invoke-ImporterJson "build_b" $buildArguments
+    $second = Invoke-ImporterJson "build_b" ($buildArguments + "--no-conversion-cache")
     Assert-ProofTrue ([bool]$first.valid -and [bool]$second.valid -and [bool]$first.semantic_provenance -and [bool]$second.semantic_provenance) "A retail build failed its semantic provenance audit."
-    Assert-ProofTrue ($first.bundle_sha256 -match '^[0-9a-f]{64}$' -and $first.bundle_sha256 -eq $second.bundle_sha256) "Repeat builds were not byte-reproducible."
+    Assert-ProofTrue ($first.bundle_sha256 -match '^[0-9a-f]{64}$' -and $first.bundle_sha256 -eq $second.bundle_sha256) "Repeat builds were not byte-reproducible (build B ran cold, so this covers the converter, not just assembly)."
     Assert-ProofTrue (
         [string]$first.profile -eq $expectedProfileId -and
         [string]$second.profile -eq $expectedProfileId -and
@@ -140,7 +296,7 @@ try {
             $second.PSObject.Properties.Name -notcontains 'published_pack'
         ) "A proof-only build unexpectedly published or selected a pack."
     }
-    Write-Host "$gate reproducibility PASS bundle_sha256=$($first.bundle_sha256)"
+    Write-Host "$gate reproducibility PASS (build B cold, converter+assemble) bundle_sha256=$($first.bundle_sha256)"
 
     $builtPackDocument = (Get-Content -Raw -LiteralPath (Join-Path $expectedBuildPackPath "pack.json") | ConvertFrom-Json)
     $builtProvenanceDocument = (Get-Content -Raw -LiteralPath (Join-Path $expectedBuildPackPath "provenance\manifest.json") | ConvertFrom-Json)
@@ -191,12 +347,177 @@ try {
     Invoke-GodotPassedFloor "stage14_15_base_loop" "stage14_15_sim_runner.gd" '(?m)^STAGE 14/15 SIM TESTS: ([0-9]+) passed, 0 failed\s*$' 31
     Invoke-GodotPassedFloor "stage15_menu_and_audio" "stage15_menu_runner.gd" '(?m)^STAGE15_MENU_RESULT passed=([0-9]+) failed=0\s*$' 22
     Invoke-GodotPassedFloor "retail_pack_runtime" "retail_pack_runner.gd" '(?m)^RETAIL_PACK_RESULT passed=([0-9]+) failed=0\s*$' 175
-    Invoke-GodotPassedFloor "playable_retail_slice" "retail_slice_runner.gd" '(?m)^RETAIL_SLICE_RESULT passed=([0-9]+) failed=0\s*$' 208
+    # playable_retail_slice honours the runner's OWN acceptance contract.
+    #
+    # It used to key on `RETAIL_SLICE_RESULT ... failed=0` with a floor of 208.
+    # That is not the contract the runner publishes. The runner pins a named
+    # known-failure allowlist, does NOT count those pinned rows into `failed`,
+    # and reports the real verdict on its own line:
+    #     RETAIL_SLICE_ACCEPTANCE PASS min_passed=<N> pinned_known_failures=<M>
+    # Two consequences of the old wiring, both now closed:
+    #   * a row that fails WITHOUT being in KNOWN_FAILURE_NAMES prints to stderr
+    #     but leaves `failed` at 0, so the old marker still matched and the step
+    #     read as a clean pass on the marker alone (only the child exit code
+    #     caught it, and only incidentally);
+    #   * the 208 floor sat 155 checks below the runner's own ratchet, so a
+    #     massive regression could clear the gate.
+    # Assert the acceptance line, then read the ratchet the runner itself
+    # declares and require the measured passed count to meet it - the floor can
+    # no longer drift away from the runner.
+    $sliceOutput = Invoke-ProofChecked $gate "playable_retail_slice" $godot @("--headless", "--path", $gameRoot, "--script", "res://tests/retail_slice_runner.gd") '(?m)^RETAIL_SLICE_ACCEPTANCE PASS min_passed=([0-9]+) pinned_known_failures=([0-9]+)\s*$' $forbiddenDiagnostics
+    $sliceAcceptance = [regex]::Match($sliceOutput, '(?m)^RETAIL_SLICE_ACCEPTANCE PASS min_passed=([0-9]+) pinned_known_failures=([0-9]+)\s*$')
+    $sliceResult = [regex]::Match($sliceOutput, '(?m)^RETAIL_SLICE_RESULT passed=([0-9]+) failed=([0-9]+)\s*$')
+    Assert-ProofTrue ($sliceAcceptance.Success -and $sliceResult.Success) "playable_retail_slice did not report both its result and acceptance lines."
+    Assert-ProofTrue ([int]$sliceResult.Groups[2].Value -eq 0) "playable_retail_slice reported unpinned failures."
+    Assert-ProofTrue ([int]$sliceResult.Groups[1].Value -ge [int]$sliceAcceptance.Groups[1].Value) "playable_retail_slice passed fewer checks than its own declared ACCEPTANCE_MIN_PASSED ratchet."
+    Write-Host "$gate playable_retail_slice passed=$($sliceResult.Groups[1].Value) ratchet=$($sliceAcceptance.Groups[1].Value) pinned_known_failures=$($sliceAcceptance.Groups[2].Value)"
     Invoke-GodotPassedFloor "external_pack_security" "external_pack_runner.gd" '(?m)^EXTERNAL_PACK_RESULT passed=([0-9]+) failed=0\s*$' 64
+    # Mouse picking hit-tests the retail Geometry footprint, not a flat
+    # world-unit radius. Pure math over the shared pick module, so it needs no
+    # cooked map or pack and stays fast.
+    # Floor ratcheted 30 -> 31 on 2026-08-04 (fortress fallback pinned to the
+    # authored 64 source half-extents).
+    Invoke-GodotPassedFloor "selection_pick_footprint" "selection_pick_footprint_runner.gd" '(?m)^SELECTION_PICK_RESULT passed=([0-9]+) failed=0\s*$' 31
+    # Retail troop movement and formation semantics: TurnTime-derived turn rate,
+    # the MaxTurnWithoutReform wheel-vs-reform switch, WaitForFormation group
+    # speed cohesion, and the authored Line/Block rank spacing. Half these checks
+    # assert the OPT-OUT path - with the "retail_formation_movement" rule absent
+    # every behaviour falls back byte-for-byte, which is what keeps the
+    # owner-signed retail_state_pin hash reachable (verified: the pin step below
+    # is green with this work landed). Pure sim math over a self-built fixture,
+    # so it needs no cooked map or pack and stays fast.
+    Invoke-GodotPassedFloor "retail_formation_movement" "retail_formation_movement_runner.gd" '(?m)^RETAIL_FORMATION_MOVEMENT passed=([0-9]+) failed=0\s*$' 31
+    # Behavioural + cross-platform state pin for the GDScript simulation.
+    #
+    # WIRED 2026-08-04. Until now this runner was CI-only, and because no local
+    # gate ever invoked it the pinned hash sat RED on `main` for a week without
+    # anyone seeing a failure (full bisect and the conscious re-mint are written
+    # up in the runner's own header). A pin nothing runs is not a pin. It asserts
+    # its own hash and exits non-zero on drift, so it carries no passed floor;
+    # the frozen fixture injects its own rules and needs no cooked pack.
+    Invoke-ProofChecked $gate "retail_state_pin" $godot @("--headless", "--path", $gameRoot, "--script", "res://tests/retail_state_pin_runner.gd") '(?m)^RETAIL_STATE_PIN OK hash matches the pinned value\s*$' $forbiddenDiagnostics | Out-Null
+    Assert-ScriptedStatePinObserved $godot
+    # Per-faction music selection. Fixture-driven (no retail bytes, no audio
+    # playback), so it is fast and green with or without a music pack mounted;
+    # when one IS mounted it re-runs the same assertions against it.
+    Invoke-GodotPassedFloor "faction_music_director" "music_director_runner.gd" '(?m)^MUSIC_DIRECTOR_RESULT passed=([0-9]+) failed=0\s*$' 119
+    # Create-a-Hero. Self-contained by construction: the runner builds its own
+    # class table from authored numbers, so it needs no pack and belongs in the
+    # deterministic section. WIRED 2026-08-05 - the slice shipped with MY HEROES
+    # enabled in the shell while nothing gated the code behind that button.
+    # Floor is the measured value from 2026-08-05.
+    Invoke-GodotPassedFloor "cah_create_a_hero" "cah_create_a_hero_runner.gd" '(?m)^CAH_CREATE_A_HERO_OK passed=([0-9]+) failed=0\s*$' 66
+
+    # The release firewall belongs to SECTION A: it is about the repository, not
+    # about anyone's mounted content, and it must run even when SECTION B is
+    # skipped.
     [void](Invoke-ProofChecked $gate "export_firewall_self_test" "powershell.exe" @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "test-export-scan.ps1")) '(?m)^EXPORT_SCAN_SELF_TEST PASS ')
     [void](Invoke-ProofChecked $gate "export_firewall" "powershell.exe" @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "export-scan.ps1"), "-Root", $gameRoot) '(?m)^EXPORT_SCAN PASS ')
 
-    Write-Host "$gate PASS bundle_sha256=$($second.bundle_sha256)"
+    Write-Host "$gate SECTION_A_DETERMINISTIC PASS scope=freshly-built-bfme2-proof-pack"
+
+    # =====================================================================
+    # SECTION B - PRIVATE MULTI-PACK SELECTION INTEGRATION GATE
+    # =====================================================================
+    # Everything above this line is deterministic: it runs against the bundle
+    # THIS run just built, from pinned inputs, and a public clone with a lawful
+    # retail install reproduces it.
+    #
+    # Everything below asserts about the MOUNTED SELECTION as a whole - the
+    # menu's availability sweep across all packs named by selection.json, the
+    # CONTROLBAR string table across every mounted pack, the goal matrices over
+    # all seven faction packs. Pinning those to this gate's single bfme2 bundle
+    # would make them assert about content they are not about.
+    #
+    # That input is a maintainer's private workspace, so it is PINNED (see the
+    # constants at the top of this file) and verified before any of it runs.
+    # An unpinned selection is exactly how a stale pack turns a red run green.
+    if ($SkipPrivateSelection) {
+        Write-Host "$gate SECTION_B_PRIVATE_SELECTION SKIPPED reason=-SkipPrivateSelection"
+        Write-Host "$gate PASS bundle_sha256=$($second.bundle_sha256) sections=A"
+        exit 0
+    }
+    $selectionPath = Join-Path $publishRoot "selection.json"
+    Assert-ProofTrue (Test-Path -LiteralPath $selectionPath -PathType Leaf) "SECTION B needs a private pack selection at $selectionPath. Run with -SkipPrivateSelection on a machine that has none."
+    $selectionSha256 = (Get-FileHash -LiteralPath $selectionPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $selectionDocument = Read-ProofJson $selectionPath
+    $selectionSupplemental = @($selectionDocument.supplementalPacks)
+    $selectionDrift = [Collections.Generic.List[string]]::new()
+    if ($selectionSha256 -ne $expectedSelectionSha256) { $selectionDrift.Add("document sha256 $selectionSha256 != pinned $expectedSelectionSha256") }
+    if ([string]$selectionDocument.activePack -ne $expectedSelectionActivePack) { $selectionDrift.Add("activePack '$($selectionDocument.activePack)' != pinned '$expectedSelectionActivePack'") }
+    foreach ($pinned in $expectedSelectionSupplementalPacks) {
+        if ($selectionSupplemental -notcontains $pinned) { $selectionDrift.Add("missing pinned supplemental pack '$pinned'") }
+    }
+    foreach ($present in $selectionSupplemental) {
+        if ($expectedSelectionSupplementalPacks -notcontains $present) { $selectionDrift.Add("unpinned supplemental pack '$present'") }
+    }
+    # Every pinned pack must actually be on disk, or the runners below silently
+    # assert about a smaller selection than the pin describes.
+    foreach ($pinned in (@($expectedSelectionActivePack) + $expectedSelectionSupplementalPacks)) {
+        $packPath = Join-Path $publishRoot ($pinned -replace '/', '\')
+        if (-not (Test-Path -LiteralPath $packPath -PathType Container)) { $selectionDrift.Add("pinned pack is not installed: $pinned") }
+    }
+    Assert-ProofTrue ($selectionDrift.Count -eq 0) ("SECTION B selection does not match its pin. " + ($selectionDrift -join "; ") + ". Updating the selection is fine; doing it silently is not - re-measure and update the `$expectedSelection* constants in tools/gate-retail.ps1 in the same change.")
+    Write-Host "$gate SECTION_B_PRIVATE_SELECTION pin OK sha256=$selectionSha256 packs=$($selectionSupplemental.Count + 1)"
+
+    # OPENBFME_CONTENT is restored afterwards so nothing below sees the switch.
+    $packScopedContentRoot = $env:OPENBFME_CONTENT
+    try {
+        $env:OPENBFME_CONTENT = $publishRoot
+        Write-Host "$gate selection-scoped runners root=$($env:OPENBFME_CONTENT)"
+        # Floors ratcheted 2026-08-04 from measured runs against this exact
+        # root (menu_sweep 22 -> 36, hud_strings 4 -> 5). RAISE these
+        # consciously when a measured run clears them; never lower one to make
+        # a red run green.
+        Invoke-GodotPassedFloor "menu_availability_sweep" "menu_sweep_runner.gd" '(?m)^MENU_SWEEP_RESULT passed=([0-9]+) failed=0\s*$' 36
+        Invoke-GodotPassedFloor "hud_string_completeness" "hud_string_completeness_runner.gd" '(?m)^HUD_STRINGS_RESULT passed=([0-9]+) failed=0 ' 5
+        # ADDED 2026-08-04. These goal/behaviour runners existed and were green
+        # but nothing ran them in a gate, so a regression in any of them could
+        # ship unnoticed. Like the two above they assert about the mounted
+        # SELECTION (all seven faction packs), not this gate's single bfme2
+        # bundle, so they belong inside this selection-scoped block. Floors are
+        # measured values from 2026-08-04, not guesses.
+        Invoke-GodotPassedFloor "goal_spellbook_matrix" "goal_spellbook_matrix_runner.gd" '(?m)^SPELLBOOK_MATRIX_RESULT passed=([0-9]+) failed=0 ' 293
+        Invoke-GodotPassedFloor "goal_production_matrix" "goal_production_matrix_runner.gd" '(?m)^PRODUCTION_MATRIX_RESULT passed=([0-9]+) failed=0\s*$' 315
+        Invoke-GodotPassedFloor "goal_deep_production_matrix" "goal_deep_production_runner.gd" '(?m)^DEEP_PRODUCTION_RESULT passed=([0-9]+) failed=0 ' 584
+        Invoke-GodotPassedFloor "goal_map_matrix" "goal_map_matrix_runner.gd" '(?m)^GOAL_MAP_MATRIX_RESULT passed=([0-9]+) failed=0 ' 83
+        Invoke-GodotPassedFloor "destroy_die_modules" "destroy_die_runner.gd" '(?m)^DESTROY_DIE_RESULT passed=([0-9]+) failed=0\s*$' 24
+        Invoke-GodotPassedFloor "banner_castle_sim" "banner_castle_sim_runner.gd" '(?m)^BANNER_CASTLE_SIM_RUNNER PASS checks=([0-9]+)\s*$' 25
+        # Fortress command surface, one process per faction (the slice hosts one
+        # faction at a time). Asserts the three castle-system contracts against
+        # the PURE retail oracle: build plots offer that faction's authored pad
+        # buildings (commandset.ini <Faction>FortressExpansionPad*CommandSet),
+        # the fortress hero roster is non-empty and matches
+        # playertemplate.ini BuildableHeroesMP, and the CastleUpgrade
+        # trigger -> real-upgrade purchase path completes. Floors are measured
+        # values from 2026-08-04. Only the three factions whose slice boots
+        # green today are wired; mordor/dwarves/elves/isengard still fail boot
+        # on PRE-EXISTING unrelated gaps (MordorBlackRiderHorde producer slot
+        # collision; missing CONTROLBAR hero-ability strings) — named here so
+        # the omission is deliberate rather than an oversight.
+        $fortressSurfaceFloors = @{ "angmar" = 22; "men" = 23; "wild" = 22 }
+        $priorSliceFaction = $env:OPENBFME_SLICE_FACTION
+        try {
+            foreach ($fortressFaction in @("angmar", "men", "wild")) {
+                $env:OPENBFME_SLICE_FACTION = $fortressFaction
+                Invoke-GodotPassedFloor "fortress_command_surface_$fortressFaction" "fortress_command_surface_runner.gd" ('(?m)^RESULT fortress_command_surface faction=' + $fortressFaction + ' passed=([0-9]+) failed=0\s*$') $fortressSurfaceFloors[$fortressFaction]
+            }
+        }
+        finally {
+            $env:OPENBFME_SLICE_FACTION = $priorSliceFaction
+        }
+        # NOT WIRED: banner_castle_silent_playtest_runner.gd. Measured
+        # 2026-08-04 it reports passed=37 failed=5 against this same root.
+        # Wiring a known-red runner into a gate only teaches people to ignore
+        # the gate; it is named here so the omission is deliberate and
+        # visible rather than an oversight.
+    }
+    finally {
+        $env:OPENBFME_CONTENT = $packScopedContentRoot
+    }
+
+    Write-Host "$gate SECTION_B_PRIVATE_SELECTION PASS selection_sha256=$selectionSha256"
+    Write-Host "$gate PASS bundle_sha256=$($second.bundle_sha256) sections=A+B"
     exit 0
 }
 catch {

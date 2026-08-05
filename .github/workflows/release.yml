@@ -92,7 +92,9 @@ jobs:
         id: release_source
         shell: powershell
         run: |
-          $sourceJson = & $env:OPENBFME_RELEASE_PYTHON -c 'import json; from tools.release_source import resolve; source = resolve(); print(json.dumps({"host": source.host, "repository": source.repository}))'
+          # Do not use python -c with JSON dict-key quotes: Windows PowerShell
+          # strips them (NameError: name 'host' is not defined). Use the module CLI.
+          $sourceJson = & $env:OPENBFME_RELEASE_PYTHON -m tools.release_source --json
           if ($LASTEXITCODE -ne 0) { throw "Configured release source could not be resolved." }
           $source = ($sourceJson -join "`n") | ConvertFrom-Json
           if ($source.repository -cne "${{ github.repository }}") {

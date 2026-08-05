@@ -118,12 +118,39 @@ def is_configured(root: Path | None = None, environ: dict | None = None) -> bool
 
 
 if __name__ == "__main__":  # pragma: no cover - operator convenience
+    import argparse
+    import json
     import sys
+
+    parser = argparse.ArgumentParser(description="Resolve the OpenBFME release source target.")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit host/repository/channel as a single JSON object (safe for PowerShell -c).",
+    )
+    args = parser.parse_args()
 
     try:
         source = resolve()
     except ReleaseSourceError as error:
         print(f"RELEASE_SOURCE UNRESOLVED\n{error}", file=sys.stderr)
         raise SystemExit(1)
-    print(f"RELEASE_SOURCE OK repository={source.repository} host={source.host} channel={source.channel}")
-    print(f"clone_url={source.clone_url}")
+
+    if args.json:
+        # Machine-readable for CI. Avoid inline python -c with dict-key quotes on
+        # Windows PowerShell (it strips them and fails with NameError: host).
+        print(
+            json.dumps(
+                {
+                    "host": source.host,
+                    "repository": source.repository,
+                    "channel": source.channel,
+                }
+            )
+        )
+    else:
+        print(
+            f"RELEASE_SOURCE OK repository={source.repository} "
+            f"host={source.host} channel={source.channel}"
+        )
+        print(f"clone_url={source.clone_url}")
