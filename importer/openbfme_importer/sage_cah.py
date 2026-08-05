@@ -2,7 +2,7 @@
 
 A ``.cah`` file is one *saved build order*, not a hero object.  It records the
 choices a player made in the Create-a-Hero front end: a class selector, a
-display name, three tint colours, two small appearance indices, the ordered
+display name, three tint colours, the class and subclass indices, the ordered
 list of ability CommandButtons that were purchased, and one chosen index per
 customisation group.  Everything in it is a **name** or a **small integer**;
 there is not a single stat, multiplier or model path.  The engine resolves
@@ -56,6 +56,33 @@ and the parser rejects the input unless the result is byte-identical.  A file
 this parser accepts is therefore one it can reproduce exactly, which is a much
 stronger claim than "no exception was raised".  Nothing is ever defaulted or
 guessed.
+
+The ``appearance`` quad
+----------------------
+``appearance`` is four ``uint32``.  The first two are **the class and subclass
+indices**, in ``createaherosystem.ini`` declaration order -- the order of its
+``#include``s, i.e. 0 Men of the West, 1 Archer, 2 Wizard, 3 Dwarf,
+4 Servants of Sauron, 5 Corrupted Man, 6 Olog-hai.  The last two are ``0`` in
+every observed file.
+
+Recovered from the eight EA-shipped heroes in ``data/systemheroes/`` and
+corroborated three ways.  The ability names each file carries are class-scoped
+in the INI, and they agree with the index every time: ``appearance[0] == 4``
+files hold ``Command_CreateAHero_SoS_*``, ``== 5`` holds ``_CM_*``, ``== 0``
+holds ``_HotW_*``.  Decisively, ``myhero_d24a5d30798e43d4986d3ec.cah`` carries
+``appearance = (0, 0, 0, 0)`` -- Men of the West / Captain of Gondor -- and its
+five attribute ``GroupOrder`` values ``(15, 11, 9, 5, 7)`` are exactly Captain
+of Gondor's authored ``DefaultValueUpgrade`` steps ``(16, 12, 10, 6, 8)`` minus
+one, which simultaneously confirms the pair and the 0-based ``GroupOrder``
+convention.
+
+The INI side of this join is compiled by
+:mod:`openbfme_importer.cah_system_compiler`, which emits ``classIndex`` and
+``subClassIndex`` on the same ordering and asserts ``GroupOrder == step - 1``
+for all 100 attribute upgrades.
+
+Falsified by a ``.cah`` whose class-scoped ability prefixes disagree with
+``appearance[0]``, or by a non-zero value in the third or fourth word.
 
 ASSUMPTIONS (each labelled with what would falsify it)
 -----------------------------------------------------
