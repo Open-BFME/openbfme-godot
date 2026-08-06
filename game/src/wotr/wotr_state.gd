@@ -31,7 +31,25 @@ const WorldScript = preload("res://src/wotr/wotr_world.gd")
 const BuildingsScript = preload("res://src/wotr/wotr_buildings.gd")
 
 const SCHEMA := "openbfme.wotr-strategic-state"
-const SCHEMA_VERSION := 1
+const SCHEMA_VERSION := 2
+
+# Retail's three phase titles/end-phase flow (LW_InstructionText05/06/11/12;
+# APT phase titles and end-phase control). These are the only phase values that
+# may enter authoritative state.
+const PHASE_TACTICAL := "tactical"
+const PHASE_BATTLE := "battle"
+const PHASE_RETREAT := "retreat"
+const PHASES := [PHASE_TACTICAL, PHASE_BATTLE, PHASE_RETREAT]
+
+# A retreat row is deliberately small and exhaustively typed. The army remains
+# authoritative in `armies`; this row says that it may only be relocated.
+const PENDING_RETREAT_FIELDS := {
+	"army": TYPE_INT,
+	"from_region": TYPE_STRING,
+	"player": TYPE_INT,
+	"turn": TYPE_INT,
+	"hero_template": TYPE_STRING,
+}
 
 const NEUTRAL := -1
 
@@ -256,6 +274,9 @@ var roster_units: Dictionary = {}
 var turn_order: PackedInt32Array = PackedInt32Array()
 ## Completed turns since setup. `active_player()` derives from it.
 var turn_index := 0
+## The current retail phase, and defeated hero-led armies awaiting relocation.
+var phase := PHASE_TACTICAL
+var pending_retreats: Array[Dictionary] = []
 
 ## region id -> player index, or NEUTRAL.
 var region_owner: Dictionary = {}
@@ -402,6 +423,8 @@ func setup(source_world: WorldScript, seats: Array, rules: Dictionary = {}) -> b
 	scenario_name = ""
 	pending_battle = {}
 	pending_claim = {}
+	phase = PHASE_TACTICAL
+	pending_retreats = []
 	events = []
 	turn_index = 0
 	_next_army_id = 1
@@ -568,6 +591,199 @@ func round_index() -> int:
 ## here rather than in every caller is what makes it impossible for one path
 ## through the campaign - the AI's, the END TURN button's, an auto-resolved
 ## battle's - to pay a seat and another to forget to.
+## THE SINGLE PUBLIC PHASE DOOR. Empty battle and retreat phases auto-pass in
+## the same call, deterministically. Only the retreat->tactical edge advances
+## the seat, so income accrues exactly once.
+func end_phase() -> String:
+	if phase == PHASE_TACTICAL:
+		phase = PHASE_BATTLE
+		events.append({"kind": "phase_changed", "phase": phase, "turn": turn_index})
+		if pending_battle.is_empty() and pending_claim.is_empty():
+			events.append({"kind": "phase_auto_passed", "phase": PHASE_BATTLE, "turn": turn_index})
+			phase = PHASE_RETREAT
+			events.append({"kind": "phase_changed", "phase": phase, "turn": turn_index})
+			if pending_retreats.is_empty():
+				events.append({"kind": "phase_auto_passed", "phase": PHASE_RETREAT, "turn": turn_index})
+				_finish_retreat_phase()
+		return phase
+	if phase == PHASE_BATTLE:
+		if not pending_battle.is_empty() or not pending_claim.is_empty():
+			_reject("battle phase cannot end while a result is undecided")
+			return phase
+		phase = PHASE_RETREAT
+		events.append({"kind": "phase_changed", "phase": phase, "turn": turn_index})
+		if pending_retreats.is_empty():
+			events.append({"kind": "phase_auto_passed", "phase": PHASE_RETREAT, "turn": turn_index})
+			_finish_retreat_phase()
+		return phase
+	# Retail's no-option relocation applies only when there is no adjacent friendly
+	# order. Try those blocked rows deterministically; selectable retreats remain
+	# player orders and keep the phase open.
+	var blocked_ids: Array[int] = []
+	for row in pending_retreats:
+		var army_id := int(row["army"])
+		if not retreat_targets(army_id).is_empty():
+			_reject("retreat phase cannot end while army %d has a choosable destination" % army_id)
+			return phase
+		blocked_ids.append(army_id)
+	for army_id in blocked_ids:
+		if not _automatic_retreat(army_id):
+			_reject("retreat army %d has no allied relocation destination" % army_id)
+			return phase
+	if not pending_retreats.is_empty():
+		_reject("retreat phase cannot end while an army awaits a retreat order")
+		return phase
+	_finish_retreat_phase()
+	return phase
+
+
+func _finish_retreat_phase() -> void:
+	advance_turn()
+	phase = PHASE_TACTICAL
+	events.append({"kind": "phase_changed", "phase": phase, "turn": turn_index})
+
+
+## Admit the only survivor retail permits from a defeated hero-led army. The
+## exact leader must be provable by template before any mutation occurs.
+func queue_hero_retreat(army_id: int, hero_unit: Dictionary) -> bool:
+	if phase != PHASE_BATTLE:
+		return _reject("a hero retreat may only be queued while a battle is being settled")
+	for row in pending_retreats:
+		if int(row.get("army", -1)) == army_id:
+			return _reject("army %d already has a pending retreat" % army_id)
+	if not armies.has(army_id):
+		return _reject("unknown retreat army %d" % army_id)
+	var army := armies[army_id] as Dictionary
+	var hero_template := String(army.get("hero_template", ""))
+	if String(army.get("kind", "")) != ARMY_HERO or hero_template.is_empty():
+		return _reject("army %d is not led by a proven hero" % army_id)
+	if String(hero_unit.get("template", "")) != hero_template:
+		return _reject("army %d survivor does not prove exact hero template %s" % [army_id, hero_template])
+	if not apply_attrition(army_id, [hero_unit]):
+		return _reject("army %d exact hero leader could not be written for retreat" % army_id)
+	pending_retreats.append({
+		"army": army_id, "from_region": String(army.get("region", "")),
+		"player": int(army.get("owner", NEUTRAL)), "turn": turn_index,
+		"hero_template": hero_template,
+	})
+	pending_retreats.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a["army"]) < int(b["army"]))
+	return true
+
+
+func retreat_targets(army_id: int) -> PackedStringArray:
+	var found: Array[String] = []
+	var row: Dictionary = {}
+	for candidate in pending_retreats:
+		if int(candidate.get("army", -1)) == army_id:
+			row = candidate
+			break
+	if row.is_empty() or world == null:
+		return PackedStringArray()
+	var owner := int(row["player"])
+	for region_id in world.neighbours(String(row["from_region"])):
+		if owner_of(region_id) == owner and _retreat_fits(army_id, region_id):
+			found.append(region_id)
+	found.sort()
+	return PackedStringArray(found)
+
+
+func _automatic_retreat(army_id: int) -> bool:
+	var row: Dictionary = {}
+	for candidate in pending_retreats:
+		if int(candidate["army"]) == army_id:
+			row = candidate
+			break
+	if row.is_empty() or not retreat_targets(army_id).is_empty() or world == null:
+		return false
+	var owner := int(row["player"])
+	var start := String(row["from_region"])
+	var capital := (
+		String((players[owner] as Dictionary).get("capital", ""))
+		if owner >= 0 and owner < players.size() else ""
+	)
+	var frontier: Array[String] = [start]
+	var distance := {start: 0}
+	var candidates: Array[String] = []
+	var best := -1
+	while not frontier.is_empty():
+		var current: String = String(frontier.pop_front())
+		var depth := int(distance[current])
+		if best >= 0 and depth > best:
+			break
+		if current != start and owner_of(current) == owner and _retreat_fits(army_id, current):
+			best = depth
+			candidates.append(current)
+			continue
+		var neighbours: Array[String] = []
+		for value in world.neighbours(current):
+			neighbours.append(String(value))
+		neighbours.sort()
+		for neighbour in neighbours:
+			if not distance.has(neighbour):
+				distance[neighbour] = depth + 1
+				frontier.append(neighbour)
+	if candidates.is_empty():
+		# Retail's authored capital is the last relocation of record and ignores
+		# the command-point cap. If it cannot be resolved, destruction is total and
+		# named rather than leaving Retreat permanently locked.
+		if not capital.is_empty() and world.has_region(capital) and owner_of(capital) == owner:
+			return _complete_retreat(army_id, capital, true)
+		var destruction_reason := "capital_absent" if capital.is_empty() else (
+			"capital_unresolved" if not world.has_region(capital) else "capital_not_owned")
+		_drop_pending_retreat(army_id)
+		if armies.has(army_id):
+			remove_army(army_id)
+		events.append({"kind": "retreat_no_destination_destroyed", "army": army_id,
+			"player": owner, "reason": destruction_reason, "turn": turn_index})
+		return true
+	# Project-authored `retreat_distance_rule`: shortest path, capital first on a
+	# distance tie, then stable region id.
+	candidates.sort_custom(func(a: String, b: String) -> bool:
+		if a == capital and b != capital: return true
+		if b == capital and a != capital: return false
+		return a < b)
+	return _complete_retreat(army_id, candidates[0], true)
+
+
+func _retreat_fits(army_id: int, region_id: String) -> bool:
+	if not armies.has(army_id):
+		return false
+	var army := armies[army_id] as Dictionary
+	var player := int(army.get("owner", NEUTRAL))
+	return (command_points_in_region(region_id, player) + int(army.get("command_points", 0))
+		<= world.region_cp_limit(region_id))
+
+
+func _drop_pending_retreat(army_id: int) -> void:
+	for index in range(pending_retreats.size()):
+		if int(pending_retreats[index].get("army", -1)) == army_id:
+			pending_retreats.remove_at(index)
+			return
+
+
+func _complete_retreat(army_id: int, to_region: String, automatic: bool) -> bool:
+	if not armies.has(army_id):
+		return false
+	(armies[army_id] as Dictionary)["region"] = to_region
+	_drop_pending_retreat(army_id)
+	events.append({"kind": "army_retreated", "army": army_id, "region": to_region,
+		"automatic": automatic, "turn": turn_index})
+	return true
+
+
+func order_retreat(army_id: int, to_region: String) -> bool:
+	if phase != PHASE_RETREAT:
+		return _reject("retreat orders are only legal in the retreat phase")
+	if to_region.is_empty():
+		if not _automatic_retreat(army_id):
+			return _reject("army %d has an adjacent retreat choice or no allied fallback" % army_id)
+	elif not Array(retreat_targets(army_id)).has(to_region):
+		return _reject("%s is not an adjacent friendly retreat destination" % to_region)
+	elif not _complete_retreat(army_id, to_region, false):
+		return _reject("retreat army %d disappeared" % army_id)
+	return true
+
+
 func advance_turn() -> int:
 	if turn_order.is_empty():
 		return NEUTRAL
@@ -629,6 +845,9 @@ func transfer_region(region_id: String, player: int) -> bool:
 ## Place an army from the world's `LivingWorldPlayerArmy` roster. Returns the
 ## new army id, or -1 when the placement is not fully understood.
 func place_army(player: int, region_id: String, army_name: String) -> int:
+	if phase != PHASE_TACTICAL:
+		_reject("training is only legal in the tactical phase")
+		return -1
 	if world == null or not world.has_region(region_id):
 		_reject("unknown region %s" % region_id)
 		return -1
@@ -748,6 +967,14 @@ func command_points_in_region(region_id: String, player: int) -> int:
 ## adjacency only, own army only, and the destination must not exceed the
 ## region's command-point cap for that player.
 func move_army(army_id: int, to_region: String) -> bool:
+	if phase != PHASE_TACTICAL:
+		return _reject("army movement is only legal in the tactical phase")
+	return _move_army_phase_internal(army_id, to_region)
+
+
+## Phase machinery and battle settlement use this private path; callers never
+## receive a second public phase door.
+func _move_army_phase_internal(army_id: int, to_region: String) -> bool:
 	if not armies.has(army_id):
 		return _reject("unknown army %d" % army_id)
 	var army := armies[army_id] as Dictionary
@@ -864,6 +1091,8 @@ func build_claim(player: int, region_id: String) -> Dictionary:
 ## the same reason `begin_battle()` validates its commitment: everything admitted
 ## here enters `authoritative_state()` and therefore the strategic hash.
 func begin_claim(record: Dictionary) -> bool:
+	if phase != PHASE_TACTICAL:
+		return _reject("a claim may only be committed in the tactical phase")
 	if record.is_empty():
 		return _reject("claim record is empty")
 	if not pending_claim.is_empty():
@@ -887,6 +1116,7 @@ func begin_claim(record: Dictionary) -> bool:
 		return _reject(
 			"army %d is not the army that would claim %s for seat %d" % [army_id, region_id, player])
 	pending_claim = record.duplicate(true)
+	phase = PHASE_BATTLE
 	events.append({"kind": "claim_begun", "region": region_id, "turn": turn_index})
 	last_command_result = true
 	return true
@@ -932,7 +1162,7 @@ func apply_claim() -> Dictionary:
 		refusals.append("the claiming army %d no longer exists" % army_id)
 	elif int((armies[army_id] as Dictionary).get("owner", NEUTRAL)) != player:
 		refusals.append("army %d no longer answers to seat %d" % [army_id, player])
-	elif not move_army(army_id, region_id):
+	elif not _move_army_phase_internal(army_id, region_id):
 		refusals.append("army %d could not march into %s: %s" % [
 			army_id, region_id, _last_rejection()])
 	elif not transfer_region(region_id, player):
@@ -1006,6 +1236,8 @@ func remove_army(army_id: int) -> bool:
 ## seated, distinct sides; distinct teams; a non-empty committed force; a
 ## well-formed digest - are checked here too.
 func begin_battle(commitment: Dictionary) -> bool:
+	if phase != PHASE_TACTICAL:
+		return _reject("an attack may only be committed in the tactical phase")
 	if commitment.is_empty():
 		return _reject("battle commitment is empty")
 	if not pending_battle.is_empty():
@@ -1022,6 +1254,7 @@ func begin_battle(commitment: Dictionary) -> bool:
 	if world == null or not world.has_region(region_id):
 		return _reject("unknown region %s" % region_id)
 	pending_battle = commitment.duplicate(true)
+	phase = PHASE_BATTLE
 	events.append({"kind": "battle_begun", "region": region_id, "turn": turn_index})
 	last_command_result = true
 	return true
@@ -1333,6 +1566,9 @@ func can_build(player: int, region_id: String, building_id: String, plot: int = 
 ## that had to choose between raising a farm and taking a region would be playing
 ## a game retail did not ship.
 func build_structure(player: int, region_id: String, building_id: String, plot: int = -1) -> Dictionary:
+	if phase != PHASE_TACTICAL:
+		_reject("construction is only legal in the tactical phase")
+		return {}
 	var refusal := build_refusal(player, region_id, building_id, plot)
 	if refusal != "":
 		_reject(refusal)
@@ -1382,6 +1618,9 @@ func build_structure(player: int, region_id: String, building_id: String, plot: 
 ## Disbanded +%d" - and the contrast is the evidence: retail wrote a refund where
 ## it meant one). Named project-authored as `demolition_refunds_nothing`.
 func demolish_structure(player: int, region_id: String, plot: int) -> Dictionary:
+	if phase != PHASE_TACTICAL:
+		_reject("demolition is only legal in the tactical phase")
+		return {}
 	if world == null or not world.has_region(region_id):
 		_reject("there is no region called '%s'" % region_id)
 		return {"ok": false, "refusal": "there is no region called '%s'" % region_id,
@@ -1827,8 +2066,35 @@ func restore(bytes: PackedByteArray) -> bool:
 			return false
 	if String(state["schema"]) != SCHEMA:
 		return false
-	if int(state["schema_version"]) != SCHEMA_VERSION:
+	var source_version := int(state["schema_version"])
+	if source_version != 1 and source_version != SCHEMA_VERSION:
 		return false
+	# Version 1 predates retail phases and migrates unambiguously to the opening
+	# tactical phase with no retreat transaction. Version 2 requires both fields.
+	var staged_phase := PHASE_TACTICAL
+	var staged_retreats: Array[Dictionary] = []
+	if source_version == SCHEMA_VERSION:
+		if (not state.has("phase") or typeof(state["phase"]) != TYPE_STRING
+				or not PHASES.has(String(state["phase"]))):
+			return false
+		if not state.has("pending_retreats") or typeof(state["pending_retreats"]) != TYPE_ARRAY:
+			return false
+		staged_phase = String(state["phase"])
+		var previous_army := -1
+		for value in state["pending_retreats"] as Array:
+			if typeof(value) != TYPE_DICTIONARY:
+				return false
+			var row := value as Dictionary
+			if row.size() != PENDING_RETREAT_FIELDS.size():
+				return false
+			for field in PENDING_RETREAT_FIELDS:
+				if not row.has(field) or typeof(row[field]) != int(PENDING_RETREAT_FIELDS[field]):
+					return false
+			var army_id := int(row["army"])
+			if army_id <= previous_army:
+				return false
+			previous_army = army_id
+			staged_retreats.append(row.duplicate(true))
 
 	var staged_players: Array[Dictionary] = []
 	for row in state["players"] as Array:
@@ -1843,6 +2109,28 @@ func restore(bytes: PackedByteArray) -> bool:
 		if typeof(source_armies[key]) != TYPE_DICTIONARY:
 			return false
 		staged_armies[int(key)] = (source_armies[key] as Dictionary).duplicate(true)
+
+	# Cross-validate every typed retreat row against the staged snapshot before
+	# any live state is touched. A row is a defeated HERO army lifecycle record,
+	# not a free-standing relocation request.
+	for row in staged_retreats:
+		var army_id := int(row["army"])
+		var player := int(row["player"])
+		if not staged_armies.has(army_id):
+			return false
+		if player < 0 or player >= staged_players.size():
+			return false
+		if int(row["turn"]) != int(state["turn_index"]):
+			return false
+		var army := staged_armies[army_id] as Dictionary
+		if String(army.get("kind", "")) != ARMY_HERO:
+			return false
+		if String(army.get("hero_template", "")) != String(row["hero_template"]):
+			return false
+		if int(army.get("owner", NEUTRAL)) != player:
+			return false
+		if String(army.get("region", "")) != String(row["from_region"]):
+			return false
 	# The battle in flight rides the snapshot. It is NOT in the required list
 	# above, because it is hashed empty-is-absent: a snapshot minted between
 	# battles legitimately carries no such key, and demanding one would refuse
@@ -1862,6 +2150,17 @@ func restore(bytes: PackedByteArray) -> bool:
 		if typeof(state["pending_claim"]) != TYPE_DICTIONARY:
 			return false
 		staged_claim = (state["pending_claim"] as Dictionary).duplicate(true)
+	if source_version == 1 and (not staged_battle.is_empty() or not staged_claim.is_empty()):
+		staged_phase = PHASE_BATTLE
+	if source_version == SCHEMA_VERSION:
+		if ((not staged_battle.is_empty() or not staged_claim.is_empty())
+				and staged_phase != PHASE_BATTLE):
+			return false
+		if not staged_retreats.is_empty() and staged_phase != PHASE_RETREAT:
+			return false
+		if (staged_phase == PHASE_RETREAT
+				and (not staged_battle.is_empty() or not staged_claim.is_empty())):
+			return false
 
 	# The battle rules ride the snapshot. They are NOT in the required list: a
 	# snapshot minted before version 3 legitimately carries neither, and refusing
@@ -1962,6 +2261,8 @@ func restore(bytes: PackedByteArray) -> bool:
 	_next_army_id = int(state["next_army_id"])
 	pending_battle = staged_battle
 	pending_claim = staged_claim
+	phase = staged_phase
+	pending_retreats = staged_retreats
 	# Derived and view-facing state is rebuilt, never restored, so a snapshot
 	# can never smuggle in an event log that the hash does not cover.
 	events = []
@@ -1985,6 +2286,8 @@ func authoritative_state() -> Dictionary:
 	var state := {
 		"schema": SCHEMA,
 		"schema_version": SCHEMA_VERSION,
+		"phase": phase,
+		"pending_retreats": pending_retreats,
 		"world_campaign": world.campaign_name if world != null else "",
 		"turn_index": turn_index,
 		"turn_order": turn_order,

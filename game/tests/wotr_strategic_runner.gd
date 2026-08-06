@@ -1214,6 +1214,11 @@ func _test_strategic_gap_register() -> void:
 	_check("the_strategic_gap_register_names_what_retail_data_cannot_support",
 		Array(names) == [
 			"army_merging_and_splitting", "army_recruitment_and_cp_costs",
+			"phase_moves_apply_immediately",
+			"phase_timer",
+			"pre_battle_retreat_losses",
+			"retreat_distance_rule",
+			"single_battle_per_phase",
 			"strategic_ai_recruitment",
 			"strategic_building_nuggets",
 			"strategic_powers",
@@ -1251,8 +1256,15 @@ func _test_strategic_gap_register() -> void:
 			"lowest_free_build_plot",
 			"neutral_claim_army_selection",
 			"neutral_claim_costs_nothing",
-			"one_action_turn_instead_of_phases",
 			"one_structure_per_territory_per_turn",
+			"phase_moves_apply_immediately",
+			"phase_timer",
+			"pre_battle_retreat_losses",
+			"retreat_ai_order_tie_break",
+			"retreat_cap_overflow_capital",
+			"retreat_capital_unevidenced_destroys",
+			"retreat_distance_rule",
+			"single_battle_per_phase",
 			"strategic_treasury_income_arithmetic",
 		], str(authored))
 	# THE INCOME ARITHMETIC IS THE ONE A PLAYER SEES A NUMBER FOR, so its stated

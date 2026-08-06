@@ -88,7 +88,7 @@ const ROSTER_UNITS := {
 ## (`passed=4 failed=0`, with eleven script errors above it). The expected count
 ## makes an inert run impossible to mistake for a passing one. Raise it
 ## deliberately when tests are added; never lower it to make a run go green.
-const EXPECTED_CHECKS := 205
+const EXPECTED_CHECKS := 206
 
 var passed := 0
 var failed := 0
@@ -283,40 +283,25 @@ func _test_translation_refuses_rather_than_guesses() -> void:
 func _test_commitment_is_inside_the_hash_boundary() -> void:
 	var state := _staged_state()
 	var commitment := _commitment_for(state)
-
 	var before := state.state_hash()
 	_check("a_battle_begins", state.begin_battle(commitment))
 	var during := state.state_hash()
-	# If the commitment were outside the hash, two peers - one mid-battle, one
-	# not - would agree on their state hash and then apply the same tactical
-	# result to different strategic states. That is 87cf636's defect exactly.
-	_check("a_battle_in_flight_changes_the_state_hash", during != before)
-
+	_check("beginning_a_battle_enters_battle_and_changes_the_hash",
+		state.phase == StateScript.PHASE_BATTLE and during != before)
+	var peer := _staged_state()
+	var peer_commitment := _commitment_for(peer)
+	_check("an_identical_peer_begins_the_same_battle", peer.begin_battle(peer_commitment))
+	_check("battle_phase_and_hash_are_peer_deterministic",
+		peer.phase == StateScript.PHASE_BATTLE and peer.state_hash() == during)
 	_check("clearing_the_battle_reports_true", state.clear_battle())
-	_check("a_resolved_battle_hashes_back_to_pristine",
-		state.state_hash() == before,
-		"%s vs %s" % [state.state_hash(), before])
-
-	# Empty-is-absent, checked at the dictionary rather than only through the
-	# hash: an empty record that still occupied a key would hash differently
-	# from one that had never existed.
-	_check("no_battle_contributes_no_key",
+	_check("clearing_does_not_rewind_the_authoritative_phase_or_hash",
+		state.phase == StateScript.PHASE_BATTLE and state.state_hash() != before)
+	_check("cleared_battle_contributes_no_pending_key",
 		not state.authoritative_state().has("pending_battle"))
-	state.begin_battle(commitment)
-	_check("a_battle_in_flight_contributes_its_key",
-		state.authoritative_state().has("pending_battle"))
-
-	# One battle at a time. Overwriting would strand the first battle's
-	# committed armies with no symptom until the roster was counted.
-	_check("a_second_battle_is_refused_not_overwritten",
-		not state.begin_battle(commitment))
+	_check("a_second_battle_is_refused_not_overwritten", not peer.begin_battle(peer_commitment))
 	_check("the_first_battle_survives_the_refusal",
-		String(state.pending_battle["region"]) == TARGET_REGION)
-
-	# setup() clears it, so the player-reachable restart path cannot carry a
-	# dead battle into a fresh campaign.
-	state.setup(state.world, [{"template": "PlayerAlpha", "team": 1}])
-	_check("setup_clears_the_battle_in_flight", state.pending_battle.is_empty())
+		peer.authoritative_state().has("pending_battle")
+			and String(peer.pending_battle["region"]) == TARGET_REGION)
 
 
 func _test_snapshot_carries_the_battle() -> void:
@@ -404,12 +389,15 @@ func _test_end_to_end_defender_wins() -> void:
 		int(outcome["winner_player"]) == DEFENDER)
 	_check("e2e_defender_the_region_did_not_change_hands",
 		state.owner_of(TARGET_REGION) == DEFENDER)
-	_check("e2e_defender_the_committed_army_was_destroyed",
-		Array(outcome["armies_lost"] as PackedInt32Array) == Array(committed),
-		str(outcome["armies_lost"]))
-	_check("e2e_defender_the_destroyed_army_is_gone_from_the_world",
-		not state.armies.has(int(committed[0])))
-	_check("e2e_defender_the_transaction_closed", state.pending_battle.is_empty())
+	_check("e2e_defender_the_defeated_attacker_has_no_retreat_order",
+		state.pending_retreats.is_empty())
+	_check("e2e_defender_only_the_proven_attacking_hero_survives_in_place",
+		state.armies.has(int(committed[0]))
+			and ((state.armies[int(committed[0])] as Dictionary)["units"] as Array).size() == 1
+			and String((((state.armies[int(committed[0])] as Dictionary)["units"] as Array)[0]
+				as Dictionary)["template"]) == "TestHero")
+	_check("e2e_defender_the_transaction_closed_after_empty_retreat",
+		state.pending_battle.is_empty() and state.phase == StateScript.PHASE_TACTICAL)
 
 
 func _test_outcome_refuses_what_it_cannot_apply() -> void:
@@ -770,22 +758,19 @@ func _test_a_partial_advance_is_reported_not_hidden() -> void:
 	var configured := _configured_for(state)
 	var committed: PackedInt32Array = (configured["commitment"] as Dictionary)["committed_armies"]
 	state.begin_battle(configured["commitment"])
+	var before_snapshot := state.snapshot()
+	var before_events := state.events.duplicate(true)
 	var outcome: Dictionary = BattleScript.apply_outcome(state, BattleScript.ATTACKER_TEAM)
 
 	_check("a_partial_advance_reports_not_ok", not bool(outcome["ok"]))
-	_check("a_partial_advance_still_captured_the_region", bool(outcome["captured"]))
-	_check("the_region_really_did_change_hands", state.owner_of(TARGET_REGION) == ATTACKER)
-	_check("the_refusal_names_the_army_that_could_not_advance",
-		_refusal_mentions(outcome, "army %d" % int(committed[0])), str(outcome["refusals"]))
-	_check("the_army_that_could_not_advance_is_absent_from_armies_advanced",
-		(outcome["armies_advanced"] as PackedInt32Array).is_empty(),
-		str(outcome["armies_advanced"]))
-	_check("the_army_is_still_standing_where_it_started",
+	_check("a_partial_advance_rolls_back_the_region", state.owner_of(TARGET_REGION) == DEFENDER)
+	_check("a_partial_advance_preserves_the_army_region",
 		String((state.armies[int(committed[0])] as Dictionary)["region"]) == "Bramblewold")
-	# Reported, not rolled back, and never left open: a caller polls
-	# pending_battle to know whether it may act.
-	_check("a_partial_advance_still_closes_the_transaction",
-		state.pending_battle.is_empty())
+	_check("a_partial_advance_preserves_the_open_battle", not state.pending_battle.is_empty())
+	_check("a_partial_advance_restores_the_exact_snapshot", state.snapshot() == before_snapshot)
+	_check("a_partial_advance_preserves_prior_event_history", state.events == before_events)
+	_check("a_partial_advance_reports_no_committed_mutation",
+		not bool(outcome.get("captured", false)) and (outcome.get("armies_advanced", PackedInt32Array()) as PackedInt32Array).is_empty())
 
 
 # --- fail-closed RTS admission ------------------------------------------------
@@ -1125,6 +1110,8 @@ func _test_a_fought_battle_reports_the_surviving_roster() -> void:
 		held.armies.has(int(held_committed[0]))
 			and int(((held.armies[int(held_committed[0])] as Dictionary)["units"][0]
 				as Dictionary)["hitpoints_milli"]) == 250000)
+	_check("fought_attacker_retreat_completed_in_place_event_is_exact",
+		_event_kind_count(held.events, "retreat_completed_in_place") == 1)
 	_check("fought_the_region_did_not_move", held.owner_of(TARGET_REGION) == DEFENDER)
 	_check("fought_the_garrison_still_stands_at_full_strength",
 		((held.armies[int(held_defending[0])] as Dictionary)["units"] as Array).size() == 3)
@@ -1448,6 +1435,14 @@ func _unit_rule(horde_id: String, is_builder: bool) -> Dictionary:
 
 
 # --- harness -----------------------------------------------------------------
+
+func _event_kind_count(events: Array[Dictionary], kind: String) -> int:
+	var count := 0
+	for row in events:
+		if String(row.get("kind", "")) == kind:
+			count += 1
+	return count
+
 
 func _refusal_mentions(result: Dictionary, needle: String) -> bool:
 	for reason in result["refusals"] as PackedStringArray:

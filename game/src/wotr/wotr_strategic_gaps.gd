@@ -179,6 +179,11 @@ const OPEN_GAPS := {
 		+ "opponent's targets and its BuildingScore* weights choose what it "
 		+ "builds, but its nine Desired*Ratio weights govern RECRUITMENT, which "
 		+ "this layer does not model (see army_recruitment_and_cp_costs)",
+	"pre_battle_retreat_losses": "pre-battle retreat loss arithmetic is not proven by the retail strings",
+	"phase_moves_apply_immediately": "moves apply immediately; no retail command-buffer representation is proven",
+	"single_battle_per_phase": "the v1 contract admits one battle; no retail multi-battle queue representation is proven",
+	"retreat_distance_rule": "automatic no-option relocation uses project-authored graph-distance and region-id tie rules",
+	"phase_timer": "no authoritative retail timer value is proven for this contract",
 }
 
 
@@ -240,6 +245,13 @@ const PROJECT_AUTHORED_RULES := {
 	# seat built and which sits on no build plot) counts as a fortress for
 	# `GAIN_PER_FORTRESS`. This layer reads it as a plain sum of structures
 	# STANDING ON PLOTS plus fertile regions held, with no base term.
+	"retreat_ai_order_tie_break":
+		"AI-owned pending retreats are ordered by army id and choose the lowest-sorted admissible adjacent region; retail authors no tie rule",
+	"retreat_cap_overflow_capital":
+		"an ordered or closest-allied retreat must fit the destination command-point cap; only the authored-capital last resort ignores it",
+	"retreat_capital_unevidenced_destroys":
+		"when no admissible allied region and no resolvable authored capital exist, the defeated hero army is destroyed so Retreat cannot lock",
+
 	"strategic_treasury_income_arithmetic":
 		"income = GAIN_PER_FORTRESS per standing Fortress + GAIN_PER_FARM per "
 		+ "standing Resource building + FERTILE_TERRITORY_BONUS per fertile "
@@ -284,11 +296,19 @@ const PROJECT_AUTHORED_RULES := {
 		+ "authors a refund for a disbanded UNIT and none for a structure, so "
 		+ "this is this project reading an absence",
 
-	"one_action_turn_instead_of_phases":
-		"retail's turn has a planning phase (every army moves) and a battle "
-		+ "phase (every collision resolves); this layer takes one action per turn, "
-		+ "so a two-seat collision on neutral ground becomes a claim followed by "
-		+ "an ordinary attack on the next seat's turn",
+	# Fable v1.0 deliberately applies tactical moves immediately; retail evidence
+	# does not expose a deferred command representation.
+	"phase_moves_apply_immediately":
+		"movement is applied when ordered during Tactical; no deferred move queue is invented",
+	"single_battle_per_phase":
+		"the current strategic transaction supports one committed battle in Battle; a multi-battle queue is not invented",
+	"retreat_distance_rule":
+		"when retail requires automatic relocation and no adjacent friendly retreat exists, closest allied ground is chosen by graph distance, then region id; that tie is project-authored",
+	"phase_timer":
+		"retail presents phase timing, but this contract authors no timer value, so phases end only through END PHASE",
+	"pre_battle_retreat_losses":
+		"retail names pre-battle retreat consequences but no loss arithmetic is proven here; the command is not implemented",
+
 }
 
 

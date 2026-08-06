@@ -713,7 +713,7 @@ func staging_regions() -> PackedStringArray:
 ## they are CLAIMABLE, and only when a hero army can actually make the claim.
 func attack_targets(from_region: String) -> PackedStringArray:
 	var targets := PackedStringArray()
-	if world == null or state == null:
+	if world == null or state == null or state.phase != StateScript.PHASE_TACTICAL:
 		return targets
 	var player := state.active_player()
 	if state.owner_of(from_region) != player:
@@ -752,7 +752,7 @@ func claim_targets(from_region: String) -> PackedStringArray:
 ## one no region on the BFME2 map can legally attack anything.
 func movement_targets(from_region: String) -> PackedStringArray:
 	var moves := PackedStringArray()
-	if world == null or state == null:
+	if world == null or state == null or state.phase != StateScript.PHASE_TACTICAL:
 		return moves
 	var player := state.active_player()
 	if state.owner_of(from_region) != player:
@@ -1363,7 +1363,7 @@ func resolve_battle(winner_team: int) -> Dictionary:
 	for reason in outcome.get("refusals", PackedStringArray()) as PackedStringArray:
 		refusals.append(String(reason))
 	if bool(outcome.get("ok", false)):
-		state.advance_turn()
+		_auto_order_ai_retreats()
 	selected_region = ""
 	selected_target = ""
 	return outcome
@@ -1439,12 +1439,12 @@ func auto_resolve_pending_battle() -> Dictionary:
 	var applied: Dictionary = BattleScript.apply_auto_resolve_outcome(state, outcome)
 	for reason in applied.get("refusals", PackedStringArray()) as PackedStringArray:
 		refusals.append(String(reason))
+	if bool(applied.get("ok", false)):
+		_auto_order_ai_retreats()
 	# The turn only passes on a battle that actually decided. An UNDECIDED
 	# battle already cost both armies their attrition; ending the turn on top of
 	# that would also cost the attacker the move, which retail states nothing
 	# about and this project is not going to invent.
-	if bool(applied.get("ok", false)) and not bool(applied.get("undecided", true)):
-		state.advance_turn()
 	selected_region = ""
 	selected_target = ""
 	return {
@@ -1473,7 +1473,7 @@ func _apply_pending_claim() -> Dictionary:
 		# The transaction stays OPEN on a refusal, exactly as a failed auto-resolve
 		# leaves its commitment open: the caller is told why and can abandon it.
 		return _auto_resolve_refused_with_existing()
-	state.advance_turn()
+	state.end_phase()
 	selected_region = ""
 	selected_target = ""
 	return {
@@ -1530,6 +1530,61 @@ func abandon_battle() -> bool:
 	if not state.pending_claim.is_empty():
 		return state.clear_claim()
 	return state.clear_battle()
+
+
+func retreat_targets(army_id: int) -> PackedStringArray:
+	return state.retreat_targets(army_id) if state != null else PackedStringArray()
+
+
+func order_retreat(army_id: int, to_region: String = "") -> bool:
+	refusals = PackedStringArray()
+	if state == null:
+		refusals.append("no War of the Ring session is running")
+		return false
+	var accepted := state.order_retreat(army_id, to_region)
+	if not accepted:
+		refusals.append(_last_state_rejection())
+		return false
+	selected_region = ""
+	selected_target = ""
+	return true
+
+
+func _auto_order_ai_retreats() -> void:
+	if state == null or state.phase != StateScript.PHASE_RETREAT:
+		return
+	var ids: Array[int] = []
+	for row in state.pending_retreats:
+		var player := int(row.get("player", StateScript.NEUTRAL))
+		if (player >= 0 and player < state.players.size()
+				and String((state.players[player] as Dictionary).get("controller", "")) == StateScript.CONTROLLER_AI):
+			ids.append(int(row["army"]))
+	ids.sort()
+	for army_id in ids:
+		var targets := state.retreat_targets(army_id)
+		order_retreat(army_id, String(targets[0]) if not targets.is_empty() else "")
+	if state.pending_retreats.is_empty() and state.phase == StateScript.PHASE_RETREAT:
+		state.end_phase()
+
+
+## UI, AI and non-visual callers share the authoritative state's single phase
+## door; no session-only transition exists.
+func end_phase() -> String:
+	refusals = PackedStringArray()
+	if state == null:
+		refusals.append("no War of the Ring session is running")
+		return ""
+	var event_count := state.events.size()
+	state.end_phase()
+	var rejected := (state.events.size() > event_count
+		and String((state.events[-1] as Dictionary).get("kind", "")) == "rejected")
+	if rejected:
+		refusals.append(String((state.events[-1] as Dictionary).get("reason", "")))
+	else:
+		_auto_order_ai_retreats()
+	selected_region = ""
+	selected_target = ""
+	return state.phase
 
 
 # --- the opponent -------------------------------------------------------------

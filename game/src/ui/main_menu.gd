@@ -3570,30 +3570,40 @@ func _resume_wotr_after_battle() -> bool:
 		return false
 	_wotr_session = session
 	var message := ""
+	var outcome_ok := false
 	if winner == WotrBattleScript.UNDECIDED:
-		# NOT a defender victory. An undecided match has no result to apply, and
-		# treating -1 as a loss would destroy the attacking army for nothing.
+		# NOT a defender victory. The undecided transaction is abandoned without a
+		# result and remains in authoritative Battle until the player ends the phase.
 		session.abandon_battle()
 		message = "The battle was left undecided. Nothing was applied; the region did not change hands."
 	else:
 		var outcome: Dictionary = session.resolve_battle(winner)
-		if bool(outcome.get("ok", false)):
+		outcome_ok = bool(outcome.get("ok", false))
+		if outcome_ok:
 			message = "%s: %s %s." % [
 				String(outcome["region"]),
 				_wotr_seat_name(session, int(outcome["winner_player"])),
 				"took the region" if bool(outcome["captured"]) else "held the region",
 			]
 		else:
-			message = "The result applied only in part: %s" % ", ".join(Array(outcome.get("refusals", PackedStringArray())))
+			# Outcome settlement is atomic. A refusal means the snapshot and event
+			# history were rolled back and the same battle remains open for action.
+			message = "The result was refused and rolled back; the battle remains: %s" % ", ".join(
+				Array(outcome.get("refusals", PackedStringArray())))
 	if not _open_wotr():
 		return false
-	# RESOLVING A TACTICAL BATTLE HANDS THE TURN ON, and this is the third and last
-	# place that happens (the other two are END TURN and AUTO-RESOLVE, both inside
-	# `wotr_screen.gd`). It is here rather than there because it happens on the far
-	# side of a scene change: the screen that was up when the battle launched no
-	# longer exists, so it cannot notice that the turn moved. Without this line a
-	# player who fights every battle in the field never meets an opponent.
-	wotr_screen.run_opponent_turns()
+	# The far side of the scene change may resume opponents only after a
+	# successful result reached authoritative clean Tactical. Human Retreat and a
+	# rolled-back/undecided Battle stay on screen for their pending action.
+	var clean_tactical: bool = (
+		outcome_ok
+		and session.state.phase == WotrStateScript.PHASE_TACTICAL
+		and session.state.pending_battle.is_empty()
+		and session.state.pending_claim.is_empty()
+		and session.state.pending_retreats.is_empty()
+	)
+	if clean_tactical:
+		wotr_screen.run_opponent_turns()
 	wotr_screen.show_message(message)
 	_show_page(PAGE_WOTR)
 	return true

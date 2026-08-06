@@ -270,10 +270,9 @@ const PHASE_CELL_WIDTH := 108.0
 ##              exactly and only what this screen lets a seat do.
 ##   BATTLE   - a battle is being resolved: the report is up, or auto-resolve is
 ##              running.
-##   RETREAT  - NOT MODELLED. This layer has no retreat step, so this cell is never
-##              lit, and that is a NAMED GAP on the diagnostics panel rather than a
-##              cell quietly lit by something else. A clock that shows a hand it
-##              cannot move is honest; a clock that puts the wrong hand up is not.
+##   RETREAT  - defeated hero leaders choose an adjacent friendly relocation;
+##              the authoritative state lights this cell until every required
+##              order or automatic no-option relocation is complete.
 const PHASE_TACTICAL := 0
 const PHASE_BATTLE := 1
 const PHASE_RETREAT := 2
@@ -285,12 +284,6 @@ const PHASE_CELLS := [
 ## Retail's own word for what the bar IS, set under the lit cell beside its title.
 const PHASE_LABEL_STRING := "APT:StrategicHUDPhaseLabel"
 const PHASE_LABEL_CAPTION := "Phase"
-## The gap the RETREAT cell stands for, stated where the diagnostics panel can
-## read it rather than left as a comment.
-const PHASE_RETREAT_GAP := (
-	"retail's chevron bar carries three phases and this layer models two of them: "
-	+ "APT:RetreatPhaseTitle (\"Retreat Phase\") has no step in this project's turn, "
-	+ "so its chevron is drawn at the inactive value and is never lit")
 const CHECKLIST_PHASE_BANNER := Rect2(-287.8, 50.9, 575.0, 28.0)
 ## THE CHECKLIST PLAQUE HAS TWO AUTHORED SIZES AND THIS SCREEN USES BOTH.
 ##
@@ -1678,7 +1671,7 @@ func build() -> void:
 
 	end_turn_button = Button.new()
 	end_turn_button.name = "EndTurn"
-	end_turn_button.text = "END TURN"
+	end_turn_button.text = "END PHASE"
 	end_turn_button.position = Vector2(side_x + 262, 636)
 	end_turn_button.custom_minimum_size = Vector2(250, 44)
 	end_turn_button.size = Vector2(250, 44)
@@ -3672,11 +3665,8 @@ func load_strategic_ui(pack_roots: Array = []) -> bool:
 func _apply_retail_captions() -> void:
 	if end_turn_button == null:
 		return
-	# END TURN KEEPS ITS OWN WORD. Retail's caption for this capsule is "END PHASE"
-	# (`APT:EndPhaseButtonText`), and it is NOT used: this screen ends a TURN and
-	# models none of retail's phases - retail's phase list is hardcoded in its
-	# executable and `livingworldlogic.ini` ships empty - so borrowing the word
-	# would be parity on the lettering and a lie about the control.
+	# Retail's own phase control (`APT:EndPhaseButtonText`).
+	end_turn_button.text = names.shell_label("APT:EndPhaseButtonText", "END PHASE")
 	back_button.text = names.shell_label("APT:MainMenu", "MAIN MENU")
 	# RETAIL'S OWN WORD FOR LEAVING THE PAUSE SHELL, out of retail's own table.
 	pause_resume.text = names.shell_label("APT:Resume", "RESUME")
@@ -4205,7 +4195,11 @@ func refresh() -> void:
 	attack_button.disabled = not can_attack_now()
 	attack_button.text = _attack_button_caption()
 	attack_button.tooltip_text = _attack_button_reason()
-	cancel_button.disabled = session.selected_region.is_empty() 		and session.selected_target.is_empty() and selected_plot.is_empty()
+	var can_abandon := (state.phase == StateScript.PHASE_BATTLE
+		and (not state.pending_battle.is_empty() or not state.pending_claim.is_empty()))
+	cancel_button.text = "ABANDON" if can_abandon else "CANCEL"
+	cancel_button.disabled = (not can_abandon and session.selected_region.is_empty()
+		and session.selected_target.is_empty() and selected_plot.is_empty())
 	cancel_button.tooltip_text = _cancel_button_reason()
 	# AUTO-RESOLVE needs the same committable attack ATTACK does, plus the two
 	# converted bundles. When either is missing the button is disabled and the
@@ -4827,11 +4821,13 @@ func end_turn() -> void:
 	if not session.state.pending_battle.is_empty():
 		_message("A battle is still in flight; it must resolve before the turn passes.")
 		return
-	session.state.advance_turn()
-	session.selected_region = ""
-	session.selected_target = ""
+	var turn_before := session.state.turn_index
+	session.end_phase()
 	selected_army_id = -1
 	_message("")
+	if session.state.turn_index == turn_before:
+		refresh()
+		return
 	# AND THEN THE OPPONENT MOVES. Before this line, END TURN handed the turn to a
 	# seat that never did anything: the campaign came straight back to the player
 	# with the map unchanged, which is the "there is no game here" half of the
@@ -4873,10 +4869,15 @@ func end_turn() -> void:
 ##
 ## Public because `main_menu.gd` calls it after a TACTICAL battle resolves - that
 ## is the third place the turn is handed on, and it happens on the other side of a
-## scene change where this screen has no way to notice.
+## scene change where this screen has no way to notice. It resumes only from a
+## clean authoritative Tactical phase; Battle or Retreat is named and left open.
 func run_opponent_turns() -> void:
 	_ai_reports = []
 	if session == null or session.state == null:
+		return
+	if (session.state.phase != StateScript.PHASE_TACTICAL
+			or not session.state.pending_battle.is_empty() or not session.state.pending_claim.is_empty()):
+		_message("Finish the current phase before the opponent can resume.")
 		return
 	if not session.active_seat_is_ai():
 		return
@@ -5020,9 +5021,8 @@ func _refresh_turn_banner(state: StateScript, seat: int, seat_row: Dictionary) -
 ## executable. There is nothing to convert, so building one would be fabrication."
 ##
 ## THE FACTS IN IT ARE STILL TRUE AND THE CONCLUSION WAS TOO STRONG. Retail's phase
-## LOGIC is indeed in the executable and is not converted - this layer still models
-## two phases and not three, which is the standing gap `PHASE_RETREAT_GAP`. But
-## retail's phase NAMES are not in the executable at all: `data/lotr.str` authors
+## LOGIC is indeed in the executable and is not converted. This layer's live phase
+## comes from authoritative strategic state, while retail's phase NAMES are not in the executable at all: `data/lotr.str` authors
 ## `APT:TacticalPhaseTitle`, `APT:BattlePhaseTitle` and `APT:RetreatPhaseTitle`, the
 ## setup string bundle converts all three, and retail's own chevron bar carries
 ## exactly three devices for them. Naming which of retail's three phases the screen
@@ -6341,7 +6341,6 @@ func _conversion_gap_lines() -> Array[String]:
 		# alternative was to light the retreat cell off something that is not a
 		# retreat, and a clock that puts the wrong hand up is worse than one that
 		# admits a hand is parked.
-		absent.append(PHASE_RETREAT_GAP)
 		# THE PRICE WORD, because it is this project's and there is nothing of
 		# retail's behind it. Retail's data really does price the farm class at
 		# nothing (WOTR_FARM_COST = 0) and retail states the rule in prose in
@@ -6667,17 +6666,16 @@ func _draw_turn_plaque() -> void:
 ## ------------------------------------------------------------------------------
 
 ## WHICH OF RETAIL'S THREE PHASES THIS SCREEN IS IN, right now. See `PHASE_CELLS`
-## for where the three come from and for why RETREAT is never returned.
+## for where the three come from; the authoritative phase selects the lit cell.
 ##
 ## Presentation only: it reads live state and writes nothing.
 func current_phase() -> int:
-	# THE BATTLE PHASE IS THE ONE WITH A BATTLE IN IT, which on this screen means
-	# the report is on the glass - that is the whole of the window between a battle
-	# being committed and its outcome being acknowledged, and it is the only moment
-	# the seat is not the one deciding.
-	if report_backdrop != null and report_backdrop.visible:
-		return PHASE_BATTLE
-	return PHASE_TACTICAL
+	if session == null or session.state == null:
+		return PHASE_TACTICAL
+	match session.state.phase:
+		StateScript.PHASE_BATTLE: return PHASE_BATTLE
+		StateScript.PHASE_RETREAT: return PHASE_RETREAT
+		_: return PHASE_TACTICAL
 
 
 ## One phase cell's rectangle in the window, or `Rect2()` with no checklist island.
@@ -9848,12 +9846,21 @@ func _on_army_clicked(army_id: int, region_id: String) -> void:
 	if session == null or session.state == null or not session.state.armies.has(army_id):
 		return
 	var army := session.state.armies[army_id] as Dictionary
-	if int(army.get("owner", StateScript.NEUTRAL)) != session.state.active_player():
-		_message("That general does not answer to the active faction.")
+	var allowed_player := session.state.active_player()
+	if session.state.phase == StateScript.PHASE_RETREAT:
+		allowed_player = StateScript.NEUTRAL
+		for row in session.state.pending_retreats:
+			if int(row.get("army", -1)) == army_id:
+				allowed_player = int(row.get("player", StateScript.NEUTRAL))
+				break
+	if int(army.get("owner", StateScript.NEUTRAL)) != allowed_player:
+		_message("That general does not answer to the faction choosing this retreat.")
 		return
 	selected_army_id = army_id
 	select_region(region_id)
-	_message("Army selected. Right-click an adjacent territory to move.")
+	_message("Army selected. Right-click an adjacent territory to retreat."
+		if session.state.phase == StateScript.PHASE_RETREAT
+		else "Army selected. Right-click an adjacent territory to move.")
 
 
 ## Complete retail's strategic move gesture. Friendly movement is applied by
@@ -9865,6 +9872,13 @@ func _on_region_commanded(region_id: String) -> void:
 	if selected_army_id < 0 or not session.state.armies.has(selected_army_id):
 		selected_army_id = -1
 		_message("Left-click one of your generals, then right-click an adjacent territory.")
+		return
+	if session.state.phase == StateScript.PHASE_RETREAT:
+		if not session.order_retreat(selected_army_id, region_id):
+			_message("Retreat refused: %s" % ", ".join(Array(session.refusals)))
+		else:
+			_message("Army retreated to %s." % _display_of(region_id))
+		refresh()
 		return
 	var result: Dictionary = session.order_army(selected_army_id, region_id)
 	if not bool(result.get("ok", false)):
@@ -9947,12 +9961,21 @@ func _region_at(point: Vector2) -> String:
 
 # --- internals ---------------------------------------------------------------
 
-## PUT THE PIECES BACK. Clears the staging, the chosen target and any open build
-## ring - PRESENTATION FIELDS ONLY, every one of them. Nothing here reaches the
-## strategic state or its hash: an attack that has been committed cannot be
-## cancelled from this screen, and this button never pretends it can.
+## CANCEL clears presentation-only staging as before. During Battle the same
+## existing control is ABANDON: it closes the undecided transaction without an
+## outcome and advances through the authoritative phase door.
 func _on_cancel_pressed() -> void:
 	if session == null:
+		return
+	if (session.state != null and session.state.phase == StateScript.PHASE_BATTLE
+			and (not session.state.pending_battle.is_empty() or not session.state.pending_claim.is_empty())):
+		if session.abandon_battle():
+			session.end_phase()
+			_message("Battle abandoned. No result was applied.")
+			if (session.state.phase == StateScript.PHASE_TACTICAL
+					and session.state.pending_battle.is_empty() and session.state.pending_claim.is_empty()):
+				run_opponent_turns()
+		refresh()
 		return
 	session.selected_target = ""
 	session.selected_region = ""
@@ -9965,6 +9988,9 @@ func _on_cancel_pressed() -> void:
 func _cancel_button_reason() -> String:
 	if session == null or session.state == null:
 		return "The war is not under way."
+	if (session.state.phase == StateScript.PHASE_BATTLE
+			and (not session.state.pending_battle.is_empty() or not session.state.pending_claim.is_empty())):
+		return "Abandon this battle without applying a result."
 	if not session.selected_target.is_empty():
 		return "Let %s be, and stand down from %s." % [
 			_display_of(session.selected_target), _display_of(session.selected_region)]

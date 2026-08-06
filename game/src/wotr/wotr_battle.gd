@@ -391,6 +391,24 @@ static func player_for_team(commitment: Dictionary, team: int) -> int:
 ## capture back would discard a battle that was genuinely won; reporting `ok`
 ## anyway would hide an army that is now standing somewhere nobody chose.
 ## Reporting exactly what moved is the only one of the three a caller can act on.
+static func _proven_hero_leaders(state: StateScript, ids: PackedInt32Array) -> Dictionary:
+	var proven: Dictionary = {}
+	for army_id in ids:
+		if not state.armies.has(int(army_id)):
+			continue
+		var army := state.armies[int(army_id)] as Dictionary
+		if String(army.get("kind", "")) != StateScript.ARMY_HERO:
+			continue
+		var template := String(army.get("hero_template", ""))
+		var matches: Array = []
+		for unit in army.get("units", []) as Array:
+			if String((unit as Dictionary).get("template", "")) == template:
+				matches.append(unit)
+		if not template.is_empty() and matches.size() == 1:
+			proven[int(army_id)] = (matches[0] as Dictionary).duplicate(true)
+	return proven
+
+
 static func apply_outcome(state: StateScript, winner_team: int) -> Dictionary:
 	var refusals := PackedStringArray()
 	if state == null:
@@ -417,6 +435,13 @@ static func apply_outcome(state: StateScript, winner_team: int) -> Dictionary:
 	var region_id := String(commitment.get("region", ""))
 	var attacker := int(commitment.get("attacker", StateScript.NEUTRAL))
 	var committed: PackedInt32Array = commitment.get("committed_armies", PackedInt32Array())
+	var defeated_ids: PackedInt32Array = (
+		commitment.get("defending_armies", PackedInt32Array())
+		if winner_player == attacker else committed
+	)
+	var retreat_heroes: Dictionary = _proven_hero_leaders(state, defeated_ids)
+	var rollback_snapshot := state.snapshot()
+	var rollback_events := state.events.duplicate(true)
 	var captured := false
 	var advanced: Array[int] = []
 	var lost: Array[int] = []
@@ -428,10 +453,19 @@ static func apply_outcome(state: StateScript, winner_team: int) -> Dictionary:
 		# result, which is a strategic-state divergence worth seeing.
 		var defending: PackedInt32Array = commitment.get("defending_armies", PackedInt32Array())
 		for army_id in defending:
-			if state.remove_army(int(army_id)):
-				lost.append(int(army_id))
+			if retreat_heroes.has(int(army_id)):
+				if not state.queue_hero_retreat(int(army_id), retreat_heroes[int(army_id)]):
+					refusals.append("defending hero army %d could not enter retreat" % int(army_id))
 			else:
-				refusals.append("defending army %d could not be removed" % int(army_id))
+				var unproven_hero := (state.armies.has(int(army_id))
+					and String((state.armies[int(army_id)] as Dictionary).get("kind", "")) == StateScript.ARMY_HERO)
+				if state.remove_army(int(army_id)):
+					lost.append(int(army_id))
+					if unproven_hero:
+						state.events.append({"kind": "defeated_hero_leader_unprovable_destroyed",
+							"army": int(army_id), "turn": state.turn_index})
+				else:
+					refusals.append("defending army %d could not be removed" % int(army_id))
 		captured = state.transfer_region(region_id, attacker)
 		if not captured:
 			refusals.append("region %s did not change hands" % region_id)
@@ -439,18 +473,37 @@ static func apply_outcome(state: StateScript, winner_team: int) -> Dictionary:
 		# advance order - and therefore which army trips the command-point cap
 		# when the force is too large - is reproducible.
 		for army_id in committed:
-			if state.move_army(int(army_id), region_id):
+			if state._move_army_phase_internal(int(army_id), region_id):
 				advanced.append(int(army_id))
 			else:
 				refusals.append("army %d could not advance into %s" % [int(army_id), region_id])
 	else:
 		for army_id in committed:
-			if state.remove_army(int(army_id)):
-				lost.append(int(army_id))
+			if retreat_heroes.has(int(army_id)):
+				if not state.apply_attrition(int(army_id), [retreat_heroes[int(army_id)]]):
+					refusals.append("hero army %d could not be stripped to its leader" % int(army_id))
+				else:
+					state.events.append({"kind": "retreat_completed_in_place",
+						"army": int(army_id), "turn": state.turn_index})
 			else:
-				refusals.append("army %d could not be removed" % int(army_id))
+				var unproven_hero := (state.armies.has(int(army_id))
+					and String((state.armies[int(army_id)] as Dictionary).get("kind", "")) == StateScript.ARMY_HERO)
+				if state.remove_army(int(army_id)):
+					lost.append(int(army_id))
+					if unproven_hero:
+						state.events.append({"kind": "defeated_hero_leader_unprovable_destroyed",
+							"army": int(army_id), "turn": state.turn_index})
+				else:
+					refusals.append("army %d could not be removed" % int(army_id))
 
+	if not refusals.is_empty():
+		if state.restore(rollback_snapshot):
+			state.events = rollback_events
+		else:
+			refusals.append("battle outcome rollback restore failed")
+		return _outcome_refused(refusals, "battle outcome rolled back after a strategic refusal")
 	state.clear_battle()
+	state.end_phase()
 	return {
 		"ok": refusals.is_empty(),
 		"refusals": refusals,
@@ -656,6 +709,32 @@ static func _settle_survivor_report(
 	var committed: PackedInt32Array = commitment.get("committed_armies", PackedInt32Array())
 	var defending: PackedInt32Array = commitment.get("defending_armies", PackedInt32Array())
 
+	# A bounded auto-resolve is not a battle decision. Keep the commitment and
+	# phase open, and apply no attrition, so the caller may retry or abandon.
+	if undecided:
+		return _auto_refused(refusals, "battle remains undecided")
+
+	var losing: PackedInt32Array = defending if winner == "attacker" else committed
+	var retreat_heroes: Dictionary = {}
+	# Validate every defeated hero before the first write. Retail preserves the
+	# leader only; if its exact template cannot be proven, refusing is safer than
+	# manufacturing a unit (LW_InstructionText11/12).
+	for army_id in losing:
+		if not state.armies.has(int(army_id)):
+			continue
+		var army := state.armies[int(army_id)] as Dictionary
+		if String(army.get("kind", "")) != StateScript.ARMY_HERO:
+			continue
+		var exact: Array = []
+		var hero_template := String(army.get("hero_template", ""))
+		for unit in survivors.get(int(army_id), []) as Array:
+			if String((unit as Dictionary).get("template", "")) == hero_template:
+				exact.append(unit)
+		if not hero_template.is_empty() and exact.size() == 1:
+			retreat_heroes[int(army_id)] = (exact[0] as Dictionary).duplicate(true)
+
+	var rollback_snapshot := state.snapshot()
+	var rollback_events := state.events.duplicate(true)
 	var lost: Array[int] = []
 	var reduced: Array[int] = []
 	# BOTH SIDES FIRST, in ascending army id, so the order the strategic layer
@@ -667,49 +746,56 @@ static func _settle_survivor_report(
 		every.append(int(army_id))
 	every.sort()
 	for army_id in every:
-		var kept: Array = survivors.get(army_id, [])
+		if retreat_heroes.has(army_id):
+			var hero_ok := (
+				state.queue_hero_retreat(army_id, retreat_heroes[army_id])
+				if defending.has(army_id)
+				else state.apply_attrition(army_id, [retreat_heroes[army_id]])
+			)
+			if hero_ok:
+				reduced.append(army_id)
+				if not defending.has(army_id):
+					state.events.append({"kind": "retreat_completed_in_place",
+						"army": army_id, "turn": state.turn_index})
+			else:
+				refusals.append("hero army %d could not preserve its leader" % army_id)
+			continue
+		var unproven_hero := (losing.has(army_id) and state.armies.has(army_id)
+			and String((state.armies[army_id] as Dictionary).get("kind", "")) == StateScript.ARMY_HERO)
+		var kept: Array = [] if losing.has(army_id) else survivors.get(army_id, [])
 		if not state.apply_attrition(army_id, kept):
 			refusals.append("attrition for army %d could not be written" % army_id)
 			continue
 		if kept.is_empty():
 			lost.append(army_id)
+			if unproven_hero:
+				state.events.append({"kind": "defeated_hero_leader_unprovable_destroyed",
+					"army": army_id, "turn": state.turn_index})
 		else:
 			reduced.append(army_id)
 
 	var captured := false
 	var advanced: Array[int] = []
 	if not undecided and winner == "attacker":
-		# A defending army that SURVIVED a lost battle still cannot stay: the
-		# region has changed hands. Retail's `LeaveInArmySummary` keeps dead
-		# heroes in a roster and says nothing about where a defeated hero goes
-		# when the ground is lost, so they are removed and the count is REPORTED
-		# rather than a retreat destination being invented.
-		var kept_through_defeat := 0
-		for army_id in defending:
-			if not state.armies.has(int(army_id)):
-				continue
-			kept_through_defeat += (state.armies[int(army_id)] as Dictionary).get("units", []).size()
-			if state.remove_army(int(army_id)):
-				if not lost.has(int(army_id)):
-					lost.append(int(army_id))
-			else:
-				refusals.append("defending army %d could not be removed" % int(army_id))
-		if kept_through_defeat > 0:
-			refusals.append(
-				("%d defending unit(s) retail would keep in the army summary were removed with "
-				+ "the region; retreat across a lost region is not modelled") % kept_through_defeat)
 		captured = state.transfer_region(region_id, attacker)
 		if not captured:
 			refusals.append("region %s did not change hands" % region_id)
 		for army_id in committed:
 			if not state.armies.has(int(army_id)):
 				continue
-			if state.move_army(int(army_id), region_id):
+			if state._move_army_phase_internal(int(army_id), region_id):
 				advanced.append(int(army_id))
 			else:
 				refusals.append("army %d could not advance into %s" % [int(army_id), region_id])
 
+	if not refusals.is_empty():
+		if state.restore(rollback_snapshot):
+			state.events = rollback_events
+		else:
+			refusals.append("battle outcome rollback restore failed")
+		return _auto_refused(refusals, "battle outcome rolled back after a strategic refusal")
 	state.clear_battle()
+	state.end_phase()
 	lost.sort()
 	reduced.sort()
 	advanced.sort()

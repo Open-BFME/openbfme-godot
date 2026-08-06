@@ -56,7 +56,7 @@ extends RefCounted
 ##
 ## Every mutation the AI makes goes through the SAME session doors the human's
 ## clicks do - `session.move_armies()`, `session.commit_attack()`,
-## `session.auto_resolve_pending_battle()`, `state.advance_turn()`. The AI has no
+## `session.auto_resolve_pending_battle()`, `session.end_phase()`. The AI has no
 ## private path into authoritative state, cannot make a move the rules would
 ## refuse a human, and therefore cannot desynchronise the strategic hash.
 
@@ -833,6 +833,9 @@ func take_turn(session, available_map_ids: Array = []) -> Dictionary:
 		report["refusals"].append("no War of the Ring session is running")
 		return report
 	var state: StateScript = session.state
+	if state.phase != StateScript.PHASE_TACTICAL:
+		report["refusals"].append("the AI only starts a round in the tactical phase")
+		return report
 	if not state.pending_battle.is_empty():
 		report["refusals"].append(
 			"a battle is already in flight in %s; the AI does not open a second one"
@@ -938,9 +941,7 @@ func take_turn(session, available_map_ids: Array = []) -> Dictionary:
 		# turn (the session says why), but an AI turn that did not advance would
 		# hand control to nobody and hang the campaign, so the opponent ends its
 		# own turn exactly once, through the same door the END TURN button uses.
-		state.advance_turn()
-		session.selected_region = ""
-		session.selected_target = ""
+		session.end_phase()
 
 	report["ok"] = true
 	report["turn_index_after"] = state.turn_index

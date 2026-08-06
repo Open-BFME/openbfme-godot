@@ -87,7 +87,7 @@ const RETAIL_ATLAS_GAP := "CPYoungWizardAlpha"
 ## figure, a refusal moves nothing and is shown, both plot counters count what
 ## stands, and the diagnosis has stopped reporting a gap that is closed. See
 ## `_check_the_screen_can_raise_a_structure`.
-const CHECKS_WITH_BUNDLE := 69
+const CHECKS_WITH_BUNDLE := 75
 const CHECKS_WITHOUT_BUNDLE := 8
 
 var _passed := 0
@@ -118,6 +118,7 @@ func _initialize() -> void:
 		_check_the_screen_binds_plots_banners_and_a_ring(ui)
 		_check_the_screen_can_take_neutral_ground()
 		_check_the_screen_can_raise_a_structure()
+		_check_live_phase_resume_and_abandon()
 	_check_the_apt_renderer_honours_retails_masks_and_substitutes_nothing()
 
 	var expected := CHECKS_WITH_BUNDLE if bound else CHECKS_WITHOUT_BUNDLE
@@ -1389,6 +1390,51 @@ func _seat(found: Dictionary):
 	session.document_path = String(found["path"])
 	session.document_source = String(found["source"])
 	return session
+
+
+func _check_live_phase_resume_and_abandon() -> void:
+	var menu_source := FileAccess.get_file_as_string("res://src/ui/main_menu.gd")
+	_check("main_menu_resume_seam_gates_opponents_on_authoritative_clean_tactical",
+		menu_source.contains("The result was refused and rolled back; the battle remains")
+			and menu_source.contains("if clean_tactical:")
+			and menu_source.contains("session.state.pending_retreats.is_empty()"))
+	var found: Dictionary = SessionScript.locate_document([])
+	if not bool(found.get("ok", false)):
+		var reason := String(found.get("reason", "living-world document unavailable"))
+		for label in [
+			"live_phase_clock_reads_authoritative_tactical",
+			"main_menu_resume_seam_waits_for_clean_tactical",
+			"battle_cancel_surface_becomes_abandon",
+			"abandon_handler_returns_authoritative_clean_tactical",
+			"abandon_handler_names_its_result",
+		]:
+			_check(String(label), false, reason)
+		return
+	var session = _seat(found)
+	# Keep the handler observation local: an AI turn would replace the named
+	# abandon message with its narrative after the authoritative transition.
+	for row in session.state.players:
+		(row as Dictionary)["controller"] = session.state.CONTROLLER_HUMAN
+	var screen := ScreenScript.new()
+	root.add_child(screen)
+	screen.configure(session, [], "", [])
+	_check("live_phase_clock_reads_authoritative_tactical",
+		screen.current_phase() == screen.PHASE_TACTICAL)
+	session.state.phase = session.state.PHASE_RETREAT
+	screen.run_opponent_turns()
+	_check("main_menu_resume_seam_waits_for_clean_tactical",
+		screen.message_label.text.contains("Finish the current phase"))
+	session.state.phase = session.state.PHASE_BATTLE
+	session.state.pending_battle = {"region": "UIAbandonProbe"}
+	screen.refresh()
+	_check("battle_cancel_surface_becomes_abandon",
+		screen.current_phase() == screen.PHASE_BATTLE and screen.cancel_button.text == "ABANDON")
+	screen._on_cancel_pressed()
+	_check("abandon_handler_returns_authoritative_clean_tactical",
+		session.state.phase == session.state.PHASE_TACTICAL and session.state.pending_battle.is_empty())
+	_check("abandon_handler_names_its_result",
+		screen.message_label.text.contains("Battle abandoned"))
+	screen.queue_free()
 
 
 # --- reporting ------------------------------------------------------------------

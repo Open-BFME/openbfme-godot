@@ -58,7 +58,7 @@ const HARNESS_MAP_IDS: Array = [
 ## ownership sets now seed (per-template spawn resolution), the fresh-campaign
 ## victory evaluation, the version 3 brief surface inside the digested brief,
 ## and the ledger surviving the scene change.
-const EXPECTED_CHECKS := 102
+const EXPECTED_CHECKS := 107
 
 var passed := 0
 var failed := 0
@@ -87,6 +87,7 @@ func _run() -> void:
 	if session == null:
 		_finish()
 		return
+	_test_phase_snapshot_contract(session)
 	# RETAIL SEATS BOTH SIDES DEEP IN THEIR OWN TERRITORY. On the real BFME2 map
 	# no region can legally attack anything on turn one, so the campaign has to be
 	# marched to a border before there is an attack to make. That is a leg of its
@@ -946,6 +947,33 @@ func _check(name: String, condition: bool, detail: String = "") -> void:
 	else:
 		failed += 1
 		printerr("WOTR_ROUND_TRIP FAIL %s%s" % [name, " (%s)" % detail if detail != "" else ""])
+
+
+func _test_phase_snapshot_contract(session) -> void:
+	var original_hash: String = session.state.state_hash()
+	var peer = StateScript.new()
+	peer.world = session.world
+	_check("phase v2 snapshot restores", peer.restore(session.state.snapshot()))
+	_check("phase v2 hash is identical", peer.state_hash() == original_hash)
+
+	var legacy: Dictionary = session.state.authoritative_state()
+	legacy["schema_version"] = 1
+	legacy.erase("phase")
+	legacy.erase("pending_retreats")
+	var migrated = StateScript.new()
+	migrated.world = session.world
+	_check("phase v1 migrates to tactical and empty retreat", migrated.restore(var_to_bytes(legacy))
+		and migrated.phase == StateScript.PHASE_TACTICAL and migrated.pending_retreats.is_empty())
+
+	var before := peer.state_hash()
+	var junk_phase: Dictionary = session.state.authoritative_state()
+	junk_phase["phase"] = "planning"
+	_check("junk v2 phase refuses all-or-nothing", not peer.restore(var_to_bytes(junk_phase))
+		and peer.state_hash() == before)
+	var junk_type: Dictionary = session.state.authoritative_state()
+	junk_type["pending_retreats"] = "not rows"
+	_check("junk v2 retreat type refuses all-or-nothing", not peer.restore(var_to_bytes(junk_type))
+		and peer.state_hash() == before)
 
 
 func _finish() -> void:
