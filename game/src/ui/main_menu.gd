@@ -3218,9 +3218,10 @@ func _start_wotr_session(chosen: Dictionary = {}) -> bool:
 	# live rows never reached the strategic state; `start_regions` is what makes
 	# retail's own freeform default startable at all. Both default to empty, which
 	# is exactly what the two chooser-less callers want.
-	if not session.begin(_wotr_document, probe_world.campaign_name, scenario, seats,
+	if not session.begin_evidenced(_wotr_document, probe_world.campaign_name, scenario, seats,
 			chosen.get("rules", {}) as Dictionary,
-			chosen.get("start_regions", PackedStringArray()) as PackedStringArray):
+			chosen.get("start_regions", PackedStringArray()) as PackedStringArray,
+			_wotr_input_identity(session)):
 		_wotr_unavailable_reason = "the strategic layer refused this campaign: %s" % ", ".join(Array(session.refusals))
 		return false
 	session.document_path = _wotr_document_path
@@ -3298,9 +3299,10 @@ func _seat_an_opponent_that_can_fight(
 		# begun before its bundles load places every army with no units and then
 		# fails the very test it is being begun for.
 		candidate.load_auto_resolve(roots)
-		if not candidate.begin(_wotr_document, campaign, scenario, retry,
+		if not candidate.begin_evidenced(_wotr_document, campaign, scenario, retry,
 				chosen.get("rules", {}) as Dictionary,
-				chosen.get("start_regions", PackedStringArray()) as PackedStringArray):
+				chosen.get("start_regions", PackedStringArray()) as PackedStringArray,
+				_wotr_input_identity(candidate)):
 			continue
 		candidate.document_path = _wotr_document_path
 		candidate.document_source = _wotr_document_source
@@ -3351,6 +3353,43 @@ func _wotr_pack_roots() -> Array:
 		roots.append(String((meta_value as Dictionary).get("root", "")))
 	roots.sort()
 	return roots
+
+
+## Required identity for begin_evidenced. This only reports facts already
+## available at the production seam; it does not discover a second content
+## configuration or infer private paths.
+func _wotr_input_identity(session) -> Dictionary:
+	var selection: Dictionary = {}
+	var selection_path := String(ModLoader.active_selection_path).strip_edges()
+	if not selection_path.is_empty():
+		selection = {"kind": "selection.json", "path": selection_path}
+	else:
+		var roots := _wotr_pack_roots()
+		if roots.size() == 1:
+			# No selection document exists on this loader route. Name the one
+			# explicitly mounted immutable bundle root rather than claiming a hash
+			# for a selection.json that was never read.
+			selection = {"kind": "immutableBundleRoot", "root": String(roots[0])}
+	var configs := {
+		"autoresolve": {"status": "absent", "reason": "no auto-resolve rules bundle was loaded"},
+		"autoresolve_bindings": {"status": "absent", "reason": "no auto-resolve bindings bundle was loaded"},
+		"ai_template": {"status": "absent", "reason": "AI template is loaded lazily after session admission"},
+		"building_catalogue": {"status": "absent", "reason": "building catalogue is loaded inside low-level session admission"},
+	}
+	if session != null and session.autoresolve != null:
+		var path := String(session.autoresolve.source_path)
+		if not path.is_empty(): configs["autoresolve"] = {"status": "present", "path": path}
+	if session != null and session.autoresolve_bindings != null:
+		var path := String(session.autoresolve_bindings.source_path)
+		if not path.is_empty(): configs["autoresolve_bindings"] = {"status": "present", "path": path}
+	return {
+		"document_path": _wotr_document_path,
+		"document_source": _wotr_document_source,
+		"active_content_source": String(ModLoader.active_content_source),
+		"selection": selection,
+		"pack_meta": (_content_db.get("pack_meta") as Array).duplicate(true),
+		"config_bundles": configs,
+	}
 
 
 ## Pack map ids the tactical layer can actually boot, in sorted order. The screen
@@ -3525,7 +3564,7 @@ func _resume_wotr_after_battle() -> bool:
 	_game_state.set("wotr_handoff", {})
 	_game_state.set("wotr_battle_winner", -1)
 	var session = WotrSessionScript.new()
-	if not session.adopt_handoff(payload as Dictionary):
+	if not session.adopt_evidenced_handoff(payload as Dictionary):
 		_wotr_unavailable_reason = "the War of the Ring session could not be resumed: %s" % ", ".join(Array(session.refusals))
 		_refresh_wotr_entry()
 		return false

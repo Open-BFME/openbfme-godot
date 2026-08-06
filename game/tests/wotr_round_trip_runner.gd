@@ -36,6 +36,7 @@ extends SceneTree
 
 const SessionScript = preload("res://src/wotr/wotr_session.gd")
 const StateScript = preload("res://src/wotr/wotr_state.gd")
+const WorldScript = preload("res://src/wotr/wotr_world.gd")
 const BattleScript = preload("res://src/wotr/wotr_battle.gd")
 const HandoffScript = preload("res://src/wotr/wotr_handoff.gd")
 const ScreenScript = preload("res://src/ui/wotr_screen.gd")
@@ -57,10 +58,12 @@ const HARNESS_MAP_IDS: Array = [
 ## ownership sets now seed (per-template spawn resolution), the fresh-campaign
 ## victory evaluation, the version 3 brief surface inside the digested brief,
 ## and the ledger surviving the scene change.
-const EXPECTED_CHECKS := 91
+const EXPECTED_CHECKS := 102
 
 var passed := 0
 var failed := 0
+var _evidenced_document_path := ""
+var _evidenced_document_bytes := PackedByteArray()
 
 
 func _initialize() -> void:
@@ -158,7 +161,13 @@ func _test_the_menu_refuses_without_a_document() -> void:
 # --- legs 1+2: a real document seats a real campaign -------------------------
 
 func _begin_session(found: Dictionary):
-	var document := found["document"] as Dictionary
+	# Evidence never points at the actual pack/private document. Copy the exact
+	# bytes into disposable user data and parse the very copy the receipt hashes.
+	_evidenced_document_bytes = _read_all_bytes(String(found["path"]))
+	_evidenced_document_path = "user://wotr-round-trip-evidenced-document.json"
+	_write_all_bytes(_evidenced_document_path, _evidenced_document_bytes)
+	var document_value: Variant = JSON.parse_string(_evidenced_document_bytes.get_string_from_utf8())
+	var document := document_value as Dictionary
 	var probe := SessionScript.new()
 	var probe_world = load("res://src/wotr/wotr_world.gd").new()
 	_check("the_real_document_loads", probe_world.load_from_dict(document, ""), str(probe_world.errors))
@@ -189,10 +198,12 @@ func _begin_session(found: Dictionary):
 
 	var session := SessionScript.new()
 	_check("the_session_begins_on_the_real_document",
-		session.begin(document, probe_world.campaign_name, String(scenarios[0]), seats),
+		session.begin_evidenced(document, probe_world.campaign_name,
+			String(scenarios[0]), seats, {}, PackedStringArray(),
+			_round_trip_identity(_evidenced_document_path)),
 		str(session.refusals))
-	session.document_path = String(found["path"])
-	session.document_source = String(found["source"])
+	session.document_path = _evidenced_document_path
+	session.document_source = "env"
 	if session.state == null:
 		return null
 	_check("both_seats_hold_authored_territory",
@@ -559,8 +570,12 @@ func _test_the_session_survives_the_scene_change(session) -> void:
 	_check("the_handoff_carries_a_schema", String(payload.get("schema", "")) == SessionScript.HANDOFF_SCHEMA)
 	_check("the_handoff_carries_no_presentation_state",
 		not payload.has("selected_region") and not payload.has("hover_region"), str(payload.keys()))
+	_check("the_handoff_carries_the_input_receipt_verbatim",
+		payload.get("input_receipt", {}) == session.input_receipt
+			and not session.input_receipt.is_empty())
 	var adopted := SessionScript.new()
-	_check("the_handoff_rebuilds_the_session", adopted.adopt_handoff(payload), str(adopted.refusals))
+	_check("the_handoff_rebuilds_the_session", adopted.adopt_evidenced_handoff(payload), str(adopted.refusals))
+	_check("the_adopted_receipt_is_identical", adopted.input_receipt == session.input_receipt)
 	_check("the_rebuilt_session_hashes_identically",
 		String(adopted.state.state_hash()) == String(session.state.state_hash()))
 	_check("the_rebuilt_session_still_has_the_battle_in_flight",
@@ -570,6 +585,41 @@ func _test_the_session_survives_the_scene_change(session) -> void:
 		adopted.state.heroes == session.state.heroes
 			and not adopted.state.heroes.is_empty(),
 		"heroes=%d" % adopted.state.heroes.size())
+
+	# Three adversarial admissions, all checked before the receiver may mutate.
+	var drift_receiver: Variant = _sentinel_receiver()
+	var drift_world: Variant = drift_receiver.world; var drift_state: Variant = drift_receiver.state
+	var changed := _evidenced_document_bytes.duplicate()
+	changed[0] = int(changed[0]) ^ 1
+	_write_all_bytes(_evidenced_document_path, changed)
+	var drift_ok: bool = drift_receiver.adopt_evidenced_handoff(payload)
+	_write_all_bytes(_evidenced_document_path, _evidenced_document_bytes)
+	_check("document_byte_drift_is_refused", not drift_ok)
+	_check("document_byte_drift_has_a_named_refusal", not drift_receiver.refusals.is_empty())
+	_check("document_byte_drift_leaves_receiver_unchanged",
+		drift_receiver.world == drift_world and drift_receiver.state == drift_state)
+
+	var other_path := "user://wotr-round-trip-other-existing-document.json"
+	_write_all_bytes(other_path, _evidenced_document_bytes)
+	var wrong_path := payload.duplicate(true); wrong_path["document_path"] = other_path
+	var path_receiver: Variant = _sentinel_receiver()
+	var path_world: Variant = path_receiver.world; var path_state: Variant = path_receiver.state
+	var path_ok: bool = path_receiver.adopt_evidenced_handoff(wrong_path)
+	_check("payload_path_mismatch_is_refused", not path_ok)
+	_check("payload_path_mismatch_has_a_named_refusal", not path_receiver.refusals.is_empty())
+	_check("payload_path_mismatch_leaves_receiver_unchanged",
+		path_receiver.world == path_world and path_receiver.state == path_state)
+
+	var wrong_source := payload.duplicate(true); wrong_source["document_source"] = "pack"
+	var source_receiver: Variant = _sentinel_receiver()
+	var source_world: Variant = source_receiver.world; var source_state: Variant = source_receiver.state
+	var source_ok: bool = source_receiver.adopt_evidenced_handoff(wrong_source)
+	_check("payload_source_mismatch_is_refused", not source_ok)
+	_check("payload_source_mismatch_has_a_named_refusal", not source_receiver.refusals.is_empty())
+	_check("payload_source_mismatch_leaves_receiver_unchanged",
+		source_receiver.world == source_world and source_receiver.state == source_state)
+
+	# The legacy low-level seam remains explicitly unreceipted.
 	var truncated := payload.duplicate(true)
 	truncated["snapshot"] = PackedByteArray()
 	var refused := SessionScript.new()
@@ -715,6 +765,60 @@ func _test_the_menu_reaches_it(found: Dictionary) -> void:
 # --- helpers -----------------------------------------------------------------
 
 var _last_winner := BattleScript.UNDECIDED
+
+
+func _round_trip_identity(document_path: String) -> Dictionary:
+	var content_db := root.get_node_or_null("ContentDB")
+	var mod_loader := root.get_node_or_null("ModLoader")
+	if mod_loader == null:
+		return {}
+	var meta: Array = []
+	if content_db != null:
+		meta = (content_db.get("pack_meta") as Array).duplicate(true)
+	var selection: Dictionary = {}
+	var selection_path := String(mod_loader.get("active_selection_path")).strip_edges()
+	if not selection_path.is_empty():
+		selection = {"kind": "selection.json", "path": selection_path}
+	elif not meta.is_empty():
+		selection = {"kind": "immutableBundleRoot",
+			"root": String((meta[0] as Dictionary).get("root", ""))}
+	var absent := {"status": "absent",
+		"reason": "round-trip fixture intentionally loads no optional config bundle"}
+	return {
+		"document_path": document_path,
+		"document_source": "env",
+		"active_content_source": String(mod_loader.get("active_content_source")),
+		"selection": selection,
+		"pack_meta": meta,
+		"config_bundles": {
+			"autoresolve": absent.duplicate(),
+			"autoresolve_bindings": absent.duplicate(),
+			"ai_template": absent.duplicate(),
+			"building_catalogue": absent.duplicate(),
+		},
+	}
+
+
+func _read_all_bytes(path: String) -> PackedByteArray:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null: return PackedByteArray()
+	var bytes := file.get_buffer(file.get_length())
+	file.close()
+	return bytes
+
+
+func _write_all_bytes(path: String, bytes: PackedByteArray) -> void:
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null: return
+	file.store_buffer(bytes)
+	file.close()
+
+
+func _sentinel_receiver() -> Variant:
+	var receiver := SessionScript.new()
+	receiver.world = WorldScript.new()
+	receiver.state = StateScript.new()
+	return receiver
 
 
 func _content_pack_roots() -> Array:

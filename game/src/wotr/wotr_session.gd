@@ -46,6 +46,7 @@ const AutoResolveBattleScript = preload("res://src/wotr/wotr_autoresolve_battle.
 const AutoResolveBindingsScript = preload("res://src/wotr/wotr_autoresolve_bindings.gd")
 const AiScript = preload("res://src/wotr/wotr_ai.gd")
 const BuildingsScript = preload("res://src/wotr/wotr_buildings.gd")
+const ReceiptScript = preload("res://src/wotr/wotr_receipt.gd")
 
 ## The document a pack ships, relative to its root. No pack built before the
 ## living-world lane carries one; that is a real state and it is reported, not
@@ -89,6 +90,8 @@ const HANDOFF_SCHEMA_VERSION := 1
 
 var world: WorldScript = null
 var state: StateScript = null
+## Immutable-by-copy evidence minted before an evidenced session is opened.
+var input_receipt: Dictionary = {}
 
 ## Retail's auto-resolve tables and the object-to-block bindings that map an
 ## army onto them. BOTH are needed to auto-resolve anything and neither is
@@ -428,10 +431,40 @@ func is_freeform(scenario: String) -> bool:
 ## FREEFORM scenario. Passing it alongside a scenario that authors its own
 ## ownership is REFUSED rather than merged: two sources of truth for where a seat
 ## begins is how a campaign comes to disagree with the picture of itself.
+## Production admission seam. Identity is required and has no default: callers
+## must name the loaded selection, mounted pack manifests, and configuration
+## bundle presence. Evidence is completely minted before the low-level begin is
+## entered, so an incomplete or unhashable identity cannot leave strategic state.
+func begin_evidenced(
+	document: Dictionary, campaign: String, scenario: String, seats: Array,
+	rules: Dictionary, start_regions: PackedStringArray, identity: Dictionary
+) -> bool:
+	world = null
+	state = null
+	input_receipt = {}
+	refusals = PackedStringArray()
+	var minted := ReceiptScript.mint(
+		String(identity.get("document_path", "")),
+		String(identity.get("document_source", "")), document,
+		campaign, scenario, seats, rules, start_regions, FACTION_BINDINGS, identity)
+	if minted.is_empty():
+		refusals.append("the War of the Ring input identity is incomplete or cannot be hashed")
+		return false
+	if not begin(document, campaign, scenario, seats, rules, start_regions):
+		return false
+	# Commit evidence only with a successfully opened state. Handoff returns a
+	# further copy, so callers cannot mutate this record through an alias.
+	input_receipt = minted
+	return true
+
+
 func begin(
 	document: Dictionary, campaign: String, scenario: String, seats: Array,
 	rules: Dictionary = {}, start_regions: PackedStringArray = PackedStringArray()
 ) -> bool:
+	# This explicit low-level seam is intentionally unreceipted, including when a
+	# Session object that was previously evidenced is reused through it.
+	input_receipt = {}
 	refusals = PackedStringArray()
 	world = WorldScript.new()
 	if not world.load_from_dict(document, campaign):
@@ -1580,7 +1613,28 @@ func handoff_payload() -> Dictionary:
 		"campaign": world.campaign_name,
 		"scenario": scenario_name,
 		"snapshot": state.snapshot(),
+		"input_receipt": input_receipt,
 	}
+
+
+## Production adoption seam. The receipt and every byte identity are verified
+## before the legacy low-level adoption seam is allowed to rebuild anything.
+func adopt_evidenced_handoff(payload: Dictionary) -> bool:
+	refusals = PackedStringArray()
+	var handed: Variant = payload.get("input_receipt", null)
+	if typeof(handed) != TYPE_DICTIONARY:
+		return _adopt_refused("the War of the Ring input receipt is missing")
+	if not ReceiptScript.verify(handed as Dictionary, true):
+		return _adopt_refused("the War of the Ring input receipt is invalid or its files drifted")
+	var receipt_document := (handed as Dictionary).get("document", {}) as Dictionary
+	if String(payload.get("document_path", "")) != String(receipt_document.get("path", "")):
+		return _adopt_refused("the handoff document path does not match its input receipt")
+	if String(payload.get("document_source", "")) != String(receipt_document.get("source", "")):
+		return _adopt_refused("the handoff document source does not match its input receipt")
+	if not adopt_handoff(payload):
+		return false
+	input_receipt = ReceiptScript.immutable_copy(handed as Dictionary)
+	return true
 
 
 ## Rebuild this session from `payload`. ALL-OR-NOTHING: every part is staged and
@@ -1636,6 +1690,7 @@ func adopt_handoff(payload: Dictionary) -> bool:
 	state.building_catalogue = buildings
 	document_path = path
 	document_source = String(payload.get("document_source", ""))
+	input_receipt = {}
 	scenario_name = String(payload.get("scenario", ""))
 	selected_region = ""
 	selected_target = ""
