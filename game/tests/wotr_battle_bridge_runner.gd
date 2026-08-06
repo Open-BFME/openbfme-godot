@@ -24,6 +24,7 @@ const WorldScript = preload("res://src/wotr/wotr_world.gd")
 const StateScript = preload("res://src/wotr/wotr_state.gd")
 const HandoffScript = preload("res://src/wotr/wotr_handoff.gd")
 const BattleScript = preload("res://src/wotr/wotr_battle.gd")
+const SessionScript = preload("res://src/wotr/wotr_session.gd")
 const ReinforcementsScript = preload("res://src/wotr/wotr_battle_reinforcements.gd")
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 
@@ -87,7 +88,7 @@ const ROSTER_UNITS := {
 ## (`passed=4 failed=0`, with eleven script errors above it). The expected count
 ## makes an inert run impossible to mistake for a passing one. Raise it
 ## deliberately when tests are added; never lower it to make a run go green.
-const EXPECTED_CHECKS := 165
+const EXPECTED_CHECKS := 205
 
 var passed := 0
 var failed := 0
@@ -112,6 +113,7 @@ func _run() -> void:
 	_test_the_defeated_garrison_does_not_survive_the_capture()
 	_test_a_partial_advance_is_reported_not_hidden()
 	_test_the_reinforcement_feed_is_staged_from_retails_cadence()
+	_test_rts_admission_fails_closed_before_the_strategic_hash()
 	_test_a_fought_battle_reports_the_surviving_roster()
 	_finish()
 
@@ -784,6 +786,158 @@ func _test_a_partial_advance_is_reported_not_hidden() -> void:
 	# pending_battle to know whether it may act.
 	_check("a_partial_advance_still_closes_the_transaction",
 		state.pending_battle.is_empty())
+
+
+# --- fail-closed RTS admission ------------------------------------------------
+
+## Packet 1 stops at admission: every current tactical gap is a named refusal,
+## and the staged feed must be present, structurally complete and ok before the
+## strategic hash admits a commitment. The pure decision seam also states the
+## future empty-gap condition without deleting today's honest gap register.
+func _test_rts_admission_fails_closed_before_the_strategic_hash() -> void:
+	var state := _staged_state()
+	var brief := HandoffScript.build_request(state.world, state, ATTACKER, TARGET_REGION)
+	# The existing RotWK datum is the only tactical cadence accepted here. No
+	# fallback constant is introduced by the test or production decision.
+	(brief["settings"] as Dictionary)["seconds_per_reinforcement"] = 300
+	brief["unsupported"] = []
+	var configured := BattleScript.configure(
+		brief, FACTION_BINDINGS, MAP_BINDINGS, StateScript.BATTLE_TYPE_RTS)
+	var supported := SessionScript.tactical_admission(configured, brief)
+	_check("rts_admission_accepts_the_future_empty_gap_condition",
+		bool(supported.get("ok", false)), str(supported.get("refusals", [])))
+	_check("accepted_rts_admission_returns_configures_identical_feed",
+		(supported.get("reinforcement_feed", {}) as Dictionary)
+			== (configured["reinforcement_feed"] as Dictionary))
+
+	for gap in HandoffScript.UNSUPPORTED_BY_TACTICAL_SIM:
+		var one_gap := brief.duplicate(true)
+		one_gap["unsupported"] = [gap]
+		var one_config := BattleScript.configure(
+			one_gap, FACTION_BINDINGS, MAP_BINDINGS, StateScript.BATTLE_TYPE_RTS)
+		var before_hash := state.state_hash()
+		var denied := SessionScript.tactical_admission(one_config, one_gap)
+		_check("rts_admission_denies_current_gap_%s" % gap,
+			not bool(denied.get("ok", false)))
+		_check("rts_admission_names_current_gap_%s" % gap,
+			_refusal_mentions(denied, String(gap)), str(denied.get("refusals", [])))
+		_check("rts_gap_denial_does_not_mutate_hash_%s" % gap,
+			state.state_hash() == before_hash)
+
+	var missing_gaps := brief.duplicate(true)
+	missing_gaps.erase("unsupported")
+	var missing_config := BattleScript.configure(
+		missing_gaps, FACTION_BINDINGS, MAP_BINDINGS, StateScript.BATTLE_TYPE_RTS)
+	var before_missing_hash := state.state_hash()
+	var missing_denied := SessionScript.tactical_admission(missing_config, missing_gaps)
+	_check("rts_admission_denies_a_missing_unsupported_gap_list",
+		not bool(missing_denied.get("ok", false)))
+	_check("rts_admission_names_the_missing_unsupported_gap_list",
+		_refusal_mentions(missing_denied, "missing the unsupported-gap list"),
+		str(missing_denied.get("refusals", [])))
+	_check("missing_unsupported_gap_list_denial_does_not_mutate_hash",
+		state.state_hash() == before_missing_hash)
+
+	var unknown_gap := brief.duplicate(true)
+	unknown_gap["unsupported"] = ["future_tactical_gap"]
+	var unknown_config := BattleScript.configure(
+		unknown_gap, FACTION_BINDINGS, MAP_BINDINGS, StateScript.BATTLE_TYPE_RTS)
+	var before_unknown_hash := state.state_hash()
+	var unknown_denied := SessionScript.tactical_admission(unknown_config, unknown_gap)
+	_check("rts_admission_denies_an_unknown_future_gap",
+		not bool(unknown_denied.get("ok", false)))
+	_check("rts_admission_preserves_the_unknown_future_gap_name",
+		_refusal_mentions(unknown_denied, "future_tactical_gap"),
+		str(unknown_denied.get("refusals", [])))
+	_check("unknown_rts_gap_denial_does_not_mutate_hash",
+		state.state_hash() == before_unknown_hash)
+
+	var absent := configured.duplicate(true)
+	absent.erase("reinforcement_feed")
+	var malformed := configured.duplicate(true)
+	malformed["reinforcement_feed"] = "not a feed"
+	var not_ok := configured.duplicate(true)
+	var refused_feed := (configured["reinforcement_feed"] as Dictionary).duplicate(true)
+	refused_feed["ok"] = false
+	refused_feed["refusals"] = PackedStringArray(["injected feed refusal"])
+	not_ok["reinforcement_feed"] = refused_feed
+	var feed_cases := {"absent": absent, "malformed": malformed, "not_ok": not_ok}
+	for case_name in feed_cases:
+		var before_hash := state.state_hash()
+		var denied := SessionScript.tactical_admission(
+			feed_cases[case_name] as Dictionary, brief)
+		_check("rts_admission_denies_%s_feed" % case_name,
+			not bool(denied.get("ok", false)))
+		_check("rts_admission_names_%s_feed" % case_name,
+			_refusal_mentions(denied, "reinforcement_feed"),
+			str(denied.get("refusals", [])))
+		_check("rts_%s_feed_denial_does_not_mutate_hash" % case_name,
+			state.state_hash() == before_hash)
+
+	var named_feed_denial := SessionScript.tactical_admission(not_ok, brief)
+	_check("rts_not_ok_feed_preserves_its_structured_refusal_string",
+		_refusal_mentions(named_feed_denial, "injected feed refusal"),
+		str(named_feed_denial.get("refusals", [])))
+
+	# Drive the real session door with public fixture data. The brief it builds
+	# correctly carries all five gaps, so denial must happen before begin_battle.
+	var session_document := _document()
+	(session_document["rtsSettings"] as Dictionary)["secondsPerReinforcement"] = 300
+	var templates := session_document["playerTemplates"] as Array
+	(templates[0] as Dictionary)["faction"] = "FactionMen"
+	(templates[1] as Dictionary)["faction"] = "FactionMordor"
+	var session_world := WorldScript.new()
+	session_world.load_from_dict(session_document, "TestCampaign")
+	var session_state := _staged_state_in(session_world)
+	session_state.battle_type = StateScript.BATTLE_TYPE_RTS
+	var session := SessionScript.new()
+	session.world = session_world
+	session.state = session_state
+	var before_snapshot := session_state.snapshot()
+	var before_hash := session_state.state_hash()
+	var denied_commit := session.commit_attack(
+		TARGET_REGION, Array(MAP_BINDINGS.values()), StateScript.BATTLE_TYPE_RTS)
+	_check("commit_attack_denies_rts_with_current_tactical_gaps",
+		not bool(denied_commit.get("ok", false))
+			and _refusal_mentions(denied_commit, "unsupported tactical gap"),
+		str(denied_commit.get("refusals", [])))
+	_check("rts_denial_happens_before_begin_battle",
+		session_state.pending_battle.is_empty())
+	_check("rts_denial_preserves_the_authoritative_hash",
+		session_state.state_hash() == before_hash)
+	_check("rts_denial_preserves_snapshot_and_restore_equality",
+		session_state.snapshot() == before_snapshot
+			and session_state.restore(before_snapshot)
+			and session_state.state_hash() == before_hash)
+
+	# A5: recreate equivalent authoritative state through its normal snapshot
+	# round trip, then assert the future empty-gap decision preserves the feed.
+	var equivalent := _staged_state_in(session_world)
+	equivalent.battle_type = StateScript.BATTLE_TYPE_RTS
+	_check("equivalent_rts_state_restores_the_pre_admission_snapshot",
+		equivalent.restore(before_snapshot) and equivalent.state_hash() == before_hash)
+	var equivalent_brief := HandoffScript.build_request(
+		session_world, equivalent, ATTACKER, TARGET_REGION)
+	equivalent_brief["unsupported"] = []
+	var equivalent_config := BattleScript.configure(
+		equivalent_brief, SessionScript.FACTION_BINDINGS,
+		session.battlefield_bindings(Array(MAP_BINDINGS.values())),
+		StateScript.BATTLE_TYPE_RTS)
+	var equivalent_admission := SessionScript.tactical_admission(
+		equivalent_config, equivalent_brief)
+	_check("equivalent_round_trip_accepts_the_future_empty_gap_condition",
+		bool(equivalent_admission.get("ok", false)),
+		str(equivalent_admission.get("refusals", [])))
+	var original_brief := HandoffScript.build_request(
+		session_world, session_state, ATTACKER, TARGET_REGION)
+	original_brief["unsupported"] = []
+	var original_config := BattleScript.configure(
+		original_brief, SessionScript.FACTION_BINDINGS,
+		session.battlefield_bindings(Array(MAP_BINDINGS.values())),
+		StateScript.BATTLE_TYPE_RTS)
+	_check("supported_acceptance_preserves_feed_across_equivalent_state_round_trip",
+		StateScript.canonical_digest(equivalent_admission["reinforcement_feed"])
+			== StateScript.canonical_digest(original_config["reinforcement_feed"]))
 
 
 # --- the staged feed: retail's SecondsPerReinforcement, honoured --------------

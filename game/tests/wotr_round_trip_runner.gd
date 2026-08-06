@@ -57,7 +57,7 @@ const HARNESS_MAP_IDS: Array = [
 ## ownership sets now seed (per-template spawn resolution), the fresh-campaign
 ## victory evaluation, the version 3 brief surface inside the digested brief,
 ## and the ledger surviving the scene change.
-const EXPECTED_CHECKS := 90
+const EXPECTED_CHECKS := 91
 
 var passed := 0
 var failed := 0
@@ -480,6 +480,13 @@ func _test_a_selection_becomes_a_commitment(session) -> Dictionary:
 		int(commitment["attacker"]), target)
 	_check("the_commitment_digests_the_brief_it_came_from",
 		BattleScript.commitment_matches_brief(commitment, brief))
+	var directly_configured := BattleScript.configure(
+		brief, SessionScript.FACTION_BINDINGS,
+		session.battlefield_bindings(HARNESS_MAP_IDS), "")
+	_check("the_session_returns_configures_reinforcement_feed_unchanged",
+		(configured.get("reinforcement_feed", {}) as Dictionary)
+			== (directly_configured.get("reinforcement_feed", {}) as Dictionary),
+		str(configured.get("reinforcement_feed", {})))
 	# The version 3 strategic surface rides the REAL brief: territory bonuses,
 	# standing buildings, hero levels and the named data gaps - all derived from
 	# hashed state, all inside the digest the check above just proved.

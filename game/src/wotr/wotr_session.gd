@@ -1137,7 +1137,7 @@ static func _stable_index(name: String, count: int) -> int:
 ## could start a battle the hash does not describe.
 ##
 ## Returns `{ok, refusals, commitment, team_roster, gameplay_rules,
-## battlefield_map, region_map_name}`. `team_roster` is re-derived from the
+## reinforcement_feed, battlefield_map, region_map_name}`. `team_roster` is re-derived from the
 ## commitment the state actually admitted, so what a caller feeds the simulation
 ## is provably the record the strategic hash covers.
 ##
@@ -1195,6 +1195,7 @@ func commit_attack(
 			"commitment": {},
 			"team_roster": [],
 			"gameplay_rules": {},
+			"reinforcement_feed": {},
 			"battlefield_map": "",
 			"region_map_name": String(world.region(target_region).get("map_name", "")),
 		}
@@ -1216,6 +1217,11 @@ func commit_attack(
 			refusals.append(String(reason))
 		return _commit_refused_with_existing()
 	var commitment := configured["commitment"] as Dictionary
+	var admission := tactical_admission(configured, brief)
+	if not bool(admission.get("ok", false)):
+		for reason in admission.get("refusals", PackedStringArray()) as PackedStringArray:
+			refusals.append(String(reason))
+		return _commit_refused_with_existing()
 	if not state.begin_battle(commitment):
 		return _commit_refused("the strategic layer refused the commitment for %s" % target_region)
 	return {
@@ -1225,8 +1231,82 @@ func commit_attack(
 		# RE-DERIVED from the admitted record, not copied from `configured`.
 		"team_roster": tactical_roster(),
 		"gameplay_rules": configured["gameplay_rules"],
+		"reinforcement_feed": configured["reinforcement_feed"],
 		"battlefield_map": String(state.pending_battle.get("battlefield_map", "")),
 		"region_map_name": String(state.pending_battle.get("map_name", "")),
+	}
+
+
+## The fail-closed RTS admission decision, kept pure so a future brief that has
+## closed all five current tactical gaps can be proven without weakening today's
+## handoff (which correctly names every one). Auto-resolve does not consume a
+## tactical feed and remains admissible exactly as before. For RTS, every current
+## unsupported capability and the complete top-level feed contract are checked
+## before `state.begin_battle()` can mutate the strategic hash.
+static func tactical_admission(configured: Dictionary, brief: Dictionary) -> Dictionary:
+	var empty := PackedStringArray()
+	var commitment_value: Variant = configured.get("commitment", {})
+	if not (commitment_value is Dictionary):
+		return {"ok": false, "refusals": PackedStringArray(
+			["RTS tactical admission refused: Battle.configure returned a malformed commitment"]),
+			"reinforcement_feed": {}}
+	var commitment := commitment_value as Dictionary
+	if String(commitment.get("battle_type", "")) != StateScript.BATTLE_TYPE_RTS:
+		return {"ok": true, "refusals": empty,
+			"reinforcement_feed": configured.get("reinforcement_feed", {})}
+
+	var denied := PackedStringArray()
+	if not brief.has("unsupported"):
+		denied.append("RTS tactical admission refused: brief is missing the unsupported-gap list")
+	else:
+		var unsupported_value: Variant = brief["unsupported"]
+		if unsupported_value is Array or unsupported_value is PackedStringArray:
+			var gap_names: Array[String] = []
+			for gap_value in unsupported_value:
+				var gap_name := String(gap_value).strip_edges()
+				if gap_name.is_empty():
+					gap_name = "<empty>"
+				gap_names.append(gap_name)
+			gap_names.sort()
+			for gap_name in gap_names:
+				denied.append("RTS tactical admission refused: unsupported tactical gap '%s'" % gap_name)
+		else:
+			denied.append("RTS tactical admission refused: brief unsupported-gap list is malformed")
+
+	var feed_value: Variant = configured.get("reinforcement_feed", null)
+	if not configured.has("reinforcement_feed"):
+		denied.append("RTS tactical admission refused: Battle.configure returned no reinforcement_feed")
+	elif not (feed_value is Dictionary):
+		denied.append("RTS tactical admission refused: reinforcement_feed is malformed")
+	else:
+		var feed := feed_value as Dictionary
+		var malformed := not feed.has("ok") or typeof(feed["ok"]) != TYPE_BOOL \
+			or not feed.has("refusals") or typeof(feed["refusals"]) != TYPE_PACKED_STRING_ARRAY \
+			or not feed.has("seconds_per_reinforcement") \
+			or typeof(feed["seconds_per_reinforcement"]) != TYPE_INT \
+			or not feed.has("attacker") or not (feed["attacker"] is Array) \
+			or not feed.has("defender") or not (feed["defender"] is Array)
+		if malformed:
+			denied.append("RTS tactical admission refused: reinforcement_feed is malformed")
+		else:
+			var feed_reasons: Array[String] = []
+			for reason in feed["refusals"] as PackedStringArray:
+				feed_reasons.append(String(reason))
+			feed_reasons.sort()
+			if not bool(feed["ok"]):
+				denied.append("RTS tactical admission refused: reinforcement_feed is not ok")
+			elif not feed_reasons.is_empty():
+				denied.append(
+					"RTS tactical admission refused: reinforcement_feed carries refusals despite ok=true")
+			for reason in feed_reasons:
+				denied.append("reinforcement_feed refusal: %s" % reason)
+			if bool(feed["ok"]) and feed_reasons.is_empty() \
+					and int(feed["seconds_per_reinforcement"]) < 0:
+				denied.append("RTS tactical admission refused: reinforcement_feed is malformed")
+	return {
+		"ok": denied.is_empty(),
+		"refusals": denied,
+		"reinforcement_feed": feed_value if denied.is_empty() else {},
 	}
 
 
@@ -1590,6 +1670,7 @@ func _commit_refused_with_existing() -> Dictionary:
 		"commitment": {},
 		"team_roster": [],
 		"gameplay_rules": {},
+		"reinforcement_feed": {},
 		"battlefield_map": "",
 		"region_map_name": "",
 	}
