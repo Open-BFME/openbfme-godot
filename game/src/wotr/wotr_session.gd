@@ -41,6 +41,7 @@ const WorldScript = preload("res://src/wotr/wotr_world.gd")
 const StateScript = preload("res://src/wotr/wotr_state.gd")
 const HandoffScript = preload("res://src/wotr/wotr_handoff.gd")
 const BattleScript = preload("res://src/wotr/wotr_battle.gd")
+const ReinforcementsScript = preload("res://src/wotr/wotr_battle_reinforcements.gd")
 const AutoResolveScript = preload("res://src/wotr/wotr_autoresolve.gd")
 const AutoResolveBattleScript = preload("res://src/wotr/wotr_autoresolve_battle.gd")
 const AutoResolveBindingsScript = preload("res://src/wotr/wotr_autoresolve_bindings.gd")
@@ -1271,7 +1272,7 @@ func commit_attack(
 
 
 ## The fail-closed RTS admission decision, kept pure so a future brief that has
-## closed all five current tactical gaps can be proven without weakening today's
+## closed all six current tactical gaps can be proven without weakening today's
 ## handoff (which correctly names every one). Auto-resolve does not consume a
 ## tactical feed and remains admissible exactly as before. For RTS, every current
 ## unsupported capability and the complete top-level feed contract are checked
@@ -1350,6 +1351,209 @@ func tactical_roster() -> Array:
 	if state == null or state.pending_battle.is_empty():
 		return []
 	return BattleScript.team_roster_for(state.pending_battle)
+
+
+## Mint the consume-once strategic -> tactical transport. This is intentionally
+## NOT an admission path: commit_attack() must already have admitted the battle,
+## and today's real RTS brief still fails that gate on its six named gaps. The
+## record is rebuilt from the receipt-bound session and compared with the actual
+## configured result before any bytes are allowed to cross the scene boundary.
+func battle_transport(configured: Dictionary) -> Dictionary:
+	refusals = PackedStringArray()
+	if state == null or state.pending_battle.is_empty():
+		return _fought_transport_refused("no battle is in flight")
+	if String(state.pending_battle.get("battle_type", "")) != StateScript.BATTLE_TYPE_RTS:
+		return _fought_transport_refused("the pending commitment is not an RTS battle")
+	if input_receipt.is_empty() or not ReceiptScript.verify(input_receipt, true):
+		return _fought_transport_refused(
+			"the War of the Ring input receipt is invalid or its files drifted")
+	var derived := _rederived_tactical_configuration()
+	if not bool(derived.get("ok", false)):
+		return _fought_transport_refused(String(derived.get("reason", "the tactical brief could not be re-derived")))
+	# Battle.configure's actual contract has these four payload fields. Battlefield
+	# ids live inside its commitment and are projected into the transport below;
+	# requiring invented top-level aliases would make every real configure refuse.
+	for field in ["commitment", "team_roster", "gameplay_rules", "reinforcement_feed"]:
+		if not configured.has(field) or configured[field] != derived[field]:
+			return _fought_transport_refused(
+				"the configured tactical %s does not match the receipt-bound session" % field)
+	var commitment := (derived["commitment"] as Dictionary).duplicate(true)
+	return {
+		"schema": "openbfme.wotr-battle-transport",
+		"version": 1,
+		"commitment": commitment,
+		"commitment_digest": StateScript.canonical_digest(commitment),
+		"team_roster": (derived["team_roster"] as Array).duplicate(true),
+		"gameplay_rules": (derived["gameplay_rules"] as Dictionary).duplicate(true),
+		"reinforcement_feed": (derived["reinforcement_feed"] as Dictionary).duplicate(true),
+		"battlefield_map": String(derived["battlefield_map"]),
+		"region_map_name": String(derived["region_map_name"]),
+	}
+
+
+## Validate and transactionally settle a fought RTS report. Neither the carried
+## transport nor the report supplies strategic unit rows: the brief and feed are
+## re-derived from the adopted, freshly verified receipt-bound world/state, and
+## only integer feed indexes and milli-strengths select survivors from that feed.
+##
+## LOW-LEVEL SEAM: the caller must establish receipt evidence first with
+## adopt_evidenced_handoff(); the production menu does so before it calls here.
+## Direct synthetic callers may exercise settlement mechanics, but are not an
+## evidenced production resume and must never be described as one.
+func resolve_fought_battle(
+		transport: Dictionary, report: Dictionary, legacy_winner_team: int
+) -> Dictionary:
+	refusals = PackedStringArray()
+	if state == null or state.pending_battle.is_empty():
+		return _fought_report_refused("no battle is in flight")
+	if String(state.pending_battle.get("battle_type", "")) != StateScript.BATTLE_TYPE_RTS:
+		return _fought_report_refused("the pending commitment is not an RTS battle")
+	if not _has_exact_keys(transport, ["schema", "version", "commitment",
+			"commitment_digest", "team_roster", "gameplay_rules", "reinforcement_feed",
+			"battlefield_map", "region_map_name"]):
+		return _fought_report_refused("the tactical transport has missing or unknown keys")
+	if typeof(transport.get("schema", null)) != TYPE_STRING \
+			or transport["schema"] != "openbfme.wotr-battle-transport" \
+			or typeof(transport.get("version", null)) != TYPE_INT or transport["version"] != 1 \
+			or typeof(transport.get("commitment", null)) != TYPE_DICTIONARY \
+			or typeof(transport.get("commitment_digest", null)) != TYPE_STRING \
+			or typeof(transport.get("team_roster", null)) != TYPE_ARRAY \
+			or typeof(transport.get("gameplay_rules", null)) != TYPE_DICTIONARY \
+			or typeof(transport.get("reinforcement_feed", null)) != TYPE_DICTIONARY \
+			or typeof(transport.get("battlefield_map", null)) != TYPE_STRING \
+			or typeof(transport.get("region_map_name", null)) != TYPE_STRING:
+		return _fought_report_refused("the tactical transport has malformed field types")
+
+	var pending := state.pending_battle
+	if transport["commitment"] != pending:
+		return _fought_report_refused("the tactical transport commitment does not match the adopted session")
+	var digest := StateScript.canonical_digest(pending)
+	if transport["commitment_digest"] != digest:
+		return _fought_report_refused("the tactical transport commitment digest does not match the adopted session")
+	var derived := _rederived_tactical_configuration()
+	if not bool(derived.get("ok", false)):
+		return _fought_report_refused(String(derived.get("reason", "the tactical brief could not be re-derived")))
+	for field in ["commitment", "team_roster", "gameplay_rules", "reinforcement_feed",
+			"battlefield_map", "region_map_name"]:
+		if transport[field] != derived[field]:
+			return _fought_report_refused(
+				"the tactical transport %s drifted from the receipt-bound brief" % field)
+
+	if not _has_exact_keys(report, ["schema", "version", "commitment_digest",
+			"winner_team", "attacker_outcomes", "defender_outcomes"]):
+		return _fought_report_refused("the tactical report has missing or unknown keys")
+	if typeof(report.get("schema", null)) != TYPE_STRING \
+			or report["schema"] != "openbfme.wotr-battle-report" \
+			or typeof(report.get("version", null)) != TYPE_INT or report["version"] != 1 \
+			or typeof(report.get("commitment_digest", null)) != TYPE_STRING \
+			or typeof(report.get("winner_team", null)) != TYPE_INT \
+			or typeof(report.get("attacker_outcomes", null)) != TYPE_DICTIONARY \
+			or typeof(report.get("defender_outcomes", null)) != TYPE_DICTIONARY:
+		return _fought_report_refused("the tactical report has malformed field types")
+	if report["commitment_digest"] != digest:
+		return _fought_report_refused("the tactical report commitment digest is stale or foreign")
+	var winner_team: int = report["winner_team"]
+	if winner_team == BattleScript.UNDECIDED:
+		return _fought_report_refused("the tactical report winner is undecided (-1)")
+	if winner_team != BattleScript.ATTACKER_TEAM and winner_team != BattleScript.DEFENDER_TEAM:
+		return _fought_report_refused("the tactical report winner_team must be 0 or 1")
+	if winner_team != legacy_winner_team:
+		return _fought_report_refused("the tactical report winner does not match the legacy tactical winner")
+	if BattleScript.player_for_team(pending, winner_team) == StateScript.NEUTRAL:
+		return _fought_report_refused("the tactical report winner is not a side of this battle")
+
+	var feed := derived["reinforcement_feed"] as Dictionary
+	for role in ["attacker", "defender"]:
+		var reason := _validate_fought_outcomes(
+			report["%s_outcomes" % role] as Dictionary, feed[role] as Array, role)
+		if not reason.is_empty():
+			return _fought_report_refused(reason)
+	var survivors: Array = ReinforcementsScript.survivors_from_feed(
+		feed["attacker"] as Array, report["attacker_outcomes"] as Dictionary)
+	survivors.append_array(ReinforcementsScript.survivors_from_feed(
+		feed["defender"] as Array, report["defender_outcomes"] as Dictionary))
+	var outcome: Dictionary = BattleScript.apply_fought_outcome(state, winner_team, survivors)
+	for reason in outcome.get("refusals", PackedStringArray()) as PackedStringArray:
+		refusals.append(String(reason))
+	if bool(outcome.get("ok", false)):
+		_auto_order_ai_retreats()
+		selected_region = ""
+		selected_target = ""
+	return outcome
+
+
+func _rederived_tactical_configuration() -> Dictionary:
+	var pending := state.pending_battle if state != null else {}
+	if pending.is_empty() or world == null:
+		return {"ok": false, "reason": "no receipt-bound battle is in flight"}
+	var brief := HandoffScript.build_request(
+		world, state, int(pending.get("attacker", StateScript.NEUTRAL)),
+		String(pending.get("region", "")))
+	if brief.is_empty() or not BattleScript.commitment_matches_brief(pending, brief):
+		return {"ok": false, "reason": "the adopted commitment no longer matches its re-derived brief"}
+	var configured: Dictionary = BattleScript.configure(
+		brief, FACTION_BINDINGS,
+		{String(pending.get("map_name", "")): String(pending.get("battlefield_map", ""))},
+		StateScript.BATTLE_TYPE_RTS)
+	if not bool(configured.get("ok", false)) or configured.get("commitment", {}) != pending:
+		return {"ok": false, "reason": "the adopted commitment cannot be reproduced from its re-derived brief"}
+	var feed := ReinforcementsScript.schedule_for(brief)
+	if configured.get("reinforcement_feed", {}) != feed:
+		return {"ok": false, "reason": "the re-derived tactical reinforcement feed is inconsistent"}
+	if not bool(feed.get("ok", false)):
+		return {
+			"ok": false,
+			"reason": "the re-derived tactical reinforcement feed was refused: %s" % ", ".join(
+				Array(feed.get("refusals", PackedStringArray()))),
+		}
+	return {
+		"ok": true,
+		"commitment": pending.duplicate(true),
+		"team_roster": BattleScript.team_roster_for(pending),
+		"gameplay_rules": (configured["gameplay_rules"] as Dictionary).duplicate(true),
+		"reinforcement_feed": feed.duplicate(true),
+		"battlefield_map": String(pending.get("battlefield_map", "")),
+		"region_map_name": String(pending.get("map_name", "")),
+	}
+
+
+static func _has_exact_keys(value: Dictionary, expected: Array) -> bool:
+	if value.size() != expected.size():
+		return false
+	for key in expected:
+		if not value.has(key):
+			return false
+	return true
+
+
+static func _validate_fought_outcomes(
+		outcomes: Dictionary, entries: Array, role: String
+) -> String:
+	var allowed: Dictionary = {}
+	for entry_value in entries:
+		var entry := entry_value as Dictionary
+		allowed[int(entry.get("feed_index", -1))] = true
+	for key in outcomes.keys():
+		if typeof(key) != TYPE_INT:
+			return "%s outcome feed index is not a strict integer" % role
+		if not allowed.has(key):
+			return "%s outcome feed index %d is foreign or out of range" % [role, key]
+		if typeof(outcomes[key]) != TYPE_INT:
+			return "%s outcome %d strength is not a strict integer" % [role, key]
+		var strength: int = outcomes[key]
+		if strength <= 0 or strength > ReinforcementsScript.MILLI:
+			return "%s outcome %d strength is outside 1..1000" % [role, key]
+	return ""
+
+
+func _fought_transport_refused(reason: String) -> Dictionary:
+	refusals.append(reason)
+	return {}
+
+
+func _fought_report_refused(reason: String) -> Dictionary:
+	refusals.append(reason)
+	return {"ok": false, "refusals": refusals, "winner_player": StateScript.NEUTRAL}
 
 
 ## Apply a decided tactical match and close the transaction, then hand the turn

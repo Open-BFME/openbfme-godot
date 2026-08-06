@@ -880,20 +880,24 @@ func _test_handoff_request() -> void:
 	# named with a `tactical_` prefix that cannot be confused with the closed
 	# strategic half.
 	var unsupported: Array = request["unsupported"]
-	_check("handoff_names_every_missing_tactical_capability",
-		unsupported == HandoffScript.UNSUPPORTED_BY_TACTICAL_SIM
-			and unsupported.has("reinforcement_schedule")
-			and unsupported.has("tactical_battle_outcome_report")
-			and unsupported.has("tactical_carried_hero_state")
-			and unsupported.has("tactical_prebuilt_fortress")
-			and unsupported.has("tactical_region_bonus_modifiers"),
+	var expected_unsupported := [
+		"reinforcement_schedule",
+		"tactical_battle_outcome_report",
+		"tactical_carried_hero_state",
+		"tactical_handicap_scaling",
+		"tactical_prebuilt_fortress",
+		"tactical_region_bonus_modifiers",
+	]
+	_check("handoff_names_the_exact_sorted_six_missing_tactical_capabilities",
+		unsupported == expected_unsupported
+			and unsupported == HandoffScript.UNSUPPORTED_BY_TACTICAL_SIM,
 		str(unsupported))
 	_check("the_closed_gaps_are_gone_rather_than_renamed_beside_themselves",
 		not unsupported.has("battle_outcome_report")
 			and not unsupported.has("carried_hero_state")
 			and not unsupported.has("prebuilt_fortress")
 			and not unsupported.has("region_bonus_modifiers")
-			and unsupported.size() == 5,
+			and unsupported.size() == 6,
 		str(unsupported))
 	# And the brief must name the retail data that is ABSENT, so the tactical
 	# side reads a recorded hole rather than assuming a default.

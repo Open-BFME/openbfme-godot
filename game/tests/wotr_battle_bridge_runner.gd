@@ -88,7 +88,7 @@ const ROSTER_UNITS := {
 ## (`passed=4 failed=0`, with eleven script errors above it). The expected count
 ## makes an inert run impossible to mistake for a passing one. Raise it
 ## deliberately when tests are added; never lower it to make a run go green.
-const EXPECTED_CHECKS := 206
+const EXPECTED_CHECKS := 241
 
 var passed := 0
 var failed := 0
@@ -115,6 +115,7 @@ func _run() -> void:
 	_test_the_reinforcement_feed_is_staged_from_retails_cadence()
 	_test_rts_admission_fails_closed_before_the_strategic_hash()
 	_test_a_fought_battle_reports_the_surviving_roster()
+	_test_fought_report_contract()
 	_finish()
 
 
@@ -865,7 +866,7 @@ func _test_rts_admission_fails_closed_before_the_strategic_hash() -> void:
 		str(named_feed_denial.get("refusals", [])))
 
 	# Drive the real session door with public fixture data. The brief it builds
-	# correctly carries all five gaps, so denial must happen before begin_battle.
+	# correctly carries all six gaps, so denial must happen before begin_battle.
 	var session_document := _document()
 	(session_document["rtsSettings"] as Dictionary)["secondsPerReinforcement"] = 300
 	var templates := session_document["playerTemplates"] as Array
@@ -885,6 +886,13 @@ func _test_rts_admission_fails_closed_before_the_strategic_hash() -> void:
 	_check("commit_attack_denies_rts_with_current_tactical_gaps",
 		not bool(denied_commit.get("ok", false))
 			and _refusal_mentions(denied_commit, "unsupported tactical gap"),
+		str(denied_commit.get("refusals", [])))
+	var expected_gap_refusals := PackedStringArray()
+	for gap in HandoffScript.UNSUPPORTED_BY_TACTICAL_SIM:
+		expected_gap_refusals.append(
+			"RTS tactical admission refused: unsupported tactical gap '%s'" % gap)
+	_check("production_rts_admission_denies_the_exact_sorted_six_gap_list",
+		denied_commit.get("refusals", PackedStringArray()) == expected_gap_refusals,
 		str(denied_commit.get("refusals", [])))
 	_check("rts_denial_happens_before_begin_battle",
 		session_state.pending_battle.is_empty())
@@ -1143,6 +1151,201 @@ func _test_a_fought_battle_reports_the_surviving_roster() -> void:
 	_check("a_spent_transaction_refuses_a_second_report",
 		not bool((BattleScript.apply_fought_outcome(
 			guarded, BattleScript.ATTACKER_TEAM, []) as Dictionary)["ok"]))
+
+
+# --- Packet 4: receipt-bound fought report -----------------------------------
+
+func _test_fought_report_contract() -> void:
+	var fixture := _fought_fixture(StateScript.BATTLE_TYPE_RTS)
+	var session = fixture["session"]
+	var transport: Dictionary = fixture["transport"]
+	var report: Dictionary = fixture["report"]
+	var configured := fixture["configured"] as Dictionary
+	var exact_transport_fields := ["schema", "version", "commitment", "commitment_digest",
+		"team_roster", "gameplay_rules", "reinforcement_feed", "battlefield_map",
+		"region_map_name"]
+	_check("synthetic_valid_transport_is_exact_and_lossless",
+		transport.keys() == exact_transport_fields
+			and transport["schema"] == "openbfme.wotr-battle-transport"
+			and transport["version"] == 1
+			and transport["commitment"] == configured["commitment"]
+			and transport["team_roster"] == configured["team_roster"]
+			and transport["gameplay_rules"] == configured["gameplay_rules"]
+			and transport["reinforcement_feed"] == configured["reinforcement_feed"]
+			and transport["commitment_digest"]
+				== StateScript.canonical_digest(configured["commitment"]),
+		str(transport))
+	var frozen_transport := transport.duplicate(true)
+	(configured["commitment"] as Dictionary)["region"] = "tampered"
+	((configured["reinforcement_feed"] as Dictionary)["attacker"] as Array).clear()
+	_check("synthetic_valid_transport_is_a_deep_copy",
+		transport == frozen_transport
+			and session.state.pending_battle == frozen_transport["commitment"])
+	var before_hash := String(session.state.state_hash())
+	var before_events: Array = session.state.events.duplicate(true)
+	session.selected_region = "Bramblewold"
+	session.selected_target = TARGET_REGION
+
+	var cases: Array = []
+	var bad := report.duplicate(true); bad["schema"] = "wrong"; cases.append(["report_schema", transport, bad, BattleScript.ATTACKER_TEAM])
+	bad = report.duplicate(true); bad["version"] = 2; cases.append(["report_version", transport, bad, BattleScript.ATTACKER_TEAM])
+	bad = report.duplicate(true); bad["commitment_digest"] = "00"; cases.append(["report_digest", transport, bad, BattleScript.ATTACKER_TEAM])
+	bad = report.duplicate(true); bad["winner_team"] = BattleScript.DEFENDER_TEAM; cases.append(["winner_mismatch", transport, bad, BattleScript.ATTACKER_TEAM])
+	bad = report.duplicate(true); bad["winner_team"] = BattleScript.UNDECIDED; cases.append(["winner_minus_one", transport, bad, BattleScript.UNDECIDED])
+	bad = report.duplicate(true); bad["winner_team"] = 2; cases.append(["winner_outside_zero_one", transport, bad, 2])
+	bad = report.duplicate(true); bad["attacker_outcomes"] = {"0": 500}; cases.append(["outcome_key_type", transport, bad, BattleScript.ATTACKER_TEAM])
+	bad = report.duplicate(true); bad["attacker_outcomes"] = {99: 500}; cases.append(["outcome_key_range", transport, bad, BattleScript.ATTACKER_TEAM])
+	bad = report.duplicate(true); bad["attacker_outcomes"] = {0: 0.5}; cases.append(["outcome_value_type", transport, bad, BattleScript.ATTACKER_TEAM])
+	bad = report.duplicate(true); bad["attacker_outcomes"] = {0: -1}; cases.append(["outcome_value_negative", transport, bad, BattleScript.ATTACKER_TEAM])
+	bad = report.duplicate(true); bad["attacker_outcomes"] = {0: 0}; cases.append(["outcome_value_zero", transport, bad, BattleScript.ATTACKER_TEAM])
+	bad = report.duplicate(true); bad["attacker_outcomes"] = {0: 1001}; cases.append(["outcome_value_range", transport, bad, BattleScript.ATTACKER_TEAM])
+	bad = report.duplicate(true); bad["extra"] = true; cases.append(["report_extra_key", transport, bad, BattleScript.ATTACKER_TEAM])
+	bad = report.duplicate(true); bad.erase("defender_outcomes"); cases.append(["report_missing_key", transport, bad, BattleScript.ATTACKER_TEAM])
+	var bad_transport := transport.duplicate(true); bad_transport["extra"] = true; cases.append(["transport_extra_key", bad_transport, report, BattleScript.ATTACKER_TEAM])
+	bad_transport = transport.duplicate(true); bad_transport.erase("team_roster"); cases.append(["transport_missing_key", bad_transport, report, BattleScript.ATTACKER_TEAM])
+	bad_transport = transport.duplicate(true); (bad_transport["reinforcement_feed"] as Dictionary)["seconds_per_reinforcement"] = 301; cases.append(["transport_feed_drift", bad_transport, report, BattleScript.ATTACKER_TEAM])
+	bad_transport = transport.duplicate(true); bad_transport["schema"] = "wrong"; cases.append(["transport_schema", bad_transport, report, BattleScript.ATTACKER_TEAM])
+	bad_transport = transport.duplicate(true); bad_transport["version"] = 2; cases.append(["transport_version", bad_transport, report, BattleScript.ATTACKER_TEAM])
+	bad_transport = transport.duplicate(true); bad_transport["commitment_digest"] = "00"; cases.append(["transport_digest", bad_transport, report, BattleScript.ATTACKER_TEAM])
+	for case_value in cases:
+		var case := case_value as Array
+		var refused: Dictionary = session.resolve_fought_battle(
+			case[1] as Dictionary, case[2] as Dictionary, int(case[3]))
+		_check("fought_report_strictly_refuses_%s_without_mutation" % String(case[0]),
+			not bool(refused.get("ok", false))
+				and not (refused.get("refusals", PackedStringArray()) as PackedStringArray).is_empty()
+				and String(session.state.state_hash()) == before_hash
+				and session.state.events == before_events
+				and not session.state.pending_battle.is_empty()
+				and session.selected_region == "Bramblewold"
+				and session.selected_target == TARGET_REGION,
+			str(refused))
+
+	var non_rts := _fought_fixture(StateScript.BATTLE_TYPE_AUTO_RESOLVE)
+	var non_rts_result: Dictionary = non_rts["session"].resolve_fought_battle(
+		non_rts["transport"], non_rts["report"], BattleScript.ATTACKER_TEAM)
+	_check("fought_report_refuses_a_non_rts_commitment",
+		not bool(non_rts_result.get("ok", false))
+			and _refusal_mentions(non_rts_result, "not an RTS battle"))
+
+	var non_rts_session = non_rts["session"]
+	var non_rts_hash := String(non_rts_session.state.state_hash())
+	var non_rts_transport: Dictionary = non_rts_session.battle_transport(
+		non_rts["configured"] as Dictionary)
+	_check("battle_transport_refuses_non_rts_before_receipt_verification",
+		non_rts_transport.is_empty()
+			and not non_rts_session.refusals.is_empty()
+			and String(non_rts_session.refusals[0]).contains("not an RTS battle")
+			and String(non_rts_session.state.state_hash()) == non_rts_hash
+			and not non_rts_session.state.pending_battle.is_empty(),
+		str(non_rts_session.refusals))
+
+	var refused_feed := _fought_fixture(StateScript.BATTLE_TYPE_RTS, -1)
+	var refused_feed_session = refused_feed["session"]
+	var refused_feed_hash := String(refused_feed_session.state.state_hash())
+	var refused_feed_events: Array = refused_feed_session.state.events.duplicate(true)
+	var refused_feed_result: Dictionary = refused_feed_session.resolve_fought_battle(
+		refused_feed["transport"], refused_feed["report"], BattleScript.ATTACKER_TEAM)
+	_check("fought_report_refuses_an_unauthored_feed_before_settlement",
+		not bool(refused_feed_result.get("ok", false))
+			and _refusal_mentions(refused_feed_result, "reinforcement feed was refused")
+			and String(refused_feed_session.state.state_hash()) == refused_feed_hash
+			and refused_feed_session.state.events == refused_feed_events
+			and not refused_feed_session.state.pending_battle.is_empty(),
+		str(refused_feed_result))
+
+	var attacker_result := _settled_fought_fixture(BattleScript.ATTACKER_TEAM)
+	_check("valid_attacker_report_captures_and_closes_transaction",
+		bool(attacker_result["outcome"].get("ok", false))
+			and attacker_result["session"].state.owner_of(TARGET_REGION) == ATTACKER
+			and attacker_result["session"].state.pending_battle.is_empty())
+	_check("valid_attacker_report_applies_fixed_point_attrition",
+		_fought_survivor_strength(
+			attacker_result["session"], int(attacker_result["survivor_army_id"])) == 400000)
+	_check("successful_fought_report_clears_the_selection",
+		attacker_result["session"].selected_region.is_empty()
+			and attacker_result["session"].selected_target.is_empty())
+
+	var defender_result := _settled_fought_fixture(BattleScript.DEFENDER_TEAM)
+	_check("valid_defender_report_holds_and_closes_transaction",
+		bool(defender_result["outcome"].get("ok", false))
+			and defender_result["session"].state.owner_of(TARGET_REGION) == DEFENDER
+			and defender_result["session"].state.pending_battle.is_empty())
+	_check("valid_defender_report_applies_fixed_point_attrition",
+		_fought_survivor_strength(
+			defender_result["session"], int(defender_result["survivor_army_id"])) == 150000)
+	var again := _settled_fought_fixture(BattleScript.DEFENDER_TEAM)
+	_check("fought_report_settlement_is_deterministic",
+		String(defender_result["session"].state.state_hash())
+			== String(again["session"].state.state_hash()))
+
+
+func _fought_fixture(battle_type: String, cadence: int = 300) -> Dictionary:
+	var document := _document()
+	(document["rtsSettings"] as Dictionary)["secondsPerReinforcement"] = cadence
+	var templates := document["playerTemplates"] as Array
+	(templates[0] as Dictionary)["faction"] = "FactionMen"
+	(templates[1] as Dictionary)["faction"] = "FactionMordor"
+	var world := WorldScript.new()
+	world.load_from_dict(document, "TestCampaign")
+	var state := _staged_state_in(world)
+	state.battle_type = battle_type
+	var brief := HandoffScript.build_request(state.world, state, ATTACKER, TARGET_REGION)
+	var configured := BattleScript.configure(
+		brief, SessionScript.FACTION_BINDINGS, MAP_BINDINGS, battle_type)
+	state.begin_battle(configured["commitment"])
+	var session := SessionScript.new()
+	session.world = state.world
+	session.state = state
+	var commitment := state.pending_battle.duplicate(true)
+	var transport := {
+		"schema": "openbfme.wotr-battle-transport",
+		"version": 1,
+		"commitment": commitment.duplicate(true),
+		"commitment_digest": StateScript.canonical_digest(commitment),
+		"team_roster": (configured["team_roster"] as Array).duplicate(true),
+		"gameplay_rules": (configured["gameplay_rules"] as Dictionary).duplicate(true),
+		"reinforcement_feed": (configured["reinforcement_feed"] as Dictionary).duplicate(true),
+		"battlefield_map": String(commitment["battlefield_map"]),
+		"region_map_name": String(commitment["map_name"]),
+	}
+	var report := {
+		"schema": "openbfme.wotr-battle-report",
+		"version": 1,
+		"commitment_digest": transport["commitment_digest"],
+		"winner_team": BattleScript.ATTACKER_TEAM,
+		"attacker_outcomes": {0: 500},
+		"defender_outcomes": {0: 500},
+	}
+	return {"session": session, "transport": transport, "report": report, "configured": configured}
+
+
+func _settled_fought_fixture(winner_team: int) -> Dictionary:
+	var fixture := _fought_fixture(StateScript.BATTLE_TYPE_RTS)
+	var session = fixture["session"]
+	var pending := session.state.pending_battle as Dictionary
+	var survivor_ids: PackedInt32Array = (
+		pending["committed_armies"]
+		if winner_team == BattleScript.ATTACKER_TEAM
+		else pending["defending_armies"])
+	var survivor_army_id := int(survivor_ids[0])
+	var report := (fixture["report"] as Dictionary).duplicate(true)
+	report["winner_team"] = winner_team
+	# The defender's first fixture unit has 300000 max HP, hence 50% = 150000.
+	session.selected_region = "Bramblewold"
+	session.selected_target = TARGET_REGION
+	var outcome: Dictionary = session.resolve_fought_battle(
+		fixture["transport"], report, winner_team)
+	return {"session": session, "outcome": outcome, "survivor_army_id": survivor_army_id}
+
+
+func _fought_survivor_strength(session, army_id: int) -> int:
+	if not session.state.armies.has(army_id):
+		return -1
+	var army := session.state.armies[army_id] as Dictionary
+	for unit_value in army.get("units", []) as Array:
+		return int((unit_value as Dictionary).get("hitpoints_milli", -1))
+	return -1
 
 
 # --- strategic fixture -------------------------------------------------------

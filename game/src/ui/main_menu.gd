@@ -2927,6 +2927,13 @@ func _refresh_skirmish_launch_state(_index: int = 0) -> void:
 		solo_flyout.hint_label.text = "ALL FACTIONS CONVERTED"
 
 
+func _clear_wotr_battle_seam() -> void:
+	_game_state.set("wotr_handoff", {})
+	_game_state.set("wotr_battle_winner", -1)
+	_game_state.set("wotr_battle_transport", {})
+	_game_state.set("wotr_battle_report", {})
+
+
 func apply_skirmish_selection() -> bool:
 	## Validates the skirmish setup fail-closed and records it on GameState
 	## for the retail slice. On failure GameState is left untouched and the
@@ -2935,6 +2942,9 @@ func apply_skirmish_selection() -> bool:
 	if launch_error != "":
 		_refresh_skirmish_launch_state()
 		return false
+	# A non-WotR launch is an explicit lifecycle boundary for every consume-once
+	# strategic/tactical record.
+	_clear_wotr_battle_seam()
 	# A solo launch is always single-player: clear any multiplayer selection a
 	# previous NETWORK visit left behind so the slice never hosts by surprise.
 	_game_state.set("retail_mp_mode", "")
@@ -3144,6 +3154,9 @@ func _refresh_wotr_entry() -> void:
 ## not load, fewer than two seats, and a scenario with no ownership to apply,
 ## and this function reports its refusal rather than working around it.
 func _start_wotr_session(chosen: Dictionary = {}) -> bool:
+	# A fresh strategic campaign cannot inherit any consume-once battle seam from
+	# an earlier launch, including one whose return was refused.
+	_clear_wotr_battle_seam()
 	# Seat options are filtered by per-faction availability below.
 	if not _ensure_skirmish_options():
 		return false
@@ -3523,7 +3536,16 @@ func wotr_team_descriptors(configured: Dictionary) -> Array:
 func _on_wotr_battle_committed(configured: Dictionary) -> void:
 	if _launch_in_progress:
 		return
-	var commitment := configured["commitment"] as Dictionary
+	var commitment_value: Variant = configured.get("commitment", null)
+	if typeof(commitment_value) != TYPE_DICTIONARY:
+		wotr_screen.show_message(
+			"The tactical launch was refused: the configured commitment is malformed.")
+		return
+	var commitment := commitment_value as Dictionary
+	if String(commitment.get("battle_type", "")) != WotrStateScript.BATTLE_TYPE_RTS:
+		wotr_screen.show_message(
+			"The tactical launch was refused: the admitted commitment is not an RTS battle.")
+		return
 	var battlefield := String(commitment.get("battlefield_map", ""))
 	if battlefield.is_empty():
 		wotr_screen.show_message("The commitment names no battlefield; the battle cannot be launched.")
@@ -3531,6 +3553,14 @@ func _on_wotr_battle_committed(configured: Dictionary) -> void:
 	var roster: Array = configured["team_roster"] as Array
 	if roster.size() != 2:
 		wotr_screen.show_message("The commitment did not authorise two sides.")
+		return
+	# Mandatory and transactional: mint and fully verify the receipt-bound record
+	# before the first tactical GameState write. A refusal cannot leave a partial
+	# launch configuration behind.
+	var transport: Dictionary = _wotr_session.battle_transport(configured)
+	if transport.is_empty():
+		wotr_screen.show_message(
+			"The tactical transport was refused: %s" % ", ".join(Array(_wotr_session.refusals)))
 		return
 	var descriptors := wotr_team_descriptors(configured)
 	if descriptors.is_empty():
@@ -3545,7 +3575,9 @@ func _on_wotr_battle_committed(configured: Dictionary) -> void:
 	_game_state.set("retail_command_point_factor", 1.0)
 	_game_state.set("retail_build_plots_only", false)
 	_game_state.set("retail_team_setup", descriptors)
-	_game_state.set("wotr_handoff", _wotr_session.handoff_payload())
+	_game_state.set("wotr_handoff", _wotr_session.handoff_payload().duplicate(true))
+	_game_state.set("wotr_battle_transport", transport.duplicate(true))
+	_game_state.set("wotr_battle_report", {})
 	_game_state.set("wotr_battle_winner", -1)
 	_launch_in_progress = true
 	get_tree().change_scene_to_file("res://scenes/retail_loading_boot.tscn")
@@ -3561,8 +3593,12 @@ func _resume_wotr_after_battle() -> bool:
 	if typeof(payload) != TYPE_DICTIONARY or (payload as Dictionary).is_empty():
 		return false
 	var winner := int(_game_state.get("wotr_battle_winner"))
-	_game_state.set("wotr_handoff", {})
-	_game_state.set("wotr_battle_winner", -1)
+	var transport := (_game_state.get("wotr_battle_transport") as Dictionary).duplicate(true)
+	var report := (_game_state.get("wotr_battle_report") as Dictionary).duplicate(true)
+	# Consume immediately, before receipt verification or report validation. A
+	# refusal leaves the adopted strategic transaction open, never replayable from
+	# stale GameState bytes on the next menu construction.
+	_clear_wotr_battle_seam()
 	var session = WotrSessionScript.new()
 	if not session.adopt_evidenced_handoff(payload as Dictionary):
 		_wotr_unavailable_reason = "the War of the Ring session could not be resumed: %s" % ", ".join(Array(session.refusals))
@@ -3571,12 +3607,30 @@ func _resume_wotr_after_battle() -> bool:
 	_wotr_session = session
 	var message := ""
 	var outcome_ok := false
-	if winner == WotrBattleScript.UNDECIDED:
-		# NOT a defender victory. The undecided transaction is abandoned without a
-		# result and remains in authoritative Battle until the player ends the phase.
+	if not report.is_empty():
+		# A present report owns this branch completely. Invalid input must never fall
+		# through to the legacy boolean resolver, because doing so would turn a named
+		# transport/report refusal into a strategically accepted result.
+		var outcome: Dictionary = session.resolve_fought_battle(transport, report, winner)
+		outcome_ok = bool(outcome.get("ok", false))
+		if outcome_ok:
+			message = "%s: %s %s." % [
+				String(outcome["region"]),
+				_wotr_seat_name(session, int(outcome["winner_player"])),
+				"took the region" if bool(outcome["captured"]) else "held the region",
+			]
+		else:
+			message = "The tactical report was refused; the battle remains: %s" % ", ".join(
+				Array(outcome.get("refusals", PackedStringArray())))
+	elif winner == WotrBattleScript.UNDECIDED:
+		# HEAD-compatible absent-report behaviour: leaving the old tactical slice
+		# undecided abandons the transaction without inventing a winner.
 		session.abandon_battle()
 		message = "The battle was left undecided. Nothing was applied; the region did not change hands."
 	else:
+		# HEAD-compatible absent-report behaviour for the current slice, which has
+		# no production report writer. The richer resolver is used only when a report
+		# is actually present.
 		var outcome: Dictionary = session.resolve_battle(winner)
 		outcome_ok = bool(outcome.get("ok", false))
 		if outcome_ok:
@@ -3996,6 +4050,7 @@ func _on_lobby_launch_confirmed() -> void:
 	# retail_team_setup) inside the lobby; the menu only owns the scene change.
 	if _launch_in_progress:
 		return
+	_clear_wotr_battle_seam()
 	_launch_in_progress = true
 	multiplayer_flyout.stop_advertising()
 	multiplayer_lobby.close_lobby()

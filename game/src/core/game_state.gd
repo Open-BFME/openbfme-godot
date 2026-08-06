@@ -76,12 +76,19 @@ var retail_mp_peer_name: String = "Challenger"
 ## UNDECIDED - a battle the player left rather than one the defender won.
 ##
 ## DELIBERATELY NOT CLEARED BY `reset_match()`. Every other field here is a
-## per-match selection that must not survive into the next match; these two are
+## per-match selection that must not survive into the next match; these fields are
 ## the opposite - they exist precisely to survive the tactical match and carry
-## its result back to the strategic map. The menu clears them when it has applied
-## the result, which is the only moment they have done their job.
+## its result back to the strategic map. The menu consumes and clears them at the
+## return boundary, and clears stale values at every unrelated launch boundary.
+##
+## `wotr_battle_transport` and `wotr_battle_report` are unhashed, non-save seam
+## records. The transport is a receipt-bound strategic brief for a future tactical
+## consumer; the optional report is consume-once input from that consumer. There
+## is deliberately no production report writer while RTS admission remains closed.
 var wotr_handoff: Dictionary = {}
 var wotr_battle_winner: int = -1
+var wotr_battle_transport: Dictionary = {}
+var wotr_battle_report: Dictionary = {}
 
 var resources: Dictionary = {0: 1500.0, 1: 1500.0, 2: 0.0}
 var power_points: Dictionary = {0: 0.0, 1: 0.0}

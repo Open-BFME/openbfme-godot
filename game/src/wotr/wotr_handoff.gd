@@ -70,6 +70,12 @@ const SCHEMA_VERSION := 3
 ## * `tactical_carried_hero_state` - the brief's `hero_level` and
 ##   `fallen_heroes` must set each hero's starting level and revival ledger in
 ##   the match, and the level must come back out in the outcome report.
+## * `tactical_handicap_scaling` - the commitment carries each side's authored
+##   handicap, but the tactical combat rules do not apply those values yet.
+##   Adding this sixth name changes every newly minted brief, its commitment
+##   digest, and therefore its strategic hash without changing the schema number.
+##   Old and new in-flight commitments are consequently not cross-build
+##   comparable; this makes no persistence or synchronisation compatibility claim.
 ## * `tactical_prebuilt_fortress` - the brief's `has_fort` and
 ##   `standing_buildings` must become a standing fortress (and, once the LW_*
 ##   macro expansions are recorded, standing buildings) on the battlefield; the
@@ -81,6 +87,7 @@ const UNSUPPORTED_BY_TACTICAL_SIM := [
 	"reinforcement_schedule",
 	"tactical_battle_outcome_report",
 	"tactical_carried_hero_state",
+	"tactical_handicap_scaling",
 	"tactical_prebuilt_fortress",
 	"tactical_region_bonus_modifiers",
 ]

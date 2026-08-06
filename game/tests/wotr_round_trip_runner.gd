@@ -6,21 +6,22 @@ extends SceneTree
 ## `wotr_battle_bridge_runner.gd` proves the strategic->tactical chain on an
 ## authored fixture. It proves nothing about whether a player can reach it, and
 ## until now nothing could: there was no scene, no screen and no menu entry.
-## This runner drives the player's path:
+## This runner drives the honest production boundary and then a labelled future
+## plumbing seam:
 ##
-##   1. the document is FOUND (pack first, then the documented env path)
-##   2. a session seats itself on it and the strategic map has real ownership
-##   3. the SCREEN offers only legal staging regions and legal targets
-##   4. a screen SELECTION becomes a COMMITMENT inside the strategic hash
-##   5. the tactical match the commitment authorises RUNS and decides
-##   6. the result comes back and MOVES THE MAP, and the turn passes
-##   7. the session survives the tactical scene change intact
-##   8. with NO document the menu entry REFUSES, loudly, rather than opening
+##   1. the document is FOUND and a real campaign is seated
+##   2. the SCREEN offers only legal staging regions and targets
+##   3. production ATTACK requests RTS and is DENIED by the six named gaps before
+##      a commitment enters the strategic hash or a launcher signal is emitted
+##   4. a test-only, direct State.begin_battle() admits the exact synthetic RTS
+##      commitment solely to exercise handoff/report scene-boundary plumbing
+##   5. the generic tactical harness runs that synthetic configuration; this is
+##      NOT current production reachability or War of the Ring simulation parity
+##   6. its synthetic result proves the existing strategic settlement plumbing
+##   7. with NO document the menu entry REFUSES loudly rather than inventing one
 ##
-## Each leg is asserted SEPARATELY. Any one of them can pass while the chain is
-## broken: a screen that offers the right targets can still commit the wrong one,
-## a commitment can be minted and never admitted, and a result can be computed
-## and never applied.
+## The future-admission leg never weakens tactical_admission(), forges receipt
+## evidence, or claims that the current production ATTACK can launch RTS.
 ##
 ## WITHOUT A DOCUMENT this runner exits 3, exactly like
 ## `wotr_livingworld_pack_runner.gd`, because legs 1-7 have nothing real to run
@@ -58,7 +59,7 @@ const HARNESS_MAP_IDS: Array = [
 ## ownership sets now seed (per-template spawn resolution), the fresh-campaign
 ## victory evaluation, the version 3 brief surface inside the digested brief,
 ## and the ledger surviving the scene change.
-const EXPECTED_CHECKS := 107
+const EXPECTED_CHECKS := 114
 
 var passed := 0
 var failed := 0
@@ -98,6 +99,7 @@ func _run() -> void:
 	if configured.is_empty():
 		_finish()
 		return
+	_test_battle_transport_refuses_unready_evidenced_input(session)
 	_test_the_commitment_configures_and_runs_a_real_match(session, configured)
 	_test_the_session_survives_the_scene_change(session)
 	_test_the_result_moves_the_map(session, configured)
@@ -464,12 +466,71 @@ func _test_a_selection_becomes_a_commitment(session) -> Dictionary:
 	_check("attack_is_armed_by_a_complete_selection", screen.can_attack_now())
 
 	var before_hash := String(session.state.state_hash())
-	var configured: Dictionary = screen.commit_selected_attack()
-	_check("the_commit_succeeds", bool(configured.get("ok", false)),
-		str(configured.get("refusals", PackedStringArray())))
+	var battle_signals: Array = []
+	screen.battle_committed.connect(func(value: Dictionary): battle_signals.append(value))
+	var production_attempt: Dictionary = screen.commit_selected_attack()
+	var expected_rts_refusals := PackedStringArray()
+	for gap in HandoffScript.UNSUPPORTED_BY_TACTICAL_SIM:
+		expected_rts_refusals.append(
+			"RTS tactical admission refused: unsupported tactical gap '%s'" % gap)
+	var actual_rts_refusals := production_attempt.get(
+		"refusals", PackedStringArray()) as PackedStringArray
+	_check("production_attack_honestly_denies_the_exact_six_gap_prefix_and_feed",
+		not bool(production_attempt.get("ok", false))
+			and actual_rts_refusals.size() > expected_rts_refusals.size()
+			and actual_rts_refusals.slice(0, expected_rts_refusals.size())
+				== expected_rts_refusals
+			and "\n".join(Array(actual_rts_refusals)).contains("reinforcement_feed")
+			and session.state.pending_battle.is_empty()
+			and battle_signals.is_empty()
+			and String(session.state.state_hash()) == before_hash,
+		str(actual_rts_refusals))
 	screen.queue_free()
-	if not bool(configured.get("ok", false)):
-		return {}
+
+	# A fixed auto-only campaign truthfully overrides ATTACK's RTS request and
+	# completes through the existing auto-resolve path without a launcher signal.
+	var fixed_auto := SessionScript.new()
+	fixed_auto.world = session.world
+	fixed_auto.state = StateScript.new()
+	fixed_auto.state.setup(session.world, [
+		{"template": String((session.state.players[0] as Dictionary)["template"])}])
+	assert(fixed_auto.state.restore(session.state.snapshot()))
+	fixed_auto.state.battle_type = StateScript.BATTLE_TYPE_AUTO_RESOLVE
+	fixed_auto.autoresolve = session.autoresolve
+	fixed_auto.autoresolve_bindings = session.autoresolve_bindings
+	fixed_auto.selected_region = staged
+	fixed_auto.selected_target = target
+	var fixed_screen := ScreenScript.new()
+	fixed_screen.build()
+	fixed_screen.configure(fixed_auto, HARNESS_MAP_IDS, "")
+	root.add_child(fixed_screen)
+	var fixed_signals: Array = []
+	fixed_screen.battle_committed.connect(
+		func(value: Dictionary): fixed_signals.append(value))
+	var fixed_result: Dictionary = fixed_screen.commit_selected_attack()
+	_check("fixed_auto_only_attack_routes_auto_and_honestly_refuses_missing_bundle",
+		not bool(fixed_result.get("ok", false))
+			and fixed_signals.is_empty()
+			and not fixed_auto.state.pending_battle.is_empty()
+			and String(fixed_auto.state.pending_battle.get("battle_type", ""))
+				== StateScript.BATTLE_TYPE_AUTO_RESOLVE
+			and not (fixed_result.get("refusals", PackedStringArray()) as PackedStringArray).is_empty()
+			and fixed_screen.last_auto_resolve.is_empty(),
+		str(fixed_result.get("refusals", [])))
+	fixed_screen.queue_free()
+
+	# FUTURE-ADMISSION SEAM ONLY. Production ATTACK above remains denied. Admit the
+	# exact RTS commitment at the low-level state boundary solely so the historical
+	# scene-change/result plumbing below remains exercised without claiming current
+	# RTS simulation parity or weakening tactical_admission().
+	var future_brief := HandoffScript.build_request(
+		session.world, session.state, session.state.active_player(), target)
+	var configured: Dictionary = BattleScript.configure(
+		future_brief, SessionScript.FACTION_BINDINGS,
+		session.battlefield_bindings(HARNESS_MAP_IDS), StateScript.BATTLE_TYPE_RTS)
+	assert(bool(configured.get("ok", false)))
+	assert(session.state.begin_battle(configured["commitment"]),
+		"future-admission fixture could not enter the hash boundary")
 	var commitment := configured["commitment"] as Dictionary
 
 	_check("the_commitment_names_the_region_the_player_selected",
@@ -532,6 +593,47 @@ func _test_a_selection_becomes_a_commitment(session) -> Dictionary:
 	_check("a_second_attack_while_a_battle_is_in_flight_is_refused",
 		not bool(second.get("ok", false)))
 	return configured
+
+
+# --- Packet 4: consume-once battle transport ---------------------------------
+
+func _test_battle_transport_refuses_unready_evidenced_input(session) -> void:
+	var resumed := SessionScript.new()
+	var payload: Dictionary = session.handoff_payload()
+	_check("battle_seam_records_are_not_smuggled_into_the_hashed_handoff",
+		not payload.has("wotr_battle_transport") and not payload.has("wotr_battle_report"))
+	_check("transport_fixture_adopts_only_after_evidence_verification",
+		resumed.adopt_evidenced_handoff(payload), str(resumed.refusals))
+	var target := String(resumed.state.pending_battle.get("region", ""))
+	# Rebuild the exact adopted snapshot at its pre-admission Tactical boundary;
+	# clear_battle() alone deliberately leaves the authoritative phase in Battle.
+	resumed.state = _rebuilt_pre_battle_state(resumed)
+	resumed.state.battle_type = StateScript.BATTLE_TYPE_RTS
+	var brief := HandoffScript.build_request(
+		resumed.world, resumed.state, resumed.state.active_player(), target)
+	var configured := BattleScript.configure(
+		brief, SessionScript.FACTION_BINDINGS,
+		resumed.battlefield_bindings(HARNESS_MAP_IDS), StateScript.BATTLE_TYPE_RTS)
+	assert(resumed.state.begin_battle(configured["commitment"]),
+		"synthetic RTS fixture was not admitted: %s" % resumed.state._last_rejection())
+	# The current private evidenced campaign honestly has no authored cadence and
+	# no bound strategic unit rows. That is the no-enable blocker, not permission
+	# for this test to forge a receipt or invent a feed.
+	_check("real_evidenced_rts_configuration_carries_a_refused_feed",
+		not bool((configured["reinforcement_feed"] as Dictionary).get("ok", false)),
+		str((configured["reinforcement_feed"] as Dictionary).get("refusals", [])))
+	var before_hash := String(resumed.state.state_hash())
+	var before_events: Array = resumed.state.events.duplicate(true)
+	var transport: Dictionary = resumed.battle_transport(configured)
+	_check("battle_transport_refuses_the_real_unready_feed_by_name",
+		transport.is_empty()
+			and not resumed.refusals.is_empty()
+			and String(resumed.refusals[0]).contains("reinforcement feed was refused"),
+		str(resumed.refusals))
+	_check("refused_evidenced_transport_is_hash_and_event_neutral",
+		String(resumed.state.state_hash()) == before_hash
+			and resumed.state.events == before_events
+			and not resumed.state.pending_battle.is_empty())
 
 
 # --- leg 5: the match the commitment authorises actually runs ----------------
@@ -758,6 +860,20 @@ func _test_the_menu_reaches_it(found: Dictionary) -> void:
 	_check("the_launch_roster_is_projected_from_the_commitment_or_refused_by_name",
 		projected or honestly_unseatable,
 		"descriptors=%s battlefield=%s" % [str(descriptors), battlefield])
+	# Exercise the actual menu launcher guard with this admitted auto-resolve
+	# commitment. It must refuse before scene launch or consume-once seam writes.
+	menu._game_state.set("wotr_handoff", {})
+	menu._game_state.set("wotr_battle_transport", {})
+	menu._game_state.set("wotr_battle_report", {})
+	menu._on_wotr_battle_committed(configured)
+	_check("menu_launcher_guard_refuses_non_rts_without_partial_seam_state",
+		String(commitment.get("battle_type", "")) == StateScript.BATTLE_TYPE_AUTO_RESOLVE
+			and not menu._launch_in_progress
+			and (menu._game_state.get("wotr_handoff") as Dictionary).is_empty()
+			and (menu._game_state.get("wotr_battle_transport") as Dictionary).is_empty()
+			and (menu._game_state.get("wotr_battle_report") as Dictionary).is_empty()
+			and screen.message_label.text.contains("not an RTS battle"),
+		screen.message_label.text)
 	menu.queue_free()
 	await process_frame
 	OS.set_environment(SessionScript.DOCUMENT_ENV, saved)
@@ -871,6 +987,9 @@ func _rebuilt_pre_battle_state(session):
 	copy.setup(session.world, [{"template": String((session.state.players[0] as Dictionary)["template"])}])
 	copy.restore(session.state.snapshot())
 	copy.clear_battle()
+	# clear_battle closes only the transaction record; a pre-admission fixture is
+	# authoritatively Tactical as well as empty.
+	copy.phase = StateScript.PHASE_TACTICAL
 	return copy
 
 

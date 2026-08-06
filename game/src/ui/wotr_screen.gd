@@ -4527,7 +4527,8 @@ func commit_selected_attack() -> Dictionary:
 	# CAPTURED BEFORE THE COMMIT, because both of the session's paths clear the
 	# selection when they succeed and the notice below needs the region's name.
 	var target := session.selected_target
-	var configured: Dictionary = session.commit_attack(target, available_map_ids)
+	var configured: Dictionary = session.commit_attack(
+		target, available_map_ids, StateScript.BATTLE_TYPE_RTS)
 	if not bool(configured.get("ok", false)):
 		_message("Attack refused: %s" % ", ".join(Array(configured.get("refusals", PackedStringArray()))))
 		refresh()
@@ -4543,6 +4544,18 @@ func commit_selected_attack() -> Dictionary:
 	# spot instead.
 	if configured.has("claim"):
 		return _finish_the_claim(target)
+	var commitment := configured.get("commitment", {}) as Dictionary
+	var admitted_type := String(commitment.get("battle_type", ""))
+	if admitted_type == StateScript.BATTLE_TYPE_AUTO_RESOLVE:
+		# A fixed auto-only campaign truthfully overrides the field request. Finish
+		# through the same path as the dedicated AUTO RESOLVE control and never
+		# advertise an auto-resolve commitment to the tactical launcher.
+		return _finish_auto_resolved_battle(configured)
+	if admitted_type != StateScript.BATTLE_TYPE_RTS:
+		_message("Attack refused: the admitted commitment names no supported battle type.")
+		refresh()
+		return {"ok": false, "refusals": PackedStringArray(
+			["the admitted commitment battle_type is neither rts nor auto_resolve"])}
 	refresh()
 	battle_committed.emit(configured)
 	return configured
@@ -4632,6 +4645,13 @@ func auto_resolve_selected_attack() -> Dictionary:
 	# properly rather than a battle report about a fight nobody had.
 	if committed.has("claim"):
 		return _finish_the_claim(target)
+	return _finish_auto_resolved_battle(committed)
+
+
+## Complete an already admitted auto-resolve commitment. Shared by the dedicated
+## AUTO RESOLVE control and ATTACK when a fixed auto-only campaign truthfully
+## overrides ATTACK's requested RTS type.
+func _finish_auto_resolved_battle(committed: Dictionary) -> Dictionary:
 	var resolved: Dictionary = session.auto_resolve_pending_battle()
 	if not bool(resolved.get("ok", false)):
 		# The commitment is still open if the resolution refused. Say so rather
