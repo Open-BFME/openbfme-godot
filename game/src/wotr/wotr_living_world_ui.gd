@@ -39,7 +39,7 @@ extends RefCounted
 ## `GarrisonSelectionPortraitName`. Resemblance between two names is never used.
 
 const SCHEMA := "openbfme.living-world-ui"
-const SCHEMA_VERSION := 3
+const SCHEMA_VERSION := 4
 
 const BUNDLE_ENV := "OPENBFME_LIVING_WORLD_UI"
 const FILE_NAME := "living-world-ui.json"
@@ -47,6 +47,7 @@ const MAX_BYTES := 16 * 1024 * 1024
 const MAX_ATLAS_BYTES := 16 * 1024 * 1024
 const MAX_EXPERIENCE_LEVELS := 4096
 const MAX_EXPERIENCE_TOKENS := 65536
+const MAX_LEVEL_UP_UPGRADES := 4096
 
 ## How an army's portrait was found, so the screen can say which rung it stood
 ## on rather than implying every banner is a hero portrait.
@@ -91,6 +92,8 @@ var faction_banner_derivation := ""
 var chrome_sheet: Dictionary = {}
 ## Source-ordered retail experience rows usable by typed UpgradeTroops nuggets.
 var upgrade_experience_levels: Array = []
+## `template -> LevelUpUpgrade` for the exact active UpgradeTroops template set.
+var level_up_upgrades: Dictionary = {}
 
 ## Image ids asked for that produced no texture, and why, in ask order. Public so
 ## the screen can name every portrait it is standing in for.
@@ -327,6 +330,88 @@ static func _validate_upgrade_experience_levels(value: Variant, building_rows: V
 	return ""
 
 
+static func _validate_level_up_upgrades(value: Variant, building_rows: Variant, experience_value: Variant) -> String:
+	if not (value is Array):
+		return "levelUpUpgrades is not an array"
+	var rows := value as Array
+	if rows.size() > MAX_LEVEL_UP_UPGRADES:
+		return "levelUpUpgrades exceeds its row cap"
+	var active: Dictionary = {}
+	var active_folded: Dictionary = {}
+	for building_value in building_rows as Array:
+		var building := building_value as Dictionary
+		if String(building.get("nuggetsStatus", "")) != "ok":
+			continue
+		for nugget_value in building.get("nuggets", []) as Array:
+			var nugget := nugget_value as Dictionary
+			if String(nugget.get("kind", "")) != "upgrade_troops":
+				continue
+			for unit_value in nugget.get("upgradeableUnits", []) as Array:
+				var unit := String(unit_value)
+				var folded := unit.to_lower()
+				if active_folded.has(folded) and String(active_folded[folded]) != unit:
+					return "active upgrade templates collide case-insensitively"
+				active[unit] = true
+				active_folded[folded] = unit
+	var by_template: Dictionary = {}
+	var row_folded: Dictionary = {}
+	for row_value in rows:
+		if not (row_value is Dictionary):
+			return "a levelUpUpgrades row is not an object"
+		var row := row_value as Dictionary
+		if not _exact_keys(row, ["levelCap", "levelsToGain", "template", "triggeredBy"]):
+			return "a levelUpUpgrades row has malformed shape"
+		var template_value: Variant = row.get("template")
+		if not (template_value is String) or String(template_value).is_empty() or String(template_value).length() > 256:
+			return "a levelUpUpgrades row has an invalid template"
+		var template := String(template_value)
+		if not active.has(template):
+			return "levelUpUpgrades carries inactive template %s" % template
+		var folded := template.to_lower()
+		if by_template.has(template) or row_folded.has(folded):
+			return "duplicate levelUpUpgrades template %s" % template
+		if not _json_integer(row.get("levelsToGain"), 1, true) or not _json_integer(row.get("levelCap"), 1, true):
+			return "levelUpUpgrades template %s has a malformed integer" % template
+		if not (row.get("triggeredBy") is Array) or (row.get("triggeredBy") as Array).is_empty():
+			return "levelUpUpgrades template %s has no TriggeredBy tokens" % template
+		var triggers: Dictionary = {}
+		for trigger_value in row.get("triggeredBy") as Array:
+			if not (trigger_value is String):
+				return "levelUpUpgrades template %s has a malformed TriggeredBy token" % template
+			var trigger := String(trigger_value)
+			var trigger_folded := trigger.to_lower()
+			if trigger.is_empty() or trigger.length() > 256 or trigger_folded == "none" or trigger_folded == "null" or triggers.has(trigger_folded):
+				return "levelUpUpgrades template %s has an invalid or duplicate TriggeredBy token" % template
+			triggers[trigger_folded] = true
+		by_template[template] = row
+		row_folded[folded] = true
+	if by_template.size() != active.size():
+		return "active upgrade templates and levelUpUpgrades rows are not the same set"
+	for template in active:
+		if not by_template.has(template):
+			return "active upgrade template %s has no levelUpUpgrades row" % String(template)
+
+	var ranks_by_template: Dictionary = {}
+	for experience_row_value in experience_value as Array:
+		var experience_row := experience_row_value as Dictionary
+		var rank := int(float(experience_row["rank"]))
+		for target_value in experience_row["targetNames"] as Array:
+			var target := String(target_value)
+			if not ranks_by_template.has(target):
+				ranks_by_template[target] = {}
+			(ranks_by_template[target] as Dictionary)[rank] = true
+	for template in by_template:
+		var cap := int(float((by_template[template] as Dictionary)["levelCap"]))
+		var covered := 0
+		for rank_value in (ranks_by_template.get(template, {}) as Dictionary):
+			var rank := int(rank_value)
+			if rank >= 2 and rank <= cap:
+				covered += 1
+		if covered != cap - 1:
+			return "levelUpUpgrades template %s lacks exact experience rank coverage through %d" % [String(template), cap]
+	return ""
+
+
 func load_from(path: String) -> bool:
 	_reset()
 	source_path = path
@@ -349,8 +434,8 @@ func load_from(path: String) -> bool:
 		return _fail("schemaVersion must be the JSON integer %d" % SCHEMA_VERSION)
 	var version := int(version_value)
 	if version != SCHEMA_VERSION:
-		if version == 1 or version == 2:
-			return _fail("schemaVersion %d is stale; regenerate the living-world UI bundle for schemaVersion 3" % version)
+		if version == 1 or version == 2 or version == 3:
+			return _fail("schemaVersion %d is stale; regenerate the living-world UI bundle for schemaVersion 4" % version)
 		return _fail("unsupported schemaVersion %d" % version)
 	var building_error := _validate_buildings(bundle.get("buildings", null))
 	if not building_error.is_empty():
@@ -359,6 +444,11 @@ func load_from(path: String) -> bool:
 		bundle.get("upgradeExperienceLevels", null), bundle.get("buildings", null))
 	if not experience_error.is_empty():
 		return _fail(experience_error)
+	var level_up_error := _validate_level_up_upgrades(
+		bundle.get("levelUpUpgrades", null), bundle.get("buildings", null),
+		bundle.get("upgradeExperienceLevels", null))
+	if not level_up_error.is_empty():
+		return _fail(level_up_error)
 
 	_atlas_directory = String(bundle.get("atlasDirectory", "ui-atlases"))
 	images = bundle.get("images", {}) as Dictionary
@@ -370,6 +460,11 @@ func load_from(path: String) -> bool:
 	faction_banner_derivation = String(bundle.get("factionBannerDerivation", ""))
 	chrome_sheet = bundle.get("chromeSheet", {}) as Dictionary
 	upgrade_experience_levels = (bundle.get("upgradeExperienceLevels", []) as Array).duplicate(true)
+	for level_up_value in bundle.get("levelUpUpgrades", []) as Array:
+		var level_up_row := (level_up_value as Dictionary).duplicate(true)
+		var level_up_template := String(level_up_row["template"])
+		level_up_row.erase("template")
+		level_up_upgrades[level_up_template] = level_up_row
 
 	var ids: Array[String] = []
 	for row_value in bundle.get("buildings", []) as Array:
@@ -795,6 +890,13 @@ func build_plot_icon(player_template: String) -> Dictionary:
 	return build_plot_icons.get(id, {}) as Dictionary
 
 
+## A deep copy of retail's LevelUpUpgrade row for an active template, or {}.
+func level_up_upgrade(template: String) -> Dictionary:
+	if not level_up_upgrades.has(template):
+		return {}
+	return (level_up_upgrades[template] as Dictionary).duplicate(true)
+
+
 # --- internals ------------------------------------------------------------------
 
 func _reset() -> void:
@@ -815,6 +917,7 @@ func _reset() -> void:
 	faction_banner_derivation = ""
 	chrome_sheet = {}
 	upgrade_experience_levels = []
+	level_up_upgrades = {}
 	_atlas_cache = {}
 	_crop_cache = {}
 	_atlas_directory = ""

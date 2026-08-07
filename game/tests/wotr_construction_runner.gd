@@ -47,8 +47,8 @@ const GapsScript = preload("res://src/wotr/wotr_strategic_gaps.gd")
 ## without propagating, so every check after the error site never runs and an
 ## inert runner prints zero failures and exits 0. Pinning the count turns that
 ## silent abort into a loud failure. Raise deliberately; never lower.
-const CHECKS_WITHOUT_DATA := 125
-const CHECKS_WITH_DATA := 149
+const CHECKS_WITHOUT_DATA := 141
+const CHECKS_WITH_DATA := 165
 
 ## Where the authored fixture bundles are written. `user://` because that is a
 ## real search root `wotr_buildings.bundle_roots()` already ends with, so the
@@ -186,10 +186,13 @@ func _ui_bundle() -> Dictionary:
 	all_kinds["nuggets"].append({"kind": "increase_command_points", "tag": "FixtureCommand", "type": "WORLD", "amount": 30})
 	return {
 		"schema": "openbfme.living-world-ui",
-		"schemaVersion": 3,
+		"schemaVersion": 4,
 		"upgradeExperienceLevels": [
 			{"name": "FixtureOneLevel1", "targetNames": ["FixtureOne", "FixtureOne"], "requiredExperience": 1, "experienceAward": 2, "rank": 1, "upgrades": ["Upgrade_Fixture1", "Upgrade_Fixture1"]},
 			{"name": "FixtureOneLevel2", "targetNames": ["FixtureOne"], "requiredExperience": 5, "experienceAward": 3, "rank": 2, "upgrades": ["Upgrade_Fixture2"]},
+		],
+		"levelUpUpgrades": [
+			{"template": "FixtureOne", "triggeredBy": ["Upgrade_FixtureVeterancy"], "levelsToGain": 1, "levelCap": 2},
 		],
 		"atlasDirectory": "ui-atlases",
 		"atlases": [],
@@ -440,7 +443,7 @@ func _test_the_catalogue_loads_from_an_authored_bundle() -> void:
 	_check("all_five_typed_nugget_kinds_reach_the_runtime_catalogue",
 		["increase_treasury", "strengthen_army", "spawn_army", "upgrade_troops", "increase_command_points"] == (carried["nuggets"] as Array).map(func(n: Variant) -> String: return String((n as Dictionary)["kind"])), str(carried["nuggets"]))
 	var experience_ui := LivingWorldUiScript.new()
-	_check("schema3_upgrade_experience_rows_load_in_source_order",
+	_check("schema4_upgrade_experience_rows_load_in_source_order",
 		experience_ui.load_from(FIXTURE_ROOT.path_join("living-world-ui.json"))
 			and (experience_ui.upgrade_experience_levels as Array).map(
 				func(row: Variant) -> String: return String((row as Dictionary)["name"]))
@@ -449,6 +452,17 @@ func _test_the_catalogue_loads_from_an_authored_bundle() -> void:
 	(experience_copy[0]["targetNames"] as Array)[0] = "MUTATED"
 	_check("upgrade_experience_rows_support_deep_copy_isolation",
 		String((experience_ui.upgrade_experience_levels[0]["targetNames"] as Array)[0]) == "FixtureOne")
+	var level_up_copy := experience_ui.level_up_upgrade("FixtureOne")
+	(level_up_copy["triggeredBy"] as Array)[0] = "MUTATED"
+	var stored_level_up := experience_ui.level_up_upgrade("FixtureOne")
+	_check("schema4_level_up_upgrade_accessor_is_deep_and_exact",
+		stored_level_up.size() == 3
+			and stored_level_up.has("levelCap")
+			and stored_level_up.has("levelsToGain")
+			and stored_level_up.has("triggeredBy")
+			and not stored_level_up.has("template")
+			and String((stored_level_up["triggeredBy"] as Array)[0]) == "Upgrade_FixtureVeterancy"
+			and experience_ui.level_up_upgrade("Inactive").is_empty())
 	_check("treasury_is_bound_from_the_typed_nugget_not_a_type_guess",
 		String(catalogue.income_macro_by_type["Fortress"]) == "GAIN_PER_FORTRESS" and catalogue.income_for_type("Fortress") == 300)
 	var isolation_ui := LivingWorldUiScript.new()
@@ -501,6 +515,69 @@ func _test_the_catalogue_loads_from_an_authored_bundle() -> void:
 		_check("%s_upgrade_experience_fails_closed" % String(bad[0]),
 			not bad_ui.load_from(bad_path) and not bad_ui.loaded
 				and bad_ui.upgrade_experience_levels.is_empty(), str(bad_ui.errors))
+	var stale_three := _ui_bundle()
+	stale_three["schemaVersion"] = 3
+	var stale_three_path := FIXTURE_ROOT.path_join("stale-three-ui.json")
+	var stale_three_file := FileAccess.open(stale_three_path, FileAccess.WRITE)
+	stale_three_file.store_string(JSON.stringify(stale_three))
+	stale_three_file.close()
+	var stale_three_ui := LivingWorldUiScript.new()
+	_check("schema_v3_is_rejected_as_stale_regenerate",
+		not stale_three_ui.load_from(stale_three_path) and String(stale_three_ui.errors[0]).contains("stale"), str(stale_three_ui.errors))
+	var bad_level_up_cases: Array = []
+	var missing_level_up := _ui_bundle()
+	missing_level_up.erase("levelUpUpgrades")
+	bad_level_up_cases.append(["missing-key", missing_level_up])
+	var absent_active_level_up := _ui_bundle()
+	absent_active_level_up["levelUpUpgrades"] = []
+	bad_level_up_cases.append(["missing-active", absent_active_level_up])
+	var inactive_level_up := _ui_bundle()
+	inactive_level_up["levelUpUpgrades"][0]["template"] = "Inactive"
+	bad_level_up_cases.append(["inactive", inactive_level_up])
+	var malformed_level_up := _ui_bundle()
+	malformed_level_up["levelUpUpgrades"][0]["extra"] = true
+	bad_level_up_cases.append(["exact-keys", malformed_level_up])
+	var fractional_level_up := _ui_bundle()
+	fractional_level_up["levelUpUpgrades"][0]["levelsToGain"] = 1.5
+	bad_level_up_cases.append(["fractional", fractional_level_up])
+	var empty_trigger := _ui_bundle()
+	empty_trigger["levelUpUpgrades"][0]["triggeredBy"] = []
+	bad_level_up_cases.append(["empty-trigger", empty_trigger])
+	var non_array_trigger := _ui_bundle()
+	non_array_trigger["levelUpUpgrades"][0]["triggeredBy"] = "Upgrade_X"
+	bad_level_up_cases.append(["non-array-trigger", non_array_trigger])
+	var duplicate_trigger := _ui_bundle()
+	duplicate_trigger["levelUpUpgrades"][0]["triggeredBy"] = ["Upgrade_X", "upgrade_x"]
+	bad_level_up_cases.append(["duplicate-trigger", duplicate_trigger])
+	var zero_level_up := _ui_bundle()
+	zero_level_up["levelUpUpgrades"][0]["levelsToGain"] = 0
+	bad_level_up_cases.append(["zero-integer", zero_level_up])
+	var negative_level_up := _ui_bundle()
+	negative_level_up["levelUpUpgrades"][0]["levelCap"] = -1
+	bad_level_up_cases.append(["negative-integer", negative_level_up])
+	var over_safe_level_up := _ui_bundle()
+	over_safe_level_up["levelUpUpgrades"][0]["levelCap"] = 9007199254740992.0
+	bad_level_up_cases.append(["over-safe-integer", over_safe_level_up])
+	var duplicate_template := _ui_bundle()
+	duplicate_template["levelUpUpgrades"].append(
+		(duplicate_template["levelUpUpgrades"][0] as Dictionary).duplicate(true))
+	bad_level_up_cases.append(["duplicate-template", duplicate_template])
+	var null_trigger := _ui_bundle()
+	null_trigger["levelUpUpgrades"][0]["triggeredBy"] = ["NULL"]
+	bad_level_up_cases.append(["null-trigger", null_trigger])
+	var rank_gap := _ui_bundle()
+	rank_gap["levelUpUpgrades"][0]["levelCap"] = 3
+	bad_level_up_cases.append(["rank-gap", rank_gap])
+	for bad_level_value in bad_level_up_cases:
+		var bad_level := bad_level_value as Array
+		var bad_level_path := FIXTURE_ROOT.path_join("%s-level-up-ui.json" % String(bad_level[0]))
+		var bad_level_file := FileAccess.open(bad_level_path, FileAccess.WRITE)
+		bad_level_file.store_string(JSON.stringify(bad_level[1]))
+		bad_level_file.close()
+		var bad_level_ui := LivingWorldUiScript.new()
+		_check("%s_level_up_upgrade_fails_closed" % String(bad_level[0]),
+			not bad_level_ui.load_from(bad_level_path) and not bad_level_ui.loaded
+				and bad_level_ui.level_up_upgrades.is_empty(), str(bad_level_ui.errors))
 	var malformed := _ui_bundle()
 	(malformed["buildings"][0] as Dictionary)["nuggets"][0]["extra"] = true
 	var malformed_path := FIXTURE_ROOT.path_join("malformed-ui.json")
@@ -511,7 +588,7 @@ func _test_the_catalogue_loads_from_an_authored_bundle() -> void:
 	_check("malformed_typed_nugget_fails_the_whole_bundle",
 		not malformed_ui.load_from(malformed_path) and not malformed_ui.loaded and malformed_ui.buildings.is_empty(), str(malformed_ui.errors))
 	var string_version := _ui_bundle()
-	string_version["schemaVersion"] = "3"
+	string_version["schemaVersion"] = "4"
 	var string_version_path := FIXTURE_ROOT.path_join("string-version-ui.json")
 	var string_version_file := FileAccess.open(string_version_path, FileAccess.WRITE)
 	string_version_file.store_string(JSON.stringify(string_version))

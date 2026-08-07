@@ -99,9 +99,10 @@ from .mapped_image import (
     resolve_mapped_image_texture_paths_partial,
     resolve_mapped_images_partial,
 )
+from .sage_cst import SageAssignment, SageBlock, SageCstLimits, SageObject, parse_sage_document
 
 SCHEMA = "openbfme.living-world-ui"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 MANIFEST_NAME = "living-world-ui.json"
 ATLAS_DIRECTORY = "ui-atlases"
@@ -130,6 +131,9 @@ MAX_NUGGET_BONUSES = 16
 MAX_NUGGET_ARMIES = 16
 MAX_UPGRADEABLE_UNITS = 64
 MAX_NUGGET_STRING = 256
+MAX_LEVEL_UP_OBJECT_INIS = 5000
+MAX_LEVEL_UP_INI_BYTES = 8 * 1024 * 1024
+MAX_LEVEL_UP_ROWS = 4096
 MAX_EXPERIENCE_LEVELS = 4096
 MAX_EXPERIENCE_DEFINES = 8192
 MAX_EXPERIENCE_TOKENS = 65536
@@ -368,6 +372,147 @@ def _upgradeable_units(buildings: Iterable[Mapping[str, Any]]) -> set[str]:
             if nugget.get("kind") == "upgrade_troops":
                 active.update(str(unit) for unit in nugget.get("upgradeableUnits", []))
     return active
+
+
+def _level_up_positive_integer(value: str, context: str) -> int:
+    """A positive integer which survives JSON exactly; signs are not authored digits."""
+
+    text = _unquote(value)
+    if re.fullmatch(r"[0-9]+", text) is None:
+        raise LivingWorldUiError(f"{context} must be a positive digit integer")
+    number = int(text)
+    if number <= 0 or number > MAX_SAFE_JSON_INTEGER:
+        raise LivingWorldUiError(f"{context} is outside the exact positive integer range")
+    return number
+
+
+def _read_level_up_upgrades(
+    reader: CatalogReader, buildings: Iterable[Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    """Read the one live flat LevelUpUpgrade module for every active template."""
+
+    active_values = _upgradeable_units(buildings)
+    active_by_fold: dict[str, str] = {}
+    for template in active_values:
+        if not template or len(template) > MAX_NUGGET_STRING:
+            raise LivingWorldUiError("active upgrade template has an invalid token")
+        folded = template.casefold()
+        if folded in active_by_fold and active_by_fold[folded] != template:
+            raise LivingWorldUiError(f"duplicate active upgrade template {template}")
+        active_by_fold[folded] = template
+    if len(active_by_fold) > MAX_LEVEL_UP_ROWS:
+        raise LivingWorldUiError("level-up upgrade row cap exceeded")
+
+    names = sorted(
+        entry.name for entry in reader._winners.values()  # noqa: SLF001 - bounded catalog view
+        if entry.name.casefold().startswith("data/ini/object/")
+        and entry.name.casefold().endswith(".ini")
+    )
+    if len(names) > MAX_LEVEL_UP_OBJECT_INIS:
+        raise LivingWorldUiError("object INI catalog cap exceeded")
+
+    definitions: dict[str, list[SageObject]] = {key: [] for key in active_by_fold}
+    limits = SageCstLimits(max_source_bytes=MAX_LEVEL_UP_INI_BYTES)
+    for name in names:
+        entry = reader.resolve(name)
+        if entry is None:  # pragma: no cover - selected from winners
+            continue
+        if entry.size > MAX_LEVEL_UP_INI_BYTES:
+            raise LivingWorldUiError(f"{name} exceeds the level-up object INI byte cap")
+        try:
+            document = parse_sage_document(reader.read(entry), name, limits=limits)
+        except Exception as exc:
+            raise LivingWorldUiError(f"cannot parse object INI {name}: {exc}") from exc
+        for item in document.items:
+            if not isinstance(item, SageObject):
+                continue
+            folded = item.name.casefold()
+            if folded in definitions:
+                definitions[folded].append(item)
+
+    rows: list[dict[str, Any]] = []
+    for folded, template in sorted(active_by_fold.items(), key=lambda pair: pair[1].casefold()):
+        matches = definitions[folded]
+        if not matches:
+            raise LivingWorldUiError(f"active upgrade object {template} is missing")
+        if len(matches) != 1:
+            raise LivingWorldUiError(f"active upgrade object {template} is duplicated")
+        obj = matches[0]
+        if obj.kind.casefold() != "object" or obj.parent is not None:
+            raise LivingWorldUiError(
+                f"active upgrade object {template} must be one direct Object with no parent")
+        modules = [
+            item for item in obj.items
+            if isinstance(item, SageBlock)
+            and (item.header_key or "").casefold() == "behavior"
+            and item.kind.casefold() == "levelupupgrade"
+        ]
+        if len(modules) != 1:
+            raise LivingWorldUiError(
+                f"active upgrade object {template} must have exactly one LevelUpUpgrade module")
+        module = modules[0]
+        tag = str(module.instance_tag or "")
+        if not tag or len(tag) > MAX_NUGGET_STRING:
+            raise LivingWorldUiError(f"active upgrade object {template} has an invalid module tag")
+        for item in obj.items:
+            if not isinstance(item, SageAssignment):
+                continue
+            if (
+                item.key.casefold() in {
+                    "addmodule", "overrideablebylikekind", "replacemodule", "removemodule"
+                }
+                and any(token.casefold() == tag.casefold() for token in item.value.split())
+            ):
+                raise LivingWorldUiError(
+                    f"active upgrade object {template} modifies its LevelUpUpgrade module")
+        if any(isinstance(item, SageBlock) for item in module.items):
+            raise LivingWorldUiError(
+                f"active upgrade object {template} has a nested LevelUpUpgrade module block")
+        assignments = [item for item in module.items if isinstance(item, SageAssignment)]
+        triggered_rows = [item.value for item in assignments if item.key.casefold() == "triggeredby"]
+        triggered_by = [token for value in triggered_rows for token in _unquote(value).split()]
+        if not triggered_by:
+            raise LivingWorldUiError(f"active upgrade object {template} has no TriggeredBy token")
+        seen_triggers: set[str] = set()
+        for token in triggered_by:
+            folded_token = token.casefold()
+            if (not token or len(token) > MAX_NUGGET_STRING
+                    or folded_token in {"none", "null"} or folded_token in seen_triggers):
+                raise LivingWorldUiError(
+                    f"active upgrade object {template} has an invalid or duplicate TriggeredBy token")
+            seen_triggers.add(folded_token)
+        gains = [item.value for item in assignments if item.key.casefold() == "levelstogain"]
+        caps = [item.value for item in assignments if item.key.casefold() == "levelcap"]
+        if len(gains) != 1 or len(caps) != 1:
+            raise LivingWorldUiError(
+                f"active upgrade object {template} must have exactly one LevelsToGain and LevelCap")
+        rows.append({
+            "template": template,
+            "triggeredBy": triggered_by,
+            "levelsToGain": _level_up_positive_integer(gains[0], f"{template} LevelsToGain"),
+            "levelCap": _level_up_positive_integer(caps[0], f"{template} LevelCap"),
+        })
+    return rows
+
+
+def _validate_level_up_experience_coverage(
+    upgrades: Iterable[Mapping[str, Any]], experience_rows: Iterable[Mapping[str, Any]]
+) -> None:
+    ranks_by_template: dict[str, set[int]] = {}
+    for row in experience_rows:
+        rank = int(row["rank"])
+        for target in row["targetNames"]:
+            ranks_by_template.setdefault(str(target), set()).add(rank)
+    for upgrade in upgrades:
+        template = str(upgrade["template"])
+        cap = int(upgrade["levelCap"])
+        ranks = ranks_by_template.get(template, set())
+        covered = sum(2 <= rank <= cap for rank in ranks)
+        if covered != cap - 1:
+            missing = next((rank for rank in range(2, min(cap, MAX_EXPERIENCE_LEVELS + 1) + 1)
+                            if rank not in ranks), 2)
+            raise LivingWorldUiError(
+                f"active upgrade object {template} has no reachable experience rank {missing}")
 
 
 def _read_upgrade_experience_levels(
@@ -1107,6 +1252,8 @@ def build_bundle(
     gaps: list[Gap] = []
     buildings = _read_buildings(reader, gaps)
     upgrade_experience_levels = _read_upgrade_experience_levels(reader, buildings)
+    level_up_upgrades = _read_level_up_upgrades(reader, buildings)
+    _validate_level_up_experience_coverage(level_up_upgrades, upgrade_experience_levels)
     templates = _read_templates(reader, gaps)
     plot_icons = _read_marker_families(
         reader, BUILD_PLOT_ICONS_PATH, "LivingWorldBuildPlotIcon", gaps
@@ -1221,6 +1368,7 @@ def build_bundle(
         "atlasDirectory": ATLAS_DIRECTORY,
         "buildings": buildings,
         "upgradeExperienceLevels": upgrade_experience_levels,
+        "levelUpUpgrades": level_up_upgrades,
         "playerTemplates": templates,
         "buildPlotIcons": plot_icons,
         "buildingIcons": building_icons,

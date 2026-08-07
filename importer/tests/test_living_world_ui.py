@@ -9,7 +9,8 @@ import pytest
 from openbfme_importer import living_world_ui as ui_module
 from openbfme_importer.living_world_ui import (
     BUILDINGS_PATH, EXPERIENCE_LEVELS_PATH, GAMEDATA_PATH, SCHEMA_VERSION,
-    LivingWorldUiError, _bonus, _read_buildings, _read_upgrade_experience_levels,
+    LivingWorldUiError, _bonus, _read_buildings, _read_level_up_upgrades,
+    _read_upgrade_experience_levels, _validate_level_up_experience_coverage,
 )
 from openbfme_importer.livingmap_bundle import CatalogReader
 
@@ -44,8 +45,8 @@ def _catalog(tmp_path: Path, body: str):
     return rows[0], [gap.public() for gap in gaps]
 
 
-def test_a1_schema_v3():
-    assert SCHEMA_VERSION == 3
+def test_a1_schema_v4():
+    assert SCHEMA_VERSION == 4
 
 
 def test_a2_all_five_and_source_order(tmp_path: Path):
@@ -297,3 +298,112 @@ End
     with pytest.raises(LivingWorldUiError, match="non-increasing"):
         _read_upgrade_experience_levels(
             _experience_reader(tmp_path / "backwards", backwards), _active("UnitA"))
+
+
+def _level_up_reader(tmp_path: Path, objects: dict[str, str]) -> CatalogReader:
+    return _multi_reader(tmp_path, {
+        "data/ini/object/" + name: payload.encode("latin-1")
+        for name, payload in objects.items()
+    })
+
+
+def test_c1_level_up_rows_are_active_exact_flat_and_source_ordered(tmp_path: Path):
+    reader = _level_up_reader(tmp_path, {
+        "two.ini": """Object UnitB
+ Behavior = LevelUpUpgrade ModuleTag_Level
+  TriggeredBy = Upgrade_One Upgrade_Two
+  TriggeredBy = Upgrade_Three
+  LevelsToGain = 7
+  LevelCap = 3
+ End
+End
+""",
+        "one.ini": """Object UnitA
+ Behavior = LevelUpUpgrade ModuleTag_Level
+  TriggeredBy = Upgrade_A
+  LevelsToGain = 1
+  LevelCap = 2
+ End
+End
+Object Inactive
+ Behavior = LevelUpUpgrade ModuleTag_Other
+  TriggeredBy = NONE
+  LevelsToGain = nope
+  LevelCap = nope
+ End
+End
+""",
+    })
+    rows = _read_level_up_upgrades(reader, _active("UnitB", "UnitA"))
+    assert rows == [
+        {"template": "UnitA", "triggeredBy": ["Upgrade_A"],
+         "levelsToGain": 1, "levelCap": 2},
+        {"template": "UnitB", "triggeredBy": ["Upgrade_One", "Upgrade_Two", "Upgrade_Three"],
+         "levelsToGain": 7, "levelCap": 3},
+    ]
+
+
+@pytest.mark.parametrize("body, match", [
+    ("", "missing"),
+    ("ChildObject UnitA Parent\nEnd\n", "direct Object"),
+    ("Object UnitA Parent\nEnd\n", "direct Object"),
+    ("Object UnitA\nEnd\n", "exactly one"),
+    ("Object UnitA\n Behavior = LevelUpUpgrade Tag\n  TriggeredBy = U\n  LevelsToGain = 1\n  LevelCap = 2\n End\n Behavior = LevelUpUpgrade Tag2\n  TriggeredBy = V\n  LevelsToGain = 1\n  LevelCap = 2\n End\nEnd\n", "exactly one"),
+    ("Object UnitA\n Behavior = LevelUpUpgrade Tag\n  TriggeredBy = U u\n  LevelsToGain = 1\n  LevelCap = 2\n End\nEnd\n", "duplicate TriggeredBy"),
+    ("Object UnitA\n Behavior = LevelUpUpgrade Tag\n  TriggeredBy = NULL\n  LevelsToGain = 1\n  LevelCap = 2\n End\nEnd\n", "TriggeredBy"),
+    ("Object UnitA\n Behavior = LevelUpUpgrade Tag\n  TriggeredBy = U ; NONE\n  LevelsToGain = +1 // rejected sign\n  LevelCap = 2\n End\nEnd\n", "positive digit"),
+    ("Object UnitA\n RemoveModule Tag\n Behavior = LevelUpUpgrade Tag\n  TriggeredBy = U\n  LevelsToGain = 1\n  LevelCap = 2\n End\nEnd\n", "modifies"),
+    ("Object UnitA\n AddModule Tag\n Behavior = LevelUpUpgrade Tag\n  TriggeredBy = U\n  LevelsToGain = 1\n  LevelCap = 2\n End\nEnd\n", "modifies"),
+    ("Object UnitA\n OverrideableByLikeKind Tag\n Behavior = LevelUpUpgrade Tag\n  TriggeredBy = U\n  LevelsToGain = 1\n  LevelCap = 2\n End\nEnd\n", "modifies"),
+    ("Object UnitA\n Behavior = LevelUpUpgrade Tag\n  TriggeredBy = U\n  LevelsToGain = 1\n  LevelCap = 2\n  Nested\n   Value = 1\n  End\n End\nEnd\n", "nested"),
+])
+def test_c2_level_up_fail_closed(tmp_path: Path, body: str, match: str):
+    reader = _level_up_reader(tmp_path, {"unit.ini": body})
+    with pytest.raises(LivingWorldUiError, match=match):
+        _read_level_up_upgrades(reader, _active("UnitA"))
+
+
+def test_c2_level_up_numeric_and_trigger_boundaries(tmp_path: Path):
+    cases = [
+        ("missing-gain", "TriggeredBy = U\n  LevelCap = 2", "exactly one"),
+        ("missing-cap", "TriggeredBy = U\n  LevelsToGain = 1", "exactly one"),
+        ("zero", "TriggeredBy = U\n  LevelsToGain = 0\n  LevelCap = 2", "positive"),
+        ("negative", "TriggeredBy = U\n  LevelsToGain = -1\n  LevelCap = 2", "positive digit"),
+        ("non-digit", "TriggeredBy = U\n  LevelsToGain = many\n  LevelCap = 2", "positive digit"),
+        ("over-safe", "TriggeredBy = U\n  LevelsToGain = 1\n  LevelCap = 9007199254740992", "exact positive integer range"),
+        ("empty-trigger", "TriggeredBy = \n  LevelsToGain = 1\n  LevelCap = 2", "no TriggeredBy"),
+    ]
+    for name, fields, match in cases:
+        reader = _level_up_reader(tmp_path / name, {"unit.ini": (
+            "Object UnitA\n Behavior = LevelUpUpgrade Tag\n  "
+            + fields + "\n End\nEnd\n")})
+        with pytest.raises(LivingWorldUiError, match=match):
+            _read_level_up_upgrades(reader, _active("UnitA"))
+
+
+def test_c3_level_up_duplicate_objects_casefold_and_bounds(tmp_path: Path, monkeypatch):
+    duplicate = _level_up_reader(tmp_path / "duplicate", {
+        "a.ini": "Object UnitA\nEnd\n", "b.ini": "Object unita\nEnd\n"})
+    with pytest.raises(LivingWorldUiError, match="duplicated"):
+        _read_level_up_upgrades(duplicate, _active("UnitA"))
+    with pytest.raises(LivingWorldUiError, match="duplicate active"):
+        _read_level_up_upgrades(_level_up_reader(tmp_path / "active", {}), _active("UnitA", "unita"))
+    monkeypatch.setattr(ui_module, "MAX_LEVEL_UP_ROWS", 0)
+    with pytest.raises(LivingWorldUiError, match="row cap"):
+        _read_level_up_upgrades(_level_up_reader(tmp_path / "row-cap", {}), _active("UnitA"))
+    monkeypatch.setattr(ui_module, "MAX_LEVEL_UP_ROWS", 4096)
+    monkeypatch.setattr(ui_module, "MAX_LEVEL_UP_OBJECT_INIS", 0)
+    with pytest.raises(LivingWorldUiError, match="catalog cap"):
+        _read_level_up_upgrades(_level_up_reader(tmp_path / "cap", {"a.ini": "Object X\nEnd\n"}), [])
+
+
+def test_c4_level_up_experience_cross_invariant():
+    upgrades = [{"template": "UnitA", "triggeredBy": ["U"], "levelsToGain": 9, "levelCap": 4}]
+    valid = [
+        {"targetNames": ["UnitA"], "rank": 2},
+        {"targetNames": ["UnitA"], "rank": 3},
+        {"targetNames": ["UnitA"], "rank": 4},
+    ]
+    _validate_level_up_experience_coverage(upgrades, valid)
+    with pytest.raises(LivingWorldUiError, match="rank 3"):
+        _validate_level_up_experience_coverage(upgrades, [valid[0], valid[2]])
