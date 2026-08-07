@@ -1653,6 +1653,76 @@ func demolish_structure(player: int, region_id: String, plot: int) -> Dictionary
 
 
 # =============================================================================
+# WORLD COMMAND POINTS
+# =============================================================================
+
+## Pure derived accessor for retail's active standing-structure WORLD CP effect.
+## `players[player].world_cp` is StartingWorldCP, each owned standing concrete
+## structure contributes its validated typed nuggets once, and the result is
+## capped at that template's MaxWorldCP. No state, cache, event, or hash changes.
+##
+## Structure ownership follows this project's accepted region-transfer projection.
+## Retail's strategic ownership/destructor callback still needs a direct trace;
+## capture is therefore not claimed independently parity-proven here.
+func world_command_point_report(player: int) -> Dictionary:
+	var rows: Array[Dictionary] = []
+	if world == null or player < 0 or player >= players.size():
+		return {"ok": false, "base": 0, "bonus": 0, "limit": 0, "max": 0,
+			"rows": rows, "refusal": "world command points name an unknown player %d" % player}
+	var player_row := players[player] as Dictionary
+	var base := int(player_row.get("world_cp", 0))
+	var template_name := String(player_row.get("template", ""))
+	var template: Dictionary = world.player_templates.get(template_name, {}) as Dictionary
+	if not template.has("max_world_cp") or typeof(template["max_world_cp"]) != TYPE_INT:
+		return {"ok": false, "base": base, "bonus": 0, "limit": base, "max": 0,
+			"rows": rows, "refusal": "player template %s has no integer MaxWorldCP" % template_name}
+	var maximum := int(template["max_world_cp"])
+	if maximum < 0:
+		return {"ok": false, "base": base, "bonus": 0, "limit": base, "max": maximum,
+			"rows": rows, "refusal": "player template %s has unsupported MaxWorldCP %d" % [template_name, maximum]}
+	var bonus := 0
+	for region_id_value in world.region_ids:
+		var region_id := String(region_id_value)
+		for structure_value in structures_in_region(region_id):
+			var structure := structure_value as Dictionary
+			if int(structure.get("owner", NEUTRAL)) != player:
+				continue
+			var building_id := String(structure.get("building", ""))
+			var concrete := (not String(structure.get("type", "")).is_empty()
+				or String(structure.get("token", "")).is_empty())
+			if building_catalogue == null:
+				if concrete:
+					return {"ok": false, "base": base, "bonus": 0, "limit": base,
+						"max": maximum, "rows": rows, "refusal":
+						"standing concrete structure %s in %s requires the missing building catalogue" % [building_id, region_id]}
+				continue
+			var contribution: Dictionary = building_catalogue.world_command_points_for_building(building_id)
+			if not bool(contribution.get("ok", false)):
+				return {"ok": false, "base": base, "bonus": 0, "limit": base,
+					"max": maximum, "rows": rows, "refusal": String(contribution.get("refusal", "standing structure cannot be interpreted"))}
+			var amount := int(contribution.get("bonus", 0))
+			if amount < 0 or bonus > 9223372036854775807 - amount:
+				return {"ok": false, "base": base, "bonus": 0, "limit": base,
+					"max": maximum, "rows": rows, "refusal": "standing WORLD command-point contributions overflow a signed 64-bit total"}
+			bonus += amount
+			for nugget_value in contribution.get("rows", []) as Array:
+				var nugget := nugget_value as Dictionary
+				rows.append({"region": region_id, "plot": int(structure.get("plot", -1)),
+					"building": building_id, "nugget": int(nugget.get("index", -1)),
+					"scope": String(nugget.get("scope", "")), "amount": int(nugget.get("amount", 0))})
+	var limit := maximum
+	if base < 0:
+		# Preserve a negative authored base (no invented lower clamp) while avoiding
+		# signed overflow before applying the upper MaxWorldCP cap.
+		if bonus <= 9223372036854775807 + base:
+			limit = mini(base + bonus, maximum)
+	elif base < maximum and bonus <= maximum - base:
+		limit = base + bonus
+	return {"ok": true, "base": base, "bonus": bonus, "limit": limit,
+		"max": maximum, "rows": rows, "refusal": ""}
+
+
+# =============================================================================
 # THE TREASURY
 # =============================================================================
 
@@ -1668,8 +1738,8 @@ func demolish_structure(player: int, region_id: String, plot: int) -> Dictionary
 ##   `APT:NewWOTRFeature4Desc` (`data/lotr.str` 53418) - "ACCUMULATE TREASURY
 ##   FROM FARMS AND FORTRESSES to recruit units and construct buildings on the
 ##   strategic map." Its title, `APT:NewWOTRFeature4`, is "Strategic Treasury".
-## And per building, in `data/ini/livingworldbuildings.ini`, as a nugget the
-## converter drops: `BuildingNugget IncreaseTreasury / TreasureAmount =
+## And per building, in `data/ini/livingworldbuildings.ini`, as a typed nugget
+## the converter carries: `BuildingNugget IncreaseTreasury / TreasureAmount =
 ## GAIN_PER_FORTRESS` on all seven fortresses (line 53 and six siblings) and
 ## `= GAIN_PER_FARM` on all seven farms (line 322 and six siblings).
 ##

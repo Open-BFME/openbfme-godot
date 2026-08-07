@@ -47,8 +47,8 @@ const GapsScript = preload("res://src/wotr/wotr_strategic_gaps.gd")
 ## without propagating, so every check after the error site never runs and an
 ## inert runner prints zero failures and exits 0. Pinning the count turns that
 ## silent abort into a loud failure. Raise deliberately; never lower.
-const CHECKS_WITHOUT_DATA := 101
-const CHECKS_WITH_DATA := 124
+const CHECKS_WITHOUT_DATA := 114
+const CHECKS_WITH_DATA := 138
 
 ## Where the authored fixture bundles are written. `user://` because that is a
 ## real search root `wotr_buildings.bundle_roots()` already ends with, so the
@@ -69,6 +69,7 @@ func _run() -> void:
 	_test_the_catalogue_loads_from_an_authored_bundle()
 	_test_nothing_builds_without_a_catalogue()
 	_test_a_build_spends_treasure_and_stands_a_structure()
+	_test_world_command_points_are_a_pure_standing_structure_effect()
 	_test_every_refusal_names_its_rule()
 	_test_income_accrues_at_the_start_of_a_turn()
 	_test_the_hash_covers_construction()
@@ -174,7 +175,7 @@ func _ui_bundle() -> Dictionary:
 	all_kinds["nuggets"].append({"kind": "strengthen_army", "tag": "FixtureStrength", "strengtheningRange": "HarnessRangeTypo", "bonusKey": "HarnessBonus", "bonuses": [{"threshold": 1, "weaponPct": null, "weaponRaw": null, "armorPct": 12.5, "armorRaw": "armor:12.5%", "experiencePct": null, "experienceRaw": null}]})
 	all_kinds["nuggets"].append({"kind": "spawn_army", "tag": "FixtureSpawn", "queueSize": 0, "armies": [{"playerArmy": "FixtureArmy", "heroTemplateName": "", "icon": "FixtureIcon", "iconSize": "Small", "buildTime": "1", "palantirMovie": "", "constructButtonImage": "FixtureImage", "constructButtonTitle": "FixtureTitle", "constructButtonHelp": "FixtureHelp"}]})
 	all_kinds["nuggets"].append({"kind": "upgrade_troops", "tag": "FixtureUpgrade", "numUpgradesPerTurn": 1, "upgradeableUnits": ["FixtureOne", "FixtureOne"]})
-	all_kinds["nuggets"].append({"kind": "increase_command_points", "tag": "FixtureCommand", "type": "WORLD", "amount": -7})
+	all_kinds["nuggets"].append({"kind": "increase_command_points", "tag": "FixtureCommand", "type": "WORLD", "amount": 30})
 	return {
 		"schema": "openbfme.living-world-ui",
 		"schemaVersion": 2,
@@ -523,8 +524,11 @@ func _test_nothing_builds_without_a_catalogue() -> void:
 	var state := _state()
 	state.building_catalogue = null
 	var refusal := state.build_refusal(0, "Ashfall", "FXB_AlphaCroft")
+	var concrete_cp: Dictionary = state.world_command_point_report(0)
 	_check("with_no_catalogue_every_build_is_refused",
-		not state.can_build(0, "Ashfall", "FXB_AlphaCroft"))
+		not state.can_build(0, "Ashfall", "FXB_AlphaCroft")
+			and not bool(concrete_cp["ok"])
+			and String(concrete_cp["refusal"]).contains("missing building catalogue"))
 	_check("the_refusal_names_the_missing_data_and_how_to_bind_it",
 		refusal.contains("catalogue") and refusal.contains("load_building_catalogue"), refusal)
 	var attempted: Dictionary = state.build_structure(0, "Ashfall", "FXB_AlphaCroft")
@@ -540,10 +544,12 @@ func _test_nothing_builds_without_a_catalogue() -> void:
 	scenario_only.setup(world, [
 		{"template": "PlayerAlpha", "team": 1}, {"template": "PlayerBeta", "team": 2}])
 	scenario_only.apply_ownership_sets("TestScenario")
+	var unresolved_cp: Dictionary = scenario_only.world_command_point_report(0)
 	_check("an_unresolved_token_stands_verbatim_and_earns_nothing",
 		Array(scenario_only.buildings_in_region("Ashfall")) == ["LW_FARM"]
 			and String((scenario_only.structures_in_region("Ashfall")[0] as Dictionary)["type"]) == ""
-			and int(scenario_only.turn_income(0).get("total", 0)) == 0)
+			and int(scenario_only.turn_income(0).get("total", 0)) == 0
+			and bool(unresolved_cp["ok"]) and int(unresolved_cp["limit"]) == 1500)
 
 
 func _test_a_build_spends_treasure_and_stands_a_structure() -> void:
@@ -630,6 +636,97 @@ func _test_a_build_spends_treasure_and_stands_a_structure() -> void:
 	state.transfer_region("Bramblewold", 1)
 	_check("a_conquered_regions_structures_change_owner_with_it",
 		int((state.structures_in_region("Bramblewold")[0] as Dictionary)["owner"]) == 1)
+
+
+func _test_world_command_points_are_a_pure_standing_structure_effect() -> void:
+	var state := _state()
+	var catalogue = state.building_catalogue
+	var opening: Dictionary = state.world_command_point_report(0)
+	_check("world_command_points_begin_at_the_hashed_starting_value",
+		bool(opening["ok"]) and int(opening["base"]) == 1500
+			and int(opening["bonus"]) == 0 and int(opening["limit"]) == 1500, str(opening))
+
+	# The catalogue seam preserves and safely sums duplicate authored nuggets.
+	var keep: Dictionary = catalogue.building("FXB_AlphaKeep")
+	var original_nuggets: Array = (keep["nuggets"] as Array).duplicate(true)
+	(keep["nuggets"] as Array).append(original_nuggets.back().duplicate(true))
+	var duplicate: Dictionary = catalogue.world_command_points_for_building("FXB_AlphaKeep")
+	_check("duplicate_WORLD_nuggets_remain_rows_and_sum_safely",
+		bool(duplicate["ok"]) and int(duplicate["bonus"]) == 60
+			and (duplicate["rows"] as Array).size() == 2, str(duplicate))
+	keep["nuggets"] = original_nuggets.duplicate(true)
+
+	# TurnsToBuild=1 stands immediately in this model; there is no invented queue.
+	var built: Dictionary = state.build_structure(0, "Bramblewold", "FXB_AlphaKeep")
+	var after_build: Dictionary = state.world_command_point_report(0)
+	_check("a_completed_build_contributes_WORLD_command_points_exactly_once",
+		bool(built["ok"]) and int(after_build["bonus"]) == 30
+			and int(after_build["limit"]) == 1530 and (after_build["rows"] as Array).size() == 1,
+		str(after_build))
+	var hash_after_build := state.state_hash()
+	var repeated: Dictionary = state.world_command_point_report(0)
+	_check("repeated_command_point_reports_neither_compound_nor_mutate_the_hash",
+		int(repeated["limit"]) == 1530 and state.state_hash() == hash_after_build,
+		str(repeated))
+
+	state.place_authored_structure(0, "Ashfall", "LW_FORT")
+	var stacked: Dictionary = state.world_command_point_report(0)
+	_check("a_second_standing_structure_stacks_its_own_contribution",
+		bool(stacked["ok"]) and int(stacked["bonus"]) == 60 and int(stacked["limit"]) == 1560,
+		str(stacked))
+	state.demolish_structure(0, "Ashfall", 1)
+	var after_demolition: Dictionary = state.world_command_point_report(0)
+	_check("demolition_reverses_one_standing_contribution",
+		bool(after_demolition["ok"]) and int(after_demolition["bonus"]) == 30
+			and int(after_demolition["limit"]) == 1530, str(after_demolition))
+
+	var alpha_template := state.world.player_templates["PlayerAlpha"] as Dictionary
+	var authored_max := int(alpha_template["max_world_cp"])
+	alpha_template["max_world_cp"] = 1510
+	var capped: Dictionary = state.world_command_point_report(0)
+	_check("WORLD_command_points_clamp_at_the_exact_template_maximum",
+		bool(capped["ok"]) and int(capped["max"]) == 1510 and int(capped["limit"]) == 1510,
+		str(capped))
+	alpha_template["max_world_cp"] = authored_max
+
+	var command := (keep["nuggets"] as Array).back() as Dictionary
+	command["type"] = "HERO"
+	var wrong_scope: Dictionary = state.world_command_point_report(0)
+	_check("a_non_WORLD_scope_fails_closed_with_a_deterministic_refusal",
+		not bool(wrong_scope["ok"]) and String(wrong_scope["refusal"]).contains("only WORLD"),
+		String(wrong_scope["refusal"]))
+	command["type"] = "WORLD"
+	command["amount"] = "30"
+	var malformed: Dictionary = state.world_command_point_report(0)
+	command["amount"] = -7.0
+	var negative: Dictionary = state.world_command_point_report(0)
+	_check("malformed_and_non_retail_negative_amounts_fail_closed",
+		not bool(malformed["ok"]) and String(malformed["refusal"]).contains("malformed amount")
+			and not bool(negative["ok"]) and String(negative["refusal"]).contains("negative amount"),
+		"malformed=%s negative=%s" % [String(malformed["refusal"]), String(negative["refusal"])])
+	command["amount"] = 30.0
+	keep["nuggets_status"] = "refused"
+	var refused: Dictionary = state.world_command_point_report(0)
+	_check("a_refused_typed_nugget_surfaces_instead_of_becoming_zero",
+		not bool(refused["ok"]) and String(refused["refusal"]).contains("refused typed"),
+		String(refused["refusal"]))
+	keep["nuggets_status"] = "ok"
+
+	var saved := state.snapshot()
+	var before_projection := state.state_hash()
+	state.transfer_region("Bramblewold", 1)
+	var former_owner: Dictionary = state.world_command_point_report(0)
+	var new_owner: Dictionary = state.world_command_point_report(1)
+	_check("the_project_model_ownership_projection_moves_the_derived_bonus",
+		int(former_owner["bonus"]) == 0 and int(new_owner["bonus"]) == 30,
+		"former=%s new=%s" % [str(former_owner), str(new_owner)])
+	_check("the_diagnostic_names_the_ownership_callback_as_a_project_model_boundary",
+		GapsScript.reason("strategic_building_nuggets").contains("ownership")
+			and GapsScript.reason("strategic_building_nuggets").contains("directly traced"))
+	state.restore(saved)
+	state.world_command_point_report(0)
+	_check("snapshot_restore_and_pure_reporting_leave_the_authoritative_hash_unchanged",
+		state.state_hash() == before_projection)
 
 
 func _test_every_refusal_names_its_rule() -> void:
@@ -933,12 +1030,13 @@ func _test_the_register_names_what_this_layer_authored() -> void:
 	_check("the_two_false_gaps_this_lane_closed_are_gone",
 		GapsScript.reason("strategic_building_construction").is_empty()
 			and GapsScript.reason("strategic_treasury_income").is_empty())
-	# WHAT THE CONVERTER STILL DROPS IS NAMED, so a reader learns why an Armory
-	# costs 500 and grants nothing rather than assuming it is a bug.
+	# The register distinguishes the two applied typed effects from the three that
+	# remain deliberately unapplied.
 	var nuggets := GapsScript.reason("strategic_building_nuggets")
-	_check("the_dropped_building_nuggets_are_named_with_what_each_one_carried",
-		nuggets.contains("IncreaseCommandPoints") and nuggets.contains("UpgradeTroops")
-			and nuggets.contains("StrengthenArmy") and nuggets.contains("IncreaseTreasury"),
+	_check("the_building_nugget_register_names_applied_and_remaining_boundaries",
+		nuggets.contains("IncreaseCommandPoints") and nuggets.contains("IncreaseTreasury")
+			and nuggets.contains("StrengthenArmy") and nuggets.contains("UpgradeTroops")
+			and nuggets.contains("SpawnArmy") and nuggets.contains("Type=WORLD"),
 		nuggets)
 	# NO RNG AND NO CLOCK on the construction path, asserted by READING the file,
 	# the same way the auto-resolve and AI runners assert it of theirs.
@@ -985,6 +1083,26 @@ func _test_against_retail_data() -> bool:
 		str(catalogue.resolved_macros))
 	_check("nothing_retail_ships_is_left_unpriced_or_untyped",
 		catalogue.unresolved_macros.is_empty(), str(catalogue.unresolved_macros))
+	var world_cp_sources: Array[String] = []
+	var world_cp_rows := 0
+	var world_cp_exact := true
+	for building_id_value in catalogue.building_ids:
+		var building_id := String(building_id_value)
+		var cp: Dictionary = catalogue.world_command_points_for_building(building_id)
+		if not bool(cp.get("ok", false)):
+			world_cp_exact = false
+			continue
+		for row_value in cp.get("rows", []) as Array:
+			var row := row_value as Dictionary
+			world_cp_rows += 1
+			world_cp_sources.append(building_id)
+			world_cp_exact = (world_cp_exact
+				and String(row.get("scope", "")) == "WORLD"
+				and int(row.get("amount", -1)) == 30
+				and String(catalogue.building(building_id).get("type", "")) == "Resource")
+	_check("retail_authors_exactly_seven_Resource_WORLD_plus_30_carriers",
+		world_cp_exact and world_cp_rows == 7 and world_cp_sources.size() == 7,
+		"rows=%d sources=%s" % [world_cp_rows, str(world_cp_sources)])
 
 	# EVERY PLAYABLE FACTION HAS ONE OF EACH TYPE, which is what makes the `LW_*`
 	# by-type resolution total rather than lucky.

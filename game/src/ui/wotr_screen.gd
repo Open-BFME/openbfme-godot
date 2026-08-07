@@ -5030,9 +5030,9 @@ func _refresh_turn_banner(state: StateScript, seat: int, seat_row: Dictionary) -
 ## STARTING purse, because no treasury is simulated and a bare "3000" beside a
 ## turn counter would read as a live balance that goes up and down.
 ##
-## The command-point pair is retail's own economy too: `MaxWorldCP = 4500` from
-## the template, against the command points this seat actually has standing on
-## the board, summed from the armies in the authoritative state.
+## The command-point pair is retail's own economy too: StartingWorldCP plus each
+## owned standing `IncreaseCommandPoints Type=WORLD` grant, capped by MaxWorldCP,
+## against the command points this seat actually has standing on the board.
 ##
 ## THERE IS A PHASE BAR NOW, AND THIS PARAGRAPH IS RESTATED RATHER THAN DELETED.
 ##
@@ -5056,9 +5056,8 @@ func _refresh_header(state: StateScript, seat: int, seat_row: Dictionary) -> voi
 		_header_facts = []
 		header_label.queue_redraw()
 		return
-	var template: Dictionary = session.world.player_templates.get(
-		String(seat_row.get("template", "")), {}) as Dictionary
-	var max_cp := int(template.get("max_world_cp", -1))
+	var cp_report: Dictionary = state.world_command_point_report(seat)
+	var live_cp_limit := str(int(cp_report.get("limit", 0))) if bool(cp_report.get("ok", false)) else "?"
 	var on_board := 0
 	for army_id in state.armies.keys():
 		var army := state.armies[army_id] as Dictionary
@@ -5091,10 +5090,12 @@ func _refresh_header(state: StateScript, seat: int, seat_row: Dictionary) -> voi
 			# way: the palantir plaque simultaneously showed the same numerator
 			# against the REGION's command-point limit ("6/720" against "6/4500"),
 			# and a blind review read the pair as one quantity contradicting itself.
-			# It is the WORLD total against retail's `MaxWorldCP`; the plaque's is
-			# one region against retail's `CommandPointLimit`. Both now say which.
+			# It is the WORLD total against the live StartingWorldCP + standing
+			# WORLD-building bonus, capped at retail's `MaxWorldCP`; the plaque's is
+			# one region against retail's `CommandPointLimit`. A refused typed nugget
+			# shows `?` rather than silently reverting to the static template maximum.
 			"label": "World Command",
-			"value": "%d/%s" % [on_board, str(max_cp) if max_cp >= 0 else "?"],
+			"value": "%d/%s" % [on_board, live_cp_limit],
 		},
 	]
 	header_label.queue_redraw()

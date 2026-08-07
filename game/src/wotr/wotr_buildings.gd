@@ -57,9 +57,10 @@ extends RefCounted
 ##
 ## Schema 2 carries all five BuildingNugget kinds without flattening them.
 ## IncreaseTreasury is resolved through the converted TreasureAmount macro and
-## applied as per-turn income. StrengthenArmy, IncreaseCommandPoints,
-## UpgradeTroops, and SpawnArmy QueueSize remain typed runtime data but their
-## effects are deliberately not applied; `wotr_strategic_gaps.gd` says so.
+## applied as per-turn income. IncreaseCommandPoints is applied for its exact
+## `Type = WORLD` scope: all seven Resource carriers author +30, and retail's
+## tooltip names it the "CP Bonus" gained when constructed. StrengthenArmy,
+## UpgradeTroops, and SpawnArmy QueueSize remain typed runtime data unapplied.
 ## Every projected record deep-copies `nuggets` and `nuggets_status`.
 ##
 ## ============================================================================
@@ -507,6 +508,66 @@ func resolve_scenario_token(token: String, player_template: String) -> Dictionar
 ## not an omission here).
 func income_for_type(type_name: String) -> int:
 	return int(income_by_type.get(type_name, 0))
+
+
+## The standing WORLD command-point contribution authored on one concrete
+## building. This is a reporting seam, not state: calls neither cache nor mutate.
+## Nuggets are walked in source order, duplicates remain separate rows, and their
+## amounts are summed only after each typed row has passed the same closed checks.
+func world_command_points_for_building(id: String) -> Dictionary:
+	var rows: Array[Dictionary] = []
+	if not loaded:
+		return {"ok": false, "building": id, "bonus": 0, "rows": rows,
+			"refusal": reason if not reason.is_empty() else "building catalogue is not loaded"}
+	if not buildings.has(id):
+		return {"ok": false, "building": id, "bonus": 0, "rows": rows,
+			"refusal": "standing structure %s is absent from the building catalogue" % id}
+	var record := buildings[id] as Dictionary
+	if String(record.get("nuggets_status", "")) != "ok":
+		return {"ok": false, "building": id, "bonus": 0, "rows": rows,
+			"refusal": "standing structure %s has refused typed BuildingNuggets (status=%s)" % [
+				id, String(record.get("nuggets_status", "missing"))]}
+	var bonus := 0
+	var nuggets_value: Variant = record.get("nuggets", null)
+	if typeof(nuggets_value) != TYPE_ARRAY:
+		return {"ok": false, "building": id, "bonus": 0, "rows": rows,
+			"refusal": "standing structure %s carries malformed typed BuildingNuggets" % id}
+	var nugget_index := 0
+	for nugget_value in nuggets_value as Array:
+		if typeof(nugget_value) != TYPE_DICTIONARY:
+			return {"ok": false, "building": id, "bonus": 0, "rows": rows,
+				"refusal": "standing structure %s nugget %d is not a dictionary" % [id, nugget_index]}
+		var nugget := nugget_value as Dictionary
+		if String(nugget.get("kind", "")) != "increase_command_points":
+			nugget_index += 1
+			continue
+		if typeof(nugget.get("type", null)) != TYPE_STRING:
+			return {"ok": false, "building": id, "bonus": 0, "rows": rows,
+				"refusal": "standing structure %s IncreaseCommandPoints nugget %d has malformed type" % [id, nugget_index]}
+		var scope := String(nugget["type"])
+		if scope != "WORLD":
+			return {"ok": false, "building": id, "bonus": 0, "rows": rows,
+				"refusal": "standing structure %s IncreaseCommandPoints nugget %d has unsupported scope '%s'; only WORLD is implemented" % [id, nugget_index, scope]}
+		var amount_value: Variant = nugget.get("amount", null)
+		# Match the converted bundle's JSON integer contract exactly: JSON numbers
+		# arrive as floats and are accepted only while finite, integral, and exactly
+		# representable by IEEE-754 (2^53-1). Never broaden this to coercion.
+		if (not (amount_value is float) or not is_finite(amount_value)
+				or amount_value != floor(amount_value)
+				or absf(amount_value) > 9007199254740991.0):
+			return {"ok": false, "building": id, "bonus": 0, "rows": rows,
+				"refusal": "standing structure %s IncreaseCommandPoints nugget %d has malformed amount" % [id, nugget_index]}
+		var amount := int(amount_value)
+		if amount < 0:
+			return {"ok": false, "building": id, "bonus": 0, "rows": rows,
+				"refusal": "standing structure %s IncreaseCommandPoints nugget %d has unsupported negative amount %d" % [id, nugget_index, amount]}
+		if bonus > 9223372036854775807 - amount:
+			return {"ok": false, "building": id, "bonus": 0, "rows": rows,
+				"refusal": "standing structure %s IncreaseCommandPoints nuggets overflow a signed 64-bit total" % id}
+		bonus += amount
+		rows.append({"index": nugget_index, "scope": scope, "amount": amount})
+		nugget_index += 1
+	return {"ok": true, "building": id, "bonus": bonus, "rows": rows, "refusal": ""}
 
 
 ## One line per fact worth printing at load, in the shape every other bundle

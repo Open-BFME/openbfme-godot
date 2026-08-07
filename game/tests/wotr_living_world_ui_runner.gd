@@ -284,25 +284,31 @@ func _check_the_screen_can_raise_a_structure() -> void:
 		"turn %d -> %d, seat %d -> %d" % [turn_before, session.state.turn_index,
 			seat_before, session.state.active_player()])
 
-	# 5. THE PLATE. It reads the LIVE treasury, which after a purchase is no longer
-	#    the template's `ScenarioStartResources` - the number it used to be frozen
-	#    at. Both halves are asserted: the plate matches the session AND, when the
-	#    price was not zero, it has moved off the template's figure.
+	# 5. THE PLATES. Treasury reads the live purse rather than frozen
+	#    ScenarioStartResources, and World Command reads the pure live report limit
+	#    rather than the static MaxWorldCP template ceiling.
 	screen.refresh()
 	var plate := ""
+	var world_command_plate := ""
 	for fact_value in screen._header_facts:
 		var fact := fact_value as Dictionary
-		if String(fact.get("label", "")).to_lower().contains("treasur") \
+		if String(fact.get("label", "")) == "World Command":
+			world_command_plate = String(fact.get("value", ""))
+		elif String(fact.get("label", "")).to_lower().contains("treasur") \
 				and not String(fact.get("label", "")).to_lower().contains("income"):
 			plate = String(fact.get("value", ""))
 	var template_purse := int((session.world.player_templates.get(
 		String((session.state.players[seat] as Dictionary).get("template", "")), {})
 		as Dictionary).get("scenario_start_resources", -1))
+	var cp_report: Dictionary = session.state.world_command_point_report(seat)
+	var displayed_limit := world_command_plate.get_slice("/", 1)
 	_check(String(names[4]),
 		plate == str(session.treasure())
-			and (price == 0 or plate != str(template_purse)),
-		"plate reads %s, session says %d, the template says %d (price %d)" % [
-			plate, session.treasure(), template_purse, price])
+			and (price == 0 or plate != str(template_purse))
+			and bool(cp_report.get("ok", false))
+			and displayed_limit == str(int(cp_report.get("limit", -1))),
+		"treasury plate %s/session %d/template %d (price %d); World Command %s/report %s" % [
+			plate, session.treasure(), template_purse, price, world_command_plate, str(cp_report)])
 
 	# 6. A REFUSAL MOVES NOTHING AND IS SHOWN. The same foundation, a second time:
 	#    it is occupied now, so every offering on it is refused.
@@ -393,12 +399,13 @@ func _check_the_screen_can_raise_a_structure() -> void:
 	#    revive the old dropped-data story or paraphrase the register's boundary.
 	var grants_diagnosis := String(screen.diagnostics_text())
 	var grants_faults: Array[String] = []
-	for phrase_value in ["drops every BuildingNugget", "unrecorded", "reconstructible"]:
+	for phrase_value in ["drops every BuildingNugget", "unrecorded", "reconstructible",
+			"four effects remain unapplied"]:
 		if grants_diagnosis.contains(String(phrase_value)):
 			grants_faults.append("stale phrase remains: %s" % String(phrase_value))
 	for token_value in ["IncreaseCommandPoints", "StrengthenArmy", "UpgradeTroops",
 			"SpawnArmy", "IncreaseTreasury", "all five BuildingNugget kinds",
-			"remain unapplied"]:
+			"Type=WORLD", "MaxWorldCP", "auxiliary", "remain unapplied"]:
 		if not grants_diagnosis.contains(String(token_value)):
 			grants_faults.append("missing typed-truth token: %s" % String(token_value))
 	var grants_reason := GapsScript.reason("strategic_building_nuggets")

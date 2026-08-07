@@ -68,14 +68,18 @@ const OPEN_GAPS := {
 	# weights on it - and the last mile that retail genuinely did not write down
 	# is in `PROJECT_AUTHORED_RULES` below rather than left to look like parity.
 
-	# Typed conversion is complete for all five BuildingNugget kinds. Treasury is
-	# resolved and applied from IncreaseTreasury itself; the other four effects
-	# are carried faithfully but deliberately not simulated yet.
+	# Typed conversion is complete for all five BuildingNugget kinds. Treasury and
+	# the evidenced WORLD command-point effect are applied; three remain carried.
 	"strategic_building_nuggets":
-		"typed conversion now carries all five BuildingNugget kinds and treasury "
-		+ "income is resolved/applied directly from IncreaseTreasury; four effects "
-		+ "remain unapplied: IncreaseCommandPoints grants, StrengthenArmy bonus "
-		+ "tables, UpgradeTroops grants, and SpawnArmy QueueSize enforcement",
+		"typed conversion carries all five BuildingNugget kinds; IncreaseTreasury "
+		+ "income and IncreaseCommandPoints with exact Type=WORLD boundaries are "
+		+ "applied once per owned standing structure, summed with duplicates, and "
+		+ "capped at MaxWorldCP (malformed, negative, overflow, or non-WORLD rows "
+		+ "fail closed). StrengthenArmy bonus tables, UpgradeTroops grants, and "
+		+ "SpawnArmy QueueSize enforcement remain unapplied. Ownership follows the "
+		+ "project's region-transfer projection; retail's strategic ownership "
+		+ "callback remains to be directly traced. Retail's auxiliary world-CP "
+		+ "modifier term remains unmodeled by this packet",
 
 
 	# The document's army rosters (`LivingWorldPlayerArmy`) carry entries and
