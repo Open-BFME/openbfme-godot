@@ -68,18 +68,21 @@ const OPEN_GAPS := {
 	# weights on it - and the last mile that retail genuinely did not write down
 	# is in `PROJECT_AUTHORED_RULES` below rather than left to look like parity.
 
-	# Typed conversion is complete for all five BuildingNugget kinds. Treasury and
-	# the evidenced WORLD command-point effect are applied; three remain carried.
+	# Typed conversion is complete for all five BuildingNugget kinds. Three are
+	# applied at their evidenced boundaries; two remain carried gaps.
 	"strategic_building_nuggets":
 		"typed conversion carries all five BuildingNugget kinds; IncreaseTreasury "
-		+ "income and IncreaseCommandPoints with exact Type=WORLD boundaries are "
-		+ "applied once per owned standing structure, summed with duplicates, and "
-		+ "capped at MaxWorldCP (malformed, negative, overflow, or non-WORLD rows "
-		+ "fail closed). StrengthenArmy bonus tables, UpgradeTroops grants, and "
-		+ "SpawnArmy QueueSize enforcement remain unapplied. Ownership follows the "
-		+ "project's region-transfer projection; retail's strategic ownership "
-		+ "callback remains to be directly traced. Retail's auxiliary world-CP "
-		+ "modifier term remains unmodeled by this packet",
+		+ "income, IncreaseCommandPoints with exact Type=WORLD boundaries (summed and "
+		+ "capped at MaxWorldCP), and StrengthenArmy with exact THIS_TERRIORITY "
+		+ "BonusKey tiers are applied from owned standing structures. "
+		+ "IncreaseCommandPoints ownership transfer follows the project's current-owner "
+		+ "region-transfer projection; retail's strategic CP ownership callback remains "
+		+ "directly untraced. In contrast, StrengthenArmy same-current-owner filtering "
+		+ "is executable-traced. StrengthenArmy affects auto-resolve armour only: it "
+		+ "makes no RTS/tactical claim and models no partial construction state. "
+		+ "Malformed or unsupported typed rows fail closed. UpgradeTroops grants and "
+		+ "SpawnArmy QueueSize enforcement remain unapplied. Retail's auxiliary "
+		+ "world-CP modifier term remains unmodeled by this packet",
 
 
 	# The document's army rosters (`LivingWorldPlayerArmy`) carry entries and

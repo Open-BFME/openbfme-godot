@@ -59,8 +59,9 @@ extends RefCounted
 ## IncreaseTreasury is resolved through the converted TreasureAmount macro and
 ## applied as per-turn income. IncreaseCommandPoints is applied for its exact
 ## `Type = WORLD` scope: all seven Resource carriers author +30, and retail's
-## tooltip names it the "CP Bonus" gained when constructed. StrengthenArmy,
-## UpgradeTroops, and SpawnArmy QueueSize remain typed runtime data unapplied.
+## tooltip names it the "CP Bonus" gained when constructed. StrengthenArmy is
+## applied to auto-resolve for its exact THIS_TERRIORITY scope; UpgradeTroops and
+## SpawnArmy QueueSize remain typed runtime data unapplied.
 ## Every projected record deep-copies `nuggets` and `nuggets_status`.
 ##
 ## ============================================================================
@@ -568,6 +569,81 @@ func world_command_points_for_building(id: String) -> Dictionary:
 		rows.append({"index": nugget_index, "scope": scope, "amount": amount})
 		nugget_index += 1
 	return {"ok": true, "building": id, "bonus": bonus, "rows": rows, "refusal": ""}
+
+
+## Validated StrengthenArmy rows for one standing building. This is a pure
+## reporting primitive: it preserves nugget/table source order and never caches a
+## derived effect. Only the executable THIS_TERRIORITY armour form is admitted.
+func strengthen_army_for_building(id: String) -> Dictionary:
+	var rows: Array[Dictionary] = []
+	if not loaded:
+		return {"ok": false, "building": id, "rows": rows, "refusal":
+			reason if not reason.is_empty() else "building catalogue is not loaded"}
+	if not buildings.has(id):
+		return {"ok": false, "building": id, "rows": rows, "refusal":
+			"standing structure %s is absent from the building catalogue" % id}
+	var record := buildings[id] as Dictionary
+	if String(record.get("nuggets_status", "")) != "ok":
+		return {"ok": false, "building": id, "rows": rows, "refusal":
+			"standing structure %s has refused typed BuildingNuggets (status=%s)" % [
+				id, String(record.get("nuggets_status", "missing"))]}
+	var nuggets_value: Variant = record.get("nuggets", null)
+	if typeof(nuggets_value) != TYPE_ARRAY:
+		return {"ok": false, "building": id, "rows": rows, "refusal":
+			"standing structure %s carries malformed typed BuildingNuggets" % id}
+	var nugget_index := 0
+	for nugget_value in nuggets_value as Array:
+		if typeof(nugget_value) != TYPE_DICTIONARY:
+			return {"ok": false, "building": id, "rows": rows, "refusal":
+				"standing structure %s nugget %d is not a dictionary" % [id, nugget_index]}
+		var nugget := nugget_value as Dictionary
+		var kind_value: Variant = nugget.get("kind", null)
+		if typeof(kind_value) != TYPE_STRING or not ["increase_treasury",
+				"increase_command_points", "strengthen_army", "upgrade_troops",
+				"spawn_army"].has(String(kind_value)):
+			return {"ok": false, "building": id, "rows": rows, "refusal":
+				"standing structure %s nugget %d has an unknown typed kind" % [id, nugget_index]}
+		if String(kind_value) != "strengthen_army":
+			nugget_index += 1
+			continue
+		if typeof(nugget.get("strengtheningRange", null)) != TYPE_STRING or String(nugget["strengtheningRange"]) != "THIS_TERRIORITY":
+			return {"ok": false, "building": id, "rows": rows, "refusal":
+				"standing structure %s StrengthenArmy nugget %d has unsupported strengtheningRange; only THIS_TERRIORITY is implemented" % [id, nugget_index]}
+		if typeof(nugget.get("bonusKey", null)) != TYPE_STRING or String(nugget["bonusKey"]).strip_edges().is_empty():
+			return {"ok": false, "building": id, "rows": rows, "refusal":
+				"standing structure %s StrengthenArmy nugget %d has malformed bonusKey" % [id, nugget_index]}
+		var bonuses_value: Variant = nugget.get("bonuses", null)
+		if typeof(bonuses_value) != TYPE_ARRAY or (bonuses_value as Array).is_empty():
+			return {"ok": false, "building": id, "rows": rows, "refusal":
+				"standing structure %s StrengthenArmy nugget %d has no bonus rows" % [id, nugget_index]}
+		var bonuses: Array[Dictionary] = []
+		var previous := 0
+		var bonus_index := 0
+		for bonus_value in bonuses_value as Array:
+			if typeof(bonus_value) != TYPE_DICTIONARY:
+				return {"ok": false, "building": id, "rows": rows, "refusal": "standing structure %s StrengthenArmy nugget %d bonus %d is not a dictionary" % [id, nugget_index, bonus_index]}
+			var bonus := bonus_value as Dictionary
+			var threshold_value: Variant = bonus.get("threshold", null)
+			if (not (threshold_value is float) or not is_finite(threshold_value)
+					or threshold_value != floor(threshold_value)
+					or threshold_value <= 0.0 or threshold_value > 9007199254740991.0):
+				return {"ok": false, "building": id, "rows": rows, "refusal": "standing structure %s StrengthenArmy nugget %d bonus %d has malformed threshold" % [id, nugget_index, bonus_index]}
+			var threshold := int(threshold_value)
+			if threshold <= previous:
+				return {"ok": false, "building": id, "rows": rows, "refusal": "standing structure %s StrengthenArmy nugget %d thresholds are not strictly increasing" % [id, nugget_index]}
+			for refused_field in ["weaponPct", "experiencePct"]:
+				if not bonus.has(refused_field) or bonus[refused_field] != null:
+					return {"ok": false, "building": id, "rows": rows, "refusal": "standing structure %s StrengthenArmy nugget %d bonus %d carries unsupported %s" % [id, nugget_index, bonus_index, refused_field]}
+			var armor_value: Variant = bonus.get("armorPct", null)
+			if not (armor_value is float) or not is_finite(armor_value) or armor_value < 0.0:
+				return {"ok": false, "building": id, "rows": rows, "refusal": "standing structure %s StrengthenArmy nugget %d bonus %d has malformed armorPct" % [id, nugget_index, bonus_index]}
+			bonuses.append({"threshold": threshold, "armorPct": float(armor_value)})
+			previous = threshold
+			bonus_index += 1
+		rows.append({"index": nugget_index, "bonusKey": String(nugget["bonusKey"]),
+			"strengtheningRange": "THIS_TERRIORITY", "bonuses": bonuses})
+		nugget_index += 1
+	return {"ok": true, "building": id, "rows": rows, "refusal": ""}
 
 
 ## One line per fact worth printing at load, in the shape every other bundle

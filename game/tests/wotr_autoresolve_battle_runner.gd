@@ -48,20 +48,20 @@ const FORBIDDEN_IN_RESOLVER := [
 ]
 
 ## LIVENESS ARITHMETIC.
-##   30 checks need no converted data at all: 6 on the rules table, 8 on the
-##      roller, 6 on the Risk contest, 2 on the source scan, 5 on the refusals,
-##      3 on the unmodelled-behaviour register.
-##   32 more need retail's auto-resolve tables AND the unit bindings AND a
+##   32 checks need no converted data at all: 6 on the rules table, 2 on the
+##      StrengthenArmy factor seam, 8 on the roller, 6 on the Risk contest, 2 on
+##      the source scan, 5 on the refusals, 3 on the unmodelled register.
+##   33 more need retail's auto-resolve tables AND the unit bindings AND a
 ##      living-world document: 5 on the corrected census, 4 on the roster-to-unit
-##      conversion, 13 on a whole battle and its working, 7 on the two-peer
+##      conversion, 14 on a whole battle and its working, 7 on the two-peer
 ##      determinism proof, 3 proving retail's own data justifies the named gaps.
-##      30 + 32 = 62.
+##      32 + 33 = 65.
 ##
-## THREE OF THOSE THIRTEEN EXIST BECAUSE A MUTATION SURVIVED, and each says so
+## THREE OF THOSE FOURTEEN EXIST BECAUSE A MUTATION SURVIVED, and each says so
 ## where it stands: a factor deleted from the order, and a survivor that had
 ## forgotten which army it belonged to, both left every earlier check green.
-const CHECKS_WITHOUT_DATA := 30
-const CHECKS_WITH_DATA := 62
+const CHECKS_WITHOUT_DATA := 32
+const CHECKS_WITH_DATA := 65
 
 var _passed := 0
 var _failed := 0
@@ -71,6 +71,7 @@ func _initialize() -> void:
 	print("== WAR OF THE RING AUTO-RESOLVE: THE WIRED HALF ==")
 
 	_check_the_rules_table_is_the_only_place_a_coefficient_lives()
+	_check_strengthen_army_factor_contract()
 	_check_the_roller_is_reproducible_and_unbiased()
 	_check_the_risk_contest_matches_its_own_stated_arithmetic()
 	_check_nothing_on_this_path_can_read_a_clock()
@@ -171,6 +172,18 @@ func _check_the_rules_table_is_the_only_place_a_coefficient_lives() -> void:
 			every_line_attributed = false
 	_check("the_table_explains_itself_line_by_line_for_the_battle_screen",
 		every_line_attributed, "%d lines" % explained.size())
+
+
+func _check_strengthen_army_factor_contract() -> void:
+	var order: Array = Rules.array_value("factor_order")
+	_check("StrengthenArmy_armour_is_ordered_immediately_after_base_armour",
+		order.find("strengthenArmor") == order.find("armor") + 1)
+	var supplied: Dictionary = Battle._modifier_for("strengthenArmor", {
+		"targetStrengthening": {"value": 0.729,
+			"source": "livingworldbuildings.ini StrengthenArmy Bonus (THIS_TERRIORITY)"}})
+	_check("StrengthenArmy_factor_uses_the_target_report_and_retail_provenance",
+		is_equal_approx(float(supplied.get("value", 0.0)), 0.729)
+			and String(supplied.get("source", "")).contains("livingworldbuildings.ini StrengthenArmy Bonus"))
 
 
 # --- the roller ----------------------------------------------------------------
@@ -497,7 +510,7 @@ func _check_a_whole_battle_resolves_and_shows_its_working(
 			"%d vs %d" % [attacker_units.size(), defender_units.size()])
 		# Every remaining check in this function still has to run, or the
 		# liveness arithmetic would silently shrink.
-		for _skipped in range(12):
+		for _skipped in range(13):
 			_check("battle_check_skipped_because_no_force_could_be_built", false)
 		return
 
@@ -505,7 +518,8 @@ func _check_a_whole_battle_resolves_and_shows_its_working(
 	var attacker := {"armies": [attacker_units], "handicap": 0, "side": "PlayerMen",
 		"resource": 0.0, "sciencePoints": 0.0}
 	var defender := {"armies": [defender_units], "handicap": 0, "side": "PlayerMordor",
-		"resource": 0.0, "sciencePoints": 0.0}
+		"resource": 0.0, "sciencePoints": 0.0,
+		"strengthening": {"ok": true, "armor_multiplier": 0.9, "groups": [], "refusal": ""}}
 	var outcome: Dictionary = Battle.resolve(rules_in, attacker, defender, seed_hex)
 	_check("a_whole_battle_resolves", bool(outcome["ok"]),
 		", ".join(Array(outcome.get("refusals", PackedStringArray()))))
@@ -514,11 +528,41 @@ func _check_a_whole_battle_resolves_and_shows_its_working(
 			and not String(outcome["reason"]).is_empty(),
 		"%s / %s" % [String(outcome["winner"]), String(outcome["reason"])])
 
+
+	# Exercise the public strike arithmetic, not merely the modifier-name map.
+	var strengthened_strike: Dictionary = Battle.strike(rules_in,
+		attacker_units[0] as Dictionary, defender_units[0] as Dictionary,
+		{"targetStrengthening": {"value": 0.9,
+			"source": "livingworldbuildings.ini StrengthenArmy Bonus (THIS_TERRIORITY)"}},
+		seed_hex, "strengthen-factor-proof")
+	var factor_rows: Array = strengthened_strike["factors"]
+	var armor_index := -1
+	var strengthen_index := -1
+	var exact_damage := 0
+	var saw_retail_strengthening := false
+	for factor_index in factor_rows.size():
+		var factor := factor_rows[factor_index] as Dictionary
+		if factor_index == 0:
+			exact_damage = int(factor["milli"])
+		else:
+			exact_damage = exact_damage * int(factor["milli"]) / 1000
+		if String(factor["name"]) == "armor":
+			armor_index = factor_index
+		if String(factor["name"]) == "strengthenArmor":
+			strengthen_index = factor_index
+			saw_retail_strengthening = int(factor["milli"]) == 900 \
+				and String(factor["owner"]) == "retail" \
+				and String(factor["source"]) == "livingworldbuildings.ini StrengthenArmy Bonus (THIS_TERRIORITY)"
+	_check("StrengthenArmy_is_emitted_after_armour_and_changes_the_exact_integer_strike_path",
+		saw_retail_strengthening and strengthen_index == armor_index + 1
+			and exact_damage == int(strengthened_strike["damageMilli"]))
+
 	# RUN IT AGAIN, FROM SCRATCH. Same seed, freshly built inputs.
 	var repeat_attacker := {"armies": [_force(rules_in, objects, names, 0, 6, 1)],
 		"handicap": 0, "side": "PlayerMen", "resource": 0.0, "sciencePoints": 0.0}
 	var repeat_defender := {"armies": [_force(rules_in, objects, names, 1, 6, 2)],
-		"handicap": 0, "side": "PlayerMordor", "resource": 0.0, "sciencePoints": 0.0}
+		"handicap": 0, "side": "PlayerMordor", "resource": 0.0, "sciencePoints": 0.0,
+		"strengthening": {"ok": true, "armor_multiplier": 0.9, "groups": [], "refusal": ""}}
 	var repeated: Dictionary = Battle.resolve(rules_in, repeat_attacker, repeat_defender, seed_hex)
 	_check("the_same_seed_over_the_same_armies_produces_a_byte_identical_result",
 		StateScript.canonical_digest(_comparable(outcome))

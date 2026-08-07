@@ -17,7 +17,8 @@ extends RefCounted
 ## retail's own numbers: retail's damage-per-round against that kind of target,
 ## multiplied by that target's armour row against this kind of attacker,
 ## multiplied by anything retail says applies - a leadership bonus, a handicap
-## rung, a resource bonus, and the "hurt units hit softer" rule. Then the DICE
+## rung, a resource bonus, the target territory's standing-building
+## StrengthenArmy armour bonus, and the "hurt units hit softer" rule. Then the DICE
 ## decide how much of that actually lands. The striking unit rolls three dice,
 ## the unit being struck rolls two. Both sort highest first, the top two are
 ## paired off, and the striker has to BEAT the defender on a pair - a tie goes
@@ -31,7 +32,8 @@ extends RefCounted
 ## RETAIL'S PART: the damage tables, the armour tables, the hitpoints per level,
 ## the combat chain's target priorities, the leadership bonuses, the handicap
 ## ladder, the reinforcement schedule, the regeneration rule, the "hurt units
-## hit softer" rule, and the end-of-battle condition.
+## hit softer" rule, the THIS_TERRIORITY StrengthenArmy armour tiers, and the
+## end-of-battle condition.
 ##
 ## THIS PROJECT'S PART: the dice, the order the multipliers are applied in, the
 ## fact that both sides strike at once, the reading of `LevelBonus` (which is to
@@ -140,9 +142,11 @@ const UNMODELLED_RETAIL_BEHAVIOUR := {
 		"Living-world regions author attack/defense/experience/resource bonuses "
 		+ "and territories add more, but retail's nine auto-resolve documents "
 		+ "state NO mechanism by which any of them reaches auto-resolve "
-		+ "arithmetic - the only battle multipliers retail authors are armor, "
-		+ "weapon, level, leadership, handicap, resource-treasury and science "
-		+ "tiers. The region bonuses now RIDE the tactical rules overlay "
+		+ "arithmetic - within those nine documents the battle multipliers are "
+		+ "armor, weapon, level, leadership, handicap, resource-treasury and "
+		+ "science tiers. That statement excludes livingworldbuildings.ini's now-"
+		+ "applied THIS_TERRIORITY StrengthenArmy bonus. The region bonuses now RIDE "
+		+ "the tactical rules overlay "
 		+ "(wotr_battle.gd `region_bonuses`); no auto-resolve multiplier is "
 		+ "invented for them until retail's own mechanism is identified."),
 }
@@ -475,6 +479,8 @@ static func _modifier_for(key: String, modifiers: Dictionary) -> Dictionary:
 			"livingworldautoresolvesciencepurchasepointbonus.ini WeaponMultiplier"],
 		"scienceArmor": ["defenderScience", "armorMultiplier",
 			"livingworldautoresolvesciencepurchasepointbonus.ini ArmorMultiplier"],
+		"strengthenArmor": ["targetStrengthening", "value",
+			"livingworldbuildings.ini StrengthenArmy Bonus (THIS_TERRIORITY)"],
 	}
 	if not MAP.has(key):
 		return {}
@@ -638,6 +644,13 @@ static func _refused(reason: String) -> Dictionary:
 static func _prepare(
 	rules_in: Dictionary, side: Dictionary, schedule: String, max_units: int
 ) -> Dictionary:
+	var strengthening: Dictionary = side.get("strengthening", {})
+	if not strengthening.is_empty() and not bool(strengthening.get("ok", false)):
+		return {"ok": false, "reason": "%s StrengthenArmy report is refused: %s" % [
+			schedule, String(strengthening.get("refusal", "unknown refusal"))]}
+	var strengthen_multiplier := float(strengthening.get("armor_multiplier", 1.0))
+	if not is_finite(strengthen_multiplier) or strengthen_multiplier < 0.0:
+		return {"ok": false, "reason": "%s StrengthenArmy armor multiplier is malformed" % schedule}
 	var armies: Array = side.get("armies", [])
 	if armies.is_empty() and side.has("units"):
 		armies = [side.get("units", [])]
@@ -677,6 +690,8 @@ static func _prepare(
 			String(side.get("side", "")), float(side.get("resource", 0.0))),
 		"science": AutoResolve.threshold_bonus(rules_in, "sciencePurchasePointBonus",
 			String(side.get("side", "")), float(side.get("sciencePoints", 0.0))),
+		"strengthening": {"value": strengthen_multiplier,
+			"source": "livingworldbuildings.ini StrengthenArmy Bonus (THIS_TERRIORITY)"},
 		"schedule": schedule,
 	}
 
@@ -762,6 +777,9 @@ static func _plan(
 			"attackerScience": attacking["science"],
 			"defenderScience": defending["science"],
 		}
+		var strengthening := defending.get("strengthening", {}) as Dictionary
+		if float(strengthening.get("value", 1.0)) != 1.0:
+			modifiers["targetStrengthening"] = strengthening
 		if attacker_leadership.has(key):
 			modifiers["attackerLeadership"] = attacker_leadership[key]
 		if defender_leadership.has(target_index):

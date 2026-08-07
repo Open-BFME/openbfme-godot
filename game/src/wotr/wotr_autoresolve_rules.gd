@@ -213,7 +213,7 @@ const RULES: Array[Dictionary] = [
 		"id": "factor_order",
 		"value": [
 			"damagePerRound", "levelBonus", "reduceAttackWhenHurt", "armor",
-			"leadershipWeapon", "leadershipArmor", "handicapWeapon", "handicapArmor",
+			"strengthenArmor", "leadershipWeapon", "leadershipArmor", "handicapWeapon", "handicapArmor",
 			"resourceWeapon", "resourceArmor", "scienceWeapon", "scienceArmor",
 			"dice",
 		],

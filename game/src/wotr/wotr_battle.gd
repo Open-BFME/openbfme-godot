@@ -574,9 +574,15 @@ static func auto_resolve_sides(state: StateScript) -> Dictionary:
 		# unit, because that is a missing binding wearing a walkover's costume.
 		if armies.is_empty() and not ids.is_empty():
 			refusals.append("the %s has armies but none of them can field a unit" % role)
+		var strengthening: Dictionary = state.strengthen_army_report(
+			seat, String(commitment.get("region", "")))
+		if not bool(strengthening.get("ok", false)):
+			refusals.append("%s StrengthenArmy refused: %s" % [role,
+				String(strengthening.get("refusal", "unknown StrengthenArmy refusal"))])
 		sides[role] = {
 			"armies": armies,
 			"handicap": int(commitment.get("%s_handicap" % role, 0)),
+			"strengthening": strengthening,
 			# The living-world player template name is what retail's resource and
 			# science bonus tables are keyed by. Both tables ship with every
 			# non-1.0 tier commented out in RotWK, so these look up to 1.0 today -

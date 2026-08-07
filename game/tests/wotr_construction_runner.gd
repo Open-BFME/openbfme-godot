@@ -47,8 +47,8 @@ const GapsScript = preload("res://src/wotr/wotr_strategic_gaps.gd")
 ## without propagating, so every check after the error site never runs and an
 ## inert runner prints zero failures and exits 0. Pinning the count turns that
 ## silent abort into a loud failure. Raise deliberately; never lower.
-const CHECKS_WITHOUT_DATA := 114
-const CHECKS_WITH_DATA := 138
+const CHECKS_WITHOUT_DATA := 118
+const CHECKS_WITH_DATA := 142
 
 ## Where the authored fixture bundles are written. `user://` because that is a
 ## real search root `wotr_buildings.bundle_roots()` already ends with, so the
@@ -70,6 +70,7 @@ func _run() -> void:
 	_test_nothing_builds_without_a_catalogue()
 	_test_a_build_spends_treasure_and_stands_a_structure()
 	_test_world_command_points_are_a_pure_standing_structure_effect()
+	_test_strengthen_army_is_a_pure_dynamic_standing_structure_effect()
 	_test_every_refusal_names_its_rule()
 	_test_income_accrues_at_the_start_of_a_turn()
 	_test_the_hash_covers_construction()
@@ -172,7 +173,14 @@ func _ui_bundle() -> Dictionary:
 		elif String(building.get("type", "")) == "Resource":
 			building["nuggets"].append({"kind": "increase_treasury", "tag": "FixtureTreasury", "treasureAmount": "GAIN_PER_FARM"})
 	var all_kinds := buildings[0] as Dictionary
-	all_kinds["nuggets"].append({"kind": "strengthen_army", "tag": "FixtureStrength", "strengtheningRange": "HarnessRangeTypo", "bonusKey": "HarnessBonus", "bonuses": [{"threshold": 1, "weaponPct": null, "weaponRaw": null, "armorPct": 12.5, "armorRaw": "armor:12.5%", "experiencePct": null, "experienceRaw": null}]})
+	all_kinds["nuggets"].append({"kind": "strengthen_army", "tag": "FixtureStrength", "strengtheningRange": "THIS_TERRIORITY", "bonusKey": "HarnessBonus", "bonuses": [
+		{"threshold": 1, "weaponPct": null, "weaponRaw": null, "armorPct": 90.0, "armorRaw": "Armor:90%", "experiencePct": null, "experienceRaw": null},
+		{"threshold": 2, "weaponPct": null, "weaponRaw": null, "armorPct": 81.0, "armorRaw": "Armor:81%", "experiencePct": null, "experienceRaw": null},
+		{"threshold": 3, "weaponPct": null, "weaponRaw": null, "armorPct": 72.9, "armorRaw": "Armor:72.9%", "experiencePct": null, "experienceRaw": null},
+		{"threshold": 4, "weaponPct": null, "weaponRaw": null, "armorPct": 65.61, "armorRaw": "Armor:65.61%", "experiencePct": null, "experienceRaw": null},
+		{"threshold": 5, "weaponPct": null, "weaponRaw": null, "armorPct": 59.049, "armorRaw": "Armor:59.049%", "experiencePct": null, "experienceRaw": null},
+		{"threshold": 6, "weaponPct": null, "weaponRaw": null, "armorPct": 53.1441, "armorRaw": "Armor:53.1441%", "experiencePct": null, "experienceRaw": null},
+		{"threshold": 7, "weaponPct": null, "weaponRaw": null, "armorPct": 47.82969, "armorRaw": "Armor:47.82969%", "experiencePct": null, "experienceRaw": null}]})
 	all_kinds["nuggets"].append({"kind": "spawn_army", "tag": "FixtureSpawn", "queueSize": 0, "armies": [{"playerArmy": "FixtureArmy", "heroTemplateName": "", "icon": "FixtureIcon", "iconSize": "Small", "buildTime": "1", "palantirMovie": "", "constructButtonImage": "FixtureImage", "constructButtonTitle": "FixtureTitle", "constructButtonHelp": "FixtureHelp"}]})
 	all_kinds["nuggets"].append({"kind": "upgrade_troops", "tag": "FixtureUpgrade", "numUpgradesPerTurn": 1, "upgradeableUnits": ["FixtureOne", "FixtureOne"]})
 	all_kinds["nuggets"].append({"kind": "increase_command_points", "tag": "FixtureCommand", "type": "WORLD", "amount": 30})
@@ -720,13 +728,121 @@ func _test_world_command_points_are_a_pure_standing_structure_effect() -> void:
 	_check("the_project_model_ownership_projection_moves_the_derived_bonus",
 		int(former_owner["bonus"]) == 0 and int(new_owner["bonus"]) == 30,
 		"former=%s new=%s" % [str(former_owner), str(new_owner)])
-	_check("the_diagnostic_names_the_ownership_callback_as_a_project_model_boundary",
-		GapsScript.reason("strategic_building_nuggets").contains("ownership")
-			and GapsScript.reason("strategic_building_nuggets").contains("directly traced"))
+	var nugget_boundary := GapsScript.reason("strategic_building_nuggets")
+	_check("the_diagnostic_distinguishes_CP_projection_from_executable_traced_strengthening",
+		nugget_boundary.contains("project's current-owner")
+			and nugget_boundary.contains("CP ownership callback remains directly untraced")
+			and nugget_boundary.contains("StrengthenArmy same-current-owner filtering")
+			and nugget_boundary.contains("executable-traced")
+			and nugget_boundary.contains("auto-resolve armour only")
+			and nugget_boundary.contains("no RTS/tactical claim"))
 	state.restore(saved)
 	state.world_command_point_report(0)
 	_check("snapshot_restore_and_pure_reporting_leave_the_authoritative_hash_unchanged",
 		state.state_hash() == before_projection)
+
+
+func _test_strengthen_army_is_a_pure_dynamic_standing_structure_effect() -> void:
+	var state := _state()
+	var expected := [0.9, 0.81, 0.729, 0.6561, 0.59049, 0.531441, 0.4782969, 0.4782969]
+	var ladder_ok := true
+	var pure := true
+	for count in range(1, 9):
+		var standing: Array = []
+		for plot in count:
+			standing.append({"building": "FXB_AlphaKeep", "owner": 0, "plot": plot,
+				"token": "", "turn": 0, "type": "Fortress"})
+		state.region_structures["Bramblewold"] = standing
+		var before := state.state_hash()
+		var report: Dictionary = state.strengthen_army_report(0, "Bramblewold")
+		ladder_ok = ladder_ok and bool(report["ok"]) \
+			and is_equal_approx(float(report["armor_multiplier"]), float(expected[count - 1]))
+		pure = pure and state.state_hash() == before \
+			and state.strengthen_army_report(0, "Bramblewold") == report
+	_check("StrengthenArmy_chooses_each_tier_and_caps_above_seven_without_mutation",
+		ladder_ok and pure)
+
+	# A foreign structure does not count. Capture changes the authoritative owner
+	# fields, and demolition removes the row; the report must follow both live verbs.
+	(state.region_structures["Bramblewold"] as Array).append({
+		"building": "FXB_AlphaKeep", "owner": 1, "plot": 8,
+		"token": "", "turn": 0, "type": "Fortress"})
+	var filtered: Dictionary = state.strengthen_army_report(0, "Bramblewold")
+	state.transfer_region("Bramblewold", 1)
+	var former: Dictionary = state.strengthen_army_report(0, "Bramblewold")
+	var captured: Dictionary = state.strengthen_army_report(1, "Bramblewold")
+	var demolition_state := _state()
+	demolition_state.region_structures["Ashfall"] = [{
+		"building": "FXB_AlphaKeep", "owner": 0, "plot": 0,
+		"token": "", "turn": 0, "type": "Fortress"}]
+	var before_demolition: Dictionary = demolition_state.strengthen_army_report(0, "Ashfall")
+	var demolished: Dictionary = demolition_state.demolish_structure(0, "Ashfall", 0)
+	var after_demolition: Dictionary = demolition_state.strengthen_army_report(0, "Ashfall")
+	_check("StrengthenArmy_filters_owner_and_recomputes_after_capture_and_demolition",
+		is_equal_approx(float(filtered["armor_multiplier"]), 0.4782969)
+			and is_equal_approx(float(former["armor_multiplier"]), 1.0)
+			and is_equal_approx(float(captured["armor_multiplier"]), 0.4782969)
+			and bool(demolished.get("ok", false))
+			and is_equal_approx(float(before_demolition["armor_multiplier"]), 0.9)
+			and is_equal_approx(float(after_demolition["armor_multiplier"]), 1.0))
+
+	state = _state()
+	var hall := state.building_catalogue.building("FXB_AlphaHall") as Dictionary
+	var other := {"kind": "strengthen_army", "strengtheningRange": "THIS_TERRIORITY",
+		"bonusKey": "OtherKey", "bonuses": [{"threshold": 1.0,
+			"weaponPct": null, "armorPct": 50.0, "experiencePct": null}]}
+	(hall["nuggets"] as Array).append(other)
+	state.region_structures["Bramblewold"] = [
+		{"building": "FXB_AlphaKeep", "owner": 0, "plot": 0,
+			"token": "", "turn": 0, "type": "Fortress"},
+		{"building": "FXB_AlphaHall", "owner": 0, "plot": 1,
+			"token": "", "turn": 0, "type": "Barracks"}]
+	var distinct: Dictionary = state.strengthen_army_report(0, "Bramblewold")
+	other["bonusKey"] = "HarnessBonus"
+	var mismatch: Dictionary = state.strengthen_army_report(0, "Bramblewold")
+	_check("StrengthenArmy_multiplies_distinct_keys_and_refuses_mismatched_shared_tables",
+		is_equal_approx(float(distinct["armor_multiplier"]), 0.45)
+			and (distinct["groups"] as Array).size() == 2
+			and not bool(mismatch["ok"])
+			and String(mismatch["refusal"]).contains("mismatched bonus tables"))
+
+	state = _state()
+	var keep := state.building_catalogue.building("FXB_AlphaKeep") as Dictionary
+	var strength := (keep["nuggets"] as Array)[1] as Dictionary
+	var original := strength.duplicate(true)
+	state.region_structures["Bramblewold"] = [{
+		"building": "FXB_AlphaKeep", "owner": 0, "plot": 0,
+		"token": "", "turn": 0, "type": "Fortress"}]
+	strength["strengtheningRange"] = "WORLD"
+	var bad_range: Dictionary = state.strengthen_army_report(0, "Bramblewold")
+	strength.clear()
+	strength.merge(original, true)
+	strength["bonuses"] = [{"threshold": 1.5, "weaponPct": null,
+		"armorPct": 90.0, "experiencePct": null}]
+	var bad_threshold: Dictionary = state.strengthen_army_report(0, "Bramblewold")
+	strength["bonuses"] = [
+		{"threshold": 1.0, "weaponPct": null, "armorPct": 90.0, "experiencePct": null},
+		{"threshold": 1.0, "weaponPct": null, "armorPct": 81.0, "experiencePct": null}]
+	var duplicate_threshold: Dictionary = state.strengthen_army_report(0, "Bramblewold")
+	strength["bonuses"] = [{"threshold": 1.0, "weaponPct": 5.0,
+		"armorPct": 90.0, "experiencePct": null}]
+	var bad_weapon: Dictionary = state.strengthen_army_report(0, "Bramblewold")
+	strength["bonuses"] = [{"threshold": 1.0, "weaponPct": null,
+		"armorPct": 90.0, "experiencePct": 5.0}]
+	var bad_experience: Dictionary = state.strengthen_army_report(0, "Bramblewold")
+	strength.clear()
+	strength.merge(original, true)
+	keep["nuggets_status"] = "refused"
+	var refused: Dictionary = state.strengthen_army_report(0, "Bramblewold")
+	keep["nuggets_status"] = "ok"
+	state.building_catalogue = null
+	var missing_catalogue: Dictionary = state.strengthen_army_report(0, "Bramblewold")
+	_check("StrengthenArmy_malformed_and_missing_inputs_fail_closed",
+		not bool(bad_range["ok"]) and not bool(bad_threshold["ok"])
+			and not bool(duplicate_threshold["ok"]) and not bool(bad_weapon["ok"])
+			and not bool(bad_experience["ok"]) and not bool(refused["ok"])
+			and not bool(missing_catalogue["ok"])
+			and String(missing_catalogue["refusal"]).contains("missing building catalogue"))
 
 
 func _test_every_refusal_names_its_rule() -> void:

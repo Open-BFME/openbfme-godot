@@ -17,8 +17,9 @@ extends RefCounted
 ## * There is NO RNG here at all. Combat resolution, if it is ever added, must
 ##   take its randomness from a caller-supplied seeded stream, not from this
 ##   file, or the hash stops being reproducible.
-## * There are NO floats. Command points, turn indices and army sizes are ints;
-##   authored decimals arrived from the importer pre-scaled as `*Milli` ints.
+## * There are NO floats in AUTHORITATIVE STATE. Command points, turn indices
+##   and army sizes are ints; pure derived reports may expose content multipliers
+##   but never serialize or hash them.
 ##
 ## What is intentionally NOT here: any tactical battle, any mission scripting,
 ## any presentation. A strategic->tactical transition is expressed as a request
@@ -1650,6 +1651,86 @@ func demolish_structure(player: int, region_id: String, plot: int) -> Dictionary
 	var empty := "build plot %d in %s carries nothing" % [plot, region_id]
 	_reject(empty)
 	return {"ok": false, "refusal": empty, "region": region_id, "plot": plot, "building": ""}
+
+
+# =============================================================================
+# STRENGTHEN ARMY (AUTO-RESOLVE ONLY)
+# =============================================================================
+
+## Pure derived report for retail's THIS_TERRIORITY StrengthenArmy effect.
+## Standing structures are read afresh on every call; nothing is serialized,
+## cached, or added to the strategic hash.
+func strengthen_army_report(player: int, region_id: String) -> Dictionary:
+	var groups: Array[Dictionary] = []
+	if world == null or not world.has_region(region_id):
+		return {"ok": false, "armor_multiplier": 1.0, "groups": groups,
+			"refusal": "StrengthenArmy names an unknown region '%s'" % region_id}
+	if player < 0 or player >= players.size():
+		return {"ok": false, "armor_multiplier": 1.0, "groups": groups,
+			"refusal": "StrengthenArmy names an unknown player %d" % player}
+	var standing_value: Variant = region_structures.get(region_id, [])
+	if typeof(standing_value) != TYPE_ARRAY:
+		return {"ok": false, "armor_multiplier": 1.0, "groups": groups,
+			"refusal": "standing structures in %s are malformed" % region_id}
+	var by_key: Dictionary = {}
+	var key_order: Array[String] = []
+	for structure_index in (standing_value as Array).size():
+		var structure_value: Variant = (standing_value as Array)[structure_index]
+		if typeof(structure_value) != TYPE_DICTIONARY:
+			return {"ok": false, "armor_multiplier": 1.0, "groups": groups,
+				"refusal": "standing structure %d in %s is not a dictionary" % [structure_index, region_id]}
+		var structure := structure_value as Dictionary
+		var structure_refusal := _structure_record_refusal(structure)
+		if structure_refusal != "":
+			return {"ok": false, "armor_multiplier": 1.0, "groups": groups,
+				"refusal": "standing structure %d in %s: %s" % [
+					structure_index, region_id, structure_refusal]}
+		if int(structure["owner"]) != player:
+			continue
+		if building_catalogue == null:
+			return {"ok": false, "armor_multiplier": 1.0, "groups": groups,
+				"refusal": "owned standing structure %s in %s requires the missing building catalogue" % [String(structure["building"]), region_id]}
+		var contribution: Dictionary = building_catalogue.strengthen_army_for_building(String(structure["building"]))
+		if not bool(contribution.get("ok", false)):
+			return {"ok": false, "armor_multiplier": 1.0, "groups": groups,
+				"refusal": String(contribution.get("refusal", "standing structure cannot be interpreted for StrengthenArmy"))}
+		for row_value in contribution.get("rows", []) as Array:
+			var row := row_value as Dictionary
+			var key := String(row.get("bonusKey", ""))
+			var table: Array = row.get("bonuses", [])
+			if by_key.has(key):
+				var existing := by_key[key] as Dictionary
+				if existing.get("bonuses", []) != table:
+					return {"ok": false, "armor_multiplier": 1.0, "groups": groups,
+						"refusal": "StrengthenArmy BonusKey %s has mismatched bonus tables" % key}
+				existing["count"] = int(existing["count"]) + 1
+				(existing["sources"] as Array).append({"building": String(structure["building"]),
+					"plot": int(structure.get("plot", -1)), "nugget": int(row.get("index", -1))})
+			else:
+				key_order.append(key)
+				by_key[key] = {"bonusKey": key, "count": 1, "bonuses": table.duplicate(true),
+					"sources": [{"building": String(structure["building"]),
+						"plot": int(structure.get("plot", -1)), "nugget": int(row.get("index", -1))}]}
+	var multiplier := 1.0
+	for key in key_order:
+		var group := (by_key[key] as Dictionary).duplicate(true)
+		var selected_threshold := 0
+		var selected_pct := 100.0
+		for bonus_value in group["bonuses"] as Array:
+			var bonus := bonus_value as Dictionary
+			if int(bonus["threshold"]) <= int(group["count"]):
+				selected_threshold = int(bonus["threshold"])
+				selected_pct = float(bonus["armorPct"])
+			else:
+				break
+		group["threshold"] = selected_threshold
+		group["armorPct"] = selected_pct
+		groups.append(group)
+		multiplier *= selected_pct / 100.0
+		if not is_finite(multiplier):
+			return {"ok": false, "armor_multiplier": 1.0, "groups": groups,
+				"refusal": "StrengthenArmy armour multipliers overflow a finite result"}
+	return {"ok": true, "armor_multiplier": multiplier, "groups": groups, "refusal": ""}
 
 
 # =============================================================================
