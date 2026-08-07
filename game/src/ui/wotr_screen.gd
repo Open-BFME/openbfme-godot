@@ -78,6 +78,7 @@ const ChromeScript = preload("res://src/wotr/wotr_chrome.gd")
 const HudScript = preload("res://src/wotr/wotr_hud_chrome.gd")
 const DisplayNamesScript = preload("res://src/wotr/wotr_display_names.gd")
 const StrategicUiScript = preload("res://src/wotr/wotr_strategic_ui.gd")
+const GapsScript = preload("res://src/wotr/wotr_strategic_gaps.gd")
 
 ## ------------------------------------------------------------------------------
 ## RETAIL'S OWN STRATEGIC HUD, COMPOSED FROM RETAIL'S OWN SLOTS
@@ -6379,10 +6380,10 @@ func _conversion_gap_lines() -> Array[String]:
 		# CONSTRUCTION IS NO LONGER AN ABSENCE. The line that stood here said the
 		# build ring changed no state; it spends the treasury and stands a structure
 		# on a numbered foundation now, so the claim is DELETED rather than reworded.
-		# What is still genuinely absent inside this lane is recruitment and what a
-		# structure GRANTS, and both are named below by their register entries.
+		# What is still genuinely absent inside this lane is recruitment and the
+		# application of four typed building grants; the register owns the latter's truth.
 		absent.append("RECRUITMENT from a built barracks - retail's ArmyToSpawn lists are carried on every structure and no army roster in the living-world document carries a purchase cost, so there is no recruit order to draw a control for (register: army_recruitment_and_cp_costs)")
-		absent.append("what a Barracks or an Armory GRANTS - the converter drops every BuildingNugget, so an Armory's UpgradeTroops list, a Fortress's StrengthenArmy armour table and a Farm's one-off IncreaseCommandPoints are unrecorded; only the treasury nugget is reconstructible and it is (register: strategic_building_nuggets)")
+		absent.append("what strategic buildings GRANT - %s (register: strategic_building_nuggets)" % GapsScript.reason("strategic_building_nuggets"))
 	# THE MARKER MODELS, kept current the same way. They ARE converted now - all
 	# 81 of them - so claiming they are not would be its own dishonesty; what is
 	# still not on the map is the 28 structure families, and the reason is a

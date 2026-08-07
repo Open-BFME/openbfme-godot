@@ -33,6 +33,7 @@ const UiScript = preload("res://src/wotr/wotr_living_world_ui.gd")
 const SessionScript = preload("res://src/wotr/wotr_session.gd")
 const ScreenScript = preload("res://src/ui/wotr_screen.gd")
 const RegionGeometryScript = preload("res://src/wotr/wotr_region_geometry.gd")
+const GapsScript = preload("res://src/wotr/wotr_strategic_gaps.gd")
 
 ## Retail's own totals, from `data/ini/livingworldbuildings.ini`. These are
 ## MEASUREMENTS of the shipped file, not targets: 28 `LivingWorldBuilding`
@@ -87,7 +88,7 @@ const RETAIL_ATLAS_GAP := "CPYoungWizardAlpha"
 ## figure, a refusal moves nothing and is shown, both plot counters count what
 ## stands, and the diagnosis has stopped reporting a gap that is closed. See
 ## `_check_the_screen_can_raise_a_structure`.
-const CHECKS_WITH_BUNDLE := 75
+const CHECKS_WITH_BUNDLE := 76
 const CHECKS_WITHOUT_BUNDLE := 8
 
 var _passed := 0
@@ -173,6 +174,7 @@ func _check_the_screen_can_raise_a_structure() -> void:
 		"a_refused_build_moves_nothing_and_the_player_is_told_why",
 		"the_build_plot_count_is_stated_once_and_counts_what_stands",
 		"the_diagnosis_no_longer_reports_construction_as_an_absent_system",
+		"the_grants_diagnosis_projects_the_gaps_register_and_tells_the_typed_truth",
 	]
 	var found: Dictionary = SessionScript.locate_document([])
 	if not bool(found.get("ok", false)):
@@ -385,6 +387,29 @@ func _check_the_screen_can_raise_a_structure() -> void:
 	_check(String(names[7]), stale.is_empty() and carries,
 		"stale claim(s): %s; replacement present: %s" % [
 			"none" if stale.is_empty() else "; ".join(stale), str(carries)])
+
+	# 9. THE GRANTS DIAGNOSIS PROJECTS THE REGISTER, VERBATIM. The converter now
+	#    carries every typed nugget; this screen may frame that fact, but it may not
+	#    revive the old dropped-data story or paraphrase the register's boundary.
+	var grants_diagnosis := String(screen.diagnostics_text())
+	var grants_faults: Array[String] = []
+	for phrase_value in ["drops every BuildingNugget", "unrecorded", "reconstructible"]:
+		if grants_diagnosis.contains(String(phrase_value)):
+			grants_faults.append("stale phrase remains: %s" % String(phrase_value))
+	for token_value in ["IncreaseCommandPoints", "StrengthenArmy", "UpgradeTroops",
+			"SpawnArmy", "IncreaseTreasury", "all five BuildingNugget kinds",
+			"remain unapplied"]:
+		if not grants_diagnosis.contains(String(token_value)):
+			grants_faults.append("missing typed-truth token: %s" % String(token_value))
+	var grants_reason := GapsScript.reason("strategic_building_nuggets")
+	if not grants_diagnosis.contains(grants_reason):
+		grants_faults.append("the strategic_building_nuggets reason is not verbatim")
+	if not grants_diagnosis.contains("(register: strategic_building_nuggets)"):
+		grants_faults.append("the strategic_building_nuggets register tag is absent")
+	_check("the_grants_diagnosis_projects_the_gaps_register_and_tells_the_typed_truth",
+		grants_faults.is_empty(),
+		"typed grants diagnosis is register-exact" if grants_faults.is_empty()
+			else "; ".join(grants_faults))
 	screen.queue_free()
 
 
