@@ -101,7 +101,7 @@ from .mapped_image import (
 )
 
 SCHEMA = "openbfme.living-world-ui"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 MANIFEST_NAME = "living-world-ui.json"
 ATLAS_DIRECTORY = "ui-atlases"
@@ -110,6 +110,8 @@ BUILDINGS_PATH = "data/ini/livingworldbuildings.ini"
 PLAYERS_PATH = "data/ini/livingworldplayers.ini"
 BUILD_PLOT_ICONS_PATH = "data/ini/livingworldbuildploticons.ini"
 BUILDING_ICONS_PATH = "data/ini/livingworldbuildingicons.ini"
+GAMEDATA_PATH = "data/ini/gamedata.ini"
+EXPERIENCE_LEVELS_PATH = "data/ini/experiencelevels.ini"
 
 #: Where retail keeps every ``MappedImage`` document. All 37 are read, because
 #: the living world draws from at least six of them (building radial buttons,
@@ -128,6 +130,10 @@ MAX_NUGGET_BONUSES = 16
 MAX_NUGGET_ARMIES = 16
 MAX_UPGRADEABLE_UNITS = 64
 MAX_NUGGET_STRING = 256
+MAX_EXPERIENCE_LEVELS = 4096
+MAX_EXPERIENCE_DEFINES = 8192
+MAX_EXPERIENCE_TOKENS = 65536
+MAX_MACRO_DEPTH = 64
 # Godot's JSON reader exposes numbers as IEEE-754 floats. Refuse integers whose
 # exact value could not survive the converter/runtime boundary.
 MAX_SAFE_JSON_INTEGER = (1 << 53) - 1
@@ -265,6 +271,213 @@ def _tree_of(reader: CatalogReader, virtual_path: str, gaps: list[Gap]):
         else:
             protected.append(line)
     return read_tree(protected, openers=frozenset())
+
+
+
+
+def _expanded_lines(reader: CatalogReader, virtual_path: str):
+    """Read an edition-winning INI plus includes through the shared bounded reader."""
+
+    def read(path: str) -> bytes:
+        entry = reader.resolve(path)
+        if entry is None:
+            raise LivingWorldUiError(f"{path} is not in the catalog")
+        return reader.read(entry)
+
+    try:
+        document = expand_document(virtual_path, read)
+        gaps: list[Gap] = []
+        lines = flatten_document(
+            document, openers=frozenset(), whitespace_pairs=False, gaps=gaps
+        )
+    except LivingWorldUiError:
+        raise
+    except Exception as exc:
+        raise LivingWorldUiError(f"cannot expand {virtual_path}: {exc}") from exc
+    if gaps:
+        first = gaps[0]
+        raise LivingWorldUiError(
+            f"malformed {first.virtual_path}:{first.line}: {first.reason} {first.detail}"
+        )
+    return lines
+
+
+def _experience_defines(documents: Iterable[Iterable[Any]]) -> dict[str, tuple[str, ...]]:
+    defines: dict[str, tuple[str, ...]] = {}
+    for lines in documents:
+        for line in lines:
+            text = line.text.strip()
+            match = re.fullmatch(r"#define\s+(\S+)\s+(.+)", text, flags=re.IGNORECASE)
+            if match is None:
+                if text.casefold().startswith("#define"):
+                    raise LivingWorldUiError(
+                        f"malformed definition at {line.virtual_path}:{line.line}"
+                    )
+                continue
+            name, raw = match.groups()
+            if name in defines:
+                raise LivingWorldUiError(f"duplicate definition {name}")
+            tokens = tuple(_unquote(raw).split())
+            if not tokens:
+                raise LivingWorldUiError(f"empty definition {name}")
+            defines[name] = tokens
+            if len(defines) > MAX_EXPERIENCE_DEFINES:
+                raise LivingWorldUiError("experience definition cap exceeded")
+    return defines
+
+
+def _expand_experience_tokens(value: str, defines: Mapping[str, tuple[str, ...]]) -> list[str]:
+    output: list[str] = []
+
+    def expand(token: str, stack: tuple[str, ...]) -> None:
+        if token not in defines:
+            output.append(token)
+        else:
+            if token in stack:
+                raise LivingWorldUiError(f"macro cycle at {token}")
+            if len(stack) >= MAX_MACRO_DEPTH:
+                raise LivingWorldUiError(f"macro depth cap at {token}")
+            for replacement in defines[token]:
+                expand(replacement, (*stack, token))
+        if len(output) > MAX_EXPERIENCE_TOKENS:
+            raise LivingWorldUiError("experience macro output cap exceeded")
+
+    for token in _unquote(value).split():
+        expand(token, ())
+    return output
+
+
+def _experience_integer(
+    value: str, defines: Mapping[str, tuple[str, ...]], *, positive: bool
+) -> int:
+    tokens = _expand_experience_tokens(value, defines)
+    if len(tokens) != 1:
+        raise LivingWorldUiError("experience scalar does not resolve to one token")
+    try:
+        return _strict_int(tokens[0], positive=positive)
+    except ValueError as exc:
+        raise LivingWorldUiError(f"unresolved experience scalar {tokens[0]}") from exc
+
+
+def _upgradeable_units(buildings: Iterable[Mapping[str, Any]]) -> set[str]:
+    active: set[str] = set()
+    for building in buildings:
+        if building.get("nuggetsStatus") != "ok":
+            continue
+        for nugget in building.get("nuggets", []):
+            if nugget.get("kind") == "upgrade_troops":
+                active.update(str(unit) for unit in nugget.get("upgradeableUnits", []))
+    return active
+
+
+def _read_upgrade_experience_levels(
+    reader: CatalogReader, buildings: Iterable[Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    """Carry only experience rows that retail's typed UpgradeTroops can use."""
+
+    game_lines = _expanded_lines(reader, GAMEDATA_PATH)
+    experience_lines = _expanded_lines(reader, EXPERIENCE_LEVELS_PATH)
+    defines = _experience_defines((game_lines, experience_lines))
+    # Directives are not blocks. Removing them keeps read_tree's structural
+    # validation focused on the authored ExperienceLevel/End grammar.
+    structural = [
+        line for line in experience_lines
+        if not line.text.strip().casefold().startswith("#define")
+    ]
+    try:
+        tree = read_tree(structural, openers=frozenset())
+    except Exception as exc:
+        raise LivingWorldUiError(f"malformed experience level document: {exc}") from exc
+
+    active = _upgradeable_units(buildings)
+    rows: list[dict[str, Any]] = []
+    names: set[str] = set()
+    token_count = 0
+    for node in tree.roots:
+        if node.kind.casefold() != "experiencelevel":
+            continue
+        name = str(node.name or "")
+        if not name or len(name) > MAX_NUGGET_STRING:
+            raise LivingWorldUiError("experience level has no valid name")
+        # ExperienceLevel rows carry nested visual-only blocks such as
+        # SelectionDecal. `read_tree` has already proved their End structure;
+        # UpgradeTroops reads only the row's direct scalar fields, so retain the
+        # row and deliberately ignore those unrelated children.
+        values: dict[str, str] = {}
+        upgrade_values: list[str] = []
+        canonical = {
+            "targetnames": "TargetNames",
+            "requiredexperience": "RequiredExperience",
+            "experienceaward": "ExperienceAward",
+            "rank": "Rank",
+            "upgrades": "Upgrades",
+        }
+        for key, value in node.fields:
+            field = canonical.get(key.casefold())
+            if field is None:
+                continue
+            if field == "Upgrades":
+                upgrade_values.append(value)
+                continue
+            if field in values:
+                raise LivingWorldUiError(f"duplicate {field} in {name}")
+            values[field] = value
+        if "TargetNames" not in values:
+            continue
+        targets = _expand_experience_tokens(values["TargetNames"], defines)
+        filtered = [target for target in targets if target in active]
+        if not filtered:
+            continue
+        # Retail contains duplicate names on rows outside the active
+        # UpgradeTroops surface. They are not this converter's data. A duplicate
+        # among REACHABLE rows, however, would make this filtered table ambiguous
+        # and therefore fails closed.
+        if name in names:
+            raise LivingWorldUiError(f"duplicate reachable experience level name {name}")
+        names.add(name)
+        required = {"RequiredExperience", "ExperienceAward", "Rank"}
+        missing = required - values.keys()
+        if missing:
+            raise LivingWorldUiError(f"{name} is missing {sorted(missing)[0]}")
+        upgrades: list[str] = []
+        for upgrade_value in upgrade_values:
+            upgrades.extend(_expand_experience_tokens(upgrade_value, defines))
+        row = {
+            "name": name,
+            "targetNames": filtered,
+            "requiredExperience": _experience_integer(
+                values["RequiredExperience"], defines, positive=True
+            ),
+            "experienceAward": _experience_integer(
+                values["ExperienceAward"], defines, positive=False
+            ),
+            "rank": _experience_integer(values["Rank"], defines, positive=True),
+            "upgrades": upgrades,
+        }
+        if any(not token or len(token) > MAX_NUGGET_STRING for token in (*filtered, *upgrades)):
+            raise LivingWorldUiError(f"experience level {name} has an invalid token")
+        rows.append(row)
+        if len(rows) > MAX_EXPERIENCE_LEVELS:
+            raise LivingWorldUiError("experience level cap exceeded")
+        token_count += len(filtered) + len(upgrades)
+        if token_count > MAX_EXPERIENCE_TOKENS:
+            raise LivingWorldUiError("experience token cap exceeded")
+
+    for unit in sorted(active):
+        previous_rank = 0
+        previous_threshold = 0
+        found = False
+        for row in rows:
+            if unit not in row["targetNames"]:
+                continue
+            found = True
+            if row["rank"] <= previous_rank or row["requiredExperience"] <= previous_threshold:
+                raise LivingWorldUiError(f"non-increasing experience progression for {unit}")
+            previous_rank = row["rank"]
+            previous_threshold = row["requiredExperience"]
+        if not found:
+            raise LivingWorldUiError(f"no experience levels cover active unit {unit}")
+    return rows
 
 
 def _fields(
@@ -893,6 +1106,7 @@ def build_bundle(
 
     gaps: list[Gap] = []
     buildings = _read_buildings(reader, gaps)
+    upgrade_experience_levels = _read_upgrade_experience_levels(reader, buildings)
     templates = _read_templates(reader, gaps)
     plot_icons = _read_marker_families(
         reader, BUILD_PLOT_ICONS_PATH, "LivingWorldBuildPlotIcon", gaps
@@ -1006,6 +1220,7 @@ def build_bundle(
         "catalog": pathlib.Path(catalog_path).name,
         "atlasDirectory": ATLAS_DIRECTORY,
         "buildings": buildings,
+        "upgradeExperienceLevels": upgrade_experience_levels,
         "playerTemplates": templates,
         "buildPlotIcons": plot_icons,
         "buildingIcons": building_icons,

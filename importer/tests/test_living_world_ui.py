@@ -6,8 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from openbfme_importer import living_world_ui as ui_module
 from openbfme_importer.living_world_ui import (
-    BUILDINGS_PATH, SCHEMA_VERSION, _bonus, _read_buildings,
+    BUILDINGS_PATH, EXPERIENCE_LEVELS_PATH, GAMEDATA_PATH, SCHEMA_VERSION,
+    LivingWorldUiError, _bonus, _read_buildings, _read_upgrade_experience_levels,
 )
 from openbfme_importer.livingmap_bundle import CatalogReader
 
@@ -42,8 +44,8 @@ def _catalog(tmp_path: Path, body: str):
     return rows[0], [gap.public() for gap in gaps]
 
 
-def test_a1_schema_v2():
-    assert SCHEMA_VERSION == 2
+def test_a1_schema_v3():
+    assert SCHEMA_VERSION == 3
 
 
 def test_a2_all_five_and_source_order(tmp_path: Path):
@@ -164,3 +166,134 @@ def test_a10_deterministic(tmp_path: Path):
     second, second_gaps = _catalog(tmp_path / "two", body)
     assert json.dumps(first, sort_keys=True) == json.dumps(second, sort_keys=True)
     assert first_gaps == second_gaps == []
+
+
+def _multi_reader(tmp_path: Path, members: dict[str, bytes]) -> CatalogReader:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    archive = tmp_path / "fixture.big"
+    _big(archive, members)
+    header = 16 + sum(8 + len(name.encode("latin-1")) + 1 for name in members)
+    offset = header
+    entries = []
+    for name, payload in members.items():
+        entries.append({"name": name, "archive": archive.name, "offset": offset,
+                        "size": len(payload), "precedence": 0})
+        offset += len(payload)
+    catalog = {"install_root": str(tmp_path), "entries": entries}
+    path = tmp_path / "catalog.json"
+    path.write_text(json.dumps(catalog))
+    return CatalogReader(path)
+
+
+def _experience_reader(tmp_path: Path, experience: str,
+                       *, gamedata: str = "#define BASE 1\n",
+                       extra: dict[str, bytes] | None = None) -> CatalogReader:
+    members = {
+        GAMEDATA_PATH: gamedata.encode("latin-1"),
+        EXPERIENCE_LEVELS_PATH: experience.encode("latin-1"),
+    }
+    members.update(extra or {})
+    return _multi_reader(tmp_path, members)
+
+
+def _active(*units: str) -> list[dict]:
+    return [{"nuggetsStatus": "ok", "nuggets": [{
+        "kind": "upgrade_troops", "upgradeableUnits": list(units)}]}]
+
+
+def test_b1_experience_macros_include_position_filter_order_duplicates_and_exact_ints(tmp_path: Path):
+    include_path = "fixture-experience.inc"
+    reader = _experience_reader(tmp_path, f"""
+ExperienceLevel First
+ TargetNames = Ignored
+ RequiredExperience = 1
+ ExperienceAward = 0
+ Rank = 1
+End
+#include "{include_path}"
+ExperienceLevel Third
+ TargetNames = UnitA
+ RequiredExperience = 9
+ ExperienceAward = 4
+ Rank = 3
+ Upgrades = U3
+End
+""", gamedata="#define BASE 2\n#define AWARD ZERO\n#define ZERO 0\n", extra={"data/ini/" + include_path: b"""
+#define TARGETS UnitA Ignored UnitA
+ExperienceLevel Second
+ TargetNames = TARGETS
+ RequiredExperience = BASE
+ ExperienceAward = AWARD
+ Rank = 1
+ Upgrades = U1 U1
+ SelectionDecal
+  Texture = RetailVisualOnly
+ End
+End
+ExperienceLevel SecondRank
+ TargetNames = UnitA
+ RequiredExperience = 5
+ ExperienceAward = 3
+ Rank = 2
+ Upgrades = U2
+End
+"""})
+    rows = _read_upgrade_experience_levels(reader, _active("UnitA"))
+    assert [row["name"] for row in rows] == ["Second", "SecondRank", "Third"]
+    assert rows[0] == {"name": "Second", "targetNames": ["UnitA", "UnitA"],
+                       "requiredExperience": 2, "experienceAward": 0, "rank": 1,
+                       "upgrades": ["U1", "U1"]}
+    assert all(type(row[key]) is int for row in rows
+               for key in ("requiredExperience", "experienceAward", "rank"))
+
+
+def test_b2_experience_missing_coverage_cycle_duplicates_and_fractional_fail(tmp_path: Path):
+    valid = """ExperienceLevel One
+ TargetNames = UnitA
+ RequiredExperience = VALUE
+ ExperienceAward = 0
+ Rank = 1
+End
+"""
+    cases = [
+        ("missing", valid.replace("UnitA", "Other"), "#define VALUE 1\n"),
+        ("cycle", valid, "#define VALUE AGAIN\n#define AGAIN VALUE\n"),
+        ("fractional", valid, "#define VALUE 1.5\n"),
+        ("duplicate-define", valid, "#define VALUE 1\n#define VALUE 2\n"),
+        ("duplicate-name", valid + valid, "#define VALUE 1\n"),
+    ]
+    for name, document, gamedata in cases:
+        with pytest.raises(LivingWorldUiError):
+            _read_upgrade_experience_levels(
+                _experience_reader(tmp_path / name, document, gamedata=gamedata),
+                _active("UnitA"))
+
+
+def test_b3_experience_caps_progression_and_determinism(tmp_path: Path, monkeypatch):
+    document = """ExperienceLevel One
+ TargetNames = UnitA
+ RequiredExperience = 1
+ ExperienceAward = 0
+ Rank = 1
+ Upgrades = U1 U2
+End
+"""
+    reader = _experience_reader(tmp_path / "deterministic", document)
+    first = _read_upgrade_experience_levels(reader, _active("UnitA"))
+    second = _read_upgrade_experience_levels(reader, _active("UnitA"))
+    assert json.dumps(first, sort_keys=True) == json.dumps(second, sort_keys=True)
+    monkeypatch.setattr(ui_module, "MAX_EXPERIENCE_TOKENS", 1)
+    with pytest.raises(LivingWorldUiError, match="cap"):
+        _read_upgrade_experience_levels(reader, _active("UnitA"))
+
+    backwards = document + """ExperienceLevel Two
+ TargetNames = UnitA
+ RequiredExperience = 1
+ ExperienceAward = 0
+ Rank = 2
+End
+"""
+    monkeypatch.setattr(ui_module, "MAX_EXPERIENCE_TOKENS", 65536)
+    with pytest.raises(LivingWorldUiError, match="non-increasing"):
+        _read_upgrade_experience_levels(
+            _experience_reader(tmp_path / "backwards", backwards), _active("UnitA"))

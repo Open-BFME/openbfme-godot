@@ -47,8 +47,8 @@ const GapsScript = preload("res://src/wotr/wotr_strategic_gaps.gd")
 ## without propagating, so every check after the error site never runs and an
 ## inert runner prints zero failures and exits 0. Pinning the count turns that
 ## silent abort into a loud failure. Raise deliberately; never lower.
-const CHECKS_WITHOUT_DATA := 118
-const CHECKS_WITH_DATA := 142
+const CHECKS_WITHOUT_DATA := 125
+const CHECKS_WITH_DATA := 149
 
 ## Where the authored fixture bundles are written. `user://` because that is a
 ## real search root `wotr_buildings.bundle_roots()` already ends with, so the
@@ -162,7 +162,7 @@ func _ui_bundle() -> Dictionary:
 		"constructButtonTitle": "", "constructButtonHelp": "",
 		"displayNameTag": "", "displayDescriptionTag": "", "recruits": [],
 	})
-	# Schema 2 carries typed nuggets on every building. Treasury binding is
+	# Schema 3 carries typed nuggets and their usable experience rows. Treasury binding is
 	# uniform by Type; one synthetic fortress also exercises all five kinds.
 	for building_value in buildings:
 		var building := building_value as Dictionary
@@ -186,7 +186,11 @@ func _ui_bundle() -> Dictionary:
 	all_kinds["nuggets"].append({"kind": "increase_command_points", "tag": "FixtureCommand", "type": "WORLD", "amount": 30})
 	return {
 		"schema": "openbfme.living-world-ui",
-		"schemaVersion": 2,
+		"schemaVersion": 3,
+		"upgradeExperienceLevels": [
+			{"name": "FixtureOneLevel1", "targetNames": ["FixtureOne", "FixtureOne"], "requiredExperience": 1, "experienceAward": 2, "rank": 1, "upgrades": ["Upgrade_Fixture1", "Upgrade_Fixture1"]},
+			{"name": "FixtureOneLevel2", "targetNames": ["FixtureOne"], "requiredExperience": 5, "experienceAward": 3, "rank": 2, "upgrades": ["Upgrade_Fixture2"]},
+		],
 		"atlasDirectory": "ui-atlases",
 		"atlases": [],
 		"images": {},
@@ -435,6 +439,16 @@ func _test_the_catalogue_loads_from_an_authored_bundle() -> void:
 	var carried := catalogue.building("FXB_AlphaKeep")
 	_check("all_five_typed_nugget_kinds_reach_the_runtime_catalogue",
 		["increase_treasury", "strengthen_army", "spawn_army", "upgrade_troops", "increase_command_points"] == (carried["nuggets"] as Array).map(func(n: Variant) -> String: return String((n as Dictionary)["kind"])), str(carried["nuggets"]))
+	var experience_ui := LivingWorldUiScript.new()
+	_check("schema3_upgrade_experience_rows_load_in_source_order",
+		experience_ui.load_from(FIXTURE_ROOT.path_join("living-world-ui.json"))
+			and (experience_ui.upgrade_experience_levels as Array).map(
+				func(row: Variant) -> String: return String((row as Dictionary)["name"]))
+				== ["FixtureOneLevel1", "FixtureOneLevel2"], str(experience_ui.errors))
+	var experience_copy: Array = experience_ui.upgrade_experience_levels.duplicate(true)
+	(experience_copy[0]["targetNames"] as Array)[0] = "MUTATED"
+	_check("upgrade_experience_rows_support_deep_copy_isolation",
+		String((experience_ui.upgrade_experience_levels[0]["targetNames"] as Array)[0]) == "FixtureOne")
 	_check("treasury_is_bound_from_the_typed_nugget_not_a_type_guess",
 		String(catalogue.income_macro_by_type["Fortress"]) == "GAIN_PER_FORTRESS" and catalogue.income_for_type("Fortress") == 300)
 	var isolation_ui := LivingWorldUiScript.new()
@@ -455,6 +469,38 @@ func _test_the_catalogue_loads_from_an_authored_bundle() -> void:
 	var stale_ui := LivingWorldUiScript.new()
 	_check("schema_v1_is_rejected_as_stale_regenerate",
 		not stale_ui.load_from(stale_path) and String(stale_ui.errors[0]).contains("stale"), str(stale_ui.errors))
+	var bad_experience_cases: Array = []
+	var fractional_experience := _ui_bundle()
+	fractional_experience["upgradeExperienceLevels"][0]["rank"] = 1.5
+	bad_experience_cases.append(["fractional", fractional_experience])
+	var duplicate_experience := _ui_bundle()
+	duplicate_experience["upgradeExperienceLevels"][1]["name"] = "FixtureOneLevel1"
+	bad_experience_cases.append(["duplicate", duplicate_experience])
+	var missing_coverage := _ui_bundle()
+	missing_coverage["upgradeExperienceLevels"] = []
+	bad_experience_cases.append(["missing-coverage", missing_coverage])
+	var stale_two := _ui_bundle()
+	stale_two["schemaVersion"] = 2
+	var stale_two_path := FIXTURE_ROOT.path_join("stale-two-ui.json")
+	var stale_two_file := FileAccess.open(stale_two_path, FileAccess.WRITE)
+	stale_two_file.store_string(JSON.stringify(stale_two))
+	stale_two_file.close()
+	var stale_two_ui := LivingWorldUiScript.new()
+	_check("schema_v2_is_rejected_as_stale_regenerate",
+		not stale_two_ui.load_from(stale_two_path) and String(stale_two_ui.errors[0]).contains("stale"), str(stale_two_ui.errors))
+	var malformed_experience := _ui_bundle()
+	malformed_experience["upgradeExperienceLevels"][0]["extra"] = true
+	bad_experience_cases.append(["malformed", malformed_experience])
+	for bad_value in bad_experience_cases:
+		var bad := bad_value as Array
+		var bad_path := FIXTURE_ROOT.path_join("%s-experience-ui.json" % String(bad[0]))
+		var bad_file := FileAccess.open(bad_path, FileAccess.WRITE)
+		bad_file.store_string(JSON.stringify(bad[1]))
+		bad_file.close()
+		var bad_ui := LivingWorldUiScript.new()
+		_check("%s_upgrade_experience_fails_closed" % String(bad[0]),
+			not bad_ui.load_from(bad_path) and not bad_ui.loaded
+				and bad_ui.upgrade_experience_levels.is_empty(), str(bad_ui.errors))
 	var malformed := _ui_bundle()
 	(malformed["buildings"][0] as Dictionary)["nuggets"][0]["extra"] = true
 	var malformed_path := FIXTURE_ROOT.path_join("malformed-ui.json")
@@ -465,7 +511,7 @@ func _test_the_catalogue_loads_from_an_authored_bundle() -> void:
 	_check("malformed_typed_nugget_fails_the_whole_bundle",
 		not malformed_ui.load_from(malformed_path) and not malformed_ui.loaded and malformed_ui.buildings.is_empty(), str(malformed_ui.errors))
 	var string_version := _ui_bundle()
-	string_version["schemaVersion"] = "2"
+	string_version["schemaVersion"] = "3"
 	var string_version_path := FIXTURE_ROOT.path_join("string-version-ui.json")
 	var string_version_file := FileAccess.open(string_version_path, FileAccess.WRITE)
 	string_version_file.store_string(JSON.stringify(string_version))

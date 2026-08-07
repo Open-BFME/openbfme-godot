@@ -39,12 +39,14 @@ extends RefCounted
 ## `GarrisonSelectionPortraitName`. Resemblance between two names is never used.
 
 const SCHEMA := "openbfme.living-world-ui"
-const SCHEMA_VERSION := 2
+const SCHEMA_VERSION := 3
 
 const BUNDLE_ENV := "OPENBFME_LIVING_WORLD_UI"
 const FILE_NAME := "living-world-ui.json"
 const MAX_BYTES := 16 * 1024 * 1024
 const MAX_ATLAS_BYTES := 16 * 1024 * 1024
+const MAX_EXPERIENCE_LEVELS := 4096
+const MAX_EXPERIENCE_TOKENS := 65536
 
 ## How an army's portrait was found, so the screen can say which rung it stood
 ## on rather than implying every banner is a hero portrait.
@@ -87,6 +89,8 @@ var faction_banner_derivation := ""
 ## on it. The islands are DERIVED from its alpha channel; nothing in the shipped
 ## data names them.
 var chrome_sheet: Dictionary = {}
+## Source-ordered retail experience rows usable by typed UpgradeTroops nuggets.
+var upgrade_experience_levels: Array = []
 
 ## Image ids asked for that produced no texture, and why, in ask order. Public so
 ## the screen can name every portrait it is standing in for.
@@ -256,6 +260,73 @@ static func _validate_buildings(value: Variant) -> String:
 				if not _validate_nugget(nugget): return "building %s has malformed typed nugget" % id
 	return ""
 
+static func _validate_upgrade_experience_levels(value: Variant, building_rows: Variant) -> String:
+	if not (value is Array):
+		return "upgradeExperienceLevels is not an array"
+	var rows: Array = value
+	if rows.size() > MAX_EXPERIENCE_LEVELS:
+		return "upgradeExperienceLevels exceeds its row cap"
+	var active: Dictionary = {}
+	for building_value in building_rows as Array:
+		var building := building_value as Dictionary
+		if String(building.get("nuggetsStatus", "")) != "ok":
+			continue
+		for nugget_value in building.get("nuggets", []) as Array:
+			var nugget := nugget_value as Dictionary
+			if String(nugget.get("kind", "")) != "upgrade_troops":
+				continue
+			for unit_value in nugget.get("upgradeableUnits", []) as Array:
+				active[String(unit_value)] = true
+	var names: Dictionary = {}
+	var progress: Dictionary = {}
+	var token_count := 0
+	for value_row in rows:
+		if not (value_row is Dictionary):
+			return "an upgrade experience row is not an object"
+		var row := value_row as Dictionary
+		if not _exact_keys(row, ["experienceAward", "name", "rank", "requiredExperience", "targetNames", "upgrades"]):
+			return "an upgrade experience row has malformed shape"
+		var name_value: Variant = row.get("name")
+		if not (name_value is String) or String(name_value).is_empty() or String(name_value).length() > 256:
+			return "an upgrade experience row has no valid name"
+		var name := String(name_value)
+		if names.has(name):
+			return "duplicate upgrade experience name %s" % name
+		names[name] = true
+		if not _json_integer(row.get("requiredExperience"), 1, true) 				or not _json_integer(row.get("experienceAward"), 0) 				or not _json_integer(row.get("rank"), 1, true):
+			return "upgrade experience row %s has a malformed integer" % name
+		if not (row.get("targetNames") is Array) or not (row.get("upgrades") is Array):
+			return "upgrade experience row %s has malformed token lists" % name
+		var targets: Array = row["targetNames"]
+		if targets.is_empty():
+			return "upgrade experience row %s has no targets" % name
+		var seen_in_row: Dictionary = {}
+		for target_value in targets:
+			if not (target_value is String) or String(target_value).is_empty() or String(target_value).length() > 256:
+				return "upgrade experience row %s has a malformed target" % name
+			var target := String(target_value)
+			if not active.has(target):
+				return "upgrade experience row %s targets an inactive unit" % name
+			token_count += 1
+			if seen_in_row.has(target):
+				continue
+			seen_in_row[target] = true
+			var prior: Dictionary = progress.get(target, {"rank": 0.0, "threshold": 0.0}) as Dictionary
+			if float(row["rank"]) <= float(prior["rank"]) 					or float(row["requiredExperience"]) <= float(prior["threshold"]):
+				return "non-increasing upgrade experience progression for %s" % target
+			progress[target] = {"rank": row["rank"], "threshold": row["requiredExperience"]}
+		for upgrade_value in row["upgrades"] as Array:
+			if not (upgrade_value is String) or String(upgrade_value).is_empty() or String(upgrade_value).length() > 256:
+				return "upgrade experience row %s has a malformed upgrade" % name
+			token_count += 1
+		if token_count > MAX_EXPERIENCE_TOKENS:
+			return "upgrade experience token cap exceeded"
+	for unit in active:
+		if not progress.has(unit):
+			return "active upgrade unit %s has no experience rows" % String(unit)
+	return ""
+
+
 func load_from(path: String) -> bool:
 	_reset()
 	source_path = path
@@ -278,12 +349,16 @@ func load_from(path: String) -> bool:
 		return _fail("schemaVersion must be the JSON integer %d" % SCHEMA_VERSION)
 	var version := int(version_value)
 	if version != SCHEMA_VERSION:
-		if version == 1:
-			return _fail("schemaVersion 1 is stale; regenerate the living-world UI bundle for schemaVersion 2")
+		if version == 1 or version == 2:
+			return _fail("schemaVersion %d is stale; regenerate the living-world UI bundle for schemaVersion 3" % version)
 		return _fail("unsupported schemaVersion %d" % version)
 	var building_error := _validate_buildings(bundle.get("buildings", null))
 	if not building_error.is_empty():
 		return _fail(building_error)
+	var experience_error := _validate_upgrade_experience_levels(
+		bundle.get("upgradeExperienceLevels", null), bundle.get("buildings", null))
+	if not experience_error.is_empty():
+		return _fail(experience_error)
 
 	_atlas_directory = String(bundle.get("atlasDirectory", "ui-atlases"))
 	images = bundle.get("images", {}) as Dictionary
@@ -294,6 +369,7 @@ func load_from(path: String) -> bool:
 	faction_banners = bundle.get("factionBanners", {}) as Dictionary
 	faction_banner_derivation = String(bundle.get("factionBannerDerivation", ""))
 	chrome_sheet = bundle.get("chromeSheet", {}) as Dictionary
+	upgrade_experience_levels = (bundle.get("upgradeExperienceLevels", []) as Array).duplicate(true)
 
 	var ids: Array[String] = []
 	for row_value in bundle.get("buildings", []) as Array:
@@ -738,6 +814,7 @@ func _reset() -> void:
 	faction_banners = {}
 	faction_banner_derivation = ""
 	chrome_sheet = {}
+	upgrade_experience_levels = []
 	_atlas_cache = {}
 	_crop_cache = {}
 	_atlas_directory = ""
