@@ -38,6 +38,8 @@ const WorldScript = preload("res://src/wotr/wotr_world.gd")
 const StateScript = preload("res://src/wotr/wotr_state.gd")
 const SessionScript = preload("res://src/wotr/wotr_session.gd")
 const BuildingsScript = preload("res://src/wotr/wotr_buildings.gd")
+const LivingWorldUiScript = preload("res://src/wotr/wotr_living_world_ui.gd")
+const MacrosScript = preload("res://src/wotr/wotr_macros.gd")
 const AiScript = preload("res://src/wotr/wotr_ai.gd")
 const GapsScript = preload("res://src/wotr/wotr_strategic_gaps.gd")
 
@@ -45,8 +47,8 @@ const GapsScript = preload("res://src/wotr/wotr_strategic_gaps.gd")
 ## without propagating, so every check after the error site never runs and an
 ## inert runner prints zero failures and exits 0. Pinning the count turns that
 ## silent abort into a loud failure. Raise deliberately; never lower.
-const CHECKS_WITHOUT_DATA := 92
-const CHECKS_WITH_DATA := 115
+const CHECKS_WITHOUT_DATA := 101
+const CHECKS_WITH_DATA := 124
 
 ## Where the authored fixture bundles are written. `user://` because that is a
 ## real search root `wotr_buildings.bundle_roots()` already ends with, so the
@@ -158,9 +160,24 @@ func _ui_bundle() -> Dictionary:
 		"constructButtonTitle": "", "constructButtonHelp": "",
 		"displayNameTag": "", "displayDescriptionTag": "", "recruits": [],
 	})
+	# Schema 2 carries typed nuggets on every building. Treasury binding is
+	# uniform by Type; one synthetic fortress also exercises all five kinds.
+	for building_value in buildings:
+		var building := building_value as Dictionary
+		building["nuggetsStatus"] = "ok"
+		building["nuggets"] = []
+		if String(building.get("type", "")) == "Fortress":
+			building["nuggets"].append({"kind": "increase_treasury", "tag": "FixtureTreasury", "treasureAmount": "GAIN_PER_FORTRESS"})
+		elif String(building.get("type", "")) == "Resource":
+			building["nuggets"].append({"kind": "increase_treasury", "tag": "FixtureTreasury", "treasureAmount": "GAIN_PER_FARM"})
+	var all_kinds := buildings[0] as Dictionary
+	all_kinds["nuggets"].append({"kind": "strengthen_army", "tag": "FixtureStrength", "strengtheningRange": "HarnessRangeTypo", "bonusKey": "HarnessBonus", "bonuses": [{"threshold": 1, "weaponPct": null, "weaponRaw": null, "armorPct": 12.5, "armorRaw": "armor:12.5%", "experiencePct": null, "experienceRaw": null}]})
+	all_kinds["nuggets"].append({"kind": "spawn_army", "tag": "FixtureSpawn", "queueSize": 0, "armies": [{"playerArmy": "FixtureArmy", "heroTemplateName": "", "icon": "FixtureIcon", "iconSize": "Small", "buildTime": "1", "palantirMovie": "", "constructButtonImage": "FixtureImage", "constructButtonTitle": "FixtureTitle", "constructButtonHelp": "FixtureHelp"}]})
+	all_kinds["nuggets"].append({"kind": "upgrade_troops", "tag": "FixtureUpgrade", "numUpgradesPerTurn": 1, "upgradeableUnits": ["FixtureOne", "FixtureOne"]})
+	all_kinds["nuggets"].append({"kind": "increase_command_points", "tag": "FixtureCommand", "type": "WORLD", "amount": -7})
 	return {
 		"schema": "openbfme.living-world-ui",
-		"schemaVersion": 1,
+		"schemaVersion": 2,
 		"atlasDirectory": "ui-atlases",
 		"atlases": [],
 		"images": {},
@@ -406,6 +423,75 @@ func _test_the_catalogue_loads_from_an_authored_bundle() -> void:
 			and catalogue.income_for_type("Resource") == 300
 			and catalogue.income_for_type("Barracks") == 0
 			and catalogue.income_for_type("Armory") == 0)
+	var carried := catalogue.building("FXB_AlphaKeep")
+	_check("all_five_typed_nugget_kinds_reach_the_runtime_catalogue",
+		["increase_treasury", "strengthen_army", "spawn_army", "upgrade_troops", "increase_command_points"] == (carried["nuggets"] as Array).map(func(n: Variant) -> String: return String((n as Dictionary)["kind"])), str(carried["nuggets"]))
+	_check("treasury_is_bound_from_the_typed_nugget_not_a_type_guess",
+		String(catalogue.income_macro_by_type["Fortress"]) == "GAIN_PER_FORTRESS" and catalogue.income_for_type("Fortress") == 300)
+	var isolation_ui := LivingWorldUiScript.new()
+	var isolation_macros := MacrosScript.new()
+	isolation_ui.load_from(FIXTURE_ROOT.path_join("living-world-ui.json"))
+	isolation_macros.load_from(FIXTURE_ROOT.path_join("macros.json"))
+	var isolation_source := isolation_ui.buildings["FXB_AlphaKeep"] as Dictionary
+	var isolation_projected := catalogue._project(isolation_source, isolation_macros)
+	(isolation_source["nuggets"][0] as Dictionary)["treasureAmount"] = "MUTATED_SOURCE"
+	_check("runtime_typed_nuggets_are_deep_copied_from_loader_state",
+		String((isolation_projected["nuggets"][0] as Dictionary)["treasureAmount"]) == "GAIN_PER_FORTRESS", str(isolation_projected["nuggets"]))
+	var stale := _ui_bundle()
+	stale["schemaVersion"] = 1
+	var stale_path := FIXTURE_ROOT.path_join("stale-ui.json")
+	var stale_file := FileAccess.open(stale_path, FileAccess.WRITE)
+	stale_file.store_string(JSON.stringify(stale))
+	stale_file.close()
+	var stale_ui := LivingWorldUiScript.new()
+	_check("schema_v1_is_rejected_as_stale_regenerate",
+		not stale_ui.load_from(stale_path) and String(stale_ui.errors[0]).contains("stale"), str(stale_ui.errors))
+	var malformed := _ui_bundle()
+	(malformed["buildings"][0] as Dictionary)["nuggets"][0]["extra"] = true
+	var malformed_path := FIXTURE_ROOT.path_join("malformed-ui.json")
+	var malformed_file := FileAccess.open(malformed_path, FileAccess.WRITE)
+	malformed_file.store_string(JSON.stringify(malformed))
+	malformed_file.close()
+	var malformed_ui := LivingWorldUiScript.new()
+	_check("malformed_typed_nugget_fails_the_whole_bundle",
+		not malformed_ui.load_from(malformed_path) and not malformed_ui.loaded and malformed_ui.buildings.is_empty(), str(malformed_ui.errors))
+	var string_version := _ui_bundle()
+	string_version["schemaVersion"] = "2"
+	var string_version_path := FIXTURE_ROOT.path_join("string-version-ui.json")
+	var string_version_file := FileAccess.open(string_version_path, FileAccess.WRITE)
+	string_version_file.store_string(JSON.stringify(string_version))
+	string_version_file.close()
+	var string_version_ui := LivingWorldUiScript.new()
+	_check("schema_version_string_is_not_coerced_to_integer",
+		not string_version_ui.load_from(string_version_path), str(string_version_ui.errors))
+	var empty_tag := _ui_bundle()
+	(empty_tag["buildings"][0] as Dictionary)["nuggets"][0]["tag"] = ""
+	var empty_tag_path := FIXTURE_ROOT.path_join("empty-tag-ui.json")
+	var empty_tag_file := FileAccess.open(empty_tag_path, FileAccess.WRITE)
+	empty_tag_file.store_string(JSON.stringify(empty_tag))
+	empty_tag_file.close()
+	var empty_tag_ui := LivingWorldUiScript.new()
+	_check("empty_required_typed_string_fails_the_whole_bundle",
+		not empty_tag_ui.load_from(empty_tag_path), str(empty_tag_ui.errors))
+	var exponent_raw := _ui_bundle()
+	(exponent_raw["buildings"][0]["nuggets"][1]["bonuses"][0] as Dictionary)["armorRaw"] = "Armor:1e1%"
+	(exponent_raw["buildings"][0]["nuggets"][1]["bonuses"][0] as Dictionary)["armorPct"] = 10.0
+	var exponent_path := FIXTURE_ROOT.path_join("exponent-bonus-ui.json")
+	var exponent_file := FileAccess.open(exponent_path, FileAccess.WRITE)
+	exponent_file.store_string(JSON.stringify(exponent_raw))
+	exponent_file.close()
+	var exponent_ui := LivingWorldUiScript.new()
+	_check("bonus_raw_rejects_expression_and_exponent_syntax",
+		not exponent_ui.load_from(exponent_path), str(exponent_ui.errors))
+	var unsafe_integer := _ui_bundle()
+	(unsafe_integer["buildings"][0]["nuggets"][4] as Dictionary)["amount"] = 9007199254740992.0
+	var unsafe_integer_path := FIXTURE_ROOT.path_join("unsafe-integer-ui.json")
+	var unsafe_integer_file := FileAccess.open(unsafe_integer_path, FileAccess.WRITE)
+	unsafe_integer_file.store_string(JSON.stringify(unsafe_integer))
+	unsafe_integer_file.close()
+	var unsafe_integer_ui := LivingWorldUiScript.new()
+	_check("typed_integers_beyond_exact_json_range_are_refused",
+		not unsafe_integer_ui.load_from(unsafe_integer_path), str(unsafe_integer_ui.errors))
 	_check("retails_ai_score_keys_bind_to_retails_four_types",
 		String(BuildingsScript.AI_SCORE_KEY_TYPES["BuildingScoreCastle"]) == "Fortress"
 			and String(BuildingsScript.AI_SCORE_KEY_TYPES["BuildingScoreFarm"]) == "Resource")

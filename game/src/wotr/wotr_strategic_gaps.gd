@@ -68,20 +68,14 @@ const OPEN_GAPS := {
 	# weights on it - and the last mile that retail genuinely did not write down
 	# is in `PROJECT_AUTHORED_RULES` below rather than left to look like parity.
 
-	# WHAT THE CONVERTER STILL DROPS. `living-world-ui.json` carries fifteen of a
-	# `LivingWorldBuilding` block's fields and NONE of its `BuildingNugget`
-	# sub-blocks. The treasury nugget is reconstructible by type (retail's table
-	# is exactly type-uniform) and IS reconstructed; the other four are not, and
-	# are the reason a Barracks and an Armory currently cost real treasure and
-	# grant nothing beyond standing on the map.
+	# Typed conversion is complete for all five BuildingNugget kinds. Treasury is
+	# resolved and applied from IncreaseTreasury itself; the other four effects
+	# are carried faithfully but deliberately not simulated yet.
 	"strategic_building_nuggets":
-		"the living-world UI converter drops every BuildingNugget, so a farm's "
-		+ "one-off IncreaseCommandPoints grant (Type=WORLD Amount=+30), a "
-		+ "fortress's StrengthenArmy armour table (Bonus = <n> Armor:<pct>), an "
-		+ "armory's UpgradeTroops list (NumUpgradesPerTurn/UpgradeableUnits) and "
-		+ "every SpawnArmy QueueSize are unrecorded here; only IncreaseTreasury "
-		+ "is reconstructible, because all 7 Fortress blocks name "
-		+ "GAIN_PER_FORTRESS and all 7 Resource blocks name GAIN_PER_FARM",
+		"typed conversion now carries all five BuildingNugget kinds and treasury "
+		+ "income is resolved/applied directly from IncreaseTreasury; four effects "
+		+ "remain unapplied: IncreaseCommandPoints grants, StrengthenArmy bonus "
+		+ "tables, UpgradeTroops grants, and SpawnArmy QueueSize enforcement",
 
 
 	# The document's army rosters (`LivingWorldPlayerArmy`) carry entries and

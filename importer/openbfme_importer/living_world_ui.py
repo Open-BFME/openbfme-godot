@@ -81,6 +81,9 @@ import hashlib
 import json
 import pathlib
 import re
+from dataclasses import replace
+from decimal import Decimal, InvalidOperation
+from math import isfinite
 from typing import Any, Iterable, Mapping
 
 from .livingmap_bundle import CatalogReader
@@ -98,7 +101,7 @@ from .mapped_image import (
 )
 
 SCHEMA = "openbfme.living-world-ui"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 MANIFEST_NAME = "living-world-ui.json"
 ATLAS_DIRECTORY = "ui-atlases"
@@ -120,6 +123,15 @@ MAPPED_IMAGE_PREFIX = "data/ini/mappedimages/"
 MAX_ATLASES = 512
 MAX_ATLAS_BYTES = 16 * 1024 * 1024
 MAX_IMAGE_IDS = 4096
+MAX_NUGGETS = 32
+MAX_NUGGET_BONUSES = 16
+MAX_NUGGET_ARMIES = 16
+MAX_UPGRADEABLE_UNITS = 64
+MAX_NUGGET_STRING = 256
+# Godot's JSON reader exposes numbers as IEEE-754 floats. Refuse integers whose
+# exact value could not survive the converter/runtime boundary.
+MAX_SAFE_JSON_INTEGER = (1 << 53) - 1
+_NUGGET_HEADER_MARK = "|#|"
 
 #: ``LivingWorldBuilding`` fields this module models, mapped to manifest keys.
 _BUILDING_FIELDS = {
@@ -245,7 +257,14 @@ def _tree_of(reader: CatalogReader, virtual_path: str, gaps: list[Gap]):
     lines = flatten_document(
         document, openers=frozenset(), whitespace_pairs=False, gaps=gaps
     )
-    return read_tree(lines, openers=frozenset())
+    protected = []
+    for line in lines:
+        tokens = line.text.split()
+        if len(tokens) == 3 and "=" not in line.text and tokens[0].casefold() == "buildingnugget":
+            protected.append(replace(line, text=tokens[0] + " " + tokens[1] + _NUGGET_HEADER_MARK + tokens[2]))
+        else:
+            protected.append(line)
+    return read_tree(protected, openers=frozenset())
 
 
 def _fields(
@@ -271,29 +290,206 @@ def _fields(
     return row
 
 
-def _read_buildings(reader: CatalogReader, gaps: list[Gap]) -> list[dict[str, Any]]:
-    """Every ``LivingWorldBuilding`` with the armies it can recruit.
+def _nugget_gap(node: Node, scope: str, reason: str, detail: str, gaps: list[Gap]) -> None:
+    gaps.append(Gap(node.virtual_path, node.line, scope, reason, detail))
 
-    The recruit list is what the radial build menu offers, and it lives two
-    blocks down - ``BuildingNugget SpawnArmy`` then ``ArmyToSpawn`` - so the
-    nesting is walked rather than flattened. A nugget that is not a spawner
-    contributes no recruits and is NOT a gap: retail authors five other nugget
-    kinds and they are simply not part of this surface.
-    """
+
+def _nugget_text(value: str) -> str:
+    text = _unquote(value)
+    if not text or len(text) > MAX_NUGGET_STRING:
+        raise ValueError("string")
+    return text
+
+
+def _strict_int(value: str, *, positive: bool) -> int:
+    text = _unquote(value)
+    if re.fullmatch(r"[+-]?\d+", text) is None:
+        raise ValueError("integer")
+    result = int(text)
+    if abs(result) > MAX_SAFE_JSON_INTEGER:
+        raise ValueError("exact JSON integer range")
+    if result <= 0 if positive else result < 0:
+        raise ValueError("range")
+    return result
+
+
+def _scalar_fields(node: Node, allowed: set[str], required: set[str]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    folded_allowed = {key.casefold(): key for key in allowed}
+    for key, value in node.fields:
+        folded = key.casefold()
+        if folded not in folded_allowed:
+            raise KeyError(key)
+        canonical = folded_allowed[folded]
+        if canonical in result:
+            raise RuntimeError(key)
+        result[canonical] = value
+    missing = required - result.keys()
+    if missing:
+        raise LookupError(sorted(missing)[0])
+    return result
+
+
+def _bonus(value: str) -> dict[str, Any]:
+    tokens = _unquote(value).split()
+    if not tokens:
+        raise ValueError("Bonus")
+    threshold = _strict_int(tokens[0], positive=True)
+    result: dict[str, Any] = {
+        "threshold": threshold,
+        "weaponPct": None, "weaponRaw": None,
+        "armorPct": None, "armorRaw": None,
+        "experiencePct": None, "experienceRaw": None,
+    }
+    dimensions = {
+        "weapon": ("weaponPct", "weaponRaw"),
+        "armor": ("armorPct", "armorRaw"),
+        "experience": ("experiencePct", "experienceRaw"),
+    }
+    seen: set[str] = set()
+    for token in tokens[1:]:
+        if len(token) > MAX_NUGGET_STRING:
+            raise OverflowError("Bonus string")
+        if ":" not in token:
+            raise ValueError(token)
+        dimension, raw = token.split(":", 1)
+        folded = dimension.casefold()
+        if folded not in dimensions or folded in seen or not raw.endswith("%"):
+            raise ValueError(token)
+        # Strip exactly one percent sign and accept finite decimal literals only.
+        number = raw[:-1]
+        if re.fullmatch(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)", number) is None:
+            raise ValueError(token)
+        try:
+            decimal = Decimal(number)
+        except InvalidOperation as exc:
+            raise ValueError(token) from exc
+        numeric = float(decimal)
+        if not decimal.is_finite() or not isfinite(numeric):
+            raise ValueError(token)
+        pct_key, raw_key = dimensions[folded]
+        result[pct_key] = numeric
+        result[raw_key] = token
+        seen.add(folded)
+    return result
+
+
+def _typed_nugget(node: Node, scope: str) -> dict[str, Any]:
+    name = str(node.name or "")
+    if _NUGGET_HEADER_MARK not in name:
+        raise TypeError(name or node.kind)
+    authored_kind, tag = name.split(_NUGGET_HEADER_MARK, 1)
+    tag = _nugget_text(tag)
+    kind = authored_kind.casefold()
+    if kind == "strengthenarmy":
+        if node.children:
+            raise ChildProcessError(node.children[0].kind)
+        # Bonus is the sole repeatable field; all scalar fields are unique.
+        scalar_node = replace(node, fields=tuple((k, v) for k, v in node.fields if k.casefold() != "bonus"))
+        fields = _scalar_fields(scalar_node, {"StrengtheningRange", "BonusKey"}, {"StrengtheningRange", "BonusKey"})
+        bonus_values = [v for k, v in node.fields if k.casefold() == "bonus"]
+        if not bonus_values:
+            raise LookupError("Bonus")
+        if len(bonus_values) > MAX_NUGGET_BONUSES:
+            raise OverflowError("Bonus")
+        return {"kind": "strengthen_army", "tag": tag,
+                "strengtheningRange": _nugget_text(fields["StrengtheningRange"]),
+                "bonusKey": _nugget_text(fields["BonusKey"]),
+                "bonuses": [_bonus(value) for value in bonus_values]}
+    if kind == "increasetreasury":
+        if node.children:
+            raise ChildProcessError(node.children[0].kind)
+        fields = _scalar_fields(node, {"TreasureAmount"}, {"TreasureAmount"})
+        return {"kind": "increase_treasury", "tag": tag,
+                "treasureAmount": _nugget_text(fields["TreasureAmount"])}
+    if kind == "increasecommandpoints":
+        if node.children:
+            raise ChildProcessError(node.children[0].kind)
+        fields = _scalar_fields(node, {"Type", "Amount"}, {"Type", "Amount"})
+        raw_amount = _unquote(fields["Amount"])
+        if re.fullmatch(r"[+-]?\d+", raw_amount) is None:
+            raise ValueError("Amount")
+        amount = int(raw_amount)
+        if abs(amount) > MAX_SAFE_JSON_INTEGER:
+            raise ValueError("Amount exact JSON integer range")
+        return {"kind": "increase_command_points", "tag": tag,
+                "type": _nugget_text(fields["Type"]), "amount": amount}
+    if kind == "upgradetroops":
+        if node.children:
+            raise ChildProcessError(node.children[0].kind)
+        fields = _scalar_fields(node, {"NumUpgradesPerTurn", "UpgradeableUnits"}, {"NumUpgradesPerTurn", "UpgradeableUnits"})
+        units = _unquote(fields["UpgradeableUnits"]).split()
+        if not units or len(units) > MAX_UPGRADEABLE_UNITS or any(len(v) > MAX_NUGGET_STRING for v in units):
+            raise OverflowError("UpgradeableUnits") if len(units) > MAX_UPGRADEABLE_UNITS else ValueError("UpgradeableUnits")
+        return {"kind": "upgrade_troops", "tag": tag,
+                "numUpgradesPerTurn": _strict_int(fields["NumUpgradesPerTurn"], positive=True),
+                "upgradeableUnits": units}
+    if kind == "spawnarmy":
+        fields = _scalar_fields(node, {"QueueSize"}, {"QueueSize"})
+        if len(node.children) > MAX_NUGGET_ARMIES:
+            raise OverflowError("ArmyToSpawn")
+        armies: list[dict[str, Any]] = []
+        for child in node.children:
+            if child.kind.casefold() != "armytospawn" or child.name is not None or child.children:
+                raise ChildProcessError(child.kind)
+            # Full back-compatible recruit row, but SOURCE order here.
+            seen: set[str] = set()
+            for key, _ in child.fields:
+                folded = key.casefold()
+                if folded not in _RECRUIT_FIELDS:
+                    raise KeyError(key)
+                if folded in seen:
+                    raise RuntimeError(key)
+                seen.add(folded)
+            army = _fields(child, _RECRUIT_FIELDS, scope + " / ArmyToSpawn", [])
+            if any(len(str(value)) > MAX_NUGGET_STRING for value in army.values()):
+                raise OverflowError("ArmyToSpawn string")
+            armies.append(army)
+        # Queue depth zero is valid: it explicitly disables queuing while still
+        # retaining authored ArmyToSpawn choices.
+        return {"kind": "spawn_army", "tag": tag,
+                "queueSize": _strict_int(fields["QueueSize"], positive=False),
+                "armies": armies}
+    raise TypeError(authored_kind)
+
+
+def _convert_nuggets(node: Node, scope: str, gaps: list[Gap]) -> tuple[str, list[dict[str, Any]]]:
+    if len(node.children) > MAX_NUGGETS:
+        _nugget_gap(node, scope, "nugget_cap_exceeded", "BuildingNugget", gaps)
+        return "refused", []
+    converted: list[dict[str, Any]] = []
+    for child in node.children:
+        child_scope = scope + " / " + str(child.name or child.kind)
+        try:
+            if child.kind.casefold() != "buildingnugget":
+                raise ChildProcessError(child.kind)
+            converted.append(_typed_nugget(child, child_scope))
+        except OverflowError as exc:
+            _nugget_gap(child, child_scope, "nugget_cap_exceeded", str(exc), gaps)
+            return "refused", []
+        except TypeError as exc:
+            _nugget_gap(child, child_scope, "nugget_unknown_kind", str(exc), gaps)
+            return "refused", []
+        except KeyError as exc:
+            _nugget_gap(child, child_scope, "nugget_unknown_field", str(exc).strip("'"), gaps)
+            return "refused", []
+        except ChildProcessError as exc:
+            _nugget_gap(child, child_scope, "nugget_unknown_subblock", str(exc), gaps)
+            return "refused", []
+        except (ValueError, RuntimeError, LookupError) as exc:
+            _nugget_gap(child, child_scope, "nugget_bad_value", str(exc), gaps)
+            return "refused", []
+    return "ok", converted
+
+
+def _read_buildings(reader: CatalogReader, gaps: list[Gap]) -> list[dict[str, Any]]:
+    """Convert buildings, retaining the legacy flattened recruit projection."""
 
     tree = _tree_of(reader, BUILDINGS_PATH, gaps)
     buildings: list[dict[str, Any]] = []
     for node in tree.roots:
         if node.kind.casefold() != "livingworldbuilding":
-            gaps.append(
-                Gap(
-                    virtual_path=node.virtual_path,
-                    line=node.line,
-                    scope="<root>",
-                    reason="unmodelled-block",
-                    detail=node.kind,
-                )
-            )
+            gaps.append(Gap(node.virtual_path, node.line, "<root>", "unmodelled-block", node.kind))
             continue
         scope = f"LivingWorldBuilding {node.name}"
         row = _fields(node, _BUILDING_FIELDS, scope, gaps)
@@ -301,15 +497,12 @@ def _read_buildings(reader: CatalogReader, gaps: list[Gap]) -> list[dict[str, An
         recruits: list[dict[str, Any]] = []
         for nugget in node.children:
             for spawn in nugget.blocks("ArmyToSpawn"):
-                recruit = _fields(
-                    spawn,
-                    _RECRUIT_FIELDS,
-                    f"{scope} / ArmyToSpawn",
-                    gaps,
-                )
-                recruits.append(recruit)
+                recruits.append(_fields(spawn, _RECRUIT_FIELDS, f"{scope} / ArmyToSpawn", gaps))
         recruits.sort(key=lambda item: str(item["playerArmy"]).casefold())
         row["recruits"] = recruits
+        status, nuggets = _convert_nuggets(node, scope, gaps)
+        row["nuggetsStatus"] = status
+        row["nuggets"] = nuggets
         buildings.append(row)
     buildings.sort(key=lambda item: str(item["id"]).casefold())
     return buildings
@@ -840,6 +1033,9 @@ def build_bundle(
         "totals": {
             "buildings": len(buildings),
             "recruits": sum(len(row["recruits"]) for row in buildings),
+            "nuggets": sum(len(row["nuggets"]) for row in buildings),
+            "nuggetsOk": sum(row["nuggetsStatus"] == "ok" for row in buildings),
+            "nuggetsRefused": sum(row["nuggetsStatus"] == "refused" for row in buildings),
             "playerTemplates": len(templates),
             "buildPlotIcons": len(plot_icons),
             "buildingIcons": len(building_icons),

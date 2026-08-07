@@ -52,31 +52,15 @@ extends RefCounted
 ## retail payload living outside `.private`, which `AGENTS.md` forbids.
 ##
 ## ============================================================================
-## WHAT THE CONVERTER DROPS, AND IS THEREFORE STILL A GAP
+## WHAT TYPED CONVERSION CARRIES, AND WHAT RUNTIME APPLIES
 ## ============================================================================
 ##
-## `living-world-ui.json` carries fifteen of the block's fields and NONE of its
-## `BuildingNugget` sub-blocks. Five nugget kinds are lost, and they are named in
-## `wotr_strategic_gaps.gd` under `strategic_building_nuggets` rather than
-## silently absent:
-##
-##   `IncreaseTreasury / TreasureAmount`  the per-turn gain. RECONSTRUCTED here
-##       by TYPE, which is exact: all seven `Type = Fortress` blocks carry
-##       `TreasureAmount = GAIN_PER_FORTRESS` and all seven `Type = Resource`
-##       blocks carry `TreasureAmount = GAIN_PER_FARM`, with no exceptions and no
-##       nugget on any Barracks or Armory. See `INCOME_MACRO_BY_TYPE` below.
-##   `IncreaseCommandPoints / Type = WORLD / Amount = +30`  a farm's one-off
-##       world command-point grant. NOT reconstructed: the amount is in the
-##       dropped nugget and inventing 30 here would be a retail number this
-##       project made up.
-##   `StrengthenArmy / Bonus = <n> Armor:<pct>`  a fortress's stacking armour
-##       table for the territory it defends. Dropped, so a standing fortress does
-##       not yet strengthen its garrison.
-##   `UpgradeTroops / NumUpgradesPerTurn / UpgradeableUnits`  what an Armory
-##       grants. Dropped, which is why an Armory is currently a structure that
-##       costs 500 and does nothing.
-##   `SpawnArmy / QueueSize`  how deep a building's recruitment queue is. The
-##       `ArmyToSpawn` rows themselves ARE converted (they are `recruits` below).
+## Schema 2 carries all five BuildingNugget kinds without flattening them.
+## IncreaseTreasury is resolved through the converted TreasureAmount macro and
+## applied as per-turn income. StrengthenArmy, IncreaseCommandPoints,
+## UpgradeTroops, and SpawnArmy QueueSize remain typed runtime data but their
+## effects are deliberately not applied; `wotr_strategic_gaps.gd` says so.
+## Every projected record deep-copies `nuggets` and `nuggets_status`.
 ##
 ## ============================================================================
 ## THE FOUR TYPES, AND THE TWO PLACES RETAIL SPELLS THEM DIFFERENTLY
@@ -170,11 +154,10 @@ const AI_SCORE_KEY_TYPES := {
 ##   LWB_GondorFarm  (line 322)  BuildingNugget IncreaseTreasury NuggetTag_GiveLoot
 ##                                   TreasureAmount = GAIN_PER_FARM
 ##
-## `living-world-ui.json` DROPS every nugget, so the binding is reconstructed
-## here BY TYPE - exactly, because retail's own table is exactly type-uniform:
-## seven `Type = Fortress` blocks all naming `GAIN_PER_FORTRESS`, seven
-## `Type = Resource` blocks all naming `GAIN_PER_FARM`, and no nugget at all on
-## any `Barracks` or `Armory`.
+## Schema 2 carries that binding directly. This file groups the validated typed
+## IncreaseTreasury nuggets by Type only to expose the existing `income_for_type`
+## API; it refuses partial, inconsistent, or unresolved bindings and never
+## supplies a macro from the Type name.
 ##
 ## THE AMOUNTS are `gamedata.ini`, in one contiguous `;//---WOTR---` block
 ## immediately above the four `WOTR_*_COST` prices this same file spends:
@@ -206,10 +189,6 @@ const AI_SCORE_KEY_TYPES := {
 ## the region term ADD rather than combining some other way, that there is no
 ## base income, and that a region's permanent authored stronghold is not a
 ## fortress for `GAIN_PER_FORTRESS`. See `turn_income()` in `wotr_state.gd`.
-const INCOME_MACRO_BY_TYPE := {
-	TYPE_FORTRESS: "GAIN_PER_FORTRESS",
-	TYPE_RESOURCE: "GAIN_PER_FARM",
-}
 
 ## The region-bonus macro whose value is a per-turn treasury bonus for holding
 ## the region. Retail authors it on eleven regions as
@@ -243,6 +222,9 @@ var resolved_macros: Dictionary = {}
 ## Macros the catalogue needed and could not resolve, name -> why. A building
 ## whose cost macro is in here is UNBUILDABLE and says so.
 var unresolved_macros: Dictionary = {}
+## Derived only from validated IncreaseTreasury nuggets, never guessed by Type.
+var income_macro_by_type: Dictionary = {}
+var income_by_type: Dictionary = {}
 
 
 ## Where the two bundles this catalogue needs may live. Deliberately wider than
@@ -304,10 +286,9 @@ func load_from_roots(roots: Array = []) -> Dictionary:
 		return _result()
 	macros_path = String(macros_found.get("path", ""))
 
-	# The treasury macros first, so a caller reading `resolved_macros` sees the
-	# whole economy in one place whether or not any building resolved.
-	for macro_name in [FERTILE_MACRO, "GAIN_PER_FORTRESS", "GAIN_PER_FARM"]:
-		_resolve_macro(macros, String(macro_name))
+	# The region bonus is independent. Building income is resolved below only
+	# from typed IncreaseTreasury nuggets; Type names are never a substitute.
+	_resolve_macro(macros, FERTILE_MACRO)
 
 	var ids: Array[String] = []
 	for id in ui.building_ids:
@@ -319,6 +300,7 @@ func load_from_roots(roots: Array = []) -> Dictionary:
 		ids.append(String(id))
 	ids.sort()
 	building_ids = PackedStringArray(ids)
+	_derive_income(macros)
 	if buildings.is_empty():
 		reason = ("the living-world UI bundle at %s carries no building block with "
 			+ "all of %s") % [ui_path, ", ".join(REQUIRED_BUILDING_FIELDS)]
@@ -382,7 +364,51 @@ func _project(source: Dictionary, macros: MacrosScript) -> Dictionary:
 		"build_title_tag": String(source.get("constructButtonTitle", "")),
 		"build_help_tag": String(source.get("constructButtonHelp", "")),
 		"recruits": recruits,
+		# Deep copies prevent runtime consumers from mutating the loader's bundle
+		# state through a shared Array/Dictionary reference.
+		"nuggets_status": String(source.get("nuggetsStatus", "refused")),
+		"nuggets": (source.get("nuggets", []) as Array).duplicate(true),
 	}
+
+
+func _derive_income(macros: MacrosScript) -> void:
+	for type_name in TYPES:
+		var rows: Array[Dictionary] = []
+		for id in building_ids:
+			var record := buildings[String(id)] as Dictionary
+			if String(record.get("type", "")) == type_name:
+				rows.append(record)
+		var found: Dictionary = {}
+		var with_income := 0
+		var refused := false
+		for record in rows:
+			var local: Array[String] = []
+			if String(record.get("nuggets_status", "")) == "ok":
+				for nugget_value in record.get("nuggets", []) as Array:
+					var nugget := nugget_value as Dictionary
+					if String(nugget.get("kind", "")) == "increase_treasury":
+						local.append(String(nugget.get("treasureAmount", "")))
+			else:
+				refused = true
+			if local.size() == 1:
+				with_income += 1
+				found[local[0]] = true
+			elif local.size() > 1:
+				found["<multiple on one building>"] = true
+		# Uniform absence is authored zero income. Partial presence, differing
+		# macros, or a refused nugget conversion cannot safely define a Type.
+		if with_income == 0 and found.is_empty() and not refused:
+			continue
+		if refused or with_income != rows.size() or found.size() != 1:
+			unresolved_macros["IncomeType=%s" % type_name] = "typed IncreaseTreasury nuggets are missing or inconsistent for Type=%s" % type_name
+			continue
+		var macro_name := String(found.keys()[0])
+		var resolved := _resolve_macro(macros, macro_name)
+		if not bool(resolved.get("ok", false)):
+			unresolved_macros["IncomeType=%s" % type_name] = String(resolved.get("reason", "unresolved treasury macro"))
+			continue
+		income_macro_by_type[type_name] = macro_name
+		income_by_type[type_name] = int(resolved["value"])
 
 
 ## Resolve one gamedata macro to an int and remember the outcome. Retail's
@@ -480,10 +506,7 @@ func resolve_scenario_token(token: String, player_template: String) -> Dictionar
 ## macro names them, so they earn nothing and that is a read of retail's table,
 ## not an omission here).
 func income_for_type(type_name: String) -> int:
-	var macro_name := String(INCOME_MACRO_BY_TYPE.get(type_name, ""))
-	if macro_name.is_empty():
-		return 0
-	return int(resolved_macros.get(macro_name, 0))
+	return int(income_by_type.get(type_name, 0))
 
 
 ## One line per fact worth printing at load, in the shape every other bundle
@@ -531,6 +554,8 @@ func _reset() -> void:
 	building_ids = PackedStringArray()
 	resolved_macros = {}
 	unresolved_macros = {}
+	income_macro_by_type = {}
+	income_by_type = {}
 
 
 static func _sorted(values: Array) -> PackedStringArray:

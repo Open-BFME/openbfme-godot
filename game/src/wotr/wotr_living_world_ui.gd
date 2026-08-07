@@ -39,7 +39,7 @@ extends RefCounted
 ## `GarrisonSelectionPortraitName`. Resemblance between two names is never used.
 
 const SCHEMA := "openbfme.living-world-ui"
-const SCHEMA_VERSION := 1
+const SCHEMA_VERSION := 2
 
 const BUNDLE_ENV := "OPENBFME_LIVING_WORLD_UI"
 const FILE_NAME := "living-world-ui.json"
@@ -139,6 +139,123 @@ func locate_and_load(roots: Array = []) -> Dictionary:
 	}
 
 
+static func _exact_keys(row: Dictionary, expected: Array[String]) -> bool:
+	if row.size() != expected.size():
+		return false
+	for key in expected:
+		if not row.has(key):
+			return false
+	return true
+
+
+static func _json_integer(value: Variant, minimum: int, positive := false) -> bool:
+	# JSON numbers arrive as floats. Accept only an exactly integral finite token;
+	# never coerce/truncate 1.5 to 1.
+	if not (value is float) or not is_finite(value) or value != floor(value):
+		return false
+	# JSON numbers cross this boundary as IEEE-754 floats; beyond 2^53-1 an
+	# authored integer cannot be carried exactly.
+	if absf(value) > 9007199254740991.0:
+		return false
+	return value > 0.0 if positive else value >= float(minimum)
+
+
+static func _strings(row: Dictionary, keys: Array[String]) -> bool:
+	for key in keys:
+		if not (row.get(key) is String) or String(row[key]).length() > 256:
+			return false
+	return true
+
+
+static func _validate_army(value: Variant) -> bool:
+	if not (value is Dictionary):
+		return false
+	var row: Dictionary = value
+	var keys: Array[String] = ["buildTime", "constructButtonHelp", "constructButtonImage", "constructButtonTitle", "heroTemplateName", "icon", "iconSize", "palantirMovie", "playerArmy"]
+	return _exact_keys(row, keys) and _strings(row, keys)
+
+
+static func _validate_bonus(value: Variant) -> bool:
+	if not (value is Dictionary):
+		return false
+	var row: Dictionary = value
+	if not _exact_keys(row, ["armorPct", "armorRaw", "experiencePct", "experienceRaw", "threshold", "weaponPct", "weaponRaw"]):
+		return false
+	if not _json_integer(row["threshold"], 1, true):
+		return false
+	for prefix in ["armor", "experience", "weapon"]:
+		var pct: Variant = row[prefix + "Pct"]
+		var raw: Variant = row[prefix + "Raw"]
+		if pct == null or raw == null:
+			if pct != null or raw != null:
+				return false
+			continue
+		if not (pct is float) or not is_finite(pct) or not (raw is String):
+			return false
+		var text := String(raw)
+		var colon := text.find(":")
+		if text.length() > 256 or colon <= 0 or text.left(colon).to_lower() != prefix 				or not text.ends_with("%") or text.ends_with("%%"):
+			return false
+		var number := text.substr(text.find(":") + 1, text.length() - text.find(":") - 2)
+		var decimal := RegEx.new()
+		decimal.compile("^[+-]?([0-9]+(\\.[0-9]*)?|\\.[0-9]+)$")
+		if decimal.search(number) == null or not is_finite(number.to_float()) or number.to_float() != pct:
+			return false
+	return true
+
+
+static func _validate_nugget(value: Variant) -> bool:
+	if not (value is Dictionary):
+		return false
+	var row: Dictionary = value
+	if not _strings(row, ["kind", "tag"]) or String(row.get("tag", "")).is_empty():
+		return false
+	match String(row.get("kind", "")):
+		"strengthen_army":
+			if not _exact_keys(row, ["bonusKey", "bonuses", "kind", "strengtheningRange", "tag"]): return false
+			if not _strings(row, ["bonusKey", "strengtheningRange"]) or String(row["bonusKey"]).is_empty() or String(row["strengtheningRange"]).is_empty(): return false
+			if not (row["bonuses"] is Array) or row["bonuses"].is_empty() or row["bonuses"].size() > 16: return false
+			for bonus in row["bonuses"]:
+				if not _validate_bonus(bonus): return false
+		"increase_treasury":
+			if not _exact_keys(row, ["kind", "tag", "treasureAmount"]): return false
+			if not _strings(row, ["treasureAmount"]) or String(row["treasureAmount"]).is_empty(): return false
+		"spawn_army":
+			if not _exact_keys(row, ["armies", "kind", "queueSize", "tag"]): return false
+			if not _json_integer(row["queueSize"], 0) or not (row["armies"] is Array) or row["armies"].size() > 16: return false
+			for army in row["armies"]:
+				if not _validate_army(army): return false
+		"upgrade_troops":
+			if not _exact_keys(row, ["kind", "numUpgradesPerTurn", "tag", "upgradeableUnits"]): return false
+			if not _json_integer(row["numUpgradesPerTurn"], 1, true) or not (row["upgradeableUnits"] is Array) or row["upgradeableUnits"].is_empty() or row["upgradeableUnits"].size() > 64: return false
+			for unit in row["upgradeableUnits"]:
+				if not (unit is String) or String(unit).is_empty() or String(unit).length() > 256: return false
+		"increase_command_points":
+			if not _exact_keys(row, ["amount", "kind", "tag", "type"]): return false
+			if not _strings(row, ["type"]) or String(row["type"]).is_empty() or not _json_integer(row["amount"], -9223372036854775808): return false
+		_:
+			return false
+	return true
+
+
+static func _validate_buildings(value: Variant) -> String:
+	if not (value is Array):
+		return "buildings is not an array"
+	for building_value in value:
+		if not (building_value is Dictionary): return "a building is not an object"
+		var row: Dictionary = building_value
+		var id: Variant = row.get("id")
+		if not (id is String) or String(id).is_empty(): return "a building record carries no id"
+		if not (row.get("nuggetsStatus") is String) or not (row.get("nuggets") is Array): return "building %s has no typed nugget status/list" % id
+		var status := String(row["nuggetsStatus"])
+		var nuggets: Array = row["nuggets"]
+		if status != "ok" and status != "refused": return "building %s has invalid nuggetsStatus" % id
+		if nuggets.size() > 32 or (status == "refused" and not nuggets.is_empty()): return "building %s violates nugget status invariant" % id
+		if status == "ok":
+			for nugget in nuggets:
+				if not _validate_nugget(nugget): return "building %s has malformed typed nugget" % id
+	return ""
+
 func load_from(path: String) -> bool:
 	_reset()
 	source_path = path
@@ -156,8 +273,17 @@ func load_from(path: String) -> bool:
 	var bundle: Dictionary = parsed
 	if String(bundle.get("schema", "")) != SCHEMA:
 		return _fail("schema is not %s" % SCHEMA)
-	if int(bundle.get("schemaVersion", -1)) != SCHEMA_VERSION:
-		return _fail("unsupported schemaVersion %d" % int(bundle.get("schemaVersion", -1)))
+	var version_value: Variant = bundle.get("schemaVersion", null)
+	if not (version_value is float) or not is_finite(version_value) or version_value != floor(version_value):
+		return _fail("schemaVersion must be the JSON integer %d" % SCHEMA_VERSION)
+	var version := int(version_value)
+	if version != SCHEMA_VERSION:
+		if version == 1:
+			return _fail("schemaVersion 1 is stale; regenerate the living-world UI bundle for schemaVersion 2")
+		return _fail("unsupported schemaVersion %d" % version)
+	var building_error := _validate_buildings(bundle.get("buildings", null))
+	if not building_error.is_empty():
+		return _fail(building_error)
 
 	_atlas_directory = String(bundle.get("atlasDirectory", "ui-atlases"))
 	images = bundle.get("images", {}) as Dictionary
