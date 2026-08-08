@@ -10,7 +10,7 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File tools\bootstrap-
 if errorlevel 1 exit /b 1
 set "PYTHON=%OPENBFME_IMPORT_ROOT%\tools\python-3.12-env\Scripts\python.exe"
 set "PYTHONPATH=%CD%\importer"
-call "%~dp0toolsesolve-retail-install.bat"
+call "%~dp0tools\resolve-retail-install.bat"
 if errorlevel 1 exit /b 1
 "%PYTHON%" -m pytest importer\tests -v --color=no -p no:cacheprovider
 if errorlevel 1 exit /b 1
