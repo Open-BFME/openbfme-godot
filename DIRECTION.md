@@ -66,11 +66,14 @@ system is accepted.
    world coverage growth with measured gaps.
 8. **Module / behavior execution** - reduce opaque-deferred module surface for
    behaviors that skirmish actually needs.
-9. **Skirmish shell** - faction/map selection, launch, end match on RotWK content.
+9. **Skirmish shell** - faction/map selection, handicap and retail game rules,
+   profile-dependent setup, save/replay/observer flows, launch, and end match on
+   RotWK content. No retail-reachable setup control may be disabled.
 10. **Presentation and HUD/audio** - terrain materials, water, fog, props, retail
     UI/audio paths iterated as systems (not one-map art freezes).
-11. **Create-a-Hero, saves, replays, observers, custom maps** - product shell
-    completeness.
+11. **Create-a-Hero authoring and custom maps** - later product-authoring
+    completeness. Retail-reachable custom-hero integration in skirmish remains
+    part of step 9 even while the authoring screen is deferred.
 12. **Campaigns** - Good/Evil (and Angmar campaign content as shipped by RotWK)
     maps, mission scripts, objectives, cinematics.
 13. **War of the Ring** - strategic layer, territories, armies, strategic->"tactical

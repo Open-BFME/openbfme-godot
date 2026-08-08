@@ -611,9 +611,9 @@
     "claim_status": "blocked-until-generator-validator-and-current-reports-exist",
     "claim_rule": "No completeness claim may be emitted from this policy file alone.",
     "private_root": ".private/retail-work/reports/compatibility",
-    "feature_graph": "bfme2-106-feature-graph.json",
-    "evidence_catalog": "bfme2-106-evidence-catalog.json",
-    "coverage_matrix": "bfme2-106-coverage-matrix.json",
+    "feature_graph": "rotwk-201-feature-graph.json",
+    "evidence_catalog": "rotwk-201-evidence-catalog.json",
+    "coverage_matrix": "rotwk-201-coverage-matrix.json",
     "views_directory": "generated-views"
   }
 }
