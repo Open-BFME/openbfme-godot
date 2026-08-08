@@ -74,7 +74,7 @@ try {
     ) '(?m)\d+ passed'
 
     if ($SkipLiveRetail) {
-        Write-Host "$gate PASS offline-only"
+        Write-Host "$gate SKIPPED reason=-SkipLiveRetail live_retail_stages=not_run"
         exit 0
     }
 
@@ -94,7 +94,7 @@ try {
     }
 
     if ([string]::IsNullOrWhiteSpace($RotwkInstall) -or -not (Test-Path -LiteralPath (Join-Path $RotwkInstall "game.dat"))) {
-        Write-Host "$gate PASS offline (no ROTWK_INSTALL); live retail stages skipped"
+        Write-Host "$gate SKIPPED reason=no_ROTWK_INSTALL live_retail_stages=not_run"
         exit 0
     }
 

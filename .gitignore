@@ -65,3 +65,8 @@ captures/
 game/.captures/
 game/.private/
 
+# Python and Ruff caches
+.pytest_cache/
+.ruff_cache/
+importer/.ruff_cache/
+

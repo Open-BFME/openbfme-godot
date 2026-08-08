@@ -8,33 +8,9 @@
 
 ## Critical hazards
 
-### W1 — HARDLINK HAZARD (critical)
+### W1 — HARDLINK HAZARD (critical; repaired)
 
-`.private/orchestration/wotr/disposable/**` is **hardlinked to the live working tree**. The durable invariant is that each live/disposable pair below resolves to the **same file identity under the same tool**, with link count greater than 1. **Editing a file there edits live source.** Ledger, receipts, and evidence cite 90+ paths inside it (topology-council floor, not independently recounted in R1a). **NEVER `rm -rf`, edit in place, or use it as a sandbox.** A gate needing isolation must use a separate temporary root and prove a different identity under the same tool.
-
-Windows (authoritative NTFS File ID):
-
-```text
-fsutil file queryfileid game\project.godot
-fsutil file queryfileid .private\orchestration\wotr\disposable\packet-0001\game\project.godot
--> 0x0000000000000000002200000004df92 for both (decimal 9570149208481682)
-fsutil file queryfileid game\src\wotr\wotr_state.gd
-fsutil file queryfileid .private\orchestration\wotr\disposable\packet-0001\game\src\wotr\wotr_state.gd
--> 0x0000000000000000001200000005a33d for both (decimal 5066549581161277)
-```
-
-WSL (DrvFs; reports a different numeric value for the same file—do not treat that as a mismatch):
-
-```text
-stat -c '%i %h' game/project.godot
-stat -c '%i %h' .private/orchestration/wotr/disposable/packet-0001/game/project.godot
--> 9570149208481684 24 for both
-stat -c '%i %h' game/src/wotr/wotr_state.gd
-stat -c '%i %h' .private/orchestration/wotr/disposable/packet-0001/game/src/wotr/wotr_state.gd
--> 5066549581161279 23 for both
-```
-
-The numeric identity is tool-dependent and may change if a file is rewritten; verify that live and disposable paths report the same ID under the same tool and link count greater than 1—verify identity, never a memorised constant.
+**REPAIRED:** the tracked/live-to-evidence file-identity intersection was reduced from 1,128 to 0 with zero byte changes. Evidence paths and bytes are unchanged. The repair addressed 25,880 evidence aliases: Strategy A detached the live side, so those evidence aliases kept their existing file identities; Strategy B detached 46 evidence aliases, so those 46 received new identities. `.private/orchestration/wotr/**` remains load-bearing evidence: **NEVER delete it or edit it in place.** `tools/gate-hardlink-isolation.py` now fail-closed enforces that no Git-tracked file shares an NTFS file identity with disposable evidence.
 
 ### W2 — IMMUTABLE PACKS (critical)
 
@@ -53,6 +29,10 @@ Or use this fail-open-filter WSL fallback:
 ```bash
 git -c filter.lfs.process= -c filter.lfs.required=false status --porcelain
 ```
+
+### Search hazard — ignore traversal omits tracked truth
+
+Ordinary source search must be **index-based**: use `git grep` and `git ls-files`, not ignore-driven filesystem traversal. There are 24 legitimately tracked `game/data/base/assets/models/**/*.obj.import` files that match `.gitignore` rules, so default ignore-aware searches silently omit them; hidden tracked files such as `.gitattributes`, `.gitignore`, and `.github/**` are also skipped by default.
 
 ## Bucket legend
 
@@ -147,7 +127,7 @@ Active ledgers, receipts, evidence, baselines, and linked history whose integrit
 
 | Root | Purpose | Producer / generator | Reproducible | Normal-run load-bearing | Legal class | Retention | Notes |
 |---|---|---|:---:|:---:|---|---|---|
-| `.private/orchestration/wotr/` | Live WotR ledger.json, 15 receipt files, 21 top-level evidence entries (96 files recursively), baselines, logs, and disposable/ history. | `WotR orchestration and gate commands` | no | no | `user-owned` | Preserve intact; never edit in place, delete, or use as a sandbox. | MISLABELED: disposable is not disposable. It is hardlinked to live source. R1a counts: `find .private/orchestration/wotr/receipts -type f | wc -l` = 15; `find .private/orchestration/wotr/evidence -mindepth 1 -maxdepth 1 | wc -l` = 21 entries; `find .private/orchestration/wotr/evidence -type f | wc -l` = 96. The 90+ cited-path figure is a topology-council floor not independently recounted in R1a. |
+| `.private/orchestration/wotr/` | Live WotR ledger.json, 15 receipt files, 21 top-level evidence entries (96 files recursively), baselines, logs, and disposable/ history. | `WotR orchestration and gate commands` | no | no | `user-owned` | Preserve intact; never edit in place, delete, or use as a sandbox. | REPAIRED: the tracked/live-to-evidence identity intersection is 0, down from 1,128, with zero byte changes. Evidence paths and bytes are unchanged; Strategy A preserved evidence-alias identities by detaching the live side, while Strategy B gave new identities to 46 detached evidence aliases. `tools/gate-hardlink-isolation.py` enforces the invariant. R1a counts remain 15 receipts, 21 top-level evidence entries, and 96 evidence files recursively. |
 
 ## `SESSION_WORKSPACE`
 
