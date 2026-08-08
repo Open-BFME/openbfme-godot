@@ -25,6 +25,7 @@ Authoritative map for this repo. If it is not linked here or from the root
 | Doc | Topic |
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Boundaries (`game` / `importer` / `engine`) |
+| [TOPOLOGY.md](TOPOLOGY.md) | Production source, private state, workspaces, and caches |
 | [CONTENT_PIPELINE.md](CONTENT_PIPELINE.md) | Import, packs, `.private` |
 | [ROTWK_SYSTEMS_PATH.md](ROTWK_SYSTEMS_PATH.md) | `run_rotwk_*` operator path |
 | [BFME2_PARITY.md](BFME2_PARITY.md) | Parity doctrine (RotWK-primary) |
