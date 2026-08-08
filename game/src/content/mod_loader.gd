@@ -227,8 +227,7 @@ func list_pack_roots() -> Array[String]:
 			# directory, reached only because OPENBFME_CONTENT named nothing
 			# usable. It can be months old while the repository's real pack has
 			# moved on, and a stale pack producing confidently wrong results
-			# that pass review is a recorded failure in this project - the
-			# reason run_worktree_game.bat exists at all.
+			# that pass review is a recorded failure in this project.
 			#
 			# Until now this path said nothing. The only message was the
 			# upstream "OPENBFME_CONTENT does not exist", which does not name
@@ -240,7 +239,7 @@ func list_pack_roots() -> Array[String]:
 				"Falling back to the DURABLE pack in user data because "
 				+ "OPENBFME_CONTENT selected nothing: %s%s. " % [selected, age]
 				+ "If you are testing repository content, set OPENBFME_CONTENT "
-				+ "to the pack root (see run_worktree_game.bat)."
+				+ "to the pack root before launching run_game.bat."
 			)
 			_diagnose(notice)
 			print("[ModLoader] %s" % notice)
