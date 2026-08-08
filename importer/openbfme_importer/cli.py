@@ -36,6 +36,7 @@ from .paths import (
 from .pipeline import (
     ImportPipeline,
     audit_pack,
+    apply_selection_transaction,
     bundle_digest,
     update_selection_entry,
 )
@@ -927,6 +928,47 @@ def build_parser() -> argparse.ArgumentParser:
         help="private Godot content-packs directory",
     )
 
+    selection_transaction = sub.add_parser(
+        "apply-selection-transaction",
+        help=(
+            "replace the COMPLETE selection in the workspace and (optionally) "
+            "the durable mirror in one staged, verified, all-or-nothing swap "
+            "per target; any failure restores both to their exact prior bytes"
+        ),
+    )
+    selection_transaction.add_argument(
+        "--active-pack",
+        required=True,
+        metavar="PACK_ID/SHA256",
+        help="content-addressed bundle that becomes activePack",
+    )
+    selection_transaction.add_argument(
+        "--supplemental-pack",
+        action="append",
+        default=[],
+        dest="supplemental_packs",
+        metavar="PACK_ID/SHA256",
+        help=(
+            "content-addressed supplement, repeatable; the flag order IS the "
+            "supplementalPacks order written to the document"
+        ),
+    )
+    selection_transaction.add_argument(
+        "--godot-content-root",
+        type=Path,
+        default=default_godot_content_root(),
+        help="private Godot content-packs directory (the workspace selection)",
+    )
+    selection_transaction.add_argument(
+        "--durable-root",
+        type=Path,
+        default=None,
+        help=(
+            "durable user pack cache whose selection.json must end up "
+            "byte-identical to the workspace one (omit to leave it untouched)"
+        ),
+    )
+
     audit = sub.add_parser(
         "audit", help="verify every converted output against provenance hashes"
     )
@@ -1104,6 +1146,19 @@ def main(argv: list[str] | None = None) -> int:
                 catalog=args.catalog,
                 verify=args.verify,
                 consumer=args.consumer,
+            )
+            _render(value, args.json)
+            return 0
+
+        if args.command == "apply-selection-transaction":
+            # RULE P2: no --select anywhere on this path. The whole selection is
+            # composed, staged, swapped once per target and verified, or nothing
+            # changes at all.
+            value = apply_selection_transaction(
+                args.godot_content_root,
+                args.active_pack,
+                args.supplemental_packs,
+                durable_root=args.durable_root,
             )
             _render(value, args.json)
             return 0

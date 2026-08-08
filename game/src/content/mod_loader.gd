@@ -15,8 +15,45 @@ const WORKSPACE_CONTENT_SETTING := "openbfme/content/workspace_content_root"
 const WORKSPACE_CONTENT_RELATIVE := ".private/content-packs"
 const SELECTION_SCHEMA := "openbfme.pack-selection"
 const SELECTION_VERSION := 0
+## Strict parity profile. When requested, the mounted set is EXACTLY the
+## selection's own closure: no res://data base pack, no res:// or user:// example
+## mod, no sibling pack, nothing ambient. RULE T24 makes demo data, example mods
+## and BFME2 supplements product failures inside the parity profile, and the
+## runtime is the only place that can prove which packs actually mounted (RULE
+## P8), so the mode is explicit and its report is machine-readable.
+##
+## Requested by either OPENBFME_STRICT_PARITY_PROFILE=1 or a selection document
+## carrying "strictParityProfile": true. It is never inferred, so an ordinary
+## playtest, editor run or existing runner keeps its current mounting exactly.
+const STRICT_PARITY_PROFILE_ENV := "OPENBFME_STRICT_PARITY_PROFILE"
+## Pack-id namespace the strict parity profile will mount. BFME2 packs are
+## SOURCE-LAYER input for the RotWK conversion, never runtime supplements
+## (RULE T24), so a strict run refuses them loudly instead of serving BFME2
+## objects and eight extra BFME2 maps inside a RotWK parity match. Overridable
+## per profile so a future non-RotWK parity profile is not blocked by this.
+const STRICT_PARITY_PACK_PREFIX_ENV := "OPENBFME_STRICT_PARITY_PACK_PREFIX"
+const STRICT_PARITY_PACK_PREFIX := "rotwk-"
 
 var diagnostics: Array[String] = []
+## True when the last list_pack_roots scan ran in strict parity profile mode.
+var strict_parity_profile := false
+## Fail-closed findings from that scan: a missing supplement, an unsafe entry, a
+## selected pack that is not a strict completion build. NEVER a silent skip
+## (RULE P7) - each one is pushed to the error log AND surfaced here so the
+## parity-profile audit report can name it.
+var strict_parity_errors: Array[String] = []
+## Per-call record of every declared supplement that did not resolve, filled by
+## selected_pack_supplements. Outside strict mode these stay diagnostics-only,
+## exactly as before.
+var supplement_failures: Array[String] = []
+## Absolute root of the pack the winning selection made active, or "".
+var active_pack_root := ""
+## Ambient (repository base, example mod, user mod) roots the last strict scan
+## refused to mount. Empty outside strict mode.
+var suppressed_ambient_roots: Array[String] = []
+## Selection entries the last strict scan refused because they are outside the
+## profile's pack-id namespace (BFME2 supplements in a RotWK parity run).
+var refused_foreign_packs: Array[String] = []
 ## Which selection source won the last list_pack_roots scan:
 ## "external" (OPENBFME_CONTENT), "workspace" (repo .private/content-packs),
 ## "durable" (user:// cache), or "" when no selection is active.
@@ -97,12 +134,23 @@ func clear_path_caches() -> void:
 
 func list_pack_roots() -> Array[String]:
 	diagnostics.clear()
+	strict_parity_errors.clear()
+	suppressed_ambient_roots.clear()
+	refused_foreign_packs.clear()
+	supplement_failures.clear()
+	strict_parity_profile = false
+	active_pack_root = ""
 	clear_path_caches()
 	var roots: Array[String] = []
-	_collect_packs(BASE_PATH, roots)
-	_collect_packs(RES_MODS, roots)
+	# AMBIENT ROOTS, HELD SEPARATELY. These are the repository base pack, the
+	# shipped example mods and the user mod folder: content nobody selected. The
+	# strict parity profile refuses all of them (see the merge below); every
+	# other run keeps them, in their original position ahead of the selection.
+	var ambient: Array[String] = []
+	_collect_packs(BASE_PATH, ambient)
+	_collect_packs(RES_MODS, ambient)
 	_ensure_dir(USER_MODS)
-	_collect_packs(USER_MODS, roots)
+	_collect_packs(USER_MODS, ambient)
 
 	# Developer/CI override. This remains ephemeral; normal installs use the
 	var external := OS.get_environment("OPENBFME_CONTENT")
@@ -199,6 +247,60 @@ func list_pack_roots() -> Array[String]:
 			roots.append(selected)
 			roots.append_array(selected_pack_supplements())
 
+	active_pack_root = active_selected
+	# STRICT PARITY PROFILE. Requested explicitly; never inferred. When it is on
+	# the mounted set is the selection's closure and nothing else, and every
+	# fail-closed finding is recorded rather than diagnosed and forgotten.
+	if _strict_parity_requested():
+		strict_parity_profile = true
+		# Cross-edition supplements are refused, not merely reported. A RotWK
+		# parity match that quietly serves BFME2 objects and eight extra BFME2
+		# maps is a product failure (RULE T24), and a loader that mounts them
+		# while the judge complains has already shipped the wrong bytes.
+		var prefix := OS.get_environment(STRICT_PARITY_PACK_PREFIX_ENV).strip_edges()
+		if prefix == "":
+			prefix = STRICT_PARITY_PACK_PREFIX
+		var kept: Array[String] = []
+		for candidate in roots:
+			var candidate_id := String(pack_identity(candidate).get("packId", ""))
+			if candidate_id.begins_with(prefix):
+				kept.append(candidate)
+				continue
+			refused_foreign_packs.append(candidate)
+			_strict_error(
+				"refusing to mount pack '%s' at %s: the strict parity profile mounts only '%s*' packs" % [candidate_id, candidate, prefix]
+			)
+		roots = kept
+		var active_refused := active_selected != "" and not kept.has(active_selected)
+		if active_refused:
+			_strict_error(
+				"the selection's ACTIVE pack %s was refused, so this run mounts no active pack at all" % active_selected
+			)
+			active_selected = ""
+			active_pack_root = ""
+		if active_selected == "" and not active_refused:
+			_strict_error(
+				"strict parity profile is active but no selection resolved a pack root; "
+				+ "the run would mount NOTHING rather than fall back to ambient content"
+			)
+		elif active_selected != "" and not _is_strict_completion_pack(active_selected):
+			_strict_error(
+				"strict parity profile is active but the selected pack %s is not a strict completion build (pack.json profile_build_complete is not true)" % active_selected
+			)
+		for failure in supplement_failures:
+			_strict_error(failure)
+		for ambient_root in ambient:
+			suppressed_ambient_roots.append(ambient_root)
+		if not ambient.is_empty():
+			print("[ModLoader] strict parity profile: refusing %d ambient pack root(s): %s" % [
+				ambient.size(), ", ".join(ambient)
+			])
+	else:
+		var merged: Array[String] = []
+		merged.append_array(ambient)
+		merged.append_array(roots)
+		roots = merged
+
 	var unique: Array[String] = []
 	var seen: Dictionary = {}
 	for root in roots:
@@ -292,6 +394,7 @@ func selected_pack_supplements(cache_root: String = "", selection_path: String =
 	## without scanning siblings; invalid entries fail closed: they are
 	## diagnosed and skipped, never searched for.
 	var supplements: Array[String] = []
+	supplement_failures.clear()
 	var cache := user_pack_cache_root() if cache_root == "" else cache_root
 	var selection := user_pack_selection_path() if selection_path == "" else selection_path
 	if not FileAccess.file_exists(selection):
@@ -304,15 +407,22 @@ func selected_pack_supplements(cache_root: String = "", selection_path: String =
 		return supplements
 	var entries: Variant = config.get("supplementalPacks", [])
 	if typeof(entries) != TYPE_ARRAY:
+		supplement_failures.append("supplementalPacks is not an array in %s" % selection)
 		_diagnose("Content selection supplementalPacks is not an array: %s" % selection)
 		return supplements
 	for entry_value in entries as Array:
 		var relative := String(entry_value)
 		var supplement := resolve_pack_path(cache, relative)
 		if supplement == "":
+			# Recorded as well as diagnosed: outside strict mode this stays a
+			# warning exactly as before, but a parity profile that quietly
+			# mounts eight packs where the selection named nine is the failure
+			# this whole packet exists to make visible (RULE P7).
+			supplement_failures.append("declared supplement %s resolves to an unsafe path under %s" % [relative, cache])
 			_diagnose("Content selection has an unsafe supplementalPacks path: %s" % relative)
 			continue
 		if not is_valid_pack_root(supplement):
+			supplement_failures.append("declared supplement %s is missing or invalid at %s" % [relative, supplement])
 			_diagnose("Supplemental content pack is invalid or missing: %s" % supplement)
 			continue
 		supplements.append(supplement)
@@ -732,6 +842,126 @@ func _pack_priority(pack_root: String) -> int:
 	if typeof(data) == TYPE_DICTIONARY:
 		return int((data as Dictionary).get("priority", 100))
 	return 100
+
+
+func _strict_parity_requested() -> bool:
+	## Explicit request only. Either the environment asks for it (audit harness,
+	## CI) or the winning selection document declares itself a parity profile.
+	## Inferring it from pack contents would silently change what every existing
+	## runner mounts, which is the opposite of fail-closed.
+	var flag := OS.get_environment(STRICT_PARITY_PROFILE_ENV).strip_edges().to_lower()
+	if flag != "" and flag != "0" and flag != "false" and flag != "no":
+		return true
+	if active_selection_path == "" or not active_selection_path.ends_with("selection.json"):
+		return false
+	var raw: Variant = _read_json(active_selection_path)
+	if typeof(raw) != TYPE_DICTIONARY:
+		return false
+	return bool((raw as Dictionary).get("strictParityProfile", false))
+
+
+func _strict_error(message: String) -> void:
+	strict_parity_errors.append(message)
+	# Loud on three channels on purpose: push_error reaches the editor, printerr
+	# reaches the console binary's stderr (which the audit harness captures),
+	# and the array reaches the machine-readable report.
+	push_error("[ModLoader] STRICT PARITY PROFILE: %s" % message)
+	printerr("[ModLoader] STRICT PARITY PROFILE: %s" % message)
+
+
+func is_bundle_digest(name: String) -> bool:
+	## A content-addressed bundle directory is exactly 64 lowercase hex digits.
+	## Anything else (a hand-made "goal-official-72" folder) is a MUTABLE name:
+	## its bytes can change under a selection that still reads identical.
+	if name.length() != 64:
+		return false
+	for index in name.length():
+		var character := name.substr(index, 1).to_lower()
+		if not ("0123456789abcdef".contains(character)):
+			return false
+	return true
+
+
+func pack_identity(pack_root: String) -> Dictionary:
+	## Everything an audit needs to name ONE mounted pack: its declared id, the
+	## bundle directory it was mounted from, and whether that directory is
+	## content-addressed. Derived from the mounted root itself, never from the
+	## selection document, so a runtime that mounted something other than what
+	## the selection names is visible (RULE P8).
+	var normalized := pack_root.replace("\\", "/").trim_suffix("/")
+	var manifest := resolve_pack_path(pack_root, "pack.json")
+	var raw: Variant = _read_json(manifest)
+	var document: Dictionary = (raw as Dictionary) if typeof(raw) == TYPE_DICTIONARY else {}
+	var leaf := normalized.get_file()
+	var parent := normalized.get_base_dir().get_file()
+	var content_addressed := is_bundle_digest(leaf)
+	var pack_id := String(document.get("id", ""))
+	var embedded := normalized.begins_with("res://")
+	var ambient_mod := (
+		normalized.begins_with("res://mods")
+		or normalized.begins_with("user://mods")
+		or normalized.contains("/mods/")
+	)
+	return {
+		"packId": pack_id,
+		"packRoot": normalized,
+		"bundleDirectory": leaf,
+		"bundleRelative": ("%s/%s" % [parent, leaf]) if content_addressed else leaf,
+		"bundleDigest": leaf if content_addressed else "",
+		"contentAddressed": content_addressed,
+		"priority": int(document.get("priority", 100)),
+		"strictCompletionBuild": bool(document.get("profile_build_complete", false)),
+		"embeddedResource": embedded,
+		"ambientMod": ambient_mod,
+		"active": (
+			active_pack_root != ""
+			and _comparison_path(pack_root) == _comparison_path(active_pack_root)
+		),
+	}
+
+
+func runtime_pack_report(mounted_roots: Array) -> Dictionary:
+	## Machine-readable answer to "what did this process actually mount, in what
+	## order, from which selection?". The parity-profile audit consumes exactly
+	## this; it never re-derives the answer from the selection document, because
+	## the selection document is the thing under test.
+	var packs: Array = []
+	for value in mounted_roots:
+		packs.append(pack_identity(String(value)))
+	var ordered_ids: Array = []
+	for entry in packs:
+		var identity: Dictionary = entry
+		# DIGEST-BEARING on purpose. This list used to carry bare pack ids, so a
+		# judge could only cross-check the two views at pack-id level and a run
+		# that mounted the right nine packs from a WRONG bundle looked
+		# self-consistent. Ambient/embedded roots keep their full path so they
+		# stay classifiable as res:// base or example mods.
+		if bool(identity["embeddedResource"]) or bool(identity["ambientMod"]) or String(identity["packId"]) == "":
+			ordered_ids.append(String(identity["packRoot"]))
+		else:
+			ordered_ids.append("%s/%s" % [String(identity["packId"]), String(identity["bundleDirectory"])])
+	var embedded: Array = []
+	var ambient: Array = []
+	for entry in packs:
+		var identity: Dictionary = entry
+		if bool(identity["ambientMod"]):
+			ambient.append(String(identity["packRoot"]))
+		elif bool(identity["embeddedResource"]):
+			embedded.append(String(identity["packRoot"]))
+	return {
+		"activeContentSource": active_content_source,
+		"activeSelectionPath": active_selection_path,
+		"activePackRoot": active_pack_root,
+		"strictParityProfile": strict_parity_profile,
+		"strictParityErrors": strict_parity_errors.duplicate(),
+		"suppressedAmbientRoots": suppressed_ambient_roots.duplicate(),
+		"refusedForeignPacks": refused_foreign_packs.duplicate(),
+		"diagnostics": diagnostics.duplicate(),
+		"orderedPacks": packs,
+		"orderedPackIds": ordered_ids,
+		"embeddedResourcePacks": embedded,
+		"ambientModPacks": ambient,
+	}
 
 
 func _is_strict_completion_pack(pack_root: String) -> bool:

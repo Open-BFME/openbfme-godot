@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import contextlib
 from dataclasses import asdict
 import hashlib
 from io import BytesIO
@@ -15,7 +16,8 @@ import struct
 import tempfile
 import threading
 import time
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
+import uuid
 
 from .big import COPY_CHUNK, sha256_file
 from .catalog import CatalogEntry, InstallCatalog, KNOWN_SLICE_ARCHIVE_SHA256
@@ -2449,6 +2451,13 @@ def update_selection_entry(
     (or active pack) that references a republished pack id is retargeted here
     in exactly one atomic rewrite: activePack stays active, supplement order
     is preserved, and no other entry changes.
+
+    ROLE-PRESERVING BY DESIGN (RULE P2): this is the one writer that moves a
+    single entry without restating the whole set, and that is exactly why it
+    exists. What it lacked was exclusion - it read, modified and wrote a
+    document a multi-root transaction could be mid-swap on, so the two writers
+    could overwrite or erase each other. It now holds the same content-root
+    lock for its whole validate -> read -> write lifetime.
     """
 
     if not pack_id or any(
@@ -2462,6 +2471,13 @@ def update_selection_entry(
     ):
         raise ValueError(f"bundle sha256 is not a 64-hex digest: {bundle_sha256!r}")
     root = ensure_external_to_repo(Path(content_root), repo_root_from_module())
+    with selection_transaction_lock(root):
+        return _update_selection_entry_locked(root, pack_id, digest)
+
+
+def _update_selection_entry_locked(
+    root: Path, pack_id: str, digest: str
+) -> dict[str, Any]:
     target_relative = f"{pack_id}/{digest}"
     target_dir = root / pack_id / digest
     if not target_dir.is_dir():
@@ -2522,6 +2538,634 @@ def update_selection_entry(
         "pack_relative": target_relative,
         "updated": updated,
         "changed": bool(updated),
+    }
+
+
+SELECTION_SCHEMA = "openbfme.pack-selection"
+SELECTION_SCHEMA_VERSION = 0
+#: Files whose presence means a cook is writing pack bundles right now. RULE P1
+#: freezes compiler identity during a cook; changing the selection underneath one
+#: is the same class of race, so the transaction refuses instead of interleaving.
+#: TODO(agent): no pre-existing cook lock exists anywhere in the importer, so
+#: this guard defines the marker itself. Whoever adds a real cook lock should
+#: point COOK_ACTIVE_MARKERS at it rather than adding a second convention.
+COOK_ACTIVE_MARKERS: tuple[str, ...] = (".cook-active", ".cooking")
+#: Interprocess mutual exclusion for the whole validate -> stage -> commit ->
+#: verify -> rollback lifetime. The marker files above are advisory breadcrumbs a
+#: cook may forget to drop; this is an atomic O_CREAT|O_EXCL create, so two
+#: processes cannot both believe they own the selection.
+#: TODO(agent): the cook side lives outside this packet's allowed paths. Every
+#: cook and publish path that writes pack bundles under a content root MUST take
+#: this same lock (see :func:`selection_transaction_lock`) before it starts and
+#: hold it until its bundles are complete; until it does, a cook racing this
+#: transaction is only caught by the advisory markers.
+SELECTION_TRANSACTION_LOCK = ".selection-transaction.lock"
+_SELECTION_RESERVED_FIELDS = frozenset(
+    {"schema", "schemaVersion", "activePack", "supplementalPacks"}
+)
+
+
+class SelectionTransactionError(RuntimeError):
+    """A staged multi-pack selection change refused, failed, or rolled back.
+
+    Every raise carries the full cause chain in its message: a rollback that
+    itself failed names BOTH the original fault and the restore fault, because
+    a half-restored pair of selection documents is exactly the hybrid state
+    this transaction exists to make impossible (RULE P7).
+    """
+
+
+def _selection_payload_bytes(
+    active_pack: str, supplemental_packs: Sequence[str], extra: Mapping[str, Any]
+) -> bytes:
+    document: dict[str, Any] = {
+        "schema": SELECTION_SCHEMA,
+        "schemaVersion": SELECTION_SCHEMA_VERSION,
+        "activePack": active_pack,
+        "supplementalPacks": list(supplemental_packs),
+    }
+    document.update(
+        {key: value for key, value in extra.items() if key not in _SELECTION_RESERVED_FIELDS}
+    )
+    return (
+        json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    ).encode("utf-8")
+
+
+def _normalized_selection_entry(raw: Any) -> str:
+    entry = str(raw).strip().replace("\\", "/")
+    try:
+        parts = safe_relative_parts(entry)
+    except ValueError as error:
+        raise SelectionTransactionError(
+            f"unsafe selection entry {entry!r}: {error}"
+        ) from error
+    if len(parts) != 2 or len(parts[1]) != 64 or any(
+        character not in "0123456789abcdef" for character in parts[1].lower()
+    ):
+        raise SelectionTransactionError(
+            "selection entry is not content-addressed (expected "
+            f"<pack-id>/<64-hex bundle digest>): {entry}"
+        )
+    if any(
+        character not in "abcdefghijklmnopqrstuvwxyz0123456789._-"
+        for character in parts[0]
+    ):
+        raise SelectionTransactionError(f"unsafe pack id in selection entry: {entry}")
+    return f"{parts[0]}/{parts[1].lower()}"
+
+
+def _verify_selection_entry_in_root(role: str, root: Path, entry: str) -> None:
+    pack_id, digest = entry.split("/", 1)
+    bundle = root / pack_id / digest
+    manifest = bundle / "pack.json"
+    if not manifest.is_file():
+        raise SelectionTransactionError(
+            f"{role} root {root} has no published bundle for selection entry "
+            f"{entry} (expected {manifest})"
+        )
+    try:
+        document = read_json(manifest)
+    except (OSError, json.JSONDecodeError) as error:
+        raise SelectionTransactionError(
+            f"{role} bundle {bundle} has an unreadable pack.json: {error}"
+        ) from error
+    if not isinstance(document, dict) or str(document.get("id", "")) != pack_id:
+        found = document.get("id") if isinstance(document, dict) else None
+        raise SelectionTransactionError(
+            f"{role} bundle {bundle} carries pack id {found!r}, expected {pack_id!r}"
+        )
+
+
+def _refuse_active_cook(roots: Sequence[tuple[str, Path]]) -> None:
+    if os.environ.get("OPENBFME_COOK_ACTIVE", "").strip():
+        raise SelectionTransactionError(
+            "refusing to change the selection while a cook is active "
+            "(OPENBFME_COOK_ACTIVE is set)"
+        )
+    for role, root in roots:
+        for marker in COOK_ACTIVE_MARKERS:
+            candidate = root / marker
+            if candidate.exists():
+                raise SelectionTransactionError(
+                    "refusing to change the selection while a cook is active: "
+                    f"{role} root holds {candidate}"
+                )
+
+
+def canonical_lock_roots(roots: Sequence[Path | str]) -> list[Path]:
+    """Total order over the roots a caller must lock, independent of input order.
+
+    Two transactions that share a durable root must take their locks in the SAME
+    sequence or they deadlock holding half of each other's set. Sorting by the
+    casefolded resolved path gives every process the same sequence from any
+    argument order, and folds a root named twice (or in two cases, which Windows
+    treats as one directory) into one lock.
+    """
+
+    ordered: dict[str, Path] = {}
+    for value in roots:
+        ordered.setdefault(_lock_root_key(value), Path(value).expanduser().resolve())
+    return [ordered[key] for key in sorted(ordered)]
+
+
+def _lock_root_key(root: Path | str) -> str:
+    """Filesystem-appropriate identity of a lock root.
+
+    NOT a blanket ``casefold``: on a case-sensitive filesystem ``/srv/Content``
+    and ``/srv/content`` are two different directories, and folding them
+    together would drop one of them from the lock set entirely - the opposite of
+    what this lock exists to guarantee. ``os.path.normcase`` folds case on
+    Windows and is the identity on POSIX, which is exactly the distinction.
+    """
+
+    return os.path.normcase(str(Path(root).expanduser().resolve()))
+
+
+@contextlib.contextmanager
+def selection_transaction_locks(roots: Sequence[Path | str]):
+    """Hold the exclusive lock of EVERY given root for one critical section."""
+
+    with contextlib.ExitStack() as stack:
+        for root in canonical_lock_roots(roots):
+            stack.enter_context(selection_transaction_lock(root))
+        yield
+
+
+@contextlib.contextmanager
+def selection_transaction_lock(content_root: Path | str):
+    """Hold exclusive ownership of one content root's selection.
+
+    ``os.open(..., O_CREAT | O_EXCL)`` is atomic on both Windows and POSIX, so
+    the process that creates the file owns the selection until it removes it.
+    A held lock is a REFUSAL, never a wait and never a break-in: a lock left
+    behind by a killed process is indistinguishable from a live one, and
+    guessing wrong means two writers on the same selection document.
+    """
+
+    root = Path(content_root)
+    lock_path = root / SELECTION_TRANSACTION_LOCK
+    try:
+        handle = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+    except FileExistsError as error:
+        holder = ""
+        try:
+            holder = lock_path.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            holder = "<unreadable>"
+        raise SelectionTransactionError(
+            f"another selection transaction or cook holds the lock at {lock_path} "
+            f"(holder: {holder or '<empty>'}). Refusing rather than waiting or "
+            "breaking in. If you are certain no cook or transaction is running, "
+            "delete that lock file by hand."
+        ) from error
+    try:
+        os.write(
+            handle,
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "acquiredUtc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "purpose": "openbfme selection transaction",
+                },
+                sort_keys=True,
+            ).encode("utf-8"),
+        )
+        os.fsync(handle)
+        yield lock_path
+    finally:
+        try:
+            os.close(handle)
+        finally:
+            lock_path.unlink(missing_ok=True)
+
+
+def durable_mirror_candidate_roots() -> list[Path]:
+    """Durable user-cache roots that might mirror a content root.
+
+    Returned BEFORE anything is read, because the caller has to lock these roots
+    before it may trust any answer about them. Only existing directories are
+    returned: a durable cache that does not exist cannot be locked, and cannot
+    yet be a mirror of anything.
+
+    ``OPENBFME_DURABLE_CONTENT`` overrides the location. The default is the
+    Godot user-data convention for this project, derived from the environment -
+    never a maintainer-specific path (RULE P10).
+    """
+
+    configured = os.environ.get("OPENBFME_DURABLE_CONTENT", "").strip()
+    if configured:
+        candidates = [Path(configured).expanduser()]
+    else:
+        appdata = os.environ.get("APPDATA", "").strip()
+        if not appdata:
+            return []
+        candidates = [
+            Path(appdata) / "Godot" / "app_userdata" / "Open BFME" / "content-packs"
+        ]
+    return [candidate for candidate in candidates if candidate.is_dir()]
+
+
+def durable_selection_mirror_of(content_root: Path | str) -> Path | None:
+    """The durable user-cache selection that mirrors THIS content root, if any.
+
+    An env-less launch resolves content from the durable Godot user cache, so a
+    selection written to the workspace alone leaves that launch on the previous
+    pack with nothing failing - a recorded failure mode in this project.
+
+    "Mirrors this root" is decided by evidence, not by a path guess: EVERY
+    normalized entry of the durable selection - activePack and every
+    supplementalPack - is mirror evidence, and one entry whose bundle exists
+    under this content root is enough. Judging on activePack alone let a durable
+    cache whose active bundle happened to live elsewhere (a different faction
+    lineage, a pack published from another root) escape the refusal while its
+    supplements were exactly the bundles published here.
+
+    Fail-closed throughout: an unreadable, non-object or unsafe-entry durable
+    selection counts as a mirror, because "I cannot tell" is not "no" (RULE P7).
+
+    CALLERS MUST HOLD the candidate roots' locks (see
+    :func:`durable_mirror_candidate_roots`) before trusting this answer.
+    """
+
+    root = Path(content_root)
+    for candidate in durable_mirror_candidate_roots():
+        selection_path = candidate / "selection.json"
+        if not selection_path.is_file():
+            continue
+        try:
+            document = read_json(selection_path)
+        except (OSError, ValueError, TypeError):
+            return selection_path
+        if not isinstance(document, dict):
+            return selection_path
+        entries: list[str] = []
+        active = document.get("activePack")
+        if active is not None:
+            entries.append(str(active))
+        supplements = document.get("supplementalPacks")
+        if isinstance(supplements, list):
+            entries.extend(str(entry) for entry in supplements)
+        elif supplements is not None:
+            return selection_path
+        for raw in entries:
+            entry = raw.strip().replace("\\", "/")
+            if not entry:
+                continue
+            try:
+                parts = safe_relative_parts(entry)
+            except ValueError:
+                return selection_path
+            if (root.joinpath(*parts) / "pack.json").is_file():
+                return selection_path
+    return None
+
+
+def _write_recovery_preimage(path: Path, prior: bytes, index: int) -> Path:
+    """Persist a target's exact prior bytes BEFORE anything is committed.
+
+    Rollback keeps the prior bytes in memory too, but memory dies with the
+    process. If this transaction is killed mid-commit, or a restore fails, the
+    operator still has the byte-exact document on disk instead of a description
+    of it.
+
+    CREATED EXCLUSIVELY, with a uuid component. A pid+index name is not unique:
+    the same process running a second transaction reproduced it exactly, and
+    opening it for write TRUNCATED the only surviving copy of an earlier failed
+    rollback's prior document. O_CREAT|O_EXCL means this can only ever create.
+    """
+
+    for _ in range(8):
+        candidate = path.parent / (
+            f"{path.name}.{os.getpid()}-{index}-{uuid.uuid4().hex}.preimage"
+        )
+        try:
+            handle = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            continue
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(prior)
+            stream.flush()
+            os.fsync(stream.fileno())
+        return candidate
+    raise SelectionTransactionError(
+        f"could not create a recovery preimage beside {path}: every candidate "
+        "name already existed"
+    )
+
+
+def _unresolved_recovery_preimages(root: Path) -> list[Path]:
+    """Preimages a previous transaction left behind because a restore failed."""
+
+    return sorted(root.glob("*.preimage"))
+
+
+def _stage_selection_file(path: Path, payload: bytes) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, temp_name = tempfile.mkstemp(
+        prefix=path.name + ".", suffix=".staged", dir=path.parent
+    )
+    with os.fdopen(handle, "wb") as stream:
+        stream.write(payload)
+        stream.flush()
+        os.fsync(stream.fileno())
+    return temp_name
+
+
+def _discard_recovery_preimages(targets: Sequence[Mapping[str, Any]]) -> None:
+    """Drop the preimages once every target is provably at its intended bytes."""
+
+    for target in targets:
+        preimage = target.get("preimage")
+        if preimage is not None:
+            Path(preimage).unlink(missing_ok=True)
+
+
+def _restore_selection_file(path: Path, prior: bytes | None) -> None:
+    if prior is None:
+        path.unlink(missing_ok=True)
+        return
+    handle, temp_name = tempfile.mkstemp(
+        prefix=path.name + ".", suffix=".restore", dir=path.parent
+    )
+    try:
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(prior)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp_name, path)
+    finally:
+        Path(temp_name).unlink(missing_ok=True)
+
+
+def apply_selection_transaction(
+    content_root: Path | str,
+    active_pack: str,
+    supplemental_packs: Sequence[str] = (),
+    *,
+    durable_root: Path | str | None = None,
+    _stage_hook: Any = None,
+) -> dict[str, Any]:
+    """Replace the COMPLETE selection in every target root in one swap each.
+
+    The materializer this replaces rewrote selection.json once per faction
+    entry, so a failure mid-way left a hybrid document — part new bundles, part
+    old — with the durable mirror at yet a third state. Nothing downstream can
+    tell such a tree from a deliberate selection.
+
+    The recipe here is staged and all-or-nothing:
+
+    1. validate EVERY entry (safe relative path, content-addressed
+       ``<pack-id>/<64-hex>``, bundle present, pack.json id matching) in EVERY
+       target root, before touching a single file;
+    2. compose the whole new document once and stage it beside each target;
+    3. commit with exactly ONE :func:`os.replace` per TARGET (never per entry);
+    4. re-read every target and require byte equality with the staged payload
+       and, across targets, with each other;
+    5. on ANY failure restore the exact prior bytes of every target, and if the
+       restore itself fails raise naming both faults.
+
+    ``_stage_hook`` is a test seam only: it is called with the stage names
+    ``validated``, ``staged``, ``after-first-commit``, ``committed``,
+    ``verified`` and ``rollback-begin`` so a test can inject a failure at a
+    real boundary rather than mocking the filesystem.
+
+    RULE P2: this never runs publish, and never touches selection roles other
+    than the ones it is given; ``update-selection-entry`` remains the
+    role-preserving single-pack repoint.
+    """
+
+    repo = repo_root_from_module()
+    workspace = ensure_external_to_repo(Path(content_root), repo)
+    roots: list[tuple[str, Path]] = [("workspace", workspace)]
+    durable: Path | None = None
+    if durable_root is not None:
+        durable = ensure_external_to_repo(Path(durable_root), repo)
+        roots.append(("durable", durable))
+    for role, root in roots:
+        if not root.is_dir():
+            raise SelectionTransactionError(f"{role} content root does not exist: {root}")
+
+    # One writer per content root for the transaction's WHOLE lifetime, and that
+    # means EVERY target root, not just the workspace: two transactions with
+    # different workspaces share one durable mirror, so a workspace-only lock
+    # excludes nothing where it matters most. Locks are taken in canonical order
+    # so two such transactions cannot deadlock on each other.
+    with selection_transaction_locks([root for _, root in roots]):
+        return _apply_selection_transaction_locked(
+            workspace, durable, roots, active_pack, supplemental_packs, _stage_hook
+        )
+
+
+def _apply_selection_transaction_locked(
+    workspace: Path,
+    durable: Path | None,
+    roots: list[tuple[str, Path]],
+    active_pack: str,
+    supplemental_packs: Sequence[str],
+    _stage_hook: Any,
+) -> dict[str, Any]:
+    _refuse_active_cook(roots)
+    # An unresolved preimage means an earlier transaction failed to restore this
+    # very document and its only byte-exact copy is sitting right there. Running
+    # over it is how that copy dies.
+    for role, root in roots:
+        stranded = _unresolved_recovery_preimages(root)
+        if stranded:
+            raise SelectionTransactionError(
+                f"refusing to start: the {role} root {root} holds "
+                f"{len(stranded)} unresolved recovery preimage(s) from a failed "
+                "rollback ("
+                + ", ".join(item.name for item in stranded)
+                + "). Restore the selection from one of them (or delete them "
+                "once you have confirmed the document is correct) before "
+                "changing the selection again."
+            )
+
+    active = _normalized_selection_entry(active_pack)
+    supplements = [_normalized_selection_entry(entry) for entry in supplemental_packs]
+    entries = [active, *supplements]
+    seen: set[str] = set()
+    for entry in entries:
+        if entry in seen:
+            raise SelectionTransactionError(
+                f"duplicate selection entry would mount the same bundle twice: {entry}"
+            )
+        seen.add(entry)
+    for role, root in roots:
+        for entry in entries:
+            _verify_selection_entry_in_root(role, root, entry)
+
+    targets: list[dict[str, Any]] = []
+    for role, root in roots:
+        path = root / "selection.json"
+        prior = path.read_bytes() if path.is_file() else None
+        targets.append({"role": role, "path": path, "prior": prior})
+
+    # Operator metadata on the live workspace selection (for example
+    # `operatorNote`) survives the swap: this transaction owns pack identity,
+    # not the owner's annotations.
+    extra: dict[str, Any] = {}
+    workspace_prior = targets[0]["prior"]
+    if workspace_prior is not None:
+        try:
+            parsed = json.loads(workspace_prior.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            parsed = None
+        if isinstance(parsed, dict):
+            extra = {
+                key: value
+                for key, value in parsed.items()
+                if key not in _SELECTION_RESERVED_FIELDS
+            }
+
+    payload = _selection_payload_bytes(active, supplements, extra)
+    payload_sha = hashlib.sha256(payload).hexdigest()
+
+    def _hook(stage: str) -> None:
+        if _stage_hook is not None:
+            _stage_hook(stage)
+
+    staged: list[str] = []
+    swaps = 0
+    committed = False
+    try:
+        # Inside the try on purpose: EVERY fault from here on leaves through the
+        # one rollback path and one exception type, so no caller has to know
+        # which stage failed to know the tree was restored.
+        _hook("validated")
+        for index, target in enumerate(targets):
+            staged.append(_stage_selection_file(target["path"], payload))
+            if target["prior"] is not None:
+                target["preimage"] = _write_recovery_preimage(
+                    target["path"], target["prior"], index
+                )
+        _hook("staged")
+        for index, target in enumerate(targets):
+            os.replace(staged[index], target["path"])
+            staged[index] = ""
+            swaps += 1
+            if index == 0:
+                _hook("after-first-commit")
+        committed = True
+        _hook("committed")
+        observed: list[bytes] = []
+        for target in targets:
+            current = target["path"].read_bytes()
+            observed.append(current)
+            if current != payload:
+                raise SelectionTransactionError(
+                    "post-commit verification failed: "
+                    f"{target['role']} selection at {target['path']} does not match "
+                    f"the staged payload (sha256 {hashlib.sha256(current).hexdigest()} "
+                    f"!= {payload_sha})"
+                )
+        if len(observed) > 1 and any(item != observed[0] for item in observed[1:]):
+            raise SelectionTransactionError(
+                "post-commit verification failed: the durable selection mirror is "
+                "not byte-identical to the workspace selection"
+            )
+        _hook("verified")
+    except BaseException as error:  # noqa: BLE001 - re-raised below, always
+        cause = f"{type(error).__name__}: {error}"
+        # EVERY target is restored INDEPENDENTLY and then re-read. The previous
+        # shape stopped at the first restore exception, which is precisely how a
+        # failed transaction could leave the workspace on the new document and
+        # the durable mirror on the old one - the hybrid state this transaction
+        # exists to make impossible.
+        restore_failures: list[str] = []
+        try:
+            _hook("rollback-begin")
+        except BaseException as begin_failure:  # noqa: BLE001
+            restore_failures.append(
+                f"rollback never started ({type(begin_failure).__name__}: "
+                f"{begin_failure}); NO target was restored"
+            )
+        else:
+            for target in targets:
+                role = target["role"]
+                path = target["path"]
+                prior = target["prior"]
+                try:
+                    _hook(f"rollback-target:{role}")
+                    _restore_selection_file(path, prior)
+                    # Fires after the restore is written, before it is proven.
+                    _hook(f"rollback-restored:{role}")
+                    observed = path.read_bytes() if path.is_file() else None
+                    if observed != prior:
+                        raise SelectionTransactionError(
+                            f"the restored bytes do not match the prior document "
+                            f"(sha256 "
+                            f"{hashlib.sha256(observed).hexdigest() if observed is not None else '<absent>'}"
+                            f" != "
+                            f"{hashlib.sha256(prior).hexdigest() if prior is not None else '<absent>'})"
+                        )
+                except BaseException as restore_failure:  # noqa: BLE001
+                    preimage = target.get("preimage")
+                    where = (
+                        str(preimage)
+                        if preimage is not None
+                        else "<none: the file did not exist before this transaction>"
+                    )
+                    restore_failures.append(
+                        f"{role} target {path} was NOT restored "
+                        f"({type(restore_failure).__name__}: {restore_failure}); "
+                        f"its exact prior bytes are preserved at {where}"
+                    )
+        for temp_name in staged:
+            if temp_name:
+                Path(temp_name).unlink(missing_ok=True)
+        if restore_failures:
+            # Preimages are deliberately LEFT on disk here: they are the only
+            # byte-exact copy of what the operator has to put back.
+            raise SelectionTransactionError(
+                f"selection transaction failed ({cause}) and the rollback did not "
+                f"fully restore every target. MANUAL RECOVERY REQUIRED: "
+                + " | ".join(restore_failures)
+                + ". Do not launch anything against these selections until they "
+                "are restored by hand."
+            ) from error
+        _discard_recovery_preimages(targets)
+        raise SelectionTransactionError(
+            f"selection transaction failed and was rolled back: {cause}. "
+            f"Committed {swaps} of {len(targets)} target(s) before the fault; "
+            "every target has been restored to its exact prior bytes and each "
+            "restore was verified independently."
+        ) from error
+    finally:
+        for temp_name in staged:
+            if temp_name:
+                Path(temp_name).unlink(missing_ok=True)
+
+    assert committed
+    _discard_recovery_preimages(targets)
+    return {
+        "schema": "openbfme.selection-transaction",
+        "schemaVersion": 1,
+        "contentRoot": str(workspace),
+        "durableRoot": str(durable) if durable is not None else None,
+        "activePack": active,
+        "supplementalPacks": supplements,
+        "entries": entries,
+        "payloadSha256": payload_sha,
+        "swaps": swaps,
+        "verified": True,
+        "changed": any(target["prior"] != payload for target in targets),
+        "preservedFields": sorted(extra),
+        "targets": [
+            {
+                "role": target["role"],
+                "path": str(target["path"]),
+                "sha256": payload_sha,
+                "previousSha256": (
+                    hashlib.sha256(target["prior"]).hexdigest()
+                    if target["prior"] is not None
+                    else None
+                ),
+                "changed": target["prior"] != payload,
+            }
+            for target in targets
+        ],
     }
 
 
@@ -4037,8 +4681,56 @@ class ImportPipeline:
         work. Anything else re-verifies from scratch. The digest is still
         re-derived from the bytes written to the destination, so a stale or
         wrong value fails the copy check rather than publishing bad content.
+
+        EVERY publish holds the content root's selection-transaction lock for
+        its whole write lifetime. This is the producer side the cook guard was
+        missing: without it ``.cook-active`` was a breadcrumb nobody dropped,
+        and a selection transaction could swap the document while bundles were
+        still landing underneath it. Every publish route in this codebase
+        (publish-faction-to-slice, publish-music-pack, playable-unit import)
+        reaches the content root through here, so one lock covers them all.
+
+        TODO(agent): ``playable_unit_import.py:787`` calls this with the default
+        ``select=True`` and is OUTSIDE this packet's allowed paths. Hardening
+        here makes that call safe rather than silent - it now writes the
+        complete document through the locked transaction, or refuses loudly when
+        a durable mirror exists - but the call site should be changed to
+        ``select=False`` plus an explicit activation step by whoever owns it.
         """
 
+        locked_root = ensure_external_to_repo(
+            Path(content_root), repo_root_from_module()
+        )
+        locked_root.mkdir(parents=True, exist_ok=True)
+        # ACTIVATION LOCKS BOTH SIDES. Probing the durable mirror under the
+        # content-root lock alone proves nothing: another transaction can create
+        # or repoint that mirror between the probe and the workspace commit, and
+        # the activation lands on a tree whose durable half has already moved.
+        # Every candidate durable root is therefore locked too, in canonical
+        # order with the content root so two such writers cannot deadlock, for
+        # the whole detect -> decide -> write lifetime. A non-activating publish
+        # has no business with the durable cache and locks only its own root.
+        lock_roots: list[Path] = [locked_root]
+        if select:
+            lock_roots.extend(durable_mirror_candidate_roots())
+        with selection_transaction_locks(lock_roots):
+            return self._publish_to_godot_locked(
+                pack_root,
+                locked_root,
+                allow_incomplete=allow_incomplete,
+                select=select,
+                verified_digest=verified_digest,
+            )
+
+    def _publish_to_godot_locked(
+        self,
+        pack_root: Path | str,
+        content_root: Path,
+        *,
+        allow_incomplete: bool = False,
+        select: bool = True,
+        verified_digest: str | None = None,
+    ) -> dict[str, str]:
         source = Path(pack_root).expanduser().resolve()
         pack_data = read_json(source / "pack.json")
         pack_id = str(pack_data.get("id", ""))
@@ -4121,11 +4813,30 @@ class ImportPipeline:
             # Live playtests read selection.json while republished bundles
             # land; leaving it untouched keeps a running slice loadable.
             return result
-        selection: dict[str, Any] = {
-            "schema": "openbfme.pack-selection",
-            "schemaVersion": 0,
-            "activePack": relative.as_posix(),
-        }
+        # LEGACY ACTIVATION, NOW ROUTED THROUGH THE ONE SELECTION WRITER.
+        #
+        # This used to compose a fresh three-key document and write it straight
+        # to the workspace: no durable mirror, and every key it did not know
+        # about (operatorNote, strictParityProfile, anything a later profile
+        # adds) silently deleted. It also ignored the durable user cache
+        # entirely, so an env-less launch kept serving the old activePack while
+        # the workspace claimed the new one.
+        #
+        # The refusals below are unchanged. What changed is the write: the
+        # complete document goes through the same staged, verified, rollback-
+        # backed transaction every other selection change uses, and a workspace
+        # that has a durable mirror is refused rather than desynchronised.
+        mirror = durable_selection_mirror_of(root)
+        if mirror is not None:
+            raise SelectionTransactionError(
+                f"refusing to activate {relative.as_posix()} in {root} alone: the "
+                f"durable user-cache selection at {mirror} mirrors this content "
+                "root, and a workspace-only activation would leave an env-less "
+                "launch on the previous pack. Publish without --select, then run "
+                "apply-selection-transaction with --durable-root so both "
+                "selections move together (RULE P2)."
+            )
+        supplements: list[str] = []
         # Preserve supplemental packs (map overlays, ranger contracts, etc.) so
         # a faction republish does not silently drop the rest of the slice stack.
         selection_path = root / "selection.json"
@@ -4167,11 +4878,21 @@ class ImportPipeline:
                         continue
                     seen.add(entry)
                     kept.append(entry)
-                if kept:
-                    selection["supplementalPacks"] = kept
-        write_json_atomic(selection_path, selection)
+                supplements = kept
+        # Already inside publish_to_godot's lock on this root, so the locked
+        # internals are called directly - re-acquiring would deadlock against
+        # ourselves.
+        transaction = _apply_selection_transaction_locked(
+            root,
+            None,
+            [("workspace", root)],
+            relative.as_posix(),
+            supplements,
+            None,
+        )
         result["selection"] = str(selection_path)
         result["active_pack"] = relative.as_posix()
+        result["selection_transaction"] = transaction
         return result
 
     def _canonical_tool_report(self) -> dict[str, Any]:

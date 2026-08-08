@@ -28,7 +28,22 @@ func _initialize() -> void:
 	call_deferred("_run")
 
 
+## Environment-selected report mode. When OPENBFME_PARITY_PROFILE_REPORT names a
+## path, this runner does NOT run the boundary tests: it reports what a fresh
+## process actually mounted for the selection under OPENBFME_CONTENT, so an
+## external judge can compare that against the parity contract. The report is
+## observation only — it makes no assertion and writes no verdict, because the
+## thing under test is the selection this very process just loaded (RULE P8).
+const PARITY_PROFILE_REPORT_ENV := "OPENBFME_PARITY_PROFILE_REPORT"
+const PARITY_DURABLE_SELECTION_ENV := "OPENBFME_PARITY_DURABLE_SELECTION"
+const PARITY_REPORT_SCHEMA := "openbfme.rotwk-parity-profile-report"
+
+
 func _run() -> void:
+	var parity_report_path := OS.get_environment(PARITY_PROFILE_REPORT_ENV).strip_edges()
+	if parity_report_path != "":
+		_emit_parity_profile_report(parity_report_path)
+		return
 	_startup_had_environment = OS.has_environment("OPENBFME_CONTENT")
 	_startup_environment = OS.get_environment("OPENBFME_CONTENT")
 	var mod_loader = root.get_node_or_null("ModLoader")
@@ -197,6 +212,216 @@ func _run() -> void:
 	_remove_tree(_external_content_root)
 	await process_frame
 	_finish()
+
+
+func _emit_parity_profile_report(report_path: String) -> void:
+	var mod_loader = root.get_node_or_null("ModLoader")
+	var content_db = root.get_node_or_null("ContentDB")
+	if mod_loader == null or content_db == null:
+		printerr("PARITY_PROFILE_REPORT FAIL autoloads unavailable (ModLoader/ContentDB)")
+		quit(2)
+		return
+	var selection_root := OS.get_environment("OPENBFME_CONTENT").strip_edges()
+	print("PARITY_PROFILE_REPORT stage=reload content=%s strict=%s" % [
+		selection_root, OS.get_environment("OPENBFME_STRICT_PARITY_PROFILE")
+	])
+	content_db.reload()
+	var mounted: Array = []
+	for value in content_db.pack_roots:
+		mounted.append(String(value))
+	var runtime: Dictionary = mod_loader.runtime_pack_report(mounted)
+	print("PARITY_PROFILE_REPORT stage=mounted packs=%d source=%s" % [
+		mounted.size(), String(runtime.get("activeContentSource", ""))
+	])
+	var selection_path := String(runtime.get("activeSelectionPath", ""))
+	if (selection_path == "" or not selection_path.ends_with("selection.json")) and selection_root != "":
+		selection_path = selection_root.replace("\\", "/").path_join("selection.json")
+	var selection_block := _parity_selection_block(selection_path)
+	var durable_block := _parity_durable_block(
+		OS.get_environment(PARITY_DURABLE_SELECTION_ENV).strip_edges(), selection_path
+	)
+	var census := _parity_map_census(content_db, runtime)
+	print("PARITY_PROFILE_REPORT stage=census total=%d mp=%d wor=%d" % [
+		int(census["total"]), int(census["mp"]), int(census["wor"])
+	])
+	var report := {
+		"schema": PARITY_REPORT_SCHEMA,
+		"schemaVersion": 1,
+		"generatedUtc": Time.get_datetime_string_from_system(true, true),
+		"godotVersion": String(Engine.get_version_info().get("string", "")),
+		"selection": selection_block,
+		"runtimeMounted": runtime,
+		"durableSelection": durable_block,
+		"mapCensus": census,
+	}
+	var handle := FileAccess.open(report_path, FileAccess.WRITE)
+	if handle == null:
+		printerr("PARITY_PROFILE_REPORT FAIL cannot write report to %s (error %d)" % [
+			report_path, FileAccess.get_open_error()
+		])
+		quit(3)
+		return
+	handle.store_string(JSON.stringify(report, "  ") + "\n")
+	handle.close()
+	print("PARITY_PROFILE_REPORT_WRITTEN path=%s packs=%d entries=%d maps=%d strictErrors=%d" % [
+		report_path,
+		mounted.size(),
+		(selection_block["orderedEntries"] as Array).size(),
+		int(census["total"]),
+		(runtime["strictParityErrors"] as Array).size(),
+	])
+	quit(0)
+
+
+func _parity_selection_block(selection_path: String) -> Dictionary:
+	var block := {
+		"path": selection_path,
+		"readable": false,
+		"sha256": "",
+		"orderedEntries": [],
+		"strictParityProfileDeclared": false,
+	}
+	if selection_path == "" or not FileAccess.file_exists(selection_path):
+		return block
+	block["sha256"] = FileAccess.get_sha256(selection_path)
+	var file := FileAccess.open(selection_path, FileAccess.READ)
+	if file == null:
+		return block
+	var text := file.get_as_text()
+	file.close()
+	var json := JSON.new()
+	if json.parse(text) != OK or typeof(json.data) != TYPE_DICTIONARY:
+		return block
+	var document: Dictionary = json.data
+	block["readable"] = true
+	block["strictParityProfileDeclared"] = bool(document.get("strictParityProfile", false))
+	var entries: Array = []
+	var active := String(document.get("activePack", ""))
+	if active != "":
+		entries.append(active)
+	var supplements: Variant = document.get("supplementalPacks", [])
+	if typeof(supplements) == TYPE_ARRAY:
+		for value in supplements as Array:
+			entries.append(String(value))
+	block["orderedEntries"] = entries
+	return block
+
+
+func _parity_durable_block(durable_path: String, workspace_path: String) -> Dictionary:
+	var block := {
+		"path": durable_path,
+		"present": false,
+		"sha256": "",
+		"workspaceSha256": "",
+		"byteIdenticalToWorkspace": false,
+		"compared": false,
+	}
+	if durable_path == "":
+		# Declared absent rather than silently assumed identical: the validator
+		# reports this as missing coverage, never as a pass (RULE P7).
+		return block
+	if workspace_path != "" and FileAccess.file_exists(workspace_path):
+		block["workspaceSha256"] = FileAccess.get_sha256(workspace_path)
+	if not FileAccess.file_exists(durable_path):
+		block["compared"] = true
+		return block
+	block["present"] = true
+	block["sha256"] = FileAccess.get_sha256(durable_path)
+	# The durable document's own entries, in its own order. Byte identity and
+	# identity-set equality are DIFFERENT claims: a report that only carries the
+	# boolean lets one flipped flag hide a whole divergent pack set, so the judge
+	# gets the entries and re-derives the answer itself.
+	var durable_document := _parity_selection_block(durable_path)
+	block["readable"] = bool(durable_document["readable"])
+	block["orderedEntries"] = durable_document["orderedEntries"]
+	if String(block["workspaceSha256"]) == "":
+		return block
+	block["compared"] = true
+	block["byteIdenticalToWorkspace"] = (
+		FileAccess.get_file_as_bytes(durable_path) == FileAccess.get_file_as_bytes(workspace_path)
+	)
+	return block
+
+
+func _parity_map_census(content_db: Node, runtime: Dictionary) -> Dictionary:
+	## The lobby-shaped map universe: retail's 22 `map mp` skirmish rows plus the
+	## 50 `map wor` living-world battle rows the strategic layer resolves
+	## (RULE S5). Counted from the catalog the runtime actually indexed, per
+	## category, so an extra BFME2 map pack shows up as drift instead of hiding
+	## inside a total.
+	##
+	## Every row is also attributed to the MOUNTED PACK its map document came
+	## from, using the document's own `_pack_root`. That is what lets the judge
+	## require one content-addressed bundle to own all 72 rows without matching
+	## on a pack name: a pack called "…-maps-private" that owns zero rows while
+	## seven faction packs supply the census is invisible in the aggregate and
+	## obvious here. A row whose pack root matches no mounted pack is counted as
+	## unattributed, never silently dropped (RULE P7).
+	var rows: Array = content_db.list_catalog_maps(content_db.PLAYABLE_MAP_CATEGORIES)
+	var mp := 0
+	var wor := 0
+	var uncategorized := 0
+	var by_root: Dictionary = {}
+	var identities: Array = runtime.get("orderedPacks", []) as Array
+	var root_to_identity: Dictionary = {}
+	for value in identities:
+		var identity: Dictionary = value
+		root_to_identity[_parity_comparison_path(String(identity["packRoot"]))] = identity
+	var unattributed := 0
+	for value in rows:
+		var row: Dictionary = value
+		var category := String(row.get("category", ""))
+		if category == "skirmish":
+			mp += 1
+		elif category == "wotr-battle":
+			wor += 1
+		else:
+			uncategorized += 1
+		var document: Dictionary = content_db.get_bundle_map(String(row.get("id", "")))
+		var pack_root := _parity_comparison_path(String(document.get("_pack_root", "")))
+		if pack_root == "" or not root_to_identity.has(pack_root):
+			unattributed += 1
+			continue
+		if not by_root.has(pack_root):
+			by_root[pack_root] = {"total": 0, "mp": 0, "wor": 0}
+		var bucket: Dictionary = by_root[pack_root]
+		bucket["total"] = int(bucket["total"]) + 1
+		if category == "skirmish":
+			bucket["mp"] = int(bucket["mp"]) + 1
+		elif category == "wotr-battle":
+			bucket["wor"] = int(bucket["wor"]) + 1
+	# EVERY mounted pack gets a row, including the ones that own nothing: a pack
+	# with zero rows is the finding, so it may not be omitted.
+	var by_pack: Array = []
+	for value in identities:
+		var identity: Dictionary = value
+		var key := _parity_comparison_path(String(identity["packRoot"]))
+		var bucket: Dictionary = by_root.get(key, {"total": 0, "mp": 0, "wor": 0})
+		by_pack.append({
+			"packId": String(identity["packId"]),
+			"bundleDigest": String(identity["bundleDigest"]),
+			"bundleDirectory": String(identity["bundleDirectory"]),
+			"contentAddressed": bool(identity["contentAddressed"]),
+			"packRoot": String(identity["packRoot"]),
+			"total": int(bucket["total"]),
+			"mp": int(bucket["mp"]),
+			"wor": int(bucket["wor"]),
+		})
+	return {
+		"total": rows.size(),
+		"mp": mp,
+		"wor": wor,
+		"uncategorized": uncategorized,
+		"unattributed": unattributed,
+		"byPack": by_pack,
+		"source": "ContentDB.list_catalog_maps(PLAYABLE_MAP_CATEGORIES) attributed by map document _pack_root",
+	}
+
+
+func _parity_comparison_path(path: String) -> String:
+	if path == "":
+		return ""
+	return path.replace("\\", "/").trim_suffix("/").to_lower()
 
 
 func _build_pack(pack_root: String) -> void:
