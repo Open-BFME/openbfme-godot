@@ -30,7 +30,15 @@ param(
     # Empty means: resolve from config/release-source.json (never hardcode a host/repo).
     [string]$Repo = '',
 
-    [int]$WaitMinutes = 90
+    [int]$WaitMinutes = 90,
+
+    # Skip the working-tree cleanliness refusal. Only for an operator who has
+    # consciously decided the dirty paths are irrelevant to the artifact.
+    [switch]$AllowDirtyTree,
+
+    # Skip the local readiness gate. Present so a re-run after a known-good
+    # readiness pass does not pay for it twice; never the default.
+    [switch]$SkipReadiness
 )
 
 Set-StrictMode -Version Latest
@@ -38,6 +46,33 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 Set-Location $repoRoot
+
+# GUARD 1 - never cut a release from a tree whose contents are not the tree the
+# commit says they are. This script's very first action is `git push origin
+# main`, so a dirty tree means the pushed commit and the bytes tested locally
+# are different things, and the signed artifact would attest to neither.
+$dirty = @(& git status --porcelain)
+if ($LASTEXITCODE -ne 0) { throw 'git status failed; refusing to publish' }
+if ($dirty.Count -gt 0) {
+    $preview = ($dirty | Select-Object -First 10) -join "`n  "
+    if (-not $AllowDirtyTree) {
+        throw ("Working tree is dirty ({0} path(s)); commit, stash or discard before publishing, or pass -AllowDirtyTree.`n  {1}" -f $dirty.Count, $preview)
+    }
+    Write-Host ("WARNING -AllowDirtyTree: publishing with {0} uncommitted path(s):`n  {1}" -f $dirty.Count, $preview)
+}
+
+# GUARD 2 - run the local readiness gate BEFORE touching the remote. Every
+# failure it reports is cheaper here than after a tag, a secret upload and a
+# 90-minute workflow wait.
+if ($SkipReadiness) {
+    Write-Host 'WARNING -SkipReadiness: local release readiness gate NOT run.'
+} else {
+    Write-Host 'Running local release readiness gate...'
+    & (Join-Path $PSScriptRoot 'Test-LaunchReleaseReadiness.ps1')
+    if ($LASTEXITCODE -ne 0) {
+        throw ("Test-LaunchReleaseReadiness.ps1 failed (exit {0}); refusing to publish." -f $LASTEXITCODE)
+    }
+}
 
 if ([string]::IsNullOrWhiteSpace($Repo)) {
     $sourceLine = & python (Join-Path $repoRoot 'tools\release_source.py') 2>&1
