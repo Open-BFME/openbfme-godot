@@ -28,6 +28,65 @@ static var _enabled_cached: int = -1
 static var _marks: Array[Dictionary] = []
 static var _last_ms: int = 0
 
+## Extra listeners for the boot timeline, called with (label, delta_ms, at_ms).
+##
+## WHY A SINK LIST AND NOT A DIRECT CALL. `src/core/diag_log.gd` wants every boot
+## stage in its run record, and the obvious spelling - preloading DiagLog here -
+## is a preload CYCLE, because DiagLog preloads this file to subscribe. A sink
+## keeps the dependency one-directional: this file knows nothing about who is
+## listening, and stays reachable from a runner that never loads DiagLog at all.
+##
+## Sinks run even when the profiler itself is disabled, because the two switches
+## are independent: OPENBFME_PROFILE_BOOT prints a timeline to the console,
+## OPENBFME_DIAGNOSTICS records one to a file, and a player asked for a bug
+## report should not also have to know about the profiler flag. Nothing is
+## registered by default, so the cost when neither is on is one `is_empty()`.
+static var _sinks: Array[Callable] = []
+
+
+static func add_sink(sink: Callable) -> void:
+	if sink.is_valid() and not _sinks.has(sink):
+		_sinks.append(sink)
+
+
+static func remove_sink(sink: Callable) -> void:
+	_sinks.erase(sink)
+
+
+## Boot-path failures, called with (label, detail). Separate from the timeline
+## sinks because a failure is not a stage with a duration - it is the reason the
+## next stage never arrived, and it has to reach error.txt whether or not the
+## profiler is on.
+static var _failure_sinks: Array[Callable] = []
+
+
+static func add_failure_sink(sink: Callable) -> void:
+	if sink.is_valid() and not _failure_sinks.has(sink):
+		_failure_sinks.append(sink)
+
+
+static func remove_failure_sink(sink: Callable) -> void:
+	_failure_sinks.erase(sink)
+
+
+static func fail(label: String, detail: String) -> void:
+	## Always loud on the error log (that is today's behaviour and it stays), and
+	## additionally recorded by any listener. startup_boot.gd reaches its failure
+	## reporting through here because that file is forbidden from preloading
+	## anything but this profiler - see its HARD RULE comment.
+	push_error("[BootProfile] %s: %s" % [label, detail])
+	for sink in _failure_sinks:
+		if sink.is_valid():
+			sink.call(label, detail)
+
+
+static func _notify(label: String, delta_ms: int, at_ms: int) -> void:
+	if _sinks.is_empty():
+		return
+	for sink in _sinks:
+		if sink.is_valid():
+			sink.call(label, delta_ms, at_ms)
+
 
 static func enabled() -> bool:
 	## Either OPENBFME_PROFILE_BOOT=1 or a `-- --profile-boot` user argument. The
@@ -43,13 +102,16 @@ static func enabled() -> bool:
 
 
 static func mark(label: String) -> void:
-	if not enabled():
+	var listening := not _sinks.is_empty()
+	if not enabled() and not listening:
 		return
 	var now := Time.get_ticks_msec()
 	var delta := now - _last_ms
 	_last_ms = now
-	_marks.append({"label": label, "at_ms": now, "delta_ms": delta})
-	print("BOOT_PROFILE stage=%-38s delta_ms=%-6d at_ms=%d" % [label, delta, now])
+	if enabled():
+		_marks.append({"label": label, "at_ms": now, "delta_ms": delta})
+		print("BOOT_PROFILE stage=%-38s delta_ms=%-6d at_ms=%d" % [label, delta, now])
+	_notify(label, delta, now)
 
 
 static func measure(label: String, elapsed_ms: int) -> void:
@@ -67,12 +129,15 @@ static func measure(label: String, elapsed_ms: int) -> void:
 	## its steps (the work actually done) and its WORST single step (the longest
 	## frame the player could feel). Both are printed in the same line shape as
 	## mark(), so tests/boot_startup_runner.gd parses them with no special case.
-	if not enabled():
+	var listening := not _sinks.is_empty()
+	if not enabled() and not listening:
 		return
 	var now := Time.get_ticks_msec()
 	_last_ms = now
-	_marks.append({"label": label, "at_ms": now, "delta_ms": maxi(0, elapsed_ms)})
-	print("BOOT_PROFILE stage=%-38s delta_ms=%-6d at_ms=%d" % [label, maxi(0, elapsed_ms), now])
+	if enabled():
+		_marks.append({"label": label, "at_ms": now, "delta_ms": maxi(0, elapsed_ms)})
+		print("BOOT_PROFILE stage=%-38s delta_ms=%-6d at_ms=%d" % [label, maxi(0, elapsed_ms), now])
+	_notify(label, maxi(0, elapsed_ms), now)
 
 
 static func marks() -> Array[Dictionary]:

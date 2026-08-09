@@ -3,6 +3,12 @@ extends Node
 ## Pack load order is deterministic: ascending priority, then normalized path.
 
 const BootProfile = preload("res://src/core/boot_profile.gd")
+## Diagnostic run recorder. Static forwarders only, so this is a null check when
+## nobody asked for diagnostics - see src/core/diag_log.gd. The reason THIS file
+## is wired first: "a stale pack silently served the wrong content" is the
+## recorded failure class here, and the answer to "which root actually mounted,
+## and why" only exists inside list_pack_roots.
+const DiagLogScript = preload("res://src/core/diag_log.gd")
 
 const BASE_PATH := "res://data"
 const RES_MODS := "res://mods"
@@ -345,7 +351,48 @@ func list_pack_roots() -> Array[String]:
 	)
 	if active_selected != "":
 		print("[ModLoader] content source=%s active=%s" % [active_content_source, active_selected])
+	_record_diagnostic_identity(unique)
 	return unique
+
+
+func _record_diagnostic_identity(mounted_roots: Array[String]) -> void:
+	## Hand the finished scan to the diagnostic run recorder. Deliberately at the
+	## END of the scan and derived from the MOUNTED roots, for the same reason
+	## runtime_pack_report exists: the selection document is the thing under
+	## suspicion, so an artifact that re-states it proves nothing.
+	if DiagLogScript.instance() == null:
+		return
+	var report := runtime_pack_report(mounted_roots)
+	# Supplements as MOUNTED, not as declared. A supplement the selection names
+	# but that never resolved is already in supplement_failures; listing it here
+	# as if it had loaded is exactly the silent-fallback shape rule 5 forbids.
+	var supplements: Array = []
+	for entry in (report.get("orderedPacks", []) as Array):
+		var identity: Dictionary = entry
+		if bool(identity.get("active", false)):
+			continue
+		if bool(identity.get("ambientMod", false)) or bool(identity.get("embeddedResource", false)):
+			continue
+		supplements.append(String(identity.get("packRoot", "")))
+	DiagLogScript.emit_content_identity(report, supplements)
+	DiagLogScript.emit(
+		"warn" if active_content_source in ["durable", "external-invalid"] else "info",
+		"content.roots_mounted",
+		{
+			"source": active_content_source,
+			"sourceReason": DiagLogScript.source_reason(active_content_source),
+			"selectionPath": active_selection_path,
+			"activePackRoot": active_pack_root,
+			"mountedRootCount": mounted_roots.size(),
+			"orderedPackIds": report.get("orderedPackIds", []),
+			"supplementFailures": supplement_failures.duplicate(),
+			"strictParityProfile": strict_parity_profile,
+		}
+	)
+	for message in strict_parity_errors:
+		DiagLogScript.emit_failure("content.strict_parity_refusal", String(message))
+	for message in supplement_failures:
+		DiagLogScript.emit_failure("content.supplement_unresolved", String(message))
 
 
 func workspace_content_root() -> String:
@@ -1053,6 +1100,7 @@ func _pack_age_description(pack_root: String) -> String:
 
 
 func _diagnose(message: String) -> void:
+	DiagLogScript.emit("warn", "content.loader_diagnostic", {"message": message})
 	diagnostics.append(message)
 	push_warning("[ModLoader] %s" % message)
 

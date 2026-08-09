@@ -470,6 +470,23 @@
               <TextBlock x:Name="AioStatusText" FontSize="11" Foreground="{StaticResource TextDim}"
                          TextWrapping="Wrap" Margin="0,0,0,16"/>
 
+              <TextBlock Text="DIAGNOSTICS" FontSize="11" FontWeight="Bold"
+                         Foreground="{StaticResource TextDim}" Margin="0,0,0,10"/>
+              <CheckBox x:Name="DiagnosticsToggle" Foreground="{StaticResource TextDim}" FontSize="12"
+                        Margin="0,0,0,8" Click="DiagnosticsToggle_Click"
+                        Content="Record detailed diagnostics while playing"
+                        ToolTip="Off by default. When on, the game records which content pack it mounted and why, plus errors, into a run log the button below collects."/>
+              <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                <Button x:Name="ExportBugReportButton" Content="Export bug report" Style="{StaticResource SecondaryBtn}"
+                        Click="ExportBugReport_Click"
+                        ToolTip="Collect the most recent launcher, game and conversion logs into one zip you can send back"/>
+                <Button x:Name="OpenLogsButton" Content="Open logs folder" Style="{StaticResource SecondaryBtn}"
+                        Click="OpenLogs_Click"/>
+              </StackPanel>
+              <TextBlock FontSize="11" Foreground="{StaticResource TextDim}" TextWrapping="Wrap"
+                         Margin="0,0,0,16"
+                         Text="The bug report zip contains only log documents: no game files, no converted assets, no passwords, and your home folder name is replaced before anything is written."/>
+
               <TextBlock FontSize="11" Foreground="{StaticResource TextDim}" TextWrapping="Wrap"
                          Text="OpenBFME is code-only. You need a legal BFME II / RotWK install (or download game files here). Converted packs stay private on this machine. Nothing is uploaded."/>
             </StackPanel>

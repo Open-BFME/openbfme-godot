@@ -312,6 +312,20 @@ jobs:
           python -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall('.')" "${{ matrix.asset }}"
           chmod +x "${{ matrix.bin }}" || true
           test -f "${{ matrix.bin }}"
+      # Runs in this job because it needs a verified Godot and NOTHING else: the
+      # diagnostics contract is pack-free by design, so it is one of the few
+      # runners that can be gated on a public runner with no private content.
+      # AGENTS.md rule 4 notes that ~35 runners no gate invokes; this one is not
+      # joining them.
+      - name: Diagnostic run contract (sim half)
+        run: |
+          set -euo pipefail
+          "$HOME/godot/${{ matrix.bin }}" --headless --path game \
+            --script res://tests/diagnostics_log_runner.gd | tee diag-output.txt
+          # A floor, not just failed=0: 'passed=0 failed=0' is what a runner that
+          # silently aborted before its first check prints, and a check that stops
+          # running is worse than a check that goes red.
+          grep -qE 'DIAG_LOG_RESULT passed=(3[0-9]|[4-9][0-9]|[1-9][0-9]{2,}) failed=0' diag-output.txt
       - name: Emit authoritative state pin
         run: |
           set -euo pipefail

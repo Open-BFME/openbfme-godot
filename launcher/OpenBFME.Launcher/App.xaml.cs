@@ -29,6 +29,11 @@ public partial class App : System.Windows.Application
     protected override async void OnStartup(System.Windows.StartupEventArgs e)
     {
         base.OnStartup(e);
+        // FIRST, before anything that can fail. The run directory has to exist
+        // before the first breadcrumb, or the earliest and most interesting part
+        // of a "it died on startup" report is the part that is missing.
+        DiagnosticsLog.Start();
+        Exit += (_, _) => DiagnosticsLog.Close();
         LifecycleLog.Write("app", $"startup args=[{string.Join(' ', e.Args)}]");
 
         LauncherOptions options;
@@ -59,6 +64,33 @@ public partial class App : System.Windows.Application
             return;
         }
         if (selfUpdate.Warning is not null) Warn(selfUpdate.Warning, options.Headless);
+
+        if (options.ExportBugReport)
+        {
+            // Handled before the window and before any update work: the point of
+            // the headless form is to still produce a bundle when the UI is the
+            // thing that is broken.
+            EnsureHeadlessConsole();
+            try
+            {
+                var report = BugReportExporter.Export(summary: new Dictionary<string, object?>
+                {
+                    ["installRoot"] = options.InstallRoot,
+                    ["channel"] = options.Channel,
+                    ["invocation"] = "headless --export-bug-report"
+                });
+                Console.WriteLine(report.ZipPath);
+                Console.Error.WriteLine(
+                    $"Bug report written: {report.ZipPath} ({report.RunCount} runs, {report.FileCount} files).");
+                Shutdown(0);
+            }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine($"Bug report export failed: {error.Message}");
+                Shutdown(1);
+            }
+            return;
+        }
 
         if (!options.Headless)
         {
@@ -194,6 +226,10 @@ public partial class App : System.Windows.Application
         try
         {
             LifecycleLog.Write(origin, error.ToString());
+            // A caught-and-kept-alive fault is still the thing the bug report is
+            // about, so it earns this run an error.txt rather than only a
+            // breadcrumb line the exporter cannot distinguish from noise.
+            DiagnosticsLog.Failure($"unhandled.{origin}", error.Message, error.ToString());
             Console.Error.WriteLine($"[{origin}] {error}");
 
             // Only modal if a dispatcher still exists and the main window is up.

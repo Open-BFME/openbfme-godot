@@ -76,7 +76,8 @@ public sealed class LauncherService
     public void LaunchGame(
         string? bfme2Path = null,
         string? rotwkPath = null,
-        string? contentRootOverride = null)
+        string? contentRootOverride = null,
+        bool diagnostics = false)
     {
         var exe = CurrentGamePath();
         var inventory = DiscoverContent(contentRootOverride);
@@ -104,6 +105,24 @@ public sealed class LauncherService
         selection = ContentPackCatalog.ValidateSelection(selection.ContentRoot);
         if (!selection.Ok)
             throw new InvalidOperationException($"Play unavailable: {selection.Reason}");
+        // The sim records nothing unless it is asked to; the toggle is how a
+        // playtester asks without being told about environment variables. It is
+        // passed to the CHILD process only - the launcher never mutates its own
+        // environment, so an export made mid-session still describes this run.
+        if (diagnostics) start.Environment["OPENBFME_DIAGNOSTICS"] = "1";
+        // Recorded from the selection that was just re-validated at the process
+        // boundary, so the identity in the bug report is the one Play actually
+        // mounted rather than the one the UI believed a minute earlier.
+        DiagnosticsLog.CaptureIdentity(selection, Options.InstallRoot, Options.Channel);
+        DiagnosticsLog.Event("info", "game.launch", new Dictionary<string, object?>
+        {
+            ["exe"] = exe,
+            ["contentRoot"] = selection.ContentRoot,
+            ["contentSource"] = inventory.Source,
+            ["activePack"] = selection.ActivePackKey,
+            ["supplements"] = selection.SupplementalPackKeys,
+            ["diagnostics"] = diagnostics
+        });
         Process.Start(start);
     }
 

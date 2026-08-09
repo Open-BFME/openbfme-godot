@@ -36,6 +36,13 @@ var tests = new (string Name, Func<Task> Run)[]
     ("hash mismatch", TestHashMismatch),
     ("scalar importer progress", TestScalarImporterProgress),
     ("diagnostic redaction", TestRedaction),
+    ("diagnostics run layout", TestDiagnosticsRunLayout),
+    ("diagnostics redaction of home paths and secrets", TestDiagnosticsRedaction),
+    ("diagnostics retention", TestDiagnosticsRetention),
+    ("diagnostics error document", TestDiagnosticsErrorDocument),
+    ("bug report zip contents", TestBugReportZipContents),
+    ("bug report excludes non-contract files", TestBugReportExcludesForeignFiles),
+    ("diagnostics preference round trip", TestDiagnosticsPreference),
     ("bundle inventory", TestBundleInventory),
     ("content pack catalog", TestContentPackCatalog),
     ("content selection validation", TestContentSelectionValidation)
@@ -1160,6 +1167,276 @@ static Task TestRedaction()
     return Task.CompletedTask;
 }
 
+// ---------------------------------------------------------------------------
+// Diagnostics run contract + bug-report export.
+//
+// The shared contract is what makes a support bundle readable: all four
+// components (importer, converter, sim, launcher) write the same directory
+// shape, so one zip answers one question in one place. These tests pin the parts
+// that a future edit could plausibly break silently - the directory NAME (which
+// is also the sort key retention depends on), the presence of every document,
+// the retention exemption for failed runs, and the two promises the zip makes to
+// a playtester: no retail bytes, no home paths, no credentials.
+// ---------------------------------------------------------------------------
+
+static Task TestDiagnosticsRunLayout()
+{
+    var root = NewRoot("diagnostics-layout");
+    try
+    {
+        using var run = DiagnosticsRun.Start("launcher", root, verbose: true)
+                        ?? throw new InvalidOperationException("run directory was not created");
+        run.Event("info", "content.roots_mounted", new Dictionary<string, object?>
+        {
+            ["source"] = "durable",
+            ["activePack"] = "rotwk-angmar/" + new string('a', 64)
+        });
+
+        var name = Path.GetFileName(run.Directory);
+        Check(DiagnosticsRun.IsRunDirectoryName(name), $"run directory name is off-contract: {name}");
+        var parts = name.Split('-');
+        Check(parts[1] == "launcher", "component segment is wrong");
+        Check(parts[2] == Environment.ProcessId.ToString(), "pid segment is wrong");
+        Check(parts[0].Length == 16 && parts[0][8] == 'T' && parts[0].EndsWith('Z'),
+            $"timestamp segment is not the compact UTC form: {parts[0]}");
+
+        Check(File.Exists(Path.Combine(run.Directory, "run.log")), "run.log missing");
+        Check(File.Exists(Path.Combine(run.Directory, "run.jsonl")), "run.jsonl missing");
+        Check(File.Exists(Path.Combine(run.Directory, "env.json")), "env.json missing");
+        Check(!File.Exists(Path.Combine(run.Directory, "error.txt")),
+            "error.txt was written for a run that never failed");
+
+        // Read SHARED: the run is still open, exactly as it is when a tester
+        // exports a bug report mid-session.
+        var rows = ReadShared(Path.Combine(run.Directory, "run.jsonl"))
+            .Split('\n')
+            .Select(line => line.Trim())
+            .Where(line => line.Length > 0)
+            .Select(line => System.Text.Json.JsonDocument.Parse(line).RootElement)
+            .ToList();
+        Check(rows.Count >= 2, "run.jsonl did not record the events");
+        foreach (var row in rows)
+            foreach (var key in new[] { "ts", "level", "component", "event", "fields" })
+                Check(row.TryGetProperty(key, out _), $"run.jsonl row is missing '{key}'");
+        Check(rows.All(r => r.GetProperty("component").GetString() == "launcher"),
+            "run.jsonl component is not the writing component");
+
+        var environment = System.Text.Json.JsonDocument.Parse(
+            ReadShared(Path.Combine(run.Directory, "env.json"))).RootElement;
+        foreach (var key in new[] { "os", "runtime", "launcher", "environment", "git" })
+            Check(environment.TryGetProperty(key, out _), $"env.json is missing '{key}'");
+        return Task.CompletedTask;
+    }
+    finally { Directory.Delete(root, true); }
+}
+
+static Task TestDiagnosticsRedaction()
+{
+    var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    var scrubbed = Redaction.Scrub($"mounted {home}\\Desktop\\open-bfme\\.private\\content-packs");
+    Check(!scrubbed.Contains(home, StringComparison.OrdinalIgnoreCase), "the user's home directory leaked");
+    // The SHAPE has to survive: "which content root did it mount" is the evidence,
+    // and ImporterRunner.Redact's <private-path> answer would destroy it. That is
+    // why this is a second redactor rather than a reuse of the first.
+    Check(scrubbed.Contains("content-packs", StringComparison.Ordinal),
+        "redaction destroyed the evidence instead of the identity");
+
+    Check(Redaction.Scrub(@"D:\Users\someone\packs") == @"D:\Users\<user>\packs",
+        "another machine's user directory was not redacted");
+
+    var secret = Redaction.Scrub("{\"signing_key\": \"MIIEvQIBADANBg\", \"packId\": \"rotwk-angmar\"}");
+    Check(!secret.Contains("MIIEvQIBADANBg", StringComparison.Ordinal), "a signing key leaked");
+    Check(secret.Contains("rotwk-angmar", StringComparison.Ordinal), "redaction ate the useful field");
+    Check(Redaction.IsSecretName("GITHUB_TOKEN") && !Redaction.IsSecretName("OPENBFME_CONTENT"),
+        "secret-name detection is wrong");
+
+    // Field NAMES, not just values: a run record that logs {"token": ...} must
+    // not leak it merely because the value looked innocent.
+    var root = NewRoot("diagnostics-redaction");
+    try
+    {
+        using var run = DiagnosticsRun.Start("launcher", root, verbose: true)!;
+        run.Event("info", "auth.probe", new Dictionary<string, object?>
+        {
+            ["token"] = "abc123",
+            ["path"] = home + "\\packs"
+        });
+        var text = ReadShared(Path.Combine(run.Directory, "run.jsonl"));
+        Check(!text.Contains("abc123", StringComparison.Ordinal), "a secret-named field leaked into run.jsonl");
+        Check(!text.Contains(home, StringComparison.OrdinalIgnoreCase), "a home path leaked into run.jsonl");
+        return Task.CompletedTask;
+    }
+    finally { Directory.Delete(root, true); }
+}
+
+static Task TestDiagnosticsRetention()
+{
+    var root = NewRoot("diagnostics-retention");
+    try
+    {
+        // Thirty runs, oldest first. Run 0 failed; the rest did not.
+        for (var index = 0; index < 30; index++)
+        {
+            var name = $"20260801T{index:D6}Z-sim-4242";
+            Directory.CreateDirectory(Path.Combine(root, name));
+            File.WriteAllText(Path.Combine(root, name, "run.log"), $"run {index}");
+            if (index == 0) File.WriteAllText(Path.Combine(root, name, "error.txt"), "it broke");
+        }
+        // Something a human put in the log root must survive retention untouched.
+        Directory.CreateDirectory(Path.Combine(root, "notes-from-the-owner"));
+
+        DiagnosticsRun.Prune(root);
+
+        var remaining = Directory.GetDirectories(root)
+            .Select(Path.GetFileName)
+            .Where(name => name is not null && DiagnosticsRun.IsRunDirectoryName(name))
+            .ToList();
+        Check(remaining.Count == DiagnosticsRun.RetentionKeep + 1,
+            $"retention kept {remaining.Count} runs, expected {DiagnosticsRun.RetentionKeep} + the failure");
+        Check(remaining.Contains("20260801T000000Z-sim-4242"),
+            "retention evicted the run that recorded a failure - the one the bug report is about");
+        Check(Directory.Exists(Path.Combine(root, "notes-from-the-owner")),
+            "retention deleted a directory it did not create");
+        return Task.CompletedTask;
+    }
+    finally { Directory.Delete(root, true); }
+}
+
+static Task TestDiagnosticsErrorDocument()
+{
+    var root = NewRoot("diagnostics-error");
+    try
+    {
+        string directory;
+        using (var run = DiagnosticsRun.Start("launcher", root, verbose: true)!)
+        {
+            directory = run.Directory;
+            run.Event("info", "game.launch", new Dictionary<string, object?> { ["exe"] = "openbfme.exe" });
+            run.Failure("game.launch_refused", "Play unavailable: selection.json is corrupt.", "at LaunchGame");
+        }
+        var text = File.ReadAllText(Path.Combine(directory, "error.txt"));
+        Check(text.Contains("game.launch_refused", StringComparison.Ordinal), "error.txt does not name the failure");
+        Check(text.Contains("selection.json is corrupt", StringComparison.Ordinal), "error.txt lost the message");
+        Check(text.Contains("game.launch", StringComparison.Ordinal), "error.txt lost the tail of the run");
+        return Task.CompletedTask;
+    }
+    finally { Directory.Delete(root, true); }
+}
+
+static Task TestBugReportZipContents()
+{
+    var logs = NewRoot("bugreport-logs");
+    var output = NewRoot("bugreport-out");
+    try
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        foreach (var component in new[] { "importer", "converter", "sim", "launcher" })
+        {
+            for (var index = 0; index < 3; index++)
+            {
+                var name = $"20260801T{index:D6}Z-{component}-{1000 + index}";
+                Directory.CreateDirectory(Path.Combine(logs, name));
+                File.WriteAllText(Path.Combine(logs, name, "run.log"),
+                    $"{component} run {index} at {home}\\packs token=hunter2secret");
+                File.WriteAllText(Path.Combine(logs, name, "run.jsonl"), "{\"event\":\"run.begin\"}");
+                File.WriteAllText(Path.Combine(logs, name, "env.json"), "{}");
+                File.WriteAllText(Path.Combine(logs, name, "identity.json"), "{}");
+            }
+        }
+
+        var result = BugReportExporter.Export(logs, output, runsPerComponent: 2, summary:
+            new Dictionary<string, object?> { ["channel"] = "playtest", ["apiToken"] = "must-not-appear" });
+
+        Check(File.Exists(result.ZipPath), "no zip was written");
+        Check(result.ZipPath.StartsWith(output, StringComparison.Ordinal), "zip was written outside the destination");
+        Check(result.RunCount == 8, $"expected 2 runs from each of 4 components, got {result.RunCount}");
+
+        using var archive = ZipFile.OpenRead(result.ZipPath);
+        var entries = archive.Entries.Select(entry => entry.FullName).ToList();
+        Check(entries.Contains("bug-report.json"), "the manifest is missing");
+        // Newest N PER COMPONENT: a tester who launched the game forty times must
+        // still send an importer run, because "the content looks wrong" is very
+        // often an importer fact.
+        foreach (var component in new[] { "importer", "converter", "sim", "launcher" })
+            Check(entries.Any(name => name.Contains($"-{component}-", StringComparison.Ordinal)),
+                $"no {component} run reached the bundle");
+        Check(entries.All(name => name == "bug-report.json"
+                                  || BugReportExporter.AllowedFiles.Contains(Path.GetFileName(name))),
+            "the bundle carries a file outside the contract allow list");
+
+        foreach (var entry in archive.Entries)
+        {
+            using var reader = new StreamReader(entry.Open());
+            var text = reader.ReadToEnd();
+            Check(!text.Contains(home, StringComparison.OrdinalIgnoreCase),
+                $"{entry.FullName} carries the tester's home directory");
+            Check(!text.Contains("hunter2secret", StringComparison.Ordinal),
+                $"{entry.FullName} carries a credential");
+            Check(!text.Contains("must-not-appear", StringComparison.Ordinal),
+                $"{entry.FullName} carries a secret-named summary field");
+        }
+        return Task.CompletedTask;
+    }
+    finally
+    {
+        Directory.Delete(logs, true);
+        Directory.Delete(output, true);
+    }
+}
+
+static Task TestBugReportExcludesForeignFiles()
+{
+    var logs = NewRoot("bugreport-foreign");
+    var output = NewRoot("bugreport-foreign-out");
+    try
+    {
+        // A run directory is a directory: anything can land in it - a crash dump,
+        // a copied pack, a screenshot. AGENTS.md rule 6 says converted retail
+        // bytes never leave .private, so the exporter copies by ALLOW LIST and
+        // this proves it, rather than trusting that nothing else will ever appear.
+        var run = Path.Combine(logs, "20260801T000000Z-sim-77");
+        Directory.CreateDirectory(run);
+        File.WriteAllText(Path.Combine(run, "run.log"), "ok");
+        File.WriteAllText(Path.Combine(run, "w3d_dump.big"), "RETAIL-BYTES");
+        File.WriteAllText(Path.Combine(run, "screenshot.png"), "PNGDATA");
+        Directory.CreateDirectory(Path.Combine(run, "packs"));
+        File.WriteAllText(Path.Combine(run, "packs", "pack.json"), "{}");
+
+        var result = BugReportExporter.Export(logs, output);
+        using var archive = ZipFile.OpenRead(result.ZipPath);
+        var entries = archive.Entries.Select(entry => entry.FullName).ToList();
+        Check(entries.Contains("runs/20260801T000000Z-sim-77/run.log"), "the contract document was not copied");
+        Check(!entries.Any(name => name.Contains("w3d_dump", StringComparison.Ordinal)
+                                   || name.Contains("screenshot", StringComparison.Ordinal)
+                                   || name.Contains("pack.json", StringComparison.Ordinal)),
+            "a non-contract file was exported");
+        return Task.CompletedTask;
+    }
+    finally
+    {
+        Directory.Delete(logs, true);
+        Directory.Delete(output, true);
+    }
+}
+
+static Task TestDiagnosticsPreference()
+{
+    var root = NewRoot("diagnostics-preference");
+    try
+    {
+        Check(!LauncherPreferences.LoadDiagnostics(root), "diagnostics defaulted to on");
+        LauncherPreferences.SaveChannel(root, "playtest");
+        LauncherPreferences.SaveDiagnostics(root, true);
+        Check(LauncherPreferences.LoadDiagnostics(root), "the diagnostics preference did not persist");
+        // READ-MODIFY-WRITE: saving one preference must not silently reset the other.
+        Check(LauncherPreferences.LoadChannel(root) == "playtest", "saving diagnostics reset the channel");
+        LauncherPreferences.SaveChannel(root, "nightly");
+        Check(LauncherPreferences.LoadDiagnostics(root), "saving the channel reset diagnostics");
+        return Task.CompletedTask;
+    }
+    finally { Directory.Delete(root, true); }
+}
+
 static Task TestScalarImporterProgress()
 {
     var method = typeof(ImporterRunner).GetMethod("ParseProgressLine",
@@ -1260,6 +1537,13 @@ static void Write(ZipArchive archive, string name, byte[] bytes)
     var entry = archive.CreateEntry(name, CompressionLevel.NoCompression);
     using var stream = entry.Open();
     stream.Write(bytes);
+}
+
+static string ReadShared(string path)
+{
+    using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+    using var reader = new StreamReader(stream);
+    return reader.ReadToEnd();
 }
 
 static string NewRoot(string suffix)

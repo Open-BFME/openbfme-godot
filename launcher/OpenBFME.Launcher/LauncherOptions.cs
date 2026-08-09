@@ -13,7 +13,8 @@ public sealed record LauncherOptions(
     bool DiscoverRelease,
     bool ProvisionBfme2,
     bool ProvisionRotwk,
-    string? RetailInstallRoot)
+    string? RetailInstallRoot,
+    bool ExportBugReport = false)
 {
     /// <summary>Flags that take exactly one value.</summary>
     private static readonly HashSet<string> ValueFlags = new(StringComparer.Ordinal)
@@ -26,7 +27,11 @@ public sealed record LauncherOptions(
     private static readonly HashSet<string> SwitchFlags = new(StringComparer.Ordinal)
     {
         "--import-bfme2", "--import-rotwk", "--no-update", "--verify-only", "--headless",
-        "--discover-release", "--provision-bfme2", "--provision-rotwk"
+        "--discover-release", "--provision-bfme2", "--provision-rotwk",
+        // The same bundle the Settings button produces, without a UI. Two reasons
+        // it exists: a launcher that will not open is exactly the report we most
+        // need, and a headless flag is the only way CI can smoke-test the export.
+        "--export-bug-report"
     };
 
     public static LauncherOptions Parse(IEnumerable<string> arguments)
@@ -115,7 +120,8 @@ public sealed record LauncherOptions(
             Has("--discover-release"),
             Has("--provision-bfme2"),
             Has("--provision-rotwk"),
-            retailInstallRoot);
+            retailInstallRoot,
+            Has("--export-bug-report"));
     }
 }
 

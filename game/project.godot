@@ -25,6 +25,7 @@ config/icon="res://icon_ring.png"
 
 [autoload]
 
+DiagLog="*res://src/core/diag_log.gd"
 Events="*res://src/core/events.gd"
 SimClock="*res://src/core/sim_clock.gd"
 ModLoader="*res://src/content/mod_loader.gd"

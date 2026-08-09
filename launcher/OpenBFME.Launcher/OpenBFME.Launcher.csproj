@@ -23,6 +23,18 @@
   </PropertyGroup>
 
   <!--
+    The diagnostics and bug-report types are internal because nothing outside the
+    launcher should build a run directory, and the test project is the only other
+    consumer. The existing alternative in Program.cs is reflection
+    (see TestRedaction), which is fine for one static method and unreadable for a
+    file-writing contract with retention rules. InternalsVisibleTo keeps the
+    surface internal to the product and directly testable.
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="OpenBFME.Launcher.Tests" />
+  </ItemGroup>
+
+  <!--
     The publish/update target is baked in from the single source of truth rather
     than written as a literal anywhere in launcher code. See ReleaseSource.cs.
     A missing file must fail the build, not silently ship an unconfigured exe.

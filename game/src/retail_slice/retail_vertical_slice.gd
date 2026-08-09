@@ -3,6 +3,7 @@ extends Node3D
 ## Integrated private Men-versus-Men production slice. Authoritative gameplay is
 ## held by RetailSliceSim; Godot nodes interpolate and present that state only.
 
+const DiagLogScript = preload("res://src/core/diag_log.gd")
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const LockstepSessionScript = preload("res://src/retail_slice/retail_lockstep_session.gd")
 const BattalionScript = preload("res://src/retail_slice/retail_battalion.gd")
@@ -2758,11 +2759,30 @@ func _load_eva_side_map() -> Dictionary:
 	return {}
 
 
+func _record_sim_heartbeat() -> void:
+	## PER-FRAME DATA, AND THE ONLY PER-FRAME DATA. Rate-limited to one sample
+	## every five seconds, and a no-op unless diagnostics were asked for: a 60 Hz
+	## event would make the recorder the slow thing and bury the four lines a bug
+	## report is actually about. The dropped samples are counted and reported at
+	## run.end, so the sample rate is never mistaken for the real frame rate.
+	if DiagLogScript.instance() == null:
+		return
+	DiagLogScript.emit_sampled("sim.heartbeat", 5000, "debug", "sim.heartbeat", {
+		"tick": simulation.tick_index,
+		"entities": simulation.entities.size(),
+		"winner": simulation.winner,
+		"paused": simulation_paused,
+		"fps": Engine.get_frames_per_second(),
+		"multiplayer": lockstep_session != null,
+	})
+
+
 func _process(delta: float) -> void:
 	_sync_hud_to_viewport()
 	_update_camera(delta)
 	if not ready_ok:
 		return
+	_record_sim_heartbeat()
 	if control_server != null:
 		control_server.poll()
 	if lockstep_session != null:
@@ -5589,6 +5609,13 @@ func _install_map_scripts_document(
 	doc: Dictionary, source_label: String = "<memory>", report_errors: bool = true
 ) -> bool:
 	var report := func(message: String) -> void:
+		# Recorded before the gate, not after. `report_errors=false` means "this
+		# caller is probing a candidate document and an error would be noise on
+		# the console" - it does NOT mean the refusal is uninteresting, and a map
+		# that silently installed no scripts is precisely the bug report we
+		# cannot currently answer. The run record keeps every refusal; only the
+		# console volume is conditional.
+		DiagLogScript.emit_failure("script.install_refused", message, source_label)
 		if report_errors:
 			push_error(message)
 	var normalized := _normalized_map_scripts_document(doc)

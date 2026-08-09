@@ -47,6 +47,7 @@ extends RefCounted
 ## door is shut, and a peer that arrives afterwards is refused with a reason.
 
 const CommandScript = preload("res://src/retail_slice/retail_command.gd")
+const DiagLogScript = preload("res://src/core/diag_log.gd")
 
 ## Bumped 1 -> 2 for the N-player handshake (join/welcome replace the old
 ## symmetric hello) and the relay envelopes. A v1 peer is refused, not guessed at.
@@ -852,6 +853,7 @@ func _receive_refuse(envelope: Dictionary) -> void:
 		return
 	join_refused_reason = _clean_lobby_text(String(envelope["reason"]), 160)
 	handshake_complete = false
+	DiagLogScript.emit_failure("sim.join_refused", join_refused_reason)
 	join_refused.emit(join_refused_reason)
 
 
@@ -1076,6 +1078,18 @@ func _compare_hash_if_ready(hash_tick: int) -> void:
 			desynced = true
 			desync_tick = hash_tick
 			desync_seat = seat
+			# A desync is THE bug report. Until now it only mutated three fields
+			# and stopped the peer, which means the evidence lived in memory of a
+			# process that is about to be closed by an annoyed player. The hashes
+			# are recorded verbatim: "they differed" is not a finding, "seat 2 had
+			# X where we had Y at tick N" is.
+			DiagLogScript.emit_failure(
+				"sim.desync",
+				"state hash mismatch at tick %d with seat %d" % [hash_tick, seat],
+				"local=%s remote=%s localSeat=%d" % [
+					_local_hash.to_lower(), String(seat_hashes[hash_tick]), local_seat
+				]
+			)
 			return
 	for seat in seats:
 		var seat_hashes := _remote_hashes.get(seat, {}) as Dictionary

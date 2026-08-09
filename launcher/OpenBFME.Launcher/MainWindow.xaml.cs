@@ -73,6 +73,10 @@ public partial class MainWindow : Window
                 ChannelSelector.SelectedItem = item;
         _channelSelectorReady = true;
         RefreshChannelPresentation();
+        // Restored, never inferred. The toggle is the player's standing answer to
+        // "record what the game is doing", and a session that silently forgot it
+        // would produce an empty bug report on the one run that mattered.
+        DiagnosticsToggle.IsChecked = LauncherPreferences.LoadDiagnostics(options.InstallRoot);
         LifecycleLog.Write("window",
             $"ctor paint begin host={PlatformCompat.HostDescription} wine={PlatformCompat.IsWine}");
         RefreshState();
@@ -1003,10 +1007,95 @@ public partial class MainWindow : Window
         try
         {
             var content = ContentRootOverrideOrNull();
-            _service.LaunchGame(BfmePath.Text, RotwkPath.Text, content);
+            var diagnostics = DiagnosticsToggle.IsChecked == true;
+            _service.LaunchGame(BfmePath.Text, RotwkPath.Text, content, diagnostics);
             var mounted = _service.ResolveContentRoot(content);
-            StatusText.Text = $"OpenBFME started · content {mounted}";
+            StatusText.Text = diagnostics
+                ? $"OpenBFME started with diagnostics · content {mounted}"
+                : $"OpenBFME started · content {mounted}";
             ClearDetail();
+        }
+        catch (Exception error)
+        {
+            // A Play that refuses is the most common bug report there is, and its
+            // reason (a selection that no longer validates) is exactly what the
+            // exported bundle should open on.
+            DiagnosticsLog.Failure("game.launch_refused", error.Message, error.ToString());
+            ShowError(error);
+        }
+    }
+
+    private void DiagnosticsToggle_Click(object sender, RoutedEventArgs e)
+    {
+        var wanted = DiagnosticsToggle.IsChecked == true;
+        try
+        {
+            LauncherPreferences.SaveDiagnostics(_service.Options.InstallRoot, wanted);
+            StatusText.Text = wanted
+                ? "Diagnostics on. The next time you press Play the game will record what it loads."
+                : "Diagnostics off. The game goes back to recording nothing.";
+            DiagnosticsLog.Event("info", "diagnostics.toggled",
+                new Dictionary<string, object?> { ["enabled"] = wanted });
+            ClearDetail();
+        }
+        catch (Exception error)
+        {
+            // Reflect the truth in the UI: the preference did NOT save, so the
+            // box must not keep claiming it did.
+            DiagnosticsToggle.IsChecked = !wanted;
+            ShowError(error, "The diagnostics preference could not be saved.", modal: false);
+        }
+    }
+
+    private void ExportBugReport_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            // Flushed first. The most recent launcher events - very often
+            // including the failure the tester is reporting - are in this
+            // process's own run directory, and an export that raced them would
+            // ship a bundle missing its own last line.
+            DiagnosticsLog.Event("info", "bugreport.export_requested");
+            var summary = new Dictionary<string, object?>
+            {
+                ["installRoot"] = _service.Options.InstallRoot,
+                ["channel"] = _service.Options.Channel,
+                ["installedVersion"] = TryCurrent(out _)?.CurrentVersion,
+                ["contentRoot"] = ContentRootOverrideOrNull() ?? _contentInventory?.ContentRoot,
+                ["diagnosticsEnabled"] = DiagnosticsToggle.IsChecked == true,
+                ["status"] = StatusText.Text
+            };
+            var result = BugReportExporter.Export(summary: summary);
+            StatusText.Text =
+                $"Bug report written: {result.ZipPath} ({result.RunCount} runs, {result.FileCount} files). " +
+                "Send this file to the OpenBFME team.";
+            DetailText.Text =
+                "The zip contains only log documents. No game files, no converted assets, no passwords, " +
+                "and your home folder name was replaced before anything was written.\n\n" +
+                string.Join("\n", result.Runs);
+            DetailPanel.Visibility = Visibility.Visible;
+            DiagnosticsLog.Event("info", "bugreport.exported", new Dictionary<string, object?>
+            {
+                ["zip"] = result.ZipPath,
+                ["runs"] = result.RunCount,
+                ["files"] = result.FileCount
+            });
+            BugReportExporter.Reveal(result.ZipPath);
+        }
+        catch (Exception error)
+        {
+            ShowError(error, "The bug report could not be written.");
+        }
+    }
+
+    private void OpenLogs_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var root = DiagnosticsRun.DefaultRoot();
+            Directory.CreateDirectory(root);
+            OpenFolder(root);
+            StatusText.Text = $"Opened {root}";
         }
         catch (Exception error) { ShowError(error); }
     }
@@ -1090,6 +1179,12 @@ public partial class MainWindow : Window
         PlayFromSettingsButton.IsEnabled = !running;
         VerifyEngineButton.IsEnabled = !running;
         OpenGameFolderButton.IsEnabled = !running;
+        DiagnosticsToggle.IsEnabled = !running;
+        OpenLogsButton.IsEnabled = !running;
+        // Export stays available DURING an operation on purpose: a conversion that
+        // is visibly wedged is precisely when a tester wants to send the logs, and
+        // the export only reads files.
+        ExportBugReportButton.IsEnabled = true;
         CancelButton.IsEnabled = running;
         if (running) PlayButton.IsEnabled = false;
         else RefreshState();

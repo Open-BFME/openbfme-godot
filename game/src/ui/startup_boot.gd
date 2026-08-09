@@ -171,7 +171,14 @@ func _load_shell() -> void:
 		# FAIL CLOSED AND VISIBLY. There is no menu to fall back to; saying so on
 		# the loading screen beats leaving a bar frozen forever.
 		_screen_progress(1.0, "The game shell failed to load. See the log.")
-		push_error("[StartupBoot] %s failed to load; the shell cannot be shown." % SHELL_SCENE_PATH)
+		# Through BootProfile.fail, not push_error directly: this file may not
+		# preload anything but the profiler (see the HARD RULE above), and the
+		# diagnostic run recorder has to see the reason the menu never appeared.
+		# fail() still push_errors, so the console behaviour is unchanged.
+		BootProfile.fail(
+			"shell_load",
+			"%s failed to load; the shell cannot be shown." % SHELL_SCENE_PATH
+		)
 		return
 	_screen_progress(1.0, "Building menu")
 	_apply_loaded_scene(packed)
