@@ -92,7 +92,7 @@ and record where the bytes came from.
 | **P0** | Playtest channel is CLI-only (`--channel playtest`) | **Fixed**: Settings selector persists under the install root; CLI remains a one-run override |
 | **P0** | Play enables on engine presence, not valid `selection.json` | **Fixed**: read-only selection validation gates UI and launch; runtime fails closed |
 | **P1** | “Get ready” / Play / Update roles subtle on first run | 3-step coach: engine → retail → convert/select |
-| **P1** | Convert (RotWK) says success without activating pack | “Published but not active” + explicit select action |
+| **P1** | Convert (RotWK) says success without activating pack | **Fixed**: reports “published but not active”; Set active remains explicit |
 | **P1** | Update UX: no size/version/restart CTA; feed clip at narrow width | Update review panel + constrained news cards |
 | **P2** | Progress bar thin; long convert lacks stage labels | Download → Index → Convert → Ready |
 | **P2** | Window.Icon is PNG not multi-size ICO | Package multi-res `.ico` |
@@ -117,7 +117,7 @@ Full write-up: `.private/scratch/sol_launcher_review.md`.
 | **P1** | Feed can rank wrong-channel releases as “ready” | **Fixed**: zero-score candidates are filtered before presentation |
 | **P1** | Tag helper allowed unsigned `-Push` (workflow rejects) | **Fixed**: `-Push` requires `-Signed`; clean-main checks |
 | **P1** | Readiness script false green on public plane | **Fixed**: `LOCAL_BUILD_READY` vs `PUBLIC_RELEASE_NOT_READY` (exit 2) |
-| **P1** | Retail discovery is only `game.dat` presence | Still open |
+| **P1** | Retail discovery is only `game.dat` presence | **Fixed**: edition executable + importer-required core archive fingerprint; wrong/incomplete states surfaced |
 | **P1** | Workshop download integrity not release-grade | **Fixed**: size-only checks replaced by pinned SHA-256 verification against a repo-tracked manifest; empty manifest = refuse to run |
 | **P1** | Provenance ledger blocks GLBs/icons/music for public artifact | Still owner gate (game assets). Launcher chrome now ledgered; banner settled by signed C2PA, mark/hero await owner attestation |
 | **P1** | Rollback can split game vs launcher pointers | Still open |
@@ -141,7 +141,7 @@ Full write-up: `.private/scratch/sol_launcher_review.md`.
 1. ~~Hosted source resolution~~ (done this pass — re-run `workflow_dispatch` to prove).
 2. ~~Persistent playtest channel + verified candidate presentation~~ (fixed locally; pending review/landing).
 3. Validate selected content before Play; runtime fail-closed on bad selection.
-4. Edition-aware retail validation + honest RotWK activation state.
+4. ~~Edition-aware retail validation + honest RotWK activation state.~~ (done: marker-only and wrong-edition trees fail closed; conversion does not silently select).
 5. Update/error UX and constrained news feed.
 6. Provenance gate for shipped GLBs/icons/music (owner evidence or replace). Launcher
    chrome is done; `game/data/base/assets` is not.

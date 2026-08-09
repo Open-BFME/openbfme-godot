@@ -321,20 +321,28 @@ static async Task TestPinnedDigestMatchInstalls()
 {
     // The mismatch test only proves the door shuts. This proves it opens — otherwise
     // "always throws" would pass every integrity test in this file.
-    var honest = System.Text.Encoding.ASCII.GetBytes("REAL-GAME-DATA-0123456789");
+    var payloads = new Dictionary<string, byte[]>
+    {
+        ["game.dat"] = Encoding.ASCII.GetBytes("REAL-GAME-DATA-0123456789"),
+        ["lotrbfme2.exe"] = Encoding.ASCII.GetBytes("BFME2-EXECUTABLE"),
+        ["ini.big"] = Encoding.ASCII.GetBytes("INI-ARCHIVE"),
+        ["w3d.big"] = Encoding.ASCII.GetBytes("W3D-ARCHIVE"),
+        ["textures0.big"] = Encoding.ASCII.GetBytes("TEXTURE-ARCHIVE"),
+    };
     var target = NewTempDirectory("openbfme-pin-match");
     var handler = new RecordingWorkshopHandler(
-        new Dictionary<string, byte[]> { ["/files/game.dat"] = honest },
-        WorkshopPackageJson(("game.dat", honest.Length, "/files/game.dat")));
+        payloads.ToDictionary(item => "/files/" + item.Key, item => item.Value),
+        WorkshopPackageJson(payloads.Select(item =>
+            (item.Key, (long)item.Value.Length, "/files/" + item.Key)).ToArray()));
     var provisioner = new AllInOneRetailProvisioner(new HttpClient(handler))
     {
-        PayloadManifest = RetailPayloadManifest.Parse(
-            PinnedManifestJson("game.dat", honest.Length, Sha256Hex(honest)))
+        PayloadManifest = RetailPayloadManifest.Parse(PinnedManifestFilesJson(payloads))
     };
 
     var result = await provisioner.ProvisionAsync("bfme2", target, null, CancellationToken.None);
-    Check(result.FilesInstalled == 1, $"expected 1 installed file, got {result.FilesInstalled}");
-    Check(File.ReadAllBytes(Path.Combine(target, "game.dat")).SequenceEqual(honest),
+    Check(result.FilesInstalled == payloads.Count,
+        $"expected {payloads.Count} installed files, got {result.FilesInstalled}");
+    Check(File.ReadAllBytes(Path.Combine(target, "game.dat")).SequenceEqual(payloads["game.dat"]),
         "installed bytes differ from the verified payload");
     Check(!Directory.EnumerateFiles(target, "*.part", SearchOption.AllDirectories).Any(),
         "a .part file survived a successful install");
@@ -342,7 +350,8 @@ static async Task TestPinnedDigestMatchInstalls()
     // Re-running verifies by digest and skips; it must not re-download.
     var downloadsBefore = handler.Requests.Count(r => r.Contains("/files/", StringComparison.Ordinal));
     var again = await provisioner.ProvisionAsync("bfme2", target, null, CancellationToken.None);
-    Check(again.FilesSkipped == 1 && again.FilesInstalled == 0, "resume did not skip a verified file");
+    Check(again.FilesSkipped == payloads.Count && again.FilesInstalled == 0,
+        "resume did not skip verified files");
     Check(handler.Requests.Count(r => r.Contains("/files/", StringComparison.Ordinal)) == downloadsBefore,
         "resume re-downloaded a file that already matched its digest");
 
@@ -456,6 +465,27 @@ static string PinnedManifestJson(string path, long size, string sha256) => $$"""
 }
 """;
 
+static string PinnedManifestFilesJson(IReadOnlyDictionary<string, byte[]> files)
+{
+    var entries = files.Select(item => $$"""
+        { "path": {{System.Text.Json.JsonSerializer.Serialize(item.Key)}}, "size": {{item.Value.LongLength}}, "sha256": "{{Sha256Hex(item.Value)}}" }
+        """);
+    return $$"""
+    {
+      "schema": "openbfme.retail-payload-manifest",
+      "schemaVersion": 1,
+      "payloads": [
+        {
+          "game": "bfme2",
+          "language": "EN",
+          "packageVersion": "test",
+          "files": [ {{string.Join(",", entries)}} ]
+        }
+      ]
+    }
+    """;
+}
+
 static string WorkshopPackageJson(params (string Name, long Size, string Url)[] files)
 {
     var entries = files.Select(f =>
@@ -504,21 +534,51 @@ static Task TestReleaseSource()
 static Task TestRetailDiscovery()
 {
     var root = Path.Combine(Path.GetTempPath(), "openbfme-retail-" + Guid.NewGuid().ToString("N"));
-    Directory.CreateDirectory(root);
+    var empty = Path.Combine(root, "empty");
+    var markerOnly = Path.Combine(root, "marker-only");
+    var bfme2 = Path.Combine(root, "bfme2");
+    var rotwk = Path.Combine(root, "rotwk");
+    Directory.CreateDirectory(empty);
+    Directory.CreateDirectory(markerOnly);
+    Directory.CreateDirectory(bfme2);
+    Directory.CreateDirectory(rotwk);
     try
     {
-        Check(RetailDiscovery.ExplainRejection(root) is not null, "a folder without game.dat must be rejected");
-        Check(!RetailDiscovery.IsRetailInstall(root), "a folder without game.dat is not an install");
-        File.WriteAllBytes(Path.Combine(root, RetailDiscovery.InstallMarker), new byte[] { 1 });
-        Check(RetailDiscovery.IsRetailInstall(root), "a folder with game.dat is an install");
-        Check(RetailDiscovery.ExplainRejection(root) is null, "a valid install must not be rejected");
-        Check(RetailDiscovery.ExplainRejection("") is not null, "an empty path must be rejected");
-        Check(RetailDiscovery.ExplainRejection(Path.Combine(root, "nope")) is not null,
+        Check(RetailDiscovery.Assess("bfme2", empty) == RetailInstallAssessment.NoMarker,
+            "an empty directory must not be valid");
+        File.WriteAllBytes(Path.Combine(markerOnly, RetailDiscovery.InstallMarker), new byte[] { 1 });
+        Check(RetailDiscovery.Assess("bfme2", markerOnly) == RetailInstallAssessment.Incomplete,
+            "marker-only policy must be incomplete");
+
+        WriteRetailFixture(bfme2, "lotrbfme2.exe");
+        WriteRetailFixture(rotwk, "lotrbfme2ep1.exe");
+        Check(RetailDiscovery.Assess("bfme2", bfme2) == RetailInstallAssessment.ValidBfme2,
+            "BFME II fixture was not valid for BFME II");
+        Check(RetailDiscovery.Assess("rotwk", bfme2) == RetailInstallAssessment.WrongEdition,
+            "BFME II fixture was not rejected as wrong-edition RotWK");
+        Check(RetailDiscovery.Assess("rotwk", rotwk) == RetailInstallAssessment.ValidRotwk,
+            "RotWK fixture was not valid for RotWK");
+        Check(RetailDiscovery.Assess("bfme2", rotwk) == RetailInstallAssessment.WrongEdition,
+            "RotWK fixture was not rejected as wrong-edition BFME II");
+        Check(!RetailDiscovery.IsRetailInstall("bfme2", markerOnly),
+            "marker-only tree passed game-aware validation");
+        Check(RetailDiscovery.ExplainRejection("rotwk", bfme2)?.Contains(
+                "Battle for Middle-earth II", StringComparison.OrdinalIgnoreCase) == true,
+            "wrong-edition RotWK explanation did not name BFME II");
+        Check(RetailDiscovery.ExplainRejection("bfme2", rotwk)?.Contains(
+                "Rise of the Witch-king", StringComparison.OrdinalIgnoreCase) == true,
+            "wrong-edition BFME II explanation did not name RotWK");
+        Check(RetailDiscovery.ExplainRejection("bfme2", markerOnly)?.Contains(
+                "incomplete", StringComparison.OrdinalIgnoreCase) == true,
+            "marker-only rejection did not explain incompleteness");
+        Check(RetailDiscovery.ExplainRejection("bfme2", "") is not null,
+            "an empty path must be rejected");
+        Check(RetailDiscovery.ExplainRejection("bfme2", Path.Combine(root, "nope")) is not null,
             "a missing folder must be rejected");
 
         // The override always wins so a player can point anywhere.
-        var environment = new Dictionary<string, string> { [RetailDiscovery.Bfme2OverrideVariable] = root };
-        Check(RetailDiscovery.Discover("bfme2", environment) == Path.GetFullPath(root),
+        var environment = new Dictionary<string, string> { [RetailDiscovery.Bfme2OverrideVariable] = bfme2 };
+        Check(RetailDiscovery.Discover("bfme2", environment) == Path.GetFullPath(bfme2),
             "the BFME2_INSTALL override was ignored");
 
         // Candidates must come from the environment, never a developer's disk.
@@ -532,6 +592,16 @@ static Task TestRetailDiscovery()
     }
     finally { Directory.Delete(root, true); }
     return Task.CompletedTask;
+}
+
+static void WriteRetailFixture(string directory, string executable)
+{
+    foreach (var name in new[]
+             {
+                 RetailDiscovery.InstallMarker, executable,
+                 "ini.big", "w3d.big", "textures0.big"
+             })
+        File.WriteAllBytes(Path.Combine(directory, name), new byte[] { 1 });
 }
 
 static Task TestUrlPolicy()
