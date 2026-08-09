@@ -241,6 +241,62 @@ def _object_ini_roots(oracle_root: Path) -> tuple[Path, ...]:
     )
 
 
+#: The Create-a-Hero system fields that name a MappedImage: the seven class
+#: archetype icons on ``CreateAHeroClass``, and the portrait + roster button on
+#: each ``SubClass``.
+CREATE_A_HERO_IMAGE_FIELDS: tuple[str, ...] = ("IconImage", "ButtonImage")
+#: Where those blocks live.  ``createaherosystem.ini`` is a shell of ``#include``
+#: directives; the classes themselves are in the sibling ``.inc`` files.
+CREATE_A_HERO_SYSTEM_GLOB = "createaherosystem*.in[ci]"
+
+
+def collect_create_a_hero_images(
+    oracle_root: Path, known_image_ids: Mapping[str, object] | None = None
+) -> tuple[ImageReference, ...]:
+    """Every MappedImage the Create-a-Hero class system names.
+
+    WHY THIS NEEDS ITS OWN COLLECTOR.  These icons are referenced from nowhere
+    else in the corpus: they hang off ``CreateAHeroClass`` and ``SubClass``
+    blocks in ``data/ini/createaherosystem*.inc``, which is neither an Object
+    document (so the object sweep never reads it) nor a CommandButton one.  The
+    result was that all seven class archetypes and all sixteen subclass
+    portraits resolved to MappedImages that existed in the oracle and were never
+    shipped, leaving the Create-a-Hero screen with no icons at all.
+
+    Read as a line scan rather than a block parse: the surface is two flat
+    assignment spellings inside nested blocks whose grammar nothing else here
+    models.  ``known_image_ids`` disambiguates the multi-image line form exactly
+    as it does for CommandButtons; it is NOT a filter, so an id retail names but
+    never defines still becomes a reference and is reported downstream as a
+    ``no-mapped-image`` gap rather than vanishing (``CPUrukHai`` is the real
+    instance).
+    """
+
+    ini_root = Path(oracle_root) / "data/ini"
+    if not ini_root.is_dir():
+        return ()
+    references: list[ImageReference] = []
+    for path in sorted(ini_root.glob(CREATE_A_HERO_SYSTEM_GLOB)):
+        source = _relative(oracle_root, path)
+        for line in _read(path).decode("cp1252", errors="replace").splitlines():
+            stripped = line.split(";", 1)[0].split("//", 1)[0].strip()
+            if "=" not in stripped:
+                continue
+            field, _, value = stripped.partition("=")
+            field = field.strip()
+            if field.casefold() not in {
+                name.casefold() for name in CREATE_A_HERO_IMAGE_FIELDS
+            }:
+                continue
+            for image_id in _image_values((value,), known_image_ids):
+                references.append(
+                    ImageReference(
+                        "CreateAHeroSystem", path.stem, field, image_id, source
+                    )
+                )
+    return tuple(references)
+
+
 def collect_image_references(
     oracle_root: Path,
     *,
@@ -299,6 +355,13 @@ def collect_image_references(
     for key in selected:
         references.extend(buttons.get(key, ()))
 
+    # The Create-a-Hero class icons, which no Object and no CommandButton names.
+    # Included in EVERY scope rather than only the host faction's: the class
+    # system is cross-faction (a Captain of Gondor is usable by Men, Elves and
+    # Dwarves) and a scoped pack that dropped them would leave the screen blank
+    # for exactly the factions that can field the hero.
+    references.extend(collect_create_a_hero_images(oracle_root, known_image_ids))
+
     references.sort(
         key=lambda reference: (
             reference.kind,
@@ -320,13 +383,38 @@ def load_mapped_images(
 ) -> tuple[dict[str, MappedImageRecord], tuple[str, ...]]:
     """Index every MappedImage block in the oracle; report ambiguous ids."""
 
+    oracle_root = Path(oracle_root)
     index: dict[str, MappedImageRecord] = {}
     ambiguous: set[str] = set()
-    for path in _ini_files(Path(oracle_root) / MAPPED_IMAGE_DIR):
+    for path in _ini_files(oracle_root / MAPPED_IMAGE_DIR):
         for record in _parse_mapped_images(_read(path), reject_duplicate_ids=False):
             key = image_key(record.id)
             existing = index.get(key)
             if existing is not None and existing != record:
+                # THE TIE-BREAK, DECIDED BY WHAT EA ACTUALLY SHIPPED.
+                #
+                # Retail defines a handful of ids twice, and the duplicates are
+                # not equivalent: the Create-a-Hero subclass portraits
+                # (CPShieldMaiden, CPDwarfSage, CPDwarfTaskmaster, CPHermit,
+                # CPOrcRaider) appear once in mappedimages/aptimages/
+                # cahportraits.ini pointing at a dedicated `<id>.tga`, and once
+                # in heroui.ini as a crop of the HeroUI_011 atlas.  NONE of the
+                # dedicated textures exist in the shipped game; the atlas does.
+                # So the cahportraits.ini rows are dead references to art EA cut,
+                # and preferring them -- which the file's name invites -- would
+                # blank five of the sixteen portraits.
+                #
+                # Resolvability decides it: a record whose texture is a real
+                # compiled atlas beats one whose texture is absent.  When both
+                # or neither resolve there is no evidence to choose on, so the
+                # id stays ambiguous and is reported rather than guessed.
+                existing_ok = compiled_atlas_path(oracle_root, existing.texture) is not None
+                candidate_ok = compiled_atlas_path(oracle_root, record.texture) is not None
+                if existing_ok and not candidate_ok:
+                    continue
+                if candidate_ok and not existing_ok:
+                    index[key] = record
+                    continue
                 ambiguous.add(record.id)
             index[key] = record
     return index, tuple(sorted(ambiguous, key=str.casefold))

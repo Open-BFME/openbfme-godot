@@ -5151,23 +5151,38 @@ def _hero_abilities(
     *,
     named_definition_cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None,
     cache_lock: threading.Lock | None,
+    button_overrides: Sequence[str] | None = None,
+    extra_power_documents: Sequence[str] = (),
 ) -> tuple[list[dict[str, object]], dict[str, IniBlock]]:
     """Emit the converted SPECIAL_POWER ability rows for one hero.
 
     Returns the ability rows plus the authored SpecialPower blocks they
     consumed (for descriptor provenance).
+
+    ``button_overrides`` names the CommandButtons to compile instead of reading
+    them off the object's CommandSet.  Create-a-Hero needs this and nothing else
+    does: its object's CommandSet holds only Attack-Move and Stop, because the
+    player's chosen powers are inserted into ``CreateAHeroCommandSetTemplate``
+    at runtime rather than authored into a set.  The powers are real and their
+    modules are on the object; only the *list* lives somewhere else.
+
+    ``extra_power_documents`` names further ``SpecialPower`` documents to merge
+    over ``specialpower.ini`` -- Create-a-Hero keeps its templates in
+    ``createaherospecialpowers.ini``.
     """
 
-    command_values = [
-        value
-        for row in _effective_values(target_lineage, "CommandSet")
-        if (value := _first((row.value,))) is not None
-    ]
-    if not command_values:
-        return [], {}
-    command_set = command_sets.get(command_values[0].casefold())
-    if command_set is None:
-        return [], {}
+    command_set: IniBlock | None = None
+    if button_overrides is None:
+        command_values = [
+            value
+            for row in _effective_values(target_lineage, "CommandSet")
+            if (value := _first((row.value,))) is not None
+        ]
+        if not command_values:
+            return [], {}
+        command_set = command_sets.get(command_values[0].casefold())
+        if command_set is None:
+            return [], {}
 
     # Gather the hero's Behavior modules once; SPECIAL_POWER buttons then bind
     # the modules that reference their SpecialPower template.
@@ -5224,6 +5239,10 @@ def _hero_abilities(
     power_blocks: dict[str, IniBlock] = {}
     if special_power_source is not None:
         power_blocks = _named_blocks(special_power_source, "SpecialPower")
+    for extra_path in extra_power_documents:
+        extra_source = _optional_document(documents, extra_path)
+        if extra_source is not None:
+            power_blocks.update(_named_blocks(extra_source, "SpecialPower"))
     modifier_source = _optional_document(documents, ATTRIBUTE_MODIFIER_PATH)
     modifier_blocks: dict[str, IniBlock] = {}
     if modifier_source is not None:
@@ -5244,12 +5263,19 @@ def _hero_abilities(
 
     abilities: list[dict[str, object]] = []
     used_power_blocks: dict[str, IniBlock] = {}
-    for slot, command_id in _command_slots(command_set):
+    if button_overrides is None:
+        slot_bindings = list(_command_slots(command_set))
+        binding_source = f"CommandSet {command_set.name}"
+    else:
+        # Slots are 1-based and follow the given order, which is the numbering
+        # the Create-a-Hero Current Powers list shows.
+        slot_bindings = list(enumerate(button_overrides, start=1))
+        binding_source = "the Create-a-Hero power list"
+    for slot, command_id in slot_bindings:
         button = command_buttons.get(command_id.casefold())
         if button is None:
             raise PlayableUnitCompilerError(
-                f"CommandSet {command_set.name} references a missing "
-                f"CommandButton: {command_id}"
+                f"{binding_source} references a missing CommandButton: {command_id}"
             )
         command_kinds = {
             value.strip().casefold() for value in button.values("Command")
@@ -5295,6 +5321,71 @@ def _hero_abilities(
             used_power_blocks[power_block.name.casefold()] = power_block
         abilities.append(ability)
     return abilities, used_power_blocks
+
+
+#: The Create-a-Hero Object, and where its SpecialPower templates live.
+CREATE_A_HERO_OBJECT = "CreateAHero"
+CREATE_A_HERO_SPECIAL_POWER_PATH = "data/ini/createaherospecialpowers.ini"
+
+
+def compile_create_a_hero_ability_effects(
+    documents: Mapping[str, bytes],
+    button_names: Sequence[str],
+    *,
+    prepared: "PlayableUnitCompilerInputs | None" = None,
+) -> dict[str, dict[str, object]]:
+    """``CommandButton name -> its compiled ability row`` for Create-a-Hero.
+
+    WHAT THIS BUYS. Without it a created hero's powers are a list of names with
+    icons and level gates and no behaviour, because the *effect* of a power is
+    not on the button -- it is in the ``SpecialPower`` behaviour modules of the
+    ``CreateAHero`` Object, which ``createaheropowers.inc`` contributes through
+    an ``#include``.  That is the same place every retail hero's effects live,
+    so this reuses :func:`_hero_abilities` rather than growing a second effect
+    compiler that could disagree with the first.
+
+    Two things make Create-a-Hero different, and both are passed through rather
+    than special-cased downstream:
+
+    * its Object's ``CommandSet`` holds only Attack-Move and Stop, because the
+      player's chosen powers are inserted into ``CreateAHeroCommandSetTemplate``
+      at runtime.  So the button list is supplied instead of read off a set.
+    * its ``SpecialPower`` templates are in ``createaherospecialpowers.ini``
+      rather than ``specialpower.ini``.
+
+    Returns only the buttons that compiled; a button this lane cannot resolve is
+    omitted, and the caller reports the power as effect-less rather than the
+    whole catalog failing.
+    """
+
+    if prepared is None:
+        prepared = prepare_playable_unit_compiler(documents)
+    target = prepared.objects.get(CREATE_A_HERO_OBJECT.casefold())
+    if target is None:
+        raise PlayableUnitCompilerError(
+            f"effective Object is missing: {CREATE_A_HERO_OBJECT}"
+        )
+    lineage = _ancestry(prepared.objects, target)
+    known = [
+        name
+        for name in button_names
+        if prepared.command_buttons.get(name.casefold()) is not None
+    ]
+    rows, _ = _hero_abilities(
+        target,
+        lineage,
+        lineage,
+        prepared.command_sets,
+        prepared.command_buttons,
+        prepared.objects,
+        documents,
+        prepared.numeric_defines,
+        named_definition_cache=prepared.named_definition_cache,
+        cache_lock=prepared.cache_lock,
+        button_overrides=known,
+        extra_power_documents=(CREATE_A_HERO_SPECIAL_POWER_PATH,),
+    )
+    return {str(row["id"]): row for row in rows if row.get("id")}
 
 
 def _hero_ability_row(

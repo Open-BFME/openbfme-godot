@@ -21,6 +21,7 @@ from openbfme_importer.interface_art import (
     pack_image_filename,
     resolve_selection_pack_dirs,
     scan_shipped_images,
+    image_key,
 )
 
 
@@ -227,6 +228,123 @@ def test_commandset_scope_restricts_the_universe(oracle: Path) -> None:
     ids = sorted({reference.image_id for reference in scoped})
     # GondorBarracks is in scope, and its CommandSet pulls in the train button.
     assert ids == ["BPGBarracks", "UIGondorSoldier"]
+
+
+# The Create-a-Hero class system: two flat image fields on blocks that are
+# neither Objects nor CommandButtons, which is why they need their own
+# collector. `CPNotAMappedImage` is referenced but undefined, and must not
+# become an invented reference.
+CREATE_A_HERO_SYSTEM_INC = """
+CreateAHeroClass
+  NameTag = CreateAHero:ClassName_HeroesOfTheWest
+  UpgradeName = Upgrade_CreateAHero_ClassHeroOfTheWest
+  IconImage = Archetype_HerooftheWest
+
+  SubClass // Captain Of Gondor
+    NameTag = CreateAHero:SubClassName_CaptainOfGondor
+    IconImage = BPGBarracks        // a known id, standing in for a portrait
+    ButtonImage = UIGondorSoldier
+  End
+
+  SubClass // one whose portrait retail never defined
+    NameTag = CreateAHero:SubClassName_Nobody
+    IconImage = CPNotAMappedImage
+  End
+End
+"""
+
+
+def test_create_a_hero_class_icons_are_collected(oracle: Path) -> None:
+    # These icons hang off CreateAHeroClass/SubClass blocks in
+    # createaherosystem*.inc, which no Object sweep and no CommandButton sweep
+    # reads. Before this collector every class archetype and subclass portrait
+    # resolved to a real MappedImage that was never shipped, so the
+    # Create-a-Hero screen had no icons at all.
+    _write(oracle / "data/ini/createaherosystemmenofthewest.inc", CREATE_A_HERO_SYSTEM_INC)
+    references = collect_image_references(oracle)
+    rows = {
+        (reference.field, reference.image_id)
+        for reference in references
+        if reference.kind == "CreateAHeroSystem"
+    }
+    assert ("IconImage", "Archetype_HerooftheWest") in rows
+    assert ("IconImage", "BPGBarracks") in rows
+    assert ("ButtonImage", "UIGondorSoldier") in rows
+    # An id retail names but never defines is still COLLECTED, so the judge can
+    # report it as a `no-mapped-image` gap by name. Dropping it here would hide
+    # a real hole in the screen. (`CPUrukHai` is the live instance.)
+    assert ("IconImage", "CPNotAMappedImage") in rows
+
+
+#: The real shape of retail's duplicate ids: the same portrait defined twice,
+#: once against a dedicated texture EA never shipped and once as a crop of an
+#: atlas that exists. Modelled on CPShieldMaiden.
+DUPLICATE_MAPPED_IMAGES_INI = """
+MappedImage CPDoubleDefined
+  Texture = CPDoubleDefined.tga
+  TextureWidth = 256
+  TextureHeight = 256
+  Coords = Left:0 Top:0 Right:191 Bottom:191
+  Status = NONE
+End
+"""
+
+DUPLICATE_MAPPED_IMAGES_ATLAS_INI = """
+MappedImage CPDoubleDefined
+  Texture = SCUserInterface_001.tga
+  TextureWidth = 512
+  TextureHeight = 512
+  Coords = Left:0 Top:0 Right:64 Bottom:64
+  Status = NONE
+End
+"""
+
+
+def test_a_duplicate_id_resolves_to_the_texture_that_actually_shipped(
+    oracle: Path,
+) -> None:
+    # Retail defines the five Create-a-Hero subclass portraits twice: once in
+    # cahportraits.ini against a dedicated `<id>.tga`, once in heroui.ini as a
+    # HeroUI_011 crop. NONE of the dedicated textures exist in the shipped
+    # game. Preferring the file whose NAME looks authoritative would blank five
+    # of the sixteen portraits; resolvability is the only evidence there is.
+    # `aa_` / `zz_` prefixes pin the outcome independent of directory order.
+    _write(
+        oracle / "data/ini/mappedimages/aptimages/aa_dedicated.ini",
+        DUPLICATE_MAPPED_IMAGES_INI,
+    )
+    _write(
+        oracle / "data/ini/mappedimages/aptimages/zz_atlas.ini",
+        DUPLICATE_MAPPED_IMAGES_ATLAS_INI,
+    )
+    index, ambiguous = load_mapped_images(oracle)
+    assert "CPDoubleDefined" not in ambiguous
+    assert index[image_key("CPDoubleDefined")].texture == "SCUserInterface_001.tga"
+
+
+def test_a_duplicate_neither_of_which_resolves_stays_ambiguous(oracle: Path) -> None:
+    # With no evidence to choose on, the id is reported rather than guessed.
+    _write(
+        oracle / "data/ini/mappedimages/aptimages/aa_dedicated.ini",
+        DUPLICATE_MAPPED_IMAGES_INI,
+    )
+    _write(
+        oracle / "data/ini/mappedimages/aptimages/zz_other.ini",
+        DUPLICATE_MAPPED_IMAGES_INI.replace("Right:191", "Right:128"),
+    )
+    _, ambiguous = load_mapped_images(oracle)
+    assert "CPDoubleDefined" in ambiguous
+
+
+def test_create_a_hero_icons_survive_a_faction_scope(oracle: Path) -> None:
+    # The class system is cross-faction - a Captain of Gondor is usable by Men,
+    # Elves and Dwarves - so a scoped pack that dropped these would blank the
+    # screen for exactly the factions that can field the hero.
+    _write(oracle / "data/ini/createaherosystemmenofthewest.inc", CREATE_A_HERO_SYSTEM_INC)
+    scoped = collect_image_references(oracle, object_path_tokens=("structures/men",))
+    assert "Archetype_HerooftheWest" in {
+        reference.image_id for reference in scoped
+    }
 
 
 def test_multi_state_button_image_lines_expand_into_one_id_per_state(

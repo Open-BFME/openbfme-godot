@@ -82,6 +82,8 @@ func _run() -> void:
 	_test_profile_validation(system)
 	_test_profile_round_trip(system)
 	_test_roster_document(system)
+	_test_power_selection_rules(system)
+	_test_powers_and_levels_reach_the_runtime_contracts(system)
 	_test_screen(system)
 	_test_purchase_spawns_with_computed_stats(system)
 
@@ -354,6 +356,162 @@ func _test_purchase_spawns_with_computed_stats(system: Dictionary) -> void:
 # ------------------------------------------------------------------ fixtures
 
 
+func _test_power_selection_rules(system: Dictionary) -> void:
+	## The three rules the CUSTOMIZE HERO POWERS screen enforces, each of which
+	## is authored on the CommandButton rather than invented by the client.
+
+	# A new hero starts with NO powers. Retail opens the screen prompting for a
+	# level-1 pick; seeding a selection would charge the player for powers they
+	# never chose.
+	_check(
+		CahHeroes.default_powers(system, 0).is_empty(),
+		"a new hero starts with no powers selected"
+	)
+
+	# The grid offers only the trees this class is named in.
+	var offered := CahHeroes.power_trees_for_class(system, 0)
+	var offered_ids: Array = []
+	for tree_value in offered:
+		for level_value in ((tree_value as Dictionary).get("levels", []) as Array):
+			offered_ids.append(String((level_value as Dictionary).get("powerId", "")))
+	_check(offered.size() == 2, "Hero of the West is offered its two power trees")
+	_check(
+		not offered_ids.has("Command_CahWizardTeleport"),
+		"a wizard-only power is not offered to Hero of the West"
+	)
+
+	# RULE 1: class binding.
+	_check(
+		not CahHeroes.power_refusals(system, 0, ["Command_CahWizardTeleport"]).is_empty(),
+		"a power bound to another class is refused"
+	)
+
+	# RULE 2: the prerequisite arrows are a real constraint. Level 2 without
+	# level 1 is refused; the whole chain is accepted.
+	_check(
+		not CahHeroes.power_refusals(system, 0, ["Command_CahSummonAllies_Level2"]).is_empty(),
+		"a power whose prerequisite is unselected is refused"
+	)
+	_check(
+		CahHeroes.power_refusals(
+			system, 0, ["Command_CahSummonAllies_Level1", "Command_CahSummonAllies_Level2"]
+		).is_empty(),
+		"a power is legal once its prerequisite is selected"
+	)
+
+	# The level gate is NOT a build-time rule: a level-7 power is legal to build
+	# a hero with and simply stays greyed out until the hero earns rank 7.
+	_check(
+		CahHeroes.power_refusals(system, 0, [
+			"Command_CahSummonAllies_Level1",
+			"Command_CahSummonAllies_Level2",
+			"Command_CahSummonAllies_Level3",
+		]).is_empty(),
+		"a level-7 power is legal at build time"
+	)
+
+	# RULE 3: build cost is the base plus the selected powers, which is the
+	# Build Cost the retail screen totals.
+	var sub_row := CahHeroes.sub_class_row(system, 0, 0)
+	var attributes := CahHeroes.default_attributes(sub_row)
+	var priced := CahHeroes.computed_stats(
+		system, sub_row, attributes,
+		["Command_CahSummonAllies_Level1", "Command_CahAthelas"]
+	)
+	_check(
+		int(priced["basePowerCost"]) == 350,
+		"the two selected powers add 200 + 150"
+	)
+	_check(
+		int(priced["buildCost"]) == BASE_BUILD_COST + 350,
+		"build cost is the base object cost plus the selected powers"
+	)
+	_check(
+		int(CahHeroes.computed_stats(system, sub_row, attributes)["buildCost"])
+			== BASE_BUILD_COST,
+		"a hero with no powers costs the base object cost"
+	)
+
+
+func _test_powers_and_levels_reach_the_runtime_contracts(system: Dictionary) -> void:
+	## A created hero must reach the sim's ability and experience engines through
+	## the SAME doors every retail hero uses. These assert the emitted document
+	## against the adapter that projects it, not against a shape of our own.
+	var profile := CahHeroes.new_profile(system, "Runtime Wiring", 0, 0)
+	profile["powers"] = [
+		"Command_CahSummonAllies_Level1", "Command_CahSummonAllies_Level2"
+	]
+	var document := CahHeroes.roster_document(system, profile, "GondorCastleKeep", 7)
+	var registration: Dictionary = document["registration"] as Dictionary
+
+	var abilities := Adapter.ability_rules(document)
+	_check(abilities.size() == 2, "both selected powers project as ability rules")
+	if abilities.size() == 2:
+		var first := abilities[0] as Dictionary
+		_check(int(first["slot"]) == 1, "ability slots are 1-based in selection order")
+		_check(
+			String(first["ability_id"]) == "Command_CahSummonAllies_Level1",
+			"the ability id is the CommandButton name"
+		)
+		_check(String(first["targeting"]) == "point", "NEED_TARGET_POS projects as point targeting")
+		_check(int(first["required_level"]) == 1, "the authored level gate travels to the runtime")
+		_check(int((abilities[1] as Dictionary)["required_level"]) == 3, "the level-2 power keeps its rank-3 gate")
+		# 30000 ms at 30 ticks/second.
+		_check(int(first["cooldown_ticks"]) > 0, "the special power's reload time becomes a cooldown")
+		# A power whose behaviour the importer COMPILED is castable, and carries
+		# the authored effect rather than a placeholder. This is the difference
+		# between a power that is listed and one that fires.
+		_check(bool(first["castable"]), "a compiled power effect is castable")
+		_check(
+			String((first["effect"] as Dictionary).get("kind", "")) == "summon",
+			"the compiled effect kind travels to the runtime"
+		)
+		# ...and one that did not compile stays selectable but is reported as
+		# not castable rather than silently pretending to fire.
+		_check(
+			not bool((abilities[1] as Dictionary)["castable"]),
+			"an uncompiled power effect is reported as not castable"
+		)
+
+	var experience := Adapter.experience_rule(document)
+	_check(not experience.is_empty(), "the level chain projects as an experience rule")
+	if not experience.is_empty():
+		_check(int(experience["max_level"]) == 3, "the ladder carries its authored max level")
+		var levels := experience["levels"] as Array
+		_check(levels.size() == 3, "every authored rank reaches the runtime")
+		var rank_two := levels[1] as Dictionary
+		_check(
+			is_equal_approx(float(rank_two["health_add"]), 60.0)
+				and is_equal_approx(float(rank_two["damage_add"]), 10.0),
+			"the per-level grants are resolved numbers, not modifier-list names"
+		)
+		_check(
+			(levels[2] as Dictionary)["upgrades"] == ["Upgrade_CreateAHeroGloriousCharge"],
+			"a level that unlocks an upgrade carries it"
+		)
+
+	var visual: Dictionary = registration.get("visual", {}) as Dictionary
+	_check(
+		String(visual.get("model", "")) == "CHHW_CG_U_SKN",
+		"the hero carries its subclass's BATTLEFIELD mesh, not the menu pose"
+	)
+	_check(
+		String(visual.get("skeleton", "")) == "CHHW_CG_U_SKL"
+			and String(visual.get("animationPrefix", "")) == "CHHW_CG",
+		"the rig and animation prefix travel with the mesh"
+	)
+	_check(
+		String(CahHeroes.model_binding(
+			CahHeroes.sub_class_row(system, 0, 0), "creationScreen"
+		).get("model", "")) == "CHHW_CG_C_SKN",
+		"the creation-screen pose is a different mesh and stays separate"
+	)
+	_check(
+		int((registration["simulation"] as Dictionary)["buildCost"]) == BASE_BUILD_COST + 350,
+		"the roster document prices the powers it equips"
+	)
+
+
 func _system_document() -> Dictionary:
 	return {
 		"schema": "openbfme.cah-system-runtime",
@@ -382,13 +540,82 @@ func _system_document() -> Dictionary:
 				_group("CreateAHero_AutoHealAttribute", 3, "INNATE_AUTO_HEAL", [["AUTO_HEAL", AUTOHEAL_LADDER]]),
 				_group("CreateAHero_VisionAttribute", 4, "INNATE_VISION", [["SHROUD_CLEARING", SHROUD_LADDER], ["VISION", VISION_LADDER]]),
 			],
+			"maxPowerSlots": 15,
+			# The POWERS screen as the importer compiles it out of the
+			# CreateAHeroUI* fields on commandbutton.ini: one three-step
+			# prerequisite chain rising through the level columns, one
+			# standalone power, and one power bound to a DIFFERENT class so the
+			# class-binding rule has something to refuse.
+			"powerCatalog": [
+				{
+					"familyId": "Command_CahSummonAllies_Level1",
+					"rootPowerId": "Command_CahSummonAllies_Level1",
+					"labelStringId": "CONTROLBAR:SummonAllies_Level1",
+					"allowedClassUpgrades": ["Upgrade_CreateAHero_ClassHeroOfTheWest"],
+					"levels": [
+						_power("Command_CahSummonAllies_Level1", 1, "", 200, ["NEED_TARGET_POS"]),
+						_power("Command_CahSummonAllies_Level2", 3, "Command_CahSummonAllies_Level1", 150, ["NEED_TARGET_POS"]),
+						_power("Command_CahSummonAllies_Level3", 7, "Command_CahSummonAllies_Level2", 100, ["NEED_TARGET_POS"]),
+					],
+				},
+				{
+					"familyId": "Command_CahAthelas",
+					"rootPowerId": "Command_CahAthelas",
+					"labelStringId": "CONTROLBAR:CAHAthelas",
+					"allowedClassUpgrades": ["Upgrade_CreateAHero_ClassHeroOfTheWest"],
+					"levels": [_power("Command_CahAthelas", 1, "", 150, [])],
+				},
+				{
+					"familyId": "Command_CahWizardTeleport",
+					"rootPowerId": "Command_CahWizardTeleport",
+					"labelStringId": "CONTROLBAR:TeleportLevel1",
+					"allowedClassUpgrades": ["Upgrade_CreateAHero_ClassIstariWizard"],
+					"levels": [_power(
+						"Command_CahWizardTeleport", 3, "", 200,
+						["NEED_TARGET_ENEMY_OBJECT"],
+						"Upgrade_CreateAHero_ClassIstariWizard"
+					)],
+				},
+			],
+			# The shared level chain, with the per-level grants already resolved
+			# to {kind, value} rows as the runtime's contract requires.
+			"experience": {
+				"maxLevel": 3,
+				"initialRank": 1,
+				"levels": [
+					{"rank": 1, "requiredExperience": 1, "experienceAward": 100, "attributeModifiers": [], "upgrades": []},
+					{"rank": 2, "requiredExperience": 125, "experienceAward": 110, "upgrades": [], "attributeModifiers": [
+						{"name": "HeroLevelUpDamage1", "modifiers": [{"kind": "DAMAGE_ADD", "value": 10}, {"kind": "HEALTH", "value": 60}], "unsupportedModifiers": []},
+					]},
+					{"rank": 3, "requiredExperience": 250, "experienceAward": 120, "upgrades": ["Upgrade_CreateAHeroGloriousCharge"], "attributeModifiers": [
+						{"name": "HeroLevelUpDamage2", "modifiers": [{"kind": "DAMAGE_ADD", "value": 10}, {"kind": "HEALTH", "value": 60}], "unsupportedModifiers": []},
+					]},
+				],
+			},
 			"classes": [{
 				"classIndex": 0,
 				"nameStringId": "CreateAHero:ClassName_HeroesOfTheWest",
 				"iconImageId": "Archetype_HerooftheWest",
+				"upgradeName": "Upgrade_CreateAHero_ClassHeroOfTheWest",
 				"subClasses": [
 					{
 						"subClassIndex": 0,
+						"models": {
+							"battlefield": {
+								"conditionFlag": "CREATE_A_HERO_00",
+								"model": "CHHW_CG_U_SKN",
+								"skeleton": "CHHW_CG_U_SKL",
+								"animationPrefix": "CHHW_CG",
+								"weaponLaunchBones": ["PRIMARY SPEAR"],
+								"mounted": {"model": "CHHW_MW_M_SKN"},
+							},
+							"creationScreen": {
+								"conditionFlag": "CREATE_A_HERO_01",
+								"model": "CHHW_CG_C_SKN",
+								"skeleton": "CHHW_CG_C_SKL",
+								"animationPrefix": "CHHW_CG",
+							},
+						},
 						"nameStringId": "CreateAHero:SubClassName_CaptainOfGondor",
 						"descriptionStringId": "CreateAHero:SubClassDesc_CaptainOfGondor",
 						"iconImageId": "HPCaptainofGondor",
@@ -420,6 +647,46 @@ func _system_document() -> Dictionary:
 				],
 			}],
 		},
+	}
+
+
+func _power(
+	power_id: String,
+	required_level: int,
+	prerequisite: String,
+	cost: int,
+	options: Array,
+	class_upgrade: String = "Upgrade_CreateAHero_ClassHeroOfTheWest"
+) -> Dictionary:
+	return {
+		"powerId": power_id,
+		"specialPowerId": "SpecialAbility%s" % power_id,
+		"requiredHeroLevel": required_level,
+		"prerequisitePowerId": prerequisite,
+		"costIfSelected": cost,
+		"costExpression": "CAH_%s_COST" % power_id.to_upper(),
+		"allowedClassUpgrades": [class_upgrade],
+		"nameStringId": "CONTROLBAR:%s" % power_id,
+		"descriptionStringId": "CONTROLBAR:ToolTip%s" % power_id,
+		"buttonImageId": "HI%s" % power_id,
+		"radiusCursorType": "",
+		"options": options,
+		"reloadTimeMs": 30000,
+		"commandType": "SPECIAL_POWER",
+		"tier": 1,
+		# The compiled behaviour, as the importer folds it onto the row from the
+		# CreateAHero Object's SpecialPower modules. Level 1 of the chain gets a
+		# real summon; the rest stay uncompiled so BOTH paths are exercised.
+		"effect": (
+			{"kind": "summon", "objectId": "GondorFighterHorde", "count": 2}
+			if required_level == 1 and prerequisite == ""
+			else {"kind": "none"}
+		),
+		"implementation": (
+			{"status": "implemented", "reason": "", "limitations": []}
+			if required_level == 1 and prerequisite == ""
+			else {"status": "unimplemented", "reason": "not compiled", "limitations": []}
+		),
 	}
 
 

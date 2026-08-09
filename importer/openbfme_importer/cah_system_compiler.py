@@ -84,6 +84,22 @@ GAME_DATA_PATH = "data/ini/createaherogamedata.inc"
 GLOBAL_GAME_DATA_PATH = "data/ini/gamedata.ini"
 DESIGN_PATH = "data/ini/object/createahero/createaherodesign.inc"
 RESPAWN_PATH = "data/ini/object/createahero/createaherorespawn.inc"
+#: Where the POWERS screen is authored.  Retail puts the whole Create-a-Hero
+#: power economy on the ``CommandButton`` -- not in the system file and not in
+#: ``createaherospecialpowers.ini`` -- through four ``CreateAHeroUI*`` fields
+#: that exist for no other purpose.  See :func:`_power_trees`.
+COMMAND_BUTTON_PATH = "data/ini/commandbutton.ini"
+#: The two halves of the 3D binding.  ``createaheromodels.inc`` carries the art
+#: keyed by an opaque ``CREATE_A_HERO_NN`` model-condition flag;
+#: ``createaheromodelconditionupgrades.inc`` is the only document that says
+#: which class/subclass pair raises which flag.  Neither is usable alone --
+#: see :func:`_model_bindings`.
+MODELS_PATH = "data/ini/object/createahero/createaheromodels.inc"
+MODEL_CONDITIONS_PATH = (
+    "data/ini/object/createahero/createaheromodelconditionupgrades.inc"
+)
+#: The shared ExperienceLevel chain every created hero levels through.
+EXPERIENCE_PATH = "data/ini/experiencelevels_createahero.inc"
 
 #: Documents that must be present.  The ``#include``s reached from
 #: ``createaherosystem.ini`` are resolved from the same mapping and are also
@@ -96,6 +112,10 @@ REQUIRED_DOCUMENTS = (
     GLOBAL_GAME_DATA_PATH,
     DESIGN_PATH,
     RESPAWN_PATH,
+    COMMAND_BUTTON_PATH,
+    MODELS_PATH,
+    MODEL_CONDITIONS_PATH,
+    EXPERIENCE_PATH,
 )
 
 #: Where ``#define``s are read from, in precedence order (later wins).  BOTH are
@@ -123,6 +143,24 @@ DESIGN_FIELDS = (
 
 #: The ``BlingType`` that marks a customisation group as an attribute slider.
 ATTRIBUTE_BLING_TYPE = "ATTRIBUTE"
+#: The ``BlingType`` that marks a cosmetic (helmet / shoulders / …) group.
+APPEARANCE_BLING_TYPE = "APPEARANCE"
+#: Special-power definitions for Create-a-Hero (levels, reload times).
+SPECIAL_POWERS_PATH = "data/ini/createaherospecialpowers.ini"
+#: Max powers a profile may store (retail's ability array is fixed-capacity 15).
+MAX_POWER_SLOTS = 15
+
+#: The ``CommandButton`` fields that make a button a Create-a-Hero power.  A
+#: button carrying ``CreateAHeroUIMinimumLevel`` is on the POWERS screen; one
+#: without it never is, which is the whole selection rule.
+CAH_UI_LEVEL_FIELD = "CreateAHeroUIMinimumLevel"
+CAH_UI_CLASSES_FIELD = "CreateAHeroUIAllowableUpgrades"
+CAH_UI_PREREQUISITE_FIELD = "CreateAHeroUIPrerequisiteButtonName"
+CAH_UI_COST_FIELD = "CreateAHeroUICostIfSelected"
+
+#: The value ``CreateAHeroUIPrerequisiteButtonName`` uses to mean "this is the
+#: first power in its chain".  Compared case-insensitively.
+CAH_NO_PREREQUISITE = "none"
 
 #: Every attribute group has exactly this many steps, in every group, in both
 #: games.  A group that does not is a corpus this module does not understand.
@@ -130,7 +168,25 @@ ATTRIBUTE_STEP_COUNT = 20
 
 #: Assignment keys that open an ``End``-terminated module block rather than
 #: carrying a scalar.  See the comment in :func:`_parse_blocks`.
-_MODULE_KEYS = frozenset({"behavior", "behaviour", "body", "draw", "clientupdate"})
+_MODULE_KEYS = frozenset(
+    {
+        "behavior",
+        "behaviour",
+        "body",
+        "draw",
+        "clientupdate",
+        # `ModelConditionState = MOUNTED CREATE_A_HERO_00` opens a block whose
+        # value is a flag list rather than a module class, but the grammar is
+        # the same and the value is kept verbatim in `__module__`.
+        "modelconditionstate",
+    }
+)
+
+#: Block kinds whose header is two tokens (``ExperienceLevel CreateAHeroLevel1``)
+#: rather than one.  An ALLOWLIST rather than a general "two bare words opens a
+#: block" rule: that rule would swallow any unrecognised two-token line and turn
+#: a corpus change into a silent misparse instead of the loud refusal below.
+_NAMED_BLOCK_KINDS = frozenset({"experiencelevel"})
 
 MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
 MAX_INCLUDE_DEPTH = 8
@@ -140,6 +196,9 @@ _INCLUDE_PATTERN = re.compile(r'^#include\s+"([^"]+)"\s*$', re.IGNORECASE)
 _DEFINE_PATTERN = re.compile(r"^#define\s+([A-Za-z_][A-Za-z0-9_]*)\s+(.*)$", re.IGNORECASE)
 _ASSIGNMENT_PATTERN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
 _BLOCK_HEADER_PATTERN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*$")
+_NAMED_BLOCK_HEADER_PATTERN = re.compile(
+    r"^([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_][A-Za-z0-9_]*)\s*$"
+)
 #: ``#MULTIPLY( NAME 0.62 )`` -- the only expression form the attribute ladders
 #: use.  Deliberately narrow: a ladder that grows a second form should fail
 #: loudly here rather than silently resolve to half of it.
@@ -159,10 +218,12 @@ class CahSystemCompilerError(ValueError):
 class _Block:
     """One ``Kind ... End`` block: ordered assignments plus child blocks."""
 
-    __slots__ = ("kind", "assignments", "blocks")
+    __slots__ = ("kind", "name", "assignments", "blocks")
 
-    def __init__(self, kind: str) -> None:
+    def __init__(self, kind: str, name: str = "") -> None:
         self.kind = kind
+        #: The second header token for ``Kind Name`` blocks, else "".
+        self.name = name
         self.assignments: list[tuple[str, str]] = []
         self.blocks: list["_Block"] = []
 
@@ -297,6 +358,16 @@ def _parse_blocks(lines: Sequence[str], label: str) -> _Block:
             stack[-1].blocks.append(block)
             stack.append(block)
             continue
+        named = _NAMED_BLOCK_HEADER_PATTERN.match(line)
+        if named is not None and named.group(1).casefold() in _NAMED_BLOCK_KINDS:
+            if len(stack) > MAX_BLOCK_DEPTH:
+                raise CahSystemCompilerError(
+                    f"{label}: line {number}: block depth exceeds {MAX_BLOCK_DEPTH}"
+                )
+            block = _Block(named.group(1), named.group(2))
+            stack[-1].blocks.append(block)
+            stack.append(block)
+            continue
         if line.startswith("#"):
             # A preprocessor directive other than #include (the includes were
             # spliced away upstream).  Retail's Create-a-Hero surface has none;
@@ -390,11 +461,23 @@ def attribute_spend(attributes: Iterable[Mapping[str, Any]], key: str = "default
 
 
 def _attribute_groups(system: _Block) -> list[dict[str, Any]]:
+    return _bling_groups(system, ATTRIBUTE_BLING_TYPE, required=True)
+
+
+def _appearance_groups(system: _Block) -> list[dict[str, Any]]:
+    ## Cosmetic groups. Optional in synthetic fixtures that only declare
+    ## ATTRIBUTE binders; real retail always ships them.
+    return _bling_groups(system, APPEARANCE_BLING_TYPE, required=False)
+
+
+def _bling_groups(
+    system: _Block, bling_type: str, *, required: bool
+) -> list[dict[str, Any]]:
     groups: list[dict[str, Any]] = []
     seen: set[str] = set()
     for binder in system.children("CreateAHeroBlingBinder"):
-        bling_type = (binder.value("BlingType") or "").strip().upper()
-        if bling_type != ATTRIBUTE_BLING_TYPE:
+        declared = (binder.value("BlingType") or "").strip().upper()
+        if declared != bling_type:
             continue
         group_name = (binder.value("GroupName") or "").strip()
         if not group_name:
@@ -403,13 +486,15 @@ def _attribute_groups(system: _Block) -> list[dict[str, Any]]:
             )
         if group_name.casefold() in seen:
             raise CahSystemCompilerError(
-                f"{SYSTEM_PATH}: attribute group {group_name!r} is declared twice"
+                f"{SYSTEM_PATH}: {bling_type.lower()} group {group_name!r} is "
+                f"declared twice"
             )
         seen.add(group_name.casefold())
         ui_slot = binder.value("UISlot")
         if ui_slot is None or not ui_slot.strip().isdigit():
             raise CahSystemCompilerError(
-                f"{SYSTEM_PATH}: attribute group {group_name!r} has no numeric UISlot"
+                f"{SYSTEM_PATH}: {bling_type.lower()} group {group_name!r} has "
+                f"no numeric UISlot"
             )
         groups.append(
             {
@@ -417,15 +502,605 @@ def _attribute_groups(system: _Block) -> list[dict[str, Any]]:
                 "uiSlot": int(ui_slot.strip()),
                 "labelStringId": (binder.value("LabelTag") or "").strip(),
                 "descriptionStringId": (binder.value("DescriptionTag") or "").strip(),
+                "blingType": bling_type,
             }
         )
-    if not groups:
+    if required and not groups:
         raise CahSystemCompilerError(
             f"{SYSTEM_PATH}: no CreateAHeroBlingBinder declares "
-            f"BlingType = {ATTRIBUTE_BLING_TYPE}"
+            f"BlingType = {bling_type}"
         )
     groups.sort(key=lambda row: (row["uiSlot"], row["groupName"].casefold()))
     return groups
+
+
+def _appearance_options(system: _Block) -> list[dict[str, Any]]:
+    ## Every CreateAHeroBling part (helmet pieces, weapons, …) as a catalog row.
+    options: list[dict[str, Any]] = []
+    for bling in system.children("CreateAHeroBling"):
+        upgrade = (bling.value("BlingUpgradeName") or "").strip()
+        group = (bling.value("GroupName") or "").strip()
+        if not upgrade or not group:
+            continue
+        options.append(
+            {
+                "upgradeName": upgrade,
+                "groupName": group,
+                "nameStringId": (bling.value("NameTag") or "").strip(),
+                "descriptionStringId": (bling.value("DescriptionTag") or "").strip(),
+            }
+        )
+    return options
+
+
+def _special_power_index(documents: Mapping[str, bytes]) -> dict[str, dict[str, Any]]:
+    """``SpecialPower`` name -> its authored enum and reload time.
+
+    This file is the *effect* side of a power.  It carries no class binding, no
+    hero level and no cost, so it cannot drive the POWERS screen on its own --
+    it is joined onto the CommandButton rows in :func:`_power_trees`.
+    """
+
+    raw = _lookup(documents, SPECIAL_POWERS_PATH)
+    if raw is None:
+        return {}
+    index: dict[str, dict[str, Any]] = {}
+    for block in parse_flat_named_blocks(raw, "SpecialPower"):
+        name = block.name.strip()
+        if not name:
+            continue
+        index[name.casefold()] = {
+            "enum": (block.values("Enum")[0].strip() if block.values("Enum") else ""),
+            "reloadTimeMs": _optional_int(block.values("ReloadTime")),
+        }
+    return index
+
+
+def _power_trees(
+    documents: Mapping[str, bytes],
+    defines: Mapping[str, float],
+    class_upgrade_names: Sequence[str],
+) -> list[dict[str, Any]]:
+    """The POWERS screen, compiled from where retail actually authors it.
+
+    WHERE THE POWER ECONOMY LIVES.  Not in ``createaherosystem.ini`` and not in
+    ``createaherospecialpowers.ini``: every rule the CUSTOMIZE HERO POWERS
+    screen enforces is on the ``CommandButton``, in four fields that exist for
+    no other purpose in the corpus.
+
+    * ``CreateAHeroUIMinimumLevel`` -- the required hero level.  Retail authors
+      exactly four values (1, 3, 7, 10), which are the four columns of the
+      screen's grid.  A button carrying this field IS a Create-a-Hero power; a
+      button without it never is.
+    * ``CreateAHeroUIAllowableUpgrades`` -- whitespace-separated
+      ``Upgrade_CreateAHero_Class*`` names.  A power offered to more than one
+      class lists them all, which is why this is a set and not a scalar.
+    * ``CreateAHeroUIPrerequisiteButtonName`` -- the button that must already be
+      selected, or ``None``.  These links are the arrows drawn between grid
+      columns, and chaining them is what recovers the
+      "Call Reinforcements -> Improved -> Great -> Superior" rows.
+    * ``CreateAHeroUICostIfSelected`` -- what this power adds to the hero's
+      build cost, as a ``#define`` name resolved through ``gamedata.ini``.  The
+      screen's Build Cost is the base object cost plus the sum of these.
+
+    A TREE IS A PREREQUISITE CHAIN, recovered rather than declared.  Retail
+    names no families; it only links each power to its predecessor.  So the
+    roots (``prerequisite = None``) are found first and each root's transitive
+    closure becomes one tree -- one row of the grid -- ordered by required
+    level.  The root's own label names the row, which is what the screen shows.
+
+    FAIL-CLOSED like the rest of this module: a prerequisite that names no
+    known button, a level retail never authored, a class upgrade no
+    ``CreateAHeroClass`` declares, or a cost that resolves to neither a number
+    nor a define, each raises rather than emitting a screen that would silently
+    offer a power the game cannot honour.
+    """
+
+    raw = _lookup(documents, COMMAND_BUTTON_PATH)
+    if raw is None:
+        raise CahSystemCompilerError(f"{COMMAND_BUTTON_PATH}: document is missing")
+    special_powers = _special_power_index(documents)
+    known_classes = {name.casefold() for name in class_upgrade_names if name}
+
+    rows: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for block in parse_flat_named_blocks(raw, "CommandButton"):
+        levels = block.values(CAH_UI_LEVEL_FIELD)
+        if not levels:
+            continue
+        button = block.name.strip()
+        label = f"{COMMAND_BUTTON_PATH}: CommandButton {button}"
+        level_text = levels[0].strip()
+        if not level_text.isdigit() or int(level_text) < 1:
+            raise CahSystemCompilerError(
+                f"{label}: {CAH_UI_LEVEL_FIELD} is {level_text!r}, which is not a "
+                f"positive hero level"
+            )
+
+        allowed: list[str] = []
+        for text in block.values(CAH_UI_CLASSES_FIELD):
+            for token in text.split():
+                if token not in allowed:
+                    allowed.append(token)
+        if not allowed:
+            raise CahSystemCompilerError(
+                f"{label}: carries {CAH_UI_LEVEL_FIELD} but no "
+                f"{CAH_UI_CLASSES_FIELD}, so no class could ever select it"
+            )
+        unknown = [name for name in allowed if name.casefold() not in known_classes]
+        if unknown:
+            raise CahSystemCompilerError(
+                f"{label}: {CAH_UI_CLASSES_FIELD} names {', '.join(unknown)}, "
+                f"which no CreateAHeroClass declares as its UpgradeName"
+            )
+
+        prerequisite = ""
+        prerequisite_values = block.values(CAH_UI_PREREQUISITE_FIELD)
+        if prerequisite_values:
+            candidate = prerequisite_values[0].strip()
+            if candidate and candidate.casefold() != CAH_NO_PREREQUISITE:
+                prerequisite = candidate
+
+        cost = 0
+        cost_expression = ""
+        cost_values = block.values(CAH_UI_COST_FIELD)
+        if cost_values:
+            cost_expression = cost_values[0].strip()
+            cost = int(
+                _resolved_scalar(cost_expression, defines, label, CAH_UI_COST_FIELD)
+            )
+
+        special_power_id = (
+            block.values("SpecialPower")[0].strip()
+            if block.values("SpecialPower")
+            else ""
+        )
+        effect = special_powers.get(special_power_id.casefold(), {})
+        options: list[str] = []
+        for text in block.values("Options"):
+            for token in text.split():
+                if token not in options:
+                    options.append(token)
+
+        if button.casefold() in {name.casefold() for name in rows}:
+            raise CahSystemCompilerError(
+                f"{label}: a Create-a-Hero CommandButton of this name is "
+                f"declared twice"
+            )
+        rows[button] = {
+            "powerId": button,
+            "specialPowerId": special_power_id,
+            "specialPowerEnum": str(effect.get("enum", "")),
+            "reloadTimeMs": int(effect.get("reloadTimeMs", 0)),
+            "requiredHeroLevel": int(level_text),
+            "prerequisitePowerId": prerequisite,
+            "costIfSelected": cost,
+            "costExpression": cost_expression,
+            "allowedClassUpgrades": allowed,
+            "commandType": (
+                block.values("Command")[0].strip() if block.values("Command") else ""
+            ),
+            "nameStringId": (
+                block.values("TextLabel")[0].strip() if block.values("TextLabel") else ""
+            ),
+            "descriptionStringId": (
+                block.values("DescriptLabel")[0].strip()
+                if block.values("DescriptLabel")
+                else ""
+            ),
+            "buttonImageId": (
+                block.values("ButtonImage")[0].strip()
+                if block.values("ButtonImage")
+                else ""
+            ),
+            "radiusCursorType": (
+                block.values("RadiusCursorType")[0].strip()
+                if block.values("RadiusCursorType")
+                else ""
+            ),
+            "options": options,
+        }
+        order.append(button)
+
+    if not rows:
+        raise CahSystemCompilerError(
+            f"{COMMAND_BUTTON_PATH}: no CommandButton carries "
+            f"{CAH_UI_LEVEL_FIELD}, so the POWERS screen has nothing to offer"
+        )
+
+    by_folded = {name.casefold(): name for name in rows}
+    children: dict[str, list[str]] = {name: [] for name in rows}
+    roots: list[str] = []
+    for name in order:
+        prerequisite = str(rows[name]["prerequisitePowerId"])
+        if not prerequisite:
+            roots.append(name)
+            continue
+        resolved = by_folded.get(prerequisite.casefold())
+        if resolved is None:
+            raise CahSystemCompilerError(
+                f"{COMMAND_BUTTON_PATH}: CommandButton {name}: "
+                f"{CAH_UI_PREREQUISITE_FIELD} names {prerequisite}, which is not "
+                f"a Create-a-Hero power button"
+            )
+        # Store the canonical spelling so a consumer can match without folding.
+        rows[name]["prerequisitePowerId"] = resolved
+        children[resolved].append(name)
+
+    trees: list[dict[str, Any]] = []
+    for root in roots:
+        members: list[dict[str, Any]] = []
+        stack = [root]
+        guard = 0
+        while stack:
+            guard += 1
+            if guard > len(rows):
+                raise CahSystemCompilerError(
+                    f"{COMMAND_BUTTON_PATH}: the {CAH_UI_PREREQUISITE_FIELD} "
+                    f"chain rooted at {root} is cyclic"
+                )
+            current = stack.pop()
+            members.append(rows[current])
+            stack.extend(reversed(children[current]))
+        members.sort(
+            key=lambda row: (int(row["requiredHeroLevel"]), str(row["powerId"]))
+        )
+        for tier, row in enumerate(members, start=1):
+            row["tier"] = tier
+        allowed_any: list[str] = []
+        for row in members:
+            for name in row["allowedClassUpgrades"]:
+                if name not in allowed_any:
+                    allowed_any.append(name)
+        trees.append(
+            {
+                "familyId": root,
+                "rootPowerId": root,
+                # The row label the screen shows is the first power's own label:
+                # the "Call Reinforcements" row is named by its level-1 button.
+                "labelStringId": str(rows[root]["nameStringId"]),
+                "allowedClassUpgrades": allowed_any,
+                "levels": members,
+            }
+        )
+    trees.sort(key=lambda tree: str(tree["familyId"]).casefold())
+    return trees
+
+
+def _optional_int(values: Sequence[str]) -> int:
+    if not values:
+        return 0
+    text = values[0].strip().split()[0]
+    if text.isdigit():
+        return int(text)
+    return 0
+
+
+#: The upgrade a subclass carries, e.g. ``Upgrade_CreateAHero_SubClass_0``.
+_SUB_CLASS_UPGRADE_PATTERN = re.compile(
+    r"^Upgrade_CreateAHero_SubClass_\d+$", re.IGNORECASE
+)
+#: The class upgrade, e.g. ``Upgrade_CreateAHero_ClassHeroOfTheWest``.
+_CLASS_UPGRADE_PATTERN = re.compile(r"^Upgrade_CreateAHero_Class\w+$", re.IGNORECASE)
+#: The opaque per-subclass model-condition flag, e.g. ``CREATE_A_HERO_07``.
+_CAH_MODEL_FLAG_PATTERN = re.compile(r"^CREATE_A_HERO_\d+$")
+#: The upgrade that means "the hero is posing in the Create-a-Hero screens
+#: rather than standing on a battlefield".  It selects a different mesh.
+MAP_MODE_UPGRADE = "Upgrade_CreateAHeroMapMode"
+
+#: The art fields a ``ModelConditionState`` carries, as (INI field, emitted key).
+_MODEL_FIELDS = (
+    ("Model", "model"),
+    ("Skeleton", "skeleton"),
+    ("ModelAnimationPrefix", "animationPrefix"),
+    ("PortraitImageName", "portraitImageId"),
+    ("ButtonImageName", "buttonImageId"),
+)
+
+
+def _model_states(documents: Mapping[str, bytes]) -> dict[str, dict[str, Any]]:
+    """``CREATE_A_HERO_NN`` flag -> the art that flag selects.
+
+    A SAGE ``ModelConditionState`` matches on a SET of flags and the most
+    specific matching set wins, so one Create-a-Hero flag can key several
+    states.  Three cases, and telling them apart is the whole job:
+
+    * ``CREATE_A_HERO_12`` alone -- the base on-foot mesh.
+    * ``MOUNTED CREATE_A_HERO_12`` -- the mesh when the hero is on a horse.
+      Both are real and neither replaces the other.
+    * ``CREATE_A_HERO_12 INVISIBLE_STEALTH`` -- a conditional restatement (the
+      Elf Archer authors one) that applies only while that other flag is up.
+
+    The first two are the bindings a client needs to show the hero; the third is
+    kept under ``conditionalStates`` rather than dropped, because dropping it
+    would silently lose art, and rather than overwriting the base, because
+    overwriting it would dress every Elf Archer in its stealth state.
+    """
+
+    root = _parse_blocks(_document_lines(documents, MODELS_PATH), MODELS_PATH)
+    states: dict[str, dict[str, Any]] = {}
+    for block in root.children("ModelConditionState"):
+        conditions = (block.value("__module__") or "").split()
+        flags = [token for token in conditions if _CAH_MODEL_FLAG_PATTERN.match(token)]
+        if len(flags) != 1:
+            # A state keyed by something other than exactly one CaH flag is not
+            # a per-subclass binding (the shared damage and rubble states are
+            # keyed by DAMAGED, RUBBLE and friends). Skipping is correct here;
+            # the per-subclass completeness check is what fails closed.
+            continue
+        art: dict[str, Any] = {"conditionFlags": conditions}
+        for field, key in _MODEL_FIELDS:
+            art[key] = (block.value(field) or "").strip()
+        art["weaponLaunchBones"] = [
+            text.strip() for text in block.values("WeaponLaunchBone")
+        ]
+        if not art["model"]:
+            raise CahSystemCompilerError(
+                f"{MODELS_PATH}: the ModelConditionState for "
+                f"{' '.join(conditions)} authors no Model"
+            )
+
+        entry = states.setdefault(flags[0], {})
+        others = [token for token in conditions if token not in flags]
+        if not others:
+            variant = "onFoot"
+        elif others == ["MOUNTED"]:
+            variant = "mounted"
+        else:
+            entry.setdefault("conditionalStates", []).append(art)
+            continue
+        if variant in entry:
+            raise CahSystemCompilerError(
+                f"{MODELS_PATH}: {flags[0]} declares two {variant} "
+                f"ModelConditionStates"
+            )
+        entry[variant] = art
+    if not states:
+        raise CahSystemCompilerError(
+            f"{MODELS_PATH}: no ModelConditionState is keyed by a "
+            f"CREATE_A_HERO_NN flag"
+        )
+    return states
+
+
+def _model_bindings(documents: Mapping[str, bytes]) -> dict[tuple[str, str], dict[str, Any]]:
+    """``(class upgrade, subclass upgrade)`` -> the meshes that pair wears.
+
+    WHY THIS IS A JOIN AND NOT A LOOKUP.  ``createaheromodels.inc`` keys its art
+    by ``CREATE_A_HERO_NN``, an opaque ordinal that appears nowhere in the
+    system file and has no relationship to the class or subclass index.  The
+    only document that connects the two is
+    ``createaheromodelconditionupgrades.inc``, where each ``ModelConditionUpgrade``
+    is ``TriggeredBy`` a class upgrade AND a subclass upgrade and raises exactly
+    one flag.  So the ordinal is recovered from the trigger pair rather than
+    assumed to track declaration order -- which it does not: the flags run
+    0..65 across 16 subclasses because each subclass claims two (battlefield and
+    creation screen), and the wizard and Olog-hai blocks interleave.
+
+    ``Upgrade_CreateAHeroMapMode`` on the trigger list marks the creation-screen
+    pose; its absence marks the battlefield one.
+    """
+
+    root = _parse_blocks(
+        _document_lines(documents, MODEL_CONDITIONS_PATH), MODEL_CONDITIONS_PATH
+    )
+    states = _model_states(documents)
+    bindings: dict[tuple[str, str], dict[str, Any]] = {}
+    for block in root.children("Behavior"):
+        module = (block.value("__module__") or "").split()
+        if not module or module[0].casefold() != "modelconditionupgrade":
+            continue
+        flag = (block.value("AddConditionFlags") or "").strip()
+        if not _CAH_MODEL_FLAG_PATTERN.match(flag):
+            continue
+        triggers: list[str] = []
+        for text in block.values("TriggeredBy"):
+            triggers.extend(text.split())
+        class_upgrades = [t for t in triggers if _CLASS_UPGRADE_PATTERN.match(t)]
+        sub_upgrades = [t for t in triggers if _SUB_CLASS_UPGRADE_PATTERN.match(t)]
+        if len(class_upgrades) != 1 or len(sub_upgrades) != 1:
+            raise CahSystemCompilerError(
+                f"{MODEL_CONDITIONS_PATH}: the ModelConditionUpgrade raising "
+                f"{flag} is triggered by {len(class_upgrades)} class and "
+                f"{len(sub_upgrades)} subclass upgrade(s); exactly one of each "
+                f"is what makes the flag attributable to a subclass"
+            )
+        entry_states = states.get(flag)
+        if entry_states is None:
+            raise CahSystemCompilerError(
+                f"{MODEL_CONDITIONS_PATH}: {flag} is raised for "
+                f"{class_upgrades[0]}/{sub_upgrades[0]} but {MODELS_PATH} "
+                f"declares no ModelConditionState for it"
+            )
+        on_foot = entry_states.get("onFoot")
+        if on_foot is None:
+            raise CahSystemCompilerError(
+                f"{MODELS_PATH}: {flag} declares only conditional or mounted "
+                f"states; {class_upgrades[0]}/{sub_upgrades[0]} has no base "
+                f"mesh to stand in"
+            )
+        # The base on-foot art is hoisted so a consumer reads `model` off the
+        # binding directly; the situational states hang beneath it.
+        art = dict(on_foot)
+        if "mounted" in entry_states:
+            art["mounted"] = entry_states["mounted"]
+        if "conditionalStates" in entry_states:
+            art["conditionalStates"] = entry_states["conditionalStates"]
+        key = (class_upgrades[0].casefold(), sub_upgrades[0].casefold())
+        surface = (
+            "creationScreen"
+            if any(t.casefold() == MAP_MODE_UPGRADE.casefold() for t in triggers)
+            else "battlefield"
+        )
+        entry = bindings.setdefault(key, {})
+        if surface in entry:
+            raise CahSystemCompilerError(
+                f"{MODEL_CONDITIONS_PATH}: {class_upgrades[0]}/"
+                f"{sub_upgrades[0]} claims two {surface} model conditions "
+                f"({entry[surface]['conditionFlag']} and {flag})"
+            )
+        entry[surface] = {"conditionFlag": flag, **art}
+    return bindings
+
+
+def _view_info(sub: _Block) -> dict[str, Any]:
+    """The subclass's own camera framing for the Create-a-Hero preview.
+
+    Retail authors four framings per subclass (far / near / close-up /
+    portrait) so a Great Troll and a Wanderer are both framed head-to-toe in the
+    same viewport. Emitted verbatim as floats; a screen that ignored these would
+    put every hero at one distance and crop the tall ones.
+    """
+
+    blocks = sub.children("ViewInfo")
+    if not blocks:
+        return {}
+    out: dict[str, Any] = {}
+    for key, value in blocks[0].assignments:
+        text = value.strip()
+        try:
+            out[key[0].lower() + key[1:]] = _number(float(text))
+        except ValueError:
+            out[key[0].lower() + key[1:]] = text
+    return out
+
+
+#: Modifier kinds the runtime's ExperienceLevel contract can actually apply.
+#: A kind outside this set is carried as evidence under ``unsupportedModifiers``
+#: rather than emitted as a modifier, because the consumer rejects the whole
+#: ladder on an unknown kind -- and a rejected ladder is a hero that never
+#: levels, which is a far worse failure than a named-but-unapplied bonus.
+_SUPPORTED_LEVEL_MODIFIER_KINDS = frozenset(
+    {"HEALTH", "DAMAGE_ADD", "DAMAGE_MULT", "SPELL_DAMAGE", "PRODUCTION"}
+)
+
+
+def _modifier_list_blocks(documents: Mapping[str, bytes]) -> dict[str, Any]:
+    """Every ``ModifierList`` block by folded name, UNRESOLVED.
+
+    Resolution is deliberately deferred to :func:`_resolved_modifier_list`.
+    ``attributemodifier.ini`` holds well over a thousand lists for the whole
+    game, authored in value forms this module has no reason to understand
+    (percentages, durations, filters).  Resolving them all up front would make
+    an unrelated list's spelling fail a Create-a-Hero compile -- which is
+    exactly what happened to ``StandardDebuff``'s ``80%``.  Only the lists the
+    level ladder actually names are ever resolved.
+    """
+
+    raw = _lookup(documents, MODIFIERS_PATH)
+    if raw is None:
+        raise CahSystemCompilerError(f"{MODIFIERS_PATH}: document is missing")
+    return {block.name.casefold(): block for block in parse_flat_named_blocks(raw, "ModifierList")}
+
+
+def _resolved_modifier_list(block: Any, defines: Mapping[str, float]) -> dict[str, Any]:
+    """One named ``ModifierList``, resolved into the runtime's contract shape."""
+
+    label = f"{MODIFIERS_PATH}: ModifierList {block.name}"
+    modifiers: list[dict[str, Any]] = []
+    unsupported: list[str] = []
+    for text in block.values("Modifier"):
+        parts = text.split(None, 1)
+        if len(parts) != 2:
+            continue
+        kind, body = parts[0].strip().upper(), parts[1].strip()
+        if kind not in _SUPPORTED_LEVEL_MODIFIER_KINDS:
+            unsupported.append(f"{kind} {body}")
+            continue
+        match = _MULTIPLY_PATTERN.match(body)
+        if match is not None:
+            # A level list authored as a product resolves against the named
+            # define rather than the attribute multiplier.
+            value = _resolved_scalar(
+                match.group(1), defines, label, "Modifier"
+            ) * float(match.group(2))
+        elif body.endswith("%"):
+            # Retail writes multipliers as percentages in places. 80% is 0.8.
+            head = body[:-1].strip()
+            try:
+                value = float(head) / 100.0
+            except ValueError:
+                unsupported.append(f"{kind} {body}")
+                continue
+        else:
+            value = _resolved_scalar(body, defines, label, "Modifier")
+        modifiers.append({"kind": kind, "value": _number(value)})
+    return {
+        "name": block.name,
+        "category": (block.values("Category") or ("",))[0].strip().upper(),
+        "modifiers": modifiers,
+        "unsupportedModifiers": unsupported,
+    }
+
+
+def _experience_ladder(
+    documents: Mapping[str, bytes], defines: Mapping[str, float]
+) -> dict[str, Any]:
+    """The shared level chain a created hero climbs, as authored.
+
+    Every created hero uses the same ``CreateAHeroLevelN`` templates regardless
+    of class, so this is compiled once rather than per subclass.  Thresholds are
+    ``#define``s (``CREATE_A_HERO_LVL2_EXP_NEEDED`` and siblings) and are
+    resolved here for the same reason build cost is: the name is not the number.
+    """
+
+    root = _parse_blocks(_document_lines(documents, EXPERIENCE_PATH), EXPERIENCE_PATH)
+    modifier_lists = _modifier_list_blocks(documents)
+    levels: list[dict[str, Any]] = []
+    for block in root.children("ExperienceLevel"):
+        label = f"{EXPERIENCE_PATH}: ExperienceLevel {block.name}"
+        rank_text = (block.value("Rank") or "").strip()
+        if not rank_text.isdigit():
+            raise CahSystemCompilerError(f"{label}: Rank is missing or non-numeric")
+        required = (block.value("RequiredExperience") or "").strip()
+        if not required:
+            raise CahSystemCompilerError(f"{label}: RequiredExperience is not authored")
+        award = (block.value("ExperienceAward") or "").strip()
+        upgrades: list[str] = []
+        for text in block.values("Upgrades"):
+            upgrades.extend(text.split())
+        modifiers: list[dict[str, Any]] = []
+        for text in block.values("AttributeModifiers"):
+            for name in text.split():
+                modifier_block = modifier_lists.get(name.casefold())
+                if modifier_block is None:
+                    raise CahSystemCompilerError(
+                        f"{label}: AttributeModifiers names {name}, which has "
+                        f"no ModifierList in {MODIFIERS_PATH}; the level would "
+                        f"grant nothing"
+                    )
+                modifiers.append(_resolved_modifier_list(modifier_block, defines))
+        levels.append(
+            {
+                "templateName": block.name,
+                "rank": int(rank_text),
+                "requiredExperience": _number(
+                    _resolved_scalar(required, defines, label, "RequiredExperience")
+                ),
+                "requiredExperienceExpression": required,
+                "experienceAward": (
+                    _number(_resolved_scalar(award, defines, label, "ExperienceAward"))
+                    if award
+                    else 0
+                ),
+                "experienceAwardExpression": award,
+                "upgrades": upgrades,
+                "attributeModifiers": modifiers,
+                "levelUpFx": (block.value("LevelUpFx") or "").strip(),
+            }
+        )
+    if not levels:
+        raise CahSystemCompilerError(
+            f"{EXPERIENCE_PATH}: no ExperienceLevel is declared"
+        )
+    levels.sort(key=lambda row: int(row["rank"]))
+    ranks = [int(row["rank"]) for row in levels]
+    if ranks != list(range(1, len(ranks) + 1)):
+        raise CahSystemCompilerError(
+            f"{EXPERIENCE_PATH}: ranks are {ranks}, which is not a contiguous "
+            f"1..N chain; a gap would make a level unreachable"
+        )
+    return {"maxLevel": ranks[-1], "initialRank": 1, "levels": levels}
 
 
 def _upgrade_index(documents: Mapping[str, bytes]) -> dict[str, tuple[str, int]]:
@@ -538,8 +1213,14 @@ def _sub_classes(
     class_index: int,
     groups: Sequence[Mapping[str, Any]],
     upgrades: Mapping[str, tuple[str, int]],
+    appearance_options: Sequence[Mapping[str, Any]],
+    model_bindings: Mapping[tuple[str, str], Mapping[str, Any]],
+    class_upgrade_name: str,
 ) -> list[dict[str, Any]]:
     group_names = [str(row["groupName"]) for row in groups]
+    option_by_upgrade = {
+        str(row["upgradeName"]).casefold(): row for row in appearance_options
+    }
     out: list[dict[str, Any]] = []
     for sub_index, sub in enumerate(class_block.children("SubClass")):
         name_tag = (sub.value("NameTag") or "").strip()
@@ -600,7 +1281,51 @@ def _sub_classes(
                 f"step-above-minimum rule does not hold for this subclass"
             )
 
+        awards: list[str] = []
+        for text in sub.values("Awards"):
+            awards.extend(part for part in text.split() if part and not part.startswith("//"))
+        tracking_stats: list[str] = []
+        for text in sub.values("Stats"):
+            tracking_stats.extend(
+                part for part in text.split() if part and not part.startswith("//")
+            )
+
+        appearance_by_group: dict[str, list[str]] = {}
+        for text in sub.values("BlingUpgrades"):
+            for token in text.replace("@", " ").split():
+                upgrade = token.strip()
+                if not upgrade or upgrade.startswith("//"):
+                    continue
+                option = option_by_upgrade.get(upgrade.casefold())
+                group_name = (
+                    str(option["groupName"]) if option is not None else "CreateAHero_Unknown"
+                )
+                appearance_by_group.setdefault(group_name, [])
+                if upgrade not in appearance_by_group[group_name]:
+                    appearance_by_group[group_name].append(upgrade)
+
         usable = tuple((sub.value("UsableFactions") or "").split())
+        sub_upgrade = (sub.value("UpgradeName") or "").strip()
+        if not sub_upgrade:
+            raise CahSystemCompilerError(
+                f"{label}: no UpgradeName, so no model condition can be "
+                f"attributed to this subclass"
+            )
+        models = model_bindings.get(
+            (class_upgrade_name.casefold(), sub_upgrade.casefold())
+        )
+        if not models:
+            raise CahSystemCompilerError(
+                f"{label}: no ModelConditionUpgrade in {MODEL_CONDITIONS_PATH} "
+                f"is triggered by {class_upgrade_name} + {sub_upgrade}, so this "
+                f"subclass has no mesh"
+            )
+        if "battlefield" not in models:
+            raise CahSystemCompilerError(
+                f"{label}: {sub_upgrade} has a creation-screen model but no "
+                f"battlefield one; a hero that cannot be shown in a match is "
+                f"not a hero this compiler will emit"
+            )
         out.append(
             {
                 "subClassIndex": sub_index,
@@ -614,6 +1339,15 @@ def _sub_classes(
                 "spendableAttributePoints": budget,
                 "defaultAttributeSpend": spend,
                 "attributes": attributes,
+                "awards": awards,
+                "trackingStats": tracking_stats,
+                "appearanceChoices": appearance_by_group,
+                "defaultPrimaryColor": (sub.value("DefaultPrimaryColor") or "").strip(),
+                "defaultSecondaryColor": (sub.value("DefaultSecondaryColor") or "").strip(),
+                "defaultTertiaryColor": (sub.value("DefaultTertiaryColor") or "").strip(),
+                "upgradeNameSubClass": sub_upgrade,
+                "models": dict(models),
+                "viewInfo": _view_info(sub),
             }
         )
     if not out:
@@ -623,7 +1357,57 @@ def _sub_classes(
     return out
 
 
-def compile_cah_system_descriptor(documents: Mapping[str, bytes]) -> dict[str, Any]:
+#: What a power carries when its effect was not compiled.  Shaped exactly like a
+#: compiled one so the client never branches on presence -- an uncompiled power
+#: is a power that does nothing, stated, rather than a missing key.
+_UNCOMPILED_EFFECT: dict[str, Any] = {
+    "effect": {"kind": "none"},
+    "implementation": {
+        "status": "unimplemented",
+        "reason": "no SpecialPower behaviour module resolved for this button",
+        "limitations": [],
+    },
+}
+
+
+def _attach_ability_effects(
+    power_catalog: list[dict[str, Any]],
+    ability_effects: Mapping[str, Mapping[str, Any]],
+) -> None:
+    """Fold the compiled behaviour of each power onto its catalog row.
+
+    THE EFFECT IS NOT ON THE BUTTON.  ``commandbutton.ini`` says which class may
+    take a power, at what level and for what price; what the power DOES is in
+    the ``SpecialPower`` behaviour modules of the ``CreateAHero`` Object.  Those
+    are compiled by the same lane that compiles every retail hero's abilities
+    (:func:`playable_unit_compiler.compile_create_a_hero_ability_effects`) and
+    joined on here by button name.
+
+    A power with no compiled effect keeps the neutral shape above rather than
+    being dropped: it is still selectable, still priced and still gated, and the
+    client reports it as not castable instead of silently pretending it fires.
+    """
+
+    for tree in power_catalog:
+        for row in tree["levels"]:
+            compiled = ability_effects.get(str(row["powerId"]))
+            if compiled is None:
+                row.update(_UNCOMPILED_EFFECT)
+                continue
+            row["effect"] = json.loads(json.dumps(compiled.get("effect", {"kind": "none"})))
+            row["implementation"] = json.loads(
+                json.dumps(compiled.get("implementation", _UNCOMPILED_EFFECT["implementation"]))
+            )
+            for key in ("targeting", "initiateSoundId", "unitSpecificSoundId"):
+                if key in compiled:
+                    row[key] = compiled[key]
+
+
+def compile_cah_system_descriptor(
+    documents: Mapping[str, bytes],
+    *,
+    ability_effects: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Compile the Create-a-Hero class system, or raise saying what was missing.
 
     ``documents`` maps posix virtual paths (relative to an effective-assets
@@ -652,6 +1436,8 @@ def compile_cah_system_descriptor(documents: Mapping[str, bytes]) -> dict[str, A
     system = system_blocks[0]
 
     groups = _attribute_groups(system)
+    appearance_groups = _appearance_groups(system)
+    appearance_options = _appearance_options(system)
     upgrades = _upgrade_index(documents)
     modifiers = _modifier_index(documents, attribute_multiplier)
 
@@ -679,8 +1465,15 @@ def compile_cah_system_descriptor(documents: Mapping[str, bytes]) -> dict[str, A
         group["stepCount"] = ATTRIBUTE_STEP_COUNT
         group["steps"] = steps
 
+    model_bindings = _model_bindings(documents)
+
     classes: list[dict[str, Any]] = []
     for class_index, class_block in enumerate(system.children("CreateAHeroClass")):
+        class_upgrade_name = (class_block.value("UpgradeName") or "").strip()
+        if not class_upgrade_name:
+            raise CahSystemCompilerError(
+                f"{SYSTEM_PATH}: class {class_index} authors no UpgradeName"
+            )
         classes.append(
             {
                 # THE INDEX A `.cah` STORES.  `appearance[0]` in a saved hero is
@@ -693,13 +1486,29 @@ def compile_cah_system_descriptor(documents: Mapping[str, bytes]) -> dict[str, A
                 "nameStringId": (class_block.value("NameTag") or "").strip(),
                 "descriptionStringId": (class_block.value("DescriptionTag") or "").strip(),
                 "powersDescriptionStringId": (class_block.value("PowersDescTag") or "").strip(),
-                "upgradeName": (class_block.value("UpgradeName") or "").strip(),
+                "upgradeName": class_upgrade_name,
                 "iconImageId": (class_block.value("IconImage") or "").strip(),
-                "subClasses": _sub_classes(class_block, class_index, groups, upgrades),
+                "subClasses": _sub_classes(
+                    class_block,
+                    class_index,
+                    groups,
+                    upgrades,
+                    appearance_options,
+                    model_bindings,
+                    class_upgrade_name,
+                ),
             }
         )
     if not classes:
         raise CahSystemCompilerError(f"{SYSTEM_PATH}: no CreateAHeroClass is declared")
+
+    # Compiled AFTER the classes, because a power's class binding is checked
+    # against the UpgradeName each CreateAHeroClass actually declares rather
+    # than against a list of class names this module carries.
+    power_catalog = _power_trees(
+        documents, defines, [str(row["upgradeName"]) for row in classes]
+    )
+    _attach_ability_effects(power_catalog, ability_effects or {})
 
     design = _parse_blocks(_document_lines(documents, DESIGN_PATH), DESIGN_PATH)
     base_stats: dict[str, Any] = {}
@@ -759,20 +1568,29 @@ def compile_cah_system_descriptor(documents: Mapping[str, bytes]) -> dict[str, A
             **base_stats,
         },
         "attributeGroups": groups,
+        "appearanceGroups": appearance_groups,
+        "appearanceOptions": appearance_options,
+        "powerCatalog": power_catalog,
+        "maxPowerSlots": MAX_POWER_SLOTS,
+        "experience": _experience_ladder(documents, defines),
         "classes": classes,
         "sourceDocuments": _source_documents(documents),
         "limitations": [
-            "Attribute groups only. The seven APPEARANCE CreateAHeroBlingBinder "
-            "groups (helmet, shoulders, body, gauntlets, weapon, shield, boots) "
-            "and their per-part upgrades are not compiled.",
-            "Per-class special powers are not compiled. The purchase cost of a "
-            "power is not authored anywhere in the INI corpus - createaherosystem.ini "
-            "authors only SpecialPowerDiscountPerLevel - so a power-buying budget "
-            "cannot be reconstructed from INI alone.",
+            "Appearance bling is compiled as upgrade-name options per group; "
+            "3D part meshes are not bound here (the client shows portrait + "
+            "default hero mesh when available).",
+            "Special powers are compiled from the CreateAHeroUI* fields on "
+            "commandbutton.ini: class binding, required hero level, "
+            "prerequisite chain and cost-if-selected all come from there, and "
+            "the effect side (enum, reload time) is joined on from "
+            "createaherospecialpowers.ini. A power whose SpecialPower has no "
+            "block in that file still compiles, with a zero reload time.",
             "Hero colours (DefaultPrimaryColor and siblings) and ViewInfo camera "
             "framing are not compiled.",
             "Experience levels are not compiled; CreateAHero uses the shared "
             "ExperienceLevel CreateAHeroLevelN templates.",
+            "Awards are listed as unlockable ids on each subclass; progress is "
+            "tracked on the saved profile, not reconstructed from INI.",
         ],
     }
     body["descriptorSha256"] = _digest(body)
@@ -827,6 +1645,11 @@ def build_cah_system_runtime(descriptor: Mapping[str, Any]) -> dict[str, Any]:
         "registration": {
             "system": descriptor["system"],
             "attributeGroups": descriptor["attributeGroups"],
+            "appearanceGroups": descriptor.get("appearanceGroups", []),
+            "appearanceOptions": descriptor.get("appearanceOptions", []),
+            "powerCatalog": descriptor.get("powerCatalog", []),
+            "maxPowerSlots": int(descriptor.get("maxPowerSlots", MAX_POWER_SLOTS)),
+            "experience": descriptor.get("experience", {}),
             "classes": descriptor["classes"],
         },
     }

@@ -33,10 +33,11 @@ extends RefCounted
 ##    about Create-a-Hero; a created hero IS a playable unit whose numbers were
 ##    computed here instead of read off an Object.
 ##
-## WHAT IS NOT HERE, and why the screen says so out loud: the seven APPEARANCE
-## bling groups (helmet, shoulders, body, gauntlets, weapon, shield, boots),
-## hero colours, and per-class special-power purchase. The importer does not
-## compile them - see the `limitations` list on the system document.
+## ALSO HERE, when the mounted system document carries them: appearance
+## upgrade choices, a special-power catalog (free selection up to
+## maxPowerSlots), awards lists, and tracking-stat keys. Older packs that only
+## ship attribute ladders still validate; the screen simply shows empty
+## catalogs for the missing lanes.
 
 const PROFILE_SCHEMA := "openbfme.cah-hero-profile"
 const PROFILE_SCHEMA_VERSION := 0
@@ -174,7 +175,12 @@ static func modifier_value(system: Dictionary, attributes: Dictionary, kind: Str
 	return fallback
 
 
-static func computed_stats(system: Dictionary, sub_row: Dictionary, attributes: Dictionary) -> Dictionary:
+static func computed_stats(
+	system: Dictionary,
+	sub_row: Dictionary,
+	attributes: Dictionary,
+	powers: Array = []
+) -> Dictionary:
 	## Every number a created hero spawns with, and the multiplier each came
 	## from. The `*Multiplier` keys are kept alongside the products so a runner
 	## - or a player reading a tooltip - can see the arithmetic rather than
@@ -203,7 +209,12 @@ static func computed_stats(system: Dictionary, sub_row: Dictionary, attributes: 
 		"armorScalar": armor_scalar,
 		"damageMultiplier": damage_mult,
 		"autoHealMultiplier": auto_heal,
-		"buildCost": int(base.get("buildCost", 0)),
+		# BUILD COST IS THE BASE PLUS THE POWERS, which is what the retail
+		# POWERS screen totals in its Build Cost field. Attributes are free;
+		# only powers are priced (CreateAHeroUICostIfSelected).
+		"buildCost": int(base.get("buildCost", 0)) + power_cost(system, powers),
+		"basePowerCost": power_cost(system, powers),
+		"baseBuildCost": int(base.get("buildCost", 0)),
 		"buildTimeSeconds": float(base.get("buildTimeSeconds", 0.0)),
 		"commandPoints": int(base.get("commandPoints", 0)),
 		"reviveCost": int(base.get("reviveCost", 0)),
@@ -220,12 +231,281 @@ static func new_profile(system: Dictionary, name: String, class_index: int, sub_
 		"classIndex": class_index,
 		"subClassIndex": sub_index,
 		"attributes": default_attributes(sub_row),
+		"appearance": default_appearance(sub_row),
+		"powers": default_powers(system, class_index),
+		"awards": [],
+		"trackingStats": {},
 		# WHICH TABLE THIS HERO WAS BUILT AGAINST. Not a lock - the hero is
 		# revalidated against whatever pack is mounted now - but it is how a
 		# "this hero was made on different content" notice can ever be shown
 		# instead of the numbers silently moving.
 		"systemDescriptorSha256": String(system.get("descriptorSha256", "")),
 	}
+
+
+static func max_power_slots(system: Dictionary) -> int:
+	var registration: Dictionary = system.get("registration", {}) as Dictionary
+	var slots := int(registration.get("maxPowerSlots", 15))
+	return maxi(1, slots)
+
+
+static func power_catalog(system: Dictionary) -> Array:
+	var registration: Dictionary = system.get("registration", {}) as Dictionary
+	return registration.get("powerCatalog", []) as Array
+
+
+static func class_upgrade_name(system: Dictionary, class_index: int) -> String:
+	return String(class_row(system, class_index).get("upgradeName", ""))
+
+
+static func power_trees_for_class(system: Dictionary, class_index: int) -> Array:
+	## The rows of the CUSTOMIZE HERO POWERS grid for one class.
+	##
+	## A tree is offered when ANY of its levels names this class, and each level
+	## keeps its own binding - retail authors trees whose upper tiers narrow to
+	## fewer classes than their root, so filtering whole trees on the root's
+	## binding alone would offer powers a class can never take.
+	var upgrade := class_upgrade_name(system, class_index)
+	if upgrade == "":
+		return []
+	var out: Array = []
+	for tree_value in power_catalog(system):
+		var tree := tree_value as Dictionary
+		var levels: Array = []
+		for level_value in (tree.get("levels", []) as Array):
+			var level := level_value as Dictionary
+			if _names_class(level.get("allowedClassUpgrades", []) as Array, upgrade):
+				levels.append(level)
+		if levels.is_empty():
+			continue
+		var copy := tree.duplicate(true)
+		copy["levels"] = levels
+		out.append(copy)
+	return out
+
+
+static func _names_class(allowed: Array, upgrade: String) -> bool:
+	for value in allowed:
+		if String(value).to_lower() == upgrade.to_lower():
+			return true
+	return false
+
+
+static func power_row(system: Dictionary, power_id: String) -> Dictionary:
+	for tree_value in power_catalog(system):
+		for level_value in ((tree_value as Dictionary).get("levels", []) as Array):
+			var level := level_value as Dictionary
+			if String(level.get("powerId", "")) == power_id:
+				return level
+	return {}
+
+
+static func power_cost(system: Dictionary, powers: Array) -> int:
+	## What the selected powers add to the hero's price. Retail shows the sum on
+	## the POWERS screen as Build Cost, so this is the same arithmetic the
+	## player is reading.
+	var total := 0
+	for power_value in powers:
+		total += int(power_row(system, String(power_value)).get("costIfSelected", 0))
+	return total
+
+
+static func power_refusals(
+	system: Dictionary, class_index: int, powers: Array
+) -> Array[String]:
+	## Every reason this power loadout is illegal, or [] when it is not.
+	##
+	## THREE RULES, ALL AUTHORED, none invented here:
+	## 1. the power must name this class in CreateAHeroUIAllowableUpgrades;
+	## 2. its prerequisite must also be selected - the arrows on the screen are
+	##    a real constraint, not decoration, so "Great Call Reinforcements"
+	##    without "Improved" is refused; and
+	## 3. no more than maxPowerSlots.
+	## The required hero level is NOT checked here: a level-10 power is a legal
+	## thing to BUILD a hero with, and it simply stays greyed out in the palette
+	## until the hero reaches that level in a match.
+	var refusals: Array[String] = []
+	var catalog := power_catalog(system)
+	if catalog.is_empty():
+		return refusals
+	var upgrade := class_upgrade_name(system, class_index)
+	var selected := {}
+	for power_value in powers:
+		selected[String(power_value)] = true
+	if powers.size() > max_power_slots(system):
+		refusals.append(
+			"the loadout equips %d powers; the limit is %d"
+			% [powers.size(), max_power_slots(system)]
+		)
+	for power_value in powers:
+		var power_id := String(power_value)
+		if power_id == "":
+			continue
+		var row := power_row(system, power_id)
+		if row.is_empty():
+			refusals.append("%s is not in the mounted power catalog" % power_id)
+			continue
+		if upgrade != "" and not _names_class(
+			row.get("allowedClassUpgrades", []) as Array, upgrade
+		):
+			refusals.append("%s is not offered to this class" % power_id)
+		var prerequisite := String(row.get("prerequisitePowerId", ""))
+		if prerequisite != "" and not selected.has(prerequisite):
+			refusals.append("%s requires %s" % [power_id, prerequisite])
+	return refusals
+
+
+## What a power carries when the importer could not compile its behaviour.
+## Shaped like a compiled row so no consumer branches on presence.
+const _UNCOMPILED_IMPLEMENTATION := {
+	"status": "unimplemented",
+	"reason": "no compiled SpecialPower behaviour for this button",
+	"limitations": [],
+}
+
+
+static func ability_rows(system: Dictionary, powers: Array) -> Array:
+	## The selected powers as the `registration.abilities` rows the runtime
+	## adapter projects. Slots are 1-based and follow selection order, which is
+	## the numbering retail shows in the Current Powers list.
+	var out: Array = []
+	var slot := 0
+	for power_value in powers:
+		var power_id := String(power_value)
+		var row := power_row(system, power_id)
+		if row.is_empty():
+			continue
+		slot += 1
+		out.append({
+			"id": power_id,
+			"slot": slot,
+			"specialPowerId": String(row.get("specialPowerId", "")),
+			# The importer states targeting when it compiled the effect; the
+			# button's own Options are the fallback for a power it could not.
+			"targeting": (
+				String(row.get("targeting", ""))
+				if String(row.get("targeting", "")) != ""
+				else _targeting_for(row.get("options", []) as Array)
+			),
+			"cooldownMs": float(row.get("reloadTimeMs", 0)),
+			"levelGate": {"requiredLevel": int(row.get("requiredHeroLevel", 1))},
+			"button": {
+				"iconIds": [String(row.get("buttonImageId", ""))],
+				"labelIds": [String(row.get("nameStringId", ""))],
+				"tooltipIds": [String(row.get("descriptionStringId", ""))],
+				"radiusCursorType": String(row.get("radiusCursorType", "")),
+				"options": (row.get("options", []) as Array).duplicate(),
+			},
+			# WHAT THE POWER DOES, as the importer compiled it out of the
+			# CreateAHero Object's SpecialPower behaviour modules - the same
+			# lane that compiles every retail hero's abilities. A power whose
+			# effect did not compile carries the neutral shape the importer
+			# supplies and is reported not castable, so it stays selectable,
+			# priced and gated without pretending to fire.
+			"effect": (row.get("effect", {"kind": "none"}) as Dictionary).duplicate(true),
+			"implementation": (
+				row.get("implementation", _UNCOMPILED_IMPLEMENTATION) as Dictionary
+			).duplicate(true),
+			"initiateSoundId": String(row.get("initiateSoundId", "")),
+			"unitSpecificSoundId": String(row.get("unitSpecificSoundId", "")),
+		})
+	return out
+
+
+static func _targeting_for(options: Array) -> String:
+	## Retail states targeting on the button's Options, and the runtime contract
+	## admits three shapes. Object targeting of any allegiance projects onto
+	## `enemy-object`, which is the only object-targeting shape the contract has.
+	for option_value in options:
+		var option := String(option_value)
+		if option in [
+			"NEED_TARGET_ENEMY_OBJECT",
+			"NEED_TARGET_NEUTRAL_OBJECT",
+			"NEED_TARGET_ALLY_OBJECT",
+		]:
+			return "enemy-object"
+	for option_value in options:
+		if String(option_value) == "NEED_TARGET_POS":
+			return "point"
+	return "self"
+
+
+static func experience_ladder(system: Dictionary) -> Dictionary:
+	var registration: Dictionary = system.get("registration", {}) as Dictionary
+	return registration.get("experience", {}) as Dictionary
+
+
+static func experience_contract(system: Dictionary) -> Dictionary:
+	## The compiled level chain, in the shape the runtime adapter's
+	## ExperienceLevel projection accepts. Returns {} when the mounted pack
+	## predates the ladder, which makes the hero unlevelled rather than unfieldable.
+	var ladder := experience_ladder(system)
+	var levels: Array = ladder.get("levels", []) as Array
+	if levels.is_empty():
+		return {}
+	return {
+		"status": "compiled",
+		"maxLevel": int(ladder.get("maxLevel", levels.size())),
+		"initialRank": int(ladder.get("initialRank", 1)),
+		"levels": levels.duplicate(true),
+		"sourceIni": "data/ini/experiencelevels_createahero.inc",
+	}
+
+
+static func model_binding(sub_row: Dictionary, surface: String) -> Dictionary:
+	## The mesh this subclass wears on one surface ("battlefield" or
+	## "creationScreen"). Empty when the pack predates the model join.
+	var models: Dictionary = sub_row.get("models", {}) as Dictionary
+	return models.get(surface, {}) as Dictionary
+
+
+static func appearance_groups(system: Dictionary) -> Array:
+	var registration: Dictionary = system.get("registration", {}) as Dictionary
+	return registration.get("appearanceGroups", []) as Array
+
+
+static func appearance_options(system: Dictionary) -> Array:
+	var registration: Dictionary = system.get("registration", {}) as Dictionary
+	return registration.get("appearanceOptions", []) as Array
+
+
+static func default_appearance(sub_row: Dictionary) -> Dictionary:
+	## First authored upgrade per appearance group, or empty when the pack has
+	## no appearanceChoices (attribute-only systems).
+	var out := {}
+	var choices: Dictionary = sub_row.get("appearanceChoices", {}) as Dictionary
+	for group_value in choices.keys():
+		var upgrades: Array = choices[group_value] as Array
+		if upgrades.is_empty():
+			continue
+		out[String(group_value)] = String(upgrades[0])
+	return out
+
+
+static func default_powers(_system: Dictionary, _class_index: int) -> Array:
+	## Nothing. Retail opens CUSTOMIZE HERO POWERS with an empty Current Powers
+	## list and the prompt "Select a Level 1 power to go in your Hero's Current
+	## Powers", so seeding a selection would both mis-state the screen and
+	## silently charge the player for powers they never chose.
+	return []
+
+
+static func option_label_for_upgrade(system: Dictionary, upgrade_name: String) -> String:
+	for row_value in appearance_options(system):
+		var row := row_value as Dictionary
+		if String(row.get("upgradeName", "")) == upgrade_name:
+			return _tail_label(String(row.get("nameStringId", upgrade_name)))
+	return _tail_label(upgrade_name)
+
+
+static func _tail_label(string_id: String) -> String:
+	if string_id == "":
+		return "?"
+	var tail := string_id.get_slice(":", string_id.get_slice_count(":") - 1)
+	for prefix in ["BlingName_", "SubClassName_", "ClassName_", "CreateAHero_"]:
+		if tail.begins_with(prefix):
+			tail = tail.substr(prefix.length())
+	return tail.replace("_", " ")
 
 
 static func sanitize_name(name: String) -> String:
@@ -306,6 +586,24 @@ static func validate_profile(system: Dictionary, profile: Dictionary) -> Array[S
 			refusals.append(
 				"the loadout spends %d of %d attribute points" % [spend, budget]
 			)
+
+	var powers: Array = profile.get("powers", []) as Array
+	refusals.append_array(power_refusals(system, class_index, powers))
+
+	var appearance: Dictionary = profile.get("appearance", {}) as Dictionary
+	var choices: Dictionary = sub_row.get("appearanceChoices", {}) as Dictionary
+	if not choices.is_empty():
+		for group_value in appearance.keys():
+			var group := String(group_value)
+			var upgrade := String(appearance[group_value])
+			var allowed: Array = choices.get(group, []) as Array
+			var ok := false
+			for candidate in allowed:
+				if String(candidate) == upgrade:
+					ok = true
+					break
+			if not ok and upgrade != "":
+				refusals.append("%s is not a legal %s upgrade for this subclass" % [upgrade, group])
 	return refusals
 
 
@@ -386,12 +684,14 @@ static func roster_document(
 		system, int(profile.get("classIndex", -1)), int(profile.get("subClassIndex", -1))
 	)
 	var attributes: Dictionary = profile.get("attributes", {}) as Dictionary
-	var stats := computed_stats(system, sub_row, attributes)
+	var powers: Array = profile.get("powers", []) as Array
+	var stats := computed_stats(system, sub_row, attributes, powers)
 	var object_id := "CreateAHero__%s" % String(profile.get("heroId", ""))
 	var command_id := "__engine__/HERO_BUILD/%s" % object_id
 	var name := sanitize_name(String(profile.get("name", "")))
 	var button_image := String(sub_row.get("buttonImageId", ""))
 	var portrait_image := String(sub_row.get("iconImageId", ""))
+	var battlefield := model_binding(sub_row, "battlefield")
 
 	return {
 		"schema": "openbfme.playable-unit-runtime",
@@ -441,6 +741,25 @@ static func roster_document(
 				},
 				"formation": {"memberCount": 1, "positions": [{"x": 0.0, "y": 0.0}]},
 			},
+			# THE POWERS AND THE LEVEL CHAIN, in the shapes the runtime adapter
+			# already projects for every retail hero. A created hero reaches the
+			# sim's ability and experience engines through the same doors rather
+			# than through a Create-a-Hero-shaped side entrance.
+			"abilities": ability_rows(system, powers),
+			"experience": experience_contract(system),
+			# THE MESH. `model` is the W3D the battlefield state selects for this
+			# subclass, joined out of createaheromodels.inc by the importer; the
+			# skeleton and animation prefix travel with it so the rig binds.
+			"visual": {
+				"model": String(battlefield.get("model", "")),
+				"skeleton": String(battlefield.get("skeleton", "")),
+				"animationPrefix": String(battlefield.get("animationPrefix", "")),
+				"conditionFlag": String(battlefield.get("conditionFlag", "")),
+				"weaponLaunchBones": (
+					battlefield.get("weaponLaunchBones", []) as Array
+				).duplicate(),
+				"mounted": (battlefield.get("mounted", {}) as Dictionary).duplicate(true),
+			},
 			"ui": {
 				"portraitImageIds": [portrait_image],
 				"commands": [{
@@ -461,10 +780,100 @@ static func roster_document(
 				"classIndex": int(profile.get("classIndex", -1)),
 				"subClassIndex": int(profile.get("subClassIndex", -1)),
 				"attributes": attributes.duplicate(),
+				"powers": powers.duplicate(),
 				"computed": stats,
 			},
 		},
 	}
+
+
+## Faction slugs as the manifest spells them, against the `UsableFactions`
+## spelling retail authors on a subclass. Retail writes "Men"/"Elves"/"Dwarves";
+## the runtime uses lowercase slugs.
+static func subclass_allows_faction(sub_row: Dictionary, faction: String) -> bool:
+	## Whether this subclass may be fielded by a faction.
+	##
+	## `UsableFactions` is authored per subclass precisely because a Captain of
+	## Gondor is buildable by Men, Elves AND Dwarves while an Orc Raider is not.
+	## A subclass that authors none is treated as unrestricted, which is what
+	## retail does with the field absent.
+	var allowed: Array = sub_row.get("usableFactions", []) as Array
+	if allowed.is_empty():
+		return true
+	var wanted := faction.strip_edges().to_lower()
+	for value in allowed:
+		if String(value).strip_edges().to_lower() == wanted:
+			return true
+	return false
+
+
+static func hero_roster_producer(unit_runtimes: Dictionary) -> Dictionary:
+	## The producer every hero of this faction trains from, and the ordinals
+	## already taken on it.
+	##
+	## Read off the loaded documents rather than named here: the producer is
+	## `MenFortress` for Men and something else for every other faction, and the
+	## ordinals retail authors are sparse (Boromir 4, Faramir 6), so a created
+	## hero must be given a free one rather than a guessed next-in-sequence.
+	var producer := ""
+	var used: Dictionary = {}
+	for document_value in unit_runtimes.values():
+		var document := document_value as Dictionary
+		if String(document.get("category", "")) != "hero":
+			continue
+		var registration: Dictionary = document.get("registration", {}) as Dictionary
+		for route_value in (registration.get("production", []) as Array):
+			var route := route_value as Dictionary
+			if String(route.get("surface", "")) != "hero-roster":
+				continue
+			if producer == "":
+				producer = String(route.get("producerObjectId", ""))
+			if String(route.get("producerObjectId", "")) == producer:
+				used[int(route.get("rosterOrdinal", 0))] = true
+	return {"producerObjectId": producer, "usedOrdinals": used}
+
+
+static func roster_documents(
+	system: Dictionary, unit_runtimes: Dictionary, faction: String
+) -> Dictionary:
+	## Every saved hero this faction may field, as playable-unit documents keyed
+	## by object id, ready to merge into the faction's roster.
+	##
+	## DETERMINISTIC BY CONSTRUCTION. Profiles are walked in hero-id order and
+	## ordinals are handed out in that order, so two peers with the same saved
+	## heroes and the same pack build the same roster in the same slots. A
+	## roster that depended on directory order would desync a lockstep match on
+	## the first hero purchase.
+	var out: Dictionary = {}
+	if system.is_empty():
+		return out
+	var binding := hero_roster_producer(unit_runtimes)
+	var producer := String(binding.get("producerObjectId", ""))
+	if producer == "":
+		# No hero producer in this faction's slice: nothing to hang a created
+		# hero off, so none are offered rather than inventing a producer.
+		return out
+	var used: Dictionary = binding.get("usedOrdinals", {}) as Dictionary
+	var profiles := load_profiles()
+	profiles.sort_custom(
+		func(a: Dictionary, b: Dictionary) -> bool:
+			return String(a.get("heroId", "")) < String(b.get("heroId", ""))
+	)
+	var next_ordinal := 1
+	for profile in profiles:
+		if not validate_profile(system, profile).is_empty():
+			continue
+		var sub_row := sub_class_row(
+			system, int(profile.get("classIndex", -1)), int(profile.get("subClassIndex", -1))
+		)
+		if not subclass_allows_faction(sub_row, faction):
+			continue
+		while used.has(next_ordinal):
+			next_ordinal += 1
+		used[next_ordinal] = true
+		var document := roster_document(system, profile, producer, next_ordinal)
+		out[String(document.get("objectId", ""))] = document
+	return out
 
 
 static func _read_profile(path: String) -> Dictionary:
