@@ -24,8 +24,12 @@ extends SceneTree
 ##      science-looking string in the player slot, so a type-searching or
 ##      wrong-field read produces a visibly wrong call rather than a pass.
 ##
-##   4. The three gap-registered members refuse loudly, name their missing world
-##      surface, never touch the world, and are never counted as coverage.
+##   4. The gap-registered wall action refuses loudly, names its missing world
+##      surface, never touches the world, and is never counted as coverage. The
+##      threat condition pair - formerly gap-registered here - is served by
+##      WP21-threat-queries since the owner ruling of 2026-08-08, and this
+##      runner asserts the handoff: censused here, registered there, evaluable
+##      through the full registry, and no longer dispatch-blocked.
 ##
 ## Synthetic values only. The retail decode supplied the SHAPES (a player
 ## indirection, a SCIENCE_* token, a comparison enum, a radius); the values here
@@ -194,7 +198,7 @@ func _test_member_census_matches_the_decode() -> void:
 	## members owned by another agent, fails here.
 	var declared: Array = (
 		Wp09.SERVED_ACTIONS + Wp09.SERVED_CONDITIONS
-		+ Wp09.BLOCKED_ACTIONS + Wp09.BLOCKED_CONDITIONS
+		+ Wp09.BLOCKED_ACTIONS + Wp09.SERVED_BY_WP21_CONDITIONS
 	)
 	declared.sort()
 	var expected: Array = Wp09.AI_USED_MEMBERS.duplicate()
@@ -209,16 +213,15 @@ func _test_member_census_matches_the_decode() -> void:
 		declared.size() == 7,
 		"declared=%s" % str(declared)
 	)
-	# The blocked-condition group must reconstruct the union the census uses,
-	# or a name could be censused but never actually registered.
-	var grouped: Array = Wp09.BLOCKED_THREAT_CONDITIONS.duplicate()
-	grouped.sort()
-	var union: Array = Wp09.BLOCKED_CONDITIONS.duplicate()
-	union.sort()
+	# The wp21 handoff (owner ruling 2026-08-08) is exactly the threat pair -
+	# nothing more may quietly move out of this package's ownership, and the
+	# handoff list may not overlap what this file still serves or blocks.
+	var handoff: Array = Wp09.SERVED_BY_WP21_CONDITIONS.duplicate()
+	handoff.sort()
 	_check(
-		"the_grouped_blocked_conditions_reconstruct_the_census_union",
-		grouped == union,
-		"grouped=%s union=%s" % [str(grouped), str(union)]
+		"the_wp21_handoff_is_exactly_the_threat_pair",
+		handoff == ["TEAM_THREAT_LEVEL", "UNIT_THREAT_LEVEL"],
+		"handoff=%s" % str(handoff)
 	)
 
 
@@ -254,7 +257,7 @@ func _test_registration() -> void:
 		str(missing_conditions)
 	)
 
-	var all_blocked: Array = Wp09.BLOCKED_ACTIONS + Wp09.BLOCKED_CONDITIONS
+	var all_blocked: Array = Wp09.BLOCKED_ACTIONS.duplicate()
 	var unblocked: Array = all_blocked.filter(
 		func(name): return not dispatch.blocked_names().has(name)
 	)
@@ -797,7 +800,11 @@ func _test_arguments_are_positional_and_typed() -> void:
 
 
 func _test_gap_registered_members() -> void:
-	## Codex REJECT: threat/wall stay blocked until retail-sourced oracles.
+	## The wall action stays blocked pending sim surface. The threat pair was
+	## unblocked by owner ruling 2026-08-08 and is served by
+	## WP21-threat-queries: it must now EVALUATE through the full registry
+	## (against this harness's instrumented Teams/Units facets) and record no
+	## blocked-subsystem gap.
 	var harness := _harness()
 	var dispatch: SageScriptDispatch = harness["dispatch"]
 
@@ -819,6 +826,12 @@ func _test_gap_registered_members() -> void:
 		str(dispatch.gaps.to_lines())
 	)
 
+	# The retail AI shapes (AI_GATE | < | 10 | 350 and <This Team> | >= | 1 |
+	# 300), against seeded facet threat values that satisfy both comparisons.
+	var world: Wp09World = harness["world"]
+	world.unit_threat_values["AI_TEST_GATE"] = {350.0: 5.0}
+	world.team_threat_values["<This Team>"] = {300.0: 2.0}
+
 	var unit_threat := _cond(
 		harness, "UNIT_THREAT_LEVEL",
 		[
@@ -826,10 +839,16 @@ func _test_gap_registered_members() -> void:
 			_real_arg(10.0), _real_arg(350.0),
 		]
 	)
-	_check("the_unit_threat_condition_does_not_fire_the_gate", not unit_threat)
 	_check(
-		"the_unit_threat_gap_is_blocked_subsystem",
-		dispatch.gaps.has("condition", "UNIT_THREAT_LEVEL", GapLog.REASON_BLOCKED_SUBSYSTEM),
+		"the_unit_threat_condition_now_evaluates_through_wp21",
+		unit_threat,
+		str(dispatch.gaps.to_lines())
+	)
+	_check(
+		"the_unit_threat_evaluation_records_no_blocked_gap",
+		not dispatch.gaps.has(
+			"condition", "UNIT_THREAT_LEVEL", GapLog.REASON_BLOCKED_SUBSYSTEM
+		),
 		str(dispatch.gaps.to_lines())
 	)
 
@@ -840,10 +859,16 @@ func _test_gap_registered_members() -> void:
 			_real_arg(1.0), _real_arg(300.0),
 		]
 	)
-	_check("the_team_threat_condition_does_not_fire_the_gate", not team_threat)
 	_check(
-		"the_team_threat_gap_is_recorded_as_blocked",
-		dispatch.gaps.has("condition", "TEAM_THREAT_LEVEL", GapLog.REASON_BLOCKED_SUBSYSTEM),
+		"the_team_threat_condition_now_evaluates_through_wp21",
+		team_threat,
+		str(dispatch.gaps.to_lines())
+	)
+	_check(
+		"the_team_threat_evaluation_records_no_blocked_gap",
+		not dispatch.gaps.has(
+			"condition", "TEAM_THREAT_LEVEL", GapLog.REASON_BLOCKED_SUBSYSTEM
+		),
 		str(dispatch.gaps.to_lines())
 	)
 
@@ -853,10 +878,10 @@ func _test_gap_registered_members() -> void:
 		and not dispatch.action_handlers.has("TEAM_THREAT_LEVEL")
 	)
 	_check(
-		"blocked_threat_and_wall_are_dispatch_blocked",
+		"the_wall_is_dispatch_blocked_and_the_threat_pair_is_not",
 		dispatch.blocked_names().has("UPGRADE_NEAREST_WALL")
-		and dispatch.blocked_names().has("UNIT_THREAT_LEVEL")
-		and dispatch.blocked_names().has("TEAM_THREAT_LEVEL")
+		and not dispatch.blocked_names().has("UNIT_THREAT_LEVEL")
+		and not dispatch.blocked_names().has("TEAM_THREAT_LEVEL")
 	)
 
 
@@ -1082,11 +1107,12 @@ func _report() -> void:
 	var harness := _harness()
 	var dispatch: SageScriptDispatch = harness["dispatch"]
 	print(
-		"HANDLERS_WP09 MEMBERS served_actions=%d served_conditions=%d blocked=%d of ai_used=%d"
+		"HANDLERS_WP09 MEMBERS served_actions=%d served_conditions=%d blocked=%d wp21_handoff=%d of ai_used=%d"
 		% [
 			Wp09.SERVED_ACTIONS.size(),
 			Wp09.SERVED_CONDITIONS.size(),
-			Wp09.BLOCKED_ACTIONS.size() + Wp09.BLOCKED_CONDITIONS.size(),
+			Wp09.BLOCKED_ACTIONS.size(),
+			Wp09.SERVED_BY_WP21_CONDITIONS.size(),
 			Wp09.AI_USED_MEMBERS.size(),
 		]
 	)

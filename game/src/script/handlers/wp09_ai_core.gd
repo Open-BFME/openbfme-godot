@@ -35,16 +35,22 @@ extends RefCounted
 ## one-to-one onto a Progression facet method that already exists with the exact
 ## parameters the signature carries.
 ##
-## THREE are gap-registered, because the world surface designed up front cannot
-## express their signature. In every case the world method exists but is
-## UNDER-PARAMETERISED - it drops an argument that decides the outcome. Calling
-## it anyway would produce a handler that returns OK while answering a different
-## question, which is the one failure mode this subsystem is built to prevent.
-## They are registered as blocked (never counted as coverage, gap reason
+## TWO - the threat condition pair - are served by a LATER package,
+## wp21_threat_queries.gd, since the owner ruling of 2026-08-08 (see
+## SERVED_BY_WP21_CONDITIONS below). This file must NOT register or block them:
+## the registry keeps the FIRST claimant of every member name, so a leftover
+## declaration here would shadow wp21's handlers.
+##
+## ONE is gap-registered, because the world surface designed up front cannot
+## express its signature: the world method exists but is UNDER-PARAMETERISED -
+## it drops an argument that decides the outcome. Calling it anyway would
+## produce a handler that returns OK while answering a different question,
+## which is the one failure mode this subsystem is built to prevent. It is
+## registered as blocked (never counted as coverage, gap reason
 ## `blocked-subsystem`, full identity in the gap log) rather than left
-## unregistered, so a map that uses one says WHY it could not be served instead
+## unregistered, so a map that uses it says WHY it could not be served instead
 ## of producing an `unimplemented` gap indistinguishable from "nobody got to it".
-## Each missing surface is named exactly in the subsystem strings below, and is
+## The missing surface is named exactly in the subsystem string below, and is
 ## reported to the world's owner - this file does not add world methods.
 ##
 ##
@@ -109,41 +115,25 @@ const SERVED_CONDITIONS := [
 #   * All 25 retail AI call sites are CONDITION call sites, with arguments
 #     shaped exactly like that signature (a comparison enum, a threat, a radius).
 #
-# So they are registered here as conditions only. `teams.set_threat_level` is
+# So they are conditions only. `teams.set_threat_level` is
 # reported to the world owner as mis-attributed; nothing in this file calls it,
 # because setting a team's threat level is not what this member does.
 
-## Blocked conditions, grouped by WHICH surface is missing. Two lists rather
-## than one, because `blocked_conditions()` attaches a single subsystem string to
-## every name it is given, and a gap that names the wrong missing surface is
-## worse than a gap that names none.
-## Codex full-parity REJECT: re-block until retail-sourced threat/wall oracles.
-const BLOCKED_THREAT_CONDITIONS := [
-	"TEAM_THREAT_LEVEL",
-	"UNIT_THREAT_LEVEL",
-]
-const BLOCKED_CONDITIONS := [
+## Owner ruling 2026-08-08: threat pair unblocked on the slice combat-weight
+## formula (authoritative for scripts; not a reverse-sourced SAGE formula —
+## retail-oracle follow-up filed). Served by wp21_threat_queries.gd.
+## Wall-upgrade names remain blocked pending sim surface.
+##
+## These two names are censused here (they ARE AI-used WP09 members) but are
+## REGISTERED by wp21_threat_queries.gd - this file must not claim them, or
+## first-registration-wins would shadow wp21's handlers.
+const SERVED_BY_WP21_CONDITIONS := [
 	"TEAM_THREAT_LEVEL",
 	"UNIT_THREAT_LEVEL",
 ]
 const BLOCKED_ACTIONS := [
 	"UPGRADE_NEAREST_WALL",
 ]
-
-## UNIT_THREAT_LEVEL(UNIT, COMPARISON, REAL, REAL) and
-## TEAM_THREAT_LEVEL(TEAM, COMPARISON, REAL, REAL) - threat WITHIN A RADIUS of
-## the unit/team. Retail AI examples: AI_GATE | 0 | 10 | 350 and
-## <This Team> | 3 | 1 | 300.
-const THREAT_RADIUS_SUBSYSTEM := (
-	"radius-scoped threat evaluation (the world exposes units.threat(object) "
-	+ "and teams.threat(team), which are the subject's OWN threat value and "
-	+ "take no radius - they serve SET_COUNTER_TO_UNIT_THREAT and "
-	+ "SET_COUNTER_TO_TEAM_THREAT. This condition asks for the threat present "
-	+ "within a radius of the subject, a different quantity: retail call sites "
-	+ "pass radii of 200-1500 world units and the answer changes with them. "
-	+ "Ignoring the radius would silently substitute one number for the other; "
-	+ "the needed surface is a query taking (subject, radius))"
-)
 
 ## UPGRADE_NEAREST_WALL(UNIT, UPGRADE, OBJECT_TYPE, OBJECT_TYPE, UNIT_REF)
 ## "For Base <UNIT> give upgrade <UPGRADE> to object type <OBJECT_TYPE> nearest
@@ -172,7 +162,8 @@ static func register(reg: SageScriptHandlerRegistry.Registrar) -> void:
 
 	reg.action("AI_PLAYER_BUILD_UPGRADE", _ai_player_build_upgrade)
 
-	reg.blocked_conditions(BLOCKED_THREAT_CONDITIONS, THREAT_RADIUS_SUBSYSTEM)
+	# TEAM_THREAT_LEVEL / UNIT_THREAT_LEVEL: deliberately absent - registered
+	# by wp21_threat_queries.gd (see SERVED_BY_WP21_CONDITIONS).
 	reg.blocked_actions(BLOCKED_ACTIONS, WALL_UPGRADE_SUBSYSTEM)
 
 
@@ -340,34 +331,6 @@ static func _ai_player_build_upgrade(ctx: Dictionary) -> int:
 			+ "not ordered to build upgrade '%s'"
 		) % [player, upgrade]
 		return Dispatch.Status.WORLD_REFUSED
-	return Dispatch.Status.OK
-
-
-static func _team_threat_level(ctx: Dictionary) -> int:
-	if not _arity_ok(ctx, 4):
-		return Dispatch.Status.BAD_ARGUMENTS
-	var args: SageScriptArgs = ctx["args"]
-	var query := (ctx["world"] as SageScriptWorld).teams().threat_within_radius(
-		args.text(0), args.real(3)
-	)
-	if not query.ok:
-		ctx["detail"] = query.detail
-		return Dispatch.Status.WORLD_REFUSED
-	ctx["result"] = ParamTypes.compare(float(query.value), args.integer(1), args.real(2))
-	return Dispatch.Status.OK
-
-
-static func _unit_threat_level(ctx: Dictionary) -> int:
-	if not _arity_ok(ctx, 4):
-		return Dispatch.Status.BAD_ARGUMENTS
-	var args: SageScriptArgs = ctx["args"]
-	var query := (ctx["world"] as SageScriptWorld).units().threat_within_radius(
-		args.text(0), args.real(3)
-	)
-	if not query.ok:
-		ctx["detail"] = query.detail
-		return Dispatch.Status.WORLD_REFUSED
-	ctx["result"] = ParamTypes.compare(float(query.value), args.integer(1), args.real(2))
 	return Dispatch.Status.OK
 
 
