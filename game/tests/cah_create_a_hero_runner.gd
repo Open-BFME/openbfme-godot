@@ -65,6 +65,8 @@ const BASE_SHROUD := 100.0
 const BASE_COMMAND_POINTS := 50
 
 const PRODUCER := "MenFortress"
+## The four level columns retail authors, which the grid's last row labels.
+const POWER_COLUMN_COUNT := 4
 
 
 func _initialize() -> void:
@@ -86,6 +88,8 @@ func _run() -> void:
 	_test_powers_and_levels_reach_the_runtime_contracts(system)
 	_test_screen(system)
 	_test_purchase_spawns_with_computed_stats(system)
+	_test_pack_resolution(system)
+	await _test_full_window_layout(system)
 
 	_clear_profiles()
 	_finish()
@@ -323,6 +327,271 @@ func _test_screen(system: Dictionary) -> void:
 	empty.queue_free()
 	screen.queue_free()
 	_clear_profiles()
+
+
+# ---------------------------------------------------- pack art and pack meshes
+
+
+func _test_pack_resolution(system: Dictionary) -> void:
+	## THE RESOLVER THE SCREEN ACTUALLY CALLS.
+	##
+	## `_resolve_model_path` used to probe `ContentDB.resolve_cah_model_path` and
+	## `ContentDB.resolve_model_path`, NEITHER OF WHICH EXISTED - so the preview
+	## fell to "not in the mounted pack yet" no matter what the pack carried, and
+	## the missing link was indistinguishable from missing content. These drive the
+	## real resolver over a SYNTHETIC pack, so they answer on a machine with no
+	## retail install and never depend on the Create-a-Hero meshes having landed.
+	var content_db := root.get_node_or_null("ContentDB")
+	_check(content_db != null, "the ContentDB autoload is reachable from the runner")
+	if content_db == null:
+		return
+
+	_check(
+		String(content_db.resolve_cah_model_path("OpenBfmeNoSuchCahModel")) == "",
+		"a model id no mounted pack carries resolves to empty rather than a guess"
+	)
+	_check(String(content_db.resolve_cah_model_path("")) == "", "an empty model id resolves to empty")
+	_check(
+		String(content_db.resolve_cah_model_path("../../etc/passwd")) == ""
+			and String(content_db.resolve_cah_model_path("cah/../../secret")) == "",
+		"a model id carrying a path separator is refused, not joined"
+	)
+
+	var screen = MyHeroesScreen.new()
+	root.add_child(screen)
+	screen.configure(system)
+	_check(
+		screen._resolve_model_path("OpenBfmeNoSuchCahModel") == "",
+		"the screen's resolver degrades to empty when the pack lacks the mesh"
+	)
+
+	# The pack the content lane is publishing into: one flat directory keyed by
+	# the retail model id, which is the only handle the class table carries.
+	var pack_root := _build_scratch_pack()
+	if not content_db.pack_roots.has(pack_root):
+		content_db.pack_roots.append(pack_root)
+	content_db._asset_exists_cache.clear()
+	content_db._frozen_resolutions.clear()
+
+	var expected := pack_root.path_join("assets/models/cah/CHHW_CG_C_SKN.glb")
+	var resolved := String(content_db.resolve_cah_model_path("CHHW_CG_C_SKN"))
+	_check(
+		resolved == expected,
+		"a mounted pack's assets/models/cah/<ID>.glb resolves (got %s)" % resolved
+	)
+	_check(
+		screen._resolve_model_path("CHHW_CG_C_SKN") == expected,
+		"the screen reaches the same file through ContentDB"
+	)
+	_check(
+		String(content_db.resolve_cah_model_path("CHHW_CG_U_SKN")) == "",
+		"a sibling id the pack does not carry stays empty even once the directory exists"
+	)
+
+	# ICONS: the texture when the pack has one, the NAME when it does not. Never a
+	# stand-in, and never a three-letter stub of the name either.
+	content_db._load_interface_art_index(pack_root, {"files": {}})
+	var with_art: Button = screen._icon_button(
+		"HICAHCaptainGondor", "Captain of Gondor", screen.ICON_SIZE, false
+	)
+	_check(
+		with_art.icon != null and with_art.text == "",
+		"an icon the pack carries is drawn as a texture, not as a caption"
+	)
+	_check(
+		with_art.tooltip_text == "Captain of Gondor",
+		"the resolved icon keeps the authored name as its tooltip"
+	)
+	var without_art: Button = screen._icon_button(
+		"HICAHNoSuchIcon", "Captain of Gondor", screen.ICON_SIZE, false
+	)
+	_check(
+		without_art.icon == null and without_art.text == "Captain of Gondor",
+		"an icon the pack lacks falls back to the WHOLE name (got '%s')" % without_art.text
+	)
+	_check(
+		without_art.custom_minimum_size.x >= screen.ICON_FALLBACK_WIDTH,
+		"the named fallback is given the room to be read"
+	)
+	_check(
+		without_art.tooltip_text.contains("HICAHNoSuchIcon"),
+		"the fallback names the icon the pack is missing"
+	)
+
+	# An id whose string the pack cannot translate reaches the screen as words
+	# rather than as an identifier.
+	_check(
+		screen._readable("CreateAHero:ClassName_HeroesOfTheWest") == "Heroes Of The West",
+		"an untranslated class id is spaced into a label (got '%s')"
+			% screen._readable("CreateAHero:ClassName_HeroesOfTheWest")
+	)
+
+	screen.queue_free()
+	content_db.pack_roots.erase(pack_root)
+	content_db._asset_exists_cache.clear()
+	content_db._frozen_resolutions.clear()
+
+
+func _build_scratch_pack() -> String:
+	var scratch := "user://cah-pack-%d" % (Time.get_ticks_usec() & 0xFFFFFF)
+	var pack_root := ProjectSettings.globalize_path(scratch.path_join("pack")).replace("\\", "/")
+	DirAccess.make_dir_recursive_absolute(pack_root.path_join("assets/models/cah"))
+	DirAccess.make_dir_recursive_absolute(pack_root.path_join("assets/ui/interface-art/cah"))
+	DirAccess.make_dir_recursive_absolute(pack_root.path_join("data/interface-art"))
+
+	# NOT A REAL MESH, deliberately. What is under test is which file the resolver
+	# names, not whether the importer's glTF loads - a fixture that needed a real
+	# mesh would make this gate wait on the content lane.
+	var mesh := FileAccess.open(pack_root.path_join("assets/models/cah/CHHW_CG_C_SKN.glb"), FileAccess.WRITE)
+	mesh.store_buffer("glTF fixture".to_utf8_buffer())
+	mesh.close()
+
+	var icon := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	icon.fill(Color(0.6, 0.5, 0.2, 1.0))
+	icon.save_png(pack_root.path_join("assets/ui/interface-art/cah/hicahcaptaingondor.png"))
+
+	var index := FileAccess.open(pack_root.path_join("data/interface-art/index.json"), FileAccess.WRITE)
+	index.store_string(JSON.stringify({
+		"schema": "openbfme.interface-art-index",
+		"schemaVersion": 1,
+		"scope": "cah",
+		"images": {
+			"HICAHCaptainGondor": "assets/ui/interface-art/cah/hicahcaptaingondor.png",
+		},
+		"gaps": [],
+	}))
+	index.close()
+
+	var meta := FileAccess.open(pack_root.path_join("pack.json"), FileAccess.WRITE)
+	meta.store_string(JSON.stringify({
+		"id": "cah-runner-fixture", "schema": "openbfme.content-pack", "schemaVersion": 0, "files": {},
+	}))
+	meta.close()
+	return pack_root
+
+
+# --------------------------------------------------------------- the window
+
+
+func _test_full_window_layout(system: Dictionary) -> void:
+	## CREATE-A-HERO IS A SCREEN, NOT A FLYOUT.
+	##
+	## It shipped as a bordered panel inset inside the shell, floating over the
+	## dimmed main menu with the hero preview given half of it and the controls
+	## squeezed into the strip left over. These pin the three things that made it a
+	## panel: the anchors, the backdrop it paints for itself, and the proportional
+	## split that stops one column from being a fixed strip.
+	# A stand-in for the shell's `Center`, sized here so the assertion does not
+	# depend on what window a headless run happens to have.
+	var host := Control.new()
+	host.size = Vector2(2560, 1440)
+	root.add_child(host)
+	var screen = MyHeroesScreen.new()
+	host.add_child(screen)
+	screen.configure(system)
+	screen.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	await process_frame
+
+	_check(
+		screen.size.is_equal_approx(host.size),
+		"the screen fills the rectangle it is anchored in (%s vs %s)" % [
+			str(screen.size), str(host.size)
+		]
+	)
+	var page_root := screen.get_node_or_null("Root") as Control
+	_check(
+		page_root != null
+			and is_equal_approx(page_root.anchor_right, 1.0)
+			and is_equal_approx(page_root.anchor_bottom, 1.0),
+		"the screen's content root is anchored FULL_RECT, so it follows a resize"
+	)
+	# ...and it really does follow one, which the copied flyout rectangle could not.
+	host.size = Vector2(1600, 900)
+	await process_frame
+	_check(
+		screen.size.is_equal_approx(host.size),
+		"the screen follows the window when it is resized (%s vs %s)" % [
+			str(screen.size), str(host.size)
+		]
+	)
+	_check(
+		page_root != null and page_root.size.x > host.size.x - 4.0 * screen.MARGIN.x,
+		"the content spans the window rather than sitting in a panel inside it"
+	)
+
+	var backdrop := screen.get_node_or_null("Backdrop") as TextureRect
+	_check(backdrop != null, "the screen owns a full-window backdrop slot")
+	if backdrop != null:
+		_check(
+			is_equal_approx(backdrop.anchor_right, 1.0) and is_equal_approx(backdrop.anchor_bottom, 1.0),
+			"the backdrop is anchored to the whole window"
+		)
+		_check(
+			not backdrop.visible,
+			"the backdrop stays down until the shell hands one over, rather than drawing a hole"
+		)
+		var texture := ImageTexture.create_from_image(Image.create(8, 8, false, Image.FORMAT_RGBA8))
+		screen.set_backdrop_texture(texture)
+		_check(
+			backdrop.visible and backdrop.texture == texture,
+			"the shell's own menu backdrop is what the screen draws"
+		)
+
+	# The preview and the controls both EXPAND. A fixed-width control column is
+	# what left a 2560px window with a vast empty left half.
+	var class_page: Control = screen._pages[screen.PAGE_CLASS]
+	var preview_slot: Control = screen._class_preview_slot
+	var controls: Control = class_page.get_child(class_page.get_child_count() - 1) as Control
+	_check(
+		preview_slot.size_flags_horizontal & Control.SIZE_EXPAND != 0
+			and controls.size_flags_horizontal & Control.SIZE_EXPAND != 0,
+		"both columns of the class page expand with the window"
+	)
+	_check(
+		controls.size_flags_stretch_ratio > preview_slot.size_flags_stretch_ratio,
+		"the controls get the larger share, the hero the smaller one"
+	)
+
+	# THE POWERS GRID'S COLUMN KEY MUST BE ON THE SCREEN. "Required Hero Level" and
+	# its four numbers are the last row OF THE GRID, so they are only in view if
+	# the band under the grid leaves the scroll enough height - and at a 340px
+	# floor (the preview's old minimum) they fell past the fold, which left four
+	# columns of powers with nothing naming them.
+	host.size = Vector2(2560, 1440)
+	screen._show_page(screen.PAGE_POWERS)
+	await process_frame
+	var grid: GridContainer = screen._power_grid
+	var scroll := grid.get_parent() as ScrollContainer
+	_check(
+		screen._powers_preview_slot.get_combined_minimum_size().y <= screen.POWERS_PREVIEW_HEIGHT + 60.0,
+		"the hero's band under the grid does not grow past its own budget (%.0f)"
+			% screen._powers_preview_slot.get_combined_minimum_size().y
+	)
+	_check(
+		grid.get_combined_minimum_size().y <= scroll.size.y,
+		"the whole grid, level strip included, is in view at 2560x1440 (%.0f in %.0f)"
+			% [grid.get_combined_minimum_size().y, scroll.size.y]
+	)
+	var cells := grid.get_child_count()
+	var aligned := cells >= 10
+	for column in range(POWER_COLUMN_COUNT):
+		var header := grid.get_child(cells - POWER_COLUMN_COUNT + column) as Control
+		var body := grid.get_child(1 + column) as Control
+		if not is_equal_approx(header.position.x, body.position.x):
+			aligned = false
+	_check(aligned, "each level number sits over the column of powers it labels")
+
+	# The shell's half of the bargain, asserted without standing the shell up.
+	var menu_script = load("res://src/ui/main_menu.gd")
+	_check(menu_script != null, "the shell script compiles")
+	if menu_script != null:
+		_check(
+			(menu_script.FULL_WINDOW_PAGES as Array).has(menu_script.PAGE_MY_HEROES),
+			"the shell takes its own furniture down for MY HEROES"
+		)
+
+	screen.queue_free()
+	host.queue_free()
 
 
 # ------------------------------------------------------------ purchase/spawn

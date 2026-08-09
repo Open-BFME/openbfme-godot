@@ -62,6 +62,26 @@ const POWER_LEVEL_COLUMNS := [1, 3, 7, 10]
 
 const ICON_SIZE := Vector2(56, 56)
 const PORTRAIT_SIZE := Vector2(64, 64)
+## What an icon slot widens to when the pack carries no art for it, so the name
+## standing in for the icon is readable rather than clipped to a stub.
+const ICON_FALLBACK_WIDTH := 148.0
+## The roster row's thumbnail, which is the subclass's own HICAH* button art.
+const ROSTER_ICON_SIZE := Vector2i(40, 40)
+## The window margin the screen's header and columns sit inside.
+const MARGIN := Vector2(46, 26)
+## HOW THE WINDOW IS DIVIDED. Retail stands the hero in roughly the left third
+## and gives the panel being edited the rest. Both columns EXPAND, so the split
+## is a proportion of whatever window the player has rather than a fixed 560px
+## strip with everything else left over to the preview - which is how the screen
+## came to have a vast empty left half and controls crammed into a gutter.
+const PREVIEW_STRETCH := 1.0
+const CONTROLS_STRETCH := 1.85
+const PREVIEW_MIN_WIDTH := 320.0
+const CONTROLS_MIN_WIDTH := 560.0
+## How wide the pages themselves are allowed to get, however wide the window is.
+const MAX_CONTENT_WIDTH := 1720.0
+## The hero's band under the powers grid.
+const POWERS_PREVIEW_HEIGHT := 200.0
 ## The powers grid. Retail gives the row label roughly a third of the grid and
 ## draws the power icons large enough to read; 76x40 cells left the screen
 ## looking like a spreadsheet rather than the reference.
@@ -98,6 +118,7 @@ var section_label: Label
 var stats_bars: VBoxContainer
 
 var _pages: Array[Control] = []
+var _page_stack: Control
 var _tab_buttons: Array[Button] = []
 var _tab_panels: Array[Control] = []
 var _class_icon_row: HBoxContainer
@@ -123,6 +144,7 @@ var _preview_root: Node3D
 var _preview_camera: Camera3D
 var _preview_model: Node3D
 var _preview_note: Label
+var _backdrop_art: TextureRect
 var _detail_portrait: TextureRect
 var _detail_stats: VBoxContainer
 var _detail_name: Label
@@ -164,6 +186,20 @@ func _ensure_built() -> void:
 	if theme == null:
 		theme = ThemeScript.create_theme(null)
 	_build()
+
+
+func set_backdrop_texture(texture: Texture2D) -> void:
+	## The shell's OWN menu backdrop, handed over rather than re-chosen here.
+	##
+	## `main_menu.gd` already resolves one - the converted retail shell art when a
+	## pack carries it, otherwise the local menu plates it cycles through - and a
+	## second selection in this file would be a second answer to the same
+	## question, free to disagree with the menu the player just came from.
+	_ensure_built()
+	if _backdrop_art == null:
+		return
+	_backdrop_art.texture = texture
+	_backdrop_art.visible = texture != null
 
 
 func system_available() -> bool:
@@ -303,14 +339,44 @@ func _reset_working_loadout() -> void:
 
 
 func _build() -> void:
+	## THE SCREEN IS THE WHOLE WINDOW, and it paints its own ground.
+	##
+	## It used to be a bordered panel inset inside the shell, floating over a
+	## dimmed main menu with the shell's masthead above it - a menu inside a menu,
+	## with the 3D preview given half the window and every control squeezed into
+	## the strip left over. Retail's Create-a-Hero is a screen: full-bleed art, its
+	## own header, the hero standing in the left third and the controls given the
+	## rest. `main_menu.gd` anchors this FULL_RECT and takes its own furniture down
+	## (see `FULL_WINDOW_PAGES`), so everything below is laid out against the
+	## window rather than against a flyout's rectangle.
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	clip_contents = true
+
+	_backdrop_art = TextureRect.new()
+	_backdrop_art.name = "Backdrop"
+	_backdrop_art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_backdrop_art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_backdrop_art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_backdrop_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_backdrop_art.visible = false
+	add_child(_backdrop_art)
+
+	# The art is a landscape, not a background for small text. The scrim is what
+	# makes twenty-odd rows of numbers legible on top of one.
+	var scrim := ColorRect.new()
+	scrim.name = "Scrim"
+	scrim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	scrim.color = Color(0.02, 0.03, 0.05, 0.72)
+	scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(scrim)
+
 	var root := VBoxContainer.new()
 	root.name = "Root"
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	root.offset_left = 24
-	root.offset_top = 14
-	root.offset_right = -24
-	root.offset_bottom = -14
+	root.offset_left = MARGIN.x
+	root.offset_top = MARGIN.y
+	root.offset_right = -MARGIN.x
+	root.offset_bottom = -MARGIN.y
 	root.add_theme_constant_override("separation", 6)
 	add_child(root)
 
@@ -318,22 +384,41 @@ func _build() -> void:
 	title_label.name = "Title"
 	title_label.text = "CREATE-A-HERO"
 	title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title_label.add_theme_font_size_override("font_size", 30)
-	title_label.add_theme_color_override("font_color", Color(0.86, 0.90, 0.94, 0.96))
+	title_label.add_theme_font_size_override("font_size", 42)
+	title_label.add_theme_color_override("font_color", Color(0.90, 0.93, 0.97, 0.97))
+	title_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.85))
+	title_label.add_theme_constant_override("shadow_offset_x", 2)
+	title_label.add_theme_constant_override("shadow_offset_y", 2)
 	root.add_child(title_label)
 
 	section_label = Label.new()
 	section_label.name = "Section"
 	section_label.text = "SELECT HERO"
 	section_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	section_label.add_theme_font_size_override("font_size", 17)
+	section_label.add_theme_font_size_override("font_size", 20)
+	section_label.add_theme_color_override("font_color", Color(0.74, 0.84, 0.95, 0.92))
 	root.add_child(section_label)
 
-	var stack := Control.new()
-	stack.name = "Pages"
-	stack.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	root.add_child(stack)
+	var rule := HSeparator.new()
+	rule.name = "HeaderRule"
+	root.add_child(rule)
+
+	# THE PAGES ARE CENTRED AND CAPPED, over a backdrop that is not.
+	#
+	# Retail draws this screen in a 4:3 panel on a full-bleed background. Letting
+	# the pages have all 2560px of a modern window instead stretches five stat bars
+	# across a metre of desk and puts the Current Powers list an inch from the
+	# right bezel - full-screen, but not laid out. `_clamp_page_width` keeps the
+	# columns together in the middle; the backdrop and the header still span
+	# everything.
+	_page_stack = Control.new()
+	_page_stack.name = "Pages"
+	_page_stack.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_page_stack.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	root.add_child(_page_stack)
+	var stack := _page_stack
+	resized.connect(_clamp_page_width)
+	_clamp_page_width()
 
 	_pages = [
 		_build_select_page(stack),
@@ -375,7 +460,9 @@ func _build_select_page(parent: Control) -> Control:
 
 	# LEFT: the Name | Type roster.
 	var left := VBoxContainer.new()
-	left.custom_minimum_size = Vector2(360, 0)
+	left.custom_minimum_size = Vector2(400, 0)
+	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left.size_flags_stretch_ratio = 1.0
 	left.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	left.add_theme_constant_override("separation", 6)
 	page.add_child(left)
@@ -394,6 +481,7 @@ func _build_select_page(parent: Control) -> Control:
 
 	hero_list = ItemList.new()
 	hero_list.name = "HeroList"
+	hero_list.fixed_icon_size = ROSTER_ICON_SIZE
 	hero_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	hero_list.allow_reselect = true
 	hero_list.item_selected.connect(_on_hero_list_selected)
@@ -425,6 +513,7 @@ func _build_select_page(parent: Control) -> Control:
 	# RIGHT: tabs over the preview.
 	var right := VBoxContainer.new()
 	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right.size_flags_stretch_ratio = 2.0
 	right.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	right.add_theme_constant_override("separation", 6)
 	page.add_child(right)
@@ -455,7 +544,9 @@ func _build_select_page(parent: Control) -> Control:
 
 	# The 3D preview, which is the centre of every retail Create-a-Hero screen.
 	_select_preview_slot = VBoxContainer.new()
+	_select_preview_slot.custom_minimum_size = Vector2(PREVIEW_MIN_WIDTH, 0)
 	_select_preview_slot.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_select_preview_slot.size_flags_stretch_ratio = 1.3
 	_select_preview_slot.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	body.add_child(_select_preview_slot)
 	_build_preview()
@@ -463,7 +554,9 @@ func _build_select_page(parent: Control) -> Control:
 
 	# The detail column the tabs swap.
 	var detail := Control.new()
-	detail.custom_minimum_size = Vector2(330, 0)
+	detail.custom_minimum_size = Vector2(340, 0)
+	detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	detail.size_flags_stretch_ratio = 1.0
 	detail.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	body.add_child(detail)
 	_tab_panels = [
@@ -483,7 +576,11 @@ func _build_preview() -> void:
 	var parent := _preview_column
 	_preview_host = SubViewportContainer.new()
 	_preview_host.stretch = true
-	_preview_host.custom_minimum_size = Vector2(300, 340)
+	# A FLOOR, NOT A SIZE. The preview column expands to fill whichever slot it is
+	# reparented into, so this only has to be big enough to be a hero. At 300x340
+	# it was also the floor of the POWERS page's band under the grid, and it pushed
+	# the grid's own level-number strip past the fold.
+	_preview_host.custom_minimum_size = Vector2(240, 220)
 	_preview_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_preview_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	parent.add_child(_preview_host)
@@ -596,12 +693,16 @@ func _build_class_page(parent: Control) -> Control:
 	# one preview is reparented into whichever page is showing rather than each
 	# page owning a second copy of the 3D scene.
 	_class_preview_slot = VBoxContainer.new()
+	_class_preview_slot.custom_minimum_size = Vector2(PREVIEW_MIN_WIDTH, 0)
 	_class_preview_slot.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_class_preview_slot.size_flags_stretch_ratio = PREVIEW_STRETCH
 	_class_preview_slot.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	page.add_child(_class_preview_slot)
 
 	var right := VBoxContainer.new()
-	right.custom_minimum_size = Vector2(560, 0)
+	right.custom_minimum_size = Vector2(CONTROLS_MIN_WIDTH, 0)
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right.size_flags_stretch_ratio = CONTROLS_STRETCH
 	right.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	right.add_theme_constant_override("separation", 6)
 	page.add_child(right)
@@ -650,12 +751,16 @@ func _build_attributes_page(parent: Control) -> Control:
 	parent.add_child(page)
 
 	_attributes_preview_slot = VBoxContainer.new()
+	_attributes_preview_slot.custom_minimum_size = Vector2(PREVIEW_MIN_WIDTH, 0)
 	_attributes_preview_slot.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_attributes_preview_slot.size_flags_stretch_ratio = PREVIEW_STRETCH
 	_attributes_preview_slot.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	page.add_child(_attributes_preview_slot)
 
 	var right := VBoxContainer.new()
-	right.custom_minimum_size = Vector2(560, 0)
+	right.custom_minimum_size = Vector2(CONTROLS_MIN_WIDTH, 0)
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right.size_flags_stretch_ratio = CONTROLS_STRETCH
 	right.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	right.add_theme_constant_override("separation", 6)
 	page.add_child(right)
@@ -668,8 +773,13 @@ func _build_attributes_page(parent: Control) -> Control:
 	right.add_child(name_edit)
 
 	right.add_child(_heading("APPEARANCE"))
+	# THE PART LIST IS WHAT GROWS. Everything else on this page is a fixed number
+	# of rows, so handing the slack to the attribute bars (which was the default)
+	# left a band of empty screen under them AND a parts list cut off mid-row at
+	# 190px. The list takes the room; the bars and the footer keep their own.
 	var appearance_scroll := ScrollContainer.new()
 	appearance_scroll.custom_minimum_size = Vector2(0, 190)
+	appearance_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	right.add_child(appearance_scroll)
 	_appearance_rows = VBoxContainer.new()
 	_appearance_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -700,7 +810,6 @@ func _build_attributes_page(parent: Control) -> Control:
 
 	attribute_rows = VBoxContainer.new()
 	attribute_rows.name = "AttributeRows"
-	attribute_rows.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	right.add_child(attribute_rows)
 
 	var tools := HBoxContainer.new()
@@ -739,6 +848,7 @@ func _build_powers_page(parent: Control) -> Control:
 	# LEFT: the grid of power chains.
 	var left := VBoxContainer.new()
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left.size_flags_stretch_ratio = 2.1
 	left.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	left.add_theme_constant_override("separation", 4)
 	page.add_child(left)
@@ -764,8 +874,12 @@ func _build_powers_page(parent: Control) -> Control:
 
 	# Retail keeps the hero on this screen too, under the grid beside the power
 	# ring, so the player can see who they are spending the cost on.
+	# 200, not 260. The "Required Hero Level" strip is the LAST ROW OF THE GRID,
+	# so every pixel this band takes is taken off the scroll view above it - and at
+	# 260 the strip fell 44px past the fold on a 1440-tall window, which left the
+	# grid's four columns with nothing naming them.
 	_powers_preview_slot = VBoxContainer.new()
-	_powers_preview_slot.custom_minimum_size = Vector2(0, 260)
+	_powers_preview_slot.custom_minimum_size = Vector2(0, POWERS_PREVIEW_HEIGHT)
 	_powers_preview_slot.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	left.add_child(_powers_preview_slot)
 
@@ -790,7 +904,9 @@ func _build_powers_page(parent: Control) -> Control:
 
 	# RIGHT: the numbered Current Powers list and the running Build Cost.
 	var right := VBoxContainer.new()
-	right.custom_minimum_size = Vector2(320, 0)
+	right.custom_minimum_size = Vector2(340, 0)
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right.size_flags_stretch_ratio = 1.0
 	right.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	right.add_theme_constant_override("separation", 4)
 	page.add_child(right)
@@ -822,6 +938,14 @@ func _build_powers_page(parent: Control) -> Control:
 	_build_cost_label.add_theme_font_size_override("font_size", 16)
 	cost_row.add_child(_build_cost_label)
 	return page
+
+
+func _clamp_page_width() -> void:
+	if _page_stack == null:
+		return
+	_page_stack.custom_minimum_size.x = minf(
+		maxf(size.x - 2.0 * MARGIN.x, CONTROLS_MIN_WIDTH + PREVIEW_MIN_WIDTH), MAX_CONTENT_WIDTH
+	)
 
 
 func _heading(text: String) -> Label:
@@ -973,6 +1097,21 @@ func _reload_hero_list() -> void:
 		if not refusals.is_empty():
 			label += "   (unavailable: %s)" % refusals[0]
 		hero_list.add_item(label)
+		# Retail draws the hero's own HICAH* button art beside its name. When the
+		# pack has none the row keeps the name and simply carries no thumbnail,
+		# rather than a generic glyph that would make every hero look alike.
+		var thumbnail := _icon_texture(_profile_button_image_id(profile))
+		if thumbnail != null:
+			hero_list.set_item_icon(hero_list.item_count - 1, thumbnail)
+
+
+func _profile_button_image_id(profile: Dictionary) -> String:
+	if _system.is_empty():
+		return ""
+	var sub_row := CahHeroes.sub_class_row(
+		_system, int(profile.get("classIndex", -1)), int(profile.get("subClassIndex", -1))
+	)
+	return String(sub_row.get("buttonImageId", sub_row.get("iconImageId", "")))
 
 
 func _profile_type_label(profile: Dictionary) -> String:
@@ -1020,8 +1159,7 @@ func _reload_sub_classes() -> void:
 
 
 func _rebuild_class_icons() -> void:
-	for child in _class_icon_row.get_children():
-		child.queue_free()
+	_clear_children(_class_icon_row)
 	var registration: Dictionary = _system.get("registration", {}) as Dictionary
 	for class_value in (registration.get("classes", []) as Array):
 		var row := class_value as Dictionary
@@ -1037,8 +1175,7 @@ func _rebuild_class_icons() -> void:
 
 
 func _rebuild_sub_icons() -> void:
-	for child in _sub_icon_row.get_children():
-		child.queue_free()
+	_clear_children(_sub_icon_row)
 	var row := CahHeroes.class_row(_system, _selected_class)
 	for sub_value in (row.get("subClasses", []) as Array):
 		var sub := sub_value as Dictionary
@@ -1053,7 +1190,9 @@ func _rebuild_sub_icons() -> void:
 		_sub_icon_row.add_child(button)
 
 
-func _icon_button(image_id: String, label: String, size: Vector2, selected: bool) -> Button:
+func _icon_button(
+	image_id: String, label: String, size: Vector2, selected: bool, fixed_width := false
+) -> Button:
 	## One retail icon, or a named refusal in its place.
 	##
 	## An icon the pack does not carry becomes a button captioned with what it
@@ -1068,9 +1207,22 @@ func _icon_button(image_id: String, label: String, size: Vector2, selected: bool
 	if texture != null:
 		button.icon = texture
 		button.expand_icon = true
+		return button
+	# NO ICON, SO THE NAME GETS THE ROOM THE ICON WOULD HAVE HAD. The three-letter
+	# truncation this replaces turned a row of classes into "Her Arc Ist", which is
+	# unreadable AND indistinguishable from a deliberate abbreviation; a wider
+	# button captioned with the whole name says the same thing legibly.
+	button.text = label
+	button.tooltip_text = "%s\n(icon %s is not in the mounted pack)" % [label, image_id]
+	# A grid cell is a COLUMN, and a column that grew to fit the longest power
+	# name in it would drag its whole column out from under the level number that
+	# labels it. Those clip; a free-standing class or type button takes the width
+	# its name needs.
+	if fixed_width:
+		button.clip_text = true
+		button.custom_minimum_size = size
 	else:
-		button.text = label.substr(0, 3)
-		button.tooltip_text = "%s\n(icon %s is not in the mounted pack)" % [label, image_id]
+		button.custom_minimum_size = Vector2(maxf(size.x, ICON_FALLBACK_WIDTH), size.y)
 	return button
 
 
@@ -1089,8 +1241,7 @@ func _icon_texture(image_id: String) -> Texture2D:
 
 
 func _rebuild_attribute_rows() -> void:
-	for child in attribute_rows.get_children():
-		child.queue_free()
+	_clear_children(attribute_rows)
 	_attribute_sliders.clear()
 	_attribute_values.clear()
 	var sub_row := CahHeroes.sub_class_row(_system, _selected_class, _selected_sub)
@@ -1139,8 +1290,7 @@ func _rebuild_attribute_rows() -> void:
 
 
 func _rebuild_appearance_rows() -> void:
-	for child in _appearance_rows.get_children():
-		child.queue_free()
+	_clear_children(_appearance_rows)
 	var sub_row := CahHeroes.sub_class_row(_system, _selected_class, _selected_sub)
 	var choices: Dictionary = sub_row.get("appearanceChoices", {}) as Dictionary
 	if choices.is_empty():
@@ -1186,8 +1336,7 @@ func _rebuild_appearance_rows() -> void:
 
 
 func _rebuild_power_grid() -> void:
-	for child in _power_grid.get_children():
-		child.queue_free()
+	_clear_children(_power_grid)
 	var trees := CahHeroes.power_trees_for_class(_system, _selected_class)
 	if trees.is_empty():
 		var empty := Label.new()
@@ -1222,7 +1371,8 @@ func _rebuild_power_grid() -> void:
 				String(level.get("buttonImageId", "")),
 				_readable(String(level.get("nameStringId", power_id))),
 				POWER_CELL_SIZE,
-				selected.has(power_id)
+				selected.has(power_id),
+				true
 			)
 			var cost := int(level.get("costIfSelected", 0))
 			cell.tooltip_text = "%s\n+%d Hero Cost\nRequires level %d%s" % [
@@ -1288,8 +1438,7 @@ func _toggle_power(power_id: String) -> void:
 
 
 func _rebuild_current_powers() -> void:
-	for child in _current_powers.get_children():
-		child.queue_free()
+	_clear_children(_current_powers)
 	if _powers.is_empty():
 		_power_hint.text = "Select a Level 1 power to go in your Hero's Current Powers."
 	for index in range(_powers.size()):
@@ -1319,8 +1468,7 @@ func _rebuild_current_powers() -> void:
 func _rebuild_detail_tabs() -> void:
 	if _detail_powers == null:
 		return
-	for child in _detail_powers.get_children():
-		child.queue_free()
+	_clear_children(_detail_powers)
 	for index in range(_powers.size()):
 		var row := CahHeroes.power_row(_system, String(_powers[index]))
 		var label := Label.new()
@@ -1383,8 +1531,7 @@ func _update_budget() -> void:
 func _update_class_preview() -> void:
 	if _class_stat_bars == null or _system.is_empty():
 		return
-	for child in _class_stat_bars.get_children():
-		child.queue_free()
+	_clear_children(_class_stat_bars)
 	var class_row := CahHeroes.class_row(_system, _selected_class)
 	var sub_row := CahHeroes.sub_class_row(_system, _selected_class, _selected_sub)
 	_class_description.text = _readable(String(class_row.get("nameStringId", "")))
@@ -1406,12 +1553,35 @@ func _update_class_preview() -> void:
 func _update_detail_stats() -> void:
 	if _detail_stats == null or _system.is_empty():
 		return
-	for child in _detail_stats.get_children():
-		child.queue_free()
-	var class_row := CahHeroes.class_row(_system, _selected_class)
 	var sub_row := CahHeroes.sub_class_row(_system, _selected_class, _selected_sub)
 	_detail_name.text = name_edit.text if name_edit != null and name_edit.text != "" else _readable(String(sub_row.get("nameStringId", "")))
 	_detail_portrait.texture = _icon_texture(String(sub_row.get("iconImageId", "")))
+	_fill_stat_panel(_detail_stats)
+	# THE STATS TAB USED TO BE EMPTIED HERE. `stats_bars` - the panel the STATS tab
+	# shows, and the tab the screen opens on - was cleared on every rebuild while
+	# the numbers were written into the APPEARANCE panel instead, so the first
+	# thing the screen showed was a blank column with four tab buttons over it.
+	_fill_stat_panel(stats_bars)
+
+
+static func _clear_children(container: Node) -> void:
+	## REMOVED FIRST, FREED AFTER. `queue_free` alone leaves the old rows in the
+	## tree until the end of the frame, so the container is laid out once with the
+	## outgoing children AND the incoming ones - which is how the powers grid came
+	## to show a scrollbar for twice the content it was drawing.
+	if container == null:
+		return
+	for child in container.get_children():
+		container.remove_child(child)
+		child.queue_free()
+
+
+func _fill_stat_panel(panel: VBoxContainer) -> void:
+	if panel == null:
+		return
+	_clear_children(panel)
+	var class_row := CahHeroes.class_row(_system, _selected_class)
+	var sub_row := CahHeroes.sub_class_row(_system, _selected_class, _selected_sub)
 	for pair in [
 		["Class", _readable(String(class_row.get("nameStringId", "")))],
 		["Type", _readable(String(sub_row.get("nameStringId", "")))],
@@ -1425,19 +1595,16 @@ func _update_detail_stats() -> void:
 		var value := Label.new()
 		value.text = String(pair[1])
 		line.add_child(value)
-		_detail_stats.add_child(line)
+		panel.add_child(line)
 	for row_value in (sub_row.get("attributes", []) as Array):
 		var row := row_value as Dictionary
 		var group := String(row.get("groupName", ""))
 		_add_step_bar(
-			_detail_stats,
+			panel,
 			_attribute_label(group),
 			int(_attributes.get(group, row.get("minStep", 1))),
 			int(row.get("maxStep", 20))
 		)
-	if stats_bars != null:
-		for child in stats_bars.get_children():
-			child.queue_free()
 
 
 func _add_step_bar(parent: Control, label_text: String, step: int, maximum: int) -> void:
@@ -1510,14 +1677,21 @@ func _load_asset_factory() -> GDScript:
 
 
 func _resolve_model_path(model_id: String) -> String:
-	if _content_db == null:
+	## The mounted pack's file for one retail model id.
+	##
+	## THIS USED TO NAME METHODS THAT DO NOT EXIST. The probe loop it replaces
+	## asked ContentDB for `resolve_cah_model_path` and `resolve_model_path`,
+	## neither of which was ever defined there, so every subclass fell to the
+	## "not in the mounted pack yet" label whatever the pack carried - a missing
+	## link that read exactly like missing content.
+	if _content_db == null or model_id == "":
 		return ""
-	for method in ["resolve_cah_model_path", "resolve_model_path"]:
-		if _content_db.has_method(method):
-			var path := String(_content_db.call(method, model_id))
-			if path != "" and FileAccess.file_exists(path):
-				return path
-	return ""
+	if not _content_db.has_method("resolve_cah_model_path"):
+		return ""
+	var path := String(_content_db.call("resolve_cah_model_path", model_id))
+	if path == "":
+		return ""
+	return path if FileAccess.file_exists(path) or ResourceLoader.exists(path) else ""
 
 
 func _frame_preview(sub_row: Dictionary, visual: Node3D) -> void:
@@ -1548,8 +1722,13 @@ func _frame_preview(sub_row: Dictionary, visual: Node3D) -> void:
 
 func _attribute_label(group_name: String) -> String:
 	## The five names retail prints beside the bars.
+	##
+	## Matched on the UNSPACED tail, because the fallback label now spaces camel
+	## case: `ArmorAttribute` reaches here as "Armor Attribute", and a match arm
+	## written against the old spelling silently stopped firing - which is how the
+	## bars came to be captioned "Damage Mult Attribute".
 	var tail := _readable(group_name)
-	match tail:
+	match tail.replace(" ", ""):
 		"ArmorAttribute": return "Armor"
 		"DamageMultAttribute": return "Power"
 		"HealthMultAttribute": return "Health"
@@ -1574,7 +1753,33 @@ func _readable(string_id: String) -> String:
 		var resolved := String(_content_db.call("get_retail_string", string_id, ""))
 		if resolved.strip_edges() != "":
 			return _without_hotkey_markers(resolved)
-	return CahHeroes._tail_label(string_id)
+	return _spaced_identifier(CahHeroes._tail_label(string_id))
+
+
+static func _spaced_identifier(tail: String) -> String:
+	## The de-namespaced tail, made readable.
+	##
+	## Without a strings table `CreateAHero:ClassName_HeroesOfTheWest` reaches the
+	## screen as `HeroesOfTheWest`, which is an identifier printed at the player.
+	## Splitting the camel case is not a translation and does not pretend to be
+	## one - the row is still identifiably the id it came from - but it is the
+	## difference between a label and a symbol.
+	var out := ""
+	for index in range(tail.length()):
+		var character := tail[index]
+		if (
+			index > 0
+			and character == character.to_upper()
+			and character != character.to_lower()
+			and tail[index - 1] != " "
+			and (
+				tail[index - 1] == tail[index - 1].to_lower()
+				or (index + 1 < tail.length() and tail[index + 1] == tail[index + 1].to_lower())
+			)
+		):
+			out += " "
+		out += character
+	return out
 
 
 static func _without_hotkey_markers(text: String) -> String:

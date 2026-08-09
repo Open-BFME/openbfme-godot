@@ -113,6 +113,8 @@ func _run() -> void:
 	var selected_map := String(menu._selected_skirmish_map())
 	_check("cold_list_selected_a_map", selected_map != "", selected_map)
 
+	_check_build_identity(menu)
+
 	# ---- 4. NON-BLOCKING -----------------------------------------------------
 	# Navigation resolves in the calling frame while the warmer is still out.
 	var opened: bool = menu.show_page("solo")
@@ -234,6 +236,46 @@ func _run() -> void:
 	# fixture id in a durable table other runs would read.
 	menu_script.clear_skirmish_availability_cache()
 	_finish()
+
+
+func _check_build_identity(menu: Node) -> void:
+	## WHICH BUILD IS THIS, asked of the shell the player sees.
+	##
+	## Two properties, and the second is the one that rotted: the identity is
+	## printed ONCE (the bottom-left duplicate above the bar is gone), and what it
+	## prints is a real build number rather than the `dev` literal that was the
+	## same string in every build ever handed to a playtester.
+	_check("build_identity_is_not_printed_twice",
+		menu.get_node_or_null("Center/BuildVersion") == null)
+	var title_version := menu.get_node_or_null("Center/TitleVersion") as Label
+	_check("build_identity_is_under_the_title",
+		title_version != null and title_version.text.strip_edges() != "",
+		title_version.text if title_version != null else "<missing>")
+	_check("build_identity_is_not_the_dev_literal",
+		title_version != null and not title_version.text.strip_edges().ends_with("build dev"),
+		title_version.text if title_version != null else "<missing>")
+
+	# The generator is git; the RUNTIME reads the file it writes, and this asserts
+	# that half over a synthetic one so the check does not need a checkout.
+	var build_info_script := load("res://src/core/build_info.gd")
+	_check("build_info_script_compiles", build_info_script != null)
+	if build_info_script == null:
+		return
+	var synthetic := "user://menu-instant-build-info-%d.json" % (Time.get_ticks_usec() & 0xFFFFFF)
+	var file := FileAccess.open(synthetic, FileAccess.WRITE)
+	file.store_string(JSON.stringify({
+		"schema": "openbfme.build-info", "schemaVersion": 0,
+		"build": "412", "commit": "abc1234",
+	}))
+	file.close()
+	_check("build_info_file_becomes_the_build_number",
+		String(build_info_script.build_id(synthetic)) == "412 (abc1234)",
+		String(build_info_script.build_id(synthetic)))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(synthetic))
+	# NOTHING IS EVER BLANK. A build with no info file falls back to a named
+	# placeholder rather than an empty corner.
+	_check("missing_build_info_falls_back_to_a_named_placeholder",
+		String(build_info_script.build_id("user://no-such-build-info.json")).strip_edges() != "")
 
 
 func _check(name: String, condition: bool, detail: String = "") -> void:

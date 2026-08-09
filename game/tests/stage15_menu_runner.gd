@@ -411,12 +411,20 @@ func _run() -> void:
 	_check("no_key_settings_row_pretends_to_be_a_control",
 		pressable.is_empty(), ", ".join(pressable))
 
-	var version_label := menu.get_node_or_null("Center/BuildVersion") as Label
-	_check("build_version_is_shown_bottom_left", version_label != null and version_label.text.strip_edges() != "")
+	# ONE build identity, under the title. The bottom-left copy printed the same
+	# string a second time and is gone; a shell that says the same thing twice is
+	# a shell the reader has to check against itself.
+	_check(
+		"build_version_is_not_printed_twice",
+		menu.get_node_or_null("Center/BuildVersion") == null
+	)
+	var version_label := menu.get_node_or_null("Center/TitleVersion") as Label
+	_check("build_version_is_shown_under_the_title", version_label != null and version_label.text.strip_edges() != "")
 	_check(
 		"build_version_is_not_a_stale_literal",
 		version_label != null
-			and version_label.text == _expected_version_text(),
+			and version_label.text.begins_with(_expected_version_text())
+			and not version_label.text.ends_with("build dev"),
 		version_label.text if version_label != null else "<missing>"
 	)
 

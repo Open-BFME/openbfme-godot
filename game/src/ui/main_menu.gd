@@ -203,6 +203,7 @@ const BACKDROP_IMAGE_IDS: Array[String] = [
 ## report and the shell they were looking at cannot disagree.
 const VERSION_SETTING := "application/config/version"
 const BUILD_ID_SETTING := "application/config/build_id"
+const BuildInfoScript = preload("res://src/core/build_info.gd")
 ## Original OpenBFME menu atmosphere stills (not retail shellmaps). When present
 ## under res:// they replace the procedural Atmosphere drawing. Cycle is stable
 ## per process so a single session does not flash between variants.
@@ -709,7 +710,11 @@ func ensure_my_heroes_screen() -> bool:
 	my_heroes_screen = script.new()
 	my_heroes_screen.name = "MyHeroesScreen"
 	my_heroes_screen.visible = false
-	my_heroes_screen.theme_type_variation = "FlyoutPanel"
+	# NO `FlyoutPanel` VARIATION, for the same reason the strategic screen refuses
+	# it: that variation is the shell's thorn-bordered list panel, and drawn behind
+	# a full-window screen it contributes a green rectangle around the edge of the
+	# window and nothing else. Create-a-Hero is a screen, not a flyout.
+	my_heroes_screen.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 	my_heroes_screen.mouse_filter = Control.MOUSE_FILTER_STOP
 	center.add_child(my_heroes_screen)
 	_layout_my_heroes_screen()
@@ -720,20 +725,20 @@ func ensure_my_heroes_screen() -> bool:
 
 
 func _layout_my_heroes_screen() -> void:
-	## Prefer the live SOLO flyout rect once it has been laid out. Anchors on the
-	## flyout can still report a zero size the first frame it has never been
-	## shown, which used to open MY HEROES as an invisible zero-rect panel.
-	if my_heroes_screen == null or solo_flyout == null:
+	## THE WHOLE WINDOW, ANCHORED - not a copy of the SOLO flyout's rectangle.
+	##
+	## Copying that rectangle is what put Create-a-Hero on screen as a bordered
+	## panel inset from the left and top and 180px short of the bottom, floating
+	## over a dimmed main menu: a menu inside a menu, with the hero preview given
+	## half of it and every control squeezed into what was left. FULL_RECT anchors
+	## rather than a copied rectangle for the same reason the strategic screen uses
+	## them - the screen must follow the window when it is resized or put
+	## fullscreen, and a copied rectangle cannot.
+	if my_heroes_screen == null:
 		return
-	var rect := solo_flyout.get_rect()
-	if rect.size.x < 64.0 or rect.size.y < 64.0:
-		var viewport_size := get_viewport_rect().size
-		rect = Rect2(
-			Vector2(28.0, 48.0),
-			Vector2(maxi(800.0, viewport_size.x - 56.0), maxi(520.0, viewport_size.y - 200.0))
-		)
-	my_heroes_screen.position = rect.position
-	my_heroes_screen.size = rect.size
+	my_heroes_screen.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	if my_heroes_screen.has_method("set_backdrop_texture"):
+		my_heroes_screen.set_backdrop_texture(backdrop_art.texture if backdrop_art != null else null)
 
 
 func _cah_system_runtime() -> Dictionary:
@@ -1198,42 +1203,44 @@ func _update_skirmish_busy_label() -> void:
 
 
 func _build_version_label() -> void:
-	## Build identity lives in two places on purpose:
-	##   1. Under the OPEN BFME title (always visible with the brand)
-	##   2. Bottom-left above the bar (still the playtester "which build?" corner)
-	## Both read project.godot — never a literal string in this file.
+	## Build identity lives in ONE place: under the OPEN BFME title, with the
+	## brand.
+	##
+	## It used to be printed twice - there and again bottom-left above the bar -
+	## with the same text in both. Two copies of one string is not redundancy, it
+	## is clutter that a reader has to check against itself. The bottom-left copy
+	## is removed here rather than left hidden, and any node a previous build left
+	## behind is taken down with it.
 	var identity := _build_identity_text()
 	var title_version := center.get_node_or_null("TitleVersion") as Label if center != null else null
 	if title_version != null:
 		title_version.text = identity
-	if center == null or center.has_node("BuildVersion"):
+	if center == null:
 		return
-	var label := Label.new()
-	label.name = "BuildVersion"
-	label.text = identity
-	# Above the bar's top edge (the caps occupy -102..-44), never overlapping a
-	# cap at any window size — both are anchored to the same bottom edge.
-	label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	label.offset_left = 22.0
-	label.offset_top = -136.0
-	label.offset_right = 520.0
-	label.offset_bottom = -114.0
-	label.add_theme_font_size_override("font_size", 13)
-	label.add_theme_color_override("font_color", Color(0.72, 0.78, 0.70, 0.75))
-	label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.8))
-	label.add_theme_constant_override("shadow_offset_x", 1)
-	label.add_theme_constant_override("shadow_offset_y", 1)
-	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	center.add_child(label)
+	var legacy := center.get_node_or_null("BuildVersion")
+	if legacy != null:
+		center.remove_child(legacy)
+		legacy.queue_free()
 
 
 func _build_identity_text() -> String:
+	## `v0.2.0-alpha  ·  build 412 (bfb414a)`.
+	##
+	## The build part is the repository's own count and commit, published by
+	## `tools/Write-BuildInfo.ps1` into `res://data/build_info.json` and read by
+	## `build_info.gd`. `OPENBFME_BUILD_ID` and the project setting still override
+	## it, in that order, so a packaging job can stamp its own id; what none of
+	## them may do is leave the shell advertising a constant.
 	var version := String(ProjectSettings.get_setting(VERSION_SETTING, "")).strip_edges()
-	var build_id := String(ProjectSettings.get_setting(BUILD_ID_SETTING, "")).strip_edges()
+	var build_id := String(OS.get_environment("OPENBFME_BUILD_ID")).strip_edges()
 	if build_id == "":
-		build_id = String(OS.get_environment("OPENBFME_BUILD_ID")).strip_edges()
+		var setting := String(ProjectSettings.get_setting(BUILD_ID_SETTING, "")).strip_edges()
+		# `dev` is the checked-in placeholder, not a stamp; it must not win over a
+		# real build number.
+		if setting != "" and setting != BuildInfoScript.FALLBACK_BUILD_ID:
+			build_id = setting
 	if build_id == "":
-		build_id = "dev"
+		build_id = BuildInfoScript.build_id()
 	if version == "":
 		return "build version not set (%s)  ·  build %s" % [VERSION_SETTING, build_id]
 	return "v%s  ·  build %s" % [version, build_id]
@@ -3997,7 +4004,13 @@ func _show_page(page: String) -> void:
 ##
 ## Listed as a constant so the runners can assert the set rather than re-deriving
 ## it, and so adding a page that takes the whole window is one line here.
-const FULL_WINDOW_PAGES := [PAGE_WOTR]
+##
+## MY HEROES joins it for the same reason: retail's Create-a-Hero is a screen of
+## its own with its own header and its own backdrop, and the shell's masthead
+## over the top of it made it read as a dialog the menu had opened. It is handed
+## the shell's own backdrop texture (`_layout_my_heroes_screen`) so taking the
+## shell's `BackdropArt` down does not cost the art.
+const FULL_WINDOW_PAGES := [PAGE_WOTR, PAGE_MY_HEROES]
 
 
 ## The shell's own furniture, which is hidden while a full-window page is up and
@@ -4010,7 +4023,7 @@ func _shell_chrome_nodes() -> Array[Control]:
 	for node_name in ["Atmosphere", "BackdropArt", "BarScrim", "Footer"]:
 		if has_node(node_name):
 			nodes.append(get_node(node_name) as Control)
-	for node_name in ["Title", "TitleVersion", "Subtitle", "BuildVersion"]:
+	for node_name in ["Title", "TitleVersion", "Subtitle"]:
 		if center != null and center.has_node(node_name):
 			nodes.append(center.get_node(node_name) as Control)
 	if _nav_diamonds != null:

@@ -2669,6 +2669,39 @@ func is_resolved_asset_path(path: String) -> bool:
 			return true
 	return false
 
+## Where the importer publishes the Create-a-Hero meshes. One flat directory
+## keyed by the retail model id, because that id is the only handle the compiled
+## class table carries - the subclass rows name `CHHW_CG_C_SKN`, never a path.
+const CAH_MODEL_DIRECTORY := "assets/models/cah"
+
+
+func resolve_cah_model_path(model_id: String) -> String:
+	## The pack file for one Create-a-Hero model id, or "" when no mounted pack
+	## carries it.
+	##
+	## EMPTY IS AN ANSWER, not an error: the creation screen states the model it
+	## wanted by name when this returns "", which is how a pack cooked before the
+	## Create-a-Hero mesh lane existed is visibly missing its heroes rather than
+	## silently showing a stand-in.
+	##
+	## The id is a bare name and is treated as one. Anything carrying a separator
+	## is refused rather than joined, so a hostile class table cannot walk out of
+	## the pack.
+	var id := model_id.strip_edges()
+	if id == "" or id.contains("/") or id.contains("\\") or id.contains(".."):
+		return ""
+	var seen: Dictionary = {}
+	for candidate in [id, id.to_upper()]:
+		if seen.has(candidate):
+			continue
+		seen[candidate] = true
+		for extension in [".glb", ".gltf"]:
+			var path := resolve_asset("%s/%s%s" % [CAH_MODEL_DIRECTORY, candidate, extension])
+			if path != "":
+				return path
+	return ""
+
+
 func resolve_mesh_path(def: Dictionary) -> String:
 	var mesh: String = String(def.get("mesh", ""))
 	var id := String(def.get("id", ""))
