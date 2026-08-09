@@ -161,6 +161,15 @@ $allowList = @{
     "game/tests/lan_discovery_runner.gd"    = @("private LAN address")
     # The scanner's own pattern table.
     "tools/export-scan.ps1"                 = @("home directory", "private retail drive", "private LAN address", "credential-shaped token", "hardcoded release target")
+    # Diagnostics redaction tests. The whole point of these fixtures is to feed
+    # the redactor a path that looks like somebody's home directory or retail
+    # install and prove it never reaches a bug report. The literals ARE the test
+    # input - substituting a safe string would invert what the assertion proves.
+    # None of them name THIS machine; they are foreign-looking by construction.
+    "game/src/core/diag_log.gd"                       = @("home directory")
+    "game/tests/diagnostics_log_runner.gd"            = @("home directory")
+    "launcher/OpenBFME.Launcher.Tests/Program.cs"     = @("home directory")
+    "importer/tests/test_diagnostics.py"              = @("home directory", "private retail drive")
     # THE one file allowed to name the publish target. Everything else must
     # resolve it at runtime via tools/release_source.py or release-source.mjs.
     "config/release-source.json"            = @("hardcoded release target")

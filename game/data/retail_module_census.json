@@ -29,13 +29,14 @@
 			"m3_pack_expansion",
 			"pipeline"
 		],
-		"consumerFileCount": 64,
+		"consumerFileCount": 65,
 		"consumerFiles": [
 			"armor_compiler",
 			"big",
 			"bootstrap",
 			"castle_behavior",
 			"catalog",
+			"diagnostics",
 			"effective_assets_catalog",
 			"effective_assets_identity",
 			"faction_census",

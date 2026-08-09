@@ -75,6 +75,11 @@ from .retail_visual_closure import (
     default_visual_closure_report_name,
 )
 from .sage_roads import build_road_closure, default_road_closure_report_name
+from . import diagnostics
+from .diagnostics import (
+    component_for_command,
+    start_run as start_diagnostics_run,
+)
 from .progress import configure_progress, complete as progress_complete
 from .util import write_json_atomic
 from .version import __version__
@@ -303,16 +308,46 @@ def _load_or_build_catalog(args: argparse.Namespace) -> InstallCatalog:
                 }
             ) from exc
         _guard(catalog, "cached")
+        stale = catalog.stale_reasons()
         if (
             catalog.install_root == install
             and catalog.source_policy == source_policy
-            and not catalog.stale_reasons()
+            and not stale
         ):
+            diagnostics.active_run().decision(
+                "catalog",
+                chosen=str(path),
+                reason="cached catalog matched the requested install and policy",
+                game=args.game,
+                origin="cached",
+                install_root=str(catalog.install_root),
+                archives=len(catalog.archives),
+            )
             return catalog
+        diagnostics.active_run().event(
+            "catalog.rebuild",
+            level="warning",
+            catalog=str(path),
+            game=args.game,
+            reason="cached catalog is stale or names a different install",
+            cached_install_root=str(catalog.install_root),
+            requested_install_root=str(install),
+            policy_matches=catalog.source_policy == source_policy,
+            stale_reasons=list(stale),
+        )
     catalog = _guard(
         InstallCatalog.build(install, source_policy=source_policy), "rebuilt"
     )
     catalog.save(path)
+    diagnostics.active_run().decision(
+        "catalog",
+        chosen=str(path),
+        reason="catalog rebuilt from the requested install",
+        game=args.game,
+        origin="rebuilt",
+        install_root=str(catalog.install_root),
+        archives=len(catalog.archives),
+    )
     return catalog
 
 
@@ -328,6 +363,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("--json", action="store_true", help="machine-readable output")
+    parser.add_argument(
+        "--diagnostics",
+        action="store_true",
+        help=(
+            "write a bug-report-grade run directory (run.log/run.jsonl/env.json/"
+            "identity.json, plus error.txt on failure) under %%LOCALAPPDATA%%\\"
+            "OpenBFME\\logs or $OPENBFME_LOG_DIR; also enabled by "
+            "OPENBFME_DIAGNOSTICS=1"
+        ),
+    )
     parser.add_argument(
         "--state-root",
         default=str(default_state_root()),
@@ -1017,7 +1062,7 @@ def _restore_env(prior: Mapping[str, str | None]) -> None:
             os.environ[key] = value
 
 
-def main(argv: list[str] | None = None) -> int:
+def _dispatch_main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     # `default_state_root()` is consulted directly by helpers that never see
@@ -1036,6 +1081,20 @@ def main(argv: list[str] | None = None) -> int:
     }
     os.environ["OPENBFME_IMPORT_ROOT"] = str(
         Path(args.state_root).expanduser().resolve()
+    )
+    # Diagnostics start *after* the state root is fixed, so env.json and every
+    # later tool-discovery decision describe the roots this run actually used
+    # rather than the process defaults. Opt-in; off means today's behavior.
+    run = start_diagnostics_run(
+        component_for_command(args.command),
+        enabled=True if getattr(args, "diagnostics", False) else None,
+        argv=list(argv) if argv is not None else sys.argv[1:],
+        content_root=getattr(args, "godot_content_root", None),
+        command=args.command,
+        state_root=str(Path(args.state_root).expanduser().resolve()),
+        game=getattr(args, "game", None),
+        profile=getattr(args, "profile", None),
+        json_output=bool(args.json),
     )
     dev_env_prior: dict[str, str | None] | None = None
     try:
@@ -1116,6 +1175,22 @@ def main(argv: list[str] | None = None) -> int:
                 _state_root(args),
                 skip_w3d_attestation=not bool(getattr(args, "deep", False)),
             )
+            # doctor is the command an operator runs when something is wrong, so
+            # its verdict — and the tool inventory behind it — belongs in the run
+            # directory verbatim rather than only on the console they lost.
+            run.event(
+                "doctor.verdict",
+                level="info" if value.get("ready") else "warning",
+                ready=bool(value.get("ready")),
+                game=args.game,
+                install_root=value.get("install_root"),
+                deep=bool(getattr(args, "deep", False)),
+                blockers=value.get("blockers") or value.get("problems"),
+                tools=value["tools"],
+                install=value.get("install"),
+                state=value.get("state"),
+                godot=value.get("godot"),
+            )
             if not args.json:
                 print(format_dependency_report(value))
             else:
@@ -1191,7 +1266,42 @@ def main(argv: list[str] | None = None) -> int:
                 candidate = assets_root / relative
                 if candidate.is_file():
                     documents[relative] = candidate.read_bytes()
+            # PASS ONE: the class table, the powers menu, the meshes and the
+            # level chain -- everything that is authored ABOUT a power.
             descriptor = compile_cah_system_descriptor(documents)
+            # PASS TWO: what each power DOES. Its behaviour lives in the
+            # CreateAHero Object's SpecialPower modules, which reach across the
+            # whole INI tree (weapons, ObjectCreationLists, attribute modifier
+            # lists), so this pass reads the tree rather than the CaH slice.
+            # Compiled separately and folded back in because the effect lane is
+            # the shared hero one; a failure here leaves the powers selectable
+            # and gated but reported as not castable, never unlisted.
+            ability_effects: dict[str, dict[str, object]] = {}
+            effect_note = ""
+            try:
+                from .playable_unit_compiler import (
+                    compile_create_a_hero_ability_effects,
+                )
+
+                tree_documents: dict[str, bytes] = {}
+                for path in sorted((assets_root / "data" / "ini").rglob("*")):
+                    if path.is_file() and path.suffix.lower() in {".ini", ".inc"}:
+                        tree_documents[
+                            path.relative_to(assets_root).as_posix()
+                        ] = path.read_bytes()
+                button_names = [
+                    str(level["powerId"])
+                    for tree in descriptor["powerCatalog"]
+                    for level in tree["levels"]
+                ]
+                ability_effects = compile_create_a_hero_ability_effects(
+                    tree_documents, button_names
+                )
+                descriptor = compile_cah_system_descriptor(
+                    documents, ability_effects=ability_effects
+                )
+            except Exception as error:  # noqa: BLE001 - reported, never swallowed
+                effect_note = f"{type(error).__name__}: {error}"
             runtime = build_cah_system_runtime(descriptor)
 
             reports = _state_root(args) / "reports"
@@ -1217,6 +1327,20 @@ def main(argv: list[str] | None = None) -> int:
                     "attribute_group_count": len(descriptor["attributeGroups"]),
                     "build_cost": descriptor["system"]["buildCost"],
                     "build_cost_expression": descriptor["system"]["buildCostExpression"],
+                    "power_tree_count": len(descriptor["powerCatalog"]),
+                    "power_count": sum(
+                        len(tree["levels"]) for tree in descriptor["powerCatalog"]
+                    ),
+                    # How many of those powers will actually FIRE, which is the
+                    # difference between a listed power and a working one.
+                    "castable_power_count": sum(
+                        1
+                        for tree in descriptor["powerCatalog"]
+                        for level in tree["levels"]
+                        if level.get("implementation", {}).get("status") == "implemented"
+                    ),
+                    "max_hero_level": descriptor["experience"]["maxLevel"],
+                    "ability_effect_note": effect_note,
                 },
                 args.json,
             )
@@ -1325,19 +1449,29 @@ def main(argv: list[str] | None = None) -> int:
             if not manifest_path.is_file():
                 progress_emit("extract-assets", "extracting effective asset tree")
                 pipeline.extract_all_assets(force=False)
-                # The pipeline was constructed BEFORE this tree existed, so its
-                # RotWK oracle bind was deferred (see
-                # ImportPipeline.source_override_root). Resolve it now, while
-                # the ordering is obvious, rather than leaving the first
-                # downstream `pipeline.catalog` read to decide whether this run
-                # cooks from the sealed oracle or from the raw catalog.
-                _ = pipeline.source_override_root
             else:
                 progress_emit(
                     "extract-assets",
                     "skipped — effective-assets manifest already present",
                     extra={"skipped": True},
                 )
+            # RESOLVE THE ORACLE BIND ON EVERY PATH, not only after an extract.
+            # The pipeline may have been constructed before the tree existed, so
+            # its RotWK oracle bind is deferred (see
+            # ImportPipeline.source_override_root). Forcing it only in the
+            # cold-start branch left a WARM run - which is every run after the
+            # first - reading `pipeline.catalog` before the bind resolved.
+            _ = pipeline.source_override_root
+            # THE CATALOG THE COOK WILL RESOLVE AGAINST, which for RotWK is an
+            # effective-assets view over the sealed oracle and NOT the outer
+            # install catalog. `publish-faction-to-slice` binds its staleness
+            # gate to this same object, so stamping the outer identity here made
+            # that gate unsatisfiable for every RotWK publish: the report and the
+            # cook described the same tree through two different objects and
+            # their identities could never agree. The only way past it was
+            # --allow-stale-coverage, which disables the check that exists to
+            # catch genuinely stale reports.
+            cook_catalog = pipeline.catalog
             report_root = _state_root(args) / "reports" / "faction-import"
             if args.game != "bfme2":
                 report_root = _workspace_root(args) / "reports" / "faction-import"
@@ -1353,7 +1487,7 @@ def main(argv: list[str] | None = None) -> int:
                     )
 
                 value = convert_faction_import(
-                    catalog,
+                    cook_catalog,
                     effective_root,
                     faction_key,
                     artifact_writer=_write_artifact,
@@ -1383,7 +1517,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 return 0 if bool(summary["conversionComplete"]) else 6
             value = plan_faction_import(
-                catalog, effective_root, faction_key, game=args.game
+                cook_catalog, effective_root, faction_key, game=args.game
             )
             report_path = report_root / f"{faction_key}-plan.json"
             write_json_atomic(report_path, value)
@@ -2251,6 +2385,14 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"unknown command: {args.command}")
     except EffectiveAssetsIdentityError as exc:
         # Structured, and never a silent read of another edition's bytes.
+        run.failure(
+            exc,
+            context={
+                "command": args.command,
+                "refusal": "effective-assets-identity",
+                "diagnostic": exc.diagnostic,
+            },
+        )
         if args.json:
             print(json.dumps(exc.diagnostic, indent=2, sort_keys=True), file=sys.stderr)
         else:
@@ -2258,22 +2400,64 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except CatalogProvenanceError as exc:
         # Structured, never a silent fallback to another edition.
+        run.failure(
+            exc,
+            context={
+                "command": args.command,
+                "refusal": "catalog-provenance",
+                "diagnostic": exc.diagnostic,
+            },
+        )
         if args.json:
             print(json.dumps(exc.diagnostic, indent=2, sort_keys=True), file=sys.stderr)
         else:
             print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     except (FileNotFoundError, ValueError, RuntimeError, OSError) as exc:
+        run.failure(exc, context={"command": args.command})
         if args.json:
             print(json.dumps({"error": str(exc)}, indent=2), file=sys.stderr)
         else:
             print(f"ERROR: {exc}", file=sys.stderr)
         return 1
+    except BaseException as exc:
+        # Unhandled types (KeyError, TypeError, KeyboardInterrupt) still reach
+        # the operator as a traceback, but the run directory keeps the evidence.
+        if isinstance(exc, Exception):
+            run.failure(exc, context={"command": args.command, "unhandled": True})
+        else:
+            run.event(
+                "aborted",
+                level="error",
+                command=args.command,
+                exception_type=type(exc).__name__,
+            )
+        raise
     finally:
         if dev_env_prior is not None:
             _restore_env(dev_env_prior)
         _restore_env(state_root_env_prior)
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Dispatch one CLI invocation and close its diagnostics run with the code.
+
+    The exit code is the single most useful field in a bug report, and only a
+    wrapper can see it: `_dispatch_main` has ~30 return sites. The run object is
+    fetched from the module-level active slot rather than threaded back out, so
+    an argparse `SystemExit` still gets a closed, complete run directory.
+    """
+
+    code = 1
+    try:
+        code = _dispatch_main(argv)
+        return code
+    except SystemExit as exc:  # argparse usage errors and explicit exits
+        code = exc.code if isinstance(exc.code, int) else 2
+        raise
+    finally:
+        diagnostics.active_run().close(exit_code=code)
 
 
 if __name__ == "__main__":

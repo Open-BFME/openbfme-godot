@@ -13,6 +13,7 @@ import os
 from pathlib import Path, PurePosixPath
 import shutil
 import struct
+import sys
 import tempfile
 import threading
 import time
@@ -3384,6 +3385,7 @@ class ImportPipeline:
         self._blender_soft_tree_fingerprint_value: str | None = None
         self._python_runtime_report: dict[str, Any] = {}
         self._ffmpeg_attested_path: str | None = None
+        self._pillow_choice_logged = False
         # (path, size, mtime_ns) -> sha256 of a retail source archive.
         self._archive_attest_cache: dict[tuple[str, int, int], str] = {}
         self.media_cache_root = shared_root / "converted-media"
@@ -3392,6 +3394,32 @@ class ImportPipeline:
             "true",
             "yes",
         }
+        # Which roots this pipeline bound to is the first question any wrong-
+        # output bug report has to answer, so it is recorded at construction
+        # rather than inferred later from whatever the environment says then.
+        from .diagnostics import active_run
+
+        active_run().decision(
+            "pipeline-roots",
+            chosen=str(self.workspace_root),
+            reason="ImportPipeline bound its state, source and pack roots",
+            game=self.game.id,
+            state_root=str(self.state_root),
+            sources_root=str(self.sources_root),
+            packs_root=str(self.packs_root),
+            media_cache_root=str(self.media_cache_root),
+            shared_cache=os.environ.get("OPENBFME_SHARED_CACHE") or None,
+            source_override_root=(
+                str(self._source_override_root)
+                if self._source_override_root is not None
+                else None
+            ),
+            rotwk_autobind_pending=bool(self._rotwk_autobind_pending),
+            catalog_type=type(self.catalog).__name__,
+            dev_mode=self.dev_mode,
+            conversion_cache_enabled=self.conversion_cache_enabled,
+            conversion_jobs=self.conversion_jobs,
+        )
 
     @property
     def source_override_root(self) -> Path | None:
@@ -3427,6 +3455,15 @@ class ImportPipeline:
                 effective_root, base_catalog=self.catalog
             )
             self._rotwk_autobind_pending = False
+            from .diagnostics import active_run
+
+            active_run().decision(
+                "source-oracle",
+                chosen=str(self._source_override_root),
+                reason="deferred RotWK bind to the verified effective-assets tree",
+                game="rotwk",
+                catalog_type=type(self.catalog).__name__,
+            )
         return self._source_override_root
 
     @property
@@ -4070,17 +4107,46 @@ class ImportPipeline:
         force: bool = False,
         allow_incomplete: bool = False,
     ) -> Path:
+        from .diagnostics import active_run
         from .progress import emit as progress_emit
 
+        run = active_run()
+        run.event(
+            "build.begin",
+            profile=resolved.profile.id,
+            pack_id=resolved.profile.pack_id,
+            pack_version=resolved.profile.pack_version,
+            game=getattr(getattr(self, "game", None), "id", None),
+            resource_rules=len(resolved.resources),
+            missing_required=len(resolved.missing_required),
+            force=bool(force),
+            allow_incomplete=bool(allow_incomplete),
+        )
         self._validate_source_catalog_binding(resolved)
         if resolved.missing_required and not allow_incomplete:
             missing = ", ".join(resolved.missing_required)
+            run.refusal(
+                "build",
+                reason="required profile resources did not resolve",
+                profile=resolved.profile.id,
+                missing_required=list(resolved.missing_required),
+            )
             raise RuntimeError(f"required profile resources did not resolve: {missing}")
 
         progress_emit("extract", "attesting archives/tools and extracting sources")
-        source_archives = self._attest_source_archives(resolved)
-        self._verify_required_tools(resolved)
-        extracted = self.extract_sources(resolved, force=force)
+        extract_phase = run.begin_phase("extract", profile=resolved.profile.id)
+        try:
+            source_archives = self._attest_source_archives(resolved)
+            self._verify_required_tools(resolved)
+            extracted = self.extract_sources(resolved, force=force)
+        except BaseException as exc:
+            run.end_phase(extract_phase, outcome="failed", exc=exc)
+            raise
+        run.end_phase(
+            extract_phase,
+            source_archives=len(source_archives),
+            extracted_files=len(extracted),
+        )
         pack_root = self.packs_root / resolved.profile.pack_id
         staging = self.packs_root / (resolved.profile.pack_id + ".building")
         if staging.exists():
@@ -4089,6 +4155,17 @@ class ImportPipeline:
         progress_emit(
             "convert-assets",
             f"cooking pack resources ({len(resolved.resources)} rules)",
+        )
+        convert_phase = run.begin_phase(
+            "convert-assets",
+            profile=resolved.profile.id,
+            resource_rules=len(resolved.resources),
+            # getattr, not attribute access: tests drive build() on partially
+            # constructed pipelines, and a logging field must never be the thing
+            # that raises. Diagnostics are evidence, never a precondition.
+            conversion_jobs=getattr(self, "conversion_jobs", None),
+            conversion_cache_enabled=getattr(self, "conversion_cache_enabled", None),
+            staging=str(staging),
         )
         provenance_entries: list[dict[str, Any]] = []
         incomplete: list[dict[str, str]] = []
@@ -4453,6 +4530,15 @@ class ImportPipeline:
         output_digests = _hash_files(
             sorted({path for item in provenance_entries for path in item["outputs"]})
         )
+        run.end_phase(
+            convert_phase,
+            converted_entries=len(provenance_entries),
+            output_files=len(output_digests),
+            incomplete_entries=len(incomplete),
+        )
+        cook_phase = run.begin_phase(
+            "cook", pack_id=resolved.profile.pack_id, staging=str(staging)
+        )
         for item in provenance_entries:
             item["outputs"] = [
                 {
@@ -4516,8 +4602,29 @@ class ImportPipeline:
         # an optional outer CLI speed path and must not claim hash validity here.
         audit = audit_pack(staging, light=False)
         write_json_atomic(staging / "provenance" / "audit.json", audit)
+        # The tool report is the record of which ffmpeg/Pillow actually cooked
+        # these bytes. It goes into the run log verbatim so a bug report can be
+        # answered without re-opening the pack.
+        run.event(
+            "tool-report",
+            pack_id=resolved.profile.pack_id,
+            tools=tools,
+            incomplete_entries=len(incomplete),
+        )
         if not audit["valid"]:
+            run.end_phase(cook_phase, outcome="failed", audit_valid=False)
+            run.refusal(
+                "cook",
+                reason="built pack failed its internal hash audit",
+                pack_id=resolved.profile.pack_id,
+                audit=audit.get("errors") or audit.get("issues"),
+            )
             raise RuntimeError("built pack failed its internal hash audit")
+        run.end_phase(
+            cook_phase,
+            audit_valid=True,
+            bundle_files=len(provenance.get("bundle_files") or []),
+        )
 
         if pack_root.exists():
             previous = self.packs_root / (resolved.profile.pack_id + ".previous")
@@ -4532,6 +4639,12 @@ class ImportPipeline:
             shutil.rmtree(previous)
         else:
             os.replace(staging, pack_root)
+        run.event(
+            "build.end",
+            pack_id=resolved.profile.pack_id,
+            pack_root=str(pack_root),
+            incomplete_entries=len(incomplete),
+        )
         return pack_root
 
     def _attest_source_archives(
@@ -4731,6 +4844,55 @@ class ImportPipeline:
         select: bool = True,
         verified_digest: str | None = None,
     ) -> dict[str, str]:
+        from .diagnostics import active_run
+
+        run = active_run()
+        publish_phase = run.begin_phase(
+            "publish",
+            source_pack=str(pack_root),
+            content_root=str(content_root),
+            select=bool(select),
+            allow_incomplete=bool(allow_incomplete),
+            digest_pre_verified=verified_digest is not None,
+        )
+        try:
+            result = self._publish_to_godot_body(
+                pack_root,
+                content_root,
+                allow_incomplete=allow_incomplete,
+                select=select,
+                verified_digest=verified_digest,
+                run=run,
+            )
+        except BaseException as exc:
+            run.end_phase(publish_phase, outcome="failed", exc=exc)
+            raise
+        run.end_phase(
+            publish_phase,
+            pack_id=result.get("pack_id"),
+            bundle_sha256=result.get("bundle_sha256"),
+            active_pack=result.get("active_pack"),
+            selection_written="selection" in result,
+        )
+        # Re-read identity from the root we just wrote so identity.json names
+        # the selection this run produced, not the one it started with.
+        run.record_identity(Path(content_root))
+        return result
+
+    def _publish_to_godot_body(
+        self,
+        pack_root: Path | str,
+        content_root: Path,
+        *,
+        allow_incomplete: bool = False,
+        select: bool = True,
+        verified_digest: str | None = None,
+        run: Any = None,
+    ) -> dict[str, str]:
+        if run is None:
+            from .diagnostics import active_run
+
+            run = active_run()
         source = Path(pack_root).expanduser().resolve()
         pack_data = read_json(source / "pack.json")
         pack_id = str(pack_data.get("id", ""))
@@ -4769,14 +4931,42 @@ class ImportPipeline:
             raise RuntimeError(
                 f"published bundle path is not a directory: {destination}"
             )
+        run.decision(
+            "published-bundle",
+            chosen=str(destination),
+            reason=(
+                "digest handed over by the caller's audit"
+                if verified_digest
+                else "digest recomputed from the source pack"
+            ),
+            pack_id=pack_id,
+            bundle_sha256=digest,
+            content_root=str(root),
+            destination_exists=destination.is_dir(),
+        )
         if destination.is_dir():
+            # Reusing an address that already exists is only safe because the
+            # bytes are re-hashed here. Record the reuse: an unverified reuse is
+            # how a pack whose name is a lie stays loaded (AGENTS.md rule 1).
             if (
                 bundle_digest(destination) != digest
                 or not audit_pack(destination, light=False)["valid"]
             ):
+                run.refusal(
+                    "publish",
+                    reason="pre-existing published bundle is corrupt or tampered",
+                    destination=str(destination),
+                    expected_sha256=digest,
+                )
                 raise RuntimeError(
                     f"pre-existing published bundle is corrupt or tampered: {destination}"
                 )
+            run.event(
+                "publish.reuse",
+                destination=str(destination),
+                bundle_sha256=digest,
+                reason="existing bundle re-hashed and matched; no copy needed",
+            )
         else:
             staging = destination.with_name(destination.name + ".building")
             if staging.exists():
@@ -4894,6 +5084,27 @@ class ImportPipeline:
         result["active_pack"] = relative.as_posix()
         result["selection_transaction"] = transaction
         return result
+
+    def _log_pillow_choice_once(self, pil_module: Any) -> None:
+        """Record which Pillow install is cooking textures, once per pipeline."""
+
+        # Unsynchronised fast path: this runs once per converted texture, and
+        # taking the conversion lock per file to answer an already-settled
+        # question is a real cost on the default (diagnostics-off) path. The
+        # race is benign — worst case two identical lines name the same Pillow.
+        if getattr(self, "_pillow_choice_logged", False):
+            return
+        self._pillow_choice_logged = True
+        from .diagnostics import active_run
+
+        active_run().decision(
+            "attested-tool",
+            chosen=getattr(pil_module, "__file__", None),
+            reason="Pillow import satisfied the pinned 12.2.0 requirement",
+            tool="pillow",
+            version=pil_module.__version__,
+            interpreter=sys.executable,
+        )
 
     def _canonical_tool_report(self) -> dict[str, Any]:
         report: dict[str, Any] = {}
@@ -5168,10 +5379,31 @@ class ImportPipeline:
             resolved_ffmpeg = str(Path(ffmpeg).resolve())
             with self._conversion_cache_lock:
                 if self._ffmpeg_attested_path != resolved_ffmpeg:
-                    if sha256_file(ffmpeg).casefold() != FFMPEG_EXE_SHA256:
+                    # Logged once per distinct executable, not once per file:
+                    # this runs on every audio job and the run log has to stay
+                    # readable. The pin failure below is the one this project
+                    # actually hit, so it is recorded before it is raised.
+                    from .diagnostics import active_run
+
+                    actual = sha256_file(ffmpeg).casefold()
+                    if actual != FFMPEG_EXE_SHA256:
+                        active_run().refusal(
+                            "audio-conversion",
+                            reason="ffmpeg does not match the pinned 8.1.1 hash",
+                            ffmpeg=resolved_ffmpeg,
+                            expected_sha256=FFMPEG_EXE_SHA256,
+                            actual_sha256=actual,
+                        )
                         raise RuntimeError(
                             "FFmpeg executable does not match the pinned 8.1.1 hash"
                         )
+                    active_run().decision(
+                        "attested-tool",
+                        chosen=resolved_ffmpeg,
+                        reason="sha256 matches the pinned FFmpeg 8.1.1",
+                        tool="ffmpeg",
+                        sha256=actual,
+                    )
                     self._ffmpeg_attested_path = resolved_ffmpeg
             tool_token = f"ffmpeg:{FFMPEG_EXE_SHA256}"
         else:
@@ -5182,10 +5414,22 @@ class ImportPipeline:
                     "Pillow is required for deterministic DDS/TGA conversion"
                 ) from exc
             if PIL.__version__ != "12.2.0":
+                from .diagnostics import active_run
+
+                # `bare pytest picks up the wrong Pillow` is a recorded incident;
+                # naming the module file makes the wrong-interpreter case obvious.
+                active_run().refusal(
+                    "texture-conversion",
+                    reason="Pillow version is not the pinned 12.2.0",
+                    found_version=PIL.__version__,
+                    pillow_path=getattr(PIL, "__file__", None),
+                    interpreter=sys.executable,
+                )
                 raise RuntimeError(
                     "Pillow 12.2.0 is required for deterministic texture output; "
                     f"found {PIL.__version__}"
                 )
+            self._log_pillow_choice_once(PIL)
             tool_token = f"pillow:{PIL.__version__}:png{png_level}"
 
         source_sha = source_sha256 or sha256_file(source)

@@ -57,17 +57,78 @@ class ToolInfo:
 
 
 def discover_executable(name: str, env_name: str | None = None) -> Path | None:
+    """Resolve a conversion tool: env override, then pinned copy, then PATH.
+
+    Every branch is reported to diagnostics because this function is where the
+    project's recorded failure class lives: when the pinned ffmpeg was missing,
+    the PATH binary was picked silently, failed the pinned-hash attest on every
+    audio job, and the run still produced confident-looking numbers. Which of
+    the three branches won is therefore evidence, not trivia.
+    """
+
+    from .diagnostics import active_run
+
+    run = active_run()
     configured = os.environ.get(env_name or "", "").strip() if env_name else ""
     if configured and Path(configured).is_file():
-        return Path(configured).resolve()
+        chosen = Path(configured).resolve()
+        run.decision(
+            "tool",
+            chosen=str(chosen),
+            reason=f"{env_name} environment override",
+            candidates=[f"env:{env_name}"],
+            tool=name,
+            source="environment",
+        )
+        return chosen
+    pinned_path: Path | None = None
     if name.casefold() in {"ffmpeg", "ffprobe"}:
         from .paths import default_state_root
 
         pinned = default_state_root() / "tools" / "ffmpeg-8.1.1" / "bin" / f"{name}.exe"
+        pinned_path = pinned
         if pinned.is_file():
-            return pinned.resolve()
+            chosen = pinned.resolve()
+            run.decision(
+                "tool",
+                chosen=str(chosen),
+                reason="pinned tool tree under the state root",
+                candidates=[str(pinned)],
+                tool=name,
+                source="pinned",
+            )
+            return chosen
     found = shutil.which(name)
-    return Path(found).resolve() if found else None
+    if found:
+        resolved = Path(found).resolve()
+        # A PATH hit for a tool that is supposed to be pinned is the exact
+        # silent fallback AGENTS.md rule 5 forbids. Say so at warning level.
+        pinned_expected = pinned_path is not None
+        run.event(
+            "decision",
+            level="warning" if pinned_expected else "info",
+            kind="tool",
+            chosen=str(resolved),
+            reason=(
+                "PATH fallback: the pinned copy is absent"
+                if pinned_expected
+                else "resolved from PATH"
+            ),
+            candidates=[str(pinned_path)] if pinned_path else None,
+            tool=name,
+            source="path",
+            pinned_expected=pinned_expected,
+        )
+        return resolved
+    run.decision(
+        "tool",
+        chosen=None,
+        reason="not found in the environment, the pinned tree, or PATH",
+        candidates=[str(pinned_path)] if pinned_path else None,
+        tool=name,
+        source="missing",
+    )
+    return None
 
 
 def inspect_tool(name: str, env_name: str | None = None, version_args: Sequence[str] = ("-version",)) -> ToolInfo:
