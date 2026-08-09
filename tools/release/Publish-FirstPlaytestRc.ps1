@@ -56,20 +56,21 @@ Write-Host ('== [3] signing secret ==')
 Get-Content -LiteralPath $priv -Raw | gh secret set OPENBFME_RELEASE_SIGNING_KEY -R $Repo --env release-signing
 if ($LASTEXITCODE -ne 0) { throw 'gh secret set failed' }
 
-Write-Host ('== [4] rulesets ==')
+Write-Host ('== [4] rulesets (best-effort; non-fatal) ==')
 function Ensure-Ruleset {
     param(
         [string]$Name,
         [string]$Target,
         [string[]]$Includes
     )
-    $listJson = gh api "repos/$Repo/rulesets" 2>$null
-    if ($LASTEXITCODE -eq 0 -and $listJson) {
-        $hit = $listJson | ConvertFrom-Json | Where-Object { $_.name -eq $Name } | Select-Object -First 1
-        if ($hit) {
-            Write-Host ("  ruleset already exists: {0} id={1}" -f $Name, $hit.id)
+    try {
+        $ids = gh api "repos/$Repo/rulesets" --jq ".[] | select(.name==`"$Name`") | .id" 2>$null
+        if ($ids) {
+            Write-Host ("  ruleset already exists: {0}" -f $Name)
             return
         }
+    } catch {
+        # listing can fail on some plans; try create anyway
     }
     $bodyObj = [ordered]@{
         name        = $Name
@@ -90,8 +91,11 @@ function Ensure-Ruleset {
     $tmp = Join-Path $env:TEMP ('openbfme-ruleset-' + [guid]::NewGuid().ToString('N') + '.json')
     try {
         [IO.File]::WriteAllText($tmp, $body, [Text.UTF8Encoding]::new($false))
-        gh api -X POST "repos/$Repo/rulesets" --input $tmp | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw ("failed to create ruleset {0}" -f $Name) }
+        $createOut = gh api -X POST "repos/$Repo/rulesets" --input $tmp 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host ("  WARN ruleset {0} not created: {1}" -f $Name, $createOut.Trim())
+            return
+        }
         Write-Host ("  created ruleset {0}" -f $Name)
     } finally {
         if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
