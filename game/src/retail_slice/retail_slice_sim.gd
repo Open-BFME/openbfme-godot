@@ -8718,6 +8718,59 @@ func unpack_base(team: int, base_name: String, free: bool) -> Dictionary:
 	return {"ok": true, "structure_id": structure_id, "cost": cost}
 
 
+# --- Map named-object namespace (retail's COMPLETE name table) --------------
+#
+# The CLOSED set of script object names the installed map authors (schema-v1
+# world.namedObjects, recorded by the install seam when the importer decoded
+# the map's script world - world.available true). Retail's ScriptEngine name
+# table (m_namedObjects, GPL Generals ScriptEngine.h + whale reversal) is
+# built from objects PLACED ON THE MAP; imported script LIBRARIES contribute
+# scripts and teams, never objects, so a name a library authors but the map
+# does not place resolves to NULL and every named condition answers FALSE.
+# This table is what lets the script-world adapter give that retail FALSE for
+# a name genuinely absent from the map (case b of the three-way split in
+# SliceUnits) instead of refusing: with the namespace declared, "the sim does
+# not model that name" AND "the map does not author it" together reproduce
+# retail's grounded false. Names the map DOES author but the sim does not
+# model keep refusing (case c) - retail would answer from a real object there.
+#
+# SIM-owned (not adapter state) for the script_unit_references reason: the
+# answer changes script outcomes, so a peer adopting a snapshot must answer
+# named conditions exactly as the peer that minted it.
+#
+# HASH INERTNESS: participates in the authoritative state ONLY when declared
+# (empty-is-absent, the unpackable_bases discipline), so every scriptless
+# scenario keeps its frozen cross-platform pin untouched.
+
+## {} = no authoritative namespace declared (every unknown name refuses);
+## {"names": {name: true, ...}} = the map's complete named-object table
+## (declared even when the map authors zero names - then EVERY unknown name
+## is retail-false). Match configuration: set by the install seam, kept
+## across reset_match() like script-team identities.
+var map_named_object_namespace: Dictionary = {}
+
+
+func configure_map_named_object_namespace(names: Array) -> void:
+	## Declare the installed map's complete named-object table. Sorted before
+	## insertion so byte-equal configuration hashes identically on every peer
+	## regardless of caller iteration order (the unpackable_bases discipline).
+	var sorted := names.duplicate()
+	sorted.sort()
+	var table: Dictionary = {}
+	for name_value in sorted:
+		table[String(name_value)] = true
+	map_named_object_namespace = {"names": table}
+
+
+func map_named_object_namespace_declared() -> bool:
+	return not map_named_object_namespace.is_empty()
+
+
+func map_declares_named_object(name: String) -> bool:
+	## Case-sensitive, like retail's strcmp over the name table.
+	return (map_named_object_namespace.get("names", {}) as Dictionary).has(name)
+
+
 # --- Script unit references (the WP16 shared namespace, SIM-owned) ---------
 #
 # team:int -> {reference_name: structure_id}. Owned by the SIM rather than
@@ -18678,6 +18731,10 @@ func _authoritative_state() -> Dictionary:
 		state["banner_respawn_ticks_by_object"] = _banner_respawn_ticks_by_object
 	if not _castle_behavior_by_source.is_empty():
 		state["castle_behavior_by_source"] = _castle_behavior_by_source
+	# Same discipline for the map named-object namespace: a match that never
+	# declares one contributes zero bytes (see the store's block comment).
+	if not map_named_object_namespace.is_empty():
+		state["map_named_object_namespace"] = map_named_object_namespace
 	# Same discipline for the script unit references: a match whose scripts
 	# never bind one contributes zero bytes (see the store's block comment).
 	if not script_unit_references.is_empty():
@@ -18863,6 +18920,7 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	_pending_commands = state["pending_commands"]
 	# Absent when empty by construction (empty-is-absent hash discipline).
 	unpackable_bases = state.get("unpackable_bases", {})
+	map_named_object_namespace = state.get("map_named_object_namespace", {})
 	script_unit_references = state.get("script_unit_references", {})
 	script_entity_references = state.get("script_entity_references", {})
 	create_object_die_pending = state.get("create_object_die_pending", [])

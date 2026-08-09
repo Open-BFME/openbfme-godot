@@ -117,15 +117,24 @@ extends RefCounted
 ## ========================
 ## Six of the eight members are conditions, and every one gates AI response
 ## logic. A read the world cannot answer must never come back as a plain
-## `false` - and for this file's biggest condition the stakes are inverted
-## relative to most packages: NAMED_NOT_DESTROYED is a NEGATED read. "That
-## object was destroyed" and "I have no idea what happened to that object" are
-## different answers, and negating the second would turn ignorance into a
-## confident "still standing" - the single worst outcome available here, since
-## it is the hero-alive gate in four libraries. Every condition therefore
-## checks `SageWorldQuery.ok` FIRST and returns WORLD_REFUSED otherwise, which
-## the dispatcher turns into CONDITION_FALLBACK (false) *and* a structured gap
-## - negation is applied only to an ANSWERED read, never to a refusal.
+## `false` - for this file's biggest condition, NAMED_NOT_DESTROYED, "that
+## object exists and stands" and "I have no idea what happened to that object"
+## are different answers, and it is the hero-alive gate in four libraries.
+## Every condition therefore checks `SageWorldQuery.ok` FIRST and returns
+## WORLD_REFUSED otherwise, which the dispatcher turns into
+## CONDITION_FALLBACK (false) *and* a structured gap.
+##
+## NAMED_NOT_DESTROYED is NOT wired as a negation. Retail evaluates it as
+## evaluateNamedUnitExists = `theUnit && !theUnit->isEffectivelyDead()`
+## (GPL Generals ScriptConditions.cpp; the retail-slice adapter documents the
+## whale-reversal confirmation) - i.e. it is units.exists() DIRECTLY, and it
+## is NOT the negation of NAMED_DESTROYED on the nonexistent-name branch:
+## for a name with no object retail answers BOTH spellings false
+## (exists: NULL short-circuits; destroyed: didUnitExist() is false). The
+## historical `not was_destroyed()` wiring here agreed with exists() for
+## every sim-modeled name but INVERTED retail's false for names absent from
+## a complete map namespace, which is why it was replaced when the
+## named-object-namespace split landed.
 ##
 ##
 ## TWO INTERPRETIVE DECISIONS, STATED RATHER THAN BURIED
@@ -189,9 +198,9 @@ static func _served(ctx: Dictionary, method: String, accepted: bool) -> int:
 
 static func _unanswered(ctx: Dictionary, query: SageWorldQuery) -> int:
 	## Every condition in this file takes this path when the world could not
-	## answer. It must NEVER be replaced by "return false" - and in this file
-	## it must ESPECIALLY never be replaced by "result = not false": see the
-	## class comment on NAMED_NOT_DESTROYED.
+	## answer. It must NEVER be replaced by "return false": a refusal carries
+	## the gap on the record, a plain false is an invented answer (see the
+	## class comment on NAMED_NOT_DESTROYED).
 	ctx["detail"] = query.detail
 	return Dispatch.Status.WORLD_REFUSED
 
@@ -221,24 +230,27 @@ static func _refuse_unknown_comparison(ctx: Dictionary, name: String, comparison
 static func _condition_named_not_destroyed(ctx: Dictionary) -> int:
 	# NAMED_NOT_DESTROYED(UNIT) - "<UNIT> has not been destroyed."
 	#
-	# THE NEGATION SITS AFTER THE OK-CHECK, AND MUST STAY THERE. The world
-	# method is the destruction read (units.was_destroyed serves both
-	# NAMED_DESTROYED and this negated spelling - the completing package
-	# registers the positive one); this handler answers NOT-destroyed, so it
-	# negates the ANSWER. Negating a refusal would turn "the world does not
-	# track destruction" into "still standing", releasing whatever the gate
-	# guards - and this is the most widely spread member of the file (17 call
-	# sites across 4 libraries, the hero/objective liveness gate). The refusal
-	# path above returns WORLD_REFUSED, which the dispatcher reads as FALSE at
-	# the call site: the conservative "treat it as gone" answer, with the gap
-	# on the record.
+	# THE STRAIGHT EXISTS READ, NOT A NEGATION (class comment): retail's
+	# evaluateNamedUnitExists is `theUnit && !theUnit->isEffectivelyDead()`,
+	# which is exactly units.exists(). Wiring it as `not was_destroyed()`
+	# gives the same answer for every name the world models, but inverts
+	# retail's FALSE for a name with no object at all (was_destroyed's NULL
+	# branch is didUnitExist(), false for a never-authored name - so both
+	# spellings are false there, and a negation would answer "still
+	# standing" for a nonexistent object). This is the most widely spread
+	# member of the file (17 call sites across 4 libraries, the
+	# hero/objective liveness gate) and the base-flag poll the rotwk maps
+	# answer entirely through the nonexistent-name branch.
+	#
+	# A refusal returns WORLD_REFUSED, which the dispatcher reads as FALSE at
+	# the call site with the gap on the record.
 	#
 	# The name passes through verbatim, per the world's argument conventions.
 	var args: SageScriptArgs = ctx["args"]
-	var query := (ctx["world"] as SageScriptWorld).units().was_destroyed(args.text(0))
+	var query := (ctx["world"] as SageScriptWorld).units().exists(args.text(0))
 	if not query.ok:
 		return _unanswered(ctx, query)
-	ctx["result"] = not query.as_bool()
+	ctx["result"] = query.as_bool()
 	return Dispatch.Status.OK
 
 

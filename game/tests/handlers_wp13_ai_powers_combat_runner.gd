@@ -22,8 +22,10 @@ extends SceneTree
 ##                        world method with the correct Scope and a SELF target
 ##   5. conditions      - true, false, and the third answer: a read the world
 ##                        cannot answer NEVER comes back as a plain false, and
-##                        NAMED_NOT_DESTROYED's negation is proven to apply
-##                        only to ANSWERED reads
+##                        NAMED_NOT_DESTROYED is proven to be the STRAIGHT
+##                        units.exists read (retail's evaluateNamedUnitExists;
+##                        not a was_destroyed negation, which inverts retail's
+##                        false for a nonexistent name - handler comment)
 ##   6. decisions       - the two documented interpretive decisions are
 ##                        pinned: >= threshold (N-1 / N / N+1 all asserted)
 ##                        and empty-team-reads-false for the ALL condition
@@ -97,7 +99,7 @@ func _run() -> void:
 	_test_team_ability_reaches_the_folded_method_with_team_scope()
 	_test_named_ability_reaches_the_folded_method_with_unit_scope()
 	_test_command_refusal_is_reported()
-	_test_named_not_destroyed_negates_an_answered_read()
+	_test_named_not_destroyed_is_the_exists_read()
 	_test_team_destroyed_is_the_straight_read()
 	_test_team_health_reads_operator_and_threshold_positionally()
 	_test_health_comparison_is_float_not_truncated()
@@ -328,16 +330,17 @@ func _test_command_refusal_is_reported() -> void:
 # --- 5. The destruction reads ---------------------------------------------
 
 
-func _test_named_not_destroyed_negates_an_answered_read() -> void:
-	# NAMED_NOT_DESTROYED(UNIT) is a NEGATED read: a standing object (the
-	# world answers was_destroyed=false) reads TRUE, a destroyed one reads
-	# FALSE. The refusal case - the negation trap - is covered separately in
-	# the unanswerable test: negating a refusal would read TRUE, and that
-	# outcome is pinned as impossible there.
+func _test_named_not_destroyed_is_the_exists_read() -> void:
+	# NAMED_NOT_DESTROYED(UNIT) is the STRAIGHT units.exists read (retail's
+	# evaluateNamedUnitExists - handler comment): a standing object (the
+	# world answers exists=true) reads TRUE, a destroyed or nonexistent one
+	# (exists=false) reads FALSE, with NO negation anywhere - a negated
+	# wiring would invert retail's false for a nonexistent name. The refusal
+	# case is covered separately in the unanswerable test.
 	var harness := _harness()
 	var world: CombatWorld = harness["world"]
-	world.set_unit_scalar("SyntheticHero", "was_destroyed", false)
-	world.set_unit_scalar("Synthetic_Fallen", "was_destroyed", true)
+	world.set_unit_scalar("SyntheticHero", "exists", true)
+	world.set_unit_scalar("Synthetic_Fallen", "exists", false)
 
 	_check(
 		"a_standing_object_reads_true",
@@ -618,8 +621,8 @@ func _test_an_unanswerable_condition_is_never_a_plain_false() -> void:
 	# A world that cannot answer must produce a REFUSAL - false at the call
 	# site, but with a gap on the record. Two of these fixtures are traps for
 	# invented defaults:
-	#   * NAMED_NOT_DESTROYED: a world that DEFAULTED was_destroyed to false
-	#     would read TRUE here ("still standing") - ignorance negated into
+	#   * NAMED_NOT_DESTROYED: a world that DEFAULTED exists to true would
+	#     read TRUE here ("still standing") - ignorance turned into
 	#     confidence, the worst outcome in this file.
 	#   * the >= 0 threshold reads: a count or health defaulting to zero
 	#     would satisfy them - refusing proves the zero was never invented.
@@ -685,7 +688,7 @@ func _test_an_unanswerable_condition_is_never_a_plain_false() -> void:
 	)
 	_check(
 		"the_refusals_name_the_missing_world_methods",
-		world.refused("units.was_destroyed")
+		world.refused("units.exists")
 		and world.refused("teams.was_destroyed")
 		and world.refused("combat.team_health_percent")
 		and world.refused("units.health_percent")
@@ -703,7 +706,7 @@ func _test_conditions_have_no_side_effects() -> void:
 	var harness := _harness()
 	var world: CombatWorld = harness["world"]
 	var env: SageScriptEnv = harness["env"]
-	world.set_unit_scalar("SyntheticHero", "was_destroyed", false)
+	world.set_unit_scalar("SyntheticHero", "exists", true)
 	world.set_unit_scalar("SyntheticHero", "health_percent", 62.5)
 	world.set_team_scalar("Synthetic_Assault_Team", "was_destroyed", false)
 	world.set_team_scalar("Synthetic_Assault_Team", "health_percent", 62.5)
@@ -750,7 +753,7 @@ func _test_arity_is_enforced_per_member() -> void:
 	var harness := _harness()
 	var world: CombatWorld = harness["world"]
 	var dispatch: SageScriptDispatch = harness["dispatch"]
-	world.set_unit_scalar("SyntheticHero", "was_destroyed", false)
+	world.set_unit_scalar("SyntheticHero", "exists", true)
 	world.set_team_scalar("Synthetic_Assault_Team", "was_destroyed", false)
 
 	_check(
@@ -978,8 +981,8 @@ class AiStubUnits:
 			return _refuse_query("units.%s" % key, "no fixture value for object '%s'" % unit)
 		return SageWorldQuery.hit(stub.unit_scalars[fixture_key])
 
-	func was_destroyed(object_name: String) -> SageWorldQuery:
-		return _scalar(object_name, "was_destroyed")
+	func exists(object_name: String) -> SageWorldQuery:
+		return _scalar(object_name, "exists")
 
 	func health_percent(object_name: String) -> SageWorldQuery:
 		return _scalar(object_name, "health_percent")

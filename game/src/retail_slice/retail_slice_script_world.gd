@@ -5262,11 +5262,28 @@ class SliceUnits:
 	##     CASE-SENSITIVE. This adapter's namespace compares the same way.
 	##   * getUnitNamed returns NULL for an unknown name and every condition
 	##     then answers FALSE - no throw, no log (ScriptConditions.cpp).
-	##     THIS ADAPTER DOES NOT BORROW THAT FALSE. Retail's false is grounded
-	##     in a COMPLETE name table; this namespace is a strict subset of the
-	##     names a map may author, so "the sim does not model that name" and
-	##     "no such object exists" are different facts, and only the second may
-	##     answer false. Unknown names REFUSE.
+	##     Retail's false is grounded in a COMPLETE name table built from
+	##     objects PLACED ON THE MAP (imported script libraries contribute
+	##     scripts and teams, never objects), so this adapter may only borrow
+	##     it when it can see the same complete table. THE THREE-WAY SPLIT
+	##     (_view):
+	##       (a) the sim models the name -> answered from sim state;
+	##       (b) the install seam declared the map's closed namedObjects table
+	##           (sim.map_named_object_namespace, from the importer-attested
+	##           schema-v1 world) and the name is ABSENT from it -> the
+	##           NULL-unit FALSE, per member, exactly retail's answer - a
+	##           correct answer, never a gap. This is what fires the authored
+	##           self-disable of the AI libraries' "Disable Flag N Check"
+	##           scripts on the rotwk maps, none of which places a BASE_FLAG
+	##           object;
+	##       (c) the name IS in the declared table but the sim does not model
+	##           its object, OR no table was declared -> REFUSE, unchanged:
+	##           retail would answer from a real object there, so a false
+	##           could be a confident wrong answer.
+	##     Value-reporting members (position, owner, health_percent) never
+	##     take branch (b): retail's false lives in the CONDITION that read
+	##     the NULL pointer, and a value member has no value to report for a
+	##     nonexistent object - they refuse with the absence on the record.
 	##   * NAMED_NOT_DESTROYED is evaluateNamedUnitExists =
 	##     `theUnit && !theUnit->isEffectivelyDead()` - DERIVED FROM THE TABLE,
 	##     not an edge record. NAMED_DESTROYED is the hybrid
@@ -5312,12 +5329,45 @@ class SliceUnits:
 		return world as RetailSliceScriptWorld
 
 	func _view(method: String, object_name: String) -> Dictionary:
-		## Shared preamble: {"reason": String} to refuse, else {"view": ...}.
+		## Shared preamble, the three-way split (class comment). Answers one of:
+		##   {"view": ...}                    - (a) the sim models the name;
+		##   {"absent": true, "reason": ...}  - (b) the installed map's declared
+		##       complete named-object table does not hold the name: retail's
+		##       NULL unit. Members whose NULL-unit answer is sourced FALSE
+		##       check "absent" FIRST and answer it; every other member falls
+		##       through to the "reason" refusal (a value member has nothing
+		##       to report about a nonexistent object);
+		##   {"reason": String}               - (c) refuse: the map authors the
+		##       name but the sim does not model it, or no table is declared.
 		var w := _world()
 		if w == null or w.sim == null:
 			return {"reason": "no simulation attached"}
 		var view := w.named_object_view(object_name)
 		if view.is_empty():
+			if (
+				w.sim.map_named_object_namespace_declared()
+				and not w.sim.map_declares_named_object(object_name)
+			):
+				return {
+					"absent": true,
+					"reason":
+					(
+						"'%s' is absent from the installed map's complete "
+						+ "named-object table; retail's name table holds no "
+						+ "such object (getUnitNamed NULL) and this member "
+						+ "has no NULL-unit answer to give"
+					) % object_name
+				}
+			if w.sim.map_named_object_namespace_declared():
+				return {
+					"reason":
+					(
+						"'%s' is authored on the installed map but this "
+						+ "simulation does not model its object; retail would "
+						+ "answer from the real object, so any invented answer "
+						+ "could be confidently wrong"
+					) % object_name
+				}
 			return {
 				"reason":
 				(
@@ -5336,6 +5386,9 @@ class SliceUnits:
 		## live map object; a structure row at health 0 is effectively dead; a
 		## row that is gone is gone.
 		var resolved := _view("units.exists", object_name)
+		if resolved.has("absent"):
+			# (b) Map-absent: getUnitNamed NULL -> `NULL && ...` is FALSE.
+			return SageWorldQuery.hit(false)
 		if resolved.has("reason"):
 			return _refuse_query("units.exists", String(resolved["reason"]))
 		var view: Dictionary = resolved["view"]
@@ -5349,6 +5402,9 @@ class SliceUnits:
 		## own todo admitting the member is misnamed. Reproduced exactly:
 		## unlike exists() this does NOT consult the dead flag.
 		var resolved := _view("units.was_created", object_name)
+		if resolved.has("absent"):
+			# (b) Map-absent: `getUnitNamed(...) != NULL` is FALSE.
+			return SageWorldQuery.hit(false)
 		if resolved.has("reason"):
 			return _refuse_query("units.was_created", String(resolved["reason"]))
 		var view: Dictionary = resolved["view"]
@@ -5360,6 +5416,13 @@ class SliceUnits:
 		## missing row IS the nulled pointer, so a bound name whose structure
 		## is gone reads destroyed; a packed flag reads not destroyed.
 		var resolved := _view("units.was_destroyed", object_name)
+		if resolved.has("absent"):
+			# (b) Map-absent: the NULL branch is `didUnitExist()`, and a name
+			# the map never authored never had an object - FALSE. Note this is
+			# NOT the negation of NAMED_NOT_DESTROYED on this branch: retail
+			# answers BOTH spellings false for a nonexistent name (the negated
+			# spelling is evaluateNamedUnitExists, served by exists()).
+			return SageWorldQuery.hit(false)
 		if resolved.has("reason"):
 			return _refuse_query("units.was_destroyed", String(resolved["reason"]))
 		var view: Dictionary = resolved["view"]
@@ -5374,6 +5437,9 @@ class SliceUnits:
 		## is effectively dead - present in the world, already dead. The sim's
 		## health-0 structure row is exactly that state.
 		var resolved := _view("units.is_dying", object_name)
+		if resolved.has("absent"):
+			# (b) Map-absent: NULL is not "present and dead" - FALSE.
+			return SageWorldQuery.hit(false)
 		if resolved.has("reason"):
 			return _refuse_query("units.is_dying", String(resolved["reason"]))
 		var view: Dictionary = resolved["view"]
@@ -5442,6 +5508,11 @@ class SliceUnits:
 		## rostered player: the question supplies the player to compare, so no
 		## neutral script-player name needs to be invented.
 		var resolved_object := _view("units.is_owned_by", object_name)
+		if resolved_object.has("absent"):
+			# (b) Map-absent: retail's evaluateNamedOwnedByPlayer returns
+			# FALSE on the NULL unit BEFORE ever resolving the player, so the
+			# player token is deliberately not resolved on this branch.
+			return SageWorldQuery.hit(false)
 		if resolved_object.has("reason"):
 			return _refuse_query(
 				"units.is_owned_by", String(resolved_object["reason"])

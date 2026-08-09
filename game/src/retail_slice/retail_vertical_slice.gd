@@ -5373,6 +5373,14 @@ func _normalized_map_scripts_document(doc: Dictionary) -> Dictionary:
 	source_names.sort()
 	for player_name in source_names:
 		sources.append({"player": String(player_name), "scripts": sources_by_player[player_name]})
+	# world.available is the importer's decoded-script-world attestation
+	# (sage_scripts.py emits available:false with empty tables when the map's
+	# script world could not be decoded). Only an ATTESTED world's
+	# namedObjects list is retail's complete name table; without it the
+	# adapter keeps refusing every unknown name (three-way split, case c).
+	var world_available: bool = (
+		typeof(world_doc.get("available")) == TYPE_BOOL and bool(world_doc["available"])
+	)
 	var named_objects: Dictionary = {}
 	for row_value in world_doc["namedObjects"] as Array:
 		if typeof(row_value) != TYPE_DICTIONARY:
@@ -5486,7 +5494,27 @@ func _normalized_map_scripts_document(doc: Dictionary) -> Dictionary:
 			"named_member_rows": member_rows,
 			"marker_only": bool(row.get("markerOnly", false)),
 		})
-	return {"ok": true, "players": players, "teams": team_rows, "sources": sources}
+	# The map's closed named-object table, keyed for the sim's namespace store.
+	# MAP world only, deliberately: retail's ScriptEngine name table is built
+	# from objects PLACED ON THE MAP; imported script libraries contribute
+	# scripts and teams, never objects (the ai libraries author BASE_FLAG_1..8
+	# in their own library worlds, yet no BASE_FLAG object exists in any of
+	# the 128 retail rotwk maps and retail answers named conditions FALSE for
+	# them - the schema-v2 composite path funnels through here with exactly
+	# the map world, so library-declared names never widen this table).
+	var namespace_names: Dictionary = {}
+	for object_name_value in named_objects.keys():
+		namespace_names[String(object_name_value)] = true
+	return {
+		"ok": true,
+		"players": players,
+		"teams": team_rows,
+		"sources": sources,
+		"named_object_namespace": {
+			"declared": world_available,
+			"names": namespace_names,
+		},
+	}
 
 
 func _script_named_member_handle(named_row: Dictionary, owner_team: int) -> Dictionary:
@@ -5783,6 +5811,19 @@ func _install_map_scripts_document(
 		simulation.script_env_state.merge(prior_env_state, true)
 		script_runtimes = prior_runtimes
 		return false
+	# COMMIT. Declare the map's complete named-object table on the sim - only
+	# now, so a failed install above records nothing (atomic like the rest of
+	# this seam), and only when the importer attested the decoded world
+	# (world.available; see _normalized_map_scripts_document). This is what
+	# lets the executor worlds answer retail's FALSE for names genuinely
+	# absent from the map (SliceUnits three-way split, case b).
+	var namespace_row: Dictionary = (
+		normalized.get("named_object_namespace", {}) as Dictionary
+	)
+	if bool(namespace_row.get("declared", false)):
+		simulation.configure_map_named_object_namespace(
+			(namespace_row.get("names", {}) as Dictionary).keys()
+		)
 	script_runtimes = runtimes
 	return true
 
