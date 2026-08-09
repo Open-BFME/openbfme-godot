@@ -217,13 +217,17 @@ public sealed class AllInOneRetailProvisioner
             Report(progress, "Installed", relative, completedBytes, totalBytes);
         }
 
-        // Require the retail marker so the rest of the launcher can treat this path
-        // as a real install. A package that downloads but never places game.dat is a
+        // Require the same edition-aware fingerprint as browse/discovery. A package
+        // that downloads a marker-only, incomplete, or wrong-edition tree is a
         // broken provision, not a success.
-        if (!RetailDiscovery.IsRetailInstall(target))
+        if (!RetailDiscovery.IsRetailInstall(game, target))
+        {
+            var rejection = RetailDiscovery.ExplainRejection(game, target)
+                            ?? "the retail fingerprint did not match";
             throw new InvalidDataException(
-                $"The {game} download finished but {RetailDiscovery.InstallMarker} is missing " +
-                $"from {target}. The workshop package may have changed; nothing was marked ready.");
+                $"The {game} download finished, but {rejection} " +
+                "The workshop package may have changed; nothing was marked ready.");
+        }
 
         WriteReceipt(target, game, package, languageCode, installed, skipped);
         progress?.Report(new ProvisionProgress(
@@ -242,9 +246,9 @@ public sealed class AllInOneRetailProvisioner
     public static string? ResolveExisting(string game, string openBfmeInstallRoot)
     {
         var found = RetailDiscovery.Discover(game);
-        if (found is not null && RetailDiscovery.IsRetailInstall(found)) return found;
+        if (found is not null && RetailDiscovery.IsRetailInstall(game, found)) return found;
         var provisioned = DefaultInstallPath(openBfmeInstallRoot, game);
-        return RetailDiscovery.IsRetailInstall(provisioned) ? provisioned : null;
+        return RetailDiscovery.IsRetailInstall(game, provisioned) ? provisioned : null;
     }
 
     private async Task<WorkshopPackage> FetchPackageAsync(string guid, CancellationToken cancellationToken)

@@ -366,13 +366,8 @@ public partial class MainWindow : Window
                 CheckReleaseText.Foreground = WarnBrush;
             }
 
-            var bfme = ResolvePath("bfme2", BfmePath.Text);
-            CheckBfmeText.Text = bfme is not null ? "BFME II · ready" : "BFME II · needed";
-            CheckBfmeText.Foreground = bfme is not null ? OkBrush : WarnBrush;
-
-            var rotwk = ResolvePath("rotwk", RotwkPath.Text);
-            CheckRotwkText.Text = rotwk is not null ? "RotWK · ready" : "RotWK · needed";
-            CheckRotwkText.Foreground = rotwk is not null ? OkBrush : WarnBrush;
+            SetRetailChecklist("bfme2", BfmePath.Text, "BFME II", CheckBfmeText);
+            SetRetailChecklist("rotwk", RotwkPath.Text, "RotWK", CheckRotwkText);
 
             var packCount = (_contentInventory?.Packs.Count ?? 0) + (_contentInventory?.Mods.Count ?? 0);
             var active = _contentInventory?.ActivePackKey;
@@ -414,9 +409,25 @@ public partial class MainWindow : Window
 
     private string? ResolvePath(string game, string boxText)
     {
-        if (RetailDiscovery.IsRetailInstall(boxText))
+        if (RetailDiscovery.IsRetailInstall(game, boxText))
             return Path.GetFullPath(boxText);
         return AllInOneRetailProvisioner.ResolveExisting(game, _service.Options.InstallRoot);
+    }
+
+    private void SetRetailChecklist(string game, string path, string label,
+        System.Windows.Controls.TextBlock text)
+    {
+        var assessment = RetailDiscovery.Assess(game, path);
+        var valid = assessment is RetailInstallAssessment.ValidBfme2 or RetailInstallAssessment.ValidRotwk;
+        var state = assessment switch
+        {
+            RetailInstallAssessment.WrongEdition => "wrong edition",
+            RetailInstallAssessment.Incomplete => "incomplete",
+            _ when valid => "ready",
+            _ => "needed",
+        };
+        text.Text = $"{label} · {state}";
+        text.Foreground = valid ? OkBrush : WarnBrush;
     }
 
     private void PrefillRetailPaths()
@@ -557,12 +568,12 @@ public partial class MainWindow : Window
                     error.Message;
             }
 
-            if (!RetailDiscovery.IsRetailInstall(BfmePath.Text))
+            if (!RetailDiscovery.IsRetailInstall("bfme2", BfmePath.Text))
                 await ProvisionCoreAsync("bfme2", token);
             else
                 StatusText.Text = "BFME II already present.";
 
-            if (!RetailDiscovery.IsRetailInstall(RotwkPath.Text))
+            if (!RetailDiscovery.IsRetailInstall("rotwk", RotwkPath.Text))
                 await ProvisionCoreAsync("rotwk", token);
             else
                 StatusText.Text = "RotWK already present.";
@@ -687,10 +698,10 @@ public partial class MainWindow : Window
         await ImportAsync("rotwk", RotwkPath.Text);
 
     private void BrowseBfme_Click(object sender, RoutedEventArgs e) =>
-        Browse(BfmePath, BfmeDetectText, "Select your Battle for Middle-earth II folder");
+        Browse("bfme2", BfmePath, BfmeDetectText, "Select your Battle for Middle-earth II folder");
 
     private void BrowseRotwk_Click(object sender, RoutedEventArgs e) =>
-        Browse(RotwkPath, RotwkDetectText, "Select your Rise of the Witch-king folder");
+        Browse("rotwk", RotwkPath, RotwkDetectText, "Select your Rise of the Witch-king folder");
 
     private void OpenAio_Click(object sender, RoutedEventArgs e)
     {
@@ -719,7 +730,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void Browse(System.Windows.Controls.TextBox box,
+    private void Browse(string game, System.Windows.Controls.TextBox box,
         System.Windows.Controls.TextBlock note, string title)
     {
         try
@@ -728,7 +739,7 @@ public partial class MainWindow : Window
             var folder = PlatformCompat.PickFolder(title, initial);
             if (folder is null) return;
             box.Text = folder;
-            note.Text = RetailDiscovery.ExplainRejection(folder)
+            note.Text = RetailDiscovery.ExplainRejection(game, folder)
                         ?? "This folder looks like a valid game installation.";
             RefreshChecklist();
         }
@@ -742,12 +753,17 @@ public partial class MainWindow : Window
 
     private async Task ImportAsync(string game, string path)
     {
-        var rejection = RetailDiscovery.ExplainRejection(path);
+        var rejection = RetailDiscovery.ExplainRejection(game, path);
         if (rejection is not null)
         {
             ShowError(new InvalidOperationException(rejection));
             return;
         }
+
+        var previousGamePackKeys = (_contentInventory?.Packs ?? Array.Empty<ContentPackEntry>())
+            .Where(pack => pack.Id.StartsWith(game + "-", StringComparison.OrdinalIgnoreCase))
+            .Select(pack => pack.RelativeKey)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         await RunOperationAsync(async token =>
         {
@@ -766,9 +782,26 @@ public partial class MainWindow : Window
                     "step failed. Your game installation was not modified — the importer only " +
                     "reads from it.");
             Progress.Value = 100;
-            StatusText.Text = game == "bfme2" ? "BFME II assets imported." : "RotWK Angmar assets imported.";
             ClearDetail();
             RefreshContentPacks();
+            RefreshChecklist();
+            var gamePacks = _contentInventory?.Packs
+                .Where(pack => pack.Id.StartsWith(game + "-", StringComparison.OrdinalIgnoreCase))
+                .ToArray() ?? Array.Empty<ContentPackEntry>();
+            var newlyPublished = gamePacks
+                .Where(pack => !previousGamePackKeys.Contains(pack.RelativeKey))
+                .ToArray();
+            var activeKey = _contentInventory?.ActivePackKey;
+            var activeForGame = activeKey is not null &&
+                                (newlyPublished.Length > 0
+                                    ? newlyPublished.Any(pack => pack.RelativeKey.Equals(
+                                        activeKey, StringComparison.OrdinalIgnoreCase))
+                                    : gamePacks.Length == 1 && gamePacks[0].RelativeKey.Equals(
+                                        activeKey, StringComparison.OrdinalIgnoreCase));
+            var label = game == "bfme2" ? "BFME II" : "RotWK Angmar";
+            StatusText.Text = activeForGame
+                ? $"{label} assets published; the active selection was unchanged."
+                : $"{label} assets published but not active. Use Set active before Play.";
         });
     }
 

@@ -1,5 +1,16 @@
 namespace OpenBFME.Launcher;
 
+public enum RetailInstallAssessment
+{
+    Missing,
+    NotADirectory,
+    NoMarker,
+    WrongEdition,
+    Incomplete,
+    ValidBfme2,
+    ValidRotwk,
+}
+
 /// <summary>
 /// Finds the player's own retail installation on this machine.
 ///
@@ -25,6 +36,15 @@ public static class RetailDiscovery
 
     /// <summary>Environment override for the Rise of the Witch-king install.</summary>
     public const string RotwkOverrideVariable = "ROTWK_INSTALL";
+
+    // These are the same bounded prerequisites used by the importer's
+    // doctor_install(): the edition executable plus its first three required
+    // CORE_ARCHIVES. Presence is enough here; payload digests belong to the
+    // separate workshop retail-payload-manifest contract.
+    private static readonly string[] CoreArchives = { "ini.big", "w3d.big", "textures0.big" };
+
+    private const string Bfme2Executable = "lotrbfme2.exe";
+    private const string RotwkExecutable = "lotrbfme2ep1.exe";
 
     private static readonly string[] Bfme2RelativeDirectories =
     {
@@ -113,7 +133,7 @@ public static class RetailDiscovery
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                     "OpenBFME");
                 var provisioned = AllInOneRetailProvisioner.DefaultInstallPath(openRoot, game);
-                if (IsRetailInstall(provisioned))
+                if (IsRetailInstall(game, provisioned))
                     return Path.GetFullPath(provisioned);
             }
             catch (Exception error) when (error is ArgumentException or NotSupportedException or PathTooLongException or IOException or UnauthorizedAccessException)
@@ -126,7 +146,7 @@ public static class RetailDiscovery
         }
 
         foreach (var candidate in Candidates(game, environment))
-            if (IsRetailInstall(candidate))
+            if (IsRetailInstall(game, candidate))
             {
                 try { return Path.GetFullPath(candidate); }
                 catch (Exception error) when (error is ArgumentException or NotSupportedException or PathTooLongException or IOException)
@@ -158,7 +178,7 @@ public static class RetailDiscovery
                         ?? key?.GetValue("Install Dir") as string;
             if (string.IsNullOrWhiteSpace(value)) return null;
             var full = Path.GetFullPath(value.Trim());
-            return IsRetailInstall(full) ? full : null;
+            return IsRetailInstall(game, full) ? full : null;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.SecurityException or ArgumentException)
         {
@@ -166,38 +186,103 @@ public static class RetailDiscovery
         }
     }
 
-    /// <summary>True when <paramref name="directory"/> looks like a real retail install.</summary>
-    public static bool IsRetailInstall(string? directory)
+    /// <summary>Assess a retail folder against one specific game edition.</summary>
+    public static RetailInstallAssessment Assess(string game, string? directory)
     {
-        if (string.IsNullOrWhiteSpace(directory)) return false;
-        try { return File.Exists(Path.Combine(directory, InstallMarker)); }
+        var (expectedExecutable, otherExecutable, valid) = Edition(game);
+        if (string.IsNullOrWhiteSpace(directory)) return RetailInstallAssessment.Missing;
+        try
+        {
+            if (!Directory.Exists(directory)) return RetailInstallAssessment.NotADirectory;
+            if (!File.Exists(Path.Combine(directory, InstallMarker)))
+                return RetailInstallAssessment.NoMarker;
+
+            var expectedPresent = File.Exists(Path.Combine(directory, expectedExecutable));
+            var otherPresent = File.Exists(Path.Combine(directory, otherExecutable));
+            if (!expectedPresent && otherPresent) return RetailInstallAssessment.WrongEdition;
+            if (!expectedPresent || CoreArchives.Any(name => !File.Exists(Path.Combine(directory, name))))
+                return RetailInstallAssessment.Incomplete;
+            return valid;
+        }
         catch (Exception error) when (error is ArgumentException or NotSupportedException or PathTooLongException or IOException or UnauthorizedAccessException)
         {
-            return false;
+            return RetailInstallAssessment.NotADirectory;
         }
     }
+
+    /// <summary>True only when the folder is valid for <paramref name="game"/>.</summary>
+    public static bool IsRetailInstall(string game, string? directory)
+    {
+        var assessment = Assess(game, directory);
+        return assessment == (game == "bfme2"
+            ? RetailInstallAssessment.ValidBfme2
+            : RetailInstallAssessment.ValidRotwk);
+    }
+
+    // Compatibility for non-edition-sensitive launch environment plumbing.
+    // Readiness, provisioning and conversion must use the game-aware overload.
+    public static bool IsRetailInstall(string? directory) =>
+        IsRetailInstall("bfme2", directory) || IsRetailInstall("rotwk", directory);
 
     /// <summary>
     /// A human-readable explanation of why a path was rejected, or <c>null</c> if it is
     /// acceptable. Written to be pasted straight into the launcher's status line.
     /// </summary>
-    public static string? ExplainRejection(string? directory)
+    public static string? ExplainRejection(string game, string? directory)
     {
-        if (string.IsNullOrWhiteSpace(directory))
-            return "No game folder is selected. Choose the folder your retail game is installed in.";
+        var (expectedExecutable, _, _) = Edition(game);
+        var requestedName = game == "bfme2"
+            ? "The Battle for Middle-earth II"
+            : "Rise of the Witch-king";
+        var otherName = game == "bfme2"
+            ? "Rise of the Witch-king"
+            : "The Battle for Middle-earth II";
+        var assessment = Assess(game, directory);
+        if (assessment == RetailInstallAssessment.Missing)
+            return $"No {requestedName} folder is selected. Choose the folder that game is installed in.";
         string full;
-        try { full = Path.GetFullPath(directory); }
+        try { full = Path.GetFullPath(directory!); }
         catch (Exception error) when (error is ArgumentException or NotSupportedException or PathTooLongException)
         {
             return $"'{directory}' is not a valid folder path.";
         }
-        if (!SafeDirectoryExists(full))
+        if (assessment == RetailInstallAssessment.NotADirectory)
             return $"There is no folder at {full}.";
-        if (!IsRetailInstall(full))
+        if (assessment == RetailInstallAssessment.NoMarker)
             return $"{full} does not contain {InstallMarker}, so it is not a game installation. " +
                    "Choose the folder that contains the game's own files.";
-        return null;
+        if (assessment == RetailInstallAssessment.WrongEdition)
+            return $"This looks like {otherName}, not {requestedName}. Choose the {requestedName} folder.";
+        if (assessment == RetailInstallAssessment.Incomplete)
+        {
+            var required = new[] { InstallMarker, expectedExecutable }.Concat(CoreArchives);
+            var missing = required.Where(name => !File.Exists(Path.Combine(full, name))).ToArray();
+            return $"This {requestedName} install is incomplete: missing {string.Join(", ", missing)}.";
+        }
+        return assessment is RetailInstallAssessment.ValidBfme2 or RetailInstallAssessment.ValidRotwk
+            ? null
+            : $"The selected folder is not a valid {requestedName} installation.";
     }
+
+    /// <summary>
+    /// Compatibility explanation for callers that only need to recognise either
+    /// supported edition. Edition-aware setup/import paths use the overload above.
+    /// </summary>
+    public static string? ExplainRejection(string? directory)
+    {
+        if (IsRetailInstall("bfme2", directory) || IsRetailInstall("rotwk", directory)) return null;
+        var bfme2 = Assess("bfme2", directory);
+        var game = bfme2 == RetailInstallAssessment.WrongEdition ? "rotwk" : "bfme2";
+        return ExplainRejection(game, directory);
+    }
+
+    private static (string ExpectedExecutable, string OtherExecutable, RetailInstallAssessment Valid)
+        Edition(string game) => game switch
+        {
+            "bfme2" => (Bfme2Executable, RotwkExecutable, RetailInstallAssessment.ValidBfme2),
+            "rotwk" => (RotwkExecutable, Bfme2Executable, RetailInstallAssessment.ValidRotwk),
+            _ => throw new ArgumentOutOfRangeException(nameof(game), game, "Expected bfme2 or rotwk."),
+        };
 
     private static string? Read(IDictionary<string, string>? environment, string name) =>
         environment is null
