@@ -54,6 +54,9 @@ from openbfme_importer.paths import (  # noqa: E402
     ensure_external_to_repo,
     repo_root_from_module,
 )
+from openbfme_importer.profile import (  # noqa: E402
+    canonical_multiplayer_map_runtime_slug,
+)
 from openbfme_importer.sage_map import (  # noqa: E402
     MAX_SOURCE_BYTES,
     SageMapError,
@@ -126,7 +129,23 @@ def _read_virtual(catalog: InstallCatalog, virtual: str, *, max_bytes: int) -> b
 
 
 def _map_slug(virtual_path: str) -> str:
-    """Stable unique slug; keep mp/wor/ang kind tokens to avoid name collisions."""
+    """Stable unique slug, aligned with the runtime's canonical map-id grammar.
+
+    Canonical skirmish sources (``maps/map mp <name>/<same>.map``) use the
+    canonical multiplayer runtime slug: the runtime installs a map's script
+    composite ONLY under ``<game>.map.<that slug>``
+    (``retail_vertical_slice.gd:5027-5037``), so a catalog row authored with a
+    kept ``mp`` token (``rotwk.map.mp-harlindon``) ships scripts that are
+    refused on every launch - the exact defect the goal-official-72 pack
+    inherited from this function.  Every other family keeps its retail kind
+    tokens (wor/ang/good/evil) for collision-free ids: ``map wor harlindon``
+    stays ``wor-harlindon`` beside skirmish ``harlindon``.
+    """
+    canonical = canonical_multiplayer_map_runtime_slug(
+        virtual_path.replace("\\", "/")
+    )
+    if canonical is not None:
+        return canonical
     parts = virtual_path.replace("\\", "/").split("/")
     folder = parts[-2] if len(parts) >= 2 else Path(virtual_path).stem
     words = [w for w in folder.casefold().split() if w]

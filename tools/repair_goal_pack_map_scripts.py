@@ -27,6 +27,14 @@ Fail-closed rules:
   ``scripts.json`` (without ``--force``) refuses the WHOLE run: everything is
   composed and validated first, and nothing is written unless every map
   passed.  No silent partial success.
+- Catalog rows whose id kept an older slug scheme (``rotwk.map.mp-harlindon``)
+  are MIGRATED to the canonical runtime id (``rotwk.map.harlindon``): the
+  runtime refuses to install a composite unless the mounted row id equals
+  ``<game>.map.<canonical slug>`` (``retail_vertical_slice.gd:5027-5037``), so
+  without the migration the composite ships but stays inert forever.  The
+  migration rewrites BOTH the ``data/maps.json`` row id and the cooked
+  ``map.json`` id (ContentDB requires them equal, ``content_db.gd:421``), and
+  refuses when another row already claims the canonical id.
 """
 
 from __future__ import annotations
@@ -234,6 +242,41 @@ def plan_map_source_backfill(
     return updated
 
 
+def plan_map_id_migration(
+    row_id: str,
+    slug: str,
+    catalog_row_ids: list[str],
+    *,
+    game: str = "rotwk",
+) -> str | None:
+    """Plan one catalog row's migration to the canonical runtime map id.
+
+    The runtime derives the ONLY id it will install scripts under from the
+    map's retail source virtualPath (``maps/map mp <name>/...`` ->
+    ``<game>.map.<name-slug>``; ``retail_vertical_slice.gd:4974-4996`` and the
+    equality check at ``:5027-5037``).  ``slug`` here is the sha-bound
+    canonical runtime slug the caller already derived through
+    ``canonical_multiplayer_map_runtime_slug`` - never the row's own slug.
+
+    Returns the canonical id when the row must move, ``None`` when it already
+    matches.  Fail-closed: refuses when any OTHER row in the same catalog
+    already claims the canonical id, because applying the migration would
+    produce a duplicate id that ContentDB rejects the whole catalog for
+    (``content_db.gd:412``).
+    """
+
+    canonical = f"{game}.map.{slug}"
+    if row_id == canonical:
+        return None
+    others = [existing for existing in catalog_row_ids if existing != row_id]
+    if canonical in others:
+        raise RepairRefusal(
+            f"cannot migrate catalog row id {row_id!r} to {canonical!r}: "
+            "other rows already claim the canonical id (ambiguous collision)"
+        )
+    return canonical
+
+
 def write_composed_document(
     target: Path, document: dict[str, Any], *, force: bool
 ) -> str:
@@ -307,8 +350,13 @@ def load_declared_composites(profile_path: Path) -> list[dict[str, Any]]:
     return declared
 
 
-def load_skirmish_rows(pack: Path) -> list[dict[str, Any]]:
-    """Bind each skirmish catalog row to its cooked map dir and source sha."""
+def load_skirmish_rows(pack: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Bind each skirmish catalog row to its cooked map dir and source sha.
+
+    Returns the parsed ``data/maps.json`` document (whose row objects the
+    returned bindings reference in place, so an id migration can rewrite the
+    document through them) plus one binding per skirmish row.
+    """
 
     catalog_path = pack / "data" / "maps.json"
     if not catalog_path.is_file():
@@ -344,6 +392,7 @@ def load_skirmish_rows(pack: Path) -> list[dict[str, Any]]:
         rows.append(
             {
                 "id": str(row.get("id") or ""),
+                "catalogRow": row,
                 "mapDir": map_path.parent,
                 "mapPath": map_path,
                 "cooked": cooked,
@@ -352,7 +401,7 @@ def load_skirmish_rows(pack: Path) -> list[dict[str, Any]]:
         )
     if not rows:
         raise RepairRefusal(f"pack catalog has no skirmish rows: {catalog_path}")
-    return rows
+    return document, rows
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -409,7 +458,11 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"install catalog is stale: {stale}")
 
     declared = load_declared_composites(profile_path)
-    rows = load_skirmish_rows(pack)
+    pack_catalog_path = pack / "data" / "maps.json"
+    pack_catalog_document, rows = load_skirmish_rows(pack)
+    all_row_ids = [
+        str(row.get("id") or "") for row in pack_catalog_document.get("maps") or []
+    ]
 
     libraries = decode_library_documents(catalog)
     library_documents = [document for _path, document in libraries]
@@ -456,10 +509,12 @@ def main(argv: list[str] | None = None) -> int:
                 map_path=row["mapPath"],
             )
             # The runtime additionally requires the catalog row id to equal
-            # the canonical slug id; a mismatch (e.g. rotwk.map.mp-harlindon
-            # vs slug harlindon) means the composite ships but stays inert
-            # until an id-migration packet lands.  Loud, not silent.
-            runtime_blocked = row["id"] != f"{args.game}.map.{slug}"
+            # the canonical slug id; a stale id (e.g. rotwk.map.mp-harlindon
+            # vs slug harlindon) is MIGRATED in place, fail-closed on
+            # ambiguous collisions.  Without it the composite ships inert.
+            migrated_id = plan_map_id_migration(
+                row["id"], slug, all_row_ids, game=args.game
+            )
             target = row["mapDir"] / "scripts.json"
             status = "write"
             if target.is_file() and not args.force:
@@ -482,17 +537,17 @@ def main(argv: list[str] | None = None) -> int:
                     "document": document,
                     "status": status,
                     "mapPath": row["mapPath"],
+                    "cooked": row["cooked"],
+                    "catalogRow": row["catalogRow"],
                     "backfill": backfill,
-                    "runtimeBlocked": runtime_blocked,
+                    "migratedId": migrated_id,
                 }
             )
             notes = []
             if backfill is not None:
                 notes.append("backfill-map-source")
-            if runtime_blocked:
-                notes.append(
-                    f"RUNTIME-BLOCKED(row id != {args.game}.map.{slug})"
-                )
+            if migrated_id is not None:
+                notes.append(f"MIGRATE-ID({row['id']} -> {migrated_id})")
             print(
                 f"PLAN {slug} {status} row={row['id']} "
                 f"scripts={len(document['scripts'])} "
@@ -518,8 +573,11 @@ def main(argv: list[str] | None = None) -> int:
     repaired = 0
     skipped = 0
     backfilled = 0
-    runtime_blocked_slugs = sorted(
-        plan["slug"] for plan in planned if plan["runtimeBlocked"]
+    migrated = 0
+    planned_migrations = sorted(
+        f"{plan['rowId']} -> {plan['migratedId']}"
+        for plan in planned
+        if plan["migratedId"] is not None
     )
     if refusals:
         print(
@@ -540,21 +598,34 @@ def main(argv: list[str] | None = None) -> int:
             status = write_composed_document(
                 plan["target"], plan["document"], force=args.force
             )
+            cooked_update = plan["backfill"]
             if plan["backfill"] is not None:
-                write_json_atomic(plan["mapPath"], plan["backfill"])
                 backfilled += 1
                 status += "+map-source-backfill"
+            if plan["migratedId"] is not None:
+                # Row id and cooked map id move TOGETHER: ContentDB refuses
+                # the whole catalog when they disagree (content_db.gd:421).
+                if cooked_update is None:
+                    cooked_update = json.loads(json.dumps(plan["cooked"]))
+                cooked_update["id"] = plan["migratedId"]
+                plan["catalogRow"]["id"] = plan["migratedId"]
+                migrated += 1
+                status += "+id-migrated"
+            if cooked_update is not None:
+                write_json_atomic(plan["mapPath"], cooked_update)
             if status.startswith("repaired"):
                 repaired += 1
             else:
                 skipped += 1
             print(f"REPAIR {plan['slug']} {status}", flush=True)
+        if migrated:
+            write_json_atomic(pack_catalog_path, pack_catalog_document)
 
-    if runtime_blocked_slugs:
+    if planned_migrations:
         print(
-            "RUNTIME-BLOCKED (composite written but the runtime will refuse "
-            "it until the pack row id matches the canonical slug): "
-            + ", ".join(runtime_blocked_slugs),
+            "ID-MIGRATIONS "
+            + ("planned (dry run): " if args.dry_run or refusals else "applied: ")
+            + ", ".join(planned_migrations),
             flush=True,
         )
     print(
@@ -562,7 +633,7 @@ def main(argv: list[str] | None = None) -> int:
         f"declared={len(declared)} skirmishRows={len(rows)} "
         f"repaired={repaired} skipped={skipped} "
         f"backfilledMapSources={backfilled} "
-        f"runtimeBlocked={len(runtime_blocked_slugs)} "
+        f"idMigrations={migrated} "
         f"refused={len(refusals)} "
         f"dryRun={bool(args.dry_run or refusals)}",
         flush=True,

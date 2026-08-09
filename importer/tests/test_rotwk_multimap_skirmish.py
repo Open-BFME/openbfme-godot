@@ -206,23 +206,25 @@ def test_registry_catalog_natively_emits_names_categories_and_art(
         str(row["id"]): row
         for row in profile["runtime_data"]["data/maps.json"]["maps"]
     }
-    # Slugs keep the retail kind token; this is what makes the two Harlindons
-    # collision-free, and also what MOVES ids relative to older packs.
+    # Skirmish slugs use the canonical runtime grammar (the ONLY id the
+    # runtime installs scripts under: retail_vertical_slice.gd:5027-5037);
+    # non-skirmish rows keep their retail kind token, which is what keeps the
+    # two Harlindons collision-free.
     assert sorted(rows) == [
-        "bfme2.map.mp-bravo-ridge",
-        "bfme2.map.mp-fall-back-4p",
-        "bfme2.map.mp-harlindon",
+        "bfme2.map.bravo-ridge",
+        "bfme2.map.fall-back-4p",
+        "bfme2.map.harlindon",
         "bfme2.map.wor-harlindon",
     ]
 
     # Authored names win; the directory derivation is a recorded last resort.
-    assert rows["bfme2.map.mp-fall-back-4p"]["displayName"] == "Stonewain Valley"
-    assert rows["bfme2.map.mp-harlindon"]["displayName"] == "Harlindon"
+    assert rows["bfme2.map.fall-back-4p"]["displayName"] == "Stonewain Valley"
+    assert rows["bfme2.map.harlindon"]["displayName"] == "Harlindon"
     assert rows["bfme2.map.wor-harlindon"]["displayName"] == "Harlindon"
-    assert rows["bfme2.map.mp-bravo-ridge"]["displayName"] == "Bravo Ridge"
+    assert rows["bfme2.map.bravo-ridge"]["displayName"] == "Bravo Ridge"
 
     # Real category classification: wor rows are never skirmish.
-    assert rows["bfme2.map.mp-fall-back-4p"]["category"] == "skirmish"
+    assert rows["bfme2.map.fall-back-4p"]["category"] == "skirmish"
     assert rows["bfme2.map.wor-harlindon"]["category"] == "wotr-battle"
     evidence = profile["planning_evidence"]
     assert evidence["categoryCounts"] == {"skirmish": 3, "wotr-battle": 1}
@@ -233,14 +235,14 @@ def test_registry_catalog_natively_emits_names_categories_and_art(
         assert row["art"] == f"assets/ui/maps/{slug}-art.png"
         assert row["preview"] == f"assets/ui/maps/{slug}-preview.png"
     resource_ids = {str(item["id"]) for item in profile["resources"]}
-    assert "map-mp-fall-back-4p-art" in resource_ids
+    assert "map-fall-back-4p-art" in resource_ids
     assert "map-wor-harlindon-preview" in resource_ids
     assert evidence["mapArtCounts"] == {"withPreview": 4, "withArt": 4}
 
     # Name provenance is evidence, not trust.
     assert evidence["displayNameSource"]["derivedFromDirectoryCount"] == 1
     assert evidence["displayNameSource"]["derivedFromDirectorySlugs"] == [
-        "mp-bravo-ridge"
+        "bravo-ridge"
     ]
     assert evidence["displayNameSource"]["authoredCount"] == 3
 
@@ -354,28 +356,33 @@ def test_repair_leaves_ambiguous_kind_stripped_art_unbound(tmp_path: Path) -> No
         assert not row.get("preview")
 
 
-def test_map_slug_keeps_kind_tokens_which_moves_ids_vs_shipped_pack() -> None:
-    """The registry lane's slugs deliberately keep the retail kind token.
+def test_map_slug_uses_canonical_runtime_slug_for_skirmish_sources() -> None:
+    """Skirmish slugs match the runtime's canonical map-id grammar.
 
-    That is collision-free but produces DIFFERENT map ids than the shipped
-    goal-official-72 pack (``rotwk.map.adorn-river``); any recook through this
-    lane is an id migration and must be decided, not discovered.
+    The runtime installs a map's script composite ONLY under
+    ``<game>.map.<canonical runtime slug>`` (``map mp `` prefix stripped);
+    a kept ``mp`` token authors a row whose scripts are refused forever -
+    the goal-official-72 harlindon defect. Non-skirmish families keep their
+    kind tokens so ``map wor harlindon`` stays distinct beside it.
     """
 
     mod = _load_tool()
     assert (
         mod._map_slug("maps/map mp adorn river/map mp adorn river.map")
-        == "mp-adorn-river"
+        == "adorn-river"
     )
     assert (
         mod._map_slug("maps/map wor ang barrow downs/map wor ang barrow downs.map")
         == "wor-ang-barrow-downs"
     )
-    assert mod._map_slug("maps/map mp harlindon/map mp harlindon.map") == "mp-harlindon"
+    assert mod._map_slug("maps/map mp harlindon/map mp harlindon.map") == "harlindon"
     assert (
         mod._map_slug("maps/map wor harlindon/map wor harlindon.map")
         == "wor-harlindon"
     )
+    # A non-canonical skirmish payload (directory/file identity mismatch)
+    # cannot install scripts anyway; it keeps the disambiguated fallback.
+    assert mod._map_slug("maps/map mp odd/renamed.map") == "mp-odd"
 
 
 def test_load_catalog_refuses_to_overwrite_on_install_root_mismatch(

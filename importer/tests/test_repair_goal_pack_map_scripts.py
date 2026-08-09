@@ -10,6 +10,7 @@ from tools.repair_goal_pack_map_scripts import (
     RepairRefusal,
     compose_pack_scripts_document,
     decode_library_documents,
+    plan_map_id_migration,
     plan_map_source_backfill,
     resolve_selected_pack,
     write_composed_document,
@@ -213,6 +214,53 @@ def test_resolve_selected_pack_reads_workspace_selection(tmp_path: Path) -> None
     selection.write_text(json.dumps({"activePack": "other/x"}), encoding="utf-8")
     with pytest.raises(RepairRefusal, match="expected exactly 1"):
         resolve_selected_pack(tmp_path)
+
+
+def test_map_id_migration_maps_stale_mp_slug_to_canonical_runtime_id() -> None:
+    """rotwk.map.mp-harlindon must migrate to rotwk.map.harlindon.
+
+    The runtime installs a script composite only when the mounted row id
+    equals ``<game>.map.<canonical runtime slug>``
+    (retail_vertical_slice.gd:5027-5037 compares ``source_map_data.map_id``
+    against ``active_game + ".map." + map_slug``), so a row that kept an older
+    slug scheme ships scripts.json that is refused on every launch.
+    """
+
+    catalog_ids = ["rotwk.map.mp-harlindon", "rotwk.map.wor-harlindon"]
+    assert (
+        plan_map_id_migration(
+            "rotwk.map.mp-harlindon", "harlindon", catalog_ids, game="rotwk"
+        )
+        == "rotwk.map.harlindon"
+    )
+
+    # Already canonical: nothing to migrate.
+    assert (
+        plan_map_id_migration(
+            "rotwk.map.harlindon",
+            "harlindon",
+            ["rotwk.map.harlindon", "rotwk.map.wor-harlindon"],
+            game="rotwk",
+        )
+        is None
+    )
+
+
+def test_map_id_migration_refuses_ambiguous_canonical_collision() -> None:
+    """A catalog that ALREADY claims the canonical id is a refusal, not a merge.
+
+    Migrating the stale row would leave two rows with the same id, which
+    ContentDB._load_map_catalog rejects wholesale (content_db.gd:412 refuses
+    duplicate pending ids), so the collision must fail the repair loudly.
+    """
+
+    with pytest.raises(RepairRefusal, match="already claim"):
+        plan_map_id_migration(
+            "rotwk.map.mp-harlindon",
+            "harlindon",
+            ["rotwk.map.mp-harlindon", "rotwk.map.harlindon"],
+            game="rotwk",
+        )
 
 
 def test_compose_refuses_non_multiplayer_virtual_path() -> None:
