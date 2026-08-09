@@ -30,13 +30,23 @@ Work at the repository top level. **Do not create branches or worktrees.**
 
 ## The rules that have actually bitten us
 
-1. **Packs are immutable.** A directory named `<sha256>` promises its bytes hash
-   to that name. Never cook, patch, or hand-edit inside a published pack under
-   `.private/content-packs/` or the durable mirror. Republish a **new** digest and
-   swap with `apply-selection-transaction` (it stages, verifies both roots, and is
-   all-or-nothing). This rule has been broken three times; each time the runtime
-   kept loading a pack whose address was a lie. `tools\check_pack_addresses.py`
-   now catches it in seconds — run it before you claim done.
+1. **Packs are immutable, and now they are sealed.** A directory named `<sha256>`
+   promises its bytes hash to that name. Published pack files under
+   `.private/content-packs/` and the durable mirror are marked read-only, so an
+   in-place cook fails with an access error **at the moment you make the mistake**.
+   That error is the guard working, not a bug — do not chmod your way past it.
+
+   The flow that works: cook into a staging directory OUTSIDE the pack, compute
+   `bundle_digest` on it, copy to `<root>/<pack-id>/<new-digest>` in **both** roots,
+   then swap with `apply-selection-transaction` (it stages, verifies both roots, and
+   is all-or-nothing). Sealing costs this nothing — publishing writes a new
+   directory, and the read-only bit propagates when it is copied.
+
+   `python tools\check_pack_addresses.py` proves every selected pack's bytes match
+   its name (seconds — run it before claiming done); `tools\publish-durable-pack.ps1
+   -Verify` proves the two roots agree; `python tools\seal_published_packs.py`
+   re-seals, and `--unseal` is there for a deliberate re-address or deletion.
+   This rule was broken three times in one night before the seal existed.
 
 2. **Bare `pytest` lies.** It picks up the wrong Pillow and fabricates ~40
    failures. Use `run_importer_tests.bat`, or the pinned interpreter at
