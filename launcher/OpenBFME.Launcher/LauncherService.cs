@@ -4,7 +4,7 @@ namespace OpenBFME.Launcher;
 
 public sealed class LauncherService
 {
-    public LauncherOptions Options { get; }
+    public LauncherOptions Options { get; private set; }
     public ReleaseInstaller Installer { get; } = new();
     public ImporterRunner Importer { get; } = new();
     public GitHubReleaseFeed ReleaseFeed { get; } = new();
@@ -20,6 +20,14 @@ public sealed class LauncherService
     {
         Options = options;
         DownloadDisclosure = ThirdPartyDownloadDisclosure.ForInstallRoot(options.InstallRoot);
+    }
+
+    public void SetChannel(string channel)
+    {
+        channel = channel.Trim().ToLowerInvariant();
+        if (!LauncherPreferences.IsChannel(channel))
+            throw new ArgumentException("Channel must be stable, playtest, or nightly.", nameof(channel));
+        Options = Options with { Channel = channel };
     }
 
     public InstallState? Current => InstallState.Load(Options.InstallRoot);

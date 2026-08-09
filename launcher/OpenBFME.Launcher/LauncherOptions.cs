@@ -68,8 +68,17 @@ public sealed record LauncherOptions(
 
         bool Has(string flag) => Array.IndexOf(args, flag) >= 0;
 
-        var channel = Value("--channel", ReleaseSource.DefaultChannel).Trim().ToLowerInvariant();
-        if (channel is not ("stable" or "playtest" or "nightly"))
+        // Resolve the root first because the persisted preference lives with install
+        // state. An explicit CLI channel wins for this process only; parsing never
+        // rewrites the preference, so operator/test invocations cannot clobber the
+        // player's next double-click choice.
+        var root = Path.GetFullPath(Value(
+            "--install-root",
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OpenBFME")));
+        var persistedChannel = LauncherPreferences.LoadChannel(root);
+        var channel = Value("--channel", persistedChannel ?? ReleaseSource.DefaultChannel)
+            .Trim().ToLowerInvariant();
+        if (!LauncherPreferences.IsChannel(channel))
             throw new ArgumentException("--channel must be stable, playtest, or nightly.");
 
         // Every channel gets a feed. Previously only "stable" had a default manifest
@@ -96,9 +105,6 @@ public sealed record LauncherOptions(
         if (game is not null && retail.Length == 0)
             throw new ArgumentException($"--import-{game} requires its retail path flag.");
 
-        var root = Path.GetFullPath(Value(
-            "--install-root",
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OpenBFME")));
         var retailInstallRootText = Value("--retail-install-root", "");
         string? retailInstallRoot = retailInstallRootText.Length == 0
             ? null

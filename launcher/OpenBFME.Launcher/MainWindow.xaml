@@ -377,6 +377,19 @@
 
           <ScrollViewer VerticalScrollBarVisibility="Auto">
             <StackPanel>
+              <TextBlock Text="RELEASE CHANNEL" FontSize="11" FontWeight="Bold"
+                         Foreground="{StaticResource TextDim}" Margin="0,0,0,10"/>
+              <TextBlock Text="Channel" FontSize="12" Margin="0,0,0,6"/>
+              <ComboBox x:Name="ChannelSelector" SelectionChanged="ChannelSelector_SelectionChanged"
+                        Margin="0,0,0,6">
+                <ComboBoxItem Content="Stable" Tag="stable"/>
+                <ComboBoxItem Content="Playtest" Tag="playtest"/>
+                <ComboBoxItem Content="Nightly" Tag="nightly"/>
+              </ComboBox>
+              <TextBlock x:Name="ChannelWarningText" FontSize="11"
+                         Foreground="{StaticResource TextDim}" TextWrapping="Wrap"
+                         Margin="0,0,0,18"/>
+
               <TextBlock Text="GAME FILES" FontSize="11" FontWeight="Bold"
                          Foreground="{StaticResource TextDim}" Margin="0,0,0,10"/>
 
