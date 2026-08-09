@@ -48,7 +48,7 @@ const TICKS_PER_SECOND := 10
 ## the exact count a HEALTHY run makes; if the run makes any other number,
 ## something aborted (or an assertion was added without updating this) and
 ## the result is not to be trusted.
-const EXPECTED_CHECKS := 48
+const EXPECTED_CHECKS := 49
 
 var passed := 0
 var failed := 0
@@ -605,18 +605,19 @@ func _test_blocked_packages() -> void:
 	var harness := _harness()
 	var dispatch: SageScriptDispatch = harness["dispatch"]
 
+	# DERIVED from the current WP02/03/04 declarations, never a literal count:
+	# the property that matters is that nothing in WP02/03/04 goes missing -
+	# every tranche-1 name is accounted for, either still blocked here or
+	# SERVED by a later package (the wp24 accounting check below). Later
+	# packages also gap-register their own blocked members, so `>=`, not `==`.
 	var expected_blocked := (
 		Wp02.BLOCKED_ACTIONS.size()
 		+ Wp03.BLOCKED_ACTIONS.size() + Wp03.BLOCKED_CONDITIONS.size()
 		+ Wp04.BLOCKED_ACTIONS.size() + Wp04.BLOCKED_CONDITIONS.size()
 	)
-	# Assert the tranche-1 blocked members are ALL registered, not that they are
-	# the only ones. Later packages gap-register their own blocked members, so a
-	# `== 32` equality turns every future package into a false failure here.
-	# The property that matters is that nothing in WP02/03/04 goes missing.
 	_check(
 		"every_tranche_one_blocked_member_is_registered",
-		dispatch.blocked_names().size() >= expected_blocked and expected_blocked == 32,
+		dispatch.blocked_names().size() >= expected_blocked,
 		"registered=%d tranche_one_expected=%d" % [
 			dispatch.blocked_names().size(), expected_blocked
 		]
@@ -633,6 +634,29 @@ func _test_blocked_packages() -> void:
 		"no_tranche_one_blocked_member_went_missing",
 		absent.is_empty(),
 		"absent=%s" % str(absent)
+	)
+	# 2026-08-08 packet P6: WP24-fog converted four former WP02 fog
+	# declarations into served handlers. The census STRENGTHENS rather than
+	# shrinks: each of the four must now be an implemented action, absent from
+	# the blocked set, and gone from WP02's declarations (still declared there
+	# it would shadow the wp24 handler - first registration wins).
+	var served_by_wp24 := [
+		"ENABLE_BORDER_SHROUD",
+		"DISABLE_BORDER_SHROUD",
+		"MAP_REVEAL_AT_WAYPOINT",
+		"MAP_SHROUD_AT_WAYPOINT",
+	]
+	var not_served: Array = served_by_wp24.filter(
+		func(name): return (
+			not dispatch.implemented_actions().has(name)
+			or dispatch.blocked_names().has(name)
+			or Wp02.BLOCKED_ACTIONS.has(name)
+		)
+	)
+	_check(
+		"every_wp02_name_that_left_the_blocked_set_is_served_by_wp24",
+		not_served.is_empty(),
+		"not_served=%s" % str(not_served)
 	)
 
 	var status := _act(harness, "MAP_SHROUD_ALL", [_player_arg(PLAYER)])
@@ -669,11 +693,12 @@ func _test_blocked_packages() -> void:
 	_check("blocked_members_are_not_counted_as_implemented", overlap.is_empty(), str(overlap))
 	_check(
 		"coverage_reports_the_blocked_set_separately",
-		# >= 32, not == 32: the point is that blocked members are counted in their
-		# own bucket rather than inflating implemented coverage. Pinning the total
+		# >= the derived tranche-1 count, never == and never a literal (2026-08-08
+		# packet P6): the point is that blocked members are counted in their own
+		# bucket rather than inflating implemented coverage. Pinning the total
 		# would make this fail every time a later package registers a blocked
 		# member, which is exactly the behaviour we want it to keep doing.
-		(dispatch.coverage()["blocked_on_subsystem"] as Array).size() >= 32
+		(dispatch.coverage()["blocked_on_subsystem"] as Array).size() >= expected_blocked
 	)
 
 
