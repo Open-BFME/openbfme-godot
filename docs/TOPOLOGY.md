@@ -21,7 +21,7 @@
 `git-lfs` is not installed in WSL, so plain `git status` can report a **clean** tree when 234+ paths are modified (topology-council figure; not R1a-reverified). Use Windows PowerShell Git as the trusted dirty-state check:
 
 ```powershell
-powershell.exe -NoProfile -Command "cd C:\Users\Jonathan\Desktop\open-bfme; git status --porcelain"
+powershell.exe -NoProfile -Command "cd <repo-root>; git status --porcelain"
 ```
 
 Or use this fail-open-filter WSL fallback:
@@ -85,8 +85,8 @@ User-local or retail-derived inputs that cannot be committed and may be irreplac
 
 | Root | Purpose | Producer / generator | Reproducible | Normal-run load-bearing | Legal class | Retention | Notes |
 |---|---|---|:---:|:---:|---|---|---|
-| `.private/retail-work/editions/rotwk/layered-install/layer-0-rotwk` | Symlink to the user-owned F:\RotWK retail installation; zero local payload bytes. | `user-owned` | no | no | `retail-derived` | Retain symlink and external retail install; never publish. | — |
-| `.private/retail-work/editions/rotwk/layered-install/layer-1-bfme2` | Symlink to the user-owned F:\BFME2 retail installation; zero local payload bytes. | `user-owned` | no | no | `retail-derived` | Retain symlink and external retail install; never publish. | — |
+| `.private/retail-work/editions/rotwk/layered-install/layer-0-rotwk` | Symlink to the user-owned RotWK retail installation (external drive); zero local payload bytes. | `user-owned` | no | no | `retail-derived` | Retain symlink and external retail install; never publish. | — |
+| `.private/retail-work/editions/rotwk/layered-install/layer-1-bfme2` | Symlink to the user-owned BFME2 retail installation (external drive); zero local payload bytes. | `user-owned` | no | no | `retail-derived` | Retain symlink and external retail install; never publish. | — |
 | `_bfme2_extract/` | 25M local BFME2 retail extraction used as canonical input. | `UNKNOWN` | no | no | `retail-derived` | Retain pending provenance review; never publish. | No in-repository generator was found; producer provenance remains UNKNOWN. |
 | `reference/` | 55M of retail reference screenshots. | `user-owned` | no | no | `retail-derived` | Retain as canonical visual input; never publish. | — |
 | `.private/onboard.config.json` | User-specific onboarding and retail-location configuration. | `user-owned` | no | no | `user-owned` | Retain locally; back up as appropriate; never publish secrets or local paths. | — |
