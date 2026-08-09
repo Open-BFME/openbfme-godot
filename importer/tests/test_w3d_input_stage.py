@@ -432,7 +432,13 @@ class W3DInputStageTests(unittest.TestCase):
                     ):
                         build_w3d_input_stage(source, linked_output)
             else:
-                with self.assertRaisesRegex(W3DInputStageError, "is linked"):
+                # A real symlinked output root hits the same guard as the
+                # mocked branch above (`W3D input stage root must not be
+                # linked`); "is linked" is the _refuse_link_chain wording for
+                # report/manifest paths, which this path never reaches.
+                with self.assertRaisesRegex(
+                    W3DInputStageError, "must not be linked"
+                ):
                     build_w3d_input_stage(source, linked_output)
 
     def test_rejects_retail_derived_output_in_public_repository_space(self) -> None:

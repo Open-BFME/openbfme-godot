@@ -74,6 +74,30 @@ class MeasurementClosureTests(unittest.TestCase):
             before["fingerprintSha256"], after["fingerprintSha256"]
         )
 
+    def test_line_ending_flavor_does_not_change_the_fingerprint(self) -> None:
+        # The repository is checked out CRLF on autocrlf Windows machines and
+        # LF on CI (`* text=auto`, actions/checkout default).  The same commit
+        # must fingerprint identically on both, or every committed report
+        # reads stale on exactly one side.
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            _fake_package(root)
+            # Pin both flavors byte-exactly: Path.write_text translates "\n"
+            # to os.linesep, so the fixture's own files are platform-shaped.
+            for source in root.glob("*.py"):
+                text = source.read_text(encoding="utf-8")
+                source.write_bytes(text.encode("utf-8"))
+            lf = measurement_fingerprint("alpha", package_root=root)
+            for source in root.glob("*.py"):
+                data = source.read_bytes()
+                source.write_bytes(data.replace(b"\n", b"\r\n"))
+            crlf = measurement_fingerprint("alpha", package_root=root)
+
+        self.assertEqual(
+            lf["fingerprintSha256"], crlf["fingerprintSha256"]
+        )
+        self.assertEqual(lf["modules"], crlf["modules"])
+
     def test_unresolvable_imports_fail_the_walk(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

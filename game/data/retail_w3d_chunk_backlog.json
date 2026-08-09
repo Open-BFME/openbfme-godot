@@ -25,9 +25,9 @@
 			"provenance": {
 				"status": "fresh",
 				"rootModule": "openbfme_importer.w3d_decode_corpus",
-				"recordedFingerprintSha256": "cfb7180242b13c6990e8ffea1c7e3ac71fa31f57d2f20ceb1a51847ecc8aa66a",
-				"currentFingerprintSha256": "cfb7180242b13c6990e8ffea1c7e3ac71fa31f57d2f20ceb1a51847ecc8aa66a",
-				"recordedGitCommit": "5ff14243b4e9fdaaab2319efcb744e027e735b96",
+				"recordedFingerprintSha256": "9513ce227a7833c87ff7e863b204ff99eafe4c1edd60c82cd6f7ffabd57fd295",
+				"currentFingerprintSha256": "9513ce227a7833c87ff7e863b204ff99eafe4c1edd60c82cd6f7ffabd57fd295",
+				"recordedGitCommit": "b1577b444e8df08982140193bfc7e21c411a7fd7",
 				"staleModules": []
 			}
 		}
@@ -757,15 +757,15 @@
 		"modules": [
 			{
 				"module": "paths",
-				"sha256": "679bb384a495fa917da56aa64333c0796722a989d213d9772bea5f20fbe9ba62"
+				"sha256": "65633f720b67c646e1ddaafd95ca8e85b1ad718c878c40b213e96d62001ef070"
 			},
 			{
 				"module": "w3d_catalog",
-				"sha256": "369d14675624b7e128eb6e1272980d6354fae1b40c8cf996623797a66b04ee00"
+				"sha256": "ab03bf9529aed8e17d72cea1ebf110ea77f7a8fadc84c135a93a02a3a9e22180"
 			},
 			{
 				"module": "w3d_chunk_backlog",
-				"sha256": "23e9c93ad563d1305f4006a3ad1088fc8b81be99edfcc8b5fdbfbb88236f679c"
+				"sha256": "11bf93266fbf4f907da59d34e6ad475ed107d45641ac17a28962cc2948fd7eb7"
 			},
 			{
 				"module": "w3d_corpus",
@@ -773,19 +773,19 @@
 			},
 			{
 				"module": "w3d_index",
-				"sha256": "b9c957491459c8a0045a54dba8bef53eb1b97a6f7b9495b91a42f0b7262c4000"
+				"sha256": "9077d936de4aed3a49604e964d25b8e2ed071470863ffd65fa756293fa58c393"
 			},
 			{
 				"module": "w3d_metadata",
-				"sha256": "3562a779a28ade31fcaef46fc02f36dc38ced577a6e8723d543b009e1798ef46"
+				"sha256": "431c83dc3e9eae79f646683192b63ca0de4b11b529f3e9ecd5727e626c6517c4"
 			},
 			{
 				"module": "w3d_string_leaves",
 				"sha256": "3a6c064ee17ef3a8f1d84ffbb74f69420c9898c1a0e9b51c97dbf52c29267da0"
 			}
 		],
-		"fingerprintSha256": "93e73af8391a1ae7f61b707fdcee9fde3854b31283e40d60412eaf65eb3f13f4",
-		"gitCommit": "5ff14243b4e9fdaaab2319efcb744e027e735b96",
+		"fingerprintSha256": "debd2d99b7439eeac714c46f9a68bc0e17042fbdd7a7c066b0d6600c6afbd094",
+		"gitCommit": "b1577b444e8df08982140193bfc7e21c411a7fd7",
 		"gitWorktreeClean": false
 	}
 }

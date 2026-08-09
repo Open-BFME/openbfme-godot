@@ -143,9 +143,13 @@ def measurement_module_closure(
     """Return ``(module, source_sha256)`` for the measurement import closure.
 
     The walk starts at ``root_module`` and follows every in-package import
-    transitively, hashing each module's exact source bytes.  The result is
-    sorted and deterministic.  A module that cannot be resolved to a source
-    file fails the walk; nothing is silently skipped except the provenance
+    transitively, hashing each module's source with line endings normalized
+    to ``\\n``.  Raw bytes would make the fingerprint depend on checkout
+    flavor: with ``* text=auto`` the same commit is CRLF in an autocrlf
+    Windows working tree and LF on CI, and a committed report generated on
+    one side would forever read stale on the other.  The result is sorted
+    and deterministic.  A module that cannot be resolved to a source file
+    fails the walk; nothing is silently skipped except the provenance
     machinery itself.
     """
 
@@ -167,13 +171,18 @@ def measurement_module_closure(
                 f"measurement module has no source file: {module!r}"
             )
         data = path.read_bytes()
-        hashes[module] = hashlib.sha256(data).hexdigest()
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise MeasurementProvenanceError(
                 f"measurement module is not UTF-8: {module!r}"
             ) from exc
+        # Hash EOL-normalized text, not raw bytes: the fingerprint must be
+        # identical across CRLF and LF checkouts of the same commit.
+        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+        hashes[module] = hashlib.sha256(
+            normalized.encode("utf-8")
+        ).hexdigest()
         pending.extend(
             child
             for child in sorted(_module_imports(text, str(path)))
