@@ -180,6 +180,13 @@ func _section_cycles(game_state: Node, content_db: Node, menu_scene: PackedScene
 				and gate_error.contains("(missing:"),
 			gate_error)
 		pack_meta.insert(removed_index, removed_entry)
+		# retail_launch_error() memoizes faction/map verdicts and a validation
+		# context snapshot while the host row is absent. Those answers are
+		# correct for the unmounted set and wrong the moment we put the host
+		# back; drop them so recovery re-asks the live pack_meta.
+		menu.set("_skirmish_availability", {})
+		menu.set("_skirmish_map_notes", {})
+		menu.set("_skirmish_validation_context_cache", {})
 		_check("remounted_host_pack_recovers_launch", String(menu.retail_launch_error()) == "",
 			String(menu.retail_launch_error()))
 

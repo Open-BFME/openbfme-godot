@@ -1041,7 +1041,7 @@ func _build_bound_retail_props(map_data: RetailMapData) -> bool:
 		if (
 			bound_path != ""
 			and bound_path.get_extension().to_lower() == "glb"
-			and ModLoader.path_is_within(map_data.pack_root, bound_path)
+			and _path_is_within_mounted_pack(bound_path)
 			and FileAccess.file_exists(bound_path)
 		):
 			bound_glb_paths.append(bound_path)
@@ -1062,7 +1062,7 @@ func _build_bound_retail_props(map_data: RetailMapData) -> bool:
 			or seen_source_indices.has(source_index)
 			or glb_path == ""
 			or glb_path.get_extension().to_lower() != "glb"
-			or not ModLoader.path_is_within(map_data.pack_root, glb_path)
+			or not _path_is_within_mounted_pack(glb_path)
 			or not FileAccess.file_exists(glb_path)
 			or not _finite_vector3(position)
 			or not _finite_number(yaw)
@@ -1288,7 +1288,7 @@ func _build_bound_retail_structures(map_data: RetailMapData) -> bool:
 		if (
 			bound_structure_path != ""
 			and bound_structure_path.get_extension().to_lower() == "glb"
-			and ModLoader.path_is_within(map_data.pack_root, bound_structure_path)
+			and _path_is_within_mounted_pack(bound_structure_path)
 			and FileAccess.file_exists(bound_structure_path)
 		):
 			bound_structure_glb_paths.append(bound_structure_path)
@@ -1316,7 +1316,7 @@ func _build_bound_retail_structures(map_data: RetailMapData) -> bool:
 			or glb_relative == ""
 			or glb_path == ""
 			or glb_path.get_extension().to_lower() != "glb"
-			or not ModLoader.path_is_within(map_data.pack_root, glb_path)
+			or not _path_is_within_mounted_pack(glb_path)
 			or not FileAccess.file_exists(glb_path)
 			or not _finite_vector3(position)
 			or not _finite_number(yaw)
@@ -1327,7 +1327,12 @@ func _build_bound_retail_structures(map_data: RetailMapData) -> bool:
 
 		var definition: Dictionary = ContentDB.get_bundle_object(object_id)
 		var definition_pack_root := String(definition.get("_pack_root", ""))
-		if definition.is_empty() or String(definition.get("kind", "")) != "structure" or definition_pack_root != map_data.pack_root:
+		# Host faction pack + maps supplement is normal; accept any mounted non-res root.
+		if (
+			definition.is_empty()
+			or String(definition.get("kind", "")) != "structure"
+			or not _is_mounted_pack_root(definition_pack_root)
+		):
 			container.free()
 			return _fail_configuration("bound lifecycle structure object is not registered by the selected map pack")
 		if typeof(definition.get("presentation")) != TYPE_DICTIONARY:
@@ -1473,6 +1478,33 @@ func _mesh_instance_count(node: Node) -> int:
 	for child in node.get_children():
 		result += _mesh_instance_count(child)
 	return result
+
+
+func _path_is_within_mounted_pack(path: String) -> bool:
+	## GLB bindings may resolve into a maps supplement pack while map.json lives
+	## under the host faction pack. Accept any currently mounted non-res root.
+	if path == "":
+		return false
+	for root_value in ModLoader.list_pack_roots():
+		var root := String(root_value)
+		if root == "" or root.begins_with("res://"):
+			continue
+		if ModLoader.path_is_within(root, path):
+			return true
+	return false
+
+
+func _is_mounted_pack_root(candidate_root: String) -> bool:
+	if candidate_root == "" or candidate_root.begins_with("res://"):
+		return false
+	var normalized := candidate_root.replace("\\", "/").trim_suffix("/").to_lower()
+	for root_value in ModLoader.list_pack_roots():
+		var root := String(root_value)
+		if root == "" or root.begins_with("res://"):
+			continue
+		if root.replace("\\", "/").trim_suffix("/").to_lower() == normalized:
+			return true
+	return false
 
 
 func _finite_number(value: float) -> bool:

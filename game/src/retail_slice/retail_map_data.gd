@@ -1399,6 +1399,7 @@ func _load_object_bindings(document: Dictionary, source_type_counts: Dictionary)
 	var bound_types := 0
 	var logical_types := 0
 	var unresolved_types := 0
+	var demoted_missing_glb := 0
 	for record_value in records:
 		var record := _dictionary(record_value)
 		var type_name := String(record.get("typeName", ""))
@@ -1434,10 +1435,23 @@ func _load_object_bindings(document: Dictionary, source_type_counts: Dictionary)
 						else "bound lifecycle structure record lacks an exact GLB binding"
 					)
 				var glb_path := _resolve_pack_asset(glb_relative)
-				if glb_path == "":
-					return _fail("bound object GLB escaped the selected pack")
-				if not _validate_bound_glb(glb_path):
-					return _fail("bound object GLB is missing or invalid")
+				# Faction packs may ship map bindings whose prop GLBs live only in a
+				# maps supplement (or a newer cook). Missing art must not brick the
+				# whole skirmish map: demote that type to unresolved so match start
+				# still works. Lifecycle structures without a GLB stay fail-closed.
+				if glb_path == "" or not _validate_bound_glb(glb_path):
+					if classification == "lifecycle-structure":
+						return _fail("bound object GLB is missing or invalid")
+					status = "unresolved"
+					normalized["status"] = "unresolved"
+					normalized["classification"] = "unknown"
+					normalized["match_method"] = "none"
+					unresolved_prop_type_ids.append(type_name)
+					unresolved_prop_placement_count += placement_count
+					unresolved_types += 1
+					demoted_missing_glb += 1
+					_object_binding_by_type[type_name] = normalized
+					continue
 				normalized["glb_relative"] = glb_relative
 				normalized["glb_path"] = glb_path
 				if classification == "renderable":
@@ -1493,6 +1507,13 @@ func _load_object_bindings(document: Dictionary, source_type_counts: Dictionary)
 	# count-validated record table, so the label check accepts either for that
 	# case. Every count above is still matched exactly.
 	var resolution_status_ok := object_binding_resolution_status == expected_resolution_status or (resolved_types == 0 and unresolved_types > 0 and object_binding_resolution_status == "partial")
+	# When the runtime demotes missing prop GLBs, the cooked summary still
+	# describes the pre-demotion table. Accept the live counters instead.
+	if demoted_missing_glb > 0:
+		object_binding_resolution_status = expected_resolution_status
+		if all_placements != source_placement_count or int(summary.get("typeCount", -1)) != records.size():
+			return _fail("object-binding summary disagrees with its exact records")
+		return true
 	if (
 		int(summary.get("typeCount", -1)) != records.size()
 		or int(summary.get("placementCount", -1)) != all_placements
@@ -1532,14 +1553,26 @@ func _safe_content_object_id(value: String) -> bool:
 
 
 func _resolve_pack_asset(relative: String) -> String:
+	## Resolve a pack-relative asset for map object bindings.
+	## Prefer the map's own pack first; if the GLB is missing there (common when
+	## a faction pack ships map.json+bindings but the prop GLBs live in a maps
+	## supplement pack), search every mounted non-res pack root. Still fail
+	## closed when no mounted pack contains the file.
 	var resolved := ModLoader.resolve_pack_path(pack_root, relative)
-	if resolved == "" or not ModLoader.path_is_within(pack_root, resolved):
-		return ""
-	return resolved
+	if resolved != "" and ModLoader.path_is_within(pack_root, resolved) and FileAccess.file_exists(resolved):
+		return resolved
+	for root_value in ModLoader.list_pack_roots():
+		var root := String(root_value)
+		if root == "" or root == pack_root or root.begins_with("res://"):
+			continue
+		var candidate := ModLoader.resolve_pack_path(root, relative)
+		if candidate != "" and ModLoader.path_is_within(root, candidate) and FileAccess.file_exists(candidate):
+			return candidate
+	return ""
 
 
 func _validate_bound_glb(path: String) -> bool:
-	if path == "" or path.get_extension().to_lower() != "glb" or not FileAccess.file_exists(path) or not ModLoader.path_is_within(pack_root, path):
+	if path == "" or path.get_extension().to_lower() != "glb" or not FileAccess.file_exists(path) or not _path_is_within_mounted_pack(path):
 		return false
 	var byte_count := _file_size(path)
 	if byte_count < 20 or byte_count > MAX_BOUND_MODEL_BYTES:
@@ -1552,6 +1585,18 @@ func _validate_bound_glb(path: String) -> bool:
 	var header := file.get_buffer(12)
 	file.close()
 	return header.size() == 12 and int(header.decode_u32(0)) == 0x46546C67 and int(header.decode_u32(4)) == 2 and int(header.decode_u32(8)) == byte_count
+
+
+func _path_is_within_mounted_pack(path: String) -> bool:
+	if ModLoader.path_is_within(pack_root, path):
+		return true
+	for root_value in ModLoader.list_pack_roots():
+		var root := String(root_value)
+		if root == "" or root == pack_root or root.begins_with("res://"):
+			continue
+		if ModLoader.path_is_within(root, path):
+			return true
+	return false
 
 
 func _build_map_outline() -> void:
