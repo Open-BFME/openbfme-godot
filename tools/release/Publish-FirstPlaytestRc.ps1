@@ -27,7 +27,8 @@ param(
     [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?$')]
     [string]$Version = '0.2.0-playtest.1',
 
-    [string]$Repo = 'Open-BFME/openbfme-godot',
+    # Empty means: resolve from config/release-source.json (never hardcode a host/repo).
+    [string]$Repo = '',
 
     [int]$WaitMinutes = 90
 )
@@ -37,6 +38,17 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 Set-Location $repoRoot
+
+if ([string]::IsNullOrWhiteSpace($Repo)) {
+    $sourceLine = & python (Join-Path $repoRoot 'tools\release_source.py') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw ("Could not resolve release target from config/release-source.json: {0}" -f ($sourceLine -join ' '))
+    }
+    $m = [regex]::Match(($sourceLine -join "`n"), 'repository=(\S+)')
+    if (-not $m.Success) { throw 'release_source.py did not print repository=owner/name' }
+    $Repo = $m.Groups[1].Value
+}
+Write-Host ("Release target repository={0}" -f $Repo)
 
 $tag = "v$Version"
 $priv = Join-Path $env:LOCALAPPDATA 'OpenBFME-release-key\openbfme-release-signing-private.pem'

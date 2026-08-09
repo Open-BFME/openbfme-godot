@@ -41,6 +41,37 @@ def _is_windows_reserved_part(part: str) -> bool:
     return any(stem == prefix or stem.startswith(prefix) for prefix in _WINDOWS_RESERVED_PREFIXES)
 
 
+def expand_windows_long_path(path: Path) -> Path:
+    """Expand Windows 8.3 short path segments (e.g. RUNNER~1) to long form.
+
+    GitHub-hosted Windows runners sometimes hand back mixed short/long forms of
+    the same temp directory from Path.resolve(). relative_to() and path equality
+    then fail even when the filesystem entry is identical. No-op on non-Windows
+    and when the path does not exist or expansion is unavailable.
+    """
+
+    if os.name != "nt":
+        return path
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        get_long = ctypes.windll.kernel32.GetLongPathNameW
+        get_long.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        get_long.restype = wintypes.DWORD
+        text = str(path)
+        size = get_long(text, None, 0)
+        if size == 0:
+            return path
+        buffer = ctypes.create_unicode_buffer(size)
+        written = get_long(text, buffer, size)
+        if written == 0:
+            return path
+        return Path(buffer.value)
+    except Exception:
+        return path
+
+
 def safe_relative_parts(value: str) -> tuple[str, ...]:
     normalized = value.replace("\\", "/")
     if not normalized or normalized.startswith("/") or normalized.startswith("~"):
