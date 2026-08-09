@@ -89,7 +89,7 @@ and record where the bytes came from.
 | Sev | Issue | Fix direction |
 |-----|--------|---------------|
 | **P0** | No GitHub `v*` playtest release yet | Admin control plane + first signed tag (below) |
-| **P0** | Playtest channel is CLI-only (`--channel playtest`) | Settings channel selector + persist preference |
+| **P0** | Playtest channel is CLI-only (`--channel playtest`) | **Fixed**: Settings selector persists under the install root; CLI remains a one-run override |
 | **P0** | Play enables on engine presence, not valid `selection.json` | Read-only content selection validator; fail closed |
 | **P1** | “Get ready” / Play / Update roles subtle on first run | 3-step coach: engine → retail → convert/select |
 | **P1** | Convert (RotWK) says success without activating pack | “Published but not active” + explicit select action |
@@ -112,9 +112,9 @@ Full write-up: `.private/scratch/sol_launcher_review.md`.
 |-----|---------|------------------------|
 | **P0** | `release.yml` Python `-c` JSON quotes broken on Windows PowerShell (run #30730696988) | **Fixed**: `python -m tools.release_source --json` |
 | **P0** | No GitHub envs / rulesets / signing secret / acceptance runner / `v*` tags | Still admin work |
-| **P0** | Playtest channel not GUI-selectable | Still open (launcher PR) |
+| **P0** | Playtest channel not GUI-selectable | **Fixed**: persistent Settings selector with effective-channel refresh |
 | **P0** | Play not gated on valid content selection; runtime sibling fallback | Still open (launcher + runtime PRs) |
-| **P1** | Feed can rank wrong-channel releases as “ready” | Still open |
+| **P1** | Feed can rank wrong-channel releases as “ready” | **Fixed**: zero-score candidates are filtered before presentation |
 | **P1** | Tag helper allowed unsigned `-Push` (workflow rejects) | **Fixed**: `-Push` requires `-Signed`; clean-main checks |
 | **P1** | Readiness script false green on public plane | **Fixed**: `LOCAL_BUILD_READY` vs `PUBLIC_RELEASE_NOT_READY` (exit 2) |
 | **P1** | Retail discovery is only `game.dat` presence | Still open |
@@ -139,7 +139,7 @@ Full write-up: `.private/scratch/sol_launcher_review.md`.
 ### Code (PR sequence — Sol order)
 
 1. ~~Hosted source resolution~~ (done this pass — re-run `workflow_dispatch` to prove).
-2. Persistent playtest channel + verified candidate presentation.
+2. ~~Persistent playtest channel + verified candidate presentation~~ (fixed locally; pending review/landing).
 3. Validate selected content before Play; runtime fail-closed on bad selection.
 4. Edition-aware retail validation + honest RotWK activation state.
 5. Update/error UX and constrained news feed.

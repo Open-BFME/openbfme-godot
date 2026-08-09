@@ -22,9 +22,11 @@ public partial class MainWindow : Window
     private readonly LauncherService _service;
     private CancellationTokenSource? _operation;
     private GitHubReleaseFeed.ReleaseCandidate? _releaseCandidate;
+    private int _releaseRefreshVersion;
     private readonly ObservableCollection<NewsItem> _news = new();
     private readonly ObservableCollection<PackListItem> _packs = new();
     private ContentPackInventory? _contentInventory;
+    private bool _channelSelectorReady;
 
     private static readonly SolidColorBrush OkBrush = Freeze(
         new SolidColorBrush(Color.FromRgb(0x8F, 0xB5, 0x7A)));
@@ -66,9 +68,11 @@ public partial class MainWindow : Window
         _service = new LauncherService(options);
         NewsFeed.ItemsSource = _news;
         PacksFeed.ItemsSource = _packs;
-        ChannelText.Text = PlatformCompat.IsWine
-            ? $"{options.Channel} · {ReleaseSource.Repository} · Wine"
-            : $"{options.Channel} · {ReleaseSource.Repository}";
+        foreach (var item in ChannelSelector.Items.OfType<ComboBoxItem>())
+            if (string.Equals(item.Tag as string, options.Channel, StringComparison.Ordinal))
+                ChannelSelector.SelectedItem = item;
+        _channelSelectorReady = true;
+        RefreshChannelPresentation();
         LifecycleLog.Write("window",
             $"ctor paint begin host={PlatformCompat.HostDescription} wine={PlatformCompat.IsWine}");
         RefreshState();
@@ -92,6 +96,45 @@ public partial class MainWindow : Window
         SettingsOverlay.Visibility = SettingsOverlay.Visibility == Visibility.Visible
             ? Visibility.Collapsed
             : Visibility.Visible;
+    }
+
+    private async void ChannelSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_channelSelectorReady || ChannelSelector.SelectedItem is not ComboBoxItem item ||
+            item.Tag is not string channel || channel == _service.Options.Channel)
+            return;
+
+        try
+        {
+            LauncherPreferences.SaveChannel(_service.Options.InstallRoot, channel);
+            _service.SetChannel(channel);
+            _releaseCandidate = null;
+            RefreshChannelPresentation();
+            StatusText.Text = $"Release channel changed to {channel}.";
+            await RefreshReleaseCandidateAsync();
+        }
+        catch (Exception error)
+        {
+            ShowError(error, "The release channel preference could not be saved.", modal: false);
+            _channelSelectorReady = false;
+            foreach (var choice in ChannelSelector.Items.OfType<ComboBoxItem>())
+                if (string.Equals(choice.Tag as string, _service.Options.Channel, StringComparison.Ordinal))
+                    ChannelSelector.SelectedItem = choice;
+            _channelSelectorReady = true;
+        }
+    }
+
+    private void RefreshChannelPresentation()
+    {
+        var channel = _service.Options.Channel;
+        ChannelText.Text = PlatformCompat.IsWine
+            ? $"{channel} · {ReleaseSource.Repository} · Wine"
+            : $"{channel} · {ReleaseSource.Repository}";
+        ChannelWarningText.Text = channel == "playtest"
+            ? "Playtest builds may break and are not the stable channel."
+            : channel == "nightly"
+                ? "Nightly builds may break and are not the stable channel."
+                : "Stable receives tested public releases.";
     }
 
     /// <summary>
@@ -475,10 +518,12 @@ public partial class MainWindow : Window
 
     private async Task RefreshReleaseCandidateAsync()
     {
+        var refreshVersion = ++_releaseRefreshVersion;
         ReleaseCandidateText.Text = "Checking GitHub…";
         try
         {
             var (uri, candidate) = await _service.ResolveManifestAsync(CancellationToken.None);
+            if (refreshVersion != _releaseRefreshVersion) return;
             _releaseCandidate = candidate;
             if (candidate is not null)
             {
@@ -494,8 +539,11 @@ public partial class MainWindow : Window
         }
         catch (Exception error)
         {
+            if (refreshVersion != _releaseRefreshVersion) return;
             _releaseCandidate = null;
-            ReleaseCandidateText.Text = "";
+            ReleaseCandidateText.Text = IsMissingRelease(error)
+                ? $"No {_service.Options.Channel} release candidate"
+                : "Release check unavailable";
             StatusText.Text = error.Message;
         }
         RefreshChecklist();
@@ -583,6 +631,7 @@ public partial class MainWindow : Window
     private async Task UpdateCoreAsync(CancellationToken token, bool quietIfMissing)
     {
         StatusText.Text = "Checking GitHub for a release candidate…";
+        ReleaseCandidateText.Text = "Checking GitHub…";
         Uri manifestUri;
         GitHubReleaseFeed.ReleaseCandidate? candidate;
         try
@@ -599,7 +648,8 @@ public partial class MainWindow : Window
         }
         catch (Exception error) when (quietIfMissing && IsMissingRelease(error))
         {
-            ReleaseCandidateText.Text = "";
+            _releaseCandidate = null;
+            ReleaseCandidateText.Text = $"No {_service.Options.Channel} release candidate";
             StatusText.Text = error.Message;
             RefreshChecklist();
             return;
@@ -985,6 +1035,7 @@ public partial class MainWindow : Window
         BfmePath.IsEnabled = !running;
         RotwkPath.IsEnabled = !running;
         ContentRootPath.IsEnabled = !running;
+        ChannelSelector.IsEnabled = !running;
         BrowseContentRootButton.IsEnabled = !running;
         OpenContentRootButton.IsEnabled = !running;
         RefreshPacksSettingsButton.IsEnabled = !running;

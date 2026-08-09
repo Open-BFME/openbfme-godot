@@ -6,7 +6,9 @@ using OpenBFME.Launcher;
 var tests = new (string Name, Func<Task> Run)[]
 {
     ("options", TestOptions),
+    ("channel preferences", TestChannelPreferences),
     ("release source", TestReleaseSource),
+    ("release channel filtering", TestReleaseChannelFiltering),
     ("retail discovery", TestRetailDiscovery),
     ("language file selection", TestLanguageFileSelection),
     ("provision path safety", TestProvisionPathSafety),
@@ -91,6 +93,48 @@ static Task TestOptions()
     });
     Check(explicitManifest.ManifestUriExplicit, "explicit --manifest-url was not flagged");
     return Task.CompletedTask;
+}
+
+static Task TestChannelPreferences()
+{
+    var root = Path.Combine(Path.GetTempPath(), $"openbfme-channel-{Guid.NewGuid():N}");
+    try
+    {
+        var firstRun = LauncherOptions.Parse(new[] { "--install-root", root });
+        Check(firstRun.Channel == ReleaseSource.DefaultChannel,
+            "first run did not use the embedded default channel");
+
+        LauncherPreferences.SaveChannel(root, "playtest");
+        var reloaded = LauncherOptions.Parse(new[] { "--install-root", root });
+        Check(reloaded.Channel == "playtest", "saved playtest preference was not reloaded");
+
+        var cliOverride = LauncherOptions.Parse(new[]
+        {
+            "--install-root", root, "--channel", "stable"
+        });
+        Check(cliOverride.Channel == "stable", "CLI channel did not override saved preference");
+        Check(LauncherPreferences.LoadChannel(root) == "playtest",
+            "CLI channel unexpectedly rewrote the saved preference");
+    }
+    finally
+    {
+        try { Directory.Delete(root, recursive: true); } catch { /* temp cleanup */ }
+    }
+    return Task.CompletedTask;
+}
+
+static async Task TestReleaseChannelFiltering()
+{
+    using var mixedHttp = new HttpClient(new ReleaseFeedHandler(includeStable: true));
+    var playtest = await new GitHubReleaseFeed(mixedHttp)
+        .ResolveAsync("playtest", CancellationToken.None);
+    Check(playtest.Tag == "v0.1.0-playtest.1",
+        $"playtest feed selected wrong-channel tag {playtest.Tag}");
+
+    using var playtestOnlyHttp = new HttpClient(new ReleaseFeedHandler(includeStable: false));
+    var stableFeed = new GitHubReleaseFeed(playtestOnlyHttp);
+    await ThrowsAsync<InvalidOperationException>(async () =>
+        await stableFeed.ResolveAsync("stable", CancellationToken.None));
 }
 
 static Task TestLanguageFileSelection()
@@ -1283,6 +1327,53 @@ static async Task ThrowsAsync<T>(Func<Task> action) where T : Exception
     try { await action(); }
     catch (T) { return; }
     throw new InvalidOperationException($"Expected {typeof(T).Name}.");
+}
+
+sealed class ReleaseFeedHandler : HttpMessageHandler
+{
+    private readonly string _releaseJson;
+
+    public ReleaseFeedHandler(bool includeStable)
+    {
+        var releases = new List<object>
+        {
+            Release("v0.1.0-playtest.1", "OpenBFME playtest", prerelease: true)
+        };
+        if (includeStable)
+            releases.Add(Release("v0.1.0", "OpenBFME stable", prerelease: false));
+        _releaseJson = System.Text.Json.JsonSerializer.Serialize(releases);
+    }
+
+    private static object Release(string tag, string name, bool prerelease) => new
+    {
+        tag_name = tag,
+        name,
+        draft = false,
+        prerelease,
+        published_at = prerelease ? "2026-08-08T12:00:00Z" : "2026-08-07T12:00:00Z",
+        assets = new[]
+        {
+            new
+            {
+                name = "release-manifest.json",
+                browser_download_url =
+                    $"https://{ReleaseSource.Host}/{ReleaseSource.Repository}/releases/download/{tag}/release-manifest.json"
+            }
+        }
+    };
+
+    protected override Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var response = request.RequestUri!.Host.Equals("api.github.com", StringComparison.OrdinalIgnoreCase)
+            ? new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(_releaseJson, Encoding.UTF8, "application/json")
+            }
+            : new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+        response.RequestMessage = request;
+        return Task.FromResult(response);
+    }
 }
 
 /// <summary>

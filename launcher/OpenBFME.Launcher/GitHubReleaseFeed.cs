@@ -204,6 +204,7 @@ public sealed class GitHubReleaseFeed
 
         return releases
             .Where(HasManifest)
+            .Where(r => ChannelScore(r, channel) > 0)
             .OrderByDescending(r => ChannelScore(r, channel))
             .ThenByDescending(r => r.PublishedAt ?? DateTimeOffset.MinValue);
     }
