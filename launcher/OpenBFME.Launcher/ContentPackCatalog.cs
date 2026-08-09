@@ -32,9 +32,19 @@ public sealed record ContentPackInventory(
     string? SelectionPath,
     string? Diagnostic);
 
+/// <summary>
+/// Read-only verdict for the exact immutable content selection Play will mount.
+/// </summary>
+public sealed record ContentSelectionValidation(
+    bool Ok,
+    string ContentRoot,
+    string? ActivePackKey,
+    IReadOnlyList<string> SupplementalPackKeys,
+    string? Reason);
+
 internal sealed record PackSelectionDocument(
     [property: JsonPropertyName("schema")] string Schema,
-    [property: JsonPropertyName("schemaVersion")] int SchemaVersion,
+    [property: JsonPropertyName("schemaVersion")] int? SchemaVersion,
     [property: JsonPropertyName("activePack")] string ActivePack,
     [property: JsonPropertyName("supplementalPacks")] IReadOnlyList<string>? SupplementalPacks);
 
@@ -56,6 +66,149 @@ public static class ContentPackCatalog
         AllowTrailingCommas = true,
         WriteIndented = true
     };
+
+    /// <summary>
+    /// Validate selection.json and every pack it names without changing any file.
+    /// A selection is launchable only when it identifies an immutable active
+    /// bundle and a complete, contained supplement set.
+    /// </summary>
+    public static ContentSelectionValidation ValidateSelection(string contentRoot)
+    {
+        string root;
+        try { root = Path.GetFullPath(contentRoot); }
+        catch (Exception error)
+        {
+            return SelectionFailure(contentRoot, $"Content root path is invalid: {error.Message}");
+        }
+
+        if (!Directory.Exists(root))
+            return SelectionFailure(root, "Content root does not exist. Convert content or choose an installed content-packs folder.");
+
+        var selectionPath = Path.Combine(root, "selection.json");
+        if (!File.Exists(selectionPath))
+            return SelectionFailure(root, "No selection.json. Convert content, then use Set active on the pack to play.");
+
+        PackSelectionDocument? selection;
+        try
+        {
+            selection = JsonSerializer.Deserialize<PackSelectionDocument>(
+                File.ReadAllBytes(selectionPath), JsonOptions);
+        }
+        catch (Exception error)
+        {
+            return SelectionFailure(root, $"selection.json is unreadable or corrupt: {error.Message}");
+        }
+
+        if (selection is null)
+            return SelectionFailure(root, "selection.json is empty or is not a JSON object.");
+        if (!string.Equals(selection.Schema, SelectionSchema, StringComparison.Ordinal))
+            return SelectionFailure(root, $"selection.json uses unsupported schema '{selection.Schema}'.");
+        if (selection.SchemaVersion != SelectionSchemaVersion)
+            return SelectionFailure(
+                root,
+                $"selection.json uses unsupported schemaVersion {selection.SchemaVersion?.ToString() ?? "(missing)"}.");
+        if (!IsExactSafeBundleKey(selection.ActivePack))
+            return SelectionFailure(root, "selection.json activePack must be exactly <pack-id>/<64-character sha256 hex> with no path escape.");
+
+        var activeError = ValidateNamedPack(root, selection.ActivePack, "Active pack");
+        if (activeError is not null)
+            return SelectionFailure(root, activeError, selection.ActivePack);
+
+        var supplements = selection.SupplementalPacks ?? Array.Empty<string>();
+        foreach (var supplement in supplements)
+        {
+            if (!IsExactSafeBundleKey(supplement))
+                return SelectionFailure(
+                    root,
+                    "A supplementalPacks entry must be exactly <pack-id>/<64-character sha256 hex> with no path escape.",
+                    selection.ActivePack,
+                    supplements);
+            var supplementError = ValidateNamedPack(root, supplement, "Supplement");
+            if (supplementError is not null)
+                return SelectionFailure(root, supplementError, selection.ActivePack, supplements);
+        }
+
+        return new ContentSelectionValidation(
+            true, root, selection.ActivePack, supplements.ToArray(), null);
+    }
+
+    private static ContentSelectionValidation SelectionFailure(
+        string root,
+        string reason,
+        string? activePackKey = null,
+        IReadOnlyList<string>? supplements = null) =>
+        new(false, root, activePackKey, supplements ?? Array.Empty<string>(), reason);
+
+    private static string? ValidateNamedPack(string root, string key, string label)
+    {
+        var packRoot = ResolveContainedPath(root, key);
+        if (packRoot is null)
+            return $"{label} path escapes the content root: {key}";
+        if (!Directory.Exists(packRoot))
+            return $"{label} is missing on disk: {key}";
+
+        var current = root;
+        try
+        {
+            foreach (var segment in key.Split('/'))
+            {
+                current = Path.Combine(current, segment);
+                if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                    return $"{label} path crosses a link or reparse point outside the immutable bundle boundary: {key}";
+            }
+        }
+        catch (Exception error)
+        {
+            return $"{label} directory is unreadable ({key}): {error.Message}";
+        }
+
+        var packJson = Path.Combine(packRoot, "pack.json");
+        if (!File.Exists(packJson))
+            return $"{label} has no pack.json: {key}";
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllBytes(packJson));
+            if ((File.GetAttributes(packJson) & FileAttributes.ReparsePoint) != 0)
+                return $"{label} pack.json is a link or reparse point: {key}";
+            var metadata = document.RootElement;
+            if (metadata.ValueKind != JsonValueKind.Object)
+                return $"{label} pack.json is not a JSON object: {key}";
+
+            var expectedId = key[..key.IndexOf('/')];
+            var actualId = ReadString(metadata, "id");
+            if (!string.Equals(actualId, expectedId, StringComparison.Ordinal))
+                return $"{label} pack.json identity mismatch: selection names '{expectedId}' but pack.json names '{actualId ?? "(missing)"}'.";
+
+            if (metadata.TryGetProperty("schema", out var schema) &&
+                (schema.ValueKind != JsonValueKind.String ||
+                 !string.Equals(schema.GetString(), ContentPackSchema, StringComparison.Ordinal)))
+                return $"{label} pack.json has an unsupported schema: {key}";
+            if (metadata.TryGetProperty("schemaVersion", out var version) &&
+                (version.ValueKind != JsonValueKind.Number ||
+                 !version.TryGetInt32(out var schemaVersion) || schemaVersion != 0))
+                return $"{label} pack.json has an unsupported schemaVersion: {key}";
+            if (metadata.TryGetProperty("dataPolicy", out var policy) &&
+                policy.ValueKind == JsonValueKind.Object &&
+                policy.TryGetProperty("externalPathsAllowed", out var external) &&
+                external.ValueKind == JsonValueKind.True)
+                return $"{label} pack.json permits paths outside its bundle: {key}";
+        }
+        catch (Exception error)
+        {
+            return $"{label} pack.json is unreadable or corrupt ({key}): {error.Message}";
+        }
+
+        return null;
+    }
+
+    private static bool IsExactSafeBundleKey(string? key)
+    {
+        if (string.IsNullOrWhiteSpace(key) || key != key.Trim() ||
+            key.Contains('\\', StringComparison.Ordinal) || Path.IsPathRooted(key))
+            return false;
+        return IsSafeBundleKey(key);
+    }
 
     /// <summary>
     /// Resolve the content root the UI and Play must both use.
@@ -429,7 +582,9 @@ public static class ContentPackCatalog
                 part.Contains('\\', StringComparison.Ordinal))
                 return false;
         }
-        return true;
+        return parts[1].Length == 64 &&
+               parts[1].All(static character =>
+                   character is >= '0' and <= '9' or >= 'a' and <= 'f' or >= 'A' and <= 'F');
     }
 
     /// <summary>

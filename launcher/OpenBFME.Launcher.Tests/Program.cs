@@ -37,7 +37,8 @@ var tests = new (string Name, Func<Task> Run)[]
     ("scalar importer progress", TestScalarImporterProgress),
     ("diagnostic redaction", TestRedaction),
     ("bundle inventory", TestBundleInventory),
-    ("content pack catalog", TestContentPackCatalog)
+    ("content pack catalog", TestContentPackCatalog),
+    ("content selection validation", TestContentSelectionValidation)
 };
 
 var failed = 0;
@@ -1308,6 +1309,100 @@ static Task TestContentPackCatalog()
         try { Directory.Delete(install, recursive: true); } catch { /* temp cleanup */ }
     }
     return Task.CompletedTask;
+}
+
+static Task TestContentSelectionValidation()
+{
+    var install = NewRoot("content-selection");
+    try
+    {
+        // An installed-engine-shaped root without content is not playable.
+        var engineOnlyContent = ContentPackCatalog.DefaultContentRoot(install);
+        var engineOnly = ContentPackCatalog.ValidateSelection(engineOnlyContent);
+        Check(!engineOnly.Ok && engineOnly.Reason?.Contains("does not exist", StringComparison.OrdinalIgnoreCase) == true,
+            "engine-only fixture incorrectly implied valid content");
+
+        var content = Path.Combine(install, "content-packs");
+        Directory.CreateDirectory(content);
+        var missing = ContentPackCatalog.ValidateSelection(content);
+        Check(!missing.Ok && missing.Reason?.Contains("No selection.json", StringComparison.Ordinal) == true,
+            "missing selection was playable");
+
+        var selectionPath = Path.Combine(content, "selection.json");
+        File.WriteAllText(selectionPath, "{ truncated");
+        var corrupt = ContentPackCatalog.ValidateSelection(content);
+        Check(!corrupt.Ok && corrupt.Reason?.Contains("corrupt", StringComparison.OrdinalIgnoreCase) == true,
+            "corrupt selection was playable");
+
+        File.WriteAllText(selectionPath, """
+            {
+              "schema": "openbfme.pack-selection",
+              "activePack": "bfme2-men/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+            """);
+        var missingVersion = ContentPackCatalog.ValidateSelection(content);
+        Check(!missingVersion.Ok && missingVersion.Reason?.Contains("schemaVersion", StringComparison.Ordinal) == true,
+            "selection without schemaVersion was playable");
+
+        File.WriteAllText(selectionPath, """
+            {
+              "schema": "openbfme.pack-selection",
+              "schemaVersion": 0,
+              "activePack": "../escape/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+            """);
+        var escaped = ContentPackCatalog.ValidateSelection(content);
+        Check(!escaped.Ok && escaped.Reason?.Contains("path escape", StringComparison.OrdinalIgnoreCase) == true,
+            "escaping activePack was playable");
+
+        var hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        var key = $"bfme2-men/{hash}";
+        WriteSelectionPack(content, key, "bfme2-men");
+        File.WriteAllText(selectionPath, $$"""
+            {
+              "schema": "openbfme.pack-selection",
+              "schemaVersion": 0,
+              "activePack": "{{key}}"
+            }
+            """);
+        var valid = ContentPackCatalog.ValidateSelection(content);
+        Check(valid.Ok && valid.ActivePackKey == key && valid.Reason is null,
+            $"valid selection was not playable: {valid.Reason}");
+
+        var missingSupplement = $"bfme2-audio/{new string('b', 64)}";
+        File.WriteAllText(selectionPath, $$"""
+            {
+              "schema": "openbfme.pack-selection",
+              "schemaVersion": 0,
+              "activePack": "{{key}}",
+              "supplementalPacks": ["{{missingSupplement}}"]
+            }
+            """);
+        var incomplete = ContentPackCatalog.ValidateSelection(content);
+        Check(!incomplete.Ok && incomplete.Reason?.Contains("Supplement is missing", StringComparison.Ordinal) == true,
+            "selection with missing supplement was playable");
+    }
+    finally
+    {
+        try { Directory.Delete(install, recursive: true); } catch { /* temp */ }
+    }
+    return Task.CompletedTask;
+}
+
+static void WriteSelectionPack(string contentRoot, string key, string id)
+{
+    var packRoot = Path.Combine(contentRoot, key.Replace('/', Path.DirectorySeparatorChar));
+    Directory.CreateDirectory(packRoot);
+    File.WriteAllText(Path.Combine(packRoot, "pack.json"), $$"""
+        {
+          "schema": "openbfme.content-pack",
+          "schemaVersion": 0,
+          "id": "{{id}}",
+          "title": "Test pack",
+          "version": "1.0.0",
+          "dataPolicy": { "externalPathsAllowed": false }
+        }
+        """);
 }
 
 static void Check(bool condition, string message)
