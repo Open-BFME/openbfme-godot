@@ -36,8 +36,9 @@ Write-Host ""
 
 # --- Brand / launcher chrome ---
 Write-Host "Brand / launcher chrome"
+# Physical files. The WPF banner is linked from docs/assets (see csproj Link=),
+# not duplicated under launcher/.../Assets/openbfme-banner.png.
 $assets = @(
-    "launcher\OpenBFME.Launcher\Assets\openbfme-banner.png",
     "launcher\OpenBFME.Launcher\Assets\openbfme-mark.png",
     "launcher\OpenBFME.Launcher\Assets\launcher-hero-bg.png",
     "docs\assets\openbfme-readme-banner.png"
@@ -51,6 +52,21 @@ foreach ($rel in $assets) {
     } else {
         BadLocal ("missing " + $rel)
     }
+}
+$linkedBanner = "docs\assets\openbfme-readme-banner.png"
+$bannerLinkOk = $false
+$csprojProbe = Join-Path $repoRoot "launcher\OpenBFME.Launcher\OpenBFME.Launcher.csproj"
+if (Test-Path -LiteralPath $csprojProbe) {
+    $csprojProbeText = Get-Content -LiteralPath $csprojProbe -Raw
+    if ($csprojProbeText -match 'openbfme-readme-banner\.png' -and
+        $csprojProbeText -match 'Link="Assets\\openbfme-banner\.png"') {
+        $bannerLinkOk = $true
+    }
+}
+if ($bannerLinkOk -and (Test-Path -LiteralPath (Join-Path $repoRoot $linkedBanner))) {
+    Ok "launcher banner linked from $linkedBanner (pack URI Assets/openbfme-banner.png)"
+} else {
+    BadLocal "launcher banner link missing (csproj must Link docs/assets/openbfme-readme-banner.png as Assets\openbfme-banner.png)"
 }
 
 # --- Release machinery (tracked) ---

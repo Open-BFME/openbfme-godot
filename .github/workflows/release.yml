@@ -34,6 +34,7 @@ jobs:
       attestations: write
     outputs:
       version: ${{ steps.identity.outputs.version }}
+      channel: ${{ steps.identity.outputs.channel }}
       release_host: ${{ steps.release_source.outputs.host }}
       release_repository: ${{ steps.release_source.outputs.repository }}
     env:
@@ -335,7 +336,16 @@ jobs:
 
   windows-vm-acceptance:
     name: clean Windows BFME2 VM acceptance
-    if: github.ref_protected == true && (github.event_name == 'push' || inputs.run_acceptance)
+    # Playtest/nightly may publish without a self-hosted retail VM so the first
+    # public feed is not blocked on runner hardware. Stable still requires it.
+    # workflow_dispatch with run_acceptance=true always runs acceptance when the
+    # ref is protected (manual soak of a candidate).
+    if: >
+      github.ref_protected == true &&
+      (
+        inputs.run_acceptance == true ||
+        (github.event_name == 'push' && needs.build.outputs.channel == 'stable')
+      )
     needs: [build, sign]
     runs-on: [self-hosted, windows, x64, openbfme-release-vm]
     timeout-minutes: 120
@@ -374,7 +384,18 @@ jobs:
 
   publish:
     name: publish immutable GitHub release
-    if: github.event_name == 'push' && github.ref_protected == true
+    # When windows-vm-acceptance is skipped (playtest/nightly), still publish if
+    # build+sign succeeded. Stable still requires acceptance success above.
+    if: >
+      always() &&
+      github.event_name == 'push' &&
+      github.ref_protected == true &&
+      needs.build.result == 'success' &&
+      needs.sign.result == 'success' &&
+      (
+        needs.windows-vm-acceptance.result == 'success' ||
+        needs.windows-vm-acceptance.result == 'skipped'
+      )
     needs: [build, sign, windows-vm-acceptance]
     runs-on: windows-latest
     environment: production-release
