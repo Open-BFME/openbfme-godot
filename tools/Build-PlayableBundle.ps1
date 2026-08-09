@@ -123,6 +123,16 @@
     staged file a third time. Faster; strictly weaker. The staged-vs-source hash
     comparison still runs in full either way.
 
+.PARAMETER Zip
+    Package the bundle for handing over a shared folder. Only after every
+    existing check has passed: verify-then-play.bat is staged beside
+    run-with-log.bat, SHA256SUMS.txt is written covering every file in the
+    bundle (standard sha256sum format, relative paths) and verified round-trip,
+    and the finished bundle is compressed to <OutputRoot>/<Name>.zip. The zip's
+    own sha256 is printed for the share listing and written beside it as
+    <Name>.zip.sha256. Off by default: hashing and compressing several
+    gigabytes is real time a dev build does not need to spend.
+
 .EXAMPLE
     powershell -NoProfile -ExecutionPolicy Bypass -File tools\Build-PlayableBundle.ps1
 
@@ -131,6 +141,9 @@
 
 .EXAMPLE
     powershell -NoProfile -ExecutionPolicy Bypass -File tools\Build-PlayableBundle.ps1 -Release
+
+.EXAMPLE
+    powershell -NoProfile -ExecutionPolicy Bypass -File tools\Build-PlayableBundle.ps1 -Release -Zip
 #>
 [CmdletBinding()]
 param(
@@ -154,6 +167,7 @@ param(
     [switch]$Force,
     [switch]$SkipLaunchCheck,
     [switch]$FastFinalVerify,
+    [switch]$Zip,
     [switch]$Help
 )
 
@@ -353,6 +367,17 @@ try {
         }
     }
     Write-BundleStep "bundle name         $Name"
+
+    # The zip's destination is checked HERE, in preflight, because refusing over
+    # a name collision after a finished multi-minute build would waste the build.
+    $zipPath = ''
+    if ($Zip) {
+        $zipPath = Join-Path $OutputRoot "$Name.zip"
+        if ((Test-Path -LiteralPath $zipPath) -and -not $Force) {
+            throw (New-BundleRefusal -Problem "A zip already exists: $zipPath" -Remedy 'Pass -Force to replace it, or -Name <other> to build alongside it.')
+        }
+        Write-BundleStep "zip target          $zipPath"
+    }
 
     # ------------------------------------------- War of the Ring data sources
     # The bundle used to ship a WAR OF THE RING button and none of its data, so
@@ -1042,12 +1067,26 @@ pause
 "@
     Write-BundleTextFile -Path (Join-Path $script:PartialRoot $script:BundleLauncher) -Content $launcher
 
+    # The tester-facing launcher: verify every file, THEN play. Staged here so
+    # it is inside the tree SHA256SUMS.txt covers; the manifest itself is only
+    # written after the final verification below has passed.
+    if ($Zip) {
+        New-BundleVerifyLauncher -BundleRoot $script:PartialRoot -BundleName $Name
+    }
+
     $readme = @"
 OpenBFME - playable bundle
 ==========================
   $Name
   commit $($source.shortCommit) on $($source.branch), built $($buildInfo.builtAtUtc) UTC
+$(if ($Zip) { @"
 
+START HERE
+  1. Double-click verify-then-play.bat - it checks every file, then starts the game.
+  2. Logs live beside the exe: run.log (from playing) and logs\ (from the build).
+  3. If it breaks: zip the logs folder together with run.log and send them, quoting
+     this build: commit $($source.shortCommit), OpenBFME.pck sha256 $($artifacts.pck.sha256)
+"@ } else { '' })
 WHAT THIS IS
   A Godot rebuild of BFME2 skirmish, bundled with pre-converted content so it
   runs without owning or converting anything yourself.
@@ -1065,7 +1104,7 @@ LAYOUT - the game finds content in content-packs NEXT TO the exe.
   content-packs/          <- must stay beside the exe
     selection.json
 $(@($packRecords | ForEach-Object { "    $($_.id)/$($_.bundleHash)/..." }) -join "`n")
-  run-with-log.bat
+  run-with-log.bat$(if ($Zip) { "`n  verify-then-play.bat    <- checks every file, then starts the game`n  SHA256SUMS.txt          <- what every shipped file must hash to" } else { '' })
   PATCH-NOTES.txt         <- what changed since the last release, in plain words
   CHANGES.txt             <- every change in this release, raw
   BUILD-INFO.txt          <- exactly what is in this build
@@ -1101,7 +1140,7 @@ REPORTING A PROBLEM
   which commit and which content produced the behaviour.
 "@
     Write-BundleTextFile -Path (Join-Path $script:PartialRoot $script:BundleReadme) -Content ($readme + "`n")
-    Write-BundleGood 'wrote BUILD-INFO.json, BUILD-INFO.txt, README.txt, PATCH-NOTES.txt, CHANGES.txt, run-with-log.bat'
+    Write-BundleGood "wrote BUILD-INFO.json, BUILD-INFO.txt, README.txt, PATCH-NOTES.txt, CHANGES.txt, run-with-log.bat$(if ($Zip) { ', verify-then-play.bat' } else { '' })"
 
     # ------------------------------------------------------------- verification
     Write-BundleHeading 'Verify the produced bundle'
@@ -1114,6 +1153,24 @@ REPORTING A PROBLEM
     }
     Write-BundleGood 'bundle verifies against its own BUILD-INFO.json'
 
+    # ------------------------------------------------------- checksum manifest
+    # Written only AFTER every existing check has passed: the manifest is the
+    # claim "these exact bytes are a verified bundle", so nothing may write it
+    # over a tree that has not earned it. It is then read back and verified
+    # against the tree it was just written from - a manifest that cannot verify
+    # its own bundle would otherwise fail for the first time on the tester's
+    # machine, which is the one place it must not.
+    if ($Zip) {
+        Write-BundleHeading 'Checksum manifest'
+        Write-BundleStep "hashing every bundle file for $($script:BundleChecksums) ..."
+        $manifestCount = New-BundleChecksumManifest -Root $script:PartialRoot -Label '  manifest'
+        $manifestProblems = @(Test-BundleChecksumManifest -Root $script:PartialRoot)
+        if ($manifestProblems.Count -gt 0) {
+            throw (New-BundleRefusal -Problem ("The just-written $($script:BundleChecksums) does not verify against the bundle it describes:`n           " + ($manifestProblems -join "`n           ")) -Remedy 'The tree changed while it was being hashed, or the disk is unreliable. Re-run the build.')
+        }
+        Write-BundleGood "$($script:BundleChecksums) covers $manifestCount files and verifies round-trip"
+    }
+
     # --------------------------------------------------------------- promote
     if (Test-Path -LiteralPath $bundleRoot) { Remove-Item -LiteralPath $bundleRoot -Recurse -Force }
     Rename-Item -LiteralPath $script:PartialRoot -NewName $Name
@@ -1123,6 +1180,29 @@ REPORTING A PROBLEM
     # without opening a 4 GB directory to find out what is in it.
     $notesBeside = Join-Path $OutputRoot "$Name-PATCH-NOTES.txt"
     Write-BundleTextFile -Path $notesBeside -Content ($notes.notesText + "`n")
+
+    # ---------------------------------------------------------------- zip
+    # After promotion, so the archive's top-level directory carries the final
+    # name and a zip can never be made of anything still called .partial.
+    $zipSha256 = ''
+    if ($Zip) {
+        Write-BundleHeading 'Zip for distribution'
+        if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+        Write-BundleStep "compressing $bundleRoot ..."
+        # [IO.Compression.ZipFile], not Compress-Archive: the 5.1 cmdlet has a
+        # documented ~2 GB per-file limit and buffering behaviour that fails on
+        # trees this size; the .NET API streams and writes zip64.
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        [IO.Compression.ZipFile]::CreateFromDirectory($bundleRoot, $zipPath, [IO.Compression.CompressionLevel]::Optimal, $true)
+        if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf) -or (New-Object IO.FileInfo $zipPath).Length -eq 0) {
+            throw (New-BundleRefusal -Problem "Compression produced no usable zip: $zipPath" -Remedy 'The bundle directory itself is finished and intact; check free disk space and re-run with -Zip.')
+        }
+        $zipSha256 = Get-BundleFileSha256 -Path $zipPath
+        # A sidecar in sha256sum format, so the share listing can quote the hash
+        # without anyone opening a multi-gigabyte archive to learn it.
+        Write-BundleTextFile -Path "$zipPath.sha256" -Content "$zipSha256  $Name.zip`n"
+        Write-BundleGood "zip $(Format-BundleBytes ((New-Object IO.FileInfo $zipPath).Length)) - sha256 $zipSha256"
+    }
 
     $elapsed = (Get-Date) - $script:StartedAt
     Write-Host ''
@@ -1145,6 +1225,13 @@ REPORTING A PROBLEM
     Write-Host "  What changed: $bundleRoot\$($script:BundlePatchNotes)"
     Write-Host "                $notesBeside"
     Write-Host "  What it is:   $bundleRoot\$($script:BundleInfoText)"
+    if ($Zip) {
+        Write-Host ''
+        Write-Host "  Ship it:      $zipPath"
+        Write-Host "  zip sha256    $zipSha256"
+        Write-Host "                (quote this in the share listing; also in $zipPath.sha256)"
+        Write-Host "  Tester runs:  verify-then-play.bat inside the extracted folder"
+    }
     Write-Host ''
     exit 0
 } catch {
