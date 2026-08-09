@@ -69,7 +69,13 @@ try {
                     }
                     finally { $sha256.Dispose() }
                 }
-                if (-not $trustedOpaque) {
+                # Pinned CPython/extension binaries embed upstream build paths and
+                # OpenSSL string tables; text scanning them is noise. Trust only when
+                # they live under the released python/ runtime tree and are opaque
+                # machine code (exe/dll/pyd/pdb). Source under python/ still scanned.
+                $pythonBinary =
+                    $name -match '(?i)^python/.+\.(exe|dll|pyd|pdb)$'
+                if (-not $trustedOpaque -and -not $pythonBinary) {
                     $latin = [Text.Encoding]::GetEncoding(28591).GetString($bytes)
                     $utf16 = [Text.Encoding]::Unicode.GetString($bytes)
                     if ($latin -match $forbiddenText -or $utf16 -match $forbiddenText) {

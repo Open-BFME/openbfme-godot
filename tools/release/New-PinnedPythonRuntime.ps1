@@ -159,7 +159,7 @@ try {
     $runtime = $runtimeJson | ConvertFrom-Json
     if (
         $runtime.version -ne "3.12.13" -or
-        $runtime.launcher_sha256 -ne "4ee5a32ca0fbfc6f4dd604fde80185cb0039d5a4bdca02ca698fffc5d9da52c7" -or
+        $runtime.launcher_sha256 -ne "32783151cd5dcf5196ff2fa342c11fc0909436531d4deec7824cbc29fd8c1a0c" -or
         $runtime.base_dll_sha256 -ne "60a12f6f0bdc0363544fcb3c824decf97d843ea7c3a9732f4ba02fa8b33cd6df" -or
         $runtime.tree_sha256 -ne "af162c36194d692391e2a972537bfa57d6576d8ffd701b731aee1ee282b6b013"
     ) {
