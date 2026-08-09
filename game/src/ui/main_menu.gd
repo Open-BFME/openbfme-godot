@@ -198,10 +198,23 @@ const OPTIONS_FLYOUT_ITEMS: Array = [
 const BACKDROP_IMAGE_IDS: Array[String] = [
 	"shellmapbackdrop", "mainmenubackdrop", "shellbackdrop", "mainmenu",
 ]
-## ProjectSettings key that names this build. Read, never written here: the
+## ProjectSettings keys that name this build. Read, never written here: the
 ## version belongs to one place (game/project.godot) so a playtester filing a
 ## report and the shell they were looking at cannot disagree.
 const VERSION_SETTING := "application/config/version"
+const BUILD_ID_SETTING := "application/config/build_id"
+## Original OpenBFME menu atmosphere stills (not retail shellmaps). When present
+## under res:// they replace the procedural Atmosphere drawing. Cycle is stable
+## per process so a single session does not flash between variants.
+const LOCAL_MENU_BACKDROPS: Array[String] = [
+	"res://data/base/assets/ui/menu/backdrop_gorge_dawn.png",
+	"res://data/base/assets/ui/menu/backdrop_fortress_dusk.png",
+	"res://data/base/assets/ui/menu/backdrop_misty_pass.png",
+	"res://data/base/assets/ui/menu/backdrop_argonath_haze.png",
+	"res://data/base/assets/ui/menu/backdrop_rivendell_vale.png",
+	"res://data/base/assets/ui/menu/backdrop_mordor_gate.png",
+]
+const BACKDROP_CYCLE_SECONDS := 12.0
 
 @onready var center: Control = $Center
 @onready var backdrop_art: TextureRect = $BackdropArt
@@ -290,6 +303,12 @@ var _wotr_unavailable_reason := ""
 var _wotr_document: Dictionary = {}
 var _wotr_document_path := ""
 var _wotr_document_source := ""
+## Local menu stills that are actually present on disk, for cycle order.
+var _local_backdrop_paths: Array[String] = []
+var _local_backdrop_index := 0
+var _local_backdrop_timer := 0.0
+var _backdrop_fade: TextureRect = null
+var _backdrop_fading := false
 
 
 func _ready() -> void:
@@ -410,8 +429,9 @@ const SKIRMISH_SWEEP_FIRST_FRAME := 3
 var _menu_frames := 0
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	_menu_frames += 1
+	_tick_backdrop_cycle(delta)
 	if not _first_frame_marked:
 		_first_frame_marked = true
 		BootProfile.mark("menu_first_frame")
@@ -680,21 +700,40 @@ func ensure_my_heroes_screen() -> bool:
 	## produces it. A shell that silently refused to open would leave the player
 	## with the same dead button they had before.
 	if my_heroes_screen != null:
+		_layout_my_heroes_screen()
 		return true
 	var script = load(MY_HEROES_SCREEN_PATH)
 	if script == null:
+		push_error("MY HEROES: failed to load %s" % MY_HEROES_SCREEN_PATH)
 		return false
 	my_heroes_screen = script.new()
 	my_heroes_screen.name = "MyHeroesScreen"
-	my_heroes_screen.position = solo_flyout.position
-	my_heroes_screen.size = solo_flyout.size
 	my_heroes_screen.visible = false
 	my_heroes_screen.theme_type_variation = "FlyoutPanel"
+	my_heroes_screen.mouse_filter = Control.MOUSE_FILTER_STOP
 	center.add_child(my_heroes_screen)
+	_layout_my_heroes_screen()
 	my_heroes_screen.back_requested.connect(func() -> void: _show_page(PAGE_MAIN))
 	my_heroes_screen.configure(_cah_system_runtime())
 	BootProfile.mark("menu:my_heroes_screen_construct")
 	return true
+
+
+func _layout_my_heroes_screen() -> void:
+	## Prefer the live SOLO flyout rect once it has been laid out. Anchors on the
+	## flyout can still report a zero size the first frame it has never been
+	## shown, which used to open MY HEROES as an invisible zero-rect panel.
+	if my_heroes_screen == null or solo_flyout == null:
+		return
+	var rect := solo_flyout.get_rect()
+	if rect.size.x < 64.0 or rect.size.y < 64.0:
+		var viewport_size := get_viewport_rect().size
+		rect = Rect2(
+			Vector2(28.0, 48.0),
+			Vector2(maxi(800.0, viewport_size.x - 56.0), maxi(520.0, viewport_size.y - 200.0))
+		)
+	my_heroes_screen.position = rect.position
+	my_heroes_screen.size = rect.size
 
 
 func _cah_system_runtime() -> Dictionary:
@@ -713,8 +752,11 @@ func _on_my_heroes_pressed() -> void:
 	if not ensure_my_heroes_screen():
 		status.text = "MY HEROES is unavailable: the screen script failed to compile."
 		return
+	_layout_my_heroes_screen()
 	my_heroes_screen.configure(_cah_system_runtime())
+	my_heroes_screen.visible = true
 	_show_page(PAGE_MY_HEROES)
+	status.text = "Create-a-Hero"
 
 
 func ensure_multiplayer_lobby() -> bool:
@@ -907,26 +949,132 @@ func shell_apt_metadata() -> Dictionary:
 
 
 func _apply_converted_backdrop() -> void:
-	## Retail renders a live 3D shellmap behind the bar (REF-07, the Argonath).
-	## Open BFME never copies a retail screenshot in: if a mounted pack publishes
-	## a converted shell backdrop the TextureRect displays it and the procedural
-	## Atmosphere drawing steps aside; otherwise the authored placeholder stands,
-	## visibly a placeholder rather than a silent substitute for private art.
-	if _content_db == null or not _content_db.has_method("resolve_retail_ui_image_path"):
+	## Backdrop priority:
+	##   1. Converted retail shell backdrop from a mounted pack (private parity)
+	##   2. Authored OpenBFME stills under res://data/base/assets/ui/menu/
+	##   3. Procedural Atmosphere drawing (Argonath-inspired code art)
+	## Nothing in this path copies a retail screenshot into the repository.
+	if _try_pack_shell_backdrop():
 		return
+	if _try_local_menu_backdrop():
+		return
+
+
+func _try_pack_shell_backdrop() -> bool:
+	if _content_db == null or not _content_db.has_method("resolve_retail_ui_image_path"):
+		return false
 	for image_id in BACKDROP_IMAGE_IDS:
 		var path := String(_content_db.call("resolve_retail_ui_image_path", image_id))
 		if path == "" or not FileAccess.file_exists(path):
 			continue
-		var image := Image.load_from_file(path)
-		if image == null or image.is_empty():
+		if _show_backdrop_image_path(path):
+			return true
+	return false
+
+
+func _try_local_menu_backdrop() -> bool:
+	_local_backdrop_paths.clear()
+	for path in LOCAL_MENU_BACKDROPS:
+		if ResourceLoader.exists(path):
+			_local_backdrop_paths.append(path)
 			continue
-		backdrop_art.texture = ImageTexture.create_from_image(image)
-		backdrop_art.visible = true
-		var atmosphere := get_node_or_null("Atmosphere") as Control
-		if atmosphere != null:
-			atmosphere.visible = false
+		var absolute := ProjectSettings.globalize_path(path)
+		if FileAccess.file_exists(absolute):
+			_local_backdrop_paths.append(absolute)
+	if _local_backdrop_paths.is_empty():
+		return false
+	_local_backdrop_index = 0
+	_local_backdrop_timer = 0.0
+	return _apply_local_backdrop_index(_local_backdrop_index, false)
+
+
+func _tick_backdrop_cycle(delta: float) -> void:
+	if _local_backdrop_paths.size() < 2 or _backdrop_fading:
 		return
+	if current_page != PAGE_MAIN:
+		return
+	if backdrop_art == null or not backdrop_art.visible:
+		return
+	_local_backdrop_timer += delta
+	if _local_backdrop_timer < BACKDROP_CYCLE_SECONDS:
+		return
+	_local_backdrop_timer = 0.0
+	_local_backdrop_index = (_local_backdrop_index + 1) % _local_backdrop_paths.size()
+	_apply_local_backdrop_index(_local_backdrop_index, true)
+
+
+func _apply_local_backdrop_index(index: int, fade: bool) -> bool:
+	if index < 0 or index >= _local_backdrop_paths.size():
+		return false
+	var path := _local_backdrop_paths[index]
+	var texture := _load_backdrop_texture(path)
+	if texture == null:
+		return false
+	var atmosphere := get_node_or_null("Atmosphere") as Control
+	if atmosphere != null:
+		atmosphere.visible = false
+	if not fade or backdrop_art.texture == null:
+		backdrop_art.texture = texture
+		backdrop_art.visible = true
+		backdrop_art.modulate = Color.WHITE
+		return true
+	_crossfade_backdrop(texture)
+	return true
+
+
+func _load_backdrop_texture(path: String) -> Texture2D:
+	if path.begins_with("res://") and ResourceLoader.exists(path):
+		var resource := load(path)
+		if resource is Texture2D:
+			return resource as Texture2D
+	var absolute := path
+	if path.begins_with("res://"):
+		absolute = ProjectSettings.globalize_path(path)
+	if not FileAccess.file_exists(absolute):
+		return null
+	var image := Image.load_from_file(absolute)
+	if image == null or image.is_empty():
+		return null
+	return ImageTexture.create_from_image(image)
+
+
+func _crossfade_backdrop(next_texture: Texture2D) -> void:
+	if backdrop_art == null or next_texture == null:
+		return
+	if _backdrop_fade == null:
+		_backdrop_fade = TextureRect.new()
+		_backdrop_fade.name = "BackdropArtFade"
+		_backdrop_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_backdrop_fade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		_backdrop_fade.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		_backdrop_fade.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		backdrop_art.add_sibling(_backdrop_fade)
+		# Keep fade under chrome, above base backdrop.
+		move_child(_backdrop_fade, backdrop_art.get_index() + 1)
+	_backdrop_fading = true
+	_backdrop_fade.texture = next_texture
+	_backdrop_fade.visible = true
+	_backdrop_fade.modulate = Color(1, 1, 1, 0)
+	var tween := create_tween()
+	tween.tween_property(_backdrop_fade, "modulate:a", 1.0, 1.35)
+	tween.tween_callback(func() -> void:
+		backdrop_art.texture = next_texture
+		backdrop_art.modulate = Color.WHITE
+		_backdrop_fade.visible = false
+		_backdrop_fading = false
+	)
+
+
+func _show_backdrop_image_path(path: String) -> bool:
+	var texture := _load_backdrop_texture(path)
+	if texture == null:
+		return false
+	backdrop_art.texture = texture
+	backdrop_art.visible = true
+	var atmosphere := get_node_or_null("Atmosphere") as Control
+	if atmosphere != null:
+		atmosphere.visible = false
+	return true
 
 
 ## The SOLO PLAY list, in retail's order. WAR OF THE RING is a real, playable
@@ -1050,22 +1198,19 @@ func _update_skirmish_busy_label() -> void:
 
 
 func _build_version_label() -> void:
-	## Build identity, bottom-left of the shell. A playtester filing a report has
-	## to be able to say which build they were on without guessing, so the version
-	## is READ from project.godot and never duplicated here — a literal in this
-	## file is exactly how the shell came to advertise a version the build had
-	## long since left behind.
-	##
-	## When project.godot declares no version the label says so, naming the
-	## setting that would fill it. That is deliberately louder than showing
-	## nothing: a missing version is a real gap in the release story, and a blank
-	## corner hides it.
+	## Build identity lives in two places on purpose:
+	##   1. Under the OPEN BFME title (always visible with the brand)
+	##   2. Bottom-left above the bar (still the playtester "which build?" corner)
+	## Both read project.godot — never a literal string in this file.
+	var identity := _build_identity_text()
+	var title_version := center.get_node_or_null("TitleVersion") as Label if center != null else null
+	if title_version != null:
+		title_version.text = identity
 	if center == null or center.has_node("BuildVersion"):
 		return
-	var version := String(ProjectSettings.get_setting(VERSION_SETTING, "")).strip_edges()
 	var label := Label.new()
 	label.name = "BuildVersion"
-	label.text = "v%s" % version if version != "" else "build version not set (%s)" % VERSION_SETTING
+	label.text = identity
 	# Above the bar's top edge (the caps occupy -102..-44), never overlapping a
 	# cap at any window size — both are anchored to the same bottom edge.
 	label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
@@ -1080,6 +1225,18 @@ func _build_version_label() -> void:
 	label.add_theme_constant_override("shadow_offset_y", 1)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	center.add_child(label)
+
+
+func _build_identity_text() -> String:
+	var version := String(ProjectSettings.get_setting(VERSION_SETTING, "")).strip_edges()
+	var build_id := String(ProjectSettings.get_setting(BUILD_ID_SETTING, "")).strip_edges()
+	if build_id == "":
+		build_id = String(OS.get_environment("OPENBFME_BUILD_ID")).strip_edges()
+	if build_id == "":
+		build_id = "dev"
+	if version == "":
+		return "build version not set (%s)  ·  build %s" % [VERSION_SETTING, build_id]
+	return "v%s  ·  build %s" % [version, build_id]
 
 
 ## THE DEFERRED-BUT-NEVER-SKIPPED CONTRACT.
@@ -3819,7 +3976,11 @@ func _show_page(page: String) -> void:
 			if stats_screen.back_btn.visible:
 				stats_screen.back_btn.grab_focus()
 		PAGE_MY_HEROES:
-			if my_heroes_screen != null and my_heroes_screen.back_button.visible:
+			if (
+				my_heroes_screen != null
+				and my_heroes_screen.back_button != null
+				and my_heroes_screen.back_button.visible
+			):
 				my_heroes_screen.back_button.grab_focus()
 
 
@@ -3849,7 +4010,7 @@ func _shell_chrome_nodes() -> Array[Control]:
 	for node_name in ["Atmosphere", "BackdropArt", "BarScrim", "Footer"]:
 		if has_node(node_name):
 			nodes.append(get_node(node_name) as Control)
-	for node_name in ["Title", "Subtitle", "BuildVersion"]:
+	for node_name in ["Title", "TitleVersion", "Subtitle", "BuildVersion"]:
 		if center != null and center.has_node(node_name):
 			nodes.append(center.get_node(node_name) as Control)
 	if _nav_diamonds != null:

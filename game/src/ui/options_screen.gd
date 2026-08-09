@@ -151,24 +151,59 @@ static func apply_display_settings(window_mode: String, resolution: String) -> v
 	## screen, and the slice's own boot: the user's choice must survive every
 	## scene transition and every entry path. Exclusive fullscreen applies the
 	## chosen resolution as the display mode; borderless keeps the native one.
+	##
+	## MULTI-MONITOR: always re-apply against the screen the window is already
+	## on. Centering with the no-argument `screen_get_size()` uses the primary
+	## display (often the left-most), which is exactly how ACCEPT on OPTIONS
+	## used to yank the game off the player's main monitor.
 	var parts := resolution.split("x", false)
 	if parts.size() != 2:
 		return
 	var size := Vector2i(int(parts[0]), int(parts[1]))
+	var screen_index := DisplayServer.window_get_current_screen()
+	if screen_index < 0:
+		screen_index = 0
+	var screen_size := DisplayServer.screen_get_size(screen_index)
+	var screen_origin := DisplayServer.screen_get_position(screen_index)
+	var prior_position := DisplayServer.window_get_position()
 	match window_mode:
 		"borderless":
+			DisplayServer.window_set_current_screen(screen_index)
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 		"fullscreen_exclusive":
+			DisplayServer.window_set_current_screen(screen_index)
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN)
 			DisplayServer.window_set_size(size)
 		_:
 			DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_BORDERLESS, false)
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
-			var screen := DisplayServer.screen_get_size()
-			var clamped := Vector2i(mini(size.x, maxi(640, screen.x)), mini(size.y, maxi(480, screen.y)))
+			var clamped := Vector2i(
+				mini(size.x, maxi(640, screen_size.x)),
+				mini(size.y, maxi(480, screen_size.y))
+			)
 			DisplayServer.window_set_size(clamped)
-			if screen.x > clamped.x and screen.y > clamped.y:
-				DisplayServer.window_set_position((screen - clamped) / 2)
+			DisplayServer.window_set_current_screen(screen_index)
+			var next_position := _window_position_on_screen(
+				prior_position, clamped, screen_origin, screen_size
+			)
+			DisplayServer.window_set_position(next_position)
+
+
+static func _window_position_on_screen(
+	prior: Vector2i, window_size: Vector2i, screen_origin: Vector2i, screen_size: Vector2i
+) -> Vector2i:
+	## Keep the window on the same monitor it was on. If the prior top-left still
+	## lands mostly inside that screen after the resize, clamp it there; otherwise
+	## re-center on that screen only (never on the primary by accident).
+	var screen_rect := Rect2i(screen_origin, screen_size)
+	var prior_rect := Rect2i(prior, window_size)
+	var overlap := screen_rect.intersection(prior_rect).get_area()
+	var area := maxi(1, window_size.x * window_size.y)
+	if overlap * 5 >= area * 2:
+		var max_x := screen_origin.x + maxi(0, screen_size.x - window_size.x)
+		var max_y := screen_origin.y + maxi(0, screen_size.y - window_size.y)
+		return Vector2i(clampi(prior.x, screen_origin.x, max_x), clampi(prior.y, screen_origin.y, max_y))
+	return screen_origin + (screen_size - window_size) / 2
 
 
 static func apply_graphics_preset(preset: String, viewport: Viewport) -> void:

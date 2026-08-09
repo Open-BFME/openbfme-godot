@@ -87,6 +87,25 @@ text = "OPEN BFME"
 horizontal_alignment = 2
 vertical_alignment = 1
 
+[node name="TitleVersion" type="Label" parent="Center"]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -900.0
+offset_top = 154.0
+offset_right = -80.0
+offset_bottom = 186.0
+grow_horizontal = 0
+theme_override_colors/font_color = Color(0.78, 0.82, 0.70, 0.88)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.85)
+theme_override_constants/shadow_offset_x = 2
+theme_override_constants/shadow_offset_y = 2
+theme_override_font_sizes/font_size = 16
+text = "v0.2.0-alpha  ·  build dev"
+horizontal_alignment = 2
+vertical_alignment = 1
+
 [node name="Subtitle" type="Label" parent="Center"]
 layout_mode = 1
 anchors_preset = 1

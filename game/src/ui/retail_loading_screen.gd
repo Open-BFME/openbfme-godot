@@ -76,10 +76,17 @@ func configure_boot(title: String) -> void:
 	## This keeps the identical ornate frame and progress readout and drops the
 	## match-only furniture, so the startup screen and the match screen are
 	## visibly the same surface rather than two separate loading screens.
+	## When a splash still is present it becomes the plate art for boot only.
 	_map_title_label.text = title
-	_art_frame.visible = false
+	_description_label.text = "Open-source RTS · content stays on your machine"
+	_description_label.visible = true
 	_preview_frame.visible = false
-	_description_label.visible = false
+	var splash := _load_boot_splash_texture()
+	if splash != null:
+		_art_rect.texture = splash
+		_art_frame.visible = true
+	else:
+		_art_frame.visible = false
 	for child in _table_grid.get_children():
 		child.queue_free()
 	_rows.clear()
@@ -110,6 +117,24 @@ func configure_boot(title: String) -> void:
 	(_table_grid.get_parent() as CenterContainer).add_child(host)
 	_rows.append({"bar": bar, "percent": percent})
 	set_load_progress(_progress_ratio, "")
+
+
+func _load_boot_splash_texture() -> Texture2D:
+	## Optional authored splash / ring plate. Prefer res:// then absolute path.
+	for path in [
+		"res://data/base/assets/ui/menu/splash_ring.png",
+		"res://icon_ring.png",
+	]:
+		if ResourceLoader.exists(path):
+			var texture := load(path) as Texture2D
+			if texture != null:
+				return texture
+		var absolute := ProjectSettings.globalize_path(path)
+		if FileAccess.file_exists(absolute):
+			var image := Image.load_from_file(absolute)
+			if image != null and not image.is_empty():
+				return ImageTexture.create_from_image(image)
+	return null
 
 
 func set_load_progress(ratio: float, phase_label: String) -> void:
