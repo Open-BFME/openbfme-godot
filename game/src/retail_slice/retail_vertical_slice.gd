@@ -4,6 +4,7 @@ extends Node3D
 ## held by RetailSliceSim; Godot nodes interpolate and present that state only.
 
 const DiagLogScript = preload("res://src/core/diag_log.gd")
+const CahHeroesScript = preload("res://src/content/cah_heroes.gd")
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const LockstepSessionScript = preload("res://src/retail_slice/retail_lockstep_session.gd")
 const BattalionScript = preload("res://src/retail_slice/retail_battalion.gd")
@@ -541,6 +542,11 @@ func _initialize_content_and_match() -> void:
 		if mp_error != OK:
 			_fail("Lockstep %s failed (%s:%d, error %d)." % [_mp_mode, mp_address, mp_port, mp_error])
 			return
+		# Product-path multiplayer proof: log mode, peer address, and bound port so
+		# dual-client evidence can show OPENBFME_MP actually armed ENet (not solo boot).
+		print("[Lockstep] mode=%s address=%s requested_port=%d bound_port=%d local_team=%d" % [
+			_mp_mode, mp_address, mp_port, int(lockstep_session.bound_port), local_team
+		])
 	_configure_simulation_expansions()
 	# Map scripts wire AFTER every other sim configuration and BEFORE the
 	# first tick: bodies are match configuration; the sim steps the executors
@@ -1769,6 +1775,42 @@ func _classify_faction_units(
 			continue
 		fieldable_unit_runtimes[object_id] = document
 		producible_unit_runtimes[object_id] = document
+
+	_add_created_heroes(slug)
+
+
+func _add_created_heroes(faction: String) -> void:
+	## Put the player's saved Create-a-Hero heroes on this faction's roster.
+	##
+	## A created hero is not special-cased anywhere downstream: it enters as an
+	## ordinary `openbfme.playable-unit-runtime` on the `hero-roster` surface,
+	## the same document shape and the same fortress producer every retail hero
+	## uses, so the manifest, the HUD palette, the ability engine and the
+	## experience engine all field it through the doors they already have.
+	##
+	## Added LAST and only under ids that are free, so a created hero can never
+	## displace a retail one. It is also added to `producible_unit_runtimes`
+	## because a hero the fortress cannot train is a hero the player cannot buy.
+	var content_db := get_node_or_null("/root/ContentDB")
+	if content_db == null:
+		return
+	var system_value: Variant = content_db.get("cah_system_runtime")
+	if typeof(system_value) != TYPE_DICTIONARY or (system_value as Dictionary).is_empty():
+		return
+	var created := CahHeroesScript.roster_documents(
+		system_value as Dictionary, fieldable_unit_runtimes, faction
+	)
+	for object_id_value in created.keys():
+		var object_id := String(object_id_value)
+		if fieldable_unit_runtimes.has(object_id):
+			unit_roster_exclusions.append({
+				"object_id": object_id,
+				"category": "hero",
+				"reason": "created-hero-id-collides-with-a-loaded-document",
+			})
+			continue
+		fieldable_unit_runtimes[object_id] = created[object_id_value]
+		producible_unit_runtimes[object_id] = created[object_id_value]
 
 
 func _faction_builder_unit_rule(builder_member_id: String) -> Dictionary:
