@@ -333,6 +333,7 @@ public partial class MainWindow : Window
         {
             VersionText.Text = "Install state unreadable";
             PlayButton.IsEnabled = false;
+            PlayFromSettingsButton.IsEnabled = false;
             StatusText.Text = error.Message;
             DetailText.Text = error.Message;
             DetailPanel.Visibility = Visibility.Visible;
@@ -340,7 +341,12 @@ public partial class MainWindow : Window
             return;
         }
         VersionText.Text = state is null ? "Not installed" : $"Version {state.CurrentVersion}";
-        PlayButton.IsEnabled = state is not null;
+        var selection = _service.ValidateContentSelection(ContentRootOverrideOrNull());
+        var playable = state is not null && selection.Ok;
+        PlayButton.IsEnabled = playable;
+        PlayFromSettingsButton.IsEnabled = playable;
+        if (state is not null && !selection.Ok)
+            StatusText.Text = $"Play unavailable: {selection.Reason}";
         RefreshChecklist();
     }
 
@@ -374,9 +380,16 @@ public partial class MainWindow : Window
             CheckRotwkText.Text = rotwk is not null ? "RotWK · ready" : "RotWK · needed";
             CheckRotwkText.Foreground = rotwk is not null ? OkBrush : WarnBrush;
 
-            var packCount = (_contentInventory?.Packs.Count ?? 0) + (_contentInventory?.Mods.Count ?? 0);
-            var active = _contentInventory?.ActivePackKey;
-            if (packCount == 0)
+            var inventory = _service.DiscoverContent(ContentRootOverrideOrNull());
+            var selection = ContentPackCatalog.ValidateSelection(inventory.ContentRoot);
+            var packCount = inventory.Packs.Count + inventory.Mods.Count;
+            var active = inventory.ActivePackKey;
+            if (!selection.Ok)
+            {
+                CheckPacksText.Text = $"Packs · blocked · {selection.Reason}";
+                CheckPacksText.Foreground = WarnBrush;
+            }
+            else if (packCount == 0)
             {
                 CheckPacksText.Text = "Packs · none";
                 CheckPacksText.Foreground = WarnBrush;
@@ -775,7 +788,7 @@ public partial class MainWindow : Window
     private void RefreshPacks_Click(object sender, RoutedEventArgs e)
     {
         RefreshContentPacks();
-        RefreshChecklist();
+        RefreshState();
         StatusText.Text = _contentInventory is null
             ? "Pack scan finished."
             : $"Found {_contentInventory.Packs.Count} pack(s) and {_contentInventory.Mods.Count} mod(s).";
@@ -793,7 +806,7 @@ public partial class MainWindow : Window
             ContentPackCatalog.SelectActivePack(root, key);
             ContentRootPath.Text = root;
             RefreshContentPacks();
-            RefreshChecklist();
+            RefreshState();
             StatusText.Text = $"Active pack set to {key.Split('/')[0]}.";
             ClearDetail();
         }
@@ -813,7 +826,7 @@ public partial class MainWindow : Window
             if (folder is null) return;
             ContentRootPath.Text = folder;
             RefreshContentPacks();
-            RefreshChecklist();
+            RefreshState();
         }
         catch (Exception error)
         {

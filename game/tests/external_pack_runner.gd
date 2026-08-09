@@ -194,6 +194,7 @@ func _run() -> void:
 	_run_map_catalog_rejection_tests(content_db, pack_root)
 	_test_external_selection_with_supplement(mod_loader)
 	_test_external_selection_supplemental_packs(mod_loader)
+	_test_external_invalid_selection_fails_closed(mod_loader)
 
 	_restore_settings()
 	if _startup_had_environment:
@@ -703,21 +704,62 @@ func _test_external_selection_supplemental_packs(mod_loader: Node) -> void:
 	OS.set_environment("OPENBFME_CONTENT", _external_content_root)
 	var roots: Array[String] = mod_loader.list_pack_roots()
 	_check(
-		"external_completion_selection_loads_nested_supplement",
-		roots.has(selected_root) and roots.has(supplement_root)
+		"external_invalid_supplement_set_mounts_nothing",
+		roots.is_empty()
 	)
 	_check(
-		"external_supplement_skips_unsafe_and_missing_entries",
+		"external_supplement_refuses_unsafe_and_missing_entries",
 		not roots.has(_external_content_root.path_join("../outside")) and not roots.has(_external_content_root.path_join("missing-pack/sha256-test"))
 	)
 	_check(
-		"external_supplement_still_suppresses_unlisted_siblings",
+		"external_invalid_supplement_set_suppresses_unlisted_siblings",
 		not roots.has(sibling_root)
 	)
 	if had_environment:
 		OS.set_environment("OPENBFME_CONTENT", old_environment)
 	else:
 		OS.unset_environment("OPENBFME_CONTENT")
+
+
+func _test_external_invalid_selection_fails_closed(mod_loader: Node) -> void:
+	var explicit_root := ProjectSettings.globalize_path("user://external-invalid-selection-%d" % Time.get_ticks_usec())
+	var sibling_root := explicit_root.path_join("stale-sibling")
+	DirAccess.make_dir_recursive_absolute(sibling_root)
+	_write_minimal_pack(sibling_root, "external-stale-sibling", 999)
+	var had_environment := OS.has_environment("OPENBFME_CONTENT")
+	var old_environment := OS.get_environment("OPENBFME_CONTENT")
+	OS.set_environment("OPENBFME_CONTENT", explicit_root)
+
+	var missing_roots: Array[String] = mod_loader.list_pack_roots()
+	_check("external_missing_selection_mounts_nothing", missing_roots.is_empty())
+	_check("external_missing_selection_refuses_sibling", not missing_roots.has(sibling_root))
+
+	var selection_path := explicit_root.path_join("selection.json")
+	var corrupt_file := FileAccess.open(selection_path, FileAccess.WRITE)
+	if corrupt_file != null:
+		corrupt_file.store_string("{ truncated")
+		corrupt_file.close()
+	var corrupt_roots: Array[String] = mod_loader.list_pack_roots()
+	_check("external_corrupt_selection_mounts_nothing", corrupt_roots.is_empty())
+
+	var selected_root := explicit_root.path_join("selected-pack/sha256-test")
+	DirAccess.make_dir_recursive_absolute(selected_root)
+	_write_minimal_pack(selected_root, "external-selected-test", 901)
+	_write_json(selection_path, {
+		"schema": "openbfme.pack-selection",
+		"schemaVersion": 0,
+		"activePack": "selected-pack/sha256-test",
+		"supplementalPacks": ["missing-pack/sha256-test"],
+	})
+	var incomplete_roots: Array[String] = mod_loader.list_pack_roots()
+	_check("external_missing_supplement_mounts_nothing", incomplete_roots.is_empty())
+	_check("external_missing_supplement_refuses_active", not incomplete_roots.has(selected_root))
+
+	if had_environment:
+		OS.set_environment("OPENBFME_CONTENT", old_environment)
+	else:
+		OS.unset_environment("OPENBFME_CONTENT")
+	_remove_tree(explicit_root)
 
 
 func _write_minimal_pack(pack_root: String, id: String, priority: int, profile_build_complete := false) -> void:

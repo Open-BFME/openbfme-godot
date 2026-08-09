@@ -155,6 +155,7 @@ func list_pack_roots() -> Array[String]:
 	# Developer/CI override. This remains ephemeral; normal installs use the
 	var external := OS.get_environment("OPENBFME_CONTENT")
 	var external_selected := ""
+	var external_unusable := false
 	active_selection_path = ""
 	if external != "":
 		if DirAccess.dir_exists_absolute(external):
@@ -174,19 +175,37 @@ func list_pack_roots() -> Array[String]:
 				if FileAccess.file_exists(external_selection):
 					external_selected = selected_user_pack_root(external, external_selection)
 					if external_selected != "":
-						active_selection_path = _absolute_path(external_selection)
-						roots.append(external_selected)
-						roots.append_array(selected_pack_supplements(external, external_selection))
+						var external_supplements := selected_pack_supplements(external, external_selection)
+						if supplement_failures.is_empty():
+							active_selection_path = _absolute_path(external_selection)
+							roots.append(external_selected)
+							roots.append_array(external_supplements)
+						else:
+							external_selected = ""
+							external_unusable = true
+							_diagnose("OPENBFME_CONTENT selection is unusable because one or more named supplements failed validation: %s" % external_selection)
 						# Explicit selection is a complete load set (active + named
 						# supplements). Never auto-mount sibling packs — stale
 						# leaves (e.g. private-leaves UI) would override the
 						# selected bundle's registries and fail pack-root gates.
 					else:
-						_collect_packs(external, roots)
+						external_unusable = true
+						_diagnose("OPENBFME_CONTENT selection is unusable; refusing to scan sibling packs: %s" % external_selection)
 				else:
-					_collect_packs(external, roots)
+					external_unusable = true
+					_diagnose("OPENBFME_CONTENT has no selection.json; refusing to scan sibling packs: %s" % external)
 		else:
+			external_unusable = true
 			_diagnose("OPENBFME_CONTENT does not exist: %s" % external)
+
+	# An explicit path is a launch contract. If it names neither a valid pack
+	# root nor a complete selection, return no roots: never substitute ambient,
+	# workspace, durable, or sibling content for bytes the caller did not choose.
+	if external != "" and external_unusable:
+		_diagnose("Explicit OPENBFME_CONTENT failed closed; no content packs will be mounted.")
+		active_content_source = "external-invalid"
+		active_pack_root = ""
+		return []
 
 	# A generated retail bundle is opt-in. The explicit developer/CI selection
 	# replaces the durable user selection so two versions of the same ruleset

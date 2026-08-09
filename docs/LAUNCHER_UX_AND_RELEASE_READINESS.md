@@ -90,7 +90,7 @@ and record where the bytes came from.
 |-----|--------|---------------|
 | **P0** | No GitHub `v*` playtest release yet | Admin control plane + first signed tag (below) |
 | **P0** | Playtest channel is CLI-only (`--channel playtest`) | Settings channel selector + persist preference |
-| **P0** | Play enables on engine presence, not valid `selection.json` | Read-only content selection validator; fail closed |
+| **P0** | Play enables on engine presence, not valid `selection.json` | **Fixed**: read-only selection validation gates UI and launch; runtime fails closed |
 | **P1** | “Get ready” / Play / Update roles subtle on first run | 3-step coach: engine → retail → convert/select |
 | **P1** | Convert (RotWK) says success without activating pack | “Published but not active” + explicit select action |
 | **P1** | Update UX: no size/version/restart CTA; feed clip at narrow width | Update review panel + constrained news cards |
@@ -113,7 +113,7 @@ Full write-up: `.private/scratch/sol_launcher_review.md`.
 | **P0** | `release.yml` Python `-c` JSON quotes broken on Windows PowerShell (run #30730696988) | **Fixed**: `python -m tools.release_source --json` |
 | **P0** | No GitHub envs / rulesets / signing secret / acceptance runner / `v*` tags | Still admin work |
 | **P0** | Playtest channel not GUI-selectable | Still open (launcher PR) |
-| **P0** | Play not gated on valid content selection; runtime sibling fallback | Still open (launcher + runtime PRs) |
+| **P0** | Play not gated on valid content selection; runtime sibling fallback | **Fixed**: immutable active/supplement validation; explicit runtime roots never fall back |
 | **P1** | Feed can rank wrong-channel releases as “ready” | Still open |
 | **P1** | Tag helper allowed unsigned `-Push` (workflow rejects) | **Fixed**: `-Push` requires `-Signed`; clean-main checks |
 | **P1** | Readiness script false green on public plane | **Fixed**: `LOCAL_BUILD_READY` vs `PUBLIC_RELEASE_NOT_READY` (exit 2) |

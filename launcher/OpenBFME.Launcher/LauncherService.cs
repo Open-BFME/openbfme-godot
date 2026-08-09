@@ -58,18 +58,29 @@ public sealed class LauncherService
         return inventory.ContentRoot;
     }
 
+    public ContentSelectionValidation ValidateContentSelection(
+        string? contentRootOverride = null)
+    {
+        var root = DiscoverContent(contentRootOverride).ContentRoot;
+        return ContentPackCatalog.ValidateSelection(root);
+    }
+
     public void LaunchGame(
         string? bfme2Path = null,
         string? rotwkPath = null,
         string? contentRootOverride = null)
     {
         var exe = CurrentGamePath();
+        var inventory = DiscoverContent(contentRootOverride);
+        var selection = ContentPackCatalog.ValidateSelection(inventory.ContentRoot);
+        if (!selection.Ok)
+            throw new InvalidOperationException($"Play unavailable: {selection.Reason}");
         var start = new ProcessStartInfo(exe)
         {
             UseShellExecute = false,
             WorkingDirectory = Path.GetDirectoryName(exe)!
         };
-        start.Environment["OPENBFME_CONTENT"] = ResolveContentRoot(contentRootOverride);
+        start.Environment["OPENBFME_CONTENT"] = selection.ContentRoot;
         // Prefer the paths the player just set in the UI, then discovery. Conversion
         // packs remain under .private/content-packs.
         var bfme2 = RetailDiscovery.IsRetailInstall(bfme2Path)
@@ -80,6 +91,11 @@ public sealed class LauncherService
             ? Path.GetFullPath(rotwkPath!)
             : AllInOneRetailProvisioner.ResolveExisting("rotwk", Options.InstallRoot);
         if (rotwk is not null) start.Environment["ROTWK_INSTALL"] = rotwk;
+        // Re-check at the process boundary so a removed/replaced selection cannot
+        // race an earlier UI or service-layer verdict.
+        selection = ContentPackCatalog.ValidateSelection(selection.ContentRoot);
+        if (!selection.Ok)
+            throw new InvalidOperationException($"Play unavailable: {selection.Reason}");
         Process.Start(start);
     }
 
