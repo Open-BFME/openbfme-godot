@@ -261,6 +261,11 @@ var keyboard_scroll_speed_scale := 1.0
 var options_overlay = null
 var _loaded_map_definition: Dictionary = {}
 var _camera_orbiting := false
+## Retail attack-cursor presentation (local only; never lockstep state).
+## Built on first hover so it can read the cursor pack a content reload
+## brought in, and left unconfigured when no pack carries the art.
+var _cursor_controller: RetailCursorController = null
+var _cursor_controller_ready := false
 var power_cast_armed := ""
 ## Set when the current faction has no spellbook document in any mounted
 ## pack (fail closed; the sim locks the whole tree with spellbook-unavailable).
@@ -6806,28 +6811,62 @@ func _update_camera(delta: float) -> void:
 	_update_hover_cursor()
 
 
-## Retail shows an attack cursor when the cursor rests over an enemy while a
-## combat selection is active (stock cross shape — styled chrome, not art).
+## Retail shows its red `SCCAttack` cursor when the pointer rests over a valid
+## enemy while a combat selection is active. The art comes from a cursor pack
+## (`RetailCursorController`); with no pack mounted this falls back to the stock
+## crosshair, which is what the slice showed before the art lane existed.
 func _update_hover_cursor() -> void:
 	if DisplayServer.get_name() == "headless" or simulation == null:
 		return
-	var shape := Input.CURSOR_ARROW
-	if (
-		not simulation.selected_ids.is_empty()
-		and construction_kind_armed == ""
-		and ability_cast_armed.is_empty()
-		and power_cast_armed == ""
-	):
+	var has_selection := not simulation.selected_ids.is_empty()
+	var command_armed := (
+		construction_kind_armed != ""
+		or not ability_cast_armed.is_empty()
+		or power_cast_armed != ""
+	)
+	var enemy_under_cursor := false
+	if has_selection and not command_armed:
 		var world: Variant = _screen_to_world(get_viewport().get_mouse_position())
 		if world != null:
 			var point := Vector2((world as Vector3).x, (world as Vector3).z)
-			var enemy_id := _closest_battalion(point, 1)
-			if enemy_id == 0:
-				enemy_id = _closest_structure(point, 1)
-			if enemy_id != 0:
-				shape = Input.CURSOR_CROSS
-	if Input.get_current_cursor_shape() != shape:
-		Input.set_default_cursor_shape(shape)
+			# Hostility is from the LOCAL seat, with the same pick margin the
+			# right-click order uses. The old reading asked for team 1 outright,
+			# so a guest seat (or any match where the local team IS 1) drew the
+			# attack cursor over its own army and never over the real enemy —
+			# and the cursor could promise an attack the click then refused.
+			enemy_under_cursor = (
+				_closest_hostile_battalion(point) != 0
+				or _closest_hostile_structure(point) != 0
+			)
+	var intent := RetailCursorController.select_intent(has_selection, command_armed, enemy_under_cursor)
+	_ensure_cursor_controller().apply(intent, float(Time.get_ticks_msec()) / 1000.0)
+
+
+func _ensure_cursor_controller() -> RetailCursorController:
+	## Built once per slice. A pack that carries no cursor art, or a malformed
+	## row, is reported by name here rather than silently leaving the stock
+	## crosshair in place looking like a wiring bug.
+	if _cursor_controller == null:
+		_cursor_controller = RetailCursorController.new()
+	if _cursor_controller_ready:
+		return _cursor_controller
+	_cursor_controller_ready = true
+	var row: Dictionary = ContentDB.get_retail_cursor("attackobj")
+	if row.is_empty():
+		var reason := ContentDB.retail_cursor_gap_reason("attackobj")
+		print("[Cursor] no mounted pack carries the retail attack cursor%s; using the stock crosshair." % (
+			"" if reason == "" else " (%s)" % reason
+		))
+		return _cursor_controller
+	if not _cursor_controller.configure(row):
+		push_warning("[Cursor] retail attack cursor could not be presented: %s" % _cursor_controller.last_error())
+		return _cursor_controller
+	print("[Cursor] retail attack cursor: %d frames, hotspot %s, %.2fs cycle." % [
+		_cursor_controller.frame_count(),
+		str(_cursor_controller.hotspot()),
+		_cursor_controller.cycle_seconds(),
+	])
+	return _cursor_controller
 
 
 ## Dev cheats mutate sim state directly and never travel the lockstep codec:

@@ -1065,6 +1065,63 @@ def build_parser() -> argparse.ArgumentParser:
         help="developer cook: light pack audit (size-only)",
     )
 
+    publish_cursors = sub.add_parser(
+        "publish-cursor-pack",
+        help=(
+            "decode the retail mouse cursors named by data/ini/mouse.ini from "
+            "the install's loose data/cursors directory and cook them into a "
+            "standalone cursor pack; selection.json is left untouched"
+        ),
+    )
+    publish_cursors.add_argument("--install", required=True)
+    _add_game_argument(publish_cursors)
+    publish_cursors.add_argument("--reindex", action="store_true")
+    publish_cursors.add_argument("--force", action="store_true")
+    publish_cursors.add_argument(
+        "--pack-id",
+        default=None,
+        help="pack id to publish (default: <game>-cursors-vslice)",
+    )
+    publish_cursors.add_argument(
+        "--cursor",
+        action="append",
+        default=None,
+        dest="cursors",
+        metavar="MOUSECURSOR_NAME",
+        help=(
+            "mouse.ini MouseCursor block to carry, repeatable "
+            "(default: the attack-intent family the game presents)"
+        ),
+    )
+    publish_cursors.add_argument(
+        "--cursors-root",
+        type=Path,
+        default=None,
+        help="loose cursor directory (default: <install>/data/cursors)",
+    )
+    publish_cursors.add_argument(
+        "--profile-output",
+        type=Path,
+        default=None,
+        help="where to write the generated profile (default: workspace/profiles)",
+    )
+    publish_cursors.add_argument(
+        "--no-publish",
+        action="store_true",
+        help="cook the pack without publishing it to the Godot content root",
+    )
+    publish_cursors.add_argument(
+        "--godot-content-root",
+        type=Path,
+        default=default_godot_content_root(),
+        help="private Godot content-packs directory",
+    )
+    publish_cursors.add_argument(
+        "--dev",
+        action="store_true",
+        help="developer cook: light pack audit (size-only)",
+    )
+
     update_selection = sub.add_parser(
         "update-selection-entry",
         help=(
@@ -2122,6 +2179,121 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                 # faction/object rows, so it never needs to be the active pack.
                 # selection.json is untouched here on purpose - retarget it
                 # with `update-selection-entry` once the bundle is published.
+                publication = pipeline.publish_to_godot(
+                    pack_root,
+                    args.godot_content_root,
+                    select=False,
+                    verified_digest=(
+                        value["bundle_sha256"]
+                        if not light_audit and value.get("valid", False)
+                        else None
+                    ),
+                )
+                value.update(publication)
+                value["selectionUpdateCommand"] = (
+                    "openbfme-import update-selection-entry "
+                    f"--pack-id {publication['pack_id']} "
+                    f"--bundle-sha256 {publication['bundle_sha256']}"
+                )
+            _render(value, args.json)
+            return 0 if value.get("valid", False) else 3
+        if args.command == "publish-cursor-pack":
+            from .cursor_pack import (
+                CURSOR_INDEX_RELATIVE,
+                CursorPackError,
+                DEFAULT_CURSOR_NAMES,
+                MOUSE_INI_PATH as CURSOR_MOUSE_INI_PATH,
+                compose_cursor_profile,
+                plan_cursor_pack,
+                read_loose_cursor,
+                resolve_cursors_root,
+            )
+
+            pack_id = args.pack_id or f"{args.game}-cursors-vslice"
+            # The binding INI is a BIG member and rides the catalog like every
+            # other retail document; only the art itself is loose.
+            mouse_entry = catalog.resolve_exact(CURSOR_MOUSE_INI_PATH)
+            if mouse_entry is None:
+                raise ValueError(
+                    f"{CURSOR_MOUSE_INI_PATH} is missing from the {args.game} catalog"
+                )
+            mouse_ini = catalog.open_archive_for(mouse_entry).read_entry(
+                catalog.as_entry(mouse_entry), max_bytes=8 * 1024 * 1024
+            )
+            if args.cursors_root is not None:
+                cursors_root = Path(args.cursors_root).expanduser()
+                if not cursors_root.is_dir():
+                    raise ValueError(f"--cursors-root is not a directory: {cursors_root}")
+            else:
+                resolved_cursors = resolve_cursors_root(Path(args.install))
+                if resolved_cursors is None:
+                    # Loose-only art: an install without this directory cannot
+                    # supply cursors at all, and a pack of nothing must not ship.
+                    raise ValueError(
+                        "retail cursor art is loose on disk and this install has "
+                        f"no data/cursors directory: {args.install}"
+                    )
+                cursors_root = resolved_cursors
+            try:
+                plan = plan_cursor_pack(
+                    mouse_ini,
+                    read_loose_cursor(cursors_root),
+                    cursor_names=args.cursors or DEFAULT_CURSOR_NAMES,
+                    provenance={
+                        "game": args.game,
+                        "catalogIdentitySha256": catalog.identity_sha256(),
+                    },
+                )
+            except CursorPackError as exc:
+                raise ValueError(f"cursor lane cannot compile a pack: {exc}") from exc
+            profile_output = Path(
+                args.profile_output
+                or (_workspace_root(args) / "profiles" / f"{pack_id}.generated.json")
+            ).expanduser()
+            pipeline = ImportPipeline(catalog, _state_root(args), game=args.game)
+            composed = compose_cursor_profile(
+                plan.document,
+                pack_id=pack_id,
+                game=args.game,
+                catalog_identity=pipeline.catalog.identity_sha256(),
+            )
+            write_json_atomic(profile_output, composed)
+            ImportProfile.load(profile_output)
+            pack_root = pipeline.build(
+                resolve_profile(ImportProfile.load(profile_output), pipeline.catalog),
+                force=args.force,
+            )
+            light_audit = bool(args.dev) or os.environ.get(
+                "OPENBFME_DEV", ""
+            ).strip().casefold() in {"1", "true", "yes"}
+            value = audit_pack(pack_root, light=light_audit)
+            value["pack"] = str(pack_root)
+            value["profile"] = str(profile_output)
+            value["pack_id"] = pack_id
+            value["cursor_index"] = CURSOR_INDEX_RELATIVE
+            value["cursors"] = plan.cursor_count
+            value["cursor_aliases"] = plan.alias_count
+            value["cursor_sources"] = [source.filename for source in plan.sources]
+            # Gaps ride the result and stderr both: a cursor the install could
+            # not supply must never be discoverable only by reading the JSON.
+            value["cursor_gaps"] = [dict(row) for row in plan.gaps]
+            if plan.gaps:
+                print(
+                    "cursor gaps: "
+                    + ", ".join(
+                        f"{row['cursor']} ({row['reason']})" for row in plan.gaps
+                    ),
+                    file=sys.stderr,
+                )
+            if light_audit:
+                value["bundle_sha256"] = "dev-skipped"
+                value["dev_mode"] = True
+            else:
+                value["bundle_sha256"] = bundle_digest(pack_root)
+            if not args.no_publish:
+                # Supplemental content only: this pack declares `cursors` and no
+                # faction rows, so it never becomes the active pack.  Retarget
+                # selection.json with `update-selection-entry`.
                 publication = pipeline.publish_to_godot(
                     pack_root,
                     args.godot_content_root,

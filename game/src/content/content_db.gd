@@ -232,6 +232,7 @@ func reload() -> void:
 	globals.clear()
 	damage_matrix.clear()
 	music_document.clear()
+	cursor_document.clear()
 	pack_meta.clear()
 	pack_roots.clear()
 	asset_roots.clear()
@@ -354,6 +355,7 @@ func _load_bundle_v0(root: String, meta: Dictionary) -> void:
 	_profile_db("  capabilities+ui+strings", pack_mark)
 	_load_retail_audio_manifest(root, String(declared.get("audioEvents", "")))
 	_load_music_document(root, String(declared.get("music", "")))
+	_load_cursor_index(root, String(declared.get("cursors", "")))
 	_profile_db("  audio_manifest", pack_mark)
 	for key in ["entryMap", "stage2Map"]:
 		var relative := String(declared.get(key, ""))
@@ -365,6 +367,82 @@ func _load_bundle_v0(root: String, meta: Dictionary) -> void:
 				map_doc["_pack_root"] = root
 				bundle_maps[map_id] = map_doc
 	_load_map_catalog(root, String(declared.get("mapCatalog", "")))
+
+
+## Retail mouse-cursor art (`openbfme.cursor-index`), contributed by any pack
+## that declares a `cursors` file. Retail ships its cursors as loose Win32
+## `.ani` files that never enter a BIG, so the importer decodes them into this
+## document as base64 PNG frames rather than as cooked pack assets: a 32x32
+## six-frame cursor is ~5 KB, and a separate asset lane for one sprite would
+## have meant bending the shared catalog and converter surface.
+##
+## Keyed by the casefolded mouse.ini `MouseCursor` block name (`attackobj`,
+## `forceattackobj`, ...). Aliases are resolved on read, not on load, so the
+## document stays a faithful copy of what the pack shipped.
+const CURSOR_INDEX_SCHEMA := "openbfme.cursor-index"
+const MAX_CURSOR_FRAMES := 64
+
+var cursor_document: Dictionary = {}
+
+
+func _load_cursor_index(root: String, relative: String) -> bool:
+	## A malformed or foreign-schema cursor document is IGNORED, never merged:
+	## a half-loaded cursor table would present the attack cursor on some
+	## intents and the stock arrow on others, which reads as a bug rather than
+	## as the honest "no cursor pack is installed".
+	if relative == "":
+		return false
+	var document := _read_declared_document(root, relative)
+	if String(document.get("schema", "")) != CURSOR_INDEX_SCHEMA or int(document.get("schemaVersion", -1)) != 1:
+		return false
+	if typeof(document.get("cursors", null)) != TYPE_DICTIONARY:
+		return false
+	document["_source"] = ModLoader.resolve_pack_path(root, relative)
+	document["_pack_root"] = root
+	cursor_document = document
+	return true
+
+
+func get_retail_cursor(name: String) -> Dictionary:
+	## Resolved cursor row for a mouse.ini intent name, or an empty dictionary
+	## when no mounted pack carries it. Never invents or substitutes art.
+	if cursor_document.is_empty():
+		return {}
+	var cursors: Variant = cursor_document.get("cursors", {})
+	if typeof(cursors) != TYPE_DICTIONARY:
+		return {}
+	var table := cursors as Dictionary
+	var key := name.to_lower()
+	var row: Variant = table.get(key, null)
+	if typeof(row) != TYPE_DICTIONARY:
+		return {}
+	# One alias hop only: the importer never chains aliases, and following an
+	# arbitrary chain here would turn a malformed document into a hang.
+	var alias := String((row as Dictionary).get("aliasOf", ""))
+	if alias != "":
+		var target: Variant = table.get(alias.to_lower(), null)
+		if typeof(target) != TYPE_DICTIONARY or String((target as Dictionary).get("aliasOf", "")) != "":
+			return {}
+		row = target
+	var resolved := (row as Dictionary).duplicate(true)
+	resolved["_source"] = cursor_document.get("_source", "")
+	resolved["_pack_root"] = cursor_document.get("_pack_root", "")
+	return resolved
+
+
+func retail_cursor_gap_reason(name: String) -> String:
+	## Empty when the cursor is not a named retail-source gap.
+	if cursor_document.is_empty():
+		return ""
+	var gaps: Variant = cursor_document.get("gaps", [])
+	if typeof(gaps) != TYPE_ARRAY:
+		return ""
+	for value in gaps as Array:
+		if typeof(value) != TYPE_DICTIONARY:
+			continue
+		if String((value as Dictionary).get("cursor", "")).to_lower() == name.to_lower():
+			return String((value as Dictionary).get("reason", "unknown"))
+	return ""
 
 
 func _load_music_document(root: String, relative: String) -> bool:
