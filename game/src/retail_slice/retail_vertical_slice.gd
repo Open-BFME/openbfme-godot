@@ -1822,11 +1822,19 @@ func _add_created_heroes(
 		# the same rules on every peer. The local `user://` store is not
 		# consulted - it differs per machine and reading it here is precisely
 		# what would build a different production roster on each peer.
+		# A LOCKSTEP roster is admitted strictly (the hero must have been built
+		# against exactly this table); a skirmish roster keeps the documented
+		# leniency, where a rebalanced pack moves an existing hero instead of
+		# making it vanish. The roster declares which it is.
+		var strict := false
+		for row_value in seat_rows:
+			if bool((row_value as Dictionary).get("lockstep", false)):
+				strict = true
 		created = CahHeroesScript.seat_roster_documents(
-			system_document, fieldable_unit_runtimes, seat_rows, faction
+			system_document, fieldable_unit_runtimes, seat_rows, faction, strict
 		)
 		for refusal in (
-			CahHeroesScript.admitted_seat_heroes(system_document, seat_rows).get(
+			CahHeroesScript.admitted_seat_heroes(system_document, seat_rows, strict).get(
 				"refusals", []
 			) as Array
 		):
@@ -1907,6 +1915,7 @@ func _created_hero_seat_rows(game_state = null) -> Array:
 			"team": int(entry.get("team", 0)),
 			"faction": String(entry.get("faction", "")),
 			"heroes": heroes.duplicate(),
+			"lockstep": bool(entry.get("lockstep", false)),
 		})
 	return rows
 

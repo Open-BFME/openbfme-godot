@@ -20,6 +20,7 @@ signal stats_pressed
 signal rows_changed
 signal controller_changed(row: int)
 signal team_changed(row: int)
+signal hero_changed(row: int)
 
 const TAB_MAP := "map"
 const TAB_RULES := "rules"
@@ -171,8 +172,8 @@ func _build_rules_content() -> void:
 	custom_heroes_toggle = CheckButton.new()
 	custom_heroes_toggle.name = "CustomHeroesToggle"
 	custom_heroes_toggle.text = "Allow Custom Heroes"
-	custom_heroes_toggle.tooltip_text = "Create-a-Hero is not a converted feature"
-	custom_heroes_toggle.disabled = true
+	custom_heroes_toggle.tooltip_text = "Field the heroes made in MY HEROES; off refuses them for every player"
+	custom_heroes_toggle.button_pressed = true
 	custom_heroes_toggle.position = Vector2(560, 16)
 	custom_heroes_toggle.size = Vector2(320, 36)
 	rules_content.add_child(custom_heroes_toggle)
@@ -290,10 +291,13 @@ func _rebuild_player_rows() -> void:
 		row_difficulty_opts.append(difficulty)
 
 		var hero := _option(row, "Hero%d" % index, Vector2(COL_HERO_X, 0), Vector2(170, ROW_HEIGHT))
+		# The rows are filled in by the menu, which is the only thing that can see
+		# the saved heroes and the mounted class table. Until then every row reads
+		# "-" - the same thing it reads when the player brings no hero at all.
 		hero.add_item("-")
+		hero.set_item_metadata(0, "")
 		hero.select(0)
-		hero.disabled = true
-		hero.tooltip_text = "Create-a-Hero is not a converted feature"
+		hero.item_selected.connect(func(_i: int) -> void: hero_changed.emit(index))
 		hero_dropdowns.append(hero)
 
 		var team := _option(row, "Team%d" % index, Vector2(COL_TEAM_X, 0), Vector2(110, ROW_HEIGHT))

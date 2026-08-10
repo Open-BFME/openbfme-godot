@@ -30,6 +30,11 @@ const ShellFlyoutScript = preload("res://src/ui/openbfme_shell_flyout.gd")
 const ShellAptRuntimeScript = preload("res://src/ui/retail_shell_apt_runtime.gd")
 const PackCapabilityScript = preload("res://src/content/pack_capability.gd")
 const SliceIds = preload("res://src/retail_slice/retail_slice_ids.gd")
+const CahHeroesScript = preload("res://src/content/cah_heroes.gd")
+## Preloaded only for its canonical hero-document spelling: a skirmish pick and a
+## lobby announcement must reach the roster in the SAME bytes, so there is one
+## canonicalizer and both callers use it.
+const SessionScript = preload("res://src/retail_slice/retail_lockstep_session.gd")
 ## DELIBERATELY STILL EAGER. `_locate_wotr_document()` runs inside `_ready()` -
 ## the SOLO PLAY flyout is built with War of the Ring's real state rather than a
 ## placeholder a later refresh has to correct - and it calls
@@ -2506,6 +2511,7 @@ func _populate_row_controls() -> void:
 		_populate_row_difficulty(row)
 		_populate_row_team(row)
 		_populate_row_color(row)
+		_populate_row_hero(row)
 		_apply_row_controller(row)
 
 
@@ -2557,10 +2563,99 @@ func _populate_row_color(row: int) -> void:
 	_on_color_changed(row)
 
 
+func _on_army_changed() -> void:
+	# A row's army decides which saved heroes that row may bring, so the picks
+	# are re-asked before anything reads them.
+	_refresh_hero_rows()
+	_refresh_skirmish_launch_state()
+
+
+func _refresh_hero_rows() -> void:
+	for row in range(solo_flyout.hero_dropdowns.size()):
+		_populate_row_hero(row)
+
+
 func _apply_row_controller(row: int) -> void:
 	var option: OptionButton = solo_flyout.row_controller_opts[row]
 	var is_human := option.selected >= 0 and option.get_item_text(option.selected) == "Human"
 	solo_flyout.set_row_controller_is_human(row, is_human)
+
+
+func _populate_row_hero(row: int) -> void:
+	## The saved Create-a-Hero heroes this row may bring, keyed by hero id.
+	##
+	## FILTERED THREE WAYS, all of them the player's own doing: the row must be
+	## the human's (an AI never brought a hero the player made), the host rule
+	## must allow custom heroes, and the hero's subclass must name this row's
+	## army in its UsableFactions - a Captain of Gondor is buildable by Men,
+	## Elves and Dwarves and an Orc Raider is not, so changing the army re-asks
+	## the question. "-" is always offered and always first: bringing no hero is
+	## the default, not a fallback.
+	if row >= solo_flyout.hero_dropdowns.size():
+		return
+	var option: OptionButton = solo_flyout.hero_dropdowns[row]
+	var previous := _selected_row_hero_id(row)
+	option.clear()
+	option.add_item("-")
+	option.set_item_metadata(0, "")
+	option.select(0)
+	var allowed := _row_may_bring_a_hero(row)
+	option.disabled = not allowed
+	if not allowed:
+		option.tooltip_text = (
+			"Only the human player brings a created hero"
+			if not _row_is_human(row)
+			else "Custom Heroes are disabled for this match"
+		)
+		return
+	option.tooltip_text = "The hero from MY HEROES this player brings to the match"
+	var system := _cah_system_runtime()
+	if system.is_empty():
+		return
+	var faction := _selected_skirmish_faction(solo_flyout.row_army_opts[row])
+	for profile in CahHeroesScript.load_profiles():
+		if not CahHeroesScript.validate_profile(system, profile).is_empty():
+			continue
+		var sub_row := CahHeroesScript.sub_class_row(
+			system, int(profile.get("classIndex", -1)), int(profile.get("subClassIndex", -1))
+		)
+		if not CahHeroesScript.subclass_allows_faction(sub_row, faction):
+			continue
+		option.add_item(CahHeroesScript.sanitize_name(String(profile.get("name", ""))))
+		var index := option.item_count - 1
+		var hero_id := String(profile.get("heroId", ""))
+		option.set_item_metadata(index, hero_id)
+		if hero_id == previous:
+			option.select(index)
+
+
+func _row_may_bring_a_hero(row: int) -> bool:
+	return _row_is_human(row) and solo_flyout.custom_heroes_toggle.button_pressed
+
+
+func _selected_row_hero_id(row: int) -> String:
+	if row >= solo_flyout.hero_dropdowns.size():
+		return ""
+	var option: OptionButton = solo_flyout.hero_dropdowns[row]
+	if option.selected < 0 or option.disabled:
+		return ""
+	return String(option.get_item_metadata(option.selected))
+
+
+func _row_hero_documents(row: int) -> Array:
+	## The row's pick, as the canonical document the per-seat roster path reads.
+	## EXACTLY THE ONE PICKED - never the whole saved store, which is what the
+	## single-player path used to field.
+	if not _row_may_bring_a_hero(row):
+		return []
+	var hero_id := _selected_row_hero_id(row)
+	if hero_id == "":
+		return []
+	var profile := CahHeroesScript.load_profile(hero_id)
+	if profile.is_empty():
+		return []
+	var document := SessionScript.canonical_hero_document(profile)
+	return [document] if document != "" else []
 
 
 func _selected_row_difficulty(row: int) -> String:
@@ -2607,6 +2702,9 @@ func _on_controller_changed(row: int) -> void:
 		solo_flyout.row_controller_opts[row].select(0)
 	for other in range(solo_flyout.row_controller_opts.size()):
 		_apply_row_controller(other)
+	# The human slot moved, so the hero column moves with it: the row that just
+	# became AI must stop offering a hero and the new human row must start.
+	_refresh_hero_rows()
 	_refresh_skirmish_launch_state()
 
 
@@ -3220,6 +3318,7 @@ func _build_team_descriptors(map_id: String) -> Array:
 			"alliance": _selected_row_alliance(row),
 			"color": _selected_row_color(row),
 			"start_index": starts[row] if row < starts.size() else 0,
+			"heroes": _row_hero_documents(row),
 		})
 	return descriptors
 
@@ -3914,7 +4013,9 @@ func _connect_actions() -> void:
 	multiplayer_flyout.host_requested.connect(_on_multiplayer_host)
 	multiplayer_flyout.join_requested.connect(_on_multiplayer_join)
 	multiplayer_flyout.back_requested.connect(func() -> void: _show_page(PAGE_MAIN))
-	solo_flyout.army_changed.connect(_refresh_skirmish_launch_state)
+	solo_flyout.army_changed.connect(_on_army_changed)
+	solo_flyout.hero_changed.connect(func(_row: int) -> void: _refresh_skirmish_launch_state())
+	solo_flyout.custom_heroes_toggle.toggled.connect(func(_on: bool) -> void: _refresh_hero_rows())
 	solo_flyout.color_changed.connect(_on_color_changed)
 	solo_flyout.rows_changed.connect(_on_rows_changed)
 	solo_flyout.controller_changed.connect(_on_controller_changed)

@@ -1565,6 +1565,12 @@ static func lobby_roster_from_seats(seats: Array, heroes_by_seat: Dictionary = {
 			# which is the only outcome cheaper than a desync.
 			"seat": seat,
 			"heroes": (heroes_by_seat.get(seat, []) as Array).duplicate(),
+			# DECLARED, not inferred. A created hero is admitted more strictly in
+			# a lockstep match than in a skirmish - it must have been built
+			# against exactly the mounted table, because leniency there is a
+			# desync. The consumer must be able to tell the two rosters apart
+			# without guessing from their shape, so the roster says which it is.
+			"lockstep": true,
 		})
 	return descriptors
 

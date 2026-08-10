@@ -44,7 +44,7 @@ const LEVEL_FOUR_UPGRADE := "Upgrade_CreateAHeroGloriousCharge"
 
 ## LIVENESS. A GDScript runtime error aborts its function without propagating,
 ## so a broken run would print zero failures. Raise deliberately; never lower.
-const EXPECTED_CHECKS := 50
+const EXPECTED_CHECKS := 58
 
 var passed := 0
 var failed := 0
@@ -90,6 +90,8 @@ func _run() -> void:
 	_test_baseline_contract(system, profile)
 
 	_test_skirmish_ownership_follows_the_human(system)
+	_test_skirmish_fields_only_the_picked_hero(system, profile)
+	_test_skirmish_setup_exposes_the_hero_column()
 	_test_created_heroes_survive_a_worker_thread(system)
 
 	var slice = _classified_slice(system)
@@ -449,6 +451,96 @@ func _classify_on_this_thread(system: Dictionary) -> int:
 			found += 1
 	slice.free()
 	return found
+
+
+func _test_skirmish_setup_exposes_the_hero_column() -> void:
+	## The setup screen's own half of the contract. Both controls existed already
+	## and both were nailed shut with the tooltip "Create-a-Hero is not a
+	## converted feature" - which stopped being true. This asserts they are open
+	## and wired, so the column cannot quietly revert to a decoration.
+	var setup_script = load("res://src/ui/skirmish_setup.gd")
+	var setup = setup_script.new()
+	root.add_child(setup)
+	_check(
+		setup.hero_dropdowns.size() == setup.row_army_opts.size()
+			and not setup.hero_dropdowns.is_empty(),
+		"every player row carries a hero dropdown"
+	)
+	var first: OptionButton = setup.hero_dropdowns[0]
+	_check(
+		not first.disabled and first.item_count == 1 and first.get_item_text(0) == "-",
+		"the hero column opens on \"-\" and is selectable"
+	)
+	_check(
+		setup.custom_heroes_toggle.button_pressed and not setup.custom_heroes_toggle.disabled,
+		"Allow Custom Heroes is a live host rule that defaults on"
+	)
+	var emitted := {"row": -1}
+	setup.hero_changed.connect(func(row: int) -> void: emitted["row"] = row)
+	first.item_selected.emit(0)
+	_check(int(emitted["row"]) == 0, "picking a hero tells the menu which row changed")
+	setup.queue_free()
+
+
+func _test_skirmish_fields_only_the_picked_hero(system: Dictionary, picked: Dictionary) -> void:
+	## THE PICK IS A PICK, not a hint. The single-player path used to field EVERY
+	## saved hero, so a player with six of them got six on the fortress roster
+	## whatever the setup screen said. With a hero column the row carries exactly
+	## one document, and this asserts the other saved heroes stay home - which is
+	## the assertion that fails if anyone ever routes this back through the local
+	## store instead of through the row.
+	var extra := CahHeroes.new_profile(system, "Left Behind", CLASS_INDEX, SUB_CLASS_INDEX)
+	var error := CahHeroes.save_profile(extra)
+	_check(error == "", "a second saved hero exists to be left behind: %s" % error)
+	if error != "":
+		return
+	_saved_hero_ids.append(String(extra.get("heroId", "")))
+	var picked_object := "CreateAHero__%s" % String(picked.get("heroId", ""))
+	var extra_object := "CreateAHero__%s" % String(extra.get("heroId", ""))
+
+	var script := GDScript.new()
+	script.source_code = "extends Node\nvar retail_team_setup: Array = []\n"
+	script.reload()
+	var state := Node.new()
+	state.set_script(script)
+	state.set("retail_team_setup", [
+		{"team": 0, "faction": FACTION, "controller": "ai", "heroes": []},
+		{
+			"team": 1, "faction": FACTION, "controller": "human",
+			"heroes": [JSON.stringify(picked, "", true)],
+		},
+	])
+	var slice = _classified_slice(system, state)
+	var created: Dictionary = slice.producible_unit_runtimes as Dictionary
+	_check(
+		created.has(picked_object) and not created.has(extra_object),
+		"the match fields the picked hero and only the picked hero"
+	)
+	var record: Dictionary = (
+		((created.get(picked_object, {}) as Dictionary).get("registration", {}) as Dictionary)
+			.get("createAHero", {}) as Dictionary
+	)
+	_check(
+		int(record.get("ownerTeam", -99)) == 1,
+		"the picked hero is owned by the row that picked it"
+	)
+	slice.free()
+
+	# CUSTOM HEROES OFF: the row carries nothing, so nothing is fielded - the
+	# same shape the lobby produces when the host turns the rule off.
+	state.set("retail_team_setup", [
+		{"team": 0, "faction": FACTION, "controller": "ai", "heroes": []},
+		{"team": 1, "faction": FACTION, "controller": "human", "heroes": []},
+	])
+	var disabled_slice = _classified_slice(system, state)
+	var disabled_created: Dictionary = disabled_slice.producible_unit_runtimes as Dictionary
+	var any_created := false
+	for object_id in disabled_created:
+		if String(object_id).begins_with("CreateAHero__"):
+			any_created = true
+	_check(not any_created, "a match whose rows bring no hero fields none")
+	disabled_slice.free()
+	state.free()
 
 
 func _test_skirmish_ownership_follows_the_human(system: Dictionary) -> void:
