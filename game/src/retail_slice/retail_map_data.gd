@@ -1605,10 +1605,12 @@ func _path_is_within_mounted_pack(path: String) -> bool:
 
 
 func _build_map_outline() -> void:
-	var source_min_x := float(playable_grid_min.x) * horizontal_scale
-	var source_max_x := float(playable_grid_max.x) * horizontal_scale
-	var source_min_y := float(playable_grid_min.y) * horizontal_scale
-	var source_max_y := float(playable_grid_max.y) * horizontal_scale
+	var source_min := grid_to_source_xy(float(playable_grid_min.x), float(playable_grid_min.y))
+	var source_max := grid_to_source_xy(float(playable_grid_max.x), float(playable_grid_max.y))
+	var source_min_x := source_min.x
+	var source_max_x := source_max.x
+	var source_min_y := source_min.y
+	var source_max_y := source_max.y
 	map_outline = PackedVector2Array([
 		_horizontal(source_to_local(Vector3(source_min_x, reference_elevation, -source_min_y))),
 		_horizontal(source_to_local(Vector3(source_max_x, reference_elevation, -source_min_y))),
@@ -1919,9 +1921,35 @@ func is_local_inside_navigation(local_position: Vector2) -> bool:
 	return grid.x >= float(navigation_grid_min.x) - 0.001 and grid.x <= float(navigation_grid_max.x) + 0.001 and grid.y >= float(navigation_grid_min.y) - 0.001 and grid.y <= float(navigation_grid_max.y) + 0.001
 
 
+## SAGE anchors world XY at the INNER (playable) map corner, so heightmap grid
+## index (border_width, border_width) - not (0, 0) - is world (0, 0), and the
+## border ring occupies negative world coordinates. Retail:
+##   OpenSAGE HeightMap.ConvertWorldCoordinates: p / HorizontalScale + BorderWidth
+##   OpenSAGE HeightMap.GetPosition: (grid - BorderWidth) * HorizontalScale
+## Every cooked record other than the terrain grid (objects, waypoints, water,
+## roads) is already stored in that world frame - the importer resolved each
+## object's ground Z through the border-shifted sample in
+## importer/openbfme_importer/sage_map.py `_HeightMap.sample_world_z`. Skipping
+## the shift here displaced the entire ground surface by border_width cells
+## under every placement it was supposed to carry (fortress walls floating over
+## the valley on Amon Sul Fortress, border 40 = 400 source units).
+func grid_to_source_xy(grid_x: float, grid_y: float) -> Vector2:
+	var border := float(border_width)
+	return Vector2((grid_x - border) * horizontal_scale, (grid_y - border) * horizontal_scale)
+
+
+func source_xy_to_grid(source_x: float, source_y: float) -> Vector2:
+	if horizontal_scale <= 0.0:
+		return Vector2.ZERO
+	var border := float(border_width)
+	return Vector2(source_x / horizontal_scale + border, source_y / horizontal_scale + border)
+
+
 func local_to_grid_float(local_position: Vector2) -> Vector2:
+	# local_to_source_horizontal returns cooked Godot horizontal space, which is
+	# (sage.x, -sage.y); the grid runs along +sage.y.
 	var source := local_to_source_horizontal(local_position)
-	return Vector2(source.x / horizontal_scale, -source.y / horizontal_scale)
+	return source_xy_to_grid(source.x, -source.y)
 
 
 func local_to_grid_cell(local_position: Vector2) -> Vector2i:
@@ -1930,7 +1958,8 @@ func local_to_grid_cell(local_position: Vector2) -> Vector2i:
 
 
 func grid_to_local_horizontal(cell: Vector2i) -> Vector2:
-	var local := source_to_local(Vector3(float(cell.x) * horizontal_scale, reference_elevation, -float(cell.y) * horizontal_scale))
+	var source := grid_to_source_xy(float(cell.x), float(cell.y))
+	var local := source_to_local(Vector3(source.x, reference_elevation, -source.y))
 	return Vector2(local.x, local.z)
 
 
@@ -1982,10 +2011,11 @@ func local_to_source_horizontal(local_position: Vector2) -> Vector2:
 func terrain_local_at(grid_x: int, grid_y: int) -> Vector3:
 	var safe_x := clampi(grid_x, 0, width - 1)
 	var safe_y := clampi(grid_y, 0, height - 1)
+	var horizontal := grid_to_source_xy(float(safe_x), float(safe_y))
 	var source := Vector3(
-		float(safe_x) * horizontal_scale,
+		horizontal.x,
 		float(height_raw_at(safe_x, safe_y)) * vertical_scale,
-		-float(safe_y) * horizontal_scale
+		-horizontal.y
 	)
 	return source_to_local(source)
 
@@ -2061,11 +2091,33 @@ func is_impassable_at(grid_x: int, grid_y: int) -> bool:
 	return (int(passability_bits[offset]) & (1 << (grid_x % 8))) != 0
 
 
+## Bilinear terrain elevation in SAGE world space, transcribed from the retail
+## engine's HeightMap.GetHeight(float, float) (OpenSAGE Terrain/HeightMap.cs).
+## This is the exact sample the importer used to resolve every authored object's
+## ground Z, so a placement authored flush to the ground (Z offset 0) lands on
+## the surface this returns. Nearest-vertex sampling was wrong by up to a full
+## cell of relief even once the grid origin was corrected.
+func source_ground_elevation(source_horizontal: Vector2) -> float:
+	if width <= 0 or height <= 0:
+		return 0.0
+	# source_horizontal is cooked Godot horizontal space: (sage.x, -sage.y).
+	var grid := source_xy_to_grid(source_horizontal.x, -source_horizontal.y)
+	var grid_x := clampf(grid.x, 0.0, float(width - 1))
+	var grid_y := clampf(grid.y, 0.0, float(height - 1))
+	var x0 := int(floor(grid_x))
+	var y0 := int(floor(grid_y))
+	var x1 := mini(x0 + 1, width - 1)
+	var y1 := mini(y0 + 1, height - 1)
+	var fx := grid_x - float(x0)
+	var fy := grid_y - float(y0)
+	var low := float(height_raw_at(x0, y0)) * (1.0 - fx) + float(height_raw_at(x1, y0)) * fx
+	var high := float(height_raw_at(x0, y1)) * (1.0 - fx) + float(height_raw_at(x1, y1)) * fx
+	return (low * (1.0 - fy) + high * fy) * vertical_scale
+
+
 func local_ground_height(local_position: Vector2) -> float:
-	var source := local_to_source_horizontal(local_position)
-	var grid_x := clampi(roundi(source.x / horizontal_scale), 0, width - 1)
-	var grid_y := clampi(roundi(-source.y / horizontal_scale), 0, height - 1)
-	return (float(height_raw_at(grid_x, grid_y)) * vertical_scale - reference_elevation) * local_transform_scale
+	var elevation := source_ground_elevation(local_to_source_horizontal(local_position))
+	return (elevation - reference_elevation) * local_transform_scale
 
 
 func simulation_configuration() -> Dictionary:

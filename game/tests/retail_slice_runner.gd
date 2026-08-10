@@ -337,12 +337,31 @@ const EXPECTED_BATTLE_SIGNATURES := {
 ## (.private/scratch/opus29-retail_slice_runner-P1.out.log). The live values are
 ## unchanged from round 20; the replay values became equal to them in this round
 ## when build_replay_simulation landed.
+##
+## MOVED 2026-08-10 (terrain vertical-height lane), and this is the explanation
+## the ratchet asks for before an update.
+##   battle  4BD653C3 -> 133D27D7
+##   defeat  13E08D05 -> 285A58CC
+## Cause: retail_map_data.gd was sampling the terrain grid without SAGE's border
+## inset, so grid index (0,0) was treated as world (0,0) instead of grid
+## (BorderWidth, BorderWidth). The ground surface therefore sat border_width *
+## horizontal_scale source units away from every object, waypoint and water
+## polygon cooked in world space — 200 units on Fords of Isen II, 400 on Amon Sul
+## Fortress, where the user saw fortress walls hanging in mid-air. Correcting the
+## origin moves the navigation grid, the walkable-cell snap and therefore the
+## seeded spawn positions, all of which are hash-visible; the elevation sample
+## also became bilinear to match the retail engine's HeightMap.GetHeight and the
+## importer's own object placement. Roots and oracle are pinned by
+## tests/terrain_object_ground_height_runner.gd (external oracle: OpenSAGE
+## HeightMap.cs / GameObject.cs).
+## The live/replay mirror is intact: both sides of both scenarios moved to the
+## same new value, which is what this table exists to be able to say.
 const OBSERVED_PRECOOK_BATTLE_SIGNATURES := {
 	"men": {
-		"battle_live": "4BD653C3",
-		"battle_replay": "4BD653C3",
-		"defeat_live": "13E08D05",
-		"defeat_replay": "13E08D05",
+		"battle_live": "133D27D7",
+		"battle_replay": "133D27D7",
+		"defeat_live": "285A58CC",
+		"defeat_replay": "285A58CC",
 	},
 }
 # This is a deadlock/watchdog bound, not a frame-time optimization gate. The
@@ -455,7 +474,22 @@ func _run() -> void:
 		if slice.source_map_data.map_outline.size() >= 3:
 			var playable_source_min: Vector2 = slice.source_map_data.local_to_source_horizontal(slice.source_map_data.map_outline[0])
 			var playable_source_max: Vector2 = slice.source_map_data.local_to_source_horizontal(slice.source_map_data.map_outline[2])
-			_check("playable_polygon_uses_declared_border", playable_source_min.is_equal_approx(Vector2(200.0, -200.0)) and playable_source_max.is_equal_approx(Vector2(3950.0, -3330.0)), "%s / %s" % [str(playable_source_min), str(playable_source_max)])
+			# SAGE world XY is anchored at the INNER (playable) map corner, so the
+			# playable rectangle runs from world (0,0) to the declared extent —
+			# OpenSAGE HeightMap.MaxXCoordinate = (Width - 2*BorderWidth) * 10 =
+			# 3750 here, MaxYCoordinate = 3130 (Godot z negates SAGE y). The old
+			# expectation (200,-200)..(3950,-3330) was grid_min*10 / grid_max*10,
+			# i.e. it pinned the missing border shift that floated map objects
+			# above the terrain; see terrain_object_ground_height_runner.gd.
+			# Compared with an absolute tolerance rather than is_equal_approx:
+			# these coordinates survive a float32 round trip through the
+			# battlefield transform, which leaves ~1e-4 of noise at a zero.
+			_check(
+				"playable_polygon_uses_declared_border",
+				playable_source_min.distance_to(Vector2(0.0, 0.0)) < 0.01
+				and playable_source_max.distance_to(Vector2(3750.0, -3130.0)) < 0.01,
+				"%s / %s" % [str(playable_source_min), str(playable_source_max)]
+			)
 		else:
 			# Empty outline means map configure() failed earlier; report it as a
 			# failed check instead of crashing _run (a crash here left the
@@ -532,7 +566,15 @@ func _run() -> void:
 		_check("retail_terrain_primary_three_way_and_cliffs_active", int(slice.battlefield.terrain_primary_blend_cell_count) == 51394 and int(slice.battlefield.terrain_three_way_blend_cell_count) == 9408 and int(slice.battlefield.terrain_cliff_cell_count) == 64)
 		_check("retail_roads_are_provenance_textured_and_grouped", bool(slice.battlefield.road_material_source_driven) and int(slice.battlefield.road_material_count) == 5 and int(slice.battlefield.road_mesh_instance_count) == 5 and slice.battlefield.road_container != null and slice.battlefield.road_container.get_child_count() == 5)
 		_check("retail_road_topology_and_curve_formula_exact", int(slice.battlefield.road_source_edge_count) == 71 and int(slice.battlefield.road_unique_endpoint_count) == 120 and int(slice.battlefield.road_shared_node_count) == 21 and int(slice.battlefield.road_curve_candidate_node_count) == 18 and int(slice.battlefield.road_generated_broad_curve_count) == 11 and int(slice.battlefield.road_straight_fallback_node_count) == 7 and slice.battlefield.road_generated_curve_evidence.size() == 11 and slice.battlefield.road_curve_fallback_evidence.size() == 7)
-		_check("retail_road_mesh_is_adaptive_and_terrain_draped", int(slice.battlefield.road_curve_strip_count) == 24 and int(slice.battlefield.road_render_strip_count) == 95 and int(slice.battlefield.road_vertex_count) == 534 and int(slice.battlefield.road_triangle_count) == 344, "strips=%d vertices=%d triangles=%d" % [slice.battlefield.road_render_strip_count, slice.battlefield.road_vertex_count, slice.battlefield.road_triangle_count])
+		# Vertex/triangle counts moved 534/344 -> 586/396 on 2026-08-10 when the
+		# terrain grid origin was corrected for SAGE's border inset (see
+		# terrain_object_ground_height_runner.gd). Road geometry itself is
+		# unchanged — 24 curve strips over 95 render strips, both pinned values —
+		# but the adaptive drape now samples the terrain the roads actually run
+		# over, and bilinearly rather than at the nearest vertex, so 52 more
+		# subdivision vertices survive the height-delta test. The topology check
+		# above (road_topology_and_curve_formula_exact) is untouched.
+		_check("retail_road_mesh_is_adaptive_and_terrain_draped", int(slice.battlefield.road_curve_strip_count) == 24 and int(slice.battlefield.road_render_strip_count) == 95 and int(slice.battlefield.road_vertex_count) == 586 and int(slice.battlefield.road_triangle_count) == 396, "curve_strips=%d strips=%d vertices=%d triangles=%d" % [slice.battlefield.road_curve_strip_count, slice.battlefield.road_render_strip_count, slice.battlefield.road_vertex_count, slice.battlefield.road_triangle_count])
 		_check("source_water_mesh_built", int(slice.battlefield.water_surface_count) == 12 and int(slice.battlefield.water_triangle_count) > 50, "surfaces=%d triangles=%d" % [slice.battlefield.water_surface_count, slice.battlefield.water_triangle_count])
 		_check("source_ford_gates_are_nonrendered_diagnostics", int(slice.battlefield.ford_marker_count) == 3 and int(slice.battlefield.get_meta("source_ford_gate_count", -1)) == 3 and slice.battlefield.ford_gate_diagnostics.size() == 3 and _visible_source_placeholder_count(slice.battlefield, "SourceFord_") == 0)
 		_check("unresolved_props_are_nonrendered_diagnostics", int(slice.battlefield.generic_prop_count) == slice.source_map_data.generic_prop_placements.size() and int(slice.battlefield.get_meta("source_unresolved_prop_placement_count", -1)) == int(slice.source_map_data.unresolved_prop_placement_count) and int(slice.battlefield.get_meta("source_unresolved_prop_sample_count", -1)) == int(slice.battlefield.generic_prop_count) and _unresolved_diagnostic_sample_count(slice.battlefield) == int(slice.battlefield.generic_prop_count) and _visible_unresolved_placeholder_count(slice.battlefield) == 0, str(slice.battlefield.unresolved_prop_diagnostics))
