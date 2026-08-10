@@ -203,6 +203,17 @@ var _preview_dragging := false
 var _loaded_model_id := ""
 var _garment_status := ""
 
+## WHERE THE IMPORTER PUBLISHES THE GARMENT SKINS. Retail's Body options repaint
+## the one body mesh, and the converted GLB embeds only the images that mesh
+## already draws - so every OTHER variant is published here, one flat directory
+## keyed by the retail texture's own basename with the extension converted
+## (`CHHW_SMN_01.tga` becomes `CHHW_SMN_01.png`). A directory rather than a
+## manifest because the compiled swap names the texture and nothing else.
+const CAH_TEXTURE_DIRECTORY := "assets/textures/cah"
+var _pack_texture_paths: Dictionary = {}
+var _pack_texture_paths_scanned := false
+var _pack_textures: Dictionary = {}
+
 
 func _ready() -> void:
 	theme = ThemeScript.create_theme(null)
@@ -214,6 +225,10 @@ func _ready() -> void:
 func configure(system: Dictionary) -> void:
 	_system = system if CahHeroes.system_is_valid(system) else {}
 	_content_db = get_node_or_null("/root/ContentDB")
+	# A DIFFERENT TABLE MEANS DIFFERENT PACKS. What was found under the mounted
+	# packs' texture directory is remembered, so it is forgotten here rather than
+	# outliving the packs it was read from.
+	_forget_pack_textures()
 	_ensure_built()
 	if is_inside_tree():
 		refresh()
@@ -2544,7 +2559,7 @@ func _apply_preview_appearance(surface := "") -> void:
 	if bool(plan.get("mapped", false)):
 		var applied := SubObjects.apply(_preview_model, plan)
 		var repainted := SubObjects.apply_texture_swaps(
-			_preview_model, plan.get("textures", []) as Array
+			_preview_model, plan.get("textures", []) as Array, _resolve_pack_texture
 		)
 		var missing: Array = repainted.get("unresolved", []) as Array
 		_garment_status = "mapped"
@@ -2624,6 +2639,70 @@ func _resolve_model_path(model_id: String) -> String:
 	if path == "":
 		return ""
 	return path if FileAccess.file_exists(path) or ResourceLoader.exists(path) else ""
+
+
+func _forget_pack_textures() -> void:
+	_pack_texture_paths.clear()
+	_pack_texture_paths_scanned = false
+	_pack_textures.clear()
+
+
+func _pack_texture_files() -> Dictionary:
+	## Every garment skin the mounted packs publish, keyed the way a compiled swap
+	## names one.
+	##
+	## THE DIRECTORY IS READ, NOT GUESSED AT ONE PATH AT A TIME. A swap names
+	## `CHSS_UKLeather.tga` and the pack ships `CHSS_UKLeather.png`: probing a
+	## single spelling would answer that on Windows, where a file is found however
+	## it is capitalised, and answer differently on the machines that build the
+	## packs. Listing the directory and keying each file the same way the swap is
+	## keyed makes the match the same everywhere.
+	##
+	## EVERY MOUNTED PACK, in the order ContentDB resolves them, so a pack that
+	## overrides a skin overrides it here too; and every hit is put back through
+	## `resolve_asset` so a path that is not inside a mounted pack cannot be
+	## reached from the compiled table.
+	if _pack_texture_paths_scanned:
+		return _pack_texture_paths
+	_pack_texture_paths_scanned = true
+	if _content_db == null:
+		return _pack_texture_paths
+	for root_value in (_content_db.pack_roots as Array):
+		var pack_root := String(root_value)
+		for file_value in DirAccess.get_files_at(pack_root.path_join(CAH_TEXTURE_DIRECTORY)):
+			var file := String(file_value)
+			var key := SubObjects.texture_key(file)
+			if key == "" or _pack_texture_paths.has(key):
+				continue
+			var resolved := String(_content_db.resolve_asset(
+				"%s/%s" % [CAH_TEXTURE_DIRECTORY, file], pack_root
+			))
+			if resolved != "":
+				_pack_texture_paths[key] = resolved
+	return _pack_texture_paths
+
+
+func _resolve_pack_texture(key: String) -> Texture2D:
+	## One published garment skin, or null when no mounted pack ships it.
+	##
+	## NULL IS AN ANSWER. The screen names the texture it could not find rather
+	## than repainting the hero in something else, which is the whole reason the
+	## caption exists.
+	if _pack_textures.has(key):
+		return _pack_textures[key] as Texture2D
+	var texture: Texture2D = null
+	var path := String(_pack_texture_files().get(key, ""))
+	if path != "" and FileAccess.file_exists(path):
+		var image := Image.load_from_file(path)
+		if image != null and not image.is_empty():
+			texture = ImageTexture.create_from_image(image)
+			# NAMED AFTER THE FILE IT CAME OUT OF, in the pack's own spelling. A
+			# texture built from an image carries no name at all, and an unnamed
+			# skin on a hero cannot be told from no skin at all by anything asking
+			# the model what it is wearing.
+			texture.resource_name = path.get_file().get_basename()
+	_pack_textures[key] = texture
+	return texture
 
 
 func _frame_preview(sub_row: Dictionary, visual: Node3D) -> void:

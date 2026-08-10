@@ -401,9 +401,15 @@ static func apply(root: Node, visibility_plan: Dictionary) -> Dictionary:
 	return {"shown": shown, "hidden": hidden, "unknown": unknown, "matched": seen.size()}
 
 
-static func apply_texture_swaps(root: Node, swaps: Array) -> Dictionary:
+static func apply_texture_swaps(root: Node, swaps: Array, resolver := Callable()) -> Dictionary:
 	## Repaint a loaded skin the way the chosen options say. Returns what moved:
 	## {swapped, restored, unresolved}.
+	##
+	## WHERE THE PAINT COMES FROM, in order: the images the skin's own GLB already
+	## carries, then `resolver` - the caller's way in to the pack's files, which is
+	## where the importer publishes the variants no mesh in the GLB references.
+	## The caller owns that lookup because this file knows about meshes and the
+	## compiled table and deliberately not about which packs are mounted.
 	##
 	## HOW A REPAINT IS UNDONE. Every surface is put back to the material the pack
 	## authored BEFORE anything is swapped onto it, so the source a swap matches
@@ -454,7 +460,7 @@ static func apply_texture_swaps(root: Node, swaps: Array) -> Dictionary:
 			if not wanted.has(from_key):
 				continue
 			var to_key := String(wanted[from_key])
-			var replacement := index.get(to_key) as Texture2D
+			var replacement := _paint(to_key, index, resolver)
 			if replacement == null:
 				unresolved[to_key] = true
 				continue
@@ -468,6 +474,18 @@ static func apply_texture_swaps(root: Node, swaps: Array) -> Dictionary:
 		missing.append(String(key_value))
 	missing.sort()
 	return {"swapped": swapped, "restored": restored, "unresolved": missing}
+
+
+static func _paint(key: String, index: Dictionary, resolver: Callable) -> Texture2D:
+	## THE MESH FIRST, THE PACK SECOND. An image the skin already draws is the one
+	## the artist authored against and costs nothing to reach; the pack file is
+	## what the importer publishes for the variants the mesh never references.
+	var embedded := index.get(key) as Texture2D
+	if embedded != null:
+		return embedded
+	if not resolver.is_valid():
+		return null
+	return resolver.call(key) as Texture2D
 
 
 static func texture_index(root: Node) -> Dictionary:

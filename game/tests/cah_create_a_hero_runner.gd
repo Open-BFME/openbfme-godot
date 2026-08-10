@@ -71,6 +71,9 @@ const PRODUCER := "MenFortress"
 ## directory this runner wrote and not about which meshes the machine's own
 ## content packs happen to have been published with.
 const SCRATCH_MODEL_ID := "CHHW_ZY_C_SKN"
+## The garment skin the scratch pack publishes, in a spelling no shipped pack
+## uses and in the mixed case the importer preserves off the retail file name.
+const SCRATCH_SKIN_NAME := "CHHW_ZySkin_02"
 ## The four level columns retail authors, which the grid's last row labels.
 const POWER_COLUMN_COUNT := 4
 
@@ -818,6 +821,40 @@ func _test_garment_texture_swaps() -> void:
 			.get("swapped", -1)) == 0,
 		"repainting no model at all is a no-op rather than a crash"
 	)
+
+	# THE PACK IS THE SECOND PLACE TO LOOK. The importer publishes the variants no
+	# mesh in the GLB references, and the caller hands in the way to reach them -
+	# so a skin the model does not carry is a repaint rather than a refusal.
+	var asked: Array[String] = []
+	var published := func(key: String) -> Texture2D:
+		asked.append(key)
+		return _named_texture(key) if key == "CHHW_SMN_09" else null
+	var from_pack := SubObjects.apply_texture_swaps(
+		skin, missing.get("textures", []) as Array, published
+	)
+	_check(
+		int(from_pack.get("swapped", 0)) == 1
+			and (from_pack.get("unresolved", []) as Array).is_empty(),
+		"a skin the GLB lacks is reached through the pack and worn (got %s)" % str(from_pack)
+	)
+	_check(
+		_painted_with(skin, "CHHW_SMN") == "CHHW_SMN_09",
+		"the body wears the skin the pack published (got %s)" % _painted_with(skin, "CHHW_SMN")
+	)
+	_check(
+		asked == ["CHHW_SMN_09"],
+		("the pack is asked only for what the model does not already carry, and asked "
+			+ "by the swap's own key (got %s)") % str(asked)
+	)
+	var still_missing := SubObjects.apply_texture_swaps(
+		skin,
+		missing.get("textures", []) as Array,
+		func(_key: String) -> Texture2D: return null
+	)
+	_check(
+		(still_missing.get("unresolved", []) as Array) == ["CHHW_SMN_09"],
+		"a skin no pack publishes is still named rather than faked (got %s)" % str(still_missing)
+	)
 	_check(
 		SubObjects.texture_index(skin).has("CHHW_SMN")
 			and SubObjects.texture_index(skin).has("CHHW_SMN_02"),
@@ -956,6 +993,31 @@ func _test_pack_resolution(system: Dictionary) -> void:
 		"a sibling id no pack carries stays empty even once the directory exists"
 	)
 
+	# THE GARMENT SKINS THE IMPORTER PUBLISHES, asked for the way a compiled swap
+	# names one - upper case, and carrying the `.tga` retail wrote.
+	screen._forget_pack_textures()
+	var swap_key := SubObjects.texture_key("%s.tga" % SCRATCH_SKIN_NAME)
+	_check(
+		screen._resolve_pack_texture(swap_key) is Texture2D,
+		"a garment skin the mounted pack publishes is loaded for the swap that names it"
+	)
+	_check(
+		String(screen._resolve_pack_texture(swap_key).resource_name) == SCRATCH_SKIN_NAME,
+		("a published skin is named after the file it came out of, so a hero can be "
+			+ "asked what he is wearing (got '%s')")
+			% String(screen._resolve_pack_texture(swap_key).resource_name)
+	)
+	_check(
+		screen._resolve_pack_texture("CHHW_ZyNoSuchSkin_09".to_upper()) == null,
+		"a garment skin no mounted pack publishes stays null rather than becoming a stand-in"
+	)
+	_check(
+		String(screen._pack_texture_files().get(swap_key, ""))
+			== pack_root.path_join("assets/textures/cah/%s.png" % SCRATCH_SKIN_NAME),
+		("the skin is found at the published layout whatever case it is spelled in "
+			+ "(got %s)") % str(screen._pack_texture_files().get(swap_key, ""))
+	)
+
 	# ICONS: the texture when the pack has one, the NAME when it does not. Never a
 	# stand-in, and never a three-letter stub of the name either.
 	content_db._load_interface_art_index(pack_root, {"files": {}})
@@ -1020,6 +1082,7 @@ func _build_scratch_pack() -> String:
 	var scratch := "user://cah-pack-%d" % (Time.get_ticks_usec() & 0xFFFFFF)
 	var pack_root := ProjectSettings.globalize_path(scratch.path_join("pack")).replace("\\", "/")
 	DirAccess.make_dir_recursive_absolute(pack_root.path_join("assets/models/cah"))
+	DirAccess.make_dir_recursive_absolute(pack_root.path_join("assets/textures/cah"))
 	DirAccess.make_dir_recursive_absolute(pack_root.path_join("assets/ui/interface-art/cah"))
 	DirAccess.make_dir_recursive_absolute(pack_root.path_join("data/interface-art"))
 
@@ -1035,6 +1098,15 @@ func _build_scratch_pack() -> String:
 	var icon := Image.create(16, 16, false, Image.FORMAT_RGBA8)
 	icon.fill(Color(0.6, 0.5, 0.2, 1.0))
 	icon.save_png(pack_root.path_join("assets/ui/interface-art/cah/hicahcaptaingondor.png"))
+
+	# A GARMENT SKIN, SPELLED THE WAY THE IMPORTER SPELLS ONE: the retail texture's
+	# own basename with the extension converted, MIXED CASE AND ALL. The case is
+	# the point - a swap names `<...>Leather.tga` and the resolver keys everything
+	# upper, so a lookup that probed one spelling would find this on Windows and
+	# miss it on the machines that cook the packs.
+	var skin := Image.create(8, 8, false, Image.FORMAT_RGBA8)
+	skin.fill(Color(0.2, 0.4, 0.7, 1.0))
+	skin.save_png(pack_root.path_join("assets/textures/cah/%s.png" % SCRATCH_SKIN_NAME))
 
 	var index := FileAccess.open(pack_root.path_join("data/interface-art/index.json"), FileAccess.WRITE)
 	index.store_string(JSON.stringify({
