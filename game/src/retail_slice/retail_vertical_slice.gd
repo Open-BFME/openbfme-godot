@@ -447,6 +447,14 @@ func _initialize_content_and_match() -> void:
 	for chrome_root_value in chrome_manifest.get("faction_pack_roots", []) as Array:
 		if not ui_pack_roots.has(chrome_root_value):
 			ui_pack_roots.append(chrome_root_value)
+	# Image provenance trusts the whole mounted selection, not just the host and
+	# the local army's packs: the interface-art index lives in whichever pack
+	# shipped it (the active faction pack today), and a Dwarves or Angmar match
+	# still draws shared chrome and cross-faction hero icons from it. Fail-closed
+	# stays intact for images with no pack backing at all.
+	for mounted_root_value in ContentDB.pack_roots:
+		if not ui_pack_roots.has(mounted_root_value):
+			ui_pack_roots.append(mounted_root_value)
 	var prefetched_count := ContentDB.prefetch_retail_ui_assets([selected_pack_root] + ui_pack_roots)
 	if profile_boot:
 		print("BOOT_PROFILE ui_prefetch_count=%d slice.ui_prefetch_ms=%d" % [prefetched_count, Time.get_ticks_msec() - boot_mark])

@@ -601,11 +601,22 @@ func _test_every_subclass_passes_presentation(system: Dictionary) -> void:
 
 	var slice = _classified_slice(system)
 	var fieldable: Dictionary = slice.fieldable_unit_runtimes as Dictionary
+	# Faction gating is off (ENFORCE_USABLE_FACTIONS), so the sweep now carries
+	# every subclass - including the one whose battlefield skin the pack cannot
+	# ship. That one must be a NAMED exclusion, not a silent absence.
 	var missing: Array[String] = []
 	for object_id in expected:
-		if not fieldable.has(object_id):
+		if fieldable.has(object_id):
+			continue
+		var named_exclusion := false
+		for exclusion_value in (slice.unit_roster_exclusions as Array):
+			var exclusion := exclusion_value as Dictionary
+			if String(exclusion.get("object_id", "")) == object_id and String(exclusion.get("reason", "")) != "":
+				named_exclusion = true
+				break
+		if not named_exclusion:
 			missing.append(object_id)
-	_check(missing.is_empty(), "every swept subclass reaches the Men roster: %s" % str(missing))
+	_check(missing.is_empty(), "every swept subclass reaches the Men roster or is excluded by name: %s" % str(missing))
 	var manifest_script = load("res://src/retail_slice/retail_faction_manifest.gd")
 	var content_db := root.get_node_or_null("ContentDB")
 	slice.faction_manifest = manifest_script.from_registries(

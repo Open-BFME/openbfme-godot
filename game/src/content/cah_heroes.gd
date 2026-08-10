@@ -1037,6 +1037,12 @@ static func roster_document(
 	}
 
 
+## Owner decision 2026-08-10: a created hero may fight for ANY faction, good or
+## evil. The authored `usableFactions` data still ships in the pack for mods
+## that want retail's gating back; flipping this constant restores it.
+const ENFORCE_USABLE_FACTIONS := false
+
+
 ## Faction slugs as the manifest spells them, against the `UsableFactions`
 ## spelling retail authors on a subclass. Retail writes "Men"/"Elves"/"Dwarves";
 ## the runtime uses lowercase slugs.
@@ -1047,6 +1053,8 @@ static func subclass_allows_faction(sub_row: Dictionary, faction: String) -> boo
 	## Gondor is buildable by Men, Elves AND Dwarves while an Orc Raider is not.
 	## A subclass that authors none is treated as unrestricted, which is what
 	## retail does with the field absent.
+	if not ENFORCE_USABLE_FACTIONS:
+		return true
 	var allowed: Array = sub_row.get("usableFactions", []) as Array
 	if allowed.is_empty():
 		return true
