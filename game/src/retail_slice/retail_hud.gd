@@ -68,26 +68,31 @@ const RETAIL_PALANTIR_AUTHORED_SIZE := Vector2(384, 256)
 const RETAIL_PALANTIR_DISPLAY_SIZE := Vector2(880, 360)
 # Regions are the exact APT atlas rectangles selected by Palantir DAT image IDs.
 #
-# REMOVED - `RETAIL_RADAR_PARCHMENT_REGION := Rect2(4, 4, 214, 214)`.
-# That rectangle crops the big brown sphere in the TOP-LEFT of
-# `apt-palantir-1-d9888d52cd89.png`, and that atlas is the SPELL / SUMMON-POWER
-# sheet: starbursts, sparkle sprites and power-button badges. The sphere is the
-# palantir ORB globe (the static MinLOD frame behind `GlobeSwirlRender`), and it
-# was being stretched across the whole radar disc as if it were the map. That is
-# the "the radar has a palantir icon over it" the owner reported: a leather ball
-# where the battlefield should be.
+# THE RADAR'S PAPER IS `apt-palantir-1`'s Rect2(4, 4, 214, 214), and it is the
+# real authored sheet. This comment previously said the opposite twice over and
+# both readings were wrong:
 #
-# There is no authored radar-fill bitmap to swap in. Every palantir FRAME atlas
-# (`apt-palantirexport-11/14/17/20`) is a ring with a fully transparent
-# interior - retail composites the radar inside the bezel rather than shipping
-# a backing image, and retail's own parchment fill is engine-drawn for the same
-# reason. So the backdrop is now a synthesized parchment plus the MAP'S INK ART
-# (`assets/ui/maps/<slug>-art.png`, the conversion of retail `<map>_art.tga`),
-# bound in `configure_minimap` where that texture is actually known. It is NOT
-# the map's `-preview.png`: that is `<map>_pic.tga`, the full-colour landmark
-# painting for the loading screen, and binding it here showed a photograph of a
-# fortress in the bezel (owner bug, 2026-08-10). A map publishing no ink art
-# falls back to bare parchment plus the synthetic water schematic.
+#   * The FIRST bug bound that region as the whole radar backdrop and stretched
+#     it over the disc as if it were the map - the "palantir icon over the
+#     radar" the owner reported.
+#   * The SECOND bug over-corrected: it called the region the palantir ORB
+#     globe, declared that "there is no authored radar-fill bitmap to swap in",
+#     and synthesized a parchment procedurally. Measured, the region is a
+#     continuous radial gradient disc - lit centre (179,160,118), mean
+#     (162.7,141.5,95.2) inside r<60, dark by r=100, alpha 0 by r=110. That is a
+#     lit paper sheet with its own rim vignette, not a leather ball, and the
+#     first bug's mistake was the SCALE it was drawn at, not the crop.
+#
+# So the paper is bound from the atlas (`RetailMinimap.bind_retail_parchment`,
+# which owns the region constant) and scaled to the bezel opening, and the MAP'S
+# INK ART (`assets/ui/maps/<slug>-art.png`, the conversion of retail
+# `<map>_art.tga`) is drawn OVER it by `configure_minimap`, where that texture is
+# actually known. The ink is NOT the map's `-preview.png`: that is
+# `<map>_pic.tga`, the full-colour landmark painting for the loading screen, and
+# binding it here showed a photograph of a fortress in the bezel (owner bug,
+# 2026-08-10). A map publishing no ink art keeps bare retail parchment plus the
+# synthetic water schematic; a build with no palantir atlas mounted at all gets
+# one flat fallback disc.
 const RETAIL_EMPTY_SOCKET_REGION := Rect2(558, 23, 56, 53)
 const RETAIL_ORB_REGIONS := {
 	"options": Rect2(701, 133, 36, 36),
@@ -1113,18 +1118,21 @@ func build() -> void:
 
 
 func configure_minimap(simulation: RefCounted, map_data: RefCounted, camera_value: Camera3D = null, ink_art: Texture2D = null) -> void:
+	# ONE call, not two. `configure` already binds (and, for a map with no art,
+	# CLEARS) the ink texture; the extra `bind_map_ink_art` that used to follow
+	# it here re-entered the same path for no effect.
+	#
+	# THE RADAR'S DRAWING IS THE MAP'S INK ART, not a palantir sprite and NOT the
+	# map's photographic preview painting. Retail lays the map's own `_art.tga`
+	# hand-drawn overlay over the authored parchment sheet inside the bezel; the
+	# converted equivalent is this map's published `art` asset
+	# (`assets/ui/maps/<slug>-art.png`). Callers must pass THAT, never `preview` -
+	# `<map>_pic.tga` is the fortress painting the loading screen shows, and
+	# binding it here put a photograph in the bezel (owner bug, 2026-08-10). A map
+	# that publishes no ink art binds nothing and the radar keeps bare retail
+	# parchment plus its synthetic water schematic.
 	minimap.configure(simulation, map_data, ink_art)
 	minimap.world_camera = camera_value
-	# THE RADAR'S BACKDROP IS THE MAP'S PARCHMENT INK, not a palantir sprite and
-	# NOT the map's photographic preview painting. Retail leaves the bezel's
-	# interior transparent and composites a tan paper fill plus the map's own
-	# `_art.tga` hand-drawn overlay inside it; the converted equivalent is this
-	# map's published `art` asset (`assets/ui/maps/<slug>-art.png`). Callers must
-	# pass THAT, never `preview` - `<map>_pic.tga` is the fortress painting the
-	# loading screen shows, and binding it here put a photograph in the bezel
-	# (owner bug, 2026-08-10). A map that publishes no ink art binds nothing and
-	# the minimap paints bare parchment plus its synthetic water schematic.
-	minimap.bind_map_ink_art(ink_art)
 
 
 func set_resources(resources: int, command_points: int, command_cap: int) -> void:
@@ -3557,6 +3565,10 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 	# below the dock). Dropping the radar beneath it puts the ring bevel over
 	# the map edge while orbs, sockets, labels, and the portrait stay on top.
 	minimap.z_index = -2
+	# Retail's authored radar sheet. The minimap owns the region constant and the
+	# crop; this pass only hands it the atlas the HUD already loaded for the orbs
+	# and sockets. Without it the radar falls back to one flat disc.
+	minimap.bind_retail_parchment(_retail_palantir_atlas)
 	var ui_font := _retail_ui_font(expected_pack_root)
 	if ui_font != null and ui_font != _retail_ui_font_cached:
 		_retail_ui_font_cached = ui_font

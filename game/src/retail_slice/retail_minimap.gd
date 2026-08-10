@@ -10,52 +10,81 @@ extends Control
 ##   `<map>_art.tga`  128x128, a SINGLE ink colour (76,44,1) carried entirely in
 ##                    the alpha channel: hand-drawn coastlines, ridge hatching
 ##                    and filled lakes. THIS is what retail composites inside
-##                    the palantir bezel over a tan paper fill - the sepia
-##                    old-map look in every RotWK screenshot.
-##   `<map>_pic.tga`  256x256, a full-colour PAINTING of the map's landmark
-##                    (Amon Sul's fortress under a blue sky). Map-select and
-##                    loading-screen art. NEVER the radar.
+##                    the palantir bezel over the parchment - the sepia old-map
+##                    look in every RotWK screenshot.
+##   `<map>_pic.tga`  A full-colour PAINTING of the map's landmark (Amon Sul's
+##                    fortress under a blue sky). Map-select and loading-screen
+##                    art. NEVER the radar. MODALLY 220x220 24-bit with NO alpha
+##                    channel: 17 of the 23 published previews are 220x220 and
+##                    only 6 are 256x256, so an earlier "256x256" claim here was
+##                    an Amon Sul coincidence generalised into a rule.
 ##
 ## The importer publishes the second as `assets/ui/maps/<slug>-art.png` and the
 ## third as `<slug>-preview.png`, and this control used to be handed the
 ## PREVIEW - so the radar showed a photographic painting of a fortress stretched
-## across the bezel (owner bug, 2026-08-10). It now takes the ink art and paints
-## the paper itself, because no retail archive ships a parchment fill bitmap:
-## every palantir frame atlas (`apt-palantirexport-11/14/17/20`) is a ring with
-## a fully transparent interior, so the paper is engine-drawn in retail too.
+## across the bezel (owner bug, 2026-08-10).
+##
+## THE PAPER IS A RETAIL BITMAP. It is NOT synthesized here, and the claim that
+## "no retail archive ships a parchment fill" (this header's own first fix,
+## 2026-08-10) was FALSE. The cooked palantir atlas
+## `assets/ui/palantir/atlases/apt-palantir-1-d9888d52cd89.png` carries the
+## authored radar sheet at `RETAIL_PARCHMENT_REGION` - a 214px disc that is a
+## continuous radial gradient from a lit centre (179,160,118) out through
+## (162.7,141.5,95.2) mean inside r<60, falling to (15,10,7) by r=100 and to
+## alpha 0 by r=110. That bitmap IS the paper AND its own rim vignette, so the
+## procedural bake and the 14 concentric darkening arcs that used to stand in
+## for it are gone; only the map's ink art is composited over it. With no pack
+## mounted (no atlas) the radar draws one flat measured disc and nothing else -
+## a visible degradation, not a hand-drawn imitation of retail.
 ##
 ## THE RADAR IS DRAWN IN SOURCE-GRID SPACE, NOT LOCAL SPACE. `retail_map_data`
 ## builds its local battlefield frame from the PLAYER-START AXIS, which is
 ## rotated against the map grid by an arbitrary angle per map (measured over the
-## 21 published RotWK maps: 35.8 deg on Fords of Isen II, 155.3 on Amon Sul
+## 21 art-bearing RotWK maps: 35.8 deg on Fords of Isen II, 155.3 on Amon Sul
 ## Fortress, 45.5 on Umbar). The ink art is authored in grid space, so painting
 ## it axis-aligned in local space would hang the drawing at a lie of an angle
 ## over the blips. Radar space here is (source.x, -source.y) - i.e. grid cell
 ## (gx, gy) times the horizontal scale, +y downward - which is exactly the ink
-## texture's own pixel order (verified against the cooked heightmap: ink ridges
-## land on heightmap slope ridges under the identity orientation, and on the
-## PLAYABLE core crop `playable_grid_min..playable_grid_max`, not the full grid
-## including the camera border).
+## texture's own pixel order.
+##
+## THAT REGISTRATION IS PINNED AGAINST REAL COOKED DATA, not against a stub:
+## `minimap_parchment_runner`'s `ink_registers_against_the_cooked_heightmap`
+## correlates every art alpha sample with the heightmap slope under it and
+## requires the playable-crop mapping to beat both rivals. Measured over all 21
+## art-bearing maps: playable crop mean r=+0.362, full bordered grid +0.086,
+## vertical flip +0.213; the playable crop wins on 21/21 against the full grid
+## and 20/21 against the flip. Amon Sul Fortress alone reads +0.316 / +0.030 /
+## +0.068.
+##
+## MAPS WITHOUT INK. 21 of the 75 cooked RotWK maps publish `<slug>-art.png`;
+## the other 54 fall back to bare parchment plus the synthetic water schematic.
+## Two art files (`harlindon-art.png`, `weather-hills-art.png`) are ORPHANS -
+## the pack publishes the image but cooks no map directory for it. That is an
+## importer follow-up, not a radar bug.
 ##
 ## The separate imported preview remains art, never a false coordinate texture.
 
-## Parchment palette measured off the retail RotWK capture's radar interior
-## (mean paper (162,140,94), lit centre (171,151,107), ink (76,44,1) straight
-## out of `_art.tga`).
-const PAPER_BASE := Color8(171, 149, 105)
-const PAPER_EDGE := Color8(118, 98, 63)
+## The authored radar sheet inside the cooked palantir atlas. Measured, not
+## guessed: outside this rectangle the atlas is spell/summon sprite work, and
+## an earlier pass cropped the palantir ORB globe from the same sheet and
+## stretched it over the disc (the "palantir icon over the radar" bug).
+const RETAIL_PARCHMENT_REGION := Rect2i(4, 4, 214, 214)
+## The ink colour retail authors into `_art.tga` (carried in the alpha channel;
+## every non-transparent texel in the cooked PNG is exactly this RGB). Used for
+## the no-ink water schematic; the ink art itself is drawn with its OWN colour
+## rather than re-tinted.
 const PAPER_INK := Color8(76, 44, 1)
-## The bezel interior around the paper, measured off the same capture.
+## The bezel interior behind the sheet. The palantir ring atlas has a fully
+## transparent middle, so without this the battlefield shows through the ring
+## around the parchment disc's soft edge. Measured off the RotWK capture.
 const BEZEL_GLASS := Color8(72, 53, 27)
-## Rim darkening inside the bezel, so the glass reads as a lit dish rather than
-## a flat brown ring - retail's radar interior falls off to near-black at the
-## metal. Applied as concentric bands over `BEZEL_GLASS`.
-const BEZEL_VIGNETTE_BANDS := 14
-const BEZEL_VIGNETTE_SPAN := 0.34
-const BEZEL_VIGNETTE_ALPHA := 0.34
-## Retail's sheet is a shade wider than the exact inscribed rectangle - measured
-## at 0.74 of the ring's opening against an inscribed 0.707 - so it overfills by
-## a few percent and lets the bezel clip the corners.
+## THE ONLY fallback paper: the mean of the retail disc inside r<60, drawn flat
+## when no mounted pack carries the palantir atlas. Deliberately featureless -
+## a degraded radar should look degraded.
+const PAPER_FALLBACK := Color8(163, 142, 95)
+## The ink sheet is a shade wider than the exact inscribed rectangle - retail's
+## capture puts the drawn map at 0.74 of the ring's opening against an inscribed
+## 0.707 - so it overfills by a few percent and lets the bezel clip the corners.
 const PAPER_FILL := 1.06
 const INK_OPACITY := 0.82
 ## Where the palantir bezel's opening is, as a fraction of the radar control's
@@ -67,11 +96,6 @@ const INK_OPACITY := 0.82
 ## worst a 2px sliver of world at the left rim, never parchment hanging outside
 ## the frame, which is how the old square backdrop spilled its corners.
 const BEZEL_RADIUS_RATIO := 0.4475
-## Baked-paper resolution on the long axis. The ink source is only 128px, so
-## anything past a few hundred is upsampled blur for no gain.
-const PAPER_MAX_DIMENSION := 384
-const PAPER_GRAIN := 7.0
-const PAPER_SEED := 0x5A6E1D
 const RADAR_DISC_SEGMENTS := 72
 
 var simulation: RefCounted
@@ -85,13 +109,20 @@ var radar_space := "local-fallback"
 ## never become the radar backdrop again. `retail_slice_runner` pins it.
 var uses_source_preview_as_background := false
 ## The map's converted `_art.tga` ink overlay, or null for a map that publishes
-## none (53 of the 76 cooked RotWK maps do not) - those keep bare parchment plus
+## none (54 of the 75 cooked RotWK maps do not) - those keep bare parchment plus
 ## the synthetic water schematic.
 var map_ink_art: Texture2D
 var uses_map_ink_art := false
-## Parchment (plus ink, when the map ships it) baked once per configure and
-## covering exactly `map_bounds`.
+## RETAIL'S authored parchment sheet, cropped once out of the palantir atlas by
+## `bind_retail_parchment`. Independent of the map, of the ink and of the zoom:
+## it is the bezel's paper, so it never pans. Null until a mounted pack supplies
+## the atlas, and `_draw` then falls back to one flat `PAPER_FALLBACK` disc.
 var radar_paper: ImageTexture
+var uses_retail_parchment := false
+## "retail-atlas" or "flat-fallback" - which of the two the last draw used, so
+## a missing pack reads as a named degradation in diagnostics rather than as a
+## slightly duller radar nobody notices.
+var parchment_source := "flat-fallback"
 var source_geometry_loaded := false
 var world_camera: Camera3D
 ## LOCAL-space camera focus, written by the slice every frame.
@@ -105,14 +136,45 @@ signal center_requested(world_position: Vector2)
 signal order_requested(world_position: Vector2)
 
 
+func bind_retail_parchment(atlas: Texture2D) -> bool:
+	## Crop retail's authored radar sheet out of the cooked palantir atlas.
+	## Called once from the HUD's art pass; the sheet does not depend on the map,
+	## so nothing here re-runs per match. Passing an atlas that is too small for
+	## `RETAIL_PARCHMENT_REGION` binds NOTHING rather than a silently clamped
+	## crop of whatever else is at (4,4).
+	radar_paper = null
+	uses_retail_parchment = false
+	parchment_source = "flat-fallback"
+	if atlas == null:
+		queue_redraw()
+		return false
+	var image := atlas.get_image()
+	if image == null or image.is_empty():
+		queue_redraw()
+		return false
+	if (
+		image.get_width() < RETAIL_PARCHMENT_REGION.end.x
+		or image.get_height() < RETAIL_PARCHMENT_REGION.end.y
+	):
+		queue_redraw()
+		return false
+	var sheet := image.get_region(RETAIL_PARCHMENT_REGION)
+	sheet.convert(Image.FORMAT_RGBA8)
+	radar_paper = ImageTexture.create_from_image(sheet)
+	uses_retail_parchment = true
+	parchment_source = "retail-atlas"
+	queue_redraw()
+	return true
+
+
 func bind_map_ink_art(texture: Texture2D) -> bool:
 	## Bind the map's `_art.tga` conversion. Passing the photographic preview
 	## here is the bug this control was rewritten for - callers must read the
-	## map row's `art` field, not `preview`.
+	## map row's `art` field, not `preview`. The ink is drawn OVER the parchment
+	## every frame rather than baked into it, so this touches no texture.
 	map_ink_art = texture
 	uses_map_ink_art = texture != null
 	uses_source_preview_as_background = false
-	_rebuild_radar_paper()
 	queue_redraw()
 	return uses_map_ink_art
 
@@ -142,10 +204,11 @@ func configure(sim: RefCounted, map_data: RefCounted = null, ink_art: Texture2D 
 		mapping_mode = "fallback-schematic"
 		source_geometry_loaded = false
 	camera_center = _radar_to_world(map_bounds.get_center())
-	if ink_art != null:
-		map_ink_art = ink_art
-		uses_map_ink_art = true
-	_rebuild_radar_paper()
+	# ALWAYS assigned, including null: configuring a map that publishes no ink
+	# art has to CLEAR the previous map's drawing, or the radar keeps painting
+	# the last map's coastlines over the new one.
+	map_ink_art = ink_art
+	uses_map_ink_art = ink_art != null
 	queue_redraw()
 
 
@@ -189,88 +252,18 @@ func set_zoom(value: float, immediate: bool = false) -> void:
 	queue_redraw()
 
 
-# ------------------------------------------------------------------ parchment
-
-
-func _rebuild_radar_paper() -> void:
-	## Bake the paper once. Retail ships no parchment bitmap (see the header),
-	## so the fill is synthesized at the measured palette and the map's ink is
-	## composited into it; zoom then only moves UVs across this one texture.
-	radar_paper = null
-	if map_bounds.size.x <= 0.0 or map_bounds.size.y <= 0.0:
-		return
-	var aspect := map_bounds.size.x / map_bounds.size.y
-	var width := PAPER_MAX_DIMENSION
-	var height := PAPER_MAX_DIMENSION
-	if aspect >= 1.0:
-		height = maxi(8, int(round(float(PAPER_MAX_DIMENSION) / aspect)))
-	else:
-		width = maxi(8, int(round(float(PAPER_MAX_DIMENSION) * aspect)))
-	var ink_bytes := PackedByteArray()
-	var ink_stride := 0
-	if map_ink_art != null:
-		var ink_image := map_ink_art.get_image()
-		if ink_image != null and not ink_image.is_empty():
-			ink_image = ink_image.duplicate()
-			ink_image.convert(Image.FORMAT_RGBA8)
-			ink_image.resize(width, height, Image.INTERPOLATE_BILINEAR)
-			ink_bytes = ink_image.get_data()
-			ink_stride = width * 4
-	var random := RandomNumberGenerator.new()
-	random.seed = PAPER_SEED
-	var bytes := PackedByteArray()
-	bytes.resize(width * height * 4)
-	var fade_span := maxf(4.0, minf(float(width), float(height)) * 0.10)
-	var feather_span := maxf(2.0, minf(float(width), float(height)) * 0.035)
-	for y in height:
-		# Laid-paper fibres: retail's radar interior reads as horizontal grain.
-		var fibre := sin(float(y) * 0.9) * 2.5
-		for x in width:
-			var edge_distance := minf(
-				minf(float(x), float(width - 1 - x)),
-				minf(float(y), float(height - 1 - y))
-			)
-			var edge_mix := clampf(1.0 - edge_distance / fade_span, 0.0, 1.0) * 0.75
-			var red := lerpf(PAPER_BASE.r8, PAPER_EDGE.r8, edge_mix) + fibre
-			var green := lerpf(PAPER_BASE.g8, PAPER_EDGE.g8, edge_mix) + fibre
-			var blue := lerpf(PAPER_BASE.b8, PAPER_EDGE.b8, edge_mix) + fibre
-			var grain := random.randf_range(-PAPER_GRAIN, PAPER_GRAIN)
-			red += grain
-			green += grain
-			blue += grain
-			var index := (y * width + x) * 4
-			if ink_stride > 0:
-				# INK_OPACITY, not 1.0: at 128px the authored strokes upsample to
-				# 3px solids, which read heavier than retail's thin anti-aliased
-				# lines even though both use the same (76,44,1).
-				var ink_alpha := (float(ink_bytes[y * ink_stride + x * 4 + 3]) / 255.0) * INK_OPACITY
-				if ink_alpha > 0.0:
-					red = lerpf(red, float(PAPER_INK.r8), ink_alpha)
-					green = lerpf(green, float(PAPER_INK.g8), ink_alpha)
-					blue = lerpf(blue, float(PAPER_INK.b8), ink_alpha)
-			bytes[index] = clampi(int(round(red)), 0, 255)
-			bytes[index + 1] = clampi(int(round(green)), 0, 255)
-			bytes[index + 2] = clampi(int(round(blue)), 0, 255)
-			# The sheet's edge FEATHERS into the bezel glass. Retail's paper has
-			# no hard rectangular border either - its straight edges are soft.
-			bytes[index + 3] = clampi(
-				int(round(255.0 * clampf(edge_distance / feather_span, 0.0, 1.0))), 0, 255
-			)
-	radar_paper = ImageTexture.create_from_image(
-		Image.create_from_data(width, height, false, Image.FORMAT_RGBA8, bytes)
-	)
-
-
 # ----------------------------------------------------------------------- draw
 
 
 func _arena() -> Rect2:
-	## The paper rectangle, INSCRIBED IN THE BEZEL, which is how retail composes
-	## it: on the RotWK capture the parchment's straight left and right edges are
-	## visible INSIDE the ring with dark glass between them and the metal, and the
-	## paper's width comes to 0.74 of the ring's opening - the inscribed rectangle
-	## of a square-ish map is 0.707. Filling the whole square control instead (the
-	## old behaviour) throws the map's four corners away under the frame.
+	## The DRAWN MAP's rectangle, INSCRIBED IN THE BEZEL, which is how retail
+	## composes it: on the RotWK capture the drawing's straight left and right
+	## edges are visible INSIDE the ring with paper still showing between them and
+	## the metal, and its width comes to 0.74 of the ring's opening - the
+	## inscribed rectangle of a square-ish map is 0.707. Filling the whole square
+	## control instead (the old behaviour) throws the map's four corners away
+	## under the frame. The PARCHMENT is a separate, larger disc (`_paper_square`)
+	## that fills the whole opening and never pans with the map.
 	var bounds := _visible_bounds()
 	var aspect := maxf(bounds.size.x, 0.001) / maxf(bounds.size.y, 0.001)
 	var diagonal := 2.0 * bezel_radius() * PAPER_FILL
@@ -281,6 +274,24 @@ func _arena() -> Rect2:
 
 func bezel_radius() -> float:
 	return minf(size.x, size.y) * BEZEL_RADIUS_RATIO
+
+
+func _paper_square() -> Rect2:
+	## Where retail's parchment bitmap lands: the square that circumscribes the
+	## bezel opening, so the authored disc's own edge falls exactly on the ring.
+	var radius := bezel_radius()
+	var center := Rect2(Vector2.ZERO, size).get_center()
+	return Rect2(center - Vector2(radius, radius), Vector2(radius, radius) * 2.0)
+
+
+func ink_sheet(arena: Rect2) -> Rect2:
+	## Where the map's ink art is drawn, in canvas pixels: exactly `map_bounds`
+	## through the radar transform, so texture UV (0,0) is the playable grid's
+	## min corner and (1,1) its max corner. Pans and zooms with the map; the
+	## parchment underneath does not. Public because the runners assert on it.
+	var origin := _radar_to_canvas(map_bounds.position, arena)
+	var end := _radar_to_canvas(map_bounds.end, arena)
+	return Rect2(origin, end - origin)
 
 
 func _radar_disc() -> PackedVector2Array:
@@ -307,34 +318,53 @@ func _draw() -> void:
 	# ships a transparent middle, so the battlefield would otherwise show through
 	# the ring around the paper. Measured off the capture at (58,42,21).
 	draw_colored_polygon(disc, BEZEL_GLASS)
-	var paper_origin := _radar_to_canvas(map_bounds.position, arena)
-	var paper_end := _radar_to_canvas(map_bounds.end, arena)
-	var paper_size := paper_end - paper_origin
-	if radar_paper != null and absf(paper_size.x) > 0.5 and absf(paper_size.y) > 0.5:
-		var quad := PackedVector2Array([
-			paper_origin,
-			Vector2(paper_end.x, paper_origin.y),
-			paper_end,
-			Vector2(paper_origin.x, paper_end.y),
+	# RETAIL'S OWN PARCHMENT, straight out of the palantir atlas. It carries its
+	# lit centre AND its rim falloff, so there are no synthetic vignette arcs
+	# over it any more - the darkening at the metal is authored.
+	if radar_paper != null:
+		var paper := _paper_square()
+		var paper_quad := PackedVector2Array([
+			paper.position,
+			Vector2(paper.end.x, paper.position.y),
+			paper.end,
+			Vector2(paper.position.x, paper.end.y),
 		])
-		for piece in Geometry2D.intersect_polygons(quad, disc):
+		# CLIPPED to the bezel, like everything else. The authored sheet's soft
+		# edge runs a couple of percent past its own opaque disc, which at the
+		# bezel's scale put a faint ring of paper OUTSIDE the ring opening.
+		for piece in Geometry2D.intersect_polygons(paper_quad, disc):
+			var polygon: PackedVector2Array = piece
+			var paper_uvs := PackedVector2Array()
+			for point in polygon:
+				paper_uvs.append((point - paper.position) / paper.size)
+			draw_colored_polygon(polygon, Color.WHITE, paper_uvs, radar_paper)
+	else:
+		# No mounted pack carries the atlas. One flat measured disc, no imitation
+		# grain, no fake vignette: the radar should read as degraded.
+		draw_colored_polygon(disc, PAPER_FALLBACK)
+	# The map's hand-drawn overlay, at its OWN authored colour (every cooked
+	# `-art.png` texel is (76,44,1) with the strokes in alpha), laid over the
+	# paper rather than baked into it - the paper is fixed to the bezel and the
+	# drawing pans and zooms with the battlefield.
+	var sheet := ink_sheet(arena)
+	if map_ink_art != null and absf(sheet.size.x) > 0.5 and absf(sheet.size.y) > 0.5:
+		var ink_quad := PackedVector2Array([
+			sheet.position,
+			Vector2(sheet.end.x, sheet.position.y),
+			sheet.end,
+			Vector2(sheet.position.x, sheet.end.y),
+		])
+		for piece in Geometry2D.intersect_polygons(ink_quad, disc):
 			var polygon: PackedVector2Array = piece
 			var uvs := PackedVector2Array()
 			for point in polygon:
-				uvs.append((point - paper_origin) / paper_size)
-			draw_colored_polygon(polygon, Color.WHITE, uvs, radar_paper)
-	# The rim falls off OVER the paper, not just around it: retail's sheet is
-	# visibly darker where it runs under the metal.
-	var band_width := radius * BEZEL_VIGNETTE_SPAN / float(BEZEL_VIGNETTE_BANDS)
-	for band in BEZEL_VIGNETTE_BANDS:
-		# RAMPED, not flat: equal-alpha bands would read as a hard ring. The
-		# outermost band carries the full darkening and each step inward carries
-		# less, so the falloff is a gradient rather than a stack of circles.
-		var strength := BEZEL_VIGNETTE_ALPHA * (1.0 - float(band) / float(BEZEL_VIGNETTE_BANDS))
-		draw_arc(
-			center, radius - band_width * (float(band) + 0.5), 0.0, TAU, RADAR_DISC_SEGMENTS,
-			Color(0.0, 0.0, 0.0, strength), band_width, true
-		)
+				uvs.append((point - sheet.position) / sheet.size)
+			# INK_OPACITY, not 1.0: at 128px the authored strokes upsample to
+			# ~3px solids, which read heavier than retail's thin anti-aliased
+			# lines even though both carry the same (76,44,1).
+			draw_colored_polygon(
+				polygon, Color(1.0, 1.0, 1.0, INK_OPACITY), uvs, map_ink_art
+			)
 	# A map that publishes no ink art still gets its water read on the paper;
 	# a map that DOES already carries its lakes and rivers in the ink, so the
 	# schematic would only double-print them.
@@ -390,7 +420,8 @@ func _draw_source_geometry(arena: Rect2, disc: PackedVector2Array) -> void:
 	for gate in source_map_data.ford_gates:
 		var edge_a := _world_to_canvas(Vector2(gate.get("edge_a", Vector2.ZERO)), arena)
 		var edge_b := _world_to_canvas(Vector2(gate.get("edge_b", Vector2.ZERO)), arena)
-		draw_line(edge_a, edge_b, PAPER_BASE, 4.0, true)
+		# Paper-coloured, so a ford reads as a gap cut through the inked water.
+		draw_line(edge_a, edge_b, PAPER_FALLBACK, 4.0, true)
 
 
 func _draw_radar_water_polygon(polygon: PackedVector2Array, ink_color: Color, disc: PackedVector2Array) -> void:

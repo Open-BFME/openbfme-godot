@@ -481,6 +481,18 @@ try {
         Invoke-GodotPassedFloor "goal_production_matrix" "goal_production_matrix_runner.gd" '(?m)^PRODUCTION_MATRIX_RESULT passed=([0-9]+) failed=0\s*$' 315
         Invoke-GodotPassedFloor "goal_deep_production_matrix" "goal_deep_production_runner.gd" '(?m)^DEEP_PRODUCTION_RESULT passed=([0-9]+) failed=0 ' 584
         Invoke-GodotPassedFloor "goal_map_matrix" "goal_map_matrix_runner.gd" '(?m)^GOAL_MAP_MATRIX_RESULT passed=([0-9]+) failed=0 ' 83
+        # ADDED 2026-08-10. The radar. Half of this runner is pure geometry over
+        # a stub (source-grid mapping under a rotated player-start axis, the ink
+        # sheet's corners, the paper staying bolted to the bezel while the map
+        # pans), and half reads the MOUNTED packs: retail's parchment bitmap out
+        # of the palantir atlas, asserted against its measured radial gradient,
+        # and a REGISTRATION PIN that correlates a cooked map's published ink
+        # alpha against its own heightmap slope under three rival mappings. The
+        # pack-backed half is why it lives in this scoped block rather than in
+        # SECTION A - and why it FAILS instead of skipping when a pack is
+        # missing. Floor is the measured 2026-08-10 value (32/0); reverting the
+        # radar to a vertical flip takes it to 25/7.
+        Invoke-GodotPassedFloor "minimap_parchment" "minimap_parchment_runner.gd" '(?m)^MINIMAP_PARCHMENT_RESULT passed=([0-9]+) failed=0\s*$' 32
         Invoke-GodotPassedFloor "destroy_die_modules" "destroy_die_runner.gd" '(?m)^DESTROY_DIE_RESULT passed=([0-9]+) failed=0\s*$' 24
         # ADDED 2026-08-09. A created hero bought, spawned, hit, healed, cast
         # and levelled on the mounted pack's own compiled CAH table. It reads

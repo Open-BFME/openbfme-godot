@@ -90,6 +90,7 @@ class CorruptContentStub:
 
 
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
+const MinimapScript := preload("res://src/retail_slice/retail_minimap.gd")
 # Turns a GDScript runtime error inside `_run` — which unwinds past every
 # `quit()` and would otherwise leave this headless process idling forever —
 # into a loud non-zero exit. See tests/runner_watchdog.gd.
@@ -139,19 +140,29 @@ func _run() -> void:
 	if selected_bind_error == "":
 		_check("selected_pack_complete_retail_hud", selected_hud.retail_presentation_bound)
 		_check_complete_binding("selected_pack", selected_hud, content_db, selected_pack_root)
-		# THE RADAR IS NOT PAINTED FROM THE SPELL ATLAS ANY MORE.
+		# THE RADAR IS TWO SEPARATE BINDINGS AND THEY GO WRONG DIFFERENTLY.
 		#
-		# This used to assert `private_parity_mode and retail_parchment != null`
-		# straight after the control-bar art pass, which locked in the bug the
-		# owner reported: `_bind_retail_bottom_left_art` cropped the palantir ORB
-		# globe out of `apt-palantir-1` (the summon-power sprite sheet) and
-		# stretched it over the whole radar disc. Every palantir FRAME atlas has a
-		# transparent ring interior - retail composites the live map there - so
-		# there is no radar-fill bitmap for the art pass to bind, and it must now
-		# bind NOTHING. The backdrop is bound in `configure_minimap` from the
-		# map's own PARCHMENT INK ART instead, which is what the second half
-		# asserts (never the `-preview.png` landmark painting - see
-		# retail_minimap.gd's header for why that distinction is the bug).
+		# PAPER, from the art pass: retail's authored parchment sheet, cropped out
+		# of `apt-palantir-1` at `RETAIL_PARCHMENT_REGION`. This used to assert
+		# `private_parity_mode and retail_parchment != null` while the art pass
+		# stretched that crop across the WHOLE radar disc as the map - the
+		# "palantir icon over the radar" the owner reported. The crop was right;
+		# the scale was not. It is now bound as the paper only, at the bezel
+		# opening, with the map drawn over it - so the binding is asserted again,
+		# with the geometry pinned by minimap_parchment_runner.
+		#
+		# DRAWING, from `configure_minimap`: the map's own ink art, and never the
+		# `-preview.png` landmark painting - see retail_minimap.gd's header for
+		# why that distinction is the second bug. Nothing binds it until a match
+		# configures the radar, so straight after the art pass it must be null.
+		_check(
+			"selected_pack_radar_paper_is_the_retail_parchment",
+			selected_hud.minimap.radar_paper != null
+				and bool(selected_hud.minimap.uses_retail_parchment)
+				and String(selected_hud.minimap.parchment_source) == "retail-atlas"
+				and selected_hud.minimap.radar_paper.get_size()
+					== Vector2(MinimapScript.RETAIL_PARCHMENT_REGION.size)
+		)
 		_check("selected_pack_radar_not_bound_to_spell_atlas", selected_hud.minimap.map_ink_art == null)
 		var radar_probe := PlaceholderTexture2D.new()
 		radar_probe.size = Vector2(64, 64)
