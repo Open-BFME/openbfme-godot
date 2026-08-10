@@ -6,7 +6,7 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import sys
 from typing import Any, Mapping
 
@@ -94,6 +94,104 @@ def _faction_slice_pack_id(game: str, factions: list[str]) -> str:
     if not factions:
         raise ValueError("faction slice pack id requires at least one faction")
     return f"{game}-{'-'.join(factions)}-vslice"
+
+
+_TEXTURE_SUFFIXES = frozenset({".bmp", ".dds", ".jpeg", ".jpg", ".pcx", ".png", ".tga"})
+#: One W3D header is far below this; the bound only stops a corrupt entry.
+_MAX_W3D_READ_BYTES = 64 * 1024 * 1024
+
+
+def _catalog_basename_index(catalog: Any, prefix: str) -> dict[str, str]:
+    """Casefolded basename -> virtual path, for one catalog subtree."""
+
+    index: dict[str, str] = {}
+    folded_prefix = prefix.casefold()
+    for entry in getattr(catalog, "entries", ()):
+        name = str(entry.name).replace("\\", "/")
+        folded = name.casefold()
+        if not folded.startswith(folded_prefix):
+            continue
+        index.setdefault(folded.rsplit("/", 1)[-1], name)
+    return index
+
+
+def _catalog_texture_paths(catalog: Any) -> tuple[str, ...]:
+    """Deduplicated texture virtual paths for visual-leaf resolution.
+
+    A catalog carries one row per archive member, so a path that several
+    archives publish appears more than once; the leaf resolver treats a
+    repeated path as a corrupt catalog. Winners are already selected by path,
+    so first-wins here is exactly the winning view.
+    """
+
+    seen: dict[str, str] = {}
+    for entry in getattr(catalog, "entries", ()):
+        name = str(entry.name).replace("\\", "/")
+        if PurePosixPath(name).suffix.casefold() not in _TEXTURE_SUFFIXES:
+            continue
+        seen.setdefault(name.casefold(), name)
+    return tuple(seen.values())
+
+
+def _compile_cah_model_resources(
+    cah_runtime: Mapping[str, Any], catalog: Any
+) -> list[dict[str, Any]]:
+    """Profile resources converting every mesh the CaH table selects.
+
+    Resolves against the same catalog the cook itself resolves against, so a
+    published binding can never name art this cook cannot convert.
+    """
+
+    from .cah_model_pack import cah_texture_resolver, compile_cah_model_pack
+
+    w3d_index = _catalog_basename_index(catalog, "art/w3d/")
+
+    def _read(virtual_path: str) -> bytes:
+        entry = catalog.resolve_exact(virtual_path)
+        if entry is None:
+            raise FileNotFoundError(
+                f"cook catalog no longer resolves CaH mesh source: {virtual_path}"
+            )
+        archive = catalog.open_archive_for(entry)
+        return archive.read_entry(
+            catalog.as_entry(entry), max_bytes=_MAX_W3D_READ_BYTES
+        )
+
+    pack = compile_cah_model_pack(
+        cah_runtime,
+        w3d_lookup=w3d_index.get,
+        textures_for=cah_texture_resolver(
+            read_w3d=_read, texture_catalog_paths=_catalog_texture_paths(catalog)
+        ),
+    )
+    return [dict(row) for row in pack.resources]
+
+
+def _compile_interface_art_pack(
+    catalog: Any, oracle_root: Path
+) -> tuple[list[dict[str, Any]], dict[str, Any]] | None:
+    """Plan the retail interface-art index for the host pack, or refuse.
+
+    Returns ``None`` only when the retail oracle tree is absent, which the cook
+    itself already refuses on with a better message; anything the lane can plan
+    but the cook catalog cannot resolve becomes a named gap, never a silent
+    drop.
+    """
+
+    from .interface_art import InterfaceArtError
+    from .interface_art_lane import plan_interface_art
+    from .interface_art_pack import compile_interface_art_pack
+
+    if not Path(oracle_root).is_dir():
+        return None
+    try:
+        plan = plan_interface_art(Path(oracle_root), scope="all")
+    except InterfaceArtError as exc:
+        raise ValueError(f"interface-art lane cannot plan the retail index: {exc}") from exc
+    compiled = compile_interface_art_pack(
+        plan, catalog_has=lambda path: catalog.resolve_exact(path) is not None
+    )
+    return [dict(row) for row in compiled.resources], dict(compiled.document)
 
 
 def _conversion_failure_report(pack_root: Path) -> dict[str, Any]:
@@ -1736,6 +1834,31 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                     raise ValueError(
                         f"CaH system runtime root is not an object: {cah_runtime_path}"
                     )
+            # The meshes that table names, and the retail interface-art index.
+            # Both are host-pack lanes; both resolve against the SAME catalog
+            # and effective-assets tree the cook itself uses, so a pack can
+            # never ship a binding its own conversion cannot answer.
+            oracle_root = _workspace_root(args) / "cache" / "effective-assets"
+            cah_model_resources = None
+            interface_art = None
+            if cah_runtime is not None:
+                cah_model_resources = _compile_cah_model_resources(
+                    cah_runtime, cook_catalog
+                )
+                progress_emit(
+                    "compose",
+                    "cah meshes="
+                    f"{sum(1 for row in cah_model_resources if row.get('output'))}",
+                )
+            if factions == ["men"]:
+                interface_art = _compile_interface_art_pack(cook_catalog, oracle_root)
+                if interface_art is not None:
+                    progress_emit(
+                        "compose",
+                        "interface-art images="
+                        f"{len(interface_art[1]['images'])} "
+                        f"atlas-resources={len(interface_art[0])}",
+                    )
             composed, receipt = compose_faction_profile(
                 base,
                 coverage_root,
@@ -1743,6 +1866,8 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                 game=args.game,
                 string_catalog=string_catalog,
                 cah_runtime=cah_runtime,
+                cah_model_resources=cah_model_resources,
+                interface_art=interface_art,
             )
             # `pipeline` / `cook_catalog` were already built above so the
             # coverage-binding gate could read the cook's real catalog identity.

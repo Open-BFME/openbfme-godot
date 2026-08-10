@@ -4,8 +4,10 @@ from copy import deepcopy
 import hashlib, json, re
 from pathlib import Path
 from typing import Mapping, Sequence
+from .cah_model_pack import CAH_MODEL_PACK_ROOT
 from .cah_system_compiler import CahSystemCompilerError, validate_cah_system_runtime
 from .faction_import import coverage_digest_payload
+from .interface_art import PACK_INDEX_SCHEMA as INTERFACE_ART_SCHEMA
 from .livingworld import LIVING_WORLD_PACK_PATH
 from .playable_structure_pack_compiler import validate_structure_visual_recipe
 from .playable_unit_import import FACTIONS as _FACTION_ROWS, extend_profile_with_unit
@@ -46,6 +48,16 @@ _CONTROLBAR_REFERENCE = re.compile(r'"(CONTROLBAR:[^"]+)"')
 # handling in compose_faction_profile).
 CAH_SYSTEM_RUNTIME_PATH = "data/cah/system.json"
 CAH_SYSTEM_PACK_KEY = "cah.system"
+
+# The retail interface-art index (every MappedImage the corpus references,
+# cut verbatim from its compiled atlas).  Published by the host Men pack for
+# the same single-owner reason as livingWorld and cah.system: two mounted
+# owners of one document resolve by mount order, which is not a contract.
+# Scope is pack-wide, never CaH-only -- the index is what makes retail icons
+# resolve at all, and a per-faction slice of it would leave the other
+# factions' buttons blank.
+INTERFACE_ART_RUNTIME_PATH = "data/interface-art/index.json"
+INTERFACE_ART_PACK_KEY = "interfaceArt"
 
 
 def _referenced_controlbar_ids(runtime_data: Mapping[str, object]) -> set[str]:
@@ -223,6 +235,51 @@ def _add_spellbook(profile: Mapping[str, object], recipe: Mapping[str, object], 
     data[runtime_path] = deepcopy(dict(runtime)); files[file_key] = runtime_path
     return target, {"objectId": object_id, "runtimePath": runtime_path, "packFileKey": file_key, "resourceIds": sorted(added, key=str.casefold)}
 
+def _append_pack_resources(
+    target: dict[str, object],
+    rows: Sequence[Mapping[str, object]],
+    label: str,
+) -> list[str]:
+    """Append lane-owned resources to the composed profile, fail-closed.
+
+    Runs AFTER the lean-expansion filter for the same reason the cah.system
+    and strings documents do: these are emissions of THIS compose, not base
+    profile rows that have to survive a filter.  An id or output that already
+    exists refuses rather than silently overwriting another owner's bytes.
+    """
+
+    resources = target.get("resources")
+    if not isinstance(resources, list):
+        raise ValueError(f"{label} resources cannot be appended: profile has none")
+    known_ids = {
+        str(row.get("id", "")).casefold()
+        for row in resources
+        if isinstance(row, Mapping)
+    }
+    known_outputs = {
+        str(row.get("output", "")).casefold()
+        for row in resources
+        if isinstance(row, Mapping) and row.get("output")
+    }
+    added: list[str] = []
+    for raw in rows:
+        if not isinstance(raw, Mapping) or not isinstance(raw.get("id"), str):
+            raise ValueError(f"{label} resource row is invalid")
+        row = deepcopy(dict(raw))
+        key = str(row["id"]).casefold()
+        if key in known_ids:
+            raise ValueError(f"{label} resource id collision: {row['id']}")
+        output = str(row.get("output", "")).casefold()
+        if output and output in known_outputs:
+            raise ValueError(f"{label} resource output collision: {row['output']}")
+        resources.append(row)
+        known_ids.add(key)
+        if output:
+            known_outputs.add(output)
+        added.append(str(row["id"]))
+    return added
+
+
 def compose_faction_profile(
     base: Mapping[str, object],
     report_root: Path,
@@ -231,6 +288,9 @@ def compose_faction_profile(
     game: str = "bfme2",
     string_catalog=None,
     cah_runtime: Mapping[str, object] | None = None,
+    cah_model_resources: Sequence[Mapping[str, object]] | None = None,
+    interface_art: tuple[Sequence[Mapping[str, object]], Mapping[str, object]]
+    | None = None,
 ) -> tuple[dict[str, object], dict[str, object]]:
     """Add only artifacts bound to converted rows in digested coverage reports.
 
@@ -244,6 +304,12 @@ def compose_faction_profile(
     ``cah_runtime`` is a validated ``openbfme.cah-system-runtime`` document.
     Only the RotWK Men host compose may carry it (the same single-owner rule
     as livingWorld); an invalid or misaddressed document refuses the compose.
+
+    ``cah_model_resources`` are the profile resources that convert the meshes
+    that table selects (``cah_model_pack``); they ride with it and share its
+    single-owner rule.  ``interface_art`` is ``(resources, index document)``
+    from ``interface_art_pack``: the pack-wide retail icon index, owned by the
+    Men host pack for the same reason.
     """
     game_key = str(game).strip().casefold()
     game_prefix = _GAME_PACK_PREFIX.get(game_key)
@@ -403,6 +469,65 @@ def compose_faction_profile(
             "packFileKey": CAH_SYSTEM_PACK_KEY,
             "runtimeSha256": cah_runtime["runtimeSha256"],
         }
+    # --- Create-a-Hero meshes ----------------------------------------------
+    # The table above names 34 meshes by id; without these resources the pack
+    # ships a hero roster whose every entry resolves to nothing.  They ride
+    # with the table under the same single-owner rule.
+    cah_model_receipt: dict[str, object] | None = None
+    if cah_model_resources:
+        if cah_runtime is None:
+            raise ValueError(
+                "cah model resources require the cah.system table they are "
+                "derived from; refusing to ship meshes with no roster"
+            )
+        added = _append_pack_resources(target, cah_model_resources, "cah model")
+        cah_model_receipt = {
+            "packRoot": CAH_MODEL_PACK_ROOT,
+            "resourceIds": added,
+            "modelOutputs": sorted(
+                (
+                    str(row["output"])
+                    for row in cah_model_resources
+                    if isinstance(row, Mapping) and row.get("output")
+                ),
+                key=str.casefold,
+            ),
+        }
+    # --- retail interface art ----------------------------------------------
+    interface_art_receipt: dict[str, object] | None = None
+    if interface_art is not None:
+        art_resources, art_document = interface_art
+        if ordered != ["men"]:
+            raise ValueError(
+                "the interface-art index is owned by the Men host pack; "
+                f"refusing to publish it from factions={ordered!r}"
+            )
+        if (
+            not isinstance(art_document, Mapping)
+            or art_document.get("schema") != INTERFACE_ART_SCHEMA
+            or not isinstance(art_document.get("images"), Mapping)
+        ):
+            raise ValueError("interface-art index document is invalid")
+        existing_art = runtime_data.get(INTERFACE_ART_RUNTIME_PATH)
+        if existing_art is not None and existing_art != dict(art_document):
+            raise ValueError(
+                f"interface-art runtime path collision: {INTERFACE_ART_RUNTIME_PATH}"
+            )
+        art_owner = files.get(INTERFACE_ART_PACK_KEY)
+        if art_owner is not None and str(art_owner) != INTERFACE_ART_RUNTIME_PATH:
+            raise ValueError(
+                f"interfaceArt pack registration has a foreign owner: {art_owner}"
+            )
+        added_art = _append_pack_resources(target, art_resources, "interface art")
+        runtime_data[INTERFACE_ART_RUNTIME_PATH] = deepcopy(dict(art_document))
+        files[INTERFACE_ART_PACK_KEY] = INTERFACE_ART_RUNTIME_PATH
+        interface_art_receipt = {
+            "runtimePath": INTERFACE_ART_RUNTIME_PATH,
+            "packFileKey": INTERFACE_ART_PACK_KEY,
+            "resourceCount": len(added_art),
+            "imageCount": len(art_document["images"]),
+            "gapCount": len(art_document.get("gaps") or []),
+        }
     # --- pack strings lane -------------------------------------------------
     if string_catalog is not None:
         existing_strings = runtime_data.get(STRINGS_RUNTIME_PATH)
@@ -431,11 +556,17 @@ def compose_faction_profile(
         receipt["strings"] = strings_receipt
     if cah_receipt is not None:
         receipt["cahSystem"] = cah_receipt
+    if cah_model_receipt is not None:
+        receipt["cahModels"] = cah_model_receipt
+    if interface_art_receipt is not None:
+        receipt["interfaceArt"] = interface_art_receipt
     return target, receipt
 
 __all__ = [
     "CAH_SYSTEM_PACK_KEY",
     "CAH_SYSTEM_RUNTIME_PATH",
+    "INTERFACE_ART_PACK_KEY",
+    "INTERFACE_ART_RUNTIME_PATH",
     "STRINGS_PACK_KEY",
     "STRINGS_RUNTIME_PATH",
     "compose_faction_profile",

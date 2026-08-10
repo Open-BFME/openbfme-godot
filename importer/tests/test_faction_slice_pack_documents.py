@@ -352,3 +352,156 @@ def test_wrong_schema_cah_runtime_refuses_the_compose(tmp_path: Path) -> None:
             _base_with_selection_contract(), tmp_path, ["men"],
             game="rotwk", cah_runtime=foreign,
         )
+
+
+# --- Create-a-Hero meshes ---------------------------------------------------
+
+def _cah_model_resources() -> list[dict[str, object]]:
+    from openbfme_importer.cah_model_pack import compile_cah_model_pack
+
+    system = {
+        "registration": {
+            "classes": [
+                {
+                    "classIndex": 0,
+                    "subClasses": [
+                        {
+                            "subClassIndex": 0,
+                            "models": {
+                                "battlefield": {
+                                    "model": "CHHW_CG_U_SKN",
+                                    "skeleton": "CHHW_CG_U_SKL",
+                                }
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+    }
+    pack = compile_cah_model_pack(
+        system,
+        w3d_lookup={
+            "chhw_cg_u_skn.w3d": "art/w3d/ch/chhw_cg_u_skn.w3d",
+            "chhw_cg_u_skl.w3d": "art/w3d/ch/chhw_cg_u_skl.w3d",
+        }.get,
+    )
+    return [dict(row) for row in pack.resources]
+
+
+def test_rotwk_men_compose_ships_the_meshes_the_cah_table_names(
+    tmp_path: Path,
+) -> None:
+    # The published gap: data/cah/system.json named 34 meshes and the pack
+    # carried none of them, so every hero in the roster drew nothing.
+    _faction_coverage(tmp_path, "men", registration={"production": []})
+    target, receipt = compose_faction_profile(
+        _base_with_selection_contract(), tmp_path, ["men"],
+        game="rotwk", string_catalog=_string_catalog(),
+        cah_runtime=_cah_runtime(), cah_model_resources=_cah_model_resources(),
+    )
+    outputs = {
+        str(row.get("output"))
+        for row in target["resources"]
+        if str(row.get("output", "")).startswith("assets/models/cah/")
+    }
+    assert outputs == {"assets/models/cah/CHHW_CG_U_SKN.glb"}
+    assert receipt["cahModels"]["modelOutputs"] == [
+        "assets/models/cah/CHHW_CG_U_SKN.glb"
+    ]
+
+
+def test_cah_meshes_without_the_table_refuse_the_compose(tmp_path: Path) -> None:
+    _faction_coverage(tmp_path, "men", registration={"production": []})
+    with pytest.raises(ValueError, match="require the cah.system table"):
+        compose_faction_profile(
+            _base_with_selection_contract(), tmp_path, ["men"],
+            game="rotwk", cah_model_resources=_cah_model_resources(),
+        )
+
+
+# --- retail interface art ---------------------------------------------------
+
+def _interface_art() -> tuple[list[dict[str, object]], dict[str, object]]:
+    from openbfme_importer.interface_art import PACK_INDEX_SCHEMA
+
+    resources = [
+        {
+            "id": "interface-art-abcdef012345-00",
+            "kind": "ui",
+            "converter": "texture-atlas-crops",
+            "patterns": ["art/compiledtextures/he/heroui_030.dds"],
+            "output": "assets/ui/interface-art/abcdef012345",
+            "options": {
+                "crops": [
+                    {
+                        "logicalName": "hicahcaptaingondor-1f7c1c6f",
+                        "output": "hicahcaptaingondor-1f7c1c6f.png",
+                        "crop": [0, 0, 64, 64],
+                    }
+                ]
+            },
+            "required": True,
+            "limit": 1,
+            "expected_count": 1,
+        }
+    ]
+    document = {
+        "schema": PACK_INDEX_SCHEMA,
+        "schemaVersion": 1,
+        "scope": "all",
+        "atlases": [],
+        "images": {
+            "HICAHCaptainGondor": (
+                "assets/ui/interface-art/abcdef012345/hicahcaptaingondor-1f7c1c6f.png"
+            )
+        },
+        "gaps": [],
+    }
+    return resources, document
+
+
+def test_men_host_compose_publishes_the_interface_art_index(tmp_path: Path) -> None:
+    # No mounted pack carried data/interface-art/index.json, so ContentDB's
+    # consumer had nothing to load and every retail icon fell back.
+    from openbfme_importer.faction_slice_profile import (
+        INTERFACE_ART_PACK_KEY,
+        INTERFACE_ART_RUNTIME_PATH,
+    )
+
+    _faction_coverage(tmp_path, "men", registration={"production": []})
+    resources, document = _interface_art()
+    target, receipt = compose_faction_profile(
+        _base_with_selection_contract(), tmp_path, ["men"],
+        game="rotwk", string_catalog=_string_catalog(),
+        cah_runtime=_cah_runtime(), interface_art=(resources, document),
+    )
+    assert target["runtime_data"][INTERFACE_ART_RUNTIME_PATH] == document
+    assert target["pack"]["files"][INTERFACE_ART_PACK_KEY] == INTERFACE_ART_RUNTIME_PATH
+    # A Create-a-Hero roster button resolves through the shipped index.
+    assert "HICAHCaptainGondor" in target["runtime_data"][INTERFACE_ART_RUNTIME_PATH]["images"]
+    assert any(
+        row["id"] == "interface-art-abcdef012345-00" for row in target["resources"]
+    )
+    assert receipt["interfaceArt"]["imageCount"] == 1
+
+
+def test_interface_art_index_is_refused_outside_the_men_host(tmp_path: Path) -> None:
+    # Two mounted owners of one index resolve by mount order, not by contract.
+    _faction_coverage(tmp_path, "elves", registration={"production": []})
+    with pytest.raises(ValueError, match="owned by the Men host pack"):
+        compose_faction_profile(
+            _base_with_selection_contract(), tmp_path, ["elves"],
+            game="rotwk", interface_art=_interface_art(),
+        )
+
+
+def test_interface_art_document_with_a_foreign_schema_refuses(tmp_path: Path) -> None:
+    _faction_coverage(tmp_path, "men", registration={"production": []})
+    resources, document = _interface_art()
+    document["schema"] = "openbfme.something-else"
+    with pytest.raises(ValueError, match="interface-art index document is invalid"):
+        compose_faction_profile(
+            _base_with_selection_contract(), tmp_path, ["men"],
+            game="rotwk", interface_art=(resources, document),
+        )

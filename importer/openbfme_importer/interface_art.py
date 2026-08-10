@@ -248,6 +248,21 @@ CREATE_A_HERO_IMAGE_FIELDS: tuple[str, ...] = ("IconImage", "ButtonImage")
 #: Where those blocks live.  ``createaherosystem.ini`` is a shell of ``#include``
 #: directives; the classes themselves are in the sibling ``.inc`` files.
 CREATE_A_HERO_SYSTEM_GLOB = "createaherosystem*.in[ci]"
+#: The per-mesh portrait/roster button each ``ModelConditionState`` of the
+#: ``CreateAHero`` Object names.  The compiled CaH system table publishes these
+#: as ``portraitImageId`` / ``buttonImageId``, so a pack that ships the table
+#: without them leaves the hero roster and the creation screen without faces.
+#: They live under ``data/ini/object/`` but the object sweep never sees them:
+#: the file is an ``.inc`` body fragment (not a standalone block document) and
+#: the two field spellings are CaH-only, in neither ``OBJECT_IMAGE_FIELDS`` nor
+#: ``COMMAND_BUTTON_IMAGE_FIELDS``.
+CREATE_A_HERO_MODEL_IMAGE_FIELDS: tuple[str, ...] = (
+    "PortraitImageName",
+    "ButtonImageName",
+)
+CREATE_A_HERO_MODEL_FILES: tuple[str, ...] = (
+    "data/ini/object/createahero/createaheromodels.inc",
+)
 
 
 def collect_create_a_hero_images(
@@ -272,11 +287,24 @@ def collect_create_a_hero_images(
     instance).
     """
 
-    ini_root = Path(oracle_root) / "data/ini"
+    oracle_root = Path(oracle_root)
+    ini_root = oracle_root / "data/ini"
     if not ini_root.is_dir():
         return ()
+    scans: list[tuple[Path, frozenset[str]]] = [
+        (path, frozenset(name.casefold() for name in CREATE_A_HERO_IMAGE_FIELDS))
+        for path in sorted(ini_root.glob(CREATE_A_HERO_SYSTEM_GLOB))
+    ]
+    model_fields = frozenset(
+        name.casefold() for name in CREATE_A_HERO_MODEL_IMAGE_FIELDS
+    )
+    for relative in CREATE_A_HERO_MODEL_FILES:
+        candidate = oracle_root / relative
+        if candidate.is_file():
+            scans.append((candidate, model_fields))
+
     references: list[ImageReference] = []
-    for path in sorted(ini_root.glob(CREATE_A_HERO_SYSTEM_GLOB)):
+    for path, fields in scans:
         source = _relative(oracle_root, path)
         for line in _read(path).decode("cp1252", errors="replace").splitlines():
             stripped = line.split(";", 1)[0].split("//", 1)[0].strip()
@@ -284,9 +312,7 @@ def collect_create_a_hero_images(
                 continue
             field, _, value = stripped.partition("=")
             field = field.strip()
-            if field.casefold() not in {
-                name.casefold() for name in CREATE_A_HERO_IMAGE_FIELDS
-            }:
+            if field.casefold() not in fields:
                 continue
             for image_id in _image_values((value,), known_image_ids):
                 references.append(
