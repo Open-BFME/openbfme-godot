@@ -2211,6 +2211,8 @@ def _castle_upgrade_documents(
     build_cost: str | None = "500",
     build_time: str | None = "30.0",
     second_upgrade: bool = False,
+    plain_object_upgrade: bool = False,
+    castle_upgrade_command: bool = False,
 ) -> dict[str, bytes]:
     documents = _structure_documents()
     objects_path = "data/ini/object/units/test_units.ini"
@@ -2247,6 +2249,14 @@ def _castle_upgrade_documents(
     if include_unmatched_button:
         command_set += """
   13 = Command_PurchaseUpgradeUnmatched
+"""
+    if plain_object_upgrade:
+        command_set += """
+  8 = Command_PurchaseUpgradeTestBanners
+"""
+    if castle_upgrade_command:
+        command_set += """
+  9 = Command_PurchaseUpgradeTestHouseOfHealing
 """
     documents["data/ini/commandset.ini"] = (
         documents["data/ini/commandset.ini"].decode("utf-8")
@@ -2288,6 +2298,35 @@ CommandButton Command_PurchaseUpgradeUnmatched
   Upgrade = Upgrade_NotACastleTrigger
 End
 """
+    if plain_object_upgrade:
+        # Retail's Command_PurchaseUpgradeDwarvenFortressBanners shape
+        # (commandbutton.ini:13695): a fortress improvement that is bought
+        # outright and applies to the fortress itself, with no CastleUpgrade
+        # pass-out module behind it.
+        command_buttons += """
+CommandButton Command_PurchaseUpgradeTestBanners
+  Command = OBJECT_UPGRADE
+  Upgrade = Upgrade_TestBanners
+  Options = CANCELABLE
+  TextLabel = CONTROLBAR:TestBanners
+  DescriptLabel = CONTROLBAR:ToolTipTestBanners
+  ButtonImage = BDFortress_Banners
+End
+"""
+    if castle_upgrade_command:
+        # Retail's Command_PurchaseUpgradeMenFortressHouseOfHealing
+        # (commandbutton.ini:13283) is the one fortress-menu button authored as
+        # `Command = CASTLE_UPGRADE` rather than OBJECT_UPGRADE.
+        command_buttons += """
+CommandButton Command_PurchaseUpgradeTestHouseOfHealing
+  Command = CASTLE_UPGRADE
+  Upgrade = Upgrade_TestHouseOfHealing
+  Options = CANCELABLE
+  TextLabel = CONTROLBAR:TestHouseOfHealing
+  DescriptLabel = CONTROLBAR:ToolTipTestHouseOfHealing
+  ButtonImage = BGFortress_HouseofHealing
+End
+"""
     documents["data/ini/commandbutton.ini"] = (
         documents["data/ini/commandbutton.ini"].decode("utf-8")
         + command_buttons
@@ -2309,6 +2348,26 @@ End
                 "  Type = OBJECT",
                 "  BuildCost = 250",
                 "  BuildTime = 15.0",
+                "End",
+            ]
+        )
+    if plain_object_upgrade:
+        upgrade_block.extend(
+            [
+                "Upgrade Upgrade_TestBanners",
+                "  Type = OBJECT",
+                "  BuildCost = 500",
+                "  BuildTime = 5.0",
+                "End",
+            ]
+        )
+    if castle_upgrade_command:
+        upgrade_block.extend(
+            [
+                "Upgrade Upgrade_TestHouseOfHealing",
+                "  Type = OBJECT",
+                "  BuildCost = 1000",
+                "  BuildTime = 30.0",
                 "End",
             ]
         )
@@ -2427,6 +2486,62 @@ def test_object_upgrade_without_castle_trigger_is_recorded_and_not_compiled() ->
         row["upgradeId"]
         for row in gameplay["nonPurchasableCastleUpgrades"]["upgrades"]
     ] == ["Upgrade_NotACastleTrigger"]
+
+
+def test_fortress_object_upgrade_without_a_trigger_module_is_still_purchasable() -> None:
+    """A fortress improvement that applies to the fortress itself is a SALE.
+
+    Four of the six buttons on `DwarvenFortressCommandSet`'s upgrades page
+    (commandset.ini:4107 slots 8, 9, 11, 13 — Banners 500, Siege Kegs 1000, Oil
+    Casks 1500, Mighty Catapult 2500) are ordinary `OBJECT_UPGRADE` buttons with
+    no `CastleUpgrade` pass-out module behind them, so filing them as
+    "non-purchasable" left two thirds of retail's fortress upgrade menu
+    unbuyable. They carry authored `BuildCost`/`BuildTime` in upgrade.ini and
+    grant nothing onward, which is exactly an empty `grantsUpgradeId`.
+    """
+
+    descriptor = compile_playable_structure_descriptor(
+        "TestKeep", _castle_upgrade_documents(plain_object_upgrade=True)
+    )
+
+    gameplay = descriptor["gameplay"]
+    rows = {row["upgradeId"]: row for row in gameplay["castleUpgrades"]["upgrades"]}
+    assert rows["Upgrade_TestBanners"] == {
+        "upgradeId": "Upgrade_TestBanners",
+        "grantsUpgradeId": "",
+        "cost": 500,
+        "buildTimeSeconds": 5.0,
+        "slot": 8,
+        "commandId": "Command_PurchaseUpgradeTestBanners",
+        "labelId": "CONTROLBAR:TestBanners",
+        "tooltipId": "CONTROLBAR:ToolTipTestBanners",
+        "buttonImageId": "BDFortress_Banners",
+        "cancelable": True,
+    }
+    assert "Upgrade_TestBanners" not in {
+        row["upgradeId"]
+        for row in gameplay.get("nonPurchasableCastleUpgrades", {}).get("upgrades", [])
+    }
+
+
+def test_fortress_castle_upgrade_command_button_is_compiled() -> None:
+    """`Command = CASTLE_UPGRADE` sells too.
+
+    Men's House of Healing (commandbutton.ini:13283) is the one fortress-menu
+    button retail authors with that command type; skipping it dropped a 1000
+    resource purchase out of the Men fortress menu.
+    """
+
+    descriptor = compile_playable_structure_descriptor(
+        "TestKeep", _castle_upgrade_documents(castle_upgrade_command=True)
+    )
+
+    rows = {
+        row["upgradeId"]: row
+        for row in descriptor["gameplay"]["castleUpgrades"]["upgrades"]
+    }
+    assert rows["Upgrade_TestHouseOfHealing"]["cost"] == 1000
+    assert rows["Upgrade_TestHouseOfHealing"]["slot"] == 9
 
 
 def test_structure_without_castle_upgrade_module_omits_castle_surface() -> None:

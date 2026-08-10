@@ -1000,10 +1000,17 @@ static func _validate_structure_research(object_id: String, research_value: Vari
 
 static func _validate_structure_castle_upgrades(object_id: String, castle_value: Variant) -> String:
 	## Fail-closed shape check for one structure document's compiled fortress
-	## improvement surface; "" when valid. Each row is an OBJECT_UPGRADE button
-	## that buys a Trigger upgrade whose real upgrade a CastleUpgrade module
-	## hands out, so BOTH ids must be present and distinct — a row that named
-	## only one of them would silently buy nothing (the shipped gap).
+	## improvement surface; "" when valid.
+	##
+	## A row is one button on the fortress's upgrades page, in either authored
+	## shape. The TRIGGER shape buys a `*Trigger` upgrade whose real upgrade a
+	## CastleUpgrade module hands to the castle, and there `grantsUpgradeId` must
+	## be present and DIFFERENT — a row naming the same id twice would silently
+	## buy nothing. The PLAIN shape (Banners, Siege Kegs, Oil Casks, Mighty
+	## Catapult — commandset.ini:4107 slots 8/9/11/13, four of the six buttons
+	## retail puts on that page) applies to the fortress itself and hands out
+	## nothing, which is an EMPTY `grantsUpgradeId`. Requiring a grant made those
+	## four unsellable.
 	if typeof(castle_value) != TYPE_DICTIONARY:
 		return "structure '%s' castle upgrade surface is not a dictionary" % object_id
 	var surface := castle_value as Dictionary
@@ -1019,8 +1026,7 @@ static func _validate_structure_castle_upgrades(object_id: String, castle_value:
 		var granted_id := String(row.get("grantsUpgradeId", ""))
 		if (
 			upgrade_id == ""
-			or granted_id == ""
-			or upgrade_id.to_lower() == granted_id.to_lower()
+			or (granted_id != "" and upgrade_id.to_lower() == granted_id.to_lower())
 			or seen_upgrades.has(upgrade_id.to_lower())
 			or int(row.get("cost", -1)) < 0
 			or float(row.get("buildTimeSeconds", -1.0)) < 0.0

@@ -496,6 +496,60 @@ var _hero_bar_buttons: Dictionary = {}
 var _radial_layer: Control
 var _radial_buttons: Array[Button] = []
 var _radial_fingerprint := "<unset>"
+var _radial_entries: Array = []
+## Which page of a PAGED command set (the fortress wheel) is showing.
+##
+## RETAIL IS PAGED, and it is one command set, not several: the fortress's
+## `Command_SelectUpgrades<Faction>Fortress` button is
+## `Command = PUSH_VISIBLE_COMMAND_RANGE` with `CommandRangeStart = 7`
+## `CommandRangeCount = 7` (commandbutton.ini:13566), which reveals command-set
+## slots 8-14 — the improvements; `Command_SelectRevivables<Faction>Fortress`
+## (:13577) pushes 14/10 for the hero slots 15-24; and both pages end on
+## `Command_RadialBack`, `Command = POP_VISIBLE_COMMAND_RANGE` (:36). Flattening
+## all three pages into one arc is what produced the bubble cloud over the
+## fortress instead of retail's small wheel.
+const RADIAL_PAGE_MAIN := "main"
+const RADIAL_PAGE_UPGRADES := "upgrades"
+const RADIAL_PAGE_HEROES := "heroes"
+
+## The page-selector / back buttons, transcribed from commandbutton.ini.
+## `heroes_image` is per faction because retail authors two different arts
+## (Command_SelectRevivablesDwarvenFortress:13580 UCCommon_GoodHeroes,
+## Command_SelectRevivablesMordorFortress:4097 UCCommon_EvilHeroes); the
+## improvements selector is UCCommon_UpgradeStructureNew for every faction
+## (:13569, :4086, :8057, :13161, :13349, :13535, :13777, :4687).
+const RETAIL_RADIAL_PAGE_FACTIONS := {
+	"men": {"token": "Men", "heroes_image": "UCCommon_GoodHeroes"},
+	"elves": {"token": "Elven", "heroes_image": "UCCommon_GoodHeroes"},
+	"dwarves": {"token": "Dwarven", "heroes_image": "UCCommon_GoodHeroes"},
+	"arnor": {"token": "Arnor", "heroes_image": "UCCommon_GoodHeroes"},
+	"mordor": {"token": "Mordor", "heroes_image": "UCCommon_EvilHeroes"},
+	"isengard": {"token": "Isengard", "heroes_image": "UCCommon_EvilHeroes"},
+	"angmar": {"token": "Angmar", "heroes_image": "UCCommon_EvilHeroes"},
+	"wild": {"token": "Wild", "heroes_image": "UCCommon_EvilHeroes"},
+}
+## English text for the three selectors, transcribed from the 2.01 string table
+## (lang/englishpatch201.big -> data/lotr.str lines 27100/27104, 27108/27112,
+## 26807/26811). Used ONLY when the mounted packs carry no localized string for
+## the faction's own CONTROLBAR id — the shipped packs do not, and that gap is
+## recorded in `retail_bind_diagnostics` rather than hidden.
+const RETAIL_RADIAL_PAGE_TEXT := {
+	RADIAL_PAGE_UPGRADES: {
+		"label": "Fortress &Upgrades",
+		"tooltip": "Purchase upgrades and additional defenses for the Fortress",
+	},
+	RADIAL_PAGE_HEROES: {
+		"label": "He&roes",
+		"tooltip": "Recruit and revive Heroes",
+	},
+	"back": {
+		"label": "Back",
+		"tooltip": "Return to the previous button set",
+	},
+}
+var _radial_page_command_cache: Dictionary = {}
+var radial_page := RADIAL_PAGE_MAIN
+signal radial_page_changed(page: String)
 ## Validated fortress expansion command presentation (icon/label/tooltip).
 var _retail_expansion_validated: Dictionary = {}
 ## Doc-driven fortress expansion command specs discovered from the selected
@@ -1802,6 +1856,15 @@ func _rebind_order_action_button(
 			button.text = fallback_label
 		button.set_meta("retail_label", fallback_label)
 		return
+	# NO EXACT-SIZE PIN. Retail does not author one command-icon size: the crops
+	# this helper binds measure 63x63 (the stance/formation UCCommon icons),
+	# 64x64 (BDFortress_DwarvenStonework and every other fortress improvement),
+	# 64x63 (BDMineShaft) and 59x59 (BDWall_WallHub). The historical 63x63 pin
+	# therefore failed EVERY fortress-improvement button, which is why the
+	# fortress upgrades page rendered humanized upgrade ids instead of retail art
+	# and retail strings. Every other guard in `_validate_retail_image` — pack
+	# boundary, PNG signature, declared-vs-header-vs-decoded agreement, size caps
+	# — still applies, so this widens the accepted crop, not the trust boundary.
 	var validation := _validate_retail_command(
 		_bound_content_db,
 		_bound_pack_root,
@@ -1811,7 +1874,7 @@ func _rebind_order_action_button(
 			"tooltip_id": tooltip_id,
 			"action_id": String(button.get_meta("action_id", "")),
 		},
-		Vector2i(63, 63)
+		Vector2i.ZERO
 	)
 	if String(validation.get("error", "")) != "":
 		if button.icon == null:
@@ -4047,6 +4110,7 @@ func _build_radial_layer() -> void:
 func sync_radial_commands(anchor: Vector2, entries: Array) -> void:
 	if _radial_layer == null:
 		return
+	_radial_entries = entries
 	var fingerprint := ""
 	for entry_value in entries:
 		var entry: Dictionary = entry_value
@@ -4091,14 +4155,27 @@ func sync_radial_commands(anchor: Vector2, entries: Array) -> void:
 			button.tooltip_text = String(entry.get("tooltip", ""))
 			var command_kind := String(entry.get("command_kind", ""))
 			var command_id := String(entry.get("id", ""))
-			button.set_meta("tooltip_group", "expansion" if command_kind == "expansion" else "train")
+			var tooltip_group := "train"
+			if command_kind == "expansion":
+				tooltip_group = "expansion"
+			elif command_kind == "upgrade" or command_kind == "page" or command_kind == "back":
+				# Priced/announced by the caller: a fortress improvement's cost
+				# comes off the compiled contract, and a page selector has none.
+				tooltip_group = "radial_command"
+			button.set_meta("tooltip_group", tooltip_group)
 			button.set_meta("tooltip_unit_id", command_id)
 			button.set_meta("tooltip_fallback_label", String(entry.get("label", "")))
 			button.set_meta("tooltip_fallback_desc", String(entry.get("tooltip", "")))
+			button.set_meta("tooltip_cost", int(entry.get("cost", -1)))
+			button.set_meta("tooltip_command_points", int(entry.get("command_points", -1)))
 			if command_kind == "upgrade":
 				button.pressed.connect(func() -> void: structure_upgrade_requested.emit(command_id))
 			elif command_kind == "expansion":
 				button.pressed.connect(func() -> void: expansion_requested.emit(command_id))
+			elif command_kind == "page":
+				button.pressed.connect(set_radial_page.bind(command_id))
+			elif command_kind == "back":
+				button.pressed.connect(set_radial_page.bind(RADIAL_PAGE_MAIN))
 			else:
 				button.pressed.connect(_emit_train_requested.bind(command_id))
 			_register_button_tooltip(button)
@@ -4106,19 +4183,21 @@ func sync_radial_commands(anchor: Vector2, entries: Array) -> void:
 			_radial_layer.add_child(button)
 			_radial_buttons.append(button)
 	var count := _radial_buttons.size()
-	# Arc radius grows with the roster so full fortress command sets (heroes +
-	# porter + 4 expansion commands) do not overlap (REF-33/35).
-	var radius := maxf(118.0, float(count) * 22.0)
+	# A RING, not a fan. Retail's radial is a wheel of sockets centred on the
+	# selected object; the old upper-half arc had to grow its radius with the
+	# roster (heroes + porter + expansions all on one page) and read as a cloud
+	# of floating portraits. Paging keeps every page small, so a fixed-ish ring
+	# starting at 12 o'clock and running clockwise fits without overlap.
+	var radius := clampf(84.0 + float(count) * 5.0, 96.0, 168.0)
 	for index in count:
 		var button := _radial_buttons[index]
 		var entry: Dictionary = entries[index]
 		button.visible = true
 		button.disabled = not bool(entry.get("enabled", false))
 		button.modulate.a = 1.0 if bool(entry.get("enabled", false)) else 0.45
-		# Fan across the upper half-circle above the anchor (REF-25 four
-		# buttons arc over the barracks door).
-		var t := 0.5 if count == 1 else float(index) / float(count - 1)
-		var angle := PI + PI * t
+		var angle := -PI * 0.5
+		if count > 1:
+			angle += TAU * float(index) / float(count)
 		button.position = anchor + Vector2(cos(angle), sin(angle)) * radius - button.size * 0.5
 		# Live training dial + countdown on the radial menu's training icons
 		# (owner: the queue-chip CCW sweep, everywhere a unit trains). Updated
@@ -4140,6 +4219,91 @@ func sync_radial_commands(anchor: Vector2, entries: Array) -> void:
 func hide_radial_commands() -> void:
 	if _radial_layer != null:
 		_radial_layer.visible = false
+
+
+## Which page of a paged command set the radial is showing, and the entries it
+## last rendered (the gate reads the surface, not the pixels).
+func set_radial_page(page: String) -> void:
+	if radial_page == page:
+		return
+	radial_page = page
+	radial_page_changed.emit(page)
+
+
+func radial_entries() -> Array:
+	return _radial_entries.duplicate()
+
+
+## Presentation for one page selector / back button of a paged command set.
+## Returns {"texture", "label", "tooltip"}; the texture is null when the pack
+## ships no converted art, and the caller renders the label as a text socket
+## (the same contract every other unbound command uses).
+func retail_radial_page_command(page: String, faction_slug: String) -> Dictionary:
+	var faction := faction_slug.strip_edges().to_lower()
+	var cache_key := "%s|%s" % [page, faction]
+	if _radial_page_command_cache.has(cache_key):
+		return (_radial_page_command_cache[cache_key] as Dictionary).duplicate()
+	var authored: Dictionary = RETAIL_RADIAL_PAGE_TEXT.get(page, {}) as Dictionary
+	var result := {
+		"texture": null,
+		"label": String(authored.get("label", page.capitalize())),
+		"tooltip": String(authored.get("tooltip", "")),
+	}
+	var faction_row: Dictionary = RETAIL_RADIAL_PAGE_FACTIONS.get(faction, {}) as Dictionary
+	var image_id := ""
+	var label_id := ""
+	var tooltip_id := ""
+	var token := String(faction_row.get("token", ""))
+	match page:
+		RADIAL_PAGE_UPGRADES:
+			image_id = "UCCommon_UpgradeStructureNew"
+			if token != "":
+				label_id = "CONTROLBAR:SelectUpgrades%sFortress" % token
+				tooltip_id = "CONTROLBAR:ToolTipCommandSelectUpgrades%sFortress" % token
+		RADIAL_PAGE_HEROES:
+			image_id = String(faction_row.get("heroes_image", ""))
+			if token != "":
+				label_id = "CONTROLBAR:SelectRevivables%sFortress" % token
+				tooltip_id = "CONTROLBAR:ToolTipCommandSelectRevivables%sFortress" % token
+		"back":
+			image_id = "UCCommon_BackArrow"
+			label_id = "CONTROLBAR:RadialBack"
+			tooltip_id = "CONTROLBAR:ToolTipCommandRadialBack"
+	if image_id != "" and _bound_content_db != null and _bound_pack_root != "":
+		# The ART and the STRINGS are resolved separately on purpose. Retail's
+		# converted `UCCommon_*` crops are in the host pack, but the faction's own
+		# CONTROLBAR ids for these three buttons are absent from every shipped
+		# pack (measured on rotwk-men / rotwk-dwarves, 2026-08-10). Binding them
+		# together would throw away an icon the pack HAS because of a string it
+		# lacks — which is exactly how the fortress improvements came to render as
+		# humanized upgrade ids. Each half falls back on its own and says so.
+		var image_validation := _validate_retail_image(
+			_bound_content_db, _bound_pack_root, image_id, Vector2i.ZERO
+		)
+		if String(image_validation.get("error", "")) == "":
+			result["texture"] = image_validation.get("texture")
+		else:
+			retail_bind_diagnostics.append(
+				"radial-page-selector-art-missing-recorded: '%s' renders as text — %s"
+				% [page, String(image_validation.get("error", ""))]
+			)
+		var localized_label := String(_bound_content_db.get_retail_string(label_id, ""))
+		var localized_tooltip := String(_bound_content_db.get_retail_string(tooltip_id, ""))
+		if localized_label != "":
+			result["label"] = localized_label
+		else:
+			retail_bind_diagnostics.append(
+				"radial-page-selector-unlocalized-recorded: '%s' renders transcribed retail text ('%s') — the mounted packs define no '%s'"
+				% [page, String(result["label"]), label_id]
+			)
+		if localized_tooltip != "":
+			result["tooltip"] = localized_tooltip
+	if _bound_content_db != null and _bound_pack_root != "":
+		# Cached only once the pack IS bound. Caching the unbound answer would
+		# pin the text-only fallback for the rest of the match even after the
+		# retail command bind completes.
+		_radial_page_command_cache[cache_key] = result
+	return result.duplicate()
 
 
 ## Validated expansion command presentation for the fortress radial; empty
@@ -4859,6 +5023,23 @@ func _resolve_tooltip_content(button: Button) -> Dictionary:
 				"shortcut": RetailTooltip.extract_hotkey_letter(label),
 				"description": _with_build_time(desc, unit_id),
 				"command_points": int(_retail_command_point_costs.get(unit_id, -1)),
+			}
+		"radial_command":
+			# Fortress improvements and the page selectors: the caller already
+			# resolved the retail label/tooltip and (for a purchase) the compiled
+			# cost, so nothing is looked up against the train registries here.
+			var radial_label := String(button.get_meta("retail_label", ""))
+			if radial_label == "":
+				radial_label = String(button.get_meta("tooltip_fallback_label", ""))
+			var radial_desc := button.tooltip_text
+			if radial_desc == "":
+				radial_desc = String(button.get_meta("tooltip_fallback_desc", ""))
+			return {
+				"title": radial_label,
+				"cost": int(button.get_meta("tooltip_cost", -1)),
+				"shortcut": RetailTooltip.extract_hotkey_letter(radial_label),
+				"description": radial_desc,
+				"command_points": int(button.get_meta("tooltip_command_points", -1)),
 			}
 		"action":
 			var action_id := String(button.get_meta("tooltip_action_id", ""))

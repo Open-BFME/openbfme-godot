@@ -3613,6 +3613,9 @@ func _closest_hostile_structure(point: Vector2) -> int:
 ## The player's free fortress build plots, nearest-first within pick range.
 ## Returns {"fortress_id", "pad_index", "pad_kind", "position"} or {}.
 var _selected_expansion_pad: Dictionary = {}
+## Which fortress the radial's current page belongs to, so selecting a different
+## building pops the wheel back to its main page.
+var _radial_page_structure_id := 0
 ## Retail build plots are small plates on the fortress apron. Expressed in
 ## SOURCE units and projected through the map transform scale: as a flat 2.2
 ## world-unit circle this ran before the structure scan and swallowed clicks
@@ -3942,6 +3945,8 @@ func _refresh_hud() -> void:
 		hud.set_production_state([], false)
 		hud.set_unit_selection_state(simulation.selected_ids, simulation.entities, simulation.tick_index)
 		hud.hide_radial_commands()
+		_radial_page_structure_id = 0
+		hud.set_radial_page(hud.RADIAL_PAGE_MAIN)
 		if not simulation.selected_ids.is_empty():
 			hud.set_active_stance(String(simulation.entity(simulation.selected_ids[0]).get("stance", "Battle")))
 		# Battalion OBJECT_UPGRADE purchase surface (compiled per unit doc): the
@@ -4144,6 +4149,8 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 				"enabled": can_train and not locked_units.has(unit_id),
 				"label": String(train_button.get_meta("retail_label", "")),
 				"tooltip": train_button.tooltip_text,
+				"cost": simulation._production_rule_value(unit_id, "cost_rule", "default_cost"),
+				"command_points": simulation._production_rule_value(unit_id, "command_points_rule", "default_command_points"),
 				"queue_row": radial_queue_by_unit.get(unit_id, {}),
 			})
 		# Universal radial (owner: every selected building carries ALL of its
@@ -4166,9 +4173,13 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 				"id": upgrade_id,
 				"icon": upgrade_icon,
 				"text": upgrade_label if upgrade_icon == null else "",
-				"enabled": upgrade_queue.is_empty(),
+				"enabled": upgrade_queue.is_empty() and bool(upgrade_command.get("gate_satisfied", true)),
 				"label": upgrade_label,
 				"tooltip": upgrade_tip,
+				# The price the player is about to pay, straight off the compiled
+				# contract — a purchase button that states no cost is the one the
+				# fortress upgrades page shipped with.
+				"cost": int(upgrade_command.get("cost", -1)),
 			})
 		# Research rides the doc-driven rows only (structure_upgrade_commands
 		# carries compiled research with its own pack strings/icons); the
@@ -4192,7 +4203,84 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 					"tooltip": String(command.get("tooltip", "")),
 				})
 	var anchor := camera.unproject_position(world_position)
-	hud.sync_radial_commands(anchor, entries)
+	hud.sync_radial_commands(anchor, _paged_radial_entries(structure, entries))
+
+
+## Retail's fortress command set is PAGED and ours must be too.
+##
+## `DwarvenFortressCommandSet` (commandset.ini:4107) is ONE set whose slots the
+## engine reveals in ranges: slots 1-6 are the main page,
+## `Command_SelectUpgradesDwarvenFortress` (PUSH_VISIBLE_COMMAND_RANGE, start 7
+## count 7 — commandbutton.ini:13566) reveals the improvements at 8-14, and
+## `Command_SelectRevivablesDwarvenFortress` (start 14 count 10, :13577) reveals
+## the hero slots 15-24. Both pages close on `Command_RadialBack`
+## (POP_VISIBLE_COMMAND_RANGE, :36).
+##
+## Showing all three ranges at once is what put a dozen floating portraits in a
+## ring over the fortress instead of retail's four-button wheel. Only a fortress
+## pages: every other building's command set is a single visible range, and its
+## radial is unchanged.
+func _paged_radial_entries(structure: Dictionary, entries: Array) -> Array:
+	if String(structure.get("structure_kind", "")) != "fortress":
+		# Selecting anything else pops the wheel back to its base range, so
+		# re-selecting the fortress does not reopen a sub-menu the player left.
+		_radial_page_structure_id = 0
+		hud.set_radial_page(hud.RADIAL_PAGE_MAIN)
+		return entries
+	if int(structure.get("id", 0)) != _radial_page_structure_id:
+		# A new selection always opens on the main page — retail pops back to the
+		# base range when the selection changes.
+		_radial_page_structure_id = int(structure.get("id", 0))
+		hud.set_radial_page(hud.RADIAL_PAGE_MAIN)
+	var page := String(hud.radial_page)
+	var main_entries: Array = []
+	var hero_entries: Array = []
+	var upgrade_entries: Array = []
+	for entry_value in entries:
+		var entry: Dictionary = entry_value
+		match String(entry.get("command_kind", "")):
+			"hero":
+				hero_entries.append(entry)
+			"upgrade":
+				upgrade_entries.append(entry)
+			_:
+				main_entries.append(entry)
+	var faction_slug := String(_faction_slug_for_radial())
+	if page == hud.RADIAL_PAGE_UPGRADES and not upgrade_entries.is_empty():
+		upgrade_entries.append(_radial_page_entry("back", "back", faction_slug))
+		return upgrade_entries
+	if page == hud.RADIAL_PAGE_HEROES and not hero_entries.is_empty():
+		hero_entries.append(_radial_page_entry("back", "back", faction_slug))
+		return hero_entries
+	# Main page (also the fallback when a page emptied out under the player, e.g.
+	# the last improvement was bought): the base slots plus the two doors.
+	if page != hud.RADIAL_PAGE_MAIN:
+		hud.set_radial_page(hud.RADIAL_PAGE_MAIN)
+	if not upgrade_entries.is_empty():
+		main_entries.append(_radial_page_entry("page", hud.RADIAL_PAGE_UPGRADES, faction_slug))
+	if not hero_entries.is_empty():
+		main_entries.append(_radial_page_entry("page", hud.RADIAL_PAGE_HEROES, faction_slug))
+	return main_entries
+
+
+func _radial_page_entry(command_kind: String, page: String, faction_slug: String) -> Dictionary:
+	var command: Dictionary = hud.retail_radial_page_command(page, faction_slug)
+	var texture = command.get("texture")
+	return {
+		"command_kind": command_kind,
+		"id": page,
+		"icon": texture,
+		"text": String(command.get("label", "")) if texture == null else "",
+		"enabled": true,
+		"label": String(command.get("label", "")),
+		"tooltip": String(command.get("tooltip", "")),
+	}
+
+
+func _faction_slug_for_radial() -> String:
+	## The LOCAL seat's faction, which is whose fortress is selected. Used only to
+	## pick retail's own good/evil hero-page art and CONTROLBAR ids.
+	return String(faction_manifest.get("faction", "")).strip_edges().to_lower()
 
 
 ## Floating "Building: N% • Ns left" above every construction site (REF-27/28).
@@ -6652,6 +6740,13 @@ func _build_hud() -> void:
 	hud.group_recall_requested.connect(_recall_group)
 	hud.train_requested.connect(_queue_selected_producer)
 	hud.structure_upgrade_requested.connect(_upgrade_selected_structure)
+	# A page selector must repaint the wheel on the click, not on the next
+	# presentation frame that happens to notice — otherwise the sub-menu opens a
+	# frame late and the click reads as dead. DEFERRED, because _refresh_hud is
+	# itself allowed to pop the page back to base (selection changed, or the page
+	# emptied out), and a direct connection would re-enter it from inside its own
+	# radial sync.
+	hud.radial_page_changed.connect(func(_page: String) -> void: call_deferred("_refresh_hud"))
 	hud.battalion_upgrade_requested.connect(_on_battalion_upgrade_requested)
 	hud.cancel_production_requested.connect(_cancel_selected_production)
 	hud.attack_move_requested.connect(_arm_attack_move)

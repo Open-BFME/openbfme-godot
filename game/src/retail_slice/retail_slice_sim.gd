@@ -2891,7 +2891,11 @@ func _compile_structure_castle_upgrades(source: Dictionary, contracts: Dictionar
 			var build_seconds := float(row.get("buildTimeSeconds", 0.0))
 			# Zero build time is authored evidence (see the research surface's
 			# RotWK BuildTime 0 note); the duration clamps to >= 1 tick below.
-			if upgrade_id == "" or granted_id == "" or cost < 0 or build_seconds < 0.0:
+			# An EMPTY grant is authored evidence, not a gap: retail's Banners /
+			# Siege Kegs / Oil Casks / Mighty Catapult buttons buy an upgrade
+			# that applies to the fortress itself with no CastleUpgrade pass-out
+			# module behind it (commandset.ini:4107 slots 8/9/11/13).
+			if upgrade_id == "" or cost < 0 or build_seconds < 0.0:
 				configuration_error = "Structure castle upgrade '%s' on '%s' is malformed" % [upgrade_id, kind]
 				return
 			var needed: Array[String] = []

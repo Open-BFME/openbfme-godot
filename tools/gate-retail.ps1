@@ -505,10 +505,15 @@ try {
         # on PRE-EXISTING unrelated gaps (MordorBlackRiderHorde producer slot
         # collision; missing CONTROLBAR hero-ability strings) — named here so
         # the omission is deliberate rather than an oversight.
-        $fortressSurfaceFloors = @{ "angmar" = 22; "men" = 23; "wild" = 22 }
+        # Raised 2026-08-10 with the paged fortress radial (main / Fortress
+        # Upgrades / Heroes pages, retail label+icon+cost on each improvement,
+        # and the created hero's recruit slot). Dwarves is wired now that its
+        # slice boots green; mordor/elves/isengard remain off for the
+        # PRE-EXISTING reasons above.
+        $fortressSurfaceFloors = @{ "angmar" = 40; "men" = 45; "wild" = 40; "dwarves" = 44 }
         $priorSliceFaction = $env:OPENBFME_SLICE_FACTION
         try {
-            foreach ($fortressFaction in @("angmar", "men", "wild")) {
+            foreach ($fortressFaction in @("angmar", "men", "wild", "dwarves")) {
                 $env:OPENBFME_SLICE_FACTION = $fortressFaction
                 Invoke-GodotPassedFloor "fortress_command_surface_$fortressFaction" "fortress_command_surface_runner.gd" ('(?m)^RESULT fortress_command_surface faction=' + $fortressFaction + ' passed=([0-9]+) failed=0\s*$') $fortressSurfaceFloors[$fortressFaction]
             }

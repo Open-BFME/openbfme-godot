@@ -93,6 +93,26 @@ func _run() -> void:
 			if int(entity_row.get("team", -1)) == 0 and bool(entity_row.get("is_builder", false)):
 				selected_text = str(entity_id)
 				break
+	if OS.get_environment("OPENBFME_CAPTURE_SELECT_FORTRESS") == "1":
+		# The fortress specifically (SELECT_STRUCTURE deliberately prefers a
+		# non-fortress producer), plus an optional radial page, so the paged
+		# fortress command wheel and its Fortress Upgrades / Heroes sub-menus can
+		# be captured as they are actually rendered.
+		var fortress_id := int(slice.simulation.fortress_id(0))
+		if fortress_id == 0:
+			_fail("OPENBFME_CAPTURE_SELECT_FORTRESS found no player fortress")
+			return
+		slice.selected_structure_id = fortress_id
+		var fortress_row: Dictionary = slice.simulation.structure(fortress_id)
+		slice.camera_focus = Vector2(fortress_row.get("position", Vector2.ZERO))
+		slice._clamp_camera_focus()
+		slice._apply_camera_transform()
+		slice._sync_presentation()
+		var radial_page := OS.get_environment("OPENBFME_CAPTURE_RADIAL_PAGE").strip_edges()
+		if radial_page != "":
+			slice.hud.set_radial_page(radial_page)
+			slice._sync_presentation()
+			slice._refresh_hud()
 	if OS.get_environment("OPENBFME_CAPTURE_SELECT_STRUCTURE") == "1":
 		# Selects the player team's first completed non-fortress structure when
 		# present, otherwise the player fortress.

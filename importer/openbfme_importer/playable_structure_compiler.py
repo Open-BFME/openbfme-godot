@@ -68,6 +68,10 @@ _CONSTRUCT_COMMANDS = (
     {"foundation_construct"},
 )
 _WALL_UPGRADE_COMMAND = "object_upgrade"
+# Retail authors ONE fortress-menu button with this command type instead:
+# Command_PurchaseUpgradeMenFortressHouseOfHealing (commandbutton.ini:13283).
+# It sells exactly like the OBJECT_UPGRADE improvements around it.
+_CASTLE_UPGRADE_COMMAND = "castle_upgrade"
 _HEALTH_FIELDS = ("MaxHealth", "MaxHealthDamaged", "MaxHealthReallyDamaged")
 
 
@@ -1535,7 +1539,7 @@ def _castle_upgrade_surface(
                     f"CommandButton {command_id}"
                 )
             commands = {value.strip().casefold() for value in button.values("Command")}
-            if commands != {_WALL_UPGRADE_COMMAND}:
+            if commands not in ({_WALL_UPGRADE_COMMAND}, {_CASTLE_UPGRADE_COMMAND}):
                 continue
             command_surface_seen = True
             upgrades = [
@@ -1570,27 +1574,44 @@ def _castle_upgrade_surface(
                         "buttons or slots across command sets"
                     )
                 continue
+            # A fortress improvement comes in TWO authored shapes and both are
+            # sales. The trigger shape buys a `*Trigger` upgrade that a
+            # `CastleUpgrade` module converts and hands to the whole castle
+            # (dwarvenfortress.ini:1096). The plain shape buys an upgrade that
+            # simply applies to the fortress itself — Banners, Siege Kegs, Oil
+            # Casks and Mighty Catapult on `DwarvenFortressCommandSet`
+            # (commandset.ini:4107 slots 8/9/11/13) are all of that shape, four
+            # of the six buttons on retail's upgrades page. Compiling only the
+            # trigger shape is what left that page two-thirds empty in game.
             behavior = behavior_by_trigger.get(folded)
-            if behavior is None:
+            trigger_id = upgrade_id
+            granted_id = ""
+            if behavior is not None:
+                trigger_id, granted_id, _wall_upgrade_radius = behavior
+
+            def _record_non_purchasable(reason: str) -> None:
                 marker: dict[str, object] = {
                     "upgradeId": upgrade_id,
                     "commandId": command_id,
                     "slot": int(slot_row.get("slot", 0)),
-                    "reason": (
-                        "OBJECT_UPGRADE button has no CastleUpgrade trigger module"
-                    ),
+                    "reason": reason,
                 }
                 marker.update(
-                    _purchase_button_fields(
-                        button, include_needed_upgrade_any=False
-                    )
+                    _purchase_button_fields(button, include_needed_upgrade_any=False)
                 )
                 non_purchasable.append(marker)
-                continue
 
-            trigger_id, granted_id, _wall_upgrade_radius = behavior
+            # A trigger NAMED BY A MODULE with no authored price is a broken
+            # pack and fails closed. A plain button may legitimately point at a
+            # feature-toggle upgrade that is granted elsewhere and never sold,
+            # so that case is recorded instead of aborting the whole faction.
             upgrade_source = _optional_document(documents, UPGRADE_PATH)
             if upgrade_source is None:
+                if behavior is None:
+                    _record_non_purchasable(
+                        f"{UPGRADE_PATH} is not in the effective INI view"
+                    )
+                    continue
                 raise PlayableStructureCompilerError(
                     f"{label} authors castle upgrades but {UPGRADE_PATH} is not in "
                     "the effective INI view"
@@ -1598,18 +1619,34 @@ def _castle_upgrade_surface(
             upgrade_blocks = _named_blocks(upgrade_source, "Upgrade")
             upgrade_block = upgrade_blocks.get(folded)
             if upgrade_block is None:
+                if behavior is None:
+                    _record_non_purchasable(
+                        f"OBJECT_UPGRADE button has no {UPGRADE_PATH} block"
+                    )
+                    continue
                 raise PlayableStructureCompilerError(
                     f"{label} castle upgrade {trigger_id} has no "
                     f"{UPGRADE_PATH} block"
                 )
             upgrade_type = _first(upgrade_block.values("Type"))
             if upgrade_type is None or upgrade_type.strip().casefold() != "object":
+                if behavior is None:
+                    _record_non_purchasable(
+                        "OBJECT_UPGRADE button sells a non-OBJECT upgrade"
+                    )
+                    continue
                 raise PlayableStructureCompilerError(
                     f"{label} castle upgrade {trigger_id} is not an OBJECT upgrade"
                 )
             cost_expression = _first(upgrade_block.values("BuildCost"))
             time_expression = _first(upgrade_block.values("BuildTime"))
             if cost_expression is None or time_expression is None:
+                if behavior is None:
+                    _record_non_purchasable(
+                        "OBJECT_UPGRADE button sells an upgrade with no authored "
+                        "BuildCost/BuildTime"
+                    )
+                    continue
                 raise PlayableStructureCompilerError(
                     f"{label} castle upgrade {trigger_id} lacks authored "
                     "BuildCost/BuildTime"
