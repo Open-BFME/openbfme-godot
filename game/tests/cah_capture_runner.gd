@@ -39,6 +39,21 @@ const BACKDROP_CANDIDATES := [
 	"res://data/base/assets/ui/menu/backdrop_misty_pass.png",
 ]
 
+## THE ONE SUBCLASS WHOSE BREASTPLATE CAN BE PHOTOGRAPHED CHANGING.
+##
+## Every Body option in the shipped table repaints the body mesh rather than
+## swapping a sub-object, and the converted GLBs embed only the images their own
+## meshes already draw - so for most subclasses exactly one of the Body textures
+## is in the pack and the rest are an importer gap. `CHCM_CM_C_SKN` carries two
+## of them (`CHCM_CM_07` on the body, `CHCM_CM_04` on its chest piece), which
+## makes the Corrupt Man the hero whose armour visibly changes between two
+## options rather than the hero the pack cannot repaint at all.
+const PAINTED_CLASS := 5
+const PAINTED_SUB := 0
+const PAINTED_GROUP := "CreateAHero_Body"
+const PAINTED_BODY := "CHCM_CM"
+const PAINTED_OPTIONS := ["Upgrade_CM01_CHBOD07", "Upgrade_CM01_CHBOD04"]
+
 var _out_dir := ""
 var _screen: Control = null
 var _viewport: SubViewport = null
@@ -80,6 +95,8 @@ func _initialize() -> void:
 		{"name": "04-appearance-attributes", "action": "attributes_tab"},
 		{"name": "05-customize-hero-powers", "action": "powers"},
 		{"name": "06-powers-with-a-chain-selected", "action": "pick_powers"},
+		{"name": "07-body-paint-a", "action": "body_a"},
+		{"name": "08-body-paint-b", "action": "body_b"},
 	]
 	_plan = []
 	for size in CAPTURE_SIZES:
@@ -198,8 +215,47 @@ func _apply(action: String) -> void:
 					_screen._toggle_power(String((level_value as Dictionary).get("powerId", "")))
 				break
 			_screen._show_page(_screen.PAGE_POWERS)
+		"body_a":
+			_wear_body(String(PAINTED_OPTIONS[0]))
+		"body_b":
+			_wear_body(String(PAINTED_OPTIONS[1]))
 		_:
 			_screen._show_page(_screen.PAGE_SELECT)
+
+
+func _wear_body(upgrade: String) -> void:
+	## Stand the painted subclass on the garment tab wearing one named Body
+	## option, and say in the log what the hero's body is actually painted with -
+	## so "the breastplate changed" is a photograph AND a texture name, not an
+	## impression of two similar pictures.
+	_screen._on_new_hero_pressed()
+	_screen.set_class_selection(PAINTED_CLASS, PAINTED_SUB)
+	_screen._appearance[PAINTED_GROUP] = upgrade
+	_screen._rebuild_appearance_rows()
+	_screen._show_page(_screen.PAGE_ATTRIBUTES)
+	_screen._show_custom_tab(_screen.CUSTOM_TAB_GARMENTS)
+	_screen._update_preview()
+	print("[cah-capture] %s -> body painted %s, garments %s" % [
+		upgrade, _body_paint(), _screen.garment_status()
+	])
+
+
+func _body_paint() -> String:
+	var model: Node3D = _screen._preview_model
+	if model == null:
+		return "<no model>"
+	var stack: Array[Node] = [model]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		for child in node.get_children():
+			stack.append(child)
+		if not (node is MeshInstance3D) or String(node.name).to_upper() != PAINTED_BODY:
+			continue
+		var material := (node as MeshInstance3D).get_active_material(0) as BaseMaterial3D
+		if material == null or material.albedo_texture == null:
+			return "<no texture>"
+		return String(material.albedo_texture.resource_name)
+	return "<no %s mesh>" % PAINTED_BODY
 
 
 func _argument(flag: String, fallback: String) -> String:

@@ -373,7 +373,8 @@ func build_cost() -> int:
 
 func garment_status() -> String:
 	## What the preview is doing about garments, as one line the screen prints
-	## and a runner can assert on: "mapped", "unmapped", "no-model" or "".
+	## and a runner can assert on: "mapped", "mapped-unmatched",
+	## "mapped-missing-textures", "unmapped", "no-model", "no-hero" or "".
 	return _garment_status
 
 
@@ -2483,6 +2484,24 @@ func _update_preview() -> void:
 	_show_turn_controls(true)
 
 
+func _preview_frame_size() -> Vector2:
+	## The shape the hero is framed for: THE CARD'S, NOT THE VIEWPORT'S.
+	##
+	## A `SubViewportContainer` resizes the viewport inside it when its children
+	## are sorted, which is a queued pass - so the `resized` signal that asks for a
+	## reframe arrives while the viewport is still the size the card USED to be,
+	## and a hero framed on that number is framed for the previous layout. It
+	## surfaced the moment the garment caption began appearing under the equipment
+	## list: the column beside the hero changed height, the card changed with it,
+	## and the hero stayed the size he had been in a card that was no longer that
+	## shape. The viewport is the fallback for a card that has not been laid out.
+	if _preview_host != null and _preview_host.size.x >= 1.0 and _preview_host.size.y >= 1.0:
+		return _preview_host.size
+	if _preview_viewport == null:
+		return Vector2.ONE
+	return Vector2(_preview_viewport.size)
+
+
 func _reframe_preview() -> void:
 	if _preview_model == null or _system.is_empty():
 		return
@@ -2512,6 +2531,10 @@ func _apply_preview_appearance(surface := "") -> void:
 	## Retail bakes every garment variant into the one skin and switches their
 	## visibility; the converted GLBs keep the retail part names, so the same
 	## switch works here as soon as the pack says which option owns which part.
+	##
+	## AND SOME GARMENTS ARE PAINT, NOT PARTS. The Body group repaints the one
+	## body mesh instead of swapping a sub-object, so a screen that only flipped
+	## visibility moved the breastplate label over a hero who never changed.
 	if _preview_model == null:
 		return
 	if surface == "":
@@ -2520,14 +2543,28 @@ func _apply_preview_appearance(surface := "") -> void:
 	var plan := SubObjects.plan(_system, sub_row, _appearance, surface)
 	if bool(plan.get("mapped", false)):
 		var applied := SubObjects.apply(_preview_model, plan)
+		var repainted := SubObjects.apply_texture_swaps(
+			_preview_model, plan.get("textures", []) as Array
+		)
+		var missing: Array = repainted.get("unresolved", []) as Array
 		_garment_status = "mapped"
 		_set_garment_caption("")
-		if int(applied.get("matched", 0)) == 0:
+		if int(applied.get("matched", 0)) == 0 and int(repainted.get("swapped", 0)) == 0:
 			# The map exists but names nothing this mesh carries, which is a
 			# content mismatch worth saying out loud rather than a silent no-op.
 			_garment_status = "mapped-unmatched"
 			_set_garment_caption(
 				"The pack maps garments to parts this mesh does not carry, so the preview cannot show them."
+			)
+		elif not missing.is_empty():
+			# THE SKIN THE OPTION WANTS IS NOT IN THE PACK. The converter embeds
+			# only the images this mesh already draws, so a Body option painted in
+			# a texture the importer never published cannot be shown - and the
+			# player is told which one rather than left doubting the stepper.
+			_garment_status = "mapped-missing-textures"
+			_set_garment_caption(
+				("This option repaints the hero in %s, which the mounted pack does not "
+					+ "ship, so his body is unchanged.") % ", ".join(missing)
 			)
 		return
 	# NO MAP IN THE PACK. Every variant the artist baked into the skin is showing
@@ -2620,7 +2657,7 @@ func _frame_preview(sub_row: Dictionary, visual: Node3D) -> void:
 	# far enough to clear his arms in every direction he could be turned to stands
 	# him in the middle of the card at a third of its height.
 	var half_height := maxf(0.05, height * 0.5)
-	var viewport_size := Vector2(_preview_viewport.size)
+	var viewport_size := _preview_frame_size()
 	var aspect := viewport_size.x / maxf(1.0, viewport_size.y)
 	var half_width := _facing_half_width(bounds, PREVIEW_DEFAULT_YAW)
 	var needed := maxf(half_height, half_width / maxf(0.2, aspect)) / PREVIEW_FILL

@@ -94,6 +94,7 @@ func _run() -> void:
 	_test_powers_and_levels_reach_the_runtime_contracts(system)
 	_test_screen(system)
 	_test_garment_sub_objects(system)
+	_test_garment_texture_swaps()
 	_test_purchase_spawns_with_computed_stats(system)
 	_test_pack_resolution(system)
 	await _test_full_window_layout(system)
@@ -661,11 +662,236 @@ func _test_garment_sub_objects(_system: Dictionary) -> void:
 	screen.configure(_system)
 	_check(
 		screen.garment_status() in [
-			"unmapped", "no-model", "mapped", "mapped-unmatched", "no-hero"
+			"unmapped", "no-model", "mapped", "mapped-unmatched",
+			"mapped-missing-textures", "no-hero"
 		],
 		"the screen reports what it did about garments (got '%s')" % screen.garment_status()
 	)
 	screen.queue_free()
+
+
+# ------------------------------------------------------------ garment paint
+
+
+## The Body group of the shipped table, in miniature. EVERY Body option of EVERY
+## subclass the pack compiles carries an empty `show` and an empty `hide` and
+## nothing but `textureSwaps` - retail repaints the one body mesh with
+## `UpgradeTexture <from> <to>` rather than baking four breastplates into the
+## skin - so a screen that only flips sub-object visibility moves the label and
+## leaves the hero in the same armour. These are spelled as the pack spells them:
+## the source and the target carry the `.tga` retail wrote, and the converted GLB
+## names the same images without it.
+const SWAP_SYSTEM := {
+	"schema": "openbfme.cah-system-runtime",
+	"schemaVersion": 0,
+	"registration": {
+		"appearanceOptions": [
+			{
+				"upgradeName": "Upgrade_Body01",
+				"groupName": "CreateAHero_Body",
+				"subObjects": {
+					"show": [],
+					"hide": [],
+					"textureSwaps": [
+						{"fromTexture": "CHHW_SMN_02.tga", "index": 0, "texture": "CHHW_SMN.tga"},
+						# The diagonal of the square retail authors: an option
+						# also names its OWN texture as a source, which is a
+						# no-op and must not be counted as a repaint.
+						{"fromTexture": "CHHW_SMN.tga", "index": 0, "texture": "CHHW_SMN.tga"},
+					],
+				},
+			},
+			{
+				"upgradeName": "Upgrade_Body02",
+				"groupName": "CreateAHero_Body",
+				"subObjects": {
+					"show": [],
+					"hide": [],
+					"textureSwaps": [
+						{"fromTexture": "CHHW_SMN.tga", "index": 0, "texture": "CHHW_SMN_02.tga"},
+					],
+				},
+			},
+			{
+				"upgradeName": "Upgrade_Body03",
+				"groupName": "CreateAHero_Body",
+				"subObjects": {
+					"show": [],
+					"hide": [],
+					"textureSwaps": [
+						{"fromTexture": "CHHW_SMN_02.tga", "index": 0, "texture": "CHHW_SMN_09.tga"},
+					],
+				},
+			},
+		],
+	},
+}
+
+const SWAP_SUB_ROW := {
+	"models": {"creationScreen": {"model": "SYNTH_C_SKN"}},
+	"appearanceChoices": {
+		"CreateAHero_Body": ["Upgrade_Body01", "Upgrade_Body02", "Upgrade_Body03"],
+	},
+}
+
+
+func _test_garment_texture_swaps() -> void:
+	## THE BREASTPLATE, which is paint rather than parts.
+	_check(
+		SubObjects.texture_key("CHHW_SMN_01.tga") == "CHHW_SMN_01"
+			and SubObjects.texture_key("art/textures/chhw_smn_01.dds") == "CHHW_SMN_01"
+			and SubObjects.texture_key("CHHW_SMN_01") == "CHHW_SMN_01",
+		"a texture is named the same whatever path, case or extension it arrives in"
+	)
+	_check(
+		SubObjects.system_maps_sub_objects(SWAP_SYSTEM),
+		"a pack whose Body options only REPAINT the hero still counts as binding garments"
+	)
+
+	var plan := SubObjects.plan(SWAP_SYSTEM, SWAP_SUB_ROW, {}, "creationScreen")
+	_check(
+		bool(plan.get("mapped", false)),
+		"a subclass whose only bindings are repaints reports itself mapped"
+	)
+	_check(
+		(plan.get("textures", []) as Array) == [{"from": "CHHW_SMN_02", "to": "CHHW_SMN"}],
+		("the plan carries the chosen option's repaint, and drops the source that is "
+			+ "already the target (got %s)") % str(plan.get("textures", []))
+	)
+
+	var skin := _painted_skin()
+	var repainted := SubObjects.apply_texture_swaps(skin, plan.get("textures", []) as Array)
+	_check(
+		int(repainted.get("swapped", 0)) == 1 and (repainted.get("unresolved", []) as Array).is_empty(),
+		"the first body option repaints exactly the surface carrying its source texture (got %s)"
+			% str(repainted)
+	)
+	_check(
+		_painted_with(skin, "CHHW_SMN") == "CHHW_SMN",
+		"the body wears the texture the chosen option paints it in (got %s)"
+			% _painted_with(skin, "CHHW_SMN")
+	)
+	_check(
+		_painted_with(skin, "HAIR_00") == "CHHW_SMN_HAIR",
+		"a surface no swap names keeps the texture the pack shipped it with"
+	)
+	# THE PACK'S OWN MATERIAL IS NEVER WRITTEN ON. Godot shares an imported
+	# scene's materials between every instance of it, so repainting one hero by
+	# editing the material would repaint every other hero using that skin.
+	_check(
+		String(_authored_material(skin, "CHHW_SMN").albedo_texture.resource_name) == "CHHW_SMN_02",
+		"the repaint is an override; the material the pack authored is untouched"
+	)
+
+	# CYCLING BACK PUTS HIM BACK. The second option's source is a texture this
+	# body never carried, so the body returns to the skin's own paint rather than
+	# keeping what the previous choice left on it.
+	var back := SubObjects.plan(
+		SWAP_SYSTEM, SWAP_SUB_ROW, {"CreateAHero_Body": "Upgrade_Body02"}, "creationScreen"
+	)
+	SubObjects.apply_texture_swaps(skin, back.get("textures", []) as Array)
+	_check(
+		_painted_with(skin, "CHHW_SMN") == "CHHW_SMN_02",
+		"cycling to another body option restores the paint the skin shipped with (got %s)"
+			% _painted_with(skin, "CHHW_SMN")
+	)
+
+	# A TEXTURE THE PACK DOES NOT SHIP IS NAMED, NOT FAKED. The converter embeds
+	# only the images this skin's own meshes draw, so an option painted in one the
+	# importer never published is reported by name and changes nothing.
+	var missing := SubObjects.plan(
+		SWAP_SYSTEM, SWAP_SUB_ROW, {"CreateAHero_Body": "Upgrade_Body03"}, "creationScreen"
+	)
+	var refused := SubObjects.apply_texture_swaps(skin, missing.get("textures", []) as Array)
+	_check(
+		(refused.get("unresolved", []) as Array) == ["CHHW_SMN_09"]
+			and int(refused.get("swapped", 0)) == 0,
+		"an option painted in a texture the pack lacks names it rather than swapping (got %s)"
+			% str(refused)
+	)
+	_check(
+		_painted_with(skin, "CHHW_SMN") == "CHHW_SMN_02",
+		"the hero keeps his own skin when the option's paint is missing"
+	)
+	_check(
+		int(SubObjects.apply_texture_swaps(null, plan.get("textures", []) as Array)
+			.get("swapped", -1)) == 0,
+		"repainting no model at all is a no-op rather than a crash"
+	)
+	_check(
+		SubObjects.texture_index(skin).has("CHHW_SMN")
+			and SubObjects.texture_index(skin).has("CHHW_SMN_02"),
+		"the model's own embedded images are the catalogue a repaint draws from"
+	)
+
+	skin.queue_free()
+
+	# THE HERO IS FRAMED FOR THE CARD HE IS STANDING IN. The caption above is why:
+	# a caption appearing under the equipment list changes the height of the card
+	# beside it, and the reframe that follows read a viewport the container had
+	# not resized yet, leaving the hero framed for the layout before the caption.
+	# The two sizes only disagree for the one pass between a card resizing and its
+	# children being sorted, which no headless assertion can hold still - the
+	# proof of the framing itself is the capture runner's photograph. What IS
+	# pinned here is that the card is what is asked, and that asking is safe.
+	var framed = MyHeroesScreen.new()
+	root.add_child(framed)
+	framed._preview_host.size = Vector2(240, 900)
+	_check(
+		framed._preview_frame_size() == Vector2(240, 900),
+		"the hero is framed for the shape of the card he stands in (got %s)"
+			% str(framed._preview_frame_size())
+	)
+	framed.queue_free()
+	var unbuilt = MyHeroesScreen.new()
+	_check(
+		unbuilt._preview_frame_size() == Vector2.ONE,
+		"a screen with no card yet asks for no framing rather than dividing by nothing (got %s)"
+			% str(unbuilt._preview_frame_size())
+	)
+	unbuilt.queue_free()
+
+
+func _painted_skin() -> Node3D:
+	## A stand-in for a converted skin's PAINT: three surfaces, three named
+	## images, in the shape the real GLBs have - the body carries one variant and
+	## another part of the same skin carries the image a Body option repaints it
+	## with, which is the only place the converter puts these textures.
+	var root := Node3D.new()
+	for entry in [["CHHW_SMN", "CHHW_SMN_02"], ["GNLT_00", "CHHW_SMN"], ["HAIR_00", "CHHW_SMN_HAIR"]]:
+		var instance := MeshInstance3D.new()
+		instance.name = String((entry as Array)[0])
+		var mesh := BoxMesh.new()
+		var material := StandardMaterial3D.new()
+		material.resource_name = "%s.lambert" % String((entry as Array)[0])
+		material.albedo_texture = _named_texture(String((entry as Array)[1]))
+		mesh.material = material
+		instance.mesh = mesh
+		root.add_child(instance)
+	return root
+
+
+func _named_texture(name: String) -> ImageTexture:
+	var texture := ImageTexture.create_from_image(
+		Image.create(2, 2, false, Image.FORMAT_RGBA8)
+	)
+	texture.resource_name = name
+	return texture
+
+
+func _painted_with(root: Node3D, part: String) -> String:
+	var instance := root.get_node_or_null(NodePath(part)) as MeshInstance3D
+	if instance == null:
+		return ""
+	var material := instance.get_active_material(0) as BaseMaterial3D
+	if material == null or material.albedo_texture == null:
+		return ""
+	return String(material.albedo_texture.resource_name)
+
+
+func _authored_material(root: Node3D, part: String) -> BaseMaterial3D:
+	var instance := root.get_node_or_null(NodePath(part)) as MeshInstance3D
+	return instance.mesh.surface_get_material(0) as BaseMaterial3D
 
 
 # ---------------------------------------------------- pack art and pack meshes

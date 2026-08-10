@@ -50,6 +50,22 @@ const DEFAULT_KEY := "defaultSubObjects"
 const SHOW_KEY := "show"
 const HIDE_KEY := "hide"
 const TEXTURE_SWAP_KEY := "textureSwaps"
+const SWAP_FROM_KEY := "fromTexture"
+const SWAP_TO_KEY := "texture"
+
+## THE OTHER HALF OF A GARMENT. Not every option is a part to show: retail's Body
+## group repaints the ONE body mesh, authored as `UpgradeTexture <from> <to>` and
+## compiled into `textureSwaps` here, and every Body option in every subclass of
+## the shipped table is that kind - `show` and `hide` both empty. Reading only
+## `show`/`hide` therefore made the breastplate stepper a label that moved over a
+## hero who never changed, which is what this key is for.
+const SWAP_FROM := "from"
+const SWAP_TO := "to"
+
+## The name put on a material this module hangs off a surface. A skin is restored
+## by taking OUR materials off, never by overwriting what the pack authored, so a
+## converter that ships surface overrides of its own keeps them.
+const SWAP_MATERIAL_PREFIX := "OpenBfmeCahSwap:"
 
 ## The tail retail gives a prop's effect mesh: `FIREBRAND_FX01` is the glow on
 ## `FIREBRAND`, not a ninth weapon to choose between.
@@ -67,19 +83,26 @@ static func system_maps_sub_objects(system: Dictionary) -> bool:
 		var bound: Dictionary = option.get(OPTION_KEY, {}) as Dictionary
 		if _names(bound, SHOW_KEY).size() > 0 or _names(bound, HIDE_KEY).size() > 0:
 			return true
+		if _swaps(bound).size() > 0:
+			return true
 	return false
 
 
 static func plan(
 	system: Dictionary, sub_row: Dictionary, appearance: Dictionary, surface: String
 ) -> Dictionary:
-	## The visibility set for one hero: {show, hide, mapped, groups}.
+	## The visibility set for one hero: {show, hide, textures, mapped, groups}.
 	##
 	## `mapped` is false when the pack carries no bindings for this subclass, and
 	## the caller is expected to say so rather than to pretend the empty plan was
 	## the player's choice.
+	##
+	## `textures` is the repaint half of the same answer - the chosen options'
+	## `<from> -> <to>` swaps, in the order the groups are authored - and is what
+	## makes a Body option a garment rather than a caption.
 	var show := {}
 	var hide := {}
+	var textures: Array[Dictionary] = []
 	var mapped := false
 
 	var models: Dictionary = sub_row.get("models", {}) as Dictionary
@@ -135,11 +158,19 @@ static func plan(
 			hide.erase(part)
 			shown_here.append(part)
 			mapped = true
-		groups[group] = {"upgrade": chosen, "show": shown_here}
+		# THE SIBLINGS' SWAPS ARE NOT UNDONE ONE BY ONE. Each option names every
+		# OTHER variant's texture as a source, so the chosen option's own list
+		# already carries whatever the hero is currently painted with.
+		var repainted_here := _swaps(bound)
+		for entry in repainted_here:
+			textures.append(entry)
+			mapped = true
+		groups[group] = {"upgrade": chosen, "show": shown_here, "textures": repainted_here}
 
 	return {
 		"show": show.keys(),
 		"hide": hide.keys(),
+		"textures": textures,
 		"mapped": mapped,
 		"groups": groups,
 	}
@@ -194,7 +225,13 @@ static func collapse_variant_families(root: Node) -> Dictionary:
 			else:
 				hide[prop] = true
 				show.erase(prop)
-	return {"show": show.keys(), "hide": hide.keys(), "mapped": false, "groups": {}}
+	return {
+		"show": show.keys(),
+		"hide": hide.keys(),
+		"textures": [] as Array[Dictionary],
+		"mapped": false,
+		"groups": {},
+	}
 
 
 static func attachment_groups(root: Node) -> Dictionary:
@@ -364,6 +401,137 @@ static func apply(root: Node, visibility_plan: Dictionary) -> Dictionary:
 	return {"shown": shown, "hidden": hidden, "unknown": unknown, "matched": seen.size()}
 
 
+static func apply_texture_swaps(root: Node, swaps: Array) -> Dictionary:
+	## Repaint a loaded skin the way the chosen options say. Returns what moved:
+	## {swapped, restored, unresolved}.
+	##
+	## HOW A REPAINT IS UNDONE. Every surface is put back to the material the pack
+	## authored BEFORE anything is swapped onto it, so the source a swap matches
+	## on is always the texture the artist baked in and never one an earlier
+	## choice left behind. That is what makes cycling reversible without keeping a
+	## history of what the player has clicked through.
+	##
+	## `unresolved` NAMES THE TEXTURES THE PACK DOES NOT SHIP. The converted skins
+	## carry only the images their own meshes reference, so an option that
+	## repaints the hero in a texture the importer never published cannot be
+	## drawn - and the screen says which one rather than leaving the player to
+	## decide whether the stepper is broken.
+	var wanted := {}
+	for value in swaps:
+		var entry := value as Dictionary
+		var from_key := String(entry.get(SWAP_FROM, ""))
+		var to_key := String(entry.get(SWAP_TO, ""))
+		if from_key != "" and to_key != "" and from_key != to_key:
+			wanted[from_key] = to_key
+	if root == null:
+		return {"swapped": 0, "restored": 0, "unresolved": [] as Array[String]}
+
+	var index := texture_index(root)
+	var swapped := 0
+	var restored := 0
+	var unresolved := {}
+	var stack: Array[Node] = [root]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		for child in node.get_children():
+			stack.append(child)
+		if not (node is MeshInstance3D):
+			continue
+		var instance := node as MeshInstance3D
+		var mesh: Mesh = instance.mesh
+		if mesh == null:
+			continue
+		for surface in range(mesh.get_surface_count()):
+			var current := instance.get_surface_override_material(surface)
+			if current != null and String(current.resource_name).begins_with(SWAP_MATERIAL_PREFIX):
+				instance.set_surface_override_material(surface, null)
+				restored += 1
+			var base := _base_material(instance, surface)
+			var texture := _albedo_of(base)
+			if texture == null:
+				continue
+			var from_key := texture_key(_texture_name(texture))
+			if not wanted.has(from_key):
+				continue
+			var to_key := String(wanted[from_key])
+			var replacement := index.get(to_key) as Texture2D
+			if replacement == null:
+				unresolved[to_key] = true
+				continue
+			var material := (base as BaseMaterial3D).duplicate() as BaseMaterial3D
+			material.resource_name = SWAP_MATERIAL_PREFIX + to_key
+			material.albedo_texture = replacement
+			instance.set_surface_override_material(surface, material)
+			swapped += 1
+	var missing: Array[String] = []
+	for key_value in unresolved.keys():
+		missing.append(String(key_value))
+	missing.sort()
+	return {"swapped": swapped, "restored": restored, "unresolved": missing}
+
+
+static func texture_index(root: Node) -> Dictionary:
+	## Every skin texture the loaded model carries, keyed by the retail texture
+	## name with its extension off.
+	##
+	## THE MODEL IS THE CATALOGUE. The converter embeds a skin's images in its own
+	## GLB rather than publishing them beside it, so the images a repaint can
+	## reach are exactly the ones some mesh in this file already draws.
+	var out := {}
+	if root == null:
+		return out
+	var stack: Array[Node] = [root]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		for child in node.get_children():
+			stack.append(child)
+		if not (node is MeshInstance3D):
+			continue
+		var instance := node as MeshInstance3D
+		var mesh: Mesh = instance.mesh
+		if mesh == null:
+			continue
+		for surface in range(mesh.get_surface_count()):
+			var texture := _albedo_of(_base_material(instance, surface))
+			if texture == null:
+				continue
+			var key := texture_key(_texture_name(texture))
+			if key != "" and not out.has(key):
+				out[key] = texture
+	return out
+
+
+static func texture_key(name: String) -> String:
+	## The name a texture answers to, however it is spelled.
+	##
+	## The pack names a swap's ends as retail writes them - `CHHW_SMN_01.tga` -
+	## and the converted GLB names the same image `CHHW_SMN_01`, so the extension
+	## and the case are both dropped before the two are compared.
+	var trimmed := name.strip_edges().replace("\\", "/").get_file()
+	if trimmed.get_extension() != "":
+		trimmed = trimmed.get_basename()
+	return trimmed.to_upper()
+
+
+static func _base_material(instance: MeshInstance3D, surface: int) -> Material:
+	var override := instance.get_surface_override_material(surface)
+	if override != null and not String(override.resource_name).begins_with(SWAP_MATERIAL_PREFIX):
+		return override
+	var mesh: Mesh = instance.mesh
+	return null if mesh == null else mesh.surface_get_material(surface)
+
+
+static func _albedo_of(material: Material) -> Texture2D:
+	if not (material is BaseMaterial3D):
+		return null
+	return (material as BaseMaterial3D).albedo_texture
+
+
+static func _texture_name(texture: Texture2D) -> String:
+	var named := String(texture.resource_name)
+	return named if named != "" else String(texture.resource_path)
+
+
 static func mesh_names(root: Node) -> PackedStringArray:
 	## Every drawable part name on a loaded model, in the retail spelling.
 	var out := PackedStringArray()
@@ -440,6 +608,24 @@ static func _options_by_upgrade(system: Dictionary) -> Dictionary:
 	for option_value in (registration.get("appearanceOptions", []) as Array):
 		var option := option_value as Dictionary
 		out[String(option.get("upgradeName", ""))] = option
+	return out
+
+
+static func _swaps(bound: Dictionary) -> Array[Dictionary]:
+	## One option's repaints, as `{from, to}` pairs the mesh can be matched with.
+	##
+	## A swap onto the texture it came from is dropped: retail authors the whole
+	## square of sources per option and the diagonal of it is a no-op.
+	var out: Array[Dictionary] = []
+	var seen := {}
+	for value in (bound.get(TEXTURE_SWAP_KEY, []) as Array):
+		var entry := value as Dictionary
+		var from_key := texture_key(String(entry.get(SWAP_FROM_KEY, "")))
+		var to_key := texture_key(String(entry.get(SWAP_TO_KEY, "")))
+		if from_key == "" or to_key == "" or from_key == to_key or seen.has(from_key):
+			continue
+		seen[from_key] = true
+		out.append({SWAP_FROM: from_key, SWAP_TO: to_key})
 	return out
 
 
