@@ -24,17 +24,20 @@ extends Control
 
 signal construct_requested(structure_kind: String)
 
+const FrameScript = preload("res://src/retail_slice/retail_side_command_frame.gd")
 const AUTHORED_RESOLUTION := Vector2(1024.0, 768.0)
 const BUTTON_SET_TRANSLATION := Vector2(1048.3, 361.3)
 const BUTTON_DIAMETER := 60.0
 const BUTTON_PITCH := 70.0
-const RIGHT_EDGE_MARGIN := 14.0
 const SIDE_COMMAND_FADE_SECONDS := 0.33
 
 var _buttons: Array[Button] = []
 var _socket_texture: Texture2D
 var _shown := false
 var _tween: Tween
+## The ornate per-faction container the sockets ride inside (user bug #6).
+## Always child index 0 so it paints behind every socket.
+var _frame = null
 
 
 func _ready() -> void:
@@ -61,6 +64,24 @@ func _build() -> void:
 	# CanvasGroup composite blanked icons and blocked GUI input entirely
 	# (Controls under a Node2D never received clicks).
 	modulate.a = 0.0
+	if _frame == null:
+		_frame = FrameScript.new()
+		add_child(_frame)
+	move_child(_frame, 0)
+	_layout_frame()
+
+
+func frame_node():
+	return _frame
+
+
+## Selects the per-faction frame art for `faction`, searching the user drop-in
+## directory, every mounted content pack, then the in-repo base assets. Returns
+## the resolved path, or "" when the procedural default frame is used.
+func bind_faction(faction: String, pack_roots: Array = []) -> String:
+	if _frame == null:
+		_build()
+	return _frame.bind_faction(faction, pack_roots)
 
 
 func configure_from_constructs(constructs: Array) -> void:
@@ -126,34 +147,70 @@ func builder_bar_shown() -> bool:
 
 
 func _layout_buttons() -> void:
-	var viewport := get_viewport_rect().size
-	if viewport.x <= 0.0 or viewport.y <= 0.0:
-		viewport = AUTHORED_RESOLUTION
-	# Retail (REF-29/32/50, 1440p): a single column of ~110px sockets starting
-	# ~130px from the top and spanning nearly the full right edge. Scale the
-	# sockets from the viewport height and shrink-to-fit so one column always
-	# holds the porter's full authored build set like retail; only an
-	# over-long roster wraps into a second column growing leftward.
+	layout_for_viewport(_live_viewport_size())
+
+
+func _live_viewport_size() -> Vector2:
+	## Safe before the widget enters the tree (bind-time / headless tests):
+	## get_viewport_rect() has no viewport to ask there.
+	if is_inside_tree() and get_viewport() != null:
+		var live := get_viewport_rect().size
+		if live.x > 0.0 and live.y > 0.0:
+			return live
+	return AUTHORED_RESOLUTION
+
+
+func _layout_frame(viewport: Vector2 = Vector2.ZERO) -> void:
+	if _frame == null:
+		return
+	var size := viewport
+	if size.x <= 0.0 or size.y <= 0.0:
+		size = _live_viewport_size()
+	var rect: Rect2 = FrameScript.frame_rect(size)
+	_frame.position = rect.position
+	_frame.size = rect.size
+	_frame.queue_redraw()
+
+
+## Lays the frame and the socket column out for an explicit viewport size. The
+## sockets ride the frame's icon column (see retail_side_command_frame.gd for
+## the measured contract), so the container and the icons can never drift apart.
+func layout_for_viewport(viewport: Vector2) -> void:
+	_layout_frame(viewport)
+	var rect: Rect2 = FrameScript.frame_rect(viewport)
+	var band: Vector2 = FrameScript.icon_band(viewport)
+	var band_height := maxf(1.0, band.y - band.x)
 	var count := maxi(1, _buttons.size())
-	var start_y := viewport.y * 0.095
-	var bottom_margin := viewport.y * 0.02
-	var pitch := viewport.y * 0.077 + 7.0
-	var rows := maxi(1, int(floorf((viewport.y - start_y - bottom_margin) / pitch)))
-	if rows < count:
-		pitch = (viewport.y - start_y - bottom_margin) / float(count)
+	var diameter: float = FrameScript.icon_diameter(viewport)
+	var pitch: float = diameter * FrameScript.ICON_PITCH_RATIO
+	var rows := maxi(1, int(floorf((band_height - diameter) / pitch)) + 1)
+	if rows < count and count <= FrameScript.MAX_SINGLE_COLUMN:
+		# Retail keeps the whole build set in one column inside the frame:
+		# shrink to fit rather than spilling sockets past the frame edge.
+		pitch = band_height / float(count)
+		diameter = clampf(pitch * FrameScript.ICON_PITCH_RATIO, FrameScript.MIN_ICON_DIAMETER, diameter)
 		rows = count
-	var diameter := clampf(pitch - 7.0, 40.0, viewport.y * 0.077)
+	elif rows < count:
+		# Pathological roster: wrap leftward out of the frame rather than
+		# shrinking the sockets into illegibility.
+		rows = maxi(1, rows)
+	var center_x: float = FrameScript.icon_column_center_x(viewport)
 	for index in _buttons.size():
 		var row := index % rows
 		var column := index / rows
 		var button := _buttons[index]
 		button.custom_minimum_size = Vector2(diameter, diameter)
 		button.size = Vector2(diameter, diameter)
-		button.add_theme_constant_override("icon_max_width", int(diameter) - 12)
+		button.add_theme_constant_override("icon_max_width", maxi(8, int(diameter) - 12))
 		button.position = Vector2(
-			viewport.x - RIGHT_EDGE_MARGIN - diameter - float(column) * pitch,
-			start_y + float(row) * pitch
+			center_x - diameter * 0.5 - float(column) * (diameter + 6.0),
+			band.x + float(row) * pitch
 		)
+	# Keep the frame painting behind every socket even after a rebuild.
+	if _frame != null and _frame.get_index() != 0:
+		move_child(_frame, 0)
+	if rect.size.x <= 0.0:
+		push_warning("[SideCommandBar] degenerate frame rect for viewport %s" % str(viewport))
 
 
 func _on_side_button_pressed(kind: String) -> void:

@@ -380,6 +380,9 @@ var fps_toggle: CheckButton
 var command_cap_slider: HSlider
 var weak_fortress_toggle: CheckButton
 var _side_bar_fingerprint := "<unset>"
+## Faction whose sidebar frame art is currently bound (user bug #6). The frame
+## lookup touches the filesystem, so it runs only when the faction changes.
+var _side_bar_frame_faction := "<unset>"
 var production_queue_buttons: Array[Button] = []
 var power_points_label: Label
 var powers_dock: Control
@@ -4942,9 +4945,29 @@ func _retail_power_title(power_id: String) -> String:
 	return out
 
 
+## Points the builder sidebar's ornate container at the current faction's frame
+## art. Resolution order and the drop-in slot are documented in
+## src/retail_slice/retail_side_command_frame.gd; with no authored art the
+## repository-generated default frame paints instead.
+func _bind_side_command_frame() -> void:
+	if retail_side_command_bar == null or not retail_side_command_bar.has_method("bind_faction"):
+		return
+	var faction := _faction_surface.strip_edges()
+	if faction == _side_bar_frame_faction:
+		return
+	_side_bar_frame_faction = faction
+	var roots: Array = []
+	if _bound_content_db != null and "pack_roots" in _bound_content_db:
+		roots = _bound_content_db.pack_roots
+	var resolved := String(retail_side_command_bar.bind_faction(faction, roots))
+	if OS.get_environment("OPENBFME_UI_PROBE") == "1":
+		print("[sidebar] frame art for '", faction, "' -> ", resolved if resolved != "" else "<procedural default>")
+
+
 func _refresh_side_command_bar(builders_only: bool) -> void:
 	if retail_side_command_bar == null:
 		return
+	_bind_side_command_frame()
 	if builders_only:
 		var constructs: Array = []
 		# Prefer manifest structure_kinds order so workshop and extra buildings
