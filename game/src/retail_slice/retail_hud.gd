@@ -1862,9 +1862,11 @@ func _rebind_order_action_button(
 	# 64x63 (BDMineShaft) and 59x59 (BDWall_WallHub). The historical 63x63 pin
 	# therefore failed EVERY fortress-improvement button, which is why the
 	# fortress upgrades page rendered humanized upgrade ids instead of retail art
-	# and retail strings. Every other guard in `_validate_retail_image` — pack
-	# boundary, PNG signature, declared-vs-header-vs-decoded agreement, size caps
-	# — still applies, so this widens the accepted crop, not the trust boundary.
+	# and retail strings. What still applies in `_validate_retail_image`: the
+	# pack/resolved-path boundary, PNG signature+IHDR validity, and the 4096
+	# dimension cap. The declared-vs-header-vs-decoded agreement is a no-op for
+	# shared interface-art icons - index.json ships no width/height, so declared
+	# defaults to the header and the comparison is tautological there.
 	var validation := _validate_retail_command(
 		_bound_content_db,
 		_bound_pack_root,
