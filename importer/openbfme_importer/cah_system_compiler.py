@@ -64,6 +64,7 @@ class, every subclass, every attribute step and every multiplier resolved.
 
 from __future__ import annotations
 
+from copy import deepcopy
 import hashlib
 import json
 import re
@@ -100,6 +101,21 @@ MODEL_CONDITIONS_PATH = (
 )
 #: The shared ExperienceLevel chain every created hero levels through.
 EXPERIENCE_PATH = "data/ini/experiencelevels_createahero.inc"
+#: WHERE THE GARMENTS LIVE.  The name is a misnomer inherited from retail: this
+#: one include carries every ``SubObjectsUpgrade`` in the Create-a-Hero system
+#: -- helmets, shoulders, bodies, gauntlets, boots and shields as well as
+#: weapons -- plus the ``WeaponSet``/``WeaponSetUpgrade`` pairs that decide what
+#: a chosen weapon actually does.  Its own header says as much.  Patch 2.01
+#: overrides it (``_patch201ini.big``), so the layered corpus is authoritative.
+GARMENT_PATH = "data/ini/object/createahero/createaheroweaponupgrades.inc"
+#: The ``CreateAHero`` Object itself.  Read line-wise rather than through
+#: :func:`_document_lines`: its ``#include``s reach ``createaheroanims.inc``,
+#: which carries a stray ``End`` no strict block reader survives, and the only
+#: thing wanted from the object is its ``LocomotorSet`` blocks.
+OBJECT_PATH = "data/ini/object/createahero/createahero.ini"
+#: Weapon templates and locomotor templates the object and its weapon sets name.
+WEAPONS_PATH = "data/ini/weapon.ini"
+LOCOMOTOR_PATH = "data/ini/locomotor.ini"
 
 #: Documents that must be present.  The ``#include``s reached from
 #: ``createaherosystem.ini`` are resolved from the same mapping and are also
@@ -116,6 +132,10 @@ REQUIRED_DOCUMENTS = (
     MODELS_PATH,
     MODEL_CONDITIONS_PATH,
     EXPERIENCE_PATH,
+    GARMENT_PATH,
+    OBJECT_PATH,
+    WEAPONS_PATH,
+    LOCOMOTOR_PATH,
 )
 
 #: Where ``#define``s are read from, in precedence order (later wins).  BOTH are
@@ -514,23 +534,589 @@ def _bling_groups(
     return groups
 
 
-def _appearance_options(system: _Block) -> list[dict[str, Any]]:
+def _appearance_options(
+    system: _Block,
+    garment: Mapping[str, Mapping[str, Any]] | None = None,
+    combat: Mapping[str, Mapping[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     ## Every CreateAHeroBling part (helmet pieces, weapons, …) as a catalog row.
+    ## Each row carries the sub-object visibility its upgrade switches, so a
+    ## client can dress the hero mesh from the descriptor alone.
     options: list[dict[str, Any]] = []
     for bling in system.children("CreateAHeroBling"):
         upgrade = (bling.value("BlingUpgradeName") or "").strip()
         group = (bling.value("GroupName") or "").strip()
         if not upgrade or not group:
             continue
-        options.append(
+        row: dict[str, Any] = {
+            "upgradeName": upgrade,
+            "groupName": group,
+            "nameStringId": (bling.value("NameTag") or "").strip(),
+            "descriptionStringId": (bling.value("DescriptionTag") or "").strip(),
+            "subObjects": _empty_sub_objects()
+            if garment is None
+            else deepcopy(dict(garment.get(upgrade.casefold(), _empty_sub_objects()))),
+        }
+        if combat is not None and upgrade.casefold() in combat:
+            row["combat"] = deepcopy(dict(combat[upgrade.casefold()]))
+        options.append(row)
+    return options
+
+
+# --------------------------------------------------------------------------- #
+# garment sub-objects
+# --------------------------------------------------------------------------- #
+
+#: The shape every appearance option carries, present even when the option
+#: switches nothing.  A consumer never branches on key presence.
+def _empty_sub_objects() -> dict[str, Any]:
+    return {
+        "show": [],
+        "hide": [],
+        "textureSwaps": [],
+        "recolorHouse": False,
+        "hideOnRemove": False,
+        "moduleCount": 0,
+    }
+
+
+def _ordered_unique(values: Iterable[str]) -> list[str]:
+    """First-authored spelling wins; retail's exact case is the contract."""
+
+    seen: dict[str, str] = {}
+    for value in values:
+        seen.setdefault(value.casefold(), value)
+    return list(seen.values())
+
+
+def _garment_block(documents: Mapping[str, bytes]) -> _Block:
+    return _parse_blocks(_document_lines(documents, GARMENT_PATH), GARMENT_PATH)
+
+
+def _sub_object_upgrades(garment: _Block) -> dict[str, dict[str, Any]]:
+    """``Upgrade_*`` (casefolded) -> the mesh sub-objects it switches.
+
+    WHY THIS DOCUMENT AND NOT THE DRAW MODULE.  A Create-a-Hero mesh ships every
+    garment variant at once -- ``CHHW_CG_C_SKN`` carries six helmets, five
+    shoulder sets, six boots and seven weapons as named sub-objects -- and the
+    Draw module in ``createaheromodels.inc`` says nothing about which of them
+    are visible.  The only documents that do are the ``SubObjectsUpgrade``
+    modules here: each names, per bling upgrade, the sub-objects that upgrade
+    reveals (``ShowSubObjects``) and the texture substitutions it applies
+    (``UpgradeTexture``).
+
+    Names are emitted EXACTLY as authored because they are matched against W3D
+    sub-object names, which the conversion preserves verbatim as GLB node names.
+
+    Retail authors more than one module per upgrade in eighteen cases (the
+    Belthronding bow also reveals the archer's sword), so modules are merged
+    rather than last-wins.
+    """
+
+    upgrades: dict[str, dict[str, Any]] = {}
+    for block in garment.children("Behavior"):
+        module = (block.value("__module__") or "").split()
+        if not module or module[0].casefold() != "subobjectsupgrade":
+            continue
+        tag = module[1] if len(module) > 1 else "?"
+        label = f"{GARMENT_PATH}: SubObjectsUpgrade {tag}"
+        triggers = [
+            token for text in block.values("TriggeredBy") for token in text.split()
+        ]
+        if not triggers:
+            raise CahSystemCompilerError(
+                f"{label} is TriggeredBy nothing, so no appearance option can "
+                f"ever raise it"
+            )
+        show = [token for text in block.values("ShowSubObjects") for token in text.split()]
+        hide = [token for text in block.values("HideSubObjects") for token in text.split()]
+        swaps: list[dict[str, Any]] = []
+        for text in block.values("UpgradeTexture"):
+            parts = text.split()
+            if len(parts) != 3 or not parts[1].isdigit():
+                raise CahSystemCompilerError(
+                    f"{label}: UpgradeTexture = {text!r} is not the authored "
+                    f"<from> <index> <to> triple"
+                )
+            swaps.append(
+                # ``texture`` is the one applied; ``fromTexture`` is what it
+                # replaces.  Retail keys the swap by the OUTGOING texture rather
+                # than by a sub-object name, so there is no sub-object to name.
+                {"fromTexture": parts[0], "index": int(parts[1]), "texture": parts[2]}
+            )
+        recolor = (block.value("RecolorHouse") or "").strip().casefold() == "yes"
+        on_remove = (
+            block.value("HideSubObjectsOnRemove") or ""
+        ).strip().casefold() == "yes"
+        for name in triggers:
+            entry = upgrades.setdefault(name.casefold(), _empty_sub_objects())
+            entry["show"] = _ordered_unique([*entry["show"], *show])
+            entry["hide"] = _ordered_unique([*entry["hide"], *hide])
+            for swap in swaps:
+                if swap not in entry["textureSwaps"]:
+                    entry["textureSwaps"].append(swap)
+            entry["recolorHouse"] = bool(entry["recolorHouse"] or recolor)
+            entry["hideOnRemove"] = bool(entry["hideOnRemove"] or on_remove)
+            entry["moduleCount"] = int(entry["moduleCount"]) + 1
+    if not upgrades:
+        raise CahSystemCompilerError(
+            f"{GARMENT_PATH}: no SubObjectsUpgrade module is declared; the "
+            f"appearance groups would have no mesh effect at all"
+        )
+    return upgrades
+
+
+def _revealed_sub_objects(garment: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    """Every sub-object any ``SubObjectsUpgrade`` in the corpus reveals."""
+
+    return _ordered_unique(
+        str(name) for row in garment.values() for name in row["show"]
+    )
+
+
+def _default_sub_objects(
+    appearance_by_group: Mapping[str, Sequence[str]],
+    garment: Mapping[str, Mapping[str, Any]],
+    revealed: Sequence[str],
+) -> dict[str, Any]:
+    """What a subclass's mesh shows before any bling is applied.
+
+    RECOVERED, NOT AUTHORED.  No retail document states a default visibility
+    set.  It is forced by two facts that are authored: the mesh carries every
+    garment variant as a sub-object, and the ONLY thing that reveals one is its
+    ``SubObjectsUpgrade``.  A hero with no upgrades applied therefore starts
+    with every upgrade-revealed sub-object hidden -- otherwise it would wear all
+    six helmets at once -- while anything no upgrade names (the body, the head,
+    the hair a subclass has no choice about) stays visible.
+
+    ``hide`` IS THE WHOLE CORPUS, NOT THIS SUBCLASS'S SLICE.  All 295 modules
+    hang off the single ``CreateAHero`` Object; the engine has one module set,
+    not one per subclass, so a sub-object named by ANY of them is hidden on any
+    mesh that carries it.  Scoping to the subclass's own ``BlingUpgrades``
+    measurably breaks: the Snow Troll mesh carries twenty-six garment
+    sub-objects its own bling list never names, and every one of them would
+    render at once.  Hiding a name a given mesh does not carry is a no-op, so
+    the corpus-wide set is both safe and the only correct one.
+
+    ``scopedToSubClass`` is the subclass's own slice, kept as evidence of what
+    that subclass can actually change.  ``HideSubObjects`` names go the other
+    way (they are hidden BY an upgrade, so visible before it) and retail authors
+    none of them; they are deliberately not folded in.
+    """
+
+    scoped: list[str] = []
+    for upgrades in appearance_by_group.values():
+        for upgrade in upgrades:
+            row = garment.get(str(upgrade).casefold())
+            if row is not None:
+                scoped.extend(str(name) for name in row["show"])
+    return {
+        "show": [],
+        "hide": list(revealed),
+        "scopedToSubClass": _ordered_unique(scoped),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# weapon combat
+# --------------------------------------------------------------------------- #
+
+#: Weapon-template fields compiled onto a weapon appearance option, as
+#: ``(INI field, emitted key)``.  Every one resolves through the defines, so a
+#: corpus that rewrites ``FARAMIR_DELAYBETWEENSHOTS`` is reported, not guessed.
+_WEAPON_SCALAR_FIELDS = (
+    ("AttackRange", "attackRange"),
+    ("DelayBetweenShots", "delayBetweenShotsMs"),
+    ("PreAttackDelay", "preAttackMs"),
+    ("FiringDuration", "firingDurationMs"),
+)
+
+#: How many bytes of ``weapon.ini`` the template scan will read.  Retail's is
+#: under a megabyte; the bound only stops a corrupt document.
+MAX_WEAPON_DOCUMENT_BYTES = 32 * 1024 * 1024
+
+_WEAPON_HEADER_PATTERN = re.compile(r"^Weapon\s+(\S+)$", re.IGNORECASE)
+
+
+def _weapon_templates(documents: Mapping[str, bytes]) -> dict[str, dict[str, Any]]:
+    """``Weapon <Name>`` -> its top-level fields and its first DamageNugget.
+
+    Read with a depth-tracking scan rather than :func:`_parse_blocks` because
+    ``weapon.ini`` is the whole game's weapon corpus, not the Create-a-Hero
+    slice: it carries constructs (nugget families, conditional blocks) that the
+    strict Create-a-Hero grammar would refuse, and refusing the whole file over
+    a weapon no hero can equip would be a worse failure than reading the
+    handful of templates the hero's weapon sets actually name.
+
+    Only the FIRST ``DamageNugget`` is taken.  The later ones on these templates
+    are ``DOTNugget`` poison riders gated behind ``RequiredUpgradeNames``, which
+    are power upgrades rather than base weapon damage.
+
+    The first ``ProjectileNugget`` is kept as well, because a bow authors no
+    damage of its own: it names a warhead weapon, and the damage is that
+    weapon's.  See :func:`_weapon_profile`.
+    """
+
+    raw = _lookup(documents, WEAPONS_PATH)
+    if raw is None:
+        raise CahSystemCompilerError(f"{WEAPONS_PATH}: document is missing")
+    if len(raw) > MAX_WEAPON_DOCUMENT_BYTES:
+        raise CahSystemCompilerError(
+            f"{WEAPONS_PATH}: {len(raw)} bytes exceeds the "
+            f"{MAX_WEAPON_DOCUMENT_BYTES} limit"
+        )
+    templates: dict[str, dict[str, Any]] = {}
+    name: str | None = None
+    depth = 0
+    nested: list[str] = []
+    current: dict[str, Any] = {}
+    for line in _lines(raw):
+        if name is None:
+            header = _WEAPON_HEADER_PATTERN.fullmatch(line)
+            if header is not None:
+                name = header.group(1)
+                depth = 1
+                nested = []
+                current = {
+                    "name": name,
+                    "fields": {},
+                    "damageNugget": None,
+                    "projectileNugget": None,
+                }
+            continue
+        if line.casefold() == "end":
+            depth -= 1
+            if nested:
+                nested.pop()
+            if depth == 0:
+                templates.setdefault(name.casefold(), current)
+                name = None
+            continue
+        assignment = _ASSIGNMENT_PATTERN.match(line)
+        if assignment is not None:
+            if not nested:
+                current["fields"].setdefault(
+                    assignment.group(1).casefold(), assignment.group(2).strip()
+                )
+            elif nested[-1] == "damagenugget" and current["damageNugget"] is not None:
+                current["damageNugget"].setdefault(
+                    assignment.group(1).casefold(), assignment.group(2).strip()
+                )
+            elif (
+                nested[-1] == "projectilenugget"
+                and current["projectileNugget"] is not None
+            ):
+                current["projectileNugget"].setdefault(
+                    assignment.group(1).casefold(), assignment.group(2).strip()
+                )
+            continue
+        header = _BLOCK_HEADER_PATTERN.match(line)
+        if header is not None:
+            kind = header.group(1).casefold()
+            nested.append(kind)
+            depth += 1
+            if kind == "damagenugget" and current["damageNugget"] is None:
+                current["damageNugget"] = {}
+            elif kind == "projectilenugget" and current["projectileNugget"] is None:
+                current["projectileNugget"] = {}
+    if name is not None:
+        raise CahSystemCompilerError(f"{WEAPONS_PATH}: Weapon {name} is unterminated")
+    if not templates:
+        raise CahSystemCompilerError(f"{WEAPONS_PATH}: no Weapon template was read")
+    return templates
+
+
+def _weapon_profile(
+    template_name: str,
+    templates: Mapping[str, Mapping[str, Any]],
+    defines: Mapping[str, float],
+) -> dict[str, Any]:
+    template = templates.get(template_name.casefold())
+    if template is None:
+        raise CahSystemCompilerError(
+            f"{WEAPONS_PATH}: no Weapon {template_name} for a Create-a-Hero "
+            f"weapon set"
+        )
+    label = f"{WEAPONS_PATH}: Weapon {template_name}"
+    fields = template["fields"]
+    profile: dict[str, Any] = {
+        "weaponTemplate": template["name"],
+        "melee": str(fields.get("meleeweapon", "")).casefold() == "yes",
+    }
+    for field, key in _WEAPON_SCALAR_FIELDS:
+        token = fields.get(field.casefold())
+        profile[key] = (
+            None
+            if token is None
+            else _number(_resolved_scalar(token, defines, label, field))
+        )
+    # WHERE A BOW'S DAMAGE IS.  A ranged Create-a-Hero weapon authors no
+    # DamageNugget at all: it authors a ProjectileNugget naming a warhead
+    # weapon, and the warhead carries the damage.  Followed exactly one hop --
+    # a warhead that itself only launches something is a corpus this module
+    # does not understand and says so.
+    nugget = template.get("damageNugget")
+    source = "weapon"
+    warhead = ""
+    if not nugget or "damage" not in nugget:
+        projectile = template.get("projectileNugget") or {}
+        warhead = str(projectile.get("warheadtemplatename", "")).strip()
+        if not warhead:
+            raise CahSystemCompilerError(
+                f"{label} authors neither a DamageNugget Damage nor a "
+                f"ProjectileNugget WarheadTemplateName; a weapon a hero can "
+                f"equip must say what it hits for"
+            )
+        carrier = templates.get(warhead.casefold())
+        if carrier is None:
+            raise CahSystemCompilerError(
+                f"{WEAPONS_PATH}: no Weapon {warhead}, named as the warhead of "
+                f"{template_name}"
+            )
+        nugget = carrier.get("damageNugget")
+        if not nugget or "damage" not in nugget:
+            raise CahSystemCompilerError(
+                f"{WEAPONS_PATH}: Weapon {warhead} is the warhead of "
+                f"{template_name} and authors no DamageNugget Damage"
+            )
+        label = f"{WEAPONS_PATH}: Weapon {warhead}"
+        source = "warhead"
+    profile["damage"] = _number(
+        _resolved_scalar(str(nugget["damage"]), defines, label, "DamageNugget Damage")
+    )
+    profile["damageType"] = str(nugget.get("damagetype", "")).strip()
+    profile["damageSource"] = source
+    profile["warheadTemplate"] = warhead
+    return profile
+
+
+def _weapon_combat(
+    garment: _Block,
+    templates: Mapping[str, Mapping[str, Any]],
+    defines: Mapping[str, float],
+) -> tuple[dict[str, dict[str, Any]], list[dict[str, str]]]:
+    """``Upgrade_CHW*`` (casefolded) -> what that weapon actually does.
+
+    THE JOIN.  A weapon bling is only an upgrade name.  A ``WeaponSetUpgrade``
+    turns that name into a ``WEAPONSET_CREATE_A_HERO_WS_NN`` flag; a
+    ``WeaponSet`` whose ``Conditions`` are exactly that flag turns the flag into
+    a ``Weapon`` template; ``weapon.ini`` turns the template into numbers.
+    Retail also authors toggle variants (``WS_02 WEAPONSET_TOGGLE_1`` is the
+    Belthronding archer's bow mode), kept beside the base set as
+    ``alternateModes`` rather than replacing it.
+
+    Returns ``(profiles, gaps)``.  A weapon whose chain breaks becomes a NAMED
+    gap rather than a zero: a fabricated number is indistinguishable from a
+    compiled one once it reaches the client.
+    """
+
+    sets: list[tuple[list[str], list[tuple[str, str]]]] = []
+    for block in garment.children("WeaponSet"):
+        conditions = (block.value("Conditions") or "").split()
+        weapons: list[tuple[str, str]] = []
+        for text in block.values("Weapon"):
+            parts = text.split()
+            if len(parts) >= 2:
+                weapons.append((parts[0].upper(), parts[1]))
+        sets.append((conditions, weapons))
+
+    profiles: dict[str, dict[str, Any]] = {}
+    gaps: list[dict[str, str]] = []
+    for block in garment.children("Behavior"):
+        module = (block.value("__module__") or "").split()
+        if not module or module[0].casefold() != "weaponsetupgrade":
+            continue
+        tag = module[1] if len(module) > 1 else "?"
+        flag = (block.value("WeaponCondition") or "").strip()
+        triggers = [
+            token for text in block.values("TriggeredBy") for token in text.split()
+        ]
+        for upgrade in triggers:
+            if not flag:
+                gaps.append(
+                    {
+                        "upgradeName": upgrade,
+                        "reason": f"WeaponSetUpgrade {tag} names no WeaponCondition",
+                    }
+                )
+                continue
+            folded = flag.casefold()
+            base = [
+                weapons
+                for conditions, weapons in sets
+                if [item.casefold() for item in conditions] == [folded]
+            ]
+            if len(base) != 1 or not base[0]:
+                gaps.append(
+                    {
+                        "upgradeName": upgrade,
+                        "reason": (
+                            f"{len(base)} WeaponSet(s) carry exactly "
+                            f"Conditions = {flag}"
+                        ),
+                    }
+                )
+                continue
+            slot, template_name = base[0][0]
+            profile = {
+                "weaponSetFlag": flag,
+                "slot": slot,
+                **_weapon_profile(template_name, templates, defines),
+            }
+            secondary = [
+                {
+                    "conditions": [
+                        item for item in conditions if item.casefold() != folded
+                    ],
+                    "slot": weapons[0][0],
+                    **_weapon_profile(weapons[0][1], templates, defines),
+                }
+                for conditions, weapons in sets
+                if folded in [item.casefold() for item in conditions]
+                and len(conditions) > 1
+                and weapons
+            ]
+            profile["alternateModes"] = secondary
+            profiles[upgrade.casefold()] = profile
+    return profiles, gaps
+
+
+# --------------------------------------------------------------------------- #
+# object baseline
+# --------------------------------------------------------------------------- #
+
+
+def _locomotor_sets(documents: Mapping[str, bytes]) -> list[dict[str, Any]]:
+    """Every ``LocomotorSet`` the ``CreateAHero`` Object authors.
+
+    Scanned line-wise from the object file WITHOUT splicing its ``#include``s:
+    the animation include retail ships carries a stray ``End`` that no strict
+    block reader survives, and a locomotor set is three assignments inside one
+    block, which needs no grammar at all.
+    """
+
+    raw = _lookup(documents, OBJECT_PATH)
+    if raw is None:
+        raise CahSystemCompilerError(f"{OBJECT_PATH}: document is missing")
+    rows: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for line in _lines(raw):
+        if current is None:
+            if line.casefold() == "locomotorset":
+                current = {}
+            continue
+        if line.casefold() == "end":
+            rows.append(current)
+            current = None
+            continue
+        assignment = _ASSIGNMENT_PATTERN.match(line)
+        if assignment is None:
+            continue
+        key, value = assignment.group(1).casefold(), assignment.group(2).strip()
+        if key in {"locomotor", "condition", "speed"}:
+            current.setdefault(key, value)
+    if not rows:
+        raise CahSystemCompilerError(
+            f"{OBJECT_PATH}: the CreateAHero Object authors no LocomotorSet, so "
+            f"it has no ground speed at all"
+        )
+    return rows
+
+
+def _locomotor_templates(documents: Mapping[str, bytes]) -> dict[str, dict[str, str]]:
+    raw = _lookup(documents, LOCOMOTOR_PATH)
+    if raw is None:
+        raise CahSystemCompilerError(f"{LOCOMOTOR_PATH}: document is missing")
+    templates: dict[str, dict[str, str]] = {}
+    for block in parse_flat_named_blocks(raw, "Locomotor"):
+        templates.setdefault(
+            block.name.casefold(),
+            {key.casefold(): value for key, value in block.assignments},
+        )
+    if not templates:
+        raise CahSystemCompilerError(f"{LOCOMOTOR_PATH}: no Locomotor template was read")
+    return templates
+
+
+#: Locomotor-template fields the sim needs, as ``(INI field, emitted key)``.
+_LOCOMOTOR_FIELDS = (
+    ("TurnTime", "turnTimeMs"),
+    ("TurnTimeDamaged", "turnTimeDamagedMs"),
+    ("Acceleration", "accelerationMs"),
+    ("Braking", "brakingMs"),
+    ("FastTurnRadius", "fastTurnRadius"),
+    ("SlowTurnRadius", "slowTurnRadius"),
+)
+
+#: The locomotor condition a freshly spawned, un-upgraded hero walks under.
+NORMAL_LOCOMOTOR_CONDITION = "SET_NORMAL"
+
+
+def _object_baseline(
+    documents: Mapping[str, bytes], defines: Mapping[str, float], base_health: Any
+) -> dict[str, Any]:
+    """Retail-native movement and health numbers for the CreateAHero Object.
+
+    Emitted in RETAIL units.  A client that wants metres per second owns that
+    conversion; this module's job is to stop the client inventing the number.
+    """
+
+    sets = _locomotor_sets(documents)
+    rows: list[dict[str, Any]] = []
+    for index, row in enumerate(sets):
+        label = f"{OBJECT_PATH}: LocomotorSet {index}"
+        locomotor = str(row.get("locomotor", "")).strip()
+        condition = str(row.get("condition", "")).strip()
+        speed_token = row.get("speed")
+        if not locomotor or not condition or speed_token is None:
+            raise CahSystemCompilerError(
+                f"{label} is missing Locomotor, Condition or Speed"
+            )
+        rows.append(
             {
-                "upgradeName": upgrade,
-                "groupName": group,
-                "nameStringId": (bling.value("NameTag") or "").strip(),
-                "descriptionStringId": (bling.value("DescriptionTag") or "").strip(),
+                "condition": condition,
+                "locomotor": locomotor,
+                "speed": _number(
+                    _resolved_scalar(str(speed_token), defines, label, "Speed")
+                ),
             }
         )
-    return options
+    normal = [
+        row
+        for row in rows
+        if str(row["condition"]).casefold() == NORMAL_LOCOMOTOR_CONDITION.casefold()
+    ]
+    if len(normal) != 1:
+        raise CahSystemCompilerError(
+            f"{OBJECT_PATH}: expected exactly one {NORMAL_LOCOMOTOR_CONDITION} "
+            f"LocomotorSet, found {len(normal)}"
+        )
+    templates = _locomotor_templates(documents)
+    template = templates.get(str(normal[0]["locomotor"]).casefold())
+    if template is None:
+        raise CahSystemCompilerError(
+            f"{LOCOMOTOR_PATH}: no Locomotor {normal[0]['locomotor']} for the "
+            f"CreateAHero Object"
+        )
+    baseline: dict[str, Any] = {
+        "objectId": "CreateAHero",
+        "baseHealth": base_health,
+        "speed": normal[0]["speed"],
+        "locomotor": normal[0]["locomotor"],
+        "locomotorSets": rows,
+    }
+    for field, key in _LOCOMOTOR_FIELDS:
+        token = template.get(field.casefold())
+        baseline[key] = (
+            None
+            if token is None
+            else _number(
+                _resolved_scalar(
+                    token, defines, f"{LOCOMOTOR_PATH}: {normal[0]['locomotor']}", field
+                )
+            )
+        )
+    return baseline
 
 
 def _special_power_index(documents: Mapping[str, bytes]) -> dict[str, dict[str, Any]]:
@@ -1216,6 +1802,8 @@ def _sub_classes(
     appearance_options: Sequence[Mapping[str, Any]],
     model_bindings: Mapping[tuple[str, str], Mapping[str, Any]],
     class_upgrade_name: str,
+    garment: Mapping[str, Mapping[str, Any]],
+    revealed: Sequence[str],
 ) -> list[dict[str, Any]]:
     group_names = [str(row["groupName"]) for row in groups]
     option_by_upgrade = {
@@ -1326,6 +1914,15 @@ def _sub_classes(
                 f"battlefield one; a hero that cannot be shown in a match is "
                 f"not a hero this compiler will emit"
             )
+        # The mesh this subclass wears carries every garment variant at once, so
+        # the client needs the pre-bling visibility state as well as the
+        # bindings.  Published in BOTH places a consumer would look: beside the
+        # subclass row, and inside the model binding itself.
+        default_sub_objects = _default_sub_objects(
+            appearance_by_group, garment, revealed
+        )
+        bound_models = deepcopy(dict(models))
+        bound_models["defaultSubObjects"] = deepcopy(default_sub_objects)
         out.append(
             {
                 "subClassIndex": sub_index,
@@ -1346,7 +1943,8 @@ def _sub_classes(
                 "defaultSecondaryColor": (sub.value("DefaultSecondaryColor") or "").strip(),
                 "defaultTertiaryColor": (sub.value("DefaultTertiaryColor") or "").strip(),
                 "upgradeNameSubClass": sub_upgrade,
-                "models": dict(models),
+                "models": bound_models,
+                "defaultSubObjects": default_sub_objects,
                 "viewInfo": _view_info(sub),
             }
         )
@@ -1437,7 +2035,17 @@ def compile_cah_system_descriptor(
 
     groups = _attribute_groups(system)
     appearance_groups = _appearance_groups(system)
-    appearance_options = _appearance_options(system)
+    # The garment lane: what each appearance option does to the mesh, and what
+    # each weapon option does in a fight.  Both come out of the one include
+    # retail calls createaheroweaponupgrades.inc.
+    garment_block = _garment_block(documents)
+    garment = _sub_object_upgrades(garment_block)
+    weapon_templates = _weapon_templates(documents)
+    combat_profiles, combat_gaps = _weapon_combat(
+        garment_block, weapon_templates, defines
+    )
+    revealed_sub_objects = _revealed_sub_objects(garment)
+    appearance_options = _appearance_options(system, garment, combat_profiles)
     upgrades = _upgrade_index(documents)
     modifiers = _modifier_index(documents, attribute_multiplier)
 
@@ -1496,6 +2104,8 @@ def compile_cah_system_descriptor(
                     appearance_options,
                     model_bindings,
                     class_upgrade_name,
+                    garment,
+                    revealed_sub_objects,
                 ),
             }
         )
@@ -1554,9 +2164,77 @@ def compile_cah_system_descriptor(
             f"found {revive_costs or 'none'}"
         )
 
+    # A weapon bling with no compiled combat is NAMED, never zeroed: the client
+    # must be able to tell "retail says 150" from "nobody knew".
+    weapon_groups = sorted(
+        {str(row["groupName"]) for row in appearance_options if "combat" in row},
+        key=str.casefold,
+    )
+    weapon_rows = [
+        row for row in appearance_options if str(row["groupName"]) in weapon_groups
+    ]
+    unresolved = sorted(
+        (str(row["upgradeName"]) for row in weapon_rows if "combat" not in row),
+        key=str.casefold,
+    )
+    combat_coverage = {
+        "weaponGroups": weapon_groups,
+        "weaponOptions": len(weapon_rows),
+        "resolved": len(weapon_rows) - len(unresolved),
+        "unresolvedUpgrades": unresolved,
+        "gaps": sorted(
+            (dict(row) for row in combat_gaps),
+            key=lambda row: str(row["upgradeName"]).casefold(),
+        ),
+    }
+    # Counted over the APPEARANCE groups only: the attribute sliders are also
+    # CreateAHeroBling rows and have no mesh effect by construction, so folding
+    # them in would report a coverage number nobody could act on.
+    appearance_group_names = {
+        str(row["groupName"]).casefold() for row in appearance_groups
+    }
+    garment_rows = [
+        row
+        for row in appearance_options
+        if str(row["groupName"]).casefold() in appearance_group_names
+    ]
+    garment_coverage = {
+        "subObjectUpgrades": len(garment),
+        "revealedSubObjects": revealed_sub_objects,
+        "appearanceOptions": len(garment_rows),
+        "optionsWithSubObjects": sum(
+            1
+            for row in garment_rows
+            if row["subObjects"]["show"]
+            or row["subObjects"]["hide"]
+            or row["subObjects"]["textureSwaps"]
+        ),
+        # Named, not counted away.  Retail's own "wear nothing" choices belong
+        # here (they reveal nothing on purpose) alongside any bling whose module
+        # the corpus genuinely omits.
+        "optionsWithoutSubObjects": sorted(
+            (
+                str(row["upgradeName"])
+                for row in garment_rows
+                if not (
+                    row["subObjects"]["show"]
+                    or row["subObjects"]["hide"]
+                    or row["subObjects"]["textureSwaps"]
+                )
+            ),
+            key=str.casefold,
+        ),
+        "optionCount": len(appearance_options),
+    }
+
     body = {
         "schema": SCHEMA,
         "schemaVersion": SCHEMA_VERSION,
+        "objectBaseline": _object_baseline(
+            documents, defines, base_stats["maxHealth"]
+        ),
+        "combatCoverage": combat_coverage,
+        "garmentCoverage": garment_coverage,
         "system": {
             "objectId": "CreateAHero",
             "attributeMultiplier": _number(attribute_multiplier),
@@ -1576,9 +2254,21 @@ def compile_cah_system_descriptor(
         "classes": classes,
         "sourceDocuments": _source_documents(documents),
         "limitations": [
-            "Appearance bling is compiled as upgrade-name options per group; "
-            "3D part meshes are not bound here (the client shows portrait + "
-            "default hero mesh when available).",
+            "Appearance bling carries the retail sub-object show/hide and "
+            "texture-swap data its SubObjectsUpgrade authors, plus each "
+            "subclass's pre-bling default visibility. Sub-object names are the "
+            "authored W3D names and match the converted GLB node names exactly. "
+            "The default-hidden set is RECOVERED (no retail document states it): "
+            "it is every sub-object an option offered to that subclass reveals.",
+            "UpgradeTexture swaps are keyed by the OUTGOING texture, which is "
+            "how retail authors them; there is no per-sub-object texture "
+            "binding to publish because retail authors none.",
+            "Weapon appearance options carry the combat numbers their WeaponSet "
+            "resolves to. An option whose chain does not resolve is listed in "
+            "combatCoverage.unresolvedUpgrades rather than given a zero.",
+            "Only the first DamageNugget of a weapon template is compiled; the "
+            "DOTNugget riders on the Create-a-Hero weapons are gated behind "
+            "poison-power upgrades rather than being base damage.",
             "Special powers are compiled from the CreateAHeroUI* fields on "
             "commandbutton.ini: class binding, required hero level, "
             "prerequisite chain and cost-if-selected all come from there, and "
@@ -1644,7 +2334,10 @@ def build_cah_system_runtime(descriptor: Mapping[str, Any]) -> dict[str, Any]:
         "descriptorSha256": descriptor["descriptorSha256"],
         "registration": {
             "system": descriptor["system"],
+            "objectBaseline": descriptor.get("objectBaseline", {}),
+            "combatCoverage": descriptor.get("combatCoverage", {}),
             "attributeGroups": descriptor["attributeGroups"],
+            "garmentCoverage": descriptor.get("garmentCoverage", {}),
             "appearanceGroups": descriptor.get("appearanceGroups", []),
             "appearanceOptions": descriptor.get("appearanceOptions", []),
             "powerCatalog": descriptor.get("powerCatalog", []),

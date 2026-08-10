@@ -138,6 +138,18 @@ END
 CONTROLBAR:UnreferencedRow
   "Never asked for"
 END
+CreateAHero:ClassName_HeroesOfTheWest
+  "Heroes of the West"
+END
+CreateAHero:BlingName_CaptainOfGondor_CHH02
+  "Gondorian Helmet"
+END
+CAH:HelmetMenuLabel
+  "Helmet"
+END
+APT:SelectHeroClassTitle
+  "Select a Class"
+END
 """
 
 
@@ -505,3 +517,104 @@ def test_interface_art_document_with_a_foreign_schema_refuses(tmp_path: Path) ->
             _base_with_selection_contract(), tmp_path, ["men"],
             game="rotwk", interface_art=(resources, document),
         )
+
+
+# --- Create-a-Hero string namespaces ----------------------------------------
+
+def _cah_runtime_naming_strings() -> dict[str, object]:
+    body: dict[str, object] = {
+        "schema": CAH_RUNTIME_SCHEMA,
+        "schemaVersion": CAH_RUNTIME_SCHEMA_VERSION,
+        "descriptorSha256": "d" * 64,
+        "registration": {
+            "system": {"buildCost": 500},
+            "attributeGroups": [{"groupName": "CreateAHero_ArmorAttribute"}],
+            "appearanceOptions": [
+                {
+                    "upgradeName": "Upgrade_CaptainOfGondor_CHH02",
+                    "nameStringId": "CreateAHero:BlingName_CaptainOfGondor_CHH02",
+                    # Retail leaves several hundred bling labels dangling; the
+                    # compose must report them, never invent them.
+                    "descriptionStringId": "CreateAHero:BlingDesc_NeverAuthored",
+                }
+            ],
+            "classes": [
+                {
+                    "nameStringId": "CreateAHero:ClassName_HeroesOfTheWest",
+                    "label": "CONTROLBAR:TestLabel",
+                }
+            ],
+        },
+    }
+    body["runtimeSha256"] = _cah_digest(body)
+    return body
+
+
+def test_the_cah_host_publishes_the_create_a_hero_string_namespaces(
+    tmp_path: Path,
+) -> None:
+    # The measured gap: the pack shipped ZERO CreateAHero: rows, so every class,
+    # subclass and garment name on screen was a de-camelcased id
+    # ("Sheild Maiden") even though retail's table has the text.
+    from openbfme_importer.faction_slice_profile import STRINGS_RUNTIME_PATH
+
+    _faction_coverage(tmp_path, "men", registration={"production": []})
+    target, receipt = compose_faction_profile(
+        _base_with_selection_contract(), tmp_path, ["men"],
+        game="rotwk", string_catalog=_string_catalog(),
+        cah_runtime=_cah_runtime_naming_strings(),
+    )
+    strings = target["runtime_data"][STRINGS_RUNTIME_PATH]["strings"]
+    assert strings["CreateAHero:ClassName_HeroesOfTheWest"] == "Heroes of the West"
+    assert strings["CreateAHero:BlingName_CaptainOfGondor_CHH02"] == "Gondorian Helmet"
+    # The whole namespace ships, not only the ids a document happened to name:
+    # the CaH screens spell most of their chrome in the client.
+    assert strings["CAH:HelmetMenuLabel"] == "Helmet"
+    assert receipt["strings"]["wholeNamespaces"] == ["CreateAHero:", "CAH:"]
+    assert receipt["strings"]["wholeNamespaceCount"] >= 1
+
+
+def test_a_referenced_apt_label_resolves_through_the_widened_scrape(
+    tmp_path: Path,
+) -> None:
+    from openbfme_importer.faction_slice_profile import STRINGS_RUNTIME_PATH
+
+    _faction_coverage(tmp_path, "men", registration={"production": []})
+    runtime = _cah_runtime_naming_strings()
+    runtime["registration"]["screenTitle"] = "APT:SelectHeroClassTitle"
+    runtime["runtimeSha256"] = _cah_digest(
+        {k: v for k, v in runtime.items() if k != "runtimeSha256"}
+    )
+    target, _receipt = compose_faction_profile(
+        _base_with_selection_contract(), tmp_path, ["men"],
+        game="rotwk", string_catalog=_string_catalog(), cah_runtime=runtime,
+    )
+    strings = target["runtime_data"][STRINGS_RUNTIME_PATH]["strings"]
+    assert strings["APT:SelectHeroClassTitle"] == "Select a Class"
+
+
+def test_a_label_retail_never_authored_stays_evidence(tmp_path: Path) -> None:
+    from openbfme_importer.faction_slice_profile import STRINGS_RUNTIME_PATH
+
+    _faction_coverage(tmp_path, "men", registration={"production": []})
+    target, _receipt = compose_faction_profile(
+        _base_with_selection_contract(), tmp_path, ["men"],
+        game="rotwk", string_catalog=_string_catalog(),
+        cah_runtime=_cah_runtime_naming_strings(),
+    )
+    document = target["runtime_data"][STRINGS_RUNTIME_PATH]
+    assert "CreateAHero:BlingDesc_NeverAuthored" not in document["strings"]
+    assert "CreateAHero:BlingDesc_NeverAuthored" in document["sourceNullStringIds"]
+
+
+def test_a_non_cah_pack_does_not_publish_the_namespaces(tmp_path: Path) -> None:
+    # Same single-owner rule as the table itself.
+    from openbfme_importer.faction_slice_profile import STRINGS_RUNTIME_PATH
+
+    _faction_coverage(tmp_path, "elves", registration={"production": []})
+    target, _receipt = compose_faction_profile(
+        _base_with_selection_contract(), tmp_path, ["elves"],
+        game="rotwk", string_catalog=_string_catalog(),
+    )
+    strings = target["runtime_data"][STRINGS_RUNTIME_PATH]["strings"]
+    assert "CAH:HelmetMenuLabel" not in strings

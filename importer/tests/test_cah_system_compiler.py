@@ -96,7 +96,7 @@ def _binders() -> str:
             f"\t\tBlingType = ATTRIBUTE\n"
             f"\tEnd"
         )
-    # One APPEARANCE binder, compiled into appearanceGroups (not attributes).
+    # Two APPEARANCE binders, compiled into appearanceGroups (not attributes).
     out.append(
         "\tCreateAHeroBlingBinder\n"
         "\t\tGroupName = CreateAHero_Helmet\n"
@@ -105,7 +105,186 @@ def _binders() -> str:
         "\t\tBlingType = APPEARANCE\n"
         "\tEnd"
     )
+    out.append(
+        "\tCreateAHeroBlingBinder\n"
+        "\t\tGroupName = CreateAHero_Weapon\n"
+        "\t\tLabelTag = CAH:WeaponMenuLabel\n"
+        "\t\tUISlot = 1\n"
+        "\t\tBlingType = APPEARANCE\n"
+        "\tEnd"
+    )
+    out.append(_blings())
     return "\n".join(out)
+
+
+#: The appearance options the fixture offers, shaped exactly like retail's:
+#: two helmets in one group and two weapons in another.
+APPEARANCE_BLINGS = (
+    ("CreateAHero_Helmet", "Upgrade_CaptainOfGondor_CHH01"),
+    ("CreateAHero_Helmet", "Upgrade_CaptainOfGondor_CHH02"),
+    ("CreateAHero_Weapon", "Upgrade_CHW01"),
+    ("CreateAHero_Weapon", "Upgrade_CHW02"),
+)
+
+
+def _blings() -> str:
+    out = []
+    for group, upgrade in APPEARANCE_BLINGS:
+        out.append(
+            f"\tCreateAHeroBling\n"
+            f"\t\tNameTag = CreateAHero:BlingName_{upgrade}\n"
+            f"\t\tDescriptionTag = CreateAHero:BlingDesc_{upgrade}\n"
+            f"\t\tGroupName = {group}\n"
+            f"\t\tBlingUpgradeName = {upgrade}\n"
+            f"\tEnd"
+        )
+    return "\n".join(out)
+
+
+def _garment() -> bytes:
+    """Retail's shape: WeaponSets, WeaponSetUpgrades and SubObjectsUpgrades.
+
+    ``Upgrade_CHW02`` carries TWO SubObjectsUpgrade modules (retail's
+    Belthronding reveals the bow AND the archer's sword) and a toggle WeaponSet,
+    because merging and alternate modes are the two behaviours a single-module
+    fixture would never exercise.
+    """
+
+    return (
+        "WeaponSet\n"
+        "\tConditions = None\n"
+        "End\n"
+        "WeaponSet\n"
+        "\tConditions = WEAPONSET_CREATE_A_HERO_WS_01\n"
+        "\tWeapon = PRIMARY CreateAHeroBasicMeleeWeapon\n"
+        "End\n"
+        "Behavior = WeaponSetUpgrade Create_A_Hero_Weapon1\n"
+        "\tTriggeredBy = Upgrade_CHW01\n"
+        "\tWeaponCondition = WEAPONSET_CREATE_A_HERO_WS_01\n"
+        "End\n"
+        "Behavior = SubObjectsUpgrade Dwarf_Upgrade\n"
+        "\tTriggeredBy = Upgrade_CHW01\n"
+        "\tShowSubObjects = AXE_01\n"
+        "\tHideSubObjectsOnRemove = Yes\n"
+        "\tFadeTimeInSeconds = 0.0\n"
+        "End\n"
+        "WeaponSet\n"
+        "\tConditions = WEAPONSET_CREATE_A_HERO_WS_02 WEAPONSET_TOGGLE_1\n"
+        "\tWeapon = PRIMARY CreateAHeroBasicRangedWeapon\n"
+        "End\n"
+        "WeaponSet\n"
+        "\tConditions = WEAPONSET_CREATE_A_HERO_WS_02\n"
+        "\tWeapon = PRIMARY CreateAHeroBasicMeleeWeapon\n"
+        "End\n"
+        "Behavior = WeaponSetUpgrade Create_A_Hero_Weapon2\n"
+        "\tTriggeredBy = Upgrade_CHW02\n"
+        "\tWeaponCondition = WEAPONSET_CREATE_A_HERO_WS_02\n"
+        "End\n"
+        "Behavior = SubObjectsUpgrade Belthronding_Upgrade\n"
+        "\tTriggeredBy = Upgrade_CHW02\n"
+        "\tShowSubObjects = Belthronding\n"
+        "\tHideSubObjectsOnRemove = Yes\n"
+        "End\n"
+        "Behavior = SubObjectsUpgrade Belthronding_ArcherSword_Upgrade\n"
+        "\tTriggeredBy = Upgrade_CHW02\n"
+        "\tShowSubObjects = WestronSword\n"
+        "\tHideSubObjectsOnRemove = Yes\n"
+        "End\n"
+        "Behavior = SubObjectsUpgrade CaptainOfGondorHelmet_Upgrade01\n"
+        "\tTriggeredBy = Upgrade_CaptainOfGondor_CHH01\n"
+        "\tShowSubObjects = HAIR_00\n"
+        "\tHideSubObjectsOnRemove = Yes\n"
+        "End\n"
+        "Behavior = SubObjectsUpgrade CaptainOfGondorHelmet_Upgrade02\n"
+        "\tTriggeredBy = Upgrade_CaptainOfGondor_CHH02\n"
+        "\tShowSubObjects = HLMT_01\n"
+        "\tUpgradeTexture = CHCM_CM_01.tga 0 CHCM_CM.tga\n"
+        "\tRecolorHouse = Yes\n"
+        "\tHideSubObjectsOnRemove = Yes\n"
+        "End\n"
+    ).encode("cp1252")
+
+
+def _weapons() -> bytes:
+    return (
+        "Weapon CreateAHeroBasicMeleeWeapon\n"
+        "\tAttackRange = STANDARD_MELEE_ATTACK_RANGE\n"
+        "\tMeleeWeapon = Yes\n"
+        "\tDelayBetweenShots = FARAMIR_DELAYBETWEENSHOTS\n"
+        "\tPreAttackDelay = FARAMIR_PREATTACKDELAY\n"
+        "\tFiringDuration = FARAMIR_FIRINGDURATION\n"
+        "\tDamageNugget\n"
+        "\t\tDamage = CREATE_A_HERO_DAMAGE\n"
+        "\t\tDamageType = HERO\n"
+        "\tEnd\n"
+        "\tDOTNugget\n"
+        "\t\tDamage = DEFAULT_POISON_DAMAGE\n"
+        "\t\tDamageType = POISON\n"
+        "\tEnd\n"
+        "End\n"
+        "Weapon CreateAHeroBasicRangedWeapon\n"
+        "\tAttackRange = 350\n"
+        "\tDelayBetweenShots = 0\n"
+        "\tPreAttackDelay = 1170\n"
+        "\tFiringDuration = 0\n"
+        "\tDamageNugget\n"
+        "\t\tDamage = CREATE_A_HERO_DAMAGE\n"
+        "\t\tDamageType = FLAME\n"
+        "\tEnd\n"
+        "End\n"
+        # A weapon no Create-a-Hero set names: proof the reader selects rather
+        # than sweeping the whole corpus into the descriptor.
+        "Weapon SomeOtherUnitWeapon\n"
+        "\tAttackRange = 40\n"
+        "\tDamageNugget\n"
+        "\t\tDamage = 12\n"
+        "\tEnd\n"
+        "End\n"
+    ).encode("cp1252")
+
+
+def _object() -> bytes:
+    """The CreateAHero Object, complete with the include that cannot be read.
+
+    Retail's ``createaheroanims.inc`` carries a stray ``End``; the fixture keeps
+    an ``#include`` in the object file so the test proves the locomotor scan
+    never tries to splice it.
+    """
+
+    return (
+        "Object CreateAHero\n"
+        '\t#include "CreateAHeroAnims.inc"\n'
+        "\tLocomotorSet\n"
+        "\t\tLocomotor = HeroHumanScalingLocomotor\n"
+        "\t\tCondition = SET_NORMAL_UPGRADED\n"
+        "\t\tSpeed = 50\n"
+        "\tEnd\n"
+        "\tLocomotorSet\n"
+        "\t\tLocomotor = HeroHumanLocomotor\n"
+        "\t\tCondition = SET_NORMAL\n"
+        "\t\tSpeed = 50\n"
+        "\tEnd\n"
+        "End\n"
+    ).encode("cp1252")
+
+
+def _locomotors() -> bytes:
+    return (
+        "Locomotor HeroHumanLocomotor\n"
+        "\tSurfaces = GROUND RUBBLE\n"
+        "\tTurnTime = 500\n"
+        "\tTurnTimeDamaged = 500\n"
+        "\tFastTurnRadius = 9\n"
+        "\tSlowTurnRadius = 1\n"
+        "\tAcceleration = 210\n"
+        "\tBraking = 210\n"
+        "End\n"
+        "Locomotor HeroHumanScalingLocomotor\n"
+        "\tTurnTime = 500\n"
+        "\tAcceleration = 510\n"
+        "\tBraking = 510\n"
+        "End\n"
+    ).encode("cp1252")
 
 
 def _sub_class(
@@ -121,6 +300,10 @@ def _sub_class(
         f"\t\tIconImage = CP{name}",
         f"\t\tButtonImage = HICAH{name}",
         "\t\tUsableFactions = Men Elves Dwarves",
+        # Retail spells a subclass's offered blings as whitespace/@ separated
+        # upgrade names, which is what scopes its default garment state.
+        "\t\tBlingUpgrades = Upgrade_CaptainOfGondor_CHH01 "
+        "Upgrade_CaptainOfGondor_CHH02@Upgrade_CHW01",
         f"\t\tSpendableAttributePoints = {budget}",
         f"\t\tUpgradeName = Upgrade_CreateAHero_SubClass_{sub_index}",
         # Retail frames every subclass individually so a Great Troll and a
@@ -297,6 +480,10 @@ def _documents(
     command_buttons: bytes | None = None,
     model_conditions: bytes | None = None,
     models: bytes | None = None,
+    garment: bytes | None = None,
+    weapons: bytes | None = None,
+    obj: bytes | None = None,
+    locomotors: bytes | None = None,
 ) -> dict[str, bytes]:
     sub = _sub_class("CaptainOfGondor", budget, steps or CAPTAIN_STEPS)
     system = (
@@ -327,6 +514,7 @@ def _documents(
             b"#define SHROUD_CLEAR_CREATE_A_HERO 100\n"
             b"#define CREATE_A_HERO_BUILDCOST 2000\n"
             b"#define CREATE_A_HERO_COMMAND_POINT_COST 50\n"
+            b"#define CREATE_A_HERO_DAMAGE 150\n"
         ),
         "data/ini/gamedata.ini": (
             b"#define CAH_BUILDCOST 500\n"
@@ -350,6 +538,10 @@ def _documents(
             b"#define HERO_LVL3_HP_ADD 60\n"
             b"#define HERO_LVL4_DAM_ADD 12\n"
             b"#define HERO_LVL4_HP_ADD 80\n"
+            b"#define STANDARD_MELEE_ATTACK_RANGE 11.5\n"
+            b"#define FARAMIR_DELAYBETWEENSHOTS 1400\n"
+            b"#define FARAMIR_PREATTACKDELAY 800\n"
+            b"#define FARAMIR_FIRINGDURATION 1200\n"
         ),
         "data/ini/commandbutton.ini": (
             _command_buttons() if command_buttons is None else command_buttons
@@ -380,6 +572,16 @@ def _documents(
             b"\tBehavior = RespawnUpdate ModuleTag_RespawnUpdate\n"
             b"\t\tRespawnRules = AutoSpawn:No Cost:1500 Time:60000 Health:100%\n"
             b"\tEnd\n"
+        ),
+        "data/ini/object/createahero/createaheroweaponupgrades.inc": (
+            _garment() if garment is None else garment
+        ),
+        "data/ini/object/createahero/createahero.ini": (
+            _object() if obj is None else obj
+        ),
+        "data/ini/weapon.ini": _weapons() if weapons is None else weapons,
+        "data/ini/locomotor.ini": (
+            _locomotors() if locomotors is None else locomotors
         ),
     }
 
@@ -806,6 +1008,244 @@ class CahExperienceLadderTests(unittest.TestCase):
         runtime = build_cah_system_runtime(descriptor)
         self.assertEqual(
             runtime["registration"]["experience"], descriptor["experience"]
+        )
+
+
+def _option(descriptor: dict, upgrade: str) -> dict:
+    for row in descriptor["appearanceOptions"]:
+        if row["upgradeName"] == upgrade:
+            return row
+    raise AssertionError(f"no appearance option {upgrade}")
+
+
+class CahGarmentSubObjectTests(unittest.TestCase):
+    """The mesh side of an appearance choice.
+
+    The published gap this closes: system.json listed appearance options by
+    upgrade name only, so a client could show the menu but not the hero -- every
+    garment variant in the mesh stayed visible at once.
+    """
+
+    def test_an_option_carries_the_sub_objects_its_upgrade_reveals(self) -> None:
+        descriptor = compile_cah_system_descriptor(_documents())
+        helmet = _option(descriptor, "Upgrade_CaptainOfGondor_CHH02")
+        self.assertEqual(helmet["subObjects"]["show"], ["HLMT_01"])
+        self.assertEqual(helmet["subObjects"]["hide"], [])
+
+    def test_sub_object_names_keep_the_authored_spelling(self) -> None:
+        # They are matched against W3D sub-object names, which the conversion
+        # preserves verbatim as GLB node names; casefolding them here would
+        # silently stop every toggle from resolving.
+        descriptor = compile_cah_system_descriptor(_documents())
+        self.assertEqual(
+            _option(descriptor, "Upgrade_CHW02")["subObjects"]["show"],
+            ["Belthronding", "WestronSword"],
+        )
+
+    def test_two_modules_on_one_upgrade_merge_rather_than_overwrite(self) -> None:
+        descriptor = compile_cah_system_descriptor(_documents())
+        bow = _option(descriptor, "Upgrade_CHW02")["subObjects"]
+        self.assertEqual(bow["moduleCount"], 2)
+        self.assertIn("Belthronding", bow["show"])
+        self.assertIn("WestronSword", bow["show"])
+
+    def test_texture_swaps_carry_both_ends_and_the_recolour_flag(self) -> None:
+        descriptor = compile_cah_system_descriptor(_documents())
+        helmet = _option(descriptor, "Upgrade_CaptainOfGondor_CHH02")["subObjects"]
+        self.assertEqual(
+            helmet["textureSwaps"],
+            [{"fromTexture": "CHCM_CM_01.tga", "index": 0, "texture": "CHCM_CM.tga"}],
+        )
+        self.assertTrue(helmet["recolorHouse"])
+
+    def test_an_option_no_module_triggers_still_carries_the_shape(self) -> None:
+        # A consumer never branches on key presence.
+        garment = (
+            "Behavior = SubObjectsUpgrade Only_Upgrade\n"
+            "\tTriggeredBy = Upgrade_CaptainOfGondor_CHH01\n"
+            "\tShowSubObjects = HAIR_00\n"
+            "End\n"
+        ).encode("cp1252")
+        descriptor = compile_cah_system_descriptor(
+            _documents(garment=garment + _garment())
+        )
+        quiet = _option(descriptor, "Upgrade_CaptainOfGondor_CHH02")["subObjects"]
+        self.assertEqual(sorted(quiet), sorted(_option(
+            descriptor, "Upgrade_CHW01"
+        )["subObjects"]))
+
+    def test_the_default_hidden_set_is_the_whole_corpus_not_one_subclass(self) -> None:
+        # All 295 modules hang off the ONE CreateAHero Object, so a sub-object
+        # any of them reveals is hidden on any mesh that carries it.  Scoping to
+        # the subclass's own BlingUpgrades measurably breaks: the Snow Troll
+        # mesh carries twenty-six garment sub-objects its own bling list never
+        # names, and every one of them would render at once.
+        descriptor = compile_cah_system_descriptor(_documents())
+        sub = descriptor["classes"][0]["subClasses"][0]
+        self.assertEqual(sub["defaultSubObjects"]["show"], [])
+        self.assertEqual(
+            sub["defaultSubObjects"]["hide"],
+            ["AXE_01", "Belthronding", "WestronSword", "HAIR_00", "HLMT_01"],
+        )
+        # …while the subclass's own slice is kept as evidence beside it.
+        self.assertEqual(
+            sub["defaultSubObjects"]["scopedToSubClass"],
+            ["HAIR_00", "HLMT_01", "AXE_01"],
+        )
+        # Published under the model binding too, per the runtime contract.
+        self.assertEqual(sub["models"]["defaultSubObjects"], sub["defaultSubObjects"])
+
+    def test_a_malformed_texture_swap_refuses_the_compile(self) -> None:
+        garment = _garment().replace(
+            b"UpgradeTexture = CHCM_CM_01.tga 0 CHCM_CM.tga",
+            b"UpgradeTexture = CHCM_CM_01.tga CHCM_CM.tga",
+        )
+        with self.assertRaises(CahSystemCompilerError) as caught:
+            compile_cah_system_descriptor(_documents(garment=garment))
+        self.assertIn("UpgradeTexture", str(caught.exception))
+
+    def test_a_module_triggered_by_nothing_refuses_the_compile(self) -> None:
+        garment = _garment().replace(
+            b"Behavior = SubObjectsUpgrade Dwarf_Upgrade\n"
+            b"\tTriggeredBy = Upgrade_CHW01\n",
+            b"Behavior = SubObjectsUpgrade Dwarf_Upgrade\n",
+        )
+        with self.assertRaises(CahSystemCompilerError) as caught:
+            compile_cah_system_descriptor(_documents(garment=garment))
+        self.assertIn("TriggeredBy nothing", str(caught.exception))
+
+    def test_the_garment_document_is_required(self) -> None:
+        documents = _documents()
+        del documents["data/ini/object/createahero/createaheroweaponupgrades.inc"]
+        with self.assertRaises(CahSystemCompilerError) as caught:
+            compile_cah_system_descriptor(documents)
+        self.assertIn("createaheroweaponupgrades.inc", str(caught.exception))
+
+
+class CahWeaponCombatTests(unittest.TestCase):
+    """What a chosen weapon actually does, instead of a fabricated constant."""
+
+    def test_a_weapon_option_carries_its_resolved_combat_numbers(self) -> None:
+        descriptor = compile_cah_system_descriptor(_documents())
+        combat = _option(descriptor, "Upgrade_CHW01")["combat"]
+        self.assertEqual(combat["weaponTemplate"], "CreateAHeroBasicMeleeWeapon")
+        self.assertEqual(combat["weaponSetFlag"], "WEAPONSET_CREATE_A_HERO_WS_01")
+        self.assertEqual(combat["slot"], "PRIMARY")
+        self.assertTrue(combat["melee"])
+        self.assertEqual(combat["damage"], 150)
+        self.assertEqual(combat["damageType"], "HERO")
+        self.assertEqual(combat["attackRange"], 11.5)
+        self.assertEqual(combat["delayBetweenShotsMs"], 1400)
+        self.assertEqual(combat["preAttackMs"], 800)
+
+    def test_only_the_first_damage_nugget_is_compiled(self) -> None:
+        # The later ones are DOT riders gated behind poison-power upgrades.
+        descriptor = compile_cah_system_descriptor(_documents())
+        self.assertEqual(_option(descriptor, "Upgrade_CHW01")["combat"]["damage"], 150)
+
+    def test_a_toggle_weapon_set_rides_beside_the_base_not_over_it(self) -> None:
+        descriptor = compile_cah_system_descriptor(_documents())
+        combat = _option(descriptor, "Upgrade_CHW02")["combat"]
+        self.assertEqual(combat["weaponTemplate"], "CreateAHeroBasicMeleeWeapon")
+        self.assertEqual(len(combat["alternateModes"]), 1)
+        mode = combat["alternateModes"][0]
+        self.assertEqual(mode["conditions"], ["WEAPONSET_TOGGLE_1"])
+        self.assertEqual(mode["weaponTemplate"], "CreateAHeroBasicRangedWeapon")
+        self.assertEqual(mode["attackRange"], 350)
+
+    def test_a_non_weapon_option_carries_no_combat_block(self) -> None:
+        descriptor = compile_cah_system_descriptor(_documents())
+        self.assertNotIn("combat", _option(descriptor, "Upgrade_CaptainOfGondor_CHH01"))
+
+    def test_an_unresolvable_weapon_is_named_never_zeroed(self) -> None:
+        garment = _garment().replace(
+            b"\tConditions = WEAPONSET_CREATE_A_HERO_WS_01\n",
+            b"\tConditions = WEAPONSET_CREATE_A_HERO_WS_99\n",
+        )
+        descriptor = compile_cah_system_descriptor(_documents(garment=garment))
+        self.assertNotIn("combat", _option(descriptor, "Upgrade_CHW01"))
+        coverage = descriptor["combatCoverage"]
+        self.assertEqual(coverage["unresolvedUpgrades"], ["Upgrade_CHW01"])
+        self.assertEqual(coverage["weaponOptions"], 2)
+        self.assertEqual(coverage["resolved"], 1)
+        self.assertEqual(
+            [row["upgradeName"] for row in coverage["gaps"]], ["Upgrade_CHW01"]
+        )
+
+    def test_a_weapon_template_the_corpus_lacks_refuses_the_compile(self) -> None:
+        weapons = _weapons().replace(
+            b"Weapon CreateAHeroBasicMeleeWeapon\n", b"Weapon SomethingElse\n"
+        )
+        with self.assertRaises(CahSystemCompilerError) as caught:
+            compile_cah_system_descriptor(_documents(weapons=weapons))
+        self.assertIn("CreateAHeroBasicMeleeWeapon", str(caught.exception))
+
+    def test_a_weapon_with_no_damage_nugget_refuses_the_compile(self) -> None:
+        weapons = _weapons().replace(
+            b"\tDamageNugget\n\t\tDamage = CREATE_A_HERO_DAMAGE\n\t\tDamageType = HERO\n\tEnd\n",
+            b"",
+            1,
+        )
+        with self.assertRaises(CahSystemCompilerError) as caught:
+            compile_cah_system_descriptor(_documents(weapons=weapons))
+        self.assertIn("DamageNugget", str(caught.exception))
+
+    def test_combat_coverage_reaches_the_runtime_document(self) -> None:
+        descriptor = compile_cah_system_descriptor(_documents())
+        runtime = build_cah_system_runtime(descriptor)
+        self.assertEqual(
+            runtime["registration"]["combatCoverage"], descriptor["combatCoverage"]
+        )
+        options = runtime["registration"]["appearanceOptions"]
+        self.assertEqual(options, descriptor["appearanceOptions"])
+
+
+class CahObjectBaselineTests(unittest.TestCase):
+    """Movement and health, in retail units, instead of client guesses."""
+
+    def test_the_baseline_is_compiled_from_the_object_and_its_locomotor(self) -> None:
+        descriptor = compile_cah_system_descriptor(_documents())
+        baseline = descriptor["objectBaseline"]
+        self.assertEqual(baseline["objectId"], "CreateAHero")
+        self.assertEqual(baseline["baseHealth"], 2000)
+        self.assertEqual(baseline["speed"], 50)
+        self.assertEqual(baseline["locomotor"], "HeroHumanLocomotor")
+        self.assertEqual(baseline["turnTimeMs"], 500)
+        self.assertEqual(baseline["accelerationMs"], 210)
+        self.assertEqual(baseline["brakingMs"], 210)
+        self.assertEqual(
+            [row["condition"] for row in baseline["locomotorSets"]],
+            ["SET_NORMAL_UPGRADED", "SET_NORMAL"],
+        )
+
+    def test_base_health_is_the_object_body_not_a_constant(self) -> None:
+        documents = _documents()
+        documents["data/ini/gamedata.ini"] = documents["data/ini/gamedata.ini"].replace(
+            b"#define FARAMIR_HEALTH 2000", b"#define FARAMIR_HEALTH 2400"
+        )
+        descriptor = compile_cah_system_descriptor(documents)
+        self.assertEqual(descriptor["objectBaseline"]["baseHealth"], 2400)
+        self.assertEqual(descriptor["system"]["maxHealth"], 2400)
+
+    def test_an_object_with_no_normal_locomotor_set_refuses(self) -> None:
+        obj = _object().replace(b"\t\tCondition = SET_NORMAL\n", b"\t\tCondition = SET_SLUGGISH\n")
+        with self.assertRaises(CahSystemCompilerError) as caught:
+            compile_cah_system_descriptor(_documents(obj=obj))
+        self.assertIn("SET_NORMAL", str(caught.exception))
+
+    def test_a_locomotor_the_corpus_lacks_refuses_the_compile(self) -> None:
+        locomotors = _locomotors().replace(
+            b"Locomotor HeroHumanLocomotor\n", b"Locomotor SomethingElse\n"
+        )
+        with self.assertRaises(CahSystemCompilerError) as caught:
+            compile_cah_system_descriptor(_documents(locomotors=locomotors))
+        self.assertIn("HeroHumanLocomotor", str(caught.exception))
+
+    def test_the_baseline_reaches_the_runtime_document(self) -> None:
+        descriptor = compile_cah_system_descriptor(_documents())
+        runtime = build_cah_system_runtime(descriptor)
+        self.assertEqual(
+            runtime["registration"]["objectBaseline"], descriptor["objectBaseline"]
         )
 
 

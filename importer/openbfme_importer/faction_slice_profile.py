@@ -40,7 +40,24 @@ from .spellbook_pack_compiler import validate_spellbook_pack_recipe
 # thing: any quoted CONTROLBAR: string value anywhere in a runtime document.
 STRINGS_RUNTIME_PATH = "data/strings.json"
 STRINGS_PACK_KEY = "strings"
-_CONTROLBAR_REFERENCE = re.compile(r'"(CONTROLBAR:[^"]+)"')
+#: Retail string-table namespaces the composed runtime documents reference.
+#:
+#: ``CONTROLBAR:`` was the only one scraped for a long time, which was correct
+#: while the pack shipped only HUD documents.  It stopped being correct when the
+#: Create-a-Hero table landed: every class, subclass, garment and power name in
+#: ``data/cah/system.json`` is a ``CreateAHero:`` or ``CAH:`` id, and the screen
+#: showed machine-de-camelcased ids ("Sheild Maiden") because no row for them
+#: was ever published.  ``APT:`` is the third namespace the CaH screens use for
+#: their own chrome.
+#:
+#: Widening this set only ADDS resolved rows; an id retail's own table has no
+#: row for lands in ``sourceNullStringIds``, which is evidence rather than a
+#: failure.  Retail leaves several hundred CaH bling labels dangling on purpose;
+#: those are reported, never synthesized.
+STRING_NAMESPACES: tuple[str, ...] = ("CONTROLBAR", "CreateAHero", "CAH", "APT")
+_STRING_REFERENCE = re.compile(
+    r'"((?:' + "|".join(STRING_NAMESPACES) + r"):[^\"]+)\"", re.IGNORECASE
+)
 
 # The Create-a-Hero class table.  Compiled by cah_system_compiler from the
 # effective-assets oracle; published only by the RotWK Men host pack (the
@@ -60,13 +77,14 @@ INTERFACE_ART_RUNTIME_PATH = "data/interface-art/index.json"
 INTERFACE_ART_PACK_KEY = "interfaceArt"
 
 
-def _referenced_controlbar_ids(runtime_data: Mapping[str, object]) -> set[str]:
-    """Every CONTROLBAR: id the composed runtime documents reference.
+def _referenced_string_ids(runtime_data: Mapping[str, object]) -> set[str]:
+    """Every retail string id the composed runtime documents reference.
 
-    Scans the canonical JSON serialization of each document, matching the HUD
-    completeness gate's own scrape (`"(CONTROLBAR:[^"]+)"` over file text).
-    The strings document itself is excluded: its keys are answers, not
-    questions, and they enter the composed document through the merge lane.
+    Scans the canonical JSON serialization of each document over the
+    :data:`STRING_NAMESPACES` prefixes, a superset of the HUD completeness
+    gate's own scrape (`"(CONTROLBAR:[^"]+)"` over file text).  The strings
+    document itself is excluded: its keys are answers, not questions, and they
+    enter the composed document through the merge lane.
     """
 
     references: set[str] = set()
@@ -76,14 +94,46 @@ def _referenced_controlbar_ids(runtime_data: Mapping[str, object]) -> set[str]:
         text = json.dumps(
             document, sort_keys=True, ensure_ascii=False, allow_nan=False
         )
-        references.update(_CONTROLBAR_REFERENCE.findall(text))
+        references.update(_STRING_REFERENCE.findall(text))
     return references
+
+
+#: Kept so callers that named the old, CONTROLBAR-only scrape keep working.
+_referenced_controlbar_ids = _referenced_string_ids
+
+
+#: Namespaces published WHOLE, not only where a runtime document happens to
+#: name them.  The Create-a-Hero screens spell most of their chrome in the
+#: client (group headings, screen titles, the class picker's captions) rather
+#: than in a pack document, so a reference-only scrape leaves rows unresolved
+#: that retail plainly has.  Both namespaces are small and Create-a-Hero-owned,
+#: and they are published only by the pack that owns the CaH table.
+WHOLE_STRING_NAMESPACES: tuple[str, ...] = ("CreateAHero:", "CAH:")
+
+
+def _whole_namespace_records(string_catalog, prefixes: Sequence[str]):
+    """Every retail row in the given namespaces, in table order.
+
+    Retail's own table is the only source: an id retail never authored is not
+    invented here.  Retail leaves several hundred Create-a-Hero bling labels
+    dangling on purpose; the client's own fallback covers those honestly.
+    """
+
+    folded = tuple(prefix.casefold() for prefix in prefixes)
+    if not folded:
+        return ()
+    return tuple(
+        record
+        for record in getattr(string_catalog, "records", ())
+        if str(record.identifier).casefold().startswith(folded)
+    )
 
 
 def _build_strings_document(
     references: set[str],
     string_catalog,
     existing: Mapping[str, object] | None,
+    whole_namespaces: Sequence[str] = (),
 ) -> tuple[dict[str, object], dict[str, object]]:
     """Resolve referenced ids against the retail table into a pack document.
 
@@ -108,6 +158,14 @@ def _build_strings_document(
             # casings of one id collapse to the single retail row.
             resolved[record.identifier] = record.value
     resolved_count = len(resolved)
+    namespace_count = 0
+    for record in _whole_namespace_records(string_catalog, whole_namespaces):
+        if record.identifier not in resolved:
+            resolved[record.identifier] = record.value
+            namespace_count += 1
+    # An id a document referenced but retail has no row for stays evidence even
+    # when its whole namespace was published: the namespace sweep can only add
+    # rows retail actually authored.
     carried_count = 0
     if existing is not None:
         rows = existing.get("strings")
@@ -145,6 +203,8 @@ def _build_strings_document(
         "resolvedCount": resolved_count,
         "carriedCount": carried_count,
         "sourceNullCount": len(source_null),
+        "wholeNamespaces": list(whole_namespaces),
+        "wholeNamespaceCount": namespace_count,
     }
     return document, stats
 
@@ -537,9 +597,13 @@ def compose_faction_profile(
         if strings_owner is not None and str(strings_owner) != STRINGS_RUNTIME_PATH:
             raise ValueError(f"strings pack registration has a foreign owner: {strings_owner}")
         strings_document, strings_receipt = _build_strings_document(
-            _referenced_controlbar_ids(runtime_data),
+            _referenced_string_ids(runtime_data),
             string_catalog,
             existing_strings,
+            # Only the pack that owns the Create-a-Hero table publishes the
+            # Create-a-Hero namespaces, for the same single-owner reason the
+            # table itself has one owner.
+            WHOLE_STRING_NAMESPACES if cah_runtime is not None else (),
         )
         runtime_data[STRINGS_RUNTIME_PATH] = strings_document
         files[STRINGS_PACK_KEY] = STRINGS_RUNTIME_PATH
