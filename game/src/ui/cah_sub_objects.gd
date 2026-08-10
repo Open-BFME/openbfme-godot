@@ -20,13 +20,28 @@ extends RefCounted
 ## WHAT HAPPENS BEFORE THE MAP LANDS. A skin with every variant baked in and no
 ## map draws ALL of them at once - a captain wearing four shields, five pairs of
 ## boots and six helmets simultaneously, which is what the preview showed before
-## this module existed. `collapse_variant_families` is the honest stopgap: a
-## mesh named `X_<digits>` with numbered siblings is BY CONSTRUCTION one variant
-## of one part, and showing more than one of them is never right whatever the
-## map turns out to say, so the lowest-numbered one is kept and the rest are put
-## away. It guesses no relationship between a garment OPTION and a part - the
-## screen says out loud that garment choices are not bound yet - it only refuses
-## to draw a stack of alternatives on top of each other.
+## this module existed. `collapse_variant_families` is the honest stopgap, and it
+## reads TWO structural facts off the mesh, never a table of retail part names:
+##
+##   1. NUMBERED SIBLINGS. A mesh named `X_<digits>` with numbered siblings is by
+##      construction one variant of one part, so the lowest-numbered one is kept
+##      and the rest are put away.
+##   2. ONE PROP PER ATTACHMENT BONE. A Create-a-Hero skin also carries every
+##      weapon the class can hold - `CHHW_CG_C_SKN` has eight, from `AXE_01` to
+##      `WESTRONSWORD` - and most of them are not numbered siblings of anything,
+##      so rule 1 left the hero holding a fan of blades. Every one of them is
+##      rigidly weighted to a SINGLE bone that no deforming mesh uses (`B_HAND_R`
+##      on that skin, which the body's own `B_HANDR` is not): a bone that exists
+##      only to hang a prop off. Two props on one hook occupy the same hand, so
+##      one is chosen and the rest are put away. An `_FX` mesh follows the prop it
+##      is named after, so a chosen weapon keeps its glow and a rejected one takes
+##      its glow with it.
+##
+## Both rules guess no relationship between a garment OPTION and a part - the
+## screen says out loud that garment choices are not bound yet - they only refuse
+## to draw a stack of alternatives on top of each other. Bones that a deforming
+## mesh rides (`B_HEAD`, which the body itself is weighted to) are NOT attachment
+## points, which is what keeps rule 2 away from a hero's own head and hair.
 
 ## The keys the compiled system document carries. Named here so a contract
 ## change is one edit rather than six string literals.
@@ -35,6 +50,10 @@ const DEFAULT_KEY := "defaultSubObjects"
 const SHOW_KEY := "show"
 const HIDE_KEY := "hide"
 const TEXTURE_SWAP_KEY := "textureSwaps"
+
+## The tail retail gives a prop's effect mesh: `FIREBRAND_FX01` is the glow on
+## `FIREBRAND`, not a ninth weapon to choose between.
+const FX_MARKER := "_FX"
 
 
 static func system_maps_sub_objects(system: Dictionary) -> bool:
@@ -67,13 +86,22 @@ static func plan(
 	var binding: Dictionary = models.get(surface, {}) as Dictionary
 	if binding.is_empty():
 		binding = models.get("battlefield", {}) as Dictionary
-	var defaults: Dictionary = binding.get(DEFAULT_KEY, {}) as Dictionary
-	for part in _names(defaults, HIDE_KEY):
-		hide[part] = true
-		mapped = true
-	for part in _names(defaults, SHOW_KEY):
-		show[part] = true
-		mapped = true
+	# THE DEFAULT SET IS AUTHORED ON THE SUBCLASS, and may be narrowed per mesh.
+	# Retail writes one `DefaultSubObjects` hide list per Create-a-Hero subclass -
+	# a hundred names, every weapon and staff and bow the shared skins carry - and
+	# reading only the per-model set left the compiled pack's real bindings on the
+	# floor: the chosen weapon appeared, and the two the option table happens not
+	# to name (`SWRD_05`, `Belthronding`) stayed in the hero's hand beside it.
+	for defaults_value in [sub_row.get(DEFAULT_KEY, {}), binding.get(DEFAULT_KEY, {})]:
+		var defaults := defaults_value as Dictionary
+		for part in _names(defaults, HIDE_KEY):
+			hide[part] = true
+			show.erase(part)
+			mapped = true
+		for part in _names(defaults, SHOW_KEY):
+			show[part] = true
+			hide.erase(part)
+			mapped = true
 
 	var options := _options_by_upgrade(system)
 	var choices: Dictionary = sub_row.get("appearanceChoices", {}) as Dictionary
@@ -121,9 +149,10 @@ static func collapse_variant_families(root: Node) -> Dictionary:
 	## The stopgap plan for a skin whose parts nothing has mapped yet.
 	##
 	## Only structure is used: `HLMT_01`, `HLMT_02`, `HLMT_05` are numbered
-	## siblings of one stem, so they are alternatives and at most one may show.
-	## A part with no numbered sibling is left exactly as the pack shipped it -
-	## this never decides that some lone mesh is "a garment".
+	## siblings of one stem, so they are alternatives and at most one may show;
+	## and every prop hanging off one attachment bone is an alternative to every
+	## other prop on it. A part that is neither is left exactly as the pack
+	## shipped it - this never decides that some lone mesh is "a garment".
 	var families := {}
 	for name in mesh_names(root):
 		var split := _split_numbered(name)
@@ -133,19 +162,164 @@ static func collapse_variant_families(root: Node) -> Dictionary:
 		if not families.has(stem):
 			families[stem] = []
 		(families[stem] as Array).append({"name": name, "index": int(split["index"])})
-	var show := []
-	var hide := []
+	var show := {}
+	var hide := {}
+	var family_sizes := {}
 	for stem_value in families.keys():
 		var members: Array = families[stem_value] as Array
-		if members.size() < 2:
-			continue
 		members.sort_custom(
 			func(a: Dictionary, b: Dictionary) -> bool: return int(a["index"]) < int(b["index"])
 		)
-		show.append(String((members[0] as Dictionary)["name"]))
+		for member_value in members:
+			family_sizes[String((member_value as Dictionary)["name"])] = members.size()
+		if members.size() < 2:
+			continue
+		show[String((members[0] as Dictionary)["name"])] = true
 		for index in range(1, members.size()):
-			hide.append(String((members[index] as Dictionary)["name"]))
-	return {"show": show, "hide": hide, "mapped": false, "groups": {}}
+			hide[String((members[index] as Dictionary)["name"])] = true
+
+	# ONE PROP PER HOOK, decided after the numbered families so that a chosen
+	# variant and a chosen prop cannot both claim the same hand.
+	var hooks := attachment_groups(root)
+	for bone_value in hooks.keys():
+		var props: Array = hooks[bone_value] as Array
+		var worn := _preferred_prop(props, family_sizes)
+		if worn == "":
+			continue
+		for prop_value in props:
+			var prop := String(prop_value)
+			if prop == worn or _fx_base(prop) == worn:
+				show[prop] = true
+				hide.erase(prop)
+			else:
+				hide[prop] = true
+				show.erase(prop)
+	return {"show": show.keys(), "hide": hide.keys(), "mapped": false, "groups": {}}
+
+
+static func attachment_groups(root: Node) -> Dictionary:
+	## The hooks this skin hangs props off, and what is hanging off each.
+	##
+	## An attachment bone is one that EVERY mesh riding it rides alone, and that
+	## no deforming mesh rides at all. A helmet is weighted to `B_HEAD` alone but
+	## the body is weighted to `B_HEAD` too, so the head is a joint of the
+	## skeleton rather than a hook - which is what stops this from deciding that a
+	## wizard's head and his eyes are two hats.
+	var singles := {}
+	var deforming := {}
+	var stack: Array[Node] = [root]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		for child in node.get_children():
+			stack.append(child)
+		if not (node is MeshInstance3D):
+			continue
+		var instance := node as MeshInstance3D
+		var bones := _bones_of(instance)
+		if bones.is_empty():
+			continue
+		if bones.size() > 1:
+			for bone in bones:
+				deforming[bone] = true
+			continue
+		var hook := bones[0]
+		if not singles.has(hook):
+			singles[hook] = []
+		var riders: Array = singles[hook] as Array
+		var key := _part_key(instance)
+		if key != "" and not riders.has(key):
+			riders.append(key)
+	var out := {}
+	for hook_value in singles.keys():
+		if deforming.has(hook_value):
+			continue
+		var riders: Array = singles[hook_value] as Array
+		if riders.size() < 2:
+			continue
+		riders.sort()
+		out[hook_value] = riders
+	return out
+
+
+static func _preferred_prop(props: Array, family_sizes: Dictionary) -> String:
+	## Which of the props on one hook is worn, decided the same way every time.
+	##
+	## A numbered part is preferred over a named one because the numbers are the
+	## class's own kit (`SWRD_05`, `BOW_03`) while the names are the bling retail
+	## awards on top of it (`GURTHANG`, `TROLLBANE`) - a hero who has earned
+	## nothing is holding the kit. An `_FX` mesh is never the choice: it is an
+	## effect on a prop, and worn on its own it is a glow with no weapon in it.
+	var best := ""
+	for prop_value in props:
+		var prop := String(prop_value)
+		if prop.contains(FX_MARKER):
+			continue
+		if best == "" or _prop_precedes(prop, best, family_sizes):
+			best = prop
+	return best
+
+
+static func _prop_precedes(prop: String, other: String, family_sizes: Dictionary) -> bool:
+	var numbered := _split_numbered(prop)
+	var other_numbered := _split_numbered(other)
+	if numbered.is_empty() != other_numbered.is_empty():
+		return other_numbered.is_empty()
+	var size := int(family_sizes.get(prop, 1))
+	var other_size := int(family_sizes.get(other, 1))
+	if size != other_size:
+		return size > other_size
+	if not numbered.is_empty() and int(numbered["index"]) != int(other_numbered["index"]):
+		return int(numbered["index"]) < int(other_numbered["index"])
+	return prop < other
+
+
+static func _fx_base(name: String) -> String:
+	var cut := name.find(FX_MARKER)
+	return "" if cut <= 0 else name.substr(0, cut)
+
+
+static func _bones_of(instance: MeshInstance3D) -> Array[String]:
+	## The bones a mesh is actually weighted to, named as the rig names them.
+	var out: Array[String] = []
+	var mesh: Mesh = instance.mesh
+	if mesh == null:
+		return out
+	var skeleton := instance.get_node_or_null(instance.skeleton) as Skeleton3D
+	var used := {}
+	for surface in range(mesh.get_surface_count()):
+		var arrays: Array = mesh.surface_get_arrays(surface)
+		if arrays.size() <= Mesh.ARRAY_WEIGHTS:
+			continue
+		if arrays[Mesh.ARRAY_BONES] == null or arrays[Mesh.ARRAY_WEIGHTS] == null:
+			continue
+		var bones: PackedInt32Array = arrays[Mesh.ARRAY_BONES]
+		var weights: PackedFloat32Array = arrays[Mesh.ARRAY_WEIGHTS]
+		for index in range(mini(bones.size(), weights.size())):
+			if weights[index] > 0.0:
+				used[bones[index]] = true
+	for index_value in used.keys():
+		var name := _bone_name(instance.skin, skeleton, int(index_value))
+		if not out.has(name):
+			out.append(name)
+	out.sort()
+	return out
+
+
+static func _bone_name(skin: Skin, skeleton: Skeleton3D, index: int) -> String:
+	## A vertex's bone index is an index into the SKIN's binds, which glTF import
+	## names after the rig's bones; the skeleton is the fallback for a mesh whose
+	## binds carry no names, and the raw index is what is left when there is no
+	## rig at all.
+	if skin != null and index >= 0 and index < skin.get_bind_count():
+		var named := String(skin.get_bind_name(index))
+		if named != "":
+			return named
+		var bound := skin.get_bind_bone(index)
+		if skeleton != null and bound >= 0 and bound < skeleton.get_bone_count():
+			return skeleton.get_bone_name(bound)
+	if skeleton != null and index >= 0 and index < skeleton.get_bone_count():
+		return skeleton.get_bone_name(index)
+	return "#%d" % index
 
 
 static func apply(root: Node, visibility_plan: Dictionary) -> Dictionary:
@@ -172,8 +346,8 @@ static func apply(root: Node, visibility_plan: Dictionary) -> Dictionary:
 			stack.append(child)
 		if not (node is GeometryInstance3D):
 			continue
-		var key := _part_key(node as Node3D)
-		if not wanted.has(key):
+		var key := _matched_key(node as Node3D, wanted)
+		if key == "":
 			continue
 		seen[key] = true
 		var visible_now := bool(wanted[key])
@@ -210,17 +384,44 @@ static func mesh_names(root: Node) -> PackedStringArray:
 static func _part_key(node: Node3D) -> String:
 	## The retail sub-object name a node stands for.
 	##
-	## The node name is authoritative; the mesh resource's own name is the
-	## fallback because a glTF importer that de-duplicates node names (`HLMT_01`
-	## becoming `HLMT_012`) leaves the mesh name intact.
+	## THE NODE NAME, and only it. The mesh resource's name used to win, and on
+	## the converted skins that name is the FILE's: `CHHW_CG_C_SKN_BOOT_01`, not
+	## `BOOT_01`. Every name in the pack's own `subObjects` sets is the retail
+	## spelling, so with the file prefix in front of it the compiled bindings
+	## matched nothing at all - the screen reported "mapped" and put not one
+	## garment on or off. The prefixed spelling is still ACCEPTED when a plan is
+	## applied (see `_matched_key`); it is simply not what a part is called.
+	return String(node.name).to_upper()
+
+
+static func _matched_key(node: Node3D, wanted: Dictionary) -> String:
+	## Which name in a plan this node answers to, or "" for none.
+	##
+	## Three spellings are accepted, because two converters disagree about which
+	## of them survives: the node's own name, the mesh resource's name, and the
+	## mesh resource's name with a file prefix in front of it.
 	var name := String(node.name).to_upper()
-	if node is MeshInstance3D:
-		var mesh: Mesh = (node as MeshInstance3D).mesh
-		if mesh != null and String(mesh.resource_name) != "":
-			var mesh_name := String(mesh.resource_name).to_upper()
-			if mesh_name != "":
-				return mesh_name
-	return name
+	if wanted.has(name):
+		return name
+	var mesh_name := _mesh_name(node)
+	if mesh_name == "":
+		return ""
+	if wanted.has(mesh_name):
+		return mesh_name
+	for key_value in wanted.keys():
+		var key := String(key_value)
+		if mesh_name.ends_with("_" + key):
+			return key
+	return ""
+
+
+static func _mesh_name(node: Node3D) -> String:
+	if not (node is MeshInstance3D):
+		return ""
+	var mesh: Mesh = (node as MeshInstance3D).mesh
+	if mesh == null:
+		return ""
+	return String(mesh.resource_name).to_upper()
 
 
 static func _split_numbered(name: String) -> Dictionary:

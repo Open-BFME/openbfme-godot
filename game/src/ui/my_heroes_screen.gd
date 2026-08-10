@@ -102,11 +102,18 @@ const POWERS_PREVIEW_HEIGHT := 200.0
 ## 64px button in.
 const POWER_LABEL_WIDTH := 250.0
 const POWER_CELL_SIZE := Vector2(96, 62)
+## How much of a chain's name the column holds before it ends in an ellipsis and
+## sends the reader to the tooltip. Two lines is a NAME; three is prose.
+const CHAIN_LABEL_MAX_LINES := 2
 ## Where the hero faces when a page opens. The converted skins stand with their
 ## back to +Z, so the preview is turned round to face the camera rather than
 ## showing the player the back of a helmet he is trying to choose.
 const PREVIEW_DEFAULT_YAW := 270.0
 const PREVIEW_DRAG_DEGREES_PER_PIXEL := 0.45
+## How much of the card the hero is asked to fill, and the tilt used for a
+## subclass whose ViewInfo the pack does not carry.
+const PREVIEW_FILL := 0.88
+const PREVIEW_DEFAULT_PITCH := -4.0
 
 var _system: Dictionary = {}
 var _profiles: Array[Dictionary] = []
@@ -131,6 +138,7 @@ var status_label: Label
 var save_button: Button
 var back_button: Button
 var hero_list: ItemList
+var _roster_count: Label
 var delete_button: Button
 var new_hero_button: Button
 var attribute_rows: VBoxContainer
@@ -177,6 +185,7 @@ var _preview_root: Node3D
 var _preview_pivot: Node3D
 var _preview_camera: Camera3D
 var _preview_model: Node3D
+var _preview_turn: HBoxContainer
 var _preview_note: Label
 var _preview_caption: Label
 var _backdrop_art: TextureRect
@@ -297,7 +306,9 @@ func create_hero(hero_name: String) -> Array[String]:
 	var error := CahHeroes.save_profile(profile)
 	if error != "":
 		return [error]
-	_editing_hero_id = ""
+	# THE HERO JUST SAVED IS THE ONE THE ROSTER SHOWS. Clearing this left MY
+	# HEROES on its no-hero state the instant after the player finished making one.
+	_editing_hero_id = String(profile.get("heroId", ""))
 	refresh()
 	roster_changed.emit()
 	return []
@@ -307,8 +318,11 @@ func delete_selected() -> bool:
 	var index := _selected_hero_index()
 	if index < 0:
 		return false
-	if not CahHeroes.delete_profile(String(_profiles[index].get("heroId", ""))):
+	var hero_id := String(_profiles[index].get("heroId", ""))
+	if not CahHeroes.delete_profile(hero_id):
 		return false
+	if hero_id == _editing_hero_id:
+		_editing_hero_id = ""
 	refresh()
 	roster_changed.emit()
 	return true
@@ -575,9 +589,11 @@ func _build_select_page(parent: Control) -> Control:
 	# LEFT: the saved roster.
 	var roster_card := _card("SAVED HEROES")
 	var roster_host := roster_card.get_parent() as Control
-	roster_host.custom_minimum_size = Vector2(380, 0)
+	roster_host.custom_minimum_size = Vector2(340, 0)
 	roster_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	roster_host.size_flags_stretch_ratio = 1.0
+	# A LIST OF AT MOST EIGHT NAMES DOES NOT NEED A QUARTER OF THE DESK. The width
+	# it gives up goes to the hero, who is what the page is about.
+	roster_host.size_flags_stretch_ratio = 0.8
 	page.add_child(roster_host)
 
 	var well := PanelContainer.new()
@@ -592,6 +608,14 @@ func _build_select_page(parent: Control) -> Control:
 	hero_list.add_theme_font_size_override("font_size", 17)
 	hero_list.item_selected.connect(_on_hero_list_selected)
 	well.add_child(hero_list)
+
+	# HOW FULL THE ROSTER IS. Retail caps the saved heroes and says so; an empty
+	# well with no count under it cannot tell "none yet" from "none left".
+	_roster_count = Label.new()
+	_roster_count.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_roster_count.add_theme_font_size_override("font_size", 14)
+	_roster_count.add_theme_color_override("font_color", Color(0.72, 0.80, 0.64, 0.85))
+	roster_card.add_child(_roster_count)
 
 	var buttons := HBoxContainer.new()
 	buttons.add_theme_constant_override("separation", 8)
@@ -614,7 +638,7 @@ func _build_select_page(parent: Control) -> Control:
 	_select_preview_slot = VBoxContainer.new()
 	_select_preview_slot.custom_minimum_size = Vector2(PREVIEW_MIN_WIDTH, 0)
 	_select_preview_slot.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_select_preview_slot.size_flags_stretch_ratio = 1.25
+	_select_preview_slot.size_flags_stretch_ratio = 1.5
 	_select_preview_slot.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	page.add_child(_select_preview_slot)
 	_build_preview()
@@ -998,7 +1022,12 @@ func _build_powers_page(parent: Control) -> Control:
 	var lattice := _card("CHOOSE HERO POWERS")
 	var lattice_host := lattice.get_parent() as Control
 	lattice_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	lattice_host.size_flags_stretch_ratio = 2.1
+	# 1.3, NOT 2.1. The four level columns are 96px wide whatever the window is, so
+	# past 1.3 the card grew and the lattice inside it did not - at 2560x1440 the
+	# right half of CHOOSE HERO POWERS was empty from the level-10 column to the
+	# frame. What the extra width is worth is a bigger hero and a wider list of
+	# what he has taken, which is what the column beside it holds.
+	lattice_host.size_flags_stretch_ratio = 1.3
 	lattice_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	page.add_child(lattice_host)
 
@@ -1321,10 +1350,14 @@ func _set_editor_enabled(enabled: bool) -> void:
 
 func _reload_hero_list() -> void:
 	hero_list.clear()
+	if _roster_count != null:
+		_roster_count.text = "%d of %d saved" % [_profiles.size(), CahHeroes.MAX_PROFILES]
 	if _profiles.is_empty():
 		# AN EMPTY LIST IS A STATE, not a blank box. Retail's roster starts empty
-		# and the screen has to say what to do about it.
-		hero_list.add_item("No heroes yet - press NEW HERO to make one.")
+		# and the screen has to say what to do about it - in a sentence short
+		# enough for the column, because an ItemList row does not wrap and the
+		# longer one ended "press NEW HERO to mak...".
+		hero_list.add_item("No heroes yet.")
 		hero_list.set_item_selectable(0, false)
 		hero_list.set_item_disabled(0, true)
 		return
@@ -1346,6 +1379,11 @@ func _reload_hero_list() -> void:
 		var thumbnail := _icon_texture(_profile_button_image_id(profile))
 		if thumbnail != null:
 			hero_list.set_item_icon(hero_list.item_count - 1, thumbnail)
+		# THE HERO ON THE STAGE IS LIT IN THE LIST. Saving one used to leave the
+		# roster with nothing selected beside a card showing him, so the row and
+		# the preview disagreed about who was being looked at.
+		if _editing_hero_id != "" and String(profile.get("heroId", "")) == _editing_hero_id:
+			hero_list.select(hero_list.item_count - 1)
 
 
 func _profile_button_image_id(profile: Dictionary) -> String:
@@ -1731,6 +1769,20 @@ func _rebuild_power_grid() -> void:
 		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		label.add_theme_font_size_override("font_size", 16)
+		# ...AND NO ESSAYS EITHER. Retail hangs some chains off a string that is a
+		# whole sentence ("This power takes up a slot for free, and allows you to
+		# manage the cost of your Create-A-Hero"), which set three lines of prose
+		# among one-line power names and pushed its own row out of the lattice. The
+		# column is capped in LINES rather than in characters, so it holds whatever
+		# a chain is called at whatever width the window gives it, and the tooltip
+		# carries the whole of it however long it is.
+		label.max_lines_visible = CHAIN_LABEL_MAX_LINES
+		label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		label.tooltip_text = label.text
+		# THE COLUMN TAKES THE SLACK. The four level columns are 96px whatever the
+		# window is, so on a 2560px desk the lattice card used to end in half a card
+		# of nothing; the names are what a wide screen has room for.
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_power_grid.add_child(label)
 		var by_level := {}
 		for level_value in (tree.get("levels", []) as Array):
@@ -1968,12 +2020,19 @@ func _rebuild_detail_tabs() -> void:
 	if _detail_powers == null:
 		return
 	_clear_children(_detail_powers)
-	if _powers.is_empty():
+	if _powers.is_empty() or not showing_saved_hero():
 		var empty := Label.new()
 		empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		empty.add_theme_font_size_override("font_size", 15)
-		empty.text = "This hero has no powers equipped."
+		empty.text = (
+			"This hero has no powers equipped." if showing_saved_hero()
+			else "No hero is selected."
+		)
 		_detail_powers.add_child(empty)
+	if not showing_saved_hero():
+		_rebuild_awards_list()
+		_update_detail_stats()
+		return
 	for index in range(_powers.size()):
 		var row := CahHeroes.power_row(_system, String(_powers[index]))
 		var label := Label.new()
@@ -1988,6 +2047,10 @@ func _rebuild_awards_list() -> void:
 	if _awards_list == null:
 		return
 	_awards_list.clear()
+	if not showing_saved_hero():
+		_awards_list.add_item("No hero is selected.")
+		_awards_list.set_item_selectable(0, false)
+		return
 	var sub_row := CahHeroes.sub_class_row(_system, _selected_class, _selected_sub)
 	var awards: Array = sub_row.get("awards", []) as Array
 	if awards.is_empty():
@@ -2089,8 +2152,46 @@ func _update_class_preview() -> void:
 		_class_stat_bars.add_child(line)
 
 
+func showing_saved_hero() -> bool:
+	## Whether MY HEROES is looking at a hero, or at an empty roster.
+	##
+	## The working loadout always holds a class, a subclass and a full attribute
+	## spend, because the CREATE pages need somewhere to start - but on the roster
+	## page those numbers belong to NOBODY until a hero is picked or saved. Printed
+	## anyway, they gave the first frame of the screen a populated statistics card
+	## and a hero in the preview beside the words "No heroes yet".
+	return _editing_hero_id != ""
+
+
+func _empty_detail_state() -> void:
+	_detail_name.text = "NO HERO SELECTED"
+	_detail_type.text = (
+		"Pick a hero from SAVED HEROES to see him here, or press NEW HERO to make one."
+		if not _profiles.is_empty()
+		else "Press NEW HERO to make one."
+	)
+	_detail_portrait.texture = null
+	for panel in [_detail_stats, stats_bars]:
+		if panel == null:
+			continue
+		_clear_children(panel)
+		var empty := Label.new()
+		empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		empty.add_theme_font_size_override("font_size", 15)
+		empty.add_theme_color_override("font_color", Color(0.70, 0.78, 0.64, 0.8))
+		empty.text = "A hero's class, his numbers and his powers are shown here once he is chosen."
+		panel.add_child(empty)
+
+
 func _update_detail_stats() -> void:
 	if _detail_stats == null or _system.is_empty():
+		return
+	# THE CREATE PAGES ALWAYS SHOW THE HERO BEING BUILT. Only the roster's own
+	# cards go blank when nobody is picked; the summary beside the garment list
+	# belongs to the hero on the page, who exists whether or not he is saved yet.
+	_fill_stat_panel(_appearance_summary)
+	if not showing_saved_hero():
+		_empty_detail_state()
 		return
 	var sub_row := CahHeroes.sub_class_row(_system, _selected_class, _selected_sub)
 	var class_row := CahHeroes.class_row(_system, _selected_class)
@@ -2104,7 +2205,6 @@ func _update_detail_stats() -> void:
 	]
 	_detail_portrait.texture = _icon_texture(String(sub_row.get("iconImageId", "")))
 	_fill_stat_panel(_detail_stats)
-	_fill_stat_panel(_appearance_summary)
 	# THE STATS TAB USED TO BE EMPTIED HERE. `stats_bars` - the panel the STATS tab
 	# shows, and the tab the screen opens on - was cleared on every rebuild while
 	# the numbers were written into the APPEARANCE panel instead, so the first
@@ -2241,6 +2341,11 @@ func _build_preview() -> void:
 	_preview_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_preview_host.mouse_filter = Control.MOUSE_FILTER_STOP
 	_preview_host.gui_input.connect(_on_preview_input)
+	# THE FRAMING FOLLOWS THE CARD. The camera is fitted to the aspect of the
+	# viewport it is shooting into, and that viewport is only resized to the card
+	# when the card is laid out - which is after the first hero is already framed,
+	# and again every time the window changes shape.
+	_preview_host.resized.connect(_reframe_preview)
 	_preview_host.tooltip_text = "Drag to turn the hero."
 	stack.add_child(_preview_host)
 
@@ -2273,6 +2378,7 @@ func _build_preview() -> void:
 	turn.alignment = BoxContainer.ALIGNMENT_CENTER
 	turn.add_theme_constant_override("separation", 10)
 	stack.add_child(turn)
+	_preview_turn = turn
 	var left := _stepper("◀")
 	left.tooltip_text = "Turn left"
 	left.pressed.connect(func() -> void: _turn_preview(-30.0))
@@ -2287,12 +2393,17 @@ func _build_preview() -> void:
 	right.pressed.connect(func() -> void: _turn_preview(30.0))
 	turn.add_child(right)
 
+	# THE NOTE IS ON THE STAGE, not under it. "No hero on the stage yet" set below
+	# the card left the card itself an unexplained black rectangle taking a third
+	# of the window; centred inside it, the empty stage says what it is.
 	_preview_note = Label.new()
 	_preview_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_preview_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_preview_note.add_theme_font_size_override("font_size", 13)
+	_preview_note.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_preview_note.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_preview_note.add_theme_font_size_override("font_size", 16)
 	_preview_note.add_theme_color_override("font_color", Color(0.88, 0.78, 0.52, 0.92))
-	_preview_column.add_child(_preview_note)
+	frame.add_child(_preview_note)
 
 
 func _on_preview_input(event: InputEvent) -> void:
@@ -2316,6 +2427,15 @@ func _apply_preview_yaw() -> void:
 
 func _update_preview() -> void:
 	if _preview_root == null or _system.is_empty():
+		return
+	if _page == PAGE_SELECT and not showing_saved_hero():
+		# THE STAGE IS EMPTY WHEN THE ROSTER IS. The working loadout's class has a
+		# mesh from the moment the screen is built, so the roster page opened on a
+		# Captain of Gondor standing beside "No heroes yet" as though he were one.
+		_drop_preview_model()
+		_preview_note.text = "No hero on the stage yet. Press NEW HERO to make one."
+		_garment_status = "no-hero"
+		_set_garment_caption("")
 		return
 	var sub_row := CahHeroes.sub_class_row(_system, _selected_class, _selected_sub)
 	# The creation-screen pose, which is a DIFFERENT mesh from the battlefield
@@ -2360,6 +2480,22 @@ func _update_preview() -> void:
 	_apply_preview_appearance(surface)
 	_frame_preview(sub_row, _preview_model)
 	_apply_preview_yaw()
+	_show_turn_controls(true)
+
+
+func _reframe_preview() -> void:
+	if _preview_model == null or _system.is_empty():
+		return
+	_frame_preview(
+		CahHeroes.sub_class_row(_system, _selected_class, _selected_sub), _preview_model
+	)
+
+
+func _show_turn_controls(shown: bool) -> void:
+	## THE ARROWS ARE FOR TURNING A HERO. With nobody on the stage they turn an
+	## empty room, and a control that does nothing is worse than an absent one.
+	if _preview_turn != null:
+		_preview_turn.visible = shown
 
 
 func _drop_preview_model() -> void:
@@ -2367,6 +2503,7 @@ func _drop_preview_model() -> void:
 		_preview_model.queue_free()
 		_preview_model = null
 	_loaded_model_id = ""
+	_show_turn_controls(false)
 
 
 func _apply_preview_appearance(surface := "") -> void:
@@ -2474,20 +2611,50 @@ func _frame_preview(sub_row: Dictionary, visual: Node3D) -> void:
 		bounds = factory.model_aabb(visual)
 	var height := maxf(0.1, bounds.size.y)
 	visual.position = Vector3(0.0, -bounds.position.y, 0.0)
-	# 1.35, not 1.85. The hero is the point of this column; at 1.85 he stood in
-	# the middle of a card three times his height like a figurine in a display
-	# case, which is exactly how the preview read as an afterthought.
-	var distance := height * 1.30
-	var pitch := -3.0
+
+	# HOW FAR BACK: far enough that the whole of him fits the card on BOTH axes. A
+	# distance derived from his height alone framed a hero for his height and then
+	# cropped the sword he is holding. The width is measured ACROSS THE POSE HE IS
+	# SHOWN IN: these skins are authored with the arms out along the model's Z, so
+	# a hero turned to face the camera is a narrow figure, and a camera pulled back
+	# far enough to clear his arms in every direction he could be turned to stands
+	# him in the middle of the card at a third of its height.
+	var half_height := maxf(0.05, height * 0.5)
+	var viewport_size := Vector2(_preview_viewport.size)
+	var aspect := viewport_size.x / maxf(1.0, viewport_size.y)
+	var half_width := _facing_half_width(bounds, PREVIEW_DEFAULT_YAW)
+	var needed := maxf(half_height, half_width / maxf(0.2, aspect)) / PREVIEW_FILL
+	var distance := needed / tan(deg_to_rad(_preview_camera.fov) * 0.5)
+	var pitch := PREVIEW_DEFAULT_PITCH
 	if not view.is_empty():
-		distance = maxf(distance, float(view.get("closeUpDist", distance)) * 0.06)
-		pitch = float(view.get("closeUpPitch", -0.07)) * 60.0
-	# HALF HIS HEIGHT, measured AFTER his feet were put on the floor above. Aiming
-	# at `bounds.position.y + height * 0.5` aimed at where his middle was BEFORE
-	# the shift, which on a model authored around its pelvis pointed the camera
-	# below the floor and stood him in the top third of the card.
-	_preview_camera.position = Vector3(0.0, height * 0.5, distance)
+		# Retail authors the tilt in radians (`CloseUpPitch = -0.3` is seventeen
+		# degrees down), which is a number about the CAMERA and not about how far
+		# away it stands - the distance is the model's own business, measured above.
+		pitch = rad_to_deg(float(view.get("closeUpPitch", deg_to_rad(PREVIEW_DEFAULT_PITCH))))
+	# THE TILT ORBITS HIM, IT DOES NOT AIM PAST HIM. A camera left at his mid-height
+	# and then pitched seventeen degrees down is pointing at the floor in front of
+	# him, which put the hero in the top half of every preview with a card's worth
+	# of empty stage under his feet. Moving it up the arc by the same angle keeps
+	# what it is looking at exactly where it was.
+	var pitch_radians := deg_to_rad(pitch)
+	_preview_camera.position = Vector3(
+		0.0,
+		half_height - sin(pitch_radians) * distance,
+		cos(pitch_radians) * distance
+	)
 	_preview_camera.rotation_degrees = Vector3(pitch, 0.0, 0.0)
+
+
+static func _facing_half_width(bounds: AABB, yaw_degrees: float) -> float:
+	## How far the model reaches ACROSS THE VIEW when it is turned to face the
+	## camera - measured from the turntable's axis, because that is what the hero
+	## turns about when the player uses the arrows.
+	var yaw := deg_to_rad(yaw_degrees)
+	var half := 0.0
+	for x in [bounds.position.x, bounds.position.x + bounds.size.x]:
+		for z in [bounds.position.z, bounds.position.z + bounds.size.z]:
+			half = maxf(half, absf(x * cos(yaw) + z * sin(yaw)))
+	return half
 
 
 # ---------------------------------------------------------------------- labels

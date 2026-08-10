@@ -66,6 +66,11 @@ const BASE_SHROUD := 100.0
 const BASE_COMMAND_POINTS := 50
 
 const PRODUCER := "MenFortress"
+## The model id the scratch pack carries, spelled the way retail spells one but
+## naming a subclass retail does not have - so the resolver's answer is about the
+## directory this runner wrote and not about which meshes the machine's own
+## content packs happen to have been published with.
+const SCRATCH_MODEL_ID := "CHHW_ZY_C_SKN"
 ## The four level columns retail authors, which the grid's last row labels.
 const POWER_COLUMN_COUNT := 4
 
@@ -292,6 +297,35 @@ func _test_screen(system: Dictionary) -> void:
 	var pair: Vector2i = screen.spend_and_budget()
 	_check(pair == Vector2i(30, 30), "the screen opens on the authored default loadout, fully spent")
 
+	# AN EMPTY ROSTER SHOWS NOBODY. The working loadout exists from the moment the
+	# screen is built because the CREATE pages need somewhere to start, and MY
+	# HEROES used to print it: a full statistics card and a Captain of Gondor in
+	# the preview, beside the words "No heroes yet - press NEW HERO to make one."
+	_check(
+		not screen.showing_saved_hero(),
+		"a screen nobody has picked a hero on reports that it is showing none"
+	)
+	_check(
+		String(screen._detail_name.text) == "NO HERO SELECTED",
+		"the detail card names the empty state rather than the working loadout (got '%s')"
+			% screen._detail_name.text
+	)
+	_check(
+		screen.stats_bars.get_child_count() == 1
+			and screen.stats_bars.get_child(0) is Label
+			and not String((screen.stats_bars.get_child(0) as Label).text).contains("Health"),
+		"HERO STATISTICS carries one line of empty state, not a hero's numbers"
+	)
+	_check(
+		String(screen._preview_note.text).contains("NEW HERO")
+			and screen._preview_model == null,
+		"the preview stage is empty and says why (got '%s')" % screen._preview_note.text
+	)
+	_check(
+		screen.garment_status() == "no-hero",
+		"the garment report says there is no hero to dress (got '%s')" % screen.garment_status()
+	)
+
 	screen.set_attribute("CreateAHero_ArmorAttribute", 17)
 	_check(screen.spend_and_budget() == Vector2i(31, 30), "overspending is reflected in the budget readout")
 	_check(screen.save_button.disabled, "SAVE is disabled while the budget does not balance")
@@ -303,6 +337,14 @@ func _test_screen(system: Dictionary) -> void:
 	_check(refusals.is_empty(), "the screen creates a hero (%s)" % str(refusals))
 	_check(screen.saved_profiles().size() == 1, "the screen lists the hero it just created")
 	_check(screen.hero_list.item_count == 1, "the saved-hero list shows one row")
+	_check(
+		screen.showing_saved_hero() and screen.hero_list.get_selected_items() == PackedInt32Array([0]),
+		"the hero just saved is the one the roster lights and the card shows"
+	)
+	_check(
+		screen.stats_bars.get_child_count() > 1,
+		"his statistics come back the moment there is a hero for them to belong to"
+	)
 
 	_check(not screen.create_hero("   ").is_empty(), "the screen refuses an unnamed hero")
 
@@ -334,19 +376,81 @@ func _test_screen(system: Dictionary) -> void:
 # ------------------------------------------------------------ garment parts
 
 
+## The rig the synthetic skin is weighted to. `B_HAND_R` is the HOOK: retail
+## weights every weapon on a Create-a-Hero skin to it and weights no part of the
+## body to it, which is what tells a prop hanging off a hero from a joint of him.
+const SKIN_BONES := [
+	"B_PELVIS", "BAT_SPINE1", "B_HEAD", "B_CLAVL", "BAT_FARML", "B_HANDL", "B_HAND_R"
+]
+
+## Every part on the synthetic skin, the bones it is weighted to, and the retail
+## sub-object it stands for - in the shape `CHHW_CG_C_SKN.glb` really has:
+## numbered variants of three garments, and four meshes on the one weapon hook,
+## two of which are named bling and one of which is an effect on another.
+##
+## `SHLD_022` is the DE-DUPLICATED node name a glTF importer leaves behind when
+## two nodes were called the same thing, and it is the reason a part is matched
+## by its mesh's name as well as by its own.
+const SKIN_PARTS := [
+	["CHHW_SMN", ["B_PELVIS", "BAT_SPINE1", "B_HEAD", "B_CLAVL", "BAT_FARML", "B_HANDL"]],
+	["HLMT_01", ["B_HEAD"]],
+	["HLMT_02", ["B_HEAD"]],
+	["SLDR_01", ["B_CLAVL", "BAT_FARML"]],
+	["SLDR_04", ["B_CLAVL", "BAT_FARML"]],
+	["SHLD_01", ["BAT_FARML", "B_HANDL"]],
+	["SHLD_022", ["BAT_FARML", "B_HANDL"], "SHLD_02"],
+	["AXE_01", ["B_HAND_R"]],
+	["AXE_01_FX01", ["B_HAND_R"]],
+	["GURTHANG", ["B_HAND_R"]],
+	["TROLLBANE", ["B_HAND_R"]],
+]
+
+
 func _synthetic_skin() -> Node3D:
-	## A stand-in for a converted Create-a-Hero GLB: one body and two numbered
-	## variants of three parts, named the way retail names its sub-objects.
+	## A stand-in for a converted Create-a-Hero GLB, RIGGED: the collapse rules
+	## read the skin's bone weights, so a fixture of unweighted boxes could not
+	## tell a weapon from a helmet and would prove nothing about either.
 	var root := Node3D.new()
-	var skeleton := Node3D.new()
+	var skeleton := Skeleton3D.new()
 	skeleton.name = "Skeleton"
 	root.add_child(skeleton)
-	for part in ["CHHW_SMN", "HLMT_01", "HLMT_02", "SLDR_01", "SLDR_04", "SHLD_01", "SHLD_02", "GURTHANG"]:
+	for bone_value in SKIN_BONES:
+		skeleton.add_bone(String(bone_value))
+	var skin := skeleton.create_skin_from_rest_transforms()
+	for entry_value in SKIN_PARTS:
+		var entry := entry_value as Array
 		var mesh := MeshInstance3D.new()
-		mesh.name = part
-		mesh.mesh = BoxMesh.new()
+		mesh.name = String(entry[0])
+		mesh.mesh = _weighted_mesh(skeleton, entry[1] as Array)
+		# THE FILE'S NAME IN FRONT OF THE PART'S, which is what the converter
+		# writes onto the mesh resource and what made a pack's own bindings match
+		# nothing when the mesh's name was taken for the part's.
+		mesh.mesh.resource_name = "SYNTH_C_SKN_%s" % String(entry[2] if entry.size() > 2 else entry[0])
 		skeleton.add_child(mesh)
+		mesh.skeleton = mesh.get_path_to(skeleton)
+		mesh.skin = skin
 	return root
+
+
+func _weighted_mesh(skeleton: Skeleton3D, bones: Array) -> ArrayMesh:
+	## One triangle per bone, each of its corners weighted wholly to that bone.
+	var vertices := PackedVector3Array()
+	var influences := PackedInt32Array()
+	var weights := PackedFloat32Array()
+	for bone_value in bones:
+		var bone := skeleton.find_bone(String(bone_value))
+		for corner in range(3):
+			vertices.append(Vector3(float(corner), float(bone), 0.0))
+			influences.append_array([bone, 0, 0, 0])
+			weights.append_array([1.0, 0.0, 0.0, 0.0])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_BONES] = influences
+	arrays[Mesh.ARRAY_WEIGHTS] = weights
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
 
 
 func _visible_parts(root: Node3D) -> Array[String]:
@@ -383,6 +487,16 @@ func _test_garment_sub_objects(_system: Dictionary) -> void:
 				# only exist on the battlefield mesh, and the preview must ignore
 				# the name rather than fail on it.
 				{"upgradeName": "Upgrade_S9", "subObjects": {"show": ["SLDR_99"], "hide": []}},
+				{
+					"upgradeName": "Upgrade_W1",
+					"subObjects": {"show": ["AXE_01", "AXE_01_FX01"], "hide": []},
+				},
+				# SPELLED AS THE INI SPELLS IT. The compiler emits these names
+				# verbatim out of retail's own text - `Gurthang`, `Shld_01`,
+				# `WestronSword` - and the meshes they name are `GURTHANG`,
+				# `SHLD_01`, `WESTRONSWORD`. A matcher that compared the two as
+				# written would no-op on every mixed-case garment in the pack.
+				{"upgradeName": "Upgrade_W2", "subObjects": {"show": ["Gurthang"], "hide": []}},
 			],
 		},
 	}
@@ -390,12 +504,21 @@ func _test_garment_sub_objects(_system: Dictionary) -> void:
 		"models": {
 			"creationScreen": {
 				"model": "SYNTH_C_SKN",
-				"defaultSubObjects": {"show": ["CHHW_SMN"], "hide": ["SHLD_01", "SHLD_02"]},
+				"defaultSubObjects": {"show": ["CHHW_SMN"], "hide": []},
 			},
+		},
+		# WHERE RETAIL PUTS THE DEFAULT SET: on the SUBCLASS, one hide list naming
+		# every prop the shared skins carry - including `TrollBane`, which no
+		# option in the table shows and which therefore nothing else takes off -
+		# and spelled in the INI's own mixed case throughout.
+		"defaultSubObjects": {
+			"show": [],
+			"hide": ["Shld_01", "Shld_02", "AXE_01", "AXE_01_FX01", "Gurthang", "TrollBane"],
 		},
 		"appearanceChoices": {
 			"CreateAHero_Helmet": ["Upgrade_HNone", "Upgrade_H1", "Upgrade_H2"],
 			"CreateAHero_ShoulderPlates": ["Upgrade_S1", "Upgrade_S9"],
+			"CreateAHero_Weapon": ["Upgrade_W1", "Upgrade_W2"],
 		},
 	}
 
@@ -417,12 +540,32 @@ func _test_garment_sub_objects(_system: Dictionary) -> void:
 	_check(bool(opening.get("mapped", false)), "the opening plan reports itself mapped")
 	SubObjects.apply(skin, opening)
 	_check(
-		", ".join(_visible_parts(skin)) == "CHHW_SMN, GURTHANG, SLDR_01, SLDR_04",
-		("the default loadout wears the body and the first shoulder plate, no helmet because the "
-			+ "first helmet option is the bare-headed one, and neither shield because the subclass "
-			+ "default hides them - and SLDR_04, which no option in this table claims, is left "
+		", ".join(_visible_parts(skin)) == "AXE_01, AXE_01_FX01, CHHW_SMN, SLDR_01, SLDR_04",
+		("the default loadout wears the body, the first shoulder plate and the first weapon with "
+			+ "its effect mesh; no helmet because the first helmet option is the bare-headed one; "
+			+ "neither shield, and neither of the other two weapons, because THE SUBCLASS'S OWN "
+			+ "default set hides them - and SLDR_04, which no option in this table claims, is left "
 			+ "exactly as the pack shipped it (got %s)") % str(_visible_parts(skin))
 	)
+	_check(
+		not _visible_parts(skin).has("TROLLBANE"),
+		"a prop the option table never names is still taken off by the subclass default set"
+	)
+
+	# THE CASE THE INI IS WRITTEN IN IS NOT THE CASE THE MESH IS NAMED IN. Choosing
+	# the option that shows `Gurthang` has to move the node called `GURTHANG`, and
+	# has to take the axe the previous option showed off the same hand.
+	SubObjects.apply(skin, SubObjects.plan(
+		mapped_system, sub_row, {"CreateAHero_Weapon": "Upgrade_W2"}, "creationScreen"
+	))
+	_check(
+		_visible_parts(skin).has("GURTHANG") and not _visible_parts(skin).has("AXE_01"),
+		"a garment named in the INI's mixed case switches the mesh named in upper case (got %s)"
+			% str(_visible_parts(skin))
+	)
+	SubObjects.apply(skin, SubObjects.plan(
+		mapped_system, sub_row, {"CreateAHero_Weapon": "Upgrade_W1"}, "creationScreen"
+	))
 
 	# CYCLING A GROUP REPLACES, it does not stack: choosing helmet 2 takes helmet
 	# 1 off, which is the whole difference between this and a hero wearing four
@@ -463,11 +606,40 @@ func _test_garment_sub_objects(_system: Dictionary) -> void:
 	var raw := _synthetic_skin()
 	var collapse := SubObjects.collapse_variant_families(raw)
 	_check(not bool(collapse.get("mapped", true)), "the stopgap plan does not claim to be mapped")
+
+	# THE HOOK IS FOUND BY THE RIG, NOT BY THE NAMES. Four meshes ride `B_HAND_R`
+	# and nothing else does; the helmets ride `B_HEAD`, which the body rides too,
+	# so the head is a joint of the hero rather than somewhere to hang a hat.
+	var hooks := SubObjects.attachment_groups(raw)
+	_check(
+		hooks.size() == 1 and hooks.has("B_HAND_R"),
+		"the one bone nothing deforming rides is recognised as the weapon hook (got %s)"
+			% str(hooks.keys())
+	)
+	_check(
+		(hooks.get("B_HAND_R", []) as Array)
+			== ["AXE_01", "AXE_01_FX01", "GURTHANG", "TROLLBANE"],
+		"every prop on the hook is collected, named bling and effect meshes included (got %s)"
+			% str(hooks.get("B_HAND_R", []))
+	)
+
 	SubObjects.apply(raw, collapse)
 	_check(
-		", ".join(_visible_parts(raw)) == "CHHW_SMN, GURTHANG, HLMT_01, SHLD_01, SLDR_01",
+		", ".join(_visible_parts(raw))
+			== "AXE_01, AXE_01_FX01, CHHW_SMN, HLMT_01, SHLD_01, SLDR_01",
 		"an unmapped skin collapses to one variant per numbered part (got %s)"
 			% str(_visible_parts(raw))
+	)
+	# THE WHOLE POINT OF THE HOOK RULE. `GURTHANG` and `TROLLBANE` are numbered
+	# siblings of nothing, so the numbered-family rule left the hero holding them
+	# and the axe at once - a fan of blades out of one fist in every screenshot.
+	_check(
+		not _visible_parts(raw).has("GURTHANG") and not _visible_parts(raw).has("TROLLBANE"),
+		"a hero holds ONE weapon, whatever its name ends in (got %s)" % str(_visible_parts(raw))
+	)
+	_check(
+		_visible_parts(raw).has("AXE_01") and _visible_parts(raw).has("AXE_01_FX01"),
+		"the chosen weapon keeps the effect mesh named after it (got %s)" % str(_visible_parts(raw))
 	)
 
 	_check(
@@ -488,7 +660,9 @@ func _test_garment_sub_objects(_system: Dictionary) -> void:
 	root.add_child(screen)
 	screen.configure(_system)
 	_check(
-		screen.garment_status() in ["unmapped", "no-model", "mapped", "mapped-unmatched"],
+		screen.garment_status() in [
+			"unmapped", "no-model", "mapped", "mapped-unmatched", "no-hero"
+		],
 		"the screen reports what it did about garments (got '%s')" % screen.garment_status()
 	)
 	screen.queue_free()
@@ -538,19 +712,22 @@ func _test_pack_resolution(system: Dictionary) -> void:
 	content_db._asset_exists_cache.clear()
 	content_db._frozen_resolutions.clear()
 
-	var expected := pack_root.path_join("assets/models/cah/CHHW_CG_C_SKN.glb")
-	var resolved := String(content_db.resolve_cah_model_path("CHHW_CG_C_SKN"))
+	# ASKED OF A DIRECTORY THIS RUNNER WROTE, in a spelling no shipped pack uses.
+	# Asserted against a real retail id, both halves of this answered from whatever
+	# Create-a-Hero meshes the machine's own packs happened to carry.
+	var expected := pack_root.path_join("assets/models/cah/%s.glb" % SCRATCH_MODEL_ID)
+	var resolved := String(content_db.resolve_cah_model_path(SCRATCH_MODEL_ID))
 	_check(
 		resolved == expected,
 		"a mounted pack's assets/models/cah/<ID>.glb resolves (got %s)" % resolved
 	)
 	_check(
-		screen._resolve_model_path("CHHW_CG_C_SKN") == expected,
+		screen._resolve_model_path(SCRATCH_MODEL_ID) == expected,
 		"the screen reaches the same file through ContentDB"
 	)
 	_check(
-		String(content_db.resolve_cah_model_path("CHHW_CG_U_SKN")) == "",
-		"a sibling id the pack does not carry stays empty even once the directory exists"
+		String(content_db.resolve_cah_model_path(SCRATCH_MODEL_ID.replace("_ZY_", "_ZZ_"))) == "",
+		"a sibling id no pack carries stays empty even once the directory exists"
 	)
 
 	# ICONS: the texture when the pack has one, the NAME when it does not. Never a
@@ -585,10 +762,26 @@ func _test_pack_resolution(system: Dictionary) -> void:
 
 	# An id whose string the pack cannot translate reaches the screen as words
 	# rather than as an identifier.
+	# BOTH HALVES OF THE RULE, ON A STRING PUT THERE BY THIS RUNNER. The id is one
+	# no pack ships, and the table is given the answer and then taken away again -
+	# because asserted against a REAL retail id this passed only while the packs
+	# had no `CreateAHero:` strings in them, and failed the day they did.
+	var synthetic_id := "CreateAHero:ClassName_OpenBfmeNoSuchClass"
 	_check(
-		screen._readable("CreateAHero:ClassName_HeroesOfTheWest") == "Heroes Of The West",
-		"an untranslated class id is spaced into a label (got '%s')"
-			% screen._readable("CreateAHero:ClassName_HeroesOfTheWest")
+		screen._readable(synthetic_id) == "Open Bfme No Such Class",
+		"an id no pack can translate is spaced into a label (got '%s')"
+			% screen._readable(synthetic_id)
+	)
+	content_db.retail_strings[synthetic_id.to_lower()] = "Lord of the Marches"
+	_check(
+		screen._readable(synthetic_id) == "Lord of the Marches",
+		"the pack's own string is preferred over the spaced id the moment it exists (got '%s')"
+			% screen._readable(synthetic_id)
+	)
+	content_db.retail_strings.erase(synthetic_id.to_lower())
+	_check(
+		screen._readable(synthetic_id) == "Open Bfme No Such Class",
+		"and the fallback comes back when the string is taken away"
 	)
 
 	screen.queue_free()
@@ -607,7 +800,9 @@ func _build_scratch_pack() -> String:
 	# NOT A REAL MESH, deliberately. What is under test is which file the resolver
 	# names, not whether the importer's glTF loads - a fixture that needed a real
 	# mesh would make this gate wait on the content lane.
-	var mesh := FileAccess.open(pack_root.path_join("assets/models/cah/CHHW_CG_C_SKN.glb"), FileAccess.WRITE)
+	var mesh := FileAccess.open(
+		pack_root.path_join("assets/models/cah/%s.glb" % SCRATCH_MODEL_ID), FileAccess.WRITE
+	)
 	mesh.store_buffer("glTF fixture".to_utf8_buffer())
 	mesh.close()
 
@@ -773,6 +968,44 @@ func _test_full_window_layout(system: Dictionary) -> void:
 					wrapped_captions += 1
 	_check(clipped == 0, "no label or cell on the lattice is clipped (%d were)" % clipped)
 
+	# ...AND NOTHING ON IT IS AN ESSAY EITHER. The name column is capped in lines,
+	# at whatever width the window gives it, with the whole of the string in the
+	# tooltip - so a chain retail named with a sentence is one row like every other
+	# row instead of a paragraph among the power names. Asserted at the NARROWEST
+	# width the screen composes at, because a cap that only holds on a 2560px desk
+	# is not a cap.
+	host.size = Vector2(1280, 720)
+	await process_frame
+	await process_frame
+	var essay: Label = null
+	for index in range(grid.get_child_count()):
+		var child := grid.get_child(index)
+		if child is Label and String((child as Label).text).begins_with("This Power Takes Up"):
+			essay = child as Label
+	_check(essay != null, "the lattice carries the chain retail named with a sentence")
+	if essay != null:
+		_check(
+			essay.get_line_count() > screen.CHAIN_LABEL_MAX_LINES,
+			"the fixture's chain name really is longer than the column holds (%d lines)"
+				% essay.get_line_count()
+		)
+		_check(
+			essay.get_visible_line_count() <= screen.CHAIN_LABEL_MAX_LINES,
+			"the name column is capped at %d lines (showed %d)"
+				% [screen.CHAIN_LABEL_MAX_LINES, essay.get_visible_line_count()]
+		)
+		_check(
+			essay.text_overrun_behavior == TextServer.OVERRUN_TRIM_ELLIPSIS,
+			"what does not fit ends in an ellipsis rather than being cut mid-word"
+		)
+		_check(
+			essay.tooltip_text.contains("Create A Hero"),
+			"the whole of the name is still readable in the tooltip (got '%s')"
+				% essay.tooltip_text
+		)
+	host.size = Vector2(2560, 1440)
+	await process_frame
+
 	# ONE FOOTER, ON EVERY PAGE. Four pages each carrying their own back/forward
 	# pair is what left short pages with a band of empty screen under them.
 	for page_index in [screen.PAGE_SELECT, screen.PAGE_CLASS, screen.PAGE_ATTRIBUTES, screen.PAGE_POWERS]:
@@ -846,7 +1079,7 @@ func _test_power_selection_rules(system: Dictionary) -> void:
 	for tree_value in offered:
 		for level_value in ((tree_value as Dictionary).get("levels", []) as Array):
 			offered_ids.append(String((level_value as Dictionary).get("powerId", "")))
-	_check(offered.size() == 2, "Hero of the West is offered its two power trees")
+	_check(offered.size() == 3, "Hero of the West is offered its three power trees")
 	_check(
 		not offered_ids.has("Command_CahWizardTeleport"),
 		"a wizard-only power is not offered to Hero of the West"
@@ -1036,6 +1269,18 @@ func _system_document() -> Dictionary:
 					"labelStringId": "CONTROLBAR:CAHAthelas",
 					"allowedClassUpgrades": ["Upgrade_CreateAHero_ClassHeroOfTheWest"],
 					"levels": [_power("Command_CahAthelas", 1, "", 150, [])],
+				},
+				{
+					# THE CHAIN RETAIL NAMES WITH A SENTENCE. `CreateAHero_NoPower`
+					# hangs off a string that explains the slot rather than naming
+					# it, and the lattice printed the whole of it as a three-line
+					# paragraph in a column of one-line power names.
+					"familyId": "Command_CreateAHeroNoPower",
+					"rootPowerId": "Command_CreateAHeroNoPower",
+					"labelStringId": ("CONTROLBAR:ThisPowerTakesUpASlotForFreeAndAllows"
+						+ "YouToManageTheCostOfYourCreateAHero"),
+					"allowedClassUpgrades": ["Upgrade_CreateAHero_ClassHeroOfTheWest"],
+					"levels": [_power("Command_CreateAHeroNoPower", 1, "", 0, [])],
 				},
 				{
 					"familyId": "Command_CahWizardTeleport",

@@ -70,13 +70,9 @@ func _initialize() -> void:
 	backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_viewport.add_child(backdrop)
 
-	_screen = MyHeroesScreen.new()
-	_screen.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_viewport.add_child(_screen)
-
-	# The screen is configured on the FIRST FRAME, not here: the ContentDB
-	# autoload mounts its packs after `_initialize` returns, so configuring now
-	# would photograph the no-table refusal on a machine that has the table.
+	# The screen is stood up on the FIRST FRAME, not here: the ContentDB autoload
+	# mounts its packs after `_initialize` returns, so configuring now would
+	# photograph the no-table refusal on a machine that has the table.
 	var steps := [
 		{"name": "01-my-heroes", "action": ""},
 		{"name": "02-select-class-and-type", "action": "class"},
@@ -105,26 +101,6 @@ func _mounted_system() -> Dictionary:
 
 
 func _process(_delta: float) -> bool:
-	if not _configured:
-		_configured = true
-		var system := _mounted_system()
-		_screen.configure(system)
-		_apply_backdrop()
-		if system.is_empty():
-			print("[cah-capture] NO cah.system MOUNTED - the screen draws its refusal, which is also worth a picture.")
-		else:
-			var registration: Dictionary = system.get("registration", {}) as Dictionary
-			print("[cah-capture] classes=%d powerTrees=%d maxLevel=%s garments=%s" % [
-				(registration.get("classes", []) as Array).size(),
-				(registration.get("powerCatalog", []) as Array).size(),
-				str((registration.get("experience", {}) as Dictionary).get("maxLevel", "?")),
-				_screen.garment_status(),
-			])
-		return false
-	_frames += 1
-	if _frames < SETTLE_FRAMES:
-		return false
-	_frames = 0
 	if _shot >= _plan.size():
 		print("[cah-capture] wrote %d image(s). This runner asserts nothing; it is a camera." % _plan.size())
 		return true
@@ -134,12 +110,22 @@ func _process(_delta: float) -> bool:
 	# state the screen was in beforehand.
 	if not _applied:
 		var wanted: Vector2i = step["size"]
-		if wanted != _size:
+		if wanted != _size or _screen == null:
+			# A NEW SCREEN PER RESOLUTION. The second pass used to walk the same
+			# instance the first pass had finished editing, so `1920x1080-01` was a
+			# photograph of a roster page with two powers equipped and a build cost
+			# of 1000 on it - a state no player reaching that screen can be in.
 			_size = wanted
 			_viewport.size = wanted
+			_stand_up_screen()
 		_apply(String(step["action"]))
 		_applied = true
+		_frames = 0
 		return false
+	_frames += 1
+	if _frames < SETTLE_FRAMES:
+		return false
+	_frames = 0
 	_applied = false
 	var image: Image = _viewport.get_texture().get_image()
 	var path := "%s/%s.png" % [_out_dir, String(step["name"])]
@@ -147,6 +133,31 @@ func _process(_delta: float) -> bool:
 	print("[cah-capture] %s" % path)
 	_shot += 1
 	return false
+
+
+func _stand_up_screen() -> void:
+	if _screen != null:
+		_viewport.remove_child(_screen)
+		_screen.queue_free()
+	_screen = MyHeroesScreen.new()
+	_screen.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_viewport.add_child(_screen)
+	var system := _mounted_system()
+	_screen.configure(system)
+	_apply_backdrop()
+	if _configured:
+		return
+	_configured = true
+	if system.is_empty():
+		print("[cah-capture] NO cah.system MOUNTED - the screen draws its refusal, which is also worth a picture.")
+		return
+	var registration: Dictionary = system.get("registration", {}) as Dictionary
+	print("[cah-capture] classes=%d powerTrees=%d maxLevel=%s garments=%s" % [
+		(registration.get("classes", []) as Array).size(),
+		(registration.get("powerCatalog", []) as Array).size(),
+		str((registration.get("experience", {}) as Dictionary).get("maxLevel", "?")),
+		_screen.garment_status(),
+	])
 
 
 func _apply_backdrop() -> void:
