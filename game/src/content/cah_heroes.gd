@@ -78,7 +78,11 @@ static func profile_dir() -> String:
 	# hazard exists. An explicit override still wins, so a runner that genuinely
 	# wants a named store says so.
 	if DisplayServer.get_name() == "headless":
-		return PROFILE_DIR + PROFILE_DIR_HEADLESS_SUFFIX
+		# Per-process, not shared: one scratch dir for all headless runs meant a
+		# hero created by one runner outlived its process and poisoned every later
+		# gate on the machine (the leftover joined the fortress roster and failed
+		# select-voice checks that had nothing to do with the run under test).
+		return "%s%s-%d" % [PROFILE_DIR, PROFILE_DIR_HEADLESS_SUFFIX, OS.get_process_id()]
 	return PROFILE_DIR
 
 ## Cap on saved heroes. Retail's front end has a fixed hero list too; the number
