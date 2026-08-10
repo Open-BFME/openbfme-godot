@@ -2344,14 +2344,23 @@ func _validate_retail_image(
 		if runtime.is_empty():
 			return {"error": "Playable-unit runtime '%s' is missing." % runtime_object_id}
 		var registration := runtime.get("registration", {}) as Dictionary
-		var metadata := (registration.get("imageBindingMetadata", {}) as Dictionary).get(image_id, {}) as Dictionary
-		image_definition = {
-			"_pack_root": String(runtime.get("_pack_root", "")),
-			"path": String((registration.get("imageBindings", {}) as Dictionary).get(image_id, "")),
-		}
-		if not metadata.is_empty():
-			image_definition["width"] = int(metadata.get("width", 0))
-			image_definition["height"] = int(metadata.get("height", 0))
+		var unit_bindings := registration.get("imageBindings", {}) as Dictionary
+		if unit_bindings.has(image_id):
+			# The unit ships its own converted crop; validate that copy.
+			var metadata := (registration.get("imageBindingMetadata", {}) as Dictionary).get(image_id, {}) as Dictionary
+			image_definition = {
+				"_pack_root": String(runtime.get("_pack_root", "")),
+				"path": String(unit_bindings.get(image_id, "")),
+			}
+			if not metadata.is_empty():
+				image_definition["width"] = int(metadata.get("width", 0))
+				image_definition["height"] = int(metadata.get("height", 0))
+		elif image_definition.is_empty():
+			# Not on the unit doc and not in the shared interface-art index.
+			return {"error": "Required UI image '%s' is missing." % image_id}
+		# else: a shared icon (a created-hero power/portrait, a hero ability)
+		# that lives in the interface-art index, not the unit's own bindings.
+		# Keep the index definition fetched above.
 	elif image_definition.is_empty():
 		return {"error": "Required UI manifest image '%s' is missing." % image_id}
 	var image_pack_root := String(image_definition.get("_pack_root", ""))
@@ -2372,12 +2381,16 @@ func _validate_retail_image(
 		# still fail closed for an image with no pack backing at all.
 		return {"error": "Required UI image '%s' did not come from the selected or faction private packs." % image_id}
 
+	# Resolve the unit/structure's own crop first; fall back to the shared
+	# interface-art index for icons that live there. Provenance above already
+	# validated the pack root of whichever definition we settled on, so the
+	# fallback cannot smuggle in an image with no pack backing.
 	var image_path := ""
 	if structure_object_id != "":
 		image_path = String(content_db.resolve_playable_structure_image_path(structure_object_id, image_id))
 	elif runtime_object_id != "":
 		image_path = String(content_db.resolve_playable_unit_image_path(runtime_object_id, image_id))
-	else:
+	if image_path == "":
 		image_path = String(content_db.resolve_retail_ui_image_path(image_id))
 	if image_path == "":
 		return {"error": "Required UI image '%s' does not resolve inside the selected private pack." % image_id}
