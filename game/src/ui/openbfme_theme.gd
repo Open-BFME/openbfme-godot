@@ -146,6 +146,56 @@ static func create_theme(retail_font: Font = null) -> Theme:
 	result.set_color("font_color", "TooltipLabel", PARCHMENT)
 	result.set_font_size("font_size", "TooltipLabel", 15)
 
+	# ---------------------------------------------------------------- CARD SHELL
+	#
+	# THE VARIATIONS THE CREATE-A-HERO SCREEN IS COMPOSED OUT OF. That screen is
+	# a page of framed cards rather than a wall of controls on black, and it draws
+	# rows of 56px retail icons - neither of which the shell's own button language
+	# can express: `_cap_box` reserves 26px of content margin on each side for a
+	# text label, so a 56px icon button had 4px of room left to draw a 56px icon
+	# in and the class row came out as a row of dots.
+	result.set_type_variation("CahCard", "PanelContainer")
+	result.set_stylebox("panel", "CahCard", _card_box(false))
+	result.set_type_variation("CahCardSunken", "PanelContainer")
+	result.set_stylebox("panel", "CahCardSunken", _card_box(true))
+
+	var slot_states := _icon_slot_boxes()
+	result.set_type_variation("CahIconSlot", "Button")
+	result.set_font_size("font_size", "CahIconSlot", 14)
+	result.set_color("font_color", "CahIconSlot", TEXT_PALE_GOLD)
+	result.set_color("font_hover_color", "CahIconSlot", TEXT_LEAF_BRIGHT)
+	result.set_color("font_pressed_color", "CahIconSlot", TEXT_LEAF_BRIGHT)
+	result.set_color("font_focus_color", "CahIconSlot", TEXT_LEAF_BRIGHT)
+	result.set_color("font_disabled_color", "CahIconSlot", Color(0.50, 0.55, 0.45, 0.55))
+	for state in slot_states.keys():
+		result.set_stylebox(String(state), "CahIconSlot", slot_states[state])
+
+	# The small square stepper the garment and attribute rows are driven with.
+	result.set_type_variation("CahStepper", "Button")
+	result.set_font_size("font_size", "CahStepper", 18)
+	result.set_color("font_color", "CahStepper", TEXT_PALE_GOLD)
+	result.set_color("font_hover_color", "CahStepper", TEXT_ON_LIME)
+	result.set_color("font_pressed_color", "CahStepper", TEXT_LEAF_BRIGHT)
+	var stepper_states := _stepper_boxes()
+	for state in stepper_states.keys():
+		result.set_stylebox(String(state), "CahStepper", stepper_states[state])
+
+	# Attribute and stat bars. Godot's default ProgressBar is a grey slab that
+	# reads as a loading bar; these are the gold-on-ink pips the shell uses.
+	result.set_type_variation("CahBar", "ProgressBar")
+	var bar_background := StyleBoxFlat.new()
+	bar_background.bg_color = Color(0.02, 0.05, 0.03, 0.92)
+	bar_background.border_color = Color(GOLD, 0.45)
+	bar_background.set_border_width_all(1)
+	bar_background.set_corner_radius_all(2)
+	result.set_stylebox("background", "CahBar", bar_background)
+	var bar_fill := StyleBoxFlat.new()
+	bar_fill.bg_color = Color(0.62, 0.52, 0.24, 0.96)
+	bar_fill.border_color = Color(GOLD_BRIGHT, 0.85)
+	bar_fill.set_border_width_all(1)
+	bar_fill.set_corner_radius_all(2)
+	result.set_stylebox("fill", "CahBar", bar_fill)
+
 	result.set_type_variation("PrimaryButton", "Button")
 	result.set_font_size("font_size", "PrimaryButton", 21)
 	result.set_color("font_color", "PrimaryButton", Color("f0deb0"))
@@ -413,6 +463,99 @@ static func _flyout_panel_box() -> StyleBoxFlat:
 	box.shadow_color = Color(0.25, 0.65, 0.25, 0.25)
 	box.shadow_size = 14
 	return box
+
+
+static func _card_box(sunken: bool) -> StyleBoxFlat:
+	## One framed card on a full-bleed screen: dark green glass inside a gold
+	## hairline, with a lit top edge. `sunken` is the well a list or a grid sits
+	## in - darker and unlit, so a scroll view reads as a hole in the card rather
+	## than as a second card floating on it.
+	var box := StyleBoxFlat.new()
+	box.bg_color = Color(0.020, 0.052, 0.030, 0.90) if not sunken else Color(0.010, 0.026, 0.016, 0.86)
+	box.border_color = Color(GOLD, 0.55 if not sunken else 0.34)
+	box.set_border_width_all(1)
+	if not sunken:
+		box.border_width_top = 2
+		box.border_color = Color(GOLD, 0.55)
+	box.set_corner_radius_all(3)
+	box.content_margin_left = 16.0
+	box.content_margin_right = 16.0
+	box.content_margin_top = 12.0
+	box.content_margin_bottom = 12.0
+	if not sunken:
+		box.shadow_color = Color(0.0, 0.0, 0.0, 0.55)
+		box.shadow_size = 10
+	return box
+
+
+static func _icon_slot_boxes() -> Dictionary:
+	## The frame around one retail icon. FOUR PIXELS of content margin, because
+	## the whole point of the slot is that the art fills it.
+	var out := {}
+	for state in ["normal", "hover", "pressed", "focus", "disabled"]:
+		var box := StyleBoxFlat.new()
+		box.set_corner_radius_all(2)
+		box.set_border_width_all(1)
+		match state:
+			"hover":
+				box.bg_color = Color(0.18, 0.33, 0.16, 0.95)
+				box.border_color = Color(0.86, 1.00, 0.66, 0.95)
+				box.set_border_width_all(2)
+			"pressed":
+				# SELECTED, not merely held: these slots are toggles, so `pressed`
+				# is the state a chosen class or an equipped power lives in and it
+				# has to be legible across the room.
+				box.bg_color = Color(0.30, 0.44, 0.16, 0.98)
+				box.border_color = Color(GOLD_BRIGHT, 1.0)
+				box.set_border_width_all(3)
+				box.shadow_color = Color(0.75, 0.65, 0.28, 0.35)
+				box.shadow_size = 8
+			"focus":
+				box.bg_color = Color(0.06, 0.13, 0.07, 0.92)
+				box.border_color = Color(GOLD_BRIGHT, 0.95)
+				box.set_border_width_all(2)
+			"disabled":
+				box.bg_color = Color(0.035, 0.055, 0.040, 0.75)
+				box.border_color = Color(0.30, 0.36, 0.28, 0.45)
+			_:
+				box.bg_color = Color(0.06, 0.13, 0.07, 0.92)
+				box.border_color = Color(GOLD, 0.45)
+		box.content_margin_left = 4.0
+		box.content_margin_right = 4.0
+		box.content_margin_top = 4.0
+		box.content_margin_bottom = 4.0
+		out[state] = box
+	return out
+
+
+static func _stepper_boxes() -> Dictionary:
+	var out := {}
+	for state in ["normal", "hover", "pressed", "focus", "disabled"]:
+		var box := StyleBoxFlat.new()
+		box.set_corner_radius_all(2)
+		box.set_border_width_all(1)
+		match state:
+			"hover":
+				box.bg_color = Color(0.55, 0.76, 0.36, 0.95)
+				box.border_color = Color(0.88, 1.0, 0.68, 0.95)
+			"pressed":
+				box.bg_color = Color(0.34, 0.52, 0.22, 0.97)
+				box.border_color = Color(GOLD_BRIGHT, 0.95)
+			"focus":
+				box.bg_color = Color(0.07, 0.15, 0.08, 0.92)
+				box.border_color = Color(GOLD_BRIGHT, 0.9)
+			"disabled":
+				box.bg_color = Color(0.04, 0.06, 0.04, 0.6)
+				box.border_color = Color(0.28, 0.33, 0.26, 0.4)
+			_:
+				box.bg_color = Color(0.07, 0.15, 0.08, 0.92)
+				box.border_color = Color(GOLD, 0.5)
+		box.content_margin_left = 6.0
+		box.content_margin_right = 6.0
+		box.content_margin_top = 2.0
+		box.content_margin_bottom = 2.0
+		out[state] = box
+	return out
 
 
 static func _column_header_box() -> StyleBoxFlat:

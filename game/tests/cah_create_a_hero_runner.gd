@@ -16,6 +16,7 @@ extends SceneTree
 const CahHeroes = preload("res://src/content/cah_heroes.gd")
 const MyHeroesScreen = preload("res://src/ui/my_heroes_screen.gd")
 const Adapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
+const SubObjects = preload("res://src/ui/cah_sub_objects.gd")
 
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
 var _runner_watchdog := RunnerWatchdogScript.new()
@@ -87,6 +88,7 @@ func _run() -> void:
 	_test_power_selection_rules(system)
 	_test_powers_and_levels_reach_the_runtime_contracts(system)
 	_test_screen(system)
+	_test_garment_sub_objects(system)
 	_test_purchase_spawns_with_computed_stats(system)
 	_test_pack_resolution(system)
 	await _test_full_window_layout(system)
@@ -329,6 +331,169 @@ func _test_screen(system: Dictionary) -> void:
 	_clear_profiles()
 
 
+# ------------------------------------------------------------ garment parts
+
+
+func _synthetic_skin() -> Node3D:
+	## A stand-in for a converted Create-a-Hero GLB: one body and two numbered
+	## variants of three parts, named the way retail names its sub-objects.
+	var root := Node3D.new()
+	var skeleton := Node3D.new()
+	skeleton.name = "Skeleton"
+	root.add_child(skeleton)
+	for part in ["CHHW_SMN", "HLMT_01", "HLMT_02", "SLDR_01", "SLDR_04", "SHLD_01", "SHLD_02", "GURTHANG"]:
+		var mesh := MeshInstance3D.new()
+		mesh.name = part
+		mesh.mesh = BoxMesh.new()
+		skeleton.add_child(mesh)
+	return root
+
+
+func _visible_parts(root: Node3D) -> Array[String]:
+	var out: Array[String] = []
+	var stack: Array[Node] = [root]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		for child in node.get_children():
+			stack.append(child)
+		if node is MeshInstance3D and (node as MeshInstance3D).visible:
+			out.append(String(node.name))
+	out.sort()
+	return out
+
+
+func _test_garment_sub_objects(_system: Dictionary) -> void:
+	## THE GARMENTS ON THE HERO'S BODY.
+	##
+	## Retail bakes every helmet, shoulder plate and shield into the one skin and
+	## switches their visibility; the converted GLBs keep the retail part names
+	## (verified against `CHHW_CG_C_SKN.glb`: HLMT_01/02/05/06, SLDR_01/02/04/05,
+	## SHLD_01..04, BOOT_00..05, GURTHANG, TROLLBANE...). These drive the switch
+	## over a SYNTHETIC skin so the gate never waits on the content lane.
+	var mapped_system := {
+		"schema": CahHeroes.SYSTEM_SCHEMA,
+		"schemaVersion": CahHeroes.SYSTEM_SCHEMA_VERSION,
+		"registration": {
+			"appearanceOptions": [
+				{"upgradeName": "Upgrade_H1", "subObjects": {"show": ["HLMT_01"], "hide": []}},
+				{"upgradeName": "Upgrade_H2", "subObjects": {"show": ["HLMT_02"], "hide": []}},
+				{"upgradeName": "Upgrade_HNone", "subObjects": {"show": [], "hide": []}},
+				{"upgradeName": "Upgrade_S1", "subObjects": {"show": ["SLDR_01"], "hide": []}},
+				# A part this skin does not carry: retail authors garments that
+				# only exist on the battlefield mesh, and the preview must ignore
+				# the name rather than fail on it.
+				{"upgradeName": "Upgrade_S9", "subObjects": {"show": ["SLDR_99"], "hide": []}},
+			],
+		},
+	}
+	var sub_row := {
+		"models": {
+			"creationScreen": {
+				"model": "SYNTH_C_SKN",
+				"defaultSubObjects": {"show": ["CHHW_SMN"], "hide": ["SHLD_01", "SHLD_02"]},
+			},
+		},
+		"appearanceChoices": {
+			"CreateAHero_Helmet": ["Upgrade_HNone", "Upgrade_H1", "Upgrade_H2"],
+			"CreateAHero_ShoulderPlates": ["Upgrade_S1", "Upgrade_S9"],
+		},
+	}
+
+	_check(
+		SubObjects.system_maps_sub_objects(mapped_system),
+		"a pack that binds appearance options to mesh parts is recognised as mapping them"
+	)
+	_check(
+		not SubObjects.system_maps_sub_objects({"registration": {"appearanceOptions": [
+			{"upgradeName": "Upgrade_H1"},
+		]}}),
+		"a pack with no bindings is recognised as NOT mapping them"
+	)
+
+	# THE DEFAULT LOADOUT: the first option of every group, plus the subclass's
+	# own default set.
+	var skin := _synthetic_skin()
+	var opening := SubObjects.plan(mapped_system, sub_row, {}, "creationScreen")
+	_check(bool(opening.get("mapped", false)), "the opening plan reports itself mapped")
+	SubObjects.apply(skin, opening)
+	_check(
+		", ".join(_visible_parts(skin)) == "CHHW_SMN, GURTHANG, SLDR_01, SLDR_04",
+		("the default loadout wears the body and the first shoulder plate, no helmet because the "
+			+ "first helmet option is the bare-headed one, and neither shield because the subclass "
+			+ "default hides them - and SLDR_04, which no option in this table claims, is left "
+			+ "exactly as the pack shipped it (got %s)") % str(_visible_parts(skin))
+	)
+
+	# CYCLING A GROUP REPLACES, it does not stack: choosing helmet 2 takes helmet
+	# 1 off, which is the whole difference between this and a hero wearing four
+	# helmets at once.
+	var second := SubObjects.plan(
+		mapped_system, sub_row, {"CreateAHero_Helmet": "Upgrade_H2"}, "creationScreen"
+	)
+	var applied := SubObjects.apply(skin, second)
+	_check(
+		not _visible_parts(skin).has("HLMT_01") and _visible_parts(skin).has("HLMT_02"),
+		"cycling to the second helmet hides the first (got %s)" % str(_visible_parts(skin))
+	)
+	# ...and the "no helmet" option really takes it off.
+	SubObjects.apply(skin, SubObjects.plan(
+		mapped_system, sub_row, {"CreateAHero_Helmet": "Upgrade_HNone"}, "creationScreen"
+	))
+	_check(
+		not _visible_parts(skin).has("HLMT_01") and not _visible_parts(skin).has("HLMT_02"),
+		"the bare-headed option shows no helmet at all (got %s)" % str(_visible_parts(skin))
+	)
+
+	# A NAME THE MESH DOES NOT CARRY IS COUNTED, NOT FATAL.
+	var missing := SubObjects.apply(skin, SubObjects.plan(
+		mapped_system, sub_row, {"CreateAHero_ShoulderPlates": "Upgrade_S9"}, "creationScreen"
+	))
+	_check(
+		(missing.get("unknown", []) as Array).has("SLDR_99"),
+		"a part the skin does not carry is reported unknown rather than raising"
+	)
+	_check(
+		not _visible_parts(skin).has("SLDR_01"),
+		"choosing the shoulder plate this skin lacks still takes the other one off"
+	)
+
+	# THE STOPGAP for a pack that carries no bindings at all. Numbered siblings
+	# are alternatives by construction, so at most one of each may show; a part
+	# with no numbered sibling is left exactly as the pack shipped it.
+	var raw := _synthetic_skin()
+	var collapse := SubObjects.collapse_variant_families(raw)
+	_check(not bool(collapse.get("mapped", true)), "the stopgap plan does not claim to be mapped")
+	SubObjects.apply(raw, collapse)
+	_check(
+		", ".join(_visible_parts(raw)) == "CHHW_SMN, GURTHANG, HLMT_01, SHLD_01, SLDR_01",
+		"an unmapped skin collapses to one variant per numbered part (got %s)"
+			% str(_visible_parts(raw))
+	)
+
+	_check(
+		SubObjects.mesh_names(raw).has("GURTHANG"),
+		"the part inventory reads the retail sub-object names off the model"
+	)
+	_check(
+		(SubObjects.apply(null, opening).get("matched", -1)) == 0,
+		"applying a plan to no model at all is a no-op rather than a crash"
+	)
+
+	skin.queue_free()
+	raw.queue_free()
+
+	# THE SCREEN'S OWN REPORT. The mounted synthetic table carries no bindings,
+	# so the screen must say so rather than pretend the hero is dressed to order.
+	var screen = MyHeroesScreen.new()
+	root.add_child(screen)
+	screen.configure(_system)
+	_check(
+		screen.garment_status() in ["unmapped", "no-model", "mapped", "mapped-unmatched"],
+		"the screen reports what it did about garments (got '%s')" % screen.garment_status()
+	)
+	screen.queue_free()
+
+
 # ---------------------------------------------------- pack art and pack meshes
 
 
@@ -552,34 +717,72 @@ func _test_full_window_layout(system: Dictionary) -> void:
 		"the controls get the larger share, the hero the smaller one"
 	)
 
-	# THE POWERS GRID'S COLUMN KEY MUST BE ON THE SCREEN. "Required Hero Level" and
-	# its four numbers are the last row OF THE GRID, so they are only in view if
-	# the band under the grid leaves the scroll enough height - and at a 340px
-	# floor (the preview's old minimum) they fell past the fold, which left four
-	# columns of powers with nothing naming them.
+	# THE POWERS GRID'S COLUMN KEY MUST BE ON THE SCREEN, and it must be the FIRST
+	# thing on it: "Required Hero Level" and its four numbers used to trail the
+	# lattice, so on a class with more chains than fit the scroll the four columns
+	# had nothing naming them until you scrolled to the bottom looking for it.
 	host.size = Vector2(2560, 1440)
 	screen._show_page(screen.PAGE_POWERS)
 	await process_frame
+	await process_frame
 	var grid: GridContainer = screen._power_grid
-	var scroll := grid.get_parent() as ScrollContainer
-	_check(
-		screen._powers_preview_slot.get_combined_minimum_size().y <= screen.POWERS_PREVIEW_HEIGHT + 60.0,
-		"the hero's band under the grid does not grow past its own budget (%.0f)"
-			% screen._powers_preview_slot.get_combined_minimum_size().y
-	)
+	var scroll: ScrollContainer = screen._power_scroll
+	_check(scroll != null and grid.get_parent() == screen._power_grid_wrap,
+		"the lattice and its connector overlay share one rectangle inside the scroll view")
 	_check(
 		grid.get_combined_minimum_size().y <= scroll.size.y,
-		"the whole grid, level strip included, is in view at 2560x1440 (%.0f in %.0f)"
+		"the whole lattice is in view at 2560x1440 (%.0f in %.0f)"
 			% [grid.get_combined_minimum_size().y, scroll.size.y]
 	)
 	var cells := grid.get_child_count()
 	var aligned := cells >= 10
 	for column in range(POWER_COLUMN_COUNT):
-		var header := grid.get_child(cells - POWER_COLUMN_COUNT + column) as Control
-		var body := grid.get_child(1 + column) as Control
+		# Row 0 is the tier key; row 1 is the first chain. Both are laid out by
+		# the same GridContainer, so a number over the wrong column would mean the
+		# grid itself had come apart.
+		var header := grid.get_child(1 + column) as Control
+		var body := grid.get_child(1 + POWER_COLUMN_COUNT + 1 + column) as Control
 		if not is_equal_approx(header.position.x, body.position.x):
 			aligned = false
-	_check(aligned, "each level number sits over the column of powers it labels")
+		if header.position.y >= body.position.y:
+			aligned = false
+	_check(aligned, "each level number leads the column of powers it labels")
+
+	# THE HERO IS BESIDE THE LATTICE, NOT UNDER IT. He used to sit in a band below
+	# the grid, and every pixel that band took came off the grid's own scroll view.
+	_check(
+		screen._powers_preview_slot.get_parent() != screen._pages[screen.PAGE_POWERS].get_child(0),
+		"the hero on the powers page stands in the right-hand column, not under the lattice"
+	)
+
+	# NOTHING ON THE LATTICE CLIPS. The chain names used to end mid-word
+	# ("Command Create A Hero Shielc"), and a power with no icon was captioned by
+	# the button's own clipped text ("Mou" for Mount / Dismount).
+	var clipped := 0
+	var wrapped_captions := 0
+	for index in range(grid.get_child_count()):
+		var child := grid.get_child(index)
+		if child is Label and (child as Label).clip_text:
+			clipped += 1
+		if child is Button:
+			var button := child as Button
+			if button.icon == null and button.text != "":
+				clipped += 1
+			for sub in button.get_children():
+				if sub is Label and (sub as Label).autowrap_mode != TextServer.AUTOWRAP_OFF:
+					wrapped_captions += 1
+	_check(clipped == 0, "no label or cell on the lattice is clipped (%d were)" % clipped)
+
+	# ONE FOOTER, ON EVERY PAGE. Four pages each carrying their own back/forward
+	# pair is what left short pages with a band of empty screen under them.
+	for page_index in [screen.PAGE_SELECT, screen.PAGE_CLASS, screen.PAGE_ATTRIBUTES, screen.PAGE_POWERS]:
+		screen._show_page(page_index)
+		var forward: Button = screen.save_button if page_index == screen.PAGE_POWERS else screen._next_button
+		_check(
+			screen.back_button.visible and forward.visible and forward.text != "",
+			"page %d carries the shared footer pair" % page_index
+		)
+	screen._show_page(screen.PAGE_SELECT)
 
 	# The shell's half of the bargain, asserted without standing the shell up.
 	var menu_script = load("res://src/ui/main_menu.gd")
