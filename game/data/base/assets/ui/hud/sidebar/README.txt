@@ -17,30 +17,44 @@ Faction keys (lower case, spaces and dashes folded to underscores):
 
 SIZE AND FORMAT
 ---------------
-  * PNG with a real alpha channel. Transparency is required: the icon column
-    and everything outside the frame must be fully transparent (alpha 0), not
-    white and not a checkerboard baked into RGB.
+  * PNG with a real alpha channel. Transparency is required: everything
+    outside the frame body must be fully transparent (alpha 0) - not white,
+    not black, and not a checkerboard baked into RGB. Generators often return
+    an opaque image with a painted-on checkerboard; that will render as a grey
+    slab over the battlefield.
   * Native size 147 x 1074 px, or any integer multiple (294 x 2148,
     441 x 3222). The aspect 147:1074 is the contract - the game stretches the
     image to that aspect, so a different aspect will visibly distort.
   * The art is drawn full-bleed into that rectangle. The game right-anchors it
     to the screen edge and scales it to 96% of the screen height, so at 1080p
-    it renders about 142 x 1037 px.
+    it renders about 142 x 1037 px. The right edge of the image lands exactly
+    on the right edge of the screen - the reference art's body runs to 147 px
+    and the generated default insets 3 px, either is fine.
 
-WHERE THE ICONS LAND (leave these areas clear)
-----------------------------------------------
+WHERE THE ICONS LAND
+--------------------
+All numbers below were measured off the retail reference crop with a pixel
+grid, and are the same numbers the game lays the sockets out from.
+
 Fractions of the image WIDTH (147 px native):
-  * round build icons are centred at x = 0.408  (60 px) and are
-    0.70 of the width across (103 px), i.e. they cover x = 0.058..0.758
-    (8 px .. 111 px). Keep that column transparent or the icons are hidden.
-  * the frame body should live to the right of that, roughly x = 0.42..1.00
-    (62 px .. 147 px), running to the right edge of the image.
+  * build icons are OVALS, wider than tall. They are centred at x = 0.585
+    (86 px), are 0.735 of the width across (108 px) and 0.571 of the width
+    tall (84 px), so they cover x = 0.218 .. 0.952 (32 px .. 140 px).
+  * the frame body sits behind and to the right of them, roughly
+    x = 0.646 .. 1.00 (95 px .. 147 px). Only a sliver of it shows past the
+    icons - that is correct, retail looks the same.
+  * everything left of x = 0.218 (32 px) is outside the widget; art there is
+    drawn but nothing is placed on it.
 
 Fractions of the image HEIGHT (1074 px native):
-  * the icon column runs from y = 0.055 to y = 0.945 (59 px .. 1015 px).
-    Nine icons fill that band at natural size; longer build sets shrink to fit.
-  * the top and bottom 5.5% are the end caps - put the scroll/volute terminals
-    there so they sit above and below the icons.
+  * the icon column runs y = 0.1331 .. 0.8538 (143 px .. 917 px). Nine icons
+    fill it exactly at natural size, centres 86.25 px apart starting at
+    y = 185; longer build sets shrink to fit the same band.
+  * put the scroll/volute terminals in the margins outside that band. In the
+    reference they are centred at y = 152 and y = 972.
+
+The icons are drawn OVER the frame, so art under the icon ovals is hidden.
+Do not rely on detail there.
 
 WHERE ELSE THE GAME LOOKS
 -------------------------

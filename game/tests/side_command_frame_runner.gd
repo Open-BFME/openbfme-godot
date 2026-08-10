@@ -35,6 +35,7 @@ func _init() -> void:
 
 
 func _run() -> void:
+	_check_reference_oracle()
 	_check_geometry_contract()
 	_check_frame_widget()
 	_check_bar_layout()
@@ -43,6 +44,60 @@ func _run() -> void:
 	_check_hud_wiring()
 	print("SIDE_COMMAND_FRAME_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(1 if failed > 0 else 0)
+
+
+func _check_reference_oracle() -> void:
+	## EXTERNAL ORACLE. The socket column is not allowed to be self-asserted: at
+	## the viewport where the frame renders at the reference crop's native size,
+	## the sockets the shipping layout produces must land on the ring positions
+	## measured off that crop with a pixel grid (147 x 1074; ring walls at
+	## x = 32 and x = 140, ring height 84, nine centres 185 .. 875).
+	## Change a ratio without re-measuring the reference and this goes red.
+	var viewport := Vector2(1920.0, FrameScript.REFERENCE_ART_SIZE.y / FrameScript.FRAME_HEIGHT_RATIO)
+	var rect: Rect2 = FrameScript.frame_rect(viewport)
+	_check(
+		"oracle_frame_renders_at_reference_size",
+		rect.size.distance_to(FrameScript.REFERENCE_ART_SIZE) < 0.75,
+		"%s vs %s" % [str(rect.size), str(FrameScript.REFERENCE_ART_SIZE)]
+	)
+	var icon: Vector2 = FrameScript.icon_size(viewport)
+	var expected_width: float = FrameScript.REFERENCE_ICON_RIGHT - FrameScript.REFERENCE_ICON_LEFT
+	_check(
+		"oracle_socket_width_matches_reference",
+		absf(icon.x - expected_width) <= 1.5,
+		"%f vs %f" % [icon.x, expected_width]
+	)
+	_check(
+		"oracle_socket_height_matches_reference",
+		absf(icon.y - FrameScript.REFERENCE_ICON_HEIGHT) <= 1.5,
+		"%f vs %f" % [icon.y, FrameScript.REFERENCE_ICON_HEIGHT]
+	)
+	var left_in_frame: float = FrameScript.icon_column_center_x(viewport) - icon.x * 0.5 - rect.position.x
+	_check(
+		"oracle_socket_left_wall_matches_reference",
+		absf(left_in_frame - FrameScript.REFERENCE_ICON_LEFT) <= 1.5,
+		"%f vs %f" % [left_in_frame, FrameScript.REFERENCE_ICON_LEFT]
+	)
+
+	var bar = BarScript.new()
+	bar._build()
+	var constructs: Array = []
+	for index in FrameScript.REFERENCE_ICON_CENTERS_Y.size():
+		constructs.append({"kind": "kind_%d" % index, "icon": null, "title": "", "description": ""})
+	bar.configure_from_constructs(constructs)
+	bar.layout_for_viewport(viewport)
+	var worst := 0.0
+	var worst_detail := ""
+	var buttons: Array = bar.side_buttons()
+	for index in buttons.size():
+		var center_y: float = buttons[index].position.y + buttons[index].size.y * 0.5 - rect.position.y
+		var expected: float = FrameScript.REFERENCE_ICON_CENTERS_Y[index]
+		var error := absf(center_y - expected)
+		if error > worst:
+			worst = error
+			worst_detail = "row %d: %f vs %f" % [index, center_y, expected]
+	_check("oracle_socket_centres_match_reference", worst <= 2.0, "worst=%f %s" % [worst, worst_detail])
+	bar.free()
 
 
 func _check_geometry_contract() -> void:

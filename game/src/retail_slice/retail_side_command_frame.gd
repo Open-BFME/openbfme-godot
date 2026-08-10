@@ -8,13 +8,17 @@ extends Control
 ## per-faction art slot, and a repository-authored default frame that is
 ## generated procedurally here (no retail bytes are copied into the repo).
 ##
-## GEOMETRY CONTRACT (measured off the retail reference crop, 147 x 1074 px):
+## GEOMETRY CONTRACT. The socket column numbers are measured off the retail
+## reference crop (147 x 1074 px) with a pixel grid - see the REFERENCE_ICON_*
+## table below, which the runner re-derives and checks against. The screen
+## margin (FRAME_TOP_RATIO / FRAME_HEIGHT_RATIO) is NOT measured: the reference
+## is a crop and cannot say how much screen edge retail left.
 ##   * the frame is right-anchored: frame_rect(viewport).end.x == viewport.x
 ##   * width / height == FRAME_ASPECT (147 / 1074)
 ##   * the frame spans FRAME_HEIGHT_RATIO of the viewport height, starting at
 ##     FRAME_TOP_RATIO from the top
-##   * the round icon column centers at ICON_COLUMN_CENTER_RATIO across the
-##     frame width, with icons ICON_DIAMETER_RATIO of the frame width across
+##   * sockets are ellipses centred at ICON_COLUMN_CENTER_RATIO across the frame
+##     width, ICON_WIDTH_RATIO wide and ICON_HEIGHT_RATIO tall (both of width)
 ##   * nine sockets fill the column at native size; longer rosters shrink to fit
 ##
 ## DROP-IN ART SLOT (the owner's manual art step). Author a transparent PNG at
@@ -59,18 +63,39 @@ const FRAME_NODE_NAME := "SideCommandFrame"
 ## this size (or an integer multiple of it) so the icon column lines up.
 const REFERENCE_ART_SIZE := Vector2(147.0, 1074.0)
 const FRAME_ASPECT := 147.0 / 1074.0
+## Screen margin. This pair is a layout choice, NOT a reference measurement:
+## the reference is a crop, so it cannot say how much screen edge retail left.
 const FRAME_TOP_RATIO := 0.02
 const FRAME_HEIGHT_RATIO := 0.96
 
-## Where the round sockets sit inside the frame, as fractions of frame width.
-const ICON_COLUMN_CENTER_RATIO := 0.408
-const ICON_DIAMETER_RATIO := 0.70
-## Vertical inset of the socket band inside the frame (scroll terminals live in
-## the inset), as a fraction of frame height.
-const ICON_BAND_INSET_RATIO := 0.055
-## Socket pitch as a fraction of socket diameter: retail's sockets nearly touch.
-const ICON_PITCH_RATIO := 0.96
-const MIN_ICON_DIAMETER := 30.0
+## ---------------------------------------------------------------------------
+## MEASURED OFF THE REFERENCE CROP (147 x 1074), pixel-grid read 2026-08-10.
+## These are the external oracle for the socket column; the ratios below are
+## derived from them and tests/side_command_frame_runner.gd re-derives the
+## socket rects and compares them back against this table. Re-measure before
+## changing any of them.
+##   * every socket ring's left outer wall sits at x = 32, right at x = 140
+##   * ring height 84 px, nine rings, centres 86.25 px apart
+##   * first ring centre y = 185, last y = 875
+const REFERENCE_ICON_LEFT := 32.0
+const REFERENCE_ICON_RIGHT := 140.0
+const REFERENCE_ICON_HEIGHT := 84.0
+const REFERENCE_ICON_PITCH := 86.25
+const REFERENCE_ICON_CENTERS_Y := [185.0, 271.25, 357.5, 443.75, 530.0, 616.25, 702.5, 788.75, 875.0]
+## ---------------------------------------------------------------------------
+
+## Socket column, as fractions of frame WIDTH. Retail's sockets are ellipses,
+## wider than they are tall, so width and height are tracked separately.
+const ICON_COLUMN_CENTER_RATIO := 0.5850  # (32 + 140) / 2 / 147
+const ICON_WIDTH_RATIO := 0.7347  # (140 - 32) / 147
+const ICON_HEIGHT_RATIO := 0.5714  # 84 / 147
+## Socket pitch as a fraction of socket HEIGHT: retail's sockets just touch.
+const ICON_PITCH_RATIO := 1.0268  # 86.25 / 84
+## Socket band inside the frame, as fractions of frame HEIGHT. The scroll
+## terminals live in the insets. 143 = 185 - 84/2, 917 = 875 + 84/2.
+const ICON_BAND_TOP_RATIO := 0.1331  # 143 / 1074
+const ICON_BAND_BOTTOM_RATIO := 0.8538  # 917 / 1074
+const MIN_ICON_HEIGHT := 26.0
 ## Beyond this many sockets a single column would be unreadable, so the roster
 ## wraps into extra columns growing leftward (the frame covers the primary
 ## column, as it does in retail where the roster never exceeds one column).
@@ -88,8 +113,15 @@ const FRAME_OUTLINE := Color("#1d1810")
 const FRAME_SHADOW := Color("#2e2717")
 const FRAME_BODY := Color("#7d6f4a")
 const FRAME_HIGHLIGHT := Color("#dccd9e")
-const BAND_LEFT_RATIO := 0.42
+## Band and terminal placement, also read off the reference crop: the vine band
+## occupies x 95..147 and runs y 175..935, with the scroll terminals centred at
+## y 152 and y 972 (they overhang the band ends, as in the reference).
+const BAND_LEFT_RATIO := 0.646  # 95 / 147
 const BAND_RIGHT_INSET := 3.0
+const BAND_TOP_RATIO := 0.163  # 175 / 1074
+const BAND_BOTTOM_RATIO := 0.870  # 935 / 1074
+const TERMINAL_TOP_RATIO := 0.1415  # 152 / 1074
+const TERMINAL_BOTTOM_RATIO := 0.9050  # 972 / 1074
 ## Rope twist: grooves repeat every TWIST_PERIOD px and lean across the band by
 ## TWIST_LEAN px, so the braid reads diagonally like the retail vine strip.
 const TWIST_PERIOD := 40.0
@@ -126,15 +158,20 @@ static func icon_column_center_x(viewport: Vector2) -> float:
 	return rect.position.x + rect.size.x * ICON_COLUMN_CENTER_RATIO
 
 
-static func icon_diameter(viewport: Vector2) -> float:
-	return frame_rect(viewport).size.x * ICON_DIAMETER_RATIO
+static func icon_size(viewport: Vector2) -> Vector2:
+	## Socket rect size. Retail's sockets are wider than tall (see the measured
+	## table above), so this is not a single diameter.
+	var width := frame_rect(viewport).size.x
+	return Vector2(width * ICON_WIDTH_RATIO, width * ICON_HEIGHT_RATIO)
 
 
 static func icon_band(viewport: Vector2) -> Vector2:
 	## Returns (top_y, bottom_y) of the socket band inside the frame.
 	var rect := frame_rect(viewport)
-	var inset := rect.size.y * ICON_BAND_INSET_RATIO
-	return Vector2(rect.position.y + inset, rect.end.y - inset)
+	return Vector2(
+		rect.position.y + rect.size.y * ICON_BAND_TOP_RATIO,
+		rect.position.y + rect.size.y * ICON_BAND_BOTTOM_RATIO
+	)
 
 
 # ------------------------------------------------------------- art lookup --
@@ -244,8 +281,8 @@ static func _build_default_image() -> Image:
 	var band_left := float(width) * BAND_LEFT_RATIO
 	var band_right := float(width) - BAND_RIGHT_INSET
 	var band_width := maxf(1.0, band_right - band_left)
-	var body_top := float(height) * 0.05
-	var body_bottom := float(height) * 0.95
+	var body_top := float(height) * BAND_TOP_RATIO
+	var body_bottom := float(height) * BAND_BOTTOM_RATIO
 	for y in height:
 		var fy := float(y)
 		var end_fade := 1.0
@@ -282,8 +319,8 @@ static func _build_default_image() -> Image:
 			color.a = clampf(alpha, 0.0, 1.0)
 			image.set_pixel(x, y, color)
 	var spiral_x := band_left + band_width * 0.5
-	_stamp_spiral(image, Vector2(spiral_x, 48.0), 1.0)
-	_stamp_spiral(image, Vector2(spiral_x, float(height) - 48.0), -1.0)
+	_stamp_spiral(image, Vector2(spiral_x, float(height) * TERMINAL_TOP_RATIO), 1.0)
+	_stamp_spiral(image, Vector2(spiral_x, float(height) * TERMINAL_BOTTOM_RATIO), -1.0)
 	return image
 
 

@@ -181,29 +181,31 @@ func layout_for_viewport(viewport: Vector2) -> void:
 	var band: Vector2 = FrameScript.icon_band(viewport)
 	var band_height := maxf(1.0, band.y - band.x)
 	var count := maxi(1, _buttons.size())
-	var diameter: float = FrameScript.icon_diameter(viewport)
-	var pitch: float = diameter * FrameScript.ICON_PITCH_RATIO
-	var rows := maxi(1, int(floorf((band_height - diameter) / pitch)) + 1)
-	if rows < count and count <= FrameScript.MAX_SINGLE_COLUMN:
-		# Retail keeps the whole build set in one column inside the frame:
-		# shrink to fit rather than spilling sockets past the frame edge.
-		pitch = band_height / float(count)
-		diameter = clampf(pitch * FrameScript.ICON_PITCH_RATIO, FrameScript.MIN_ICON_DIAMETER, diameter)
-		rows = count
-	elif rows < count:
+	var icon: Vector2 = FrameScript.icon_size(viewport)
+	var pitch: float = icon.y * FrameScript.ICON_PITCH_RATIO
+	var rows := count
+	if count > FrameScript.MAX_SINGLE_COLUMN:
 		# Pathological roster: wrap leftward out of the frame rather than
 		# shrinking the sockets into illegibility.
-		rows = maxi(1, rows)
+		rows = maxi(1, int(floorf((band_height - icon.y) / pitch)) + 1)
+	else:
+		# Retail keeps the whole build set in one column inside the frame:
+		# shrink to fit rather than spilling sockets past the frame ends.
+		var span := icon.y + float(count - 1) * pitch
+		if span > band_height:
+			var shrink := band_height / span
+			icon *= shrink
+			pitch *= shrink
 	var center_x: float = FrameScript.icon_column_center_x(viewport)
 	for index in _buttons.size():
 		var row := index % rows
 		var column := index / rows
 		var button := _buttons[index]
-		button.custom_minimum_size = Vector2(diameter, diameter)
-		button.size = Vector2(diameter, diameter)
-		button.add_theme_constant_override("icon_max_width", maxi(8, int(diameter) - 12))
+		button.custom_minimum_size = icon
+		button.size = icon
+		button.add_theme_constant_override("icon_max_width", maxi(8, int(icon.x) - 12))
 		button.position = Vector2(
-			center_x - diameter * 0.5 - float(column) * (diameter + 6.0),
+			center_x - icon.x * 0.5 - float(column) * (icon.x + 6.0),
 			band.x + float(row) * pitch
 		)
 	# Keep the frame painting behind every socket even after a rebuild.
