@@ -159,6 +159,11 @@ static func hud_specs(document: Dictionary) -> Array[Dictionary]:
 	for command_value in commands as Array:
 		if typeof(command_value) == TYPE_DICTIONARY:
 			commands_by_id[String((command_value as Dictionary).get("commandId", ""))] = command_value
+	# A created hero's TextLabel is the player's chosen name - literal display
+	# text, never a retail string-table key. Route it through the HUD's authored
+	# -label path (label_id "", authored_fallback) so it is shown verbatim rather
+	# than looked up and failing "Required localized string ... is missing".
+	var created_hero := (registration.get("createAHero", {}) as Dictionary).size() > 0
 	var output: Array[Dictionary] = []
 	for producer in producer_bindings(document):
 		var command_row: Dictionary = commands_by_id.get(String(producer.get("command_id", "")), {})
@@ -168,24 +173,30 @@ static func hud_specs(document: Dictionary) -> Array[Dictionary]:
 		var tooltip_id := _first_string(fields.get("DescriptLabel", []))
 		if button_image == "" or label_id == "" or tooltip_id == "":
 			return []
-		output.append({
+		var spec := {
 			"unit_id": runtime_unit_id(document),
 			"source_object_id": source_id,
 			"producer_source_object_id": String(producer.get("producer_source_object_id", "")),
 			"producer_runtime_id": String(producer.get("producer_runtime_id", "")),
 			"button_name": "Train_" + _slug(source_id),
-			"fallback_label": String(string_bindings.get(label_id, label_id)),
 			"fallback_tooltip": String(string_bindings.get(tooltip_id, tooltip_id)),
 			"image_source_size": (image_metadata.get(button_image, {}) as Dictionary).duplicate(),
 			"image_id": button_image,
-			"label_id": label_id,
 			"tooltip_id": tooltip_id,
 			"portrait_image_id": portrait_id,
 			"command_id": String(command_row.get("commandId", "")),
 			"surface": String(producer.get("surface", "")),
 			"slot": int(producer.get("slot", 0)),
 			"roster_ordinal": int(producer.get("roster_ordinal", 0)),
-		})
+		}
+		if created_hero:
+			spec["label_id"] = ""
+			spec["fallback_label"] = label_id
+			spec["authored_fallback"] = true
+		else:
+			spec["label_id"] = label_id
+			spec["fallback_label"] = String(string_bindings.get(label_id, label_id))
+		output.append(spec)
 	return output
 
 

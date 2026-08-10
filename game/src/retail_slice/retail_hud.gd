@@ -2082,8 +2082,13 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 	for spec_value in _retail_portrait_specs:
 		var spec: Dictionary = spec_value
 		# Unit SelectPortraits are authored 191x191; hero SelectPortraits ("HP*")
-		# are authored 192x192. Trust the pack-declared square size in that band.
-		var expected_portrait_size := RETAIL_PORTRAIT_SOURCE_SIZE
+		# and created-hero class portraits ("CP*") are 192x192. Pin the exact size
+		# ONLY when the unit document authoritatively declares its own crop; a
+		# shared portrait resolved from the interface-art index carries no per-unit
+		# declared size and the index records no dimensions, so inventing a 191
+		# default and pinning to it fails a legitimate 192x192 asset. Leave those
+		# unpinned - the validator still enforces PNG safety and dimension bounds.
+		var expected_portrait_size := Vector2i.ZERO
 		var portrait_runtime_id := String(spec.get("runtime_object_id", ""))
 		if portrait_runtime_id != "":
 			var portrait_runtime: Dictionary = content_db.get_playable_unit_runtime(portrait_runtime_id)
