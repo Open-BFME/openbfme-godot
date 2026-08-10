@@ -135,6 +135,15 @@ END
 CONTROLBAR:EmptyRetailRow
   ""
 END
+OBJECT:CreateAHero
+  "Create a Hero"
+END
+OBJECT:UnreferencedUnit
+  "Some Other Unit"
+END
+CreateAHero:BlingName_Dwarf_CHH01
+  "Dwarven Helmet"
+END
 CONTROLBAR:UnreferencedRow
   "Never asked for"
 END
@@ -618,3 +627,89 @@ def test_a_non_cah_pack_does_not_publish_the_namespaces(tmp_path: Path) -> None:
     )
     strings = target["runtime_data"][STRINGS_RUNTIME_PATH]["strings"]
     assert "CAH:HelmetMenuLabel" not in strings
+
+
+# --- referenced-spelling resolution -----------------------------------------
+
+def _cah_runtime_with_mixed_case_ids() -> dict[str, object]:
+    body: dict[str, object] = {
+        "schema": CAH_RUNTIME_SCHEMA,
+        "schemaVersion": CAH_RUNTIME_SCHEMA_VERSION,
+        "descriptorSha256": "d" * 64,
+        "registration": {
+            # Retail's own object display name, in the OBJECT namespace.
+            "system": {"displayNameStringId": "OBJECT:CreateAHero"},
+            "attributeGroups": [{"groupName": "CreateAHero_ArmorAttribute"}],
+            "appearanceOptions": [
+                {
+                    # INI shouts DWARF; lotr.str spells it Dwarf.  The whole
+                    # point of the strings lane is that this label reaches the
+                    # screen anyway.
+                    "upgradeName": "Upgrade_DWARF_CHH01",
+                    "nameStringId": "CreateAHero:BlingName_DWARF_CHH01",
+                }
+            ],
+            "classes": [{"label": "CONTROLBAR:TestLabel"}],
+        },
+    }
+    body["runtimeSha256"] = _cah_digest(body)
+    return body
+
+
+def test_a_referenced_id_resolves_under_the_spelling_that_referenced_it(
+    tmp_path: Path,
+) -> None:
+    # THE BUG: the row was published under RETAIL's casing only, so a consumer
+    # looking up the id its own document names found nothing and fell back to a
+    # de-camelcased key.  Retail spells 24 referenced ids differently from the
+    # documents that name them.
+    from openbfme_importer.faction_slice_profile import STRINGS_RUNTIME_PATH
+
+    _faction_coverage(tmp_path, "men", registration={"production": []})
+    target, receipt = compose_faction_profile(
+        _base_with_selection_contract(), tmp_path, ["men"],
+        game="rotwk", string_catalog=_string_catalog(),
+        cah_runtime=_cah_runtime_with_mixed_case_ids(),
+    )
+    strings = target["runtime_data"][STRINGS_RUNTIME_PATH]["strings"]
+    assert strings["CreateAHero:BlingName_DWARF_CHH01"] == "Dwarven Helmet"
+    # Retail's own spelling stays too: it is what the whole-namespace sweep and
+    # every other pack publish under.
+    assert strings["CreateAHero:BlingName_Dwarf_CHH01"] == "Dwarven Helmet"
+    assert receipt["strings"]["referencedSpellingAliasCount"] >= 1
+
+
+def test_a_case_miss_is_never_counted_as_retail_absent(tmp_path: Path) -> None:
+    from openbfme_importer.faction_slice_profile import STRINGS_RUNTIME_PATH
+
+    _faction_coverage(tmp_path, "men", registration={"production": []})
+    target, _receipt = compose_faction_profile(
+        _base_with_selection_contract(), tmp_path, ["men"],
+        game="rotwk", string_catalog=_string_catalog(),
+        cah_runtime=_cah_runtime_with_mixed_case_ids(),
+    )
+    document = target["runtime_data"][STRINGS_RUNTIME_PATH]
+    assert "CreateAHero:BlingName_DWARF_CHH01" not in document.get(
+        "sourceNullStringIds", []
+    )
+
+
+def test_the_object_namespace_is_scraped(tmp_path: Path) -> None:
+    # `OBJECT:CreateAHero` is the hero's own display name ("Create a Hero").
+    # Scraped where referenced rather than published whole: OBJECT: is the
+    # largest namespace retail has and every unit in the game lives in it.
+    from openbfme_importer.faction_slice_profile import (
+        STRINGS_RUNTIME_PATH,
+        WHOLE_STRING_NAMESPACES,
+    )
+
+    _faction_coverage(tmp_path, "men", registration={"production": []})
+    target, _receipt = compose_faction_profile(
+        _base_with_selection_contract(), tmp_path, ["men"],
+        game="rotwk", string_catalog=_string_catalog(),
+        cah_runtime=_cah_runtime_with_mixed_case_ids(),
+    )
+    strings = target["runtime_data"][STRINGS_RUNTIME_PATH]["strings"]
+    assert strings["OBJECT:CreateAHero"] == "Create a Hero"
+    assert "OBJECT:" not in WHOLE_STRING_NAMESPACES
+    assert "OBJECT:UnreferencedUnit" not in strings

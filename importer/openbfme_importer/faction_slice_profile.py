@@ -54,7 +54,18 @@ STRINGS_PACK_KEY = "strings"
 #: row for lands in ``sourceNullStringIds``, which is evidence rather than a
 #: failure.  Retail leaves several hundred CaH bling labels dangling on purpose;
 #: those are reported, never synthesized.
-STRING_NAMESPACES: tuple[str, ...] = ("CONTROLBAR", "CreateAHero", "CAH", "APT")
+#:
+#: ``OBJECT:`` is scraped but deliberately NOT in :data:`WHOLE_STRING_NAMESPACES`
+#: -- it is the largest namespace retail has (every unit in the game) and only
+#: the ids a document actually names belong in a pack.  ``OBJECT:CreateAHero``
+#: ("Create a Hero") is the one this lane needs.
+STRING_NAMESPACES: tuple[str, ...] = (
+    "CONTROLBAR",
+    "CreateAHero",
+    "CAH",
+    "APT",
+    "OBJECT",
+)
 _STRING_REFERENCE = re.compile(
     r'"((?:' + "|".join(STRING_NAMESPACES) + r"):[^\"]+)\"", re.IGNORECASE
 )
@@ -149,14 +160,26 @@ def _build_strings_document(
 
     resolved: dict[str, str] = {}
     source_null: set[str] = set()
+    alias_count = 0
     for identifier in sorted(references, key=lambda item: (item.casefold(), item)):
         record = string_catalog.record(identifier)
         if record is None:
             source_null.add(identifier)
         else:
-            # Key under the retail table's own spelling so two referenced
-            # casings of one id collapse to the single retail row.
+            # Key under the retail table's own spelling: that is what the
+            # whole-namespace sweep and every other pack publish under.
             resolved[record.identifier] = record.value
+            # AND under the spelling that referenced it.  Resolution here is
+            # case-insensitive but the CLIENT's lookup is not, and retail
+            # disagrees with its own INI on 24 referenced ids -- the INI shouts
+            # `BlingName_DWARF_CHH01` where lotr.str writes `..._Dwarf_...`,
+            # and `SubClassDesc_CaptainOfGondor` is `...CaptainofGondor` in the
+            # table.  Publishing only retail's casing put the text in the pack
+            # where nothing could find it, which is the exact silent-fallback
+            # failure this lane exists to remove.
+            if identifier != record.identifier:
+                resolved[identifier] = record.value
+                alias_count += 1
     resolved_count = len(resolved)
     namespace_count = 0
     for record in _whole_namespace_records(string_catalog, whole_namespaces):
@@ -205,6 +228,7 @@ def _build_strings_document(
         "sourceNullCount": len(source_null),
         "wholeNamespaces": list(whole_namespaces),
         "wholeNamespaceCount": namespace_count,
+        "referencedSpellingAliasCount": alias_count,
     }
     return document, stats
 
