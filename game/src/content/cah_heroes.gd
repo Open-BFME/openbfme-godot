@@ -61,9 +61,25 @@ const PROFILE_DIR := "user://cah-heroes"
 const PROFILE_DIR_ENV := "OPENBFME_CAH_PROFILE_DIR"
 
 
+## Suffix for the store a HEADLESS process gets when it asked for nothing.
+const PROFILE_DIR_HEADLESS_SUFFIX := "-headless-scratch"
+
+
 static func profile_dir() -> String:
 	var override := OS.get_environment(PROFILE_DIR_ENV).strip_edges()
-	return override if override != "" else PROFILE_DIR
+	if override != "":
+		return override
+	# NOBODY PLAYS HEADLESS. A gate that forgets to sandbox itself would
+	# otherwise reach straight into the installed game's saves, which is exactly
+	# how a real store came to be emptied - the mistake was easy to make and
+	# invisible until someone lost their heroes. Making the safe store the
+	# DEFAULT for the only kind of process that can make that mistake means a
+	# future runner cannot make it at all, whether or not its author knows this
+	# hazard exists. An explicit override still wins, so a runner that genuinely
+	# wants a named store says so.
+	if DisplayServer.get_name() == "headless":
+		return PROFILE_DIR + PROFILE_DIR_HEADLESS_SUFFIX
+	return PROFILE_DIR
 
 ## Cap on saved heroes. Retail's front end has a fixed hero list too; the number
 ## matters less than there being one, because this directory is swept on every

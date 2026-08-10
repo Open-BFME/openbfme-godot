@@ -46,10 +46,21 @@ const SPEAR_POWER := "Command_CreateAHeroThrowSpear_Level1"
 ## that proves a level-up does something rather than only counting.
 const LEVEL_FOUR_XP := 300
 const LEVEL_FOUR_UPGRADE := "Upgrade_CreateAHeroGloriousCharge"
+## The ONE refusal a detached probe slice legitimately produces: it is handed no
+## structure pack, so the fortress has no presentation evidence. Pinned exactly,
+## so any other refusal - including one from a created hero - fails the check.
+const PROBE_STRUCTURE_EVIDENCE := "bfme2.object.men-fortress escaped the selected and faction packs"
+## The Uruk subclass ships no battlefield skin in the mounted pack (CHSS_UK_C_SKN
+## is published, CHSS_UK_U_SKN is not), which makes it the live case for the
+## graceful exclusion - a hero the pack cannot show must be left off the roster
+## with its reason, never admitted and then fatal at the presentation proof.
+const UNSHIPPABLE_CLASS_INDEX := 4
+const UNSHIPPABLE_SUB_INDEX := 1
+const UNSHIPPABLE_FACTION := "isengard"
 
 ## LIVENESS. A GDScript runtime error aborts its function without propagating,
 ## so a broken run would print zero failures. Raise deliberately; never lower.
-const EXPECTED_CHECKS := 62
+const EXPECTED_CHECKS := 68
 
 var passed := 0
 var failed := 0
@@ -95,7 +106,9 @@ func _run() -> void:
 	_test_baseline_fallback(system, profile)
 	_test_baseline_contract(system, profile)
 
+	_test_headless_never_defaults_to_the_players_store()
 	_test_every_subclass_passes_presentation(system)
+	_test_unshippable_subclass_is_excluded_not_fatal(system)
 	_test_skirmish_ownership_follows_the_human(system)
 	_test_skirmish_fields_only_the_picked_hero(system, profile)
 	_test_skirmish_setup_exposes_the_hero_column()
@@ -597,18 +610,100 @@ func _test_every_subclass_passes_presentation(system: Dictionary) -> void:
 	slice.faction_manifest = manifest_script.from_registries(
 		FACTION, fieldable, content_db.call("get_playable_structure_runtimes")
 	)
-	# The proof is asked about EVERY fieldable unit, so a detached probe slice can
-	# still trip on structure evidence it was never given. What is asserted here
-	# is the created heroes' own clause: no swept subclass may be the thing the
-	# proof names.
+	# The proof is asked about EVERY fieldable unit, so this detached probe slice
+	# trips on structure evidence it was never given. That one refusal is named
+	# EXACTLY rather than filtered by substring: "does not mention a created
+	# hero" would also pass if the proof fell over before it ever reached the
+	# unit loop, which is the failure this check exists to notice.
 	var reason := String(slice._load_required_presentation_definitions())
 	_check(
-		not reason.contains("CreateAHero__"),
-		"no created hero fails the roster presentation proof: %s" % reason
+		reason == "" or reason == PROBE_STRUCTURE_EVIDENCE,
+		"the presentation proof reaches the units and accepts every swept subclass: %s" % reason
 	)
 	slice.free()
 	for hero_id in swept_ids:
 		CahHeroes.delete_profile(hero_id)
+
+
+func _test_headless_never_defaults_to_the_players_store() -> void:
+	## THE GUARANTEE THAT DOES NOT DEPEND ON REMEMBERING. Every runner here
+	## sandboxes itself deliberately, but the next one has to remember to, and
+	## the cost of forgetting was a player losing their heroes. A headless
+	## process that asks for nothing must still not be handed the real store.
+	var sandbox := OS.get_environment(CahHeroes.PROFILE_DIR_ENV)
+	OS.set_environment(CahHeroes.PROFILE_DIR_ENV, "")
+	var unasked := CahHeroes.profile_dir()
+	OS.set_environment(CahHeroes.PROFILE_DIR_ENV, sandbox)
+	_check(
+		unasked != CahHeroes.PROFILE_DIR
+			and unasked.begins_with(CahHeroes.PROFILE_DIR),
+		"a headless process that asks for no store is not given the player's (%s)" % unasked
+	)
+	_check(
+		CahHeroes.profile_dir() == sandbox and sandbox != "",
+		"an explicit override still wins over the headless default"
+	)
+
+
+func _test_unshippable_subclass_is_excluded_not_fatal(system: Dictionary) -> void:
+	## THE GRACEFUL BRANCH, on the subclass that actually needs it.
+	##
+	## The mounted pack publishes the Uruk's creation-screen skin and not its
+	## battlefield one, so this hero genuinely cannot be shown in a match. That
+	## must cost the player one unit and nothing else: excluded from the roster,
+	## with a reason naming the skin, and the match still launching. Admitting it
+	## instead is what killed every launch a created hero was part of, so the
+	## branch that prevents that has to be exercised rather than assumed - and
+	## the sweep above cannot reach it, because the Uruk is not a Men subclass.
+	var sub_row := CahHeroes.sub_class_row(system, UNSHIPPABLE_CLASS_INDEX, UNSHIPPABLE_SUB_INDEX)
+	_check(
+		CahHeroes.subclass_allows_faction(sub_row, UNSHIPPABLE_FACTION),
+		"the unshippable subclass is one %s may field" % UNSHIPPABLE_FACTION
+	)
+	var profile := CahHeroes.new_profile(
+		system, "Unshippable", UNSHIPPABLE_CLASS_INDEX, UNSHIPPABLE_SUB_INDEX
+	)
+	if CahHeroes.save_profile(profile) != "":
+		_check(false, "the unshippable hero saves")
+		return
+	var object_id := "CreateAHero__%s" % String(profile.get("heroId", ""))
+	var slice_script = load("res://src/retail_slice/retail_vertical_slice.gd")
+	var slice = slice_script.new()
+	var map_data = load("res://src/retail_slice/retail_map_data.gd").new()
+	map_data.local_transform_scale = MAP_SCALE
+	slice.source_map_data = map_data
+	slice._classify_faction_units(
+		UNSHIPPABLE_FACTION, {}, {}, {}, null, system, root.get_node_or_null("ContentDB")
+	)
+	_check(
+		not (slice.producible_unit_runtimes as Dictionary).has(object_id)
+			and not (slice.fieldable_unit_runtimes as Dictionary).has(object_id),
+		"a hero whose skin the pack cannot ship stays off the roster"
+	)
+	var named := ""
+	for exclusion_value in (slice.unit_roster_exclusions as Array):
+		var exclusion := exclusion_value as Dictionary
+		if String(exclusion.get("object_id", "")) == object_id:
+			named = String(exclusion.get("reason", ""))
+	_check(
+		named.contains("CHSS_UK_U_SKN") and named.contains("does not ship"),
+		"the exclusion names the skin the pack does not ship: %s" % named
+	)
+	# AND THE MATCH STILL RUNS. The whole point of excluding rather than
+	# admitting is that the rest of the roster survives.
+	var manifest_script = load("res://src/retail_slice/retail_faction_manifest.gd")
+	var content_db := root.get_node_or_null("ContentDB")
+	slice.faction_manifest = manifest_script.from_registries(
+		UNSHIPPABLE_FACTION,
+		slice.fieldable_unit_runtimes,
+		content_db.call("get_playable_structure_runtimes")
+	)
+	_check(
+		not String(slice._load_required_presentation_definitions()).contains(object_id),
+		"the excluded hero cannot fail a proof it is no longer part of"
+	)
+	slice.free()
+	CahHeroes.delete_profile(String(profile.get("heroId", "")))
 
 
 func _test_skirmish_ownership_follows_the_human(system: Dictionary) -> void:

@@ -40,8 +40,9 @@ func real_store_untouched() -> bool:
 
 
 func real_store_description() -> String:
-	return "real store had %d files, now %d" % [
-		_real_listing.size(), _listing(CahHeroes.PROFILE_DIR).size()
+	var now := _listing(CahHeroes.PROFILE_DIR)
+	return "real store held %d files (%s), now %d (%s)" % [
+		_real_listing.size(), ", ".join(_real_listing), now.size(), ", ".join(now)
 	]
 
 
@@ -50,12 +51,27 @@ func scratch_dir() -> String:
 
 
 func _listing(path: String) -> PackedStringArray:
+	## NAMES ARE NOT ENOUGH. A run that rewrote a hero in place - same file, new
+	## contents - would leave the listing identical and the player's hero
+	## replaced, so each entry carries the bytes' own fingerprint.
 	var dir := DirAccess.open(path)
 	if dir == null:
 		return PackedStringArray()
 	var names := dir.get_files()
 	names.sort()
-	return names
+	var fingerprints := PackedStringArray()
+	for file_name in names:
+		fingerprints.append("%s:%s" % [file_name, _fingerprint("%s/%s" % [path, file_name])])
+	return fingerprints
+
+
+func _fingerprint(path: String) -> String:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return "unreadable"
+	var bytes := file.get_buffer(file.get_length())
+	file.close()
+	return "%d/%s" % [bytes.size(), bytes.get_string_from_utf8().sha256_text()]
 
 
 func _empty(path: String) -> void:
