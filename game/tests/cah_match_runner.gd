@@ -60,7 +60,7 @@ const UNSHIPPABLE_FACTION := "isengard"
 
 ## LIVENESS. A GDScript runtime error aborts its function without propagating,
 ## so a broken run would print zero failures. Raise deliberately; never lower.
-const EXPECTED_CHECKS := 68
+const EXPECTED_CHECKS := 72
 
 var passed := 0
 var failed := 0
@@ -109,6 +109,7 @@ func _run() -> void:
 	_test_headless_never_defaults_to_the_players_store()
 	_test_every_subclass_passes_presentation(system)
 	_test_unshippable_subclass_is_excluded_not_fatal(system)
+	_test_every_launch_validation_stage_accepts_a_created_hero(system)
 	_test_skirmish_ownership_follows_the_human(system)
 	_test_skirmish_fields_only_the_picked_hero(system, profile)
 	_test_skirmish_setup_exposes_the_hero_column()
@@ -623,6 +624,71 @@ func _test_every_subclass_passes_presentation(system: Dictionary) -> void:
 	slice.free()
 	for hero_id in swept_ids:
 		CahHeroes.delete_profile(hero_id)
+
+
+func _test_every_launch_validation_stage_accepts_a_created_hero(system: Dictionary) -> void:
+	## EVERY GATE BETWEEN THE PLAYER AND THE MATCH, not the one that broke last.
+	##
+	## A launch is refused by a series of independent proofs, and a created hero
+	## has now failed two of them in front of the player - the roster presentation
+	## proof, then the production-UI proof one stage later. Both were found by the
+	## player rather than by a test, because the tests stopped at the roster and
+	## never walked the rest of the boot. So this walks them: a hero is picked,
+	## and each stage is asked in turn whether it would refuse the launch.
+	##
+	## The second stage failed because a created hero is registered into the
+	## SLICE's roster but never into ContentDB's runtime registry, which is where
+	## the HUD looks when it validates the buy button's art - "Playable-unit
+	## runtime 'CreateAHero__...' is missing.", once per image the button needs.
+	var profile := CahHeroes.new_profile(system, "Launch Proof", CLASS_INDEX, SUB_CLASS_INDEX)
+	if CahHeroes.save_profile(profile) != "":
+		_check(false, "the launch-proof hero saves")
+		return
+	var hero_id := String(profile.get("heroId", ""))
+	var object_id := "CreateAHero__%s" % hero_id
+	var content_db := root.get_node_or_null("ContentDB")
+	var slice = _classified_slice(system)
+	_check(
+		(slice.producible_unit_runtimes as Dictionary).has(object_id),
+		"the launch-proof hero reaches the roster"
+	)
+
+	# STAGE: the roster presentation proof (the one already fixed).
+	var manifest_script = load("res://src/retail_slice/retail_faction_manifest.gd")
+	slice.faction_manifest = manifest_script.from_registries(
+		FACTION, slice.fieldable_unit_runtimes,
+		content_db.call("get_playable_structure_runtimes")
+	)
+	var presentation := String(slice._load_required_presentation_definitions())
+	_check(
+		not presentation.contains(object_id),
+		"stage 1 (roster presentation) accepts the picked hero: %s" % presentation
+	)
+
+	# STAGE: the production-UI proof. This is the one the player hit second, and
+	# it is asked of the REAL HUD against the REAL ContentDB - a stubbed registry
+	# would answer the question the bug is about.
+	# Enabled BEFORE the HUD enters the tree, because entering it builds.
+	var hud = load("res://src/retail_slice/retail_hud.gd").new()
+	var registration_error := String(hud.enable_playable_unit_content(
+		slice.producible_unit_runtimes,
+		(slice.faction_manifest.get("producer_kind_registry", {}) as Dictionary)
+	))
+	root.add_child(hud)
+	_check(
+		registration_error == "",
+		"stage 2a (HUD registration) accepts the picked hero: %s" % registration_error
+	)
+	var binding_error := String(hud.bind_retail_train_commands(
+		content_db, String(slice.selected_pack_root), true, []
+	))
+	_check(
+		not binding_error.contains(object_id),
+		"stage 2b (production UI binding) accepts the picked hero: %s" % binding_error
+	)
+	hud.queue_free()
+	slice.free()
+	CahHeroes.delete_profile(hero_id)
 
 
 func _test_headless_never_defaults_to_the_players_store() -> void:

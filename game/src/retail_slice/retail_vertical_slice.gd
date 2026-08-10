@@ -1858,12 +1858,18 @@ func _add_created_heroes(
 	for object_id_value in created.keys():
 		var object_id := String(object_id_value)
 		if fieldable_unit_runtimes.has(object_id):
-			unit_roster_exclusions.append({
-				"object_id": object_id,
-				"category": "hero",
-				"reason": "created-hero-id-collides-with-a-loaded-document",
-			})
-			continue
+			# A created hero already present is THIS hero coming back round -
+			# registering it in ContentDB makes it an input to the next
+			# classification - not a converted document it would displace. Only a
+			# genuine collision with a retail document is refused.
+			var existing: Dictionary = fieldable_unit_runtimes[object_id] as Dictionary
+			if not (existing.get("registration", {}) as Dictionary).has("createAHero"):
+				unit_roster_exclusions.append({
+					"object_id": object_id,
+					"category": "hero",
+					"reason": "created-hero-id-collides-with-a-loaded-document",
+				})
+				continue
 		var document: Dictionary = created[object_id_value] as Dictionary
 		var projection_error := _project_created_hero_presentation(
 			document, system_document, content_db_override
@@ -1954,6 +1960,12 @@ func _project_created_hero_presentation(
 		return "%s wears %s, which the selected pack does not ship" % [object_id, model_id]
 	document["_pack_root"] = pack_root
 	var capability_id := "%s.animation" % member_id
+	# THE HUD ASKS CONTENTDB, NOT US. The production-UI proof validates each buy
+	# button's art by calling ContentDB.get_playable_unit_runtime(objectId), so a
+	# hero present only in this slice's roster reads as "missing" there - once per
+	# image the button needs, which is the repeated refusal the player saw.
+	# Registering the document is what makes the two registries agree.
+	content_db.playable_unit_runtimes[object_id] = document
 	content_db.bundle_objects[member_id] = {
 		"id": member_id,
 		"kind": "member",

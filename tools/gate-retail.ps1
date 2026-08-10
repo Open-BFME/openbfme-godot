@@ -486,7 +486,7 @@ try {
         # and levelled on the mounted pack's own compiled CAH table. It reads
         # the SELECTION (the Men slice plus data/cah/system.json), so it belongs
         # inside this block; floor is the measured 2026-08-09 value.
-        Invoke-GodotPassedFloor "cah_match" "cah_match_runner.gd" '(?m)^CAH_MATCH_RESULT passed=([0-9]+) failed=0\s*$' 68
+        Invoke-GodotPassedFloor "cah_match" "cah_match_runner.gd" '(?m)^CAH_MATCH_RESULT passed=([0-9]+) failed=0\s*$' 72
         # The lockstep gate now also carries the two-seat created-hero exchange
         # (lobby table convergence, byte-identical launch rosters, ownership,
         # and equal state hashes with different heroes per seat), which needs
