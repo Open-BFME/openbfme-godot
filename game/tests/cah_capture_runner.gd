@@ -294,6 +294,30 @@ func _apply(action: String) -> void:
 				_wear(shot, String(shot["group"]), String(shot["option"]))
 			else:
 				_screen._show_page(_screen.PAGE_SELECT)
+	_report_idles(action)
+
+
+func _report_idles(action: String) -> void:
+	## WHETHER THE HERO IS DOING ANYTHING, printed beside the picture.
+	##
+	## `cah_create_a_hero_runner.gd` proves the idle playback over synthetic clips,
+	## which is the only way to prove it on a machine whose packs carry no creation
+	## animations yet. What it cannot say is whether THIS pack ships any - and a
+	## still photograph cannot show motion either - so the reading is logged: the
+	## clip the hero is on, the specials he can break into, and retail's chance.
+	if _screen == null or _screen._preview_model == null:
+		return
+	var report: Dictionary = _screen.preview_idle_report()
+	if String(report.get("base", "")) == "":
+		print("[cah-capture] %s -> no creation idles on this subclass; the hero stands still" % action)
+		return
+	print("[cah-capture] %s -> idling %s (playing %s, specials %s at %s%%)" % [
+		action,
+		String(report["base"]),
+		String(report["playing"]),
+		str(report["specials"]),
+		str(report["chance"]),
+	])
 
 
 func _wear(subject: Dictionary, group: String, upgrade: String) -> void:

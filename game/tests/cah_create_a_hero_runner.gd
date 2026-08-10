@@ -96,6 +96,8 @@ func _run() -> void:
 	_test_power_selection_rules(system)
 	_test_powers_and_levels_reach_the_runtime_contracts(system)
 	_test_screen(system)
+	_test_the_editor_opens_on_the_hero_it_would_save()
+	_test_creation_screen_idles(system)
 	_test_garment_sub_objects(system)
 	_test_garment_texture_swaps()
 	_test_garment_default_kit()
@@ -376,6 +378,389 @@ func _test_screen(system: Dictionary) -> void:
 	empty.queue_free()
 	screen.queue_free()
 	_clear_profiles()
+
+
+# --------------------------------------------------- what you see is what saves
+
+
+func _dressed_system_document() -> Dictionary:
+	## The class table with GARMENTS on it: the shield group of the kit fixture,
+	## and a subclass whose default show-set names the shield of its SECOND option.
+	##
+	## That gap is the whole test. `default_appearance(sub_row)` on its own can only
+	## answer with each group's first option, because deciding which option shows a
+	## part means reading the option table - so the two callers of it can disagree
+	## about what the hero is wearing, and until this landed they did.
+	var system := _system_document()
+	var registration: Dictionary = system["registration"]
+	registration["appearanceOptions"] = (
+		(KIT_SYSTEM["registration"] as Dictionary)["appearanceOptions"] as Array
+	).duplicate(true)
+	var classes: Array = registration["classes"]
+	var sub_row: Dictionary = ((classes[0] as Dictionary)["subClasses"] as Array)[0]
+	sub_row["appearanceChoices"] = (KIT_SUB_ROW["appearanceChoices"] as Dictionary).duplicate(true)
+	sub_row["defaultSubObjects"] = (KIT_SUB_ROW["defaultSubObjects"] as Dictionary).duplicate(true)
+	return system
+
+
+func _test_the_editor_opens_on_the_hero_it_would_save() -> void:
+	## THE HERO ON THE STAGE IS THE HERO THAT GETS SAVED.
+	##
+	## `new_profile` dresses a hero by asking the compiled table which option the
+	## subclass's default kit is showing; the editor's own reset asked without the
+	## table and got each group's first row. On the shipped content that is "No
+	## Shield" - so the player built a Captain holding nothing and saved one
+	## carrying Shield CHS02, and neither screen ever admitted the swap.
+	var system := _dressed_system_document()
+	var fresh: Dictionary = CahHeroes.new_profile(system, "Beregond", 0, 0)["appearance"]
+	_check(
+		String(fresh.get("CreateAHero_Shield", "")) == "Upgrade_S2",
+		"the fixture's authored kit is a shield that is NOT the group's first option (got %s)"
+			% str(fresh)
+	)
+
+	var screen = MyHeroesScreen.new()
+	root.add_child(screen)
+	screen.configure(system)
+	_check(
+		screen.working_appearance() == fresh,
+		"the editor opens wearing exactly what saving it would write (editor %s, saved %s)"
+			% [str(screen.working_appearance()), str(fresh)]
+	)
+
+	# AND ON EVERY LATER RESET, which is the same call from the other direction:
+	# picking a class is what a player does before they have saved anything.
+	screen.set_class_selection(0, 0)
+	_check(
+		screen.working_appearance() == fresh,
+		"picking the class lands on the same kit rather than on the first row of each group (got %s)"
+			% str(screen.working_appearance())
+	)
+
+	# THE ROUND TRIP, so this is a claim about the file and not only about two
+	# dictionaries: the hero the editor shows is the hero that comes back.
+	_clear_profiles()
+	var refusals: Array = screen.create_hero("Beregond")
+	_check(refusals.is_empty(), "the dressed hero saves (%s)" % str(refusals))
+	var saved: Array[Dictionary] = screen.saved_profiles()
+	_check(
+		saved.size() == 1 and (saved[0].get("appearance", {}) as Dictionary) == fresh,
+		"the saved hero is wearing what the editor was showing (got %s)"
+			% str({} if saved.is_empty() else saved[0].get("appearance", {}))
+	)
+	_clear_profiles()
+	screen.queue_free()
+
+
+# ------------------------------------------------------------ creation idles
+
+
+## The clips the fixture model carries, named the way retail names creation-screen
+## animation states. Nothing here asserts these particular spellings exist in any
+## pack - the screen resolves whatever the compiled table names.
+const IDLE_BASE := "CHRIDLA"
+const IDLE_SPECIALS := ["CHRCHRA", "CHRCHKA"]
+const IDLE_SUB_ROW := {
+	"models": {"creationScreen": {"model": "SYNTH_C_SKN"}},
+	"creationIdles": {
+		"base": "CHRIDLA",
+		"specials": ["CHRCHRA", "CHRCHKA"],
+		"specialChance": 20.0,
+	},
+}
+## The same table on the model binding instead of the subclass row, because the
+## importer may compile it either way and a screen that only reads one of them
+## shows a statue on the other.
+const IDLE_SUB_ROW_ON_BINDING := {
+	"models": {
+		"creationScreen": {
+			"model": "SYNTH_C_SKN",
+			"creationIdles": {
+				"base": "CHRIDLA",
+				"specials": ["CHRCHRA"],
+				"specialChance": 20.0,
+			},
+		},
+	},
+}
+
+## THE SHAPE `cah_system_compiler.py` ACTUALLY EMITS, transcribed off
+## `_creation_idles`: the block hangs on the creation-screen model binding beside
+## the mesh it animates; `base` is the whole bored-idle SET rather than one clip,
+## because retail's creation-screen states name several and the specials are what
+## is subtracted from them; every row carries the exported GLB animation AND the
+## retail id it came from; and the chance is spelled `specialChancePercent`.
+const IDLE_COMPILED_BASES := ["CHRIDLA", "CHRIDLB"]
+const IDLE_SUB_ROW_COMPILED := {
+	"models": {
+		"creationScreen": {
+			"model": "SYNTH_C_SKN",
+			"animationPrefix": "CHHW_CG",
+			"creationIdles": {
+				"animationPrefix": "CHHW_CG",
+				"base": [
+					{"animation": "CHRIDLA", "sourceAnimation": "CHHW_CG_CHRIDLA"},
+					{"animation": "CHRIDLB", "sourceAnimation": "CHHW_CG_CHRIDLB"},
+				],
+				"specials": [
+					{"role": "cheer", "animation": "CHRCHRA", "sourceAnimation": "CHHW_CG_CHRCHRA"},
+					{"role": "checkWeapon", "animation": "CHRCHKA", "sourceAnimation": "CHHW_CG_CHRCHKA"},
+				],
+				"specialChancePercent": 20.0,
+			},
+		},
+	},
+}
+
+## A pack whose GLB kept the RETAIL spelling rather than the exporter's. The
+## compiled row names both, so the clip is still found.
+const IDLE_SUB_ROW_BY_SOURCE_NAME := {
+	"creationIdles": {
+		"base": [{"animation": "chhw_cg_chridla", "sourceAnimation": "CHHW_CG_CHRIDLA"}],
+		"specials": [{"role": "cheer", "animation": "chhw_cg_chrchra", "sourceAnimation": "CHHW_CG_CHRCHRA"}],
+		"specialChancePercent": 20.0,
+	},
+}
+
+
+func _idle_model(clips: Array, library := "") -> Node3D:
+	## A stand-in for a converted creation-screen GLB that carries animations.
+	##
+	## THE CLIPS ARE AUTHORED AS LOOPING on purpose. A looping clip never emits
+	## `animation_finished`, so a screen that trusted the clip's own loop would play
+	## the base idle for ever and roll for a special exactly never - which is a
+	## feature that looks implemented and is not.
+	var root_node := Node3D.new()
+	var mover := Node3D.new()
+	mover.name = "Mover"
+	root_node.add_child(mover)
+	var player := AnimationPlayer.new()
+	player.name = "AnimationPlayer"
+	root_node.add_child(player)
+	var animations := AnimationLibrary.new()
+	for value in clips:
+		var animation := Animation.new()
+		animation.length = 0.5
+		animation.loop_mode = Animation.LOOP_LINEAR
+		var track := animation.add_track(Animation.TYPE_VALUE)
+		animation.track_set_path(track, NodePath("Mover:position:x"))
+		animation.track_insert_key(track, 0.0, 0.0)
+		animation.track_insert_key(track, 0.5, 1.0)
+		animations.add_animation(StringName(String(value)), animation)
+	player.add_animation_library(StringName(library), animations)
+	return root_node
+
+
+func _play_out_one_clip(screen) -> void:
+	## Run the hero's current clip off its end, which is where the screen decides
+	## what he does next. A screen with no playback has no player to advance, and
+	## that is a FAILED CHECK below rather than a crashed runner.
+	if screen._preview_animator == null:
+		return
+	screen._preview_animator.advance(0.6)
+
+
+func _test_creation_screen_idles(system: Dictionary) -> void:
+	## THE HERO IDLES WHILE HE IS BEING MADE, as he does in retail's own screen.
+	##
+	## Driven over synthetic clips, because the playback machinery must be provable
+	## on a machine whose packs carry no creation animations yet - and because the
+	## one thing a headless runner can prove about motion is which clip the player
+	## is on and when it changed.
+	var screen = MyHeroesScreen.new()
+	root.add_child(screen)
+	screen.configure(system)
+
+	# A MODEL WITH NO ANIMATIONS AT ALL. The pose it shipped in is the whole of
+	# what the screen can show, and it says nothing about it: a hero who is not
+	# waving is not a defect worth a caption over the equipment list.
+	var note_before := String(screen._preview_note.text)
+	var caption_before := String(screen._preview_caption.text)
+	var still := Node3D.new()
+	screen._preview_pivot.add_child(still)
+	screen._preview_model = still
+	screen._bind_preview_idles(IDLE_SUB_ROW, "still")
+	var quiet: Dictionary = screen.preview_idle_report()
+	_check(
+		String(quiet["base"]) == "" and String(quiet["playing"]) == "",
+		"a model with no AnimationPlayer idles nothing (got %s)" % str(quiet)
+	)
+	_check(
+		String(screen._preview_note.text) == note_before
+			and String(screen._preview_caption.text) == caption_before,
+		"...and the screen says nothing about it (note '%s', caption '%s')"
+			% [screen._preview_note.text, screen._preview_caption.text]
+	)
+	screen._preview_pivot.remove_child(still)
+	still.queue_free()
+
+	var model := _idle_model(IDLE_COMPILED_BASES + IDLE_SPECIALS)
+	screen._preview_pivot.add_child(model)
+	screen._preview_model = model
+	# A MISS every time, so nothing below can pass by luck.
+	screen.set_preview_idle_roll(func(_loop: int) -> float: return 99.0)
+	screen._bind_preview_idles(IDLE_SUB_ROW, "idle-1")
+	var report: Dictionary = screen.preview_idle_report()
+	_check(
+		String(report["base"]) == IDLE_BASE
+			and (report["specials"] as Array).size() == IDLE_SPECIALS.size()
+			and is_equal_approx(float(report["chance"]), 20.0),
+		"the compiled idle table reaches the preview whole (got %s)" % str(report)
+	)
+	_check(
+		String(report["playing"]) == IDLE_BASE,
+		"the hero opens on his base idle (got '%s')" % str(report["playing"])
+	)
+	_check(
+		screen._preview_animator != null
+			and screen._preview_animator.get_animation(IDLE_BASE).loop_mode == Animation.LOOP_NONE,
+		"a clip the converter marked as looping is played as a one-shot, so its end can be rolled at"
+	)
+
+	# THE BASE LOOPS. Playing it out starts it again rather than leaving the hero
+	# frozen on his last frame.
+	_play_out_one_clip(screen)
+	var looped: Dictionary = screen.preview_idle_report()
+	_check(
+		String(looped["playing"]) == IDLE_BASE and int(looped["loops"]) == 1,
+		"playing the base clip out starts it again - the idle loops (got %s)" % str(looped)
+	)
+
+	# A HIT AT THE END OF A LOOP plays one of the specials.
+	screen.set_preview_idle_roll(func(_loop: int) -> float: return 0.0)
+	_play_out_one_clip(screen)
+	var hit: Dictionary = screen.preview_idle_report()
+	_check(
+		IDLE_SPECIALS.has(String(hit["playing"])),
+		"a hit roll at the end of a loop plays a special (got '%s')" % str(hit["playing"])
+	)
+
+	# ...AND HANDS HIM BACK. A special is an interruption, not a new resting state.
+	_play_out_one_clip(screen)
+	_check(
+		String(screen.preview_idle_report()["playing"]) == IDLE_BASE,
+		"the special hands the hero back to his base idle (got '%s')"
+			% str(screen.preview_idle_report()["playing"])
+	)
+
+	# THE INTRO SPECIAL, which is not a roll. The roll is still a miss below, so
+	# what fires here can only be the timer.
+	screen.set_preview_idle_roll(func(_loop: int) -> float: return 99.0)
+	screen._bind_preview_idles(IDLE_SUB_ROW, "idle-2")
+	_check(
+		String(screen.preview_idle_report()["playing"]) == IDLE_BASE,
+		"the hero appears idling rather than mid-cheer"
+	)
+	screen._advance_preview_idles(1.0)
+	_check(
+		String(screen.preview_idle_report()["playing"]) == IDLE_BASE,
+		"a second in he is still idling (got '%s')"
+			% str(screen.preview_idle_report()["playing"])
+	)
+	screen._advance_preview_idles(0.6)
+	_check(
+		IDLE_SPECIALS.has(String(screen.preview_idle_report()["playing"])),
+		"a second and a half after he appears he does something, whatever the roll says (got '%s')"
+			% str(screen.preview_idle_report()["playing"])
+	)
+
+	# WHERE THE TABLE IS COMPILED does not change what the hero does.
+	screen._bind_preview_idles(IDLE_SUB_ROW_ON_BINDING, "idle-3")
+	_check(
+		String(screen.preview_idle_report()["base"]) == IDLE_BASE,
+		"idles compiled onto the creation-screen model binding are read too (got %s)"
+			% str(screen.preview_idle_report())
+	)
+
+	# A TABLE NAMING A CLIP THE MODEL DOES NOT CARRY is a content gap, and the
+	# hero stands still through it rather than the screen failing on the name.
+	screen._bind_preview_idles(
+		{"creationIdles": {"base": "CHRNOPE", "specials": [], "specialChance": 20.0}}, "idle-4"
+	)
+	_check(
+		String(screen.preview_idle_report()["base"]) == ""
+			and String(screen.preview_idle_report()["playing"]) == "",
+		"a base clip the model does not carry idles nothing (got %s)"
+			% str(screen.preview_idle_report())
+	)
+	screen._bind_preview_idles(
+		{
+			"creationIdles": {
+				"base": IDLE_BASE,
+				"specials": [IDLE_SPECIALS[0], "CHRNOPE"],
+				"specialChance": 20.0,
+			},
+		},
+		"idle-5"
+	)
+	var partial: Array = screen.preview_idle_report()["specials"] as Array
+	_check(
+		partial.size() == 1 and String(partial[0]) == IDLE_SPECIALS[0],
+		"a special the model does not carry is left out rather than played as silence (got %s)"
+			% str(partial)
+	)
+
+	# THE SHAPE THE IMPORTER COMPILES, read whole: a base SET rather than one clip,
+	# specials as rows naming the exported clip and the retail id it came from, and
+	# the chance under the name the compiler writes.
+	screen.set_preview_idle_roll(func(_loop: int) -> float: return 99.0)
+	screen._bind_preview_idles(IDLE_SUB_ROW_COMPILED, "idle-compiled")
+	var compiled: Dictionary = screen.preview_idle_report()
+	_check(
+		(compiled["bases"] as Array).size() == IDLE_COMPILED_BASES.size()
+			and (compiled["specials"] as Array).size() == IDLE_SPECIALS.size()
+			and is_equal_approx(float(compiled["chance"]), 20.0),
+		"the compiled block's base set, specials and specialChancePercent all land (got %s)"
+			% str(compiled)
+	)
+	_check(
+		IDLE_COMPILED_BASES.has(String(compiled["playing"])),
+		"the hero opens on one of his bored idles (got '%s')" % str(compiled["playing"])
+	)
+	# THE SET IS A SET. Playing one out lands on one of them, not on a special and
+	# not on silence.
+	_play_out_one_clip(screen)
+	_check(
+		IDLE_COMPILED_BASES.has(String(screen.preview_idle_report()["playing"])),
+		"the end of one bored idle starts another (got '%s')"
+			% str(screen.preview_idle_report()["playing"])
+	)
+
+	screen._preview_pivot.remove_child(model)
+	model.queue_free()
+
+	# THE CLIP UNDER ITS RETAIL NAME. `animation` is what the exporter called it
+	# and `sourceAnimation` is where it came from; a pack that kept the retail
+	# spelling is still a pack the hero idles on.
+	var retail_named := _idle_model(["CHHW_CG_CHRIDLA", "CHHW_CG_CHRCHRA"])
+	screen._preview_pivot.add_child(retail_named)
+	screen._preview_model = retail_named
+	screen._bind_preview_idles(IDLE_SUB_ROW_BY_SOURCE_NAME, "idle-source-named")
+	_check(
+		String(screen.preview_idle_report()["playing"]) == "CHHW_CG_CHRIDLA"
+			and (screen.preview_idle_report()["specials"] as Array).size() == 1,
+		"a clip found only under its retail id is played rather than skipped (got %s)"
+			% str(screen.preview_idle_report())
+	)
+	screen._preview_pivot.remove_child(retail_named)
+	retail_named.queue_free()
+
+	# A CONVERTER THAT FILES ITS CLIPS UNDER A LIBRARY names them `<library>/CLIP`,
+	# and the compiled table names the clip. Both spellings answer to the same name.
+	var libraried := _idle_model([IDLE_BASE], "skl")
+	screen._preview_pivot.add_child(libraried)
+	screen._preview_model = libraried
+	screen._bind_preview_idles(IDLE_SUB_ROW, "idle-6")
+	_check(
+		String(screen.preview_idle_report()["playing"]) == "skl/%s" % IDLE_BASE,
+		"a clip filed under an animation library still answers to its compiled name (got '%s')"
+			% str(screen.preview_idle_report()["playing"])
+	)
+	screen._preview_pivot.remove_child(libraried)
+	libraried.queue_free()
+
+	screen._preview_model = null
+	screen.queue_free()
 
 
 # ------------------------------------------------------------ garment parts

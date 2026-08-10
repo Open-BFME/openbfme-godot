@@ -115,6 +115,30 @@ const PREVIEW_DRAG_DEGREES_PER_PIXEL := 0.45
 const PREVIEW_FILL := 0.88
 const PREVIEW_DEFAULT_PITCH := -4.0
 
+## WHAT THE HERO DOES WHILE HE IS BEING MADE. Retail's creation screen does not
+## stand its heroes still: they breathe, and every so often they cheer, look
+## themselves over or turn the weapon they are holding over in their hand. The
+## importer compiles the per-subclass table off retail's creation-screen
+## `AnimationState`s and its `CreateAHeroSystem` chance field, and publishes it as
+## `creationIdles`: the `base` loop set, the `specials` that interrupt it, and the
+## percentage chance one does at the end of a loop.
+##
+## READ LOOSELY, ON PURPOSE. The compiler carries each clip as a row naming BOTH
+## the exported GLB animation and the retail id it came from, and spells the
+## chance `specialChancePercent`; a bare string and a bare `specialChance` are
+## accepted for the same key because this screen is not the place a contract
+## detail should be able to turn the hero into a statue.
+const IDLES_KEY := "creationIdles"
+const IDLE_BASE_KEY := "base"
+const IDLE_SPECIALS_KEY := "specials"
+const IDLE_CHANCE_KEYS := ["specialChancePercent", "specialChance"]
+const IDLE_NAME_KEYS := ["animation", "sourceAnimation", "name"]
+## HOW SOON THE FIRST SPECIAL PLAYS. A one-in-five roll at the end of each loop
+## means a player can open this screen, dress a hero and leave again without ever
+## seeing the feature - so the hero does something once, shortly after he is on
+## the stage, and every later one is rolled for.
+const IDLE_INTRO_DELAY := 1.5
+
 var _system: Dictionary = {}
 var _profiles: Array[Dictionary] = []
 var _selected_class := 0
@@ -202,6 +226,16 @@ var _preview_yaw := PREVIEW_DEFAULT_YAW
 var _preview_dragging := false
 var _loaded_model_id := ""
 var _garment_status := ""
+
+var _preview_animator: AnimationPlayer = null
+var _preview_idle_subject := ""
+var _preview_idle_bases: Array[String] = []
+var _preview_idle_specials: Array[String] = []
+var _preview_idle_chance := 0.0
+var _preview_idle_loops := 0
+var _preview_idle_intro_left := 0.0
+var _preview_idle_rng := RandomNumberGenerator.new()
+var _preview_idle_roll := Callable()
 
 ## WHERE THE IMPORTER PUBLISHES THE GARMENT SKINS. Retail's Body options repaint
 ## the one body mesh, and the converted GLB embeds only the images that mesh
@@ -367,6 +401,11 @@ func working_powers() -> Array:
 	return _powers.duplicate()
 
 
+func working_appearance() -> Dictionary:
+	## What the hero on the stage is wearing, which is what saving him writes.
+	return _appearance.duplicate()
+
+
 func saved_profiles() -> Array[Dictionary]:
 	return _profiles.duplicate(true)
 
@@ -396,7 +435,12 @@ func garment_status() -> String:
 func _reset_working_loadout() -> void:
 	var sub_row := CahHeroes.sub_class_row(_system, _selected_class, _selected_sub)
 	_attributes = CahHeroes.default_attributes(sub_row)
-	_appearance = CahHeroes.default_appearance(sub_row)
+	# THE SYSTEM IS HALF THE ANSWER. `default_appearance` reads the subclass's
+	# default show-set and then asks the TABLE which option shows those parts;
+	# without it every group fell back to its first option, so the editor opened on
+	# "No Shield" while `new_profile` - which does pass it - saved the authored
+	# Shield CHS02. The hero being built was not the hero being saved.
+	_appearance = CahHeroes.default_appearance(sub_row, _system)
 	_powers = CahHeroes.default_powers(_system, _selected_class)
 	_awards = []
 
@@ -2494,6 +2538,7 @@ func _update_preview() -> void:
 		_preview_pivot.add_child(visual)
 		_preview_note.text = ""
 	_apply_preview_appearance(surface)
+	_bind_preview_idles(sub_row, "%d:%d:%s" % [_selected_class, _selected_sub, model_id])
 	_frame_preview(sub_row, _preview_model)
 	_apply_preview_yaw()
 	_show_turn_controls(true)
@@ -2533,11 +2578,249 @@ func _show_turn_controls(shown: bool) -> void:
 
 
 func _drop_preview_model() -> void:
+	_forget_preview_idles()
 	if _preview_model != null:
 		_preview_model.queue_free()
 		_preview_model = null
 	_loaded_model_id = ""
 	_show_turn_controls(false)
+
+
+# ------------------------------------------------------------- idle animations
+
+
+func set_preview_idle_roll(roll: Callable) -> void:
+	## The per-loop roll, handed over so a runner can force one.
+	##
+	## The screen's own roll comes off a seeded stream (see `_bind_preview_idles`)
+	## rather than a global random, for the same reason the animated props seed
+	## theirs: a preview that picks differently on every run is a preview no two
+	## runs can be compared over. A test that has to prove "a special plays on a hit
+	## and does not on a miss" hands its own answer in here rather than looping
+	## until chance obliges.
+	_preview_idle_roll = roll
+
+
+func preview_idle_report() -> Dictionary:
+	## What the hero is doing, as one dictionary a runner can assert on and a
+	## capture run can print beside a still photograph that cannot show motion.
+	return {
+		"base": "" if _preview_idle_bases.is_empty() else _preview_idle_bases[0],
+		"bases": _preview_idle_bases.duplicate(),
+		"specials": _preview_idle_specials.duplicate(),
+		"chance": _preview_idle_chance,
+		"loops": _preview_idle_loops,
+		"playing": "" if _preview_animator == null else String(_preview_animator.current_animation),
+	}
+
+
+func _process(delta: float) -> void:
+	_advance_preview_idles(delta)
+
+
+func _advance_preview_idles(delta: float) -> void:
+	## The countdown to the hero's FIRST special, and nothing else: every later one
+	## is rolled at the end of a base loop by `_on_preview_idle_finished`, which is
+	## where retail's own chance belongs.
+	if _preview_idle_intro_left <= 0.0:
+		return
+	_preview_idle_intro_left -= delta
+	if _preview_idle_intro_left > 0.0:
+		return
+	_preview_idle_intro_left = 0.0
+	_play_preview_idle(_pick_preview_special())
+
+
+func _idle_table(sub_row: Dictionary) -> Dictionary:
+	## The subclass's creation-screen idles, read off EITHER place the compiler can
+	## put them: the subclass row itself, or the model binding they belong to. Both
+	## are one line here, and the alternative is a screen that silently shows a
+	## statue the day the importer moves the key by one level.
+	var declared: Variant = sub_row.get(IDLES_KEY, {})
+	if typeof(declared) == TYPE_DICTIONARY and not (declared as Dictionary).is_empty():
+		return declared as Dictionary
+	var models: Dictionary = sub_row.get("models", {}) as Dictionary
+	for surface in ["creationScreen", "battlefield"]:
+		var binding: Dictionary = models.get(surface, {}) as Dictionary
+		var bound: Variant = binding.get(IDLES_KEY, {})
+		if typeof(bound) == TYPE_DICTIONARY and not (bound as Dictionary).is_empty():
+			return bound as Dictionary
+	return {}
+
+
+func _bind_preview_idles(sub_row: Dictionary, subject: String) -> void:
+	## Put the hero to work, or leave him standing.
+	##
+	## SILENCE IS THE RIGHT ANSWER FOR CONTENT WITH NO IDLES. Every other missing
+	## asset on this screen is named on the stage, because a helmet that is not
+	## there is a hole in a hero the player is choosing. An animation that is not
+	## there is a hero who stands still - which is exactly what this screen showed
+	## before there was any playback at all, and is worth no caption.
+	if subject == _preview_idle_subject:
+		return
+	_forget_preview_idles()
+	_preview_idle_subject = subject
+	_preview_animator = _find_animation_player(_preview_model)
+	if _preview_animator == null:
+		return
+	var idles := _idle_table(sub_row)
+	# RETAIL LOOPS A SET, not a clip. `_creation_idle_plan` hands over every
+	# creation-screen state that is not one of the three specials, which for most
+	# subclasses is more than one bored idle - so one of them is chosen at the end
+	# of each loop and a hero left alone does not metronome.
+	_preview_idle_bases = _resolve_idle_clips(idles.get(IDLE_BASE_KEY, ""))
+	if _preview_idle_bases.is_empty():
+		_preview_animator = null
+		return
+	for special in _resolve_idle_clips(idles.get(IDLE_SPECIALS_KEY, [])):
+		if not _preview_idle_bases.has(special) and not _preview_idle_specials.has(special):
+			_preview_idle_specials.append(special)
+	for key in IDLE_CHANCE_KEYS:
+		if idles.has(key):
+			_preview_idle_chance = clampf(float(idles[key]), 0.0, 100.0)
+			break
+	# ONE STREAM PER SUBCLASS, seeded the way `retail_animated_prop_controller`
+	# seeds its placements: the hero does the same things in the same order every
+	# time the screen is opened on him, so a preview can be photographed twice and
+	# the two pictures compared.
+	_preview_idle_rng.seed = int(_selected_class * 0x9E3779B1) ^ subject.hash()
+	if not _preview_animator.animation_finished.is_connected(_on_preview_idle_finished):
+		_preview_animator.animation_finished.connect(_on_preview_idle_finished)
+	_preview_idle_intro_left = IDLE_INTRO_DELAY if not _preview_idle_specials.is_empty() else 0.0
+	_play_preview_idle(_pick_preview_base())
+
+
+func _forget_preview_idles() -> void:
+	if _preview_animator != null and is_instance_valid(_preview_animator):
+		if _preview_animator.animation_finished.is_connected(_on_preview_idle_finished):
+			_preview_animator.animation_finished.disconnect(_on_preview_idle_finished)
+	_preview_animator = null
+	_preview_idle_subject = ""
+	_preview_idle_bases = []
+	_preview_idle_specials = []
+	_preview_idle_chance = 0.0
+	_preview_idle_loops = 0
+	_preview_idle_intro_left = 0.0
+
+
+func _find_animation_player(root: Node) -> AnimationPlayer:
+	if root == null:
+		return null
+	var stack: Array[Node] = [root]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node is AnimationPlayer:
+			return node as AnimationPlayer
+		for child in node.get_children():
+			stack.append(child)
+	return null
+
+
+func _resolve_idle_clips(value: Variant) -> Array[String]:
+	## Every clip one half of a compiled idle table names, in the order it names
+	## them, dropping the ones this model does not carry.
+	var out: Array[String] = []
+	var rows: Array = (value as Array) if typeof(value) == TYPE_ARRAY else [value]
+	for row in rows:
+		var resolved := _resolve_idle_row(row)
+		if resolved != "" and not out.has(resolved):
+			out.append(resolved)
+	return out
+
+
+func _resolve_idle_row(row: Variant) -> String:
+	## One entry of a compiled idle list, however it is spelled.
+	##
+	## The compiler carries each clip TWICE - the name the exporter gave it in the
+	## GLB and the retail animation id it came from - because a consumer holding
+	## only the retail id would have to re-implement the exporter's naming rule to
+	## find the clip. Both are tried, in that order, and a bare string is a name in
+	## its own right.
+	if typeof(row) == TYPE_DICTIONARY:
+		for key in IDLE_NAME_KEYS:
+			var resolved := _resolve_idle_animation(String((row as Dictionary).get(key, "")))
+			if resolved != "":
+				return resolved
+		return ""
+	return _resolve_idle_animation(String(row))
+
+
+func _resolve_idle_animation(clip_name: String) -> String:
+	## The animation on the loaded model that one compiled name stands for, or "".
+	##
+	## A converted GLB may file its clips under a library, so `CHRIDLA` reaches the
+	## player as `<library>/CHRIDLA`; both spellings are accepted and an AMBIGUOUS
+	## name is refused rather than guessed at - the same rule the animated props
+	## resolve their actions by.
+	if _preview_animator == null or clip_name.strip_edges() == "":
+		return ""
+	var wanted := clip_name.strip_edges()
+	var matches: Array[String] = []
+	for value in _preview_animator.get_animation_list():
+		var text := String(value)
+		if text == wanted or text.get_slice("/", text.get_slice_count("/") - 1) == wanted:
+			matches.append(text)
+	return matches[0] if matches.size() == 1 else ""
+
+
+func _play_preview_idle(clip_name: String) -> void:
+	## THE LOOP IS DRIVEN FROM HERE, not left to the clip.
+	##
+	## A clip the converter marked as looping never ends, and the end of a loop is
+	## precisely where the hero's next move is rolled - so it is played as a
+	## one-shot and started again on `animation_finished`, which is what the
+	## animated props do with a state they have to react to the end of.
+	if _preview_animator == null or clip_name == "":
+		return
+	if not _preview_animator.has_animation(clip_name):
+		return
+	var animation := _preview_animator.get_animation(clip_name)
+	if animation != null:
+		animation.loop_mode = Animation.LOOP_NONE
+	_preview_animator.play(clip_name)
+
+
+func _on_preview_idle_finished(clip_name: StringName) -> void:
+	if _preview_animator == null or _preview_idle_bases.is_empty():
+		return
+	# A SPECIAL IS AN INTERRUPTION, not a new resting state, so the end of one
+	# hands the hero straight back to his idle set without rolling for another.
+	if not _preview_idle_bases.has(String(clip_name)):
+		_play_preview_idle(_pick_preview_base())
+		return
+	_preview_idle_loops += 1
+	if _roll_preview_special():
+		_play_preview_idle(_pick_preview_special())
+		return
+	_play_preview_idle(_pick_preview_base())
+
+
+func _roll_preview_special() -> bool:
+	if _preview_idle_specials.is_empty() or _preview_idle_chance <= 0.0:
+		return false
+	var roll := (
+		float(_preview_idle_roll.call(_preview_idle_loops)) if _preview_idle_roll.is_valid()
+		else _preview_idle_rng.randf_range(0.0, 100.0)
+	)
+	return roll < _preview_idle_chance
+
+
+func _pick_preview_base() -> String:
+	return _pick_idle_clip(_preview_idle_bases)
+
+
+func _pick_preview_special() -> String:
+	return _pick_preview_base() if _preview_idle_specials.is_empty() else _pick_idle_clip(
+		_preview_idle_specials
+	)
+
+
+func _pick_idle_clip(clips: Array[String]) -> String:
+	if clips.is_empty():
+		return ""
+	if clips.size() == 1:
+		return clips[0]
+	return clips[int(_preview_idle_rng.randi() % clips.size())]
 
 
 func _apply_preview_appearance(surface := "") -> void:
