@@ -222,7 +222,426 @@ func _run() -> void:
 		and host_sim.tick_index == stopped_tick and client_sim.tick_index == stopped_tick
 	_check("desync_detection_and_stop", desync_ok,
 		"corrupt_tick=%d desync_tick=%d" % [corrupt_tick, host_session.desync_tick])
+	await _test_created_hero_exchange()
 	_finish()
+
+
+# --- created heroes across seats ---------------------------------------------
+#
+# A Create-a-Hero profile is saved under `user://`, so two peers NEVER have the
+# same set. Injecting each peer's own local heroes would build two different
+# production rosters and desync on the first purchase. The lobby therefore
+# exchanges them, and this phase proves the two halves of that claim: the
+# exchange converges (both peers hold the same table and derive a byte-identical
+# launch roster), and the agreed table produces byte-identical rule input on both
+# peers, after which two sims carrying DIFFERENT seats' heroes hash the same.
+
+const CahHeroes = preload("res://src/content/cah_heroes.gd")
+const Adapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
+const CAH_PRODUCER := "MenFortress"
+const CAH_PRODUCER_KIND := "men_fortress"
+const CAH_SEAT_A_ID := "aaaaaaaaaaaa1111aaaa1111"
+const CAH_SEAT_B_ID := "bbbbbbbbbbbb2222bbbb2222"
+
+
+func _test_created_hero_exchange() -> void:
+	await process_frame
+	await process_frame
+	var content_db = root.get_node_or_null("ContentDB")
+	var system_value: Variant = content_db.get("cah_system_runtime") if content_db != null else {}
+	var system: Dictionary = (
+		system_value as Dictionary if typeof(system_value) == TYPE_DICTIONARY else {}
+	)
+	_check("cah_table_mounted", CahHeroes.system_is_valid(system))
+	if not CahHeroes.system_is_valid(system):
+		return
+	var profile_a := CahHeroes.new_profile(system, "Seat A", 0, 0)
+	profile_a["heroId"] = CAH_SEAT_A_ID
+	var profile_b := CahHeroes.new_profile(system, "Seat B", 0, 1)
+	profile_b["heroId"] = CAH_SEAT_B_ID
+
+	_test_created_hero_lobby_exchange(profile_a, profile_b)
+	_test_created_hero_lockstep(system, profile_a, profile_b)
+
+
+func _test_created_hero_lobby_exchange(profile_a: Dictionary, profile_b: Dictionary) -> void:
+	## Sim-less lobby sessions on a real socket, exactly the pre-game phase.
+	var host = SessionScript.new(null)
+	var guest = SessionScript.new(null)
+	var host_error: Error = host.host(0)
+	var join_error: Error = guest.join("127.0.0.1", host.bound_port) if host_error == OK else ERR_CANT_CONNECT
+	var seated := host_error == OK and join_error == OK and _pump_pair(host, guest, func() -> bool:
+		return host.handshake_complete and guest.handshake_complete and guest.local_seat == 1)
+	_check("cah_lobby_seated", seated)
+	if not seated:
+		host.close()
+		guest.close()
+		return
+	host.send_lobby_profile("Host", "men", 0, true)
+	guest.send_lobby_profile("Guest", "men", 1, true)
+	_check("cah_host_announces_its_heroes", host.send_lobby_heroes([profile_a]))
+	_check("cah_guest_announces_its_heroes", guest.send_lobby_heroes([profile_b]))
+	var converged := _pump_pair(host, guest, func() -> bool:
+		return host.lobby_seat_heroes.size() == 2 and guest.lobby_seat_heroes.size() == 2 \
+			and host.lobby_seats.size() == 2 and guest.lobby_seats.size() == 2)
+	_check("cah_hero_tables_converge", converged)
+	if converged:
+		_check(
+			"cah_hero_tables_are_byte_identical",
+			var_to_bytes(host.lobby_seat_heroes) == var_to_bytes(guest.lobby_seat_heroes)
+		)
+		var host_roster: Array = host.build_lobby_roster()
+		var guest_roster: Array = guest.build_lobby_roster()
+		_check(
+			"cah_launch_roster_carries_every_seats_heroes",
+			host_roster.size() == 2
+				and var_to_bytes(host_roster) == var_to_bytes(guest_roster)
+				and (host_roster[0] as Dictionary).get("heroes", []).size() == 1
+				and (host_roster[1] as Dictionary).get("heroes", []).size() == 1
+		)
+		_check(
+			"cah_launch_roster_binds_heroes_to_seats",
+			int((host_roster[0] as Dictionary).get("seat", -1)) == 0
+				and int((host_roster[1] as Dictionary).get("seat", -1)) == 1
+		)
+	# THE HOST RULE. AllowCustomHeroes off empties the agreed table for EVERY
+	# seat, on every peer, so a disabled match cannot half-apply.
+	host.send_lobby_settings("bfme2.map.rivendell", 1200, 1.0, false, false)
+	var settings_reached := _pump_pair(host, guest, func() -> bool:
+		return not guest.custom_heroes_allowed())
+	_check("cah_host_toggle_reaches_the_guest", settings_reached)
+	if settings_reached:
+		var host_disabled: Array = host.build_lobby_roster()
+		var guest_disabled: Array = guest.build_lobby_roster()
+		_check(
+			"cah_host_toggle_strips_every_seats_heroes",
+			host_disabled.size() == 2
+				and var_to_bytes(host_disabled) == var_to_bytes(guest_disabled)
+				and (host_disabled[0] as Dictionary).get("heroes", []).is_empty()
+				and (host_disabled[1] as Dictionary).get("heroes", []).is_empty()
+		)
+	host.send_lobby_settings("bfme2.map.rivendell", 1200, 1.0, false, true)
+	_pump_pair(host, guest, func() -> bool: return guest.custom_heroes_allowed())
+	# NEVER TRUST REMOTE BYTES. A non-canonical document (the same object with
+	# unsorted keys) and an over-cap list are both refused outright.
+	var rejected_before: int = host.rejected_packets
+	host._receive_lobby_heroes(1, {"kind": "lobby.heroes", "heroes": ["{\"b\":1,\"a\":2}"]})
+	var oversized: Array = []
+	for _index in range(SessionScript.LOBBY_HEROES_PER_SEAT_MAX + 1):
+		oversized.append(SessionScript.canonical_hero_document(profile_b))
+	host._receive_lobby_heroes(1, {"kind": "lobby.heroes", "heroes": oversized})
+	host._receive_lobby_heroes(1, {"kind": "lobby.heroes", "heroes": [42]})
+	# A LIST THAT CANNOT FIT A PACKET MUST BE REFUSED, not accepted and then
+	# dropped by the transport: the caller's "announce nothing rather than a
+	# truncated set" fallback can only fire if the send says no.
+	var fat := profile_b.duplicate(true)
+	fat["name"] = "F".repeat(SessionScript.LOBBY_NAME_MAX)
+	fat["awards"] = []
+	for _index in range(4000):
+		(fat["awards"] as Array).append("Award_%d" % _index)
+	_check("cah_unsendable_hero_list_is_refused", not guest.send_lobby_heroes([fat]))
+	_check(
+		"cah_hero_caps_fit_one_packet",
+		SessionScript.MAX_SEATS * SessionScript.LOBBY_HEROES_BYTES_MAX
+			< SessionScript.MAX_PACKET_BYTES
+	)
+	_check(
+		"cah_malformed_hero_payloads_fail_closed",
+		host.rejected_packets == rejected_before + 3
+			and var_to_bytes(host.lobby_seat_heroes.get(1, [])) == var_to_bytes([
+				SessionScript.canonical_hero_document(profile_b)
+			])
+	)
+	host.close()
+	guest.close()
+
+
+func _test_created_hero_lockstep(
+	system: Dictionary, profile_a: Dictionary, profile_b: Dictionary
+) -> void:
+	var seat_rows: Array = [
+		{"seat": 0, "team": 0, "faction": "men", "heroes": [SessionScript.canonical_hero_document(profile_a)]},
+		{"seat": 1, "team": 1, "faction": "men", "heroes": [SessionScript.canonical_hero_document(profile_b)]},
+	]
+	var fieldable := {"FixtureRosterHero": _cah_roster_anchor()}
+	# Each peer derives the roster from the AGREED bytes, independently.
+	var peer_a_documents := CahHeroes.seat_roster_documents(system, fieldable, seat_rows, "men")
+	var peer_b_documents := CahHeroes.seat_roster_documents(
+		system, fieldable, [seat_rows[1], seat_rows[0]], "men"
+	)
+	_check("cah_both_seats_reach_the_roster", peer_a_documents.size() == 2)
+	_test_created_hero_id_hijack(system, profile_a, fieldable)
+	_test_created_hero_id_shape(system, profile_a)
+	_check(
+		"cah_peers_derive_byte_identical_rosters",
+		var_to_bytes(peer_a_documents) == var_to_bytes(peer_b_documents)
+	)
+	var object_a := "CreateAHero__%s" % CAH_SEAT_A_ID
+	var object_b := "CreateAHero__%s" % CAH_SEAT_B_ID
+	var record_a: Dictionary = (
+		((peer_a_documents.get(object_a, {}) as Dictionary).get("registration", {}) as Dictionary)
+			.get("createAHero", {}) as Dictionary
+	)
+	var record_b: Dictionary = (
+		((peer_a_documents.get(object_b, {}) as Dictionary).get("registration", {}) as Dictionary)
+			.get("createAHero", {}) as Dictionary
+	)
+	_check(
+		"cah_ordinals_derive_from_seat_and_hero_id",
+		int(record_a.get("ownerTeam", -1)) == 0 and int(record_b.get("ownerTeam", -1)) == 1
+			and _roster_ordinal(peer_a_documents[object_a]) != _roster_ordinal(peer_a_documents[object_b])
+	)
+
+	var runtimes: Dictionary = fieldable.duplicate(true)
+	for object_id in peer_a_documents:
+		runtimes[String(object_id)] = peer_a_documents[object_id]
+	var sim_a = _cah_sim(runtimes)
+	var sim_b = _cah_sim(runtimes)
+	if sim_a == null or sim_b == null:
+		return
+	var unit_a := Adapter.runtime_unit_id(peer_a_documents[object_a] as Dictionary)
+	var unit_b := Adapter.runtime_unit_id(peer_a_documents[object_b] as Dictionary)
+	_check(
+		"cah_ownership_refuses_the_other_seats_hero",
+		String(sim_a.queue_unit(0, 1, unit_b).get("reason", "")) == "created-hero-not-owned"
+			and String(sim_a.queue_unit(1, 2, unit_a).get("reason", "")) == "created-hero-not-owned"
+	)
+	_check(
+		"cah_producer_surface_hides_the_other_seats_hero",
+		_cah_owned_production(sim_a, 0).has(unit_a)
+			and not _cah_owned_production(sim_a, 0).has(unit_b)
+			and _cah_owned_production(sim_a, 1).has(unit_b)
+	)
+	# BOTH seats' purchases execute on BOTH sims, through the command queue, in
+	# the canonical (team, seq) order the network applies them in.
+	for sim in [sim_a, sim_b]:
+		sim.submit_command({
+			"tick": sim.tick_index + 2, "team": 0, "seq": 1, "type": "queue_unit",
+			"args": {"producer": 1, "unit_type": unit_a},
+		})
+		sim.submit_command({
+			"tick": sim.tick_index + 2, "team": 1, "seq": 2, "type": "queue_unit",
+			"args": {"producer": 2, "unit_type": unit_b},
+		})
+	var hashes_equal := true
+	for _tick in range(1200):
+		sim_a.tick()
+		sim_b.tick()
+		if sim_a.tick_index % 30 == 0:
+			hashes_equal = hashes_equal and sim_a.state_hash() == sim_b.state_hash()
+	_check("cah_two_seat_state_hashes_stay_identical", hashes_equal)
+	var spawned_a := _cah_spawned(sim_a, unit_a)
+	var spawned_b := _cah_spawned(sim_a, unit_b)
+	_check(
+		"cah_each_seat_fields_its_own_hero",
+		spawned_a != 0 and spawned_b != 0
+			and int((sim_a.entity(spawned_a) as Dictionary).get("team", -1)) == 0
+			and int((sim_a.entity(spawned_b) as Dictionary).get("team", -1)) == 1
+	)
+
+
+func _test_created_hero_id_hijack(
+	system: Dictionary, profile_a: Dictionary, fieldable: Dictionary
+) -> void:
+	## THE HIJACK. Every seat sees every other seat's hero ids in the host's
+	## table, and the object id a created hero occupies is derived from that id.
+	## A guest that re-announces the id of a hero on a LOWER seat would, walking
+	## seats ascending, overwrite the victim's document and delete their hero
+	## from the match - silently, on every peer, so not even a desync would
+	## reveal it. First claim wins and the loser is refused BY NAME.
+	var thief := profile_a.duplicate(true)
+	thief["name"] = "Thief"
+	var rows: Array = [
+		{
+			"seat": 0, "team": 0, "faction": "men",
+			"heroes": [SessionScript.canonical_hero_document(profile_a)],
+		},
+		{
+			"seat": 1, "team": 1, "faction": "men",
+			"heroes": [SessionScript.canonical_hero_document(thief)],
+		},
+	]
+	var admission := CahHeroes.admitted_seat_heroes(system, rows)
+	var admitted: Array = admission.get("admitted", []) as Array
+	var refusals: Array = admission.get("refusals", []) as Array
+	var claimed_refusal := false
+	for refusal in refusals:
+		if String(refusal).contains(CAH_SEAT_A_ID) and String(refusal).contains("seat 1"):
+			claimed_refusal = true
+	_check(
+		"cah_hero_id_hijack_is_refused",
+		admitted.size() == 1
+			and int((admitted[0] as Dictionary).get("seat", -1)) == 0
+			and claimed_refusal
+	)
+	var documents := CahHeroes.seat_roster_documents(system, fieldable, rows, "men")
+	_check(
+		"cah_hijacked_victim_keeps_its_hero",
+		documents.size() == 1
+			and documents.has("CreateAHero__%s" % CAH_SEAT_A_ID)
+			and int(
+				(((documents["CreateAHero__%s" % CAH_SEAT_A_ID] as Dictionary)
+					.get("registration", {}) as Dictionary)
+					.get("createAHero", {}) as Dictionary).get("ownerTeam", -1)
+			) == 0
+	)
+
+
+func _test_created_hero_id_shape(system: Dictionary, profile_a: Dictionary) -> void:
+	## A hero id reaches the object id, the command id, the sim's unit-type
+	## space, the exclusion log and the filesystem. Remote bytes may not put
+	## anything in it but the shape this module's own generator produces.
+	var hostile := [
+		"../../etc",
+		"a/b\nc",
+		"__engine__/HERO_BUILD/MenFortress",
+		"A".repeat(24),
+		"abc",
+		"a".repeat(4000),
+		"aaaaaaaaaaaa1111aaaa111",
+	]
+	var all_refused := true
+	for candidate in hostile:
+		var probe := profile_a.duplicate(true)
+		probe["heroId"] = String(candidate)
+		if CahHeroes.validate_profile(system, probe).is_empty():
+			all_refused = false
+	_check("cah_hostile_hero_ids_are_refused", all_refused)
+	_check(
+		"cah_generated_hero_ids_are_accepted",
+		CahHeroes.validate_profile(system, profile_a).is_empty()
+	)
+
+
+func _roster_ordinal(document: Dictionary) -> int:
+	var production: Array = (
+		(document.get("registration", {}) as Dictionary).get("production", []) as Array
+	)
+	return int((production[0] as Dictionary).get("rosterOrdinal", -1)) if not production.is_empty() else -1
+
+
+func _cah_spawned(sim, unit_type: String) -> int:
+	for entity_id in sim.entity_ids():
+		if String((sim.entity(entity_id) as Dictionary).get("unit_type", "")) == unit_type:
+			return int(entity_id)
+	return 0
+
+
+func _cah_sim(runtimes: Dictionary):
+	var sim = SimScript.new()
+	sim._apply_gameplay_rules({
+		"enable_base_loop": true,
+		"playable_unit_runtimes": runtimes,
+		"producer_kind_by_source_object": {CAH_PRODUCER: CAH_PRODUCER_KIND},
+		"unit_rules": {},
+		"starting_resources": 100000,
+		"command_point_cap": 10000,
+		"source_map_transform_scale": 0.1,
+		"spawn_initial_battalions": false,
+	})
+	_check("cah_sim_configures", String(sim.configuration_error) == "", String(sim.configuration_error))
+	if String(sim.configuration_error) != "":
+		return null
+	sim.ai_enabled = false
+	sim.entities.clear()
+	sim.structures.clear()
+	sim.expansion_pads.clear()
+	for producer_id in [1, 2]:
+		sim.structures[producer_id] = {
+			"id": producer_id,
+			"team": producer_id - 1,
+			"health": 10000,
+			"construction_progress": 1.0,
+			"structure_kind": CAH_PRODUCER_KIND,
+			"position": Vector2(0.0, 40.0 * float(producer_id)),
+			"rally": Vector2(10.0, 40.0 * float(producer_id)),
+			# The full surface, so the OWNERSHIP gate is what refuses a
+			# cross-seat purchase rather than the production list beating it
+			# to the answer.
+			"production": sim.production_rule_ids(),
+			"queue": [],
+			"completed_upgrades": [],
+		}
+	return sim
+
+
+func _cah_owned_production(sim, team: int) -> Array:
+	var offered: Array = []
+	for unit_type in sim.production_rule_ids():
+		if sim.created_hero_owner_team(String(unit_type)) in [-1, team]:
+			offered.append(String(unit_type))
+	return offered
+
+
+func _cah_roster_anchor() -> Dictionary:
+	## A retail hero on the hero-roster surface: the producer a created hero
+	## hangs off, and the ordinal it must not collide with.
+	return {
+		"schema": "openbfme.playable-unit-runtime",
+		"schemaVersion": 0,
+		"objectId": "FixtureRosterHero",
+		"category": "hero",
+		"descriptorSha256": "5".repeat(64),
+		"recipeSha256": "6".repeat(64),
+		"resourceIds": [],
+		"registration": {
+			"production": [{
+				"producerObjectId": CAH_PRODUCER,
+				"commandSetId": "__engine__/BuildableHeroesMP",
+				"commandId": "__engine__/HERO_BUILD/FixtureRosterHero",
+				"surface": "hero-roster",
+				"slot": 0,
+				"rosterOrdinal": 1,
+				"prerequisites": [],
+				"commandSetTransition": [],
+			}],
+			"composition": {
+				"containerObjectId": "FixtureRosterHero",
+				"primaryMemberObjectId": "FixtureRosterHero",
+				"members": [{"objectId": "FixtureRosterHero", "count": 1}],
+			},
+			"simulation": {
+				"displayName": "OBJECT:FixtureRosterHero",
+				"buildCost": 1000,
+				"buildTimeSeconds": 5.0,
+				"commandPoints": 10,
+				"memberCount": 1,
+				"memberHealth": 2000,
+				"speed": 50.0,
+				"visionRange": 150.0,
+				"combat": {
+					"attackRange": 40.0, "minimumAttackRange": 0.0,
+					"delayBetweenShotsMs": 1000.0, "preAttackDelayMs": 250.0,
+					"firingDurationMs": 250.0, "damage": 100,
+				},
+				"movement": {"acceleration": 210.0, "braking": 210.0, "turnRateDegreesPerSecond": 720.0},
+				"formation": {"memberCount": 1, "positions": [{"x": 0.0, "y": 0.0}]},
+			},
+			"ui": {
+				"portraitImageIds": ["HIFixture"],
+				"commands": [{
+					"commandId": "__engine__/HERO_BUILD/FixtureRosterHero",
+					"fields": {
+						"ButtonImage": ["HIFixture"],
+						"TextLabel": ["OBJECT:FixtureRosterHero"],
+						"DescriptLabel": ["CONTROLBAR:FixtureRosterHero"],
+					},
+					"audioRoutes": [],
+				}],
+			},
+		},
+	}
+
+
+func _pump_pair(host, guest, condition: Callable) -> bool:
+	for iteration in range(20000):
+		host.poll()
+		guest.poll()
+		if condition.call():
+			return true
+		if iteration % 100 == 99:
+			OS.delay_msec(1)
+	return false
 
 
 func _pump_handshake(iteration_budget: int) -> bool:

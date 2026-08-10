@@ -55,6 +55,11 @@ const MAX_PROFILES := 64
 const MAX_NAME_LENGTH := 24
 const MAX_PROFILE_BYTES := 64 * 1024
 
+## The one shape a hero id may have. Generated here, and required of every
+## profile that reaches a roster - including one that arrived over a wire.
+const HERO_ID_LENGTH := 24
+const HERO_ID_ALPHABET := "0123456789abcdef"
+
 ## The modifier kinds the five attribute groups emit, and what each scales.
 ## `ARMOR` is a damage-taken scalar (INNATE_ARMOR), so a HIGHER armour step
 ## means MORE damage taken unless the sim inverts it - which is exactly what
@@ -66,6 +71,32 @@ const KIND_HEALTH_MULT := "HEALTH_MULT"
 const KIND_AUTO_HEAL := "AUTO_HEAL"
 const KIND_VISION := "VISION"
 const KIND_SHROUD_CLEARING := "SHROUD_CLEARING"
+
+## What a created hero fights with when the mounted pack predates the retail
+## baseline join - i.e. when the compiled system carries no `objectBaseline` and
+## its weapon appearance options carry no `combat`.
+##
+## THESE NUMBERS ARE INVENTED and every document built on them says so, in
+## `registration.createAHero.limitations`. They exist so an older pack fields a
+## hero that moves and swings instead of failing the roster; they are not a
+## retail citation and nothing may treat them as one.
+const FALLBACK_SPEED := 50.0
+const FALLBACK_COMBAT := {
+	"attackRange": 40.0,
+	"minimumAttackRange": 0.0,
+	"delayBetweenShotsMs": 1250.0,
+	"preAttackDelayMs": 1000.0,
+	"firingDurationMs": 1400.0,
+	"damage": 150.0,
+}
+const FALLBACK_MOVEMENT := {
+	"acceleration": 210.0,
+	"braking": 210.0,
+	"turnRateDegreesPerSecond": 720.0,
+}
+
+const LIMITATION_OBJECT_BASELINE := "cah-object-baseline-absent"
+const LIMITATION_WEAPON_COMBAT := "cah-weapon-combat-absent"
 
 
 static func system_is_valid(system: Variant) -> bool:
@@ -175,6 +206,93 @@ static func modifier_value(system: Dictionary, attributes: Dictionary, kind: Str
 	return fallback
 
 
+static func object_baseline(system: Dictionary) -> Dictionary:
+	## The retail CreateAHero Object's own movement/health numbers, when the
+	## importer compiled them. Empty on a pack that predates the join, which is
+	## what puts a document on the invented fallbacks and names the limitation.
+	##
+	## Three homes are accepted because the compiler states the baseline
+	## alongside the object row and a reader that pinned one path would go blind
+	## the first time it moved.
+	var registration: Dictionary = system.get("registration", {}) as Dictionary
+	for holder_value in [registration, registration.get("system", {}), system]:
+		if typeof(holder_value) != TYPE_DICTIONARY:
+			continue
+		var candidate: Variant = (holder_value as Dictionary).get("objectBaseline")
+		if typeof(candidate) == TYPE_DICTIONARY and not (candidate as Dictionary).is_empty():
+			return candidate as Dictionary
+	return {}
+
+
+static func weapon_group_name(system: Dictionary) -> String:
+	var registration: Dictionary = system.get("registration", {}) as Dictionary
+	return String((registration.get("system", {}) as Dictionary).get("weaponGroupName", ""))
+
+
+static func weapon_appearance_row(system: Dictionary, appearance: Dictionary) -> Dictionary:
+	## The appearance option the hero wears in the weapon group. Retail prices
+	## and models the weapon as bling, and the weapon IS the hero's combat, so
+	## the chosen option is where damage, range and reload come from.
+	var group := weapon_group_name(system)
+	if group == "":
+		return {}
+	var upgrade := String(appearance.get(group, ""))
+	if upgrade == "":
+		return {}
+	for row_value in appearance_options(system):
+		var row := row_value as Dictionary
+		if String(row.get("upgradeName", "")) == upgrade:
+			return row
+	return {}
+
+
+static func combat_baseline(system: Dictionary, profile: Dictionary) -> Dictionary:
+	## The source-unit combat and locomotion a created hero spawns with, plus
+	## the named limitations of whatever the mounted pack could not supply.
+	##
+	## SOURCE UNITS, deliberately. Every playable-unit document states retail
+	## numbers and the runtime adapter scales them by the map's transform scale
+	## exactly once; converting here would scale them twice.
+	var limitations: Array[String] = []
+	var baseline := object_baseline(system)
+	if baseline.is_empty():
+		limitations.append(LIMITATION_OBJECT_BASELINE)
+	var weapon := weapon_appearance_row(
+		system, profile.get("appearance", {}) as Dictionary
+	)
+	var weapon_combat: Dictionary = weapon.get("combat", {}) as Dictionary
+	if weapon_combat.is_empty() or not weapon_combat.has("damage"):
+		limitations.append(LIMITATION_WEAPON_COMBAT)
+		weapon_combat = {}
+	var combat := FALLBACK_COMBAT.duplicate()
+	for key in weapon_combat.keys():
+		combat[String(key)] = weapon_combat[key]
+	var movement := FALLBACK_MOVEMENT.duplicate()
+	var baseline_movement: Dictionary = baseline.get("movement", {}) as Dictionary
+	for key in baseline_movement.keys():
+		movement[String(key)] = baseline_movement[key]
+	return {
+		"speed": float(baseline.get("speed", FALLBACK_SPEED)),
+		"baseHealth": float(baseline.get("baseHealth", 0.0)),
+		"combat": combat,
+		"movement": movement,
+		"weaponUpgradeName": String(weapon.get("upgradeName", "")),
+		"limitations": limitations,
+	}
+
+
+static func base_health_value(system: Dictionary) -> float:
+	## The unmultiplied health a created hero starts from: the compiled object
+	## baseline when the pack carries one, else the CreateAHero Object's own
+	## `MaxHealth`, which every pack has stated since the first compile.
+	var baseline := object_baseline(system)
+	var from_baseline := float(baseline.get("baseHealth", 0.0))
+	if from_baseline > 0.0:
+		return from_baseline
+	var registration: Dictionary = system.get("registration", {}) as Dictionary
+	return float((registration.get("system", {}) as Dictionary).get("maxHealth", 0.0))
+
+
 static func computed_stats(
 	system: Dictionary,
 	sub_row: Dictionary,
@@ -195,7 +313,7 @@ static func computed_stats(
 	var damage_mult := modifier_value(system, attributes, KIND_DAMAGE_MULT, 1.0)
 	var auto_heal := modifier_value(system, attributes, KIND_AUTO_HEAL, 1.0)
 
-	var base_health := float(base.get("maxHealth", 0.0))
+	var base_health := base_health_value(system)
 	var base_vision := float(base.get("visionRange", 0.0))
 	var base_shroud := float(base.get("shroudClearingRange", 0.0))
 
@@ -540,8 +658,14 @@ static func validate_profile(system: Dictionary, profile: Dictionary) -> Array[S
 		return refusals
 	if sanitize_name(String(profile.get("name", ""))) == "":
 		refusals.append("the hero has no name")
-	if String(profile.get("heroId", "")) == "":
-		refusals.append("the hero has no id")
+	if not hero_id_valid(String(profile.get("heroId", ""))):
+		# NOT MERELY NON-EMPTY. A hero id becomes the object id, the command id,
+		# the sim's unit-type key, a filename and a line in the exclusion log, and
+		# in a match it arrives from another machine. Constraining it to exactly
+		# what `_new_hero_id` produces closes path traversal, command-id forgery
+		# and log injection with one shape check, and removes the case-tie that a
+		# case-insensitive ordering would otherwise leave in the roster sort.
+		refusals.append("the hero id is not a %d-character lowercase hex id" % HERO_ID_LENGTH)
 
 	var class_index := int(profile.get("classIndex", -1))
 	var sub_index := int(profile.get("subClassIndex", -1))
@@ -686,6 +810,8 @@ static func roster_document(
 	var attributes: Dictionary = profile.get("attributes", {}) as Dictionary
 	var powers: Array = profile.get("powers", []) as Array
 	var stats := computed_stats(system, sub_row, attributes, powers)
+	var baseline := combat_baseline(system, profile)
+	var baseline_combat: Dictionary = baseline["combat"] as Dictionary
 	var object_id := "CreateAHero__%s" % String(profile.get("heroId", ""))
 	var command_id := "__engine__/HERO_BUILD/%s" % object_id
 	var name := sanitize_name(String(profile.get("name", "")))
@@ -724,22 +850,32 @@ static func roster_document(
 				"commandPoints": stats["commandPoints"],
 				"memberCount": 1,
 				"memberHealth": stats["health"],
-				"speed": 50.0,
+				"speed": float(baseline["speed"]),
 				"visionRange": stats["visionRange"],
+				# THE WEAPON THE HERO IS WEARING, times the damage slider. The
+				# bling a player picked on the APPEARANCE screen is the weapon
+				# retail equips, so its compiled damage/range/reload is the base
+				# every DAMAGE_MULT step multiplies.
 				"combat": {
-					"attackRange": 40.0,
-					"minimumAttackRange": 0.0,
-					"delayBetweenShotsMs": 1250.0,
-					"preAttackDelayMs": 1000.0,
-					"firingDurationMs": 1400.0,
-					"damage": int(round(150.0 * float(stats["damageMultiplier"]))),
+					"attackRange": float(baseline_combat.get("attackRange", 0.0)),
+					"minimumAttackRange": float(baseline_combat.get("minimumAttackRange", 0.0)),
+					"delayBetweenShotsMs": float(baseline_combat.get("delayBetweenShotsMs", 0.0)),
+					"preAttackDelayMs": float(baseline_combat.get("preAttackDelayMs", 0.0)),
+					"firingDurationMs": float(baseline_combat.get("firingDurationMs", 0.0)),
+					"damage": maxi(1, int(round(
+						float(baseline_combat.get("damage", 0.0))
+						* float(stats["damageMultiplier"])
+					))),
+					"damageType": String(baseline_combat.get("damageType", "")),
 				},
-				"movement": {
-					"acceleration": 210.0,
-					"braking": 210.0,
-					"turnRateDegreesPerSecond": 720.0,
-				},
+				"movement": (baseline["movement"] as Dictionary).duplicate(),
 				"formation": {"memberCount": 1, "positions": [{"x": 0.0, "y": 0.0}]},
+				# THE OTHER TWO SLIDERS, on the document rather than only in the
+				# arithmetic record. INNATE_ARMOR is a damage-TAKEN scalar and
+				# AUTO_HEAL scales the object's own regeneration, so both reach
+				# the sim as body properties of this one unit.
+				"innateArmorScalar": float(stats["armorScalar"]),
+				"autoHealMultiplier": float(stats["autoHealMultiplier"]),
 			},
 			# THE POWERS AND THE LEVEL CHAIN, in the shapes the runtime adapter
 			# already projects for every retail hero. A created hero reaches the
@@ -833,17 +969,115 @@ static func hero_roster_producer(unit_runtimes: Dictionary) -> Dictionary:
 	return {"producerObjectId": producer, "usedOrdinals": used}
 
 
-static func roster_documents(
-	system: Dictionary, unit_runtimes: Dictionary, faction: String
+static func admitted_seat_heroes(
+	system: Dictionary, seat_rows: Array, require_descriptor_match: bool = true
 ) -> Dictionary:
-	## Every saved hero this faction may field, as playable-unit documents keyed
-	## by object id, ready to merge into the faction's roster.
+	## Which of the match's announced heroes may actually be fielded, and one
+	## stated reason per hero that may not.
 	##
-	## DETERMINISTIC BY CONSTRUCTION. Profiles are walked in hero-id order and
-	## ordinals are handed out in that order, so two peers with the same saved
-	## heroes and the same pack build the same roster in the same slots. A
-	## roster that depended on directory order would desync a lockstep match on
-	## the first hero purchase.
+	## RUN IDENTICALLY ON EVERY PEER, on the bytes the lobby agreed, against the
+	## locally mounted table. Admission is therefore a pure function of (agreed
+	## payload, mounted pack) - and since lockstep already requires every peer to
+	## mount the same pack, every peer admits and refuses exactly the same set.
+	## That is the whole determinism argument: no peer may field a hero another
+	## peer refused, so no peer can disagree about the production roster.
+	##
+	## FAIL CLOSED. A hero that fails ANY rule is dropped, not repaired: an
+	## over-budget loadout, a power its class cannot take, a hero built against
+	## different content. Dropping one hero costs one player one unit; admitting
+	## a hero one peer computes differently costs the whole match.
+	var admitted: Array = []
+	var refusals: Array[String] = []
+	var claimed: Dictionary = {}
+	var rows: Array = seat_rows.duplicate()
+	rows.sort_custom(
+		func(a: Dictionary, b: Dictionary) -> bool:
+			return int(a.get("seat", 0)) < int(b.get("seat", 0))
+	)
+	var descriptor := String(system.get("descriptorSha256", ""))
+	for row_value in rows:
+		var row := row_value as Dictionary
+		var seat := int(row.get("seat", 0))
+		var profiles: Array[Dictionary] = []
+		for hero_value in (row.get("heroes", []) as Array):
+			var profile := _decoded_hero(hero_value)
+			if profile.is_empty():
+				refusals.append("seat %d announced a hero document that is not readable" % seat)
+				continue
+			profiles.append(profile)
+		profiles.sort_custom(
+			func(a: Dictionary, b: Dictionary) -> bool:
+				return String(a.get("heroId", "")) < String(b.get("heroId", ""))
+		)
+		for profile in profiles:
+			var hero_id := String(profile.get("heroId", ""))
+			var reasons := validate_profile(system, profile)
+			# THE CONTENT LOCK, and only on the match path. A saved hero is
+			# deliberately NOT frozen to the table it was made on - a rebalanced
+			# pack moves every existing hero, which is the whole point of storing
+			# a build order rather than stats. In a lockstep match that same
+			# leniency is a desync, so there the descriptor must match exactly.
+			if require_descriptor_match \
+				and String(profile.get("systemDescriptorSha256", "")) != descriptor:
+				reasons.append("the hero was built against different content")
+			# THE ID IS THE SLOT. A created hero occupies an object id derived
+			# from its hero id, and every seat can read every other seat's ids off
+			# the lobby table - so a peer that re-announced a victim's id would
+			# overwrite the victim's document and delete their hero from the
+			# match, identically on every peer and therefore invisibly. First
+			# claim wins, in the same (seat, hero-id) order the roster is built
+			# in, and the loser is refused by name.
+			if claimed.has(hero_id):
+				refusals.append(
+					"seat %d hero %s excluded: that hero id is already claimed by seat %d"
+					% [seat, hero_id, int(claimed[hero_id])]
+				)
+				continue
+			if not reasons.is_empty():
+				refusals.append(
+					"seat %d hero %s excluded: %s" % [seat, hero_id, ", ".join(reasons)]
+				)
+				continue
+			claimed[hero_id] = seat
+			admitted.append({
+				"seat": seat,
+				"team": int(row.get("team", seat)),
+				"faction": String(row.get("faction", "")),
+				"profile": profile,
+			})
+	return {"admitted": admitted, "refusals": refusals}
+
+
+static func _decoded_hero(value: Variant) -> Dictionary:
+	## A hero as announced: either the canonical JSON document the lobby carries
+	## or, on the single-player path, the profile dictionary itself.
+	if typeof(value) == TYPE_DICTIONARY:
+		return value as Dictionary
+	if typeof(value) != TYPE_STRING:
+		return {}
+	if String(value).length() > MAX_PROFILE_BYTES:
+		return {}
+	var parsed: Variant = JSON.parse_string(String(value))
+	if typeof(parsed) != TYPE_DICTIONARY:
+		return {}
+	return parsed as Dictionary
+
+
+static func seat_roster_documents(
+	system: Dictionary,
+	unit_runtimes: Dictionary,
+	seat_rows: Array,
+	faction: String,
+	require_descriptor_match: bool = true
+) -> Dictionary:
+	## Every announced hero this faction may field, as playable-unit documents
+	## keyed by object id, ready to merge into the faction's roster.
+	##
+	## DETERMINISTIC BY CONSTRUCTION. Heroes are walked in (seat, hero-id) order
+	## and ordinals are handed out in that order, so every peer builds the same
+	## roster in the same slots. A roster that depended on directory order - or
+	## on which heroes happened to be saved on THIS machine - would desync a
+	## lockstep match on the first hero purchase.
 	var out: Dictionary = {}
 	if system.is_empty():
 		return out
@@ -853,16 +1087,15 @@ static func roster_documents(
 		# No hero producer in this faction's slice: nothing to hang a created
 		# hero off, so none are offered rather than inventing a producer.
 		return out
-	var used: Dictionary = binding.get("usedOrdinals", {}) as Dictionary
-	var profiles := load_profiles()
-	profiles.sort_custom(
-		func(a: Dictionary, b: Dictionary) -> bool:
-			return String(a.get("heroId", "")) < String(b.get("heroId", ""))
-	)
+	var used: Dictionary = (binding.get("usedOrdinals", {}) as Dictionary).duplicate()
 	var next_ordinal := 1
-	for profile in profiles:
-		if not validate_profile(system, profile).is_empty():
+	var admission := admitted_seat_heroes(system, seat_rows, require_descriptor_match)
+	for entry_value in (admission.get("admitted", []) as Array):
+		var entry := entry_value as Dictionary
+		var seat_faction := String(entry.get("faction", ""))
+		if seat_faction != "" and seat_faction != faction:
 			continue
+		var profile := entry.get("profile", {}) as Dictionary
 		var sub_row := sub_class_row(
 			system, int(profile.get("classIndex", -1)), int(profile.get("subClassIndex", -1))
 		)
@@ -872,8 +1105,36 @@ static func roster_documents(
 			next_ordinal += 1
 		used[next_ordinal] = true
 		var document := roster_document(system, profile, producer, next_ordinal)
+		var record: Dictionary = (
+			(document["registration"] as Dictionary)["createAHero"] as Dictionary
+		)
+		record["ownerSeat"] = int(entry.get("seat", 0))
+		record["ownerTeam"] = int(entry.get("team", 0))
 		out[String(document.get("objectId", ""))] = document
 	return out
+
+
+static func roster_documents(
+	system: Dictionary, unit_runtimes: Dictionary, faction: String, owner_team: int = 0
+) -> Dictionary:
+	## The single-player roster: this machine's own saved heroes, on one seat.
+	## One implementation with the multiplayer path so a skirmish hero and a
+	## lockstep hero are never built by different arithmetic.
+	##
+	## THE OWNER TEAM IS PASSED IN, not assumed. A skirmish roster hands each row
+	## its own sim team id and the human is not always on the first row, so a
+	## hero owned by a hardcoded team 0 would be offered to whichever AI sits
+	## there and refused to the player who made it.
+	var profiles: Array = []
+	for profile in load_profiles():
+		profiles.append(profile)
+	return seat_roster_documents(
+		system,
+		unit_runtimes,
+		[{"seat": 0, "team": owner_team, "faction": faction, "heroes": profiles}],
+		faction,
+		false
+	)
 
 
 static func _read_profile(path: String) -> Dictionary:
@@ -905,8 +1166,21 @@ static func _is_safe_hero_id(hero_id: String) -> bool:
 	return true
 
 
+static func hero_id_valid(hero_id: String) -> bool:
+	## EXACTLY what `_new_hero_id` produces, and nothing else. Wider than this
+	## and a hero id off another machine can spell a path, a command id or a log
+	## line; `_is_safe_hero_id` stays wider only so an older saved file can still
+	## be read off disk rather than becoming unopenable.
+	if hero_id.length() != HERO_ID_LENGTH:
+		return false
+	for character in hero_id:
+		if not HERO_ID_ALPHABET.contains(character):
+			return false
+	return true
+
+
 static func _new_hero_id() -> String:
 	var out := ""
-	for _index in range(24):
-		out += "0123456789abcdef"[randi() % 16]
+	for _index in range(HERO_ID_LENGTH):
+		out += HERO_ID_ALPHABET[randi() % HERO_ID_ALPHABET.length()]
 	return out

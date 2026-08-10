@@ -24,6 +24,7 @@ signal launch_confirmed
 signal leave_requested
 
 const SessionScript = preload("res://src/retail_slice/retail_lockstep_session.gd")
+const CahHeroesScript = preload("res://src/content/cah_heroes.gd")
 
 const FACTION_NAMES: Array[String] = ["Men", "Elves", "Dwarves", "Isengard", "Mordor", "Goblins", "Angmar"]
 const MAP_NAMES: Array[String] = ["Fords of Isen II", "Rivendell", "Mount Doom", "Dagorlad", "Mordor"]
@@ -85,6 +86,8 @@ var map_opt: OptionButton
 var resources_opt: OptionButton
 var cp_opt: OptionButton
 var build_mode_opt: OptionButton
+var custom_heroes_opt: OptionButton
+var custom_heroes_value_label: Label
 var map_value_label: Label
 var resources_value_label: Label
 var cp_value_label: Label
@@ -358,6 +361,26 @@ func _build() -> void:
 	build_mode_value_label = _row_label("BuildModeValue", "Freeform (BFME2)", Vector2(SETTINGS_X, build_y + 5), SETTINGS_W)
 	add_child(build_mode_value_label)
 
+	# Retail's AllowCustomHeroes, on the same host-authoritative surface as the
+	# other three rules: a host that turns it off refuses created heroes for the
+	# whole match, not only for itself.
+	var heroes_label_y := build_y + ROW_HEIGHT + 6.0
+	var heroes_y := heroes_label_y + 18.0
+	add_child(_field_label("CustomHeroesLabel", "Custom Heroes", Vector2(SETTINGS_X, heroes_label_y)))
+	custom_heroes_opt = OptionButton.new()
+	custom_heroes_opt.name = "CustomHeroesOpt"
+	custom_heroes_opt.add_item("Allowed")
+	custom_heroes_opt.set_item_metadata(0, true)
+	custom_heroes_opt.add_item("Disabled")
+	custom_heroes_opt.set_item_metadata(1, false)
+	custom_heroes_opt.select(0)
+	custom_heroes_opt.position = Vector2(SETTINGS_X, heroes_y)
+	custom_heroes_opt.size = Vector2(SETTINGS_W, ROW_HEIGHT)
+	custom_heroes_opt.item_selected.connect(func(_index: int) -> void: _send_settings())
+	add_child(custom_heroes_opt)
+	custom_heroes_value_label = _row_label("CustomHeroesValue", "Allowed", Vector2(SETTINGS_X, heroes_y + 5), SETTINGS_W)
+	add_child(custom_heroes_value_label)
+
 	# --- chat (full width, below both columns) -------------------------------
 	var chat_top := ROW_TOP + ROW_PITCH * MAX_SEATS + 6.0
 	var chat_log_height := maxf(52.0, size.y - chat_top - 130.0)
@@ -482,10 +505,12 @@ func _set_settings_editable(editable: bool) -> void:
 	resources_opt.visible = editable
 	cp_opt.visible = editable
 	build_mode_opt.visible = editable
+	custom_heroes_opt.visible = editable
 	map_value_label.visible = not editable
 	resources_value_label.visible = not editable
 	cp_value_label.visible = not editable
 	build_mode_value_label.visible = not editable
+	custom_heroes_value_label.visible = not editable
 	# The alliance pickers follow the same host-authoritative rule.
 	local_team_opt.visible = editable
 	local_team_label.visible = not editable
@@ -511,7 +536,23 @@ func _announce_profile() -> void:
 		String(fields["name"]), String(fields["faction"]), int(fields["color"]), bool(fields["ready"])
 	):
 		_profile_dirty = false
+		_announce_created_heroes()
 	_refresh_buttons()
+
+
+func _announce_created_heroes() -> void:
+	## This machine's saved Create-a-Hero heroes, announced with the profile so
+	## every peer knows every seat's heroes BEFORE the launch roster is derived.
+	## A store this peer cannot announce (over the wire caps) announces nothing
+	## rather than a truncated list, so the player fields no created hero instead
+	## of a different set from the one every other peer sees.
+	if session == null:
+		return
+	var profiles: Array = []
+	for profile in CahHeroesScript.load_profiles():
+		profiles.append(profile)
+	if not session.send_lobby_heroes(profiles) and not profiles.is_empty():
+		session.send_lobby_heroes([])
 
 
 func _on_profile_edited() -> void:
@@ -692,6 +733,9 @@ func _selected_settings() -> Dictionary:
 		"resources": int(resources_opt.get_item_metadata(maxi(0, resources_opt.selected))),
 		"cp_factor": float(cp_opt.get_item_metadata(maxi(0, cp_opt.selected))),
 		"build_plots": bool(build_mode_opt.get_item_metadata(maxi(0, build_mode_opt.selected))),
+		"allow_custom_heroes": bool(
+			custom_heroes_opt.get_item_metadata(maxi(0, custom_heroes_opt.selected))
+		),
 	}
 
 
@@ -701,7 +745,8 @@ func _send_settings() -> void:
 	var settings := _selected_settings()
 	session.send_lobby_settings(
 		String(settings["map_id"]), int(settings["resources"]),
-		float(settings["cp_factor"]), bool(settings["build_plots"])
+		float(settings["cp_factor"]), bool(settings["build_plots"]),
+		bool(settings["allow_custom_heroes"])
 	)
 
 
@@ -721,6 +766,9 @@ func _apply_settings_to_controls(settings: Dictionary) -> void:
 	var build_plots := bool(settings.get("build_plots", false))
 	build_mode_opt.select(1 if build_plots else 0)
 	build_mode_value_label.text = "Build Plots (BFME1)" if build_plots else "Freeform (BFME2)"
+	var allow_heroes := bool(settings.get("allow_custom_heroes", true))
+	custom_heroes_opt.select(0 if allow_heroes else 1)
+	custom_heroes_value_label.text = "Allowed" if allow_heroes else "Disabled"
 
 
 func _refresh_buttons() -> void:

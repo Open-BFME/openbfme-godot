@@ -110,6 +110,37 @@ const LOBBY_HOUSE_COLORS: Array[Color] = [
 const LOBBY_ALLIANCE_MIN := 1
 const LOBBY_ALLIANCE_MAX := MAX_SEATS
 
+## --- Created heroes on the wire ---------------------------------------------
+## A Create-a-Hero profile is saved under `user://`, so every peer's set is
+## DIFFERENT. A lockstep match whose peers each injected their own local heroes
+## would build different production rosters and desync on the first purchase, so
+## the lobby exchanges them: each seat announces its own, the host is the only
+## writer of the table, and the agreed table rides the launch roster where the
+## existing byte-equality gate already refuses any disagreement.
+##
+## CARRIED AS CANONICAL JSON TEXT, not as dictionaries. Godot dictionaries
+## preserve insertion order and `var_to_bytes` is order-sensitive, so a
+## dictionary that survived a round trip through another peer's parser could
+## byte-differ from the same dictionary built locally and fail the launch gate
+## for no reason. A JSON document with sorted keys has exactly one spelling, and
+## re-canonicalizing on receipt (parse, re-stringify, compare) rejects anything
+## that is not already in it — which is also a cheap schema gate on wire data.
+##
+## THIS FILE KNOWS NOTHING ABOUT CREATE-A-HERO RULES. It bounds and canonicalizes
+## bytes. Whether a hero is legal (budget, power prerequisites, the content it
+## was built against) is decided by the same `validate_profile` the local screen
+## uses, at match boot, on the agreed bytes — identically on every peer.
+## THE CAPS ARE SIZED SO THE WHOLE TABLE FITS ONE PACKET. The host rebroadcasts
+## every seat's list together, so the binding number is MAX_SEATS x the per-seat
+## budget, and that product must stay under MAX_PACKET_BYTES - otherwise a legal
+## announcement would be accepted here and then dropped by the transport, which
+## is the one failure mode a fail-closed protocol must not have. A saved profile
+## is a build order (a class pair and five small integers), so a real one is
+## about two kilobytes; these budgets are roomy against that, not tight.
+const LOBBY_HEROES_PER_SEAT_MAX := 8
+const LOBBY_HERO_BYTES_MAX := 16 * 1024
+const LOBBY_HEROES_BYTES_MAX := 24 * 1024
+
 signal lobby_updated
 signal lobby_chat_received(team: int, text: String)
 signal lobby_launch_accepted(roster: Array)
@@ -194,6 +225,9 @@ var lobby_chat_log: Array = []
 var lobby_launch_roster: Array = []
 var lobby_launch_settings: Dictionary = {}
 var lobby_launch_received := false
+## seat -> Array[String] of canonical hero documents. Host-authoritative like
+## the seat table: a guest announces its own and adopts the host's table.
+var lobby_seat_heroes: Dictionary = {}
 
 
 func _init(simulation: RetailSliceSim = null) -> void:
@@ -623,6 +657,9 @@ func _on_peer_disconnect(event_peer: ENetPacketPeer) -> void:
 
 func _release_seat(seat: int) -> void:
 	_seats.erase(seat)
+	# A vacated seat's heroes leave with it, so a later peer that takes the seat
+	# never inherits the previous occupant's roster.
+	lobby_seat_heroes.erase(seat)
 	_remote_bundles.erase(seat)
 	_remote_contiguous.erase(seat)
 	_remote_last_seq.erase(seat)
@@ -761,6 +798,10 @@ func _receive_packet(event_peer: ENetPacketPeer, packet: PackedByteArray) -> voi
 			_receive_relay_chat(envelope)
 		"lobby.seats":
 			_receive_lobby_seats(envelope)
+		"lobby.heroes":
+			_receive_lobby_heroes(sender_seat, envelope)
+		"lobby.heroTable":
+			_receive_lobby_hero_table(envelope)
 		"lobby.settings":
 			_receive_lobby_settings(envelope)
 		"lobby.launch":
@@ -818,6 +859,7 @@ func _receive_join(event_peer: ENetPacketPeer, envelope: Dictionary) -> void:
 	# Everyone (including the newcomer) gets the authoritative table, and the
 	# newcomer additionally needs the current settings.
 	_broadcast_seat_table()
+	_broadcast_hero_table()
 	if not lobby_settings.is_empty():
 		_send_to_peer(event_peer, {
 			"kind": "lobby.settings",
@@ -825,6 +867,7 @@ func _receive_join(event_peer: ENetPacketPeer, envelope: Dictionary) -> void:
 			"resources": int(lobby_settings["resources"]),
 			"cp_factor": float(lobby_settings["cp_factor"]),
 			"build_plots": bool(lobby_settings["build_plots"]),
+			"allow_custom_heroes": bool(lobby_settings.get("allow_custom_heroes", true)),
 		})
 	# The host's own announced profile is not part of the table until it has
 	# been announced; if it already was, replay it to the newcomer so its 1v1
@@ -1118,6 +1161,11 @@ static func lobby_default_settings() -> Dictionary:
 		"resources": 1200,
 		"cp_factor": 1.0,
 		"build_plots": false,
+		# RETAIL'S OWN TOGGLE. BFME2's online GAME SETUP carries an
+		# AllowCustomHeroes switch, and a host that turns it off is refusing
+		# created heroes for EVERY seat - so it empties the agreed hero table
+		# rather than filtering at each peer, where two peers could disagree.
+		"allow_custom_heroes": true,
 	}
 
 
@@ -1155,6 +1203,12 @@ static func _lobby_settings_fields_valid(map_id: String, resource_amount: int, c
 	return LOBBY_MAP_IDS.has(map_id) \
 		and LOBBY_RESOURCE_VALUES.has(resource_amount) \
 		and LOBBY_CP_FACTORS.has(cp_factor)
+
+
+func custom_heroes_allowed() -> bool:
+	## Retail's AllowCustomHeroes. Absent on a settings dict from before the
+	## toggle existed, which reads as allowed - the historical behaviour.
+	return bool(lobby_settings.get("allow_custom_heroes", true))
 
 
 static func _canonical_profile(player_name: String, faction: String, color: int, ready: bool) -> Dictionary:
@@ -1225,6 +1279,175 @@ func _broadcast_seat_table() -> void:
 		return
 	_rebuild_lobby_seats()
 	_broadcast({"kind": "lobby.seats", "seats": lobby_seats.duplicate(true)})
+
+
+# --- created heroes ----------------------------------------------------------
+
+## The one spelling of a hero document on the wire: JSON with sorted keys.
+## Returns "" for anything that is not a dictionary or does not survive the
+## round trip, which is also how a malformed remote payload is refused.
+static func canonical_hero_document(value: Variant) -> String:
+	var text := ""
+	if typeof(value) == TYPE_DICTIONARY:
+		text = JSON.stringify(value, "", true)
+	elif typeof(value) == TYPE_STRING:
+		text = String(value)
+	else:
+		return ""
+	var parsed: Variant = JSON.parse_string(text)
+	if typeof(parsed) != TYPE_DICTIONARY:
+		return ""
+	# THE PARSE IS NOT OPTIONAL, even for a dictionary this peer built itself.
+	# JSON widens every number to float, so a document stringified straight out
+	# of memory spells `0` exactly where the same document read back off the
+	# wire spells `0.0`. Canonicalizing through a parse makes the two spellings
+	# one - without it a peer refuses its OWN hero on the echo.
+	return JSON.stringify(parsed, "", true)
+
+
+## Validates a whole hero list off the wire. Returns the canonical list, or []
+## for anything over the caps or not already canonical. An EMPTY list is legal
+## and is the normal case: most seats bring no created hero.
+static func validated_hero_documents(rows: Variant) -> Array:
+	if typeof(rows) != TYPE_ARRAY:
+		return []
+	var source := rows as Array
+	if source.size() > LOBBY_HEROES_PER_SEAT_MAX:
+		return []
+	var out: Array = []
+	var total := 0
+	for row_value in source:
+		if typeof(row_value) != TYPE_STRING:
+			return []
+		var text := String(row_value)
+		if text.length() > LOBBY_HERO_BYTES_MAX:
+			return []
+		total += text.length()
+		if total > LOBBY_HEROES_BYTES_MAX:
+			return []
+		var canonical := canonical_hero_document(text)
+		if canonical == "" or canonical != text:
+			return []
+		out.append(canonical)
+	return out
+
+
+func heroes_for_seat(seat: int) -> Array:
+	return (lobby_seat_heroes.get(seat, []) as Array).duplicate()
+
+
+## Announce this peer's own created heroes. Accepts profile dictionaries or
+## already-canonical documents; anything that fails the caps is refused whole
+## rather than trimmed, so a peer never silently plays with fewer heroes than it
+## announced.
+func send_lobby_heroes(profiles: Array) -> bool:
+	if not handshake_complete or local_seat < 0:
+		return false
+	var canonical: Array = []
+	for profile_value in profiles:
+		var document := canonical_hero_document(profile_value)
+		if document == "":
+			return false
+		canonical.append(document)
+	var validated := validated_hero_documents(canonical)
+	if validated.size() != canonical.size():
+		return false
+	var envelope := {"kind": "lobby.heroes", "heroes": validated.duplicate()}
+	# A packet the transport would silently drop is a refusal HERE. _send_to_peer
+	# discards an oversized packet without saying so, and a caller that was told
+	# "sent" would then play a match believing it had announced heroes nobody
+	# received - the exact split-brain the byte-equal launch gate exists to stop.
+	if var_to_bytes(envelope).size() > MAX_PACKET_BYTES:
+		return false
+	lobby_seat_heroes[local_seat] = validated
+	_send_envelope(envelope)
+	if _is_host:
+		_broadcast_hero_table()
+	if _connection != null:
+		_connection.flush()
+	return true
+
+
+func _broadcast_hero_table() -> void:
+	if not _is_host:
+		return
+	_broadcast({"kind": "lobby.heroTable", "table": _hero_table_rows()})
+
+
+func _hero_table_rows() -> Array:
+	## Ascending seat order, so the table has one spelling on every peer.
+	var seats: Array = lobby_seat_heroes.keys()
+	seats.sort()
+	var rows: Array = []
+	for seat_value in seats:
+		var seat := int(seat_value)
+		if not _seats.has(seat):
+			continue
+		rows.append({"seat": seat, "heroes": (lobby_seat_heroes[seat_value] as Array).duplicate()})
+	return rows
+
+
+func _receive_lobby_heroes(sender_seat: int, envelope: Dictionary) -> void:
+	if not handshake_complete or envelope.size() != 2 \
+		or typeof(envelope.get("heroes")) != TYPE_ARRAY:
+		rejected_packets += 1
+		return
+	if not _seats.has(sender_seat) or sender_seat == local_seat:
+		rejected_packets += 1
+		return
+	var rows := envelope["heroes"] as Array
+	var validated := validated_hero_documents(rows)
+	if validated.size() != rows.size():
+		rejected_packets += 1
+		return
+	lobby_seat_heroes[sender_seat] = validated
+	if _is_host:
+		_broadcast_hero_table()
+		if _connection != null:
+			_connection.flush()
+	lobby_updated.emit()
+
+
+func _receive_lobby_hero_table(envelope: Dictionary) -> void:
+	## Host-authoritative, exactly like the seat table.
+	if _is_host or not handshake_complete or envelope.size() != 2 \
+		or typeof(envelope.get("table")) != TYPE_ARRAY:
+		rejected_packets += 1
+		return
+	var rows := envelope["table"] as Array
+	if rows.size() > MAX_SEATS:
+		rejected_packets += 1
+		return
+	var table: Dictionary = {}
+	var previous_seat := -1
+	for row_value in rows:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			rejected_packets += 1
+			return
+		var row := row_value as Dictionary
+		if row.size() != 2 or typeof(row.get("seat")) != TYPE_INT \
+			or typeof(row.get("heroes")) != TYPE_ARRAY:
+			rejected_packets += 1
+			return
+		var seat := int(row["seat"])
+		if seat < 0 or seat >= MAX_SEATS or seat <= previous_seat:
+			rejected_packets += 1
+			return
+		var announced := row["heroes"] as Array
+		var validated := validated_hero_documents(announced)
+		if validated.size() != announced.size():
+			rejected_packets += 1
+			return
+		previous_seat = seat
+		table[seat] = validated
+	# Our own row is the one we announced; the host echoes it back and it must
+	# agree, or this peer would field a roster it never asked for.
+	if table.has(local_seat) and lobby_seat_heroes.has(local_seat):
+		if var_to_bytes(table[local_seat]) != var_to_bytes(lobby_seat_heroes[local_seat]):
+			rejected_packets += 1
+			return
+	lobby_seat_heroes = table
+	lobby_updated.emit()
 
 
 ## Keeps the 1v1 mirrors (peer_team, lobby_remote_profile) pointing at the
@@ -1305,7 +1528,7 @@ func _validated_seat_table(rows: Array) -> Dictionary:
 ## team comes from SEAT_TEAM_IDS; alliance is the host-assigned value, which
 ## defaults to seat + 1 (free-for-all) and reproduces the historical 1v1 pair
 ## of alliances 1 and 2 exactly.
-static func lobby_roster_from_seats(seats: Array) -> Array:
+static func lobby_roster_from_seats(seats: Array, heroes_by_seat: Dictionary = {}) -> Array:
 	var descriptors: Array = []
 	for row_value in seats:
 		var row := row_value as Dictionary
@@ -1318,6 +1541,12 @@ static func lobby_roster_from_seats(seats: Array) -> Array:
 			"alliance": int(row.get("alliance", seat + 1)),
 			"color": LOBBY_HOUSE_COLORS[clampi(int(row.get("color", 0)), 0, LOBBY_HOUSE_COLORS.size() - 1)],
 			"start_index": 0,
+			# THE SEAT'S CREATED HEROES, carried on the roster so the launch
+			# gate's byte comparison already covers them: a peer whose hero
+			# table disagrees with the host's cannot start the match at all,
+			# which is the only outcome cheaper than a desync.
+			"seat": seat,
+			"heroes": (heroes_by_seat.get(seat, []) as Array).duplicate(),
 		})
 	return descriptors
 
@@ -1349,7 +1578,9 @@ func build_lobby_roster() -> Array:
 	for row_value in lobby_seats:
 		if not bool((row_value as Dictionary).get("announced", false)):
 			return []
-	return lobby_roster_from_seats(lobby_seats)
+	return lobby_roster_from_seats(
+		lobby_seats, lobby_seat_heroes if custom_heroes_allowed() else {}
+	)
 
 
 ## True when every occupied seat has announced a profile AND ticked ready.
@@ -1413,7 +1644,13 @@ func send_lobby_chat(text: String) -> bool:
 	return true
 
 
-func send_lobby_settings(map_id: String, resource_amount: int, cp_factor: float, build_plots: bool) -> bool:
+func send_lobby_settings(
+	map_id: String,
+	resource_amount: int,
+	cp_factor: float,
+	build_plots: bool,
+	allow_custom_heroes: bool = true
+) -> bool:
 	## HOST-ONLY authoritative. A guest calling this is a no-op fail-closed.
 	if not _is_host or not handshake_complete \
 		or not _lobby_settings_fields_valid(map_id, resource_amount, cp_factor, build_plots):
@@ -1423,6 +1660,7 @@ func send_lobby_settings(map_id: String, resource_amount: int, cp_factor: float,
 		"resources": resource_amount,
 		"cp_factor": cp_factor,
 		"build_plots": build_plots,
+		"allow_custom_heroes": allow_custom_heroes,
 	}
 	_send_envelope({
 		"kind": "lobby.settings",
@@ -1430,6 +1668,7 @@ func send_lobby_settings(map_id: String, resource_amount: int, cp_factor: float,
 		"resources": resource_amount,
 		"cp_factor": cp_factor,
 		"build_plots": build_plots,
+		"allow_custom_heroes": allow_custom_heroes,
 	})
 	_connection.flush()
 	return true
@@ -1594,11 +1833,12 @@ func _receive_relay_chat(envelope: Dictionary) -> void:
 
 func _receive_lobby_settings(envelope: Dictionary) -> void:
 	## Settings are host-authoritative: the host never accepts them from a guest.
-	if _is_host or not handshake_complete or envelope.size() != 5 \
+	if _is_host or not handshake_complete or envelope.size() != 6 \
 		or typeof(envelope.get("map_id")) != TYPE_STRING \
 		or typeof(envelope.get("resources")) != TYPE_INT \
 		or typeof(envelope.get("cp_factor")) != TYPE_FLOAT \
 		or typeof(envelope.get("build_plots")) != TYPE_BOOL \
+		or typeof(envelope.get("allow_custom_heroes")) != TYPE_BOOL \
 		or not _lobby_settings_fields_valid(
 			String(envelope["map_id"]), int(envelope["resources"]),
 			float(envelope["cp_factor"]), bool(envelope["build_plots"])):
@@ -1609,6 +1849,7 @@ func _receive_lobby_settings(envelope: Dictionary) -> void:
 		"resources": int(envelope["resources"]),
 		"cp_factor": float(envelope["cp_factor"]),
 		"build_plots": bool(envelope["build_plots"]),
+		"allow_custom_heroes": bool(envelope["allow_custom_heroes"]),
 	}
 	lobby_updated.emit()
 

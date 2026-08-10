@@ -1048,6 +1048,11 @@ func production_scope_for_team(team: int) -> Dictionary:
 	return _team_production_scopes.get(team, {}) as Dictionary
 
 
+func created_hero_owner_team(unit_type: String) -> int:
+	## The team that made this created hero, or -1 for everything else.
+	return int(_created_hero_owner_teams.get(unit_type, -1))
+
+
 func _derived_team_builder_rule(manifest: Dictionary, builder_member_id: String) -> Dictionary:
 	## Projects a faction builder's authored train rule (retail: the fortress
 	## citadel trains porters) from the team's own playableUnit document,
@@ -1269,6 +1274,11 @@ var _home_layout: Dictionary = {}
 var _rules: Dictionary = {}
 var configuration_error := ""
 var _unit_production_rules: Dictionary = {}
+## unit type -> owning team, for created heroes only. Every peer registers EVERY
+## seat's created heroes (identical rule tables are what keeps a lockstep match
+## in step), so the owner has to be recorded or seat A's fortress would happily
+## train seat B's hero. Retail units never appear here.
+var _created_hero_owner_teams: Dictionary = {}
 var _completed_hero_identities: Dictionary = {}
 var _production_unit_order: Array[String] = []
 var _ai_production_plan: Array[String] = []
@@ -2387,6 +2397,7 @@ func _configure_playable_unit_runtime_contracts() -> void:
 	var producer_kinds: Dictionary = _rules.get("producer_kind_by_source_object", {}) as Dictionary
 	_unit_armor.clear()
 	_unit_weapon_upgrades.clear()
+	_created_hero_owner_teams.clear()
 	missing_armor_units.clear()
 	missing_damage_type_units.clear()
 	var object_ids: Array[String] = []
@@ -2588,6 +2599,11 @@ func _configure_playable_unit_runtime_contracts() -> void:
 		}
 		if not _production_unit_order.has(unit_type):
 			_production_unit_order.append(unit_type)
+		var created_hero: Dictionary = (
+			(document_value as Dictionary).get("registration", {}) as Dictionary
+		).get("createAHero", {}) as Dictionary
+		if created_hero.has("ownerTeam"):
+			_created_hero_owner_teams[unit_type] = int(created_hero["ownerTeam"])
 		var prerequisites_by_producer: Dictionary = {}
 		var any_groups_by_producer: Dictionary = {}
 		for route in resolved_producers:
@@ -3346,6 +3362,8 @@ func _initialize_base_loop() -> void:
 			for unit_type in team_production_order:
 				if not team_scope.is_empty() and not team_scope.has(String(unit_type)):
 					continue
+				if created_hero_owner_team(String(unit_type)) not in [-1, team]:
+					continue
 				var production_rule: Dictionary = team_production_rules[unit_type]
 				var producer_kinds_for_rule: Array = production_rule.get("producer_kinds", [String(production_rule.get("producer_kind", ""))])
 				if producer_kinds_for_rule.has(kind):
@@ -3696,6 +3714,13 @@ func _add_battalion(
 	# ordinary ActiveBody units so their snapshots/hashes do not change.
 	if unit_rule.get("highlander_body") == true:
 		entities[id]["highlander_body"] = true
+	# Innate body scalars (damage taken, regeneration rate). Absent unless the
+	# compiled rule authors them, so no retail unit's snapshot or authoritative
+	# hash gains a byte.
+	if unit_rule.has("innate_armor_scalar"):
+		entities[id]["innate_armor_scalar"] = maxf(0.0, float(unit_rule["innate_armor_scalar"]))
+	if unit_rule.has("auto_heal_multiplier"):
+		entities[id]["auto_heal_multiplier"] = maxf(0.0, float(unit_rule["auto_heal_multiplier"]))
 	# Optional object lifecycle policy. Its absence contributes no entity,
 	# snapshot, or authoritative-hash bytes.
 	if unit_rule.has("destroy_die"):
@@ -11262,6 +11287,10 @@ func queue_unit(team: int, producer: int, unit_type: String = SOLDIER_HORDE_ID) 
 	var production_rule: Dictionary = _unit_production_rules.get(unit_type, {})
 	if production_rule.is_empty():
 		return {"ok": false, "reason": "unsupported-unit"}
+	if created_hero_owner_team(unit_type) not in [-1, team]:
+		# Every peer registers every seat's created heroes so the rule tables
+		# match; only the seat that made one may buy it.
+		return {"ok": false, "reason": "created-hero-not-owned"}
 	if String(production_rule.get("category", "")) == "hero" and hero_unavailable(team, unit_type):
 		return {"ok": false, "reason": "hero-unavailable"}
 	var missing_production_upgrade := production_gate_unsatisfied(
@@ -11929,7 +11958,12 @@ func _step_hero_regeneration() -> void:
 		var ticks_since_damage := tick_index - int(row.get("last_damage_tick", -1000000))
 		if float(ticks_since_damage) * TICK_SECONDS < HERO_REGEN_OUT_OF_COMBAT_SECONDS:
 			continue
-		var amount := maxi(1, roundi(float(maximum) * HERO_REGEN_PERCENT_PER_SECOND * TICK_SECONDS))
+		# AUTO_HEAL scales the object's own regeneration rate, which is what
+		# retail's AutoHeal attribute ladder does: it multiplies an authored
+		# AutoHealBehavior, it does not author one. A unit that declares no
+		# multiplier regenerates at exactly the historical rate.
+		var heal_rate := HERO_REGEN_PERCENT_PER_SECOND * float(row.get("auto_heal_multiplier", 1.0))
+		var amount := maxi(1, roundi(float(maximum) * heal_rate * TICK_SECONDS))
 		var health_values: Array = row.get("member_health", [])
 		var member_maximum := int(row.get("member_maximum_health", 0))
 		var remaining := amount
@@ -16405,6 +16439,12 @@ func _member_body_damage_factor(
 	## already formed DamageInfo.in.m_amount before Body::attemptDamage.
 	return (
 		_member_armor_scalar(target, damage_type, components)
+		# INNATE_ARMOR: a damage-TAKEN scalar the object carries for its whole
+		# life, as against the timed ability/aura grants above it. Retail's
+		# Create-a-Hero armour ladder is authored exactly this way, so a HIGHER
+		# step means MORE damage taken and the number arrives already inverted.
+		# Absent on every retail unit, which keeps this factor exactly 1.0 there.
+		* float(target.get("innate_armor_scalar", 1.0))
 		* float(_stance_state(target).get("incomingDamageMultiplier", 1.0))
 		* float(_formation_effects(target).get("incoming_damage_multiplier", 1.0))
 		* _ability_incoming_multiplier(target)

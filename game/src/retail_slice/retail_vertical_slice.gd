@@ -1779,7 +1779,9 @@ func _classify_faction_units(
 	_add_created_heroes(slug)
 
 
-func _add_created_heroes(faction: String) -> void:
+func _add_created_heroes(
+	faction: String, system_override: Dictionary = {}, game_state_override = null
+) -> void:
 	## Put the player's saved Create-a-Hero heroes on this faction's roster.
 	##
 	## A created hero is not special-cased anywhere downstream: it enters as an
@@ -1791,15 +1793,50 @@ func _add_created_heroes(faction: String) -> void:
 	## Added LAST and only under ids that are free, so a created hero can never
 	## displace a retail one. It is also added to `producible_unit_runtimes`
 	## because a hero the fortress cannot train is a hero the player cannot buy.
-	var content_db := get_node_or_null("/root/ContentDB")
-	if content_db == null:
+	var system_document := system_override
+	if system_document.is_empty():
+		var content_db := get_node_or_null("/root/ContentDB")
+		if content_db == null:
+			return
+		var system_value: Variant = content_db.get("cah_system_runtime")
+		if typeof(system_value) != TYPE_DICTIONARY:
+			return
+		system_document = system_value as Dictionary
+	if system_document.is_empty():
 		return
-	var system_value: Variant = content_db.get("cah_system_runtime")
-	if typeof(system_value) != TYPE_DICTIONARY or (system_value as Dictionary).is_empty():
-		return
-	var created := CahHeroesScript.roster_documents(
-		system_value as Dictionary, fieldable_unit_runtimes, faction
-	)
+	var seat_rows := _created_hero_seat_rows(game_state_override)
+	var created: Dictionary = {}
+	if seat_rows.is_empty():
+		# SINGLE PLAYER: this machine's own saved heroes, owned by the team the
+		# HUMAN row sits on - which is not always team 0.
+		created = CahHeroesScript.roster_documents(
+			system_document,
+			fieldable_unit_runtimes,
+			faction,
+			_local_player_team(game_state_override)
+		)
+	else:
+		# MULTIPLAYER: the heroes the lobby AGREED, every seat's, admitted by
+		# the same rules on every peer. The local `user://` store is not
+		# consulted - it differs per machine and reading it here is precisely
+		# what would build a different production roster on each peer.
+		created = CahHeroesScript.seat_roster_documents(
+			system_document, fieldable_unit_runtimes, seat_rows, faction
+		)
+		for refusal in (
+			CahHeroesScript.admitted_seat_heroes(system_document, seat_rows).get(
+				"refusals", []
+			) as Array
+		):
+			# Printed on EVERY peer, identically, because every peer refused the
+			# same hero for the same reason. A one-sided exclusion would be the
+			# desync this whole path exists to prevent.
+			print("[RetailVerticalSlice] created hero refused: %s" % String(refusal))
+			unit_roster_exclusions.append({
+				"object_id": "",
+				"category": "hero",
+				"reason": String(refusal),
+			})
 	for object_id_value in created.keys():
 		var object_id := String(object_id_value)
 		if fieldable_unit_runtimes.has(object_id):
@@ -1811,6 +1848,37 @@ func _add_created_heroes(faction: String) -> void:
 			continue
 		fieldable_unit_runtimes[object_id] = created[object_id_value]
 		producible_unit_runtimes[object_id] = created[object_id_value]
+
+
+func _local_player_team(game_state = null) -> int:
+	## The sim team the human occupies. Skirmish rows carry their own team ids out
+	## of the menu's pool and the human may sit on any row, so nothing here may
+	## assume PLAYER_TEAM. A roster with no human row (headless faction sweeps)
+	## keeps the historical team 0.
+	for entry_value in _menu_team_setup(game_state):
+		var entry := entry_value as Dictionary
+		if String(entry.get("controller", "ai")).strip_edges().to_lower() == "human":
+			return int(entry.get("team", 0))
+	return 0
+
+
+func _created_hero_seat_rows(game_state = null) -> Array:
+	## The match's agreed per-seat created heroes, off the launch roster the
+	## lobby byte-matched across every peer. [] for a single-player match, which
+	## is the signal to fall back to this machine's own saved heroes.
+	var rows: Array = []
+	for entry_value in _menu_team_setup(game_state):
+		var entry := entry_value as Dictionary
+		if not entry.has("heroes"):
+			continue
+		var heroes: Array = entry.get("heroes", []) as Array
+		rows.append({
+			"seat": int(entry.get("seat", rows.size())),
+			"team": int(entry.get("team", 0)),
+			"faction": String(entry.get("faction", "")),
+			"heroes": heroes.duplicate(),
+		})
+	return rows
 
 
 func _faction_builder_unit_rule(builder_member_id: String) -> Dictionary:

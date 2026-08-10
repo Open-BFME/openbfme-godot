@@ -482,6 +482,16 @@ try {
         Invoke-GodotPassedFloor "goal_deep_production_matrix" "goal_deep_production_runner.gd" '(?m)^DEEP_PRODUCTION_RESULT passed=([0-9]+) failed=0 ' 584
         Invoke-GodotPassedFloor "goal_map_matrix" "goal_map_matrix_runner.gd" '(?m)^GOAL_MAP_MATRIX_RESULT passed=([0-9]+) failed=0 ' 83
         Invoke-GodotPassedFloor "destroy_die_modules" "destroy_die_runner.gd" '(?m)^DESTROY_DIE_RESULT passed=([0-9]+) failed=0\s*$' 24
+        # ADDED 2026-08-09. A created hero bought, spawned, hit, healed, cast
+        # and levelled on the mounted pack's own compiled CAH table. It reads
+        # the SELECTION (the Men slice plus data/cah/system.json), so it belongs
+        # inside this block; floor is the measured 2026-08-09 value.
+        Invoke-GodotPassedFloor "cah_match" "cah_match_runner.gd" '(?m)^CAH_MATCH_RESULT passed=([0-9]+) failed=0\s*$' 40
+        # The lockstep gate now also carries the two-seat created-hero exchange
+        # (lobby table convergence, byte-identical launch rosters, ownership,
+        # and equal state hashes with different heroes per seat), which needs
+        # the mounted CAH table - hence its move into the scoped block.
+        Invoke-GodotPassedFloor "retail_lockstep_network" "retail_lockstep_network_runner.gd" '(?m)^RETAIL_LOCKSTEP_NET_RESULT passed=([0-9]+) failed=0\s*$' 34
         Invoke-GodotPassedFloor "banner_castle_sim" "banner_castle_sim_runner.gd" '(?m)^BANNER_CASTLE_SIM_RUNNER PASS checks=([0-9]+)\s*$' 25
         # Fortress command surface, one process per faction (the slice hosts one
         # faction at a time). Asserts the three castle-system contracts against

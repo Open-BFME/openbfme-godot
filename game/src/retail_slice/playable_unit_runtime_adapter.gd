@@ -218,6 +218,9 @@ static func simulation_rule(document: Dictionary) -> Dictionary:
 		}
 		if resolved.has("permanentWeaponLocks"):
 			row["permanentWeaponLocks"] = resolved["permanentWeaponLocks"]
+		for body_field in ["innateArmorScalar", "autoHealMultiplier"]:
+			if resolved.has(body_field):
+				row[body_field] = _resolved_value(resolved.get(body_field))
 		if resolved.has("destroyDie"):
 			row["destroyDie"] = resolved["destroyDie"]
 		if resolved.has("slowDeaths"):
@@ -299,6 +302,17 @@ static func simulation_rule(document: Dictionary) -> Dictionary:
 		output["permanent_weapon_locks"] = permanent_locks
 	if row.get("highlanderBody") == true:
 		output["highlander_body"] = true
+	# INNATE body properties: a damage-TAKEN scalar and a regeneration-rate
+	# scalar the object carries for its whole life, as against the timed
+	# ability/aura modifiers the sim already tracks per entity. Absent unless the
+	# document authors them, and neutral values are dropped, so nothing an
+	# ordinary retail unit produces changes shape.
+	var innate_armor := float(row.get("innateArmorScalar", 1.0))
+	if is_finite(innate_armor) and innate_armor >= 0.0 and not is_equal_approx(innate_armor, 1.0):
+		output["innate_armor_scalar"] = innate_armor
+	var auto_heal := float(row.get("autoHealMultiplier", 1.0))
+	if is_finite(auto_heal) and auto_heal >= 0.0 and not is_equal_approx(auto_heal, 1.0):
+		output["auto_heal_multiplier"] = auto_heal
 	if typeof(row.get("autoAcquireEnemiesWhenIdle")) == TYPE_DICTIONARY:
 		output["auto_acquire_enemies_when_idle"] = (
 			row.get("autoAcquireEnemiesWhenIdle", {}) as Dictionary
@@ -483,6 +497,9 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 		output["permanent_weapon_locks"] = permanent_locks.duplicate()
 	if simulation.get("highlander_body") == true:
 		output["highlander_body"] = true
+	for body_field in ["innate_armor_scalar", "auto_heal_multiplier"]:
+		if simulation.has(body_field):
+			output[body_field] = float(simulation[body_field])
 	if simulation.has("destroy_die"):
 		var destroy_die := _normalized_destroy_die(simulation.get("destroy_die"))
 		if destroy_die.is_empty():
