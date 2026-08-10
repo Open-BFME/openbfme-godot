@@ -4718,12 +4718,16 @@ func _toggle_selected_formation() -> void:
 
 
 var _expansion_pad_markers: Dictionary = {}
-var _expansion_pad_model_cache: Dictionary = {}
 
 
-## Engine-spawned fortress build plots: the pad plot model at each free pad
-## (retail shows the plot circles ringing the fortress, REF-32/52), hidden
-## once an expansion rises on the pad or the fortress falls.
+## Fortress build-plot HIGHLIGHT. The plot plate itself is retail content and is
+## already on screen: CastleBehavior unpacks one `*FortressExpansionPad*` object
+## per authored slot, and each of those is a real structure node rendering its
+## own body plus its W3DFloorDraw bib. This layer used to re-instance that same
+## bib model at the same position, so every plot drew TWICE (user bug #4) — one
+## retail plate and one engine-spawned copy stacked on it. It now carries no
+## model at all: just the ring that marks which plot the player clicked, so the
+## radial's anchor is visible without a second plate.
 func _sync_expansion_pad_markers() -> void:
 	if simulation == null:
 		return
@@ -4732,12 +4736,7 @@ func _sync_expansion_pad_markers() -> void:
 		var pads := simulation.expansion_pad_states(fortress_id)
 		var markers: Array = _expansion_pad_markers.get(fortress_id, [])
 		while markers.size() < pads.size():
-			var marker := _make_pad_marker(
-				fortress_id,
-				String((pads[markers.size()] as Dictionary).get("pad_kind", ""))
-			)
-			if marker == null:
-				break
+			var marker := _make_pad_marker()
 			add_child(marker)
 			_assign_geometry_light_layer(marker, OBJECT_LIGHT_LAYER)
 			markers.append(marker)
@@ -4751,64 +4750,29 @@ func _sync_expansion_pad_markers() -> void:
 			var pad: Dictionary = pads[index]
 			var position := Vector2(pad.get("position", Vector2.ZERO))
 			marker.position = Vector3(position.x, _presentation_height(position) + 0.02, position.y)
-			marker.visible = fortress_alive and int(pad.get("expansion_structure_id", 0)) == 0
-			# The clicked plot swells slightly so the player sees which pad the
-			# radial is anchored to.
-			var marker_selected := (
-				marker.visible
+			# Only the clicked plot is highlighted; a free plot shows retail's own
+			# plate and nothing else.
+			marker.visible = (
+				fortress_alive
+				and int(pad.get("expansion_structure_id", 0)) == 0
 				and int(_selected_expansion_pad.get("fortress_id", 0)) == fortress_id
 				and int(_selected_expansion_pad.get("pad_index", -1)) == index
 			)
-			marker.scale = Vector3.ONE * (1.35 if marker_selected else 1.0)
 		_expansion_pad_markers[fortress_id] = markers
 
 
-func _make_pad_marker(fortress_id: int, pad_kind: String) -> Node3D:
-	var fortress := simulation.structure(fortress_id)
-	var manifest := _presentation_manifest_for_team(int(fortress.get("team", -1)))
-	var composites := manifest.get("fortress_composite_object_ids", {}) as Dictionary
-	var role := "fortress-composite-side-pad" if pad_kind == "side" else "fortress-composite-corner-pad"
-	var source_id := String(composites.get(role, ""))
-	# Some retail factions author only one expansion plot visual. Reuse that
-	# faction's other proven plot role; never fall back to Men or fake geometry.
-	if source_id == "":
-		var alternate := "fortress-composite-corner-pad" if pad_kind == "side" else "fortress-composite-side-pad"
-		source_id = String(composites.get(alternate, ""))
-	if source_id == "":
-		return null
-	var definition := ContentDB.get_playable_structure_runtime(source_id)
-	if definition.is_empty():
-		return null
-	# Cache only the resolved path; every marker is a fresh instance from the
-	# asset factory's duplicating loader (never a re-parented node).
-	var resolved := String(_expansion_pad_model_cache.get(source_id, ""))
-	if resolved == "<failed>":
-		return null
-	if resolved == "":
-		var bib := (((definition.get("registration", {}) as Dictionary).get("presentation", {}) as Dictionary).get("buildingLifecycle", {}) as Dictionary).get("bib", {}) as Dictionary
-		var relative := String((bib.get("visual", {}) as Dictionary).get("glb", "")).replace("\\", "/")
-		resolved = ContentDB.resolve_asset(relative, String(definition.get("_pack_root", ""))) if relative != "" else ""
-		if resolved == "" or not FileAccess.file_exists(resolved):
-			_expansion_pad_model_cache[source_id] = "<failed>"
-			return null
-		_expansion_pad_model_cache[source_id] = resolved
-	var asset_factory = load("res://src/view/asset_factory.gd")
-	var instance: Node3D = asset_factory._try_load_model(resolved) as Node3D
-	if instance == null:
-		return null
+func _make_pad_marker() -> Node3D:
 	var marker := Node3D.new()
 	marker.name = "ExpansionPadMarker"
-	instance.scale = Vector3.ONE * maxf(0.0001, source_map_data.local_transform_scale)
-	marker.add_child(instance)
-	# Retail build plots read as a light ground circle; the converted floor
-	# model alone is near-invisible against terrain, so ring it (styled chrome
-	# in the retail plot idiom, never fake art).
+	# Selection chrome in the retail plot idiom (a light ground circle), never a
+	# second copy of the plot's own converted geometry.
 	var ring := MeshInstance3D.new()
 	ring.name = "PadRing"
 	ring.mesh = _make_ground_ring(0.62, 48, 0.055)
 	ring.material_override = _ghost_ring_material(Color(0.82, 0.74, 0.5, 0.7))
 	ring.position.y = 0.06
 	marker.add_child(ring)
+	marker.visible = false
 	return marker
 
 

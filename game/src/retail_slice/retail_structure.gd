@@ -89,6 +89,11 @@ var rebuild_hole_original_removal_frame_status := ""
 var contract_error := ""
 var shared_uniform_scale := 1.0
 var shared_vertical_offset := 0.0
+## Authored retail Body module for this object, read verbatim from the compiled
+## structure document (`ActiveBody` / `StructureBody` / `ImmortalBody` / ...).
+## Empty when the document carries no health block (fixture and bounded-workshop
+## seams), which reads as damageable — the pre-existing behaviour.
+var body_module := ""
 
 ## --- Purchased structure levels (doc-driven L2/L3 presentation) ---
 ## The building's level rides the simulation row; the per-level model variant
@@ -227,12 +232,13 @@ func sync_state(entity: Dictionary) -> void:
 		_visual_root.visible = contract_error == ""
 	if _selection_ring != null:
 		_selection_ring.visible = selected and health > 0 and contract_error == ""
+	var show_health_bar := contract_error == "" and health > 0 and active_visual_mode != "no-render" and draws_health_bar()
 	if _health_fill != null:
-		_health_fill.visible = contract_error == "" and health > 0 and active_visual_mode != "no-render"
+		_health_fill.visible = show_health_bar
 		_health_fill.scale.x = maxf(0.001, health_ratio)
 		_health_fill.position.x = (health_ratio - 1.0) * 1.65
 	if _health_back != null:
-		_health_back.visible = contract_error == "" and health > 0 and active_visual_mode != "no-render"
+		_health_back.visible = show_health_bar
 	var under_construction := contract_error == "" and construction_ratio < 1.0 and health > 0
 	if _build_back != null:
 		_build_back.visible = under_construction
@@ -1284,22 +1290,30 @@ func _configure_selected_pack_contract(bundle_object_id: String) -> void:
 			return
 		_set_contract_error("structure presentation has no buildingLifecycle object")
 		return
-	_bind_upgrade_chain_levels(bundle_object_id)
+	_bind_structure_document_facts(bundle_object_id)
 	_configure_contract(presentation, presentation["buildingLifecycle"] as Dictionary)
 
 
-func _bind_upgrade_chain_levels(bundle_object_id: String) -> void:
+func _bind_structure_document_facts(bundle_object_id: String) -> void:
 	## Bind the structure document's authored per-level model variants (the
-	## upgradeChain's SubObjectsUpgrade rows). Documents without a chain simply
-	## keep every sub-object visible — nothing is invented.
+	## upgradeChain's SubObjectsUpgrade rows) and its authored Body module.
+	## Documents without a chain simply keep every sub-object visible — nothing
+	## is invented.
 	_level_presentations.clear()
 	_level_health_additions.clear()
+	body_module = ""
 	for source_id_value in ContentDB.get_playable_structure_runtimes().keys():
 		var source_id := String(source_id_value)
 		if UnitAdapterScript._runtime_id(source_id) != bundle_object_id:
 			continue
 		var document: Dictionary = ContentDB.get_playable_structure_runtime(source_id)
 		var gameplay: Dictionary = (document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary
+		# Retail Body module, verbatim. `ImmortalBody` is the fortress build
+		# plot's body: it can never lose health, which is why retail floats no
+		# health bar over an empty plot (user bug #9).
+		var health_primary: Variant = (gameplay.get("health", {}) as Dictionary).get("primary", {})
+		if typeof(health_primary) == TYPE_DICTIONARY:
+			body_module = String((health_primary as Dictionary).get("module", ""))
 		var chain: Dictionary = gameplay.get("upgradeChain", {}) as Dictionary
 		if not chain.is_empty():
 			var level_one: Dictionary = chain.get("levelOne", {}) as Dictionary
@@ -1924,10 +1938,11 @@ func _activate_v1_phase(phase: String) -> void:
 	active_visual_mode = visual_mode
 	if _selection_ring != null:
 		_selection_ring.visible = selected and health_ratio > 0.0 and visual_mode != "no-render"
+	var show_health_bar := health_ratio > 0.0 and visual_mode != "no-render" and draws_health_bar()
 	if _health_fill != null:
-		_health_fill.visible = health_ratio > 0.0 and visual_mode != "no-render"
+		_health_fill.visible = show_health_bar
 	if _health_back != null:
-		_health_back.visible = health_ratio > 0.0 and visual_mode != "no-render"
+		_health_back.visible = show_health_bar
 	retail_mesh_path = String(_resolved_paths.get(body_path, body_path)) if body_path != "" else ""
 	if body != null:
 		_apply_declared_phase_animation(body, phase, construction_ratio)
@@ -2235,14 +2250,14 @@ func _build_markers() -> void:
 	# Hug the rooflines: the old 7.4/4.8 anchors floated the bars in the sky.
 	_health_back.position = Vector3(0, 5.0 if structure_kind == "fortress" else 3.1, 0)
 	_health_back.material_override = _emissive(Color("131a1e"))
-	_health_back.visible = contract_error == ""
+	_health_back.visible = contract_error == "" and draws_health_bar()
 	add_child(_health_back)
 	_health_fill = MeshInstance3D.new()
 	_health_fill.name = "HealthFill"
 	_health_fill.mesh = back_mesh.duplicate()
 	_health_fill.position = _health_back.position + Vector3(0, 0.02, -0.01)
 	_health_fill.material_override = _emissive(Color("5bd765") if team == 0 else Color("df5a4f"))
-	_health_fill.visible = contract_error == ""
+	_health_fill.visible = contract_error == "" and draws_health_bar()
 	add_child(_health_fill)
 	# Construction progress rides just under the health bar in retail gold.
 	_build_back = MeshInstance3D.new()
@@ -2259,6 +2274,16 @@ func _build_markers() -> void:
 	_build_fill.material_override = _emissive(Color("e0b64f"))
 	_build_fill.visible = false
 	add_child(_build_fill)
+
+
+## Retail draws a health bar for objects that can lose health. A fortress build
+## plot cannot: its authored Body is `ImmortalBody` (the only structures in every
+## published faction pack that carry it are the `*FortressExpansionPad*` objects,
+## MaxHealth 15000), so an EMPTY plot floats no bar (user bug #9). The structure
+## a player raises on that plot is an ordinary damageable building and keeps its
+## bar. Documents without a compiled health block keep the old behaviour.
+func draws_health_bar() -> bool:
+	return body_module != "ImmortalBody"
 
 
 func _emissive(color: Color) -> StandardMaterial3D:
