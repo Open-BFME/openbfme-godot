@@ -6130,7 +6130,7 @@ func _faction_spellbook_document(faction_override: String = "") -> Dictionary:
 	var document := _spellbook_document_for_faction(selected_pack_root, faction)
 	if not document.is_empty():
 		return document
-	for pack_root in ModLoader.list_pack_roots():
+	for pack_root in ContentDB.pack_roots:
 		if selected_pack_root != "" and pack_root == selected_pack_root:
 			continue
 		document = _spellbook_document_for_faction(pack_root, faction)

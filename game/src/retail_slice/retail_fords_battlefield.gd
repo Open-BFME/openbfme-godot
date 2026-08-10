@@ -1483,9 +1483,12 @@ func _mesh_instance_count(node: Node) -> int:
 func _path_is_within_mounted_pack(path: String) -> bool:
 	## GLB bindings may resolve into a maps supplement pack while map.json lives
 	## under the host faction pack. Accept any currently mounted non-res root.
+	## Reuse the cached mounted set: list_pack_roots() re-scans and re-sorts every
+	## pack (and prints) per call, and this runs once per bound map GLB - an
+	## asset-heavy map turned it into thousands of full rescans and froze loading.
 	if path == "":
 		return false
-	for root_value in ModLoader.list_pack_roots():
+	for root_value in ContentDB.pack_roots:
 		var root := String(root_value)
 		if root == "" or root.begins_with("res://"):
 			continue
@@ -1498,7 +1501,7 @@ func _is_mounted_pack_root(candidate_root: String) -> bool:
 	if candidate_root == "" or candidate_root.begins_with("res://"):
 		return false
 	var normalized := candidate_root.replace("\\", "/").trim_suffix("/").to_lower()
-	for root_value in ModLoader.list_pack_roots():
+	for root_value in ContentDB.pack_roots:
 		var root := String(root_value)
 		if root == "" or root.begins_with("res://"):
 			continue
