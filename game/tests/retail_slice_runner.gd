@@ -474,10 +474,12 @@ func _run() -> void:
 		if slice.source_map_data.map_outline.size() >= 3:
 			var playable_source_min: Vector2 = slice.source_map_data.local_to_source_horizontal(slice.source_map_data.map_outline[0])
 			var playable_source_max: Vector2 = slice.source_map_data.local_to_source_horizontal(slice.source_map_data.map_outline[2])
-			# SAGE world XY is anchored at the INNER (playable) map corner, so the
-			# playable rectangle runs from world (0,0) to the declared extent —
-			# OpenSAGE HeightMap.MaxXCoordinate = (Width - 2*BorderWidth) * 10 =
-			# 3750 here, MaxYCoordinate = 3130 (Godot z negates SAGE y). The old
+			# SAGE world XY is anchored at the INNER (playable) map corner (the
+			# oracle-backed half: OpenSAGE HeightMap adds BorderWidth converting
+			# world to grid), so the playable rectangle starts at world (0,0). The
+			# 3750/3130 extent is the runtime's own cooked playableWorldExtent —
+			# OpenSAGE's Width-1 convention would say 3740/3120, a pre-existing
+			# one-cell disagreement this pin does not adjudicate. The old
 			# expectation (200,-200)..(3950,-3330) was grid_min*10 / grid_max*10,
 			# i.e. it pinned the missing border shift that floated map objects
 			# above the terrain; see terrain_object_ground_height_runner.gd.
