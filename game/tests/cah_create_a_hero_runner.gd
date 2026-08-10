@@ -21,6 +21,11 @@ const SubObjects = preload("res://src/ui/cah_sub_objects.gd")
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
 var _runner_watchdog := RunnerWatchdogScript.new()
 
+const ProfileSandboxScript := preload("res://tests/cah_profile_sandbox.gd")
+## This gate empties the profile store between phases. It does that in a scratch
+## store, never in the player's - see tests/cah_profile_sandbox.gd.
+var _profiles := ProfileSandboxScript.new()
+
 var passed := 0
 var failed := 0
 
@@ -79,6 +84,7 @@ const POWER_COLUMN_COUNT := 4
 
 
 func _initialize() -> void:
+	_profiles.open("cah-create-a-hero")
 	_runner_watchdog.start(self, "CAH_CREATE_A_HERO_RUNNER")
 	call_deferred("_run")
 
@@ -2298,6 +2304,8 @@ func _check(condition: bool, label: String) -> void:
 
 
 func _finish() -> void:
+	_check(_profiles.real_store_untouched(), "the run left the player's own heroes untouched (%s)" % _profiles.real_store_description())
+	_profiles.close()
 	print("CAH_CREATE_A_HERO_RESULT passed=%d failed=%d" % [passed, failed])
 	if failed == 0:
 		print("CAH_CREATE_A_HERO_OK passed=%d failed=0" % passed)

@@ -47,6 +47,24 @@ const SYSTEM_SCHEMA_VERSION := 0
 
 const PROFILE_DIR := "user://cah-heroes"
 
+## WHERE THE PLAYER'S HEROES LIVE, and how a test is kept out of it.
+##
+## Every headless runner shares one `user://` directory with the installed game,
+## so a gate that created and deleted heroes was deleting the PLAYER'S heroes -
+## and it did, silently, on every run until someone noticed their store was
+## empty. Runners now point this at a scratch directory before they touch
+## anything. An environment variable rather than an injected argument because a
+## profile is read through static functions from the screen, the menu, the lobby
+## and the slice: one of those would have been missed, and the one missed is the
+## one that deletes. Crash-safe by construction - a run that dies half way
+## through has still never named the real directory.
+const PROFILE_DIR_ENV := "OPENBFME_CAH_PROFILE_DIR"
+
+
+static func profile_dir() -> String:
+	var override := OS.get_environment(PROFILE_DIR_ENV).strip_edges()
+	return override if override != "" else PROFILE_DIR
+
 ## Cap on saved heroes. Retail's front end has a fixed hero list too; the number
 ## matters less than there being one, because this directory is swept on every
 ## visit to MY HEROES and an unbounded sweep is an unbounded stall.
@@ -812,7 +830,7 @@ static func validate_profile(system: Dictionary, profile: Dictionary) -> Array[S
 
 
 static func profile_path(hero_id: String) -> String:
-	return "%s/%s.json" % [PROFILE_DIR, hero_id]
+	return "%s/%s.json" % [profile_dir(), hero_id]
 
 
 static func save_profile(profile: Dictionary) -> String:
@@ -820,12 +838,12 @@ static func save_profile(profile: Dictionary) -> String:
 	var hero_id := String(profile.get("heroId", ""))
 	if not _is_safe_hero_id(hero_id):
 		return "hero id %s is not a plain hexadecimal id" % hero_id
-	if not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(PROFILE_DIR)):
+	if not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(profile_dir())):
 		var error := DirAccess.make_dir_recursive_absolute(
-			ProjectSettings.globalize_path(PROFILE_DIR)
+			ProjectSettings.globalize_path(profile_dir())
 		)
 		if error != OK:
-			return "could not create %s (error %d)" % [PROFILE_DIR, error]
+			return "could not create %s (error %d)" % [profile_dir(), error]
 	var file := FileAccess.open(profile_path(hero_id), FileAccess.WRITE)
 	if file == null:
 		return "could not write %s (error %d)" % [profile_path(hero_id), FileAccess.get_open_error()]
@@ -854,7 +872,7 @@ static func load_profiles() -> Array[Dictionary]:
 	## A file that does not parse is skipped, not fatal: one corrupt hero must
 	## not take the whole MY HEROES screen down with it.
 	var out: Array[Dictionary] = []
-	var dir := DirAccess.open(PROFILE_DIR)
+	var dir := DirAccess.open(profile_dir())
 	if dir == null:
 		return out
 	var names := dir.get_files()
@@ -864,7 +882,7 @@ static func load_profiles() -> Array[Dictionary]:
 			continue
 		if out.size() >= MAX_PROFILES:
 			break
-		var profile := _read_profile("%s/%s" % [PROFILE_DIR, file_name])
+		var profile := _read_profile("%s/%s" % [profile_dir(), file_name])
 		if not profile.is_empty():
 			out.append(profile)
 	return out

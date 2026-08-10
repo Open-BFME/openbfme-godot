@@ -38,6 +38,10 @@ const ScriptExecutorScript = preload("res://src/script/script_executor.gd")
 ## of its own, so the menu now reaches the same bytes for free. There is still
 ## exactly one definition of each value - do not re-inline a literal here.
 const SliceIds = preload("res://src/retail_slice/retail_slice_ids.gd")
+## Where the importer publishes the Create-a-Hero meshes: one flat directory
+## keyed by the retail model id, because that id is the only handle the compiled
+## class table carries.
+const CREATED_HERO_MODEL_DIRECTORY := "assets/models/cah"
 const SOLDIER_OBJECT_ID := SliceIds.SOLDIER_OBJECT_ID
 const SOLDIER_HORDE_ID := SliceIds.SOLDIER_HORDE_ID
 const RANGER_OBJECT_ID := "bfme2.object.gondor-ranger"
@@ -1655,7 +1659,8 @@ func _classify_faction_units(
 	structure_runtimes_override: Dictionary = {},
 	pack_index_override: Dictionary = {},
 	game_state_override = null,
-	cah_system_override: Dictionary = {}
+	cah_system_override: Dictionary = {},
+	content_db_override = null
 ) -> void:
 	## Roster composition for the selected faction: each converted playableUnit
 	## document is either fieldable (resolved simulation evidence, a supported
@@ -1778,11 +1783,14 @@ func _classify_faction_units(
 		fieldable_unit_runtimes[object_id] = document
 		producible_unit_runtimes[object_id] = document
 
-	_add_created_heroes(slug, cah_system_override, game_state_override)
+	_add_created_heroes(slug, cah_system_override, game_state_override, content_db_override)
 
 
 func _add_created_heroes(
-	faction: String, system_override: Dictionary = {}, game_state_override = null
+	faction: String,
+	system_override: Dictionary = {},
+	game_state_override = null,
+	content_db_override = null
 ) -> void:
 	## Put the player's saved Create-a-Hero heroes on this faction's roster.
 	##
@@ -1856,8 +1864,24 @@ func _add_created_heroes(
 				"reason": "created-hero-id-collides-with-a-loaded-document",
 			})
 			continue
-		fieldable_unit_runtimes[object_id] = created[object_id_value]
-		producible_unit_runtimes[object_id] = created[object_id_value]
+		var document: Dictionary = created[object_id_value] as Dictionary
+		var projection_error := _project_created_hero_presentation(
+			document, system_document, content_db_override
+		)
+		if projection_error != "":
+			# A hero whose skin the mounted pack cannot show is left OFF the
+			# roster with its reason, rather than admitted and then killing the
+			# whole match at the presentation proof - which is what a created
+			# hero did to every launch it was part of.
+			print("[RetailVerticalSlice] created hero refused: %s" % projection_error)
+			unit_roster_exclusions.append({
+				"object_id": object_id,
+				"category": "hero",
+				"reason": projection_error,
+			})
+			continue
+		fieldable_unit_runtimes[object_id] = document
+		producible_unit_runtimes[object_id] = document
 
 
 func _tree_autoload(node_name: String) -> Node:
@@ -1886,6 +1910,72 @@ func _tree_autoload(node_name: String) -> Node:
 	if not is_inside_tree():
 		return null
 	return get_node_or_null("/root/%s" % node_name)
+
+
+func _project_created_hero_presentation(
+	document: Dictionary, system: Dictionary, content_db_override = null
+) -> String:
+	## Give a created hero the presentation row every other fieldable unit has.
+	##
+	## THE ROSTER PRESENTATION PROOF ASKS EVERY FIELDABLE RUNTIME the same three
+	## questions - which pack are you from, what is your bundle object, where is
+	## your mesh - and a created hero could answer none of them, because it is
+	## COMPILED here rather than converted by the importer, so nothing ever
+	## projected one for it. The proof therefore refused every match a created
+	## hero was part of, by name, whatever the subclass: "CreateAHero__...
+	## generic playable-unit presentation is incomplete".
+	##
+	## The answers all exist; they were simply never written down. The pack that
+	## compiled the class table is the hero's pack, the subclass names its own
+	## battlefield mesh, and the importer publishes that mesh under its retail id.
+	## This is the same projection `_project_castle_piece_definition` performs for
+	## engine-spawned castle pieces, which are absent from the converted tables
+	## for the same reason.
+	##
+	## Returns "" on success, or the stated reason the hero cannot be shown.
+	var content_db = content_db_override if content_db_override != null else _tree_autoload("ContentDB")
+	if content_db == null:
+		# The skirmish availability sweep classifies off the scene tree and never
+		# reaches the presentation proof; projecting there would also mutate a
+		# shared table from a worker thread. Nothing to do and nothing at risk.
+		return ""
+	var member_id := PlayableUnitAdapter.runtime_member_id(document)
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	var visual: Dictionary = registration.get("visual", {}) as Dictionary
+	var model_id := String(visual.get("model", ""))
+	var pack_root := String(system.get("_pack_root", ""))
+	var object_id := String(document.get("objectId", ""))
+	if member_id == "" or pack_root == "":
+		return "%s has no pack to resolve its presentation against" % object_id
+	if model_id == "":
+		return "%s names no battlefield model" % object_id
+	var relative := "%s/%s.glb" % [CREATED_HERO_MODEL_DIRECTORY, model_id]
+	if String(content_db.call("resolve_asset", relative, pack_root)) == "":
+		return "%s wears %s, which the selected pack does not ship" % [object_id, model_id]
+	document["_pack_root"] = pack_root
+	var capability_id := "%s.animation" % member_id
+	content_db.bundle_objects[member_id] = {
+		"id": member_id,
+		"kind": "member",
+		"sourceObjectId": object_id,
+		"animationCapabilityId": capability_id,
+		"presentation": {"model": relative},
+		"_source": "openbfme.cah-system-runtime",
+		"_pack_root": pack_root,
+	}
+	# NO CLIPS, said plainly. The class table names a skeleton and an animation
+	# prefix, not the per-state clip bindings the converter compiles for a retail
+	# unit, so this capability carries none and the hero stands its ground
+	# unanimated rather than borrowing another unit's movements.
+	content_db.animation_capabilities[capability_id] = {
+		"id": capability_id,
+		"states": {},
+		"unresolvedAnimationTracks": 0,
+		"source": "openbfme.cah-system-runtime",
+		"_source": "openbfme.cah-system-runtime",
+		"_pack_root": pack_root,
+	}
+	return ""
 
 
 func _local_player_team(game_state = null) -> int:

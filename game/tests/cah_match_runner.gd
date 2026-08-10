@@ -25,6 +25,11 @@ const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
 var _runner_watchdog := RunnerWatchdogScript.new()
 
+const ProfileSandboxScript := preload("res://tests/cah_profile_sandbox.gd")
+## This runner saves and deletes heroes. It does that in a scratch store, never
+## in the player's - see tests/cah_profile_sandbox.gd.
+var _profiles := ProfileSandboxScript.new()
+
 const FACTION := "men"
 const PLAYER_TEAM := 0
 const ENEMY_TEAM := 1
@@ -44,7 +49,7 @@ const LEVEL_FOUR_UPGRADE := "Upgrade_CreateAHeroGloriousCharge"
 
 ## LIVENESS. A GDScript runtime error aborts its function without propagating,
 ## so a broken run would print zero failures. Raise deliberately; never lower.
-const EXPECTED_CHECKS := 58
+const EXPECTED_CHECKS := 62
 
 var passed := 0
 var failed := 0
@@ -52,6 +57,7 @@ var _saved_hero_ids: Array[String] = []
 
 
 func _initialize() -> void:
+	_profiles.open("cah-match")
 	_runner_watchdog.start(self, "CAH_MATCH")
 	call_deferred("_run")
 
@@ -89,6 +95,7 @@ func _run() -> void:
 	_test_baseline_fallback(system, profile)
 	_test_baseline_contract(system, profile)
 
+	_test_every_subclass_passes_presentation(system)
 	_test_skirmish_ownership_follows_the_human(system)
 	_test_skirmish_fields_only_the_picked_hero(system, profile)
 	_test_skirmish_setup_exposes_the_hero_column()
@@ -543,6 +550,67 @@ func _test_skirmish_fields_only_the_picked_hero(system: Dictionary, picked: Dict
 	state.free()
 
 
+func _test_every_subclass_passes_presentation(system: Dictionary) -> void:
+	## EVERY SUBCLASS, not the one that happened to be tested.
+	##
+	## A created hero reaches the same roster-presentation proof every converted
+	## unit does, and that proof asks each fieldable runtime for a bundle object,
+	## an animation capability and a mesh out of its own pack. A created hero has
+	## no bundle object - it is compiled here, not converted - so it answered with
+	## nothing and the slice refused the whole match by name:
+	## "CreateAHero__... generic playable-unit presentation is incomplete".
+	##
+	## The sweep is the point. One subclass proves one skin; the Men-usable nine
+	## prove the rule, and they are not interchangeable - different meshes on
+	## different skeletons out of different class blocks. The one the player
+	## picked was not the one anybody had run.
+	var registration: Dictionary = system.get("registration", {}) as Dictionary
+	var expected: Array[String] = []
+	# The sweep's own heroes, removed at the end so the checks after this one see
+	# the store the earlier ones set up rather than nine strangers.
+	var swept_ids: Array[String] = []
+	for class_value in (registration.get("classes", []) as Array):
+		var class_row := class_value as Dictionary
+		for sub_value in (class_row.get("subClasses", []) as Array):
+			var sub_row := sub_value as Dictionary
+			if not CahHeroes.subclass_allows_faction(sub_row, FACTION):
+				continue
+			var profile := CahHeroes.new_profile(
+				system, "Sweep %d" % expected.size(),
+				int(class_row.get("classIndex", -1)), int(sub_row.get("subClassIndex", -1))
+			)
+			if CahHeroes.save_profile(profile) != "":
+				continue
+			swept_ids.append(String(profile.get("heroId", "")))
+			expected.append("CreateAHero__%s" % String(profile.get("heroId", "")))
+	_check(expected.size() >= 9, "the sweep covers every Men-usable subclass (%d)" % expected.size())
+
+	var slice = _classified_slice(system)
+	var fieldable: Dictionary = slice.fieldable_unit_runtimes as Dictionary
+	var missing: Array[String] = []
+	for object_id in expected:
+		if not fieldable.has(object_id):
+			missing.append(object_id)
+	_check(missing.is_empty(), "every swept subclass reaches the Men roster: %s" % str(missing))
+	var manifest_script = load("res://src/retail_slice/retail_faction_manifest.gd")
+	var content_db := root.get_node_or_null("ContentDB")
+	slice.faction_manifest = manifest_script.from_registries(
+		FACTION, fieldable, content_db.call("get_playable_structure_runtimes")
+	)
+	# The proof is asked about EVERY fieldable unit, so a detached probe slice can
+	# still trip on structure evidence it was never given. What is asserted here
+	# is the created heroes' own clause: no swept subclass may be the thing the
+	# proof names.
+	var reason := String(slice._load_required_presentation_definitions())
+	_check(
+		not reason.contains("CreateAHero__"),
+		"no created hero fails the roster presentation proof: %s" % reason
+	)
+	slice.free()
+	for hero_id in swept_ids:
+		CahHeroes.delete_profile(hero_id)
+
+
 func _test_skirmish_ownership_follows_the_human(system: Dictionary) -> void:
 	## THE HUMAN IS NOT ALWAYS ON ROW 0. A skirmish roster hands each row its own
 	## sim team out of TEAM_ID_POOL, so a created hero owned by a hardcoded
@@ -586,7 +654,7 @@ func _classified_slice(system: Dictionary, game_state = null):
 	# ONE classification, with the class table and the setup injected the way the
 	# skirmish sweep injects them on its worker. Calling _add_created_heroes a
 	# second time by hand would collide with the roster the first pass built.
-	slice._classify_faction_units(FACTION, {}, {}, {}, game_state, system)
+	slice._classify_faction_units(FACTION, {}, {}, {}, game_state, system, root.get_node_or_null("ContentDB"))
 	return slice
 
 
@@ -772,6 +840,8 @@ func _check(condition: bool, label: String) -> void:
 func _finish() -> void:
 	for hero_id in _saved_hero_ids:
 		CahHeroes.delete_profile(hero_id)
+	_check(_profiles.real_store_untouched(), "the run left the player's own heroes untouched (%s)" % _profiles.real_store_description())
+	_profiles.close()
 	var ran := passed + failed
 	if ran != EXPECTED_CHECKS:
 		failed += 1

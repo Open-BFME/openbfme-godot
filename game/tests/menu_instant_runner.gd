@@ -34,12 +34,17 @@ const MAX_BUILD_FRAME_MS := 8
 const ABSENT_MAP_ID := "openbfme.test.absent-map"
 const ABSENT_MAP_NAME := "ABSENT FIXTURE MAP"
 
+const ProfileSandboxScript := preload("res://tests/cah_profile_sandbox.gd")
+## The hero-pick check saves and deletes heroes; it does that in a scratch store,
+## never in the player's - see tests/cah_profile_sandbox.gd.
+var _profiles := ProfileSandboxScript.new()
 var _runner_watchdog := RunnerWatchdogScript.new()
 var _passed := 0
 var _failed := 0
 
 
 func _initialize() -> void:
+	_profiles.open("menu-instant")
 	_runner_watchdog.start(self, "MENU_INSTANT_RUNNER", 900_000)
 	call_deferred("_run")
 
@@ -375,6 +380,9 @@ func _check(name: String, condition: bool, detail: String = "") -> void:
 
 
 func _finish() -> void:
+	_check("run_left_the_players_own_heroes_untouched",
+		_profiles.real_store_untouched(), _profiles.real_store_description())
+	_profiles.close()
 	print("MENU_INSTANT_RESULT passed=%d failed=%d" % [_passed, _failed])
 	_runner_watchdog.stop()
 	quit(0 if _failed == 0 else 1)
