@@ -2213,6 +2213,7 @@ def _castle_upgrade_documents(
     second_upgrade: bool = False,
     plain_object_upgrade: bool = False,
     castle_upgrade_command: bool = False,
+    radial_page_selectors: bool = False,
 ) -> dict[str, bytes]:
     documents = _structure_documents()
     objects_path = "data/ini/object/units/test_units.ini"
@@ -2257,6 +2258,16 @@ def _castle_upgrade_documents(
     if castle_upgrade_command:
         command_set += """
   9 = Command_PurchaseUpgradeTestHouseOfHealing
+"""
+    if radial_page_selectors:
+        # Retail's fortress command set opens its upgrades/heroes pages with
+        # PUSH_VISIBLE_COMMAND_RANGE selectors and closes them with
+        # Command_RadialBack, which occupies the LAST slot of every page
+        # (DwarvenFortressCommandSet slots 5/14/24, commandset.ini:1931).
+        command_set += """
+  2 = Command_SelectUpgradesTestFortress
+  14 = Command_RadialBack
+  24 = Command_RadialBack
 """
     documents["data/ini/commandset.ini"] = (
         documents["data/ini/commandset.ini"].decode("utf-8")
@@ -2325,6 +2336,29 @@ CommandButton Command_PurchaseUpgradeTestHouseOfHealing
   TextLabel = CONTROLBAR:TestHouseOfHealing
   DescriptLabel = CONTROLBAR:ToolTipTestHouseOfHealing
   ButtonImage = BGFortress_HouseofHealing
+End
+"""
+    if radial_page_selectors:
+        command_buttons += """
+CommandButton Command_SelectUpgradesTestFortress
+  Command = PUSH_VISIBLE_COMMAND_RANGE
+  TextLabel = CONTROLBAR:SelectUpgradesTestFortress
+  ButtonImage = UCCommon_UpgradeStructureNew
+  ButtonBorderType = SYSTEM
+  DescriptLabel = CONTROLBAR:ToolTipCommandSelectUpgradesTestFortress
+  Radial = Yes
+	CommandRangeStart		= 7	//Starts its counting at 0, so command button 8 is 7
+	CommandRangeCount		= 7
+End
+CommandButton Command_RadialBack
+  Command = POP_VISIBLE_COMMAND_RANGE
+  Options = OK_FOR_MULTI_SELECT
+  TextLabel = CONTROLBAR:RadialBack
+  ButtonImage = UCCommon_BackArrow
+  ButtonBorderType = SYSTEM
+  DescriptLabel = CONTROLBAR:ToolTipCommandRadialBack
+  Radial = Yes
+  InPalantir = No
 End
 """
     documents["data/ini/commandbutton.ini"] = (
@@ -2429,6 +2463,55 @@ def test_castle_upgrade_button_emits_trigger_grant_and_authored_purchase_fields(
         "neededUpgradeIds": ["Upgrade_StoneWork"],
         "cancelable": True,
     }
+
+
+def test_castle_upgrade_surface_records_authored_radial_page_selectors() -> None:
+    """The fortress's page selectors carry retail's OWN string ids.
+
+    The HUD used to spell `CONTROLBAR:SelectUpgrades<Token>Fortress` itself from
+    the faction token, which is wrong for two of the seven factions: Angmar's
+    selectors are authored with the DWARVEN labels
+    (commandbutton.ini:13532/13543) and Wild's heroes page points at
+    `CONTROLBAR:SelectRevivablesGoblinFortress` (:13785). Nothing in the packs
+    ever NAMED those ids, so the strings lane -- which publishes exactly the
+    retail rows a runtime document references -- had no reason to ship them and
+    all three buttons drew transcribed fallback text. Compiling the authored
+    selectors puts the real ids in the document, which both feeds the strings
+    scrape and gives the runtime the id retail actually authored.
+    """
+
+    descriptor = compile_playable_structure_descriptor(
+        "TestKeep", _castle_upgrade_documents(radial_page_selectors=True)
+    )
+
+    assert descriptor["gameplay"]["castleUpgrades"]["pageSelectors"] == [
+        {
+            "commandId": "Command_RadialBack",
+            "command": "POP_VISIBLE_COMMAND_RANGE",
+            "slots": [14, 24],
+            "labelId": "CONTROLBAR:RadialBack",
+            "tooltipId": "CONTROLBAR:ToolTipCommandRadialBack",
+            "buttonImageId": "UCCommon_BackArrow",
+        },
+        {
+            "commandId": "Command_SelectUpgradesTestFortress",
+            "command": "PUSH_VISIBLE_COMMAND_RANGE",
+            "slots": [2],
+            "labelId": "CONTROLBAR:SelectUpgradesTestFortress",
+            "tooltipId": "CONTROLBAR:ToolTipCommandSelectUpgradesTestFortress",
+            "buttonImageId": "UCCommon_UpgradeStructureNew",
+            "commandRangeStart": 7,
+            "commandRangeCount": 7,
+        },
+    ]
+
+
+def test_castle_upgrade_surface_omits_page_selectors_when_unauthored() -> None:
+    descriptor = compile_playable_structure_descriptor(
+        "TestKeep", _castle_upgrade_documents()
+    )
+
+    assert "pageSelectors" not in descriptor["gameplay"]["castleUpgrades"]
 
 
 @pytest.mark.parametrize("missing_field", ["BuildCost", "BuildTime"])

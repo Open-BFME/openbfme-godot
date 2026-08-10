@@ -36,6 +36,7 @@ const BOOT_DEADLINE_MS := 300000
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const CahHeroesScript = preload("res://src/content/cah_heroes.gd")
 const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
+const ManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
 
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
 var _runner_watchdog := RunnerWatchdogScript.new()
@@ -135,6 +136,7 @@ func _initialize() -> void:
 
 
 func _run() -> void:
+	_check_castle_upgrade_surface_shapes()
 	_check_castle_upgrade_purchase_path()
 	if not FACTION_EXPECTATIONS.has(_faction):
 		print("RESULT fortress_surface faction=%s SKIPPED (no transcribed retail expectation)" % _faction)
@@ -413,12 +415,71 @@ func _seed_created_hero() -> String:
 	return CahHeroesScript.save_profile(profile)
 
 
+func _check_castle_upgrade_surface_shapes() -> void:
+	## Retail authors a fortress improvement in THREE shapes, and the manifest's
+	## fail-closed shape check must accept all three.
+	##
+	## 1. TRIGGER: buy `*Trigger`, a CastleUpgrade module converts it and hands a
+	##    DIFFERENT upgrade to the castle (dwarvenfortress.ini:1096).
+	## 2. PLAIN: buy an upgrade that applies to the fortress itself, no module
+	##    behind it, so nothing is handed out (commandset.ini slots 8/9/11/13).
+	## 3. SELF-GRANTING PASS-OUT: a CastleUpgrade module whose `TriggeredBy` and
+	##    `Upgrade` are the SAME id. Angmar's House of Lamentation is authored
+	##    exactly this way (angmarfortress.ini:1235-1238,
+	##    `ModuleTag_PassOutHouseOfHealingUpgrade`). The same id in and out is not
+	##    a no-op: the module's job is to propagate the upgrade the fortress was
+	##    sold to every castle piece. Rejecting it as "buys nothing" made the
+	##    whole Angmar manifest fail closed, so the slice would not boot at all.
+	var trigger_row := {
+		"upgradeId": "Upgrade_AngmarFortressIceWallsTrigger",
+		"grantsUpgradeId": "Upgrade_AngmarFortressIceWalls",
+		"cost": 500, "buildTimeSeconds": 30.0, "slot": 12,
+		"commandId": "Command_PurchaseUpgradeAngmarFortressIceWalls",
+	}
+	var plain_row := {
+		"upgradeId": "Upgrade_DwarvenFortressBanners", "grantsUpgradeId": "",
+		"cost": 500, "buildTimeSeconds": 5.0, "slot": 8,
+		"commandId": "Command_PurchaseUpgradeDwarvenFortressBanners",
+	}
+	var pass_out_row := {
+		"upgradeId": "Upgrade_AngmarFortressHouseOfLamentation",
+		"grantsUpgradeId": "Upgrade_AngmarFortressHouseOfLamentation",
+		"cost": 1000, "buildTimeSeconds": 30.0, "slot": 11,
+		"commandId": "Command_PurchaseUpgradeAngmarFortressHouseOfLamentation",
+	}
+	for row_case in [
+		["trigger", trigger_row], ["plain", plain_row], ["self_granting_pass_out", pass_out_row],
+	]:
+		var shape_name := String(row_case[0])
+		var error := ManifestScript._validate_structure_castle_upgrades(
+			"AngmarFortressCitadel", {"upgrades": [row_case[1]]}
+		)
+		_check(
+			"castle_upgrade_shape_%s_is_accepted" % shape_name,
+			error == "",
+			"retail's %s shape was rejected: %s" % [shape_name, error]
+		)
+	# A row that names no upgrade at all is still malformed and must fail closed;
+	# widening for the pass-out shape must not turn the check off.
+	var empty_error := ManifestScript._validate_structure_castle_upgrades(
+		"AngmarFortressCitadel",
+		{"upgrades": [{"upgradeId": "", "grantsUpgradeId": "", "cost": 1, "buildTimeSeconds": 1.0, "slot": 1, "commandId": "X"}]}
+	)
+	_check(
+		"castle_upgrade_shape_empty_id_still_fails_closed",
+		empty_error != "",
+		"an upgrade row with no id was accepted"
+	)
+
+
 func _check_castle_upgrade_purchase_path() -> void:
-	## Fixture-driven: the shipped packs carry the CastleUpgrade *modules* but no
-	## purchasable castleUpgrades surface (the compiler skips OBJECT_UPGRADE
-	## buttons — playable_structure_compiler.py:1442), so this section proves the
-	## runtime half end to end against an authored surface of the exact shape the
-	## compiler must emit.
+	## Fixture-driven: proves the runtime half end to end against an authored
+	## surface of the exact shape the compiler emits. (The claim that once stood
+	## here — that the shipped packs carry no purchasable castleUpgrades surface
+	## because the compiler skips OBJECT_UPGRADE buttons — is no longer true: the
+	## packs now ship retail's whole upgrades page. The fixture is kept anyway so
+	## the purchase path stays covered independently of whatever the mounted pack
+	## happens to contain.)
 	var sim = SimScript.new()
 	sim._rules = {
 		"enable_base_loop": true,

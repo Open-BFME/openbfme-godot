@@ -47,19 +47,33 @@ $publishRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot ".private\content-pac
 # SILENTLY is not. When the selection legitimately moves, re-measure and update
 # these constants in the same change that moves it, and say so - the same
 # conscious-update pattern the state pins use.
-$expectedSelectionSha256 = "4c328f95a6be70b2fa0c4feb6adf899bf2ae5fa9a39ecb4b44e9c9c1fde005c5"
-$expectedSelectionActivePack = "rotwk-men-vslice/544b84ebe0d8e6a84a13eaf218efe639a0cb3d3743213da95d7aa0f06ba777fa"
+# RE-MEASURED 2026-08-10 (fortress upgrade-catalog republish). Two changes are
+# folded in here, and both are stated rather than absorbed silently:
+#   1. The pin had ALREADY drifted before this change - it still described the
+#      2026-08-04 pure-retail rebase set, while the live selection had moved to
+#      the 08-05/08-10 publishes, and it named neither rotwk-cursors-vslice nor
+#      the real rotwk-skirmish-maps-private digest. Section B could not have
+#      passed against the live selection as pinned.
+#   2. Six faction bundles were republished so the fortress upgrade catalogs
+#      reach the game (2 -> 6/7/5 rows per faction). rotwk-men-vslice is
+#      DELIBERATELY unchanged: its cook is blocked by a pre-existing CaH
+#      animation-lane gap (cah-model-chss_uk_u_skn fails W3D
+#      model-scene-mesh-bind), which predates this lane and is named in the
+#      commit rather than worked around.
+$expectedSelectionSha256 = "932abb5c9e9d45f758ea69b2ab8c66b733a1516f44741150e5e8a5c9e7144ef1"
+$expectedSelectionActivePack = "rotwk-men-vslice/d9a12509ba2591245c50a7109a90ef4a348f82ac9e08b4290e0aaac070238a2e"
 $expectedSelectionSupplementalPacks = @(
     "bfme2-men-vslice/ce02105e952ce91faa2b2cab429e2be01200c939e6553ef8be5b2deb8e591383",
     "bfme2-skirmish-maps-private/f9c14cfa4c25e68509373390741fc82e5892f050a2305a19fa3efaca0f39a5b0",
-    "rotwk-skirmish-maps-private/goal-official-72",
-    "rotwk-elves-vslice/7309cdd1889139bbf4aa2b3f3a34a80cb3f79e7e613275012cf4a472001e6558",
-    "rotwk-dwarves-vslice/1b1ada8e16b2bfd8bd4d0694f70facc6752ec366d7d7b067f94d2ae7c43caf29",
-    "rotwk-isengard-vslice/cad2fc6c98f13dc60a20a4356f9f703ee0c729410ec8fb5a16c189c76c3850cc",
-    "rotwk-mordor-vslice/7ee7a0d23f31a92d687889aab3da7f5e2173071b5a02013ad130855b9b14a841",
-    "rotwk-wild-vslice/3d14447d1fc106c3a63bdf8437ffe49da87d9ae2e5387c4b362b3d98e4daa0ed",
-    "rotwk-angmar-vslice/44a84a32ab6d639bb1052429e629192b2c0e826de90c2b260041a764a1a50fcf",
-    "rotwk-music-vslice/f10d95389a1ab51a7a20b3f549fc6b90291db51f7e68693e4d157f1a67eada8d"
+    "rotwk-skirmish-maps-private/fbc3018d6f6f13d1690edaa3d9cbd0a83d569d2a817cb546ee0269642174bdea",
+    "rotwk-elves-vslice/5e512d70d98f21ac150fb77c6891e1526aa13beac9eb510ae526e25ab4f7a603",
+    "rotwk-dwarves-vslice/005243a7689f5b042dc6346768fe5740f553ac458d84bf5cf25110b448aa7d15",
+    "rotwk-isengard-vslice/5834304546f6e9a407bdd376e912a4f71f13f86e62710c285ccf356912b48bf1",
+    "rotwk-mordor-vslice/4961cca5a980b54333dd170b73241d4d5743e258b4db4d08da9ebe1f722cbe02",
+    "rotwk-wild-vslice/93f99f5f8ba0ed6b12535d4b6540ed5b98810523bb84ada03bca5d2df55f3d6f",
+    "rotwk-angmar-vslice/a9e3233564318ea52770203a960ec726c3365d7a5b56f743c871540808205f58",
+    "rotwk-music-vslice/f10d95389a1ab51a7a20b3f549fc6b90291db51f7e68693e4d157f1a67eada8d",
+    "rotwk-cursors-vslice/11236cb6a57396ccf3bfad7d4406f89dc7e0e95b3d9db34c0063c6c1c1d760d2"
 )
 $stateRoot = if (-not [string]::IsNullOrWhiteSpace($env:OPENBFME_IMPORT_ROOT)) {
     [IO.Path]::GetFullPath($env:OPENBFME_IMPORT_ROOT)
@@ -522,7 +536,15 @@ try {
         # and the created hero's recruit slot). Dwarves is wired now that its
         # slice boots green; mordor/elves/isengard remain off for the
         # PRE-EXISTING reasons above.
-        $fortressSurfaceFloors = @{ "angmar" = 40; "men" = 45; "wild" = 40; "dwarves" = 44 }
+        # Raised 2026-08-10 by the fortress upgrade-catalog republish. The packs
+        # now carry retail's WHOLE upgrades page instead of only the two buttons
+        # whose CastleUpgrade module converts a *Trigger id, so each faction adds
+        # ~3 checks per newly purchasable improvement (offered / binds its pack
+        # icon / states its cost): dwarves 44->60, angmar 40->56, wild 40->53.
+        # men rises 45->49 on the four new castle-upgrade SHAPE checks only - its
+        # pack is deliberately not republished this round (CaH cook gap, see the
+        # selection pin note above), so its catalog is still the old two rows.
+        $fortressSurfaceFloors = @{ "angmar" = 56; "men" = 49; "wild" = 53; "dwarves" = 60 }
         $priorSliceFaction = $env:OPENBFME_SLICE_FACTION
         try {
             foreach ($fortressFaction in @("angmar", "men", "wild", "dwarves")) {

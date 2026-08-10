@@ -72,6 +72,19 @@ _WALL_UPGRADE_COMMAND = "object_upgrade"
 # Command_PurchaseUpgradeMenFortressHouseOfHealing (commandbutton.ini:13283).
 # It sells exactly like the OBJECT_UPGRADE improvements around it.
 _CASTLE_UPGRADE_COMMAND = "castle_upgrade"
+# The fortress command set is ONE set the engine reveals in ranges: a
+# PUSH_VISIBLE_COMMAND_RANGE selector opens the improvements/heroes page and
+# POP_VISIBLE_COMMAND_RANGE (`Command_RadialBack`) closes it.  These buttons
+# carry retail's own TextLabel/DescriptLabel, and the packs never named them,
+# so the strings lane -- which publishes exactly the rows a runtime document
+# references -- had nothing to resolve and the buttons drew fallback text.
+_RADIAL_PAGE_COMMANDS = frozenset(
+    {"push_visible_command_range", "pop_visible_command_range"}
+)
+_RADIAL_PAGE_RANGE_FIELDS = (
+    ("CommandRangeStart", "commandRangeStart"),
+    ("CommandRangeCount", "commandRangeCount"),
+)
 _HEALTH_FIELDS = ("MaxHealth", "MaxHealthDamaged", "MaxHealthReallyDamaged")
 
 
@@ -1500,6 +1513,23 @@ def _purchase_button_fields(
     return fields
 
 
+def _authored_presentation(button: IniBlock) -> dict[str, object]:
+    """The button's authored label/tooltip/icon ids, and nothing else."""
+
+    fields: dict[str, object] = {}
+    for field, output_key in (
+        ("TextLabel", "labelId"),
+        ("DescriptLabel", "tooltipId"),
+        ("ButtonImage", "buttonImageId"),
+    ):
+        for value in button.values(field):
+            text = value.strip()
+            if text and text.casefold() not in {"none", "null"}:
+                fields[output_key] = text
+                break
+    return fields
+
+
 def _castle_upgrade_surface(
     target_id: str,
     lineage: Sequence[SageObject],
@@ -1526,6 +1556,7 @@ def _castle_upgrade_surface(
     non_purchasable: list[dict[str, object]] = []
     sold_triggers: set[str] = set()
     command_surface_seen = False
+    page_selectors: dict[str, dict[str, object]] = {}
     for trained_row in trained:
         set_id = str(trained_row.get("id", ""))
         for slot_row in trained_row.get("slots", []):
@@ -1539,6 +1570,35 @@ def _castle_upgrade_surface(
                     f"CommandButton {command_id}"
                 )
             commands = {value.strip().casefold() for value in button.values("Command")}
+            if commands & _RADIAL_PAGE_COMMANDS:
+                # One selector legitimately rides several slots and several
+                # command-set variants: `Command_RadialBack` closes BOTH pages,
+                # so it sits at the last slot of each (DwarvenFortressCommandSet
+                # 14 and 24). Collect the slots rather than picking a winner.
+                selector = page_selectors.setdefault(
+                    command_id.casefold(),
+                    {"commandId": command_id, "slots": []},
+                )
+                slot = int(slot_row.get("slot", 0))
+                slots = selector["slots"]
+                assert isinstance(slots, list)
+                if slot not in slots:
+                    slots.append(slot)
+                if "command" not in selector:
+                    selector["command"] = sorted(commands)[0].upper()
+                    selector.update(_authored_presentation(button))
+                    for field, output_key in _RADIAL_PAGE_RANGE_FIELDS:
+                        raw = _first(button.values(field))
+                        if raw is None or not raw.strip():
+                            continue
+                        selector[output_key] = int(
+                            _numeric_value(
+                                raw,
+                                defines,
+                                f"{label} CommandButton {command_id} {field}",
+                            )
+                        )
+                continue
             if commands not in ({_WALL_UPGRADE_COMMAND}, {_CASTLE_UPGRADE_COMMAND}):
                 continue
             command_surface_seen = True
@@ -1693,19 +1753,28 @@ def _castle_upgrade_surface(
             int(row.get("slot", 0)),
         )
     )
+    selector_rows = [
+        page_selectors[key] for key in sorted(page_selectors)
+    ]
+    for selector in selector_rows:
+        slots = selector["slots"]
+        assert isinstance(slots, list)
+        slots.sort()
     source_paths = {
         item.source_virtual_path
         for item in lineage
     }
     if rows:
         source_paths.update({UPGRADE_PATH, COMMAND_SET_PATH, COMMAND_BUTTON_PATH})
-    elif command_surface_seen:
+    elif command_surface_seen or selector_rows:
         source_paths.update({COMMAND_SET_PATH, COMMAND_BUTTON_PATH})
     result: dict[str, object] = {
         "sourceIni": sorted(source_paths, key=str.casefold),
     }
     if rows:
         result["upgrades"] = rows
+    if selector_rows:
+        result["pageSelectors"] = selector_rows
     if non_purchasable:
         result["nonPurchasable"] = non_purchasable
     return result
