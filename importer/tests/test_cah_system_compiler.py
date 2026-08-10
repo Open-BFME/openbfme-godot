@@ -474,6 +474,57 @@ def _experience_levels() -> bytes:
     return "\n".join(out).encode("cp1252")
 
 
+
+def _anims() -> bytes:
+    """Retail's creation-screen animation states.
+
+    Carries the stray ``End`` retail ships, because tolerating it is exactly
+    why this document is scanned rather than parsed, and a battlefield state
+    that must not contribute to the screen's idle vocabulary.
+    """
+
+    lines = [
+        "//================== ANIMATIONS ====================",
+        "AnimationState = CREATE_A_HERO_IN_CREATION_SCREEN "
+        "CREATE_A_HERO_EXAMINE_SELF CREATE_A_HERO_SELECTED_CHEER",
+        "	StateName = STATE_ExamineSelf",
+        "	Animation = ExamineSelf",
+        "		AnimationName = #(MODEL)_C_CLRA",
+        "		AnimationMode = ONCE",
+        "	End",
+        "End",
+        "AnimationState = CREATE_A_HERO_IN_CREATION_SCREEN "
+        "CREATE_A_HERO_EXAMINE_WEAPON_RIGHT CREATE_A_HERO_SELECTED_CHEER",
+        "	StateName = STATE_ExamineWeapon",
+        "	Animation = WeaponSwap",
+        "		AnimationName = #(MODEL)_C_WPNA",
+        "	End",
+        "End",
+        "AnimationState = CREATE_A_HERO_IN_CREATION_SCREEN "
+        "CREATE_A_HERO_SELECTED_CHEER",
+        "	StateName = STATE_SelectedCheer",
+        "	Animation = Foot_ATNB",
+        "		AnimationName = #(MODEL)_C_ATNB #(MODEL)_C_ATND",
+        "	End",
+        "	Animation = Foot_ATNE",
+        "		AnimationName = #(MODEL)_C_ATNE #(MODEL)_C_ATND",
+        "	End",
+        "End",
+        "TransitionState = Trans_SelectedCheer",
+        "	Animation = Transition",
+        "		AnimationName = #(MODEL)_C_SLCA",
+        "	End",
+        "End",
+        "// A battlefield state, which the screen never plays.",
+        "AnimationState = MOVING",
+        "	Animation = Run",
+        "		AnimationName = #(MODEL)_U_RUNA",
+        "	End",
+        "End",
+    ]
+    return "\n".join(lines).encode("cp1252")
+
+
 def _documents(
     *,
     budget: int = 30,
@@ -486,11 +537,18 @@ def _documents(
     weapons: bytes | None = None,
     obj: bytes | None = None,
     locomotors: bytes | None = None,
+    anims: bytes | None = None,
 ) -> dict[str, bytes]:
     sub = _sub_class("CaptainOfGondor", budget, steps or CAPTAIN_STEPS)
     system = (
         "CreateAHeroSystem\n"
         "\tWeaponGroupName = CreateAHero_Weapon\n"
+        # The creation screen's three special idles and how often one plays.
+        # `Anin` is retail's own typo, kept verbatim.
+        "\tSelectedCheerAninName = _C_SLCA\n"
+        "\tExamineWeaponAninName = _C_WPNA\n"
+        "\tExamineSelfAninName = _C_CLRA\n"
+        "\tSpecialAnimPercentChance = 20.0\n"
         "\tCommandSetTemplate = CreateAHeroCommandSetTemplate\n"
         f"{_binders()}\n"
         '#include "CreateAHeroSystemMenOfTheWest.inc"\n'
@@ -584,6 +642,9 @@ def _documents(
         "data/ini/weapon.ini": _weapons() if weapons is None else weapons,
         "data/ini/locomotor.ini": (
             _locomotors() if locomotors is None else locomotors
+        ),
+        "data/ini/object/createahero/createaheroanims.inc": (
+            _anims() if anims is None else anims
         ),
     }
 
@@ -1354,3 +1415,134 @@ class CahAuthoredGarmentDefaultTests(unittest.TestCase):
             sub["appearanceDefaults"],
             {"CreateAHero_Helmet": "Upgrade_CaptainOfGondor_CHH02"},
         )
+
+
+class CahCreationIdleTests(unittest.TestCase):
+    """The creation screen's idle loop.
+
+    Retail plays a bored-idle cycle plus three special idles on the hero
+    creation screen. None of it reached the pack, so the preview hero stood
+    still in its bind pose.
+    """
+
+    def _creation(self, descriptor: dict) -> dict:
+        return descriptor["classes"][0]["subClasses"][0]["models"]["creationScreen"]
+
+    def test_the_idle_names_are_built_from_the_subclass_anim_prefix(self) -> None:
+        descriptor = compile_cah_system_descriptor(_documents())
+        idles = self._creation(descriptor)["creationIdles"]
+        self.assertEqual(idles["animationPrefix"], "CHHW_CG")
+        self.assertEqual(
+            [row["sourceAnimation"] for row in idles["base"]],
+            ["CHHW_CG_C_ATNB", "CHHW_CG_C_ATND", "CHHW_CG_C_ATNE"],
+        )
+
+    def test_the_three_specials_come_off_the_system_block(self) -> None:
+        # Not from the anim file: the system block is where retail states them,
+        # and it is the only place the roles are distinguishable.
+        descriptor = compile_cah_system_descriptor(_documents())
+        idles = self._creation(descriptor)["creationIdles"]
+        self.assertEqual(
+            [(row["role"], row["sourceAnimation"]) for row in idles["specials"]],
+            [
+                ("selectedCheer", "CHHW_CG_C_SLCA"),
+                ("examineWeapon", "CHHW_CG_C_WPNA"),
+                ("examineSelf", "CHHW_CG_C_CLRA"),
+            ],
+        )
+        self.assertEqual(idles["specialChancePercent"], 20.0)
+
+    def test_the_special_chance_is_a_percent_float_not_a_fraction(self) -> None:
+        # The consumer clamps this to 0..100. A 0..1 fraction would fire a
+        # special idle a fifth of one percent of the time; an int would hand a
+        # typed reader the wrong type for a legitimately fractional field.
+        descriptor = compile_cah_system_descriptor(_documents())
+        chance = self._creation(descriptor)["creationIdles"]["specialChancePercent"]
+        self.assertIsInstance(chance, float)
+        self.assertEqual(chance, 20.0)
+        self.assertEqual(
+            descriptor["creationIdlePlan"]["specialChancePercent"], 20.0
+        )
+
+    def test_a_fractional_chance_survives_verbatim(self) -> None:
+        documents = _documents()
+        documents["data/ini/createaherosystem.ini"] = documents[
+            "data/ini/createaherosystem.ini"
+        ].replace(b"SpecialAnimPercentChance = 20.0", b"SpecialAnimPercentChance = 12.5")
+        descriptor = compile_cah_system_descriptor(documents)
+        self.assertEqual(
+            self._creation(descriptor)["creationIdles"]["specialChancePercent"], 12.5
+        )
+
+    def test_each_entry_carries_the_converted_glb_animation_name(self) -> None:
+        # The consumer asks the GLB by this name; it must not have to
+        # re-implement the adapter's naming rule.
+        descriptor = compile_cah_system_descriptor(_documents())
+        idles = self._creation(descriptor)["creationIdles"]
+        self.assertEqual(
+            [row["animation"] for row in idles["base"]],
+            ["chhw_cg_c_atnb", "chhw_cg_c_atnd", "chhw_cg_c_atne"],
+        )
+        self.assertEqual(idles["specials"][0]["animation"], "chhw_cg_c_slca")
+
+    def test_the_glb_name_rule_matches_the_blender_adapter(self) -> None:
+        # Pins the reproduced rule to the adapter's own `clean_name`, which is
+        # the thing that actually names the exported clip.
+        import re as _re
+
+        from openbfme_importer.cah_system_compiler import glb_animation_name
+
+        def adapter_clean_name(value: str) -> str:
+            return _re.sub(r"[^a-z0-9_]+", "_", value.casefold()).strip("_")
+
+        for probe in ("CHHW_CG_C_ATNB", "CHAR_AR_C_SLCA", "A B-C.D", "_X_"):
+            self.assertEqual(glb_animation_name(probe), adapter_clean_name(probe))
+
+    def test_a_battlefield_state_contributes_no_creation_idle(self) -> None:
+        descriptor = compile_cah_system_descriptor(_documents())
+        idles = self._creation(descriptor)["creationIdles"]
+        every = [row["sourceAnimation"] for row in idles["base"]]
+        self.assertNotIn("CHHW_CG_U_RUNA", every)
+
+    def test_the_specials_are_not_repeated_in_the_base_loop(self) -> None:
+        descriptor = compile_cah_system_descriptor(_documents())
+        idles = self._creation(descriptor)["creationIdles"]
+        base = {row["sourceAnimation"] for row in idles["base"]}
+        for row in idles["specials"]:
+            self.assertNotIn(row["sourceAnimation"], base)
+
+    def test_a_system_with_no_special_anim_field_refuses(self) -> None:
+        documents = _documents()
+        documents["data/ini/createaherosystem.ini"] = documents[
+            "data/ini/createaherosystem.ini"
+        ].replace(b"\tSelectedCheerAninName = _C_SLCA\n", b"")
+        with self.assertRaises(CahSystemCompilerError) as caught:
+            compile_cah_system_descriptor(documents)
+        self.assertIn("SelectedCheerAninName", str(caught.exception))
+
+    def test_a_system_with_no_special_chance_refuses(self) -> None:
+        documents = _documents()
+        documents["data/ini/createaherosystem.ini"] = documents[
+            "data/ini/createaherosystem.ini"
+        ].replace(b"\tSpecialAnimPercentChance = 20.0\n", b"")
+        with self.assertRaises(CahSystemCompilerError) as caught:
+            compile_cah_system_descriptor(documents)
+        self.assertIn("SpecialAnimPercentChance", str(caught.exception))
+
+    def test_an_anim_file_with_no_creation_state_refuses(self) -> None:
+        with self.assertRaises(CahSystemCompilerError) as caught:
+            compile_cah_system_descriptor(
+                _documents(anims=b"AnimationState = MOVING\nEnd\n")
+            )
+        self.assertIn("CREATE_A_HERO_IN_CREATION_SCREEN", str(caught.exception))
+
+    def test_the_idle_plan_reaches_the_runtime_document(self) -> None:
+        descriptor = compile_cah_system_descriptor(_documents())
+        runtime = build_cah_system_runtime(descriptor)
+        self.assertEqual(
+            runtime["registration"]["creationIdlePlan"], descriptor["creationIdlePlan"]
+        )
+        creation = runtime["registration"]["classes"][0]["subClasses"][0]["models"][
+            "creationScreen"
+        ]
+        self.assertEqual(creation["creationIdles"]["specialChancePercent"], 20.0)

@@ -394,3 +394,144 @@ def test_a_system_with_no_swaps_ships_nothing() -> None:
         {"registration": {"appearanceOptions": []}}, texture_catalog_paths=()
     )
     assert pack.resources == ()
+
+
+# --- creation-screen idle animations ----------------------------------------
+
+def _idle_system(*, cheer: bool = True) -> dict:
+    specials = [
+        {"role": "selectedCheer", "animation": "chhw_cg_c_slca",
+         "sourceAnimation": "CHHW_CG_C_SLCA"},
+        {"role": "examineWeapon", "animation": "chhw_cg_c_wpna",
+         "sourceAnimation": "CHHW_CG_C_WPNA"},
+        {"role": "examineSelf", "animation": "chhw_cg_c_clra",
+         "sourceAnimation": "CHHW_CG_C_CLRA"},
+    ]
+    if not cheer:
+        specials = specials[1:]
+    return {
+        "registration": {
+            "classes": [
+                {
+                    "classIndex": 0,
+                    "subClasses": [
+                        {
+                            "subClassIndex": 0,
+                            "models": {
+                                "battlefield": {
+                                    "model": "CHHW_CG_U_SKN",
+                                    "skeleton": "CHHW_CG_U_SKL",
+                                },
+                                "creationScreen": {
+                                    "model": "CHHW_CG_C_SKN",
+                                    "skeleton": "CHHW_CG_C_SKL",
+                                    "creationIdles": {
+                                        "animationPrefix": "CHHW_CG",
+                                        "base": [
+                                            {
+                                                "animation": "chhw_cg_c_atnb",
+                                                "sourceAnimation": "CHHW_CG_C_ATNB",
+                                            }
+                                        ],
+                                        "specials": specials,
+                                        "specialChancePercent": 20.0,
+                                    },
+                                },
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+    }
+
+
+_IDLE_W3D = {
+    "chhw_cg_u_skn.w3d": "art/w3d/ch/chhw_cg_u_skn.w3d",
+    "chhw_cg_u_skl.w3d": "art/w3d/ch/chhw_cg_u_skl.w3d",
+    "chhw_cg_c_skn.w3d": "art/w3d/ch/chhw_cg_c_skn.w3d",
+    "chhw_cg_c_skl.w3d": "art/w3d/ch/chhw_cg_c_skl.w3d",
+    "chhw_cg_c_atnb.w3d": "art/w3d/ch/chhw_cg_c_atnb.w3d",
+    "chhw_cg_c_slca.w3d": "art/w3d/ch/chhw_cg_c_slca.w3d",
+    "chhw_cg_c_wpna.w3d": "art/w3d/ch/chhw_cg_c_wpna.w3d",
+    "chhw_cg_c_clra.w3d": "art/w3d/ch/chhw_cg_c_clra.w3d",
+}
+
+
+def _by_output(pack, output: str) -> dict:
+    for row in pack.resources:
+        if row.get("output") == output:
+            return row
+    raise AssertionError(f"no resource outputs {output}")
+
+
+def test_a_creation_screen_mesh_converts_through_the_animated_lane() -> None:
+    # THE GAP: the creation-screen hero stood in its bind pose because the
+    # hierarchical converter refuses animations outright, so no clip could ship.
+    from openbfme_importer.cah_model_pack import compile_cah_model_pack
+
+    pack = compile_cah_model_pack(_idle_system(), w3d_lookup=_IDLE_W3D.get)
+    creation = _by_output(pack, "assets/models/cah/CHHW_CG_C_SKN.glb")
+    assert creation["converter"] == "w3d-bundle"
+    assert creation["options"]["animations"] == [
+        "chhw_cg_c_atnb.w3d",
+        "chhw_cg_c_slca.w3d",
+        "chhw_cg_c_wpna.w3d",
+        "chhw_cg_c_clra.w3d",
+    ]
+    # Every declared clip is staged: options.animations only NAMES files the
+    # pattern closure already selected.
+    for name in creation["options"]["animations"]:
+        assert f"art/w3d/ch/{name}" in creation["patterns"]
+
+
+def test_a_battlefield_mesh_keeps_the_still_lane() -> None:
+    # Keeping the eighteen battlefield meshes hierarchical is what stops this
+    # from invalidating their conversion cache.
+    from openbfme_importer.cah_model_pack import compile_cah_model_pack
+
+    pack = compile_cah_model_pack(_idle_system(), w3d_lookup=_IDLE_W3D.get)
+    battlefield = _by_output(pack, "assets/models/cah/CHHW_CG_U_SKN.glb")
+    assert battlefield["converter"] == "w3d-hierarchical"
+    assert "animations" not in battlefield["options"]
+
+
+def test_a_clip_retail_never_shipped_is_a_named_gap_not_a_refusal() -> None:
+    # Neither dwarf subclass has a cheer animation. Refusing the mesh over it
+    # would cost the roster a hero to save a flourish.
+    from openbfme_importer.cah_model_pack import compile_cah_model_pack
+
+    lookup = dict(_IDLE_W3D)
+    del lookup["chhw_cg_c_slca.w3d"]
+    pack = compile_cah_model_pack(_idle_system(), w3d_lookup=lookup.get)
+    creation = _by_output(pack, "assets/models/cah/CHHW_CG_C_SKN.glb")
+    assert creation["converter"] == "w3d-bundle"
+    assert "chhw_cg_c_slca.w3d" not in creation["options"]["animations"]
+    assert pack.receipt["animationGaps"] == [
+        {
+            "modelId": "CHHW_CG_C_SKN",
+            "animationId": "CHHW_CG_C_SLCA",
+            "reason": "the retail install carries no such W3D",
+        }
+    ]
+
+
+def test_a_mesh_the_install_lacks_is_still_fatal() -> None:
+    # The tolerance above is for CLIPS only.
+    from openbfme_importer.cah_model_pack import (
+        CahModelPackError,
+        compile_cah_model_pack,
+    )
+
+    lookup = dict(_IDLE_W3D)
+    del lookup["chhw_cg_c_skn.w3d"]
+    with pytest.raises(CahModelPackError, match="CHHW_CG_C_SKN"):
+        compile_cah_model_pack(_idle_system(), w3d_lookup=lookup.get)
+
+
+def test_the_receipt_counts_animated_meshes() -> None:
+    from openbfme_importer.cah_model_pack import compile_cah_model_pack
+
+    pack = compile_cah_model_pack(_idle_system(), w3d_lookup=_IDLE_W3D.get)
+    assert pack.receipt["animatedModelCount"] == 1
+    assert pack.receipt["modelCount"] == 2

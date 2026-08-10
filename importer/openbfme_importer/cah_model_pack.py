@@ -70,6 +70,10 @@ class CahModelBinding:
     skeleton_id: str
     #: Where in the descriptor this binding was authored (diagnostics only).
     owner: str
+    #: Retail animation ids this mesh must carry as GLB clips.  Only the
+    #: creation-screen bindings have any: they are the ones the hero-creation
+    #: screen idles on.  Empty means a still, hierarchical conversion.
+    animation_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -92,6 +96,31 @@ def _registration(value: Mapping[str, object]) -> Mapping[str, object]:
     return registration
 
 
+def _creation_idle_animation_ids(node: Mapping[str, object]) -> tuple[str, ...]:
+    """Retail animation ids the compiled ``creationIdles`` block names.
+
+    Read off the binding rather than rebuilt from the prefix: the compiler
+    already resolved which suffixes the creation-screen states use, and
+    duplicating that rule here would let the two drift.
+    """
+
+    idles = node.get("creationIdles")
+    if not isinstance(idles, Mapping):
+        return ()
+    found: list[str] = []
+    for key in ("base", "specials"):
+        rows = idles.get(key)
+        if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+            continue
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            identifier = row.get("sourceAnimation")
+            if isinstance(identifier, str) and identifier.strip():
+                found.append(identifier.strip())
+    return tuple(dict.fromkeys(found))
+
+
 def _visit_model_node(
     node: object, owner: str, out: list[CahModelBinding]
 ) -> None:
@@ -105,7 +134,14 @@ def _visit_model_node(
                 f"CaH model {model!r} ({owner}) names no skeleton; "
                 "a skinned mesh cannot be staged without its hierarchy"
             )
-        out.append(CahModelBinding(model.strip(), skeleton.strip(), owner))
+        out.append(
+            CahModelBinding(
+                model.strip(),
+                skeleton.strip(),
+                owner,
+                _creation_idle_animation_ids(node),
+            )
+        )
     states = node.get("conditionalStates")
     if isinstance(states, Sequence) and not isinstance(states, (str, bytes)):
         for index, state in enumerate(states):
@@ -164,6 +200,9 @@ def cah_model_bindings(document: Mapping[str, object]) -> tuple[CahModelBinding,
         if existing is None:
             unique[key] = binding
             continue
+        if existing.animation_ids != binding.animation_ids and not existing.animation_ids:
+            unique[key] = binding
+            existing = binding
         if existing.skeleton_id.casefold() != binding.skeleton_id.casefold():
             raise CahModelPackError(
                 f"CaH mesh {binding.model_id!r} binds two hierarchies: "
@@ -237,12 +276,34 @@ def compile_cah_model_pack(
 
     resources: list[dict[str, object]] = []
     rows: list[dict[str, object]] = []
+    animation_gaps: list[dict[str, str]] = []
     for binding in bindings:
         slug = binding.model_id.casefold()
         model_path = paths[binding.model_id]
         skeleton_path = paths[binding.skeleton_id]
+        # IDLE CLIPS ARE OPTIONAL PER NAME, NOT PER MESH.  Retail simply does
+        # not ship a few of them (neither dwarf subclass has a cheer), and a
+        # missing clip must leave the hero idling rather than refuse the mesh
+        # the whole roster needs.  A name that resolves to nothing is recorded
+        # as a gap; a mesh or hierarchy that does is still fatal above.
+        animation_paths: list[str] = []
+        for identifier in binding.animation_ids:
+            resolved = w3d_lookup(f"{identifier.casefold()}.w3d")
+            if resolved:
+                animation_paths.append(resolved)
+            else:
+                animation_gaps.append(
+                    {
+                        "modelId": binding.model_id,
+                        "animationId": identifier,
+                        "reason": "the retail install carries no such W3D",
+                    }
+                )
         staged = tuple(
-            sorted({model_path, skeleton_path}, key=lambda item: (item.casefold(), item))
+            sorted(
+                {model_path, skeleton_path, *animation_paths},
+                key=lambda item: (item.casefold(), item),
+            )
         )
         texture_ids: list[str] = []
         raw_textures = tuple(textures_for(staged)) if textures_for is not None else ()
@@ -265,17 +326,26 @@ def compile_cah_model_pack(
                     "expected_count": len(ordered_textures),
                 }
             )
+        # A mesh with clips converts through the animated lane, which is the
+        # ONLY one that exports GLB animations; the still lane refuses them
+        # outright.  A mesh with none stays hierarchical, so the eighteen
+        # battlefield meshes keep their existing conversion and cache entries.
+        options: dict[str, object] = {
+            "model": PurePosixPath(model_path).name,
+            "inputResourceIds": texture_ids,
+        }
+        if animation_paths:
+            options["animations"] = [
+                PurePosixPath(path).name for path in animation_paths
+            ]
         resources.append(
             {
                 "id": _resource_id(CAH_MODEL_RESOURCE_PREFIX, slug),
                 "kind": "model",
-                "converter": "w3d-hierarchical",
+                "converter": "w3d-bundle" if animation_paths else "w3d-hierarchical",
                 "patterns": list(staged),
                 "output": f"{CAH_MODEL_PACK_ROOT}/{binding.model_id}.glb",
-                "options": {
-                    "model": PurePosixPath(model_path).name,
-                    "inputResourceIds": texture_ids,
-                },
+                "options": options,
                 "required": True,
                 "limit": len(staged),
                 "expected_count": len(staged),
@@ -289,12 +359,20 @@ def compile_cah_model_pack(
                 "sourceW3d": model_path,
                 "skeletonW3d": skeleton_path,
                 "textureCount": len(ordered_textures),
+                "animationCount": len(animation_paths),
+                "animations": [
+                    PurePosixPath(path).name.rsplit(".", 1)[0]
+                    for path in animation_paths
+                ],
             }
         )
     receipt = {
         "packRoot": CAH_MODEL_PACK_ROOT,
         "modelCount": len(rows),
         "w3dCount": len(paths),
+        "animatedModelCount": sum(1 for row in rows if row["animationCount"]),
+        # Named, never counted away: retail's own missing clips live here.
+        "animationGaps": animation_gaps,
         "models": rows,
     }
     return CahModelPack(tuple(resources), bindings, receipt)

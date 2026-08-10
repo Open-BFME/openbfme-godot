@@ -116,6 +116,11 @@ OBJECT_PATH = "data/ini/object/createahero/createahero.ini"
 #: Weapon templates and locomotor templates the object and its weapon sets name.
 WEAPONS_PATH = "data/ini/weapon.ini"
 LOCOMOTOR_PATH = "data/ini/locomotor.ini"
+#: Where the creation screen's idle loop is authored.  Read line-wise: this is
+#: the file with the stray ``End`` that no strict block reader survives (the
+#: module docstring's own example), and the creation-screen states are the first
+#: hundred lines of it.
+ANIMS_PATH = "data/ini/object/createahero/createaheroanims.inc"
 
 #: Documents that must be present.  The ``#include``s reached from
 #: ``createaherosystem.ini`` are resolved from the same mapping and are also
@@ -136,6 +141,7 @@ REQUIRED_DOCUMENTS = (
     OBJECT_PATH,
     WEAPONS_PATH,
     LOCOMOTOR_PATH,
+    ANIMS_PATH,
 )
 
 #: Where ``#define``s are read from, in precedence order (later wins).  BOTH are
@@ -771,6 +777,186 @@ def _default_sub_objects(
         "show": _ordered_unique(shown),
         "hide": list(revealed),
         "scopedToSubClass": _ordered_unique(scoped),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# creation-screen idles
+# --------------------------------------------------------------------------- #
+
+#: The three special idles, as ``(CreateAHeroSystem field, emitted role)``.
+#: ``Anin`` is retail's own typo and is spelled here exactly as authored --
+#: correcting it would read a field that does not exist.
+SPECIAL_IDLE_FIELDS = (
+    ("SelectedCheerAninName", "selectedCheer"),
+    ("ExamineWeaponAninName", "examineWeapon"),
+    ("ExamineSelfAninName", "examineSelf"),
+)
+#: How often the client should pick a special over the base loop.
+SPECIAL_IDLE_CHANCE_FIELD = "SpecialAnimPercentChance"
+#: The flag that marks an AnimationState as belonging to the creation screen.
+CREATION_SCREEN_ANIM_CONDITION = "CREATE_A_HERO_IN_CREATION_SCREEN"
+#: Retail's substitution token for a subclass's ``ModelAnimationPrefix``.
+MODEL_ANIM_TOKEN = "#(MODEL)"
+
+_ANIM_STATE_HEADER = re.compile(
+    r"^(AnimationState|TransitionState)\s*=\s*(.*)$", re.IGNORECASE
+)
+_ANIM_NAME_ASSIGNMENT = re.compile(r"^AnimationName\s*=\s*(.*)$", re.IGNORECASE)
+
+
+def _creation_screen_anim_suffixes(documents: Mapping[str, bytes]) -> tuple[str, ...]:
+    """Animation suffixes the creation-screen ``AnimationState``s name.
+
+    Scanned line-wise, not parsed: ``createaheroanims.inc`` carries a stray
+    ``End`` that fails the block reader, which is the very reason the mesh lane
+    cannot walk the CreateAHero closure.  The scan needs no block structure --
+    it tracks which state header it is inside and collects the ``#(MODEL)_*``
+    tokens until the next header.
+
+    ``TransitionState`` blocks are excluded: the three transitions are the
+    SPECIAL idles, and those are authored authoritatively on the system block
+    rather than inferred from here.
+    """
+
+    raw = _lookup(documents, ANIMS_PATH)
+    if raw is None:
+        raise CahSystemCompilerError(f"{ANIMS_PATH}: document is missing")
+    suffixes: list[str] = []
+    inside = False
+    for line in _lines(raw):
+        header = _ANIM_STATE_HEADER.match(line)
+        if header is not None:
+            conditions = header.group(2).split()
+            inside = header.group(1).casefold() == "animationstate" and any(
+                token.casefold() == CREATION_SCREEN_ANIM_CONDITION.casefold()
+                for token in conditions
+            )
+            continue
+        if not inside:
+            continue
+        assignment = _ANIM_NAME_ASSIGNMENT.match(line)
+        if assignment is None:
+            continue
+        for token in assignment.group(1).split():
+            if token.startswith(MODEL_ANIM_TOKEN):
+                suffix = token[len(MODEL_ANIM_TOKEN) :].strip()
+                if suffix and suffix not in suffixes:
+                    suffixes.append(suffix)
+    if not suffixes:
+        raise CahSystemCompilerError(
+            f"{ANIMS_PATH}: no {CREATION_SCREEN_ANIM_CONDITION} AnimationState "
+            f"names a {MODEL_ANIM_TOKEN} animation; the creation screen would "
+            f"have no idle at all"
+        )
+    return tuple(suffixes)
+
+
+def _creation_idle_plan(
+    system: _Block, documents: Mapping[str, bytes]
+) -> dict[str, Any]:
+    """The creation screen's idle vocabulary, before any subclass is named.
+
+    Every part is READ, not assumed: the three special suffixes and the chance
+    of playing one come off ``CreateAHeroSystem``; the base loop comes off the
+    creation-screen ``AnimationState``s minus those three specials, which is
+    what leaves the bored-idle set retail actually loops.
+    """
+
+    specials: list[dict[str, str]] = []
+    for field, role in SPECIAL_IDLE_FIELDS:
+        suffix = (system.value(field) or "").strip()
+        if not suffix:
+            raise CahSystemCompilerError(
+                f"{SYSTEM_PATH}: CreateAHeroSystem authors no {field}; the "
+                f"creation screen's {role} idle cannot be named"
+            )
+        specials.append({"role": role, "suffix": suffix, "field": field})
+    chance_token = (system.value(SPECIAL_IDLE_CHANCE_FIELD) or "").strip()
+    if not chance_token:
+        raise CahSystemCompilerError(
+            f"{SYSTEM_PATH}: CreateAHeroSystem authors no "
+            f"{SPECIAL_IDLE_CHANCE_FIELD}; how often a special idle plays would "
+            f"be a client invention"
+        )
+    try:
+        chance = float(chance_token)
+    except ValueError as error:
+        raise CahSystemCompilerError(
+            f"{SYSTEM_PATH}: {SPECIAL_IDLE_CHANCE_FIELD} = {chance_token!r} is "
+            f"not a number"
+        ) from error
+
+    special_suffixes = {row["suffix"].casefold() for row in specials}
+    base = [
+        suffix
+        for suffix in _creation_screen_anim_suffixes(documents)
+        if suffix.casefold() not in special_suffixes
+    ]
+    if not base:
+        raise CahSystemCompilerError(
+            f"{ANIMS_PATH}: the creation-screen states name only the special "
+            f"idles; there is no base loop to fall back to"
+        )
+    return {
+        "baseSuffixes": base,
+        "specials": specials,
+        # A PERCENT IN 0..100, EMITTED AS A FLOAT.  Retail authors `20.0`, and
+        # this is the one number in this module that must not go through
+        # `_number`: collapsing it to `20` would hand a typed consumer an int
+        # for a field that can legitimately be fractional, and a consumer that
+        # mistook the unit would fire a special idle either every twentieth
+        # time or a fifth of one percent of the time.
+        "specialChancePercent": float(chance),
+    }
+
+
+#: THE NAME A CONVERTED GLB ANIMATION CARRIES.  The Blender adapter names every
+#: exported clip after its SOURCE W3D FILE STEM, lowercased with every run of
+#: non-``[a-z0-9_]`` collapsed to ``_`` (``importer/blender/w3d_to_glb.py``'s
+#: ``clean_name``, applied at export and re-asserted against the written GLB).
+#: Reproduced here rather than imported because that module imports ``bpy`` and
+#: only runs inside the pinned Blender; a test pins the two spellings together.
+_GLB_ANIMATION_NAME = re.compile(r"[^a-z0-9_]+")
+
+
+def glb_animation_name(identifier: str) -> str:
+    """The exported GLB animation name for a retail animation id."""
+
+    return _GLB_ANIMATION_NAME.sub("_", identifier.casefold()).strip("_")
+
+
+def _creation_idles(plan: Mapping[str, Any], prefix: str) -> dict[str, Any]:
+    """One subclass's idle animation names, from its ``ModelAnimationPrefix``.
+
+    Retail substitutes the prefix for ``#(MODEL)``; several subclasses share one
+    (all three wizards animate as ``CHWZ_YW``), which is why the prefix is read
+    off the model binding rather than derived from the mesh id.
+
+    Each entry carries BOTH names: ``animation`` is what the client asks the GLB
+    for, and ``sourceAnimation`` is the retail id it came from.  A consumer that
+    had only the retail id would have to re-implement the adapter's naming rule
+    to find the clip.
+    """
+
+    return {
+        "animationPrefix": prefix,
+        "base": [
+            {
+                "animation": glb_animation_name(f"{prefix}{suffix}"),
+                "sourceAnimation": f"{prefix}{suffix}",
+            }
+            for suffix in plan["baseSuffixes"]
+        ],
+        "specials": [
+            {
+                "role": row["role"],
+                "animation": glb_animation_name(f"{prefix}{row['suffix']}"),
+                "sourceAnimation": f"{prefix}{row['suffix']}",
+            }
+            for row in plan["specials"]
+        ],
+        "specialChancePercent": plan["specialChancePercent"],
     }
 
 
@@ -1861,6 +2047,7 @@ def _sub_classes(
     class_upgrade_name: str,
     garment: Mapping[str, Mapping[str, Any]],
     revealed: Sequence[str],
+    idle_plan: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
     group_names = [str(row["groupName"]) for row in groups]
     option_by_upgrade = {
@@ -2010,6 +2197,19 @@ def _sub_classes(
         )
         bound_models = deepcopy(dict(models))
         bound_models["defaultSubObjects"] = deepcopy(default_sub_objects)
+        # The creation screen plays an idle loop.  The names hang off the
+        # binding that owns the mesh they animate, so a consumer that has the
+        # model has the animation list without a second lookup.
+        creation = bound_models.get("creationScreen")
+        if isinstance(creation, dict):
+            prefix = str(creation.get("animationPrefix", "")).strip()
+            if not prefix:
+                raise CahSystemCompilerError(
+                    f"{label}: the creation-screen ModelConditionState authors "
+                    f"no ModelAnimationPrefix, so its idle animations cannot "
+                    f"be named"
+                )
+            creation["creationIdles"] = _creation_idles(idle_plan, prefix)
         out.append(
             {
                 "subClassIndex": sub_index,
@@ -2135,6 +2335,7 @@ def compile_cah_system_descriptor(
         garment_block, weapon_templates, defines
     )
     revealed_sub_objects = _revealed_sub_objects(garment)
+    idle_plan = _creation_idle_plan(system, documents)
     marked_defaults = _marked_default_upgrades(system)
     appearance_options = _appearance_options(
         system, garment, combat_profiles, marked_defaults
@@ -2199,6 +2400,7 @@ def compile_cah_system_descriptor(
                     class_upgrade_name,
                     garment,
                     revealed_sub_objects,
+                    idle_plan,
                 ),
             }
         )
@@ -2352,6 +2554,7 @@ def compile_cah_system_descriptor(
         ),
         "combatCoverage": combat_coverage,
         "garmentCoverage": garment_coverage,
+        "creationIdlePlan": idle_plan,
         "system": {
             "objectId": "CreateAHero",
             "attributeMultiplier": _number(attribute_multiplier),
@@ -2453,6 +2656,7 @@ def build_cah_system_runtime(descriptor: Mapping[str, Any]) -> dict[str, Any]:
             "system": descriptor["system"],
             "objectBaseline": descriptor.get("objectBaseline", {}),
             "combatCoverage": descriptor.get("combatCoverage", {}),
+            "creationIdlePlan": descriptor.get("creationIdlePlan", {}),
             "attributeGroups": descriptor["attributeGroups"],
             "garmentCoverage": descriptor.get("garmentCoverage", {}),
             "appearanceGroups": descriptor.get("appearanceGroups", []),
