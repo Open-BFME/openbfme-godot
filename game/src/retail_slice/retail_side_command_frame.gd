@@ -38,16 +38,27 @@ extends Control
 ## `assets/ui/palantir/atlases/apt-libingameimagesmain-1-1e7e4306fa99.png`
 ## (1024x512, already converted into the Men/BFME2 packs and already whitelisted
 ## by data/ui/palantir/scene-contract.json, so exact_atlas_texture() would hand
-## it out today). BFME2 sub-rects, top-left origin, pixel-identical to RotWK's
-## repacked page:
+## it out today).
+##
+## THE RECTS BELOW ARE BFME2-ATLAS-ONLY. RotWK REPACKED apt/libingameimagesmain
+## (35 of 54 entries differ): the tile SIZES are stable at 46x46, but 11 of the
+## 13 tile ORIGINS move - e.g. spellButtonRing is at (744, 386) in RotWK, not
+## (675, 382). The converted atlas page in the packs is BFME2-sourced by hash,
+## so these rects are correct for it; a future lane that binds retail tiles MUST
+## re-read the origins from whichever edition's archive it samples, or it will
+## draw the wrong sprite.
+## BFME2 sub-rects, top-left origin:
 ##   SideCommandBar01 (top cap + volute)  Rect2(747, 258, 46, 63)
 ##   SideCommandBar02..12 (middle bodies) (723,386) (771,386) (819,386)
 ##       (867,386) (492,337) (366,358) (492,385) (171,357) (318,340) (1,388)
 ##       (123,357) - each 46x46, one per socket index (sprite 13 labels _1.._11)
 ##   spellButtonRing (socket ring)        Rect2(675, 382, 46, 46)
-## controlbarscheme.ini's per-faction command-bar images are dead in both
-## editions (every image key commented out; SMCommandBar/SGCommandBar/... ship
-## in no archive), so retail has exactly one shared frame.
+##
+## controlbarscheme.ini's per-faction command-bar image blocks (ImagePart /
+## ImageName SGCommandBar and friends) are LIVE text, not commented out - but
+## the textures they name exist in no archive in either edition (checked across
+## every archived basename). The scheme asks for art that was never shipped, so
+## retail renders exactly one shared frame regardless of faction.
 ## It is NOT bound here because the retail tile column is 46 authored px wide -
 ## the vine band ends where the socket ring ends - while the frame the owner
 ## asked for (and the reference crop) carries a band that runs out to the screen
@@ -95,7 +106,6 @@ const ICON_PITCH_RATIO := 1.0268  # 86.25 / 84
 ## terminals live in the insets. 143 = 185 - 84/2, 917 = 875 + 84/2.
 const ICON_BAND_TOP_RATIO := 0.1331  # 143 / 1074
 const ICON_BAND_BOTTOM_RATIO := 0.8538  # 917 / 1074
-const MIN_ICON_HEIGHT := 26.0
 ## Beyond this many sockets a single column would be unreadable, so the roster
 ## wraps into extra columns growing leftward (the frame covers the primary
 ## column, as it does in retail where the roster never exceeds one column).

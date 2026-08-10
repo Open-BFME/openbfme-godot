@@ -79,7 +79,10 @@ func _check_reference_oracle() -> void:
 		"%f vs %f" % [left_in_frame, FrameScript.REFERENCE_ICON_LEFT]
 	)
 
+	# In-tree: out of the tree a Control never applies its combined minimum size,
+	# so socket rects measured there can differ from what the player sees.
 	var bar = BarScript.new()
+	root.add_child(bar)
 	bar._build()
 	var constructs: Array = []
 	for index in FrameScript.REFERENCE_ICON_CENTERS_Y.size():
@@ -151,6 +154,7 @@ func _check_frame_widget() -> void:
 
 func _check_bar_layout() -> void:
 	var bar = BarScript.new()
+	root.add_child(bar)
 	bar._build()
 	var kinds := ["farm", "barracks", "archery_range", "stable", "well", "forge", "battle_tower"]
 	var constructs: Array = []
@@ -208,6 +212,48 @@ func _check_bar_layout() -> void:
 	bar.set_builder_visible(false)
 	_check("frame_hidden_without_builder", not bar.builder_bar_shown(), str(bar.builder_bar_shown()))
 	bar.free()
+	_check_crowded_roster()
+
+
+func _check_crowded_roster() -> void:
+	## Retail's porter set is nine sockets; ours can carry more. A crowded roster
+	## must shrink to fit the SAME band, never spill past the frame ends and never
+	## leave the icon column. 14 sockets is past the point where natural-size
+	## sockets stop fitting, so this exercises the shrink path in-tree.
+	for count in [12, 14]:
+		var bar = BarScript.new()
+		root.add_child(bar)
+		bar._build()
+		var constructs: Array = []
+		for index in count:
+			constructs.append({"kind": "kind_%d" % index, "icon": null, "title": "", "description": ""})
+		bar.configure_from_constructs(constructs)
+		var viewport := Vector2(1920.0, 1080.0)
+		bar.layout_for_viewport(viewport)
+		var rect: Rect2 = FrameScript.frame_rect(viewport)
+		var band: Vector2 = FrameScript.icon_band(viewport)
+		var center_x: float = FrameScript.icon_column_center_x(viewport)
+		var buttons: Array = bar.side_buttons()
+		var inside: bool = buttons.size() == count
+		var single_column := true
+		var worst := ""
+		for index in buttons.size():
+			var button_rect := Rect2(buttons[index].position, buttons[index].size)
+			if button_rect.position.y < band.x - 0.5 or button_rect.end.y > band.y + 0.5:
+				inside = false
+				worst = str(button_rect)
+			if button_rect.position.x < rect.position.x - 0.5 or button_rect.end.x > rect.end.x + 0.5:
+				inside = false
+				worst = str(button_rect)
+			if absf(button_rect.get_center().x - center_x) > 1.0:
+				single_column = false
+				worst = str(button_rect)
+			if index > 0 and button_rect.position.y <= buttons[index - 1].position.y:
+				inside = false
+				worst = str(button_rect)
+		_check("crowded_%d_sockets_stay_in_band" % count, inside, "band=%s worst=%s" % [str(band), worst])
+		_check("crowded_%d_sockets_stay_one_column" % count, single_column, "center=%f worst=%s" % [center_x, worst])
+		bar.free()
 
 
 func _check_art_slot() -> void:
@@ -303,29 +349,50 @@ func _check_default_texture() -> void:
 				transparent += 1
 	_check("default_texture_has_body", opaque > 200, "opaque=%d" % opaque)
 	_check("default_texture_has_transparency", transparent > 200, "transparent=%d" % transparent)
-	# The icon column must be clear of the frame body so the round build icons
-	# read against the map, exactly like the retail reference.
-	var column_x := int(FrameScript.REFERENCE_ART_SIZE.x * 0.12)
-	var column_alpha := 0.0
+	# Alpha profile ACROSS THE SOCKET COLUMN (x 32..140 in reference px). The left
+	# of the column must be clear so the icons read against the map, and the band
+	# must be opaque behind their right side - that split IS the retail
+	# composition. Sampling outside 32..140 proves nothing about the icon column.
+	var column_left: float = FrameScript.REFERENCE_ICON_LEFT
+	var column_right: float = FrameScript.REFERENCE_ICON_RIGHT
+	var band_left: float = FrameScript.REFERENCE_ART_SIZE.x * FrameScript.BAND_LEFT_RATIO
+	_check(
+		"band_edge_splits_the_socket_column",
+		band_left > column_left + 8.0 and band_left < column_right - 8.0,
+		"band_left=%f column=%f..%f" % [band_left, column_left, column_right]
+	)
+	var clear_x := int(column_left + (band_left - column_left) * 0.5)
+	var backed_x := int(band_left + (column_right - band_left) * 0.5)
+	var clear_alpha := 0.0
+	var backed_alpha := 0.0
+	var samples := 0
 	for y in range(200, 800, 11):
-		column_alpha += image.get_pixel(column_x, y).a
-	_check("default_texture_leaves_icon_column_clear", column_alpha < 1.0, "alpha_sum=%f" % column_alpha)
-	# ...and the right band must be solid frame body.
-	var band_x := int(FrameScript.REFERENCE_ART_SIZE.x * 0.8)
-	var band_alpha := 0.0
-	var band_samples := 0
-	for y in range(200, 800, 11):
-		band_alpha += image.get_pixel(band_x, y).a
-		band_samples += 1
-	_check("default_texture_paints_right_band", band_alpha > float(band_samples) * 0.8, "alpha=%f n=%d" % [band_alpha, band_samples])
+		clear_alpha += image.get_pixel(clear_x, y).a
+		backed_alpha += image.get_pixel(backed_x, y).a
+		samples += 1
+	_check(
+		"socket_column_clear_left_of_band",
+		clear_alpha < 1.0,
+		"x=%d alpha_sum=%f over %d rows" % [clear_x, clear_alpha, samples]
+	)
+	_check(
+		"socket_column_backed_right_of_band",
+		backed_alpha > float(samples) * 0.8,
+		"x=%d alpha_sum=%f over %d rows" % [backed_x, backed_alpha, samples]
+	)
 
 
 func _check_hud_wiring() -> void:
-	## End-to-end: selecting a builder on a non-Men faction must reveal the
-	## framed column AND pick up that faction's drop-in art from the documented
-	## user slot. Only writes a fixture the runner itself owns.
+	## End-to-end: selecting a builder reveals the framed column AND picks up that
+	## faction's drop-in art from the documented user slot.
+	##
+	## The fixture faction key is deliberately NOT a real faction. This has to
+	## write into the production user slot to prove the real lookup path, and an
+	## aborted run can leave the file behind - under a real key that stray white
+	## PNG would become the player's actual frame for that faction.
 	var user_slot: String = FrameScript.USER_ART_ROOT
-	var fixture := "%s/sidebar_frame_dwarves.png" % user_slot
+	var fixture_faction := "zz_runner_fixture"
+	var fixture := "%s/sidebar_frame_%s.png" % [user_slot, fixture_faction]
 	if FileAccess.file_exists(fixture):
 		_check("hud_user_slot_fixture_free", false, "refusing to overwrite owner art at %s" % fixture)
 		return
@@ -336,7 +403,7 @@ func _check_hud_wiring() -> void:
 	var hud = hud_script.new()
 	root.add_child(hud)
 	hud.build()
-	hud.configure_manifest_construct_kinds(["farm", "barracks", "well"], "dwarves")
+	hud.configure_manifest_construct_kinds(["farm", "barracks", "well"], fixture_faction)
 	hud.set_unit_selection_state(
 		[91] as Array[int],
 		{91: {"object_id": "bfme2.object.dwarven-builder", "is_builder": true}}
