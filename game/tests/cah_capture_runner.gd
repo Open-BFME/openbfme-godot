@@ -79,6 +79,32 @@ const PAINTED_SUBJECTS := [
 	},
 ]
 
+## THE SHIELD THE DEFAULT KIT WAS SHOWING, and the row that says he has none.
+##
+## The Captain's `defaultSubObjects` show-set carries `Shld_02` because his
+## authored default shield option shows it, and the plan used to put that part in
+## the show-set and the hide-set at once - so the equipment list read "No shield"
+## over a hero holding one. Both states are photographed: the option that really
+## does dress him in it, and the row that says he is without.
+const KIT_SHOTS := [
+	{
+		"name": "captain-of-gondor-shield-default",
+		"class": 0,
+		"sub": 0,
+		"body": "CHHW_SMN",
+		"group": "CreateAHero_Shield",
+		"option": "Upgrade_CAPG_CHS02",
+	},
+	{
+		"name": "captain-of-gondor-no-shield",
+		"class": 0,
+		"sub": 0,
+		"body": "CHHW_SMN",
+		"group": "CreateAHero_Shield",
+		"option": "Upgrade_NoShield",
+	},
+]
+
 var _out_dir := ""
 var _screen: Control = null
 var _viewport: SubViewport = null
@@ -130,6 +156,13 @@ func _initialize() -> void:
 				],
 				"action": "body:%d:%d" % [subject_index, option_index],
 			})
+	for shot_index in range(KIT_SHOTS.size()):
+		steps.append({
+			"name": "%02d-kit-%s" % [
+				steps.size() + 1, String((KIT_SHOTS[shot_index] as Dictionary)["name"])
+			],
+			"action": "kit:%d" % shot_index,
+		})
 	_plan = []
 	for size in CAPTURE_SIZES:
 		for step in steps:
@@ -250,32 +283,60 @@ func _apply(action: String) -> void:
 		_:
 			if action.begins_with("body:"):
 				var parts := action.split(":")
-				_wear_body(
-					PAINTED_SUBJECTS[int(parts[1])] as Dictionary, int(parts[2])
+				var subject: Dictionary = PAINTED_SUBJECTS[int(parts[1])]
+				_wear(
+					subject,
+					PAINTED_GROUP,
+					String((subject["options"] as Array)[int(parts[2])])
 				)
+			elif action.begins_with("kit:"):
+				var shot: Dictionary = KIT_SHOTS[int(action.split(":")[1])]
+				_wear(shot, String(shot["group"]), String(shot["option"]))
 			else:
 				_screen._show_page(_screen.PAGE_SELECT)
 
 
-func _wear_body(subject: Dictionary, option_index: int) -> void:
-	## Stand one subclass on the garment tab wearing one Body option, and say in
-	## the log what the hero's body is actually painted with - so "the breastplate
-	## changed" is a photograph AND a texture name, not an impression of two
-	## similar pictures.
-	var upgrade := String((subject["options"] as Array)[option_index])
+func _wear(subject: Dictionary, group: String, upgrade: String) -> void:
+	## Stand one subclass on the garment tab wearing one option of one group, and
+	## say in the log what the hero is actually made of - so "the breastplate
+	## changed" and "he is not holding a shield" are a photograph AND a reading off
+	## the model, not an impression of two similar pictures.
 	_screen._on_new_hero_pressed()
 	_screen.set_class_selection(int(subject["class"]), int(subject["sub"]))
-	_screen._appearance[PAINTED_GROUP] = upgrade
+	_screen._appearance[group] = upgrade
 	_screen._rebuild_appearance_rows()
 	_screen._show_page(_screen.PAGE_ATTRIBUTES)
 	_screen._show_custom_tab(_screen.CUSTOM_TAB_GARMENTS)
 	_screen._update_preview()
+	print("[cah-capture] %s %s -> shields %s" % [
+		String(subject["name"]), upgrade, str(_worn_parts("SHLD"))
+	])
 	print("[cah-capture] %s %s -> body painted %s, garments %s" % [
 		String(subject["name"]),
 		upgrade,
 		_body_paint(String(subject["body"])),
 		_screen.garment_status(),
 	])
+
+
+func _worn_parts(prefix: String) -> Array[String]:
+	## The parts of one family the hero is actually drawing, read off the model.
+	var out: Array[String] = []
+	var model: Node3D = _screen._preview_model
+	if model == null:
+		return out
+	var stack: Array[Node] = [model]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		for child in node.get_children():
+			stack.append(child)
+		if not (node is MeshInstance3D) or not (node as MeshInstance3D).visible:
+			continue
+		var name := String(node.name).to_upper()
+		if name.begins_with(prefix) and not out.has(name):
+			out.append(name)
+	out.sort()
+	return out
 
 
 func _body_paint(part: String) -> String:

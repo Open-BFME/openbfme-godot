@@ -53,6 +53,20 @@ const TEXTURE_SWAP_KEY := "textureSwaps"
 const SWAP_FROM_KEY := "fromTexture"
 const SWAP_TO_KEY := "texture"
 
+## WHAT TAKING A GARMENT OFF MEANS. Retail's `SubObjectsUpgrade` carries
+## `HideOnRemove`, and it is the whole of the answer to "the option is gone, so
+## what happens to the parts it was showing". Absent is taken for yes, because
+## that is the behaviour every option in the shipped table that shows anything
+## asks for, and because a no would leave the hero wearing the garment he just
+## took off.
+const HIDE_ON_REMOVE_KEY := "hideOnRemove"
+
+## WHICH OPTION THE HERO IS WEARING BEFORE HE IS DRESSED. Retail marks it with an
+## `@` on the BlingUpgrades line; the compiler carries it twice, as a per-group
+## table on the subclass and as a flag on the option, and either will do.
+const GROUP_DEFAULTS_KEY := "appearanceDefaults"
+const IS_DEFAULT_KEY := "isDefault"
+
 ## THE OTHER HALF OF A GARMENT. Not every option is a part to show: retail's Body
 ## group repaints the ONE body mesh, authored as `UpgradeTexture <from> <to>` and
 ## compiled into `textureSwaps` here, and every Body option in every subclass of
@@ -138,19 +152,31 @@ static func plan(
 		if not upgrades.has(chosen):
 			chosen = String(upgrades[0])
 		# THE SIBLINGS COME OFF FIRST. Within one group only one option can be
-		# worn, so every part any OTHER option in the group would show is hidden
-		# before the chosen one is shown - which is what makes cycling replace a
+		# worn, so every part any OTHER option in the group would show is taken off
+		# before the chosen one is put on - which is what makes cycling replace a
 		# helmet instead of stacking a second one on top of it.
-		for upgrade_value in upgrades:
-			var upgrade := String(upgrade_value)
-			if upgrade == chosen:
+		#
+		# AND TAKEN OFF THE DEFAULT KIT TOO, which is the half that was missing.
+		# The subclass's `defaultSubObjects` show-set is the hero as retail draws
+		# him before anything is chosen, and it AGREES with the default option of
+		# each group: `Shld_02` is in the Captain's default kit BECAUSE his default
+		# shield option shows it. Hiding a part without erasing it from the
+		# show-set left `Shld_02` in both, and `apply` puts the shows on last - so
+		# "No Shield" drew a shield. A part is now in exactly one of the two.
+		for upgrade_value in _retired_options(system, sub_row, group, upgrades, chosen):
+			var removed: Dictionary = (
+				options.get(String(upgrade_value), {}).get(OPTION_KEY, {}) as Dictionary
+			)
+			if not bool(removed.get(HIDE_ON_REMOVE_KEY, true)):
 				continue
-			for part in _names(options.get(upgrade, {}).get(OPTION_KEY, {}) as Dictionary, SHOW_KEY):
+			for part in _names(removed, SHOW_KEY):
 				hide[part] = true
+				show.erase(part)
 				mapped = true
 		var bound: Dictionary = options.get(chosen, {}).get(OPTION_KEY, {}) as Dictionary
 		for part in _names(bound, HIDE_KEY):
 			hide[part] = true
+			show.erase(part)
 			mapped = true
 		var shown_here: Array[String] = []
 		for part in _names(bound, SHOW_KEY):
@@ -174,6 +200,46 @@ static func plan(
 		"mapped": mapped,
 		"groups": groups,
 	}
+
+
+static func authored_default(sub_row: Dictionary, group: String, system: Dictionary) -> String:
+	## The option a group is wearing before the player touches it, or "".
+	##
+	## The subclass's own table is asked first because it names one option per
+	## group and cannot be ambiguous; the per-option flag is the fallback, and it
+	## CAN be ambiguous - the Captain's table marks two of his four shields - so
+	## the first one the group lists wins rather than the last one read.
+	var declared: Dictionary = sub_row.get(GROUP_DEFAULTS_KEY, {}) as Dictionary
+	var named := String(declared.get(group, ""))
+	if named != "":
+		return named
+	var choices: Dictionary = sub_row.get("appearanceChoices", {}) as Dictionary
+	var options := _options_by_upgrade(system)
+	for upgrade_value in (choices.get(group, []) as Array):
+		var upgrade := String(upgrade_value)
+		if bool((options.get(upgrade, {}) as Dictionary).get(IS_DEFAULT_KEY, false)):
+			return upgrade
+	return ""
+
+
+static func _retired_options(
+	system: Dictionary, sub_row: Dictionary, group: String, upgrades: Array, chosen: String
+) -> Array[String]:
+	## Every option in one group that the hero is NOT wearing.
+	##
+	## The authored default is named separately rather than trusted to be in the
+	## list: it is what the default kit was drawn from, and a table that named a
+	## default the group does not offer would otherwise leave that garment on the
+	## hero for good. On the shipped packs it is always one of the group's own.
+	var out: Array[String] = []
+	for upgrade_value in upgrades:
+		var upgrade := String(upgrade_value)
+		if upgrade != chosen and not out.has(upgrade):
+			out.append(upgrade)
+	var named := authored_default(sub_row, group, system)
+	if named != "" and named != chosen and not out.has(named):
+		out.append(named)
+	return out
 
 
 static func collapse_variant_families(root: Node) -> Dictionary:

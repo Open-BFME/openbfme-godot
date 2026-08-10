@@ -98,6 +98,7 @@ func _run() -> void:
 	_test_screen(system)
 	_test_garment_sub_objects(system)
 	_test_garment_texture_swaps()
+	_test_garment_default_kit()
 	_test_purchase_spawns_with_computed_stats(system)
 	_test_pack_resolution(system)
 	await _test_full_window_layout(system)
@@ -671,6 +672,174 @@ func _test_garment_sub_objects(_system: Dictionary) -> void:
 		"the screen reports what it did about garments (got '%s')" % screen.garment_status()
 	)
 	screen.queue_free()
+
+
+# --------------------------------------------------------- the default kit
+
+
+## THE HERO AS RETAIL DRAWS HIM BEFORE ANYTHING IS CHOSEN, and the option that
+## put him in it. Retail hands the subclass a `defaultSubObjects` show-set AND
+## marks one option per group with an `@`, and the two agree: the Captain's
+## `Shld_02` is in his default kit because his default shield option shows it.
+## Picking another shield removes that option, and `HideOnRemove` is retail's own
+## word for what happens to the parts it was showing.
+##
+## `SLDR_04` is the control: it is in the default kit and NO option in any group
+## names it, so it is part of the hero rather than a choice and must survive
+## every cycle. `Upgrade_S3` is the shape the shipped table does not have - an
+## option that shows something and asks NOT to be undressed - which is asserted
+## because retail's switch is honoured rather than assumed.
+const KIT_SYSTEM := {
+	"schema": "openbfme.cah-system-runtime",
+	"schemaVersion": 0,
+	"registration": {
+		"appearanceOptions": [
+			{
+				"upgradeName": "Upgrade_NoShield",
+				"groupName": "CreateAHero_Shield",
+				"subObjects": {"show": [], "hide": [], "hideOnRemove": false},
+			},
+			{
+				"upgradeName": "Upgrade_S1",
+				"groupName": "CreateAHero_Shield",
+				"subObjects": {"show": ["Shld_01"], "hide": [], "hideOnRemove": true},
+			},
+			{
+				"upgradeName": "Upgrade_S2",
+				"groupName": "CreateAHero_Shield",
+				"isDefault": true,
+				"subObjects": {"show": ["Shld_02"], "hide": [], "hideOnRemove": true},
+			},
+			{
+				"upgradeName": "Upgrade_S3",
+				"groupName": "CreateAHero_Shield",
+				"subObjects": {"show": ["SLDR_01"], "hide": [], "hideOnRemove": false},
+			},
+			{
+				"upgradeName": "Upgrade_H1",
+				"groupName": "CreateAHero_Helmet",
+				"subObjects": {"show": ["HLMT_01"], "hide": []},
+			},
+			{
+				"upgradeName": "Upgrade_H2",
+				"groupName": "CreateAHero_Helmet",
+				"subObjects": {"show": ["HLMT_02"], "hide": []},
+			},
+		],
+	},
+}
+
+const KIT_SUB_ROW := {
+	"models": {"creationScreen": {"model": "SYNTH_C_SKN"}},
+	"appearanceDefaults": {"CreateAHero_Shield": "Upgrade_S2"},
+	"defaultSubObjects": {"show": ["CHHW_SMN", "SLDR_04", "Shld_02"], "hide": []},
+	"appearanceChoices": {
+		"CreateAHero_Shield": ["Upgrade_NoShield", "Upgrade_S1", "Upgrade_S2", "Upgrade_S3"],
+		"CreateAHero_Helmet": ["Upgrade_H1", "Upgrade_H2"],
+	},
+}
+
+
+func _test_garment_default_kit() -> void:
+	_check(
+		SubObjects.authored_default(KIT_SUB_ROW, "CreateAHero_Shield", KIT_SYSTEM) == "Upgrade_S2",
+		"the subclass's own table names the option a group opens on"
+	)
+	_check(
+		SubObjects.authored_default(
+			{"appearanceChoices": KIT_SUB_ROW["appearanceChoices"]},
+			"CreateAHero_Shield",
+			KIT_SYSTEM
+		) == "Upgrade_S2",
+		"a table with no defaults falls back to the option the pack flags as the default"
+	)
+	_check(
+		SubObjects.authored_default(KIT_SUB_ROW, "CreateAHero_Helmet", KIT_SYSTEM) == "",
+		"a group retail never marked a default on says so rather than picking one"
+	)
+
+	var skin := _synthetic_skin()
+
+	# THE REPORTED BUG. The default kit shows `Shld_02` and the group opens on the
+	# option that shows nothing, so the hero has to be standing there without a
+	# shield - and the part the kit shows that no option claims has to stay.
+	SubObjects.apply(skin, SubObjects.plan(
+		KIT_SYSTEM, KIT_SUB_ROW, {"CreateAHero_Shield": "Upgrade_NoShield"}, "creationScreen"
+	))
+	_check(
+		not _visible_parts(skin).has("SHLD_022"),
+		"choosing No Shield takes off the shield the DEFAULT KIT was showing (got %s)"
+			% str(_visible_parts(skin))
+	)
+	_check(
+		_visible_parts(skin).has("SLDR_04") and _visible_parts(skin).has("CHHW_SMN"),
+		"the parts of the default kit that no option claims are still the hero (got %s)"
+			% str(_visible_parts(skin))
+	)
+
+	# ...AND PUT BACK. The default option is a choice like any other, so choosing
+	# it again dresses him in it.
+	SubObjects.apply(skin, SubObjects.plan(
+		KIT_SYSTEM, KIT_SUB_ROW, {"CreateAHero_Shield": "Upgrade_S2"}, "creationScreen"
+	))
+	_check(
+		_visible_parts(skin).has("SHLD_022") and not _visible_parts(skin).has("SHLD_01"),
+		"choosing the default option back puts its shield on and no other (got %s)"
+			% str(_visible_parts(skin))
+	)
+
+	# THE GENERAL CASE, not a rule about the default: switching between two
+	# options neither of which is the default retracts the one being left.
+	SubObjects.apply(skin, SubObjects.plan(
+		KIT_SYSTEM, KIT_SUB_ROW, {"CreateAHero_Shield": "Upgrade_S1"}, "creationScreen"
+	))
+	_check(
+		_visible_parts(skin).has("SHLD_01") and not _visible_parts(skin).has("SHLD_022"),
+		"switching off the default retracts it for a non-default option too (got %s)"
+			% str(_visible_parts(skin))
+	)
+	SubObjects.apply(skin, SubObjects.plan(
+		KIT_SYSTEM, KIT_SUB_ROW, {"CreateAHero_Shield": "Upgrade_NoShield"}, "creationScreen"
+	))
+	_check(
+		not _visible_parts(skin).has("SHLD_01") and not _visible_parts(skin).has("SHLD_022"),
+		"leaving a non-default option retracts that one as well (got %s)"
+			% str(_visible_parts(skin))
+	)
+
+	# RETAIL'S OWN SWITCH IS READ. An option that asks not to be undressed keeps
+	# its part when it is left, which is what `HideOnRemove = No` says and what
+	# every shipped option that shows anything declines to ask for.
+	SubObjects.apply(skin, SubObjects.plan(
+		KIT_SYSTEM, KIT_SUB_ROW, {"CreateAHero_Shield": "Upgrade_S3"}, "creationScreen"
+	))
+	_check(
+		_visible_parts(skin).has("SLDR_01"),
+		"the option that shows a part is wearing it (got %s)" % str(_visible_parts(skin))
+	)
+	SubObjects.apply(skin, SubObjects.plan(
+		KIT_SYSTEM, KIT_SUB_ROW, {"CreateAHero_Shield": "Upgrade_S2"}, "creationScreen"
+	))
+	_check(
+		_visible_parts(skin).has("SLDR_01"),
+		"a part whose option said HideOnRemove No stays on when that option is left (got %s)"
+			% str(_visible_parts(skin))
+	)
+
+	# A DEFAULT THE GROUP DOES NOT OFFER is still taken off, so a table that names
+	# one cannot leave a garment on the hero that nothing can reach.
+	var stranded := KIT_SUB_ROW.duplicate(true)
+	(stranded["appearanceDefaults"] as Dictionary)["CreateAHero_Helmet"] = "Upgrade_H2"
+	(stranded["appearanceChoices"] as Dictionary)["CreateAHero_Helmet"] = ["Upgrade_H1"]
+	(stranded["defaultSubObjects"] as Dictionary)["show"] = ["HLMT_02"]
+	SubObjects.apply(skin, SubObjects.plan(KIT_SYSTEM, stranded, {}, "creationScreen"))
+	_check(
+		not _visible_parts(skin).has("HLMT_02") and _visible_parts(skin).has("HLMT_01"),
+		"a default option the group no longer offers is retired too (got %s)"
+			% str(_visible_parts(skin))
+	)
+
+	skin.queue_free()
 
 
 # ------------------------------------------------------------ garment paint
