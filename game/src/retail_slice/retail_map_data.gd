@@ -1561,7 +1561,11 @@ func _resolve_pack_asset(relative: String) -> String:
 	var resolved := ModLoader.resolve_pack_path(pack_root, relative)
 	if resolved != "" and ModLoader.path_is_within(pack_root, resolved) and FileAccess.file_exists(resolved):
 		return resolved
-	for root_value in ModLoader.list_pack_roots():
+	# Reuse the already-mounted root set rather than re-scanning every pack on
+	# each asset: list_pack_roots() re-reads and re-sorts all packs (and prints)
+	# per call, so an asset-heavy map turned this into thousands of full rescans
+	# and froze map loading. The mounted set is stable during a load.
+	for root_value in ContentDB.pack_roots:
 		var root := String(root_value)
 		if root == "" or root == pack_root or root.begins_with("res://"):
 			continue
@@ -1590,7 +1594,8 @@ func _validate_bound_glb(path: String) -> bool:
 func _path_is_within_mounted_pack(path: String) -> bool:
 	if ModLoader.path_is_within(pack_root, path):
 		return true
-	for root_value in ModLoader.list_pack_roots():
+	# Cached mounted set, not a per-call re-scan (see _resolve_pack_asset).
+	for root_value in ContentDB.pack_roots:
 		var root := String(root_value)
 		if root == "" or root == pack_root or root.begins_with("res://"):
 			continue
