@@ -491,9 +491,11 @@ func _initialize_content_and_match() -> void:
 	_source_art_texture = asset_factory.load_texture_asset(art_path) if art_declared else null
 	map_art_degradations.clear()
 	if not preview_declared:
-		map_art_degradations.append("map_preview (no preview published by this map pack; minimap falls back to cooked terrain)")
+		map_art_degradations.append("map_preview (no landmark painting published by this map pack; the loading screen's right plate falls back)")
 	if not art_declared:
-		map_art_degradations.append("map_art (no loading art published by this map pack; loading screen falls back to the default plate)")
+		# The ink art feeds BOTH the loading plate and the radar parchment, so a
+		# map without it loses the hand-drawn radar read, not just a thumbnail.
+		map_art_degradations.append("map_art (no parchment ink art published by this map pack; loading screen falls back to the default plate and the radar draws bare parchment)")
 	map_preview_loaded = _preview_texture != null or not preview_declared
 	map_art_loaded = _source_art_texture != null or not art_declared
 	if not map_art_degradations.is_empty():
@@ -598,7 +600,12 @@ func _initialize_content_and_match() -> void:
 	audio_system.configure(selected_pack_root, DisplayServer.get_name() != "headless", producible_unit_runtimes, _faction_structure_audio_contract(), _faction_eva_side())
 	audio_system.set_declared_structure_lifecycle_audio_active(_all_men_structure_contracts_v1())
 	await _mark_initialization_phase("audio")
-	hud.configure_minimap(simulation, source_map_data, camera, _preview_texture)
+	# THE RADAR TAKES THE INK ART, NOT THE PREVIEW PAINTING. `_source_art_texture`
+	# is the map's `<map>_art.tga` conversion (single-colour hand-drawn overlay);
+	# `_preview_texture` is `<map>_pic.tga`, the landmark painting. Handing the
+	# painting to the radar is what put a photographic fortress in the palantir
+	# bezel - see retail_minimap.gd's header.
+	hud.configure_minimap(simulation, source_map_data, camera, _source_art_texture)
 	var command_costs: Dictionary = {}
 	for unit_type in simulation.production_rule_ids():
 		command_costs[unit_type] = simulation._production_rule_value(String(unit_type), "cost_rule", "default_cost")

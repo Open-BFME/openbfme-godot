@@ -724,6 +724,20 @@ func _run() -> void:
 	_check("outcome_layer_exists", slice.hud.outcome_layer != null and not slice.hud.outcome_layer.visible)
 	_check("audio_controls_exist_in_pause", slice.hud.music_slider != null and slice.hud.voice_slider != null and slice.hud.mute_toggle != null)
 	_check("source_mapping_not_preview_texture", String(slice.minimap.mapping_mode) == "source-derived-local-transform" and bool(slice.minimap.source_geometry_loaded) and not bool(slice.minimap.uses_source_preview_as_background))
+	# THE RADAR SHOWS THE PARCHMENT INK ART, NOT THE LANDMARK PAINTING.
+	# `_source_art_texture` is `<map>_art.tga` (hand-drawn overlay);
+	# `_preview_texture` is `<map>_pic.tga` (the full-colour painting the
+	# loading screen shows). The radar was wired to the painting, which is
+	# the "photographic map in the palantir" the owner reported. Fords of
+	# Isen II publishes both, so both halves of this are load-bearing here.
+	_check(
+		"radar_backdrop_is_map_ink_art_not_preview_painting",
+		slice.minimap.map_ink_art == slice._source_art_texture
+			and slice.minimap.map_ink_art != null
+			and slice.minimap.map_ink_art != slice._preview_texture
+			and bool(slice.minimap.uses_map_ink_art)
+			and slice.minimap.radar_paper != null
+	)
 	_check("snappy_radar_zoom_contract", is_equal_approx(float(slice.minimap.zoom_response_seconds), 0.09) and float(slice.minimap.radar_zoom_target) == 1.0)
 	var player_fortress_position := Vector2(slice.simulation.structure(slice.simulation.fortress_id(0)).get("position", Vector2.INF))
 	var camera_inset: float = minf(float(slice._camera_ground_constraint_inset()), minf(slice.source_map_data.local_bounds.size.x, slice.source_map_data.local_bounds.size.y) * 0.5 - 0.001)

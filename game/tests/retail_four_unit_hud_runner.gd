@@ -149,18 +149,21 @@ func _run() -> void:
 		# transparent ring interior - retail composites the live map there - so
 		# there is no radar-fill bitmap for the art pass to bind, and it must now
 		# bind NOTHING. The backdrop is bound in `configure_minimap` from the
-		# map's own preview art instead, which is what the second half asserts.
-		_check("selected_pack_radar_not_bound_to_spell_atlas", selected_hud.minimap.retail_parchment == null)
+		# map's own PARCHMENT INK ART instead, which is what the second half
+		# asserts (never the `-preview.png` landmark painting - see
+		# retail_minimap.gd's header for why that distinction is the bug).
+		_check("selected_pack_radar_not_bound_to_spell_atlas", selected_hud.minimap.map_ink_art == null)
 		var radar_probe := PlaceholderTexture2D.new()
 		radar_probe.size = Vector2(64, 64)
 		selected_hud.configure_minimap(null, null, null, radar_probe)
 		_check(
-			"selected_pack_radar_backdrop_is_the_map_preview",
-			selected_hud.minimap.private_parity_mode
-				and selected_hud.minimap.retail_parchment == radar_probe
+			"selected_pack_radar_backdrop_is_the_map_ink_art",
+			selected_hud.minimap.uses_map_ink_art
+				and selected_hud.minimap.map_ink_art == radar_probe
+				and not selected_hud.minimap.uses_source_preview_as_background
 		)
 		selected_hud.configure_minimap(null, null, null, null)
-		_check("selected_pack_radar_without_preview_stays_schematic", not selected_hud.minimap.private_parity_mode)
+		_check("selected_pack_radar_without_ink_art_stays_schematic", not selected_hud.minimap.uses_map_ink_art)
 		_check("selected_pack_three_retail_orb_buttons", selected_hud.orb_buttons.size() == 3 and (selected_hud.orb_buttons["options"] as Button).icon != null and (selected_hud.orb_buttons["powers"] as Button).icon != null and (selected_hud.orb_buttons["score"] as Button).icon != null)
 		_check("selected_pack_six_retail_empty_sockets", selected_hud.command_grid.find_children("RetailEmptySocket*", "TextureRect", false, false).size() == 6)
 		(selected_hud.orb_buttons["powers"] as Button).pressed.emit()

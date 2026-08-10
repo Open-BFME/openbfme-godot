@@ -79,11 +79,15 @@ const RETAIL_PALANTIR_DISPLAY_SIZE := Vector2(880, 360)
 #
 # There is no authored radar-fill bitmap to swap in. Every palantir FRAME atlas
 # (`apt-palantirexport-11/14/17/20`) is a ring with a fully transparent
-# interior - retail composites the LIVE MAP inside the bezel rather than
-# shipping a backing image. So the radar's backdrop is now the map's own
-# converted preview art, bound in `configure_minimap` where that texture is
-# actually known, and a map that publishes no preview falls back to the
-# synthetic schematic instead of borrowing a spell sprite.
+# interior - retail composites the radar inside the bezel rather than shipping
+# a backing image, and retail's own parchment fill is engine-drawn for the same
+# reason. So the backdrop is now a synthesized parchment plus the MAP'S INK ART
+# (`assets/ui/maps/<slug>-art.png`, the conversion of retail `<map>_art.tga`),
+# bound in `configure_minimap` where that texture is actually known. It is NOT
+# the map's `-preview.png`: that is `<map>_pic.tga`, the full-colour landmark
+# painting for the loading screen, and binding it here showed a photograph of a
+# fortress in the bezel (owner bug, 2026-08-10). A map publishing no ink art
+# falls back to bare parchment plus the synthetic water schematic.
 const RETAIL_EMPTY_SOCKET_REGION := Rect2(558, 23, 56, 53)
 const RETAIL_ORB_REGIONS := {
 	"options": Rect2(701, 133, 36, 36),
@@ -1108,16 +1112,19 @@ func build() -> void:
 	_wire_retail_tooltips()
 
 
-func configure_minimap(simulation: RefCounted, map_data: RefCounted, camera_value: Camera3D = null, preview: Texture2D = null) -> void:
-	minimap.configure(simulation, map_data, preview)
+func configure_minimap(simulation: RefCounted, map_data: RefCounted, camera_value: Camera3D = null, ink_art: Texture2D = null) -> void:
+	minimap.configure(simulation, map_data, ink_art)
 	minimap.world_camera = camera_value
-	# THE RADAR'S BACKDROP IS THE MAP, not a palantir sprite. Retail leaves the
-	# bezel's interior transparent and composites the battlefield inside it, so
-	# the closest converted equivalent is this map's own published preview art.
-	# A map that publishes none binds nothing, and the minimap's synthetic
-	# schematic draws instead - the slice already reports that as a named map-art
-	# degradation (`map_preview (no preview published by this map pack ...)`).
-	minimap.bind_retail_parchment(preview)
+	# THE RADAR'S BACKDROP IS THE MAP'S PARCHMENT INK, not a palantir sprite and
+	# NOT the map's photographic preview painting. Retail leaves the bezel's
+	# interior transparent and composites a tan paper fill plus the map's own
+	# `_art.tga` hand-drawn overlay inside it; the converted equivalent is this
+	# map's published `art` asset (`assets/ui/maps/<slug>-art.png`). Callers must
+	# pass THAT, never `preview` - `<map>_pic.tga` is the fortress painting the
+	# loading screen shows, and binding it here put a photograph in the bezel
+	# (owner bug, 2026-08-10). A map that publishes no ink art binds nothing and
+	# the minimap paints bare parchment plus its synthetic water schematic.
+	minimap.bind_map_ink_art(ink_art)
 
 
 func set_resources(resources: int, command_points: int, command_cap: int) -> void:
