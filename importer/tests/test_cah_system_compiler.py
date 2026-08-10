@@ -300,10 +300,12 @@ def _sub_class(
         f"\t\tIconImage = CP{name}",
         f"\t\tButtonImage = HICAH{name}",
         "\t\tUsableFactions = Men Elves Dwarves",
-        # Retail spells a subclass's offered blings as whitespace/@ separated
-        # upgrade names, which is what scopes its default garment state.
+        # Retail spells a subclass's offered blings as whitespace-separated
+        # upgrade names, one of which may carry the `@` default marker.  Shaped
+        # exactly like retail's own line: the marked option is not first.
         "\t\tBlingUpgrades = Upgrade_CaptainOfGondor_CHH01 "
-        "Upgrade_CaptainOfGondor_CHH02@Upgrade_CHW01",
+        "@Upgrade_CaptainOfGondor_CHH02",
+        "\t\tBlingUpgrades = Upgrade_CHW01 Upgrade_CHW02",
         f"\t\tSpendableAttributePoints = {budget}",
         f"\t\tUpgradeName = Upgrade_CreateAHero_SubClass_{sub_index}",
         # Retail frames every subclass individually so a Great Troll and a
@@ -1082,7 +1084,6 @@ class CahGarmentSubObjectTests(unittest.TestCase):
         # names, and every one of them would render at once.
         descriptor = compile_cah_system_descriptor(_documents())
         sub = descriptor["classes"][0]["subClasses"][0]
-        self.assertEqual(sub["defaultSubObjects"]["show"], [])
         self.assertEqual(
             sub["defaultSubObjects"]["hide"],
             ["AXE_01", "Belthronding", "WestronSword", "HAIR_00", "HLMT_01"],
@@ -1090,7 +1091,7 @@ class CahGarmentSubObjectTests(unittest.TestCase):
         # …while the subclass's own slice is kept as evidence beside it.
         self.assertEqual(
             sub["defaultSubObjects"]["scopedToSubClass"],
-            ["HAIR_00", "HLMT_01", "AXE_01"],
+            ["HAIR_00", "HLMT_01", "AXE_01", "Belthronding", "WestronSword"],
         )
         # Published under the model binding too, per the runtime contract.
         self.assertEqual(sub["models"]["defaultSubObjects"], sub["defaultSubObjects"])
@@ -1251,3 +1252,105 @@ class CahObjectBaselineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CahAuthoredGarmentDefaultTests(unittest.TestCase):
+    """Retail's `@` marker: the option a garment group STARTS on.
+
+    The published gap: the pack carried no default flag, so the client picked
+    each group's first listed option -- which for most groups is retail's
+    "wear nothing" entry.  Every newly created hero rendered bare-headed,
+    bare-handed and barefoot.
+    """
+
+    def test_the_marked_option_is_the_subclass_group_default(self) -> None:
+        descriptor = compile_cah_system_descriptor(_documents())
+        sub = descriptor["classes"][0]["subClasses"][0]
+        self.assertEqual(
+            sub["appearanceDefaults"],
+            {"CreateAHero_Helmet": "Upgrade_CaptainOfGondor_CHH02"},
+        )
+        # The marker is not the first token; first-wins would pick the wrong one.
+        self.assertEqual(
+            sub["appearanceChoices"]["CreateAHero_Helmet"][0],
+            "Upgrade_CaptainOfGondor_CHH01",
+        )
+
+    def test_the_default_outfit_reaches_the_default_show_set(self) -> None:
+        # This is what dresses the preview hero: Godot matches options whose
+        # parts appear in the show-set, so an empty show-set made the rule inert.
+        descriptor = compile_cah_system_descriptor(_documents())
+        sub = descriptor["classes"][0]["subClasses"][0]
+        self.assertEqual(sub["defaultSubObjects"]["show"], ["HLMT_01"])
+        self.assertEqual(sub["models"]["defaultSubObjects"]["show"], ["HLMT_01"])
+        # APPLY ORDER IS HIDE THEN SHOW: the corpus-wide hide set necessarily
+        # contains the very parts the outfit shows.
+        self.assertIn("HLMT_01", sub["defaultSubObjects"]["hide"])
+
+    def test_an_unmarked_group_contributes_no_default(self) -> None:
+        descriptor = compile_cah_system_descriptor(_documents())
+        sub = descriptor["classes"][0]["subClasses"][0]
+        self.assertNotIn("CreateAHero_Weapon", sub["appearanceDefaults"])
+        self.assertNotIn("AXE_01", sub["defaultSubObjects"]["show"])
+
+    def test_the_catalog_row_carries_the_default_flag(self) -> None:
+        descriptor = compile_cah_system_descriptor(_documents())
+        self.assertTrue(_option(descriptor, "Upgrade_CaptainOfGondor_CHH02")["isDefault"])
+        self.assertFalse(
+            _option(descriptor, "Upgrade_CaptainOfGondor_CHH01")["isDefault"]
+        )
+        # Every row carries the key; a consumer never branches on presence.
+        self.assertTrue(
+            all("isDefault" in row for row in descriptor["appearanceOptions"])
+        )
+
+    def test_a_marker_naming_an_undeclared_upgrade_refuses_the_compile(self) -> None:
+        documents = _documents()
+        key = "data/ini/CreateAHeroSystemMenOfTheWest.inc"
+        documents[key] = documents[key].replace(
+            b"@Upgrade_CaptainOfGondor_CHH02", b"@Upgrade_NoSuchThing"
+        )
+        with self.assertRaises(CahSystemCompilerError) as caught:
+            compile_cah_system_descriptor(documents)
+        self.assertIn("Upgrade_NoSuchThing", str(caught.exception))
+
+    def test_two_markers_in_one_group_refuse_the_compile(self) -> None:
+        documents = _documents()
+        key = "data/ini/CreateAHeroSystemMenOfTheWest.inc"
+        documents[key] = documents[key].replace(
+            b"Upgrade_CaptainOfGondor_CHH01 @Upgrade_CaptainOfGondor_CHH02",
+            b"@Upgrade_CaptainOfGondor_CHH01 @Upgrade_CaptainOfGondor_CHH02",
+        )
+        with self.assertRaises(CahSystemCompilerError) as caught:
+            compile_cah_system_descriptor(documents)
+        self.assertIn("marks two defaults", str(caught.exception))
+
+    def test_an_unspaced_marker_still_yields_both_names(self) -> None:
+        # Tolerance, not a retail form: retail always spaces the marker, but
+        # stripping rather than splitting would turn `A@B` into one dead name.
+        documents = _documents()
+        key = "data/ini/CreateAHeroSystemMenOfTheWest.inc"
+        documents[key] = documents[key].replace(
+            b"Upgrade_CaptainOfGondor_CHH01 @Upgrade_CaptainOfGondor_CHH02",
+            b"Upgrade_CaptainOfGondor_CHH01@Upgrade_CaptainOfGondor_CHH02",
+        )
+        descriptor = compile_cah_system_descriptor(documents)
+        sub = descriptor["classes"][0]["subClasses"][0]
+        self.assertEqual(
+            sub["appearanceChoices"]["CreateAHero_Helmet"],
+            ["Upgrade_CaptainOfGondor_CHH01", "Upgrade_CaptainOfGondor_CHH02"],
+        )
+        self.assertEqual(
+            sub["appearanceDefaults"]["CreateAHero_Helmet"],
+            "Upgrade_CaptainOfGondor_CHH02",
+        )
+
+    def test_the_defaults_reach_the_runtime_document(self) -> None:
+        descriptor = compile_cah_system_descriptor(_documents())
+        runtime = build_cah_system_runtime(descriptor)
+        sub = runtime["registration"]["classes"][0]["subClasses"][0]
+        self.assertEqual(sub["defaultSubObjects"]["show"], ["HLMT_01"])
+        self.assertEqual(
+            sub["appearanceDefaults"],
+            {"CreateAHero_Helmet": "Upgrade_CaptainOfGondor_CHH02"},
+        )

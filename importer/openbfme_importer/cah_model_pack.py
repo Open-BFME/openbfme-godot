@@ -36,6 +36,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
+from typing import NamedTuple
 
 #: Published pack directory for Create-a-Hero meshes (runtime contract).
 CAH_MODEL_PACK_ROOT = "assets/models/cah"
@@ -326,6 +327,57 @@ def _texture_identifiers(metadata: object) -> tuple[str, ...]:
     return tuple(dict.fromkeys(found))
 
 
+def resolve_texture_identifiers(
+    identifiers: Sequence[str], texture_catalog_paths: Sequence[str]
+) -> dict[str, tuple[str, ...]]:
+    """Authored texture identifier -> the retail virtual path(s) that answer it.
+
+    Applies the authored-TGA -> compiled-DDS bridge the retail visual closure
+    uses, including RotWK's space-bearing texture names (an authored
+    ``"NAME .TGA"`` has no safe extensionless stem, so its explicit compiled
+    ``.dds`` basename is requested instead).  An identifier the catalog cannot
+    answer is simply absent from the result; naming the failure is the caller's
+    job, because "unresolved" means something different to a mesh's own texture
+    closure than it does to a garment texture swap.
+    """
+
+    from .visual_leaf import VisualLeafRequest, diagnose_visual_leaves
+
+    unique = tuple(dict.fromkeys(identifiers))
+    if not unique:
+        return {}
+    requests: list[VisualLeafRequest] = []
+    primary: dict[str, int] = {}
+    bridged: dict[str, int] = {}
+    for identifier in unique:
+        primary[identifier] = len(requests)
+        requests.append(VisualLeafRequest(identifier, "texture"))
+        pure = PurePosixPath(identifier)
+        if pure.suffix.casefold() != ".tga":
+            continue
+        stem = pure.with_suffix("").as_posix()
+        compiled = (
+            pure.with_suffix(".dds").as_posix() if stem.endswith((" ", ".")) else stem
+        )
+        bridged[identifier] = len(requests)
+        requests.append(VisualLeafRequest(compiled, "texture"))
+    batch = diagnose_visual_leaves(tuple(texture_catalog_paths), requests)
+    resolved: dict[str, tuple[str, ...]] = {}
+    for identifier in unique:
+        candidates = [primary[identifier]]
+        if identifier in bridged:
+            candidates.append(bridged[identifier])
+        for index in candidates:
+            resolution = batch.resolutions[index]
+            if resolution is None:
+                continue
+            resolved[identifier] = tuple(
+                leaf.virtual_path for leaf in resolution.leaves
+            )
+            break
+    return resolved
+
+
 def cah_texture_resolver(
     *,
     read_w3d: Callable[[str], bytes],
@@ -340,8 +392,6 @@ def cah_texture_resolver(
     ``.dds`` basename is requested instead).  An identifier no catalog path can
     answer is refused by name rather than dropped.
     """
-
-    from .visual_leaf import VisualLeafRequest, diagnose_visual_leaves
 
     scanner = scan
     if scanner is None:
@@ -367,38 +417,15 @@ def cah_texture_resolver(
         unique = tuple(dict.fromkeys(identifiers))
         if not unique:
             return ()
-        requests: list[VisualLeafRequest] = []
-        primary: dict[str, int] = {}
-        bridged: dict[str, int] = {}
-        for identifier in unique:
-            primary[identifier] = len(requests)
-            requests.append(VisualLeafRequest(identifier, "texture"))
-            pure = PurePosixPath(identifier)
-            if pure.suffix.casefold() != ".tga":
-                continue
-            stem = pure.with_suffix("").as_posix()
-            compiled = (
-                pure.with_suffix(".dds").as_posix()
-                if stem.endswith((" ", "."))
-                else stem
-            )
-            bridged[identifier] = len(requests)
-            requests.append(VisualLeafRequest(compiled, "texture"))
-        batch = diagnose_visual_leaves(catalog_paths, requests)
+        answered = resolve_texture_identifiers(unique, catalog_paths)
         resolved: list[str] = []
         missing: list[str] = []
         for identifier in unique:
-            candidates = [primary[identifier]]
-            if identifier in bridged:
-                candidates.append(bridged[identifier])
-            for index in candidates:
-                resolution = batch.resolutions[index]
-                if resolution is None:
-                    continue
-                resolved.extend(leaf.virtual_path for leaf in resolution.leaves)
-                break
-            else:
+            leaves = answered.get(identifier)
+            if leaves is None:
                 missing.append(identifier)
+            else:
+                resolved.extend(leaves)
         if missing:
             raise CahModelPackError(
                 "Create-a-Hero mesh references "
@@ -413,9 +440,152 @@ def cah_texture_resolver(
     return textures_for
 
 
+# --------------------------------------------------------------------------- #
+# garment texture swaps
+# --------------------------------------------------------------------------- #
+
+#: Published pack directory for the textures a garment swap names.
+#:
+#: RETAIL'S BASENAME IS THE KEY, and the pack path preserves it verbatim: the
+#: system table names swap targets as authored texture filenames
+#: (``CHHW_SMN_01.tga``) with no path, and the client resolves them by basename.
+#: A digest-slugged name would need a side index nothing else in this lane has.
+CAH_TEXTURE_PACK_ROOT = "assets/textures/cah"
+CAH_SWAP_TEXTURE_RESOURCE_PREFIX = "cah-swap-texture"
+
+
+class CahSwapTexturePack(NamedTuple):
+    """Profile resources plus a receipt for the swap textures this lane ships."""
+
+    resources: tuple[dict[str, object], ...]
+    receipt: dict[str, object]
+
+
+def cah_swap_texture_identifiers(document: Mapping[str, object]) -> tuple[str, ...]:
+    """Every texture identifier a compiled appearance option's swaps name.
+
+    Both ends are collected.  ``texture`` is what the swap paints on and is
+    non-negotiable; ``fromTexture`` is what it paints over, and a client that
+    cannot restore it cannot let the player change their mind -- retail's Body
+    groups are cycles, where each option swaps every OTHER option's skin back to
+    its own.
+    """
+
+    registration = _registration(document)
+    options = registration.get("appearanceOptions")
+    if not isinstance(options, Sequence) or isinstance(options, (str, bytes)):
+        return ()
+    found: list[str] = []
+    for row in options:
+        if not isinstance(row, Mapping):
+            continue
+        sub_objects = row.get("subObjects")
+        if not isinstance(sub_objects, Mapping):
+            continue
+        swaps = sub_objects.get("textureSwaps")
+        if not isinstance(swaps, Sequence) or isinstance(swaps, (str, bytes)):
+            continue
+        for swap in swaps:
+            if not isinstance(swap, Mapping):
+                continue
+            for key in ("texture", "fromTexture"):
+                value = swap.get(key)
+                if isinstance(value, str) and value.strip():
+                    found.append(value.strip())
+    return tuple(dict.fromkeys(found))
+
+
+def _texture_output_stem(identifier: str) -> str:
+    """Retail's authored basename, minus its extension, preserved verbatim."""
+
+    return PurePosixPath(identifier.replace("\\", "/")).name.rsplit(".", 1)[0].strip()
+
+
+def compile_cah_swap_texture_pack(
+    document: Mapping[str, object], *, texture_catalog_paths: Sequence[str]
+) -> CahSwapTexturePack:
+    """Publish every texture the compiled garment swaps name.
+
+    WHY THIS EXISTS.  Every subclass's Body group is texture-driven: retail
+    repaints one body mesh through ``UpgradeTexture`` rather than swapping a
+    sub-object.  The mesh conversion embeds only the images a skin's own meshes
+    reference, so the alternate skins -- the Captain of Gondor's three
+    breastplates among them -- were named by the table and present in no pack.
+    An option whose target cannot be resolved renders as the wrong body.
+
+    Fail-closed: a swap target the retail install cannot answer is named and
+    refused, because a silently dropped skin is indistinguishable from a skin
+    the client simply failed to apply.
+    """
+
+    identifiers = cah_swap_texture_identifiers(document)
+    if not identifiers:
+        return CahSwapTexturePack((), {"packRoot": CAH_TEXTURE_PACK_ROOT, "textures": []})
+    answered = resolve_texture_identifiers(identifiers, texture_catalog_paths)
+    missing = [name for name in identifiers if name not in answered]
+    if missing:
+        raise CahModelPackError(
+            f"the retail install cannot answer {len(missing)} Create-a-Hero "
+            "garment texture swap target(s): "
+            + ", ".join(sorted(missing, key=str.casefold))
+        )
+
+    resources: list[dict[str, object]] = []
+    rows: list[dict[str, object]] = []
+    by_output: dict[str, str] = {}
+    for identifier in sorted(identifiers, key=lambda item: (item.casefold(), item)):
+        stem = _texture_output_stem(identifier)
+        if not stem:
+            raise CahModelPackError(
+                f"Create-a-Hero swap texture {identifier!r} has no basename"
+            )
+        output = f"{CAH_TEXTURE_PACK_ROOT}/{stem}.png"
+        previous = by_output.get(output.casefold())
+        if previous is not None:
+            # Two authored spellings of one basename would race for one path.
+            # Retail has none; a corpus that gains one must say so out loud.
+            if previous.casefold() != identifier.casefold():
+                raise CahModelPackError(
+                    f"Create-a-Hero swap textures {previous!r} and {identifier!r} "
+                    f"both publish to {output}"
+                )
+            continue
+        by_output[output.casefold()] = identifier
+        source = answered[identifier][0]
+        resources.append(
+            {
+                "id": _resource_id(
+                    CAH_SWAP_TEXTURE_RESOURCE_PREFIX, stem.casefold().replace(" ", "-")
+                ),
+                "kind": "texture",
+                "converter": "texture",
+                "patterns": [source],
+                "output": output,
+                "required": True,
+                "limit": 1,
+                "expected_count": 1,
+            }
+        )
+        rows.append(
+            {"identifier": identifier, "output": output, "source": source}
+        )
+    receipt = {
+        "packRoot": CAH_TEXTURE_PACK_ROOT,
+        "textureCount": len(rows),
+        "textures": rows,
+    }
+    return CahSwapTexturePack(tuple(resources), receipt)
+
+
 __all__ = [
     "CAH_MODEL_PACK_ROOT",
     "CAH_MODEL_RESOURCE_PREFIX",
+    "CAH_SWAP_TEXTURE_RESOURCE_PREFIX",
+    "CAH_TEXTURE_PACK_ROOT",
+    "CahSwapTexturePack",
+    "cah_swap_texture_identifiers",
+    "compile_cah_swap_texture_pack",
+    "resolve_texture_identifiers",
     "CahModelBinding",
     "CahModelPack",
     "CahModelPackError",

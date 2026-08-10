@@ -4,7 +4,7 @@ from copy import deepcopy
 import hashlib, json, re
 from pathlib import Path
 from typing import Mapping, Sequence
-from .cah_model_pack import CAH_MODEL_PACK_ROOT
+from .cah_model_pack import CAH_MODEL_PACK_ROOT, CAH_TEXTURE_PACK_ROOT
 from .cah_system_compiler import CahSystemCompilerError, validate_cah_system_runtime
 from .faction_import import coverage_digest_payload
 from .interface_art import PACK_INDEX_SCHEMA as INTERFACE_ART_SCHEMA
@@ -373,6 +373,7 @@ def compose_faction_profile(
     string_catalog=None,
     cah_runtime: Mapping[str, object] | None = None,
     cah_model_resources: Sequence[Mapping[str, object]] | None = None,
+    cah_texture_resources: Sequence[Mapping[str, object]] | None = None,
     interface_art: tuple[Sequence[Mapping[str, object]], Mapping[str, object]]
     | None = None,
 ) -> tuple[dict[str, object], dict[str, object]]:
@@ -577,6 +578,34 @@ def compose_faction_profile(
                 key=str.casefold,
             ),
         }
+    # --- Create-a-Hero garment swap textures --------------------------------
+    # Every subclass's Body group repaints one mesh through UpgradeTexture
+    # rather than swapping a sub-object, and the mesh conversion embeds only the
+    # images that mesh itself references.  Without these the alternate skins --
+    # the Captain of Gondor's three breastplates among them -- are named by the
+    # table and present in no pack.
+    cah_texture_receipt: dict[str, object] | None = None
+    if cah_texture_resources:
+        if cah_runtime is None:
+            raise ValueError(
+                "cah garment textures require the cah.system table that names "
+                "them; refusing to ship swap targets with no swaps"
+            )
+        added_textures = _append_pack_resources(
+            target, cah_texture_resources, "cah garment texture"
+        )
+        cah_texture_receipt = {
+            "packRoot": CAH_TEXTURE_PACK_ROOT,
+            "resourceIds": added_textures,
+            "textureOutputs": sorted(
+                (
+                    str(row["output"])
+                    for row in cah_texture_resources
+                    if isinstance(row, Mapping) and row.get("output")
+                ),
+                key=str.casefold,
+            ),
+        }
     # --- retail interface art ----------------------------------------------
     interface_art_receipt: dict[str, object] | None = None
     if interface_art is not None:
@@ -646,6 +675,8 @@ def compose_faction_profile(
         receipt["cahSystem"] = cah_receipt
     if cah_model_receipt is not None:
         receipt["cahModels"] = cah_model_receipt
+    if cah_texture_receipt is not None:
+        receipt["cahGarmentTextures"] = cah_texture_receipt
     if interface_art_receipt is not None:
         receipt["interfaceArt"] = interface_art_receipt
     return target, receipt

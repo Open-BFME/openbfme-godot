@@ -279,3 +279,118 @@ def test_unresolved_texture_refuses_rather_than_shipping_an_untextured_hero() ->
     )
     with pytest.raises(CahModelPackError, match="unresolved texture"):
         resolver(("art/w3d/ch/chhw_cg_c_skn.w3d",))
+
+
+# --- garment swap textures --------------------------------------------------
+
+_SWAP_SYSTEM = {
+    "registration": {
+        "appearanceOptions": [
+            {
+                "upgradeName": "Upgrade_CAPG_CHBOD01",
+                "subObjects": {
+                    "show": [],
+                    "hide": [],
+                    "textureSwaps": [
+                        {
+                            "fromTexture": "CHHW_SMN_01.tga",
+                            "index": 0,
+                            "texture": "CHHW_SMN.tga",
+                        }
+                    ],
+                },
+            },
+            {
+                "upgradeName": "Upgrade_CAPG_CHBOD02",
+                "subObjects": {
+                    "show": [],
+                    "hide": [],
+                    "textureSwaps": [
+                        {
+                            "fromTexture": "CHHW_SMN.tga",
+                            "index": 0,
+                            "texture": "CHHW_SMN_01.tga",
+                        }
+                    ],
+                },
+            },
+            # A part-driven option contributes no texture.
+            {
+                "upgradeName": "Upgrade_CaptainOfGondor_CHH02",
+                "subObjects": {"show": ["HLMT_01"], "hide": [], "textureSwaps": []},
+            },
+        ]
+    }
+}
+
+_SWAP_CATALOG = (
+    "art/compiledtextures/ch/chhw_smn.dds",
+    "art/compiledtextures/ch/chhw_smn_01.dds",
+    "art/compiledtextures/xx/unrelated.dds",
+)
+
+
+def test_swap_targets_publish_under_the_retail_basename() -> None:
+    # THE PUBLISHED GAP: every Body group repaints the mesh through
+    # UpgradeTexture, and the mesh conversion embeds only the images that mesh
+    # already references, so the alternate skins were named by the table and
+    # present in no pack.
+    from openbfme_importer.cah_model_pack import compile_cah_swap_texture_pack
+
+    pack = compile_cah_swap_texture_pack(
+        _SWAP_SYSTEM, texture_catalog_paths=_SWAP_CATALOG
+    )
+    outputs = sorted(str(row["output"]) for row in pack.resources)
+    assert outputs == [
+        "assets/textures/cah/CHHW_SMN.png",
+        "assets/textures/cah/CHHW_SMN_01.png",
+    ]
+    assert {row["converter"] for row in pack.resources} == {"texture"}
+    assert pack.receipt["textureCount"] == 2
+
+
+def test_both_ends_of_a_swap_are_published() -> None:
+    # A Body group is a cycle: each option swaps every other option's skin back
+    # to its own, so a client that cannot restore `fromTexture` cannot let the
+    # player change their mind.
+    from openbfme_importer.cah_model_pack import cah_swap_texture_identifiers
+
+    assert set(cah_swap_texture_identifiers(_SWAP_SYSTEM)) == {
+        "CHHW_SMN.tga",
+        "CHHW_SMN_01.tga",
+    }
+
+
+def test_the_authored_tga_bridges_to_the_compiled_dds() -> None:
+    from openbfme_importer.cah_model_pack import compile_cah_swap_texture_pack
+
+    pack = compile_cah_swap_texture_pack(
+        _SWAP_SYSTEM, texture_catalog_paths=_SWAP_CATALOG
+    )
+    sources = {str(row["patterns"][0]) for row in pack.resources}
+    assert sources == {
+        "art/compiledtextures/ch/chhw_smn.dds",
+        "art/compiledtextures/ch/chhw_smn_01.dds",
+    }
+
+
+def test_a_swap_target_retail_lacks_refuses_the_compile() -> None:
+    from openbfme_importer.cah_model_pack import (
+        CahModelPackError,
+        compile_cah_swap_texture_pack,
+    )
+
+    with pytest.raises(CahModelPackError, match="CHHW_SMN_01.tga"):
+        compile_cah_swap_texture_pack(
+            _SWAP_SYSTEM,
+            texture_catalog_paths=("art/compiledtextures/ch/chhw_smn.dds",),
+        )
+
+
+def test_a_system_with_no_swaps_ships_nothing() -> None:
+    from openbfme_importer.cah_model_pack import compile_cah_swap_texture_pack
+
+    pack = compile_cah_swap_texture_pack(
+        {"registration": {"appearanceOptions": []}}, texture_catalog_paths=()
+    )
+    assert pack.resources == ()

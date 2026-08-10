@@ -167,6 +167,23 @@ def _compile_cah_model_resources(
     return [dict(row) for row in pack.resources]
 
 
+def _compile_cah_swap_texture_resources(
+    cah_runtime: Mapping[str, Any], catalog: Any
+) -> list[dict[str, Any]]:
+    """Profile resources publishing every texture a garment swap names.
+
+    Resolved against the same catalog the cook resolves against, so a published
+    swap can never name art this cook cannot convert.
+    """
+
+    from .cah_model_pack import compile_cah_swap_texture_pack
+
+    pack = compile_cah_swap_texture_pack(
+        cah_runtime, texture_catalog_paths=_catalog_texture_paths(catalog)
+    )
+    return [dict(row) for row in pack.resources]
+
+
 def _compile_interface_art_pack(
     catalog: Any, oracle_root: Path
 ) -> tuple[list[dict[str, Any]], dict[str, Any]] | None:
@@ -1840,15 +1857,20 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
             # never ship a binding its own conversion cannot answer.
             oracle_root = _workspace_root(args) / "cache" / "effective-assets"
             cah_model_resources = None
+            cah_texture_resources = None
             interface_art = None
             if cah_runtime is not None:
                 cah_model_resources = _compile_cah_model_resources(
                     cah_runtime, cook_catalog
                 )
+                cah_texture_resources = _compile_cah_swap_texture_resources(
+                    cah_runtime, cook_catalog
+                )
                 progress_emit(
                     "compose",
                     "cah meshes="
-                    f"{sum(1 for row in cah_model_resources if row.get('output'))}",
+                    f"{sum(1 for row in cah_model_resources if row.get('output'))} "
+                    f"swap-textures={len(cah_texture_resources)}",
                 )
             if factions == ["men"]:
                 interface_art = _compile_interface_art_pack(cook_catalog, oracle_root)
@@ -1867,6 +1889,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                 string_catalog=string_catalog,
                 cah_runtime=cah_runtime,
                 cah_model_resources=cah_model_resources,
+                cah_texture_resources=cah_texture_resources,
                 interface_art=interface_art,
             )
             # `pipeline` / `cook_catalog` were already built above so the

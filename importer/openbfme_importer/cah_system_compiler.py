@@ -161,6 +161,19 @@ DESIGN_FIELDS = (
     ("BountyValue", "bountyValue"),
 )
 
+#: How retail marks the option a group STARTS on.  On a subclass's
+#: ``BlingUpgrades`` line one token may be prefixed ``@``:
+#:
+#:     BlingUpgrades = Upgrade_NoHelmet @Upgrade_CaptainOfGondor_CHH01 ...
+#:
+#: That is the only statement of a garment default anywhere in the corpus.  A
+#: pack that drops the marker leaves the client picking the first listed option,
+#: which for most groups is retail's "wear nothing" entry -- so a brand new hero
+#: renders bare-headed, bare-handed and barefoot.  Twenty-five of the 112
+#: authored group lines carry a marker; the rest genuinely have no authored
+#: default and keep the client's own first-option rule.
+DEFAULT_BLING_MARKER = "@"
+
 #: The ``BlingType`` that marks a customisation group as an attribute slider.
 ATTRIBUTE_BLING_TYPE = "ATTRIBUTE"
 #: The ``BlingType`` that marks a cosmetic (helmet / shoulders / …) group.
@@ -534,10 +547,33 @@ def _bling_groups(
     return groups
 
 
+def _marked_default_upgrades(system: _Block) -> dict[str, str]:
+    """Every upgrade any subclass marks with ``@``: casefolded -> as authored.
+
+    Purely lexical, and deliberately so: it runs before the option catalog
+    exists so the catalog rows can be stamped as they are built.  Whether a
+    marked name resolves to a declared option is checked in :func:`_sub_classes`,
+    where the subclass that authored it can be named in the failure.
+    """
+
+    marked: dict[str, str] = {}
+    for class_block in system.children("CreateAHeroClass"):
+        for sub in class_block.children("SubClass"):
+            for text in sub.values("BlingUpgrades"):
+                for token in text.split():
+                    if not token.startswith(DEFAULT_BLING_MARKER):
+                        continue
+                    upgrade = token.lstrip(DEFAULT_BLING_MARKER).strip()
+                    if upgrade and not upgrade.startswith("//"):
+                        marked.setdefault(upgrade.casefold(), upgrade)
+    return marked
+
+
 def _appearance_options(
     system: _Block,
     garment: Mapping[str, Mapping[str, Any]] | None = None,
     combat: Mapping[str, Mapping[str, Any]] | None = None,
+    marked_defaults: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     ## Every CreateAHeroBling part (helmet pieces, weapons, …) as a catalog row.
     ## Each row carries the sub-object visibility its upgrade switches, so a
@@ -556,6 +592,13 @@ def _appearance_options(
             "subObjects": _empty_sub_objects()
             if garment is None
             else deepcopy(dict(garment.get(upgrade.casefold(), _empty_sub_objects()))),
+            # True where SOME subclass marks this upgrade as its group default.
+            # The authoritative, per-subclass answer is `appearanceDefaults` on
+            # the subclass row: one upgrade can be the default for one subclass
+            # and merely offered to another.
+            "isDefault": bool(
+                marked_defaults is not None and upgrade.casefold() in marked_defaults
+            ),
         }
         if combat is not None and upgrade.casefold() in combat:
             row["combat"] = deepcopy(dict(combat[upgrade.casefold()]))
@@ -678,6 +721,7 @@ def _default_sub_objects(
     appearance_by_group: Mapping[str, Sequence[str]],
     garment: Mapping[str, Mapping[str, Any]],
     revealed: Sequence[str],
+    appearance_defaults: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """What a subclass's mesh shows before any bling is applied.
 
@@ -698,6 +742,14 @@ def _default_sub_objects(
     render at once.  Hiding a name a given mesh does not carry is a no-op, so
     the corpus-wide set is both safe and the only correct one.
 
+    ``show`` IS THE AUTHORED STARTING OUTFIT.  It is the union of the show-parts
+    of the options this subclass's ``@`` markers name, so a hero nobody has
+    dressed yet wears what retail dressed it in.  APPLY ORDER IS HIDE THEN SHOW:
+    ``hide`` is the corpus-wide set and necessarily contains these same names,
+    so a consumer that applied ``show`` first would immediately hide the outfit
+    again.  Groups retail leaves unmarked contribute nothing here and keep the
+    client's own first-option rule.
+
     ``scopedToSubClass`` is the subclass's own slice, kept as evidence of what
     that subclass can actually change.  ``HideSubObjects`` names go the other
     way (they are hidden BY an upgrade, so visible before it) and retail authors
@@ -710,8 +762,13 @@ def _default_sub_objects(
             row = garment.get(str(upgrade).casefold())
             if row is not None:
                 scoped.extend(str(name) for name in row["show"])
+    shown: list[str] = []
+    for upgrade in (appearance_defaults or {}).values():
+        row = garment.get(str(upgrade).casefold())
+        if row is not None:
+            shown.extend(str(name) for name in row["show"])
     return {
-        "show": [],
+        "show": _ordered_unique(shown),
         "hide": list(revealed),
         "scopedToSubClass": _ordered_unique(scoped),
     }
@@ -1879,18 +1936,48 @@ def _sub_classes(
             )
 
         appearance_by_group: dict[str, list[str]] = {}
+        appearance_defaults: dict[str, str] = {}
         for text in sub.values("BlingUpgrades"):
-            for token in text.replace("@", " ").split():
-                upgrade = token.strip()
-                if not upgrade or upgrade.startswith("//"):
-                    continue
-                option = option_by_upgrade.get(upgrade.casefold())
-                group_name = (
-                    str(option["groupName"]) if option is not None else "CreateAHero_Unknown"
-                )
-                appearance_by_group.setdefault(group_name, [])
-                if upgrade not in appearance_by_group[group_name]:
-                    appearance_by_group[group_name].append(upgrade)
+            for token in text.split():
+                # Retail always writes the marker as a token prefix
+                # (`... Upgrade_NoHelmet @Upgrade_X ...`), but splitting on it
+                # rather than stripping it means an unspaced `A@B` still yields
+                # both names instead of one unresolvable one.
+                parts = token.split(DEFAULT_BLING_MARKER)
+                for index, part in enumerate(parts):
+                    upgrade = part.strip()
+                    if not upgrade or upgrade.startswith("//"):
+                        continue
+                    marked = index > 0
+                    option = option_by_upgrade.get(upgrade.casefold())
+                    group_name = (
+                        str(option["groupName"])
+                        if option is not None
+                        else "CreateAHero_Unknown"
+                    )
+                    appearance_by_group.setdefault(group_name, [])
+                    if upgrade not in appearance_by_group[group_name]:
+                        appearance_by_group[group_name].append(upgrade)
+                    if not marked:
+                        continue
+                    # FAIL CLOSED.  A marker naming an upgrade no
+                    # CreateAHeroBling declares would silently leave the group
+                    # with no authored default, which is exactly the state that
+                    # dresses a new hero in "No Helmet" -- the bug this data
+                    # exists to fix.
+                    if option is None:
+                        raise CahSystemCompilerError(
+                            f"{label}: BlingUpgrades marks {DEFAULT_BLING_MARKER}"
+                            f"{upgrade} as the group default, but no "
+                            f"CreateAHeroBling declares that upgrade"
+                        )
+                    previous = appearance_defaults.get(group_name)
+                    if previous is not None and previous != upgrade:
+                        raise CahSystemCompilerError(
+                            f"{label}: group {group_name} marks two defaults "
+                            f"({previous} and {upgrade})"
+                        )
+                    appearance_defaults[group_name] = upgrade
 
         usable = tuple((sub.value("UsableFactions") or "").split())
         sub_upgrade = (sub.value("UpgradeName") or "").strip()
@@ -1919,7 +2006,7 @@ def _sub_classes(
         # bindings.  Published in BOTH places a consumer would look: beside the
         # subclass row, and inside the model binding itself.
         default_sub_objects = _default_sub_objects(
-            appearance_by_group, garment, revealed
+            appearance_by_group, garment, revealed, appearance_defaults
         )
         bound_models = deepcopy(dict(models))
         bound_models["defaultSubObjects"] = deepcopy(default_sub_objects)
@@ -1939,6 +2026,9 @@ def _sub_classes(
                 "awards": awards,
                 "trackingStats": tracking_stats,
                 "appearanceChoices": appearance_by_group,
+                # The option each group STARTS on, per retail's `@` marker.
+                # Authoritative over the catalog-wide `isDefault` flag.
+                "appearanceDefaults": appearance_defaults,
                 "defaultPrimaryColor": (sub.value("DefaultPrimaryColor") or "").strip(),
                 "defaultSecondaryColor": (sub.value("DefaultSecondaryColor") or "").strip(),
                 "defaultTertiaryColor": (sub.value("DefaultTertiaryColor") or "").strip(),
@@ -2045,7 +2135,10 @@ def compile_cah_system_descriptor(
         garment_block, weapon_templates, defines
     )
     revealed_sub_objects = _revealed_sub_objects(garment)
-    appearance_options = _appearance_options(system, garment, combat_profiles)
+    marked_defaults = _marked_default_upgrades(system)
+    appearance_options = _appearance_options(
+        system, garment, combat_profiles, marked_defaults
+    )
     upgrades = _upgrade_index(documents)
     modifiers = _modifier_index(documents, attribute_multiplier)
 
@@ -2198,16 +2291,41 @@ def compile_cah_system_descriptor(
         for row in appearance_options
         if str(row["groupName"]).casefold() in appearance_group_names
     ]
+    # THREE KINDS OF OPTION, COUNTED APART.  Lumping them together read
+    # "267/275 covered" while every Body option was undrawable: those switch no
+    # sub-object at all, they REPAINT one, and a pack that ships the table
+    # without the swap targets renders the wrong skin.  A part-driven option
+    # needs its sub-object; a texture-driven one needs its texture published.
+    def _parts(row: Mapping[str, Any]) -> bool:
+        return bool(row["subObjects"]["show"] or row["subObjects"]["hide"])
+
+    def _swaps(row: Mapping[str, Any]) -> bool:
+        return bool(row["subObjects"]["textureSwaps"])
+
+    swap_targets = _ordered_unique(
+        str(swap["texture"])
+        for row in appearance_options
+        for swap in row["subObjects"]["textureSwaps"]
+        if isinstance(swap, Mapping) and swap.get("texture")
+    )
     garment_coverage = {
         "subObjectUpgrades": len(garment),
         "revealedSubObjects": revealed_sub_objects,
         "appearanceOptions": len(garment_rows),
-        "optionsWithSubObjects": sum(
-            1
-            for row in garment_rows
-            if row["subObjects"]["show"]
-            or row["subObjects"]["hide"]
-            or row["subObjects"]["textureSwaps"]
+        "optionsWithSubObjects": sum(1 for row in garment_rows if _parts(row)),
+        # Texture-driven, NOT part-driven: retail repaints the body mesh through
+        # UpgradeTexture rather than revealing a sub-object.  Drawable only if
+        # the swap targets ship as pack assets.
+        "textureOnlyOptions": sorted(
+            (
+                str(row["upgradeName"])
+                for row in garment_rows
+                if _swaps(row) and not _parts(row)
+            ),
+            key=str.casefold,
+        ),
+        "optionsWithPartsAndSwaps": sum(
+            1 for row in garment_rows if _parts(row) and _swaps(row)
         ),
         # Named, not counted away.  Retail's own "wear nothing" choices belong
         # here (they reveal nothing on purpose) alongside any bling whose module
@@ -2216,14 +2334,13 @@ def compile_cah_system_descriptor(
             (
                 str(row["upgradeName"])
                 for row in garment_rows
-                if not (
-                    row["subObjects"]["show"]
-                    or row["subObjects"]["hide"]
-                    or row["subObjects"]["textureSwaps"]
-                )
+                if not _parts(row) and not _swaps(row)
             ),
             key=str.casefold,
         ),
+        # Every distinct texture a swap paints on.  The pack must carry one
+        # asset per entry or the option renders the wrong skin.
+        "swapTargetTextures": swap_targets,
         "optionCount": len(appearance_options),
     }
 
