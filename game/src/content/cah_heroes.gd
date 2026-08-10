@@ -97,6 +97,7 @@ const FALLBACK_MOVEMENT := {
 
 const LIMITATION_OBJECT_BASELINE := "cah-object-baseline-absent"
 const LIMITATION_WEAPON_COMBAT := "cah-weapon-combat-absent"
+const LIMITATION_TURN_RATE := "cah-turn-rate-not-stated"
 
 
 static func system_is_valid(system: Variant) -> bool:
@@ -267,10 +268,38 @@ static func combat_baseline(system: Dictionary, profile: Dictionary) -> Dictiona
 	var combat := FALLBACK_COMBAT.duplicate()
 	for key in weapon_combat.keys():
 		combat[String(key)] = weapon_combat[key]
+	# The compiler spells the pre-attack wind-up `preAttackMs`; the runtime
+	# contract every playable-unit document is read against spells it
+	# `preAttackDelayMs`. Same number, and translating it here is the difference
+	# between a hero on its real weapon and a hero on its real weapon with one
+	# invented timing quietly left in the middle of it.
+	for spelling in [["preAttackMs", "preAttackDelayMs"]]:
+		if weapon_combat.has(spelling[0]):
+			combat[spelling[1]] = weapon_combat[spelling[0]]
 	var movement := FALLBACK_MOVEMENT.duplicate()
+	# Locomotion arrives either as a movement sub-dictionary or flat on the
+	# baseline; both spellings are read so a compiler that moves it does not
+	# silently drop the hero back onto invented numbers.
 	var baseline_movement: Dictionary = baseline.get("movement", {}) as Dictionary
 	for key in baseline_movement.keys():
 		movement[String(key)] = baseline_movement[key]
+	for spelling in [
+		["acceleration", "acceleration"],
+		["accelerationMs", "acceleration"],
+		["braking", "braking"],
+		["brakingMs", "braking"],
+		["turnRateDegreesPerSecond", "turnRateDegreesPerSecond"],
+	]:
+		if baseline.has(spelling[0]):
+			movement[spelling[1]] = float(baseline[spelling[0]])
+	if not baseline.is_empty() and not baseline.has("turnRateDegreesPerSecond") \
+		and not baseline_movement.has("turnRateDegreesPerSecond"):
+		# A retail Locomotor states `TurnTime` - how long a turn TAKES - and the
+		# simulation wants a rate in degrees per second. The arc that time covers
+		# is not stated anywhere this module can read, so the turn rate stays on
+		# its invented value and SAYS SO rather than being derived from a guess
+		# about what TurnTime means.
+		limitations.append(LIMITATION_TURN_RATE)
 	return {
 		"speed": float(baseline.get("speed", FALLBACK_SPEED)),
 		"baseHealth": float(baseline.get("baseHealth", 0.0)),

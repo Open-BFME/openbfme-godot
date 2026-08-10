@@ -44,7 +44,7 @@ const LEVEL_FOUR_UPGRADE := "Upgrade_CreateAHeroGloriousCharge"
 
 ## LIVENESS. A GDScript runtime error aborts its function without propagating,
 ## so a broken run would print zero failures. Raise deliberately; never lower.
-const EXPECTED_CHECKS := 40
+const EXPECTED_CHECKS := 47
 
 var passed := 0
 var failed := 0
@@ -85,7 +85,8 @@ func _run() -> void:
 		profile.get("powers", []) as Array
 	)
 	var baseline := CahHeroes.combat_baseline(system, profile)
-	_report_baseline(baseline)
+	_report_baseline(system, profile, baseline)
+	_test_baseline_fallback(system, profile)
 	_test_baseline_contract(system, profile)
 
 	_test_skirmish_ownership_follows_the_human(system)
@@ -221,25 +222,106 @@ func _write_profile(system: Dictionary) -> Dictionary:
 	return profile
 
 
-func _report_baseline(baseline: Dictionary) -> void:
-	## The mounted pack either states the retail object/weapon numbers or it does
-	## not. Either is a pass; a SILENT fallback is not, so the limitation is
-	## printed by name and the runner says which numbers it is asserting against.
+func _report_baseline(system: Dictionary, profile: Dictionary, baseline: Dictionary) -> void:
+	## THE MOUNTED PACK NOW STATES THE RETAIL NUMBERS, so this asserts that they
+	## are the ones being used - not that a fallback happened to survive. The
+	## values are read back out of the pack's own weapon row rather than typed in
+	## here, so the check follows a rebalance instead of pinning one build; the
+	## literals below it are the 2026-08-09 measured values, present so a silent
+	## change of meaning is still caught.
 	var limitations: Array = baseline.get("limitations", []) as Array
 	for limitation in limitations:
 		print("CAH_MATCH LIMITATION %s" % String(limitation))
+	var combat: Dictionary = baseline["combat"] as Dictionary
 	print(
-		"CAH_MATCH BASELINE speed=%.1f damage=%.1f range=%.1f weapon=%s"
+		"CAH_MATCH BASELINE speed=%.1f damage=%.1f range=%.1f reload=%.0f preattack=%.0f weapon=%s"
 		% [
-			float(baseline["speed"]),
-			float((baseline["combat"] as Dictionary).get("damage", 0.0)),
-			float((baseline["combat"] as Dictionary).get("attackRange", 0.0)),
+			float(baseline["speed"]), float(combat.get("damage", 0.0)),
+			float(combat.get("attackRange", 0.0)),
+			float(combat.get("delayBetweenShotsMs", 0.0)),
+			float(combat.get("preAttackDelayMs", 0.0)),
 			String(baseline.get("weaponUpgradeName", "")),
 		]
 	)
 	_check(
-		float((baseline["combat"] as Dictionary).get("damage", 0.0)) > 0.0,
-		"the hero has a weapon to swing whether or not the pack states one"
+		not limitations.has(CahHeroes.LIMITATION_OBJECT_BASELINE)
+			and not limitations.has(CahHeroes.LIMITATION_WEAPON_COMBAT),
+		"the mounted pack states the object baseline and the weapon's combat"
+	)
+	var weapon_row := CahHeroes.weapon_appearance_row(
+		system, profile.get("appearance", {}) as Dictionary
+	)
+	var authored: Dictionary = weapon_row.get("combat", {}) as Dictionary
+	_check(
+		is_equal_approx(float(combat.get("damage", -1.0)), float(authored.get("damage", -2.0)))
+			and is_equal_approx(
+				float(combat.get("attackRange", -1.0)), float(authored.get("attackRange", -2.0))
+			)
+			and is_equal_approx(
+				float(combat.get("delayBetweenShotsMs", -1.0)),
+				float(authored.get("delayBetweenShotsMs", -2.0))
+			)
+			and is_equal_approx(
+				float(combat.get("firingDurationMs", -1.0)),
+				float(authored.get("firingDurationMs", -2.0))
+			),
+		"the chosen weapon's own compiled damage, range, reload and firing time are used"
+	)
+	_check(
+		is_equal_approx(
+			float(combat.get("preAttackDelayMs", -1.0)), float(authored.get("preAttackMs", -2.0))
+		),
+		"the compiler's preAttackMs reaches the contract's preAttackDelayMs"
+	)
+	_check(
+		is_equal_approx(
+			float(baseline["speed"]),
+			float(CahHeroes.object_baseline(system).get("speed", -1.0))
+		)
+			and is_equal_approx(CahHeroes.base_health_value(system), 2000.0),
+		"the compiled object baseline drives speed and base health"
+	)
+	_check(
+		is_equal_approx(float(combat.get("attackRange", 0.0)), 11.5)
+			and is_equal_approx(float(combat.get("damage", 0.0)), 150.0)
+			and is_equal_approx(float(baseline["speed"]), 50.0),
+		"the retail numbers are the measured ones (range 11.5, damage 150, speed 50)"
+	)
+
+
+func _test_baseline_fallback(system: Dictionary, profile: Dictionary) -> void:
+	## The live pack states the contract now, so the GRACEFUL path is no longer
+	## exercised by simply running. It is kept honest here against a copy of the
+	## mounted table with the contract stripped back out - what an older pack, or
+	## a pack whose weapon compile failed, actually looks like.
+	var stripped := system.duplicate(true)
+	var registration: Dictionary = stripped["registration"] as Dictionary
+	registration.erase("objectBaseline")
+	(registration.get("system", {}) as Dictionary).erase("objectBaseline")
+	for option_value in (registration.get("appearanceOptions", []) as Array):
+		(option_value as Dictionary).erase("combat")
+	var baseline := CahHeroes.combat_baseline(stripped, profile)
+	var limitations: Array = baseline.get("limitations", []) as Array
+	var combat: Dictionary = baseline["combat"] as Dictionary
+	_check(
+		limitations.has(CahHeroes.LIMITATION_OBJECT_BASELINE)
+			and limitations.has(CahHeroes.LIMITATION_WEAPON_COMBAT),
+		"a pack without the contract names both limitations"
+	)
+	_check(
+		is_equal_approx(float(baseline["speed"]), CahHeroes.FALLBACK_SPEED)
+			and is_equal_approx(
+				float(combat.get("damage", 0.0)), float(CahHeroes.FALLBACK_COMBAT["damage"])
+			)
+			and is_equal_approx(
+				float(combat.get("attackRange", 0.0)),
+				float(CahHeroes.FALLBACK_COMBAT["attackRange"])
+			),
+		"a pack without the contract still fields a hero that moves and swings"
+	)
+	_check(
+		is_equal_approx(CahHeroes.base_health_value(stripped), 2000.0),
+		"base health falls back to the object's own MaxHealth"
 	)
 
 

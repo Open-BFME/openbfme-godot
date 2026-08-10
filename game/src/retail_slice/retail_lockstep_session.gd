@@ -1320,9 +1320,14 @@ static func validated_hero_documents(rows: Variant) -> Array:
 		if typeof(row_value) != TYPE_STRING:
 			return []
 		var text := String(row_value)
-		if text.length() > LOBBY_HERO_BYTES_MAX:
+		# BYTES, NOT CHARACTERS. The packet cap these budgets are sized against
+		# is a byte count, and one codepoint is up to four bytes - so measuring
+		# in `length()` let a wide-script document four times over budget pass a
+		# cap that promised the whole rebroadcast table would fit one packet.
+		var size := text.to_utf8_buffer().size()
+		if size > LOBBY_HERO_BYTES_MAX:
 			return []
-		total += text.length()
+		total += size
 		if total > LOBBY_HEROES_BYTES_MAX:
 			return []
 		var canonical := canonical_hero_document(text)
@@ -1371,7 +1376,20 @@ func send_lobby_heroes(profiles: Array) -> bool:
 func _broadcast_hero_table() -> void:
 	if not _is_host:
 		return
-	_broadcast({"kind": "lobby.heroTable", "table": _hero_table_rows()})
+	var envelope := {"kind": "lobby.heroTable", "table": _hero_table_rows()}
+	# The caps make this unreachable; the guard is here anyway because the cost
+	# of being wrong is a table the transport drops without a word, leaving every
+	# guest on a stale view that then refuses the launch while the host proceeds.
+	# A denial of launch is cheaper than a desync but it is not free, and a
+	# silent one is unbudgeable. Loud beats silent.
+	if var_to_bytes(envelope).size() > MAX_PACKET_BYTES:
+		rejected_packets += 1
+		push_error(
+			"RetailLockstepSession refusing a %d-byte created-hero table; the packet limit is %d"
+			% [var_to_bytes(envelope).size(), MAX_PACKET_BYTES]
+		)
+		return
+	_broadcast(envelope)
 
 
 func _hero_table_rows() -> Array:

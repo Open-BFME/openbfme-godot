@@ -340,6 +340,26 @@ func _test_created_hero_lobby_exchange(profile_a: Dictionary, profile_b: Diction
 	for _index in range(4000):
 		(fat["awards"] as Array).append("Award_%d" % _index)
 	_check("cah_unsendable_hero_list_is_refused", not guest.send_lobby_heroes([fat]))
+	# THE CAP MUST BE MEASURED IN THE PACKET'S OWN UNIT. A document built from
+	# three-byte codepoints is under any character cap and three times over the
+	# byte budget it was sized against; four such seats overflow the host's
+	# rebroadcast and every guest is left on a stale table.
+	var wide := profile_b.duplicate(true)
+	wide["awards"] = []
+	var wide_award := "".rpad(512, "中")
+	while (
+		JSON.stringify(wide, "", true).to_utf8_buffer().size()
+		< SessionScript.LOBBY_HERO_BYTES_MAX
+	):
+		(wide["awards"] as Array).append(wide_award)
+	var wide_document := SessionScript.canonical_hero_document(wide)
+	_check(
+		"cah_wide_utf8_hero_is_measured_in_bytes",
+		wide_document.length() <= SessionScript.LOBBY_HERO_BYTES_MAX
+			and wide_document.to_utf8_buffer().size() > SessionScript.LOBBY_HERO_BYTES_MAX
+			and not guest.send_lobby_heroes([wide])
+			and SessionScript.validated_hero_documents([wide_document]).is_empty()
+	)
 	_check(
 		"cah_hero_caps_fit_one_packet",
 		SessionScript.MAX_SEATS * SessionScript.LOBBY_HEROES_BYTES_MAX
