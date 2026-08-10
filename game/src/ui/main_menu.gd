@@ -2594,21 +2594,29 @@ func _populate_row_hero(row: int) -> void:
 	if row >= solo_flyout.hero_dropdowns.size():
 		return
 	var option: OptionButton = solo_flyout.hero_dropdowns[row]
-	var previous := _selected_row_hero_id(row)
+	# The REMEMBERED pick, not the selectable one: a disabled column reports no
+	# hero (that is what makes the rule bite), so reading the selection back
+	# through the same door would throw the choice away the moment the rule was
+	# switched off, and switching it on again would offer a blank row.
+	var previous := _remembered_row_hero_id(row)
 	option.clear()
 	option.add_item("-")
 	option.set_item_metadata(0, "")
 	option.select(0)
-	var allowed := _row_may_bring_a_hero(row)
-	option.disabled = not allowed
-	if not allowed:
-		option.tooltip_text = (
-			"Only the human player brings a created hero"
-			if not _row_is_human(row)
+	var is_human := _row_is_human(row)
+	option.disabled = not _row_may_bring_a_hero(row)
+	option.tooltip_text = (
+		"The hero from MY HEROES this player brings to the match" if not option.disabled
+		else (
+			"Only the human player brings a created hero" if not is_human
 			else "Custom Heroes are disabled for this match"
 		)
+	)
+	# An AI row never had a pick, so it is emptied. A human row keeps its list
+	# even while the rule forbids using it - greyed out, still showing what was
+	# chosen - so turning the rule back on restores the choice instead of a blank.
+	if not is_human:
 		return
-	option.tooltip_text = "The hero from MY HEROES this player brings to the match"
 	var system := _cah_system_runtime()
 	if system.is_empty():
 		return
@@ -2627,6 +2635,16 @@ func _populate_row_hero(row: int) -> void:
 		option.set_item_metadata(index, hero_id)
 		if hero_id == previous:
 			option.select(index)
+
+
+func _remembered_row_hero_id(row: int) -> String:
+	## What this row picked, whether or not the rule currently lets it be used.
+	if row >= solo_flyout.hero_dropdowns.size():
+		return ""
+	var option: OptionButton = solo_flyout.hero_dropdowns[row]
+	if option.selected < 0:
+		return ""
+	return String(option.get_item_metadata(option.selected))
 
 
 func _row_may_bring_a_hero(row: int) -> bool:
@@ -3292,13 +3310,35 @@ func _first_non_human_row() -> int:
 
 func _setup_is_advanced() -> bool:
 	## True when the setup carries something the legacy two-side fields cannot
-	## represent: more than two rows, or any AI slot on a non-default difficulty.
+	## represent, and therefore must be handed to the slice as a descriptor list.
+	return _setup_is_advanced_rows() or _setup_carries_a_hero_decision()
+
+
+func _setup_is_advanced_rows() -> bool:
+	## The original two conditions: more than two rows, or an AI off medium.
 	if solo_flyout.row_army_opts.size() > 2:
 		return true
 	for row in range(solo_flyout.row_army_opts.size()):
 		if not _row_is_human(row) and _selected_row_difficulty(row) != RETAIL_AI_DEFAULT_DIFFICULTY:
 			return true
 	return false
+
+
+func _setup_carries_a_hero_decision() -> bool:
+	## WHICH HERO THE PLAYER BRINGS IS SUCH A THING, and it was not counted.
+	##
+	## The legacy pair carries two factions and nothing else, so a default 1v1
+	## wrote no descriptor list at all - and with no list the slice falls back to
+	## fielding EVERY saved hero. The dropdown and the Allow Custom Heroes toggle
+	## were therefore inert in exactly the setup almost everyone plays: pick one
+	## hero and get all of them, turn the rule off and still get all of them.
+	##
+	## A saved hero is enough to make the setup advanced, whether or not one is
+	## picked, because "-" is a DECISION - it means bring none - and the legacy
+	## path cannot say it. With no saved heroes there is nothing to decide and
+	## nothing to field either way, so the default launch keeps its proven
+	## two-team path and the pinned battle signature is untouched.
+	return not CahHeroesScript.load_profiles().is_empty()
 
 
 func _build_team_descriptors(map_id: String) -> Array:
@@ -4015,7 +4055,9 @@ func _connect_actions() -> void:
 	multiplayer_flyout.back_requested.connect(func() -> void: _show_page(PAGE_MAIN))
 	solo_flyout.army_changed.connect(_on_army_changed)
 	solo_flyout.hero_changed.connect(func(_row: int) -> void: _refresh_skirmish_launch_state())
-	solo_flyout.custom_heroes_toggle.toggled.connect(func(_on: bool) -> void: _refresh_hero_rows())
+	solo_flyout.custom_heroes_toggle.toggled.connect(func(_on: bool) -> void:
+		_refresh_hero_rows()
+		_refresh_skirmish_launch_state())
 	solo_flyout.color_changed.connect(_on_color_changed)
 	solo_flyout.rows_changed.connect(_on_rows_changed)
 	solo_flyout.controller_changed.connect(_on_controller_changed)

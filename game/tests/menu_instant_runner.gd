@@ -230,12 +230,99 @@ func _run() -> void:
 	warm._refresh_skirmish_launch_state()
 	_check("recovered_play_button_is_enabled", not warm.solo_flyout.play_btn.disabled)
 
+	_check_default_setup_carries_the_hero_pick(warm)
+
 	warm.queue_free()
 	await process_frame
 	# The synthetic row was memoized alongside the real ones; do not leave a
 	# fixture id in a durable table other runs would read.
 	menu_script.clear_skirmish_availability_cache()
 	_finish()
+
+
+func _check_default_setup_carries_the_hero_pick(menu: Node) -> void:
+	## THE DEFAULT SETUP IS THE ONE EVERYBODY PLAYS: one human, one medium AI,
+	## two rows. It is also the setup that used to throw the hero pick away.
+	##
+	## `retail_team_setup` was written only for setups the legacy two-side fields
+	## cannot express - more than two rows, or an AI off medium - and the hero
+	## column is exactly such a thing, but it was not counted. So the default
+	## launch wrote [], the slice fell back to fielding EVERY saved hero, and both
+	## the dropdown and the Allow Custom Heroes toggle were inert for the common
+	## case. This drives the REAL menu write on the REAL default setup; a check
+	## that hand-builds the roster cannot see this, because hand-building it is
+	## the very step the bug skips.
+	const CahHeroes = preload("res://src/content/cah_heroes.gd")
+	var system: Dictionary = menu._cah_system_runtime()
+	if not CahHeroes.system_is_valid(system):
+		_check("default_setup_hero_pick_needs_a_class_table", false, "no mounted CAH table")
+		return
+	# Start from an empty store: a hero left behind by an earlier run would make
+	# "only the picked one" unprovable, and this runner shares user:// with the
+	# other Create-a-Hero gates.
+	for stale in CahHeroes.load_profiles():
+		CahHeroes.delete_profile(String(stale.get("heroId", "")))
+	var brought := CahHeroes.new_profile(system, "Brought Along", 0, 0)
+	var left := CahHeroes.new_profile(system, "Left Behind", 0, 0)
+	for profile in [brought, left]:
+		if CahHeroes.save_profile(profile) != "":
+			_check("default_setup_hero_fixtures_save", false)
+			return
+	menu._refresh_hero_rows()
+	_check("default_setup_is_two_rows_on_medium",
+		menu.solo_flyout.row_army_opts.size() == 2 and not menu._setup_is_advanced_rows(),
+		"rows=%d" % menu.solo_flyout.row_army_opts.size())
+
+	var picker: OptionButton = menu.solo_flyout.hero_dropdowns[0]
+	var picked_index := -1
+	for index in range(picker.item_count):
+		if String(picker.get_item_metadata(index)) == String(brought.get("heroId", "")):
+			picked_index = index
+	_check("default_setup_lists_the_saved_heroes", picked_index > 0, "index=%d" % picked_index)
+	if picked_index > 0:
+		picker.select(picked_index)
+
+	var brought_object := "CreateAHero__%s" % String(brought.get("heroId", ""))
+	var left_object := "CreateAHero__%s" % String(left.get("heroId", ""))
+	_check("default_setup_launch_is_recorded", menu.apply_skirmish_selection())
+	var fielded := _fielded_created_heroes(menu, system)
+	_check("default_setup_fields_only_the_picked_hero",
+		fielded.has(brought_object) and not fielded.has(left_object),
+		"fielded=%s" % str(fielded))
+
+	# TOGGLE OFF must also suppress the single-player fallback: writing [] here
+	# is what let every saved hero back in through the side door.
+	menu.solo_flyout.custom_heroes_toggle.button_pressed = false
+	menu.solo_flyout.custom_heroes_toggle.toggled.emit(false)
+	_check("default_setup_launch_is_recorded_with_heroes_off", menu.apply_skirmish_selection())
+	var suppressed := _fielded_created_heroes(menu, system)
+	_check("default_setup_with_custom_heroes_off_fields_none",
+		suppressed.is_empty(), "fielded=%s" % str(suppressed))
+	menu.solo_flyout.custom_heroes_toggle.button_pressed = true
+	menu.solo_flyout.custom_heroes_toggle.toggled.emit(true)
+	_check("toggling_custom_heroes_back_on_keeps_the_pick",
+		String(menu._selected_row_hero_id(0)) == String(brought.get("heroId", "")),
+		String(menu._selected_row_hero_id(0)))
+
+	for profile in [brought, left]:
+		CahHeroes.delete_profile(String(profile.get("heroId", "")))
+
+
+func _fielded_created_heroes(menu: Node, system: Dictionary) -> Array:
+	## The created heroes THIS recorded launch would put on the fortress, read
+	## back through the slice's own classification rather than re-derived here.
+	var slice = load("res://src/retail_slice/retail_vertical_slice.gd").new()
+	var map_data = load("res://src/retail_slice/retail_map_data.gd").new()
+	map_data.local_transform_scale = 0.1
+	slice.source_map_data = map_data
+	slice._classify_faction_units("men", {}, {}, {}, menu._game_state, system)
+	var out: Array = []
+	for object_id in (slice.producible_unit_runtimes as Dictionary).keys():
+		if String(object_id).begins_with("CreateAHero__"):
+			out.append(String(object_id))
+	slice.free()
+	out.sort()
+	return out
 
 
 func _check_build_identity(menu: Node) -> void:
