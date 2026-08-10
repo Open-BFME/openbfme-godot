@@ -752,6 +752,15 @@ func _cah_system_runtime() -> Dictionary:
 	return value as Dictionary if typeof(value) == TYPE_DICTIONARY else {}
 
 
+func _cah_system_snapshot() -> Dictionary:
+	## A PRIVATE COPY of the class table, taken on the main thread, for the
+	## skirmish sweep to carry onto its worker. The worker may not reach an
+	## autoload - Godot refuses node lookups off the main thread - so without
+	## this the slice it builds classifies every faction with no created heroes
+	## and the availability answer disagrees with the match the player then gets.
+	return _cah_system_runtime().duplicate(true)
+
+
 func _on_my_heroes_pressed() -> void:
 	_close_shell_flyouts()
 	if not ensure_my_heroes_screen():
@@ -1743,8 +1752,13 @@ func _start_skirmish_worker() -> void:
 	var host_root := String(host_resolution.get("root", ""))
 	var selected_root := _selected_faction_pack_root()
 	var men_gate_error := _men_pack_gate_error_from_snapshot(
-		pack_meta_snapshot, maps_snapshot, host_resolution
+		pack_meta_snapshot, maps_snapshot, host_resolution, unit_snapshot
 	)
+	# The Create-a-Hero table, captured HERE on the main thread. The worker
+	# cannot reach an autoload - Godot refuses node lookups off the main thread -
+	# so a slice built there would classify a faction with no created heroes on
+	# it and the sweep would answer with a roster the match then contradicts.
+	var cah_snapshot := _cah_system_snapshot()
 	_skirmish_worker_cancel_mutex.lock()
 	_skirmish_worker_cancelled = false
 	_skirmish_worker_cancel_mutex.unlock()
@@ -1755,7 +1769,7 @@ func _start_skirmish_worker() -> void:
 			slice_script, manifest_script, map_data_script, choices, host_root, selected_root,
 			unit_snapshot, structure_snapshot, pack_index_snapshot, maps_snapshot, men_gate_error,
 			lazy_script_failure(LAZY_SLICE), lazy_script_failure(LAZY_FACTION_MANIFEST),
-			_skirmish_worker_result_box
+			cah_snapshot, _skirmish_worker_result_box
 		), false, "OpenBFME skirmish availability")
 
 
@@ -1763,14 +1777,14 @@ func _skirmish_worker_entry(slice_script, manifest_script, map_data_script,
 		choices: Array, host_root: String, selected_root: String, unit_snapshot: Dictionary,
 		structure_snapshot: Dictionary, pack_index_snapshot: Dictionary, maps_snapshot: Dictionary,
 		men_gate_error: String, slice_failure: String, manifest_failure: String,
-		result_box: Dictionary) -> void:
+		cah_snapshot: Dictionary, result_box: Dictionary) -> void:
 	# Wrapper is the finally-equivalent: an inner script error returns here, and
 	# the pooled thread has checks restored before its result is observed.
 	Thread.set_thread_safety_checks_enabled(false)
 	var result = _compute_skirmish_sweep_worker(
 		slice_script, manifest_script, map_data_script, choices, host_root, selected_root,
 		unit_snapshot, structure_snapshot, pack_index_snapshot, maps_snapshot,
-		men_gate_error, slice_failure, manifest_failure
+		men_gate_error, slice_failure, manifest_failure, cah_snapshot
 	)
 	Thread.set_thread_safety_checks_enabled(true)
 	# WorkerThreadPool discards task return values. This private box is read only
@@ -1781,7 +1795,8 @@ func _skirmish_worker_entry(slice_script, manifest_script, map_data_script,
 func _compute_skirmish_sweep_worker(slice_script, manifest_script, map_data_script,
 		choices: Array, host_root: String, selected_root: String, unit_snapshot: Dictionary,
 		structure_snapshot: Dictionary, pack_index_snapshot: Dictionary, maps_snapshot: Dictionary,
-		men_gate_error: String, slice_failure: String, manifest_failure: String) -> Dictionary:
+		men_gate_error: String, slice_failure: String, manifest_failure: String,
+		cah_snapshot: Dictionary = {}) -> Dictionary:
 	## THREAD-SAFETY CONTRACT: this job creates and mutates only its private probe
 	## and result dictionaries. ContentDB/pack calls here are read-only snapshots,
 	## plus bounded file reads. Shared menu dictionaries and all Controls are only
@@ -1801,7 +1816,8 @@ func _compute_skirmish_sweep_worker(slice_script, manifest_script, map_data_scri
 		var faction_id := String((faction_value as Dictionary)["id"])
 		availability[faction_id] = _compute_faction_availability(
 			faction_id, probe, manifest_script, unit_snapshot, structure_snapshot,
-			pack_index_snapshot, men_gate_error, slice_failure, manifest_failure)
+			pack_index_snapshot, men_gate_error, slice_failure, manifest_failure,
+			cah_snapshot)
 		_note_skirmish_worker_progress()
 		if _skirmish_worker_is_cancelled():
 			if probe != null:
@@ -1832,7 +1848,8 @@ func _compute_skirmish_sweep_worker(slice_script, manifest_script, map_data_scri
 
 func _compute_faction_availability(faction_id: String, probe, manifest_script,
 		unit_snapshot: Dictionary, structures: Dictionary, pack_index_snapshot: Dictionary,
-		men_gate_error: String, slice_failure: String, manifest_failure: String) -> String:
+		men_gate_error: String, slice_failure: String, manifest_failure: String,
+		cah_snapshot: Dictionary = {}) -> String:
 	if manifest_script == null:
 		return manifest_failure if manifest_failure != "" else SKIRMISH_MANIFEST_UNAVAILABLE_VERDICT
 	if faction_id == manifest_script.DEFAULT_FACTION:
@@ -1843,7 +1860,7 @@ func _compute_faction_availability(faction_id: String, probe, manifest_script,
 		if _skirmish_worker_is_cancelled():
 			return "validation-cancelled"
 		probe._classify_faction_units(
-			faction_id, unit_snapshot, structures, pack_index_snapshot
+			faction_id, unit_snapshot, structures, pack_index_snapshot, null, cah_snapshot
 		)
 		if _skirmish_worker_is_cancelled():
 			return "validation-cancelled"
@@ -2142,8 +2159,10 @@ func _skirmish_validation_context(fresh: bool = false) -> Dictionary:
 		"host_root": String(host_resolution.get("root", "")),
 		"selected_root": _selected_faction_pack_root(),
 		"men_gate_error": _men_pack_gate_error_from_snapshot(
-			pack_meta_snapshot, maps_snapshot, host_resolution
+			pack_meta_snapshot, maps_snapshot, host_resolution,
+			_content_db.call("get_playable_unit_runtimes") as Dictionary
 		),
+		"cah_system": _cah_system_snapshot(),
 	}
 	if fresh:
 		return context
@@ -2161,7 +2180,8 @@ func validate_skirmish_faction(faction_id: String) -> String:
 		faction_id, context["probe"], context["manifest_script"],
 		context["units"] as Dictionary, context["structures"] as Dictionary,
 		context["pack_index"] as Dictionary, String(context["men_gate_error"]),
-		lazy_script_failure(LAZY_SLICE), lazy_script_failure(LAZY_FACTION_MANIFEST)
+		lazy_script_failure(LAZY_SLICE), lazy_script_failure(LAZY_FACTION_MANIFEST),
+		context.get("cah_system", {}) as Dictionary
 	)
 	_skirmish_availability[faction_id] = verdict
 	_skirmish_on_pick_validation_ms += Time.get_ticks_msec() - started
@@ -2269,14 +2289,17 @@ func compute_skirmish_synchronous_baseline_for_test() -> Dictionary:
 	var host_resolution: Dictionary = PackCapabilityScript.resolve_host_slice_pack(pack_meta_snapshot)
 	var host_root := String(host_resolution.get("root", ""))
 	var selected_root := _selected_faction_pack_root()
-	var men_gate_error := _men_pack_gate_error_from_snapshot(pack_meta_snapshot, maps_snapshot, host_resolution)
+	var men_gate_error := _men_pack_gate_error_from_snapshot(
+		pack_meta_snapshot, maps_snapshot, host_resolution, unit_snapshot
+	)
 	for faction_value in RETAIL_FACTIONS:
 		var step_started := Time.get_ticks_msec()
 		var faction_id := String((faction_value as Dictionary)["id"])
 		availability[faction_id] = _compute_faction_availability(
 			faction_id, probe, manifest_script, unit_snapshot, structure_snapshot,
 			pack_index_snapshot, men_gate_error,
-			lazy_script_failure(LAZY_SLICE), lazy_script_failure(LAZY_FACTION_MANIFEST))
+			lazy_script_failure(LAZY_SLICE), lazy_script_failure(LAZY_FACTION_MANIFEST),
+			_cah_system_snapshot())
 		worst = maxi(worst, Time.get_ticks_msec() - step_started)
 	for choice_value in _skirmish_map_choice_rows:
 		var step_started := Time.get_ticks_msec()
@@ -2755,7 +2778,8 @@ func _retail_faction_availability(faction_id: String) -> String:
 		faction_id, context["probe"], context["manifest_script"],
 		context["units"] as Dictionary, context["structures"] as Dictionary,
 		context["pack_index"] as Dictionary, String(context["men_gate_error"]),
-		lazy_script_failure(LAZY_SLICE), lazy_script_failure(LAZY_FACTION_MANIFEST)
+		lazy_script_failure(LAZY_SLICE), lazy_script_failure(LAZY_FACTION_MANIFEST),
+		context.get("cah_system", {}) as Dictionary
 	)
 
 
@@ -2830,14 +2854,23 @@ func _men_pack_gate_error() -> String:
 	## The first fail-closed checks retail_vertical_slice runs for the default
 	## Men manifest: soldier/horde/map bundle documents, the soldier animation
 	## capability, and a mounted pack that can host the match.
-	var member := _content_db.call("get_bundle_object", SliceIds.SOLDIER_OBJECT_ID) as Dictionary
-	var horde := _content_db.call("get_bundle_object", SliceIds.SOLDIER_HORDE_ID) as Dictionary
-	var map_definition := _content_db.call("get_bundle_map", SliceIds.MAP_ID) as Dictionary
-	if member.is_empty() or horde.is_empty() or map_definition.is_empty():
-		return "the private bfme2-men-vslice pack is not selected (run run_importer.bat)"
-	var capability := _content_db.call("get_animation_capability", String(member.get("animationCapabilityId", ""))) as Dictionary
-	if capability.is_empty():
-		return "the bfme2-men-vslice pack soldier animation capability is missing"
+	## THE LEGACY PROBE IS THE LAST RESORT, not the first. Its three documents are
+	## the shapes the old bfme2-men-vslice pack shipped; a selection that provides
+	## Men in the current shape carries playable-unit runtimes instead, and asking
+	## it for a bundle object told the player Men was "not converted" while six
+	## other factions - which never came through here - loaded from that same
+	## selection. So when there is modern content mounted, Men is left to the same
+	## per-faction classification every other faction gets, and only the question
+	## that classification cannot answer is asked here: can anything host a match.
+	if (_content_db.call("get_playable_unit_runtimes") as Dictionary).is_empty():
+		var member := _content_db.call("get_bundle_object", SliceIds.SOLDIER_OBJECT_ID) as Dictionary
+		var horde := _content_db.call("get_bundle_object", SliceIds.SOLDIER_HORDE_ID) as Dictionary
+		var map_definition := _content_db.call("get_bundle_map", SliceIds.MAP_ID) as Dictionary
+		if member.is_empty() or horde.is_empty() or map_definition.is_empty():
+			return "no selected content pack provides the Men faction (run run_importer.bat)"
+		var capability := _content_db.call("get_animation_capability", String(member.get("animationCapabilityId", ""))) as Dictionary
+		if capability.is_empty():
+			return "the selected pack's soldier animation capability is missing"
 	# Ask the SAME question the slice's host resolver asks, through the SAME
 	# function: a menu that passes while the slice refuses is a launch that dies
 	# after the loading screen. Two copies of the walk is how they came to
@@ -2862,20 +2895,37 @@ func _men_pack_gate_error() -> String:
 func _men_pack_gate_error_from_snapshot(
 	_pack_meta_snapshot: Array,
 	maps_snapshot: Dictionary,
-	host_resolution: Dictionary
+	host_resolution: Dictionary,
+	unit_snapshot: Dictionary = {}
 ) -> String:
 	# Called on the main thread before dispatch. The returned string is the only
 	# Men gate state the worker consumes; pack_meta/maps are private snapshots.
-	var member := _content_db.call("get_bundle_object", SliceIds.SOLDIER_OBJECT_ID) as Dictionary
-	var horde := _content_db.call("get_bundle_object", SliceIds.SOLDIER_HORDE_ID) as Dictionary
-	var map_definition := maps_snapshot.get(SliceIds.MAP_ID, {}) as Dictionary
-	if member.is_empty() or horde.is_empty() or map_definition.is_empty():
-		return "the private bfme2-men-vslice pack is not selected (run run_importer.bat)"
-	var capability := _content_db.call(
-		"get_animation_capability", String(member.get("animationCapabilityId", ""))
-	) as Dictionary
-	if capability.is_empty():
-		return "the bfme2-men-vslice pack soldier animation capability is missing"
+	#
+	# THIS GATE USED TO ASK FOR ONE PACK BY ITS CONTENTS. It looked for the
+	# gondor-fighter BUNDLE object and the Fords of Isen II bundle map, which are
+	# the shapes the old bfme2-men-vslice pack shipped - so a selection that
+	# provides Men perfectly well in the CURRENT shape (playable-unit runtimes,
+	# which is how all seven RotWK factions arrive) was told Men was "not
+	# converted" and the PLAY button was refused. Six other factions passed the
+	# whole time, because only Men was ever routed through here.
+	#
+	# So: when the mounted content speaks the current shape at all, Men is
+	# validated the way every other faction already is - classify it and read its
+	# manifest's own verdict, a few lines below in _compute_faction_availability.
+	# The legacy probe remains for a legacy-only selection, where it is still the
+	# only evidence there is. What stays unconditional is the one thing the
+	# per-faction check cannot answer: whether ANY mounted pack can host a match.
+	if unit_snapshot.is_empty():
+		var member := _content_db.call("get_bundle_object", SliceIds.SOLDIER_OBJECT_ID) as Dictionary
+		var horde := _content_db.call("get_bundle_object", SliceIds.SOLDIER_HORDE_ID) as Dictionary
+		var map_definition := maps_snapshot.get(SliceIds.MAP_ID, {}) as Dictionary
+		if member.is_empty() or horde.is_empty() or map_definition.is_empty():
+			return "no selected content pack provides the Men faction (run run_importer.bat)"
+		var capability := _content_db.call(
+			"get_animation_capability", String(member.get("animationCapabilityId", ""))
+		) as Dictionary
+		if capability.is_empty():
+			return "the selected pack's soldier animation capability is missing"
 	if String(host_resolution.get("root", "")) != "":
 		return ""
 	return String(host_resolution.get("error", "no mounted content pack can host a match"))

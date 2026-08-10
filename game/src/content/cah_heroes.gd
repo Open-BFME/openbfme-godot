@@ -378,7 +378,7 @@ static func new_profile(system: Dictionary, name: String, class_index: int, sub_
 		"classIndex": class_index,
 		"subClassIndex": sub_index,
 		"attributes": default_attributes(sub_row),
-		"appearance": default_appearance(sub_row),
+		"appearance": default_appearance(sub_row, system),
 		"powers": default_powers(system, class_index),
 		"awards": [],
 		"trackingStats": {},
@@ -616,17 +616,68 @@ static func appearance_options(system: Dictionary) -> Array:
 	return registration.get("appearanceOptions", []) as Array
 
 
-static func default_appearance(sub_row: Dictionary) -> Dictionary:
-	## First authored upgrade per appearance group, or empty when the pack has
-	## no appearanceChoices (attribute-only systems).
+static func default_sub_object_show_set(sub_row: Dictionary) -> Dictionary:
+	## The parts a subclass wears before the player changes anything, as a set.
+	## Authored in two places depending on the compile, so both are read.
+	var out: Dictionary = {}
+	var sets: Array = [
+		sub_row.get("defaultSubObjects", {}),
+		(sub_row.get("models", {}) as Dictionary).get("defaultSubObjects", {}),
+	]
+	for set_value in sets:
+		if typeof(set_value) != TYPE_DICTIONARY:
+			continue
+		for part_value in ((set_value as Dictionary).get("show", []) as Array):
+			out[String(part_value)] = true
+	return out
+
+
+static func default_appearance(sub_row: Dictionary, system: Dictionary = {}) -> Dictionary:
+	## What the hero is wearing when the screen opens.
+	##
+	## THE AUTHORED ANSWER FIRST: the option whose parts are in the subclass's own
+	## default show-set is, by definition, the state retail draws before anything
+	## is chosen. Where that set names none of a group's options the first
+	## authored upgrade is used, which for several groups is retail's "No Helmet"
+	## / "No Boots" row - the hero opens bare-headed and barefoot.
+	##
+	## THAT IS A KNOWN GAP, not a choice. Retail marks the real defaults with `@`
+	## on the BlingUpgrades lines and no compiled pack carries that flag yet, so
+	## on today's content the show-set is empty and every group falls back. The
+	## rule above is here so the day a pack states its defaults - as `@`-derived
+	## flags or as a populated show-set - the hero dresses himself with no further
+	## change here. Picking "the first option that shows something" instead would
+	## dress him now by inventing an answer retail never gave.
 	var out := {}
 	var choices: Dictionary = sub_row.get("appearanceChoices", {}) as Dictionary
+	var shown := default_sub_object_show_set(sub_row)
 	for group_value in choices.keys():
 		var upgrades: Array = choices[group_value] as Array
 		if upgrades.is_empty():
 			continue
 		out[String(group_value)] = String(upgrades[0])
+		if shown.is_empty() or system.is_empty():
+			continue
+		for upgrade_value in upgrades:
+			if _option_shows_any(system, String(upgrade_value), shown):
+				out[String(group_value)] = String(upgrade_value)
+				break
 	return out
+
+
+static func _option_shows_any(system: Dictionary, upgrade_name: String, shown: Dictionary) -> bool:
+	for row_value in appearance_options(system):
+		var row := row_value as Dictionary
+		if String(row.get("upgradeName", "")) != upgrade_name:
+			continue
+		var parts: Array = (row.get("subObjects", {}) as Dictionary).get("show", []) as Array
+		if parts.is_empty():
+			return false
+		for part_value in parts:
+			if not shown.has(String(part_value)):
+				return false
+		return true
+	return false
 
 
 static func default_powers(_system: Dictionary, _class_index: int) -> Array:

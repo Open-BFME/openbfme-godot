@@ -44,7 +44,7 @@ const LEVEL_FOUR_UPGRADE := "Upgrade_CreateAHeroGloriousCharge"
 
 ## LIVENESS. A GDScript runtime error aborts its function without propagating,
 ## so a broken run would print zero failures. Raise deliberately; never lower.
-const EXPECTED_CHECKS := 47
+const EXPECTED_CHECKS := 50
 
 var passed := 0
 var failed := 0
@@ -90,6 +90,7 @@ func _run() -> void:
 	_test_baseline_contract(system, profile)
 
 	_test_skirmish_ownership_follows_the_human(system)
+	_test_created_heroes_survive_a_worker_thread(system)
 
 	var slice = _classified_slice(system)
 	if slice == null:
@@ -404,6 +405,52 @@ func _test_baseline_contract(system: Dictionary, profile: Dictionary) -> void:
 	)
 
 
+func _test_created_heroes_survive_a_worker_thread(system: Dictionary) -> void:
+	## THE SWEEP RUNS OFF THE TREE, ON A POOLED WORKER. Godot refuses node lookups
+	## from a non-main thread, so a slice built there cannot ASK for the mounted
+	## class table - it has to be handed it, exactly as the sweep is already
+	## handed its unit, structure and pack-index snapshots. Before that hand-off
+	## existed the classification simply found no table, and every created hero
+	## was quietly missing from the availability answer the menu shows while the
+	## game logged an error per faction.
+	##
+	## Both halves are pinned: injected, the hero is there; NOT injected, it is
+	## not - so the plumbing cannot be tidied away as redundant.
+	var outcome := {"injected": 0, "bare": 0}
+	var worker := Thread.new()
+	var started := worker.start(func() -> void:
+		outcome["injected"] = _classify_on_this_thread(system)
+		outcome["bare"] = _classify_on_this_thread({})
+	)
+	_check(started == OK, "the sweep worker thread starts")
+	if started == OK:
+		worker.wait_to_finish()
+	_check(
+		int(outcome["injected"]) >= 1,
+		"a created hero reaches the roster from a worker thread off the scene tree (found %d)"
+			% int(outcome["injected"])
+	)
+	_check(
+		int(outcome["bare"]) == 0,
+		"a worker that is handed no class table finds no created hero, which is why it is handed one"
+	)
+
+
+func _classify_on_this_thread(system: Dictionary) -> int:
+	var slice_script = load("res://src/retail_slice/retail_vertical_slice.gd")
+	var slice = slice_script.new()
+	var map_data = load("res://src/retail_slice/retail_map_data.gd").new()
+	map_data.local_transform_scale = MAP_SCALE
+	slice.source_map_data = map_data
+	slice._classify_faction_units(FACTION, {}, {}, {}, null, system)
+	var found := 0
+	for object_id in (slice.producible_unit_runtimes as Dictionary).keys():
+		if String(object_id).begins_with("CreateAHero__"):
+			found += 1
+	slice.free()
+	return found
+
+
 func _test_skirmish_ownership_follows_the_human(system: Dictionary) -> void:
 	## THE HUMAN IS NOT ALWAYS ON ROW 0. A skirmish roster hands each row its own
 	## sim team out of TEAM_ID_POOL, so a created hero owned by a hardcoded
@@ -444,11 +491,10 @@ func _classified_slice(system: Dictionary, game_state = null):
 	var map_data = load("res://src/retail_slice/retail_map_data.gd").new()
 	map_data.local_transform_scale = MAP_SCALE
 	slice.source_map_data = map_data
-	slice._classify_faction_units(FACTION)
-	# The detached slice cannot reach the ContentDB autoload, so the mounted
-	# table is injected the same way _menu_team_setup takes an injected
-	# GameState. This IS the production injection path, not a copy of it.
-	slice._add_created_heroes(FACTION, system, game_state)
+	# ONE classification, with the class table and the setup injected the way the
+	# skirmish sweep injects them on its worker. Calling _add_created_heroes a
+	# second time by hand would collide with the roster the first pass built.
+	slice._classify_faction_units(FACTION, {}, {}, {}, game_state, system)
 	return slice
 
 

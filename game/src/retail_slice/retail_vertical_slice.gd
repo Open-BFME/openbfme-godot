@@ -1653,7 +1653,9 @@ func _classify_faction_units(
 	faction: String,
 	unit_runtimes_override: Dictionary = {},
 	structure_runtimes_override: Dictionary = {},
-	pack_index_override: Dictionary = {}
+	pack_index_override: Dictionary = {},
+	game_state_override = null,
+	cah_system_override: Dictionary = {}
 ) -> void:
 	## Roster composition for the selected faction: each converted playableUnit
 	## document is either fieldable (resolved simulation evidence, a supported
@@ -1776,7 +1778,7 @@ func _classify_faction_units(
 		fieldable_unit_runtimes[object_id] = document
 		producible_unit_runtimes[object_id] = document
 
-	_add_created_heroes(slug)
+	_add_created_heroes(slug, cah_system_override, game_state_override)
 
 
 func _add_created_heroes(
@@ -1795,7 +1797,7 @@ func _add_created_heroes(
 	## because a hero the fortress cannot train is a hero the player cannot buy.
 	var system_document := system_override
 	if system_document.is_empty():
-		var content_db := get_node_or_null("/root/ContentDB")
+		var content_db := _tree_autoload("ContentDB")
 		if content_db == null:
 			return
 		var system_value: Variant = content_db.get("cah_system_runtime")
@@ -1848,6 +1850,34 @@ func _add_created_heroes(
 			continue
 		fieldable_unit_runtimes[object_id] = created[object_id_value]
 		producible_unit_runtimes[object_id] = created[object_id_value]
+
+
+func _tree_autoload(node_name: String) -> Node:
+	## An autoload, resolved WITHOUT an absolute path from `self`.
+	##
+	## `get_node("/root/X")` is only legal from a node that is itself in the
+	## active scene tree. The skirmish faction sweep builds a slice on a WORKER
+	## THREAD, off the tree, and every absolute lookup from it fails outright -
+	## which is how created heroes came to be silently missing from the sweep's
+	## availability answer while the game logged an error per faction. The runners
+	## never saw it because a headless runner is on the main thread and injects
+	## the dependency anyway.
+	##
+	## Walking the tree from the root instead does not help either: Godot refuses
+	## `get_node_or_null` on ANY node from a non-main thread. Nor may the autoload
+	## be named as a bare global identifier - a `--script` runner compiles its
+	## preloaded scripts BEFORE the singletons are registered, and the bare name
+	## is then a compile error that poisons this whole script for the process
+	## (pack_capability.gd carries the same scar).
+	##
+	## So the lookup is simply not attempted from off the tree. Callers that run
+	## there - the sweep worker - are handed what they need instead, the way the
+	## sweep already hands over its unit, structure and pack-index snapshots.
+	## Asking and getting null is how the hero used to vanish; asking is now the
+	## main-thread path and injection is the worker's.
+	if not is_inside_tree():
+		return null
+	return get_node_or_null("/root/%s" % node_name)
 
 
 func _local_player_team(game_state = null) -> int:
@@ -1987,7 +2017,7 @@ func _menu_team_setup(game_state = null) -> Array:
 	## injected game_state (detached-node tests) overrides the autoload lookup.
 	if OS.get_environment("OPENBFME_SLICE_FACTION").strip_edges() != "":
 		return []
-	var state = game_state if game_state != null else get_node_or_null("/root/GameState")
+	var state = game_state if game_state != null else _tree_autoload("GameState")
 	if state == null:
 		return []
 	var raw: Variant = state.get("retail_team_setup")
