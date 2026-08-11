@@ -121,6 +121,10 @@ func configure(map_data: RetailMapData) -> bool:
 	_clear_generated()
 	if map_data == null or not map_data.ready:
 		return _fail_configuration("retail map data is unavailable")
+	if not map_data.castle_gameplay_blockers.is_empty():
+		return _fail_configuration(
+			"castle gameplay unsupported: " + ", ".join(map_data.castle_gameplay_blockers)
+		)
 	if not _build_bound_retail_props(map_data):
 		return false
 	if profile_init:

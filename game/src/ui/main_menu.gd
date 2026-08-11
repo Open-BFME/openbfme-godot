@@ -1907,6 +1907,7 @@ func _compute_map_availability(map_id: String, probe, map_data_script,
 			pack_root, resolved, _skirmish_worker_is_cancelled
 		))
 		var validation_error := String(map_data.error)
+		var castle_blockers: Array[String] = map_data.castle_gameplay_blockers.duplicate()
 		# RefCounted validators created in a pooled task must drop their final
 		# reference on that same task; waiting for VM local cleanup leaked them.
 		map_data = null
@@ -1914,6 +1915,8 @@ func _compute_map_availability(map_id: String, probe, map_data_script,
 			return "validation-cancelled"
 		if not loaded:
 			return "cooked map data failed validation: %s" % validation_error
+		if not castle_blockers.is_empty():
+			return "castle gameplay unsupported: " + ", ".join(castle_blockers)
 		return ""
 	if map_id == SliceIds.MAP_ID:
 		if host_root == "":

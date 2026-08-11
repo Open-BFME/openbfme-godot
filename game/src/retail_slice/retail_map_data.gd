@@ -22,6 +22,15 @@ const MAX_TERRAIN_TEXTURE_TOTAL_BYTES := 128 * 1024 * 1024
 const BLEND_DESCRIPTION_RECORD_BYTES := 18
 const CLIFF_MAPPING_RECORD_BYTES := 38
 const MAX_MAP_OBJECTS := 5000
+const CASTLE_SIEGE_FAMILY := "retail-castle-siege-skirmish"
+const CASTLE_SIEGE_STATUS := "blocked-named-gaps"
+const CASTLE_SIEGE_ADMISSION_POLICY := "document-loadable-lobby-visible-gameplay-fails-closed"
+const CASTLE_SIEGE_BLOCKERS: Array[String] = [
+	"walkable-walls",
+	"defendable-gates",
+	"wall-garrisons",
+	"wall-mounted-defenses",
+]
 const MAX_WATER_VERTICES := 4096
 ## BFME2 1.06 CREEP_OBJECTFILTER lair set (gamedata.ini line 87): every lair
 ## placement on the five converted maps carries originalOwner PlyrCreeps.
@@ -105,6 +114,11 @@ var map_id := ""
 var source_virtual_path := ""
 var source_sha256 := ""
 var source_bytes := 0
+## Authored only by the castle/siege admission profile. Existing maps have an
+## empty array, so their deterministic runtime path is byte-for-byte unchanged.
+## A non-empty array means the source document is loadable and inspectable, but
+## battlefield configuration and menu availability must refuse gameplay by name.
+var castle_gameplay_blockers: Array[String] = []
 var _map_runtime_profile: Dictionary = DEFAULT_MAP_RUNTIME_PROFILE
 var width := 0
 var height := 0
@@ -236,6 +250,8 @@ func load_from_pack(
 	if source_binary_packaged:
 		return _fail("retail source map must not be packaged")
 	map_id = String(map_definition.get("id", ""))
+	if not _load_castle_siege_contract(map_definition.get("castleSiege", null)):
+		return false
 	_map_runtime_profile = MAP_RUNTIME_PROFILES.get(map_id, DEFAULT_MAP_RUNTIME_PROFILE)
 	var source_identity := _dictionary(map_definition.get("source", {}))
 	source_virtual_path = String(source_identity.get("virtualPath", ""))
@@ -372,6 +388,31 @@ func load_from_pack(
 	if profile_init:
 		print("RETAIL_MAP_DATA_PHASE name=navigation delta_ms=%d" % (Time.get_ticks_msec() - profile_last_ms))
 	ready = true
+	return true
+
+
+func _load_castle_siege_contract(value: Variant) -> bool:
+	castle_gameplay_blockers.clear()
+	if value == null:
+		return true
+	if typeof(value) != TYPE_DICTIONARY:
+		return _fail("castleSiege must be an object")
+	var contract := value as Dictionary
+	if (
+		contract.size() != 4
+		or String(contract.get("family", "")) != CASTLE_SIEGE_FAMILY
+		or String(contract.get("gameplayStatus", "")) != CASTLE_SIEGE_STATUS
+		or String(contract.get("admissionPolicy", "")) != CASTLE_SIEGE_ADMISSION_POLICY
+		or typeof(contract.get("blockers", null)) != TYPE_ARRAY
+	):
+		return _fail("invalid castleSiege admission contract")
+	var blockers := contract.get("blockers", []) as Array
+	if blockers.size() != CASTLE_SIEGE_BLOCKERS.size():
+		return _fail("invalid castleSiege blocker inventory")
+	for index in range(CASTLE_SIEGE_BLOCKERS.size()):
+		if typeof(blockers[index]) != TYPE_STRING or String(blockers[index]) != CASTLE_SIEGE_BLOCKERS[index]:
+			return _fail("invalid castleSiege blocker inventory")
+	castle_gameplay_blockers.assign(blockers)
 	return true
 
 
@@ -2456,6 +2497,7 @@ func _reset() -> void:
 	source_virtual_path = ""
 	source_sha256 = ""
 	source_bytes = 0
+	castle_gameplay_blockers.clear()
 	_map_runtime_profile = DEFAULT_MAP_RUNTIME_PROFILE
 	height_samples = PackedByteArray()
 	passability_bits = PackedByteArray()

@@ -169,6 +169,7 @@ ALLOWED_MAP_METADATA = frozenset(
         "terrainMaterials",
         "roadMaterials",
         "knownEnvironment",
+        "castleSiege",
     }
 )
 
@@ -3237,6 +3238,26 @@ def convert_sage_map(
         metadata["knownEnvironment"], dict
     ):
         raise SageMapError("sage-map metadata.knownEnvironment must be an object")
+    if "castleSiege" in metadata:
+        castle_siege = metadata["castleSiege"]
+        if (
+            not isinstance(castle_siege, dict)
+            or set(castle_siege)
+            != {"family", "gameplayStatus", "blockers", "admissionPolicy"}
+            or castle_siege.get("family") != "retail-castle-siege-skirmish"
+            or castle_siege.get("gameplayStatus") != "blocked-named-gaps"
+            or castle_siege.get("admissionPolicy")
+            != "document-loadable-lobby-visible-gameplay-fails-closed"
+            or not isinstance(castle_siege.get("blockers"), list)
+            or castle_siege.get("blockers")
+            != [
+                "walkable-walls",
+                "defendable-gates",
+                "wall-garrisons",
+                "wall-mounted-defenses",
+            ]
+        ):
+            raise SageMapError("sage-map metadata.castleSiege contract is invalid")
     if resolved_profile.map_kind != "multiplayer":
         missing_names = [
             field for field in ("id", "displayName") if field not in metadata
@@ -3670,6 +3691,7 @@ def convert_sage_map(
         "terrainMaterials",
         "roadMaterials",
         "knownEnvironment",
+        "castleSiege",
     ):
         if field in metadata:
             map_data[field] = metadata[field]

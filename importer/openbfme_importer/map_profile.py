@@ -105,6 +105,60 @@ MAP_CATEGORIES = (
     SYSTEM_CATEGORY,
 )
 
+#: Retail castle/siege maps which are lobby-authored multiplayer maps despite
+#: living under ``map wor`` directories.  The old directory-only admission
+#: rule treated every one as strategic-layer-only.  This finite census is
+#: pinned to RotWK's official map registry and parsed object documents; it is
+#: deliberately not a wall-name heuristic that could sweep ordinary WOTR maps
+#: into the skirmish lobby.
+_CASTLE_GAMEPLAY_BLOCKERS = (
+    "walkable-walls",
+    "defendable-gates",
+    "wall-garrisons",
+    "wall-mounted-defenses",
+)
+
+
+def _castle_runtime_contract() -> dict[str, Any]:
+    return {
+        "family": "retail-castle-siege-skirmish",
+        "gameplayStatus": "blocked-named-gaps",
+        "blockers": list(_CASTLE_GAMEPLAY_BLOCKERS),
+        "admissionPolicy": "document-loadable-lobby-visible-gameplay-fails-closed",
+    }
+
+
+CASTLE_SIEGE_MAPS: dict[str, dict[str, Any]] = {
+    path: {
+        "displayName": display_name,
+        "playerCount": player_count,
+        "runtimeContract": _castle_runtime_contract(),
+    }
+    for path, display_name, player_count in (
+        (
+            "maps/map mp amon sul fortress/map mp amon sul fortress.map",
+            "Amon Sul Fortress",
+            3,
+        ),
+        ("maps/map wor ang carn dum/map wor ang carn dum.map", "Carn Dum", 2),
+        ("maps/map wor ang fornost/map wor ang fornost.map", "Fornost", 3),
+        ("maps/map wor black gate/map wor black gate.map", "Black Gate", 3),
+        ("maps/map wor dol guldur/map wor dol guldur.map", "Dol Guldur", 4),
+        ("maps/map wor erebor/map wor erebor.map", "Erebor", 2),
+        ("maps/map wor grey havens/map wor grey havens.map", "Grey Havens", 3),
+        ("maps/map wor helms deep/map wor helms deep.map", "Helm's Deep", 4),
+        ("maps/map wor isengard/map wor isengard.map", "Isengard", 2),
+        ("maps/map wor minas morgul/map wor minas morgul.map", "Minas Morgul", 3),
+        ("maps/map wor minas tirith/map wor minas tirith.map", "Minas Tirith", 4),
+    )
+}
+
+
+def castle_siege_map_evidence(virtual_path: str) -> dict[str, Any] | None:
+    """Return the pinned retail castle admission row for an exact map path."""
+
+    return CASTLE_SIEGE_MAPS.get(virtual_path.replace("\\", "/").casefold())
+
 #: Categories whose registry ``isMultiplayer`` flag is meaningful, and whose
 #: ``numPlayers`` therefore has to agree with the authored player starts.
 _MULTIPLAYER_CATEGORIES = frozenset({SKIRMISH_CATEGORY, WOTR_BATTLE_CATEGORY})
@@ -344,6 +398,8 @@ def discover_registry_map_targets(
         virtual_path = str(record["virtualPath"])
         directory = _map_directory(virtual_path)
         category = classify_map_directory(directory)
+        if castle_siege_map_evidence(virtual_path) is not None:
+            category = SKIRMISH_CATEGORY
         if category not in selected_categories:
             continue
         if prefix and not directory.casefold().startswith(prefix):
@@ -686,6 +742,9 @@ def build_map_profile(
             "displayName": target.display_name,
             "terrainMaterials": terrain_materials_output,
         }
+        castle_evidence = castle_siege_map_evidence(target.virtual_path)
+        if castle_evidence is not None:
+            metadata["castleSiege"] = dict(castle_evidence["runtimeContract"])
         if preview_entry is not None:
             metadata["preview"] = preview_output
         if art_entry is not None:
@@ -840,6 +899,8 @@ def build_map_profile(
             ),
             "navigationMeshStatus": "not-generated-or-validated-by-map-profile",
         }
+        if castle_evidence is not None:
+            row["castleSiege"] = dict(castle_evidence["runtimeContract"])
         if preview_entry is not None:
             row["preview"] = preview_output
         if art_entry is not None:

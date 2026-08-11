@@ -46,6 +46,7 @@ from openbfme_importer.map_census import (  # noqa: E402
     resolve_map_display_name,
 )
 from openbfme_importer.map_profile import (  # noqa: E402
+    castle_siege_map_evidence,
     SKIRMISH_CATEGORY,
     WOTR_BATTLE_CATEGORY,
     classify_map_directory,
@@ -185,6 +186,8 @@ def _registry_category(virtual_path: str) -> str:
     maps, so the flag alone cannot define a skirmish list.  The shipped
     directory kind is the authored fact and the only one that separates them.
     """
+    if castle_siege_map_evidence(virtual_path) is not None:
+        return SKIRMISH_CATEGORY
     parts = virtual_path.replace("\\", "/").split("/")
     folder = parts[-2] if len(parts) >= 2 else Path(virtual_path).stem
     words = [w for w in folder.casefold().split() if w]
@@ -300,6 +303,9 @@ def build_registry_skirmish_catalog(
             "navigationMeshStatus": "not-generated-or-validated-by-map-profile",
             "terrainMaterialsStatus": "pending-bfme2-base-or-layered-assets",
         }
+        castle_evidence = castle_siege_map_evidence(virtual)
+        if castle_evidence is not None:
+            row["castleSiege"] = dict(castle_evidence["runtimeContract"])
         # Retail ships ``<map>_pic.tga`` (lobby/minimap preview) and
         # ``<map>_art.tga`` (loading plate) beside the binary. This lane used to
         # cook neither, so every published row carried an empty preview/art and
