@@ -584,6 +584,7 @@ def _appearance_options(
     garment: Mapping[str, Mapping[str, Any]] | None = None,
     combat: Mapping[str, Mapping[str, Any]] | None = None,
     marked_defaults: Mapping[str, str] | None = None,
+    group_orders: Mapping[str, int | None] | None = None,
 ) -> list[dict[str, Any]]:
     ## Every CreateAHeroBling part (helmet pieces, weapons, …) as a catalog row.
     ## Each row carries the sub-object visibility its upgrade switches, so a
@@ -599,6 +600,13 @@ def _appearance_options(
             "groupName": group,
             "nameStringId": (bling.value("NameTag") or "").strip(),
             "descriptionStringId": (bling.value("DescriptionTag") or "").strip(),
+            # Optional for existing consumers, but explicit even when retail
+            # omits it: null means "not declared", never "use array position".
+            "groupOrder": (
+                group_orders.get(upgrade.casefold())
+                if group_orders is not None
+                else None
+            ),
             "subObjects": _empty_sub_objects()
             if garment is None
             else deepcopy(dict(garment.get(upgrade.casefold(), _empty_sub_objects()))),
@@ -1959,6 +1967,41 @@ def _upgrade_index(documents: Mapping[str, bytes]) -> dict[str, tuple[str, int]]
     return index
 
 
+def _appearance_group_orders(
+    documents: Mapping[str, bytes],
+) -> dict[str, int | None]:
+    """``upgradeName -> declared GroupOrder`` including authored absences.
+
+    Appearance order is not the order of CreateAHeroBling rows. Retail stores
+    the value declared on the corresponding Upgrade block, and some families
+    (notably Weapon) declare no value at all. Those absences are data and must
+    survive compilation as ``None`` rather than acquiring a positional guess.
+    """
+
+    raw = _lookup(documents, UPGRADES_PATH)
+    if raw is None:
+        raise CahSystemCompilerError(f"{UPGRADES_PATH}: document is missing")
+    out: dict[str, int | None] = {}
+    for block in parse_flat_named_blocks(raw, "Upgrade"):
+        values = block.values("GroupOrder")
+        if len(values) > 1:
+            raise CahSystemCompilerError(
+                f"{UPGRADES_PATH}: Upgrade {block.name} declares GroupOrder "
+                f"{len(values)} times"
+            )
+        order: int | None = None
+        if values:
+            text = values[0].strip()
+            if not text.isdigit():
+                raise CahSystemCompilerError(
+                    f"{UPGRADES_PATH}: Upgrade {block.name} has non-numeric "
+                    f"GroupOrder {text!r}"
+                )
+            order = int(text)
+        out[block.name.casefold()] = order
+    return out
+
+
 def _modifier_index(
     documents: Mapping[str, bytes], attribute_multiplier: float
 ) -> dict[str, dict[str, Any]]:
@@ -2487,7 +2530,8 @@ def compile_cah_system_descriptor(
     idle_plan = _creation_idle_plan(system, documents)
     marked_defaults = _marked_default_upgrades(system)
     appearance_options = _appearance_options(
-        system, garment, combat_profiles, marked_defaults
+        system, garment, combat_profiles, marked_defaults,
+        _appearance_group_orders(documents),
     )
     upgrades = _upgrade_index(documents)
     modifiers = _modifier_index(documents, attribute_multiplier)

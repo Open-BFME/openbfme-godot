@@ -331,10 +331,37 @@ func _test_retail_cah_import(system: Dictionary) -> void:
 			"CreateAHero_Boots": "Upgrade_Boots02",
 			"CreateAHero_Gauntlets": "Upgrade_Gauntlets02",
 			"CreateAHero_Helmet": "Upgrade_Helmet02",
-			"CreateAHero_Shield": "Upgrade_Shield02",
+			# Stored order 1 resolves by declaration, not by array position.
+			"CreateAHero_Shield": "Upgrade_Shield01",
 			"CreateAHero_ShoulderPlates": "Upgrade_ShoulderPlates02",
 			"CreateAHero_Weapon": "Upgrade_Weapon02",
 		}, "a retail-shaped twelve-group file imports every appearance GroupOrder intact")
+	var collision_system := realistic_system.duplicate(true)
+	var collision_options := (collision_system["registration"] as Dictionary)["appearanceOptions"] as Array
+	for option_value in collision_options:
+		var option := option_value as Dictionary
+		if String(option.get("groupName", "")) == "CreateAHero_Body":
+			option["groupOrder"] = 1
+	var collision_result := CahHeroes.import_retail_cah_profile(collision_system,
+		Marshalls.base64_to_raw(RETAIL_CAH_REALISTIC_BASE64), "colliding-appearance-order.cah")
+	var collision_refusals := collision_result.get("refusals", PackedStringArray()) as PackedStringArray
+	_check(collision_refusals.size() == 1
+		and String(collision_refusals[0]).contains("CreateAHero_Body")
+		and String(collision_refusals[0]).contains("ambiguous"),
+		"a colliding declared appearance GroupOrder is refused by group and order")
+	var absent_system := realistic_system.duplicate(true)
+	var absent_options := (absent_system["registration"] as Dictionary)["appearanceOptions"] as Array
+	for option_value in absent_options:
+		var option := option_value as Dictionary
+		if String(option.get("groupName", "")) == "CreateAHero_Weapon":
+			option["groupOrder"] = null
+	var absent_result := CahHeroes.import_retail_cah_profile(absent_system,
+		Marshalls.base64_to_raw(RETAIL_CAH_REALISTIC_BASE64), "absent-appearance-order.cah")
+	var absent_refusals := absent_result.get("refusals", PackedStringArray()) as PackedStringArray
+	_check(absent_refusals.size() == 1
+		and String(absent_refusals[0]).contains("CreateAHero_Weapon GroupOrder 1")
+		and String(absent_refusals[0]).contains("declare no GroupOrder"),
+		"a group with no declared GroupOrder refuses instead of using position")
 	var unknown_appearance := Marshalls.base64_to_raw(RETAIL_CAH_REALISTIC_BASE64)
 	var body_marker := "CreateAHero_Body".to_ascii_buffer()
 	var body_at := unknown_appearance.hex_encode().find(body_marker.hex_encode()) / 2
@@ -342,8 +369,11 @@ func _test_retail_cah_import(system: Dictionary) -> void:
 		unknown_appearance[body_at + body_marker.size()] = 99
 	var unknown_result := CahHeroes.import_retail_cah_profile(
 		realistic_system, unknown_appearance, "unknown-appearance-order.cah")
-	_check(not (unknown_result.get("refusals", PackedStringArray()) as PackedStringArray).is_empty(),
-		"an appearance GroupOrder the mounted table does not author is refused by name")
+	var unknown_refusals := unknown_result.get("refusals", PackedStringArray()) as PackedStringArray
+	_check(unknown_refusals.size() == 1
+		and String(unknown_refusals[0]).contains("CreateAHero_Body GroupOrder 99")
+		and String(unknown_refusals[0]).contains("declared orders are [0, 1]"),
+		"an unknown appearance GroupOrder is refused with the declared orders")
 	var unsanitized_result := CahHeroes.import_retail_cah_profile(system,
 		Marshalls.base64_to_raw(RETAIL_CAH_UNSANITIZED_NAME_BASE64), "unsanitized-name.cah")
 	var sanitized_profile := unsanitized_result.get("profile", {}) as Dictionary
@@ -377,22 +407,39 @@ func _test_retail_cah_import(system: Dictionary) -> void:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(CahHeroes.profile_dir()))
 	var fixture_file := FileAccess.open(fixture_path, FileAccess.WRITE)
 	if fixture_file != null:
-		fixture_file.store_buffer(Marshalls.base64_to_raw(RETAIL_CAH_WRITER_BASE64))
+		var ui_fixture := Marshalls.base64_to_raw(RETAIL_CAH_WRITER_BASE64)
+		_set_cah_group_order(ui_fixture, "CreateAHero_ArmorAttribute", 14)
+		_set_cah_group_order(ui_fixture, "CreateAHero_DamageMultAttribute", 12)
+		fixture_file.store_buffer(ui_fixture)
 		fixture_file.close()
+	# Exercise a warm roster: import selection and hydration must not depend on
+	# this being the first profile created during a cold run.
+	var existing := CahHeroes.new_profile(system, "Existing Hero", 0, 0)
+	_check(CahHeroes.save_profile(existing) == "", "the warm-roster import fixture saves")
 	var screen := MyHeroesScreen.new()
 	root.add_child(screen)
 	screen.configure(system)
 	var ui_refusals := screen.import_retail_file(fixture_path)
 	var imported_profiles := CahHeroes.load_profiles()
-	_check(ui_refusals.is_empty() and imported_profiles.size() == 1
-		and String(imported_profiles[0].get("importedFrom", "")) == "RETAIL-SYNTHETIC-ID",
+	var imported := {}
+	for candidate_value in imported_profiles:
+		var candidate := candidate_value as Dictionary
+		if String(candidate.get("importedFrom", "")) == "RETAIL-SYNTHETIC-ID":
+			imported = candidate
+			break
+	_check(ui_refusals.is_empty() and imported_profiles.size() == 2 and not imported.is_empty(),
 		"the MY HEROES import action validates and saves through the real profile store")
 	_check(screen.name_edit.text == "Imported Captain",
 		"import selects the new roster row and hydrates the editor with its name")
+	_check(int(screen.working_attributes().get("CreateAHero_ArmorAttribute", 0)) == 15
+		and int(screen.working_attributes().get("CreateAHero_DamageMultAttribute", 0)) == 13,
+		"import hydrates a non-default 30-point attribute spend into the editor")
 	screen._on_save_pressed()
-	var resaved := CahHeroes.load_profiles()
-	_check(resaved.size() == 1 and String(resaved[0].get("name", "")) == "Imported Captain",
-		"saving immediately after import preserves the imported hero")
+	var resaved := CahHeroes.load_profile(String(imported.get("heroId", "")))
+	_check(String(resaved.get("name", "")) == "Imported Captain"
+		and int((resaved.get("attributes", {}) as Dictionary).get("CreateAHero_ArmorAttribute", 0)) == 15
+		and int((resaved.get("attributes", {}) as Dictionary).get("CreateAHero_DamageMultAttribute", 0)) == 13,
+		"saving after a warm-roster import preserves the imported non-default spend")
 	screen.queue_free()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(fixture_path))
 	_clear_profiles()
@@ -2381,6 +2428,16 @@ func _colors_are_rgb_triples(colors: Array) -> bool:
 	return true
 
 
+func _set_cah_group_order(data: PackedByteArray, group: String, order: int) -> void:
+	var marker := group.to_ascii_buffer()
+	var offset := data.hex_encode().find(marker.hex_encode()) / 2
+	if offset < 0:
+		return
+	offset += marker.size()
+	for byte_index in range(4):
+		data[offset + byte_index] = (order >> (byte_index * 8)) & 0xff
+
+
 func _system_with_appearance_choices(system: Dictionary) -> Dictionary:
 	var out := system.duplicate(true)
 	var classes := ((out["registration"] as Dictionary)["classes"] as Array)
@@ -2392,8 +2449,14 @@ func _system_with_appearance_choices(system: Dictionary) -> Dictionary:
 		var first := "Upgrade_%s01" % tail
 		var second := "Upgrade_%s02" % tail
 		choices[group] = [first, second]
-		options.append({"upgradeName": first, "groupName": group})
-		options.append({"upgradeName": second, "groupName": group})
+		options.append({"upgradeName": first, "groupName": group, "groupOrder": 0})
+		options.append({"upgradeName": second, "groupName": group, "groupOrder": 1})
+	# Deliberately reverse Shield's declarations: stored order 1 must bind the
+	# first positional option, proving the importer follows retail's declaration.
+	for option_value in options:
+		var option := option_value as Dictionary
+		if String(option.get("groupName", "")) == "CreateAHero_Shield":
+			option["groupOrder"] = 1 if String(option.get("upgradeName", "")).ends_with("01") else 0
 	sub_row["appearanceChoices"] = choices
 	(out["registration"] as Dictionary)["appearanceOptions"] = options
 	return out

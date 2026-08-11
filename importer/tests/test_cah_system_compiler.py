@@ -42,6 +42,30 @@ def _upgrades() -> bytes:
                 f"  GroupOrder = {step - 1}\n"
                 f"End"
             )
+    lines.extend(
+        [
+            "Upgrade Upgrade_CAPG_CHS01\n"
+            "  Type = OBJECT\n"
+            "  GroupName = CreateAHero_Shield\n"
+            "  GroupOrder = 0\n"
+            "End",
+            "Upgrade Upgrade_CAPG_CHS02\n"
+            "  Type = OBJECT\n"
+            "  GroupName = CreateAHero_Shield\n"
+            "  GroupOrder = 1\n"
+            "End",
+            # Retail's Weapon upgrades declare no GroupOrder. The compiler must
+            # publish that absence as null, not invent a positional order.
+            "Upgrade Upgrade_CHW01\n"
+            "  Type = OBJECT\n"
+            "  GroupName = CreateAHero_Weapon\n"
+            "End",
+            "Upgrade Upgrade_CHW02\n"
+            "  Type = OBJECT\n"
+            "  GroupName = CreateAHero_Weapon\n"
+            "End",
+        ]
+    )
     return "\n".join(lines).encode("cp1252")
 
 
@@ -107,6 +131,14 @@ def _binders() -> str:
     )
     out.append(
         "\tCreateAHeroBlingBinder\n"
+        "\t\tGroupName = CreateAHero_Shield\n"
+        "\t\tLabelTag = CAH:ShieldMenuLabel\n"
+        "\t\tUISlot = 2\n"
+        "\t\tBlingType = APPEARANCE\n"
+        "\tEnd"
+    )
+    out.append(
+        "\tCreateAHeroBlingBinder\n"
         "\t\tGroupName = CreateAHero_Weapon\n"
         "\t\tLabelTag = CAH:WeaponMenuLabel\n"
         "\t\tUISlot = 1\n"
@@ -124,6 +156,8 @@ APPEARANCE_BLINGS = (
     ("CreateAHero_Helmet", "Upgrade_CaptainOfGondor_CHH02"),
     ("CreateAHero_Weapon", "Upgrade_CHW01"),
     ("CreateAHero_Weapon", "Upgrade_CHW02"),
+    ("CreateAHero_Shield", "Upgrade_CAPG_CHS01"),
+    ("CreateAHero_Shield", "Upgrade_CAPG_CHS02"),
 )
 
 
@@ -334,6 +368,7 @@ def _sub_class(
         "\t\tBlingUpgrades = Upgrade_CaptainOfGondor_CHH01 "
         "@Upgrade_CaptainOfGondor_CHH02",
         "\t\tBlingUpgrades = Upgrade_CHW01 Upgrade_CHW02",
+        "\t\tBlingUpgrades = Upgrade_CAPG_CHS01 Upgrade_CAPG_CHS02",
         f"\t\tSpendableAttributePoints = {budget}",
         f"\t\tUpgradeName = Upgrade_CreateAHero_SubClass_{sub_index}",
         "\t\tDefaultPrimaryColor = R:150 G:151\tB:152",
@@ -727,6 +762,15 @@ class CahSystemCompilerTests(unittest.TestCase):
         descriptor = compile_cah_system_descriptor(_documents())
         sub = descriptor["classes"][0]["subClasses"][0]
         self.assertEqual(sub["defaultColors"], [[150, 151, 152], [10, 20, 30], [255, 0, 128]])
+
+    def test_appearance_options_publish_declared_group_order_without_guessing(self) -> None:
+        options = {
+            row["upgradeName"]: row
+            for row in compile_cah_system_descriptor(_documents())["appearanceOptions"]
+        }
+        self.assertEqual(options["Upgrade_CAPG_CHS01"]["groupOrder"], 0)
+        self.assertEqual(options["Upgrade_CAPG_CHS02"]["groupOrder"], 1)
+        self.assertIsNone(options["Upgrade_CHW01"]["groupOrder"])
 
     def test_compiles_classes_groups_and_ladders(self) -> None:
         descriptor = compile_cah_system_descriptor(_documents())

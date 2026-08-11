@@ -487,12 +487,12 @@ static func import_retail_cah_profile(system: Dictionary, data: PackedByteArray,
 			(profile["attributes"] as Dictionary)[group] = order + 1
 		elif appearance_choices.has(group):
 			var choices := appearance_choices[group] as Array
-			if order < 0 or order >= choices.size():
-				mapping_refusals.append(
-					"%s GroupOrder %d is outside the mounted 0..%d choices"
-					% [group, order, choices.size() - 1])
+			var resolved := _appearance_upgrade_for_group_order(system, group, choices, order)
+			var refusal := String(resolved.get("refusal", ""))
+			if not refusal.is_empty():
+				mapping_refusals.append(refusal)
 			else:
-				(profile["appearance"] as Dictionary)[group] = String(choices[order])
+				(profile["appearance"] as Dictionary)[group] = String(resolved.get("upgrade", ""))
 		else:
 			mapping_refusals.append("%s is not authored for class %d subclass %d" % [
 				group, class_index, sub_index])
@@ -502,6 +502,44 @@ static func import_retail_cah_profile(system: Dictionary, data: PackedByteArray,
 	if not validation.is_empty():
 		return {"profile": {}, "refusals": PackedStringArray(validation)}
 	return {"profile": profile, "refusals": PackedStringArray()}
+
+
+static func _appearance_upgrade_for_group_order(system: Dictionary, group: String,
+		choices: Array, stored_order: int) -> Dictionary:
+	## A .cah stores Upgrade.GroupOrder, not a CreateAHeroBling array index.
+	## Missing declarations and retail collisions are both unknowable states.
+	var choice_names := {}
+	for value in choices:
+		choice_names[String(value)] = true
+	var declared_orders: Array[int] = []
+	var matches: Array[String] = []
+	var registration := system.get("registration", {}) as Dictionary
+	for value in registration.get("appearanceOptions", []) as Array:
+		var option := value as Dictionary
+		var upgrade := String(option.get("upgradeName", ""))
+		if String(option.get("groupName", "")) != group or not choice_names.has(upgrade):
+			continue
+		if not option.has("groupOrder") or option.get("groupOrder") == null:
+			continue
+		var declared := int(option.get("groupOrder"))
+		if declared not in declared_orders:
+			declared_orders.append(declared)
+		if declared == stored_order:
+			matches.append(upgrade)
+	declared_orders.sort()
+	if declared_orders.is_empty():
+		return {"refusal": (
+			"%s GroupOrder %d cannot be mapped: mounted options declare no GroupOrder values"
+			% [group, stored_order])}
+	if matches.is_empty():
+		return {"refusal": (
+			"%s GroupOrder %d is not declared by the mounted options; declared orders are %s"
+			% [group, stored_order, str(declared_orders)])}
+	if matches.size() > 1:
+		return {"refusal": (
+			"%s GroupOrder %d is ambiguous; mounted options %s all declare it"
+			% [group, stored_order, str(matches)])}
+	return {"upgrade": matches[0]}
 
 
 static func carry_profile_optional_keys(rebuilt: Dictionary, existing: Dictionary) -> Dictionary:
@@ -695,9 +733,10 @@ static func _cah_string(state: Dictionary, what: String, utf16: bool) -> String:
 			return ""
 		unit_index += 2
 	var text := bytes.get_string_from_utf16()
-	# One decoded character per authored UTF-16 unit is the oracle's round-trip
-	# boundary. Godot otherwise accepts an unpaired surrogate by silently
-	# dropping/replacing it and hands the importer a different name.
+	# Deliberately stricter than the Python oracle: valid astral characters use a
+	# surrogate pair and therefore decode to fewer Godot UTF-32 characters than
+	# authored UTF-16 units. Until profile-name policy admits that distinction,
+	# refuse them as well as lossy decoding instead of silently changing a name.
 	if text.length() != count:
 		_cah_fail(state, int(state["offset"]) - bytes.size(),
 			"%s decoded to %d characters, expected %d UTF-16 units" % [what, text.length(), count])

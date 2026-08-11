@@ -139,8 +139,10 @@ func open(active_session, host_flag: bool, local_default_name: String = "",
 	local_ready_check.button_pressed = false
 	chat_log_label.text = ""
 	_set_settings_editable(is_host)
-	_apply_settings_to_controls(SessionScript.lobby_default_settings())
 	_populate_hero_picker()
+	# Applying settings can announce the visible picker selection. Populate its
+	# metadata first so reopening never announces the previous session's row.
+	_apply_settings_to_controls(SessionScript.lobby_default_settings())
 	if session != null:
 		session.lobby_updated.connect(_on_lobby_updated)
 		session.lobby_chat_received.connect(_on_lobby_chat)
