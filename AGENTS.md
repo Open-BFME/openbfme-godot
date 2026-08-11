@@ -41,7 +41,10 @@ another machine and run. Four steps, one command each.
 | 4. Publish | `powershell -File tools\Publish-DistBuild.ps1` | Lands in `dist\v<version>\`. Add `-Rc` for the release candidate (launcher included), `-Zip` to hand it over a share |
 
 `powershell -File tools\Test-DistPipeline.ps1` checks steps 1-3 in about a
-second — run it before you spend half an hour on step 4.
+second — run it before you spend an hour and a half on step 4. Two switches
+exist because that hour and a half is real: `-PreflightOnly` runs every check
+and the hand-off binding and stops before building; `-FinishOnly` verifies an
+already-built `dist\v<version>\` and redoes only the notes, stamp and launcher.
 
 - **`dist\` and `build\` are git-ignored and stay that way.** The published
   folder carries converted retail content packs. `Publish-DistBuild.ps1` asks git
