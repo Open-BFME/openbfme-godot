@@ -75,6 +75,26 @@ func _run() -> void:
 	_check("pack_carries_theoden_mounted_only_button", (mounted_only.get("RohanTheoden", []) as Array).has("Command_SpecialAbilityTheodenGloriousCharge"))
 	_check("pack_carries_glorfindel_mounted_only_button", (mounted_only.get("ElvenGlorfindel", []) as Array).has("Command_SpecialAbilityGlorfindelWindRider"))
 	_check("pack_carries_faramir_unmounted_only_buttons", (unmounted_only.get("GondorFaramir", []) as Array).has("Command_SpecialAbilityWoundArrow"))
+	# THE FOURTH FORM-GATED HERO, WHO IS NOT A SUBJECT.
+	#
+	# The shipped packs carry exactly four form-gated heroes. Three of them are
+	# exercised above and through the HUD/sim sections below. The fourth, Angmar's
+	# Morgramir, authors `Command_SpecialAbilityDarkGlory Options = UNMOUNTED_ONLY`
+	# but has NO mount button at all: angmarmorgramir.ini:716 gives him the
+	# ToggleMounted behavior while AngmarMorgramirCommandSet (commandset.ini:
+	# 3261-3273) never offers it, so the importer correctly emits no mount-toggle
+	# ability and the subject filter above skips him. His behaviour is right in
+	# every reachable retail state - he always reads unmounted, so Dark Glory
+	# always shows - but without this row a republish that dropped his
+	# UNMOUNTED_ONLY option would not redden anything. Asserted as PACK DATA only;
+	# there is no HUD state to drive.
+	_check(
+		"pack_carries_morgramir_unmounted_only_option_though_he_has_no_mount_button",
+		_object_option_is_compiled(
+			content_db, "AngmarMorgramir", "Command_SpecialAbilityDarkGlory", "UNMOUNTED_ONLY"
+		),
+		"angmarmorgramir.json must still compile the authored UNMOUNTED_ONLY option"
+	)
 	if subjects.is_empty():
 		_finish()
 		return
@@ -245,6 +265,22 @@ func _hidden_names(buttons: Dictionary, ability_ids: Array) -> String:
 			output.append(String(ability_value))
 	return "hidden:%s" % str(output) if not output.is_empty() else ""
 
+
+
+func _object_option_is_compiled(
+	content_db, object_id: String, ability_id: String, option: String
+) -> bool:
+	## Pack-data only: does this object's compiled ability rule still carry the
+	## authored option? Used for a form-gated hero the HUD sections cannot drive
+	## because retail never gives him a mount button.
+	var document: Dictionary = content_db.call("get_playable_unit_runtime", object_id)
+	if document.is_empty():
+		return false
+	for rule in Adapter.ability_rules(document):
+		if String(rule.get("ability_id", "")) != ability_id:
+			continue
+		return (rule.get("options", []) as Array).has(option)
+	return false
 
 func _check(name: String, ok: bool, detail: String = "") -> bool:
 	_runner_watchdog.note(name)

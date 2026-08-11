@@ -94,7 +94,35 @@ var observability_enabled := false
 var music_player: AudioStreamPlayer
 var _music_player_alt: AudioStreamPlayer
 var voice_player: AudioStreamPlayer
+## `sfx_player` is the HEAD of `sfx_players`, kept as a named field because the
+## slice, the settings lane and the existing gates all reference it directly.
 var sfx_player: AudioStreamPlayer
+## THE SFX LANE IS A POOL, NOT ONE PLAYER.
+##
+## A single AudioStreamPlayer meant `stream = ...; play()` per event, so every
+## effect CUT OFF the previous one mid-sample. At horde combat rates (one
+## `combat.member_swing` per member per attack) a ~1s clip survived 50-100ms:
+## a machine-gun of clipped transients, which is the mechanical cause of the
+## "attack sounds awful" playtest report. Round-robin over N players lets
+## simultaneous effects overlap the way the retail mixer does.
+##
+## NAMED LIMITATION: these are non-positional AudioStreamPlayers, not
+## AudioStreamPlayer3D. Retail authors `Type = world ...` on these events
+## (3D positional with MinRange/MaxRange attenuation), but the sim's
+## `combat.member_swing` / `combat.hit` payloads carry NO world position
+## (retail_slice_sim.gd emits attacker/target ids only), so there is nothing
+## honest to place a 3D emitter at from this module. Recorded as
+## `unsupported-type:world:<event>` in `sfx_semantics_gaps`.
+const SFX_POOL_SIZE := 8
+var sfx_players: Array[AudioStreamPlayer] = []
+var _sfx_cursor := 0
+## event_id -> how many times the authored `Limit` voice cap dropped a request.
+## Retail AudioEvent `Limit = 3` means at most three concurrent instances; the
+## cap is HONORED (the pack carries the field) and every drop is counted.
+var sfx_limit_drops: Dictionary = {}
+## Retail AudioEvent parameters this lane still cannot honor, as
+## `unsupported-<field>:<event_id>` strings. Never invented, only reported.
+var sfx_semantics_gaps: Dictionary = {}
 # music_streams keeps the legacy state -> primary AudioStream view (the exact
 # <state>.mp3 leaf) so existing closure gates stay intact.
 var music_streams: Dictionary = {}
@@ -136,12 +164,28 @@ var playable_unit_weapon_sfx: Dictionary = {}
 ## class — a machine or monster never borrows the human BodyFallSoldier).
 var playable_unit_bodyfall: Dictionary = {}
 ## object id -> the unit's OWN authored `SoundImpact` AudioEvent id.
+##
+## NOT the per-hit sound. Retail's `SoundImpact` is the CRUSH / KNOCKBACK thud:
+## `data/ini/object/goodfaction/units/men/gondorfighter.ini:768` authors
+## `SoundImpact = ImpactHorse` (a horse-trample leaf) on an INFANTRY object,
+## and the same file's knockback death module at :913-919
+## (`Behavior = SlowDeathBehavior ModuleTag_07 / DeathTypes = NONE +KNOCKBACK`)
+## carries the comment "Same as normal death, but no sound (sound already
+## played by SoundImpact = ... )". The field is kept indexed here so a future
+## crush/knockback event can route it (`route_crush_impact`); it must never be
+## routed from `combat.hit`.
 var playable_unit_impact: Dictionary = {}
-## object id -> how many times that unit had to use the CLASS weapon-swing
-## default because no converted pack carries its weapon's FXList sound. This is
-## the measured size of the "everything swings the same" gap; see
-## `_route_weapon_swing`.
+## object id -> how many weapon swings that unit had to drop because no
+## converted pack carries its weapon's FXList sound. This is the measured size
+## of the remaining "this unit has no swing sound" gap; see
+## `_route_weapon_swing`. The old class defaults (`SwordShingClean1ForHordes` /
+## `ArrowDrawBow`) were INVENTED substitutions no retail weapon chain names for
+## these units, so the gap is now a counted silence instead of a wrong sound.
 var generic_weapon_swing_fallbacks: Dictionary = {}
+## damage type (retail `DamageType`, e.g. SLASH/PIERCE) -> how many hits landed
+## with no per-hit sound because the DamageFX table is not imported. See the
+## `combat.hit` branch in `sync_events`.
+var damage_fx_gaps: Dictionary = {}
 ## Per-structure-kind converted audio contract projected by the slice from the
 ## faction's playable-structure documents (select/damage/collapse/EVA ids and
 ## the damaged-state health fractions). Kinds absent here keep legacy routing.
@@ -229,6 +273,9 @@ func configure(selected_pack_root: String, enable_playback: bool = true, active_
 	playable_unit_bodyfall.clear()
 	playable_unit_impact.clear()
 	generic_weapon_swing_fallbacks.clear()
+	damage_fx_gaps.clear()
+	sfx_limit_drops.clear()
+	sfx_semantics_gaps.clear()
 	route_failures.clear()
 	missing_required_events.clear()
 	unvoiced_roster_degradations.clear()
@@ -289,10 +336,19 @@ func _ensure_players() -> void:
 		voice_player = AudioStreamPlayer.new()
 		voice_player.name = "RetailVoice"
 		add_child(voice_player)
-	if sfx_player == null or not is_instance_valid(sfx_player):
-		sfx_player = AudioStreamPlayer.new()
-		sfx_player.name = "RetailSfx"
-		add_child(sfx_player)
+	# The SFX pool. Index 0 is also published as `sfx_player` so every existing
+	# caller and gate keeps its handle; indices 1..N-1 exist purely so a second
+	# simultaneous effect does not truncate the first.
+	var rebuilt: Array[AudioStreamPlayer] = []
+	for index in SFX_POOL_SIZE:
+		var existing: AudioStreamPlayer = sfx_players[index] if index < sfx_players.size() else null
+		if existing == null or not is_instance_valid(existing):
+			existing = AudioStreamPlayer.new()
+			existing.name = "RetailSfx" if index == 0 else "RetailSfx%d" % index
+			add_child(existing)
+		rebuilt.append(existing)
+	sfx_players = rebuilt
+	sfx_player = sfx_players[0]
 	_apply_volume_levels()
 
 
@@ -356,8 +412,11 @@ func _apply_volume_levels() -> void:
 		_music_player_alt.volume_db = UserSettingsScript.SILENT_DB
 	if voice_player != null and is_instance_valid(voice_player):
 		voice_player.volume_db = UserSettingsScript.volume_to_db(voice_sfx_volume, muted)
-	if sfx_player != null and is_instance_valid(sfx_player):
-		sfx_player.volume_db = UserSettingsScript.volume_to_db(voice_sfx_volume, muted)
+	# The whole SFX pool tracks the user slider; a per-event retail `Volume`
+	# offset is added on top at play time (see `_play_sfx`).
+	for pooled_sfx in sfx_players:
+		if pooled_sfx != null and is_instance_valid(pooled_sfx):
+			pooled_sfx.volume_db = UserSettingsScript.volume_to_db(voice_sfx_volume, muted)
 	for ambient_player in ambient_players:
 		if ambient_player != null and is_instance_valid(ambient_player):
 			ambient_player.volume_db = UserSettingsScript.volume_to_db(voice_sfx_volume, muted)
@@ -1196,7 +1255,7 @@ func _consume_event(event: Dictionary) -> void:
 		# The porter's own VoiceBuildResponse acknowledges the build order and
 		# the site starts its hammering loop bed.
 		_play_routed(route_roster_voice(_object_id_for_event(event, entity_id), "build", sequence), voice_player)
-		_play_routed(route_audio_event("BuildingConstructionLoop", sequence), sfx_player)
+		_play_sfx(route_audio_event("BuildingConstructionLoop", sequence))
 	elif kind == "construction.completed":
 		# Retail EVA "construction complete" sting (GenericBuildingComplete-Builder),
 		# local player team only (team 0 mirrors the sim's PLAYER_TEAM).
@@ -1205,7 +1264,7 @@ func _consume_event(event: Dictionary) -> void:
 	elif kind == "battalion.defeated":
 		var defeated_object_id := _object_id_for_event(event, target_id)
 		_play_routed(route_roster_voice(defeated_object_id, "death", sequence), voice_player)
-		_play_routed(_route_bodyfall(defeated_object_id, sequence), sfx_player)
+		_play_sfx(_route_bodyfall(defeated_object_id, sequence))
 		_entity_object_ids.erase(target_id)
 		# Pure RotWK 2.01 has no generic UnitLost/BattalionLost EVA block.
 		# The unit's own authored death voice above is therefore the complete,
@@ -1213,32 +1272,71 @@ func _consume_event(event: Dictionary) -> void:
 	elif kind == "battalion.member_defeated":
 		# Every fallen member lands its own class bodyfall (horde wipes are not
 		# a single thud); the battalion's die voice still fires once at defeat.
-		_play_routed(_route_bodyfall(_object_id_for_event(event, target_id), sequence), sfx_player)
+		_play_sfx(_route_bodyfall(_object_id_for_event(event, target_id), sequence))
 	elif kind == "combat.swing":
-		_play_routed(_route_weapon_swing(_object_id_for_event(event, entity_id), sequence), sfx_player)
+		# BATTALION-LEVEL CADENCE MARKER ONLY - deliberately silent.
+		#
+		# `combat.swing` fires ONCE for the whole horde when an attack cycle
+		# begins (retail_slice_sim.gd:15743). Retail's weapon sound is a WEAPON
+		# FireFX, which fires per weapon discharge, i.e. once per MEMBER:
+		# `data/ini/weapon.ini:5514 Weapon GondorSword` authors
+		# `FireFX = FX_GondorSwordHit` and every soldier in the horde carries
+		# that weapon. Routing it from the battalion event made eight swordsmen
+		# produce one clink. The per-member hop below is the retail-shaped one;
+		# the battalion's own acknowledgement is the `voice.attack` ack handled
+		# above.
+		#
+		# IT IS NOT USELESS: it is the only combat event that carries the
+		# battalion's `object_id` (retail_slice_sim.gd:15745). The per-member
+		# event that follows it in the same attack cycle carries only
+		# member_index (retail_slice_sim.gd:15754-15760), so without this hop a
+		# starting-army battalion - one never seen via production.complete or
+		# unit.summoned - would have no object to resolve its weapon sound from.
+		var swinging_object_id := String(event.get("object_id", ""))
+		if swinging_object_id != "" and entity_id > 0 and _active_roster_object_ids().has(swinging_object_id):
+			_entity_object_ids[entity_id] = swinging_object_id
+	elif kind == "combat.member_swing":
+		# ONE WEAPON SOUND PER MEMBER PER SWING, matching retail's per-weapon
+		# FireFX. The sim has emitted this event at retail_slice_sim.gd:15754
+		# and NOTHING in game/src consumed it.
+		_play_sfx(_route_weapon_swing(_object_id_for_event(event, entity_id), sequence))
 	elif kind == "combat.hit":
-		# THE IMPACT LAYER IS PER-UNIT AUTHORED, not per-class guessed. Retail
-		# writes `SoundImpact = <AudioEvent>` on the Object itself (e.g.
-		# `data/ini/object/goodfaction/units/men/gondorfighter.ini` -
-		# `SoundImpact = ImpactHorse`), the importer already carries that field
-		# into every playable-unit document's `registration.audioRoutes`, and
-		# `_load_playable_unit_audio_routes` now indexes it. So a hit answers
-		# with the leaf THAT unit declares.
+		# THE PER-HIT LAYER IS A NAMED, COUNTED GAP - NOT SoundImpact.
 		#
-		# The previous rule fired one hardcoded `ImpactHorse` for cavalry /
-		# monster / siege and left every infantry and hero hit silent, which is
-		# a large part of what "the fighting sounds generic" was: an authored
-		# per-unit field was shipped in the packs and never read.
+		# This branch used to route the target object's `SoundImpact`. That is
+		# the wrong retail field twice over:
 		#
-		# Units with no authored SoundImpact keep the old class rule, and
-		# infantry without one still fails closed to silence rather than
-		# borrowing another unit's leaf.
-		var hit_object_id := String(event.get("target_object_id", ""))
-		var authored_impact := String(playable_unit_impact.get(hit_object_id, ""))
-		if authored_impact != "":
-			_play_routed(route_audio_event(authored_impact, sequence), sfx_player)
-		elif _is_cavalry_object(hit_object_id) or String(playable_unit_categories.get(hit_object_id, "")) in ["monster", "siege"]:
-			_play_routed(route_audio_event("ImpactHorse", sequence), sfx_player)
+		# 1. `SoundImpact` is the CRUSH / KNOCKBACK thud, not the per-hit sound.
+		#    `gondorfighter.ini:768` authors `SoundImpact = ImpactHorse` on an
+		#    INFANTRY object, and the same file's knockback death module
+		#    (`gondorfighter.ini:913-919`, `SlowDeathBehavior ModuleTag_07 /
+		#    DeathTypes = NONE +KNOCKBACK`) is commented "Same as normal death,
+		#    but no sound (sound already played by SoundImpact = ... )".
+		#    Measured over the mounted packs, `SoundImpact` resolves to
+		#    `ImpactHorse` for 168 of the 168 playable-unit documents that carry
+		#    it - a shared object macro, not a per-unit choice. Since
+		#    `combat.hit` fires once per member per damage application
+		#    (retail_slice_sim.gd:17202), a horde fight emitted a continuous
+		#    stream of Volume-90 horse-trample thuds. That is the dominant part
+		#    of the "attack sounds still sound awful" report.
+		#
+		# 2. Retail's real per-hit layer is DamageFX: the weapon declares a
+		#    `DamageFXType` (`data/ini/weapon.ini:5514 Weapon GondorSword` ->
+		#    `DamageFXType = SWORD_SLASH`) and `data/ini/damagefx.ini` resolves
+		#    DamageFXType x armor to an FXList. For a sword hit that resolves to
+		#    NOTHING: damagefx.ini's `NormalDamageFX` block authors
+		#    `MajorFX = SWORD_SLASH  FX_NONE`. Retail plays no sound at all on a
+		#    sword hit - the sound of melee is the SWING.
+		#
+		# The DamageFX tables are not imported, so this lane cannot resolve the
+		# correct per-hit FX for the damage types that DO author one
+		# (GOOD_ARROW_PIERCE -> FX_GoodArrowHit, MAGIC -> FX_MagicHit, ...).
+		# Rather than substitute a wrong sound the hit is SILENT, and the gap
+		# keeps a number per damage type in `damage_fx_gaps`.
+		var hit_damage_type := String(event.get("damage_type", "")).to_upper()
+		if hit_damage_type == "":
+			hit_damage_type = "UNDECLARED"
+		damage_fx_gaps[hit_damage_type] = int(damage_fx_gaps.get(hit_damage_type, 0)) + 1
 	elif kind == "combat.hit_structure":
 		_consume_structure_damage(event, sequence)
 	elif kind == "structure.destroyed":
@@ -1253,11 +1351,11 @@ func _consume_event(event: Dictionary) -> void:
 		# pack cannot resolve them).
 		var cast_sound_id := String(event.get("sound_id", ""))
 		if cast_sound_id != "":
-			_play_routed(route_audio_event(cast_sound_id, sequence), sfx_player)
+			_play_sfx(route_audio_event(cast_sound_id, sequence))
 	elif kind == "power.purchased":
 		# The authored palantir spellbook purchase click (Gui_PalantirChoosePowerClick);
 		# the powers orb emits no chrome sound of its own on a successful pick.
-		_play_routed(route_audio_event("Gui_PalantirChoosePowerClick", sequence), sfx_player)
+		_play_sfx(route_audio_event("Gui_PalantirChoosePowerClick", sequence))
 	elif kind == "eva.base_under_attack":
 		_play_structure_eva(event, "eva_damaged", sequence, eva_clock)
 	elif kind == "eva.building_lost":
@@ -1289,15 +1387,42 @@ func _route_weapon_swing(object_id: String, sequence: int) -> Dictionary:
 		return route_audio_event(String(weapon_sfx["fire"]), sequence)
 	if category == "monster" and String(weapon_sfx.get("swing", "")) != "":
 		return route_audio_event(String(weapon_sfx["swing"]), sequence)
-	# REMAINING NAMED GAP - a unit reaching this point has NO bound weapon
-	# FireFX sound in its pack: either the weapon's FXList genuinely authors
-	# no Sound (recorded by the importer in presentation.weaponAudioGaps as
-	# `fxlist-authors-no-sound`) or the loaded pack predates the weapon-chain
-	# emission. The class default is COUNTED rather than hidden, so the gap
-	# keeps a number.
-	var fallback_id := "ArrowDrawBow" if _is_ranged_object(object_id) else "SwordShingClean1ForHordes"
+	# REMAINING NAMED GAP - FAIL VISIBLE, NOT FAIL PRETTY.
+	#
+	# A unit reaching this point has NO bound weapon FireFX sound in its pack:
+	# either the weapon's FXList genuinely authors no Sound (recorded by the
+	# importer in presentation.weaponAudioGaps as `fxlist-authors-no-sound`) or
+	# the loaded pack predates the weapon-chain emission.
+	#
+	# This used to play `ArrowDrawBow` for anything ranged and
+	# `SwordShingClean1ForHordes` for everything else. Both are INVENTED
+	# substitutions: no retail weapon chain reachable from these objects names
+	# either event, so the runtime was manufacturing a sound the retail data
+	# never asked for. With 173 of the 187 loaded unit documents carrying a real
+	# bound weapon event, the honest answer for the remaining handful is silence
+	# plus a number, so the gap gets closed by importing the missing chain
+	# instead of hidden behind a plausible clink.
 	generic_weapon_swing_fallbacks[object_id] = int(generic_weapon_swing_fallbacks.get(object_id, 0)) + 1
-	return route_audio_event(fallback_id, sequence)
+	return _rejection("no_authored_weapon_sfx", "", object_id, "sfx", sequence)
+
+
+func route_crush_impact(object_id: String, sequence: int) -> Dictionary:
+	## THE UNIT'S AUTHORED `SoundImpact`, PRESERVED FOR ITS REAL RETAIL USE.
+	##
+	## Retail's `SoundImpact` is the crush / knockback thud, not a per-hit
+	## sound: `gondorfighter.ini:768` gives an INFANTRY object
+	## `SoundImpact = ImpactHorse`, and that same file's knockback death module
+	## (`gondorfighter.ini:913-919`) suppresses its own death sound with the
+	## comment "sound already played by SoundImpact = ... ".
+	##
+	## NOTHING CALLS THIS YET. The sim emits no crush / knockback / trample
+	## event for this lane to hang it on; when one lands, this is the route it
+	## should use, and it must NOT be re-attached to `combat.hit` (see that
+	## branch for why).
+	var impact_id := String(playable_unit_impact.get(object_id, ""))
+	if impact_id == "":
+		return _rejection("no_authored_sound_impact", "", object_id, "sfx", sequence)
+	return route_audio_event(impact_id, sequence)
 
 
 func _route_bodyfall(object_id: String, sequence: int) -> Dictionary:
@@ -1321,7 +1446,7 @@ func _consume_structure_damage(event: Dictionary, sequence: int) -> void:
 	var really_id := _structure_contract_event("really_damaged", structure_kind)
 	if damaged_id == "" and really_id == "":
 		# No converted per-structure evidence: legacy generic stone damage.
-		_play_routed(route_audio_event("BuildingLightDamageStone", sequence), sfx_player)
+		_play_sfx(route_audio_event("BuildingLightDamageStone", sequence))
 		return
 	# Retail SoundOnDamaged/SoundOnReallyDamaged fire on ENTERING the damaged
 	# bands (the structure doc's own maxHealthDamaged/ReallyDamaged fractions),
@@ -1362,9 +1487,9 @@ func _play_structure_stage_sound(doc_id: String, generic_id: String, sequence: i
 	if doc_id != "":
 		var doc_result := route_audio_event(doc_id, sequence)
 		if bool(doc_result.get("ok", false)):
-			_play_routed(doc_result, sfx_player)
+			_play_sfx(doc_result)
 			return
-	_play_routed(route_audio_event(generic_id, sequence), sfx_player)
+	_play_sfx(route_audio_event(generic_id, sequence))
 
 
 func _structure_contract_event(role: String, structure_kind: String) -> String:
@@ -1458,7 +1583,7 @@ func _play_eva_announcement(eva_id: String, sequence: int, now_msec: int = -1) -
 	eva_last_played_msec[eva_id] = clock
 	eva_arbitration_msec = clock
 	eva_arbitration_priority = priority
-	_play_routed(routed, sfx_player)
+	_play_sfx(routed)
 	routed["eva_id"] = eva_id
 	routed["priority"] = priority
 	routed["cooldown_ms"] = cooldown_ms
@@ -1780,7 +1905,7 @@ func play_ui_event(event_id: String) -> Dictionary:
 	_next_ui_sequence += 1
 	var result := route_audio_event(event_id, sequence)
 	if bool(result.get("ok", false)):
-		_play_routed(result, sfx_player)
+		_play_sfx(result)
 	_append_bounded_observability(intent_log, {
 		"kind": "ui.sound",
 		"sequence": sequence,
@@ -1801,7 +1926,7 @@ func play_declared_structure_event(event_id: String, sequence: int, structure_id
 	result["structure_id"] = structure_id
 	result["phase"] = phase
 	if bool(result.get("ok", false)):
-		_play_routed(result, sfx_player)
+		_play_sfx(result)
 	_append_bounded_observability(intent_log, {
 		"kind": "structure.lifecycle.audio",
 		"sequence": sequence,
@@ -1850,6 +1975,7 @@ func _route_definition(route: Dictionary, sequence: int, object_id: String, kind
 	var selected_stream := _stream_for_leaf(selected)
 	if selected_stream == null:
 		return _rejection("corrupt_event", event_id, object_id, kind, sequence)
+	var semantics := _sfx_semantics(route, sequence)
 	var result := {
 		"ok": true,
 		"event_id": event_id,
@@ -1861,6 +1987,11 @@ func _route_definition(route: Dictionary, sequence: int, object_id: String, kind
 		"path": String(selected.get("path", "")),
 		"stream": selected_stream,
 		"source": String(route.get("source", "")),
+		# Retail AudioEvent mix parameters carried by the pack; see `_play_sfx`
+		# for exactly which are honored and which stay named gaps.
+		"volume_db": float(semantics["volume_db"]),
+		"pitch_scale": float(semantics["pitch_scale"]),
+		"limit": int(semantics["limit"]),
 	}
 	last_route_result = result.duplicate()
 	_append_bounded_observability(routing_log, _observable_route_result(result))
@@ -1904,6 +2035,107 @@ func _play_routed(result: Dictionary, player: AudioStreamPlayer) -> void:
 		return
 	player.stream = result.get("stream") as AudioStream
 	player.play()
+
+
+func _play_sfx(result: Dictionary) -> void:
+	## THE SFX ENTRY POINT. Everything routed to the effects lane goes through
+	## here so it lands on a FREE pool player instead of stamping over whatever
+	## was already sounding, and so the retail AudioEvent parameters the pack
+	## actually carries are applied.
+	##
+	## Honored (the pack's `data/audio_events.json` carries these fields
+	## verbatim from retail's AudioEvent blocks, e.g. `ImpactHorse` ships
+	## `Limit = 3`, `Volume = 90`, `PitchShift = -10 10`):
+	##   Limit      - concurrent instances of the same event id, hard capped.
+	##   Volume     - amplitude percent, applied as a dB offset on top of the
+	##                user slider.
+	##   PitchShift - authored low/high percent range, resolved DETERMINISTICALLY
+	##                from the event sequence (never randf) so replays match.
+	## NOT honored, and reported rather than invented (`sfx_semantics_gaps`):
+	##   VolumeShift  - retail's units for this field are ambiguous between a
+	##                  dB trim and a percent trim; guessing would be a made-up
+	##                  mix decision.
+	##   Priority     - there is no ducking/eviction model in this lane yet.
+	##   Type = world - needs a 3D emitter and a world position; the combat
+	##                  events carry neither (see `sfx_players`).
+	if not bool(result.get("ok", false)) or not playback_enabled:
+		return
+	if sfx_players.is_empty():
+		return
+	var event_id := String(result.get("event_id", ""))
+	var limit := int(result.get("limit", 0))
+	if limit > 0:
+		var sounding := 0
+		for pooled in sfx_players:
+			if pooled != null and is_instance_valid(pooled) and pooled.playing and String(pooled.get_meta("retail_event_id", "")) == event_id:
+				sounding += 1
+		if sounding >= limit:
+			sfx_limit_drops[event_id] = int(sfx_limit_drops.get(event_id, 0)) + 1
+			return
+	var player := _next_free_sfx_player()
+	if player == null:
+		return
+	player.set_meta("retail_event_id", event_id)
+	player.stream = result.get("stream") as AudioStream
+	player.volume_db = UserSettingsScript.volume_to_db(voice_sfx_volume, muted) + float(result.get("volume_db", 0.0))
+	player.pitch_scale = float(result.get("pitch_scale", 1.0))
+	player.play()
+
+
+func _next_free_sfx_player() -> AudioStreamPlayer:
+	## Prefer an IDLE player so nothing audible is truncated; only when every
+	## pool slot is busy does the oldest cursor slot get reused (retail's mixer
+	## has finite voices too, and the cap above usually prevents reaching here).
+	for offset in sfx_players.size():
+		var index := (_sfx_cursor + offset) % sfx_players.size()
+		var candidate := sfx_players[index]
+		if candidate != null and is_instance_valid(candidate) and not candidate.playing:
+			_sfx_cursor = (index + 1) % sfx_players.size()
+			return candidate
+	var fallback := sfx_players[_sfx_cursor % sfx_players.size()]
+	_sfx_cursor = (_sfx_cursor + 1) % sfx_players.size()
+	return fallback if fallback != null and is_instance_valid(fallback) else null
+
+
+func _sfx_semantics(route: Dictionary, sequence: int) -> Dictionary:
+	## Retail AudioEvent parameters for a ContentDB-backed route. Routes with no
+	## `definition` (playable-unit-runtime voice/weapon bindings resolved
+	## straight to asset paths) carry no parameters at all — those get neutral
+	## values and are NOT guessed at.
+	var definition: Variant = route.get("definition", null)
+	if typeof(definition) != TYPE_DICTIONARY:
+		return {"volume_db": 0.0, "pitch_scale": 1.0, "limit": 0}
+	var parameters := _ambient_parameters(definition as Dictionary)
+	if parameters.is_empty():
+		return {"volume_db": 0.0, "pitch_scale": 1.0, "limit": 0}
+	var event_id := String(route.get("event_id", ""))
+	var volume_db := 0.0
+	if parameters.has("volume"):
+		var volume_percent := String(parameters["volume"])
+		if volume_percent.is_valid_float() and volume_percent.to_float() > 0.0:
+			volume_db = linear_to_db(clampf(volume_percent.to_float() / 100.0, 0.0001, 4.0))
+	var pitch_scale := 1.0
+	if parameters.has("pitchshift"):
+		var bounds := String(parameters["pitchshift"]).split(" ", false)
+		if bounds.size() == 2 and bounds[0].is_valid_float() and bounds[1].is_valid_float():
+			var low := bounds[0].to_float()
+			var high := bounds[1].to_float()
+			# Deterministic position inside the authored range: a cheap integer
+			# hash of the event sequence, so a replay of the same event stream
+			# produces the same pitch every time.
+			var spread := float(posmod(sequence * 2654435761, 1009)) / 1008.0
+			pitch_scale = clampf(1.0 + (low + spread * (high - low)) / 100.0, 0.25, 4.0)
+	var limit := 0
+	if parameters.has("limit"):
+		var limit_text := String(parameters["limit"])
+		if limit_text.is_valid_int():
+			limit = maxi(0, limit_text.to_int())
+	for unsupported in ["volumeshift", "priority"]:
+		if parameters.has(unsupported):
+			sfx_semantics_gaps["unsupported-%s:%s" % [unsupported, event_id]] = true
+	if String(parameters.get("type", "")).to_lower().split(" ").has("world"):
+		sfx_semantics_gaps["unsupported-type:world:%s" % event_id] = true
+	return {"volume_db": volume_db, "pitch_scale": pitch_scale, "limit": limit}
 
 
 func _set_music(state: String) -> void:
@@ -2120,7 +2352,9 @@ func _append_bounded_observability(log: Array[Dictionary], row: Dictionary) -> v
 
 func stop_all() -> void:
 	_finalize_music_fade()
-	for player in [music_player, _music_player_alt, voice_player, sfx_player]:
+	var live: Array = [music_player, _music_player_alt, voice_player]
+	live.append_array(sfx_players)
+	for player in live:
 		if player != null and is_instance_valid(player):
 			player.stop()
 			player.stream = null
@@ -2148,13 +2382,17 @@ func stop_all() -> void:
 
 func dispose() -> void:
 	stop_all()
-	for player in [music_player, _music_player_alt, voice_player, sfx_player]:
+	var owned: Array = [music_player, _music_player_alt, voice_player]
+	owned.append_array(sfx_players)
+	for player in owned:
 		if player != null and is_instance_valid(player):
 			player.free()
 	music_player = null
 	_music_player_alt = null
 	voice_player = null
+	sfx_players.clear()
 	sfx_player = null
+	_sfx_cursor = 0
 
 
 func _exit_tree() -> void:
