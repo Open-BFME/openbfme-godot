@@ -139,6 +139,7 @@ var _runtime_route_registry: Dictionary = {}
 var _source_unit_scale := 0.0
 var _pending_route_phase := ""
 var _bounded_phase_paths: Dictionary = {}
+var _health_bar_width := 3.6
 
 
 func _enter_tree() -> void:
@@ -232,11 +233,17 @@ func sync_state(entity: Dictionary) -> void:
 		_visual_root.visible = contract_error == ""
 	if _selection_ring != null:
 		_selection_ring.visible = selected and health > 0 and contract_error == ""
-	var show_health_bar := contract_error == "" and health > 0 and active_visual_mode != "no-render" and draws_health_bar()
+	var show_health_bar := (
+		contract_error == ""
+		and health > 0
+		and active_visual_mode != "no-render"
+		and draws_health_bar()
+		and (selected or health < maximum)
+	)
 	if _health_fill != null:
 		_health_fill.visible = show_health_bar
 		_health_fill.scale.x = maxf(0.001, health_ratio)
-		_health_fill.position.x = (health_ratio - 1.0) * 1.65
+		_health_fill.position.x = (health_ratio - 1.0) * _health_bar_width * 0.5
 	if _health_back != null:
 		_health_back.visible = show_health_bar
 	var under_construction := contract_error == "" and construction_ratio < 1.0 and health > 0
@@ -245,7 +252,7 @@ func sync_state(entity: Dictionary) -> void:
 	if _build_fill != null:
 		_build_fill.visible = under_construction
 		_build_fill.scale.x = maxf(0.001, construction_ratio)
-		_build_fill.position.x = (construction_ratio - 1.0) * 1.65
+		_build_fill.position.x = (construction_ratio - 1.0) * _health_bar_width * 0.5
 	_update_lifecycle_metadata()
 
 
@@ -1397,7 +1404,7 @@ func set_level(value: int, upgrading: bool = false, progress: float = 0.0) -> vo
 			_build_back.visible = true
 			_build_fill.visible = true
 			_build_fill.scale.x = maxf(0.001, upgrade_progress)
-			_build_fill.position.x = (upgrade_progress - 1.0) * 1.65
+			_build_fill.position.x = (upgrade_progress - 1.0) * _health_bar_width * 0.5
 
 
 func _level_targets_for(value: int) -> Dictionary:
@@ -1938,7 +1945,7 @@ func _activate_v1_phase(phase: String) -> void:
 	active_visual_mode = visual_mode
 	if _selection_ring != null:
 		_selection_ring.visible = selected and health_ratio > 0.0 and visual_mode != "no-render"
-	var show_health_bar := health_ratio > 0.0 and visual_mode != "no-render" and draws_health_bar()
+	var show_health_bar := health_ratio > 0.0 and visual_mode != "no-render" and draws_health_bar() and (selected or health_ratio < 1.0)
 	if _health_fill != null:
 		_health_fill.visible = show_health_bar
 	if _health_back != null:
@@ -2245,33 +2252,37 @@ func _build_markers() -> void:
 	_health_back = MeshInstance3D.new()
 	_health_back.name = "HealthBack"
 	var back_mesh := BoxMesh.new()
-	back_mesh.size = Vector3(3.6, 0.16, 0.13)
+	# Each castle piece owns its own footprint. A flat 3.6-world-unit width made
+	# small towers wear a fortress-sized strip; cap that legacy width by the
+	# projected retail footprint that also owns picking and the selection ring.
+	_health_bar_width = minf(3.6, maxf(0.35, pick_radius * 2.0))
+	back_mesh.size = Vector3(_health_bar_width, 0.16, 0.13)
 	_health_back.mesh = back_mesh
 	# Hug the rooflines: the old 7.4/4.8 anchors floated the bars in the sky.
 	_health_back.position = Vector3(0, 5.0 if structure_kind == "fortress" else 3.1, 0)
-	_health_back.material_override = _emissive(Color("131a1e"))
-	_health_back.visible = contract_error == "" and draws_health_bar()
+	_health_back.material_override = _emissive(Color("131a1e"), true)
+	_health_back.visible = false
 	add_child(_health_back)
 	_health_fill = MeshInstance3D.new()
 	_health_fill.name = "HealthFill"
 	_health_fill.mesh = back_mesh.duplicate()
 	_health_fill.position = _health_back.position + Vector3(0, 0.02, -0.01)
-	_health_fill.material_override = _emissive(Color("5bd765") if team == 0 else Color("df5a4f"))
-	_health_fill.visible = contract_error == "" and draws_health_bar()
+	_health_fill.material_override = _emissive(Color("5bd765") if team == 0 else Color("df5a4f"), true)
+	_health_fill.visible = false
 	add_child(_health_fill)
 	# Construction progress rides just under the health bar in retail gold.
 	_build_back = MeshInstance3D.new()
 	_build_back.name = "BuildBack"
 	_build_back.mesh = back_mesh.duplicate()
 	_build_back.position = _health_back.position + Vector3(0, -0.28, 0)
-	_build_back.material_override = _emissive(Color("1e1710"))
+	_build_back.material_override = _emissive(Color("1e1710"), true)
 	_build_back.visible = false
 	add_child(_build_back)
 	_build_fill = MeshInstance3D.new()
 	_build_fill.name = "BuildFill"
 	_build_fill.mesh = back_mesh.duplicate()
 	_build_fill.position = _build_back.position + Vector3(0, 0.02, -0.01)
-	_build_fill.material_override = _emissive(Color("e0b64f"))
+	_build_fill.material_override = _emissive(Color("e0b64f"), true)
 	_build_fill.visible = false
 	add_child(_build_fill)
 
@@ -2286,9 +2297,11 @@ func draws_health_bar() -> bool:
 	return body_module != "ImmortalBody"
 
 
-func _emissive(color: Color) -> StandardMaterial3D:
+func _emissive(color: Color, billboard: bool = false) -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	if billboard:
+		material.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
 	material.albedo_color = color
 	material.emission_enabled = true
 	material.emission = color * 0.35

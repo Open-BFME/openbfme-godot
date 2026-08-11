@@ -4090,8 +4090,9 @@ func _build_radial_layer() -> void:
 
 ## entries: [{"command_kind": "train"|"hero"|"upgrade", "id": String,
 ## "icon": Texture2D, "enabled": bool, "label": String, "tooltip": String}].
-## anchor: screen position the arc floats over (the selected producer).
-func sync_radial_commands(anchor: Vector2, entries: Array) -> void:
+## anchor: retained for the selection synchronization contract; the wheel itself
+## is fixed in the palantir dish beside the radar.
+func sync_radial_commands(_anchor: Vector2, entries: Array) -> void:
 	if _radial_layer == null:
 		return
 	_radial_entries = entries
@@ -4167,12 +4168,14 @@ func sync_radial_commands(anchor: Vector2, entries: Array) -> void:
 			_radial_layer.add_child(button)
 			_radial_buttons.append(button)
 	var count := _radial_buttons.size()
-	# A RING, not a fan. Retail's radial is a wheel of sockets centred on the
-	# selected object; the old upper-half arc had to grow its radius with the
-	# roster (heroes + porter + expansions all on one page) and read as a cloud
-	# of floating portraits. Paging keeps every page small, so a fixed-ish ring
-	# starting at 12 o'clock and running clockwise fits without overlap.
-	var radius := clampf(84.0 + float(count) * 5.0, 96.0, 168.0)
+	# The command wheel is the palantir dish beside the radar. The entry data is
+	# still synchronized by the selected world structure, but its buttons belong
+	# to this fixed HUD wheel, not to a second ring floating over the building.
+	# This also keeps the authored icons legible while the camera moves.
+	var wheel_center := Vector2.ZERO
+	if command_panel != null:
+		wheel_center = Vector2(RETAIL_DISH_CENTER.x, command_panel.position.y + RETAIL_DISH_CENTER.y)
+	var radius := minf(104.0, RETAIL_DISH_RADIUS)
 	for index in count:
 		var button := _radial_buttons[index]
 		var entry: Dictionary = entries[index]
@@ -4182,7 +4185,7 @@ func sync_radial_commands(anchor: Vector2, entries: Array) -> void:
 		var angle := -PI * 0.5
 		if count > 1:
 			angle += TAU * float(index) / float(count)
-		button.position = anchor + Vector2(cos(angle), sin(angle)) * radius - button.size * 0.5
+		button.position = wheel_center + Vector2(cos(angle), sin(angle)) * radius - button.size * 0.5
 		# Live training dial + countdown on the radial menu's training icons
 		# (owner: the queue-chip CCW sweep, everywhere a unit trains). Updated
 		# here in the per-frame layout pass so the buttons are not rebuilt
@@ -4198,11 +4201,21 @@ func sync_radial_commands(anchor: Vector2, entries: Array) -> void:
 			if stale_countdown != null:
 				stale_countdown.visible = false
 	_radial_layer.visible = count > 0
+	_set_empty_command_sockets_visible(count == 0)
 
 
 func hide_radial_commands() -> void:
 	if _radial_layer != null:
 		_radial_layer.visible = false
+	_set_empty_command_sockets_visible(true)
+
+
+func _set_empty_command_sockets_visible(value: bool) -> void:
+	if command_grid == null:
+		return
+	for child in command_grid.get_children():
+		if String(child.name).begins_with("RetailEmptySocket"):
+			(child as CanvasItem).visible = value
 
 
 ## Which page of a paged command set the radial is showing, and the entries it

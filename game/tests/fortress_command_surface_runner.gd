@@ -269,6 +269,7 @@ func _check_fortress_radial_pages(slice, sim, hud, fortress: int) -> void:
 
 	# --- Section 4: the main page is a MENU, not the whole command set --------
 	var main_entries := await _radial_entries_for_page(hud, RADIAL_PAGE_MAIN)
+	_check_radial_is_in_the_palantir_wheel(hud, RADIAL_PAGE_MAIN)
 	var main_kinds: Dictionary = {}
 	for entry_value in main_entries:
 		main_kinds[String((entry_value as Dictionary).get("command_kind", ""))] = true
@@ -433,6 +434,31 @@ func _radial_entries_for_page(hud, page: String) -> Array:
 	for _frame in range(4):
 		await process_frame
 	return hud.radial_entries()
+
+
+func _check_radial_is_in_the_palantir_wheel(hud, page: String) -> void:
+	var panel := hud.command_panel as Control
+	var outside: Array[String] = []
+	var blank: Array[String] = []
+	if panel != null:
+		var panel_rect := panel.get_global_rect()
+		for index in hud._radial_buttons.size():
+			var button := hud._radial_buttons[index] as Button
+			if not panel_rect.encloses(button.get_global_rect()):
+				outside.append("%s:%s" % [button.name, str(button.get_global_rect())])
+			var entry: Dictionary = hud._radial_entries[index]
+			if entry.get("icon") == null and String(entry.get("label", "")).strip_edges() == "":
+				blank.append(button.name)
+	_check(
+		"%s_radial_buttons_render_inside_the_palantir_wheel" % _faction,
+		panel != null and not hud._radial_buttons.is_empty() and outside.is_empty(),
+		"page=%s panel=%s outside=%s" % [page, str(panel.get_global_rect() if panel != null else Rect2()), str(outside)]
+	)
+	_check(
+		"%s_radial_buttons_have_icon_or_honest_text" % _faction,
+		blank.is_empty(),
+		"page=%s blank=%s" % [page, str(blank)]
+	)
 
 
 func _seed_created_hero() -> String:

@@ -188,10 +188,13 @@ func _test_plot_presentation() -> void:
 	# Control rows: the gate must not swallow damageable structures' bars.
 	var fortress_node = _slice.structure_nodes.get(fortress_id)
 	_check(
-		"fortress_still_shows_its_health_bar",
-		fortress_node != null and _health_bar_visible(fortress_node),
+		"full_health_unselected_fortress_hides_its_health_bar",
+		fortress_node != null and not _health_bar_visible(fortress_node),
 		"node=%s" % str(fortress_node)
 	)
+	if fortress_node != null:
+		_test_damage_or_selection_health_bar_visibility(fortress_node, simulation.structure(fortress_id))
+		_test_health_bar_geometry_is_footprint_bounded_and_billboarded()
 	await _test_occupied_plot_shows_a_bar(fortress_id)
 
 
@@ -215,10 +218,14 @@ func _test_occupied_plot_shows_a_bar(fortress_id: int) -> void:
 	await process_frame
 	var expansion_node = _slice.structure_nodes.get(expansion_id)
 	_check(
-		"occupied_plot_expansion_shows_a_health_bar",
-		expansion_node != null and _health_bar_visible(expansion_node),
+		"full_health_unselected_expansion_hides_its_health_bar",
+		expansion_node != null and not _health_bar_visible(expansion_node),
 		"node=%s progress=%s" % [str(expansion_node), str(simulation.structure(expansion_id).get("construction_progress", -1.0))]
 	)
+	if expansion_node != null:
+		expansion_node.set_selected(true)
+		expansion_node.sync_state(simulation.structure(expansion_id))
+		_check("selected_expansion_shows_its_health_bar", _health_bar_visible(expansion_node))
 
 
 ## Expansion-pad rows in the fortress document's compiled CastleBehavior — the
@@ -290,6 +297,39 @@ func _health_bar_visible(structure_node: Node) -> bool:
 		if bar != null and bar.is_visible_in_tree():
 			return true
 	return false
+
+
+func _test_damage_or_selection_health_bar_visibility(structure_node, entity: Dictionary) -> void:
+	structure_node.set_selected(true)
+	structure_node.sync_state(entity)
+	_check("selected_full_health_fortress_shows_its_health_bar", _health_bar_visible(structure_node))
+	structure_node.set_selected(false)
+	var damaged := entity.duplicate(true)
+	damaged["health"] = maxi(1, int(entity.get("maximum_health", 1)) - 1)
+	structure_node.sync_state(damaged)
+	_check("damaged_unselected_fortress_shows_its_health_bar", _health_bar_visible(structure_node))
+	structure_node.sync_state(entity)
+
+
+func _test_health_bar_geometry_is_footprint_bounded_and_billboarded() -> void:
+	var oversized: Array[String] = []
+	var non_billboarded: Array[String] = []
+	for structure_value in _slice.structure_nodes.values():
+		var structure = structure_value
+		if structure == null or not structure.draws_health_bar():
+			continue
+		var back := structure.get_node_or_null("HealthBack") as MeshInstance3D
+		if back == null or not (back.mesh is BoxMesh):
+			oversized.append("%s:no-box" % structure.name)
+			continue
+		var width := (back.mesh as BoxMesh).size.x
+		if width > float(structure.pick_radius) * 2.0 + 0.001:
+			oversized.append("%s:width=%.3f footprint=%.3f" % [structure.name, width, float(structure.pick_radius) * 2.0])
+		var material := back.material_override as BaseMaterial3D
+		if material == null or material.billboard_mode != BaseMaterial3D.BILLBOARD_ENABLED:
+			non_billboarded.append(structure.name)
+	_check("health_bars_are_bounded_by_each_structure_footprint", oversized.is_empty(), str(oversized))
+	_check("health_bars_are_screen_facing_billboards", non_billboarded.is_empty(), str(non_billboarded))
 
 
 func _check(name: String, condition: bool, detail: String = "") -> void:
