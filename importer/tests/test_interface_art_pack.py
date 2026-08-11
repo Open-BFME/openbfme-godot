@@ -196,3 +196,20 @@ def test_create_a_hero_model_portraits_are_collected(tmp_path: Path) -> None:
         "PortraitImageName",
         "ButtonImageName",
     }
+
+
+def test_create_a_hero_award_medals_are_collected(tmp_path: Path) -> None:
+    from openbfme_importer.interface_art import collect_create_a_hero_images
+
+    root = tmp_path / "effective-assets"
+    awards = root / "data/ini/awardsystem.ini"
+    awards.parent.mkdir(parents=True, exist_ok=True)
+    awards.write_text(
+        "AwardSystem\nObjectAward\nAwardName = Vanquisher\n"
+        "ImageName = CahAward_Vanquisher\nEnd\nEnd\n",
+        encoding="cp1252",
+    )
+    references = collect_create_a_hero_images(root)
+    assert [(row.field, row.image_id) for row in references] == [
+        ("ImageName", "CahAward_Vanquisher")
+    ]

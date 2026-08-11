@@ -148,6 +148,7 @@ var _appearance: Dictionary = {}
 var _colors: Array = []
 var _powers: Array = []
 var _awards: Array = []
+var _tracking_stats: Dictionary = {}
 var _active_tab := TAB_STATS
 var _active_custom_tab := CUSTOM_TAB_GARMENTS
 var _page := PAGE_SELECT
@@ -352,6 +353,7 @@ func create_hero(hero_name: String) -> Array[String]:
 		profile["colors"] = _colors.duplicate(true)
 	profile["powers"] = _powers.duplicate()
 	profile["awards"] = _awards.duplicate()
+	profile["trackingStats"] = _tracking_stats.duplicate(true)
 	var refusals := CahHeroes.validate_profile(_system, profile)
 	if not refusals.is_empty():
 		return refusals
@@ -449,6 +451,7 @@ func _reset_working_loadout() -> void:
 	_colors = (sub_row.get("defaultColors", []) as Array).duplicate(true)
 	_powers = CahHeroes.default_powers(_system, _selected_class)
 	_awards = []
+	_tracking_stats = {}
 
 
 func _sync_color_buttons() -> void:
@@ -850,12 +853,10 @@ func _build_detail_awards(parent: Control) -> Control:
 	var hint := Label.new()
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint.add_theme_font_size_override("font_size", 14)
-	hint.text = "Awards unlock through play; the ones this hero has earned are ticked."
+	hint.text = "Awards unlock through play. Medals shown here are read-only."
 	panel.add_child(hint)
 	_awards_list = ItemList.new()
-	_awards_list.select_mode = ItemList.SELECT_MULTI
 	_awards_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_awards_list.multi_selected.connect(func(_i: int, _s: bool) -> void: _sync_awards_from_list())
 	panel.add_child(_awards_list)
 	return panel
 
@@ -1400,6 +1401,7 @@ func _on_hero_list_selected(index: int) -> void:
 	_colors = (profile.get("colors", CahHeroes.sub_class_row(_system, _selected_class, _selected_sub).get("defaultColors", [])) as Array).duplicate(true)
 	_powers = (profile.get("powers", []) as Array).duplicate()
 	_awards = (profile.get("awards", []) as Array).duplicate()
+	_tracking_stats = (profile.get("trackingStats", {}) as Dictionary).duplicate(true)
 	_reload_classes()
 	_reload_sub_classes()
 	_rebuild_all()
@@ -2156,19 +2158,16 @@ func _rebuild_awards_list() -> void:
 		owned[String(award_value)] = true
 	for award_value in awards:
 		var award_id := String(award_value)
+		var definition: Dictionary = {}
+		for definition_value in ((_system.get("registration", {}) as Dictionary).get("awardDefinitions", []) as Array):
+			if String((definition_value as Dictionary).get("awardId", "")) == award_id:
+				definition = definition_value as Dictionary
+				break
 		var index := _awards_list.item_count
-		_awards_list.add_item(_readable(award_id))
+		var label := ("EARNED — " if owned.has(award_id) else "LOCKED — ") + _readable(award_id)
+		_awards_list.add_item(label, _icon_texture(String(definition.get("imageId", ""))))
 		_awards_list.set_item_metadata(index, award_id)
-		if owned.has(award_id):
-			_awards_list.select(index, false)
-
-
-func _sync_awards_from_list() -> void:
-	_awards.clear()
-	for index in _awards_list.get_selected_items():
-		var value: Variant = _awards_list.get_item_metadata(index)
-		if value != null:
-			_awards.append(String(value))
+		_awards_list.set_item_selectable(index, false)
 
 
 # --------------------------------------------------------------------- readouts

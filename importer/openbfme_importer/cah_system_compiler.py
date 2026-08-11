@@ -122,6 +122,7 @@ LOCOMOTOR_PATH = "data/ini/locomotor.ini"
 #: hundred lines of it.
 ANIMS_PATH = "data/ini/object/createahero/createaheroanims.inc"
 AUDIO_PATH = "data/ini/object/createahero/createaheroaudio.inc"
+AWARD_SYSTEM_PATH = "data/ini/awardsystem.ini"
 
 #: Documents that must be present.  The ``#include``s reached from
 #: ``createaherosystem.ini`` are resolved from the same mapping and are also
@@ -144,6 +145,7 @@ REQUIRED_DOCUMENTS = (
     LOCOMOTOR_PATH,
     ANIMS_PATH,
     AUDIO_PATH,
+    AWARD_SYSTEM_PATH,
 )
 
 #: Where ``#define``s are read from, in precedence order (later wins).  BOTH are
@@ -2354,6 +2356,57 @@ def _cah_voice_bindings(
     return bindings
 
 
+def _award_system(
+    documents: Mapping[str, bytes],
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    root = _parse_blocks(_document_lines(documents, AWARD_SYSTEM_PATH), AWARD_SYSTEM_PATH)
+    systems = root.children("AwardSystem")
+    if len(systems) != 1:
+        raise CahSystemCompilerError(
+            f"{AWARD_SYSTEM_PATH}: expected one AwardSystem, found {len(systems)}"
+        )
+    system = systems[0]
+    stats: list[dict[str, str]] = []
+    stat_ids: set[str] = set()
+    for block in system.children("ThingStat"):
+        stat_id = (block.value("StatName") or "").strip()
+        if not stat_id or stat_id.casefold() in stat_ids:
+            raise CahSystemCompilerError(f"{AWARD_SYSTEM_PATH}: invalid duplicate ThingStat {stat_id!r}")
+        stat_ids.add(stat_id.casefold())
+        stats.append({
+            "statId": stat_id,
+            "nameStringId": (block.value("NameTag") or "").strip(),
+            "descriptionStringId": (block.value("DescriptionTag") or "").strip(),
+        })
+    awards: list[dict[str, Any]] = []
+    award_ids: set[str] = set()
+    for block in system.children("ObjectAward"):
+        award_id = (block.value("AwardName") or "").strip()
+        if not award_id or award_id.casefold() in award_ids:
+            raise CahSystemCompilerError(f"{AWARD_SYSTEM_PATH}: invalid duplicate ObjectAward {award_id!r}")
+        award_ids.add(award_id.casefold())
+        triggers: list[dict[str, Any]] = []
+        for trigger in block.children("Trigger"):
+            trigger_stats = [value for value in (trigger.value("Stat") or "").split() if value]
+            threshold = (trigger.value("Threshold") or "").strip()
+            if not trigger_stats or not threshold.isdigit():
+                raise CahSystemCompilerError(f"{AWARD_SYSTEM_PATH}: {award_id} has an invalid Trigger")
+            unknown = [value for value in trigger_stats if value.casefold() not in stat_ids]
+            if unknown:
+                raise CahSystemCompilerError(f"{AWARD_SYSTEM_PATH}: {award_id} names unknown stat(s) {', '.join(unknown)}")
+            triggers.append({"statIds": trigger_stats, "threshold": int(threshold)})
+        if not triggers:
+            raise CahSystemCompilerError(f"{AWARD_SYSTEM_PATH}: {award_id} has no Trigger")
+        awards.append({
+            "awardId": award_id,
+            "imageId": (block.value("ImageName") or "").strip(),
+            "nameStringId": (block.value("NameTag") or "").strip(),
+            "descriptionStringId": (block.value("DescriptionTag") or "").strip(),
+            "triggers": triggers,
+        })
+    return awards, stats
+
+
 def _attach_ability_effects(
     power_catalog: list[dict[str, Any]],
     ability_effects: Mapping[str, Mapping[str, Any]],
@@ -2465,6 +2518,7 @@ def compile_cah_system_descriptor(
 
     model_bindings = _model_bindings(documents)
     voice_bindings = _cah_voice_bindings(documents)
+    award_definitions, tracking_stat_definitions = _award_system(documents)
 
     classes: list[dict[str, Any]] = []
     for class_index, class_block in enumerate(system.children("CreateAHeroClass")):
@@ -2504,6 +2558,18 @@ def compile_cah_system_descriptor(
         )
     if not classes:
         raise CahSystemCompilerError(f"{SYSTEM_PATH}: no CreateAHeroClass is declared")
+
+    known_awards = {str(row["awardId"]).casefold() for row in award_definitions}
+    known_stats = {str(row["statId"]).casefold() for row in tracking_stat_definitions}
+    for class_row in classes:
+        for sub_row in class_row["subClasses"]:
+            unknown_awards = [value for value in sub_row["awards"] if str(value).casefold() not in known_awards]
+            unknown_stats = [value for value in sub_row["trackingStats"] if str(value).casefold() not in known_stats]
+            if unknown_awards or unknown_stats:
+                raise CahSystemCompilerError(
+                    f"{sub_row['nameStringId']}: unknown awards/stats: "
+                    + ", ".join([*unknown_awards, *unknown_stats])
+                )
 
     used_voice_keys = {
         (str(class_row["upgradeName"]).casefold(), str(sub_row["upgradeNameSubClass"]).casefold())
@@ -2675,6 +2741,8 @@ def compile_cah_system_descriptor(
             "unboundSubclasses": sorted(unbound_subclasses, key=str.casefold),
             "orphanSoundUpgrades": sorted(orphan_voice_keys, key=str.casefold),
         },
+        "awardDefinitions": award_definitions,
+        "trackingStatDefinitions": tracking_stat_definitions,
         "system": {
             "objectId": "CreateAHero",
             "attributeMultiplier": _number(attribute_multiplier),
@@ -2718,6 +2786,11 @@ def compile_cah_system_descriptor(
             "Hero colours are compiled as three RGB byte triples from the "
             "subclass defaults. Retail authors no discrete selectable palette; "
             "the picker is a continuous gradient strip.",
+            "All ObjectAward and ThingStat definitions are compiled. Runtime "
+            "v1 can derive ENEMIES_KILLED, HEROS_KILLED, created-hero kills, "
+            "fortress/keep destruction, and match win/loss counts; faction, "
+            "KindOf, named-retail-hero, creature-family, and WotR-map-specific "
+            "counters remain named gaps until their victim metadata is proven.",
             "Experience levels are not compiled; CreateAHero uses the shared "
             "ExperienceLevel CreateAHeroLevelN templates.",
             "Awards are listed as unlockable ids on each subclass; progress is "
@@ -2779,6 +2852,8 @@ def build_cah_system_runtime(descriptor: Mapping[str, Any]) -> dict[str, Any]:
             "combatCoverage": descriptor.get("combatCoverage", {}),
             "creationIdlePlan": descriptor.get("creationIdlePlan", {}),
             "voiceCoverage": descriptor.get("voiceCoverage", {}),
+            "awardDefinitions": descriptor.get("awardDefinitions", []),
+            "trackingStatDefinitions": descriptor.get("trackingStatDefinitions", []),
             "attributeGroups": descriptor["attributeGroups"],
             "garmentCoverage": descriptor.get("garmentCoverage", {}),
             "appearanceGroups": descriptor.get("appearanceGroups", []),

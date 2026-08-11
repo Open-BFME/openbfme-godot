@@ -1203,6 +1203,12 @@ var events: Array[Dictionary] = []
 var _event_digest := 0x811C9DC5
 var entities: Dictionary = {}
 var structures: Dictionary = {}
+## Created-hero award contracts are derived from their ordinary playable-unit
+## runtime documents. Mutable tallies/results remain absent for hero-less
+## matches so the historical snapshot signature does not move.
+var _cah_award_contracts: Dictionary = {}
+var _cah_award_tallies: Dictionary = {}
+var cah_award_results: Dictionary = {}
 var team_resources: Dictionary = {PLAYER_TEAM: 0, ENEMY_TEAM: 0}
 var team_command_points: Dictionary = {PLAYER_TEAM: 0, ENEMY_TEAM: 0}
 ## Residual parity subsystems (FoW, path, wall helpers, OCL leaf registry, mood/meta).
@@ -1690,6 +1696,9 @@ func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 	_banner_respawn_ticks_by_object.clear()
 	units_without_upgrade_commands.clear()
 	_unit_experience_rules.clear()
+	_cah_award_contracts.clear()
+	_cah_award_tallies.clear()
+	cah_award_results.clear()
 	_unit_module_contracts.clear()
 	_structure_module_contracts.clear()
 	_castle_upgrade_grants.clear()
@@ -2604,6 +2613,10 @@ func _configure_playable_unit_runtime_contracts() -> void:
 		).get("createAHero", {}) as Dictionary
 		if created_hero.has("ownerTeam"):
 			_created_hero_owner_teams[unit_type] = int(created_hero["ownerTeam"])
+		if not created_hero.is_empty() and created_hero.has("awardDefinitions"):
+			var award_contract := created_hero.duplicate(true)
+			award_contract["ownerTeam"] = int(created_hero.get("ownerTeam", -1))
+			_cah_award_contracts[unit_type] = award_contract
 		var prerequisites_by_producer: Dictionary = {}
 		var any_groups_by_producer: Dictionary = {}
 		for route in resolved_producers:
@@ -12820,6 +12833,9 @@ func experience_unauthored_victims() -> Array[String]:
 
 
 func _award_member_kill_experience(attacker_id: int, target: Dictionary) -> void:
+	# Award stats count at the lethal hook before XP's authored-evidence early
+	# returns. A victim with no ExperienceLevel still counts as a retail kill.
+	_record_cah_member_kill(attacker_id, target)
 	if not entities.has(attacker_id):
 		return
 	var attacker: Dictionary = entities[attacker_id]
@@ -12842,6 +12858,53 @@ func _award_member_kill_experience(attacker_id: int, target: Dictionary) -> void
 	if award <= 0:
 		return
 	_award_experience(attacker, award)
+
+
+func _cah_tally_for(unit_type: String) -> Dictionary:
+	if not _cah_award_contracts.has(unit_type):
+		return {}
+	if not _cah_award_tallies.has(unit_type):
+		_cah_award_tallies[unit_type] = (
+			(_cah_award_contracts[unit_type] as Dictionary).get("trackingStats", {})
+			as Dictionary
+		).duplicate(true)
+	return _cah_award_tallies[unit_type] as Dictionary
+
+
+func _record_cah_member_kill(attacker_id: int, target: Dictionary) -> void:
+	if not entities.has(attacker_id):
+		return
+	var attacker := entities[attacker_id] as Dictionary
+	if int(attacker.get("health", 0)) <= 0:
+		return
+	if not _is_hostile(int(attacker.get("team", -1)), int(target.get("team", -1))):
+		return
+	var tally := _cah_tally_for(String(attacker.get("unit_type", "")))
+	if tally.is_empty() and not _cah_award_contracts.has(String(attacker.get("unit_type", ""))):
+		return
+	tally["ENEMIES_KILLED"] = int(tally.get("ENEMIES_KILLED", 0)) + 1
+	# Retail spells this identifier HEROS_KILLED in awardsystem.ini.
+	if String(target.get("category", "")) == "hero":
+		tally["HEROS_KILLED"] = int(tally.get("HEROS_KILLED", 0)) + 1
+	if String(target.get("unit_type", "")).begins_with("CreateAHero__"):
+		tally["MP_CREATE_A_HEROES_KILLED"] = int(tally.get("MP_CREATE_A_HEROES_KILLED", 0)) + 1
+
+
+func _record_cah_structure_kill(attacker_id: int, target: Dictionary) -> void:
+	if not entities.has(attacker_id):
+		return
+	var attacker := entities[attacker_id] as Dictionary
+	if not _is_hostile(int(attacker.get("team", -1)), int(target.get("team", -1))):
+		return
+	var unit_type := String(attacker.get("unit_type", ""))
+	var tally := _cah_tally_for(unit_type)
+	if tally.is_empty() and not _cah_award_contracts.has(unit_type):
+		return
+	# The only structure-derived ThingStat retail defines is keeps destroyed;
+	# v1 maps the authoritative fortress death path and names all other building
+	# categories as gaps instead of inventing a BUILDINGS_DESTROYED counter.
+	if String(target.get("structure_kind", "")) == "fortress":
+		tally["MP_KEEPS_DESTROYED"] = int(tally.get("MP_KEEPS_DESTROYED", 0)) + 1
 
 
 func _award_experience(row: Dictionary, amount: int) -> void:
@@ -17121,6 +17184,7 @@ func _apply_structure_damage(attacker_id: int, target_id: int, amount: int, dama
 		_last_base_under_attack_tick = tick_index
 		_emit_event("eva.base_under_attack", 0, target_id, {"team": PLAYER_TEAM, "structure_kind": structure_kind})
 	if int(target["health"]) == 0:
+		_record_cah_structure_kill(attacker_id, target)
 		var queue: Array = target.get("queue", [])
 		# Queued costs stay spent, matching the deterministic no-refund contract.
 		queue.clear()
@@ -18150,6 +18214,52 @@ func _surviving_teams() -> Array:
 	return survivors
 
 
+func _evaluate_cah_match_awards() -> void:
+	var unit_types: Array = _cah_award_contracts.keys()
+	unit_types.sort_custom(func(a, b): return String(a) < String(b))
+	for unit_type_value in unit_types:
+		var unit_type := String(unit_type_value)
+		if cah_award_results.has(unit_type):
+			continue
+		var contract := _cah_award_contracts[unit_type] as Dictionary
+		var tally := _cah_tally_for(unit_type)
+		var owner_team := int(contract.get("ownerTeam", _created_hero_owner_teams.get(unit_type, -1)))
+		var result_stat := "HERO_VICTORY_COUNT_SKIRMISH" if owner_team == winner else "HERO_DEFEAT_COUNT_SKIRMISH"
+		tally[result_stat] = int(tally.get(result_stat, 0)) + 1
+		var eligible: Dictionary = {}
+		for award_value in contract.get("eligibleAwards", []) as Array:
+			eligible[String(award_value)] = true
+		var awards: Array = (contract.get("ownedAwards", []) as Array).duplicate()
+		var new_awards: Array = []
+		for definition_value in contract.get("awardDefinitions", []) as Array:
+			var definition := definition_value as Dictionary
+			var award_id := String(definition.get("awardId", ""))
+			if award_id == "" or not eligible.has(award_id) or awards.has(award_id):
+				continue
+			var earned := true
+			for trigger_value in definition.get("triggers", []) as Array:
+				var trigger := trigger_value as Dictionary
+				var total := 0
+				for stat_value in trigger.get("statIds", []) as Array:
+					total += int(tally.get(String(stat_value), 0))
+				if total < int(trigger.get("threshold", 0)):
+					earned = false
+					break
+			if earned:
+				awards.append(award_id)
+				new_awards.append(award_id)
+		var result := {
+			"heroId": String(contract.get("heroId", unit_type.trim_prefix("CreateAHero__"))),
+			"objectId": unit_type,
+			"ownerTeam": owner_team,
+			"trackingStats": tally.duplicate(true),
+			"awards": awards,
+			"newAwards": new_awards,
+		}
+		cah_award_results[unit_type] = result
+		_emit_event("cah.awards_resolved", 0, 0, result)
+
+
 func _resolve_victory() -> void:
 	## Last-alliance-standing over the whole roster. The match ends when no two
 	## surviving teams are mutually hostile (a single alliance, or one team, or
@@ -18169,6 +18279,7 @@ func _resolve_victory() -> void:
 		winner = int(roster[0]) if not roster.is_empty() else PLAYER_TEAM
 	else:
 		winner = int(survivors[0])
+	_evaluate_cah_match_awards()
 	for id in living_ids(winner):
 		var row: Dictionary = entities[id]
 		row["target_id"] = 0
@@ -18775,6 +18886,12 @@ func _authoritative_state() -> Dictionary:
 		state["banner_respawn_ticks_by_object"] = _banner_respawn_ticks_by_object
 	if not _castle_behavior_by_source.is_empty():
 		state["castle_behavior_by_source"] = _castle_behavior_by_source
+	if not _cah_award_contracts.is_empty():
+		state["cah_award_contracts"] = _cah_award_contracts
+	if not _cah_award_tallies.is_empty():
+		state["cah_award_tallies"] = _cah_award_tallies
+	if not cah_award_results.is_empty():
+		state["cah_award_results"] = cah_award_results
 	# Same discipline for the map named-object namespace: a match that never
 	# declares one contributes zero bytes (see the store's block comment).
 	if not map_named_object_namespace.is_empty():
@@ -18912,6 +19029,9 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	_unit_banner_carriers = state.get("unit_banner_carriers", {})
 	_banner_respawn_ticks_by_object = state.get("banner_respawn_ticks_by_object", {})
 	_castle_behavior_by_source = state.get("castle_behavior_by_source", {})
+	_cah_award_contracts = state.get("cah_award_contracts", {})
+	_cah_award_tallies = state.get("cah_award_tallies", {})
+	cah_award_results = state.get("cah_award_results", {})
 	_next_dynamic_id = state["next_dynamic_id"]
 	_next_dynamic_structure_id = int(state["next_dynamic_structure_id"])
 	_next_order_sequence = int(state["next_order_sequence"])

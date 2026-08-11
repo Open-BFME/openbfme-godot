@@ -956,7 +956,8 @@ static func roster_document(
 	var button_image := String(sub_row.get("buttonImageId", ""))
 	var portrait_image := String(sub_row.get("iconImageId", ""))
 	var battlefield := model_binding(sub_row, "battlefield")
-	var audio_routes := {"primaryMember": {}}
+	var system_registration := system.get("registration", {}) as Dictionary
+	var audio_routes := {"container": {}, "primaryMember": {}, "weapon": {}}
 	var voice_fields := {
 		"select": "VoiceSelect",
 		"move": "VoiceMove",
@@ -1077,6 +1078,11 @@ static func roster_document(
 				"attributes": attributes.duplicate(),
 				"powers": powers.duplicate(),
 				"colors": (profile.get("colors", []) as Array).duplicate(true),
+				"trackingStats": (profile.get("trackingStats", {}) as Dictionary).duplicate(true),
+				"ownedAwards": (profile.get("awards", []) as Array).duplicate(),
+				"eligibleAwards": (sub_row.get("awards", []) as Array).duplicate(),
+				"trackingStatIds": (sub_row.get("trackingStats", []) as Array).duplicate(),
+				"awardDefinitions": (system_registration.get("awardDefinitions", []) as Array).duplicate(true),
 				"computed": stats,
 			},
 		},

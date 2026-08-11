@@ -283,6 +283,19 @@ def _audio() -> bytes:
     ).encode("cp1252")
 
 
+def _award_system() -> bytes:
+    return (
+        "AwardSystem\n"
+        "ObjectAward\n"
+        "AwardName = Vanquisher\nImageName = CahAward_Vanquisher\n"
+        "NameTag = Award:Vanquisher_Name\nDescriptionTag = Award:Vanquisher_Desc\n"
+        "Trigger\nStat = ENEMIES_KILLED\nThreshold = 3000\nEnd\nEnd\n"
+        "ThingStat\nStatName = ENEMIES_KILLED\nNameTag = Stat:ENEMIES_KILLED_Name\n"
+        "DescriptionTag = Stat:ENEMIES_KILLED_Desc\nEnd\n"
+        "End\n"
+    ).encode("cp1252")
+
+
 def _locomotors() -> bytes:
     return (
         "Locomotor HeroHumanLocomotor\n"
@@ -658,6 +671,7 @@ def _documents(
             _object() if obj is None else obj
         ),
         "data/ini/object/createahero/createaheroaudio.inc": _audio(),
+        "data/ini/awardsystem.ini": _award_system(),
         "data/ini/weapon.ini": _weapons() if weapons is None else weapons,
         "data/ini/locomotor.ini": (
             _locomotors() if locomotors is None else locomotors
@@ -669,6 +683,13 @@ def _documents(
 
 
 class CahSystemCompilerTests(unittest.TestCase):
+    def test_award_and_stat_definitions_are_compiled(self) -> None:
+        descriptor = compile_cah_system_descriptor(_documents())
+        self.assertEqual(descriptor["awardDefinitions"][0]["awardId"], "Vanquisher")
+        self.assertEqual(descriptor["awardDefinitions"][0]["imageId"], "CahAward_Vanquisher")
+        self.assertEqual(descriptor["awardDefinitions"][0]["triggers"], [{"statIds": ["ENEMIES_KILLED"], "threshold": 3000}])
+        self.assertEqual(descriptor["trackingStatDefinitions"][0]["statId"], "ENEMIES_KILLED")
+
     def test_subclass_fixed_voice_routes_are_compiled(self) -> None:
         descriptor = compile_cah_system_descriptor(_documents())
         voice = descriptor["classes"][0]["subClasses"][0]["voice"]

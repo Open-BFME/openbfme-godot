@@ -263,6 +263,10 @@ CREATE_A_HERO_MODEL_IMAGE_FIELDS: tuple[str, ...] = (
 CREATE_A_HERO_MODEL_FILES: tuple[str, ...] = (
     "data/ini/object/createahero/createaheromodels.inc",
 )
+CREATE_A_HERO_AWARD_FILE = "data/ini/awardsystem.ini"
+CREATE_A_HERO_MEDAL_IMAGE_FILE = (
+    "data/ini/mappedimages/aptimages/createaheroimages.ini"
+)
 
 
 def collect_create_a_hero_images(
@@ -302,6 +306,9 @@ def collect_create_a_hero_images(
         candidate = oracle_root / relative
         if candidate.is_file():
             scans.append((candidate, model_fields))
+    award_file = oracle_root / CREATE_A_HERO_AWARD_FILE
+    if award_file.is_file():
+        scans.append((award_file, frozenset({"imagename"})))
 
     references: list[ImageReference] = []
     for path, fields in scans:
@@ -320,6 +327,24 @@ def collect_create_a_hero_images(
                         "CreateAHeroSystem", path.stem, field, image_id, source
                     )
                 )
+    # The dedicated atlas declares 28 medals, including four currently
+    # commented-out/unused award ids. Ship the complete retail medal set so a
+    # later award enablement cannot produce a text-only row.
+    medal_file = oracle_root / CREATE_A_HERO_MEDAL_IMAGE_FILE
+    seen = {row.image_id.casefold() for row in references}
+    if medal_file.is_file():
+        source = _relative(oracle_root, medal_file)
+        for line in _read(medal_file).decode("cp1252", errors="replace").splitlines():
+            match = re.match(r"^\s*MappedImage\s+(.+?)\s*$", line, re.IGNORECASE)
+            if match is None:
+                continue
+            image_id = match.group(1).strip()
+            if not image_id.casefold().startswith("cahaward_") or image_id.casefold() in seen:
+                continue
+            seen.add(image_id.casefold())
+            references.append(
+                ImageReference("CreateAHeroAwards", "AwardMedals", "MappedImage", image_id, source)
+            )
     return tuple(references)
 
 

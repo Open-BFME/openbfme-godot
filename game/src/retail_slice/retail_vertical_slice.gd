@@ -4004,10 +4004,31 @@ func _refresh_hud() -> void:
 	if simulation.winner != -1 and simulation.winner != _last_presented_winner:
 		_last_presented_winner = simulation.winner
 		_record_strategic_result(simulation.winner)
+		_persist_local_cah_awards()
 		# The HUD renders 0 as VICTORY / non-zero as DEFEAT; map the winning
 		# team through the local perspective so a guest (team 1) win shows
 		# VICTORY on the guest's machine.
 		hud.show_outcome(0 if simulation.winner == local_team else 1)
+
+
+func _persist_local_cah_awards() -> void:
+	## Persistence stays outside the deterministic sim. Every peer evaluates the
+	## same result, but only this client's local-seat heroes touch user://.
+	var object_ids: Array = simulation.cah_award_results.keys()
+	object_ids.sort_custom(func(a, b): return String(a) < String(b))
+	for object_id_value in object_ids:
+		var result := simulation.cah_award_results[object_id_value] as Dictionary
+		if int(result.get("ownerTeam", -1)) != local_team:
+			continue
+		var hero_id := String(result.get("heroId", ""))
+		var profile := CahHeroesScript.load_profile(hero_id)
+		if profile.is_empty():
+			continue
+		profile["trackingStats"] = (result.get("trackingStats", {}) as Dictionary).duplicate(true)
+		profile["awards"] = (result.get("awards", []) as Array).duplicate()
+		var error := CahHeroesScript.save_profile(profile)
+		if error != "":
+			push_error("Create-a-Hero award persistence failed for %s: %s" % [hero_id, error])
 
 
 func _record_strategic_result(winner_team: int) -> void:

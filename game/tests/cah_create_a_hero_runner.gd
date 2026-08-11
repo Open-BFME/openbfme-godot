@@ -264,6 +264,8 @@ func _test_roster_document(system: Dictionary) -> void:
 	var document := CahHeroes.roster_document(system, profile, PRODUCER, 12)
 	var audio_routes: Dictionary = document["registration"].get("audioRoutes", {})
 	_check(not audio_routes.is_empty() and (audio_routes["primaryMember"]["VoiceSelect"] as Array)[0]["id"] == "HeroWestMaleVoiceSelectMS", "fixed subclass voice reaches the ordinary playable-unit audio route")
+	var cah_contract: Dictionary = document["registration"].get("createAHero", {})
+	_check(cah_contract.get("eligibleAwards", []) == ["Vanquisher"] and (cah_contract.get("awardDefinitions", []) as Array).size() == 1, "award eligibility and triggers reach the playable-unit document")
 
 	_check(String(document.get("schema", "")) == "openbfme.playable-unit-runtime", "the roster document is a playable-unit-runtime")
 	_check(int(document.get("schemaVersion", -1)) == 0, "the roster document is schema version 0")
@@ -364,6 +366,7 @@ func _test_screen(system: Dictionary) -> void:
 		screen.stats_bars.get_child_count() > 1,
 		"his statistics come back the moment there is a hero for them to belong to"
 	)
+	_check(screen._awards_list.item_count == 1 and not screen._awards_list.is_item_selectable(0), "award medals are a read-only play result, not editor checkboxes")
 
 	_check(not screen.create_hero("   ").is_empty(), "the screen refuses an unnamed hero")
 
@@ -2110,6 +2113,7 @@ func _system_document() -> Dictionary:
 				_group("CreateAHero_VisionAttribute", 4, "INNATE_VISION", [["SHROUD_CLEARING", SHROUD_LADDER], ["VISION", VISION_LADDER]]),
 			],
 			"maxPowerSlots": 15,
+			"awardDefinitions": [{"awardId": "Vanquisher", "imageId": "CahAward_Vanquisher", "nameStringId": "Award:Vanquisher_Name", "descriptionStringId": "Award:Vanquisher_Desc", "triggers": [{"statIds": ["ENEMIES_KILLED"], "threshold": 3000}]}],
 			# The POWERS screen as the importer compiles it out of the
 			# CreateAHeroUI* fields on commandbutton.ini: one three-step
 			# prerequisite chain rising through the level columns, one
@@ -2211,6 +2215,8 @@ func _system_document() -> Dictionary:
 							"attackStructure": ["HeroWestMaleVoiceAttackBuilding"],
 							"created": ["HeroWestMaleVoiceSalute"],
 						},
+						"awards": ["Vanquisher"],
+						"trackingStats": ["ENEMIES_KILLED"],
 						"defaultAttributeSpend": 30,
 						"attributes": CAPTAIN_ATTRIBUTES,
 					},
