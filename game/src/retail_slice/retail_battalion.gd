@@ -16,6 +16,14 @@ const ARCHER_PROJECTILE_PACK_KEY := "gondorArcherProjectile"
 ## The only projectile the sidecar declares (its weapon.projectileTemplateId);
 ## every other projectile it renders is a borrow.
 const SIDECAR_PROJECTILE_OBJECT_ID := "GondorArcherArrow"
+## Arrow-art diagnostic severity. "info" rows are recorded and logged but do not
+## raise an engine warning; see _record_combat_visual_diagnostic.
+## Values are DiagLog levels; "warn" additionally raises an engine warning.
+const DIAGNOSTIC_SEVERITY := {
+	"arrow-art-shared-good-fallback": "info",
+	"arrow-art-unresolved": "warn",
+	"projectile-art-binding-rejected": "warn",
+}
 const VISIBLE_ARROW_PROJECTILE_IDS := {
 	"GondorArcherArrow": true,
 	"GoodFactionArrow": true,
@@ -50,6 +58,7 @@ const BAR_FILL_ASPECT := 0.042 / 0.58
 const ArcherProjectileControllerScript = preload("res://src/retail_slice/retail_archer_projectile_controller.gd")
 const SelectionDecalScript = preload("res://src/retail_slice/retail_selection_decal.gd")
 const PackCapability = preload("res://src/content/pack_capability.gd")
+const DiagLogScript = preload("res://src/core/diag_log.gd")
 const SelectionPick = preload("res://src/retail_slice/retail_selection_pick.gd")
 const UserSettingsScript = preload("res://src/ui/user_settings.gd")
 const HealthOverlayScript = preload("res://src/retail_slice/retail_member_health_overlay.gd")
@@ -89,6 +98,13 @@ var combat_visual_contract_error := ""
 ## Replaces the silent contract-error-only path: a battalion that falls back to
 ## the shared Good arrow, or resolves no art at all, says which and why.
 var combat_visual_diagnostics: Array[Dictionary] = []
+## Human-readable one-liners for the same rows, for surfaces that carry text
+## rather than structured rows (the slice's arrow-art aggregate).
+var combat_visual_diagnostic_summaries: Array[String] = []
+## Test-only. A runner that DELIBERATELY provokes the unresolved-art path (to
+## prove the diagnostic fires) would otherwise print an engine warning that the
+## proof gates read as a defect. Production never sets this.
+static var suppress_engine_warnings := false
 var archer_projectile_controller: RetailArcherProjectileController
 var source_selection_decal: RetailSelectionDecal
 var animation_players: Array[AnimationPlayer] = []
@@ -1315,6 +1331,7 @@ func _configure_combat_visual_contract(definition: Dictionary) -> void:
 	exact_impact_effect_node_count = 0
 	combat_visual_contract_error = ""
 	combat_visual_diagnostics.clear()
+	combat_visual_diagnostic_summaries.clear()
 	if not VISIBLE_ARROW_PROJECTILE_IDS.has(projectile_object_id):
 		return
 	if object_id == RANGER_OBJECT_ID and weapon_launch_bone != RANGER_LAUNCH_BONE:
@@ -1331,6 +1348,16 @@ func _configure_combat_visual_contract(definition: Dictionary) -> void:
 	#    GondorArcherArrow it outranks the art-only document. That is
 	#    resolution by identity, not a special case: the sidecar declares
 	#    weapon.projectileTemplateId = GondorArcherArrow and nothing else.
+	#
+	#    TODO (2026-08-11, opus-arrow-art): this comparison ROTS the day the
+	#    importer compiles an impact/audio closure into projectileArt. From then
+	#    on the richer compiled document is silently ignored for the one
+	#    projectile it would improve, because this branch short-circuits before
+	#    step 2 -- and the runner check
+	#    gondor_sidecar_full_closure_outranks_art_only_row pins the old
+	#    behaviour in place, so nothing will fail to tell you. Replace the id
+	#    literal with a comparison of what each candidate actually carries
+	#    (impact model + audio leaf counts) when that lane lands.
 	if (
 		sidecar_root != ""
 		and projectile_object_id == SIDECAR_PROJECTILE_OBJECT_ID
@@ -1356,7 +1383,7 @@ func _configure_combat_visual_contract(definition: Dictionary) -> void:
 		return
 	if not art.is_empty():
 		# The document existed but could not bind: that is a defect, not a gap.
-		combat_visual_diagnostics.append({
+		_record_combat_visual_diagnostic({
 			"code": "projectile-art-binding-rejected",
 			"projectileObjectId": projectile_object_id,
 			"packRoot": String(art.get("_pack_root", "")),
@@ -1368,15 +1395,18 @@ func _configure_combat_visual_contract(definition: Dictionary) -> void:
 	#    is a borrowed Good arrow -- say so out loud rather than rendering
 	#    silently.
 	var pack_root := sidecar_root
-	if pack_root != "" and projectile_object_id != SIDECAR_PROJECTILE_OBJECT_ID:
-		combat_visual_diagnostics.append({
-			"code": "arrow-art-shared-good-fallback",
-			"projectileObjectId": projectile_object_id,
-			"packRoot": pack_root,
-			"packFileKey": ARCHER_PROJECTILE_PACK_KEY,
-			"impact": "no mounted pack ships compiled art for this projectile; presenting the Gondor sidecar's shared Good arrow",
-		})
 	if archer_projectile_controller.configure_from_pack(pack_root, _source_unit_scale) and archer_projectile_controller.contract_ready:
+		# Recorded only once the borrow actually binds. Appending before the
+		# configure would leave a failed bind claiming both "presenting the
+		# shared Good arrow" and "presents no visible arrows".
+		if projectile_object_id != SIDECAR_PROJECTILE_OBJECT_ID:
+			_record_combat_visual_diagnostic({
+				"code": "arrow-art-shared-good-fallback",
+				"projectileObjectId": projectile_object_id,
+				"packRoot": pack_root,
+				"packFileKey": ARCHER_PROJECTILE_PACK_KEY,
+				"impact": "no mounted pack ships compiled art for this projectile; presenting the Gondor sidecar's shared Good arrow",
+			})
 		combat_visual_source_closure_present = true
 		# These are validated presentation-resource counts. No visible projectile
 		# or impact node is emitted until an owner supplies the authoritative
@@ -1386,7 +1416,7 @@ func _configure_combat_visual_contract(definition: Dictionary) -> void:
 		return
 	if archer_projectile_controller.contract_declared:
 		combat_visual_contract_error = "invalid selected-pack arrow projectile contract: %s" % archer_projectile_controller.error
-		combat_visual_diagnostics.append({
+		_record_combat_visual_diagnostic({
 			"code": "arrow-art-unresolved",
 			"projectileObjectId": projectile_object_id,
 			"objectId": object_id,
@@ -1405,7 +1435,7 @@ func _configure_combat_visual_contract(definition: Dictionary) -> void:
 	# The silent path this replaces: no mounted pack answers for this
 	# projectile at all, so a RotWK-only mount fired invisible arrows with
 	# nothing but an unread error string to show for it.
-	combat_visual_diagnostics.append({
+	_record_combat_visual_diagnostic({
 		"code": "arrow-art-unresolved",
 		"projectileObjectId": projectile_object_id,
 		"objectId": object_id,
@@ -1428,6 +1458,43 @@ func _compiled_projectile_object_id(runtime_object_id: String) -> String:
 		var resolved := (gameplay.get("simulation", {}) as Dictionary).get("resolved", {}) as Dictionary
 		return String((resolved.get("combat", {}) as Dictionary).get("projectileObjectId", ""))
 	return ""
+
+
+## Record one arrow-art diagnostic AND surface it. A diagnostic nobody reads is
+## the same defect as the silent contract-error string this replaced, so every
+## row goes three places: the aggregated array (which the parent slice pulls up
+## exactly like retail_fords_battlefield pulls up its animated-prop rows), a
+## node meta for probes, the engine warning log, and the diagnostics run record
+## when one is open.
+func _record_combat_visual_diagnostic(row: Dictionary) -> void:
+	combat_visual_diagnostics.append(row)
+	set_meta("combat_visual_diagnostics", combat_visual_diagnostics.duplicate(true))
+	var code := String(row.get("code", "unnamed"))
+	var summary := "%s (%s %s -> %s): %s" % [
+		code,
+		object_id,
+		"entity %d" % entity_id,
+		String(row.get("projectileObjectId", "")),
+		String(row.get("impact", row.get("reason", ""))),
+	]
+	# Severity is deliberate. The shared-Good borrow is the EXPECTED state until
+	# the next republish ships compiled art, and an engine warning for a known
+	# universal condition would either redden every gate or train readers to
+	# ignore warnings. Only the genuine defects -- no art at all, or a shipped
+	# document that will not bind -- earn a warning.
+	var level := String(DIAGNOSTIC_SEVERITY.get(code, "warn"))
+	if level == "warn" and not suppress_engine_warnings:
+		push_warning(summary)
+	DiagLogScript.emit(level, "presentation.arrow_art", {
+		"code": code,
+		"objectId": object_id,
+		"entityId": entity_id,
+		"projectileObjectId": String(row.get("projectileObjectId", "")),
+		"packRoot": String(row.get("packRoot", "")),
+		"reason": String(row.get("reason", "")),
+		"impact": String(row.get("impact", "")),
+	})
+	combat_visual_diagnostic_summaries.append(summary)
 
 
 ## Standard mounted-pack resolution for compiled per-projectile art: the

@@ -163,6 +163,11 @@ func _resolve_mp_settings(game_state_override: Node = null) -> void:
 var _mp_desync_reported := false
 var _mp_last_pause_command_tick := -1
 var battalion_nodes: Dictionary = {}
+## Arrow-art resolution diagnostics aggregated from every spawned battalion
+## (borrowed Good arrow, unresolved art, rejected binding). Deduplicated by
+## code+projectile; also mirrored onto this node's meta for probes.
+var arrow_art_diagnostics: Array[Dictionary] = []
+var _arrow_art_diagnostic_keys: Dictionary = {}
 var structure_nodes: Dictionary = {}
 var order_indicators: Dictionary = {}
 var attack_target_indicator: RetailAttackTargetIndicator
@@ -2783,12 +2788,33 @@ func _spawn_battalion(id: int, expected_members: int) -> void:
 	# units near-black.
 	_assign_geometry_light_layer(battalion, INFANTRY_LIGHT_LAYER | OBJECT_LIGHT_LAYER)
 	battalion_nodes[id] = battalion
+	_aggregate_arrow_art_diagnostics(battalion)
 	_ensure_member_render_batcher().register_battalion(battalion)
 	var indicator: RetailOrderIndicator = OrderIndicatorScript.new()
 	indicator.name = "OrderIndicator_%d" % id
 	indicator.configure(selected_pack_root, source_map_data.local_transform_scale)
 	add_child(indicator)
 	order_indicators[id] = indicator
+
+
+## Pull a spawned battalion's arrow-art diagnostics up to the slice, the same
+## way the Fords battlefield pulls up its animated-prop controller's rows.
+## Deduplicated by code+projectile: one Mordor archer horde and twenty of them
+## report the same missing art, and twenty copies is noise, not evidence.
+func _aggregate_arrow_art_diagnostics(battalion: RetailBattalion) -> void:
+	if battalion == null or battalion.combat_visual_diagnostics.is_empty():
+		return
+	for row_value in battalion.combat_visual_diagnostics:
+		var row := row_value as Dictionary
+		var key := "%s|%s" % [
+			String(row.get("code", "")),
+			String(row.get("projectileObjectId", "")),
+		]
+		if _arrow_art_diagnostic_keys.has(key):
+			continue
+		_arrow_art_diagnostic_keys[key] = true
+		arrow_art_diagnostics.append(row.duplicate(true))
+	set_meta("arrow_art_diagnostics", arrow_art_diagnostics.duplicate(true))
 
 
 ## Create the member render batcher on first use and keep it pointed at the
@@ -4087,6 +4113,15 @@ func _refresh_hud() -> void:
 			simulation.living_ids(0 if local_team == 1 else 1).size(),
 			source_map_data.route_query_count if source_map_data != null else 0,
 		]
+		# Arrow-art resolution is a presentation contract a player can actually
+		# see go wrong (borrowed or missing arrows), so the F10 overlay names it
+		# rather than leaving it only in the run record.
+		for row_value in arrow_art_diagnostics:
+			var row := row_value as Dictionary
+			diagnostics += "\nARROW ART %s %s" % [
+				String(row.get("code", "")),
+				String(row.get("projectileObjectId", "")),
+			]
 		hud.show_diagnostics(diagnostics, true)
 	else:
 		hud.show_diagnostics("", false)

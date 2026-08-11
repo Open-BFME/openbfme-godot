@@ -8,7 +8,7 @@ const ARCHER_PROJECTILE_PACK_KEY := "gondorArcherProjectile"
 const PROJECTILE_ART_PACK_KEY := "projectileArt"
 const PROJECTILE_ART_SCHEMA := "openbfme.projectile-art-runtime"
 ## Every check this runner is expected to reach; see _finish().
-const EXPECTED_CHECK_COUNT := 33
+const EXPECTED_CHECK_COUNT := 34
 
 var passed := 0
 var failed := 0
@@ -23,7 +23,9 @@ var _runner_watchdog := RunnerWatchdogScript.new()
 
 
 func _initialize() -> void:
-	_runner_watchdog.start(self, "RETAIL_ARCHER_PROJECTILE_PRESENTATION_RUNNER")
+	_runner_watchdog.start(self, "RETAIL_ARCHER_PROJECTILE_PRESENTATION_RUNNER", 0, 0, true)
+	_runner_watchdog.set_result_provider(func() -> String:
+		return "passed=%d failed=%d of %d" % [passed, failed, EXPECTED_CHECK_COUNT])
 	call_deferred("_run")
 
 
@@ -287,10 +289,14 @@ func _check_compiled_projectile_art(battalion_script: GDScript, controller_scrip
 	if content_db != null:
 		mounted.assign(content_db.pack_roots)
 		content_db.pack_roots = [] as Array[String]
+	# This provocation is supposed to fail closed, so mute the engine warning it
+	# legitimately raises; the proof gates read a stray WARNING as a defect.
+	battalion_script.suppress_engine_warnings = true
 	var starved = battalion_script.new()
 	root.add_child(starved)
 	starved.projectile_object_id = "EvilFactionArrow"
 	starved._configure_combat_visual_contract({})
+	battalion_script.suppress_engine_warnings = false
 	_check(
 		"absent_projectile_art_reports_a_named_diagnostic",
 		_has_diagnostic(starved.combat_visual_diagnostics, "arrow-art-unresolved")
@@ -305,10 +311,25 @@ func _check_compiled_projectile_art(battalion_script: GDScript, controller_scrip
 	root.add_child(borrower)
 	borrower.projectile_object_id = "EvilFactionArrow"
 	borrower._configure_combat_visual_contract({})
+	# Not an OR over both codes -- that passes no matter what happens. Assert the
+	# code that MUST fire for the binding that actually occurred: a bound
+	# sidecar is a borrow and must say so; compiled art must NOT claim a borrow.
+	var borrower_bound_sidecar := (
+		borrower.archer_projectile_controller != null
+		and String(borrower.archer_projectile_controller.art_binding) == "gondor-arrow-closure"
+	)
+	var borrower_bound_compiled := (
+		borrower.archer_projectile_controller != null
+		and String(borrower.archer_projectile_controller.art_binding) == "compiled-projectile-art"
+	)
+	var borrow_named := _has_diagnostic(
+		borrower.combat_visual_diagnostics, "arrow-art-shared-good-fallback"
+	)
 	_check(
 		"shared_good_arrow_borrow_reports_a_named_diagnostic",
-		_has_diagnostic(borrower.combat_visual_diagnostics, "arrow-art-shared-good-fallback")
-			or _has_diagnostic(borrower.combat_visual_diagnostics, "arrow-art-unresolved")
+		(borrow_named if borrower_bound_sidecar
+			else (not borrow_named if borrower_bound_compiled
+				else _has_diagnostic(borrower.combat_visual_diagnostics, "arrow-art-unresolved")))
 	)
 	borrower.queue_free()
 	# Precedence: the sidecar is GondorArcherArrow's OWN full closure (streak +
@@ -332,6 +353,31 @@ func _check_compiled_projectile_art(battalion_script: GDScript, controller_scrip
 	gondor.queue_free()
 	if mounted_fixture and content_db != null:
 		content_db.pack_roots.erase(fixture_root)
+	# The diagnostics must be CONSUMED, not just recorded. Prove the slice's
+	# aggregate pulls a battalion's rows up (and deduplicates them) rather than
+	# leaving an array nobody reads.
+	var slice_script := load("res://src/retail_slice/retail_vertical_slice.gd") as GDScript
+	var slice = slice_script.new()
+	var donor = battalion_script.new()
+	donor.object_id = "bfme2.object.mordor-archer"
+	donor.combat_visual_diagnostics.append({
+		"code": "arrow-art-shared-good-fallback",
+		"projectileObjectId": "EvilFactionArrow",
+	})
+	donor.combat_visual_diagnostics.append({
+		"code": "arrow-art-shared-good-fallback",
+		"projectileObjectId": "EvilFactionArrow",
+	})
+	slice._aggregate_arrow_art_diagnostics(donor)
+	slice._aggregate_arrow_art_diagnostics(donor)
+	_check(
+		"slice_aggregates_and_deduplicates_arrow_art_diagnostics",
+		slice.arrow_art_diagnostics.size() == 1
+			and String(slice.arrow_art_diagnostics[0].get("code", "")) == "arrow-art-shared-good-fallback"
+			and (slice.get_meta("arrow_art_diagnostics", []) as Array).size() == 1
+	)
+	donor.free()
+	slice.free()
 	resolver.queue_free()
 	await process_frame
 
@@ -484,7 +530,7 @@ func _check(name: String, condition: bool) -> void:
 func _finish() -> void:
 	# Liveness guard. A GDScript runtime error inside an awaited section
 	# unwinds it silently, so a half-run suite would otherwise print a green
-	# RESULT with fewer checks (measured: 25 of 32 on the pre-fix runtime).
+	# RESULT with fewer checks (measured: 25 of 33 on the pre-fix runtime).
 	if passed + failed != EXPECTED_CHECK_COUNT:
 		failed += 1
 		printerr(

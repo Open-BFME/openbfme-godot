@@ -13,7 +13,7 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $forbiddenDiagnostics = '(?i)\b(?:ERROR|WARNING|leak(?:ed|s|ing)?|orphan(?:ed|s)?|ObjectDB instances|RID allocations|resources still in use|SCRIPT ERROR)\b'
 $focusedRunners = [ordered]@{
     'animated_prop_runtime' = @('retail_animated_prop_runtime_runner.gd', '(?m)^RETAIL_ANIMATED_PROP_RUNTIME_RESULT passed=18 failed=0\s*$')
-    'archer_projectile_presentation_runtime' = @('retail_archer_projectile_presentation_runner.gd', '(?m)^RETAIL_ARCHER_PROJECTILE_PRESENTATION_RESULT passed=33 failed=0\s*$')
+    'archer_projectile_presentation_runtime' = @('retail_archer_projectile_presentation_runner.gd', '(?m)^RETAIL_ARCHER_PROJECTILE_PRESENTATION_RESULT passed=34 failed=0\s*$')
     'bound_props_runtime' = @('retail_bound_props_runner.gd', '(?m)^RETAIL_BOUND_PROPS_RESULT passed=30 failed=0\s*$')
     'builder_construction_runtime' = @('retail_builder_construction_runner.gd', '(?m)^RETAIL_BUILDER_CONSTRUCTION_RESULT passed=12 failed=0\s*$')
     'environment_runtime' = @('retail_environment_runner.gd', '(?m)^RETAIL_ENVIRONMENT_RESULT passed=33 failed=0\s*$')

@@ -182,6 +182,52 @@ def test_arrow_projectiles_report_no_model_gap() -> None:
 
 
 @private_sources
+def test_silverthorn_layered_streaks_and_unauthored_additive() -> None:
+    """Retail does not author every W3DStreakDraw field, and layers streaks.
+
+    The Mirkwood silverthorn is the corpus's counter-example to both
+    assumptions this compiler started with: it authors TWO W3DStreakDraw
+    modules on one object, and omits ``Additive`` on both. A strict
+    exactly-one-value read of ``Additive`` fails closed here -- which would
+    abort an elves publish, since this is a compiled elves projectile.
+    """
+
+    runtime = compile_projectile_art(
+        ("MirkwoodArcherSilverthornProjectile",), EFFECTIVE_ASSETS
+    )["runtime"]
+    entry = _entry(runtime, "MirkwoodArcherSilverthornProjectile")
+    streaks = [row for row in entry["draws"] if row["kind"] == "W3DStreakDraw"]
+    assert len(streaks) == 2
+    # Both layers are compiled with their own authored geometry and texture.
+    assert [row["texture"] for row in streaks] == [
+        "assets/textures/projectiles/exarrowstreakfire.png",
+        "assets/textures/projectiles/exlightstreaks2.png",
+    ]
+    assert [(row["length"], row["width"], row["numSegments"]) for row in streaks] == [
+        (15, 3, 6),
+        (50, 1, 6),
+    ]
+    assert all(row["color"] == {"r": 0, "g": 128, "b": 255} for row in streaks)
+    for row in streaks:
+        # Additive is NOT authored here; the value carried is the engine
+        # default recorded in retail's own GoodFactionArrow comment
+        # ("Additive = No ; Yes by default"), and authoredFields says so.
+        assert "Additive" not in row["authoredFields"]
+        assert row["additive"] is True
+        assert sorted(row["authoredFields"]) == ["Color", "Length", "NumSegments", "Width"]
+
+
+@private_sources
+def test_authored_additive_is_reported_as_authored() -> None:
+    """Control for the test above: the arrow DOES author Additive = No."""
+
+    runtime = compile_projectile_art(("GoodFactionArrow",), EFFECTIVE_ASSETS)["runtime"]
+    streak = _streak(_entry(runtime, "GoodFactionArrow"))
+    assert "Additive" in streak["authoredFields"]
+    assert streak["additive"] is False
+
+
+@private_sources
 def test_unknown_projectile_object_id_fails_closed() -> None:
     with pytest.raises(ProjectileArtCompilerError):
         compile_projectile_art(("NotARetailProjectile",), EFFECTIVE_ASSETS)
