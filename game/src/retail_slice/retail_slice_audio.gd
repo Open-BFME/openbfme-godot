@@ -159,6 +159,19 @@ var _structure_damage_stage: Dictionary = {}
 var scoped_playable_unit_documents: Dictionary = {}
 var route_failures: Dictionary = {}
 var missing_required_events: Array[String] = []
+## Roster voices NO MOUNTED PACK CAN ANSWER, as named rows. These are reported
+## and warned about, but they do not refuse the launch: see
+## `_created_hero_voice_is_unanswerable` for the deliberately narrow rule that
+## puts a row here instead of into `missing_required_events`.
+var unvoiced_roster_degradations: Array[String] = []
+## object id -> true for runtime-synthesized created heroes (their runtime
+## document carries `registration.createAHero`). Filled by
+## `_load_playable_unit_audio_routes` alongside the voice tables.
+var playable_unit_created_hero: Dictionary = {}
+## object id -> the audio event ids the unit's OWN document ships bindings for,
+## folded lower-case. A created hero ships none; a converted pack unit ships one
+## per authored event.
+var playable_unit_declared_bindings: Dictionary = {}
 var intent_log: Array[Dictionary] = []
 var routing_log: Array[Dictionary] = []
 var ambient_players: Array[AudioStreamPlayer3D] = []
@@ -217,6 +230,9 @@ func configure(selected_pack_root: String, enable_playback: bool = true, active_
 	generic_weapon_swing_fallbacks.clear()
 	route_failures.clear()
 	missing_required_events.clear()
+	unvoiced_roster_degradations.clear()
+	playable_unit_created_hero.clear()
+	playable_unit_declared_bindings.clear()
 	intent_log.clear()
 	routing_log.clear()
 	last_route_result.clear()
@@ -991,6 +1007,7 @@ func _append_unique_streams(target: Array, route_value: Variant) -> void:
 
 func _collect_readiness_diagnostics() -> void:
 	missing_required_events.clear()
+	unvoiced_roster_degradations.clear()
 	for state in ["explore", "battle", "victory", "defeat"]:
 		if not music_streams.has(state):
 			missing_required_events.append("missing_music_state:%s" % state)
@@ -1003,12 +1020,68 @@ func _collect_readiness_diagnostics() -> void:
 				# A unit with no authored candidates for a kind has nothing to
 				# bind (builders author no attack voice): absent, not missing.
 				continue
-			if not bound.has(kind):
-				missing_required_events.append("missing_voice_event:%s:%s:%s" % [object_id, kind, String(candidates[0])])
+			if bound.has(kind):
+				continue
+			if _created_hero_voice_is_unanswerable(object_id, candidates):
+				unvoiced_roster_degradations.append(
+					"unvoiced_created_hero:%s:%s:%s" % [object_id, kind, String(candidates[0])]
+				)
+				continue
+			missing_required_events.append("missing_voice_event:%s:%s:%s" % [object_id, kind, String(candidates[0])])
 	for event_id in REQUIRED_SFX_EVENT_IDS:
 		if not audio_event_routes.has(event_id.to_lower()):
 			missing_required_events.append("missing_sfx_event:%s" % event_id)
 	missing_required_events.sort()
+	unvoiced_roster_degradations.sort()
+	if not unvoiced_roster_degradations.is_empty():
+		# Same shape as the slice's map-art degradation report: absent content is
+		# a NAMED downgrade on the way to a playable match, never a silent one.
+		var summary := ", ".join(PackedStringArray(unvoiced_roster_degradations))
+		push_warning("Created-hero voice degraded: %s" % summary)
+		print("[RetailSliceAudio] created-hero-voice-degraded %s" % summary)
+
+
+func _created_hero_voice_is_unanswerable(object_id: String, candidates: Array) -> bool:
+	## Can ANY mounted pack voice this created hero, for this kind?
+	##
+	## A created hero is not converted content: it is synthesized at runtime from
+	## the mounted `cah.system` table, and that table names its voice events BY
+	## REFERENCE ("HeroWestMaleVoiceAttack") into the retail audio registry. It
+	## therefore ships no samples and no `audioBindings` of its own, unlike every
+	## converted playable unit, whose importer resolved each authored event to
+	## leaves (or to an explicit `authored-silent` resolution) inside the unit's
+	## own document. When the mounted registry defines NONE of the referenced
+	## events, no mounted pack can speak this line at all. The honest answer is a
+	## silent hero in a match that plays, reported by name - not a refusal that
+	## takes the whole faction offline. (Retail ships those hero voice sets; our
+	## converted registry does not carry them yet.)
+	##
+	## DELIBERATELY NARROW, so the fail-closed rule this sits inside stays intact:
+	##   - only runtime-synthesized created heroes (`registration.createAHero`);
+	##   - only when the hero's own document declares NO binding or resolution for
+	##     the event, so a hero that DOES carry converted audio is still strict;
+	##   - only when the registry DEFINES NONE of the candidates. An event the
+	##     registry defines but cannot deliver (missing samples, broken
+	##     multisound, cyclic definition) is a BROKEN PACK and still fails closed,
+	##     exactly as `pack_capability` treats a declared-but-absent surface.
+	if not bool(playable_unit_created_hero.get(object_id, false)):
+		return false
+	var content_db := get_node_or_null("/root/ContentDB")
+	if content_db == null:
+		# No registry to ask means no evidence of absence. Stay strict.
+		return false
+	var declared_bindings: Dictionary = playable_unit_declared_bindings.get(object_id, {}) as Dictionary
+	for candidate_value in candidates:
+		var event_id := String(candidate_value)
+		if event_id == "":
+			continue
+		if declared_bindings.has(event_id.to_lower()):
+			return false
+		if not (content_db.call("get_retail_audio_event", event_id) as Dictionary).is_empty():
+			return false
+		if not (content_db.call("get_retail_audio_multisound", event_id) as Dictionary).is_empty():
+			return false
+	return true
 
 
 func sync_events(events: Array[Dictionary]) -> void:
@@ -1421,6 +1494,21 @@ func _load_playable_unit_audio_routes() -> void:
 		var registration: Dictionary = document.get("registration", {}) as Dictionary
 		var bindings: Dictionary = registration.get("audioBindings", {}) as Dictionary
 		var resolutions: Dictionary = registration.get("audioResolution", {}) as Dictionary
+		# Provenance the readiness rule below needs: WHO authored this document
+		# and WHAT it brought with it. A converted pack unit ships one binding
+		# (or an `authored-silent` resolution) per authored event; a created hero
+		# is synthesized at runtime from cah.system and ships neither.
+		var created_hero := registration.has("createAHero")
+		var declared_bindings: Dictionary = {}
+		for binding_key in bindings.keys():
+			declared_bindings[String(binding_key).to_lower()] = true
+		for resolution_key in resolutions.keys():
+			declared_bindings[String(resolution_key).to_lower()] = true
+		playable_unit_created_hero[object_id] = created_hero
+		playable_unit_declared_bindings[object_id] = declared_bindings
+		if unit_id != object_id:
+			playable_unit_created_hero[unit_id] = created_hero
+			playable_unit_declared_bindings[unit_id] = declared_bindings
 		for event_id_value in bindings.keys():
 			var event_id := String(event_id_value)
 			var leaves: Array[Dictionary] = []

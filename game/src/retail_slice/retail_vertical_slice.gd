@@ -722,7 +722,13 @@ func _initialize_content_and_match() -> void:
 		if not simulation.base_loop_enabled:
 			failed_capabilities.append("simulation_base_loop")
 		if not audio_system.has_complete_roster_audio_closure():
-			failed_capabilities.append("roster_audio_closure")
+			# Name the surfaces, not just the capability: "roster_audio_closure"
+			# alone sent a whole lane hunting the wrong subsystem. The readiness
+			# diagnostics already say exactly which music state or voice event is
+			# unbound, so they travel with the refusal.
+			failed_capabilities.append(
+				"roster_audio_closure[%s]" % ", ".join(PackedStringArray(audio_system.readiness_diagnostics()))
+			)
 		if not hud.retail_train_commands_bound:
 			failed_capabilities.append("hud_train_commands")
 		_fail("Retail pack mounted, but capability validation failed: %s" % ", ".join(failed_capabilities))

@@ -3,6 +3,7 @@ extends SceneTree
 ## copies retail payloads and exercises the enabled Godot playback path.
 
 const AudioScript = preload("res://src/retail_slice/retail_slice_audio.gd")
+const PackCapabilityScript = preload("res://src/content/pack_capability.gd")
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 
 var passed := 0
@@ -29,8 +30,17 @@ func _run() -> void:
 		_finish([])
 		return
 	content_db.reload()
-	var soldier_definition: Dictionary = content_db.get_bundle_object(AudioScript.SOLDIER_OBJECT_ID)
-	var selected_pack_root := String(soldier_definition.get("_pack_root", ""))
+	# THE HOST PACK, ASKED THE WAY PRODUCTION ASKS IT. This runner used to take
+	# the pack root off the shared soldier document, which is the exact mistake
+	# retail_vertical_slice._resolve_host_slice_pack warns about in its header:
+	# a supplement carrying its own copy of a shared base object legitimately
+	# wins that id while contributing no host surfaces. When a fatter faction
+	# pack started winning `bfme2.object.gondor-fighter`, this runner pointed the
+	# audio module at a root with no assets/audio/music and reported four missing
+	# music states that production never had. One resolution, shared.
+	var selected_pack_root := String(
+		PackCapabilityScript.resolve_host_slice_pack(content_db.pack_meta).get("root", "")
+	)
 	var external_root := OS.get_environment("OPENBFME_CONTENT")
 	_check("selected_private_pack_root_available", selected_pack_root != "" and external_root != "" and mod_loader.path_is_within(external_root, selected_pack_root), selected_pack_root)
 	if selected_pack_root == "":

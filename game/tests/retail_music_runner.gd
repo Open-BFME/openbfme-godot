@@ -7,6 +7,7 @@ extends SceneTree
 
 const AudioScript = preload("res://src/retail_slice/retail_slice_audio.gd")
 const UserSettingsScript = preload("res://src/ui/user_settings.gd")
+const PackCapabilityScript = preload("res://src/content/pack_capability.gd")
 
 var passed := 0
 var failed := 0
@@ -32,8 +33,14 @@ func _run() -> void:
 		_finish()
 		return
 	content_db.reload()
-	var soldier_definition: Dictionary = content_db.get_bundle_object(AudioScript.SOLDIER_OBJECT_ID)
-	var selected_pack_root := String(soldier_definition.get("_pack_root", ""))
+	# Same shared host resolution production uses. Taking the root off the shared
+	# soldier document instead pointed this runner at whichever supplement won
+	# that object id — a faction pack with no assets/audio/music — and every
+	# playlist assertion then failed on content the game never reads from there.
+	# See the header of retail_vertical_slice._resolve_host_slice_pack.
+	var selected_pack_root := String(
+		PackCapabilityScript.resolve_host_slice_pack(content_db.pack_meta).get("root", "")
+	)
 	var external_root := OS.get_environment("OPENBFME_CONTENT")
 	_check(
 		"selected_private_pack_root_available",

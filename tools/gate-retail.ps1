@@ -448,6 +448,13 @@ try {
     # enabled in the shell while nothing gated the code behind that button.
     # Floor is the measured value from 2026-08-05.
     Invoke-GodotPassedFloor "cah_create_a_hero" "cah_create_a_hero_runner.gd" '(?m)^CAH_CREATE_A_HERO_OK passed=([0-9]+) failed=0\s*$' 66
+    # The roster-audio closure rule that decides whether an unbound created-hero
+    # voice degrades the hero to silence or refuses the whole launch. WIRED
+    # 2026-08-11 after a republished faction pack added retail hero voice sets to
+    # cah.system that the mounted audio registry defines nowhere, and closure
+    # took Men and Dwarves offline at the end of a successful boot. Cheap: it
+    # configures the audio module against the host pack four times, no playback.
+    Invoke-GodotPassedFloor "created_hero_voice_closure" "retail_created_hero_voice_closure_runner.gd" '(?m)^CREATED_HERO_VOICE_CLOSURE_RESULT passed=([0-9]+) failed=0\s*$' 10
 
     # The release firewall belongs to SECTION A: it is about the repository, not
     # about anyone's mounted content, and it must run even when SECTION B is
