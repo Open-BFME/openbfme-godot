@@ -624,6 +624,27 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    ring_system = sub.add_parser(
+        "compile-ring-system",
+        help="compile the One Ring descriptor and Godot runtime from effective assets",
+    )
+    ring_system.add_argument(
+        "--assets-root",
+        type=Path,
+        required=True,
+        help="read-only effective-assets root produced by extract-all-assets",
+    )
+    _add_game_argument(ring_system)
+    ring_system.add_argument(
+        "--runtime-out",
+        type=Path,
+        default=None,
+        help=(
+            "write the Godot-facing openbfme.ring-system-runtime document here "
+            "(defaults to alongside the descriptor)"
+        ),
+    )
+
     road_closure = sub.add_parser(
         "road-closure",
         help="resolve exact Road definitions and textures from effective assets",
@@ -1518,6 +1539,51 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
             )
             return 0
 
+        if args.command == "compile-ring-system":
+            if args.game != "rotwk":
+                raise ValueError("compile-ring-system requires --game rotwk")
+            from .ring_system_compiler import (
+                build_ring_system_runtime,
+                compile_ring_system_descriptor,
+            )
+
+            assets_root = ensure_external_to_repo(
+                args.assets_root, repo_root_from_module()
+            )
+            documents = {
+                path.relative_to(assets_root).as_posix(): path.read_bytes()
+                for path in sorted((assets_root / "data" / "ini").rglob("*"))
+                if path.is_file() and path.suffix.casefold() in {".ini", ".inc"}
+            }
+            descriptor = compile_ring_system_descriptor(documents)
+            runtime = build_ring_system_runtime(descriptor)
+            reports = _state_root(args) / "reports"
+            descriptor_path = reports / f"{args.game}-ring-system-descriptor.json"
+            runtime_path = (
+                args.runtime_out
+                if args.runtime_out is not None
+                else reports / f"{args.game}-ring-system-runtime.json"
+            )
+            write_json_atomic(descriptor_path, descriptor)
+            write_json_atomic(runtime_path, runtime)
+            registration = runtime["registration"]
+            _render(
+                {
+                    "ready": True,
+                    "game": args.game,
+                    "descriptor": str(descriptor_path),
+                    "runtime": str(runtime_path),
+                    "descriptor_sha256": descriptor["descriptorSha256"],
+                    "runtime_sha256": runtime["runtimeSha256"],
+                    "object_count": len(registration["objects"]),
+                    "delivery_structure_count": len(
+                        registration["delivery"]["structures"]
+                    ),
+                },
+                args.json,
+            )
+            return 0
+
         if args.command == "visual-closure":
             assets_root = ensure_external_to_repo(
                 args.assets_root, repo_root_from_module()
@@ -1919,15 +1985,19 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
             ring_runtime = None
             ring_resources = None
             if args.game == "rotwk" and factions == ["men"]:
-                from .ring_system_compiler import compile_ring_system
+                from .ring_system_compiler import (
+                    build_ring_system_runtime,
+                    compile_ring_system_descriptor,
+                )
 
                 ring_documents = {
                     path.relative_to(oracle_root).as_posix(): path.read_bytes()
                     for path in sorted((oracle_root / "data" / "ini").rglob("*"))
                     if path.is_file() and path.suffix.casefold() in {".ini", ".inc"}
                 }
-                ring_runtime = compile_ring_system(ring_documents)
-                art_plan = ring_runtime.get("artConversionPlan")
+                ring_descriptor = compile_ring_system_descriptor(ring_documents)
+                ring_runtime = build_ring_system_runtime(ring_descriptor)
+                art_plan = ring_descriptor.get("artConversionPlan")
                 if not isinstance(art_plan, Mapping) or not isinstance(
                     art_plan.get("resources"), list
                 ):

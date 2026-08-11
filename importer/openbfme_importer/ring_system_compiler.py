@@ -11,13 +11,11 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
-from typing import Any
 
 from .playable_unit_compiler import (
     _ancestry,
     _effective_top_blocks,
     _effective_values,
-    _first,
     _resolved_expression,
     _tokens,
     prepare_playable_unit_compiler,
@@ -31,13 +29,14 @@ from .sage_cst import (
 from .sage_ini import IniBlock, parse_flat_named_blocks
 
 
-SCHEMA = "openbfme.ring-system"
+SCHEMA = "openbfme.ring-system-descriptor"
 SCHEMA_VERSION = 0
+RUNTIME_SCHEMA = "openbfme.ring-system-runtime"
+RUNTIME_SCHEMA_VERSION = 0
 
 NEUTRAL_GOLLUM = "NeutralGollum"
 RING_GOLLUM = "NeutralGollum_RingHero"
 DROPPED_RING = "TheDroppedRing"
-RING_HEROES = ("MordorSauron_RingHero", "ElvenGaladriel_RingHero")
 RING_UPGRADES = ("Upgrade_RingHero", "Upgrade_FortressRingHero")
 RING_EVA_EVENTS = (
     "GollumSeen",
@@ -284,11 +283,13 @@ def _compile_gollum(
 
 def _compile_filter(expression: str) -> dict[str, object]:
     tokens = expression.split()
+    modes: list[str] = []
     include: list[str] = []
     exclude: list[str] = []
     predicates: list[str] = []
     for token in tokens:
         if token.upper() in {"ANY", "NONE"}:
+            modes.append(token.upper())
             continue
         if token.startswith("+"):
             include.append(token[1:])
@@ -300,9 +301,16 @@ def _compile_filter(expression: str) -> dict[str, object]:
         raise RingSystemCompilerError("TheDroppedRing ObjectFilter must exclude -NEUTRALGOLLUM")
     if "NOT_FLYING_UNITS" not in {value.upper() for value in predicates}:
         raise RingSystemCompilerError("TheDroppedRing ObjectFilter lacks NOT_FLYING_UNITS")
-    result: dict[str, object] = {"include": include, "exclude": exclude}
-    result["predicate"] = predicates[0] if len(predicates) == 1 else predicates
-    return result
+    if len(modes) != 1:
+        raise RingSystemCompilerError(
+            "TheDroppedRing ObjectFilter must author exactly one ANY/NONE mode"
+        )
+    return {
+        "mode": modes[0],
+        "include": include,
+        "exclude": exclude,
+        "predicate": predicates,
+    }
 
 
 def _compile_ring(objects: Mapping[str, SageObject]) -> dict[str, object]:
@@ -372,13 +380,18 @@ def _scope_lines(source: bytes, family: str, name: str) -> list[str]:
     raise RingSystemCompilerError(f"unterminated {family}: {name}")
 
 
-def _compile_ocl(source: bytes, name: str) -> dict[str, object]:
+def _ocl_values(source: bytes, name: str) -> dict[str, str]:
     lines = _scope_lines(source, "ObjectCreationList", name)
     values: dict[str, str] = {}
     for line in lines:
         if "=" in line:
             key, value = (part.strip() for part in line.split("=", 1))
             values[key.casefold()] = value
+    return values
+
+
+def _compile_ocl(source: bytes, name: str) -> dict[str, object]:
+    values = _ocl_values(source, name)
     if values.get("objectnames") != DROPPED_RING or values.get("count") != "1":
         raise RingSystemCompilerError(f"{name} must create one {DROPPED_RING}")
     result: dict[str, object] = {"objectId": DROPPED_RING, "count": 1}
@@ -395,6 +408,30 @@ def _compile_ocl(source: bytes, name: str) -> dict[str, object]:
             for axis, value in zip(("x", "y", "z"), match.groups(), strict=True)
         }
     return result
+
+
+def _compile_spawn_contract(source: bytes) -> tuple[dict[str, str], dict[str, str]]:
+    carrier = _ocl_values(source, "OCL_TheRingCarrier")
+    stealer = _ocl_values(source, "OCL_TheRingStealer")
+    for name, values in (("OCL_TheRingCarrier", carrier), ("OCL_TheRingStealer", stealer)):
+        if values.get("count") != "1":
+            raise RingSystemCompilerError(f"{name} must create exactly one object")
+        if not values.get("objectnames"):
+            raise RingSystemCompilerError(f"{name} has no ObjectNames")
+        if not values.get("destinationplayer") or not values.get("waypointspawnpoints"):
+            raise RingSystemCompilerError(f"{name} has incomplete spawn routing")
+    if carrier["destinationplayer"] != stealer["destinationplayer"]:
+        raise RingSystemCompilerError("ring carrier and stealer destination players differ")
+    if carrier["waypointspawnpoints"] != stealer["waypointspawnpoints"]:
+        raise RingSystemCompilerError("ring carrier and stealer waypoint families differ")
+    return (
+        {
+            "objectId": carrier["objectnames"],
+            "waypointFamily": carrier["waypointspawnpoints"],
+            "team": carrier["destinationplayer"],
+        },
+        {stealer["objectnames"]: "authored-stealer-spawn-excluded-from-runtime"},
+    )
 
 
 def _compile_upgrades(documents: Mapping[str, bytes]) -> dict[str, object]:
@@ -533,42 +570,48 @@ def _compile_ring_hero(
         "onDeath": {"createObjectList": "OCL_TheOneRing"},
         "experienceLevelOnCreate": 10,
     }
-    if object_id == "ElvenGaladriel_RingHero":
-        fury = [
-            row
-            for row in obj.blocks
-            if row.kind.casefold() in {"specialpowermodule", "specialabilityupdate"}
-            and "terriblefury" in (row.instance_tag or "").casefold()
-        ]
+    fury = [
+        row
+        for row in obj.blocks
+        if row.kind.casefold() in {"specialpowermodule", "specialabilityupdate"}
+        and "terriblefury" in (row.instance_tag or "").casefold()
+    ]
+    if fury:
         kinds = [row.kind for row in fury]
         if {value.casefold() for value in kinds} != {
             "specialpowermodule", "specialabilityupdate"
         }:
-            raise RingSystemCompilerError("Galadriel child Terrible Fury modules are incomplete")
-        condition_rows = _own_modules(obj, "ModelConditionUpgrade")
-        dark = next(
-            (
-                row
-                for row in condition_rows
-                if "USER_1" in _tokens(" ".join(row.values("AddConditionFlags")))
-            ),
-            None,
-        )
-        draw_models = [
-            value.strip()
-            for source_object in lineage
-            for draw in source_object.blocks
-            if draw.kind.casefold() == "w3dscriptedmodeldraw"
-            for state in _nested_blocks(draw, "ModelConditionState")
-            if "USER_1" in {token.upper() for token in state.header_tokens}
-            for value in state.values("Model")
-        ]
-        if dark is None or draw_models != ["EUGaldrl_SKN"]:
-            raise RingSystemCompilerError("Galadriel USER_1 dark-skin swap is incomplete")
+            raise RingSystemCompilerError(
+                f"{object_id} child Terrible Fury modules are incomplete"
+            )
         result["terribleFuryModules"] = [
             {"kind": row.kind, "specialPowerTemplate": _value(row, "SpecialPowerTemplate")}
             for row in fury
         ]
+
+    condition_rows = [
+        row
+        for row in _own_modules(obj, "ModelConditionUpgrade")
+        if "USER_1" in {
+            token.upper()
+            for token in _tokens(" ".join(row.values("AddConditionFlags")))
+        }
+    ]
+    draw_models = [
+        value.strip()
+        for source_object in lineage
+        for draw in source_object.blocks
+        if draw.kind.casefold() == "w3dscriptedmodeldraw"
+        for state in _nested_blocks(draw, "ModelConditionState")
+        if "USER_1" in {token.upper() for token in state.header_tokens}
+        for value in state.values("Model")
+    ]
+    if condition_rows or draw_models:
+        if len(condition_rows) != 1 or len(draw_models) != 1:
+            raise RingSystemCompilerError(
+                f"{object_id} USER_1 model-condition swap is incomplete"
+            )
+        dark = condition_rows[0]
         result["darkSkin"] = {
             "triggeredBy": _value(dark, "TriggeredBy"),
             "condition": "USER_1",
@@ -616,7 +659,16 @@ def _compile_delivery(
             "fxForRingEntry": _value(module, "FXForRingEntry"),
             "enterSound": _value(module, "EnterSound"),
         }
-        if obj.name.casefold() == "ereborthrone":
+        owns_ring_drop = any(
+            drop.values("CreationList") == ("OCL_TheOneRing",)
+            for drop in _own_modules(obj, "CreateObjectDie")
+        )
+        includes_ring_func = any(
+            ref.relative_virtual_path.casefold().endswith("fortressringfunc.inc")
+            for ref in obj.includes
+        )
+        row["dropsRingOnDeath"] = owns_ring_drop or includes_ring_func
+        if not row["dropsRingOnDeath"]:
             row["note"] = "retail-bug-accepts-ring-never-returns-it"
         structures.append(row)
         module_rows["lossAnnouncement"].extend(_own_modules(obj, "FXListDie"))
@@ -690,7 +742,7 @@ def _compile_delivery(
     return {"structures": structures, "fortressModules": modules}
 
 
-def _art_plan() -> dict[str, object]:
+def _art_plan(compiled_objects: Mapping[str, object]) -> dict[str, object]:
     gollum_animations = [
         f"art/w3d/cu/cugollum_{suffix}.w3d"
         for suffix in (
@@ -793,13 +845,42 @@ def _art_plan() -> dict[str, object]:
             "art/w3d/ex/exonering.w3d",
             "art/w3d/ex/exonering_cr.w3d",
         ],
-        "galadrielDarkSkin": {"model": "EUGaldrl_SKN", "requiredIfUnshipped": True},
+        "conditionalHeroModels": [
+            {
+                "objectId": object_id,
+                "condition": dark_skin["condition"],
+                "model": dark_skin["model"],
+                "requiredIfUnshipped": True,
+            }
+            for object_id, compiled in compiled_objects.items()
+            if isinstance(compiled, Mapping)
+            and isinstance((dark_skin := compiled.get("darkSkin")), Mapping)
+        ],
         "resources": resources,
     }
 
 
-def compile_ring_system(documents: Mapping[str, bytes]) -> dict[str, object]:
-    """Compile the complete ring system from one patched effective INI view."""
+def _importer_evidence(documents: Mapping[str, bytes]) -> dict[str, object]:
+    sources = [
+        {
+            "virtualPath": path.replace("\\", "/"),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+        for path, payload in sorted(documents.items(), key=lambda item: item[0].casefold())
+        if path.replace("\\", "/").casefold().startswith("data/ini/")
+        and path.casefold().endswith((".ini", ".inc"))
+    ]
+    return {
+        "compiler": "openbfme_importer.ring_system_compiler",
+        "sourceDocumentCount": len(sources),
+        "sourceCorpusSha256": _digest(sources),
+    }
+
+
+def compile_ring_system_descriptor(
+    documents: Mapping[str, bytes],
+) -> dict[str, object]:
+    """Compile the evidence-bearing ring descriptor from an effective INI view."""
 
     if not isinstance(documents, Mapping) or not documents:
         raise RingSystemCompilerError("effective INI document mapping is empty")
@@ -825,20 +906,47 @@ def compile_ring_system(documents: Mapping[str, bytes]) -> dict[str, object]:
         objects, _document(documents, "data/ini/armor.ini")
     )
     ring = _compile_ring(objects)
+    player_templates = _compile_player_templates(documents)
+    hero_ids: dict[str, str] = {}
+    for heroes in player_templates.values():
+        for hero_id in heroes:
+            folded = hero_id.casefold()
+            incumbent = hero_ids.get(folded)
+            if incumbent is not None and incumbent != hero_id:
+                raise RingSystemCompilerError(
+                    f"ring hero id has ambiguous casing: {incumbent!r} / {hero_id!r}"
+                )
+            hero_ids[folded] = hero_id
+
     compiled_objects: dict[str, object] = {
         NEUTRAL_GOLLUM: gollum,
         RING_GOLLUM: ring_gollum,
         DROPPED_RING: ring,
     }
-    for hero_id in RING_HEROES:
+    for hero_id in sorted(hero_ids.values(), key=str.casefold):
+        if hero_id.casefold() in {key.casefold() for key in compiled_objects}:
+            raise RingSystemCompilerError(
+                f"ring hero route collides with core ring object: {hero_id}"
+            )
         compiled_objects[hero_id] = _compile_ring_hero(
             objects, hero_id, prepared.numeric_defines
         )
     ocl_source = _document(documents, "data/ini/objectcreationlist.ini")
+    spawn, excluded_objects = _compile_spawn_contract(ocl_source)
+    if spawn["objectId"] not in compiled_objects:
+        raise RingSystemCompilerError(
+            f"OCL_TheRingCarrier names uncompiled object: {spawn['objectId']}"
+        )
+    for excluded_id in excluded_objects:
+        excluded = _required_object(objects, excluded_id)
+        if (excluded.parent or "").casefold() != NEUTRAL_GOLLUM.casefold():
+            raise RingSystemCompilerError(
+                f"OCL_TheRingStealer object {excluded_id} is not a {NEUTRAL_GOLLUM} child"
+            )
     result: dict[str, object] = {
         "schema": SCHEMA,
         "schemaVersion": SCHEMA_VERSION,
-        "outputPath": "data/ring/system.json",
+        "runtimeOutputPath": "data/ring/system.json",
         "objects": compiled_objects,
         "objectCreationLists": {
             name: _compile_ocl(ocl_source, name)
@@ -849,40 +957,161 @@ def compile_ring_system(documents: Mapping[str, bytes]) -> dict[str, object]:
         "routes": _compile_routes(documents),
         "system": {
             "modeToken": "ringheroes",
-            "spawn": {
-                "waypointFamily": "SpawnPoint_SkirmishGollum_",
-                "team": "PlyrCreeps",
-            },
+            "spawn": spawn,
             "evaEvents": list(RING_EVA_EVENTS),
-            "ringHeroesByFaction": _compile_player_templates(documents),
+            "ringHeroesByFaction": player_templates,
         },
-        "artConversionPlan": _art_plan(),
-        "excludedObjects": {
-            "NeutralGollum_RingStealer": "verified-dead-content-not-instantiated"
-        },
+        "artConversionPlan": _art_plan(compiled_objects),
+        "excludedObjects": excluded_objects,
+        "importerEvidence": _importer_evidence(documents),
     }
-    result["systemSha256"] = _digest(result)
-    validate_ring_system(result)
+    result["descriptorSha256"] = _digest(result)
+    validate_ring_system_descriptor(result)
     return result
 
 
-def validate_ring_system(value: Mapping[str, object]) -> None:
-    """Validate the bounded contract and its content identity."""
+def _validate_registration(value: Mapping[str, object]) -> None:
+    objects = value.get("objects")
+    system = value.get("system")
+    if not isinstance(objects, Mapping) or not isinstance(system, Mapping):
+        raise RingSystemCompilerError("ring registration object/system tables are invalid")
+    routes = system.get("ringHeroesByFaction")
+    if not isinstance(routes, Mapping) or not routes:
+        raise RingSystemCompilerError("ring registration has no faction hero routes")
+    routed_heroes: set[str] = set()
+    for faction, heroes in routes.items():
+        if not isinstance(faction, str) or not isinstance(heroes, list) or not heroes:
+            raise RingSystemCompilerError("ring faction hero route is invalid")
+        if not all(isinstance(hero, str) and hero for hero in heroes):
+            raise RingSystemCompilerError(f"ring faction {faction} has an invalid hero id")
+        routed_heroes.update(heroes)
+    expected_objects = {NEUTRAL_GOLLUM, RING_GOLLUM, DROPPED_RING, *routed_heroes}
+    if set(objects) != expected_objects:
+        raise RingSystemCompilerError("ring system object set does not match faction routes")
+
+    ring = objects.get(DROPPED_RING)
+    try:
+        filter_row = ring["ringMechanic"]["attach"]["filter"]  # type: ignore[index]
+    except (KeyError, TypeError):
+        raise RingSystemCompilerError("ring attach filter is missing") from None
+    if (
+        not isinstance(filter_row, Mapping)
+        or filter_row.get("mode") not in {"ANY", "NONE"}
+        or not isinstance(filter_row.get("include"), list)
+        or not isinstance(filter_row.get("exclude"), list)
+        or not isinstance(filter_row.get("predicate"), list)
+        or "NEUTRALGOLLUM" not in {
+            str(item).upper() for item in filter_row.get("exclude", [])
+        }
+        or "NOT_FLYING_UNITS" not in {
+            str(item).upper() for item in filter_row.get("predicate", [])
+        }
+    ):
+        raise RingSystemCompilerError("ring attach filter contract is invalid")
+
+    spawn = system.get("spawn")
+    if (
+        not isinstance(spawn, Mapping)
+        or spawn.get("objectId") not in objects
+        or not isinstance(spawn.get("waypointFamily"), str)
+        or not spawn.get("waypointFamily")
+        or not isinstance(spawn.get("team"), str)
+        or not spawn.get("team")
+    ):
+        raise RingSystemCompilerError("ring spawn contract is invalid")
+    if system.get("evaEvents") != list(RING_EVA_EVENTS):
+        raise RingSystemCompilerError("ring system EVA contract is invalid")
+
+    excluded = value.get("excludedObjects")
+    if (
+        not isinstance(excluded, Mapping)
+        or not excluded
+        or set(excluded).intersection(objects)
+        or not all(isinstance(key, str) and key for key in excluded)
+    ):
+        raise RingSystemCompilerError("ring excluded-object contract is invalid")
+
+    delivery = value.get("delivery")
+    structures = delivery.get("structures") if isinstance(delivery, Mapping) else None
+    if not isinstance(structures, list) or len(structures) != 26:
+        raise RingSystemCompilerError("ring delivery structure set is invalid")
+    if not all(
+        isinstance(row, Mapping)
+        and isinstance(row.get("dropsRingOnDeath"), bool)
+        for row in structures
+    ):
+        raise RingSystemCompilerError("ring delivery drop flags are invalid")
+
+
+def validate_ring_system_descriptor(value: Mapping[str, object]) -> None:
+    """Validate the evidence-bearing descriptor and its content identity."""
 
     if value.get("schema") != SCHEMA or value.get("schemaVersion") != SCHEMA_VERSION:
-        raise RingSystemCompilerError("ring system schema identity is invalid")
+        raise RingSystemCompilerError("ring system descriptor identity is invalid")
     unsigned = dict(value)
-    digest = unsigned.pop("systemSha256", None)
+    digest = unsigned.pop("descriptorSha256", None)
     if not isinstance(digest, str) or digest != _digest(unsigned):
-        raise RingSystemCompilerError("ring system digest is invalid")
-    objects = value.get("objects")
-    if not isinstance(objects, Mapping) or set(objects) != {
-        NEUTRAL_GOLLUM, RING_GOLLUM, DROPPED_RING, *RING_HEROES
-    }:
-        raise RingSystemCompilerError("ring system object set is invalid")
-    system = value.get("system")
-    if not isinstance(system, Mapping) or system.get("evaEvents") != list(RING_EVA_EVENTS):
-        raise RingSystemCompilerError("ring system EVA contract is invalid")
-    delivery = value.get("delivery")
-    if not isinstance(delivery, Mapping) or len(delivery.get("structures", [])) != 26:
-        raise RingSystemCompilerError("ring delivery structure set is invalid")
+        raise RingSystemCompilerError("ring system descriptor digest is invalid")
+    evidence = value.get("importerEvidence")
+    if (
+        not isinstance(evidence, Mapping)
+        or not isinstance(evidence.get("sourceDocumentCount"), int)
+        or evidence.get("sourceDocumentCount", 0) < 1
+        or not isinstance(evidence.get("sourceCorpusSha256"), str)
+    ):
+        raise RingSystemCompilerError("ring system importer evidence is invalid")
+    _validate_registration(value)
+
+
+def build_ring_system_runtime(descriptor: Mapping[str, object]) -> dict[str, object]:
+    """Build the Godot-facing runtime without descriptor-only importer evidence."""
+
+    validate_ring_system_descriptor(descriptor)
+    registration_keys = (
+        "objects",
+        "objectCreationLists",
+        "upgrades",
+        "delivery",
+        "routes",
+        "system",
+        "excludedObjects",
+    )
+    result: dict[str, object] = {
+        "schema": RUNTIME_SCHEMA,
+        "schemaVersion": RUNTIME_SCHEMA_VERSION,
+        "descriptorSha256": descriptor["descriptorSha256"],
+        "registration": {key: descriptor[key] for key in registration_keys},
+    }
+    result["runtimeSha256"] = _digest(result)
+    validate_ring_system_runtime(result)
+    return result
+
+
+def validate_ring_system_runtime(value: Mapping[str, object]) -> None:
+    if (
+        value.get("schema") != RUNTIME_SCHEMA
+        or value.get("schemaVersion") != RUNTIME_SCHEMA_VERSION
+    ):
+        raise RingSystemCompilerError("ring system runtime identity is invalid")
+    unsigned = dict(value)
+    digest = unsigned.pop("runtimeSha256", None)
+    if not isinstance(digest, str) or digest != _digest(unsigned):
+        raise RingSystemCompilerError("ring system runtime digest is invalid")
+    if not isinstance(value.get("descriptorSha256"), str):
+        raise RingSystemCompilerError("ring runtime descriptor identity is invalid")
+    registration = value.get("registration")
+    if not isinstance(registration, Mapping):
+        raise RingSystemCompilerError("ring runtime registration is invalid")
+    _validate_registration(registration)
+
+
+def compile_ring_system(documents: Mapping[str, bytes]) -> dict[str, object]:
+    """Backward-compatible descriptor compiler; prefer the explicit name."""
+
+    return compile_ring_system_descriptor(documents)
+
+
+def validate_ring_system(value: Mapping[str, object]) -> None:
+    """Backward-compatible descriptor validator; prefer the explicit name."""
+
+    validate_ring_system_descriptor(value)

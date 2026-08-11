@@ -33,7 +33,10 @@ from openbfme_importer.faction_slice_profile import (
     STRINGS_RUNTIME_PATH,
     compose_faction_profile,
 )
-from openbfme_importer.ring_system_compiler import compile_ring_system
+from openbfme_importer.ring_system_compiler import (
+    build_ring_system_runtime,
+    compile_ring_system_descriptor,
+)
 from importer.tests.test_ring_system_compiler import _documents as _ring_documents
 from openbfme_importer.sage_string import parse_string_catalog
 
@@ -331,8 +334,9 @@ def test_rotwk_men_compose_owns_ring_system_and_conversion_resources(
     tmp_path: Path,
 ) -> None:
     _faction_coverage(tmp_path, "men", registration={"production": []})
-    runtime = compile_ring_system(_ring_documents())
-    resources = runtime["artConversionPlan"]["resources"]
+    descriptor = compile_ring_system_descriptor(_ring_documents())
+    runtime = build_ring_system_runtime(descriptor)
+    resources = descriptor["artConversionPlan"]["resources"]
 
     target, receipt = compose_faction_profile(
         _base_with_selection_contract(),
@@ -348,7 +352,7 @@ def test_rotwk_men_compose_owns_ring_system_and_conversion_resources(
     assert {row["id"] for row in resources} <= {
         row["id"] for row in target["resources"]
     }
-    assert receipt["ringSystem"]["systemSha256"] == runtime["systemSha256"]
+    assert receipt["ringSystem"]["runtimeSha256"] == runtime["runtimeSha256"]
     assert receipt["ringSystem"]["resourceCount"] == len(resources)
 
 
@@ -742,5 +746,3 @@ def test_the_object_namespace_is_scraped(tmp_path: Path) -> None:
     assert strings["OBJECT:CreateAHero"] == "Create a Hero"
     assert "OBJECT:" not in WHOLE_STRING_NAMESPACES
     assert "OBJECT:UnreferencedUnit" not in strings
-    RING_SYSTEM_PACK_KEY,
-    RING_SYSTEM_RUNTIME_PATH,

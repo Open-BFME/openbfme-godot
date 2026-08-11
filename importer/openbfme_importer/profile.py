@@ -487,10 +487,12 @@ def _validate_w3d_source_variants(resources: list["ResourceRule"]) -> None:
 def _validate_script_composite_resources(resources: list["ResourceRule"]) -> None:
     """Validate exact source closure and output ownership before extraction."""
 
-    expected_libraries = [
+    base_libraries = [
         "libraries/ai_initialize/ai_initialize.map",
         "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map",
     ]
+    gollum_library = "libraries/lib_gollumspawn/lib_gollumspawn.map"
+    allowed_library_closures = (base_libraries, [*base_libraries, gollum_library])
     for resource in resources:
         output_key = (
             "/".join(safe_relative_parts(resource.output)).casefold()
@@ -511,8 +513,6 @@ def _validate_script_composite_resources(resources: list["ResourceRule"]) -> Non
         if (
             resource.output is None
             or Path(resource.output).name.casefold() != "scripts.json"
-            or resource.limit != 3
-            or resource.expected_count != 3
             or set(resource.options) != {"mapVirtualPath", "libraryVirtualPaths"}
         ):
             raise ValueError(
@@ -527,12 +527,15 @@ def _validate_script_composite_resources(resources: list["ResourceRule"]) -> Non
             if isinstance(map_virtual_path, str) and isinstance(libraries, list)
             else []
         )
+        expected_source_count = 1 + len(libraries) if isinstance(libraries, list) else 0
         if (
             runtime_slug is None
-            or libraries != expected_libraries
-            or resource.patterns != (map_virtual_path, *expected_libraries)
-            or len(requested_paths) != 3
-            or len({path.casefold() for path in requested_paths}) != 3
+            or libraries not in allowed_library_closures
+            or resource.limit != expected_source_count
+            or resource.expected_count != expected_source_count
+            or resource.patterns != tuple(requested_paths)
+            or len(requested_paths) != expected_source_count
+            or len({path.casefold() for path in requested_paths}) != expected_source_count
         ):
             raise ValueError(
                 f"resource {resource.id!r} must own the exact ordered map and "

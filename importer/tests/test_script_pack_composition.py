@@ -273,6 +273,38 @@ def test_script_composite_profile_refuses_later_output_owner() -> None:
             ImportProfile.load(path)
 
 
+def test_script_composite_profile_accepts_gollum_three_library_closure() -> None:
+    libraries = [*LIBRARY_PATHS, GOLLUM_LIBRARY_PATH]
+    composite = {
+        "id": "map-fixture-scripts",
+        "kind": "map",
+        "converter": "sage-script-composite",
+        "patterns": [MAP_PATH, *libraries],
+        "output": "maps/fixture/scripts.json",
+        "limit": 4,
+        "expected_count": 4,
+        "options": {
+            "mapVirtualPath": MAP_PATH,
+            "libraryVirtualPaths": libraries,
+        },
+    }
+    with tempfile.TemporaryDirectory() as raw:
+        path = Path(raw) / "profile.json"
+        write_json_atomic(
+            path,
+            {
+                "format": 1,
+                "id": "script-composite-gollum",
+                "pack": {"id": "script-composite-gollum"},
+                "resources": [composite],
+            },
+        )
+
+        loaded = ImportProfile.load(path)
+
+    assert loaded.resources[0].patterns == tuple([MAP_PATH, *libraries])
+
+
 @pytest.mark.parametrize("converter", ["copy", "sage-map", "sage-scripts"])
 def test_script_composite_profile_reserves_map_scripts_output(
     converter: str,

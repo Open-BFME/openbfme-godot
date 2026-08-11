@@ -1,16 +1,28 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
+from openbfme_importer.cli import main as cli_main
 from openbfme_importer.ring_system_compiler import (
     RingSystemCompilerError,
+    build_ring_system_runtime,
     compile_ring_system,
+    compile_ring_system_descriptor,
     validate_ring_system,
+    validate_ring_system_runtime,
 )
 
 
 def _structure(index: int, *, erebor: bool = False) -> str:
     name = "EreborThrone" if erebor else f"FixtureFortress{index:02d}"
+    ring_drop = "" if erebor else """
+  Behavior = CreateObjectDie ModuleTag_DropOneRing
+    TriggeredBy = Upgrade_RingHero Upgrade_FortressRingHero
+    CreationList = OCL_TheOneRing
+  End
+"""
     return f"""
 Object {name}
   Side = Dwarves
@@ -24,10 +36,7 @@ Object {name}
   Behavior = FXListDie ModuleTag_AnnounceRingLoss
     DeathFX = FX_FortressOneRingDeath
   End
-  Behavior = CreateObjectDie ModuleTag_DropOneRing
-    TriggeredBy = Upgrade_RingHero Upgrade_FortressRingHero
-    CreationList = OCL_TheOneRing
-  End
+{ring_drop}
   Behavior = ModelConditionUpgrade ModuleTag_ShowOneRing
     TriggeredBy = Upgrade_FortressRingHero
     AddConditionFlags = ONE_RING
@@ -127,6 +136,22 @@ ObjectCreationList OCL_TheOneRingCD
     Offset = X:126 Y:0 Z:0.0
   End
 End
+ObjectCreationList OCL_TheRingStealer
+  CreateObject
+    ObjectNames = NeutralGollum_RingStealer
+    Count = 1
+    DestinationPlayer = PlyrCreeps
+    WaypointSpawnPoints = SpawnPoint_SkirmishGollum_
+  End
+End
+ObjectCreationList OCL_TheRingCarrier
+  CreateObject
+    ObjectNames = NeutralGollum_RingHero
+    Count = 1
+    DestinationPlayer = PlyrCreeps
+    WaypointSpawnPoints = SpawnPoint_SkirmishGollum_
+  End
+End
 """,
         "data/ini/upgrade.ini": b"""
 Upgrade Upgrade_RingHero
@@ -169,6 +194,19 @@ End
 ChildObject MordorSauron_RingHero MordorSauron
   Behavior = RemoveUpgradeUpgrade ModuleTag_RemoveUpgrades
     TriggeredBy = Upgrade_MordorFaction
+    UpgradeToRemove = Upgrade_RingHero Upgrade_FortressRingHero
+    RemoveFromAllPlayerObjects = Yes
+  End
+  Behavior = CreateObjectDie ModuleTag_DropRing
+    CreationList = OCL_TheOneRing
+  End
+  Behavior = ExperienceLevelCreate ModuleTag_Level10
+    LevelToGrant = 10
+  End
+End
+ChildObject AnyModRingHero MordorSauron
+  Behavior = RemoveUpgradeUpgrade ModuleTag_RemoveUpgrades
+    TriggeredBy = Upgrade_MenFaction
     UpgradeToRemove = Upgrade_RingHero Upgrade_FortressRingHero
     RemoveFromAllPlayerObjects = Yes
   End
@@ -233,6 +271,7 @@ def test_compiles_complete_ring_contract_from_synthetic_effective_ini() -> None:
         "TheDroppedRing",
         "MordorSauron_RingHero",
         "ElvenGaladriel_RingHero",
+        "AnyModRingHero",
     }
     assert "NeutralGollum_RingStealer" not in result["objects"]
     gollum = result["objects"]["NeutralGollum"]
@@ -256,9 +295,10 @@ def test_compiles_complete_ring_contract_from_synthetic_effective_ini() -> None:
 
     ring = result["objects"]["TheDroppedRing"]
     assert ring["ringMechanic"]["attach"]["filter"] == {
+        "mode": "ANY",
         "include": ["INFANTRY", "CAVALRY", "HERO", "MONSTER", "MACHINE"],
         "exclude": ["NEUTRALGOLLUM"],
-        "predicate": "NOT_FLYING_UNITS",
+        "predicate": ["NOT_FLYING_UNITS"],
     }
     assert ring["ringMechanic"]["removeUpgrade"]["triggerFactionUpgrades"] == [
         "Upgrade_AngmarFaction", "Upgrade_IsengardFaction", "Upgrade_MordorFaction",
@@ -270,11 +310,39 @@ def test_compiles_complete_ring_contract_from_synthetic_effective_ini() -> None:
     }
 
 
+def test_ring_filter_preserves_any_vs_none_mode() -> None:
+    any_result = compile_ring_system(_documents())
+    none_documents = _documents()
+    none_documents["data/ini/crate.ini"] = none_documents[
+        "data/ini/crate.ini"
+    ].replace(b"ObjectFilter = ANY ", b"ObjectFilter = NONE ")
+
+    none_result = compile_ring_system(none_documents)
+
+    assert any_result["objects"]["TheDroppedRing"]["ringMechanic"]["attach"][
+        "filter"
+    ]["mode"] == "ANY"
+    assert none_result["objects"]["TheDroppedRing"]["ringMechanic"]["attach"][
+        "filter"
+    ]["mode"] == "NONE"
+    assert any_result["objects"]["TheDroppedRing"]["ringMechanic"]["attach"][
+        "filter"
+    ] != none_result["objects"]["TheDroppedRing"]["ringMechanic"]["attach"][
+        "filter"
+    ]
+
+
 def test_delivery_upgrades_routes_heroes_and_system_are_source_backed() -> None:
     result = compile_ring_system(_documents())
     assert len(result["delivery"]["structures"]) == 26
     erebor = next(row for row in result["delivery"]["structures"] if row["objectId"] == "EreborThrone")
     assert erebor["note"] == "retail-bug-accepts-ring-never-returns-it"
+    assert erebor["dropsRingOnDeath"] is False
+    assert all(
+        row["dropsRingOnDeath"] is True
+        for row in result["delivery"]["structures"]
+        if row["objectId"] != "EreborThrone"
+    )
     assert set(result["delivery"]["fortressModules"]) == {
         "lossAnnouncement", "ringDrop", "modelCondition", "drawModels",
     }
@@ -289,7 +357,9 @@ def test_delivery_upgrades_routes_heroes_and_system_are_source_backed() -> None:
     assert result["system"]["ringHeroesByFaction"]["Men"] == ["AnyModRingHero"]
     assert result["system"]["modeToken"] == "ringheroes"
     assert result["system"]["spawn"] == {
-        "waypointFamily": "SpawnPoint_SkirmishGollum_", "team": "PlyrCreeps",
+        "objectId": "NeutralGollum_RingHero",
+        "waypointFamily": "SpawnPoint_SkirmishGollum_",
+        "team": "PlyrCreeps",
     }
     assert len(result["system"]["evaEvents"]) == 8
 
@@ -306,7 +376,7 @@ def test_delivery_upgrades_routes_heroes_and_system_are_source_backed() -> None:
     }
 
 
-def test_art_plan_is_exact_and_marks_galadriel_dark_skin_required() -> None:
+def test_art_plan_is_exact_and_marks_authored_conditional_hero_model_required() -> None:
     plan = compile_ring_system(_documents())["artConversionPlan"]
     assert plan["layout"] == "standard-unit-model-pack"
     assert plan["gollum"]["sourceGame"] == "bfme2"
@@ -317,7 +387,73 @@ def test_art_plan_is_exact_and_marks_galadriel_dark_skin_required() -> None:
     ]
     assert plan["ring"]["models"] == ["art/w3d/th/thering.w3d"]
     assert plan["fortressRingModels"] == ["art/w3d/ex/exonering.w3d", "art/w3d/ex/exonering_cr.w3d"]
-    assert plan["galadrielDarkSkin"] == {"model": "EUGaldrl_SKN", "requiredIfUnshipped": True}
+    assert plan["conditionalHeroModels"] == [{
+        "objectId": "ElvenGaladriel_RingHero",
+        "condition": "USER_1",
+        "model": "EUGaldrl_SKN",
+        "requiredIfUnshipped": True,
+    }]
+
+
+def test_descriptor_and_runtime_are_separate_sealed_schemas() -> None:
+    descriptor = compile_ring_system_descriptor(_documents())
+    runtime = build_ring_system_runtime(descriptor)
+    validate_ring_system_runtime(runtime)
+
+    assert descriptor["schema"] == "openbfme.ring-system-descriptor"
+    assert "descriptorSha256" in descriptor
+    assert "importerEvidence" in descriptor
+    assert runtime["schema"] == "openbfme.ring-system-runtime"
+    assert runtime["descriptorSha256"] == descriptor["descriptorSha256"]
+    assert "runtimeSha256" in runtime
+    assert "importerEvidence" not in runtime
+    assert "artConversionPlan" not in runtime["registration"]
+
+
+def test_modded_ring_hero_reference_fails_closed_when_object_is_missing() -> None:
+    documents = _documents()
+    source = documents["data/ini/object/ringheroes.ini"]
+    start = source.index(b"ChildObject AnyModRingHero")
+    end = source.index(b"Object ElvenGaladriel", start)
+    documents["data/ini/object/ringheroes.ini"] = source[:start] + source[end:]
+
+    with pytest.raises(RingSystemCompilerError, match="AnyModRingHero"):
+        compile_ring_system_descriptor(documents)
+
+
+def test_compile_ring_system_cli_writes_descriptor_and_runtime(
+    tmp_path, capsys
+) -> None:
+    assets_root = tmp_path / "effective-assets"
+    for virtual_path, payload in _documents().items():
+        target = assets_root / virtual_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
+    state_root = tmp_path / "state"
+
+    status = cli_main(
+        [
+            "--json",
+            "--state-root",
+            str(state_root),
+            "compile-ring-system",
+            "--game",
+            "rotwk",
+            "--assets-root",
+            str(assets_root),
+        ]
+    )
+
+    assert status == 0
+    summary = json.loads(capsys.readouterr().out)
+    descriptor = json.loads(
+        (state_root / "reports" / "rotwk-ring-system-descriptor.json").read_text()
+    )
+    runtime = json.loads(
+        (state_root / "reports" / "rotwk-ring-system-runtime.json").read_text()
+    )
+    assert summary["descriptor_sha256"] == descriptor["descriptorSha256"]
+    assert summary["runtime_sha256"] == runtime["runtimeSha256"]
 
 
 @pytest.mark.parametrize(

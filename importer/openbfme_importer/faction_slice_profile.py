@@ -16,7 +16,7 @@ from .retail_fords_completion_profile import (
     MEN_SELECTION_RESOURCES,
     MEN_SELECTION_RUNTIME_PATH,
 )
-from .ring_system_compiler import RingSystemCompilerError, validate_ring_system
+from .ring_system_compiler import RingSystemCompilerError, validate_ring_system_runtime
 
 # Authoritative BFME2 faction slugs (men, elves, dwarves, isengard, mordor,
 # wild) come from the playable-unit FACTIONS registry.  RotWK 2.01 adds its own
@@ -531,7 +531,7 @@ def compose_faction_profile(
         if game_key != "rotwk" or ordered != ["men"]:
             raise ValueError("ring.system is owned by the RotWK Men host pack")
         try:
-            validate_ring_system(ring_runtime)
+            validate_ring_system_runtime(ring_runtime)
         except RingSystemCompilerError as exc:
             raise ValueError(f"ring system document is invalid: {exc}") from exc
         if runtime_data.get(RING_SYSTEM_RUNTIME_PATH) not in (None, ring_runtime):
@@ -545,7 +545,7 @@ def compose_faction_profile(
         ring_receipt = {
             "runtimePath": RING_SYSTEM_RUNTIME_PATH,
             "packFileKey": RING_SYSTEM_PACK_KEY,
-            "systemSha256": ring_runtime["systemSha256"],
+            "runtimeSha256": ring_runtime["runtimeSha256"],
             "resourceCount": len(added),
         }
     # --- Create-a-Hero system table ----------------------------------------
