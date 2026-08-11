@@ -178,6 +178,10 @@ func _test_attribute_arithmetic(system: Dictionary) -> void:
 func _test_profile_validation(system: Dictionary) -> void:
 	var profile := CahHeroes.new_profile(system, "Beregond", 0, 0)
 	_check(CahHeroes.validate_profile(system, profile).is_empty(), "a fresh default profile validates")
+	_check(profile.get("colors", []) == [[150, 151, 152], [10, 20, 30], [255, 0, 128]], "a fresh profile carries three typed subclass colours")
+	var invalid_colors := profile.duplicate(true)
+	invalid_colors["colors"] = [[0, 0, 0], [256, 0, 0], [0, 0, 0]]
+	_check(not CahHeroes.validate_profile(system, invalid_colors).is_empty(), "an out-of-range colour is refused")
 
 	var unspent := profile.duplicate(true)
 	(unspent["attributes"] as Dictionary)["CreateAHero_ArmorAttribute"] = 15
@@ -2197,6 +2201,7 @@ func _system_document() -> Dictionary:
 						"buttonImageId": "HICAHCaptainGondor",
 						"usableFactions": ["Men", "Elves", "Dwarves"],
 						"spendableAttributePoints": 30,
+						"defaultColors": [[150, 151, 152], [10, 20, 30], [255, 0, 128]],
 						"defaultAttributeSpend": 30,
 						"attributes": CAPTAIN_ATTRIBUTES,
 					},

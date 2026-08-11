@@ -408,7 +408,7 @@ static func computed_stats(
 
 static func new_profile(system: Dictionary, name: String, class_index: int, sub_index: int) -> Dictionary:
 	var sub_row := sub_class_row(system, class_index, sub_index)
-	return {
+	var profile := {
 		"schema": PROFILE_SCHEMA,
 		"schemaVersion": PROFILE_SCHEMA_VERSION,
 		"heroId": _new_hero_id(),
@@ -426,6 +426,10 @@ static func new_profile(system: Dictionary, name: String, class_index: int, sub_
 		# instead of the numbers silently moving.
 		"systemDescriptorSha256": String(system.get("descriptorSha256", "")),
 	}
+	var default_colors := sub_row.get("defaultColors", []) as Array
+	if default_colors.size() == 3:
+		profile["colors"] = default_colors.duplicate(true)
+	return profile
 
 
 static func max_power_slots(system: Dictionary) -> int:
@@ -832,6 +836,22 @@ static func validate_profile(system: Dictionary, profile: Dictionary) -> Array[S
 	var powers: Array = profile.get("powers", []) as Array
 	refusals.append_array(power_refusals(system, class_index, powers))
 
+	# Optional in schema v0: old profiles remain valid, while a profile that
+	# opts in must carry exactly primary/secondary/tertiary RGB byte triples.
+	if profile.has("colors"):
+		var colors: Variant = profile.get("colors")
+		if not colors is Array or (colors as Array).size() != 3:
+			refusals.append("colors must contain exactly three RGB triples")
+		else:
+			for color_value in colors as Array:
+				if not color_value is Array or (color_value as Array).size() != 3:
+					refusals.append("each hero color must be an RGB triple")
+					continue
+				for channel in color_value as Array:
+					if not (channel is int or channel is float) or int(channel) < 0 or int(channel) > 255 or float(channel) != float(int(channel)):
+						refusals.append("hero color channels must be integers from 0 to 255")
+						break
+
 	var appearance: Dictionary = profile.get("appearance", {}) as Dictionary
 	var choices: Dictionary = sub_row.get("appearanceChoices", {}) as Dictionary
 	if not choices.is_empty():
@@ -1013,6 +1033,8 @@ static func roster_document(
 					battlefield.get("weaponLaunchBones", []) as Array
 				).duplicate(),
 				"mounted": (battlefield.get("mounted", {}) as Dictionary).duplicate(true),
+				"colors": (profile.get("colors", []) as Array).duplicate(true),
+				"packRoot": String(system.get("_pack_root", "")),
 			},
 			"ui": {
 				"portraitImageIds": [portrait_image],
@@ -1035,6 +1057,7 @@ static func roster_document(
 				"subClassIndex": int(profile.get("subClassIndex", -1)),
 				"attributes": attributes.duplicate(),
 				"powers": powers.duplicate(),
+				"colors": (profile.get("colors", []) as Array).duplicate(true),
 				"computed": stats,
 			},
 		},

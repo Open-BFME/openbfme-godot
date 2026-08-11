@@ -308,6 +308,9 @@ def _sub_class(
         "\t\tBlingUpgrades = Upgrade_CHW01 Upgrade_CHW02",
         f"\t\tSpendableAttributePoints = {budget}",
         f"\t\tUpgradeName = Upgrade_CreateAHero_SubClass_{sub_index}",
+        "\t\tDefaultPrimaryColor = R:150 G:151\tB:152",
+        "\t\tDefaultSecondaryColor = R:10 G:20 B:30",
+        "\t\tDefaultTertiaryColor = R:255 G:0 B:128",
         # Retail frames every subclass individually so a Great Troll and a
         # Wanderer both fit the same viewport.
         "\t\tViewInfo\n"
@@ -650,6 +653,11 @@ def _documents(
 
 
 class CahSystemCompilerTests(unittest.TestCase):
+    def test_subclass_default_colors_are_typed_rgb_triples(self) -> None:
+        descriptor = compile_cah_system_descriptor(_documents())
+        sub = descriptor["classes"][0]["subClasses"][0]
+        self.assertEqual(sub["defaultColors"], [[150, 151, 152], [10, 20, 30], [255, 0, 128]])
+
     def test_compiles_classes_groups_and_ladders(self) -> None:
         descriptor = compile_cah_system_descriptor(_documents())
         validate_cah_system_descriptor(descriptor)

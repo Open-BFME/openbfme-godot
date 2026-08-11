@@ -2210,6 +2210,20 @@ def _sub_classes(
                     f"be named"
                 )
             creation["creationIdles"] = _creation_idles(idle_plan, prefix)
+        def authored_color(field: str) -> list[int]:
+            raw = (sub.value(field) or "").strip()
+            match = re.fullmatch(
+                r"R\s*:\s*(\d+)\s+G\s*:\s*(\d+)\s+B\s*:\s*(\d+)",
+                raw,
+                re.IGNORECASE,
+            )
+            if match is None:
+                raise CahSystemCompilerError(f"{label}: {field} is not an RGB triple: {raw!r}")
+            rgb = [int(value) for value in match.groups()]
+            if any(value > 255 for value in rgb):
+                raise CahSystemCompilerError(f"{label}: {field} is outside RGB byte range: {raw!r}")
+            return rgb
+
         out.append(
             {
                 "subClassIndex": sub_index,
@@ -2229,9 +2243,11 @@ def _sub_classes(
                 # The option each group STARTS on, per retail's `@` marker.
                 # Authoritative over the catalog-wide `isDefault` flag.
                 "appearanceDefaults": appearance_defaults,
-                "defaultPrimaryColor": (sub.value("DefaultPrimaryColor") or "").strip(),
-                "defaultSecondaryColor": (sub.value("DefaultSecondaryColor") or "").strip(),
-                "defaultTertiaryColor": (sub.value("DefaultTertiaryColor") or "").strip(),
+                "defaultColors": [
+                    authored_color("DefaultPrimaryColor"),
+                    authored_color("DefaultSecondaryColor"),
+                    authored_color("DefaultTertiaryColor"),
+                ],
                 "upgradeNameSubClass": sub_upgrade,
                 "models": bound_models,
                 "defaultSubObjects": default_sub_objects,
@@ -2595,8 +2611,9 @@ def compile_cah_system_descriptor(
             "the effect side (enum, reload time) is joined on from "
             "createaherospecialpowers.ini. A power whose SpecialPower has no "
             "block in that file still compiles, with a zero reload time.",
-            "Hero colours (DefaultPrimaryColor and siblings) and ViewInfo camera "
-            "framing are not compiled.",
+            "Hero colours are compiled as three RGB byte triples from the "
+            "subclass defaults. Retail authors no discrete selectable palette; "
+            "the picker is a continuous gradient strip.",
             "Experience levels are not compiled; CreateAHero uses the shared "
             "ExperienceLevel CreateAHeroLevelN templates.",
             "Awards are listed as unlockable ids on each subclass; progress is "

@@ -163,7 +163,8 @@ static func preflight_explicit_model_path(resolved_model_path: String, pack_root
 static func make_explicit_model_visual(
 	resolved_model_path: String,
 	side: int,
-	content_object_id: String = ""
+	content_object_id: String = "",
+	definition_override: Dictionary = {}
 ) -> Node3D:
 	## Fail-closed bridge for an already-resolved authored GLB. Unlike the
 	## generic bundle bridge, this helper never normalizes each model and never
@@ -176,12 +177,17 @@ static func make_explicit_model_visual(
 		return null
 	var root := Node3D.new()
 	root.name = "ExplicitModel_%s" % resolved_model_path.get_file().get_basename()
-	var definition: Dictionary = ContentDB.get_bundle_object(content_object_id) if content_object_id != "" else {}
+	var definition: Dictionary = definition_override if not definition_override.is_empty() else (ContentDB.get_bundle_object(content_object_id) if content_object_id != "" else {})
 	var private_retail := _is_private_retail_definition(definition)
 	var tinted_surfaces := 0 if private_retail else _tint_if_needed(loaded, side, false)
 	var house_colored := 0
 	if private_retail:
-		house_colored = RetailHouseColorScript.apply(loaded, side, String(definition.get("_pack_root", "")))
+		var explicit_color: Variant = definition.get("_house_color")
+		house_colored = (
+			RetailHouseColorScript.apply_with_color(loaded, explicit_color as Color, String(definition.get("_pack_root", "")))
+			if explicit_color is Color
+			else RetailHouseColorScript.apply(loaded, side, String(definition.get("_pack_root", "")))
+		)
 	root.add_child(loaded)
 	root.set_meta("authored", true)
 	root.set_meta("mesh_path", resolved_model_path)

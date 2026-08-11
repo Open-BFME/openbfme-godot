@@ -41,6 +41,16 @@ static func apply(node: Node3D, team: int, pack_root: String) -> int:
 	return _apply_recursive(node, team_color)
 
 
+## Per-object seam used by Create-a-Hero. It deliberately bypasses the team
+## palette while retaining the identical authored mask lookup and shader.
+static func apply_with_color(node: Node3D, color: Color, pack_root: String) -> int:
+	if node == null or pack_root == "":
+		return 0
+	if not _configure(pack_root):
+		return 0
+	return _apply_recursive(node, color)
+
+
 static func _apply_recursive(node: Node, team_color: Color) -> int:
 	var recolored := 0
 	if node is MeshInstance3D:

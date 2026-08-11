@@ -145,6 +145,7 @@ var _selected_class := 0
 var _selected_sub := 0
 var _attributes: Dictionary = {}
 var _appearance: Dictionary = {}
+var _colors: Array = []
 var _powers: Array = []
 var _awards: Array = []
 var _active_tab := TAB_STATS
@@ -188,6 +189,7 @@ var _sub_title: Label
 var _sub_description: Label
 var _class_stat_bars: VBoxContainer
 var _appearance_rows: VBoxContainer
+var _color_buttons: Array[ColorPickerButton] = []
 var _appearance_summary: VBoxContainer
 var _points_label: Label
 var _power_grid: GridContainer
@@ -329,6 +331,7 @@ func _rebuild_all() -> void:
 	_rebuild_power_grid()
 	_rebuild_current_powers()
 	_rebuild_detail_tabs()
+	_sync_color_buttons()
 	_update_budget()
 	_update_class_preview()
 	_update_preview()
@@ -345,6 +348,8 @@ func create_hero(hero_name: String) -> Array[String]:
 		profile["heroId"] = _editing_hero_id
 	profile["attributes"] = _attributes.duplicate()
 	profile["appearance"] = _appearance.duplicate()
+	if _colors.size() == 3:
+		profile["colors"] = _colors.duplicate(true)
 	profile["powers"] = _powers.duplicate()
 	profile["awards"] = _awards.duplicate()
 	var refusals := CahHeroes.validate_profile(_system, profile)
@@ -441,8 +446,28 @@ func _reset_working_loadout() -> void:
 	# "No Shield" while `new_profile` - which does pass it - saved the authored
 	# Shield CHS02. The hero being built was not the hero being saved.
 	_appearance = CahHeroes.default_appearance(sub_row, _system)
+	_colors = (sub_row.get("defaultColors", []) as Array).duplicate(true)
 	_powers = CahHeroes.default_powers(_system, _selected_class)
 	_awards = []
+
+
+func _sync_color_buttons() -> void:
+	for index in mini(_color_buttons.size(), _colors.size()):
+		var rgb := _colors[index] as Array
+		if rgb.size() == 3:
+			_color_buttons[index].color = Color8(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+
+
+func _on_hero_color_changed(index: int, color: Color) -> void:
+	if index < 0 or index >= 3:
+		return
+	while _colors.size() < 3:
+		_colors.append([160, 160, 160])
+	_colors[index] = [int(round(color.r * 255.0)), int(round(color.g * 255.0)), int(round(color.b * 255.0))]
+	# The masked material is per visual. Recreate it so the preview never mutates
+	# a cached GLB or a material shared with another hero.
+	_loaded_model_id = ""
+	_update_preview()
 
 
 # --------------------------------------------------------------------- layout
@@ -1004,12 +1029,20 @@ func _build_garment_panel(parent: Control) -> Control:
 	_appearance_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_appearance_rows.add_theme_constant_override("separation", 10)
 	card.add_child(_appearance_rows)
-	# NO COLOUR TABS. Retail's three colour swatches recolour the house-colour
-	# channel of the skin's textures, and the mounted packs carry no house-colour
-	# mask for the Create-a-Hero skins - so the buttons could only ever have
-	# repainted the whole hero or done nothing at all, which is what they did.
-	# They are gone until the pack ships the mask; a dead control is worse than
-	# an absent one.
+	var color_row := HBoxContainer.new()
+	color_row.name = "HeroColors"
+	color_row.add_theme_constant_override("separation", 8)
+	card.add_child(color_row)
+	_color_buttons.clear()
+	for index in 3:
+		var picker := ColorPickerButton.new()
+		picker.name = ["PrimaryColor", "SecondaryColor", "TertiaryColor"][index]
+		picker.text = ["PRIMARY", "SECONDARY", "TERTIARY"][index]
+		picker.tooltip_text = "Retail uses a continuous colour gradient. The authored palette crop will replace this built-in picker after the batched pack rebuild."
+		picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		picker.color_changed.connect(func(color: Color) -> void: _on_hero_color_changed(index, color))
+		color_row.add_child(picker)
+		_color_buttons.append(picker)
 	_preview_caption = Label.new()
 	_preview_caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_preview_caption.add_theme_font_size_override("font_size", 14)
@@ -1364,6 +1397,7 @@ func _on_hero_list_selected(index: int) -> void:
 	_selected_sub = int(profile.get("subClassIndex", 0))
 	_attributes = (profile.get("attributes", {}) as Dictionary).duplicate()
 	_appearance = (profile.get("appearance", {}) as Dictionary).duplicate()
+	_colors = (profile.get("colors", CahHeroes.sub_class_row(_system, _selected_class, _selected_sub).get("defaultColors", [])) as Array).duplicate(true)
 	_powers = (profile.get("powers", []) as Array).duplicate()
 	_awards = (profile.get("awards", []) as Array).duplicate()
 	_reload_classes()
@@ -2528,7 +2562,11 @@ func _update_preview() -> void:
 			_preview_note.text = "The model loader is unavailable in this context."
 			_garment_status = "no-model"
 			return
-		var visual: Node3D = factory.make_explicit_model_visual(path, 0)
+		var definition := {"_pack_root": String(_system.get("_pack_root", ""))}
+		if not _colors.is_empty() and (_colors[0] as Array).size() == 3:
+			var rgb := _colors[0] as Array
+			definition["_house_color"] = Color8(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+		var visual: Node3D = factory.make_explicit_model_visual(path, 0, "", definition)
 		if visual == null:
 			_preview_note.text = "Model %s could not be loaded from the pack." % model_id
 			_garment_status = "no-model"
