@@ -394,6 +394,44 @@ Test-Case '-FinishOnly stamps the BUNDLE commit, not HEAD' {
     } finally { Remove-ScratchRepository -Root $scratch }
 }
 
+Test-Case 'the stamp takes the build NUMBER from the commit that was exported' {
+    # Same defect as stamping HEAD, one field over: `build` and
+    # `buildInfoCommit` describe what the GAME prints, which is whatever was
+    # baked into the .pck. Finishing an older bundle from a moved-on checkout
+    # reported build 171 for a .pck containing build 166.
+    $scratch = New-ScratchRepository
+    try {
+        [void](New-Item -ItemType Directory -Path (Join-Path $scratch 'game\data') -Force)
+        [IO.File]::WriteAllText((Join-Path $scratch 'game\data\build_info.json'), '{"version":"0.2.1","build":"166","commit":"d5bc2d1"}')
+        $previous = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            & git -C $scratch add -A 2>$null | Out-Null
+            & git -C $scratch commit -q -m 'bundle commit' 2>$null | Out-Null
+            $bundleCommit = (& git -C $scratch rev-parse HEAD 2>$null | Out-String).Trim()
+            [IO.File]::WriteAllText((Join-Path $scratch 'game\data\build_info.json'), '{"version":"0.2.1","build":"171","commit":"9946fdb"}')
+            & git -C $scratch add -A 2>$null | Out-Null
+            & git -C $scratch commit -q -m 'later' 2>$null | Out-Null
+        } finally { $ErrorActionPreference = $previous }
+
+        $exported = Get-DistBuildInfoAtCommit -RepoRoot $scratch -Commit $bundleCommit
+        Assert-True ($null -ne $exported) 'git could not produce build_info.json at the bundle commit'
+        Assert-True ([string]$exported.build -ceq '166') "read build '$($exported.build)' at the bundle commit, not 166"
+
+        $destination = Join-Path $scratch 'out'
+        [void](New-Item -ItemType Directory -Path $destination -Force)
+        $stamp = New-DistVersionStamp -RepoRoot $scratch -Version '0.2.1' -Destination $destination `
+            -IsReleaseCandidate $false -SourceCommit $bundleCommit.Substring(0, 7) -ExportedBuildInfo $exported
+        Assert-True ($stamp.build -ceq '166') "VERSION.json would claim build $($stamp.build); the .pck contains 166"
+        Assert-True ($stamp.buildInfoCommit -ceq 'd5bc2d1') "buildInfoCommit is '$($stamp.buildInfoCommit)'"
+
+        # And with no override it still reads the working tree, for the build path.
+        $fromTree = New-DistVersionStamp -RepoRoot $scratch -Version '0.2.1' -Destination $destination `
+            -IsReleaseCandidate $false -SourceCommit 'abcdef1'
+        Assert-True ($fromTree.build -ceq '171') "the building path should read the checkout, got $($fromTree.build)"
+    } finally { Remove-ScratchRepository -Root $scratch }
+}
+
 Test-Case 'Resolve-DistSourceCommit refuses a bundle that cannot say what it is' {
     $scratch = New-ScratchRepository
     try {

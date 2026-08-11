@@ -125,6 +125,37 @@ function Get-DistBuildInfo {
 }
 
 
+function Get-DistBuildInfoAtCommit {
+    <#
+    .SYNOPSIS
+        The build_info.json that was EXPORTED into a given build, read out of
+        git rather than off the working tree.
+    .DESCRIPTION
+        The same mistake as stamping HEAD, one field over. `build` and
+        `buildInfoCommit` describe what the GAME prints in its own menu, and the
+        game prints whatever was baked into the .pck - which is the file as it
+        stood at the bundle's commit, not as it stands in the checkout now.
+        Finishing an older bundle from a moved-on checkout reported build 171
+        for a .pck containing build 166.
+
+        The .pck cannot be opened here, but git has the exact bytes that went
+        into it. Returns $null when git cannot produce them, so the caller can
+        fall back out loud instead of quietly using the wrong file.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$RepoRoot,
+        [Parameter(Mandatory)][string]$Commit
+    )
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $text = (& git -C $RepoRoot show "${Commit}:game/data/build_info.json" 2>$null | Out-String)
+    } finally { $ErrorActionPreference = $previous }
+    if ($text.Trim() -eq '') { return $null }
+    try { return ($text.TrimStart([char]0xFEFF) | ConvertFrom-Json) } catch { return $null }
+}
+
+
 function Get-DistPatchNotesPath {
     param(
         [Parameter(Mandatory)][string]$RepoRoot,
@@ -399,9 +430,14 @@ function New-DistVersionStamp {
         [Parameter(Mandatory)][string]$Version,
         [Parameter(Mandatory)][string]$Destination,
         [Parameter(Mandatory)][bool]$IsReleaseCandidate,
-        [Parameter(Mandatory)][string]$SourceCommit
+        [Parameter(Mandatory)][string]$SourceCommit,
+        # The build_info.json that was EXPORTED into this build. Supplied by the
+        # caller because only the caller knows whether that is the checkout's
+        # copy (building) or the one at the bundle's commit (finishing).
+        $ExportedBuildInfo = $null
     )
-    $buildInfo = Get-DistBuildInfo -RepoRoot $RepoRoot
+    $buildInfo = $ExportedBuildInfo
+    if ($null -eq $buildInfo) { $buildInfo = Get-DistBuildInfo -RepoRoot $RepoRoot }
     $build = ''
     $buildInfoCommit = ''
     if ($null -ne $buildInfo) {

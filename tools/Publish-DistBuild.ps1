@@ -429,8 +429,20 @@ try {
     Copy-Item -LiteralPath $notesSource -Destination (Join-Path $bundleRoot 'PATCH-NOTES.md') -Force
     Write-DistGood "PATCH-NOTES.md <- $notesSource"
 
+    # `build` and `buildInfoCommit` describe what the GAME prints, so they must
+    # come from the build_info.json that was baked into THIS .pck. On the
+    # finishing path that is the file at the bundle's commit, not the one in a
+    # checkout that has moved on - reading the checkout reported build 171 for a
+    # .pck containing build 166.
+    $exportedBuildInfo = $null
+    if ($FinishOnly) {
+        $exportedBuildInfo = Get-DistBuildInfoAtCommit -RepoRoot $repoRoot -Commit $commit
+        if ($null -eq $exportedBuildInfo) {
+            Write-DistWarn "git cannot produce game/data/build_info.json at $shortCommit, so VERSION.json falls back to this checkout's copy - it may not be what the game prints."
+        }
+    }
     $stamp = New-DistVersionStamp -RepoRoot $repoRoot -Version $Version -Destination $bundleRoot `
-        -IsReleaseCandidate ([bool]$Rc) -SourceCommit $shortCommit
+        -IsReleaseCandidate ([bool]$Rc) -SourceCommit $shortCommit -ExportedBuildInfo $exportedBuildInfo
     Write-DistGood "VERSION.json: v$Version, build $($stamp.build), built from $($stamp.commit)"
     # Not a refusal: build_info.json is generated and then committed, so it can
     # never carry the hash of the commit that carries it. One commit behind is
@@ -440,9 +452,19 @@ try {
     # class of mistake as stamping HEAD in the first place.
     if ($stamp.buildInfoCommit -ne '' -and -not $shortCommit.StartsWith($stamp.buildInfoCommit)) {
         $behind = Get-DistCommitDistance -RepoRoot $repoRoot -From $stamp.buildInfoCommit -To $commit
-        $line = "the game's own menu will print build $($stamp.build) ($($stamp.buildInfoCommit)), which is $behind commit(s) behind this build ($shortCommit)."
-        if ($behind -eq '1') { Write-DistStep "note: $line That is structural - build_info.json is committed after it is generated." }
-        else { Write-DistWarn "$line Re-run tools/Write-BuildInfo.ps1 and commit it so the menu matches the folder." }
+        $line = "the game's own menu will print build $($stamp.build) ($($stamp.buildInfoCommit))"
+        if ($behind -ceq '1') {
+            # The normal state, and it cannot be fixed: build_info.json is
+            # generated and then committed, so it never names its own commit.
+            Write-DistStep "note: $line, one commit behind this build ($shortCommit). That is structural."
+        } elseif ($behind -ceq '0') {
+            # Distance 0 with different hashes means it is NOT an ancestor - the
+            # stamp was generated on a later or divergent commit. Saying "0
+            # commits behind" here would read as agreement.
+            Write-DistWarn "$line, which is NOT an ancestor of this build ($shortCommit) - it was generated on a different or later commit than the bytes."
+        } else {
+            Write-DistWarn "$line, which is $behind commit(s) behind this build ($shortCommit). Re-run tools/Write-BuildInfo.ps1 and commit it so the menu matches the folder."
+        }
     }
 
     # ------------------------------------------------------------ launcher
