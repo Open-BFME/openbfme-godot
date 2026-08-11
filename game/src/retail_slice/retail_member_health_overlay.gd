@@ -1,7 +1,8 @@
 class_name RetailMemberHealthOverlay
 extends Control
 ## Screen-space member health bars for the private retail slice: one small bar
-## just above each soldier of a SELECTED or DAMAGED battalion.
+## just above each soldier of a SELECTED battalion (or of every battalion, when
+## the player has turned "Show All Health Bars" on).
 ##
 ## SAGE computes one UI region per drawable, fixes the bar height at three
 ## pixels, draws a one-pixel outline, and scales the width by tactical zoom.
@@ -39,9 +40,14 @@ const CHEVRON_COLOR := Color(0.95, 0.85, 0.35, 0.95)
 ## tier at which src/view/member_lod_policy.gd drops per-member decoration.
 const SOURCE_MAXIMUM_OVERLAY_DISTANCE := 150.0
 
+const UserSettingsScript = preload("res://src/ui/user_settings.gd")
+
 var tactical_view: Node
 var tactical_camera: Camera3D
 var battalions: Dictionary
+## The player's "Show All Health Bars" opt-in, read once when the overlay is
+## configured. A gate may set it directly to exercise the opted-in surface.
+var show_all_health_bars := UserSettingsScript.DEFAULT_SHOW_ALL_HEALTH_BARS
 var rendered_bar_count := 0
 var rendered_chevron_count := 0
 ## Diagnostic mirror of the last drawn bars, populated only when a capture or a
@@ -56,6 +62,11 @@ func configure(view: Node, camera: Camera3D, battalion_nodes: Dictionary) -> voi
 	tactical_view = view
 	tactical_camera = camera
 	battalions = battalion_nodes
+	show_all_health_bars = bool(
+		UserSettingsScript.load_controls().get(
+			"show_all_health_bars", UserSettingsScript.DEFAULT_SHOW_ALL_HEALTH_BARS
+		)
+	)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	set_process(true)
@@ -87,12 +98,7 @@ func _draw() -> void:
 			continue
 		var battalion := battalion_value as Node
 		var battalion_selected := bool(battalion.get("selected"))
-		var battalion_damaged := (
-			bool(battalion.call("has_damaged_member"))
-			if battalion.has_method("has_damaged_member")
-			else false
-		)
-		if not should_show_battalion(battalion_selected, battalion_damaged):
+		if not should_show_battalion(battalion_selected, show_all_health_bars):
 			continue
 		# Distance gate before member_health_overlay_rows(), which allocates one
 		# Dictionary per living member each frame.
@@ -108,10 +114,9 @@ func _draw() -> void:
 			var ratio := clampf(float(row.get("health_ratio", 0.0)), 0.0, 1.0)
 			if ratio <= 0.0:
 				continue
-			# Retail shows a soldier's bar while his horde is selected or he is
-			# hurt. A full-health idle army - friendly or enemy - carries none.
-			if not battalion_selected and ratio >= 0.999:
-				continue
+			# A SELECTED horde bars every member, full health included (REF-45).
+			# The per-member rule is therefore the battalion's rule; nothing here
+			# may re-filter on damage.
 			var world_position := row.get("world_position", Vector3.ZERO) as Vector3
 			if tactical_camera.is_position_behind(world_position):
 				continue
@@ -205,14 +210,22 @@ static func source_health_colors(health_ratio: float) -> Dictionary:
 	}
 
 
-## Retail's rule, and the one the structure presenter already uses
-## (retail_structure.gd: `selected or health_ratio < 1.0`): a health bar belongs
-## to a unit the player has selected or to a unit that has been hurt. The old
-## `team != 0 or is_selected` painted a bar over every enemy soldier on screen at
-## full health, which is what made a zoomed-out battle line read as a wall of
-## floating slabs.
-static func should_show_battalion(is_selected: bool, is_damaged: bool) -> bool:
-	return is_selected or is_damaged
+## RETAIL'S RULE IS SELECTED-ONLY, PLUS AN OPT-IN.
+##
+## Evidence (orchestrator adjudication, 2026-08-11): REF-45 shows a selected
+## horde barring EVERY member including full-health ones; REF-40's mass melee
+## shows ZERO bars over unselected but visibly damaged enemies; and
+## lotr.str:2616-2622 authors `APT:EnableHealthBars`, the "Show All Health Bars"
+## option, which only exists because the default is selected-only.
+##
+## So neither the original `team != 0 or is_selected` (a bar over every enemy on
+## screen) nor the intermediate `is_selected or is_damaged` is retail. Damage
+## does not summon a bar; selection does, and the player may opt into all of
+## them. The opt-in is `OpenBFMEUserSettings` `show_all_health_bars`
+## (user_settings.gd DEFAULT_SHOW_ALL_HEALTH_BARS := false), which the options
+## screen already writes and which nothing consumed until now.
+static func should_show_battalion(is_selected: bool, show_all_health_bars: bool) -> bool:
+	return is_selected or show_all_health_bars
 
 
 ## Distance LOD gate. An unknown/negative distance draws, so a camera that has

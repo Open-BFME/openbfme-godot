@@ -581,10 +581,21 @@ func _run() -> void:
 
 
 func _print_unit_bar_diagnostics(slice: Node) -> void:
-	## Screen-space truth about the unit health bars in the frame that is about to
-	## be saved: where each member is drawn, and where his bar is drawn. Both
-	## presenters are covered - the screen-space overlay used by retail-parity
-	## packs and the world-space billboard quads used by every other pack.
+	## DIAGNOSTICS ONLY - THIS FUNCTION ASSERTS NOTHING AND FAILS NOTHING.
+	##
+	## It prints screen-space truth about the unit health bars in the frame that
+	## is about to be saved: where each member is drawn, and where his bar is
+	## drawn. Both presenters are covered - the screen-space overlay used by
+	## retail-parity packs and the world-space billboard quads used by every other
+	## pack. The pass/fail gate for these properties is
+	## `tests/retail_member_health_overlay_runner.gd`; this exists so a human (or
+	## a reviewer) can compare two captures numerically instead of by eye.
+	##
+	## CAVEAT: it calls `overlay._draw()` by hand to refresh the debug mirror.
+	## Godot answers that with "Drawing is only allowed inside this node's
+	## `_draw()`" for each draw call - the region mirror is still populated
+	## because it is filled before the draw calls, but those errors in the log are
+	## this line's fault and not a rendering failure.
 	var camera: Camera3D = slice.camera
 	var overlay_rows: Dictionary = {}
 	var overlay = slice.member_health_overlay
@@ -596,7 +607,11 @@ func _print_unit_bar_diagnostics(slice: Node) -> void:
 		for row_value in overlay.debug_bar_regions:
 			var row: Dictionary = row_value
 			overlay_rows["%s|%d" % [String(row.get("battalion", "")), int(row.get("member_index", -1))]] = row
-		print("RETAIL_RENDER_UNIT_BAR_OVERLAY rows=%d" % overlay.debug_bar_regions.size())
+		print("RETAIL_RENDER_UNIT_BAR_DIAGNOSTIC_OVERLAY rows=%d" % overlay.debug_bar_regions.size())
+		# Leave the overlay as this diagnostic found it: the mirror allocates one
+		# Dictionary per drawn bar per frame and must not stay on after a capture.
+		overlay.collect_debug_regions = false
+		overlay.debug_bar_regions.clear()
 	var ids: Array = slice.battalion_nodes.keys()
 	ids.sort()
 	for id_value in ids.slice(0, mini(3, ids.size())):
@@ -604,7 +619,7 @@ func _print_unit_bar_diagnostics(slice: Node) -> void:
 		var member_visuals: Dictionary = battalion.get("member_visuals") as Dictionary
 		var member_indices: Array = member_visuals.keys()
 		member_indices.sort()
-		print("RETAIL_RENDER_UNIT_BAR_BATTALION id=%s object=%s team=%s parity=%s selected=%s members=%d status=%s anchor_source=%s" % [
+		print("RETAIL_RENDER_UNIT_BAR_DIAGNOSTIC_BATTALION id=%s object=%s team=%s parity=%s selected=%s members=%d status=%s anchor_source=%s" % [
 			str(id_value),
 			String(battalion.get("object_id")),
 			str(battalion.get("team")),
@@ -640,7 +655,7 @@ func _print_unit_bar_diagnostics(slice: Node) -> void:
 				apex.y = member_bounds.end.y
 				if not camera.is_position_behind(apex):
 					apex_y = camera.unproject_position(apex).y
-			print("RETAIL_RENDER_UNIT_BAR member=%d member_screen=%s member_apex_y=%.1f bar_source=%s bar_screen=%s width_ratio=%.2f gap_above_apex_px=%.1f" % [
+			print("RETAIL_RENDER_UNIT_BAR_DIAGNOSTIC member=%d member_screen=%s member_apex_y=%.1f bar_source=%s bar_screen=%s width_ratio=%.2f gap_above_apex_px=%.1f" % [
 				member_index,
 				str(member_rect),
 				apex_y,

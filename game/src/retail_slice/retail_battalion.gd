@@ -42,6 +42,8 @@ const ArcherProjectileControllerScript = preload("res://src/retail_slice/retail_
 const SelectionDecalScript = preload("res://src/retail_slice/retail_selection_decal.gd")
 const PackCapability = preload("res://src/content/pack_capability.gd")
 const SelectionPick = preload("res://src/retail_slice/retail_selection_pick.gd")
+const UserSettingsScript = preload("res://src/ui/user_settings.gd")
+const HealthOverlayScript = preload("res://src/retail_slice/retail_member_health_overlay.gd")
 
 var entity_id := 0
 var team := 0
@@ -93,9 +95,16 @@ var member_health_half_widths: Dictionary = {}
 ## the quad's width and its anchor height above the member's own origin.
 var member_health_bar_widths: Dictionary = {}
 var member_health_bar_heights: Dictionary = {}
-## How each member's anchor height was obtained. "measured-visual-bounds" when
-## the member's own geometry produced it; the fallback names say so.
+## How the members' anchor heights were obtained, as a single battalion-scalar
+## summary: "measured-visual-bounds" only when EVERY member was measured. One
+## member falling back reports "partial-...", so a scalar can no longer hide a
+## per-member measurement failure behind its luckier neighbours.
 var member_health_anchor_source := "unmeasured"
+var member_health_measured_count := 0
+var member_health_fallback_count := 0
+## The player's "Show All Health Bars" opt-in, read once when this battalion is
+## configured. A gate may set it directly to exercise the opted-in surface.
+var show_all_health_bars := UserSettingsScript.DEFAULT_SHOW_ALL_HEALTH_BARS
 var experience_level := 1
 var banner_carrier_visual: Node3D
 var banner_carrier_object_id := ""
@@ -170,6 +179,11 @@ func configure(
 	private_parity_mode_active = _is_private_retail_pack(definition)
 	projectile_object_id = _compiled_projectile_object_id(object_id)
 	_source_unit_scale = source_unit_scale if is_finite(source_unit_scale) and source_unit_scale > 0.0 else 0.0
+	show_all_health_bars = bool(
+		UserSettingsScript.load_controls().get(
+			"show_all_health_bars", UserSettingsScript.DEFAULT_SHOW_ALL_HEALTH_BARS
+		)
+	)
 	_configure_combat_visual_contract(definition)
 	name = "RetailBattalion_%d" % id
 	_build_clip_map(capability)
@@ -329,16 +343,12 @@ func _build_members(expected_members: int, formation_positions: Array) -> void:
 		if measured.size.y > 0.0:
 			member_health_anchor_heights[member_index] = measured.end.y + HEALTH_BAR_HEAD_GAP
 			member_health_half_widths[member_index] = maxf(measured.size.x, measured.size.z) * 0.5
-			member_health_anchor_source = "measured-visual-bounds"
+			member_health_measured_count += 1
 		else:
 			member_health_anchor_heights[member_index] = shared_health_anchor_height
 			member_health_half_widths[member_index] = 0.0
-			if member_health_anchor_source != "measured-visual-bounds":
-				member_health_anchor_source = (
-					"source-geometry-table"
-					if _source_unit_scale > 0.0
-					else "unscaled-default"
-				)
+			member_health_fallback_count += 1
+		_publish_anchor_source()
 		# Retail contact shadow: SAGE draws infantry shadows as dark decals at
 		# shadow color ARGB(64,0,0,0); the blob decal is the approved
 		# equivalence and travels/frees with the member visual.
@@ -368,6 +378,20 @@ func _build_members(expected_members: int, formation_positions: Array) -> void:
 			team_color_status = String(visual.get_meta("team_color_status", ""))
 		member_animation_players[member_index] = []
 		_collect_animation_players(visual, member_index)
+
+
+func _publish_anchor_source() -> void:
+	var fallback_name := "source-geometry-table" if _source_unit_scale > 0.0 else "unscaled-default"
+	if member_health_fallback_count == 0:
+		member_health_anchor_source = "measured-visual-bounds"
+	elif member_health_measured_count == 0:
+		member_health_anchor_source = fallback_name
+	else:
+		member_health_anchor_source = "partial-measured-visual-bounds-%d-of-%d-fell-back-to-%s" % [
+			member_health_fallback_count,
+			member_health_measured_count + member_health_fallback_count,
+			fallback_name,
+		]
 
 
 func _measure_member_bounds(visual: Node3D) -> AABB:
@@ -968,7 +992,16 @@ func _refresh_member_overlays() -> void:
 		if ring != null:
 			ring.visible = overlay_detail_allowed and visual_is_emerged(member_index) and living and selected
 		var emerged := visual_is_emerged(member_index)
-		var show_health := overlay_detail_allowed and emerged and living and (selected or ratio < 0.999)
+		# Retail's rule, one line, shared with the screen-space presenter: a
+		# SELECTED horde bars every member including full-health ones (REF-45),
+		# and damage alone summons nothing (REF-40). `show_all_health_bars` is the
+		# player's authored opt-in (lotr.str APT:EnableHealthBars).
+		var show_health := (
+			overlay_detail_allowed
+			and emerged
+			and living
+			and HealthOverlayScript.should_show_battalion(selected, show_all_health_bars)
+		)
 		var member_visual: Node3D = member_visuals.get(member_index)
 		# The bar TRAVELS WITH ITS SOLDIER. Only `fill.position.x` used to track
 		# the member, so a battalion that had walked or wheeled left every bar
@@ -1023,15 +1056,6 @@ func member_health_overlay_rows() -> Array[Dictionary]:
 	return rows
 
 
-func has_damaged_member() -> bool:
-	## Retail draws a unit's health bar when it is selected or hurt - the same
-	## rule the structure presenter uses. Allocation-free so the per-frame overlay
-	## can gate whole battalions on it.
-	for ratio_value in member_health_ratios.values():
-		var ratio := float(ratio_value)
-		if ratio > 0.0 and ratio < 0.999:
-			return true
-	return false
 
 
 func set_experience_level(level: int) -> void:

@@ -24,7 +24,10 @@ $focusedRunners = [ordered]@{
     'hud_wnd_runtime' = @('retail_hud_wnd_runtime_runner.gd', '(?m)^RETAIL_HUD_WND_RUNTIME_RESULT passed=62 failed=0\s*$')
     'linear_fog_runtime' = @('retail_linear_fog_runner.gd', '(?m)^RETAIL_LINEAR_FOG_RESULT passed=23 failed=0\s*$')
     'member_combat_runtime' = @('retail_member_combat_runner.gd', '(?m)^RETAIL_MEMBER_COMBAT_RESULT passed=49 failed=0\s*$')
-    'member_health_overlay_runtime' = @('retail_member_health_overlay_runner.gd', '(?m)^RETAIL_MEMBER_HEALTH_OVERLAY_RESULT passed=13 failed=0\s*$')
+    # Pinned 13 while the runner emitted 15 on clean main - pre-existing gate rot,
+    # red before this lane touched anything. Re-pinned to 40 because this lane
+    # rewrote the runner and owning a runner means owning its pin.
+    'member_health_overlay_runtime' = @('retail_member_health_overlay_runner.gd', '(?m)^RETAIL_MEMBER_HEALTH_OVERLAY_RESULT passed=40 failed=0\s*$')
     'selection_decal_runtime' = @('retail_selection_decal_runner.gd', '(?m)^RETAIL_SELECTION_DECAL_RESULT passed=15 failed=0\s*$')
     'neutral_lifecycle_runtime' = @('retail_neutral_lifecycle_runner.gd', '(?m)^RETAIL_NEUTRAL_LIFECYCLE_RESULT passed=51 failed=0\s*$')
     'particle_runtime' = @('retail_particle_runtime_runner.gd', '(?m)^RETAIL_PARTICLE_RUNTIME_RESULT passed=17 failed=0\s*$')

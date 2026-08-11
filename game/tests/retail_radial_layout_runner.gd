@@ -1,18 +1,23 @@
 extends SceneTree
 ## Fast geometry gate for the fortress palantir command surface.
 ##
-## Two review-proven defects live here and neither needs a booted match to see:
+## THE DEFECT IT GATES, AND THE ONE IT DELIBERATELY PERMITS.
 ##
-##   1. `_radial_button_position` clamps every expanded-range button into the
-##      command panel AFTER spacing it on the arc. At exactly eight entries the
-##      bottom clamp (panel.bottom - 64) collapses the arc spacing and two 64px
-##      buttons overlap - the men hero page with no created hero produced
-##      (684,957) and (623,1016), dx 61 < 64. Nine or more entries clear only
-##      because the radius grows with the count.
-##   2. The five production queue chips are authored at panel-local
-##      (60 + 40*i, 318) and the sixth retail command socket at (148, 296) is
-##      64px tall, so a producing fortress draws chips 2 and 3 straight through
-##      the socket. That overlap is pure layout arithmetic - it needs no pack.
+## GATED - the five production queue chips were authored at panel-local
+## (60 + 40*i, 318) and the sixth retail command socket sits at (148, 296) and is
+## 64px tall, so a producing fortress drew two opaque 36px chips through a live
+## command button. Opaque over opaque, and the chip is clickable, so it was an
+## input hazard as well as a visual one. Pure layout arithmetic; needs no pack.
+##
+## PERMITTED, ON PURPOSE - `_radial_button_position` clamps expanded-range
+## buttons into the panel after spacing them on the arc, and at eight entries two
+## 64px boxes overlap by 3x5 px = 15 px^2 ((684,957) and (623,1016), the men hero
+## page with no created hero). This runner does NOT fail that, because retail's
+## OWN authored slots 4 and 5 overlap by 17x4 px = 68 px^2 - four and a half
+## times as much - and the converted socket art is transparent exactly there
+## (proved below from the shipped PNG). A rectangle-intersection gate would fail
+## retail itself. The bound is therefore retail's own worst authored overlap
+## area, and the separation floor is retail's own tightest authored pair.
 ##
 ## This runner is deliberately cheap: it builds one RetailHud, reads the real
 ## production layout functions, and asserts rectangles. It is the fast gate in
@@ -31,6 +36,10 @@ const CAPTURE_VIEWPORT := Vector2i(1920, 1080)
 ## and every larger authored range up to the hero range's ten entries plus a
 ## page selector and a back button.
 const COVERED_COUNTS := [6, 7, 8, 9, 10, 11, 12]
+## Counts laid out by the EXPANDED arc. Six entries are the authored constant
+## itself, so holding it to a bound derived from the authored constant would be
+## `min(S) >= min(S)` - the identity row below covers it instead.
+const EXPANDED_COUNTS := [7, 8, 9, 10, 11, 12]
 
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
 var _runner_watchdog := RunnerWatchdogScript.new()
@@ -89,16 +98,29 @@ func _run() -> void:
 			panel_rect.position + (hud_script.RETAIL_COMMAND_SLOT_SOURCE[slot] as Vector2),
 			hud_script.RETAIL_COMMAND_SLOT_SIZE as Vector2
 		))
-	# Retail's own tightest authored pair, centre to centre. Every expanded range
-	# is held to this same separation.
+	# BOTH BOUNDS COME OUT OF RETAIL'S OWN ARC, computed here rather than typed in:
+	# its tightest authored pair centre to centre, and its worst authored pair by
+	# overlap AREA. An expanded range may be no tighter and no more overlapping
+	# than the six sockets retail itself ships.
 	var authored_minimum_separation := INF
+	var authored_maximum_overlap_area := 0.0
 	for left in socket_rects.size():
 		for right in range(left + 1, socket_rects.size()):
 			authored_minimum_separation = minf(
 				authored_minimum_separation,
 				socket_rects[left].get_center().distance_to(socket_rects[right].get_center())
 			)
-	print("RETAIL_RADIAL_LAYOUT authored_minimum_separation=%.3f" % authored_minimum_separation)
+			authored_maximum_overlap_area = maxf(
+				authored_maximum_overlap_area, _overlap_area(socket_rects[left], socket_rects[right])
+			)
+	print("RETAIL_RADIAL_LAYOUT authored_minimum_separation=%.3f authored_maximum_overlap_area=%.1f" % [
+		authored_minimum_separation, authored_maximum_overlap_area
+	])
+	_check(
+		"authored_sockets_themselves_overlap_as_boxes",
+		authored_maximum_overlap_area > 0.0,
+		"if retail's own sockets stopped overlapping, the bound below is no longer retail's"
+	)
 
 	var socket_chip_overlaps: Array[String] = []
 	for socket_index in socket_rects.size():
@@ -118,6 +140,31 @@ func _run() -> void:
 			chips_inside = false
 	_check("queue_chips_stay_inside_the_command_panel", chips_inside, str(chip_rects))
 
+	# retail_hud.gd's RETAIL_QUEUE_CHIP_ORIGIN comment claims the chips are clear
+	# of the palantir dish as well as of the sockets. Claims on this surface get
+	# assertions: the dish is a CIRCLE (centre RETAIL_DISH_CENTER, radius
+	# RETAIL_DISH_RADIUS) and the selection portrait fills it, so a rectangle test
+	# against its bounding box would be the wrong shape.
+	# Same expression production uses (`_radial_button_position`): the dish centre
+	# is authored in dock x and panel-relative y.
+	var dish_centre := Vector2(
+		(hud_script.RETAIL_DISH_CENTER as Vector2).x,
+		panel_rect.position.y + (hud_script.RETAIL_DISH_CENTER as Vector2).y
+	)
+	var dish_radius: float = hud_script.RETAIL_DISH_RADIUS
+	var dish_overlaps: Array[String] = []
+	for chip_index in chip_rects.size():
+		var nearest := Vector2(
+			clampf(dish_centre.x, chip_rects[chip_index].position.x, chip_rects[chip_index].end.x),
+			clampf(dish_centre.y, chip_rects[chip_index].position.y, chip_rects[chip_index].end.y)
+		)
+		if nearest.distance_to(dish_centre) < dish_radius:
+			dish_overlaps.append("chip%d %s is %.1f from the dish centre (radius %.1f)" % [
+				chip_index, str(chip_rects[chip_index]), nearest.distance_to(dish_centre), dish_radius
+			])
+	print("RETAIL_RADIAL_LAYOUT dish_centre=%s radius=%.1f" % [str(dish_centre), dish_radius])
+	_check("queue_chips_clear_the_palantir_dish", dish_overlaps.is_empty(), str(dish_overlaps))
+
 	# --- every producible radial range lays out cleanly -----------------------
 	for count in COVERED_COUNTS:
 		var rects: Array[Rect2] = []
@@ -128,26 +175,18 @@ func _run() -> void:
 			))
 		print("RETAIL_RADIAL_LAYOUT count=%d positions=%s" % [count, str(rects.map(func(r: Rect2) -> Vector2: return r.position))])
 
-		var outside: Array[String] = []
-		for index in rects.size():
-			if not panel_rect.encloses(rects[index]):
-				outside.append("%d:%s" % [index, str(rects[index])])
-		_check(
-			"radial_%d_entries_stay_inside_the_command_panel" % count,
-			outside.is_empty(),
-			str(outside)
-		)
+		# NO CONTAINMENT ROW HERE ON PURPOSE. `_radial_button_position` ends in two
+		# `clampf` calls against this very rectangle, so asserting containment
+		# would assert that clampf clamps. Containment is instead gated where it
+		# can actually fail - on the live buttons, in
+		# fortress_command_surface_runner's `_check_radial_is_in_the_palantir_wheel`.
 
-		# THE ORACLE IS RETAIL'S OWN ARC, NOT A RECTANGLE TEST.
-		#
-		# The authored palantir sockets are 64px boxes holding a round socket
-		# graphic, and retail's own slots 4 and 5 - (315,231) and (268,291) -
-		# overlap as boxes by 17x4 px while their art never touches. A plain
-		# `Rect2.intersects` gate therefore fails retail itself. What an expanded
-		# range must preserve is retail's separation: no pair of entries may sit
-		# closer, centre to centre, than retail's own tightest authored pair.
+		# TWO BOUNDS, BOTH RETAIL'S OWN (see the file header for why neither is a
+		# plain rectangle-intersection test).
 		var closest := INF
 		var closest_detail := ""
+		var worst_area := 0.0
+		var worst_area_detail := "<none>"
 		for index in rects.size():
 			for other in range(index + 1, rects.size()):
 				var separation := rects[index].get_center().distance_to(rects[other].get_center())
@@ -156,14 +195,28 @@ func _run() -> void:
 					closest_detail = "%d %s x %d %s" % [
 						index, str(rects[index].position), other, str(rects[other].position)
 					]
-		print("RETAIL_RADIAL_LAYOUT count=%d closest_centres=%.2f authored_minimum=%.2f %s" % [
-			count, closest, authored_minimum_separation, closest_detail
+				var area := _overlap_area(rects[index], rects[other])
+				if area > worst_area:
+					worst_area = area
+					worst_area_detail = "%d %s x %d %s = %s" % [
+						index, str(rects[index].position), other, str(rects[other].position),
+						str(rects[index].intersection(rects[other]).size)
+					]
+		print("RETAIL_RADIAL_LAYOUT count=%d closest_centres=%.2f (authored %.2f) worst_overlap_area=%.1f (authored %.1f) %s | %s" % [
+			count, closest, authored_minimum_separation, worst_area, authored_maximum_overlap_area,
+			closest_detail, worst_area_detail
 		])
-		_check(
-			"radial_%d_entries_keep_the_authored_socket_separation" % count,
-			closest >= authored_minimum_separation - 0.01,
-			"closest=%.2f authored=%.2f %s" % [closest, authored_minimum_separation, closest_detail]
-		)
+		if count in EXPANDED_COUNTS:
+			_check(
+				"radial_%d_entries_overlap_no_worse_than_retails_own_sockets" % count,
+				worst_area <= authored_maximum_overlap_area + 0.01,
+				"worst=%.1f px^2 authored=%.1f px^2 %s" % [worst_area, authored_maximum_overlap_area, worst_area_detail]
+			)
+			_check(
+				"radial_%d_entries_keep_the_authored_socket_separation" % count,
+				closest >= authored_minimum_separation - 0.01,
+				"closest=%.2f authored=%.2f %s" % [closest, authored_minimum_separation, closest_detail]
+			)
 
 		var chip_overlaps: Array[String] = []
 		for index in rects.size():
@@ -257,6 +310,11 @@ func _check_socket_art_corners_are_transparent(hud_script) -> void:
 		worst_alpha <= 16,
 		"worst corner alpha %d" % worst_alpha
 	)
+
+
+func _overlap_area(left: Rect2, right: Rect2) -> float:
+	var shared := left.intersection(right)
+	return maxf(0.0, shared.size.x) * maxf(0.0, shared.size.y)
 
 
 func _queue_chip_rects(hud) -> Array[Rect2]:
