@@ -684,7 +684,9 @@ def normalize_retail_absent_textures(value: Any) -> list[str]:
     return sorted(value)
 
 
-def clear_retail_absent_textures(tolerated: list[str]) -> list[str]:
+def clear_retail_absent_textures(
+    tolerated: list[str], *, staging_root: Path
+) -> dict[str, list[str]]:
     """Unlink generated placeholders for recorded retail-absent textures.
 
     The pinned importer substitutes a generated color-grid image when a W3D
@@ -695,12 +697,29 @@ def clear_retail_absent_textures(tolerated: list[str]) -> list[str]:
     may be unlinked — every other generated image stays for the placeholder
     validation to reject. The material keeps all remaining channels; no
     substitute texture is invented.
+
+    A recorded exclusion does not always become a placeholder. The pinned
+    importer resolves exactly one texture per material pass
+    (``tx_stages[0].tx_ids[0][0]``) and warns that it supports only one
+    texture stage per pass, so a mesh that authors more textures than its
+    passes reference — RotWK's ``mu_banr_w.w3d`` authors three across two
+    passes — leaves the surplus name untouched by the import. Nothing was
+    created, so nothing can leak, and the exclusion is returned as
+    ``unreferenced`` evidence rather than aborting the conversion.
+
+    Both remaining shapes stay fail-closed, because each would mean the
+    recorded closure disagrees with the staged reality:
+
+    * the excluded basename is present in the staged input directory, so it
+      is not a retail-absent texture at all;
+    * an image with that name survives the placeholder sweep, so the import
+      resolved it from a real payload.
     """
 
     tolerated_stems = {
-        Path(basename).stem.casefold() for basename in tolerated
+        Path(basename).stem.casefold(): basename for basename in tolerated
     }
-    unmatched = set(tolerated_stems)
+    unmatched = dict(tolerated_stems)
     cleared: list[str] = []
     for image in list(getattr(bpy.data, "images", []) or []):
         if getattr(image, "source", None) != "GENERATED":
@@ -718,13 +737,36 @@ def clear_retail_absent_textures(tolerated: list[str]) -> list[str]:
                 if getattr(node, "image", None) is image:
                     nodes.remove(node)
         bpy.data.images.remove(image)
-        unmatched.discard(stem)
+        unmatched.pop(stem, None)
         cleared.append(image_name)
     if unmatched:
-        raise RuntimeError(
-            "retail-absent texture exclusion did not match a generated placeholder"
+        staged_stems = {
+            path.stem.casefold()
+            for path in staging_root.iterdir()
+            if path.is_file() and path.suffix.casefold() in TEXTURE_SUFFIXES
+        }
+        surviving_stems = {
+            Path(str(getattr(image, "name", ""))).stem.casefold()
+            for image in list(getattr(bpy.data, "images", []) or [])
+        }
+        for stem, basename in sorted(unmatched.items()):
+            if stem in staged_stems:
+                raise RuntimeError(
+                    "retail-absent texture exclusion names a staged texture: "
+                    f"{basename}"
+                )
+            if stem in surviving_stems:
+                raise RuntimeError(
+                    "retail-absent texture exclusion resolved to an imported "
+                    f"texture: {basename}"
+                )
+    unreferenced = sorted(unmatched.values())
+    if unreferenced:
+        print(
+            "OPENBFME_W3D_RETAIL_ABSENT_TEXTURE_UNREFERENCED "
+            + json.dumps(unreferenced, sort_keys=True)
         )
-    return sorted(cleared)
+    return {"cleared": sorted(cleared), "unreferenced": unreferenced}
 
 
 def validate_asset_kind_request(
@@ -776,6 +818,34 @@ SHADER_BOOLEAN_COMPATIBILITY_PROPERTIES = {
     "AlphaBlendingEnable": "openbfme_w3d_alpha_blending_enable",
     "FogEnable": "openbfme_w3d_fog_enable",
 }
+# RotWK 2.01 authors "None" as its explicit no-texture sentinel in shader
+# material string properties. A scan of all 14,475 effective-assets W3Ds finds
+# 119 sentinel references across 35 files, but only 9 of them sit in a
+# property the pinned plugin ever resolves: NormalMap in 8 files (bbbags,
+# cah_skull, cahero_gondor04/06/07, esbtemple, gumaarms_sknl, livingmap) and
+# Texture_1 in psupplies04. The other 110 references are WaterPCATexture1/2/3,
+# PCAFrothTexture and PCANoiseTexture on 26 water models, which the plugin
+# never dispatches at all, so they cannot produce a placeholder. Exactly one
+# of the nine, esbtemple.w3d, is reachable from any current profile.
+RETAIL_W3D_NO_TEXTURE_SENTINEL = "None"
+# The pinned plugin's find_texture dispatch set: the exact property names
+# whose handler in material_import.create_material_from_shader_material
+# (lines 147-199) calls find_texture. Every other name falls through to its
+# "shader property not implemented" path and never touches the loader, so
+# sanitizing anything outside this set would be a change without a cause.
+# DamagedTexture and SpecMap are derived from that dispatch set rather than
+# observed: neither occurs as a string property anywhere in retail.
+SHADER_TEXTURE_PROPERTIES = frozenset(
+    {
+        "DamagedTexture",
+        "DiffuseTexture",
+        "NormalMap",
+        "SpecMap",
+        "Texture_0",
+        "Texture_1",
+    }
+)
+_ACTIVE_SHADER_TEXTURE_SENTINEL_DROPS: list[dict[str, Any]] = []
 MAX_OPTIONAL_MESH_EXCLUSIONS = 64
 CLEAN_MESH_IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9_]{0,126}[a-z0-9])?$")
 MAX_RETAIL_ABSENT_TEXTURES = 16
@@ -1846,19 +1916,35 @@ def _same_runtime_identity(left: Any, right: Any) -> bool:
 
 def _split_shader_material_compatibility_properties(
     shader_material: Any,
-) -> tuple[Any, dict[str, bool]]:
+) -> tuple[Any, dict[str, bool], list[str]]:
     """Remove only two source-proven bools unsupported by the pinned plugin.
 
     The untouched pinned importer still sees every other shader property, so
     an unknown or newly introduced property continues to fail closed. The
     filtered copy retains source property order for all supported properties.
+
+    The retail no-texture sentinel is removed on the same terms and reported
+    back to the caller, which records it: dropping it edits the retail
+    material graph, so it may not happen silently.
     """
 
     properties = list(getattr(shader_material, "properties", []) or [])
     retained: list[Any] = []
     compatibility: dict[str, bool] = {}
+    dropped_sentinels: list[str] = []
     for prop in properties:
         name = str(getattr(prop, "name", ""))
+        if (
+            name in SHADER_TEXTURE_PROPERTIES
+            and type(getattr(prop, "value", None)) is str
+            and prop.value == RETAIL_W3D_NO_TEXTURE_SENTINEL
+        ):
+            # "None" is retail's no-texture declaration, not a basename. Drop
+            # exactly that value from exactly the texture-valued properties;
+            # any other value — including "none" or "None.tga" — still reaches
+            # the pinned importer and still fails closed if it cannot resolve.
+            dropped_sentinels.append(name)
+            continue
         if name not in SHADER_BOOLEAN_COMPATIBILITY_PROPERTIES:
             retained.append(prop)
             continue
@@ -1873,11 +1959,11 @@ def _split_shader_material_compatibility_properties(
                 f"W3D shader compatibility property is not an exact boolean: {name}"
             )
         compatibility[name] = value
-    if not compatibility:
-        return shader_material, {}
+    if not compatibility and not dropped_sentinels:
+        return shader_material, {}, []
     filtered = copy_module.copy(shader_material)
     filtered.properties = retained
-    return filtered, compatibility
+    return filtered, compatibility, dropped_sentinels
 
 
 def _set_exact_material_boolean(material: Any, key: str, value: bool) -> None:
@@ -1901,9 +1987,25 @@ def _shader_material_compatibility_importer(original: Any) -> Any:
         raise RuntimeError("pinned shader material importer is unavailable")
 
     def compatible_import(context: Any, name: str, shader_material: Any) -> Any:
-        filtered, compatibility = _split_shader_material_compatibility_properties(
-            shader_material
-        )
+        (
+            filtered,
+            compatibility,
+            dropped_sentinels,
+        ) = _split_shader_material_compatibility_properties(shader_material)
+        for property_name in dropped_sentinels:
+            record = {
+                "material": str(name),
+                "property": property_name,
+                "value": RETAIL_W3D_NO_TEXTURE_SENTINEL,
+                "reason": "retail-no-texture-sentinel",
+            }
+            if record in _ACTIVE_SHADER_TEXTURE_SENTINEL_DROPS:
+                continue
+            _ACTIVE_SHADER_TEXTURE_SENTINEL_DROPS.append(record)
+            print(
+                "OPENBFME_W3D_SHADER_TEXTURE_SENTINEL_DROPPED "
+                + json.dumps(record, sort_keys=True)
+            )
         material, principled = original(context, name, filtered)
         for source_name, value in compatibility.items():
             custom_name = SHADER_BOOLEAN_COMPATIBILITY_PROPERTIES[source_name]
@@ -4505,6 +4607,7 @@ def _convert_w3d_job_impl(
     """Convert one job and return the established adapter report schema."""
 
     _ACTIVE_RETAIL_ORPHAN_HLOD_EXCLUSIONS.clear()
+    _ACTIVE_SHADER_TEXTURE_SENTINEL_DROPS.clear()
 
     args = argparse.Namespace(
         asset_kind=asset_kind,
@@ -4574,11 +4677,18 @@ def _convert_w3d_job_impl(
     # Recorded retail-absent textures are unlinked before material passes see
     # the graph, so their placeholders never leak into additive or opaque
     # material conversion. Only scanner-recorded exclusions are tolerated.
-    retail_absent_textures_cleared = (
-        clear_retail_absent_textures(args.retail_absent_textures)
+    retail_absent_texture_result = (
+        clear_retail_absent_textures(
+            args.retail_absent_textures,
+            staging_root=model.parent,
+        )
         if args.retail_absent_textures
-        else []
+        else {"cleared": [], "unreferenced": []}
     )
+    retail_absent_textures_cleared = retail_absent_texture_result["cleared"]
+    retail_absent_textures_unreferenced = retail_absent_texture_result[
+        "unreferenced"
+    ]
     # Preserve the visual contribution of source-proven additive W3D textures
     # before the render payload is fingerprinted. Unproven materials are never
     # modified by this pass.
@@ -4888,6 +4998,11 @@ def _convert_w3d_job_impl(
         "required_equipment": sorted(set(args.required_equipment)),
         "equipment": equipment,
         "retail_absent_textures_cleared": retail_absent_textures_cleared,
+        "retail_absent_textures_unreferenced": retail_absent_textures_unreferenced,
+        "shader_texture_sentinels_dropped": sorted(
+            _ACTIVE_SHADER_TEXTURE_SENTINEL_DROPS,
+            key=lambda record: (record["material"], record["property"]),
+        ),
         "animations": logical_animation_count,
         "animation_curves": animation_curve_count,
         "animation_keys": animation_key_count,

@@ -668,6 +668,10 @@ class W3dOpaqueMaterialNormalizationTests(unittest.TestCase):
 
 
 class W3dShaderMaterialCompatibilityTests(unittest.TestCase):
+    def setUp(self) -> None:
+        ADAPTER._ACTIVE_SHADER_TEXTURE_SENTINEL_DROPS.clear()
+        self.addCleanup(ADAPTER._ACTIVE_SHADER_TEXTURE_SENTINEL_DROPS.clear)
+
     @staticmethod
     def _invoke(properties):
         seen = []
@@ -717,6 +721,80 @@ class W3dShaderMaterialCompatibilityTests(unittest.TestCase):
                 "source_flags_preserved": True,
             },
         )
+
+    def test_retail_no_texture_sentinel_is_dropped_before_the_pinned_import(
+        self,
+    ) -> None:
+        """RotWK esbtemple.w3d (and 34 sibling W3Ds) author ``NormalMap = "None"``.
+
+        ``None`` is the retail no-texture sentinel, not a basename. The pinned
+        plugin only skips empty strings, so it asks its loader for a file named
+        ``None``, gets the 2048x2048 color grid, and the generated-placeholder
+        validator correctly refuses the model. Drop exactly the sentinel from
+        exactly the texture-valued properties before delegating.
+        """
+
+        seen, _material, _principled, _result = self._invoke(
+            [
+                FakeShaderProperty("DiffuseTexture", "fixture.dds", property_type=1),
+                FakeShaderProperty("NormalMap", "None", property_type=1),
+                FakeShaderProperty("BumpScale", 1.0, property_type=4),
+            ]
+        )
+
+        self.assertEqual(seen, ["DiffuseTexture", "BumpScale"])
+
+    def test_sentinel_drop_leaves_a_receipt_and_clean_input_leaves_none(
+        self,
+    ) -> None:
+        """Silently editing the retail material graph is not acceptable.
+
+        esbtemple-shaped input must record which property of which material
+        lost its sentinel, exactly as the unreferenced-texture relaxation
+        records its evidence. Clean input must record nothing at all.
+        """
+
+        self._invoke(
+            [
+                FakeShaderProperty("DiffuseTexture", "ESBbarrack.tga", property_type=1),
+                FakeShaderProperty("NormalMap", "None", property_type=1),
+            ]
+        )
+
+        self.assertEqual(
+            ADAPTER._ACTIVE_SHADER_TEXTURE_SENTINEL_DROPS,
+            [
+                {
+                    "material": "fixture",
+                    "property": "NormalMap",
+                    "value": "None",
+                    "reason": "retail-no-texture-sentinel",
+                }
+            ],
+        )
+
+        ADAPTER._ACTIVE_SHADER_TEXTURE_SENTINEL_DROPS.clear()
+        self._invoke(
+            [
+                FakeShaderProperty("DiffuseTexture", "ESBbarrack.tga", property_type=1),
+                FakeShaderProperty("NormalMap", "ESBbarrack_NRM.tga", property_type=1),
+            ]
+        )
+
+        self.assertEqual(ADAPTER._ACTIVE_SHADER_TEXTURE_SENTINEL_DROPS, [])
+
+    def test_sentinel_drop_is_exact_and_never_touches_real_names(self) -> None:
+        for name, value in (
+            ("NormalMap", "none"),
+            ("NormalMap", "None.tga"),
+            ("DiffuseTexture", "NoneSuch.dds"),
+            ("Shininess", "None"),
+        ):
+            with self.subTest(name=name, value=value):
+                seen, _material, _principled, _result = self._invoke(
+                    [FakeShaderProperty(name, value, property_type=1)]
+                )
+                self.assertEqual(seen, [name])
 
     def test_false_alpha_flag_maps_to_opaque(self) -> None:
         _seen, material, _principled, _result = self._invoke(
@@ -1638,19 +1716,77 @@ class W3dRetailAbsentTextureTests(unittest.TestCase):
             ],
         )
 
-        cleared = ADAPTER.clear_retail_absent_textures(["NBElvnBarx_D_NRM.tga"])
+        with tempfile.TemporaryDirectory() as staging:
+            result = ADAPTER.clear_retail_absent_textures(
+                ["NBElvnBarx_D_NRM.tga"], staging_root=Path(staging)
+            )
 
-        self.assertEqual(cleared, ["NBElvnBarx_D_NRM.dds"])
+        self.assertEqual(result["cleared"], ["NBElvnBarx_D_NRM.dds"])
+        self.assertEqual(result["unreferenced"], [])
         self.assertNotIn(placeholder, ADAPTER.bpy.data.images)
         self.assertIn(other, ADAPTER.bpy.data.images)
         self.assertIn(staged, ADAPTER.bpy.data.images)
         self.assertNotIn(image_node, nodes)
         self.assertIn(other_node, nodes)
 
-    def test_unmatched_tolerated_name_fails_closed(self) -> None:
-        ADAPTER.bpy.data = types.SimpleNamespace(images=[], materials=[])
-        with self.assertRaisesRegex(RuntimeError, "did not match a generated placeholder"):
-            ADAPTER.clear_retail_absent_textures(["absent.tga"])
+    def test_unreferenced_absent_texture_is_recorded_not_fatal(self) -> None:
+        """RotWK mu_banr_w.w3d authors three mesh textures across two material
+        passes. The pinned importer resolves exactly one texture per pass
+        (``tx_stages[0].tx_ids[0][0]``), so the third authored name never
+        becomes an image at all and no placeholder can leak. The recorded
+        exclusion must survive as evidence instead of aborting the build.
+        """
+
+        placeholder_one = types.SimpleNamespace(
+            name="CinMrdBnr01.dds", source="GENERATED"
+        )
+        placeholder_two = types.SimpleNamespace(
+            name="CinMrdBnr02.dds", source="GENERATED"
+        )
+        ADAPTER.bpy.data = types.SimpleNamespace(
+            images=FakeImageCollection([placeholder_one, placeholder_two]),
+            materials=[],
+        )
+
+        with tempfile.TemporaryDirectory() as staging:
+            (Path(staging) / "mu_banr_w.w3d").write_bytes(b"model")
+            (Path(staging) / "MU_Banr.dds").write_bytes(b"texture")
+            result = ADAPTER.clear_retail_absent_textures(
+                ["CinMrdBnr01.tga", "CinMrdBnr02.tga", "xb_gas_01.tga"],
+                staging_root=Path(staging),
+            )
+
+        self.assertEqual(
+            result["cleared"], ["CinMrdBnr01.dds", "CinMrdBnr02.dds"]
+        )
+        self.assertEqual(result["unreferenced"], ["xb_gas_01.tga"])
+        self.assertEqual(list(ADAPTER.bpy.data.images), [])
+
+    def test_absent_texture_that_is_staged_fails_closed(self) -> None:
+        ADAPTER.bpy.data = types.SimpleNamespace(
+            images=FakeImageCollection([]), materials=[]
+        )
+        with tempfile.TemporaryDirectory() as staging:
+            (Path(staging) / "absent.dds").write_bytes(b"payload")
+            with self.assertRaisesRegex(
+                RuntimeError, "names a staged texture"
+            ):
+                ADAPTER.clear_retail_absent_textures(
+                    ["absent.tga"], staging_root=Path(staging)
+                )
+
+    def test_absent_texture_resolved_to_a_real_image_fails_closed(self) -> None:
+        resolved = types.SimpleNamespace(name="absent", source="FILE")
+        ADAPTER.bpy.data = types.SimpleNamespace(
+            images=FakeImageCollection([resolved]), materials=[]
+        )
+        with tempfile.TemporaryDirectory() as staging:
+            with self.assertRaisesRegex(
+                RuntimeError, "resolved to an imported texture"
+            ):
+                ADAPTER.clear_retail_absent_textures(
+                    ["absent.tga"], staging_root=Path(staging)
+                )
 
 
 class FakeImageCollection(list):
