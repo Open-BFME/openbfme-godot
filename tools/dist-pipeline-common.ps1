@@ -185,6 +185,41 @@ function Test-DistVersionConsistency {
 }
 
 
+function Get-DistOwningCheckout {
+    <#
+    .SYNOPSIS
+        Which working tree does this path belong to? Not "which one am I in".
+    .DESCRIPTION
+        A second real hole this gate found, this one on the first live run.
+
+        Publishing happens FROM a worktree and INTO the main checkout, because a
+        worktree is temporary and a build published into one disappears with it.
+        Ask `git -C <worktree> check-ignore <main>\dist` and git answers with an
+        error, because the path is outside the working tree it was asked in -
+        and an error read as "not ignored" reports the firewall as DOWN when it
+        is up. That is a false alarm rather than a false pass, so it refused
+        rather than leaked, but it stopped every publish from a worktree.
+
+        The question is therefore asked of the checkout that OWNS the path.
+        Walks up to the nearest ancestor that exists, since the directory may
+        not have been created yet.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    $current = [IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
+    while ($current -ne '' -and $null -ne $current -and -not [IO.Directory]::Exists($current)) {
+        $current = [IO.Path]::GetDirectoryName($current)
+    }
+    if ($current -eq '' -or $null -eq $current) { return '' }
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $top = (& git -C $current rev-parse --show-toplevel 2>$null | Out-String).Trim()
+    } finally { $ErrorActionPreference = $previous }
+    if ($top -eq '') { return '' }
+    return [IO.Path]::GetFullPath($top)
+}
+
+
 function Get-DistTrackedFiles {
     <#
     .SYNOPSIS
@@ -255,6 +290,20 @@ function Assert-DistReleaseFirewall {
         [Parameter(Mandatory)][string]$RepoRoot,
         [Parameter(Mandatory)][string]$DistRoot
     )
+    # Ask the checkout that OWNS the dist root, not the one this script is
+    # running from - publishing happens FROM a worktree INTO the main checkout,
+    # and git answers questions about paths outside its own working tree with an
+    # error that reads exactly like "not ignored".
+    $owner = Get-DistOwningCheckout -Path $DistRoot
+    if ($owner -eq '') {
+        throw (New-DistRefusal `
+            -Problem "No git checkout owns the dist root, so nothing can prove it is unreachable from git: $DistRoot" `
+            -Remedy 'Publish into a directory inside the repository (dist/ by default), or one whose own checkout ignores it.')
+    }
+    if ($owner -cne [IO.Path]::GetFullPath($RepoRoot)) {
+        Write-Verbose "dist root belongs to $owner, not $RepoRoot; asking git there."
+    }
+    $RepoRoot = $owner
     $tracked = @(Get-DistTrackedFiles -RepoRoot $RepoRoot -Path $DistRoot)
     if ($tracked.Count -gt 0) {
         $preview = ($tracked | Select-Object -First 10) -join "`n           "

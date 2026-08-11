@@ -197,6 +197,39 @@ Test-Case 'a dist directory that does not exist YET is still known to be ignored
     } finally { Remove-ScratchRepository -Root $scratch }
 }
 
+Test-Case 'the firewall works when publishing FROM a worktree INTO the main checkout' {
+    # How every publish actually runs, and it failed on the first live attempt:
+    # git answers a question about a path outside its own working tree with an
+    # error, which read as "dist is NOT ignored" and refused a publish that was
+    # perfectly safe. The firewall must ask the checkout that owns the path.
+    $scratch = New-ScratchRepository
+    $worktree = ''
+    try {
+        $previous = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            & git -C $scratch add .gitignore VERSION 2>$null | Out-Null
+            & git -C $scratch commit -q -m 'scratch base' 2>$null | Out-Null
+            $worktree = Join-Path $scratch '.worktrees\lane'
+            & git -C $scratch worktree add -q -b lane $worktree 2>$null | Out-Null
+        } finally { $ErrorActionPreference = $previous }
+        Assert-True (Test-Path -LiteralPath $worktree -PathType Container) 'scratch setup failed: no worktree was created'
+
+        $dist = Join-Path $scratch 'dist'
+        [void](New-Item -ItemType Directory -Path $dist -Force)
+        Assert-True ((Get-DistOwningCheckout -Path $dist) -ceq ([IO.Path]::GetFullPath($scratch))) 'the dist root was attributed to the wrong checkout'
+        # -RepoRoot is the worktree; -DistRoot is in the main checkout.
+        [void](Assert-DistReleaseFirewall -RepoRoot $worktree -DistRoot $dist)
+    } finally {
+        if ($worktree -ne '' -and (Test-Path -LiteralPath $worktree)) {
+            $previous = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try { & git -C $scratch worktree remove --force $worktree 2>$null | Out-Null } finally { $ErrorActionPreference = $previous }
+        }
+        Remove-ScratchRepository -Root $scratch
+    }
+}
+
 Test-Case 'version consistency reports drift rather than tolerating it' {
     $scratch = New-ScratchRepository
     try {
