@@ -24,8 +24,7 @@ var _runner_watchdog := RunnerWatchdogScript.new()
 
 func _initialize() -> void:
 	_runner_watchdog.start(self, "RETAIL_ARCHER_PROJECTILE_PRESENTATION_RUNNER", 0, 0, true)
-	_runner_watchdog.set_result_provider(func() -> String:
-		return "passed=%d failed=%d of %d" % [passed, failed, EXPECTED_CHECK_COUNT])
+	_runner_watchdog.set_result_provider(func() -> Vector2i: return Vector2i(passed, failed))
 	call_deferred("_run")
 
 

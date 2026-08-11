@@ -20,6 +20,10 @@ const SIDECAR_PROJECTILE_OBJECT_ID := "GondorArcherArrow"
 ## raise an engine warning; see _record_combat_visual_diagnostic.
 ## Values are DiagLog levels; "warn" additionally raises an engine warning.
 const DIAGNOSTIC_SEVERITY := {
+	# TODO(2026-08-11): "info" is a point-in-time judgment — the shared-Good borrow is
+	# the universal expected state while no pack ships projectileArt. The day a
+	# republished pack carries it, a borrow means id-keyed resolution FAILED and this
+	# entry must flip to "warn" (rot condition ratified by the arrow-art round-2 review).
 	"arrow-art-shared-good-fallback": "info",
 	"arrow-art-unresolved": "warn",
 	"projectile-art-binding-rejected": "warn",
