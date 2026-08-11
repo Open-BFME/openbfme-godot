@@ -450,9 +450,10 @@ static func import_retail_cah_profile(system: Dictionary, data: PackedByteArray,
 	if not system_is_valid(system):
 		return {"profile": {}, "refusals": PackedStringArray(["no valid Create-a-Hero system is mounted"])}
 	var raw_name := String(parsed.get("name", ""))
-	if sanitize_name(raw_name) != raw_name:
+	var imported_name := sanitize_name(raw_name)
+	if imported_name.is_empty():
 		return {"profile": {}, "refusals": PackedStringArray([
-			"hero name cannot be represented without changing it (maximum %d printable characters)" % MAX_NAME_LENGTH
+			"hero name is empty after removing unsupported characters"
 		])}
 	var appearance_quad: Array = parsed.get("appearance", []) as Array
 	var class_index := int(appearance_quad[0])
@@ -462,12 +463,16 @@ static func import_retail_cah_profile(system: Dictionary, data: PackedByteArray,
 		return {"profile": {}, "refusals": PackedStringArray([
 			"the mounted content has no class %d subclass %d" % [class_index, sub_index]
 		])}
-	var profile := new_profile(system, raw_name, class_index, sub_index)
+	var profile := new_profile(system, imported_name, class_index, sub_index)
 	profile["attributes"] = {}
 	profile["appearance"] = {}
 	profile["powers"] = (parsed.get("powers", []) as Array).duplicate()
 	profile["colors"] = (parsed.get("colors", []) as Array).duplicate(true)
-	profile["importedFrom"] = String(parsed.get("retailHeroId", ""))
+	var retail_hero_id := String(parsed.get("retailHeroId", ""))
+	profile["importedFrom"] = retail_hero_id if imported_name == raw_name else {
+		"retailHeroId": retail_hero_id,
+		"originalName": raw_name,
+	}
 	var authored_attributes: Dictionary = {}
 	for value in sub_row.get("attributes", []) as Array:
 		var row := value as Dictionary
@@ -549,8 +554,10 @@ static func parse_retail_cah(data: PackedByteArray, label: String = "<cah>") -> 
 	for color_name in ["primary", "secondary", "tertiary"]:
 		var color_bytes := _cah_take(state, 4, "%s colour" % color_name)
 		var color: Array = []
-		for byte in color_bytes:
-			color.append(int(byte))
+		# The file carries four bytes, but the coordinated profile contract is
+		# exactly RGB. The fourth byte is undetermined and is not an alpha channel.
+		for index in range(mini(3, color_bytes.size())):
+			color.append(int(color_bytes[index]))
 		colors.append(color)
 	var powers: Array = []
 	var seen_empty := false
@@ -667,7 +674,35 @@ static func _cah_string(state: Dictionary, what: String, utf16: bool) -> String:
 				_cah_fail(state, int(state["offset"]) - bytes.size(), "%s is not ASCII" % what)
 				return ""
 		return bytes.get_string_from_ascii()
-	return bytes.get_string_from_utf16()
+	var unit_index := 0
+	while unit_index + 1 < bytes.size():
+		var unit := int(bytes[unit_index]) | (int(bytes[unit_index + 1]) << 8)
+		if unit >= 0xd800 and unit <= 0xdbff:
+			if unit_index + 3 >= bytes.size():
+				_cah_fail(state, int(state["offset"]) - bytes.size() + unit_index,
+					"%s contains an unpaired UTF-16 high surrogate" % what)
+				return ""
+			var following := int(bytes[unit_index + 2]) | (int(bytes[unit_index + 3]) << 8)
+			if following < 0xdc00 or following > 0xdfff:
+				_cah_fail(state, int(state["offset"]) - bytes.size() + unit_index,
+					"%s contains an unpaired UTF-16 high surrogate" % what)
+				return ""
+			unit_index += 4
+			continue
+		if unit >= 0xdc00 and unit <= 0xdfff:
+			_cah_fail(state, int(state["offset"]) - bytes.size() + unit_index,
+				"%s contains an unpaired UTF-16 low surrogate" % what)
+			return ""
+		unit_index += 2
+	var text := bytes.get_string_from_utf16()
+	# One decoded character per authored UTF-16 unit is the oracle's round-trip
+	# boundary. Godot otherwise accepts an unpaired surrogate by silently
+	# dropping/replacing it and hands the importer a different name.
+	if text.length() != count:
+		_cah_fail(state, int(state["offset"]) - bytes.size(),
+			"%s decoded to %d characters, expected %d UTF-16 units" % [what, text.length(), count])
+		return ""
+	return text
 
 
 static func max_power_slots(system: Dictionary) -> int:

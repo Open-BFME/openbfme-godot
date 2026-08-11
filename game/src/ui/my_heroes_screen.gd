@@ -397,6 +397,12 @@ func import_retail_file(path: String) -> Array[String]:
 		return [error]
 	_editing_hero_id = String(profile.get("heroId", ""))
 	refresh()
+	for index in range(_profiles.size()):
+		if String(_profiles[index].get("heroId", "")) != _editing_hero_id:
+			continue
+		hero_list.select(index)
+		_on_hero_list_selected(index)
+		break
 	roster_changed.emit()
 	return []
 

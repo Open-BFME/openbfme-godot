@@ -36,12 +36,15 @@ extends SceneTree
 ## came out of the commitment and nowhere else.
 
 const SessionScript = preload("res://src/wotr/wotr_session.gd")
+const RetailSessionScript = preload("res://src/retail_slice/retail_lockstep_session.gd")
 const StateScript = preload("res://src/wotr/wotr_state.gd")
 const WorldScript = preload("res://src/wotr/wotr_world.gd")
 const BattleScript = preload("res://src/wotr/wotr_battle.gd")
 const HandoffScript = preload("res://src/wotr/wotr_handoff.gd")
 const ScreenScript = preload("res://src/ui/wotr_screen.gd")
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
+const CahHeroesScript = preload("res://src/content/cah_heroes.gd")
+const ProfileSandboxScript = preload("res://tests/cah_profile_sandbox.gd")
 
 ## The pack maps a battle may be fought on in this runner. Fixed rather than
 ## discovered so the battlefield binding - and therefore the commitment digest -
@@ -59,15 +62,17 @@ const HARNESS_MAP_IDS: Array = [
 ## ownership sets now seed (per-template spawn resolution), the fresh-campaign
 ## victory evaluation, the version 3 brief surface inside the digested brief,
 ## and the ledger surviving the scene change.
-const EXPECTED_CHECKS := 116
+const EXPECTED_CHECKS := 122
 
 var passed := 0
 var failed := 0
 var _evidenced_document_path := ""
 var _evidenced_document_bytes := PackedByteArray()
+var _profiles := ProfileSandboxScript.new()
 
 
 func _initialize() -> void:
+	_profiles.open("wotr-round-trip")
 	call_deferred("_run")
 
 
@@ -80,6 +85,7 @@ func _run() -> void:
 	var found: Dictionary = SessionScript.locate_document(_content_pack_roots())
 	if not bool(found.get("ok", false)):
 		printerr("WOTR_ROUND_TRIP MISSING %s" % String(found.get("reason", "")))
+		_profiles.close()
 		quit(3)
 		return
 	print("WOTR_ROUND_TRIP document %s (%s)" % [String(found["path"]), String(found["source"])])
@@ -810,6 +816,37 @@ func _test_the_menu_reaches_it(found: Dictionary) -> void:
 	menu._skirmish_availability = availability
 	menu._wotr_unavailable_reason = ""
 	menu._wotr_session = null
+	var cah_system := menu._cah_system_runtime() as Dictionary
+	var valid_profile := CahHeroesScript.new_profile(cah_system, "Wotr Pick", 0, 0)
+	var valid_id := String(valid_profile.get("heroId", ""))
+	_check("the_wotr_picker_fixture_saves_in_the_profile_sandbox",
+		not cah_system.is_empty() and CahHeroesScript.save_profile(valid_profile).is_empty())
+	menu._wotr_unavailable_reason = ""
+	menu._wotr_session = null
+	_check("wotr_refuses_a_picker_id_whose_profile_does_not_load",
+		not menu._start_wotr_session({"hero_id": "0123456789abcdef01234567"})
+			and String(menu.wotr_unavailable_reason()).contains("profile not found"))
+	var invalid_profile := CahHeroesScript.new_profile(cah_system, "Invalid Wotr Pick", 0, 0)
+	(invalid_profile.get("attributes", {}) as Dictionary).erase("CreateAHero_ArmorAttribute")
+	_check("the_invalid_wotr_picker_fixture_saves_for_load_then_validate",
+		CahHeroesScript.save_profile(invalid_profile).is_empty())
+	menu._wotr_unavailable_reason = ""
+	menu._wotr_session = null
+	_check("wotr_refuses_a_loaded_picker_profile_that_fails_validation",
+		not menu._start_wotr_session({"hero_id": String(invalid_profile.get("heroId", ""))})
+			and String(menu.wotr_unavailable_reason()).contains("selected created hero was refused"))
+	menu._wotr_unavailable_reason = ""
+	menu._wotr_session = null
+	var picker_chain_started: bool = bool(menu._start_wotr_session({"hero_id": valid_id}))
+	var canonical_pick: String = RetailSessionScript.canonical_hero_document(
+		CahHeroesScript.load_profile(valid_id))
+	var selected_document := String(menu._wotr_selected_hero_document)
+	menu._wotr_session = null
+	var resume_started: bool = bool(menu._start_wotr_session())
+	_check("wotr_picker_id_loads_validates_canonicalises_and_survives_no_arg_resume",
+		picker_chain_started and not canonical_pick.is_empty()
+			and selected_document == canonical_pick and resume_started
+			and String(menu._wotr_selected_hero_document) == canonical_pick)
 	_check("the_entry_opens_the_strategic_page", bool(menu.show_page("wotr")))
 	_check("the_strategic_screen_is_visible", (menu.get_node("Center/WotrScreen") as Control).visible)
 	var screen = menu.get_node("Center/WotrScreen")
@@ -1112,6 +1149,9 @@ func _test_phase_snapshot_contract(session) -> void:
 
 
 func _finish() -> void:
+	_check("the WOTR run left the player's own heroes untouched",
+		_profiles.real_store_untouched(), _profiles.real_store_description())
+	_profiles.close()
 	var ran := passed + failed
 	if ran != EXPECTED_CHECKS:
 		failed += 1

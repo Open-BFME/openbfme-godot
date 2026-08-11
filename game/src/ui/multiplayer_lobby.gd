@@ -876,8 +876,10 @@ func _apply_settings_to_controls(settings: Dictionary) -> void:
 	custom_heroes_opt.select(0 if allow_heroes else 1)
 	custom_heroes_value_label.text = "Allowed" if allow_heroes else "Disabled"
 	_refresh_hero_picker_enabled()
-	if not allow_heroes and session != null and int(session.local_seat) >= 0 \
-			and not session.heroes_for_seat(int(session.local_seat)).is_empty():
+	# A settings packet is the guest-side equivalent of the host changing this
+	# control locally. Announce on BOTH edges: disable clears the field, and
+	# re-enable restores the still-visible picker selection.
+	if session != null and int(session.local_seat) >= 0:
 		_announce_created_heroes()
 
 

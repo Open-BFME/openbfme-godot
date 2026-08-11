@@ -29,9 +29,18 @@ var _profiles := ProfileSandboxScript.new()
 
 ## Generated with sage_cah.CahHero.to_bytes(), not copied from retail. It is a
 ## class 0/subclass 0 hero with the fixture table's exact default attribute
-## spend, two real CommandButton power ids, three synthetic RGBA quads, and a
+## spend, two real CommandButton power ids, three synthetic four-byte colour
+## records, and a
 ## retail-shaped id which the importer must retain only as importedFrom.
 const RETAIL_CAH_WRITER_BASE64 := "QUxBRTJTVFIBAAAAAAAAAAgTAAAAEEkAbQBwAG8AcgB0AGUAZAAgAEMAYQBwAHQAYQBpAG4AAAAAAAAAAAAAAAAAAAAAABI0Vv9lQyHuq83v3R5Db21tYW5kX0NhaFN1bW1vbkFsbGllc19MZXZlbDEAAAAAAQAAABJDb21tYW5kX0NhaEF0aGVsYXMBAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUAAAAaQ3JlYXRlQUhlcm9fQXJtb3JBdHRyaWJ1dGUPAAAAH0NyZWF0ZUFIZXJvX0RhbWFnZU11bHRBdHRyaWJ1dGULAAAAH0NyZWF0ZUFIZXJvX0hlYWx0aE11bHRBdHRyaWJ1dGUJAAAAHUNyZWF0ZUFIZXJvX0F1dG9IZWFsQXR0cmlidXRlBQAAABtDcmVhdGVBSGVyb19WaXNpb25BdHRyaWJ1dGUHAAAAE1JFVEFJTC1TWU5USEVUSUMtSUQAeFY0Eg=="
+
+## Generated with the same writer, with the twelve groups every observed real
+## hero carries: five attributes plus all seven appearance/bling groups.
+const RETAIL_CAH_REALISTIC_BASE64 := "QUxBRTJTVFIBAAAAAAAAAAgTAAAAEVIAZQBhAGwAaQBzAHQAaQBjACAAQwBhAHAAdABhAGkAbgAAAAAAAAAAAAAAAAAAAAAAlpaW/ygyPP5GUFr9HkNvbW1hbmRfQ2FoU3VtbW9uQWxsaWVzX0xldmVsMQAAAAABAAAAEkNvbW1hbmRfQ2FoQXRoZWxhcwEAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAABpDcmVhdGVBSGVyb19Bcm1vckF0dHJpYnV0ZQ8AAAAfQ3JlYXRlQUhlcm9fRGFtYWdlTXVsdEF0dHJpYnV0ZQsAAAAfQ3JlYXRlQUhlcm9fSGVhbHRoTXVsdEF0dHJpYnV0ZQkAAAAdQ3JlYXRlQUhlcm9fQXV0b0hlYWxBdHRyaWJ1dGUFAAAAG0NyZWF0ZUFIZXJvX1Zpc2lvbkF0dHJpYnV0ZQcAAAAQQ3JlYXRlQUhlcm9fQm9keQEAAAARQ3JlYXRlQUhlcm9fQm9vdHMBAAAAFUNyZWF0ZUFIZXJvX0dhdW50bGV0cwEAAAASQ3JlYXRlQUhlcm9fSGVsbWV0AQAAABJDcmVhdGVBSGVyb19TaGllbGQBAAAAGkNyZWF0ZUFIZXJvX1Nob3VsZGVyUGxhdGVzAQAAABJDcmVhdGVBSGVyb19XZWFwb24BAAAAE1JFVEFJTC1SRUFMSVNUSUMtSUQAeFY0Eg=="
+
+## Generated with sage_cah too. Its retail name deliberately needs trimming
+## and truncation; import keeps the original only as provenance metadata.
+const RETAIL_CAH_UNSANITIZED_NAME_BASE64 := "QUxBRTJTVFIBAAAAAAAAAAgTAAAAJyAAIAAgAEEAIABWAGUAcgB5ACAATABvAG4AZwAgAEkAbQBwAG8AcgB0AGUAZAAgAEMAYQBwAHQAYQBpAG4AIABOAGEAbQBlACAAIAAgAAAAAAAAAAAAAAAAAAAAAAABAgMEBQYHCAkKCwweQ29tbWFuZF9DYWhTdW1tb25BbGxpZXNfTGV2ZWwxAAAAAAEAAAASQ29tbWFuZF9DYWhBdGhlbGFzAQAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFAAAAGkNyZWF0ZUFIZXJvX0FybW9yQXR0cmlidXRlDwAAAB9DcmVhdGVBSGVyb19EYW1hZ2VNdWx0QXR0cmlidXRlCwAAAB9DcmVhdGVBSGVyb19IZWFsdGhNdWx0QXR0cmlidXRlCQAAAB1DcmVhdGVBSGVyb19BdXRvSGVhbEF0dHJpYnV0ZQUAAAAbQ3JlYXRlQUhlcm9fVmlzaW9uQXR0cmlidXRlBwAAABVSRVRBSUwtVU5TQU5JVElaRUQtSUQAeFY0Eg=="
 
 var passed := 0
 var failed := 0
@@ -309,8 +318,51 @@ func _test_retail_cah_import(system: Dictionary) -> void:
 	}, "retail zero-based GroupOrder becomes the one-based attribute steps")
 	_check(profile.get("powers", []) == ["Command_CahSummonAllies_Level1", "Command_CahAthelas"],
 		"retail CommandButton names become the selected power ids in purchase order")
-	_check(profile.get("colors", []) == [[18, 52, 86, 255], [101, 67, 33, 238], [171, 205, 239, 221]],
-		"all three retail colour quads survive losslessly")
+	_check(profile.get("colors", []) == [[18, 52, 86], [101, 67, 33], [171, 205, 239]]
+		and _colors_are_rgb_triples(profile.get("colors", []) as Array),
+		"imported colors are three RGB triples of integer channels")
+	var realistic_system := _system_with_appearance_choices(system)
+	var realistic_result := CahHeroes.import_retail_cah_profile(realistic_system,
+		Marshalls.base64_to_raw(RETAIL_CAH_REALISTIC_BASE64), "realistic-writer-fixture.cah")
+	var realistic_profile := realistic_result.get("profile", {}) as Dictionary
+	_check((realistic_result.get("refusals", PackedStringArray()) as PackedStringArray).is_empty()
+		and realistic_profile.get("appearance", {}) == {
+			"CreateAHero_Body": "Upgrade_Body02",
+			"CreateAHero_Boots": "Upgrade_Boots02",
+			"CreateAHero_Gauntlets": "Upgrade_Gauntlets02",
+			"CreateAHero_Helmet": "Upgrade_Helmet02",
+			"CreateAHero_Shield": "Upgrade_Shield02",
+			"CreateAHero_ShoulderPlates": "Upgrade_ShoulderPlates02",
+			"CreateAHero_Weapon": "Upgrade_Weapon02",
+		}, "a retail-shaped twelve-group file imports every appearance GroupOrder intact")
+	var unknown_appearance := Marshalls.base64_to_raw(RETAIL_CAH_REALISTIC_BASE64)
+	var body_marker := "CreateAHero_Body".to_ascii_buffer()
+	var body_at := unknown_appearance.hex_encode().find(body_marker.hex_encode()) / 2
+	if body_at >= 0:
+		unknown_appearance[body_at + body_marker.size()] = 99
+	var unknown_result := CahHeroes.import_retail_cah_profile(
+		realistic_system, unknown_appearance, "unknown-appearance-order.cah")
+	_check(not (unknown_result.get("refusals", PackedStringArray()) as PackedStringArray).is_empty(),
+		"an appearance GroupOrder the mounted table does not author is refused by name")
+	var unsanitized_result := CahHeroes.import_retail_cah_profile(system,
+		Marshalls.base64_to_raw(RETAIL_CAH_UNSANITIZED_NAME_BASE64), "unsanitized-name.cah")
+	var sanitized_profile := unsanitized_result.get("profile", {}) as Dictionary
+	_check((unsanitized_result.get("refusals", PackedStringArray()) as PackedStringArray).is_empty()
+		and String(sanitized_profile.get("name", "")) == "A Very Long Imported Cap"
+		and String((sanitized_profile.get("importedFrom", {}) as Dictionary).get("originalName", ""))
+			== "   A Very Long Imported Captain Name   ",
+		"an import uses the sanitized name and records the original in importedFrom")
+	var surrogate := Marshalls.base64_to_raw(RETAIL_CAH_WRITER_BASE64)
+	# Header is 21 bytes, then the Unicode length byte, then UTF-16LE units.
+	surrogate[22] = 0x00
+	surrogate[23] = 0xd8
+	surrogate[24] = 0x00
+	surrogate[25] = 0xd8
+	var surrogate_result := CahHeroes.import_retail_cah_profile(system, surrogate, "surrogate-name.cah")
+	_check(not (surrogate_result.get("refusals", PackedStringArray()) as PackedStringArray).is_empty()
+		and (String((surrogate_result.get("refusals", PackedStringArray()) as PackedStringArray)[0]).contains("decoded")
+			or String((surrogate_result.get("refusals", PackedStringArray()) as PackedStringArray)[0]).contains("surrogate")),
+		"a UTF-16 name containing an unpaired surrogate is refused")
 	_check(String(profile.get("importedFrom", "")) == "RETAIL-SYNTHETIC-ID"
 		and CahHeroes.hero_id_valid(String(profile.get("heroId", "")))
 		and String(profile.get("heroId", "")) != String(profile.get("importedFrom", "")),
@@ -335,6 +387,12 @@ func _test_retail_cah_import(system: Dictionary) -> void:
 	_check(ui_refusals.is_empty() and imported_profiles.size() == 1
 		and String(imported_profiles[0].get("importedFrom", "")) == "RETAIL-SYNTHETIC-ID",
 		"the MY HEROES import action validates and saves through the real profile store")
+	_check(screen.name_edit.text == "Imported Captain",
+		"import selects the new roster row and hydrates the editor with its name")
+	screen._on_save_pressed()
+	var resaved := CahHeroes.load_profiles()
+	_check(resaved.size() == 1 and String(resaved[0].get("name", "")) == "Imported Captain",
+		"saving immediately after import preserves the imported hero")
 	screen.queue_free()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(fixture_path))
 	_clear_profiles()
@@ -344,7 +402,7 @@ func _test_profile_extra_keys_survive_resave(system: Dictionary) -> void:
 	_clear_profiles()
 	var profile := CahHeroes.new_profile(system, "Carry Forward", 0, 0)
 	profile["trackingStats"] = {"wins": 7}
-	profile["colors"] = [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]]
+	profile["colors"] = [[1, 2, 3], [5, 6, 7], [9, 10, 11]]
 	profile["importedFrom"] = "RETAIL-ORIGINAL"
 	_check(CahHeroes.save_profile(profile) == "", "the extra-key carry-forward fixture saves")
 	var screen := MyHeroesScreen.new()
@@ -357,7 +415,7 @@ func _test_profile_extra_keys_survive_resave(system: Dictionary) -> void:
 	_check(refusals.is_empty()
 		and int((saved.get("trackingStats", {}) as Dictionary).get("wins", -1)) == 7
 		and saved_colors.size() == 3 and int((saved_colors[0] as Array)[0]) == 1
-		and int((saved_colors[2] as Array)[3]) == 12
+		and int((saved_colors[2] as Array)[2]) == 11
 		and String(saved.get("importedFrom", "")) == "RETAIL-ORIGINAL",
 		"editing a hero carries every optional and unknown profile key forward")
 	screen.queue_free()
@@ -2309,6 +2367,36 @@ func _test_powers_and_levels_reach_the_runtime_contracts(system: Dictionary) -> 
 		int((registration["simulation"] as Dictionary)["buildCost"]) == BASE_BUILD_COST + 350,
 		"the roster document prices the powers it equips"
 	)
+
+
+func _colors_are_rgb_triples(colors: Array) -> bool:
+	if colors.size() != 3:
+		return false
+	for value in colors:
+		if typeof(value) != TYPE_ARRAY or (value as Array).size() != 3:
+			return false
+		for channel in value as Array:
+			if typeof(channel) != TYPE_INT or int(channel) < 0 or int(channel) > 255:
+				return false
+	return true
+
+
+func _system_with_appearance_choices(system: Dictionary) -> Dictionary:
+	var out := system.duplicate(true)
+	var classes := ((out["registration"] as Dictionary)["classes"] as Array)
+	var sub_row := (((classes[0] as Dictionary)["subClasses"] as Array)[0] as Dictionary)
+	var choices := {}
+	var options: Array = []
+	for tail in ["Body", "Boots", "Gauntlets", "Helmet", "Shield", "ShoulderPlates", "Weapon"]:
+		var group := "CreateAHero_%s" % tail
+		var first := "Upgrade_%s01" % tail
+		var second := "Upgrade_%s02" % tail
+		choices[group] = [first, second]
+		options.append({"upgradeName": first, "groupName": group})
+		options.append({"upgradeName": second, "groupName": group})
+	sub_row["appearanceChoices"] = choices
+	(out["registration"] as Dictionary)["appearanceOptions"] = options
+	return out
 
 
 func _system_document() -> Dictionary:

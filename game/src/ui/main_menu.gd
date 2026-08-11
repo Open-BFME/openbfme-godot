@@ -3513,7 +3513,10 @@ func _start_wotr_session(chosen: Dictionary = {}) -> bool:
 	# A fresh strategic campaign cannot inherit any consume-once battle seam from
 	# an earlier launch, including one whose return was refused.
 	_clear_wotr_battle_seam()
-	_wotr_selected_hero_document = ""
+	# Setup always authors hero_id, including "-" as an explicit empty choice.
+	# The no-argument route is resume/open and must retain the existing pick.
+	if chosen.has("hero_id"):
+		_wotr_selected_hero_document = ""
 	var chosen_hero_id := String(chosen.get("hero_id", ""))
 	if not chosen_hero_id.is_empty():
 		var profile := CahHeroesScript.load_profile(chosen_hero_id)

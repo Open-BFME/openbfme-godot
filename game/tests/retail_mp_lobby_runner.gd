@@ -91,10 +91,20 @@ func _run() -> void:
 			and hero_picker.disabled
 	_check("custom_heroes_disabled_forces_an_empty_announcement", disabled_cleared)
 	if hero_picker != null:
-		hero_panel.custom_heroes_opt.select(0)
-		hero_panel._on_custom_heroes_selected(0)
+		var disabled_settings := defaults.duplicate(true)
+		disabled_settings["allow_custom_heroes"] = false
+		host_session.lobby_settings = disabled_settings.duplicate(true)
+		hero_panel._apply_settings_to_controls(disabled_settings)
 		_pump_until(func() -> bool:
+			return guest_session.heroes_for_seat(host_session.local_seat).is_empty())
+		var enabled_settings := defaults.duplicate(true)
+		enabled_settings["allow_custom_heroes"] = true
+		host_session.lobby_settings = enabled_settings.duplicate(true)
+		hero_panel._apply_settings_to_controls(enabled_settings)
+		var reenabled_announced := _pump_until(func() -> bool:
 			return guest_session.heroes_for_seat(host_session.local_seat) == [picked_document])
+		_check("custom_heroes_reenabled_reannounces_the_visible_picker_selection",
+			reenabled_announced and not hero_picker.disabled)
 	if hero_picker != null:
 		hero_picker.select(0)
 		hero_panel._announce_created_heroes()
@@ -192,6 +202,8 @@ func _run() -> void:
 	var guest_accepted: bool = _pump_until(func() -> bool: return guest_session.lobby_launch_received)
 	var host_roster_bytes: PackedByteArray = var_to_bytes(host_session.lobby_launch_roster)
 	var guest_roster_bytes: PackedByteArray = var_to_bytes(guest_session.lobby_launch_roster)
+	var expected_roster: Array = SessionScript.lobby_roster_from_seats(
+		host_session.lobby_seats, host_session.lobby_seat_heroes)
 	var roster_shape_ok: bool = host_session.lobby_launch_roster.size() == 2 \
 		and int((host_session.lobby_launch_roster[0] as Dictionary).get("team", -1)) == 0 \
 		and int((host_session.lobby_launch_roster[1] as Dictionary).get("team", -1)) == 1 \
@@ -204,8 +216,8 @@ func _run() -> void:
 	_check("launch_descriptor_lists_byte_identical", launch_sent and guest_accepted and roster_shape_ok \
 		and host_roster_bytes == guest_roster_bytes \
 		and var_to_bytes(host_session.lobby_launch_settings) == var_to_bytes(guest_session.lobby_launch_settings))
-	_check("selected_hero_survives_the_byte_equal_launch_gate", launch_sent and guest_accepted \
-		and host_roster_bytes == guest_roster_bytes and roster_shape_ok)
+	_check("host_launch_roster_matches_the_external_seat_table_oracle",
+		host_roster_bytes == var_to_bytes(expected_roster))
 	hero_panel.close_lobby()
 	hero_panel.queue_free()
 	await process_frame
