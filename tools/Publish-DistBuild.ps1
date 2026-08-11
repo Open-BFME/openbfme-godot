@@ -114,6 +114,10 @@ param(
     [switch]$Force,
     [switch]$Zip,
     [switch]$SkipLaunchCheck,
+    # Run every check, prove the hand-off to Build-PlayableBundle binds, and
+    # stop before building anything. What tools/Test-DistPipeline.ps1 drives, and
+    # what to run yourself before committing half an hour to an export.
+    [switch]$PreflightOnly,
     [switch]$Help
 )
 
@@ -234,21 +238,52 @@ try {
     Write-DistHeading "Build dist\$bundleName"
     Write-DistStep 'handing off to tools/Build-PlayableBundle.ps1 (export, stage, hash, boot) ...'
 
-    $buildArguments = @(
-        '-RepositoryRoot', $repoRoot
-        '-Release'
-        '-ReleaseRoot', $DistRoot
-        '-Name', $bundleName
-        '-Godot', $Godot
-    )
-    if ($ContentRoot -ne '') { $buildArguments += @('-ContentRoot', $ContentRoot) }
-    if ($AllowDirty) { $buildArguments += '-AllowDirtyRelease' }
-    if ($AllowMissingWotrData) { $buildArguments += '-AllowMissingWotrData' }
-    if ($Force) { $buildArguments += '-Force' }
-    if ($Zip) { $buildArguments += '-Zip' }
-    if ($SkipLaunchCheck) { $buildArguments += '-SkipLaunchCheck' }
+    # A HASH TABLE, not an array. Array splatting binds POSITIONALLY - the
+    # `-Name` strings are passed as values, not read as parameter names - so
+    # `@('-RepositoryRoot', $repoRoot, '-Release', ...)` quietly filled seven
+    # positional parameters in declaration order and refused with
+    # "Cannot convert value 'v0.2.1' to type System.Int32" on the seventh.
+    # Named binding is the only form that means what it reads like.
+    $buildArguments = @{
+        RepositoryRoot = $repoRoot
+        Release        = $true
+        ReleaseRoot    = $DistRoot
+        Name           = $bundleName
+        Godot          = $Godot
+    }
+    if ($ContentRoot -ne '') { $buildArguments['ContentRoot'] = $ContentRoot }
+    if ($AllowDirty) { $buildArguments['AllowDirtyRelease'] = $true }
+    if ($AllowMissingWotrData) { $buildArguments['AllowMissingWotrData'] = $true }
+    if ($Force) { $buildArguments['Force'] = $true }
+    if ($Zip) { $buildArguments['Zip'] = $true }
+    if ($SkipLaunchCheck) { $buildArguments['SkipLaunchCheck'] = $true }
 
-    & (Join-Path $PSScriptRoot 'Build-PlayableBundle.ps1') @buildArguments
+    # Prove the hand-off binds BEFORE spending the export on it. The binder is
+    # asked, using Build-PlayableBundle's own declared parameters, so a renamed
+    # or mistyped parameter refuses in milliseconds instead of after a build.
+    $buildScript = Join-Path $PSScriptRoot 'Build-PlayableBundle.ps1'
+    $buildCommand = Get-Command -Name $buildScript -CommandType ExternalScript
+    foreach ($key in @($buildArguments.Keys)) {
+        if (-not $buildCommand.Parameters.ContainsKey($key)) {
+            throw (New-DistRefusal `
+                -Problem "This wrapper would pass -$key, which Build-PlayableBundle.ps1 does not accept." `
+                -Remedy "Its parameters are: $(($buildCommand.Parameters.Keys | Sort-Object) -join ', ')")
+        }
+        $wanted = $buildCommand.Parameters[$key].ParameterType
+        try { [void][System.Management.Automation.LanguagePrimitives]::ConvertTo($buildArguments[$key], $wanted) }
+        catch {
+            throw (New-DistRefusal -Problem "-$key would be passed '$($buildArguments[$key])', which is not a $($wanted.Name).")
+        }
+    }
+    if ($PreflightOnly) {
+        Write-DistGood "$($buildArguments.Count) argument(s) bind against Build-PlayableBundle.ps1"
+        Write-Host ''
+        Write-Host "PREFLIGHT ONLY - nothing was built. v$Version would be published to $bundleRoot" -ForegroundColor Green
+        Write-Host ''
+        exit 0
+    }
+
+    & $buildScript @buildArguments
     if ($LASTEXITCODE -ne 0) {
         throw (New-DistRefusal -Problem "Build-PlayableBundle.ps1 refused (exit $LASTEXITCODE). Nothing was published." -Remedy 'Its own output above names the reason and the remedy.')
     }

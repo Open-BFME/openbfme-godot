@@ -151,6 +151,24 @@ Test-Case 'the real firewall passes on this checkout' {
 }
 
 # --------------------------------------------------------------- behaviour
+Test-Case 'the publisher preflights and binds against the build it wraps' {
+    # Every argument the wrapper passes is checked against
+    # Build-PlayableBundle.ps1's own declared parameters. The first live run
+    # refused with "Cannot convert value 'v0.2.1' to type System.Int32" AFTER
+    # preflight, because array splatting binds positionally; this is the second
+    # in a second rather than the same discovery at the end of an export.
+    $output = @(& powershell -NoProfile -ExecutionPolicy Bypass `
+        -File (Join-Path $PSScriptRoot 'Publish-DistBuild.ps1') `
+        -PreflightOnly -Rc -Godot 'C:\does-not-need-to-exist\godot.exe' `
+        -AllowDirty -Force 2>&1 |
+        ForEach-Object { $_.ToString() })
+    $text = $output -join "`n"
+    Assert-True ($LASTEXITCODE -eq 0) "preflight exited $LASTEXITCODE`n        $text"
+    Assert-True ($text -cmatch 'bind against Build-PlayableBundle') "preflight did not report the binding check:`n        $text"
+    Assert-True ($text -cmatch 'PREFLIGHT ONLY') "preflight did not stop before building:`n        $text"
+    Assert-True ($text -cnotmatch 'REFUSED') "preflight refused:`n        $text"
+}
+
 Write-Host ''
 Write-Host 'The guards refuse when they should'
 
