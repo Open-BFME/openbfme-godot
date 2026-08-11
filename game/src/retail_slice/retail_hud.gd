@@ -1449,13 +1449,21 @@ func _update_hero_ability_buttons(selected_ids: Array[int], entities: Dictionary
 		var show := unit_id == hero_unit_id
 		var level := int(hero_row.get("level", 1)) if show else 1
 		var states: Dictionary = (hero_row.get("ability_states", {}) as Dictionary) if show else {}
+		# SpecialAbilityToggleMounted does NOT swap the command set in retail:
+		# the same set stays bound and the palantir HIDES the buttons that do
+		# not belong to the live form (commandbutton.ini per-button
+		# `Options = MOUNTED_ONLY` / `UNMOUNTED_ONLY` - Theoden's Glorious
+		# Charge is mounted-only, Faramir's weapon toggle and Wound Arrow are
+		# foot-only). The flag is read straight off the authoritative entity
+		# row; the HUD adds no state of its own.
+		var mounted := bool(hero_row.get("mounted", false)) if show else false
 		for ability_id_value in (hero_ability_buttons[unit_id] as Dictionary).keys():
 			var ability_id := String(ability_id_value)
 			var button: Button = (hero_ability_buttons[unit_id] as Dictionary)[ability_id]
-			button.visible = show
-			if not show:
-				continue
 			var spec := _ability_spec_for(unit_id, ability_id)
+			button.visible = show and _ability_belongs_to_form(spec, mounted)
+			if not button.visible:
+				continue
 			var state: Dictionary = states.get(ability_id, {}) as Dictionary
 			var ready_tick := int(state.get("cooldown_ready_tick", 0))
 			var cooldown_ticks := int(state.get("cooldown_ticks", 0))
@@ -1473,6 +1481,17 @@ func _update_hero_ability_buttons(selected_ids: Array[int], entities: Dictionary
 				sweep.visible = cooling and sweep.texture_progress != null
 				sweep.value = clampf(float(remaining) / float(maxi(1, cooldown_ticks)), 0.0, 1.0)
 			button.tooltip_text = _ability_button_tooltip(unit_id, ability_id, level, remaining)
+
+
+func _ability_belongs_to_form(spec: Dictionary, mounted: bool) -> bool:
+	## Retail CommandButton `Options` form gate. An ability that names neither
+	## form belongs to both, exactly as retail treats an unflagged button.
+	var options: Array = spec.get("options", []) as Array
+	if options.has("MOUNTED_ONLY"):
+		return mounted
+	if options.has("UNMOUNTED_ONLY"):
+		return not mounted
+	return true
 
 
 func _emit_ability_cast_requested(unit_id: String, ability_id: String) -> void:

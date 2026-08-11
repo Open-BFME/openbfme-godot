@@ -13865,6 +13865,11 @@ func _apply_ability_mount_toggle(hero_row: Dictionary, effect: Dictionary) -> Di
 		if String(hero_row.get("weapon_toggle_mode", "")) == "mounted":
 			hero_row["weapon_toggle_mode"] = ""
 		hero_row["mounted"] = false
+		# ERASE, never set to "". The alt-form voice key is read by
+		# `_voice_event_identity` and is otherwise ABSENT: a key that exists on
+		# every hero row (even empty) would be walked by `_canonicalize` and
+		# would move the determinism pin for units that never mount.
+		hero_row.erase("form")
 		_rescale_member_health_preserving_fraction(hero_row, int(effect.get("dismountedMemberHealth", 0)))
 		return {"ok": true, "reason": "", "effect": "mount-toggle", "affected": 1, "mounted": false}
 	var mounted_speed_scaled := float(effect.get("mounted_speed_scaled", 0.0))
@@ -13890,6 +13895,12 @@ func _apply_ability_mount_toggle(hero_row: Dictionary, effect: Dictionary) -> Di
 			return {"ok": false, "reason": "weapon-mode-unavailable:%s" % mode}
 		hero_row["weapon_toggle_mode"] = mode
 	hero_row["mounted"] = true
+	# Retail heroes with a MOUNTED ModelConditionFlag author a SECOND voice set
+	# for the mounted form (theoden.ini: VoiceSelect = TheodenVoiceSelectMS
+	# TheodenVoiceSelectMountedMS, VoiceMove = TheodenVoiceMove
+	# TheodenVoiceMoveMounted). The audio module already classifies and prefers
+	# those alternates; the form is the one thing only the sim can know.
+	hero_row["form"] = "mounted"
 	_rescale_member_health_preserving_fraction(hero_row, int(effect.get("mountedMemberHealth", 0)))
 	return {"ok": true, "reason": "", "effect": "mount-toggle", "affected": 1, "mounted": true}
 

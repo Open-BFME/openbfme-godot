@@ -20,6 +20,13 @@ $focusedRunners = [ordered]@{
     'four_unit_audio' = @('retail_four_unit_audio_runner.gd', '(?m)^RETAIL_FOUR_UNIT_AUDIO_RESULT passed=105 failed=0 missing=0\s*$')
     'four_unit_hud' = @('retail_four_unit_hud_runner.gd', '(?m)^RETAIL_FOUR_UNIT_HUD_RESULT passed=134 failed=0\s*$')
     'full_terrain_runtime' = @('retail_full_terrain_runner.gd', '(?m)^RETAIL_FULL_TERRAIN_RESULT passed=29 failed=0\s*$')
+    # Owner playtest report B ("the mounted horse unit swap for heroes doesn't
+    # work"): the alt-form voice key across a mount toggle, and the retail
+    # per-button MOUNTED_ONLY / UNMOUNTED_ONLY palantir filter. Both read their
+    # evidence out of the compiled pack, so a republish that drops the mounted
+    # voice events or the button options is a RED here.
+    'hero_mounted_button_options' = @('hero_mounted_button_options_runner.gd', '(?m)^HERO_MOUNTED_BUTTON_OPTIONS_RESULT passed=46 failed=0\s*$')
+    'hero_mounted_voice' = @('hero_mounted_voice_runner.gd', '(?m)^HERO_MOUNTED_VOICE_RESULT passed=25 failed=0\s*$')
     'hud_apt_runtime' = @('retail_hud_apt_runtime_runner.gd', '(?m)^HUD_APT_RUNTIME_SUMMARY passed=67 failed=0\s*$')
     'hud_wnd_runtime' = @('retail_hud_wnd_runtime_runner.gd', '(?m)^RETAIL_HUD_WND_RUNTIME_RESULT passed=62 failed=0\s*$')
     'linear_fog_runtime' = @('retail_linear_fog_runner.gd', '(?m)^RETAIL_LINEAR_FOG_RESULT passed=23 failed=0\s*$')
