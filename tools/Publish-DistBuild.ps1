@@ -111,6 +111,10 @@ param(
     [switch]$AllowDirty,
     [switch]$AllowEnvDependentContent,
     [switch]$AllowMissingWotrData,
+    # Passed through: where the content pack already ships a War of the Ring
+    # artefact, use the pack's copy instead of refusing the collision. Nothing is
+    # replaced and the pack's copy is still schema-verified.
+    [switch]$AllowPackOwnedWotrData,
     [switch]$Force,
     [switch]$Zip,
     [switch]$SkipLaunchCheck,
@@ -254,6 +258,7 @@ try {
     if ($ContentRoot -ne '') { $buildArguments['ContentRoot'] = $ContentRoot }
     if ($AllowDirty) { $buildArguments['AllowDirtyRelease'] = $true }
     if ($AllowMissingWotrData) { $buildArguments['AllowMissingWotrData'] = $true }
+    if ($AllowPackOwnedWotrData) { $buildArguments['AllowPackOwnedWotrData'] = $true }
     if ($Force) { $buildArguments['Force'] = $true }
     if ($Zip) { $buildArguments['Zip'] = $true }
     if ($SkipLaunchCheck) { $buildArguments['SkipLaunchCheck'] = $true }

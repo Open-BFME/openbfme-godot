@@ -88,6 +88,17 @@
     build; that is deliberate, and it is the fix for having shipped this class of
     omission three times.
 
+.PARAMETER AllowPackOwnedWotrData
+    Use the content pack's own copy of a War of the Ring artefact where the pack
+    already ships one, instead of refusing the collision. Nothing is replaced -
+    the staging is SKIPPED, and the pack's copy is still verified against the
+    schema its loader declares, so a pack that carries a broken document still
+    stops the build. Each skip is named in the output and in BUILD-INFO.
+
+    Needed once a content republish starts carrying this data inside the pack,
+    at which point "the pack already ships it" stops being a mistake and starts
+    being the normal case.
+
 .PARAMETER AllowMismatchedWotrDocument
     Ship a living-world document other than the one the converted region
     geometry and region portraits record being built against. Off by default:
@@ -163,6 +174,7 @@ param(
     [string]$LivingWorldDocument = '',
     [string]$LivingMapBundle = '',
     [switch]$AllowMissingWotrData,
+    [switch]$AllowPackOwnedWotrData,
     [switch]$AllowMismatchedWotrDocument,
     [switch]$Force,
     [switch]$SkipLaunchCheck,
@@ -552,6 +564,9 @@ try {
     Write-BundleTextFile -Path (Join-Path $bundleContentRoot 'selection.json') -Content $selection.rawText
 
     $packRecords = New-Object 'System.Collections.Generic.List[object]'
+    # Artefacts the pack itself provides, so BUILD-INFO can say who supplied
+    # what rather than implying this build staged everything it verified.
+    $packOwnedWotr = New-Object 'System.Collections.Generic.List[string]'
     $totalFiles = 0
     $totalBytes = [long]0
     $wotrRecord = [ordered]@{
@@ -573,6 +588,7 @@ try {
         bundlesDeclared = @($wotrPlan.rules).Count
         bundlesStaged = 0
         bundlesMissing = @($wotrMissing)
+        packOwned      = @()
         bundles = @($wotrPlan.rules | ForEach-Object {
             [ordered]@{
                 env = $_.env; schema = $_.schema; loader = $_.loader
@@ -624,9 +640,24 @@ try {
             foreach ($group in $wotrPlan.groups) {
                 $target = Join-Path $destination ($group.destination -replace '/', '\')
                 $alreadyMine = ($createdTargets -ccontains $target)
+                # A pack that already ships this artefact needs nothing staged
+                # into it, and NOTHING here may replace a pack file - that is
+                # content substitution, and the hash proof above would no longer
+                # describe what shipped. The collision is a refusal by default
+                # because it usually means two sources disagree about the same
+                # path. -AllowPackOwnedWotrData says "the pack is the source for
+                # this one", skips it, and leaves the landed-artefact check below
+                # to verify the pack's own copy against the loader's schema. Every
+                # skip is named in the output and in BUILD-INFO; none is silent.
+                $packOwnsIt = ((-not $alreadyMine) -and (Test-Path -LiteralPath $target))
+                if ($packOwnsIt -and $AllowPackOwnedWotrData) {
+                    Write-BundleWarn "content pack already ships $($group.destination) - staging skipped, the pack's own copy is used and verified"
+                    $packOwnedWotr.Add($group.destination)
+                    continue
+                }
                 if ($group.kind -ceq 'document') {
                     if (Test-Path -LiteralPath $target) {
-                        throw (New-BundleRefusal -Problem "The content pack already ships $($group.destination); staging would replace it." -Remedy 'A pack that carries its own living-world document is already complete. Rebuild without staging, or remove the collision at the source.')
+                        throw (New-BundleRefusal -Problem "The content pack already ships $($group.destination); staging would replace it." -Remedy 'A pack that carries its own living-world document is already complete. Pass -AllowPackOwnedWotrData to use the pack''s copy (it is still schema-verified), or remove the collision at the source.')
                     }
                     [void](New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($target)) -Force)
                     Copy-Item -LiteralPath $group.source -Destination $target -Force
@@ -634,7 +665,7 @@ try {
                     $createdTargets.Add($target)
                 } elseif ($group.primary) {
                     if (Test-Path -LiteralPath $target) {
-                        throw (New-BundleRefusal -Problem "The content pack already ships $($group.destination); staging would replace it." -Remedy 'Rebuild without staging, or remove the collision at the source.')
+                        throw (New-BundleRefusal -Problem "The content pack already ships $($group.destination); staging would replace it." -Remedy 'Pass -AllowPackOwnedWotrData to use the pack''s copy, or remove the collision at the source.')
                     }
                     Invoke-Robocopy -Source $group.source -Destination $target
                     $stagedRoots.Add($target)
@@ -645,7 +676,7 @@ try {
                     # files inside a pack tree whose hash was just proved, which
                     # is content substitution wearing staging's clothes.
                     if (-not $alreadyMine -and (Test-Path -LiteralPath $target)) {
-                        throw (New-BundleRefusal -Problem "$($group.envs -join ', ') must be staged beside $($group.destination), and the content pack already ships that directory." -Remedy 'Rebuild the pack without it, or remove the collision at the source. Nothing may be merged into a pack-owned directory.')
+                        throw (New-BundleRefusal -Problem "$($group.envs -join ', ') must be staged beside $($group.destination), and the content pack already ships that directory." -Remedy 'Pass -AllowPackOwnedWotrData to use the pack''s own copy, rebuild the pack without it, or remove the collision at the source. Nothing may be merged into a pack-owned directory.')
                     }
                     Invoke-Robocopy -Source $group.source -Destination $target -Merge
                 }
@@ -718,6 +749,10 @@ try {
                 bundlesDeclared = @($wotrPlan.rules).Count
                 bundlesStaged   = @($wotrPlan.rules | Where-Object { $_.present }).Count
                 bundlesMissing  = @($wotrMissing)
+                # Present and verified, but supplied by the content pack rather
+                # than staged by this build. Recorded so BUILD-INFO never implies
+                # this build put them there.
+                packOwned       = @($packOwnedWotr.ToArray())
                 bundles         = $bundleRecords
             }
             Write-BundleGood "War of the Ring: $($wotrRecord.bundlesStaged) of $($wotrRecord.bundlesDeclared) bundle(s), $($overlay.Count) files, $(Format-BundleBytes $overlayBytes) staged inside content-packs/$($pack.relative)/ - no environment variable needed"
