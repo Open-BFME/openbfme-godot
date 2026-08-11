@@ -57,7 +57,7 @@ const SLICE_SCALE := 0.02649232738129
 ## A retail VisionRange in source units (GondorRanger horde, compiled value).
 const RANGER_VISION_SOURCE := 470.0
 
-const EXPECTED_CHECKS := 63
+const EXPECTED_CHECKS := 64
 
 var passed := 0
 var failed := 0
@@ -912,6 +912,18 @@ func _test_script_reveal_radius_is_scaled_into_sim_space() -> void:
 		"reading the authored radius as sim units would uncover the whole map",
 		unscaled.is_visible(0, Vector2(-38.0, -38.0))
 			and unscaled.is_visible(0, Vector2(38.0, 38.0))
+	)
+	# And the PRODUCTION helper itself, not a reimplementation of its math:
+	# SliceFog._sim_radius is what the wp24 verbs feed the fine grid through.
+	# (Reviewer-proven gap: the runner stayed green with the helper reverted.)
+	var harness_sim = SimScript.new()
+	harness_sim._rules["source_map_transform_scale"] = SLICE_SCALE
+	var world := RetailSliceScriptWorld.new(harness_sim)
+	var fog_facet = world._make_fog()
+	_check(
+		"the verb helper converts the authored SOURCE radius into sim units",
+		is_equal_approx(fog_facet._sim_radius(world, authored_source_radius), authored_source_radius * SLICE_SCALE),
+		"got %f expected %f" % [fog_facet._sim_radius(world, authored_source_radius), authored_source_radius * SLICE_SCALE]
 	)
 
 
