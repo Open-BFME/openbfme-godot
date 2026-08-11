@@ -950,6 +950,8 @@ def _convert_one_plan_object(
     catalog_identity_sha256: str,
     assets_fp: str,
     policy_fp: str,
+    graph_identity_sha256: str = "",
+    numeric_defines_sha256: str = "",
     document_hashes: Mapping[str, str] | None = None,
     game: str = "bfme2",
 ) -> tuple[dict[str, object], dict[str, Mapping[str, object]]]:
@@ -1005,13 +1007,17 @@ def _convert_one_plan_object(
         documents_fp=documents_fp,
         catalog_identity_sha256=catalog_identity_sha256,
         effective_root_fp=assets_fp,
-        # Whole-faction graph/plan hashes made an unrelated INI edit evict
-        # every object.  The plan descriptor and compiler-authored source
-        # closure below are the per-object semantic replacements.
-        graph_input_set_sha256="",
+        # The graph directly supplies mapped-image rows to structure recipes
+        # and runtimes. Keep the whole graph as a fail-closed component until
+        # every consumed row has a proven per-object projection.
+        graph_identity_sha256=graph_identity_sha256,
         plan_aggregate_sha256="",
         policy_fp=policy_fp,
         compiler_token=compiler_token,
+        # Structures consume prepared.numeric_defines even though their
+        # descriptor sourceDocuments do not currently include every defining
+        # INI (notably gamedata.ini).
+        numeric_defines_sha256=numeric_defines_sha256,
         plan_descriptor_sha256=(
             str(plan_descriptor) if isinstance(plan_descriptor, str) else ""
         ),
@@ -1487,9 +1493,32 @@ def build_faction_conversion(
     document_hashes = {
         path: hashlib.sha256(payload).hexdigest() for path, payload in documents.items()
     }
-    # Keep non-INI visual/model identity broad, while INIs are hashed through
-    # each descriptor's compiler-authored source closure.
+    # Keep every manifest row outside data/ini broad. Rows inside data/ini also
+    # have compiler-authored closures, while the catalog identity remains the
+    # safety backstop until those hand-curated closures are complete.
     assets_fp = durable_non_ini_assets_fingerprint(effective_root)
+    graph_identity_sha256 = hashlib.sha256(
+        json.dumps(
+            faction_graph,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    numeric_defines_sha256 = (
+        hashlib.sha256(
+            json.dumps(
+                prepared.numeric_defines,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        if prepared is not None
+        else hashlib.sha256(str(preparation_error).encode("utf-8")).hexdigest()
+    )
     policy_fp = policy_roots_fingerprint(
         spawned=spawned,
         spawned_roles=spawned_roles,
@@ -1579,6 +1608,8 @@ def build_faction_conversion(
                 catalog_identity_sha256=catalog_identity_sha256,
                 assets_fp=assets_fp,
                 policy_fp=policy_fp,
+                graph_identity_sha256=graph_identity_sha256,
+                numeric_defines_sha256=numeric_defines_sha256,
                 document_hashes=document_hashes,
                 game=game,
             )

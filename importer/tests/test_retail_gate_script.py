@@ -236,6 +236,14 @@ def test_single_build_is_explicit_and_never_claims_attestation() -> None:
     assert "if (-not $SingleBuild)" in text
     assert "Single build provenance falsely claimed" in text
     assert "Pack provenance must defer the A/B claim" in text
+    assert (
+        '"$gate PASS attested=false mode=single-build '
+        'bundle_sha256=$($second.bundle_sha256) sections=A"' in text
+    )
+    assert (
+        '"$gate PASS attested=false mode=single-build '
+        'bundle_sha256=$($second.bundle_sha256) sections=A+B"' in text
+    )
 
 
 def test_audit_stays_bound_to_frozen_profile_and_resolved_closure() -> None:

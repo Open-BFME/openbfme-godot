@@ -475,7 +475,11 @@ try {
     # An unpinned selection is exactly how a stale pack turns a red run green.
     if ($SkipPrivateSelection) {
         Write-Host "$gate SECTION_B_PRIVATE_SELECTION SKIPPED reason=-SkipPrivateSelection"
-        Write-Host "$gate PASS bundle_sha256=$($second.bundle_sha256) sections=A"
+        if ($SingleBuild) {
+            Write-Host "$gate PASS attested=false mode=single-build bundle_sha256=$($second.bundle_sha256) sections=A"
+        } else {
+            Write-Host "$gate PASS attested=true mode=cold-a-b bundle_sha256=$($second.bundle_sha256) sections=A"
+        }
         exit 0
     }
     $selectionPath = Join-Path $publishRoot "selection.json"
@@ -593,7 +597,11 @@ try {
     }
 
     Write-Host "$gate SECTION_B_PRIVATE_SELECTION PASS selection_sha256=$selectionSha256"
-    Write-Host "$gate PASS bundle_sha256=$($second.bundle_sha256) sections=A+B"
+    if ($SingleBuild) {
+        Write-Host "$gate PASS attested=false mode=single-build bundle_sha256=$($second.bundle_sha256) sections=A+B"
+    } else {
+        Write-Host "$gate PASS attested=true mode=cold-a-b bundle_sha256=$($second.bundle_sha256) sections=A+B"
+    }
     exit 0
 }
 catch {

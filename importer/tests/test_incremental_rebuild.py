@@ -5,14 +5,21 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+import pytest
+
+from openbfme_importer.faction_object_cache import _COMPILER_SALT_MODULES
 from openbfme_importer.incremental_rebuild import (
+    _COMPILER_DEPENDENCY_MANIFESTS,
+    _FAMILY_COMPILER_EXCLUSIONS,
     compiler_dependency_identity,
     document_closure_identity,
     rebuild_execution_provenance,
     rebuild_status_for_coverage,
     reconvert_requested,
+    validate_reconvert_matches,
     w3d_adapter_cache_identity,
 )
+from openbfme_importer import incremental_rebuild
 from openbfme_importer.cli import build_parser
 
 
@@ -32,24 +39,6 @@ def test_document_closure_edit_invalidates_only_dependent_document() -> None:
     edited = {**documents, "data/ini/object/a.ini": b"Object A\n  KindOf = HERO\nEnd\n"}
     assert document_closure_identity(edited, ("data/ini/object/a.ini",))["sha256"] != a["sha256"]
     assert document_closure_identity(edited, ("data/ini/object/b.ini",))["sha256"] == b["sha256"]
-
-
-def test_synthetic_hundred_document_savings_measurement() -> None:
-    documents = {
-        f"data/ini/object/object-{index:03d}.ini": f"Object O{index}\nEnd\n".encode()
-        for index in range(100)
-    }
-    before = {
-        path: document_closure_identity(documents, (path,))["sha256"]
-        for path in documents
-    }
-    changed_path = "data/ini/object/object-042.ini"
-    documents[changed_path] += b"; compiler-relevant edit\n"
-    rebuilt = sum(
-        document_closure_identity(documents, (path,))["sha256"] != identity
-        for path, identity in before.items()
-    )
-    assert rebuilt == 1  # 1% rebuild, versus the former 100% whole-corpus salt.
 
 
 def test_unknown_document_dependencies_fail_closed_to_full_corpus() -> None:
@@ -90,6 +79,41 @@ def test_compiler_identity_is_family_scoped_and_unknown_fails_closed() -> None:
     assert unknown_before["sha256"] != unknown_after["sha256"]
 
 
+def test_family_identities_cover_payload_producer_and_legacy_salt_modules() -> None:
+    for lane, manifest in _COMPILER_DEPENDENCY_MANIFESTS.items():
+        assert "faction_import.py" in manifest, lane
+        excluded = _FAMILY_COMPILER_EXCLUSIONS[lane]
+        assert not (manifest & excluded), lane
+        assert set(_COMPILER_SALT_MODULES) <= manifest | excluded, lane
+
+
+@pytest.mark.parametrize("family", ["unit", "structure", "spellbook"])
+def test_faction_import_edit_changes_every_family_identity(family: str) -> None:
+    modules = {
+        "faction_import.py": b"PAYLOAD_WRITER = 1\n",
+        "faction_object_cache.py": b"pass\n",
+        "incremental_rebuild.py": b"pass\n",
+    }
+    before = compiler_dependency_identity(family, module_sources=modules)
+    edited = {**modules, "faction_import.py": b"PAYLOAD_WRITER = 2\n"}
+    after = compiler_dependency_identity(family, module_sources=edited)
+    assert before["sha256"] != after["sha256"]
+
+
+@pytest.mark.parametrize("family", ["unit", "structure", "spellbook"])
+def test_blender_adapter_edit_changes_every_family_identity(family: str) -> None:
+    modules = {
+        "faction_import.py": b"pass\n",
+        "faction_object_cache.py": b"pass\n",
+        "incremental_rebuild.py": b"pass\n",
+        "blender/w3d_to_glb.py": b"ADAPTER = 1\n",
+    }
+    before = compiler_dependency_identity(family, module_sources=modules)
+    edited = {**modules, "blender/w3d_to_glb.py": b"ADAPTER = 2\n"}
+    after = compiler_dependency_identity(family, module_sources=edited)
+    assert before["sha256"] != after["sha256"]
+
+
 def test_dynamic_compiler_dependency_discovery_fails_closed() -> None:
     modules = {
         "playable_unit_compiler.py": b"__import__(dependency_name)\n",
@@ -121,6 +145,16 @@ def test_reconversion_scope_and_provenance_are_honest() -> None:
     }
 
 
+def test_reconvert_only_fails_closed_when_no_asset_id_matches() -> None:
+    with pytest.raises(ValueError, match="matched zero W3D asset ids"):
+        validate_reconvert_matches(
+            ("GondorFighter", "RohanRohirrim"), ("*uruk*",)
+        )
+    assert validate_reconvert_matches(
+        ("GondorFighter", "IsengardUrukHai"), ("*uruk*",)
+    ) == ("IsengardUrukHai",)
+
+
 def test_scoped_adapter_edit_only_changes_selected_converter_key() -> None:
     patterns = ("*uruk*",)
     before = "a" * 64
@@ -133,12 +167,19 @@ def test_scoped_adapter_edit_only_changes_selected_converter_key() -> None:
     )
 
 
-def test_rebuild_status_reports_changed_source_and_compiler_reason(tmp_path: Path) -> None:
+def test_rebuild_status_reports_changed_source_and_compiler_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     assets = tmp_path / "assets"
     source = assets / "data" / "ini" / "object" / "a.ini"
     source.parent.mkdir(parents=True)
     source.write_bytes(b"changed")
-    compiler = compiler_dependency_identity("unit")
+    pinned_compiler_identity = "f" * 64
+    monkeypatch.setattr(
+        incremental_rebuild,
+        "compiler_dependency_identity",
+        lambda _family: {"sha256": pinned_compiler_identity},
+    )
     coverage = {
         "faction": "men",
         "objects": [
@@ -164,7 +205,7 @@ def test_rebuild_status_reports_changed_source_and_compiler_reason(tmp_path: Pat
     assert row["wouldRebuild"] is True
     assert row["reasons"] == [
         "source-changed:data/ini/object/a.ini",
-        f"compiler-identity-changed:{compiler['sha256']}",
+        f"compiler-identity-changed:{pinned_compiler_identity}",
     ]
     assert status["summary"] == {"objects": 1, "rebuild": 1, "reuse": 0}
 

@@ -20,7 +20,12 @@ from typing import Any, Mapping, Sequence
 _COMMON_COMPILER_MODULES = frozenset(
     {
         "armor_compiler.py",
+        # This module owns _convert_one_plan_object and writes every cached
+        # row/artifact envelope.  Treat it as a leaf below so family manifests
+        # remain intentional instead of inheriting every lane it orchestrates.
+        "faction_import.py",
         "faction_object_cache.py",
+        "faction_census.py",
         "incremental_rebuild.py",
         "faction_policy.py",
         "pack_recipe_catalog_identity.py",
@@ -50,6 +55,7 @@ _COMPILER_DEPENDENCY_MANIFESTS: dict[str, frozenset[str]] = {
         "playable_structure_compiler.py",
         "playable_structure_lifecycle_evidence.py",
         "playable_structure_pack_compiler.py",
+        "playable_unit_compiler.py",
         "retail_building_lifecycle.py",
         "retail_visual_closure.py",
         "typed_visual_graph.py",
@@ -60,6 +66,7 @@ _COMPILER_DEPENDENCY_MANIFESTS: dict[str, frozenset[str]] = {
     "spellbook": _COMMON_COMPILER_MODULES
     | {
         "retail_ability_fx_ingress.py",
+        "retail_visual_closure.py",
         "spellbook_compiler.py",
         "spellbook_import.py",
         "spellbook_pack_compiler.py",
@@ -69,6 +76,56 @@ _COMPILER_DEPENDENCY_MANIFESTS: dict[str, frozenset[str]] = {
         "w3d_index.py",
         "w3d_texture_closure.py",
     },
+}
+
+# Every module retained from the former all-family compiler salt is either in a
+# lane's manifest above or explicitly excluded here.  These are semantic lane
+# boundaries, not modules presumed harmless globally; the guard test forces a
+# decision whenever the legacy list grows.
+_FAMILY_COMPILER_EXCLUSIONS: dict[str, frozenset[str]] = {
+    "unit": frozenset(
+        {
+            # Structure-only descriptor, lifecycle, and recipe/runtime lane.
+            "castle_behavior.py",
+            "playable_structure_compiler.py",
+            "playable_structure_lifecycle_evidence.py",
+            "playable_structure_pack_compiler.py",
+            "retail_building_lifecycle.py",
+            # Spellbook-only descriptor, ingress, and recipe/runtime lane.
+            "spellbook_compiler.py",
+            "spellbook_import.py",
+            "spellbook_pack_compiler.py",
+            "spellbook_visual_ingress.py",
+        }
+    ),
+    "structure": frozenset(
+        {
+            # Unit pack/import output is not called by structure conversion;
+            # playable_unit_compiler remains included for shared preparation.
+            "playable_unit_import.py",
+            "playable_unit_pack_compiler.py",
+            "retail_ability_fx_ingress.py",
+            # Spellbook-only descriptor, ingress, and recipe/runtime lane.
+            "spellbook_compiler.py",
+            "spellbook_import.py",
+            "spellbook_pack_compiler.py",
+            "spellbook_visual_ingress.py",
+        }
+    ),
+    "spellbook": frozenset(
+        {
+            # Unit-only descriptor/import/recipe lane.
+            "playable_unit_compiler.py",
+            "playable_unit_import.py",
+            "playable_unit_pack_compiler.py",
+            # Structure-only descriptor, lifecycle, and recipe/runtime lane.
+            "castle_behavior.py",
+            "playable_structure_compiler.py",
+            "playable_structure_lifecycle_evidence.py",
+            "playable_structure_pack_compiler.py",
+            "retail_building_lifecycle.py",
+        }
+    ),
 }
 
 _UNIT_FAMILIES = frozenset(
@@ -84,7 +141,7 @@ _UNIT_FAMILIES = frozenset(
     }
 )
 _IDENTITY_LEAF_MODULES = frozenset(
-    {"faction_object_cache.py", "incremental_rebuild.py"}
+    {"faction_import.py", "faction_object_cache.py", "incremental_rebuild.py"}
 )
 _LIVE_COMPILER_IDENTITY_MEMO: dict[str, dict[str, Any]] = {}
 _LIVE_COMPILER_IDENTITY_LOCK = threading.Lock()
@@ -133,6 +190,15 @@ def compiler_dependency_identity(
                 # A read race is uncertainty: preserve the filename and make
                 # the identity differ rather than silently omitting it.
                 sources[path.name] = b"<unreadable>"
+        blender_dir = package.parent / "blender"
+        for path in sorted(
+            blender_dir.glob("*.py"), key=lambda item: item.name.casefold()
+        ):
+            name = f"blender/{path.name}"
+            try:
+                sources[name] = path.read_bytes()
+            except OSError:
+                sources[name] = b"<unreadable>"
     else:
         sources = {str(name): bytes(payload) for name, payload in module_sources.items()}
 
@@ -141,6 +207,9 @@ def compiler_dependency_identity(
     missing = sorted((declared or frozenset()) - set(sources))
     discovery_uncertain = False
     expanded = set(declared or ())
+    # Blender adapters affect the GLB bytes embedded by every family and are
+    # intentionally outside the Python package import graph.
+    expanded.update(name for name in sources if name.startswith("blender/"))
     if declared is not None and not (live_sources and missing):
         pending = list(expanded & set(sources))
         parsed: set[str] = set()
@@ -281,6 +350,24 @@ def reconvert_requested(asset_id: str, patterns: Sequence[str]) -> bool:
     return any(fnmatch.fnmatchcase(folded, pattern.casefold()) for pattern in patterns)
 
 
+def validate_reconvert_matches(
+    asset_ids: Sequence[str], patterns: Sequence[str]
+) -> tuple[str, ...]:
+    """Return matched W3D ids, refusing a typo/no-op scoped reconversion."""
+
+    if not patterns:
+        return ()
+    matched = tuple(
+        asset_id for asset_id in asset_ids if reconvert_requested(asset_id, patterns)
+    )
+    if not matched:
+        raise ValueError(
+            "reconvert-only patterns matched zero W3D asset ids: "
+            + ", ".join(str(pattern) for pattern in patterns)
+        )
+    return matched
+
+
 def w3d_adapter_cache_identity(
     adapter_sha256: str, asset_id: str, patterns: Sequence[str]
 ) -> str:
@@ -401,5 +488,6 @@ __all__ = [
     "rebuild_execution_provenance",
     "rebuild_status_for_coverage",
     "reconvert_requested",
+    "validate_reconvert_matches",
     "w3d_adapter_cache_identity",
 ]

@@ -29,7 +29,7 @@
 			"m3_pack_expansion",
 			"pipeline"
 		],
-		"consumerFileCount": 72,
+		"consumerFileCount": 73,
 		"consumerFiles": [
 			"armor_compiler",
 			"big",
@@ -44,6 +44,7 @@
 			"faction_object_cache",
 			"faction_policy",
 			"game",
+			"incremental_rebuild",
 			"living_world_strings",
 			"livingmap_bundle",
 			"livingworld",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 from pathlib import Path
 from unittest import mock
@@ -16,6 +17,7 @@ from openbfme_importer.faction_object_cache import (
     documents_fingerprint,
     durable_effective_assets_fingerprint,
     durable_non_ini_assets_fingerprint,
+    clear_compiler_identity_token_memo,
     object_cache_key,
     policy_roots_fingerprint,
 )
@@ -44,23 +46,26 @@ def test_object_cache_key_changes_with_inputs() -> None:
         documents_fp="d" * 64,
         catalog_identity_sha256="c" * 64,
         effective_root_fp="manifest-agg:" + "e" * 64,
-        graph_input_set_sha256="g" * 64,
+        graph_identity_sha256="g" * 64,
         plan_aggregate_sha256="p" * 64,
         policy_fp="o" * 64,
         compiler_token="t" * 64,
+        numeric_defines_sha256="n" * 64,
     )
     k1 = object_cache_key(**base)
     k2 = object_cache_key(**{**base, "object_id": "HeroEight"})
     k3 = object_cache_key(**{**base, "extra": {"plan_status": "descriptor-ready"}})
-    k4 = object_cache_key(**{**base, "graph_input_set_sha256": "h" * 64})
+    k4 = object_cache_key(**{**base, "graph_identity_sha256": "h" * 64})
     k5 = object_cache_key(**{**base, "compiler_token": "u" * 64})
     k6 = object_cache_key(**{**base, "policy_fp": "q" * 64})
+    k7 = object_cache_key(**{**base, "numeric_defines_sha256": "v" * 64})
     assert len(k1) == 64
     assert k1 != k2
     assert k1 != k3
     assert k1 != k4
     assert k1 != k5
     assert k1 != k6
+    assert k1 != k7
     assert object_cache_key(**base) == k1
 
 
@@ -97,12 +102,14 @@ def test_durable_assets_fp_uses_manifest_aggregate(tmp_path: Path) -> None:
     assert other_fp != missing_a
 
 
-def test_non_ini_assets_fp_ignores_ini_rows_but_keeps_visual_bytes(tmp_path: Path) -> None:
+def test_non_ini_assets_fp_excludes_only_data_ini_rows(tmp_path: Path) -> None:
     root = tmp_path / "assets"
     meta = root / ".openbfme"
     meta.mkdir(parents=True)
 
-    def write_manifest(ini_hash: str, model_hash: str) -> None:
+    def write_manifest(
+        ini_hash: str, model_hash: str, map_ini_hash: str = "5" * 64
+    ) -> None:
         (meta / "manifest.json").write_text(
             json.dumps(
                 {
@@ -111,6 +118,11 @@ def test_non_ini_assets_fp_ignores_ini_rows_but_keeps_visual_bytes(tmp_path: Pat
                             "path": "data/ini/object/men.ini",
                             "size": 10,
                             "sha256": ini_hash,
+                        },
+                        {
+                            "path": "maps/map mp/men/map.ini",
+                            "size": 11,
+                            "sha256": map_ini_hash,
                         },
                         {
                             "path": "art/model.w3d",
@@ -128,7 +140,22 @@ def test_non_ini_assets_fp_ignores_ini_rows_but_keeps_visual_bytes(tmp_path: Pat
     write_manifest("3" * 64, "2" * 64)
     assert durable_non_ini_assets_fingerprint(root) == before
     write_manifest("3" * 64, "4" * 64)
-    assert durable_non_ini_assets_fingerprint(root) != before
+    visual_changed = durable_non_ini_assets_fingerprint(root)
+    assert visual_changed != before
+
+    # INIs outside data/ini are not represented by descriptor source closures.
+    write_manifest("3" * 64, "4" * 64, "6" * 64)
+    assert durable_non_ini_assets_fingerprint(root) != visual_changed
+
+
+def test_clear_compiler_identity_token_memo_clears_both_identity_layers() -> None:
+    from openbfme_importer import faction_object_cache, incremental_rebuild
+
+    faction_object_cache._COMPILER_TOKEN_MEMO["unit"] = "a" * 64
+    incremental_rebuild._LIVE_COMPILER_IDENTITY_MEMO["unit"] = {"sha256": "b" * 64}
+    clear_compiler_identity_token_memo()
+    assert faction_object_cache._COMPILER_TOKEN_MEMO == {}
+    assert incremental_rebuild._LIVE_COMPILER_IDENTITY_MEMO == {}
 
 
 def test_policy_roots_fingerprint_is_order_independent() -> None:
@@ -193,8 +220,8 @@ def test_unexpected_convert_exception_becomes_gap_not_batch_abort(
         structure_patches[2],
         structure_patches[3],
         mock.patch(
-                "openbfme_importer.faction_import.durable_non_ini_assets_fingerprint",
-                return_value="non-ini-manifest:" + "a" * 64,
+            "openbfme_importer.faction_import.durable_non_ini_assets_fingerprint",
+            return_value="non-ini-manifest:" + "a" * 64,
         ),
         mock.patch(
             "openbfme_importer.faction_import.build_retail_visual_closure",
@@ -240,8 +267,8 @@ def test_conversion_cache_hit_skips_recompile(tmp_path: Path) -> None:
             structure_recipe,
         ),
         mock.patch(
-                "openbfme_importer.faction_import.durable_non_ini_assets_fingerprint",
-                return_value="non-ini-manifest:" + "a" * 64,
+            "openbfme_importer.faction_import.durable_non_ini_assets_fingerprint",
+            return_value="non-ini-manifest:" + "a" * 64,
         ),
     ):
         first = build_faction_conversion(
@@ -291,8 +318,8 @@ def test_parallel_convert_preserves_plan_order_and_aggregate(tmp_path: Path) -> 
         structure_patches[2],
         structure_patches[3],
         mock.patch(
-                "openbfme_importer.faction_import.durable_non_ini_assets_fingerprint",
-                return_value="non-ini-manifest:" + "a" * 64,
+            "openbfme_importer.faction_import.durable_non_ini_assets_fingerprint",
+            return_value="non-ini-manifest:" + "a" * 64,
         ),
     ):
         serial = build_faction_conversion(
@@ -335,8 +362,8 @@ def test_object_cache_disabled_without_state_root(tmp_path: Path, monkeypatch: p
         structure_patches[2],
         structure_patches[3],
         mock.patch(
-                "openbfme_importer.faction_import.durable_non_ini_assets_fingerprint",
-                return_value="non-ini-manifest:" + "a" * 64,
+            "openbfme_importer.faction_import.durable_non_ini_assets_fingerprint",
+            return_value="non-ini-manifest:" + "a" * 64,
         ),
     ):
         coverage = build_faction_conversion(
@@ -349,7 +376,7 @@ def test_object_cache_disabled_without_state_root(tmp_path: Path, monkeypatch: p
     assert coverage["summary"]["cacheHits"] == 0
 
 
-def test_whole_graph_identity_change_does_not_evict_unchanged_objects(
+def test_graph_identity_change_invalidates_object_cache(
     tmp_path: Path,
 ) -> None:
     documents, graph = _fixture()
@@ -368,8 +395,8 @@ def test_whole_graph_identity_change_does_not_evict_unchanged_objects(
             pack_recipe,
         ),
         mock.patch(
-                "openbfme_importer.faction_import.durable_non_ini_assets_fingerprint",
-                return_value="non-ini-manifest:" + "a" * 64,
+            "openbfme_importer.faction_import.durable_non_ini_assets_fingerprint",
+            return_value="non-ini-manifest:" + "a" * 64,
         ),
     ):
         first = build_faction_conversion(
@@ -380,9 +407,15 @@ def test_whole_graph_identity_change_does_not_evict_unchanged_objects(
             state_root=tmp_path,
             convert_jobs=1,
         )
-        graph2 = dict(graph)
-        graph2["inputSetSha256"] = "9" * 64
-        # Keep plan happy: plan validates graph identity format only.
+        graph2 = deepcopy(graph)
+        graph2["resolvedLeaves"] = {
+            "mappedImages": [
+                {
+                    "id": "BPortrait_UniversalFactory",
+                    "compiledTextureVirtualPath": "art/compiled/factory.png",
+                }
+            ]
+        }
         second = build_faction_conversion(
             graph2,
             documents,
@@ -392,9 +425,47 @@ def test_whole_graph_identity_change_does_not_evict_unchanged_objects(
             convert_jobs=1,
         )
     assert first["summary"]["cacheHits"] == 0
-    # The plan descriptor + source closure are unchanged, so a broad census
-    # aggregate change cannot evict every independent object.
-    assert second["summary"]["cacheHits"] == 3
+    # The graph feeds mapped-image rows directly into cached recipes/runtimes.
+    assert second["summary"]["cacheHits"] == 0
+
+
+def test_numeric_defines_change_invalidates_object_cache(tmp_path: Path) -> None:
+    documents, graph = _fixture()
+    unit_patches = _unit_conversion_patches()
+    structure_patches = _structure_success_patches()
+    with (
+        unit_patches[0],
+        unit_patches[1],
+        unit_patches[2],
+        structure_patches[0],
+        structure_patches[1],
+        structure_patches[2],
+        structure_patches[3],
+        mock.patch(
+            "openbfme_importer.faction_import.durable_non_ini_assets_fingerprint",
+            return_value="non-ini-manifest:" + "a" * 64,
+        ),
+    ):
+        first = build_faction_conversion(
+            graph,
+            documents,
+            Path("unused-effective-root"),
+            catalog_identity_sha256="2" * 64,
+            state_root=tmp_path,
+            convert_jobs=1,
+        )
+        edited_documents = dict(documents)
+        edited_documents["data/ini/gamedata.ini"] += b"\n#define CacheGuard 7\n"
+        second = build_faction_conversion(
+            graph,
+            edited_documents,
+            Path("unused-effective-root"),
+            catalog_identity_sha256="2" * 64,
+            state_root=tmp_path,
+            convert_jobs=1,
+        )
+    assert first["summary"]["cacheHits"] == 0
+    assert second["summary"]["cacheHits"] == 0
 
 
 def test_shared_cache_env_routes_object_cache(
@@ -414,8 +485,8 @@ def test_shared_cache_env_routes_object_cache(
         structure_patches[2],
         structure_patches[3],
         mock.patch(
-                "openbfme_importer.faction_import.durable_non_ini_assets_fingerprint",
-                return_value="non-ini-manifest:" + "a" * 64,
+            "openbfme_importer.faction_import.durable_non_ini_assets_fingerprint",
+            return_value="non-ini-manifest:" + "a" * 64,
         ),
     ):
         build_faction_conversion(

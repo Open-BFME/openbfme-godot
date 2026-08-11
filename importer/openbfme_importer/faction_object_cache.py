@@ -19,7 +19,7 @@ from .util import read_json, write_json_atomic
 
 CACHE_SCHEMA = "openbfme.faction-object-cache"
 # Bump when key material or stored artifact envelope changes.
-CACHE_VERSION = 4
+CACHE_VERSION = 5
 # Artifacts that are large / re-derivable and must not bloat durable DDC.
 _CACHE_EXCLUDED_ARTIFACTS = frozenset({"visual-closure"})
 _LOCK = threading.Lock()
@@ -152,11 +152,17 @@ _COMPILER_TOKEN_LOCK = threading.Lock()
 
 
 def clear_compiler_identity_token_memo() -> None:
-    """Test helper: drop process-local compiler identity memo."""
+    """Drop both layers of process-local compiler identity memoization."""
 
     global _COMPILER_TOKEN_MEMO
     with _COMPILER_TOKEN_LOCK:
         _COMPILER_TOKEN_MEMO = {}
+    # Local import avoids the module-load cycle.  Both memo layers must clear
+    # together or source-mutation tests can observe a stale family identity.
+    from . import incremental_rebuild
+
+    with incremental_rebuild._LIVE_COMPILER_IDENTITY_LOCK:
+        incremental_rebuild._LIVE_COMPILER_IDENTITY_MEMO.clear()
 
 
 def compiler_identity_token(family: str | None = None) -> str:
@@ -261,7 +267,7 @@ def durable_effective_assets_fingerprint(effective_root: Path | str) -> str:
 
 
 def durable_non_ini_assets_fingerprint(effective_root: Path | str) -> str:
-    """Hash manifest rows outside INI so one INI edit stays document-scoped.
+    """Hash manifest rows outside ``data/ini/**``.
 
     The converted object envelope also contains visual recipes, so dropping
     effective-assets identity entirely would under-invalidate on a model or
@@ -286,7 +292,7 @@ def durable_non_ini_assets_fingerprint(effective_root: Path | str) -> str:
             sha256 = str(item["sha256"]).casefold()
             if len(sha256) != 64:
                 raise ValueError("manifest file hash is malformed")
-            if not path.casefold().endswith(".ini"):
+            if not path.casefold().startswith("data/ini/"):
                 rows.append({"path": path.casefold(), "size": size, "sha256": sha256})
         return "non-ini-manifest:" + hashlib.sha256(_canonical_bytes(rows)).hexdigest()
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
@@ -329,10 +335,11 @@ def object_cache_key(
     documents_fp: str,
     catalog_identity_sha256: str,
     effective_root_fp: str,
-    graph_input_set_sha256: str = "",
+    graph_identity_sha256: str = "",
     plan_aggregate_sha256: str = "",
     policy_fp: str = "",
     compiler_token: str = "",
+    numeric_defines_sha256: str = "",
     plan_descriptor_sha256: str = "",
     extra: Mapping[str, object] | None = None,
 ) -> str:
@@ -344,10 +351,11 @@ def object_cache_key(
         "documents_fp": documents_fp,
         "catalog_identity_sha256": catalog_identity_sha256.casefold(),
         "effective_root_fp": effective_root_fp,
-        "graph_input_set_sha256": graph_input_set_sha256.casefold(),
+        "graph_identity_sha256": graph_identity_sha256.casefold(),
         "plan_aggregate_sha256": plan_aggregate_sha256.casefold(),
         "policy_fp": policy_fp.casefold(),
         "compiler_token": compiler_token.casefold(),
+        "numeric_defines_sha256": numeric_defines_sha256.casefold(),
         "plan_descriptor_sha256": plan_descriptor_sha256.casefold(),
         "extra": dict(extra or {}),
     }

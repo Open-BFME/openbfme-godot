@@ -58,6 +58,7 @@ from .util import read_json, write_json_atomic
 from .incremental_rebuild import (
     rebuild_execution_provenance,
     reconvert_requested,
+    validate_reconvert_matches,
     w3d_adapter_cache_identity,
 )
 from .version import __version__
@@ -4253,6 +4254,11 @@ class ImportPipeline:
                             str(cached.get("source_sha256") or ""),
                         )
                     )
+
+        validate_reconvert_matches(
+            tuple(str(job[6]) for job in w3d_jobs),
+            getattr(self, "reconvert_only", ()),
+        )
 
         # Overlap W3D and media lanes when both have work (independent outputs).
         # Use one progress stage so concurrent workers do not clobber stage ETA.
