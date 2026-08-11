@@ -46,7 +46,7 @@ $focusedRunners = [ordered]@{
     # per-button MOUNTED_ONLY / UNMOUNTED_ONLY palantir filter. Both read their
     # evidence out of the compiled pack, so a republish that drops the mounted
     # voice events or the button options is a RED here.
-    'hero_mounted_button_options' = @('hero_mounted_button_options_runner.gd', '(?m)^HERO_MOUNTED_BUTTON_OPTIONS_RESULT passed=46 failed=0\s*$')
+    'hero_mounted_button_options' = @('hero_mounted_button_options_runner.gd', '(?m)^HERO_MOUNTED_BUTTON_OPTIONS_RESULT passed=47 failed=0\s*$')
     'hero_mounted_voice' = @('hero_mounted_voice_runner.gd', '(?m)^HERO_MOUNTED_VOICE_RESULT passed=25 failed=0\s*$')
     'hud_apt_runtime' = @('retail_hud_apt_runtime_runner.gd', '(?m)^HUD_APT_RUNTIME_SUMMARY passed=67 failed=0\s*$')
     'hud_wnd_runtime' = @('retail_hud_wnd_runtime_runner.gd', '(?m)^RETAIL_HUD_WND_RUNTIME_RESULT passed=62 failed=0\s*$')
