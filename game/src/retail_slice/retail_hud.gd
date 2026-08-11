@@ -660,6 +660,10 @@ func configure_faction_surface(manifest: Dictionary) -> void:
 			page = RADIAL_PAGE_UPGRADES
 		elif command_id.contains("SelectRevivables"):
 			page = RADIAL_PAGE_HEROES
+		else:
+			retail_bind_diagnostics.append(
+				"radial-page-selector-unrecognized: command '%s' is filed under the back catch-all" % command_id
+			)
 		_radial_page_selectors[page] = selector.duplicate(true)
 	_radial_page_command_cache.clear()
 	if _faction_heading_label != null:
@@ -2308,15 +2312,18 @@ func resolve_hud_string(string_id: String, context: Dictionary) -> Dictionary:
 	var spec_name := String(context.get("spec_name", ""))
 	var authored_fallback := bool(context.get("authored_fallback", false))
 	var fallback := String(context.get("fallback", "")).strip_edges()
-	var null_fallback := String(context.get("null_fallback", ""))
+	var empty_id_fallback := String(context.get("empty_id_fallback", ""))
+	var source_null_fallback := String(context.get("source_null_fallback", ""))
 	if string_id.strip_edges() == "":
 		if not authored_fallback:
 			return {"error": "Command '%s' has no localized %s id and no recorded authored fallback." % [spec_name, role]}
-		return {"error": "", "text": fallback if fallback != "" else null_fallback}
+		return {"error": "", "text": fallback if fallback != "" else empty_id_fallback}
 	var runtime_strings := context.get("runtime_strings", {}) as Dictionary
 	if runtime_strings.has(string_id):
 		return {"error": "", "text": String(runtime_strings[string_id])}
-	var content_db = context.get("content_db")
+	var content_db = context.get("content_db", _bound_content_db)
+	if content_db == null:
+		return {"error": "ContentDB is unavailable; cannot resolve localized string '%s'." % string_id}
 	var localized := String(content_db.get_retail_string(string_id, _MISSING_RETAIL_STRING))
 	if localized != _MISSING_RETAIL_STRING:
 		return {"error": "", "text": localized}
@@ -2324,7 +2331,7 @@ func resolve_hud_string(string_id: String, context: Dictionary) -> Dictionary:
 		retail_bind_diagnostics.append(
 			"retail-unlocalized-%s: '%s' references '%s', which retail's own string table never defines" % [role, spec_name, string_id]
 		)
-		return {"error": "", "text": null_fallback}
+		return {"error": "", "text": source_null_fallback}
 	return {"error": "Required localized string '%s' is missing." % string_id}
 
 
@@ -2363,13 +2370,19 @@ func _validate_retail_command(
 		"authored_fallback": authored_fallback,
 	}
 	var label_context := string_context.duplicate()
-	label_context.merge({"role": "label", "fallback": fallback_label, "null_fallback": spec_name}, true)
+	label_context.merge({
+		"role": "label", "fallback": fallback_label,
+		"empty_id_fallback": spec_name, "source_null_fallback": "",
+	}, true)
 	var label_resolution := resolve_hud_string(label_id, label_context)
 	if String(label_resolution.get("error", "")) != "":
 		return label_resolution
 	var label_text := String(label_resolution["text"])
 	var tooltip_context := string_context.duplicate()
-	tooltip_context.merge({"role": "tooltip", "fallback": fallback_tooltip, "null_fallback": label_text}, true)
+	tooltip_context.merge({
+		"role": "tooltip", "fallback": fallback_tooltip,
+		"empty_id_fallback": label_text, "source_null_fallback": label_text,
+	}, true)
 	var tooltip_resolution := resolve_hud_string(tooltip_id, tooltip_context)
 	if String(tooltip_resolution.get("error", "")) != "":
 		return tooltip_resolution

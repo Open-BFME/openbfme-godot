@@ -87,7 +87,7 @@ func _run_faction(faction: String) -> void:
 		)
 		var expected := "Required UI manifest image '%s' is missing." % missing_icon
 		_check(
-			"%s_broken_fixture_fails_at_retail_command_ui" % faction,
+			"%s_direct_validator_pins_missing_icon_error_after_boot" % faction,
 			String(broken.get("error", "")) == expected,
 			"expected '%s', got '%s'" % [expected, String(broken.get("error", ""))]
 		)

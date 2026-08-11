@@ -18,6 +18,19 @@ const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
 var _runner_watchdog := RunnerWatchdogScript.new()
 
 
+class OutsidePackContentDB:
+	extends RefCounted
+
+	func get_retail_ui_image(_image_id: String) -> Dictionary:
+		return {"path": "C:/outside-pack/icon.png"}
+
+	func resolve_retail_ui_image_path(_image_id: String) -> String:
+		return "C:/outside-pack/icon.png"
+
+	func is_resolved_asset_path(_path: String) -> bool:
+		return false
+
+
 func _initialize() -> void:
 	_runner_watchdog.start(self, "RETAIL_HUD_MULTIPACK_RUNNER")
 	call_deferred("_run")
@@ -32,6 +45,30 @@ func _run() -> void:
 		_finish()
 		return
 	var hud = hud_script.new()
+	var source_null_id := "CONTROLBAR:CodexSourceNullLabel"
+	var source_null := {}
+	source_null[source_null_id] = true
+	var source_null_label: Dictionary = hud.resolve_hud_string(source_null_id, {
+		"content_db": content_db,
+		"runtime_strings": {},
+		"source_null": source_null,
+		"spec_name": "InternalCommandId",
+		"role": "label",
+		"null_fallback": "InternalCommandId",
+		"empty_id_fallback": "InternalCommandId",
+		"source_null_fallback": "",
+	})
+	var source_null_diagnostic_recorded := false
+	for value in hud.retail_bind_diagnostics:
+		if String(value).begins_with("retail-unlocalized-label:") and String(value).contains(source_null_id):
+			source_null_diagnostic_recorded = true
+	_check(
+		"source_null_label_renders_blank_with_diagnostic",
+		String(source_null_label.get("error", "")) == ""
+			and String(source_null_label.get("text", "not-blank")) == ""
+			and source_null_diagnostic_recorded,
+		"resolution=%s diagnostics=%s" % [str(source_null_label), str(hud.retail_bind_diagnostics)]
+	)
 
 	var men_root := String((content_db.call("get_bundle_object", "bfme2.object.gondor-fighter") as Dictionary).get("_pack_root", ""))
 	var men_doc := {}
@@ -85,6 +122,15 @@ func _run() -> void:
 	_check("unpackaged_image_rejected", String(unpackaged.get("error", "")).contains("is missing"), String(unpackaged.get("error", "")))
 	var no_selection: Dictionary = hud._validate_retail_image(content_db, "", "AptStrategicUnitUpgradeArmor", Vector2i.ZERO)
 	_check("mounted_shared_image_needs_no_second_selection_gate", String(no_selection.get("error", "")) == "", String(no_selection.get("error", "")))
+	var outside_pack: Dictionary = hud._validate_retail_image(
+		OutsidePackContentDB.new(), men_root, "OutsidePackFixture", Vector2i.ZERO
+	)
+	var outside_pack_error := "Required UI image 'OutsidePackFixture' resolved outside the mounted content-pack boundary."
+	_check(
+		"outside_mounted_pack_boundary_rejected",
+		String(outside_pack.get("error", "")) == outside_pack_error,
+		"expected '%s', got '%s'" % [outside_pack_error, String(outside_pack.get("error", ""))]
+	)
 	var missing_runtime: Dictionary = hud._validate_retail_image(content_db, men_root, "AnyImage", Vector2i.ZERO, "NoSuchRuntimeObject")
 	_check("missing_runtime_rejected", String(missing_runtime.get("error", "")).contains("is missing"), String(missing_runtime.get("error", "")))
 
