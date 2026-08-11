@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import struct
+from pathlib import Path
 
 import pytest
 
@@ -13,6 +15,7 @@ from openbfme_importer.ring_system_compiler import (
     validate_ring_system,
     validate_ring_system_runtime,
 )
+from openbfme_importer.pipeline import _w3d_texture_references
 
 
 def _structure(index: int, *, carn_dum: bool = False, erebor: bool = False) -> str:
@@ -403,6 +406,45 @@ def test_art_plan_is_exact_and_marks_authored_conditional_hero_model_required() 
         f"art/w3d/cu/cugollum_{suffix}.w3d"
         for suffix in ("atkb", "chra", "diea", "dieb", "gtpa", "hita", "idla", "idlb", "idlc", "idld", "runa")
     ]
+    # The retail skin fixture authors CUSmeagol.tga; its compiled payload is
+    # cusmeagol.dds.  HC_CUGollum is a separate house-color texture and cannot
+    # satisfy the model importer's authored texture lookup.
+    assert plan["gollum"]["textures"] == [
+        "art/compiledtextures/cu/cusmeagol.dds"
+    ]
+    gollum_texture = next(
+        resource
+        for resource in plan["resources"]
+        if resource["id"] == "ring-gollum-textures"
+    )
+    assert gollum_texture["patterns"] == [
+        "art/compiledtextures/cu/cusmeagol.dds"
+    ]
+    fortress_textures = next(
+        resource
+        for resource in plan["resources"]
+        if resource["id"] == "ring-fortress-textures"
+    )
+    assert fortress_textures["patterns"] == [
+        "art/compiledtextures/ex/exblast2.dds",
+        "art/compiledtextures/ex/excloudcr01.dds",
+        "art/compiledtextures/ex/exring01.dds",
+        "art/compiledtextures/ex/exringfont.dds",
+    ]
+    fortress_models = [
+        resource
+        for resource in plan["resources"]
+        if resource["id"].startswith("ring-fortress-model-")
+    ]
+    assert len(fortress_models) == 2
+    assert all(
+        resource["converter"] == "w3d-hierarchical"
+        for resource in fortress_models
+    )
+    assert all(
+        resource["options"]["inputResourceIds"] == ["ring-fortress-textures"]
+        for resource in fortress_models
+    )
     assert plan["ring"]["models"] == ["art/w3d/th/thering.w3d"]
     assert plan["fortressRingModels"] == ["art/w3d/ex/exonering.w3d", "art/w3d/ex/exonering_cr.w3d"]
     assert plan["conditionalHeroModels"] == [{
@@ -411,6 +453,38 @@ def test_art_plan_is_exact_and_marks_authored_conditional_hero_model_required() 
         "model": "EUGaldrl_SKN",
         "requiredIfUnshipped": True,
     }]
+
+
+def test_gollum_plan_stages_compiled_payload_for_authored_w3d_texture(
+    tmp_path: Path,
+) -> None:
+    """Reproduce the generated-placeholder class with a W3D/oracle fixture."""
+
+    authored_name = "CUSmeagol.tga"
+    encoded = authored_name.encode("ascii") + b"\0"
+    model = tmp_path / "cugollum_skn.w3d"
+    model.write_bytes(struct.pack("<II", 0x00000032, len(encoded)) + encoded)
+
+    oracle_texture = (
+        tmp_path / "art" / "compiledtextures" / "cu" / "cusmeagol.dds"
+    )
+    oracle_texture.parent.mkdir(parents=True)
+    oracle_texture.write_bytes(b"DDS fixture")
+
+    references = _w3d_texture_references(model)
+    assert references == [authored_name]
+    expected_compiled = [
+        f"art/compiledtextures/{Path(reference).stem[:2].casefold()}/"
+        f"{Path(reference).stem.casefold()}.dds"
+        for reference in references
+    ]
+    assert all((tmp_path / path).is_file() for path in expected_compiled)
+
+    plan = compile_ring_system(_documents())["artConversionPlan"]
+    resource = next(
+        row for row in plan["resources"] if row["id"] == "ring-gollum-textures"
+    )
+    assert resource["patterns"] == expected_compiled
 
 
 def test_descriptor_and_runtime_are_separate_sealed_schemas() -> None:

@@ -758,7 +758,10 @@ def _art_plan(compiled_objects: Mapping[str, object]) -> dict[str, object]:
             "id": "ring-gollum-textures",
             "kind": "texture",
             "converter": "hash-only",
-            "patterns": ["art/compiledtextures/hc/hc_cugollum.tga"],
+            # CUGollum_SKIN authors CUSmeagol.tga. Retail publishes that image
+            # as the compiled DDS below; HC_CUGollum is a separate house-color
+            # payload and does not satisfy the W3D importer's texture lookup.
+            "patterns": ["art/compiledtextures/cu/cusmeagol.dds"],
             "required": True,
             "limit": 1,
             "expected_count": 1,
@@ -809,14 +812,36 @@ def _art_plan(compiled_objects: Mapping[str, object]) -> dict[str, object]:
             "limit": 1,
             "expected_count": 1,
         },
+        {
+            "id": "ring-fortress-textures",
+            "kind": "texture",
+            "converter": "hash-only",
+            # Both EXOneRing delivery models author these four TGA names;
+            # retail publishes their compiled payloads as DDS files.
+            "patterns": [
+                "art/compiledtextures/ex/exblast2.dds",
+                "art/compiledtextures/ex/excloudcr01.dds",
+                "art/compiledtextures/ex/exring01.dds",
+                "art/compiledtextures/ex/exringfont.dds",
+            ],
+            "required": True,
+            "limit": 4,
+            "expected_count": 4,
+        },
         *[
             {
                 "id": f"ring-fortress-model-{index}",
                 "kind": "model",
-                "converter": "w3d-static",
+                # Retail authors a one-bone hierarchy even though these draw
+                # models have no animation clips; keep the hierarchy instead
+                # of misclassifying the imported armature as static geometry.
+                "converter": "w3d-hierarchical",
                 "patterns": [path],
                 "output": f"assets/models/ring/{path.rsplit('/', 1)[-1][:-4]}.glb",
-                "options": {"model": path.rsplit("/", 1)[-1], "inputResourceIds": []},
+                "options": {
+                    "model": path.rsplit("/", 1)[-1],
+                    "inputResourceIds": ["ring-fortress-textures"],
+                },
                 "required": True,
                 "limit": 1,
                 "expected_count": 1,
@@ -835,7 +860,7 @@ def _art_plan(compiled_objects: Mapping[str, object]) -> dict[str, object]:
                 "art/w3d/cu/cugollum_skl.w3d",
             ],
             "animations": gollum_animations,
-            "textures": ["art/compiledtextures/hc/hc_cugollum.tga"],
+            "textures": ["art/compiledtextures/cu/cusmeagol.dds"],
         },
         "ring": {
             "models": ["art/w3d/th/thering.w3d"],
@@ -847,6 +872,12 @@ def _art_plan(compiled_objects: Mapping[str, object]) -> dict[str, object]:
         "fortressRingModels": [
             "art/w3d/ex/exonering.w3d",
             "art/w3d/ex/exonering_cr.w3d",
+        ],
+        "fortressRingTextures": [
+            "art/compiledtextures/ex/exblast2.dds",
+            "art/compiledtextures/ex/excloudcr01.dds",
+            "art/compiledtextures/ex/exring01.dds",
+            "art/compiledtextures/ex/exringfont.dds",
         ],
         "conditionalHeroModels": [
             {
