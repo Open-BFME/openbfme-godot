@@ -2785,7 +2785,16 @@ def compile_cah_system_descriptor(
             "block in that file still compiles, with a zero reload time.",
             "Hero colours are compiled as three RGB byte triples from the "
             "subclass defaults. Retail authors no discrete selectable palette; "
-            "the picker is a continuous gradient strip.",
+            "the picker is a continuous gradient strip. Hero colors are "
+            "preview-only; the battlefield still uses team house color.",
+            "Voice projection compiles the fixed subclass routes only. The "
+            "three conditional bow/mounted SoundUpgrade variants are not "
+            "compiled. Dropped retail keys are VoiceAttackCharge, "
+            "VoiceAttackAir, VoiceAttackMachine, VoiceMoveToCamp, "
+            "VoiceMoveWhileAttacking, VoiceRetreatToCastle, VoiceGarrison, "
+            "VoiceEnterUnit*, VoiceInitiateCaptureBuilding, VoicePriority, "
+            "and SoundImpact. No registration.audioBindings are projected, "
+            "so CAH heroes remain silent until a later lane lands bindings.",
             "All ObjectAward and ThingStat definitions are compiled. Runtime "
             "v1 can derive ENEMIES_KILLED, HEROS_KILLED, created-hero kills, "
             "fortress/keep destruction, and match win/loss counts; faction, "

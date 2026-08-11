@@ -699,6 +699,30 @@ class CahSystemCompilerTests(unittest.TestCase):
         self.assertEqual(voice["attackStructure"], ["HeroWestMaleVoiceAttackBuilding"])
         self.assertEqual(voice["created"], ["HeroWestMaleVoiceSalute"])
 
+    def test_voice_projection_limitations_are_named(self) -> None:
+        descriptor = compile_cah_system_descriptor(_documents())
+        voice_limitation = next(
+            value
+            for value in descriptor["limitations"]
+            if "audioBindings" in value
+        )
+        self.assertIn("three conditional bow/mounted SoundUpgrade variants", voice_limitation)
+        for retail_key in (
+            "VoiceAttackCharge",
+            "VoiceAttackAir",
+            "VoiceAttackMachine",
+            "VoiceMoveToCamp",
+            "VoiceMoveWhileAttacking",
+            "VoiceRetreatToCastle",
+            "VoiceGarrison",
+            "VoiceEnterUnit*",
+            "VoiceInitiateCaptureBuilding",
+            "VoicePriority",
+            "SoundImpact",
+        ):
+            self.assertIn(retail_key, voice_limitation)
+        self.assertIn("CAH heroes remain silent", voice_limitation)
+
     def test_subclass_default_colors_are_typed_rgb_triples(self) -> None:
         descriptor = compile_cah_system_descriptor(_documents())
         sub = descriptor["classes"][0]["subClasses"][0]

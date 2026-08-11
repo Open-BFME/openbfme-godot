@@ -17,6 +17,7 @@ const CahHeroes = preload("res://src/content/cah_heroes.gd")
 const MyHeroesScreen = preload("res://src/ui/my_heroes_screen.gd")
 const Adapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const SubObjects = preload("res://src/ui/cah_sub_objects.gd")
+const RetailHouseColor = preload("res://src/retail_slice/retail_house_color.gd")
 
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
 var _runner_watchdog := RunnerWatchdogScript.new()
@@ -98,10 +99,15 @@ func _run() -> void:
 	_test_attribute_arithmetic(system)
 	_test_profile_validation(system)
 	_test_profile_round_trip(system)
+	_test_tracking_and_awards_survive_edit(system)
 	_test_roster_document(system)
 	_test_power_selection_rules(system)
 	_test_powers_and_levels_reach_the_runtime_contracts(system)
 	_test_screen(system)
+	_test_color_drag_does_not_reload(system)
+	_test_color_degradation_is_visible(system)
+	_test_authored_awards_render_once(system)
+	_test_house_color_cache_isolated()
 	_test_the_editor_opens_on_the_hero_it_would_save()
 	_test_creation_screen_idles(system)
 	_test_garment_sub_objects(system)
@@ -233,6 +239,10 @@ func _test_profile_round_trip(system: Dictionary) -> void:
 	_check(String(reloaded.get("name", "")) == "Beregond", "the name survives the round trip")
 	_check(int(reloaded.get("classIndex", -1)) == 0, "the class survives the round trip")
 	_check(
+		reloaded.get("colors", []) == [[150, 151, 152], [10, 20, 30], [255, 0, 128]],
+		"the fixture's compiled default colours survive create and reload"
+	)
+	_check(
 		int((reloaded.get("attributes", {}) as Dictionary).get("CreateAHero_HealthMultAttribute", 0)) == 12,
 		"the allocated attributes survive the round trip"
 	)
@@ -254,6 +264,24 @@ func _test_profile_round_trip(system: Dictionary) -> void:
 
 	_check(CahHeroes.delete_profile(String(profile["heroId"])), "the profile deletes")
 	_check(CahHeroes.load_profiles().is_empty(), "the store is empty after delete")
+
+
+func _test_tracking_and_awards_survive_edit(system: Dictionary) -> void:
+	_clear_profiles()
+	var profile := CahHeroes.new_profile(system, "Awarded", 0, 0)
+	profile["trackingStats"] = {"ENEMIES_KILLED": 3001}
+	profile["awards"] = ["Vanquisher"]
+	_check(CahHeroes.save_profile(profile) == "", "the awarded fixture profile saves")
+	var screen = MyHeroesScreen.new()
+	root.add_child(screen)
+	screen.configure(system)
+	screen._on_hero_list_selected(0)
+	_check(screen.create_hero("Awarded edited").is_empty(), "editing an awarded hero re-saves it")
+	var reloaded := CahHeroes.load_profile(String(profile["heroId"]))
+	_check(reloaded.get("trackingStats", {}) == {"ENEMIES_KILLED": 3001}, "trackingStats survive an edit re-save")
+	_check(reloaded.get("awards", []) == ["Vanquisher"], "ownedAwards survive an edit re-save")
+	screen.queue_free()
+	_clear_profiles()
 
 
 # ----------------------------------------------------------- roster document
@@ -367,6 +395,10 @@ func _test_screen(system: Dictionary) -> void:
 		"his statistics come back the moment there is a hero for them to belong to"
 	)
 	_check(screen._awards_list.item_count == 1 and not screen._awards_list.is_item_selectable(0), "award medals are a read-only play result, not editor checkboxes")
+	var hero_id := String((screen.saved_profiles()[0] as Dictionary).get("heroId", ""))
+	screen._on_hero_color_changed(0, Color8(12, 34, 56))
+	_check(screen.create_hero("Beregond").is_empty(), "a changed hero colour saves through create_hero")
+	_check(CahHeroes.load_profile(hero_id).get("colors", [])[0] == [12, 34, 56], "a picker colour survives create_hero and reload")
 
 	_check(not screen.create_hero("   ").is_empty(), "the screen refuses an unnamed hero")
 
@@ -393,6 +425,118 @@ func _test_screen(system: Dictionary) -> void:
 	empty.queue_free()
 	screen.queue_free()
 	_clear_profiles()
+
+
+func _test_color_drag_does_not_reload(system: Dictionary) -> void:
+	var screen = MyHeroesScreen.new()
+	root.add_child(screen)
+	screen.configure(system)
+	var model := Node3D.new()
+	screen._preview_pivot.add_child(model)
+	screen._preview_model = model
+	screen._loaded_model_id = "drag-sentinel"
+	screen._on_hero_color_changed(0, Color8(41, 82, 123))
+	_check(screen._preview_model == model, "dragging a colour keeps the instantiated GLB")
+	_check(screen._loaded_model_id == "drag-sentinel", "dragging a colour does not clear the loaded model id")
+	screen.queue_free()
+
+
+func _test_color_degradation_is_visible(system: Dictionary) -> void:
+	var screen = MyHeroesScreen.new()
+	root.add_child(screen)
+	var fixture := system.duplicate(true)
+	fixture["_pack_root"] = _profiles.scratch_dir().path_join("pack-without-house-color")
+	screen.configure(fixture)
+	screen._garment_status = "mapped"
+	var visual := Node3D.new()
+	visual.set_meta("house_color_surfaces", 0)
+	screen._surface_color_degradation(visual)
+	_check(screen.garment_status().contains("color-unavailable"), "a pack without house-colour data names the preview degradation")
+	_check(String(screen._preview_caption.text).contains("cannot show hero colours"), "the preview caption says that the picker moves no pixels")
+	screen.queue_free()
+
+
+func _test_authored_awards_render_once(system: Dictionary) -> void:
+	_clear_profiles()
+	var fixture := system.duplicate(true)
+	var registration: Dictionary = fixture["registration"]
+	registration["awardDefinitions"] = [
+		{"awardId": "DrogothsBane", "imageId": "CahAward_DrogothsBane", "triggers": []},
+		{"awardId": "Vanquisher", "imageId": "CahAward_Vanquisher", "triggers": []},
+	]
+	var classes: Array = registration["classes"]
+	var sub_classes: Array = (classes[0] as Dictionary)["subClasses"]
+	(sub_classes[0] as Dictionary)["awards"] = ["DrogothsBane", "DrogothsBane", "Vanquisher"]
+	var profile := CahHeroes.new_profile(fixture, "Medalist", 0, 0)
+	_check(CahHeroes.save_profile(profile) == "", "the authored-awards fixture profile saves")
+	var screen = MyHeroesScreen.new()
+	root.add_child(screen)
+	screen.configure(fixture)
+	screen._on_hero_list_selected(0)
+	_check(screen._awards_list.item_count == 2, "the awards tab renders authored list entries and dedupes the retail duplicate")
+	_check(not screen._awards_list.is_item_selectable(0) and not screen._awards_list.is_item_selectable(1), "authored award entries render read-only")
+	screen.queue_free()
+	_clear_profiles()
+
+
+func _test_house_color_cache_isolated() -> void:
+	var pack_root := _profiles.scratch_dir().path_join("house-color-cache-fixture")
+	var data_dir := pack_root.path_join("data")
+	var provenance_dir := pack_root.path_join("provenance")
+	var mask_dir := pack_root.path_join("assets/textures/house-color")
+	for directory in [data_dir, provenance_dir, mask_dir]:
+		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(directory))
+	var retail_mask := "art/compiledtextures/hc/fixture.png"
+	_write_json(pack_root.path_join("data/house-color.json"), {
+		"models": [{"textureBindings": [{"baseTexture": "fixture.tga", "maskTextures": [retail_mask]}]}],
+	})
+	_write_json(pack_root.path_join("provenance/manifest.json"), {
+		"entries": [{
+			"source": {"virtual_path": retail_mask},
+			"outputs": [{"path": "assets/textures/house-color/mask-fixture.png"}],
+		}],
+	})
+	var mask := Image.create(1, 1, false, Image.FORMAT_RGBA8)
+	mask.fill(Color.WHITE)
+	_check(mask.save_png(pack_root.path_join("assets/textures/house-color/mask-fixture.png")) == OK, "the house-colour cache fixture writes its mask")
+	RetailHouseColor._configured_pack = ""
+	RetailHouseColor._stem_to_mask_path = {}
+	RetailHouseColor._mask_textures = {}
+	RetailHouseColor._materials = {}
+	var custom_node := _house_color_mesh()
+	var team_node := _house_color_mesh()
+	var custom_count := RetailHouseColor.apply_with_color(custom_node, Color8(12, 34, 56), pack_root)
+	var team_count := RetailHouseColor.apply(team_node, 0, pack_root)
+	var custom_material := (custom_node.mesh as Mesh).surface_get_material(0) as ShaderMaterial
+	var team_material := (team_node.mesh as Mesh).surface_get_material(0) as ShaderMaterial
+	_check(custom_count == 1 and team_count == 1, "per-colour and team entries each recolour one fixture surface")
+	_check(custom_material != team_material, "per-colour and team house-colour cache entries are distinct")
+	_check(not Color(custom_material.get_shader_parameter("team_color")).is_equal_approx(Color(team_material.get_shader_parameter("team_color"))), "per-colour and team cache entries retain isolated colours")
+	RetailHouseColor._configured_pack = ""
+	RetailHouseColor._stem_to_mask_path = {}
+	RetailHouseColor._mask_textures = {}
+	RetailHouseColor._materials = {}
+
+
+func _house_color_mesh() -> MeshInstance3D:
+	var texture_image := Image.create(1, 1, false, Image.FORMAT_RGBA8)
+	texture_image.fill(Color.WHITE)
+	var texture := ImageTexture.create_from_image(texture_image)
+	texture.resource_name = "fixture"
+	var material := StandardMaterial3D.new()
+	material.albedo_texture = texture
+	var mesh := QuadMesh.new()
+	mesh.material = material
+	var instance := MeshInstance3D.new()
+	instance.mesh = mesh
+	return instance
+
+
+func _write_json(path: String, value: Variant) -> void:
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file != null:
+		file.store_string(JSON.stringify(value))
+		file.close()
 
 
 # --------------------------------------------------- what you see is what saves

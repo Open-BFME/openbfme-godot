@@ -42,6 +42,7 @@ extends Panel
 const CahHeroes = preload("res://src/content/cah_heroes.gd")
 const ThemeScript = preload("res://src/ui/openbfme_theme.gd")
 const SubObjects = preload("res://src/ui/cah_sub_objects.gd")
+const PackCapability = preload("res://src/content/pack_capability.gd")
 
 ## Loaded on demand rather than preloaded. `asset_factory.gd` reaches the
 ## `ContentDB` autoload at class scope, so preloading it here would make this
@@ -467,10 +468,40 @@ func _on_hero_color_changed(index: int, color: Color) -> void:
 	while _colors.size() < 3:
 		_colors.append([160, 160, 160])
 	_colors[index] = [int(round(color.r * 255.0)), int(round(color.g * 255.0)), int(round(color.b * 255.0))]
-	# The masked material is per visual. Recreate it so the preview never mutates
-	# a cached GLB or a material shared with another hero.
-	_loaded_model_id = ""
-	_update_preview()
+	# ColorPicker emits continuously while dragging. The primary masked colour is
+	# changed on private per-visual materials in place; secondary/tertiary colours
+	# are persisted for the later garment-binding lane without reloading the GLB.
+	if index == 0 and _preview_model != null:
+		_recolor_preview_house_color(color)
+
+
+func _recolor_preview_house_color(color: Color) -> int:
+	var recolored := 0
+	var stack: Array[Node] = [_preview_model]
+	while not stack.is_empty():
+		var node := stack.pop_back() as Node
+		if node is MeshInstance3D:
+			var instance := node as MeshInstance3D
+			var mesh: Mesh = instance.mesh
+			if mesh != null:
+				for surface in mesh.get_surface_count():
+					var source := mesh.surface_get_material(surface)
+					if not source is ShaderMaterial:
+						continue
+					var current: Variant = (source as ShaderMaterial).get_shader_parameter("team_color")
+					if not current is Color:
+						continue
+					# House-colour materials are cached across visuals. Duplicate before
+					# changing the uniform so one hero cannot recolour another.
+					var private_material := (source as ShaderMaterial).duplicate(false) as ShaderMaterial
+					private_material.set_shader_parameter("team_color", color)
+					mesh.surface_set_material(surface, private_material)
+					recolored += 1
+		for child in node.get_children():
+			stack.append(child)
+	if _preview_model != null:
+		_preview_model.set_meta("house_color_surfaces", recolored)
+	return recolored
 
 
 # --------------------------------------------------------------------- layout
@@ -2156,8 +2187,12 @@ func _rebuild_awards_list() -> void:
 	var owned := {}
 	for award_value in _awards:
 		owned[String(award_value)] = true
+	var rendered := {}
 	for award_value in awards:
 		var award_id := String(award_value)
+		if award_id == "" or rendered.has(award_id):
+			continue
+		rendered[award_id] = true
 		var definition: Dictionary = {}
 		for definition_value in ((_system.get("registration", {}) as Dictionary).get("awardDefinitions", []) as Array):
 			if String((definition_value as Dictionary).get("awardId", "")) == award_id:
@@ -2575,10 +2610,30 @@ func _update_preview() -> void:
 		_preview_pivot.add_child(visual)
 		_preview_note.text = ""
 	_apply_preview_appearance(surface)
+	_surface_color_degradation(_preview_model)
 	_bind_preview_idles(sub_row, "%d:%d:%s" % [_selected_class, _selected_sub, model_id])
 	_frame_preview(sub_row, _preview_model)
 	_apply_preview_yaw()
 	_show_turn_controls(true)
+
+
+func _surface_color_degradation(visual: Node3D) -> void:
+	if visual == null or _colors.is_empty():
+		return
+	var pack_root := String(_system.get("_pack_root", ""))
+	var has_masks := PackCapability.provides_house_color(pack_root)
+	var recolored := int(visual.get_meta("house_color_surfaces", 0))
+	if has_masks and recolored > 0:
+		return
+	if not _garment_status.contains("color-unavailable"):
+		_garment_status = (_garment_status + "+" if _garment_status != "" else "") + "color-unavailable"
+	var note := (
+		"This mounted pack has no house-colour masks, so the preview cannot show hero colours."
+		if not has_masks
+		else "The hero mesh has no recolourable surfaces, so the preview cannot show hero colours."
+	)
+	var existing := "" if _preview_caption == null else String(_preview_caption.text)
+	_set_garment_caption(note if existing == "" else "%s %s" % [existing, note])
 
 
 func _preview_frame_size() -> Vector2:

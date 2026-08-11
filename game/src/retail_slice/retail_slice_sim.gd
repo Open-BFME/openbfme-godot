@@ -12886,7 +12886,7 @@ func _record_cah_member_kill(attacker_id: int, target: Dictionary) -> void:
 	# Retail spells this identifier HEROS_KILLED in awardsystem.ini.
 	if String(target.get("category", "")) == "hero":
 		tally["HEROS_KILLED"] = int(tally.get("HEROS_KILLED", 0)) + 1
-	if String(target.get("unit_type", "")).begins_with("CreateAHero__"):
+	if _cah_openplay_multiplayer() and String(target.get("unit_type", "")).begins_with("CreateAHero__"):
 		tally["MP_CREATE_A_HEROES_KILLED"] = int(tally.get("MP_CREATE_A_HEROES_KILLED", 0)) + 1
 
 
@@ -12903,8 +12903,15 @@ func _record_cah_structure_kill(attacker_id: int, target: Dictionary) -> void:
 	# The only structure-derived ThingStat retail defines is keeps destroyed;
 	# v1 maps the authoritative fortress death path and names all other building
 	# categories as gaps instead of inventing a BUILDINGS_DESTROYED counter.
-	if String(target.get("structure_kind", "")) == "fortress":
+	if _cah_openplay_multiplayer() and String(target.get("structure_kind", "")) == "fortress":
 		tally["MP_KEEPS_DESTROYED"] = int(tally.get("MP_KEEPS_DESTROYED", 0)) + 1
+
+
+func _cah_openplay_multiplayer() -> bool:
+	## Awardsystem.ini separates skirmish and open-play multiplayer counters.
+	## The explicit session rule is agreed before setup on every lockstep peer;
+	## absent remains the historical solo/skirmish path.
+	return String(_rules.get("session_mode", "skirmish")) == "openplay-mp"
 
 
 func _award_experience(row: Dictionary, amount: int) -> void:
@@ -18224,7 +18231,8 @@ func _evaluate_cah_match_awards() -> void:
 		var contract := _cah_award_contracts[unit_type] as Dictionary
 		var tally := _cah_tally_for(unit_type)
 		var owner_team := int(contract.get("ownerTeam", _created_hero_owner_teams.get(unit_type, -1)))
-		var result_stat := "HERO_VICTORY_COUNT_SKIRMISH" if owner_team == winner else "HERO_DEFEAT_COUNT_SKIRMISH"
+		var mode_suffix := "OPENPLAY_MP" if _cah_openplay_multiplayer() else "SKIRMISH"
+		var result_stat := "HERO_%s_COUNT_%s" % ["VICTORY" if owner_team == winner else "DEFEAT", mode_suffix]
 		tally[result_stat] = int(tally.get(result_stat, 0)) + 1
 		var eligible: Dictionary = {}
 		for award_value in contract.get("eligibleAwards", []) as Array:

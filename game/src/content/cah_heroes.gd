@@ -1325,7 +1325,23 @@ static func _read_profile(path: String) -> Dictionary:
 	var parsed: Variant = JSON.parse_string(text)
 	if typeof(parsed) != TYPE_DICTIONARY:
 		return {}
-	return parsed as Dictionary
+	var profile := parsed as Dictionary
+	# JSON numbers return as floats. These fields are integer retail counters and
+	# RGB bytes, so restore their typed profile shape at the persistence boundary.
+	if profile.get("colors") is Array:
+		var colors: Array = []
+		for color_value in profile["colors"] as Array:
+			var color: Array = []
+			if color_value is Array:
+				for channel in color_value as Array:
+					color.append(int(channel))
+			colors.append(color)
+		profile["colors"] = colors
+	if profile.get("trackingStats") is Dictionary:
+		var stats: Dictionary = profile["trackingStats"] as Dictionary
+		for stat_id in stats.keys():
+			stats[stat_id] = int(stats[stat_id])
+	return profile
 
 
 static func _is_safe_hero_id(hero_id: String) -> bool:

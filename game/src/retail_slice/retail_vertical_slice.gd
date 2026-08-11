@@ -1509,6 +1509,11 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 		"ai_queue_interval_ticks": 60,
 		"ai_attack_delay_ticks": 300,
 	}
+	# Awardsystem.ini authors separate open-play multiplayer counters. Only a
+	# real host/join session opts into that vocabulary; absence is deliberately
+	# the byte-identical solo/skirmish default used by every historical runner.
+	if _mp_mode == "host" or _mp_mode == "join":
+		rules["session_mode"] = "openplay-mp"
 	# Menu RULES tab seam: GameState carries the setup's Initial Resources and
 	# Command Point Factor. -1 / 1.0 keep the authored values above.
 	var game_state := get_node_or_null("/root/GameState")
