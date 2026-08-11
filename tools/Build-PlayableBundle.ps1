@@ -331,8 +331,13 @@ try {
     # Only for -Release, and only for the directory this tool owns. A dev build
     # with a hand-picked -OutputRoot is not this tool's directory to blanket-
     # ignore, and the refusal below is the right answer for it.
+    # Which directory carries the guard is decided by Get-BundleReleaseIgnoreOwner:
+    # normally the parent of the output root, but the output root itself when the
+    # parent is tracked source (`-ReleaseRoot <repo>\dist`, which is what
+    # tools/Publish-DistBuild.ps1 asks for so a build lands at dist\v0.2.1\).
+    # Blanket-ignoring a tracked parent would hide the whole project from git.
     $ignoreOwner = ''
-    if ($Release) { $ignoreOwner = [IO.Path]::GetDirectoryName($OutputRoot.TrimEnd('\', '/')) }
+    if ($Release) { $ignoreOwner = Get-BundleReleaseIgnoreOwner -OutputRoot $OutputRoot }
     if ($ignoreOwner -ne '' -and $null -ne $ignoreOwner) {
         if (Set-BundleReleaseDirectoryIgnored -ReleaseDirectory $ignoreOwner) {
             Write-BundleStep "wrote the self-ignoring guard $ignoreOwner\.gitignore (keeps this directory out of git on every branch)"

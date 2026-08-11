@@ -28,6 +28,43 @@ Work at the repository top level. **Do not create branches or worktrees.**
 | Launch the game | `run_game.bat` | |
 | Pack address check | `python tools\check_pack_addresses.py` | Seconds. Run it after any pack work |
 
+## Publishing a build
+
+When a major thing lands, the beta gets a number and a folder you can copy to
+another machine and run. Four steps, one command each.
+
+| Step | Command | Notes |
+|---|---|---|
+| 1. Bump the number | edit `VERSION` (e.g. `0.2.1` → `0.2.2`) | One line. The only place the version is decided |
+| 2. Restate it everywhere | `powershell -File tools\Write-BuildInfo.ps1` | Then match `config/version` in `game\project.godot` and the label in `game\scenes\boot.tscn`. Commit all four |
+| 3. Write the notes | `docs\patch-notes\v<version>.md` | Owner-facing plain language: what changed for the player, and a `## Known gaps` section. The publish refuses without it |
+| 4. Publish | `powershell -File tools\Publish-DistBuild.ps1` | Lands in `dist\v<version>\`. Add `-Rc` for the release candidate (launcher included), `-Zip` to hand it over a share |
+
+`powershell -File tools\Test-DistPipeline.ps1` checks steps 1-3 in about a
+second — run it before you spend half an hour on step 4.
+
+- **`dist\` and `build\` are git-ignored and stay that way.** The published
+  folder carries converted retail content packs. `Publish-DistBuild.ps1` asks git
+  twice — before and after the build — whether the dist root is ignored *and*
+  whether git tracks anything under it, and refuses on either. Patch notes, the
+  scripts and this file are committed; nothing under `dist\` ever is.
+- **`Publish-DistBuild.ps1` does not reimplement the build.** It wraps
+  `tools\Build-PlayableBundle.ps1`, which exports, stages the packs
+  `selection.json` names, proves the staged bytes hash to the source packs and
+  boots the result headless twice. Fix build behaviour there, not in the wrapper.
+- **A published folder must run with no environment set.** The wrapped build
+  boots the export once with `OPENBFME_CONTENT` and once without, and the
+  publish refuses if the two runs do not reach the same content census.
+  `-AllowEnvDependentContent` overrides it and says so loudly in the output —
+  never use it for a folder going to another machine.
+- **`-Rc` builds the launcher and the install root it reads.** The launcher has
+  no "browse to a game" control: it follows `current.json` to
+  `versions\<version>\` and verifies those files by hash. The publish writes that
+  layout and then runs `tools\release\Test-LauncherHeadless.ps1` against the exe
+  it just produced. This is the LOCAL release-candidate shape — publishing to
+  GitHub is a different path (`tools\release\Publish-FirstPlaytestRc.ps1`) and
+  needs signing keys.
+
 ## The rules that have actually bitten us
 
 1. **Packs are immutable, and now they are sealed.** A directory named `<sha256>`

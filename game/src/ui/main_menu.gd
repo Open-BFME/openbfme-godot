@@ -1248,7 +1248,16 @@ func _build_identity_text() -> String:
 	## `build_info.gd`. `OPENBFME_BUILD_ID` and the project setting still override
 	## it, in that order, so a packaging job can stamp its own id; what none of
 	## them may do is leave the shell advertising a constant.
-	var version := String(ProjectSettings.get_setting(VERSION_SETTING, "")).strip_edges()
+	## The version part prefers the GENERATED answer over the hand-edited one:
+	## `VERSION` at the repository root is the source of truth, and
+	## `tools/Write-BuildInfo.ps1` copies it into `build_info.json`, whereas
+	## `config/version` in project.godot is a literal somebody has to remember to
+	## change. `tools/Test-DistPipeline.ps1` refuses a publish where they differ,
+	## so this preference only ever decides during the window between a bump and
+	## the file that has not caught up yet - and it decides for the generated one.
+	var version := BuildInfoScript.product_version()
+	if version == "":
+		version = String(ProjectSettings.get_setting(VERSION_SETTING, "")).strip_edges()
 	var build_id := String(OS.get_environment("OPENBFME_BUILD_ID")).strip_edges()
 	if build_id == "":
 		var setting := String(ProjectSettings.get_setting(BUILD_ID_SETTING, "")).strip_edges()

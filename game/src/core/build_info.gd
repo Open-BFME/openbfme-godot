@@ -42,6 +42,25 @@ static func build_id(path: String = BUILD_INFO_PATH) -> String:
 	return id
 
 
+static func product_version(path: String = BUILD_INFO_PATH) -> String:
+	## `0.2.1` - the beta number this build was published under, or "" when this
+	## checkout has not been stamped yet.
+	##
+	## Same contract as `build_id()`: the FILE is the source at runtime, because
+	## an export ships neither `.git` nor the repository's `VERSION`. It is
+	## written by `tools/Write-BuildInfo.ps1` from `VERSION`, which is the one
+	## place the product version is decided; `tools/Publish-DistBuild.ps1`
+	## refuses to publish a build whose copies of it disagree.
+	##
+	## Returns "" rather than a placeholder. A caller that wants a fallback must
+	## choose one out loud - a version string invented here would be a silent
+	## fallback, and this project has paid for those.
+	var info := read_build_info(path)
+	if info.is_empty():
+		return ""
+	return String(info.get("version", "")).strip_edges()
+
+
 static func read_build_info(path: String = BUILD_INFO_PATH) -> Dictionary:
 	if not FileAccess.file_exists(path):
 		return {}

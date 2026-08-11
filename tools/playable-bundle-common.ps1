@@ -983,6 +983,56 @@ function Get-BundleMainWorktree {
     return $main
 }
 
+function Test-BundleDirectoryHasTrackedFiles {
+    <#
+    .SYNOPSIS
+        Does git track anything under this directory? Asked, never assumed.
+    .DESCRIPTION
+        "Not ignored" and "tracked" are different facts and only one of them is
+        answerable from .gitignore: a path git already tracks stays tracked no
+        matter what any ignore rule says. A directory that does not exist tracks
+        nothing, which is the honest answer rather than an error.
+    #>
+    param([Parameter(Mandatory)][string]$Directory)
+    $full = [IO.Path]::GetFullPath($Directory).TrimEnd('\', '/')
+    if (-not [IO.Directory]::Exists($full)) { return $false }
+    Push-Location $full
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $tracked = @(& git ls-files -- . 2>$null | Where-Object { $_ -ne '' }) }
+    finally { $ErrorActionPreference = $previousPreference; Pop-Location }
+    return ($tracked.Count -gt 0)
+}
+
+function Get-BundleReleaseIgnoreOwner {
+    <#
+    .SYNOPSIS
+        Which directory should carry the self-ignoring `.gitignore`.
+    .DESCRIPTION
+        Normally the PARENT of the output root, so one guard covers every
+        release ever built into `dist/` rather than one per bundle.
+
+        Unless the parent is source. `-ReleaseRoot <repo>\dist` is a legitimate
+        thing to ask for - it is what tools/Publish-DistBuild.ps1 asks for, so a
+        published build lands at `dist\v0.2.1\` and not `dist\bundle\v0.2.1\` -
+        and its parent is the repository root, which is tracked. Blanket-
+        ignoring THAT would hide the entire project from git and clobber the
+        real .gitignore doing it, so in that case the output root owns its own
+        guard instead. The guarantee is identical; only its location moves.
+
+        Returns '' when neither candidate can safely own it, which the caller
+        treats as "write no guard" - never as "write it anyway".
+    #>
+    param([Parameter(Mandatory)][string]$OutputRoot)
+    $full = [IO.Path]::GetFullPath($OutputRoot).TrimEnd('\', '/')
+    $parent = [IO.Path]::GetDirectoryName($full)
+    if ($parent -ne '' -and $null -ne $parent -and -not (Test-BundleDirectoryHasTrackedFiles -Directory $parent)) {
+        return $parent
+    }
+    if (-not (Test-BundleDirectoryHasTrackedFiles -Directory $full)) { return $full }
+    return ''
+}
+
 function Set-BundleReleaseDirectoryIgnored {
     <#
     .SYNOPSIS
@@ -1015,15 +1065,8 @@ function Set-BundleReleaseDirectoryIgnored {
     # git is tracking anything here, this is not one, and the caller has pointed
     # a release somewhere it must not go - which the git-ignore refusal below
     # will then say out loud.
-    if ([IO.Directory]::Exists($full)) {
-        Push-Location $full
-        $previousPreference = $ErrorActionPreference
-        $ErrorActionPreference = 'Continue'
-        try { $tracked = @(& git ls-files -- . 2>$null | Where-Object { $_ -ne '' }) }
-        finally { $ErrorActionPreference = $previousPreference; Pop-Location }
-        if ($tracked.Count -gt 0) {
-            throw (New-BundleRefusal -Problem "Refusing to write a blanket .gitignore into $full - git is tracking $($tracked.Count) file(s) there, so it is source, not release output." -Remedy 'Point the release at a directory that holds output only (dist/ by default).')
-        }
+    if (Test-BundleDirectoryHasTrackedFiles -Directory $full) {
+        throw (New-BundleRefusal -Problem "Refusing to write a blanket .gitignore into $full - git is tracking file(s) there, so it is source, not release output." -Remedy 'Point the release at a directory that holds output only (dist/ by default).')
     }
 
     [void](New-Item -ItemType Directory -Path $full -Force)

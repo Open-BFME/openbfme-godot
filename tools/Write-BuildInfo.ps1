@@ -32,9 +32,25 @@ if ($LASTEXITCODE -ne 0 -or -not $commit) {
     throw "git rev-parse failed in $RepoRoot; no commit to write."
 }
 
+# The product version comes from VERSION at the repository root and from nowhere
+# else. It is carried in here because an export ships no VERSION file either, and
+# a build that cannot state its own beta number is the "which build is this?"
+# problem wearing a different hat. Absent VERSION is a refusal, not a blank: a
+# published folder named v0.2.1 whose game says nothing would be worse than no
+# number at all.
+$versionFile = Join-Path $RepoRoot 'VERSION'
+if (-not (Test-Path -LiteralPath $versionFile -PathType Leaf)) {
+    throw "VERSION is missing at $versionFile; there is no product version to write."
+}
+$version = ([IO.File]::ReadAllText($versionFile)).Trim()
+if ($version -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$') {
+    throw "VERSION does not hold a version: '$version'"
+}
+
 $payload = [ordered]@{
     schema        = 'openbfme.build-info'
-    schemaVersion = 0
+    schemaVersion = 1
+    version       = $version
     build         = $count
     commit        = $commit
     generatedUtc  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
@@ -45,4 +61,4 @@ if (-not (Test-Path $directory)) {
     New-Item -ItemType Directory -Force -Path $directory | Out-Null
 }
 ($payload | ConvertTo-Json) | Out-File -FilePath $OutFile -Encoding utf8
-Write-Output "build $count ($commit) -> $OutFile"
+Write-Output "v$version build $count ($commit) -> $OutFile"
