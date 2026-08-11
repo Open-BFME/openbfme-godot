@@ -33,7 +33,10 @@ from .sage_cst import (
     parse_sage_document,
 )
 from .sage_ini import IniBlock, parse_flat_named_blocks
-from .sage_audio import normalize_faction_voice_event
+from .sage_audio import (
+    faction_voice_equivalence_provenance,
+    normalize_faction_voice_event,
+)
 
 
 SCHEMA = "openbfme.playable-unit-descriptor"
@@ -2735,23 +2738,31 @@ def _audio_routes(
             normalized_identifier = normalize_faction_voice_event(
                 ancestry[-1].name, assignment.key, authored_identifier
             )
-            identifiers = [normalized_identifier]
+            identifiers = [(normalized_identifier, authored_identifier)]
         else:
-            tokens = {
-                normalize_faction_voice_event(
-                    ancestry[-1].name, assignment.key, token
-                ).casefold()
-                for token in _tokens(assignment.value)
-            }
+            tokens = _tokens(assignment.value)
             identifiers = sorted(
                 {
-                    target
+                    (
+                        normalize_faction_voice_event(
+                            ancestry[-1].name, assignment.key, token
+                        ),
+                        token,
+                    )
                     for field, target in authored_edges
-                    if field == folded and target.casefold() in tokens
+                    if field == folded
+                    for token in tokens
+                    if target.casefold()
+                    in {
+                        token.casefold(),
+                        normalize_faction_voice_event(
+                            ancestry[-1].name, assignment.key, token
+                        ).casefold(),
+                    }
                 },
-                key=str.casefold,
+                key=lambda item: (item[0].casefold(), item[1].casefold()),
             )
-        for identifier in identifiers:
+        for identifier, authored_identifier in identifiers:
             if not identifier:
                 continue
             row = {
@@ -2759,6 +2770,11 @@ def _audio_routes(
                 "sourceIni": assignment.source_virtual_path,
                 "line": assignment.line,
             }
+            equivalence = faction_voice_equivalence_provenance(
+                ancestry[-1].name, assignment.key, authored_identifier
+            )
+            if equivalence is not None:
+                row["approvedEquivalence"] = equivalence
             result[assignment.key].append(row)
     return {
         key: rows

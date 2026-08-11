@@ -3,6 +3,7 @@ extends SceneTree
 ## copies retail payloads and exercises the enabled Godot playback path.
 
 const AudioScript = preload("res://src/retail_slice/retail_slice_audio.gd")
+const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 
 var passed := 0
 var failed := 0
@@ -415,9 +416,11 @@ func _run() -> void:
 		"StructureUnderAttack": {"Men": "BuildingLightDamageStone"},
 		"CampDestroyed": {"Men": "BuildingSink"},
 		"RingPickedUpLocal": {"Men": "ImpactHorse"},
+		"AlliedPlayerGainsRing": {"Men": "BodyFallGeneric2"},
 		"EnemyPlayerGainsRing": {"Men": "BuildingHeavyDamageStone"},
 		"UpgradeForgedBladesReady": {"Men": "SwordShingClean1ForHordes"},
 		"UpgradeFlameArrowsReady": {"Men": "ArrowDrawBow"},
+		"UpgradeHeavyArmorReady": {"Men": "BodyFallSoldier"},
 	}
 	var fixture_semantics := {
 		"CannotBuildDueToCPLimit": {"priority": 7, "cooldownMs": 60000},
@@ -426,9 +429,11 @@ func _run() -> void:
 		"StructureUnderAttack": {"priority": 7, "cooldownMs": 30000},
 		"CampDestroyed": {"priority": 4, "cooldownMs": 15000},
 		"RingPickedUpLocal": {"priority": 9, "cooldownMs": 20000},
+		"AlliedPlayerGainsRing": {"priority": 8, "cooldownMs": 20000},
 		"EnemyPlayerGainsRing": {"priority": 7, "cooldownMs": 20000},
 		"UpgradeForgedBladesReady": {"priority": 6, "cooldownMs": 1000},
 		"UpgradeFlameArrowsReady": {"priority": 6, "cooldownMs": 1000},
+		"UpgradeHeavyArmorReady": {"priority": 6, "cooldownMs": 1000},
 	}
 	var eva_fixture = AudioScript.new()
 	root.add_child(eva_fixture)
@@ -453,16 +458,30 @@ func _run() -> void:
 	var unit_attack_repeat: Dictionary = eva_fixture.play_eva_event("UnitUnderAttack", 106, 85001)
 	_check("eva_unit_under_attack_routes_and_respects_cooldown", bool(unit_attack.get("ok", false)) and not bool(unit_attack_repeat.get("ok", true)) and String(unit_attack_repeat.get("reason", "")) == "eva_cooldown", "%s / %s" % [unit_attack, unit_attack_repeat])
 	var enemy_ring: Dictionary = eva_fixture.play_eva_event("EnemyPlayerGainsRing", 107, 160000)
+	var allied_ring: Dictionary = eva_fixture.play_ring_pickup_event("allied", "", 113, 161000)
+	var missing_local_ring: Dictionary = eva_fixture.play_ring_pickup_event("local", "", 114, 162000)
+	var despawned_ring: Dictionary = eva_fixture.play_ring_pickup_event("carrier-unavailable", "RingPickedUpLocal", 115, 163000)
 	eva_fixture.sync_events([
 		{"sequence": 108, "tick": 900, "kind": "eva.base_under_attack", "structure_kind": "fortress"},
 		{"sequence": 109, "tick": 1100, "kind": "eva.building_lost", "structure_kind": "fortress"},
 		{"sequence": 111, "tick": 1700, "kind": "battalion_upgrade.completed", "team": 0, "upgrade_id": "Upgrade_ForgedBlades"},
 		{"sequence": 112, "tick": 1800, "kind": "battalion_upgrade.completed", "team": 0, "upgrade_id": "Upgrade_GondorArcherFireArrows"},
+		{"sequence": 116, "tick": 1900, "kind": "battalion_upgrade.completed", "team": 0, "upgrade_id": "Upgrade_GondorHeavyArmor"},
 	])
 	_check("eva_under_attack_and_building_lost_surface_compiled_ids", eva_fixture.eva_last_played_msec.has("StructureUnderAttack") and eva_fixture.eva_last_played_msec.has("CampDestroyed"))
 	_check("eva_ring_events_surface_compiled_ids", eva_fixture.eva_last_played_msec.has("RingPickedUpLocal") and bool(enemy_ring.get("ok", false)) and String(enemy_ring.get("eva_id", "")) == "EnemyPlayerGainsRing", str(enemy_ring))
-	_check("eva_upgrade_complete_surfaces_real_battalion_event_ids", eva_fixture.eva_last_played_msec.has("UpgradeForgedBladesReady") and eva_fixture.eva_last_played_msec.has("UpgradeFlameArrowsReady"))
-	_check("eva_authored_silent_unit_lost_has_no_substitute", not fixture_events.has("UnitLost") and not fixture_events.has("BattalionLost"))
+	_check("eva_allied_ring_uses_allied_perspective", bool(allied_ring.get("ok", false)) and String(allied_ring.get("eva_id", "")) == "AlliedPlayerGainsRing", str(allied_ring))
+	_check("eva_empty_local_ring_contract_has_named_diagnostic", not bool(missing_local_ring.get("ok", true)) and String(missing_local_ring.get("reason", "")) == "ring_eva_unavailable" and eva_fixture.eva_diagnostics.has("ring_eva_unavailable:RingPickedUpLocal:114"), str(missing_local_ring))
+	_check("eva_despawned_ring_carrier_fails_closed", not bool(despawned_ring.get("ok", true)) and String(despawned_ring.get("reason", "")) == "ring_carrier_unavailable" and eva_fixture.eva_diagnostics.has("ring_carrier_unavailable:RingPickedUpLocal:115"), str(despawned_ring))
+	_check("eva_upgrade_complete_surfaces_real_battalion_event_ids", eva_fixture.eva_last_played_msec.has("UpgradeForgedBladesReady") and eva_fixture.eva_last_played_msec.has("UpgradeFlameArrowsReady") and eva_fixture.eva_last_played_msec.has("UpgradeHeavyArmorReady"))
+	var relation_probe = SimScript.new()
+	relation_probe.configure_team_roster([
+		{"team": 0, "faction": "men", "is_ai": false, "alliance": "west"},
+		{"team": 1, "faction": "elves", "is_ai": true, "alliance": "west"},
+		{"team": 5, "faction": "mordor", "is_ai": true},
+	])
+	relation_probe.setup({}, {"spawn_initial_battalions": false})
+	_check("eva_ring_perspective_classifies_allies_and_enemies", relation_probe.team_relationship(0, 1) == "allied" and relation_probe.team_relationship(0, 5) == "enemy" and relation_probe.team_relationship(0, 99) == "unavailable")
 	eva_fixture.dispose()
 	eva_fixture.free()
 

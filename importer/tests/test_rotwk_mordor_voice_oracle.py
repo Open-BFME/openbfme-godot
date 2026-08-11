@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from openbfme_importer.playable_unit_compiler import (
+    compile_playable_unit_descriptor,
+    prepare_playable_unit_compiler,
+)
 from openbfme_importer.sage_audio import normalize_faction_voice_event
 
 
@@ -20,6 +24,16 @@ EFFECTIVE = (
     / "effective-assets"
 )
 MORDOR_UNITS = EFFECTIVE / "data/ini/object/evilfaction/units/mordor"
+
+
+def _effective_ini_documents() -> dict[str, bytes]:
+    if not EFFECTIVE.is_dir():
+        pytest.fail("pure RotWK 2.01 effective-assets oracle is not present")
+    return {
+        path.relative_to(EFFECTIVE).as_posix(): path.read_bytes()
+        for path in (EFFECTIVE / "data/ini").rglob("*")
+        if path.is_file() and path.suffix.casefold() in {".ini", ".inc"}
+    }
 
 
 def _voice_fields(name: str) -> dict[str, str]:
@@ -88,8 +102,55 @@ def test_mordor_goblin_uruk_named_graph_is_authored_silent_or_orc_mixed() -> Non
     assert re.search(r"(?ims)^AudioEvent\s+OrcVoiceAttack2\b.*?EUOrcPr_voiAtt", sound)
 
 
-def test_unrecognized_mordor_uruk_voice_binding_fails_closed() -> None:
-    with pytest.raises(ValueError, match="cross-faction-voice-binding"):
+def test_modded_goblin_binding_is_preserved_without_aborting_the_edition() -> None:
+    assert (
         normalize_faction_voice_event(
-            "MordorGoblinSwordsman", "VoiceGuard", "UrukVoiceGuard"
+            "MordorGoblinSwordsman", "VoiceGuard", "ModdedGoblinVoiceGuard"
         )
+        == "ModdedGoblinVoiceGuard"
+    )
+
+
+def test_compiled_mordor_battering_ram_death_uses_approved_orc_equivalence() -> None:
+    documents = _effective_ini_documents()
+    prepared = prepare_playable_unit_compiler(documents)
+    object_rows = [
+        {
+            "id": definition.name,
+            "edges": (
+                [
+                    {
+                        "field": "Sound",
+                        "targetKind": "audio-definition",
+                        "targetId": "UrukVoiceDie",
+                    }
+                ]
+                if definition.name == "MordorBatteringRam"
+                else []
+            ),
+        }
+        for definition in prepared.objects.values()
+    ]
+    descriptor = compile_playable_unit_descriptor(
+        "MordorBatteringRam",
+        documents,
+        prepared=prepared,
+        game="rotwk",
+        faction_graph={
+            "target": {"playerTemplate": "FactionMordor"},
+            "definitions": {"objects": object_rows, "commandButtons": []},
+        },
+    )
+
+    routes = descriptor["presentation"]["audioRoutes"]
+    for owner in ("container", "primaryMember"):
+        sound_rows = routes[owner]["Sound"]
+        assert [row["id"] for row in sound_rows] == ["OrcVoiceDie"]
+        assert sound_rows[0]["sourceIni"].endswith(
+            "object/evilfaction/units/isengard/batteringram.ini"
+        )
+        assert sound_rows[0]["line"] == 682
+        assert sound_rows[0]["approvedEquivalence"] == {
+            "authoredId": "UrukVoiceDie",
+            "reason": "mordor-battering-ram-inherits-isengard-slow-death-sound",
+        }

@@ -536,6 +536,17 @@ func _is_hostile(team_a: int, team_b: int) -> bool:
 	return true
 
 
+func team_relationship(observer_team: int, subject_team: int) -> String:
+	## Presentation-facing classification over the authoritative roster. This is
+	## read-only and deliberately returns "unavailable" for neutral/unrostered
+	## owners so callers cannot mislabel an unknown subject as an enemy.
+	if observer_team == subject_team and _is_combatant_team(observer_team):
+		return "local"
+	if not _is_combatant_team(observer_team) or not _is_combatant_team(subject_team):
+		return "unavailable"
+	return "enemy" if _is_hostile(observer_team, subject_team) else "allied"
+
+
 func _hostile_living_ids(team: int) -> Array[int]:
 	## Every living battalion hostile to `team`, ascending id order. For the
 	## 2-team free-for-all this is identical to living_ids(other_team): the sole

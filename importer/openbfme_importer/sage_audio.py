@@ -25,37 +25,44 @@ MAX_AUDIO_PARAMETERS_PER_EVENT = 4_096
 MAX_AUDIO_REFERENCE_WEIGHT = 1_000_000
 MAX_AUDIO_SAMPLE_PATHS = 250_000
 
-_MORDOR_GOBLIN_AUTHORED_URUK_BINDINGS = {
-    "mordorgoblinswordsman": {
-        ("voiceselect", "urukvoiceselect"),
-        ("voicemove", "urukvoicemovems"),
-        ("voiceattack", "urukvoiceattackms"),
-    },
-    "mordorgoblinarcher": {
-        ("voiceselect", "urukvoiceselect"),
-        ("voicemove", "urukvoicemovems"),
-        ("voiceattack", "urukvoiceattackms"),
-    },
+_APPROVED_FACTION_VOICE_EQUIVALENCES = {
+    ("mordorbatteringram", "sound", "urukvoicedie"): (
+        "OrcVoiceDie",
+        "mordor-battering-ram-inherits-isengard-slow-death-sound",
+    ),
 }
 
 
 def normalize_faction_voice_event(object_id: str, field: str, event_id: str) -> str:
-    """Validate the surprising but retail-authored Mordor goblin bindings.
+    """Apply only source-backed, object-specific faction voice equivalences.
 
-    UrukVoiceSelect is authored silent; the move/attack multisounds deliberately
-    include OrcVoice* porter leaves. Preserve that graph verbatim and reject any
-    other UrukVoice binding on these objects instead of guessing a replacement.
+    RotWK authors ``MordorBatteringRam`` as an Isengard child and replaces all
+    seventeen command voices with ``OrcBatteringRamVoice*`` but accidentally
+    inherits ``SlowDeathBehavior/Sound = INITIAL UrukVoiceDie``.  Retail places
+    ``OrcVoiceDie`` immediately beside ``UrukVoiceDie`` with identical semantics,
+    and Mordor unit/siege death behaviors repeatedly select the Orc event.  That
+    makes this one binding an approved equivalence rather than an invented
+    substitute.  Every other event, including stranded/modded goblin bindings,
+    remains verbatim and cannot abort an edition build here.
     """
 
-    authored = _MORDOR_GOBLIN_AUTHORED_URUK_BINDINGS.get(object_id.casefold())
-    if authored is None:
-        return event_id
-    binding = (field.casefold(), event_id.casefold())
-    if event_id.casefold().startswith("urukvoice") and binding not in authored:
-        raise ValueError(
-            f"cross-faction-voice-binding:{object_id}:{field}:{event_id}"
-        )
-    return event_id
+    approved = _APPROVED_FACTION_VOICE_EQUIVALENCES.get(
+        (object_id.casefold(), field.casefold(), event_id.casefold())
+    )
+    return approved[0] if approved is not None else event_id
+
+
+def faction_voice_equivalence_provenance(
+    object_id: str, field: str, event_id: str
+) -> dict[str, str] | None:
+    """Describe an approved rewrite so compiled routes retain source intent."""
+
+    approved = _APPROVED_FACTION_VOICE_EQUIVALENCES.get(
+        (object_id.casefold(), field.casefold(), event_id.casefold())
+    )
+    if approved is None:
+        return None
+    return {"authoredId": event_id, "reason": approved[1]}
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_+.-]{0,255}$")
 _REFERENCE = re.compile(

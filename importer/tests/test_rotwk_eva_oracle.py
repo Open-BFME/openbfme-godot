@@ -63,6 +63,12 @@ def test_pure_rotwk_has_no_generic_unit_lost_announcer_event() -> None:
     assert "BattalionLost" not in events
 
 
+def test_heavy_armor_ready_has_only_the_five_authored_faction_sounds() -> None:
+    sides = set(_document()["events"]["UpgradeHeavyArmorReady"])
+    assert sides == {"Angmar", "Isengard", "Men", "Mordor", "Wild"}
+    assert {"Dwarves", "Elves"}.isdisjoint(sides)
+
+
 def test_economic_plot_loss_is_authored_silent_not_substituted() -> None:
     document = _document()
     assert "EconPlotDestroyed" not in document["events"]

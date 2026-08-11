@@ -4148,13 +4148,17 @@ func _consume_event_feed() -> void:
 				)
 		elif kind == "ring.picked_up" and audio_system != null:
 			var ring_carrier: Dictionary = simulation.entity(int(event.get("entity_id", 0)))
-			var ring_eva := String(event.get("eva", "")) if int(ring_carrier.get("team", -1)) == local_team else "EnemyPlayerGainsRing"
-			if ring_eva != "":
-				audio_system.play_eva_event(
-					ring_eva,
-					int(event.get("sequence", 0)),
-					int(event.get("tick", 0)) * 100
+			var relationship := "carrier-unavailable"
+			if not ring_carrier.is_empty():
+				relationship = simulation.team_relationship(
+					local_team, int(ring_carrier.get("team", -1))
 				)
+			audio_system.play_ring_pickup_event(
+				relationship,
+				String(event.get("eva", "")),
+				int(event.get("sequence", 0)),
+				int(event.get("tick", 0)) * 100
+			)
 		if int(event.get("team", -1)) != local_team and kind != "match.victory":
 			continue
 		match kind:

@@ -150,6 +150,7 @@ var faction_side := ""
 var eva_last_played_msec: Dictionary = {}
 var eva_arbitration_msec := -1
 var eva_arbitration_priority := -1
+var eva_diagnostics: Array[String] = []
 var _structure_damage_stage: Dictionary = {}
 ## When non-empty, these playable-unit documents replace the ContentDB-wide
 ## registry for roster voices and readiness, so a faction match is gated on
@@ -224,6 +225,7 @@ func configure(selected_pack_root: String, enable_playback: bool = true, active_
 	eva_last_played_msec.clear()
 	eva_arbitration_msec = -1
 	eva_arbitration_priority = -1
+	eva_diagnostics.clear()
 	declared_structure_lifecycle_audio_active = false
 	# Entity→object identity is carried on the sim's voice-relevant events and
 	# learned as they stream; no static roster pin exists (S1: the retired
@@ -1260,24 +1262,52 @@ func play_eva_event(eva_id: String, sequence: int = 0, now_msec: int = -1) -> Di
 	return _play_eva_announcement(eva_id, sequence, now_msec)
 
 
+func play_ring_pickup_event(relationship: String, authored_local_eva: String, sequence: int, now_msec: int) -> Dictionary:
+	## Perspective is resolved by the presentation owner before this call. An
+	## absent carrier or ring contract is a named refusal, never an enemy guess.
+	var eva_id := ""
+	match relationship:
+		"local":
+			eva_id = authored_local_eva
+			if eva_id == "":
+				return _eva_rejection("ring_eva_unavailable", "RingPickedUpLocal", sequence)
+		"allied":
+			eva_id = "AlliedPlayerGainsRing"
+		"enemy":
+			eva_id = "EnemyPlayerGainsRing"
+		"carrier-unavailable":
+			return _eva_rejection("ring_carrier_unavailable", "RingPickedUpLocal", sequence)
+		_:
+			return _eva_rejection("ring_perspective_unavailable", "RingPickedUpLocal", sequence)
+	return _play_eva_announcement(eva_id, sequence, now_msec)
+
+
+func _eva_rejection(reason: String, eva_id: String, sequence: int) -> Dictionary:
+	var diagnostic := "%s:%s:%d" % [reason, eva_id, sequence]
+	if not eva_diagnostics.has(diagnostic):
+		eva_diagnostics.append(diagnostic)
+		eva_diagnostics.sort()
+	return _rejection(reason, eva_id, faction_side, "eva", sequence)
+
+
 func _play_eva_announcement(eva_id: String, sequence: int, now_msec: int = -1) -> Dictionary:
 	## Retail eva.ini binds each announcement to a per-side Camp* sound set.
 	## The slice carries that side map in its structure audio contract; a side
 	## or event the converted evidence does not cover fails closed to silence.
 	if now_msec < 0:
-		return _rejection("eva_clock_unavailable", eva_id, faction_side, "eva", sequence)
+		return _eva_rejection("eva_clock_unavailable", eva_id, sequence)
 	var eva_events: Variant = structure_audio_contract.get("eva_events", {})
 	if typeof(eva_events) != TYPE_DICTIONARY or faction_side == "":
-		return _rejection("eva_contract_unavailable", eva_id, faction_side, "eva", sequence)
+		return _eva_rejection("eva_contract_unavailable", eva_id, sequence)
 	var side_sounds: Variant = (eva_events as Dictionary).get(eva_id, {})
 	if typeof(side_sounds) != TYPE_DICTIONARY:
-		return _rejection("eva_event_unavailable", eva_id, faction_side, "eva", sequence)
+		return _eva_rejection("eva_event_unavailable", eva_id, sequence)
 	var sound_id := String((side_sounds as Dictionary).get(faction_side, ""))
 	if sound_id == "":
-		return _rejection("eva_side_unavailable", eva_id, faction_side, "eva", sequence)
+		return _eva_rejection("eva_side_unavailable", eva_id, sequence)
 	var semantics_all: Variant = structure_audio_contract.get("eva_semantics", {})
 	if typeof(semantics_all) != TYPE_DICTIONARY or not (semantics_all as Dictionary).has(eva_id):
-		return _rejection("eva_semantics_unavailable", eva_id, faction_side, "eva", sequence)
+		return _eva_rejection("eva_semantics_unavailable", eva_id, sequence)
 	var semantics: Dictionary = (
 		(semantics_all as Dictionary).get(eva_id, {}) as Dictionary
 		if typeof(semantics_all) == TYPE_DICTIONARY else {}
@@ -1287,12 +1317,12 @@ func _play_eva_announcement(eva_id: String, sequence: int, now_msec: int = -1) -
 	var clock := now_msec
 	var previous := int(eva_last_played_msec.get(eva_id, -cooldown_ms - 1))
 	if cooldown_ms > 0 and clock - previous < cooldown_ms:
-		return _rejection("eva_cooldown", eva_id, faction_side, "eva", sequence)
+		return _eva_rejection("eva_cooldown", eva_id, sequence)
 	# Requests surfaced in one presentation timestamp arbitrate by retail
 	# Priority. A lower/equal event never interrupts a higher one; a higher
 	# event may replace it. This state is presentation-only and never hashed.
 	if clock == eva_arbitration_msec and priority <= eva_arbitration_priority:
-		return _rejection("eva_priority", eva_id, faction_side, "eva", sequence)
+		return _eva_rejection("eva_priority", eva_id, sequence)
 	var routed := route_audio_event(sound_id, sequence)
 	if not bool(routed.get("ok", false)):
 		return routed
