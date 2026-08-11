@@ -1277,6 +1277,7 @@ var _spawn_positions: Dictionary = {}
 ## inert for every 2-team match.
 var _extra_team_centers: Dictionary = {}
 var _home_layout: Dictionary = {}
+var _map_script_waypoints: Dictionary = {}
 var _rules: Dictionary = {}
 var configuration_error := ""
 var _unit_production_rules: Dictionary = {}
@@ -1392,6 +1393,12 @@ var retail_formation_movement := false
 var _creep_lair_placements: Array = []
 var _next_creep_guard_id := 70001
 var _next_creep_structure_id := 60001
+var ring_mechanic_enabled := false
+var _ring_contract: Dictionary = {}
+var _ring_delivery_kinds: Dictionary = {}
+const RING_FALLBACK_TICK := 5
+const RING_DEFAULT_GOLLUM := "NeutralGollum_RingHero"
+const RING_DEFAULT_ITEM := "TheDroppedRing"
 
 
 func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) -> void:
@@ -1457,6 +1464,8 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	entity_container.clear()
 	script_areas.clear()
 	script_waypoints.clear()
+	for waypoint_name in _map_script_waypoints.keys():
+		script_waypoints[String(waypoint_name)] = _map_script_waypoints[waypoint_name]
 	script_waypoint_paths.clear()
 	team_created_edge.clear()
 	match_script_flags.clear()
@@ -1498,6 +1507,12 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	_reset_spellbook_match_state()
 	clock_paused = false
 	_apply_gameplay_rules(gameplay_rules if not gameplay_rules.is_empty() else _rules)
+	if ring_mechanic_enabled:
+		script_surface_bag["game_mode"] = String(_ring_contract.get("modeToken", "ringheroes"))
+		script_surface_bag["ring_mechanic"] = {
+			"gollum_id": 0, "gollum_spawned": false, "ring_active": false,
+			"ring_position": Vector2.ZERO, "carrier_id": 0,
+		}
 	team_upgrades = _seed_team_map({})
 	_has_hero_units = false
 	_register_forge_upgrade_contracts()
@@ -1550,6 +1565,8 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	_next_creep_structure_id = 60001
 	if creep_lairs_enabled:
 		_seed_creep_lairs()
+	if ring_mechanic_enabled:
+		_mark_ring_delivery_structures()
 	# Spellbook effect rules (summon stats) bake the source→sim scale, which
 	# only exists once the gameplay rules are applied above: recompute them
 	# now. Ownership/points already reset; configure only touches doc-derived
@@ -1601,6 +1618,13 @@ func _apply_map_configuration(configuration: Dictionary) -> void:
 	# expose all authored Player_N_Start centers here). Absent on 2-team configs.
 	var configured_team_centers: Variant = configuration.get("team_start_centers", {})
 	_extra_team_centers = {}
+	_map_script_waypoints.clear()
+	var configured_waypoints: Variant = configuration.get("script_waypoints", {})
+	if typeof(configured_waypoints) == TYPE_DICTIONARY:
+		for waypoint_name in (configured_waypoints as Dictionary).keys():
+			var waypoint_position: Variant = (configured_waypoints as Dictionary)[waypoint_name]
+			if typeof(waypoint_position) == TYPE_VECTOR2:
+				_map_script_waypoints[String(waypoint_name)] = waypoint_position
 	if typeof(configured_team_centers) == TYPE_DICTIONARY:
 		for team_key in (configured_team_centers as Dictionary).keys():
 			var center_value: Variant = (configured_team_centers as Dictionary)[team_key]
@@ -1675,6 +1699,7 @@ func _apply_fallback_configuration() -> void:
 	route_provider = null
 	playable_outline = PackedVector2Array()
 	_home_layout.clear()
+	_map_script_waypoints.clear()
 	_extra_team_centers = {}
 	source_map_configured = false
 	_creep_lair_placements = []
@@ -1683,6 +1708,8 @@ func _apply_fallback_configuration() -> void:
 func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 	_rules = gameplay_rules.duplicate(true)
 	configuration_error = ""
+	ring_mechanic_enabled = bool(_rules.get("allow_ring_heroes", false))
+	_configure_ring_mechanic_contract()
 	if not _configure_faction_manifest():
 		return
 	_unit_prerequisites.clear()
@@ -1730,6 +1757,269 @@ func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 	team_resources = _seed_team_map(starting_resources)
 	team_command_points = _seed_team_map(120)
 	_seed_team_manifest_tables()
+
+
+func _configure_ring_mechanic_contract() -> void:
+	_ring_contract = (_rules.get("ring_system", {}) as Dictionary).duplicate(true)
+	for registry_key in ["ring_runtime_documents", "playable_unit_runtimes"]:
+		var registry: Variant = _rules.get(registry_key, {})
+		if typeof(registry) != TYPE_DICTIONARY:
+			continue
+		for document_value in (registry as Dictionary).values():
+			if typeof(document_value) != TYPE_DICTIONARY:
+				continue
+			var mechanic: Dictionary = (document_value as Dictionary).get("ringMechanic", {}) as Dictionary
+			for block_name in ["gollum", "ring"]:
+				var block: Variant = mechanic.get(block_name, {})
+				if typeof(block) == TYPE_DICTIONARY:
+					_ring_contract.merge(block as Dictionary, false)
+					if block_name == "ring" and (block as Dictionary).has("scanRange"):
+						_ring_contract["pickupRange"] = float((block as Dictionary)["scanRange"])
+	_ring_delivery_kinds.clear()
+	for kind_value in (_rules.get("ring_delivery_structure_kinds", []) as Array):
+		_ring_delivery_kinds[String(kind_value)] = true
+	var producer_kinds: Dictionary = _rules.get("producer_kind_by_source_object", {}) as Dictionary
+	var structure_runtimes: Variant = _rules.get("playable_structure_runtimes", {})
+	if typeof(structure_runtimes) == TYPE_DICTIONARY:
+		for document_value in (structure_runtimes as Dictionary).values():
+			if typeof(document_value) != TYPE_DICTIONARY:
+				continue
+			var document := document_value as Dictionary
+			var delivery: Variant = (document.get("ringMechanic", {}) as Dictionary).get("delivery", {})
+			if typeof(delivery) != TYPE_DICTIONARY or (delivery as Dictionary).is_empty():
+				continue
+			var kind := String(producer_kinds.get(String(document.get("objectId", "")), ""))
+			if kind != "":
+				_ring_delivery_kinds[kind] = (delivery as Dictionary).duplicate(true)
+	if ring_mechanic_enabled and _ring_contract.is_empty():
+		_ring_contract = {
+			"waypointFamily": "SpawnPoint_SkirmishGollum_", "spawnTeam": CREEP_TEAM,
+			"modeToken": "ringheroes", "gollumObjectId": RING_DEFAULT_GOLLUM,
+			"ringObjectId": RING_DEFAULT_ITEM, "pickupRange": 10.0,
+			"deliveryRange": 10.0, "status": "HOLDING_THE_RING",
+		}
+		print("[RetailSliceSim] RING_CONTRACT_LIMITATION stale-pack-no-data-ring-system; using named retail constants until data/ring/system.json is shipped")
+
+
+func _ring_state() -> Dictionary:
+	return script_surface_bag.get("ring_mechanic", {}) as Dictionary
+
+
+func _mark_ring_delivery_structures() -> void:
+	for structure_id in structure_ids():
+		var row: Dictionary = structures[structure_id]
+		var kind := String(row.get("structure_kind", ""))
+		if _ring_delivery_kinds.has(kind):
+			row["ring_delivery"] = (_ring_delivery_kinds[kind] as Dictionary).duplicate(true) \
+				if typeof(_ring_delivery_kinds[kind]) == TYPE_DICTIONARY else {}
+
+
+func _ring_gollum_object_id() -> String:
+	return String(_ring_contract.get("gollumObjectId", RING_DEFAULT_GOLLUM))
+
+
+func _ring_spawn_team() -> int:
+	var value: Variant = _ring_contract.get("spawnTeam", CREEP_TEAM)
+	return int(value) if typeof(value) in [TYPE_INT, TYPE_FLOAT] else CREEP_TEAM
+
+
+func _ring_eva(name: String) -> String:
+	return String((_ring_contract.get("evaEvents", {}) as Dictionary).get(name, ""))
+
+
+func _is_ring_gollum(row: Dictionary) -> bool:
+	var wanted := _ring_gollum_object_id()
+	return String(row.get("object_id", "")) == wanted \
+		or String(row.get("unit_type", "")) == wanted \
+		or String(row.get("source_object_id", "")) == wanted
+
+
+func _spawn_ring_gollum_fallback() -> void:
+	var state := _ring_state()
+	if bool(state.get("gollum_spawned", false)):
+		return
+	var family := String(_ring_contract.get("waypointFamily", "SpawnPoint_SkirmishGollum_"))
+	var rolled := logic_random_int(1, 8)
+	var waypoint := "%s%d" % [family, rolled]
+	var at: Vector2
+	if script_waypoints.has(waypoint):
+		at = Vector2(script_waypoints[waypoint])
+	else:
+		var candidates: Array[String] = []
+		for name_value in script_waypoints.keys():
+			if String(name_value).begins_with(family):
+				candidates.append(String(name_value))
+		candidates.sort()
+		if not candidates.is_empty():
+			waypoint = candidates[posmod(rolled - 1, candidates.size())]
+			at = Vector2(script_waypoints[waypoint])
+		else:
+			waypoint = "fallback-map-centre"
+			at = Vector2.ZERO
+		push_warning("RING_GOLLUM_FALLBACK missing scripted spawn; deterministic sim fallback waypoint=%s roll=%d" % [waypoint, rolled])
+	var gollum_id := spawn_script_object(
+		_ring_gollum_object_id(), _ring_spawn_team(), at
+	)
+	if gollum_id <= 0:
+		push_error("RING_GOLLUM_FALLBACK_FAILED stale pack lacks playable Gollum rule (%s)" % _ring_gollum_object_id())
+		state["gollum_spawned"] = true
+		state["limitation"] = "stale-pack-no-playable-gollum"
+		return
+	state["gollum_id"] = gollum_id
+	state["gollum_spawned"] = true
+	_configure_ring_gollum(entities[gollum_id] as Dictionary)
+	_emit_event("ring.gollum_spawned", gollum_id, 0, {"waypoint": waypoint, "fallback": true})
+
+
+func _configure_ring_gollum(row: Dictionary) -> void:
+	row["ring_gollum"] = true
+	row["ring_wander_percentage"] = int(_ring_contract.get("wanderPercentage", 80))
+	row["ring_detection_range"] = float(_ring_contract.get("detectionRange", 120.0))
+	row["ring_flee_enemy_range"] = float(_ring_contract.get("fleeEnemyRange", 300.0))
+	row["ring_flee_distance"] = float(_ring_contract.get("fleeDistance", 800.0))
+	if not _stealth_active(row):
+		_grant_stealth(row, 0x3FFFFFFF, [])
+
+
+func _drop_ring(at: Vector2, source_id: int, reason: String) -> void:
+	var state := _ring_state()
+	var old_carrier := int(state.get("carrier_id", 0))
+	if old_carrier != 0 and entities.has(old_carrier):
+		set_entity_object_status(old_carrier, String(_ring_contract.get("status", "HOLDING_THE_RING")), false)
+	state["ring_active"] = true
+	state["ring_position"] = at
+	state["carrier_id"] = 0
+	_emit_event("ring.dropped", source_id, 0, {"position": at, "reason": reason, "object_id": String(_ring_contract.get("ringObjectId", RING_DEFAULT_ITEM)), "eva": _ring_eva("dropped")})
+
+
+func _on_ring_entity_death(entity_id: int, row: Dictionary) -> void:
+	if not ring_mechanic_enabled:
+		return
+	var state := _ring_state()
+	if entity_id == int(state.get("gollum_id", 0)) or bool(row.get("ring_gollum", false)):
+		_drop_ring(Vector2(row.get("position", Vector2.ZERO)), entity_id, "gollum-killed")
+	elif entity_id == int(state.get("carrier_id", 0)):
+		_drop_ring(Vector2(row.get("position", Vector2.ZERO)), entity_id, "carrier-killed")
+	elif bool(row.get("ring_hero", false)):
+		_drop_ring(Vector2(row.get("position", Vector2.ZERO)), entity_id, "ring-hero-killed")
+
+
+func _step_ring_gollum(gollum_id: int) -> void:
+	if not entities.has(gollum_id):
+		return
+	var row: Dictionary = entities[gollum_id]
+	if int(row.get("health", 0)) <= 0:
+		return
+	var position := Vector2(row.get("position", Vector2.ZERO))
+	var detect_range := float(row.get("ring_detection_range", 120.0))
+	var detector := _spatial_nearest_hostile(row, CREEP_TEAM, position, detect_range, 0, true)
+	if detector != 0:
+		if _stealth_active(row):
+			_clear_stealth(row)
+	else:
+		if not _stealth_active(row):
+			_grant_stealth(row, 0x3FFFFFFF, [])
+	var flee_range := float(row.get("ring_flee_enemy_range", 300.0))
+	var threat := _spatial_nearest_hostile(row, CREEP_TEAM, position, flee_range, 0, true)
+	if threat != 0:
+		var away := Vector2((entities[threat] as Dictionary).get("position", position)).direction_to(position)
+		if away.length_squared() < 0.000001:
+			away = Vector2.RIGHT.rotated(float(posmod(gollum_id, 8)) * TAU / 8.0)
+		var destination := position + away * float(row.get("ring_flee_distance", 800.0))
+		if _assign_route(row, destination):
+			row["state"] = "run"
+			row["ring_flee_target"] = threat
+			_emit_event("ring.gollum_flee", gollum_id, threat, {"destination": destination})
+		return
+	if not (row.get("route", []) as Array).is_empty() or (tick_index + gollum_id) % 20 != 0:
+		return
+	if logic_random_int(1, 100) > int(row.get("ring_wander_percentage", 80)):
+		return
+	var angle := TAU * float(logic_random_int(0, 359)) / 360.0
+	var distance := float(logic_random_int(8, 24))
+	if _assign_route(row, position + Vector2.RIGHT.rotated(angle) * distance):
+		row["state"] = "run"
+		row["ring_wander_count"] = int(row.get("ring_wander_count", 0)) + 1
+		_emit_event("ring.gollum_wander", gollum_id, 0, {"destination": row.get("destination", position)})
+
+
+func _step_ring_mechanic() -> void:
+	if not ring_mechanic_enabled:
+		return
+	var state := _ring_state()
+	if not bool(state.get("gollum_spawned", false)):
+		for entity_id in entity_ids():
+			if _is_ring_gollum(entities[entity_id] as Dictionary):
+				state["gollum_id"] = entity_id
+				state["gollum_spawned"] = true
+				_configure_ring_gollum(entities[entity_id] as Dictionary)
+				_emit_event("ring.gollum_spawned", entity_id, 0, {"fallback": false})
+				break
+	if not bool(state.get("gollum_spawned", false)) and tick_index >= RING_FALLBACK_TICK:
+		_spawn_ring_gollum_fallback()
+	var gollum_id := int(state.get("gollum_id", 0))
+	if gollum_id != 0:
+		_step_ring_gollum(gollum_id)
+	var carrier_id := int(state.get("carrier_id", 0))
+	if carrier_id != 0 and entities.has(carrier_id) and int((entities[carrier_id] as Dictionary).get("health", 0)) > 0:
+		var carrier: Dictionary = entities[carrier_id]
+		state["ring_position"] = Vector2(carrier.get("position", Vector2.ZERO))
+		_ensure_parity()
+		for team in _roster_team_ids():
+			parity.fog_reveal(int(team), state["ring_position"], 1.0, true)
+		for structure_id in structure_ids(int(carrier.get("team", -1))):
+			var structure: Dictionary = structures[structure_id]
+			if not structure.has("ring_delivery"):
+				continue
+			var delivery: Dictionary = structure.get("ring_delivery", {}) as Dictionary
+			var range := float(delivery.get("scanRange", _ring_contract.get("deliveryRange", 10.0)))
+			if Vector2(structure.get("position", Vector2.ZERO)).distance_to(Vector2(carrier.get("position", Vector2.ZERO))) <= range:
+				var team := int(carrier.get("team", -1))
+				var owned: Dictionary = team_upgrades.get(team, {}) as Dictionary
+				owned["Upgrade_RingHero"] = true
+				team_upgrades[team] = owned
+				var completed: Array = structure.get("completed_upgrades", [])
+				if not completed.has("Upgrade_FortressRingHero"):
+					completed.append("Upgrade_FortressRingHero")
+				structure["completed_upgrades"] = completed
+				set_entity_object_status(carrier_id, String(_ring_contract.get("status", "HOLDING_THE_RING")), false)
+				state["ring_active"] = false
+				state["carrier_id"] = 0
+				_emit_event("ring.delivered", carrier_id, structure_id, {"team": team, "eva": _ring_eva("delivered")})
+				return
+	if not bool(state.get("ring_active", false)) or int(state.get("carrier_id", 0)) != 0:
+		return
+	var ring_position := Vector2(state.get("ring_position", Vector2.ZERO))
+	var pickup_range := float(_ring_contract.get("pickupRange", 10.0))
+	for entity_id in entity_ids():
+		var candidate: Dictionary = entities[entity_id]
+		if not _ring_pickup_eligible(candidate):
+			continue
+		if Vector2(candidate.get("position", Vector2.ZERO)).distance_to(ring_position) > pickup_range:
+			continue
+		state["ring_active"] = false
+		state["carrier_id"] = entity_id
+		set_entity_object_status(entity_id, String(_ring_contract.get("status", "HOLDING_THE_RING")), true)
+		_emit_event("ring.picked_up", entity_id, 0, {"position": ring_position, "eva": _ring_eva("pickedUp")})
+		_emit_event("ring.carrier_revealed", entity_id, 0, {"teams": _roster_team_ids()})
+		break
+
+
+func _ring_pickup_eligible(candidate: Dictionary) -> bool:
+	## Narrow consumer for the converter's compiled ObjectFilter projection.
+	## Unknown optional fields do not broaden admission; the mandatory retail
+	## ground/Gollum exclusions are always applied.
+	if int(candidate.get("health", 0)) <= 0 or bool(candidate.get("flying", false)) \
+			or _is_ring_gollum(candidate):
+		return false
+	var filter: Dictionary = _ring_contract.get("attachFilter", {}) as Dictionary
+	var object_id := String(candidate.get("object_id", ""))
+	var category := String(candidate.get("category", ""))
+	if (filter.get("excludedObjectIds", []) as Array).has(object_id):
+		return false
+	if (filter.get("excludedCategories", []) as Array).has(category):
+		return false
+	return true
 
 
 func _configure_faction_manifest() -> bool:
@@ -2418,6 +2708,27 @@ func _configure_playable_unit_runtime_contracts() -> void:
 		if typeof(document_value) != TYPE_DICTIONARY:
 			configuration_error = "Playable-unit runtime '%s' is invalid" % object_id
 			return
+		if PlayableUnitAdapter.is_ring_hero_summon(document_value as Dictionary) \
+				and not ring_mechanic_enabled:
+			continue
+		var ring_gollum_block: Variant = ((document_value as Dictionary).get("ringMechanic", {}) as Dictionary).get("gollum", {})
+		if ring_mechanic_enabled and typeof(ring_gollum_block) == TYPE_DICTIONARY \
+				and not (ring_gollum_block as Dictionary).is_empty():
+			_ring_contract.merge((ring_gollum_block as Dictionary), false)
+			var gollum_simulation := PlayableUnitAdapter.simulation_rule(document_value as Dictionary, false)
+			var gollum_rule := PlayableUnitAdapter.normalized_unit_rule(
+				gollum_simulation, float(_rules.get("source_map_transform_scale", 0.0))
+			)
+			if gollum_rule.is_empty():
+				configuration_error = "Ring Gollum runtime '%s' has no normalized unit rule" % object_id
+				return
+			var source_gollum_id := String((document_value as Dictionary).get("objectId", ""))
+			var member_gollum_id := PlayableUnitAdapter.runtime_member_id(document_value as Dictionary)
+			configured_unit_rules[source_gollum_id] = gollum_rule
+			configured_unit_rules[member_gollum_id] = gollum_rule
+			if not _ring_contract.has("gollumObjectId"):
+				_ring_contract["gollumObjectId"] = source_gollum_id
+			continue
 		# Compiled armor.ini contract + forge upgrade effects ride every fresh
 		# document; a stale pack without the block is a recorded exclusion with
 		# the SAGE passthrough, never an invented multiplier. One canonical,
@@ -2606,6 +2917,8 @@ func _configure_playable_unit_runtime_contracts() -> void:
 			"command_slot": int(primary_producer.get("slot", 0)),
 			"surface": String(primary_producer.get("surface", "")),
 		}
+		if String(primary_producer.get("source_field", "")) == "BuildableRingHeroesMP":
+			(_unit_production_rules[unit_type] as Dictionary)["is_ring_hero"] = true
 		if not _production_unit_order.has(unit_type):
 			_production_unit_order.append(unit_type)
 		var created_hero: Dictionary = (
@@ -4002,19 +4315,22 @@ func unlock_upgrades_for_unit(unit_type: String, producer_kind: String = "") -> 
 
 
 func production_gate_unsatisfied(
-	unit_type: String, producer_kind: String, completed_upgrades: Array
+	unit_type: String, producer_kind: String, completed_upgrades: Array,
+	team_completed_upgrades: Array = []
 ) -> String:
 	## Returns the upgrade id the gate is still waiting on, or "" when it holds.
 	## The ALL-of set must be owned entirely; the ANY-of group (when authored)
 	## needs any single member. An absent group is never a gate.
 	for required_value in required_upgrades_for_unit(unit_type, producer_kind):
-		if not completed_upgrades.has(String(required_value)):
+		if not completed_upgrades.has(String(required_value)) \
+				and not team_completed_upgrades.has(String(required_value)):
 			return String(required_value)
 	var any_group := required_upgrade_any_group_for_unit(unit_type, producer_kind)
 	if any_group.is_empty():
 		return ""
 	for candidate_value in any_group:
-		if completed_upgrades.has(String(candidate_value)):
+		if completed_upgrades.has(String(candidate_value)) \
+				or team_completed_upgrades.has(String(candidate_value)):
 			return ""
 	return String(any_group[0])
 
@@ -7873,7 +8189,10 @@ func spawn_script_object(object_type: String, team: int, at: Vector2) -> int:
 		# Allocating outside the seeded per-team id ranges would collide with
 		# another team's ids, so an unseeded team refuses rather than inventing
 		# an id space.
-		return -1
+		if team == CREEP_TEAM:
+			_next_dynamic_id[team] = 80001
+		else:
+			return -1
 	var entity_id := int(_next_dynamic_id[team])
 	_next_dynamic_id[team] = entity_id + 1
 	_add_battalion(
@@ -11304,6 +11623,8 @@ func queue_unit(team: int, producer: int, unit_type: String = SOLDIER_HORDE_ID) 
 	var production_rule: Dictionary = _unit_production_rules.get(unit_type, {})
 	if production_rule.is_empty():
 		return {"ok": false, "reason": "unsupported-unit"}
+	if bool(production_rule.get("is_ring_hero", false)) and not ring_mechanic_enabled:
+		return {"ok": false, "reason": "ring-heroes-disabled"}
 	if created_hero_owner_team(unit_type) not in [-1, team]:
 		# Every peer registers every seat's created heroes so the rule tables
 		# match; only the seat that made one may buy it.
@@ -11314,6 +11635,7 @@ func queue_unit(team: int, producer: int, unit_type: String = SOLDIER_HORDE_ID) 
 		unit_type,
 		String(building.get("structure_kind", "")),
 		Array(building.get("completed_upgrades", [])),
+		(team_upgrades.get(team, {}) as Dictionary).keys(),
 	)
 	if missing_production_upgrade != "":
 		return {"ok": false, "reason": "missing-upgrade", "required_upgrade": missing_production_upgrade}
@@ -11815,6 +12137,7 @@ func tick() -> void:
 	# _step_script_executors(); with nothing registered this is a no-op and
 	# the tick is byte-identical to the pre-wiring engine (the b177804c pin).
 	_step_script_executors()
+	_step_ring_mechanic()
 	# Script time-freeze freezes GAMEPLAY only AFTER scripts step, so a script
 	# that freezes time can still run its unfreeze action on a later script step.
 	_ensure_parity()
@@ -14430,6 +14753,19 @@ func _step_production() -> void:
 		# QueueProductionExitUpdate uses a create point at the producer doorway,
 		# reveals the horde there, and only then sends it to the rally point.
 		_add_battalion(new_id, team, door_point, display_name, object_id, unit_type, committed_command_points)
+		if bool(production_rule.get("is_ring_hero", false)):
+			var ring_hero: Dictionary = entities[new_id]
+			ring_hero["ring_hero"] = true
+			ring_hero["level"] = 10
+			var owned: Dictionary = team_upgrades.get(team, {}) as Dictionary
+			owned.erase("Upgrade_RingHero")
+			team_upgrades[team] = owned
+			for team_structure_id in structure_ids(team):
+				var team_structure: Dictionary = structures[team_structure_id]
+				var producer_upgrades: Array = team_structure.get("completed_upgrades", [])
+				producer_upgrades.erase("Upgrade_FortressRingHero")
+				team_structure["completed_upgrades"] = producer_upgrades
+			_emit_event("ring.hero_created", new_id, id, {"team": team, "rank": 10})
 		if String(production_rule.get("category", "")) == "hero":
 			_completed_hero_identities["%d:%s" % [team, unit_type]] = true
 			if team == PLAYER_TEAM:
@@ -16729,6 +17065,7 @@ func _bookkeep_battalion_death(
 	## Shared authoritative bookkeeping for every battalion lethal path. Callers
 	## retain path-specific kill credit/events, but lifetime, corpse policy,
 	## selection, routing, and command-point release cannot drift apart.
+	_on_ring_entity_death(entity_id, row)
 	_summon_despawn_ticks.erase(entity_id)
 	_summon_aura_source_ids.erase(entity_id)
 	# A produced hero's death releases its identity on every lethal path, not
@@ -19014,6 +19351,8 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	_spawn_positions = state["spawn_positions"]
 	_home_layout = state["home_layout"]
 	_rules = state["rules"]
+	ring_mechanic_enabled = bool(_rules.get("allow_ring_heroes", false))
+	_configure_ring_mechanic_contract()
 	_unit_production_rules = state["unit_production_rules"]
 	_completed_hero_identities = state["completed_hero_identities"]
 	_production_unit_order = state["production_unit_order"]

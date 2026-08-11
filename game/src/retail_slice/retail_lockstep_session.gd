@@ -868,6 +868,8 @@ func _receive_join(event_peer: ENetPacketPeer, envelope: Dictionary) -> void:
 			"cp_factor": float(lobby_settings["cp_factor"]),
 			"build_plots": bool(lobby_settings["build_plots"]),
 			"allow_custom_heroes": bool(lobby_settings.get("allow_custom_heroes", true)),
+			"allow_ring_heroes": bool(lobby_settings.get("allow_ring_heroes", true)),
+			"logic_random_seed": int(lobby_settings.get("logic_random_seed", 0)),
 		})
 	# The host's own announced profile is not part of the table until it has
 	# been announced; if it already was, replay it to the newcomer so its 1v1
@@ -1166,6 +1168,8 @@ static func lobby_default_settings() -> Dictionary:
 		# created heroes for EVERY seat - so it empties the agreed hero table
 		# rather than filtering at each peer, where two peers could disagree.
 		"allow_custom_heroes": true,
+		"allow_ring_heroes": true,
+		"logic_random_seed": 0,
 	}
 
 
@@ -1209,6 +1213,10 @@ func custom_heroes_allowed() -> bool:
 	## Retail's AllowCustomHeroes. Absent on a settings dict from before the
 	## toggle existed, which reads as allowed - the historical behaviour.
 	return bool(lobby_settings.get("allow_custom_heroes", true))
+
+
+func ring_heroes_allowed() -> bool:
+	return bool(lobby_settings.get("allow_ring_heroes", true))
 
 
 static func _canonical_profile(player_name: String, faction: String, color: int, ready: bool) -> Dictionary:
@@ -1673,18 +1681,24 @@ func send_lobby_settings(
 	resource_amount: int,
 	cp_factor: float,
 	build_plots: bool,
-	allow_custom_heroes: bool = true
+	allow_custom_heroes: bool = true,
+	allow_ring_heroes: bool = true
 ) -> bool:
 	## HOST-ONLY authoritative. A guest calling this is a no-op fail-closed.
 	if not _is_host or not handshake_complete \
 		or not _lobby_settings_fields_valid(map_id, resource_amount, cp_factor, build_plots):
 		return false
+	var seed := int(lobby_settings.get("logic_random_seed", 0))
+	if seed == 0:
+		seed = (Time.get_ticks_usec() ^ int(Time.get_unix_time_from_system())) & 0x7FFFFFFF
 	lobby_settings = {
 		"map_id": map_id,
 		"resources": resource_amount,
 		"cp_factor": cp_factor,
 		"build_plots": build_plots,
 		"allow_custom_heroes": allow_custom_heroes,
+		"allow_ring_heroes": allow_ring_heroes,
+		"logic_random_seed": seed,
 	}
 	_send_envelope({
 		"kind": "lobby.settings",
@@ -1693,6 +1707,8 @@ func send_lobby_settings(
 		"cp_factor": cp_factor,
 		"build_plots": build_plots,
 		"allow_custom_heroes": allow_custom_heroes,
+		"allow_ring_heroes": allow_ring_heroes,
+		"logic_random_seed": seed,
 	})
 	_connection.flush()
 	return true
@@ -1857,12 +1873,14 @@ func _receive_relay_chat(envelope: Dictionary) -> void:
 
 func _receive_lobby_settings(envelope: Dictionary) -> void:
 	## Settings are host-authoritative: the host never accepts them from a guest.
-	if _is_host or not handshake_complete or envelope.size() != 6 \
+	if _is_host or not handshake_complete or envelope.size() != 8 \
 		or typeof(envelope.get("map_id")) != TYPE_STRING \
 		or typeof(envelope.get("resources")) != TYPE_INT \
 		or typeof(envelope.get("cp_factor")) != TYPE_FLOAT \
 		or typeof(envelope.get("build_plots")) != TYPE_BOOL \
 		or typeof(envelope.get("allow_custom_heroes")) != TYPE_BOOL \
+		or typeof(envelope.get("allow_ring_heroes")) != TYPE_BOOL \
+		or typeof(envelope.get("logic_random_seed")) != TYPE_INT \
 		or not _lobby_settings_fields_valid(
 			String(envelope["map_id"]), int(envelope["resources"]),
 			float(envelope["cp_factor"]), bool(envelope["build_plots"])):
@@ -1874,6 +1892,8 @@ func _receive_lobby_settings(envelope: Dictionary) -> void:
 		"cp_factor": float(envelope["cp_factor"]),
 		"build_plots": bool(envelope["build_plots"]),
 		"allow_custom_heroes": bool(envelope["allow_custom_heroes"]),
+		"allow_ring_heroes": bool(envelope["allow_ring_heroes"]),
+		"logic_random_seed": int(envelope["logic_random_seed"]),
 	}
 	lobby_updated.emit()
 

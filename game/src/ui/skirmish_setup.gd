@@ -180,8 +180,8 @@ func _build_rules_content() -> void:
 	ring_heroes_toggle = CheckButton.new()
 	ring_heroes_toggle.name = "RingHeroesToggle"
 	ring_heroes_toggle.text = "Allow Ring Heroes"
-	ring_heroes_toggle.tooltip_text = "Ring Heroes are not a converted feature"
-	ring_heroes_toggle.disabled = true
+	ring_heroes_toggle.tooltip_text = "Allow the One Ring and each faction's Ring Hero"
+	ring_heroes_toggle.button_pressed = true
 	ring_heroes_toggle.position = Vector2(560, 64)
 	ring_heroes_toggle.size = Vector2(320, 36)
 	rules_content.add_child(ring_heroes_toggle)

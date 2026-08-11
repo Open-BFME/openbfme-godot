@@ -41,6 +41,11 @@ var retail_command_point_factor: float = 1.0
 ## restricted to designated empty plots). Threaded into the sim through
 ## gameplay_rules["build_plots_only"].
 var retail_build_plots_only: bool = false
+## Host-authoritative One Ring rule and the shared retail GameLogic seed.
+## The zero seed is valid; single-player launch replaces it with a stable hash
+## of the selected match configuration so otherwise identical peers agree.
+var retail_allow_ring_heroes: bool = false
+var retail_logic_random_seed: int = 0
 ## Player start spot: 0 keeps the authored assignment (the human takes
 ## Player_2_Start); 1..N takes retail Player_N_Start and the AI takes another.
 var retail_player_start_index: int = 0
@@ -140,6 +145,8 @@ func reset_match() -> void:
 	retail_initial_resources = -1
 	retail_command_point_factor = 1.0
 	retail_build_plots_only = false
+	retail_allow_ring_heroes = false
+	retail_logic_random_seed = 0
 	retail_player_start_index = 0
 	retail_player_color = Color(0.176, 0.302, 0.675)
 	retail_enemy_color = Color(0.651, 0.125, 0.110)

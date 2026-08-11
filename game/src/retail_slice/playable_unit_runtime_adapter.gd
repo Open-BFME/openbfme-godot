@@ -25,17 +25,19 @@ static func _has_authored_command_socket_evidence(route: Dictionary) -> bool:
 
 
 static func is_ring_hero_summon(document: Dictionary) -> bool:
-	## Retail ring heroes (Galadriel) are summoned by the One Ring mechanic,
-	## never trained from a producer roster: their roster entry is the summon
-	## slot and their command-point cost is zero. Such a document is not a
-	## trained production candidate for any faction.
-	if String(document.get("category", "")) != "hero":
-		return false
+	## Exact compiled provenance; command-point/category guesses misclassified
+	## ordinary zero-CP heroes and hid malformed ring routes.
 	var registration: Dictionary = document.get("registration", {}) as Dictionary
-	var simulation_row: Dictionary = registration.get("simulation", {}) as Dictionary
-	var resolved: Dictionary = simulation_row.get("resolved", {}) as Dictionary
-	var command_points: Variant = _resolved_value(resolved.get("commandPoints"))
-	return command_points != null and int(command_points) == 0
+	# CAH documents reuse the engine hero-roster surface but carry an explicit
+	# createAHero ownership record; they are never retail One Ring summons.
+	if registration.has("createAHero"):
+		return false
+	for route_value in registration.get("production", []) as Array:
+		if typeof(route_value) == TYPE_DICTIONARY and String(
+			(route_value as Dictionary).get("sourceField", "")
+		) == "BuildableRingHeroesMP":
+			return true
+	return false
 
 
 static func fieldability(document: Dictionary) -> Dictionary:
@@ -114,6 +116,7 @@ static func producer_bindings(document: Dictionary) -> Array[Dictionary]:
 			"command_set_id": String(row.get("commandSetId", "")),
 			"command_id": String(row.get("commandId", "")),
 			"surface": surface,
+			"source_field": String(row.get("sourceField", "")),
 			"slot": slot,
 			"roster_ordinal": roster_ordinal,
 			"prerequisites": (row.get("prerequisites", []) as Array).duplicate(),
@@ -200,7 +203,7 @@ static func hud_specs(document: Dictionary) -> Array[Dictionary]:
 	return output
 
 
-static func simulation_rule(document: Dictionary) -> Dictionary:
+static func simulation_rule(document: Dictionary, require_producer: bool = true) -> Dictionary:
 	## Importers must resolve authoritative numbers before runtime. Raw macro,
 	## WeaponTemplate, Locomotor or Armor ids are evidence, not simulation values.
 	var registration: Dictionary = document.get("registration", {}) as Dictionary
@@ -253,7 +256,7 @@ static func simulation_rule(document: Dictionary) -> Dictionary:
 		String(row.displayName).strip_edges() == ""
 		or int(row.buildCost) < 0
 		or float(row.buildTimeSeconds) <= 0.0
-		or int(row.commandPoints) <= 0
+		or (int(row.commandPoints) <= 0 and not is_ring_hero_summon(document))
 		or int(row.memberCount) <= 0
 		or int(row.memberHealth) <= 0
 		or float(row.speed) < 0.0
@@ -261,7 +264,7 @@ static func simulation_rule(document: Dictionary) -> Dictionary:
 	):
 		return {}
 	var producers := producer_bindings(document)
-	if producers.is_empty():
+	if producers.is_empty() and require_producer:
 		return {}
 	var display_name := String(row.displayName)
 	# The display name arrives as a source string-table id (OBJECT:ElvenElrond);
@@ -287,7 +290,7 @@ static func simulation_rule(document: Dictionary) -> Dictionary:
 		"formation": (row.get("formation", {}) as Dictionary).duplicate(true),
 		"fear_resistant": row.get("fearResistant") == true,
 		"producers": producers,
-		"prerequisites": (producers[0].get("prerequisites", []) as Array).duplicate(),
+		"prerequisites": (producers[0].get("prerequisites", []) as Array).duplicate() if not producers.is_empty() else [],
 	}
 	if row.has("destroyDie"):
 		var destroy_die := _resolved_destroy_die(row.get("destroyDie"))

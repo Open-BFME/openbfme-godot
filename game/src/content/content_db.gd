@@ -56,6 +56,9 @@ var spellbook_runtime: Dictionary = {}
 ## and says so by name. Nothing else in the game reads it, so an absent table
 ## costs exactly the Create-a-Hero feature and nothing else.
 var cah_system_runtime: Dictionary = {}
+## Optional `data/ring/system.json`; empty records the named stale-pack
+## limitation consumed by RetailSliceSim.
+var ring_system_runtime: Dictionary = {}
 ## Effect-object presentation rows registered from every admitted spellbook
 ## runtime document's `presentation.visualBindings`: object id -> the binding
 ## row the importer emitted (status / model / sourceW3d / memberObjectId).
@@ -212,6 +215,7 @@ func reload() -> void:
 	ranger_runtime.clear()
 	trebuchet_runtime.clear()
 	spellbook_runtime.clear()
+	ring_system_runtime.clear()
 	spellbook_visual_bindings.clear()
 	spellbook_unconverted_visuals.clear()
 	playable_unit_runtimes.clear()
@@ -344,6 +348,7 @@ func _load_bundle_v0(root: String, meta: Dictionary) -> void:
 	_load_trebuchet_runtime(root, String(declared.get("trebuchetRuntime", "")))
 	_load_spellbook_runtimes(root, declared)
 	_load_cah_system_runtime(root, declared)
+	_load_ring_system_runtime(root, declared)
 	_profile_db("  rules+runtimes+spellbook", pack_mark)
 	_load_playable_unit_runtimes(root, declared)
 	_profile_db("  playable_units", pack_mark)
@@ -682,6 +687,25 @@ func _load_cah_system_runtime(root: String, declared: Dictionary) -> void:
 	document["_pack_root"] = root
 	document["_pack_file_key"] = "cah.system"
 	cah_system_runtime = document
+
+
+func _load_ring_system_runtime(root: String, declared: Dictionary) -> void:
+	var relative := String(declared.get("ring.system", declared.get("ringSystem", "")))
+	if relative == "" or not ModLoader.is_safe_relative_path(relative):
+		return
+	var document := _read_declared_document_bounded(root, relative, MAX_PLAYABLE_UNIT_RUNTIME_BYTES)
+	if document.is_empty() or String(document.get("schema", "")) != "openbfme.ring-system" \
+			or int(document.get("schemaVersion", -1)) != 0:
+		return
+	for required in ["waypointFamily", "spawnTeam", "modeToken", "evaEvents"]:
+		if not document.has(required):
+			return
+	if not document.has("heroesByFaction") and not document.has("perFactionHeroes"):
+		return
+	document["_source"] = ModLoader.resolve_pack_path(root, relative)
+	document["_pack_root"] = root
+	document["_pack_file_key"] = "ring.system"
+	ring_system_runtime = document
 
 
 func _register_spellbook_visual_bindings(root: String, document: Dictionary) -> void:

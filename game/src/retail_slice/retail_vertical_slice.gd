@@ -1528,6 +1528,12 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 		# the default freeform launch leaves _rules byte-identical.
 		if bool(game_state.get("retail_build_plots_only")):
 			rules["build_plots_only"] = true
+		if bool(game_state.get("retail_allow_ring_heroes")):
+			rules["allow_ring_heroes"] = true
+			rules["logic_random_seed"] = int(game_state.get("retail_logic_random_seed"))
+			var ring_system_value: Variant = ContentDB.get("ring_system_runtime")
+			if typeof(ring_system_value) == TYPE_DICTIONARY and not (ring_system_value as Dictionary).is_empty():
+				rules["ring_system"] = (ring_system_value as Dictionary).duplicate(true)
 	rules["source_map_transform_scale"] = source_map_data.local_transform_scale
 	# Neutral creep lairs are strictly opt-in (menu-independent env seam; a
 	# skirmish RULES toggle can ride this later). Only added when requested, so
@@ -1570,6 +1576,20 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 		for runtime_key in extra_playable_runtimes.keys():
 			if not playable_runtimes.has(runtime_key):
 				playable_runtimes[runtime_key] = extra_playable_runtimes[runtime_key]
+		if bool(rules.get("allow_ring_heroes", false)):
+			var available_ring_producers := _producer_kind_registry()
+			rules["playable_structure_runtimes"] = ContentDB.get_playable_structure_runtimes()
+			for runtime_key in playable_unit_runtimes.keys():
+				var candidate: Dictionary = playable_unit_runtimes[runtime_key]
+				var producer_loaded := false
+				for binding in PlayableUnitAdapter.producer_bindings(candidate):
+					if available_ring_producers.has(String(binding.get("producer_source_object_id", ""))):
+						producer_loaded = true
+						break
+				var gollum_block: Variant = (candidate.get("ringMechanic", {}) as Dictionary).get("gollum", {})
+				if (PlayableUnitAdapter.is_ring_hero_summon(candidate) and producer_loaded) \
+						or (typeof(gollum_block) == TYPE_DICTIONARY and not (gollum_block as Dictionary).is_empty()):
+					playable_runtimes[runtime_key] = candidate
 		rules["playable_unit_runtimes"] = playable_runtimes
 		var producer_kinds: Dictionary = _producer_kind_registry()
 		for producer_key in extra_producer_kinds.keys():
@@ -3696,6 +3716,11 @@ func _sync_presentation() -> void:
 			String(entity.get("banner_carrier_object_id", "")),
 			Vector2(entity.get("banner_carrier_offset_source", Vector2.ZERO))
 		)
+		battalion.sync_ring_carrier(
+			simulation.entity_has_object_status(id, "HOLDING_THE_RING"),
+			"TheDroppedRing",
+			Vector2(0.0, -10.0)
+		)
 		battalion.set_production_exit_progress(float(entity.get("production_exit_progress", 1.0)))
 		battalion.set_selected(simulation.selected_ids.has(id))
 		var attack_target := _attack_target_node(entity)
@@ -3897,7 +3922,10 @@ func hud_locked_units(production: Array, structure_kind: String, completed_upgra
 		if simulation.hero_unavailable(local_team, unit_type):
 			locked.append(unit_type)
 			continue
-		if simulation.production_gate_unsatisfied(unit_type, structure_kind, completed_upgrades) != "":
+		if simulation.production_gate_unsatisfied(
+			unit_type, structure_kind, completed_upgrades,
+			(simulation.team_upgrades.get(local_team, {}) as Dictionary).keys()
+		) != "":
 			locked.append(unit_type)
 	return locked
 
@@ -6290,7 +6318,10 @@ func _match_configuration() -> Dictionary:
 	var configuration := source_map_data.simulation_configuration()
 	var game_state := get_node_or_null("/root/GameState")
 	if game_state == null:
+		configuration.erase("script_waypoints")
 		return configuration
+	if not bool(game_state.get("retail_allow_ring_heroes")):
+		configuration.erase("script_waypoints")
 	var choice := int(game_state.get("retail_player_start_index"))
 	if choice <= 0:
 		return configuration

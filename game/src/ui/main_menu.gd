@@ -3293,6 +3293,8 @@ func apply_skirmish_selection() -> bool:
 	_game_state.set("retail_initial_resources", _selected_rules_resources())
 	_game_state.set("retail_command_point_factor", _selected_rules_factor())
 	_game_state.set("retail_build_plots_only", _selected_build_plots_only())
+	_game_state.set("retail_allow_ring_heroes", solo_flyout.ring_heroes_toggle.button_pressed)
+	_game_state.set("retail_logic_random_seed", _single_player_logic_seed(map_id))
 	# N-team descriptor list: authoritative when present. Only written for setups
 	# the legacy pair cannot express (>2 rows, or a non-medium AI tier); the exact
 	# legacy default clears it so the slice keeps its proven two-team path and the
@@ -3387,6 +3389,21 @@ func _selected_build_plots_only() -> bool:
 	return bool(option.get_item_metadata(option.selected))
 
 
+func _single_player_logic_seed(map_id: String) -> int:
+	## Varied by the complete visible match choice, deterministic for replaying
+	## that configuration. `hash()` is deliberately avoided: its implementation
+	## is not the cross-version simulation contract.
+	var material := "%s|%d|%.3f|%s|%s" % [
+		map_id, _selected_rules_resources(), _selected_rules_factor(),
+		_selected_skirmish_faction(solo_flyout.row_army_opts[maxi(0, _human_row_index())]),
+		_selected_skirmish_faction(solo_flyout.row_army_opts[_first_non_human_row()]),
+	]
+	var value := 0x811C9DC5
+	for byte in material.to_utf8_buffer():
+		value = ((value ^ int(byte)) * 16777619) & 0x7FFFFFFF
+	return value
+
+
 func _on_rules_changed(_index: int = 0) -> void:
 	_game_state.set("retail_initial_resources", _selected_rules_resources())
 	_game_state.set("retail_command_point_factor", _selected_rules_factor())
@@ -3397,6 +3414,7 @@ func _on_rules_reset() -> void:
 	_select_option_by_metadata_value(solo_flyout.initial_resources_opt, RULES_DEFAULT_RESOURCES)
 	_select_option_by_metadata_value(solo_flyout.cp_factor_opt, RULES_DEFAULT_FACTOR)
 	_select_option_by_metadata_value(solo_flyout.build_mode_opt, RULES_DEFAULT_BUILD_PLOTS_ONLY)
+	solo_flyout.ring_heroes_toggle.button_pressed = true
 	_on_rules_changed()
 
 

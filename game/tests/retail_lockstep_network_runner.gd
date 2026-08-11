@@ -310,6 +310,17 @@ func _test_created_hero_lobby_exchange(profile_a: Dictionary, profile_b: Diction
 	var settings_reached := _pump_pair(host, guest, func() -> bool:
 		return not guest.custom_heroes_allowed())
 	_check("cah_host_toggle_reaches_the_guest", settings_reached)
+	_check(
+		"ring_rule_and_seed_are_host_authoritative",
+		settings_reached
+			and host.ring_heroes_allowed() == guest.ring_heroes_allowed()
+			and int(host.lobby_settings.get("logic_random_seed", 0)) != 0
+			and int(host.lobby_settings.get("logic_random_seed", 0)) == int(guest.lobby_settings.get("logic_random_seed", -1))
+	)
+	_check(
+		"lobby_settings_envelopes_are_byte_identical_with_ring_fields",
+		settings_reached and var_to_bytes(host.lobby_settings) == var_to_bytes(guest.lobby_settings)
+	)
 	if settings_reached:
 		var host_disabled: Array = host.build_lobby_roster()
 		var guest_disabled: Array = guest.build_lobby_roster()

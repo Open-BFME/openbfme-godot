@@ -162,6 +162,7 @@ var road_materials_path := ""
 var road_source_report_aggregate_sha256 := ""
 var provenance_manifest_path := ""
 var waypoint_count := 0
+var local_named_waypoints: Dictionary = {}
 var player_start_count := 0
 var standing_water_count := 0
 var river_count := 0
@@ -778,10 +779,16 @@ func _load_waypoints(document: Dictionary) -> bool:
 	player_start_count = starts.size()
 	if waypoint_count != int(document.get("count", -1)) or waypoint_count > MAX_WAYPOINTS:
 		return _fail("cooked waypoint count does not match its metadata")
+	local_named_waypoints.clear()
 	for row_value in waypoints:
 		var row := _dictionary(row_value)
-		if row.is_empty() or _vector3(row.get("godotPosition", [])) == Vector3.INF:
+		var position := _vector3(row.get("godotPosition", []))
+		if row.is_empty() or position == Vector3.INF:
 			return _fail("invalid cooked waypoint placement")
+		var waypoint_name := String(row.get("name", ""))
+		if waypoint_name != "":
+			var local := source_to_local(position)
+			local_named_waypoints[waypoint_name] = Vector2(local.x, local.z)
 	for required_name in ["Player_1_Start", "Player_2_Start"]:
 		var row := _dictionary(starts.get(required_name, {}))
 		var position := _vector3(row.get("godotPosition", []))
@@ -2178,6 +2185,7 @@ func simulation_configuration() -> Dictionary:
 		"home_layout": home_layout,
 		"team_start_centers": team_start_centers,
 		"team_start_indices": team_start_indices,
+		"script_waypoints": local_named_waypoints.duplicate(true),
 		"ford_gates": _simulation_ford_gates(),
 		# Authored PlyrCreeps lairs. The simulation only seeds them when its
 		# opt-in creep rule is enabled; carrying them here is inert otherwise.

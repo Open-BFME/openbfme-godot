@@ -192,11 +192,13 @@ func _run() -> void:
 	# is no longer in this set: it is the enabled alliance control for the N-team
 	# setup (asserted enabled just below).
 	var disabled_reasons_ok := true
-	for node_name in ["Hero0", "Hero1", "Handicap0", "Handicap1", "CustomHeroesToggle", "RingHeroesToggle", "ProfileButton"]:
+	for node_name in ["Hero0", "Hero1", "Handicap0", "Handicap1", "CustomHeroesToggle", "ProfileButton"]:
 		var control := menu.find_child(node_name, true, false) as Control
 		if control == null or not control.get("disabled") or String(control.tooltip_text).strip_edges() == "":
 			disabled_reasons_ok = false
 	_check("unsupported_columns_disabled_with_reasons", disabled_reasons_ok)
+	var ring_toggle := menu.find_child("RingHeroesToggle", true, false) as CheckButton
+	_check("ring_heroes_rule_is_live_and_defaults_on", ring_toggle != null and not ring_toggle.disabled and ring_toggle.button_pressed)
 	# The Team column is now an enabled alliance dropdown (rows sharing a number are
 	# allied); default assigns each of the two rows its own number (free-for-all).
 	var team0_opt := menu.find_child("Team0", true, false) as OptionButton

@@ -943,6 +943,8 @@ func _apply_launch_to_game_state(roster: Array) -> void:
 	game_state.set("retail_initial_resources", int(settings.get("resources", 1200)))
 	game_state.set("retail_command_point_factor", float(settings.get("cp_factor", 1.0)))
 	game_state.set("retail_build_plots_only", bool(settings.get("build_plots", false)))
+	game_state.set("retail_allow_ring_heroes", bool(settings.get("allow_ring_heroes", true)))
+	game_state.set("retail_logic_random_seed", int(settings.get("logic_random_seed", 0)))
 	game_state.set("retail_player_start_index", 0)
 	game_state.set("retail_player_color", host_descriptor.get("color", SessionScript.LOBBY_HOUSE_COLORS[0]))
 	game_state.set("retail_enemy_color", guest_descriptor.get("color", SessionScript.LOBBY_HOUSE_COLORS[1]))
