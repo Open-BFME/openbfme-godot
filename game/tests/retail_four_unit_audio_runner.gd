@@ -168,7 +168,11 @@ func _run() -> void:
 		{"sequence": 5, "kind": "voice.select", "entity_id": 2, "target_id": 0, "object_id": AudioScript.ARCHER_OBJECT_ID},
 		{"sequence": 6, "kind": "order.move", "entity_id": 102, "target_id": 0, "object_id": AudioScript.TOWER_GUARD_OBJECT_ID},
 		{"sequence": 7, "kind": "voice.attack", "entity_id": 103, "target_id": 101, "object_id": AudioScript.KNIGHT_OBJECT_ID},
+		# The battalion cadence event first: it is the only combat event that
+		# carries the horde's object_id, and the per-member event that follows
+		# resolves its weapon sound from the binding it teaches.
 		{"sequence": 8, "kind": "combat.swing", "entity_id": 2, "target_id": 101, "object_id": AudioScript.ARCHER_OBJECT_ID},
+		{"sequence": 81, "kind": "combat.member_swing", "entity_id": 2, "target_id": 101},
 		{"sequence": 9, "kind": "combat.hit_structure", "entity_id": 1, "target_id": 2001},
 		{"sequence": 10, "kind": "battalion.defeated", "entity_id": 1, "target_id": 103, "object_id": AudioScript.KNIGHT_OBJECT_ID},
 		{"sequence": 11, "kind": "structure.destroyed", "entity_id": 1, "target_id": 2001},
@@ -178,9 +182,23 @@ func _run() -> void:
 	])
 	audio._next_event_index = 4
 	var horse_impacts_before_intents := _routing_log_count(audio.routing_log, "ImpactHorse", true)
+	var archer_weapon_before := _routing_log_count(audio.routing_log, "ArcherWeapon", true)
 	audio.sync_events(intent_events)
 	var routed_horse_impacts := _routing_log_count(audio.routing_log, "ImpactHorse", true) - horse_impacts_before_intents
-	_check("archer_swing_routes_bow_sfx", _routing_log_has(audio.routing_log, "ArrowDrawBow", true))
+	# WHAT THIS NOW GATES: the archer's OWN authored weapon FireFX sound, fired
+	# from the per-member swing event, counted as a DELTA over this sync_events
+	# call.
+	#
+	# It used to read `archer_swing_routes_bow_sfx` and assert that
+	# `ArrowDrawBow` appeared ANYWHERE in the routing log with ok=true. That was
+	# vacuous: the REQUIRED_SFX_EVENT_IDS loop and the sfx-variation checks above
+	# route `ArrowDrawBow` three times BEFORE this point, so the assertion could
+	# never fail no matter what the swing did - and `ArrowDrawBow` was in any
+	# case an invented class default, not a leaf the archer's weapon names. The
+	# archer's real bound event is `ArcherWeapon` (Weapon FireFX -> FXList Sound),
+	# and retail fires FireFX per weapon discharge, i.e. per member.
+	var archer_weapon_routed := _routing_log_count(audio.routing_log, "ArcherWeapon", true) - archer_weapon_before
+	_check("archer_member_swing_routes_own_authored_weapon_sfx", archer_weapon_routed == 1, "routed=%d" % archer_weapon_routed)
 	_check("building_hit_routes_stone_sfx", _routing_log_has(audio.routing_log, "BuildingLightDamageStone", true))
 	_check("knight_defeat_routes_horse_impact", routed_horse_impacts == 2 and not audio._entity_object_ids.has(103), "routed_impacts=%d pinned_103=%s" % [routed_horse_impacts, str(audio._entity_object_ids.has(103))])
 	_check("structure_destroy_routes_heavy_stone_sfx", _routing_log_has(audio.routing_log, "BuildingHeavyDamageStone", true))
@@ -220,18 +238,39 @@ func _run() -> void:
 	_check("construction_start_routes_builder_voice_and_loop", _routing_log_has(audio.routing_log, "MenBuilderVoiceBuild", true) and _routing_log_has(audio.routing_log, "BuildingConstructionLoop", true))
 
 	# S4: attack acks split by target class; siege fires its authored launch
-	# sound; cavalry hits land the horse impact.
+	# sound; a per-hit event plays NOTHING.
 	audio._next_event_index = 0
+	var s4_horse_before := _routing_log_count(audio.routing_log, "ImpactHorse", true)
 	audio.sync_events([
 		{"sequence": 20, "kind": "voice.attack", "entity_id": 103, "target_id": 2001, "object_id": AudioScript.KNIGHT_OBJECT_ID, "target_kind": "structure"},
 		{"sequence": 21, "kind": "voice.attack", "entity_id": 103, "target_id": 101, "object_id": AudioScript.KNIGHT_OBJECT_ID, "target_kind": "battalion"},
-		{"sequence": 22, "kind": "combat.swing", "entity_id": 11, "target_id": 2001, "object_id": "bfme2.object.gondor-trebuchet"},
-		{"sequence": 23, "kind": "combat.hit", "entity_id": 1, "target_id": 103, "target_object_id": AudioScript.KNIGHT_OBJECT_ID},
+		{"sequence": 22, "kind": "combat.member_swing", "entity_id": 11, "target_id": 2001},
+		{"sequence": 23, "kind": "combat.hit", "entity_id": 1, "target_id": 103, "target_object_id": AudioScript.KNIGHT_OBJECT_ID, "damage_type": "CRUSH"},
 	])
 	_check("knight_attack_structure_ack_is_target_classed", _routing_log_has(audio.routing_log, "GondorKnightVoiceAttackBuilding", true))
 	_check("knight_attack_unit_ack_stays_generic", _routing_log_has(audio.routing_log, "GondorKnightVoiceAttack", true))
 	_check("trebuchet_swing_routes_launch_voice", _routing_log_has(audio.routing_log, "TrebuchetLaunchVoice", true))
-	_check("cavalry_hit_routes_horse_impact", _routing_log_count(audio.routing_log, "ImpactHorse", true) >= 3)
+	# WHAT THIS NOW GATES: a per-hit event routes NO sound at all, and the gap is
+	# counted by damage type.
+	#
+	# It used to read `cavalry_hit_routes_horse_impact` and require at least
+	# three ok=true `ImpactHorse` rows in the cumulative log. That ENSHRINED the
+	# bug the owner reported: `combat.hit` was routed to the target object's
+	# `SoundImpact`, which is the CRUSH/KNOCKBACK thud
+	# (`gondorfighter.ini:768 SoundImpact = ImpactHorse` sits on an INFANTRY
+	# object; the same file's knockback death module at :913-919 is commented
+	# "sound already played by SoundImpact"), and which resolves to the same
+	# shared `ImpactHorse` macro for every unit document that carries it. Since
+	# `combat.hit` fires once per member per damage application, a horde fight
+	# became a stream of horse-trample thuds. Retail's per-hit layer is DamageFX
+	# (`weapon.ini:5514 Weapon GondorSword -> DamageFXType = SWORD_SLASH`,
+	# `damagefx.ini NormalDamageFX -> MajorFX = SWORD_SLASH  FX_NONE`), which is
+	# not imported and which plays nothing at all for a sword hit.
+	#
+	# The assertion was also cumulative rather than a delta, so earlier sections
+	# of this runner already satisfied it on their own.
+	var s4_horse_from_hit := _routing_log_count(audio.routing_log, "ImpactHorse", true) - s4_horse_before
+	_check("per_hit_event_plays_no_sound_and_counts_a_damagefx_gap", s4_horse_from_hit == 0 and int(audio.get("damage_fx_gaps").get("CRUSH", 0)) == 1, "horse=%d gaps=%s" % [s4_horse_from_hit, str(audio.get("damage_fx_gaps"))])
 
 	# #24: alt-form heroes route their mounted set when the event carries the
 	# form; the base form stays the default.
