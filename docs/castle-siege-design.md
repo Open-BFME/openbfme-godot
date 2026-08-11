@@ -382,7 +382,7 @@ Maps needing this: Carn Dum 39, Dol Guldur 16 (`DoGoldurWallCatapultSmall`,
 
 ### 2.5 skirmish-ai-libraries — the weakest blocker of the five
 
-**Retail intends these maps to be played as skirmish with AI. Three independent oracles agree.**
+**Retail intends these maps to be played as skirmish with AI. Two independent oracles agree.**
 
 **(i) The auto-generated multiplayer registry**, `maps/mapcache.ini` (header: *"This INI file
 is auto-generated - do not modify"*): all ten castle maps are `isMultiplayer=yes` with
@@ -1088,6 +1088,7 @@ own branch, no push, no pack builds while a republish is running.
   in the authored 14-entry list, and that non-castle maps are unaffected.
 
 **Suggested order:** L1 → L2a → L2b → {L3, L4 parallel} → L5 → L7 → L10 → L8 → L9 → L6.
+(L9 is opportunistic: schedule it any time after L2b rather than letting it lag to ninth — newly-selectable structures without presentation is a worse player state than unshipped lanes.)
 After L1+L2+L3+L4+L7+L10: Black Gate, Grey Havens, Erebor, Fornost playable (Black Gate
 first, per D4). After L5: Carn Dum, Dol Guldur. Minas Tirith, Helm's Deep, Minas Morgul and
 Isengard need L6. L9 should not lag L2b by long — selectable-but-unpresented structures are
@@ -1108,9 +1109,6 @@ a bad intermediate state to leave in main.
   `numPlayers = 2-4`, not 8. An 8-slot AI seat list on a 2-player asymmetric map is a
   **lobby-admission** problem — how many AI opponents may be seated, and on which start
   positions — and no lane in section 5 addresses it. It is assigned to **L8** below.
-- **D5 — lobby admission on asymmetric castle maps.** Follows from D2: on a 2-player map
-  like Erebor or Carn Dum, does the lobby offer 1 AI opponent, or do we allow team stacking
-  onto authored start positions that do not exist? Needs an owner call before L8 is briefed.
 - **D3 — fake vs real wall garrison.** Retail ships player wall "garrison" as a
   weapon/armor/geometry upgrade, not real occupants (section 2.2). Adopt retail's fake
   garrison for wall plots (cheap, visually identical) while implementing real containment
@@ -1121,6 +1119,9 @@ a bad intermediate state to leave in main.
   gates, no garrisons and no wall-mounted defenses, so this makes it the first castle map
   to become playable. Chasing the engine-side open is explicitly out of scope unless the
   owner overrides.
+- **D5 — lobby admission on asymmetric castle maps.** Follows from D2: on a 2-player map
+  like Erebor or Carn Dum, does the lobby offer 1 AI opponent, or do we allow team stacking
+  onto authored start positions that do not exist? Needs an owner call before L8 is briefed.
 
 *(A question about neutral gate ownership was withdrawn: `FakePathfindPortalBehaviour
 AllowEnemies = No` is uniform across every retail gate, so the rule is data, not a
