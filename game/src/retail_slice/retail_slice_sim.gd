@@ -3809,11 +3809,26 @@ func _initialize_base_loop() -> void:
 			}
 			if bool((team_build_rules.get(kind, {}) as Dictionary).get("highlander_body", false)):
 				structures[structure_id]["highlander_body"] = true
-			if kind == "fortress":
-				var fortress_sources: Dictionary = structure_source_object_ids_for_team(team)
-				var fortress_aliases: Array = fortress_sources.get("fortress", []) as Array
-				if not fortress_aliases.is_empty():
-					structures[structure_id]["source_object_id"] = String(fortress_aliases[0])
+			# Retail object identity for EVERY seeded kind, not just fortresses,
+			# so this path and issue_construct stamp the same table for the same
+			# kind and a building cannot have two identities depending on
+			# whether the map placed it or a porter raised it.
+			#
+			# MEASURED, not assumed: the id is one input to
+			# _structure_footprint_radius, which raised the worry that stamping
+			# it would move structure attack-range and unit eviction. On the
+			# mounted Men and Angmar packs it does not — the runner prints
+			# with/without/seed radii for a fortress and a non-fortress kind and
+			# all three agree to four decimals (FORTRESS_FOOTPRINT,
+			# NON_FORTRESS_FOOTPRINT), because the resolver already falls back to
+			# the same per-kind geometry. The 3000-tick state pin is unchanged.
+			# The symmetry is worth having on its own terms; it is not a fix for
+			# a divergence anyone has demonstrated.
+			var seed_sources: Variant = structure_source_object_ids_for_team(team).get(kind, [])
+			if typeof(seed_sources) == TYPE_ARRAY and not (seed_sources as Array).is_empty():
+				structures[structure_id]["source_object_id"] = String((seed_sources as Array)[0])
+			elif typeof(seed_sources) in [TYPE_STRING, TYPE_STRING_NAME]:
+				structures[structure_id]["source_object_id"] = String(seed_sources)
 			_apply_structure_create_grants(
 				structures[structure_id] as Dictionary, true, true
 			)
@@ -15394,9 +15409,15 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 	# A building the player RAISES is the same retail object as the one the map
 	# seeds (_seed_structures) or a flag unpacks (unpack_base): both of those
 	# stamp the faction's authored source id and this path did not, so a
-	# constructed structure came up with no retail identity at all. Snapshot-inert
-	# (state_signature carries no source id), so the cross-platform pin is
-	# untouched.
+	# constructed structure came up with no retail identity at all -- which is
+	# what left a built fortress unable to unpack its castle and therefore
+	# showing an empty command wheel.
+	#
+	# Snapshot-inert (state_signature carries no source id), so the
+	# cross-platform pin is untouched. It is NOT inert in general -- the id also
+	# feeds _structure_footprint_radius and object-id script queries -- but the
+	# footprint half is measured to be a no-op on the mounted packs; see the
+	# note in _seed_structures.
 	var constructed_sources: Variant = structure_source_object_ids_for_team(team).get(structure_kind, [])
 	if typeof(constructed_sources) == TYPE_ARRAY and not (constructed_sources as Array).is_empty():
 		structures[structure_id]["source_object_id"] = String((constructed_sources as Array)[0])

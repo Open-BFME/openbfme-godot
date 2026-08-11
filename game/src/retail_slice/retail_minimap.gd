@@ -136,6 +136,11 @@ var last_center_request := Vector2.ZERO
 ## True while the left button is held on the radar: the camera follows the
 ## cursor until release (retail drag-scrub).
 var scrubbing := false
+## The radar viewport and bezel rectangle as they were at the moment of press.
+## Every motion in one drag is measured against these, never against the live
+## values, which the drag itself is busy moving. See the press branch.
+var _scrub_bounds := Rect2()
+var _scrub_arena := Rect2()
 
 signal center_requested(world_position: Vector2)
 signal order_requested(world_position: Vector2)
@@ -250,8 +255,19 @@ func _gui_input(event: InputEvent) -> void:
 			# Retail: press jumps the camera there, and HOLDING drags it — the
 			# radar scrubs continuously under the cursor until the button is
 			# released.
+			#
+			# The radar frame is LATCHED at press. Above radar_zoom 1.0 the
+			# visible bounds are recentred on `camera_center`, and the slice
+			# writes camera_center = camera_focus every frame — so re-reading
+			# the live viewport per motion event measures each sample against a
+			# viewport the PREVIOUS sample just moved. That is a positive
+			# feedback loop: a perfectly stationary held cursor walks the camera
+			# across the map and pins it to the edge. Measuring the whole drag
+			# in the frame it started in removes the loop entirely.
 			scrubbing = true
-			last_center_request = _canvas_to_world(mouse.position, _arena())
+			_scrub_bounds = _visible_bounds()
+			_scrub_arena = _arena()
+			last_center_request = _canvas_to_world_within(mouse.position, _scrub_arena, _scrub_bounds)
 			center_requested.emit(last_center_request)
 			accept_event()
 		elif mouse.button_index == MOUSE_BUTTON_RIGHT:
@@ -262,8 +278,11 @@ func _gui_input(event: InputEvent) -> void:
 	elif event is InputEventMouseMotion and scrubbing:
 		# Godot keeps this control as the GUI mouse focus from press to release,
 		# so the drag keeps scrubbing even when the cursor leaves the bezel;
-		# _canvas_to_world clamps to the map edge, which is the retail feel.
-		last_center_request = _canvas_to_world((event as InputEventMouseMotion).position, _arena())
+		# the mapping clamps to the map edge, which is the retail feel.
+		# Latched frame, not the live one — see the press branch above.
+		last_center_request = _canvas_to_world_within(
+			(event as InputEventMouseMotion).position, _scrub_arena, _scrub_bounds
+		)
 		center_requested.emit(last_center_request)
 		accept_event()
 
@@ -582,7 +601,12 @@ func _radar_to_canvas(radar: Vector2, arena: Rect2) -> Vector2:
 
 
 func _canvas_to_world(canvas: Vector2, arena: Rect2) -> Vector2:
-	var visible_bounds := _visible_bounds()
+	return _canvas_to_world_within(canvas, arena, _visible_bounds())
+
+
+func _canvas_to_world_within(canvas: Vector2, arena: Rect2, visible_bounds: Rect2) -> Vector2:
+	## Mapping against an EXPLICIT radar viewport. A held drag must pass the
+	## viewport it started with (see `_scrub_bounds`), not re-read the live one.
 	var safe_size := Vector2(maxf(visible_bounds.size.x, 1.0), maxf(visible_bounds.size.y, 1.0))
 	var scale := minf(arena.size.x / safe_size.x, arena.size.y / safe_size.y)
 	var rendered_size := safe_size * scale

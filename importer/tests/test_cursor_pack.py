@@ -239,6 +239,10 @@ End
         "sccattack.ani": _ani([_solid_frame(RED)], sequence=None, rates=None),
         "sccmove.ani": _ani([_solid_frame(GREEN)], sequence=None, rates=None),
     }
+    # NOTE: the explicit cursor_names below bypasses DEFAULT_CURSOR_NAMES, so
+    # this half is a REGRESSION guard on the planner, not on the whitelist --
+    # it passes with or without the widening.  The default-driven plan further
+    # down is the half that is red without it.
     plan = plan_cursor_pack(mouse_ini, _reader(files), cursor_names=["attackobj", "move"])
     cursors = plan.document["cursors"]
 
@@ -250,3 +254,14 @@ End
     # ...and it is genuinely different art from the attack cursor.
     assert cursors["move"]["frames"][0]["png"] != cursors["attackobj"]["frames"][0]["png"]
     assert not plan.gaps
+
+    # The half that actually depends on the widened whitelist: plan with the
+    # SHIPPED default set.  Before "move" was added to DEFAULT_CURSOR_NAMES this
+    # produced a pack with no move cursor at all, which is why right-click move
+    # showed no bronze arrow -- the runtime had nothing to bind.
+    default_plan = plan_cursor_pack(mouse_ini, _reader(files))
+    assert "move" in default_plan.document["cursors"], (
+        "the shipped DEFAULT_CURSOR_NAMES does not carry retail's Move cursor, "
+        "so no republish can give the game its bronze move arrow"
+    )
+    assert default_plan.document["cursors"]["move"]["texture"] == "SCCMove"

@@ -19,7 +19,7 @@ const RallyIndicatorScript = preload("res://src/retail_slice/retail_rally_indica
 
 ## Every _check in this file. Guards against a silent coroutine/runtime abort
 ## skipping a whole section and still reporting green.
-const EXPECTED_CHECKS := 16
+const EXPECTED_CHECKS := 19
 
 var passed := 0
 var failed := 0
@@ -100,6 +100,73 @@ func _check_minimap_drag_scrubs_the_camera() -> void:
 	)
 	# A right-press must not arm the left-drag scrub.
 	_check("minimap_right_click_does_not_arm_scrubbing", not minimap.scrubbing, "right press armed the drag")
+
+	minimap.queue_free()
+	_check_minimap_drag_does_not_run_away_when_zoomed()
+
+
+func _check_minimap_drag_does_not_run_away_when_zoomed() -> void:
+	## The regime the drag check above CANNOT see.
+	##
+	## At radar_zoom 1.0 `_visible_bounds()` returns the whole map, so the
+	## canvas->world mapping is a fixed function and a stationary cursor is
+	## trivially stable. Above 1.0 the visible bounds are recentred on
+	## `camera_center`, and the slice writes `camera_center = camera_focus`
+	## every frame (retail_vertical_slice._refresh_hud) — so if a held drag
+	## re-reads the live viewport per event, each sample is measured against a
+	## viewport the previous sample just moved. That is positive feedback: a
+	## perfectly STATIONARY held cursor walks the camera to the map edge.
+	##
+	## Reproducing it needs both halves: zoom > 1 AND the camera_center
+	## feedback the real HUD performs. Without the feedback the loop is broken
+	## by the harness rather than by the code under test.
+	var minimap := MinimapScript.new()
+	minimap.size = Vector2(240, 240)
+	root.add_child(minimap)
+	minimap.set_zoom(2.0, true)
+
+	var centers: Array[Vector2] = []
+	minimap.center_requested.connect(func(point: Vector2) -> void:
+		centers.append(point)
+		# Exactly what _refresh_hud does the frame after a centre request.
+		minimap.camera_center = point
+	)
+
+	var held := Vector2(150.0, 96.0)
+	minimap._gui_input(_button(MOUSE_BUTTON_LEFT, true, held))
+	for _event in range(20):
+		minimap._gui_input(_motion(held))
+	minimap._gui_input(_button(MOUSE_BUTTON_LEFT, false, held))
+
+	var drift := 0.0
+	if centers.size() >= 2:
+		drift = centers[0].distance_to(centers[centers.size() - 1])
+	_check(
+		"minimap_zoomed_drag_emits_every_event",
+		centers.size() == 21,
+		"expected 21 centre requests (press + 20 motions), got %d" % centers.size()
+	)
+	_check(
+		"minimap_zoomed_stationary_drag_does_not_run_away",
+		drift <= 0.01,
+		"a stationary held cursor drifted %.3f world units over %d events (first=%s last=%s)" % [
+			drift, centers.size(), str(centers[0] if not centers.is_empty() else Vector2.ZERO),
+			str(centers[centers.size() - 1] if not centers.is_empty() else Vector2.ZERO),
+		]
+	)
+
+	# A drag that genuinely MOVES must still track, or the latch could pass the
+	# check above by simply ignoring motion.
+	centers.clear()
+	minimap.camera_center = Vector2.ZERO
+	minimap._gui_input(_button(MOUSE_BUTTON_LEFT, true, Vector2(100.0, 100.0)))
+	minimap._gui_input(_motion(Vector2(140.0, 130.0)))
+	minimap._gui_input(_button(MOUSE_BUTTON_LEFT, false, Vector2(140.0, 130.0)))
+	_check(
+		"minimap_zoomed_drag_still_tracks_real_motion",
+		centers.size() == 2 and centers[0] != centers[1],
+		"a moving drag reported %s" % str(centers)
+	)
 
 	minimap.queue_free()
 

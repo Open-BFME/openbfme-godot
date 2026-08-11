@@ -3795,26 +3795,47 @@ func _sync_rally_indicator() -> void:
 
 
 func _selection_target_structure(structure_id: int) -> int:
-	## A castle is ONE command surface. CastleBehavior unpacks a fortress into a
-	## citadel plus wall/tower pieces, and those pieces carry no command set of
-	## their own (production [], no upgrades, no expansion pads) — so selecting
-	## one hands the player a palantir with nothing in it. That is exactly the
-	## playtest report: a freshly BUILT fortress showed an empty command wheel
-	## while the map-start one showed its commands.
+	## A castle is ONE command surface: CastleBehavior unpacks a fortress into a
+	## citadel plus its BSE pieces, and those pieces carry no command set of
+	## their own (production [], no upgrades, no expansion pads), so selecting
+	## one hands the player a palantir with nothing in it.
 	##
-	## The pieces win the pick for a geometric reason, not a construction one:
-	## RetailSelectionPick.closest_hit scores candidates by how deeply the click
-	## sits inside their footprint RELATIVE to that footprint's size, so a small
-	## wall piece always outscores the large fortress body it sits on. Rather
-	## than distort that tiebreak (it is what lets a battalion standing on a
-	## fortress plate stay selectable), resolve the piece to the fortress that
-	## owns it at the moment of SELECTION.
+	## WHAT THIS IS NOT. It is tempting to read this as the cause of the
+	## playtest report ("the fortress I build has no menu"), and an earlier
+	## version of this comment did. That was wrong, and the distinction matters:
+	##
+	##   * The empty wheel on a BUILT fortress was the missing retail object
+	##     identity - issue_construct stamped no source_object_id, so the castle
+	##     never unpacked and the fortress had no pages to show. That is fixed
+	##     in retail_slice_sim.issue_construct, not here.
+	##   * This mispick is a SEPARATE, real bug that hits the map-start fortress
+	##     exactly as hard: RetailSelectionPick.closest_hit scores candidates by
+	##     how deeply the click sits inside their footprint RELATIVE to that
+	##     footprint's size, so a small piece always outscores the large body it
+	##     stands on, no matter how the castle came to exist.
+	##
+	## Rather than distort that tiebreak (it is what lets a battalion standing
+	## on a fortress plate stay selectable), a piece resolves to its owner at
+	## the moment of SELECTION.
+	##
+	## The resolution is deliberately conditional on the piece having nothing to
+	## offer. Buildable gates, walls and towers are expansion_of_fortress rows,
+	## not castle_piece rows, so they are unaffected - but if a pack ever
+	## authors a BSE piece that DOES carry its own command surface, redirecting
+	## the player away from it would hide real commands. Keying on "has no
+	## commands of its own" makes that structural rather than an assumption
+	## about what pieces happen to contain today.
 	if structure_id == 0 or simulation == null:
 		return structure_id
-	var owner_id := int(simulation.structure(structure_id).get("castle_piece_of_fortress", 0))
-	if owner_id != 0 and int(simulation.structure(owner_id).get("health", 0)) > 0:
-		return owner_id
-	return structure_id
+	var piece: Dictionary = simulation.structure(structure_id)
+	var owner_id := int(piece.get("castle_piece_of_fortress", 0))
+	if owner_id == 0 or int(simulation.structure(owner_id).get("health", 0)) <= 0:
+		return structure_id
+	if not Array(piece.get("production", [])).is_empty():
+		return structure_id
+	if not simulation.structure_upgrade_commands(structure_id).is_empty():
+		return structure_id
+	return owner_id
 
 
 func _closest_structure(point: Vector2, team: int) -> int:

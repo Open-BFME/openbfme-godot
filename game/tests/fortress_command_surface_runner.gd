@@ -144,6 +144,28 @@ var failed := 0
 var _faction := "angmar"
 var _cah_seed_error := ""
 
+## Silent-abort guard. A GDScript runtime error inside an `await`-ing function
+## unwinds it WITHOUT failing anything, so a runner that only counts failures
+## prints a confident green while whole sections never ran — this file's
+## sections 8 and 9 are await-heavy and have legitimate early returns, so a
+## raw check-count pin would be brittle across factions. Instead every section
+## records that it finished, and _finish refuses a run that stopped early.
+var _sections_completed: Array[String] = []
+## Sections _run intends to reach; appended as it commits to each one, so a
+## legitimate early exit (unknown faction, boot failure) does not demand
+## sections it never started.
+var _sections_expected: Array[String] = []
+
+
+func _section_reached(name: String) -> void:
+	if not _sections_expected.has(name):
+		_sections_expected.append(name)
+
+
+func _section_completed(name: String) -> void:
+	if not _sections_completed.has(name):
+		_sections_completed.append(name)
+
 
 func _initialize() -> void:
 	_runner_watchdog.start(self, "FORTRESS_COMMAND_SURFACE_RUNNER")
@@ -268,10 +290,18 @@ func _run() -> void:
 	)
 
 	# --- Sections 4-6: the retail PAGED radial --------------------------------
+	# NOTE: completion is recorded INSIDE each section, never here. A runtime
+	# error inside an awaited coroutine unwinds that coroutine and hands control
+	# straight back to this function, so marking a section done after its
+	# `await` returned would mark an aborted section as complete — which is
+	# exactly the failure mode this guard exists to catch.
+	_section_reached("radial_pages")
 	await _check_fortress_radial_pages(slice, sim, hud, fortress)
 	# --- Section 8: a fortress the PLAYER builds ------------------------------
+	_section_reached("constructed_fortress_parity")
 	await _check_constructed_fortress_parity(slice, sim, hud, fortress)
 	# --- Section 9: hero portrait double-click centres the camera -------------
+	_section_reached("hero_portrait_focus")
 	_check_hero_portrait_double_click_centres_the_camera(slice, sim, hud)
 	_finish()
 
@@ -365,6 +395,7 @@ func _check_hero_portrait_double_click_centres_the_camera(slice, sim, hud) -> vo
 		hud._hero_bar_buttons.is_empty() or wired_portraits == hud._hero_bar_buttons.size(),
 		"%d of %d portrait buttons have a gui_input handler" % [wired_portraits, hud._hero_bar_buttons.size()]
 	)
+	_section_completed("hero_portrait_focus")
 
 
 func _check_constructed_fortress_parity(slice, sim, hud, seed_fortress: int) -> void:
@@ -379,6 +410,7 @@ func _check_constructed_fortress_parity(slice, sim, hud, seed_fortress: int) -> 
 	## to the object, not to how the object came to exist.
 	if not sim.structure_build_rules_for_team(0).has("fortress"):
 		print("SKIP %s_constructed_fortress_parity (faction cannot build a fortress)" % _faction)
+		_section_completed("constructed_fortress_parity")
 		return
 	var seed_surface := await _command_surface_snapshot(slice, hud, seed_fortress)
 
@@ -460,8 +492,10 @@ func _check_constructed_fortress_parity(slice, sim, hud, seed_fortress: int) -> 
 	# The left-click pick must land on the citadel, not on one of the castle
 	# pieces CastleBehavior spawns around it: a piece produces nothing, so its
 	# wheel is exactly the empty ring the playtest screenshot shows.
-	_check_left_click_lands_on_the_citadel(slice, sim, seed_fortress, "map_start")
-	_check_left_click_lands_on_the_citadel(slice, sim, built_id, "built")
+	_section_reached("left_click_map_start")
+	_check_left_clicking_the_castle_selects_the_fortress(slice, sim, seed_fortress, "map_start")
+	_section_reached("left_click_built")
+	_check_left_clicking_the_castle_selects_the_fortress(slice, sim, built_id, "built")
 
 	var built_surface := await _command_surface_snapshot(slice, hud, built_id)
 
@@ -517,6 +551,17 @@ func _check_constructed_fortress_parity(slice, sim, hud, seed_fortress: int) -> 
 	# radius feeds the attack-range gate against structures and unit eviction
 	# around them. The fix makes the built fortress agree with the seeded one;
 	# that INTENDED consequence is gated here rather than left implicit.
+	# How much the identity is actually WORTH on this pack, measured rather than
+	# assumed: the same row with source_object_id stripped is exactly the state
+	# a constructed building used to be in.
+	var fortress_stripped: Dictionary = (sim.structure(built_id) as Dictionary).duplicate(true)
+	fortress_stripped.erase("source_object_id")
+	fortress_stripped.erase("footprint_radius_source")
+	print("FORTRESS_FOOTPRINT with=%.4f without=%.4f seed=%.4f" % [
+		sim._structure_footprint_radius(sim.structure(built_id)),
+		sim._structure_footprint_radius(fortress_stripped),
+		sim._structure_footprint_radius(sim.structure(seed_fortress)),
+	])
 	_check(
 		"%s_built_fortress_has_the_same_footprint_radius" % _faction,
 		is_equal_approx(
@@ -537,12 +582,16 @@ func _check_constructed_fortress_parity(slice, sim, hud, seed_fortress: int) -> 
 			String(sim.structure(built_id).get("source_object_id", "")),
 		]
 	)
+	_section_reached("constructed_non_fortress_parity")
+	_check_constructed_non_fortress_parity(slice, sim)
+	_section_completed("constructed_fortress_parity")
 
 
-func _check_left_click_lands_on_the_citadel(slice, sim, fortress_id: int, label: String) -> void:
-	## Clicking anywhere on a fortress's own footprint must select the fortress.
-	## Reported per fortress so a general pick bug and a construction-only pick
-	## bug are told apart.
+func _check_left_clicking_the_castle_selects_the_fortress(slice, sim, fortress_id: int, label: String) -> void:
+	## Clicking anywhere on a castle must leave the player holding the FORTRESS
+	## and its command wheel — whichever branch of _handle_left_click gets there
+	## (expansion pad, structure pick, or castle-piece resolution). Reported per
+	## fortress so a general pick bug and a construction-only one are told apart.
 	## Probes are scaled to the fortress's OWN footprint, so this asserts what a
 	## player actually does — click on the building — rather than an invented
 	## world-unit distance that may fall outside the silhouette entirely.
@@ -563,13 +612,37 @@ func _check_left_click_lands_on_the_citadel(slice, sim, fortress_id: int, label:
 		if piece_row.is_empty() or int(piece_row.get("health", 0)) <= 0:
 			continue
 		offsets.append(Vector2(piece_row.get("position", centre)) - centre)
+	# Drive the REAL left-click handler, not a re-composition of the two helpers
+	# it happens to call. _handle_left_click runs an expansion-pad test and a
+	# battalion test FIRST, and on Men most of these probes are in fact
+	# pad-intercepted — a check that skipped those branches was testing a path
+	# the player never takes. (Pad interception is a correct outcome here: it
+	# also selects the fortress, so the player still gets the castle's wheel.)
+	var pad_intercepted := 0
+	var battalion_intercepted := 0
 	for probe in offsets:
-		# The real selection path, castle-piece resolution included.
-		var picked := int(slice._selection_target_structure(int(slice._closest_structure(centre + probe, 0))))
-		if picked != fortress_id:
-			mispicks.append("offset %s -> id=%d kind=%s" % [
-				str(probe), picked, String(sim.structure(picked).get("structure_kind", "<none>"))
-			])
+		slice._selected_expansion_pad = {}
+		sim.selected_ids.clear()
+		slice.selected_structure_id = 0
+		slice._handle_left_click(centre + probe, false)
+		var picked := int(slice.selected_structure_id)
+		if not slice._selected_expansion_pad.is_empty():
+			pad_intercepted += 1
+		if picked == fortress_id:
+			continue
+		if not sim.selected_ids.is_empty():
+			# A friendly battalion standing on the castle won the click. That is
+			# RETAIL behaviour, not a mispick: units are selected over the
+			# buildings they stand on, and _handle_left_click tests the
+			# battalion branch before the structure branch on purpose.
+			battalion_intercepted += 1
+			continue
+		mispicks.append("offset %s -> id=%d kind=%s" % [
+			str(probe), picked, String(sim.structure(picked).get("structure_kind", "<none>"))
+		])
+	# Leave no pad armed for the sections that follow.
+	slice._selected_expansion_pad = {}
+	sim.selected_ids.clear()
 	# The probes above re-compose _closest_structure + _selection_target_structure,
 	# so they would still pass if the left-click handler stopped calling the
 	# resolver. Guard the call site itself (the precedent this project already
@@ -584,15 +657,112 @@ func _check_left_click_lands_on_the_citadel(slice, sim, fortress_id: int, label:
 		click_source.contains("_selection_target_structure(_closest_structure(point, local_team))"),
 		"the left-click structure pick no longer resolves castle pieces to their fortress"
 	)
-	print("FORTRESS_PICK %s id=%d radius=%.3f pieces=%s" % [
-		label, fortress_id, radius,
+	print("FORTRESS_PICK %s id=%d radius=%.3f pad=%d battalion=%d of %d pieces=%s" % [
+		label, fortress_id, radius, pad_intercepted, battalion_intercepted, offsets.size(),
 		str(sim.structure(fortress_id).get("castle_piece_structure_ids", []))
 	])
+	# The gate must not be satisfied by every probe being intercepted: at least
+	# some clicks have to reach the structure branch this check exists to test.
 	_check(
-		"%s_clicking_the_%s_fortress_selects_the_citadel" % [_faction, label],
+		"%s_%s_castle_probes_reach_the_structure_branch" % [_faction, label],
+		pad_intercepted + battalion_intercepted + mispicks.size() < offsets.size(),
+		"all %d probes were intercepted before the structure pick" % offsets.size()
+	)
+	_check(
+		"%s_left_clicking_the_%s_castle_selects_the_fortress" % [_faction, label],
 		mispicks.is_empty(),
 		str(mispicks)
 	)
+	_section_completed("left_click_%s" % label)
+
+
+func _check_constructed_non_fortress_parity(slice, sim) -> void:
+	## The fortress is not a special case. `source_object_id` is what
+	## _structure_footprint_radius resolves authored geometry through, and that
+	## radius feeds the attack-range gate against structures and unit eviction -
+	## so a barracks the map seeded and a barracks a porter raised must resolve
+	## the SAME identity, or the same building fights and pushes units
+	## differently depending on how it came to exist.
+	##
+	## The slice maps seed only a fortress (plus its castle pieces), so there is
+	## usually no seeded barracks to compare against directly. The symmetry is
+	## therefore asserted against the shared source of truth both paths read:
+	## structure_source_object_ids_for_team(team)[kind]. _seed_structures and
+	## issue_construct now both stamp exactly that value for every kind, so a
+	## constructed building agreeing with the table IS agreement with the seed
+	## path.
+	var buildable: Dictionary = sim.structure_build_rules_for_team(0)
+	var sources: Dictionary = sim.structure_source_object_ids_for_team(0)
+	var kind := ""
+	var expected_id := ""
+	for kind_value in buildable.keys():
+		var candidate := String(kind_value)
+		if candidate == "fortress" or candidate.contains("expansion") or candidate.contains("wall_hub"):
+			continue
+		var aliases: Variant = sources.get(candidate, [])
+		if typeof(aliases) == TYPE_ARRAY and not (aliases as Array).is_empty():
+			kind = candidate
+			expected_id = String((aliases as Array)[0])
+			break
+	if kind == "":
+		print("NON_FORTRESS_PARITY_DIAG buildable=%s sourced=%s" % [
+			str(buildable.keys()), str(sources.keys())
+		])
+		print("SKIP %s_constructed_non_fortress_parity (no buildable non-fortress kind has a retail source id)" % _faction)
+		_section_completed("constructed_non_fortress_parity")
+		return
+
+	var builder_ids: Array[int] = []
+	for id in sim.entity_ids():
+		var row: Dictionary = sim.entity(id)
+		if int(row.get("team", -1)) == 0 and int(row.get("health", 0)) > 0 and bool(row.get("is_builder", false)):
+			builder_ids = [id]
+			break
+	if builder_ids.is_empty():
+		print("SKIP %s_constructed_non_fortress_parity (no builder)" % _faction)
+		_section_completed("constructed_non_fortress_parity")
+		return
+	slice._grant_test_resources()
+	var at := Vector2(sim.entity(builder_ids[0]).get("position", Vector2.ZERO))
+	var built_id := 0
+	for radius in [10.0, 16.0, 24.0, 34.0]:
+		for step in range(8):
+			var angle := TAU * float(step) / 8.0
+			var order: Dictionary = sim.issue_construct(
+				builder_ids, kind, at + Vector2(cos(angle), sin(angle)) * float(radius), false, 0
+			)
+			if bool(order.get("ok", false)):
+				built_id = int(order.get("structure_id", 0))
+				break
+		if built_id != 0:
+			break
+	if not _check(
+		"%s_a_%s_can_be_constructed" % [_faction, kind], built_id != 0, "no legal site accepted a %s" % kind
+	):
+		_section_completed("constructed_non_fortress_parity")
+		return
+	_check(
+		"%s_built_%s_carries_the_seed_paths_retail_identity" % [_faction, kind],
+		String(sim.structure(built_id).get("source_object_id", "")) == expected_id,
+		"expected %s, got %s" % [expected_id, String(sim.structure(built_id).get("source_object_id", ""))]
+	)
+	# The identity must actually reach the footprint, or stamping it is cosmetic.
+	# Compare against the same row with the id stripped: that is precisely the
+	# state this lane found a constructed building in.
+	var stripped: Dictionary = (sim.structure(built_id) as Dictionary).duplicate(true)
+	stripped.erase("source_object_id")
+	stripped.erase("footprint_radius_source")
+	var with_identity := float(sim._structure_footprint_radius(sim.structure(built_id)))
+	var without_identity := float(sim._structure_footprint_radius(stripped))
+	print("NON_FORTRESS_FOOTPRINT kind=%s id=%s with=%.4f without=%.4f" % [
+		kind, expected_id, with_identity, without_identity
+	])
+	_check(
+		"%s_built_%s_footprint_comes_from_its_authored_geometry" % [_faction, kind],
+		with_identity > 0.0,
+		"the constructed %s resolved a non-positive footprint radius" % kind
+	)
+	_section_completed("constructed_non_fortress_parity")
 
 
 func _upgrade_ids(commands: Array) -> Array:
@@ -815,6 +985,7 @@ func _check_fortress_radial_pages(slice, sim, hud, fortress: int) -> void:
 	# Leave the wheel where a player would find it.
 	hud.set_radial_page(RADIAL_PAGE_MAIN)
 
+	_section_completed("radial_pages")
 	# --- Section 7: the wheel with a LIVE production queue --------------------
 	#
 	# Every earlier radial check ran against an idle fortress, so the five
@@ -1250,5 +1421,19 @@ func _check(name: String, ok: bool, detail: String) -> bool:
 
 
 func _finish() -> void:
-	print("RESULT fortress_command_surface faction=%s passed=%d failed=%d" % [_faction, passed, failed])
+	# Liveness pin: every section this run committed to must have reported that
+	# it finished. Without this a coroutine that aborted mid-section simply
+	# contributes fewer checks and the run still prints green.
+	var missing: Array[String] = []
+	for name in _sections_expected:
+		if not _sections_completed.has(name):
+			missing.append(name)
+	if not missing.is_empty():
+		failed += 1
+		print("FAIL runner_ran_every_section :: started %s but never finished %s — a section aborted silently" % [
+			str(_sections_expected), str(missing)
+		])
+	print("RESULT fortress_command_surface faction=%s passed=%d failed=%d sections=%s" % [
+		_faction, passed, failed, str(_sections_completed)
+	])
 	quit(0 if failed == 0 else 1)
