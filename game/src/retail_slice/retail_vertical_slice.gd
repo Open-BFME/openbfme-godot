@@ -96,8 +96,6 @@ const FORDS_WATER_REFLECTION_STATUS := "unresolved-in-effective-tree-and-current
 ## replace this placeholder with the converted retail skybox presentation.
 const RETAIL_MAP_EDGE_BACKDROP_COLOR := Color.BLACK
 const FORDS_FOG_COLOR := Color(220.0 / 255.0, 226.0 / 255.0, 235.0 / 255.0, 1.0)
-const FORDS_FOG_START_SOURCE := 350.0
-const FORDS_FOG_END_SOURCE := 2000.0
 const FORDS_CAMERA_MIN_HEIGHT_SOURCE := 120.0
 const FORDS_CAMERA_MAX_HEIGHT_SOURCE := 300.0
 const FORDS_CAMERA_PITCH_ABOVE_HORIZONTAL_DEGREES := 37.5
@@ -6576,10 +6574,10 @@ func _build_environment() -> void:
 			"status": FORDS_WATER_REFLECTION_STATUS,
 		},
 		"fog": {
-			"enabled_in_source": true,
-			"color": FORDS_FOG_COLOR,
-			"start_source": FORDS_FOG_START_SOURCE,
-			"end_source": FORDS_FOG_END_SOURCE,
+			"enabled_in_source": false,
+			"color": Color.TRANSPARENT,
+			"start_source": 0.0,
+			"end_source": 0.0,
 			"start_local": 0.0,
 			"end_local": 0.0,
 			"runtime_enabled": false,
@@ -6629,9 +6627,15 @@ func _build_environment() -> void:
 func _configure_source_environment() -> String:
 	if source_map_data == null or not source_map_data.ready or source_map_data.local_transform_scale <= 0.0:
 		return "validated Fords map scale is unavailable"
+	var fog_binding := _load_compiled_map_fog()
+	if fog_binding.has("error"):
+		return String(fog_binding.get("error", "compiled map fog is unavailable"))
 	var local_scale := source_map_data.local_transform_scale
 	linear_fog = LinearFogScript.new()
-	var fog_error := linear_fog.configure_fords(local_scale)
+	var source_color: Color = fog_binding.get("color", Color.TRANSPARENT)
+	var source_start := float(fog_binding.get("start", -1.0))
+	var source_end := float(fog_binding.get("end", -1.0))
+	var fog_error := linear_fog.configure_exact(source_color, source_start, source_end, local_scale)
 	if fog_error != "":
 		linear_fog = null
 		return fog_error
@@ -6640,9 +6644,16 @@ func _configure_source_environment() -> String:
 		linear_fog = null
 		return "exact Fords linear fog compositor could not be created"
 	world_environment.compositor = compositor
+	world_environment.environment.fog_light_color = source_color
 	var fog_metadata := environment_runtime_metadata.get("fog", {}) as Dictionary
-	fog_metadata["start_local"] = FORDS_FOG_START_SOURCE * local_scale
-	fog_metadata["end_local"] = FORDS_FOG_END_SOURCE * local_scale
+	fog_metadata["enabled_in_source"] = true
+	fog_metadata["color"] = source_color
+	fog_metadata["start_source"] = source_start
+	fog_metadata["end_source"] = source_end
+	fog_metadata["start_local"] = source_start * local_scale
+	fog_metadata["end_local"] = source_end * local_scale
+	fog_metadata["compiled_document"] = String(fog_binding.get("compiled_document", ""))
+	fog_metadata["source_path"] = String(fog_binding.get("source_path", ""))
 	fog_metadata["runtime_enabled"] = true
 	fog_metadata["renderer_status"] = "exact-linear-depth-compositor-configured-forward-plus-dispatch-requires-rendered-gate"
 	fog_metadata["runtime_contract"] = linear_fog.runtime_contract()
@@ -6661,6 +6672,62 @@ func _configure_source_environment() -> String:
 	world_environment.set_meta("retail_environment", environment_runtime_metadata)
 	_apply_camera_transform()
 	return ""
+
+
+func _load_compiled_map_fog() -> Dictionary:
+	var environment_path := String(source_map_data.map_root).path_join("environment.json")
+	if (
+		environment_path == ""
+		or not ModLoader.path_is_within(source_map_data.map_root, environment_path)
+		or not ModLoader.path_is_within(source_map_data.pack_root, environment_path)
+		or not FileAccess.file_exists(environment_path)
+	):
+		return {"error": "compiled map environment document is missing or unsafe"}
+	var file := FileAccess.open(environment_path, FileAccess.READ)
+	if file == null or file.get_length() <= 0 or file.get_length() > MAP_DOCUMENT_MAX_BYTES:
+		return {"error": "compiled map environment document has invalid size"}
+	file.close()
+	var value: Variant = ModLoader._read_json(environment_path)
+	if typeof(value) != TYPE_DICTIONARY:
+		return {"error": "compiled map environment document is invalid JSON"}
+	var document := value as Dictionary
+	if (
+		String(document.get("schema", "")) != "openbfme.fords-environment"
+		or int(document.get("schemaVersion", -1)) != 0
+		or String(document.get("mapId", "")) != String(source_map_data.map_id)
+	):
+		return {"error": "compiled map environment identity does not match the loaded map"}
+	var fog := document.get("fog", {}) as Dictionary
+	var color_row: Variant = fog.get("colorRgb8", null)
+	if not bool(fog.get("enabled", false)) or String(fog.get("mode", "")) != "linear":
+		return {"error": "compiled map does not declare enabled linear fog"}
+	if typeof(color_row) != TYPE_ARRAY or (color_row as Array).size() != 3:
+		return {"error": "compiled map fog color is invalid"}
+	var color_values := color_row as Array
+	for component in color_values:
+		if (
+			typeof(component) not in [TYPE_INT, TYPE_FLOAT]
+			or not is_finite(float(component))
+			or float(component) != floorf(float(component))
+			or int(component) < 0
+			or int(component) > 255
+		):
+			return {"error": "compiled map fog color is outside RGB8"}
+	var source_start := float(fog.get("start", -1.0))
+	var source_end := float(fog.get("end", -1.0))
+	if not is_finite(source_start) or source_start < 0.0 or not is_finite(source_end) or source_end <= source_start:
+		return {"error": "compiled map fog distances are invalid"}
+	var source := fog.get("source", {}) as Dictionary
+	var source_path := String(source.get("path", ""))
+	if source_path == "":
+		return {"error": "compiled map fog has no retail source path"}
+	return {
+		"color": Color(float(color_values[0]) / 255.0, float(color_values[1]) / 255.0, float(color_values[2]) / 255.0, 1.0),
+		"start": source_start,
+		"end": source_end,
+		"compiled_document": environment_path,
+		"source_path": source_path,
+	}
 
 
 func _build_source_lights() -> void:

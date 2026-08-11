@@ -1,15 +1,12 @@
 @tool
 class_name FordsLinearFog
 extends CompositorEffect
-## Exact camera-depth linear fog surface for BFME2 Fords of Isen II.
+## Exact camera-depth linear fog surface for compiled SAGE map environments.
 ##
 ## The caller must supply the already-validated uniform map scale. This class
 ## deliberately does not infer SAGE-to-Godot distance conversion.
 
 const SHADER_PATH := "res://src/retail_slice/fords_linear_fog.glsl"
-const SOURCE_COLOR := Color(220.0 / 255.0, 226.0 / 255.0, 235.0 / 255.0, 1.0)
-const SOURCE_START := 350.0
-const SOURCE_END := 2000.0
 const WORKGROUP_SIZE := 8
 
 var _rd: RenderingDevice
@@ -18,6 +15,9 @@ var _pipeline: RID
 var _nearest_sampler: RID
 var _parameter_mutex := Mutex.new()
 var _configured := false
+var _source_color := Color.TRANSPARENT
+var _source_start := 0.0
+var _source_end := 0.0
 var _local_units_per_source_unit := 0.0
 var _fog_start_local := 0.0
 var _fog_end_local := 0.0
@@ -48,27 +48,25 @@ func configure_exact(
 		source_end: float,
 		local_units_per_source_unit: float
 ) -> String:
-	if not _colors_equal(source_color, SOURCE_COLOR):
-		return "source fog color must be exact RGB 220,226,235"
-	if source_start != SOURCE_START:
-		return "source fog start must be exactly 350"
-	if source_end != SOURCE_END:
-		return "source fog end must be exactly 2000"
+	if not _color_is_finite(source_color):
+		return "source fog color must be finite"
+	if not is_finite(source_start) or source_start < 0.0:
+		return "source fog start must be finite and non-negative"
+	if not is_finite(source_end) or source_end <= source_start:
+		return "source fog end must be finite and greater than start"
 	if not is_finite(local_units_per_source_unit) or local_units_per_source_unit <= 0.0:
 		return "an explicit positive finite uniform map scale is required"
 
 	_parameter_mutex.lock()
+	_source_color = source_color
+	_source_start = source_start
+	_source_end = source_end
 	_local_units_per_source_unit = local_units_per_source_unit
 	_fog_start_local = source_start * local_units_per_source_unit
 	_fog_end_local = source_end * local_units_per_source_unit
 	_configured = true
 	_parameter_mutex.unlock()
 	return ""
-
-
-func configure_fords(local_units_per_source_unit: float) -> String:
-	return configure_exact(SOURCE_COLOR, SOURCE_START, SOURCE_END, local_units_per_source_unit)
-
 
 func is_configured() -> bool:
 	_parameter_mutex.lock()
@@ -88,9 +86,9 @@ func create_compositor() -> Compositor:
 func runtime_contract() -> Dictionary:
 	_parameter_mutex.lock()
 	var contract := {
-		"source_color": SOURCE_COLOR,
-		"source_start": SOURCE_START,
-		"source_end": SOURCE_END,
+		"source_color": _source_color,
+		"source_start": _source_start,
+		"source_end": _source_end,
 		"local_units_per_source_unit": _local_units_per_source_unit,
 		"fog_start_local": _fog_start_local,
 		"fog_end_local": _fog_end_local,
@@ -175,6 +173,7 @@ func _render_callback(
 	var configured := _configured
 	var fog_start := _fog_start_local
 	var fog_end := _fog_end_local
+	var fog_color := _source_color
 	_parameter_mutex.unlock()
 	if not configured:
 		return
@@ -204,7 +203,7 @@ func _render_callback(
 		var push_constant := _projection_push_data(inverse_projection)
 		push_constant.append_array(PackedFloat32Array([
 			float(size.x), float(size.y), fog_start, fog_end,
-			SOURCE_COLOR.r, SOURCE_COLOR.g, SOURCE_COLOR.b, SOURCE_COLOR.a,
+			fog_color.r, fog_color.g, fog_color.b, fog_color.a,
 		]))
 		var color_uniform := RDUniform.new()
 		color_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
@@ -247,5 +246,5 @@ static func _projection_push_data(projection: Projection) -> PackedFloat32Array:
 	])
 
 
-static func _colors_equal(left: Color, right: Color) -> bool:
-	return left == right
+static func _color_is_finite(value: Color) -> bool:
+	return is_finite(value.r) and is_finite(value.g) and is_finite(value.b) and is_finite(value.a)

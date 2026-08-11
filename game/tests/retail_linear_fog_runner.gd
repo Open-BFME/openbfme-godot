@@ -31,16 +31,16 @@ func _run() -> void:
 	var source := FileAccess.get_file_as_string(FOG_SCRIPT_PATH)
 	var shader_source := FileAccess.get_file_as_string(FOG_SHADER_PATH)
 	var fog = fog_script.new()
-	_check("exact_source_color", _color_near(fog.SOURCE_COLOR, Color(220.0 / 255.0, 226.0 / 255.0, 235.0 / 255.0, 1.0)))
-	_check("exact_source_distances", is_equal_approx(fog.SOURCE_START, 350.0) and is_equal_approx(fog.SOURCE_END, 2000.0))
 	_check("effect_refuses_unconfigured_compositor", not fog.is_configured() and fog.create_compositor() == null)
-	_check("effect_rejects_non_exact_color", fog.configure_exact(Color.WHITE, 350.0, 2000.0, 0.5) != "")
-	_check("effect_rejects_non_exact_start", fog.configure_exact(fog.SOURCE_COLOR, 349.0, 2000.0, 0.5) != "")
-	_check("effect_rejects_non_exact_end", fog.configure_exact(fog.SOURCE_COLOR, 350.0, 1999.0, 0.5) != "")
-	_check("effect_rejects_missing_or_invalid_scale", fog.configure_fords(0.0) != "" and fog.configure_fords(NAN) != "")
-	_check("effect_accepts_explicit_uniform_scale", fog.configure_fords(0.5) == "" and fog.is_configured())
+	_check("effect_rejects_non_finite_color", fog.configure_exact(Color(NAN, 0.0, 0.0, 1.0), 350.0, 2000.0, 0.5) != "")
+	_check("effect_rejects_invalid_start", fog.configure_exact(Color.WHITE, -1.0, 2000.0, 0.5) != "")
+	_check("effect_rejects_invalid_end", fog.configure_exact(Color.WHITE, 350.0, 350.0, 0.5) != "")
+	_check("effect_rejects_missing_or_invalid_scale", fog.configure_exact(Color.WHITE, 350.0, 2000.0, 0.0) != "" and fog.configure_exact(Color.WHITE, 350.0, 2000.0, NAN) != "")
+	var compiled_color := Color(220.0 / 255.0, 226.0 / 255.0, 235.0 / 255.0, 1.0)
+	_check("effect_accepts_compiled_parameters_and_uniform_scale", fog.configure_exact(compiled_color, 350.0, 2000.0, 0.5) == "" and fog.is_configured())
 
 	var contract: Dictionary = fog.runtime_contract()
+	_check("configured_source_parameters_are_retained", _color_near(contract.get("source_color", Color.TRANSPARENT), compiled_color) and is_equal_approx(float(contract.get("source_start", 0.0)), 350.0) and is_equal_approx(float(contract.get("source_end", 0.0)), 2000.0))
 	_check("source_to_local_scale_is_exact", is_equal_approx(float(contract.get("fog_start_local", 0.0)), 175.0) and is_equal_approx(float(contract.get("fog_end_local", 0.0)), 1000.0))
 	_check("curve_is_camera_depth_linear", is_equal_approx(fog.fog_factor_for_camera_depth(174.0, 175.0, 1000.0), 0.0) and is_equal_approx(fog.fog_factor_for_camera_depth(175.0, 175.0, 1000.0), 0.0) and is_equal_approx(fog.fog_factor_for_camera_depth(587.5, 175.0, 1000.0), 0.5) and is_equal_approx(fog.fog_factor_for_camera_depth(1000.0, 175.0, 1000.0), 1.0) and is_equal_approx(fog.fog_factor_for_camera_depth(1001.0, 175.0, 1000.0), 1.0))
 	_check("invalid_curve_inputs_fail_visible", is_nan(fog.fog_factor_for_camera_depth(NAN, 175.0, 1000.0)) and is_nan(fog.fog_factor_for_camera_depth(500.0, 1000.0, 175.0)))
@@ -81,7 +81,7 @@ func _run() -> void:
 	_check("pipeline_or_exact_headless_blocker", initialization_error == "" or headless_device_blocker, initialization_error)
 	_check("dispatch_state_matches_device_availability", (initialization_error == "" and int(execution.get("dispatch_count", 0)) > 0 and Vector2i(execution.get("last_render_size", Vector2i.ZERO)).x > 0) or (headless_device_blocker and int(execution.get("dispatch_count", -1)) == 0))
 
-	print("RETAIL_LINEAR_FOG_METRICS source_start=%.1f source_end=%.1f local_start=%.1f local_end=%.1f dispatches=%d headless_device_blocker=%s" % [fog.SOURCE_START, fog.SOURCE_END, float(contract.get("fog_start_local", 0.0)), float(contract.get("fog_end_local", 0.0)), int(execution.get("dispatch_count", 0)), headless_device_blocker])
+	print("RETAIL_LINEAR_FOG_METRICS source_start=%.1f source_end=%.1f local_start=%.1f local_end=%.1f dispatches=%d headless_device_blocker=%s" % [float(contract.get("source_start", 0.0)), float(contract.get("source_end", 0.0)), float(contract.get("fog_start_local", 0.0)), float(contract.get("fog_end_local", 0.0)), int(execution.get("dispatch_count", 0)), headless_device_blocker])
 	render_root.queue_free()
 	await process_frame
 	fog = null

@@ -51,6 +51,9 @@ func _run() -> void:
 	var lighting: Dictionary = metadata.get("lighting", {}) as Dictionary
 	var camera_data: Dictionary = metadata.get("camera", {}) as Dictionary
 	var source_text := FileAccess.get_file_as_string(SOURCE_PATH)
+	var environment_path := String(map_data.map_root).path_join("environment.json")
+	var environment_document := mod_loader._read_json(environment_path) as Dictionary
+	var authored_fog := environment_document.get("fog", {}) as Dictionary
 
 	_check("oracle_identity_is_pinned", String(metadata.get("oracle_sha256", "")) == ORACLE_SHA256 and String(slice.FORDS_ENVIRONMENT_ORACLE_SHA256) == ORACLE_SHA256)
 	_check("active_fords_time_and_weather_are_exact", String(metadata.get("time_of_day", "")) == "AFTERNOON" and String(metadata.get("weather", "")) == "NORMAL")
@@ -63,11 +66,16 @@ func _run() -> void:
 	_check("procedural_sky_class_is_absent", not source_text.contains("ProceduralSkyMaterial"))
 
 	var local_scale := float(map_data.local_transform_scale)
-	_check("fog_source_values_are_exact", bool(fog.get("enabled_in_source", false)) and _color_near(fog.get("color", Color.TRANSPARENT), Color(220.0 / 255.0, 226.0 / 255.0, 235.0 / 255.0, 1.0)) and is_equal_approx(float(fog.get("start_source", 0.0)), 350.0) and is_equal_approx(float(fog.get("end_source", 0.0)), 2000.0))
-	_check("fog_distances_use_exact_map_scale", is_equal_approx(float(fog.get("start_local", 0.0)), 350.0 * local_scale) and is_equal_approx(float(fog.get("end_local", 0.0)), 2000.0 * local_scale))
+	var authored_start := float(authored_fog.get("start", -1.0))
+	var authored_end := float(authored_fog.get("end", -1.0))
+	_check("loaded_map_environment_document_is_valid", String(environment_document.get("schema", "")) == "openbfme.fords-environment" and String(environment_document.get("mapId", "")) == String(map_data.map_id) and String(authored_fog.get("mode", "")) == "linear")
+	_check("applied_fog_traces_loaded_map_document", String(fog.get("compiled_document", "")) == environment_path and String(fog.get("source_path", "")) == "maps/map mp fords of isen ii/map.ini")
+	_check("fog_source_values_are_exact", bool(fog.get("enabled_in_source", false)) and _color_near(fog.get("color", Color.TRANSPARENT), Color(220.0 / 255.0, 226.0 / 255.0, 235.0 / 255.0, 1.0)) and is_equal_approx(float(fog.get("start_source", 0.0)), authored_start) and is_equal_approx(float(fog.get("end_source", 0.0)), authored_end))
+	_check("fog_distances_use_exact_map_scale", is_equal_approx(float(fog.get("start_local", 0.0)), authored_start * local_scale) and is_equal_approx(float(fog.get("end_local", 0.0)), authored_end * local_scale))
 	var fog_contract := fog.get("runtime_contract", {}) as Dictionary
 	_check("exact_linear_fog_compositor_is_bound", environment != null and not environment.fog_enabled and slice.world_environment != null and slice.world_environment.compositor != null and slice.linear_fog != null and slice.linear_fog.is_configured() and bool(fog.get("runtime_enabled", false)) and _color_near(environment.fog_light_color, Color(220.0 / 255.0, 226.0 / 255.0, 235.0 / 255.0, 1.0)))
-	_check("linear_fog_contract_uses_exact_scaled_curve", is_equal_approx(float(fog_contract.get("source_start", 0.0)), 350.0) and is_equal_approx(float(fog_contract.get("source_end", 0.0)), 2000.0) and is_equal_approx(float(fog_contract.get("local_units_per_source_unit", 0.0)), local_scale) and is_equal_approx(float(fog_contract.get("fog_start_local", 0.0)), 350.0 * local_scale) and is_equal_approx(float(fog_contract.get("fog_end_local", 0.0)), 2000.0 * local_scale) and String(fog_contract.get("curve", "")).begins_with("clamp"))
+	_check("linear_fog_contract_uses_loaded_scaled_curve", is_equal_approx(float(fog_contract.get("source_start", 0.0)), authored_start) and is_equal_approx(float(fog_contract.get("source_end", 0.0)), authored_end) and is_equal_approx(float(fog_contract.get("local_units_per_source_unit", 0.0)), local_scale) and is_equal_approx(float(fog_contract.get("fog_start_local", 0.0)), authored_start * local_scale) and is_equal_approx(float(fog_contract.get("fog_end_local", 0.0)), authored_end * local_scale) and String(fog_contract.get("curve", "")).begins_with("clamp"))
+	_check("presenter_has_no_hardcoded_fog_distance_binding", not source_text.contains("linear_fog.configure_fords") and not source_text.contains("FORDS_FOG_START_SOURCE * local_scale") and not source_text.contains("FORDS_FOG_END_SOURCE * local_scale"))
 	_check("linear_fog_gpu_oracle_gap_remains_explicit", String(fog.get("renderer_status", "")).contains("rendered-gate") and String(fog_contract.get("transparent_depth_status", "")).contains("unresolved") and String(fog_contract.get("sky_depth_status", "")).contains("reverse-z clear depth"))
 	_check("old_exponential_fog_guesses_are_removed", not source_text.contains("fog_density") and not source_text.contains("fog_height") and not source_text.contains("536f70"))
 
