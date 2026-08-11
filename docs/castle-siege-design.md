@@ -70,9 +70,15 @@ a real `*Contain` module (**not** the `GARRISON` KindOf — see the trap below);
 **Two traps that produced wrong numbers during this very analysis, both worth stating so
 the implementation lane does not repeat them:**
 
-1. **`ChildObject` inheritance.** A first pass missed it and reported Carn Dum as having
-   **zero** gates and zero wall-mounted defenses. It has five and thirty-nine. Any lane
-   rebuilding this index must resolve `ChildObject` parents.
+1. **The `ChildObject` keyword.** A first pass ignored it and reported Carn Dum as having
+   **zero** gates and zero wall-mounted defenses. It has five and thirty-nine.
+   *Mechanism, precisely:* Carn Dum's four castle types are declared
+   `ChildObject <name> <parent>` at `evilfaction/structures/angmar/angmarcastlewalls.ini`
+   lines 2612, 2686, 2722 and 2780, and each **re-declares its full `KindOf` line
+   directly**. No parent-inheritance resolution is required for these — the index only has
+   to *recognize the `ChildObject` keyword as a definition site*. A lane that resolves
+   inheritance but never registers `ChildObject` names still reports zero. (Resolving
+   parents remains worthwhile for other families, but it is not what fixes Carn Dum.)
 2. **`GARRISON` KindOf does not mean garrisonable.** A first pass counted Erebor at 8
    garrison objects; the real figure is 6. `Erebortower2`
    (`data/ini/object/civilian/ereborbuildings.ini:4928`) carries `GARRISON` **and** a
@@ -109,7 +115,7 @@ Worse, `retail_map_data.gd:978-1009` (`_load_objects`) reads only `typeName`, `i
 that file returns **zero hits** — the authored ownership and health data is dropped at the
 front door, even though it is already on disk.
 
-This prerequisite is lane L2 below and it is the largest single piece of work after
+This prerequisite is lanes L2a/L2b below and it is the largest single piece of work after
 walkable walls.
 
 ## 2. Retail semantics, per blocker
@@ -148,8 +154,15 @@ Precise semantics, several of which contradict the obvious guess:
 - **The auto-trigger is an axis-aligned rectangle, not a radius** — `AIGateUpdate
   TriggerWidthX/Y`. Only two values tree-wide: `450.0 x 225.0` on map gates, `300.0 x
   150.0` on buildable faction gates.
-- **Ally-only lives on a different module.** `FakePathfindPortalBehaviour AllowEnemies =
-  No` / `AllowNonSkirmishAIUnits = No`, uniform across every gate.
+- **Ally-only lives on a different module**, and it is **two distinct rules**, uniform
+  across every gate:
+  - `AllowEnemies = No` — hostile units may not path through; they must destroy the gate.
+  - `AllowNonSkirmishAIUnits = No` — a *separate* restriction on which **friendly** units
+    may use the portal, gating traversal on the unit being skirmish-AI-controlled. This is
+    the rule **L7 depends on**: AI armies routing out through their own castle gate pass
+    this test, and anything the pipeline fails to mark as a skirmish-AI unit will silently
+    fail to path through a friendly open gate. Conflating the two rules will produce an AI
+    that builds an army and never leaves its castle.
 - **`OpenByDefault` splits map gates from built gates.** Map/scenario gates idle **open**
   (`Yes`: both Helm's Deep doors, `MinisGateDoor`, `EreborGateDoors`); player-built faction
   gates idle **closed** (`No`). Castle-map gates therefore start open.
@@ -231,7 +244,8 @@ has it's own DieModule` lines appearing ~30x in `ministirithbuildings.ini` are
 *tower* garrison.
 
 Module census (live `Behavior =` lines): `HordeContain` 120, `CitadelSlaughterHordeContain`
-28, `HordeGarrisonContain` 26, `HorseHordeContain` 20, `TransportContain` 15,
+28, `HordeGarrisonContain` **18** (matching section 3.9's declaration-site count; an
+earlier draft said 26), `HorseHordeContain` 20, `TransportContain` 15,
 `HordeTransportContain` 8, `TunnelContain` 4, `SiegeEngineContain` 4,
 `ProductionQueueHordeContain` 3, `GarrisonContain` **2**, `OpenContain` 0 (all commented).
 
@@ -376,9 +390,11 @@ their authored player counts. The near-homonym *campaign* maps in the same file 
 `maps\map ang carn dum\` and `maps\map ang fornost\` (no `wor`) — are correctly
 `isMultiplayer=no, numPlayers=1`. The `wor` variants are the skirmish versions.
 
-**(ii) Every castle map declares eight lobby slots with `isComputer = true` and
-`loadAIScript = true`** — retail's own per-slot "an AI may occupy this seat and its AI
-scripts should be loaded" flag, byte-identical to the `map mp` maps.
+**(ii) — WITHDRAWN.** An earlier draft cited "eight lobby slots with `isComputer = true`
+and `loadAIScript = true`" as authorial intent. It is not: the
+`(isHuman, isComputer, loadAIScript) = (1,1,1) x 8` signature is **identical on all 128
+maps in the corpus**, including the shell map, the Create-A-Hero map and every cinematic.
+It is a WorldBuilder default. Do not cite it. The argument stands on (i) and (iii) alone.
 
 **(iii) Five of the ten tune skirmish AI in their own `map.ini`**:
 ```
@@ -386,10 +402,13 @@ SkirmishAIData TheSkirmishAIData
     AnyTypeTemplateDisabledSlots = 1
 End
 ```
-and the same files re-point **every faction's** starting porters for that map
-(`PlayerTemplate FactionMen / FactionElves / … / FactionAngmar`, with per-map
-`StartingUnitOffset`). Nobody authors eight-faction starting-porter offsets for a map that
-never runs a skirmish start.
+
+The starting-porter evidence is narrower than an earlier draft claimed and is corrected
+here: **exactly two maps — Helm's Deep and Minas Tirith — re-point starting porters, with
+seven `PlayerTemplate` blocks each** (not "every faction on five maps"). Erebor, Grey
+Havens and Dol Guldur author **zero** `PlayerTemplate` overrides. Two maps hand-tuning
+seven factions' skirmish start positions is still strong evidence of skirmish intent, but
+it is evidence about those two maps, not about the family.
 
 **Retail even ships hand-authored, per-faction, per-map AI base layouts for these maps.**
 `data/ini/default/skirmishaidata.ini` binds base templates to maps by name:
@@ -409,20 +428,33 @@ End
 
 Distinct `GameMapToUseOn` values: 33 generic `<ANY>`, then **8 entries each** for
 `map wor minas tirith`, `helms deep`, `erebor`, `dol guldur`, `grey havens`,
-`ANG Carn Dum`, and 7 for `ANG Fornost` — i.e. all eight playable factions covered on six
-castle maps (Arnor is missing a Fornost base). The layouts live in
+`ANG Carn Dum`, and 7 for `ANG Fornost`. The layouts live in
 `bases/ai base - <faction> - <name>/*.bse` (EAR-refpack castle templates decoding to
 per-structure offset/angle/priority/phase). Isengard, Black Gate and Minas Morgul have no
 binding and fall back to the generic `<ANY>` bases — retail lets AI run there anyway.
 
+Three corrections to how this evidence may be used:
+
+- **The 8 `Side`s are the 7 playable factions plus ARNOR**, and Arnor is
+  `PlayableSide = No` (`playertemplate.ini:446-448`). "All eight playable factions" is
+  wrong, and Fornost's 7 is not "missing Arnor".
+- **Map-specific base authoring is not castle-exclusive.** `MAP MP Amon Sul Fortress.map`
+  and `map wor rivendell.map` also receive 8 bases. This weakens the "castle maps are
+  special" framing — note especially that Amon Sul is the map this programme deliberately
+  kept as a *plain* skirmish map. The evidence shows retail expected AI here; it does not
+  establish castle maps as a distinct AI category.
+- **Carn Dum's 8 entries span three case-variant filename spellings.** Any repo lookup must
+  be case-insensitive or it finds only 5.
+
 **Correction to the premise: no retail map references the AI libraries at all.** Decoding
 the `LibraryMapLists` chunk of every map in the corpus (50 `map wor`, 22 `map mp`, plus
 campaign) yields exactly two referenced libraries — `Lib_GollumSpawn` (56 maps) and
-`Lib_End_Mission` (8 campaign maps). `ai_initialize.map` and
-`ai_mp_inherit_management.map` are referenced by **zero** maps and zero `.ini` files. The
-engine attaches them; map data never does. So the castle maps do not "lack" a hookup the
-`map mp` maps have — **no retail map has one**, and 13 of the 22 shipped `map mp` maps have
-zero scripts at all yet play skirmish with AI.
+`Lib_End_Mission` (**18** campaign maps; 74 maps carry any library reference at all, and no
+map references both). `ai_initialize.map` and `ai_mp_inherit_management.map` are referenced
+by **zero** maps and zero `.ini` files. The engine attaches them; map data never does. So
+the castle maps do not "lack" a hookup the `map mp` maps have — **no retail map has one**,
+and **14** of the 22 shipped `map mp` maps have zero scripts at all yet play skirmish with
+AI.
 
 The library logic is start-position-driven (`START_POSITION_IS 1..8`) and faction-driven
 (`SKIRMISH_PLAYER_FACTION`), never map-name-driven. Map-specific base authoring is an
@@ -440,11 +472,20 @@ if (target.category == SKIRMISH_CATEGORY
         "output": f"{output_root}/scripts.json", ...})
 ```
 
-This is an **unconditional injection**, not a filter on the map's own `LibraryMapLists`.
+**The gate is a conjunct, and castle maps fail BOTH halves.** `target.category ==
+SKIRMISH_CATEGORY` fails because castle maps are still `wotr-battle` until the admission
+lane's category change lands (section 1.1), *and*
 `is_canonical_multiplayer_map_virtual_path` (`profile.py:96-125`) requires exactly
-`maps/map mp <name>/<name>.map`. Castle maps live at `maps/map wor helms deep/...`, the
-regex fails, no `scripts.json` is cooked, and the AI has no libraries. Verified in the
-shipped pack: 22 of 76 maps have `scripts.json`, **all `map mp`; zero castle maps**.
+`maps/map mp <name>/<name>.map`. **Fixing the path grammar alone cooks nothing** — L7 must
+clear both conditions, which makes it dependent on L1's category work rather than merely
+"benefiting" from it.
+
+Injection nuance: the AI pair is injected **unconditionally** once the gate passes — it is
+not a filter on the map's own `LibraryMapLists`. `GOLLUM_SPAWN` is different: it is
+content-filtered via `_gollum_spawn_library_referenced`.
+
+Verified in the shipped pack: 22 of 76 maps have `scripts.json`, **all `map mp`; zero
+castle maps**.
 
 The maps also carry the structural prerequisites `ai_initialize` needs: `Player_N_Start`
 waypoints for `START_POSITION_IS` are present on **all ten**, and `Player_N_BuildPlot_1..4`
@@ -461,14 +502,26 @@ Two honest residual risks:
 - **Content, not plumbing.** `ai_initialize` was written for symmetric `map mp` topology
   and may behave badly on an asymmetric castle map even once loaded. That needs a playtest
   oracle, not a unit test.
-- **`BASE_FLAG_N` provenance is unresolved.** `ai_initialize` unconditionally references
-  `BASE_FLAG_1..8` via `NAMED_BASE_UNPACK_FREE`, yet **no shipped map, `.bse`, or `.ini` in
-  the entire retail corpus contains that string**. Maps instead place `BASE_SPAWN_1..N`
-  objects of type `SkirmishSpawnPoint` (Minas Tirith 4, Helm's Deep 4, Dol Guldur 4, Black
-  Gate 3, Grey Havens 3, Minas Morgul 3, Isengard 2; Erebor, Carn Dum and Fornost have 0).
-  The inference is that the engine creates the flag at runtime and names it, but that is
-  unproven from data. **L7 must resolve this before claiming AI works**, because three
-  castle maps author no spawn points at all.
+- **`BASE_FLAG_N` provenance — largely resolved, and it changes L7's shape.** An earlier
+  draft said the string appears nowhere in retail. That was a **grep artifact**: the
+  library `.map` files are refpack-compressed, so naive search misses them. `BASE_FLAG`
+  does exist in retail, in 19 library `.map` files — `ai_initialize.map` (x32) and
+  `ai_mp_inherit_management.map` (x24), so it is consumed by **both** libraries, not
+  `ai_initialize` alone.
+
+  The bridge is almost certainly
+  `libraries\multiplayer_start_teams\multiplayer_start_teams.map` — the **only** file in
+  the corpus containing both `BASE_FLAG` (x24) and `BASE_SPAWN` (x16), i.e. the translation
+  from the map-authored `BASE_SPAWN_N` objects to the `BASE_FLAG_N` names the AI consumes.
+  `NAMED_BASE_UNPACK_FREE` occurs in `ai_initialize.map` and `multiplayer_human.map`.
+
+  Restated precisely: **`BASE_FLAG` appears only inside `libraries/*.map` — zero playable
+  maps, zero `.bse`, zero `.ini`.** The practical consequence is that L7's library set is
+  wrong: attaching only the AI pair may not be enough, and `multiplayer_start_teams` plus
+  `multiplayer_human` must be considered. Maps still place `BASE_SPAWN_1..N`
+  `SkirmishSpawnPoint` objects (Minas Tirith 4, Helm's Deep 4, Dol Guldur 4, Black Gate 3,
+  Grey Havens 3, Minas Morgul 3, Isengard 2; **Erebor, Carn Dum and Fornost have 0**), so
+  the residual risk on those three maps stands.
 
 ### 2.6 What the maps' own scripts do — and one rule we must honour
 
@@ -664,9 +717,10 @@ independently of faction packs.
 
 ### 3.8 Importer object corpus — castle map objects are never compiled at all
 
-This is stronger than "they bind as `renderable`". `faction_import.py::_account_objects`
-(~line 390) walks **only command-reachable objects** — the CommandSet/CommandButton
-closure. Map-authored civilian objects never enter the corpus. Cross-matching every castle
+This is stronger than "they bind as `renderable`". `faction_import.py::build_faction_import_plan`
+(line 389 — the docstring describing command-reachability lives here; there is **no**
+`_account_objects` symbol in the importer) walks **only command-reachable objects** — the
+CommandSet/CommandButton closure. Map-authored civilian objects never enter the corpus. Cross-matching every castle
 map type-name against every compiled descriptor slug in every pack yields an **empty
 intersection**: there is no compiled definition for `EreborMainGate`, `MinisWallA`,
 `AngmarWallCarnDum` or any of their peers, even though retail authors them fully
@@ -719,14 +773,27 @@ cached object in those lanes and **requires a full faction re-convert**
 garrisons therefore ride a faction rebuild; only the map-document/admission work rides the
 cheap maps republish.
 
-**Hard dependency for wall-mounted defenses:** **0 of 2716 compiled structure descriptors
-across all seven packs contain a `weaponId`.** `playable_structure_compiler.py:165-316` has
-a `_structure_combat_contract` lane, but it produces nothing — retail's
-`GondorCastleWallTower` authors `WeaponSet / Weapon = PRIMARY CastleWallUpgradeBow` plus
-`AIUpdateInterface`, and the compiled `gondorcastlewalltower.json` carries neither
-(`AIUpdateInterface` is not even in the opaque list, so it vanishes silently). **No
-structure can shoot until this is root-caused.** L5 is blocked on it, and it was not
-root-caused by this design lane.
+**Dependency for wall-mounted defenses — narrower than first stated, and now root-caused.**
+
+Correction to an earlier draft of this document: `_structure_combat_contract`
+(`playable_structure_compiler.py:160-316`) **does** produce combat contracts on current
+main — `MenTrebuchetExpansion` compiles a `weaponId` of `GondorTrebuchetRock`. The
+"0 of 2716" figure counted **every pack revision on disk**, including stale ones; across
+the *selected* packs the figure is **0 of 182**. Neither number means the lane is inert.
+
+What actually fails is the **direct-weapon** structure shape (`SentryTowerBow`,
+`CastleWallUpgradeBow`), where the contract returns `None` for two specific reasons:
+
+1. **`DelayBetweenShots` uses the `Min:` / `Max:` form**, which `_resolved_definition_field`
+   cannot resolve (it expects a scalar).
+2. **Damage is absent as a scalar** because these weapons author multiple
+   upgrade-conditional `ProjectileNugget`s rather than one damage value.
+
+Fix those two field shapes and every base defense tower compiles. This reframes L5 from
+"blocked on an unknown" to "fix two known field shapes" — see the regrade in section 5.
+
+(`AIUpdateInterface` is still not in the opaque module list, so it vanishes silently; that
+is a separate, smaller gap.)
 
 Unsupported modules are **not warned**: anything neither typed nor in the opaque set is
 silently absent. Object-level failures surface as `status: "converter-gap"` rows in
@@ -739,7 +806,7 @@ Principles: absent unless authored; fail closed with named diagnostics; derive r
 from the map's object inventory rather than hardcoding; reuse the `castle_behavior.py`
 contract template.
 
-### 4.1 The prerequisite (L2): map placements become sim entities
+### 4.1 The prerequisite (L2a/L2b): map objects compiled, then made sim entities
 
 Three concrete changes, following precedents that already exist:
 
@@ -832,7 +899,7 @@ Unlocks Grey Havens (needs nothing else), Erebor, Fornost.
 
 Implement mechanism (b)/(c) — `ReplaceSelfUpgrade` and in-place `GeometryUpgrade` — before
 (a), since the slave-object path adds a second entity with `SlavedUpdate` lifetime rules.
-Structures already shoot (`_step_structure_weapons()` `:9024-9070`), already take damage
+Structures already shoot (`_step_structure_weapons()` `:8514`), already take damage
 through one funnel, and already resolve authored footprints. The picker affordance mirrors
 the existing expansion-pad UI.
 
@@ -867,41 +934,48 @@ Ordered; each sized for one implementor session except L6. Every lane: failing-f
 own branch, no push, no pack builds while a republish is running.
 
 ### L1 — per-map capability derivation
-- **Scope.** Retail object index with `ChildObject` inheritance resolved; derive per-map
-  capabilities; replace the hardcoded five-blocker seal with `required - implemented`;
-  version the `castleSiege` contract to v2 while still accepting v1. Add `scaleable-walls`
-  to the capability vocabulary.
+- **Scope.** Retail object index registering `Object`, `ChildObject` **and `ObjectReskin`**
+  definition sites; derive per-map capabilities; replace the hardcoded five-blocker seal
+  with `required - implemented`; version the `castleSiege` contract to v2 while still
+  accepting v1. Add `scaleable-walls` to the capability vocabulary.
 - **Depends on.** Nothing.
 - **DoD.** Importer pytest against the real oracle reproduces the section 1.2 matrix
-  exactly, including Carn Dum = 5 gates / 39 wall-mounted (the `ChildObject` trap) and
-  Erebor = 6 real garrisons with `Erebortower2` explicitly excluded (the `GARRISON`-KindOf
-  trap). `retail_map_data.gd` accepts v1 and v2, red-first. `a436bb59…` unchanged;
+  exactly, including Carn Dum = 5 gates / 39 wall-mounted (the `ChildObject`-keyword trap)
+  and Erebor = 6 real garrisons with `Erebortower2` explicitly excluded (the
+  `GARRISON`-KindOf trap). Unresolved type-name residue is 1-10 scenery types per map or
+  explained. `retail_map_data.gd` accepts v1 and v2, red-first. `a436bb59…` unchanged;
   `retail_slice_runner` failure names unchanged vs main.
 
-### L1b — honour `Build Restrictions` (small, ships with L1)
-- **Scope.** Apply the maps' authored `ALLOW_DISALLOW_ONE_BUILDING` fortress/wall-hub
-  lockout (section 2.6). Without it, players build a normal base and the map's point is
-  lost.
-- **Depends on.** Nothing. Fold into L1 if it fits the session.
-- **DoD.** Red-first test that a castle map refuses fortress construction for every faction
-  in the authored 14-entry list, and that non-castle maps are unaffected.
-
-### L2 — admit map objects to the compiled corpus (the prerequisite)
-- **Scope.** Section 4.1 **plus** section 3.8: `faction_import._account_objects` walks only
+### L2a — admit map objects to the compiled corpus
+- **Scope.** Section 3.8: `faction_import.build_faction_import_plan` (line 389) walks only
   command-reachable objects, so castle map objects have no compiled definition at all. Add
-  a corpus admission path for map-referenced types; stop dropping `properties` in
-  `retail_map_data.gd:978-1009`; classify castle types as `lifecycle-structure`; emit
-  `fixtures.json`; route placements into `simulation_configuration()`; spawn via the
-  `_spawn_castle_piece_structure()` precedent. Add structure broad-phase via the existing
-  spatial hash (`_spatial_key()`).
-- **Depends on.** L1. **This is the largest importer change in the programme** — if it does
-  not fit one session, split corpus-admission from runtime-spawning.
+  a corpus admission path for map-referenced types; emit `maps/<slug>/fixtures.json`
+  (section 4.1).
+- **Depends on.** L1.
+- **Cost note.** This lane **rides a full faction re-convert** (`import-faction --convert`
+  then `publish-faction-to-slice`), not the cheap maps republish. Of all the lanes, this is
+  the one where that matters most — plan the session around the rebuild time.
 - **DoD.** Real-oracle pytest: `EreborGateDoors` and `EBGarrisonableTower` produce compiled
   definitions carrying their authored health, armor and module contracts; Erebor emits one
   `gate` fixture with three named geometries and `Player_1` owner, and six `garrison`
-  fixtures with `ContainMax = 3`. A castle map's walls exist as sim structures with authored
-  health/owner and are targetable. Measured tick cost on Carn Dum reported honestly.
-  `a436bb59…` unchanged on non-castle maps.
+  fixtures with `ContainMax = 3`.
+
+### L2b — map placements become sim entities
+- **Scope.** Stop dropping `properties` in `retail_map_data.gd:978-1009`; classify castle
+  types as `lifecycle-structure`; route placements into `simulation_configuration()`; spawn
+  via the `_spawn_castle_piece_structure()` precedent. Add structure broad-phase via the
+  existing spatial hash (`_spatial_key()`).
+- **Depends on.** L2a.
+- **Ship behind a feature gate.** This flips ~166 objects per map from inert decoration
+  into live sim structures. It must be a flag with a clean rollback, not a one-way door —
+  the blast radius covers pathing, targeting, performance and presentation simultaneously.
+- **DoD.** A castle map's walls exist as sim structures with authored health/owner and are
+  targetable. Measured tick cost on Carn Dum reported honestly, before and after
+  broad-phase. Feature gate proven to restore prior behavior when off. `a436bb59…`
+  unchanged on non-castle maps.
+
+> **The L2a/L2b split is the default, not a fallback.** An earlier draft graded the combined
+> lane B- and offered splitting as a contingency; that was generous. Brief them separately.
 
 ### L3 — defendable gates
 - **Scope.** Section 4.2. Typed `GateOpenAndCloseBehavior` /
@@ -909,61 +983,115 @@ own branch, no push, no pack builds while a republish is running.
   `OPAQUE_DEFERRED_MODULE_KINDS`); gate state machine, `OpenByDefault`, auto-open
   rectangle, auto-reset, enemy refusal, disc-set blocking in the deflection pass, death
   rules, hash-safe state. Reuse the existing unread `row["gate_open"]` bits.
-- **Depends on.** L2 for map gates. **But the runtime half can start immediately against
+- **Depends on.** L2a for map gates. **But the runtime half can start immediately against
   the already-compiled buildable `MenWallGate`** (section 3.8), which ships the full
   authored contract and a `Command_ToggleGate` command set. Exploit that parallelism.
 - **Cost note.** Touching `module_contracts.py` invalidates the unit and structure compiler
   caches: this lane rides a **full faction re-convert**, not a map republish.
 - **DoD.** Red-first sim tests for all five behaviors; two-sim determinism; `a436bb59…`
   unchanged; oracle pytest pins `OpenByDefault`, `PercentOpenForPathing`,
-  `ResetTimeInMilliseconds` and the three geometry names.
+  `ResetTimeInMilliseconds` and the three geometry names. **The gate toggle must ride the
+  lockstep command queue** — prove MP determinism of the *command*, not merely of the
+  resulting state, with a two-peer test. (OpenSAGE's `Toggle()` is called straight from a
+  command callback marked `//TODO: proper toggle gate order`; do not copy that path.)
   **Owner-visible milestone:** a castle map launches and its gate works.
 
 ### L4 — wall (tower) garrisons
 - **Scope.** Section 4.3. Promote `GarrisonContain`/`HordeGarrisonContain` from opaque to
   typed, then sim semantics, then unblock the 11 WP03 verbs.
-- **Depends on.** L2 for map towers; the runtime half can start against the 8
+- **Depends on.** L2a for map towers; the runtime half can start against the 8
   already-compiled buildable garrison towers. Independent of L3.
-- **DoD.** Red-first tests for horde capacity, `PassengerFilter` refusal, damage isolation,
-  death eviction, neutral capture. Fabricated `DEFAULT_TRANSPORT_CAPACITY` deleted.
-  **Grey Havens becomes fully playable.**
+- **DoD.** Red-first tests for horde capacity (3, and 1 for `GHGarrisonableTower`),
+  `PassengerFilter` refusal, damage isolation at 0%, death eviction, neutral capture, and
+  `Erebortower2` accepting nobody. Fabricated `DEFAULT_TRANSPORT_CAPACITY` deleted, with a
+  test proving capacity now derives from the compiled contract.
+  *(An earlier draft claimed "Grey Havens becomes fully playable" as this lane's DoD. It is
+  not: Grey Havens additionally needs L1, L2 and L7. L4's own testable contribution is the
+  garrison contract above; the map-playable milestone belongs to whichever lane lands last.)*
 
-### L5 — wall-mounted defenses (blocked until a spike clears)
+### L5 — wall-mounted defenses
 - **Scope.** Section 4.4, mechanisms (b)/(c), scoped to Carn Dum and Dol Guldur.
-- **Blocked on.** **0 of 2716 compiled structure descriptors carry a `weaponId`**
-  (section 3.9). No structure can shoot. **Lane task 1 is a root-cause spike on
-  `_structure_combat_contract`**; if it does not clear, L5 stops and is re-briefed.
-- **Depends on.** L2, and that spike.
-- **DoD.** `GondorCastleWallTower` compiles with its authored `CastleWallUpgradeBow`; Carn
-  Dum's 39 wall-upgrade placements resolve; a catapult can be bought, fires, and is
-  destructible. Determinism preserved.
+  **Regraded from "spike-gated" to a bounded fix.** An earlier draft claimed no structure
+  can shoot; in fact `_structure_combat_contract`
+  (`playable_structure_compiler.py:160-316`) already compiles expansion weapons
+  (`MenTrebuchetExpansion` → `GondorTrebuchetRock`). Only the **direct-weapon** shape fails,
+  for two identified reasons: `DelayBetweenShots` in `Min:`/`Max:` form that
+  `_resolved_definition_field` cannot resolve, and damage absent as a scalar because the
+  weapon authors multiple upgrade-conditional `ProjectileNugget`s. **Fix those two field
+  shapes and every base defense tower compiles** — this is lane task 1, and it is a known
+  fix rather than an open spike.
+- **Depends on.** L2a.
+- **DoD.** The two field shapes are handled; `SentryTowerBow` and `CastleWallUpgradeBow`
+  resolve; `GondorCastleWallTower` compiles with its authored weapon. Carn Dum's 39
+  wall-upgrade placements resolve; a catapult can be bought, fires, and is destructible.
+  Mutual exclusion (`ConflictsWith`) proven. Determinism preserved.
 
 ### L6 — walkable walls (gated on owner decision D1; multi-session)
 - **Scope.** Section 4.5. **First task is a spike**: confirm `P1`/`P2`/`R1` sub-meshes
   survive W3D-to-GLB conversion. If they do not, stop and re-scope.
-- **Depends on.** L2, and D1.
+- **Depends on.** L2b, and D1.
 - **DoD.** A unit routes from ground up a stair onto a Helm's Deep wall and back; enemies
   cannot reach the top without a dock or stair; a new pathing-covering determinism pin is
   minted; the four walkable maps drop the blocker. **Do not brief as one session.**
 
 ### L7 — skirmish AI on castle maps
-- **Scope.** Widen the `map_profile.py:763` path-grammar gate for the ten pinned
-  `CASTLE_SIEGE_MAPS` paths; verify the composer's placeholder-player contract still holds.
-  **Then resolve `BASE_FLAG_N`** (section 2.5): the library unconditionally references
-  `BASE_FLAG_1..8` and nothing in retail authors that string, while Erebor, Carn Dum and
-  Fornost place no `SkirmishSpawnPoint` at all. Stretch goal: compile the per-map AI base
-  layouts retail already ships (`skirmishaidata.ini` `GameMapToUseOn` +
-  `bases/ai base - <faction> - <name>/*.bse`) for the six bound maps.
-- **Depends on.** L1; benefits from L3.
-- **DoD.** Red-first importer test that a castle map gets `scripts.json` and a non-admitted
-  `map wor` map does not. Headless match proving AI **actually expands and attacks** on at
-  least two castle maps — including one with zero spawn points (Erebor or Carn Dum), since
-  that is where `BASE_FLAG` resolution will fail if it is going to. Honest report of which
-  maps get base-building vs defend-only AI.
+- **Task 1: decode `multiplayer_start_teams.map`'s scripts** (section 2.5). It is the only
+  file in the corpus containing both `BASE_FLAG` (x24) and `BASE_SPAWN` (x16) and is almost
+  certainly the bridge from map-authored `BASE_SPAWN_N` objects to the `BASE_FLAG_N` names
+  the AI consumes. Widen the library set L7 considers attaching to include
+  `multiplayer_start_teams` and `multiplayer_human`, not just the AI pair.
+- **Scope.** Clear **both halves** of the `map_profile.py:763-790` conjunct — the
+  `category == skirmish` test *and* the `map mp` path grammar. Fixing the path grammar
+  alone cooks nothing. Verify the composer's placeholder-player contract still holds.
+  Stretch: compile the per-map AI base layouts retail ships (`skirmishaidata.ini`
+  `GameMapToUseOn` + `bases/ai base - <faction> - <name>/*.bse`) for the six bound maps —
+  **using case-insensitive filename lookup**, or Carn Dum's three case-variant spellings
+  yield 5 entries instead of 8.
+- **Depends on.** L1 — hard, not "benefits from": the category conjunct means L7 cannot
+  cook anything until L1's category change lands. Also benefits from L3.
+- **DoD.** Red-first importer test that a castle map gets `scripts.json` with the correct
+  library composition and a non-admitted `map wor` map does not. Headless match proving AI
+  **actually expands and attacks** on at least two castle maps — including one with zero
+  `SkirmishSpawnPoint` (Erebor or Carn Dum), since that is where `BASE_FLAG` resolution
+  will fail if it is going to. Assert on structures built and attacks issued with an
+  explicit check-count liveness assertion; a runner that reports green while the AI stood
+  still is the failure mode. Honest report of which maps get base-building vs defend-only AI.
 
-**Suggested order:** L1 → L2 → {L3, L4 parallel} → L5 → L7 → L6.
-After L1+L2+L3+L4: Black Gate, Grey Havens, Erebor, Fornost playable. After L5: Carn Dum
-and Dol Guldur. Minas Tirith, Helm's Deep, Minas Morgul and Isengard need L6.
+### L8 — lobby admission for asymmetric castle maps
+- **Scope.** `mapcache.ini` gives these maps `numPlayers = 2-4`, not 8. Decide and enforce
+  how many AI opponents may be seated and on which authored start positions. No other lane
+  addresses this, and without it a 2-player map like Erebor or Carn Dum can be handed a
+  seat list it has no start positions for.
+- **Depends on.** L1; owner decision D5.
+- **DoD.** Red-first test that lobby seat count for each castle map matches its authored
+  `numPlayers`, and that seating an AI beyond that is refused with a named diagnostic.
+
+### L9 — presentation for map-placed castle structures
+- **Scope.** L2b turns ~166 objects per map into live, selectable sim structures. Nothing
+  presents them: minimap icons, selection decals, health bars, hover/tooltip, and fog
+  reveal all need to handle map-placed structures. Today the only consumer of the structure
+  classification is `retail_fords_battlefield.gd:1313`, which is fords-specific.
+- **Depends on.** L2b.
+- **DoD.** A castle map's walls, gates and towers select, show health, appear on the
+  minimap, and reveal correctly under fog, without per-frame visibility flicker (the known
+  hazard that kills clicks and hover). Frame cost measured on Carn Dum and Minas Tirith.
+
+### L10 — honour `Build Restrictions`
+- **Scope.** Apply the maps' authored `ALLOW_DISALLOW_ONE_BUILDING` fortress/wall-hub
+  lockout (section 2.6). Without it, players build a normal base and the map's point is lost.
+- **Depends on.** **L7, not nothing.** An earlier draft called this trivial and suggested
+  folding it into L1. That was wrong: `Build Restrictions` lives in the map's own script
+  chunk, castle maps cook no `scripts.json` at all, and the composite converter bundles map
+  scripts and libraries together — so this needs L7's cook fix, or an explicit
+  map-scripts-only cook path added here.
+- **DoD.** Red-first test that a castle map refuses fortress construction for every faction
+  in the authored 14-entry list, and that non-castle maps are unaffected.
+
+**Suggested order:** L1 → L2a → L2b → {L3, L4 parallel} → L5 → L7 → L10 → L8 → L9 → L6.
+After L1+L2+L3+L4+L7+L10: Black Gate, Grey Havens, Erebor, Fornost playable (Black Gate
+first, per D4). After L5: Carn Dum, Dol Guldur. Minas Tirith, Helm's Deep, Minas Morgul and
+Isengard need L6. L9 should not lag L2b by long — selectable-but-unpresented structures are
+a bad intermediate state to leave in main.
 
 ## 6. Owner decisions requested
 
@@ -971,18 +1099,28 @@ and Dol Guldur. Minas Tirith, Helm's Deep, Minas Morgul and Isengard need L6.
   Minas Tirith and Helm's Deep blocked, or fund the multi-session nav-layer rewrite
   (section 4.5)? The owner's headline request is specifically those two maps, so the cheap
   path does **not** deliver the ask.
-- **D2 — AI scope on castle maps.** Retail's own evidence (per-map AI base layouts for six
-  of these maps, `loadAIScript=true` on every slot, per-map `SkirmishAIData` and
-  starting-porter offsets) says **standard base-building AI everywhere** is the faithful
-  answer, with generic `<ANY>` layouts on Isengard, Black Gate and Minas Morgul exactly as
-  retail does. Recommend adopting that rather than a defend-only v1. Confirm.
+- **D2 — AI scope on castle maps.** Retail's evidence (per-map AI base layouts for six of
+  these maps, per-map `SkirmishAIData`, and starting-porter overrides on Minas Tirith and
+  Helm's Deep) says **standard base-building AI everywhere** is the faithful answer, with
+  generic `<ANY>` layouts on Isengard, Black Gate and Minas Morgul exactly as retail does.
+  Recommend adopting that rather than a defend-only v1. Confirm.
+  **Coupled constraint nobody owns yet:** `mapcache.ini` gives these maps
+  `numPlayers = 2-4`, not 8. An 8-slot AI seat list on a 2-player asymmetric map is a
+  **lobby-admission** problem — how many AI opponents may be seated, and on which start
+  positions — and no lane in section 5 addresses it. It is assigned to **L8** below.
+- **D5 — lobby admission on asymmetric castle maps.** Follows from D2: on a 2-player map
+  like Erebor or Carn Dum, does the lobby offer 1 AI opponent, or do we allow team stacking
+  onto authored start positions that do not exist? Needs an owner call before L8 is briefed.
 - **D3 — fake vs real wall garrison.** Retail ships player wall "garrison" as a
   weapon/armor/geometry upgrade, not real occupants (section 2.2). Adopt retail's fake
   garrison for wall plots (cheap, visually identical) while implementing real containment
   only for the neutral towers that authored it?
-- **D4 — Black Gate.** Its gates are script-driven `USER_1`/`USER_2` animations on
-  `UNATTACKABLE` objects, not gate modules. Ship it as a no-gate battlefield, or implement
-  the script-driven open?
+- **D4 — Black Gate (default chosen, confirm only).** Its gates are script-driven
+  `USER_1`/`USER_2` animations on `UNATTACKABLE` objects, not gate modules, and the map
+  authors zero scripts. **Default: ship Black Gate as a no-gate battlefield.** It needs no
+  gates, no garrisons and no wall-mounted defenses, so this makes it the first castle map
+  to become playable. Chasing the engine-side open is explicitly out of scope unless the
+  owner overrides.
 
 *(A question about neutral gate ownership was withdrawn: `FakePathfindPortalBehaviour
 AllowEnemies = No` is uniform across every retail gate, so the rule is data, not a
@@ -993,9 +1131,11 @@ decision.)*
 - **Nothing here was implemented or runtime-verified.** No Godot runner was executed. The
   `castle_map_admission_runner.gd` result quoted in the predecessor report was not
   reproduced, and that runner has no invocation in the repo.
-- The capability matrix has 8-53 unresolved `typeName`s per map. Spot checks show these are
-  overwhelmingly scenery, but they were **not** exhaustively classified. L1 must resolve
-  them to zero-or-explained before the matrix is load-bearing.
+- The capability matrix's 8-53 unresolved `typeName`s per map were a **tooling artifact of
+  this lane's index, not a data gap**: the index registered `Object` and `ChildObject` but
+  missed **759 `ObjectReskin` definitions**. With reskins registered, the residue falls to
+  **1-10 purely scenery types per map**. L1 should still drive it to zero-or-explained, but
+  the matrix is sounder than the first draft implied.
 - The retail index resolves single-level `ChildObject` inheritance and `KindOf`/`Behavior`
   lines only; it does not evaluate `#include`, macro expansion, or `.inc` conditionals, so
   some objects may carry modules it misses.
@@ -1005,10 +1145,18 @@ decision.)*
 - All ten maps' script chunks **were** decoded (section 2.6), but the Black Gate's
   script-driven `USER_1`/`USER_2` gate open remains unexplained: that map authors **zero**
   scripts, so whatever opens it is not map script. D4 stands.
-- **`BASE_FLAG_N` is unresolved** (section 2.5) and is the most likely cause of a silent AI
-  failure on Erebor, Carn Dum and Fornost.
-- **The structure-weapon gap was not root-caused.** `0/2716` descriptors carry a
-  `weaponId`; L5 is blocked on a spike that this lane did not run.
+- **`BASE_FLAG_N` is now largely resolved** (section 2.5) — an earlier draft called it
+  absent from retail, which was a grep artifact against refpack-compressed library `.map`
+  files. What remains genuinely unverified is whether
+  `multiplayer_start_teams.map` really performs the `BASE_SPAWN` → `BASE_FLAG` translation;
+  its scripts were **not** decoded. Erebor, Carn Dum and Fornost (zero spawn points) remain
+  the likeliest silent-AI-failure candidates.
+- **The structure-weapon gap is root-caused but unfixed.** Correcting an earlier draft:
+  `_structure_combat_contract` does compile expansion weapons today, and the "0 of 2716"
+  figure counted every pack revision on disk (selected packs: 0 of 182). The real defect is
+  two field shapes in the direct-weapon path (`DelayBetweenShots` `Min:`/`Max:` form;
+  damage absent as a scalar under upgrade-conditional `ProjectileNugget`s). Identified by
+  review, **not verified by a fix in this lane**.
 - One cross-lane claim was investigated and **disproved**: a report that the importer
   silently drops space-indented `ArmorSet` blocks was traced to a researcher reading
   `.private/retail-work/cache/effective-assets` — a different, non-current tree — instead of
