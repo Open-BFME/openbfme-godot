@@ -213,13 +213,16 @@ func state_at(position: Vector2) -> int:
 	## radar blip and every scenery placement.
 	##
 	## IT ASKS THE MODEL, and does not keep its own handle on the visibility
-	## plane. Caching that handle looks free - the plane is a Godot packed array
-	## and those are refcounted - but a packed array taken OUT of a Dictionary
-	## through a typed accessor detaches from the one the model keeps writing,
-	## and the overlay then answers with a snapshot from whenever it last
-	## refreshed. That is not a hypothetical: it shipped for the length of one
-	## test run and made a battalion standing in plain sight unclickable, because
-	## the pick asked the stale copy and was told the ground was shrouded.
+	## plane. Caching that handle looks free - the plane is a Godot packed array,
+	## refcounted, and a handle taken out of the Dictionary DOES share the
+	## buffer (review-probed on 4.7; the model's _bind_team optimisation depends
+	## on exactly that). The real hazard is wholesale ARRAY REPLACEMENT: the
+	## model installs brand-new arrays on configure()/from_state()/_ensure_team(),
+	## and a cached handle keeps pointing at the orphaned old one - which is why
+	## the model carries _unbind_team(). A stale cache shipped for the length of
+	## one test run and made a battalion standing in plain sight unclickable,
+	## because the pick asked the orphaned copy and was told the ground was
+	## shrouded. Asking the model every call sidesteps the lifecycle entirely.
 	if not enabled or _fog == null:
 		return FogScript.CLEAR
 	return _fog.state_at(local_team, position)
