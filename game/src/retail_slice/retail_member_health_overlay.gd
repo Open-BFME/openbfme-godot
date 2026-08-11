@@ -121,12 +121,20 @@ func _draw() -> void:
 			if tactical_camera.is_position_behind(world_position):
 				continue
 			var screen_center := tactical_camera.unproject_position(world_position)
-			# FOOTPRINT-BOUNDED, LIKE THE STRUCTURE BAR.
+			# BOUNDED BY THE UNIT'S AUTHORED BODY, LIKE THE STRUCTURE BAR.
 			#
 			# The zoom curve alone gave every soldier a 40..100px bar whatever his
 			# apparent size, so a zoomed-out army rendered as a wall of slabs wider
-			# than the men under them. The member's own measured half-width is
+			# than the men under them. The half-width the battalion publishes is
 			# projected through the camera and caps the source width.
+			#
+			# That half-width used to be the member's measured MESH extent, which
+			# contains his spear, so a spear horde drew bars twice the width of the
+			# sword horde beside it. It is now half the unit's authored Geometry
+			# radius (retail_battalion.member_bar_width), which is what retail
+			# sizes a unit by and is near-uniform across infantry - so this cap
+			# still shrinks a bar toward the man at distance without letting one
+			# unit type outgrow another.
 			var width := width_bound
 			var half_width := float(row.get("half_width", 0.0))
 			if half_width > 0.0:

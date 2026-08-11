@@ -1172,8 +1172,11 @@ func member_health_overlay_rows() -> Array[Dictionary]:
 			"member_index": member_index,
 			"health_ratio": ratio,
 			"world_position": visual.global_position + Vector3.UP * float(member_health_anchor_heights.get(member_index, 1.8)),
-			# Bounds the drawn bar to the soldier it belongs to. Zero means the
-			# member could not be measured and the overlay keeps its source width.
+			# Half the unit's AUTHORED bar width, shared by every member of the
+			# horde. It no longer depends on whether this member's mesh could be
+			# measured, so the old "zero means fall back to the source width"
+			# contract is gone; a zero here now means the battalion was never
+			# built, and the overlay's own floor handles it.
 			"half_width": float(member_health_half_widths.get(member_index, 0.0)),
 			"experience_level": experience_level,
 		})
