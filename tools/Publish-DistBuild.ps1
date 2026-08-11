@@ -94,11 +94,37 @@
     Passed through. Also disables the self-sufficiency refusal, because there is
     then no probe to judge - and says so rather than passing quietly.
 
-.EXAMPLE
-    powershell -NoProfile -ExecutionPolicy Bypass -File tools\Publish-DistBuild.ps1
+.PARAMETER AllowPackOwnedWotrData
+    Passed through: where the content pack already ships a War of the Ring
+    DOCUMENT, use the pack's copy instead of refusing the collision. Nothing is
+    replaced and the pack's copy is still verified against its loader's schema.
+    Required today, because the active pack builds living-world.json into itself
+    and without this no release can be built from the current pack set at all.
+
+.PARAMETER PreflightOnly
+    Run every check, prove the hand-off to Build-PlayableBundle binds, and stop
+    before building. Refused together with -FinishOnly.
+
+.PARAMETER FinishOnly
+    The bundle at dist\v<version>\ is already built. Verify it against its own
+    BUILD-INFO.json and redo only the finishing work: notes, stamp, launcher,
+    firewall. The stamps then name the commit the BUNDLE records - NOT HEAD,
+    which is the whole point: the bytes are older than HEAD by definition.
+
+.PARAMETER AllowFinishFromOtherCommit
+    Finish a bundle whose commit is not HEAD. Refused by default because the
+    patch notes come from this checkout and would describe a later tree. The
+    stamps name the bundle's commit either way.
 
 .EXAMPLE
-    powershell -NoProfile -ExecutionPolicy Bypass -File tools\Publish-DistBuild.ps1 -Rc
+    # What actually works on this machine today. Every switch is a defect
+    # elsewhere; AGENTS.md lists what retires each one.
+    powershell -NoProfile -ExecutionPolicy Bypass -File tools\Publish-DistBuild.ps1 `
+        -Godot <godot.exe> -AllowEnvDependentContent -AllowPackOwnedWotrData
+
+.EXAMPLE
+    powershell -NoProfile -ExecutionPolicy Bypass -File tools\Publish-DistBuild.ps1 -Rc `
+        -Godot <godot.exe> -AllowEnvDependentContent -AllowPackOwnedWotrData
 #>
 [CmdletBinding()]
 param(
@@ -128,6 +154,10 @@ param(
     # gigabytes of hashing are not the thing that went wrong, and re-paying an
     # hour and a half for a file copy is how a pipeline stops getting used.
     [switch]$FinishOnly,
+    # Finish a bundle that was built from a commit other than HEAD. The stamps
+    # name the BUNDLE's commit either way; what this accepts is that the patch
+    # notes and anything else read from this checkout describe a later tree.
+    [switch]$AllowFinishFromOtherCommit,
     [switch]$Help
 )
 
@@ -140,6 +170,25 @@ if ($Help) {
 }
 
 . (Join-Path $PSScriptRoot 'dist-pipeline-common.ps1')
+
+# -PreflightOnly's exit lives on the building path, so combining it with
+# -FinishOnly used to IGNORE it silently and do the finishing work for real -
+# a "change nothing" flag writing files. Refused rather than reinterpreted:
+# guessing which one the operator meant is how a dry run becomes a publish.
+if ($PreflightOnly -and $FinishOnly) {
+    Write-Host ''
+    Write-Host 'REFUSED: -PreflightOnly and -FinishOnly contradict each other. -PreflightOnly changes nothing; -FinishOnly writes the notes, the stamp and the launcher.' -ForegroundColor Red
+    Write-Host '           Fix: pass one. -PreflightOnly to check without building, -FinishOnly to complete a bundle that is already built.' -ForegroundColor Red
+    Write-Host ''
+    exit 1
+}
+if ($AllowFinishFromOtherCommit -and -not $FinishOnly) {
+    Write-Host ''
+    Write-Host 'REFUSED: -AllowFinishFromOtherCommit has no meaning without -FinishOnly.' -ForegroundColor Red
+    Write-Host '           Fix: drop it, or add -FinishOnly.' -ForegroundColor Red
+    Write-Host ''
+    exit 1
+}
 
 function Write-DistHeading { param([string]$Text) Write-Host ''; Write-Host $Text -ForegroundColor White; Write-Host ('-' * $Text.Length) }
 function Write-DistStep { param([string]$Text) Write-Host "  $Text" }
@@ -179,7 +228,7 @@ try {
     if ($versionProblems.Count -gt 0) {
         throw (New-DistRefusal `
             -Problem ("This build would state its version inconsistently:`n           " + ($versionProblems -join "`n           ")) `
-            -Remedy 'Bring every copy in line with VERSION, then re-run. tools/Test-DistPipeline.ps1 checks this in a second.')
+            -Remedy 'Bring every copy in line with VERSION, then re-run. tools/Test-DistPipeline.ps1 checks this in about fifteen seconds.')
     }
     Write-DistGood 'every file that states a version agrees with VERSION'
 
@@ -212,9 +261,14 @@ try {
         }
         Write-DistWarn "-AllowDirty: publishing with $($dirty.Count) uncommitted path(s); the change log cannot include them."
     }
-    $commit = (& git -C $repoRoot rev-parse HEAD | Out-String).Trim()
-    $shortCommit = (& git -C $repoRoot rev-parse --short HEAD | Out-String).Trim()
-    Write-DistStep "commit              $shortCommit"
+    # HEAD, for now. On -FinishOnly this is REPLACED below by the commit the
+    # bundle records, because the bytes are older than HEAD and the stamp must
+    # name the bytes. Nothing may use these two before that point.
+    $headCommit = (& git -C $repoRoot rev-parse HEAD | Out-String).Trim()
+    $headShortCommit = (& git -C $repoRoot rev-parse --short HEAD | Out-String).Trim()
+    $commit = $headCommit
+    $shortCommit = $headShortCommit
+    Write-DistStep "HEAD                $shortCommit"
 
     # -- godot ---------------------------------------------------------------
     if ($Godot -eq '') {
@@ -321,12 +375,35 @@ try {
 
     # ------------------------------------------------- read back the verdict
     # From the artefact, not from the fact that the previous command exited 0.
-    Write-DistHeading 'Self-sufficiency'
     $buildInfoPath = Join-Path $bundleRoot 'BUILD-INFO.json'
     if (-not (Test-Path -LiteralPath $buildInfoPath -PathType Leaf)) {
         throw (New-DistRefusal -Problem "The published folder has no BUILD-INFO.json, so it cannot say what it is: $buildInfoPath")
     }
     $bundleInfo = (([IO.File]::ReadAllText($buildInfoPath)).TrimStart([char]0xFEFF) | ConvertFrom-Json)
+
+    # ------------------------------------------------- which commit shipped
+    # EVERY stamp below names this, so it has to be the commit whose bytes are
+    # in the folder. On -FinishOnly that is NOT HEAD: the bundle was built
+    # earlier, HEAD has moved, and stamping HEAD put a commit into VERSION.json,
+    # current.json and .openbfme-version.json whose bytes were never in the
+    # build - while BUILD-INFO.json, written by the build itself, said otherwise.
+    $sourceCommit = Resolve-DistSourceCommit -RepoRoot $repoRoot -FromBundle ([bool]$FinishOnly) -BuildInfo $bundleInfo
+    $commit = $sourceCommit.commit
+    $shortCommit = $sourceCommit.shortCommit
+    if ($FinishOnly) {
+        Write-DistStep "bundle commit       $shortCommit (from BUILD-INFO.json, not HEAD)"
+        if ($commit -cne $headCommit) {
+            $distance = Get-DistCommitDistance -RepoRoot $repoRoot -From $commit -To $headCommit
+            if (-not $AllowFinishFromOtherCommit) {
+                throw (New-DistRefusal `
+                    -Problem ("The bundle was built from $shortCommit but HEAD is $headShortCommit ($distance commit(s) later), so the patch notes and any other file taken from this checkout would describe a tree the bundle does not contain.") `
+                    -Remedy 'Pass -AllowFinishFromOtherCommit to finish it anyway (the stamps name the BUNDLE commit either way), or rebuild with -Force so the bytes and the checkout agree.')
+            }
+            Write-DistWarn "-AllowFinishFromOtherCommit: bundle is $shortCommit, HEAD is $headShortCommit ($distance commit(s) later). The stamps name the bundle; the notes come from this checkout."
+        }
+    }
+
+    Write-DistHeading 'Self-sufficiency'
     $selfLocating = [bool]$bundleInfo.launchCheck.selfLocatesContent
     if ($SkipLaunchCheck) {
         Write-DistWarn '-SkipLaunchCheck: this folder was never booted, so nothing here has proved it runs on another machine.'
@@ -358,9 +435,11 @@ try {
     # Not a refusal: build_info.json is generated and then committed, so it can
     # never carry the hash of the commit that carries it. One commit behind is
     # correct. Further behind than that is a stale stamp, and worth saying.
+    # Measured against the BUNDLE's commit, not HEAD. Against HEAD it reported
+    # "5 commits behind" for a bundle that was one behind, which is the same
+    # class of mistake as stamping HEAD in the first place.
     if ($stamp.buildInfoCommit -ne '' -and -not $shortCommit.StartsWith($stamp.buildInfoCommit)) {
-        $behind = (& git -C $repoRoot rev-list --count "$($stamp.buildInfoCommit)..HEAD" 2>$null | Out-String).Trim()
-        if ($behind -eq '') { $behind = '?' }
+        $behind = Get-DistCommitDistance -RepoRoot $repoRoot -From $stamp.buildInfoCommit -To $commit
         $line = "the game's own menu will print build $($stamp.build) ($($stamp.buildInfoCommit)), which is $behind commit(s) behind this build ($shortCommit)."
         if ($behind -eq '1') { Write-DistStep "note: $line That is structural - build_info.json is committed after it is generated." }
         else { Write-DistWarn "$line Re-run tools/Write-BuildInfo.ps1 and commit it so the menu matches the folder." }

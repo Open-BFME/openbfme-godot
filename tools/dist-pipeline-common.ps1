@@ -320,6 +320,75 @@ function Assert-DistReleaseFirewall {
 }
 
 
+function Resolve-DistSourceCommit {
+    <#
+    .SYNOPSIS
+        Which commit did the BYTES being published come from?
+    .DESCRIPTION
+        Not the same question as "what is HEAD", and answering it with HEAD
+        shipped a wrong stamp: -FinishOnly finishes a bundle that was built
+        earlier, so by the time the notes, VERSION.json and the launcher install
+        root were written, HEAD had moved two commits on and all three claimed a
+        commit whose bytes were never in the folder. BUILD-INFO.json - written by
+        the build, from the tree the build actually exported - said something
+        else, and it was right.
+
+        So on the finishing path the answer comes from the artefact, and on the
+        building path from git. `origin` says which, so a caller can refuse a
+        mismatch rather than average two numbers.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$RepoRoot,
+        [Parameter(Mandatory)][bool]$FromBundle,
+        $BuildInfo = $null
+    )
+    if ($FromBundle) {
+        if ($null -eq $BuildInfo -or $null -eq $BuildInfo.source) {
+            throw (New-DistRefusal `
+                -Problem 'The existing bundle carries no BUILD-INFO.json source record, so nothing can say which commit its bytes came from.' `
+                -Remedy 'Rebuild it: run without -FinishOnly and with -Force.')
+        }
+        $full = [string]$BuildInfo.source.commit
+        $short = [string]$BuildInfo.source.shortCommit
+        if ($full -cnotmatch '^[0-9a-f]{40}$') {
+            throw (New-DistRefusal -Problem "The existing bundle records an unusable commit: '$full'" -Remedy 'Rebuild it.')
+        }
+        if ($short -eq '') { $short = $full.Substring(0, 7) }
+        return [pscustomobject]@{ commit = $full; shortCommit = $short; origin = 'bundle' }
+    }
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $full = (& git -C $RepoRoot rev-parse HEAD 2>$null | Out-String).Trim()
+        $short = (& git -C $RepoRoot rev-parse --short HEAD 2>$null | Out-String).Trim()
+    } finally { $ErrorActionPreference = $previous }
+    if ($full -cnotmatch '^[0-9a-f]{40}$') {
+        throw (New-DistRefusal -Problem "git could not name HEAD in $RepoRoot.")
+    }
+    return [pscustomobject]@{ commit = $full; shortCommit = $short; origin = 'head' }
+}
+
+
+function Get-DistCommitDistance {
+    <#
+    .SYNOPSIS
+        How many commits separate two revisions, or '?' when git cannot say.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$RepoRoot,
+        [Parameter(Mandatory)][string]$From,
+        [Parameter(Mandatory)][string]$To
+    )
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $count = (& git -C $RepoRoot rev-list --count "$From..$To" 2>$null | Out-String).Trim()
+    } finally { $ErrorActionPreference = $previous }
+    if ($count -cnotmatch '^[0-9]+$') { return '?' }
+    return $count
+}
+
+
 function New-DistVersionStamp {
     <#
     .SYNOPSIS

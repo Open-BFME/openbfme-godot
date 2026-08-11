@@ -38,13 +38,27 @@ another machine and run. Four steps, one command each.
 | 1. Bump the number | edit `VERSION` (e.g. `0.2.1` → `0.2.2`) | One line. The only place the version is decided |
 | 2. Restate it everywhere | `powershell -File tools\Write-BuildInfo.ps1` | Then match `config/version` in `game\project.godot` and the label in `game\scenes\boot.tscn`. Commit all four |
 | 3. Write the notes | `docs\patch-notes\v<version>.md` | Owner-facing plain language: what changed for the player, and a `## Known gaps` section. The publish refuses without it |
-| 4. Publish | `powershell -File tools\Publish-DistBuild.ps1` | Lands in `dist\v<version>\`. Add `-Rc` for the release candidate (launcher included), `-Zip` to hand it over a share |
+| 4. Publish | `powershell -File tools\Publish-DistBuild.ps1 -Godot <godot.exe> -AllowEnvDependentContent -AllowPackOwnedWotrData` | Lands in `dist\v<version>\`. Add `-Rc` for the release candidate (launcher included), `-Zip` to hand it over a share |
 
-`powershell -File tools\Test-DistPipeline.ps1` checks steps 1-3 in about a
-second — run it before you spend an hour and a half on step 4. Two switches
+`powershell -File tools\Test-DistPipeline.ps1` checks steps 1-3 in ten to
+fifteen seconds — run it before you spend an hour and a half on step 4. Two switches
 exist because that hour and a half is real: `-PreflightOnly` runs every check
 and the hand-off binding and stops before building; `-FinishOnly` verifies an
-already-built `dist\v<version>\` and redoes only the notes, stamp and launcher.
+already-built `dist\v<version>\` and redoes only the notes, stamp and launcher
+(it stamps the commit the BUNDLE records, not HEAD, and refuses if the two
+differ unless you pass `-AllowFinishFromOtherCommit`).
+
+**Step 4 needs three switches today, and every one of them is a real defect
+somewhere else.** None is a preference; each is listed with what retires it.
+
+| Switch | Why it is needed today | What retires it |
+|---|---|---|
+| `-Godot <path>` | `tools\resolve-godot.ps1` deliberately refuses to know about maintainer-machine paths, and this machine's Godot lives in one (`C:\Users\Jonathan\Downloads\godot47\`). Nothing is wrong; the resolver is doing its job | Drop the binary in `.tools\godot\`, or set `OPENBFME_GODOT`, and the flag stops being needed |
+| `-AllowEnvDependentContent` | The exported build does not resolve `content-packs\` beside its own exe. With no environment set it finds *something* — 11 packs instead of 14, almost certainly the stale durable pack in the user profile — so the folder is `run-with-log.bat`-only, not double-clickable. The publish refuses without this flag, deliberately | Bundle-relative content resolution in the game. Until then every published folder is bat-launcher-only and its patch notes say so |
+| `-AllowPackOwnedWotrData` | The active content pack now builds `data\living-world.json` into itself, and the staging rule was written when only the private workspace could supply it. Without the flag **no release can be built from the current pack set at all** | Either the packs stop carrying it, or the staging plan learns that a pack-supplied document is the normal case. The flag only reaches documents; directory bundles still refuse |
+
+`-AllowMissingWotrData` is also needed while `OPENBFME_LIVING_WORLD_AI_TEMPLATE`
+is absent from the private workspace. Produce that artefact and it goes away.
 
 - **`dist\` and `build\` are git-ignored and stay that way.** The published
   folder carries converted retail content packs. `Publish-DistBuild.ps1` asks git
@@ -55,11 +69,13 @@ already-built `dist\v<version>\` and redoes only the notes, stamp and launcher.
   `tools\Build-PlayableBundle.ps1`, which exports, stages the packs
   `selection.json` names, proves the staged bytes hash to the source packs and
   boots the result headless twice. Fix build behaviour there, not in the wrapper.
-- **A published folder must run with no environment set.** The wrapped build
-  boots the export once with `OPENBFME_CONTENT` and once without, and the
-  publish refuses if the two runs do not reach the same content census.
-  `-AllowEnvDependentContent` overrides it and says so loudly in the output —
-  never use it for a folder going to another machine.
+- **A published folder should run with no environment set, and today's do not.**
+  The wrapped build boots the export once with `OPENBFME_CONTENT` and once
+  without, and the publish refuses if the two runs disagree. That refusal is
+  firing on every build right now, so `-AllowEnvDependentContent` is required
+  and the folder is `run-with-log.bat`-only. Say that to testers; the patch
+  notes lead with it. Do not treat the flag as routine once the game resolves
+  content beside its own exe — at that point its absence is a regression.
 - **`-Rc` builds the launcher and the install root it reads.** The launcher has
   no "browse to a game" control: it follows `current.json` to
   `versions\<version>\` and verifies those files by hash. The publish writes that

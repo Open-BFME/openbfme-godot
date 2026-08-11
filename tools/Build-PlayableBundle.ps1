@@ -592,7 +592,8 @@ try {
         bundles = @($wotrPlan.rules | ForEach-Object {
             [ordered]@{
                 env = $_.env; schema = $_.schema; loader = $_.loader
-                staged = $false; source = $_.source; packRelative = ''
+                staged = $false; stagedByThisBuild = $false; suppliedBy = 'nothing'
+                source = $_.source; packRelative = ''
                 basis = $_.basis; losesWithout = $_.loses
             }
         })
@@ -649,7 +650,15 @@ try {
                 # this one", skips it, and leaves the landed-artefact check below
                 # to verify the pack's own copy against the loader's schema. Every
                 # skip is named in the output and in BUILD-INFO; none is silent.
-                $packOwnsIt = ((-not $alreadyMine) -and (Test-Path -LiteralPath $target))
+                # DOCUMENTS ONLY. The observed case is a pack that builds
+                # living-world.json into itself: one file, wholly owned, and the
+                # loader either accepts it or does not. A directory bundle is a
+                # different question - "the pack ships this directory" does not
+                # mean it ships the same FILES, and skipping there could leave a
+                # half-populated tree that still passes a manifest check. Until
+                # something counts staged-vs-pack files per bundle, the switch
+                # does not reach that case and those collisions still refuse.
+                $packOwnsIt = ((-not $alreadyMine) -and ($group.kind -ceq 'document') -and (Test-Path -LiteralPath $target))
                 if ($packOwnsIt -and $AllowPackOwnedWotrData) {
                     Write-BundleWarn "content pack already ships $($group.destination) - staging skipped, the pack's own copy is used and verified"
                     $packOwnedWotr.Add($group.destination)
@@ -723,7 +732,14 @@ try {
                     env         = $_.env
                     schema      = $_.schema
                     loader      = $_.loader
+                    # `staged` has always meant "a source for this was FOUND",
+                    # which is not the same claim as "this build put it there" -
+                    # and once a pack can supply its own copy, reading the first
+                    # as the second is wrong. Both facts are recorded now, so
+                    # packOwned is not the only place the difference appears.
                     staged      = [bool]$_.present
+                    stagedByThisBuild = ([bool]$_.present -and ($packOwnedWotr -cnotcontains $_.destination))
+                    suppliedBy  = $(if (-not $_.present) { 'nothing' } elseif ($packOwnedWotr -ccontains $_.destination) { 'content pack' } else { 'this build' })
                     source      = $_.source
                     packRelative = $(if ($_.present) { $_.landedRelative } else { '' })
                     basis       = $_.basis
@@ -1138,7 +1154,12 @@ HOW TO RUN
   $launchNote
   $exeNote
 
-LAYOUT - the game finds content in content-packs NEXT TO the exe.
+LAYOUT$(if ($selfLocating) { ' - the game finds content in content-packs NEXT TO the exe.' } else { @"
+ - content-packs sits NEXT TO the exe and must stay there, but this
+  build does NOT find it by itself: run-with-log.bat points it at this folder.
+  Four lines up says the same thing; they are generated from the same measured
+  answer, so they cannot drift apart.
+"@ })
   OpenBFME.exe
   OpenBFME.pck
   content-packs/          <- must stay beside the exe

@@ -1,12 +1,13 @@
 <#
 .SYNOPSIS
-    The cheap gate in front of the expensive one. Seconds, not half an hour.
+    The cheap gate in front of the expensive one. Ten to fifteen seconds,
+    measured, against ninety minutes for the thing it guards.
 
 .DESCRIPTION
     tools/Publish-DistBuild.ps1 exports Godot, stages several gigabytes of
     content and boots the result twice. Discovering a drifted version string or
     a hole in the release firewall at the END of that is paying thirty minutes
-    to learn something knowable in a second, so it is knowable here instead.
+    to learn something knowable in fifteen seconds, so it is knowable here.
 
     Two kinds of check, and the second kind is the one that matters:
 
@@ -156,7 +157,7 @@ Test-Case 'the publisher preflights and binds against the build it wraps' {
     # Build-PlayableBundle.ps1's own declared parameters. The first live run
     # refused with "Cannot convert value 'v0.2.1' to type System.Int32" AFTER
     # preflight, because array splatting binds positionally; this is the second
-    # in a second rather than the same discovery at the end of an export.
+    # in fifteen seconds rather than the same discovery at the end of an export.
     $output = @(& powershell -NoProfile -ExecutionPolicy Bypass `
         -File (Join-Path $PSScriptRoot 'Publish-DistBuild.ps1') `
         -PreflightOnly -Rc -Godot 'C:\does-not-need-to-exist\godot.exe' `
@@ -343,6 +344,89 @@ Test-Case 'the version stamp records the build commit AND the commit the menu pr
         Assert-True ($written.schema -ceq 'openbfme.dist-version') "VERSION.json schema is '$($written.schema)'"
         Assert-True ($written.redistributable -eq $false) 'VERSION.json must state that this folder is not redistributable'
     } finally { Remove-ScratchRepository -Root $scratch }
+}
+
+Test-Case '-FinishOnly stamps the BUNDLE commit, not HEAD' {
+    # The shipped defect: -FinishOnly took the commit from `git rev-parse HEAD`
+    # at preflight, so VERSION.json, current.json and .openbfme-version.json all
+    # named a commit two later than the bytes in the folder, while
+    # BUILD-INFO.json - written by the build - named the right one.
+    # The existing install-root case cannot catch this: it is HANDED the commit.
+    $scratch = New-ScratchRepository
+    try {
+        [IO.File]::WriteAllText((Join-Path $scratch 'a.txt'), 'one')
+        $previous = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            & git -C $scratch add -A 2>$null | Out-Null
+            & git -C $scratch commit -q -m 'first' 2>$null | Out-Null
+            $bundleCommit = (& git -C $scratch rev-parse HEAD 2>$null | Out-String).Trim()
+            [IO.File]::WriteAllText((Join-Path $scratch 'b.txt'), 'two')
+            & git -C $scratch add -A 2>$null | Out-Null
+            & git -C $scratch commit -q -m 'second' 2>$null | Out-Null
+            $head = (& git -C $scratch rev-parse HEAD 2>$null | Out-String).Trim()
+        } finally { $ErrorActionPreference = $previous }
+        Assert-True ($bundleCommit -cne $head) 'scratch setup failed: HEAD did not move'
+
+        $buildInfo = [pscustomobject]@{
+            source = [pscustomobject]@{ commit = $bundleCommit; shortCommit = $bundleCommit.Substring(0, 7) }
+        }
+        $fromBundle = Resolve-DistSourceCommit -RepoRoot $scratch -FromBundle $true -BuildInfo $buildInfo
+        Assert-True ($fromBundle.commit -ceq $bundleCommit) "-FinishOnly resolved '$($fromBundle.commit)', not the bundle's own commit"
+        Assert-True ($fromBundle.origin -ceq 'bundle') "origin is '$($fromBundle.origin)'"
+
+        $fromHead = Resolve-DistSourceCommit -RepoRoot $scratch -FromBundle $false
+        Assert-True ($fromHead.commit -ceq $head) "the building path resolved '$($fromHead.commit)', not HEAD"
+        Assert-True ($fromHead.origin -ceq 'head') "origin is '$($fromHead.origin)'"
+
+        # And the stamp must carry through what was resolved, not re-ask git.
+        $destination = Join-Path $scratch 'out'
+        [void](New-Item -ItemType Directory -Path $destination -Force)
+        [void](New-Item -ItemType Directory -Path (Join-Path $scratch 'game\data') -Force)
+        [IO.File]::WriteAllText((Join-Path $scratch 'game\data\build_info.json'), '{"version":"0.2.1","build":"9","commit":"deadbee"}')
+        $stamp = New-DistVersionStamp -RepoRoot $scratch -Version '0.2.1' -Destination $destination `
+            -IsReleaseCandidate $false -SourceCommit $fromBundle.shortCommit
+        Assert-True ($stamp.commit -ceq $bundleCommit.Substring(0, 7)) "VERSION.json would say '$($stamp.commit)'"
+
+        # The drift distance must be measured from the BUNDLE, not from HEAD.
+        Assert-True ((Get-DistCommitDistance -RepoRoot $scratch -From $bundleCommit -To $bundleCommit) -ceq '0') 'distance to itself is not 0'
+        Assert-True ((Get-DistCommitDistance -RepoRoot $scratch -From $bundleCommit -To $head) -ceq '1') 'distance from the bundle to HEAD is not 1'
+    } finally { Remove-ScratchRepository -Root $scratch }
+}
+
+Test-Case 'Resolve-DistSourceCommit refuses a bundle that cannot say what it is' {
+    $scratch = New-ScratchRepository
+    try {
+        Assert-Throws -Matching 'no BUILD-INFO.json source record' -Body {
+            [void](Resolve-DistSourceCommit -RepoRoot $scratch -FromBundle $true -BuildInfo $null)
+        }
+        Assert-Throws -Matching 'unusable commit' -Body {
+            [void](Resolve-DistSourceCommit -RepoRoot $scratch -FromBundle $true `
+                -BuildInfo ([pscustomobject]@{ source = [pscustomobject]@{ commit = 'abc'; shortCommit = 'abc' } }))
+        }
+    } finally { Remove-ScratchRepository -Root $scratch }
+}
+
+Test-Case '-PreflightOnly with -FinishOnly is refused, not silently ignored' {
+    # It used to be ignored: the exit-0 block lives on the building path, so the
+    # combination did the finishing work for real - a flag whose whole promise is
+    # "changes nothing" writing the notes, the stamp and the launcher.
+    $output = @(& powershell -NoProfile -ExecutionPolicy Bypass `
+        -File (Join-Path $PSScriptRoot 'Publish-DistBuild.ps1') `
+        -PreflightOnly -FinishOnly 2>&1 | ForEach-Object { $_.ToString() })
+    $text = $output -join "`n"
+    Assert-True ($LASTEXITCODE -ne 0) "the combination exited 0:`n        $text"
+    Assert-True ($text -cmatch 'contradict each other') "it did not refuse for the stated reason:`n        $text"
+    Assert-True ($text -cnotmatch 'PREFLIGHT ONLY') 'it claimed to have preflighted'
+}
+
+Test-Case '-AllowFinishFromOtherCommit is refused without -FinishOnly' {
+    $output = @(& powershell -NoProfile -ExecutionPolicy Bypass `
+        -File (Join-Path $PSScriptRoot 'Publish-DistBuild.ps1') `
+        -AllowFinishFromOtherCommit 2>&1 | ForEach-Object { $_.ToString() })
+    $text = $output -join "`n"
+    Assert-True ($LASTEXITCODE -ne 0) "it exited 0:`n        $text"
+    Assert-True ($text -cmatch 'no meaning without -FinishOnly') "wrong refusal:`n        $text"
 }
 
 Test-Case 'the launcher install root is the shape the launcher reads' {
