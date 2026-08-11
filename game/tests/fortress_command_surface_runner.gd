@@ -348,6 +348,23 @@ func _check_hero_portrait_double_click_centres_the_camera(slice, sim, hud) -> vo
 		sim.selected_ids.has(hero_id),
 		"selection is %s" % str(sim.selected_ids)
 	)
+	# The checks above drive the handler directly, so they would still pass if
+	# the production wiring were deleted. Guard the wiring itself: the slice must
+	# be listening, and a real portrait button must route its raw input here.
+	_check(
+		"%s_slice_listens_for_hero_focus" % _faction,
+		hud.hero_focus_requested.get_connections().size() > 0,
+		"nothing is connected to RetailHud.hero_focus_requested"
+	)
+	var wired_portraits := 0
+	for button_value in hud._hero_bar_buttons.values():
+		if (button_value as Button).gui_input.get_connections().size() > 0:
+			wired_portraits += 1
+	_check(
+		"%s_hero_portraits_route_their_raw_input" % _faction,
+		hud._hero_bar_buttons.is_empty() or wired_portraits == hud._hero_bar_buttons.size(),
+		"%d of %d portrait buttons have a gui_input handler" % [wired_portraits, hud._hero_bar_buttons.size()]
+	)
 
 
 func _check_constructed_fortress_parity(slice, sim, hud, seed_fortress: int) -> void:
@@ -493,6 +510,24 @@ func _check_constructed_fortress_parity(slice, sim, hud, seed_fortress: int) -> 
 		seed_upgrades == built_upgrades,
 		"seed=%s built=%s" % [str(seed_upgrades), str(built_upgrades)]
 	)
+	# Stamping source_object_id is NOT snapshot-only. _structure_footprint_radius
+	# falls through to _resolved_footprint_source_radius(source_object_id, kind),
+	# so without an id a constructed building used the generic fallback radius
+	# while the identical seeded building used its authored geometry — and that
+	# radius feeds the attack-range gate against structures and unit eviction
+	# around them. The fix makes the built fortress agree with the seeded one;
+	# that INTENDED consequence is gated here rather than left implicit.
+	_check(
+		"%s_built_fortress_has_the_same_footprint_radius" % _faction,
+		is_equal_approx(
+			sim._structure_footprint_radius(sim.structure(built_id)),
+			sim._structure_footprint_radius(sim.structure(seed_fortress))
+		),
+		"seed=%f built=%f" % [
+			sim._structure_footprint_radius(sim.structure(seed_fortress)),
+			sim._structure_footprint_radius(sim.structure(built_id)),
+		]
+	)
 	_check(
 		"%s_built_fortress_carries_its_retail_object_identity" % _faction,
 		String(sim.structure(built_id).get("source_object_id", ""))
@@ -535,6 +570,20 @@ func _check_left_click_lands_on_the_citadel(slice, sim, fortress_id: int, label:
 			mispicks.append("offset %s -> id=%d kind=%s" % [
 				str(probe), picked, String(sim.structure(picked).get("structure_kind", "<none>"))
 			])
+	# The probes above re-compose _closest_structure + _selection_target_structure,
+	# so they would still pass if the left-click handler stopped calling the
+	# resolver. Guard the call site itself (the precedent this project already
+	# uses in attack_cursor_runner for the same reason).
+	var click_source := ""
+	var slice_script := FileAccess.open("res://src/retail_slice/retail_vertical_slice.gd", FileAccess.READ)
+	if slice_script != null:
+		click_source = slice_script.get_as_text()
+		slice_script.close()
+	_check(
+		"%s_left_click_selection_routes_through_the_castle_resolver" % _faction,
+		click_source.contains("_selection_target_structure(_closest_structure(point, local_team))"),
+		"the left-click structure pick no longer resolves castle pieces to their fortress"
+	)
 	print("FORTRESS_PICK %s id=%d radius=%.3f pieces=%s" % [
 		label, fortress_id, radius,
 		str(sim.structure(fortress_id).get("castle_piece_structure_ids", []))

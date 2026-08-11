@@ -180,3 +180,73 @@ def test_loose_reader_refuses_to_escape_the_cursor_directory(tmp_path) -> None:
         read("../secret.ani")
     with pytest.raises(FileNotFoundError):
         read("missing.ani")
+
+
+def test_default_cursor_names_carry_the_retail_move_family() -> None:
+    """The bronze move arrows must be in the shipped set, not just the attack ones.
+
+    Playtest report: "right-click move doesn't use the bronze arrows from the
+    game base".  Root cause was this whitelist, not the runtime: every mounted
+    pack carried exactly one payload (``SCCAttack``) aliased five ways, because
+    only the attack family was ever named here.
+
+    Oracle is retail's own binding table, ``data/ini/mouse.ini`` in the pure
+    RotWK 2.01 effective-assets tree::
+
+        MouseCursor Move           Image/Texture = SCCMove        (:64)
+        MouseCursor AttackMove     Image/Texture = SCCAttMov      (:69)
+        MouseCursor SetRallyPoint  Image/Texture = SCCRallyPnt    (:174)
+        MouseCursor Waypoint       Image/Texture = SCCWaypoint    (:219)
+        MouseCursor Normal/Arrow   Image/Texture = SCCPointer.cur (:36/:42)
+
+    These names are lowercased ``MouseCursor`` block names, which is the key
+    space ``parse_mouse_cursor_bindings`` emits and ``plan_cursor_pack``
+    selects on.
+    """
+    from openbfme_importer.cursor_pack import DEFAULT_CURSOR_NAMES
+
+    # The attack family must not be lost while widening.
+    for name in ("attackobj", "forceattackobj", "forceattackground", "target", "outrange"):
+        assert name in DEFAULT_CURSOR_NAMES
+
+    # The move family the playtest report needs.
+    for name in ("move", "attackmove", "setrallypoint", "waypoint", "normal", "arrow"):
+        assert name in DEFAULT_CURSOR_NAMES, f"retail authors MouseCursor {name} but the pack would not carry it"
+
+    # Every name is lowercase and unique, or plan_cursor_pack cannot match the
+    # parsed mouse.ini keys.
+    assert len(set(DEFAULT_CURSOR_NAMES)) == len(DEFAULT_CURSOR_NAMES)
+    assert all(name == name.lower() for name in DEFAULT_CURSOR_NAMES)
+
+
+def test_plan_carries_the_move_cursor_when_mouse_ini_binds_it(tmp_path) -> None:
+    """End to end over the planner: a ``Move`` binding becomes a real payload.
+
+    Guards the half of the whitelist change the constant test cannot see - that
+    ``plan_cursor_pack`` actually resolves ``SCCMove`` to ``sccmove.ani`` and
+    emits it as its OWN payload rather than an alias of the attack sprite.
+    """
+    mouse_ini = b"""
+MouseCursor AttackObj
+  Texture = SCCAttack
+End
+
+MouseCursor Move
+  Texture = SCCMove
+End
+"""
+    files = {
+        "sccattack.ani": _ani([_solid_frame(RED)], sequence=None, rates=None),
+        "sccmove.ani": _ani([_solid_frame(GREEN)], sequence=None, rates=None),
+    }
+    plan = plan_cursor_pack(mouse_ini, _reader(files), cursor_names=["attackobj", "move"])
+    cursors = plan.document["cursors"]
+
+    assert "move" in cursors, "the Move binding did not reach the compiled index"
+    assert "aliasOf" not in cursors["move"], "Move must be its own payload, not an attack alias"
+    assert cursors["move"]["texture"] == "SCCMove"
+    assert cursors["move"]["source"] == "sccmove.ani"
+    assert plan.cursor_count == 2, "Move must cost its own payload"
+    # ...and it is genuinely different art from the attack cursor.
+    assert cursors["move"]["frames"][0]["png"] != cursors["attackobj"]["frames"][0]["png"]
+    assert not plan.gaps

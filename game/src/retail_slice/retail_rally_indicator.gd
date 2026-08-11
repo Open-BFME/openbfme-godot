@@ -19,12 +19,35 @@ extends Node3D
 ## flag, this draws a NAMED synthetic banner and says so via
 ## `art_source_is_synthetic`; `configure()` will prefer the retail model the
 ## moment a pack resolves one by id.
+##
+## The asset the republish must carry, transcribed from the pure RotWK 2.01
+## tree (cache/effective-assets/data/ini/object/system/system.ini:1201):
+##
+##     Object RallyPointMarker
+##       KindOf = DRAWABLE_ONLY
+##       Draw = W3DScriptedModelDraw ModuleTag_01
+##         DefaultModelConditionState
+##           Model = RallyFlag_SKN
+##         End
+##         IdleAnimationState
+##           Animation = IDLE
+##             AnimationName = RallyFlag_SKL.RallyFlag_WAVA
+##             AnimationMode = LOOP
+##
+## The compiled path below follows the convention the sibling object already
+## demonstrates in the shipped packs: `Object MoveHint` -> `Model = SCMoveHint`
+## (system.ini:1221) -> `assets/models/system/scmovehint.glb`, i.e. the MODEL
+## name lowercased. RallyFlag_SKN therefore lands at rallyflag_skn.glb.
 
 const AssetFactory = preload("res://src/view/asset_factory.gd")
 
 ## The retail model this indicator WANTS. Named here so the pack gap is
 ## greppable and so a future pack that ships it binds without a code change.
-const RETAIL_RALLY_MODEL_PATH := "assets/models/system/scrallypoint.glb"
+const RETAIL_RALLY_MODEL_PATH := "assets/models/system/rallyflag_skn.glb"
+## Retail's authored model and idle-wave animation names, kept verbatim so the
+## republish target is greppable from the code that wants it.
+const RETAIL_RALLY_MODEL_NAME := "RallyFlag_SKN"
+const RETAIL_RALLY_IDLE_ANIMATION := "RallyFlag_SKL.RallyFlag_WAVA"
 
 ## Banner geometry, in battlefield world units.
 const POLE_HEIGHT := 1.15
