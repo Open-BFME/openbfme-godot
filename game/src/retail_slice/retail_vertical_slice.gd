@@ -5875,8 +5875,11 @@ func _normalized_composite_map_scripts_document(doc: Dictionary) -> Dictionary:
 	if typeof(templates_value) != TYPE_ARRAY:
 		return {"ok": false, "reason": "schema-v2 libraryTemplates is not an array"}
 	var templates := templates_value as Array
-	if templates.size() != 2:
-		return {"ok": false, "reason": "schema-v2 requires exactly two library templates"}
+	# The two per-player AI libraries are the mandatory closure; a map that
+	# declares Lib_GollumSpawn in its LibraryMapLists adds exactly one further
+	# template, bound once to the map's own creeps player.
+	if templates.size() != 2 and templates.size() != 3:
+		return {"ok": false, "reason": "schema-v2 requires the two AI library templates and at most one bound library"}
 	var composite_source_value: Variant = doc.get("source")
 	if typeof(composite_source_value) != TYPE_DICTIONARY:
 		return {"ok": false, "reason": "schema-v2 source is not an object"}
@@ -5923,18 +5926,20 @@ func _normalized_composite_map_scripts_document(doc: Dictionary) -> Dictionary:
 	if typeof(provenance_libraries_value) != TYPE_ARRAY:
 		return {"ok": false, "reason": "schema-v2 source libraries is not an array"}
 	var provenance_library_rows := provenance_libraries_value as Array
-	if provenance_library_rows.size() != 2:
-		return {"ok": false, "reason": "schema-v2 requires exactly two source libraries"}
+	if provenance_library_rows.size() != templates.size():
+		return {"ok": false, "reason": "schema-v2 source libraries do not match the library templates"}
 	var expected_library_paths := [
 		"libraries/ai_initialize/ai_initialize.map",
 		"libraries/ai_mp_inherit_management/ai_mp_inherit_management.map",
 	]
+	if templates.size() == 3:
+		expected_library_paths.append("libraries/lib_gollumspawn/lib_gollumspawn.map")
 	# Retail-byte authenticity belongs to the normal pack audit/receipt trust
 	# boundary. Runtime does not possess the proprietary library bytes and must
 	# not pretend to re-attest them cryptographically. It instead requires the
 	# exact audited structural closure and that each source row stays coupled
 	# to the template identity the importer derived from those bytes.
-	for index in range(2):
+	for index in range(templates.size()):
 		if typeof(provenance_library_rows[index]) != TYPE_DICTIONARY:
 			return {"ok": false, "reason": "schema-v2 source library row is not an object"}
 		if typeof(templates[index]) != TYPE_DICTIONARY:
@@ -5991,7 +5996,8 @@ func _normalized_composite_map_scripts_document(doc: Dictionary) -> Dictionary:
 	var local_teams_by_player: Dictionary = {}
 	for target_player in target_players:
 		local_teams_by_player[target_player] = {}
-	for template_value in templates:
+	for template_index in range(templates.size()):
+		var template_value: Variant = templates[template_index]
 		if typeof(template_value) != TYPE_DICTIONARY:
 			return {"ok": false, "reason": "schema-v2 library template is not an object"}
 		var template := template_value as Dictionary
@@ -6002,13 +6008,36 @@ func _normalized_composite_map_scripts_document(doc: Dictionary) -> Dictionary:
 			return {"ok": false, "reason": "schema-v2 library identity is invalid or duplicated"}
 		var identity := String(template["identity"])
 		identities[identity] = true
+		var template_class := String(template.get("instantiateFor", ""))
+		var placeholder := String(template.get("playerPlaceholder", ""))
 		if (
-			String(template.get("instantiateFor", "")) != "aiPlayers"
-			or String(template.get("playerPlaceholder", "")) != "Player"
-			or typeof(template.get("world")) != TYPE_DICTIONARY
+			typeof(template.get("world")) != TYPE_DICTIONARY
 			or typeof(template.get("scripts")) != TYPE_ARRAY
 		):
 			return {"ok": false, "reason": "schema-v2 library template contract is invalid"}
+		# The first two templates are the per-player AI closure, in order. A
+		# third may only be the map-player class: retail binds such a library
+		# (Lib_GollumSpawn authors PlyrCreeps) once, by name, to the map's own
+		# player - the same shape the maps that inline it already encode.
+		var instantiation_targets: Array[String] = []
+		if template_index < 2:
+			if template_class != "aiPlayers" or placeholder != "Player":
+				return {"ok": false, "reason": "schema-v2 library template contract is invalid"}
+			instantiation_targets.append_array(target_players)
+		else:
+			# The provenance row at this index is already pinned to
+			# lib_gollumspawn above; pin the placeholder to the player that
+			# library actually declares, so a bound template cannot be
+			# retargeted at a concrete skirmish player.
+			if (
+				template_class != "mapPlayer"
+				or placeholder != "PlyrCreeps"
+				or not (normalized["players"] as Dictionary).has(placeholder)
+			):
+				return {"ok": false, "reason": "schema-v2 bound library template contract is invalid"}
+			instantiation_targets.append(placeholder)
+			if not local_teams_by_player.has(placeholder):
+				local_teams_by_player[placeholder] = {}
 		var library_world := template["world"] as Dictionary
 		if (
 			typeof(library_world.get("players")) != TYPE_ARRAY
@@ -6027,10 +6056,10 @@ func _normalized_composite_map_scripts_document(doc: Dictionary) -> Dictionary:
 				or typeof(row.get("name")) != TYPE_STRING
 			):
 				return {"ok": false, "reason": "schema-v2 library player types are invalid"}
-			if String(row["name"]) == "Player":
+			if String(row["name"]) == placeholder:
 				placeholder_indices.append(int(row["index"]))
 		if placeholder_indices.size() != 1:
-			return {"ok": false, "reason": "schema-v2 library must have one Player placeholder"}
+			return {"ok": false, "reason": "schema-v2 library must have one player placeholder"}
 		var placeholder_index := placeholder_indices[0]
 		var payloads: Array = []
 		for script_value in template["scripts"] as Array:
@@ -6043,7 +6072,7 @@ func _normalized_composite_map_scripts_document(doc: Dictionary) -> Dictionary:
 				or typeof(script_row.get("payload")) != TYPE_DICTIONARY
 				or (script_row["payload"] as Dictionary).is_empty()
 			):
-				return {"ok": false, "reason": "schema-v2 library script is outside Player"}
+				return {"ok": false, "reason": "schema-v2 library script is outside its placeholder"}
 			payloads.append((script_row["payload"] as Dictionary).duplicate(true))
 		if payloads.is_empty():
 			return {"ok": false, "reason": "schema-v2 library carries no scripts"}
@@ -6057,7 +6086,7 @@ func _normalized_composite_map_scripts_document(doc: Dictionary) -> Dictionary:
 			if (
 				typeof(team_row.get("name")) != TYPE_STRING
 				or typeof(team_row.get("owner")) != TYPE_STRING
-				or not ["", "Player"].has(String(team_row.get("owner", "")))
+				or not ["", placeholder].has(String(team_row.get("owner", "")))
 				or not _json_integral_number(team_row.get("objectCount", -1))
 				or int(team_row.get("objectCount", -1)) < 0
 				or typeof(team_row.get("namedMembers")) != TYPE_ARRAY
@@ -6087,15 +6116,15 @@ func _normalized_composite_map_scripts_document(doc: Dictionary) -> Dictionary:
 				}
 			library_team_rows.append({
 				"name": local_name,
-				"owner_player": "Player",
-				"default": local_name == "teamPlayer",
+				"owner_player": placeholder,
+				"default": local_name == "team" + placeholder,
 				"object_count": int(team_row["objectCount"]),
 				"named_members": (team_row["namedMembers"] as Array).duplicate(),
 				"marker_only": tactical_markers_only,
 				"library_identity": identity,
 			})
 
-		for target_player in target_players:
+		for target_player in instantiation_targets:
 			var source: Dictionary = source_by_player.get(target_player, {
 				"player": target_player,
 				"scripts": [],

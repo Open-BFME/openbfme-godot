@@ -252,6 +252,105 @@ class SageScriptsConverterTests(unittest.TestCase):
         # to one concrete Player_N at conversion time.
         self.assertNotIn("Player_1", composite["libraryTemplates"][0])
 
+    def _gollum_shaped_documents(self) -> tuple[dict, dict]:
+        """A map with PlyrCreeps plus a library bound to that concrete player.
+
+        Mirrors the decoded retail shapes: ``lib_gollumspawn.map`` declares
+        players ``["", "PlyrCreeps"]`` with team ``teamPlyrCreeps`` and hangs
+        its eleven SkirmishGollum_Spawn scripts off index 1, while every
+        ``map mp`` map declares ``PlyrCreeps``.
+        """
+
+        map_document = {
+            "schema": MAP_SCRIPTS_SCHEMA,
+            "schemaVersion": MAP_SCRIPTS_SCHEMA_VERSION,
+            "source": {"container": "map", "sourceSha256": "1" * 64},
+            "world": {
+                "available": True,
+                "players": [
+                    {"index": 0, "name": ""},
+                    {"index": 1, "name": "PlyrCivilian"},
+                    {"index": 2, "name": "PlyrCreeps"},
+                    {"index": 3, "name": "Player_1"},
+                ],
+                "teams": [],
+                "namedObjects": [],
+                "waypoints": [],
+                "waypointPaths": [],
+                "triggerAreas": [],
+            },
+            "scripts": [],
+        }
+        library = {
+            "schema": MAP_SCRIPTS_SCHEMA,
+            "schemaVersion": MAP_SCRIPTS_SCHEMA_VERSION,
+            "source": {"container": "map", "sourceSha256": "3" * 64},
+            "world": {
+                "available": True,
+                "players": [
+                    {"index": 0, "name": ""},
+                    {"index": 1, "name": "PlyrCreeps"},
+                ],
+                "teams": [
+                    {
+                        "index": 0,
+                        "name": "team",
+                        "owner": "",
+                        "objectCount": 0,
+                        "namedMembers": [],
+                    },
+                    {
+                        "index": 1,
+                        "name": "teamPlyrCreeps",
+                        "owner": "PlyrCreeps",
+                        "objectCount": 0,
+                        "namedMembers": [],
+                    },
+                ],
+                "namedObjects": [],
+                "waypoints": [],
+                "waypointPaths": [],
+                "triggerAreas": [],
+            },
+            "scripts": [
+                {
+                    "playerIndex": 1,
+                    "payload": {
+                        "name": "SkirmishGollum_SpawnGollum_SpawnPoint1",
+                        "isActive": True,
+                        "records": [],
+                    },
+                }
+            ],
+        }
+        return map_document, library
+
+    def test_composite_binds_a_named_library_to_its_map_player(self) -> None:
+        map_document, library = self._gollum_shaped_documents()
+
+        composite = compose_map_scripts_document(map_document, [library])
+
+        template = composite["libraryTemplates"][0]
+        self.assertEqual(template["playerPlaceholder"], "PlyrCreeps")
+        # Retail runs Lib_GollumSpawn once, under the map's own creeps
+        # player - never once per AI player.
+        self.assertEqual(template["instantiateFor"], "mapPlayer")
+        self.assertEqual(
+            template["scripts"][0]["payload"]["name"],
+            "SkirmishGollum_SpawnGollum_SpawnPoint1",
+        )
+
+    def test_composite_refuses_a_named_library_the_map_cannot_bind(self) -> None:
+        map_document, library = self._gollum_shaped_documents()
+        map_document["world"]["players"] = [
+            row
+            for row in map_document["world"]["players"]
+            if row["name"] != "PlyrCreeps"
+        ]
+
+        with self.assertRaisesRegex(ValueError, "does not declare"):
+            compose_map_scripts_document(map_document, [library])
+
     def test_composite_refuses_ambiguous_or_duplicate_library_templates(
         self,
     ) -> None:
@@ -284,8 +383,13 @@ class SageScriptsConverterTests(unittest.TestCase):
 
         ambiguous = json.loads(json.dumps(library))
         ambiguous["world"]["players"].append({"index": 2, "name": "Player"})
-        with self.assertRaisesRegex(ValueError, "exactly one Player"):
+        with self.assertRaisesRegex(ValueError, "exactly one player placeholder"):
             compose_map_scripts_document(map_document, [ambiguous])
+
+        anonymous = json.loads(json.dumps(library))
+        anonymous["world"]["players"] = [{"index": 0, "name": ""}]
+        with self.assertRaisesRegex(ValueError, "exactly one player placeholder"):
+            compose_map_scripts_document(map_document, [anonymous])
 
         foreign = json.loads(json.dumps(library))
         foreign["scripts"] = [{"playerIndex": 99, "payload": {}}]

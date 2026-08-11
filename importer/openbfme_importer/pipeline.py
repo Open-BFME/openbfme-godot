@@ -26,7 +26,11 @@ from .game import retail_game, workspace_root
 from .effective_assets_identity import verify_effective_assets
 from .effective_assets_catalog import EffectiveAssetsCatalog
 from .paths import ensure_external_to_repo, repo_root_from_module, safe_relative_parts
-from .map_profile import GOLLUM_SPAWN_LIBRARY_PATH
+from .map_profile import (
+    AI_LIBRARY_PLAYER_PLACEHOLDER,
+    GOLLUM_SPAWN_LIBRARY_PATH,
+    GOLLUM_SPAWN_LIBRARY_PLAYER,
+)
 from .profile import (
     ResolvedProfile,
     ResolvedResource,
@@ -5770,8 +5774,29 @@ class ImportPipeline:
             for virtual_path in expected_libraries
         ]
         document = compose_map_scripts_document(map_document, library_documents)
-        # The composition helper deliberately knows only decoded SAGE
-        # documents.  This converter is the authority that resolved their
+        # The composer knows only decoded documents, so it can only require
+        # that a library declares ONE placeholder and that the map declares
+        # it. This converter is the authority that resolved the archive paths,
+        # so it is where each audited library is pinned to the player its own
+        # retail bytes name: without this, a library whose source was swapped
+        # (or a placeholder renamed) could bind its scripts to a concrete
+        # skirmish player instead of the creeps player.
+        expected_placeholders = [
+            GOLLUM_SPAWN_LIBRARY_PLAYER
+            if virtual_path == GOLLUM_SPAWN_LIBRARY_PATH
+            else AI_LIBRARY_PLAYER_PLACEHOLDER
+            for virtual_path in expected_libraries
+        ]
+        for index, expected_placeholder in enumerate(expected_placeholders):
+            template = document["libraryTemplates"][index]
+            if template["playerPlaceholder"] != expected_placeholder:
+                raise ValueError(
+                    "sage-script-composite library "
+                    f"{expected_libraries[index]!r} must bind the player "
+                    f"{expected_placeholder!r}, not "
+                    f"{template['playerPlaceholder']!r}"
+                )
+        # This converter is the authority that resolved their
         # archive virtual paths, so bind those paths to the emitted
         # provenance rows here rather than trusting caller-supplied document
         # metadata.

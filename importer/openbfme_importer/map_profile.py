@@ -48,6 +48,14 @@ AI_MP_INHERIT_LIBRARY_PATH = (
     "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map"
 )
 GOLLUM_SPAWN_LIBRARY_PATH = "libraries/lib_gollumspawn/lib_gollumspawn.map"
+#: The player Lib_GollumSpawn actually declares in the retail bytes. Pinning it
+#: keeps the map-player binding class from being a wildcard: a library may only
+#: bind to the player its own audited source names, never to whatever player a
+#: profile or a swapped source happens to declare (a Player_1 hijack composed
+#: cleanly before this pin).
+GOLLUM_SPAWN_LIBRARY_PLAYER = "PlyrCreeps"
+#: Per-player AI template libraries author this placeholder.
+AI_LIBRARY_PLAYER_PLACEHOLDER = "Player"
 from .profile import (
     assert_input_resource_references_resolve,
     is_canonical_multiplayer_map_virtual_path,

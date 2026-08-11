@@ -734,15 +734,29 @@ def compose_map_scripts_document(
     map_document: dict[str, Any],
     library_documents: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Compose one decoded map world with per-player retail AI libraries.
+    """Compose one decoded map world with its attached retail script libraries.
 
-    Library ``.map`` files author a single placeholder player named
-    ``Player``.  SAGE instantiates that library separately for every active
-    skirmish player; concatenating its scripts into the map document would
-    lose that execution context and would collide library-local team names.
-    Schema v2 therefore preserves each library as an explicit template.  The
-    runtime binds ``Player`` and its local teams inside each concrete
-    ``Player_N`` executor.
+    A library ``.map`` file authors exactly one named placeholder player and
+    hangs every script and team off it.  Retail binds that placeholder by
+    name, and the name decides the binding class:
+
+    ``Player``
+        the per-player template class (``ai_initialize``,
+        ``ai_mp_inherit_management``).  SAGE instantiates the library once for
+        every active skirmish player, so concatenating its scripts into the
+        map document would lose that execution context and collide
+        library-local team names.
+
+    any other name
+        the map-player class (``lib_gollumspawn`` authors ``PlyrCreeps``).
+        Retail binds it once to the map's own player of that exact name.  The
+        eight retail maps that inline Lib_GollumSpawn instead of attaching it
+        carry precisely those scripts under their ``PlyrCreeps`` player, which
+        is the oracle for this class.
+
+    Schema v2 therefore preserves each library as an explicit template that
+    names its placeholder and its instantiation class; the runtime binds the
+    placeholder and its local teams inside the concrete executor(s).
     """
 
     def require_v1(document: dict[str, Any], label: str) -> None:
@@ -759,6 +773,11 @@ def compose_map_scripts_document(
     map_world = map_document["world"]
     if not map_world.get("available"):
         raise ValueError("map document has no decoded script world")
+    map_player_names = {
+        str(row.get("name"))
+        for row in map_world.get("players", [])
+        if isinstance(row, dict) and isinstance(row.get("name"), str)
+    }
 
     templates: list[dict[str, Any]] = []
     identities: set[str] = set()
@@ -788,14 +807,27 @@ def compose_map_scripts_document(
             for row in players
             if isinstance(row, dict)
         }
-        placeholder_indices = [
-            player_index
+        placeholder_rows = [
+            (player_index, player_name)
             for player_index, player_name in player_rows.items()
-            if player_name == "Player"
+            if isinstance(player_name, str) and player_name != ""
         ]
-        if len(placeholder_indices) != 1:
-            raise ValueError(f"{label} must declare exactly one Player placeholder")
-        placeholder_index = placeholder_indices[0]
+        if len(placeholder_rows) != 1:
+            raise ValueError(f"{label} must declare exactly one player placeholder")
+        placeholder_index, placeholder_name = placeholder_rows[0]
+        if placeholder_name == "Player":
+            instantiate_for = "aiPlayers"
+        else:
+            # A library that names a concrete retail player (Lib_GollumSpawn
+            # names PlyrCreeps) is bound once, by name, to the map's own
+            # player.  Refuse the composition when the map does not declare
+            # that player: the scripts would have no executor.
+            instantiate_for = "mapPlayer"
+            if placeholder_name not in map_player_names:
+                raise ValueError(
+                    f"{label} binds player {placeholder_name!r} which the map "
+                    "document does not declare"
+                )
         for script in library["scripts"]:
             if (
                 not isinstance(script, dict)
@@ -803,21 +835,23 @@ def compose_map_scripts_document(
                 or not isinstance(script.get("payload"), dict)
             ):
                 raise ValueError(
-                    f"{label} carries a script outside the Player placeholder"
+                    f"{label} carries a script outside the "
+                    f"{placeholder_name} placeholder"
                 )
         for team in world.get("teams", []):
             if (
                 not isinstance(team, dict)
-                or team.get("owner") not in ("", "Player")
+                or team.get("owner") not in ("", placeholder_name)
             ):
                 raise ValueError(
-                    f"{label} carries a team outside the Player placeholder"
+                    f"{label} carries a team outside the "
+                    f"{placeholder_name} placeholder"
                 )
         templates.append(
             {
                 "identity": identity,
-                "instantiateFor": "aiPlayers",
-                "playerPlaceholder": "Player",
+                "instantiateFor": instantiate_for,
+                "playerPlaceholder": placeholder_name,
                 "world": copy.deepcopy(world),
                 "scripts": copy.deepcopy(library["scripts"]),
             }

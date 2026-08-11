@@ -28,11 +28,20 @@ LIBRARY_PATHS = [
 GOLLUM_LIBRARY_PATH = "libraries/lib_gollumspawn/lib_gollumspawn.map"
 
 
-def _document(identity: str, *, library: bool) -> dict:
+def _document(identity: str, *, library: bool, placeholder: str = "Player") -> dict:
+    # Retail shapes, not convenient ones. The per-player AI libraries author a
+    # placeholder literally named ``Player``; Lib_GollumSpawn authors
+    # ``PlyrCreeps`` and binds to the map's own player of that name, so every
+    # map fixture has to declare it. Fixturing gollum with a ``Player``
+    # placeholder is what let this converter go green while the real build
+    # refused the real library bytes.
     players = (
-        [{"index": 0, "name": "Player"}]
+        [{"index": 0, "name": placeholder}]
         if library
-        else [{"index": 0, "name": "PlyrCivilian"}]
+        else [
+            {"index": 0, "name": "PlyrCivilian"},
+            {"index": 1, "name": "PlyrCreeps"},
+        ]
     )
     return {
         "schema": "openbfme.map-scripts",
@@ -154,8 +163,12 @@ def test_script_composite_merges_authored_gollum_spawn_library_reference() -> No
     )
     payloads = {path: path.encode() for path in paths}
     documents = {
-        payload: _document(str(index + 1) * 64, library=index > 0)
-        for index, payload in enumerate(payloads.values())
+        payload: _document(
+            str(index + 1) * 64,
+            library=index > 0,
+            placeholder="PlyrCreeps" if path == GOLLUM_LIBRARY_PATH else "Player",
+        )
+        for index, (path, payload) in enumerate(payloads.items())
     }
     with tempfile.TemporaryDirectory() as raw:
         root = Path(raw)
@@ -188,6 +201,69 @@ def test_script_composite_merges_authored_gollum_spawn_library_reference() -> No
         assert [
             row["identity"] for row in document["libraryTemplates"]
         ] == ["2" * 64, "3" * 64, "4" * 64]
+        # The gollum template is the map-player class bound to PlyrCreeps; the
+        # two AI templates stay the per-player class.
+        assert [
+            (row["instantiateFor"], row["playerPlaceholder"])
+            for row in document["libraryTemplates"]
+        ] == [
+            ("aiPlayers", "Player"),
+            ("aiPlayers", "Player"),
+            ("mapPlayer", "PlyrCreeps"),
+        ]
+
+
+def test_script_composite_refuses_a_gollum_library_bound_to_another_player() -> None:
+    """A bound library may only claim the player its own retail bytes name.
+
+    The composer alone cannot catch this: ``Player_1`` IS declared by the map,
+    so the document is internally consistent. Only the converter knows which
+    archive path each document came from.
+    """
+
+    libraries = [*LIBRARY_PATHS, GOLLUM_LIBRARY_PATH]
+    paths = [MAP_PATH, *libraries]
+    entries = tuple(
+        CatalogEntry("libraries.big", path, index, 1, 0)
+        for index, path in enumerate(paths)
+    )
+    payloads = {path: path.encode() for path in paths}
+    documents = {}
+    for index, (path, payload) in enumerate(payloads.items()):
+        placeholder = "Player"
+        if path == GOLLUM_LIBRARY_PATH:
+            placeholder = "Player_1"
+        document = _document(
+            str(index + 1) * 64, library=index > 0, placeholder=placeholder
+        )
+        if index == 0:
+            document["world"]["players"].append({"index": 2, "name": "Player_1"})
+        documents[payload] = document
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        extracted = {}
+        for entry in entries:
+            source = root / f"source-{entry.offset}.map"
+            source.write_bytes(payloads[entry.name])
+            extracted[(entry.archive.casefold(), entry.name.casefold())] = {
+                "source_path": source,
+            }
+        with mock.patch(
+            "openbfme_importer.sage_scripts.map_scripts_document",
+            side_effect=lambda payload, *, container: documents[payload],
+        ):
+            with pytest.raises(ValueError, match="must bind the player"):
+                ImportPipeline._convert_script_composite_bundle(
+                    _pipeline(),
+                    _resource(entries, libraries),
+                    extracted,
+                    "maps/fixture/scripts.json",
+                    {
+                        "mapVirtualPath": MAP_PATH,
+                        "libraryVirtualPaths": libraries,
+                    },
+                    root / "pack",
+                )
 
 
 def test_script_composite_refuses_output_collision() -> None:
