@@ -1916,6 +1916,23 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
             cah_model_resources = None
             cah_texture_resources = None
             interface_art = None
+            ring_runtime = None
+            ring_resources = None
+            if args.game == "rotwk" and factions == ["men"]:
+                from .ring_system_compiler import compile_ring_system
+
+                ring_documents = {
+                    path.relative_to(oracle_root).as_posix(): path.read_bytes()
+                    for path in sorted((oracle_root / "data" / "ini").rglob("*"))
+                    if path.is_file() and path.suffix.casefold() in {".ini", ".inc"}
+                }
+                ring_runtime = compile_ring_system(ring_documents)
+                art_plan = ring_runtime.get("artConversionPlan")
+                if not isinstance(art_plan, Mapping) or not isinstance(
+                    art_plan.get("resources"), list
+                ):
+                    raise ValueError("compiled ring art conversion plan is invalid")
+                ring_resources = art_plan["resources"]
             if cah_runtime is not None:
                 cah_model_resources = _compile_cah_model_resources(
                     cah_runtime, cook_catalog
@@ -1948,6 +1965,8 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                 cah_model_resources=cah_model_resources,
                 cah_texture_resources=cah_texture_resources,
                 interface_art=interface_art,
+                ring_runtime=ring_runtime,
+                ring_resources=ring_resources,
             )
             # `pipeline` / `cook_catalog` were already built above so the
             # coverage-binding gate could read the cook's real catalog identity.

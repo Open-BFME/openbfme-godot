@@ -16,7 +16,7 @@ cannot be resolved or parsed are recorded as rejections, never substituted.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 import re
@@ -47,7 +47,33 @@ AI_INITIALIZE_LIBRARY_PATH = "libraries/ai_initialize/ai_initialize.map"
 AI_MP_INHERIT_LIBRARY_PATH = (
     "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map"
 )
+GOLLUM_SPAWN_LIBRARY_PATH = "libraries/lib_gollumspawn/lib_gollumspawn.map"
 from .profile import is_canonical_multiplayer_map_virtual_path
+
+
+def _gollum_spawn_library_referenced(setup: Mapping[str, Any]) -> bool:
+    """Whether a parsed map delegates its Gollum scripts to libraries.big.
+
+    Some retail maps inline Lib_GollumSpawn.  Adding the library to those maps
+    as well would run the spawn logic twice, so composition follows the exact
+    LibraryMapLists dependency rather than applying a corpus-wide default.
+    """
+
+    lists = setup.get("libraryMapLists")
+    if not isinstance(lists, list):
+        raise ValueError("parsed map libraryMapLists contract is invalid")
+    references = [
+        reference
+        for row in lists
+        if isinstance(row, Mapping)
+        for reference in row.get("references", [])
+        if isinstance(reference, Mapping)
+    ]
+    return any(
+        str(reference.get("normalized", "")).casefold()
+        == GOLLUM_SPAWN_LIBRARY_PATH
+        for reference in references
+    )
 
 #: Retail map directories are named ``map <kind> <name>``; the multiplayer
 #: skirmish set is exactly the ``mp`` kind.
@@ -683,6 +709,12 @@ def build_map_profile(
             target.category == SKIRMISH_CATEGORY
             and is_canonical_multiplayer_map_virtual_path(map_entry.name)
         ):
+            script_libraries = [
+                AI_INITIALIZE_LIBRARY_PATH,
+                AI_MP_INHERIT_LIBRARY_PATH,
+            ]
+            if _gollum_spawn_library_referenced(parsed.setup):
+                script_libraries.append(GOLLUM_SPAWN_LIBRARY_PATH)
             map_resources.append(
                 {
                     "id": f"map-{target.slug}-scripts",
@@ -690,18 +722,14 @@ def build_map_profile(
                     "converter": "sage-script-composite",
                     "patterns": [
                         map_entry.name,
-                        AI_INITIALIZE_LIBRARY_PATH,
-                        AI_MP_INHERIT_LIBRARY_PATH,
+                        *script_libraries,
                     ],
                     "output": f"{output_root}/scripts.json",
-                    "limit": 3,
-                    "expected_count": 3,
+                    "limit": 1 + len(script_libraries),
+                    "expected_count": 1 + len(script_libraries),
                     "options": {
                         "mapVirtualPath": map_entry.name,
-                        "libraryVirtualPaths": [
-                            AI_INITIALIZE_LIBRARY_PATH,
-                            AI_MP_INHERIT_LIBRARY_PATH,
-                        ],
+                        "libraryVirtualPaths": script_libraries,
                     },
                 }
             )

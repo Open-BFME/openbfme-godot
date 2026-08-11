@@ -7238,7 +7238,25 @@ def compile_playable_unit_descriptor(
             raise PlayableUnitCompilerError(
                 f"hero {target.name} has no reachable starting-fortress producer"
             )
+        ring_prerequisites: list[str] = []
         if is_ring_hero:
+            slot_button = command_buttons.get("command_ringheroreviveslot")
+            if slot_button is None:
+                raise PlayableUnitCompilerError(
+                    "ring hero route has no authored Command_RingHeroReviveSlot"
+                )
+            needed_values = _block_values(slot_button, "NeededUpgrade")
+            ring_prerequisites = (
+                list(_tokens(needed_values[0])) if len(needed_values) == 1 else []
+            )
+            if ring_prerequisites != [
+                "Upgrade_RingHero",
+                "Upgrade_FortressRingHero",
+            ]:
+                raise PlayableUnitCompilerError(
+                    "Command_RingHeroReviveSlot NeededUpgrade must require "
+                    "Upgrade_RingHero and Upgrade_FortressRingHero"
+                )
             # The ring hero revives at the fortress after the regular hero
             # roster slots, so its engine ordinal continues that sequence.
             roster_ordinals = (len(hero_roster) + ring_matches[0],)
@@ -7264,7 +7282,10 @@ def compile_playable_unit_descriptor(
                 "commandId": command_id,
                 "surface": "hero-roster",
                 "rosterOrdinal": roster_ordinal,
-                "prerequisites": [],
+                # This shared emission also serves ordinary fortress heroes.
+                # Only the authored ring-revive path inherits the slot's
+                # ALL-of NeededUpgrade pair.
+                "prerequisites": list(ring_prerequisites),
                 "commandSetTransition": [],
                 "sourceField": source_field,
                 "sourcePlayerTemplate": player_template_id,

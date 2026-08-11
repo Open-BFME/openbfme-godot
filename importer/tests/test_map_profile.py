@@ -8,7 +8,9 @@ import unittest
 from openbfme_importer.catalog import InstallCatalog
 from openbfme_importer.map_profile import (
     FIVE_MAP_TARGETS,
+    GOLLUM_SPAWN_LIBRARY_PATH,
     _display_name,
+    _gollum_spawn_library_referenced,
     _slug,
     build_five_map_profile,
     build_skirmish_map_profile,
@@ -20,6 +22,27 @@ from openbfme_importer.profile import ImportProfile, resolve_profile
 from importer.tests.test_big import make_big
 from importer.tests.test_map_census import _encoded_path
 from importer.tests.test_sage_map import _synthetic_map
+
+
+def test_gollum_spawn_library_is_selected_only_for_authored_map_reference() -> None:
+    referenced = {
+        "libraryMapLists": [
+            {
+                "references": [
+                    {
+                        "normalized": "Libraries/Lib_GollumSpawn/Lib_GollumSpawn.map"
+                    }
+                ]
+            }
+        ]
+    }
+    inline_only = {"libraryMapLists": [{"references": []}]}
+
+    assert _gollum_spawn_library_referenced(referenced)
+    assert not _gollum_spawn_library_referenced(inline_only)
+    assert GOLLUM_SPAWN_LIBRARY_PATH == (
+        "libraries/lib_gollumspawn/lib_gollumspawn.map"
+    )
 
 
 def _catalog(root: Path, *, omit_preview: bool = False) -> InstallCatalog:

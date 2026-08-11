@@ -83,6 +83,22 @@ _EXCLUDED_HERO_FORM_CONDITIONS = {
 }
 
 
+def _is_required_galadriel_ring_skin(row: Mapping[str, object]) -> bool:
+    """The Ring Hero's USER_1 skin is gameplay state, not an optional form.
+
+    Retail's child-only ModelConditionUpgrade raises USER_1 at object level 1
+    and swaps to EUGaldrl_SKN.  Treating every USER_1 hero row as an excluded
+    form silently removed the actual Ring Hero appearance from the pack.
+    """
+
+    conditions = row.get("conditions")
+    return (
+        str(row.get("identifier", "")).casefold() == "eugaldrl_skn"
+        and isinstance(conditions, list)
+        and {str(value).casefold() for value in conditions} == {"user_1"}
+    )
+
+
 class PlayableUnitPackCompilerError(ValueError):
     """A source-backed playable unit cannot produce one bounded pack recipe."""
 
@@ -841,6 +857,7 @@ def compile_playable_unit_pack_recipe(
         and row.get("kind") == "model"
         and isinstance(row.get("conditions"), list)
         and bool(row.get("conditions"))
+        and not _is_required_galadriel_ring_skin(row)
         and {
             str(value).casefold() for value in row.get("conditions", [])
         }.issubset(_EXCLUDED_HERO_FORM_CONDITIONS)

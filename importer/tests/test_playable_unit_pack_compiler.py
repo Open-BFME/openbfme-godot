@@ -914,6 +914,58 @@ def test_missing_texture_on_conditional_model_is_explicitly_unsupported() -> Non
     )
 
 
+def test_galadriel_ring_hero_user_1_dark_skin_is_converted_not_excluded() -> None:
+    descriptor = _descriptor("HeroUnit")
+    closure = _closure(descriptor)
+    member = descriptor["composition"]["primaryMemberObjectId"]
+    path = "art/w3d/eu/eugaldrl_skn.w3d"
+    closure["exactLeaves"].append(
+        _leaf(
+            member,
+            "EUGaldrl_SKN",
+            "model",
+            path,
+            ["USER_1"],
+            "ModelConditionState USER_1",
+        )
+    )
+    closure["scannedW3d"].append(
+        {
+            "virtualPath": path,
+            "byteLength": 1,
+            "sha256": "4" * 64,
+            "headerIds": {
+                "virtualPath": path,
+                "modelIds": ["EUGaldrl_SKN"],
+                "hierarchyIds": [],
+                "animationIds": [],
+            },
+            "modelReferences": [],
+            "warnings": [],
+        }
+    )
+    _rehash_closure(closure)
+
+    recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+
+    visual = recipe["runtimeRegistration"]["visual"]
+    assert not any(
+        row.get("identifier") == "EUGaldrl_SKN"
+        and row.get("runtimeSupport") == "excluded-hero-form"
+        for row in visual["unsupportedVisualReferences"]
+    )
+    resource = next(
+        row
+        for row in recipe["resources"]
+        if row["kind"] == "model"
+        and path in row["patterns"]
+    )
+    component = next(
+        row for row in visual["components"] if row["sourceW3d"] == path
+    )
+    assert component["conditions"] == ["USER_1"]
+
+
 def test_world_builder_model_occurrence_does_not_claim_runtime_ownership() -> None:
     descriptor = _descriptor("HeroUnit")
     closure = _closure(descriptor)

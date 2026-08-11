@@ -27,10 +27,14 @@ from openbfme_importer.cah_system_compiler import (
 from openbfme_importer.faction_slice_profile import (
     CAH_SYSTEM_PACK_KEY,
     CAH_SYSTEM_RUNTIME_PATH,
+    RING_SYSTEM_PACK_KEY,
+    RING_SYSTEM_RUNTIME_PATH,
     STRINGS_PACK_KEY,
     STRINGS_RUNTIME_PATH,
     compose_faction_profile,
 )
+from openbfme_importer.ring_system_compiler import compile_ring_system
+from importer.tests.test_ring_system_compiler import _documents as _ring_documents
 from openbfme_importer.sage_string import parse_string_catalog
 
 
@@ -321,6 +325,31 @@ def test_rotwk_men_compose_publishes_cah_system_table(tmp_path: Path) -> None:
         "packFileKey": CAH_SYSTEM_PACK_KEY,
         "runtimeSha256": runtime["runtimeSha256"],
     }
+
+
+def test_rotwk_men_compose_owns_ring_system_and_conversion_resources(
+    tmp_path: Path,
+) -> None:
+    _faction_coverage(tmp_path, "men", registration={"production": []})
+    runtime = compile_ring_system(_ring_documents())
+    resources = runtime["artConversionPlan"]["resources"]
+
+    target, receipt = compose_faction_profile(
+        _base_with_selection_contract(),
+        tmp_path,
+        ["men"],
+        game="rotwk",
+        ring_runtime=runtime,
+        ring_resources=resources,
+    )
+
+    assert target["runtime_data"][RING_SYSTEM_RUNTIME_PATH] == runtime
+    assert target["pack"]["files"][RING_SYSTEM_PACK_KEY] == RING_SYSTEM_RUNTIME_PATH
+    assert {row["id"] for row in resources} <= {
+        row["id"] for row in target["resources"]
+    }
+    assert receipt["ringSystem"]["systemSha256"] == runtime["systemSha256"]
+    assert receipt["ringSystem"]["resourceCount"] == len(resources)
 
 
 def test_cah_table_controlbar_ids_are_covered_by_the_strings_lane(
@@ -713,3 +742,5 @@ def test_the_object_namespace_is_scraped(tmp_path: Path) -> None:
     assert strings["OBJECT:CreateAHero"] == "Create a Hero"
     assert "OBJECT:" not in WHOLE_STRING_NAMESPACES
     assert "OBJECT:UnreferencedUnit" not in strings
+    RING_SYSTEM_PACK_KEY,
+    RING_SYSTEM_RUNTIME_PATH,

@@ -16,6 +16,7 @@ from .retail_fords_completion_profile import (
     MEN_SELECTION_RESOURCES,
     MEN_SELECTION_RUNTIME_PATH,
 )
+from .ring_system_compiler import RingSystemCompilerError, validate_ring_system
 
 # Authoritative BFME2 faction slugs (men, elves, dwarves, isengard, mordor,
 # wild) come from the playable-unit FACTIONS registry.  RotWK 2.01 adds its own
@@ -86,6 +87,8 @@ CAH_SYSTEM_PACK_KEY = "cah.system"
 # factions' buttons blank.
 INTERFACE_ART_RUNTIME_PATH = "data/interface-art/index.json"
 INTERFACE_ART_PACK_KEY = "interfaceArt"
+RING_SYSTEM_RUNTIME_PATH = "data/ring/system.json"
+RING_SYSTEM_PACK_KEY = "ring.system"
 
 
 def _referenced_string_ids(runtime_data: Mapping[str, object]) -> set[str]:
@@ -376,6 +379,8 @@ def compose_faction_profile(
     cah_texture_resources: Sequence[Mapping[str, object]] | None = None,
     interface_art: tuple[Sequence[Mapping[str, object]], Mapping[str, object]]
     | None = None,
+    ring_runtime: Mapping[str, object] | None = None,
+    ring_resources: Sequence[Mapping[str, object]] | None = None,
 ) -> tuple[dict[str, object], dict[str, object]]:
     """Add only artifacts bound to converted rows in digested coverage reports.
 
@@ -521,6 +526,28 @@ def compose_faction_profile(
         raise ValueError("target profile is not extensible for pack documents")
     strings_receipt: dict[str, object] | None = None
     cah_receipt: dict[str, object] | None = None
+    ring_receipt: dict[str, object] | None = None
+    if ring_runtime is not None:
+        if game_key != "rotwk" or ordered != ["men"]:
+            raise ValueError("ring.system is owned by the RotWK Men host pack")
+        try:
+            validate_ring_system(ring_runtime)
+        except RingSystemCompilerError as exc:
+            raise ValueError(f"ring system document is invalid: {exc}") from exc
+        if runtime_data.get(RING_SYSTEM_RUNTIME_PATH) not in (None, ring_runtime):
+            raise ValueError(f"ring runtime path collision: {RING_SYSTEM_RUNTIME_PATH}")
+        owner = files.get(RING_SYSTEM_PACK_KEY)
+        if owner not in (None, RING_SYSTEM_RUNTIME_PATH):
+            raise ValueError("ring.system pack registration has a foreign owner")
+        added = _append_pack_resources(target, ring_resources or [], "ring art")
+        runtime_data[RING_SYSTEM_RUNTIME_PATH] = deepcopy(dict(ring_runtime))
+        files[RING_SYSTEM_PACK_KEY] = RING_SYSTEM_RUNTIME_PATH
+        ring_receipt = {
+            "runtimePath": RING_SYSTEM_RUNTIME_PATH,
+            "packFileKey": RING_SYSTEM_PACK_KEY,
+            "systemSha256": ring_runtime["systemSha256"],
+            "resourceCount": len(added),
+        }
     # --- Create-a-Hero system table ----------------------------------------
     # Registered BEFORE the strings scan so any CONTROLBAR: id the table
     # carries is covered by the strings document like every other reference.
@@ -679,6 +706,8 @@ def compose_faction_profile(
         receipt["cahGarmentTextures"] = cah_texture_receipt
     if interface_art_receipt is not None:
         receipt["interfaceArt"] = interface_art_receipt
+    if ring_receipt is not None:
+        receipt["ringSystem"] = ring_receipt
     return target, receipt
 
 __all__ = [
@@ -686,6 +715,8 @@ __all__ = [
     "CAH_SYSTEM_RUNTIME_PATH",
     "INTERFACE_ART_PACK_KEY",
     "INTERFACE_ART_RUNTIME_PATH",
+    "RING_SYSTEM_PACK_KEY",
+    "RING_SYSTEM_RUNTIME_PATH",
     "STRINGS_PACK_KEY",
     "STRINGS_RUNTIME_PATH",
     "compose_faction_profile",

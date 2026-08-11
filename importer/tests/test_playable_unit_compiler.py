@@ -1061,6 +1061,7 @@ def _ring_hero_fixture() -> tuple[dict[str, bytes], dict[str, object]]:
     documents["data/ini/commandbutton.ini"] += b"""
 CommandButton Command_RingHeroReviveSlot
   Command = REVIVE
+  NeededUpgrade = Upgrade_RingHero Upgrade_FortressRingHero
   TextLabel = CONTROLBAR:GenericReviveHero
   DescriptLabel = CONTROLBAR:ToolTipGenericReviveHero
 End
@@ -1085,6 +1086,10 @@ def test_ring_hero_uses_the_engine_ring_roster_route() -> None:
     assert route["commandId"] == "__engine__/RING_HERO_BUILD/HeroRing"
     assert route["sourceField"] == "BuildableRingHeroesMP"
     assert route["producerObjectId"] == "UniversalFactory"
+    assert route["prerequisites"] == [
+        "Upgrade_RingHero",
+        "Upgrade_FortressRingHero",
+    ]
     # The ring slot follows the eight authored hero roster slots.
     assert route["rosterOrdinal"] == 9
     assert "slot" not in route
@@ -1093,6 +1098,15 @@ def test_ring_hero_uses_the_engine_ring_roster_route() -> None:
         "TextLabel": ["CONTROLBAR:GenericReviveHero"],
         "DescriptLabel": ["CONTROLBAR:ToolTipGenericReviveHero"],
     }
+
+
+def test_regular_hero_roster_route_does_not_inherit_ring_prerequisites() -> None:
+    documents, graph = _hero_roster_fixture()
+
+    result = compile_playable_unit_descriptor("HeroSeven", documents, faction_graph=graph)
+
+    assert result["production"][0]["commandSetId"] == "__engine__/BuildableHeroesMP"
+    assert result["production"][0]["prerequisites"] == []
 
 
 def test_ring_hero_rejects_duplicate_ring_roster_entries() -> None:

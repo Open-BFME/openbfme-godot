@@ -26,6 +26,7 @@ from .game import retail_game, workspace_root
 from .effective_assets_identity import verify_effective_assets
 from .effective_assets_catalog import EffectiveAssetsCatalog
 from .paths import ensure_external_to_repo, repo_root_from_module, safe_relative_parts
+from .map_profile import GOLLUM_SPAWN_LIBRARY_PATH
 from .profile import (
     ResolvedProfile,
     ResolvedResource,
@@ -5663,7 +5664,7 @@ class ImportPipeline:
             )
         map_virtual_path = options.get("mapVirtualPath")
         library_virtual_paths = options.get("libraryVirtualPaths")
-        expected_libraries = [
+        base_libraries = [
             "libraries/ai_initialize/ai_initialize.map",
             "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map",
         ]
@@ -5688,19 +5689,25 @@ class ImportPipeline:
         # canonical spelling so runtime comparison cannot vary by catalog
         # casing or profile authoring.
         map_virtual_path = str(map_virtual_path).casefold()
-        if library_virtual_paths != expected_libraries:
+        allowed_libraries = (
+            base_libraries,
+            [*base_libraries, GOLLUM_SPAWN_LIBRARY_PATH],
+        )
+        if library_virtual_paths not in allowed_libraries:
             raise ValueError(
                 "sage-script-composite libraryVirtualPaths must be the ordered "
-                "ai_initialize and ai_mp_inherit_management closure"
+                "ai_initialize and ai_mp_inherit_management closure, optionally "
+                "followed by the authored lib_gollumspawn dependency"
             )
+        expected_libraries = list(library_virtual_paths)
         requested_paths = [map_virtual_path, *expected_libraries]
-        if len({path.casefold() for path in requested_paths}) != 3:
+        if len({path.casefold() for path in requested_paths}) != len(requested_paths):
             raise ValueError(
                 "sage-script-composite source virtual paths must be unique"
             )
-        if len(resource.entries) != 3:
+        if len(resource.entries) != len(requested_paths):
             raise ValueError(
-                "sage-script-composite requires exactly three resolved sources"
+                "sage-script-composite requires exactly its declared resolved sources"
             )
 
         entries_by_path: dict[str, Any] = {}

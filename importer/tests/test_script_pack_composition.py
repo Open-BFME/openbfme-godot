@@ -25,6 +25,7 @@ LIBRARY_PATHS = [
     "libraries/ai_initialize/ai_initialize.map",
     "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map",
 ]
+GOLLUM_LIBRARY_PATH = "libraries/lib_gollumspawn/lib_gollumspawn.map"
 
 
 def _document(identity: str, *, library: bool) -> dict:
@@ -50,20 +51,23 @@ def _document(identity: str, *, library: bool) -> dict:
     }
 
 
-def _resource(entries: tuple[CatalogEntry, ...]) -> ResolvedResource:
+def _resource(
+    entries: tuple[CatalogEntry, ...],
+    library_paths: list[str] = LIBRARY_PATHS,
+) -> ResolvedResource:
     return ResolvedResource(
         ResourceRule(
             id="map-fixture-scripts",
             kind="map",
-            patterns=(MAP_PATH, *LIBRARY_PATHS),
+            patterns=(MAP_PATH, *library_paths),
             required=True,
             converter="sage-script-composite",
             output="maps/fixture/scripts.json",
-            limit=3,
-            expected_count=3,
+            limit=1 + len(library_paths),
+            expected_count=1 + len(library_paths),
             options={
                 "mapVirtualPath": MAP_PATH,
-                "libraryVirtualPaths": LIBRARY_PATHS,
+                "libraryVirtualPaths": library_paths,
             },
         ),
         entries,
@@ -139,6 +143,51 @@ def test_script_composite_emits_exact_ordered_three_source_bundle() -> None:
         assert [
             row["identity"] for row in document["libraryTemplates"]
         ] == ["2" * 64, "3" * 64]
+
+
+def test_script_composite_merges_authored_gollum_spawn_library_reference() -> None:
+    libraries = [*LIBRARY_PATHS, GOLLUM_LIBRARY_PATH]
+    paths = [MAP_PATH, *libraries]
+    entries = tuple(
+        CatalogEntry("libraries.big", path, index, 1, 0)
+        for index, path in enumerate(paths)
+    )
+    payloads = {path: path.encode() for path in paths}
+    documents = {
+        payload: _document(str(index + 1) * 64, library=index > 0)
+        for index, payload in enumerate(payloads.values())
+    }
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        extracted = {}
+        for entry in entries:
+            source = root / f"source-{entry.offset}.map"
+            source.write_bytes(payloads[entry.name])
+            extracted[(entry.archive.casefold(), entry.name.casefold())] = {
+                "source_path": source,
+            }
+        with mock.patch(
+            "openbfme_importer.sage_scripts.map_scripts_document",
+            side_effect=lambda payload, *, container: documents[payload],
+        ):
+            output = ImportPipeline._convert_script_composite_bundle(
+                _pipeline(),
+                _resource(entries, libraries),
+                extracted,
+                "maps/fixture/scripts.json",
+                {"mapVirtualPath": MAP_PATH, "libraryVirtualPaths": libraries},
+                root / "pack",
+            )
+
+        document = json.loads(output[0].read_text(encoding="utf-8"))
+        assert [row["virtualPath"] for row in document["source"]["libraries"]] == libraries
+        assert len(document["libraryTemplates"]) == 3
+        assert [
+            row["sourceBytes"] for row in document["source"]["libraries"]
+        ] == [1, 1, 1]
+        assert [
+            row["identity"] for row in document["libraryTemplates"]
+        ] == ["2" * 64, "3" * 64, "4" * 64]
 
 
 def test_script_composite_refuses_output_collision() -> None:
