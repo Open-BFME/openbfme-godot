@@ -1082,7 +1082,11 @@ func _assert_shroud(slice, image: Image) -> bool:
 		_fail("the shroud overlay never rebuilt its texture; nothing was uploaded to the terrain")
 		return false
 	var material := slice.battlefield.terrain_material as ShaderMaterial
-	if material == null or not bool(material.get_shader_parameter("shroud_enabled")):
+	# `get_shader_parameter` returns NULL for a parameter that was never set, and
+	# `bool(null)` throws rather than answering false - so the check that was
+	# supposed to report "the terrain is not sampling the shroud" instead
+	# crashed the runner and left it to the watchdog. Compared against `true`.
+	if material == null or material.get_shader_parameter("shroud_enabled") != true:
 		_fail("the terrain material is not sampling the shroud texture")
 		return false
 	var visible_world := Vector2.INF
@@ -1108,20 +1112,44 @@ func _assert_shroud(slice, image: Image) -> bool:
 	if visible_world == Vector2.INF:
 		_fail("shroud assertion needs at least one living local-team object standing on cleared ground")
 		return false
-	var bounds: Rect2 = overlay.bounds()
-	# A point deep inside the grid's far corner, one tenth in from the edge so it
-	# is real ground rather than the off-grid skirt.
-	var shrouded_world := bounds.position + bounds.size * 0.1
 	if overlay.state_at(visible_world) == 0:
 		_fail("the local player's own unit is standing on ground the shroud model calls unexplored")
 		return false
-	if overlay.state_at(shrouded_world) != 0:
-		_fail("the chosen far-corner sample at %s is not shrouded; pick another" % shrouded_world)
+	# The shrouded sample is SEARCHED FOR on screen rather than assumed at the
+	# grid's far corner: the capture camera frames the player's base, and the far
+	# corner of a 183x183 grid unprojects well outside a 1920x1080 viewport - so
+	# the old fixed sample failed the runner with "projected outside the captured
+	# viewport" and the assertion had never once been able to run. The scan is a
+	# deterministic raster over the grid, so it picks the same cell every time.
+	var bounds: Rect2 = overlay.bounds()
+	var shrouded_world := Vector2.INF
+	var steps := 48
+	for row in range(steps + 1):
+		for column in range(steps + 1):
+			var candidate := bounds.position + Vector2(
+				bounds.size.x * float(column) / float(steps),
+				bounds.size.y * float(row) / float(steps)
+			)
+			if overlay.state_at(candidate) != 0:
+				continue
+			if _screen_sample(slice, image, candidate) == Color.TRANSPARENT:
+				continue
+			shrouded_world = candidate
+			break
+		if shrouded_world != Vector2.INF:
+			break
+	if shrouded_world == Vector2.INF:
+		_fail("no unexplored ground is on screen in this capture; the shroud cannot be sampled")
 		return false
 	var visible_pixel := _screen_sample(slice, image, visible_world)
 	var shrouded_pixel := _screen_sample(slice, image, shrouded_world)
-	print("RETAIL_RENDER_SHROUD rebuilds=%d visible_world=%s visible_pixel=%s shrouded_world=%s shrouded_pixel=%s" % [
-		int(overlay.rebuild_count()), visible_world, visible_pixel, shrouded_world, shrouded_pixel,
+	# The grid size is reported because every presentation cost in this system is
+	# per-CELL, and the cell count follows the loaded map's extent rather than
+	# any constant in the source.
+	print("RETAIL_RENDER_SHROUD rebuilds=%d grid=%s cell=%.4f visible_world=%s visible_pixel=%s shrouded_world=%s shrouded_pixel=%s" % [
+		int(overlay.rebuild_count()), overlay.grid_cells(),
+		float(slice.simulation.fog_of_war().cell_size),
+		visible_world, visible_pixel, shrouded_world, shrouded_pixel,
 	])
 	if visible_pixel == Color.TRANSPARENT or shrouded_pixel == Color.TRANSPARENT:
 		_fail("a shroud sample point projected outside the captured viewport")
@@ -1137,6 +1165,103 @@ func _assert_shroud(slice, image: Image) -> bool:
 		_fail("cleared ground rendered at luma %.4f, no brighter than the shroud - the overlay is covering everything" % visible_luma)
 		return false
 	print("RETAIL_RENDER_SHROUD_OK shrouded_luma=%.4f cleared_luma=%.4f" % [shrouded_luma, visible_luma])
+	if not _assert_structures_see(slice, overlay):
+		return false
+	return _assert_shroud_covers_scenery(slice, overlay)
+
+
+func _assert_structures_see(slice, overlay) -> bool:
+	## "I built a fortress and it gives no fog visibility." The unit tests drive
+	## the sim's structure looker with an INJECTED build rule; this is the end of
+	## the chain that they cannot reach - the compiled ShroudClearingRange in the
+	## mounted pack, through the faction manifest, into the build rules, out of
+	## `_structure_shroud_clearing_radius`, and onto ground that is actually
+	## clear in the frame that was rendered.
+	var simulation = slice.simulation
+	var checked := 0
+	for id in simulation.structure_ids():
+		var row: Dictionary = simulation.structure(id)
+		if int(row.get("team", -1)) != int(slice.local_team) or int(row.get("health", 0)) <= 0:
+			continue
+		var radius := float(simulation._structure_shroud_clearing_radius(row))
+		if radius <= 0.0:
+			# Retail authors 0 on purpose for some objects (the fortress
+			# expansion pads); those are legitimately not lookers and are skipped
+			# rather than failing, but they cannot satisfy the check either.
+			continue
+		checked += 1
+		if overlay.state_at(Vector2(row["position"])) == 0:
+			_fail(
+				"structure '%s' resolves a deshroud radius of %.3f but is standing on unexplored ground"
+				% [String(row.get("structure_kind", "")), radius]
+			)
+			return false
+	if checked == 0:
+		_fail(
+			"not one of the local player's structures resolved a compiled deshroud"
+			+ " range; the pack's ShroudClearingRange is not reaching the look pass"
+		)
+		return false
+	print("RETAIL_RENDER_SHROUD_STRUCTURES_OK %d local structures clear their own ground" % checked)
+	return true
+
+
+func _assert_shroud_covers_scenery(slice, overlay) -> bool:
+	## THE TERRAIN SHADER ONLY DARKENS TERRAIN. The luma checks above prove the
+	## GROUND goes black under unexplored shroud, and they passed on the very
+	## frame the owner photographed a lit forest standing on that black ground -
+	## trees and ruins are separate meshes the modulate never touched. So the
+	## rendered evidence has to include the things standing ON the ground.
+	##
+	## Asserted through the production gate (`bind_scenery`/`apply_to_scenery`),
+	## on the placements the loaded map actually staged, so a map that stages
+	## none of them is reported as a skip and can never look like a pass.
+	var staged := 0
+	for container in [
+		slice.battlefield.retail_prop_container, slice.battlefield.retail_structure_container
+	]:
+		if container != null:
+			staged += (container as Node3D).get_child_count()
+	if int(overlay.scenery_count()) != staged:
+		_fail(
+			"the shroud bound %d scenery placements but the battlefield staged %d"
+			% [int(overlay.scenery_count()), staged]
+		)
+		return false
+	if staged == 0:
+		print("RETAIL_RENDER_SHROUD_SCENERY SKIPPED: this map stages no bound props or structures")
+		return true
+	# OBSERVE, never apply. The first cut of this assertion called
+	# `apply_to_scenery()` itself and then checked the result - so it passed with
+	# the production call deleted, which is the whole defect it exists to catch.
+	# It now reads only the `visible` flags the SLICE left behind on the frame
+	# that was actually rendered into `image`.
+	var hidden := 0
+	for entry_value in overlay._scenery:
+		if not bool(((entry_value as Dictionary)["node"] as Node3D).visible):
+			hidden += 1
+	var shrouded_placements := 0
+	var lit_under_shroud: Array = []
+	for entry_value in overlay._scenery:
+		var entry: Dictionary = entry_value
+		if overlay.state_at(Vector2(entry["position"])) != 0:
+			continue
+		shrouded_placements += 1
+		if bool((entry["node"] as Node3D).visible):
+			lit_under_shroud.append(Vector2(entry["position"]))
+	print("RETAIL_RENDER_SHROUD_SCENERY staged=%d hidden=%d under_shroud=%d" % [
+		staged, hidden, shrouded_placements
+	])
+	if not lit_under_shroud.is_empty():
+		_fail(
+			"%d scenery placements are still rendering under unexplored shroud (first at %s)"
+			% [lit_under_shroud.size(), lit_under_shroud[0]]
+		)
+		return false
+	if shrouded_placements == 0:
+		print("RETAIL_RENDER_SHROUD_SCENERY_OK no placement stands on unexplored ground this frame")
+		return true
+	print("RETAIL_RENDER_SHROUD_SCENERY_OK %d placements hidden by the shroud" % shrouded_placements)
 	return true
 
 

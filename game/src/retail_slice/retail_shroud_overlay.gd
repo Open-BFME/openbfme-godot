@@ -41,9 +41,12 @@ extends RefCounted
 ## fog is a visual effect over structures, not an information barrier.
 ##
 ## Cost control: the texture is rebuilt on a fixed frame cadence rather than
-## every frame. The grid only changes when something moved, and a 40-source-unit
-## cell does not change fast; the cadence is a presentation constant with no
-## simulation consequence whatever.
+## every frame, AND only when the grid's revision has actually moved. The first
+## cut had only the cadence, so a match with nothing moving still paid a full
+## rebuild seven times a second - 6.6ms of it, measured, because both byte
+## planes were built by a per-cell GDScript loop over a 33,489-cell grid. The
+## planes are now maintained by the model as it stamps, so a rebuild is two
+## memcpys and two texture uploads, and a still battlefield skips even those.
 
 const FogScript = preload("res://src/retail_slice/retail_fog_of_war.gd")
 
@@ -60,6 +63,7 @@ var _minimap_texture: ImageTexture = null
 var _frames_since_rebuild := REBUILD_INTERVAL_FRAMES
 var _rebuild_count := 0
 var _last_bounds := Rect2()
+var _last_revision := -1
 
 
 func configure(fog, team: int) -> void:
@@ -73,6 +77,7 @@ func configure(fog, team: int) -> void:
 	_minimap_texture = null
 	_frames_since_rebuild = REBUILD_INTERVAL_FRAMES
 	_rebuild_count = 0
+	_last_revision = -1
 
 
 func release() -> void:
@@ -107,9 +112,17 @@ func update(force: bool = false) -> bool:
 	if not enabled or _fog == null:
 		return false
 	_frames_since_rebuild += 1
-	if not force and _texture != null and _frames_since_rebuild < REBUILD_INTERVAL_FRAMES:
-		return false
+	if not force and _texture != null:
+		if _frames_since_rebuild < REBUILD_INTERVAL_FRAMES:
+			return false
+		# Nothing moved: the grid is byte-for-byte what it was at the last
+		# upload, so there is nothing to upload. The cadence counter is still
+		# consumed so an idle match does not re-test on every single frame.
+		if int(_fog.revision(local_team)) == _last_revision:
+			_frames_since_rebuild = 0
+			return false
 	_frames_since_rebuild = 0
+	_last_revision = int(_fog.revision(local_team))
 	var image: Image = _fog.alpha_image(local_team)
 	if image == null:
 		return false
@@ -118,33 +131,17 @@ func update(force: bool = false) -> bool:
 		_texture = ImageTexture.create_from_image(image)
 	else:
 		_texture.update(image)
-	_rebuild_minimap_texture(image)
+	var radar: Image = _fog.radar_image(local_team)
+	if radar != null:
+		if _minimap_texture == null \
+				or _minimap_texture.get_width() != radar.get_width() \
+				or _minimap_texture.get_height() != radar.get_height():
+			_minimap_texture = ImageTexture.create_from_image(radar)
+		else:
+			_minimap_texture.update(radar)
 	_last_bounds = _fog.grid_bounds()
 	_rebuild_count += 1
 	return true
-
-
-func _rebuild_minimap_texture(alpha: Image) -> void:
-	var width := alpha.get_width()
-	var height := alpha.get_height()
-	var pixels := PackedByteArray()
-	pixels.resize(width * height * 4)
-	var source := alpha.get_data()
-	for index in range(width * height):
-		var offset := index * 4
-		pixels[offset] = 0
-		pixels[offset + 1] = 0
-		pixels[offset + 2] = 0
-		# Retail's byte says how much you can SEE; the radar layer draws how much
-		# is hidden, so it is the complement.
-		pixels[offset + 3] = 255 - source[index]
-	var image := Image.create_from_data(width, height, false, Image.FORMAT_RGBA8, pixels)
-	if _minimap_texture == null \
-			or _minimap_texture.get_width() != width \
-			or _minimap_texture.get_height() != height:
-		_minimap_texture = ImageTexture.create_from_image(image)
-	else:
-		_minimap_texture.update(image)
 
 
 func apply_to_terrain(material: ShaderMaterial) -> void:
@@ -169,14 +166,14 @@ func unit_visible(position: Vector2) -> bool:
 	## ground remembers terrain, never armies.
 	if not enabled or _fog == null:
 		return true
-	return _fog.state_at(local_team, position) == FogScript.CLEAR
+	return state_at(position) == FogScript.CLEAR
 
 
 func structure_visible(position: Vector2) -> bool:
 	## Explored is enough - see the class comment's named GhostObject deviation.
 	if not enabled or _fog == null:
 		return true
-	return _fog.state_at(local_team, position) != FogScript.SHROUDED
+	return state_at(position) != FogScript.SHROUDED
 
 
 func visible_unit_ids(ids: Array, position_lookup: Callable) -> Array:
@@ -212,9 +209,95 @@ func _filter_ids(ids: Array, position_lookup: Callable, units: bool) -> Array:
 
 
 func state_at(position: Vector2) -> int:
+	## The hot query: called for every presented battalion, every structure, every
+	## radar blip and every scenery placement.
+	##
+	## IT ASKS THE MODEL, and does not keep its own handle on the visibility
+	## plane. Caching that handle looks free - the plane is a Godot packed array
+	## and those are refcounted - but a packed array taken OUT of a Dictionary
+	## through a typed accessor detaches from the one the model keeps writing,
+	## and the overlay then answers with a snapshot from whenever it last
+	## refreshed. That is not a hypothetical: it shipped for the length of one
+	## test run and made a battalion standing in plain sight unclickable, because
+	## the pick asked the stale copy and was told the ground was shrouded.
 	if not enabled or _fog == null:
 		return FogScript.CLEAR
 	return _fog.state_at(local_team, position)
+
+
+# --- Map scenery ------------------------------------------------------------
+#
+# THE TERRAIN SHADER ONLY DARKENS TERRAIN. Trees, rocks and ruins are separate
+# meshes and the shroud modulate never touched them, so the owner's first fog-on
+# playtest showed a black map border with a full forest standing brightly on top
+# of it: "I can see trees and objects in the fog of war."
+#
+# Retail's treatment is the one the terrain already gets, because scenery IS
+# terrain as far as knowledge goes: nothing renders under UNEXPLORED shroud, and
+# once ground has been explored its trees stay drawn even when the ground goes
+# back to fog. That is the same explored test structures use, and it is why a
+# scouted forest does not blink out when the scout walks home.
+#
+# Cost: the scenery list is bound once and answered on the texture's own
+# cadence - so at most every eighth frame, and only when the grid changed at all.
+
+
+var _scenery: Array = []
+
+
+func bind_scenery(containers: Array) -> int:
+	## `containers` are Node3Ds whose direct children are one placement each.
+	## Returns how many placements were bound, so a caller can prove the shroud
+	## actually reached the scenery rather than silently binding nothing.
+	_scenery.clear()
+	for container_value in containers:
+		var container := container_value as Node3D
+		if container == null:
+			continue
+		var write_to_child := bool(container.get_meta("shroud_gates_child", false))
+		for child in container.get_children():
+			var placement := child as Node3D
+			if placement == null:
+				continue
+			# An animated prop's own controller writes `placement_root.visible`
+			# on every state transition, so the shroud gate is written one level
+			# down on the placement's visual instead of fighting it. Bound
+			# lifecycle structures have no such writer and take the root.
+			var target: Node3D = placement
+			if write_to_child and placement.get_child_count() > 0:
+				var visual := placement.get_child(0) as Node3D
+				if visual != null:
+					target = visual
+			var world := placement.global_position if placement.is_inside_tree() \
+				else placement.transform.origin
+			_scenery.append({
+				"node": target,
+				"position": Vector2(world.x, world.z),
+			})
+	return _scenery.size()
+
+
+func scenery_count() -> int:
+	return _scenery.size()
+
+
+func apply_to_scenery() -> int:
+	## Returns how many placements are currently hidden by the shroud - the
+	## number a rendered capture can assert against.
+	if _scenery.is_empty():
+		return 0
+	var hidden := 0
+	if not enabled or _fog == null:
+		for entry_value in _scenery:
+			(entry_value as Dictionary)["node"].visible = true
+		return 0
+	for entry_value in _scenery:
+		var entry: Dictionary = entry_value
+		var visible_now := state_at(Vector2(entry["position"])) != FogScript.SHROUDED
+		(entry["node"] as Node3D).visible = visible_now
+		if not visible_now:
+			hidden += 1
+	return hidden
 
 
 func minimap_texture() -> ImageTexture:

@@ -1034,6 +1034,10 @@ func _build_bound_retail_props(map_data: RetailMapData) -> bool:
 	container.name = "SourceBoundRetailProps"
 	container.set_meta("presentation", "retail-bound-glb")
 	container.set_meta("source_type_ids", bound_retail_prop_type_ids.duplicate())
+	# The shroud gate writes one level down on these, not on the placement root:
+	# RetailAnimatedPropController sets `placement_root.visible = true` on a
+	# VISIBILITY_ONLY state transition and would un-hide a shrouded tree.
+	container.set_meta("shroud_gates_child", true)
 	var seen_source_indices: Dictionary = {}
 	var staged_mesh_count := 0
 	# Warm the shared mesh cache with one threaded parse per unique bound GLB;

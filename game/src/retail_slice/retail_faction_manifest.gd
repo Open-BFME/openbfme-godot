@@ -181,6 +181,9 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 	var excluded_structures: Dictionary = {}
 	var fortress_composite_object_ids: Dictionary = {}
 	var structure_construct_icons: Dictionary = {}
+	## The citadel's ShroudClearingRange, harvested off the excluded composite
+	## and filed under the fortress kind once the loop has seen both documents.
+	var fortress_composite_deshroud_source := 0.0
 	for object_id in structure_ids:
 		var document: Dictionary = structure_runtimes[object_id] as Dictionary
 		var registration: Dictionary = document.get("registration", {}) as Dictionary
@@ -254,6 +257,24 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 				structure_castle_upgrades["fortress"] = (
 					composite_castle as Dictionary
 				).duplicate(true)
+			if composite_role == "fortress-composite-citadel":
+				# THE FORTRESS SEES THROUGH ITS CITADEL, for exactly the reason
+				# the castle upgrades above are harvested here. MenFortress - the
+				# constructable object the "fortress" kind is built from -
+				# authors no VisionRange and no ShroudClearingRange at all;
+				# MenFortressCitadel authors 400 and 800. Reading the deshroud
+				# range off the constructable object alone leaves a player's own
+				# fortress standing in the dark, which is what the first fog-on
+				# playtest reported.
+				var citadel_fields: Dictionary = (
+					(document.get("registration", {}) as Dictionary).get("gameplay", {})
+					as Dictionary
+				).get("scalarFields", {}) as Dictionary
+				var citadel_deshroud := _scalar_number(citadel_fields, "ShroudClearingRange")
+				if citadel_deshroud < 0.0:
+					citadel_deshroud = _scalar_number(citadel_fields, "VisionRange")
+				if citadel_deshroud > 0.0:
+					fortress_composite_deshroud_source = citadel_deshroud
 			excluded_structures[object_id.to_lower()] = {
 				"object_id": object_id,
 				"evidence": evidence,
@@ -291,6 +312,19 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 			as Dictionary
 		)
 		var build_rule := {"cost": int(cost), "seconds": seconds}
+		# The building's own deshroud range, in SOURCE units, carried so the
+		# simulation's look pass can give a structure vision. Retail authors
+		# ShroudClearingRange and VisionRange independently and both ship in the
+		# compiled scalar fields - GondorBarracks is 160/160, MenFortressCitadel
+		# 400/800, GondorBattleTower 600/500 - so the deshroud value is preferred
+		# and vision is only the fallback for the objects that author no
+		# ShroudClearingRange. A structure that authors 0 on purpose (the
+		# fortress expansion PADS do) keeps 0 and stays a non-looker.
+		var deshroud_source := _scalar_number(scalar_fields, "ShroudClearingRange")
+		if deshroud_source < 0.0:
+			deshroud_source = _scalar_number(scalar_fields, "VisionRange")
+		if deshroud_source > 0.0:
+			build_rule["shroud_clearing_range_source"] = deshroud_source
 		if bool(
 			(health_contract.get("highlanderBody", {}) as Dictionary)
 			.get("value", false)
@@ -395,6 +429,16 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 	# natural-nocase document order they were derived from.
 	structure_kinds.erase("fortress")
 	structure_kinds.push_front("fortress")
+	# Filed after the loop because the constructable fortress and its citadel are
+	# two documents and the order they arrive in is not guaranteed. The
+	# constructable object wins when it authors a range of its own; every men-,
+	# elf- and dwarf-shaped fortress in the shipped packs authors none, so in
+	# practice this is where a fortress gets its eyes.
+	if fortress_composite_deshroud_source > 0.0:
+		var fortress_rule: Dictionary = structure_build_rules.get("fortress", {}) as Dictionary
+		if float(fortress_rule.get("shroud_clearing_range_source", 0.0)) <= 0.0:
+			fortress_rule["shroud_clearing_range_source"] = fortress_composite_deshroud_source
+			structure_build_rules["fortress"] = fortress_rule
 
 	var builder_names: Array = builder_sources.keys()
 	builder_names.sort_custom(func(a, b) -> bool: return String(a).naturalnocasecmp_to(String(b)) < 0)

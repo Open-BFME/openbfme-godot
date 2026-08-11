@@ -62,6 +62,50 @@ extends RefCounted
 ## byte-identical `to_state()`; `retail_fog_of_war_runner.gd` asserts it. Peers
 ## in a lockstep match each compute every player's grid from their own identical
 ## simulation, so the grids agree without being transmitted.
+##
+## THE LOOK PASS IS INCREMENTAL, and it has to be. The first cut of this module
+## cleared and re-stamped every looker's disc every tick. Measured on the slice
+## battlefield - a 183x183 grid, 120 lookers, a compiled 470-source deshroud
+## range - that full rebuild cost 19.5 MILLISECONDS PER TICK (13.8ms of it in
+## `_cells_in_circle` alone), which at 30Hz is 58% of a core spent on fog before
+## a single frame is drawn. The owner's first fog-on playtest reported exactly
+## that: "fog of war is laggy on start, super laggy".
+##
+## So a looker is now a KEYED, REFCOUNTED registration:
+##
+##   * `add_look(team, centre, radius, key)` upserts. If the looker has not
+##     changed CELL and has not changed radius since the last pass, the call
+##     does nothing at all - which is the steady state for a stationary army.
+##   * Moving out of a cell unstamps the old disc (-1) and stamps the new (+1).
+##   * `commit_look_pass()` unstamps every keyed looker the pass did not refresh,
+##     which is how a dead unit stops seeing.
+##
+## The disc is therefore quantised to the looker's CELL rather than its exact
+## position, and that is retail's own model rather than a shortcut: SAGE keeps
+## the shroud ON the partition cell array and re-evaluates an object's look when
+## the object changes partition cell (OpenSAGE PartitionCellManager tracks a
+## per-object cell and reacts to `OnObjectMoved`). The quantisation moves an
+## edge by at most half a cell - 20 source units on an 800-unit fortress
+## deshroud - and the reached set is still the exact circle-versus-cell-rect
+## test, just taken from the cell centre.
+##
+## The template that test collapses to is worth writing down, because it is why
+## a stamp is now three array operations per cell and no floating point at all.
+## In cell units with the disc centred on cell (0,0)'s centre, the nearest point
+## of cell (dx,dy) is |dx|-0.5 away in x (0 when dx is 0), so the row test is
+## just `|dy| <= rc + 0.5` and the span is `|dx| <= sqrt(rc^2 - ndy^2) + 0.5`.
+## `_disc_spans()` caches those spans per radius; `_stamp_cells()` walks them,
+## and because every row is one contiguous interval, a looker that steps one
+## cell is re-stamped by `_restamp_moved` as a per-row interval difference -
+## about fifty cells rather than the nine hundred and sixty two a clear-and-
+## refill would touch.
+##
+## The presentation feed is maintained the same way. Rebuilding the L8 alpha
+## image and the RGBA radar layer with a per-cell GDScript loop cost 2.4ms and
+## 4.2ms respectively EVERY rebuild (7.5 times a second). Both byte planes are
+## now written by `_stamp_cells` for the cells that actually changed, so
+## `alpha_image()` and `radar_image()` are C++ memcpys, and `revision()` lets the
+## overlay skip the upload entirely when nothing moved.
 
 
 ## gamedata.ini:8627. Source (retail world) units per shroud cell.
@@ -98,11 +142,73 @@ var border_shroud := true
 var _look: Dictionary = {}
 ## team -> PackedByteArray, one entry per cell: 1 once the team has ever seen it.
 var _explored: Dictionary = {}
-## team -> PackedInt32Array of cell indices stamped since the last begin, so a
-## pass can be cleared in O(stamped) instead of O(grid).
-var _touched: Dictionary = {}
+## team -> PackedByteArray, one entry per cell: the retail visibility byte
+## (255 clear / 127 fog / 0 shroud), kept in step with `_look`/`_explored` by
+## `_stamp_cells` so the presentation never has to walk the grid to build it.
+var _alpha: Dictionary = {}
+## team -> PackedByteArray, four entries per cell: the radar's darkening layer,
+## black with alpha = 255 - visibility. Same reason as `_alpha`.
+var _radar: Dictionary = {}
+## team -> int, bumped whenever any cell's visibility byte changed. The overlay
+## compares it and skips the texture upload when nothing moved.
+var _revision: Dictionary = {}
 ## team -> PackedByteArray: cells held clear by a permanent reveal.
 var _permanent: Dictionary = {}
+
+## Keyed lookers, insertion-ordered: key -> {team, cx, cy, radius, seen}. A key
+## is whatever the caller uses to mean "the same looker as last pass" (the sim
+## uses the entity id, and the negated structure id). Key 0 is reserved for
+## UNKEYED looks, which are transient: stamped immediately and dropped by the
+## next `begin_look_pass`, which is what a one-shot script reveal wants.
+var _lookers: Dictionary = {}
+## Transient (unkeyed) stamps live for exactly one pass: [team, cx, cy, radius].
+var _transient: Array = []
+## radius bucket -> PackedInt32Array of (dy, dx_min, dx_max) triples.
+var _disc_row_cache: Dictionary = {}
+## Set by `from_state`: the restored look counts are owned by lookers that no
+## longer exist, so the next pass drops them before stamping. See `from_state`.
+var _looks_stale := false
+## Monotonic look-pass counter; a looker whose `seen` is not this number was not
+## refreshed by the current pass and is dropped by `commit_look_pass`.
+var _pass_index := 0
+
+## The four planes of ONE team, bound by `_bind_team` for the duration of a
+## stamp. `_apply_span` runs once per row of a disc - twenty five times for a
+## ranger, four times that for a moved looker - and fetching the planes out of
+## their dictionaries inside it made the row loop pay four dictionary lookups
+## and four Variant casts to write two bytes. Binding once per stamp instead
+## took the all-moving worst case from 6.9ms a tick to well under two.
+var _bound_team := -1
+var _bound_look := PackedInt32Array()
+var _bound_explored := PackedByteArray()
+var _bound_alpha := PackedByteArray()
+var _bound_radar := PackedByteArray()
+
+
+func _bind_team(team: int) -> bool:
+	if _bound_team == team:
+		return true
+	if not _ensure_team(team):
+		return false
+	# Shared by reference with the dictionaries, not copied: a Godot packed array
+	# held in a container is one refcounted buffer, so writes through this
+	# binding land in the grid the queries read.
+	_bound_look = _look[team]
+	_bound_explored = _explored[team]
+	_bound_alpha = _alpha[team]
+	_bound_radar = _radar[team]
+	_bound_team = team
+	return true
+
+
+func _unbind_team() -> void:
+	## Any wholesale replacement of a team's planes must drop the binding, or a
+	## later stamp would write through a stale buffer.
+	_bound_team = -1
+	_bound_look = PackedInt32Array()
+	_bound_explored = PackedByteArray()
+	_bound_alpha = PackedByteArray()
+	_bound_radar = PackedByteArray()
 ## Ordered records {name, team, center, radius}. Retail keys permanent reveals
 ## by a MapRevealName so MAP_UNDO_REVEAL_PERMANENTLY_AT_WAYPOINT can drop one
 ## without disturbing the others.
@@ -130,9 +236,16 @@ func configure(bounds_min: Vector2, bounds_max: Vector2, transform_scale: float)
 	cells_y = maxi(1, int(ceil(maxf(0.0, extent.y) / cell_size)) + 1)
 	_look.clear()
 	_explored.clear()
-	_touched.clear()
+	_alpha.clear()
+	_radar.clear()
+	_revision.clear()
 	_permanent.clear()
 	_permanent_reveals.clear()
+	_lookers.clear()
+	_transient.clear()
+	# The row spans are in CELL units, so a new cell size invalidates them.
+	_disc_row_cache.clear()
+	_unbind_team()
 
 
 func configure_default(transform_scale: float) -> void:
@@ -174,30 +287,28 @@ func _cells_in_circle(center: Vector2, radius: float) -> PackedInt32Array:
 	## the set when the circle touches ANY part of it, so the reached set can
 	## exceed the radius by up to half a cell diagonal - never by a full cell,
 	## which is what a naive centre-distance test would give at the corners.
+	##
+	## The disc is taken from the CENTRE of the cell that contains `center`, so
+	## this enumerates exactly the cells `_stamp_cells` writes. There is one
+	## geometry in this module and this is it - a second, exact-position variant
+	## would let the permanent-reveal MASK and the stamp that fills it disagree
+	## about the rim of the same circle.
 	var out := PackedInt32Array()
-	var r := maxf(0.0, radius)
-	var local := center - origin
-	var min_x := int(floor((local.x - r) / cell_size))
-	var max_x := int(floor((local.x + r) / cell_size))
-	var min_y := int(floor((local.y - r) / cell_size))
-	var max_y := int(floor((local.y + r) / cell_size))
-	min_x = maxi(0, min_x)
-	min_y = maxi(0, min_y)
-	max_x = mini(cells_x - 1, max_x)
-	max_y = mini(cells_y - 1, max_y)
-	var r_squared := r * r
-	for cy in range(min_y, max_y + 1):
-		var cell_min_y := origin.y + float(cy) * cell_size
-		var cell_max_y := cell_min_y + cell_size
-		var nearest_y := clampf(center.y, cell_min_y, cell_max_y)
-		var dy := center.y - nearest_y
-		for cx in range(min_x, max_x + 1):
-			var cell_min_x := origin.x + float(cx) * cell_size
-			var cell_max_x := cell_min_x + cell_size
-			var nearest_x := clampf(center.x, cell_min_x, cell_max_x)
-			var dx := center.x - nearest_x
-			if dx * dx + dy * dy <= r_squared:
-				out.append(cy * cells_x + cx)
+	var base := cell_index(center)
+	var spans := _disc_spans(radius)
+	var dy_max := spans[0]
+	for dy in range(-dy_max, dy_max + 1):
+		var cy := base.y + dy
+		if cy < 0 or cy >= cells_y:
+			continue
+		var half := spans[1 + dy + dy_max]
+		var x0 := maxi(0, base.x - half)
+		var x1 := mini(cells_x - 1, base.x + half)
+		if x0 > x1:
+			continue
+		var row_base := cy * cells_x
+		for index in range(row_base + x0, row_base + x1 + 1):
+			out.append(index)
 	return out
 
 
@@ -221,10 +332,21 @@ func _ensure_team(team: int) -> bool:
 	var permanent := PackedByteArray()
 	permanent.resize(count)
 	permanent.fill(0)
+	var alpha := PackedByteArray()
+	alpha.resize(count)
+	alpha.fill(RETAIL_SHROUD_ALPHA)
+	# Black everywhere, fully opaque: an unlooked grid hides the whole radar.
+	var radar := PackedByteArray()
+	radar.resize(count * 4)
+	radar.fill(0)
+	for index in range(count):
+		radar[index * 4 + 3] = 255 - RETAIL_SHROUD_ALPHA
 	_look[team] = looks
 	_explored[team] = explored
 	_permanent[team] = permanent
-	_touched[team] = PackedInt32Array()
+	_alpha[team] = alpha
+	_radar[team] = radar
+	_revision[team] = 0
 	return true
 
 
@@ -232,75 +354,294 @@ func teams() -> Array:
 	return _look.keys()
 
 
+func revision(team: int) -> int:
+	## Bumped once per stamp that changed at least one cell's visibility byte.
+	## Presentation-only: the overlay skips its texture upload when this has not
+	## moved since the last one, which is most frames of most matches.
+	return int(_revision.get(team, 0))
+
+
+# --- The disc template ------------------------------------------------------
+
+
+func _disc_spans(radius: float) -> PackedInt32Array:
+	## The disc of `radius` centred on the CENTRE of cell (0,0), as one half-span
+	## per row: `[dy_max, m(-dy_max), ..., m(0), ..., m(dy_max)]`, where the disc
+	## covers exactly `|dx| <= m(dy)` on row `dy`.
+	##
+	## See the class comment: with the disc on a cell centre the exact
+	## circle-versus-cell-rectangle test collapses to |dy| <= rc + 0.5 for the
+	## row and |dx| <= sqrt(rc^2 - ndy^2) + 0.5 for the span, where
+	## ndy = max(0, |dy| - 0.5). No per-cell floating point survives into the
+	## stamp, and because every row is a contiguous interval a MOVED looker can
+	## be re-stamped as a per-row interval difference rather than a full clear
+	## and refill (`_restamp_moved`).
+	##
+	## Bucketed to 1/256 of a cell so that float noise in a compiled range
+	## cannot grow the cache without bound; a 256th of a 40-source-unit cell is
+	## 0.16 source units, far below anything retail authors.
+	var rc := maxf(0.0, radius) / cell_size
+	var bucket := int(round(rc * 256.0))
+	if _disc_row_cache.has(bucket):
+		return _disc_row_cache[bucket]
+	var quantised := float(bucket) / 256.0
+	var dy_max := int(floor(quantised + 0.5))
+	var spans := PackedInt32Array()
+	spans.resize(2 + 2 * dy_max)
+	spans[0] = dy_max
+	for dy in range(-dy_max, dy_max + 1):
+		var ndy := maxf(0.0, absf(float(dy)) - 0.5)
+		var span_squared := quantised * quantised - ndy * ndy
+		# `dy_max` is floor(rc + 0.5), so ndy never exceeds rc and this is never
+		# negative; clamped anyway rather than trusting float rounding at the rim.
+		var dx_max := 0
+		if span_squared > 0.0:
+			dx_max = int(floor(sqrt(span_squared) + 0.5))
+		spans[1 + dy + dy_max] = dx_max
+	_disc_row_cache[bucket] = spans
+	return spans
+
+
 # --- The per-tick look pass -------------------------------------------------
 
 
 func begin_look_pass() -> void:
-	## Drops last pass's clear set. Explored is NOT touched: that is the whole
-	## point of the fog state - the ground stays remembered.
-	for team in _look.keys():
-		var looks: PackedInt32Array = _look[team]
-		var touched: PackedInt32Array = _touched[team]
-		for index in touched:
-			looks[index] = 0
-		_touched[team] = PackedInt32Array()
+	## Marks every keyed looker stale and drops last pass's transient stamps.
+	## Explored is NOT touched: that is the whole point of the fog state - the
+	## ground stays remembered.
+	if _looks_stale:
+		_looks_stale = false
+		for team in _look.keys():
+			_reset_team_looks(int(team))
+	for stamp_value in _transient:
+		var stamp: Array = stamp_value
+		_stamp_cells(int(stamp[0]), int(stamp[1]), int(stamp[2]), float(stamp[3]), -1)
+	_transient.clear()
+	# Staleness is a PASS NUMBER, not a flag swept over every looker: a looker is
+	# stale when the number it last recorded is not the current one. Sweeping the
+	# flag cost 355us a tick on a 120-looker battlefield, for bookkeeping that
+	# `commit_look_pass` has to walk the same set to act on anyway.
+	_pass_index += 1
 
 
-func add_look(team: int, center: Vector2, radius: float) -> void:
-	_stamp(team, center, radius)
+func add_look(team: int, center: Vector2, radius: float, key: int = 0) -> void:
+	## `key` identifies the looker across passes. A non-zero key makes the look
+	## INCREMENTAL: a looker that has not changed cell or radius since the last
+	## pass costs one dictionary lookup and two comparisons, and nothing is
+	## touched. Key 0 is a transient one-shot stamp that `begin_look_pass` drops.
+	if not _ensure_team(team):
+		return
+	var cell := cell_index(center)
+	if key == 0:
+		_stamp_cells(team, cell.x, cell.y, radius, 1)
+		_transient.append([team, cell.x, cell.y, radius])
+		return
+	var existing: Variant = _lookers.get(key)
+	if existing != null:
+		var record: Dictionary = existing
+		if int(record["team"]) == team \
+				and int(record["cx"]) == cell.x and int(record["cy"]) == cell.y \
+				and is_equal_approx(float(record["radius"]), radius):
+			record["seen"] = _pass_index
+			return
+		if int(record["team"]) == team and is_equal_approx(float(record["radius"]), radius):
+			# Same army, same range, one cell to the left: the two discs overlap
+			# almost entirely, so only the RIM moves. Re-stamping both in full
+			# would touch 962 cells for a one-cell step that actually changes 50.
+			_restamp_moved(
+				team, int(record["cx"]), int(record["cy"]), cell.x, cell.y, radius
+			)
+			record["cx"] = cell.x
+			record["cy"] = cell.y
+			record["seen"] = _pass_index
+			return
+		_stamp_cells(
+			int(record["team"]), int(record["cx"]), int(record["cy"]),
+			float(record["radius"]), -1
+		)
+	_stamp_cells(team, cell.x, cell.y, radius, 1)
+	_lookers[key] = {
+		"team": team, "cx": cell.x, "cy": cell.y, "radius": radius,
+		"seen": _pass_index,
+	}
 
 
 func commit_look_pass() -> void:
-	## Permanent reveals are re-stamped after the movement-driven looks so a
-	## script reveal cannot be erased by the unit that walked out of it.
-	for record_value in _permanent_reveals:
-		var record: Dictionary = record_value
-		_stamp(
-			int(record["team"]), Vector2(record["center"]), float(record["radius"])
+	## Drops every keyed looker the pass did not refresh - a dead unit, a razed
+	## building - by unstamping exactly what it had stamped. Permanent reveals
+	## are lookers with their own keys and are never dropped here, so a script
+	## reveal still cannot be erased by the unit that walked out of it.
+	var stale: Array = []
+	for key in _lookers.keys():
+		var record: Dictionary = _lookers[key]
+		# A permanent reveal is never stale. It is a looker so that it holds a
+		# refcount of its own, not so that it can expire.
+		if bool(record.get("permanent", false)):
+			continue
+		if int(record["seen"]) != _pass_index:
+			stale.append(key)
+	for key in stale:
+		var record: Dictionary = _lookers[key]
+		_stamp_cells(
+			int(record["team"]), int(record["cx"]), int(record["cy"]),
+			float(record["radius"]), -1
 		)
+		_lookers.erase(key)
+
+
+func _stamp_cells(team: int, cx: int, cy: int, radius: float, delta: int) -> void:
+	## The whole hot path. `delta` is +1 to add a looker and -1 to remove one;
+	## the look count is a refcount, so a cell covered by two armies survives
+	## one of them leaving. Every write that changes the cell's VISIBILITY also
+	## updates the two presentation byte planes, so nothing downstream has to
+	## walk the grid.
+	if not _bind_team(team):
+		return
+	var spans := _disc_spans(radius)
+	var dy_max := spans[0]
+	var changed := false
+	for dy in range(-dy_max, dy_max + 1):
+		var half := spans[1 + dy + dy_max]
+		if _apply_span(cy + dy, cx - half, cx + half, delta):
+			changed = true
+	if changed:
+		_revision[team] = int(_revision.get(team, 0)) + 1
+
+
+func _restamp_moved(
+	team: int, old_cx: int, old_cy: int, new_cx: int, new_cy: int, radius: float
+) -> void:
+	## A looker that changed cell without changing team or radius. Both discs
+	## have the SAME row profile, and every row of a disc is one contiguous
+	## interval, so per row the work is at most two interval differences: the
+	## part of the old row the new row no longer covers (release) and the part of
+	## the new row the old row did not cover (acquire). For the one-cell step a
+	## locomotor actually takes that is two cells per row instead of two full
+	## rows.
+	if not _bind_team(team):
+		return
+	var spans := _disc_spans(radius)
+	var dy_max := spans[0]
+	var changed := false
+	for y in range(mini(old_cy, new_cy) - dy_max, maxi(old_cy, new_cy) + dy_max + 1):
+		var old_dy := y - old_cy
+		var new_dy := y - new_cy
+		var has_old := absi(old_dy) <= dy_max
+		var has_new := absi(new_dy) <= dy_max
+		if not has_old and not has_new:
+			continue
+		if not has_new:
+			var released := spans[1 + old_dy + dy_max]
+			if _apply_span(y, old_cx - released, old_cx + released, -1):
+				changed = true
+			continue
+		if not has_old:
+			var acquired := spans[1 + new_dy + dy_max]
+			if _apply_span(y, new_cx - acquired, new_cx + acquired, 1):
+				changed = true
+			continue
+		var old_half := spans[1 + old_dy + dy_max]
+		var new_half := spans[1 + new_dy + dy_max]
+		var old_x0 := old_cx - old_half
+		var old_x1 := old_cx + old_half
+		var new_x0 := new_cx - new_half
+		var new_x1 := new_cx + new_half
+		if old_x1 < new_x0 or new_x1 < old_x0:
+			# The two rows do not even touch: no difference to take.
+			if _apply_span(y, old_x0, old_x1, -1):
+				changed = true
+			if _apply_span(y, new_x0, new_x1, 1):
+				changed = true
+			continue
+		# Overlapping intervals: [old \ new] on each side, then [new \ old].
+		if old_x0 < new_x0 and _apply_span(y, old_x0, new_x0 - 1, -1):
+			changed = true
+		if old_x1 > new_x1 and _apply_span(y, new_x1 + 1, old_x1, -1):
+			changed = true
+		if new_x0 < old_x0 and _apply_span(y, new_x0, old_x0 - 1, 1):
+			changed = true
+		if new_x1 > old_x1 and _apply_span(y, old_x1 + 1, new_x1, 1):
+			changed = true
+	if changed:
+		_revision[team] = int(_revision.get(team, 0)) + 1
+
+
+func _apply_span(y: int, x0: int, x1: int, delta: int) -> bool:
+	## One contiguous run of cells on one row of the team bound by `_bind_team`.
+	## Returns true when at least one cell's VISIBILITY changed, which is what
+	## the revision counter tracks - a refcount going from 2 to 3 changes nothing
+	## anyone can see.
+	if y < 0 or y >= cells_y:
+		return false
+	var lo := maxi(0, x0)
+	var hi := mini(cells_x - 1, x1)
+	if lo > hi:
+		return false
+	var looks := _bound_look
+	var explored := _bound_explored
+	var alpha := _bound_alpha
+	var radar := _bound_radar
+	var row_base := y * cells_x
+	var changed := false
+	for index in range(row_base + lo, row_base + hi + 1):
+		var before := looks[index]
+		# Clamped at zero. The refcount invariant is maintained by
+		# `_reset_team_looks` dropping every outstanding stamp whenever a script
+		# verb zeroes the counts wholesale, so an underflow should be
+		# unreachable - but a shipped grid that went negative would pin a cell
+		# CLEAR forever, and that is not a failure worth being purist about.
+		var after := maxi(0, before + delta)
+		looks[index] = after
+		if after > 0:
+			if before <= 0:
+				explored[index] = 1
+				alpha[index] = RETAIL_CLEAR_ALPHA
+				radar[index * 4 + 3] = 255 - RETAIL_CLEAR_ALPHA
+				changed = true
+		elif before > 0:
+			# The last looker left: retail falls back to FOGGED, never to
+			# SHROUDED. Only an explicit script shroud reshrouds ground.
+			alpha[index] = RETAIL_FOG_ALPHA
+			radar[index * 4 + 3] = 255 - RETAIL_FOG_ALPHA
+			changed = true
+	return changed
 
 
 func _stamp(team: int, center: Vector2, radius: float) -> void:
-	if not _ensure_team(team):
-		return
-	var looks: PackedInt32Array = _look[team]
-	var explored: PackedByteArray = _explored[team]
-	var touched: PackedInt32Array = _touched[team]
-	for index in _cells_in_circle(center, radius):
-		if looks[index] == 0:
-			touched.append(index)
-		looks[index] += 1
-		explored[index] = 1
-	_touched[team] = touched
+	## Transient one-shot stamp used by the script reveal verbs.
+	add_look(team, center, radius, 0)
 
 
 # --- Queries ----------------------------------------------------------------
 
 
+static func state_for_alpha(alpha_byte: int) -> int:
+	## The visibility byte is the single source of truth for a cell's state, so
+	## every reader - the model, the overlay's cached fast path, the radar -
+	## decodes it here and cannot drift into a fourth answer.
+	if alpha_byte >= RETAIL_CLEAR_ALPHA:
+		return CLEAR
+	if alpha_byte > RETAIL_SHROUD_ALPHA:
+		return FOGGED
+	return SHROUDED
+
+
 func state_at(team: int, position: Vector2) -> int:
-	if not _look.has(team):
+	if not _alpha.has(team):
 		return SHROUDED
 	var index := _flat_at(position)
 	if index < 0:
 		return SHROUDED
-	if (_look[team] as PackedInt32Array)[index] > 0:
-		return CLEAR
-	if (_explored[team] as PackedByteArray)[index] != 0:
-		return FOGGED
-	return SHROUDED
+	return state_for_alpha((_alpha[team] as PackedByteArray)[index])
 
 
 func state_at_cell(team: int, cx: int, cy: int) -> int:
-	if not _look.has(team):
+	if not _alpha.has(team):
 		return SHROUDED
 	var index := _flat(cx, cy)
 	if index < 0:
 		return SHROUDED
-	if (_look[team] as PackedInt32Array)[index] > 0:
-		return CLEAR
-	if (_explored[team] as PackedByteArray)[index] != 0:
-		return FOGGED
-	return SHROUDED
+	return state_for_alpha((_alpha[team] as PackedByteArray)[index])
 
 
 func is_visible(team: int, position: Vector2) -> bool:
@@ -350,7 +691,69 @@ func reveal(
 		var permanent_mask: PackedByteArray = _permanent[team]
 		for index in _cells_in_circle(center, radius):
 			permanent_mask[index] = 1
+		# A permanent reveal is a LOOKER that never goes stale, not a stamp that
+		# has to be reapplied every commit. It holds its own refcount on every
+		# cell it covers, so the unit that walks out of it cannot take the clear
+		# with it, and dropping the reveal releases exactly what it held.
+		_register_permanent_looker(_permanent_reveals.size() - 1)
+		return
 	_stamp(team, center, radius)
+
+
+func _permanent_looker_key(record_index: int) -> String:
+	return "perm:%d" % record_index
+
+
+func _register_permanent_looker(record_index: int) -> void:
+	if record_index < 0 or record_index >= _permanent_reveals.size():
+		return
+	var record: Dictionary = _permanent_reveals[record_index]
+	var team := int(record["team"])
+	if not _ensure_team(team):
+		return
+	var center := Vector2(record["center"])
+	var cell := cell_index(center)
+	var radius := float(record["radius"])
+	_stamp_cells(team, cell.x, cell.y, radius, 1)
+	_lookers[_permanent_looker_key(record_index)] = {
+		"team": team, "cx": cell.x, "cy": cell.y, "radius": radius,
+		"seen": _pass_index, "permanent": true,
+	}
+
+
+func _reset_team_looks(team: int) -> void:
+	## Wholesale look reset, used by the script verbs that zero the clear set
+	## outright (MAP_SHROUD_*, dropping a permanent reveal). Everything holding a
+	## refcount on this team's cells is dropped WITHOUT unstamping - the counts
+	## are about to be zeroed anyway, and unstamping a zeroed grid is what would
+	## corrupt it - and the surviving permanent reveals are then re-stamped.
+	## Explored survives: the ground WAS seen.
+	if not _look.has(team):
+		return
+	var looks: PackedInt32Array = _look[team]
+	var explored: PackedByteArray = _explored[team]
+	var alpha: PackedByteArray = _alpha[team]
+	var radar: PackedByteArray = _radar[team]
+	looks.fill(0)
+	for index in range(looks.size()):
+		var value := RETAIL_FOG_ALPHA if explored[index] != 0 else RETAIL_SHROUD_ALPHA
+		alpha[index] = value
+		radar[index * 4 + 3] = 255 - value
+	_revision[team] = int(_revision.get(team, 0)) + 1
+	var dropped: Array = []
+	for key in _lookers.keys():
+		if int((_lookers[key] as Dictionary)["team"]) == team:
+			dropped.append(key)
+	for key in dropped:
+		_lookers.erase(key)
+	var kept_transient: Array = []
+	for stamp_value in _transient:
+		if int((stamp_value as Array)[0]) != team:
+			kept_transient.append(stamp_value)
+	_transient = kept_transient
+	for record_index in range(_permanent_reveals.size()):
+		if int((_permanent_reveals[record_index] as Dictionary)["team"]) == team:
+			_register_permanent_looker(record_index)
 
 
 func shroud(team: int, center: Vector2, radius: float) -> void:
@@ -362,14 +765,13 @@ func shroud(team: int, center: Vector2, radius: float) -> void:
 	## anything.
 	if not _look.has(team):
 		return
-	var looks: PackedInt32Array = _look[team]
 	var explored: PackedByteArray = _explored[team]
 	var permanent_mask: PackedByteArray = _permanent[team]
 	for index in _cells_in_circle(center, radius):
 		if permanent_mask[index] != 0:
 			continue
-		looks[index] = 0
 		explored[index] = 0
+	_reset_team_looks(team)
 
 
 func undo_permanent_reveal(team: int, center: Vector2, radius: float) -> void:
@@ -416,29 +818,16 @@ func _rebuild_permanent(team: int) -> void:
 		return
 	var permanent_mask: PackedByteArray = _permanent[team]
 	permanent_mask.fill(0)
-	var looks: PackedInt32Array = _look[team]
-	var touched: PackedInt32Array = _touched[team]
-	# Dropping a permanent reveal must drop the clear it was holding, or the
-	# undo would be invisible until the next look pass. Explored survives: the
-	# ground WAS seen.
-	looks.fill(0)
-	_touched[team] = PackedInt32Array()
-	touched = _touched[team]
 	for record_value in _permanent_reveals:
 		var record: Dictionary = record_value
 		if int(record["team"]) != team:
 			continue
 		for index in _cells_in_circle(Vector2(record["center"]), float(record["radius"])):
 			permanent_mask[index] = 1
-	_stamp_permanent_for(team)
-
-
-func _stamp_permanent_for(team: int) -> void:
-	for record_value in _permanent_reveals:
-		var record: Dictionary = record_value
-		if int(record["team"]) != team:
-			continue
-		_stamp(team, Vector2(record["center"]), float(record["radius"]))
+	# Dropping a permanent reveal must drop the clear it was holding, or the undo
+	# would be invisible until the next look pass. The reset re-registers the
+	# survivors; explored survives, because the ground WAS seen.
+	_reset_team_looks(team)
 
 
 func reveal_all(team: int, permanent: bool) -> void:
@@ -462,22 +851,35 @@ func alpha_image(team: int) -> Image:
 	## One byte per cell in retail's convention (255 clear, 127 fog, 0 shroud),
 	## ready to upload as an L8 texture and sample by world XZ with linear
 	## filtering - which is how retail gets a smooth edge out of a 40-unit grid.
-	var image := Image.create_empty(maxi(1, cells_x), maxi(1, cells_y), false, Image.FORMAT_L8)
-	if not _look.has(team):
-		image.fill(Color(0.0, 0.0, 0.0, 1.0))
-		return image
-	var looks: PackedInt32Array = _look[team]
-	var explored: PackedByteArray = _explored[team]
-	var bytes := PackedByteArray()
-	bytes.resize(cells_x * cells_y)
-	for index in range(cells_x * cells_y):
-		if looks[index] > 0:
-			bytes[index] = RETAIL_CLEAR_ALPHA
-		elif explored[index] != 0:
-			bytes[index] = RETAIL_FOG_ALPHA
-		else:
-			bytes[index] = RETAIL_SHROUD_ALPHA
-	return Image.create_from_data(cells_x, cells_y, false, Image.FORMAT_L8, bytes)
+	##
+	## The plane is maintained cell-by-cell by `_stamp_cells`, so this is a
+	## memcpy and not a 33,489-iteration GDScript loop. It used to be the loop,
+	## and that cost 2.4ms every rebuild.
+	if not _alpha.has(team):
+		var empty := Image.create_empty(
+			maxi(1, cells_x), maxi(1, cells_y), false, Image.FORMAT_L8
+		)
+		empty.fill(Color(0.0, 0.0, 0.0, 1.0))
+		return empty
+	return Image.create_from_data(
+		cells_x, cells_y, false, Image.FORMAT_L8, _alpha[team] as PackedByteArray
+	)
+
+
+func radar_image(team: int) -> Image:
+	## The radar's darkening layer: black, with alpha = 255 - visibility, so the
+	## minimap can draw the whole shroud as ONE textured polygon with no shader
+	## and no inversion at the draw site. Same reason as `alpha_image` for
+	## maintaining it incrementally - building it per rebuild cost 4.2ms.
+	if not _radar.has(team):
+		var empty := Image.create_empty(
+			maxi(1, cells_x), maxi(1, cells_y), false, Image.FORMAT_RGBA8
+		)
+		empty.fill(Color(0.0, 0.0, 0.0, 1.0))
+		return empty
+	return Image.create_from_data(
+		cells_x, cells_y, false, Image.FORMAT_RGBA8, _radar[team] as PackedByteArray
+	)
 
 
 func grid_bounds() -> Rect2:
@@ -516,8 +918,14 @@ func from_state(state: Dictionary) -> void:
 	border_shroud = bool(state.get("border_shroud", true))
 	_look.clear()
 	_explored.clear()
+	_alpha.clear()
+	_radar.clear()
+	_revision.clear()
 	_permanent.clear()
-	_touched.clear()
+	_lookers.clear()
+	_transient.clear()
+	_disc_row_cache.clear()
+	_unbind_team()
 	for team in (state.get("look", {}) as Dictionary).keys():
 		_look[team] = ((state["look"] as Dictionary)[team] as PackedInt32Array).duplicate()
 		_explored[team] = (
@@ -528,13 +936,31 @@ func from_state(state: Dictionary) -> void:
 			(state.get("permanent", {}) as Dictionary).get(team, PackedByteArray())
 			as PackedByteArray
 		).duplicate()
-		# The touched list is a clearing optimisation, not state. A restored
-		# grid rebuilds it from the look counts so the next begin_look_pass
-		# clears exactly what a live grid would have cleared.
-		var rebuilt := PackedInt32Array()
+		# The visibility planes are derived, not serialized: a saved grid carries
+		# the counts and the explored bits, and the two byte planes are rebuilt
+		# from them once, here, rather than being trusted from a file.
 		var looks: PackedInt32Array = _look[team]
+		var explored: PackedByteArray = _explored[team]
+		var alpha := PackedByteArray()
+		alpha.resize(looks.size())
+		var radar := PackedByteArray()
+		radar.resize(looks.size() * 4)
+		radar.fill(0)
 		for index in range(looks.size()):
+			var value := RETAIL_SHROUD_ALPHA
 			if looks[index] > 0:
-				rebuilt.append(index)
-		_touched[team] = rebuilt
+				value = RETAIL_CLEAR_ALPHA
+			elif explored[index] != 0:
+				value = RETAIL_FOG_ALPHA
+			alpha[index] = value
+			radar[index * 4 + 3] = 255 - value
+		_alpha[team] = alpha
+		_radar[team] = radar
+		_revision[team] = 1
 	_permanent_reveals = (state.get("permanent_reveals", []) as Array).duplicate(true)
+	# THE RESTORED GRID HAS COUNTS BUT NO LOOKERS. Nothing holds the refcounts
+	# the file carries, so the next live pass would stamp its lookers ON TOP of
+	# them and no cell would ever fall back to fog again. The counts are dropped
+	# at the start of the next pass instead - which is exactly what the old
+	# rebuilt-touched-list did - and re-earned by the lookers that still exist.
+	_looks_stale = not _look.is_empty()

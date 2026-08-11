@@ -49,6 +49,14 @@ const PlayableUnitAdapter := preload("res://src/retail_slice/playable_unit_runti
 const SimScript := preload("res://src/retail_slice/retail_slice_sim.gd")
 const ParityScript := preload("res://src/retail_slice/retail_slice_parity.gd")
 const Watchdog := preload("res://tests/runner_watchdog.gd")
+const ManifestScript := preload("res://src/retail_slice/retail_faction_manifest.gd")
+## NOT preloaded. retail_vertical_slice.gd names the ContentDB and ModLoader
+## AUTOLOADS, and in `--script` mode the runner's own script is compiled before
+## the autoloads are registered, so a preload of the slice fails to resolve them
+## and takes the whole runner down with it. Loaded at call time instead, which is
+## what menu_instant_runner.gd does for the same reason.
+const SLICE_SCRIPT_PATH := "res://src/retail_slice/retail_vertical_slice.gd"
+const MAP_DATA_SCRIPT_PATH := "res://src/retail_slice/retail_map_data.gd"
 
 ## Retail gamedata.ini PartitionCellSize, in source (retail world) units.
 const RETAIL_PARTITION_CELL_SIZE := 40.0
@@ -57,7 +65,7 @@ const SLICE_SCALE := 0.02649232738129
 ## A retail VisionRange in source units (GondorRanger horde, compiled value).
 const RANGER_VISION_SOURCE := 470.0
 
-const EXPECTED_CHECKS := 64
+const EXPECTED_CHECKS := 91
 
 var passed := 0
 var failed := 0
@@ -87,6 +95,12 @@ func _run() -> void:
 	_test_the_compiled_deshroud_range_reaches_the_entity_row()
 	_test_hostile_pick_candidates_are_shroud_gated()
 	_test_script_reveal_radius_is_scaled_into_sim_space()
+	_test_a_structure_clears_fog_around_itself()
+	_test_the_compiled_structure_deshroud_range_ships_in_the_pack()
+	_test_a_click_into_fog_is_a_move_order()
+	_test_scenery_is_hidden_under_unexplored_shroud()
+	_test_the_incremental_pass_agrees_with_a_full_rebuild()
+	_test_the_look_pass_stays_inside_its_frame_budget()
 	var ran := passed + failed
 	if ran != EXPECTED_CHECKS:
 		failed += 1
@@ -924,6 +938,471 @@ func _test_script_reveal_radius_is_scaled_into_sim_space() -> void:
 		"the verb helper converts the authored SOURCE radius into sim units",
 		is_equal_approx(fog_facet._sim_radius(world, authored_source_radius), authored_source_radius * SLICE_SCALE),
 		"got %f expected %f" % [fog_facet._sim_radius(world, authored_source_radius), authored_source_radius * SLICE_SCALE]
+	)
+
+
+# --- Bug B: a structure that gives no vision --------------------------------
+
+
+## GondorBarracks, effective-assets data/ini/object/goodfaction/structures/men/
+## barracks.ini:220 - ShroudClearingRange = GONDOR_BARRACKS_SHROUD_CLEAR = 160,
+## with VisionRange 160.0 on the line above. The published rotwk-men pack
+## carries both under registration.gameplay.scalarFields.
+const BARRACKS_DESHROUD_SOURCE := 160.0
+
+
+func _structure_row(structure_id: int, team: int, kind: String, position: Vector2) -> Dictionary:
+	return {
+		"id": structure_id,
+		"team": team,
+		"kind": "structure",
+		"structure_kind": kind,
+		"name": kind,
+		"position": position,
+		"rally": position,
+		"health": 1000,
+		"maximum_health": 1000,
+		"construction_progress": 1.0,
+		"level": 1,
+		"completed_upgrades": [],
+		"upgrade_queue": [],
+		"production": [],
+		"queue": [],
+		"damage_remainders": {},
+		"income_per_payout": 0,
+	}
+
+
+func _test_a_structure_clears_fog_around_itself() -> void:
+	## THE OWNER'S SECOND PLAYTEST BUG, and the reason it could never have
+	## worked: every one of the eight sites in retail_slice_sim.gd that builds a
+	## structure row writes neither `vision_range` nor `shroud_clearing_range`
+	## nor `footprint_radius`, so the structure half of the look pass read 0 from
+	## every building ever placed and did nothing at all. "I built a fortress and
+	## it gives no fog visibility."
+	##
+	## The radius is resolved from the team's compiled BUILD RULES instead, which
+	## is where the manifest already puts every other authored number - so the
+	## fix reaches a map-seeded fortress and a player-built barracks by one path.
+	var sim = _sim_with_fog(true)
+	sim.structures.clear()
+	var far := Vector2(30.0, 30.0)
+	sim.structures[801] = _structure_row(801, 0, "barracks", far)
+	sim.tick()
+	_check(
+		"a structure whose kind carries no compiled deshroud range is not a looker",
+		int(sim.fog_of_war().state_at(0, far)) == Fog.SHROUDED,
+		"state=%d - a defaulted radius would hide the missing plumbing" % int(
+			sim.fog_of_war().state_at(0, far)
+		)
+	)
+	# The compiled value, in the shape the faction manifest hands it over: the
+	# authored SOURCE units, converted by the map's own transform downstream.
+	var rules: Dictionary = sim.structure_build_rules_for_team(0)
+	rules["barracks"] = {
+		"cost": 400,
+		"seconds": 30.0,
+		"shroud_clearing_range_source": BARRACKS_DESHROUD_SOURCE,
+	}
+	sim._team_structure_build_rules[0] = rules
+	sim.tick()
+	var expected := BARRACKS_DESHROUD_SOURCE * SLICE_SCALE
+	_check(
+		"a completed structure clears the fog it stands in",
+		int(sim.fog_of_war().state_at(0, far)) == Fog.CLEAR,
+		"state=%d" % int(sim.fog_of_war().state_at(0, far))
+	)
+	_check(
+		"it clears out to its compiled deshroud range and not past it",
+		int(sim.fog_of_war().state_at(0, far + Vector2(expected * 0.6, 0.0))) == Fog.CLEAR
+			and int(sim.fog_of_war().state_at(
+				0, far + Vector2(expected + float(sim.fog_of_war().cell_size) * 2.0, 0.0)
+			)) != Fog.CLEAR,
+		"range=%f cell=%f" % [expected, float(sim.fog_of_war().cell_size)]
+	)
+	_check(
+		"and it gives its vision to its own team only",
+		int(sim.fog_of_war().state_at(1, far)) == Fog.SHROUDED
+	)
+	# A structure BUILT during the match, not seeded at map load: the looker set
+	# has to admit it on the tick it appears, which is exactly what a keyed
+	# incremental pass makes easy to get wrong.
+	var built := Vector2(-30.0, 25.0)
+	sim.structures[802] = _structure_row(802, 0, "barracks", built)
+	sim.tick()
+	_check(
+		"a structure raised mid-match joins the looker set on the tick it appears",
+		int(sim.fog_of_war().state_at(0, built)) == Fog.CLEAR,
+		"state=%d" % int(sim.fog_of_war().state_at(0, built))
+	)
+	# And a razed one stops seeing, which the keyed pass has to do by unstamping
+	# rather than by the full rebuild it no longer performs.
+	sim.structures.erase(802)
+	sim.tick()
+	_check(
+		"a razed structure stops clearing, leaving fog and not clear ground",
+		int(sim.fog_of_war().state_at(0, built)) == Fog.FOGGED,
+		"state=%d" % int(sim.fog_of_war().state_at(0, built))
+	)
+
+
+func _test_the_compiled_structure_deshroud_range_ships_in_the_pack() -> void:
+	## EXTERNAL ORACLE, not a fixture: the value is read out of the descriptor
+	## the mounted pack actually publishes, and through the manifest's own
+	## `_scalar_number` rather than a reimplementation of it. Skipped LOUDLY when
+	## no pack is mounted, so it can never pass by finding nothing.
+	var descriptor := _mounted_structure_descriptor("gondorbarracks.json")
+	if descriptor.is_empty():
+		_check(
+			"structure descriptor oracle SKIPPED: no mounted pack",
+			true,
+			"set OPENBFME_CONTENT to a published pack to run it"
+		)
+		_check("structure descriptor oracle SKIPPED: vision fallback", true)
+		return
+	var scalar_fields: Dictionary = (
+		(descriptor.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary
+	).get("scalarFields", {}) as Dictionary
+	_check(
+		"the published structure descriptor carries the retail ShroudClearingRange",
+		absf(
+			ManifestScript._scalar_number(scalar_fields, "ShroudClearingRange")
+			- BARRACKS_DESHROUD_SOURCE
+		) < 0.001,
+		"got %s" % ManifestScript._scalar_number(scalar_fields, "ShroudClearingRange")
+	)
+	_check(
+		"and its VisionRange, the separate number the manifest only falls back to",
+		ManifestScript._scalar_number(scalar_fields, "VisionRange") > 0.0
+	)
+
+
+func _mounted_structure_descriptor(file_name: String) -> Dictionary:
+	var root := OS.get_environment("OPENBFME_CONTENT")
+	if root == "":
+		return {}
+	var selection := FileAccess.get_file_as_string(root.path_join("selection.json"))
+	if selection == "":
+		return {}
+	var parsed: Variant = JSON.parse_string(selection)
+	if typeof(parsed) != TYPE_DICTIONARY:
+		return {}
+	var active := String((parsed as Dictionary).get("activePack", ""))
+	if active == "":
+		return {}
+	var path := root.path_join(active).path_join("data/playable-structures").path_join(file_name)
+	var text := FileAccess.get_file_as_string(path)
+	if text == "":
+		return {}
+	var document: Variant = JSON.parse_string(text)
+	if typeof(document) != TYPE_DICTIONARY:
+		return {}
+	return document as Dictionary
+
+
+# --- Bug C: clicking into fog ------------------------------------------------
+
+
+func _test_a_click_into_fog_is_a_move_order() -> void:
+	## RETAIL RULE: a right-click into fog or shroud always yields a MOVE order,
+	## because the order generator resolves the click against what the local
+	## player can SEE and only force-fire bypasses that (OpenSAGE
+	## UnitOrderGenerator.cs:83). The slice was picking its right-click target
+	## off the UNFILTERED hostile list, so a click on black ground with an
+	## invisible enemy under it produced an attack order on something the player
+	## could not see - and a refused attack order is a click that did nothing.
+	## "I can't click for units to go into the fog."
+	##
+	## Driven through the PRODUCTION helper `_right_click_target`, against a real
+	## simulation, rather than a reimplementation of the pick.
+	var slice_script = load(SLICE_SCRIPT_PATH)
+	var map_data_script = load(MAP_DATA_SCRIPT_PATH)
+	if slice_script == null or map_data_script == null:
+		_check("the vertical slice script could be loaded", false, "autoloads missing")
+		return
+	var slice = slice_script.new()
+	var map_data = map_data_script.new()
+	map_data.local_transform_scale = SLICE_SCALE
+	slice.source_map_data = map_data
+	slice.local_team = 0
+	var sim = _sim_with_fog(true)
+	slice.simulation = sim
+	var enemy := Vector2(20.0, 0.0)
+	sim.tick()
+	slice.shroud_overlay.configure(sim.fog_of_war(), 0)
+	_check(
+		"the fixture puts the enemy on ground team 0 has never seen",
+		int(sim.fog_of_war().state_at(0, enemy)) == Fog.SHROUDED,
+		"state=%d" % int(sim.fog_of_war().state_at(0, enemy))
+	)
+	_check(
+		"a right-click on a shrouded enemy resolves to no target, so the order is a move",
+		slice._right_click_target(enemy) == 0,
+		"target=%d" % slice._right_click_target(enemy)
+	)
+	# The ungated pick is what the handler used to call, and it still finds the
+	# enemy - which is what proves the fix is the GATE and not a fixture that
+	# accidentally put the enemy out of pick range.
+	_check(
+		"and the ungated pick would have found it, which is what made the click fail",
+		slice._closest_hostile_battalion(enemy) == 902,
+		"ungated=%d" % slice._closest_hostile_battalion(enemy)
+	)
+	# Walk team 0 up to the enemy so the ground is CLEAR: the same click must now
+	# resolve to the attack it always should have.
+	sim.entities[901]["position"] = enemy + Vector2(1.0, 0.0)
+	sim.entities[901]["destination"] = enemy + Vector2(1.0, 0.0)
+	sim.tick()
+	# Read the enemy's LIVE position: this is a real simulation and the tick that
+	# put team 0 next to it also let it act. Clicking the stale point would test
+	# the fixture rather than the gate.
+	var live_enemy := Vector2(sim.entity(902)["position"])
+	_check(
+		"the same click on a visible enemy still resolves to an attack target",
+		int(sim.fog_of_war().state_at(0, live_enemy)) == Fog.CLEAR
+			and slice._right_click_target(live_enemy) == 902,
+		"state=%d target=%d" % [
+			int(sim.fog_of_war().state_at(0, live_enemy)),
+			slice._right_click_target(live_enemy),
+		]
+	)
+	# With fog off nothing is gated at all, which is the behaviour every match
+	# shipped before this lane and must keep.
+	var open_slice = slice_script.new()
+	open_slice.source_map_data = map_data
+	open_slice.local_team = 0
+	var open_sim = _sim_with_fog(false)
+	open_slice.simulation = open_sim
+	open_slice.shroud_overlay.configure(open_sim.fog_of_war(), 0)
+	_check(
+		"a fog-off match gates nothing and clicks the enemy it always did",
+		open_slice._right_click_target(enemy) == 902,
+		"target=%d" % open_slice._right_click_target(enemy)
+	)
+	slice.free()
+	open_slice.free()
+
+
+# --- Bug D: trees standing in the dark ---------------------------------------
+
+
+func _test_scenery_is_hidden_under_unexplored_shroud() -> void:
+	## The terrain shader modulates TERRAIN. Trees, rocks and ruins are separate
+	## meshes it never touches, so the first fog-on playtest showed a black map
+	## border with a lit forest standing on top of it: "I can see trees and
+	## objects in the fog of war." Scenery takes the same EXPLORED test
+	## structures take - nothing under unexplored shroud, and a scouted tree
+	## stays drawn when the ground falls back to fog, the way the remembered
+	## terrain under it does.
+	var fog = _grid()
+	fog.enabled = true
+	var overlay = Overlay.new()
+	overlay.configure(fog, 0)
+
+	var container := Node3D.new()
+	container.set_meta("shroud_gates_child", true)
+	var seen_tree := Node3D.new()
+	seen_tree.transform.origin = Vector3.ZERO
+	seen_tree.add_child(Node3D.new())
+	var far_tree := Node3D.new()
+	far_tree.transform.origin = Vector3(35.0, 0.0, 35.0)
+	far_tree.add_child(Node3D.new())
+	container.add_child(seen_tree)
+	container.add_child(far_tree)
+
+	var bound := overlay.bind_scenery([container])
+	_check("every placement in the container is bound", bound == 2, "bound=%d" % bound)
+	_check(
+		"the gate is written on the placement's visual, not the root the animated"
+			+ " prop controller rewrites",
+		overlay._scenery[0]["node"] == seen_tree.get_child(0)
+	)
+	var hidden := overlay.apply_to_scenery()
+	_check(
+		"an unexplored map hides every prop standing in it",
+		hidden == 2 and not seen_tree.get_child(0).visible and not far_tree.get_child(0).visible,
+		"hidden=%d" % hidden
+	)
+	fog.begin_look_pass()
+	fog.add_look(0, Vector2.ZERO, RANGER_VISION_SOURCE * SLICE_SCALE, 1)
+	fog.commit_look_pass()
+	hidden = overlay.apply_to_scenery()
+	_check(
+		"a prop on ground the player can see is drawn",
+		hidden == 1 and seen_tree.get_child(0).visible,
+		"hidden=%d" % hidden
+	)
+	# The looker walks away: the ground falls back to FOG, and retail keeps
+	# showing scenery it has already been shown.
+	fog.begin_look_pass()
+	fog.commit_look_pass()
+	_check(
+		"the fixture actually fell back to fog rather than to shroud",
+		int(fog.state_at(0, Vector2.ZERO)) == Fog.FOGGED,
+		"state=%d" % int(fog.state_at(0, Vector2.ZERO))
+	)
+	hidden = overlay.apply_to_scenery()
+	_check(
+		"a prop on remembered ground stays drawn, the way the remembered terrain does",
+		hidden == 1 and seen_tree.get_child(0).visible and not far_tree.get_child(0).visible,
+		"hidden=%d" % hidden
+	)
+	# Fog off must not leave a map missing its trees.
+	var open_fog = _grid()
+	var open_overlay = Overlay.new()
+	open_overlay.configure(open_fog, 0)
+	open_overlay.bind_scenery([container])
+	_check(
+		"a fog-off match restores every placement",
+		open_overlay.apply_to_scenery() == 0
+			and seen_tree.get_child(0).visible and far_tree.get_child(0).visible
+	)
+	container.free()
+
+
+# --- Bug A: the cost ---------------------------------------------------------
+
+
+func _test_the_incremental_pass_agrees_with_a_full_rebuild() -> void:
+	## The keyed pass only re-stamps a looker that changed CELL, and re-stamps a
+	## MOVED one as a per-row interval difference rather than a clear and a
+	## refill. Both are optimisations of a model that is trivially correct when
+	## written the slow way, so the slow way is the oracle: an UNKEYED grid,
+	## which clears and re-stamps everything every pass, driven with the same
+	## positions. Any refcount that leaks, any rim cell an interval difference
+	## misses, and the two states stop being byte-identical.
+	var keyed = _grid()
+	var naive = _grid()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20260811
+	var positions: Array[Vector2] = []
+	var radii: Array[float] = []
+	for looker in range(12):
+		positions.append(Vector2(rng.randf_range(-30.0, 30.0), rng.randf_range(-30.0, 30.0)))
+		radii.append(RANGER_VISION_SOURCE * SLICE_SCALE * rng.randf_range(0.3, 1.2))
+	var diverged_at := -1
+	for step in range(40):
+		for looker in range(positions.size()):
+			# A locomotor step, plus one teleport-sized jump of the kind a
+			# respawn or a script reposition produces.
+			var jump := 8.0 if step == 17 and looker % 3 == 0 else 0.6
+			positions[looker] += Vector2(
+				rng.randf_range(-jump, jump), rng.randf_range(-jump, jump)
+			)
+		keyed.begin_look_pass()
+		naive.begin_look_pass()
+		for looker in range(positions.size()):
+			# Two lookers die at step 25 and must stop seeing in both models.
+			if step >= 25 and looker >= positions.size() - 2:
+				continue
+			keyed.add_look(0, positions[looker], radii[looker], looker + 1)
+			naive.add_look(0, positions[looker], radii[looker])
+		keyed.commit_look_pass()
+		naive.commit_look_pass()
+		if diverged_at < 0 and _digest(keyed) != _digest(naive):
+			diverged_at = step
+	_check(
+		"the incremental pass is byte-identical to a full rebuild over forty passes",
+		diverged_at < 0,
+		"diverged at step %d" % diverged_at
+	)
+
+
+func _test_the_look_pass_stays_inside_its_frame_budget() -> void:
+	## THE OWNER'S FIRST PLAYTEST BUG: "fog of war is LAGGY on start, super
+	## laggy." Measured on this exact fixture before the rewrite - the slice's
+	## own 183x183 grid, 120 lookers at a compiled 470-source deshroud range -
+	## the look pass cost 19,463us PER TICK and the overlay rebuild 6,648us
+	## seven and a half times a second. At 30Hz that is 58% of a core spent on
+	## fog with nothing else running.
+	##
+	## The budgets below are generous against what the rewrite actually measures
+	## (about 240us and 5us), because a shared build machine is not a benchmark
+	## rig - but they sit an order of magnitude under the numbers that produced
+	## the bug report, so the defect cannot come back unnoticed.
+	var fog = Fog.new()
+	fog.enabled = true
+	fog.configure_default(SLICE_SCALE)
+	_check(
+		"the budget fixture is the slice's own grid, not a toy one",
+		int(fog.cells_x) == 183 and int(fog.cells_y) == 183,
+		"grid=%dx%d" % [int(fog.cells_x), int(fog.cells_y)]
+	)
+	var radius := RANGER_VISION_SOURCE * SLICE_SCALE
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 11
+	var army: Array[Vector2] = []
+	for looker in range(120):
+		army.append(Vector2(rng.randf_range(-40.0, 40.0), rng.randf_range(-40.0, 40.0)))
+	fog.begin_look_pass()
+	for looker in range(army.size()):
+		fog.add_look(0, army[looker], radius, looker + 1)
+	fog.commit_look_pass()
+
+	var started := Time.get_ticks_usec()
+	for step in range(20):
+		fog.begin_look_pass()
+		for looker in range(army.size()):
+			fog.add_look(0, army[looker], radius, looker + 1)
+		fog.commit_look_pass()
+	var still_us := float(Time.get_ticks_usec() - started) / 20.0
+	_check(
+		"a stationary army costs almost nothing per tick",
+		still_us < 4000.0,
+		"%.0fus per tick (19463us before the rewrite)" % still_us
+	)
+
+	# A retail locomotor is about 5.5 sim units a second against a 1.06-unit
+	# cell, so a unit crosses a cell roughly every sixth 30Hz tick. This walks
+	# the WHOLE army at that speed, which is the busiest a real match gets.
+	started = Time.get_ticks_usec()
+	for step in range(20):
+		fog.begin_look_pass()
+		for looker in range(army.size()):
+			fog.add_look(
+				0, army[looker] + Vector2(float(step) * 0.183, 0.0), radius, looker + 1
+			)
+		fog.commit_look_pass()
+	var moving_us := float(Time.get_ticks_usec() - started) / 20.0
+	_check(
+		"and an army that is entirely on the move still fits well inside a 30Hz tick",
+		moving_us < 6000.0,
+		"%.0fus per tick (19463us before the rewrite)" % moving_us
+	)
+
+	var overlay = Overlay.new()
+	overlay.configure(fog, 0)
+	overlay.update(true)
+	started = Time.get_ticks_usec()
+	for step in range(20):
+		overlay.update(true)
+	var rebuild_us := float(Time.get_ticks_usec() - started) / 20.0
+	_check(
+		"a forced overlay rebuild is two memcpys and two uploads, not two grid walks",
+		rebuild_us < 800.0,
+		"%.0fus per rebuild (6648us before the rewrite)" % rebuild_us
+	)
+
+	# And the rebuild does not happen at all when the grid has not moved, which
+	# is most frames of most matches.
+	var before_count := int(overlay.rebuild_count())
+	for frame in range(64):
+		overlay.update()
+	_check(
+		"an unchanged grid is not re-uploaded on the cadence",
+		int(overlay.rebuild_count()) == before_count,
+		"rebuilds=%d" % (int(overlay.rebuild_count()) - before_count)
+	)
+	fog.begin_look_pass()
+	for looker in range(army.size()):
+		fog.add_look(0, army[looker] + Vector2(3.0, 3.0), radius, looker + 1)
+	fog.commit_look_pass()
+	for frame in range(16):
+		overlay.update()
+	_check(
+		"but a grid that DID change is uploaded on the very next cadence tick",
+		int(overlay.rebuild_count()) > before_count,
+		"rebuilds=%d" % (int(overlay.rebuild_count()) - before_count)
 	)
 
 

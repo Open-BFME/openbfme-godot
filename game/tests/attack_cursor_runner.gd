@@ -203,8 +203,29 @@ func _test_slice_asks_for_hostility_not_team_one() -> void:
 	if start < 0:
 		return
 	var body := source.substr(start, source.find("func _ensure_cursor_controller") - start)
-	_check("hover_cursor_uses_local_hostility", body.contains("_closest_hostile_battalion"))
-	_check("hover_cursor_checks_hostile_structures", body.contains("_closest_hostile_structure"))
+	# These two checks USED to spell out the two pick helpers by name, and they
+	# had been silently red since the shroud lane renamed them to the
+	# `_closest_visible_*` variants - a substring assertion that stopped
+	# describing the code the moment the code moved. What actually has to be
+	# true is stronger and does not depend on a helper's name: the cursor and
+	# the right-click ORDER must resolve their target through the SAME function,
+	# because the whole defect class here is the cursor promising an order the
+	# click then refuses.
+	_check("hover_cursor_uses_the_order_target_resolver", body.contains("_right_click_target(point)"))
+	var order_start := source.find("func _handle_right_click")
+	var order_body := source.substr(order_start, source.find("func _screen_to_world") - order_start)
+	_check(
+		"right_click_order_uses_the_same_resolver",
+		order_start >= 0 and order_body.contains("_right_click_target(point)")
+	)
+	var resolver_start := source.find("func _right_click_target")
+	var resolver := source.substr(resolver_start, source.find("func _closest_visible_hostile_battalion") - resolver_start)
+	_check(
+		"the_shared_resolver_is_shroud_gated",
+		resolver_start >= 0
+			and resolver.contains("_closest_visible_hostile_battalion")
+			and resolver.contains("_closest_visible_hostile_structure")
+	)
 	_check("hover_cursor_drops_the_hardcoded_team", not body.contains("_closest_battalion(point, 1)"))
 	_check("hover_cursor_delegates_intent", body.contains("RetailCursorController.select_intent"))
 

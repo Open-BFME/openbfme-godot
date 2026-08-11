@@ -17639,7 +17639,10 @@ func _step_shroud_grid() -> void:
 		var radius := _shroud_clearing_radius(row)
 		if radius <= 0.0:
 			continue
-		fog.add_look(team, row.get("position", Vector2.ZERO), radius)
+		# The entity id IS the looker key, which is what makes the pass
+		# incremental: a battalion that has not left its shroud cell since last
+		# tick costs one dictionary lookup here and touches no cell at all.
+		fog.add_look(team, row.get("position", Vector2.ZERO), radius, eid)
 	for sid in structure_ids():
 		if not structures.has(sid):
 			continue
@@ -17649,17 +17652,40 @@ func _step_shroud_grid() -> void:
 		var steam := int(srow.get("team", -1))
 		if steam < 0:
 			continue
-		var sradius := _shroud_clearing_radius(srow)
-		if sradius <= 0.0:
-			# A structure with no compiled deshroud range still owns the ground
-			# it stands on; retail's smallest authored building deshroud is its
-			# own footprint. Using the footprint radius keeps a player's own base
-			# out of the shroud without inventing a vision number.
-			sradius = float(srow.get("footprint_radius", 0.0))
+		var sradius := _structure_shroud_clearing_radius(srow)
 		if sradius <= 0.0:
 			continue
-		fog.add_look(steam, srow.get("position", Vector2.ZERO), sradius)
+		# Structure ids and entity ids share a numbering space in places, so the
+		# structure key is negated to keep the two looker sets disjoint.
+		fog.add_look(steam, srow.get("position", Vector2.ZERO), sradius, -sid)
 	fog.commit_look_pass()
+
+
+func _structure_shroud_clearing_radius(srow: Dictionary) -> float:
+	## THE BUG THIS EXISTS TO FIX. Structure rows are built at eight separate
+	## sites in this file and NOT ONE of them ever wrote `vision_range`,
+	## `shroud_clearing_range` or `footprint_radius`, so the generic
+	## `_shroud_clearing_radius` read 0 from every building ever placed and the
+	## structure half of the look pass was dead code. The owner's first fog-on
+	## playtest found it immediately: "I built a fortress and it gives no fog
+	## visibility."
+	##
+	## Rather than teach eight construction sites the same field, the radius is
+	## resolved from the row's kind against the team's compiled build rules -
+	## which is where the manifest already puts every other authored number - so
+	## a map-seeded fortress, a porter-built farm, an expansion pad tower, an
+	## unpacked base and a summoned Lone Tower all get their vision by the same
+	## path, the moment they exist.
+	var direct := float(srow.get("shroud_clearing_range", 0.0))
+	if direct > 0.0:
+		return direct
+	var rule: Dictionary = structure_build_rules_for_team(
+		int(srow.get("team", -1))
+	).get(String(srow.get("structure_kind", "")), {}) as Dictionary
+	var source := float(rule.get("shroud_clearing_range_source", 0.0))
+	if source <= 0.0:
+		return 0.0
+	return source * source_transform_scale()
 
 
 func _step_fog_from_vision() -> void:

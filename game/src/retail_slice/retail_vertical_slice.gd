@@ -623,6 +623,23 @@ func _initialize_content_and_match() -> void:
 	simulation.refresh_fog_of_war()
 	shroud_overlay.configure(simulation.fog_of_war(), local_team)
 	shroud_overlay.update(true)
+	# Trees, rocks and ruins are separate meshes the terrain shader never
+	# touches, so they need the shroud applied to them by hand or they stand
+	# lit on top of unexplored black. Bound here, once, and answered on the
+	# overlay's own cadence from `_sync_presentation`.
+	if battlefield != null:
+		# THE FIRST APPLY HAS TO BE UNCONDITIONAL. `_sync_presentation` only
+		# reapplies when `update()` reports a rebuild, and `update()` now
+		# declines to rebuild when the grid's revision has not moved - so on a
+		# battlefield where nothing moves in the opening frames the terrain
+		# material would never be told the shroud exists at all, and the whole
+		# map would render lit. Found by the render capture, which crashed on a
+		# `shroud_enabled` parameter that had never been set.
+		shroud_overlay.apply_to_terrain(battlefield.terrain_material as ShaderMaterial)
+		shroud_overlay.bind_scenery([
+			battlefield.retail_prop_container, battlefield.retail_structure_container
+		])
+		shroud_overlay.apply_to_scenery()
 	hud.configure_minimap(simulation, source_map_data, camera, _source_art_texture, shroud_overlay)
 	var command_costs: Dictionary = {}
 	for unit_type in simulation.production_rule_ids():
@@ -3641,11 +3658,7 @@ func _handle_right_click(point: Vector2) -> void:
 		hud.set_feedback("Construction placement cancelled.")
 		_sync_presentation()
 		return
-	# Hostility is from the LOCAL seat's perspective: the host attacks team 1,
-	# a lockstep guest attacks team 0 — never a hardcoded enemy team 1.
-	var enemy_id := _closest_hostile_battalion(point)
-	if enemy_id == 0:
-		enemy_id = _closest_hostile_structure(point)
+	var enemy_id := _right_click_target(point)
 	if enemy_id != 0:
 		var accepted := int(_apply_local_command("issue_attack", {"ids": simulation.selected_ids.duplicate(), "target_id": enemy_id}))
 		hud.set_feedback("Attack order accepted." if accepted > 0 else "Attack order rejected.", accepted == 0)
@@ -3771,6 +3784,34 @@ func _closest_hostile_structure(point: Vector2) -> int:
 	)
 
 
+func _right_click_target(point: Vector2) -> int:
+	## What a right-click at `point` is aimed AT, or 0 for "the ground".
+	##
+	## RETAIL RULE, and the bug it fixes. Clicking into fog or shroud always
+	## yields a MOVE order in retail - the order generator resolves the click
+	## against what the local player can SEE, and only a force-fire modifier
+	## bypasses that (OpenSAGE UnitOrderGenerator.cs:83). This slice was picking
+	## its right-click target off the unfiltered hostile list, so a click on
+	## black ground that happened to have an invisible enemy under it produced an
+	## attack order on something the player could not see - and when that order
+	## was refused the click did nothing at all. The owner's playtest found it as
+	## "I can't click for units to go into the fog, or it doesn't show the icon
+	## it normally would".
+	##
+	## The same two picks the hover cursor uses, so the cursor and the click can
+	## no longer disagree about a fogged enemy - which the cursor's own comment
+	## named as a known gap and this closes. Structures use the explored test,
+	## which is what lets a player keep ordering an attack on a base they have
+	## scouted (the named GhostObject deviation).
+	##
+	## Hostility is from the LOCAL seat's perspective: the host attacks team 1,
+	## a lockstep guest attacks team 0 - never a hardcoded enemy team 1.
+	var enemy_id := _closest_visible_hostile_battalion(point)
+	if enemy_id == 0:
+		enemy_id = _closest_visible_hostile_structure(point)
+	return enemy_id
+
+
 func _closest_visible_hostile_battalion(point: Vector2) -> int:
 	## As `_closest_hostile_battalion`, but only over enemies the local player
 	## can currently SEE. Presentation-only: this feeds the cursor, never a
@@ -3855,6 +3896,9 @@ func _sync_presentation() -> void:
 	# whole block costs one boolean.
 	if shroud_overlay.update() and battlefield != null:
 		shroud_overlay.apply_to_terrain(battlefield.terrain_material as ShaderMaterial)
+		# Same cadence, same frame's knowledge: the ground and the things
+		# standing on it can never disagree about what has been explored.
+		shroud_overlay.apply_to_scenery()
 	var ring_presentation: Dictionary = simulation.ring_presentation_contract()
 	for id in simulation.entity_ids():
 		var entity: Dictionary = simulation.entity(id)
@@ -7411,17 +7455,12 @@ func _update_hover_cursor() -> void:
 			# this gate the attack cursor lit up over ground that looks empty
 			# and promised an order on something invisible.
 			#
-			# Only the CURSOR is gated here, deliberately. The right-click
-			# handler turns the same pick into an `issue_attack` COMMAND, which
-			# is lockstep traffic - gating it changes the command stream and
-			# belongs with the retail targeting rule (a click into fog yields a
-			# Move order; OpenSAGE UnitOrderGenerator.cs:83), which is a
-			# follow-up, not this change. Until then the cursor and the click
-			# can disagree on a fogged enemy, and that is a KNOWN gap.
-			enemy_under_cursor = (
-				_closest_visible_hostile_battalion(point) != 0
-				or _closest_visible_hostile_structure(point) != 0
-			)
+			# The right-click handler now resolves its target through the SAME
+			# gate (`_right_click_target`), so the cursor and the click can no
+			# longer disagree about a fogged enemy. That gap was named here when
+			# only the cursor was gated; it is closed, and the shared helper is
+			# what keeps it closed.
+			enemy_under_cursor = _right_click_target(point) != 0
 	var intent := RetailCursorController.select_intent(has_selection, command_armed, enemy_under_cursor)
 	_ensure_cursor_controller().apply(intent, float(Time.get_ticks_msec()) / 1000.0)
 
