@@ -227,6 +227,17 @@ def test_reproducibility_build_b_runs_cold() -> None:
     assert "build B ran cold" in text
 
 
+def test_single_build_is_explicit_and_never_claims_attestation() -> None:
+    text = _gate_text()
+    assert "[switch]$SingleBuild" in text
+    assert '$buildArguments += "--single-build"' in text
+    assert "$second = $first" in text
+    assert "reproducibility NOT ATTESTED" in text
+    assert "if (-not $SingleBuild)" in text
+    assert "Single build provenance falsely claimed" in text
+    assert "Pack provenance must defer the A/B claim" in text
+
+
 def test_audit_stays_bound_to_frozen_profile_and_resolved_closure() -> None:
     text = _gate_text()
     assert "$builtPackDocument.profile_build_complete -is [bool]" in text

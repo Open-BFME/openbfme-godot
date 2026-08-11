@@ -1294,7 +1294,14 @@ class W3dStaticPipelineTests(unittest.TestCase):
             self.assertEqual(target.read_bytes(), expected)
             self.assertEqual(
                 pipeline.conversion_cache_stats,
-                {"enabled": True, "jobs": pipeline.conversion_jobs, "hits": 1, "misses": 1, "populated": 1},
+                {
+                    "enabled": True,
+                    "jobs": pipeline.conversion_jobs,
+                    "hits": 1,
+                    "misses": 1,
+                    "populated": 1,
+                    "forced": 0,
+                },
             )
 
             (pipeline.converted_cache_root / key / "output.glb").write_bytes(b"corrupt")

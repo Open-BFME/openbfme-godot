@@ -3,6 +3,10 @@ param(
     [string]$Install = "$env:BFME2_INSTALL",
     [string]$GodotPath = "",
     [switch]$IntegrationOwnerPublish,
+    # Developer-only escape hatch. The default remains the cold A/B proof.
+    # This switch performs one build and the pack provenance records that the
+    # reproducibility comparison was not attested.
+    [switch]$SingleBuild,
     # Run only SECTION A (the deterministic BFME2 proof-pack gate). SECTION B
     # asserts about a maintainer's private multi-pack selection and cannot run
     # on a machine that does not have one.
@@ -280,10 +284,20 @@ try {
     # cold W3D conversion of the profile. That is the price of the claim; do not
     # "fix" a slow gate by putting the cache back, because that silently
     # downgrades what the assertion below proves.
+    if ($SingleBuild) {
+        $buildArguments += "--single-build"
+    }
     $first = Invoke-ImporterJson "build_a" $buildArguments
-    $second = Invoke-ImporterJson "build_b" ($buildArguments + "--no-conversion-cache")
+    if ($SingleBuild) {
+        $second = $first
+        Write-Host "$gate reproducibility NOT ATTESTED (single build explicitly requested) bundle_sha256=$($first.bundle_sha256)"
+    } else {
+        $second = Invoke-ImporterJson "build_b" ($buildArguments + "--no-conversion-cache")
+    }
     Assert-ProofTrue ([bool]$first.valid -and [bool]$second.valid -and [bool]$first.semantic_provenance -and [bool]$second.semantic_provenance) "A retail build failed its semantic provenance audit."
-    Assert-ProofTrue ($first.bundle_sha256 -match '^[0-9a-f]{64}$' -and $first.bundle_sha256 -eq $second.bundle_sha256) "Repeat builds were not byte-reproducible (build B ran cold, so this covers the converter, not just assembly)."
+    if (-not $SingleBuild) {
+        Assert-ProofTrue ($first.bundle_sha256 -match '^[0-9a-f]{64}$' -and $first.bundle_sha256 -eq $second.bundle_sha256) "Repeat builds were not byte-reproducible (build B ran cold, so this covers the converter, not just assembly)."
+    }
     Assert-ProofTrue (
         [string]$first.profile -eq $expectedProfileId -and
         [string]$second.profile -eq $expectedProfileId -and
@@ -310,7 +324,9 @@ try {
             $second.PSObject.Properties.Name -notcontains 'published_pack'
         ) "A proof-only build unexpectedly published or selected a pack."
     }
-    Write-Host "$gate reproducibility PASS (build B cold, converter+assemble) bundle_sha256=$($first.bundle_sha256)"
+    if (-not $SingleBuild) {
+        Write-Host "$gate reproducibility PASS (build B cold, converter+assemble) bundle_sha256=$($first.bundle_sha256)"
+    }
 
     $builtPackDocument = (Get-Content -Raw -LiteralPath (Join-Path $expectedBuildPackPath "pack.json") | ConvertFrom-Json)
     $builtProvenanceDocument = (Get-Content -Raw -LiteralPath (Join-Path $expectedBuildPackPath "provenance\manifest.json") | ConvertFrom-Json)
@@ -319,6 +335,17 @@ try {
         [bool]$builtPackDocument.profile_build_complete -and
         @($builtProvenanceDocument.incomplete).Count -eq 0
     ) "Strict completion build retained incomplete conversion reasons."
+    if ($SingleBuild) {
+        Assert-ProofTrue (
+            [string]$builtProvenanceDocument.incrementalRebuild.reproducibility.mode -eq 'single-build' -and
+            -not [bool]$builtProvenanceDocument.incrementalRebuild.reproducibility.attested
+        ) "Single build provenance falsely claimed reproducibility attestation."
+    } else {
+        Assert-ProofTrue (
+            [string]$builtProvenanceDocument.incrementalRebuild.reproducibility.mode -eq 'cold-a-b-required' -and
+            -not [bool]$builtProvenanceDocument.incrementalRebuild.reproducibility.attested
+        ) "Pack provenance must defer the A/B claim to this external gate."
+    }
 
     $audit = Invoke-ImporterJson "audit" @("audit", [string]$second.pack)
     Assert-ProofTrue (

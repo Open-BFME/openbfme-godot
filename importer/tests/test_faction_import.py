@@ -42,13 +42,9 @@ def test_engine_managed_extension_gap_becomes_named_exclusion_at_convert_boundar
         wall_templates=(),
         source_null_sets=(),
         object_cache=None,
-        documents_fp="",
         catalog_identity_sha256="",
         assets_fp="",
-        graph_input_set_sha256="",
-        plan_aggregate_sha256="",
         policy_fp="",
-        compiler_token="",
     )
     assert row["status"] == "excluded"
     assert "engine-managed reachable extension" in row["reason"]
@@ -536,13 +532,9 @@ def test_fortress_center_generic_skips_visual_closure() -> None:
             wall_templates=(),
             source_null_sets=(),
             object_cache=None,
-            documents_fp="d",
             catalog_identity_sha256="2" * 64,
             assets_fp="a",
-            graph_input_set_sha256="g",
-            plan_aggregate_sha256="p",
             policy_fp="y",
-            compiler_token="c",
             game="rotwk",
         )
     assert row["status"] == "excluded"

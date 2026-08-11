@@ -22,10 +22,13 @@ from .faction_object_cache import (
     FactionObjectCache,
     compiler_identity_token,
     default_cache_root,
-    documents_fingerprint,
-    durable_effective_assets_fingerprint,
+    durable_non_ini_assets_fingerprint,
     object_cache_key,
     policy_roots_fingerprint,
+)
+from .incremental_rebuild import (
+    compiler_dependency_identity,
+    document_closure_identity,
 )
 from .faction_policy import (
     implicit_object_roots,
@@ -113,6 +116,20 @@ _COVERAGE_EPHEMERAL_SUMMARY_KEYS = frozenset(
         "slowestObjects",
     }
 )
+
+
+def _descriptor_source_paths(descriptor: Mapping[str, object]) -> list[str] | None:
+    """Extract the compiler's own source closure, or signal broad fallback."""
+
+    sources = descriptor.get("sourceDocuments")
+    if not isinstance(sources, list) or not sources:
+        return None
+    paths: list[str] = []
+    for row in sources:
+        if not isinstance(row, Mapping) or not isinstance(row.get("virtualPath"), str):
+            return None
+        paths.append(str(row["virtualPath"]))
+    return sorted(set(paths), key=lambda value: (value.casefold(), value))
 
 
 def coverage_digest_payload(coverage: Mapping[str, object]) -> dict[str, object]:
@@ -592,6 +609,9 @@ def build_faction_import_plan(
                         "kindOf": list(kinds),
                         "status": "descriptor-ready",
                         "descriptorSha256": structure_descriptor["descriptorSha256"],
+                        "sourceDocumentPaths": _descriptor_source_paths(
+                            structure_descriptor
+                        ),
                     }
                 )
             continue
@@ -630,6 +650,9 @@ def build_faction_import_plan(
                         "kindOf": list(kinds),
                         "status": "descriptor-ready",
                         "descriptorSha256": spellbook_descriptor["descriptorSha256"],
+                        "sourceDocumentPaths": _descriptor_source_paths(
+                            spellbook_descriptor
+                        ),
                     }
                 )
             continue
@@ -700,6 +723,7 @@ def build_faction_import_plan(
                     "kindOf": list(kinds),
                     "status": "descriptor-ready",
                     "descriptorSha256": descriptor["descriptorSha256"],
+                    "sourceDocumentPaths": _descriptor_source_paths(descriptor),
                 }
             )
 
@@ -923,13 +947,10 @@ def _convert_one_plan_object(
     wall_templates: tuple[str, ...],
     source_null_sets: tuple[str, ...],
     object_cache: FactionObjectCache | None,
-    documents_fp: str,
     catalog_identity_sha256: str,
     assets_fp: str,
-    graph_input_set_sha256: str,
-    plan_aggregate_sha256: str,
     policy_fp: str,
-    compiler_token: str,
+    document_hashes: Mapping[str, str] | None = None,
     game: str = "bfme2",
 ) -> tuple[dict[str, object], dict[str, Mapping[str, object]]]:
     """Convert one plan row; returns (coverage_row, artifacts)."""
@@ -942,6 +963,22 @@ def _convert_one_plan_object(
     status = str(plan_row["status"])
     row: dict[str, object] = {"id": object_id, "family": family}
     artifacts: dict[str, Mapping[str, object]] = {}
+
+    source_paths = plan_row.get("sourceDocumentPaths")
+    closure_identity = document_closure_identity(
+        documents,
+        source_paths if isinstance(source_paths, list) else None,
+        document_hashes=document_hashes,
+    )
+    compiler_identity = compiler_dependency_identity(family)
+    documents_fp = str(closure_identity["sha256"])
+    compiler_token = str(compiler_identity["sha256"])
+    row["incremental"] = {
+        "dependencyMode": closure_identity["mode"],
+        "sourceDocuments": closure_identity["sourceDocuments"],
+        "compilerMode": compiler_identity["mode"],
+        "compilerIdentity": compiler_token,
+    }
 
     plan_reason = str(plan_row.get("reason", ""))
     if (
@@ -968,8 +1005,11 @@ def _convert_one_plan_object(
         documents_fp=documents_fp,
         catalog_identity_sha256=catalog_identity_sha256,
         effective_root_fp=assets_fp,
-        graph_input_set_sha256=graph_input_set_sha256,
-        plan_aggregate_sha256=plan_aggregate_sha256,
+        # Whole-faction graph/plan hashes made an unrelated INI edit evict
+        # every object.  The plan descriptor and compiler-authored source
+        # closure below are the per-object semantic replacements.
+        graph_input_set_sha256="",
+        plan_aggregate_sha256="",
         policy_fp=policy_fp,
         compiler_token=compiler_token,
         plan_descriptor_sha256=(
@@ -977,6 +1017,7 @@ def _convert_one_plan_object(
         ),
         extra={"plan_status": status, "game": game.casefold().strip()},
     )
+    row["incremental"]["cacheKey"] = cache_key  # type: ignore[index]
     if object_cache is not None and (
         family in {"structure", "spellbook"} or status == "descriptor-ready"
     ):
@@ -1443,10 +1484,12 @@ def build_faction_conversion(
     source_null_sets = _source_null_command_set_ids(faction_graph)
 
     plan_objects = list(plan["objects"])
-    docs_fp = documents_fingerprint(documents)
-    assets_fp = durable_effective_assets_fingerprint(effective_root)
-    graph_input = str(faction_graph.get("inputSetSha256") or "")
-    plan_aggregate = str(plan.get("aggregateSha256") or "")
+    document_hashes = {
+        path: hashlib.sha256(payload).hexdigest() for path, payload in documents.items()
+    }
+    # Keep non-INI visual/model identity broad, while INIs are hashed through
+    # each descriptor's compiler-authored source closure.
+    assets_fp = durable_non_ini_assets_fingerprint(effective_root)
     policy_fp = policy_roots_fingerprint(
         spawned=spawned,
         spawned_roles=spawned_roles,
@@ -1533,13 +1576,10 @@ def build_faction_conversion(
                 wall_templates=wall_templates,
                 source_null_sets=source_null_sets,
                 object_cache=object_cache,
-                documents_fp=docs_fp,
                 catalog_identity_sha256=catalog_identity_sha256,
                 assets_fp=assets_fp,
-                graph_input_set_sha256=graph_input,
-                plan_aggregate_sha256=plan_aggregate,
                 policy_fp=policy_fp,
-                compiler_token=compiler_token,
+                document_hashes=document_hashes,
                 game=game,
             )
         except Exception as exc:  # noqa: BLE001 — fail-closed per object, not batch

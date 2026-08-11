@@ -907,6 +907,24 @@ def build_parser() -> argparse.ArgumentParser:
                 help="force cold W3D conversion without reading or populating the conversion cache",
             )
             command.add_argument(
+                "--reconvert-only",
+                action="append",
+                default=[],
+                metavar="PATTERN",
+                help=(
+                    "force matching W3D asset ids cold while retaining scoped "
+                    "cache identity for all others; repeatable shell pattern"
+                ),
+            )
+            command.add_argument(
+                "--single-build",
+                action="store_true",
+                help=(
+                    "developer mode: record that the cold A/B reproducibility "
+                    "comparison was skipped"
+                ),
+            )
+            command.add_argument(
                 "--conversion-jobs",
                 type=int,
                 default=None,
@@ -1023,6 +1041,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-conversion-cache",
         action="store_true",
         help="force cold W3D conversion without reading or populating the conversion cache",
+    )
+    publish_faction.add_argument(
+        "--reconvert-only",
+        action="append",
+        default=[],
+        metavar="PATTERN",
+        help=(
+            "force matching W3D asset ids cold while retaining scoped cache "
+            "identity for all others; repeatable shell pattern"
+        ),
+    )
+    publish_faction.add_argument(
+        "--single-build",
+        action="store_true",
+        help="record this developer cook as non-attested (cold A/B skipped)",
     )
     publish_faction.add_argument(
         "--conversion-jobs",
@@ -1205,6 +1238,26 @@ def build_parser() -> argparse.ArgumentParser:
             "durable user pack cache whose selection.json must end up "
             "byte-identical to the workspace one (omit to leave it untouched)"
         ),
+    )
+
+    rebuild_status = sub.add_parser(
+        "rebuild-status",
+        help="dry-run faction object invalidation and explain every rebuild",
+    )
+    rebuild_status.add_argument(
+        "--faction", required=True, action="append", metavar="NAME"
+    )
+    rebuild_status.add_argument(
+        "--coverage-root",
+        type=Path,
+        default=None,
+        help="directory containing <faction>-coverage.json",
+    )
+    rebuild_status.add_argument(
+        "--assets-root",
+        type=Path,
+        required=True,
+        help="effective-assets root used to re-hash recorded source INIs",
     )
 
     audit = sub.add_parser(
@@ -1394,6 +1447,44 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
             value = audit_pack(args.pack)
             _render(value, args.json)
             return 0 if value["valid"] else 3
+
+        if args.command == "rebuild-status":
+            from .incremental_rebuild import rebuild_status_for_coverage
+            from .faction_object_cache import default_cache_root
+
+            coverage_root = Path(
+                args.coverage_root
+                or (_state_root(args) / "reports" / "faction-import")
+            ).expanduser().resolve()
+            reports = []
+            for faction in args.faction:
+                coverage_path = coverage_root / f"{faction}-coverage.json"
+                if not coverage_path.is_file():
+                    raise FileNotFoundError(
+                        f"faction coverage missing at {coverage_path}"
+                    )
+                with coverage_path.open("r", encoding="utf-8") as stream:
+                    coverage = json.load(stream)
+                report = rebuild_status_for_coverage(
+                    coverage,
+                    args.assets_root,
+                    cache_root=default_cache_root(_state_root(args)),
+                )
+                report["coverage"] = str(coverage_path)
+                reports.append(report)
+            value = {
+                "dryRun": True,
+                "assetsRoot": str(Path(args.assets_root).expanduser().resolve()),
+                "factions": reports,
+                "summary": {
+                    "factions": len(reports),
+                    "objects": sum(row["summary"]["objects"] for row in reports),
+                    "rebuild": sum(row["summary"]["rebuild"] for row in reports),
+                    "reuse": sum(row["summary"]["reuse"] for row in reports),
+                },
+            }
+            _render(value, args.json)
+            return 0
 
         if args.command == "describe-pack":
             from .pack_report import describe_pack, render_pack_report
@@ -1877,6 +1968,8 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                 game=args.game,
                 conversion_cache_enabled=not args.no_conversion_cache,
                 conversion_jobs=args.conversion_jobs,
+                reconvert_only=args.reconvert_only,
+                single_build=args.single_build,
             )
             # Force the deferred RotWK oracle bind (ImportPipeline
             # .source_override_root) so `pipeline.catalog` is the effective
@@ -2696,6 +2789,8 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
             game=args.game,
             conversion_cache_enabled=not getattr(args, "no_conversion_cache", False),
             conversion_jobs=getattr(args, "conversion_jobs", None),
+            reconvert_only=getattr(args, "reconvert_only", ()),
+            single_build=bool(getattr(args, "single_build", False)),
         )
         report = pipeline.plan_report(resolved)
         report_path = pipeline.reports_root / f"{resolved.profile.id}-plan.json"

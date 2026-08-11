@@ -15,6 +15,7 @@ from openbfme_importer.faction_object_cache import (
     FactionObjectCache,
     documents_fingerprint,
     durable_effective_assets_fingerprint,
+    durable_non_ini_assets_fingerprint,
     object_cache_key,
     policy_roots_fingerprint,
 )
@@ -96,6 +97,40 @@ def test_durable_assets_fp_uses_manifest_aggregate(tmp_path: Path) -> None:
     assert other_fp != missing_a
 
 
+def test_non_ini_assets_fp_ignores_ini_rows_but_keeps_visual_bytes(tmp_path: Path) -> None:
+    root = tmp_path / "assets"
+    meta = root / ".openbfme"
+    meta.mkdir(parents=True)
+
+    def write_manifest(ini_hash: str, model_hash: str) -> None:
+        (meta / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "files": [
+                        {
+                            "path": "data/ini/object/men.ini",
+                            "size": 10,
+                            "sha256": ini_hash,
+                        },
+                        {
+                            "path": "art/model.w3d",
+                            "size": 20,
+                            "sha256": model_hash,
+                        },
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    write_manifest("1" * 64, "2" * 64)
+    before = durable_non_ini_assets_fingerprint(root)
+    write_manifest("3" * 64, "2" * 64)
+    assert durable_non_ini_assets_fingerprint(root) == before
+    write_manifest("3" * 64, "4" * 64)
+    assert durable_non_ini_assets_fingerprint(root) != before
+
+
 def test_policy_roots_fingerprint_is_order_independent() -> None:
     a = policy_roots_fingerprint(
         spawned=("B", "A"), wall_templates=("W",), source_null_sets=()
@@ -158,8 +193,8 @@ def test_unexpected_convert_exception_becomes_gap_not_batch_abort(
         structure_patches[2],
         structure_patches[3],
         mock.patch(
-            "openbfme_importer.faction_import.durable_effective_assets_fingerprint",
-            return_value="manifest-agg:" + "a" * 64,
+                "openbfme_importer.faction_import.durable_non_ini_assets_fingerprint",
+                return_value="non-ini-manifest:" + "a" * 64,
         ),
         mock.patch(
             "openbfme_importer.faction_import.build_retail_visual_closure",
@@ -205,8 +240,8 @@ def test_conversion_cache_hit_skips_recompile(tmp_path: Path) -> None:
             structure_recipe,
         ),
         mock.patch(
-            "openbfme_importer.faction_import.durable_effective_assets_fingerprint",
-            return_value="manifest-agg:" + "a" * 64,
+                "openbfme_importer.faction_import.durable_non_ini_assets_fingerprint",
+                return_value="non-ini-manifest:" + "a" * 64,
         ),
     ):
         first = build_faction_conversion(
@@ -256,8 +291,8 @@ def test_parallel_convert_preserves_plan_order_and_aggregate(tmp_path: Path) -> 
         structure_patches[2],
         structure_patches[3],
         mock.patch(
-            "openbfme_importer.faction_import.durable_effective_assets_fingerprint",
-            return_value="manifest-agg:" + "a" * 64,
+                "openbfme_importer.faction_import.durable_non_ini_assets_fingerprint",
+                return_value="non-ini-manifest:" + "a" * 64,
         ),
     ):
         serial = build_faction_conversion(
@@ -300,8 +335,8 @@ def test_object_cache_disabled_without_state_root(tmp_path: Path, monkeypatch: p
         structure_patches[2],
         structure_patches[3],
         mock.patch(
-            "openbfme_importer.faction_import.durable_effective_assets_fingerprint",
-            return_value="manifest-agg:" + "a" * 64,
+                "openbfme_importer.faction_import.durable_non_ini_assets_fingerprint",
+                return_value="non-ini-manifest:" + "a" * 64,
         ),
     ):
         coverage = build_faction_conversion(
@@ -314,7 +349,9 @@ def test_object_cache_disabled_without_state_root(tmp_path: Path, monkeypatch: p
     assert coverage["summary"]["cacheHits"] == 0
 
 
-def test_graph_identity_change_invalidates_object_cache(tmp_path: Path) -> None:
+def test_whole_graph_identity_change_does_not_evict_unchanged_objects(
+    tmp_path: Path,
+) -> None:
     documents, graph = _fixture()
     unit_patches = _unit_conversion_patches()
     structure_patches = _structure_success_patches()
@@ -331,8 +368,8 @@ def test_graph_identity_change_invalidates_object_cache(tmp_path: Path) -> None:
             pack_recipe,
         ),
         mock.patch(
-            "openbfme_importer.faction_import.durable_effective_assets_fingerprint",
-            return_value="manifest-agg:" + "a" * 64,
+                "openbfme_importer.faction_import.durable_non_ini_assets_fingerprint",
+                return_value="non-ini-manifest:" + "a" * 64,
         ),
     ):
         first = build_faction_conversion(
@@ -355,8 +392,9 @@ def test_graph_identity_change_invalidates_object_cache(tmp_path: Path) -> None:
             convert_jobs=1,
         )
     assert first["summary"]["cacheHits"] == 0
-    # Same documents/catalog but different graph identity → no hits.
-    assert second["summary"]["cacheHits"] == 0
+    # The plan descriptor + source closure are unchanged, so a broad census
+    # aggregate change cannot evict every independent object.
+    assert second["summary"]["cacheHits"] == 3
 
 
 def test_shared_cache_env_routes_object_cache(
@@ -376,8 +414,8 @@ def test_shared_cache_env_routes_object_cache(
         structure_patches[2],
         structure_patches[3],
         mock.patch(
-            "openbfme_importer.faction_import.durable_effective_assets_fingerprint",
-            return_value="manifest-agg:" + "a" * 64,
+                "openbfme_importer.faction_import.durable_non_ini_assets_fingerprint",
+                return_value="non-ini-manifest:" + "a" * 64,
         ),
     ):
         build_faction_conversion(

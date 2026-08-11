@@ -19,7 +19,7 @@ from .util import read_json, write_json_atomic
 
 CACHE_SCHEMA = "openbfme.faction-object-cache"
 # Bump when key material or stored artifact envelope changes.
-CACHE_VERSION = 3
+CACHE_VERSION = 4
 # Artifacts that are large / re-derivable and must not bloat durable DDC.
 _CACHE_EXCLUDED_ARTIFACTS = frozenset({"visual-closure"})
 _LOCK = threading.Lock()
@@ -69,6 +69,7 @@ _COMPILER_SALT_MODULES = (
     "faction_import.py",
     "faction_policy.py",
     "faction_object_cache.py",
+    "incremental_rebuild.py",
 )
 
 
@@ -146,7 +147,7 @@ def _compiler_source_salt() -> str:
     return digest.hexdigest()
 
 
-_COMPILER_TOKEN_MEMO: str | None = None
+_COMPILER_TOKEN_MEMO: dict[str, str] = {}
 _COMPILER_TOKEN_LOCK = threading.Lock()
 
 
@@ -155,20 +156,28 @@ def clear_compiler_identity_token_memo() -> None:
 
     global _COMPILER_TOKEN_MEMO
     with _COMPILER_TOKEN_LOCK:
-        _COMPILER_TOKEN_MEMO = None
+        _COMPILER_TOKEN_MEMO = {}
 
 
-def compiler_identity_token() -> str:
+def compiler_identity_token(family: str | None = None) -> str:
     """Pin converter schemas + source bytes so code/schema bumps invalidate DDC.
 
     Memoized per process: hashing every compiler module on each faction convert
     was pure overhead once the salt is fixed for the process lifetime.
     """
 
-    global _COMPILER_TOKEN_MEMO
+    memo_key = (family or "<all>").casefold().strip()
     with _COMPILER_TOKEN_LOCK:
-        if _COMPILER_TOKEN_MEMO is not None:
-            return _COMPILER_TOKEN_MEMO
+        if memo_key in _COMPILER_TOKEN_MEMO:
+            return _COMPILER_TOKEN_MEMO[memo_key]
+
+    if family is not None:
+        from .incremental_rebuild import compiler_dependency_identity
+
+        token = str(compiler_dependency_identity(family)["sha256"])
+        with _COMPILER_TOKEN_LOCK:
+            _COMPILER_TOKEN_MEMO[memo_key] = token
+        return token
 
     # Local imports avoid circular import at module load.
     from .playable_structure_compiler import (
@@ -220,7 +229,7 @@ def compiler_identity_token() -> str:
     }
     token = hashlib.sha256(_canonical_bytes(payload)).hexdigest()
     with _COMPILER_TOKEN_LOCK:
-        _COMPILER_TOKEN_MEMO = token
+        _COMPILER_TOKEN_MEMO[memo_key] = token
     return token
 
 
@@ -249,6 +258,39 @@ def durable_effective_assets_fingerprint(effective_root: Path | str) -> str:
     except OSError:
         return _tree_inventory_fingerprint(root, "unreadable-manifest")
     return f"manifest-file:{digest}"
+
+
+def durable_non_ini_assets_fingerprint(effective_root: Path | str) -> str:
+    """Hash manifest rows outside INI so one INI edit stays document-scoped.
+
+    The converted object envelope also contains visual recipes, so dropping
+    effective-assets identity entirely would under-invalidate on a model or
+    texture edit.  A valid effective-assets manifest lets us separate those
+    bytes from source INIs.  Any malformed or missing inventory falls back to
+    the existing whole-tree fingerprint.
+    """
+
+    root = Path(effective_root).expanduser()
+    manifest_path = root / ".openbfme" / "manifest.json"
+    try:
+        manifest = read_json(manifest_path)
+        files = manifest["files"]
+        if not isinstance(files, list):
+            raise TypeError("manifest files is not a list")
+        rows: list[dict[str, object]] = []
+        for item in files:
+            if not isinstance(item, Mapping):
+                raise TypeError("manifest file row is not an object")
+            path = str(item["path"]).replace("\\", "/")
+            size = int(item["size"])
+            sha256 = str(item["sha256"]).casefold()
+            if len(sha256) != 64:
+                raise ValueError("manifest file hash is malformed")
+            if not path.casefold().endswith(".ini"):
+                rows.append({"path": path.casefold(), "size": size, "sha256": sha256})
+        return "non-ini-manifest:" + hashlib.sha256(_canonical_bytes(rows)).hexdigest()
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return "full-fallback:" + durable_effective_assets_fingerprint(root)
 
 
 def _tree_inventory_fingerprint(root: Path, reason: str) -> str:

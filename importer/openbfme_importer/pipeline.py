@@ -55,6 +55,11 @@ from .tools import (
     run_checked,
 )
 from .util import read_json, write_json_atomic
+from .incremental_rebuild import (
+    rebuild_execution_provenance,
+    reconvert_requested,
+    w3d_adapter_cache_identity,
+)
 from .version import __version__
 from .w3d_metadata import scan_w3d_metadata
 from .w3d_glb_validation import validate_w3d_glb_semantics
@@ -3302,6 +3307,8 @@ class ImportPipeline:
         conversion_cache_enabled: bool = True,
         conversion_jobs: int | None = None,
         source_override_root: Path | None = None,
+        reconvert_only: Sequence[str] = (),
+        single_build: bool = False,
     ) -> None:
         self.catalog = catalog
         self.state_root = ensure_external_to_repo(state_root, repo_root_from_module())
@@ -3376,7 +3383,16 @@ class ImportPipeline:
             raise ValueError("conversion_jobs must be at least 1")
         self.conversion_jobs = conversion_jobs or default_jobs
         self.conversion_cache_enabled = conversion_cache_enabled
-        self._conversion_cache_stats = {"hits": 0, "misses": 0, "populated": 0}
+        self.reconvert_only = tuple(str(pattern) for pattern in reconvert_only)
+        if any(not pattern.strip() for pattern in self.reconvert_only):
+            raise ValueError("reconvert-only patterns must not be empty")
+        self.single_build = bool(single_build)
+        self._conversion_cache_stats = {
+            "hits": 0,
+            "misses": 0,
+            "populated": 0,
+            "forced": 0,
+        }
         self._conversion_cache_lock = threading.Lock()
         self._conversion_key_locks: dict[str, threading.Lock] = {}
         self._w3d_batch_tools: dict[str, Any] | None = None
@@ -3420,6 +3436,8 @@ class ImportPipeline:
             dev_mode=self.dev_mode,
             conversion_cache_enabled=self.conversion_cache_enabled,
             conversion_jobs=self.conversion_jobs,
+            reconvert_only=list(self.reconvert_only),
+            single_build=self.single_build,
         )
 
     @property
@@ -4589,6 +4607,10 @@ class ImportPipeline:
             "tools": tools,
             "incomplete": incomplete,
             "entries": provenance_entries,
+            "incrementalRebuild": rebuild_execution_provenance(
+                reconvert_only=getattr(self, "reconvert_only", ()),
+                single_build=bool(getattr(self, "single_build", False)),
+            ),
         }
         provenance["bundle_files"] = _canonical_pack_inventory(
             staging,
@@ -7059,17 +7081,26 @@ class ImportPipeline:
                 copied.items(), key=lambda item: (item[0].casefold(), item[0])
             )
         }
+        force_reconvert = reconvert_requested(asset_id, self.reconvert_only)
+        adapter_bundle_sha256 = (
+            sha256_file(adapter)
+            + sha256_file(
+                repo_root_from_module()
+                / "importer"
+                / "blender"
+                / "w3d_multi_to_glb.py"
+            )
+        )
+        # An explicit scoped run is an operator-owned escape hatch: selected
+        # assets retain exact adapter identity and are forced cold; siblings
+        # use a stable scoped identity so an unrelated adapter edit does not
+        # evict the full corpus. Provenance records that this was partial.
+        adapter_cache_identity = w3d_adapter_cache_identity(
+            adapter_bundle_sha256, asset_id, self.reconvert_only
+        )
         cache_key = _w3d_conversion_cache_key(
             source_hashes=source_hashes,
-            adapter_sha256=(
-                sha256_file(adapter)
-                + sha256_file(
-                    repo_root_from_module()
-                    / "importer"
-                    / "blender"
-                    / "w3d_multi_to_glb.py"
-                )
-            ),
+            adapter_sha256=adapter_cache_identity,
             plugin_attestation_sha256=str(
                 self._w3d_batch_tools["plugin_attestation_sha256"]
             ),
@@ -7087,8 +7118,13 @@ class ImportPipeline:
             },
         )
         combined_log: str | None
-        with self._w3d_cache_lock(cache_key):
-            combined_log = self._copy_w3d_cache_hit(cache_key, target)
+        if force_reconvert:
+            with self._conversion_cache_lock:
+                self._conversion_cache_stats["forced"] += 1
+            combined_log = None
+        else:
+            with self._w3d_cache_lock(cache_key):
+                combined_log = self._copy_w3d_cache_hit(cache_key, target)
         return {
             "index": index,
             "asset_id": asset_id,
@@ -7116,6 +7152,7 @@ class ImportPipeline:
             "command": command,
             "job_root": job_root,
             "cache_hit": combined_log is not None,
+            "force_reconvert": force_reconvert,
             "combined_log": combined_log or "",
         }
 
@@ -7283,8 +7320,12 @@ class ImportPipeline:
         )
         with self._w3d_cache_lock(prepared["cache_key"]):
             # Re-check cache under lock in case a peer filled it.
-            combined_log = self._copy_w3d_cache_hit(
-                prepared["cache_key"], prepared["target"]
+            combined_log = (
+                None
+                if prepared.get("force_reconvert")
+                else self._copy_w3d_cache_hit(
+                    prepared["cache_key"], prepared["target"]
+                )
             )
             if combined_log is None:
                 result = run_checked(prepared["command"], env=isolated_environment)
