@@ -45,15 +45,36 @@ CURSORS_DIRECTORY = "data/cursors"
 
 # Only the cursors the game actually presents are carried.  Shipping the whole
 # 49-entry retail table would put roughly a megabyte of base64 into a document
-# nothing reads; every id here is wired on the Godot side.  The five names all
-# resolve to the same retail art (``SCCAttack``) - retail gives one sprite five
-# intents - so they cost one payload plus four aliases.
+# nothing reads; every id here is wired on the Godot side.
+#
+# The attack family (``attackobj`` and friends) all resolve to the same retail
+# art (``SCCAttack``) - retail gives one sprite five intents - so they cost one
+# payload plus four aliases.
+#
+# The move family was added for the playtest report "right-click move doesn't
+# use the bronze arrows from the game base".  Retail binds those in
+# ``data/ini/mouse.ini``:
+#
+#   MouseCursor Move           Image/Texture = SCCMove        (:64)
+#   MouseCursor AttackMove     Image/Texture = SCCAttMov      (:69)
+#   MouseCursor SetRallyPoint  Image/Texture = SCCRallyPnt    (:174)
+#   MouseCursor Waypoint       Image/Texture = SCCWaypoint    (:219)
+#   MouseCursor Normal/Arrow   Image/Texture = SCCPointer.cur (:36/:42)
+#
+# (line numbers from the pure RotWK 2.01 effective-assets tree).  Each is its
+# own sprite, so unlike the attack family these are real extra payloads.
 DEFAULT_CURSOR_NAMES: tuple[str, ...] = (
     "attackobj",
     "forceattackobj",
     "forceattackground",
     "target",
     "outrange",
+    "move",
+    "attackmove",
+    "setrallypoint",
+    "waypoint",
+    "normal",
+    "arrow",
 )
 
 # Resource-exhaustion bound on the emitted document, not a semantic limit.

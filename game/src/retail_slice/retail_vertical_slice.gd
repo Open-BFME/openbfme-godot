@@ -11,6 +11,7 @@ const BattalionScript = preload("res://src/retail_slice/retail_battalion.gd")
 const StructureScript = preload("res://src/retail_slice/retail_structure.gd")
 const OrderIndicatorScript = preload("res://src/retail_slice/retail_order_indicator.gd")
 const AttackTargetIndicatorScript = preload("res://src/retail_slice/retail_attack_target_indicator.gd")
+const RallyIndicatorScript = preload("res://src/retail_slice/retail_rally_indicator.gd")
 const AudioScript = preload("res://src/retail_slice/retail_slice_audio.gd")
 const MapDataScript = preload("res://src/retail_slice/retail_map_data.gd")
 const SelectionPick = preload("res://src/retail_slice/retail_selection_pick.gd")
@@ -176,6 +177,7 @@ var _arrow_art_diagnostic_keys: Dictionary = {}
 var structure_nodes: Dictionary = {}
 var order_indicators: Dictionary = {}
 var attack_target_indicator: RetailAttackTargetIndicator
+var rally_indicator: RetailRallyIndicator
 var audio_system: RetailSliceAudio
 var source_map_data: RetailMapData
 var selected_pack_root := ""
@@ -489,6 +491,11 @@ func _initialize_content_and_match() -> void:
 	attack_target_indicator.name = "AttackTargetIndicator"
 	add_child(attack_target_indicator)
 	attack_target_indicator.configure(hud.retail_action_texture("attack_move"))
+	# Rally banner for the selected producer (presentation only).
+	rally_indicator = RallyIndicatorScript.new()
+	rally_indicator.name = "RallyIndicator"
+	rally_indicator.configure(selected_pack_root)
+	add_child(rally_indicator)
 
 	var asset_factory = load("res://src/view/asset_factory.gd")
 	# A catalog row may legitimately declare no preview/art: the retail corpus
@@ -3761,6 +3768,32 @@ func _closest_battalion(point: Vector2, team: int) -> int:
 	return SelectionPick.closest_hit(point, _battalion_pick_candidates(simulation.living_ids(team)))
 
 
+func _sync_rally_indicator() -> void:
+	## Retail plants a flag on the rally point of the selected production
+	## building, so the player can see where its units will walk. Presentation
+	## only: the point itself is sim state (`rally` on the structure row, moved
+	## by set_structure_rally), so nothing here can affect the state signature.
+	if rally_indicator == null or simulation == null:
+		return
+	if selected_structure_id == 0:
+		rally_indicator.clear_rally()
+		return
+	var structure: Dictionary = simulation.structure(selected_structure_id)
+	# Only a building that actually TRAINS something has a meaningful rally
+	# point; a wall or a farm would just be clutter.
+	if (
+		structure.is_empty()
+		or int(structure.get("team", -1)) != local_team
+		or int(structure.get("health", 0)) <= 0
+		or float(structure.get("construction_progress", 1.0)) < 1.0
+		or Array(structure.get("production", [])).is_empty()
+	):
+		rally_indicator.clear_rally()
+		return
+	var rally := Vector2(structure.get("rally", structure.get("position", Vector2.ZERO)))
+	rally_indicator.show_rally(rally, _presentation_height(rally))
+
+
 func _selection_target_structure(structure_id: int) -> int:
 	## A castle is ONE command surface. CastleBehavior unpacks a fortress into a
 	## citadel plus wall/tower pieces, and those pieces carry no command set of
@@ -4038,6 +4071,7 @@ func _sync_presentation() -> void:
 				float(structure_upgrade_queue[0].get("progress", 0.0))
 			)
 	_sync_creep_lair_visuals()
+	_sync_rally_indicator()
 	if _profile_sync:
 		presentation_profile["structures_us"] = presentation_profile.get("structures_us", 0) + (Time.get_ticks_usec() - _profile_mark)
 		_profile_mark = Time.get_ticks_usec()
@@ -4716,6 +4750,19 @@ func _on_hero_recall_requested(hero_id: int) -> void:
 		return
 	selected_structure_id = 0
 	simulation.select_only(hero_id)
+	_sync_presentation()
+
+
+func _on_hero_focus_requested(hero_id: int) -> void:
+	## Retail: double-clicking a hero's portrait in the bottom row jumps the
+	## camera to him. Selection is handled by the single click that precedes it
+	## (_on_hero_recall_requested), so this only moves the view — but it selects
+	## defensively too, because a runner may drive the double click alone.
+	if simulation == null or not simulation.entities.has(hero_id):
+		return
+	selected_structure_id = 0
+	simulation.select_only(hero_id)
+	_center_camera_on(Vector2(simulation.entity(hero_id).get("position", camera_focus)))
 	_sync_presentation()
 
 
@@ -7375,6 +7422,7 @@ func _build_hud() -> void:
 	hud.cheat_level_up_requested.connect(_cheat_level_up_selected)
 	hud.construct_requested.connect(_arm_construction)
 	hud.hero_recall_requested.connect(_on_hero_recall_requested)
+	hud.hero_focus_requested.connect(_on_hero_focus_requested)
 	hud.expansion_requested.connect(_on_expansion_requested)
 	hud.music_volume_changed.connect(func(value: float) -> void:
 		if audio_system != null: audio_system.set_music_volume(value, true)

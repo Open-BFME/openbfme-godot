@@ -133,6 +133,9 @@ var radar_zoom := 1.0
 var radar_zoom_target := 1.0
 var zoom_response_seconds := 0.09
 var last_center_request := Vector2.ZERO
+## True while the left button is held on the radar: the camera follows the
+## cursor until release (retail drag-scrub).
+var scrubbing := false
 
 signal center_requested(world_position: Vector2)
 signal order_requested(world_position: Vector2)
@@ -229,8 +232,14 @@ func _process(delta: float) -> void:
 
 
 func _gui_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
+	if event is InputEventMouseButton:
 		var mouse := event as InputEventMouseButton
+		if mouse.button_index == MOUSE_BUTTON_LEFT and not mouse.pressed:
+			scrubbing = false
+			accept_event()
+			return
+		if not mouse.pressed:
+			return
 		if mouse.button_index == MOUSE_BUTTON_WHEEL_UP:
 			nudge_zoom(1)
 			accept_event()
@@ -238,6 +247,10 @@ func _gui_input(event: InputEvent) -> void:
 			nudge_zoom(-1)
 			accept_event()
 		elif mouse.button_index == MOUSE_BUTTON_LEFT:
+			# Retail: press jumps the camera there, and HOLDING drags it — the
+			# radar scrubs continuously under the cursor until the button is
+			# released.
+			scrubbing = true
 			last_center_request = _canvas_to_world(mouse.position, _arena())
 			center_requested.emit(last_center_request)
 			accept_event()
@@ -246,6 +259,13 @@ func _gui_input(event: InputEvent) -> void:
 			# world point without moving the camera.
 			order_requested.emit(_canvas_to_world(mouse.position, _arena()))
 			accept_event()
+	elif event is InputEventMouseMotion and scrubbing:
+		# Godot keeps this control as the GUI mouse focus from press to release,
+		# so the drag keeps scrubbing even when the cursor leaves the bezel;
+		# _canvas_to_world clamps to the map edge, which is the retail feel.
+		last_center_request = _canvas_to_world((event as InputEventMouseMotion).position, _arena())
+		center_requested.emit(last_center_request)
+		accept_event()
 
 
 func nudge_zoom(direction: int) -> void:

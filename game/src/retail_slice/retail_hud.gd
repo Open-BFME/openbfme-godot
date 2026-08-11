@@ -40,6 +40,8 @@ signal powers_reset_requested
 signal powers_closed
 signal construct_requested(structure_kind: String)
 signal hero_recall_requested(hero_id: int)
+## Double-click on a hero portrait: select him AND put the camera on him.
+signal hero_focus_requested(hero_id: int)
 signal expansion_requested(expansion_kind: String)
 signal battalion_upgrade_requested(upgrade_id: String)
 signal music_volume_changed(value: float)
@@ -4070,6 +4072,14 @@ func sync_hero_bar(heroes: Array) -> void:
 			health.add_theme_stylebox_override("fill", fill)
 			button.add_child(health)
 			button.pressed.connect(func() -> void: hero_recall_requested.emit(hero_id))
+			# Retail: a single click on a hero portrait selects that hero, a
+			# DOUBLE click jumps the camera to him. Button.pressed cannot tell
+			# the two apart, so the double click is read off the raw event; the
+			# single-click select still fires underneath it, which is what
+			# retail does too (you end up selected AND looking at him).
+			button.gui_input.connect(
+				func(event: InputEvent) -> void: _on_hero_button_gui_input(event, hero_id)
+			)
 			hero_bar.add_child(button)
 			_hero_bar_buttons[hero_id] = button
 		var portrait_rect := button.get_node("Portrait") as TextureRect
@@ -4091,6 +4101,17 @@ func sync_hero_bar(heroes: Array) -> void:
 			(_hero_bar_buttons[existing_id] as Button).queue_free()
 			_hero_bar_buttons.erase(existing_id)
 	hero_bar.visible = not heroes.is_empty()
+
+
+func _on_hero_button_gui_input(event: InputEvent, hero_id: int) -> void:
+	## Double-click on a hero portrait = "show me him". Kept as its own named
+	## method (rather than an inline lambda) so a runner can drive it directly.
+	var mouse := event as InputEventMouseButton
+	if mouse == null or mouse.button_index != MOUSE_BUTTON_LEFT:
+		return
+	if not mouse.pressed or not mouse.double_click:
+		return
+	hero_focus_requested.emit(hero_id)
 
 
 func _build_radial_layer() -> void:

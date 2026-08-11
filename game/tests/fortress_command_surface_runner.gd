@@ -271,7 +271,83 @@ func _run() -> void:
 	await _check_fortress_radial_pages(slice, sim, hud, fortress)
 	# --- Section 8: a fortress the PLAYER builds ------------------------------
 	await _check_constructed_fortress_parity(slice, sim, hud, fortress)
+	# --- Section 9: hero portrait double-click centres the camera -------------
+	_check_hero_portrait_double_click_centres_the_camera(slice, sim, hud)
 	_finish()
+
+
+func _check_hero_portrait_double_click_centres_the_camera(slice, sim, hud) -> void:
+	## Owner playtest bug C: "When I double-click a hero from the hero menu it
+	## needs to center the camera on them." Single click selects (retail), the
+	## double click additionally jumps the view. Driven through the HUD's real
+	## portrait input handler so the wiring — not a reimplementation — is gated.
+	if hud == null or not hud.has_method("_on_hero_button_gui_input"):
+		_check("%s_hero_bar_has_a_double_click_path" % _faction, false, "RetailHud has no portrait input handler")
+		return
+	# The bar is built from living team-0 entities whose category is "hero"
+	# (_sync_hero_bar). If this fixture fields none, any living player entity
+	# still exercises the same portrait -> camera wiring, so the gate degrades
+	# rather than vanishing; the subject is reported either way.
+	var hero_id := 0
+	var subject := "hero"
+	for id in sim.entity_ids():
+		var row: Dictionary = sim.entity(id)
+		if int(row.get("team", -1)) != 0 or int(row.get("health", 0)) <= 0:
+			continue
+		if String(row.get("category", "")) == "hero":
+			hero_id = id
+			subject = "hero %d" % id
+			break
+		if hero_id == 0:
+			hero_id = id
+			subject = "non-hero entity %d" % id
+	if not _check(
+		"%s_hero_bar_has_a_subject_to_double_click" % _faction,
+		hero_id != 0,
+		"team 0 fields no living entity at all"
+	):
+		return
+	print("HERO_FOCUS subject=%s id=%d" % [subject, hero_id])
+
+	# Park the camera somewhere the hero is NOT, so a no-op cannot pass.
+	var hero_at := Vector2(sim.entity(hero_id).get("position", Vector2.ZERO))
+	slice._center_camera_on(hero_at + Vector2(28.0, 22.0))
+	var parked := Vector2(slice.camera_focus)
+	if not _check(
+		"%s_camera_can_be_parked_away_from_the_hero" % _faction,
+		parked.distance_to(hero_at) > 1.0,
+		"camera clamped onto the hero at %s, so the jump is unobservable" % str(parked)
+	):
+		return
+
+	# A SINGLE click must select without moving the view.
+	var single := InputEventMouseButton.new()
+	single.button_index = MOUSE_BUTTON_LEFT
+	single.pressed = true
+	hud._on_hero_button_gui_input(single, hero_id)
+	_check(
+		"%s_hero_portrait_single_click_does_not_move_the_camera" % _faction,
+		Vector2(slice.camera_focus).is_equal_approx(parked),
+		"a single click moved the camera to %s" % str(slice.camera_focus)
+	)
+
+	# The DOUBLE click jumps to him.
+	var double := InputEventMouseButton.new()
+	double.button_index = MOUSE_BUTTON_LEFT
+	double.pressed = true
+	double.double_click = true
+	hud._on_hero_button_gui_input(double, hero_id)
+	var focus := Vector2(slice.camera_focus)
+	_check(
+		"%s_hero_portrait_double_click_centres_the_camera" % _faction,
+		focus.distance_to(hero_at) < parked.distance_to(hero_at) and focus.distance_to(hero_at) <= 1.0,
+		"hero at %s, camera went from %s to %s" % [str(hero_at), str(parked), str(focus)]
+	)
+	_check(
+		"%s_hero_portrait_double_click_also_selects_him" % _faction,
+		sim.selected_ids.has(hero_id),
+		"selection is %s" % str(sim.selected_ids)
+	)
 
 
 func _check_constructed_fortress_parity(slice, sim, hud, seed_fortress: int) -> void:
