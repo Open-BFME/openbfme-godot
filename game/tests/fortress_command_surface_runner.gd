@@ -94,6 +94,21 @@ const PAGE_SELECTOR_EXPECTATIONS := {
 	},
 }
 
+## The nine images consumed by Mordor's two page selectors, six fortress
+## improvements, and back button. These are retail's ButtonImage ids (including
+## the authored Gorgonoth spelling), not runtime-invented aliases.
+const MORDOR_FORTRESS_IMAGE_IDS: Array[String] = [
+	"UCCommon_UpgradeStructureNew",
+	"UCCommon_EvilHeroes",
+	"BMFortress_DoomPyres",
+	"BMFortress_LavaMoat",
+	"BMOrcPit_FlamingArrows",
+	"BMFortress_MagmaCauldrons",
+	"BMFortress_MorgulSorcery",
+	"BMFortress_GorgonothSpire",
+	"UCCommon_BackArrow",
+]
+
 ## Localized fortress-improvement labels, transcribed from the 2.01 string table
 ## (lang/englishpatch201.big -> data/lotr.str). The runtime must present THESE,
 ## not a humanized copy of the upgrade id.
@@ -153,6 +168,7 @@ func _initialize() -> void:
 func _run() -> void:
 	_check_castle_upgrade_surface_shapes()
 	_check_castle_upgrade_purchase_path()
+	_check_mordor_fortress_interface_art()
 	if not FACTION_EXPECTATIONS.has(_faction):
 		print("RESULT fortress_surface faction=%s SKIPPED (no transcribed retail expectation)" % _faction)
 		return _finish()
@@ -256,6 +272,24 @@ func _run() -> void:
 	_finish()
 
 
+func _check_mordor_fortress_interface_art() -> void:
+	var content_db = root.get_node_or_null("ContentDB")
+	var failures: Array[String] = []
+	if content_db == null:
+		failures.append("ContentDB unavailable")
+	else:
+		for image_id in MORDOR_FORTRESS_IMAGE_IDS:
+			var row: Dictionary = content_db.get_retail_ui_image(image_id)
+			var resolved := String(content_db.resolve_retail_ui_image_path(image_id))
+			if String(row.get("_origin", "")) != "interface-art" or resolved == "" or not FileAccess.file_exists(resolved):
+				failures.append("%s origin=%s path=%s" % [image_id, String(row.get("_origin", "")), resolved])
+	_check(
+		"mordor_all_nine_fortress_image_ids_resolve_via_interface_art",
+		failures.is_empty(),
+		str(failures)
+	)
+
+
 func _check_fortress_radial_pages(slice, sim, hud, fortress: int) -> void:
 	## Retail's fortress command wheel is three pages deep (see the header
 	## transcription). Ours must offer the same doors, present the improvement
@@ -330,6 +364,7 @@ func _check_fortress_radial_pages(slice, sim, hud, fortress: int) -> void:
 	# --- Section 5: the improvement page, with retail label/icon/cost ---------
 	if not offered_upgrades.is_empty():
 		var upgrade_entries := await _radial_entries_for_page(hud, RADIAL_PAGE_UPGRADES)
+		_check_radial_is_in_the_palantir_wheel(hud, RADIAL_PAGE_UPGRADES)
 		var upgrade_by_id: Dictionary = {}
 		var has_back := false
 		for entry_value in upgrade_entries:
@@ -384,6 +419,7 @@ func _check_fortress_radial_pages(slice, sim, hud, fortress: int) -> void:
 
 	# --- Section 6: the hero page carries the created hero --------------------
 	var hero_entries := await _radial_entries_for_page(hud, RADIAL_PAGE_HEROES)
+	_check_radial_is_in_the_palantir_wheel(hud, RADIAL_PAGE_HEROES)
 	var hero_ids: Dictionary = {}
 	var hero_back := false
 	for entry_value in hero_entries:
@@ -440,12 +476,28 @@ func _check_radial_is_in_the_palantir_wheel(hud, page: String) -> void:
 	var panel := hud.command_panel as Control
 	var outside: Array[String] = []
 	var blank: Array[String] = []
+	var overlaps: Array[String] = []
+	var radial_overlaps: Array[String] = []
 	if panel != null:
 		var panel_rect := panel.get_global_rect()
+		var visible_socket_buttons: Array[Button] = []
+		_collect_visible_buttons(hud.command_panel, visible_socket_buttons)
 		for index in hud._radial_buttons.size():
 			var button := hud._radial_buttons[index] as Button
 			if not panel_rect.encloses(button.get_global_rect()):
 				outside.append("%s:%s" % [button.name, str(button.get_global_rect())])
+			for socket_button in visible_socket_buttons:
+				if button.get_global_rect().intersects(socket_button.get_global_rect()):
+					overlaps.append("%s %s intersects %s %s" % [
+						button.name, str(button.get_global_rect()),
+						socket_button.name, str(socket_button.get_global_rect())
+					])
+			for other_index in range(index + 1, hud._radial_buttons.size()):
+				var other := hud._radial_buttons[other_index] as Button
+				if button.get_global_rect().intersects(other.get_global_rect()):
+					radial_overlaps.append("%s %s intersects %s %s" % [
+						button.name, str(button.get_global_rect()), other.name, str(other.get_global_rect())
+					])
 			var entry: Dictionary = hud._radial_entries[index]
 			if entry.get("icon") == null and String(entry.get("label", "")).strip_edges() == "":
 				blank.append(button.name)
@@ -459,6 +511,45 @@ func _check_radial_is_in_the_palantir_wheel(hud, page: String) -> void:
 		blank.is_empty(),
 		"page=%s blank=%s" % [page, str(blank)]
 	)
+	_check(
+		"%s_radial_buttons_do_not_intersect_visible_socket_buttons" % _faction,
+		overlaps.is_empty(),
+		"page=%s overlaps=%s" % [page, str(overlaps)]
+	)
+	_check(
+		"%s_radial_buttons_do_not_self_intersect" % _faction,
+		radial_overlaps.is_empty(),
+		"page=%s overlaps=%s" % [page, str(radial_overlaps)]
+	)
+	var visibility_before: Array[bool] = []
+	for child in hud.command_socket_layer.get_children():
+		if child is Button:
+			visibility_before.append((child as Button).visible)
+	var transition_count := int(hud._radial_socket_visibility_transitions)
+	hud.sync_radial_commands(Vector2.ZERO, hud._radial_entries)
+	hud.sync_radial_commands(Vector2.ZERO, hud._radial_entries)
+	var visibility_after: Array[bool] = []
+	for child in hud.command_socket_layer.get_children():
+		if child is Button:
+			visibility_after.append((child as Button).visible)
+	_check(
+		"%s_radial_socket_visibility_is_stable_across_frame_refreshes" % _faction,
+		visibility_before == visibility_after
+			and transition_count == int(hud._radial_socket_visibility_transitions),
+		"page=%s before=%s after=%s transitions=%d->%d" % [
+			page, str(visibility_before), str(visibility_after), transition_count,
+			int(hud._radial_socket_visibility_transitions)
+		]
+	)
+
+
+func _collect_visible_buttons(node: Node, into: Array[Button]) -> void:
+	if node == null:
+		return
+	if node is Button and (node as Button).is_visible_in_tree():
+		into.append(node as Button)
+	for child in node.get_children():
+		_collect_visible_buttons(child, into)
 
 
 func _seed_created_hero() -> String:

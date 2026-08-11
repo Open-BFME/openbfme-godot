@@ -503,6 +503,8 @@ var _radial_layer: Control
 var _radial_buttons: Array[Button] = []
 var _radial_fingerprint := "<unset>"
 var _radial_entries: Array = []
+var _radial_socket_surface_active := false
+var _radial_socket_visibility_transitions := 0
 ## Which page of a PAGED command set (the fortress wheel) is showing.
 ##
 ## RETAIL IS PAGED, and it is one command set, not several: the fortress's
@@ -1276,7 +1278,7 @@ func set_production_state(
 						button.text = String(route.get("fallback_label", ""))
 						button.tooltip_text = String(route.get("fallback_tooltip", ""))
 					break
-		button.visible = supported
+		button.visible = supported and not _radial_socket_surface_active
 		button.disabled = not enabled or not supported or locked_units.has(unit_id)
 		button.set_meta("producer_queue_count", maxi(0, queue_count))
 		if _retail_train_labels.has(unit_id) and not private_parity_mode_active:
@@ -1501,7 +1503,7 @@ func _update_doc_upgrade_buttons(commands: Array, completed_upgrades: Array, upg
 		offered[upgrade_id] = command
 	for upgrade_id_value in _doc_upgrade_buttons.keys():
 		var existing := _doc_upgrade_buttons[upgrade_id_value] as Button
-		existing.visible = offered.has(upgrade_id_value)
+		existing.visible = offered.has(upgrade_id_value) and not _radial_socket_surface_active
 		if offered.has(upgrade_id_value):
 			var command: Dictionary = offered[upgrade_id_value]
 			existing.disabled = not upgrade_queue.is_empty()
@@ -1535,6 +1537,7 @@ func _update_doc_upgrade_buttons(commands: Array, completed_upgrades: Array, upg
 			_style_button(button)
 		button.pressed.connect(func() -> void: structure_upgrade_requested.emit(String(upgrade_id_value)))
 		_place_command_button(button, clampi(slot - 1, 0, RETAIL_COMMAND_SLOT_SOURCE.size() - 1))
+		button.visible = not _radial_socket_surface_active
 		_doc_upgrade_buttons[upgrade_id_value] = button
 		_rebind_order_action_button(
 			button,
@@ -4172,20 +4175,14 @@ func sync_radial_commands(_anchor: Vector2, entries: Array) -> void:
 	# still synchronized by the selected world structure, but its buttons belong
 	# to this fixed HUD wheel, not to a second ring floating over the building.
 	# This also keeps the authored icons legible while the camera moves.
-	var wheel_center := Vector2.ZERO
-	if command_panel != null:
-		wheel_center = Vector2(RETAIL_DISH_CENTER.x, command_panel.position.y + RETAIL_DISH_CENTER.y)
-	var radius := minf(104.0, RETAIL_DISH_RADIUS)
+	_set_radial_socket_surface_active(count > 0)
 	for index in count:
 		var button := _radial_buttons[index]
 		var entry: Dictionary = entries[index]
 		button.visible = true
 		button.disabled = not bool(entry.get("enabled", false))
 		button.modulate.a = 1.0 if bool(entry.get("enabled", false)) else 0.45
-		var angle := -PI * 0.5
-		if count > 1:
-			angle += TAU * float(index) / float(count)
-		button.position = wheel_center + Vector2(cos(angle), sin(angle)) * radius - button.size * 0.5
+		button.position = _radial_button_position(index, count, button.size)
 		# Live training dial + countdown on the radial menu's training icons
 		# (owner: the queue-chip CCW sweep, everywhere a unit trains). Updated
 		# here in the per-frame layout pass so the buttons are not rebuilt
@@ -4201,13 +4198,63 @@ func sync_radial_commands(_anchor: Vector2, entries: Array) -> void:
 			if stale_countdown != null:
 				stale_countdown.visible = false
 	_radial_layer.visible = count > 0
-	_set_empty_command_sockets_visible(count == 0)
 
 
 func hide_radial_commands() -> void:
 	if _radial_layer != null:
 		_radial_layer.visible = false
-	_set_empty_command_sockets_visible(true)
+	_set_radial_socket_surface_active(false)
+
+
+func _radial_button_position(index: int, count: int, button_size: Vector2) -> Vector2:
+	if command_panel == null:
+		return Vector2.ZERO
+	# The first six entries occupy the exact APT-authored palantir sockets.
+	if count <= RETAIL_COMMAND_SLOT_SOURCE.size():
+		return command_panel.position + RETAIL_COMMAND_SLOT_SOURCE[index]
+	# Longer authored ranges continue the same open socket arc. Radius restores
+	# the old count-scaled property and angular extent grows only as far as needed
+	# for 64px buttons, never an invented full-360 ring.
+	var panel_dish_center := RETAIL_DISH_CENTER - Vector2(command_panel.position.x, 0.0)
+	var wheel_center := command_panel.position + panel_dish_center
+	var first_center := RETAIL_COMMAND_SLOT_SOURCE[0] + RETAIL_COMMAND_SLOT_SIZE * 0.5
+	var last_center := RETAIL_COMMAND_SLOT_SOURCE[-1] + RETAIL_COMMAND_SLOT_SIZE * 0.5
+	var first_angle := (first_center - panel_dish_center).angle()
+	var last_angle := (last_center - panel_dish_center).angle()
+	while last_angle <= first_angle:
+		last_angle += TAU
+	# Seven entries sit at the oracle arc's measured outer radius (131px).
+	# Larger ranges keep growing instead of regressing to one fixed radius.
+	var radius := clampf(131.0 + 8.0 * float(count - 7), 117.0, 168.0)
+	# Rectangles collide on the diagonal even when their centres are one width
+	# apart. The sqrt(2) chord makes at least one screen axis clear by 2px.
+	var min_chord := sqrt(2.0) * (maxf(button_size.x, button_size.y) + 2.0)
+	var min_step := 2.0 * asin(clampf(min_chord / (2.0 * radius), 0.0, 1.0))
+	var authored_sweep := last_angle - first_angle
+	var sweep := minf(TAU - min_step, maxf(authored_sweep, min_step * float(count - 1)))
+	var midpoint := (first_angle + last_angle) * 0.5
+	var angle := midpoint - sweep * 0.5 + sweep * float(index) / float(count - 1)
+	var position := wheel_center + Vector2(cos(angle), sin(angle)) * radius - button_size * 0.5
+	# The bottom authored socket is flush with the 360px dock edge. Expanded
+	# ranges may reach that edge but never cross it and clip off-screen.
+	position.x = clampf(position.x, command_panel.position.x, command_panel.position.x + command_panel.size.x - button_size.x)
+	position.y = clampf(position.y, command_panel.position.y, command_panel.position.y + command_panel.size.y - button_size.y)
+	return position
+
+
+func _set_radial_socket_surface_active(active: bool) -> void:
+	# Transition-only ownership avoids the old per-frame show/hide flicker that
+	# invalidated hover and in-flight clicks. set_production_state also honors
+	# this state, so it cannot re-show a socket before this method runs.
+	if _radial_socket_surface_active == active:
+		return
+	_radial_socket_surface_active = active
+	_radial_socket_visibility_transitions += 1
+	if active and command_socket_layer != null:
+		for child in command_socket_layer.get_children():
+			if child is Button:
+				(child as Button).visible = false
+	_set_empty_command_sockets_visible(not active)
 
 
 func _set_empty_command_sockets_visible(value: bool) -> void:

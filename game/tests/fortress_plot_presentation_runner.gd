@@ -312,24 +312,41 @@ func _test_damage_or_selection_health_bar_visibility(structure_node, entity: Dic
 
 
 func _test_health_bar_geometry_is_footprint_bounded_and_billboarded() -> void:
-	var oversized: Array[String] = []
+	var footprint_mismatches: Array[String] = []
+	var roof_mismatches: Array[String] = []
 	var non_billboarded: Array[String] = []
 	for structure_value in _slice.structure_nodes.values():
 		var structure = structure_value
 		if structure == null or not structure.draws_health_bar():
 			continue
-		var back := structure.get_node_or_null("HealthBack") as MeshInstance3D
-		if back == null or not (back.mesh is BoxMesh):
-			oversized.append("%s:no-box" % structure.name)
+		var back := structure.get_node_or_null("HealthBack") as Sprite3D
+		if back == null:
+			footprint_mismatches.append("%s:no-fixed-pixel-sprite" % structure.name)
 			continue
-		var width := (back.mesh as BoxMesh).size.x
-		if width > float(structure.pick_radius) * 2.0 + 0.001:
-			oversized.append("%s:width=%.3f footprint=%.3f" % [structure.name, width, float(structure.pick_radius) * 2.0])
-		var material := back.material_override as BaseMaterial3D
-		if material == null or material.billboard_mode != BaseMaterial3D.BILLBOARD_ENABLED:
+		var width := float(structure._health_bar_width)
+		var footprint_width := float(structure.pick_radius) * 2.0
+		if absf(width - footprint_width) > 0.02:
+			footprint_mismatches.append("%s:width=%.3f footprint=%.3f source=%s" % [
+				structure.name, width, footprint_width, String(structure.selection_radius_source)
+			])
+		var intact_body := structure._active_body as Node3D
+		if intact_body != null:
+			# Production records the transformed intact visual AABB top directly;
+			# the contract target height is not the rendered top when source-unit
+			# scale is authoritative in the selected pack.
+			var roof_y := float(structure._visual_top_y)
+			var bar_top := back.position.y
+			if bar_top < roof_y or bar_top - roof_y > 0.20:
+				roof_mismatches.append("%s:roof=%.3f bar_top=%.3f gap=%.3f" % [
+					structure.name, roof_y, bar_top, bar_top - roof_y
+				])
+		else:
+			roof_mismatches.append("%s:no-active-body" % structure.name)
+		if back.billboard != BaseMaterial3D.BILLBOARD_ENABLED or not back.fixed_size:
 			non_billboarded.append(structure.name)
-	_check("health_bars_are_bounded_by_each_structure_footprint", oversized.is_empty(), str(oversized))
-	_check("health_bars_are_screen_facing_billboards", non_billboarded.is_empty(), str(non_billboarded))
+	_check("health_bars_match_each_structure_footprint", footprint_mismatches.is_empty(), str(footprint_mismatches))
+	_check("health_bar_top_hugs_measured_visual_roof", roof_mismatches.is_empty(), str(roof_mismatches))
+	_check("health_bars_are_fixed_pixel_screen_facing_billboards", non_billboarded.is_empty(), str(non_billboarded))
 
 
 func _check(name: String, condition: bool, detail: String = "") -> void:

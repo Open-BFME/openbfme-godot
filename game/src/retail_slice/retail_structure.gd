@@ -125,10 +125,10 @@ var _loaded_visuals: Dictionary = {}
 var _fixture_mode := false
 var _target_height := DEFAULT_TARGET_HEIGHT
 var _selection_ring: MeshInstance3D
-var _health_back: MeshInstance3D
-var _health_fill: MeshInstance3D
-var _build_back: MeshInstance3D
-var _build_fill: MeshInstance3D
+var _health_back: Sprite3D
+var _health_fill: Sprite3D
+var _build_back: Sprite3D
+var _build_fill: Sprite3D
 var _visual_root: Node3D
 var _model_host: Node3D
 var _active_body: Node3D
@@ -140,6 +140,10 @@ var _source_unit_scale := 0.0
 var _pending_route_phase := ""
 var _bounded_phase_paths: Dictionary = {}
 var _health_bar_width := 3.6
+var _visual_top_y := DEFAULT_TARGET_HEIGHT
+const HEALTH_BAR_SCREEN_WIDTH_PX := 64
+const HEALTH_BAR_SCREEN_HEIGHT_PX := 5
+const HEALTH_BAR_ROOF_GAP := 0.12
 
 
 func _enter_tree() -> void:
@@ -243,7 +247,7 @@ func sync_state(entity: Dictionary) -> void:
 	if _health_fill != null:
 		_health_fill.visible = show_health_bar
 		_health_fill.scale.x = maxf(0.001, health_ratio)
-		_health_fill.position.x = (health_ratio - 1.0) * _health_bar_width * 0.5
+		_health_fill.offset.x = (health_ratio - 1.0) * HEALTH_BAR_SCREEN_WIDTH_PX * 0.5
 	if _health_back != null:
 		_health_back.visible = show_health_bar
 	var under_construction := contract_error == "" and construction_ratio < 1.0 and health > 0
@@ -252,7 +256,7 @@ func sync_state(entity: Dictionary) -> void:
 	if _build_fill != null:
 		_build_fill.visible = under_construction
 		_build_fill.scale.x = maxf(0.001, construction_ratio)
-		_build_fill.position.x = (construction_ratio - 1.0) * _health_bar_width * 0.5
+		_build_fill.offset.x = (construction_ratio - 1.0) * HEALTH_BAR_SCREEN_WIDTH_PX * 0.5
 	_update_lifecycle_metadata()
 
 
@@ -1204,14 +1208,20 @@ func _compiled_geometry_source_radius() -> float:
 
 
 func _apply_visual_bounds_selection_radius(bounds: AABB, uniform_scale: float) -> void:
+	## The intact body's measured top owns marker placement even when compiled
+	## retail Geometry owns picking. Constants made a billboard jump far above
+	## some rooflines and bury itself in others.
+	_visual_top_y = (bounds.position.y + bounds.size.y) * uniform_scale + shared_vertical_offset
 	## Fallback for packs without compiled geometry: measure the intact body.
 	if selection_radius_source == "compiled-retail-geometry":
+		_sync_health_bar_geometry()
 		return
 	var measured := SelectionPick.world_radius_from_visual_bounds(bounds, uniform_scale)
 	if measured <= 0.0:
 		return
 	pick_radius = measured
 	selection_radius_source = "intact-body-bounds"
+	_sync_health_bar_geometry()
 
 
 func _build_visual_root() -> void:
@@ -1404,7 +1414,7 @@ func set_level(value: int, upgrading: bool = false, progress: float = 0.0) -> vo
 			_build_back.visible = true
 			_build_fill.visible = true
 			_build_fill.scale.x = maxf(0.001, upgrade_progress)
-			_build_fill.position.x = (upgrade_progress - 1.0) * _health_bar_width * 0.5
+			_build_fill.offset.x = (upgrade_progress - 1.0) * HEALTH_BAR_SCREEN_WIDTH_PX * 0.5
 
 
 func _level_targets_for(value: int) -> Dictionary:
@@ -2249,42 +2259,60 @@ func _build_markers() -> void:
 	_selection_ring.visible = false
 	add_child(_selection_ring)
 
-	_health_back = MeshInstance3D.new()
+	_health_back = Sprite3D.new()
 	_health_back.name = "HealthBack"
-	var back_mesh := BoxMesh.new()
-	# Each castle piece owns its own footprint. A flat 3.6-world-unit width made
-	# small towers wear a fortress-sized strip; cap that legacy width by the
-	# projected retail footprint that also owns picking and the selection ring.
-	_health_bar_width = minf(3.6, maxf(0.35, pick_radius * 2.0))
-	back_mesh.size = Vector3(_health_bar_width, 0.16, 0.13)
-	_health_back.mesh = back_mesh
-	# Hug the rooflines: the old 7.4/4.8 anchors floated the bars in the sky.
-	_health_back.position = Vector3(0, 5.0 if structure_kind == "fortress" else 3.1, 0)
-	_health_back.material_override = _emissive(Color("131a1e"), true)
+	_configure_fixed_pixel_sprite(_health_back, _solid_texture(Color("131a1e"), HEALTH_BAR_SCREEN_WIDTH_PX + 4, HEALTH_BAR_SCREEN_HEIGHT_PX + 2), 8)
 	_health_back.visible = false
 	add_child(_health_back)
-	_health_fill = MeshInstance3D.new()
+	_health_fill = Sprite3D.new()
 	_health_fill.name = "HealthFill"
-	_health_fill.mesh = back_mesh.duplicate()
-	_health_fill.position = _health_back.position + Vector3(0, 0.02, -0.01)
-	_health_fill.material_override = _emissive(Color("5bd765") if team == 0 else Color("df5a4f"), true)
+	_configure_fixed_pixel_sprite(_health_fill, _solid_texture(Color("5bd765") if team == 0 else Color("df5a4f"), HEALTH_BAR_SCREEN_WIDTH_PX, HEALTH_BAR_SCREEN_HEIGHT_PX), 9)
 	_health_fill.visible = false
 	add_child(_health_fill)
 	# Construction progress rides just under the health bar in retail gold.
-	_build_back = MeshInstance3D.new()
+	_build_back = Sprite3D.new()
 	_build_back.name = "BuildBack"
-	_build_back.mesh = back_mesh.duplicate()
-	_build_back.position = _health_back.position + Vector3(0, -0.28, 0)
-	_build_back.material_override = _emissive(Color("1e1710"), true)
+	_configure_fixed_pixel_sprite(_build_back, _solid_texture(Color("1e1710"), HEALTH_BAR_SCREEN_WIDTH_PX + 4, HEALTH_BAR_SCREEN_HEIGHT_PX + 2), 8)
 	_build_back.visible = false
 	add_child(_build_back)
-	_build_fill = MeshInstance3D.new()
+	_build_fill = Sprite3D.new()
 	_build_fill.name = "BuildFill"
-	_build_fill.mesh = back_mesh.duplicate()
-	_build_fill.position = _build_back.position + Vector3(0, 0.02, -0.01)
-	_build_fill.material_override = _emissive(Color("e0b64f"), true)
+	_configure_fixed_pixel_sprite(_build_fill, _solid_texture(Color("e0b64f"), HEALTH_BAR_SCREEN_WIDTH_PX, HEALTH_BAR_SCREEN_HEIGHT_PX), 9)
 	_build_fill.visible = false
 	add_child(_build_fill)
+	_sync_health_bar_geometry()
+
+
+func _configure_fixed_pixel_sprite(sprite: Sprite3D, texture: Texture2D, priority: int) -> void:
+	sprite.texture = texture
+	sprite.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	sprite.fixed_size = true
+	# At the canonical 1080p retail capture viewport this is a 64px command-
+	# scale strip. fixed_size keeps that apparent size stable as the camera zooms.
+	sprite.pixel_size = 0.00085
+	sprite.no_depth_test = true
+	sprite.shaded = false
+	sprite.render_priority = priority
+
+
+func _solid_texture(color: Color, width: int, height: int) -> ImageTexture:
+	var image := Image.create(width, height, false, Image.FORMAT_RGBA8)
+	image.fill(color)
+	return ImageTexture.create_from_image(image)
+
+
+func _sync_health_bar_geometry() -> void:
+	# This is intentionally an exact positive relationship, not merely a cap.
+	# A later intact-body measurement must update the value markers were seeded
+	# with; the previous min/max expression silently stayed at the legacy 3.6.
+	_health_bar_width = maxf(0.001, pick_radius * 2.0)
+	if _health_back == null:
+		return
+	var anchor_y := _visual_top_y + HEALTH_BAR_ROOF_GAP
+	_health_back.position = Vector3(0, anchor_y, 0)
+	_health_fill.position = Vector3(0, anchor_y, -0.01)
+	_build_back.position = Vector3(0, anchor_y - 0.22, 0)
+	_build_fill.position = Vector3(0, anchor_y - 0.22, -0.01)
 
 
 ## Retail draws a health bar for objects that can lose health. A fortress build
