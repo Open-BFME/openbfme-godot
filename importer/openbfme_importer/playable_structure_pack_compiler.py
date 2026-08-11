@@ -43,6 +43,7 @@ LIFECYCLE_PHASE_ORDER = (
     "rubble",
     "post-rubble",
 )
+RETAIL_W3D_NO_TEXTURE_SENTINEL = "None"
 
 
 class PlayableStructurePackCompilerError(ValueError):
@@ -496,6 +497,10 @@ def compile_structure_visual_recipe(
         identifier = row.get("identifier")
         if not isinstance(source, str) or not isinstance(identifier, str):
             raise PlayableStructurePackCompilerError("embedded texture row is invalid")
+        # RotWK 2.01 esbtemple.w3d authors NormalMap="None" as its exact
+        # no-texture sentinel. It is not a missing retail texture basename.
+        if identifier == RETAIL_W3D_NO_TEXTURE_SENTINEL:
+            continue
         if not identifier:
             raise PlayableStructurePackCompilerError(
                 "retail-absent texture identifier is empty"
@@ -856,6 +861,8 @@ def compile_structure_visual_recipe(
         if not isinstance(source, str) or source.casefold() not in selected_keys:
             continue
         if row.get("status") == "missing":
+            if row.get("identifier") == RETAIL_W3D_NO_TEXTURE_SENTINEL:
+                continue
             # The texture is absent from the retail install (no exact
             # candidate); retail renders the model without that map.  Record
             # the retail-absent reference explicitly instead of guessing a

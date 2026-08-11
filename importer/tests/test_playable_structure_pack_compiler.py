@@ -728,6 +728,28 @@ def test_retail_absent_texture_is_an_explicit_exclusion() -> None:
     validate_structure_visual_recipe(recipe)
 
 
+def test_retail_none_texture_sentinel_is_not_collected_as_absent() -> None:
+    closure = _closure()
+    real_missing = closure["w3dDependencyClosure"]["embeddedTextures"][0]
+    real_missing["status"] = "missing"
+    real_missing["physicalVirtualPaths"] = []
+    none_sentinel = dict(real_missing)
+    none_sentinel["identifier"] = "None"
+    closure["w3dDependencyClosure"]["embeddedTextures"].append(none_sentinel)
+    _rehash(closure)
+
+    recipe = compile_structure_visual_recipe(_TARGET, closure)
+
+    models = _models_by_source(recipe)
+    assert models[_MODEL_INTACT]["options"]["retailAbsentTextures"] == [
+        "Fixture.tga"
+    ]
+    exclusions = [
+        row for row in recipe["exclusions"] if row["reason"] == "retail-absent-texture"
+    ]
+    assert [row["identifier"] for row in exclusions] == ["Fixture.tga"]
+
+
 _MODEL_D1 = "art/w3d/fx/keep_d1.w3d"
 _HIERARCHY_D1 = "art/w3d/fx/keep_d1skl.w3d"
 _MODEL_DRC = "art/w3d/fx/keep_drc.w3d"
