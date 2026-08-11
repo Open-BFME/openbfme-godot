@@ -428,6 +428,21 @@ func _run() -> void:
 		slice.hud.show_retail_tooltip(side_buttons[0])
 	if OS.get_environment("OPENBFME_CAPTURE_DISABLE_FOG") == "1":
 		slice.world_environment.compositor = null
+	var force_fog_saturation := OS.get_environment("OPENBFME_CAPTURE_FORCE_FOG_SATURATION") == "1"
+	if force_fog_saturation:
+		if slice.linear_fog == null:
+			_fail("OPENBFME_CAPTURE_FORCE_FOG_SATURATION requires compiled linear fog")
+			return
+		var fog_contract: Dictionary = slice.linear_fog.runtime_contract()
+		var saturation_error: String = slice.linear_fog.configure_exact(
+			fog_contract.get("source_color", Color.TRANSPARENT),
+			0.0,
+			0.001,
+			1.0
+		)
+		if saturation_error != "":
+			_fail("fog saturation probe could not configure: %s" % saturation_error)
+			return
 	if OS.get_environment("OPENBFME_CAPTURE_DISABLE_ROADS") == "1" and slice.battlefield.road_container != null:
 		slice.battlefield.road_container.visible = false
 	if OS.get_environment("OPENBFME_CAPTURE_DISABLE_PROPS") == "1" and slice.battlefield.retail_prop_container != null:
@@ -518,6 +533,18 @@ func _run() -> void:
 	if save_error != OK or not FileAccess.file_exists(output):
 		_fail("rendered PNG could not be written")
 		return
+	if force_fog_saturation:
+		var sample_position := Vector2i(image.get_width() / 2, image.get_height() / 2)
+		var sample := image.get_pixelv(sample_position)
+		var sample_rgb8 := Vector3i(
+			roundi(sample.r * 255.0),
+			roundi(sample.g * 255.0),
+			roundi(sample.b * 255.0)
+		)
+		print("RETAIL_RENDER_FOG_SATURATION pixel=%s rgb8=%s expected=(220, 226, 235)" % [sample_position, sample_rgb8])
+		if sample_rgb8 != Vector3i(220, 226, 235):
+			_fail("fog saturation pixel is %s, expected retail RGB8 (220, 226, 235)" % sample_rgb8)
+			return
 	var camera_metadata: Dictionary = slice.camera.get_meta("retail_camera", {}) as Dictionary
 	var structure_diagnostics := _structure_diagnostics(slice)
 	var geometry_diagnostics := _geometry_diagnostics(slice)

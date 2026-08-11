@@ -16,6 +16,12 @@ layout(push_constant, std430) uniform Params {
 	vec4 fog_color;
 } params;
 
+vec3 srgb_to_linear(vec3 color) {
+	vec3 low = color / 12.92;
+	vec3 high = pow((color + 0.055) / 1.055, vec3(2.4));
+	return mix(low, high, step(vec3(0.04045), color));
+}
+
 void main() {
 	ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
 	ivec2 size = ivec2(params.raster_size);
@@ -45,6 +51,6 @@ void main() {
 		1.0
 	);
 	vec4 color = imageLoad(color_image, pixel);
-	color.rgb = mix(color.rgb, params.fog_color.rgb, fog_factor);
+	color.rgb = mix(color.rgb, srgb_to_linear(params.fog_color.rgb), fog_factor);
 	imageStore(color_image, pixel, color);
 }

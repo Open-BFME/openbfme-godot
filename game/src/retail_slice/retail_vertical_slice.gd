@@ -6631,6 +6631,31 @@ func _configure_source_environment() -> String:
 	if fog_binding.has("error"):
 		return String(fog_binding.get("error", "compiled map fog is unavailable"))
 	var local_scale := source_map_data.local_transform_scale
+	if not bool(fog_binding.get("enabled", false)):
+		linear_fog = null
+		world_environment.compositor = null
+		var disabled_fog_metadata := environment_runtime_metadata.get("fog", {}) as Dictionary
+		disabled_fog_metadata["enabled_in_source"] = false
+		disabled_fog_metadata["runtime_enabled"] = false
+		disabled_fog_metadata["compiled_document"] = String(fog_binding.get("compiled_document", ""))
+		disabled_fog_metadata["source_path"] = String(fog_binding.get("source_path", ""))
+		disabled_fog_metadata["degradation"] = String(fog_binding.get("degradation", ""))
+		disabled_fog_metadata["renderer_status"] = "retail-default-hardware-fog-disabled"
+		environment_runtime_metadata["fog"] = disabled_fog_metadata
+		var disabled_camera_metadata := environment_runtime_metadata.get("camera", {}) as Dictionary
+		disabled_camera_metadata["minimum_height_local"] = FORDS_CAMERA_MIN_HEIGHT_SOURCE * local_scale
+		disabled_camera_metadata["maximum_height_local"] = FORDS_CAMERA_MAX_HEIGHT_SOURCE * local_scale
+		disabled_camera_metadata["ground_minimum_local"] = (FORDS_CAMERA_GROUND_MIN_SOURCE - source_map_data.reference_elevation) * local_scale
+		disabled_camera_metadata["ground_maximum_local"] = (FORDS_CAMERA_GROUND_MAX_SOURCE - source_map_data.reference_elevation) * local_scale
+		disabled_camera_metadata["local_transform_scale"] = local_scale
+		disabled_camera_metadata["coordinate_transform"] = "godot=(sage.x,sage.z,-sage.y),then-player-start-local-basis"
+		disabled_camera_metadata["local_axis_x"] = source_map_data.local_axis_x
+		disabled_camera_metadata["local_axis_z"] = source_map_data.local_axis_z
+		environment_runtime_metadata["camera"] = disabled_camera_metadata
+		_build_source_lights()
+		world_environment.set_meta("retail_environment", environment_runtime_metadata)
+		_apply_camera_transform()
+		return ""
 	linear_fog = LinearFogScript.new()
 	var source_color: Color = fog_binding.get("color", Color.TRANSPARENT)
 	var source_start := float(fog_binding.get("start", -1.0))
@@ -6680,9 +6705,15 @@ func _load_compiled_map_fog() -> Dictionary:
 		environment_path == ""
 		or not ModLoader.path_is_within(source_map_data.map_root, environment_path)
 		or not ModLoader.path_is_within(source_map_data.pack_root, environment_path)
-		or not FileAccess.file_exists(environment_path)
 	):
-		return {"error": "compiled map environment document is missing or unsafe"}
+		return {"error": "compiled map environment document path is unsafe"}
+	if not FileAccess.file_exists(environment_path):
+		var degradation := "Compiled map environment.json is absent for %s; using retail default HardwareFog disabled" % String(source_map_data.map_id)
+		push_warning(degradation)
+		return {
+			"enabled": false,
+			"degradation": degradation,
+		}
 	var file := FileAccess.open(environment_path, FileAccess.READ)
 	if file == null or file.get_length() <= 0 or file.get_length() > MAP_DOCUMENT_MAX_BYTES:
 		return {"error": "compiled map environment document has invalid size"}
@@ -6699,8 +6730,15 @@ func _load_compiled_map_fog() -> Dictionary:
 		return {"error": "compiled map environment identity does not match the loaded map"}
 	var fog := document.get("fog", {}) as Dictionary
 	var color_row: Variant = fog.get("colorRgb8", null)
-	if not bool(fog.get("enabled", false)) or String(fog.get("mode", "")) != "linear":
-		return {"error": "compiled map does not declare enabled linear fog"}
+	if not bool(fog.get("enabled", false)):
+		return {
+			"enabled": false,
+			"compiled_document": environment_path,
+			"source_path": String((fog.get("source", {}) as Dictionary).get("path", "")),
+			"degradation": "compiled environment declares HardwareFog disabled",
+		}
+	if String(fog.get("mode", "")) != "linear":
+		return {"error": "enabled compiled map fog is not linear"}
 	if typeof(color_row) != TYPE_ARRAY or (color_row as Array).size() != 3:
 		return {"error": "compiled map fog color is invalid"}
 	var color_values := color_row as Array
@@ -6722,6 +6760,7 @@ func _load_compiled_map_fog() -> Dictionary:
 	if source_path == "":
 		return {"error": "compiled map fog has no retail source path"}
 	return {
+		"enabled": true,
 		"color": Color(float(color_values[0]) / 255.0, float(color_values[1]) / 255.0, float(color_values[2]) / 255.0, 1.0),
 		"start": source_start,
 		"end": source_end,

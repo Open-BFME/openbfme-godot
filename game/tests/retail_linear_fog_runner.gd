@@ -34,16 +34,16 @@ func _run() -> void:
 	_check("effect_refuses_unconfigured_compositor", not fog.is_configured() and fog.create_compositor() == null)
 	_check("effect_rejects_non_finite_color", fog.configure_exact(Color(NAN, 0.0, 0.0, 1.0), 350.0, 2000.0, 0.5) != "")
 	_check("effect_rejects_invalid_start", fog.configure_exact(Color.WHITE, -1.0, 2000.0, 0.5) != "")
-	_check("effect_rejects_invalid_end", fog.configure_exact(Color.WHITE, 350.0, 350.0, 0.5) != "")
-	_check("effect_rejects_missing_or_invalid_scale", fog.configure_exact(Color.WHITE, 350.0, 2000.0, 0.0) != "" and fog.configure_exact(Color.WHITE, 350.0, 2000.0, NAN) != "")
+	_check("effect_rejects_invalid_end", fog.configure_exact(Color.WHITE, 725.0, 725.0, 0.5) != "")
+	_check("effect_rejects_missing_or_invalid_scale", fog.configure_exact(Color.WHITE, 725.0, 2000.0, 0.0) != "" and fog.configure_exact(Color.WHITE, 725.0, 2000.0, NAN) != "")
 	var compiled_color := Color(220.0 / 255.0, 226.0 / 255.0, 235.0 / 255.0, 1.0)
-	_check("effect_accepts_compiled_parameters_and_uniform_scale", fog.configure_exact(compiled_color, 350.0, 2000.0, 0.5) == "" and fog.is_configured())
+	_check("effect_accepts_non_fords_compiled_parameters_and_uniform_scale", fog.configure_exact(compiled_color, 725.0, 2000.0, 0.5) == "" and fog.is_configured())
 
 	var contract: Dictionary = fog.runtime_contract()
-	_check("configured_source_parameters_are_retained", _color_near(contract.get("source_color", Color.TRANSPARENT), compiled_color) and is_equal_approx(float(contract.get("source_start", 0.0)), 350.0) and is_equal_approx(float(contract.get("source_end", 0.0)), 2000.0))
-	_check("source_to_local_scale_is_exact", is_equal_approx(float(contract.get("fog_start_local", 0.0)), 175.0) and is_equal_approx(float(contract.get("fog_end_local", 0.0)), 1000.0))
-	_check("curve_is_camera_depth_linear", is_equal_approx(fog.fog_factor_for_camera_depth(174.0, 175.0, 1000.0), 0.0) and is_equal_approx(fog.fog_factor_for_camera_depth(175.0, 175.0, 1000.0), 0.0) and is_equal_approx(fog.fog_factor_for_camera_depth(587.5, 175.0, 1000.0), 0.5) and is_equal_approx(fog.fog_factor_for_camera_depth(1000.0, 175.0, 1000.0), 1.0) and is_equal_approx(fog.fog_factor_for_camera_depth(1001.0, 175.0, 1000.0), 1.0))
-	_check("invalid_curve_inputs_fail_visible", is_nan(fog.fog_factor_for_camera_depth(NAN, 175.0, 1000.0)) and is_nan(fog.fog_factor_for_camera_depth(500.0, 1000.0, 175.0)))
+	_check("configured_source_parameters_are_retained", _color_near(contract.get("source_color", Color.TRANSPARENT), compiled_color) and is_equal_approx(float(contract.get("source_start", 0.0)), 725.0) and is_equal_approx(float(contract.get("source_end", 0.0)), 2000.0))
+	_check("source_to_local_scale_is_exact", is_equal_approx(float(contract.get("fog_start_local", 0.0)), 362.5) and is_equal_approx(float(contract.get("fog_end_local", 0.0)), 1000.0))
+	_check("curve_is_camera_depth_linear", is_equal_approx(fog.fog_factor_for_camera_depth(362.0, 362.5, 1000.0), 0.0) and is_equal_approx(fog.fog_factor_for_camera_depth(362.5, 362.5, 1000.0), 0.0) and is_equal_approx(fog.fog_factor_for_camera_depth(681.25, 362.5, 1000.0), 0.5) and is_equal_approx(fog.fog_factor_for_camera_depth(1000.0, 362.5, 1000.0), 1.0) and is_equal_approx(fog.fog_factor_for_camera_depth(1001.0, 362.5, 1000.0), 1.0))
+	_check("invalid_curve_inputs_fail_visible", is_nan(fog.fog_factor_for_camera_depth(NAN, 362.5, 1000.0)) and is_nan(fog.fog_factor_for_camera_depth(500.0, 1000.0, 362.5)))
 	_check("configured_compositor_contains_only_exact_effect", fog.create_compositor() != null and fog.create_compositor().compositor_effects.size() == 1 and fog.create_compositor().compositor_effects[0] == fog)
 	_check("resolved_depth_is_requested", fog.access_resolved_depth and fog.effect_callback_type == CompositorEffect.EFFECT_CALLBACK_TYPE_POST_TRANSPARENT)
 
@@ -52,6 +52,8 @@ func _run() -> void:
 	_check("compute_shader_compiles", spirv != null and spirv.compile_error_compute == "", spirv.compile_error_compute if spirv != null else "no SPIR-V")
 	_check("shader_reconstructs_camera_depth", shader_source.contains("params.inv_projection * vec4(ndc_xy, raw_depth, 1.0)") and shader_source.contains("camera_depth = -(view_position.z / view_position.w)"))
 	_check("shader_uses_exact_linear_curve", shader_source.contains("(camera_depth - params.fog_start) / (params.fog_end - params.fog_start)"))
+	var expected_linear := Color(0.7156935, 0.7605245, 0.8307699, 1.0)
+	_check("shader_applies_linear_converted_fog_color", shader_source.contains("srgb_to_linear(params.fog_color.rgb)") and _color_near(_srgb_to_linear(compiled_color), expected_linear))
 	_check("shader_has_no_exponential_approximation", not shader_source.contains("exp(") and not shader_source.contains("exp2(") and not source.contains("fog_density") and not source.contains("fog_height"))
 	_check("no_coordinate_scale_is_guessed", source.contains("an explicit positive finite uniform map scale is required") and not source.contains("0.026492327"))
 	_check("transparent_gap_and_clear_depth_semantics_are_explicit", String(contract.get("transparent_depth_status", "")).contains("unresolved") and String(contract.get("sky_depth_status", "")).contains("reverse-z clear depth"))
@@ -93,6 +95,19 @@ func _color_near(value: Variant, expected: Color) -> bool:
 		return false
 	var actual := value as Color
 	return is_equal_approx(actual.r, expected.r) and is_equal_approx(actual.g, expected.g) and is_equal_approx(actual.b, expected.b) and is_equal_approx(actual.a, expected.a)
+
+
+func _srgb_to_linear(value: Color) -> Color:
+	return Color(
+		_srgb_channel_to_linear(value.r),
+		_srgb_channel_to_linear(value.g),
+		_srgb_channel_to_linear(value.b),
+		value.a
+	)
+
+
+func _srgb_channel_to_linear(value: float) -> float:
+	return value / 12.92 if value <= 0.04045 else pow((value + 0.055) / 1.055, 2.4)
 
 
 func _check(name: String, condition: bool, detail: String = "") -> void:
