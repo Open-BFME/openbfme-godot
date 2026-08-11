@@ -54,7 +54,7 @@ func _run() -> void:
 	_check("shader_uses_exact_linear_curve", shader_source.contains("(camera_depth - params.fog_start) / (params.fog_end - params.fog_start)"))
 	_check("shader_has_no_exponential_approximation", not shader_source.contains("exp(") and not shader_source.contains("exp2(") and not source.contains("fog_density") and not source.contains("fog_height"))
 	_check("no_coordinate_scale_is_guessed", source.contains("an explicit positive finite uniform map scale is required") and not source.contains("0.026492327"))
-	_check("unresolved_transparent_and_sky_semantics_are_explicit", String(contract.get("transparent_depth_status", "")).contains("unresolved") and String(contract.get("sky_depth_status", "")).contains("fail-visible"))
+	_check("transparent_gap_and_clear_depth_semantics_are_explicit", String(contract.get("transparent_depth_status", "")).contains("unresolved") and String(contract.get("sky_depth_status", "")).contains("reverse-z clear depth"))
 	var projection_probe := Projection(
 		Vector4(1.0, 2.0, 3.0, 4.0),
 		Vector4(5.0, 6.0, 7.0, 8.0),

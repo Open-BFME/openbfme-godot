@@ -56,9 +56,9 @@ func _run() -> void:
 	_check("active_fords_time_and_weather_are_exact", String(metadata.get("time_of_day", "")) == "AFTERNOON" and String(metadata.get("weather", "")) == "NORMAL")
 	_check("retail_skybox_contract_is_identified_without_guessing_texture_set", bool(sky.get("draw_skybox_in_source", false)) and String(sky.get("model_source", "")) == "art/w3d/ne/new_skybox.w3d" and String(sky.get("texture_set_source", "")) == "data/ini/environment.ini" and not bool(sky.get("map_texture_set_override_present", true)) and String(sky.get("status", "")).contains("unresolved") and String(sky.get("runtime_background", "")) == "neutral-black-map-edge-backdrop")
 	_check("skyenv_is_classified_as_water_reflection_not_world_sky", String(water_reflection.get("source_leaf", "")) == "SkyEnv.tga" and int(water_reflection.get("standing_water_area_count", 0)) == 4 and String(water_reflection.get("status", "")).contains("unresolved") and not sky.has("source_leaf"))
-	# Retail camera-edge captures show a neutral blank outside the terrain, not
-	# the light fog color. This is a world-level presentation contract so every
-	# selected map gets the same fail-closed backdrop without a per-map skirt.
+	# Owner-directed dark-neutral placeholder pending the named retail
+	# new_skybox.w3d + environment.ini texture-set closure. Per-map fog data
+	# controls distance fog only; it does not select this backdrop.
 	_check("map_edge_void_uses_neutral_black_backdrop", environment != null and environment.background_mode == Environment.BG_COLOR and _color_near(environment.background_color, Color.BLACK) and environment.sky == null)
 	_check("procedural_sky_class_is_absent", not source_text.contains("ProceduralSkyMaterial"))
 
@@ -68,7 +68,7 @@ func _run() -> void:
 	var fog_contract := fog.get("runtime_contract", {}) as Dictionary
 	_check("exact_linear_fog_compositor_is_bound", environment != null and not environment.fog_enabled and slice.world_environment != null and slice.world_environment.compositor != null and slice.linear_fog != null and slice.linear_fog.is_configured() and bool(fog.get("runtime_enabled", false)) and _color_near(environment.fog_light_color, Color(220.0 / 255.0, 226.0 / 255.0, 235.0 / 255.0, 1.0)))
 	_check("linear_fog_contract_uses_exact_scaled_curve", is_equal_approx(float(fog_contract.get("source_start", 0.0)), 350.0) and is_equal_approx(float(fog_contract.get("source_end", 0.0)), 2000.0) and is_equal_approx(float(fog_contract.get("local_units_per_source_unit", 0.0)), local_scale) and is_equal_approx(float(fog_contract.get("fog_start_local", 0.0)), 350.0 * local_scale) and is_equal_approx(float(fog_contract.get("fog_end_local", 0.0)), 2000.0 * local_scale) and String(fog_contract.get("curve", "")).begins_with("clamp"))
-	_check("linear_fog_gpu_oracle_gap_remains_explicit", String(fog.get("renderer_status", "")).contains("rendered-gate") and String(fog_contract.get("transparent_depth_status", "")).contains("unresolved") and String(fog_contract.get("sky_depth_status", "")).contains("fail-visible"))
+	_check("linear_fog_gpu_oracle_gap_remains_explicit", String(fog.get("renderer_status", "")).contains("rendered-gate") and String(fog_contract.get("transparent_depth_status", "")).contains("unresolved") and String(fog_contract.get("sky_depth_status", "")).contains("reverse-z clear depth"))
 	_check("old_exponential_fog_guesses_are_removed", not source_text.contains("fog_density") and not source_text.contains("fog_height") and not source_text.contains("536f70"))
 
 	_check("camera_source_constraints_are_exact", is_equal_approx(float(camera_data.get("minimum_height_source", 0.0)), 120.0) and is_equal_approx(float(camera_data.get("maximum_height_source", 0.0)), 300.0) and is_equal_approx(float(camera_data.get("pitch_above_horizontal_degrees", 0.0)), 37.5) and is_equal_approx(float(camera_data.get("yaw_degrees", INF)), 0.0) and is_equal_approx(float(camera_data.get("scroll_speed_scalar", 0.0)), 1.0))

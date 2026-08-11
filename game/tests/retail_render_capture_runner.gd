@@ -6,6 +6,8 @@ const PRIVATE_SCRATCH_PATH := "res://../.private/scratch"
 const DEFAULT_VIEWPORT := Vector2i(1920, 1080)
 const MAX_READY_FRAMES := 2400
 const SETTLE_FRAMES := 12
+const MAP_EDGE_VOID_VIEWPORT := Vector2i(1920, 1080)
+const MAP_EDGE_VOID_SAMPLE := Vector2i(960, 100)
 
 
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
@@ -499,6 +501,15 @@ func _run() -> void:
 	if image == null or image.is_empty() or image.get_width() != viewport_size.x or image.get_height() != viewport_size.y:
 		_fail("rendered viewport capture has dimensions %dx%d instead of %dx%d" % [image.get_width() if image != null else -1, image.get_height() if image != null else -1, viewport_size.x, viewport_size.y])
 		return
+	if OS.get_environment("OPENBFME_CAPTURE_ASSERT_MAP_EDGE_BACKDROP") == "1":
+		if viewport_size != MAP_EDGE_VOID_VIEWPORT or slice.camera_focus != Vector2(200.0, 200.0):
+			_fail("map-edge backdrop assertion requires a 1920x1080 capture focused at 200,200")
+			return
+		var void_pixel := image.get_pixelv(MAP_EDGE_VOID_SAMPLE)
+		if not void_pixel.is_equal_approx(Color.BLACK):
+			_fail("map-edge rendered void pixel at %s is %s, expected the owner-directed black backdrop" % [MAP_EDGE_VOID_SAMPLE, void_pixel])
+			return
+		print("RETAIL_RENDER_MAP_EDGE_BACKDROP_OK pixel=%s color=%s" % [MAP_EDGE_VOID_SAMPLE, void_pixel])
 	var parent := output.get_base_dir()
 	if DirAccess.make_dir_recursive_absolute(parent) != OK:
 		_fail("private render-capture directory could not be created")

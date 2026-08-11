@@ -99,7 +99,7 @@ func runtime_contract() -> Dictionary:
 		"curve": "clamp((camera_depth-start)/(end-start),0,1)",
 		"callback": "post-transparent",
 		"transparent_depth_status": "unresolved: transparent fragments do not author the sampled opaque depth buffer",
-		"sky_depth_status": "fail-visible: non-finite homogeneous depth is left unchanged",
+		"sky_depth_status": "reverse-z clear depth is left unchanged so the environment backdrop remains visible",
 	}
 	_parameter_mutex.unlock()
 	return contract

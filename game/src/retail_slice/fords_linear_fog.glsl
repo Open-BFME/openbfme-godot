@@ -25,11 +25,15 @@ void main() {
 
 	vec2 screen_uv = (vec2(pixel) + vec2(0.5)) / params.raster_size;
 	float raw_depth = texture(depth_texture, screen_uv).r;
+	// Godot Forward+ uses reverse-Z: zero is the clear depth, not geometry.
+	// Preserve the environment backdrop instead of fogging clear pixels.
+	if (raw_depth <= 0.0) {
+		return;
+	}
 	vec2 ndc_xy = screen_uv * 2.0 - 1.0;
 	vec4 view_position = params.inv_projection * vec4(ndc_xy, raw_depth, 1.0);
 
-	// A zero homogeneous divisor represents no finite camera-space surface.
-	// Leave it unchanged rather than inventing sky/clear-buffer fog semantics.
+	// Guard malformed finite-depth reconstruction independently of clear depth.
 	if (abs(view_position.w) <= 1e-8) {
 		return;
 	}
