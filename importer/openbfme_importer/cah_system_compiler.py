@@ -121,6 +121,7 @@ LOCOMOTOR_PATH = "data/ini/locomotor.ini"
 #: module docstring's own example), and the creation-screen states are the first
 #: hundred lines of it.
 ANIMS_PATH = "data/ini/object/createahero/createaheroanims.inc"
+AUDIO_PATH = "data/ini/object/createahero/createaheroaudio.inc"
 
 #: Documents that must be present.  The ``#include``s reached from
 #: ``createaherosystem.ini`` are resolved from the same mapping and are also
@@ -142,6 +143,7 @@ REQUIRED_DOCUMENTS = (
     WEAPONS_PATH,
     LOCOMOTOR_PATH,
     ANIMS_PATH,
+    AUDIO_PATH,
 )
 
 #: Where ``#define``s are read from, in precedence order (later wins).  BOTH are
@@ -2048,6 +2050,7 @@ def _sub_classes(
     garment: Mapping[str, Mapping[str, Any]],
     revealed: Sequence[str],
     idle_plan: Mapping[str, Any],
+    voice_bindings: Mapping[tuple[str, str], Mapping[str, Sequence[str]]],
 ) -> list[dict[str, Any]]:
     group_names = [str(row["groupName"]) for row in groups]
     option_by_upgrade = {
@@ -2248,6 +2251,9 @@ def _sub_classes(
                     authored_color("DefaultSecondaryColor"),
                     authored_color("DefaultTertiaryColor"),
                 ],
+                "voice": deepcopy(dict(voice_bindings.get(
+                    (class_upgrade_name.casefold(), sub_upgrade.casefold()), {}
+                ))),
                 "upgradeNameSubClass": sub_upgrade,
                 "models": bound_models,
                 "defaultSubObjects": default_sub_objects,
@@ -2272,6 +2278,80 @@ _UNCOMPILED_EFFECT: dict[str, Any] = {
         "limitations": [],
     },
 }
+
+
+def _cah_voice_bindings(
+    documents: Mapping[str, bytes],
+) -> dict[tuple[str, str], dict[str, list[str]]]:
+    """Fixed class/subclass SoundUpgrade routes from createaheroaudio.inc.
+
+    Conditional bow/mounted overrides are deliberately excluded from v1; the
+    unconditional block is the retail voice identity for the subclass.
+    """
+
+    raw = _lookup(documents, AUDIO_PATH)
+    if raw is None:
+        raise CahSystemCompilerError(f"{AUDIO_PATH}: document is missing")
+    bindings: dict[tuple[str, str], dict[str, list[str]]] = {}
+    current_key: tuple[str, str] | None = None
+    fields: dict[str, list[str]] = {}
+    conditional = False
+    nested = 0
+    aliases = {
+        "voiceselect": "select",
+        "voiceselectbattle": "select",
+        "voicemove": "move",
+        "voiceattack": "attack",
+        "voiceattackstructure": "attackStructure",
+        "voicecreated": "created",
+        "voicefullycreated": "created",
+        "voiceguard": "guard",
+        "voicefear": "fear",
+    }
+
+    def finish() -> None:
+        nonlocal current_key, fields, conditional, nested
+        if current_key is not None and not conditional:
+            if current_key in bindings:
+                raise CahSystemCompilerError(
+                    f"{AUDIO_PATH}: duplicate unconditional SoundUpgrade for {current_key}"
+                )
+            bindings[current_key] = fields
+        current_key, fields, conditional, nested = None, {}, False, 0
+
+    for line in _lines(raw):
+        assignment = _ASSIGNMENT_PATTERN.match(line)
+        if current_key is None:
+            if assignment is None or assignment.group(1).casefold() != "soundupgrade":
+                continue
+            upgrades = assignment.group(2).split()
+            class_upgrades = [value for value in upgrades if _CLASS_UPGRADE_PATTERN.match(value)]
+            sub_upgrades = [value for value in upgrades if _SUB_CLASS_UPGRADE_PATTERN.match(value)]
+            if len(class_upgrades) != 1 or len(sub_upgrades) != 1:
+                raise CahSystemCompilerError(
+                    f"{AUDIO_PATH}: SoundUpgrade does not name one class and subclass: {assignment.group(2)!r}"
+                )
+            current_key = (class_upgrades[0].casefold(), sub_upgrades[0].casefold())
+            continue
+        if line.casefold() == "end":
+            if nested:
+                nested -= 1
+            else:
+                finish()
+            continue
+        if assignment is None:
+            nested += 1
+            continue
+        key, event_id = assignment.group(1), assignment.group(2).strip()
+        if key.casefold() == "requiredmodelconditions":
+            conditional = True
+            continue
+        role = aliases.get(key.casefold())
+        if role and event_id and event_id not in fields.setdefault(role, []):
+            fields[role].append(event_id)
+    if current_key is not None:
+        raise CahSystemCompilerError(f"{AUDIO_PATH}: unterminated SoundUpgrade")
+    return bindings
 
 
 def _attach_ability_effects(
@@ -2384,6 +2464,7 @@ def compile_cah_system_descriptor(
         group["steps"] = steps
 
     model_bindings = _model_bindings(documents)
+    voice_bindings = _cah_voice_bindings(documents)
 
     classes: list[dict[str, Any]] = []
     for class_index, class_block in enumerate(system.children("CreateAHeroClass")):
@@ -2417,11 +2498,28 @@ def compile_cah_system_descriptor(
                     garment,
                     revealed_sub_objects,
                     idle_plan,
+                    voice_bindings,
                 ),
             }
         )
     if not classes:
         raise CahSystemCompilerError(f"{SYSTEM_PATH}: no CreateAHeroClass is declared")
+
+    used_voice_keys = {
+        (str(class_row["upgradeName"]).casefold(), str(sub_row["upgradeNameSubClass"]).casefold())
+        for class_row in classes
+        for sub_row in class_row["subClasses"]
+        if sub_row.get("voice")
+    }
+    unbound_subclasses = [
+        f"{class_row['upgradeName']}+{sub_row['upgradeNameSubClass']}"
+        for class_row in classes
+        for sub_row in class_row["subClasses"]
+        if not sub_row.get("voice")
+    ]
+    orphan_voice_keys = [
+        "+".join(key) for key in voice_bindings if key not in used_voice_keys
+    ]
 
     # Compiled AFTER the classes, because a power's class binding is checked
     # against the UpgradeName each CreateAHeroClass actually declares rather
@@ -2571,6 +2669,12 @@ def compile_cah_system_descriptor(
         "combatCoverage": combat_coverage,
         "garmentCoverage": garment_coverage,
         "creationIdlePlan": idle_plan,
+        "voiceCoverage": {
+            "boundSubclasses": len(used_voice_keys),
+            "totalSubclasses": sum(len(row["subClasses"]) for row in classes),
+            "unboundSubclasses": sorted(unbound_subclasses, key=str.casefold),
+            "orphanSoundUpgrades": sorted(orphan_voice_keys, key=str.casefold),
+        },
         "system": {
             "objectId": "CreateAHero",
             "attributeMultiplier": _number(attribute_multiplier),
@@ -2674,6 +2778,7 @@ def build_cah_system_runtime(descriptor: Mapping[str, Any]) -> dict[str, Any]:
             "objectBaseline": descriptor.get("objectBaseline", {}),
             "combatCoverage": descriptor.get("combatCoverage", {}),
             "creationIdlePlan": descriptor.get("creationIdlePlan", {}),
+            "voiceCoverage": descriptor.get("voiceCoverage", {}),
             "attributeGroups": descriptor["attributeGroups"],
             "garmentCoverage": descriptor.get("garmentCoverage", {}),
             "appearanceGroups": descriptor.get("appearanceGroups", []),

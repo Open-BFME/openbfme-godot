@@ -956,6 +956,24 @@ static func roster_document(
 	var button_image := String(sub_row.get("buttonImageId", ""))
 	var portrait_image := String(sub_row.get("iconImageId", ""))
 	var battlefield := model_binding(sub_row, "battlefield")
+	var audio_routes := {"primaryMember": {}}
+	var voice_fields := {
+		"select": "VoiceSelect",
+		"move": "VoiceMove",
+		"attack": "VoiceAttack",
+		"attackStructure": "VoiceAttackStructure",
+		"created": "VoiceCreated",
+		"guard": "VoiceGuard",
+		"fear": "VoiceFear",
+	}
+	for role_value in voice_fields.keys():
+		var event_rows: Array = []
+		for event_value in Array((sub_row.get("voice", {}) as Dictionary).get(role_value, [])):
+			var event_id := String(event_value)
+			if event_id != "":
+				event_rows.append({"id": event_id})
+		if not event_rows.is_empty():
+			(audio_routes["primaryMember"] as Dictionary)[voice_fields[role_value]] = event_rows
 
 	return {
 		"schema": "openbfme.playable-unit-runtime",
@@ -966,6 +984,7 @@ static func roster_document(
 		"recipeSha256": String(system.get("runtimeSha256", "")),
 		"resourceIds": [],
 		"registration": {
+			"audioRoutes": audio_routes,
 			"production": [{
 				"producerObjectId": producer_object_id,
 				"commandSetId": "__engine__/BuildableHeroesMP",

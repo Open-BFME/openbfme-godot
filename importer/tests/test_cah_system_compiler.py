@@ -268,6 +268,21 @@ def _object() -> bytes:
     ).encode("cp1252")
 
 
+def _audio() -> bytes:
+    return (
+        "SoundUpgrade = Upgrade_CreateAHero_ClassHeroOfTheWest Upgrade_CreateAHero_SubClass_0\n"
+        "\tVoiceAttack = HeroWestMaleVoiceAttack\n"
+        "\tVoiceAttackStructure = HeroWestMaleVoiceAttackBuilding\n"
+        "\tVoiceCreated = HeroWestMaleVoiceSalute\n"
+        "\tVoiceFear = HeroWestMaleVoiceHelpMe\n"
+        "\tVoiceGuard = HeroWestMaleVoiceMove\n"
+        "\tVoiceMove = HeroWestMaleVoiceMove\n"
+        "\tVoiceSelect = HeroWestMaleVoiceSelectMS\n"
+        "\tVoiceSelectBattle = HeroWestMaleVoiceSelectBattle\n"
+        "End\n"
+    ).encode("cp1252")
+
+
 def _locomotors() -> bytes:
     return (
         "Locomotor HeroHumanLocomotor\n"
@@ -642,6 +657,7 @@ def _documents(
         "data/ini/object/createahero/createahero.ini": (
             _object() if obj is None else obj
         ),
+        "data/ini/object/createahero/createaheroaudio.inc": _audio(),
         "data/ini/weapon.ini": _weapons() if weapons is None else weapons,
         "data/ini/locomotor.ini": (
             _locomotors() if locomotors is None else locomotors
@@ -653,6 +669,15 @@ def _documents(
 
 
 class CahSystemCompilerTests(unittest.TestCase):
+    def test_subclass_fixed_voice_routes_are_compiled(self) -> None:
+        descriptor = compile_cah_system_descriptor(_documents())
+        voice = descriptor["classes"][0]["subClasses"][0]["voice"]
+        self.assertEqual(voice["select"], ["HeroWestMaleVoiceSelectMS", "HeroWestMaleVoiceSelectBattle"])
+        self.assertEqual(voice["move"], ["HeroWestMaleVoiceMove"])
+        self.assertEqual(voice["attack"], ["HeroWestMaleVoiceAttack"])
+        self.assertEqual(voice["attackStructure"], ["HeroWestMaleVoiceAttackBuilding"])
+        self.assertEqual(voice["created"], ["HeroWestMaleVoiceSalute"])
+
     def test_subclass_default_colors_are_typed_rgb_triples(self) -> None:
         descriptor = compile_cah_system_descriptor(_documents())
         sub = descriptor["classes"][0]["subClasses"][0]

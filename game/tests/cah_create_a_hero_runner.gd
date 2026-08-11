@@ -262,6 +262,8 @@ func _test_profile_round_trip(system: Dictionary) -> void:
 func _test_roster_document(system: Dictionary) -> void:
 	var profile := CahHeroes.new_profile(system, "Beregond", 0, 0)
 	var document := CahHeroes.roster_document(system, profile, PRODUCER, 12)
+	var audio_routes: Dictionary = document["registration"].get("audioRoutes", {})
+	_check(not audio_routes.is_empty() and (audio_routes["primaryMember"]["VoiceSelect"] as Array)[0]["id"] == "HeroWestMaleVoiceSelectMS", "fixed subclass voice reaches the ordinary playable-unit audio route")
 
 	_check(String(document.get("schema", "")) == "openbfme.playable-unit-runtime", "the roster document is a playable-unit-runtime")
 	_check(int(document.get("schemaVersion", -1)) == 0, "the roster document is schema version 0")
@@ -2202,6 +2204,13 @@ func _system_document() -> Dictionary:
 						"usableFactions": ["Men", "Elves", "Dwarves"],
 						"spendableAttributePoints": 30,
 						"defaultColors": [[150, 151, 152], [10, 20, 30], [255, 0, 128]],
+						"voice": {
+							"select": ["HeroWestMaleVoiceSelectMS", "HeroWestMaleVoiceSelectBattle"],
+							"move": ["HeroWestMaleVoiceMove"],
+							"attack": ["HeroWestMaleVoiceAttack"],
+							"attackStructure": ["HeroWestMaleVoiceAttackBuilding"],
+							"created": ["HeroWestMaleVoiceSalute"],
+						},
 						"defaultAttributeSpend": 30,
 						"attributes": CAPTAIN_ATTRIBUTES,
 					},
