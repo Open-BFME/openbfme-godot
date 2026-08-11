@@ -54,12 +54,12 @@ func _run() -> void:
 
 	_check("oracle_identity_is_pinned", String(metadata.get("oracle_sha256", "")) == ORACLE_SHA256 and String(slice.FORDS_ENVIRONMENT_ORACLE_SHA256) == ORACLE_SHA256)
 	_check("active_fords_time_and_weather_are_exact", String(metadata.get("time_of_day", "")) == "AFTERNOON" and String(metadata.get("weather", "")) == "NORMAL")
-	_check("retail_skybox_contract_is_identified_without_guessing_texture_set", bool(sky.get("draw_skybox_in_source", false)) and String(sky.get("model_source", "")) == "art/w3d/ne/new_skybox.w3d" and String(sky.get("texture_set_source", "")) == "data/ini/environment.ini" and not bool(sky.get("map_texture_set_override_present", true)) and String(sky.get("status", "")).contains("unresolved") and String(sky.get("runtime_background", "")) == "fog-color-horizon-no-sky-material")
+	_check("retail_skybox_contract_is_identified_without_guessing_texture_set", bool(sky.get("draw_skybox_in_source", false)) and String(sky.get("model_source", "")) == "art/w3d/ne/new_skybox.w3d" and String(sky.get("texture_set_source", "")) == "data/ini/environment.ini" and not bool(sky.get("map_texture_set_override_present", true)) and String(sky.get("status", "")).contains("unresolved") and String(sky.get("runtime_background", "")) == "neutral-black-map-edge-backdrop")
 	_check("skyenv_is_classified_as_water_reflection_not_world_sky", String(water_reflection.get("source_leaf", "")) == "SkyEnv.tga" and int(water_reflection.get("standing_water_area_count", 0)) == 4 and String(water_reflection.get("status", "")).contains("unresolved") and not sky.has("source_leaf"))
-	# Approved equivalence: the horizon clears to the exact retail fog color
-	# (the value linear fog saturates to at distance); no sky material is
-	# invented while the skybox texture set stays oracle-blocked.
-	_check("fog_color_horizon_background_has_no_invented_sky", environment != null and environment.background_mode == Environment.BG_COLOR and _color_near(environment.background_color, Color(220.0 / 255.0, 226.0 / 255.0, 235.0 / 255.0, 1.0)) and environment.sky == null)
+	# Retail camera-edge captures show a neutral blank outside the terrain, not
+	# the light fog color. This is a world-level presentation contract so every
+	# selected map gets the same fail-closed backdrop without a per-map skirt.
+	_check("map_edge_void_uses_neutral_black_backdrop", environment != null and environment.background_mode == Environment.BG_COLOR and _color_near(environment.background_color, Color.BLACK) and environment.sky == null)
 	_check("procedural_sky_class_is_absent", not source_text.contains("ProceduralSkyMaterial"))
 
 	var local_scale := float(map_data.local_transform_scale)

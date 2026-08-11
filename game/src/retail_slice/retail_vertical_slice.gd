@@ -91,6 +91,10 @@ const FORDS_SKYBOX_TEXTURE_SET_SOURCE := "data/ini/environment.ini"
 const FORDS_SKYBOX_STATUS := "texture-set-selection-and-current-pack-conversion-unresolved-neutral-black-background"
 const FORDS_WATER_REFLECTION_SOURCE_LEAF := "SkyEnv.tga"
 const FORDS_WATER_REFLECTION_STATUS := "unresolved-in-effective-tree-and-current-pack-profile"
+## Fail-closed presentation behind every terrain mesh. Retail edge captures do
+## not expose the bright environment/fog color when the camera reaches a map
+## boundary; they leave the non-world region neutral and blank instead.
+const RETAIL_MAP_EDGE_BACKDROP_COLOR := Color.BLACK
 const FORDS_FOG_COLOR := Color(220.0 / 255.0, 226.0 / 255.0, 235.0 / 255.0, 1.0)
 const FORDS_FOG_START_SOURCE := 350.0
 const FORDS_FOG_END_SOURCE := 2000.0
@@ -6533,13 +6537,10 @@ func _build_environment() -> void:
 	var environment := Environment.new()
 	# The retail world sky is new_skybox.w3d plus a five-face texture set from
 	# environment.ini. Fords does not declare which named set the executable
-	# selects, and that closure is absent from the current pack. A neutral
-	# background keeps the gap visible without inventing a replacement sky.
+	# selects, and that closure is absent from the current pack. Use the generic
+	# retail map-edge blank while that sky closure remains unavailable.
 	environment.background_mode = Environment.BG_COLOR
-	# Approved equivalence: with the skybox texture set still oracle-blocked,
-	# the horizon clears to the exact retail fog color the linear fog saturates
-	# to at distance, instead of an invented black void.
-	environment.background_color = FORDS_FOG_COLOR
+	environment.background_color = RETAIL_MAP_EDGE_BACKDROP_COLOR
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	# Approved equivalence: the object-domain material ambient sum applies as
 	# scene ambient. The terrain shader evaluates its own exact ambient and
@@ -6567,7 +6568,7 @@ func _build_environment() -> void:
 			"texture_set_source": FORDS_SKYBOX_TEXTURE_SET_SOURCE,
 			"map_texture_set_override_present": false,
 			"status": FORDS_SKYBOX_STATUS,
-			"runtime_background": "fog-color-horizon-no-sky-material",
+			"runtime_background": "neutral-black-map-edge-backdrop",
 		},
 		"water_reflection": {
 			"source_leaf": FORDS_WATER_REFLECTION_SOURCE_LEAF,
