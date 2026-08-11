@@ -628,7 +628,9 @@ def _module_contract(block: SageBlock) -> dict[str, object]:
 
 
 def _compile_delivery(
-    documents: Mapping[str, bytes], objects: Mapping[str, SageObject]
+    documents: Mapping[str, bytes],
+    objects: Mapping[str, SageObject],
+    ring_creation_lists: set[str],
 ) -> dict[str, object]:
     structures: list[dict[str, object]] = []
     module_rows: dict[str, list[SageBlock]] = {
@@ -660,8 +662,9 @@ def _compile_delivery(
             "enterSound": _value(module, "EnterSound"),
         }
         owns_ring_drop = any(
-            drop.values("CreationList") == ("OCL_TheOneRing",)
+            creation_list.casefold() in ring_creation_lists
             for drop in _own_modules(obj, "CreateObjectDie")
+            for creation_list in drop.values("CreationList")
         )
         includes_ring_func = any(
             ref.relative_virtual_path.casefold().endswith("fortressringfunc.inc")
@@ -943,17 +946,22 @@ def compile_ring_system_descriptor(
             raise RingSystemCompilerError(
                 f"OCL_TheRingStealer object {excluded_id} is not a {NEUTRAL_GOLLUM} child"
             )
+    object_creation_lists = {
+        name: _compile_ocl(ocl_source, name)
+        for name in ("OCL_TheOneRing", "OCL_TheOneRingCD")
+    }
     result: dict[str, object] = {
         "schema": SCHEMA,
         "schemaVersion": SCHEMA_VERSION,
         "runtimeOutputPath": "data/ring/system.json",
         "objects": compiled_objects,
-        "objectCreationLists": {
-            name: _compile_ocl(ocl_source, name)
-            for name in ("OCL_TheOneRing", "OCL_TheOneRingCD")
-        },
+        "objectCreationLists": object_creation_lists,
         "upgrades": _compile_upgrades(documents),
-        "delivery": _compile_delivery(documents, objects),
+        "delivery": _compile_delivery(
+            documents,
+            objects,
+            {name.casefold() for name in object_creation_lists},
+        ),
         "routes": _compile_routes(documents),
         "system": {
             "modeToken": "ringheroes",

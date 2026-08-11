@@ -67,10 +67,12 @@ Important nested contracts:
   failure. A conditional hero model is discovered from the hero's authored
   `ModelConditionUpgrade` plus matching model-condition draw state, never from
   a hero-name special case.
-- `delivery.structures` has exactly 26 rows. Every row carries a boolean
-  `dropsRingOnDeath` derived from its own ring-drop behavior or its authored
-  `FortressRingFunc.inc` include. Retail `EreborThrone` therefore emits false
-  plus `note: "retail-bug-accepts-ring-never-returns-it"`.
+- `delivery.structures` has exactly 26 rows: 25 emit
+  `dropsRingOnDeath: true`, including `AngmarCitadelCarnDum` via its authored
+  `OCL_TheOneRingCD` drop, and only `EreborThrone` emits false plus
+  `note: "retail-bug-accepts-ring-never-returns-it"`. The boolean is derived
+  from a structure's own compiled ring-OCL drop or its authored
+  `FortressRingFunc.inc` include.
 - `system.spawn` and `excludedObjects` are derived from
   `OCL_TheRingCarrier`/`OCL_TheRingStealer`. The compiler requires both OCLs to
   agree on team and waypoint family, requires the carrier object to be compiled,

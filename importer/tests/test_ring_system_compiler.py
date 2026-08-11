@@ -15,14 +15,21 @@ from openbfme_importer.ring_system_compiler import (
 )
 
 
-def _structure(index: int, *, erebor: bool = False) -> str:
-    name = "EreborThrone" if erebor else f"FixtureFortress{index:02d}"
+def _structure(index: int, *, carn_dum: bool = False, erebor: bool = False) -> str:
+    name = (
+        "AngmarCitadelCarnDum"
+        if carn_dum
+        else "EreborThrone"
+        if erebor
+        else f"FixtureFortress{index:02d}"
+    )
+    creation_list = "OCL_TheOneRingCD" if carn_dum else "OCL_TheOneRing"
     ring_drop = "" if erebor else """
   Behavior = CreateObjectDie ModuleTag_DropOneRing
     TriggeredBy = Upgrade_RingHero Upgrade_FortressRingHero
-    CreationList = OCL_TheOneRing
+    CreationList = {creation_list}
   End
-"""
+""".format(creation_list=creation_list)
     return f"""
 Object {name}
   Side = Dwarves
@@ -52,7 +59,11 @@ End
 
 
 def _documents() -> dict[str, bytes]:
-    structures = "".join(_structure(i) for i in range(25)) + _structure(25, erebor=True)
+    structures = (
+        _structure(0, carn_dum=True)
+        + "".join(_structure(i) for i in range(1, 25))
+        + _structure(25, erebor=True)
+    )
     return {
         "data/ini/object/neutral/neutralunits.ini": b"""
 Object NeutralGollum
@@ -338,6 +349,13 @@ def test_delivery_upgrades_routes_heroes_and_system_are_source_backed() -> None:
     erebor = next(row for row in result["delivery"]["structures"] if row["objectId"] == "EreborThrone")
     assert erebor["note"] == "retail-bug-accepts-ring-never-returns-it"
     assert erebor["dropsRingOnDeath"] is False
+    carn_dum = next(
+        row
+        for row in result["delivery"]["structures"]
+        if row["objectId"] == "AngmarCitadelCarnDum"
+    )
+    assert carn_dum["dropsRingOnDeath"] is True
+    assert "note" not in carn_dum
     assert all(
         row["dropsRingOnDeath"] is True
         for row in result["delivery"]["structures"]
