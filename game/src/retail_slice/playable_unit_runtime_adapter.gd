@@ -40,14 +40,14 @@ static func is_ring_hero_summon(document: Dictionary) -> bool:
 	return false
 
 
-static func fieldability(document: Dictionary) -> Dictionary:
+static func fieldability(document: Dictionary, allow_ring_heroes := false) -> Dictionary:
 	## Fail-closed classification for roster composition: exactly why a
 	## converted playable-unit document can or cannot join a faction slice.
 	## Callers record the reason; nothing is silently approximated.
 	var category := String(document.get("category", ""))
 	if category not in ["infantry", "ranged-infantry", "cavalry", "hero", "siege", "monster"]:
 		return {"ok": false, "reason": "unsupported-category:%s" % category}
-	if is_ring_hero_summon(document):
+	if is_ring_hero_summon(document) and not allow_ring_heroes:
 		return {"ok": false, "reason": "ring-hero-summon-not-trained"}
 	var simulation := simulation_rule(document)
 	if not simulation.is_empty():

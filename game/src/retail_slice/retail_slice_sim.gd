@@ -1396,6 +1396,10 @@ var _next_creep_structure_id := 60001
 var ring_mechanic_enabled := false
 var _ring_contract: Dictionary = {}
 var _ring_delivery_kinds: Dictionary = {}
+# Map script executors evaluate on tick 1 before the ring step. Four additional
+# ticks cover their initial interval/condition settling window, so tick 5 is the
+# first fallback opportunity. Script-spawn dedupe below makes this exact bound
+# non-load-bearing: a later authored spawn is absorbed instead of duplicating it.
 const RING_FALLBACK_TICK := 5
 const RING_DEFAULT_GOLLUM := "NeutralGollum_RingHero"
 const RING_DEFAULT_ITEM := "TheDroppedRing"
@@ -1464,7 +1468,16 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	entity_container.clear()
 	script_areas.clear()
 	script_waypoints.clear()
+	var effective_rules := gameplay_rules if not gameplay_rules.is_empty() else _rules
+	var ring_waypoint_family := String(
+		(effective_rules.get("ring_system", {}) as Dictionary).get(
+			"waypointFamily", "SpawnPoint_SkirmishGollum_"
+		)
+	)
+	var ring_waypoints_enabled := bool(effective_rules.get("allow_ring_heroes", false))
 	for waypoint_name in _map_script_waypoints.keys():
+		if not ring_waypoints_enabled and String(waypoint_name).begins_with(ring_waypoint_family):
+			continue
 		script_waypoints[String(waypoint_name)] = _map_script_waypoints[waypoint_name]
 	script_waypoint_paths.clear()
 	team_created_edge.clear()
@@ -1773,8 +1786,12 @@ func _configure_ring_mechanic_contract() -> void:
 				var block: Variant = mechanic.get(block_name, {})
 				if typeof(block) == TYPE_DICTIONARY:
 					_ring_contract.merge(block as Dictionary, false)
-					if block_name == "ring" and (block as Dictionary).has("scanRange"):
-						_ring_contract["pickupRange"] = float((block as Dictionary)["scanRange"])
+					if not (block as Dictionary).is_empty():
+						var document_object_id := String((document_value as Dictionary).get("objectId", ""))
+						if document_object_id != "":
+							_ring_contract["gollumObjectId" if block_name == "gollum" else "ringObjectId"] = document_object_id
+						if block_name == "ring" and (block as Dictionary).has("scanRange"):
+							_ring_contract["pickupRange"] = float((block as Dictionary)["scanRange"])
 	_ring_delivery_kinds.clear()
 	for kind_value in (_rules.get("ring_delivery_structure_kinds", []) as Array):
 		_ring_delivery_kinds[String(kind_value)] = true
@@ -1802,16 +1819,27 @@ func _configure_ring_mechanic_contract() -> void:
 
 
 func _ring_state() -> Dictionary:
-	return script_surface_bag.get("ring_mechanic", {}) as Dictionary
+	if not script_surface_bag.has("ring_mechanic") \
+			or typeof(script_surface_bag["ring_mechanic"]) != TYPE_DICTIONARY:
+		script_surface_bag["ring_mechanic"] = {
+			"gollum_id": 0, "gollum_spawned": false, "ring_active": false,
+			"ring_position": Vector2.ZERO, "carrier_id": 0,
+		}
+	return script_surface_bag["ring_mechanic"] as Dictionary
 
 
 func _mark_ring_delivery_structures() -> void:
 	for structure_id in structure_ids():
-		var row: Dictionary = structures[structure_id]
-		var kind := String(row.get("structure_kind", ""))
-		if _ring_delivery_kinds.has(kind):
-			row["ring_delivery"] = (_ring_delivery_kinds[kind] as Dictionary).duplicate(true) \
-				if typeof(_ring_delivery_kinds[kind]) == TYPE_DICTIONARY else {}
+		_mark_ring_delivery_structure(structures[structure_id] as Dictionary)
+
+
+func _mark_ring_delivery_structure(row: Dictionary) -> void:
+	if not ring_mechanic_enabled:
+		return
+	var kind := String(row.get("structure_kind", ""))
+	if _ring_delivery_kinds.has(kind):
+		row["ring_delivery"] = (_ring_delivery_kinds[kind] as Dictionary).duplicate(true) \
+			if typeof(_ring_delivery_kinds[kind]) == TYPE_DICTIONARY else {}
 
 
 func _ring_gollum_object_id() -> String:
@@ -1827,6 +1855,24 @@ func _ring_eva(name: String) -> String:
 	return String((_ring_contract.get("evaEvents", {}) as Dictionary).get(name, ""))
 
 
+func ring_presentation_contract() -> Dictionary:
+	var offset_value: Variant = _ring_contract.get("carrierOffsetSource", Vector2(0.0, -10.0))
+	var offset := Vector2(0.0, -10.0)
+	if typeof(offset_value) == TYPE_VECTOR2:
+		offset = offset_value as Vector2
+	elif typeof(offset_value) == TYPE_ARRAY and (offset_value as Array).size() >= 2:
+		offset = Vector2(float((offset_value as Array)[0]), float((offset_value as Array)[1]))
+	elif typeof(offset_value) == TYPE_DICTIONARY:
+		var offset_row := offset_value as Dictionary
+		offset = Vector2(float(offset_row.get("x", 0.0)), float(offset_row.get("y", -10.0)))
+	return {
+		"enabled": ring_mechanic_enabled,
+		"object_id": String(_ring_contract.get("ringObjectId", RING_DEFAULT_ITEM)),
+		"status": String(_ring_contract.get("status", "HOLDING_THE_RING")),
+		"offset_source": offset,
+	}
+
+
 func _is_ring_gollum(row: Dictionary) -> bool:
 	var wanted := _ring_gollum_object_id()
 	return String(row.get("object_id", "")) == wanted \
@@ -1834,9 +1880,22 @@ func _is_ring_gollum(row: Dictionary) -> bool:
 		or String(row.get("source_object_id", "")) == wanted
 
 
+func _existing_ring_gollum_id() -> int:
+	for entity_id in entity_ids():
+		var row: Dictionary = entities[entity_id]
+		if _is_ring_gollum(row) and int(row.get("health", 0)) > 0:
+			return entity_id
+	return 0
+
+
 func _spawn_ring_gollum_fallback() -> void:
 	var state := _ring_state()
 	if bool(state.get("gollum_spawned", false)):
+		return
+	var existing := _existing_ring_gollum_id()
+	if existing != 0:
+		state["gollum_id"] = existing
+		state["gollum_spawned"] = true
 		return
 	var family := String(_ring_contract.get("waypointFamily", "SpawnPoint_SkirmishGollum_"))
 	var rolled := logic_random_int(1, 8)
@@ -1856,9 +1915,9 @@ func _spawn_ring_gollum_fallback() -> void:
 		else:
 			waypoint = "fallback-map-centre"
 			at = Vector2.ZERO
-		push_warning("RING_GOLLUM_FALLBACK missing scripted spawn; deterministic sim fallback waypoint=%s roll=%d" % [waypoint, rolled])
+	push_warning("RING_GOLLUM_FALLBACK scripted spawn absent after tick %d; deterministic fallback waypoint=%s roll=%d" % [RING_FALLBACK_TICK, waypoint, rolled])
 	var gollum_id := spawn_script_object(
-		_ring_gollum_object_id(), _ring_spawn_team(), at
+		_ring_gollum_object_id(), _ring_spawn_team(), at, true
 	)
 	if gollum_id <= 0:
 		push_error("RING_GOLLUM_FALLBACK_FAILED stale pack lacks playable Gollum rule (%s)" % _ring_gollum_object_id())
@@ -1872,11 +1931,12 @@ func _spawn_ring_gollum_fallback() -> void:
 
 
 func _configure_ring_gollum(row: Dictionary) -> void:
+	var source_scale := maxf(0.000001, float(_rules.get("source_map_transform_scale", 1.0)))
 	row["ring_gollum"] = true
 	row["ring_wander_percentage"] = int(_ring_contract.get("wanderPercentage", 80))
-	row["ring_detection_range"] = float(_ring_contract.get("detectionRange", 120.0))
-	row["ring_flee_enemy_range"] = float(_ring_contract.get("fleeEnemyRange", 300.0))
-	row["ring_flee_distance"] = float(_ring_contract.get("fleeDistance", 800.0))
+	row["ring_detection_range"] = float(_ring_contract.get("detectionRange", 120.0)) * source_scale
+	row["ring_flee_enemy_range"] = float(_ring_contract.get("fleeEnemyRange", 300.0)) * source_scale
+	row["ring_flee_distance"] = float(_ring_contract.get("fleeDistance", 800.0)) * source_scale
 	if not _stealth_active(row):
 		_grant_stealth(row, 0x3FFFFFFF, [])
 
@@ -1912,7 +1972,8 @@ func _step_ring_gollum(gollum_id: int) -> void:
 		return
 	var position := Vector2(row.get("position", Vector2.ZERO))
 	var detect_range := float(row.get("ring_detection_range", 120.0))
-	var detector := _spatial_nearest_hostile(row, CREEP_TEAM, position, detect_range, 0, true)
+	var gollum_team := int(row.get("team", _ring_spawn_team()))
+	var detector := _spatial_nearest_hostile(row, gollum_team, position, detect_range, 0, true)
 	if detector != 0:
 		if _stealth_active(row):
 			_clear_stealth(row)
@@ -1920,7 +1981,7 @@ func _step_ring_gollum(gollum_id: int) -> void:
 		if not _stealth_active(row):
 			_grant_stealth(row, 0x3FFFFFFF, [])
 	var flee_range := float(row.get("ring_flee_enemy_range", 300.0))
-	var threat := _spatial_nearest_hostile(row, CREEP_TEAM, position, flee_range, 0, true)
+	var threat := _spatial_nearest_hostile(row, gollum_team, position, flee_range, 0, true)
 	if threat != 0:
 		var away := Vector2((entities[threat] as Dictionary).get("position", position)).direction_to(position)
 		if away.length_squared() < 0.000001:
@@ -1972,7 +2033,7 @@ func _step_ring_mechanic() -> void:
 			if not structure.has("ring_delivery"):
 				continue
 			var delivery: Dictionary = structure.get("ring_delivery", {}) as Dictionary
-			var range := float(delivery.get("scanRange", _ring_contract.get("deliveryRange", 10.0)))
+			var range := float(delivery.get("scanRange", _ring_contract.get("deliveryRange", 10.0))) * maxf(0.000001, float(_rules.get("source_map_transform_scale", 1.0)))
 			if Vector2(structure.get("position", Vector2.ZERO)).distance_to(Vector2(carrier.get("position", Vector2.ZERO))) <= range:
 				var team := int(carrier.get("team", -1))
 				var owned: Dictionary = team_upgrades.get(team, {}) as Dictionary
@@ -1981,6 +2042,7 @@ func _step_ring_mechanic() -> void:
 				var completed: Array = structure.get("completed_upgrades", [])
 				if not completed.has("Upgrade_FortressRingHero"):
 					completed.append("Upgrade_FortressRingHero")
+					completed.sort()
 				structure["completed_upgrades"] = completed
 				set_entity_object_status(carrier_id, String(_ring_contract.get("status", "HOLDING_THE_RING")), false)
 				state["ring_active"] = false
@@ -1990,7 +2052,7 @@ func _step_ring_mechanic() -> void:
 	if not bool(state.get("ring_active", false)) or int(state.get("carrier_id", 0)) != 0:
 		return
 	var ring_position := Vector2(state.get("ring_position", Vector2.ZERO))
-	var pickup_range := float(_ring_contract.get("pickupRange", 10.0))
+	var pickup_range := float(_ring_contract.get("pickupRange", 10.0)) * maxf(0.000001, float(_rules.get("source_map_transform_scale", 1.0)))
 	for entity_id in entity_ids():
 		var candidate: Dictionary = entities[entity_id]
 		if not _ring_pickup_eligible(candidate):
@@ -2708,9 +2770,6 @@ func _configure_playable_unit_runtime_contracts() -> void:
 		if typeof(document_value) != TYPE_DICTIONARY:
 			configuration_error = "Playable-unit runtime '%s' is invalid" % object_id
 			return
-		if PlayableUnitAdapter.is_ring_hero_summon(document_value as Dictionary) \
-				and not ring_mechanic_enabled:
-			continue
 		var ring_gollum_block: Variant = ((document_value as Dictionary).get("ringMechanic", {}) as Dictionary).get("gollum", {})
 		if ring_mechanic_enabled and typeof(ring_gollum_block) == TYPE_DICTIONARY \
 				and not (ring_gollum_block as Dictionary).is_empty():
@@ -2917,7 +2976,12 @@ func _configure_playable_unit_runtime_contracts() -> void:
 			"command_slot": int(primary_producer.get("slot", 0)),
 			"surface": String(primary_producer.get("surface", "")),
 		}
-		if String(primary_producer.get("source_field", "")) == "BuildableRingHeroesMP":
+		var is_ring_hero_rule := false
+		for producer_route in resolved_producers:
+			if String(producer_route.get("source_field", "")) == "BuildableRingHeroesMP":
+				is_ring_hero_rule = true
+				break
+		if is_ring_hero_rule:
 			(_unit_production_rules[unit_type] as Dictionary)["is_ring_hero"] = true
 		if not _production_unit_order.has(unit_type):
 			_production_unit_order.append(unit_type)
@@ -2935,6 +2999,9 @@ func _configure_playable_unit_runtime_contracts() -> void:
 		for route in resolved_producers:
 			var producer_kind := String(route["producer_kind"])
 			var candidate: Array = (route.get("prerequisites", []) as Array).duplicate()
+			if String(route.get("source_field", "")) == "BuildableRingHeroesMP" and candidate.is_empty():
+				candidate = ["Upgrade_RingHero", "Upgrade_FortressRingHero"]
+				print("[RetailSliceSim] stale-pack-ring-prereqs-synthesized unit=%s producer=%s" % [unit_type, producer_kind])
 			var candidate_any: Array = (route.get("prerequisites_any_of", []) as Array).duplicate()
 			if not prerequisites_by_producer.has(producer_kind):
 				prerequisites_by_producer[producer_kind] = candidate
@@ -8163,7 +8230,7 @@ func _spawn_summon_targets(team: int, point: Vector2, targets: Array) -> Array:
 	return spawned
 
 
-func spawn_script_object(object_type: String, team: int, at: Vector2) -> int:
+func spawn_script_object(object_type: String, team: int, at: Vector2, ring_fallback := false) -> int:
 	## Map-script object creation (campaign B4). Instantiates one battalion of
 	## the retail object type `object_type` for `team` at `at` and returns its
 	## entity id.
@@ -8179,6 +8246,14 @@ func spawn_script_object(object_type: String, team: int, at: Vector2) -> int:
 	## create objects is byte-identical to one compiled before it existed.
 	if object_type == "":
 		return -1
+	if ring_mechanic_enabled and object_type == _ring_gollum_object_id() and not ring_fallback:
+		var existing := _existing_ring_gollum_id()
+		if existing != 0:
+			var state := _ring_state()
+			state["gollum_id"] = existing
+			state["gollum_spawned"] = true
+			print("[RetailSliceSim] RING_GOLLUM_SCRIPT_DUPLICATE_ABSORBED existing=%d object=%s" % [existing, object_type])
+			return existing
 	var unit_rules_value: Variant = _rules.get("unit_rules", {})
 	if typeof(unit_rules_value) != TYPE_DICTIONARY:
 		return -1
@@ -8189,7 +8264,7 @@ func spawn_script_object(object_type: String, team: int, at: Vector2) -> int:
 		# Allocating outside the seeded per-team id ranges would collide with
 		# another team's ids, so an unseeded team refuses rather than inventing
 		# an id space.
-		if team == CREEP_TEAM:
+		if team == CREEP_TEAM and ring_mechanic_enabled:
 			_next_dynamic_id[team] = 80001
 		else:
 			return -1
@@ -8204,7 +8279,15 @@ func spawn_script_object(object_type: String, team: int, at: Vector2) -> int:
 		object_type,
 		0
 	)
-	return entity_id if entities.has(entity_id) else -1
+	if not entities.has(entity_id):
+		return -1
+	if ring_mechanic_enabled and object_type == _ring_gollum_object_id() and not ring_fallback:
+		var state := _ring_state()
+		state["gollum_id"] = entity_id
+		state["gollum_spawned"] = true
+		_configure_ring_gollum(entities[entity_id] as Dictionary)
+		_emit_event("ring.gollum_spawned", entity_id, 0, {"fallback": false, "script": true})
+	return entity_id
 
 
 func _step_summon_despawns() -> void:
@@ -15190,6 +15273,7 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 		"damage_remainders": {},
 		"income_per_payout": int(_rules.get("farm_income", 25)) if structure_kind == "farm" else 0,
 	}
+	_mark_ring_delivery_structure(structures[structure_id] as Dictionary)
 	if bool(build_rule.get("highlander_body", false)):
 		structures[structure_id]["highlander_body"] = true
 	team_resources[team] = resources_for_team(team) - cost

@@ -1662,6 +1662,10 @@ func _resolve_faction_manifest(faction_override: String = "") -> Dictionary:
 	if faction == "":
 		faction = FactionManifestScript.DEFAULT_FACTION
 	_classify_faction_units(faction)
+	var game_state = get_node_or_null("/root/GameState") if is_inside_tree() else null
+	var allow_ring_heroes: bool = false
+	if game_state != null:
+		allow_ring_heroes = game_state.get("retail_allow_ring_heroes") == true
 	# Only honestly fieldable units reach the manifest: the manifest gate is
 	# deliberately fail-closed for anything it can see, so unfieldable
 	# documents stay out here with their recorded exclusion reason instead.
@@ -1669,7 +1673,8 @@ func _resolve_faction_manifest(faction_override: String = "") -> Dictionary:
 	return FactionManifestScript.from_registries(
 		faction,
 		fieldable_unit_runtimes,
-		ContentDB.get_playable_structure_runtimes()
+		ContentDB.get_playable_structure_runtimes(),
+		allow_ring_heroes
 	)
 
 
@@ -1775,6 +1780,12 @@ func _classify_faction_units(
 		pack_index_override if not pack_index_override.is_empty() else ContentDB.get_playable_unit_runtime_pack_index()
 	)
 	var object_ids: Array[String] = []
+	var active_game_state = game_state_override
+	if active_game_state == null and is_inside_tree():
+		active_game_state = get_node_or_null("/root/GameState")
+	var allow_ring_heroes: bool = false
+	if active_game_state != null:
+		allow_ring_heroes = active_game_state.get("retail_allow_ring_heroes") == true
 	for value in runtimes.keys():
 		object_ids.append(String(value))
 	object_ids.sort_custom(func(a: String, b: String) -> bool: return a.naturalnocasecmp_to(b) < 0)
@@ -1817,8 +1828,13 @@ func _classify_faction_units(
 			if not PlayableUnitAdapter.producer_bindings(document).is_empty():
 				producible_unit_runtimes[object_id] = document
 			continue
-		var verdict := PlayableUnitAdapter.fieldability(document)
+		var verdict := PlayableUnitAdapter.fieldability(document, allow_ring_heroes)
 		if not bool(verdict.get("ok", false)):
+			if PlayableUnitAdapter.is_ring_hero_summon(document):
+				# Keep the compiled rule in the sim even while the roster toggle is
+				# off, so a stale/replayed purchase receives the authoritative
+				# ring-heroes-disabled refusal instead of unsupported-unit.
+				producible_unit_runtimes[object_id] = document
 			unit_roster_exclusions.append({
 				"object_id": object_id,
 				"category": String(document.get("category", "")),
@@ -3693,6 +3709,7 @@ func _sync_presentation() -> void:
 		return
 	if _profile_sync:
 		_profile_mark = Time.get_ticks_usec()
+	var ring_presentation: Dictionary = simulation.ring_presentation_contract()
 	for id in simulation.entity_ids():
 		var entity: Dictionary = simulation.entity(id)
 		if int(entity.get("team", -1)) == SimScript.CREEP_TEAM:
@@ -3716,11 +3733,12 @@ func _sync_presentation() -> void:
 			String(entity.get("banner_carrier_object_id", "")),
 			Vector2(entity.get("banner_carrier_offset_source", Vector2.ZERO))
 		)
-		battalion.sync_ring_carrier(
-			simulation.entity_has_object_status(id, "HOLDING_THE_RING"),
-			"TheDroppedRing",
-			Vector2(0.0, -10.0)
-		)
+		if bool(ring_presentation.get("enabled", false)):
+			battalion.sync_ring_carrier(
+				simulation.entity_has_object_status(id, String(ring_presentation.get("status", "HOLDING_THE_RING"))),
+				String(ring_presentation.get("object_id", "")),
+				Vector2(ring_presentation.get("offset_source", Vector2.ZERO))
+			)
 		battalion.set_production_exit_progress(float(entity.get("production_exit_progress", 1.0)))
 		battalion.set_selected(simulation.selected_ids.has(id))
 		var attack_target := _attack_target_node(entity)
@@ -3917,6 +3935,7 @@ func hud_locked_units(production: Array, structure_kind: String, completed_upgra
 	## own gate — ALL-of list plus the authored ANY-of group (commandbutton.ini
 	## NeededUpgradeAny) — or the HUD offers train buttons queue_unit refuses.
 	var locked: Array[String] = []
+	var team_upgrade_ids: Array = (simulation.team_upgrades.get(local_team, {}) as Dictionary).keys()
 	for unit_type_value in production:
 		var unit_type := String(unit_type_value)
 		if simulation.hero_unavailable(local_team, unit_type):
@@ -3924,7 +3943,7 @@ func hud_locked_units(production: Array, structure_kind: String, completed_upgra
 			continue
 		if simulation.production_gate_unsatisfied(
 			unit_type, structure_kind, completed_upgrades,
-			(simulation.team_upgrades.get(local_team, {}) as Dictionary).keys()
+			team_upgrade_ids
 		) != "":
 			locked.append(unit_type)
 	return locked

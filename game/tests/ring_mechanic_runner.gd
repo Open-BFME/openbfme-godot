@@ -30,6 +30,11 @@ func _run() -> void:
 		}]},
 	}
 	_check(Adapter.is_ring_hero_summon(route_doc), "compiled sourceField identifies ring hero")
+	_test_stale_pack_prerequisites()
+	_test_source_range_scaling()
+	_test_unseeded_ring_state()
+	_test_sim_waypoint_gate()
+	_test_document_contract_precedence()
 	var a = _make_sim(true)
 	var b = _make_sim(true)
 	_check(String(a.configuration_error) == "" and String(b.configuration_error) == "", "synthetic compiled contracts configure")
@@ -85,6 +90,14 @@ func _run() -> void:
 	_check(_living_gollums(off) == 0, "rule off spawns no Gollum")
 	_configure_ring_hero_purchase(off, _fortress(off, 0))
 	_check(String(off.queue_unit(0, _fortress(off, 0), HERO).get("reason", "")) == "ring-heroes-disabled", "rule off refuses ring hero purchase")
+	var scripted_after_fallback = _make_sim(true)
+	for _i in range(6): scripted_after_fallback.tick()
+	var absorbed: int = scripted_after_fallback.spawn_script_object(GOLLUM, Sim.CREEP_TEAM, Vector2(20.0, 0.0))
+	_check(absorbed == int(scripted_after_fallback._ring_state().get("gollum_id", 0)) and _living_gollums(scripted_after_fallback) == 1, "script Gollum after fallback is absorbed")
+	var scripted_before_fallback = _make_sim(true)
+	var scripted_id: int = scripted_before_fallback.spawn_script_object(GOLLUM, Sim.CREEP_TEAM, Vector2(20.0, 0.0))
+	for _i in range(10): scripted_before_fallback.tick()
+	_check(scripted_id > 0 and _living_gollums(scripted_before_fallback) == 1, "script Gollum before fallback prevents fallback duplicate")
 	print("RING_MECHANIC_RESULT passed=%d failed=%d hash=%s" % [passed, failed, a.state_hash()])
 	quit(0 if failed == 0 else 1)
 
@@ -112,6 +125,144 @@ func _make_sim(enabled: bool):
 	sim.ai_enabled = false
 	for i in range(1, 9): sim.register_script_waypoint("SpawnPoint_SkirmishGollum_%d" % i, Vector2(i * 3.0, 0.0))
 	return sim
+
+
+func _test_stale_pack_prerequisites() -> void:
+	var sim = Sim.new()
+	var runtime_id := "bfme2.object.fixture-ring-hero"
+	var rules := _rules_for(true)
+	(rules["unit_rules"] as Dictionary)[runtime_id] = _unit_rule(runtime_id, 5000, 6.0)
+	rules["playable_unit_runtimes"] = {"FixtureRingHero": _pack_ring_hero_document([])}
+	rules["producer_kind_by_source_object"] = {"FixtureFortress": "fortress"}
+	sim.setup({}, rules)
+	sim.ai_enabled = false
+	var fortress := _fortress(sim, 0)
+	var refused: Dictionary = sim.queue_unit(0, fortress, runtime_id)
+	_check(String(refused.get("reason", "")) == "missing-upgrade", "stale pack ring hero is unbuyable without synthesized prerequisites")
+	(sim.team_upgrades[0] as Dictionary)["Upgrade_RingHero"] = true
+	var completed: Array = (sim.structures[fortress] as Dictionary).completed_upgrades
+	completed.append("Upgrade_FortressRingHero")
+	completed.sort()
+	var accepted: Dictionary = sim.queue_unit(0, fortress, runtime_id)
+	_check(bool(accepted.get("ok", false)), "stale pack ring hero is buyable after both synthesized prerequisites")
+	var off_rules := _rules_for(false)
+	(off_rules["unit_rules"] as Dictionary)[runtime_id] = _unit_rule(runtime_id, 5000, 6.0)
+	off_rules["playable_unit_runtimes"] = {"FixtureRingHero": _pack_ring_hero_document([])}
+	off_rules["producer_kind_by_source_object"] = {"FixtureFortress": "fortress"}
+	var off_sim = Sim.new()
+	off_sim.setup({}, off_rules)
+	var off_reason := String(off_sim.queue_unit(0, _fortress(off_sim, 0), runtime_id).get("reason", ""))
+	_check(off_reason == "ring-heroes-disabled", "real pack-shaped rule-off purchase returns ring-heroes-disabled")
+	_check(off_sim.spawn_script_object(GOLLUM, Sim.CREEP_TEAM, Vector2.ZERO) == -1, "rule off does not grant the ring creep-team id space")
+	var compiled_rules := _rules_for(true)
+	(compiled_rules["unit_rules"] as Dictionary)[runtime_id] = _unit_rule(runtime_id, 5000, 6.0)
+	compiled_rules["playable_unit_runtimes"] = {"FixtureRingHero": _pack_ring_hero_document(["Upgrade_CompiledRingGate"])}
+	compiled_rules["producer_kind_by_source_object"] = {"FixtureFortress": "fortress"}
+	var compiled_sim = Sim.new()
+	compiled_sim.setup({}, compiled_rules)
+	_check(compiled_sim.production_gate_unsatisfied(runtime_id, "fortress", [], []) == "Upgrade_CompiledRingGate", "non-empty compiled ring prerequisites supersede synthesis")
+
+
+func _test_source_range_scaling() -> void:
+	var sim = _make_sim(true)
+	sim._rules["source_map_transform_scale"] = 0.1
+	var gollum := _add_fixture_unit(sim, 801, Sim.CREEP_TEAM, Vector2.ZERO, GOLLUM)
+	sim._configure_ring_gollum(sim.entities[gollum] as Dictionary)
+	_check(is_equal_approx(float((sim.entities[gollum] as Dictionary).ring_detection_range), 12.0), "Gollum detection range scales source 120 by map scale")
+	_check(is_equal_approx(float((sim.entities[gollum] as Dictionary).ring_flee_enemy_range), 30.0), "Gollum flee enemy range scales source 300 by map scale")
+	_check(is_equal_approx(float((sim.entities[gollum] as Dictionary).ring_flee_distance), 80.0), "Gollum flee distance scales source 800 by map scale")
+	_add_fixture_unit(sim, 802, 0, Vector2(13.0, 0.0), CARRIER)
+	sim._step_ring_gollum(gollum)
+	_check(sim._stealth_active(sim.entities[gollum] as Dictionary), "detection does not trigger outside scaled 120 range")
+	var pickup_sim = _make_sim(true)
+	pickup_sim._rules["source_map_transform_scale"] = 0.1
+	var pickup_state := pickup_sim._ring_state()
+	pickup_state["gollum_spawned"] = true
+	pickup_state["ring_active"] = true
+	pickup_state["ring_position"] = Vector2.ZERO
+	var carrier := _add_fixture_unit(pickup_sim, 803, 0, Vector2(2.0, 0.0), CARRIER)
+	pickup_sim._step_ring_mechanic()
+	_check(int(pickup_state.get("carrier_id", 0)) == 0, "ring pickup does not trigger outside scaled source 10 range")
+	pickup_sim.script_teleport_entity(carrier, Vector2(0.5, 0.0))
+	pickup_sim._step_ring_mechanic()
+	_check(int(pickup_state.get("carrier_id", 0)) == carrier, "ring pickup triggers inside scaled source 10 range")
+
+
+func _test_unseeded_ring_state() -> void:
+	var sim = _make_sim(true)
+	sim.script_surface_bag.erase("ring_mechanic")
+	var state := sim._ring_state()
+	state["persistence_probe"] = true
+	_check(bool(sim._ring_state().get("persistence_probe", false)), "unseeded ring bag lazily stores its state dictionary")
+	for _i in range(20): sim.tick()
+	_check(_living_gollums(sim) == 1, "unseeded ring bag lazily stores state and spawns exactly one Gollum")
+
+
+func _test_sim_waypoint_gate() -> void:
+	var sim = Sim.new()
+	sim.setup({}, _rules_for(false))
+	sim._map_script_waypoints = {
+		"SpawnPoint_SkirmishGollum_1": Vector2(1.0, 0.0),
+		"OrdinaryScriptWaypoint": Vector2(2.0, 0.0),
+	}
+	sim.setup({}, _rules_for(false))
+	_check(not sim.script_waypoints.has("SpawnPoint_SkirmishGollum_1") and sim.script_waypoints.has("OrdinaryScriptWaypoint"), "sim itself gates ring spawn waypoints when rule is off")
+
+
+func _test_document_contract_precedence() -> void:
+	var rules := _rules_for(true)
+	(rules["ring_system"] as Dictionary)["gollumObjectId"] = "StaleSystemGollum"
+	(rules["ring_system"] as Dictionary)["ringObjectId"] = "StaleSystemRing"
+	(rules["ring_system"] as Dictionary)["carrierOffsetSource"] = [3.0, -7.0]
+	var sim = Sim.new()
+	sim.setup({}, rules)
+	var presentation: Dictionary = sim.ring_presentation_contract()
+	_check(sim._ring_gollum_object_id() == GOLLUM, "Gollum runtime document objectId supersedes system default")
+	_check(String(presentation.get("object_id", "")) == "TheDroppedRing", "ring runtime document objectId supersedes system default")
+	_check(Vector2(presentation.get("offset_source", Vector2.ZERO)) == Vector2(3.0, -7.0), "ring presentation offset comes from the contract")
+	var late_structure := {"structure_kind": "fortress"}
+	sim._mark_ring_delivery_structure(late_structure)
+	_check(late_structure.has("ring_delivery"), "structure built mid-match receives ring delivery contract")
+
+
+func _rules_for(enabled: bool) -> Dictionary:
+	return {
+		"enable_base_loop": true, "allow_ring_heroes": enabled,
+		"spawn_initial_battalions": false, "starting_resources": 20000,
+		"command_point_cap": 1000, "logic_random_seed": 8675309,
+		"unit_rules": {GOLLUM: _unit_rule(GOLLUM, 200, 4.0), CARRIER: _unit_rule(CARRIER, 500, 0.0), HERO: _unit_rule(HERO, 5000, 6.0)},
+		"ring_system": {
+			"waypointFamily": "SpawnPoint_SkirmishGollum_", "spawnTeam": Sim.CREEP_TEAM,
+			"modeToken": "ringheroes", "gollumObjectId": GOLLUM, "ringObjectId": "TheDroppedRing",
+			"deliveryRange": 10.0,
+		},
+		"ring_runtime_documents": {
+			GOLLUM: {"objectId": GOLLUM, "ringMechanic": {"gollum": {"wanderPercentage": 80, "detectionRange": 120.0, "fleeEnemyRange": 300.0, "fleeDistance": 800.0}}},
+			"TheDroppedRing": {"objectId": "TheDroppedRing", "ringMechanic": {"ring": {"attachFilter": {"excludedObjectIds": [GOLLUM], "excludedCategories": ["flyer"]}, "scanRange": 10.0, "status": "HOLDING_THE_RING"}}},
+		},
+		"playable_structure_runtimes": {"FixtureFortress": {"objectId": "FixtureFortress", "ringMechanic": {"delivery": {"scanRange": 10.0}}}},
+		"producer_kind_by_source_object": {"FixtureFortress": "fortress"},
+	}
+
+
+func _pack_ring_hero_document(prerequisites: Array) -> Dictionary:
+	return {
+		"objectId": "FixtureRingHero", "category": "hero",
+		"registration": {
+			"composition": {"containerObjectId": "FixtureRingHero", "primaryMemberObjectId": "FixtureRingHero"},
+			"production": [{
+				"surface": "hero-roster", "slot": 0, "rosterOrdinal": 1,
+				"producerObjectId": "FixtureFortress", "commandSetId": "__engine__/BuildableRingHeroesMP",
+				"commandId": "Command_ConstructRingHero", "sourceField": "BuildableRingHeroesMP",
+				"prerequisites": prerequisites,
+			}],
+			"simulation": {
+				"displayName": "Ring Hero", "buildCost": 10000, "buildTimeSeconds": 300.0,
+				"commandPoints": 0, "memberCount": 1, "memberHealth": 5000,
+				"speed": 60.0, "visionRange": 200.0, "combat": {"damage": 100},
+			},
+		},
+	}
 
 
 func _unit_rule(id: String, health: int, speed: float) -> Dictionary:

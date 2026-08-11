@@ -124,7 +124,7 @@ static func default_manifest() -> Dictionary:
 	}
 
 
-static func from_registries(faction: String, unit_runtimes: Dictionary, structure_runtimes: Dictionary) -> Dictionary:
+static func from_registries(faction: String, unit_runtimes: Dictionary, structure_runtimes: Dictionary, allow_ring_heroes := false) -> Dictionary:
 	## Builds a manifest from imported pack registries. `faction` is a lowercase
 	## source object-id prefix (for example "rohan" matching RohanBarracks /
 	## RohanPorter). Men keeps `default_manifest()` when both registries are
@@ -432,7 +432,7 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 	var production_exclusions: Array = []
 	for unit_id in unit_ids:
 		var unit_document: Dictionary = unit_runtimes[unit_id] as Dictionary
-		if PlayableUnitAdapter.is_ring_hero_summon(unit_document):
+		if PlayableUnitAdapter.is_ring_hero_summon(unit_document) and not allow_ring_heroes:
 			# A ring-hero roster entry is retail's One Ring summon slot, not a
 			# trained production route: it must never be validated as producer
 			# content (its recorded producer belongs to the summon mechanic, and
@@ -453,6 +453,15 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 		var roster_dropped_routes: Array = []
 		for producer in PlayableUnitAdapter.producer_bindings(unit_document):
 			var producer_source := String(producer.get("producer_source_object_id", ""))
+			if allow_ring_heroes and PlayableUnitAdapter.is_ring_hero_summon(unit_document) \
+					and String(producer.get("source_field", "")) == "BuildableRingHeroesMP":
+				# This is an engine PlayerTemplate roster, not a literal building
+				# command set. Bind its recorded source identity to this faction's
+				# fortress so the rule-on manifest exposes the retail ring slot.
+				producer_kind_registry[producer_source] = "fortress"
+				producer_kinds_folded[producer_source.to_lower()] = producer_source
+				resolved_route_count += 1
+				continue
 			if producer_kinds_folded.has(producer_source.to_lower()):
 				resolved_route_count += 1
 				continue

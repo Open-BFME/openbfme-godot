@@ -49,6 +49,8 @@ func _run() -> void:
 		not bool(verdict.get("ok", true)) and String(verdict.get("reason", "")) == "ring-hero-summon-not-trained",
 		"adapter fieldability excludes the ring hero with the recorded summon reason: %s" % String(verdict.get("reason", ""))
 	)
+	var enabled_verdict := Adapter.fieldability(galadriel, true)
+	_check(bool(enabled_verdict.get("ok", false)), "rule-on adapter fieldability admits the pack-shaped ring hero")
 
 	# Direct callers (menu availability, probes) hand from_registries the full
 	# registries. The ring hero must land in excluded_units with the summon
@@ -80,6 +82,17 @@ func _run() -> void:
 			not rules.has("bfme2.object.elven-galadriel-ringhero"),
 			"no trained production rule exists for the ring hero"
 		)
+	var enabled_elves: Dictionary = Manifest.from_registries(
+		"elves",
+		content_db.get_playable_unit_runtimes(),
+		content_db.get_playable_structure_runtimes(),
+		true
+	)
+	var enabled_error := String(enabled_elves.get("_error", ""))
+	var enabled_rules: Dictionary = enabled_elves.get("unit_production_rules", {}) as Dictionary
+	_check(enabled_error == "", "rule-on real manifest builds from mounted pack documents: %s" % enabled_error)
+	var galadriel_rule: Dictionary = enabled_rules.get("bfme2.object.elven-galadriel-ring-hero", {}) as Dictionary
+	_check(not galadriel_rule.is_empty() and String(galadriel_rule.get("producer_kind", "")) == "fortress", "rule-on real manifest surfaces Galadriel on the fortress roster")
 
 	# Men is untouched: her object id stays outside the Men faction scope and
 	# the Men manifest builds with her simply out of scope.

@@ -543,16 +543,17 @@ try {
         # and levelled on the mounted pack's own compiled CAH table. It reads
         # the SELECTION (the Men slice plus data/cah/system.json), so it belongs
         # inside this block; floor is the measured 2026-08-09 value.
-		Invoke-GodotPassedFloor "cah_match" "cah_match_runner.gd" '(?m)^CAH_MATCH_RESULT passed=([0-9]+) failed=0\s*$' 72
-		# Synthetic compiled-contract full loop: deterministic Gollum, ring
-		# pickup/re-drop/delivery, dual-scope purchase gate, 300s rank-10 hero,
-		# death re-drop, rule-off refusal, and twin hashes every 30 ticks.
-		Invoke-GodotPassedFloor "ring_mechanic" "ring_mechanic_runner.gd" '(?m)^RING_MECHANIC_RESULT passed=([0-9]+) failed=0 hash=[0-9a-f]{64}\s*$' 121
+        Invoke-GodotPassedFloor "cah_match" "cah_match_runner.gd" '(?m)^CAH_MATCH_RESULT passed=([0-9]+) failed=0\s*$' 72
+        # Synthetic compiled-contract full loop: deterministic Gollum, ring
+        # pickup/re-drop/delivery, dual-scope purchase gate, 300s rank-10 hero,
+        # death re-drop, rule-off refusal, and twin hashes every 30 ticks. The
+        # exact final hash pins the authoritative behavior, not only its check count.
+        Invoke-GodotPassedFloor "ring_mechanic" "ring_mechanic_runner.gd" '(?m)^RING_MECHANIC_RESULT passed=([0-9]+) failed=0 hash=2650094088785f8e521604f8dec1218c4c5f95fa0d9e8802110a424f3e8aa875\s*$' 141
         # The lockstep gate now also carries the two-seat created-hero exchange
         # (lobby table convergence, byte-identical launch rosters, ownership,
         # and equal state hashes with different heroes per seat), which needs
         # the mounted CAH table - hence its move into the scoped block.
-		Invoke-GodotPassedFloor "retail_lockstep_network" "retail_lockstep_network_runner.gd" '(?m)^RETAIL_LOCKSTEP_NET_RESULT passed=([0-9]+) failed=0\s*$' 37
+        Invoke-GodotPassedFloor "retail_lockstep_network" "retail_lockstep_network_runner.gd" '(?m)^RETAIL_LOCKSTEP_NET_RESULT passed=([0-9]+) failed=0\s*$' 37
         Invoke-GodotPassedFloor "banner_castle_sim" "banner_castle_sim_runner.gd" '(?m)^BANNER_CASTLE_SIM_RUNNER PASS checks=([0-9]+)\s*$' 25
         # Fortress command surface, one process per faction (the slice hosts one
         # faction at a time). Asserts the three castle-system contracts against
