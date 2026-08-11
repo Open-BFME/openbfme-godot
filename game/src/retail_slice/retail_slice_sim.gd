@@ -3,6 +3,7 @@ extends RefCounted
 
 const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const ParitySystems = preload("res://src/retail_slice/retail_slice_parity.gd")
+const FogOfWarScript = preload("res://src/retail_slice/retail_fog_of_war.gd")
 const CommandScript = preload("res://src/retail_slice/retail_command.gd")
 const SelectionPick = preload("res://src/retail_slice/retail_selection_pick.gd")
 
@@ -1405,6 +1406,9 @@ var _creep_lair_placements: Array = []
 var _next_creep_guard_id := 70001
 var _next_creep_structure_id := 60001
 var ring_mechanic_enabled := false
+## Retail shroud. DERIVED state, never hashed - see retail_fog_of_war.gd.
+var fog_of_war_enabled := false
+var _fog_of_war = null
 var _ring_contract: Dictionary = {}
 var _ring_delivery_kinds: Dictionary = {}
 # Map script executors evaluate on tick 1 before the ring step. Four additional
@@ -1776,6 +1780,13 @@ func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 	# legacy runner and the untouched menu) resolves false, so the pinned
 	# behaviour signature stays byte-identical.
 	retail_formation_movement = bool(_rules.get("retail_formation_movement", false))
+	# Retail shroud/fog-of-war opt-in. Absent resolves false, which is what every
+	# legacy runner and the pinned scenario get. Note this flag CANNOT move any
+	# hash even when true: the fog grid is derived presentation state and
+	# contributes zero bytes to _authoritative_state() (retail_fog_of_war.gd's
+	# header states the contract and retail_fog_of_war_runner asserts it).
+	fog_of_war_enabled = bool(_rules.get("enable_fog_of_war", false))
+	_fog_of_war = null
 	command_point_cap = maxi(60, int(_rules.get("command_point_cap", 200)))
 	var starting_resources := maxi(0, int(_rules.get("starting_resources", 1200 if base_loop_enabled else 0)))
 	team_resources = _seed_team_map(starting_resources)
@@ -12320,6 +12331,10 @@ func tick() -> void:
 		return
 	# FoW consumer: each living unit reveals fog cells for its owner by vision.
 	_step_fog_from_vision()
+	# The retail shroud grid, off unless the match authored `enable_fog_of_war`.
+	# Placed AFTER the legacy pass and touching none of its state, so a fog-off
+	# match is byte-identical below this line and the 3000-tick pin cannot move.
+	_step_shroud_grid()
 	if base_loop_enabled:
 		_step_economy()
 		_step_structure_upgrades()
@@ -17524,6 +17539,108 @@ func ingest_ocl_leaves_from_document(document: Dictionary) -> int:
 		register_ocl_leaf(ocl_id2, ocl2)
 		registered += 1
 	return registered
+
+
+func fog_of_war():
+	## The retail shroud grid for this match. Always returns a model - a match
+	## with fog off gets one whose `enabled` is false and which no tick ever
+	## stamps, so a presentation query is a cheap "everything is visible" rather
+	## than a null check at every call site.
+	if _fog_of_war == null:
+		_fog_of_war = FogOfWarScript.new()
+		_fog_of_war.enabled = fog_of_war_enabled
+		var scale := float(_rules.get("source_map_transform_scale", 0.0))
+		if scale <= 0.0:
+			# No map transform in the rules (bare harness sims). One sim unit per
+			# source unit is the only honest fallback; the cell then spans
+			# PartitionCellSize directly.
+			scale = 1.0
+		if playable_outline.size() >= 3:
+			var bounds_min := playable_outline[0]
+			var bounds_max := playable_outline[0]
+			for point in playable_outline:
+				bounds_min = Vector2(minf(bounds_min.x, point.x), minf(bounds_min.y, point.y))
+				bounds_max = Vector2(maxf(bounds_max.x, point.x), maxf(bounds_max.y, point.y))
+			# One shroud cell of margin so a unit nudged onto the border by
+			# eviction still has a cell of its own.
+			var margin := Vector2.ONE * FogOfWarScript.cell_size_for_scale(scale)
+			_fog_of_war.configure(bounds_min - margin, bounds_max + margin, scale)
+		else:
+			_fog_of_war.configure_default(scale)
+	return _fog_of_war
+
+
+func _shroud_clearing_radius(row: Dictionary) -> float:
+	## Retail authors TWO independent ranges and this is the deshroud one.
+	##   gamedata.ini:38-64 - SHROUD_CLEAR_* and VISION_* are separate macro
+	##   families, and the shipped objects disagree constantly: MenFortressCitadel
+	##   is VisionRange 400 / ShroudClearingRange 800, GondorSentryTower is
+	##   600 / 500. Deriving one from the other would be wrong in both directions.
+	## Falls back to vision_range only when the pack carries no deshroud value,
+	## which is every unit compiled before this lane's importer change rides a
+	## republish - named as a live gap in the report rather than hidden here.
+	var shroud_range := float(row.get("shroud_clearing_range", 0.0))
+	if shroud_range > 0.0:
+		return shroud_range
+	return float(row.get("vision_range", 0.0))
+
+
+func refresh_fog_of_war() -> void:
+	## Stamp the shroud grid once, outside the tick. The presentation calls this
+	## when a match is bound so the first frame already shows the player's own
+	## base cleared; without it a match opens on a fully black screen that pops
+	## clear one tick later.
+	_step_shroud_grid()
+
+
+func _step_shroud_grid() -> void:
+	## The retail look pass: rebuild every team's clear set from scratch from the
+	## authoritative entity and structure rows. A full rebuild rather than
+	## retail's incremental refcount because the result is identical and a
+	## rebuild cannot accumulate error across 3000 ticks; the one behavioural
+	## difference is UnlookPersistDuration (gamedata.ini:9024, retail 1), the
+	## delay before a vacated cell falls back to fog, which this model does not
+	## implement. Named in the report.
+	##
+	## Iteration order follows entity_ids()/structure_ids(), the same sorted
+	## order every other step uses, so two peers stamp in the same order.
+	if not fog_of_war_enabled:
+		return
+	var fog = fog_of_war()
+	fog.begin_look_pass()
+	for eid in entity_ids():
+		if not entities.has(eid):
+			continue
+		var row: Dictionary = entities[eid]
+		if int(row.get("health", 0)) <= 0:
+			continue
+		var team := int(row.get("team", -1))
+		if team < 0:
+			continue
+		var radius := _shroud_clearing_radius(row)
+		if radius <= 0.0:
+			continue
+		fog.add_look(team, row.get("position", Vector2.ZERO), radius)
+	for sid in structure_ids():
+		if not structures.has(sid):
+			continue
+		var srow: Dictionary = structures[sid]
+		if int(srow.get("health", 0)) <= 0:
+			continue
+		var steam := int(srow.get("team", -1))
+		if steam < 0:
+			continue
+		var sradius := _shroud_clearing_radius(srow)
+		if sradius <= 0.0:
+			# A structure with no compiled deshroud range still owns the ground
+			# it stands on; retail's smallest authored building deshroud is its
+			# own footprint. Using the footprint radius keeps a player's own base
+			# out of the shroud without inventing a vision number.
+			sradius = float(srow.get("footprint_radius", 0.0))
+		if sradius <= 0.0:
+			continue
+		fog.add_look(steam, srow.get("position", Vector2.ZERO), sradius)
+	fog.commit_look_pass()
 
 
 func _step_fog_from_vision() -> void:

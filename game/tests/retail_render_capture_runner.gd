@@ -527,6 +527,9 @@ func _run() -> void:
 			_fail("map-edge rendered void pixel at %s is %s, expected the owner-directed black backdrop" % [MAP_EDGE_VOID_SAMPLE, void_pixel])
 			return
 		print("RETAIL_RENDER_MAP_EDGE_BACKDROP_OK pixel=%s color=%s" % [MAP_EDGE_VOID_SAMPLE, void_pixel])
+	if OS.get_environment("OPENBFME_CAPTURE_ASSERT_SHROUD") == "1":
+		if not _assert_shroud(slice, image):
+			return
 	var parent := output.get_base_dir()
 	if DirAccess.make_dir_recursive_absolute(parent) != OK:
 		_fail("private render-capture directory could not be created")
@@ -1059,3 +1062,90 @@ func _prop_type_diagnostics(container: Node3D) -> Array[Dictionary]:
 func _fail(message: String) -> void:
 	printerr("RETAIL_RENDER_CAPTURE_FAIL %s" % message)
 	quit(1)
+
+
+func _assert_shroud(slice, image: Image) -> bool:
+	## RENDERED evidence for the shroud overlay: not "the property is set", but
+	## "the pixels on the ground the local player has never seen are black, and
+	## the pixels under his own army are not".
+	##
+	## The sample points are DERIVED, never hard-coded screen coordinates: one is
+	## the local player's own entity (which is clearing shroud around itself by
+	## construction), the other is the far corner of the shroud grid (which no
+	## look has ever touched). Both are unprojected through the live camera, so
+	## the assertion follows the camera instead of breaking when it moves.
+	var overlay = slice.shroud_overlay
+	if overlay == null or not bool(overlay.enabled):
+		_fail("shroud assertion requested but the slice has no enabled shroud overlay")
+		return false
+	if int(overlay.rebuild_count()) <= 0:
+		_fail("the shroud overlay never rebuilt its texture; nothing was uploaded to the terrain")
+		return false
+	var material := slice.battlefield.terrain_material as ShaderMaterial
+	if material == null or not bool(material.get_shader_parameter("shroud_enabled")):
+		_fail("the terrain material is not sampling the shroud texture")
+		return false
+	var visible_world := Vector2.INF
+	for id in slice.simulation.entity_ids():
+		var entity: Dictionary = slice.simulation.entity(id)
+		if int(entity.get("team", -1)) != int(slice.local_team):
+			continue
+		if int(entity.get("health", 0)) <= 0:
+			continue
+		visible_world = Vector2(entity["position"])
+		break
+	if visible_world == Vector2.INF:
+		# A retail skirmish opens with a fortress and a porter, and the porter
+		# may not have spawned yet; the fortress always has.
+		for id in slice.simulation.structure_ids():
+			var structure: Dictionary = slice.simulation.structure(id)
+			if int(structure.get("team", -1)) != int(slice.local_team):
+				continue
+			if int(structure.get("health", 0)) <= 0:
+				continue
+			visible_world = Vector2(structure["position"])
+			break
+	if visible_world == Vector2.INF:
+		_fail("shroud assertion needs at least one living local-team object standing on cleared ground")
+		return false
+	var bounds: Rect2 = overlay.bounds()
+	# A point deep inside the grid's far corner, one tenth in from the edge so it
+	# is real ground rather than the off-grid skirt.
+	var shrouded_world := bounds.position + bounds.size * 0.1
+	if overlay.state_at(visible_world) == 0:
+		_fail("the local player's own unit is standing on ground the shroud model calls unexplored")
+		return false
+	if overlay.state_at(shrouded_world) != 0:
+		_fail("the chosen far-corner sample at %s is not shrouded; pick another" % shrouded_world)
+		return false
+	var visible_pixel := _screen_sample(slice, image, visible_world)
+	var shrouded_pixel := _screen_sample(slice, image, shrouded_world)
+	print("RETAIL_RENDER_SHROUD rebuilds=%d visible_world=%s visible_pixel=%s shrouded_world=%s shrouded_pixel=%s" % [
+		int(overlay.rebuild_count()), visible_world, visible_pixel, shrouded_world, shrouded_pixel,
+	])
+	if visible_pixel == Color.TRANSPARENT or shrouded_pixel == Color.TRANSPARENT:
+		_fail("a shroud sample point projected outside the captured viewport")
+		return false
+	# Retail's ShroudAlpha is 0 - fully opaque - so shrouded ground modulates to
+	# black. A small tolerance covers post-processing, not a lit terrain texel.
+	var shrouded_luma := shrouded_pixel.r + shrouded_pixel.g + shrouded_pixel.b
+	var visible_luma := visible_pixel.r + visible_pixel.g + visible_pixel.b
+	if shrouded_luma > 0.09:
+		_fail("shrouded ground rendered at luma %.4f (%s); ShroudAlpha 0 means it must be black" % [shrouded_luma, shrouded_pixel])
+		return false
+	if visible_luma <= shrouded_luma + 0.05:
+		_fail("cleared ground rendered at luma %.4f, no brighter than the shroud - the overlay is covering everything" % visible_luma)
+		return false
+	print("RETAIL_RENDER_SHROUD_OK shrouded_luma=%.4f cleared_luma=%.4f" % [shrouded_luma, visible_luma])
+	return true
+
+
+func _screen_sample(slice, image: Image, world_xz: Vector2) -> Color:
+	var world := Vector3(world_xz.x, float(slice.source_map_data.local_ground_height(world_xz)), world_xz.y)
+	if slice.camera.is_position_behind(world):
+		return Color.TRANSPARENT
+	var screen: Vector2 = slice.camera.unproject_position(world)
+	var pixel := Vector2i(roundi(screen.x), roundi(screen.y))
+	if pixel.x < 0 or pixel.y < 0 or pixel.x >= image.get_width() or pixel.y >= image.get_height():
+		return Color.TRANSPARENT
+	return image.get_pixelv(pixel)

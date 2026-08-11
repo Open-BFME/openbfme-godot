@@ -278,10 +278,47 @@ uniform vec3 sage_light_1_direction = vec3(0.0, -1.0, 0.0);
 uniform vec3 sage_light_2_color = vec3(0.0);
 uniform vec3 sage_light_2_direction = vec3(0.0, -1.0, 0.0);
 
+// --- Retail shroud overlay ---------------------------------------------------
+// One L8 texel per shroud cell carrying retail's own visibility byte
+// (gamedata.ini ClearAlpha 255 / FogAlpha 127 / ShroudAlpha 0, where 0 is
+// OPAQUE). It modulates the finished terrain texel, which is why unexplored
+// ground reads black and remembered ground reads as half-lit terrain rather
+// than as a white wash: retail's ShroudColor is white because the layer is a
+// MODULATE, not an overlay tint.
+//
+// filter_linear on purpose. The grid is 40 source units per cell and a nearest
+// sample would be visibly blocky; retail interpolates between cell centres and
+// so does this. The UV maps a cell's centre to its texel's centre exactly, so
+// no half-texel correction is needed: uv = (world - origin) / (cells * size)
+// evaluates to (i + 0.5) / N at the centre of cell i.
+uniform sampler2D shroud_texture : filter_linear, repeat_disable;
+// origin.xy, then the grid's full extent in world units.
+uniform vec4 shroud_bounds = vec4(0.0, 0.0, 1.0, 1.0);
+uniform bool shroud_enabled = false;
+// How dark fully shrouded ground goes. Retail's ShroudAlpha of 0 is total, and
+// this stays 0.0; it exists so a debug view can lift the shroud without
+// rebuilding the shader.
+uniform float shroud_floor = 0.0;
+
 varying vec3 sage_world_normal;
+varying vec3 sage_world_position;
 
 void vertex() {
 	sage_world_normal = normalize(MODEL_NORMAL_MATRIX * NORMAL);
+	sage_world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+}
+
+float shroud_visibility(vec3 world_position) {
+	if (!shroud_enabled) {
+		return 1.0;
+	}
+	vec2 uv = (world_position.xz - shroud_bounds.xy) / max(shroud_bounds.zw, vec2(0.0001));
+	// Ground outside the grid is ground the player has never been able to see.
+	// Clamping instead would smear the border cells outward across the skirt.
+	if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+		return shroud_floor;
+	}
+	return max(texture(shroud_texture, uv).r, shroud_floor);
 }
 
 float diagonal_blend(vec2 fractional_uv, bool two_sided) {
@@ -369,7 +406,7 @@ void fragment() {
 	}
 	// This is OpenSAGE's terrain DoLighting contract: summed per-light ambient
 	// and Lambert diffuse, saturated once, then multiplied by the terrain texel.
-	ALBEDO = terrain_color * lighting;
+	ALBEDO = terrain_color * lighting * shroud_visibility(sage_world_position);
 	ROUGHNESS = 0.92;
 	SPECULAR = 0.20;
 }

@@ -17,6 +17,7 @@ const SelectionPick = preload("res://src/retail_slice/retail_selection_pick.gd")
 const BattlefieldScript = preload("res://src/retail_slice/retail_fords_battlefield.gd")
 const HudScript = preload("res://src/retail_slice/retail_hud.gd")
 const LinearFogScript = preload("res://src/retail_slice/fords_linear_fog.gd")
+const ShroudOverlayScript = preload("res://src/retail_slice/retail_shroud_overlay.gd")
 const MemberHealthOverlayScript = preload("res://src/retail_slice/retail_member_health_overlay.gd")
 const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const FactionManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
@@ -135,6 +136,10 @@ var simulation: RetailSliceSim
 ## Empty when the map ships no scripts.json: the inert default.
 var script_runtimes: Array = []
 var local_team := 0
+## The local player's retail shroud. Always constructed; `enabled` is false for
+## a fog-off match and every query then answers "visible", so no call site needs
+## a null check.
+var shroud_overlay = ShroudOverlayScript.new()
 var _local_command_seq := 0
 var lockstep_session
 ## Debug-gated Game Control API (OPENBFME_CONTROL_PORT); null when env unset.
@@ -612,7 +617,13 @@ func _initialize_content_and_match() -> void:
 	# `_preview_texture` is `<map>_pic.tga`, the landmark painting. Handing the
 	# painting to the radar is what put a photographic fortress in the palantir
 	# bezel - see retail_minimap.gd's header.
-	hud.configure_minimap(simulation, source_map_data, camera, _source_art_texture)
+	# The shroud is bound BEFORE the radar so the first frame the HUD draws
+	# already knows what the local player can see. A fog-off match binds an
+	# overlay whose `enabled` is false, which is the byte-identical legacy radar.
+	simulation.refresh_fog_of_war()
+	shroud_overlay.configure(simulation.fog_of_war(), local_team)
+	shroud_overlay.update(true)
+	hud.configure_minimap(simulation, source_map_data, camera, _source_art_texture, shroud_overlay)
 	var command_costs: Dictionary = {}
 	for unit_type in simulation.production_rule_ids():
 		command_costs[unit_type] = simulation._production_rule_value(String(unit_type), "cost_rule", "default_cost")
@@ -1548,6 +1559,21 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 	# byte-identical.
 	if OS.get_environment("OPENBFME_CREEP_LAIRS") == "1":
 		rules["enable_creep_lairs"] = true
+	# THE FOG TOGGLE. Retail skirmish and MP always run with shroud on, so this
+	# is ON by default here - but ONLY here, in the scene that launches a real
+	# match. Every runner that builds a `RetailSliceSim` directly (the 3000-tick
+	# state pin included) passes its own rules dictionary, never sees this key,
+	# and therefore keeps running fog-off exactly as before.
+	#
+	# It is also opt-OUT rather than opt-in so the default match is the retail
+	# one: `OPENBFME_FOG_OF_WAR=0` turns it off for a capture or a debug run.
+	# Adding the key cannot move any hash in either direction - the fog grid is
+	# derived state and contributes zero bytes to _authoritative_state() (see
+	# retail_fog_of_war.gd) - but it DOES change `rules`, which is hashed, so a
+	# runner that drives this scene and pins a hash would see it. None do today;
+	# the ones that pin build their own sim.
+	if OS.get_environment("OPENBFME_FOG_OF_WAR").strip_edges() != "0":
+		rules["enable_fog_of_war"] = true
 	var manifest_for_rules: Dictionary = faction_manifest.duplicate(true)
 	# Retail skirmish start: fortress + porter only — the base is built, not
 	# given. Gate runners set OPENBFME_STARTER_ARMY=1 to keep the legacy
@@ -3770,6 +3796,12 @@ func _sync_presentation() -> void:
 		return
 	if _profile_sync:
 		_profile_mark = Time.get_ticks_usec()
+	# The shroud texture is refreshed FIRST, before anything queries it, so the
+	# terrain, the units, the structures and the radar all present the same
+	# frame's knowledge. A fog-off match returns false here immediately and the
+	# whole block costs one boolean.
+	if shroud_overlay.update() and battlefield != null:
+		shroud_overlay.apply_to_terrain(battlefield.terrain_material as ShaderMaterial)
 	var ring_presentation: Dictionary = simulation.ring_presentation_contract()
 	for id in simulation.entity_ids():
 		var entity: Dictionary = simulation.entity(id)
@@ -3786,6 +3818,13 @@ func _sync_presentation() -> void:
 			_spawn_battalion(id, int(gameplay_rules.get("member_count", 15)))
 		var battalion: RetailBattalion = battalion_nodes[id]
 		var position := Vector2(entity["position"])
+		# THE SHROUD GATE. Set on the ROOT node, never on the member visuals:
+		# retail_battalion's production-exit path and member_render_batcher both
+		# rewrite `member_visuals[i].visible` every frame and would fight it.
+		# Root visibility is already honoured downstream - member_lod_policy
+		# classifies an invisible battalion as CULLED - so a hidden unit also
+		# stops animating and leaves the MultiMesh batch.
+		battalion.visible = shroud_overlay.unit_visible(position)
 		battalion.set_authoritative_position(Vector3(position.x, _presentation_height(position), position.y))
 		battalion.set_health(int(entity["health"]), int(entity["maximum_health"]))
 		battalion.set_experience_level(int(entity.get("level", 1)))
@@ -3863,6 +3902,11 @@ func _sync_presentation() -> void:
 		if not structure_nodes.has(id):
 			_spawn_structure(id)
 		var structure: RetailStructure = structure_nodes[id]
+		# `structure.visible`, NOT `_visual_root.visible`: sync_state() below
+		# rewrites the visual root every frame from the contract-error flag.
+		structure.visible = shroud_overlay.structure_visible(
+			Vector2(simulation.structure(id).get("position", Vector2.ZERO))
+		)
 		structure.set_selected(selected_structure_id == id)
 		structure.sync_state(simulation.structure(id))
 		var structure_upgrade_queue := simulation.structure_upgrade_queue_state(id)

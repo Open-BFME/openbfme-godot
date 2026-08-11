@@ -1146,7 +1146,7 @@ func build() -> void:
 	_wire_retail_tooltips()
 
 
-func configure_minimap(simulation: RefCounted, map_data: RefCounted, camera_value: Camera3D = null, ink_art: Texture2D = null) -> void:
+func configure_minimap(simulation: RefCounted, map_data: RefCounted, camera_value: Camera3D = null, ink_art: Texture2D = null, shroud: RefCounted = null) -> void:
 	# ONE call, not two. `configure` already binds (and, for a map with no art,
 	# CLEARS) the ink texture; the extra `bind_map_ink_art` that used to follow
 	# it here re-entered the same path for no effect.
@@ -1160,7 +1160,7 @@ func configure_minimap(simulation: RefCounted, map_data: RefCounted, camera_valu
 	# binding it here put a photograph in the bezel (owner bug, 2026-08-10). A map
 	# that publishes no ink art binds nothing and the radar keeps bare retail
 	# parchment plus its synthetic water schematic.
-	minimap.configure(simulation, map_data, ink_art)
+	minimap.configure(simulation, map_data, ink_art, shroud)
 	minimap.world_camera = camera_value
 
 

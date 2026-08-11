@@ -99,6 +99,8 @@ const BEZEL_RADIUS_RATIO := 0.4475
 const RADAR_DISC_SEGMENTS := 72
 
 var simulation: RefCounted
+## The local player's shroud, or null for a fog-off match / a legacy caller.
+var shroud_overlay: RefCounted = null
 var source_map_data: RefCounted
 ## Radar-space bounds: source grid units for a cooked map, local units for the
 ## unconfigured fallback.
@@ -179,8 +181,16 @@ func bind_map_ink_art(texture: Texture2D) -> bool:
 	return uses_map_ink_art
 
 
-func configure(sim: RefCounted, map_data: RefCounted = null, ink_art: Texture2D = null) -> void:
+func configure(
+	sim: RefCounted,
+	map_data: RefCounted = null,
+	ink_art: Texture2D = null,
+	shroud: RefCounted = null
+) -> void:
 	simulation = sim
+	# Optional and last: every existing caller keeps its three-argument call and
+	# gets a shroud-free radar, which is what a fog-off match wants.
+	shroud_overlay = shroud
 	source_map_data = map_data
 	uses_source_preview_as_background = false
 	if map_data != null and bool(map_data.ready):
@@ -370,10 +380,20 @@ func _draw() -> void:
 	# schematic would only double-print them.
 	if source_geometry_loaded and not uses_map_ink_art:
 		_draw_source_geometry(arena, disc)
+	# The shroud is drawn between the land and the blips, so the radar can never
+	# leak what the battlefield hides: a fogged region is dimmed here by exactly
+	# the retail alpha the terrain shader modulates by, and the blip loops below
+	# skip anything the local player cannot currently see.
+	if shroud_overlay != null and bool(shroud_overlay.enabled):
+		_draw_shroud(arena, disc)
 	if simulation != null:
 		for id in simulation.entity_ids():
 			var entity: Dictionary = simulation.entity(id)
 			if int(entity.get("health", 0)) <= 0:
+				continue
+			# Units only. A unit in fog is gone from the radar, exactly as it is
+			# gone from the battlefield.
+			if shroud_overlay != null and not shroud_overlay.unit_visible(Vector2(entity["position"])):
 				continue
 			var point := _world_to_canvas(Vector2(entity["position"]), arena)
 			if point.distance_to(center) > radius:
@@ -385,6 +405,10 @@ func _draw() -> void:
 			var structure: Dictionary = simulation.structure(id)
 			if int(structure.get("health", 0)) <= 0:
 				continue
+			# Structures survive into fog (see the named GhostObject deviation
+			# in retail_shroud_overlay.gd): explored is enough.
+			if shroud_overlay != null and not shroud_overlay.structure_visible(Vector2(structure["position"])):
+				continue
 			var point := _world_to_canvas(Vector2(structure["position"]), arena)
 			if point.distance_to(center) > radius:
 				continue
@@ -392,6 +416,34 @@ func _draw() -> void:
 			draw_rect(Rect2(point - Vector2(3.0, 3.0), Vector2(6.0, 6.0)), Color(0.16, 0.11, 0.05, 0.85), true)
 			draw_rect(Rect2(point - Vector2(2.0, 2.0), Vector2(4.0, 4.0)), color, true)
 	_draw_camera_footprint(arena, disc)
+
+
+func _draw_shroud(arena: Rect2, disc: PackedVector2Array) -> void:
+	## ONE textured polygon over the bezel disc, not one quad per shroud cell.
+	## The grid is 183x183 cells on a slice map; a per-cell loop with a polygon
+	## clip each would be 33,000 clipped draws EVERY redraw, and the radar
+	## redraws every frame. The overlay hands over a premultiplied darkening
+	## image instead (black, with alpha = 255 - retail visibility) so the whole
+	## layer is a single `draw_colored_polygon` with the disc's own UVs.
+	##
+	## The UVs come back through `_canvas_to_world`, the exact inverse of the
+	## mapping the blips use, so the shroud cannot drift away from the units it
+	## is supposed to be hiding - including on a `source-grid` radar where the
+	## forward mapping negates Y.
+	if shroud_overlay == null or disc.size() < 3:
+		return
+	var texture: Texture2D = shroud_overlay.minimap_texture()
+	if texture == null:
+		return
+	var grid: Rect2 = shroud_overlay.bounds()
+	if grid.size.x <= 0.0 or grid.size.y <= 0.0:
+		return
+	var uvs := PackedVector2Array()
+	uvs.resize(disc.size())
+	for index in range(disc.size()):
+		var world := _canvas_to_world(disc[index], arena)
+		uvs[index] = (world - grid.position) / grid.size
+	draw_colored_polygon(disc, Color(1.0, 1.0, 1.0, 1.0), uvs, texture)
 
 
 func _draw_source_geometry(arena: Rect2, disc: PackedVector2Array) -> void:

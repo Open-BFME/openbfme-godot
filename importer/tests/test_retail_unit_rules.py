@@ -27,6 +27,44 @@ SOURCE_PATHS = (
 )
 
 
+def test_shroud_clearing_range_is_compiled_separately_from_vision() -> None:
+    """ShroudClearingRange is its own range and the HORDE carries the real one.
+
+    Retail keeps two independent macro families (``gamedata.ini``
+    ``SHROUD_CLEAR_*`` versus ``VISION_*``), and the values below are read
+    straight out of the effective corpus:
+
+      gamedata.ini:36    SHROUD_CLEAR_STANDARD           = 25
+      gamedata.ini:1109  GONDOR_SOLDIER_HORDE_SHROUD_RANGE = 400
+      gamedata.ini:1182  GONDOR_RANGER_VISION_RANGE      = 480
+      gamedata.ini:1184  GONDOR_RANGER_HORDE_SHROUD_RANGE = 500
+
+    The member value of 25 is deliberate: horde members must not each deshroud.
+    Anything that reads the member and ignores the horde deshrouds a bubble 16x
+    too small, and the two ranges must never be derived from one another - the
+    ranger horde is VisionRange 470 / ShroudClearingRange 500.
+    """
+    paths = retail_unit_rule_source_paths((RANGER_UNIT_SPEC,))
+    if not all((EFFECTIVE / path).is_file() for path in paths):
+        pytest.skip("private effective BFME II 1.06 Ranger corpus is not present")
+    document = extract_retail_unit_rules(
+        {path: EFFECTIVE / path for path in paths},
+        unit_specs=(RANGER_UNIT_SPEC,),
+    )
+    ranger = document["units"][0]
+    assert ranger["horde"]["shroudClearingRange"]["value"] == 500
+    assert ranger["horde"]["visionRange"]["value"] == 470
+    assert ranger["member"]["shroudClearingRange"]["value"] == 25
+    assert ranger["member"]["visionRange"]["value"] == 480
+    # Provenance rides the value, like every other compiled number here: the
+    # authoring line, and the macro it resolved through.
+    provenance = ranger["horde"]["shroudClearingRange"]
+    assert provenance["raw"] == "GONDOR_RANGER_HORDE_SHROUD_RANGE"
+    assert provenance["source"]["field"] == "ShroudClearingRange"
+    assert provenance["source"]["scopeName"] == "GondorRangerHorde"
+    assert provenance["resolvedDefines"][0]["name"] == "GONDOR_RANGER_HORDE_SHROUD_RANGE"
+
+
 def test_base_profile_declares_one_retail_unit_rule_bundle_and_source_closure() -> None:
     profile = ImportProfile.load(ROOT / "importer" / "profiles" / "men-fords-v0.json")
     resources = [item for item in profile.resources if item.converter == "retail-unit-rules"]

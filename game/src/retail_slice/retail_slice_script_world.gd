@@ -7599,6 +7599,20 @@ class SliceFog:
 		w.sim.parity.fog_reveal(
 			int(resolved["team"]), tr["center"], float(tr["radius"]), permanent
 		)
+		# ...and the retail shroud grid, which is what the terrain overlay and
+		# the minimap actually draw. Both are driven because the legacy parity
+		# dictionary is hashed state that other systems already read, while the
+		# shroud grid is the presented one; dropping either would make a map
+		# script silently half-work. The reveal is keyed by the PLAYER NAME so
+		# MAP_UNDO_REVEAL_PERMANENTLY_AT_WAYPOINT has a name to remove, which is
+		# how retail keys permanent reveals (a MapRevealName per record).
+		w.sim.fog_of_war().reveal(
+			int(resolved["team"]),
+			tr["center"],
+			float(tr["radius"]),
+			permanent,
+			String(target.get("reveal_name", player))
+		)
 		return true
 
 	func shroud(player: String, target: Dictionary) -> bool:
@@ -7611,6 +7625,7 @@ class SliceFog:
 			return _refuse_command("fog.shroud", String(resolved["reason"]))
 		var tr := _fog_target_center_radius(target)
 		w.sim.parity.fog_shroud(int(resolved["team"]), tr["center"], float(tr["radius"]))
+		w.sim.fog_of_war().shroud(int(resolved["team"]), tr["center"], float(tr["radius"]))
 		return true
 
 	func undo_permanent_reveal(player: String, target: Dictionary) -> bool:
@@ -7625,6 +7640,16 @@ class SliceFog:
 		w.sim.parity.fog_undo_permanent(
 			int(resolved["team"]), tr["center"], float(tr["radius"])
 		)
+		var undo_team := int(resolved["team"])
+		var undo_name := String(target.get("reveal_name", player))
+		# Try the NAMED undo first (retail's own keying), and fall back to the
+		# positional form for a target that carries no name. Never both: a named
+		# hit that also ran the positional sweep would drop unrelated reveals
+		# that merely happen to sit near the same waypoint.
+		if not w.sim.fog_of_war().undo_permanent_reveal_named(undo_team, undo_name):
+			w.sim.fog_of_war().undo_permanent_reveal(
+				undo_team, tr["center"], float(tr["radius"])
+			)
 		return true
 
 	func set_border_shroud(enabled: bool) -> bool:
@@ -7633,6 +7658,7 @@ class SliceFog:
 			return _refuse_command("fog.set_border_shroud", "no simulation attached")
 		w.sim._ensure_parity()
 		w.sim.parity.fog_border_shroud = enabled
+		w.sim.fog_of_war().border_shroud = enabled
 		return true
 
 

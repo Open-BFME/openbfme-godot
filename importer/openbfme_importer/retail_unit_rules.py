@@ -319,6 +319,35 @@ def _vision(obj: SageObject, source: _Source, defines: Mapping[str, _Define]) ->
     return _number(value.value, source, "Object", obj.name, value.key, value.line, defines)
 
 
+def _shroud_clearing(
+    obj: SageObject, source: _Source, defines: Mapping[str, _Define]
+) -> dict[str, Any] | None:
+    """Return the object's authored ``ShroudClearingRange``, or None.
+
+    This is a SEPARATE range from ``VisionRange`` and must not be derived from
+    it. Retail's own macro table keeps two independent families
+    (``gamedata.ini`` ``SHROUD_CLEAR_*`` versus ``VISION_*``) and the shipped
+    objects disagree constantly: ``MenFortressCitadel`` is VisionRange 400 /
+    ShroudClearingRange 800, ``GondorSentryTower`` is 600 / 500. Of the objects
+    that author both, roughly half give them different values.
+
+    It is optional because 352 shipped objects author ``VisionRange`` only. A
+    missing value is reported as absent rather than defaulted, so the runtime
+    can make its own fallback decision and say so.
+
+    THE HORDE/MEMBER TRAP. ``SHROUD_CLEAR_STANDARD`` is 25 and is what the
+    individual horde MEMBER authors, deliberately, so members do not each
+    deshroud. The real radius lives on the horde PARENT (``GondorFighter`` 25
+    versus ``GondorFighterHorde`` 400). Both are compiled here because both
+    objects are compiled here; a consumer that reads the member value and
+    ignores the horde will deshroud a 16x-too-small bubble.
+    """
+    value = _assignment(obj.items, "ShroudClearingRange")
+    if value is None:
+        return None
+    return _number(value.value, source, "Object", obj.name, value.key, value.line, defines)
+
+
 def _weapon_name(obj: SageObject) -> str:
     block = _base_state_block(obj, "WeaponSet")
     weapons = [
@@ -812,6 +841,13 @@ def _object_rules(
         # use weaponSets so conditions and secondary weapons are not lost.
         "weapon": base_weapon,
     }
+    shroud_clearing = _shroud_clearing(obj, source, defines)
+    if shroud_clearing is not None:
+        # Absent stays ABSENT. Emitting a zero (or a copy of visionRange) for the
+        # 352 objects that author no ShroudClearingRange would be indistinguishable
+        # downstream from an object that authors 0 on purpose - and Carn Dum's
+        # map.ini does exactly that for nine props.
+        result["shroudClearingRange"] = shroud_clearing
     if include_formation:
         result["formation"] = _horde_formation(obj, source, defines)
         result["stances"] = _stance_rules(obj, source, modifier_source)
