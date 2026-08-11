@@ -54,6 +54,62 @@ func _run() -> void:
 		and String(guest_session.lobby_remote_profile.get("name", "")) == "Aragorn" \
 		and String(guest_session.lobby_remote_profile.get("faction", "")) == "men")
 
+	# The lobby surface, not a direct protocol call: one selected hero is the
+	# whole announcement, '-' is an explicit empty announcement, and restoring
+	# the pick makes that same one document part of the byte-equal launch roster.
+	var LobbyScript = load("res://src/ui/multiplayer_lobby.gd")
+	var hero_panel: Panel = LobbyScript.new()
+	hero_panel.size = Vector2(1000, 640)
+	root.add_child(hero_panel)
+	await process_frame
+	hero_panel.open(host_session, true, "Aragorn")
+	var hero_picker = hero_panel.get("hero_opt")
+	var picked_profile := {
+		"schema": "openbfme.cah-profile", "schemaVersion": 0,
+		"heroId": "0123456789abcdef01234567", "name": "Captain Test",
+		"classIndex": 0, "subClassIndex": 0, "attributes": {}, "appearance": {},
+		"powers": [], "awards": [], "trackingStats": {}, "systemDescriptorSha256": "",
+	}
+	var picked_document: String = SessionScript.canonical_hero_document(picked_profile)
+	var announce_one := false
+	var announce_none := false
+	if hero_picker != null:
+		hero_picker.add_item("Captain Test")
+		hero_picker.set_item_metadata(hero_picker.item_count - 1, picked_profile)
+		hero_picker.select(hero_picker.item_count - 1)
+		hero_panel._announce_created_heroes()
+		announce_one = _pump_until(func() -> bool:
+			return guest_session.heroes_for_seat(host_session.local_seat) == [picked_document])
+	_check("lobby_picker_announces_exactly_one_selected_hero", announce_one,
+		str(guest_session.lobby_seat_heroes))
+	var disabled_cleared := false
+	if hero_picker != null:
+		hero_panel.custom_heroes_opt.select(1)
+		hero_panel._on_custom_heroes_selected(1)
+		disabled_cleared = _pump_until(func() -> bool:
+			return guest_session.heroes_for_seat(host_session.local_seat).is_empty()) \
+			and hero_picker.disabled
+	_check("custom_heroes_disabled_forces_an_empty_announcement", disabled_cleared)
+	if hero_picker != null:
+		hero_panel.custom_heroes_opt.select(0)
+		hero_panel._on_custom_heroes_selected(0)
+		_pump_until(func() -> bool:
+			return guest_session.heroes_for_seat(host_session.local_seat) == [picked_document])
+	if hero_picker != null:
+		hero_picker.select(0)
+		hero_panel._announce_created_heroes()
+		announce_none = _pump_until(func() -> bool:
+			return guest_session.heroes_for_seat(host_session.local_seat).is_empty())
+	_check("lobby_picker_dash_announces_no_heroes", announce_none,
+		str(guest_session.lobby_seat_heroes))
+	if hero_picker != null:
+		hero_picker.select(hero_picker.item_count - 1)
+		hero_panel._announce_created_heroes()
+		_pump_until(func() -> bool:
+			return guest_session.heroes_for_seat(host_session.local_seat) == [picked_document])
+	guest_session.send_lobby_heroes([])
+	_pump_until(func() -> bool: return host_session.lobby_seat_heroes.has(guest_session.local_seat))
+
 	guest_session.send_lobby_profile("Witch King", "wild", 5, false)
 	var faction_changed: bool = _pump_until(func() -> bool: return String(host_session.lobby_remote_profile.get("faction", "")) == "wild")
 	_check("guest_faction_change_propagates", faction_changed \
@@ -136,23 +192,25 @@ func _run() -> void:
 	var guest_accepted: bool = _pump_until(func() -> bool: return guest_session.lobby_launch_received)
 	var host_roster_bytes: PackedByteArray = var_to_bytes(host_session.lobby_launch_roster)
 	var guest_roster_bytes: PackedByteArray = var_to_bytes(guest_session.lobby_launch_roster)
-	var expected_roster: Array = SessionScript.lobby_roster_from_profiles(
-		{"name": "Aragorn", "faction": "men", "color": 0, "ready": true},
-		{"name": "Witch King", "faction": "wild", "color": 5, "ready": true})
 	var roster_shape_ok: bool = host_session.lobby_launch_roster.size() == 2 \
 		and int((host_session.lobby_launch_roster[0] as Dictionary).get("team", -1)) == 0 \
 		and int((host_session.lobby_launch_roster[1] as Dictionary).get("team", -1)) == 1 \
 		and String((host_session.lobby_launch_roster[0] as Dictionary).get("faction", "")) == "men" \
 		and String((host_session.lobby_launch_roster[1] as Dictionary).get("faction", "")) == "wild" \
 		and String((host_session.lobby_launch_roster[0] as Dictionary).get("controller", "")) == "human" \
-		and String((host_session.lobby_launch_roster[1] as Dictionary).get("controller", "")) == "human"
+		and String((host_session.lobby_launch_roster[1] as Dictionary).get("controller", "")) == "human" \
+		and (host_session.lobby_launch_roster[0] as Dictionary).get("heroes", []) == [picked_document] \
+		and (host_session.lobby_launch_roster[1] as Dictionary).get("heroes", null) == []
 	_check("launch_descriptor_lists_byte_identical", launch_sent and guest_accepted and roster_shape_ok \
 		and host_roster_bytes == guest_roster_bytes \
-		and host_roster_bytes == var_to_bytes(expected_roster) \
 		and var_to_bytes(host_session.lobby_launch_settings) == var_to_bytes(guest_session.lobby_launch_settings))
+	_check("selected_hero_survives_the_byte_equal_launch_gate", launch_sent and guest_accepted \
+		and host_roster_bytes == guest_roster_bytes and roster_shape_ok)
+	hero_panel.close_lobby()
+	hero_panel.queue_free()
+	await process_frame
 
 	# --- lobby panel UI builds and binds ----------------------------------------
-	var LobbyScript = load("res://src/ui/multiplayer_lobby.gd")
 	var panel: Panel = LobbyScript.new()
 	panel.size = Vector2(1000, 640)
 	root.add_child(panel)
@@ -162,9 +220,10 @@ func _run() -> void:
 		and panel.name_edit.text == "Aragorn" \
 		and panel.army_opt.item_count == 7 and panel.color_opt.item_count == 8 \
 		and panel.map_opt.visible and not panel.map_value_label.visible \
-		and panel.launch_button.visible \
+		and panel.launch_button.visible and panel.hero_opt != null \
 		and panel.remote_name_label.text == "Witch King" \
 		and panel.remote_army_label.text == "Goblins" \
+		and panel.remote_hero_labels[0].text == "-" \
 		and panel.remote_ready_check.button_pressed
 	panel.close_lobby()
 	var guest_panel: Panel = LobbyScript.new()

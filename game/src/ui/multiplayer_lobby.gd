@@ -46,13 +46,15 @@ const ROW_TOP := 58.0
 const ROW_PITCH := 32.0
 const ROW_HEIGHT := 31.0
 const COL_NAME_X := 30.0
-const COL_NAME_W := 150.0
-const COL_ARMY_X := 186.0
-const COL_ARMY_W := 120.0
-const COL_TEAM_X := 312.0
-const COL_TEAM_W := 56.0
-const COL_COLOR_X := 374.0
-const COL_COLOR_W := 110.0
+const COL_NAME_W := 110.0
+const COL_ARMY_X := 146.0
+const COL_ARMY_W := 94.0
+const COL_HERO_X := 246.0
+const COL_HERO_W := 104.0
+const COL_TEAM_X := 356.0
+const COL_TEAM_W := 46.0
+const COL_COLOR_X := 408.0
+const COL_COLOR_W := 76.0
 const COL_READY_X := 490.0
 ## Settings column, to the right of the seat rows.
 const SETTINGS_X := 530.0
@@ -64,6 +66,7 @@ var is_host := false
 var heading_label: Label
 var name_edit: LineEdit
 var army_opt: OptionButton
+var hero_opt: OptionButton
 var color_opt: OptionButton
 var local_team_label: Label
 var local_team_opt: OptionButton
@@ -78,6 +81,7 @@ var remote_color_label: Label
 var remote_ready_check: CheckBox
 var remote_name_labels: Array[Label] = []
 var remote_army_labels: Array[Label] = []
+var remote_hero_labels: Array[Label] = []
 var remote_team_labels: Array[Label] = []
 var remote_team_opts: Array[OptionButton] = []
 var remote_color_labels: Array[Label] = []
@@ -103,6 +107,7 @@ var leave_button: Button
 var _launched := false
 var _was_connected := false
 var _profile_dirty := false
+var _cah_system: Dictionary = {}
 ## Seat ids currently shown in remote rows, in row order. Lets a TEAM
 ## OptionButton on row k know which seat it is reassigning.
 var _remote_row_seats: Array[int] = []
@@ -116,12 +121,14 @@ func _ready() -> void:
 ## Binds a connected (or connecting) session and shows the lobby. host_flag
 ## must match the session's own side; local_default_name seeds the editable
 ## name field ("" keeps Player/Challenger).
-func open(active_session, host_flag: bool, local_default_name: String = "") -> void:
+func open(active_session, host_flag: bool, local_default_name: String = "",
+		cah_system: Dictionary = {}) -> void:
 	session = active_session
 	is_host = host_flag
 	_launched = false
 	_was_connected = false
 	_profile_dirty = false
+	_cah_system = cah_system
 	heading_label.text = "GAME LOBBY - HOSTING" if is_host else "GAME LOBBY - JOINED"
 	var default_name := local_default_name.strip_edges()
 	if default_name == "" or not SessionScript.lobby_name_valid(default_name):
@@ -133,6 +140,7 @@ func open(active_session, host_flag: bool, local_default_name: String = "") -> v
 	chat_log_label.text = ""
 	_set_settings_editable(is_host)
 	_apply_settings_to_controls(SessionScript.lobby_default_settings())
+	_populate_hero_picker()
 	if session != null:
 		session.lobby_updated.connect(_on_lobby_updated)
 		session.lobby_chat_received.connect(_on_lobby_chat)
@@ -194,6 +202,7 @@ func _build() -> void:
 	var columns := [
 		["PLAYER", COL_NAME_X, COL_NAME_W],
 		["ARMY", COL_ARMY_X, COL_ARMY_W],
+		["HERO", COL_HERO_X, COL_HERO_W],
 		["TEAM", COL_TEAM_X, COL_TEAM_W],
 		["COLOR", COL_COLOR_X, COL_COLOR_W],
 		["READY", COL_READY_X, 40.0],
@@ -226,8 +235,17 @@ func _build() -> void:
 	army_opt.select(0)
 	army_opt.position = Vector2(COL_ARMY_X, ROW_TOP)
 	army_opt.size = Vector2(COL_ARMY_W, ROW_HEIGHT)
-	army_opt.item_selected.connect(func(_index: int) -> void: _on_profile_edited())
+	army_opt.item_selected.connect(_on_army_selected)
 	add_child(army_opt)
+	hero_opt = OptionButton.new()
+	hero_opt.name = "LocalHero"
+	hero_opt.add_item("-")
+	hero_opt.set_item_metadata(0, {})
+	hero_opt.select(0)
+	hero_opt.position = Vector2(COL_HERO_X, ROW_TOP)
+	hero_opt.size = Vector2(COL_HERO_W, ROW_HEIGHT)
+	hero_opt.item_selected.connect(_on_hero_selected)
+	add_child(hero_opt)
 	local_team_label = _row_label("LocalTeam", "1", Vector2(COL_TEAM_X, ROW_TOP + 5), COL_TEAM_W)
 	add_child(local_team_label)
 	local_team_opt = _alliance_option("LocalTeamOpt", Vector2(COL_TEAM_X, ROW_TOP))
@@ -259,6 +277,10 @@ func _build() -> void:
 		var army_label := _row_label("RemoteArmy%s" % suffix, "-", Vector2(COL_ARMY_X, row_y + 5), COL_ARMY_W)
 		add_child(army_label)
 		remote_army_labels.append(army_label)
+		var hero_label := _row_label("RemoteHero%s" % suffix, "-", Vector2(COL_HERO_X, row_y + 5), COL_HERO_W)
+		hero_label.clip_text = true
+		add_child(hero_label)
+		remote_hero_labels.append(hero_label)
 		var team_label := _row_label("RemoteTeam%s" % suffix, str(row + 2), Vector2(COL_TEAM_X, row_y + 5), COL_TEAM_W)
 		add_child(team_label)
 		remote_team_labels.append(team_label)
@@ -376,7 +398,7 @@ func _build() -> void:
 	custom_heroes_opt.select(0)
 	custom_heroes_opt.position = Vector2(SETTINGS_X, heroes_y)
 	custom_heroes_opt.size = Vector2(SETTINGS_W, ROW_HEIGHT)
-	custom_heroes_opt.item_selected.connect(func(_index: int) -> void: _send_settings())
+	custom_heroes_opt.item_selected.connect(_on_custom_heroes_selected)
 	add_child(custom_heroes_opt)
 	custom_heroes_value_label = _row_label("CustomHeroesValue", "Allowed", Vector2(SETTINGS_X, heroes_y + 5), SETTINGS_W)
 	add_child(custom_heroes_value_label)
@@ -541,18 +563,77 @@ func _announce_profile() -> void:
 
 
 func _announce_created_heroes() -> void:
-	## This machine's saved Create-a-Hero heroes, announced with the profile so
-	## every peer knows every seat's heroes BEFORE the launch roster is derived.
+	## Exactly the local picker selection, announced with the profile so every
+	## peer knows what this seat brings BEFORE the launch roster is derived.
 	## A store this peer cannot announce (over the wire caps) announces nothing
 	## rather than a truncated list, so the player fields no created hero instead
 	## of a different set from the one every other peer sees.
 	if session == null:
 		return
-	var profiles: Array = []
-	for profile in CahHeroesScript.load_profiles():
-		profiles.append(profile)
+	var profiles := _selected_hero_profiles()
 	if not session.send_lobby_heroes(profiles) and not profiles.is_empty():
+		set_status("Selected hero could not be announced within the lobby packet limits.", true)
 		session.send_lobby_heroes([])
+
+
+func _selected_hero_profiles() -> Array:
+	if hero_opt == null or hero_opt.selected <= 0 or hero_opt.disabled:
+		return []
+	var value: Variant = hero_opt.get_item_metadata(hero_opt.selected)
+	return [(value as Dictionary).duplicate(true)] if typeof(value) == TYPE_DICTIONARY else []
+
+
+func _populate_hero_picker() -> void:
+	if hero_opt == null:
+		return
+	var previous_id := ""
+	if hero_opt.selected > 0:
+		var previous: Variant = hero_opt.get_item_metadata(hero_opt.selected)
+		if typeof(previous) == TYPE_DICTIONARY:
+			previous_id = String((previous as Dictionary).get("heroId", ""))
+	hero_opt.clear()
+	hero_opt.add_item("-")
+	hero_opt.set_item_metadata(0, {})
+	hero_opt.select(0)
+	if not _cah_system.is_empty():
+		var faction := String(army_opt.get_item_metadata(maxi(0, army_opt.selected)))
+		for profile in CahHeroesScript.load_profiles():
+			if not CahHeroesScript.validate_profile(_cah_system, profile).is_empty():
+				continue
+			var sub_row := CahHeroesScript.sub_class_row(_cah_system,
+				int(profile.get("classIndex", -1)), int(profile.get("subClassIndex", -1)))
+			if not CahHeroesScript.subclass_allows_faction(sub_row, faction):
+				continue
+			hero_opt.add_item(CahHeroesScript.sanitize_name(String(profile.get("name", ""))))
+			var index := hero_opt.item_count - 1
+			hero_opt.set_item_metadata(index, profile.duplicate(true))
+			if String(profile.get("heroId", "")) == previous_id:
+				hero_opt.select(index)
+	_refresh_hero_picker_enabled()
+
+
+func _refresh_hero_picker_enabled() -> void:
+	if hero_opt == null:
+		return
+	var allowed := true
+	if session != null and not session.lobby_settings.is_empty():
+		allowed = bool(session.lobby_settings.get("allow_custom_heroes", true))
+	else:
+		allowed = bool(custom_heroes_opt.get_item_metadata(maxi(0, custom_heroes_opt.selected)))
+	hero_opt.disabled = not allowed
+	hero_opt.tooltip_text = "The one hero this seat brings" if allowed \
+		else "Custom Heroes are disabled by the host"
+
+
+func _on_army_selected(_index: int) -> void:
+	_populate_hero_picker()
+	_on_profile_edited()
+	_announce_created_heroes()
+
+
+func _on_hero_selected(_index: int) -> void:
+	_on_profile_edited()
+	_announce_created_heroes()
 
 
 func _on_profile_edited() -> void:
@@ -678,6 +759,7 @@ func _refresh_seat_rows() -> void:
 		var occupied := row < _remote_row_seats.size()
 		remote_name_labels[row].visible = occupied
 		remote_army_labels[row].visible = occupied
+		remote_hero_labels[row].visible = occupied
 		remote_color_labels[row].visible = occupied
 		remote_ready_checks[row].visible = occupied
 		remote_team_labels[row].visible = occupied and not is_host
@@ -693,12 +775,15 @@ func _refresh_seat_rows() -> void:
 		if not bool(record.get("announced", false)):
 			remote_name_labels[row].text = "Waiting..."
 			remote_army_labels[row].text = "-"
+			remote_hero_labels[row].text = "-"
 			remote_color_labels[row].text = "-"
 			remote_ready_checks[row].button_pressed = false
 			continue
 		remote_name_labels[row].text = String(record.get("name", "?"))
 		var faction_index: int = SessionScript.LOBBY_FACTION_IDS.find(String(record.get("faction", "men")))
 		remote_army_labels[row].text = FACTION_NAMES[faction_index] if faction_index >= 0 else "?"
+		remote_hero_labels[row].text = _hero_names_for_seat(_remote_row_seats[row])
+		remote_hero_labels[row].tooltip_text = remote_hero_labels[row].text
 		var color_index := clampi(int(record.get("color", 0)), 0, SessionScript.LOBBY_COLOR_NAMES.size() - 1)
 		remote_color_labels[row].text = SessionScript.LOBBY_COLOR_NAMES[color_index]
 		remote_ready_checks[row].button_pressed = bool(record.get("ready", false))
@@ -707,12 +792,14 @@ func _refresh_seat_rows() -> void:
 		# so a two-player lobby looks exactly as it did.
 		remote_name_labels[0].visible = true
 		remote_army_labels[0].visible = true
+		remote_hero_labels[0].visible = true
 		remote_color_labels[0].visible = true
 		remote_ready_checks[0].visible = true
 		remote_team_labels[0].visible = not is_host
 		remote_team_opts[0].visible = is_host
 		remote_name_labels[0].text = "Waiting..."
 		remote_army_labels[0].text = "-"
+		remote_hero_labels[0].text = "-"
 		remote_color_labels[0].text = "-"
 		remote_ready_checks[0].button_pressed = false
 
@@ -725,6 +812,19 @@ func _seat_record(seat: int) -> Dictionary:
 		if int(row.get("seat", -1)) == seat:
 			return row
 	return {}
+
+
+func _hero_names_for_seat(seat: int) -> String:
+	if session == null:
+		return "-"
+	var names: Array[String] = []
+	for document_value in session.heroes_for_seat(seat):
+		var parsed: Variant = JSON.parse_string(String(document_value))
+		if typeof(parsed) == TYPE_DICTIONARY:
+			var name := CahHeroesScript.sanitize_name(String((parsed as Dictionary).get("name", "")))
+			if not name.is_empty():
+				names.append(name)
+	return ", ".join(names) if not names.is_empty() else "-"
 
 
 func _selected_settings() -> Dictionary:
@@ -750,6 +850,12 @@ func _send_settings() -> void:
 	)
 
 
+func _on_custom_heroes_selected(_index: int) -> void:
+	_send_settings()
+	_refresh_hero_picker_enabled()
+	_announce_created_heroes()
+
+
 func _apply_settings_to_controls(settings: Dictionary) -> void:
 	var map_index: int = SessionScript.LOBBY_MAP_IDS.find(String(settings.get("map_id", "")))
 	if map_index >= 0:
@@ -769,6 +875,10 @@ func _apply_settings_to_controls(settings: Dictionary) -> void:
 	var allow_heroes := bool(settings.get("allow_custom_heroes", true))
 	custom_heroes_opt.select(0 if allow_heroes else 1)
 	custom_heroes_value_label.text = "Allowed" if allow_heroes else "Disabled"
+	_refresh_hero_picker_enabled()
+	if not allow_heroes and session != null and int(session.local_seat) >= 0 \
+			and not session.heroes_for_seat(int(session.local_seat)).is_empty():
+		_announce_created_heroes()
 
 
 func _refresh_buttons() -> void:

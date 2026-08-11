@@ -4432,7 +4432,8 @@ func _launch_multiplayer(mode: String, address: String, port: int) -> void:
 			session
 		)
 	multiplayer_flyout.set_busy(true)
-	multiplayer_lobby.open(session, mode == "host", String(_game_state.get("retail_mp_player_name")))
+	multiplayer_lobby.open(session, mode == "host",
+		String(_game_state.get("retail_mp_player_name")), _cah_system_runtime())
 	_show_page(PAGE_MP_LOBBY)
 
 
