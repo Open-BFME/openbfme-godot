@@ -8,7 +8,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import sys
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from .catalog import (
     ArchivePolicy,
@@ -53,6 +53,7 @@ from .sage_video import convert_videos
 from .tools import discover_executable
 from .faction_profile import build_men_leaf_profile
 from .faction_slice_profile import compose_faction_profile
+from .projectile_art_compiler import compile_projectile_art
 from .map_profile import (
     MAP_SETS,
     build_category_map_profile,
@@ -2118,12 +2119,39 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                         f"{len(interface_art[1]['images'])} "
                         f"atlas-resources={len(interface_art[0])}",
                     )
+            # Per-projectile art: the compose hands back the projectile Object
+            # ids its own runtime documents resolved to, and this builder
+            # compiles each one's authored Draw art from the SAME oracle tree
+            # and catalog the rest of the cook resolves against.  Without it a
+            # pack can only draw arrows by borrowing the BFME2 host pack's
+            # single Gondor sidecar.
+            def _build_projectile_art(
+                projectile_object_ids: Sequence[str],
+            ) -> Mapping[str, object] | None:
+                if not projectile_object_ids:
+                    return None
+                result = compile_projectile_art(
+                    projectile_object_ids,
+                    oracle_root,
+                    catalog=cook_catalog,
+                    catalog_identity_sha256=cook_catalog.identity_sha256(),
+                )
+                summary = result["summary"]
+                progress_emit(
+                    "compose",
+                    "projectile-art projectiles="
+                    f"{summary['projectileCount']} textures={summary['textureCount']} "
+                    f"model-gaps={summary['unconvertedModelProjectileCount']}",
+                )
+                return result
+
             composed, receipt = compose_faction_profile(
                 base,
                 coverage_root,
                 factions,
                 game=args.game,
                 string_catalog=string_catalog,
+                projectile_art_builder=_build_projectile_art,
                 cah_runtime=cah_runtime,
                 cah_model_resources=cah_model_resources,
                 cah_texture_resources=cah_texture_resources,

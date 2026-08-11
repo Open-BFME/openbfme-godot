@@ -7,6 +7,15 @@ const FormationScript = preload("res://src/retail_slice/retail_formation.gd")
 const DEFAULT_OBJECT_ID := "bfme2.object.gondor-fighter"
 const ARCHER_OBJECT_ID := "bfme2.object.gondor-archer"
 const RANGER_OBJECT_ID := "bfme2.object.gondor-ranger"
+## Pack file keys. `projectileArt` is the per-projectile art document the
+## importer compiles for every faction pack (keyed by compiled
+## projectileObjectId); `gondorArcherProjectile` is the older BFME2 Men host
+## sidecar that only ever carried the Gondor closure.
+const PROJECTILE_ART_PACK_KEY := "projectileArt"
+const ARCHER_PROJECTILE_PACK_KEY := "gondorArcherProjectile"
+## The only projectile the sidecar declares (its weapon.projectileTemplateId);
+## every other projectile it renders is a borrow.
+const SIDECAR_PROJECTILE_OBJECT_ID := "GondorArcherArrow"
 const VISIBLE_ARROW_PROJECTILE_IDS := {
 	"GondorArcherArrow": true,
 	"GoodFactionArrow": true,
@@ -76,6 +85,10 @@ var combat_visual_source_closure_present := false
 var exact_projectile_node_count := 0
 var exact_impact_effect_node_count := 0
 var combat_visual_contract_error := ""
+## Named runtime diagnostics for arrow art resolution ({"code": ..., ...}).
+## Replaces the silent contract-error-only path: a battalion that falls back to
+## the shared Good arrow, or resolves no art at all, says which and why.
+var combat_visual_diagnostics: Array[Dictionary] = []
 var archer_projectile_controller: RetailArcherProjectileController
 var source_selection_decal: RetailSelectionDecal
 var animation_players: Array[AnimationPlayer] = []
@@ -870,24 +883,34 @@ func _present_archer_member_attack(member_index: int) -> void:
 	if direction.length_squared() <= 0.000001:
 		return
 	var pose := Transform3D(Basis.looking_at(direction.normalized(), Vector3.UP), start_local)
-	var fire_leaf := posmod(event_token, archer_projectile_controller.validated_fire_audio_leaf_count)
+	# Compiled per-projectile art carries no audio leaves; only the Gondor
+	# sidecar closure does. Never index an empty leaf pool.
+	var fire_leaf_count := int(archer_projectile_controller.validated_fire_audio_leaf_count)
+	var play_fire_audio := fire_leaf_count > 0 and object_id == ARCHER_OBJECT_ID
+	var fire_leaf := posmod(event_token, fire_leaf_count) if fire_leaf_count > 0 else 0
 	var projectile := archer_projectile_controller.present_authoritative_projectile(
 		event_token,
 		pose,
 		false,
 		fire_leaf,
-		object_id == ARCHER_OBJECT_ID
+		play_fire_audio
 	)
 	if projectile == null:
 		return
 	projectile.set_meta("authoritative_member_index", member_index)
 	projectile.set_meta("presentation_authority", "simulation-member-attack-token")
 	projectile.set_meta("projectile_object_id", projectile_object_id)
+	# Honest provenance: the compiled per-projectile art when the mounted packs
+	# answered for this id, otherwise the borrowed Gondor sidecar arrow.
 	projectile.set_meta(
 		"art_binding",
-		"gondor-arrow-closure"
-		if projectile_object_id == "GondorArcherArrow"
-		else "shared-good-arrow-visible-fallback"
+		archer_projectile_controller.art_binding
+		if archer_projectile_controller.art_binding == ArcherProjectileControllerScript.ART_BINDING_COMPILED
+		else (
+			"gondor-arrow-closure"
+			if projectile_object_id == "GondorArcherArrow"
+			else "shared-good-arrow-visible-fallback"
+		)
 	)
 	projectile.set_meta("launch_bone", weapon_launch_bone)
 	projectile.set_meta("launch_global", start_global)
@@ -960,14 +983,15 @@ func _finish_archer_projectile(event_token: int, target_ref: WeakRef, target_glo
 		return
 	var global_pose := Transform3D(Basis.looking_at(direction, Vector3.UP), target_global)
 	var local_pose := target.global_transform.affine_inverse() * global_pose
-	var impact_leaf := posmod(event_token, archer_projectile_controller.validated_impact_audio_leaf_count)
+	var impact_leaf_count := int(archer_projectile_controller.validated_impact_audio_leaf_count)
+	var impact_leaf := posmod(event_token, impact_leaf_count) if impact_leaf_count > 0 else 0
 	var impact := archer_projectile_controller.present_authoritative_target_impact(
 		event_token,
 		target,
 		local_pose,
 		"NormalDamageFX",
 		impact_leaf,
-		object_id == ARCHER_OBJECT_ID
+		impact_leaf_count > 0 and object_id == ARCHER_OBJECT_ID
 	)
 	if impact == null:
 		return
@@ -1290,17 +1314,68 @@ func _configure_combat_visual_contract(definition: Dictionary) -> void:
 	exact_projectile_node_count = 0
 	exact_impact_effect_node_count = 0
 	combat_visual_contract_error = ""
+	combat_visual_diagnostics.clear()
 	if not VISIBLE_ARROW_PROJECTILE_IDS.has(projectile_object_id):
 		return
 	if object_id == RANGER_OBJECT_ID and weapon_launch_bone != RANGER_LAUNCH_BONE:
 		combat_visual_contract_error = "Ranger primary launch bone is not ARROW"
 		return
-	var pack_root := String(definition.get("_pack_root", ""))
-	if not _pack_ships_archer_projectile(pack_root):
-		pack_root = _mounted_archer_projectile_root()
 	archer_projectile_controller = ArcherProjectileControllerScript.new()
 	archer_projectile_controller.name = "RetailArcherProjectileController"
 	add_child(archer_projectile_controller)
+	var sidecar_root := String(definition.get("_pack_root", ""))
+	if not _pack_ships_archer_projectile(sidecar_root):
+		sidecar_root = _mounted_archer_projectile_root()
+	# 1. The Gondor sidecar is this projectile's OWN full closure (streak plus
+	#    the FX_GoodArrowHit g_arrow impact and 100 exact audio leaves), so for
+	#    GondorArcherArrow it outranks the art-only document. That is
+	#    resolution by identity, not a special case: the sidecar declares
+	#    weapon.projectileTemplateId = GondorArcherArrow and nothing else.
+	if (
+		sidecar_root != ""
+		and projectile_object_id == SIDECAR_PROJECTILE_OBJECT_ID
+		and archer_projectile_controller.configure_from_pack(sidecar_root, _source_unit_scale)
+		and archer_projectile_controller.contract_ready
+	):
+		combat_visual_source_closure_present = true
+		exact_projectile_node_count = int(archer_projectile_controller.validated_streak_texture_count > 0)
+		exact_impact_effect_node_count = int(archer_projectile_controller.validated_impact_model_count > 0)
+		return
+	# 2. Art compiled for THIS projectile object id, from whichever mounted
+	#    pack ships it (standard resolution: the pack's own first).
+	var art := _compiled_projectile_art(definition, projectile_object_id)
+	if not art.is_empty() and archer_projectile_controller.configure_from_projectile_art(
+		projectile_object_id,
+		String(art.get("_pack_root", "")),
+		art.get("entry", {}) as Dictionary,
+		_source_unit_scale
+	) and archer_projectile_controller.contract_ready:
+		combat_visual_source_closure_present = true
+		exact_projectile_node_count = int(archer_projectile_controller.validated_streak_texture_count > 0)
+		exact_impact_effect_node_count = 0
+		return
+	if not art.is_empty():
+		# The document existed but could not bind: that is a defect, not a gap.
+		combat_visual_diagnostics.append({
+			"code": "projectile-art-binding-rejected",
+			"projectileObjectId": projectile_object_id,
+			"packRoot": String(art.get("_pack_root", "")),
+			"reason": String(archer_projectile_controller.error),
+		})
+	# 3. Fall back to the Gondor sidecar for a projectile it does NOT declare.
+	#    It is the only shipped arrow art until the next republish carries the
+	#    compiled per-projectile documents, and for a non-Gondor projectile it
+	#    is a borrowed Good arrow -- say so out loud rather than rendering
+	#    silently.
+	var pack_root := sidecar_root
+	if pack_root != "" and projectile_object_id != SIDECAR_PROJECTILE_OBJECT_ID:
+		combat_visual_diagnostics.append({
+			"code": "arrow-art-shared-good-fallback",
+			"projectileObjectId": projectile_object_id,
+			"packRoot": pack_root,
+			"packFileKey": ARCHER_PROJECTILE_PACK_KEY,
+			"impact": "no mounted pack ships compiled art for this projectile; presenting the Gondor sidecar's shared Good arrow",
+		})
 	if archer_projectile_controller.configure_from_pack(pack_root, _source_unit_scale) and archer_projectile_controller.contract_ready:
 		combat_visual_source_closure_present = true
 		# These are validated presentation-resource counts. No visible projectile
@@ -1311,6 +1386,13 @@ func _configure_combat_visual_contract(definition: Dictionary) -> void:
 		return
 	if archer_projectile_controller.contract_declared:
 		combat_visual_contract_error = "invalid selected-pack arrow projectile contract: %s" % archer_projectile_controller.error
+		combat_visual_diagnostics.append({
+			"code": "arrow-art-unresolved",
+			"projectileObjectId": projectile_object_id,
+			"objectId": object_id,
+			"reason": String(archer_projectile_controller.error),
+			"impact": "this battalion presents no visible arrows",
+		})
 		return
 	# Retail evidence closes this chain as GondorArcherBow ->
 	# GondorArcherArrow/GoodFactionArrow -> EXArrowStreak01, then
@@ -1320,6 +1402,18 @@ func _configure_combat_visual_contract(definition: Dictionary) -> void:
 		+ "GoodFactionArrow/GondorArcherArrow with EXArrowStreak01, and "
 		+ "GOOD_ARROW_PIERCE/FX_GoodArrowHit with g_arrow plus ImpactArrow"
 	)
+	# The silent path this replaces: no mounted pack answers for this
+	# projectile at all, so a RotWK-only mount fired invisible arrows with
+	# nothing but an unread error string to show for it.
+	combat_visual_diagnostics.append({
+		"code": "arrow-art-unresolved",
+		"projectileObjectId": projectile_object_id,
+		"objectId": object_id,
+		"reason": "no mounted pack ships %s art or the %s sidecar" % [
+			PROJECTILE_ART_PACK_KEY, ARCHER_PROJECTILE_PACK_KEY
+		],
+		"impact": "this battalion presents no visible arrows",
+	})
 
 
 func _compiled_projectile_object_id(runtime_object_id: String) -> String:
@@ -1336,14 +1430,70 @@ func _compiled_projectile_object_id(runtime_object_id: String) -> String:
 	return ""
 
 
-func _pack_ships_archer_projectile(pack_root: String) -> bool:
+## Standard mounted-pack resolution for compiled per-projectile art: the
+## battalion's own pack answers first, then any other mounted pack that ships
+## a row for this projectile object id. No pack-id or faction guessing, and no
+## borrowing a foreign projectile's art under a different id.
+func _compiled_projectile_art(definition: Dictionary, wanted_projectile_object_id: String) -> Dictionary:
+	if wanted_projectile_object_id == "":
+		return {}
+	var roots: Array[String] = []
+	var own := String(definition.get("_pack_root", ""))
+	if own != "":
+		roots.append(own)
+	for root_value in ContentDB.pack_roots:
+		var root := String(root_value)
+		if root != "" and not roots.has(root):
+			roots.append(root)
+	for pack_root in roots:
+		var entry := _projectile_art_entry(pack_root, wanted_projectile_object_id)
+		if not entry.is_empty():
+			return {"_pack_root": pack_root, "entry": entry}
+	return {}
+
+
+func _projectile_art_entry(pack_root: String, wanted_projectile_object_id: String) -> Dictionary:
+	var relative := _pack_declared_file(pack_root, PROJECTILE_ART_PACK_KEY)
+	if relative == "":
+		return {}
+	var path := ModLoader.resolve_pack_path(pack_root, relative)
+	if path == "" or not FileAccess.file_exists(path) or not ModLoader.path_is_within(pack_root, path):
+		return {}
+	var value: Variant = ModLoader._read_json(path)
+	if typeof(value) != TYPE_DICTIONARY:
+		return {}
+	var document := value as Dictionary
+	if String(document.get("schema", "")) != RetailArcherProjectileController.PROJECTILE_ART_SCHEMA:
+		return {}
+	var rows: Variant = document.get("projectiles", [])
+	if typeof(rows) != TYPE_ARRAY:
+		return {}
+	for row_value in rows as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			continue
+		var row := row_value as Dictionary
+		if String(row.get("projectileObjectId", "")) == wanted_projectile_object_id:
+			return row
+	return {}
+
+
+func _pack_declared_file(pack_root: String, key: String) -> String:
 	if pack_root == "":
-		return false
+		return ""
 	var pack_path := ModLoader.resolve_pack_path(pack_root, "pack.json")
 	if pack_path == "" or not FileAccess.file_exists(pack_path):
-		return false
+		return ""
 	var value: Variant = ModLoader._read_json(pack_path)
-	return typeof(value) == TYPE_DICTIONARY and ((value as Dictionary).get("files", {}) as Dictionary).has("gondorArcherProjectile")
+	if typeof(value) != TYPE_DICTIONARY:
+		return ""
+	var files: Variant = (value as Dictionary).get("files", {})
+	if typeof(files) != TYPE_DICTIONARY:
+		return ""
+	return String((files as Dictionary).get(key, ""))
+
+
+func _pack_ships_archer_projectile(pack_root: String) -> bool:
+	return _pack_declared_file(pack_root, ARCHER_PROJECTILE_PACK_KEY) != ""
 
 
 func _mounted_archer_projectile_root() -> String:

@@ -10,6 +10,12 @@ extends Node3D
 
 const MAX_DOCUMENT_BYTES := 1024 * 1024
 const EXPECTED_SCHEMA := "openbfme.archer-projectile-binding"
+## Per-projectile compiled art (importer: projectile_art_compiler). Unlike the
+## Gondor sidecar above this is keyed by the compiled projectileObjectId, so
+## every faction pack answers for the arrows its own archers fire.
+const PROJECTILE_ART_SCHEMA := "openbfme.projectile-art-runtime"
+const ART_BINDING_COMPILED := "compiled-projectile-art"
+const ART_BINDING_GONDOR_SIDECAR := "gondor-arrow-closure"
 const EXPECTED_UNIT_OBJECT_ID := "GondorArcher"
 const EXPECTED_DAMAGE_FX_SETS: Array[String] = [
 	"NormalDamageFX",
@@ -27,6 +33,10 @@ const EXPECTED_UNRESOLVED_SEMANTICS: Array[String] = [
 
 var contract_declared := false
 var contract_ready := false
+## Which retail closure the presented art came from: the compiled
+## per-projectile art document, or the Gondor sidecar's shared Good arrow.
+var art_binding := ""
+var art_projectile_object_id := ""
 var presentation_assets_ready := false
 var parity_ready := false
 var error := ""
@@ -47,6 +57,12 @@ var _impact_audio_paths: Array[String] = []
 var _active_projectiles: Dictionary = {}
 var _active_impacts: Dictionary = {}
 var _presentation_scale := 1.0
+## Authored W3DStreakDraw Width/Length. The Gondor sidecar pins 2x15; a
+## compiled per-projectile art row carries whatever retail authored for it.
+var _streak_size := Vector2(2.0, 15.0)
+var _streak_segments := 1
+var _streak_additive := false
+var _streak_color := Color(1.0, 1.0, 1.0)
 
 static var _validated_asset_cache: Dictionary = {}
 
@@ -77,6 +93,89 @@ func configure_from_pack(pack_root: String, presentation_scale: float = 1.0) -> 
 	return configure_document(document, pack_root, _presentation_scale)
 
 
+func configure_from_projectile_art(
+	projectile_object_id: String,
+	pack_root: String,
+	entry: Dictionary,
+	presentation_scale: float = 1.0
+) -> bool:
+	## Bind the streak art the importer compiled for THIS projectile object id.
+	##
+	## This is art only: the Gondor sidecar's impact model and 100 exact audio
+	## leaves are a separate, Gondor-specific closure (GOOD_ARROW_PIERCE ->
+	## FX_GoodArrowHit -> g_arrow + ImpactArrow). A caller that presents from
+	## this binding gets the right arrow and no invented impact, and the
+	## diagnostic below says so instead of implying parity.
+	_reset()
+	_presentation_scale = presentation_scale if is_finite(presentation_scale) and presentation_scale > 0.0 else 1.0
+	contract_declared = true
+	if String(entry.get("projectileObjectId", "")) != projectile_object_id or projectile_object_id == "":
+		return _fail("compiled projectile art row does not name this projectile")
+	var draws_value: Variant = entry.get("draws", [])
+	if typeof(draws_value) != TYPE_ARRAY:
+		return _fail("compiled projectile art row has no draw list")
+	var streak: Dictionary = {}
+	var extra_streak_tags: Array[String] = []
+	for draw_value in draws_value as Array:
+		if typeof(draw_value) != TYPE_DICTIONARY:
+			return _fail("compiled projectile art draw row is invalid")
+		var draw := draw_value as Dictionary
+		if String(draw.get("kind", "")) != "W3DStreakDraw":
+			continue
+		if not streak.is_empty():
+			# Retail layers streaks on some projectiles (the Mirkwood
+			# silverthorn authors two). This presenter draws the first and
+			# names the rest rather than compositing an unproven stack.
+			extra_streak_tags.append(String(draw.get("instanceTag", "")))
+			continue
+		streak = draw
+	if streak.is_empty():
+		# A rock/axe projectile authors a model instead of a streak; this
+		# controller presents streaks only. Not an error, and not a claim.
+		return _fail("compiled projectile art authors no W3DStreakDraw")
+	_pack_root = pack_root
+	art_projectile_object_id = projectile_object_id
+	var width := float(streak.get("width", 2))
+	var length := float(streak.get("length", 15))
+	if not (is_finite(width) and is_finite(length)) or width <= 0.0 or length <= 0.0:
+		return _fail("compiled projectile art streak geometry is invalid")
+	_streak_size = Vector2(width, length)
+	_streak_segments = int(streak.get("numSegments", 1))
+	_streak_additive = bool(streak.get("additive", false))
+	_streak_color = _art_color(streak.get("color", {}))
+	_normal_streak_texture = _load_texture(String(streak.get("texture", "")))
+	if _normal_streak_texture == null:
+		return _fail("compiled projectile art streak texture is missing, escaped, or invalid")
+	validated_streak_texture_count = 1
+	var weather_value: Variant = streak.get("weatherTextures", {})
+	if typeof(weather_value) == TYPE_DICTIONARY:
+		var snow_relative := String((weather_value as Dictionary).get("SNOWY", ""))
+		if snow_relative != "":
+			_snow_streak_texture = _load_texture(snow_relative)
+			if _snow_streak_texture == null:
+				return _fail("compiled projectile art snow texture is missing, escaped, or invalid")
+			validated_streak_texture_count = 2
+	art_binding = ART_BINDING_COMPILED
+	contract_ready = true
+	presentation_assets_ready = true
+	parity_ready = false
+	diagnostics.append({
+		"code": "projectile-art-impact-closure-absent",
+		"projectileObjectId": projectile_object_id,
+		"packRoot": pack_root,
+		"impact": "compiled projectile art carries streak art only; the target-impact model and exact audio leaves stay unbound",
+	})
+	if not extra_streak_tags.is_empty():
+		diagnostics.append({
+			"code": "projectile-art-layered-streaks-unpresented",
+			"projectileObjectId": projectile_object_id,
+			"instanceTags": extra_streak_tags.duplicate(),
+			"impact": "only the first authored W3DStreakDraw is presented",
+		})
+	_set_runtime_metadata()
+	return true
+
+
 func configure_document(document: Dictionary, pack_root: String, presentation_scale: float = 1.0) -> bool:
 	_reset()
 	_presentation_scale = presentation_scale if is_finite(presentation_scale) and presentation_scale > 0.0 else 1.0
@@ -86,6 +185,8 @@ func configure_document(document: Dictionary, pack_root: String, presentation_sc
 	_pack_root = pack_root
 	if not _load_assets(document):
 		return false
+	art_binding = ART_BINDING_GONDOR_SIDECAR
+	art_projectile_object_id = "GondorArcherArrow"
 	contract_ready = true
 	presentation_assets_ready = true
 	# All five unresolved source-engine decisions remain required from an
@@ -137,9 +238,11 @@ func present_authoritative_projectile(
 	root.transform = authoritative_pose
 	root.set_meta("source_draw_kind", "W3DStreakDraw")
 	root.set_meta("source_draw_id", "EXArrowStreak01")
-	root.set_meta("source_length", 15)
-	root.set_meta("source_width", 2)
-	root.set_meta("source_num_segments", 1)
+	root.set_meta("source_length", int(_streak_size.y))
+	root.set_meta("source_width", int(_streak_size.x))
+	root.set_meta("source_num_segments", _streak_segments)
+	root.set_meta("art_binding", art_binding)
+	root.set_meta("art_projectile_object_id", art_projectile_object_id)
 	root.set_meta("parity_ready", false)
 	root.set_meta("authoritative_attack_event_token", attack_event_token)
 
@@ -148,9 +251,14 @@ func present_authoritative_projectile(
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	material.albedo_texture = texture
+	# Authored W3DStreakDraw Color/Additive. The Gondor sidecar authors white,
+	# non-additive, so this is a no-op on that path.
+	material.albedo_color = _streak_color
+	if _streak_additive:
+		material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
 	var quad := QuadMesh.new()
 	quad.orientation = PlaneMesh.FACE_Z
-	quad.size = Vector2(2.0, 15.0) * _presentation_scale
+	quad.size = _streak_size * _presentation_scale
 	quad.material = material
 	var streak := MeshInstance3D.new()
 	streak.name = "ExactEXArrowStreak01Texture"
@@ -515,6 +623,18 @@ func _load_assets(document: Dictionary) -> bool:
 	return valid
 
 
+func _art_color(value: Variant) -> Color:
+	if typeof(value) != TYPE_DICTIONARY:
+		return Color(1.0, 1.0, 1.0)
+	var row := value as Dictionary
+	return Color(
+		clampf(float(row.get("r", 255)) / 255.0, 0.0, 1.0),
+		clampf(float(row.get("g", 255)) / 255.0, 0.0, 1.0),
+		clampf(float(row.get("b", 255)) / 255.0, 0.0, 1.0),
+		clampf(float(row.get("a", 255)) / 255.0, 0.0, 1.0)
+	)
+
+
 func _load_texture(relative: String) -> Texture2D:
 	var path := ModLoader.resolve_pack_path(_pack_root, relative)
 	if not _safe_file(_pack_root, path, "png"):
@@ -659,6 +779,8 @@ func _finite_transform(value: Transform3D) -> bool:
 
 func _set_runtime_metadata() -> void:
 	set_meta("contract_declared", contract_declared)
+	set_meta("art_binding", art_binding)
+	set_meta("art_projectile_object_id", art_projectile_object_id)
 	set_meta("contract_ready", contract_ready)
 	set_meta("presentation_assets_ready", presentation_assets_ready)
 	set_meta("parity_ready", parity_ready)
@@ -682,6 +804,12 @@ func _reset() -> void:
 	contract_ready = false
 	presentation_assets_ready = false
 	parity_ready = false
+	art_binding = ""
+	art_projectile_object_id = ""
+	_streak_size = Vector2(2.0, 15.0)
+	_streak_segments = 1
+	_streak_additive = false
+	_streak_color = Color(1.0, 1.0, 1.0)
 	error = ""
 	validated_streak_texture_count = 0
 	validated_impact_model_count = 0

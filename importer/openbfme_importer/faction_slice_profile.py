@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 import hashlib, json, re
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 from .cah_model_pack import CAH_MODEL_PACK_ROOT, CAH_TEXTURE_PACK_ROOT
 from .cah_system_compiler import CahSystemCompilerError, validate_cah_system_runtime
 from .faction_import import coverage_digest_payload
@@ -11,6 +11,13 @@ from .interface_art import PACK_INDEX_SCHEMA as INTERFACE_ART_SCHEMA
 from .livingworld import LIVING_WORLD_PACK_PATH
 from .playable_structure_pack_compiler import validate_structure_visual_recipe
 from .playable_unit_import import FACTIONS as _FACTION_ROWS, extend_profile_with_unit
+from .projectile_art_compiler import (
+    PROJECTILE_ART_PACK_KEY,
+    PROJECTILE_ART_RUNTIME_PATH,
+    ProjectileArtCompilerError,
+    collect_projectile_object_ids,
+    validate_projectile_art_runtime,
+)
 from .retail_fords_completion_profile import (
     MEN_SELECTION_PACK_KEY,
     MEN_SELECTION_RESOURCES,
@@ -381,6 +388,10 @@ def compose_faction_profile(
     | None = None,
     ring_runtime: Mapping[str, object] | None = None,
     ring_resources: Sequence[Mapping[str, object]] | None = None,
+    projectile_art_builder: Callable[
+        [Sequence[str]], Mapping[str, object] | None
+    ]
+    | None = None,
 ) -> tuple[dict[str, object], dict[str, object]]:
     """Add only artifacts bound to converted rows in digested coverage reports.
 
@@ -400,6 +411,13 @@ def compose_faction_profile(
     single-owner rule.  ``interface_art`` is ``(resources, index document)``
     from ``interface_art_pack``: the pack-wide retail icon index, owned by the
     Men host pack for the same reason.
+
+    ``projectile_art_builder`` receives the projectile Object ids THIS compose's
+    own runtime documents resolve to and returns
+    ``projectile_art_compiler.compile_projectile_art``'s result.  Unlike the
+    host-owned lanes above, every faction pack ships its own copy: a pack must
+    be able to draw the arrows its own archers fire without a foreign pack
+    being mounted.
     """
     game_key = str(game).strip().casefold()
     game_prefix = _GAME_PACK_PREFIX.get(game_key)
@@ -548,6 +566,45 @@ def compose_faction_profile(
             "runtimeSha256": ring_runtime["runtimeSha256"],
             "resourceCount": len(added),
         }
+    # --- per-projectile art ------------------------------------------------
+    # Runs after the lean expansion filter for the same reason the lanes above
+    # do: this document is an emission of THIS compose.  The projectile ids are
+    # read out of the runtime documents that survived the filter, so a pack
+    # ships art for exactly the projectiles its own units and structures fire.
+    projectile_art_receipt: dict[str, object] | None = None
+    if projectile_art_builder is not None:
+        projectile_ids = collect_projectile_object_ids(runtime_data)
+        result = projectile_art_builder(projectile_ids) if projectile_ids else None
+        if result is not None:
+            art_runtime = result.get("runtime")
+            if not isinstance(art_runtime, Mapping):
+                raise ValueError("projectile art result has no runtime document")
+            try:
+                validate_projectile_art_runtime(art_runtime)
+            except ProjectileArtCompilerError as exc:
+                raise ValueError(f"projectile art document is invalid: {exc}") from exc
+            existing_art = runtime_data.get(PROJECTILE_ART_RUNTIME_PATH)
+            if existing_art is not None and existing_art != dict(art_runtime):
+                raise ValueError(
+                    f"projectile art runtime path collision: {PROJECTILE_ART_RUNTIME_PATH}"
+                )
+            art_owner = files.get(PROJECTILE_ART_PACK_KEY)
+            if art_owner is not None and str(art_owner) != PROJECTILE_ART_RUNTIME_PATH:
+                raise ValueError(
+                    f"projectileArt pack registration has a foreign owner: {art_owner}"
+                )
+            added_projectile_art = _append_pack_resources(
+                target, result.get("resources") or [], "projectile art"
+            )
+            runtime_data[PROJECTILE_ART_RUNTIME_PATH] = deepcopy(dict(art_runtime))
+            files[PROJECTILE_ART_PACK_KEY] = PROJECTILE_ART_RUNTIME_PATH
+            projectile_art_receipt = {
+                "runtimePath": PROJECTILE_ART_RUNTIME_PATH,
+                "packFileKey": PROJECTILE_ART_PACK_KEY,
+                "runtimeSha256": art_runtime["runtimeSha256"],
+                "projectileObjectIds": list(projectile_ids),
+                "resourceCount": len(added_projectile_art),
+            }
     # --- Create-a-Hero system table ----------------------------------------
     # Registered BEFORE the strings scan so any CONTROLBAR: id the table
     # carries is covered by the strings document like every other reference.
@@ -708,6 +765,8 @@ def compose_faction_profile(
         receipt["interfaceArt"] = interface_art_receipt
     if ring_receipt is not None:
         receipt["ringSystem"] = ring_receipt
+    if projectile_art_receipt is not None:
+        receipt["projectileArt"] = projectile_art_receipt
     return target, receipt
 
 __all__ = [
@@ -715,6 +774,8 @@ __all__ = [
     "CAH_SYSTEM_RUNTIME_PATH",
     "INTERFACE_ART_PACK_KEY",
     "INTERFACE_ART_RUNTIME_PATH",
+    "PROJECTILE_ART_PACK_KEY",
+    "PROJECTILE_ART_RUNTIME_PATH",
     "RING_SYSTEM_PACK_KEY",
     "RING_SYSTEM_RUNTIME_PATH",
     "STRINGS_PACK_KEY",

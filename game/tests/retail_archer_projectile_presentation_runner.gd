@@ -4,9 +4,15 @@ extends SceneTree
 ## projectile when no target or token transition exists.
 
 const ARCHER_OBJECT_ID := "bfme2.object.gondor-archer"
+const ARCHER_PROJECTILE_PACK_KEY := "gondorArcherProjectile"
+const PROJECTILE_ART_PACK_KEY := "projectileArt"
+const PROJECTILE_ART_SCHEMA := "openbfme.projectile-art-runtime"
+## Every check this runner is expected to reach; see _finish().
+const EXPECTED_CHECK_COUNT := 33
 
 var passed := 0
 var failed := 0
+var fixture_root := ""
 
 
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
@@ -23,7 +29,18 @@ func _initialize() -> void:
 
 func _run() -> void:
 	print("RETAIL_ARCHER_PROJECTILE_PRESENTATION_PHASE runner-started")
+	# OPENBFME_TEST_PACK is an override, not a requirement. Production
+	# (retail_battalion._mounted_archer_projectile_root) self-locates the pack
+	# that declares the contract; a test that is strictly more brittle than the
+	# code it covers reports environment shape as a lane failure.
 	var pack_root := OS.get_environment("OPENBFME_TEST_PACK").strip_edges()
+	var pack_root_source := "environment"
+	if pack_root == "" or not _pack_declares(pack_root, ARCHER_PROJECTILE_PACK_KEY):
+		var located := _mounted_root_declaring(ARCHER_PROJECTILE_PACK_KEY)
+		if located != "":
+			pack_root = located
+			pack_root_source = "mounted-root-fallback"
+	print("RETAIL_ARCHER_PROJECTILE_PRESENTATION_PHASE pack-source=%s" % pack_root_source)
 	_check(
 		"selected_archer_pack_available",
 		pack_root != "" and pack_root.is_absolute_path() and not pack_root.begins_with("res://")
@@ -209,7 +226,250 @@ func _run() -> void:
 	archer.queue_free()
 	target.queue_free()
 	await process_frame
+	await _check_compiled_projectile_art(battalion_script, controller_script)
+	_cleanup_fixture()
 	_finish()
+
+
+func _check_compiled_projectile_art(battalion_script: GDScript, controller_script: GDScript) -> void:
+	## Art must resolve BY the compiled projectileObjectId from whichever
+	## mounted pack ships it -- never by borrowing another projectile's row.
+	fixture_root = _build_projectile_art_fixture()
+	_check("projectile_art_fixture_pack_written", fixture_root != "")
+	if fixture_root == "":
+		return
+	var resolver = battalion_script.new()
+	root.add_child(resolver)
+	var evil := resolver._compiled_projectile_art({"_pack_root": fixture_root}, "EvilFactionArrow") as Dictionary
+	_check(
+		"compiled_art_resolves_by_projectile_object_id",
+		not evil.is_empty()
+			and String(evil.get("_pack_root", "")) == fixture_root
+			and String((evil.get("entry", {}) as Dictionary).get("projectileObjectId", "")) == "EvilFactionArrow"
+	)
+	_check(
+		"compiled_art_never_borrows_a_foreign_projectile_row",
+		(resolver._compiled_projectile_art({"_pack_root": fixture_root}, "GoodFactionArrow") as Dictionary).is_empty()
+	)
+	var art_controller = controller_script.new()
+	root.add_child(art_controller)
+	var bound: bool = art_controller.configure_from_projectile_art(
+		"EvilFactionArrow", fixture_root, evil.get("entry", {}) as Dictionary, 0.01
+	)
+	_check(
+		"compiled_art_binds_its_own_streak_texture",
+		bound
+			and bool(art_controller.contract_ready)
+			and String(art_controller.art_binding) == "compiled-projectile-art"
+			and String(art_controller.art_projectile_object_id) == "EvilFactionArrow"
+			and int(art_controller.validated_streak_texture_count) == 1
+	)
+	_check(
+		"compiled_art_does_not_claim_the_gondor_impact_closure",
+		not bool(art_controller.parity_ready)
+			and int(art_controller.validated_impact_model_count) == 0
+			and _has_diagnostic(art_controller.diagnostics, "projectile-art-impact-closure-absent")
+	)
+	var art_projectile: Node3D = art_controller.present_authoritative_projectile(
+		1, Transform3D.IDENTITY, false, 0, false
+	)
+	_check(
+		"compiled_art_projectile_carries_its_binding_provenance",
+		art_projectile != null
+			and String(art_projectile.get_meta("art_binding", "")) == "compiled-projectile-art"
+			and String(art_projectile.get_meta("art_projectile_object_id", "")) == "EvilFactionArrow"
+	)
+	art_controller.remove_projectile(1)
+	art_controller.queue_free()
+	# Absent art must be a NAMED diagnostic, not a silent contract-error string.
+	var content_db := _content_db()
+	var mounted: Array[String] = []
+	if content_db != null:
+		mounted.assign(content_db.pack_roots)
+		content_db.pack_roots = [] as Array[String]
+	var starved = battalion_script.new()
+	root.add_child(starved)
+	starved.projectile_object_id = "EvilFactionArrow"
+	starved._configure_combat_visual_contract({})
+	_check(
+		"absent_projectile_art_reports_a_named_diagnostic",
+		_has_diagnostic(starved.combat_visual_diagnostics, "arrow-art-unresolved")
+			and not bool(starved.combat_visual_source_closure_present)
+	)
+	starved.queue_free()
+	if content_db != null:
+		content_db.pack_roots = mounted
+	# With today's packs only the Gondor sidecar exists, so a non-Gondor
+	# projectile is a borrow: that must be named too.
+	var borrower = battalion_script.new()
+	root.add_child(borrower)
+	borrower.projectile_object_id = "EvilFactionArrow"
+	borrower._configure_combat_visual_contract({})
+	_check(
+		"shared_good_arrow_borrow_reports_a_named_diagnostic",
+		_has_diagnostic(borrower.combat_visual_diagnostics, "arrow-art-shared-good-fallback")
+			or _has_diagnostic(borrower.combat_visual_diagnostics, "arrow-art-unresolved")
+	)
+	borrower.queue_free()
+	# Precedence: the sidecar is GondorArcherArrow's OWN full closure (streak +
+	# g_arrow impact + 100 audio leaves). Once republished packs also ship an
+	# art-only row for it, the fuller closure must still win.
+	var mounted_fixture := false
+	if content_db != null and not content_db.pack_roots.has(fixture_root):
+		content_db.pack_roots.append(fixture_root)
+		mounted_fixture = true
+	var gondor = battalion_script.new()
+	root.add_child(gondor)
+	gondor.projectile_object_id = "GondorArcherArrow"
+	gondor._configure_combat_visual_contract({})
+	_check(
+		"gondor_sidecar_full_closure_outranks_art_only_row",
+		gondor.archer_projectile_controller != null
+			and bool(gondor.archer_projectile_controller.contract_ready)
+			and String(gondor.archer_projectile_controller.art_binding) == "gondor-arrow-closure"
+			and int(gondor.archer_projectile_controller.validated_impact_model_count) == 1
+	)
+	gondor.queue_free()
+	if mounted_fixture and content_db != null:
+		content_db.pack_roots.erase(fixture_root)
+	resolver.queue_free()
+	await process_frame
+
+
+func _content_db() -> Node:
+	var content_db := root.get_node_or_null("/root/ContentDB")
+	if content_db != null and (content_db.pack_roots as Array).is_empty():
+		var workspace := ProjectSettings.globalize_path("res://../.private/content-packs")
+		if DirAccess.dir_exists_absolute(workspace):
+			OS.set_environment("OPENBFME_CONTENT", workspace)
+			content_db.reload()
+	return content_db
+
+
+func _pack_declares(pack_root: String, key: String) -> bool:
+	if pack_root == "":
+		return false
+	var pack_path := pack_root.path_join("pack.json")
+	if not FileAccess.file_exists(pack_path):
+		return false
+	var value: Variant = JSON.parse_string(FileAccess.get_file_as_string(pack_path))
+	if typeof(value) != TYPE_DICTIONARY:
+		return false
+	var files: Variant = (value as Dictionary).get("files", {})
+	return typeof(files) == TYPE_DICTIONARY and (files as Dictionary).has(key)
+
+
+func _mounted_root_declaring(key: String) -> String:
+	var content_db := _content_db()
+	if content_db == null:
+		return ""
+	for root_value in content_db.pack_roots:
+		var candidate := String(root_value)
+		if _pack_declares(candidate, key):
+			return candidate
+	return ""
+
+
+func _write_json(path: String, value: Variant) -> bool:
+	if DirAccess.make_dir_recursive_absolute(path.get_base_dir()) != OK:
+		return false
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		return false
+	file.store_string(JSON.stringify(value))
+	file.close()
+	return true
+
+
+func _art_row(projectile_object_id: String, virtual_path: String, texture_relative: String) -> Dictionary:
+	return {
+		"projectileObjectId": projectile_object_id,
+		"objectKind": "Object",
+		"source": {"virtualPath": virtual_path, "line": 22},
+		"draws": [
+			{
+				"kind": "W3DStreakDraw",
+				"instanceTag": "ModuleTag_Draw2",
+				"length": 15,
+				"width": 2,
+				"numSegments": 1,
+				"additive": false,
+				"color": {"r": 255, "g": 255, "b": 255},
+				"texture": texture_relative,
+				"weatherTextures": {},
+				"source": {
+					"definingObject": projectile_object_id,
+					"virtualPath": virtual_path,
+					"line": 30,
+				},
+			}
+		],
+	}
+
+
+func _build_projectile_art_fixture() -> String:
+	## A pack that ships compiled art for EvilFactionArrow ONLY, with a
+	## deliberately distinct (red) streak texture so a Good-arrow borrow is
+	## visible as a failure rather than an indistinguishable pass.
+	var fixture := "user://projectile-art-%d" % (Time.get_ticks_usec() & 0xFFFFFF)
+	var absolute := ProjectSettings.globalize_path(fixture)
+	var texture_relative := "assets/textures/projectiles/evilfactionarrowstreak.png"
+	var image := Image.create(4, 4, false, Image.FORMAT_RGBA8)
+	image.fill(Color(1.0, 0.0, 0.0, 1.0))
+	var texture_path := absolute.path_join(texture_relative)
+	if DirAccess.make_dir_recursive_absolute(texture_path.get_base_dir()) != OK:
+		return ""
+	if image.save_png(texture_path) != OK:
+		return ""
+	if not _write_json(
+		absolute.path_join("pack.json"),
+		{
+			"id": "projectile-art-fixture",
+			"schema": "openbfme.content-pack",
+			"schemaVersion": 0,
+			"files": {PROJECTILE_ART_PACK_KEY: "data/projectile-art.json"},
+		}
+	):
+		return ""
+	if not _write_json(
+		absolute.path_join("data/projectile-art.json"),
+		{
+			"schema": PROJECTILE_ART_SCHEMA,
+			"schemaVersion": 0,
+			"projectiles": [
+				_art_row("EvilFactionArrow", "data/ini/object/evilfaction/evilfactionsubobjects.ini", texture_relative),
+				# Shipped so the runner can prove the Gondor sidecar's FULL closure
+				# still outranks an art-only row for its own projectile.
+				_art_row("GondorArcherArrow", "data/ini/object/goodfaction/goodfactionsubobjects.ini", texture_relative),
+			],
+			"unconvertedModelProjectileObjectIds": [],
+			"unsupportedDrawModules": [],
+		}
+	):
+		return ""
+	return absolute
+
+
+func _cleanup_fixture() -> void:
+	if fixture_root == "":
+		return
+	for relative in [
+		"assets/textures/projectiles/evilfactionarrowstreak.png",
+		"data/projectile-art.json",
+		"pack.json",
+	]:
+		DirAccess.remove_absolute(fixture_root.path_join(relative))
+	for relative in ["assets/textures/projectiles", "assets/textures", "assets", "data"]:
+		DirAccess.remove_absolute(fixture_root.path_join(relative))
+	DirAccess.remove_absolute(fixture_root)
+	fixture_root = ""
+
+
+func _has_diagnostic(rows: Array, code: String) -> bool:
+	for row_value in rows:
+		if typeof(row_value) == TYPE_DICTIONARY and String((row_value as Dictionary).get("code", "")) == code:
+			return true
+	return false
 
 
 func _check(name: String, condition: bool) -> void:
@@ -222,5 +482,14 @@ func _check(name: String, condition: bool) -> void:
 
 
 func _finish() -> void:
+	# Liveness guard. A GDScript runtime error inside an awaited section
+	# unwinds it silently, so a half-run suite would otherwise print a green
+	# RESULT with fewer checks (measured: 25 of 32 on the pre-fix runtime).
+	if passed + failed != EXPECTED_CHECK_COUNT:
+		failed += 1
+		printerr(
+			"RETAIL_ARCHER_PROJECTILE_PRESENTATION FAIL every_check_ran expected=%d actual=%d"
+			% [EXPECTED_CHECK_COUNT, passed + failed - 1]
+		)
 	print("RETAIL_ARCHER_PROJECTILE_PRESENTATION_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
