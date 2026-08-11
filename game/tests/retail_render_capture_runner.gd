@@ -159,6 +159,17 @@ func _run() -> void:
 			_fail("OPENBFME_CAPTURE_SELECT_BATTALION could not select the battalion")
 			return
 		slice._sync_presentation()
+	if OS.get_environment("OPENBFME_CAPTURE_SHOW_ALL_HEALTH_BARS") == "1":
+		# Capture-only lever for the health-bar presenters, whose retail rule is
+		# selected-only. Comparing bar SIZE across two different unit types needs
+		# both hordes barred in one frame, which selection alone cannot do. This
+		# sets the same opt-in the options screen writes; it asserts nothing.
+		for battalion_value in slice.battalion_nodes.values():
+			if battalion_value is Node:
+				(battalion_value as Node).set("show_all_health_bars", true)
+		if slice.get("member_health_overlay") != null:
+			slice.member_health_overlay.show_all_health_bars = true
+		slice._sync_presentation()
 	var move_offset_text := OS.get_environment("OPENBFME_CAPTURE_MOVE_OFFSET").strip_edges()
 	if move_offset_text != "":
 		if selected_text == "":

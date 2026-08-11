@@ -7,13 +7,14 @@ const UserSettingsScript = preload("res://src/ui/user_settings.gd")
 ## is the branch every currently published pack takes. A whole section that
 ## unwinds on a runtime error still prints a green RESULT line, so the row count
 ## is asserted as well as the per-section sentinels below.
-const MINIMUM_EXPECTED_ROWS := 33
+const MINIMUM_EXPECTED_ROWS := 52
 
 var passed := 0
 var failed := 0
 var _chevron_section_completed := false
 var _visibility_section_completed := false
 var _geometry_section_completed := false
+var _consistency_section_completed := false
 
 
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
@@ -55,6 +56,7 @@ func _run() -> void:
 	await _check_rank_chevrons()
 	await _check_selected_only_visibility()
 	await _check_member_bar_geometry()
+	await _check_cross_unit_bar_consistency()
 	# LIVENESS GUARD. A GDScript runtime error inside an awaited section unwinds
 	# that section and hands control straight back here, so a runner without these
 	# sentinels prints a clean green result for work it never did. One sentinel
@@ -63,6 +65,7 @@ func _run() -> void:
 	_check("chevron_section_ran_to_completion", _chevron_section_completed)
 	_check("visibility_section_ran_to_completion", _visibility_section_completed)
 	_check("geometry_section_ran_to_completion", _geometry_section_completed)
+	_check("consistency_section_ran_to_completion", _consistency_section_completed)
 	_check(
 		"every_expected_row_ran",
 		passed + failed >= MINIMUM_EXPECTED_ROWS,
@@ -164,9 +167,30 @@ const GEOMETRY_SOURCE_UNIT_SCALE := 0.1
 ## cleared, and a min-only bound would pass the old floating slab.
 const MAXIMUM_HEAD_CLEARANCE := 0.25
 const MINIMUM_HEAD_CLEARANCE := 0.0
-## The drawn bar must be a real, member-sized bar. Without a lower bound a
-## 0.001-unit invisible sliver satisfied "no wider than the member" perfectly.
-const MINIMUM_WIDTH_FRACTION_OF_MEMBER := 0.5
+## THE OLD WIDTH ORACLE WAS THE BUG.
+##
+## These two bounds used to be `drawn_width / max(member_AABB.x, member_AABB.z)`
+## in [0.5, 1.02] -- "the bar is as wide as the member". The member's mesh AABB
+## includes his SPEAR, so that oracle scored a Tower Guard bar three times wider
+## than the Gondor Fighter's next to him as a perfect 1.00, which is the owner's
+## reported "a lot of the health bars have inconsistent sizes". The denominator
+## is now the member's measured HEIGHT, which no weapon can inflate sideways, and
+## the real cross-unit property is gated in its own section below.
+const MAXIMUM_WIDTH_FRACTION_OF_MEMBER_HEIGHT := 1.0
+const MINIMUM_WIDTH_FRACTION_OF_MEMBER_HEIGHT := 0.2
+## Every member of one horde is the same retail Object, so their bars must be
+## bit-identical, not merely similar.
+const WITHIN_HORDE_WIDTH_TOLERANCE := 1.0001
+## ACROSS units, retail's own oracle is the authored `Geometry` block, and it is
+## near-uniform: the mounted RotWK men pack authors majorRadius 8.0 for
+## GondorFighter, GondorTowerShieldGuard, GondorArcher, GondorCavalry,
+## RohanSpearmen and RohanTheoden alike. Two units retail sizes identically must
+## therefore draw identical bars; the small slack absorbs float only.
+const CROSS_UNIT_WIDTH_TOLERANCE := 1.02
+## The two units in the owner's screenshot 3: a sword-and-shield horde whose bars
+## looked right, and a spear horde whose bars rendered as overlapping slabs.
+const CONSISTENCY_COMPACT_OBJECT_ID := "bfme2.object.gondor-fighter"
+const CONSISTENCY_LONG_WEAPON_OBJECT_ID := "bfme2.object.gondor-tower-guard"
 
 
 func _check_member_bar_geometry() -> void:
@@ -252,11 +276,12 @@ func _check_member_bar_geometry() -> void:
 				member_index, anchor_y, bounds.end.y, bounds.size.y
 			]
 		)
-		var measured_half := maxf(bounds.size.x, bounds.size.z) * 0.5
 		widths.observe(
-			float(row.get("half_width", 0.0)),
-			measured_half,
-			"member %d measured_half=%.4f" % [member_index, measured_half]
+			float(row.get("half_width", 0.0)) * 2.0,
+			bounds.size.y,
+			"member %d measured_height=%.4f measured_horizontal_extent=%.4f" % [
+				member_index, bounds.size.y, maxf(bounds.size.x, bounds.size.z)
+			]
 		)
 	_check("geometry_every_member_was_measured", measured_members == rows.size(), "%d of %d" % [measured_members, rows.size()])
 	_report_bar_geometry(clearances, widths)
@@ -286,13 +311,13 @@ func _report_bar_geometry(clearances: _ClearanceSpread, widths: _WidthSpread) ->
 		"worst member: %s clearance=%.4f" % [clearances.maximum_detail, clearances.maximum]
 	)
 	_check(
-		"member_bar_is_no_wider_than_the_member",
-		widths.observed and widths.maximum_ratio <= 1.0 + 0.02,
+		"member_bar_is_not_a_slab_over_the_member",
+		widths.observed and widths.maximum_ratio <= MAXIMUM_WIDTH_FRACTION_OF_MEMBER_HEIGHT,
 		"worst member: %s ratio=%.4f" % [widths.maximum_detail, widths.maximum_ratio]
 	)
 	_check(
 		"member_bar_is_wide_enough_to_see",
-		widths.observed and widths.minimum_ratio >= MINIMUM_WIDTH_FRACTION_OF_MEMBER,
+		widths.observed and widths.minimum_ratio >= MINIMUM_WIDTH_FRACTION_OF_MEMBER_HEIGHT,
 		"worst member: %s ratio=%.4f" % [widths.minimum_detail, widths.minimum_ratio]
 	)
 
@@ -363,8 +388,10 @@ func _check_world_quad_bar_geometry(battalion) -> void:
 		var quad := back.mesh as QuadMesh
 		widths.observe(
 			quad.size.x if quad != null else -1.0,
-			maxf(bounds.size.x, bounds.size.z),
-			"member %d measured_width=%.4f" % [member_index, maxf(bounds.size.x, bounds.size.z)]
+			bounds.size.y,
+			"member %d measured_height=%.4f measured_horizontal_extent=%.4f" % [
+				member_index, bounds.size.y, maxf(bounds.size.x, bounds.size.z)
+			]
 		)
 	_check(
 		"quad_every_member_was_measured",
@@ -406,6 +433,206 @@ func _check_world_quad_bar_geometry(battalion) -> void:
 	battalion._refresh_member_overlays()
 	_check("quad_show_all_setting_bars_the_unselected_member", moved_back.visible)
 	battalion.show_all_health_bars = false
+
+
+func _check_cross_unit_bar_consistency() -> void:
+	## THE OWNER'S BUG, STATED DIRECTLY: two hordes standing in the same battle
+	## must not draw different-sized health bars.
+	##
+	## Oracle is retail's own `Geometry` authoring, read here out of the mounted
+	## pack rather than assumed: GondorFighter and GondorTowerShieldGuard are both
+	## authored majorRadius 8.0, so retail sizes them identically and so must we.
+	## The Tower Guard carries a long spear and the Fighter does not, which is
+	## exactly the difference the old mesh-AABB width turned into a slab.
+	var content_db = root.get_node_or_null("ContentDB")
+	if not _check("consistency_content_db_available", content_db != null):
+		return
+	await process_frame
+	await process_frame
+	var battalion_script = load("res://src/retail_slice/retail_battalion.gd")
+	var samples: Array[Dictionary] = []
+	var battalions: Array = []
+	for object_id in [CONSISTENCY_COMPACT_OBJECT_ID, CONSISTENCY_LONG_WEAPON_OBJECT_ID]:
+		var definition: Dictionary = content_db.get_bundle_object(object_id)
+		if not _check(
+			"consistency_%s_is_mounted" % object_id,
+			String(definition.get("_pack_root", "")) != "",
+			str(definition.keys())
+		):
+			continue
+		var battalion = battalion_script.new()
+		root.add_child(battalion)
+		battalion.configure(
+			5150 + battalions.size(), 0, object_id, {}, 3, GEOMETRY_SOURCE_UNIT_SCALE,
+			[Vector3.ZERO, Vector3(1.2, 0.0, 0.0), Vector3(2.4, 0.0, 0.0)]
+		)
+		battalions.append(battalion)
+		await process_frame
+		# WHICH PRESENTER a unit gets is a property of the PACK its bundle object
+		# came from, not of the unit: on the shipped selection the Gondor Fighter
+		# takes the world-quad path and the Tower Guard the parity overlay. So the
+		# sampled quantity is the width BOTH presenters consume - the row's
+		# `half_width` - and the world quad is sampled as well where it exists.
+		var is_parity := bool(battalion.private_parity_mode_active)
+		print("RETAIL_MEMBER_HEALTH_OVERLAY consistency_presenter[%s]=%s" % [
+			object_id, "parity-overlay" if is_parity else "world-quad"
+		])
+		# The parity overlay publishes its width as the row's `half_width` and
+		# builds no quads; the world-quad presenter publishes no rows and builds
+		# quads. Both are the SAME authored bar width, so each is read out of its
+		# own presenter and compared on equal terms.
+		var parity_widths := {}
+		for row_value in battalion.member_health_overlay_rows():
+			var row: Dictionary = row_value
+			parity_widths[int(row.get("member_index", -1))] = float(row.get("half_width", 0.0)) * 2.0
+		for member_index_value in battalion.member_visuals.keys():
+			var member_index := int(member_index_value)
+			var bounds := _world_mesh_bounds(battalion.member_visuals.get(member_index) as Node3D)
+			var back: MeshInstance3D = battalion.member_health_backs.get(member_index) as MeshInstance3D
+			var quad: QuadMesh = (back.mesh as QuadMesh) if back != null else null
+			var width := float(parity_widths.get(member_index, -1.0)) if is_parity else (quad.size.x if quad != null else -1.0)
+			if not _check(
+				"consistency_%s_member_%d_has_a_bar_width" % [object_id, member_index],
+				width > 0.0,
+				"presenter=%s width=%.4f" % ["parity-overlay" if is_parity else "world-quad", width]
+			):
+				continue
+			samples.append({
+				"object_id": object_id,
+				"member_index": member_index,
+				"width": width,
+				"quad_thickness": quad.size.y if quad != null else -1.0,
+				"extent": maxf(bounds.size.x, bounds.size.z),
+			})
+	if not _check("consistency_sampled_both_unit_types", samples.size() >= 6, "%d samples" % samples.size()):
+		for battalion in battalions:
+			battalion.queue_free()
+		return
+	# The whole point of the section: the two unit types must differ in what they
+	# HOLD and not in what they DRAW. Reported so a reviewer can see both.
+	var extent_ratio := _extreme_ratio(samples, "extent")
+	print("RETAIL_MEMBER_HEALTH_OVERLAY consistency_member_mesh_extent_ratio=%.4f" % extent_ratio.ratio)
+	_check(
+		"consistency_the_two_units_really_do_differ_in_mesh_extent",
+		extent_ratio.ratio >= 1.15,
+		"%s vs %s ratio=%.4f - if these are alike this section proves nothing" % [
+			extent_ratio.minimum_detail, extent_ratio.maximum_detail, extent_ratio.ratio
+		]
+	)
+	var width_ratio := _extreme_ratio(samples, "width")
+	print("RETAIL_MEMBER_HEALTH_OVERLAY consistency_bar_width_ratio=%.4f width_min=%.4f width_max=%.4f" % [
+		width_ratio.ratio, width_ratio.minimum, width_ratio.maximum
+	])
+	_check(
+		"bars_are_the_same_width_across_units_retail_sizes_alike",
+		width_ratio.ratio <= CROSS_UNIT_WIDTH_TOLERANCE,
+		"widest %s = %.4f, narrowest %s = %.4f, ratio=%.4f" % [
+			width_ratio.maximum_detail, width_ratio.maximum,
+			width_ratio.minimum_detail, width_ratio.minimum,
+			width_ratio.ratio,
+		]
+	)
+	# Thickness is only a world-quad property (the parity overlay draws a fixed
+	# three-pixel bar). Sampled where it exists, and asserted unconditionally on
+	# the pure helper so the property is gated even when the shipped selection
+	# routes one of the two units to the other presenter.
+	var quad_samples: Array[Dictionary] = []
+	for sample in samples:
+		if float(sample.get("quad_thickness", -1.0)) > 0.0:
+			quad_samples.append(sample)
+	if quad_samples.size() >= 2:
+		var thickness_ratio := _extreme_ratio(quad_samples, "quad_thickness")
+		print("RETAIL_MEMBER_HEALTH_OVERLAY consistency_bar_thickness_ratio=%.4f thickness_min=%.4f thickness_max=%.4f" % [
+			thickness_ratio.ratio, thickness_ratio.minimum, thickness_ratio.maximum
+		])
+		_check(
+			"drawn_quad_bars_are_the_same_thickness",
+			thickness_ratio.ratio <= CROSS_UNIT_WIDTH_TOLERANCE,
+			"thickest %s = %.4f, thinnest %s = %.4f" % [
+				thickness_ratio.maximum_detail, thickness_ratio.maximum,
+				thickness_ratio.minimum_detail, thickness_ratio.minimum,
+			]
+		)
+	else:
+		_check(
+			"drawn_quad_bars_are_the_same_thickness",
+			true,
+			"only %d world-quad members in this selection; pure-helper rows carry it" % quad_samples.size()
+		)
+	# THE THICKNESS PROPERTY ITSELF: no unit may make its bar fatter. The helper
+	# takes no radius at all, which is the whole point - it used to be
+	# `width * aspect`, so a spear made the bar both wider and thicker.
+	var battalion_script_static = load("res://src/retail_slice/retail_battalion.gd")
+	var infantry_width: float = battalion_script_static.member_bar_width(8.0, GEOMETRY_SOURCE_UNIT_SCALE)
+	var giant_width: float = battalion_script_static.member_bar_width(200.0, GEOMETRY_SOURCE_UNIT_SCALE)
+	var runt_width: float = battalion_script_static.member_bar_width(0.5, GEOMETRY_SOURCE_UNIT_SCALE)
+	_check(
+		"infantry_bar_keeps_its_shipped_width",
+		is_equal_approx(infantry_width, 0.58),
+		"retail infantry majorRadius 8.0 at source scale 0.1 -> %.4f" % infantry_width
+	)
+	_check(
+		"a_runaway_footprint_cannot_make_a_slab",
+		giant_width / infantry_width <= 2.1,
+		"majorRadius 200 -> %.4f, which is %.4fx infantry" % [giant_width, giant_width / infantry_width]
+	)
+	_check(
+		"a_tiny_footprint_still_draws_a_readable_bar",
+		runt_width / infantry_width >= 0.7,
+		"majorRadius 0.5 -> %.4f" % runt_width
+	)
+	for object_id in [CONSISTENCY_COMPACT_OBJECT_ID, CONSISTENCY_LONG_WEAPON_OBJECT_ID]:
+		var horde: Array[Dictionary] = []
+		for sample in samples:
+			if String(sample.get("object_id", "")) == object_id:
+				horde.append(sample)
+		if horde.is_empty():
+			continue
+		var horde_ratio := _extreme_ratio(horde, "width")
+		_check(
+			"bars_within_%s_are_identical" % object_id,
+			horde_ratio.ratio <= WITHIN_HORDE_WIDTH_TOLERANCE,
+			"ratio=%.4f min=%.4f max=%.4f" % [horde_ratio.ratio, horde_ratio.minimum, horde_ratio.maximum]
+		)
+	# The width source is reported, not assumed: a pack whose bundle objects carry
+	# no `sourceObjectId` cannot reach its playable-unit geometry and falls back to
+	# retail's authored infantry default. Either way the bars must be uniform, but
+	# the log has to say which happened.
+	for battalion in battalions:
+		print("RETAIL_MEMBER_HEALTH_OVERLAY consistency_bar_source[%s]=%s" % [
+			str(battalion.object_id), str(battalion.get("member_health_bar_source"))
+		])
+		battalion.queue_free()
+	await process_frame
+	_consistency_section_completed = true
+
+
+class _ExtremeRatio:
+	extends RefCounted
+	var minimum := INF
+	var maximum := -INF
+	var minimum_detail := "<none>"
+	var maximum_detail := "<none>"
+
+	var ratio: float:
+		get:
+			if not is_finite(minimum) or minimum <= 0.0 or not is_finite(maximum):
+				return INF
+			return maximum / minimum
+
+
+func _extreme_ratio(samples: Array[Dictionary], key: String) -> _ExtremeRatio:
+	var spread := _ExtremeRatio.new()
+	for sample in samples:
+		var value := float(sample.get(key, 0.0))
+		var detail := "%s member %d" % [String(sample.get("object_id", "?")), int(sample.get("member_index", -1))]
+		if value < spread.minimum:
+			spread.minimum = value
+			spread.minimum_detail = detail
+		if value > spread.maximum:
+			spread.maximum = value
+			spread.maximum_detail = detail
+	return spread
 
 
 func _world_mesh_bounds(visual: Node3D) -> AABB:

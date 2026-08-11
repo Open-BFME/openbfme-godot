@@ -27,7 +27,10 @@ $focusedRunners = [ordered]@{
     # Pinned 13 while the runner emitted 15 on clean main - pre-existing gate rot,
     # red before this lane touched anything. Re-pinned to 40 because this lane
     # rewrote the runner and owning a runner means owning its pin.
-    'member_health_overlay_runtime' = @('retail_member_health_overlay_runner.gd', '(?m)^RETAIL_MEMBER_HEALTH_OVERLAY_RESULT passed=40 failed=0\s*$')
+    # Re-pinned 40 -> 59: this lane added the cross-unit bar-consistency section
+    # (the owner's "inconsistent health bar sizes" defect) and owning a runner
+    # means owning its pin.
+    'member_health_overlay_runtime' = @('retail_member_health_overlay_runner.gd', '(?m)^RETAIL_MEMBER_HEALTH_OVERLAY_RESULT passed=59 failed=0\s*$')
     'selection_decal_runtime' = @('retail_selection_decal_runner.gd', '(?m)^RETAIL_SELECTION_DECAL_RESULT passed=15 failed=0\s*$')
     'neutral_lifecycle_runtime' = @('retail_neutral_lifecycle_runner.gd', '(?m)^RETAIL_NEUTRAL_LIFECYCLE_RESULT passed=51 failed=0\s*$')
     'particle_runtime' = @('retail_particle_runtime_runner.gd', '(?m)^RETAIL_PARTICLE_RUNTIME_RESULT passed=17 failed=0\s*$')

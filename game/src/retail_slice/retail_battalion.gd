@@ -59,6 +59,41 @@ const HEALTH_BAR_HEAD_GAP := 0.12
 const BAR_BACK_ASPECT := 0.065 / 0.58
 const BAR_FILL_WIDTH_RATIO := 0.54 / 0.58
 const BAR_FILL_ASPECT := 0.042 / 0.58
+## THE BAR IS SIZED BY THE UNIT'S AUTHORED BODY, NOT BY WHAT IT IS HOLDING.
+##
+## The measured mesh AABB was used for both the bar's width and (through
+## BAR_BACK_ASPECT) its thickness. That AABB contains the WEAPON: a Tower Guard's
+## spear and an infantry banner stick metres out of the man, so a spear horde
+## drew bars several times wider AND several times thicker than a sword horde
+## standing next to it -- the owner's "a lot of the health bars have inconsistent
+## sizes", where one horde renders as overlapping green slabs and its neighbour
+## as thin ticks.
+##
+## Retail's own oracle for a unit's body is the authored `Geometry` block, and it
+## is near-uniform by design. From the mounted RotWK men pack
+## (data/playable-units/*.json, `registration.gameplay.geometry`):
+##   GondorFighter          majorRadius 8.0   (object/.../gondor.ini:940)
+##   GondorTowerShieldGuard majorRadius 8.0
+##   GondorArcher           majorRadius 8.0
+##   GondorCavalry          majorRadius 8.0
+##   RohanSpearmen          majorRadius 8.0
+##   RohanTheoden           majorRadius 8.0
+## Sizing the bar off that reproduces retail's near-uniform bar and still leaves
+## room for the genuinely larger classes (trolls, siege) as a MINOR width class,
+## bounded by the clamp below instead of running away with a mesh extent.
+##
+## Calibration: the pre-existing legal-safe bar was 0.58 world units wide at the
+## slice's validated source scale 0.1, and retail's infantry radius is 8.0, so
+## 0.58 / (8.0 * 0.1) = 0.725 world units of bar per source radius per unit of
+## scale. Infantry therefore keeps EXACTLY the bar width it shipped with; only
+## the runaway weapon-driven widths change.
+const MEMBER_BAR_WIDTH_PER_SOURCE_RADIUS := 0.725
+## Width classes are bounded, not free. Below/above this band a class stops
+## scaling, so no authored footprint can ever reproduce the slab.
+const MEMBER_BAR_MINIMUM_SOURCE_RADIUS := 6.0
+const MEMBER_BAR_MAXIMUM_SOURCE_RADIUS := 16.0
+## Used only when the map supplies no source scale at all.
+const MEMBER_BAR_FALLBACK_WIDTH := 0.58
 const ArcherProjectileControllerScript = preload("res://src/retail_slice/retail_archer_projectile_controller.gd")
 const SelectionDecalScript = preload("res://src/retail_slice/retail_selection_decal.gd")
 const PackCapability = preload("res://src/content/pack_capability.gd")
@@ -133,6 +168,10 @@ var member_health_bar_heights: Dictionary = {}
 ## member falling back reports "partial-...", so a scalar can no longer hide a
 ## per-member measurement failure behind its luckier neighbours.
 var member_health_anchor_source := "unmeasured"
+## Where the bar's WIDTH came from: the unit's compiled retail `Geometry` block,
+## or retail's infantry default when the mounted pack's bundle object carries no
+## `sourceObjectId` to reach its playable-unit document with.
+var member_health_bar_source := "unsized"
 var member_health_measured_count := 0
 var member_health_fallback_count := 0
 ## The player's "Show All Health Bars" opt-in, read once when this battalion is
@@ -336,6 +375,13 @@ func _clips(value: Variant) -> Array[String]:
 
 func _build_members(expected_members: int, formation_positions: Array) -> void:
 	var asset_factory = load("res://src/view/asset_factory.gd")
+	# One authored body radius for the whole battalion: every member of a horde is
+	# the same retail Object, so their bars are identical by construction and a
+	# horde can never again render as a ragged row of different-sized slabs.
+	var bar_width := member_bar_width(_member_source_geometry_radius(), _source_unit_scale)
+	member_health_bar_source = (
+		"compiled-geometry" if _member_geometry_is_compiled else "retail-infantry-default"
+	)
 	var source_geometry_height := float(SOURCE_HEALTH_GEOMETRY_HEIGHT.get(object_id, 19.2))
 	var shared_health_anchor_height := (
 		(source_geometry_height + SOURCE_HEALTH_HEIGHT_OFFSET) * _source_unit_scale
@@ -373,13 +419,14 @@ func _build_members(expected_members: int, formation_positions: Array) -> void:
 		# Members are measured the same way, and the table survives only as the
 		# fallback for geometry that cannot be measured.
 		var measured := _measure_member_bounds(visual)
+		# The ANCHOR is measured (it must ride this model); the WIDTH is authored
+		# and shared, so both presenters draw the same bar for the same unit.
+		member_health_half_widths[member_index] = bar_width * 0.5
 		if measured.size.y > 0.0:
 			member_health_anchor_heights[member_index] = measured.end.y + HEALTH_BAR_HEAD_GAP
-			member_health_half_widths[member_index] = maxf(measured.size.x, measured.size.z) * 0.5
 			member_health_measured_count += 1
 		else:
 			member_health_anchor_heights[member_index] = shared_health_anchor_height
-			member_health_half_widths[member_index] = 0.0
 			member_health_fallback_count += 1
 		_publish_anchor_source()
 		# Retail contact shadow: SAGE draws infantry shadows as dark decals at
@@ -394,7 +441,7 @@ func _build_members(expected_members: int, formation_positions: Array) -> void:
 		if private_parity_mode_active:
 			member_overlay_status = "source-health-canvas-bound-selection-decal-contract-pending"
 		else:
-			_build_member_overlay(member_index, visual.position, measured)
+			_build_member_overlay(member_index, visual.position, measured, bar_width)
 			member_overlay_status = "legal-safe-gameplay-overlay"
 		if (
 			bool(visual.get_meta("authored", false))
@@ -532,7 +579,37 @@ func _member_source_geometry_radius() -> float:
 	return SelectionPick.DEFAULT_MEMBER_SOURCE_RADIUS
 
 
-func _build_member_overlay(member_index: int, member_position: Vector3, measured_bounds: AABB = AABB()) -> void:
+static func member_bar_width(source_radius: float, source_unit_scale: float) -> float:
+	## Drawn width of one member's health bar, in world units, from the unit's
+	## AUTHORED source footprint radius. Weapon-free by construction: the value
+	## comes from the compiled `Geometry` block, never from a mesh AABB.
+	if not is_finite(source_unit_scale) or source_unit_scale <= 0.0:
+		return MEMBER_BAR_FALLBACK_WIDTH
+	var radius := (
+		source_radius
+		if is_finite(source_radius) and source_radius > 0.0
+		else SelectionPick.DEFAULT_MEMBER_SOURCE_RADIUS
+	)
+	radius = clampf(radius, MEMBER_BAR_MINIMUM_SOURCE_RADIUS, MEMBER_BAR_MAXIMUM_SOURCE_RADIUS)
+	return MEMBER_BAR_WIDTH_PER_SOURCE_RADIUS * radius * source_unit_scale
+
+
+static func member_bar_thickness(source_unit_scale: float, aspect: float) -> float:
+	## Bar THICKNESS is the same for every member on the map. It used to be
+	## `width * aspect`, so a wide bar was also a fat bar and the two errors
+	## multiplied. Deriving it from the DEFAULT infantry radius alone means a
+	## troll's slightly wider bar is no thicker than a soldier's.
+	if not is_finite(source_unit_scale) or source_unit_scale <= 0.0:
+		return MEMBER_BAR_FALLBACK_WIDTH * aspect
+	return (
+		MEMBER_BAR_WIDTH_PER_SOURCE_RADIUS
+		* SelectionPick.DEFAULT_MEMBER_SOURCE_RADIUS
+		* source_unit_scale
+		* aspect
+	)
+
+
+func _build_member_overlay(member_index: int, member_position: Vector3, measured_bounds: AABB = AABB(), bar_width: float = MEMBER_BAR_FALLBACK_WIDTH) -> void:
 	# These are gameplay overlays rather than claimed retail art. Their scale is
 	# matched to the source member radius; final texture/color parity remains an
 	# oracle styling gate.
@@ -556,25 +633,28 @@ func _build_member_overlay(member_index: int, member_position: Vector3, measured
 	add_child(selection_ring)
 	member_selection_rings[member_index] = selection_ring
 
-	# THE BAR IS THE SOLDIER'S OWN WIDTH, JUST OVER HIS HEAD.
+	# THE BAR SITS JUST OVER HIS HEAD, SIZED BY HIS AUTHORED BODY.
 	#
 	# It used to be a fixed 0.58x0.065 quad parked at a fixed y=1.45 above the
-	# member's authored formation slot. On the shipped packs that put a bar 45%
-	# of a body height ABOVE the head of every soldier, at a width that had
-	# nothing to do with him - the owner-visible "slabs floating above units".
-	# Both numbers now come from the member's measured geometry, in the same
-	# footprint-bounded, measured-roof shape as the structure presenter.
-	var bar_width := 0.58
+	# member's authored formation slot - the owner-visible "slabs floating above
+	# units". The anchor was then moved onto the member's MEASURED visual top,
+	# which is right, and the WIDTH was moved there too, which was not: the mesh
+	# AABB contains the man's spear, so a Tower Guard's bar came out several
+	# times wider and (through the aspect) several times thicker than the Gondor
+	# Fighter's beside him. Width and thickness now come from the authored
+	# `Geometry` radius (see MEMBER_BAR_WIDTH_PER_SOURCE_RADIUS); only the anchor
+	# is measured.
 	var bar_anchor_height := 1.45
 	if measured_bounds.size.y > 0.0:
-		bar_width = maxf(maxf(measured_bounds.size.x, measured_bounds.size.z), 0.2)
 		bar_anchor_height = measured_bounds.end.y + HEALTH_BAR_HEAD_GAP
 	member_health_bar_widths[member_index] = bar_width
 	member_health_bar_heights[member_index] = bar_anchor_height
+	var back_thickness := member_bar_thickness(_source_unit_scale, BAR_BACK_ASPECT)
+	var fill_thickness := member_bar_thickness(_source_unit_scale, BAR_FILL_ASPECT)
 	var health_back := MeshInstance3D.new()
 	health_back.name = "MemberHealthBack_%02d" % member_index
 	var back_quad := QuadMesh.new()
-	back_quad.size = Vector2(bar_width, bar_width * BAR_BACK_ASPECT)
+	back_quad.size = Vector2(bar_width, back_thickness)
 	health_back.mesh = back_quad
 	health_back.position = member_position + Vector3(0.0, bar_anchor_height, 0.0)
 	var back_material := StandardMaterial3D.new()
@@ -591,7 +671,7 @@ func _build_member_overlay(member_index: int, member_position: Vector3, measured
 	var health_fill := MeshInstance3D.new()
 	health_fill.name = "MemberHealthFill_%02d" % member_index
 	var fill_quad := QuadMesh.new()
-	fill_quad.size = Vector2(bar_width * BAR_FILL_WIDTH_RATIO, bar_width * BAR_FILL_ASPECT)
+	fill_quad.size = Vector2(bar_width * BAR_FILL_WIDTH_RATIO, fill_thickness)
 	health_fill.mesh = fill_quad
 	health_fill.position = member_position + Vector3(0.0, bar_anchor_height, -0.01)
 	var fill_material := StandardMaterial3D.new()
