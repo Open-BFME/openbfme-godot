@@ -309,6 +309,9 @@ var _wotr_unavailable_reason := ""
 var _wotr_document: Dictionary = {}
 var _wotr_document_path := ""
 var _wotr_document_source := ""
+## The one Create-a-Hero document chosen on the WotR setup surface. Empty means
+## the human seat deliberately brings no created hero.
+var _wotr_selected_hero_document := ""
 ## Local menu stills that are actually present on disk, for cycle order.
 var _local_backdrop_paths: Array[String] = []
 var _local_backdrop_index := 0
@@ -3510,6 +3513,25 @@ func _start_wotr_session(chosen: Dictionary = {}) -> bool:
 	# A fresh strategic campaign cannot inherit any consume-once battle seam from
 	# an earlier launch, including one whose return was refused.
 	_clear_wotr_battle_seam()
+	_wotr_selected_hero_document = ""
+	var chosen_hero_id := String(chosen.get("hero_id", ""))
+	if not chosen_hero_id.is_empty():
+		var profile := CahHeroesScript.load_profile(chosen_hero_id)
+		var system := _cah_system_runtime()
+		var hero_refusals: Array[String] = []
+		if profile.is_empty():
+			hero_refusals.append("profile not found")
+		elif system.is_empty():
+			hero_refusals.append("Create-a-Hero system unavailable")
+		else:
+			hero_refusals = CahHeroesScript.validate_profile(system, profile)
+		if not hero_refusals.is_empty():
+			_wotr_unavailable_reason = "the selected created hero was refused: %s" % ", ".join(hero_refusals)
+			return false
+		_wotr_selected_hero_document = SessionScript.canonical_hero_document(profile)
+		if _wotr_selected_hero_document.is_empty():
+			_wotr_unavailable_reason = "the selected created hero could not be canonicalised"
+			return false
 	# Seat options are filtered by per-faction availability below.
 	if not _ensure_skirmish_options():
 		return false
@@ -3793,7 +3815,7 @@ func _open_wotr_setup() -> bool:
 		return false
 	wotr_setup_screen.pack_faction_availability = _skirmish_availability
 	wotr_setup_screen.configure(
-		_wotr_document, probe, pack_roots, _wotr_unavailable_reason)
+		_wotr_document, probe, pack_roots, _wotr_unavailable_reason, _cah_system_runtime())
 	for line in wotr_setup_screen.describe_load():
 		print("[wotr-setup] %s" % String(line))
 	return true
@@ -3882,6 +3904,8 @@ func wotr_team_descriptors(configured: Dictionary) -> Array:
 			"alliance": index + 1,
 			"color": HOUSE_COLORS[index]["color"],
 			"start_index": starts[index],
+			"heroes": [_wotr_selected_hero_document]
+				if not bool(seat["is_ai"]) and not _wotr_selected_hero_document.is_empty() else [],
 		})
 	return descriptors
 

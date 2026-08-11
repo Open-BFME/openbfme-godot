@@ -59,7 +59,7 @@ const HARNESS_MAP_IDS: Array = [
 ## ownership sets now seed (per-template spawn resolution), the fresh-campaign
 ## victory evaluation, the version 3 brief surface inside the digested brief,
 ## and the ledger surviving the scene change.
-const EXPECTED_CHECKS := 114
+const EXPECTED_CHECKS := 116
 
 var passed := 0
 var failed := 0
@@ -852,6 +852,22 @@ func _test_the_menu_reaches_it(found: Dictionary) -> void:
 	var commitment := configured.get("commitment", {}) as Dictionary
 	var descriptors: Array = menu.wotr_team_descriptors(configured)
 	var battlefield := String(commitment.get("battlefield_map", ""))
+	if descriptors.size() == 2:
+		menu._wotr_selected_hero_document = "{\"heroId\":\"0123456789abcdef01234567\",\"name\":\"Wotr Pick\"}"
+		descriptors = menu.wotr_team_descriptors(configured)
+		_check("wotr_human_fields_exactly_the_one_picked_created_hero",
+			(descriptors[0] as Dictionary).get("heroes", []) == [menu._wotr_selected_hero_document]
+				and (descriptors[1] as Dictionary).get("heroes", null) == [],
+			str(descriptors))
+		menu._wotr_selected_hero_document = ""
+		descriptors = menu.wotr_team_descriptors(configured)
+		_check("wotr_unpicked_created_hero_fields_none",
+			(descriptors[0] as Dictionary).get("heroes", null) == [], str(descriptors))
+	else:
+		_check("wotr_human_fields_exactly_the_one_picked_created_hero", false,
+			"battlefield was unexpectedly unseatable")
+		_check("wotr_unpicked_created_hero_fields_none", false,
+			"battlefield was unexpectedly unseatable")
 	# EITHER the roster is projected from the commitment, OR the battlefield has
 	# fewer than two authored player starts on this machine and the menu refused
 	# to seat it. Both are correct; a roster that was neither would be invented.

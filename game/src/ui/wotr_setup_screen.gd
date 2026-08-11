@@ -67,6 +67,7 @@ const WorldScript = preload("res://src/wotr/wotr_world.gd")
 const MapPreviewScript = preload("res://src/ui/wotr_setup_map_preview.gd")
 const MapBundleScript = preload("res://src/wotr/wotr_map_bundle.gd")
 const SessionScript = preload("res://src/wotr/wotr_session.gd")
+const CahHeroesScript = preload("res://src/content/cah_heroes.gd")
 
 const TAB_MAP := 0
 const TAB_RULES := 1
@@ -116,6 +117,7 @@ var active_tab := TAB_MAP
 ## here: this screen never mutates either, and never starts a session.
 var document: Dictionary = {}
 var world: WorldScript = null
+var cah_system: Dictionary = {}
 
 ## `{template, pack_faction, unavailable_reason}` per seatable player template,
 ## in the session's own sorted order.
@@ -311,10 +313,12 @@ func configure(
 		source_document: Dictionary,
 		session_probe,
 		pack_roots: Array,
-		reason: String) -> void:
+		reason: String,
+		source_cah_system: Dictionary = {}) -> void:
 	_ensure_children()
 	unavailable_reason = reason
 	document = source_document
+	cah_system = source_cah_system
 	_load_bundles(pack_roots)
 	if not reason.is_empty():
 		_relayout()
@@ -685,6 +689,7 @@ func _seat_default_rows() -> void:
 			"controller": "human" if row == 0 else "ai",
 			"color_slot": int(BindingsScript.default_color(row)["slot"]),
 			"handicap_index": BindingsScript.HANDICAP_DEFAULT,
+			"hero_id": "",
 		})
 	_seed_seat_starts()
 
@@ -911,11 +916,9 @@ func _collect_absences() -> void:
 		+ "(the reference shows 'Ancalgon'); Open BFME has no profile system, so "
 		+ "the cell shows the neutral default '%s' and the PROFILE button opens "
 		+ "nothing.") % DEFAULT_PROFILE_NAME)
-	lines.append(
-		"retail's Hero column offers the profile's custom heroes (the reference "
-		+ "shows 'Wizard Boi' and the stock heroes asterisked); no profile or "
-		+ "Create-A-Hero system exists here, so the cell shows the scenario's "
-		+ "own act-army hero instead, by its retail display name.")
+	if cah_system.is_empty():
+		lines.append(
+			"the Hero picker has no mounted Create-a-Hero system, so it can offer only '-'")
 	for row in BindingsScript.RULE_ROWS:
 		if not String(row.get("absent_reason", "")).is_empty():
 			lines.append("%s: %s" % [_label(String(row["label_key"])), String(row["absent_reason"])])
@@ -1020,6 +1023,15 @@ func seat_payload() -> Array:
 			"handicap": int(BindingsScript.HANDICAP_LEVELS[int(row["handicap_index"])]),
 		})
 	return payload
+
+
+## The one saved hero chosen by this machine's human seat. The tactical launch
+## canonicalises this id from disk; the setup surface never authors a document.
+func selected_hero_id() -> String:
+	for row in seats:
+		if String((row as Dictionary).get("controller", "")) == "human":
+			return String((row as Dictionary).get("hero_id", ""))
+	return ""
 
 
 ## The start territories `WotrSession.begin()` takes, one per seat, and EMPTY on
@@ -1891,16 +1903,17 @@ func _draw_table() -> void:
 		_draw_table_cell("army_%d" % row_index,
 			Rect2(x + 4.0, cell_y, widths[1] - 8.0, cell_h), _army_label(row_index))
 		x += widths[1]
-		# Hero: retail's own display name for the scenario's act-army spawn, on a
-		# STUDLESS run of the row - retail offers a hero choice here and this
-		# project derives it from the scenario, so a stud would dress a derived
-		# value as a control. See `absences`.
+		# Hero: this machine's human may bring one saved Create-a-Hero profile or
+		# '-'. Machine seats retain the scenario hero as context but never receive
+		# this machine's saved profile documents.
 		var hero_cell := Rect2(x + 4.0, cell_y, widths[2] - 8.0, cell_h)
-		_clipped_text(_hero_text(row_index), Rect2(hero_cell.position + Vector2(6.0, 0.0),
-			hero_cell.size - Vector2(12.0, 0.0)), _fs(BODY_FONT), TEXT)
-		_hits.append({"id": "hero_%d" % row_index, "rect": hero_cell, "kind": "info",
-			"note": "the hero is the scenario's own act-army spawn for this template, "
-				+ "not a choice; retail's custom-hero list is not implemented"})
+		if human:
+			_draw_table_cell("hero_%d" % row_index, hero_cell, _hero_text(row_index))
+		else:
+			_clipped_text(_hero_text(row_index), Rect2(hero_cell.position + Vector2(6.0, 0.0),
+				hero_cell.size - Vector2(12.0, 0.0)), _fs(BODY_FONT), TEXT)
+			_hits.append({"id": "hero_%d" % row_index, "rect": hero_cell, "kind": "info",
+				"note": "machine seats do not bring this machine's saved created heroes"})
 		x += widths[2]
 		_draw_table_cell("team_%d" % row_index,
 			Rect2(x + 4.0, cell_y, widths[3] - 8.0, cell_h), str(int(row["team"])))
@@ -2039,6 +2052,13 @@ func _army_label(row_index: int) -> String:
 
 
 func _hero_text(row_index: int) -> String:
+	if row_index < seats.size() and String(seats[row_index].get("controller", "")) == "human":
+		var hero_id := String(seats[row_index].get("hero_id", ""))
+		if hero_id.is_empty():
+			return "-"
+		var profile := CahHeroesScript.load_profile(hero_id)
+		return CahHeroesScript.sanitize_name(String(profile.get("name", ""))) \
+			if not profile.is_empty() else "-"
 	var template := _hero_template(row_index)
 	if template.is_empty():
 		return "-"
@@ -2298,6 +2318,29 @@ func _menu_options(id: String) -> Array[Dictionary]:
 					"note": reason if not reason.is_empty() else (
 						"already taken by another seat" if taken else ""),
 				})
+		"hero":
+			options.append({"text": "-", "value": 0, "enabled": true, "note": ""})
+			if row_index >= seats.size() or cah_system.is_empty():
+				return options
+			var seat := seats[row_index] as Dictionary
+			if String(seat.get("controller", "")) != "human":
+				return options
+			var seat_option := seat_options[int(seat["option_index"])] as Dictionary
+			var faction := String(seat_option.get("pack_faction", ""))
+			for profile in CahHeroesScript.load_profiles():
+				if not CahHeroesScript.validate_profile(cah_system, profile).is_empty():
+					continue
+				var sub_row := CahHeroesScript.sub_class_row(cah_system,
+					int(profile.get("classIndex", -1)), int(profile.get("subClassIndex", -1)))
+				if not CahHeroesScript.subclass_allows_faction(sub_row, faction):
+					continue
+				options.append({
+					"text": CahHeroesScript.sanitize_name(String(profile.get("name", ""))),
+					"value": options.size(),
+					"hero_id": String(profile.get("heroId", "")),
+					"enabled": true,
+					"note": "",
+				})
 		"team":
 			for team in range(1, MAX_SEATS + 1):
 				options.append({"text": str(team), "value": team, "enabled": true, "note": ""})
@@ -2353,6 +2396,13 @@ func _selected_value(id: String) -> int:
 			return 0 if String(row["controller"]) == "human" else 1
 		"army":
 			return int(row["option_index"])
+		"hero":
+			var hero_id := String(row.get("hero_id", ""))
+			var options := _menu_options(id)
+			for index in range(options.size()):
+				if String((options[index] as Dictionary).get("hero_id", "")) == hero_id:
+					return index
+			return 0
 		"team":
 			return int(row["team"])
 		"color":
@@ -2399,6 +2449,17 @@ func _apply_choice(id: String, value: int) -> void:
 						(seats[other] as Dictionary)["controller"] = "ai"
 		"army":
 			row["option_index"] = value
+			var remembered := String(row.get("hero_id", ""))
+			var still_allowed := remembered.is_empty()
+			for option in _menu_options("hero_%d" % int(parts[1])):
+				if String((option as Dictionary).get("hero_id", "")) == remembered:
+					still_allowed = true
+			if not still_allowed:
+				row["hero_id"] = ""
+		"hero":
+			var options := _menu_options(id)
+			row["hero_id"] = String((options[value] as Dictionary).get("hero_id", "")) \
+				if value >= 0 and value < options.size() else ""
 		"team":
 			row["team"] = value
 		"color":
@@ -2616,6 +2677,7 @@ func _press(id: String) -> void:
 				# non-empty list against a scenario that authors its own ownership,
 				# so the two can never both be applied.
 				"start_regions": start_regions(),
+				"hero_id": selected_hero_id(),
 			})
 		"add_seat":
 			if seats.size() >= _seat_ceiling():
@@ -2641,6 +2703,7 @@ func _press(id: String) -> void:
 					"controller": "ai",
 					"color_slot": slot,
 					"handicap_index": BindingsScript.HANDICAP_DEFAULT,
+					"hero_id": "",
 				})
 				break
 			# The new seat arrives WITHOUT a start territory on a freeform
