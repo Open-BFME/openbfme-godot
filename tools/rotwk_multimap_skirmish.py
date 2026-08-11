@@ -274,22 +274,30 @@ def build_registry_skirmish_catalog(
 
         map_id = f"{game}.map.{slug}"
         output_root = f"maps/{slug}"
+        castle_evidence = castle_siege_map_evidence(virtual)
+        resource_metadata: dict[str, Any] = {
+            "id": map_id,
+            "displayName": display,
+        }
+        resource_options: dict[str, Any] = {
+            "metadata": resource_metadata,
+            "profile": "multiplayer",
+        }
+        if castle_evidence is not None:
+            resource_metadata["castleSiege"] = dict(
+                castle_evidence["runtimeContract"]
+            )
         resources.append(
             {
                 "id": f"map-{slug}-binary",
                 "kind": "map",
                 "converter": "sage-map",
                 "patterns": [virtual.replace("\\", "/")],
-                "output": f"{output_root}/map.json",
+                "output": output_root,
                 "required": True,
                 "limit": 1,
                 "expected_count": 1,
-                "options": {
-                    "id": map_id,
-                    "displayName": display,
-                    "category": category,
-                    "profile": "multiplayer",
-                },
+                "options": resource_options,
             }
         )
         row: dict[str, Any] = {
@@ -303,7 +311,6 @@ def build_registry_skirmish_catalog(
             "navigationMeshStatus": "not-generated-or-validated-by-map-profile",
             "terrainMaterialsStatus": "pending-bfme2-base-or-layered-assets",
         }
-        castle_evidence = castle_siege_map_evidence(virtual)
         if castle_evidence is not None:
             row["castleSiege"] = dict(castle_evidence["runtimeContract"])
         # Retail ships ``<map>_pic.tga`` (lobby/minimap preview) and

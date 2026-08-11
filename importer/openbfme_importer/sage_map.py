@@ -3255,6 +3255,7 @@ def convert_sage_map(
                 "defendable-gates",
                 "wall-garrisons",
                 "wall-mounted-defenses",
+                "skirmish-ai-libraries",
             ]
         ):
             raise SageMapError("sage-map metadata.castleSiege contract is invalid")

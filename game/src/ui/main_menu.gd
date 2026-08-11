@@ -2008,8 +2008,14 @@ func _refresh_map_row_states() -> void:
 		var note := String(_skirmish_map_notes.get(map_id, ""))
 		var available := note == ""
 		button.disabled = not available
-		button.text = _retail_map_display_name(map_id) + ("" if available else " (unavailable)")
+		button.text = _retail_map_display_name(map_id) + ("" if available else _unavailable_map_suffix(note))
 		button.tooltip_text = "" if available else "Unavailable: %s" % note
+
+
+func _unavailable_map_suffix(note: String) -> String:
+	if note.begins_with("castle gameplay unsupported:"):
+		return " — castle sieges not yet supported"
+	return " (unavailable)"
 
 
 func _poll_skirmish_worker() -> void:
@@ -2447,7 +2453,7 @@ func _build_skirmish_map_row(map_index: int, choice: Dictionary) -> void:
 	row.name = "MapRow%d" % map_index
 	row.toggle_mode = true
 	row.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	row.text = String(choice["name"]) + ("" if available else " (unavailable)")
+	row.text = String(choice["name"]) + ("" if available else _unavailable_map_suffix(note))
 	row.custom_minimum_size = Vector2(0, 28)
 	for state in ["normal", "hover", "pressed", "disabled"]:
 		var row_box := StyleBoxFlat.new()

@@ -116,6 +116,7 @@ _CASTLE_GAMEPLAY_BLOCKERS = (
     "defendable-gates",
     "wall-garrisons",
     "wall-mounted-defenses",
+    "skirmish-ai-libraries",
 )
 
 
@@ -135,11 +136,6 @@ CASTLE_SIEGE_MAPS: dict[str, dict[str, Any]] = {
         "runtimeContract": _castle_runtime_contract(),
     }
     for path, display_name, player_count in (
-        (
-            "maps/map mp amon sul fortress/map mp amon sul fortress.map",
-            "Amon Sul Fortress",
-            3,
-        ),
         ("maps/map wor ang carn dum/map wor ang carn dum.map", "Carn Dum", 2),
         ("maps/map wor ang fornost/map wor ang fornost.map", "Fornost", 3),
         ("maps/map wor black gate/map wor black gate.map", "Black Gate", 3),

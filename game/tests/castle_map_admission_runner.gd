@@ -3,14 +3,18 @@ extends SceneTree
 ## The next pack cook adds the castleSiege contract; this runner injects that
 ## exact metadata over today's immutable document to verify the runtime seam.
 
+const Watchdog := preload("res://tests/runner_watchdog.gd")
 const PACK_ID := "rotwk-skirmish-maps-private"
 const CATALOG_MAX_BYTES := 1024 * 1024
 const DOCUMENT_MAX_BYTES := 8 * 1024 * 1024
+const EXPECTED_CHECKS := 36
+const AMON_SUL := "Amon Sul Fortress"
 const BLOCKERS: Array[String] = [
 	"walkable-walls",
 	"defendable-gates",
 	"wall-garrisons",
 	"wall-mounted-defenses",
+	"skirmish-ai-libraries",
 ]
 const CONTRACT := {
 	"family": "retail-castle-siege-skirmish",
@@ -19,7 +23,6 @@ const CONTRACT := {
 	"admissionPolicy": "document-loadable-lobby-visible-gameplay-fails-closed",
 }
 const CASTLE_STARTS := {
-	"Amon Sul Fortress": 3,
 	"Carn Dum": 2,
 	"Fornost": 3,
 	"Black Gate": 3,
@@ -34,9 +37,12 @@ const CASTLE_STARTS := {
 
 var passed := 0
 var failed := 0
+var _watchdog := Watchdog.new()
 
 
 func _initialize() -> void:
+	_watchdog.start(self, "CASTLE_MAP_ADMISSION", 0, 0, true)
+	_watchdog.set_result_provider(func() -> Vector2i: return Vector2i(passed, failed))
 	call_deferred("_run")
 
 
@@ -48,8 +54,14 @@ func _run() -> void:
 		return
 	var content_root := OS.get_environment("OPENBFME_CONTENT").strip_edges()
 	var pack_root := ""
-	for candidate_value in loader.selected_pack_supplements(
-		content_root, content_root.path_join("selection.json")):
+	var candidates: Array[String] = []
+	var active_pack := String(loader.selected_user_pack_root(
+		content_root, content_root.path_join("selection.json")))
+	if active_pack != "":
+		candidates.append(active_pack)
+	candidates.append_array(loader.selected_pack_supplements(
+		content_root, content_root.path_join("selection.json")))
+	for candidate_value in candidates:
 		var candidate := String(candidate_value)
 		if candidate.replace("\\", "/").contains("/%s/" % PACK_ID):
 			pack_root = candidate
@@ -60,7 +72,7 @@ func _run() -> void:
 		_finish()
 		return
 	var definitions := _castle_definitions(loader, pack_root)
-	_check("all_castle_documents_present", definitions.size() == CASTLE_STARTS.size(), str(definitions.keys()))
+	_check("all_castle_documents_present", definitions.size() == CASTLE_STARTS.size() + 1, str(definitions.keys()))
 	var definition := definitions.get("Erebor", {}) as Dictionary
 	_check("erebor_compiled_document_present", not definition.is_empty())
 	if definition.is_empty():
@@ -81,6 +93,27 @@ func _run() -> void:
 		_check("%s_authored_spawns" % String(display_name).to_snake_case(),
 			int(candidate_data.player_start_count) == int(CASTLE_STARTS[display_name]),
 			str(candidate_data.player_start_count))
+	var amon_definition := definitions.get(AMON_SUL, {}) as Dictionary
+	_check("amon_sul_real_document_present", not amon_definition.is_empty())
+	var amon_data = map_data_script.new()
+	_check("amon_sul_map_data_loads_without_castle_contract",
+		bool(amon_data.load_from_pack(pack_root, amon_definition)), String(amon_data.error))
+	_check("amon_sul_has_no_castle_refusal", amon_data.castle_gameplay_blockers.is_empty(),
+		str(amon_data.castle_gameplay_blockers))
+	var amon_battlefield = battlefield_script.new()
+	root.add_child(amon_battlefield)
+	_check("amon_sul_battlefield_configures_as_skirmish",
+		bool(amon_battlefield.configure(amon_data)), String(amon_battlefield.error))
+	# Exercise the battlefield's own teardown while it is still in-tree; this
+	# clears its retained material/mesh references and queues every generated
+	# child through Godot's normal deletion path.
+	amon_battlefield._clear_generated()
+	var asset_factory_script = load("res://src/view/asset_factory.gd")
+	asset_factory_script.clear_mesh_cache()
+	await process_frame
+	await process_frame
+	root.remove_child(amon_battlefield)
+	amon_battlefield.free()
 	var objects := _read_bounded(loader, pack_root, "maps/erebor/objects.json", DOCUMENT_MAX_BYTES)
 	var type_names: Dictionary = {}
 	for value in objects.get("objects", []) as Array:
@@ -111,8 +144,24 @@ func _run() -> void:
 		and String(battlefield.error) == "castle gameplay unsupported: " + ", ".join(BLOCKERS),
 		String(battlefield.error))
 	root.remove_child(battlefield)
-	battlefield.queue_free()
-	_finish()
+	battlefield.free()
+	# Drop the last script/local references before the rendering servers drain.
+	# SceneTree.quit() otherwise begins native teardown while the coroutine still
+	# owns the fully configured Amon Sul presentation graph.
+	amon_battlefield = null
+	battlefield = null
+	amon_data = null
+	contracted_data = null
+	malformed_data = null
+	map_data_script = null
+	battlefield_script = null
+	asset_factory_script = null
+	definitions.clear()
+	objects.clear()
+	type_names.clear()
+	# Defer the quit until this coroutine returns so its local map/resource
+	# references are released before Godot tears down the rendering servers.
+	call_deferred("_finish")
 
 
 func _castle_definitions(loader, pack_root: String) -> Dictionary:
@@ -123,7 +172,7 @@ func _castle_definitions(loader, pack_root: String) -> Dictionary:
 			continue
 		var row := value as Dictionary
 		var display_name := String(row.get("displayName", ""))
-		if not CASTLE_STARTS.has(display_name):
+		if not CASTLE_STARTS.has(display_name) and display_name != AMON_SUL:
 			continue
 		var relative := String(row.get("map", ""))
 		var document := _read_bounded(loader, pack_root, relative, DOCUMENT_MAX_BYTES)
@@ -152,6 +201,7 @@ func _read_bounded(loader, pack_root: String, relative: String, maximum: int) ->
 
 
 func _check(name: String, condition: bool, detail: String = "") -> void:
+	_watchdog.note(name)
 	if condition:
 		passed += 1
 		print("CASTLE_MAP_ADMISSION PASS %s" % name)
@@ -161,5 +211,10 @@ func _check(name: String, condition: bool, detail: String = "") -> void:
 
 
 func _finish() -> void:
+	var ran := passed + failed
+	if ran != EXPECTED_CHECKS:
+		failed += 1
+		printerr("CASTLE_MAP_ADMISSION FAIL liveness ran %d checks, expected %d - a function aborted before its assertions" % [ran, EXPECTED_CHECKS])
 	print("CASTLE_MAP_ADMISSION_RESULT passed=%d failed=%d" % [passed, failed])
+	_watchdog.stop()
 	quit(0 if failed == 0 else 1)

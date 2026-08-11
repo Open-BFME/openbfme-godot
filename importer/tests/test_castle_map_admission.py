@@ -25,6 +25,16 @@ def _retail_catalog_path() -> Path | None:
 
 
 RETAIL_CATALOG = _retail_catalog_path()
+AMON_SUL_VIRTUAL_PATH = (
+    "maps/map mp amon sul fortress/map mp amon sul fortress.map"
+)
+EXPECTED_CASTLE_BLOCKERS = [
+    "walkable-walls",
+    "defendable-gates",
+    "wall-garrisons",
+    "wall-mounted-defenses",
+    "skirmish-ai-libraries",
+]
 
 
 def test_multimap_registry_catalog_uses_the_same_finite_castle_admission() -> None:
@@ -41,6 +51,15 @@ def test_multimap_registry_catalog_uses_the_same_finite_castle_admission() -> No
         module._registry_category("maps/map wor rivendell/map wor rivendell.map")
         == "wotr-battle"
     )
+
+
+def test_amon_sul_remains_an_ordinary_skirmish_map() -> None:
+    assert AMON_SUL_VIRTUAL_PATH not in CASTLE_SIEGE_MAPS
+
+
+def test_castle_contract_names_the_missing_skirmish_ai_libraries() -> None:
+    for evidence in CASTLE_SIEGE_MAPS.values():
+        assert evidence["runtimeContract"]["blockers"] == EXPECTED_CASTLE_BLOCKERS
 
 
 def test_castle_document_refuses_an_incomplete_gap_inventory(tmp_path: Path) -> None:
@@ -121,3 +140,52 @@ def test_real_erebor_compiles_a_castle_document_with_wall_gate_and_garrison(
     assert "EreborWall01" in type_names
     assert "EreborMainGate" in type_names
     assert "EBGarrisonableTower" in type_names
+
+
+@pytest.mark.skipif(RETAIL_CATALOG is None, reason="RotWK retail oracle is not present")
+def test_real_multimap_tool_emits_castle_contract_into_resource_metadata(
+    tmp_path: Path,
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    tool_path = root / "tools" / "rotwk_multimap_skirmish.py"
+    spec = importlib.util.spec_from_file_location("castle_multimap_tool_emission", tool_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    profile = module.build_registry_skirmish_catalog(
+        InstallCatalog.load(RETAIL_CATALOG), game="rotwk"
+    )
+    erebor_resource = next(
+        resource
+        for resource in profile["resources"]
+        if resource["id"] == "map-wor-erebor-binary"
+    )
+    assert set(erebor_resource["options"]) == {"metadata", "profile"}
+    assert erebor_resource["output"] == "maps/wor-erebor"
+    assert erebor_resource["options"]["metadata"]["id"] == "rotwk.map.wor-erebor"
+    assert erebor_resource["options"]["metadata"]["displayName"] == "Erebor"
+    assert erebor_resource["options"]["metadata"]["castleSiege"] == (
+        CASTLE_SIEGE_MAPS["maps/map wor erebor/map wor erebor.map"]["runtimeContract"]
+    )
+
+    # Exercise the tool-produced metadata through the actual converter. This is
+    # the second seal: the catalog row validator is not enough by itself.
+    catalog = InstallCatalog.load(RETAIL_CATALOG)
+    entry = catalog.resolve_exact("maps/map wor erebor/map wor erebor.map")
+    assert entry is not None
+    archive = catalog.open_archive_for(entry)
+    source_path = tmp_path / "tool-erebor.map"
+    source_path.write_bytes(
+        archive.read_entry(catalog.as_entry(entry), max_bytes=MAX_SOURCE_BYTES)
+    )
+    output = tmp_path / "tool-erebor"
+    convert_sage_map(
+        source_path,
+        output,
+        metadata=erebor_resource["options"]["metadata"],
+        profile=erebor_resource["options"]["profile"],
+    )
+    document = json.loads((output / "map.json").read_text(encoding="utf-8"))
+    assert document["castleSiege"] == erebor_resource["options"]["metadata"][
+        "castleSiege"
+    ]

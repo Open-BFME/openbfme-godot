@@ -30,6 +30,7 @@ const CASTLE_SIEGE_BLOCKERS: Array[String] = [
 	"defendable-gates",
 	"wall-garrisons",
 	"wall-mounted-defenses",
+	"skirmish-ai-libraries",
 ]
 const MAX_WATER_VERTICES := 4096
 ## BFME2 1.06 CREEP_OBJECTFILTER lair set (gamedata.ini line 87): every lair
