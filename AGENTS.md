@@ -38,7 +38,7 @@ another machine and run. Four steps, one command each.
 | 1. Bump the number | edit `VERSION` (e.g. `0.2.1` → `0.2.2`) | One line. The only place the version is decided |
 | 2. Restate it everywhere | `powershell -File tools\Write-BuildInfo.ps1` | Then match `config/version` in `game\project.godot` and the label in `game\scenes\boot.tscn`. Commit all four |
 | 3. Write the notes | `docs\patch-notes\v<version>.md` | Owner-facing plain language: what changed for the player, and a `## Known gaps` section. The publish refuses without it |
-| 4. Publish | `powershell -File tools\Publish-DistBuild.ps1 -Godot <godot.exe> -AllowEnvDependentContent -AllowPackOwnedWotrData` | Lands in `dist\v<version>\`. Add `-Rc` for the release candidate (launcher included), `-Zip` to hand it over a share |
+| 4. Publish | `powershell -File tools\Publish-DistBuild.ps1 -Godot <godot.exe> -AllowEnvDependentContent -AllowPackOwnedWotrData -AllowMissingWotrData` | Lands in `dist\v<version>\`. Add `-Rc` for the release candidate (launcher included), `-Zip` to hand it over a share |
 
 `powershell -File tools\Test-DistPipeline.ps1` checks steps 1-3 in ten to
 fifteen seconds — run it before you spend an hour and a half on step 4. Two switches

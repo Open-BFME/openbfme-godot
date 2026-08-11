@@ -120,11 +120,11 @@
     # What actually works on this machine today. Every switch is a defect
     # elsewhere; AGENTS.md lists what retires each one.
     powershell -NoProfile -ExecutionPolicy Bypass -File tools\Publish-DistBuild.ps1 `
-        -Godot <godot.exe> -AllowEnvDependentContent -AllowPackOwnedWotrData
+        -Godot <godot.exe> -AllowEnvDependentContent -AllowPackOwnedWotrData -AllowMissingWotrData
 
 .EXAMPLE
     powershell -NoProfile -ExecutionPolicy Bypass -File tools\Publish-DistBuild.ps1 -Rc `
-        -Godot <godot.exe> -AllowEnvDependentContent -AllowPackOwnedWotrData
+        -Godot <godot.exe> -AllowEnvDependentContent -AllowPackOwnedWotrData -AllowMissingWotrData
 #>
 [CmdletBinding()]
 param(
