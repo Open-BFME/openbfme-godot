@@ -36,6 +36,10 @@ from .profile import (
     MAX_RESOURCES,
     MAX_TEXTURE_ATLAS_CROPS,
 )
+from .playable_unit_compiler import (
+    _numeric_defines,
+    _resolved_multiplicative_expression,
+)
 from .sage_audio import (
     parse_sage_audio_definitions,
     resolve_audio_sample_paths,
@@ -874,7 +878,8 @@ def _eva_event_side_sounds(source: bytes) -> dict[str, tuple[str, tuple[tuple[st
 
 
 def _eva_side_map_document(
-    events: dict[str, tuple[str, tuple[tuple[str, str], ...]]]
+    events: dict[str, tuple[str, tuple[tuple[str, str], ...]]],
+    source: bytes,
 ) -> dict[str, Any]:
     """Project the parsed eva.ini blocks into the runtime side-map document.
 
@@ -891,7 +896,62 @@ def _eva_side_map_document(
             sides[side] = sound
         if sides:
             mapped[authored] = dict(sorted(sides.items(), key=lambda item: item[0].casefold()))
-    return {"schema": "openbfme.eva-events", "schemaVersion": 0, "events": mapped}
+    semantics = _eva_event_semantics(source)
+    return {
+        "schema": "openbfme.eva-events",
+        "schemaVersion": 1,
+        "events": mapped,
+        "semantics": semantics,
+    }
+
+
+def _eva_event_semantics(source: bytes) -> dict[str, dict[str, int]]:
+    """Compile retail EVA arbitration fields into runtime integers."""
+
+    constants = _numeric_defines({EVA_PATH: source})
+    field_names = {
+        "priority": "priority",
+        "timebetweeneventsms": "cooldownMs",
+        "quiettimems": "quietTimeMs",
+        "expirationtimems": "expirationMs",
+    }
+    output: dict[str, dict[str, int]] = {}
+    current = ""
+    in_side_sound = False
+    for line in _ini_lines(source):
+        header = _EVA_BLOCK_HEADER.fullmatch(line)
+        if header is not None and current == "":
+            current = header.group(1)
+            output.setdefault(current, {})
+            continue
+        if current == "":
+            continue
+        if line.casefold() == "end":
+            if in_side_sound:
+                in_side_sound = False
+            else:
+                current = ""
+            continue
+        if line.split()[0].casefold() == "sidesound":
+            in_side_sound = True
+            continue
+        if in_side_sound or "=" not in line:
+            continue
+        key, _, raw = line.partition("=")
+        destination = field_names.get(key.strip().casefold())
+        if destination is None:
+            continue
+        value = _resolved_multiplicative_expression(raw.strip(), constants)
+        if value is None or float(value) < 0 or not float(value).is_integer():
+            raise ValueError(
+                f"eva-event-semantics-unresolved:{current}:{key.strip()}:{raw.strip()}"
+            )
+        output[current][destination] = int(value)
+    return {
+        event_id: fields
+        for event_id, fields in sorted(output.items(), key=lambda item: item[0].casefold())
+        if fields
+    }
 
 
 def _eva_audio_extension(
@@ -1091,7 +1151,9 @@ def build_faction_audio_extension(
         "samples": dict(sorted(samples.items(), key=lambda item: item[0].casefold())),
     }
     eva_document = _read_document(catalog, EVA_PATH)
-    eva_side_map = _eva_side_map_document(_eva_event_side_sounds(eva_document.source))
+    eva_side_map = _eva_side_map_document(
+        _eva_event_side_sounds(eva_document.source), eva_document.source
+    )
     unresolved = _object(report.get("unresolved"), "faction census unresolved")
     return {
         "resources": resources,

@@ -25,6 +25,38 @@ MAX_AUDIO_PARAMETERS_PER_EVENT = 4_096
 MAX_AUDIO_REFERENCE_WEIGHT = 1_000_000
 MAX_AUDIO_SAMPLE_PATHS = 250_000
 
+_MORDOR_GOBLIN_AUTHORED_URUK_BINDINGS = {
+    "mordorgoblinswordsman": {
+        ("voiceselect", "urukvoiceselect"),
+        ("voicemove", "urukvoicemovems"),
+        ("voiceattack", "urukvoiceattackms"),
+    },
+    "mordorgoblinarcher": {
+        ("voiceselect", "urukvoiceselect"),
+        ("voicemove", "urukvoicemovems"),
+        ("voiceattack", "urukvoiceattackms"),
+    },
+}
+
+
+def normalize_faction_voice_event(object_id: str, field: str, event_id: str) -> str:
+    """Validate the surprising but retail-authored Mordor goblin bindings.
+
+    UrukVoiceSelect is authored silent; the move/attack multisounds deliberately
+    include OrcVoice* porter leaves. Preserve that graph verbatim and reject any
+    other UrukVoice binding on these objects instead of guessing a replacement.
+    """
+
+    authored = _MORDOR_GOBLIN_AUTHORED_URUK_BINDINGS.get(object_id.casefold())
+    if authored is None:
+        return event_id
+    binding = (field.casefold(), event_id.casefold())
+    if event_id.casefold().startswith("urukvoice") and binding not in authored:
+        raise ValueError(
+            f"cross-faction-voice-binding:{object_id}:{field}:{event_id}"
+        )
+    return event_id
+
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_+.-]{0,255}$")
 _REFERENCE = re.compile(
     r"^(?P<id>[A-Za-z0-9_][A-Za-z0-9_+.-]{0,255})(?::(?P<weight>[0-9]+))?$"

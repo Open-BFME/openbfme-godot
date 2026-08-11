@@ -147,6 +147,9 @@ var generic_weapon_swing_fallbacks: Dictionary = {}
 var structure_audio_contract: Dictionary = {}
 ## Retail eva.ini side name for the local player (Men/Elves/Dwarves/...).
 var faction_side := ""
+var eva_last_played_msec: Dictionary = {}
+var eva_arbitration_msec := -1
+var eva_arbitration_priority := -1
 var _structure_damage_stage: Dictionary = {}
 ## When non-empty, these playable-unit documents replace the ContentDB-wide
 ## registry for roster voices and readiness, so a faction match is gated on
@@ -168,17 +171,19 @@ var _stream_cache: Dictionary = {}
 var _entity_object_ids: Dictionary = {}
 var _next_event_index := 0
 var _next_ui_sequence := 1000000000
+var local_team := 0
 var music_volume := UserSettingsScript.DEFAULT_MUSIC_VOLUME
 var voice_sfx_volume := UserSettingsScript.DEFAULT_VOICE_SFX_VOLUME
 var muted := UserSettingsScript.DEFAULT_MUTED
 
 
-func configure(selected_pack_root: String, enable_playback: bool = true, active_playable_unit_documents: Dictionary = {}, faction_structure_audio: Dictionary = {}, player_faction_side: String = "") -> bool:
+func configure(selected_pack_root: String, enable_playback: bool = true, active_playable_unit_documents: Dictionary = {}, faction_structure_audio: Dictionary = {}, player_faction_side: String = "", player_team: int = 0) -> bool:
 	pack_root = selected_pack_root
 	playback_enabled = enable_playback
 	scoped_playable_unit_documents = active_playable_unit_documents.duplicate(true)
 	structure_audio_contract = faction_structure_audio.duplicate(true)
 	faction_side = player_faction_side
+	local_team = player_team
 	_ensure_players()
 	# THE MUSIC HANDOFF. The shell playlist plays on the GameAudio autoload,
 	# which survives the scene change into a match, so the menu theme would
@@ -216,6 +221,9 @@ func configure(selected_pack_root: String, enable_playback: bool = true, active_
 	last_route_result.clear()
 	_stream_cache.clear()
 	_structure_damage_stage.clear()
+	eva_last_played_msec.clear()
+	eva_arbitration_msec = -1
+	eva_arbitration_priority = -1
 	declared_structure_lifecycle_audio_active = false
 	# Entity→object identity is carried on the sim's voice-relevant events and
 	# learned as they stream; no static roster pin exists (S1: the retired
@@ -1021,6 +1029,7 @@ func _consume_event(event: Dictionary) -> void:
 	var sequence := int(event.get("sequence", 0))
 	var entity_id := int(event.get("entity_id", 0))
 	var target_id := int(event.get("target_id", 0))
+	var eva_clock := int(event.get("tick", -1)) * 100 if event.has("tick") else -1
 	if kind == "production.complete":
 		var produced_object_id := String(event.get("object_id", ""))
 		if produced_object_id != "" and _active_roster_object_ids().has(produced_object_id):
@@ -1060,13 +1069,16 @@ func _consume_event(event: Dictionary) -> void:
 	elif kind == "construction.completed":
 		# Retail EVA "construction complete" sting (GenericBuildingComplete-Builder),
 		# local player team only (team 0 mirrors the sim's PLAYER_TEAM).
-		if int(event.get("team", -1)) == 0:
-			_play_eva_announcement("GenericBuildingComplete-Builder", sequence)
+		if int(event.get("team", -1)) == local_team:
+			_play_eva_announcement("GenericBuildingComplete-Builder", sequence, eva_clock)
 	elif kind == "battalion.defeated":
 		var defeated_object_id := _object_id_for_event(event, target_id)
 		_play_routed(route_roster_voice(defeated_object_id, "death", sequence), voice_player)
 		_play_routed(_route_bodyfall(defeated_object_id, sequence), sfx_player)
 		_entity_object_ids.erase(target_id)
+		# Pure RotWK 2.01 has no generic UnitLost/BattalionLost EVA block.
+		# The unit's own authored death voice above is therefore the complete,
+		# fail-closed retail route; never substitute another faction's announcer.
 	elif kind == "battalion.member_defeated":
 		# Every fallen member lands its own class bodyfall (horde wipes are not
 		# a single thud); the battalion's die voice still fires once at defeat.
@@ -1100,6 +1112,10 @@ func _consume_event(event: Dictionary) -> void:
 		_consume_structure_damage(event, sequence)
 	elif kind == "structure.destroyed":
 		_consume_structure_destroyed(event, sequence)
+	elif kind in ["battalion_upgrade.completed", "upgrade.completed"] and int(event.get("team", -1)) == local_team:
+		var upgrade_eva := _upgrade_complete_eva_id(String(event.get("upgrade_id", "")))
+		if upgrade_eva != "":
+			_play_eva_announcement(upgrade_eva, sequence, eva_clock)
 	elif kind == "power.cast":
 		# Spellbook casts carry the document's initiateSoundId; route_audio_event
 		# lazily promotes ContentDB-registered spell events (fail closed when the
@@ -1112,15 +1128,15 @@ func _consume_event(event: Dictionary) -> void:
 		# the powers orb emits no chrome sound of its own on a successful pick.
 		_play_routed(route_audio_event("Gui_PalantirChoosePowerClick", sequence), sfx_player)
 	elif kind == "eva.base_under_attack":
-		_play_structure_eva(event, "eva_damaged", sequence)
+		_play_structure_eva(event, "eva_damaged", sequence, eva_clock)
 	elif kind == "eva.building_lost":
-		_play_structure_eva(event, "eva_die", sequence)
+		_play_structure_eva(event, "eva_die", sequence, eva_clock)
 	elif kind == "eva.ally_defeated":
-		_play_eva_announcement("AllyDefeated", sequence)
+		_play_eva_announcement("AllyDefeated", sequence, eva_clock)
 	elif kind == "eva.enemy_defeated":
-		_play_eva_announcement("EnemyDefeated", sequence)
+		_play_eva_announcement("EnemyDefeated", sequence, eva_clock)
 	elif kind == "eva.hero_created":
-		_play_eva_announcement("HeroCreated", sequence)
+		_play_eva_announcement("HeroCreated", sequence, eva_clock)
 	_append_bounded_observability(intent_log, event.duplicate(true))
 
 
@@ -1234,25 +1250,75 @@ func _structure_contract_fraction(role: String, structure_kind: String) -> float
 	return clampf(float((rows as Dictionary)[structure_kind]), 0.0, 1.0)
 
 
-func _play_structure_eva(event: Dictionary, role: String, sequence: int) -> void:
+func _play_structure_eva(event: Dictionary, role: String, sequence: int, now_msec: int = -1) -> void:
 	var eva_id := _structure_contract_event(role, String(event.get("structure_kind", "")))
 	if eva_id != "":
-		_play_eva_announcement(eva_id, sequence)
+		_play_eva_announcement(eva_id, sequence, now_msec)
 
 
-func _play_eva_announcement(eva_id: String, sequence: int) -> void:
+func play_eva_event(eva_id: String, sequence: int = 0, now_msec: int = -1) -> Dictionary:
+	return _play_eva_announcement(eva_id, sequence, now_msec)
+
+
+func _play_eva_announcement(eva_id: String, sequence: int, now_msec: int = -1) -> Dictionary:
 	## Retail eva.ini binds each announcement to a per-side Camp* sound set.
 	## The slice carries that side map in its structure audio contract; a side
 	## or event the converted evidence does not cover fails closed to silence.
+	if now_msec < 0:
+		return _rejection("eva_clock_unavailable", eva_id, faction_side, "eva", sequence)
 	var eva_events: Variant = structure_audio_contract.get("eva_events", {})
 	if typeof(eva_events) != TYPE_DICTIONARY or faction_side == "":
-		return
+		return _rejection("eva_contract_unavailable", eva_id, faction_side, "eva", sequence)
 	var side_sounds: Variant = (eva_events as Dictionary).get(eva_id, {})
 	if typeof(side_sounds) != TYPE_DICTIONARY:
-		return
+		return _rejection("eva_event_unavailable", eva_id, faction_side, "eva", sequence)
 	var sound_id := String((side_sounds as Dictionary).get(faction_side, ""))
-	if sound_id != "":
-		_play_routed(route_audio_event(sound_id, sequence), sfx_player)
+	if sound_id == "":
+		return _rejection("eva_side_unavailable", eva_id, faction_side, "eva", sequence)
+	var semantics_all: Variant = structure_audio_contract.get("eva_semantics", {})
+	if typeof(semantics_all) != TYPE_DICTIONARY or not (semantics_all as Dictionary).has(eva_id):
+		return _rejection("eva_semantics_unavailable", eva_id, faction_side, "eva", sequence)
+	var semantics: Dictionary = (
+		(semantics_all as Dictionary).get(eva_id, {}) as Dictionary
+		if typeof(semantics_all) == TYPE_DICTIONARY else {}
+	)
+	var priority := int(semantics.get("priority", 0))
+	var cooldown_ms := int(semantics.get("cooldownMs", 0))
+	var clock := now_msec
+	var previous := int(eva_last_played_msec.get(eva_id, -cooldown_ms - 1))
+	if cooldown_ms > 0 and clock - previous < cooldown_ms:
+		return _rejection("eva_cooldown", eva_id, faction_side, "eva", sequence)
+	# Requests surfaced in one presentation timestamp arbitrate by retail
+	# Priority. A lower/equal event never interrupts a higher one; a higher
+	# event may replace it. This state is presentation-only and never hashed.
+	if clock == eva_arbitration_msec and priority <= eva_arbitration_priority:
+		return _rejection("eva_priority", eva_id, faction_side, "eva", sequence)
+	var routed := route_audio_event(sound_id, sequence)
+	if not bool(routed.get("ok", false)):
+		return routed
+	eva_last_played_msec[eva_id] = clock
+	eva_arbitration_msec = clock
+	eva_arbitration_priority = priority
+	_play_routed(routed, sfx_player)
+	routed["eva_id"] = eva_id
+	routed["priority"] = priority
+	routed["cooldown_ms"] = cooldown_ms
+	return routed
+
+
+func _upgrade_complete_eva_id(upgrade_id: String) -> String:
+	var folded := upgrade_id.to_lower()
+	for row in [
+		["banner", "UpgradeBannerCarrierTechnologyReady"],
+		["flamearrow", "UpgradeFlameArrowsReady"],
+		["flamingarrow", "UpgradeFlameArrowsReady"],
+		["firearrow", "UpgradeFlameArrowsReady"],
+		["forgedblade", "UpgradeForgedBladesReady"],
+		["heavyarmor", "UpgradeHeavyArmorReady"],
+	]:
+		if folded.contains(String(row[0])):
+			return String(row[1])
+	return ""
 
 
 func _object_id_for_event(event: Dictionary, entity_id: int) -> String:

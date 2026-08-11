@@ -33,6 +33,7 @@ from .sage_cst import (
     parse_sage_document,
 )
 from .sage_ini import IniBlock, parse_flat_named_blocks
+from .sage_audio import normalize_faction_voice_event
 
 
 SCHEMA = "openbfme.playable-unit-descriptor"
@@ -2727,12 +2728,21 @@ def _audio_routes(
     result: dict[str, list[dict[str, object]]] = defaultdict(list)
     for assignment in _effective_recursive_assignments(ancestry):
         folded = assignment.key.casefold()
+        authored_identifier = _first((assignment.value,))
         if authored_edges is None:
             if not folded.startswith(("voice", "sound", "eva")):
                 continue
-            identifiers = [_first((assignment.value,))]
+            normalized_identifier = normalize_faction_voice_event(
+                ancestry[-1].name, assignment.key, authored_identifier
+            )
+            identifiers = [normalized_identifier]
         else:
-            tokens = {token.casefold() for token in _tokens(assignment.value)}
+            tokens = {
+                normalize_faction_voice_event(
+                    ancestry[-1].name, assignment.key, token
+                ).casefold()
+                for token in _tokens(assignment.value)
+            }
             identifiers = sorted(
                 {
                     target
@@ -2744,13 +2754,12 @@ def _audio_routes(
         for identifier in identifiers:
             if not identifier:
                 continue
-            result[assignment.key].append(
-                {
-                    "id": identifier,
-                    "sourceIni": assignment.source_virtual_path,
-                    "line": assignment.line,
-                }
-            )
+            row = {
+                "id": identifier,
+                "sourceIni": assignment.source_virtual_path,
+                "line": assignment.line,
+            }
+            result[assignment.key].append(row)
     return {
         key: rows
         for key, rows in sorted(result.items(), key=lambda item: item[0].casefold())

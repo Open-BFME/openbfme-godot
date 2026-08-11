@@ -16,6 +16,7 @@ from .mapped_image import (
     resolve_mapped_images_partial,
 )
 from .sage_audio import (
+    normalize_faction_voice_event,
     parse_sage_audio_definitions,
     resolve_audio_sample_paths,
     resolve_audio_sample_paths_partial,
@@ -1231,7 +1232,9 @@ def _census_playable_faction(
                         continue
                     if ordinal >= len(tokens):
                         continue
-                    token = tokens[ordinal]
+                    token = normalize_faction_voice_event(
+                        block.name, field, tokens[ordinal]
+                    )
                     if token.casefold() in _AUDIO_SENTINELS:
                         continue
                     audio_id = audio_definition_names.get(token.casefold())

@@ -599,7 +599,7 @@ func _initialize_content_and_match() -> void:
 
 	audio_system = AudioScript.new()
 	add_child(audio_system)
-	audio_system.configure(selected_pack_root, DisplayServer.get_name() != "headless", producible_unit_runtimes, _faction_structure_audio_contract(), _faction_eva_side())
+	audio_system.configure(selected_pack_root, DisplayServer.get_name() != "headless", producible_unit_runtimes, _faction_structure_audio_contract(), _faction_eva_side(), local_team)
 	audio_system.set_declared_structure_lifecycle_audio_active(_all_men_structure_contracts_v1())
 	await _mark_initialization_phase("audio")
 	# THE RADAR TAKES THE INK ART, NOT THE PREVIEW PAINTING. `_source_art_texture`
@@ -3035,7 +3035,9 @@ func _faction_structure_audio_contract() -> Dictionary:
 				(contract["damaged_fraction"] as Dictionary)[kind] = clampf(damaged_health / max_health, 0.0, 1.0)
 			if really_health > 0.0:
 				(contract["really_damaged_fraction"] as Dictionary)[kind] = clampf(really_health / max_health, 0.0, 1.0)
-	contract["eva_events"] = _load_eva_side_map()
+	var eva_contract := _load_eva_contract()
+	contract["eva_events"] = eva_contract.get("events", {})
+	contract["eva_semantics"] = eva_contract.get("semantics", {})
 	return contract
 
 
@@ -3050,7 +3052,7 @@ func _first_audio_route_id(rows: Variant) -> String:
 	return ""
 
 
-func _load_eva_side_map() -> Dictionary:
+func _load_eva_contract() -> Dictionary:
 	## eva.ini is global: every cooked pack ships the same side map, so the
 	## first mounted pack that carries it wins (the men EVA overlay and every
 	## recooked faction pack are all valid sources). When no pack ships it the
@@ -3065,12 +3067,20 @@ func _load_eva_side_map() -> Dictionary:
 		var document: Variant = ModLoader._read_json(path)
 		if typeof(document) != TYPE_DICTIONARY:
 			continue
-		if String((document as Dictionary).get("schema", "")) != "openbfme.eva-events" or int((document as Dictionary).get("schemaVersion", -1)) != 0:
+		var version := int((document as Dictionary).get("schemaVersion", -1))
+		if String((document as Dictionary).get("schema", "")) != "openbfme.eva-events":
+			continue
+		if version != 1:
+			push_warning("[EVA] unsupported schemaVersion=%d at %s; announcements fail closed until the next republish" % [version, path])
 			continue
 		var events: Variant = (document as Dictionary).get("events", {})
 		if typeof(events) == TYPE_DICTIONARY:
-			return (events as Dictionary).duplicate(true)
-	return {}
+			var semantics: Variant = (document as Dictionary).get("semantics", {})
+			return {
+				"events": (events as Dictionary).duplicate(true),
+				"semantics": (semantics as Dictionary).duplicate(true) if typeof(semantics) == TYPE_DICTIONARY else {},
+			}
+	return {"events": {}, "semantics": {}}
 
 
 func _record_sim_heartbeat() -> void:
@@ -3472,6 +3482,7 @@ func _handle_left_click(point: Vector2, additive: bool) -> void:
 			hud.set_feedback("Cannot build here: %s." % String(result.get("reason", "rejected")).replace("-", " "), true)
 			if String(result.get("reason", "")) == "insufficient-resources":
 				hud.push_event_feed("Insufficient funds.")
+			_announce_purchase_rejection(String(result.get("reason", "")))
 		_sync_presentation()
 		return
 	_selected_expansion_pad = {}
@@ -4122,7 +4133,29 @@ func _consume_event_feed() -> void:
 		var event: Dictionary = events[_feed_event_index]
 		_feed_event_index += 1
 		var kind := String(event.get("kind", ""))
-		if int(event.get("team", -1)) != 0 and kind != "match.victory":
+		# combat.hit has no team field because it is deterministic sim output.
+		# Resolve ownership here, in the presentation consumer, so ordinary unit
+		# damage can surface retail's per-faction UnitUnderAttack EVA without
+		# adding anything to hashed state. Cooldown arbitration suppresses the
+		# otherwise noisy hit stream.
+		if kind == "combat.hit":
+			var hit_target: Dictionary = simulation.entity(int(event.get("target_id", 0)))
+			if int(hit_target.get("team", -1)) == local_team and audio_system != null:
+				audio_system.play_eva_event(
+					"UnitUnderAttack",
+					int(event.get("sequence", 0)),
+					int(event.get("tick", 0)) * 100
+				)
+		elif kind == "ring.picked_up" and audio_system != null:
+			var ring_carrier: Dictionary = simulation.entity(int(event.get("entity_id", 0)))
+			var ring_eva := String(event.get("eva", "")) if int(ring_carrier.get("team", -1)) == local_team else "EnemyPlayerGainsRing"
+			if ring_eva != "":
+				audio_system.play_eva_event(
+					ring_eva,
+					int(event.get("sequence", 0)),
+					int(event.get("tick", 0)) * 100
+				)
+		if int(event.get("team", -1)) != local_team and kind != "match.victory":
 			continue
 		match kind:
 			"construction.completed":
@@ -4535,6 +4568,8 @@ func _queue_selected_producer(unit_id: String) -> void:
 	if not accepted and reason == "insufficient-resources":
 		# Retail surfaces rejected purchases in the top-right event feed.
 		hud.push_event_feed("Insufficient funds.")
+	if not accepted:
+		_announce_purchase_rejection(reason)
 	_refresh_hud()
 
 
@@ -4556,6 +4591,7 @@ func _on_battalion_upgrade_requested(upgrade_id: String) -> void:
 		hud.set_feedback("Purchase started (%d battalion%s)." % [queued, "" if queued == 1 else "s"])
 	elif String(last_result.get("reason", "")) == "insufficient-resources":
 		hud.push_event_feed("Insufficient funds.")
+		_announce_purchase_rejection("insufficient-resources")
 	else:
 		hud.set_feedback("Cannot purchase: %s." % String(last_result.get("reason", "rejected")).replace("-", " "), true)
 	_sync_presentation()
@@ -4577,7 +4613,22 @@ func _upgrade_selected_structure(upgrade_id: String) -> void:
 	)
 	if not accepted and String(result.get("reason", "")) == "insufficient-resources":
 		hud.push_event_feed("Insufficient funds.")
+		_announce_purchase_rejection("insufficient-resources")
 	_refresh_hud()
+
+
+func _announce_purchase_rejection(reason: String) -> void:
+	## HUD-side rejection feedback is presentation state. It deliberately calls
+	## the EVA router here instead of emitting/mutating a hashed sim event.
+	if audio_system == null:
+		return
+	var eva_id := ""
+	if reason == "command-point-cap":
+		eva_id = "CannotBuildDueToCPLimit"
+	elif reason == "insufficient-resources":
+		eva_id = "CannotBuildDueToFunds"
+	if eva_id != "":
+		audio_system.play_eva_event(eva_id, -1, simulation.tick_index * 100 if simulation != null else 0)
 
 
 func _cancel_selected_production(queue_index: int) -> void:

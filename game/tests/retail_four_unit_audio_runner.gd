@@ -405,6 +405,67 @@ func _run() -> void:
 		audio4.dispose()
 		audio4.free()
 
+	# Fixture-driven EVA arbitration/trigger contract. The mounted packs predate
+	# schema v1 semantics; exact retail samples ride the next batch republish, so
+	# reuse contained event routes while pinning the logical per-faction EVA ids.
+	var fixture_events := {
+		"CannotBuildDueToCPLimit": {"Men": "ArrowDrawBow"},
+		"CannotBuildDueToFunds": {"Men": "BodyFallSoldier"},
+		"UnitUnderAttack": {"Men": "BodyFallGeneric2"},
+		"StructureUnderAttack": {"Men": "BuildingLightDamageStone"},
+		"CampDestroyed": {"Men": "BuildingSink"},
+		"RingPickedUpLocal": {"Men": "ImpactHorse"},
+		"EnemyPlayerGainsRing": {"Men": "BuildingHeavyDamageStone"},
+		"UpgradeForgedBladesReady": {"Men": "SwordShingClean1ForHordes"},
+		"UpgradeFlameArrowsReady": {"Men": "ArrowDrawBow"},
+	}
+	var fixture_semantics := {
+		"CannotBuildDueToCPLimit": {"priority": 7, "cooldownMs": 60000},
+		"CannotBuildDueToFunds": {"priority": 7, "cooldownMs": 4000},
+		"UnitUnderAttack": {"priority": 3, "cooldownMs": 30000},
+		"StructureUnderAttack": {"priority": 7, "cooldownMs": 30000},
+		"CampDestroyed": {"priority": 4, "cooldownMs": 15000},
+		"RingPickedUpLocal": {"priority": 9, "cooldownMs": 20000},
+		"EnemyPlayerGainsRing": {"priority": 7, "cooldownMs": 20000},
+		"UpgradeForgedBladesReady": {"priority": 6, "cooldownMs": 1000},
+		"UpgradeFlameArrowsReady": {"priority": 6, "cooldownMs": 1000},
+	}
+	var eva_fixture = AudioScript.new()
+	root.add_child(eva_fixture)
+	eva_fixture.configure(selected_pack_root, false, {}, {
+		"eva_events": fixture_events,
+		"eva_semantics": fixture_semantics,
+		"eva_damaged": {"fortress": "StructureUnderAttack"},
+		"eva_die": {"fortress": "CampDestroyed"},
+	}, "Men")
+	var cp_first: Dictionary = eva_fixture.play_eva_event("CannotBuildDueToCPLimit", 100, 1000)
+	var cp_repeat: Dictionary = eva_fixture.play_eva_event("CannotBuildDueToCPLimit", 101, 1001)
+	_check("eva_command_limit_routes_per_faction_event", bool(cp_first.get("ok", false)) and String(cp_first.get("eva_id", "")) == "CannotBuildDueToCPLimit", str(cp_first))
+	_check("eva_command_limit_respects_compiled_cooldown", not bool(cp_repeat.get("ok", true)) and String(cp_repeat.get("reason", "")) == "eva_cooldown", str(cp_repeat))
+	var clockless: Dictionary = eva_fixture.play_eva_event("CannotBuildDueToFunds", 112)
+	_check("eva_clockless_request_fails_closed", not bool(clockless.get("ok", true)) and String(clockless.get("reason", "")) == "eva_clock_unavailable", str(clockless))
+	var ring_high: Dictionary = eva_fixture.play_eva_event("RingPickedUpLocal", 102, 70000)
+	var building_low: Dictionary = eva_fixture.play_eva_event("CampDestroyed", 103, 70000)
+	_check("eva_ring_priority_wins_same_presentation_timestamp", bool(ring_high.get("ok", false)) and not bool(building_low.get("ok", true)) and String(building_low.get("reason", "")) == "eva_priority", "%s / %s" % [ring_high, building_low])
+	var funds: Dictionary = eva_fixture.play_eva_event("CannotBuildDueToFunds", 104, 80000)
+	_check("eva_insufficient_resources_routes_per_faction_event", bool(funds.get("ok", false)) and String(funds.get("eva_id", "")) == "CannotBuildDueToFunds", str(funds))
+	var unit_attack: Dictionary = eva_fixture.play_eva_event("UnitUnderAttack", 105, 85000)
+	var unit_attack_repeat: Dictionary = eva_fixture.play_eva_event("UnitUnderAttack", 106, 85001)
+	_check("eva_unit_under_attack_routes_and_respects_cooldown", bool(unit_attack.get("ok", false)) and not bool(unit_attack_repeat.get("ok", true)) and String(unit_attack_repeat.get("reason", "")) == "eva_cooldown", "%s / %s" % [unit_attack, unit_attack_repeat])
+	var enemy_ring: Dictionary = eva_fixture.play_eva_event("EnemyPlayerGainsRing", 107, 160000)
+	eva_fixture.sync_events([
+		{"sequence": 108, "tick": 900, "kind": "eva.base_under_attack", "structure_kind": "fortress"},
+		{"sequence": 109, "tick": 1100, "kind": "eva.building_lost", "structure_kind": "fortress"},
+		{"sequence": 111, "tick": 1700, "kind": "battalion_upgrade.completed", "team": 0, "upgrade_id": "Upgrade_ForgedBlades"},
+		{"sequence": 112, "tick": 1800, "kind": "battalion_upgrade.completed", "team": 0, "upgrade_id": "Upgrade_GondorArcherFireArrows"},
+	])
+	_check("eva_under_attack_and_building_lost_surface_compiled_ids", eva_fixture.eva_last_played_msec.has("StructureUnderAttack") and eva_fixture.eva_last_played_msec.has("CampDestroyed"))
+	_check("eva_ring_events_surface_compiled_ids", eva_fixture.eva_last_played_msec.has("RingPickedUpLocal") and bool(enemy_ring.get("ok", false)) and String(enemy_ring.get("eva_id", "")) == "EnemyPlayerGainsRing", str(enemy_ring))
+	_check("eva_upgrade_complete_surfaces_real_battalion_event_ids", eva_fixture.eva_last_played_msec.has("UpgradeForgedBladesReady") and eva_fixture.eva_last_played_msec.has("UpgradeFlameArrowsReady"))
+	_check("eva_authored_silent_unit_lost_has_no_substitute", not fixture_events.has("UnitLost") and not fixture_events.has("BattalionLost"))
+	eva_fixture.dispose()
+	eva_fixture.free()
+
 	audio.dispose()
 	audio.free()
 	# Give the audio server a bounded teardown window after this function returns:
