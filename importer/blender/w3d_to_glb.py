@@ -26,6 +26,49 @@ import bpy
 ADAPTER_REPORT_SCHEMA = "openbfme.w3d-adapter-report"
 ADAPTER_REPORT_VERSION = 2
 
+# RotWK 2.01's battlefield Uruk-family skins carry a rigid BARREL subobject
+# whose HLOD binding points one past the end of this authored hierarchy. Keep
+# the complete pivot oracle here so this retail compatibility path cannot turn
+# into a general out-of-range fallback.
+_RETAIL_URUK_BATTLEFIELD_PIVOTS = (
+    "ROOTTRANSFORM",
+    "B_SWORD",
+    "B_HAND_R",
+    "B_BOW",
+    "B_HAND_L",
+    "ROOT DUMMY",
+    "B_WAIST",
+    "BAT_RIBS",
+    "B_NECK",
+    "BAT_HEAD",
+    "B_PTAIL1",
+    "B_PTAIL2",
+    "B_DREADS1",
+    "B_DREADS2",
+    "BAT_CLAVR",
+    "BAT_UARMR",
+    "BAT_FARMR",
+    "B_HANDR",
+    "BAT_CLAVL",
+    "BAT_UARML",
+    "B_FARML",
+    "B_HANDL",
+    "BAT_THIGHR",
+    "B_CALFR",
+    "B_HEELR",
+    "B_FOOTR",
+    "B_FCLOTH1",
+    "B_FCLOTH2",
+    "B_BCLOTH1",
+    "B_BCLOTH2",
+    "BAT_THIGHL",
+    "B_CALFL",
+    "B_HEELL",
+    "B_FOOTL",
+)
+_RETAIL_ORPHAN_HLOD_PROPERTY = "openbfme_retail_orphan_hlod_exclusion"
+_ACTIVE_RETAIL_ORPHAN_HLOD_EXCLUSIONS: list[dict[str, Any]] = []
+
 _W3D_CONVERSION_FAILURE_PHASES = frozenset(
     {
         "scene-reset",
@@ -1095,6 +1138,9 @@ def _non_render_reasons(item: Any) -> list[str]:
         for key, value in _custom_items(owner):
             if not _custom_value_is_enabled(value):
                 continue
+            if key == _RETAIL_ORPHAN_HLOD_PROPERTY:
+                reasons.add("retail-orphan-hlod-binding")
+                continue
             # W3D ``userText`` is free-form authoring metadata. Retail render
             # meshes commonly contain disabled fields such as
             # ``Proxy_Geometry = <none>`` and ``Disable_Collisions = 0``.
@@ -1886,6 +1932,112 @@ def install_shader_material_compatibility_shim() -> None:
     # mesh_import uses ``from material_import import *`` and therefore owns a
     # separate function binding that must be replaced explicitly.
     mesh_import.create_material_from_shader_material = compatible
+
+
+def retail_orphan_hlod_exclusion(
+    hierarchy: Any, sub_object: Any
+) -> dict[str, Any] | None:
+    """Recognize byte-proven RotWK Uruk-family orphan HLOD bindings.
+
+    ``CHSS_UK_U_SKN`` authors ``BARREL`` at bone index 34, but its declared
+    ``CHSS_UK_U_SKL`` contains exactly 34 pivots (valid indices 0..33) and no
+    BARREL pivot. ``CHSS_UT_U_SKN`` carries the identical BARREL vertex stream
+    and the same orphan binding against that hierarchy. A sibling Troll skin
+    proves BARREL needs a non-identity authored pivot, so binding either orphan
+    to ROOTTRANSFORM would visibly misplace it. Exclude only these complete
+    retail fingerprints; every other out-of-range reference continues into the
+    pinned importer and fails closed.
+    """
+
+    header = getattr(hierarchy, "header", None)
+    hierarchy_name = str(
+        getattr(header, "name", "") or getattr(hierarchy, "name", "")
+    )
+    raw_pivots = getattr(hierarchy, "pivots", None)
+    if raw_pivots is None:
+        return None
+    try:
+        pivots = tuple(str(getattr(item, "name", "")) for item in raw_pivots)
+    except TypeError:
+        return None
+    authored_index = getattr(sub_object, "bone_index", None)
+    identifier = str(getattr(sub_object, "identifier", ""))
+    if (
+        hierarchy_name != "CHSS_UK_U_SKL"
+        or pivots != _RETAIL_URUK_BATTLEFIELD_PIVOTS
+        or type(authored_index) is not int
+        or authored_index != len(pivots)
+        or identifier
+        not in {
+            "CHSS_UK_U_SKN.BARREL",
+            "CHSS_UT_U_SKN.BARREL",
+        }
+    ):
+        return None
+    return {
+        "hierarchy": hierarchy_name,
+        "sub_object": identifier,
+        "authored_pivot_index": authored_index,
+        "pivot_count": len(pivots),
+        "disposition": "excluded",
+        "reason": "retail-hlod-references-missing-pivot",
+    }
+
+
+def _retail_hlod_rig_object_exclusion_importer(original: Any) -> Any:
+    if not callable(original):
+        raise RuntimeError("pinned HLOD rigid-object binder is unavailable")
+
+    def compatible_rig_object(
+        obj: Any, hierarchy: Any, rig: Any, sub_object: Any
+    ) -> Any:
+        raw_pivots = getattr(hierarchy, "pivots", None)
+        try:
+            pivot_count = len(raw_pivots) if raw_pivots is not None else 0
+        except TypeError:
+            return original(obj, hierarchy, rig, sub_object)
+        authored_index = getattr(sub_object, "bone_index", None)
+        if type(authored_index) is int and 0 <= authored_index < pivot_count:
+            return original(obj, hierarchy, rig, sub_object)
+        proof = retail_orphan_hlod_exclusion(hierarchy, sub_object)
+        if proof is None:
+            return original(obj, hierarchy, rig, sub_object)
+        try:
+            obj[_RETAIL_ORPHAN_HLOD_PROPERTY] = json.dumps(proof, sort_keys=True)
+        except (
+            AttributeError,
+            KeyError,
+            ReferenceError,
+            RuntimeError,
+            TypeError,
+        ) as exc:
+            raise RuntimeError(
+                "retail orphan HLOD exclusion could not be marked"
+            ) from exc
+        if proof not in _ACTIVE_RETAIL_ORPHAN_HLOD_EXCLUSIONS:
+            _ACTIVE_RETAIL_ORPHAN_HLOD_EXCLUSIONS.append(proof)
+            print(
+                "OPENBFME_W3D_RETAIL_ORPHAN_HLOD_EXCLUDED "
+                + json.dumps(proof, sort_keys=True)
+            )
+        # The pinned importer cannot resolve the missing pivot. The custom
+        # marker is consumed by remove_non_render_geometry before export, so an
+        # unplaced render mesh cannot leak into the GLB.
+        return None
+
+    return compatible_rig_object
+
+
+def install_retail_hlod_exclusion_shim() -> None:
+    """Patch both pinned-plugin bindings without changing its attested tree."""
+
+    from io_mesh_w3d.common.utils import helpers, mesh_import  # type: ignore
+
+    original = helpers.rig_object
+    compatible = _retail_hlod_rig_object_exclusion_importer(original)
+    helpers.rig_object = compatible
+    # mesh_import uses ``from helpers import *`` and owns a separate binding.
+    mesh_import.rig_object = compatible
 
 
 def collect_shader_material_compatibility(
@@ -4241,6 +4393,7 @@ def initialize_w3d_converter(plugin_root: Path) -> None:
 
     io_mesh_w3d.register()
     install_shader_material_compatibility_shim()
+    install_retail_hlod_exclusion_shim()
     _INITIALIZED_W3D_PLUGIN_ROOT = plugin_root
 
 
@@ -4350,6 +4503,8 @@ def _convert_w3d_job_impl(
     phase_checkpoint: _W3DConversionPhaseCheckpoint,
 ) -> dict[str, Any]:
     """Convert one job and return the established adapter report schema."""
+
+    _ACTIVE_RETAIL_ORPHAN_HLOD_EXCLUSIONS.clear()
 
     args = argparse.Namespace(
         asset_kind=asset_kind,

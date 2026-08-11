@@ -1080,7 +1080,7 @@ class W3dAdapterInitializationTests(unittest.TestCase):
             adapter = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(adapter)
 
-            calls = {"factory": 0, "register": 0, "shim": 0}
+            calls = {"factory": 0, "register": 0, "material_shim": 0, "hlod_shim": 0}
             fake_bpy.ops.wm.read_factory_settings = lambda **_kwargs: calls.__setitem__(
                 "factory", calls["factory"] + 1
             )
@@ -1089,7 +1089,10 @@ class W3dAdapterInitializationTests(unittest.TestCase):
             )
             sys.modules["io_mesh_w3d"] = plugin
             adapter.install_shader_material_compatibility_shim = lambda: (
-                calls.__setitem__("shim", calls["shim"] + 1)
+                calls.__setitem__("material_shim", calls["material_shim"] + 1)
+            )
+            adapter.install_retail_hlod_exclusion_shim = lambda: (
+                calls.__setitem__("hlod_shim", calls["hlod_shim"] + 1)
             )
 
             with tempfile.TemporaryDirectory() as temporary:
@@ -1107,7 +1110,15 @@ class W3dAdapterInitializationTests(unittest.TestCase):
 
                 adapter.initialize_w3d_converter(plugin_root)
                 adapter.initialize_w3d_converter(plugin_root)
-                self.assertEqual(calls, {"factory": 1, "register": 1, "shim": 1})
+                self.assertEqual(
+                    calls,
+                    {
+                        "factory": 1,
+                        "register": 1,
+                        "material_shim": 1,
+                        "hlod_shim": 1,
+                    },
+                )
                 with self.assertRaisesRegex(RuntimeError, "switch plugin roots"):
                     adapter.initialize_w3d_converter(other_root)
         finally:

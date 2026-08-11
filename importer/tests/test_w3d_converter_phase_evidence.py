@@ -416,6 +416,158 @@ class StaticConversionHarness:
 
 
 class W3dConverterPhaseEvidenceTests(unittest.TestCase):
+    def test_retail_uruk_orphan_hlod_exclusion_is_exact_and_fail_closed(self) -> None:
+        pivot_names = (
+            "ROOTTRANSFORM",
+            "B_SWORD",
+            "B_HAND_R",
+            "B_BOW",
+            "B_HAND_L",
+            "ROOT DUMMY",
+            "B_WAIST",
+            "BAT_RIBS",
+            "B_NECK",
+            "BAT_HEAD",
+            "B_PTAIL1",
+            "B_PTAIL2",
+            "B_DREADS1",
+            "B_DREADS2",
+            "BAT_CLAVR",
+            "BAT_UARMR",
+            "BAT_FARMR",
+            "B_HANDR",
+            "BAT_CLAVL",
+            "BAT_UARML",
+            "B_FARML",
+            "B_HANDL",
+            "BAT_THIGHR",
+            "B_CALFR",
+            "B_HEELR",
+            "B_FOOTR",
+            "B_FCLOTH1",
+            "B_FCLOTH2",
+            "B_BCLOTH1",
+            "B_BCLOTH2",
+            "BAT_THIGHL",
+            "B_CALFL",
+            "B_HEELL",
+            "B_FOOTL",
+        )
+        hierarchy = types.SimpleNamespace(
+            name="CHSS_UK_U_SKL",
+            pivots=[types.SimpleNamespace(name=name) for name in pivot_names],
+        )
+        sub_object = types.SimpleNamespace(
+            bone_index=34,
+            identifier="CHSS_UK_U_SKN.BARREL",
+        )
+
+        expected = {
+            "hierarchy": "CHSS_UK_U_SKL",
+            "sub_object": "CHSS_UK_U_SKN.BARREL",
+            "authored_pivot_index": 34,
+            "pivot_count": 34,
+            "disposition": "excluded",
+            "reason": "retail-hlod-references-missing-pivot",
+        }
+        self.assertEqual(
+            CONVERTER.retail_orphan_hlod_exclusion(hierarchy, sub_object), expected
+        )
+        uruk_troll = types.SimpleNamespace(
+            bone_index=34,
+            identifier="CHSS_UT_U_SKN.BARREL",
+        )
+        self.assertEqual(
+            CONVERTER.retail_orphan_hlod_exclusion(hierarchy, uruk_troll),
+            {**expected, "sub_object": "CHSS_UT_U_SKN.BARREL"},
+        )
+
+        for changed in (
+            types.SimpleNamespace(bone_index=35, identifier=sub_object.identifier),
+            types.SimpleNamespace(bone_index=34, identifier="OTHER.BARREL"),
+            types.SimpleNamespace(bone_index=34, identifier="CHSS_UK_U_SKN.SWORD"),
+        ):
+            self.assertIsNone(
+                CONVERTER.retail_orphan_hlod_exclusion(hierarchy, changed)
+            )
+        wrong_hierarchy = types.SimpleNamespace(
+            name=hierarchy.name,
+            pivots=[*hierarchy.pivots[:-1], types.SimpleNamespace(name="OTHER")],
+        )
+        self.assertIsNone(
+            CONVERTER.retail_orphan_hlod_exclusion(wrong_hierarchy, sub_object)
+        )
+        self.assertIsNone(
+            CONVERTER.retail_orphan_hlod_exclusion(
+                types.SimpleNamespace(
+                    name="OTHER_SKL",
+                    pivots=hierarchy.pivots,
+                ),
+                sub_object,
+            )
+        )
+        self.assertIsNone(CONVERTER.retail_orphan_hlod_exclusion(None, sub_object))
+
+        calls: list[tuple[object, object, object, object]] = []
+        rig = object()
+        obj: dict[str, object] = {}
+
+        def pinned_rig_object(target, target_hierarchy, target_rig, binding):
+            calls.append((target, target_hierarchy, target_rig, binding))
+            return "pinned-result"
+
+        CONVERTER._ACTIVE_RETAIL_ORPHAN_HLOD_EXCLUSIONS.clear()
+        self.addCleanup(CONVERTER._ACTIVE_RETAIL_ORPHAN_HLOD_EXCLUSIONS.clear)
+        compatible = CONVERTER._retail_hlod_rig_object_exclusion_importer(
+            pinned_rig_object
+        )
+        self.assertIsNone(compatible(obj, hierarchy, rig, sub_object))
+        self.assertEqual(calls, [])
+        self.assertEqual(
+            CONVERTER._ACTIVE_RETAIL_ORPHAN_HLOD_EXCLUSIONS,
+            [expected],
+        )
+        self.assertIn(CONVERTER._RETAIL_ORPHAN_HLOD_PROPERTY, obj)
+        # _custom_items uses subscription syntax, so exercise the exact marker
+        # through a dict-backed Blender-object stand-in.
+        class MarkedObject(dict):
+            name = "BARREL"
+            data = None
+
+        marked_object = MarkedObject(obj)
+        self.assertIn(
+            "retail-orphan-hlod-binding",
+            CONVERTER._non_render_reasons(marked_object),
+        )
+        compatible(obj, hierarchy, rig, sub_object)
+        self.assertEqual(
+            CONVERTER._ACTIVE_RETAIL_ORPHAN_HLOD_EXCLUSIONS,
+            [expected],
+        )
+        self.assertEqual(sub_object.bone_index, 34)
+
+        for pass_through_hierarchy, pass_through_sub_object in (
+            (hierarchy, types.SimpleNamespace(bone_index=0, identifier="VALID")),
+            (hierarchy, types.SimpleNamespace(bone_index=35, identifier="OTHER")),
+            (None, None),
+        ):
+            pass_through_obj = object()
+            self.assertEqual(
+                compatible(
+                    pass_through_obj,
+                    pass_through_hierarchy,
+                    rig,
+                    pass_through_sub_object,
+                ),
+                "pinned-result",
+            )
+            self.assertIs(calls[-1][0], pass_through_obj)
+            self.assertIs(calls[-1][1], pass_through_hierarchy)
+            self.assertIs(calls[-1][3], pass_through_sub_object)
+
+        with self.assertRaisesRegex(RuntimeError, "could not be marked"):
+            compatible(object(), hierarchy, rig, sub_object)
+
     @staticmethod
     def _fake_pinned_importer_modules(*, load_result={"FINISHED"}):
         def complete(*_args, **_kwargs):
