@@ -122,6 +122,12 @@ param(
     # stop before building anything. What tools/Test-DistPipeline.ps1 drives, and
     # what to run yourself before committing half an hour to an export.
     [switch]$PreflightOnly,
+    # The bundle at dist\v<version>\ is already built. Verify it against its own
+    # BUILD-INFO.json and do only the finishing work: notes, stamp, launcher,
+    # firewall. For when a finishing step failed - the export and several
+    # gigabytes of hashing are not the thing that went wrong, and re-paying an
+    # hour and a half for a file copy is how a pipeline stops getting used.
+    [switch]$FinishOnly,
     [switch]$Help
 )
 
@@ -188,7 +194,10 @@ try {
 
     $bundleName = "v$Version"
     $bundleRoot = Join-Path $DistRoot $bundleName
-    if ((Test-Path -LiteralPath $bundleRoot) -and -not $Force) {
+    if ($FinishOnly -and -not (Test-Path -LiteralPath $bundleRoot -PathType Container)) {
+        throw (New-DistRefusal -Problem "-FinishOnly needs a bundle that is already built, and there is nothing at $bundleRoot" -Remedy 'Run without -FinishOnly to build it.')
+    }
+    if ((Test-Path -LiteralPath $bundleRoot) -and -not $Force -and -not $FinishOnly) {
         throw (New-DistRefusal -Problem "This version is already published: $bundleRoot" -Remedy 'Bump VERSION for a new milestone, or pass -Force to replace it.')
     }
 
@@ -239,6 +248,19 @@ try {
     }
 
     # ------------------------------------------------------------ the build
+    if ($FinishOnly) {
+        # Verify the bundle against its OWN manifest before finishing it. The
+        # claim being made is "this folder is a real, complete build", and it is
+        # made by the existing verifier rather than by the folder existing.
+        Write-DistHeading "Verify the existing dist\$bundleName"
+        Write-DistStep 'tools/Test-PlayableBundle.ps1 -Quick (layout and sizes against BUILD-INFO.json) ...'
+        & (Join-Path $PSScriptRoot 'Test-PlayableBundle.ps1') -Bundle $bundleRoot -Quick
+        if ($LASTEXITCODE -ne 0) {
+            throw (New-DistRefusal -Problem "The existing bundle does not verify (exit $LASTEXITCODE), so there is nothing safe to finish." -Remedy 'Rebuild it: run without -FinishOnly and with -Force.')
+        }
+        Write-DistGood 'the existing bundle verifies against its own BUILD-INFO.json'
+    } else {
+
     Write-DistHeading "Build dist\$bundleName"
     Write-DistStep 'handing off to tools/Build-PlayableBundle.ps1 (export, stage, hash, boot) ...'
 
@@ -294,6 +316,7 @@ try {
     }
     if (-not (Test-Path -LiteralPath $bundleRoot -PathType Container)) {
         throw (New-DistRefusal -Problem "Build-PlayableBundle.ps1 reported success but $bundleRoot does not exist." -Remedy 'Do not ship anything. This is a defect in the build script or the disk.')
+    }
     }
 
     # ------------------------------------------------- read back the verdict
