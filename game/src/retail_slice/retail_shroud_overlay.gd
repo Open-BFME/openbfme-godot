@@ -27,6 +27,19 @@ extends RefCounted
 ## registry and it is on the follow-up list. Units are the easy half and are
 ## exact: a unit is drawn only while its cell is CLEAR.
 ##
+## THE GHOST GAP CUTS BOTH WAYS, and the second direction leaks information the
+## player has not earned:
+##   * a structure DESTROYED in fog vanishes from your view, where retail leaves
+##     the ghost standing until you look again - you learn it died;
+##   * a structure BUILT in fog on ground you once explored pops into existence
+##     live, where retail shows you nothing until you look - you learn it exists;
+##   * a structure you HAVE seen streams its CURRENT health bar, production
+##     queue and upgrade level through the fog, where retail freezes all of it
+##     at the moment you last saw it.
+## In a competitive match the last one is the worst: fog stops hiding an enemy
+## base's economy the instant you scout it once. Until the ghost registry lands,
+## fog is a visual effect over structures, not an information barrier.
+##
 ## Cost control: the texture is rebuilt on a fixed frame cadence rather than
 ## every frame. The grid only changes when something moved, and a 40-source-unit
 ## cell does not change fast; the cadence is a presentation constant with no
@@ -164,6 +177,38 @@ func structure_visible(position: Vector2) -> bool:
 	if not enabled or _fog == null:
 		return true
 	return _fog.state_at(local_team, position) != FogScript.SHROUDED
+
+
+func visible_unit_ids(ids: Array, position_lookup: Callable) -> Array:
+	## Filter a pick candidate list down to the units the local player can
+	## actually see. An enemy in fog is not drawn, so it must not be found by the
+	## mouse either - otherwise the attack cursor lights up over apparently empty
+	## ground and promises an order on something invisible.
+	##
+	## Ordering is preserved: `SelectionPick.closest_hit` resolves ties by first
+	## occurrence, so reordering here would silently change which of two
+	## overlapping enemies the cursor names.
+	return _filter_ids(ids, position_lookup, true)
+
+
+func visible_structure_ids(ids: Array, position_lookup: Callable) -> Array:
+	## Structures use the EXPLORED test, matching the battlefield and the radar
+	## (see the class comment's named GhostObject deviation).
+	return _filter_ids(ids, position_lookup, false)
+
+
+func _filter_ids(ids: Array, position_lookup: Callable, units: bool) -> Array:
+	if not enabled or _fog == null or not position_lookup.is_valid():
+		return ids.duplicate()
+	var out: Array = []
+	for id in ids:
+		var position: Vector2 = position_lookup.call(id)
+		if units:
+			if unit_visible(position):
+				out.append(id)
+		elif structure_visible(position):
+			out.append(id)
+	return out
 
 
 func state_at(position: Vector2) -> int:

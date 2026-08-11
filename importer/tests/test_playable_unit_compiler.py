@@ -213,6 +213,80 @@ def test_compiles_categories_without_object_specific_rules(
     assert len(result["descriptorSha256"]) == 64
 
 
+def _shroud_documents() -> dict[str, bytes]:
+    """`_documents()` with a ShroudClearingRange injected into two objects.
+
+    A SEPARATE corpus on purpose. The first attempt added the field to the
+    shared `_object()` template, and even for objects that authored nothing the
+    template left a blank line where the value would go - which shifted every
+    later object's provenance LINE NUMBERS by one, changed every descriptor
+    digest, and broke `test_playable_unit_death_model`'s pinned recipe hashes.
+    Digests here are pinned by other modules; this corpus is used only by the
+    two tests below, so it cannot move any of them.
+
+    The values are the retail shape: the MEMBER authors SHROUD_CLEAR_STANDARD
+    (25) so horde members do not each deshroud, and the real radius lives on the
+    horde CONTAINER (800, against a VisionRange of 300 so no test can pass by
+    reading the wrong field).
+    """
+    documents = dict(_documents())
+    key = "data/ini/object/units/test_units.ini"
+    lines = documents[key].decode("utf-8").splitlines(keepends=True)
+    wanted = {"InfantryMember": 25, "InfantryHorde": 800}
+    output: list[str] = []
+    current: str | None = None
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("Object "):
+            current = stripped.split()[1]
+        output.append(line)
+        if (
+            current in wanted
+            and stripped.startswith("VisionRange")
+        ):
+            output.append("  ShroudClearingRange = %d\n" % wanted[current])
+            current = None
+    documents[key] = "".join(output).encode("utf-8")
+    return documents
+
+
+def test_shroud_clearing_range_is_compiled_off_the_horde_container() -> None:
+    """The deshroud radius comes off the CONTAINER, never the member.
+
+    The fixture authors VisionRange 300 on both, ShroudClearingRange 25 on the
+    member and 800 on the horde - the retail shape, where
+    SHROUD_CLEAR_STANDARD (25) exists so horde members do not each deshroud and
+    the real radius sits on the parent (GondorFighter 25 versus
+    GondorFighterHorde 400).
+
+    Three distinct ways to get this wrong, and each is asserted against:
+    reading the member (25), deriving it from VisionRange (300), and defaulting
+    it when unauthored.
+    """
+    documents = _shroud_documents()
+    result = compile_playable_unit_descriptor("InfantryHorde", documents)
+    resolved = result["gameplay"]["simulation"]["resolved"]
+    assert resolved["shroudClearingRange"]["value"] == 800
+    assert resolved["visionRange"]["value"] == 300
+    assert resolved["shroudClearingRange"]["value"] != resolved["visionRange"]["value"]
+
+
+def test_an_object_with_no_shroud_clearing_range_compiles_without_the_key() -> None:
+    """Absent stays absent - it is not defaulted to 0 or to VisionRange.
+
+    352 shipped objects author VisionRange only, and Carn Dum's map.ini authors
+    an explicit ShroudClearingRange of 0 for nine props. A defaulted value would
+    make those two cases indistinguishable downstream, and it would add a key to
+    the runtime's hashed entity row.
+    """
+    documents = _shroud_documents()
+    # HeroUnit authors no ShroudClearingRange even in the injected corpus.
+    result = compile_playable_unit_descriptor("HeroUnit", documents)
+    resolved = result["gameplay"]["simulation"]["resolved"]
+    assert "shroudClearingRange" not in resolved
+    assert resolved["visionRange"]["value"] == 300
+
+
 def test_prepared_inputs_preserve_descriptor_identity() -> None:
     documents = _documents()
     expected = compile_playable_unit_descriptor("InfantryHorde", documents)

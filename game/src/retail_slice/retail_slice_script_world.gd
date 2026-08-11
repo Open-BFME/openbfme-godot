@@ -7575,6 +7575,28 @@ class SliceFog:
 	func _world() -> RetailSliceScriptWorld:
 		return world as RetailSliceScriptWorld
 
+	func _sim_radius(w: RetailSliceScriptWorld, source_radius: float) -> float:
+		## THE UNIT TRAP, and it is a real one.
+		##
+		## `_fog_target_center_radius` converts the target's CENTRE into sim
+		## space (via `_sim_point`) but returns the authored radius in SOURCE
+		## units, untouched. On the legacy parity grid that mismatch was merely
+		## invisible - its cells are 1887 source units across, so any radius at
+		## all lit roughly the same handful of cells. On the retail grid it is
+		## catastrophic: an authored radius of 500 read as 500 SIM units is
+		## ~18,900 source units, and one MAP_REVEAL_AT_WAYPOINT would uncover the
+		## entire map for the rest of the match.
+		##
+		## Scaled HERE and only here, deliberately. The legacy `parity.fog_*`
+		## calls above keep receiving the unscaled value because that dictionary
+		## is hashed authoritative state - correcting it there would move every
+		## scripted scenario's hash and is an owner decision, not a bug fix. The
+		## two grids therefore disagree about this radius on purpose, and the
+		## legacy one is the one that is wrong.
+		if w == null or w.sim == null:
+			return source_radius
+		return source_radius * float(w.sim.source_transform_scale())
+
 	func _fog_target_center_radius(target: Dictionary) -> Dictionary:
 		var center := Vector2.ZERO
 		var radius := 100.0
@@ -7609,7 +7631,7 @@ class SliceFog:
 		w.sim.fog_of_war().reveal(
 			int(resolved["team"]),
 			tr["center"],
-			float(tr["radius"]),
+			_sim_radius(w, float(tr["radius"])),
 			permanent,
 			String(target.get("reveal_name", player))
 		)
@@ -7625,7 +7647,9 @@ class SliceFog:
 			return _refuse_command("fog.shroud", String(resolved["reason"]))
 		var tr := _fog_target_center_radius(target)
 		w.sim.parity.fog_shroud(int(resolved["team"]), tr["center"], float(tr["radius"]))
-		w.sim.fog_of_war().shroud(int(resolved["team"]), tr["center"], float(tr["radius"]))
+		w.sim.fog_of_war().shroud(
+			int(resolved["team"]), tr["center"], _sim_radius(w, float(tr["radius"]))
+		)
 		return true
 
 	func undo_permanent_reveal(player: String, target: Dictionary) -> bool:
@@ -7648,7 +7672,7 @@ class SliceFog:
 		# that merely happen to sit near the same waypoint.
 		if not w.sim.fog_of_war().undo_permanent_reveal_named(undo_team, undo_name):
 			w.sim.fog_of_war().undo_permanent_reveal(
-				undo_team, tr["center"], float(tr["radius"])
+				undo_team, tr["center"], _sim_radius(w, float(tr["radius"]))
 			)
 		return true
 

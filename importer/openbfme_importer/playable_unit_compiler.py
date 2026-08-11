@@ -1288,6 +1288,28 @@ def _simulation_contract(
                 "sourceIni": primary_body[0].source_virtual_path,
                 "line": primary_body[0].line,
             }
+    # ShroudClearingRange: OPTIONAL, and read off the CONTAINER (the horde),
+    # not the member.
+    #
+    # This is a different range from VisionRange and is never derived from it -
+    # MenFortressCitadel is VisionRange 400 / ShroudClearingRange 800,
+    # GondorSentryTower is 600 / 500, and of the objects that author both,
+    # roughly half disagree. It comes off the container because the MEMBER value
+    # is SHROUD_CLEAR_STANDARD (25) precisely so horde members do not each
+    # deshroud; the real radius is on the parent (GondorFighter 25 versus
+    # GondorFighterHorde 400). Note this is the opposite owner from
+    # ``visionRange`` above, which is a member field - that asymmetry is retail's,
+    # not a mistake here.
+    #
+    # Not in ``required``: 352 shipped objects author VisionRange only, and Carn
+    # Dum's map.ini authors an explicit 0 for nine props. Absent must stay
+    # absent so the runtime can tell "no deshroud authored" from "deshroud 0"
+    # and fall back loudly instead of silently.
+    shroud_clearing = _resolved_scalar(
+        container_fields, "ShroudClearingRange", constants
+    )
+    if shroud_clearing is not None:
+        resolved["shroudClearingRange"] = shroud_clearing
     member_count = sum(int(row.get("count", 0)) for row in members)
     if member_count <= 0:
         missing.append("memberCount")

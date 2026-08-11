@@ -45,6 +45,7 @@ extends SceneTree
 
 const Fog := preload("res://src/retail_slice/retail_fog_of_war.gd")
 const Overlay := preload("res://src/retail_slice/retail_shroud_overlay.gd")
+const PlayableUnitAdapter := preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const SimScript := preload("res://src/retail_slice/retail_slice_sim.gd")
 const ParityScript := preload("res://src/retail_slice/retail_slice_parity.gd")
 const Watchdog := preload("res://tests/runner_watchdog.gd")
@@ -56,7 +57,7 @@ const SLICE_SCALE := 0.02649232738129
 ## A retail VisionRange in source units (GondorRanger horde, compiled value).
 const RANGER_VISION_SOURCE := 470.0
 
-const EXPECTED_CHECKS := 50
+const EXPECTED_CHECKS := 63
 
 var passed := 0
 var failed := 0
@@ -83,6 +84,9 @@ func _run() -> void:
 	_test_sim_absent_unless_enabled()
 	_test_sim_tick_drives_the_grid()
 	_test_presentation_overlay_hides_units_but_not_structures()
+	_test_the_compiled_deshroud_range_reaches_the_entity_row()
+	_test_hostile_pick_candidates_are_shroud_gated()
+	_test_script_reveal_radius_is_scaled_into_sim_space()
 	var ran := passed + failed
 	if ran != EXPECTED_CHECKS:
 		failed += 1
@@ -607,6 +611,134 @@ func _test_sim_tick_drives_the_grid() -> void:
 	)
 
 
+# --- The compiled range actually reaching a row -----------------------------
+
+
+## A retail fortress shape: VisionRange 400, ShroudClearingRange 800
+## (MenFortressCitadel, effective-assets). The two numbers must not be
+## interchangeable anywhere along the path.
+const DESHROUD_FIXTURE_VISION := 400.0
+const DESHROUD_FIXTURE_SHROUD := 800.0
+
+
+func _test_the_compiled_deshroud_range_reaches_the_entity_row() -> void:
+	## THE GAP THIS WAS WRITTEN TO CATCH. The importer compiling
+	## `shroudClearingRange` is worth nothing on its own: the value has to cross
+	## the runtime adapter, the unit rule, and the entity row before
+	## `_shroud_clearing_radius` can read it. Before this check existed nothing
+	## in game/src wrote `shroud_clearing_range` at all, so the sim's
+	## `row.get("shroud_clearing_range", 0.0)` was permanently 0, the fallback to
+	## vision was permanent, and a republish would have changed NOTHING.
+	##
+	## Each step is asserted separately so a break names the seam that dropped
+	## the value rather than just "the radius is wrong".
+	var document := _deshroud_document(true)
+	var simulation: Dictionary = PlayableUnitAdapter.simulation_rule(document, false)
+	_check(
+		"the runtime adapter carries the compiled deshroud range off the document",
+		absf(float(simulation.get("shroud_clearing_range_source", 0.0)) - DESHROUD_FIXTURE_SHROUD) < 0.001,
+		"got %s" % simulation.get("shroud_clearing_range_source", "<absent>")
+	)
+	var rule: Dictionary = PlayableUnitAdapter.normalized_unit_rule(simulation, SLICE_SCALE)
+	_check(
+		"the unit rule scales it into sim space, distinct from vision",
+		absf(float(rule.get("shroud_clearing_range", 0.0)) - DESHROUD_FIXTURE_SHROUD * SLICE_SCALE) < 0.0001
+			and absf(float(rule.get("shroud_clearing_range_source", 0.0)) - DESHROUD_FIXTURE_SHROUD) < 0.001
+			and absf(float(rule.get("vision_range_source", 0.0)) - DESHROUD_FIXTURE_VISION) < 0.001,
+		"rule shroud=%s source=%s vision=%s" % [
+			rule.get("shroud_clearing_range", "<absent>"),
+			rule.get("shroud_clearing_range_source", "<absent>"),
+			rule.get("vision_range_source", "<absent>"),
+		]
+	)
+	var sim = _sim_with_fog(true)
+	var row: Dictionary = _row_from_rule(sim, 950, rule)
+	_check(
+		"the entity row keeps the deshroud range",
+		absf(float(row.get("shroud_clearing_range", 0.0)) - DESHROUD_FIXTURE_SHROUD * SLICE_SCALE) < 0.0001,
+		"row=%s" % row.get("shroud_clearing_range", "<absent>")
+	)
+	_check(
+		"the fog pass deshrouds at the 800 radius, not the 400 vision radius",
+		absf(sim._shroud_clearing_radius(row) - DESHROUD_FIXTURE_SHROUD * SLICE_SCALE) < 0.0001,
+		"radius=%.6f vision-derived would be %.6f" % [
+			sim._shroud_clearing_radius(row), DESHROUD_FIXTURE_VISION * SLICE_SCALE
+		]
+	)
+	# ABSENT MUST STAY ABSENT. A pack compiled before this change authors no
+	# deshroud range, and emitting a 0 (or a copy of vision) for it would both
+	# lie about the source data and add a key to the hashed entity row, which is
+	# what the 3000-tick pin would notice.
+	var legacy_rule: Dictionary = PlayableUnitAdapter.normalized_unit_rule(
+		PlayableUnitAdapter.simulation_rule(_deshroud_document(false), false), SLICE_SCALE
+	)
+	var legacy_row: Dictionary = _row_from_rule(sim, 951, legacy_rule)
+	_check(
+		"a pack with no compiled deshroud range adds no key anywhere",
+		not legacy_rule.has("shroud_clearing_range")
+			and not legacy_rule.has("shroud_clearing_range_source")
+			and not legacy_row.has("shroud_clearing_range"),
+		"rule keys present=%s row key present=%s" % [
+			legacy_rule.has("shroud_clearing_range"), legacy_row.has("shroud_clearing_range")
+		]
+	)
+	_check(
+		"and falls back to vision, which is what every published pack does today",
+		absf(sim._shroud_clearing_radius(legacy_row) - DESHROUD_FIXTURE_VISION * SLICE_SCALE) < 0.0001,
+		"radius=%.6f" % sim._shroud_clearing_radius(legacy_row)
+	)
+
+
+func _row_from_rule(sim, entity_id: int, rule: Dictionary) -> Dictionary:
+	## Goes through `_add_battalion`'s `unit_rule_override`, the PRODUCTION row
+	## builder, rather than a test-only hook - a hook could keep passing while
+	## the real path dropped the field.
+	sim._add_battalion(
+		entity_id, 0, Vector2(-30.0, 30.0), "Fog fixture",
+		"bfme2.object.fog-fixture", "bfme2.object.fog-fixture-horde", -1, rule
+	)
+	return sim.entities.get(entity_id, {}) as Dictionary
+
+
+func _deshroud_document(with_shroud_range: bool) -> Dictionary:
+	var resolved := {
+		"displayNameId": {"value": "OBJECT:FogFixture"},
+		"buildCost": {"value": 100},
+		"buildTimeSeconds": {"value": 5.0},
+		"commandPoints": {"value": 10},
+		"memberCount": {"value": 1},
+		"memberHealth": {"value": 500},
+		"speed": {"value": 40.0},
+		"visionRange": {"value": DESHROUD_FIXTURE_VISION},
+		"combat": {
+			"attackRange": {"value": 100.0},
+			"minimumAttackRange": {"value": 0.0, "defined": true},
+			"delayBetweenShotsMs": {"value": 600.0},
+			"preAttackDelayMs": {"value": 200.0},
+			"firingDurationMs": {"value": 200.0},
+			"damage": {"value": 10.0},
+		},
+		"movement": {
+			"acceleration": {"value": 40.0},
+			"braking": {"value": 40.0},
+			"turnRateDegreesPerSecond": {"value": 180.0},
+		},
+		"formation": {"positions": [{"x": 0.0, "y": 0.0}]},
+		"fearResistant": {"value": false},
+	}
+	if with_shroud_range:
+		resolved["shroudClearingRange"] = {"value": DESHROUD_FIXTURE_SHROUD}
+	return {
+		"objectId": "FogFixtureHorde",
+		"unitId": "bfme2.object.fog-fixture-horde",
+		"memberId": "bfme2.object.fog-fixture",
+		"category": "infantry",
+		# `status: ready` on purpose: that is the branch the compiled-document
+		# path takes, and it is the only branch that reads `resolved`.
+		"registration": {"simulation": {"status": "ready", "resolved": resolved}},
+	}
+
+
 # --- Presentation -----------------------------------------------------------
 
 
@@ -689,6 +821,98 @@ func _minimap_alpha(overlay, fog, position: Vector2) -> int:
 	var cell: Vector2i = fog.cell_index(position)
 	var image: Image = overlay.minimap_texture().get_image()
 	return int(round(image.get_pixelv(cell).a * 255.0))
+
+
+# --- Hover / picking --------------------------------------------------------
+
+
+func _test_hostile_pick_candidates_are_shroud_gated() -> void:
+	## THE OWNER-VISIBLE BUG. An enemy standing in fog is not drawn, but the
+	## hostile pick that feeds the cursor never asked the shroud - so the mouse
+	## found it anyway and the attack cursor lit up over what looks like empty
+	## ground, promising an attack on nothing the player can see.
+	##
+	## Units use the CLEAR test and structures the explored test, the same split
+	## the battlefield and the radar use, so the cursor can never disagree with
+	## what is on screen.
+	var fog = _grid()
+	fog.enabled = true
+	var radius := RANGER_VISION_SOURCE * SLICE_SCALE
+	fog.begin_look_pass()
+	fog.add_look(0, Vector2(-20.0, 0.0), radius)
+	fog.commit_look_pass()
+	fog.begin_look_pass()
+	fog.add_look(0, Vector2(10.0, 0.0), radius)
+	fog.commit_look_pass()
+	var positions := {
+		1: Vector2(10.0, 0.0),    # in the clear
+		2: Vector2(-20.0, 0.0),   # remembered, not currently seen
+		3: Vector2(-38.0, 38.0),  # never seen
+	}
+	var lookup := func(id: int) -> Vector2: return positions.get(id, Vector2.ZERO)
+	var overlay = Overlay.new()
+	overlay.configure(fog, 0)
+	_check(
+		"only the enemy on cleared ground is a unit pick candidate",
+		overlay.visible_unit_ids([1, 2, 3], lookup) == [1],
+		"got %s" % [overlay.visible_unit_ids([1, 2, 3], lookup)]
+	)
+	_check(
+		"an enemy structure stays pickable in fog but not in shroud",
+		overlay.visible_structure_ids([1, 2, 3], lookup) == [1, 2],
+		"got %s" % [overlay.visible_structure_ids([1, 2, 3], lookup)]
+	)
+	_check(
+		"the gate preserves the caller's ordering, which the pick relies on",
+		overlay.visible_unit_ids([3, 1, 2], lookup) == [1]
+			and overlay.visible_structure_ids([3, 2, 1], lookup) == [2, 1]
+	)
+	var off = Overlay.new()
+	off.configure(null, 0)
+	_check(
+		"a fog-off match gates nothing, so every legacy pick is unchanged",
+		off.visible_unit_ids([1, 2, 3], lookup) == [1, 2, 3]
+			and off.visible_structure_ids([1, 2, 3], lookup) == [1, 2, 3]
+	)
+
+
+# --- Script reveal radius units ---------------------------------------------
+
+
+func _test_script_reveal_radius_is_scaled_into_sim_space() -> void:
+	## A map script authors its reveal radius in SOURCE units, like every other
+	## retail length. The slice's fog target reader converts the CENTRE into sim
+	## space but leaves the radius alone, so the value reaching the grid must be
+	## scaled or a modest authored radius uncovers the whole battlefield.
+	##
+	## Asserted as a UNIT relationship rather than through the script world,
+	## because the script world needs a mounted pack: a 500-source-unit reveal
+	## must light a 13.2-sim-unit circle, not a 500-sim-unit one (which is
+	## 18,872 source units - larger than any retail map).
+	var fog = _grid()
+	fog.enabled = true
+	var authored_source_radius := 500.0
+	fog.reveal(0, Vector2.ZERO, authored_source_radius * SLICE_SCALE, false)
+	var edge := authored_source_radius * SLICE_SCALE  # 13.246 sim units
+	_check(
+		"a 500-source-unit reveal lights ground just inside its scaled radius",
+		fog.is_visible(0, Vector2(edge * 0.9, 0.0))
+	)
+	_check(
+		"and leaves the far side of the battlefield shrouded",
+		int(fog.state_at(0, Vector2(-38.0, -38.0))) == Fog.SHROUDED
+			and int(fog.state_at(0, Vector2(38.0, 38.0))) == Fog.SHROUDED,
+		"an unscaled 500 would have covered the entire %s grid" % fog.grid_bounds().size
+	)
+	# The failure mode this pins: the same number read as sim units.
+	var unscaled = _grid()
+	unscaled.enabled = true
+	unscaled.reveal(0, Vector2.ZERO, authored_source_radius, false)
+	_check(
+		"reading the authored radius as sim units would uncover the whole map",
+		unscaled.is_visible(0, Vector2(-38.0, -38.0))
+			and unscaled.is_visible(0, Vector2(38.0, 38.0))
+	)
 
 
 # --- Reporting --------------------------------------------------------------

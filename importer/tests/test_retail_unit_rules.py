@@ -27,35 +27,75 @@ SOURCE_PATHS = (
 )
 
 
-def test_shroud_clearing_range_is_compiled_separately_from_vision() -> None:
+def _shroud_corpora() -> list[tuple[str, Path]]:
+    """Every retail corpus on this machine, newest edition last.
+
+    Two reasons this does not just reuse the module-level ``EFFECTIVE``:
+
+    1. ``ROOT`` is ``parents[2]`` of this file, which inside a git WORKTREE is
+       the worktree root - and a worktree has no ``.private``. The corpus is
+       only ever in the main checkout, so the root is resolved by walking up
+       until one is found. Without this the test SKIPS in every worktree, which
+       is exactly how it silently failed to gate anything.
+    2. The content baseline is RotWK, not BFME2 1.06, so a BFME2-only fixture
+       gates nothing on a RotWK box.
+
+    The asserted values are identical in both editions - only the line numbers
+    drift (``SHROUD_CLEAR_STANDARD`` is gamedata.ini:36 in BFME2 1.06 and :38 in
+    RotWK) - so the same assertions run against whichever corpora exist.
+    """
+    root = Path(__file__).resolve()
+    for candidate in root.parents:
+        if (candidate / ".private" / "retail-work").is_dir():
+            root = candidate
+            break
+    else:
+        return []
+    private = root / ".private" / "retail-work"
+    candidates = [
+        ("bfme2-1.06", private / "cache" / "effective-assets"),
+        ("rotwk", private / "editions" / "rotwk" / "cache" / "effective-assets"),
+    ]
+    paths = retail_unit_rule_source_paths((RANGER_UNIT_SPEC,))
+    return [
+        (name, base)
+        for name, base in candidates
+        if all((base / path).is_file() for path in paths)
+    ]
+
+
+@pytest.mark.parametrize("edition,corpus", _shroud_corpora() or [("none", None)])
+def test_shroud_clearing_range_is_compiled_separately_from_vision(
+    edition: str, corpus: Path | None
+) -> None:
     """ShroudClearingRange is its own range and the HORDE carries the real one.
 
     Retail keeps two independent macro families (``gamedata.ini``
-    ``SHROUD_CLEAR_*`` versus ``VISION_*``), and the values below are read
-    straight out of the effective corpus:
+    ``SHROUD_CLEAR_*`` versus ``VISION_*``). The values below are read straight
+    out of the effective corpus and are identical in BFME2 1.06 and RotWK::
 
-      gamedata.ini:36    SHROUD_CLEAR_STANDARD           = 25
-      gamedata.ini:1109  GONDOR_SOLDIER_HORDE_SHROUD_RANGE = 400
-      gamedata.ini:1182  GONDOR_RANGER_VISION_RANGE      = 480
-      gamedata.ini:1184  GONDOR_RANGER_HORDE_SHROUD_RANGE = 500
+      SHROUD_CLEAR_STANDARD             = 25   (gamedata.ini:36 / :38)
+      GONDOR_RANGER_VISION_RANGE        = 480  (:1182 / :1942)
+      GONDOR_RANGER_HORDE_VISION_RANGE  = 470  (:1183 / :1943)
+      GONDOR_RANGER_HORDE_SHROUD_RANGE  = 500  (:1184 / :1944)
 
     The member value of 25 is deliberate: horde members must not each deshroud.
     Anything that reads the member and ignores the horde deshrouds a bubble 16x
     too small, and the two ranges must never be derived from one another - the
     ranger horde is VisionRange 470 / ShroudClearingRange 500.
     """
+    if corpus is None:
+        pytest.skip("no retail effective-assets corpus is present on this machine")
     paths = retail_unit_rule_source_paths((RANGER_UNIT_SPEC,))
-    if not all((EFFECTIVE / path).is_file() for path in paths):
-        pytest.skip("private effective BFME II 1.06 Ranger corpus is not present")
     document = extract_retail_unit_rules(
-        {path: EFFECTIVE / path for path in paths},
+        {path: corpus / path for path in paths},
         unit_specs=(RANGER_UNIT_SPEC,),
     )
     ranger = document["units"][0]
-    assert ranger["horde"]["shroudClearingRange"]["value"] == 500
-    assert ranger["horde"]["visionRange"]["value"] == 470
-    assert ranger["member"]["shroudClearingRange"]["value"] == 25
-    assert ranger["member"]["visionRange"]["value"] == 480
+    assert ranger["horde"]["shroudClearingRange"]["value"] == 500, edition
+    assert ranger["horde"]["visionRange"]["value"] == 470, edition
+    assert ranger["member"]["shroudClearingRange"]["value"] == 25, edition
+    assert ranger["member"]["visionRange"]["value"] == 480, edition
     # Provenance rides the value, like every other compiled number here: the
     # authoring line, and the macro it resolved through.
     provenance = ranger["horde"]["shroudClearingRange"]
@@ -63,6 +103,21 @@ def test_shroud_clearing_range_is_compiled_separately_from_vision() -> None:
     assert provenance["source"]["field"] == "ShroudClearingRange"
     assert provenance["source"]["scopeName"] == "GondorRangerHorde"
     assert provenance["resolvedDefines"][0]["name"] == "GONDOR_RANGER_HORDE_SHROUD_RANGE"
+
+
+def test_at_least_one_retail_corpus_is_available_for_shroud_gating() -> None:
+    """A guard on the guard: if no corpus resolves, the test above is a no-op.
+
+    Without this, the parametrized case degrades to a single skip and the
+    importer half of the fog lane gates nothing - which is precisely the state
+    this change was asked to fix.
+    """
+    if not (Path(__file__).resolve().parents[3] / ".private").exists() and not _shroud_corpora():
+        pytest.skip("no private retail corpus on this machine at all")
+    assert _shroud_corpora(), (
+        "no retail effective-assets corpus resolved; the ShroudClearingRange "
+        "compile test cannot gate anything here"
+    )
 
 
 def test_base_profile_declares_one_retail_unit_rule_bundle_and_source_closure() -> None:

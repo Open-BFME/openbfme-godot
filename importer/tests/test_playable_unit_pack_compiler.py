@@ -666,6 +666,16 @@ def test_same_compiler_emits_complete_category_recipes(
     recipe = compile_playable_unit_pack_recipe(descriptor, _closure(descriptor))
     validate_playable_unit_pack_recipe(recipe)
     assert recipe["category"] == category
+    # The compiler resolves simulation numbers under `gameplay.simulation`, but
+    # every runtime consumer reads `registration.simulation` - and the recipe is
+    # what bridges them. Pinned here because a break in this ONE deepcopy makes
+    # a freshly compiled value silently never reach the game: the fog lane
+    # shipped a ShroudClearingRange compile that changed nothing at runtime for
+    # exactly that class of reason.
+    assert (
+        recipe["runtimeRegistration"]["simulation"]
+        == descriptor["gameplay"]["simulation"]
+    )
     assert recipe["runtimeRegistration"]["stringBindings"] == descriptor["presentation"]["resolvedStrings"]
     assert set(recipe["runtimeRegistration"]["imageBindingMetadata"]) == set(recipe["runtimeRegistration"]["imageBindings"])
     assert all(

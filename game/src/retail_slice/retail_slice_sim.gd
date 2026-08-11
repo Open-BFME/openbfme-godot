@@ -4129,6 +4129,18 @@ func _add_battalion(
 		# extraction is an importer follow-up; absent means not resistant).
 		"fear_resistant": bool(unit_rule.get("fear_resistant", false)),
 	}
+	# ShroudClearingRange, the deshroud radius. Absent unless the compiled rule
+	# authors one, exactly like the body scalars below and for the same reason:
+	# a key that appears unconditionally would change every unit's snapshot and
+	# move the 3000-tick pin. Absent means the fog pass falls back to vision and
+	# says so (_shroud_clearing_radius).
+	if unit_rule.has("shroud_clearing_range"):
+		entities[id]["shroud_clearing_range"] = maxf(
+			0.0, float(unit_rule["shroud_clearing_range"])
+		)
+		entities[id]["shroud_clearing_range_source"] = maxf(
+			0.0, float(unit_rule.get("shroud_clearing_range_source", 0.0))
+		)
 	# Body policy is optional authoritative state. Keep the key absent for
 	# ordinary ActiveBody units so their snapshots/hashes do not change.
 	if unit_rule.get("highlander_body") == true:
@@ -17583,6 +17595,13 @@ func _shroud_clearing_radius(row: Dictionary) -> float:
 	if shroud_range > 0.0:
 		return shroud_range
 	return float(row.get("vision_range", 0.0))
+
+
+func source_transform_scale() -> float:
+	## Source (retail) units to sim units for the loaded map. 1.0 when no map
+	## transform is configured, which is what a bare harness sim gets.
+	var scale := float(_rules.get("source_map_transform_scale", 0.0))
+	return scale if scale > 0.0 else 1.0
 
 
 func refresh_fog_of_war() -> void:

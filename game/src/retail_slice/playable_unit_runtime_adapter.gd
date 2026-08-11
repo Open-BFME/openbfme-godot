@@ -249,6 +249,19 @@ static func simulation_rule(document: Dictionary, require_producer: bool = true)
 		var mood_rate := _resolved_dictionary(resolved.get("moodAttackCheckRate", {}))
 		if not mood_rate.is_empty():
 			row["moodAttackCheckRate"] = mood_rate
+		# ShroudClearingRange, the DESHROUD radius - a range of its own, never a
+		# function of VisionRange. Retail's own objects disagree constantly
+		# (MenFortressCitadel is VisionRange 400 / ShroudClearingRange 800), and it
+		# is compiled off the HORDE container, not the member: the member value is
+		# SHROUD_CLEAR_STANDARD 25 precisely so members do not each deshroud.
+		#
+		# OPTIONAL, and absent must stay absent. 352 shipped objects author no
+		# deshroud range and Carn Dum authors an explicit 0 for nine props, so a
+		# defaulted value would be indistinguishable from an authored one - and it
+		# would add a key to the hashed entity row, which the 3000-tick pin notices.
+		var shroud_clearing: Variant = _resolved_value(resolved.get("shroudClearingRange"))
+		if typeof(shroud_clearing) in [TYPE_INT, TYPE_FLOAT] and float(shroud_clearing) >= 0.0:
+			row["shroudClearingRange"] = shroud_clearing
 	for field in ["displayName", "buildCost", "buildTimeSeconds", "commandPoints", "memberCount", "memberHealth", "speed", "visionRange"]:
 		if not row.has(field):
 			return {}
@@ -292,6 +305,8 @@ static func simulation_rule(document: Dictionary, require_producer: bool = true)
 		"producers": producers,
 		"prerequisites": (producers[0].get("prerequisites", []) as Array).duplicate() if not producers.is_empty() else [],
 	}
+	if row.has("shroudClearingRange"):
+		output["shroud_clearing_range_source"] = float(row["shroudClearingRange"])
 	if row.has("destroyDie"):
 		var destroy_die := _resolved_destroy_die(row.get("destroyDie"))
 		if destroy_die.is_empty() and not _destroy_die_is_deferred_primary_member_only(
@@ -411,6 +426,10 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 		positions.append(Vector3((position.y - center.y) * source_scale, 0.0, (position.x - center.x) * source_scale))
 	var speed := float(simulation.get("speed_source", -1.0))
 	var vision := float(simulation.get("vision_range_source", -1.0))
+	# -1.0 sentinel, not 0.0: an authored ShroudClearingRange of 0 is real (Carn
+	# Dum's map.ini sets nine props to exactly that) and must survive as 0 rather
+	# than being read as "not authored".
+	var shroud_clearing := float(simulation.get("shroud_clearing_range_source", -1.0))
 	var acceleration := float(movement.get("acceleration", -1.0)) * HORDE_LOCOMOTION_RESPONSE_SCALE
 	var braking := float(movement.get("braking", -1.0)) * HORDE_LOCOMOTION_RESPONSE_SCALE
 	var turn_rate := float(movement.get("turnRateDegreesPerSecond", -1.0))
@@ -509,6 +528,12 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 			if String((mode_value as Dictionary).get("weapon_slot", "")) == "":
 				return {}
 		output["permanent_weapon_locks"] = permanent_locks.duplicate()
+	if shroud_clearing >= 0.0:
+		# Scaled by the map transform exactly as vision is, and kept alongside its
+		# source value so the fog pass can be checked against the retail INI
+		# without dividing back out.
+		output["shroud_clearing_range"] = shroud_clearing * source_scale
+		output["shroud_clearing_range_source"] = shroud_clearing
 	if simulation.get("highlander_body") == true:
 		output["highlander_body"] = true
 	for body_field in ["innate_armor_scalar", "auto_heal_multiplier"]:

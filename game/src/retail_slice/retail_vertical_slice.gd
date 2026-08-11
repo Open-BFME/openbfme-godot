@@ -1572,6 +1572,16 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 	# retail_fog_of_war.gd) - but it DOES change `rules`, which is hashed, so a
 	# runner that drives this scene and pins a hash would see it. None do today;
 	# the ones that pin build their own sim.
+	#
+	# MULTIPLAYER FOOTGUN, same class as OPENBFME_CREEP_LAIRS above: this writes
+	# into `rules`, and `rules` is a HASHED STATIC KEY of the authoritative
+	# state. One peer launching with OPENBFME_FOG_OF_WAR=0 while the others do
+	# not produces a different rules hash on that peer and the match desyncs at
+	# the very first comparison - not gradually, and not with a message that
+	# points anywhere near this line. It is a local debug/capture switch ONLY.
+	# A real per-match fog option belongs in the lobby settings envelope
+	# (retail_lockstep_session.gd), which is agreed across peers before the sim
+	# is built, exactly as allow_ring_heroes is.
 	if OS.get_environment("OPENBFME_FOG_OF_WAR").strip_edges() != "0":
 		rules["enable_fog_of_war"] = true
 	var manifest_for_rules: Dictionary = faction_manifest.duplicate(true)
@@ -2580,6 +2590,12 @@ func _convert_retail_unit_rule(source_rules: Dictionary, tick_ms: float) -> Dict
 	var formation: Dictionary = horde.get("formation", {}) as Dictionary
 	var stances: Dictionary = horde.get("stances", {}) as Dictionary
 	var horde_vision := _retail_rule_number(horde.get("visionRange"))
+	# The deshroud radius off the HORDE, never the member (the member authors
+	# SHROUD_CLEAR_STANDARD 25 so members do not each deshroud) and never
+	# derived from visionRange (retail's own objects disagree constantly).
+	# Deliberately OUTSIDE the finite/non-negative loop below: absent is legal
+	# and resolves to NAN there, which that loop would reject.
+	var horde_shroud_clearing := _retail_rule_number(horde.get("shroudClearingRange"))
 	var speed_raw := _retail_rule_number(horde_locomotor_set.get("speed"))
 	var acceleration_raw := _retail_rule_number(horde_locomotor.get("acceleration"))
 	var turn_rate_raw := _retail_rule_number(horde_locomotor.get("turnRateDegreesPerSecond"))
@@ -2673,7 +2689,7 @@ func _convert_retail_unit_rule(source_rules: Dictionary, tick_ms: float) -> Dict
 		category = "ranged-infantry"
 	elif horde_id != "":
 		category = "infantry"
-	return {
+	var rule := {
 		"horde_id": horde_id,
 		"category": category,
 		"speed": speed_raw * source_map_data.local_transform_scale,
@@ -2713,6 +2729,10 @@ func _convert_retail_unit_rule(source_rules: Dictionary, tick_ms: float) -> Dict
 		"stances": stances.duplicate(true),
 		"provenance": source_rules.duplicate(true),
 	}
+	if is_finite(horde_shroud_clearing) and horde_shroud_clearing >= 0.0:
+		rule["shroud_clearing_range"] = horde_shroud_clearing * source_map_data.local_transform_scale
+		rule["shroud_clearing_range_source"] = horde_shroud_clearing
+	return rule
 
 
 func _convert_retail_weapon_mode(weapon: Dictionary, tick_ms: float) -> Dictionary:
@@ -3741,6 +3761,33 @@ func _closest_hostile_structure(point: Vector2) -> int:
 	return SelectionPick.closest_hit(
 		point,
 		_structure_pick_candidates(simulation._hostile_living_structure_ids(local_team)),
+		SelectionPick.ORDER_MARGIN
+	)
+
+
+func _closest_visible_hostile_battalion(point: Vector2) -> int:
+	## As `_closest_hostile_battalion`, but only over enemies the local player
+	## can currently SEE. Presentation-only: this feeds the cursor, never a
+	## command.
+	return SelectionPick.closest_hit(
+		point,
+		_battalion_pick_candidates(shroud_overlay.visible_unit_ids(
+			simulation._hostile_living_ids(local_team),
+			func(id: int) -> Vector2: return Vector2(simulation.entity(id).get("position", Vector2.ZERO))
+		)),
+		SelectionPick.ORDER_MARGIN
+	)
+
+
+func _closest_visible_hostile_structure(point: Vector2) -> int:
+	## Structures use the explored test, so a base you have scouted stays
+	## targetable-looking in fog - the named GhostObject deviation.
+	return SelectionPick.closest_hit(
+		point,
+		_structure_pick_candidates(shroud_overlay.visible_structure_ids(
+			simulation._hostile_living_structure_ids(local_team),
+			func(id: int) -> Vector2: return Vector2(simulation.structure(id).get("position", Vector2.ZERO))
+		)),
 		SelectionPick.ORDER_MARGIN
 	)
 
@@ -7353,9 +7400,21 @@ func _update_hover_cursor() -> void:
 			# so a guest seat (or any match where the local team IS 1) drew the
 			# attack cursor over its own army and never over the real enemy —
 			# and the cursor could promise an attack the click then refused.
+			# SHROUD-GATED, unlike the right-click order below. An enemy in
+			# fog is not drawn, so the mouse must not find it either: before
+			# this gate the attack cursor lit up over ground that looks empty
+			# and promised an order on something invisible.
+			#
+			# Only the CURSOR is gated here, deliberately. The right-click
+			# handler turns the same pick into an `issue_attack` COMMAND, which
+			# is lockstep traffic - gating it changes the command stream and
+			# belongs with the retail targeting rule (a click into fog yields a
+			# Move order; OpenSAGE UnitOrderGenerator.cs:83), which is a
+			# follow-up, not this change. Until then the cursor and the click
+			# can disagree on a fogged enemy, and that is a KNOWN gap.
 			enemy_under_cursor = (
-				_closest_hostile_battalion(point) != 0
-				or _closest_hostile_structure(point) != 0
+				_closest_visible_hostile_battalion(point) != 0
+				or _closest_visible_hostile_structure(point) != 0
 			)
 	var intent := RetailCursorController.select_intent(has_selection, command_armed, enemy_under_cursor)
 	_ensure_cursor_controller().apply(intent, float(Time.get_ticks_msec()) / 1000.0)
