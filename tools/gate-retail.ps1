@@ -448,13 +448,6 @@ try {
     # enabled in the shell while nothing gated the code behind that button.
     # Floor is the measured value from 2026-08-05.
     Invoke-GodotPassedFloor "cah_create_a_hero" "cah_create_a_hero_runner.gd" '(?m)^CAH_CREATE_A_HERO_OK passed=([0-9]+) failed=0\s*$' 66
-    # The roster-audio closure rule that decides whether an unbound created-hero
-    # voice degrades the hero to silence or refuses the whole launch. WIRED
-    # 2026-08-11 after a republished faction pack added retail hero voice sets to
-    # cah.system that the mounted audio registry defines nowhere, and closure
-    # took Men and Dwarves offline at the end of a successful boot. Cheap: it
-    # configures the audio module against the host pack four times, no playback.
-    Invoke-GodotPassedFloor "created_hero_voice_closure" "retail_created_hero_voice_closure_runner.gd" '(?m)^CREATED_HERO_VOICE_CLOSURE_RESULT passed=([0-9]+) failed=0\s*$' 10
 
     # The release firewall belongs to SECTION A: it is about the repository, not
     # about anyone's mounted content, and it must run even when SECTION B is
@@ -551,6 +544,18 @@ try {
         # the SELECTION (the Men slice plus data/cah/system.json), so it belongs
         # inside this block; floor is the measured 2026-08-09 value.
         Invoke-GodotPassedFloor "cah_match" "cah_match_runner.gd" '(?m)^CAH_MATCH_RESULT passed=([0-9]+) failed=0\s*$' 72
+        # ADDED 2026-08-11, BOTH OF THESE, after a republished faction pack added
+        # retail hero voice sets to cah.system that no mounted pack's audio
+        # registry defines. Roster-audio closure treated "authored but unbound"
+        # as a hard refusal and took Men and Dwarves offline at the very end of a
+        # successful boot - and NOTHING IN ANY GATE RAN THE RUNNER THAT CAUGHT
+        # IT. Both live in this scoped block, not SECTION A: the closure runner
+        # resolves the host pack out of the mounted selection (it fails closed on
+        # this gate's single bfme2 proof bundle), and launch validation boots the
+        # real slice twice against the selection's Men and Dwarves packs.
+        # Floors are measured 2026-08-11 values against this root.
+        Invoke-GodotPassedFloor "created_hero_voice_closure" "retail_created_hero_voice_closure_runner.gd" '(?m)^CREATED_HERO_VOICE_CLOSURE_RESULT passed=([0-9]+) failed=0\s*$' 12
+        Invoke-GodotPassedFloor "retail_launch_validation" "retail_launch_validation_runner.gd" '(?m)^RESULT retail_launch_validation passed=([0-9]+) failed=0\s*$' 35
         # Synthetic compiled-contract full loop: deterministic Gollum, ring
         # pickup/re-drop/delivery, dual-scope purchase gate, 300s rank-10 hero,
         # death re-drop, rule-off refusal, and twin hashes every 30 ticks. The

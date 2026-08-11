@@ -9,6 +9,7 @@ const OBSERVABILITY_LOG_TRIM_COUNT := 512
 const UserSettingsScript = preload("res://src/ui/user_settings.gd")
 const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const MusicDirectorScript = preload("res://src/core/music_director.gd")
+const DiagLogScript = preload("res://src/core/diag_log.gd")
 
 const SOLDIER_OBJECT_ID := "bfme2.object.gondor-fighter"
 const ARCHER_OBJECT_ID := "bfme2.object.gondor-archer"
@@ -1034,11 +1035,66 @@ func _collect_readiness_diagnostics() -> void:
 	missing_required_events.sort()
 	unvoiced_roster_degradations.sort()
 	if not unvoiced_roster_degradations.is_empty():
-		# Same shape as the slice's map-art degradation report: absent content is
-		# a NAMED downgrade on the way to a playable match, never a silent one.
+		# NAMED, NOT WARNED, and the severity is deliberate - the same call the
+		# arrow-art lane made for the shared-Good borrow (retail_battalion.gd,
+		# `DIAGNOSTIC_SEVERITY`). Until a pack ships the retail hero voice sets in
+		# its audio registry, EVERY created hero in EVERY match lands here. An
+		# engine warning for a known universal condition either reddens every
+		# proof gate (which reads a stray WARNING as a defect) or trains readers
+		# to scroll past warnings. A structured DiagLog row plus a printed line
+		# keeps it loud in the place that survives the run; the moment a mounted
+		# pack CAN answer these events the rows stop appearing on their own.
 		var summary := ", ".join(PackedStringArray(unvoiced_roster_degradations))
-		push_warning("Created-hero voice degraded: %s" % summary)
 		print("[RetailSliceAudio] created-hero-voice-degraded %s" % summary)
+		DiagLogScript.emit("info", "audio.created_hero_voice_unavailable", {
+			"rows": unvoiced_roster_degradations.duplicate(),
+			"packRoot": pack_root,
+			"factionSide": faction_side,
+		})
+
+
+func _marker_is_truthy(value: Variant) -> bool:
+	## Truthiness for a JSON-shaped document marker. `bool(value)` is NOT usable
+	## here: GDScript has no bool constructor for Dictionary/Array and throws a
+	## runtime error that unwinds the whole configure (observed through the proof
+	## harness). A real `createAHero` marker is a non-empty Dictionary; `false`,
+	## `{}`, `[]`, `""` and `0` all mean "not a created hero", which is the
+	## strict side.
+	match typeof(value):
+		TYPE_NIL:
+			return false
+		TYPE_BOOL:
+			return value
+		TYPE_INT, TYPE_FLOAT:
+			return float(value) != 0.0
+		TYPE_STRING, TYPE_STRING_NAME:
+			return String(value).strip_edges() != ""
+		TYPE_DICTIONARY:
+			return not (value as Dictionary).is_empty()
+		TYPE_ARRAY:
+			return not (value as Array).is_empty()
+	return false
+
+
+func _record_audio_provenance(object_id: String, created_hero: bool, declared_bindings: Dictionary) -> void:
+	## Merge, never overwrite, and merge in the STRICTER direction on both axes.
+	##
+	## Two runtime documents can name the same id (a horde's container id is its
+	## member's unit id, and a created hero is registered under one id twice).
+	## Last-writer-wins would let a created hero's marker land on a converted
+	## unit's id - degrading a voice that must stay strict - or drop a converted
+	## unit's declared bindings off an id a hero also claims. So: an id is a
+	## created hero only when EVERY document claiming it says so, and its
+	## declared-binding set is the UNION of every claim. Both directions add
+	## strictness, so a collision can only ever refuse more, never less.
+	if playable_unit_created_hero.has(object_id):
+		playable_unit_created_hero[object_id] = bool(playable_unit_created_hero[object_id]) and created_hero
+	else:
+		playable_unit_created_hero[object_id] = created_hero
+	var merged: Dictionary = playable_unit_declared_bindings.get(object_id, {}) as Dictionary
+	for key_value in declared_bindings.keys():
+		merged[key_value] = true
+	playable_unit_declared_bindings[object_id] = merged
 
 
 func _created_hero_voice_is_unanswerable(object_id: String, candidates: Array) -> bool:
@@ -1498,17 +1554,23 @@ func _load_playable_unit_audio_routes() -> void:
 		# and WHAT it brought with it. A converted pack unit ships one binding
 		# (or an `authored-silent` resolution) per authored event; a created hero
 		# is synthesized at runtime from cah.system and ships neither.
-		var created_hero := registration.has("createAHero")
+		# TRUTH-CHECKED, not merely present: `createAHero: false` (or an empty
+		# marker) is not a created hero and must stay strict. `has()` would have
+		# handed the degradation to any document that carried the key at all.
+		var created_hero := _marker_is_truthy(registration.get("createAHero", false))
 		var declared_bindings: Dictionary = {}
 		for binding_key in bindings.keys():
 			declared_bindings[String(binding_key).to_lower()] = true
 		for resolution_key in resolutions.keys():
 			declared_bindings[String(resolution_key).to_lower()] = true
-		playable_unit_created_hero[object_id] = created_hero
-		playable_unit_declared_bindings[object_id] = declared_bindings
+		_record_audio_provenance(object_id, created_hero, declared_bindings)
 		if unit_id != object_id:
-			playable_unit_created_hero[unit_id] = created_hero
-			playable_unit_declared_bindings[unit_id] = declared_bindings
+			# The container id is an ALIAS several documents can legitimately
+			# claim (a horde and its member share one). The sibling tables above
+			# are last-writer-wins on that alias; these two are not, because
+			# either direction of a stray overwrite loosens the closure rule:
+			# see _record_audio_provenance.
+			_record_audio_provenance(unit_id, created_hero, declared_bindings)
 		for event_id_value in bindings.keys():
 			var event_id := String(event_id_value)
 			var leaves: Array[Dictionary] = []

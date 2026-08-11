@@ -24,7 +24,12 @@ var _runner_watchdog := RunnerWatchdogScript.new()
 
 
 func _initialize() -> void:
-	_runner_watchdog.start(self, "CREATED_HERO_VOICE_CLOSURE_RUNNER")
+	# Stall tracking armed, plus the (passed, failed) provider, because THIS lane
+	# is the one that watched retail_music_runner idle on a silently aborted
+	# coroutine. The provider contract is `func() -> Vector2i` - a String there
+	# crashes the abort path itself, which a prior lane shipped.
+	_runner_watchdog.start(self, "CREATED_HERO_VOICE_CLOSURE_RUNNER", 0, 0, true)
+	_runner_watchdog.set_result_provider(func() -> Vector2i: return Vector2i(passed, failed))
 	call_deferred("_run")
 
 
@@ -107,7 +112,45 @@ func _run() -> void:
 	)
 	_dispose(pack_audio)
 
-	# 4. A created hero whose voice the registry DOES define keeps binding, so the
+	# 4. FAIL-CLOSED HALF. A document carrying a FALSY `createAHero` marker is not
+	#    a created hero. Pinned because `registration.has("createAHero")` would
+	#    have handed the degradation to it on the strength of the key alone.
+	var falsy := _created_hero_document("test.falsy-marker", unanswerable)
+	(falsy["registration"] as Dictionary)["createAHero"] = false
+	var falsy_id := PlayableUnitAdapter.runtime_member_id(falsy)
+	var falsy_audio = _configure(host_root, {"test.falsy-marker": falsy})
+	_check(
+		"falsy_create_a_hero_marker_still_fails_closed",
+		falsy_audio.readiness_diagnostics().has(
+			"missing_voice_event:%s:select:%s" % [falsy_id, unanswerable]
+		),
+		str(falsy_audio.readiness_diagnostics())
+	)
+	_dispose(falsy_audio)
+
+	# 5. FAIL-CLOSED HALF. Two documents claiming one id: a created hero and a
+	#    converted unit. The merge keeps the STRICTER answer, so the shared id
+	#    never inherits the hero's degradation from whichever document loaded
+	#    last.
+	var shared_hero := _created_hero_document("test.shared-id", unanswerable)
+	var shared_unit := _created_hero_document("test.shared-id", unanswerable)
+	(shared_unit["registration"] as Dictionary).erase("createAHero")
+	var shared_id := PlayableUnitAdapter.runtime_member_id(shared_hero)
+	var shared_audio = _configure(host_root, {
+		"a.hero": shared_hero,
+		"b.unit": shared_unit,
+	})
+	_check(
+		"an_id_two_documents_claim_keeps_the_stricter_answer",
+		shared_audio.readiness_diagnostics().has(
+			"missing_voice_event:%s:select:%s" % [shared_id, unanswerable]
+		)
+			and shared_audio.unvoiced_roster_degradations.is_empty(),
+		str(shared_audio.readiness_diagnostics()) + " " + str(shared_audio.unvoiced_roster_degradations)
+	)
+	_dispose(shared_audio)
+
+	# 6. A created hero whose voice the registry DOES define keeps binding, so the
 	#    rule never suppresses a voice the mounted content can actually speak.
 	var answerable := _first_routable_event(host_root)
 	if _check("mounted_registry_answers_at_least_one_event", answerable != "", "registry routed nothing"):
@@ -187,6 +230,7 @@ func _created_hero_document(object_id: String, select_event: String) -> Dictiona
 
 
 func _check(name: String, ok: bool, detail: String) -> bool:
+	_runner_watchdog.note(name)
 	if ok:
 		passed += 1
 		print("PASS %s" % name)
