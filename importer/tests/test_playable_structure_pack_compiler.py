@@ -750,6 +750,56 @@ def test_retail_none_texture_sentinel_is_not_collected_as_absent() -> None:
     assert [row["identifier"] for row in exclusions] == ["Fixture.tga"]
 
 
+def test_all_sentinel_model_emits_consistent_resources_and_references() -> None:
+    # A model whose only texture reference is the retail "None" sentinel gets
+    # no texture resource. Its model resource must then reference none either:
+    # the profile loader refuses any inputResourceIds entry the profile does
+    # not declare.
+    closure = _closure()
+    rows = closure["w3dDependencyClosure"]["embeddedTextures"]
+    for row in rows:
+        row["status"] = "missing"
+        row["physicalVirtualPaths"] = []
+        row["identifier"] = "None"
+    _rehash(closure)
+
+    recipe = compile_structure_visual_recipe(_TARGET, closure)
+
+    declared = {str(row["id"]) for row in recipe["resources"]}
+    referenced = {
+        str(value)
+        for row in recipe["resources"]
+        for value in (row.get("options") or {}).get("inputResourceIds", [])
+    }
+    assert referenced <= declared
+    assert not [row for row in recipe["resources"] if row["kind"] == "texture"]
+    validate_structure_visual_recipe(recipe)
+
+
+def test_mixed_sentinel_model_still_emits_its_texture_resource() -> None:
+    closure = _closure()
+    rows = closure["w3dDependencyClosure"]["embeddedTextures"]
+    sentinel = dict(rows[0])
+    sentinel["status"] = "missing"
+    sentinel["physicalVirtualPaths"] = []
+    sentinel["identifier"] = "None"
+    rows.append(sentinel)
+    _rehash(closure)
+
+    recipe = compile_structure_visual_recipe(_TARGET, closure)
+
+    textures = [row for row in recipe["resources"] if row["kind"] == "texture"]
+    assert textures
+    declared = {str(row["id"]) for row in recipe["resources"]}
+    referenced = {
+        str(value)
+        for row in recipe["resources"]
+        for value in (row.get("options") or {}).get("inputResourceIds", [])
+    }
+    assert referenced <= declared
+    validate_structure_visual_recipe(recipe)
+
+
 _MODEL_D1 = "art/w3d/fx/keep_d1.w3d"
 _HIERARCHY_D1 = "art/w3d/fx/keep_d1skl.w3d"
 _MODEL_DRC = "art/w3d/fx/keep_drc.w3d"

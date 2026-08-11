@@ -48,7 +48,10 @@ AI_MP_INHERIT_LIBRARY_PATH = (
     "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map"
 )
 GOLLUM_SPAWN_LIBRARY_PATH = "libraries/lib_gollumspawn/lib_gollumspawn.map"
-from .profile import is_canonical_multiplayer_map_virtual_path
+from .profile import (
+    assert_input_resource_references_resolve,
+    is_canonical_multiplayer_map_virtual_path,
+)
 
 
 def _gollum_spawn_library_referenced(setup: Mapping[str, Any]) -> bool:
@@ -995,6 +998,11 @@ def build_map_profile(
         },
         "propBindingFailures": binding_failures,
     }
+    # A map whose bindings are dropped above takes its resource declarations
+    # with it. Any later map that still points at one of those declarations is
+    # a profile ImportProfile.load will refuse, so refuse it here instead --
+    # at generation, where the evidence about which map dropped what is live.
+    assert_input_resource_references_resolve(resources, label=f"map profile {profile_id}")
     return profile
 
 

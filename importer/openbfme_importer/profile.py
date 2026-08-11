@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 import hashlib
 import json
@@ -78,6 +79,41 @@ W3D_DEPENDENCY_CONVERTERS = {
     "w3d-static",
 }
 W3D_INPUT_RESOURCE_IDS_OPTION = "inputResourceIds"
+
+
+def assert_input_resource_references_resolve(
+    resources: "Iterable[Mapping[str, Any]]", *, label: str = ""
+) -> None:
+    """Refuse a resource list that points at a resource nobody declares.
+
+    :meth:`ImportProfile.load` already enforces this invariant, but it runs
+    after generation: a generator that merges resources from several planners
+    can emit the hole and only learn about it when a later command loads the
+    written profile, with no evidence left about which generator dropped the
+    declaration.  Generators call this at the point of assembly so the class
+    fails closed at compile time instead.
+    """
+
+    rows = [row for row in resources if isinstance(row, Mapping)]
+    declared = {str(row.get("id")) for row in rows}
+    missing: list[str] = []
+    for row in rows:
+        options = row.get("options")
+        if not isinstance(options, Mapping):
+            continue
+        values = options.get(W3D_INPUT_RESOURCE_IDS_OPTION)
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if str(value) not in declared:
+                missing.append(f"{row.get('id')!s} -> {value!s}")
+    if missing:
+        scope = f" in {label}" if label else ""
+        raise ValueError(
+            f"resource{scope} references undeclared input resources: "
+            + ", ".join(sorted(set(missing))[:10])
+            + (f" (+{len(set(missing)) - 10} more)" if len(set(missing)) > 10 else "")
+        )
 
 
 def canonical_multiplayer_map_runtime_slug(value: object) -> str | None:

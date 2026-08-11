@@ -24,6 +24,7 @@ from pathlib import Path
 import re
 from typing import Any, Mapping
 
+from .profile import assert_input_resource_references_resolve
 from .retail_animated_prop_profile import build_retail_animated_prop_plan
 from .retail_hierarchical_profile import build_retail_hierarchical_prop_plan
 from .retail_visual_closure import build_retail_visual_closure
@@ -185,7 +186,7 @@ def _texture_owner_key(resource: Mapping[str, Any]) -> str | None:
 
 def _merge_stage_resources(
     accumulated: list[dict[str, Any]],
-    texture_owners: dict[str, str],
+    texture_owners: dict[str, dict[str, Any]],
     stage_resources: list[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
     """Add one planner stage's resources, keeping one owner per texture source.
@@ -195,20 +196,35 @@ def _merge_stage_resources(
     two cooked outputs.  The Fords composer resolves that by hand; here the
     first stage to claim a source stays its owner and the later stage's model
     dependency is rewritten to it, so a source is cooked once.
+
+    ``texture_owners`` maps a retail texture source to the *whole* owning
+    resource, not just its id, and is shared across every map in a profile.  A
+    later map that reaches the same source must still declare that owner --
+    recording only the id let a map inherit an owner from a map whose bindings
+    were later dropped whole, leaving its models pointing at a resource nothing
+    declared.  Re-declaring the stored owner is byte-identical to the original
+    declaration, so the profile still collapses it to one resource.
     """
 
     rewritten: dict[str, str] = {}
     added: list[dict[str, Any]] = []
+    declared = {str(item["id"]) for item in accumulated}
     for resource in stage_resources:
         key = _texture_owner_key(resource)
         if key is None:
             continue
         owner = texture_owners.get(key)
         if owner is None:
-            texture_owners[key] = str(resource["id"])
+            texture_owners[key] = deepcopy(dict(resource))
             added.append(deepcopy(dict(resource)))
-        else:
-            rewritten[str(resource["id"])] = owner
+            declared.add(str(resource["id"]))
+            continue
+        owner_id = str(owner["id"])
+        if owner_id != str(resource["id"]):
+            rewritten[str(resource["id"])] = owner_id
+        if owner_id not in declared:
+            added.append(deepcopy(owner))
+            declared.add(owner_id)
     for resource in stage_resources:
         if _texture_owner_key(resource) is not None:
             continue
@@ -255,7 +271,7 @@ def build_map_prop_binding_plan(
     effective_assets_manifest: Mapping[str, Any],
     map_pattern: str,
     output_root: str,
-    texture_owners: dict[str, str] | None = None,
+    texture_owners: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Plan one map's object bindings and their conversion resources.
 
@@ -443,6 +459,7 @@ def build_map_prop_binding_plan(
     evidence["unboundPlacementCount"] = sum(
         placement_counts.get(name, 0) for name in unbound
     )
+    assert_input_resource_references_resolve(resources, label=map_pattern)
     return {
         "objectBindings": {"logical": logical_rows, "models": model_rows},
         "resources": resources,

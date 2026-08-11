@@ -9,6 +9,7 @@ from openbfme_importer.map_prop_bindings import (
     partition_placement_types,
     pseudo_type_classification,
 )
+from openbfme_importer.profile import assert_input_resource_references_resolve
 
 
 class _Parsed:
@@ -144,6 +145,118 @@ class StageMergeTests(unittest.TestCase):
         self.assertEqual(
             second_wolf["options"]["inputResourceIds"],
             ["static-prop-texture-shadowi"],
+        )
+
+
+    def test_a_later_map_redeclares_the_owner_it_inherits(self) -> None:
+        # Regression: the shared owner map recorded only the owning resource
+        # *id*. A map that reached a source first claimed ownership even when
+        # its bindings were later dropped whole (prop-binding-resource-conflict
+        # / prop-binding-rejected), and every later map then emitted models
+        # pointing at a resource no map declared -- exactly the profile
+        # ImportProfile.load refused with "structure-crow-intact-cubird-flya
+        # references unknown input resource structure-crow-material-textures-000".
+        owners: dict[str, dict[str, object]] = {}
+        dropped: list[dict[str, object]] = []
+        kept: list[dict[str, object]] = []
+        texture = {
+            "id": "structure-crow-material-textures-000",
+            "kind": "texture",
+            "patterns": ["art/compiledtextures/cu/cubird01.dds"],
+            "output": "assets/textures/structures/crow.png",
+        }
+        crow = {
+            "id": "structure-crow-intact-cubird-flya",
+            "kind": "model",
+            "patterns": ["art/w3d/cu/cubird_flya.w3d"],
+            "output": "assets/models/structures/crow/intact.glb",
+            "options": {
+                "inputResourceIds": ["structure-crow-material-textures-000"]
+            },
+        }
+        _merge_stage_resources(dropped, owners, [dict(texture), dict(crow)])
+        # `dropped` is discarded by the profile builder; `owners` is not.
+        _merge_stage_resources(kept, owners, [dict(texture), dict(crow)])
+
+        declared = {str(item["id"]) for item in kept}
+        referenced = {
+            str(value)
+            for item in kept
+            for value in (item.get("options") or {}).get("inputResourceIds", [])
+        }
+        self.assertEqual(referenced - declared, set())
+        self.assertIn("structure-crow-material-textures-000", declared)
+
+    def test_an_inherited_owner_is_declared_once_per_map(self) -> None:
+        owners: dict[str, dict[str, object]] = {}
+        first: list[dict[str, object]] = []
+        second: list[dict[str, object]] = []
+        texture = {
+            "id": "static-prop-texture-shadowi",
+            "kind": "texture",
+            "patterns": ["art/compiledtextures/sh/shadowi.tga"],
+            "output": "assets/textures/props/shadowi.png",
+        }
+        rock = {
+            "id": "static-prop-model-rock",
+            "kind": "model",
+            "patterns": ["art/w3d/rock.w3d"],
+            "output": "assets/models/props/rock.glb",
+            "options": {"inputResourceIds": ["static-prop-texture-shadowi"]},
+        }
+        _merge_stage_resources(first, owners, [dict(texture), dict(rock)])
+        _merge_stage_resources(second, owners, [dict(texture), dict(rock)])
+        _merge_stage_resources(second, owners, [dict(texture), dict(rock)])
+
+        ids = [str(item["id"]) for item in second]
+        self.assertEqual(ids.count("static-prop-texture-shadowi"), 1)
+        # Re-declaration must be byte-identical or the profile builder drops
+        # the whole map as a resource conflict.
+        self.assertEqual(
+            next(
+                item
+                for item in second
+                if item["id"] == "static-prop-texture-shadowi"
+            ),
+            next(
+                item
+                for item in first
+                if item["id"] == "static-prop-texture-shadowi"
+            ),
+        )
+
+
+class InputResourceReferenceGuardTests(unittest.TestCase):
+    def test_undeclared_input_resource_reference_fails_closed(self) -> None:
+        with self.assertRaises(ValueError) as raised:
+            assert_input_resource_references_resolve(
+                [
+                    {
+                        "id": "structure-crow-intact-cubird-flya",
+                        "options": {
+                            "inputResourceIds": [
+                                "structure-crow-material-textures-000"
+                            ]
+                        },
+                    }
+                ],
+                label="map profile rotwk-playable-maps-generated",
+            )
+        self.assertIn("structure-crow-material-textures-000", str(raised.exception))
+
+    def test_resolved_references_pass(self) -> None:
+        assert_input_resource_references_resolve(
+            [
+                {"id": "structure-crow-material-textures-000"},
+                {
+                    "id": "structure-crow-intact-cubird-flya",
+                    "options": {
+                        "inputResourceIds": [
+                            "structure-crow-material-textures-000"
+                        ]
+                    },
+                },
+            ]
         )
 
 
