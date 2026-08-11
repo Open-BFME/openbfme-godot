@@ -3632,7 +3632,7 @@ func _handle_left_click(point: Vector2, additive: bool) -> void:
 			simulation.select_only(player_id)
 		hud.set_feedback("Selected %s" % String(simulation.entity(player_id).get("name", "battalion")))
 	else:
-		var structure_id := _closest_structure(point, local_team)
+		var structure_id := _selection_target_structure(_closest_structure(point, local_team))
 		simulation.clear_selection()
 		selected_structure_id = structure_id
 		if structure_id != 0:
@@ -3759,6 +3759,29 @@ func _source_pick_scale() -> float:
 
 func _closest_battalion(point: Vector2, team: int) -> int:
 	return SelectionPick.closest_hit(point, _battalion_pick_candidates(simulation.living_ids(team)))
+
+
+func _selection_target_structure(structure_id: int) -> int:
+	## A castle is ONE command surface. CastleBehavior unpacks a fortress into a
+	## citadel plus wall/tower pieces, and those pieces carry no command set of
+	## their own (production [], no upgrades, no expansion pads) — so selecting
+	## one hands the player a palantir with nothing in it. That is exactly the
+	## playtest report: a freshly BUILT fortress showed an empty command wheel
+	## while the map-start one showed its commands.
+	##
+	## The pieces win the pick for a geometric reason, not a construction one:
+	## RetailSelectionPick.closest_hit scores candidates by how deeply the click
+	## sits inside their footprint RELATIVE to that footprint's size, so a small
+	## wall piece always outscores the large fortress body it sits on. Rather
+	## than distort that tiebreak (it is what lets a battalion standing on a
+	## fortress plate stay selectable), resolve the piece to the fortress that
+	## owns it at the moment of SELECTION.
+	if structure_id == 0 or simulation == null:
+		return structure_id
+	var owner_id := int(simulation.structure(structure_id).get("castle_piece_of_fortress", 0))
+	if owner_id != 0 and int(simulation.structure(owner_id).get("health", 0)) > 0:
+		return owner_id
+	return structure_id
 
 
 func _closest_structure(point: Vector2, team: int) -> int:

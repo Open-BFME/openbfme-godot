@@ -15391,6 +15391,17 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 		"damage_remainders": {},
 		"income_per_payout": int(_rules.get("farm_income", 25)) if structure_kind == "farm" else 0,
 	}
+	# A building the player RAISES is the same retail object as the one the map
+	# seeds (_seed_structures) or a flag unpacks (unpack_base): both of those
+	# stamp the faction's authored source id and this path did not, so a
+	# constructed structure came up with no retail identity at all. Snapshot-inert
+	# (state_signature carries no source id), so the cross-platform pin is
+	# untouched.
+	var constructed_sources: Variant = structure_source_object_ids_for_team(team).get(structure_kind, [])
+	if typeof(constructed_sources) == TYPE_ARRAY and not (constructed_sources as Array).is_empty():
+		structures[structure_id]["source_object_id"] = String((constructed_sources as Array)[0])
+	elif typeof(constructed_sources) in [TYPE_STRING, TYPE_STRING_NAME]:
+		structures[structure_id]["source_object_id"] = String(constructed_sources)
 	_mark_ring_delivery_structure(structures[structure_id] as Dictionary)
 	if bool(build_rule.get("highlander_body", false)):
 		structures[structure_id]["highlander_body"] = true

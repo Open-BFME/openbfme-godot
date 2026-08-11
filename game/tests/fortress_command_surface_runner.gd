@@ -269,7 +269,233 @@ func _run() -> void:
 
 	# --- Sections 4-6: the retail PAGED radial --------------------------------
 	await _check_fortress_radial_pages(slice, sim, hud, fortress)
+	# --- Section 8: a fortress the PLAYER builds ------------------------------
+	await _check_constructed_fortress_parity(slice, sim, hud, fortress)
 	_finish()
+
+
+func _check_constructed_fortress_parity(slice, sim, hud, seed_fortress: int) -> void:
+	## Owner playtest bug A: "The fortress I build doesn't have the menu for
+	## building heroes/upgrades/builder next to the radar." A player-constructed
+	## fortress came up with a COMPLETELY EMPTY palantir while the map-start
+	## fortress showed its full wheel.
+	##
+	## The oracle is the map-start fortress of the SAME team and faction: two
+	## fortresses one player owns must offer the same commands. Retail has no
+	## notion of a second-class fortress — commandset.ini binds the command set
+	## to the object, not to how the object came to exist.
+	if not sim.structure_build_rules_for_team(0).has("fortress"):
+		print("SKIP %s_constructed_fortress_parity (faction cannot build a fortress)" % _faction)
+		return
+	var seed_surface := await _command_surface_snapshot(slice, hud, seed_fortress)
+
+	slice._grant_test_resources()
+	var builder_id := 0
+	for id in sim.entity_ids():
+		var row: Dictionary = sim.entity(id)
+		if int(row.get("team", -1)) == 0 and int(row.get("health", 0)) > 0 and bool(row.get("is_builder", false)):
+			builder_id = id
+			break
+	if not _check(
+		"%s_a_builder_exists_to_build_a_second_fortress" % _faction,
+		builder_id != 0,
+		"team 0 fields no builder, so the construction path is untested"
+	):
+		return
+
+	# A legal plot for a second fortress, probed with the sim's own dry run.
+	var builder_ids: Array[int] = [builder_id]
+	var builder_at := Vector2(sim.entity(builder_id).get("position", Vector2.ZERO))
+	var site := Vector2.ZERO
+	var has_site := false
+	var refusal := "no candidate probed"
+	for radius in [12.0, 18.0, 26.0, 34.0, 46.0]:
+		for step in range(8):
+			var angle := TAU * float(step) / 8.0
+			var candidate := builder_at + Vector2(cos(angle), sin(angle)) * float(radius)
+			var probe: Dictionary = sim.validate_construct_site(builder_ids, "fortress", candidate, 0)
+			if bool(probe.get("ok", false)):
+				site = candidate
+				has_site = true
+				break
+			refusal = String(probe.get("reason", ""))
+		if has_site:
+			break
+	if not _check(
+		"%s_a_second_fortress_has_a_legal_site" % _faction, has_site, "last refusal: %s" % refusal
+	):
+		return
+
+	var order: Dictionary = sim.issue_construct(builder_ids, "fortress", site, false, 0)
+	if not _check(
+		"%s_a_second_fortress_can_be_ordered" % _faction,
+		bool(order.get("ok", false)),
+		String(order.get("reason", ""))
+	):
+		return
+	var built_id := int(order.get("structure_id", 0))
+
+	# Walk the porter over and raise the building through the REAL step path, so
+	# every authored completion side effect (pad seeding, create grants, events)
+	# fires exactly as it does in a live match.
+	var completed := false
+	var hurried := false
+	for _tick in range(6000):
+		sim.tick()
+		var site_row: Dictionary = sim.structure(built_id)
+		if site_row.is_empty() or int(site_row.get("health", 0)) <= 0:
+			break
+		if float(site_row.get("construction_progress", 0.0)) >= 1.0:
+			completed = true
+			break
+		if not hurried and String(sim.entity(builder_id).get("state", "")) == "construct":
+			# The porter has arrived; skip the build timer, not the build path.
+			sim.debug_finish_team_work(0)
+			hurried = true
+	if not _check(
+		"%s_the_second_fortress_finishes_construction" % _faction,
+		completed,
+		"progress=%s health=%s builder_state=%s" % [
+			str(sim.structure(built_id).get("construction_progress", -1.0)),
+			str(sim.structure(built_id).get("health", -1)),
+			String(sim.entity(builder_id).get("state", "")),
+		]
+	):
+		return
+
+	# The owner does not assign selected_structure_id — he CLICKS the building.
+	# The left-click pick must land on the citadel, not on one of the castle
+	# pieces CastleBehavior spawns around it: a piece produces nothing, so its
+	# wheel is exactly the empty ring the playtest screenshot shows.
+	_check_left_click_lands_on_the_citadel(slice, sim, seed_fortress, "map_start")
+	_check_left_click_lands_on_the_citadel(slice, sim, built_id, "built")
+
+	var built_surface := await _command_surface_snapshot(slice, hud, built_id)
+
+	# The bug, stated as a gate: the built fortress's wheel is not empty.
+	_check(
+		"%s_built_fortress_main_page_is_not_empty" % _faction,
+		not (built_surface[RADIAL_PAGE_MAIN] as Dictionary).get("ids", []).is_empty(),
+		"the constructed fortress offers no commands at all (seed offers %s)" % str(
+			(seed_surface[RADIAL_PAGE_MAIN] as Dictionary).get("ids", [])
+		)
+	)
+	# ...and it is the SAME wheel the map-start fortress carries.
+	for page_value in [RADIAL_PAGE_MAIN, RADIAL_PAGE_UPGRADES, RADIAL_PAGE_HEROES]:
+		var page := String(page_value)
+		var seed_page: Dictionary = seed_surface[page]
+		var built_page: Dictionary = built_surface[page]
+		_check(
+			"%s_built_fortress_%s_page_matches_the_map_start_fortress" % [_faction, page],
+			seed_page.get("ids", []) == built_page.get("ids", []),
+			"seed=%s built=%s" % [str(seed_page.get("ids", [])), str(built_page.get("ids", []))]
+		)
+	# The sim-side surfaces the wheel is drawn from, checked directly so a HUD
+	# failure and a sim failure are told apart.
+	var seed_heroes: Array = Array(sim.structure(seed_fortress).get("production", [])).duplicate()
+	var built_heroes: Array = Array(sim.structure(built_id).get("production", [])).duplicate()
+	seed_heroes.sort()
+	built_heroes.sort()
+	_check(
+		"%s_built_fortress_produces_the_same_roster" % _faction,
+		seed_heroes == built_heroes,
+		"seed=%s built=%s" % [str(seed_heroes), str(built_heroes)]
+	)
+	var seed_pads: Array = sim.expansion_commands_for(seed_fortress).duplicate()
+	var built_pads: Array = sim.expansion_commands_for(built_id).duplicate()
+	seed_pads.sort()
+	built_pads.sort()
+	_check(
+		"%s_built_fortress_offers_the_same_expansions" % _faction,
+		seed_pads == built_pads,
+		"seed=%s built=%s" % [str(seed_pads), str(built_pads)]
+	)
+	var seed_upgrades: Array = _upgrade_ids(sim.structure_upgrade_commands(seed_fortress))
+	var built_upgrades: Array = _upgrade_ids(sim.structure_upgrade_commands(built_id))
+	_check(
+		"%s_built_fortress_offers_the_same_improvements" % _faction,
+		seed_upgrades == built_upgrades,
+		"seed=%s built=%s" % [str(seed_upgrades), str(built_upgrades)]
+	)
+	_check(
+		"%s_built_fortress_carries_its_retail_object_identity" % _faction,
+		String(sim.structure(built_id).get("source_object_id", ""))
+			== String(sim.structure(seed_fortress).get("source_object_id", "")),
+		"seed=%s built=%s" % [
+			String(sim.structure(seed_fortress).get("source_object_id", "")),
+			String(sim.structure(built_id).get("source_object_id", "")),
+		]
+	)
+
+
+func _check_left_click_lands_on_the_citadel(slice, sim, fortress_id: int, label: String) -> void:
+	## Clicking anywhere on a fortress's own footprint must select the fortress.
+	## Reported per fortress so a general pick bug and a construction-only pick
+	## bug are told apart.
+	## Probes are scaled to the fortress's OWN footprint, so this asserts what a
+	## player actually does — click on the building — rather than an invented
+	## world-unit distance that may fall outside the silhouette entirely.
+	var centre := Vector2(sim.structure(fortress_id).get("position", Vector2.ZERO))
+	var radius := float(slice._structure_pick_radius(fortress_id, "fortress"))
+	var mispicks: Array[String] = []
+	var offsets: Array[Vector2] = [Vector2.ZERO]
+	for fraction in [0.45, 0.85]:
+		for step in range(8):
+			var angle := TAU * float(step) / 8.0
+			offsets.append(Vector2(cos(angle), sin(angle)) * radius * float(fraction))
+	# The castle is far wider than the citadel's own footprint: CastleBehavior
+	# unpacks wall and tower pieces that stand well outside `radius`, and they
+	# are the parts of the silhouette a player most often clicks. Clicking one
+	# must select the castle, not hand back a piece with an empty command set.
+	for piece_value in Array(sim.structure(fortress_id).get("castle_piece_structure_ids", [])):
+		var piece_row: Dictionary = sim.structure(int(piece_value))
+		if piece_row.is_empty() or int(piece_row.get("health", 0)) <= 0:
+			continue
+		offsets.append(Vector2(piece_row.get("position", centre)) - centre)
+	for probe in offsets:
+		# The real selection path, castle-piece resolution included.
+		var picked := int(slice._selection_target_structure(int(slice._closest_structure(centre + probe, 0))))
+		if picked != fortress_id:
+			mispicks.append("offset %s -> id=%d kind=%s" % [
+				str(probe), picked, String(sim.structure(picked).get("structure_kind", "<none>"))
+			])
+	print("FORTRESS_PICK %s id=%d radius=%.3f pieces=%s" % [
+		label, fortress_id, radius,
+		str(sim.structure(fortress_id).get("castle_piece_structure_ids", []))
+	])
+	_check(
+		"%s_clicking_the_%s_fortress_selects_the_citadel" % [_faction, label],
+		mispicks.is_empty(),
+		str(mispicks)
+	)
+
+
+func _upgrade_ids(commands: Array) -> Array:
+	var ids: Array = []
+	for command_value in commands:
+		ids.append(String((command_value as Dictionary).get("upgrade_id", "")))
+	ids.sort()
+	return ids
+
+
+func _command_surface_snapshot(slice, hud, structure_id: int) -> Dictionary:
+	## The three radial pages of one structure, reduced to sorted
+	## "<kind>:<id>" lists so two fortresses can be compared directly.
+	var sim = slice.simulation
+	slice.selected_structure_id = structure_id
+	sim.selected_ids.clear()
+	slice._selected_expansion_pad = {}
+	var snapshot: Dictionary = {}
+	for page_value in [RADIAL_PAGE_MAIN, RADIAL_PAGE_UPGRADES, RADIAL_PAGE_HEROES]:
+		var page := String(page_value)
+		var ids: Array = []
+		for entry_value in await _radial_entries_for_page(hud, page):
+			var entry: Dictionary = entry_value
+			ids.append("%s:%s" % [String(entry.get("command_kind", "")), String(entry.get("id", ""))])
+		ids.sort()
+		snapshot[page] = {"ids": ids}
+	hud.set_radial_page(RADIAL_PAGE_MAIN)
+	return snapshot
 
 
 func _check_mordor_fortress_interface_art() -> void:
