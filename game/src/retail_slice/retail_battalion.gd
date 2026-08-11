@@ -556,15 +556,28 @@ func _member_source_geometry_radius() -> float:
 	_member_geometry_is_compiled = false
 	if not ContentDB.has_method("get_playable_unit_runtime"):
 		return SelectionPick.DEFAULT_MEMBER_SOURCE_RADIUS
-	# Playable-unit runtimes are keyed by the retail objectId; the battalion
-	# carries the bundle slug, whose definition records its retail source.
+	# THE MEMBER IS NOT THE HORDE.
+	#
+	# A playable-unit document registers under its HORDE id
+	# (`GondorFighterHorde`) while the battalion carries a MEMBER bundle slug
+	# whose definition records the member's retail source (`GondorFighter`). So
+	# `get_playable_unit_runtime(source_object_id)` missed on EVERY unit in the
+	# game and every one of them silently took the infantry default 8.0 -
+	# discarding, among others, Knights of Dol Amroth's authored majorRadius 10.
+	# ContentDB now indexes each document by the member it describes; the
+	# horde-id lookups stay as fallbacks for callers that hold a horde slug.
 	var definition: Dictionary = ContentDB.get_bundle_object(object_id)
 	var source_object_id := String(definition.get("sourceObjectId", ""))
+	var documents: Array = []
+	if ContentDB.has_method("get_playable_unit_runtime_for_member") and source_object_id != "":
+		documents.append(ContentDB.get_playable_unit_runtime_for_member(source_object_id))
 	for candidate in [source_object_id, object_id]:
 		var id := String(candidate)
 		if id == "":
 			continue
-		var document: Variant = ContentDB.get_playable_unit_runtime(id)
+		documents.append(ContentDB.get_playable_unit_runtime(id))
+	for document_value in documents:
+		var document: Variant = document_value
 		if typeof(document) != TYPE_DICTIONARY:
 			continue
 		var registration: Dictionary = (document as Dictionary).get("registration", {}) as Dictionary

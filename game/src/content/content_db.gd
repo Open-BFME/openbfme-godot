@@ -80,6 +80,16 @@ var playable_unit_runtimes: Dictionary = {}
 ## faction-scoped consumers (the manifest) resolve their own pack's copy from
 ## this index instead.
 var playable_unit_runtime_pack_index: Dictionary = {}
+## Casefolded MEMBER object id -> the playable-unit document that describes him.
+##
+## A playableUnit document registers under its HORDE id (`GondorFighterHorde`),
+## but everything it authors about the man - his `Geometry`, his model, his
+## animations - is the MEMBER's (`GondorFighter`), and the bundle object the
+## battalion carries records that member id as its `sourceObjectId`. So a
+## consumer holding a member could not reach the document that describes him:
+## `get_playable_unit_runtime("GondorFighter")` misses, because the key is
+## `GondorFighterHorde`. This index closes that hop.
+var playable_unit_runtime_member_index: Dictionary = {}
 ## Load-ordered per-pack bundle object members / animation capabilities
 ## projected from playableUnit.* documents. Shared retail units (MordorWorker)
 ## project the same member and capability ids from every faction pack; the
@@ -220,6 +230,7 @@ func reload() -> void:
 	spellbook_unconverted_visuals.clear()
 	playable_unit_runtimes.clear()
 	playable_unit_runtime_pack_index.clear()
+	playable_unit_runtime_member_index.clear()
 	bundle_object_pack_index.clear()
 	animation_capability_pack_index.clear()
 	skipped_playable_unit_documents.clear()
@@ -941,6 +952,20 @@ func _load_playable_unit_runtimes(root: String, declared: Dictionary) -> bool:
 		if not playable_unit_runtime_pack_index.has(folded):
 			playable_unit_runtime_pack_index[folded] = []
 		(playable_unit_runtime_pack_index[folded] as Array).append(document)
+		# Index the document under the MEMBER it describes as well as the horde it
+		# is named for. Uses the geometry block's own `objectId` - the same field
+		# the member's `Geometry` is authored on - rather than deriving a name, so
+		# a unit whose horde is not literally "<member>Horde" still resolves. Last
+		# pack wins, matching the flat registry above.
+		var member_source_id := String(
+			(
+				(
+					(document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary
+				).get("geometry", {}) as Dictionary
+			).get("objectId", "")
+		)
+		if member_source_id != "":
+			playable_unit_runtime_member_index[member_source_id.to_lower()] = document
 		var member := projection["member"] as Dictionary
 		var capability := projection["capability"] as Dictionary
 		var member_key := String(member["id"])
@@ -2426,6 +2451,18 @@ func get_spellbook_runtime() -> Dictionary:
 
 func get_playable_unit_runtime(object_id: String) -> Dictionary:
 	return (playable_unit_runtimes.get(object_id, {}) as Dictionary).duplicate(true)
+
+
+func get_playable_unit_runtime_for_member(member_object_id: String) -> Dictionary:
+	## The playable-unit document that DESCRIBES this member, found by his own
+	## source object id (`GondorFighter`) rather than by the horde id the document
+	## registers under (`GondorFighterHorde`). Empty when no mounted pack
+	## describes him, so callers fall back rather than guess.
+	if member_object_id == "":
+		return {}
+	return (
+		playable_unit_runtime_member_index.get(member_object_id.to_lower(), {}) as Dictionary
+	).duplicate(true)
 
 
 func get_playable_unit_runtimes() -> Dictionary:

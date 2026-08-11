@@ -7,7 +7,7 @@ const UserSettingsScript = preload("res://src/ui/user_settings.gd")
 ## is the branch every currently published pack takes. A whole section that
 ## unwinds on a runtime error still prints a green RESULT line, so the row count
 ## is asserted as well as the per-section sentinels below.
-const MINIMUM_EXPECTED_ROWS := 52
+const MINIMUM_EXPECTED_ROWS := 63
 
 var passed := 0
 var failed := 0
@@ -71,9 +71,32 @@ func _run() -> void:
 		passed + failed >= MINIMUM_EXPECTED_ROWS,
 		"rows=%d expected at least %d" % [passed + failed, MINIMUM_EXPECTED_ROWS]
 	)
+	# DRAIN THE DEFERRED FREES BEFORE QUITTING. `queue_free()` destroys on a later
+	# frame, so quitting straight after it leaves every mesh, material and
+	# instance RID allocated - which Godot reports as "RID allocations ... were
+	# leaked at exit", and which this runner's harness step
+	# (tools/gate-m2-focused.ps1) scans stderr for. The rows above are already
+	# counted; these frames only let the tree finish tearing itself down.
+	for _drain_frame in 8:
+		await process_frame
 
 	print("RETAIL_MEMBER_HEALTH_OVERLAY_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
+
+
+func _redraw(overlay) -> void:
+	## A REAL DRAW PASS, NOT A DIRECT `_draw()` CALL.
+	##
+	## Calling `_draw()` by hand raises "Drawing is only allowed inside this
+	## node's `_draw()`" for every draw_rect it performs. The counters still came
+	## out right, so the runner looked green - but this runner's harness step
+	## (tools/gate-m2-focused.ps1, Invoke-ProofChecked) scans stderr for
+	## /ERROR/, so the step could never pass no matter what the RESULT line
+	## said. The overlay queues its own redraw every `_process`, so asking for one
+	## and yielding two frames gets a genuine NOTIFICATION_DRAW.
+	overlay.queue_redraw()
+	await process_frame
+	await process_frame
 
 
 func _check_rank_chevrons() -> void:
@@ -91,7 +114,7 @@ func _check_rank_chevrons() -> void:
 	overlay.configure(null, camera, {"veteran": veteran, "rookie": rookie})
 	await process_frame
 	await process_frame
-	overlay._draw()
+	await _redraw(overlay)
 	_check(
 		"rank_chevrons_track_experience_level",
 		overlay.rendered_chevron_count == 2,
@@ -127,21 +150,21 @@ func _check_selected_only_visibility() -> void:
 	overlay.show_all_health_bars = false
 	await process_frame
 	await process_frame
-	overlay._draw()
+	await _redraw(overlay)
 	_check(
 		"selected_full_health_horde_bars_every_member",
 		overlay.rendered_bar_count == 4,
 		"bars=%d" % overlay.rendered_bar_count
 	)
 	overlay.battalions = {"damaged": unselected_damaged}
-	overlay._draw()
+	await _redraw(overlay)
 	_check(
 		"unselected_damaged_battalion_draws_no_bars",
 		overlay.rendered_bar_count == 0,
 		"bars=%d" % overlay.rendered_bar_count
 	)
 	overlay.show_all_health_bars = true
-	overlay._draw()
+	await _redraw(overlay)
 	_check(
 		"show_all_setting_bars_the_unselected_battalion",
 		overlay.rendered_bar_count == 4,
@@ -191,6 +214,20 @@ const CROSS_UNIT_WIDTH_TOLERANCE := 1.02
 ## looked right, and a spear horde whose bars rendered as overlapping slabs.
 const CONSISTENCY_COMPACT_OBJECT_ID := "bfme2.object.gondor-fighter"
 const CONSISTENCY_LONG_WEAPON_OBJECT_ID := "bfme2.object.gondor-tower-guard"
+## THE DISCRIMINATING UNIT.
+##
+## Fighter and Tower Guard are BOTH authored majorRadius 8.0, so an equal-width
+## assertion over just those two passes even when the authored-geometry lookup is
+## completely broken and every unit falls to the 8.0 default - which is exactly
+## what was happening. Knights of Dol Amroth are authored majorRadius 10.0
+## (gondorknightsofdolhorde.json, `registration.gameplay.geometry`), so their bar
+## MUST come out 10/8 wider. That ratio is unreachable without a working lookup.
+const CONSISTENCY_WIDE_OBJECT_ID := "bfme2.object.gondor-knightsof-dol"
+const AUTHORED_INFANTRY_SOURCE_RADIUS := 8.0
+const AUTHORED_DOL_AMROTH_SOURCE_RADIUS := 10.0
+## Bars may form minor width CLASSES but never a slab: the whole spread across
+## every unit in the game is bounded well under the 2.26x the mesh AABB produced.
+const MAXIMUM_CROSS_CLASS_WIDTH_RATIO := 1.6
 
 
 func _check_member_bar_geometry() -> void:
@@ -440,10 +477,17 @@ func _check_cross_unit_bar_consistency() -> void:
 	## must not draw different-sized health bars.
 	##
 	## Oracle is retail's own `Geometry` authoring, read here out of the mounted
-	## pack rather than assumed: GondorFighter and GondorTowerShieldGuard are both
-	## authored majorRadius 8.0, so retail sizes them identically and so must we.
-	## The Tower Guard carries a long spear and the Fighter does not, which is
-	## exactly the difference the old mesh-AABB width turned into a slab.
+	## pack rather than assumed. Three units, chosen so the section can FAIL in
+	## both directions:
+	##   * GondorFighter and GondorTowerShieldGuard are both authored majorRadius
+	##     8.0, so they must draw IDENTICAL bars. The Tower Guard carries a long
+	##     spear and the Fighter does not, which is the difference the old
+	##     mesh-AABB width turned into a slab (2.26x).
+	##   * GondorKnightsofDol is authored majorRadius 10.0, so it must draw a bar
+	##     10/8 WIDER. Without that row the section was tautological: every unit
+	##     was silently taking the same 8.0 default because the document lookup
+	##     used the member id against a registry keyed by the horde id, so an
+	##     equal-width assertion over two equal-radius units could not fail.
 	var content_db = root.get_node_or_null("ContentDB")
 	if not _check("consistency_content_db_available", content_db != null):
 		return
@@ -452,7 +496,9 @@ func _check_cross_unit_bar_consistency() -> void:
 	var battalion_script = load("res://src/retail_slice/retail_battalion.gd")
 	var samples: Array[Dictionary] = []
 	var battalions: Array = []
-	for object_id in [CONSISTENCY_COMPACT_OBJECT_ID, CONSISTENCY_LONG_WEAPON_OBJECT_ID]:
+	for object_id in [
+		CONSISTENCY_COMPACT_OBJECT_ID, CONSISTENCY_LONG_WEAPON_OBJECT_ID, CONSISTENCY_WIDE_OBJECT_ID
+	]:
 		var definition: Dictionary = content_db.get_bundle_object(object_id)
 		if not _check(
 			"consistency_%s_is_mounted" % object_id,
@@ -504,22 +550,27 @@ func _check_cross_unit_bar_consistency() -> void:
 				"quad_thickness": quad.size.y if quad != null else -1.0,
 				"extent": maxf(bounds.size.x, bounds.size.z),
 			})
-	if not _check("consistency_sampled_both_unit_types", samples.size() >= 6, "%d samples" % samples.size()):
+	if not _check("consistency_sampled_every_unit_type", samples.size() >= 9, "%d samples" % samples.size()):
 		for battalion in battalions:
 			battalion.queue_free()
 		return
-	# The whole point of the section: the two unit types must differ in what they
-	# HOLD and not in what they DRAW. Reported so a reviewer can see both.
+	# The units must differ in what they HOLD and not (beyond their authored
+	# class) in what they DRAW. Reported so a reviewer can see both.
 	var extent_ratio := _extreme_ratio(samples, "extent")
 	print("RETAIL_MEMBER_HEALTH_OVERLAY consistency_member_mesh_extent_ratio=%.4f" % extent_ratio.ratio)
 	_check(
-		"consistency_the_two_units_really_do_differ_in_mesh_extent",
+		"consistency_the_units_really_do_differ_in_mesh_extent",
 		extent_ratio.ratio >= 1.15,
 		"%s vs %s ratio=%.4f - if these are alike this section proves nothing" % [
 			extent_ratio.minimum_detail, extent_ratio.maximum_detail, extent_ratio.ratio
 		]
 	)
-	var width_ratio := _extreme_ratio(samples, "width")
+	# EQUAL-RADIUS PAIR: retail authors both of these 8.0, so they must be equal.
+	# This is the row the mesh-AABB defect failed at 2.26x.
+	var equal_radius_samples: Array[Dictionary] = _samples_for(
+		samples, [CONSISTENCY_COMPACT_OBJECT_ID, CONSISTENCY_LONG_WEAPON_OBJECT_ID]
+	)
+	var width_ratio := _extreme_ratio(equal_radius_samples, "width")
 	print("RETAIL_MEMBER_HEALTH_OVERLAY consistency_bar_width_ratio=%.4f width_min=%.4f width_max=%.4f" % [
 		width_ratio.ratio, width_ratio.minimum, width_ratio.maximum
 	])
@@ -530,6 +581,37 @@ func _check_cross_unit_bar_consistency() -> void:
 			width_ratio.maximum_detail, width_ratio.maximum,
 			width_ratio.minimum_detail, width_ratio.minimum,
 			width_ratio.ratio,
+		]
+	)
+	# THE DISCRIMINATING ROW. Knights of Dol Amroth are authored majorRadius 10.0
+	# against infantry's 8.0, so their bar must be 1.25x. If the authored-geometry
+	# lookup regresses, every unit falls back to the same default and this ratio
+	# collapses to 1.0 - which is precisely how the broken member/horde id lookup
+	# hid for a whole review cycle.
+	var class_infantry_width := _mean_width(samples, CONSISTENCY_COMPACT_OBJECT_ID)
+	var dol_width := _mean_width(samples, CONSISTENCY_WIDE_OBJECT_ID)
+	var expected_class_ratio := AUTHORED_DOL_AMROTH_SOURCE_RADIUS / AUTHORED_INFANTRY_SOURCE_RADIUS
+	var observed_class_ratio := (dol_width / class_infantry_width) if class_infantry_width > 0.0 else -1.0
+	print("RETAIL_MEMBER_HEALTH_OVERLAY consistency_class_ratio observed=%.4f expected=%.4f infantry=%.4f dol=%.4f" % [
+		observed_class_ratio, expected_class_ratio, class_infantry_width, dol_width
+	])
+	_check(
+		"the_authored_geometry_radius_actually_drives_the_bar_width",
+		absf(observed_class_ratio - expected_class_ratio) <= 0.02 * expected_class_ratio,
+		"Dol Amroth authors majorRadius %.1f against infantry %.1f, so the bar must be %.4fx; measured %.4fx (infantry=%.4f dol=%.4f)" % [
+			AUTHORED_DOL_AMROTH_SOURCE_RADIUS, AUTHORED_INFANTRY_SOURCE_RADIUS,
+			expected_class_ratio, observed_class_ratio, class_infantry_width, dol_width,
+		]
+	)
+	# Classes are allowed, slabs are not.
+	var overall_ratio := _extreme_ratio(samples, "width")
+	_check(
+		"the_whole_width_spread_stays_a_class_not_a_slab",
+		overall_ratio.ratio <= MAXIMUM_CROSS_CLASS_WIDTH_RATIO,
+		"widest %s = %.4f, narrowest %s = %.4f, ratio=%.4f" % [
+			overall_ratio.maximum_detail, overall_ratio.maximum,
+			overall_ratio.minimum_detail, overall_ratio.minimum,
+			overall_ratio.ratio,
 		]
 	)
 	# Thickness is only a world-quad property (the parity overlay draws a fixed
@@ -599,9 +681,34 @@ func _check_cross_unit_bar_consistency() -> void:
 	# retail's authored infantry default. Either way the bars must be uniform, but
 	# the log has to say which happened.
 	for battalion in battalions:
+		var bar_source := str(battalion.get("member_health_bar_source"))
 		print("RETAIL_MEMBER_HEALTH_OVERLAY consistency_bar_source[%s]=%s" % [
-			str(battalion.object_id), str(battalion.get("member_health_bar_source"))
+			str(battalion.object_id), bar_source
 		])
+		# TELEMETRY IS ASSERTED, NOT JUST PRINTED. Both units whose bundle object
+		# records a `sourceObjectId` must reach their compiled document; a
+		# regression in the member->document lookup shows up here as
+		# "retail-infantry-default" even before it moves a width.
+		if String(battalion.object_id) != CONSISTENCY_LONG_WEAPON_OBJECT_ID:
+			_check(
+				"bar_width_comes_from_compiled_geometry_%s" % str(battalion.object_id),
+				bar_source == "compiled-geometry",
+				bar_source
+			)
+		else:
+			# NAMED GAP, NOT A SILENT SKIP. This bundle object comes from a pack's
+			# static objects.json, which records no `sourceObjectId`, so nothing can
+			# reach its playable-unit document and it takes retail's authored
+			# infantry default 8.0. That happens to equal what retail authors for
+			# GondorTowerShieldGuard, so its bar is right by luck, not by lookup.
+			# Asserted as the gap it is: if a republish ever gives this object a
+			# source id, this row flips and the exclusion above should be removed.
+			_check(
+				"tower_guard_is_still_the_known_sourceless_bundle_gap",
+				bar_source == "retail-infantry-default"
+					and String(content_db.get_bundle_object(String(battalion.object_id)).get("sourceObjectId", "")) == "",
+				bar_source
+			)
 		battalion.queue_free()
 	await process_frame
 	_consistency_section_completed = true
@@ -619,6 +726,24 @@ class _ExtremeRatio:
 			if not is_finite(minimum) or minimum <= 0.0 or not is_finite(maximum):
 				return INF
 			return maximum / minimum
+
+
+func _samples_for(samples: Array[Dictionary], object_ids: Array) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for sample in samples:
+		if object_ids.has(String(sample.get("object_id", ""))):
+			out.append(sample)
+	return out
+
+
+func _mean_width(samples: Array[Dictionary], object_id: String) -> float:
+	## Mean rather than first, so one stray member cannot carry the class ratio.
+	var total := 0.0
+	var count := 0
+	for sample in _samples_for(samples, [object_id]):
+		total += float(sample.get("width", 0.0))
+		count += 1
+	return (total / float(count)) if count > 0 else 0.0
 
 
 func _extreme_ratio(samples: Array[Dictionary], key: String) -> _ExtremeRatio:

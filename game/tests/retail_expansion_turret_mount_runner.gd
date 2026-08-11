@@ -32,8 +32,17 @@ const SHELL_GEOMETRY_HEIGHT := 50.0
 ## Fords of Isen map transform (RETAIL_RENDER_CAMERA local_transform_scale).
 const FORDS_TRANSFORM_SCALE := 0.02649232738129
 
+## The converted engine visuals the mounted packs still do not carry. Retail arms
+## both Men trebuchet towers with MenTrebuchetFortress and neither the active nor
+## any supplemental pack converts it, so the tower renders bare however correct
+## the mount offset is. EMPTY THIS LIST when the importer ships the visual.
+const EXPECTED_MISSING_TURRET_VISUALS: Array[String] = [
+	"bfme2.object.men-trebuchet-fortress",
+]
+
 var passed := 0
 var failed := 0
+var missing_turret_visuals: Array[String] = []
 var _pack_section_completed := false
 
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
@@ -184,6 +193,8 @@ func _check_mounted_pack() -> void:
 			])
 			if bundle.is_empty():
 				print("RETAIL_EXPANSION_TURRET_MOUNT PACK_GAP %s: no converted visual for '%s'" % [object_id, runtime_id])
+				if not missing_turret_visuals.has(runtime_id):
+					missing_turret_visuals.append(runtime_id)
 		# NAMED PACK GAP, NOT A PASS. Retail arms this tower with an engine
 		# (ThingToSpawn = MenTrebuchetFortress). The mounted pack carries no
 		# compiled `combat.spawnedObjectId`, so the slice has nothing to mount and
@@ -195,6 +206,22 @@ func _check_mounted_pack() -> void:
 			print("RETAIL_EXPANSION_TURRET_MOUNT PACK_GAP %s: authored turret, no compiled combat.spawnedObjectId" % object_id)
 		checked += 1
 	_check("pack_offsets_were_read_for_both_expansions", checked == expected.size(), "%d of %d" % [checked, expected.size()])
+	# THE GAP IS ASSERTED, NOT JUST PRINTED.
+	#
+	# A bare print cannot fail, so a future republish that DROPPED a converted
+	# engine visual would be silent here - and so would the happy case where the
+	# importer finally ships one. Pinning the exact set turns both directions
+	# red: ship the engine and this row fails until EXPECTED_MISSING_TURRET_
+	# VISUALS is emptied (and the offset assertions above become live); lose
+	# another visual and it fails immediately.
+	missing_turret_visuals.sort()
+	var expected_missing := EXPECTED_MISSING_TURRET_VISUALS.duplicate()
+	expected_missing.sort()
+	_check(
+		"the_missing_turret_visual_set_is_exactly_the_known_pack_gap",
+		missing_turret_visuals == expected_missing,
+		"observed %s, expected %s" % [str(missing_turret_visuals), str(expected_missing)]
+	)
 	_pack_section_completed = true
 
 

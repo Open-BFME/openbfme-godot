@@ -17,21 +17,16 @@ $focusedRunners = [ordered]@{
     'bound_props_runtime' = @('retail_bound_props_runner.gd', '(?m)^RETAIL_BOUND_PROPS_RESULT passed=30 failed=0\s*$')
     'builder_construction_runtime' = @('retail_builder_construction_runner.gd', '(?m)^RETAIL_BUILDER_CONSTRUCTION_RESULT passed=12 failed=0\s*$')
     'environment_runtime' = @('retail_environment_runner.gd', '(?m)^RETAIL_ENVIRONMENT_RESULT passed=33 failed=0\s*$')
-    # Re-pinned 105/0 -> 138/7. This runner used to CRASH at its SimScript.new()
-    # call site, unwind past quit(), and get killed by the watchdog at 1200s - and
-    # the process still exited 0, so the pin above could never match and the gate
-    # was silently rotten. The crash is fixed, so the runner now reaches its end
-    # and the pin reflects what it actually emits. The seven failures are all
-    # PRE-EXISTING - identical on a `git checkout d5bc2d1 -- game/src` tree with
-    # this same runner file - and are pinned as a ratchet so an eighth is RED:
-    #   trebuchet_swing_routes_launch_voice
-    #   farm_damaged_band_plays_doc_wood_exactly_once
-    #   farm_really_damaged_band_plays_doc_heavy_wood
-    #   elves_pack_mounted_for_audio
-    #   elves_pack_ships_v1_audio_registry
-    #   eva_side_map_resolves_from_mounted_packs
-    #   men_eva_overlay_ships_side_map
-    # They are open pack/registry gaps, not licence to add more.
+    # Re-pinned 105/0 -> 138/7, and the runner now exits 0 on its declared
+    # ratchet. CORRECTION to this lane's first attempt, which asserted the runner
+    # crashed and hung: it does not. Measured on a pre-lane tree (c883b48, its own
+    # runner and its own game/src) it completes in 17s at 138/7 and exits 1. The
+    # 105/0 pin was simply STALE, and because Invoke-ProofChecked fails any
+    # nonzero exit, this step was unpassable no matter what the pin said.
+    # The seven failures are open pack/registry gaps that predate the lane and are
+    # now pinned BY NAME inside the runner (EXPECTED_FAILURES), so an eighth
+    # failure is red AND a name silently dropping off is red. See the runner for
+    # the list.
     'four_unit_audio' = @('retail_four_unit_audio_runner.gd', '(?m)^RETAIL_FOUR_UNIT_AUDIO_RESULT passed=138 failed=7 missing=0\s*$')
     # Owner playtest report D ("attack sounds still sound awful"): the per-hit
     # layer must stay silent-with-a-counted-DamageFX-gap instead of firing the
@@ -43,7 +38,7 @@ $focusedRunners = [ordered]@{
     # back out of the compiled pack, and the source-to-local mapping that lifts
     # the engine onto the tower deck. Also prints the PACK_GAP line for the
     # engine visual the packs still do not carry.
-    'expansion_turret_mount' = @('retail_expansion_turret_mount_runner.gd', '(?m)^RETAIL_EXPANSION_TURRET_MOUNT_RESULT passed=16 failed=0\s*$')
+    'expansion_turret_mount' = @('retail_expansion_turret_mount_runner.gd', '(?m)^RETAIL_EXPANSION_TURRET_MOUNT_RESULT passed=17 failed=0\s*$')
     'four_unit_hud' = @('retail_four_unit_hud_runner.gd', '(?m)^RETAIL_FOUR_UNIT_HUD_RESULT passed=134 failed=0\s*$')
     'full_terrain_runtime' = @('retail_full_terrain_runner.gd', '(?m)^RETAIL_FULL_TERRAIN_RESULT passed=29 failed=0\s*$')
     # Owner playtest report B ("the mounted horse unit swap for heroes doesn't
@@ -60,10 +55,10 @@ $focusedRunners = [ordered]@{
     # Pinned 13 while the runner emitted 15 on clean main - pre-existing gate rot,
     # red before this lane touched anything. Re-pinned to 40 because this lane
     # rewrote the runner and owning a runner means owning its pin.
-    # Re-pinned 40 -> 59: this lane added the cross-unit bar-consistency section
+    # Re-pinned 40 -> 68: this lane added the cross-unit bar-consistency section
     # (the owner's "inconsistent health bar sizes" defect) and owning a runner
     # means owning its pin.
-    'member_health_overlay_runtime' = @('retail_member_health_overlay_runner.gd', '(?m)^RETAIL_MEMBER_HEALTH_OVERLAY_RESULT passed=59 failed=0\s*$')
+    'member_health_overlay_runtime' = @('retail_member_health_overlay_runner.gd', '(?m)^RETAIL_MEMBER_HEALTH_OVERLAY_RESULT passed=68 failed=0\s*$')
     'selection_decal_runtime' = @('retail_selection_decal_runner.gd', '(?m)^RETAIL_SELECTION_DECAL_RESULT passed=15 failed=0\s*$')
     'neutral_lifecycle_runtime' = @('retail_neutral_lifecycle_runner.gd', '(?m)^RETAIL_NEUTRAL_LIFECYCLE_RESULT passed=51 failed=0\s*$')
     'particle_runtime' = @('retail_particle_runtime_runner.gd', '(?m)^RETAIL_PARTICLE_RUNTIME_RESULT passed=17 failed=0\s*$')
