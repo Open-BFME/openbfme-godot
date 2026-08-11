@@ -28,6 +28,16 @@ const SOURCE_HEALTH_GEOMETRY_HEIGHT := {
 	"bfme2.object.gondor-ranger": 19.2,
 }
 const SOURCE_HEALTH_HEIGHT_OFFSET := 10.0
+## World-unit clearance between a member's measured visual top and its health
+## bar. Matches the structure presenter's roof gap (retail_structure.gd
+## HEALTH_BAR_ROOF_GAP) so units and buildings float their bars alike.
+const HEALTH_BAR_HEAD_GAP := 0.12
+## Proportions of the legal-safe world-space member bar, preserved exactly from
+## the authored 0.58 x 0.065 back and 0.54 x 0.042 fill so only its size and
+## anchor become member-relative.
+const BAR_BACK_ASPECT := 0.065 / 0.58
+const BAR_FILL_WIDTH_RATIO := 0.54 / 0.58
+const BAR_FILL_ASPECT := 0.042 / 0.58
 const ArcherProjectileControllerScript = preload("res://src/retail_slice/retail_archer_projectile_controller.gd")
 const SelectionDecalScript = preload("res://src/retail_slice/retail_selection_decal.gd")
 const PackCapability = preload("res://src/content/pack_capability.gd")
@@ -75,6 +85,17 @@ var member_health_backs: Dictionary = {}
 var member_health_fills: Dictionary = {}
 var member_health_ratios: Dictionary = {}
 var member_health_anchor_heights: Dictionary = {}
+## Half the measured horizontal extent of each member's visual, in world units.
+## The screen-space health overlay bounds its bar to the member it belongs to
+## instead of drawing one fixed-pixel slab per soldier.
+var member_health_half_widths: Dictionary = {}
+## World-space member bar geometry for the legal-safe (non-parity) presenter:
+## the quad's width and its anchor height above the member's own origin.
+var member_health_bar_widths: Dictionary = {}
+var member_health_bar_heights: Dictionary = {}
+## How each member's anchor height was obtained. "measured-visual-bounds" when
+## the member's own geometry produced it; the fallback names say so.
+var member_health_anchor_source := "unmeasured"
 var experience_level := 1
 var banner_carrier_visual: Node3D
 var banner_carrier_object_id := ""
@@ -293,7 +314,31 @@ func _build_members(expected_members: int, formation_positions: Array) -> void:
 		member_count += 1
 		member_visuals[member_index] = visual
 		member_health_ratios[member_index] = 1.0
-		member_health_anchor_heights[member_index] = shared_health_anchor_height
+		# THE BAR RIDES THE MODEL, NOT A TABLE.
+		#
+		# The old anchor was `(SOURCE_HEALTH_GEOMETRY_HEIGHT + 10) * scale` above
+		# the member's ORIGIN: for a Gondor fighter that is 2.92 world units over
+		# a soldier the same table says is 1.92 tall, so every bar floated half a
+		# body height over its owner's head (owner-visible "slabs above units").
+		# The structure presenter had the same class of bug and was fixed by
+		# measuring the transformed model instead (retail_structure.gd
+		# `_sync_health_bar_geometry`, `_visual_top_y + HEALTH_BAR_ROOF_GAP`).
+		# Members are measured the same way, and the table survives only as the
+		# fallback for geometry that cannot be measured.
+		var measured := _measure_member_bounds(visual)
+		if measured.size.y > 0.0:
+			member_health_anchor_heights[member_index] = measured.end.y + HEALTH_BAR_HEAD_GAP
+			member_health_half_widths[member_index] = maxf(measured.size.x, measured.size.z) * 0.5
+			member_health_anchor_source = "measured-visual-bounds"
+		else:
+			member_health_anchor_heights[member_index] = shared_health_anchor_height
+			member_health_half_widths[member_index] = 0.0
+			if member_health_anchor_source != "measured-visual-bounds":
+				member_health_anchor_source = (
+					"source-geometry-table"
+					if _source_unit_scale > 0.0
+					else "unscaled-default"
+				)
 		# Retail contact shadow: SAGE draws infantry shadows as dark decals at
 		# shadow color ARGB(64,0,0,0); the blob decal is the approved
 		# equivalence and travels/frees with the member visual.
@@ -306,7 +351,7 @@ func _build_members(expected_members: int, formation_positions: Array) -> void:
 		if private_parity_mode_active:
 			member_overlay_status = "source-health-canvas-bound-selection-decal-contract-pending"
 		else:
-			_build_member_overlay(member_index, visual.position)
+			_build_member_overlay(member_index, visual.position, measured)
 			member_overlay_status = "legal-safe-gameplay-overlay"
 		if (
 			bool(visual.get_meta("authored", false))
@@ -323,6 +368,30 @@ func _build_members(expected_members: int, formation_positions: Array) -> void:
 			team_color_status = String(visual.get_meta("team_color_status", ""))
 		member_animation_players[member_index] = []
 		_collect_animation_players(visual, member_index)
+
+
+func _measure_member_bounds(visual: Node3D) -> AABB:
+	## The member's drawn extent in ITS OWN space, walked with local transforms so
+	## the measurement is valid before the battalion enters the scene tree (the
+	## slice configures battalions off-tree). Returns a zero AABB when the member
+	## carries no mesh yet, which is the caller's signal to fall back.
+	var bounds := AABB()
+	var measured := false
+	var pending: Array = [[visual, Transform3D.IDENTITY]]
+	while not pending.is_empty():
+		var entry: Array = pending.pop_back()
+		var node := entry[0] as Node
+		var to_visual := entry[1] as Transform3D
+		if node is MeshInstance3D and (node as MeshInstance3D).mesh != null:
+			var mesh_bounds := to_visual * (node as MeshInstance3D).get_aabb()
+			bounds = bounds.merge(mesh_bounds) if measured else mesh_bounds
+			measured = true
+		for child_value in node.get_children():
+			if child_value is Node3D:
+				pending.append([child_value, to_visual * (child_value as Node3D).transform])
+			elif child_value is Node:
+				pending.append([child_value, to_visual])
+	return bounds if measured else AABB()
 
 
 func _resolve_selection_radius() -> void:
@@ -406,7 +475,7 @@ func _member_source_geometry_radius() -> float:
 	return SelectionPick.DEFAULT_MEMBER_SOURCE_RADIUS
 
 
-func _build_member_overlay(member_index: int, member_position: Vector3) -> void:
+func _build_member_overlay(member_index: int, member_position: Vector3, measured_bounds: AABB = AABB()) -> void:
 	# These are gameplay overlays rather than claimed retail art. Their scale is
 	# matched to the source member radius; final texture/color parity remains an
 	# oracle styling gate.
@@ -430,12 +499,27 @@ func _build_member_overlay(member_index: int, member_position: Vector3) -> void:
 	add_child(selection_ring)
 	member_selection_rings[member_index] = selection_ring
 
+	# THE BAR IS THE SOLDIER'S OWN WIDTH, JUST OVER HIS HEAD.
+	#
+	# It used to be a fixed 0.58x0.065 quad parked at a fixed y=1.45 above the
+	# member's authored formation slot. On the shipped packs that put a bar 45%
+	# of a body height ABOVE the head of every soldier, at a width that had
+	# nothing to do with him - the owner-visible "slabs floating above units".
+	# Both numbers now come from the member's measured geometry, in the same
+	# footprint-bounded, measured-roof shape as the structure presenter.
+	var bar_width := 0.58
+	var bar_anchor_height := 1.45
+	if measured_bounds.size.y > 0.0:
+		bar_width = maxf(maxf(measured_bounds.size.x, measured_bounds.size.z), 0.2)
+		bar_anchor_height = measured_bounds.end.y + HEALTH_BAR_HEAD_GAP
+	member_health_bar_widths[member_index] = bar_width
+	member_health_bar_heights[member_index] = bar_anchor_height
 	var health_back := MeshInstance3D.new()
 	health_back.name = "MemberHealthBack_%02d" % member_index
 	var back_quad := QuadMesh.new()
-	back_quad.size = Vector2(0.58, 0.065)
+	back_quad.size = Vector2(bar_width, bar_width * BAR_BACK_ASPECT)
 	health_back.mesh = back_quad
-	health_back.position = member_position + Vector3(0.0, 1.45, 0.0)
+	health_back.position = member_position + Vector3(0.0, bar_anchor_height, 0.0)
 	var back_material := StandardMaterial3D.new()
 	back_material.albedo_color = Color(0.025, 0.035, 0.04, 0.94)
 	back_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -450,9 +534,9 @@ func _build_member_overlay(member_index: int, member_position: Vector3) -> void:
 	var health_fill := MeshInstance3D.new()
 	health_fill.name = "MemberHealthFill_%02d" % member_index
 	var fill_quad := QuadMesh.new()
-	fill_quad.size = Vector2(0.54, 0.042)
+	fill_quad.size = Vector2(bar_width * BAR_FILL_WIDTH_RATIO, bar_width * BAR_FILL_ASPECT)
 	health_fill.mesh = fill_quad
-	health_fill.position = member_position + Vector3(0.0, 1.45, -0.01)
+	health_fill.position = member_position + Vector3(0.0, bar_anchor_height, -0.01)
 	var fill_material := StandardMaterial3D.new()
 	fill_material.albedo_color = Color(0.18, 0.86, 0.24, 0.98)
 	fill_material.emission_enabled = true
@@ -885,16 +969,29 @@ func _refresh_member_overlays() -> void:
 			ring.visible = overlay_detail_allowed and visual_is_emerged(member_index) and living and selected
 		var emerged := visual_is_emerged(member_index)
 		var show_health := overlay_detail_allowed and emerged and living and (selected or ratio < 0.999)
+		var member_visual: Node3D = member_visuals.get(member_index)
+		# The bar TRAVELS WITH ITS SOLDIER. Only `fill.position.x` used to track
+		# the member, so a battalion that had walked or wheeled left every bar
+		# hanging over the authored formation slot the member had long left.
+		var anchor := Vector3.ZERO
+		if member_visual != null:
+			anchor = member_visual.position + Vector3(
+				0.0, float(member_health_bar_heights.get(member_index, 1.45)), 0.0
+			)
 		var back: MeshInstance3D = member_health_backs.get(member_index)
 		if back != null:
 			back.visible = show_health
+			if member_visual != null:
+				back.position = anchor
 		var fill: MeshInstance3D = member_health_fills.get(member_index)
 		if fill != null:
 			fill.visible = show_health
 			fill.scale.x = maxf(0.001, ratio)
-			var member_visual: Node3D = member_visuals.get(member_index)
 			if member_visual != null:
-				fill.position.x = member_visual.position.x + (ratio - 1.0) * 0.27
+				# A left-anchored drain: the quad shrinks around its centre, so it
+				# slides left by half of what it lost.
+				var fill_half_width := float(member_health_bar_widths.get(member_index, 0.58)) * BAR_FILL_WIDTH_RATIO * 0.5
+				fill.position = anchor + Vector3((ratio - 1.0) * fill_half_width, 0.0, -0.01)
 
 
 func member_overlay_node_count() -> int:
@@ -918,9 +1015,23 @@ func member_health_overlay_rows() -> Array[Dictionary]:
 			"member_index": member_index,
 			"health_ratio": ratio,
 			"world_position": visual.global_position + Vector3.UP * float(member_health_anchor_heights.get(member_index, 1.8)),
+			# Bounds the drawn bar to the soldier it belongs to. Zero means the
+			# member could not be measured and the overlay keeps its source width.
+			"half_width": float(member_health_half_widths.get(member_index, 0.0)),
 			"experience_level": experience_level,
 		})
 	return rows
+
+
+func has_damaged_member() -> bool:
+	## Retail draws a unit's health bar when it is selected or hurt - the same
+	## rule the structure presenter uses. Allocation-free so the per-frame overlay
+	## can gate whole battalions on it.
+	for ratio_value in member_health_ratios.values():
+		var ratio := float(ratio_value)
+		if ratio > 0.0 and ratio < 0.999:
+			return true
+	return false
 
 
 func set_experience_level(level: int) -> void:

@@ -512,6 +512,8 @@ func _run() -> void:
 					slice.camera.unproject_position(member_zero.global_position),
 					"true" if member_zero.is_visible_in_tree() else "false",
 				])
+	if OS.get_environment("OPENBFME_CAPTURE_UNIT_BAR_DIAGNOSTICS") == "1":
+		_print_unit_bar_diagnostics(slice)
 	var image := root.get_texture().get_image()
 	if image == null or image.is_empty() or image.get_width() != viewport_size.x or image.get_height() != viewport_size.y:
 		_fail("rendered viewport capture has dimensions %dx%d instead of %dx%d" % [image.get_width() if image != null else -1, image.get_height() if image != null else -1, viewport_size.x, viewport_size.y])
@@ -576,6 +578,137 @@ func _run() -> void:
 	slice.queue_free()
 	await process_frame
 	quit(0)
+
+
+func _print_unit_bar_diagnostics(slice: Node) -> void:
+	## Screen-space truth about the unit health bars in the frame that is about to
+	## be saved: where each member is drawn, and where his bar is drawn. Both
+	## presenters are covered - the screen-space overlay used by retail-parity
+	## packs and the world-space billboard quads used by every other pack.
+	var camera: Camera3D = slice.camera
+	var overlay_rows: Dictionary = {}
+	var overlay = slice.member_health_overlay
+	# Tolerant of an overlay build that predates the debug mirror: a missing
+	# property must not unwind this whole diagnostic block silently.
+	if overlay != null and is_instance_valid(overlay) and "collect_debug_regions" in overlay:
+		overlay.collect_debug_regions = true
+		overlay._draw()
+		for row_value in overlay.debug_bar_regions:
+			var row: Dictionary = row_value
+			overlay_rows["%s|%d" % [String(row.get("battalion", "")), int(row.get("member_index", -1))]] = row
+		print("RETAIL_RENDER_UNIT_BAR_OVERLAY rows=%d" % overlay.debug_bar_regions.size())
+	var ids: Array = slice.battalion_nodes.keys()
+	ids.sort()
+	for id_value in ids.slice(0, mini(3, ids.size())):
+		var battalion: Node3D = slice.battalion_nodes[id_value] as Node3D
+		var member_visuals: Dictionary = battalion.get("member_visuals") as Dictionary
+		var member_indices: Array = member_visuals.keys()
+		member_indices.sort()
+		print("RETAIL_RENDER_UNIT_BAR_BATTALION id=%s object=%s team=%s parity=%s selected=%s members=%d status=%s anchor_source=%s" % [
+			str(id_value),
+			String(battalion.get("object_id")),
+			str(battalion.get("team")),
+			str(battalion.get("private_parity_mode_active")),
+			str(battalion.get("selected")),
+			member_indices.size(),
+			String(battalion.get("member_overlay_status")),
+			str(battalion.get("member_health_anchor_source")),
+		])
+		for member_index_value in member_indices.slice(0, mini(2, member_indices.size())):
+			var member_index := int(member_index_value)
+			var visual: Node3D = member_visuals[member_index] as Node3D
+			var member_rect := _screen_rect_of_bounds(camera, _world_bounds_of(visual))
+			var bar_rect := Rect2()
+			var bar_source := "none"
+			var backs: Dictionary = battalion.get("member_health_backs") as Dictionary
+			var back: MeshInstance3D = backs.get(member_index) as MeshInstance3D
+			if back != null and is_instance_valid(back):
+				bar_source = "world-quad visible=%s" % str(back.visible)
+				bar_rect = _screen_rect_of_billboard(camera, back)
+			var overlay_key := "%s|%d" % [battalion.name, member_index]
+			if overlay_rows.has(overlay_key):
+				bar_source = "screen-overlay"
+				bar_rect = (overlay_rows[overlay_key] as Dictionary).get("region", Rect2()) as Rect2
+			# The member's screen rectangle is the hull of eight AABB corners, so its
+			# top edge belongs to whichever corner perspective throws highest. The
+			# fair comparison for a bar drawn at the model's centre line is the
+			# projected APEX: the centre of the top face.
+			var member_bounds := _world_bounds_of(visual)
+			var apex_y := -1.0
+			if member_bounds.size.y > 0.0:
+				var apex := member_bounds.get_center()
+				apex.y = member_bounds.end.y
+				if not camera.is_position_behind(apex):
+					apex_y = camera.unproject_position(apex).y
+			print("RETAIL_RENDER_UNIT_BAR member=%d member_screen=%s member_apex_y=%.1f bar_source=%s bar_screen=%s width_ratio=%.2f gap_above_apex_px=%.1f" % [
+				member_index,
+				str(member_rect),
+				apex_y,
+				bar_source,
+				str(bar_rect),
+				(bar_rect.size.x / member_rect.size.x) if member_rect.size.x > 0.0 else -1.0,
+				(apex_y - bar_rect.end.y) if apex_y >= 0.0 else NAN,
+			])
+
+
+func _world_bounds_of(node: Node3D) -> AABB:
+	var bounds := AABB()
+	var measured := false
+	var pending: Array[Node] = [node]
+	while not pending.is_empty():
+		var current: Node = pending.pop_back()
+		if current is MeshInstance3D and (current as MeshInstance3D).mesh != null:
+			var mesh_instance := current as MeshInstance3D
+			var mesh_bounds := mesh_instance.global_transform * mesh_instance.get_aabb()
+			bounds = bounds.merge(mesh_bounds) if measured else mesh_bounds
+			measured = true
+		for child in current.get_children():
+			if child is Node:
+				pending.append(child as Node)
+	return bounds if measured else AABB()
+
+
+func _screen_rect_of_bounds(camera: Camera3D, bounds: AABB) -> Rect2:
+	if bounds.size == Vector3.ZERO:
+		return Rect2()
+	var points: Array[Vector2] = []
+	for corner in 8:
+		var world: Vector3 = bounds.get_endpoint(corner)
+		if camera.is_position_behind(world):
+			return Rect2()
+		points.append(camera.unproject_position(world))
+	return _bounding_rect(points)
+
+
+func _screen_rect_of_billboard(camera: Camera3D, sprite: MeshInstance3D) -> Rect2:
+	## A billboarded quad always faces the camera, so its screen footprint is the
+	## quad's own size laid on the camera's right/up axes at the quad's origin.
+	var quad := sprite.mesh as QuadMesh
+	if quad == null:
+		return _screen_rect_of_bounds(camera, sprite.global_transform * sprite.get_aabb())
+	var scale := sprite.global_transform.basis.get_scale()
+	var half_x := quad.size.x * 0.5 * scale.x
+	var half_y := quad.size.y * 0.5 * scale.y
+	var right := camera.global_transform.basis.x.normalized()
+	var up := camera.global_transform.basis.y.normalized()
+	var center := sprite.global_position
+	var points: Array[Vector2] = []
+	for sign_x: float in [-1.0, 1.0]:
+		for sign_y: float in [-1.0, 1.0]:
+			var world: Vector3 = center + right * (half_x * sign_x) + up * (half_y * sign_y)
+			if camera.is_position_behind(world):
+				return Rect2()
+			points.append(camera.unproject_position(world))
+	return _bounding_rect(points)
+
+
+func _bounding_rect(points: Array[Vector2]) -> Rect2:
+	if points.is_empty():
+		return Rect2()
+	var rect := Rect2(points[0], Vector2.ZERO)
+	for index in range(1, points.size()):
+		rect = rect.expand(points[index])
+	return rect
 
 
 func _pose_attack_pair(slice: Node, pair_text: String) -> bool:

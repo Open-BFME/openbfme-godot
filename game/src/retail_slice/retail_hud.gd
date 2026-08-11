@@ -142,6 +142,19 @@ const RETAIL_COMMAND_SLOT_SOURCE := [
 	Vector2(315, 231), Vector2(268, 291), Vector2(148, 296),
 ]
 const RETAIL_COMMAND_SLOT_SIZE := Vector2(64, 64)
+# THE QUEUE CHIPS SIT BESIDE THE DISH, NOT UNDER THE SOCKETS.
+#
+# They used to run left-to-right at panel-local (60 + 40*i, 318). The sixth
+# authored command socket is at (148, 296) and is 64px tall, so a fortress that
+# was training anything drew chips 2 and 3 straight through it - 28x36 px of an
+# opaque 36px icon over a live command button (retail_radial_layout_runner).
+# The authored sockets are retail geometry and cannot move, so the chips do:
+# a column in the panel's unused right margin, clear of every socket, of the
+# palantir dish (centre 227,219 radius 118) and of every expanded radial arc
+# position from six to twelve entries. The gate holds that claim.
+const RETAIL_QUEUE_CHIP_ORIGIN := Vector2(432, 56)
+const RETAIL_QUEUE_CHIP_SIZE := Vector2(36, 36)
+const RETAIL_QUEUE_CHIP_PITCH := 40.0
 const RETAIL_POWER_IMAGE_IDS := [
 	"SBGood_RallyingCall", "SBGood_Heal", "SBGood_MenLoneTower", "SBGood_ElvenWood",
 	"SBGood_ArrowVolley", "SBGood_TomBombadil", "SBGood_SummonHobbits", "SBGood_SummonDunedain",
@@ -1760,10 +1773,8 @@ func _ensure_production_queue_chips() -> void:
 	for index in 5:
 		var queue_button := Button.new()
 		queue_button.name = "QueueSlot%d" % index
-		# 318 keeps the 36px chip inside the 360px frame panel (344 ran 20px off
-		# the screen bottom, hiding the training dial entirely).
-		queue_button.position = Vector2(60 + index * 40, 318)
-		queue_button.size = Vector2(36, 36)
+		queue_button.position = RETAIL_QUEUE_CHIP_ORIGIN + Vector2(0.0, float(index) * RETAIL_QUEUE_CHIP_PITCH)
+		queue_button.size = RETAIL_QUEUE_CHIP_SIZE
 		for state in ["normal", "hover", "pressed", "disabled", "focus"]:
 			queue_button.add_theme_stylebox_override(state, StyleBoxEmpty.new())
 		queue_button.expand_icon = true

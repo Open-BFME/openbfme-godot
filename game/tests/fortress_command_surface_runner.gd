@@ -464,6 +464,73 @@ func _check_fortress_radial_pages(slice, sim, hud, fortress: int) -> void:
 	# Leave the wheel where a player would find it.
 	hud.set_radial_page(RADIAL_PAGE_MAIN)
 
+	# --- Section 7: the wheel with a LIVE production queue --------------------
+	#
+	# Every earlier radial check ran against an idle fortress, so the five
+	# production queue chips were hidden and never took part in the overlap
+	# assertions. They were authored under the palantir at panel-local
+	# (60 + 40*i, 318) and the sixth retail command socket is at (148, 296),
+	# 64px tall - a fortress that was training anything drew opaque chips through
+	# a live command button. Queue real work and re-run the same gate.
+	await _check_radial_with_a_live_queue(slice, hud, fortress)
+
+
+func _check_radial_with_a_live_queue(slice, hud, fortress: int) -> void:
+	var sim = slice.simulation
+	slice._grant_test_resources()
+	var producer := fortress
+	var queued := 0
+	for production_value in Array(sim.structure(fortress).get("production", [])):
+		var result: Dictionary = sim.queue_unit(0, fortress, String(production_value))
+		if bool(result.get("ok", false)):
+			queued += 1
+		if queued >= 2:
+			break
+	if queued == 0:
+		# Any producing structure exercises the same chip surface.
+		for structure_id in sim.structure_ids():
+			var row: Dictionary = sim.structure(structure_id)
+			if int(row.get("team", -1)) != 0 or int(row.get("health", 0)) <= 0:
+				continue
+			for production_value in Array(row.get("production", [])):
+				var result: Dictionary = sim.queue_unit(0, structure_id, String(production_value))
+				if bool(result.get("ok", false)):
+					producer = structure_id
+					queued += 1
+				if queued >= 2:
+					break
+			if queued > 0:
+				break
+	if not _check(
+		"%s_a_production_queue_can_be_populated" % _faction,
+		queued > 0,
+		"no player structure accepted a training order, so the chip surface is untested"
+	):
+		return
+	sim.advance(5)
+	slice.selected_structure_id = producer
+	slice._sync_presentation()
+	slice._refresh_hud()
+	for _frame in range(4):
+		await process_frame
+	var visible_chips := 0
+	for chip_value in hud.production_queue_buttons:
+		if (chip_value as Button).is_visible_in_tree():
+			visible_chips += 1
+	print("FORTRESS_COMMAND_SURFACE queue producer=%d queued=%d visible_chips=%d chip0=%s" % [
+		producer, queued, visible_chips,
+		str((hud.production_queue_buttons[0] as Button).get_global_rect()) if not hud.production_queue_buttons.is_empty() else "<none>",
+	])
+	if not _check(
+		"%s_production_chips_are_visible_while_training" % _faction,
+		visible_chips > 0,
+		"the queue was populated but no chip rendered, so the overlap gate below proves nothing"
+	):
+		return
+	# The chips are inside the command panel, so the existing wheel gate now
+	# includes them in its socket-intersection and containment assertions.
+	_check_radial_is_in_the_palantir_wheel(hud, "%s+queue" % RADIAL_PAGE_MAIN)
+
 
 func _radial_entries_for_page(hud, page: String) -> Array:
 	hud.set_radial_page(page)
