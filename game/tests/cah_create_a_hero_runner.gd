@@ -27,6 +27,12 @@ const ProfileSandboxScript := preload("res://tests/cah_profile_sandbox.gd")
 ## store, never in the player's - see tests/cah_profile_sandbox.gd.
 var _profiles := ProfileSandboxScript.new()
 
+## Generated with sage_cah.CahHero.to_bytes(), not copied from retail. It is a
+## class 0/subclass 0 hero with the fixture table's exact default attribute
+## spend, two real CommandButton power ids, three synthetic RGBA quads, and a
+## retail-shaped id which the importer must retain only as importedFrom.
+const RETAIL_CAH_WRITER_BASE64 := "QUxBRTJTVFIBAAAAAAAAAAgTAAAAEEkAbQBwAG8AcgB0AGUAZAAgAEMAYQBwAHQAYQBpAG4AAAAAAAAAAAAAAAAAAAAAABI0Vv9lQyHuq83v3R5Db21tYW5kX0NhaFN1bW1vbkFsbGllc19MZXZlbDEAAAAAAQAAABJDb21tYW5kX0NhaEF0aGVsYXMBAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUAAAAaQ3JlYXRlQUhlcm9fQXJtb3JBdHRyaWJ1dGUPAAAAH0NyZWF0ZUFIZXJvX0RhbWFnZU11bHRBdHRyaWJ1dGULAAAAH0NyZWF0ZUFIZXJvX0hlYWx0aE11bHRBdHRyaWJ1dGUJAAAAHUNyZWF0ZUFIZXJvX0F1dG9IZWFsQXR0cmlidXRlBQAAABtDcmVhdGVBSGVyb19WaXNpb25BdHRyaWJ1dGUHAAAAE1JFVEFJTC1TWU5USEVUSUMtSUQAeFY0Eg=="
+
 var passed := 0
 var failed := 0
 
@@ -83,7 +89,6 @@ const SCRATCH_SKIN_NAME := "CHHW_ZySkin_02"
 ## The four level columns retail authors, which the grid's last row labels.
 const POWER_COLUMN_COUNT := 4
 
-
 func _initialize() -> void:
 	_profiles.open("cah-create-a-hero")
 	_runner_watchdog.start(self, "CAH_CREATE_A_HERO_RUNNER")
@@ -100,6 +105,8 @@ func _run() -> void:
 	_test_profile_validation(system)
 	_test_profile_round_trip(system)
 	_test_tracking_and_awards_survive_edit(system)
+	_test_retail_cah_import(system)
+	_test_profile_extra_keys_survive_resave(system)
 	_test_roster_document(system)
 	_test_power_selection_rules(system)
 	_test_powers_and_levels_reach_the_runtime_contracts(system)
@@ -284,6 +291,79 @@ func _test_tracking_and_awards_survive_edit(system: Dictionary) -> void:
 	_clear_profiles()
 
 
+func _test_retail_cah_import(system: Dictionary) -> void:
+	var result := CahHeroes.import_retail_cah_profile(
+		system, Marshalls.base64_to_raw(RETAIL_CAH_WRITER_BASE64), "synthetic-writer-fixture.cah")
+	var refusals: PackedStringArray = result.get("refusals", PackedStringArray())
+	var profile: Dictionary = result.get("profile", {}) as Dictionary
+	_check(refusals.is_empty(), "the writer-generated retail .cah imports without refusal: %s" % str(refusals))
+	_check(not profile.is_empty() and CahHeroes.validate_profile(system, profile).is_empty(),
+		"the imported profile passes the real profile validator")
+	_check(String(profile.get("name", "")) == "Imported Captain"
+		and int(profile.get("classIndex", -1)) == 0 and int(profile.get("subClassIndex", -1)) == 0,
+		"retail name and appearance quad select class 0 subclass 0")
+	_check(profile.get("attributes", {}) == {
+		"CreateAHero_ArmorAttribute": 16, "CreateAHero_DamageMultAttribute": 12,
+		"CreateAHero_HealthMultAttribute": 10, "CreateAHero_AutoHealAttribute": 6,
+		"CreateAHero_VisionAttribute": 8,
+	}, "retail zero-based GroupOrder becomes the one-based attribute steps")
+	_check(profile.get("powers", []) == ["Command_CahSummonAllies_Level1", "Command_CahAthelas"],
+		"retail CommandButton names become the selected power ids in purchase order")
+	_check(profile.get("colors", []) == [[18, 52, 86, 255], [101, 67, 33, 238], [171, 205, 239, 221]],
+		"all three retail colour quads survive losslessly")
+	_check(String(profile.get("importedFrom", "")) == "RETAIL-SYNTHETIC-ID"
+		and CahHeroes.hero_id_valid(String(profile.get("heroId", "")))
+		and String(profile.get("heroId", "")) != String(profile.get("importedFrom", "")),
+		"the retail id is provenance and the saved hero receives a new safe id")
+	var bad := Marshalls.base64_to_raw(RETAIL_CAH_WRITER_BASE64)
+	bad[0] = 0
+	var bad_result := CahHeroes.import_retail_cah_profile(system, bad, "bad-magic.cah")
+	_check(not (bad_result.get("refusals", PackedStringArray()) as PackedStringArray).is_empty()
+		and String((bad_result.get("refusals", PackedStringArray()) as PackedStringArray)[0]).contains("magic"),
+		"a malformed .cah is refused by name")
+	var fixture_path := CahHeroes.profile_dir().path_join("writer-fixture.cah")
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(CahHeroes.profile_dir()))
+	var fixture_file := FileAccess.open(fixture_path, FileAccess.WRITE)
+	if fixture_file != null:
+		fixture_file.store_buffer(Marshalls.base64_to_raw(RETAIL_CAH_WRITER_BASE64))
+		fixture_file.close()
+	var screen := MyHeroesScreen.new()
+	root.add_child(screen)
+	screen.configure(system)
+	var ui_refusals := screen.import_retail_file(fixture_path)
+	var imported_profiles := CahHeroes.load_profiles()
+	_check(ui_refusals.is_empty() and imported_profiles.size() == 1
+		and String(imported_profiles[0].get("importedFrom", "")) == "RETAIL-SYNTHETIC-ID",
+		"the MY HEROES import action validates and saves through the real profile store")
+	screen.queue_free()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(fixture_path))
+	_clear_profiles()
+
+
+func _test_profile_extra_keys_survive_resave(system: Dictionary) -> void:
+	_clear_profiles()
+	var profile := CahHeroes.new_profile(system, "Carry Forward", 0, 0)
+	profile["trackingStats"] = {"wins": 7}
+	profile["colors"] = [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]]
+	profile["importedFrom"] = "RETAIL-ORIGINAL"
+	_check(CahHeroes.save_profile(profile) == "", "the extra-key carry-forward fixture saves")
+	var screen := MyHeroesScreen.new()
+	root.add_child(screen)
+	screen.configure(system)
+	screen._on_hero_list_selected(0)
+	var refusals := screen.create_hero("Carry Forward Resaved")
+	var saved := CahHeroes.load_profile(String(profile["heroId"]))
+	var saved_colors := saved.get("colors", []) as Array
+	_check(refusals.is_empty()
+		and int((saved.get("trackingStats", {}) as Dictionary).get("wins", -1)) == 7
+		and saved_colors.size() == 3 and int((saved_colors[0] as Array)[0]) == 1
+		and int((saved_colors[2] as Array)[3]) == 12
+		and String(saved.get("importedFrom", "")) == "RETAIL-ORIGINAL",
+		"editing a hero carries every optional and unknown profile key forward")
+	screen.queue_free()
+	_clear_profiles()
+
+
 # ----------------------------------------------------------- roster document
 
 
@@ -343,6 +423,9 @@ func _test_screen(system: Dictionary) -> void:
 	screen.configure(system)
 
 	_check(screen.system_available(), "the screen accepts the mounted class table")
+	_check(screen.import_button != null and screen.import_button.text == "IMPORT"
+		and screen._import_dialog.access == FileDialog.ACCESS_FILESYSTEM,
+		"MY HEROES exposes a free-browse retail .cah import button")
 	var pair: Vector2i = screen.spend_and_budget()
 	_check(pair == Vector2i(30, 30), "the screen opens on the authored default loadout, fully spent")
 

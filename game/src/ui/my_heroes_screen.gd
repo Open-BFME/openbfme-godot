@@ -168,6 +168,7 @@ var hero_list: ItemList
 var _roster_count: Label
 var delete_button: Button
 var new_hero_button: Button
+var import_button: Button
 var attribute_rows: VBoxContainer
 var title_label: Label
 var section_label: Label
@@ -251,6 +252,7 @@ const CAH_TEXTURE_DIRECTORY := "assets/textures/cah"
 var _pack_texture_paths: Dictionary = {}
 var _pack_texture_paths_scanned := false
 var _pack_textures: Dictionary = {}
+var _import_dialog: FileDialog
 
 
 func _ready() -> void:
@@ -347,6 +349,8 @@ func create_hero(hero_name: String) -> Array[String]:
 		return ["no Create-a-Hero class table is mounted"]
 	var profile := CahHeroes.new_profile(_system, hero_name, _selected_class, _selected_sub)
 	if _editing_hero_id != "":
+		profile = CahHeroes.carry_profile_optional_keys(
+			profile, CahHeroes.load_profile(_editing_hero_id))
 		profile["heroId"] = _editing_hero_id
 	profile["attributes"] = _attributes.duplicate()
 	profile["appearance"] = _appearance.duplicate()
@@ -369,6 +373,54 @@ func create_hero(hero_name: String) -> Array[String]:
 	refresh()
 	roster_changed.emit()
 	return []
+
+
+func import_retail_file(path: String) -> Array[String]:
+	if _system.is_empty():
+		return ["no Create-a-Hero class table is mounted"]
+	if _profiles.size() >= CahHeroes.MAX_PROFILES:
+		return ["there are already %d saved heroes" % CahHeroes.MAX_PROFILES]
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return ["could not read %s (error %d)" % [path, FileAccess.get_open_error()]]
+	var bytes := file.get_buffer(file.get_length())
+	file.close()
+	var result := CahHeroes.import_retail_cah_profile(_system, bytes, path)
+	var refusals: Array[String] = []
+	for value in result.get("refusals", PackedStringArray()):
+		refusals.append(String(value))
+	if not refusals.is_empty():
+		return refusals
+	var profile := result.get("profile", {}) as Dictionary
+	var error := CahHeroes.save_profile(profile)
+	if not error.is_empty():
+		return [error]
+	_editing_hero_id = String(profile.get("heroId", ""))
+	refresh()
+	roster_changed.emit()
+	return []
+
+
+func _retail_cah_default_dir() -> String:
+	var appdata := OS.get_environment("APPDATA").strip_edges()
+	if appdata.is_empty():
+		return ""
+	return appdata.path_join("My Rise of the Witch-king Files").path_join("Save")
+
+
+func _on_import_pressed() -> void:
+	var default_dir := _retail_cah_default_dir()
+	if not default_dir.is_empty() and DirAccess.dir_exists_absolute(default_dir):
+		_import_dialog.current_dir = default_dir
+	_import_dialog.popup_centered_ratio(0.72)
+
+
+func _on_import_file_selected(path: String) -> void:
+	var refusals := import_retail_file(path)
+	if refusals.is_empty():
+		status_label.text = "Imported %s." % path.get_file()
+	else:
+		status_label.text = "Not imported: %s." % "; ".join(refusals)
 
 
 func delete_selected() -> bool:
@@ -589,6 +641,14 @@ func _build() -> void:
 	)
 	root.add_child(sub_option)
 
+	_import_dialog = FileDialog.new()
+	_import_dialog.name = "ImportCahDialog"
+	_import_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	_import_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+	_import_dialog.filters = PackedStringArray(["*.cah ; Retail Create-a-Hero files"])
+	_import_dialog.file_selected.connect(_on_import_file_selected)
+	add_child(_import_dialog)
+
 
 func _build_header(root: VBoxContainer) -> void:
 	title_label = Label.new()
@@ -745,6 +805,12 @@ func _build_select_page(parent: Control) -> Control:
 	new_hero_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	new_hero_button.pressed.connect(_on_new_hero_pressed)
 	buttons.add_child(new_hero_button)
+	import_button = Button.new()
+	import_button.name = "ImportHero"
+	import_button.text = "IMPORT"
+	import_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	import_button.pressed.connect(_on_import_pressed)
+	buttons.add_child(import_button)
 	delete_button = Button.new()
 	delete_button.name = "DeleteHero"
 	delete_button.text = "DELETE"
@@ -1467,7 +1533,8 @@ func _on_reset_powers() -> void:
 func _set_editor_enabled(enabled: bool) -> void:
 	if name_edit != null:
 		name_edit.editable = enabled
-	for control in [class_option, sub_option, save_button, delete_button, new_hero_button, _next_button]:
+	for control in [class_option, sub_option, save_button, delete_button, new_hero_button,
+		import_button, _next_button]:
 		if control != null:
 			control.disabled = not enabled
 

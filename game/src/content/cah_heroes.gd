@@ -93,6 +93,12 @@ const MAX_PROFILES := 64
 const MAX_NAME_LENGTH := 24
 const MAX_PROFILE_BYTES := 64 * 1024
 
+const RETAIL_CAH_MAGIC := [65, 76, 65, 69, 50, 83, 84, 82] # ALAE2STR
+const RETAIL_CAH_MAX_BYTES := 1024 * 1024
+const RETAIL_CAH_ABILITY_SLOTS := 15
+const RETAIL_CAH_MAX_GROUPS := 4096
+const RETAIL_CAH_MAX_STRING_UNITS := 64 * 1024
+
 ## The one shape a hero id may have. Generated here, and required of every
 ## profile that reaches a roster - including one that arrived over a wire.
 const HERO_ID_LENGTH := 24
@@ -430,6 +436,238 @@ static func new_profile(system: Dictionary, name: String, class_index: int, sub_
 	if default_colors.size() == 3:
 		profile["colors"] = default_colors.duplicate(true)
 	return profile
+
+
+static func import_retail_cah_profile(system: Dictionary, data: PackedByteArray,
+		label: String = "<cah>") -> Dictionary:
+	## Port of the straight-line ALAE2STR v1 reader in sage_cah.py. The checksum
+	## is deliberately consumed but not interpreted: its algorithm is unknown,
+	## while every structural field around it is validated fail-closed.
+	var parsed := parse_retail_cah(data, label)
+	var refusals := parsed.get("refusals", []) as Array
+	if not refusals.is_empty():
+		return {"profile": {}, "refusals": PackedStringArray(refusals)}
+	if not system_is_valid(system):
+		return {"profile": {}, "refusals": PackedStringArray(["no valid Create-a-Hero system is mounted"])}
+	var raw_name := String(parsed.get("name", ""))
+	if sanitize_name(raw_name) != raw_name:
+		return {"profile": {}, "refusals": PackedStringArray([
+			"hero name cannot be represented without changing it (maximum %d printable characters)" % MAX_NAME_LENGTH
+		])}
+	var appearance_quad: Array = parsed.get("appearance", []) as Array
+	var class_index := int(appearance_quad[0])
+	var sub_index := int(appearance_quad[1])
+	var sub_row := sub_class_row(system, class_index, sub_index)
+	if sub_row.is_empty():
+		return {"profile": {}, "refusals": PackedStringArray([
+			"the mounted content has no class %d subclass %d" % [class_index, sub_index]
+		])}
+	var profile := new_profile(system, raw_name, class_index, sub_index)
+	profile["attributes"] = {}
+	profile["appearance"] = {}
+	profile["powers"] = (parsed.get("powers", []) as Array).duplicate()
+	profile["colors"] = (parsed.get("colors", []) as Array).duplicate(true)
+	profile["importedFrom"] = String(parsed.get("retailHeroId", ""))
+	var authored_attributes: Dictionary = {}
+	for value in sub_row.get("attributes", []) as Array:
+		var row := value as Dictionary
+		authored_attributes[String(row.get("groupName", ""))] = true
+	var appearance_choices: Dictionary = sub_row.get("appearanceChoices", {}) as Dictionary
+	var mapping_refusals: Array[String] = []
+	for value in parsed.get("groups", []) as Array:
+		var group_row := value as Dictionary
+		var group := String(group_row.get("group", ""))
+		var order := int(group_row.get("order", -1))
+		if authored_attributes.has(group):
+			(profile["attributes"] as Dictionary)[group] = order + 1
+		elif appearance_choices.has(group):
+			var choices := appearance_choices[group] as Array
+			if order < 0 or order >= choices.size():
+				mapping_refusals.append(
+					"%s GroupOrder %d is outside the mounted 0..%d choices"
+					% [group, order, choices.size() - 1])
+			else:
+				(profile["appearance"] as Dictionary)[group] = String(choices[order])
+		else:
+			mapping_refusals.append("%s is not authored for class %d subclass %d" % [
+				group, class_index, sub_index])
+	if not mapping_refusals.is_empty():
+		return {"profile": {}, "refusals": PackedStringArray(mapping_refusals)}
+	var validation := validate_profile(system, profile)
+	if not validation.is_empty():
+		return {"profile": {}, "refusals": PackedStringArray(validation)}
+	return {"profile": profile, "refusals": PackedStringArray()}
+
+
+static func carry_profile_optional_keys(rebuilt: Dictionary, existing: Dictionary) -> Dictionary:
+	## Editing rebuilds authored choices against the mounted system, but profile
+	## extensions belong to their owning lanes and must survive untouched.
+	var out := rebuilt.duplicate(true)
+	var editor_owned := {
+		"schema": true, "schemaVersion": true, "heroId": true, "name": true,
+		"classIndex": true, "subClassIndex": true, "attributes": true,
+		"appearance": true, "powers": true, "awards": true,
+		"systemDescriptorSha256": true,
+	}
+	for key in existing.keys():
+		if not editor_owned.has(String(key)):
+			out[key] = existing[key]
+	return out
+
+
+static func parse_retail_cah(data: PackedByteArray, label: String = "<cah>") -> Dictionary:
+	var state := {"data": data, "offset": 0, "label": label, "refusals": []}
+	if data.size() > RETAIL_CAH_MAX_BYTES:
+		_cah_fail(state, 0, "file is %d bytes; limit is %d" % [data.size(), RETAIL_CAH_MAX_BYTES])
+		return state
+	var magic := _cah_take(state, RETAIL_CAH_MAGIC.size(), "magic")
+	if not (state["refusals"] as Array).is_empty():
+		return state
+	if magic != PackedByteArray(RETAIL_CAH_MAGIC):
+		_cah_fail(state, 0, "magic is not ALAE2STR")
+		return state
+	var version_offset := int(state["offset"])
+	var version := _cah_u32(state, "version")
+	if version != 1:
+		_cah_fail(state, version_offset, "version is %d; only version 1 is supported" % version)
+	var reserved_offset := int(state["offset"])
+	var reserved := _cah_u32(state, "header reserved word")
+	if reserved != 0:
+		_cah_fail(state, reserved_offset, "header reserved word is %d, expected 0" % reserved)
+	var tag_offset := int(state["offset"])
+	var tag := _cah_u8(state, "header tag")
+	if tag != 8:
+		_cah_fail(state, tag_offset, "header tag is %d, expected 8" % tag)
+	_cah_u32(state, "header selector")
+	var name := _cah_string(state, "hero name", true)
+	if name.is_empty():
+		_cah_fail(state, int(state["offset"]), "hero name is empty")
+	var appearance: Array = []
+	for index in range(4):
+		appearance.append(_cah_u32(state, "appearance index %d" % index))
+	var colors: Array = []
+	for color_name in ["primary", "secondary", "tertiary"]:
+		var color_bytes := _cah_take(state, 4, "%s colour" % color_name)
+		var color: Array = []
+		for byte in color_bytes:
+			color.append(int(byte))
+		colors.append(color)
+	var powers: Array = []
+	var seen_empty := false
+	for slot in range(RETAIL_CAH_ABILITY_SLOTS):
+		var slot_offset := int(state["offset"])
+		var button := _cah_string(state, "ability slot %d button" % slot, false)
+		var purchase := _cah_u32(state, "ability slot %d purchase order" % slot)
+		var palantir := _cah_u32(state, "ability slot %d palantir slot" % slot)
+		if button.is_empty():
+			if purchase != 0 or palantir != 0:
+				_cah_fail(state, slot_offset, "unused ability slot %d is not zero-filled" % slot)
+			seen_empty = true
+			continue
+		if seen_empty:
+			_cah_fail(state, slot_offset, "ability slot %d is populated after an empty slot" % slot)
+		if purchase != powers.size():
+			_cah_fail(state, slot_offset, "ability slot %d purchase order is %d, expected %d" % [
+				slot, purchase, powers.size()])
+		if palantir < 1 or palantir > 255:
+			_cah_fail(state, slot_offset, "ability slot %d palantir slot %d is outside 1..255" % [slot, palantir])
+		powers.append(button)
+	var group_count_offset := int(state["offset"])
+	var group_count := _cah_u32(state, "customisation group count")
+	if group_count > RETAIL_CAH_MAX_GROUPS:
+		_cah_fail(state, group_count_offset, "declares %d customisation groups; limit is %d" % [
+			group_count, RETAIL_CAH_MAX_GROUPS])
+		group_count = 0
+	var groups: Array = []
+	var seen_groups: Dictionary = {}
+	for index in range(group_count):
+		var entry_offset := int(state["offset"])
+		var group := _cah_string(state, "group %d name" % index, false)
+		var order := _cah_u32(state, "group %d chosen GroupOrder" % index)
+		if group.is_empty():
+			_cah_fail(state, entry_offset, "group %d has an empty name" % index)
+		elif seen_groups.has(group):
+			_cah_fail(state, entry_offset, "group %s appears more than once" % group)
+		else:
+			seen_groups[group] = true
+			groups.append({"group": group, "order": order})
+	var retail_hero_id := _cah_string(state, "hero id", false)
+	if retail_hero_id.is_empty():
+		_cah_fail(state, int(state["offset"]), "hero id is empty")
+	var flag_offset := int(state["offset"])
+	var trailer_flag := _cah_u8(state, "trailer flag")
+	if trailer_flag != 0 and trailer_flag != 1:
+		_cah_fail(state, flag_offset, "trailer flag is %d, expected 0 or 1" % trailer_flag)
+	_cah_u32(state, "trailer checksum") # Unknown algorithm: deliberately ignored.
+	if int(state["offset"]) != data.size():
+		_cah_fail(state, int(state["offset"]), "%d trailing bytes after the checksum" % [
+			data.size() - int(state["offset"])])
+	if not (state["refusals"] as Array).is_empty():
+		return state
+	return {
+		"name": name, "appearance": appearance, "colors": colors,
+		"powers": powers, "groups": groups, "retailHeroId": retail_hero_id,
+		"refusals": [],
+	}
+
+
+static func _cah_fail(state: Dictionary, offset: int, reason: String) -> void:
+	var refusals := state["refusals"] as Array
+	if refusals.is_empty():
+		refusals.append("%s: at offset 0x%x: %s" % [String(state["label"]), offset, reason])
+
+
+static func _cah_take(state: Dictionary, count: int, what: String) -> PackedByteArray:
+	var offset := int(state["offset"])
+	var data := state["data"] as PackedByteArray
+	if count < 0 or offset + count > data.size():
+		_cah_fail(state, offset, "%s needs %d bytes, only %d remain" % [what, count, data.size() - offset])
+		state["offset"] = data.size()
+		return PackedByteArray()
+	var out := PackedByteArray()
+	out.resize(count)
+	for index in range(count):
+		out[index] = data[offset + index]
+	state["offset"] = offset + count
+	return out
+
+
+static func _cah_u8(state: Dictionary, what: String) -> int:
+	var bytes := _cah_take(state, 1, what)
+	return int(bytes[0]) if bytes.size() == 1 else 0
+
+
+static func _cah_u32(state: Dictionary, what: String) -> int:
+	var bytes := _cah_take(state, 4, what)
+	if bytes.size() != 4:
+		return 0
+	return int(bytes[0]) | (int(bytes[1]) << 8) | (int(bytes[2]) << 16) | (int(bytes[3]) << 24)
+
+
+static func _cah_length(state: Dictionary, what: String) -> int:
+	var offset := int(state["offset"])
+	var count := _cah_u8(state, "%s length" % what)
+	if count == 255:
+		count = _cah_u32(state, "%s escaped length" % what)
+		if count < 255:
+			_cah_fail(state, offset, "%s uses the 0xFF length escape for short length %d" % [what, count])
+	if count > RETAIL_CAH_MAX_STRING_UNITS:
+		_cah_fail(state, offset, "%s length %d exceeds limit %d" % [
+			what, count, RETAIL_CAH_MAX_STRING_UNITS])
+		return 0
+	return count
+
+
+static func _cah_string(state: Dictionary, what: String, utf16: bool) -> String:
+	var count := _cah_length(state, what)
+	var bytes := _cah_take(state, count * 2 if utf16 else count, what)
+	if not utf16:
+		for byte in bytes:
+			if int(byte) > 127:
+				_cah_fail(state, int(state["offset"]) - bytes.size(), "%s is not ASCII" % what)
+				return ""
+		return bytes.get_string_from_ascii()
+	return bytes.get_string_from_utf16()
 
 
 static func max_power_slots(system: Dictionary) -> int:
