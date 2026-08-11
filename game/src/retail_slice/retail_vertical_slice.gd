@@ -6,6 +6,7 @@ extends Node3D
 const DiagLogScript = preload("res://src/core/diag_log.gd")
 const CahHeroesScript = preload("res://src/content/cah_heroes.gd")
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
+const ExpansionMountScript = preload("res://src/retail_slice/retail_expansion_mount.gd")
 const LockstepSessionScript = preload("res://src/retail_slice/retail_lockstep_session.gd")
 const BattalionScript = preload("res://src/retail_slice/retail_battalion.gd")
 const StructureScript = preload("res://src/retail_slice/retail_structure.gd")
@@ -2962,12 +2963,32 @@ func _spawn_structure(id: int) -> void:
 		if weapon_visual != null and bool(weapon_visual.get_meta("authored", false)):
 			weapon_visual.name = "SpawnedFortressWeapon"
 			weapon_visual.set_meta("spawn_source", "compiled-object-creation-upgrade")
+			# ON TOP OF THE TOWER, WHERE RETAIL AUTHORS IT. The visual used to be
+			# parented at identity, which collapsed the authored
+			# `Offset = X:12.0 Y:0.0 Z:51.0` to the shell's origin and left the
+			# engine sitting on the ground at the tower's foot.
+			var turret_offset_source := Vector3.ZERO
+			var expansion_rule := _expansion_object_ids.get(kind, {}) as Dictionary
+			if typeof(expansion_rule.get("turret_offset_source")) == TYPE_VECTOR3:
+				turret_offset_source = expansion_rule["turret_offset_source"]
+			weapon_visual.position = ExpansionMountScript.source_offset_to_local(
+				turret_offset_source, source_map_data.local_transform_scale
+			)
+			weapon_visual.set_meta("mount_offset_source", turret_offset_source)
 			structure.add_child(weapon_visual)
 		else:
-			push_warning(
-				"RetailVerticalSlice: spawned fortress weapon '%s' has no authored bundle visual in the mounted pack"
-				% spawned_weapon_object_id
+			# NAMED, COUNTED PACK GAP. Retail arms this tower with an engine and the
+			# mounted pack carries no converted visual for it, so the tower renders
+			# bare - the owner's "the trebuchets are not physically spawned on top
+			# of the tower parts". A push_warning alone let that read as working
+			# artillery; the gap is now queryable so a gate can assert it.
+			var gap := (
+				"%s: authored ObjectCreationUpgrade turret '%s' has no converted bundle visual in the mounted pack"
+				% [kind, spawned_weapon_object_id]
 			)
+			if not expansion_turret_gaps.has(gap):
+				expansion_turret_gaps.append(gap)
+			push_warning("RetailVerticalSlice: %s" % gap)
 			if weapon_visual != null:
 				weapon_visual.queue_free()
 	_assign_geometry_light_layer(structure, OBJECT_LIGHT_LAYER)
@@ -5480,6 +5501,9 @@ const EXPANSION_KIND_OVERRIDES := {
 	"mengarrisontowerexpansion": "garrison_dormitory",
 }
 var _expansion_object_ids: Dictionary = {}
+## Fortress artillery expansions retail arms with an engine that the mounted pack
+## cannot supply. Named and counted rather than left to read as an empty tower.
+var expansion_turret_gaps: Array[String] = []
 
 
 ## {expansion_kind: playableStructure document} for every pad-built expansion in
@@ -5580,6 +5604,7 @@ func _configure_simulation_expansions(sim = null) -> void:
 	if sim == null:
 		return
 	var rules: Dictionary = {}
+	expansion_turret_gaps.clear()
 	var documents := _expansion_documents()
 	for kind_value in documents.keys():
 		var kind := String(kind_value)
@@ -5628,6 +5653,21 @@ func _configure_simulation_expansions(sim = null) -> void:
 				"RetailVerticalSlice: structure '%s' has no compiled combat contract (stale pack); expansion remains non-firing"
 				% String(definition.get("objectId", runtime_id))
 			)
+		if _structure_is_artillery_expansion(gameplay):
+			# THE TURRET RIDES THE TOWER DECK. Kept as SOURCE units on the rule and
+			# converted at spawn, so the number in the rule is comparable to the
+			# authored INI without knowing the map's transform.
+			var spawned_source := String(combat.get("spawnedObjectId", ""))
+			rule["turret_offset_source"] = ExpansionMountScript.authored_spawn_offset(gameplay, spawned_source)
+			if spawned_source == "":
+				# FAIL VISIBLE: retail authors an engine on this tower and the pack
+				# carries no compiled combat contract to name it, so nothing will be
+				# mounted. Counted so a gate can assert the gap rather than a silent
+				# empty tower reading as correct.
+				expansion_turret_gaps.append(
+					"%s: authored ObjectCreationUpgrade turret, no compiled combat.spawnedObjectId in the mounted pack"
+					% String(definition.get("objectId", runtime_id))
+				)
 		if bool(
 			(health_contract.get("highlanderBody", {}) as Dictionary)
 			.get("value", false)
