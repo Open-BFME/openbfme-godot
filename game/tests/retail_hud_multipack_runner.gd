@@ -1,8 +1,7 @@
 extends SceneTree
-## Consumer gate for the HUD's multi-pack image validation: runtime-backed
-## unit images may resolve from the selected host pack OR any faction-manifest
-## pack root (supplemental faction packs), while images with no pack backing
-## stay fail-closed rejected.
+## Consumer gate for resolve-once HUD image validation. Host and supplemental
+## images are trusted only when ContentDB resolves them through a mounted pack;
+## images with no pack backing stay fail-closed rejected.
 ##
 ## The HUD script is loaded at runtime (not preloaded): a --script main loop
 ## compiles its top-level preloads before the autoload globals it references
@@ -43,64 +42,58 @@ func _run() -> void:
 		var bindings := ((document.get("registration", {}) as Dictionary).get("imageBindings", {}) as Dictionary)
 		if pack_root == "" or bindings.is_empty():
 			continue
-		if bool(hud._same_pack_root(pack_root, men_root)) and men_doc.is_empty():
+		if _same_path(pack_root, men_root) and men_doc.is_empty():
 			men_doc = {"object_id": String(object_id_value), "image_id": String(bindings.keys()[0]), "root": pack_root}
-		elif not bool(hud._same_pack_root(pack_root, men_root)) and elves_doc.is_empty():
+		elif not _same_path(pack_root, men_root) and elves_doc.is_empty():
 			elves_doc = {"object_id": String(object_id_value), "image_id": String(bindings.keys()[0]), "root": pack_root}
 	_check("men_host_pack_resolves", men_root != "" and not men_doc.is_empty(), men_root)
-	_check("supplemental_faction_pack_present", not elves_doc.is_empty() and not bool(hud._same_pack_root(String(elves_doc.get("root", "")), men_root)), str(elves_doc.get("root", "missing")))
+	_check("supplemental_faction_pack_present", not elves_doc.is_empty() and not _same_path(String(elves_doc.get("root", "")), men_root), str(elves_doc.get("root", "missing")))
 	if men_doc.is_empty() or elves_doc.is_empty() or men_root == "":
 		_finish()
 		return
 
 	# Host-pack runtime-backed image keeps validating against the host root.
-	hud.set_allowed_image_pack_roots([men_root])
 	var men_validation: Dictionary = hud._validate_retail_image(
 		content_db, men_root, String(men_doc["image_id"]), Vector2i.ZERO, String(men_doc["object_id"])
 	)
 	_check("host_pack_image_still_accepted", String(men_validation.get("error", "")) == "", String(men_validation.get("error", "")))
 
-	# The supplemental-pack image is rejected while its pack root is not allowed…
-	var blocked_validation: Dictionary = hud._validate_retail_image(
-		content_db, men_root, String(elves_doc["image_id"]), Vector2i.ZERO, String(elves_doc["object_id"])
-	)
-	_check(
-		"supplemental_image_rejected_without_its_root",
-		String(blocked_validation.get("error", "")).contains("did not come from the selected or faction private packs"),
-		String(blocked_validation.get("error", ""))
-	)
-	# …and accepted once the faction manifest's pack root is declared.
-	hud.set_allowed_image_pack_roots([men_root, String(elves_doc["root"])])
+	# The supplemental hit is accepted because ContentDB resolved it through a
+	# mounted pack; no mutable HUD-local allowlist participates.
 	var multi_validation: Dictionary = hud._validate_retail_image(
 		content_db, men_root, String(elves_doc["image_id"]), Vector2i.ZERO, String(elves_doc["object_id"])
 	)
-	_check("supplemental_image_accepted_with_faction_root", String(multi_validation.get("error", "")) == "", String(multi_validation.get("error", "")))
+	_check(
+		"supplemental_image_accepted_by_mounted_resolver",
+		String(multi_validation.get("error", "")) == "",
+		String(multi_validation.get("error", ""))
+	)
 
-	# Sequential binds cannot leak faction roots: after a clear and a fresh
-	# bind without the faction root, the supplemental image is rejected again.
+	# Sequential clears cannot alter resolver provenance.
 	hud._clear_retail_command_bindings(false)
-	_check("clear_resets_image_allow_list", not bool(hud._pack_root_allowed(String(elves_doc["root"]))))
-	hud.set_allowed_image_pack_roots([men_root])
-	var reblocked_validation: Dictionary = hud._validate_retail_image(
+	var repeated_validation: Dictionary = hud._validate_retail_image(
 		content_db, men_root, String(elves_doc["image_id"]), Vector2i.ZERO, String(elves_doc["object_id"])
 	)
 	_check(
-		"sequential_bind_without_roots_rejects",
-		String(reblocked_validation.get("error", "")).contains("did not come from the selected or faction private packs"),
-		String(reblocked_validation.get("error", ""))
+		"sequential_clear_preserves_mounted_resolution",
+		String(repeated_validation.get("error", "")) == "",
+		String(repeated_validation.get("error", ""))
 	)
 
 	# Images with no pack backing stay fail-closed rejected.
-	_check("empty_pack_root_never_allowed", not bool(hud._pack_root_allowed("")))
 	var unpackaged: Dictionary = hud._validate_retail_image(content_db, men_root, "DefinitelyNotARealImageId", Vector2i.ZERO)
 	_check("unpackaged_image_rejected", String(unpackaged.get("error", "")).contains("is missing"), String(unpackaged.get("error", "")))
 	var no_selection: Dictionary = hud._validate_retail_image(content_db, "", "AptStrategicUnitUpgradeArmor", Vector2i.ZERO)
-	_check("no_selected_pack_rejected", String(no_selection.get("error", "")).contains("did not come from the selected private pack"), String(no_selection.get("error", "")))
+	_check("mounted_shared_image_needs_no_second_selection_gate", String(no_selection.get("error", "")) == "", String(no_selection.get("error", "")))
 	var missing_runtime: Dictionary = hud._validate_retail_image(content_db, men_root, "AnyImage", Vector2i.ZERO, "NoSuchRuntimeObject")
 	_check("missing_runtime_rejected", String(missing_runtime.get("error", "")).contains("is missing"), String(missing_runtime.get("error", "")))
 
 	hud.free()
 	_finish()
+
+
+func _same_path(left: String, right: String) -> bool:
+	return left.replace("\\", "/").simplify_path().trim_suffix("/").to_lower() == right.replace("\\", "/").simplify_path().trim_suffix("/").to_lower()
 
 
 func _check(name: String, condition: bool, detail: String = "") -> void:

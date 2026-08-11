@@ -4253,16 +4253,26 @@ func _paged_radial_entries(structure: Dictionary, entries: Array) -> Array:
 			_:
 				main_entries.append(entry)
 	var faction_slug := String(_faction_slug_for_radial())
+	var upgrade_selector: Dictionary = hud.retail_radial_page_command(hud.RADIAL_PAGE_UPGRADES, faction_slug)
+	var hero_selector: Dictionary = hud.retail_radial_page_command(hud.RADIAL_PAGE_HEROES, faction_slug)
 	if page == hud.RADIAL_PAGE_UPGRADES and not upgrade_entries.is_empty():
+		upgrade_entries = upgrade_entries.slice(0, maxi(0, int(upgrade_selector.get("command_range_count", 0)) - 1))
 		upgrade_entries.append(_radial_page_entry("back", "back", faction_slug))
 		return upgrade_entries
 	if page == hud.RADIAL_PAGE_HEROES and not hero_entries.is_empty():
+		hero_entries = hero_entries.slice(0, maxi(0, int(hero_selector.get("command_range_count", 0)) - 1))
 		hero_entries.append(_radial_page_entry("back", "back", faction_slug))
 		return hero_entries
 	# Main page (also the fallback when a page emptied out under the player, e.g.
 	# the last improvement was bought): the base slots plus the two doors.
 	if page != hud.RADIAL_PAGE_MAIN:
 		hud.set_radial_page(hud.RADIAL_PAGE_MAIN)
+	var selector_count := int(not upgrade_entries.is_empty()) + int(not hero_entries.is_empty())
+	var main_range_count := int(upgrade_selector.get("command_range_start", 0))
+	if main_range_count <= 0:
+		main_range_count = int(hero_selector.get("command_range_start", 0))
+	if main_range_count > 0 and main_entries.size() + selector_count > main_range_count:
+		main_entries.resize(maxi(0, main_range_count - selector_count))
 	if not upgrade_entries.is_empty():
 		main_entries.append(_radial_page_entry("page", hud.RADIAL_PAGE_UPGRADES, faction_slug))
 	if not hero_entries.is_empty():
@@ -4281,6 +4291,12 @@ func _radial_page_entry(command_kind: String, page: String, faction_slug: String
 		"enabled": true,
 		"label": String(command.get("label", "")),
 		"tooltip": String(command.get("tooltip", "")),
+		"selector_command_id": String(command.get("command_id", "")),
+		"selector_image_id": String(command.get("image_id", "")),
+		"selector_label_id": String(command.get("label_id", "")),
+		"selector_tooltip_id": String(command.get("tooltip_id", "")),
+		"command_range_start": int(command.get("command_range_start", -1)),
+		"command_range_count": int(command.get("command_range_count", 0)),
 	}
 
 

@@ -78,6 +78,21 @@ const FACTION_EXPECTATIONS := {
 const RADIAL_PAGE_MAIN := "main"
 const RADIAL_PAGE_UPGRADES := "upgrades"
 const RADIAL_PAGE_HEROES := "heroes"
+const PAGE_SELECTOR_EXPECTATIONS := {
+	"dwarves": {
+		"upgrades": ["Command_SelectUpgradesDwarvenFortress", "CONTROLBAR:SelectUpgradesDwarvenFortress", 7, 7],
+		"heroes": ["Command_SelectRevivablesDwarvenFortress", "CONTROLBAR:SelectRevivablesDwarvenFortress", 14, 10],
+	},
+	"angmar": {
+		# Retail deliberately authors the Dwarven string ids on Angmar's buttons.
+		"upgrades": ["Command_SelectUpgradesAngmarFortress", "CONTROLBAR:SelectUpgradesDwarvenFortress", 7, 7],
+		"heroes": ["Command_SelectRevivablesAngmarFortress", "CONTROLBAR:SelectRevivablesDwarvenFortress", 14, 10],
+	},
+	"wild": {
+		"upgrades": ["Command_SelectUpgradesWildFortress", "CONTROLBAR:SelectUpgradesWildFortress", 6, 7],
+		"heroes": ["Command_SelectRevivablesWildFortress", "CONTROLBAR:SelectRevivablesGoblinFortress", 13, 10],
+	},
+}
 
 ## Localized fortress-improvement labels, transcribed from the 2.01 string table
 ## (lang/englishpatch201.big -> data/lotr.str). The runtime must present THESE,
@@ -271,7 +286,7 @@ func _check_fortress_radial_pages(slice, sim, hud, fortress: int) -> void:
 	for entry_value in main_entries:
 		var entry: Dictionary = entry_value
 		if String(entry.get("command_kind", "")) == "page":
-			page_targets[String(entry.get("id", ""))] = String(entry.get("label", ""))
+			page_targets[String(entry.get("id", ""))] = entry
 	var offered_upgrades: Array = sim.structure_upgrade_commands(fortress)
 	if not offered_upgrades.is_empty():
 		_check(
@@ -284,6 +299,32 @@ func _check_fortress_radial_pages(slice, sim, hud, fortress: int) -> void:
 		page_targets.has(RADIAL_PAGE_HEROES),
 		"no Heroes selector on the main page: %s" % str(page_targets.keys())
 	)
+	if _faction == "men":
+		_check(
+			"men_precompiled_page_selector_fallback_is_named",
+			hud.retail_bind_diagnostics.any(func(note: String) -> bool: return note.begins_with("radial-page-selectors-fallback-precompiled-pack:")),
+			str(hud.retail_bind_diagnostics)
+		)
+	if PAGE_SELECTOR_EXPECTATIONS.has(_faction):
+		var content_db := root.get_node("ContentDB")
+		for page_value in [RADIAL_PAGE_UPGRADES, RADIAL_PAGE_HEROES]:
+			var selector_page := String(page_value)
+			var expected: Array = (PAGE_SELECTOR_EXPECTATIONS[_faction] as Dictionary)[selector_page]
+			var entry: Dictionary = page_targets.get(selector_page, {})
+			_check(
+				"%s_%s_selector_consumes_pack_ids_and_range" % [_faction, selector_page],
+				String(entry.get("selector_command_id", "")) == String(expected[0])
+					and String(entry.get("selector_label_id", "")) == String(expected[1])
+					and int(entry.get("command_range_start", -1)) == int(expected[2])
+					and int(entry.get("command_range_count", 0)) == int(expected[3]),
+				str(entry)
+			)
+			var authored_label := String(content_db.get_retail_string(String(expected[1]), ""))
+			_check(
+				"%s_%s_selector_resolves_its_authored_label_id" % [_faction, selector_page],
+				authored_label != "" and String(entry.get("label", "")) == authored_label,
+				"id=%s expected='%s' got='%s'" % [String(expected[1]), authored_label, String(entry.get("label", ""))]
+			)
 
 	# --- Section 5: the improvement page, with retail label/icon/cost ---------
 	if not offered_upgrades.is_empty():

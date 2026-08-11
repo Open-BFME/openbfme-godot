@@ -470,9 +470,6 @@ var _spellbook_power_ids: Array[String] = []
 ## after the player cycles those orders (same pack the train buttons used).
 var _bound_content_db = null
 var _bound_pack_root := ""
-## Pack roots runtime-backed images may resolve from: the selected host pack
-## plus the faction manifest's converted faction packs (supplemental packs).
-var _allowed_image_pack_roots: Array[String] = []
 ## The faction whose construct surface was last registered ("" = Men default).
 ## Men-only hardcoded surfaces (forge research) scope themselves against it.
 var _faction_surface := ""
@@ -557,6 +554,7 @@ const RETAIL_RADIAL_PAGE_TEXT := {
 	},
 }
 var _radial_page_command_cache: Dictionary = {}
+var _radial_page_selectors: Dictionary = {}
 var radial_page := RADIAL_PAGE_MAIN
 signal radial_page_changed(page: String)
 ## Validated fortress expansion command presentation (icon/label/tooltip).
@@ -652,6 +650,18 @@ func configure_faction_surface(manifest: Dictionary) -> void:
 	## Faction-agnostic chrome. Construct kinds should already be registered
 	## before build(); this still refreshes the filter list and the heading.
 	var faction := String(manifest.get("faction", "men")).strip_edges()
+	_radial_page_selectors.clear()
+	var fortress_castle: Dictionary = (manifest.get("structure_castle_upgrades", {}) as Dictionary).get("fortress", {}) as Dictionary
+	for selector_value in fortress_castle.get("pageSelectors", []) as Array:
+		var selector := selector_value as Dictionary
+		var command_id := String(selector.get("commandId", ""))
+		var page := "back"
+		if command_id.contains("SelectUpgrades"):
+			page = RADIAL_PAGE_UPGRADES
+		elif command_id.contains("SelectRevivables"):
+			page = RADIAL_PAGE_HEROES
+		_radial_page_selectors[page] = selector.duplicate(true)
+	_radial_page_command_cache.clear()
 	if _faction_heading_label != null:
 		_faction_heading_label.text = _faction_display_name(faction)
 	# Safe after build: only updates the visibility filter (does not invent
@@ -1954,6 +1964,10 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 		return ""
 	if content_db == null:
 		return "ContentDB is unavailable; cannot bind the private production UI."
+	if _radial_page_selectors.is_empty() and _faction_surface != "":
+		retail_bind_diagnostics.append(
+			"radial-page-selectors-fallback-precompiled-pack: using legacy faction-derived ids and 7/7 + 14/10 ranges"
+		)
 	if not _built:
 		return "The production command buttons have not been built."
 	if train_buttons.size() != _retail_command_specs.size():
@@ -1964,7 +1978,6 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 		return "No production commands are configured for the selected pack."
 	_bound_content_db = content_db
 	_bound_pack_root = expected_pack_root
-	set_allowed_image_pack_roots([expected_pack_root] + faction_pack_roots)
 	if retail_apt_runtime == null:
 		return "The retail Palantir APT runtime has not been built."
 	var apt_configured := retail_apt_runtime.configure_from_pack(expected_pack_root, true)
@@ -1976,8 +1989,9 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 		# images (SGCommandBar) that no pack carries. Retry against the recorded
 		# host/faction roots; a genuine host declares its contract on the first
 		# attempt, so this costs a BFME2 faction nothing.
-		for root in _allowed_image_pack_roots:
-			if _same_pack_root(root, expected_pack_root):
+		for root_value in [expected_pack_root] + faction_pack_roots:
+			var root := String(root_value)
+			if root == expected_pack_root:
 				continue
 			if retail_apt_runtime.configure_from_pack(root, true) and retail_apt_runtime.contract_declared:
 				apt_configured = true
@@ -2286,6 +2300,34 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 	return "" if retail_presentation_bound else "Private retail HUD failed to apply its validated presentation atomically."
 
 
+func resolve_hud_string(string_id: String, context: Dictionary) -> Dictionary:
+	## Unit-local strings win, then the mounted retail table. Source-null ids and
+	## explicit authored fallbacks are policy outcomes of this same resolution,
+	## not a second lookup path.
+	var role := String(context.get("role", "label"))
+	var spec_name := String(context.get("spec_name", ""))
+	var authored_fallback := bool(context.get("authored_fallback", false))
+	var fallback := String(context.get("fallback", "")).strip_edges()
+	var null_fallback := String(context.get("null_fallback", ""))
+	if string_id.strip_edges() == "":
+		if not authored_fallback:
+			return {"error": "Command '%s' has no localized %s id and no recorded authored fallback." % [spec_name, role]}
+		return {"error": "", "text": fallback if fallback != "" else null_fallback}
+	var runtime_strings := context.get("runtime_strings", {}) as Dictionary
+	if runtime_strings.has(string_id):
+		return {"error": "", "text": String(runtime_strings[string_id])}
+	var content_db = context.get("content_db")
+	var localized := String(content_db.get_retail_string(string_id, _MISSING_RETAIL_STRING))
+	if localized != _MISSING_RETAIL_STRING:
+		return {"error": "", "text": localized}
+	if (context.get("source_null", {}) as Dictionary).has(string_id):
+		retail_bind_diagnostics.append(
+			"retail-unlocalized-%s: '%s' references '%s', which retail's own string table never defines" % [role, spec_name, string_id]
+		)
+		return {"error": "", "text": null_fallback}
+	return {"error": "Required localized string '%s' is missing." % string_id}
+
+
 func _validate_retail_command(
 	content_db,
 	expected_pack_root: String,
@@ -2308,57 +2350,30 @@ func _validate_retail_command(
 	if runtime_object_id != "":
 		runtime_registration = (content_db.get_playable_unit_runtime(runtime_object_id).get("registration", {}) as Dictionary)
 	var runtime_strings: Dictionary = runtime_registration.get("stringBindings", {}) as Dictionary
-	# Command ids retail references but never localizes. RotWK's own
-	# data/ini/commandbutton.ini:3281 sets Faramir's DescriptLabel to
-	# CONTROLBAR:ToolTipFaramirMount and no retail .str file defines it (same
-	# for CONTROLBAR:SpecialAbilityShieldBubble at :2340). There is no text to
-	# resolve and never will be, so fail-closing here blocked the whole Men HUD
-	# — and with it every Men match, single-player and multiplayer. The
-	# importer records these ids explicitly; render blank and diagnose.
 	var runtime_source_null: Dictionary = {}
 	for source_null_value in (runtime_registration.get("sourceNullStringIds", []) as Array):
 		runtime_source_null[String(source_null_value)] = true
 	var fallback_label := String(spec.get("fallback_label", "")).strip_edges()
 	var fallback_tooltip := String(spec.get("fallback_tooltip", "")).strip_edges()
-	# Fail closed on missing localized strings: a non-empty id that resolves
-	# nowhere is a pack gap and aborts the bind — hand-written English is never
-	# silently presented as retail text. The ONLY sanctioned fallback is an
-	# explicitly marked spec ("authored_fallback": true, recorded in
-	# retail_bind_diagnostics) for content whose pack ships no strings at all
-	# (e.g. faction buildings with unconverted Elven CONTROLBAR keys).
 	var spec_name := String(spec.get("action_id", spec.get("button_name", spec.get("image_id", ""))))
 	var authored_fallback := bool(spec.get("authored_fallback", false))
-	var label_text := ""
-	if label_id.strip_edges() == "":
-		if not authored_fallback:
-			return {"error": "Command '%s' has no localized label id and no recorded authored fallback." % spec_name}
-		label_text = fallback_label if fallback_label != "" else spec_name
-	else:
-		label_text = String(runtime_strings.get(label_id, content_db.get_retail_string(label_id, _MISSING_RETAIL_STRING)))
-		if label_text == _MISSING_RETAIL_STRING:
-			if not runtime_source_null.has(label_id):
-				return {"error": "Required localized string '%s' is missing." % label_id}
-			label_text = ""
-			retail_bind_diagnostics.append(
-				"retail-unlocalized-label: '%s' references '%s', which retail's own string table never defines" % [spec_name, label_id]
-			)
-	var tooltip_text := ""
-	if tooltip_id.strip_edges() == "":
-		if authored_fallback and fallback_tooltip != "":
-			tooltip_text = fallback_tooltip
-		elif authored_fallback:
-			tooltip_text = label_text
-		else:
-			return {"error": "Command '%s' has no localized tooltip id and no recorded authored fallback." % spec_name}
-	else:
-		tooltip_text = String(runtime_strings.get(tooltip_id, content_db.get_retail_string(tooltip_id, _MISSING_RETAIL_STRING)))
-		if tooltip_text == _MISSING_RETAIL_STRING:
-			if not runtime_source_null.has(tooltip_id):
-				return {"error": "Required localized string '%s' is missing." % tooltip_id}
-			tooltip_text = label_text
-			retail_bind_diagnostics.append(
-				"retail-unlocalized-tooltip: '%s' references '%s', which retail's own string table never defines" % [spec_name, tooltip_id]
-			)
+	var string_context := {
+		"content_db": content_db, "runtime_strings": runtime_strings,
+		"source_null": runtime_source_null, "spec_name": spec_name,
+		"authored_fallback": authored_fallback,
+	}
+	var label_context := string_context.duplicate()
+	label_context.merge({"role": "label", "fallback": fallback_label, "null_fallback": spec_name}, true)
+	var label_resolution := resolve_hud_string(label_id, label_context)
+	if String(label_resolution.get("error", "")) != "":
+		return label_resolution
+	var label_text := String(label_resolution["text"])
+	var tooltip_context := string_context.duplicate()
+	tooltip_context.merge({"role": "tooltip", "fallback": fallback_tooltip, "null_fallback": label_text}, true)
+	var tooltip_resolution := resolve_hud_string(tooltip_id, tooltip_context)
+	if String(tooltip_resolution.get("error", "")) != "":
+		return tooltip_resolution
+	var tooltip_text := String(tooltip_resolution["text"])
 	if authored_fallback and (label_id.strip_edges() == "" or tooltip_id.strip_edges() == ""):
 		retail_bind_diagnostics.append(
 			"authored-fallback-not-retail: '%s' uses recorded English text ('%s') — no localized string exists in the selected pack" % [spec_name, label_text]
@@ -2368,120 +2383,55 @@ func _validate_retail_command(
 	return image_validation
 
 
-func _same_pack_root(left: String, right: String) -> bool:
-	## Windows path separators and simplify_path drift must not fail-closed a
-	## valid image that was loaded from the selected bundle.
-	if left == right:
-		return true
-	var a := left.replace("\\", "/").simplify_path().trim_suffix("/").to_lower()
-	var b := right.replace("\\", "/").simplify_path().trim_suffix("/").to_lower()
-	return a != "" and a == b
-
-
-func set_allowed_image_pack_roots(roots: Array) -> void:
-	## Records every pack root runtime-backed images may resolve from. Public so
-	## consumer runners can exercise the multi-pack acceptance seam directly;
-	## bind_retail_train_commands always drives it in production.
-	_allowed_image_pack_roots.clear()
-	for root_value in roots:
-		var root := String(root_value).strip_edges()
-		if root == "":
-			continue
-		var duplicate := false
-		for existing in _allowed_image_pack_roots:
-			if _same_pack_root(existing, root):
-				duplicate = true
-				break
-		if not duplicate:
-			_allowed_image_pack_roots.append(root)
-
-
-func _pack_root_allowed(image_pack_root: String) -> bool:
-	## Fail closed for images with no pack backing; otherwise accept any
-	## recorded host/faction pack root.
-	if image_pack_root.strip_edges() == "":
-		return false
-	for allowed in _allowed_image_pack_roots:
-		if _same_pack_root(image_pack_root, allowed):
-			return true
-	return false
-
-
-func _validate_retail_image(
-	content_db, expected_pack_root: String, image_id: String, exact_size: Vector2i,
-	runtime_object_id: String = "", structure_object_id: String = ""
-) -> Dictionary:
-	var image_definition: Dictionary = content_db.get_retail_ui_image(image_id)
-	if structure_object_id != "":
-		# Structure docs carry their converted construct-button/portrait crops
-		# under registration.presentation.imageBindings (faction packs).
-		var structure_runtime: Dictionary = content_db.get_playable_structure_runtime(structure_object_id)
-		if structure_runtime.is_empty():
-			return {"error": "Playable-structure runtime '%s' is missing." % structure_object_id}
-		var structure_presentation := (structure_runtime.get("registration", {}) as Dictionary).get("presentation", {}) as Dictionary
-		var structure_metadata := (structure_presentation.get("imageBindingMetadata", {}) as Dictionary).get(image_id, {}) as Dictionary
-		image_definition = {
-			"_pack_root": String(structure_runtime.get("_pack_root", "")),
-			"path": String((structure_presentation.get("imageBindings", {}) as Dictionary).get(image_id, "")),
-		}
-		if not structure_metadata.is_empty():
-			image_definition["width"] = int(structure_metadata.get("width", 0))
-			image_definition["height"] = int(structure_metadata.get("height", 0))
-	elif runtime_object_id != "":
+func resolve_hud_icon(image_id: String, context: Dictionary) -> Dictionary:
+	## One lookup owns both source priority and provenance. ContentDB's resolvers
+	## only yield paths inside mounted packs; validation rechecks that boundary.
+	var content_db = context.get("content_db", _bound_content_db)
+	if content_db == null:
+		return {"error": "ContentDB is unavailable; cannot resolve UI image '%s'." % image_id}
+	var runtime_object_id := String(context.get("runtime_object_id", ""))
+	var structure_object_id := String(context.get("structure_object_id", ""))
+	if runtime_object_id != "":
 		var runtime: Dictionary = content_db.get_playable_unit_runtime(runtime_object_id)
 		if runtime.is_empty():
 			return {"error": "Playable-unit runtime '%s' is missing." % runtime_object_id}
 		var registration := runtime.get("registration", {}) as Dictionary
-		var unit_bindings := registration.get("imageBindings", {}) as Dictionary
-		if unit_bindings.has(image_id):
-			# The unit ships its own converted crop; validate that copy.
-			var metadata := (registration.get("imageBindingMetadata", {}) as Dictionary).get(image_id, {}) as Dictionary
-			image_definition = {
-				"_pack_root": String(runtime.get("_pack_root", "")),
-				"path": String(unit_bindings.get(image_id, "")),
-			}
-			if not metadata.is_empty():
-				image_definition["width"] = int(metadata.get("width", 0))
-				image_definition["height"] = int(metadata.get("height", 0))
-		elif image_definition.is_empty():
-			# Not on the unit doc and not in the shared interface-art index.
-			return {"error": "Required UI image '%s' is missing." % image_id}
-		# else: a shared icon (a created-hero power/portrait, a hero ability)
-		# that lives in the interface-art index, not the unit's own bindings.
-		# Keep the index definition fetched above.
-	elif image_definition.is_empty():
-		return {"error": "Required UI manifest image '%s' is missing." % image_id}
-	var image_pack_root := String(image_definition.get("_pack_root", ""))
-	if runtime_object_id != "" or structure_object_id != "":
-		# Runtime-backed unit/structure images may live in a supplemental
-		# faction pack: accept the host pack or any manifest-declared faction
-		# pack root, and fail closed when the image has no pack backing at all.
-		if not _pack_root_allowed(image_pack_root):
-			return {"error": "Required UI image '%s' did not come from the selected or faction private packs." % image_id}
-	elif not _same_pack_root(image_pack_root, expected_pack_root) and not _pack_root_allowed(image_pack_root):
-		# Shared HUD chrome (the command-bar buttons, fortress expansion icons,
-		# SGCommandBar) is host-pack payload. An expansion faction cooks as a
-		# LEAN supplemental pack that deliberately ships none of it — the host
-		# pinned to BFME2 1.06 bytes owns those surfaces and the supplement
-		# borrows them. Requiring strict equality with the selected pack made
-		# every Angmar match fail HUD validation on images the mounted host pack
-		# was already providing. Accept the recorded host/faction roots, and
-		# still fail closed for an image with no pack backing at all.
-		return {"error": "Required UI image '%s' did not come from the selected or faction private packs." % image_id}
-
-	# Resolve the unit/structure's own crop first; fall back to the shared
-	# interface-art index for icons that live there. Provenance above already
-	# validated the pack root of whichever definition we settled on, so the
-	# fallback cannot smuggle in an image with no pack backing.
-	var image_path := ""
+		if (registration.get("imageBindings", {}) as Dictionary).has(image_id):
+			var path := String(content_db.resolve_playable_unit_image_path(runtime_object_id, image_id))
+			if path != "":
+				return {"error": "", "path": path, "source": "unit", "definition": (registration.get("imageBindingMetadata", {}) as Dictionary).get(image_id, {}) as Dictionary}
 	if structure_object_id != "":
-		image_path = String(content_db.resolve_playable_structure_image_path(structure_object_id, image_id))
-	elif runtime_object_id != "":
-		image_path = String(content_db.resolve_playable_unit_image_path(runtime_object_id, image_id))
-	if image_path == "":
-		image_path = String(content_db.resolve_retail_ui_image_path(image_id))
-	if image_path == "":
-		return {"error": "Required UI image '%s' does not resolve inside the selected private pack." % image_id}
+		var runtime: Dictionary = content_db.get_playable_structure_runtime(structure_object_id)
+		if runtime.is_empty():
+			return {"error": "Playable-structure runtime '%s' is missing." % structure_object_id}
+		var presentation := (runtime.get("registration", {}) as Dictionary).get("presentation", {}) as Dictionary
+		if (presentation.get("imageBindings", {}) as Dictionary).has(image_id):
+			var path := String(content_db.resolve_playable_structure_image_path(structure_object_id, image_id))
+			if path != "":
+				return {"error": "", "path": path, "source": "structure", "definition": (presentation.get("imageBindingMetadata", {}) as Dictionary).get(image_id, {}) as Dictionary}
+	var shared_definition: Dictionary = content_db.get_retail_ui_image(image_id)
+	if not shared_definition.is_empty():
+		var shared_path := String(content_db.resolve_retail_ui_image_path(image_id))
+		if shared_path != "":
+			# Interface-art index rows declare no dimensions; never invent them.
+			return {"error": "", "path": shared_path, "source": "shared", "definition": {}}
+	var kind := "UI image" if runtime_object_id != "" or structure_object_id != "" else "UI manifest image"
+	return {"error": "Required %s '%s' is missing." % [kind, image_id]}
+
+
+func _validate_retail_image(
+	content_db, _expected_pack_root: String, image_id: String, exact_size: Vector2i,
+	runtime_object_id: String = "", structure_object_id: String = ""
+) -> Dictionary:
+	var resolved := resolve_hud_icon(image_id, {
+		"content_db": content_db,
+		"runtime_object_id": runtime_object_id,
+		"structure_object_id": structure_object_id,
+	})
+	if String(resolved.get("error", "")) != "":
+		return resolved
+	var image_path := String(resolved["path"])
+	var image_definition := resolved.get("definition", {}) as Dictionary
 	if image_path.get_extension().to_lower() != "png":
 		return {"error": "Required UI image '%s' must resolve to a PNG, got '%s'." % [image_id, image_path.get_file()]}
 	if not bool(content_db.is_resolved_asset_path(image_path)):
@@ -2508,9 +2458,10 @@ func _validate_retail_image(
 		or header_height > MAX_RETAIL_COMMAND_ICON_DIMENSION
 	):
 		return {"error": "Required UI image '%s' has unsafe PNG dimensions %dx%d." % [image_id, header_width, header_height]}
-	var declared_width := int(image_definition.get("width", header_width))
-	var declared_height := int(image_definition.get("height", header_height))
-	if declared_width != header_width or declared_height != header_height:
+	var has_declared_size := image_definition.has("width") or image_definition.has("height")
+	var declared_width := int(image_definition.get("width", 0))
+	var declared_height := int(image_definition.get("height", 0))
+	if has_declared_size and (declared_width != header_width or declared_height != header_height):
 		return {"error": "Required UI image '%s' declares %dx%d but its PNG header is %dx%d." % [image_id, declared_width, declared_height, header_width, header_height]}
 
 	var decoded := Image.new()
@@ -2526,7 +2477,7 @@ func _validate_retail_image(
 		or source_height > MAX_RETAIL_COMMAND_ICON_DIMENSION
 	):
 		return {"error": "Required UI image '%s' has unsafe decoded dimensions %dx%d." % [image_id, source_width, source_height]}
-	if declared_width != source_width or declared_height != source_height:
+	if has_declared_size and (declared_width != source_width or declared_height != source_height):
 		return {"error": "Required UI image '%s' decoded to %dx%d but its manifest declares %dx%d." % [
 			image_id,
 			source_width,
@@ -2662,7 +2613,6 @@ func _clear_retail_command_bindings(hide_commands: bool) -> void:
 	_retail_train_label = ""
 	_retail_train_labels.clear()
 	_retail_portrait_textures.clear()
-	_allowed_image_pack_roots.clear()
 	if selection_portrait != null:
 		selection_portrait.texture = null
 		selection_portrait.visible = false
@@ -4271,33 +4221,42 @@ func retail_radial_page_command(page: String, faction_slug: String) -> Dictionar
 		"tooltip": String(authored.get("tooltip", "")),
 	}
 	var faction_row: Dictionary = RETAIL_RADIAL_PAGE_FACTIONS.get(faction, {}) as Dictionary
-	var image_id := ""
-	var label_id := ""
-	var tooltip_id := ""
 	var token := String(faction_row.get("token", ""))
+	var selector: Dictionary = {}
 	match page:
 		RADIAL_PAGE_UPGRADES:
-			image_id = "UCCommon_UpgradeStructureNew"
-			if token != "":
-				label_id = "CONTROLBAR:SelectUpgrades%sFortress" % token
-				tooltip_id = "CONTROLBAR:ToolTipCommandSelectUpgrades%sFortress" % token
+			selector = {
+				"buttonImageId": "UCCommon_UpgradeStructureNew",
+				"labelId": "CONTROLBAR:SelectUpgrades%sFortress" % token,
+				"tooltipId": "CONTROLBAR:ToolTipCommandSelectUpgrades%sFortress" % token,
+				"commandRangeStart": 7, "commandRangeCount": 7,
+			}
 		RADIAL_PAGE_HEROES:
-			image_id = String(faction_row.get("heroes_image", ""))
-			if token != "":
-				label_id = "CONTROLBAR:SelectRevivables%sFortress" % token
-				tooltip_id = "CONTROLBAR:ToolTipCommandSelectRevivables%sFortress" % token
+			selector = {
+				"buttonImageId": String(faction_row.get("heroes_image", "")),
+				"labelId": "CONTROLBAR:SelectRevivables%sFortress" % token,
+				"tooltipId": "CONTROLBAR:ToolTipCommandSelectRevivables%sFortress" % token,
+				"commandRangeStart": 14, "commandRangeCount": 10,
+			}
 		"back":
-			image_id = "UCCommon_BackArrow"
-			label_id = "CONTROLBAR:RadialBack"
-			tooltip_id = "CONTROLBAR:ToolTipCommandRadialBack"
+			selector = {"buttonImageId": "UCCommon_BackArrow", "labelId": "CONTROLBAR:RadialBack", "tooltipId": "CONTROLBAR:ToolTipCommandRadialBack"}
+	if _radial_page_selectors.has(page):
+		selector = (_radial_page_selectors[page] as Dictionary).duplicate(true)
+	elif token == "" and page != "back":
+		selector["labelId"] = ""
+		selector["tooltipId"] = ""
+	var image_id := String(selector.get("buttonImageId", ""))
+	var label_id := String(selector.get("labelId", ""))
+	var tooltip_id := String(selector.get("tooltipId", ""))
+	result.merge({
+		"command_id": String(selector.get("commandId", "")),
+		"image_id": image_id, "label_id": label_id, "tooltip_id": tooltip_id,
+		"command_range_start": int(selector.get("commandRangeStart", -1)),
+		"command_range_count": int(selector.get("commandRangeCount", 0)),
+	}, true)
 	if image_id != "" and _bound_content_db != null and _bound_pack_root != "":
-		# The ART and the STRINGS are resolved separately on purpose. Retail's
-		# converted `UCCommon_*` crops are in the host pack, but the faction's own
-		# CONTROLBAR ids for these three buttons are absent from every shipped
-		# pack (measured on rotwk-men / rotwk-dwarves, 2026-08-10). Binding them
-		# together would throw away an icon the pack HAS because of a string it
-		# lacks — which is exactly how the fortress improvements came to render as
-		# humanized upgrade ids. Each half falls back on its own and says so.
+		# Art and strings remain independently presentable: a missing localized
+		# selector string must not discard an icon the mounted pack does carry.
 		var image_validation := _validate_retail_image(
 			_bound_content_db, _bound_pack_root, image_id, Vector2i.ZERO
 		)
