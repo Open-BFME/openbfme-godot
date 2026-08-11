@@ -117,7 +117,6 @@ const KNOWN_FAILURE_NAMES := {
 	# explicitly by the archer projectile controller and is not; the check
 	# reports no detail because the blocker string is absent rather than
 	# wrong. Inherited pin, untriaged — 2026-08-04.
-	"gondor_archer_projectile_impact_closure_blocker_is_explicit": true,
 	# PRESENTATION PARITY FAMILY (four names, one root). The private slice is
 	# still drawing invented team colour instead of source-authored colour:
 	# `status=fallback-team-tint` with `blue=2/0 red=2/0` (two tinted surfaces,

@@ -32,6 +32,7 @@ func _run() -> void:
 	_test_mode_on_snapshot_round_trip()
 	_test_mode_on_twin_determinism()
 	_test_grant_upgrade_create_on_build_complete()
+	_test_expansion_weapon_acquires_and_fires()
 	_test_inherit_upgrade_create_exact_creation_edge()
 	await _test_mode_on_non_men_and_cross_faction()
 	print("RETAIL_BUILD_PLOTS_RESULT passed=%d failed=%d" % [passed, failed])
@@ -202,6 +203,141 @@ func _test_grant_upgrade_create_on_build_complete() -> void:
 		Array(structure.get("completed_upgrades", [])).count(
 			"Upgrade_TestBuiltObject"
 		) == 1
+	)
+
+
+func _test_expansion_weapon_acquires_and_fires() -> void:
+	var sim = _make_sim(false, false)
+	sim.configure_expansion_rules({
+		"test_trebuchet_expansion": {
+			"cost": 1,
+			"seconds": 0.05,
+			"health": 1000,
+			"pad_kinds": ["side", "corner"],
+			"name": "Test Trebuchet Expansion",
+			"object_id": "bfme2.object.test-trebuchet-expansion",
+			"attack": {
+				"range": 100.0,
+				"damage": 25.0,
+				"period_ticks": 8,
+				"pre_attack_ticks": 1,
+				"projectile_speed": 20.0,
+				"projectile_object_id": "TestRockProjectile",
+				"weapon_id": "TestTrebuchetWeapon",
+			},
+		},
+	})
+	var built: Dictionary = sim.issue_expansion_construct(
+		0, sim.fortress_id(0), "test_trebuchet_expansion"
+	)
+	var structure_id := int(built.get("structure_id", 0))
+	var structure := sim.structures.get(structure_id, {}) as Dictionary
+	structure["construction_progress"] = 1.0
+	var enemies: Array[int] = sim.living_ids(1)
+	var enemy_id := enemies[0] if not enemies.is_empty() else 0
+	if enemy_id != 0:
+		(sim.entities[enemy_id] as Dictionary)["position"] = Vector2(structure.get("position", Vector2.ZERO)) + Vector2(5.0, 0.0)
+	var before := int((sim.entities.get(enemy_id, {}) as Dictionary).get("health", 0))
+	sim.advance(1)
+	var launched := false
+	var projectile_token := 0
+	var launch_tick := -1
+	for event_value in sim.events:
+		var event := event_value as Dictionary
+		if String(event.get("kind", "")) == "combat.structure_projectile_launched" and int(event.get("entity_id", 0)) == structure_id:
+			launched = true
+			projectile_token = int(event.get("projectile_token", 0))
+			launch_tick = int(event.get("tick", -1))
+			break
+	var launch_cooldown := int(
+		(structure.get("attack", {}) as Dictionary).get("cooldown", -1)
+	)
+	var in_flight_snapshot: PackedByteArray = sim.snapshot()
+	var restored_in_flight = _make_sim(false, false)
+	var restored_ok: bool = restored_in_flight.restore(in_flight_snapshot)
+	var restored_attack := (
+		(restored_in_flight.structures.get(structure_id, {}) as Dictionary)
+		.get("attack", {}) as Dictionary
+	)
+	_check(
+		"fortress_in_flight_projectile_snapshot_and_hash_round_trip",
+		restored_ok
+			and restored_attack.has("pending_projectile")
+			and restored_in_flight.state_hash() == sim.state_hash()
+	)
+	(restored_in_flight.structures[structure_id] as Dictionary)["health"] = 0
+	for _tick in range(4):
+		restored_in_flight.advance(1)
+	var destroyed_owner_hit := false
+	for event_value in restored_in_flight.events:
+		var event := event_value as Dictionary
+		if (
+			String(event.get("kind", "")) == "power.structure_weapon_hit"
+			and int(event.get("entity_id", 0)) == structure_id
+			and int(event.get("projectile_token", 0)) == projectile_token
+		):
+			destroyed_owner_hit = true
+	_check(
+		"launched_projectile_resolves_after_firing_structure_is_destroyed",
+		destroyed_owner_hit
+			and not restored_attack.has("pending_projectile")
+	)
+	_check(
+		"fortress_trebuchet_spawns_projectile_before_impact_damage",
+		launched and int((sim.entities.get(enemy_id, {}) as Dictionary).get("health", 0)) == before,
+		"launched=%s health=%d->%d" % [launched, before, int((sim.entities.get(enemy_id, {}) as Dictionary).get("health", 0))]
+	)
+	for _tick in range(7):
+		sim.advance(1)
+	var after := int((sim.entities.get(enemy_id, {}) as Dictionary).get("health", 0))
+	var correlated_hit := false
+	for event_value in sim.events:
+		var event := event_value as Dictionary
+		if (
+			String(event.get("kind", "")) == "power.structure_weapon_hit"
+			and int(event.get("entity_id", 0)) == structure_id
+			and int(event.get("target_id", 0)) == enemy_id
+			and int(event.get("projectile_token", 0)) == projectile_token
+		):
+			correlated_hit = true
+			break
+	_check(
+		"fortress_trebuchet_expansion_acquires_and_fires_within_n_ticks",
+		bool(built.get("ok", false))
+			and typeof(structure.get("attack")) == TYPE_DICTIONARY
+			and projectile_token > 0
+			and correlated_hit
+			and launch_cooldown == launch_tick + 8
+			and after < before,
+		"built=%s enemy=%d health=%d->%d attack=%s" % [built, enemy_id, before, after, structure.get("attack")]
+	)
+	var cancelled = _make_sim(false, false)
+	cancelled.configure_expansion_rules(sim._expansion_build_rules)
+	var cancelled_build: Dictionary = cancelled.issue_expansion_construct(
+		0, cancelled.fortress_id(0), "test_trebuchet_expansion"
+	)
+	var cancelled_structure_id := int(cancelled_build.get("structure_id", 0))
+	(cancelled.structures[cancelled_structure_id] as Dictionary)["construction_progress"] = 1.0
+	var cancelled_enemy_id := int(cancelled.living_ids(1)[0])
+	(cancelled.entities[cancelled_enemy_id] as Dictionary)["position"] = (
+		Vector2((cancelled.structures[cancelled_structure_id] as Dictionary).get("position", Vector2.ZERO))
+		+ Vector2(5.0, 0.0)
+	)
+	cancelled.advance(1)
+	cancelled.entities.erase(cancelled_enemy_id)
+	for _tick in range(12):
+		cancelled.advance(1)
+	var cancellation_seen := false
+	for event_value in cancelled.events:
+		var event := event_value as Dictionary
+		if (
+			String(event.get("kind", "")) == "combat.structure_projectile_cancelled"
+			and int(event.get("entity_id", 0)) == cancelled_structure_id
+		):
+			cancellation_seen = true
+	_check(
+		"fortress_projectile_cancels_when_target_disappears",
+		cancellation_seen
 	)
 
 
@@ -380,6 +516,59 @@ func _test_mode_on_non_men_and_cross_faction() -> void:
 	var base_rules: Dictionary = slice.gameplay_rules.duplicate(true)
 	var map_config: Dictionary = slice.source_map_data.simulation_configuration()
 	var men_manifest: Dictionary = slice.faction_manifest.duplicate(true)
+	var projected_attack: Dictionary = slice._structure_attack_rule({
+		"attackRange": {"value": 500},
+		"minimumAttackRange": {"value": 150},
+		"delayBetweenShotsMs": {"value": 6000},
+		"preAttackDelayMs": {"value": 800},
+		"damage": {"value": 300},
+		"projectileSpeed": {"value": 201},
+		"projectileObjectId": "DwarvenCatapultRockProjectile",
+		"weaponId": "DwarvenIronHillsCatapultRock",
+		"spawnedObjectId": "DwarvenCatapultFortress",
+	})
+	_check(
+		"compiled_structure_combat_projects_range_timing_and_identity",
+		is_equal_approx(float(projected_attack.get("range", 0.0)), 500.0 * slice.source_map_data.local_transform_scale)
+			and is_equal_approx(float(projected_attack.get("minimum_range", 0.0)), 150.0 * slice.source_map_data.local_transform_scale)
+			and int(projected_attack.get("period_ticks", 0)) == roundi(6000.0 / (SimScript.TICK_SECONDS * 1000.0))
+			and int(projected_attack.get("pre_attack_ticks", 0)) == roundi(800.0 / (SimScript.TICK_SECONDS * 1000.0))
+			and String(projected_attack.get("projectile_object_id", "")) == "DwarvenCatapultRockProjectile"
+	)
+	var presentation_owner := int(slice.simulation.fortress_id(0))
+	var presentation_key := "%d:77" % presentation_owner
+	slice.simulation.events.append({
+		"tick": slice.simulation.tick_index,
+		"kind": "combat.structure_projectile_launched",
+		"entity_id": presentation_owner,
+		"target_id": 0,
+		"projectile_token": 77,
+		"projectile_object_id": "TestRockProjectile",
+		"team": 0,
+		"launch_position": Vector2.ZERO,
+		"target_position": Vector2(5.0, 0.0),
+		"impact_tick": slice.simulation.tick_index + 5,
+	})
+	slice._consume_structure_projectile_events()
+	var presented_projectile := slice.structure_projectile_nodes.get(presentation_key) as Node
+	_check(
+		"fortress_projectile_presentation_binds_identity_and_visible_fallback",
+		presented_projectile != null
+			and String(presented_projectile.get_meta("projectile_object_id", "")) == "TestRockProjectile"
+			and String(presented_projectile.get_meta("art_binding", "")) == "procedural-current-pack-fallback"
+	)
+	slice.simulation.events.append({
+		"tick": slice.simulation.tick_index,
+		"kind": "combat.structure_projectile_cancelled",
+		"entity_id": presentation_owner,
+		"target_id": 0,
+		"projectile_token": 77,
+	})
+	slice._consume_structure_projectile_events()
+	_check(
+		"fortress_projectile_cancellation_removes_presentation_node",
+		not slice.structure_projectile_nodes.has(presentation_key)
+	)
 	slice._classify_faction_units("elves")
 	var elves_manifest: Dictionary = slice._resolve_faction_manifest("elves")
 	slice.queue_free()

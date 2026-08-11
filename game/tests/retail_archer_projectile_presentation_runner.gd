@@ -41,10 +41,70 @@ func _run() -> void:
 	if battalion_script == null or controller_script == null:
 		_finish()
 		return
+	var configured_probe = battalion_script.new()
+	root.add_child(configured_probe)
+	configured_probe.configure(
+		78, 0, "bfme2.object.elven-lorien-archer", {}, 0, 0.01, []
+	)
+	_check(
+		"configure_derives_non_gondor_binding_and_mounted_sidecar",
+		configured_probe.projectile_object_id == "GoodFactionArrow"
+			and configured_probe.archer_projectile_controller != null
+			and configured_probe.archer_projectile_controller.contract_ready
+	)
+	configured_probe.queue_free()
+	var ranger_probe = battalion_script.new()
+	root.add_child(ranger_probe)
+	ranger_probe.configure(
+		80, 0, "bfme2.object.gondor-ranger", {}, 0, 0.01, []
+	)
+	_check(
+		"ranger_compiled_binding_is_allowlisted_arrow",
+		ranger_probe.projectile_object_id == "GoodFactionArrow"
+	)
+	_check(
+		"ranger_keeps_authored_arrow_launch_bone",
+		ranger_probe.weapon_launch_bone == "ARROW"
+	)
+	_check(
+		"ranger_configure_binds_mounted_arrow_sidecar",
+		ranger_probe.archer_projectile_controller != null
+			and ranger_probe.archer_projectile_controller.contract_ready
+	)
+	ranger_probe.queue_free()
+	var siege_probe = battalion_script.new()
+	root.add_child(siege_probe)
+	siege_probe.configure(
+		79, 0, "bfme2.object.gondor-trebuchet", {}, 0, 0.01, []
+	)
+	_check(
+		"non_arrow_projectile_never_binds_arrow_presentation",
+		siege_probe.projectile_object_id == "GondorTrebuchetRockProjectile"
+			and siege_probe.archer_projectile_controller == null
+	)
+	siege_probe.queue_free()
 	var archer = battalion_script.new()
 	root.add_child(archer)
+	var faction_bindings := {
+		"men": [ARCHER_OBJECT_ID, "GondorArcherArrow"],
+		"elves": ["bfme2.object.elven-lorien-archer", "GoodFactionArrow"],
+		"dwarves": ["bfme2.object.dwarven-men-of-dale", "GoodFactionArrow"],
+		"isengard": ["bfme2.object.isengard-uruk-crossbow", "GoodFactionArrow"],
+		"mordor": ["bfme2.object.mordor-archer", "EvilFactionArrow"],
+		"wild": ["bfme2.object.goblin-archer", "EvilFactionArrow"],
+		"angmar": ["bfme2.object.angmar-dark-ranger", "EvilFactionArrow"],
+		"ranger": ["bfme2.object.gondor-ranger", "GoodFactionArrow"],
+	}
+	for faction_value in faction_bindings.keys():
+		var faction := String(faction_value)
+		var binding := faction_bindings[faction] as Array
+		_check(
+			"compiled_member_id_resolves_%s_projectile_binding" % faction,
+			archer._compiled_projectile_object_id(String(binding[0])) == String(binding[1])
+		)
 	archer.entity_id = 77
 	archer.object_id = ARCHER_OBJECT_ID
+	archer.projectile_object_id = "GondorArcherArrow"
 	archer.member_count = 1
 	archer._source_unit_scale = 0.01
 	archer.clip_map = {"idle": "fixture", "attack": "fixture"}
@@ -124,6 +184,25 @@ func _run() -> void:
 			and int(archer.archer_impacts_presented) == 1
 			and int(archer.archer_projectile_controller.active_projectile_node_count) == 0
 			and int(archer.archer_projectile_controller.active_impact_node_count) == 1
+	)
+	# Every faction's compiled ranged member carries a retail
+	# projectileObjectId.  Presentation must follow that binding instead of
+	# rejecting everything except the historical Gondor special case.
+	archer.object_id = "bfme2.object.elven-lorien-archer"
+	archer.projectile_object_id = "GoodFactionArrow"
+	archer.sync_member_states(
+		[100], 100, [2], "attack", [2], ["ranged"],
+		[target.global_position + Vector3(0.0, 0.15, 0.0)]
+	)
+	var non_gondor_projectile := archer.archer_projectile_controller.find_child(
+		"RetailGondorArcherProjectile_*", false, false
+	) as Node
+	_check(
+		"non_gondor_compiled_projectile_binding_spawns_visible_arrow",
+		int(archer.archer_projectiles_presented) == 2
+			and int(archer.archer_projectile_controller.active_projectile_node_count) == 1
+			and non_gondor_projectile != null
+			and String(non_gondor_projectile.get_meta("projectile_object_id", "")) == "GoodFactionArrow"
 	)
 	await create_timer(1.1).timeout
 	_check("impact_lifetime_is_bounded", int(archer.archer_projectile_controller.active_impact_node_count) == 0)

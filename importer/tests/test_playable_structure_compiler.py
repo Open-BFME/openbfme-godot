@@ -192,6 +192,167 @@ def test_constructed_structure_compiles_deterministically() -> None:
     assert len(first["descriptorSha256"]) == 64
 
 
+def test_structure_weapon_and_projectile_binding_compile_from_authored_ini() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  BuildCost = KEEP_BUILDCOST",
+        b"""  WeaponSet
+    Conditions = None
+    Weapon = PRIMARY TestKeepRockWeapon
+  End
+  BuildCost = KEEP_BUILDCOST""",
+        1,
+    )
+    documents["data/ini/weapon.ini"] = b"""
+Weapon TestKeepRockWeapon
+  AttackRange = 500
+  MinimumAttackRange = 100
+  WeaponSpeed = 300
+  DelayBetweenShots = 8000
+  PreAttackDelay = 1200
+  FiringDuration = 5400
+  ProjectileTemplateName = TestKeepRockProjectile
+  WarheadTemplateName = TestKeepRockWarhead
+End
+Weapon TestKeepRockWarhead
+  Damage = 390
+  DamageType = SIEGE
+End
+"""
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+
+    assert descriptor["gameplay"]["combat"] == {
+        "weaponId": "TestKeepRockWeapon",
+        "weaponSlot": "PRIMARY",
+        "attackRange": {"value": 500, "expression": "500", "sourceIni": "data/ini/weapon.ini", "line": 3, "constantSourceIni": None},
+        "minimumAttackRange": {"value": 100, "expression": "100", "sourceIni": "data/ini/weapon.ini", "line": 4, "constantSourceIni": None},
+        "projectileSpeed": {"value": 300, "expression": "300", "sourceIni": "data/ini/weapon.ini", "line": 5, "constantSourceIni": None},
+        "delayBetweenShotsMs": {"value": 8000, "expression": "8000", "sourceIni": "data/ini/weapon.ini", "line": 6, "constantSourceIni": None},
+        "preAttackDelayMs": {"value": 1200, "expression": "1200", "sourceIni": "data/ini/weapon.ini", "line": 7, "constantSourceIni": None},
+        "firingDurationMs": {"value": 5400, "expression": "5400", "sourceIni": "data/ini/weapon.ini", "line": 8, "constantSourceIni": None},
+        "damage": {"value": 390, "expression": "390", "sourceIni": "data/ini/weapon.ini", "line": 13, "constantSourceIni": None},
+        "damageType": "SIEGE",
+        "warheadId": "TestKeepRockWarhead",
+        "projectileObjectId": "TestKeepRockProjectile",
+    }
+
+
+def test_artillery_expansion_joins_acquisition_shell_to_spawned_delivery_weapon() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  BuildCost = KEEP_BUILDCOST",
+        b"""  WeaponSet
+    Conditions = None
+    Weapon = PRIMARY TestAcquisitionShell
+  End
+  Behavior = ObjectCreationUpgrade ModuleTag_SpawnWeapon
+    TriggeredBy = Upgrade_TestArtillery
+    ThingToSpawn = TestSpawnedArtillery
+  End
+  BuildCost = KEEP_BUILDCOST""",
+        1,
+    ) + b"""
+Object TestSpawnedArtillery
+  KindOf = STRUCTURE
+  WeaponSet
+    Conditions = None
+    Weapon = PRIMARY TestDeliveryWeapon
+  End
+End
+"""
+    documents["data/ini/weapon.ini"] = b"""
+Weapon TestAcquisitionShell
+  AttackRange = 600
+  MinimumAttackRange = 200
+  DelayBetweenShots = 9000
+  PreAttackDelay = 1300
+  FiringDuration = 5500
+  SlaveAttackNugget
+  End
+End
+Weapon TestDeliveryWeapon
+  AttackRange = 500
+  MinimumAttackRange = 100
+  WeaponSpeed = 300
+  DelayBetweenShots = 8000
+  PreAttackDelay = 1200
+  FiringDuration = 5400
+  ProjectileTemplateName = TestRockProjectile
+  WarheadTemplateName = TestRockWarhead
+End
+Weapon TestRockWarhead
+  Damage = 390
+  DamageType = SIEGE
+End
+"""
+
+    combat = compile_playable_structure_descriptor(
+        "TestKeep", documents
+    )["gameplay"]["combat"]
+
+    assert combat["weaponId"] == "TestDeliveryWeapon"
+    assert combat["targetAcquisitionWeaponId"] == "TestAcquisitionShell"
+    assert combat["spawnedObjectId"] == "TestSpawnedArtillery"
+    assert combat["projectileObjectId"] == "TestRockProjectile"
+    assert combat["projectileSpeed"]["value"] == 300
+    assert combat["damage"]["value"] == 390
+    assert combat["attackRange"]["value"] == 600
+    assert combat["minimumAttackRange"]["value"] == 200
+    assert combat["delayBetweenShotsMs"]["value"] == 9000
+    assert combat["preAttackDelayMs"]["value"] == 1300
+    assert combat["firingDurationMs"]["value"] == 5500
+
+
+def test_interval_tower_weapon_remains_a_valid_lifecycle_only_structure() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  BuildCost = KEEP_BUILDCOST",
+        b"""  WeaponSet
+    Conditions = None
+    Weapon = PRIMARY TestTowerBow
+  End
+  Behavior = ObjectCreationUpgrade ModuleTag_UnrelatedDecoration
+    TriggeredBy = Upgrade_TestDecoration
+    ThingToSpawn = TestDecoration
+  End
+  BuildCost = KEEP_BUILDCOST""",
+        1,
+    ) + b"""
+Object TestDecoration
+  KindOf = STRUCTURE
+  WeaponSet
+    Conditions = None
+    Weapon = PRIMARY TestDecorationWeapon
+  End
+End
+"""
+    documents["data/ini/weapon.ini"] = b"""
+Weapon TestTowerBow
+  AttackRange = 400
+  DelayBetweenShots = Min:1000 Max:1200
+  ProjectileTemplateName = GoodFactionArrow
+End
+Weapon TestDecorationWeapon
+  AttackRange = 50
+  WeaponSpeed = 10
+  DelayBetweenShots = 1000
+  PreAttackDelay = 0
+  FiringDuration = 100
+  Damage = 1
+  ProjectileTemplateName = TestDecorationProjectile
+End
+"""
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+
+    assert "combat" not in descriptor["gameplay"]
+    validate_playable_structure_descriptor(descriptor)
+
+
 def test_queue_production_exit_update_compiles_effective_deferred_contract() -> None:
     documents = _structure_documents()
     path = "data/ini/object/units/test_units.ini"

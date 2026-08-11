@@ -8518,6 +8518,16 @@ func _step_structure_weapons() -> void:
 	for structure_id_value in structures.keys():
 		var structure_id := int(structure_id_value)
 		var structure: Dictionary = structures[structure_id]
+		var attack_value: Variant = structure.get("attack", null)
+		var attack := attack_value as Dictionary if typeof(attack_value) == TYPE_DICTIONARY else {}
+		var pending := attack.get("pending_projectile", {}) as Dictionary
+		if not pending.is_empty():
+			if tick_index < int(pending.get("impact_tick", tick_index)):
+				continue
+			# An already-launched shell remains authoritative even if its firing
+			# expansion is destroyed before impact.
+			_resolve_structure_weapon_impact(structure_id, attack, pending)
+			continue
 		if int(structure.get("health", 0)) <= 0:
 			continue
 		if String(structure.get("summon_object_id", "")) != "" and float(structure.get("construction_progress", 1.0)) < 1.0:
@@ -8530,20 +8540,19 @@ func _step_structure_weapons() -> void:
 			continue
 		if float(structure.get("construction_progress", 1.0)) < 1.0:
 			continue
-		var attack_value: Variant = structure.get("attack", null)
 		if typeof(attack_value) != TYPE_DICTIONARY:
 			continue
-		var attack := attack_value as Dictionary
 		if tick_index < int(attack.get("cooldown", 0)):
 			continue
 		var team := int(structure.get("team", -1))
 		var origin := Vector2(structure.get("position", Vector2.ZERO))
 		var best_id := 0
 		var best_distance := float(attack.get("range", 0.0))
+		var minimum_distance := maxf(0.0, float(attack.get("minimum_range", 0.0)))
 		for id in living_ids(1 - team):
 			var row: Dictionary = entities[id]
 			var distance := origin.distance_to(Vector2(row.get("position", Vector2.ZERO)))
-			if distance < best_distance:
+			if distance >= minimum_distance and distance < best_distance:
 				best_distance = distance
 				best_id = id
 		if best_id == 0:
@@ -8558,28 +8567,91 @@ func _step_structure_weapons() -> void:
 		if member_index < 0:
 			continue
 		var amount := maxi(1, roundi(float(attack.get("damage", 0.0))))
-		var prior_member_health := int(health_values[member_index])
-		health_values[member_index] = maxi(0, prior_member_health - amount)
+		var flight_ticks := 0
+		var projectile_speed := float(attack.get("projectile_speed", 0.0))
+		if projectile_speed > 0.0 and String(attack.get("projectile_object_id", "")) != "":
+			flight_ticks = maxi(1, ceili(best_distance / projectile_speed / TICK_SECONDS))
+		var token := int(attack.get("next_projectile_token", 1))
+		attack["next_projectile_token"] = token + 1
+		attack["pending_projectile"] = {
+			"token": token,
+			"target_id": best_id,
+			"member_index": member_index,
+			"amount": amount,
+			"impact_tick": tick_index + int(attack.get("pre_attack_ticks", 0)) + flight_ticks,
+		}
+		# DelayBetweenShots is measured from this authored attack cycle, not
+		# from projectile impact; adding flight time here made artillery fire
+		# progressively slower at longer range.
+		attack["cooldown"] = tick_index + int(attack.get("period_ticks", 1))
+		_emit_event("combat.structure_projectile_launched", structure_id, best_id, {
+			"projectile_token": token,
+			"projectile_object_id": String(attack.get("projectile_object_id", "")),
+			"weapon_id": String(attack.get("weapon_id", "")),
+			"team": team,
+			"launch_position": origin,
+			"target_position": Vector2(target.get("position", Vector2.ZERO)),
+			"impact_tick": int((attack["pending_projectile"] as Dictionary)["impact_tick"]),
+		})
+		if int((attack["pending_projectile"] as Dictionary)["impact_tick"]) <= tick_index:
+			_resolve_structure_weapon_impact(
+				structure_id, attack, attack["pending_projectile"] as Dictionary
+			)
+
+
+func _resolve_structure_weapon_impact(
+	structure_id: int, attack: Dictionary, pending: Dictionary
+) -> void:
+	var target_id := int(pending.get("target_id", 0))
+	if not entities.has(target_id):
+		_emit_event("combat.structure_projectile_cancelled", structure_id, target_id, {
+			"projectile_token": int(pending.get("token", 0)),
+			"projectile_object_id": String(attack.get("projectile_object_id", "")),
+		})
+		attack.erase("pending_projectile")
+		return
+	var target := entities[target_id] as Dictionary
+	var health_values: Array = target.get("member_health", [])
+	var member_index := int(pending.get("member_index", -1))
+	if member_index < 0 or member_index >= health_values.size() or int(health_values[member_index]) <= 0:
+		member_index = -1
+		for index in health_values.size():
+			if int(health_values[index]) > 0:
+				member_index = index
+				break
+	if member_index >= 0:
+		var amount := maxi(1, int(pending.get("amount", 1)))
+		var prior_health := int(health_values[member_index])
+		health_values[member_index] = maxi(0, prior_health - amount)
 		target["member_health"] = health_values
-		var aggregate := 0
+		var aggregate_health := 0
 		for value in health_values:
-			aggregate += int(value)
-		target["health"] = aggregate
+			aggregate_health += int(value)
+		target["health"] = aggregate_health
 		target["last_damage_tick"] = tick_index
 		var defeated_members: Array[int] = []
-		if prior_member_health > 0 and int(health_values[member_index]) == 0:
+		if prior_health > 0 and int(health_values[member_index]) == 0:
 			defeated_members.append(member_index)
-		if aggregate <= 0:
+		if aggregate_health <= 0:
 			var death_policy := _bookkeep_battalion_death(
-				best_id, target, "NORMAL", defeated_members
+				target_id, target, "NORMAL", defeated_members
 			)
-			_emit_event("battalion.defeated", structure_id, best_id)
+			_emit_event("battalion.defeated", structure_id, target_id)
 			if bool(death_policy.get("destroy_object", false)):
-				entities.erase(best_id)
+				entities.erase(target_id)
 		else:
 			_apply_playable_unit_death_policy(target, "NORMAL", defeated_members)
-			_emit_event("power.structure_weapon_hit", structure_id, best_id, {"amount": amount})
-		attack["cooldown"] = tick_index + int(attack.get("period_ticks", 1)) + int(attack.get("pre_attack_ticks", 0))
+		_emit_event("power.structure_weapon_hit", structure_id, target_id, {
+			"amount": amount,
+			"projectile_token": int(pending.get("token", 0)),
+			"projectile_object_id": String(attack.get("projectile_object_id", "")),
+		})
+	else:
+		_emit_event("combat.structure_projectile_cancelled", structure_id, target_id, {
+			"projectile_token": int(pending.get("token", 0)),
+			"projectile_object_id": String(attack.get("projectile_object_id", "")),
+		})
+	attack.erase("pending_projectile")
 
 
 func validate_construct_site(builder_ids: Array[int], structure_kind: String, point: Vector2, team: int = PLAYER_TEAM) -> Dictionary:
@@ -8985,6 +9057,14 @@ func issue_expansion_construct(team: int, fortress_id: int, expansion_kind: Stri
 		"expansion_of_fortress": fortress_id,
 		"expansion_pad_index": pad_index,
 	}
+	var attack_value: Variant = rule.get("attack")
+	if typeof(attack_value) == TYPE_DICTIONARY and not (attack_value as Dictionary).is_empty():
+		var attack := (attack_value as Dictionary).duplicate(true)
+		attack["cooldown"] = tick_index
+		structures[structure_id]["attack"] = attack
+		var spawned_object_id := String(attack.get("spawned_object_id", ""))
+		if spawned_object_id != "":
+			structures[structure_id]["spawned_weapon_object_id"] = spawned_object_id
 	if bool(rule.get("highlander_body", false)):
 		structures[structure_id]["highlander_body"] = true
 	_apply_structure_inherit_upgrades(structures[structure_id] as Dictionary)
@@ -18964,6 +19044,11 @@ func state_snapshot() -> Dictionary:
 			"queue": queue_rows,
 			"upgrade_queue": upgrade_queue_rows,
 		})
+		var snapshot_structure := structure_rows[-1] as Dictionary
+		if typeof(structure_row.get("attack")) == TYPE_DICTIONARY:
+			snapshot_structure["attack"] = (structure_row["attack"] as Dictionary).duplicate(true)
+		if String(structure_row.get("spawned_weapon_object_id", "")) != "":
+			snapshot_structure["spawned_weapon_object_id"] = String(structure_row["spawned_weapon_object_id"])
 	var gate_rows: Array[Dictionary] = []
 	for gate in ford_gates:
 		var edge_a := Vector2(gate.get("edge_a", Vector2.ZERO))

@@ -2846,6 +2846,28 @@ func _spawn_structure(id: int) -> void:
 	structure.position = Vector3(position.x, _presentation_height(position) - 0.35 + float(entity.get("elevation", 0.0)), position.y)
 	structure.rotation.y = -float(entity.get("facing_radians", 0.0))
 	add_child(structure)
+	var spawned_weapon_object_id := String(entity.get("spawned_weapon_object_id", ""))
+	if spawned_weapon_object_id != "":
+		var asset_factory = load("res://src/view/asset_factory.gd")
+		var weapon_definition: Dictionary = ContentDB.get_bundle_object(spawned_weapon_object_id)
+		var weapon_visual: Node3D = null
+		if not weapon_definition.is_empty():
+			weapon_visual = asset_factory.make_bundle_object_visual(
+				spawned_weapon_object_id,
+				int(entity.get("team", 0)),
+				source_map_data.local_transform_scale
+			)
+		if weapon_visual != null and bool(weapon_visual.get_meta("authored", false)):
+			weapon_visual.name = "SpawnedFortressWeapon"
+			weapon_visual.set_meta("spawn_source", "compiled-object-creation-upgrade")
+			structure.add_child(weapon_visual)
+		else:
+			push_warning(
+				"RetailVerticalSlice: spawned fortress weapon '%s' has no authored bundle visual in the mounted pack"
+				% spawned_weapon_object_id
+			)
+			if weapon_visual != null:
+				weapon_visual.queue_free()
 	_assign_geometry_light_layer(structure, OBJECT_LIGHT_LAYER)
 	structure_nodes[id] = structure
 
@@ -3831,6 +3853,7 @@ func _sync_presentation() -> void:
 		_profile_mark = Time.get_ticks_usec()
 	if audio_system != null:
 		audio_system.sync_events(simulation.events)
+	_consume_structure_projectile_events()
 	_consume_power_fx_events()
 	if _profile_sync:
 		presentation_profile["audio_us"] = presentation_profile.get("audio_us", 0) + (Time.get_ticks_usec() - _profile_mark)
@@ -3843,6 +3866,7 @@ func _sync_presentation() -> void:
 		_score_event_index = simulation.events.size()
 		_feed_event_index = simulation.events.size()
 		_power_fx_event_index = simulation.events.size()
+		_structure_projectile_event_index = simulation.events.size()
 		if audio_system != null:
 			audio_system.acknowledge_event_history_compaction(simulation.events.size())
 	if _profile_sync:
@@ -5328,6 +5352,15 @@ func _configure_simulation_expansions(sim = null) -> void:
 			"object_id": runtime_id,
 			"create_grants": create_grants,
 		}
+		var combat := gameplay.get("combat", {}) as Dictionary
+		var attack := _structure_attack_rule(combat)
+		if not attack.is_empty():
+			rule["attack"] = attack
+		elif _structure_is_artillery_expansion(gameplay):
+			push_warning(
+				"RetailVerticalSlice: structure '%s' has no compiled combat contract (stale pack); expansion remains non-firing"
+				% String(definition.get("objectId", runtime_id))
+			)
 		if bool(
 			(health_contract.get("highlanderBody", {}) as Dictionary)
 			.get("value", false)
@@ -5354,6 +5387,51 @@ func _configure_simulation_expansions(sim = null) -> void:
 			_project_castle_piece_definition(piece_value as Dictionary)
 		castle_by_source[object_id] = compiled
 	sim.configure_castle_behaviors(castle_by_source)
+
+
+func _structure_attack_rule(combat: Dictionary) -> Dictionary:
+	## Packs built before the structure-weapon compiler carry no combat key;
+	## returning empty keeps those expansions constructable but explicitly
+	## non-firing until the next immutable pack publication.
+	var required := ["attackRange", "delayBetweenShotsMs", "preAttackDelayMs", "damage"]
+	for field in required:
+		if typeof(combat.get(field)) != TYPE_DICTIONARY:
+			return {}
+	var attack_range := float((combat["attackRange"] as Dictionary).get("value", -1.0))
+	var delay_ms := float((combat["delayBetweenShotsMs"] as Dictionary).get("value", -1.0))
+	var pre_attack_ms := float((combat["preAttackDelayMs"] as Dictionary).get("value", -1.0))
+	var damage := float((combat["damage"] as Dictionary).get("value", 0.0))
+	if attack_range <= 0.0 or delay_ms < 0.0 or pre_attack_ms < 0.0 or damage <= 0.0:
+		return {}
+	var projectile_speed := 0.0
+	if typeof(combat.get("projectileSpeed")) == TYPE_DICTIONARY:
+		projectile_speed = float((combat["projectileSpeed"] as Dictionary).get("value", 0.0))
+	return {
+		"range": attack_range * source_map_data.local_transform_scale,
+		"minimum_range": (
+			float((combat.get("minimumAttackRange", {}) as Dictionary).get("value", 0.0))
+			* source_map_data.local_transform_scale
+		),
+		"damage": damage,
+		"period_ticks": maxi(1, roundi(delay_ms / (SimScript.TICK_SECONDS * 1000.0))),
+		"pre_attack_ticks": maxi(0, roundi(pre_attack_ms / (SimScript.TICK_SECONDS * 1000.0))),
+		"projectile_speed": projectile_speed * source_map_data.local_transform_scale,
+		"projectile_object_id": String(combat.get("projectileObjectId", "")),
+		"weapon_id": String(combat.get("weaponId", "")),
+		"spawned_object_id": PlayableUnitAdapter._runtime_id(String(combat.get("spawnedObjectId", ""))) if String(combat.get("spawnedObjectId", "")) != "" else "",
+	}
+
+
+func _structure_is_artillery_expansion(gameplay: Dictionary) -> bool:
+	for row_value in gameplay.get("moduleContracts", []) as Array:
+		var row := row_value as Dictionary
+		if String(row.get("module", "")).to_lower() != "objectcreationupgrade":
+			continue
+		var fields := row.get("fields", {}) as Dictionary
+		var spawn := fields.get("ThingToSpawn", {}) as Dictionary
+		if String(spawn.get("authored", "")) != "":
+			return true
+	return false
 
 
 func _project_castle_piece_definition(piece: Dictionary) -> void:
@@ -6536,6 +6614,12 @@ func reset_match() -> void:
 	simulation_paused = false
 	_score_cache = {"units_trained": 0, "units_lost": 0, "resources_gathered": 0}
 	_score_event_index = 0
+	_structure_projectile_event_index = 0
+	for node_value in structure_projectile_nodes.values():
+		var projectile_node := node_value as Node
+		if projectile_node != null and is_instance_valid(projectile_node):
+			projectile_node.queue_free()
+	structure_projectile_nodes.clear()
 	if is_inside_tree():
 		get_tree().paused = false
 	selected_structure_id = 0
@@ -7282,6 +7366,88 @@ func _grant_test_resources() -> void:
 
 
 var _power_fx_event_index := 0
+var _structure_projectile_event_index := 0
+var structure_projectile_nodes: Dictionary = {}
+
+
+func _consume_structure_projectile_events() -> void:
+	var events: Array = simulation.events
+	while _structure_projectile_event_index < events.size():
+		var event := events[_structure_projectile_event_index] as Dictionary
+		_structure_projectile_event_index += 1
+		var kind := String(event.get("kind", ""))
+		if kind not in [
+			"combat.structure_projectile_launched",
+			"power.structure_weapon_hit",
+			"combat.structure_projectile_cancelled",
+		]:
+			continue
+		var key := "%d:%d" % [int(event.get("entity_id", 0)), int(event.get("projectile_token", 0))]
+		if kind in ["power.structure_weapon_hit", "combat.structure_projectile_cancelled"]:
+			var old := structure_projectile_nodes.get(key) as Node
+			if old != null and is_instance_valid(old):
+				old.queue_free()
+			structure_projectile_nodes.erase(key)
+			continue
+		var start := event.get("launch_position", Vector2.ZERO) as Vector2
+		var finish := event.get("target_position", start) as Vector2
+		var projectile_id := String(event.get("projectile_object_id", ""))
+		var runtime_projectile_id := PlayableUnitAdapter._runtime_id(projectile_id)
+		var asset_factory = load("res://src/view/asset_factory.gd")
+		var projectile: Node3D = null
+		if not ContentDB.get_bundle_object(runtime_projectile_id).is_empty():
+			projectile = asset_factory.make_bundle_object_visual(
+				runtime_projectile_id,
+				int(event.get("team", 0)),
+				source_map_data.local_transform_scale
+			)
+		var authored := projectile != null and bool(projectile.get_meta("authored", false))
+		if not authored:
+			if projectile != null:
+				projectile.queue_free()
+			projectile = MeshInstance3D.new()
+			var mesh := SphereMesh.new()
+			mesh.radius = 0.22
+			mesh.height = 0.44
+			(projectile as MeshInstance3D).mesh = mesh
+			var material := StandardMaterial3D.new()
+			material.albedo_color = Color(0.24, 0.20, 0.16)
+			(projectile as MeshInstance3D).material_override = material
+		projectile.name = "RetailStructureProjectile_%s" % key.replace(":", "_")
+		projectile.position = Vector3(start.x, _presentation_height(start) + 2.5, start.y)
+		projectile.set_meta("projectile_object_id", projectile_id)
+		projectile.set_meta(
+			"art_binding",
+			"compiled-projectile-object" if authored else "procedural-current-pack-fallback"
+		)
+		add_child(projectile)
+		structure_projectile_nodes[key] = projectile
+		var ticks := maxi(1, int(event.get("impact_tick", simulation.tick_index + 1)) - int(event.get("tick", simulation.tick_index)))
+		var tween := projectile.create_tween()
+		tween.tween_method(
+			Callable(self, "_update_structure_projectile_pose").bind(projectile, start, finish),
+			0.0, 1.0, float(ticks) * SimScript.TICK_SECONDS
+		)
+	for key_value in structure_projectile_nodes.keys():
+		var key := String(key_value)
+		var separator := key.find(":")
+		var owner_id := int(key.left(separator)) if separator >= 0 else 0
+		if simulation.structures.has(owner_id):
+			continue
+		var orphan := structure_projectile_nodes.get(key) as Node
+		if orphan != null and is_instance_valid(orphan):
+			orphan.queue_free()
+		structure_projectile_nodes.erase(key)
+
+
+func _update_structure_projectile_pose(weight: float, projectile: Node3D, start: Vector2, finish: Vector2) -> void:
+	if projectile == null or not is_instance_valid(projectile):
+		return
+	var t := clampf(weight, 0.0, 1.0)
+	var point := start.lerp(finish, t)
+	var ground := _presentation_height(point)
+	var arc := sin(t * PI) * maxf(3.0, start.distance_to(finish) * 0.35)
+	projectile.position = Vector3(point.x, ground + 1.0 + arc, point.y)
 
 
 func _consume_power_fx_events() -> void:

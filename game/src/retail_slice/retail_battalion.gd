@@ -7,6 +7,11 @@ const FormationScript = preload("res://src/retail_slice/retail_formation.gd")
 const DEFAULT_OBJECT_ID := "bfme2.object.gondor-fighter"
 const ARCHER_OBJECT_ID := "bfme2.object.gondor-archer"
 const RANGER_OBJECT_ID := "bfme2.object.gondor-ranger"
+const VISIBLE_ARROW_PROJECTILE_IDS := {
+	"GondorArcherArrow": true,
+	"GoodFactionArrow": true,
+	"EvilFactionArrow": true,
+}
 const PRESENTATION_TICK_SECONDS := 0.1
 const DEFAULT_TURN_RATE_DEGREES_PER_SECOND := 720.0
 const ARCHER_LAUNCH_BONE := "ARROWNOCK"
@@ -115,6 +120,9 @@ var _next_archer_presentation_token := 1
 var archer_projectiles_presented := 0
 var archer_impacts_presented := 0
 var weapon_launch_bone := ARCHER_LAUNCH_BONE
+## Retail Weapon.ProjectileTemplateName projected by the playable-unit
+## descriptor. Empty on packs built before the generic binding landed.
+var projectile_object_id := ""
 
 
 func configure(
@@ -134,8 +142,12 @@ func configure(
 	retail_model_filename = String(presentation.get("model", "")).get_file()
 	weapon_launch_bone = String(presentation.get("weaponLaunchBone", ARCHER_LAUNCH_BONE))
 	if object_id == RANGER_OBJECT_ID and weapon_launch_bone != RANGER_LAUNCH_BONE:
-		weapon_launch_bone = ""
+		# The bounded Ranger overlay borrows Men's projectile sidecar and does
+		# not repeat the member attachment metadata. Retail's Ranger launch
+		# bone is the already-pinned ARROW contract, not Archer's ARROWNOCK.
+		weapon_launch_bone = RANGER_LAUNCH_BONE
 	private_parity_mode_active = _is_private_retail_pack(definition)
+	projectile_object_id = _compiled_projectile_object_id(object_id)
 	_source_unit_scale = source_unit_scale if is_finite(source_unit_scale) and source_unit_scale > 0.0 else 0.0
 	_configure_combat_visual_contract(definition)
 	name = "RetailBattalion_%d" % id
@@ -728,7 +740,7 @@ func member_attack_global_position(member_index: int) -> Vector3:
 
 
 func _present_archer_member_attack(member_index: int) -> void:
-	if object_id not in [ARCHER_OBJECT_ID, RANGER_OBJECT_ID] or archer_projectile_controller == null or not archer_projectile_controller.contract_ready:
+	if not VISIBLE_ARROW_PROJECTILE_IDS.has(projectile_object_id) or archer_projectile_controller == null or not archer_projectile_controller.contract_ready:
 		return
 	if _attack_target_ref == null:
 		return
@@ -762,6 +774,13 @@ func _present_archer_member_attack(member_index: int) -> void:
 		return
 	projectile.set_meta("authoritative_member_index", member_index)
 	projectile.set_meta("presentation_authority", "simulation-member-attack-token")
+	projectile.set_meta("projectile_object_id", projectile_object_id)
+	projectile.set_meta(
+		"art_binding",
+		"gondor-arrow-closure"
+		if projectile_object_id == "GondorArcherArrow"
+		else "shared-good-arrow-visible-fallback"
+	)
 	projectile.set_meta("launch_bone", weapon_launch_bone)
 	projectile.set_meta("launch_global", start_global)
 	archer_projectiles_presented += 1
@@ -1136,14 +1155,14 @@ func _configure_combat_visual_contract(definition: Dictionary) -> void:
 	exact_projectile_node_count = 0
 	exact_impact_effect_node_count = 0
 	combat_visual_contract_error = ""
-	if not private_parity_mode_active or object_id not in [ARCHER_OBJECT_ID, RANGER_OBJECT_ID]:
+	if not VISIBLE_ARROW_PROJECTILE_IDS.has(projectile_object_id):
 		return
 	if object_id == RANGER_OBJECT_ID and weapon_launch_bone != RANGER_LAUNCH_BONE:
 		combat_visual_contract_error = "Ranger primary launch bone is not ARROW"
 		return
 	var pack_root := String(definition.get("_pack_root", ""))
-	if object_id == RANGER_OBJECT_ID:
-		pack_root = String(ContentDB.get_bundle_object(ARCHER_OBJECT_ID).get("_pack_root", ""))
+	if not _pack_ships_archer_projectile(pack_root):
+		pack_root = _mounted_archer_projectile_root()
 	archer_projectile_controller = ArcherProjectileControllerScript.new()
 	archer_projectile_controller.name = "RetailArcherProjectileController"
 	add_child(archer_projectile_controller)
@@ -1156,16 +1175,48 @@ func _configure_combat_visual_contract(definition: Dictionary) -> void:
 		exact_impact_effect_node_count = int(archer_projectile_controller.validated_impact_model_count > 0)
 		return
 	if archer_projectile_controller.contract_declared:
-		combat_visual_contract_error = "invalid selected-pack Gondor Archer projectile contract: %s" % archer_projectile_controller.error
+		combat_visual_contract_error = "invalid selected-pack arrow projectile contract: %s" % archer_projectile_controller.error
 		return
 	# Retail evidence closes this chain as GondorArcherBow ->
 	# GondorArcherArrow/GoodFactionArrow -> EXArrowStreak01, then
 	# GOOD_ARROW_PIERCE -> FX_GoodArrowHit -> g_arrow + ImpactArrow.
 	combat_visual_contract_error = (
-		"missing selected-pack GondorArcherBow combat closure: convert "
+		"missing selected-pack arrow combat closure for %s -> %s: convert " % [object_id, projectile_object_id]
 		+ "GoodFactionArrow/GondorArcherArrow with EXArrowStreak01, and "
 		+ "GOOD_ARROW_PIERCE/FX_GoodArrowHit with g_arrow plus ImpactArrow"
 	)
+
+
+func _compiled_projectile_object_id(runtime_object_id: String) -> String:
+	for document_value in ContentDB.get_playable_unit_runtimes().values():
+		var document := document_value as Dictionary
+		if (
+			PlayableUnitRuntimeAdapter.runtime_unit_id(document) != runtime_object_id
+			and PlayableUnitRuntimeAdapter.runtime_member_id(document) != runtime_object_id
+		):
+			continue
+		var gameplay := (document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary
+		var resolved := (gameplay.get("simulation", {}) as Dictionary).get("resolved", {}) as Dictionary
+		return String((resolved.get("combat", {}) as Dictionary).get("projectileObjectId", ""))
+	return ""
+
+
+func _pack_ships_archer_projectile(pack_root: String) -> bool:
+	if pack_root == "":
+		return false
+	var pack_path := ModLoader.resolve_pack_path(pack_root, "pack.json")
+	if pack_path == "" or not FileAccess.file_exists(pack_path):
+		return false
+	var value: Variant = ModLoader._read_json(pack_path)
+	return typeof(value) == TYPE_DICTIONARY and ((value as Dictionary).get("files", {}) as Dictionary).has("gondorArcherProjectile")
+
+
+func _mounted_archer_projectile_root() -> String:
+	for root_value in ContentDB.pack_roots:
+		var root := String(root_value)
+		if _pack_ships_archer_projectile(root):
+			return root
+	return ""
 
 
 func _configure_source_selection_decal(definition: Dictionary) -> void:

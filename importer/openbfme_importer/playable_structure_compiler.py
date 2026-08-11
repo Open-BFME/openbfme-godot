@@ -10,6 +10,9 @@ implicit-root policy.
 
 from __future__ import annotations
 
+import re
+from functools import lru_cache
+
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 import hashlib
@@ -38,6 +41,10 @@ from .playable_unit_compiler import (
     _audio_routes,
     _block_values,
     _command_slots,
+    _base_weapon_damage,
+    _default_nested_target,
+    _default_set_target,
+    _default_weapon_slot,
     _effective_top_blocks,
     _effective_values,
     _experience_level_rows,
@@ -46,8 +53,11 @@ from .playable_unit_compiler import (
     _kind_of,
     _level_modifier_leaf,
     _named_blocks,
+    _named_definition_values,
     _optional_document,
     _scalar_fields,
+    _resolved_definition_field,
+    _apply_nugget_damage_types,
     _select_experience_chain,
     _tokens,
     _walk_blocks,
@@ -90,6 +100,220 @@ _HEALTH_FIELDS = ("MaxHealth", "MaxHealthDamaged", "MaxHealthReallyDamaged")
 
 class PlayableStructureCompilerError(ValueError):
     """The requested structure descriptor cannot be derived without guessing."""
+
+
+@lru_cache(maxsize=16)
+def _decoded_ini_lines(payload: bytes) -> tuple[str, ...]:
+    return tuple(payload.decode("cp1252", errors="strict").splitlines())
+
+
+def _weapon_has_authored_slave_attack_nugget(
+    documents: Mapping[str, bytes], weapon_id: str, weapon: Mapping[str, object]
+) -> bool:
+    """Return whether the named Weapon directly authors SlaveAttackNugget.
+
+    The acquisition-shell -> ThingToSpawn join is specific to this SAGE
+    nugget.  Weapon incompleteness alone is not evidence: ordinary tower bows
+    author interval-valued delays that the scalar compiler intentionally does
+    not flatten, and must remain valid lifecycle-only structure descriptors.
+    """
+
+    header = re.compile(
+        rf"^Weapon\s+{re.escape(weapon_id)}(?:\s+\S+)?\s*$", re.IGNORECASE
+    )
+    source_paths = {
+        str(row.get("sourceIni", ""))
+        for value in weapon.values()
+        for row in (
+            [value]
+            if isinstance(value, Mapping)
+            else value
+            if isinstance(value, Sequence) and not isinstance(value, (str, bytes))
+            else []
+        )
+        if isinstance(row, Mapping) and str(row.get("sourceIni", ""))
+    }
+    payloads = (
+        [documents[path] for path in source_paths if path in documents]
+        if source_paths
+        else list(documents.values())
+    )
+    for payload in payloads:
+        inside = False
+        for raw_line in _decoded_ini_lines(payload):
+            if not inside:
+                inside = header.fullmatch(raw_line.strip()) is not None
+                continue
+            active = raw_line.split(";", 1)[0].split("//", 1)[0].strip()
+            if (
+                raw_line
+                and not raw_line[0].isspace()
+                and active
+                and active.casefold() != "end"
+            ):
+                break
+            if active.casefold().startswith("slaveattacknugget"):
+                return True
+    return False
+
+
+def _structure_combat_contract(
+    lineage: Sequence[SageObject],
+    documents: Mapping[str, bytes],
+    prepared: PlayableUnitCompilerInputs,
+) -> dict[str, object] | None:
+    """Compile an authored default structure WeaponSet without approximations.
+
+    Fortress artillery expansions are ordinary armed SAGE objects.  Treating
+    structure descriptors as lifecycle-only discarded their WeaponSet join,
+    so the runtime had neither acquisition numbers nor a projectile identity.
+    """
+
+    weapon_id = _default_set_target(lineage, "WeaponSet", "Weapon")
+    if weapon_id is None:
+        return None
+    weapon = _named_definition_values(
+        documents,
+        "Weapon",
+        weapon_id,
+        cache=prepared.named_definition_cache,
+        cache_lock=prepared.cache_lock,
+    )
+    if weapon is None:
+        raise PlayableStructureCompilerError(
+            f"structure default weapon is unresolvable: {weapon_id}"
+        )
+    combat: dict[str, object] = {"weaponId": weapon_id}
+    weapon_slot = _default_weapon_slot(lineage, weapon_id)
+    if weapon_slot is not None:
+        combat["weaponSlot"] = weapon_slot
+    for output_name, source_name in (
+        ("attackRange", "AttackRange"),
+        ("minimumAttackRange", "MinimumAttackRange"),
+        ("projectileSpeed", "WeaponSpeed"),
+        ("delayBetweenShotsMs", "DelayBetweenShots"),
+        ("preAttackDelayMs", "PreAttackDelay"),
+        ("firingDurationMs", "FiringDuration"),
+        ("damage", "Damage"),
+    ):
+        field = _resolved_definition_field(
+            weapon, source_name, prepared.numeric_defines
+        )
+        if field is not None:
+            combat[output_name] = field
+
+    warhead_id = _default_nested_target(
+        documents,
+        "Weapon",
+        weapon_id,
+        "WarheadTemplateName",
+        flat_kind_cache=prepared.flat_kind_cache,
+        cache_lock=prepared.cache_lock,
+    )
+    damage_owner = weapon
+    if warhead_id:
+        warhead = _named_definition_values(
+            documents,
+            "Weapon",
+            warhead_id,
+            cache=prepared.named_definition_cache,
+            cache_lock=prepared.cache_lock,
+        )
+        if warhead is None:
+            raise PlayableStructureCompilerError(
+                f"structure weapon warhead is unresolvable: {warhead_id}"
+            )
+        combat["warheadId"] = warhead_id
+        damage_owner = warhead
+        damage = _resolved_definition_field(
+            warhead, "Damage", prepared.numeric_defines
+        )
+        if damage is not None:
+            combat["damage"] = damage
+    if "damage" not in combat:
+        damage = _base_weapon_damage(
+            documents,
+            warhead_id or weapon_id,
+            prepared.numeric_defines,
+            cache=prepared.named_definition_cache,
+            cache_lock=prepared.cache_lock,
+        )
+        if damage is not None:
+            combat["damage"] = damage
+
+    projectile_id = _default_nested_target(
+        documents,
+        "Weapon",
+        weapon_id,
+        "ProjectileTemplateName",
+        flat_kind_cache=prepared.flat_kind_cache,
+        cache_lock=prepared.cache_lock,
+    )
+    if projectile_id:
+        combat["projectileObjectId"] = projectile_id
+    damage_types = {
+        str(row.get("expression", "")).casefold(): str(row.get("expression", ""))
+        for row in damage_owner.get("damagetype", ())
+        if str(row.get("expression", ""))
+    }
+    if len(damage_types) == 1:
+        combat["damageType"] = next(iter(damage_types.values()))
+    elif not damage_types:
+        _apply_nugget_damage_types(combat)
+
+    required = {
+        "attackRange",
+        "delayBetweenShotsMs",
+        "preAttackDelayMs",
+        "firingDurationMs",
+        "damage",
+    }
+    if required - combat.keys():
+        # Fortress artillery expansions author a fake acquisition weapon with
+        # SlaveAttackNugget; an ObjectCreationUpgrade spawns the real turret,
+        # whose WeaponSet owns projectile speed, warhead and damage. Follow
+        # that authored join rather than inventing combat on the shell.
+        if not _weapon_has_authored_slave_attack_nugget(
+            documents, weapon_id, weapon
+        ):
+            return None
+        spawned_ids = {
+            tokens[0].casefold(): tokens[0]
+            for block in _effective_top_blocks(lineage)
+            if (block.header_key or "").casefold() == "behavior"
+            and block.kind.casefold() == "objectcreationupgrade"
+            for row in block.assignments
+            if row.key.casefold() == "thingtospawn"
+            for tokens in [_tokens(row.value)]
+            if len(tokens) == 1
+        }
+        if len(spawned_ids) == 1:
+            spawned_id = next(iter(spawned_ids.values()))
+            spawned = prepared.objects.get(spawned_id.casefold())
+            if spawned is None:
+                raise PlayableStructureCompilerError(
+                    f"structure artillery slave object is missing: {spawned_id}"
+                )
+            delivery = _structure_combat_contract(
+                _ancestry(prepared.objects, spawned), documents, prepared
+            )
+            if delivery is not None:
+                for field in (
+                    "attackRange",
+                    "minimumAttackRange",
+                    "delayBetweenShotsMs",
+                    "preAttackDelayMs",
+                    "firingDurationMs",
+                ):
+                    if field in combat:
+                        delivery[field] = combat[field]
+                delivery["targetAcquisitionWeaponId"] = weapon_id
+                delivery["spawnedObjectId"] = spawned_id
+                return delivery
+        raise PlayableStructureCompilerError(
+            f"structure weapon contract is incomplete: {weapon_id}"
+        )
+    return combat
 
 
 
@@ -2748,6 +2972,7 @@ def compile_playable_structure_descriptor(
         prepared.numeric_defines,
         target.name,
     )
+    combat = _structure_combat_contract(lineage, documents, prepared)
     try:
         module_contracts = compile_all_module_contracts(lineage, target.name)
     except ModuleContractError as error:
@@ -2808,7 +3033,13 @@ def compile_playable_structure_descriptor(
                 )
             )
             else set()
-        ),
+        )
+        | {
+            str(row["sourceIni"])
+            for value in (combat or {}).values()
+            for row in ([value] if isinstance(value, Mapping) else [])
+            if isinstance(row.get("sourceIni"), str) and row.get("sourceIni")
+        },
         key=lambda value: (value.casefold(), value),
     )
     source_documents = []
@@ -2914,6 +3145,7 @@ def compile_playable_structure_descriptor(
                 if geometry_contract is not None
                 else {}
             ),
+            **({"combat": combat} if combat is not None else {}),
             "scalarFields": _resolved_scalar_fields(
                 scalars,
                 frozenset(
@@ -3018,6 +3250,38 @@ def validate_playable_structure_descriptor(value: Mapping[str, object]) -> None:
         raise PlayableStructureCompilerError(
             "structure descriptor gameplay is invalid"
         )
+    combat = gameplay.get("combat")
+    if combat is not None:
+        if not isinstance(combat, Mapping) or not all(
+            isinstance(combat.get(field), Mapping)
+            and isinstance(combat[field].get("value"), (int, float))
+            and not isinstance(combat[field].get("value"), bool)
+            for field in (
+                "attackRange",
+                "delayBetweenShotsMs",
+                "preAttackDelayMs",
+                "firingDurationMs",
+                "damage",
+            )
+        ):
+            raise PlayableStructureCompilerError(
+                "structure descriptor combat contract is invalid"
+            )
+        for identity in (
+            "weaponId",
+            "weaponSlot",
+            "warheadId",
+            "projectileObjectId",
+            "damageType",
+            "targetAcquisitionWeaponId",
+            "spawnedObjectId",
+        ):
+            if identity in combat and (
+                not isinstance(combat[identity], str) or not combat[identity]
+            ):
+                raise PlayableStructureCompilerError(
+                    "structure descriptor combat identity is invalid"
+                )
     health = gameplay.get("health")
     if health is None and "BASE_FOUNDATION" not in {
         str(item) for item in kinds
