@@ -744,19 +744,17 @@ func _run() -> void:
 	)
 	_check("snappy_radar_zoom_contract", is_equal_approx(float(slice.minimap.zoom_response_seconds), 0.09) and float(slice.minimap.radar_zoom_target) == 1.0)
 	var player_fortress_position := Vector2(slice.simulation.structure(slice.simulation.fortress_id(0)).get("position", Vector2.INF))
-	# The look-at clamp is the authored playable bounds directly (the retail
-	# scroll contract: the map border is reachable, v0.2.2 camera fix).
-	var camera_bounds: Rect2 = slice.source_map_data.local_bounds
-	var expected_camera_focus: Vector2 = Vector2(
-		clampf(player_fortress_position.x, camera_bounds.position.x, camera_bounds.end.x),
-		clampf(player_fortress_position.y, camera_bounds.position.y, camera_bounds.end.y)
-	)
+	# Look-at starts on the fortress. Fords authors both starts inside the
+	# playable quad, so the quad clamp must leave the fortress untouched
+	# (v0.2.2 camera fix: no screen-margin inset, clamp is the playable
+	# quad — not its local AABB).
 	_check(
 		"camera_starts_from_source_fortress_with_exact_constraint",
-		slice.camera_focus.is_equal_approx(expected_camera_focus)
+		slice.source_map_data.is_local_inside_playable(player_fortress_position)
+		and slice.camera_focus.is_equal_approx(player_fortress_position)
 		and is_equal_approx(float(slice.camera_zoom), 1.0)
 		and is_equal_approx(float(slice.camera_zoom_target), 1.0),
-		"actual=%s expected=%s zoom=%.6f" % [str(slice.camera_focus), str(expected_camera_focus), float(slice.camera_zoom_target)]
+		"actual=%s fortress=%s zoom=%.6f inside_playable=%s" % [str(slice.camera_focus), str(player_fortress_position), float(slice.camera_zoom_target), str(slice.source_map_data.is_local_inside_playable(player_fortress_position))]
 	)
 	_check("equipment_proof_loaded", bool(slice.equipment_proof_loaded) or slice._men_uses_full_pack_manifest() or String(slice.faction_manifest.get("faction", "")) != "men")
 	# Full-pack presentation contract: every fieldable unit and every spawned

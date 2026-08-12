@@ -79,13 +79,14 @@ func _run() -> void:
 	_check("linear_fog_gpu_oracle_gap_remains_explicit", String(fog.get("renderer_status", "")).contains("rendered-gate") and String(fog_contract.get("transparent_depth_status", "")).contains("unresolved") and String(fog_contract.get("sky_depth_status", "")).contains("reverse-z clear depth"))
 	_check("old_exponential_fog_guesses_are_removed", not source_text.contains("fog_density") and not source_text.contains("fog_height") and not source_text.contains("536f70"))
 
-	_check("camera_source_constraints_are_exact", is_equal_approx(float(camera_data.get("minimum_height_source", 0.0)), 120.0) and is_equal_approx(float(camera_data.get("maximum_height_source", 0.0)), 300.0) and is_equal_approx(float(camera_data.get("pitch_above_horizontal_degrees", 0.0)), 37.5) and is_equal_approx(float(camera_data.get("yaw_degrees", INF)), 0.0) and is_equal_approx(float(camera_data.get("scroll_speed_scalar", 0.0)), 1.0))
+	_check("camera_source_constraints_are_exact", is_equal_approx(float(camera_data.get("minimum_height_source", 0.0)), 120.0) and is_equal_approx(float(camera_data.get("maximum_height_source", 0.0)), 300.0) and is_equal_approx(float(camera_data.get("pitch_above_horizontal_degrees", 0.0)), 37.5) and is_equal_approx(float(camera_data.get("authored_yaw_degrees", INF)), 0.0) and is_equal_approx(float(camera_data.get("scroll_speed_scalar", 0.0)), 1.0))
 	_check("camera_ground_bounds_are_exact", is_equal_approx(float(camera_data.get("ground_minimum_source", 0.0)), 260.0) and is_equal_approx(float(camera_data.get("ground_maximum_source", 0.0)), 380.0))
 	_check("camera_distances_use_exact_map_scale", is_equal_approx(float(camera_data.get("minimum_height_local", 0.0)), 120.0 * local_scale) and is_equal_approx(float(camera_data.get("maximum_height_local", 0.0)), 300.0 * local_scale))
 	_check("common_source_named_camera_fov_is_bound", is_equal_approx(deg_to_rad(float(slice.camera.fov)), 0.8726646304130554) and is_equal_approx(float(camera_data.get("common_named_camera_fov_radians", 0.0)), 0.8726646304130554))
 	_check("skirmish_camera_starts_at_source_max_height", is_equal_approx(float(slice.camera_zoom), 1.0) and is_equal_approx(float(slice.camera_zoom_target), 1.0) and is_equal_approx(float(camera_data.get("current_height_source", 0.0)), 300.0))
 	_check("camera_pitch_geometry_is_exact", _camera_pitch_is_exact(slice, map_data))
 	_check("camera_home_yaw_source_offset_is_exact", _camera_yaw_is_exact(camera_data))
+	_check("camera_live_yaw_metadata_is_published", _camera_live_yaw_is_published(camera_data))
 	_check("camera_ground_sample_stays_in_source_bounds", _camera_ground_is_bounded(slice, map_data))
 	_check("camera_focus_reaches_authored_map_bounds", _camera_focus_clamps_to_authored_bounds(slice, map_data))
 
@@ -154,12 +155,22 @@ func _camera_pitch_is_exact(slice, map_data) -> bool:
 
 
 func _camera_yaw_is_exact(camera_data: Dictionary) -> bool:
-	# The match-start heading is re-aimed per seat (camera_home_yaw in the
-	# slice), so the source offset's DIRECTION varies with the seat; its
-	# magnitude stays the exact gamedata.ini depth at the default 300 height.
+	# Owner-feel per-seat heading (camera_home_yaw) changes the source
+	# offset's DIRECTION; its magnitude stays the exact gamedata.ini depth
+	# at the default 300 height. This detached runner has home yaw 0.
 	var source_offset: Vector3 = camera_data.get("current_source_offset", Vector3.INF)
 	var expected_depth := 300.0 / tan(deg_to_rad(37.5))
 	return is_equal_approx(Vector2(source_offset.x, source_offset.y).length(), expected_depth) and is_equal_approx(source_offset.z, 300.0)
+
+
+func _camera_live_yaw_is_published(camera_data: Dictionary) -> bool:
+	# yaw_degrees is the live heading (authored + home + user). authored_yaw_degrees
+	# is the gamedata.ini default (0.0). This detached runner has no seat, so
+	# live == authored == 0. A live match publishes the per-seat heading here.
+	var authored := float(camera_data.get("authored_yaw_degrees", INF))
+	var live := float(camera_data.get("live_yaw_degrees", INF))
+	var published := float(camera_data.get("yaw_degrees", INF))
+	return is_equal_approx(authored, 0.0) and is_equal_approx(live, published) and is_finite(live)
 
 
 func _camera_ground_is_bounded(slice, map_data) -> bool:
@@ -169,13 +180,23 @@ func _camera_ground_is_bounded(slice, map_data) -> bool:
 
 
 func _camera_focus_clamps_to_authored_bounds(slice, map_data) -> bool:
-	# The look-at point must reach the authored playable bounds exactly - the
-	# v0.2.2 retail scroll contract (map border reachable), no screen-margin
-	# inset pulled inside the border.
-	slice.camera_focus = Vector2(-1_000_000.0, 1_000_000.0)
+	# The look-at must reach the authored playable QUAD (map_outline), not
+	# the local AABB of that quad. Push past one edge midpoint; the clamp
+	# must land on that midpoint. No screen-margin inset.
+	var outline: PackedVector2Array = map_data.map_outline
+	if outline.size() < 4:
+		return false
+	var a: Vector2 = outline[0]
+	var b: Vector2 = outline[1]
+	var mid := (a + b) * 0.5
+	var edge := b - a
+	var n := Vector2(edge.y, -edge.x).normalized()
+	if Geometry2D.is_point_in_polygon(mid + n * 0.1, outline):
+		n = -n
+	slice.camera_focus = mid + n * 16.0
 	slice._clamp_camera_focus()
-	var expected := Vector2(map_data.local_bounds.position.x, map_data.local_bounds.end.y)
-	return slice.camera_focus.is_equal_approx(expected)
+	var focus: Vector2 = slice.camera_focus
+	return focus.is_equal_approx(mid)
 
 
 func _all_source_lights_are_exact(slice) -> bool:

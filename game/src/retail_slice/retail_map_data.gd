@@ -2248,6 +2248,30 @@ func is_local_inside_playable(local_position: Vector2) -> bool:
 	return grid.x >= float(playable_grid_min.x) - 0.001 and grid.x <= float(playable_grid_max.x) + 0.001 and grid.y >= float(playable_grid_min.y) - 0.001 and grid.y <= float(playable_grid_max.y) + 0.001
 
 
+func clamp_local_to_playable(local_position: Vector2) -> Vector2:
+	## Project a local-space look-at onto the authored playable quad (the SAGE
+	## playable rect / map_outline), not the local AABB of that quad. Interior
+	## points are returned unchanged so the round-trip cannot shrink a legal
+	## focus. Used by the tactical-camera scroll clamp.
+	if not ready or local_transform_scale <= 0.0:
+		return local_position
+	var source_h := local_to_source_horizontal(local_position)
+	var sage_x := source_h.x
+	var sage_y := -source_h.y
+	var source_min := grid_to_source_xy(float(playable_grid_min.x), float(playable_grid_min.y))
+	var source_max := grid_to_source_xy(float(playable_grid_max.x), float(playable_grid_max.y))
+	var min_x := minf(source_min.x, source_max.x)
+	var max_x := maxf(source_min.x, source_max.x)
+	var min_y := minf(source_min.y, source_max.y)
+	var max_y := maxf(source_min.y, source_max.y)
+	var clamped_x := clampf(sage_x, min_x, max_x)
+	var clamped_y := clampf(sage_y, min_y, max_y)
+	if is_equal_approx(clamped_x, sage_x) and is_equal_approx(clamped_y, sage_y):
+		return local_position
+	var local := source_to_local(Vector3(clamped_x, reference_elevation, -clamped_y))
+	return Vector2(local.x, local.z)
+
+
 func is_local_inside_navigation(local_position: Vector2) -> bool:
 	## The navigation region extends the declared playable border to cover
 	## player starts authored just outside it; routing follows this region.
