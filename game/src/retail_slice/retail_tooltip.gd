@@ -134,11 +134,13 @@ func set_retail_font(font: FontFile) -> void:
 		(label as Label).add_theme_font_override("font", font)
 
 
-## title: bold command name. cost: -1 to hide the cost row, otherwise the exact
-## value passed by the HUD (never invented here). shortcut: "" to hide.
+## title: bold command name. cost: -1 to hide the purchase-cost row, otherwise
+## the exact value passed by the HUD (never invented here). shortcut: "" to hide.
 ## description: pack description text, any number of lines.
 ## command_points: -1 to hide the retail "Command Points: N" row.
-func show_content(title: String, cost: int, shortcut: String, description: String, command_points: int = -1) -> void:
+## refund: -1 to hide; when set, the treasure row reads "Refund: N" and never
+## a negative Cost (Command_Sell / lotr.str:14228).
+func show_content(title: String, cost: int, shortcut: String, description: String, command_points: int = -1, refund: int = -1) -> void:
 	if _panel == null:
 		_build()
 	# Retail strings carry "&" hotkey markers (e.g. "Build Archer&ty Range");
@@ -146,8 +148,15 @@ func show_content(title: String, cost: int, shortcut: String, description: Strin
 	_title_label.text = _strip_hotkey_markers(title)
 	_shortcut_label.text = "Shortcut: %s" % shortcut if shortcut != "" else ""
 	_shortcut_label.visible = shortcut != ""
-	_cost_row.visible = cost >= 0
-	_cost_label.text = "Cost: %d" % cost if cost >= 0 else ""
+	if refund >= 0:
+		_cost_row.visible = true
+		_cost_label.text = "Refund: %d" % refund
+	elif cost >= 0:
+		_cost_row.visible = true
+		_cost_label.text = "Cost: %d" % cost
+	else:
+		_cost_row.visible = shortcut != ""
+		_cost_label.text = ""
 	_command_points_label.text = "Command Points: %d" % command_points if command_points > 0 else ""
 	_command_points_label.visible = command_points > 0
 	_description_label.text = _strip_hotkey_markers(description)

@@ -25,12 +25,17 @@ extends SceneTree
 ## Sections
 ##   1. Fortress radial carries its compiled sell row plus porter/selectors,
 ##      and the upgrades page still matches the authored improvements + back.
-##   2. BUILT barracks / archery range / blacksmith (forge) radial ids equal
-##      each compiled direct command set.
-##   3. A BUILT farm's radial is exactly its compiled set: Command_Sell alone.
-##   4. Clicking the sell button sells through the lockstep command codec:
+##   2. BUILT barracks / archery range / blacksmith (forge) radial SOCKETS
+##      equal each compiled direct command set (authored holes preserved).
+##   3. A BUILT farm's radial is Command_Sell in palantir socket 6, with the
+##      five empty dishes left visible (commandset.ini:5772).
+##   4. An UNDER-CONSTRUCTION farm still exposes SELL (farm.ini:34 has no
+##      construction override); demolish refunds 50% of the already-paid cost.
+##   5. The sell tooltip is CONTROLBAR:SellBuilding / ToolTipSellBuilding
+##      ("Demolish Building" / "Demolish") and a Refund, never Cost: -<n>.
+##   6. Clicking the sell button sells through the lockstep command codec:
 ##      structure razed, 50% refund (gamedata.ini:8973), selection cleared.
-##   5. Unit palantir unchanged: the porter keeps stop + stance, no radial.
+##   7. Unit palantir unchanged: the porter keeps stop + stance, no radial.
 ##
 ## Run:
 ##   OPENBFME_CONTENT=<repo>/.private/content-packs godot --headless --path game \
@@ -49,7 +54,7 @@ var _sections_completed: Array[String] = []
 var _last_construct_detail := ""
 ## Liveness pin: an aborted coroutine must exit non-zero, so the expected check
 ## count is asserted at finish. Keep in sync with the _check call sites below.
-const EXPECTED_CHECKS := 27
+const EXPECTED_CHECKS := 32
 
 
 func _initialize() -> void:
@@ -83,30 +88,31 @@ func _run() -> void:
 	var farm_doc: Dictionary = content_db.get_playable_structure_runtime("GondorFarm")
 	var farm_sets: Array = ((farm_doc.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary).get("trainedCommandSets", []) as Array
 	var farm_direct := _direct_command_set(farm_sets)
+	var farm_compiled_slots := _command_slots_of(farm_direct)
 	_check(
 		"compiled_farm_command_set_is_sell_only",
-		farm_direct.size() == 1 and String((farm_direct[0] as Dictionary).get("commandId", "")) == "Command_Sell",
-		"commandset.ini:5771 SellableCommandSet -> %s" % str(farm_direct)
+		farm_compiled_slots == {6: "Command_Sell"},
+		"commandset.ini:5772 SellableCommandSet 6=Command_Sell -> %s" % _format_slots(farm_compiled_slots)
 	)
 	var barracks_doc: Dictionary = content_db.get_playable_structure_runtime("GondorBarracks")
 	var barracks_direct := _direct_command_set(((barracks_doc.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary).get("trainedCommandSets", []) as Array)
-	var barracks_compiled_ids := _command_ids_of(barracks_direct)
+	var barracks_compiled_slots := _command_slots_of(barracks_direct)
 	_check(
 		"compiled_barracks_command_set_has_five_rows",
-		barracks_direct.size() == 5,
-		"GondorBarracksCommandSet (3 trains + level2 + sell) -> %s" % str(barracks_compiled_ids)
+		barracks_direct.size() == 5 and String(barracks_compiled_slots.get(6, "")) == "Command_Sell" and not barracks_compiled_slots.has(5),
+		"GondorBarracksCommandSet slots 1-4 + 6 (hole at 5) -> %s" % _format_slots(barracks_compiled_slots)
 	)
-	var archery_compiled_ids := _compiled_direct_ids_for_kind("archery_range")
+	var archery_compiled_slots := _compiled_direct_slots_for_kind("archery_range")
 	_check(
 		"compiled_archery_command_set_has_five_rows",
-		archery_compiled_ids.size() == 5 and archery_compiled_ids.has("Command_Sell"),
-		"GondorArcheryCommandSet (2 trains + fire arrows + level2 + sell) -> %s" % str(_sorted(archery_compiled_ids))
+		archery_compiled_slots.size() == 5 and String(archery_compiled_slots.get(6, "")) == "Command_Sell" and not archery_compiled_slots.has(5),
+		"GondorArcheryCommandSet (2 trains + fire arrows + level2 + sell) -> %s" % _format_slots(archery_compiled_slots)
 	)
-	var forge_compiled_ids := _compiled_direct_ids_for_kind("forge")
+	var forge_compiled_slots := _compiled_direct_slots_for_kind("forge")
 	_check(
 		"compiled_forge_command_set_has_five_rows",
-		forge_compiled_ids.size() == 5 and forge_compiled_ids.has("Command_Sell"),
-		"GondorForgeCommandSet (3 techs + level2 + sell) -> %s" % str(_sorted(forge_compiled_ids))
+		forge_compiled_slots.size() == 5 and String(forge_compiled_slots.get(6, "")) == "Command_Sell" and not forge_compiled_slots.has(5),
+		"GondorForgeCommandSet (3 techs + level2 + sell) -> %s" % _format_slots(forge_compiled_slots)
 	)
 	_section_completed("oracle")
 
@@ -163,11 +169,16 @@ func _run() -> void:
 		_check("barracks_built", barracks != 0)
 		if barracks != 0:
 			await _select_structure(barracks)
-			var barracks_wheel := _radial_command_ids()
+			var barracks_wheel := _radial_command_slots()
 			_check(
 				"barracks_radial_ids_match_compiled_command_set",
-				barracks_wheel == barracks_compiled_ids,
-				"wheel=%s compiled=%s" % [str(_sorted(barracks_wheel)), str(_sorted(barracks_compiled_ids))]
+				barracks_wheel == barracks_compiled_slots,
+				"wheel=%s compiled=%s" % [_format_slots(barracks_wheel), _format_slots(barracks_compiled_slots)]
+			)
+			_check(
+				"barracks_empty_socket_shown_for_authored_hole",
+				_empty_socket_visible(4) and not _empty_socket_visible(5),
+				"slot5_empty=%s slot6_empty=%s" % [str(_empty_socket_visible(4)), str(_empty_socket_visible(5))]
 			)
 		_section_completed("barracks")
 
@@ -175,14 +186,14 @@ func _run() -> void:
 		_check("archery_built", archery != 0)
 		if archery != 0:
 			await _select_structure(archery)
-			var archery_wheel := _radial_command_ids()
+			var archery_wheel := _radial_command_slots()
 			_check(
 				"archery_radial_ids_match_compiled_command_set",
-				archery_wheel == archery_compiled_ids,
+				archery_wheel == archery_compiled_slots,
 				"kind=%s wheel=%s compiled=%s" % [
 					String(sim.structure(archery).get("structure_kind", "")),
-					str(_sorted(archery_wheel)),
-					str(_sorted(archery_compiled_ids)),
+					_format_slots(archery_wheel),
+					_format_slots(archery_compiled_slots),
 				]
 			)
 		_section_completed("archery")
@@ -201,24 +212,68 @@ func _run() -> void:
 		)
 		if forge != 0:
 			await _select_structure(forge)
-			var forge_wheel := _radial_command_ids()
+			var forge_wheel := _radial_command_slots()
 			_check(
 				"forge_radial_ids_match_compiled_command_set",
-				forge_wheel == forge_compiled_ids,
-				"wheel=%s compiled=%s" % [str(_sorted(forge_wheel)), str(_sorted(forge_compiled_ids))]
+				forge_wheel == forge_compiled_slots,
+				"wheel=%s compiled=%s" % [_format_slots(forge_wheel), _format_slots(forge_compiled_slots)]
 			)
 		_section_completed("forge")
 
-		# --- Sections 3+4: farm wheel is sell-only, and the sale executes ------
+		# --- Section 3a: under-construction farm still exposes SELL (farm.ini:34)
+		var incomplete_farm := _begin_structure(porter, "farm", fortress_pos, [Vector2(16, 16), Vector2(-16, 16), Vector2(16, -16), Vector2(-20, 8)])
+		var incomplete_row: Dictionary = sim.structure(incomplete_farm) if incomplete_farm != 0 else {}
+		_check(
+			"incomplete_farm_exposes_sell",
+			incomplete_farm != 0
+			and float(incomplete_row.get("construction_progress", 1.0)) < 1.0
+			and not sim.structure_sell_command(incomplete_farm).is_empty(),
+			"id=%d progress=%s sell=%s last=%s" % [
+				incomplete_farm,
+				str(incomplete_row.get("construction_progress", "<gone>")),
+				str(sim.structure_sell_command(incomplete_farm)),
+				_last_construct_detail,
+			]
+		)
+		if incomplete_farm != 0:
+			await _select_structure(incomplete_farm)
+			var incomplete_wheel := _radial_command_slots()
+			var incomplete_before: int = sim.resources_for_team(0)
+			var incomplete_sell := _find_sell_button()
+			if incomplete_sell != null:
+				incomplete_sell.pressed.emit()
+				for i in 4:
+					await process_frame
+			var incomplete_sold: Dictionary = sim.structure(incomplete_farm)
+			_check(
+				"incomplete_farm_sale_refunds_fifty_percent",
+				(incomplete_sold.is_empty() or int(incomplete_sold.get("health", 1)) <= 0)
+				and sim.resources_for_team(0) == incomplete_before + 150
+				and incomplete_wheel == {6: "Command_Sell"},
+				"wheel=%s health=%s before=%d after=%d" % [
+					_format_slots(incomplete_wheel),
+					str(incomplete_sold.get("health", "<gone>")),
+					incomplete_before,
+					sim.resources_for_team(0),
+				]
+			)
+
+		# --- Sections 3+4: farm wheel is sell at socket 6, and the sale executes ------
 		var farm := await _build_structure(porter, "farm", fortress_pos, [Vector2(0, 18), Vector2(-18, 0), Vector2(0, -18), Vector2(-14, -14)])
 		_check("farm_built", farm != 0)
 		if farm != 0:
 			await _select_structure(farm)
-			var farm_wheel := _radial_command_ids()
+			var farm_wheel := _radial_command_slots()
 			_check(
 				"farm_radial_is_exactly_command_sell",
-				farm_wheel == {"Command_Sell": true},
-				"wheel=%s" % str(_radial_ids())
+				farm_wheel == {6: "Command_Sell"},
+				"wheel=%s entries=%s" % [_format_slots(farm_wheel), str(_radial_ids())]
+			)
+			_check(
+				"farm_empty_sockets_shown_for_unoccupied",
+				_empty_socket_visible(0) and _empty_socket_visible(1) and _empty_socket_visible(2)
+				and _empty_socket_visible(3) and _empty_socket_visible(4) and not _empty_socket_visible(5),
+				"visible=%s" % str(_empty_socket_visibility())
 			)
 			var farm_cost := int((sim.structure_build_rules_for_team(0).get("farm", {}) as Dictionary).get("cost", 0))
 			_check("farm_build_cost_is_compiled", farm_cost == 300, "gamedata.ini GONDOR_FARM build cost -> %d" % farm_cost)
@@ -229,6 +284,21 @@ func _run() -> void:
 				button_names.append(String(button.name))
 			_check("farm_sell_button_present", sell_button != null, "buttons=%s entries=%s" % [str(button_names), str(_radial_ids())])
 			if sell_button != null:
+				_slice.hud.show_retail_tooltip(sell_button)
+				var tip_title: String = _slice.hud.retail_tooltip.title_text()
+				var tip_desc: String = _slice.hud.retail_tooltip.description_text()
+				var tip_cost: String = _slice.hud.retail_tooltip.cost_text()
+				_check(
+					"farm_sell_tooltip_is_demolish_with_refund",
+					tip_title == "Demolish Building"
+					and tip_desc == "Demolish"
+					and tip_cost == "Refund: 150"
+					and not tip_cost.begins_with("Cost:"),
+					"title=%s desc=%s cost=%s meta_cost=%s" % [
+						tip_title, tip_desc, tip_cost, str(sell_button.get_meta("tooltip_cost", "<missing>")),
+					]
+				)
+				_slice.hud.retail_tooltip.hide_tooltip()
 				sell_button.pressed.emit()
 				for i in 4:
 					await process_frame
@@ -288,14 +358,19 @@ func _direct_command_set(sets: Array) -> Array:
 	return (sets[0] as Dictionary).get("slots", []) as Array if not sets.is_empty() else []
 
 
-func _command_ids_of(slots: Array) -> Dictionary:
-	var ids := {}
+func _command_slots_of(slots: Array) -> Dictionary:
+	## Authored palantir map: {slot_number: commandId}. Holes are omitted keys.
+	var mapped := {}
 	for slot_value in slots:
-		ids[String((slot_value as Dictionary).get("commandId", ""))] = true
-	return ids
+		var row: Dictionary = slot_value
+		var slot := int(row.get("slot", 0))
+		var command_id := String(row.get("commandId", ""))
+		if slot >= 1 and command_id != "":
+			mapped[slot] = command_id
+	return mapped
 
 
-func _compiled_direct_ids_for_kind(kind: String) -> Dictionary:
+func _compiled_direct_slots_for_kind(kind: String) -> Dictionary:
 	## Resolve the kind through the team's authored source-object aliases so a
 	## fortress / citadel split (or a forge slug vs objectId) still hits the
 	## document that actually carries trainedCommandSets.
@@ -311,14 +386,17 @@ func _compiled_direct_ids_for_kind(kind: String) -> Dictionary:
 		var sets: Array = ((document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary).get("trainedCommandSets", []) as Array
 		var direct := _direct_command_set(sets)
 		if not direct.is_empty():
-			return _command_ids_of(direct)
+			return _command_slots_of(direct)
 	return {}
 
 
-func _sorted(ids: Dictionary) -> Array:
-	var out := ids.keys()
-	out.sort()
-	return out
+func _format_slots(slots: Dictionary) -> String:
+	var keys: Array = slots.keys()
+	keys.sort()
+	var parts: Array[String] = []
+	for key in keys:
+		parts.append("%s=%s" % [str(key), str(slots[key])])
+	return "{%s}" % ", ".join(parts)
 
 
 func _porter_id() -> int:
@@ -326,6 +404,19 @@ func _porter_id() -> int:
 		var row: Dictionary = _slice.simulation.entities[id]
 		if int(row.get("team", -1)) == 0 and bool(row.get("is_builder", false)) and int(row.get("health", 0)) > 0:
 			return int(id)
+	return 0
+
+
+func _begin_structure(porter: int, kind: String, anchor: Vector2, offsets: Array) -> int:
+	## Issue construct and return the site immediately, still under construction.
+	var sim = _slice.simulation
+	_last_construct_detail = "no-attempt"
+	for offset_value in offsets:
+		var offset := offset_value as Vector2
+		var result: Dictionary = sim._issue_construct_for_team(0, [porter] as Array[int], kind, anchor + offset)
+		_last_construct_detail = "%s@%s -> %s" % [kind, str(offset), str(result)]
+		if bool(result.get("ok", false)):
+			return int(result.get("structure_id", 0))
 	return 0
 
 
@@ -369,28 +460,60 @@ func _radial_ids() -> Array:
 	return ids
 
 
-func _radial_command_ids() -> Dictionary:
-	## The wheel's command vocabulary: trains map through the sim's compiled
-	## production rule (its command_id), upgrades through the compiled contract,
-	## sell/page/back by their own ids.
-	var ids := {}
+func _radial_command_slots() -> Dictionary:
+	## Socket-position-aware wheel map. Slot numbers come from the button's
+	## actual palantir position (RETAIL_COMMAND_SLOT_SOURCE), not from an
+	## entry.slot self-oracle — packing-by-index must fail this comparison.
+	var mapped := {}
 	var sim = _slice.simulation
 	var production_rules: Dictionary = sim.unit_production_rules_for_team(0)
-	for entry_value in _slice.hud.radial_entries():
-		var entry: Dictionary = entry_value
+	var entries: Array = _slice.hud.radial_entries()
+	var buttons: Array = _slice.hud._radial_buttons
+	for i in entries.size():
+		var entry: Dictionary = entries[i]
 		var kind := String(entry.get("command_kind", ""))
 		var id := String(entry.get("id", ""))
+		var command_id := id
 		match kind:
 			"train", "hero":
 				var rule: Dictionary = production_rules.get(id, {}) as Dictionary
-				ids[String(rule.get("command_id", id))] = true
+				command_id = String(rule.get("command_id", id))
 			"upgrade":
-				ids[String(entry.get("command_id", id))] = true
+				command_id = String(entry.get("command_id", id))
 			"page", "back":
 				continue
-			_:
-				ids[id] = true
-	return ids
+		var socket := 0
+		if i < buttons.size():
+			socket = _palantir_socket_for_button(buttons[i] as Button)
+		if socket >= 1:
+			mapped[socket] = command_id
+	return mapped
+
+
+func _palantir_socket_for_button(button: Button) -> int:
+	## 1-based authored palantir socket, or 0 if the button is not on a dish.
+	if button == null or _slice.hud.command_panel == null:
+		return 0
+	var origin: Vector2 = _slice.hud.command_panel.position
+	for index in _slice.hud.RETAIL_COMMAND_SLOT_SOURCE.size():
+		var expected: Vector2 = origin + (_slice.hud.RETAIL_COMMAND_SLOT_SOURCE[index] as Vector2)
+		if button.position.is_equal_approx(expected):
+			return index + 1
+	return 0
+
+
+func _empty_socket_visible(slot_index: int) -> bool:
+	if _slice.hud.command_grid == null:
+		return false
+	var socket := _slice.hud.command_grid.get_node_or_null("RetailEmptySocket%d" % slot_index) as CanvasItem
+	return socket != null and socket.visible
+
+
+func _empty_socket_visibility() -> Array:
+	var out: Array = []
+	for slot_index in _slice.hud.RETAIL_COMMAND_SLOT_SOURCE.size():
+		out.append(_empty_socket_visible(slot_index))
+	return out
 
 
 func _find_sell_button() -> Button:

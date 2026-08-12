@@ -4164,10 +4164,10 @@ func sync_radial_commands(_anchor: Vector2, entries: Array) -> void:
 	var fingerprint := ""
 	for entry_value in entries:
 		var entry: Dictionary = entry_value
-		fingerprint += "%s:%s:%s:%s:%s;" % [
+		fingerprint += "%s:%s:%s:%s:%s:%s;" % [
 			String(entry.get("command_kind", "")), String(entry.get("id", "")),
 			str(bool(entry.get("enabled", false))), str(entry.get("icon") != null),
-			String(entry.get("text", ""))
+			String(entry.get("text", "")), str(int(entry.get("slot", 0)))
 		]
 	if fingerprint != _radial_fingerprint:
 		_radial_fingerprint = fingerprint
@@ -4217,6 +4217,7 @@ func sync_radial_commands(_anchor: Vector2, entries: Array) -> void:
 			button.set_meta("tooltip_fallback_label", String(entry.get("label", "")))
 			button.set_meta("tooltip_fallback_desc", String(entry.get("tooltip", "")))
 			button.set_meta("tooltip_cost", int(entry.get("cost", -1)))
+			button.set_meta("tooltip_refund", int(entry.get("refund", -1)))
 			button.set_meta("tooltip_command_points", int(entry.get("command_points", -1)))
 			if command_kind == "upgrade":
 				button.pressed.connect(func() -> void: structure_upgrade_requested.emit(command_id))
@@ -4239,14 +4240,26 @@ func sync_radial_commands(_anchor: Vector2, entries: Array) -> void:
 	# still synchronized by the selected world structure, but its buttons belong
 	# to this fixed HUD wheel, not to a second ring floating over the building.
 	# This also keeps the authored icons legible while the camera moves.
-	_set_radial_socket_surface_active(count > 0)
+	# Palantir sockets 1-6 map to authored command-set slots (commandset.ini
+	# :4053). Overflow pages (fortress 8-icon leftover) keep the expanded arc.
+	var hide_all_empty := count > RETAIL_COMMAND_SLOT_SOURCE.size()
+	var occupied := {}
+	for index in count:
+		var placed_entry: Dictionary = entries[index]
+		var placed_slot := int(placed_entry.get("slot", 0))
+		var socket_index := index
+		if not hide_all_empty and placed_slot >= 1 and placed_slot <= RETAIL_COMMAND_SLOT_SOURCE.size():
+			socket_index = placed_slot - 1
+		if socket_index >= 0 and socket_index < RETAIL_COMMAND_SLOT_SOURCE.size():
+			occupied[socket_index] = true
+	_set_radial_socket_surface_active(count > 0, occupied, hide_all_empty)
 	for index in count:
 		var button := _radial_buttons[index]
 		var entry: Dictionary = entries[index]
 		button.visible = true
 		button.disabled = not bool(entry.get("enabled", false))
 		button.modulate.a = 1.0 if bool(entry.get("enabled", false)) else 0.45
-		button.position = _radial_button_position(index, count, button.size)
+		button.position = _radial_button_position(index, count, button.size, int(entry.get("slot", 0)))
 		# Live training dial + countdown on the radial menu's training icons
 		# (owner: the queue-chip CCW sweep, everywhere a unit trains). Updated
 		# here in the per-frame layout pass so the buttons are not rebuilt
@@ -4270,12 +4283,16 @@ func hide_radial_commands() -> void:
 	_set_radial_socket_surface_active(false)
 
 
-func _radial_button_position(index: int, count: int, button_size: Vector2) -> Vector2:
+func _radial_button_position(index: int, count: int, button_size: Vector2, slot: int = 0) -> Vector2:
 	if command_panel == null:
 		return Vector2.ZERO
-	# The first six entries occupy the exact APT-authored palantir sockets.
+	# Palantir sockets 1-6 follow authored command-set slot numbers so a farm
+	# whose only row is `6 = Command_Sell` lands on the bottom dish, not the top.
 	if count <= RETAIL_COMMAND_SLOT_SOURCE.size():
-		return command_panel.position + RETAIL_COMMAND_SLOT_SOURCE[index]
+		var socket := index
+		if slot >= 1 and slot <= RETAIL_COMMAND_SLOT_SOURCE.size():
+			socket = slot - 1
+		return command_panel.position + RETAIL_COMMAND_SLOT_SOURCE[socket]
 	# Longer authored ranges continue the same open socket arc. Radius restores
 	# the old count-scaled property and angular extent grows only as far as needed
 	# for 64px buttons, never an invented full-360 ring.
@@ -4306,27 +4323,39 @@ func _radial_button_position(index: int, count: int, button_size: Vector2) -> Ve
 	return position
 
 
-func _set_radial_socket_surface_active(active: bool) -> void:
+func _set_radial_socket_surface_active(active: bool, occupied: Dictionary = {}, hide_all_empty: bool = false) -> void:
 	# Transition-only ownership avoids the old per-frame show/hide flicker that
 	# invalidated hover and in-flight clicks. set_production_state also honors
 	# this state, so it cannot re-show a socket before this method runs.
-	if _radial_socket_surface_active == active:
-		return
-	_radial_socket_surface_active = active
-	_radial_socket_visibility_transitions += 1
-	if active and command_socket_layer != null:
-		for child in command_socket_layer.get_children():
-			if child is Button:
-				(child as Button).visible = false
-	_set_empty_command_sockets_visible(not active)
+	# Empty-socket dishes update every call: a farm (socket 6 only) and a
+	# barracks (hole at slot 5) occupy different dishes while radial stays active.
+	if _radial_socket_surface_active != active:
+		_radial_socket_surface_active = active
+		_radial_socket_visibility_transitions += 1
+		if active and command_socket_layer != null:
+			for child in command_socket_layer.get_children():
+				if child is Button:
+					(child as Button).visible = false
+	_sync_empty_command_sockets(active, occupied, hide_all_empty)
 
 
 func _set_empty_command_sockets_visible(value: bool) -> void:
+	_sync_empty_command_sockets(not value, {}, not value)
+
+
+func _sync_empty_command_sockets(radial_active: bool, occupied: Dictionary, hide_all_empty: bool) -> void:
 	if command_grid == null:
 		return
-	for child in command_grid.get_children():
-		if String(child.name).begins_with("RetailEmptySocket"):
-			(child as CanvasItem).visible = value
+	for slot in RETAIL_COMMAND_SLOT_SOURCE.size():
+		var socket := command_grid.get_node_or_null("RetailEmptySocket%d" % slot) as CanvasItem
+		if socket == null:
+			continue
+		if not radial_active:
+			socket.visible = true
+		elif hide_all_empty:
+			socket.visible = false
+		else:
+			socket.visible = not occupied.has(slot)
 
 
 ## Which page of a paged command set the radial is showing, and the entries it
@@ -5163,7 +5192,8 @@ func show_retail_tooltip(button: Button) -> void:
 		int(content.get("cost", -1)),
 		String(content.get("shortcut", "")),
 		String(content.get("description", "")),
-		int(content.get("command_points", -1))
+		int(content.get("command_points", -1)),
+		int(content.get("refund", -1))
 	)
 	var screen := get_viewport_rect().size
 	retail_tooltip.place_retail_anchor(screen)
@@ -5198,6 +5228,7 @@ func _resolve_tooltip_content(button: Button) -> Dictionary:
 			return {
 				"title": radial_label,
 				"cost": int(button.get_meta("tooltip_cost", -1)),
+				"refund": int(button.get_meta("tooltip_refund", -1)),
 				"shortcut": RetailTooltip.extract_hotkey_letter(radial_label),
 				"description": radial_desc,
 				"command_points": int(button.get_meta("tooltip_command_points", -1)),

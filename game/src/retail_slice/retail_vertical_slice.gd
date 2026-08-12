@@ -4546,7 +4546,9 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 		var pad_anchor := camera.unproject_position(world_position)
 		hud.sync_radial_commands(pad_anchor, entries)
 		return
-	if int(structure.get("team", -1)) == local_team and int(structure.get("health", 0)) > 0 and float(structure.get("construction_progress", 1.0)) >= 1.0:
+	var structure_complete := float(structure.get("construction_progress", 1.0)) >= 1.0
+	var structure_owned_alive := int(structure.get("team", -1)) == local_team and int(structure.get("health", 0)) > 0
+	if structure_owned_alive and structure_complete:
 		# Active queue row per unit type: the radial's training icons sweep the
 		# same CCW dial + live countdown as the palantir queue chips (owner).
 		var radial_queue_by_unit: Dictionary = {}
@@ -4573,6 +4575,12 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 					radial_text = train_button.text
 				if radial_text == "":
 					radial_text = simulation.production_rule_display_name(unit_id)
+			var production_rule: Dictionary = simulation.unit_production_rules_for_team(local_team).get(unit_id, {}) as Dictionary
+			var train_slot := simulation.structure_command_slot(selected_structure_id, String(production_rule.get("command_id", "")))
+			if train_slot <= 0:
+				train_slot = int(train_button.get_meta("retail_command_slot", 0))
+			if train_slot <= 0:
+				train_slot = int(production_rule.get("command_slot", 0))
 			entries.append({
 				"command_kind": "hero" if hud.hero_buttons.has(unit_id) else "train",
 				"id": unit_id,
@@ -4584,6 +4592,7 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 				"cost": simulation._production_rule_value(unit_id, "cost_rule", "default_cost"),
 				"command_points": simulation._production_rule_value(unit_id, "command_points_rule", "default_command_points"),
 				"queue_row": radial_queue_by_unit.get(unit_id, {}),
+				"slot": train_slot,
 			})
 		# Universal radial (owner: every selected building carries ALL of its
 		# authored commands above it, REF-25/33/35 — train, research, upgrades):
@@ -4600,6 +4609,9 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 			if doc_button != null:
 				upgrade_label = String(doc_button.get_meta("retail_label", ""))
 				upgrade_tip = doc_button.tooltip_text
+			var upgrade_slot := int(upgrade_command.get("slot", 0))
+			if upgrade_slot <= 0:
+				upgrade_slot = simulation.structure_command_slot(selected_structure_id, String(upgrade_command.get("command_id", "")))
 			entries.append({
 				"command_kind": "upgrade",
 				"id": upgrade_id,
@@ -4613,6 +4625,7 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 				# contract — a purchase button that states no cost is the one the
 				# fortress upgrades page shipped with.
 				"cost": int(upgrade_command.get("cost", -1)),
+				"slot": upgrade_slot,
 			})
 		# Research rides the doc-driven rows only (structure_upgrade_commands
 		# carries compiled research with its own pack strings/icons); the
@@ -4635,9 +4648,10 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 					"label": String(command.get("label", "")),
 					"tooltip": String(command.get("tooltip", "")),
 				})
-		# Command_Sell is slot 6 of every compiled Men production set and the
-		# whole of SellableCommandSet (commandset.ini:5771). Without it a farm
-		# — whose authored set IS that one row — shows an empty palantir.
+	# Command_Sell is slot 6 of every compiled Men production set and the
+	# whole of SellableCommandSet (commandset.ini:5771 / farm.ini:34). SAGE
+	# exposes it for the building's whole life, including under construction.
+	if structure_owned_alive:
 		var sell: Dictionary = simulation.structure_sell_command(selected_structure_id)
 		if not sell.is_empty():
 			var sell_cmd: Dictionary = hud.retail_sell_command()
@@ -4651,8 +4665,9 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 				"enabled": true,
 				"label": sell_label,
 				"tooltip": String(sell_cmd.get("tooltip", "Demolish")),
-				"cost": -int(sell.get("refund", 0)),
+				"cost": -1,
 				"refund": int(sell.get("refund", 0)),
+				"slot": int(sell.get("slot", 6)),
 			})
 	var anchor := camera.unproject_position(world_position)
 	hud.sync_radial_commands(anchor, _paged_radial_entries(structure, entries))

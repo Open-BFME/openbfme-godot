@@ -15431,8 +15431,9 @@ func structure_sell_command(structure_id: int) -> Dictionary:
 	var building: Dictionary = structures[structure_id]
 	if int(building.get("health", 0)) <= 0:
 		return {}
-	if float(building.get("construction_progress", 1.0)) < 1.0:
-		return {}
+	# farm.ini:34 authors CommandSet = SellableCommandSet on the object with
+	# no under-construction override. SAGE exposes SELL for the building's
+	# whole life; refund is still SellPercentage of the already-paid cost.
 	var slot := _compiled_sell_slot_for(building)
 	if slot.is_empty():
 		return {}
@@ -15461,7 +15462,7 @@ func sell_structure(team: int, structure_id: int) -> Dictionary:
 	var building: Dictionary = structures[structure_id]
 	if int(building.get("team", -1)) != team:
 		return {"ok": false, "reason": "wrong-owner"}
-	if int(building.get("health", 0)) <= 0 or float(building.get("construction_progress", 0.0)) < 1.0:
+	if int(building.get("health", 0)) <= 0:
 		return {"ok": false, "reason": "structure-unavailable"}
 	var sell: Dictionary = structure_sell_command(structure_id)
 	if sell.is_empty():
@@ -15471,6 +15472,18 @@ func sell_structure(team: int, structure_id: int) -> Dictionary:
 	building["health"] = 0
 	building["queue"] = []
 	building["upgrade_queue"] = []
+	# Detach the porter so a later construct does not treat this husk as a
+	# cancellable site (that path refunds the full build cost).
+	var builder_id := int(building.get("builder_id", 0))
+	if builder_id != 0 and entities.has(builder_id):
+		var builder: Dictionary = entities[builder_id]
+		if int(builder.get("construction_id", 0)) == structure_id:
+			builder["construction_id"] = 0
+			if String(builder.get("order_kind", "")) == "construct":
+				builder["order_kind"] = ""
+			if String(builder.get("state", "")) == "construct":
+				builder["state"] = "idle"
+	building["builder_id"] = 0
 	_clear_expansion_pad_occupant(structure_id)
 	var structure_kind := String(building.get("structure_kind", ""))
 	_emit_event("structure.sold", 0, structure_id, {
@@ -15486,7 +15499,31 @@ func sell_structure(team: int, structure_id: int) -> Dictionary:
 	return {"ok": true, "refund": refund, "structure_id": structure_id}
 
 
+func structure_command_slot(structure_id: int, command_id: String) -> int:
+	## Authored palantir slot for a command on this building's current compiled
+	## command set, or 0 when the docs do not place it.
+	if command_id == "" or not structures.has(structure_id):
+		return 0
+	for slot_value in _compiled_command_slots_for(structures[structure_id]):
+		if typeof(slot_value) != TYPE_DICTIONARY:
+			continue
+		var slot: Dictionary = slot_value
+		if String(slot.get("commandId", "")) == command_id:
+			return int(slot.get("slot", 0))
+	return 0
+
+
 func _compiled_sell_slot_for(building: Dictionary) -> Dictionary:
+	for slot_value in _compiled_command_slots_for(building):
+		if typeof(slot_value) != TYPE_DICTIONARY:
+			continue
+		var slot: Dictionary = slot_value
+		if String(slot.get("commandId", "")) == "Command_Sell":
+			return slot
+	return {}
+
+
+func _compiled_command_slots_for(building: Dictionary) -> Array:
 	var candidates: Array[String] = []
 	var stamped := String(building.get("source_object_id", ""))
 	if stamped != "":
@@ -15504,7 +15541,7 @@ func _compiled_sell_slot_for(building: Dictionary) -> Dictionary:
 			candidates.append(alias_id)
 	var db = _content_db_ref()
 	if db == null or not db.has_method("get_playable_structure_runtime"):
-		return {}
+		return []
 	for object_id in candidates:
 		var document: Dictionary = db.get_playable_structure_runtime(object_id)
 		if document.is_empty():
@@ -15513,13 +15550,10 @@ func _compiled_sell_slot_for(building: Dictionary) -> Dictionary:
 			((document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)
 			.get("trainedCommandSets", [])
 		) as Array
-		for slot_value in _direct_or_first_command_set_slots(sets):
-			if typeof(slot_value) != TYPE_DICTIONARY:
-				continue
-			var slot: Dictionary = slot_value
-			if String(slot.get("commandId", "")) == "Command_Sell":
-				return slot
-	return {}
+		var slots := _direct_or_first_command_set_slots(sets)
+		if not slots.is_empty():
+			return slots
+	return []
 
 
 func _direct_or_first_command_set_slots(sets: Array) -> Array:
