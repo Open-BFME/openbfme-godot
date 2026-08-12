@@ -105,18 +105,17 @@ static func make_bundle_object_visual(object_id: String, side: int, source_unit_
 				if millimeters > 0.0:
 					target_height = millimeters / 1000.0
 			_scale_to_height(loaded, target_height)
+		# Borrow HouseColor from the first mounted pack that ships the file so
+		# Men banners whose own pack omitted data/house-color.json still bind
+		# masks. A supplemental Men file is not "this object is private retail":
+		# suppress invented tint only when the owning pack provides house color
+		# or a borrowed mask actually recolored surfaces.
 		var house_color_root := _house_color_pack_root(definition)
-		var private_retail := house_color_root != ""
-		var tinted_surfaces := 0 if private_retail else _tint_if_needed(loaded, side, false)
 		var house_colored := 0
-		if private_retail:
-			# Exact retail house color: recolor only mask-marked pixels using the
-			# pack's converted HouseColor masks. Invented whole-material tints
-			# stay suppressed in private parity mode. The owning pack may declare
-			# houseColor without shipping the file (rotwk-men-vslice a046f5a2);
-			# borrow the first mounted pack that actually has the masks, the same
-			# way selection decals already borrow a shipped contract.
+		if house_color_root != "":
 			house_colored = RetailHouseColorScript.apply(loaded, side, house_color_root)
+		var private_retail := _is_private_retail_definition(definition) or house_colored > 0
+		var tinted_surfaces := 0 if private_retail else _tint_if_needed(loaded, side, false)
 		root.add_child(loaded)
 		root.set_meta("authored", true)
 		root.set_meta("mesh_path", mesh_path)

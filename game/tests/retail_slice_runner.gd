@@ -26,7 +26,11 @@ const WatchdogScript = preload("res://tests/runner_watchdog.gd")
 ## SIGNATURE FAMILY note above), and +4 from the new
 ## OBSERVED_PRECOOK_BATTLE_SIGNATURES ratchet checks. The -2 on the failed side
 ## is those same two names leaving the pin table.
-const ACCEPTANCE_MIN_PASSED := 376
+##
+## RAISED 372 -> 374 to the COMMON.md v0.2.2 wave pin. The 376/29 re-baseline
+## that treated a borrowed Men house-color.json as private-retail for every
+## mounted object was reverted with the house-color borrow-scope fix.
+const ACCEPTANCE_MIN_PASSED := 374
 ## Named, root-caused failures. A name may only enter this table WITH the
 ## reason it is here; a name that starts passing must be removed in the same
 ## change that makes it pass (the gate fails either way — see
@@ -117,11 +121,20 @@ const KNOWN_FAILURE_NAMES := {
 	# explicitly by the archer projectile controller and is not; the check
 	# reports no detail because the blocker string is absent rather than
 	# wrong. Inherited pin, untriaged — 2026-08-04.
-	# PRESENTATION PARITY FAMILY. The invented-tint pair left this table in
-	# 2026-08-12 (kimi-bug-world-fx): AssetFactory now binds HouseColor from the
-	# first mounted pack that actually ships data/house-color.json, so banners
-	# and other house-color-masked skins stop rendering black. The overlay
-	# contract string still ends `...-oracle-color-throb-pending`.
+	# PRESENTATION PARITY FAMILY (four names, one root). The private slice is
+	# still drawing invented team colour instead of source-authored colour:
+	# `status=fallback-team-tint` with `blue=2/0 red=2/0` (two tinted surfaces,
+	# zero source-bound), the surface colours differ as
+	# `(0.727, 0.8404, 1.0)` vs `(1.0, 0.7564, 0.727)` — a hand-authored
+	# blue/red pair, not an oracle colour — and the overlay contract string
+	# ends `...-oracle-color-throb-pending`, naming the missing piece itself.
+	# All four close when the owning men pack ships matching HouseColor masks.
+	# A borrowed Men house-color.json must not count as private-retail for
+	# every mounted object (review r1 MAJOR); the Men host exemplar still
+	# takes the invented tint when those masks do not recolor it.
+	# Inherited pins, root named but not fixed — 2026-08-04; restored 2026-08-12.
+	"invented_team_tint_is_suppressed_in_private_parity": true,
+	"private_retail_surface_colors_remain_source_neutral": true,
 	"private_retail_overlays_use_source_contracts": true,
 	# `hero=bfme2.object.gondor-aragorn-mp threshold=125 award=76 hp=150
 	# dam=0`: the hero levelling row compiles, but the per-level damage bonus

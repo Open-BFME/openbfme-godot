@@ -4,9 +4,9 @@ extends SceneTree
 ##
 ## GondorInfantryBanner authors idle GUBanner_IDLB (gondorinfantrybanner.ini:69-77)
 ## and OkToChangeModelColor. The horde presenter spawned the GLB but never
-## played a clip (bind pose = T-pose) and the active men pack declares
-## houseColor without shipping data/house-color.json (masks live on the
-## supplemental bfme2-men-vslice pack).
+## played a clip (bind pose = T-pose). The active men pack lists houseColor
+## only under m3Recipe.runtimeOutputs and does not ship data/house-color.json
+## (masks live on the supplemental bfme2-men-vslice pack).
 
 const Watchdog := preload("res://tests/runner_watchdog.gd")
 const SCALE := 0.02649232738129
