@@ -678,6 +678,11 @@ def _passive_area_effect_contract(
         modifier = _first(block.values("ModifierName"))
         if modifier is not None:
             row["modifierName"] = modifier
+        # fortress.ini:898 House of Healing healer is UpgradeRequired, not
+        # always-on. Wells (well.ini:228-234) omit the field.
+        upgrade_required = _first(block.values("UpgradeRequired"))
+        if upgrade_required is not None:
+            row["upgradeRequired"] = upgrade_required
         return row
     return None
 

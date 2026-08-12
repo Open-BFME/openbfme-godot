@@ -2868,3 +2868,68 @@ End
     assert effect["radiusAuthored"] == "GONDOR_WELL_AOE_RADIUS"
     assert effect["healFx"] == "FX_SpellHealUnitHealBuff"
     assert effect["sourceIni"].endswith("test_units.ini")
+    assert "upgradeRequired" not in effect
+
+
+def test_passive_area_effect_compiles_upgrade_required() -> None:
+    # fortress.ini:897-904 MenFortressCitadel House of Healing healer is
+    # PassiveAreaEffectBehavior with UpgradeRequired, not an always-on well.
+    documents = _structure_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    documents[objects_path] = (
+        documents[objects_path].decode("utf-8")
+        + """
+Object TestCitadelHealer
+  CommandSet = TestKeepCommandSet
+  KindOf = SELECTABLE STRUCTURE
+  BuildCost = 300
+  BuildTime = 30
+  VisionRange = 160
+  DisplayName = OBJECT:TestCitadelHealer
+  SelectPortrait = UPTestCitadel
+  ButtonImage = BITestCitadel
+  SoundOnDamaged = WellDamagedSound
+  Draw = W3DScriptedModelDraw ModuleTag_Draw
+    DefaultModelConditionState
+      Model = Keep_SKN
+    End
+  End
+  Body = StructureBody ModuleTag_Body
+    MaxHealth = 5000
+    MaxHealthDamaged = 2500
+    MaxHealthReallyDamaged = 1250
+  End
+  Behavior = PassiveAreaEffectBehavior ModuleTag_HouseOfHealingHealer
+    UpgradeRequired = Upgrade_MenFortressHouseOfHealing
+    EffectRadius = 200
+    HealPercentPerSecond = 3%
+    HealFX = FX_SpellHealUnitHealBuff
+  End
+End
+"""
+    ).encode("utf-8")
+    command_sets = documents["data/ini/commandset.ini"].decode("utf-8")
+    documents["data/ini/commandset.ini"] = command_sets.replace(
+        "End\n",
+        "  12 = Command_ConstructTestCitadelHealer\nEnd\n",
+        1,
+    ).encode("utf-8")
+    documents["data/ini/commandbutton.ini"] = (
+        documents["data/ini/commandbutton.ini"].decode("utf-8")
+        + """
+CommandButton Command_ConstructTestCitadelHealer
+  Command = DOZER_CONSTRUCT
+  Object = TestCitadelHealer
+  ButtonImage = BITestCitadel
+  TextLabel = CONTROLBAR:TestCitadel
+  DescriptLabel = CONTROLBAR:ToolTipTestCitadel
+End
+"""
+    ).encode("utf-8")
+
+    descriptor = compile_playable_structure_descriptor("TestCitadelHealer", documents)
+    validate_playable_structure_descriptor(descriptor)
+    effect = descriptor["gameplay"]["passiveAreaEffect"]
+    assert effect["radius"] == 200
+    assert effect["healFx"] == "FX_SpellHealUnitHealBuff"
+    assert effect["upgradeRequired"] == "Upgrade_MenFortressHouseOfHealing"

@@ -146,7 +146,11 @@ var _water_fx: Node3D
 var aura_radius_source := 0.0
 var aura_radius_local := 0.0
 var aura_effect_kind := ""
+var aura_upgrade_required := ""
 var water_fx_present := false
+var _structure_upgrade_ids: Dictionary = {}
+var _well_water_authored := false
+var _well_water_resolved := false
 const HEALTH_BAR_SCREEN_WIDTH_PX := 64
 const HEALTH_BAR_SCREEN_HEIGHT_PX := 5
 const HEALTH_BAR_ROOF_GAP := 0.12
@@ -172,6 +176,7 @@ func configure(entity: Dictionary, bundle_object_id: String = "", source_unit_sc
 	_build_visual_root()
 	_configure_selected_pack_contract(bundle_object_id)
 	_build_markers()
+	_ingest_structure_upgrades(entity)
 	_configure_area_effect_presentation()
 	sync_state(entity)
 
@@ -272,6 +277,7 @@ func sync_state(entity: Dictionary) -> void:
 		_build_fill.visible = under_construction
 		_build_fill.scale.x = maxf(0.001, construction_ratio)
 		_build_fill.offset.x = (construction_ratio - 1.0) * HEALTH_BAR_SCREEN_WIDTH_PX * 0.5
+	_ingest_structure_upgrades(entity)
 	_sync_aura_visibility()
 	_sync_water_fx()
 	_update_lifecycle_metadata()
@@ -2235,14 +2241,49 @@ func _configure_area_effect_presentation() -> void:
 	## Retail well/statue SelectionDecal (experiencelevels.ini:10091-10140) and
 	## PassiveAreaEffectBehavior (well.ini:228, statue.ini:168). The ring is
 	## the authored EffectRadius; WellHealFX is the intact well's water cue.
+	## fortress.ini:897-904 House of Healing is the same module with
+	## UpgradeRequired — no ring until that upgrade is applied.
 	var effect := _passive_area_effect_from_document()
-	if not effect.is_empty():
+	aura_upgrade_required = String(effect.get("upgrade_required", ""))
+	if not effect.is_empty() and _aura_upgrade_satisfied():
 		aura_radius_source = float(effect.get("radius_source", 0.0))
 		aura_effect_kind = String(effect.get("kind", ""))
 		var scale := _source_unit_scale if _source_unit_scale > 0.0 else 1.0
 		aura_radius_local = aura_radius_source * scale
 		_build_aura_ring()
+	else:
+		aura_radius_source = 0.0
+		aura_radius_local = 0.0
+		aura_effect_kind = ""
+		_clear_aura_ring()
 	_sync_water_fx()
+
+
+func _ingest_structure_upgrades(entity: Dictionary) -> void:
+	var next_ids: Dictionary = {}
+	for item in entity.get("completed_upgrades", []) as Array:
+		var upgrade_id := String(item)
+		if upgrade_id != "":
+			next_ids[upgrade_id] = true
+	var applied: Variant = entity.get("applied_upgrades", {})
+	if typeof(applied) == TYPE_DICTIONARY:
+		for key_value in (applied as Dictionary).keys():
+			var upgrade_id := String(key_value)
+			if upgrade_id != "":
+				next_ids[upgrade_id] = true
+	var changed := next_ids.size() != _structure_upgrade_ids.size()
+	if not changed:
+		for key_value in next_ids.keys():
+			if not _structure_upgrade_ids.has(key_value):
+				changed = true
+				break
+	_structure_upgrade_ids = next_ids
+	if changed and aura_upgrade_required != "":
+		_configure_area_effect_presentation()
+
+
+func _aura_upgrade_satisfied() -> bool:
+	return aura_upgrade_required == "" or _structure_upgrade_ids.has(aura_upgrade_required)
 
 
 func _passive_area_effect_from_document() -> Dictionary:
@@ -2257,6 +2298,7 @@ func _passive_area_effect_from_document() -> Dictionary:
 			"radius_source": float(row.get("radius", 0.0)),
 			"kind": "heal" if String(row.get("healFx", "")) != "" or float(row.get("healPercentPerSecond", 0.0)) > 0.0 else "leadership",
 			"heal_fx": String(row.get("healFx", "")),
+			"upgrade_required": String(row.get("upgradeRequired", "")),
 		}
 	for contract_value in gameplay.get("moduleContracts", []) as Array:
 		if typeof(contract_value) != TYPE_DICTIONARY:
@@ -2277,6 +2319,7 @@ func _passive_area_effect_from_document() -> Dictionary:
 			"radius_source": radius,
 			"kind": "heal" if heal_fx != "" else ("leadership" if modifier != "" else "area"),
 			"heal_fx": heal_fx,
+			"upgrade_required": String((fields.get("UpgradeRequired", {}) as Dictionary).get("authored", "")),
 		}
 	return {}
 
@@ -2306,11 +2349,16 @@ func _playable_structure_document() -> Dictionary:
 	return {}
 
 
+func _clear_aura_ring() -> void:
+	if _aura_ring != null and is_instance_valid(_aura_ring):
+		_aura_ring.queue_free()
+	_aura_ring = null
+
+
 func _build_aura_ring() -> void:
 	if aura_radius_local <= 0.0:
 		return
-	if _aura_ring != null and is_instance_valid(_aura_ring):
-		_aura_ring.queue_free()
+	_clear_aura_ring()
 	_aura_ring = MeshInstance3D.new()
 	_aura_ring.name = "AreaEffectRadius"
 	var mesh := TorusMesh.new()
@@ -2343,13 +2391,38 @@ func _sync_aura_visibility() -> void:
 	)
 
 
+func _authors_well_heal_fx() -> bool:
+	## well.ini:121-126 second Draw TheHealEffect ParticleSysBone NONE WellHealFX.
+	## House of Healing (fortress.ini:904) authors FX_SpellHealUnitHealBuff —
+	## that is a unit heal ping, not the well fountain.
+	if _well_water_resolved:
+		return _well_water_authored
+	if structure_kind == "well" or _bundle_object_id.to_lower().contains("well"):
+		_well_water_authored = true
+		_well_water_resolved = true
+		return true
+	var document := _playable_structure_document()
+	if not document.is_empty():
+		var registration: Dictionary = document.get("registration", {}) as Dictionary
+		var life: Dictionary = registration.get("buildingLifecycle", {}) as Dictionary
+		if life.is_empty():
+			life = (registration.get("presentation", {}) as Dictionary).get("buildingLifecycle", {}) as Dictionary
+		var effects: Dictionary = life.get("effects", {}) as Dictionary
+		for attachment_value in effects.get("particleAttachments", []) as Array:
+			if typeof(attachment_value) != TYPE_DICTIONARY:
+				continue
+			if String((attachment_value as Dictionary).get("particleSystemId", "")) == WELL_WATER_FX_ID:
+				_well_water_authored = true
+				_well_water_resolved = true
+				return true
+	_well_water_authored = false
+	_well_water_resolved = true
+	return false
+
+
 func _sync_water_fx() -> void:
 	var wants_water := (
-		(
-			structure_kind == "well"
-			or _bundle_object_id.to_lower().contains("well")
-			or aura_effect_kind == "heal"
-		)
+		_authors_well_heal_fx()
 		and current_lifecycle_phase in ["", "intact"]
 		and construction_ratio >= 1.0
 		and health_ratio > 0.0

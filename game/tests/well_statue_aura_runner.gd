@@ -10,7 +10,7 @@ extends SceneTree
 
 const Watchdog := preload("res://tests/runner_watchdog.gd")
 const SCALE := 0.02649232738129
-const EXPECTED_CHECKS := 7
+const EXPECTED_CHECKS := 14
 
 var passed := 0
 var failed := 0
@@ -98,6 +98,74 @@ func _run() -> void:
 		"ring=%s" % statue_ring
 	)
 	statue.queue_free()
+
+	# fortress.ini:897-904 MenFortressCitadel House of Healing is upgrade-gated.
+	# The healer authors HealFX = FX_SpellHealUnitHealBuff, not WellHealFX.
+	var citadel = structure_script.new()
+	root.add_child(citadel)
+	citadel.configure(
+		{
+			"id": 3006,
+			"team": 0,
+			"structure_kind": "fortress",
+			"health": 7500,
+			"maximum_health": 7500,
+			"construction_progress": 1.0,
+		},
+		"bfme2.object.men-fortress-citadel",
+		SCALE
+	)
+	_check(
+		"citadel authors UpgradeRequired House of Healing",
+		String(citadel.aura_upgrade_required) == "Upgrade_MenFortressHouseOfHealing",
+		"upgrade_required=%s" % citadel.aura_upgrade_required
+	)
+	_check(
+		"citadel without House of Healing has no aura radius",
+		absf(float(citadel.aura_radius_source)) < 0.001,
+		"radius_source=%s kind=%s" % [citadel.aura_radius_source, citadel.aura_effect_kind]
+	)
+	_check(
+		"citadel without House of Healing has no WellHealFX",
+		not citadel.water_fx_present and citadel.find_child("WellHealFX", true, false) == null,
+		"water_fx_present=%s" % citadel.water_fx_present
+	)
+	citadel.set_selected(true)
+	var citadel_ring: Node = citadel.find_child("AreaEffectRadius", true, false)
+	_check(
+		"selected citadel without upgrade shows no ring",
+		citadel_ring == null or not (citadel_ring as Node3D).visible,
+		"ring=%s visible=%s" % [citadel_ring, citadel_ring.visible if citadel_ring is Node3D else "?"]
+	)
+	citadel.sync_state(
+		{
+			"id": 3006,
+			"team": 0,
+			"structure_kind": "fortress",
+			"health": 7500,
+			"maximum_health": 7500,
+			"construction_progress": 1.0,
+			"completed_upgrades": ["Upgrade_MenFortressHouseOfHealing"],
+		}
+	)
+	_check(
+		"citadel after House of Healing presents heal radius 200",
+		absf(float(citadel.aura_radius_source) - 200.0) < 0.001,
+		"radius_source=%s" % citadel.aura_radius_source
+	)
+	citadel.set_selected(true)
+	citadel_ring = citadel.find_child("AreaEffectRadius", true, false)
+	_check(
+		"selected citadel after upgrade shows the aura ring",
+		citadel_ring is MeshInstance3D and (citadel_ring as MeshInstance3D).visible,
+		"ring=%s" % citadel_ring
+	)
+	_check(
+		"citadel after upgrade still has no WellHealFX",
+		not citadel.water_fx_present and citadel.find_child("WellHealFX", true, false) == null,
+		"water_fx_present=%s" % citadel.water_fx_present
+	)
+	citadel.queue_free()
 	_finish()
 
 
