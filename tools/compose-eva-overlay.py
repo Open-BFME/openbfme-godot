@@ -11,7 +11,36 @@ sys.path.insert(0, str(ROOT / "importer"))
 from openbfme_importer.profile import ImportProfile
 
 
-def main() -> int:
+_CENSUS_GAME_LABELS = {"bfme2": ("BFME2", "1.06"), "rotwk": ("RotWK", "2.01")}
+
+
+def assert_census_edition(report: dict, game: str) -> None:
+    """Refuse a census produced from a different retail edition than --game.
+
+    The catalog and the census are two independent inputs; crossing them
+    composes one edition's announcer bytes under the other edition's identity,
+    which nothing downstream would catch.
+    """
+
+    expected = _CENSUS_GAME_LABELS[game]
+    target = report.get("target")
+    if not isinstance(target, dict):
+        raise ValueError("audio census has no target identity")
+    actual = (target.get("game"), target.get("patch"))
+    if actual != expected:
+        raise ValueError(
+            "audio census edition %r does not match --game %s (expected %r)"
+            % (actual, game, expected)
+        )
+
+
+def catalog_path(state_root: Path, game: str) -> Path:
+    """Catalog for one retail edition, addressed exactly as the importer CLI does."""
+
+    return state_root / "catalog" / ("%s.json" % game)
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Compose a minimal EVA announcer overlay profile for one faction: "
@@ -22,6 +51,15 @@ def main() -> int:
     )
     parser.add_argument("--audio-census", type=Path, required=True)
     parser.add_argument("--faction", required=True, help="census faction side (Men, Elves, ...)")
+    parser.add_argument(
+        "--game",
+        choices=("bfme2", "rotwk"),
+        default="bfme2",
+        help=(
+            "retail edition whose catalog and eva.ini are read (default: bfme2, "
+            "the edition the first overlay was composed from)"
+        ),
+    )
     parser.add_argument("--pack-id", required=True)
     parser.add_argument("--pack-title", default=None)
     parser.add_argument("--output", type=Path, required=True)
@@ -32,17 +70,23 @@ def main() -> int:
         default=None,
         help="importer state root (default: .private/retail-work); its catalog is required",
     )
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
     args = parser.parse_args()
 
     state_root = args.state_root or (ROOT / ".private" / "retail-work")
-    catalog_path = state_root / "catalog" / "bfme2.json"
-    if not catalog_path.is_file():
-        parser.error("state-root catalog is required (not found: %s)" % catalog_path)
+    catalog_file = catalog_path(state_root, args.game)
+    if not catalog_file.is_file():
+        parser.error("state-root catalog is required (not found: %s)" % catalog_file)
     from openbfme_importer.catalog import InstallCatalog
     from openbfme_importer.faction_profile import build_faction_audio_extension
 
-    catalog = InstallCatalog.load(catalog_path)
+    catalog = InstallCatalog.load(catalog_file)
     report = json.loads(args.audio_census.read_text(encoding="utf-8"))
+    assert_census_edition(report, args.game)
     extension = build_faction_audio_extension(
         catalog, report, args.faction, include_census_registry=False
     )

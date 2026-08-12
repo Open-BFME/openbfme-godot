@@ -823,7 +823,17 @@ _FACTION_PLAYER_TEMPLATES: dict[str, str] = {
     "Isengard": "FactionIsengard",
     "Mordor": "FactionMordor",
     "Wild": "FactionWild",
+    # RotWK 2.01's expansion side. eva.ini authors a full Angmar announcer set
+    # (93 side-sound rows), so an Angmar overlay pack is composable exactly the
+    # way the six BFME2 sides are.
+    "Angmar": "FactionAngmar",
 }
+# The exact (game, patch) identity labels faction_census stamps onto a leaf
+# census target, one per supported retail edition. Kept as pairs so a census
+# cannot claim one edition's game name with the other's patch level.
+CENSUS_EDITIONS: frozenset[tuple[str, str]] = frozenset(
+    {("BFME2", "1.06"), ("RotWK", "2.01")}
+)
 _EVA_BLOCK_HEADER = re.compile(
     r"^(?:NewEvaEvent|PredefinedEvaEvent)\s+([A-Za-z0-9_+.-]+)\s*$", re.IGNORECASE
 )
@@ -1059,13 +1069,19 @@ def _validate_faction_audio_report(report: Any, faction: str, template: str) -> 
     if result.get("closureStatus") != _REPORT_CLOSURE:
         raise ValueError("faction census report does not contain the required leaf closure")
     target = _object(result.get("target"), "faction census target")
-    if (
-        target.get("game") != "BFME2"
-        or target.get("patch") != "1.06"
-        or target.get("faction") != faction
-        or target.get("playerTemplate") != template
-    ):
-        raise ValueError(f"faction census target is not BFME2 1.06 {faction}")
+    # RotWK 2.01 is the shipped content baseline (owner decision 2026-07-27), so
+    # a 2.01 census is as valid an audio source as a 1.06 one. The (game, patch)
+    # pair is still checked as a PAIR: a relabelled census that claims one
+    # edition's identity over the other's bytes stays refused.
+    edition = (target.get("game"), target.get("patch"))
+    if edition not in CENSUS_EDITIONS:
+        raise ValueError(
+            "faction census target names no supported retail edition: %r" % (edition,)
+        )
+    if target.get("faction") != faction or target.get("playerTemplate") != template:
+        raise ValueError(
+            f"faction census target is not {edition[0]} {edition[1]} {faction}"
+        )
     _digest(result.get("inputSetSha256"), "faction census inputSetSha256")
     resolved = _object(result.get("resolvedLeaves"), "faction census resolvedLeaves")
     _object(resolved.get("audio"), "faction census resolvedLeaves.audio")
