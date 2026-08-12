@@ -641,6 +641,47 @@ def _resource_behavior_radius(
     return None
 
 
+def _passive_area_effect_contract(
+    lineage: Sequence[SageObject],
+    defines: Mapping[str, int | float],
+    target_id: str,
+) -> dict[str, object] | None:
+    """PassiveAreaEffectBehavior: well heal / statue leadership radius.
+
+    well.ini:228-235 EffectRadius = GONDOR_WELL_AOE_RADIUS (gamedata.ini:2337 = 200).
+    statue.ini:168-174 EffectRadius = GONDOR_STATUE_AOE_RADIUS (gamedata.ini:2321 = 200).
+    """
+
+    for block in _walk_blocks(_effective_top_blocks(lineage)):
+        words = block.kind.casefold().split()
+        if not words or words[0] != "passiveareaeffectbehavior":
+            continue
+        token = _first(block.values("EffectRadius"))
+        if token is None:
+            continue
+        radius = _numeric_value(
+            token, defines, f"{target_id} {block.kind} EffectRadius"
+        )
+        row: dict[str, object] = {
+            "radius": radius,
+            "radiusAuthored": token,
+            "module": block.kind,
+            "sourceIni": block.source_virtual_path,
+            "line": block.line,
+        }
+        heal_fx = _first(block.values("HealFX"))
+        if heal_fx is not None:
+            row["healFx"] = heal_fx
+        heal_pct = _first(block.values("HealPercentPerSecond"))
+        if heal_pct is not None:
+            row["healPercentPerSecondAuthored"] = heal_pct
+        modifier = _first(block.values("ModifierName"))
+        if modifier is not None:
+            row["modifierName"] = modifier
+        return row
+    return None
+
+
 def _health_contract(
     lineage: Sequence[SageObject],
     defines: Mapping[str, int | float],
@@ -2957,6 +2998,9 @@ def compile_playable_structure_descriptor(
     resource_behavior = _resource_behavior_radius(
         lineage, prepared.numeric_defines, target.name
     )
+    passive_area_effect = _passive_area_effect_contract(
+        lineage, prepared.numeric_defines, target.name
+    )
     create_grants = _grant_upgrade_create_contract(
         lineage, documents, target.name
     )
@@ -3117,6 +3161,11 @@ def compile_playable_structure_descriptor(
             **(
                 {"resourceBehavior": resource_behavior}
                 if resource_behavior is not None
+                else {}
+            ),
+            **(
+                {"passiveAreaEffect": passive_area_effect}
+                if passive_area_effect is not None
                 else {}
             ),
             **({"createGrants": create_grants} if create_grants else {}),

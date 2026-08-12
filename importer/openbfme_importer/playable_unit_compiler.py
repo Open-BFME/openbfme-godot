@@ -1767,6 +1767,9 @@ def _simulation_contract(
             )
             if weapon_upgrades:
                 combat_value["upgrades"] = weapon_upgrades
+        sub_object_upgrades = _sub_object_upgrades_contract(armor_lineages)
+        if sub_object_upgrades:
+            resolved["subObjectUpgrades"] = sub_object_upgrades
     except ArmorCompilerError as exc:
         raise PlayableUnitCompilerError(
             f"armor/upgrade contract is unresolvable: {exc}"
@@ -2070,6 +2073,54 @@ def _formation_contract(
     if len(positions) != member_count:
         return None
     return {"memberCount": member_count, "positions": positions, "ranks": rank_rows}
+
+
+def _sub_object_upgrades_contract(
+    lineages: Sequence[Sequence[SageObject]],
+) -> list[dict[str, object]]:
+    """Compile SubObjectsUpgrade Show/Hide tokens keyed by TriggeredBy.
+
+    Retail's fire-stones visual is exactly this module (trebuchet.ini:529-531
+    ShowSubObjects = FirePlane). The runtime hides those meshes until the
+    upgrade is applied; without this contract a pack republish cannot name
+    which nodes to flip.
+    """
+
+    rows: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for lineage in lineages:
+        for block in _effective_top_blocks(lineage):
+            if (block.header_key or "").casefold() != "behavior":
+                continue
+            kind_words = block.kind.casefold().split()
+            if not kind_words or kind_words[0] != "subobjectsupgrade":
+                continue
+            trigger = _first(block.values("TriggeredBy"))
+            if trigger is None or not _tokens(trigger):
+                continue
+            upgrade_id = _tokens(trigger)[-1]
+            folded = upgrade_id.casefold()
+            if folded in seen:
+                continue
+            show: list[str] = []
+            hide: list[str] = []
+            for text in block.values("ShowSubObjects"):
+                show.extend(_tokens(text))
+            for text in block.values("HideSubObjects"):
+                hide.extend(_tokens(text))
+            if not show and not hide:
+                continue
+            seen.add(folded)
+            rows.append(
+                {
+                    "upgradeId": upgrade_id,
+                    "show": show,
+                    "hide": hide,
+                    "sourceIni": block.source_virtual_path,
+                    "line": block.line,
+                }
+            )
+    return rows
 
 
 def _provenance_paths(value: object) -> set[str]:

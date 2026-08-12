@@ -141,9 +141,23 @@ var _pending_route_phase := ""
 var _bounded_phase_paths: Dictionary = {}
 var _health_bar_width := 3.6
 var _visual_top_y := DEFAULT_TARGET_HEIGHT
+var _aura_ring: MeshInstance3D
+var _water_fx: Node3D
+var aura_radius_source := 0.0
+var aura_radius_local := 0.0
+var aura_effect_kind := ""
+var water_fx_present := false
 const HEALTH_BAR_SCREEN_WIDTH_PX := 64
 const HEALTH_BAR_SCREEN_HEIGHT_PX := 5
 const HEALTH_BAR_ROOF_GAP := 0.12
+## Retail gamedata.ini:2321 / 2337. PassiveAreaEffectBehavior on GondorWell and
+## GondorStatue authors these macros; the current pack records the token but
+## not the resolved number. The table is the cited retail value, not a guess.
+const AREA_EFFECT_RADIUS_SOURCE := {
+	"GONDOR_WELL_AOE_RADIUS": 200.0,
+	"GONDOR_STATUE_AOE_RADIUS": 200.0,
+}
+const WELL_WATER_FX_ID := "WellHealFX"
 
 
 func _enter_tree() -> void:
@@ -158,6 +172,7 @@ func configure(entity: Dictionary, bundle_object_id: String = "", source_unit_sc
 	_build_visual_root()
 	_configure_selected_pack_contract(bundle_object_id)
 	_build_markers()
+	_configure_area_effect_presentation()
 	sync_state(entity)
 
 
@@ -257,6 +272,8 @@ func sync_state(entity: Dictionary) -> void:
 		_build_fill.visible = under_construction
 		_build_fill.scale.x = maxf(0.001, construction_ratio)
 		_build_fill.offset.x = (construction_ratio - 1.0) * HEALTH_BAR_SCREEN_WIDTH_PX * 0.5
+	_sync_aura_visibility()
+	_sync_water_fx()
 	_update_lifecycle_metadata()
 
 
@@ -285,6 +302,7 @@ func _sync_men_damage_phase(health: int, construction_progress: float) -> void:
 		if _v1_phase_row(_lifecycle, target).is_empty():
 			return
 		_activate_phase(target)
+		_sync_water_fx()
 	elif target == "construction":
 		_apply_declared_phase_animation(_active_body, target, construction_progress)
 
@@ -293,6 +311,7 @@ func set_selected(value: bool) -> void:
 	selected = value
 	if _selection_ring != null:
 		_selection_ring.visible = selected and health_ratio > 0.0 and contract_error == "" and active_visual_mode != "no-render"
+	_sync_aura_visibility()
 
 
 func lifecycle_state() -> Dictionary:
@@ -2066,7 +2085,16 @@ func _bind_v1_phase_routes(row: Dictionary) -> void:
 		var attachment: Dictionary = attachment_value
 		var matches := false
 		for condition_value in attachment.get("sourceConditions", []) as Array:
-			if active_conditions.has(String(condition_value)):
+			var condition := String(condition_value)
+			# Retail ModelConditionState = NONE on the well's second Draw module
+			# (well.ini:122-126 WellHealFX) means "no special condition" — the
+			# intact building. Matching only exact phase flags dropped it.
+			if condition == "NONE":
+				if phase == "intact":
+					matches = true
+					break
+				continue
+			if active_conditions.has(condition):
 				matches = true
 				break
 		if matches:
@@ -2201,6 +2229,162 @@ func _animation_players(node: Node3D) -> Array[AnimationPlayer]:
 func _stop_animations(node: Node3D) -> void:
 	for player in _animation_players(node):
 		player.stop()
+
+
+func _configure_area_effect_presentation() -> void:
+	## Retail well/statue SelectionDecal (experiencelevels.ini:10091-10140) and
+	## PassiveAreaEffectBehavior (well.ini:228, statue.ini:168). The ring is
+	## the authored EffectRadius; WellHealFX is the intact well's water cue.
+	var effect := _passive_area_effect_from_document()
+	if not effect.is_empty():
+		aura_radius_source = float(effect.get("radius_source", 0.0))
+		aura_effect_kind = String(effect.get("kind", ""))
+		var scale := _source_unit_scale if _source_unit_scale > 0.0 else 1.0
+		aura_radius_local = aura_radius_source * scale
+		_build_aura_ring()
+	_sync_water_fx()
+
+
+func _passive_area_effect_from_document() -> Dictionary:
+	var document := _playable_structure_document()
+	if document.is_empty():
+		return {}
+	var gameplay: Dictionary = (document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary
+	var compiled: Variant = gameplay.get("passiveAreaEffect")
+	if typeof(compiled) == TYPE_DICTIONARY and float((compiled as Dictionary).get("radius", 0.0)) > 0.0:
+		var row := compiled as Dictionary
+		return {
+			"radius_source": float(row.get("radius", 0.0)),
+			"kind": "heal" if String(row.get("healFx", "")) != "" or float(row.get("healPercentPerSecond", 0.0)) > 0.0 else "leadership",
+			"heal_fx": String(row.get("healFx", "")),
+		}
+	for contract_value in gameplay.get("moduleContracts", []) as Array:
+		if typeof(contract_value) != TYPE_DICTIONARY:
+			continue
+		var contract := contract_value as Dictionary
+		if String(contract.get("module", "")) != "PassiveAreaEffectBehavior":
+			continue
+		var fields: Dictionary = contract.get("fields", {}) as Dictionary
+		var authored := String((fields.get("EffectRadius", {}) as Dictionary).get("authored", ""))
+		var radius := float(AREA_EFFECT_RADIUS_SOURCE.get(authored, 0.0))
+		if radius <= 0.0 and authored.is_valid_float():
+			radius = float(authored)
+		if radius <= 0.0:
+			continue
+		var heal_fx := String((fields.get("HealFX", {}) as Dictionary).get("authored", ""))
+		var modifier := String((fields.get("ModifierName", {}) as Dictionary).get("authored", ""))
+		return {
+			"radius_source": radius,
+			"kind": "heal" if heal_fx != "" else ("leadership" if modifier != "" else "area"),
+			"heal_fx": heal_fx,
+		}
+	return {}
+
+
+func _playable_structure_document() -> Dictionary:
+	if not ContentDB.has_method("get_playable_structure_runtime"):
+		return {}
+	var direct: Variant = ContentDB.get_playable_structure_runtime(_bundle_object_id)
+	if typeof(direct) == TYPE_DICTIONARY and not (direct as Dictionary).is_empty():
+		return direct as Dictionary
+	if ContentDB.has_method("get_playable_structure_runtimes"):
+		for source_id_value in ContentDB.get_playable_structure_runtimes().keys():
+			var document: Dictionary = ContentDB.get_playable_structure_runtime(String(source_id_value))
+			var object_id := String(document.get("objectId", ""))
+			if object_id == _bundle_object_id or String(document.get("id", "")) == _bundle_object_id:
+				return document
+			var registration: Dictionary = document.get("registration", {}) as Dictionary
+			var life: Dictionary = registration.get("buildingLifecycle", {}) as Dictionary
+			if life.is_empty():
+				life = (registration.get("presentation", {}) as Dictionary).get("buildingLifecycle", {}) as Dictionary
+			if String(life.get("objectId", "")) == _bundle_object_id:
+				return document
+			var folded_source := object_id.to_lower()
+			var folded_bundle := _bundle_object_id.to_lower().replace("bfme2.object.", "").replace("-", "")
+			if folded_source == folded_bundle:
+				return document
+	return {}
+
+
+func _build_aura_ring() -> void:
+	if aura_radius_local <= 0.0:
+		return
+	if _aura_ring != null and is_instance_valid(_aura_ring):
+		_aura_ring.queue_free()
+	_aura_ring = MeshInstance3D.new()
+	_aura_ring.name = "AreaEffectRadius"
+	var mesh := TorusMesh.new()
+	mesh.inner_radius = maxf(0.01, aura_radius_local * 0.94)
+	mesh.outer_radius = aura_radius_local
+	_aura_ring.mesh = mesh
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.albedo_color = (
+		Color(0.35, 0.72, 0.95, 0.42) if aura_effect_kind == "heal" else Color(0.86, 0.78, 0.32, 0.42)
+	)
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_aura_ring.material_override = material
+	_aura_ring.position = Vector3(0.0, 0.08, 0.0)
+	_aura_ring.visible = false
+	add_child(_aura_ring)
+	_sync_aura_visibility()
+
+
+func _sync_aura_visibility() -> void:
+	if _aura_ring == null or not is_instance_valid(_aura_ring):
+		return
+	_aura_ring.visible = (
+		selected
+		and health_ratio > 0.0
+		and construction_ratio >= 1.0
+		and active_visual_mode != "no-render"
+		and aura_radius_local > 0.0
+	)
+
+
+func _sync_water_fx() -> void:
+	var wants_water := (
+		(
+			structure_kind == "well"
+			or _bundle_object_id.to_lower().contains("well")
+			or aura_effect_kind == "heal"
+		)
+		and current_lifecycle_phase in ["", "intact"]
+		and construction_ratio >= 1.0
+		and health_ratio > 0.0
+	)
+	if not wants_water:
+		if _water_fx != null and is_instance_valid(_water_fx):
+			_water_fx.visible = false
+		water_fx_present = false
+		return
+	if _water_fx != null and is_instance_valid(_water_fx):
+		_water_fx.visible = true
+		water_fx_present = true
+		return
+	_water_fx = Node3D.new()
+	_water_fx.name = "WellHealFX"
+	var column := MeshInstance3D.new()
+	column.name = "WellWaterColumn"
+	var mesh := CylinderMesh.new()
+	var scale := _source_unit_scale if _source_unit_scale > 0.0 else 1.0
+	mesh.top_radius = 4.0 * scale
+	mesh.bottom_radius = 6.0 * scale
+	mesh.height = 10.0 * scale
+	column.mesh = mesh
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.albedo_color = Color(0.45, 0.72, 0.92, 0.38)
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	column.material_override = material
+	column.position = Vector3(0.0, mesh.height * 0.45, 0.0)
+	_water_fx.add_child(column)
+	add_child(_water_fx)
+	water_fx_present = true
+	if not active_particle_system_ids.has(WELL_WATER_FX_ID):
+		active_particle_system_ids.append(WELL_WATER_FX_ID)
 
 
 func _set_contract_error(message: String) -> void:

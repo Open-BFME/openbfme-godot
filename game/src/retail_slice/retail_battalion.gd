@@ -181,6 +181,8 @@ var show_all_health_bars := UserSettingsScript.DEFAULT_SHOW_ALL_HEALTH_BARS
 var experience_level := 1
 var banner_carrier_visual: Node3D
 var banner_carrier_object_id := ""
+var fire_upgrade_active := false
+var fire_upgrade_id := ""
 var ring_carrier_visual: Node3D
 var ring_carrier_object_id := ""
 ## Presentation detail level published by the view-side distance LOD
@@ -301,6 +303,141 @@ func sync_banner_carrier(spawned: bool, banner_object_id: String, offset_source:
 	add_child(visual)
 	banner_carrier_visual = visual
 	banner_carrier_object_id = banner_object_id
+	_play_banner_clip(current_state if current_state != "" else "idle")
+
+
+func sync_upgrade_visuals(applied_upgrades: Dictionary) -> void:
+	## Retail WeaponSetUpgrade + SubObjectsUpgrade for Fire Stones
+	## (trebuchet.ini:525-531). The fire plane stays hidden until the upgrade
+	## is on the battalion; showing it is the authored visual flip.
+	var upgrade_id := _fire_stones_upgrade_id(applied_upgrades)
+	var wanted := upgrade_id != ""
+	if wanted == fire_upgrade_active and fire_upgrade_id == upgrade_id:
+		return
+	fire_upgrade_active = wanted
+	fire_upgrade_id = upgrade_id
+	var shown := 0
+	var asset_factory = load("res://src/view/asset_factory.gd")
+	for visual_value in member_visuals.values():
+		if visual_value is Node:
+			shown += int(asset_factory.set_named_subobject_visible(
+				visual_value as Node, "FirePlane", wanted
+			))
+	if wanted:
+		var flaming := _compiled_flaming_projectile_object_id()
+		if flaming != "":
+			projectile_object_id = flaming
+	else:
+		projectile_object_id = _compiled_projectile_object_id(object_id)
+	set_meta("fire_upgrade_active", fire_upgrade_active)
+	set_meta("fire_upgrade_id", fire_upgrade_id)
+	set_meta("fire_plane_nodes_shown", shown)
+	set_meta("fire_projectile_object_id", projectile_object_id)
+
+
+func fire_plane_visible_count() -> int:
+	var count := 0
+	for visual_value in member_visuals.values():
+		if visual_value is Node:
+			count += _count_visible_named(visual_value as Node, "FirePlane")
+	return count
+
+
+func _fire_stones_upgrade_id(applied_upgrades: Dictionary) -> String:
+	for key_value in applied_upgrades.keys():
+		var upgrade_id := String(key_value)
+		if upgrade_id == "":
+			continue
+		var folded := upgrade_id.to_lower()
+		if folded.contains("firestones") or folded.contains("fire_stones") or folded.contains("flamingmunitions"):
+			return upgrade_id
+	return ""
+
+
+func _compiled_flaming_projectile_object_id() -> String:
+	## weapon.ini:3257 GondorTrebuchetRockFlaming -> GondorTrebuchetRockProjectileFlaming
+	for document_value in ContentDB.get_playable_unit_runtimes().values():
+		var document := document_value as Dictionary
+		if (
+			PlayableUnitRuntimeAdapter.runtime_unit_id(document) != object_id
+			and PlayableUnitRuntimeAdapter.runtime_member_id(document) != object_id
+		):
+			continue
+		var gameplay := (document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary
+		var resolved := (gameplay.get("simulation", {}) as Dictionary).get("resolved", {}) as Dictionary
+		var combat: Dictionary = resolved.get("combat", {}) as Dictionary
+		for upgrade_value in combat.get("upgrades", []) as Array:
+			if typeof(upgrade_value) != TYPE_DICTIONARY:
+				continue
+			var upgrade := upgrade_value as Dictionary
+			if String(upgrade.get("upgradeId", "")).to_lower().contains("firestone"):
+				var weapon_id := String(upgrade.get("weaponId", ""))
+				if weapon_id.to_lower().ends_with("flaming"):
+					return weapon_id.replace("RockFlaming", "RockProjectileFlaming")
+		return "GondorTrebuchetRockProjectileFlaming"
+	return ""
+
+
+func _count_visible_named(root: Node, token: String) -> int:
+	var count := 0
+	var want := token.to_lower().replace(" ", "")
+	if root is Node3D:
+		var folded := root.name.to_lower().replace(" ", "")
+		if (folded == want or folded.begins_with(want)) and (root as Node3D).visible:
+			count += 1
+	for child in root.get_children():
+		count += _count_visible_named(child, token)
+	return count
+
+
+func _play_banner_clip(state: String) -> void:
+	## Banner carriers are a visual child, not a second battalion, so they never
+	## went through set_action_state. Without this they stay in the GLB bind
+	## pose — the T-pose the owner reported.
+	if banner_carrier_visual == null or not is_instance_valid(banner_carrier_visual):
+		return
+	var semantic := "move" if state in ["run", "move"] else "idle"
+	if state == "attack":
+		semantic = "attack"
+	elif state == "death":
+		semantic = "death"
+	var requested := _banner_clip_for_state(semantic)
+	if requested == "":
+		requested = "GUBanner_IDLB" if semantic != "move" else "GUBanner_RUNA"
+	for player in _animation_players_under(banner_carrier_visual):
+		var playable := _resolve_animation_name(player, requested)
+		if playable == "":
+			continue
+		if player.current_animation == playable and player.is_playing():
+			continue
+		player.play(playable, 0.12)
+		if semantic in ["idle", "move"] and player.current_animation_length > 0.0:
+			player.seek(player.current_animation_length * 0.15, true)
+
+
+func _banner_clip_for_state(semantic: String) -> String:
+	var capability_id := String(banner_carrier_visual.get_meta("animation_capability_id", ""))
+	if capability_id == "":
+		capability_id = "playable-unit:gondorinfantrybanner"
+	var capability: Dictionary = ContentDB.get_animation_capability(capability_id)
+	var states: Dictionary = capability.get("states", {}) as Dictionary
+	var row: Dictionary = states.get(semantic, states.get("idle", {})) as Dictionary
+	var clips: Array = row.get("clips", []) as Array
+	if clips.is_empty():
+		return ""
+	return String(clips[0])
+
+
+func _animation_players_under(root: Node) -> Array[AnimationPlayer]:
+	var players: Array[AnimationPlayer] = []
+	var stack: Array[Node] = [root]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node is AnimationPlayer:
+			players.append(node as AnimationPlayer)
+		for child in node.get_children():
+			stack.append(child)
+	return players
 
 
 func sync_ring_carrier(holding: bool, ring_object_id: String, offset_source: Vector2) -> void:
@@ -1273,6 +1410,7 @@ func set_action_state(state: String, force: bool = false, action_token: int = -1
 		member_action_states[member_index] = normalized
 		for player_value in member_animation_players.get(member_index, []):
 			_play_member_clip(player_value as AnimationPlayer, requested, normalized, member_index, 0.12, true)
+	_play_banner_clip(normalized)
 	_refresh_label()
 
 

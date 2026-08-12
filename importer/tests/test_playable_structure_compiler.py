@@ -2802,3 +2802,69 @@ def test_castle_upgrade_rows_sort_by_casefolded_trigger_id() -> None:
     assert [
         row["upgradeId"] for row in descriptor["gameplay"]["castleUpgrades"]["upgrades"]
     ] == ["Upgrade_AlphaWallsTrigger", "Upgrade_TestIceWallsTrigger"]
+
+
+def test_passive_area_effect_compiles_authored_well_radius() -> None:
+    documents = _structure_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    documents[objects_path] = (
+        documents[objects_path].decode("utf-8")
+        + """
+Object TestWell
+  CommandSet = TestKeepCommandSet
+  KindOf = SELECTABLE STRUCTURE
+  BuildCost = 300
+  BuildTime = 30
+  VisionRange = 160
+  DisplayName = OBJECT:TestWell
+  SelectPortrait = UPTestWell
+  ButtonImage = BITestWell
+  SoundOnDamaged = WellDamagedSound
+  Draw = W3DScriptedModelDraw ModuleTag_Draw
+    DefaultModelConditionState
+      Model = Well_SKN
+    End
+  End
+  Body = StructureBody ModuleTag_Body
+    MaxHealth = 1500
+    MaxHealthDamaged = 1000
+    MaxHealthReallyDamaged = 500
+  End
+  Behavior = PassiveAreaEffectBehavior ModuleTag_Splash
+    EffectRadius = GONDOR_WELL_AOE_RADIUS
+    HealPercentPerSecond = 2%
+    HealFX = FX_SpellHealUnitHealBuff
+  End
+End
+"""
+    ).encode("utf-8")
+    documents["data/ini/gamedata.ini"] = (
+        documents["data/ini/gamedata.ini"].decode("utf-8")
+        + "\n#define GONDOR_WELL_AOE_RADIUS 200\n"
+    ).encode("utf-8")
+    command_sets = documents["data/ini/commandset.ini"].decode("utf-8")
+    documents["data/ini/commandset.ini"] = command_sets.replace(
+        "End\n",
+        "  12 = Command_ConstructTestWell\nEnd\n",
+        1,
+    ).encode("utf-8")
+    documents["data/ini/commandbutton.ini"] = (
+        documents["data/ini/commandbutton.ini"].decode("utf-8")
+        + """
+CommandButton Command_ConstructTestWell
+  Command = DOZER_CONSTRUCT
+  Object = TestWell
+  ButtonImage = BITestWell
+  TextLabel = CONTROLBAR:TestWell
+  DescriptLabel = CONTROLBAR:ToolTipTestWell
+End
+"""
+    ).encode("utf-8")
+
+    descriptor = compile_playable_structure_descriptor("TestWell", documents)
+    validate_playable_structure_descriptor(descriptor)
+    effect = descriptor["gameplay"]["passiveAreaEffect"]
+    assert effect["radius"] == 200
+    assert effect["radiusAuthored"] == "GONDOR_WELL_AOE_RADIUS"
+    assert effect["healFx"] == "FX_SpellHealUnitHealBuff"
+    assert effect["sourceIni"].endswith("test_units.ini")

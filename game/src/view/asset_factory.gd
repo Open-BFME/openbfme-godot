@@ -81,6 +81,11 @@ static func make_bundle_object_visual(object_id: String, side: int, source_unit_
 	var mesh_path := ContentDB.resolve_mesh_path(definition)
 	var loaded := _try_load_model(mesh_path)
 	if loaded:
+		# Retail SubObjectsUpgrade ShowSubObjects meshes start hidden
+		# (trebuchet.ini:529-531 ShowSubObjects = FirePlane). The converter
+		# keeps the mesh in the GLB but does not hide it, so the AABB floor
+		# snap treats a 40-source-unit fire billboard as the wheels.
+		_hide_default_upgrade_subobjects(loaded)
 		if is_finite(source_unit_scale) and source_unit_scale > 0.0:
 			# Retail W3D geometry and the cooked map share SAGE world units. The
 			# selected-map runtime therefore applies its single validated source-to-
@@ -100,14 +105,18 @@ static func make_bundle_object_visual(object_id: String, side: int, source_unit_
 				if millimeters > 0.0:
 					target_height = millimeters / 1000.0
 			_scale_to_height(loaded, target_height)
-		var private_retail := _is_private_retail_definition(definition)
+		var house_color_root := _house_color_pack_root(definition)
+		var private_retail := house_color_root != ""
 		var tinted_surfaces := 0 if private_retail else _tint_if_needed(loaded, side, false)
 		var house_colored := 0
 		if private_retail:
 			# Exact retail house color: recolor only mask-marked pixels using the
 			# pack's converted HouseColor masks. Invented whole-material tints
-			# stay suppressed in private parity mode.
-			house_colored = RetailHouseColorScript.apply(loaded, side, String(definition.get("_pack_root", "")))
+			# stay suppressed in private parity mode. The owning pack may declare
+			# houseColor without shipping the file (rotwk-men-vslice a046f5a2);
+			# borrow the first mounted pack that actually has the masks, the same
+			# way selection decals already borrow a shipped contract.
+			house_colored = RetailHouseColorScript.apply(loaded, side, house_color_root)
 		root.add_child(loaded)
 		root.set_meta("authored", true)
 		root.set_meta("mesh_path", mesh_path)
@@ -461,6 +470,8 @@ static func _aabb_of(node: Node3D) -> AABB:
 		var n: Node = item[0]
 		var xf: Transform3D = item[1]
 		if n is Node3D:
+			if not (n as Node3D).visible:
+				continue
 			xf = xf * (n as Node3D).transform
 		if n is MeshInstance3D:
 			var mi := n as MeshInstance3D
@@ -474,6 +485,61 @@ static func _aabb_of(node: Node3D) -> AABB:
 		for c in n.get_children():
 			stack.append([c, xf])
 	return acc
+
+
+static func _hide_default_upgrade_subobjects(root: Node) -> void:
+	## Meshes retail only reveals through SubObjectsUpgrade ShowSubObjects start
+	## hidden. The field trebuchet authors ShowSubObjects = FirePlane
+	## (trebuchet.ini:529-531); the fortress-wall child uses ExtraPublicBone
+	## FirePlane01. Matching is the authored token, case-insensitive.
+	if root is Node3D and _is_default_hidden_subobject(root.name):
+		(root as Node3D).visible = false
+	for child in root.get_children():
+		_hide_default_upgrade_subobjects(child)
+
+
+static func _is_default_hidden_subobject(node_name: String) -> bool:
+	var folded := node_name.to_lower().replace(" ", "")
+	return folded == "fireplane" or folded == "fireplane01" or folded.begins_with("fireplane")
+
+
+static func set_named_subobject_visible(root: Node, token: String, shown: bool) -> int:
+	## Reveal or hide every node whose name matches the authored ShowSubObjects
+	## token. Returns how many nodes flipped. Used by the fire-stones upgrade.
+	var matched := 0
+	var want := token.to_lower().replace(" ", "")
+	if root is Node3D:
+		var folded := root.name.to_lower().replace(" ", "")
+		if folded == want or folded.begins_with(want):
+			(root as Node3D).visible = shown
+			matched += 1
+	for child in root.get_children():
+		matched += set_named_subobject_visible(child, token, shown)
+	return matched
+
+
+static func _house_color_pack_root(definition: Dictionary) -> String:
+	var own := String(definition.get("_pack_root", ""))
+	if _pack_has_house_color_file(own):
+		return own
+	var content_db := Engine.get_main_loop()
+	if content_db is SceneTree:
+		var db = (content_db as SceneTree).root.get_node_or_null("ContentDB")
+		if db != null:
+			for root_value in db.pack_roots:
+				var root := String(root_value)
+				if _pack_has_house_color_file(root):
+					return root
+	return ""
+
+
+static func _pack_has_house_color_file(pack_root: String) -> bool:
+	if pack_root == "" or pack_root.begins_with("res://"):
+		return false
+	if not PackCapability.provides_house_color(pack_root):
+		return false
+	var path := pack_root.replace("\\", "/").path_join("data/house-color.json")
+	return FileAccess.file_exists(path)
 
 static func _tint_if_needed(node: Node3D, side: int, hero: bool) -> int:
 	# GLTF materials normally live on ArrayMesh surfaces rather than as a

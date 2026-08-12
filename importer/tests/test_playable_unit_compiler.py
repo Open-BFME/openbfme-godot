@@ -5682,3 +5682,45 @@ def test_partially_typed_nuggets_do_not_spread_the_authored_type() -> None:
         {"damageType": "HERO", "value": 10},
         {"damageType": "", "value": 5},
     ]
+
+
+def test_sub_object_upgrade_compiles_fire_plane_show_token() -> None:
+    command_row, button_row = _combat_command("SiegeEngine", 8, "SiegeEngine")
+    documents = _combat_documents(
+        _combat_object(
+            "SiegeEngine",
+            "SIEGEENGINE MACHINE",
+            "  WeaponSet\n"
+            "    Conditions = None\n"
+            "    Weapon = PRIMARY SiegeRock\n"
+            "  End\n"
+            "  Behavior = SubObjectsUpgrade ModuleTag_FlamingRockUpgrade\n"
+            "    TriggeredBy = Upgrade_GondorFireStones\n"
+            "    ShowSubObjects = FirePlane\n"
+            "  End\n",
+        ),
+        "Weapon SiegeRock\n"
+        "  AttackRange = 400.0\n"
+        "  DelayBetweenShots = 8000\n"
+        "  DamageNugget\n"
+        "    Damage = 200\n"
+        "    DamageType = SIEGE\n"
+        "  End\n"
+        "End\n",
+        command_row,
+        button_row,
+    )
+
+    descriptor = compile_playable_unit_descriptor("SiegeEngine", documents)
+    validate_playable_unit_descriptor(descriptor)
+    upgrades = descriptor["gameplay"]["simulation"]["resolved"]["subObjectUpgrades"]
+    assert upgrades == [
+        {
+            "upgradeId": "Upgrade_GondorFireStones",
+            "show": ["FirePlane"],
+            "hide": [],
+            "sourceIni": "data/ini/object/units/test_units.ini",
+            "line": upgrades[0]["line"],
+        }
+    ]
+    assert isinstance(upgrades[0]["line"], int) and upgrades[0]["line"] > 0

@@ -2871,7 +2871,8 @@ func _spawn_battalion(id: int, expected_members: int) -> void:
 	)
 	var position := Vector2(entity["position"])
 	add_child(battalion)
-	battalion.set_authoritative_position(Vector3(position.x, _presentation_height(position), position.y), true)
+	battalion.set_authoritative_position(Vector3(position.x, _presentation_height_for_entity(entity, position), position.y), true)
+	battalion.sync_upgrade_visuals(entity.get("applied_upgrades", {}) as Dictionary)
 	# Capture-anchored equivalence: retail infantry read as sunlit like
 	# structures (bfme2-ref-120s), so members receive the object-domain rig in
 	# addition to the authored infantry rig; infantry-only lighting leaves
@@ -4097,9 +4098,10 @@ func _sync_presentation() -> void:
 		# classifies an invisible battalion as CULLED - so a hidden unit also
 		# stops animating and leaves the MultiMesh batch.
 		battalion.visible = shroud_overlay.unit_visible(position)
-		battalion.set_authoritative_position(Vector3(position.x, _presentation_height(position), position.y))
+		battalion.set_authoritative_position(Vector3(position.x, _presentation_height_for_entity(entity, position), position.y))
 		battalion.set_health(int(entity["health"]), int(entity["maximum_health"]))
 		battalion.set_experience_level(int(entity.get("level", 1)))
+		battalion.sync_upgrade_visuals(entity.get("applied_upgrades", {}) as Dictionary)
 		battalion.sync_banner_carrier(
 			bool(entity.get("banner_carrier_spawned", false)),
 			String(entity.get("banner_carrier_object_id", "")),
@@ -7149,6 +7151,18 @@ func _presentation_height(position: Vector2) -> float:
 	if source_map_data == null or not source_map_data.ready:
 		return 0.35
 	return source_map_data.local_ground_height(position) + 0.35
+
+
+func _presentation_height_for_entity(entity: Dictionary, position: Vector2) -> float:
+	## Infantry keep the 0.35 hover that hides terrain z-fighting. Siege
+	## engines (trebuchet.ini CatapultLocomotor, wheels on the ground) sit on
+	## the sampled terrain: the owner screenshot was wheels floating above it.
+	var ground := 0.0
+	if source_map_data != null and source_map_data.ready:
+		ground = source_map_data.local_ground_height(position)
+	if String(entity.get("category", "")) == "siege":
+		return ground
+	return ground + 0.35
 
 
 func _build_environment() -> void:
