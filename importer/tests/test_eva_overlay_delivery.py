@@ -350,19 +350,30 @@ def test_eva_document_declares_the_schema_fields_it_does_not_compile() -> None:
     catalog = _rotwk_catalog()
     source = _rotwk_eva_source(catalog)
     coverage = _eva_semantic_field_coverage(source)
-    assert coverage["compiledAndConsumedByRuntime"] == ["cooldownMs", "priority"]
-    assert coverage["compiledButUnconsumed"] == {"expirationMs": 309, "quietTimeMs": 2}
-    # Authored by retail, never compiled. Counted from the bytes so the claim
-    # cannot drift away from the file.
-    assert coverage["authoredButNotCompiled"] == {
-        "AlwaysPlayFromHomeBase": 48,
-        "CountAsJumpToLocation": 97,
-        "MillisecondsToWaitBeforePlaying": 20,
-        "OtherEvaEventsToBlock": 8,
+    assert coverage["compiledAndConsumedByRuntime"] == [
+        "blockEvents",
+        "cooldownMs",
+        "delayMs",
+        "priority",
+    ]
+    assert coverage["compiledButUnconsumed"] == {
+        "expirationMs": 309,
+        "jumpToLocation": 97,
+        "playFromHomeBase": 48,
+        "quietTimeMs": 2,
     }
-    # MiscEvaData is not authored in this document at all; declaring it as an
-    # omission would be a fabricated gap.
-    assert "MiscEvaData" not in coverage["authoredButNotCompiled"]
+    # Authored by retail, never compiled: the MiscEvaData global block is the
+    # ONLY uncompiled field set left in eva.ini (its jump-to/camp-timeout
+    # knobs belong to camera and camp-destroyed lanes, not announcer
+    # arbitration). Counted from the bytes so the claim cannot drift.
+    assert coverage["authoredButNotCompiled"] == {
+        "EnemyCampDestroyedDamageTimeoutMS": 1,
+        "EnemySightedMaxVoicePositionScanRange": 1,
+        "FriendlyCampDestroyedDamageTimeoutMS": 1,
+        "MaxMillisecondsBeforeResettingLastJumpTo": 1,
+        "MaxMillisecondsToKeepJumpToEvents": 1,
+        "MinDistanceBetweenJumpToEvents": 1,
+    }
 
 
 def _rotwk_eva_source(catalog) -> bytes:

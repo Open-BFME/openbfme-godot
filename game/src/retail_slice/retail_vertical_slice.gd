@@ -3197,6 +3197,7 @@ func _faction_structure_audio_contract() -> Dictionary:
 	var eva_contract := _load_eva_contract()
 	contract["eva_events"] = eva_contract.get("events", {})
 	contract["eva_semantics"] = eva_contract.get("semantics", {})
+	contract["eva_created_events"] = eva_contract.get("created_events", {})
 	return contract
 
 
@@ -3235,11 +3236,15 @@ func _load_eva_contract() -> Dictionary:
 		var events: Variant = (document as Dictionary).get("events", {})
 		if typeof(events) == TYPE_DICTIONARY:
 			var semantics: Variant = (document as Dictionary).get("semantics", {})
+			var created_events: Variant = (document as Dictionary).get("createdEvents", {})
 			return {
 				"events": (events as Dictionary).duplicate(true),
 				"semantics": (semantics as Dictionary).duplicate(true) if typeof(semantics) == TYPE_DICTIONARY else {},
+				# Schema-additive: packs predating createdEvents project an empty
+				# map and the audio layer keeps its legacy hero-created path.
+				"created_events": (created_events as Dictionary).duplicate(true) if typeof(created_events) == TYPE_DICTIONARY else {},
 			}
-	return {"events": {}, "semantics": {}}
+	return {"events": {}, "semantics": {}, "created_events": {}}
 
 
 func _record_sim_heartbeat() -> void:

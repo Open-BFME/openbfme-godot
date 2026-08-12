@@ -196,6 +196,13 @@ var eva_last_played_msec: Dictionary = {}
 var eva_arbitration_msec := -1
 var eva_arbitration_priority := -1
 var eva_diagnostics: Array[String] = []
+## Folded eva id -> sim-clock ms until which that event is muted because a
+## playing event's retail OtherEvaEventsToBlock list (compiled `blockEvents`)
+## names it. Presentation-only, like the arbitration state above.
+var eva_blocked_until_msec: Dictionary = {}
+## Announcements deferred by retail MillisecondsToWaitBeforePlaying (compiled
+## `delayMs`): {eva_id, due_msec, sequence} in the sim-clock domain.
+var eva_pending_delays: Array[Dictionary] = []
 var _structure_damage_stage: Dictionary = {}
 ## When non-empty, these playable-unit documents replace the ContentDB-wide
 ## registry for roster voices and readiness, so a faction match is gated on
@@ -290,6 +297,8 @@ func configure(selected_pack_root: String, enable_playback: bool = true, active_
 	eva_arbitration_msec = -1
 	eva_arbitration_priority = -1
 	eva_diagnostics.clear()
+	eva_blocked_until_msec.clear()
+	eva_pending_delays.clear()
 	declared_structure_lifecycle_audio_active = false
 	# Entity→object identity is carried on the sim's voice-relevant events and
 	# learned as they stream; no static roster pin exists (S1: the retired
@@ -1220,6 +1229,11 @@ func _consume_event(event: Dictionary) -> void:
 	var entity_id := int(event.get("entity_id", 0))
 	var target_id := int(event.get("target_id", 0))
 	var eva_clock := int(event.get("tick", -1)) * 100 if event.has("tick") else -1
+	if eva_clock >= 0:
+		# Any event clock doubles as the EVA clock: announcements deferred by
+		# retail MillisecondsToWaitBeforePlaying sound at the first event at or
+		# after their due time.
+		flush_due_eva_events(eva_clock)
 	if kind == "production.complete":
 		var produced_object_id := String(event.get("object_id", ""))
 		if produced_object_id != "" and _active_roster_object_ids().has(produced_object_id):
@@ -1365,7 +1379,7 @@ func _consume_event(event: Dictionary) -> void:
 	elif kind == "eva.enemy_defeated":
 		_play_eva_announcement("EnemyDefeated", sequence, eva_clock)
 	elif kind == "eva.hero_created":
-		_play_eva_announcement("HeroCreated", sequence, eva_clock)
+		_play_created_eva(event, sequence, eva_clock)
 	_append_bounded_observability(intent_log, event.duplicate(true))
 
 
@@ -1512,6 +1526,44 @@ func _play_structure_eva(event: Dictionary, role: String, sequence: int, now_mse
 		_play_eva_announcement(eva_id, sequence, now_msec)
 
 
+func _play_created_eva(event: Dictionary, sequence: int, now_msec: int) -> void:
+	## Retail keys creation announcements per OBJECT: the object INI's
+	## VoiceCreated = EVA:<event> (compiled into the eva document's
+	## createdEvents map) names the announcer event for the created thing.
+	## "HeroCreated" itself is authored by no retail side, so it only remains
+	## as the legacy path for packs predating the createdEvents schema, where
+	## it fails closed exactly as before. An object retail gives no EVA
+	## creation voice (pure 2.01 comments out the Witch-King's) fails closed
+	## here; a unit whose event authors no line for the local side fails
+	## closed one step deeper, on the side map.
+	var created_map: Variant = structure_audio_contract.get("eva_created_events", {})
+	if typeof(created_map) != TYPE_DICTIONARY or (created_map as Dictionary).is_empty():
+		_play_eva_announcement("HeroCreated", sequence, now_msec)
+		return
+	var object_id := String(event.get("object_id", ""))
+	var eva_id := _created_event_for_object(object_id)
+	if eva_id == "":
+		_eva_rejection("eva_created_unauthored", object_id, sequence)
+		return
+	_play_eva_announcement(eva_id, sequence, now_msec)
+
+
+func _created_event_for_object(object_id: String) -> String:
+	if object_id == "":
+		return ""
+	var created_map: Variant = structure_audio_contract.get("eva_created_events", {})
+	if typeof(created_map) != TYPE_DICTIONARY:
+		return ""
+	var direct := String((created_map as Dictionary).get(object_id, ""))
+	if direct != "":
+		return direct
+	var folded := object_id.to_lower()
+	for key_value in (created_map as Dictionary).keys():
+		if String(key_value).to_lower() == folded:
+			return String((created_map as Dictionary).get(key_value, ""))
+	return ""
+
+
 func play_eva_event(eva_id: String, sequence: int = 0, now_msec: int = -1) -> Dictionary:
 	return _play_eva_announcement(eva_id, sequence, now_msec)
 
@@ -1544,7 +1596,7 @@ func _eva_rejection(reason: String, eva_id: String, sequence: int) -> Dictionary
 	return _rejection(reason, eva_id, faction_side, "eva", sequence)
 
 
-func _play_eva_announcement(eva_id: String, sequence: int, now_msec: int = -1) -> Dictionary:
+func _play_eva_announcement(eva_id: String, sequence: int, now_msec: int = -1, allow_delay_deferral: bool = true) -> Dictionary:
 	## Retail eva.ini binds each announcement to a per-side Camp* sound set.
 	## The slice carries that side map in its structure audio contract; a side
 	## or event the converted evidence does not cover fails closed to silence.
@@ -1569,6 +1621,11 @@ func _play_eva_announcement(eva_id: String, sequence: int, now_msec: int = -1) -
 	var priority := int(semantics.get("priority", 0))
 	var cooldown_ms := int(semantics.get("cooldownMs", 0))
 	var clock := now_msec
+	# Retail OtherEvaEventsToBlock (compiled `blockEvents`): while the blocking
+	# event plays, the events it names do not start. Old packs carry no
+	# blockEvents, so this state stays empty and nothing changes for them.
+	if clock < int(eva_blocked_until_msec.get(eva_id.to_lower(), -1)):
+		return _eva_rejection("eva_blocked", eva_id, sequence)
 	var previous := int(eva_last_played_msec.get(eva_id, -cooldown_ms - 1))
 	if cooldown_ms > 0 and clock - previous < cooldown_ms:
 		return _eva_rejection("eva_cooldown", eva_id, sequence)
@@ -1577,17 +1634,68 @@ func _play_eva_announcement(eva_id: String, sequence: int, now_msec: int = -1) -
 	# event may replace it. This state is presentation-only and never hashed.
 	if clock == eva_arbitration_msec and priority <= eva_arbitration_priority:
 		return _eva_rejection("eva_priority", eva_id, sequence)
+	# Retail MillisecondsToWaitBeforePlaying (compiled `delayMs`, e.g.
+	# MountainTrollCreated's "Wait until really ready" 3000 ms): the first
+	# accepted request does not sound; it is held and played once the wait has
+	# elapsed (see `flush_due_eva_events`). Repeat requests while held keep the
+	# original due clock rather than stacking a second announcement.
+	var delay_ms := int(semantics.get("delayMs", 0))
+	if allow_delay_deferral and delay_ms > 0:
+		for pending in eva_pending_delays:
+			if String(pending.get("eva_id", "")) == eva_id:
+				var held := _rejection("eva_delay", eva_id, faction_side, "eva", sequence)
+				held["due_msec"] = int(pending.get("due_msec", clock + delay_ms))
+				return held
+		var due := clock + delay_ms
+		eva_pending_delays.append({"eva_id": eva_id, "due_msec": due, "sequence": sequence})
+		var deferral := _rejection("eva_delay", eva_id, faction_side, "eva", sequence)
+		deferral["due_msec"] = due
+		return deferral
 	var routed := route_audio_event(sound_id, sequence)
 	if not bool(routed.get("ok", false)):
 		return routed
 	eva_last_played_msec[eva_id] = clock
 	eva_arbitration_msec = clock
 	eva_arbitration_priority = priority
+	var block_events: Variant = semantics.get("blockEvents", [])
+	if typeof(block_events) == TYPE_ARRAY and not (block_events as Array).is_empty():
+		# The bytes never state the block window; the field name reads as
+		# "while this event plays", so the window is the played sound's decoded
+		# length - deterministic from the pack bytes. With no measurable stream
+		# the event's own cooldown is the conservative stand-in.
+		var block_window_ms := cooldown_ms
+		var stream: Variant = routed.get("stream")
+		if stream is AudioStream:
+			block_window_ms = maxi(int(round((stream as AudioStream).get_length() * 1000.0)), 0)
+		if block_window_ms > 0:
+			for blocked_value in block_events as Array:
+				var blocked_id := String(blocked_value).to_lower()
+				eva_blocked_until_msec[blocked_id] = maxi(
+					int(eva_blocked_until_msec.get(blocked_id, -1)), clock + block_window_ms
+				)
 	_play_sfx(routed)
 	routed["eva_id"] = eva_id
 	routed["priority"] = priority
 	routed["cooldown_ms"] = cooldown_ms
 	return routed
+
+
+func flush_due_eva_events(now_msec: int) -> Array:
+	## Play every delay-deferred announcement whose wait has elapsed at this
+	## clock. Driven by the event stream (`_consume_event`) and callable
+	## directly; a deferred line whose game goes quiet sounds at the next
+	## announcement clock, never instantly and never twice.
+	var results: Array = []
+	var kept: Array[Dictionary] = []
+	for pending in eva_pending_delays:
+		if int(pending.get("due_msec", 0)) <= now_msec:
+			results.append(_play_eva_announcement(
+				String(pending.get("eva_id", "")), int(pending.get("sequence", 0)), now_msec, false
+			))
+		else:
+			kept.append(pending)
+	eva_pending_delays = kept
+	return results
 
 
 func _upgrade_complete_eva_id(upgrade_id: String) -> String:

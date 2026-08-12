@@ -46,6 +46,7 @@ from .sage_audio import (
     resolve_audio_sample_paths_partial,
     resolve_sage_audio_closure,
 )
+from .sage_cst import parse_sage_document
 from .sage_ini import (
     _lines as _ini_lines,
 )
@@ -916,17 +917,25 @@ def _eva_side_map_document(
     }
 
 
-def _eva_event_semantics(source: bytes) -> dict[str, dict[str, int]]:
-    """Compile retail EVA arbitration fields into runtime integers."""
+def _eva_event_semantics(source: bytes) -> dict[str, dict[str, Any]]:
+    """Compile retail EVA arbitration fields into runtime-consumable values.
+
+    Three field shapes share the block walk:
+
+    - integers (``priority``, ``cooldownMs``, ``quietTimeMs``, ``expirationMs``,
+      ``delayMs``): resolved through eva.ini's ``#define`` constants and held
+      to the same non-negative-integer rule as before;
+    - yes/no flags (``playFromHomeBase``, ``jumpToLocation``): retail authors
+      only ``Yes``/``No``; anything else fails closed;
+    - event-id lists (``blockEvents`` from ``OtherEvaEventsToBlock``): the
+      whitespace-separated event names, verbatim and in authored order. A
+      name may reference an event defined LATER in the file (retail ships
+      ``EvaEventForwardReference`` for exactly that), so names are compiled
+      unresolved, as authored.
+    """
 
     constants = _numeric_defines({EVA_PATH: source})
-    field_names = {
-        "priority": "priority",
-        "timebetweeneventsms": "cooldownMs",
-        "quiettimems": "quietTimeMs",
-        "expirationtimems": "expirationMs",
-    }
-    output: dict[str, dict[str, int]] = {}
+    output: dict[str, dict[str, Any]] = {}
     current = ""
     in_side_sound = False
     for line in _ini_lines(source):
@@ -949,8 +958,25 @@ def _eva_event_semantics(source: bytes) -> dict[str, dict[str, int]]:
         if in_side_sound or "=" not in line:
             continue
         key, _, raw = line.partition("=")
-        destination = field_names.get(key.strip().casefold())
+        folded = key.strip().casefold()
+        destination = _EVA_COMPILED_SEMANTIC_FIELDS.get(folded)
         if destination is None:
+            continue
+        if destination == "blockEvents":
+            tokens = raw.strip().split()
+            if not tokens or any(_EVA_BLOCK_REFERENCE.fullmatch(token) is None for token in tokens):
+                raise ValueError(
+                    f"eva-event-semantics-unresolved:{current}:{key.strip()}:{raw.strip()}"
+                )
+            output[current][destination] = tokens
+            continue
+        if destination in ("playFromHomeBase", "jumpToLocation"):
+            token = raw.strip().split()[0].casefold() if raw.strip() else ""
+            if token not in ("yes", "no"):
+                raise ValueError(
+                    f"eva-event-semantics-unresolved:{current}:{key.strip()}:{raw.strip()}"
+                )
+            output[current][destination] = token == "yes"
             continue
         value = _resolved_multiplicative_expression(raw.strip(), constants)
         if value is None or float(value) < 0 or not float(value).is_integer():
@@ -1174,17 +1200,23 @@ _MISSING_SAMPLE_COUNTERPARTS = {
     "kuwar_losrova": "data/audio/sounds/kuwar_losrhoa.wav",
     "kuwar_unirova": "data/audio/sounds/kuwar_unirhoa.wav",
 }
-# Retail authors these EVA block fields; the compiler emits only the four in
-# ``_eva_event_semantics``. Counted from the bytes at compose time rather than
-# listed here, so the declaration cannot drift away from the file.
+# Retail authors these EVA block fields and the compiler emits all of them.
+# Counted from the bytes at compose time rather than listed here, so the
+# declaration cannot drift away from the file.
 _EVA_COMPILED_SEMANTIC_FIELDS = {
     "priority": "priority",
     "timebetweeneventsms": "cooldownMs",
     "quiettimems": "quietTimeMs",
     "expirationtimems": "expirationMs",
+    "millisecondstowaitbeforeplaying": "delayMs",
+    "otherevaeventstoblock": "blockEvents",
+    "alwaysplayfromhomebase": "playFromHomeBase",
+    "countasjumptolocation": "jumpToLocation",
 }
+# An OtherEvaEventsToBlock token names another eva event block.
+_EVA_BLOCK_REFERENCE = re.compile(r"^[A-Za-z0-9_+.-]+$")
 # What retail_slice_audio._play_eva_announcement actually reads today.
-_EVA_RUNTIME_CONSUMED_FIELDS = ("cooldownMs", "priority")
+_EVA_RUNTIME_CONSUMED_FIELDS = ("blockEvents", "cooldownMs", "delayMs", "priority")
 # Structural, not semantics: these build the side map itself.
 _EVA_STRUCTURAL_FIELDS = frozenset({"side", "sound"})
 
@@ -1192,9 +1224,12 @@ _EVA_STRUCTURAL_FIELDS = frozenset({"side", "sound"})
 def _eva_semantic_field_coverage(source: bytes) -> dict[str, Any]:
     """Declare which eva.ini block fields this pack's semantics carry.
 
-    An announcer document that silently omits `OtherEvaEventsToBlock` implies a
-    completeness it does not have. Naming the omissions - with the count retail
-    authors - keeps a reader from mistaking "not implemented" for "not used".
+    An announcer document that silently omits a field implies a completeness
+    it does not have. Naming the omissions - with the count retail authors -
+    keeps a reader from mistaking "not implemented" for "not used". The
+    ``MiscEvaData`` global block is counted too: its fields are authored in
+    eva.ini and stay uncompiled (they belong to the camp-destroyed and
+    jump-to-camera lanes, not announcer arbitration).
     """
 
     authored: dict[str, int] = {}
@@ -1202,7 +1237,7 @@ def _eva_semantic_field_coverage(source: bytes) -> dict[str, Any]:
     inside = False
     for line in _ini_lines(source):
         header = _EVA_BLOCK_HEADER.fullmatch(line)
-        if header is not None and not inside:
+        if (header is not None or line.strip().casefold() == "miscevadata") and not inside:
             inside = True
             depth = 0
             continue
@@ -1239,6 +1274,83 @@ def _eva_semantic_field_coverage(source: bytes) -> dict[str, Any]:
         "compiledButUnconsumed": dict(sorted(compiled_counts.items())),
         "authoredButNotCompiled": dict(sorted(authored.items())),
     }
+
+
+# An Object block's creation voice can name an EVA announcer event instead of
+# a positional sound: ``VoiceCreated = EVA:NazgulCreated`` (pure RotWK 2.01
+# mordorblackrider.ini:686-687). ``VoiceFullyCreated`` carries the same
+# binding for objects retail announces at construction completion; the two
+# never disagree on one object (verified against the oracle corpus at compose
+# time - a disagreement raises rather than picking one silently).
+_EVA_CREATED_VOICE = re.compile(r"^eva:([A-Za-z0-9_+.-]+)\s*$", re.IGNORECASE)
+_EVA_CREATED_OBJECT_PREFIX = "data/ini/object/"
+MAX_EVA_CREATED_BINDINGS = 4_096
+
+
+def _eva_created_event_bindings(catalog: InstallCatalog) -> dict[str, str]:
+    """Project every Object's authored ``EVA:`` creation voice into one map.
+
+    Retail keys creation announcements per OBJECT, not through a generic
+    "created" event: ``VoiceCreated = EVA:<event>`` (or, for objects announced
+    at construction completion, ``VoiceFullyCreated = EVA:<event>``) names the
+    eva.ini block the announcer fires when that object appears. The runtime's
+    hero-created signal carries the created object id, so this map is how it
+    resolves to the event retail authored for it. ``VoiceCreated`` - the
+    created-moment voice - wins when both are authored; they never disagree in
+    pure RotWK 2.01 and a disagreement raises rather than guessing.
+
+    Scope: the object corpus (``data/ini/object/**.ini``). The ``.inc``
+    includes author no ``EVA:`` creation voice at all (byte-checked), and the
+    fields are object-level, so the bounded CST reader's top-level assignments
+    are the complete population.
+    """
+
+    created: dict[str, str] = {}
+    fully: dict[str, str] = {}
+    paths = sorted(
+        (
+            entry.name
+            for entry in _effective_entries(catalog).values()
+            if entry.name.casefold().startswith(_EVA_CREATED_OBJECT_PREFIX)
+            and entry.name.casefold().endswith(".ini")
+        ),
+        key=str.casefold,
+    )
+    for path in paths:
+        document = parse_sage_document(_read_document(catalog, path).source, path)
+        for obj in document.objects:
+            for key, table in (("VoiceCreated", created), ("VoiceFullyCreated", fully)):
+                for value in obj.values(key):
+                    match = _EVA_CREATED_VOICE.fullmatch(value.strip())
+                    if match is None:
+                        if value.strip().casefold().startswith("eva:"):
+                            raise ValueError(
+                                f"eva-created-binding-unresolved:{obj.name}:{key}:{value.strip()}"
+                            )
+                        continue
+                    event = match.group(1)
+                    existing = table.get(obj.name)
+                    if existing is not None and existing.casefold() != event.casefold():
+                        raise ValueError(
+                            f"eva-created-binding-conflict:{obj.name}:{key}:{existing}:{event}"
+                        )
+                    table[obj.name] = event
+    if len(created.keys() | fully.keys()) > MAX_EVA_CREATED_BINDINGS:
+        raise ValueError("eva created-event binding count exceeds limit")
+    bindings: dict[str, str] = {}
+    for name in sorted(created.keys() | fully.keys(), key=str.casefold):
+        created_event = created.get(name)
+        fully_event = fully.get(name)
+        if (
+            created_event is not None
+            and fully_event is not None
+            and created_event.casefold() != fully_event.casefold()
+        ):
+            raise ValueError(
+                f"eva-created-binding-conflict:{name}:{created_event}:{fully_event}"
+            )
+        bindings[name] = created_event if created_event is not None else fully_event  # type: ignore[assignment]
+    return bindings
 
 
 def _validate_faction_audio_report(report: Any, faction: str, template: str) -> dict[str, Any]:
@@ -1377,6 +1489,12 @@ def build_faction_audio_extension(
     eva_side_map["semanticFieldCoverage"] = _eva_semantic_field_coverage(
         eva_document.source
     )
+    # Retail announces unit/hero creation PER OBJECT (VoiceCreated =
+    # EVA:<event>), not via one generic id: the runtime's hero-created signal
+    # carries the created object id and resolves it through this map. An
+    # object retail gives no EVA creation voice (the Witch-King's is commented
+    # out in pure 2.01) stays unmapped and fails closed at runtime.
+    eva_side_map["createdEvents"] = _eva_created_event_bindings(catalog)
     unresolved = _object(report.get("unresolved"), "faction census unresolved")
     return {
         "resources": resources,
