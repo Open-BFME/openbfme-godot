@@ -40,6 +40,29 @@ def catalog_path(state_root: Path, game: str) -> Path:
     return state_root / "catalog" / ("%s.json" % game)
 
 
+def oracle_catalog(state_root: Path, game: str, catalog):
+    """Bind the same source the build pipeline will read.
+
+    For RotWK the pipeline replaces the BIG catalog with the sealed
+    effective-assets tree (`ImportPipeline.__init__`), and the composed profile
+    records that tree's identity. Stamping the BIG catalog's identity instead
+    makes every build refuse with "profile source catalog identity does not
+    match the current catalog" - and would describe bytes other than the ones
+    the pack is cooked from.
+    """
+
+    if game != "rotwk":
+        return catalog
+    from openbfme_importer.effective_assets_catalog import EffectiveAssetsCatalog
+    from openbfme_importer.effective_assets_identity import verify_effective_assets
+
+    root = state_root / "editions" / "rotwk" / "cache" / "effective-assets"
+    if not root.is_dir():
+        raise ValueError("RotWK effective-assets oracle is missing: %s" % root)
+    verify_effective_assets(root, game="rotwk", catalog=None, consumer="compose-eva-overlay")
+    return EffectiveAssetsCatalog(root, base_catalog=catalog)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -84,7 +107,7 @@ def main() -> int:
     from openbfme_importer.catalog import InstallCatalog
     from openbfme_importer.faction_profile import build_faction_audio_extension
 
-    catalog = InstallCatalog.load(catalog_file)
+    catalog = oracle_catalog(state_root, args.game, InstallCatalog.load(catalog_file))
     report = json.loads(args.audio_census.read_text(encoding="utf-8"))
     assert_census_edition(report, args.game)
     extension = build_faction_audio_extension(
@@ -125,6 +148,7 @@ def main() -> int:
         "sampleCount": len(extension["runtime_data"]["data/audio_events.json"]["samples"]),
         "evaEventCount": len(extension["runtime_data"]["data/eva_events.json"]["events"]),
         "unresolvedDiagnostics": extension["unresolvedDiagnostics"],
+        "unplayableRetailReferences": extension["evaDiagnostics"],
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.receipt.parent.mkdir(parents=True, exist_ok=True)

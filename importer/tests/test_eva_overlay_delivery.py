@@ -157,3 +157,96 @@ def test_compose_tool_refuses_a_census_from_another_edition(game: str) -> None:
 def test_compose_tool_accepts_the_matching_edition_census() -> None:
     module = _compose_module()
     module.assert_census_edition(_rotwk_census("Men"), "rotwk")
+
+
+def _rotwk_catalog():
+    catalog_path = PRIVATE_ROOT / "catalog" / "rotwk.json"
+    if not catalog_path.is_file():
+        pytest.skip(f"RotWK catalog is not present: {catalog_path}")
+    from openbfme_importer.catalog import InstallCatalog
+
+    return InstallCatalog.load(catalog_path)
+
+
+def test_angmar_eva_set_survives_retails_own_broken_sample_references() -> None:
+    """RotWK 2.01 references four announcer samples that do not exist.
+
+    ``CampThrallUpgradeSanctum`` lists three samples of which only
+    ``KUAngUpg_WKSnctm`` ships; ``CampThrallWORLostRhovanion`` and
+    ``CampThrallWORUnifyRhovanion`` each list one sample that ships under no
+    name at all. (The install does ship ``kuupg_sanct2``/``kuupg_sanctum`` and
+    ``kuwar_losrhoa``, so these are EA prefix typos - but guessing which file
+    EA meant is exactly the substitution this pipeline refuses.)
+
+    A broken reference must cost retail its broken leaf and nothing else: the
+    other six sides composed fine, and Angmar's remaining 100+ announcer sets
+    must not be lost to a single typo.
+    """
+
+    from openbfme_importer.faction_profile import _eva_audio_extension
+
+    catalog = _rotwk_catalog()
+    resources, events, multisounds, samples, diagnostics = _eva_audio_extension(
+        catalog, "Angmar", "angmar", {}, {}
+    )
+    assert resources and samples
+
+    sanctum = events["CampThrallUpgradeSanctum"]
+    assert [row["id"] for row in sanctum["sounds"]] == ["KUAngUpg_WKSnctm"]
+
+    # Zero surviving leaves means the event cannot play at all; it is dropped
+    # rather than shipped as a silent stub that would look like a routing bug.
+    assert "CampThrallWORLostRhovanion" not in events
+    assert "CampThrallWORUnifyRhovanion" not in events
+
+    assert set(diagnostics["missingSamples"]) == {
+        "KUAngUpg_Sanct2",
+        "KUAngUpg_Sanctum",
+        "KUWar_LosRova",
+        "KUWar_UniRova",
+    }
+    assert set(diagnostics["droppedDefinitions"]) == {
+        "CampThrallWORLostRhovanion",
+        "CampThrallWORUnifyRhovanion",
+    }
+    for sample_id in diagnostics["missingSamples"]:
+        assert sample_id not in samples
+
+
+@pytest.mark.parametrize("side", ["Men", "Elves", "Dwarves", "Isengard", "Mordor", "Wild"])
+def test_the_six_intact_sides_lose_nothing(side: str) -> None:
+    from openbfme_importer.faction_profile import _eva_audio_extension
+
+    catalog = _rotwk_catalog()
+    _resources, events, _multisounds, _samples, diagnostics = _eva_audio_extension(
+        catalog, side, side.casefold(), {}, {}
+    )
+    assert diagnostics == {"missingSamples": [], "droppedDefinitions": []}
+    assert events
+
+
+def test_rotwk_overlay_binds_the_effective_assets_oracle_not_the_big_catalog() -> None:
+    """The pipeline swaps RotWK's catalog for the effective-assets tree.
+
+    A profile stamped with the raw BIG catalog's identity is refused by
+    `_validate_source_catalog_binding` at build time - which is exactly how the
+    first seven composed profiles failed - and would in any case describe a
+    different source than the one the pack is cooked from.
+    """
+
+    module = _compose_module()
+    if not (PRIVATE_ROOT / "editions/rotwk/cache/effective-assets").is_dir():
+        pytest.skip("RotWK effective-assets oracle is not present")
+    base = _rotwk_catalog()
+    oracle = module.oracle_catalog(PRIVATE_ROOT, "rotwk", base)
+    assert oracle.identity_sha256() != base.identity_sha256()
+
+    from openbfme_importer.effective_assets_catalog import EffectiveAssetsCatalog
+
+    assert isinstance(oracle, EffectiveAssetsCatalog)
+
+
+def test_bfme2_keeps_reading_its_big_catalog() -> None:
+    module = _compose_module()
+    base = _rotwk_catalog()
+    assert module.oracle_catalog(PRIVATE_ROOT, "bfme2", base) is base

@@ -43,6 +43,7 @@ from .playable_unit_compiler import (
 from .sage_audio import (
     parse_sage_audio_definitions,
     resolve_audio_sample_paths,
+    resolve_audio_sample_paths_partial,
     resolve_sage_audio_closure,
 )
 from .sage_ini import (
@@ -970,14 +971,28 @@ def _eva_audio_extension(
     audio_slug: str,
     existing_samples: dict[str, str],
     existing_definitions: dict[str, Any],
-) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any], dict[str, Any]]:
+) -> tuple[
+    list[dict[str, Any]],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, list[str]],
+]:
     """Resolve the faction side's eva.ini Camp* announcer sets.
 
-    Returns (resources, events, multisounds, samples) in exactly the manifest
-    row shapes ``_audio_resources_and_manifest`` emits, so callers merge them
-    field-by-field.  Every root must resolve through the same voice.ini /
-    soundeffects.ini definition corpus the census uses; anything unresolved
-    raises (fail closed, never a substitute).
+    Returns (resources, events, multisounds, samples, diagnostics) in exactly
+    the manifest row shapes ``_audio_resources_and_manifest`` emits, so callers
+    merge them field-by-field.  Every root must resolve through the same
+    voice.ini / soundeffects.ini definition corpus the census uses.
+
+    RETAIL'S OWN BROKEN REFERENCES ARE A FACT, NOT A FAILURE. RotWK 2.01 names
+    four Angmar announcer samples that ship under no name at all (EA prefix
+    typos: ``KUAngUpg_Sanct2`` for the shipped ``kuupg_sanct2``, and so on).
+    A missing sample costs its own leaf and nothing else; a definition left
+    with zero playable leaves is DROPPED rather than shipped as a silent stub
+    that would read as a routing bug at runtime.  Both are reported by name in
+    ``diagnostics`` and never repaired by guessing which file EA meant - that
+    guess is the substitution this pipeline exists to refuse.
     """
 
     eva_document = _read_document(catalog, EVA_PATH)
@@ -996,7 +1011,15 @@ def _eva_audio_extension(
     )
     closure = resolve_sage_audio_closure(definitions, sorted(roots.values(), key=str.casefold))
     virtual_paths = [entry.name for entry in _effective_entries(catalog).values()]
-    sample_paths = resolve_audio_sample_paths(closure.sample_ids, virtual_paths)
+    sample_paths, missing_samples, ambiguous_samples = resolve_audio_sample_paths_partial(
+        closure.sample_ids, virtual_paths
+    )
+    if ambiguous_samples:
+        # Two catalog leaves answering one stem is an INSTALL problem, not a
+        # retail authoring fact: refusing keeps the coin-flip out of the pack.
+        raise ValueError(
+            "ambiguous eva audio samples: %s" % ", ".join(sorted(ambiguous_samples))
+        )
 
     events: dict[str, Any] = {}
     multisounds: dict[str, Any] = {}
@@ -1012,11 +1035,14 @@ def _eva_audio_extension(
         neutral = row.neutral()
         neutral.pop("id")
         multisounds[row.id] = neutral
+    dropped = _prune_unplayable_definitions(events, multisounds, missing_samples)
 
     ordered_new_samples: list[tuple[str, str]] = []
     known_sample_keys = {item.casefold() for item in existing_samples}
     for sample_id in closure.sample_ids:
         if sample_id.casefold() in known_sample_keys:
+            continue
+        if sample_id not in sample_paths:
             continue
         virtual_path = sample_paths[sample_id]
         source_stem = PurePosixPath(virtual_path).stem
@@ -1044,7 +1070,45 @@ def _eva_audio_extension(
         item[0]: f"assets/audio/{audio_slug}/{PurePosixPath(item[1]).stem.casefold()}.wav"
         for item in ordered_new_samples
     }
-    return resources, events, multisounds, samples
+    diagnostics = {
+        "missingSamples": sorted(missing_samples, key=str.casefold),
+        "droppedDefinitions": sorted(dropped, key=str.casefold),
+    }
+    return resources, events, multisounds, samples, diagnostics
+
+
+def _prune_unplayable_definitions(
+    events: dict[str, Any],
+    multisounds: dict[str, Any],
+    missing_samples: tuple[str, ...],
+) -> list[str]:
+    """Drop leaves whose sample does not exist, and definitions left empty.
+
+    Runs to a fixpoint: a multisound whose every subsound was dropped is itself
+    unplayable, and any parent referencing it loses that leaf in turn. Returns
+    the ids of the definitions that were removed.
+    """
+
+    if not missing_samples:
+        return []
+    unplayable = {item.casefold() for item in missing_samples}
+    dropped: list[str] = []
+    changed = True
+    while changed:
+        changed = False
+        for table, field in ((events, "sounds"), (multisounds, "subsounds")):
+            for definition_id in list(table):
+                rows = table[definition_id][field]
+                kept = [row for row in rows if str(row["id"]).casefold() not in unplayable]
+                if len(kept) != len(rows):
+                    table[definition_id][field] = kept
+                    changed = True
+                if not kept:
+                    del table[definition_id]
+                    dropped.append(definition_id)
+                    unplayable.add(definition_id.casefold())
+                    changed = True
+    return dropped
 
 
 def _validate_faction_audio_report(report: Any, faction: str, template: str) -> dict[str, Any]:
@@ -1139,9 +1203,13 @@ def build_faction_audio_extension(
         roots.extend(census_manifest["rootIds"])
 
     existing_definitions: dict[str, Any] = {**events, **multisounds}
-    eva_resources, eva_events, eva_multisounds, eva_samples = _eva_audio_extension(
-        catalog, faction, audio_slug, samples, existing_definitions
-    )
+    (
+        eva_resources,
+        eva_events,
+        eva_multisounds,
+        eva_samples,
+        eva_diagnostics,
+    ) = _eva_audio_extension(catalog, faction, audio_slug, samples, existing_definitions)
     resources.extend(eva_resources)
     events.update(eva_events)
     multisounds.update(eva_multisounds)
@@ -1170,6 +1238,10 @@ def build_faction_audio_extension(
     eva_side_map = _eva_side_map_document(
         _eva_event_side_sounds(eva_document.source), eva_document.source
     )
+    # The side map stays the authored retail projection - it is the oracle, not
+    # a derived view - but the pack carries WHY a named sound will never play,
+    # so a fail-closed announcement at runtime can be told apart from a bug.
+    eva_side_map["unplayableRetailReferences"] = eva_diagnostics
     unresolved = _object(report.get("unresolved"), "faction census unresolved")
     return {
         "resources": resources,
@@ -1177,6 +1249,7 @@ def build_faction_audio_extension(
             "data/audio_events.json": audio_manifest,
             "data/eva_events.json": eva_side_map,
         },
+        "evaDiagnostics": eva_diagnostics,
         "files": {
             "audioEvents": "data/audio_events.json",
             "evaEvents": "data/eva_events.json",
