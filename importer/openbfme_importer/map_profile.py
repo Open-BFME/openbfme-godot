@@ -23,6 +23,7 @@ import re
 from typing import Any
 
 from .catalog import CatalogEntry, InstallCatalog
+from .castle_capabilities import castle_siege_contract_v2
 from .map_census import (
     MAPCACHE_VIRTUAL_PATH,
     MAX_MAPCACHE_BYTES,
@@ -122,29 +123,80 @@ MAP_CATEGORIES = (
 #: pinned to RotWK's official map registry and parsed object documents; it is
 #: deliberately not a wall-name heuristic that could sweep ordinary WOTR maps
 #: into the skirmish lobby.
-_CASTLE_GAMEPLAY_BLOCKERS = (
-    "walkable-walls",
-    "defendable-gates",
-    "wall-garrisons",
-    "wall-mounted-defenses",
-    "skirmish-ai-libraries",
-)
+#: Per-map derived castle/siege requirement sets (lane L1).  Each tuple is
+#: pinned here and PROVEN against the pure retail oracle by
+#: ``importer/tests/test_castle_capabilities_oracle.py``: the object-derived
+#: capabilities come from joining the retail object index (Object +
+#: ChildObject + ObjectReskin, inheritance resolved) against the map's placed
+#: typeNames; ``skirmish-ai-libraries`` is a family-level requirement
+#: (design 2.5: mapcache multiplayer registry + per-map AIBase bindings).
+#: The runtime computes blockers = required - implemented, so no blocker list
+#: is authored.  Canonical order per ``castle_capabilities.CAPABILITY_VOCABULARY``.
+_CASTLE_REQUIRED_CAPABILITIES: dict[str, tuple[str, ...]] = {
+    "maps/map wor ang carn dum/map wor ang carn dum.map": (
+        "defendable-gates",
+        "wall-mounted-defenses",
+        "skirmish-ai-libraries",
+    ),
+    "maps/map wor ang fornost/map wor ang fornost.map": (
+        "defendable-gates",
+        "wall-garrisons",
+        "skirmish-ai-libraries",
+    ),
+    "maps/map wor black gate/map wor black gate.map": (
+        "walkable-walls",
+        "skirmish-ai-libraries",
+    ),
+    "maps/map wor dol guldur/map wor dol guldur.map": (
+        "walkable-walls",
+        "scaleable-walls",
+        "defendable-gates",
+        "wall-mounted-defenses",
+        "skirmish-ai-libraries",
+    ),
+    "maps/map wor erebor/map wor erebor.map": (
+        "walkable-walls",
+        "defendable-gates",
+        "wall-garrisons",
+        "skirmish-ai-libraries",
+    ),
+    "maps/map wor grey havens/map wor grey havens.map": (
+        "wall-garrisons",
+        "skirmish-ai-libraries",
+    ),
+    "maps/map wor helms deep/map wor helms deep.map": (
+        "walkable-walls",
+        "defendable-gates",
+        "skirmish-ai-libraries",
+    ),
+    "maps/map wor isengard/map wor isengard.map": (
+        "walkable-walls",
+        "defendable-gates",
+        "skirmish-ai-libraries",
+    ),
+    "maps/map wor minas morgul/map wor minas morgul.map": (
+        "walkable-walls",
+        "defendable-gates",
+        "skirmish-ai-libraries",
+    ),
+    "maps/map wor minas tirith/map wor minas tirith.map": (
+        "walkable-walls",
+        "defendable-gates",
+        "wall-mounted-defenses",
+        "skirmish-ai-libraries",
+    ),
+}
 
 
-def _castle_runtime_contract() -> dict[str, Any]:
-    return {
-        "family": "retail-castle-siege-skirmish",
-        "gameplayStatus": "blocked-named-gaps",
-        "blockers": list(_CASTLE_GAMEPLAY_BLOCKERS),
-        "admissionPolicy": "document-loadable-lobby-visible-gameplay-fails-closed",
-    }
+def _castle_runtime_contract(virtual_path: str) -> dict[str, Any]:
+    return castle_siege_contract_v2(_CASTLE_REQUIRED_CAPABILITIES[virtual_path])
 
 
 CASTLE_SIEGE_MAPS: dict[str, dict[str, Any]] = {
     path: {
         "displayName": display_name,
         "playerCount": player_count,
-        "runtimeContract": _castle_runtime_contract(),
+        "runtimeContract": _castle_runtime_contract(path),
     }
     for path, display_name, player_count in (
         ("maps/map wor ang carn dum/map wor ang carn dum.map", "Carn Dum", 2),

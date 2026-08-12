@@ -19,6 +19,7 @@ import struct
 import sys
 from typing import Any, Iterator
 
+from .castle_capabilities import CastleCapabilityError, validate_capability_subset
 from .paths import safe_relative_parts
 from .util import write_json_atomic
 
@@ -3204,6 +3205,52 @@ def _waypoint_runtime_semantics(
     }
 
 
+def _valid_castle_siege_contract(castle_siege: object) -> bool:
+    """Accept the legacy v1 seal or the v2 per-map capability contract.
+
+    v1 is the admission lane's exact-order, exact-length five-blocker shape;
+    the mounted pack predates per-map derivation, so it must keep loading.
+    v2 carries the derived per-map ``required`` capability set; blockers are
+    computed by the runtime as ``required - implemented`` and are therefore
+    never authored.
+    """
+
+    if not isinstance(castle_siege, dict):
+        return False
+    shared = (
+        castle_siege.get("family") == "retail-castle-siege-skirmish"
+        and castle_siege.get("gameplayStatus") == "blocked-named-gaps"
+        and castle_siege.get("admissionPolicy")
+        == "document-loadable-lobby-visible-gameplay-fails-closed"
+    )
+    if not shared:
+        return False
+    if set(castle_siege) == {"family", "gameplayStatus", "blockers", "admissionPolicy"}:
+        return castle_siege.get("blockers") == [
+            "walkable-walls",
+            "defendable-gates",
+            "wall-garrisons",
+            "wall-mounted-defenses",
+            "skirmish-ai-libraries",
+        ]
+    if set(castle_siege) == {
+        "version",
+        "family",
+        "gameplayStatus",
+        "admissionPolicy",
+        "required",
+    }:
+        version = castle_siege.get("version")
+        if isinstance(version, bool) or not isinstance(version, int) or version != 2:
+            return False
+        try:
+            validate_capability_subset(castle_siege.get("required"))
+        except CastleCapabilityError:
+            return False
+        return True
+    return False
+
+
 def convert_sage_map(
     source: Path | str,
     output_directory: Path | str,
@@ -3239,25 +3286,7 @@ def convert_sage_map(
     ):
         raise SageMapError("sage-map metadata.knownEnvironment must be an object")
     if "castleSiege" in metadata:
-        castle_siege = metadata["castleSiege"]
-        if (
-            not isinstance(castle_siege, dict)
-            or set(castle_siege)
-            != {"family", "gameplayStatus", "blockers", "admissionPolicy"}
-            or castle_siege.get("family") != "retail-castle-siege-skirmish"
-            or castle_siege.get("gameplayStatus") != "blocked-named-gaps"
-            or castle_siege.get("admissionPolicy")
-            != "document-loadable-lobby-visible-gameplay-fails-closed"
-            or not isinstance(castle_siege.get("blockers"), list)
-            or castle_siege.get("blockers")
-            != [
-                "walkable-walls",
-                "defendable-gates",
-                "wall-garrisons",
-                "wall-mounted-defenses",
-                "skirmish-ai-libraries",
-            ]
-        ):
+        if not _valid_castle_siege_contract(metadata["castleSiege"]):
             raise SageMapError("sage-map metadata.castleSiege contract is invalid")
     if resolved_profile.map_kind != "multiplayer":
         missing_names = [

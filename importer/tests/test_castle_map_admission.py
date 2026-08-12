@@ -7,6 +7,10 @@ from pathlib import Path
 import pytest
 
 from openbfme_importer.catalog import InstallCatalog
+from openbfme_importer.castle_capabilities import (
+    CAPABILITY_VOCABULARY,
+    castle_siege_contract_v2,
+)
 from openbfme_importer.map_profile import (
     CASTLE_SIEGE_MAPS,
     SKIRMISH_CATEGORY,
@@ -59,7 +63,15 @@ def test_amon_sul_remains_an_ordinary_skirmish_map() -> None:
 
 def test_castle_contract_names_the_missing_skirmish_ai_libraries() -> None:
     for evidence in CASTLE_SIEGE_MAPS.values():
-        assert evidence["runtimeContract"]["blockers"] == EXPECTED_CASTLE_BLOCKERS
+        contract = evidence["runtimeContract"]
+        assert contract["version"] == 2
+        assert contract["family"] == "retail-castle-siege-skirmish"
+        assert "skirmish-ai-libraries" in contract["required"]
+        # Canonical vocabulary order, no authored blocker list: the runtime
+        # computes blockers = required - implemented at load time.
+        ranks = [CAPABILITY_VOCABULARY.index(name) for name in contract["required"]]
+        assert ranks == sorted(ranks)
+        assert "blockers" not in contract
 
 
 def test_castle_document_refuses_an_incomplete_gap_inventory(tmp_path: Path) -> None:
@@ -81,6 +93,80 @@ def test_castle_document_refuses_an_incomplete_gap_inventory(tmp_path: Path) -> 
                     ),
                 }
             },
+        )
+
+
+def test_castle_document_accepts_a_v2_capability_contract(tmp_path: Path) -> None:
+    source, _ = _synthetic_map()
+    source_path = tmp_path / "castle.map"
+    source_path.write_bytes(source)
+    contract = castle_siege_contract_v2(["defendable-gates", "wall-garrisons"])
+
+    convert_sage_map(
+        source_path,
+        tmp_path / "output",
+        metadata={"castleSiege": contract},
+    )
+
+    document = json.loads(
+        (tmp_path / "output" / "map.json").read_text(encoding="utf-8")
+    )
+    assert document["castleSiege"] == contract
+
+
+def test_castle_document_still_accepts_the_legacy_v1_contract(tmp_path: Path) -> None:
+    source, _ = _synthetic_map()
+    source_path = tmp_path / "castle.map"
+    source_path.write_bytes(source)
+    contract = {
+        "family": "retail-castle-siege-skirmish",
+        "gameplayStatus": "blocked-named-gaps",
+        "blockers": list(EXPECTED_CASTLE_BLOCKERS),
+        "admissionPolicy": "document-loadable-lobby-visible-gameplay-fails-closed",
+    }
+
+    convert_sage_map(
+        source_path,
+        tmp_path / "output",
+        metadata={"castleSiege": contract},
+    )
+
+    document = json.loads(
+        (tmp_path / "output" / "map.json").read_text(encoding="utf-8")
+    )
+    assert document["castleSiege"] == contract
+
+
+@pytest.mark.parametrize(
+    "contract",
+    (
+        # Unknown capability name.
+        castle_siege_contract_v2(["walkable-walls"])
+        | {"required": ["walkable-walls", "moonbeams"]},
+        # Non-canonical order.
+        castle_siege_contract_v2(["defendable-gates"])
+        | {"required": ["defendable-gates", "walkable-walls"]},
+        # Empty requirement set contradicts the blocked status.
+        castle_siege_contract_v2(["walkable-walls"]) | {"required": []},
+        # An authored blocker list is the v1 hardcode the v2 schema removes.
+        castle_siege_contract_v2(["walkable-walls"])
+        | {"blockers": ["walkable-walls"]},
+        # Wrong version number.
+        castle_siege_contract_v2(["walkable-walls"]) | {"version": 3},
+    ),
+)
+def test_castle_document_refuses_malformed_v2_contracts(
+    tmp_path: Path, contract: dict
+) -> None:
+    source, _ = _synthetic_map()
+    source_path = tmp_path / "castle.map"
+    source_path.write_bytes(source)
+
+    with pytest.raises(SageMapError, match="castleSiege contract is invalid"):
+        convert_sage_map(
+            source_path,
+            tmp_path / "output",
+            metadata={"castleSiege": contract},
         )
 
 

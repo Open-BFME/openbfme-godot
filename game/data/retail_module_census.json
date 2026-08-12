@@ -29,12 +29,13 @@
 			"m3_pack_expansion",
 			"pipeline"
 		],
-		"consumerFileCount": 73,
+		"consumerFileCount": 74,
 		"consumerFiles": [
 			"armor_compiler",
 			"big",
 			"bootstrap",
 			"castle_behavior",
+			"castle_capabilities",
 			"catalog",
 			"diagnostics",
 			"effective_assets_catalog",
@@ -1843,7 +1844,8 @@
 			"classificationNote": "upgrade trigger with world side effects at runtime",
 			"status": "consumed",
 			"consumedBy": [
-				"module_contracts.py"
+				"module_contracts.py",
+				"playable_structure_compiler.py"
 			],
 			"refusedBy": [],
 			"refusalReasons": [],
@@ -2438,6 +2440,7 @@
 			"classificationNote": "structure lifecycle runtime (build/collapse/rebuild/topple)",
 			"status": "consumed",
 			"consumedBy": [
+				"castle_capabilities.py",
 				"module_contracts.py"
 			],
 			"refusedBy": [],
@@ -2910,6 +2913,7 @@
 			"classificationNote": "container/garrison/transport runtime system",
 			"status": "consumed",
 			"consumedBy": [
+				"castle_capabilities.py",
 				"module_contracts.py"
 			],
 			"refusedBy": [],
@@ -5709,6 +5713,7 @@
 			"classificationNote": "container/garrison/transport runtime system",
 			"status": "consumed",
 			"consumedBy": [
+				"castle_capabilities.py",
 				"module_contracts.py"
 			],
 			"refusedBy": [],
