@@ -69,12 +69,107 @@ static func source_footprint_radius(geometry: Dictionary) -> float:
 	var radius := float(footprint.get("radius", 0.0))
 	if is_finite(radius) and radius > 0.0:
 		return radius
-	# No precomputed union: derive it from the primary block so an older
-	# document still narrows the pick instead of silently widening it.
+	# No precomputed union: prefer the authored pieces (primary + Additional
+	# Geometry at GeometryOffset) so a barracks whose document still has the
+	# CYLINDER 8.0 rally probe as majorRadius is picked on the 45x50 body,
+	# not the probe. Primary-only documents keep the old single-span fallback.
+	var union := source_union_radius_from_pieces(geometry)
+	if union > 0.0:
+		return union
 	var major := absf(float(_geometry_number(geometry, "majorRadius")))
 	var minor := absf(float(_geometry_number(geometry, "minorRadius")))
 	var span := maxf(major, minor)
 	return span if is_finite(span) and span > 0.0 else 0.0
+
+
+static func source_union_radius_from_pieces(geometry: Dictionary) -> float:
+	## Same union as the importer's `_geometry_footprint`: max(|offset| + span)
+	## on each ground axis, then the larger half-extent (not the half-diagonal).
+	var pieces: Variant = geometry.get("pieces", [])
+	if typeof(pieces) != TYPE_ARRAY or (pieces as Array).is_empty():
+		return 0.0
+	var half_x := 0.0
+	var half_y := 0.0
+	var measured := false
+	for piece_value in pieces as Array:
+		if typeof(piece_value) != TYPE_DICTIONARY:
+			continue
+		var piece := piece_value as Dictionary
+		var major := absf(float(_geometry_number(piece, "majorRadius")))
+		var minor := absf(float(_geometry_number(piece, "minorRadius")))
+		if major <= 0.0 and minor <= 0.0:
+			continue
+		if minor <= 0.0:
+			minor = major
+		if major <= 0.0:
+			major = minor
+		var offset: Dictionary = piece.get("offset", {}) as Dictionary
+		var offset_x := float(offset.get("x", 0.0)) if not offset.is_empty() else 0.0
+		var offset_y := float(offset.get("y", 0.0)) if not offset.is_empty() else 0.0
+		half_x = maxf(half_x, absf(offset_x) + major)
+		half_y = maxf(half_y, absf(offset_y) + minor)
+		measured = true
+	if not measured:
+		return 0.0
+	var span := maxf(half_x, half_y)
+	return span if is_finite(span) and span > 0.0 else 0.0
+
+
+static func effective_world_pick_radius(compiled_world: float, visual_world: float) -> float:
+	## Retail Geometry is a floor, never a ceiling against the body the player
+	## can see. A fortress keep whose intact AABB outruns the 64-unit box
+	## (fortress.ini:1254-1306 contact points at X:-90 Y:82) must pick at the
+	## visual edge.
+	var compiled := compiled_world if is_finite(compiled_world) and compiled_world > 0.0 else 0.0
+	var visual := visual_world if is_finite(visual_world) and visual_world > 0.0 else 0.0
+	return maxf(compiled, visual)
+
+
+static func geometry_piece_candidates(
+	entity_id: int,
+	origin: Vector2,
+	geometry: Dictionary,
+	source_scale: float
+) -> Array:
+	## One pick candidate per authored Geometry / AdditionalGeometry piece.
+	## BOX pieces keep their half-extents; CYLINDER / SPHERE stay circular.
+	## SAGE ground Y maps onto Godot Z.
+	var scale := source_scale if is_finite(source_scale) and source_scale > 0.0 else 0.0
+	if entity_id == 0 or scale <= 0.0:
+		return []
+	var pieces: Variant = geometry.get("pieces", [])
+	if typeof(pieces) != TYPE_ARRAY:
+		return []
+	var candidates: Array = []
+	for piece_value in pieces as Array:
+		if typeof(piece_value) != TYPE_DICTIONARY:
+			continue
+		var piece := piece_value as Dictionary
+		var major := absf(float(_geometry_number(piece, "majorRadius")))
+		var minor := absf(float(_geometry_number(piece, "minorRadius")))
+		if major <= 0.0 and minor <= 0.0:
+			continue
+		if minor <= 0.0:
+			minor = major
+		if major <= 0.0:
+			major = minor
+		var offset: Dictionary = piece.get("offset", {}) as Dictionary
+		var world := origin + Vector2(
+			float(offset.get("x", 0.0)) * scale,
+			float(offset.get("y", 0.0)) * scale
+		)
+		var shape := String(piece.get("shape", "CYLINDER")).to_upper()
+		var candidate := {
+			"id": entity_id,
+			"position": world,
+			"shape": shape,
+			"radius": maxf(MINIMUM_SELECTION_RADIUS, maxf(major, minor) * scale + SELECTION_MARGIN),
+		}
+		if shape == "BOX":
+			candidate["half_x"] = maxf(MINIMUM_SELECTION_RADIUS, major * scale + SELECTION_MARGIN)
+			candidate["half_z"] = maxf(MINIMUM_SELECTION_RADIUS, minor * scale + SELECTION_MARGIN)
+		candidates.append(candidate)
+	return candidates
 
 
 static func _geometry_number(geometry: Dictionary, key: String) -> float:
@@ -133,10 +228,22 @@ static func closest_hit(point: Vector2, candidates: Array, extra_margin: float =
 		if not is_finite(radius) or radius <= 0.0:
 			continue
 		radius = maxf(radius, MINIMUM_SELECTION_RADIUS) + margin
-		var distance := point.distance_to(Vector2(candidate.get("position", Vector2.ZERO)))
-		if distance > radius:
-			continue
-		var score := distance / radius
+		var position := Vector2(candidate.get("position", Vector2.ZERO))
+		var delta := point - position
+		var score := 0.0
+		if String(candidate.get("shape", "")) == "BOX":
+			var half_x := float(candidate.get("half_x", radius)) + margin
+			var half_z := float(candidate.get("half_z", radius)) + margin
+			if not is_finite(half_x) or half_x <= 0.0 or not is_finite(half_z) or half_z <= 0.0:
+				continue
+			if absf(delta.x) > half_x or absf(delta.y) > half_z:
+				continue
+			score = Vector2(delta.x / half_x, delta.y / half_z).length()
+		else:
+			var distance := delta.length()
+			if distance > radius:
+				continue
+			score = distance / radius
 		if score < best_score:
 			best_score = score
 			best_id = id

@@ -151,6 +151,10 @@ var animation_players: Array[AnimationPlayer] = []
 var member_animation_players: Dictionary = {}
 var member_current_clips: Dictionary = {}
 var member_visuals: Dictionary = {}
+## Mesh AABB centre offset in the member visual's local XZ. The selection
+## ring / decal sits here so a hero whose body is authored off the node
+## origin is not ringed "just on the side".
+var member_visual_centers: Dictionary = {}
 var member_selection_rings: Dictionary = {}
 var member_health_backs: Dictionary = {}
 var member_health_fills: Dictionary = {}
@@ -481,9 +485,10 @@ func _build_clip_map(capability: Dictionary) -> void:
 		"construct": _clips(states.get("construct", {})),
 		"victory": _clips(states.get("idle", {})),
 		"selectionTransition": _clips(states.get("selectionTransition", {})),
+		"selected": _clips(states.get("selected", {})),
 	}
 	clip_modes.clear()
-	for state_name in ["idle", "move", "attack", "death"]:
+	for state_name in ["idle", "move", "attack", "death", "selectionTransition", "selected"]:
 		var state_value: Variant = states.get(state_name, {})
 		if typeof(state_value) == TYPE_DICTIONARY:
 			clip_modes[state_name] = String((state_value as Dictionary).get("mode", "loop"))
@@ -566,9 +571,11 @@ func _build_members(expected_members: int, formation_positions: Array) -> void:
 		member_health_half_widths[member_index] = bar_width * 0.5
 		if measured.size.y > 0.0:
 			member_health_anchor_heights[member_index] = measured.end.y + HEALTH_BAR_HEAD_GAP
+			member_visual_centers[member_index] = Vector3(measured.get_center().x, 0.0, measured.get_center().z)
 			member_health_measured_count += 1
 		else:
 			member_health_anchor_heights[member_index] = shared_health_anchor_height
+			member_visual_centers[member_index] = Vector3.ZERO
 			member_health_fallback_count += 1
 		_publish_anchor_source()
 		# Retail contact shadow: SAGE draws infantry shadows as dark decals at
@@ -803,6 +810,47 @@ static func member_bar_thickness(source_unit_scale: float, aspect: float) -> flo
 	)
 
 
+func _member_selection_anchor(member_index: int) -> Vector3:
+	var visual := member_visuals.get(member_index) as Node3D
+	var offset: Vector3 = member_visual_centers.get(member_index, Vector3.ZERO)
+	if visual == null or not is_instance_valid(visual):
+		return offset
+	return visual.position + offset
+
+
+func _ensure_synthetic_member_selection_rings() -> void:
+	## Fallback ring under every living member when the SHADOW_MERGE_DECAL
+	## contract is missing or failed to bind. Sized to the authored Geometry
+	## body, centred on the live visual — never a giant battalion torus.
+	for member_index in range(member_count):
+		if member_selection_rings.has(member_index):
+			continue
+		var visual := member_visuals.get(member_index) as Node3D
+		if visual == null or not is_instance_valid(visual):
+			continue
+		var selection_ring := MeshInstance3D.new()
+		selection_ring.name = "MemberSelection_%02d" % member_index
+		var ring_mesh := TorusMesh.new()
+		var radius := maxf(0.12, _member_selection_radius)
+		ring_mesh.inner_radius = maxf(0.08, radius * 0.85)
+		ring_mesh.outer_radius = radius
+		ring_mesh.rings = 24
+		ring_mesh.ring_segments = 6
+		selection_ring.mesh = ring_mesh
+		var anchor := _member_selection_anchor(member_index)
+		selection_ring.position = Vector3(anchor.x, 0.045, anchor.z)
+		var ring_material := StandardMaterial3D.new()
+		ring_material.albedo_color = Color(0.22, 0.82, 0.30, 0.72)
+		ring_material.emission_enabled = true
+		ring_material.emission = Color(0.035, 0.16, 0.05)
+		ring_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		ring_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		selection_ring.material_override = ring_material
+		selection_ring.visible = false
+		add_child(selection_ring)
+		member_selection_rings[member_index] = selection_ring
+
+
 func _build_member_overlay(member_index: int, member_position: Vector3, measured_bounds: AABB = AABB(), bar_width: float = MEMBER_BAR_FALLBACK_WIDTH) -> void:
 	# These are gameplay overlays rather than claimed retail art. Their scale is
 	# matched to the source member radius; final texture/color parity remains an
@@ -897,8 +945,12 @@ func _collect_animation_players(node: Node, member_index: int) -> void:
 func _build_markers() -> void:
 	# The old rings and health bar are repository-authored debug presentation,
 	# not BFME2 retail art. The selected private parity pack therefore fails
-	# closed and renders none of them. Legal-safe/default content keeps the
-	# existing fallback below.
+	# closed and renders none of them — except a selection ring, which every
+	# selectable battalion must show. Heroes / porter often ship neither the
+	# Icon02 mesh nor a bound SHADOW_MERGE_DECAL; failing into "nothing" is
+	# the owner's missing circle.
+	if source_selection_decal == null or not source_selection_decal.contract_ready:
+		_ensure_synthetic_member_selection_rings()
 	if private_parity_mode_active:
 		return
 	if source_selection_decal != null and source_selection_decal.contract_ready:
@@ -986,14 +1038,24 @@ func set_selected(value: bool) -> void:
 		_selection_ring.visible = selected and production_exit_progress >= 1.0
 	if source_selection_decal != null:
 		source_selection_decal.set_selected(selected and production_exit_progress >= 1.0)
-	if selected and not was_selected and current_state == "idle" and String(clip_map.get("selectionTransition", "")) != "":
-		# Retail plays the at-attention acknowledgement when an idle battalion
-		# is selected; members snap to attention one-shot, then return to idle.
+	if selected and not was_selected and current_state == "idle":
+		# Retail (gondorfighter.ini:519-531 / :664-670): idle → TRANS_IdleToSelected
+		# (ATNA once) then loop STATE_Selected (ATNB) until an order. Missing
+		# clips fail closed and stay idle — do not invent a pose.
 		for member_index in range(member_count):
 			if float(member_health_ratios.get(member_index, 0.0)) <= 0.0:
 				continue
-			if String(member_action_states.get(member_index, "idle")) == "idle":
+			if String(member_action_states.get(member_index, "idle")) != "idle":
+				continue
+			if String(clip_map.get("selectionTransition", "")) != "":
 				_play_member_state(member_index, "selectionTransition", -1, true)
+			elif String(clip_map.get("selected", "")) != "":
+				_play_member_state(member_index, "selected", -1, true)
+	elif not selected and was_selected:
+		for member_index in range(member_count):
+			var action := String(member_action_states.get(member_index, ""))
+			if action == "selectionTransition" or action == "selected":
+				_play_member_state(member_index, "idle", -1, true)
 	_refresh_member_overlays()
 
 
@@ -1867,7 +1929,7 @@ func _configure_source_selection_decal(definition: Dictionary) -> void:
 	for member_index in range(member_count):
 		var visual: Node3D = member_visuals.get(member_index)
 		if visual != null:
-			positions.append(visual.position)
+			positions.append(_member_selection_anchor(member_index))
 	source_selection_decal = SelectionDecalScript.new()
 	source_selection_decal.name = "RetailMenSelectionDecal"
 	add_child(source_selection_decal)
@@ -1947,7 +2009,7 @@ func _play_member_clip(player: AnimationPlayer, requested: String, state: String
 		# factor and idle until the next shot — do not stretch across reload.
 		player.speed_scale = attack_fire_speed_factor if attack_fire_speed_factor > 0.0 else 1.0
 	player.play(playable, blend)
-	if apply_phase and state in ["idle", "run", "victory"] and player.current_animation_length > 0.0:
+	if apply_phase and state in ["idle", "run", "victory", "selected"] and player.current_animation_length > 0.0:
 		player.seek(player.current_animation_length * phase_for_member(member_index, state), true)
 
 
@@ -1979,14 +2041,20 @@ func _process(_delta: float) -> void:
 		if float(member_health_ratios.get(member_index, 1.0)) <= 0.0:
 			continue
 		if String(member_action_states.get(member_index, "")) == "selectionTransition":
-			# The at-attention acknowledgement is one-shot; settle back to idle.
+			# The at-attention acknowledgement is one-shot; then loop ATNB for
+			# as long as the battalion stays selected and idle. Snapping back
+			# to idle the moment the one-shot ended was the owner's "clicking
+			# Gondor soldiers does not play the at-attention animation".
 			var attention_playing := false
 			for player_value in member_animation_players.get(member_index, []):
 				if (player_value as AnimationPlayer).is_playing():
 					attention_playing = true
 					break
 			if not attention_playing:
-				_play_member_state(member_index, "idle", -1, false)
+				if selected and current_state == "idle" and String(clip_map.get("selected", "")) != "":
+					_play_member_state(member_index, "selected", -1, false)
+				else:
+					_play_member_state(member_index, "idle", -1, false)
 			continue
 		var requested := String(member_current_clips.get(member_index, ""))
 		for player_value in member_animation_players.get(member_index, []):
@@ -2038,8 +2106,6 @@ func _update_member_positions(delta: float) -> void:
 
 
 func _update_legal_safe_member_overlays() -> void:
-	if private_parity_mode_active:
-		return
 	if presentation_detail_level > 0:
 		# Overlays are hidden by distance LOD; do not pay to track their
 		# positions until they are drawn again.
@@ -2050,8 +2116,11 @@ func _update_legal_safe_member_overlays() -> void:
 			continue
 		var ring := member_selection_rings.get(member_index) as MeshInstance3D
 		if ring != null:
-			ring.position.x = visual.position.x
-			ring.position.z = visual.position.z
+			var anchor := _member_selection_anchor(member_index)
+			ring.position.x = anchor.x
+			ring.position.z = anchor.z
+		if private_parity_mode_active:
+			continue
 		var health_back := member_health_backs.get(member_index) as MeshInstance3D
 		if health_back != null:
 			health_back.position.x = visual.position.x
@@ -2071,7 +2140,7 @@ func _sync_selection_layout(state: String, force: bool = false) -> void:
 		return
 	var positions: Array[Vector3] = []
 	for member_index in range(member_count):
-		positions.append(member_presentation_target(member_index, state))
+		positions.append(_member_selection_anchor(member_index))
 	source_selection_decal.set_member_positions(positions)
 	_selection_layout_state = layout_state
 

@@ -43,8 +43,8 @@ const TROLL_SOURCE_RADIUS := 17.6
 ## LIVENESS (rulebook T3): a mid-body script error aborts the enclosing
 ## function without propagating. Completion is marked only at the END of each
 ## test body, and the exact check count must match EXPECTED_CHECKS.
-const EXPECTED_TESTS := 11
-const EXPECTED_CHECKS := 54
+const EXPECTED_TESTS := 14
+const EXPECTED_CHECKS := 72
 ## Floor kept so a content-less run still fails closed if it aborts early.
 const MINIMUM_CHECKS := 40
 
@@ -69,6 +69,9 @@ func _run() -> void:
 	_test_slice_pick_wires_member_candidates()
 	_test_order_margin_stays_within_the_hitbox()
 	_test_mounted_pack_member_geometry_matches_retail()
+	_test_pieces_union_beats_primary_probe()
+	_test_visual_aabb_is_a_floor_over_compiled_geometry()
+	_test_piece_accurate_structure_hits()
 
 	if _completed.size() != EXPECTED_TESTS:
 		failed += 1
@@ -392,6 +395,152 @@ func _test_mounted_pack_member_geometry_matches_retail() -> void:
 		)
 		_check("troll_pick_is_fatter_than_archer_pick", troll_radius > 2.0 * archer_radius)
 	_completed.append("mounted-geometry")
+
+
+func _barracks_pieces_geometry() -> Dictionary:
+	## Retail barracks.ini:434-452 — CYLINDER 8.0 rally probe plus Geom_Orig
+	## BOX 20x20 at X:-22 Y:-30 and BOX 45x50 at the origin. Union is 45x50.
+	return {
+		"shape": "CYLINDER",
+		"majorRadius": {"authored": "8.0", "value": 8.0},
+		"minorRadius": {"authored": "8.0", "value": 8.0},
+		"height": {"authored": "10", "value": 10.0},
+		"pieces": [
+			{
+				"role": "primary",
+				"shape": "CYLINDER",
+				"majorRadius": {"authored": "8.0", "value": 8.0},
+				"minorRadius": {"authored": "8.0", "value": 8.0},
+			},
+			{
+				"role": "additional",
+				"name": "Geom_Orig",
+				"shape": "BOX",
+				"majorRadius": {"authored": "20.0", "value": 20.0},
+				"minorRadius": {"authored": "20.0", "value": 20.0},
+				"offset": {"x": -22.0, "y": -30.0, "z": 0.0},
+			},
+			{
+				"role": "additional",
+				"name": "Geom_Orig",
+				"shape": "BOX",
+				"majorRadius": {"authored": "45.0", "value": 45.0},
+				"minorRadius": {"authored": "50.0", "value": 50.0},
+				"offset": {"x": 0.0, "y": 0.0, "z": 0.0},
+			},
+		],
+	}
+
+
+func _fortress_pieces_geometry() -> Dictionary:
+	## Retail fortress.ini:1254-1300 — BOX 64 main body plus plot pads at
+	## GeometryOffset X:64 Y:-64 (and the other five). Union radius is 74.
+	return {
+		"shape": "BOX",
+		"majorRadius": {"authored": "64", "value": 64.0},
+		"minorRadius": {"authored": "64", "value": 64.0},
+		"pieces": [
+			{
+				"role": "primary",
+				"shape": "BOX",
+				"majorRadius": {"authored": "64", "value": 64.0},
+				"minorRadius": {"authored": "64", "value": 64.0},
+			},
+			{
+				"role": "additional",
+				"name": "Plots",
+				"shape": "BOX",
+				"majorRadius": {"authored": "10.0", "value": 10.0},
+				"minorRadius": {"authored": "10.0", "value": 10.0},
+				"offset": {"x": 64.0, "y": -64.0, "z": 0.0},
+			},
+		],
+	}
+
+
+func _test_pieces_union_beats_primary_probe() -> void:
+	## THE BUG. A pack document can carry geometry.pieces without a precomputed
+	## footprint row. source_footprint_radius used to fall back to the primary
+	## 8.0 rally probe and the barracks was barely clickable.
+	var barracks := _barracks_pieces_geometry()
+	_check("barracks_pieces_union_is_50_not_the_8_probe", is_equal_approx(Pick.source_footprint_radius(barracks), 50.0))
+	var with_footprint := barracks.duplicate(true)
+	with_footprint["footprint"] = {"majorRadius": 45.0, "minorRadius": 50.0, "radius": 50.0}
+	_check("barracks_footprint_row_still_wins", is_equal_approx(Pick.source_footprint_radius(with_footprint), 50.0))
+	var fortress := _fortress_pieces_geometry()
+	_check("fortress_pieces_union_is_74", is_equal_approx(Pick.source_footprint_radius(fortress), 74.0))
+	_completed.append("pieces-union")
+
+
+func _test_visual_aabb_is_a_floor_over_compiled_geometry() -> void:
+	## THE BUG. MenFortress compiled Geometry is the 64-unit BOX plus plots
+	## (fortress.ini:1254-1300, union 74). The visible keep is larger — repair
+	## contact points go to X:-90 Y:82 (:1305-1306). Compiled geometry is a
+	## floor, never a ceiling against the body the player can see.
+	var compiled_64 := Pick.world_radius_from_source(64.0, FORDS_SOURCE_SCALE)
+	var compiled_74 := Pick.world_radius_from_source(74.0, FORDS_SOURCE_SCALE)
+	var visual_bounds := AABB(Vector3(-90.0, 0.0, -82.0), Vector3(174.0, 75.0, 164.0))
+	var visual := Pick.world_radius_from_visual_bounds(visual_bounds, FORDS_SOURCE_SCALE)
+	_check("keep_visual_is_larger_than_the_64_box", visual > compiled_64)
+	_check("keep_visual_is_larger_than_the_74_union", visual > compiled_74)
+	_check(
+		"effective_pick_takes_the_visual_floor",
+		is_equal_approx(Pick.effective_world_pick_radius(compiled_74, visual), visual)
+	)
+	_check(
+		"compiled_stays_the_floor_when_visual_is_smaller",
+		is_equal_approx(Pick.effective_world_pick_radius(compiled_74, compiled_64), compiled_74)
+	)
+	var structure_script: GDScript = load("res://src/retail_slice/retail_structure.gd")
+	_check("structure_script_compiles", structure_script != null and structure_script.can_instantiate())
+	if structure_script == null or not structure_script.can_instantiate():
+		_completed.append("visual-floor")
+		return
+	var structure: Node3D = structure_script.new()
+	root.add_child(structure)
+	structure.structure_kind = "fortress"
+	structure.selection_radius_source = "compiled-retail-geometry"
+	structure.pick_radius = compiled_74
+	structure._source_unit_scale = FORDS_SOURCE_SCALE
+	structure._apply_visual_bounds_selection_radius(visual_bounds, FORDS_SOURCE_SCALE)
+	_check("structure_pick_grows_to_the_visible_keep", structure.pick_radius >= visual - 0.001)
+	var origin := Vector2(20.0, -8.0)
+	structure.global_position = Vector3(origin.x, 0.0, origin.y)
+	var candidates: Array = structure.structure_pick_candidates(11)
+	_check("structure_emits_pick_candidates", not candidates.is_empty())
+	var visual_edge := origin + Vector2(visual * 0.92, 0.0)
+	_check("click_on_the_visible_keep_edge_selects", Pick.closest_hit(visual_edge, candidates) == 11)
+	var compiled_only := [{"id": 11, "position": origin, "radius": compiled_74}]
+	_check("compiled_union_alone_would_miss_the_keep_edge", Pick.closest_hit(visual_edge, compiled_only) == 0)
+	structure.queue_free()
+	_completed.append("visual-floor")
+
+
+func _test_piece_accurate_structure_hits() -> void:
+	## A single circle at the entity origin leaves offset pieces unclickable.
+	## Barracks Geom_Orig sits at X:-22 Y:-30 (barracks.ini:440-445). Fortress
+	## plot pads sit at X:64 Y:-64 (fortress.ini:1260-1265).
+	var origin := Vector2(10.0, 4.0)
+	var barracks := Pick.geometry_piece_candidates(7, origin, _barracks_pieces_geometry(), FORDS_SOURCE_SCALE)
+	_check("barracks_emits_one_candidate_per_piece", barracks.size() == 3)
+	var union_radius := Pick.world_radius_from_source(50.0, FORDS_SOURCE_SCALE)
+	_check(
+		"click_on_the_45x50_body_selects",
+		Pick.closest_hit(origin + Vector2(union_radius * 0.85, 0.0), barracks) == 7
+	)
+	var probe_only := [{"id": 7, "position": origin, "radius": Pick.world_radius_from_source(8.0, FORDS_SOURCE_SCALE)}]
+	_check(
+		"eight_unit_probe_alone_misses_the_45x50_body",
+		Pick.closest_hit(origin + Vector2(union_radius * 0.85, 0.0), probe_only) == 0
+	)
+	var geom_orig := origin + Vector2(-22.0, -30.0) * FORDS_SOURCE_SCALE
+	_check("click_on_offset_geom_orig_selects", Pick.closest_hit(geom_orig, barracks) == 7)
+	var fortress := Pick.geometry_piece_candidates(11, origin, _fortress_pieces_geometry(), FORDS_SOURCE_SCALE)
+	var plot := origin + Vector2(64.0, -64.0) * FORDS_SOURCE_SCALE
+	_check("click_on_offset_fortress_plot_selects", Pick.closest_hit(plot, fortress) == 11)
+	var body_only := [{"id": 11, "position": origin, "radius": Pick.world_radius_from_source(64.0, FORDS_SOURCE_SCALE)}]
+	_check("sixty_four_box_alone_misses_the_plot_pad", Pick.closest_hit(plot, body_only) == 0)
+	_completed.append("piece-hits")
 
 
 func _check(label: String, condition: bool) -> void:

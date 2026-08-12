@@ -1534,6 +1534,89 @@ func _append_ability_state(
 	}
 
 
+func _selection_animation_states(visual: Dictionary) -> Dictionary:
+	## Project SELECTED / idle→selected TransitionState from authored pack
+	## rows so current packs can play ATNA/ATNB without a republish.
+	##
+	## Cooked rotwk-men-vslice stores:
+	##   GUManMocap_ATNA conditions=["TRANS_IdleToSelected"]  (fighter.ini:664)
+	##   GUManMocap_ATNB conditions=["SELECTED"]              (fighter.ini:519)
+	##   GUArcher_ATNA   conditions=["TRANS_Idle_to_Selected"] (archer.ini:530)
+	##   GUArcher_ATNB   conditions=["SELECTED"]               (archer.ini:499)
+	## with semanticState null (the compiler used to leave them unmapped).
+	var result := {}
+	var authored: Variant = visual.get("authoredAnimationStates", [])
+	if typeof(authored) != TYPE_ARRAY:
+		return result
+	var selected_ranked: Array[Dictionary] = []
+	var transition_ranked: Array[Dictionary] = []
+	for row_value in authored as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			continue
+		var row := row_value as Dictionary
+		if String(row.get("runtimeSupport", "")).begins_with("excluded"):
+			continue
+		var identifier := String(row.get("identifier", ""))
+		if identifier == "":
+			continue
+		var conditions: Array = row.get("conditions", []) as Array
+		var conds: Array = []
+		for condition_value in conditions:
+			conds.append(str(condition_value).to_upper())
+		var semantic_raw: Variant = row.get("semanticState", "")
+		var semantic := "" if semantic_raw == null else str(semantic_raw)
+		if semantic == "selected" or _conditions_are_selected(conds):
+			selected_ranked.append({
+				"identifier": identifier,
+				"rank": _playable_clip_rank("selected", identifier, conditions),
+			})
+		elif semantic == "selectionTransition" or _conditions_are_idle_to_selected(conds):
+			transition_ranked.append({
+				"identifier": identifier,
+				"rank": _playable_clip_rank("selectionTransition", identifier, conditions),
+			})
+	if not transition_ranked.is_empty():
+		result["selectionTransition"] = {
+			"clips": _ranked_clip_identifiers(transition_ranked),
+			"mode": "once",
+			"useWeaponTiming": false,
+		}
+	if not selected_ranked.is_empty():
+		result["selected"] = {
+			"clips": _ranked_clip_identifiers(selected_ranked),
+			"mode": "loop",
+			"useWeaponTiming": false,
+		}
+	return result
+
+
+func _conditions_are_selected(conds: Array) -> bool:
+	return conds.has("SELECTED") and not _conditions_are_idle_to_selected(conds)
+
+
+func _conditions_are_idle_to_selected(conds: Array) -> bool:
+	for cond_value in conds:
+		var compact := str(cond_value).to_upper().replace("_", "").replace("-", "").replace(" ", "")
+		if compact.contains("IDLETOSELECTED"):
+			return true
+	return false
+
+
+func _ranked_clip_identifiers(ranked: Array[Dictionary]) -> Array[String]:
+	var sorted_rows := ranked.duplicate()
+	sorted_rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		if int(a["rank"]) != int(b["rank"]):
+			return int(a["rank"]) < int(b["rank"])
+		return String(a["identifier"]).naturalnocasecmp_to(String(b["identifier"])) < 0
+	)
+	var clips: Array[String] = []
+	for entry in sorted_rows:
+		var identifier := String(entry.get("identifier", ""))
+		if identifier != "" and not clips.has(identifier):
+			clips.append(identifier)
+	return clips
+
+
 func _merge_projected_member(
 	member: Dictionary, replaced: Dictionary, document: Dictionary
 ) -> Dictionary:
@@ -1651,7 +1734,7 @@ func _playable_unit_projection(document: Dictionary) -> Dictionary:
 				clips.append(identifier)
 		states[state] = {
 			"clips": clips,
-			"mode": "loop" if state in ["idle", "move"] else "once",
+			"mode": "loop" if state in ["idle", "move", "selected"] else "once",
 			"useWeaponTiming": state == "attack",
 		}
 		if state == "attack":
@@ -1685,6 +1768,11 @@ func _playable_unit_projection(document: Dictionary) -> Dictionary:
 		var ability_state := String(ability_state_value)
 		if not states.has(ability_state):
 			states[ability_state] = ability_states[ability_state_value]
+	var selection_states := _selection_animation_states(visual)
+	for selection_state_value in selection_states.keys():
+		var selection_state := String(selection_state_value)
+		if not states.has(selection_state):
+			states[selection_state] = selection_states[selection_state_value]
 	var root := String(document.get("_pack_root", ""))
 	return {
 		"member": {
@@ -1750,6 +1838,16 @@ func _playable_clip_rank(state: String, identifier: String, conditions: Array) -
 		if conds.has("MOVING"):
 			return 20
 		return conds.size()
+	if state == "selected":
+		if id_lower.contains("atnb"):
+			return 0
+		if id_lower.contains("idla") or id_lower.contains("idle"):
+			return 20
+		return 10
+	if state == "selectionTransition":
+		if id_lower.contains("atna"):
+			return 0
+		return 10
 	return conds.size()
 
 

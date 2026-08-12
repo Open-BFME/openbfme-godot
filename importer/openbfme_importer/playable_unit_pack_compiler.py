@@ -25,6 +25,10 @@ from .retail_ability_fx_ingress import AbilityFxIngressError, fx_recipe_parts
 SCHEMA = "openbfme.playable-unit-pack-recipe"
 SCHEMA_VERSION = 0
 _CORE_ORDER = ("idle", "move", "attack", "death")
+# Optional capability states. Not required to compile a unit; projected when
+# the Object authors them. Retail SELECTED (gondorfighter.ini:519-531) loops
+# ATNB; TransitionState TRANS_IdleToSelected (:664-670) plays ATNA once.
+_SELECTION_STATES = ("selectionTransition", "selected")
 _ATTACK_TOKENS = {
     "ATTACKING",
     "FIRING_A",
@@ -195,6 +199,10 @@ def _state(row: Mapping[str, object]) -> str | None:
     if not isinstance(scope, list) or any(not isinstance(item, str) for item in scope):
         raise PlayableUnitPackCompilerError("visual scope path is invalid")
     scope_text = " ".join(scope).upper()
+    if _is_idle_to_selected_state(conditions, scope_text):
+        return "selectionTransition"
+    if "SELECTED" in conditions:
+        return "selected"
     if "DYING" in conditions or any(item.startswith("DEATH_") for item in conditions):
         return "death"
     if conditions & _ATTACK_TOKENS or "ATTACK" in scope_text or "FIRING" in scope_text:
@@ -225,6 +233,23 @@ def _state(row: Mapping[str, object]) -> str | None:
     ):
         return "idle"
     return None
+
+
+def _compact_token(value: str) -> str:
+    return value.upper().replace(" ", "").replace("_", "").replace("-", "")
+
+
+def _is_idle_to_selected_state(conditions: set[str], scope_text: str) -> bool:
+    """True for TransitionState TRANS_IdleToSelected / TRANS_Idle_to_Selected.
+
+    Compiled packs store that name as a condition token on the ATNA row
+    (gondorfighterhorde.json GUManMocap_ATNA). TRANS_SelectedToIdle / ATND
+    is the leave-attention clip and must stay unmapped.
+    """
+
+    tokens = {_compact_token(item) for item in conditions}
+    tokens.add(_compact_token(scope_text))
+    return any("IDLETOSELECTED" in token for token in tokens)
 
 
 def _is_turn_animation(row: Mapping[str, object]) -> bool:
@@ -1310,11 +1335,19 @@ def compile_playable_unit_pack_recipe(
     for row in animation_rows:
         state = _state(row)
         if state is not None:
-            state_rows[state].append(row)
+            state_rows.setdefault(state, []).append(row)
     for row in retail_absent_animation_gaps:
         state = _state(row)
         fallback_state = "move" if _is_turn_animation(row) else state
-        if fallback_state is None or not state_rows[fallback_state]:
+        if fallback_state is None:
+            raise PlayableUnitPackCompilerError(
+                "visual closure is not conversion-ready: retail-absent animation has no authored state fallback"
+            )
+        if fallback_state in _SELECTION_STATES:
+            # SELECTED / idle→selected are optional capability states. A
+            # missing ATNA variant must not fail the whole unit compile.
+            continue
+        if not state_rows.get(fallback_state):
             raise PlayableUnitPackCompilerError(
                 "visual closure is not conversion-ready: retail-absent animation has no authored state fallback"
             )
@@ -1348,6 +1381,9 @@ def compile_playable_unit_pack_recipe(
     state_bindings: dict[str, list[dict[str, object]]] = {
         state: [] for state in required_states
     }
+    for extra_state in _SELECTION_STATES:
+        if state_rows.get(extra_state):
+            state_bindings.setdefault(extra_state, [])
     authored_animation_states: list[dict[str, object]] = []
     scanned_by_path: dict[str, Mapping[str, object]] = {
         str(row.get("virtualPath", "")).casefold(): row
@@ -1459,6 +1495,7 @@ def compile_playable_unit_pack_recipe(
                         else (
                             "generic-core"
                             if semantic_state in required_states
+                            or semantic_state in _SELECTION_STATES
                             else "packaged-unimplemented"
                         )
                     ),
@@ -1474,7 +1511,7 @@ def compile_playable_unit_pack_recipe(
             if (
                 not separate_death
                 and not zero_byte_placeholder
-                and semantic_state in required_states
+                and semantic_state in state_bindings
                 and str(row.get("targetObject", "")).casefold()
                 == animated_body_id.casefold()
             ):
@@ -1505,8 +1542,10 @@ def compile_playable_unit_pack_recipe(
                     "mixed death model swap conditions are ambiguous"
                 )
             seen_condition_sets.add(condition_set)
-    for state in required_states:
+    for state in list(state_bindings):
         if not state_bindings[state]:
+            if state not in required_states:
+                continue
             if state == "death" and death_swap_paths:
                 continue
             if core_animation_exclusions:

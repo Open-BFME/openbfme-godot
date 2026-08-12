@@ -67,6 +67,78 @@ def test_moving_turn_animation_keeps_move_classification() -> None:
     assert _state(row) == "move"
 
 
+def test_selected_animation_state_maps_to_selected() -> None:
+    # Retail gondorfighter.ini:519-521 / gondorarcher.ini:499-505: AnimationState
+    # = SELECTED loops ATNB (GUManMocap_ATNB / GUArcher_ATNB).
+    row = {
+        "conditions": ["SELECTED"],
+        "provenance": {
+            "scopePath": [
+                "W3DHordeModelDraw ModuleTag_01",
+                "AnimationState SELECTED",
+                "Animation ATNB",
+            ]
+        },
+    }
+    assert _state(row) == "selected"
+
+
+def test_idle_to_selected_transition_maps_to_selection_transition() -> None:
+    # Retail gondorfighter.ini:664-670 TransitionState TRANS_IdleToSelected
+    # plays ATNA once. The compiled pack stores that name as a condition
+    # (gondorfighterhorde.json authoredAnimationStates GUManMocap_ATNA).
+    fighter = {
+        "conditions": ["TRANS_IdleToSelected"],
+        "provenance": {
+            "scopePath": [
+                "W3DHordeModelDraw ModuleTag_01",
+                "TransitionState TRANS_IdleToSelected",
+                "Animation ATNA",
+            ]
+        },
+    }
+    archer = {
+        "conditions": ["TRANS_Idle_to_Selected"],
+        "provenance": {
+            "scopePath": [
+                "W3DHordeModelDraw ModuleTag_01",
+                "TransitionState TRANS_Idle_to_Selected",
+                "Animation ATNA",
+            ]
+        },
+    }
+    assert _state(fighter) == "selectionTransition"
+    assert _state(archer) == "selectionTransition"
+
+
+def test_selected_to_idle_transition_stays_unmapped() -> None:
+    # TRANS_SelectedToIdle / ATND is the leave-attention clip. Mapping it into
+    # selectionTransition would play the stand-down pose on select.
+    row = {
+        "conditions": ["TRANS_SelectedToIdle"],
+        "provenance": {
+            "scopePath": [
+                "W3DHordeModelDraw ModuleTag_01",
+                "TransitionState TRANS_SelectedToIdle",
+                "Animation ATND",
+            ]
+        },
+    }
+    assert _state(row) is None
+    archer = {
+        **row,
+        "conditions": ["TRANS_Selected_To_Idle"],
+        "provenance": {
+            "scopePath": [
+                "W3DHordeModelDraw ModuleTag_01",
+                "TransitionState TRANS_Selected_To_Idle",
+                "Animation ATNC",
+            ]
+        },
+    }
+    assert _state(archer) is None
+
+
 def test_turn_clip_cannot_replace_missing_walk_clip() -> None:
     descriptor = _descriptor("HeroUnit")
     closure = _closure(descriptor)
@@ -720,6 +792,75 @@ def test_recipe_is_deterministic_under_visual_leaf_reordering() -> None:
     second = compile_playable_unit_pack_recipe(descriptor, shuffled)
     assert first["resources"] == second["resources"]
     assert first["runtimeRegistration"] == second["runtimeRegistration"]
+
+
+def test_selected_states_compile_into_core_animations() -> None:
+    descriptor = _descriptor("HeroUnit")
+    closure = _closure(descriptor)
+    member = str(descriptor["composition"]["primaryMemberObjectId"])
+    slug = member.casefold()
+    atna_path = f"art/w3d/fi/{slug}_atna.w3d"
+    atnb_path = f"art/w3d/fi/{slug}_atnb.w3d"
+    closure["exactLeaves"].extend(
+        [
+            _leaf(
+                member,
+                f"{member}_ATNA",
+                "animation",
+                atna_path,
+                ["TRANS_IdleToSelected"],
+                "TransitionState TRANS_IdleToSelected",
+            ),
+            _leaf(
+                member,
+                f"{member}_ATNB",
+                "animation",
+                atnb_path,
+                ["SELECTED"],
+                "AnimationState SELECTED",
+            ),
+        ]
+    )
+    for path, token in ((atna_path, "ATNA"), (atnb_path, "ATNB")):
+        closure["scannedW3d"].append(
+            {
+                "virtualPath": path,
+                "byteLength": 1,
+                "sha256": hashlib.sha256(path.encode()).hexdigest(),
+                "headerIds": {
+                    "virtualPath": path,
+                    "modelIds": [],
+                    "hierarchyIds": [],
+                    "animationIds": [f"{member.upper()}_SKL.{member.upper()}_{token}"],
+                },
+                "modelReferences": [],
+                "warnings": [],
+            }
+        )
+    _rehash_closure(closure)
+
+    recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+    core = recipe["runtimeRegistration"]["visual"]["coreAnimations"]
+    assert "selected" in core
+    assert "selectionTransition" in core
+    assert any(
+        str(row.get("identifier", "")).endswith("_ATNB") for row in core["selected"]
+    )
+    assert any(
+        str(row.get("identifier", "")).endswith("_ATNA")
+        for row in core["selectionTransition"]
+    )
+    authored = recipe["runtimeRegistration"]["visual"]["authoredAnimationStates"]
+    selected_rows = [
+        row for row in authored if row.get("semanticState") == "selected"
+    ]
+    transition_rows = [
+        row for row in authored if row.get("semanticState") == "selectionTransition"
+    ]
+    assert selected_rows
+    assert transition_rows
+    assert all(row["runtimeSupport"] == "generic-core" for row in selected_rows)
+    assert all(row["runtimeSupport"] == "generic-core" for row in transition_rows)
 
 
 def test_conditional_embedded_death_model_is_not_attached_to_intact_bundle() -> None:

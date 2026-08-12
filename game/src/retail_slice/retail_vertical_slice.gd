@@ -3838,6 +3838,12 @@ func _structure_pick_candidates(ids: Array) -> Array:
 		var row: Dictionary = simulation.structure(id)
 		if row.is_empty():
 			continue
+		var node: Variant = structure_nodes.get(id, null)
+		if node != null and is_instance_valid(node) and node.has_method("structure_pick_candidates"):
+			var live: Array = node.structure_pick_candidates(id)
+			if not live.is_empty():
+				candidates.append_array(live)
+				continue
 		candidates.append({
 			"id": id,
 			"position": Vector2(row["position"]),

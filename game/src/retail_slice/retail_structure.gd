@@ -60,6 +60,12 @@ var retail_mesh_path := ""
 ## flat constant: see RetailSelectionPick for why that broke picking.
 var pick_radius := 4.0
 var selection_radius_source := "unresolved"
+## Compiled Geometry document (primary + AdditionalGeometry pieces). Empty when
+## the selected pack predates the projection.
+var compiled_geometry: Dictionary = {}
+## Intact-body AABB centre in local XZ. The selection ring and pick floor sit
+## here so an offset keep / well / statue is not picked at a stale origin.
+var visual_pick_center := Vector2.ZERO
 
 # Deterministic public lifecycle state used by the focused gate and diagnostics.
 var current_lifecycle_phase := ""
@@ -1219,6 +1225,7 @@ func _compiled_geometry_source_radius() -> float:
 	## playable-structure document, when that pack carries it. Packs published
 	## before the projection landed simply have no row and fall through to the
 	## body-bounds measurement below.
+	compiled_geometry = {}
 	if _bundle_object_id == "" or not ContentDB.has_method("get_playable_structure_runtime"):
 		return 0.0
 	var document: Variant = ContentDB.get_playable_structure_runtime(_bundle_object_id)
@@ -1229,7 +1236,8 @@ func _compiled_geometry_source_radius() -> float:
 	var geometry: Variant = gameplay.get("geometry", {})
 	if typeof(geometry) != TYPE_DICTIONARY:
 		return 0.0
-	return SelectionPick.source_footprint_radius(geometry as Dictionary)
+	compiled_geometry = (geometry as Dictionary).duplicate(true)
+	return SelectionPick.source_footprint_radius(compiled_geometry)
 
 
 func _apply_visual_bounds_selection_radius(bounds: AABB, uniform_scale: float) -> void:
@@ -1237,16 +1245,47 @@ func _apply_visual_bounds_selection_radius(bounds: AABB, uniform_scale: float) -
 	## retail Geometry owns picking. Constants made a billboard jump far above
 	## some rooflines and bury itself in others.
 	_visual_top_y = (bounds.position.y + bounds.size.y) * uniform_scale + shared_vertical_offset
-	## Fallback for packs without compiled geometry: measure the intact body.
-	if selection_radius_source == "compiled-retail-geometry":
-		_sync_health_bar_geometry()
-		return
+	var scale := uniform_scale if is_finite(uniform_scale) and uniform_scale > 0.0 else 0.0
+	if scale > 0.0:
+		visual_pick_center = Vector2(
+			(bounds.position.x + bounds.size.x * 0.5) * scale,
+			(bounds.position.z + bounds.size.z * 0.5) * scale
+		)
+	## Retail Geometry is a floor, never a ceiling against the body the player
+	## can see. A fortress keep whose intact AABB outruns the 64-unit box
+	## (fortress.ini:1254-1306) must pick — and draw its ring — at the visual
+	## edge. Compiled-only used to return early here and leave the walls
+	## unclickable.
 	var measured := SelectionPick.world_radius_from_visual_bounds(bounds, uniform_scale)
-	if measured <= 0.0:
-		return
-	pick_radius = measured
-	selection_radius_source = "intact-body-bounds"
+	var combined := SelectionPick.effective_world_pick_radius(pick_radius, measured)
+	if combined > 0.0:
+		if measured > pick_radius and selection_radius_source == "compiled-retail-geometry":
+			selection_radius_source = "compiled-and-intact-visual-floor"
+		elif selection_radius_source != "compiled-retail-geometry" and measured > 0.0:
+			selection_radius_source = "intact-body-bounds"
+		pick_radius = combined
 	_sync_health_bar_geometry()
+	_sync_selection_ring_geometry()
+
+
+func structure_pick_candidates(entity_id: int) -> Array:
+	## Piece-accurate hit tests when AdditionalGeometry exists, plus a visual
+	## AABB floor circle so the keep's walls stay clickable. Empty when this
+	## node has neither compiled pieces nor a measured pick radius; callers
+	## keep the origin-circle fallback for that seam.
+	if entity_id == 0:
+		return []
+	var origin := Vector2(global_position.x, global_position.z)
+	var candidates: Array = SelectionPick.geometry_piece_candidates(
+		entity_id, origin, compiled_geometry, _source_unit_scale
+	)
+	if pick_radius > 0.0:
+		candidates.append({
+			"id": entity_id,
+			"position": origin + visual_pick_center,
+			"radius": pick_radius,
+		})
+	return candidates
 
 
 func _build_visual_root() -> void:
@@ -2511,7 +2550,7 @@ func _build_markers() -> void:
 	ring.rings = 36
 	ring.ring_segments = 8
 	_selection_ring.mesh = ring
-	_selection_ring.position.y = 0.08
+	_selection_ring.position = Vector3(visual_pick_center.x, 0.08, visual_pick_center.y)
 	_selection_ring.material_override = _emissive(Color("67e48b"))
 	_selection_ring.visible = false
 	add_child(_selection_ring)
@@ -2556,6 +2595,20 @@ func _solid_texture(color: Color, width: int, height: int) -> ImageTexture:
 	var image := Image.create(width, height, false, Image.FORMAT_RGBA8)
 	image.fill(color)
 	return ImageTexture.create_from_image(image)
+
+
+func _sync_selection_ring_geometry() -> void:
+	if _selection_ring == null:
+		return
+	var ring := _selection_ring.mesh as TorusMesh
+	if ring == null:
+		ring = TorusMesh.new()
+		ring.rings = 36
+		ring.ring_segments = 8
+		_selection_ring.mesh = ring
+	ring.inner_radius = pick_radius
+	ring.outer_radius = pick_radius + 0.22
+	_selection_ring.position = Vector3(visual_pick_center.x, 0.08, visual_pick_center.y)
 
 
 func _sync_health_bar_geometry() -> void:
