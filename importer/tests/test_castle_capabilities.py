@@ -170,10 +170,14 @@ End
 
 def test_plain_object_editor_annotation_is_not_a_parent() -> None:
     # Retail demo leftovers author ``Object MoriaDebrisPileA (Rocks)`` and
-    # ``Object Water Plane``: on a plain ``Object`` header the second token is
-    # an editor annotation, never a template.  Exactly three such rows exist in
-    # the corpus, all plain ``Object``; ``ChildObject``/``ObjectReskin``
-    # parents still fail closed when unresolvable (test above).
+    # ``Object Water Plane``: on a plain ``Object`` header an UNRESOLVABLE
+    # second token is an editor annotation, never a template. Three such rows
+    # exist in the corpus. A fourth plain-``Object`` header carries a token
+    # that DOES resolve (``Object DwarvenFortressMightyCatapult
+    # DwarvenCatapult``, catapult.ini:775) and inherits from it - the rule is
+    # unresolvable-means-annotation, not plain-Object-means-no-parent.
+    # ``ChildObject``/``ObjectReskin`` parents still fail closed when
+    # unresolvable (test above).
     documents = {
         "data/ini/object/test/demo.ini": b"""
 Object TestWater Plane
