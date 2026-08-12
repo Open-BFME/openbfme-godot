@@ -846,6 +846,10 @@ SHADER_TEXTURE_PROPERTIES = frozenset(
     }
 )
 _ACTIVE_SHADER_TEXTURE_SENTINEL_DROPS: list[dict[str, Any]] = []
+# The pinned importer deliberately omits the source root pivot, so a hierarchy
+# whose only pivot is this one imports as an armature with zero bones.
+OMITTED_ROOT_PIVOT_NAME = "ROOTTRANSFORM"
+_ACTIVE_ROOT_RIGID_INERT_VERTEX_GROUPS: list[dict[str, Any]] = []
 MAX_OPTIONAL_MESH_EXCLUSIONS = 64
 CLEAN_MESH_IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9_]{0,126}[a-z0-9])?$")
 MAX_RETAIL_ABSENT_TEXTURES = 16
@@ -3279,6 +3283,8 @@ def bake_proven_root_rigid_hierarchy(
     if unexpected_children:
         raise RuntimeError("proven root-rigid carrier has non-render children")
 
+    carrier_bone_count = len(list(getattr(getattr(rig, "data", None), "bones", []) or []))
+    inert_vertex_groups: list[tuple[Any, list[str]]] = []
     world_transforms: list[tuple[Any, Any]] = []
     for item in mesh_objects:
         if getattr(item, "type", None) != "MESH":
@@ -3296,10 +3302,6 @@ def bake_proven_root_rigid_hierarchy(
             raise RuntimeError(
                 "proven root-rigid render mesh is not rigidly parented to the carrier"
             )
-        if list(getattr(item, "vertex_groups", []) or []):
-            raise RuntimeError(
-                "proven root-rigid render mesh has ambiguous deformation state"
-            )
         inert_modifiers = list(getattr(item, "modifiers", []) or [])
         if any(
             str(getattr(modifier, "type", "")) != "ARMATURE"
@@ -3308,6 +3310,30 @@ def bake_proven_root_rigid_hierarchy(
             raise RuntimeError(
                 "proven root-rigid render mesh has ambiguous deformation state"
             )
+        groups = list(getattr(item, "vertex_groups", []) or [])
+        if groups:
+            # Retail also authors this carrier shape as a skin: gudeadar2.w3d
+            # weights every vertex to its one pivot, ROOTTRANSFORM, which
+            # OpenSAGE deliberately omits, so the carrier imports with zero
+            # bones. A vertex group that names only that omitted root pivot on
+            # a carrier that really has no bones cannot move a vertex, and the
+            # armature modifier that would consume it must belong to this
+            # carrier. Any other group name, any additional group, any real
+            # bone, or a foreign armature is a genuine deformation the bake
+            # must not silently discard.
+            if (
+                carrier_bone_count != 0
+                or {str(getattr(group, "name", "")) for group in groups}
+                != {OMITTED_ROOT_PIVOT_NAME}
+                or any(
+                    getattr(modifier, "object", None) not in (None, rig)
+                    for modifier in inert_modifiers
+                )
+            ):
+                raise RuntimeError(
+                    "proven root-rigid render mesh has ambiguous deformation state"
+                )
+            inert_vertex_groups.append((item, [OMITTED_ROOT_PIVOT_NAME]))
         world = _copy_private_transform(getattr(item, "matrix_world", None))
         finite_world = _finite_matrix_elements(world)
         if finite_world is None or finite_world[0] != (4, 4):
@@ -3322,6 +3348,10 @@ def bake_proven_root_rigid_hierarchy(
             # (proven above) and dangle once the carrier is removed.
             for modifier in list(getattr(item, "modifiers", []) or []):
                 item.modifiers.remove(modifier)
+            # Proven-inert groups are removed with their modifier so the baked
+            # mesh is rigid in fact, not merely in effect.
+            for group in list(getattr(item, "vertex_groups", []) or []):
+                item.vertex_groups.remove(group)
             item.parent = None
             item.parent_type = "OBJECT"
             item.parent_bone = ""
@@ -3343,6 +3373,8 @@ def bake_proven_root_rigid_hierarchy(
             or not _private_transforms_close(getattr(item, "matrix_world", None), world)
         ):
             raise RuntimeError("proven root-rigid render transform was not preserved")
+        if list(getattr(item, "vertex_groups", []) or []):
+            raise RuntimeError("proven root-rigid inert vertex group was not removed")
 
     try:
         object_collection.remove(rig, do_unlink=True)
@@ -3359,6 +3391,19 @@ def bake_proven_root_rigid_hierarchy(
             raise RuntimeError(
                 "proven root-rigid render transform changed after carrier removal"
             )
+    for _item, names in inert_vertex_groups:
+        record = {
+            "groups": sorted(names),
+            "carrier_bone_count": carrier_bone_count,
+            "reason": "omitted-root-pivot-skin",
+        }
+        if record in _ACTIVE_ROOT_RIGID_INERT_VERTEX_GROUPS:
+            continue
+        _ACTIVE_ROOT_RIGID_INERT_VERTEX_GROUPS.append(record)
+        print(
+            "OPENBFME_W3D_ROOT_RIGID_INERT_VERTEX_GROUPS_REMOVED "
+            + json.dumps(record, sort_keys=True)
+        )
     return {
         "requested": True,
         "applied": True,
@@ -4608,6 +4653,7 @@ def _convert_w3d_job_impl(
 
     _ACTIVE_RETAIL_ORPHAN_HLOD_EXCLUSIONS.clear()
     _ACTIVE_SHADER_TEXTURE_SENTINEL_DROPS.clear()
+    _ACTIVE_ROOT_RIGID_INERT_VERTEX_GROUPS.clear()
 
     args = argparse.Namespace(
         asset_kind=asset_kind,
@@ -4999,6 +5045,9 @@ def _convert_w3d_job_impl(
         "equipment": equipment,
         "retail_absent_textures_cleared": retail_absent_textures_cleared,
         "retail_absent_textures_unreferenced": retail_absent_textures_unreferenced,
+        "root_rigid_inert_vertex_groups_removed": list(
+            _ACTIVE_ROOT_RIGID_INERT_VERTEX_GROUPS
+        ),
         "shader_texture_sentinels_dropped": sorted(
             _ACTIVE_SHADER_TEXTURE_SENTINEL_DROPS,
             key=lambda record: (record["material"], record["property"]),

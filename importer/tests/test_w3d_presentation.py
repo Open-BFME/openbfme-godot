@@ -562,6 +562,111 @@ class W3dPresentationFixtureTests(unittest.TestCase):
                 "hierarchical", True, rig, [mesh], objects
             )
 
+    def test_proven_root_rigid_bake_accepts_the_omitted_root_pivot_skin(self) -> None:
+        """RotWK gudeadar2.w3d is a skin whose every vertex weights to the root.
+
+        Its hierarchy holds one pivot, ROOTTRANSFORM, which OpenSAGE
+        deliberately omits, so the carrier imports with zero bones and the
+        skin's single vertex group can deform nothing. That is the root-rigid
+        shape this bake exists for, expressed as a skin instead of a rigid
+        mesh. The inert group is removed and named in evidence; a group with
+        any other name, or any group at all on a carrier that really has
+        bones, still fails closed.
+        """
+
+        def scene(group_names, bones=()):
+            rig = types.SimpleNamespace(
+                type="ARMATURE",
+                data=types.SimpleNamespace(bones=list(bones), animation_data=None),
+                pose=types.SimpleNamespace(bones=[]),
+                parent=None,
+                parent_type="OBJECT",
+                parent_bone="",
+                modifiers=[],
+                constraints=[],
+                animation_data=None,
+            )
+            mesh = types.SimpleNamespace(
+                type="MESH",
+                data=types.SimpleNamespace(animation_data=None),
+                parent=None,
+                parent_type="OBJECT",
+                parent_bone="",
+                modifiers=[types.SimpleNamespace(type="ARMATURE", object=rig)],
+                vertex_groups=[
+                    types.SimpleNamespace(name=name) for name in group_names
+                ],
+                matrix_world=[
+                    [1.0, 0.0, 0.0, 3.0],
+                    [0.0, 1.0, 0.0, 4.0],
+                    [0.0, 0.0, 1.0, 5.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+                animation_data=None,
+            )
+            objects = FakeCollection([mesh, rig])
+            FAKE_BPY.data = types.SimpleNamespace(objects=objects, actions=[])
+            return rig, mesh, objects
+
+        ADAPTER._ACTIVE_ROOT_RIGID_INERT_VERTEX_GROUPS.clear()
+        self.addCleanup(ADAPTER._ACTIVE_ROOT_RIGID_INERT_VERTEX_GROUPS.clear)
+
+        rig, mesh, objects = scene(["ROOTTRANSFORM"])
+        report = ADAPTER.bake_proven_root_rigid_hierarchy(
+            "hierarchical", True, rig, [mesh], objects
+        )
+
+        self.assertEqual(list(objects), [mesh])
+        self.assertEqual(mesh.vertex_groups, [])
+        self.assertEqual(mesh.modifiers, [])
+        self.assertEqual(
+            mesh.matrix_world,
+            [
+                [1.0, 0.0, 0.0, 3.0],
+                [0.0, 1.0, 0.0, 4.0],
+                [0.0, 0.0, 1.0, 5.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        )
+        self.assertEqual(report["applied"], True)
+        self.assertEqual(report["deform_ambiguity_absent"], True)
+        self.assertEqual(
+            ADAPTER._ACTIVE_ROOT_RIGID_INERT_VERTEX_GROUPS,
+            [
+                {
+                    "groups": ["ROOTTRANSFORM"],
+                    "carrier_bone_count": 0,
+                    "reason": "omitted-root-pivot-skin",
+                }
+            ],
+        )
+
+        for name, groups, bones in (
+            ("other-name", ["B_HAND_R"], ()),
+            ("root-plus-other", ["ROOTTRANSFORM", "B_HAND_R"], ()),
+            (
+                "carrier-really-has-bones",
+                ["ROOTTRANSFORM"],
+                (types.SimpleNamespace(name="ROOTTRANSFORM", constraints=[]),),
+            ),
+        ):
+            with self.subTest(name=name):
+                rig, mesh, objects = scene(groups, bones)
+                with self.assertRaisesRegex(RuntimeError, "ambiguous deformation"):
+                    ADAPTER.bake_proven_root_rigid_hierarchy(
+                        "hierarchical", True, rig, [mesh], objects
+                    )
+
+        with self.subTest(name="foreign-armature-modifier"):
+            rig, mesh, objects = scene(["ROOTTRANSFORM"])
+            mesh.modifiers = [
+                types.SimpleNamespace(type="ARMATURE", object=types.SimpleNamespace())
+            ]
+            with self.assertRaisesRegex(RuntimeError, "ambiguous deformation"):
+                ADAPTER.bake_proven_root_rigid_hierarchy(
+                    "hierarchical", True, rig, [mesh], objects
+                )
+
     def test_proven_root_rigid_bake_accepts_rigid_multi_pivot_carrier(self) -> None:
         def scene():
             bones = [
