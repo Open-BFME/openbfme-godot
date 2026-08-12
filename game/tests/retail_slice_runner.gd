@@ -364,23 +364,35 @@ const EXPECTED_BATTLE_SIGNATURES := {
 ## form carry no clipReloadTimeMs, so every ClipSize = 1 archer weapon
 ## (GondorArcherBow weapon.ini:4239, MordorArcherBow :10409, both
 ## Min:1500 Max:2000) reloaded in 0 ms and volleyed every 14 ticks instead of
-## the authored 30 (PreAttackDelay 1000 + reload Max 2000). The adapter now
-## bridges those packs from ContinuousFireCoast, which retail authors exactly
-## equal to ClipReloadTime's Max on these weapons (weapon.ini:4241 vs :4239);
-## the men battle/defeat scenarios field archers, so kill order and tick
-## counts move. Attribution run: with ONLY playable_unit_runtime_adapter.gd
-## stashed, this runner returned to 374/31 with battle live back at 133D27D7
-## (.private/orchestration/fable-wave/bugfix-lanes/logs-kimi-bug-combat/
-## slice-attribution.log).
-## retail_state_pin is byte-identical (its fixture uses synthetic unit rules;
-## pack cadence never enters it). The live/replay mirror is intact: both
-## sides of both scenarios moved to the same new value.
+## the authored 30 (PreAttackDelay 1000 + reload Max 2000). The adapter then
+## bridged those packs from ContinuousFireCoast when the pack provenance
+## authors coast as a *_RELOADTIME_MAX token (34 of 35 shipped combos;
+## NOT a universal stand-in — CreateAHeroBasicRangedWeapon coast=2000 vs
+## reload max 1500; LegolasHawkStrike / DwarvenMenOfDaleBlackArrows /
+## GoblinArcherPoisonArrows have no coast; WildSpiderRiderBow's coast is
+## deliberately commented out).
+##
+## MOVED 2026-08-12 (kimi-bug-combat FIX-FIRST) PreAttackType PER_POSITION.
+##   battle  BEE6651D -> D48DB1F7
+##   defeat  6242FE75 -> 58F3870F
+## Cause: GondorArcherBow authors PreAttackType = PER_POSITION
+## (weapon.ini:4233), so PreAttackDelay is charged only on a new
+## target/attack position (and the first shot). The previous ratchet treated
+## every volley as pre-attack + reload (30 ticks). Sustained fire on a
+## stationary target now cycles at firing + clip reload only (20 ticks at
+## the authored Max). Current packs do not compile PreAttackType; the
+## adapter infers PER_POSITION only for the clip-1 + delay-0 +
+## *_RELOADTIME_MAX-coast shape (the 34/35 combo) and honors the compiled
+## token when present (HaradrimBow PER_SHOT keeps every-shot windup).
+## Live/replay sides agree. EXPECTED_BATTLE_SIGNATURES is untouched.
+## retail_state_pin is byte-identical (synthetic rules have no
+## pre_attack_type; last-target keys are written only on PER_POSITION fire).
 const OBSERVED_PRECOOK_BATTLE_SIGNATURES := {
 	"men": {
-		"battle_live": "BEE6651D",
-		"battle_replay": "BEE6651D",
-		"defeat_live": "6242FE75",
-		"defeat_replay": "6242FE75",
+		"battle_live": "D48DB1F7",
+		"battle_replay": "D48DB1F7",
+		"defeat_live": "58F3870F",
+		"defeat_replay": "58F3870F",
 	},
 }
 # This is a deadlock/watchdog bound, not a frame-time optimization gate. The

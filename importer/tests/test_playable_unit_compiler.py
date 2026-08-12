@@ -2695,6 +2695,91 @@ def test_ranged_clip_reload_time_resolves_to_the_authored_max() -> None:
     )
 
 
+def test_pre_attack_type_compiles_from_the_authored_token() -> None:
+    """Retail authors PreAttackType per weapon (weapon.ini:4233 GondorArcherBow
+    = PER_POSITION; :4783 FaramirBow = PER_POSITION; :10808 HaradrimBow =
+    PER_SHOT). The compiler used to ignore the token, so every volley charged
+    PreAttackDelay. PER_POSITION means windup only on a new target/position
+    (and the first shot); compiling the token is what lets the runtime honor
+    it instead of hardcoding Gondor."""
+    command_row, button_row = _combat_command("CombatArcher", 9, "CombatArcher")
+    documents = _combat_documents(
+        _combat_object(
+            "CombatArcher",
+            "INFANTRY",
+            "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY CombatArcherBow\n  End\n",
+        ),
+        "Weapon CombatArcherBow\n"
+        "  AttackRange = COMBAT_ARCHER_RANGE\n"
+        "  DelayBetweenShots = 0\n"
+        "  PreAttackDelay = 1000\n"
+        "  PreAttackRandomAmount = 200\n"
+        "  PreAttackType = PER_POSITION\n"
+        "  FiringDuration = 0\n"
+        "  ClipSize = 1\n"
+        "  AutoReloadsClip = Yes\n"
+        "  ClipReloadTime = Min:COMBAT_ARCHER_RELOAD_MIN Max:COMBAT_ARCHER_RELOAD_MAX\n"
+        "  ContinuousFireOne = 0\n"
+        "  ContinuousFireCoast = COMBAT_ARCHER_RELOAD_MAX\n"
+        "  DamageNugget\n"
+        "    Damage = 35\n"
+        "    DamageType = PIERCE\n"
+        "  End\n"
+        "End\n",
+        command_row,
+        button_row,
+        defines=(
+            "\n#define COMBAT_ARCHER_RANGE 300\n"
+            "#define COMBAT_ARCHER_RELOAD_MIN 1500\n"
+            "#define COMBAT_ARCHER_RELOAD_MAX 2000\n"
+        ),
+    )
+
+    descriptor = compile_playable_unit_descriptor("CombatArcher", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    combat = descriptor["gameplay"]["simulation"]["resolved"]["combat"]
+    assert combat["preAttackType"]["value"] == "PER_POSITION"
+    assert combat["preAttackType"]["expression"].strip() == "PER_POSITION"
+    random_amount = combat["preAttackRandomAmountMs"]
+    assert random_amount["value"] == 200
+    assert random_amount["deterministicUse"] == "deferred"
+
+
+def test_pre_attack_type_per_shot_is_not_rewritten_to_per_position() -> None:
+    """HaradrimBow (weapon.ini:10808) authors PER_SHOT. Compiling the token
+    must keep that type; a Gondor-shaped default would drop the every-shot
+    windup."""
+    command_row, button_row = _combat_command("CombatHaradrim", 9, "CombatHaradrim")
+    documents = _combat_documents(
+        _combat_object(
+            "CombatHaradrim",
+            "INFANTRY",
+            "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY CombatHaradrimBow\n  End\n",
+        ),
+        "Weapon CombatHaradrimBow\n"
+        "  AttackRange = 275.0\n"
+        "  DelayBetweenShots = 900\n"
+        "  PreAttackDelay = 2100\n"
+        "  PreAttackRandomAmount = 200\n"
+        "  PreAttackType = PER_SHOT\n"
+        "  FiringDuration = 700\n"
+        "  DamageNugget\n"
+        "    Damage = 40\n"
+        "    DamageType = PIERCE\n"
+        "  End\n"
+        "End\n",
+        command_row,
+        button_row,
+    )
+
+    descriptor = compile_playable_unit_descriptor("CombatHaradrim", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    combat = descriptor["gameplay"]["simulation"]["resolved"]["combat"]
+    assert combat["preAttackType"]["value"] == "PER_SHOT"
+
+
 def test_authored_unresolvable_delay_between_shots_is_not_defaulted() -> None:
     command_row, button_row = _combat_command("CombatLancer", 9, "CombatLancer")
     documents = _combat_documents(

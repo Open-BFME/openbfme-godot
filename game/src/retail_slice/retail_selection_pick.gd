@@ -26,13 +26,13 @@ const MINIMUM_SELECTION_RADIUS := 0.32
 ## World-unit forgiveness added to a resolved footprint so a click that lands on
 ## the silhouette edge still hits. Deliberately small.
 const SELECTION_MARGIN := 0.12
-## Extra forgiveness for right-click attack targeting only. Retail's attack
-## cursor is slightly more generous than the selection hit-test - but only
-## slightly: at the Fords scale (0.026492) an archer's whole authored body is
-## 0.21 world units of radius, so the old 0.45 was more than double the hitbox
-## it was meant to pad and lit the attack cursor over empty ground beside the
-## target. 0.15 keeps the order pick one notch looser than SELECTION_MARGIN
-## without outgrowing the smallest authored body in the slice.
+## Extra forgiveness for right-click attack targeting only. INVENTED — there
+## is no retail oracle for this pad (OpenSAGE hit-tests the authored collider
+## with no extra world-unit margin). 0.15 is one notch looser than
+## SELECTION_MARGIN and stays inside the thinnest authored body in the slice
+## (GondorArcher GeometryMajorRadius 8.0 → 0.21 world at the Fords scale).
+## The old 0.45 was more than double that hitbox and lit the attack cursor
+## over empty ground beside the target.
 const ORDER_MARGIN := 0.15
 ## Retail infantry author `GeometryMajorRadius = 8.0`; used when a pack document
 ## carries no geometry for a horde member.

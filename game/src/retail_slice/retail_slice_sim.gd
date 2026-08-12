@@ -4133,6 +4133,10 @@ func _add_battalion(
 		"firing_duration_ticks": maxi(0, int(unit_rule["firing_duration_ticks"])),
 		"member_damage": member_damage,
 	}
+	if unit_rule.has("pre_attack_type"):
+		fallback_weapon["pre_attack_type"] = String(unit_rule["pre_attack_type"])
+	if unit_rule.has("pre_attack_random_amount_ms"):
+		fallback_weapon["pre_attack_random_amount_ms"] = float(unit_rule["pre_attack_random_amount_ms"])
 	var weapon_modes: Dictionary = (unit_rule.get("weapon_modes", {}) as Dictionary).duplicate(true)
 	if weapon_modes.is_empty():
 		weapon_modes["default"] = fallback_weapon
@@ -4267,6 +4271,13 @@ func _add_battalion(
 		# extraction is an importer follow-up; absent means not resistant).
 		"fear_resistant": bool(unit_rule.get("fear_resistant", false)),
 	}
+	# PreAttackType / random amount ride the compiled rule. Absent on the
+	# synthetic pin harness (which never authors them) so the 3000-tick pin
+	# stays put; `_step_member_attacks` defaults missing type to PER_SHOT.
+	if unit_rule.has("pre_attack_type"):
+		entities[id]["pre_attack_type"] = String(unit_rule["pre_attack_type"])
+	if unit_rule.has("pre_attack_random_amount_ms"):
+		entities[id]["pre_attack_random_amount_ms"] = float(unit_rule["pre_attack_random_amount_ms"])
 	# ShroudClearingRange, the deshroud radius. Absent unless the compiled rule
 	# authors one, exactly like the body scalars below and for the same reason:
 	# a key that appears unconditionally would change every unit's snapshot and
@@ -16040,8 +16051,32 @@ func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, tar
 		var coast_anchor_ms := base_reload_or_delay_ms
 		if continuous_threshold > 0 and int(row.get("continuous_fire_count", 0)) > continuous_threshold:
 			coast_anchor_ms = floorf(coast_anchor_ms / rate_multiplier)
+		# PreAttackType (weapon.ini:4233 GondorArcherBow = PER_POSITION;
+		# :10808 HaradrimBow = PER_SHOT). PER_POSITION charges PreAttackDelay
+		# only when the attacker acquires a NEW target/attack position (and
+		# on the first shot of an engagement). Sustained fire on a stationary
+		# target cycles at firing + clip reload only. PER_SHOT (and PER_ATTACK
+		# until it has its own rule) keeps the every-shot windup.
+		# PreAttackRandomAmount is compiled but not applied (deferred).
+		var pre_attack_type := String(row.get("pre_attack_type", "PER_SHOT")).to_upper()
+		var last_target_id := int(row.get("pre_attack_last_target_id", 0))
+		var last_target_kind := String(row.get("pre_attack_last_target_kind", ""))
+		var same_engagement := (
+			last_target_id == target_id
+			and last_target_kind == target_kind
+			and last_target_id != 0
+		)
+		var charge_pre_attack := pre_attack_type != "PER_POSITION" or not same_engagement
+		var windup_ticks := pre_attack_ticks if charge_pre_attack else 0
+		var windup_ms := float(row.get("pre_attack_delay_ms", 0.0)) if charge_pre_attack else 0.0
 		row["attack_sequence"] = int(row.get("attack_sequence", 0)) + 1
 		row["continuous_fire_count"] = int(row.get("continuous_fire_count", 0)) + 1
+		# Persist last-target only for PER_POSITION. Writing these keys on the
+		# pin harness (PER_SHOT default, synthetic rules) would move the
+		# 3000-tick state hash.
+		if pre_attack_type == "PER_POSITION":
+			row["pre_attack_last_target_id"] = target_id
+			row["pre_attack_last_target_kind"] = target_kind
 		var attack_sequence := int(row["attack_sequence"])
 		for member_index in range(member_health_values.size()):
 			if int(member_health_values[member_index]) <= 0:
@@ -16053,12 +16088,12 @@ func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, tar
 			start_ticks[member_index] = tick_index + stagger
 			# Every member owns its attack boundary. This avoids the old whole-
 			# horde structure impact while preserving deterministic replay.
-			hit_ticks[member_index] = tick_index + stagger + pre_attack_ticks
+			hit_ticks[member_index] = tick_index + stagger + windup_ticks
 		var reload_or_delay_ms := base_reload_or_delay_ms
 		if continuous_threshold > 0 and int(row["continuous_fire_count"]) > continuous_threshold:
 			reload_or_delay_ms = floorf(reload_or_delay_ms / rate_multiplier)
 		var cadence_ms := (
-			float(row.get("pre_attack_delay_ms", 0.0))
+			windup_ms
 			+ float(row.get("firing_duration_ms", 0.0))
 			+ reload_or_delay_ms
 		)
@@ -16067,13 +16102,14 @@ func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, tar
 		row["continuous_fire_expiration_tick"] = tick_index + coast_anchor_ticks + coast_ticks
 		row["attack_cooldown"] = maxi(
 			cadence_ticks,
-			pre_attack_ticks + maximum_stagger + 1
+			windup_ticks + maximum_stagger + 1
 		)
-		row["attack_windup"] = pre_attack_ticks + maximum_stagger
+		row["attack_windup"] = windup_ticks + maximum_stagger
 		_emit_event("combat.swing", attacker_id, target_id, {
 			"attack_sequence": attack_sequence,
 			"living_members": _living_member_count(row),
 			"object_id": String(row.get("object_id", "")),
+			"charged_pre_attack": charge_pre_attack,
 		})
 	for member_index in range(member_health_values.size()):
 		if int(member_health_values[member_index]) <= 0:
@@ -16186,6 +16222,13 @@ func _clear_member_attack_schedule(row: Dictionary) -> void:
 		hit_ticks[index] = -1
 	row["member_attack_start_ticks"] = start_ticks
 	row["member_attack_hit_ticks"] = hit_ticks
+	# Leaving the firing engagement drops the PER_POSITION last-target so the
+	# next acquire (including the same unit after an idle) charges windup.
+	# Only touch the keys if they already exist — adding them on the pin
+	# harness (which never fires) would move the state hash.
+	if row.has("pre_attack_last_target_id"):
+		row["pre_attack_last_target_id"] = 0
+		row["pre_attack_last_target_kind"] = ""
 
 
 func _clear_member_targets(row: Dictionary) -> void:
@@ -16263,7 +16306,8 @@ func _apply_weapon_mode(row: Dictionary, mode: String) -> bool:
 	for field in [
 		"attack_range", "attack_range_source", "minimum_attack_range",
 		"minimum_attack_range_source", "delay_between_shots_ms",
-		"pre_attack_delay_ms", "firing_duration_ms", "attack_period_ticks",
+		"pre_attack_delay_ms", "pre_attack_type", "pre_attack_random_amount_ms",
+		"firing_duration_ms", "attack_period_ticks",
 		"pre_attack_ticks", "firing_duration_ticks", "member_damage", "clip_size",
 		"clip_reload_time_ms", "continuous_fire_one", "continuous_fire_coast_ticks",
 		"continuous_fire_rate_multiplier",

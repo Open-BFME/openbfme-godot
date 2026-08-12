@@ -40,13 +40,12 @@ const INFANTRY_SOURCE_RADIUS := 8.0
 ## `Geometry = CYLINDER`, `GeometryMajorRadius = 17.6`, `GeometryHeight = 40.0`.
 const TROLL_SOURCE_RADIUS := 17.6
 
-## LIVENESS (rulebook T3): a headless coroutine that aborts silently looks
-## exactly like a clean pass. Every test appends its name here and the run only
-## reports green when all of them arrived. Raise this when you add a test;
-## never lower it.
+## LIVENESS (rulebook T3): a mid-body script error aborts the enclosing
+## function without propagating. Completion is marked only at the END of each
+## test body, and the exact check count must match EXPECTED_CHECKS.
 const EXPECTED_TESTS := 11
-## Floor on asserted checks, so a test that returns early after one assert
-## cannot pass for the whole suite either.
+const EXPECTED_CHECKS := 54
+## Floor kept so a content-less run still fails closed if it aborts early.
 const MINIMUM_CHECKS := 40
 
 var passed := 0
@@ -60,39 +59,34 @@ func _initialize() -> void:
 
 func _run() -> void:
 	_test_source_footprint_reads_compiled_geometry()
-	_completed.append("source-footprint")
 	_test_world_projection_matches_retail_scale()
-	_completed.append("world-projection")
 	_test_visual_bounds_fallback_is_tight()
-	_completed.append("visual-bounds")
 	_test_structure_pick_rejects_distant_clicks()
-	_completed.append("structure-pick")
 	_test_battalion_pick_rejects_distant_clicks()
-	_completed.append("battalion-pick")
 	_test_nested_footprints_prefer_the_tighter_volume()
-	_completed.append("nested-footprints")
 	_test_no_flat_pick_radius_constants_remain()
-	_completed.append("no-flat-constants")
 	_test_horde_pick_is_the_member_union()
-	_completed.append("member-union")
 	_test_slice_pick_wires_member_candidates()
-	_completed.append("slice-wiring")
 	_test_order_margin_stays_within_the_hitbox()
-	_completed.append("order-margin")
 	_test_mounted_pack_member_geometry_matches_retail()
-	_completed.append("mounted-geometry")
 
 	if _completed.size() != EXPECTED_TESTS:
 		failed += 1
 		push_error("SELECTION_PICK_FAIL liveness: %d/%d tests reported (%s)" % [
 			_completed.size(), EXPECTED_TESTS, ", ".join(_completed)
 		])
-	if passed + failed < MINIMUM_CHECKS:
+	var ran := passed + failed
+	if ran != EXPECTED_CHECKS:
+		failed += 1
+		push_error("SELECTION_PICK_FAIL liveness: ran %d checks, expected %d - a function aborted before its assertions" % [
+			ran, EXPECTED_CHECKS
+		])
+	elif ran < MINIMUM_CHECKS:
 		failed += 1
 		push_error("SELECTION_PICK_FAIL liveness: only %d checks ran, expected at least %d" % [
-			passed + failed, MINIMUM_CHECKS
+			ran, MINIMUM_CHECKS
 		])
-	print("SELECTION_PICK_RESULT passed=%d failed=%d tests=%d" % [passed, failed, _completed.size()])
+	print("SELECTION_PICK_RESULT passed=%d failed=%d tests=%d checks=%d" % [passed, failed, _completed.size(), ran])
 	quit(0 if failed == 0 else 1)
 
 
@@ -112,6 +106,7 @@ func _test_source_footprint_reads_compiled_geometry() -> void:
 	primary_only.erase("footprint")
 	_check("primary_geometry_fallback", is_equal_approx(Pick.source_footprint_radius(primary_only), 8.0))
 	_check("empty_geometry_is_zero", is_equal_approx(Pick.source_footprint_radius({}), 0.0))
+	_completed.append("source-footprint")
 
 
 func _test_world_projection_matches_retail_scale() -> void:
@@ -139,6 +134,7 @@ func _test_world_projection_matches_retail_scale() -> void:
 		infantry >= Pick.MINIMUM_SELECTION_RADIUS and infantry < 0.4
 	)
 	_check("no_scale_yields_no_radius", is_equal_approx(Pick.world_radius_from_source(50.0, 0.0), 0.0))
+	_completed.append("world-projection")
 
 
 func _test_visual_bounds_fallback_is_tight() -> void:
@@ -155,6 +151,7 @@ func _test_visual_bounds_fallback_is_tight() -> void:
 		"tiny_model_stays_clickable",
 		Pick.world_radius_from_visual_bounds(sliver, FORDS_SOURCE_SCALE) >= Pick.MINIMUM_SELECTION_RADIUS
 	)
+	_completed.append("visual-bounds")
 
 
 func _test_structure_pick_rejects_distant_clicks() -> void:
@@ -182,6 +179,7 @@ func _test_structure_pick_rejects_distant_clicks() -> void:
 		"click_just_beyond_the_footprint_does_not_select",
 		Pick.closest_hit(Vector2(10.0 + radius + 0.2, 4.0), candidates) == 0
 	)
+	_completed.append("structure-pick")
 
 
 func _test_battalion_pick_rejects_distant_clicks() -> void:
@@ -206,6 +204,7 @@ func _test_battalion_pick_rejects_distant_clicks() -> void:
 		Pick.closest_hit(Vector2(radius + 0.1, 0.0), candidates, Pick.ORDER_MARGIN) == 3
 			and Pick.closest_hit(Vector2(radius + 0.3, 0.0), candidates, Pick.ORDER_MARGIN) == 0
 	)
+	_completed.append("battalion-pick")
 
 
 func _test_nested_footprints_prefer_the_tighter_volume() -> void:
@@ -227,6 +226,7 @@ func _test_nested_footprints_prefer_the_tighter_volume() -> void:
 		"zero_radius_candidates_are_never_hit",
 		Pick.closest_hit(Vector2.ZERO, [{"id": 9, "position": Vector2.ZERO, "radius": 0.0}]) == 0
 	)
+	_completed.append("nested-footprints")
 
 
 func _test_no_flat_pick_radius_constants_remain() -> void:
@@ -239,6 +239,7 @@ func _test_no_flat_pick_radius_constants_remain() -> void:
 		"pick_path_uses_the_footprint_module",
 		source.contains("RetailSelectionPick") or source.contains("SelectionPick")
 	)
+	_completed.append("no-flat-constants")
 
 
 func _test_horde_pick_is_the_member_union() -> void:
@@ -253,6 +254,7 @@ func _test_horde_pick_is_the_member_union() -> void:
 	var battalion_script: GDScript = load(BATTALION_SCRIPT_PATH)
 	_check("battalion_script_compiles", battalion_script != null and battalion_script.can_instantiate())
 	if battalion_script == null or not battalion_script.can_instantiate():
+		_completed.append("member-union")
 		return
 	var battalion: Node3D = battalion_script.new()
 	root.add_child(battalion)
@@ -307,6 +309,7 @@ func _test_horde_pick_is_the_member_union() -> void:
 	root.add_child(fresh)
 	_check("no_visuals_yields_no_candidates_for_the_fallback", fresh.member_pick_candidates(7).is_empty())
 	fresh.queue_free()
+	_completed.append("member-union")
 
 
 func _test_slice_pick_wires_member_candidates() -> void:
@@ -319,10 +322,12 @@ func _test_slice_pick_wires_member_candidates() -> void:
 	var start := source.find("func _battalion_pick_candidates")
 	_check("battalion_pick_candidates_present", start >= 0)
 	if start < 0:
+		_completed.append("slice-wiring")
 		return
 	var body := source.substr(start, source.find("func _battalion_pick_radius") - start)
 	_check("slice_picks_per_member_when_visuals_live", body.contains("member_pick_candidates"))
 	_check("horde_disc_remains_only_a_fallback", body.contains("_battalion_pick_radius(id)"))
+	_completed.append("slice-wiring")
 
 
 func _test_order_margin_stays_within_the_hitbox() -> void:
@@ -334,6 +339,7 @@ func _test_order_margin_stays_within_the_hitbox() -> void:
 	var archer_body_world := INFANTRY_SOURCE_RADIUS * FORDS_SOURCE_SCALE
 	_check("order_margin_exceeds_selection_margin", Pick.ORDER_MARGIN > Pick.SELECTION_MARGIN)
 	_check("order_margin_no_wider_than_the_thinnest_body", Pick.ORDER_MARGIN <= archer_body_world)
+	_completed.append("order-margin")
 
 
 func _test_mounted_pack_member_geometry_matches_retail() -> void:
@@ -345,10 +351,12 @@ func _test_mounted_pack_member_geometry_matches_retail() -> void:
 	var db = root.get_node_or_null("ContentDB")
 	_check("content_db_autoload_available", db != null)
 	if db == null:
+		_completed.append("mounted-geometry")
 		return
 	db.reload()
 	if not db.has_method("get_playable_unit_runtime_for_member"):
 		_check("content_db_indexes_geometry_per_member", false)
+		_completed.append("mounted-geometry")
 		return
 	var content_requested := OS.get_environment("OPENBFME_CONTENT").strip_edges() != ""
 	var cases := {
@@ -383,6 +391,7 @@ func _test_mounted_pack_member_geometry_matches_retail() -> void:
 			((troll_doc.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary).get("geometry", {})
 		)
 		_check("troll_pick_is_fatter_than_archer_pick", troll_radius > 2.0 * archer_radius)
+	_completed.append("mounted-geometry")
 
 
 func _check(label: String, condition: bool) -> void:

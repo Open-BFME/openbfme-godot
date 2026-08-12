@@ -1669,7 +1669,17 @@ func _playable_unit_projection(document: Dictionary) -> Dictionary:
 				states["attackRangedPre"] = {"clips": pre_clips, "mode": "once", "useWeaponTiming": false}
 			var fire_clips := _conditioned_attack_clips(ranked, "FIRING_OR_RELOADING")
 			if not fire_clips.is_empty():
-				states["attackRangedFire"] = {"clips": fire_clips, "mode": "once", "useWeaponTiming": true}
+				# Retail comments UseWeaponTiming OUT (gondorarcher.ini:261)
+				# and authors AnimationSpeedFactorRange = 1.2 1.3 (:262) so
+				# the clip always finishes before the randomized reload.
+				# Play at the authored min (deterministic; deferred Max jitter)
+				# and idle until the next shot — do not stretch across reload.
+				states["attackRangedFire"] = {
+					"clips": fire_clips,
+					"mode": "once",
+					"useWeaponTiming": false,
+					"speedFactor": 1.2,
+				}
 	var ability_states := _ability_animation_states(visual)
 	for ability_state_value in ability_states.keys():
 		var ability_state := String(ability_state_value)

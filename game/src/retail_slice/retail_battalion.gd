@@ -125,6 +125,7 @@ var clip_map: Dictionary = {}
 var clip_sets: Dictionary = {}
 var clip_modes: Dictionary = {}
 var attack_uses_weapon_timing := false
+var attack_fire_speed_factor := 1.0
 var equipment_contract: Dictionary = {}
 var equipment_contract_ready := false
 var unresolved_animation_track_count := 0
@@ -350,6 +351,10 @@ func _build_clip_map(capability: Dictionary) -> void:
 		if typeof(state_value) == TYPE_DICTIONARY:
 			clip_modes[state_name] = String((state_value as Dictionary).get("mode", "loop"))
 	attack_uses_weapon_timing = bool((states.get("attack", {}) as Dictionary).get("useWeaponTiming", false))
+	var fire_state: Dictionary = states.get("attackRangedFire", {}) as Dictionary
+	attack_fire_speed_factor = float(fire_state.get("speedFactor", 1.0))
+	if attack_fire_speed_factor <= 0.0:
+		attack_fire_speed_factor = 1.0
 	equipment_contract = (capability.get("equipment", {}) as Dictionary).duplicate(true)
 	equipment_contract_ready = bool(equipment_contract.get("validated", false))
 	unresolved_animation_track_count = int(capability.get("unresolvedAnimationTracks", 0))
@@ -1797,18 +1802,12 @@ func _play_member_clip(player: AnimationPlayer, requested: String, state: String
 		return
 	var jitter := 0.96 + float(posmod(entity_id * 5 + member_index * 7, 7)) * (0.08 / 6.0)
 	player.speed_scale = jitter
-	if state == "attack_ranged_fire" and attack_reload_seconds > 0.0:
-		var animation := player.get_animation(playable)
-		if animation != null and animation.length > 0.0:
-			# Retail's FIRING_OR_RELOADING state spans the authored reload
-			# (gondorarcher.ini:236-288 binds FIRING_OR_RELOADING_A with the
-			# reload, not a fixed-speed one-shot): bind the clip to the authored
-			# firing+reload span so the member visibly nocks, draws and holds
-			# across the whole cycle instead of snapping back to idle while the
-			# sim is still reloading. Clamped so odd pack data can never pin or
-			# strobe the rig; the tiny per-member jitter stays so a horde does
-			# not move as one.
-			player.speed_scale = clampf(animation.length / attack_reload_seconds, 0.5, 2.0) * jitter
+	if state == "attack_ranged_fire":
+		# Retail comments UseWeaponTiming OUT (gondorarcher.ini:251/261) and
+		# authors AnimationSpeedFactorRange = 1.2 1.3 (:262) so the fire clip
+		# always finishes before the randomized reload. Play at that authored
+		# factor and idle until the next shot — do not stretch across reload.
+		player.speed_scale = attack_fire_speed_factor if attack_fire_speed_factor > 0.0 else 1.0
 	player.play(playable, blend)
 	if apply_phase and state in ["idle", "run", "victory"] and player.current_animation_length > 0.0:
 		player.seek(player.current_animation_length * phase_for_member(member_index, state), true)

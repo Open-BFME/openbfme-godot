@@ -224,7 +224,7 @@ static func simulation_rule(document: Dictionary, require_producer: bool = true)
 			"memberHealth": _resolved_value(resolved.get("memberHealth")),
 			"speed": _resolved_value(resolved.get("speed")),
 			"visionRange": _resolved_value(resolved.get("visionRange")),
-			"combat": _resolved_dictionary(resolved.get("combat", {})),
+			"combat": _flatten_combat(resolved.get("combat", {})),
 			"movement": _resolved_dictionary(resolved.get("movement", {})),
 			"formation": resolved.get("formation", {}),
 			"fearResistant": _resolved_value(resolved.get("fearResistant")),
@@ -449,6 +449,7 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 	var clip_reload_ms := float(clip_reload["reload_ms"])
 	if period_ms <= 0.0 and clip_reload_ms > 0.0:
 		period_ms = clip_reload_ms
+	var pre_attack := _resolved_pre_attack_type(combat)
 	var category := String(simulation.get("category", ""))
 	# Compiled alternate weapon-mode profiles (WEAPONSET_TOGGLE_* / MOUNTED):
 	# each converts into the same scaled shape the sim's weapon-mode table
@@ -473,6 +474,8 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 			"minimum_attack_range_source": minimum_range,
 			"delay_between_shots_ms": delay_ms,
 			"pre_attack_delay_ms": pre_attack_ms,
+			"pre_attack_type": String(pre_attack["type"]),
+			"pre_attack_random_amount_ms": float(combat.get("preAttackRandomAmountMs", 0.0)),
 			"firing_duration_ms": firing_ms,
 			"attack_period_ticks": maxi(1, roundi(period_ms / (TICK_SECONDS * 1000.0))),
 			"pre_attack_ticks": maxi(0, roundi(pre_attack_ms / (TICK_SECONDS * 1000.0))),
@@ -505,6 +508,8 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 		"vision_range_source": vision,
 		"delay_between_shots_ms": delay_ms,
 		"pre_attack_delay_ms": pre_attack_ms,
+		"pre_attack_type": String(pre_attack["type"]),
+		"pre_attack_random_amount_ms": float(combat.get("preAttackRandomAmountMs", 0.0)),
 		"firing_duration_ms": firing_ms,
 		"attack_period_ticks": maxi(1, roundi(period_ms / (TICK_SECONDS * 1000.0))),
 		"pre_attack_ticks": maxi(0, roundi(pre_attack_ms / (TICK_SECONDS * 1000.0))),
@@ -526,6 +531,7 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 			# to come from the ContinuousFireCoast bridge instead of the cooked
 			# ClipReloadTime, the rule itself says so.
 			"clip_reload_source": String(clip_reload["source"]),
+			"pre_attack_type_source": String(pre_attack["source"]),
 		},
 	}
 	var permanent_locks: Array = simulation.get("permanent_weapon_locks", []) as Array
@@ -576,34 +582,80 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 	return output
 
 
-static func _resolved_clip_reload_ms(combat: Dictionary) -> Dictionary:
-	## Clip reload drives the shot cadence of every ClipSize = 1 weapon: the
-	## sim substitutes it for DelayBetweenShots (retail_slice_sim.gd
-	## `_step_member_attacks`). Retail authors it as a RANGED value -
-	## `ClipReloadTime = Min:1500 Max:2000` (weapon.ini:4239 GondorArcherBow,
-	## :10409 MordorArcherBow, :1836 LorienElvenBow, :1260 MirkwoodArcherBow) -
-	## and pack builds from before the importer learned that form carry no
-	## `clipReloadTimeMs` at all, which collapsed the reload to 0 ms and
-	## doubled the visible archer fire rate.
-	##
-	## Bridge for those packs: on every one of those weapons retail authors
-	## ContinuousFireCoast exactly equal to ClipReloadTime's Max
-	## (weapon.ini:4241 vs :4239, and likewise :10409, :1836, :1260), and the
-	## deterministic runtime takes the authored Max (the spellbook resolvedMax
-	## convention, retail_slice_sim.gd `_spellbook_weapon_field`). The proxy
-	## therefore reproduces the cooked value exactly - and retires itself the
-	## day the packs are re-cooked, because the real field wins first. The
-	## source is returned so callers can record it loudly in provenance.
-	var reload_ms := float(combat.get("clipReloadTimeMs", 0.0))
-	if reload_ms > 0.0:
-		return {"reload_ms": reload_ms, "source": "clipReloadTimeMs"}
+static func _coast_expression(combat: Dictionary) -> String:
+	var expression := String(combat.get("continuousFireCoastExpression", "")).strip_edges()
+	if expression != "":
+		return expression
+	var raw: Variant = combat.get("continuousFireCoastMs")
+	if typeof(raw) == TYPE_DICTIONARY:
+		return String((raw as Dictionary).get("expression", "")).strip_edges()
+	return ""
+
+
+static func _coast_is_reloadtime_max_token(combat: Dictionary) -> bool:
+	## 34 of 35 shipped clip-1 combos author ContinuousFireCoast as a
+	## `*_RELOADTIME_MAX` token (GondorArcherBow weapon.ini:4241
+	## GONDOR_ARCHER_BOW_RELOADTIME_MAX). The 35th and the no-coast weapons
+	## are NOT a valid proxy — see `_resolved_clip_reload_ms`.
+	var token := _coast_expression(combat)
+	token = token.split(";", 1)[0].split("//", 1)[0].strip_edges().to_upper()
+	return token.ends_with("_RELOADTIME_MAX") or token == "RELOADTIME_MAX"
+
+
+static func _resolved_pre_attack_type(combat: Dictionary) -> Dictionary:
+	var authored := String(combat.get("preAttackType", "")).strip_edges().to_upper()
+	if authored in ["PER_POSITION", "PER_SHOT", "PER_ATTACK"]:
+		return {"type": authored, "source": "preAttackType"}
+	# Pre-cook bridge: current packs do not compile PreAttackType. Retail
+	# clip-1 delay-0 bows whose coast is the *_RELOADTIME_MAX token are
+	# PER_POSITION (GondorArcherBow weapon.ini:4233, MordorArcherBow :10402).
+	# WildSpiderRiderBow is PER_SHOT and authors no coast (commented out at
+	# weapon.ini:15729) — it must not take this bridge.
 	if (
 		int(combat.get("clipSize", 0)) == 1
 		and float(combat.get("delayBetweenShotsMs", -1.0)) <= 0.0
+		and _coast_is_reloadtime_max_token(combat)
 	):
+		return {"type": "PER_POSITION", "source": "clip-1-coast-reloadmax-proxy"}
+	return {"type": "PER_SHOT", "source": "default-per-shot"}
+
+
+static func _resolved_clip_reload_ms(combat: Dictionary) -> Dictionary:
+	## Clip reload drives the shot cadence of ClipSize = 1 weapons: the sim
+	## substitutes it for DelayBetweenShots (retail_slice_sim.gd
+	## `_step_member_attacks`). Retail authors it as a RANGED value —
+	## `ClipReloadTime = Min:1500 Max:2000` (weapon.ini:4239 GondorArcherBow,
+	## :10409 MordorArcherBow) — and pack builds from before the importer
+	## learned that form carry no `clipReloadTimeMs` at all.
+	##
+	## ContinuousFireCoast is NOT a universal stand-in. Five retail
+	## counterexamples:
+	##   * CreateAHeroBasicRangedWeapon (weapon.ini:19009) coast = 2000
+	##     (FARAMIR_BOW_RELOADTIME_MAX) vs ClipReloadTime Max 1500
+	##   * LegolasHawkStrike (:135) — no coast
+	##   * DwarvenMenOfDaleBlackArrows (:6734) — no coast
+	##   * GoblinArcherPoisonArrows (:18014) — no coast
+	##   * WildSpiderRiderBow (:15729) — coast deliberately commented out
+	## 34 of 35 shipped combos author coast as a *_RELOADTIME_MAX token; the
+	## proxy is legal ONLY then. Otherwise use the compiled clipReloadTimeMs
+	## (now that the importer parses Min/Max) or fail loud — never a silent 0.
+	var reload_ms := float(combat.get("clipReloadTimeMs", 0.0))
+	if reload_ms > 0.0:
+		return {"reload_ms": reload_ms, "source": "clipReloadTimeMs"}
+	var needs_clip_reload := (
+		int(combat.get("clipSize", 0)) == 1
+		and float(combat.get("delayBetweenShotsMs", -1.0)) <= 0.0
+	)
+	if needs_clip_reload and _coast_is_reloadtime_max_token(combat):
 		var coast_ms := float(combat.get("continuousFireCoastMs", 0.0))
 		if coast_ms > 0.0:
 			return {"reload_ms": coast_ms, "source": "continuousFireCoastMs-proxy"}
+	if needs_clip_reload:
+		push_error(
+			"playable_unit_runtime_adapter: clip-1 DelayBetweenShots=0 weapon has no clipReloadTimeMs and ContinuousFireCoast is not an authored *_RELOADTIME_MAX token (expression=%s). Refusing a silent 0 ms reload."
+			% _coast_expression(combat)
+		)
+		return {"reload_ms": 0.0, "source": "unresolved"}
 	return {"reload_ms": 0.0, "source": "none"}
 
 
@@ -627,6 +679,7 @@ static func _normalized_weapon_mode(mode_key: String, profile: Dictionary, sourc
 	var clip_reload_ms := float(_resolved_clip_reload_ms(profile)["reload_ms"])
 	if period_ms <= 0.0 and clip_reload_ms > 0.0:
 		period_ms = clip_reload_ms
+	var pre_attack := _resolved_pre_attack_type(profile)
 	return {
 		"name": String(profile.get("weaponId", mode_key)),
 		"weapon_slot": String(profile.get("weaponSlot", "")).to_lower(),
@@ -636,6 +689,8 @@ static func _normalized_weapon_mode(mode_key: String, profile: Dictionary, sourc
 		"minimum_attack_range_source": minimum_range,
 		"delay_between_shots_ms": delay_ms,
 		"pre_attack_delay_ms": pre_attack_ms,
+		"pre_attack_type": String(pre_attack["type"]),
+		"pre_attack_random_amount_ms": float(profile.get("preAttackRandomAmountMs", 0.0)),
 		"firing_duration_ms": firing_ms,
 		"attack_period_ticks": maxi(1, roundi(period_ms / (TICK_SECONDS * 1000.0))),
 		"pre_attack_ticks": maxi(0, roundi(pre_attack_ms / (TICK_SECONDS * 1000.0))),
@@ -1022,7 +1077,7 @@ static func _resolved_weapon_modes(value: Variant) -> Dictionary:
 		var profile: Variant = (value as Dictionary)[mode_key]
 		if typeof(profile) != TYPE_DICTIONARY:
 			return {}
-		output[String(mode_key)] = _resolved_dictionary(profile)
+		output[String(mode_key)] = _flatten_combat(profile)
 	return output
 
 
@@ -1032,6 +1087,21 @@ static func _resolved_dictionary(value: Variant) -> Dictionary:
 	var output: Dictionary = {}
 	for key in (value as Dictionary).keys():
 		output[key] = _resolved_value((value as Dictionary)[key])
+	return output
+
+
+static func _flatten_combat(value: Variant) -> Dictionary:
+	## Like `_resolved_dictionary` but keeps the ContinuousFireCoast expression
+	## so the clip-reload proxy can see whether the pack authored a
+	## `*_RELOADTIME_MAX` token (the only case the proxy is legal).
+	var output := _resolved_dictionary(value)
+	if typeof(value) != TYPE_DICTIONARY:
+		return output
+	var coast: Variant = (value as Dictionary).get("continuousFireCoastMs")
+	if typeof(coast) == TYPE_DICTIONARY:
+		output["continuousFireCoastExpression"] = String(
+			(coast as Dictionary).get("expression", "")
+		)
 	return output
 
 

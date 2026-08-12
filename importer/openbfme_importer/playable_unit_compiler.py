@@ -591,6 +591,55 @@ def _resolved_ranged_definition_field(
     return result
 
 
+_PRE_ATTACK_TYPES = frozenset({"PER_POSITION", "PER_SHOT", "PER_ATTACK"})
+
+
+def _token_from_expression(expression: str) -> str:
+    """Strip INI comments and return the leading token, uppercased."""
+
+    token = expression.split(";", 1)[0].split("//", 1)[0].strip().upper()
+    return token
+
+
+def _resolved_token_definition_field(
+    definition: Mapping[str, Sequence[Mapping[str, object]]] | None,
+    field: str,
+    allowed: frozenset[str],
+) -> dict[str, object] | None:
+    """Resolve an authored enum token (PreAttackType = PER_POSITION)."""
+
+    if definition is None:
+        return None
+    rows = definition.get(field.casefold(), ())
+    resolved: list[dict[str, object]] = []
+    for row in rows:
+        expression = str(row.get("expression", ""))
+        token = _token_from_expression(expression)
+        if token not in allowed:
+            continue
+        resolved.append(
+            {
+                "value": token,
+                "expression": expression.strip(),
+                "sourceIni": str(row.get("sourceIni", "")),
+                "line": int(row.get("line", 0)),
+            }
+        )
+    by_value: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for row in resolved:
+        by_value[_digest(row["value"])].append(row)
+    if len(by_value) != 1:
+        return None
+    equivalent = next(iter(by_value.values()))
+    result = dict(equivalent[0])
+    if len(equivalent) > 1:
+        result["equivalentSources"] = [
+            {"sourceIni": row["sourceIni"], "line": row["line"]}
+            for row in equivalent
+        ]
+    return result
+
+
 _MULTIPLICATIVE_PATTERN = re.compile(
     r"#MULTIPLY\(\s*([^()\s]+)\s+(-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+))\s*\)",
     re.IGNORECASE,
@@ -1606,6 +1655,19 @@ def _simulation_contract(
                 )
             if field is not None:
                 combat[output_name] = field
+        pre_attack_type = _resolved_token_definition_field(
+            weapon, "PreAttackType", _PRE_ATTACK_TYPES
+        )
+        if pre_attack_type is not None:
+            combat["preAttackType"] = pre_attack_type
+        pre_attack_random = _resolved_definition_field(
+            weapon, "PreAttackRandomAmount", constants
+        )
+        if pre_attack_random is not None:
+            # Authored (weapon.ini:4232 GondorArcherBow = 200). Deterministic
+            # use is deferred: the runtime charges the flat PreAttackDelay.
+            pre_attack_random["deterministicUse"] = "deferred"
+            combat["preAttackRandomAmountMs"] = pre_attack_random
         if "delayBetweenShotsMs" not in combat and not weapon.get("delaybetweenshots"):
             # SAGE defaults an unauthored DelayBetweenShots to 0 ms (retail
             # MordorLanceThrown comments it out and carries cadence on the clip
@@ -4875,8 +4937,23 @@ def _weapon_mode_profile(
                 constants,
                 resolve=_resolved_multiplicative_expression,
             )
+        if field is None and source_name == "ClipReloadTime":
+            field = _resolved_ranged_definition_field(
+                definition, source_name, constants
+            )
         if field is not None:
             profile[output_name] = field
+    pre_attack_type = _resolved_token_definition_field(
+        definition, "PreAttackType", _PRE_ATTACK_TYPES
+    )
+    if pre_attack_type is not None:
+        profile["preAttackType"] = pre_attack_type
+    pre_attack_random = _resolved_definition_field(
+        definition, "PreAttackRandomAmount", constants
+    )
+    if pre_attack_random is not None:
+        pre_attack_random["deterministicUse"] = "deferred"
+        profile["preAttackRandomAmountMs"] = pre_attack_random
     if "damage" not in profile:
         nugget_damage = _base_weapon_damage(
             documents,
