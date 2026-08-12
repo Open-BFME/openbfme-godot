@@ -822,8 +822,8 @@ SHADER_BOOLEAN_COMPATIBILITY_PROPERTIES = {
 # material string properties. A scan of all 14,475 effective-assets W3Ds finds
 # 119 sentinel references across 35 files, but only 9 of them sit in a
 # property the pinned plugin ever resolves: NormalMap in 8 files (bbbags,
-# cah_skull, cahero_gondor04/06/07, esbtemple, gumaarms_sknl, livingmap) and
-# Texture_1 in psupplies04. The other 110 references are WaterPCATexture1/2/3,
+# cah_skull, cahero_gondor04/06/07, esbtemple, psupplies04, livingmap) and
+# Texture_1 in gumaarms_sknl. The other 110 references are WaterPCATexture1/2/3,
 # PCAFrothTexture and PCANoiseTexture on 26 water models, which the plugin
 # never dispatches at all, so they cannot produce a placeholder. Exactly one
 # of the nine, esbtemple.w3d, is reachable from any current profile.
