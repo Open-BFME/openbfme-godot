@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -689,6 +690,211 @@ def validate_map_fixtures(document: object) -> None:
             )
 
 
+# --- lane L2b: lifecycle-structure reclassification ---------------------------
+#
+# Fixtures make castle map objects sim entities (lane L2b), so the types that
+# seed must be classified ``lifecycle-structure`` — not ``renderable`` — in
+# object-bindings.json, carrying an ``objectId`` into the loader exactly like
+# the Fords neutral buildings do (design 4.1 item 2).  ``rebind_…`` moves the
+# seeded types' existing renderable rows from ``models`` to ``structures``;
+# the GLB/sourceVirtualModel art is reused verbatim, no second conversion.
+
+#: BFME2 1.06 CREEP_OBJECTFILTER lair set (mirrors
+#: ``retail_map_data.gd::CREEP_LAIR_TYPE_NAMES``).  Creep-lair placements are
+#: owned by the creep-lair lane's routing and seeding; castle fixture seeding
+#: defers them so the two lanes never double-spawn one placement.
+CREEP_LAIR_TYPE_NAMES: frozenset[str] = frozenset(
+    {
+        "barrowwightlair",
+        "cavetrolllair",
+        "cavetrolllairsnow",
+        "firedrakelair",
+        "moriargoblinlair",
+        "moriargoblinlairsnow",
+        "spiderlair",
+        "warglair",
+    }
+)
+
+#: Synthesized ContentDB id prefix for map-fixture structures.  Map-fixture
+#: types have no faction-pack object document; the id is deterministic from
+#: the type name and exists so lifecycle-structure bindings carry the same
+#: shape the loader already validates for the Fords neutrals.
+MAP_FIXTURE_OBJECT_ID_PREFIX = "bfme2.object.map-fixture."
+
+#: Named defer reasons (a fixture row that is admitted but never sim-seeded).
+FIXTURE_DEFER_CREEP_LAIR = "creep-lair-owned"
+FIXTURE_DEFER_INERT = "inert-scenery"
+FIXTURE_DEFER_CAPTURABLE = "capturable-flag"
+
+
+def castle_fixture_seed_disposition(row: Mapping[str, Any]) -> str:
+    """Return ``"seed"`` or the named reason this fixture is never sim-seeded.
+
+    The loader's sim-routing mirror (``retail_map_data.gd``) applies the same
+    rule to the same fields; both are pinned against the same oracle counts:
+
+    - creep-lair types belong to the creep-lair lane (``creep_lair_placements``
+      owns their seeding; enabling both must not double-spawn a lair);
+    - ``INERT`` KindOf is indestructible scenery (Carn Dum's high-pass rocks);
+    - ``CAPTURABLE``/``CAPTUREFLAG`` belongs to the capture lane.
+    """
+    type_name = str(row.get("typeName", ""))
+    if type_name.casefold() in CREEP_LAIR_TYPE_NAMES:
+        return FIXTURE_DEFER_CREEP_LAIR
+    kind_of = row.get("kindOf")
+    kinds = {
+        str(kind)
+        for kind in (kind_of if isinstance(kind_of, Sequence) and not isinstance(kind_of, (str, bytes)) else [])
+    }
+    if "INERT" in kinds:
+        return FIXTURE_DEFER_INERT
+    if "CAPTURABLE" in kinds or "CAPTUREFLAG" in kinds:
+        return FIXTURE_DEFER_CAPTURABLE
+    return "seed"
+
+
+def map_fixture_object_id(type_name: str) -> str:
+    """Deterministic, loader-safe ContentDB id for a map-fixture structure.
+
+    Mirrors ``retail_map_data.gd::_safe_content_object_id``: the
+    ``bfme2.object.`` prefix, lowercase alphanumerics plus ``-``/``.``, no
+    ``..``, no trailing separator.  SAGE type names may carry underscores
+    (``WOR_EreborThrone``), which the loader's alphabet rejects, so ``_``
+    folds to ``-``; collisions that folding could cause are refused by the
+    caller (``rebind_castle_fixture_structures``), never silently merged.
+    """
+    slug = type_name.casefold().replace("_", "-")
+    object_id = MAP_FIXTURE_OBJECT_ID_PREFIX + slug
+    if (
+        not slug
+        or len(object_id) > 128
+        or not re.fullmatch(r"[a-z0-9][a-z0-9.-]*", slug)
+        or ".." in slug
+        or slug.endswith((".", "-"))
+    ):
+        raise CastleFixturesError(
+            f"castle fixture type name {type_name!r} cannot form a safe object id"
+        )
+    return object_id
+
+
+def rebind_castle_fixture_structures(
+    bindings: Mapping[str, Any], fixtures_document: Mapping[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Move sim-seeded fixture types from ``models`` to ``structures`` rows.
+
+    ``bindings`` is one map's planned ``options.objectBindings``
+    (``logical``/``models``[/``structures``] rows); ``fixtures_document`` is
+    the L2a fixtures document for the same map.  Returns the rewritten
+    bindings plus evidence.  Every seeded fixture type MUST already have a
+    renderable binding row (the art is reused); a type without one is named
+    in ``unboundFixtureTypeNames`` and left alone — no GLB is ever invented.
+    A fixture type declared ``logical`` is a contradiction and fails closed.
+    """
+    if not isinstance(bindings, Mapping):
+        raise CastleFixturesError("object bindings must be an object")
+    rows = fixtures_document.get("fixtures")
+    if not isinstance(rows, list):
+        raise CastleFixturesError("fixtures document has no fixture rows")
+
+    def _row_list(key: str) -> list[Mapping[str, Any]]:
+        value = bindings.get(key, [])
+        if not isinstance(value, list) or any(
+            not isinstance(item, Mapping) for item in value
+        ):
+            raise CastleFixturesError(f"object bindings {key} rows must be objects")
+        return list(value)
+
+    logical = _row_list("logical")
+    models = _row_list("models")
+    structures = _row_list("structures")
+
+    seeded: dict[str, str] = {}
+    deferred: dict[str, int] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise CastleFixturesError("fixtures document has an invalid fixture row")
+        disposition = castle_fixture_seed_disposition(row)
+        if disposition == "seed":
+            spelling = str(row.get("typeName", ""))
+            seeded.setdefault(spelling.casefold(), spelling)
+        else:
+            deferred[disposition] = deferred.get(disposition, 0) + 1
+
+    models_by_type = {str(row.get("typeName", "")).casefold(): row for row in models}
+    logical_names = {str(row.get("typeName", "")).casefold() for row in logical}
+    existing_structure_names = {
+        str(row.get("typeName", "")).casefold() for row in structures
+    }
+
+    moved: dict[str, dict[str, Any]] = {}
+    unbound: list[str] = []
+    seen_object_ids: dict[str, str] = {}
+    for folded, spelling in sorted(seeded.items()):
+        if folded in logical_names:
+            raise CastleFixturesError(
+                f"castle fixture type {spelling!r} is declared logical"
+            )
+        if folded in existing_structure_names:
+            raise CastleFixturesError(
+                f"castle fixture type {spelling!r} already has a structure binding"
+            )
+        model = models_by_type.get(folded)
+        if model is None:
+            unbound.append(spelling)
+            continue
+        object_id = map_fixture_object_id(spelling)
+        prior = seen_object_ids.get(object_id)
+        if prior is not None:
+            raise CastleFixturesError(
+                f"castle fixture object ids collide: {prior!r} and {spelling!r}"
+            )
+        seen_object_ids[object_id] = spelling
+        glb = model.get("glb")
+        source_model = model.get("sourceVirtualModel")
+        match_method = model.get("matchMethod")
+        if not isinstance(glb, str) or not glb:
+            raise CastleFixturesError(
+                f"castle fixture type {spelling!r} has an invalid glb binding"
+            )
+        if not isinstance(source_model, str) or not source_model:
+            raise CastleFixturesError(
+                f"castle fixture type {spelling!r} has an invalid sourceVirtualModel"
+            )
+        moved[folded] = {
+            "typeName": str(model["typeName"]),
+            "sourceVirtualModel": source_model,
+            "glb": glb,
+            "matchMethod": match_method,
+            "objectId": object_id,
+        }
+
+    def _sorted(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            dict(row)
+            for row in sorted(
+                rows,
+                key=lambda row: (
+                    str(row.get("typeName", "")).casefold(),
+                    str(row.get("typeName", "")),
+                ),
+            )
+        ]
+
+    rebound = {
+        "logical": _sorted(logical),
+        "models": _sorted(row for row in models if str(row.get("typeName", "")).casefold() not in moved),
+        "structures": _sorted([*structures, *moved.values()]),
+    }
+    evidence = {
+        "movedTypeNames": [str(row["typeName"]) for row in rebound["structures"] if str(row["typeName"]).casefold() in moved],
+        "unboundFixtureTypeNames": sorted(unbound, key=str.casefold),
+        "deferredPlacements": dict(sorted(deferred.items())),
+    }
+    return rebound, evidence
+
+
 def make_effective_assets_fixtures_builder(
     effective_assets_root: str | Path,
     *,
@@ -722,13 +928,21 @@ def make_effective_assets_fixtures_builder(
 
 
 __all__ = [
+    "CREEP_LAIR_TYPE_NAMES",
+    "FIXTURE_DEFER_CAPTURABLE",
+    "FIXTURE_DEFER_CREEP_LAIR",
+    "FIXTURE_DEFER_INERT",
     "FIXTURE_ROLES",
+    "MAP_FIXTURE_OBJECT_ID_PREFIX",
     "MAP_FIXTURES_SCHEMA",
     "MAP_FIXTURES_SCHEMA_VERSION",
     "MAP_OBJECT_DESCRIPTOR_SCHEMA",
     "CastleFixturesError",
     "build_map_fixtures",
+    "castle_fixture_seed_disposition",
     "compile_map_object_descriptor",
     "make_effective_assets_fixtures_builder",
+    "map_fixture_object_id",
+    "rebind_castle_fixture_structures",
     "validate_map_fixtures",
 ]

@@ -22,6 +22,11 @@ const MAX_TERRAIN_TEXTURE_TOTAL_BYTES := 128 * 1024 * 1024
 const BLEND_DESCRIPTION_RECORD_BYTES := 18
 const CLIFF_MAPPING_RECORD_BYTES := 38
 const MAX_MAP_OBJECTS := 5000
+## Mirror of sage_map.py MAX_PROPERTIES_PER_OBJECT: a single cooked object
+## never authors more than this many properties.
+const MAX_OBJECT_PROPERTIES := 512
+## Mirror of sage_map.py MAX_OBJECT_BINDING_TEXT for property names/values.
+const MAX_OBJECT_PROPERTY_TEXT := 1024
 const CASTLE_SIEGE_FAMILY := "retail-castle-siege-skirmish"
 const CASTLE_SIEGE_STATUS := "blocked-named-gaps"
 const CASTLE_SIEGE_ADMISSION_POLICY := "document-loadable-lobby-visible-gameplay-fails-closed"
@@ -160,6 +165,15 @@ var castle_required_capabilities: Array[String] = []
 ## malformed document never is.
 var map_fixtures: Array = []
 var fixtures_omitted: Array = []
+## Lane L2b: the sim-seeded subset of map_fixtures, translated to sim-local
+## space, plus the named defer tally (reason -> placement count) for the rows
+## that never seed. Both surface through simulation_configuration(); the sim
+## only consumes them when its "enable_castle_fixtures" rule is on.
+var castle_fixture_placements: Array[Dictionary] = []
+var castle_fixture_deferred: Dictionary = {}
+## source object index -> typeName, for cross-checking fixture rows against
+## the cooked objects they claim to describe (never trust a document pair).
+var _object_type_by_index: Array[String] = []
 var _map_runtime_profile: Dictionary = DEFAULT_MAP_RUNTIME_PROFILE
 var width := 0
 var height := 0
@@ -430,6 +444,9 @@ func load_from_pack(
 		return false
 	if fixtures_declared and not _load_fixtures(fixtures):
 		return false
+	if fixtures_declared and not _cross_check_fixtures_against_objects():
+		return false
+	_derive_castle_fixture_placements()
 	if _validation_cancelled():
 		return false
 	if roads_declared and road_materials_declared and not roads_geometry_only and road_unresolved_control_point_count == 0 and not _load_road_materials(road_materials):
@@ -554,7 +571,12 @@ func _load_fixtures(value: Variant) -> bool:
 	var rows := _array(document.get("fixtures", null))
 	if rows.is_empty():
 		return _fail("cooked fixtures document has no fixture rows")
-	if rows.size() > MAX_MAP_FIXTURES or int(document.get("count", -1)) != rows.size():
+	# Oversize is its own refusal (L2a follow-up F5): a document whose count
+	# metadata matches a too-large rows list used to share the mismatch
+	# diagnostic, which named the wrong defect.
+	if rows.size() > MAX_MAP_FIXTURES:
+		return _fail("cooked fixtures document exceeds its bound")
+	if int(document.get("count", -1)) != rows.size():
 		return _fail("cooked fixtures count does not match its metadata")
 	var seen_indices := {}
 	for row_value in rows:
@@ -676,6 +698,80 @@ func _valid_fixture_garrison_block(value: Variant) -> bool:
 	if not _exact_integer(block.get("containMax", null)) or int(block.get("containMax")) <= 0:
 		return _fail("garrison fixture has an invalid containMax")
 	return true
+
+
+func _safe_object_property_value(value: Variant) -> bool:
+	## Exactly the value shapes sage_map.py::_parse_property can emit
+	## (bool / i32 / f32 / ascii / unicode strings); anything else fails closed.
+	match typeof(value):
+		TYPE_BOOL, TYPE_INT:
+			return true
+		TYPE_FLOAT:
+			return _finite_number(value)
+		TYPE_STRING:
+			return String(value).length() <= MAX_OBJECT_PROPERTY_TEXT
+	return false
+
+
+func _castle_fixture_seed_disposition(record: Dictionary) -> String:
+	## Lane L2b seed filter, mirrored clause-for-clause from the importer's
+	## castle_fixtures.castle_fixture_seed_disposition and pinned to the same
+	## oracle counts (Erebor seeds 587, Carn Dum 260; both suites assert).
+	var type_name := String(record.get("typeName", "")).to_lower()
+	for lair_type in CREEP_LAIR_TYPE_NAMES:
+		# Creep-lair placements belong to the creep lane's routing; seeding
+		# them here too would double-spawn every lair.
+		if lair_type.to_lower() == type_name:
+			return "creep-lair-owned"
+	var kind_of := _array(record.get("kindOf", []))
+	if kind_of.has("INERT"):
+		# Indestructible scenery (Carn Dum's high-pass rocks, mine carts).
+		return "inert-scenery"
+	if kind_of.has("CAPTURABLE") or kind_of.has("CAPTUREFLAG"):
+		# Capture-flag semantics belong to the capture lane.
+		return "capturable-flag"
+	return "seed"
+
+
+func _cross_check_fixtures_against_objects() -> bool:
+	## Every fixture row claims an objects.json row (typeName + index); verify
+	## the claim against the cooked objects actually loaded. A fixtures
+	## document describing objects this map does not place fails closed.
+	for record_value in map_fixtures:
+		var record: Dictionary = record_value
+		var index := int(record.get("index", -1))
+		if index < 0 or index >= _object_type_by_index.size() or _object_type_by_index[index] != String(record.get("typeName", "")):
+			return _fail("castle fixture does not cross-match its cooked object")
+	return true
+
+
+func _derive_castle_fixture_placements() -> void:
+	castle_fixture_placements.clear()
+	castle_fixture_deferred.clear()
+	for record_value in map_fixtures:
+		var record: Dictionary = record_value
+		var disposition := _castle_fixture_seed_disposition(record)
+		if disposition != "seed":
+			castle_fixture_deferred[disposition] = int(castle_fixture_deferred.get(disposition, 0)) + 1
+			continue
+		var local := source_to_local(_vector3(record.get("position", [])))
+		var row := {
+			"type_name": String(record.get("typeName", "")),
+			"role": String(record.get("role", "")),
+			"source_index": int(record.get("index", -1)),
+			"position": Vector2(local.x, local.z),
+			"elevation": local.y,
+			"yaw": float(record.get("angle", 0.0)),
+			"owner": String(record.get("originalOwner", "")),
+			"maximum_health": float(record.get("maxHealth", 0.0)),
+			# JSON null armor is the recorded SAGE passthrough (no authored
+			# ArmorSet); the sim row carries "" for it.
+			"armor": "" if record.get("armor") == null else String(record.get("armor")),
+			"indestructible": bool(record.get("indestructible", false)),
+		}
+		if record.has("initialHealth"):
+			row["initial_health"] = float(record.get("initialHealth"))
+		castle_fixture_placements.append(row)
 
 
 var _validation_cancel_check := Callable()
@@ -1252,6 +1348,8 @@ func _load_objects(document: Dictionary, road_document: Dictionary, binding_docu
 	object_count = objects.size()
 	if object_count != int(document.get("count", -1)) or object_count > MAX_MAP_OBJECTS:
 		return _fail("cooked map object count does not match its metadata")
+	_object_type_by_index.clear()
+	_object_type_by_index.resize(object_count)
 	# Road wire objects are a separate layer only when the map declares a cooked
 	# roads document. Without one (the five-maps cook does not convert roads),
 	# every placement flows through object binding like any other source object.
@@ -1268,6 +1366,19 @@ func _load_objects(document: Dictionary, road_document: Dictionary, binding_docu
 		var sage_position := _vector3(object.get("sagePosition", []))
 		var yaw := float(object.get("godotYawRadians", NAN))
 		var road_type_value: Variant = object.get("roadType", null)
+		# Lane L2b: the authored properties bag (originalOwner, objectEnabled,
+		# objectIndestructible, objectInitialHealth, objectTargetable, …) is on
+		# disk in every cooked objects.json; it was silently dropped here. Keep
+		# it, bounded to exactly what the SAGE property parser can emit.
+		var properties_value: Variant = object.get("properties", {})
+		if typeof(properties_value) != TYPE_DICTIONARY:
+			return _fail("invalid cooked object placement properties")
+		var properties: Dictionary = properties_value
+		if properties.size() > MAX_OBJECT_PROPERTIES:
+			return _fail("cooked object placement properties exceed their bound")
+		for property_name in properties:
+			if typeof(property_name) != TYPE_STRING or String(property_name).is_empty() or String(property_name).length() > MAX_OBJECT_PROPERTY_TEXT or not _safe_object_property_value(properties[property_name]):
+				return _fail("invalid cooked object placement properties")
 		if object.is_empty() or type_name == "" or type_name.length() > 128 or source_index < 0 or source_index >= object_count or source_indices.has(source_index) or source_position == Vector3.INF or sage_position == Vector3.INF or not _finite_number(yaw) or not _exact_integer(road_type_value):
 			return _fail("invalid cooked object placement")
 		var road_type := int(road_type_value)
@@ -1291,7 +1402,9 @@ func _load_objects(document: Dictionary, road_document: Dictionary, binding_docu
 			"source_yaw": yaw,
 			"yaw": yaw,
 			"scale": Vector3.ONE,
+			"properties": properties,
 		})
+		_object_type_by_index[source_index] = type_name
 	nonroad_object_count = normalized_objects.size()
 	if roads_declared:
 		if not _load_roads(road_document, source_roads, declared_road_summary):
@@ -2541,6 +2654,11 @@ func simulation_configuration() -> Dictionary:
 		# Authored PlyrCreeps lairs. The simulation only seeds them when its
 		# opt-in creep rule is enabled; carrying them here is inert otherwise.
 		"creep_lair_placements": creep_lair_placements.duplicate(true),
+		# Lane L2b castle fixtures in sim-local space. Inert unless the sim's
+		# opt-in "enable_castle_fixtures" rule is enabled; the deferred tally
+		# names every admitted-but-unseeded placement by reason.
+		"castle_fixture_placements": castle_fixture_placements.duplicate(true),
+		"castle_fixture_deferred": castle_fixture_deferred.duplicate(true),
 	}
 
 
@@ -2811,6 +2929,9 @@ func _reset() -> void:
 	castle_required_capabilities.clear()
 	map_fixtures.clear()
 	fixtures_omitted.clear()
+	castle_fixture_placements.clear()
+	castle_fixture_deferred.clear()
+	_object_type_by_index.clear()
 	_map_runtime_profile = DEFAULT_MAP_RUNTIME_PROFILE
 	height_samples = PackedByteArray()
 	passability_bits = PackedByteArray()

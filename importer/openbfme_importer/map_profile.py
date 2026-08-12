@@ -24,6 +24,7 @@ from typing import Any
 
 from .catalog import CatalogEntry, InstallCatalog
 from .castle_capabilities import castle_siege_contract_v2
+from .castle_fixtures import rebind_castle_fixture_structures
 from .map_census import (
     MAPCACHE_VIRTUAL_PATH,
     MAX_MAPCACHE_BYTES,
@@ -944,23 +945,31 @@ def build_map_profile(
             map_resources[0]["options"]["objectBindings"] = binding_rows
         if castle_evidence is not None and fixtures_builder is not None:
             # Castle maps only: the fixtures document is the gameplay
-            # counterpart to object-bindings.json (lane L2a).  A rejection is
-            # recorded loudly in planning evidence, never silently dropped.
-            try:
-                fixtures_document = fixtures_builder(target, parsed)
-            except (SageMapError, ValueError) as exc:
-                if strict:
-                    raise
-                binding_failures.append(
-                    {
-                        "slug": target.slug,
-                        "category": target.category,
-                        "status": "fixtures-rejected",
-                        "reason": str(exc),
-                    }
+            # counterpart to object-bindings.json (lane L2a).  A build failure
+            # fails closed in BOTH modes (lane L2b, review follow-up F3):
+            # non-strict tolerance would cook the map with no fixtures at
+            # all, and the loader cannot distinguish that from a pre-L2a
+            # pack — the silent degrade the registry-catalog path never had.
+            fixtures_document = fixtures_builder(target, parsed)
+            map_resources[0]["options"]["fixtures"] = fixtures_document
+            if binding_rows is not None and isinstance(
+                fixtures_document.get("fixtures"), list
+            ):
+                # Lane L2b: sim-seeded fixture types are lifecycle
+                # structures, not renderable props (design 4.1 item 2).
+                # The rebind moves their existing model rows; a fixtures
+                # document without a rows list is a stub/invalid shape the
+                # cook-side seal refuses, so it is left untouched here.
+                binding_rows, fixture_rebind_evidence = (
+                    rebind_castle_fixture_structures(
+                        binding_rows, fixtures_document
+                    )
                 )
-            else:
-                map_resources[0]["options"]["fixtures"] = fixtures_document
+                map_resources[0]["options"]["objectBindings"] = binding_rows
+                if binding_evidence is not None:
+                    binding_evidence["castleFixtureStructures"] = (
+                        fixture_rebind_evidence
+                    )
         for resource in binding_resources:
             resource_id = str(resource["id"])
             if resource_id not in shared_binding_resources:

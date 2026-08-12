@@ -9,7 +9,7 @@ extends SceneTree
 ## geometries / Player_1 owner; EBGarrisonableTower ContainMax 3).
 
 const Watchdog := preload("res://tests/runner_watchdog.gd")
-const EXPECTED_CHECKS := 26
+const EXPECTED_CHECKS := 28
 
 const V2_CONTRACT := {
 	"version": 2,
@@ -287,6 +287,32 @@ func _run() -> void:
 		not _load(bad_omitted, bad_omitted_doc)
 		and String(bad_omitted.error) == "map fixtures document has an invalid omitted entry",
 		String(bad_omitted.error))
+
+	# L2a follow-up F5: a matching count that exceeds MAX_MAP_FIXTURES must
+	# name the bound, not pretend the metadata disagreed.
+	var oversize = map_data_script.new()
+	var oversize_doc := VALID_DOCUMENT.duplicate(true)
+	var oversize_rows: Array = []
+	for index in range(2049):
+		var row: Dictionary = FLAG_FIXTURE.duplicate(true)
+		row["index"] = index
+		oversize_rows.append(row)
+	oversize_doc["fixtures"] = oversize_rows
+	oversize_doc["count"] = 2049
+	_check("oversize_fixtures_names_the_bound",
+		not _load(oversize, oversize_doc)
+		and String(oversize.error) == "cooked fixtures document exceeds its bound",
+		String(oversize.error))
+
+	# L2a follow-up F5: a non-integral index is a placement error, not a
+	# silent int() truncate.
+	var float_index = map_data_script.new()
+	var float_index_doc := VALID_DOCUMENT.duplicate(true)
+	float_index_doc["fixtures"][0]["index"] = 1.5
+	_check("float_index_fails_closed",
+		not _load(float_index, float_index_doc)
+		and String(float_index.error) == "invalid castle fixture placement",
+		String(float_index.error))
 
 	_finish()
 

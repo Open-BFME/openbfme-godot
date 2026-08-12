@@ -24,6 +24,15 @@ const NEUTRAL_TEAM := 2
 ## spellbook/economy/AI production. Distinct from NEUTRAL_TEAM, which only
 ## owns capturable structures. High sentinel so no N-team roster id collides.
 const CREEP_TEAM := 9999
+## Non-combatant owner for map-authored castle fixtures whose originalOwner is
+## not a rostered player (PlyrCivilian, PlyrNeutral, retail's malformed
+## "/team"): never hostile, never a victory participant, like NEUTRAL_TEAM but
+## collision-free against N-team rosters (NEUTRAL_TEAM = 2 IS rostered on
+## 3+ player maps).
+const CASTLE_CIVILIAN_TEAM := 9998
+## First structure id handed to seeded castle fixtures (creep structures take
+## 60001+, creep guards 70001+, dynamic structures 3000+).
+const CASTLE_FIXTURE_FIRST_ID := 80001
 const CREEP_VISION_SOURCE := 200.0  # gamedata.ini line 61 CREEP_VISION
 const CREEP_LAIR_MAX_HEALTH := 2000  # StructureBody MaxHealth, all six lairs
 const CREEP_LAIR_DAMAGED_HEALTH := 1000  # authored damage tiers 1000/500
@@ -752,6 +761,62 @@ func _spatial_gather_sorted(point: Vector2, radius: float) -> Array[int]:
 	return result
 
 
+## Broad-phase for _deflect_around_structures (lane L2b item 6). A castle map
+## seeds hundreds of live structures (Carn Dum: 260) and the deflection loop
+## used to walk ALL of them per moving entity per tick. Structures never move,
+## so a spatial bucket index over their centres stays valid until the table is
+## mutated; `_structures_mutation_serial` is bumped at every mutation site and
+## the index rebuilds lazily on the first query after a change.
+##
+## Exactness contract: the gather returns every structure whose blocking disc
+## (radius <= STRUCTURE_DEFLECT_GATHER_RADIUS) can overlap the query point, in
+## ascending id order — the same visit order as the old full scan. Any centre
+## outside the gathered box is further than the maximum radius away, and the
+## deflection loop skips those rows with zero side effects, so the result is
+## byte-identical to the full scan.
+const STRUCTURE_DEFLECT_GATHER_RADIUS := 4.6  # max STRUCTURE_BLOCK_RADIUS (fortress); the footprint corridor only shrinks radii
+
+var _structures_mutation_serial := 0
+var _structure_spatial_serial := -1
+var _structure_spatial_cells: Dictionary = {}
+
+
+func _note_structure_table_mutation() -> void:
+	_structures_mutation_serial += 1
+
+
+func _structure_spatial_index() -> Dictionary:
+	if _structure_spatial_serial != _structures_mutation_serial:
+		_structure_spatial_cells.clear()
+		for id_value in structures.keys():
+			var row: Dictionary = structures[id_value]
+			var position := Vector2(row.get("position", Vector2.ZERO))
+			var key := _spatial_key(_spatial_axis_cell(position.x), _spatial_axis_cell(position.y))
+			if not _structure_spatial_cells.has(key):
+				_structure_spatial_cells[key] = []
+			(_structure_spatial_cells[key] as Array).append(int(id_value))
+		_structure_spatial_serial = _structures_mutation_serial
+	return _structure_spatial_cells
+
+
+func _structure_ids_near(position: Vector2) -> Array[int]:
+	var index := _structure_spatial_index()
+	var low_cx := _spatial_axis_cell(position.x - STRUCTURE_DEFLECT_GATHER_RADIUS)
+	var high_cx := _spatial_axis_cell(position.x + STRUCTURE_DEFLECT_GATHER_RADIUS)
+	var low_cy := _spatial_axis_cell(position.y - STRUCTURE_DEFLECT_GATHER_RADIUS)
+	var high_cy := _spatial_axis_cell(position.y + STRUCTURE_DEFLECT_GATHER_RADIUS)
+	var result: Array[int] = []
+	for cx in range(low_cx, high_cx + 1):
+		for cy in range(low_cy, high_cy + 1):
+			var bucket: Variant = index.get(_spatial_key(cx, cy))
+			if bucket == null:
+				continue
+			for id_value in bucket as Array:
+				result.append(int(id_value))
+	result.sort()
+	return result
+
+
 ## Effectively unbounded search range for callers that scanned every hostile.
 ## The sweep is still cheap: ring_limit below is clamped to the union of the
 ## hostile teams' occupied cell boxes, so this bounds the tie-break, not the work.
@@ -1405,6 +1470,15 @@ var retail_formation_movement := false
 var _creep_lair_placements: Array = []
 var _next_creep_guard_id := 70001
 var _next_creep_structure_id := 60001
+## Map-authored castle structures (opt-in gameplay rule
+## "enable_castle_fixtures"; default off keeps every legacy runner and the
+## pinned scenario byte-identical — the fog lane's absent-unless-enabled
+## pattern). Placements arrive with the map configuration (already validated
+## and translated by RetailMapData) and stay inert until the rule enables
+## seeding.
+var castle_fixtures_enabled := false
+var _castle_fixture_placements: Array = []
+var _next_castle_fixture_id := CASTLE_FIXTURE_FIRST_ID
 var ring_mechanic_enabled := false
 ## Retail shroud. DERIVED state, never hashed - see retail_fog_of_war.gd.
 var fog_of_war_enabled := false
@@ -1437,6 +1511,7 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	_event_digest = 0x811C9DC5
 	entities.clear()
 	structures.clear()
+	_note_structure_table_mutation()
 	_structure_footprint_radius_cache.clear()
 	# MATCH-SCOPED base-loop state resets WITH the structures it pointed at.
 	# Stale expansion-pad keys would both survive a reset AND block re-seeding
@@ -1593,6 +1668,9 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	_next_creep_structure_id = 60001
 	if creep_lairs_enabled:
 		_seed_creep_lairs()
+	_next_castle_fixture_id = CASTLE_FIXTURE_FIRST_ID
+	if castle_fixtures_enabled:
+		_seed_castle_fixtures()
 	if ring_mechanic_enabled:
 		_mark_ring_delivery_structures()
 	# Spellbook effect rules (summon stats) bake the source→sim scale, which
@@ -1709,6 +1787,39 @@ func _apply_map_configuration(configuration: Dictionary) -> void:
 				"yaw": float(lair.get("yaw", 0.0)),
 				"binding_status": String(lair.get("binding_status", "unresolved")),
 			})
+	# Lane L2b castle fixtures, same contract as the creep-lair block above:
+	# validated and translated upstream by RetailMapData, inert here until the
+	# opt-in rule seeds them; malformed rows are dropped so seeding never
+	# guesses.
+	_castle_fixture_placements = []
+	var configured_fixtures: Variant = configuration.get("castle_fixture_placements", [])
+	if typeof(configured_fixtures) == TYPE_ARRAY:
+		for fixture_value in configured_fixtures as Array:
+			if typeof(fixture_value) != TYPE_DICTIONARY:
+				continue
+			var fixture := fixture_value as Dictionary
+			if (
+				typeof(fixture.get("position")) != TYPE_VECTOR2
+				or String(fixture.get("type_name", "")) == ""
+				or typeof(fixture.get("source_index")) != TYPE_INT
+				or typeof(fixture.get("maximum_health")) not in [TYPE_INT, TYPE_FLOAT]
+			):
+				continue
+			var fixture_row := {
+				"type_name": String(fixture.get("type_name", "")),
+				"role": String(fixture.get("role", "")),
+				"source_index": int(fixture.get("source_index", -1)),
+				"position": Vector2(fixture.get("position")),
+				"elevation": float(fixture.get("elevation", 0.0)),
+				"yaw": float(fixture.get("yaw", 0.0)),
+				"owner": String(fixture.get("owner", "")),
+				"maximum_health": float(fixture.get("maximum_health", 1.0)),
+				"armor": String(fixture.get("armor", "")),
+				"indestructible": bool(fixture.get("indestructible", false)),
+			}
+			if fixture.has("initial_health"):
+				fixture_row["initial_health"] = float(fixture.get("initial_health"))
+			_castle_fixture_placements.append(fixture_row)
 
 
 func _apply_fallback_configuration() -> void:
@@ -1731,6 +1842,7 @@ func _apply_fallback_configuration() -> void:
 	_extra_team_centers = {}
 	source_map_configured = false
 	_creep_lair_placements = []
+	_castle_fixture_placements = []
 
 
 func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
@@ -1776,6 +1888,15 @@ func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 	# menu) resolves false, so the default match — and the pinned battle
 	# signature — stays byte-identical.
 	creep_lairs_enabled = bool(_rules.get("enable_creep_lairs", false))
+	# Map-authored castle fixtures (lane L2b). Absent-unless-enabled, same
+	# hashed-rules contract as the fog lane's enable_fog_of_war: the key
+	# only lives in `_rules` (which is hashed) when a match opts in. An
+	# explicit false is stripped so it cannot desync a peer that omitted
+	# the key; every legacy runner and the pinned scenario stay
+	# byte-identical.
+	if _rules.has("enable_castle_fixtures") and not bool(_rules.get("enable_castle_fixtures", false)):
+		_rules.erase("enable_castle_fixtures")
+	castle_fixtures_enabled = bool(_rules.get("enable_castle_fixtures", false))
 	# Retail turn-rate / wheel-vs-reform / group-cohesion opt-in. Absent (every
 	# legacy runner and the untouched menu) resolves false, so the pinned
 	# behaviour signature stays byte-identical.
@@ -3758,6 +3879,7 @@ func _team_structure_base(team: int) -> int:
 
 func _initialize_base_loop() -> void:
 	structures.clear()
+	_note_structure_table_mutation()
 	# Same contract as _restore_authoritative_state: ids are about to be reused
 	# by a new match, so the id-keyed footprint memo must not survive.
 	_structure_footprint_radius_cache.clear()
@@ -3788,6 +3910,7 @@ func _initialize_base_loop() -> void:
 				if producer_kinds_for_rule.has(kind):
 					production.append(unit_type)
 			var structure_id := base_id + index + 1
+			_note_structure_table_mutation()
 			structures[structure_id] = {
 				"id": structure_id,
 				"team": team,
@@ -7718,6 +7841,7 @@ func _cast_spellbook_structure_summon(team: int, effect: Dictionary, point: Vect
 	var build_ticks := int(effect.get("build_ticks", 1))
 	var health := int(effect.get("health", 1))
 	var weapon: Dictionary = effect.get("weapon", {}) as Dictionary
+	_note_structure_table_mutation()
 	structures[structure_id] = {
 		"id": structure_id,
 		"team": team,
@@ -8891,6 +9015,7 @@ func _spawn_castle_piece_structure(
 	var structure_id := _next_dynamic_structure_id
 	_next_dynamic_structure_id += 1
 	var team := int(fortress.get("team", -1))
+	_note_structure_table_mutation()
 	structures[structure_id] = {
 		"id": structure_id,
 		"team": team,
@@ -9070,6 +9195,7 @@ func issue_expansion_construct(team: int, fortress_id: int, expansion_kind: Stri
 	var position: Vector2 = (pads[pad_index] as Dictionary).get("position", Vector2.ZERO)
 	var build_ticks := maxi(1, roundi(float(rule.get("seconds", 20.0)) / TICK_SECONDS))
 	# Foundation behavior: the plot builds the expansion itself (no porter).
+	_note_structure_table_mutation()
 	structures[structure_id] = {
 		"id": structure_id,
 		"team": team,
@@ -9249,6 +9375,7 @@ func unpack_base(team: int, base_name: String, free: bool) -> Dictionary:
 	_next_dynamic_structure_id += 1
 	var maximum_health := int(row.get("health", 1000))
 	var position := Vector2(row.get("position", Vector2.ZERO))
+	_note_structure_table_mutation()
 	structures[structure_id] = {
 		"id": structure_id,
 		"team": team,
@@ -15395,6 +15522,7 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 		if producer_kinds_for_rule.has(structure_kind):
 			production.append(unit_type)
 	var build_ticks := maxi(1, roundi(float(build_rule["seconds"]) / TICK_SECONDS))
+	_note_structure_table_mutation()
 	structures[structure_id] = {
 		"id": structure_id,
 		"team": team,
@@ -15448,6 +15576,7 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 			var previous_team := int(previous_site.get("team", team))
 			team_resources[previous_team] = resources_for_team(previous_team) + int(structure_build_rules_for_team(previous_team).get(String(previous_site.get("structure_kind", "")), {}).get("cost", 0))
 			structures.erase(previous_site_id)
+			_note_structure_table_mutation()
 			_emit_event("construction.cancelled", builder_id, previous_site_id, {"team": previous_team})
 	builder["construction_id"] = structure_id
 	builder["order_kind"] = "construct"
@@ -15455,6 +15584,7 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 	_clear_member_targets(builder)
 	if not _assign_route(builder, position):
 		structures.erase(structure_id)
+		_note_structure_table_mutation()
 		team_resources[team] = resources_for_team(team) + cost
 		builder["construction_id"] = 0
 		return {"ok": false, "reason": last_route_rejection if last_route_rejection != "" else "route-rejected"}
@@ -16420,9 +16550,11 @@ func _deflect_around_structures(
 	# by _step_route. A non-zero value selects the TANGENTIAL SLIDE below; the
 	# stationary eviction pass passes zero and keeps the radial push.
 	#
-	# `structure_id_list` lets a caller that deflects many entities in one pass
-	# hoist the sorted id list out of its own loop (structure_ids() allocates and
-	# SORTS on every call). Empty means "read it here".
+	# `structure_id_list` used to let a caller hoist structure_ids() out of a
+	# multi-entity pass. The spatial-hash gather is a complete, cheaper
+	# substitute for that full list (a centre outside the gathered box cannot
+	# overlap any blocking disc), so a provided list is ignored — honouring
+	# it would let the eviction hoist bypass the broad-phase.
 	var attack_target_id := int(row.get("target_id", 0))
 	var attack_target_kind := String(row.get("target_kind", "battalion"))
 	var passable := _castle_footprint_pass_through(
@@ -16430,7 +16562,12 @@ func _deflect_around_structures(
 		attack_target_id,
 		attack_target_kind,
 	)
-	var ids: Array[int] = structure_id_list if not structure_id_list.is_empty() else structure_ids()
+	# BROAD-PHASE (lane L2b item 6): only structures whose blocking disc can
+	# overlap `position` are visited, in the same ascending id order the full
+	# scan used. A centre outside the gathered box is further than the maximum
+	# block radius away, and the loop below skips such rows with no side
+	# effects, so this is byte-identical to scanning structure_ids().
+	var ids: Array[int] = _structure_ids_near(position)
 	# TOTAL push bound. Round 18 clamped each structure's push to
 	# STRUCTURE_EVICTION_STEP separately, so N overlapping discs could compound
 	# into an N * step jump in one tick — and overlapping discs are the NORMAL
@@ -17830,6 +17967,15 @@ func _apply_structure_damage(attacker_id: int, target_id: int, amount: int, dama
 	var target: Dictionary = structures[target_id]
 	if int(target.get("health", 0)) <= 0:
 		return
+	if bool(target.get("indestructible", false)):
+		# Map-authored castle fixtures carry SAGE objectIndestructible verbatim
+		# (Erebor authors it on 501 of 609 fixture rows); retail never damages
+		# those structures, so the sim refuses the damage by name.
+		_emit_event("combat.damage_refused", attacker_id, target_id, {
+			"reason": "indestructible",
+			"target": "structure %s" % String(target.get("structure_kind", "")),
+		})
+		return
 	var damage_type := damage_type_override
 	var damage_components := _damage_components_for(attacker_id, damage_type_override)
 	if damage_type == "":
@@ -18063,6 +18209,7 @@ func _seed_creep_lairs() -> void:
 		var lair_id := _next_creep_structure_id
 		_next_creep_structure_id += 1
 		var position := Vector2(placement.get("position", Vector2.ZERO))
+		_note_structure_table_mutation()
 		structures[lair_id] = {
 			"id": lair_id,
 			"team": CREEP_TEAM,
@@ -18145,6 +18292,99 @@ func _spawn_creep_guard(lair_id: int) -> int:
 	lair["creep_guard_ids"] = guard_ids
 	_emit_event("creep.guard_spawned", guard_id, lair_id, {"object_id": guard_object_id})
 	return guard_id
+
+
+func _castle_fixture_team(owner: String) -> int:
+	## Map a fixture's authored originalOwner ("Player_N/teamPlayer_N",
+	## "PlyrCivilian/teamPlyrCivilian", …) onto a sim team. A player owner maps
+	## to the roster team seated at that start index (team_start_indices:
+	## team -> zero-based start index); PlyrCreeps maps to the creep team;
+	## everything else — civilian/neutral owners, retail's malformed "/team",
+	## and players with no roster seat on this match — maps to the
+	## non-combatant civilian team, never silently to team 0.
+	if owner.begins_with("PlyrCreeps"):
+		return CREEP_TEAM
+	if owner.begins_with("Player_"):
+		var digits := owner.trim_prefix("Player_").split("/", true, 1)[0]
+		if digits.is_valid_int():
+			var seat := int(digits) - 1
+			for team_value in _team_descriptors.keys():
+				var descriptor: Dictionary = _team_descriptors[team_value]
+				if int(descriptor.get("start_index", -1)) == seat:
+					return int(team_value)
+	return CASTLE_CIVILIAN_TEAM
+
+
+func _seed_castle_fixtures() -> void:
+	## Lane L2b: map-authored castle structures become live sim structures,
+	## following the creep-lair seeding precedent (deterministic source_index
+	## order, authored health/owner, recorded provisional armor). Only the
+	## sim-seeded subset arrives here — creep lairs, INERT scenery and
+	## capturable flags were deferred upstream with named reasons.
+	if _castle_fixture_placements.is_empty():
+		return
+	if not _structure_armor.has("castle_fixture"):
+		# No castle map-fixture armor table is compiled into the packs yet, so
+		# register a recorded neutral 1.0 provisional (the creep-lair
+		# precedent) instead of falling to the unrelated 0.25 default. The
+		# authored set name rides each row ("castle_fixture_armor") for the
+		# lane that compiles those tables.
+		_structure_armor["castle_fixture"] = {"set_id": "MapFixture-provisional", "damage_scalar": 1.0, "scalars": {"default": 1.0}}
+	var placements := _castle_fixture_placements.duplicate(true)
+	placements.sort_custom(
+		func(a, b): return int((a as Dictionary).get("source_index", 0)) < int((b as Dictionary).get("source_index", 0))
+	)
+	for placement_value in placements:
+		var placement: Dictionary = placement_value
+		var structure_id := _next_castle_fixture_id
+		_next_castle_fixture_id += 1
+		var position := Vector2(placement.get("position", Vector2.ZERO))
+		var maximum_health := maxi(1, roundi(float(placement.get("maximum_health", 1.0))))
+		var health := maximum_health
+		if placement.has("initial_health"):
+			# objectInitialHealth is an authored PERCENT of MaxHealth: Carn Dum
+			# authors 99/75/50 on seven rows, everything measured else is 100.
+			health = clampi(
+				maxi(1, roundi(float(maximum_health) * float(placement.get("initial_health", 100.0)) / 100.0)),
+				1,
+				maximum_health
+			)
+		_note_structure_table_mutation()
+		structures[structure_id] = {
+			"id": structure_id,
+			"team": _castle_fixture_team(String(placement.get("owner", ""))),
+			"kind": "structure",
+			"structure_kind": "castle_fixture",
+			"name": String(placement.get("type_name", "")),
+			"castle_fixture_type": String(placement.get("type_name", "")),
+			"castle_fixture_role": String(placement.get("role", "")),
+			"castle_fixture_owner": String(placement.get("owner", "")),
+			"castle_fixture_armor": String(placement.get("armor", "")),
+			"source_index": int(placement.get("source_index", -1)),
+			"position": position,
+			"elevation": float(placement.get("elevation", 0.0)),
+			"facing_radians": float(placement.get("yaw", 0.0)),
+			"rally": position,
+			"health": health,
+			"maximum_health": maximum_health,
+			# SAGE objectIndestructible, carried verbatim (Erebor authors it on
+			# 501 of 609 fixture rows); _apply_structure_damage refuses it.
+			"indestructible": bool(placement.get("indestructible", false)),
+			"construction_progress": 1.0,
+			"level": 1,
+			"completed_upgrades": [],
+			"upgrade_queue": [],
+			"production": [],
+			"queue": [],
+			"damage_remainders": {},
+			"income_per_payout": 0,
+		}
+		_emit_event("castle.fixture_seeded", 0, structure_id, {
+			"type_name": String(placement.get("type_name", "")),
+			"role": String(placement.get("role", "")),
+			"team": int(structures[structure_id].get("team", -1)),
+			"source_index": int(placement.get("source_index", -1)),
+		})
 
 
 func _step_creeps() -> void:
@@ -18273,6 +18513,7 @@ func _on_creep_structure_destroyed(attacker_id: int, target_id: int) -> void:
 			var hole_id := _next_creep_structure_id
 			_next_creep_structure_id += 1
 			var position := Vector2(target.get("position", Vector2.ZERO))
+			_note_structure_table_mutation()
 			structures[hole_id] = {
 				"id": hole_id,
 				"team": CREEP_TEAM,
@@ -18310,6 +18551,7 @@ func _rebuild_creep_lair(hole_id: int) -> void:
 	var hole: Dictionary = structures.get(hole_id, {})
 	var lair_id := int(hole.get("creep_lair_id", 0))
 	structures.erase(hole_id)
+	_note_structure_table_mutation()
 	var lair: Dictionary = structures.get(lair_id, {})
 	if lair.is_empty():
 		return
@@ -19592,6 +19834,13 @@ func _authoritative_state() -> Dictionary:
 		"next_creep_guard_id": _next_creep_guard_id,
 		"next_creep_structure_id": _next_creep_structure_id,
 	}
+	# EMPTY-IS-ABSENT (the unpackable-bases contract below): the castle-fixture
+	# lane only appears in the hashed state when a match opts in, so the frozen
+	# cross-platform pin and every legacy runner stay byte-identical.
+	if castle_fixtures_enabled:
+		state["castle_fixtures_enabled"] = true
+		state["castle_fixture_placements"] = _castle_fixture_placements
+		state["next_castle_fixture_id"] = _next_castle_fixture_id
 	# EMPTY-IS-ABSENT, deliberately: a match with no configured base flags must
 	# contribute NOTHING for this subsystem, so the frozen cross-platform state
 	# pin keeps proving the addition is inert by default. An unconditional key
@@ -19722,6 +19971,7 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	ai_enabled = bool(state["ai_enabled"])
 	entities = state["entities"]
 	structures = state["structures"]
+	_note_structure_table_mutation()
 	# The structure table was just replaced wholesale; the id-keyed footprint
 	# memo describes the old one.
 	_structure_footprint_radius_cache.clear()
@@ -19865,6 +20115,9 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	_creep_lair_placements = state.get("creep_lair_placements", [])
 	_next_creep_guard_id = int(state.get("next_creep_guard_id", 70001))
 	_next_creep_structure_id = int(state.get("next_creep_structure_id", 60001))
+	castle_fixtures_enabled = bool(state.get("castle_fixtures_enabled", false))
+	_castle_fixture_placements = state.get("castle_fixture_placements", [])
+	_next_castle_fixture_id = int(state.get("next_castle_fixture_id", CASTLE_FIXTURE_FIRST_ID))
 	# Reconstruct the derived team registry + per-team manifest aliases from the
 	# restored authoritative dicts. Roster order matches setup()'s ascending
 	# seeding; the manifest tables realias the restored global tables. Neither is

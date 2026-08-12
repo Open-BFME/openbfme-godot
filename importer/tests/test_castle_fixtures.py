@@ -493,3 +493,217 @@ def test_convert_sage_map_refuses_malformed_fixtures(tmp_path) -> None:
 
     with pytest.raises(SageMapError, match="fixtures"):
         convert_sage_map(source_path, tmp_path / "output", fixtures=fixtures)
+
+
+# --- lane L2b: lifecycle-structure reclassification ---------------------------
+
+from openbfme_importer.castle_fixtures import (  # noqa: E402
+    castle_fixture_seed_disposition,
+    map_fixture_object_id,
+    rebind_castle_fixture_structures,
+)
+
+
+def _fixture_row(
+    index: int, type_name: str, kind_of: list[str], role: str = "structure"
+) -> dict[str, object]:
+    return {
+        "typeName": type_name,
+        "role": role,
+        "index": index,
+        "position": [0.0, 300.0, 0.0],
+        "angle": 0.0,
+        "kindOf": kind_of,
+        "maxHealth": 1000.0,
+        "armor": "TestWallArmor",
+        "originalOwner": "Player_1/teamPlayer_1",
+    }
+
+
+def _model_row(type_name: str) -> dict[str, object]:
+    slug = type_name.casefold()
+    return {
+        "typeName": type_name,
+        "sourceVirtualModel": f"art/w3d/nb/{slug}.w3d",
+        "glb": f"assets/models/props/{slug}.glb",
+        "matchMethod": "exact-type-name",
+    }
+
+
+# --- seed disposition (the sim-seed filter, shared with the loader's mirror) --
+
+
+def test_seed_disposition_seeds_combat_structures() -> None:
+    row = _fixture_row(0, "TestMapGate", ["STRUCTURE", "IMMOBILE", "WALL_GATE"], "gate")
+    assert castle_fixture_seed_disposition(row) == "seed"
+
+
+def test_seed_disposition_defers_creep_lairs_to_the_creep_lane() -> None:
+    row = _fixture_row(0, "FireDrakeLair", ["STRUCTURE", "IMMOBILE"])
+    assert castle_fixture_seed_disposition(row) == "creep-lair-owned"
+    # case-insensitive: the cooked typeName case is not guaranteed
+    row["typeName"] = "warglair"
+    assert castle_fixture_seed_disposition(row) == "creep-lair-owned"
+
+
+def test_seed_disposition_skips_inert_scenery() -> None:
+    row = _fixture_row(0, "RockHighPass03", ["STRUCTURE", "INERT", "ROCK_VENDOR"])
+    assert castle_fixture_seed_disposition(row) == "inert-scenery"
+
+
+def test_seed_disposition_skips_capturable_flags() -> None:
+    row = _fixture_row(0, "CaptureFlag", ["STRUCTURE", "CAPTURABLE", "CAPTUREFLAG"])
+    assert castle_fixture_seed_disposition(row) == "capturable-flag"
+
+
+# --- map-fixture object ids ----------------------------------------------------
+
+
+def test_map_fixture_object_id_is_loader_safe() -> None:
+    assert (
+        map_fixture_object_id("EreborGateDoors")
+        == "bfme2.object.map-fixture.ereborgatedoors"
+    )
+    # SAGE type names may carry underscores; the loader's id alphabet cannot.
+    assert (
+        map_fixture_object_id("WOR_EreborThrone")
+        == "bfme2.object.map-fixture.wor-ereborthrone"
+    )
+
+
+def test_map_fixture_object_id_refuses_unsafe_names() -> None:
+    for bad in ("", "Foo Bar", "Foo/Bar", "Foo..Bar", "Foo-Bar-", "Foo.", "Éowyn"):
+        with pytest.raises(CastleFixturesError):
+            map_fixture_object_id(bad)
+
+
+# --- rebind --------------------------------------------------------------------
+
+
+def _rebind_bindings() -> dict[str, object]:
+    return {
+        "logical": [{"typeName": "TestLogical", "classification": "logical"}],
+        "models": [
+            _model_row("TestMapGate"),
+            _model_row("TestGarrisonTower"),
+            _model_row("TestTree"),
+        ],
+    }
+
+
+def test_rebind_moves_seeded_fixture_types_to_structures() -> None:
+    fixtures = {
+        "fixtures": [
+            _fixture_row(0, "TestMapGate", ["STRUCTURE", "WALL_GATE"], "gate"),
+            _fixture_row(
+                1, "TestGarrisonTower", ["STRUCTURE", "GARRISON"], "garrison"
+            ),
+        ]
+    }
+    bindings, evidence = rebind_castle_fixture_structures(
+        _rebind_bindings(), fixtures
+    )
+    models = bindings["models"]
+    structures = bindings["structures"]
+    assert [row["typeName"] for row in models] == ["TestTree"]
+    moved = {row["typeName"]: row for row in structures}
+    assert set(moved) == {"TestMapGate", "TestGarrisonTower"}
+    gate = moved["TestMapGate"]
+    assert gate["objectId"] == "bfme2.object.map-fixture.testmapgate"
+    # The renderable binding's art is reused verbatim — no second conversion.
+    assert gate["glb"] == "assets/models/props/testmapgate.glb"
+    assert gate["sourceVirtualModel"] == "art/w3d/nb/testmapgate.w3d"
+    assert gate["matchMethod"] == "exact-type-name"
+    assert evidence["movedTypeNames"] == ["TestGarrisonTower", "TestMapGate"]
+    assert evidence["unboundFixtureTypeNames"] == []
+    assert evidence["deferredPlacements"] == {}
+    # The input document is never mutated.
+    assert fixtures["fixtures"][0]["typeName"] == "TestMapGate"
+
+
+def test_rebind_leaves_deferred_fixture_types_renderable() -> None:
+    fixtures = {
+        "fixtures": [
+            _fixture_row(0, "FireDrakeLair", ["STRUCTURE"]),
+            _fixture_row(1, "RockHighPass03", ["STRUCTURE", "INERT"]),
+            _fixture_row(2, "RockHighPass03", ["STRUCTURE", "INERT"]),
+            _fixture_row(3, "CaptureFlag", ["STRUCTURE", "CAPTURABLE"]),
+            _fixture_row(4, "TestMapGate", ["STRUCTURE", "WALL_GATE"], "gate"),
+        ]
+    }
+    bindings = {
+        "logical": [],
+        "models": [
+            _model_row("FireDrakeLair"),
+            _model_row("RockHighPass03"),
+            _model_row("CaptureFlag"),
+            _model_row("TestMapGate"),
+        ],
+    }
+    bindings, evidence = rebind_castle_fixture_structures(bindings, fixtures)
+    assert [row["typeName"] for row in bindings["models"]] == [
+        "CaptureFlag",
+        "FireDrakeLair",
+        "RockHighPass03",
+    ]
+    assert [row["typeName"] for row in bindings["structures"]] == ["TestMapGate"]
+    assert evidence["deferredPlacements"] == {
+        "capturable-flag": 1,
+        "creep-lair-owned": 1,
+        "inert-scenery": 2,
+    }
+
+
+def test_rebind_records_fixture_types_without_a_visual_binding() -> None:
+    fixtures = {
+        "fixtures": [
+            _fixture_row(0, "TestMapGate", ["STRUCTURE", "WALL_GATE"], "gate"),
+            _fixture_row(1, "TestGhostWall", ["STRUCTURE"], "wall"),
+        ]
+    }
+    bindings = {"logical": [], "models": [_model_row("TestMapGate")]}
+    bindings, evidence = rebind_castle_fixture_structures(bindings, fixtures)
+    assert [row["typeName"] for row in bindings["structures"]] == ["TestMapGate"]
+    # Nothing is invented: an unbound fixture type is named, not silently
+    # left renderable and not given a fabricated GLB.
+    assert evidence["unboundFixtureTypeNames"] == ["TestGhostWall"]
+
+
+def test_rebind_refuses_a_fixture_type_declared_logical() -> None:
+    fixtures = {
+        "fixtures": [
+            _fixture_row(0, "TestMapGate", ["STRUCTURE", "WALL_GATE"], "gate"),
+        ]
+    }
+    bindings = {
+        "logical": [{"typeName": "testmapgate", "classification": "logical"}],
+        "models": [],
+    }
+    with pytest.raises(CastleFixturesError, match="logical"):
+        rebind_castle_fixture_structures(bindings, fixtures)
+
+
+def test_rebind_refuses_object_id_casefold_collisions() -> None:
+    fixtures = {
+        "fixtures": [
+            _fixture_row(0, "Foo_Bar", ["STRUCTURE"]),
+            _fixture_row(1, "Foo-Bar", ["STRUCTURE"]),
+        ]
+    }
+    bindings = {"logical": [], "models": [_model_row("Foo_Bar"), _model_row("Foo-Bar")]}
+    with pytest.raises(CastleFixturesError, match="collid"):
+        rebind_castle_fixture_structures(bindings, fixtures)
+
+
+def test_rebind_refuses_malformed_binding_rows() -> None:
+    fixtures = {
+        "fixtures": [
+            _fixture_row(0, "TestMapGate", ["STRUCTURE", "WALL_GATE"], "gate"),
+        ]
+    }
+    broken = _model_row("TestMapGate")
+    broken["glb"] = ""
+    with pytest.raises(CastleFixturesError, match="glb"):
+        rebind_castle_fixture_structures(
+            {"logical": [], "models": [broken]}, fixtures
+        )

@@ -406,3 +406,233 @@ def test_map_profile_wires_fixtures_for_castle_maps_only(catalog) -> None:
     assert built == {EREBOR: built[EREBOR]}
     amon_sul = resources[f"map-{amon_sul_slug}-binary"]
     assert "fixtures" not in amon_sul["options"]
+
+
+# --- lane L2b: seed disposition + lifecycle-structure reclassification --------
+
+from openbfme_importer.castle_fixtures import (  # noqa: E402
+    castle_fixture_seed_disposition,
+    map_fixture_object_id,
+    rebind_castle_fixture_structures,
+)
+
+CARN_DUM = "maps/map wor ang carn dum/map wor ang carn dum.map"
+
+#: Pinned against the pure RotWK oracle (probe over all ten cooked maps,
+#: 2026-08-12): per map (seeded rows, seeded distinct types, deferred rows by
+#: reason).  The seed rule is three clauses — creep-lair types defer to the
+#: creep lane, INERT KindOf is indestructible scenery, CAPTURABLE/CAPTUREFLAG
+#: belongs to the capture lane — and the loader's GDScript mirror must produce
+#: these same numbers.
+EXPECTED_SEED_DISPOSITIONS = {
+    "maps/map wor minas tirith/map wor minas tirith.map": (207, 61, {"capturable-flag": 5, "creep-lair-owned": 4, "inert-scenery": 1}),
+    "maps/map wor helms deep/map wor helms deep.map": (45, 37, {"capturable-flag": 3, "inert-scenery": 32}),
+    EREBOR: (587, 39, {"capturable-flag": 4, "creep-lair-owned": 2, "inert-scenery": 16}),
+    "maps/map wor isengard/map wor isengard.map": (23, 7, {"capturable-flag": 2, "creep-lair-owned": 4, "inert-scenery": 27}),
+    "maps/map wor black gate/map wor black gate.map": (9, 9, {"creep-lair-owned": 4, "inert-scenery": 72}),
+    "maps/map wor dol guldur/map wor dol guldur.map": (319, 10, {"capturable-flag": 5, "creep-lair-owned": 8, "inert-scenery": 2}),
+    "maps/map wor grey havens/map wor grey havens.map": (20, 4, {"capturable-flag": 10, "creep-lair-owned": 2, "inert-scenery": 8}),
+    "maps/map wor minas morgul/map wor minas morgul.map": (98, 27, {"capturable-flag": 4, "creep-lair-owned": 2, "inert-scenery": 52}),
+    CARN_DUM: (260, 22, {"capturable-flag": 3, "inert-scenery": 140}),
+    "maps/map wor ang fornost/map wor ang fornost.map": (234, 29, {"capturable-flag": 4, "inert-scenery": 15}),
+}
+
+
+@oracle_present
+@pytest.mark.parametrize("virtual_path", sorted(EXPECTED_SEED_DISPOSITIONS))
+def test_fixture_seed_disposition_matches_oracle(virtual_path, fixtures_by_map) -> None:
+    rows = fixtures_by_map[virtual_path]["fixtures"]
+    deferred: dict[str, int] = {}
+    seed_types: set[str] = set()
+    seed_rows = 0
+    for row in rows:
+        disposition = castle_fixture_seed_disposition(row)
+        if disposition == "seed":
+            seed_rows += 1
+            seed_types.add(str(row["typeName"]))
+            # Every seeded retail type name must form a loader-safe object id.
+            assert map_fixture_object_id(str(row["typeName"])).startswith(
+                "bfme2.object.map-fixture."
+            )
+        else:
+            deferred[disposition] = deferred.get(disposition, 0) + 1
+    expected_rows, expected_types, expected_deferred = EXPECTED_SEED_DISPOSITIONS[
+        virtual_path
+    ]
+    assert seed_rows == expected_rows
+    assert len(seed_types) == expected_types
+    assert deferred == expected_deferred
+
+
+def _synthetic_model_bindings(type_names) -> dict[str, object]:
+    return {
+        "logical": [],
+        "models": [
+            {
+                "typeName": name,
+                "sourceVirtualModel": f"art/w3d/eb/{name.casefold()}.w3d",
+                "glb": f"assets/models/props/{name.casefold()}.glb",
+                "matchMethod": "exact-type-name",
+            }
+            for name in type_names
+        ],
+    }
+
+
+@oracle_present
+def test_cooked_erebor_bindings_classify_seeded_types_as_lifecycle_structures(
+    fixtures_by_map, catalog, tmp_path
+) -> None:
+    fixtures = fixtures_by_map[EREBOR]
+    type_names = sorted({str(row["typeName"]) for row in fixtures["fixtures"]})
+    rebound, evidence = rebind_castle_fixture_structures(
+        _synthetic_model_bindings(type_names), fixtures
+    )
+    assert len(evidence["movedTypeNames"]) == 39
+    assert evidence["unboundFixtureTypeNames"] == []
+    assert evidence["deferredPlacements"] == {
+        "capturable-flag": 4,
+        "creep-lair-owned": 2,
+        "inert-scenery": 16,
+    }
+
+    entry = catalog.resolve_exact(EREBOR)
+    assert entry is not None
+    archive = catalog.open_archive_for(entry)
+    source_path = tmp_path / "erebor.map"
+    source_path.write_bytes(
+        archive.read_entry(catalog.as_entry(entry), max_bytes=MAX_SOURCE_BYTES)
+    )
+    output = tmp_path / "erebor"
+    convert_sage_map(
+        source_path,
+        output,
+        metadata={
+            "id": "rotwk.map.wor-erebor",
+            "displayName": "Erebor",
+            "castleSiege": CASTLE_SIEGE_MAPS[EREBOR]["runtimeContract"],
+        },
+        object_bindings=rebound,
+        fixtures=fixtures,
+    )
+    cooked = json.loads((output / "object-bindings.json").read_text(encoding="utf-8"))
+    records = {str(row["typeName"]): row for row in cooked["records"]}
+
+    gate = records["EreborGateDoors"]
+    assert gate["status"] == "bound"
+    assert gate["classification"] == "lifecycle-structure"
+    assert gate["objectId"] == "bfme2.object.map-fixture.ereborgatedoors"
+    assert gate["glb"] == "assets/models/props/ereborgatedoors.glb"
+    tower = records["EBGarrisonableTower"]
+    assert tower["classification"] == "lifecycle-structure"
+    assert tower["objectId"] == "bfme2.object.map-fixture.ebgarrisonabletower"
+    # The underscore name folds to the loader's alphabet.
+    throne = records["WOR_EreborThrone"]
+    assert throne["objectId"] == "bfme2.object.map-fixture.wor-ereborthrone"
+
+    # Deferred types stay exactly what the visual binder made them.
+    assert records["FireDrakeLair"]["classification"] == "renderable"
+    assert "objectId" not in records["FireDrakeLair"]
+    assert records["CaptureFlag"]["classification"] == "renderable"
+    # Omitted (Body-less) scenery was never in the models set: unresolved.
+    assert records["EBMineCartD"]["status"] == "unresolved"
+
+    # The cooked summary still closes over its own record table.
+    summary = cooked["summary"]
+    assert summary["typeCount"] == len(cooked["records"])
+    lifecycle = [
+        row
+        for row in cooked["records"]
+        if row["classification"] == "lifecycle-structure"
+    ]
+    assert len(lifecycle) == 39
+    assert summary["boundTypeCount"] >= 39
+
+
+@oracle_present
+def test_map_profile_rebinds_fixture_types_when_fixtures_and_bindings_meet(
+    catalog,
+) -> None:
+    targets, _ = discover_registry_map_targets(
+        catalog, categories=(SKIRMISH_CATEGORY,)
+    )
+    selected = tuple(
+        target for target in targets if target.virtual_path == EREBOR
+    )
+    assert len(selected) == 1
+
+    fixture_row = {
+        "typeName": "EreborGateDoors",
+        "role": "gate",
+        "index": 812,
+        "position": [3585.2, 3686.6, 0.0],
+        "angle": 1.57,
+        "kindOf": ["STRUCTURE", "IMMOBILE", "SELECTABLE", "BLOCKING_GATE", "WALL_GATE"],
+        "maxHealth": 20000.0,
+        "armor": "DefaultWallArmor",
+        "originalOwner": "Player_1/teamPlayer_1",
+    }
+
+    def stub_fixtures(target, parsed) -> dict[str, object]:
+        return {"schema": "openbfme.sage-map-fixtures", "fixtures": [fixture_row]}
+
+    def fake_binder(target, parsed):
+        return (
+            [],
+            _synthetic_model_bindings(["EreborGateDoors", "DaleHouse"]),
+            {"stub": True},
+        )
+
+    profile = build_map_profile(
+        catalog,
+        selected,
+        profile_id="fixtures-rebind-test",
+        title="fixtures rebind test",
+        pack_id="fixtures-rebind-test",
+        pack_version="v0",
+        terrain_output="assets/terrain/fixtures-rebind-test",
+        binder=fake_binder,
+        fixtures_builder=stub_fixtures,
+    )
+    resources = {str(resource["id"]): resource for resource in profile["resources"]}
+    erebor = resources[f"map-{selected[0].slug}-binary"]
+    bindings = erebor["options"]["objectBindings"]
+    assert [row["typeName"] for row in bindings["models"]] == ["DaleHouse"]
+    structures = bindings["structures"]
+    assert len(structures) == 1
+    assert structures[0]["typeName"] == "EreborGateDoors"
+    assert structures[0]["objectId"] == "bfme2.object.map-fixture.ereborgatedoors"
+    assert structures[0]["glb"] == "assets/models/props/ereborgatedoors.glb"
+
+
+@oracle_present
+def test_map_profile_fixtures_rejection_fails_closed_even_non_strict(catalog) -> None:
+    # L2a follow-up F3: the registry-catalog path fails closed when a castle
+    # map's fixtures cannot build, but build_map_profile's default non-strict
+    # mode used to record the rejection and cook the map with NO fixtures —
+    # indistinguishable from a pre-L2a pack downstream. The modes now agree.
+    from openbfme_importer.sage_map import SageMapError
+
+    targets, _ = discover_registry_map_targets(
+        catalog, categories=(SKIRMISH_CATEGORY,)
+    )
+    selected = tuple(
+        target for target in targets if target.virtual_path == EREBOR
+    )
+    assert len(selected) == 1
+
+    def raising_builder(target, parsed) -> dict[str, object]:
+        raise SageMapError("fixtures boom")
+
+    with pytest.raises(SageMapError, match="fixtures boom"):
+        build_map_profile(
+            catalog,
+            selected,
+            profile_id="fixtures-strict-test",
+            title="fixtures strict test",
+            pack_id="fixtures-strict-test",
+            pack_version="v0",
+            terrain_output="assets/terrain/fixtures-strict-test",
+            strict=False,
+            fixtures_builder=raising_builder,
+        )
