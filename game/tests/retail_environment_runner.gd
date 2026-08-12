@@ -85,9 +85,9 @@ func _run() -> void:
 	_check("common_source_named_camera_fov_is_bound", is_equal_approx(deg_to_rad(float(slice.camera.fov)), 0.8726646304130554) and is_equal_approx(float(camera_data.get("common_named_camera_fov_radians", 0.0)), 0.8726646304130554))
 	_check("skirmish_camera_starts_at_source_max_height", is_equal_approx(float(slice.camera_zoom), 1.0) and is_equal_approx(float(slice.camera_zoom_target), 1.0) and is_equal_approx(float(camera_data.get("current_height_source", 0.0)), 300.0))
 	_check("camera_pitch_geometry_is_exact", _camera_pitch_is_exact(slice, map_data))
-	_check("camera_yaw_zero_source_offset_is_exact", _camera_yaw_is_exact(camera_data))
+	_check("camera_home_yaw_source_offset_is_exact", _camera_yaw_is_exact(camera_data))
 	_check("camera_ground_sample_stays_in_source_bounds", _camera_ground_is_bounded(slice, map_data))
-	_check("camera_focus_uses_inset_map_bounds", _camera_focus_clamps_to_inset_bounds(slice, map_data))
+	_check("camera_focus_reaches_authored_map_bounds", _camera_focus_clamps_to_authored_bounds(slice, map_data))
 
 	_check("three_source_lighting_domains_are_retained", int(lighting.get("source_domain_count", 0)) == 3 and int(lighting.get("lights_per_domain", 0)) == 3 and lighting.get("runtime_directional_domains", []) == ["object", "infantry"] and int(lighting.get("runtime_directional_light_count", 0)) == 6 and slice.source_environment_lights.size() == 6)
 	_check("source_light_values_and_basis_are_exact", _all_source_lights_are_exact(slice))
@@ -154,9 +154,12 @@ func _camera_pitch_is_exact(slice, map_data) -> bool:
 
 
 func _camera_yaw_is_exact(camera_data: Dictionary) -> bool:
+	# The match-start heading is re-aimed per seat (camera_home_yaw in the
+	# slice), so the source offset's DIRECTION varies with the seat; its
+	# magnitude stays the exact gamedata.ini depth at the default 300 height.
 	var source_offset: Vector3 = camera_data.get("current_source_offset", Vector3.INF)
 	var expected_depth := 300.0 / tan(deg_to_rad(37.5))
-	return is_zero_approx(source_offset.x) and is_equal_approx(source_offset.y, -expected_depth) and is_equal_approx(source_offset.z, 300.0)
+	return is_equal_approx(Vector2(source_offset.x, source_offset.y).length(), expected_depth) and is_equal_approx(source_offset.z, 300.0)
 
 
 func _camera_ground_is_bounded(slice, map_data) -> bool:
@@ -165,11 +168,13 @@ func _camera_ground_is_bounded(slice, map_data) -> bool:
 	return ground_source >= 260.0 - 0.0001 and ground_source <= 380.0 + 0.0001
 
 
-func _camera_focus_clamps_to_inset_bounds(slice, map_data) -> bool:
+func _camera_focus_clamps_to_authored_bounds(slice, map_data) -> bool:
+	# The look-at point must reach the authored playable bounds exactly - the
+	# v0.2.2 retail scroll contract (map border reachable), no screen-margin
+	# inset pulled inside the border.
 	slice.camera_focus = Vector2(-1_000_000.0, 1_000_000.0)
 	slice._clamp_camera_focus()
-	var inset := minf(float(slice._camera_ground_constraint_inset()), minf(map_data.local_bounds.size.x, map_data.local_bounds.size.y) * 0.5 - 0.001)
-	var expected := Vector2(map_data.local_bounds.position.x + inset, map_data.local_bounds.end.y - inset)
+	var expected := Vector2(map_data.local_bounds.position.x, map_data.local_bounds.end.y)
 	return slice.camera_focus.is_equal_approx(expected)
 
 

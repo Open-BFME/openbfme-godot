@@ -267,6 +267,15 @@ var _drag_selecting := false
 var _selection_band: Control = null
 const DRAG_SELECT_THRESHOLD := 8.0
 var camera_user_yaw := 0.0
+## Per-seat match-start heading. gamedata.ini authors DefaultCameraYawAngle =
+## 0.0 as the DEFAULT (data/ini/gamedata.ini:8593 in the rotwk oracle); retail
+## re-aims it for the local player's start spot so the player's own base sits
+## at the bottom of the screen on every map and start corner. Fixed-default
+## starts faced off-map for north-side seats (the v0.2.2 "camera starts upside
+## down" report: measured 126 deg off the map center on the Fords default
+## seat). Computed once at match start by _seat_home_camera_yaw; the player's
+## middle-mouse orbit (camera_user_yaw) rides on top of it.
+var camera_home_yaw := 0.0
 var _last_backspace_ms := 0
 var _right_drag_origin := Vector2.INF
 var _right_dragging := false
@@ -609,6 +618,7 @@ func _initialize_content_and_match() -> void:
 	if player_fortress_id != 0:
 		var player_fortress_position := Vector2(simulation.structure(player_fortress_id).get("position", Vector2.ZERO))
 		camera_focus = player_fortress_position
+		camera_home_yaw = _seat_home_camera_yaw(player_fortress_position)
 		_clamp_camera_focus()
 		_apply_camera_transform()
 	await _mark_initialization_phase("simulation")
@@ -3327,7 +3337,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		if key.pressed and not key.echo:
 			if key.keycode == KEY_BACKSPACE:
 				# Retail: double-tap Backspace snaps the camera home to the
-				# player fortress with default zoom and rotation.
+				# player fortress with default zoom and the match-start
+				# (per-seat home) heading.
 				var now := Time.get_ticks_msec()
 				if now - _last_backspace_ms <= 500:
 					_reset_camera_home()
@@ -7899,9 +7910,12 @@ func _apply_camera_transform() -> void:
 	# offset_y = -(offset_z / tan(CameraPitch)). CameraPitch is therefore the
 	# optical-axis elevation above the horizontal plane, not an off-top-down angle.
 	var source_depth := source_height / tan(deg_to_rad(FORDS_CAMERA_PITCH_ABOVE_HORIZONTAL_DEGREES))
-	# The source yaw stays exact; camera_user_yaw is the player's retail-style
-	# middle-mouse orbit on top of it (zero until the player rotates).
-	var yaw := deg_to_rad(FORDS_CAMERA_YAW_DEGREES) + camera_user_yaw
+	# The authored default yaw (gamedata.ini DefaultCameraYawAngle = 0.0) is
+	# re-aimed per seat at match start (camera_home_yaw, see _seat_home_camera_yaw)
+	# so the local player's base sits at the bottom of the screen;
+	# camera_user_yaw is the player's retail-style middle-mouse orbit on top of
+	# it (zero until the player rotates).
+	var yaw := deg_to_rad(FORDS_CAMERA_YAW_DEGREES) + camera_home_yaw + camera_user_yaw
 	# At SAGE yaw zero the camera is south of its target and looks toward +Y.
 	# Convert that exact Z-up offset through the map's established local basis.
 	var source_offset := Vector3(sin(yaw) * source_depth, -cos(yaw) * source_depth, source_height)
@@ -7924,13 +7938,18 @@ func _clamp_camera_focus() -> void:
 		camera_focus.x = clampf(camera_focus.x, -50.0, 50.0)
 		camera_focus.y = clampf(camera_focus.y, -42.0, 42.0)
 		return
+	# Retail clamps the camera LOOK-AT point so the player can scroll until the
+	# playable border is reached (v0.2.2 owner report: in retail the map border
+	# can sit mid-screen; here the clamp stopped a full screen-bottom
+	# ground-projection inset short of it). The source-derived constraint -
+	# OpenSAGE TacticalView.CalcCameraConstraints, porting the Generals ZH
+	# W3DView::calcCameraConstraints GPL source - clamps the look-at point into
+	# a rect derived from the map extent; the camera's own position is never
+	# the constrained quantity, and the reachable region is not pulled inside
+	# the playable border.
 	var bounds: Rect2 = source_map_data.local_bounds
-	var maximum_inset := maxf(0.0, minf(bounds.size.x, bounds.size.y) * 0.5 - 0.001)
-	var inset := minf(_camera_ground_constraint_inset(), maximum_inset)
-	var minimum := bounds.position + Vector2(inset, inset)
-	var maximum := bounds.end - Vector2(inset, inset)
-	camera_focus.x = clampf(camera_focus.x, minimum.x, maximum.x)
-	camera_focus.y = clampf(camera_focus.y, minimum.y, maximum.y)
+	camera_focus.x = clampf(camera_focus.x, bounds.position.x, bounds.end.x)
+	camera_focus.y = clampf(camera_focus.y, bounds.position.y, bounds.end.y)
 
 
 func _bounded_camera_ground_local() -> float:
@@ -7945,27 +7964,37 @@ func _bounded_camera_ground_local() -> float:
 func _camera_forward_local() -> Vector2:
 	if source_map_data == null or not source_map_data.ready:
 		return Vector2.UP
-	var yaw := deg_to_rad(FORDS_CAMERA_YAW_DEGREES)
+	# Scroll follows the VIEW: the same total yaw that orients the camera -
+	# per-seat home heading plus the player's orbit - or pressing "up" would
+	# pan somewhere other than up-screen for any seat whose home heading is
+	# not the default (which is most of them now).
+	var yaw := deg_to_rad(FORDS_CAMERA_YAW_DEGREES) + camera_home_yaw + camera_user_yaw
 	var source_forward := Vector3(-sin(yaw), cos(yaw), 0.0)
 	var local_forward_3d := _sage_direction_to_local(source_forward)
 	var local_forward := Vector2(local_forward_3d.x, local_forward_3d.z)
 	return local_forward.normalized() if local_forward.length_squared() > 0.0 else Vector2.UP
 
 
-func _camera_ground_constraint_inset() -> float:
+func _seat_home_camera_yaw(from_local: Vector2) -> float:
+	## The source yaw that aims the camera from `from_local` (the local
+	## player's start) at the center of the authored playable bounds, so the
+	## match opens with the player's own base at the bottom of the screen and
+	## the map laid out ahead - retail's start view on every seat, per the
+	## v0.2.2 owner report. Returns 0 (the gamedata.ini default yaw) when
+	## there is no meaningful direction to aim along.
 	if source_map_data == null or not source_map_data.ready:
 		return 0.0
-	var local_height := lerpf(FORDS_CAMERA_MIN_HEIGHT_SOURCE, FORDS_CAMERA_MAX_HEIGHT_SOURCE, camera_zoom) * source_map_data.local_transform_scale
-	var optical_axis_elevation := deg_to_rad(FORDS_CAMERA_PITCH_ABOVE_HORIZONTAL_DEGREES)
-	# OpenSAGE's source-derived constraint samples 95% of screen height. The
-	# point is 90% of the center-to-bottom normalized projection coordinate.
-	var bottom_ray_delta := atan(tan(FORDS_CAMERA_NAMED_FOV_RADIANS * 0.5) * 0.9)
-	var bottom_ray_elevation := optical_axis_elevation - bottom_ray_delta
-	if bottom_ray_elevation <= 0.0:
+	var to_center := source_map_data.local_bounds.get_center() - from_local
+	if to_center.length_squared() < 0.0001:
 		return 0.0
-	var center_distance := local_height / tan(deg_to_rad(FORDS_CAMERA_PITCH_ABOVE_HORIZONTAL_DEGREES))
-	var bottom_distance := local_height / tan(bottom_ray_elevation)
-	return maxf(0.0, bottom_distance - center_distance)
+	var d := to_center.normalized()
+	# _sage_vector_to_local maps a SAGE horizontal (x, y) through
+	# godot=(sage.x, -sage.y) onto the (local_axis_x, local_axis_z) basis, and
+	# the camera forward at source yaw is SAGE (-sin(yaw), cos(yaw)). The
+	# basis is a rotation, so invert it by expanding `d` back onto the axes to
+	# recover the godot horizontal, then read the yaw off it.
+	var godot := source_map_data.local_axis_x * d.x + source_map_data.local_axis_z * d.y
+	return wrapf(atan2(-godot.x, -godot.y) - deg_to_rad(FORDS_CAMERA_YAW_DEGREES), -PI, PI)
 
 
 func _clear_presentations() -> void:

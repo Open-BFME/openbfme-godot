@@ -744,12 +744,12 @@ func _run() -> void:
 	)
 	_check("snappy_radar_zoom_contract", is_equal_approx(float(slice.minimap.zoom_response_seconds), 0.09) and float(slice.minimap.radar_zoom_target) == 1.0)
 	var player_fortress_position := Vector2(slice.simulation.structure(slice.simulation.fortress_id(0)).get("position", Vector2.INF))
-	var camera_inset: float = minf(float(slice._camera_ground_constraint_inset()), minf(slice.source_map_data.local_bounds.size.x, slice.source_map_data.local_bounds.size.y) * 0.5 - 0.001)
-	var camera_minimum: Vector2 = slice.source_map_data.local_bounds.position + Vector2(camera_inset, camera_inset)
-	var camera_maximum: Vector2 = slice.source_map_data.local_bounds.end - Vector2(camera_inset, camera_inset)
+	# The look-at clamp is the authored playable bounds directly (the retail
+	# scroll contract: the map border is reachable, v0.2.2 camera fix).
+	var camera_bounds: Rect2 = slice.source_map_data.local_bounds
 	var expected_camera_focus: Vector2 = Vector2(
-		clampf(player_fortress_position.x, camera_minimum.x, camera_maximum.x),
-		clampf(player_fortress_position.y, camera_minimum.y, camera_maximum.y)
+		clampf(player_fortress_position.x, camera_bounds.position.x, camera_bounds.end.x),
+		clampf(player_fortress_position.y, camera_bounds.position.y, camera_bounds.end.y)
 	)
 	_check(
 		"camera_starts_from_source_fortress_with_exact_constraint",
