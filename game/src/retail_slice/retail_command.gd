@@ -25,6 +25,7 @@ const COMMAND_TYPES: Array[String] = [
 	"cast_rally",
 	"cast_ability",
 	"set_structure_rally",
+	"sell_structure",
 	"pause",
 	"resume",
 ]

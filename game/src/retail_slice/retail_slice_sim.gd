@@ -15422,6 +15422,129 @@ func set_structure_rally(team: int, structure_id: int, position: Vector2) -> Dic
 	return {"ok": true}
 
 
+func structure_sell_command(structure_id: int) -> Dictionary:
+	## Compiled Command_Sell row for this structure, or {} if the mounted docs
+	## do not author a sell slot. Command_Sell is slot 6 of every Men production
+	## set and the whole of SellableCommandSet (commandset.ini:5771).
+	if not structures.has(structure_id):
+		return {}
+	var building: Dictionary = structures[structure_id]
+	if int(building.get("health", 0)) <= 0:
+		return {}
+	if float(building.get("construction_progress", 1.0)) < 1.0:
+		return {}
+	var slot := _compiled_sell_slot_for(building)
+	if slot.is_empty():
+		return {}
+	var kind := String(building.get("structure_kind", ""))
+	var team := int(building.get("team", -1))
+	var cost := int((structure_build_rules_for_team(team).get(kind, {}) as Dictionary).get("cost", 0))
+	if cost <= 0:
+		cost = int((_expansion_build_rules.get(kind, {}) as Dictionary).get("cost", 0))
+	# gamedata.ini:8973 SellPercentage = 50%.
+	var refund := int(cost / 2)
+	return {
+		"command_id": String(slot.get("commandId", "Command_Sell")),
+		"slot": int(slot.get("slot", 6)),
+		"refund": refund,
+	}
+
+
+func sell_structure(team: int, structure_id: int) -> Dictionary:
+	## Retail SELL (commandbutton.ini:3554): raze the building and refund
+	## SellPercentage of its authored build cost. Presentation follows the
+	## ordinary health=0 / structure.destroyed path.
+	if not base_loop_enabled or winner != -1:
+		return {"ok": false, "reason": "match-unavailable"}
+	if not structures.has(structure_id):
+		return {"ok": false, "reason": "unknown-structure"}
+	var building: Dictionary = structures[structure_id]
+	if int(building.get("team", -1)) != team:
+		return {"ok": false, "reason": "wrong-owner"}
+	if int(building.get("health", 0)) <= 0 or float(building.get("construction_progress", 0.0)) < 1.0:
+		return {"ok": false, "reason": "structure-unavailable"}
+	var sell: Dictionary = structure_sell_command(structure_id)
+	if sell.is_empty():
+		return {"ok": false, "reason": "no-sell-command"}
+	var refund := int(sell.get("refund", 0))
+	team_resources[team] = resources_for_team(team) + refund
+	building["health"] = 0
+	building["queue"] = []
+	building["upgrade_queue"] = []
+	_clear_expansion_pad_occupant(structure_id)
+	var structure_kind := String(building.get("structure_kind", ""))
+	_emit_event("structure.sold", 0, structure_id, {
+		"team": team,
+		"refund": refund,
+		"structure_kind": structure_kind,
+	})
+	_emit_event("structure.destroyed", 0, structure_id, {
+		"reason": "sold",
+		"structure_kind": structure_kind,
+		"team": team,
+	})
+	return {"ok": true, "refund": refund, "structure_id": structure_id}
+
+
+func _compiled_sell_slot_for(building: Dictionary) -> Dictionary:
+	var candidates: Array[String] = []
+	var stamped := String(building.get("source_object_id", ""))
+	if stamped != "":
+		candidates.append(stamped)
+	var kind := String(building.get("structure_kind", ""))
+	var aliases: Variant = structure_source_object_ids_for_team(int(building.get("team", -1))).get(kind, [])
+	if typeof(aliases) == TYPE_ARRAY:
+		for alias_value in aliases as Array:
+			var alias_id := String(alias_value)
+			if alias_id != "" and not candidates.has(alias_id):
+				candidates.append(alias_id)
+	elif typeof(aliases) in [TYPE_STRING, TYPE_STRING_NAME]:
+		var alias_id := String(aliases)
+		if alias_id != "" and not candidates.has(alias_id):
+			candidates.append(alias_id)
+	var db = _content_db_ref()
+	if db == null or not db.has_method("get_playable_structure_runtime"):
+		return {}
+	for object_id in candidates:
+		var document: Dictionary = db.get_playable_structure_runtime(object_id)
+		if document.is_empty():
+			continue
+		var sets: Array = (
+			((document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)
+			.get("trainedCommandSets", [])
+		) as Array
+		for slot_value in _direct_or_first_command_set_slots(sets):
+			if typeof(slot_value) != TYPE_DICTIONARY:
+				continue
+			var slot: Dictionary = slot_value
+			if String(slot.get("commandId", "")) == "Command_Sell":
+				return slot
+	return {}
+
+
+func _direct_or_first_command_set_slots(sets: Array) -> Array:
+	for set_value in sets:
+		if typeof(set_value) != TYPE_DICTIONARY:
+			continue
+		var row: Dictionary = set_value
+		if String(row.get("kind", "")) == "direct":
+			return row.get("slots", []) as Array
+	if sets.is_empty() or typeof(sets[0]) != TYPE_DICTIONARY:
+		return []
+	return (sets[0] as Dictionary).get("slots", []) as Array
+
+
+func _clear_expansion_pad_occupant(structure_id: int) -> void:
+	for fortress_id_value in expansion_pads.keys():
+		var pads: Array = expansion_pads[fortress_id_value] as Array
+		for pad_value in pads:
+			if typeof(pad_value) != TYPE_DICTIONARY:
+				continue
+			var pad: Dictionary = pad_value
+			if int(pad.get("expansion_structure_id", 0)) == structure_id:
+				pad["expansion_structure_id"] = 0
+
+
 func issue_construct(ids: Array[int], structure_kind: String, position: Vector2, dry_run: bool = false, team: int = PLAYER_TEAM) -> Dictionary:
 	return _issue_construct_for_team(team, ids, structure_kind, position, dry_run)
 
@@ -19667,6 +19790,8 @@ func apply_command(cmd: Dictionary) -> void:
 			last_command_result = cast_ability(int(args.get("hero_id", 0)), String(args.get("ability_id", "")), Vector2(args.get("target_point", Vector2.ZERO)), team)
 		"set_structure_rally":
 			last_command_result = set_structure_rally(team, int(args.get("structure_id", 0)), Vector2(args.get("position", Vector2.ZERO)))
+		"sell_structure":
+			last_command_result = sell_structure(team, int(args.get("structure_id", 0)))
 		"pause":
 			clock_paused = true
 			last_command_result = true

@@ -4603,6 +4603,7 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 			entries.append({
 				"command_kind": "upgrade",
 				"id": upgrade_id,
+				"command_id": String(upgrade_command.get("command_id", "")),
 				"icon": upgrade_icon,
 				"text": upgrade_label if upgrade_icon == null else "",
 				"enabled": upgrade_queue.is_empty() and bool(upgrade_command.get("gate_satisfied", true)),
@@ -4634,6 +4635,25 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 					"label": String(command.get("label", "")),
 					"tooltip": String(command.get("tooltip", "")),
 				})
+		# Command_Sell is slot 6 of every compiled Men production set and the
+		# whole of SellableCommandSet (commandset.ini:5771). Without it a farm
+		# — whose authored set IS that one row — shows an empty palantir.
+		var sell: Dictionary = simulation.structure_sell_command(selected_structure_id)
+		if not sell.is_empty():
+			var sell_cmd: Dictionary = hud.retail_sell_command()
+			var sell_icon: Texture2D = sell_cmd.get("texture") as Texture2D
+			var sell_label := String(sell_cmd.get("label", "Demolish Building"))
+			entries.append({
+				"command_kind": "sell",
+				"id": String(sell.get("command_id", "Command_Sell")),
+				"icon": sell_icon,
+				"text": sell_label if sell_icon == null else "",
+				"enabled": true,
+				"label": sell_label,
+				"tooltip": String(sell_cmd.get("tooltip", "Demolish")),
+				"cost": -int(sell.get("refund", 0)),
+				"refund": int(sell.get("refund", 0)),
+			})
 	var anchor := camera.unproject_position(world_position)
 	hud.sync_radial_commands(anchor, _paged_radial_entries(structure, entries))
 
@@ -4692,12 +4712,26 @@ func _paged_radial_entries(structure: Dictionary, entries: Array) -> Array:
 	# the last improvement was bought): the base slots plus the two doors.
 	if page != hud.RADIAL_PAGE_MAIN:
 		hud.set_radial_page(hud.RADIAL_PAGE_MAIN)
+	# Command_Sell is compiled slot 6 of MenFortressCommandSet (commandset.ini
+	# :4063). Hold it out of the 7-slot trim so the demolish socket survives
+	# the expansion + selector pack that already fills the authored range.
+	var sell_entries: Array = []
+	var kept_main: Array = []
+	for main_value in main_entries:
+		var main_entry: Dictionary = main_value
+		if String(main_entry.get("command_kind", "")) == "sell":
+			sell_entries.append(main_entry)
+		else:
+			kept_main.append(main_entry)
+	main_entries = kept_main
 	var selector_count := int(not upgrade_entries.is_empty()) + int(not hero_entries.is_empty())
 	var main_range_count := int(upgrade_selector.get("command_range_start", 0))
 	if main_range_count <= 0:
 		main_range_count = int(hero_selector.get("command_range_start", 0))
 	if main_range_count > 0 and main_entries.size() + selector_count > main_range_count:
 		main_entries.resize(maxi(0, main_range_count - selector_count))
+	for sell_value in sell_entries:
+		main_entries.append(sell_value)
 	if not upgrade_entries.is_empty():
 		main_entries.append(_radial_page_entry("page", hud.RADIAL_PAGE_UPGRADES, faction_slug))
 	if not hero_entries.is_empty():
@@ -4819,6 +4853,26 @@ func _on_hero_focus_requested(hero_id: int) -> void:
 	selected_structure_id = 0
 	simulation.select_only(hero_id)
 	_center_camera_on(Vector2(simulation.entity(hero_id).get("position", camera_focus)))
+	_sync_presentation()
+
+
+func _sell_selected_structure() -> void:
+	if simulation == null or selected_structure_id == 0:
+		hud.set_feedback("Cannot demolish: select the building first.", true)
+		_refresh_hud()
+		return
+	var structure_id := selected_structure_id
+	var result: Dictionary = _apply_local_command("sell_structure", {"structure_id": structure_id})
+	var accepted := bool(result.get("ok", false))
+	if accepted:
+		selected_structure_id = 0
+		_selected_expansion_pad = {}
+		hud.set_feedback("Building demolished.")
+	else:
+		hud.set_feedback(
+			"Cannot demolish: %s." % String(result.get("reason", "rejected")).replace("-", " "),
+			true
+		)
 	_sync_presentation()
 
 
@@ -7532,6 +7586,7 @@ func _build_hud() -> void:
 	hud.hero_recall_requested.connect(_on_hero_recall_requested)
 	hud.hero_focus_requested.connect(_on_hero_focus_requested)
 	hud.expansion_requested.connect(_on_expansion_requested)
+	hud.structure_sell_requested.connect(_sell_selected_structure)
 	hud.music_volume_changed.connect(func(value: float) -> void:
 		if audio_system != null: audio_system.set_music_volume(value, true)
 	)

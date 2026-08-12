@@ -43,6 +43,9 @@ signal hero_recall_requested(hero_id: int)
 ## Double-click on a hero portrait: select him AND put the camera on him.
 signal hero_focus_requested(hero_id: int)
 signal expansion_requested(expansion_kind: String)
+## Compiled Command_Sell (commandbutton.ini:3554, InPalantir Yes). Emitted when
+## the player clicks the radial demolish socket for the selected structure.
+signal structure_sell_requested
 signal battalion_upgrade_requested(upgrade_id: String)
 signal music_volume_changed(value: float)
 signal voice_volume_changed(value: float)
@@ -507,6 +510,7 @@ var _construction_labels: Array[Label] = []
 ## shown for the selected structure or hero (REF-25/41).
 var _dish_level_label: Label
 var _dish_level_bar: ProgressBar
+var _dish_level_caption := ""
 ## Recruited-hero strip bottom-center: small portraits with level badges and
 ## health bars (REF-24/41).
 var hero_bar: HBoxContainer
@@ -571,6 +575,7 @@ const RETAIL_RADIAL_PAGE_TEXT := {
 	},
 }
 var _radial_page_command_cache: Dictionary = {}
+var _retail_sell_command: Dictionary = {}
 var _radial_page_selectors: Dictionary = {}
 var radial_page := RADIAL_PAGE_MAIN
 signal radial_page_changed(page: String)
@@ -683,6 +688,7 @@ func configure_faction_surface(manifest: Dictionary) -> void:
 			)
 		_radial_page_selectors[page] = selector.duplicate(true)
 	_radial_page_command_cache.clear()
+	_retail_sell_command.clear()
 	if _faction_heading_label != null:
 		_faction_heading_label.text = _faction_display_name(faction)
 	# Safe after build: only updates the visibility filter (does not invent
@@ -4005,6 +4011,7 @@ func _layout_dish_level_caption() -> void:
 ## caption: e.g. "Level: 1"; progress 0..1 (retail level-XP bar; 0 when the
 ## sim has no XP source). Visible only while a structure or hero is selected.
 func set_dish_level(caption: String, progress: float) -> void:
+	_dish_level_caption = caption
 	if _dish_level_label == null:
 		return
 	# The caption rides the retail dish interior; only parity mode binds that
@@ -4015,6 +4022,10 @@ func set_dish_level(caption: String, progress: float) -> void:
 	if show:
 		_dish_level_label.text = caption
 		_dish_level_bar.value = clampf(progress, 0.0, 1.0)
+
+
+func dish_level_caption() -> String:
+	return _dish_level_caption
 
 
 func _build_hero_bar() -> void:
@@ -4197,7 +4208,7 @@ func sync_radial_commands(_anchor: Vector2, entries: Array) -> void:
 			var tooltip_group := "train"
 			if command_kind == "expansion":
 				tooltip_group = "expansion"
-			elif command_kind == "upgrade" or command_kind == "page" or command_kind == "back":
+			elif command_kind == "upgrade" or command_kind == "page" or command_kind == "back" or command_kind == "sell":
 				# Priced/announced by the caller: a fortress improvement's cost
 				# comes off the compiled contract, and a page selector has none.
 				tooltip_group = "radial_command"
@@ -4215,6 +4226,8 @@ func sync_radial_commands(_anchor: Vector2, entries: Array) -> void:
 				button.pressed.connect(set_radial_page.bind(command_id))
 			elif command_kind == "back":
 				button.pressed.connect(set_radial_page.bind(RADIAL_PAGE_MAIN))
+			elif command_kind == "sell":
+				button.pressed.connect(func() -> void: structure_sell_requested.emit())
 			else:
 				button.pressed.connect(_emit_train_requested.bind(command_id))
 			_register_button_tooltip(button)
@@ -4414,6 +4427,50 @@ func retail_radial_page_command(page: String, faction_slug: String) -> Dictionar
 ## when unbound or the pack lacks the command (fail closed).
 func retail_expansion_command(kind: String) -> Dictionary:
 	return (_retail_expansion_validated.get(kind, {}) as Dictionary).duplicate()
+
+
+func retail_sell_command() -> Dictionary:
+	## Command_Sell presentation (commandbutton.ini:3554): BCSell + the
+	## CONTROLBAR:SellBuilding / ToolTipSellBuilding pair. The texture is null
+	## when the pack has no converted art; the caller keeps the socket as text
+	## so a farm — whose authored set IS this one row — never vanishes.
+	if not _retail_sell_command.is_empty():
+		return _retail_sell_command.duplicate()
+	# lotr.str:14228 CONTROLBAR:SellBuilding = "Demolish Building";
+	# CONTROLBAR:ToolTipSellBuilding = "Demolish". Honest fallbacks match the
+	# retail English bytes when the mounted pack has no localized string.
+	var result := {
+		"texture": null,
+		"label": "Demolish Building",
+		"tooltip": "Demolish",
+	}
+	const IMAGE_ID := "BCSell"
+	const LABEL_ID := "CONTROLBAR:SellBuilding"
+	const TOOLTIP_ID := "CONTROLBAR:ToolTipSellBuilding"
+	if _bound_content_db != null and _bound_pack_root != "":
+		var image_validation := _validate_retail_image(
+			_bound_content_db, _bound_pack_root, IMAGE_ID, Vector2i.ZERO
+		)
+		if String(image_validation.get("error", "")) == "":
+			result["texture"] = image_validation.get("texture")
+		else:
+			retail_bind_diagnostics.append(
+				"sell-command-art-missing-recorded: Command_Sell renders as text — %s"
+				% String(image_validation.get("error", ""))
+			)
+		var localized_label := String(_bound_content_db.get_retail_string(LABEL_ID, ""))
+		var localized_tooltip := String(_bound_content_db.get_retail_string(TOOLTIP_ID, ""))
+		if localized_label != "":
+			result["label"] = localized_label
+		else:
+			retail_bind_diagnostics.append(
+				"sell-command-unlocalized-recorded: Command_Sell renders transcribed retail text ('%s') — the mounted packs define no '%s'"
+				% [String(result["label"]), LABEL_ID]
+			)
+		if localized_tooltip != "":
+			result["tooltip"] = localized_tooltip
+		_retail_sell_command = result.duplicate()
+	return result.duplicate()
 
 
 func radial_command_count() -> int:
