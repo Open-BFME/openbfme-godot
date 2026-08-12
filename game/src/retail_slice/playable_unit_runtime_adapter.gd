@@ -262,6 +262,23 @@ static func simulation_rule(document: Dictionary, require_producer: bool = true)
 		var shroud_clearing: Variant = _resolved_value(resolved.get("shroudClearingRange"))
 		if typeof(shroud_clearing) in [TYPE_INT, TYPE_FLOAT] and float(shroud_clearing) >= 0.0:
 			row["shroudClearingRange"] = shroud_clearing
+		var crush := _resolved_dictionary(resolved.get("crush", {}))
+		if not crush.is_empty():
+			row["crush"] = crush
+			if crush.has("crusherLevel"):
+				row["crusher_level"] = int(crush["crusherLevel"])
+			if crush.has("crushableLevel"):
+				row["crushable_level"] = int(crush["crushableLevel"])
+			if crush.has("crushWeaponId"):
+				row["crush_weapon_id"] = String(crush["crushWeaponId"])
+			if crush.has("crushDamage"):
+				row["crush_damage"] = int(crush["crushDamage"])
+			if crush.has("minCrushVelocityPercent"):
+				row["min_crush_velocity_percent"] = float(crush["minCrushVelocityPercent"])
+			if crush.has("crushDecelerationPercent"):
+				row["crush_deceleration_percent"] = float(crush["crushDecelerationPercent"])
+			if crush.has("crushKnockback"):
+				row["crush_knockback"] = float(crush["crushKnockback"])
 	for field in ["displayName", "buildCost", "buildTimeSeconds", "commandPoints", "memberCount", "memberHealth", "speed", "visionRange"]:
 		if not row.has(field):
 			return {}
@@ -433,6 +450,7 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 	var acceleration := float(movement.get("acceleration", -1.0)) * HORDE_LOCOMOTION_RESPONSE_SCALE
 	var braking := float(movement.get("braking", -1.0)) * HORDE_LOCOMOTION_RESPONSE_SCALE
 	var turn_rate := float(movement.get("turnRateDegreesPerSecond", -1.0))
+	var max_turn_without_reform := float(movement.get("maxTurnWithoutReformDegrees", 0.0))
 	var attack_range := float(combat.get("attackRange", -1.0))
 	var minimum_range := float(combat.get("minimumAttackRange", 0.0))
 	var delay_ms := float(combat.get("delayBetweenShotsMs", -1.0))
@@ -548,6 +566,9 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 		# without dividing back out.
 		output["shroud_clearing_range"] = shroud_clearing * source_scale
 		output["shroud_clearing_range_source"] = shroud_clearing
+	if max_turn_without_reform > 0.0:
+		output["max_turn_without_reform_degrees"] = max_turn_without_reform
+	_copy_optional_crush_fields(output, simulation)
 	if simulation.get("highlander_body") == true:
 		output["highlander_body"] = true
 	for body_field in ["innate_armor_scalar", "auto_heal_multiplier"]:
@@ -1079,6 +1100,43 @@ static func _resolved_weapon_modes(value: Variant) -> Dictionary:
 			return {}
 		output[String(mode_key)] = _flatten_combat(profile)
 	return output
+
+
+static func _copy_optional_crush_fields(output: Dictionary, simulation: Dictionary) -> void:
+	## Absent-unless-set: only copy crush keys the document actually authored.
+	var crush: Dictionary = simulation.get("crush", {}) as Dictionary
+	var pairs := [
+		["crusher_level", "crusherLevel"],
+		["crushable_level", "crushableLevel"],
+		["crush_weapon_id", "crushWeaponId"],
+		["crush_damage", "crushDamage"],
+		["min_crush_velocity_percent", "minCrushVelocityPercent"],
+		["crush_deceleration_percent", "crushDecelerationPercent"],
+		["crush_knockback", "crushKnockback"],
+	]
+	for pair_value in pairs:
+		var pair: Array = pair_value
+		var snake := String(pair[0])
+		var camel := String(pair[1])
+		var raw: Variant = null
+		if simulation.has(snake):
+			raw = simulation.get(snake)
+		elif crush.has(camel):
+			raw = crush.get(camel)
+		elif crush.has(snake):
+			raw = crush.get(snake)
+		if raw == null:
+			continue
+		if snake == "crush_weapon_id":
+			var weapon_id := String(raw).strip_edges()
+			if weapon_id != "":
+				output[snake] = weapon_id
+			continue
+		if typeof(raw) in [TYPE_INT, TYPE_FLOAT] and is_finite(float(raw)):
+			if snake in ["crusher_level", "crushable_level", "crush_damage"]:
+				output[snake] = int(raw)
+			else:
+				output[snake] = float(raw)
 
 
 static func _resolved_dictionary(value: Variant) -> Dictionary:

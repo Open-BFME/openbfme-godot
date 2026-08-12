@@ -1367,6 +1367,47 @@ def _resolved_definition_field(
     return result
 
 
+def _crush_contract(
+    member_fields: Mapping[str, Mapping[str, object]],
+    documents: Mapping[str, bytes],
+    constants: Mapping[str, int | float],
+    *,
+    named_definition_cache: dict[
+        tuple[str, str], dict[str, list[dict[str, object]]] | None
+    ]
+    | None = None,
+    cache_lock: threading.Lock | None = None,
+) -> dict[str, object]:
+    """Compile authored crush fields. Absent stays absent — no invented factor."""
+
+    crush: dict[str, object] = {}
+    for output_name, source_name in (
+        ("crusherLevel", "CrusherLevel"),
+        ("crushableLevel", "CrushableLevel"),
+        ("minCrushVelocityPercent", "MinCrushVelocityPercent"),
+        ("crushDecelerationPercent", "CrushDecelerationPercent"),
+        ("crushKnockback", "CrushKnockback"),
+    ):
+        field = _resolved_scalar(member_fields, source_name, constants)
+        if field is not None:
+            crush[output_name] = field
+    weapon_row = member_fields.get("CrushWeapon")
+    if isinstance(weapon_row, Mapping):
+        weapon_id = str(weapon_row.get("expression", "")).strip()
+        if weapon_id:
+            crush["crushWeaponId"] = weapon_id
+            damage = _base_weapon_damage(
+                documents,
+                weapon_id,
+                constants,
+                cache=named_definition_cache,
+                cache_lock=cache_lock,
+            )
+            if damage is not None:
+                crush["crushDamage"] = damage
+    return crush
+
+
 def _simulation_contract(
     container_fields: Mapping[str, Mapping[str, object]],
     member_fields: Mapping[str, Mapping[str, object]],
@@ -1493,12 +1534,26 @@ def _simulation_contract(
                 turn_rate["semantic"] = "360 degrees divided by TurnTime seconds"
         if turn_rate is not None:
             movement["turnRateDegreesPerSecond"] = turn_rate
+        max_turn = _resolved_definition_field(
+            locomotor, "MaxTurnWithoutReform", constants
+        )
+        if max_turn is not None:
+            movement["maxTurnWithoutReformDegrees"] = max_turn
     for field in ("acceleration", "braking", "turnRateDegreesPerSecond"):
         if field not in movement:
             missing.append(field)
     if movement:
         movement["locomotorId"] = locomotor_id
         resolved["movement"] = movement
+    crush = _crush_contract(
+        member_fields,
+        documents,
+        constants,
+        named_definition_cache=named_definition_cache,
+        cache_lock=cache_lock,
+    )
+    if crush:
+        resolved["crush"] = crush
     weapon_id = _default_set_target(member_lineage, "WeaponSet", "Weapon")
     if weapon_id is None and hero:
         # Hero sets that reserve PRIMARY for special powers author the standard
@@ -2897,6 +2952,10 @@ def _scalar_fields(ancestry: Sequence[SageObject]) -> dict[str, dict[str, object
         "ExperienceValue",
         "CrusherLevel",
         "CrushableLevel",
+        "CrushWeapon",
+        "MinCrushVelocityPercent",
+        "CrushDecelerationPercent",
+        "CrushKnockback",
     ):
         values = _effective_values(ancestry, field)
         if not values:

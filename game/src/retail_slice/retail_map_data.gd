@@ -2228,10 +2228,22 @@ func query_route(from_local: Vector2, to_local: Vector2) -> Dictionary:
 		start_cell = _nearest_walkable_cell(start_cell, 12)
 		if start_cell.x < 0:
 			return {"valid": false, "reason": "blocked-origin", "points": [], "cells": []}
+	if _segment_is_walkable(from_local, to_local):
+		var los_cells := _cells_on_segment(
+			local_to_grid_float(from_local), local_to_grid_float(to_local)
+		)
+		if los_cells.size() <= MAX_ROUTE_CELLS:
+			return {
+				"valid": true,
+				"reason": "",
+				"points": _exact_destination_points(to_local),
+				"cells": los_cells,
+				"ford_name": _ford_name_for_cells(los_cells),
+			}
 	var id_path: Array[Vector2i] = _navigation_grid.get_id_path(start_cell, destination_cell, false)
 	if id_path.is_empty() or id_path.size() > MAX_ROUTE_CELLS:
 		return {"valid": false, "reason": "no-bounded-route", "points": [], "cells": []}
-	var points := _compress_route_points(id_path, to_local)
+	var points := _string_pull_route(from_local, id_path, to_local)
 	return {
 		"valid": true,
 		"reason": "",
@@ -2325,6 +2337,79 @@ func _compress_route_points(cells: Array[Vector2i], exact_destination: Vector2) 
 	if points.is_empty() or not points[-1].is_equal_approx(exact_destination):
 		points.append(exact_destination)
 	return points
+
+
+func _exact_destination_points(exact_destination: Vector2) -> Array[Vector2]:
+	var points: Array[Vector2] = []
+	points.append(exact_destination)
+	return points
+
+
+func _cell_is_los_walkable(cell: Vector2i) -> bool:
+	if not is_navigation_walkable(cell):
+		return false
+	# Water is legal only on a named ford corridor. Maps that leave water
+	# walkable in the A* grid still must not take an open-field shortcut
+	# through a pond.
+	if is_water_cell(cell) and not is_ford_corridor_cell(cell):
+		return false
+	return true
+
+
+func _cells_on_segment(from_grid: Vector2, to_grid: Vector2) -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	var delta := to_grid - from_grid
+	var distance := delta.length()
+	var steps := maxi(1, ceili(distance * 4.0))
+	var seen: Dictionary = {}
+	for index in range(steps + 1):
+		var sample: Vector2 = from_grid.lerp(to_grid, float(index) / float(steps))
+		var cell := Vector2i(roundi(sample.x), roundi(sample.y))
+		var key := cell.x * 100000 + cell.y
+		if seen.has(key):
+			continue
+		seen[key] = true
+		cells.append(cell)
+	return cells
+
+
+func _segment_is_walkable(from_local: Vector2, to_local: Vector2) -> bool:
+	for cell in _cells_on_segment(local_to_grid_float(from_local), local_to_grid_float(to_local)):
+		if not _cell_is_los_walkable(cell):
+			return false
+	return true
+
+
+func _string_pull_route(
+	from_local: Vector2, cells: Array[Vector2i], exact_destination: Vector2
+) -> Array[Vector2]:
+	## Collapse mutually-visible A* cell centers. Last point is always the
+	## exact destination, never a cell center that happens to be nearby.
+	var anchors: Array[Vector2] = []
+	if cells.size() > 1:
+		for index in range(1, cells.size()):
+			var cell_point := grid_to_local_horizontal(cells[index])
+			if anchors.is_empty() or not anchors[-1].is_equal_approx(cell_point):
+				anchors.append(cell_point)
+	if anchors.is_empty() or not anchors[-1].is_equal_approx(exact_destination):
+		anchors.append(exact_destination)
+	var pulled: Array[Vector2] = []
+	var cursor := from_local
+	var index := 0
+	while index < anchors.size():
+		var farthest := index
+		var probe := anchors.size() - 1
+		while probe > index:
+			if _segment_is_walkable(cursor, anchors[probe]):
+				farthest = probe
+				break
+			probe -= 1
+		pulled.append(anchors[farthest])
+		cursor = anchors[farthest]
+		index = farthest + 1
+	if pulled.is_empty() or not pulled[-1].is_equal_approx(exact_destination):
+		pulled.append(exact_destination)
+	return pulled
 
 
 func _ford_name_for_cells(cells: Array[Vector2i]) -> String:

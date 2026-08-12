@@ -4290,6 +4290,22 @@ func _add_battalion(
 		entities[id]["shroud_clearing_range_source"] = maxf(
 			0.0, float(unit_rule.get("shroud_clearing_range_source", 0.0))
 		)
+	if unit_rule.has("max_turn_without_reform_degrees"):
+		entities[id]["max_turn_without_reform_degrees"] = float(
+			unit_rule["max_turn_without_reform_degrees"]
+		)
+	for crush_int_key in ["crusher_level", "crushable_level", "crush_damage"]:
+		if unit_rule.has(crush_int_key):
+			entities[id][crush_int_key] = int(unit_rule[crush_int_key])
+	if unit_rule.has("crush_weapon_id"):
+		entities[id]["crush_weapon_id"] = String(unit_rule["crush_weapon_id"])
+	for crush_float_key in [
+		"min_crush_velocity_percent",
+		"crush_deceleration_percent",
+		"crush_knockback",
+	]:
+		if unit_rule.has(crush_float_key):
+			entities[id][crush_float_key] = float(unit_rule[crush_float_key])
 	# Body policy is optional authoritative state. Keep the key absent for
 	# ordinary ActiveBody units so their snapshots/hashes do not change.
 	if unit_rule.get("highlander_body") == true:
@@ -17231,8 +17247,8 @@ func _step_route(row: Dictionary) -> void:
 	row["position"] = position
 	_spatial_sync(row)
 	row["route"] = route
-	# Minimal cavalry trample while charging into enemies at speed.
-	if String(row.get("category", "")) == "cavalry" and current_speed > max_speed * 0.4:
+	# Authored crush, or the legacy cavalry trample when crush fields are absent.
+	if _should_attempt_crush(row, current_speed, max_speed):
 		_try_cavalry_trample(row)
 	if route.is_empty():
 		_clear_pending_route(row, int(row["target_id"]) == 0)
@@ -17240,15 +17256,31 @@ func _step_route(row: Dictionary) -> void:
 			row["state"] = "idle"
 
 
+func _should_attempt_crush(row: Dictionary, current_speed: float, max_speed: float) -> bool:
+	if max_speed <= 0.0:
+		return false
+	if row.has("crush_damage") and int(row.get("crush_damage", 0)) > 0:
+		var min_percent := float(row.get("min_crush_velocity_percent", 40.0))
+		return current_speed + 0.0001 >= max_speed * (min_percent / 100.0)
+	return String(row.get("category", "")) == "cavalry" and current_speed > max_speed * 0.4
+
+
 func _try_cavalry_trample(row: Dictionary) -> void:
-	## One bonus damage pulse when a charging cavalry battalion overlaps an
-	## enemy within TRAMPLE_COLLISION_RADIUS. Cooldown prevents continuous
-	## ticks. The struck battalion is also bowled over: knocked down and
-	## displaced away from the charge through the shared knockback core
-	## (retail infantry fly aside, sprawl, then stand up). Flyers are immune.
+	## Authored crush when crush_damage/crusher_level are present. Otherwise
+	## the legacy cavalry 0.5 pulse so the pin and slice trample checks stay
+	## put on packs that predate the fields.
 	var cooldown := int(row.get("trample_cooldown", 0))
 	if cooldown > 0:
 		row["trample_cooldown"] = cooldown - 1
+		return
+	var authored_damage := int(row.get("crush_damage", 0))
+	var has_authored := row.has("crush_damage") and authored_damage > 0
+	if has_authored:
+		var max_speed := float(row.get("speed", 0.0))
+		var min_percent := float(row.get("min_crush_velocity_percent", 40.0))
+		if max_speed > 0.0 and float(row.get("current_speed", 0.0)) + 0.0001 < max_speed * (min_percent / 100.0):
+			return
+	elif String(row.get("category", "")) != "cavalry":
 		return
 	var team := int(row.get("team", PLAYER_TEAM))
 	var origin := Vector2(row.get("position", Vector2.ZERO))
@@ -17257,15 +17289,37 @@ func _try_cavalry_trample(row: Dictionary) -> void:
 	)
 	if best_id == 0:
 		return
-	var damage := maxi(1, int(round(float(row.get("member_damage", 1)) * float(row.get("member_count", 1)) * TRAMPLE_DAMAGE_FACTOR * _timed_modifier_product(row, "CRUSH"))))
+	var victim: Dictionary = entities[best_id] as Dictionary
+	if has_authored:
+		var crusher_level := int(row.get("crusher_level", 0))
+		var victim_level := int(victim.get("crushable_level", 0))
+		if crusher_level <= victim_level:
+			return
+	var damage := 0
+	if has_authored:
+		damage = maxi(
+			1,
+			int(round(float(authored_damage) * _timed_modifier_product(row, "CRUSH")))
+		)
+	else:
+		damage = maxi(1, int(round(float(row.get("member_damage", 1)) * float(row.get("member_count", 1)) * TRAMPLE_DAMAGE_FACTOR * _timed_modifier_product(row, "CRUSH"))))
 	# A braced shield wall blunts the charge (retail pike/shield counterplay).
-	damage = maxi(1, roundi(float(damage) * float(_formation_effects(entities[best_id] as Dictionary).get("trample_damage_multiplier", 1.0))))
+	damage = maxi(1, roundi(float(damage) * float(_formation_effects(victim).get("trample_damage_multiplier", 1.0))))
 	_apply_damage(int(row.get("id", 0)), best_id, damage, "battalion")
 	row["trample_cooldown"] = TRAMPLE_COOLDOWN_TICKS
-	_emit_event("combat.trample", int(row.get("id", 0)), best_id, {"amount": damage, "category": "cavalry"})
-	# Damage keeps its existing single-victim semantics above; the knockdown
-	# sweep covers everything the charge plows through around the impact.
-	_apply_knockback(origin, TRAMPLE_COLLISION_RADIUS, TRAMPLE_KNOCKBACK_STRENGTH, team, 0, "trample", int(row.get("id", 0)))
+	var payload := {
+		"amount": damage,
+		"category": String(row.get("category", "cavalry")),
+	}
+	if has_authored:
+		payload["weapon"] = String(row.get("crush_weapon_id", ""))
+		_emit_event("combat.crush", int(row.get("id", 0)), best_id, payload)
+	# Alias kept so existing slice/knockback listeners still see a pulse.
+	_emit_event("combat.trample", int(row.get("id", 0)), best_id, payload)
+	var knockback_strength := TRAMPLE_KNOCKBACK_STRENGTH
+	if has_authored and row.has("crush_knockback"):
+		knockback_strength = maxf(0.0, float(row.get("crush_knockback", TRAMPLE_KNOCKBACK_STRENGTH)))
+	_apply_knockback(origin, TRAMPLE_COLLISION_RADIUS, knockback_strength, team, 0, "trample", int(row.get("id", 0)))
 
 
 func _resume_order_after_knockdown(row: Dictionary) -> bool:

@@ -232,6 +232,10 @@ var weapon_launch_bone := ARCHER_LAUNCH_BONE
 ## Retail Weapon.ProjectileTemplateName projected by the playable-unit
 ## descriptor. Empty on packs built before the generic binding landed.
 var projectile_object_id := ""
+## Last applied mount presentation. Foot model is kept when the pack has no
+## mounted-container-payload recipe (named gap, not a silent mesh swap).
+var _mount_presentation_applied := false
+var mount_visual_gap := ""
 
 
 func configure(
@@ -271,6 +275,27 @@ func configure(
 	_configure_source_selection_decal(definition)
 	_build_markers()
 	set_action_state("idle", true)
+
+
+func sync_mount_presentation(mounted: bool) -> void:
+	## Tiny hook: when the sim marks the hero mounted, prefer the pack's
+	## mounted-container-payload visual. If that recipe is absent, keep the
+	## foot model and record the gap.
+	if _mount_presentation_applied == mounted:
+		return
+	_mount_presentation_applied = mounted
+	if not mounted:
+		mount_visual_gap = ""
+		return
+	var definition: Dictionary = ContentDB.get_bundle_object(object_id)
+	var visual: Dictionary = definition.get("visual", {}) as Dictionary
+	if visual.is_empty():
+		visual = definition.get("presentation", {}) as Dictionary
+	var composition: Dictionary = visual.get("presentationComposition", {}) as Dictionary
+	if String(composition.get("form", "")) != "mounted-container-payload":
+		mount_visual_gap = "pack-has-no-mounted-container-payload"
+		return
+	mount_visual_gap = ""
 
 
 func sync_banner_carrier(spawned: bool, banner_object_id: String, offset_source: Vector2) -> void:
