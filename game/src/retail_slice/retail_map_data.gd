@@ -535,16 +535,22 @@ func _load_terrain_material_catalog(relative: String, blend: Dictionary, blend_t
 		if blend_textures.size() != terrain_texture_count:
 			return _fail("terrain material catalog is incomplete")
 	else:
+		# Two symbols may share one texture file (retail authors HelmsDeepBrick03
+		# and ClifFornost02 onto the same bytes), so a deduplicating cook emits
+		# fewer texture rows than materials. Older cooks emitted one row per
+		# material; both shapes are validated below via the by-png lookup.
 		if (
 			int(manifest.get("symbolCount", -1)) != materials.size()
 			or int(manifest.get("textureCount", -1)) != texture_rows.size()
-			or materials.size() != texture_rows.size()
+			or texture_rows.size() < 1
+			or texture_rows.size() > materials.size()
 			or materials.size() < terrain_texture_count
 			or materials.size() > MAX_SHARED_TERRAIN_MATERIALS
 			or blend_textures.size() != terrain_texture_count
 		):
 			return _fail("terrain material catalog is incomplete")
 	var symbol_indices: Dictionary = {}
+	var texture_rows_by_png: Dictionary = {}
 	if not exact_ordered:
 		for material_index in range(materials.size()):
 			var catalog_row := _dictionary(materials[material_index])
@@ -552,6 +558,21 @@ func _load_terrain_material_catalog(relative: String, blend: Dictionary, blend_t
 			if catalog_row.is_empty() or catalog_symbol == "" or String(catalog_row.get("definitionSymbol", "")) != catalog_symbol or int(catalog_row.get("tableIndex", -1)) != material_index or symbol_indices.has(catalog_symbol):
 				return _fail("shared terrain material catalog is internally inconsistent")
 			symbol_indices[catalog_symbol] = material_index
+		for texture_value in texture_rows:
+			var candidate_row := _dictionary(texture_value)
+			var candidate_png := String(candidate_row.get("png", ""))
+			if candidate_row.is_empty() or candidate_png == "":
+				return _fail("shared terrain material catalog is internally inconsistent")
+			if texture_rows_by_png.has(candidate_png):
+				# A per-material cook repeats the row for a shared file; the
+				# repeats must agree byte-for-byte or the catalog is lying.
+				var existing := _dictionary(texture_rows_by_png[candidate_png])
+				if String(existing.get("pngSha256", "")) != String(candidate_row.get("pngSha256", "")) \
+						or int(existing.get("width", 0)) != int(candidate_row.get("width", 0)) \
+						or int(existing.get("height", 0)) != int(candidate_row.get("height", 0)):
+					return _fail("shared terrain material catalog is internally inconsistent")
+				continue
+			texture_rows_by_png[candidate_png] = candidate_row
 
 	var material_root := manifest_path.get_base_dir()
 	var expected_cell_start := 0
@@ -568,7 +589,10 @@ func _load_terrain_material_catalog(relative: String, blend: Dictionary, blend_t
 			if shared_index < 0:
 				return _fail("shared terrain material catalog does not cover the map texture table")
 			material_row = _dictionary(materials[shared_index])
-			texture_row = _dictionary(texture_rows[shared_index])
+			# Deduplicated texture lists no longer align index-wise with the
+			# material table; the material's own png names its texture row, and
+			# the rows-disagree check below still cross-validates the pair.
+			texture_row = _dictionary(texture_rows_by_png.get(String(material_row.get("png", "")), {}))
 			expected_table_index = shared_index
 		var symbol := String(material_row.get("symbol", ""))
 		var definition_symbol := String(material_row.get("definitionSymbol", ""))

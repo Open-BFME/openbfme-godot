@@ -1,13 +1,14 @@
 extends SceneTree
-## Retail castle admission proof against the currently cooked Erebor document.
-## The next pack cook adds the castleSiege contract; this runner injects that
-## exact metadata over today's immutable document to verify the runtime seam.
+## Retail castle admission proof against the cooked playable-maps pack.
+## The pack now ships the castleSiege contract on every castle row, so this
+## runner verifies the REAL cooked metadata end to end: catalog row, document
+## load, named blockers, and the battlefield refusing gameplay by name.
 
 const Watchdog := preload("res://tests/runner_watchdog.gd")
-const PACK_ID := "rotwk-skirmish-maps-private"
+const PACK_ID := "rotwk-playable-maps-private"
 const CATALOG_MAX_BYTES := 1024 * 1024
 const DOCUMENT_MAX_BYTES := 8 * 1024 * 1024
-const EXPECTED_CHECKS := 36
+const EXPECTED_CHECKS := 46
 const AMON_SUL := "Amon Sul Fortress"
 const BLOCKERS: Array[String] = [
 	"walkable-walls",
@@ -87,6 +88,9 @@ func _run() -> void:
 
 	for display_name in CASTLE_STARTS:
 		var candidate := definitions.get(display_name, {}) as Dictionary
+		_check("%s_cooked_contract_exact" % String(display_name).to_snake_case(),
+			(candidate.get("castleSiege", {}) as Dictionary) == CONTRACT,
+			str(candidate.get("castleSiege", null)))
 		var candidate_data = map_data_script.new()
 		_check("%s_map_data_loads" % String(display_name).to_snake_case(),
 			bool(candidate_data.load_from_pack(pack_root, candidate)), String(candidate_data.error))
@@ -114,7 +118,7 @@ func _run() -> void:
 	await process_frame
 	root.remove_child(amon_battlefield)
 	amon_battlefield.free()
-	var objects := _read_bounded(loader, pack_root, "maps/erebor/objects.json", DOCUMENT_MAX_BYTES)
+	var objects := _read_bounded(loader, pack_root, "maps/wor-erebor/objects.json", DOCUMENT_MAX_BYTES)
 	var type_names: Dictionary = {}
 	for value in objects.get("objects", []) as Array:
 		if typeof(value) == TYPE_DICTIONARY:
@@ -123,8 +127,8 @@ func _run() -> void:
 	_check("erebor_gate_objects_preserved", type_names.has("EreborMainGate"))
 	_check("erebor_garrison_objects_preserved", type_names.has("EBGarrisonableTower"))
 
+	# The cooked Erebor document carries the real contract now - no injection.
 	var contracted := definition.duplicate(true)
-	contracted["castleSiege"] = CONTRACT
 	var contracted_data = map_data_script.new()
 	_check("contracted_castle_document_loads", bool(contracted_data.load_from_pack(pack_root, contracted)), String(contracted_data.error))
 	_check("named_castle_gaps_surface_exactly", contracted_data.castle_gameplay_blockers == BLOCKERS,
