@@ -1535,7 +1535,9 @@ func _play_created_eva(event: Dictionary, sequence: int, now_msec: int) -> void:
 	## the createdEvents schema, where it fails closed exactly as before. An
 	## object retail gives no create hook fails closed here; a unit whose
 	## event authors no line for the local side fails closed one step deeper,
-	## on the side map.
+	## on the side map. Production object_id is the adapter slug
+	## (`bfme2.object.mordor-sauron-ring-hero`), not the CST name the map
+	## stores; `_created_event_for_object` bridges those key spaces.
 	var created_map: Variant = structure_audio_contract.get("eva_created_events", {})
 	if typeof(created_map) != TYPE_DICTIONARY or (created_map as Dictionary).is_empty():
 		_play_eva_announcement("HeroCreated", sequence, now_msec)
@@ -1554,13 +1556,25 @@ func _created_event_for_object(object_id: String) -> String:
 	var created_map: Variant = structure_audio_contract.get("eva_created_events", {})
 	if typeof(created_map) != TYPE_DICTIONARY:
 		return ""
-	var direct := String((created_map as Dictionary).get(object_id, ""))
+	var table := created_map as Dictionary
+	var direct := String(table.get(object_id, ""))
 	if direct != "":
 		return direct
 	var folded := object_id.to_lower()
-	for key_value in (created_map as Dictionary).keys():
-		if String(key_value).to_lower() == folded:
-			return String((created_map as Dictionary).get(key_value, ""))
+	# Production eva.hero_created carries PlayableUnitAdapter._runtime_id
+	# (`bfme2.object.` + slug of the CST name). createdEvents is keyed by
+	# those CST names. Exact / casefold never hit `bfme2.object.mordor-sauron-
+	# ring-hero` against `MordorSauron_RingHero`; slug with the same function
+	# the adapter used to emit.
+	var want_runtime := object_id
+	if not want_runtime.begins_with("bfme2.object."):
+		want_runtime = PlayableUnitAdapter._runtime_id(object_id)
+	for key_value in table.keys():
+		var key := String(key_value)
+		if key.to_lower() == folded:
+			return String(table.get(key_value, ""))
+		if PlayableUnitAdapter._runtime_id(key) == want_runtime:
+			return String(table.get(key_value, ""))
 	return ""
 
 

@@ -14,7 +14,11 @@ extends SceneTree
 ##         eva.hero_created resolves the created object to its authored
 ##         per-unit event, including ChildObject inherit and spawn-FX
 ##         EvaEventOwner for fortress heroes (failing closed where retail
-##         authors nothing).
+##         authors nothing). The injected object_id is the production slug
+##         (`bfme2.object.` + slug of the CST name) that retail_slice_sim
+##         actually emits — not the CST name the compiler keys createdEvents
+##         by. A runner that injected CST names would stay green while every
+##         live hero stayed silent.
 ##
 ## Pack roots come from whatever OPENBFME_CONTENT selects; the runner never
 ## reads or writes the shared selection itself.
@@ -110,8 +114,20 @@ func _run_new_schema_checks(events: Dictionary, semantics: Dictionary, created_e
 	_check("new_schema_compiles_suppression_and_delay_fields", has_block and has_delay)
 	_check(
 		"new_schema_carries_created_events_map",
-		created_events.size() == 237,
-		"createdEvents=%d" % created_events.size()
+		created_events.size() == 237
+		and String(created_events.get("MordorSauron_RingHero", "")) == "SauronCreated"
+		and String(created_events.get("IsengardLurtz", "")) == "LurtzCreated"
+		and String(created_events.get("MordorWitchKingOnFellBeast", "")) == "WitchKingCreated"
+		and not created_events.has("bfme2.object.mordor-sauron-ring-hero")
+		and not created_events.has("bfme2.object.isengard-lurtz")
+		and not created_events.has("bfme2.object.mordor-witch-king-on-fell-beast"),
+		"createdEvents=%d sauron=%s lurtz=%s witch=%s slug_sauron=%s" % [
+			created_events.size(),
+			str(created_events.get("MordorSauron_RingHero", "")),
+			str(created_events.get("IsengardLurtz", "")),
+			str(created_events.get("MordorWitchKingOnFellBeast", "")),
+			str(created_events.get("bfme2.object.mordor-sauron-ring-hero", "")),
+		]
 	)
 
 	# --- OtherEvaEventsToBlock: the UnitUnderAttack mutual suppression ------
@@ -303,6 +319,10 @@ func _sync_batch(audio: Node, events: Array[Dictionary]) -> void:
 
 
 func _hero_created_events(object_id: String, sequence: int, clock_msec: int) -> Array[Dictionary]:
+	# Production emit (retail_slice_sim.gd via PlayableUnitAdapter.runtime_member_id)
+	# carries `bfme2.object.` + slug(CST). Injecting the CST name itself hides
+	# the lookup miss this runner exists to catch.
+	var production_id := _production_object_id(object_id)
 	return [{
 		"kind": "eva.hero_created",
 		"sequence": sequence,
@@ -310,9 +330,23 @@ func _hero_created_events(object_id: String, sequence: int, clock_msec: int) -> 
 		"target_id": 0,
 		"tick": clock_msec / 100,
 		"team": 0,
-		"object_id": object_id,
-		"unit_type": object_id,
+		"object_id": production_id,
+		"unit_type": production_id,
 	}]
+
+
+func _production_object_id(cst_name: String) -> String:
+	# Pins the exact production slugs eva.hero_created carries. Kept as a table
+	# so a slug-algorithm drift cannot silently re-green this runner.
+	var known := {
+		"MordorBlackRider": "bfme2.object.mordor-black-rider",
+		"MordorMountainTroll": "bfme2.object.mordor-mountain-troll",
+		"IsengardFighter": "bfme2.object.isengard-fighter",
+		"MordorSauron_RingHero": "bfme2.object.mordor-sauron-ring-hero",
+		"MordorWitchKingOnFellBeast": "bfme2.object.mordor-witch-king-on-fell-beast",
+		"IsengardLurtz": "bfme2.object.isengard-lurtz",
+	}
+	return String(known.get(cst_name, ""))
 
 
 func _routed_events_since(audio: Node, mark: int) -> Array[String]:
