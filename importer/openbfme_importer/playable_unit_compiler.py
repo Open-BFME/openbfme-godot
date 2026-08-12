@@ -510,6 +510,87 @@ def _resolved_expression(
     return constants.get(token.casefold())
 
 
+_RANGED_PATTERN = re.compile(
+    r"Min\s*:\s*(\S+)\s+Max\s*:\s*(\S+)",
+    re.IGNORECASE,
+)
+
+
+def _resolved_ranged_expression(
+    expression: str, constants: Mapping[str, int | float]
+) -> tuple[int | float, int | float] | None:
+    """Resolve the authored ``Min:X Max:Y`` ranged form.
+
+    Retail authors horde-archer cadence this way (weapon.ini GondorArcherBow
+    ``ClipReloadTime = Min:GONDOR_ARCHER_BOW_RELOADTIME_MIN
+    Max:GONDOR_ARCHER_BOW_RELOADTIME_MAX``); the plain resolver above matches
+    none of its tokens and the field used to be dropped whole. Mirrors the
+    spellbook compiler's ``resolvedMin``/``resolvedMax`` handling
+    (spellbook_compiler.py:1856-1862).
+    """
+
+    match = _RANGED_PATTERN.fullmatch(expression.strip())
+    if match is None:
+        return None
+    minimum = _resolved_expression(match.group(1), constants)
+    maximum = _resolved_expression(match.group(2), constants)
+    if minimum is None or maximum is None:
+        return None
+    return minimum, maximum
+
+
+def _resolved_ranged_definition_field(
+    definition: Mapping[str, Sequence[Mapping[str, object]]] | None,
+    field: str,
+    constants: Mapping[str, int | float],
+) -> dict[str, object] | None:
+    """`_resolved_definition_field` for the ranged form.
+
+    The deterministic runtime takes the authored Max (the spellbook path's
+    ``resolvedMax`` convention, consumed at retail_slice_sim.gd
+    ``_spellbook_weapon_field``), so ``value`` is the Max; the Min rides
+    along as provenance.
+    """
+
+    if definition is None:
+        return None
+    rows = definition.get(field.casefold(), ())
+    resolved: list[dict[str, object]] = []
+    for row in rows:
+        expression = str(row.get("expression", ""))
+        ranged = _resolved_ranged_expression(expression, constants)
+        if ranged is None:
+            continue
+        minimum, maximum = ranged
+        resolved.append(
+            {
+                "value": maximum,
+                "valueMin": minimum,
+                "valueMax": maximum,
+                "rangeSemantics": (
+                    "authored Min:X Max:Y; the deterministic runtime fires on "
+                    "the authored Max (spellbook resolvedMax convention)"
+                ),
+                "expression": expression,
+                "sourceIni": str(row.get("sourceIni", "")),
+                "line": int(row.get("line", 0)),
+            }
+        )
+    by_value: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for row in resolved:
+        by_value[_digest((row["valueMin"], row["valueMax"]))].append(row)
+    if len(by_value) != 1:
+        return None
+    equivalent = next(iter(by_value.values()))
+    result = dict(equivalent[0])
+    if len(equivalent) > 1:
+        result["equivalentSources"] = [
+            {"sourceIni": row["sourceIni"], "line": row["line"]}
+            for row in equivalent
+        ]
+    return result
+
+
 _MULTIPLICATIVE_PATTERN = re.compile(
     r"#MULTIPLY\(\s*([^()\s]+)\s+(-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+))\s*\)",
     re.IGNORECASE,
@@ -1513,6 +1594,15 @@ def _simulation_contract(
                     source_name,
                     constants,
                     resolve=_resolved_multiplicative_expression,
+                )
+            if field is None and source_name == "ClipReloadTime":
+                # Horde archers author the reload as `Min:X Max:Y`
+                # (weapon.ini:4239 GondorArcherBow, :10409 MordorArcherBow,
+                # :1836 LorienElvenBow, :1260 MirkwoodArcherBow). The plain
+                # resolver cannot read that form; dropping the field zeroed
+                # the whole reload and doubled the visible fire rate.
+                field = _resolved_ranged_definition_field(
+                    weapon, source_name, constants
                 )
             if field is not None:
                 combat[output_name] = field

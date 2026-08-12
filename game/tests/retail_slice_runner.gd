@@ -355,12 +355,32 @@ const EXPECTED_BATTLE_SIGNATURES := {
 ## HeightMap.cs / GameObject.cs).
 ## The live/replay mirror is intact: both sides of both scenarios moved to the
 ## same new value, which is what this table exists to be able to say.
+##
+## MOVED 2026-08-12 (kimi-bug-combat lane) archer clip reload restored, and
+## this is the explanation the ratchet asks for before an update.
+##   battle  133D27D7 -> BEE6651D
+##   defeat  285A58CC -> 6242FE75
+## Cause: packs cooked before the importer learned the `Min:X Max:Y` ranged
+## form carry no clipReloadTimeMs, so every ClipSize = 1 archer weapon
+## (GondorArcherBow weapon.ini:4239, MordorArcherBow :10409, both
+## Min:1500 Max:2000) reloaded in 0 ms and volleyed every 14 ticks instead of
+## the authored 30 (PreAttackDelay 1000 + reload Max 2000). The adapter now
+## bridges those packs from ContinuousFireCoast, which retail authors exactly
+## equal to ClipReloadTime's Max on these weapons (weapon.ini:4241 vs :4239);
+## the men battle/defeat scenarios field archers, so kill order and tick
+## counts move. Attribution run: with ONLY playable_unit_runtime_adapter.gd
+## stashed, this runner returned to 374/31 with battle live back at 133D27D7
+## (.private/orchestration/fable-wave/bugfix-lanes/logs-kimi-bug-combat/
+## slice-attribution.log).
+## retail_state_pin is byte-identical (its fixture uses synthetic unit rules;
+## pack cadence never enters it). The live/replay mirror is intact: both
+## sides of both scenarios moved to the same new value.
 const OBSERVED_PRECOOK_BATTLE_SIGNATURES := {
 	"men": {
-		"battle_live": "133D27D7",
-		"battle_replay": "133D27D7",
-		"defeat_live": "285A58CC",
-		"defeat_replay": "285A58CC",
+		"battle_live": "BEE6651D",
+		"battle_replay": "BEE6651D",
+		"defeat_live": "6242FE75",
+		"defeat_replay": "6242FE75",
 	},
 }
 # This is a deadlock/watchdog bound, not a frame-time optimization gate. The

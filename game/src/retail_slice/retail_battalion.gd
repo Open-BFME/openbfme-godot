@@ -550,6 +550,45 @@ func selection_radius() -> float:
 	return pick_radius
 
 
+func member_pick_candidates(entity_id: int) -> Array:
+	## One pick candidate per LIVING member, at the member's own position with
+	## its own authored Geometry radius.
+	##
+	## Retail hit-tests the click against each object member's Geometry cylinder
+	## (gondorarcher.ini:796-799 authors MajorRadius 8.0 for one archer), so the
+	## pickable silhouette of a horde is the union of its members' bodies. The
+	## battalion-level `selection_radius()` (formation spread + one member body,
+	## centred on the horde root) is the bounding DISC of that union: on a
+	## 15-member archer line it lights the attack cursor over the gaps between
+	## ranks and well past the outermost silhouette - the owner's "hovering far
+	## from an enemy still lights the attack cursor". This is the union itself.
+	##
+	## Returns an empty array when no member visuals exist yet (spawn frame,
+	## headless seams); callers keep the battalion-level fallback for that case.
+	##
+	## The radius is the authored Geometry body (`_member_selection_radius`),
+	## not `MINIMUM_SELECTION_RADIUS`. That floor exists so a horde-level disc
+	## stays clickable; applying it per member would inflate a thin unit
+	## (archer MajorRadius 8.0 -> 0.21 world at Fords) up to 0.32 and miss
+	## the owner's "just around their hitbox". `_resolve_selection_radius`
+	## already substitutes the floor when authored geometry is missing.
+	var radius := _member_selection_radius
+	var candidates: Array = []
+	for member_index in member_visuals.keys():
+		if float(member_health_ratios.get(member_index, 1.0)) <= 0.0:
+			continue
+		var visual_value = member_visuals[member_index]
+		if visual_value == null or not is_instance_valid(visual_value):
+			continue
+		var world := (visual_value as Node3D).global_position
+		candidates.append({
+			"id": entity_id,
+			"position": Vector2(world.x, world.z),
+			"radius": radius,
+		})
+	return candidates
+
+
 func _member_source_geometry_radius() -> float:
 	## Compiled retail Geometry from the selected pack's playable-unit document
 	## when present; otherwise the retail infantry default (MajorRadius 8.0).
@@ -1742,11 +1781,34 @@ func _resolve_animation_name(player: AnimationPlayer, requested: String) -> Stri
 	return ""
 
 
+## Authored span of the fire-and-reload animation state, in seconds. Set by
+## the slice from the sim's unit rule (firing duration + the reload the sim
+## actually waits out); 0 leaves fire clips at their authored speed.
+var attack_reload_seconds := 0.0
+
+
+func set_attack_reload_seconds(value: float) -> void:
+	attack_reload_seconds = value if is_finite(value) and value > 0.0 else 0.0
+
+
 func _play_member_clip(player: AnimationPlayer, requested: String, state: String, member_index: int, blend: float, apply_phase: bool) -> void:
 	var playable := _resolve_animation_name(player, requested)
 	if playable == "":
 		return
-	player.speed_scale = 0.96 + float(posmod(entity_id * 5 + member_index * 7, 7)) * (0.08 / 6.0)
+	var jitter := 0.96 + float(posmod(entity_id * 5 + member_index * 7, 7)) * (0.08 / 6.0)
+	player.speed_scale = jitter
+	if state == "attack_ranged_fire" and attack_reload_seconds > 0.0:
+		var animation := player.get_animation(playable)
+		if animation != null and animation.length > 0.0:
+			# Retail's FIRING_OR_RELOADING state spans the authored reload
+			# (gondorarcher.ini:236-288 binds FIRING_OR_RELOADING_A with the
+			# reload, not a fixed-speed one-shot): bind the clip to the authored
+			# firing+reload span so the member visibly nocks, draws and holds
+			# across the whole cycle instead of snapping back to idle while the
+			# sim is still reloading. Clamped so odd pack data can never pin or
+			# strobe the rig; the tiny per-member jitter stays so a horde does
+			# not move as one.
+			player.speed_scale = clampf(animation.length / attack_reload_seconds, 0.5, 2.0) * jitter
 	player.play(playable, blend)
 	if apply_phase and state in ["idle", "run", "victory"] and player.current_animation_length > 0.0:
 		player.seek(player.current_animation_length * phase_for_member(member_index, state), true)

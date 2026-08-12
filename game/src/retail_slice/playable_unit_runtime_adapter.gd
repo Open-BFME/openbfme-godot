@@ -445,7 +445,8 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 	if damage <= 0:
 		return {}
 	var period_ms := delay_ms
-	var clip_reload_ms := float(combat.get("clipReloadTimeMs", 0.0))
+	var clip_reload := _resolved_clip_reload_ms(combat)
+	var clip_reload_ms := float(clip_reload["reload_ms"])
 	if period_ms <= 0.0 and clip_reload_ms > 0.0:
 		period_ms = clip_reload_ms
 	var category := String(simulation.get("category", ""))
@@ -518,7 +519,14 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 		"default_weapon_mode": "default",
 		"default_weapon_slot": String(combat.get("weaponSlot", "")).to_lower(),
 		"formation_positions": positions,
-		"provenance": {"source_object_id": String(simulation.get("source_object_id", "")), "source_contract": "openbfme.playable-unit-runtime"},
+		"provenance": {
+			"source_object_id": String(simulation.get("source_object_id", "")),
+			"source_contract": "openbfme.playable-unit-runtime",
+			# Loud by construction (AGENTS.md rule 5): when the clip reload had
+			# to come from the ContinuousFireCoast bridge instead of the cooked
+			# ClipReloadTime, the rule itself says so.
+			"clip_reload_source": String(clip_reload["source"]),
+		},
 	}
 	var permanent_locks: Array = simulation.get("permanent_weapon_locks", []) as Array
 	if not permanent_locks.is_empty():
@@ -568,6 +576,37 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 	return output
 
 
+static func _resolved_clip_reload_ms(combat: Dictionary) -> Dictionary:
+	## Clip reload drives the shot cadence of every ClipSize = 1 weapon: the
+	## sim substitutes it for DelayBetweenShots (retail_slice_sim.gd
+	## `_step_member_attacks`). Retail authors it as a RANGED value -
+	## `ClipReloadTime = Min:1500 Max:2000` (weapon.ini:4239 GondorArcherBow,
+	## :10409 MordorArcherBow, :1836 LorienElvenBow, :1260 MirkwoodArcherBow) -
+	## and pack builds from before the importer learned that form carry no
+	## `clipReloadTimeMs` at all, which collapsed the reload to 0 ms and
+	## doubled the visible archer fire rate.
+	##
+	## Bridge for those packs: on every one of those weapons retail authors
+	## ContinuousFireCoast exactly equal to ClipReloadTime's Max
+	## (weapon.ini:4241 vs :4239, and likewise :10409, :1836, :1260), and the
+	## deterministic runtime takes the authored Max (the spellbook resolvedMax
+	## convention, retail_slice_sim.gd `_spellbook_weapon_field`). The proxy
+	## therefore reproduces the cooked value exactly - and retires itself the
+	## day the packs are re-cooked, because the real field wins first. The
+	## source is returned so callers can record it loudly in provenance.
+	var reload_ms := float(combat.get("clipReloadTimeMs", 0.0))
+	if reload_ms > 0.0:
+		return {"reload_ms": reload_ms, "source": "clipReloadTimeMs"}
+	if (
+		int(combat.get("clipSize", 0)) == 1
+		and float(combat.get("delayBetweenShotsMs", -1.0)) <= 0.0
+	):
+		var coast_ms := float(combat.get("continuousFireCoastMs", 0.0))
+		if coast_ms > 0.0:
+			return {"reload_ms": coast_ms, "source": "continuousFireCoastMs-proxy"}
+	return {"reload_ms": 0.0, "source": "none"}
+
+
 static func _normalized_weapon_mode(mode_key: String, profile: Dictionary, source_scale: float) -> Dictionary:
 	## One compiled alternate weapon profile -> the sim's weapon-mode entry.
 	## Fail-closed: any unresolvable field rejects the whole mode.
@@ -585,7 +624,7 @@ static func _normalized_weapon_mode(mode_key: String, profile: Dictionary, sourc
 	if damage <= 0:
 		return {}
 	var period_ms := delay_ms
-	var clip_reload_ms := float(profile.get("clipReloadTimeMs", 0.0))
+	var clip_reload_ms := float(_resolved_clip_reload_ms(profile)["reload_ms"])
 	if period_ms <= 0.0 and clip_reload_ms > 0.0:
 		period_ms = clip_reload_ms
 	return {

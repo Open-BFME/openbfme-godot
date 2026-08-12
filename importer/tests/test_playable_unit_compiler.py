@@ -2643,6 +2643,58 @@ def test_absent_delay_between_shots_records_engine_default() -> None:
     assert "combat.delayBetweenShotsMs" not in simulation["missing"]
 
 
+def test_ranged_clip_reload_time_resolves_to_the_authored_max() -> None:
+    """Retail horde archers author `ClipReloadTime = Min:X Max:Y`
+    (weapon.ini:4239 GondorArcherBow -> gamedata.ini:1858-1859 Min 1500 /
+    Max 2000; same form at :10409 MordorArcherBow, :1836 LorienElvenBow,
+    :1260 MirkwoodArcherBow). The plain expression resolver reads none of
+    that form, so the field used to vanish from the pack and the runtime
+    reload collapsed to 0 ms. The deterministic runtime fires on the
+    authored Max (the spellbook resolvedMax convention)."""
+    command_row, button_row = _combat_command("CombatArcher", 9, "CombatArcher")
+    documents = _combat_documents(
+        _combat_object(
+            "CombatArcher",
+            "INFANTRY",
+            "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY CombatArcherBow\n  End\n",
+        ),
+        "Weapon CombatArcherBow\n"
+        "  AttackRange = COMBAT_ARCHER_RANGE\n"
+        "  DelayBetweenShots = 0\n"
+        "  PreAttackDelay = 1000\n"
+        "  FiringDuration = 0\n"
+        "  ClipSize = 1\n"
+        "  AutoReloadsClip = Yes\n"
+        "  ClipReloadTime = Min:COMBAT_ARCHER_RELOAD_MIN Max:COMBAT_ARCHER_RELOAD_MAX\n"
+        "  ContinuousFireOne = 0\n"
+        "  ContinuousFireCoast = 2000\n"
+        "  DamageNugget\n"
+        "    Damage = 35\n"
+        "    DamageType = PIERCE\n"
+        "  End\n"
+        "End\n",
+        command_row,
+        button_row,
+        defines=(
+            "\n#define COMBAT_ARCHER_RANGE 300\n"
+            "#define COMBAT_ARCHER_RELOAD_MIN 1500\n"
+            "#define COMBAT_ARCHER_RELOAD_MAX 2000\n"
+        ),
+    )
+
+    descriptor = compile_playable_unit_descriptor("CombatArcher", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    combat = descriptor["gameplay"]["simulation"]["resolved"]["combat"]
+    reload = combat["clipReloadTimeMs"]
+    assert reload["value"] == 2000
+    assert reload["valueMin"] == 1500
+    assert reload["valueMax"] == 2000
+    assert reload["expression"] == (
+        "Min:COMBAT_ARCHER_RELOAD_MIN Max:COMBAT_ARCHER_RELOAD_MAX"
+    )
+
+
 def test_authored_unresolvable_delay_between_shots_is_not_defaulted() -> None:
     command_row, button_row = _combat_command("CombatLancer", 9, "CombatLancer")
     documents = _combat_documents(

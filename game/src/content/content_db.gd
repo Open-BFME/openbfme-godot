@@ -1629,6 +1629,7 @@ func _playable_unit_projection(document: Dictionary) -> Dictionary:
 				ranked.append({
 					"identifier": identifier,
 					"condition_count": conditions.size(),
+					"conditions": conditions,
 					"rank": _playable_clip_rank(state, identifier, conditions),
 				})
 		elif typeof(raw_bindings) == TYPE_DICTIONARY:
@@ -1653,6 +1654,22 @@ func _playable_unit_projection(document: Dictionary) -> Dictionary:
 			"mode": "loop" if state in ["idle", "move"] else "once",
 			"useWeaponTiming": state == "attack",
 		}
+		if state == "attack":
+			# Retail splits the ranged attack into PREATTACK (windup) and
+			# FIRING_OR_RELOADING (release + reload span) animation states
+			# (gondorarcher.ini:236-288: PREATTACK_A -> GUArcher_ATKF1,
+			# FIRING_OR_RELOADING_A -> GUArcher_ATKF2). The authored condition
+			# tokens ride the compiled bindings, so the split needs no pack
+			# change: without it both the windup and the release fell back to
+			# the generic attack list, whose alphabetically-first clip is the
+			# FIRING_OR_PREATTACK_B variant (GUArcher_ATKD) - the owner's
+			# "firing animation doesn't play correctly".
+			var pre_clips := _conditioned_attack_clips(ranked, "PREATTACK")
+			if not pre_clips.is_empty():
+				states["attackRangedPre"] = {"clips": pre_clips, "mode": "once", "useWeaponTiming": false}
+			var fire_clips := _conditioned_attack_clips(ranked, "FIRING_OR_RELOADING")
+			if not fire_clips.is_empty():
+				states["attackRangedFire"] = {"clips": fire_clips, "mode": "once", "useWeaponTiming": true}
 	var ability_states := _ability_animation_states(visual)
 	for ability_state_value in ability_states.keys():
 		var ability_state := String(ability_state_value)
@@ -1678,6 +1695,23 @@ func _playable_unit_projection(document: Dictionary) -> Dictionary:
 			"_pack_root": root,
 		},
 	}
+
+
+func _conditioned_attack_clips(ranked: Array, condition_prefix: String) -> Array[String]:
+	## Distinct clip identifiers whose authored conditions carry the given
+	## token prefix, in rank order (see _playable_unit_projection's sort).
+	var result: Array[String] = []
+	for entry_value in ranked:
+		var entry := entry_value as Dictionary
+		var matched := false
+		for condition_value in entry.get("conditions", []) as Array:
+			if String(condition_value).to_upper().begins_with(condition_prefix):
+				matched = true
+				break
+		var identifier := String(entry.get("identifier", ""))
+		if matched and identifier != "" and not result.has(identifier):
+			result.append(identifier)
+	return result
 
 
 func _playable_clip_rank(state: String, identifier: String, conditions: Array) -> int:

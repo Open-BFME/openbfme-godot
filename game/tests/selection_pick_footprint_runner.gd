@@ -18,6 +18,13 @@ extends SceneTree
 ## units of footprint radius; the slice used to pick it anywhere within 5.5.
 
 const Pick = preload("res://src/retail_slice/retail_selection_pick.gd")
+## NOT preloaded: retail_battalion.gd names the ContentDB autoload, and a
+## --script SceneTree runner compiles its preloads before the autoloads
+## register, so a const preload here binds a half-compiled GDScript whose
+## `.new()` is missing. Runtime `load()` inside the test compiles lazily,
+## after the autoloads exist (same reason the scene runners load the slice
+## tscn inside _run, not at parse time).
+const BATTALION_SCRIPT_PATH := "res://src/retail_slice/retail_battalion.gd"
 
 # 76.0 / 2868.7 -- see the header. Kept as a literal so the runner does not
 # need a cooked map on disk.
@@ -29,9 +36,22 @@ const BARRACKS_SOURCE_RADIUS := 50.0
 ## Read from the module so the fallback and this runner cannot drift apart.
 const FORTRESS_SOURCE_RADIUS := Pick.DEFAULT_FORTRESS_SOURCE_RADIUS
 const INFANTRY_SOURCE_RADIUS := 8.0
+## Pure RotWK 2.01 `object/evilfaction/units/mordor/attacktroll.ini:795-797`:
+## `Geometry = CYLINDER`, `GeometryMajorRadius = 17.6`, `GeometryHeight = 40.0`.
+const TROLL_SOURCE_RADIUS := 17.6
+
+## LIVENESS (rulebook T3): a headless coroutine that aborts silently looks
+## exactly like a clean pass. Every test appends its name here and the run only
+## reports green when all of them arrived. Raise this when you add a test;
+## never lower it.
+const EXPECTED_TESTS := 11
+## Floor on asserted checks, so a test that returns early after one assert
+## cannot pass for the whole suite either.
+const MINIMUM_CHECKS := 40
 
 var passed := 0
 var failed := 0
+var _completed: Array[String] = []
 
 
 func _initialize() -> void:
@@ -40,14 +60,39 @@ func _initialize() -> void:
 
 func _run() -> void:
 	_test_source_footprint_reads_compiled_geometry()
+	_completed.append("source-footprint")
 	_test_world_projection_matches_retail_scale()
+	_completed.append("world-projection")
 	_test_visual_bounds_fallback_is_tight()
+	_completed.append("visual-bounds")
 	_test_structure_pick_rejects_distant_clicks()
+	_completed.append("structure-pick")
 	_test_battalion_pick_rejects_distant_clicks()
+	_completed.append("battalion-pick")
 	_test_nested_footprints_prefer_the_tighter_volume()
+	_completed.append("nested-footprints")
 	_test_no_flat_pick_radius_constants_remain()
+	_completed.append("no-flat-constants")
+	_test_horde_pick_is_the_member_union()
+	_completed.append("member-union")
+	_test_slice_pick_wires_member_candidates()
+	_completed.append("slice-wiring")
+	_test_order_margin_stays_within_the_hitbox()
+	_completed.append("order-margin")
+	_test_mounted_pack_member_geometry_matches_retail()
+	_completed.append("mounted-geometry")
 
-	print("SELECTION_PICK_RESULT passed=%d failed=%d" % [passed, failed])
+	if _completed.size() != EXPECTED_TESTS:
+		failed += 1
+		push_error("SELECTION_PICK_FAIL liveness: %d/%d tests reported (%s)" % [
+			_completed.size(), EXPECTED_TESTS, ", ".join(_completed)
+		])
+	if passed + failed < MINIMUM_CHECKS:
+		failed += 1
+		push_error("SELECTION_PICK_FAIL liveness: only %d checks ran, expected at least %d" % [
+			passed + failed, MINIMUM_CHECKS
+		])
+	print("SELECTION_PICK_RESULT passed=%d failed=%d tests=%d" % [passed, failed, _completed.size()])
 	quit(0 if failed == 0 else 1)
 
 
@@ -152,11 +197,14 @@ func _test_battalion_pick_rejects_distant_clicks() -> void:
 	)
 	# The legacy battalion constant was 6.0 world units.
 	_check("click_at_legacy_battalion_radius_does_not_select", Pick.closest_hit(Vector2(5.5, 0.0), candidates) == 0)
-	# Attack orders keep a small extra margin; selection does not.
+	# Attack orders keep a small extra margin; selection does not. The margin
+	# forgives the silhouette edge (radius + 0.1) but must not reach a full
+	# third of a world unit past the body (the old 0.45 did - wider than the
+	# thinnest authored member body in the slice, 8.0 source = 0.21 world).
 	_check(
 		"order_margin_is_forgiving_but_bounded",
-		Pick.closest_hit(Vector2(radius + 0.3, 0.0), candidates, Pick.ORDER_MARGIN) == 3
-			and Pick.closest_hit(Vector2(5.5, 0.0), candidates, Pick.ORDER_MARGIN) == 0
+		Pick.closest_hit(Vector2(radius + 0.1, 0.0), candidates, Pick.ORDER_MARGIN) == 3
+			and Pick.closest_hit(Vector2(radius + 0.3, 0.0), candidates, Pick.ORDER_MARGIN) == 0
 	)
 
 
@@ -191,6 +239,150 @@ func _test_no_flat_pick_radius_constants_remain() -> void:
 		"pick_path_uses_the_footprint_module",
 		source.contains("RetailSelectionPick") or source.contains("SelectionPick")
 	)
+
+
+func _test_horde_pick_is_the_member_union() -> void:
+	## THE BUG. The battalion pick used to be ONE disc centred on the horde
+	## root: formation spread + one member body. On a 15-archer line that disc
+	## is ~1.5 world units of radius - it lit the attack cursor over the gaps
+	## between ranks and past the outermost silhouette ("hovering far from an
+	## enemy still lights the attack cursor"). Retail hit-tests each member's
+	## authored Geometry cylinder (gondorarcher.ini:796-799, MajorRadius 8.0),
+	## so the pickable silhouette is the UNION of member bodies.
+	var member_radius := Pick.world_radius_from_source(INFANTRY_SOURCE_RADIUS, FORDS_SOURCE_SCALE)
+	var battalion_script: GDScript = load(BATTALION_SCRIPT_PATH)
+	_check("battalion_script_compiles", battalion_script != null and battalion_script.can_instantiate())
+	if battalion_script == null or not battalion_script.can_instantiate():
+		return
+	var battalion: Node3D = battalion_script.new()
+	root.add_child(battalion)
+	# Off-origin: candidates must be WORLD positions, not local ones.
+	battalion.position = Vector3(30.0, 0.0, -12.0)
+	battalion._member_selection_radius = member_radius
+	var offsets := [Vector3(-1.0, 0.0, 0.0), Vector3(1.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.9)]
+	for index in offsets.size():
+		var visual := Node3D.new()
+		battalion.add_child(visual)
+		visual.position = offsets[index]
+		battalion.member_visuals[index] = visual
+	var candidates: Array = battalion.member_pick_candidates(42)
+	_check("one_candidate_per_living_member", candidates.size() == offsets.size())
+	var all_radius := true
+	var all_id := true
+	for candidate_value in candidates:
+		var candidate: Dictionary = candidate_value
+		if absf(float(candidate.get("radius", 0.0)) - member_radius) > 0.001:
+			all_radius = false
+		if int(candidate.get("id", 0)) != 42:
+			all_id = false
+	_check("candidates_carry_the_member_geometry_radius", all_radius)
+	_check("candidates_carry_the_battalion_id", all_id)
+	var found_world_member := false
+	for candidate_value in candidates:
+		if Vector2((candidate_value as Dictionary).get("position", Vector2.ZERO)).distance_to(Vector2(31.0, -12.0)) < 0.001:
+			found_world_member = true
+	_check("candidate_positions_are_world_space", found_world_member)
+	var origin := Vector2(30.0, -12.0)
+	_check("hover_over_a_member_hits", Pick.closest_hit(origin + Vector2(1.0, 0.0), candidates) == 42)
+	# The horde centre sits 1.0 world units from every member - deep inside the
+	# old bounding disc, outside every authored body.
+	_check("formation_centre_gap_does_not_hit", Pick.closest_hit(origin, candidates) == 0)
+	var legacy_disc := [{"id": 42, "position": origin, "radius": 1.0 + member_radius}]
+	_check("legacy_bounding_disc_would_have_hit_the_gap", Pick.closest_hit(origin, legacy_disc) == 42)
+	_check(
+		"order_margin_forgives_the_silhouette_edge",
+		Pick.closest_hit(origin + Vector2(1.0 + member_radius + 0.05, 0.0), candidates, Pick.ORDER_MARGIN) == 42
+	)
+	_check("order_margin_does_not_reach_the_gap", Pick.closest_hit(origin, candidates, Pick.ORDER_MARGIN) == 0)
+	# Dead members (health already 0, corpse still present) are not pickable.
+	battalion.member_health_ratios[2] = 0.0
+	_check("dead_members_stop_being_pickable_while_corpse_remains", battalion.member_pick_candidates(42).size() == 2)
+	# After the corpse is freed the visual map drops them too.
+	battalion.member_visuals.erase(1)
+	_check("dead_members_stop_being_pickable", battalion.member_pick_candidates(42).size() == 1)
+	battalion.queue_free()
+	# No visuals yet (spawn frame, headless seam): empty, so the caller's
+	# battalion-level fallback disc takes over. That contract must hold.
+	var fresh: Node3D = battalion_script.new()
+	root.add_child(fresh)
+	_check("no_visuals_yields_no_candidates_for_the_fallback", fresh.member_pick_candidates(7).is_empty())
+	fresh.queue_free()
+
+
+func _test_slice_pick_wires_member_candidates() -> void:
+	## The cursor/order picks run through `_battalion_pick_candidates`; it must
+	## prefer per-member candidates and keep the horde disc only as the
+	## no-visuals fallback. Substring wiring check, same pattern as
+	## attack_cursor_runner's slice-wiring test.
+	var source := FileAccess.get_file_as_string("res://src/retail_slice/retail_vertical_slice.gd")
+	_check("vertical_slice_source_readable_for_wiring", source.length() > 0)
+	var start := source.find("func _battalion_pick_candidates")
+	_check("battalion_pick_candidates_present", start >= 0)
+	if start < 0:
+		return
+	var body := source.substr(start, source.find("func _battalion_pick_radius") - start)
+	_check("slice_picks_per_member_when_visuals_live", body.contains("member_pick_candidates"))
+	_check("horde_disc_remains_only_a_fallback", body.contains("_battalion_pick_radius(id)"))
+
+
+func _test_order_margin_stays_within_the_hitbox() -> void:
+	## Retail's attack cursor is slightly more generous than the selection
+	## hit-test - slightly. The thinnest authored member body in the slice is
+	## the archer's MajorRadius 8.0 (gondorarcher.ini:796-799), 0.21 world at
+	## the Fords scale; an order margin wider than that is not a margin, it is
+	## a second hitbox.
+	var archer_body_world := INFANTRY_SOURCE_RADIUS * FORDS_SOURCE_SCALE
+	_check("order_margin_exceeds_selection_margin", Pick.ORDER_MARGIN > Pick.SELECTION_MARGIN)
+	_check("order_margin_no_wider_than_the_thinnest_body", Pick.ORDER_MARGIN <= archer_body_world)
+
+
+func _test_mounted_pack_member_geometry_matches_retail() -> void:
+	## Oracle check against the mounted packs: the compiled geometry index must
+	## reproduce the authored radii this whole runner cites - a thin unit (Men
+	## archer, 8.0) and a fat one (Mordor attack troll, 17.6). Skips loudly
+	## with no content; FAILS when OPENBFME_CONTENT is set and the document is
+	## missing (same rule as attack_cursor_runner's mounted-pack test).
+	var db = root.get_node_or_null("ContentDB")
+	_check("content_db_autoload_available", db != null)
+	if db == null:
+		return
+	db.reload()
+	if not db.has_method("get_playable_unit_runtime_for_member"):
+		_check("content_db_indexes_geometry_per_member", false)
+		return
+	var content_requested := OS.get_environment("OPENBFME_CONTENT").strip_edges() != ""
+	var cases := {
+		"GondorArcher": INFANTRY_SOURCE_RADIUS,
+		"MordorAttackTroll": TROLL_SOURCE_RADIUS,
+	}
+	for member_id in cases.keys():
+		var expected := float(cases[member_id])
+		var document: Dictionary = db.get_playable_unit_runtime_for_member(String(member_id))
+		if document.is_empty():
+			if content_requested:
+				_check("mounted_pack_carries_%s_geometry" % member_id, false)
+			else:
+				print("SELECTION_PICK_SKIP no_pack_for_%s" % member_id)
+			continue
+		var registration: Dictionary = document.get("registration", {})
+		var geometry: Dictionary = (registration.get("gameplay", {}) as Dictionary).get("geometry", {})
+		var resolved := Pick.source_footprint_radius(geometry)
+		_check(
+			"%s_geometry_radius_is_the_authored_value" % member_id,
+			absf(resolved - expected) < 0.05
+		)
+	# The fat/thin contrast is the owner's ask: pick bounds track the AUTHORED
+	# geometry per unit, not one shared constant.
+	var archer_doc: Dictionary = db.get_playable_unit_runtime_for_member("GondorArcher")
+	var troll_doc: Dictionary = db.get_playable_unit_runtime_for_member("MordorAttackTroll")
+	if not archer_doc.is_empty() and not troll_doc.is_empty():
+		var archer_radius := Pick.source_footprint_radius(
+			((archer_doc.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary).get("geometry", {})
+		)
+		var troll_radius := Pick.source_footprint_radius(
+			((troll_doc.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary).get("geometry", {})
+		)
+		_check("troll_pick_is_fatter_than_archer_pick", troll_radius > 2.0 * archer_radius)
 
 
 func _check(label: String, condition: bool) -> void:

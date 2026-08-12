@@ -3512,11 +3512,53 @@ func _finish_box_selection(release_position: Vector2, additive: bool) -> void:
 			if not picked.has(id):
 				picked.append(id)
 	if picked.is_empty():
+		# Retail rule (OpenSAGE SelectionSystem.MultiSelect, the SAGE band-box):
+		# a drag box selects every own NON-structure whose collider intersects
+		# it; a structure caught in the box is remembered only as a fallback and
+		# selected when the box caught no units at all. Additive drags never
+		# reach here with an empty `picked`, matching retail's clear-and-set.
+		var structure_id := _selection_target_structure(_box_pick_structure(rect))
+		if structure_id == 0:
+			return
+		simulation.clear_selection()
+		selected_structure_id = structure_id
+		hud.set_feedback("Selected %s" % String(simulation.structure(structure_id).get("name", "structure")))
+		if audio_system != null:
+			audio_system.play_structure_select(String(simulation.structure(structure_id).get("structure_kind", "")))
+		_sync_presentation()
 		return
 	selected_structure_id = 0
 	var count := int(simulation.select_many(picked))
 	hud.set_feedback("Selected %d battalion%s." % [count, "" if count == 1 else "s"])
 	_sync_presentation()
+
+
+func _box_pick_structure(rect: Rect2) -> int:
+	## The band-box structure fallback: the first own living structure whose
+	## footprint INTERSECTS the box (retail hit-tests the rough collider against
+	## the box frustum, not the origin point). Returns 0 when none qualifies.
+	var ids: Array = structure_nodes.keys()
+	ids.sort()
+	for id_value in ids:
+		var id := int(id_value)
+		var row: Dictionary = simulation.structure(id)
+		if row.is_empty() or int(row.get("team", -1)) != local_team or int(row.get("health", 0)) <= 0:
+			continue
+		var node := structure_nodes[id] as Node3D
+		if node == null or not is_instance_valid(node) or camera.is_position_behind(node.global_position):
+			continue
+		var center := camera.unproject_position(node.global_position)
+		var radius := _structure_pick_radius(id, String(row.get("structure_kind", "")))
+		# Project the world-unit footprint radius onto the screen along the
+		# camera's right axis; the pitch makes a vertical projection misleading.
+		var edge := camera.unproject_position(
+			node.global_position + camera.global_transform.basis.x * radius
+		)
+		var screen_radius := absf(edge.x - center.x)
+		var clamped := center.clamp(rect.position, rect.position + rect.size)
+		if center.distance_to(clamped) <= screen_radius:
+			return id
+	return 0
 
 
 func _select_same_type_on_screen(point: Vector2) -> void:
@@ -3715,6 +3757,18 @@ func _handle_right_click(point: Vector2) -> void:
 	_sync_presentation()
 
 
+func _entity_attack_reload_seconds(entity: Dictionary) -> float:
+	## The reload the SIM actually waits out (retail_slice_sim.gd
+	## `_step_member_attacks`: a ClipSize = 1 weapon reloads its clip, anything
+	## else waits DelayBetweenShots) plus the authored firing duration the
+	## retail FIRING_OR_RELOADING state spans. Feeds
+	## RetailBattalion.attack_reload_seconds.
+	var reload_ms := float(entity.get("delay_between_shots_ms", 0.0))
+	if int(entity.get("clip_size", 0)) == 1:
+		reload_ms = float(entity.get("clip_reload_time_ms", reload_ms))
+	return (float(entity.get("firing_duration_ms", 0.0)) + reload_ms) / 1000.0
+
+
 func _screen_to_world(screen_position: Vector2) -> Variant:
 	if camera == null:
 		return null
@@ -3736,6 +3790,15 @@ func _battalion_pick_candidates(ids: Array) -> Array:
 		var entity: Dictionary = simulation.entity(id)
 		if entity.is_empty():
 			continue
+		# Retail picks against each member's authored Geometry body, so a live
+		# presentation contributes one candidate per member. Only the spawn frame
+		# / headless seam (no visuals yet) keeps the horde-level fallback disc.
+		var node: Variant = battalion_nodes.get(id, null)
+		if node != null and is_instance_valid(node):
+			var per_member: Array = node.member_pick_candidates(id)
+			if not per_member.is_empty():
+				candidates.append_array(per_member)
+				continue
 		candidates.append({
 			"id": id,
 			"position": Vector2(entity["position"]),
@@ -4061,6 +4124,7 @@ func _sync_presentation() -> void:
 			attack_target_height,
 			maxf(SimScript.TICK_SECONDS, float(entity.get("pre_attack_ticks", 1)) * SimScript.TICK_SECONDS)
 		)
+		battalion.set_attack_reload_seconds(_entity_attack_reload_seconds(entity))
 		battalion.sync_member_states(
 			Array(entity.get("member_health", [])),
 			int(entity.get("member_maximum_health", 1)),
