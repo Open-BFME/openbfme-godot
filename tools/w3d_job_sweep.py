@@ -105,7 +105,9 @@ def stage_job(
         "model": str(model),
         "asset_kind": CONVERTER_ASSET_KINDS[resource["converter"]],
         "animations": animations,
-        "required_equipment": list(options.get("requiredEquipment") or []),
+        # snake_case on purpose: the pipeline reads options["required_equipment"]
+        # and generated profiles emit it that way; every OTHER option is camelCase.
+        "required_equipment": list(options.get("required_equipment") or []),
         "excluded_optional_meshes": list(options.get("excludedOptionalMeshes") or []),
         "proven_root_rigid_bake": bool(options.get("provenRootRigidBake", False)),
         "proven_pivot_only_model": bool(options.get("provenPivotOnlyModel", False)),

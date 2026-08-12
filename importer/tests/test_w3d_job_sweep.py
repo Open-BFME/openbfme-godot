@@ -52,6 +52,10 @@ class W3dJobSweepStagingTests(unittest.TestCase):
                     "options": {
                         "model": "unit.w3d",
                         "animations": ["unit_idle.w3d", "unit_empty.w3d"],
+                        # Generated profiles emit this ONE option in snake_case
+                        # (pipeline.py reads options["required_equipment"]);
+                        # every other W3D option key is camelCase.
+                        "required_equipment": ["sword_a"],
                     },
                 },
             ]
@@ -101,6 +105,9 @@ class W3dJobSweepStagingTests(unittest.TestCase):
             self.assertEqual(
                 [Path(item).name for item in job["animations"]], ["unit_idle.w3d"]
             )
+            # A sweep that drops the equipment list stages a DIFFERENT job than
+            # the build would run, which falsifies the tool's whole premise.
+            self.assertEqual(job["required_equipment"], ["sword_a"])
 
     def test_missing_model_and_unknown_owner_fail_closed(self) -> None:
         profile = self._profile()
