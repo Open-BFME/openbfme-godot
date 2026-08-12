@@ -689,6 +689,7 @@ def build_map_profile(
         [MapTarget, ParsedSageMap],
         tuple[list[dict[str, Any]], dict[str, Any] | None, dict[str, Any] | None],
     ] = _no_object_bindings,
+    fixtures_builder: Callable[[MapTarget, ParsedSageMap], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return a deterministic profile generated only from exact retail facts.
 
@@ -696,6 +697,11 @@ def build_map_profile(
     resources those bindings depend on.  It defaults to declaring none, so a
     caller without an extracted effective-assets tree produces exactly the
     profile this lane produced before automatic prop binding existed.
+
+    ``fixtures_builder`` compiles one castle map's ``options.fixtures``
+    document (lane L2a: map-referenced object corpus admission).  It is only
+    consulted for maps carrying a ``castleSiege`` contract; with the default
+    ``None`` the profile is byte-identical to before the option existed.
     """
 
     if not targets:
@@ -936,6 +942,25 @@ def build_map_profile(
             )
         if binding_rows is not None:
             map_resources[0]["options"]["objectBindings"] = binding_rows
+        if castle_evidence is not None and fixtures_builder is not None:
+            # Castle maps only: the fixtures document is the gameplay
+            # counterpart to object-bindings.json (lane L2a).  A rejection is
+            # recorded loudly in planning evidence, never silently dropped.
+            try:
+                fixtures_document = fixtures_builder(target, parsed)
+            except (SageMapError, ValueError) as exc:
+                if strict:
+                    raise
+                binding_failures.append(
+                    {
+                        "slug": target.slug,
+                        "category": target.category,
+                        "status": "fixtures-rejected",
+                        "reason": str(exc),
+                    }
+                )
+            else:
+                map_resources[0]["options"]["fixtures"] = fixtures_document
         for resource in binding_resources:
             resource_id = str(resource["id"])
             if resource_id not in shared_binding_resources:
@@ -1142,6 +1167,7 @@ def build_category_map_profile(
         [MapTarget, ParsedSageMap],
         tuple[list[dict[str, Any]], dict[str, Any] | None, dict[str, Any] | None],
     ] = _no_object_bindings,
+    fixtures_builder: Callable[[MapTarget, ParsedSageMap], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return the profile for one named retail map set this install ships."""
 
@@ -1189,6 +1215,7 @@ def build_category_map_profile(
         rejections=rejections,
         strict=strict,
         binder=binder,
+        fixtures_builder=fixtures_builder,
     )
 
 

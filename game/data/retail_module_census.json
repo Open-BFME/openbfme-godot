@@ -29,13 +29,14 @@
 			"m3_pack_expansion",
 			"pipeline"
 		],
-		"consumerFileCount": 74,
+		"consumerFileCount": 75,
 		"consumerFiles": [
 			"armor_compiler",
 			"big",
 			"bootstrap",
 			"castle_behavior",
 			"castle_capabilities",
+			"castle_fixtures",
 			"catalog",
 			"diagnostics",
 			"effective_assets_catalog",
@@ -699,6 +700,7 @@
 			"classificationNote": "death-event runtime behaviour",
 			"status": "consumed",
 			"consumedBy": [
+				"castle_fixtures.py",
 				"module_contracts.py",
 				"spellbook_compiler.py"
 			],
@@ -2441,6 +2443,7 @@
 			"status": "consumed",
 			"consumedBy": [
 				"castle_capabilities.py",
+				"castle_fixtures.py",
 				"module_contracts.py"
 			],
 			"refusedBy": [],
@@ -2914,6 +2917,7 @@
 			"status": "consumed",
 			"consumedBy": [
 				"castle_capabilities.py",
+				"castle_fixtures.py",
 				"module_contracts.py"
 			],
 			"refusedBy": [],
@@ -5714,6 +5718,7 @@
 			"status": "consumed",
 			"consumedBy": [
 				"castle_capabilities.py",
+				"castle_fixtures.py",
 				"module_contracts.py"
 			],
 			"refusedBy": [],

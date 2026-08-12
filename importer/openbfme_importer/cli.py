@@ -2774,11 +2774,18 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
             else:
                 assets_root = getattr(args, "effective_assets", None)
                 binder = None
+                fixtures_builder = None
                 if assets_root is not None:
+                    from .castle_fixtures import (
+                        make_effective_assets_fixtures_builder,
+                    )
                     from .map_prop_bindings import load_effective_assets_manifest
 
                     binder = make_effective_assets_binder(
                         assets_root, load_effective_assets_manifest(assets_root)
+                    )
+                    fixtures_builder = make_effective_assets_fixtures_builder(
+                        assets_root, game=args.game
                     )
                 profile = build_category_map_profile(
                     catalog,
@@ -2787,6 +2794,11 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                     strict=bool(getattr(args, "strict", False)),
                     target_limit=getattr(args, "map_limit", None),
                     **({"binder": binder} if binder is not None else {}),
+                    **(
+                        {"fixtures_builder": fixtures_builder}
+                        if fixtures_builder is not None
+                        else {}
+                    ),
                 )
                 generated_name = f"{args.game}-{map_set}-maps.generated.json"
             generated_path = _workspace_root(args) / "profiles" / generated_name

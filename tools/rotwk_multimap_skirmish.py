@@ -215,9 +215,15 @@ def _map_art_entries(
 
 
 def build_registry_skirmish_catalog(
-    catalog: InstallCatalog, *, game: str
+    catalog: InstallCatalog, *, game: str, fixtures_builder: Any = None
 ) -> dict[str, Any]:
-    """Build maps.json + profile shell from official multiplayer registry rows."""
+    """Build maps.json + profile shell from official multiplayer registry rows.
+
+    ``fixtures_builder`` (lane L2a) is an optional
+    ``(virtual_path, parsed) -> document`` callable consulted only for maps
+    carrying a ``castleSiege`` contract; with the default ``None`` the profile
+    is byte-identical to before the option existed.
+    """
     registry = parse_mapcache_bytes(
         _read_virtual(catalog, MAPCACHE_VIRTUAL_PATH, max_bytes=MAX_MAPCACHE_BYTES)
     )
@@ -287,6 +293,11 @@ def build_registry_skirmish_catalog(
             resource_metadata["castleSiege"] = dict(
                 castle_evidence["runtimeContract"]
             )
+            if fixtures_builder is not None:
+                # Lane L2a: the gameplay counterpart to object-bindings.json.
+                # A build failure here fails the catalog build closed — a
+                # castle map without its fixtures document is a named gap.
+                resource_options["fixtures"] = fixtures_builder(virtual, parsed)
         resources.append(
             {
                 "id": f"map-{slug}-binary",
@@ -926,7 +937,28 @@ def main(argv: list[str] | None = None) -> int:
         profile = json.loads(profile_path.read_text(encoding="utf-8"))
     else:
         catalog = _load_catalog(state_root, args.game, operator_install)
-        profile = build_registry_skirmish_catalog(catalog, game=args.game)
+        # Lane L2a: castle map fixtures ride the same effective-assets tree the
+        # full-profile binder uses (default resolution included).  Without a
+        # tree the catalog builds exactly as before, fixtures absent.
+        fixtures_builder = None
+        fixtures_root = (
+            args.effective_assets.expanduser().resolve()
+            if args.effective_assets
+            else _default_effective_assets(state_root, args.game)
+        )
+        if fixtures_root is not None and (
+            fixtures_root / "data" / "ini" / "object"
+        ).is_dir():
+            from openbfme_importer.castle_fixtures import (
+                make_effective_assets_fixtures_builder,
+            )
+
+            fixtures_builder = make_effective_assets_fixtures_builder(
+                fixtures_root, game=args.game
+            )
+        profile = build_registry_skirmish_catalog(
+            catalog, game=args.game, fixtures_builder=fixtures_builder
+        )
         profile_path = profiles_dir / f"{args.game}-skirmish-maps.generated.json"
         write_json_atomic(profile_path, profile)
         payload = json.dumps(profile, indent=2, sort_keys=True, ensure_ascii=False) + "\n"

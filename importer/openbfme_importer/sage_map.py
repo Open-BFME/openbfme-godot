@@ -3257,6 +3257,7 @@ def convert_sage_map(
     metadata: dict[str, Any] | None = None,
     expected: dict[str, Any] | None = None,
     object_bindings: Any = None,
+    fixtures: dict[str, Any] | None = None,
     *,
     profile: str = "multiplayer",
 ) -> list[Path]:
@@ -3288,6 +3289,18 @@ def convert_sage_map(
     if "castleSiege" in metadata:
         if not _valid_castle_siege_contract(metadata["castleSiege"]):
             raise SageMapError("sage-map metadata.castleSiege contract is invalid")
+    if fixtures is not None:
+        # The fixtures document is the gameplay counterpart to
+        # object-bindings.json (design 4.1); it is sealed before any cooking so
+        # a malformed document never reaches a pack.  The import is deferred:
+        # castle_fixtures reaches sage_map transitively via
+        # playable_structure_compiler -> castle_behavior.
+        from .castle_fixtures import CastleFixturesError, validate_map_fixtures
+
+        try:
+            validate_map_fixtures(fixtures)
+        except CastleFixturesError as exc:
+            raise SageMapError(f"sage-map fixtures document is invalid: {exc}") from exc
     if resolved_profile.map_kind != "multiplayer":
         missing_names = [
             field for field in ("id", "displayName") if field not in metadata
@@ -3552,6 +3565,11 @@ def convert_sage_map(
     object_bindings_path = output / "object-bindings.json"
     write_json_atomic(object_bindings_path, binding_inventory)
 
+    fixtures_path = None
+    if fixtures is not None:
+        fixtures_path = output / "fixtures.json"
+        write_json_atomic(fixtures_path, fixtures)
+
     player_start_bindings = [
         {
             "playerIndex": int(item["playerIndex"]),
@@ -3725,6 +3743,11 @@ def convert_sage_map(
     ):
         if field in metadata:
             map_data[field] = metadata[field]
+    if fixtures is not None:
+        map_data["fixtures"] = "fixtures.json"
+        map_data["conversionStatus"]["fixtures"] = (
+            "map-object-fixtures-imported-sim-routing-pending"
+        )
     map_path = output / "map.json"
     write_json_atomic(map_path, map_data)
 
@@ -3738,6 +3761,7 @@ def convert_sage_map(
         objects_path,
         roads_path,
         object_bindings_path,
+        *([fixtures_path] if fixtures_path is not None else []),
         waypoints_path,
         setup_path,
         chunks_path,

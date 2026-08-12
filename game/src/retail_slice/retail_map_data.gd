@@ -50,6 +50,19 @@ const CASTLE_SIEGE_CAPABILITIES: Array[String] = [
 ## capability is still a named gap. Lanes L3+ move names from required into
 ## this list; a map ships when its computed blockers reach empty.
 const CASTLE_SIEGE_IMPLEMENTED: Array[String] = []
+## Lane L2a: maps/<slug>/fixtures.json — the gameplay counterpart to
+## object-bindings.json. Validated strictly; a malformed document is a named
+## load failure, never a silent degrade to decoration.
+const MAP_FIXTURES_SCHEMA := "openbfme.sage-map-fixtures"
+const MAP_FIXTURE_ROLES: Array[String] = [
+	"gate",
+	"garrison",
+	"static-gate",
+	"wall-mounted",
+	"wall",
+	"structure",
+]
+const MAX_MAP_FIXTURES := 2048
 const MAX_WATER_VERTICES := 4096
 ## BFME2 1.06 CREEP_OBJECTFILTER lair set (gamedata.ini line 87): every lair
 ## placement on the five converted maps carries originalOwner PlyrCreeps.
@@ -138,6 +151,15 @@ var source_bytes := 0
 ## A non-empty array means the source document is loadable and inspectable, but
 ## battlefield configuration and menu availability must refuse gameplay by name.
 var castle_gameplay_blockers: Array[String] = []
+## The castle contract's requirement set (v2 "required"; v1's blocker array),
+## retained so a fixtures document's capabilities can be cross-checked
+## against it — both are the same L1 derivation and must agree.
+var castle_required_capabilities: Array[String] = []
+## Lane L2a: validated rows from maps/<slug>/fixtures.json. Empty on pre-L2a
+## packs (the document pointer is absent there); absence is legal, a
+## malformed document never is.
+var map_fixtures: Array = []
+var fixtures_omitted: Array = []
 var _map_runtime_profile: Dictionary = DEFAULT_MAP_RUNTIME_PROFILE
 var width := 0
 var height := 0
@@ -343,10 +365,24 @@ func load_from_pack(
 	var water := _read_document(String(map_definition.get("water", "")), "water")
 	if _validation_cancelled():
 		return false
+	# Lane L2a fixtures are optional: pre-L2a packs declare no pointer and load
+	# exactly as before. A DECLARED document must validate strictly below.
+	var fixtures_raw: Variant = map_definition.get("fixtures", "")
+	var fixtures_rel := "" if fixtures_raw == null else String(fixtures_raw).strip_edges()
+	if fixtures_rel == "<null>" or fixtures_rel.to_lower() == "null":
+		fixtures_rel = ""
+	var fixtures_declared := fixtures_rel != ""
+	var fixtures := _read_document(fixtures_rel, "fixtures") if fixtures_declared else {}
+	if _validation_cancelled():
+		return false
 	if profile_init:
 		print("RETAIL_MAP_DATA_PHASE name=documents delta_ms=%d" % (Time.get_ticks_msec() - profile_last_ms))
 		profile_last_ms = Time.get_ticks_msec()
 	if terrain.is_empty() or objects.is_empty() or object_bindings.is_empty() or waypoints.is_empty() or water.is_empty():
+		return false
+	if fixtures_declared and fixtures.is_empty():
+		# A declared fixtures pointer that resolves to nothing readable is a
+		# hard failure (the diagnostic was named by _read_document).
 		return false
 	if roads_declared and roads.is_empty():
 		return _fail("roads document missing or unreadable")
@@ -392,6 +428,8 @@ func load_from_pack(
 				return _fail("road-material document escaped the selected map")
 	if not _load_objects(objects, roads if roads_declared else {}, object_bindings, road_summary):
 		return false
+	if fixtures_declared and not _load_fixtures(fixtures):
+		return false
 	if _validation_cancelled():
 		return false
 	if roads_declared and road_materials_declared and not roads_geometry_only and road_unresolved_control_point_count == 0 and not _load_road_materials(road_materials):
@@ -412,6 +450,7 @@ func load_from_pack(
 
 func _load_castle_siege_contract(value: Variant) -> bool:
 	castle_gameplay_blockers.clear()
+	castle_required_capabilities.clear()
 	if value == null:
 		return true
 	if typeof(value) != TYPE_DICTIONARY:
@@ -436,6 +475,9 @@ func _load_castle_siege_contract(value: Variant) -> bool:
 		if typeof(blockers[index]) != TYPE_STRING or String(blockers[index]) != CASTLE_SIEGE_BLOCKERS[index]:
 			return _fail("invalid castleSiege blocker inventory")
 	castle_gameplay_blockers.assign(blockers)
+	# v1's exact blocker array is also the requirement set (nothing was
+	# implemented when the seal shipped); a v2 document states it explicitly.
+	castle_required_capabilities.assign(blockers)
 	return true
 
 
@@ -471,6 +513,168 @@ func _load_castle_siege_contract_v2(contract: Dictionary) -> bool:
 		var capability := String(entry)
 		if not CASTLE_SIEGE_IMPLEMENTED.has(capability):
 			castle_gameplay_blockers.append(capability)
+	castle_required_capabilities.assign(required)
+	return true
+
+
+func _load_fixtures(value: Variant) -> bool:
+	## Lane L2a: validate maps/<slug>/fixtures.json. Absent (null) is a pre-L2a
+	## pack and loads as no fixtures; a present document validates strictly and
+	## refuses every malformed shape with a named diagnostic — it never
+	## silently degrades castle structures back to decoration.
+	map_fixtures.clear()
+	fixtures_omitted.clear()
+	if value == null:
+		return true
+	if typeof(value) != TYPE_DICTIONARY:
+		return _fail("fixtures must be an object")
+	var document := value as Dictionary
+	if String(document.get("schema", "")) != MAP_FIXTURES_SCHEMA or int(document.get("schemaVersion", -1)) != 0:
+		return _fail("unexpected cooked fixtures schema")
+	if castle_required_capabilities.is_empty():
+		return _fail("fixtures document without a castleSiege contract")
+	var capabilities := _array(document.get("capabilities", null))
+	if capabilities.is_empty():
+		return _fail("invalid fixtures capability inventory")
+	var declared: Array[String] = []
+	var previous_rank := -1
+	var seen_capabilities := {}
+	for entry in capabilities:
+		if typeof(entry) != TYPE_STRING:
+			return _fail("invalid fixtures capability inventory")
+		var capability := String(entry)
+		var rank: int = CASTLE_SIEGE_CAPABILITIES.find(capability)
+		if rank < 0 or rank <= previous_rank or seen_capabilities.has(capability):
+			return _fail("invalid fixtures capability inventory")
+		seen_capabilities[capability] = true
+		previous_rank = rank
+		declared.append(capability)
+	if declared != castle_required_capabilities:
+		return _fail("fixtures capabilities disagree with the castleSiege contract")
+	var rows := _array(document.get("fixtures", null))
+	if rows.is_empty():
+		return _fail("cooked fixtures document has no fixture rows")
+	if rows.size() > MAX_MAP_FIXTURES or int(document.get("count", -1)) != rows.size():
+		return _fail("cooked fixtures count does not match its metadata")
+	var seen_indices := {}
+	for row_value in rows:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			return _fail("invalid castle fixture record")
+		var record := row_value as Dictionary
+		var type_name := String(record.get("typeName", ""))
+		if type_name == "" or type_name.length() > 128:
+			return _fail("invalid castle fixture record")
+		var role := String(record.get("role", ""))
+		if not MAP_FIXTURE_ROLES.has(role):
+			return _fail("castle fixture has an unknown role")
+		if not _exact_integer(record.get("index", null)) or int(record.get("index")) < 0:
+			return _fail("invalid castle fixture placement")
+		var index := int(record.get("index"))
+		if seen_indices.has(index):
+			return _fail("castle fixture placement index is duplicated")
+		seen_indices[index] = true
+		if not _valid_fixture_vector(record.get("position", null)) or not _valid_fixture_number(record.get("angle", null)):
+			return _fail("invalid castle fixture placement")
+		if String(record.get("originalOwner", "")) == "":
+			return _fail("castle fixture has an invalid originalOwner")
+		var kind_of := _array(record.get("kindOf", null))
+		var kind_of_valid := not kind_of.is_empty()
+		for kind in kind_of:
+			if typeof(kind) != TYPE_STRING or String(kind) == "":
+				kind_of_valid = false
+		if not kind_of_valid:
+			return _fail("invalid castle fixture record")
+		if not _valid_fixture_number(record.get("maxHealth", null)) or float(record.get("maxHealth")) <= 0.0:
+			return _fail("castle fixture has an invalid maxHealth")
+		var armor: Variant = record.get("armor", null)
+		# JSON null is the recorded SAGE passthrough (no authored ArmorSet,
+		# e.g. CaptureFlag); anything else malformed fails closed.
+		if armor != null and (typeof(armor) != TYPE_STRING or String(armor) == ""):
+			return _fail("castle fixture has an invalid armor")
+		if record.has("initialHealth") and not _valid_fixture_number(record.get("initialHealth")):
+			return _fail("invalid castle fixture placement")
+		for flag in ["indestructible", "enabled", "targetable"]:
+			if record.has(flag) and typeof(record.get(flag)) != TYPE_BOOL:
+				return _fail("invalid castle fixture placement")
+		match role:
+			"gate":
+				if record.has("garrison"):
+					return _fail("castle fixture role disagrees with its module block")
+				if not _valid_fixture_gate_block(record.get("gate", null)):
+					return false
+			"garrison":
+				if record.has("gate"):
+					return _fail("castle fixture role disagrees with its module block")
+				if not _valid_fixture_garrison_block(record.get("garrison", null)):
+					return false
+			_:
+				if record.has("gate") or record.has("garrison"):
+					return _fail("castle fixture role disagrees with its module block")
+		map_fixtures.append(record)
+	for entry in _array(document.get("omitted", [])):
+		if typeof(entry) != TYPE_DICTIONARY:
+			return _fail("map fixtures document has an invalid omitted entry")
+		var omission := entry as Dictionary
+		if String(omission.get("typeName", "")) == "" or String(omission.get("reason", "")) != "no-authored-body-maxhealth":
+			return _fail("map fixtures document has an invalid omitted entry")
+		fixtures_omitted.append(omission)
+	return true
+
+
+func _valid_fixture_number(value: Variant) -> bool:
+	if typeof(value) != TYPE_INT and typeof(value) != TYPE_FLOAT:
+		return false
+	return _finite_number(float(value))
+
+
+func _valid_fixture_vector(value: Variant) -> bool:
+	if typeof(value) != TYPE_ARRAY:
+		return false
+	var parts := value as Array
+	if parts.size() != 3:
+		return false
+	for part in parts:
+		if not _valid_fixture_number(part):
+			return false
+	return true
+
+
+func _valid_fixture_gate_block(value: Variant) -> bool:
+	if typeof(value) != TYPE_DICTIONARY:
+		return _fail("gate fixture has an invalid gate module block")
+	var block := value as Dictionary
+	if typeof(block.get("openByDefault", null)) != TYPE_BOOL:
+		return _fail("gate fixture has an invalid gate module block")
+	if not _valid_fixture_number(block.get("resetMilliseconds", null)) or float(block.get("resetMilliseconds")) <= 0.0:
+		return _fail("gate fixture has an invalid gate module block")
+	if not _valid_fixture_number(block.get("percentOpenForPathing", null)) or float(block.get("percentOpenForPathing")) < 0.0:
+		return _fail("gate fixture has an invalid gate module block")
+	var geometries: Variant = block.get("geometries", null)
+	if typeof(geometries) != TYPE_DICTIONARY or (geometries as Dictionary).is_empty():
+		return _fail("gate fixture has invalid named geometries")
+	for geometry_name in (geometries as Dictionary):
+		if String(geometry_name) == "":
+			return _fail("gate fixture has invalid named geometries")
+		var entry: Variant = (geometries as Dictionary)[geometry_name]
+		if typeof(entry) != TYPE_DICTIONARY:
+			return _fail("gate fixture has invalid named geometries")
+		var geometry := entry as Dictionary
+		if String(geometry.get("shape", "")) == "":
+			return _fail("gate fixture has invalid named geometries")
+		for field in ["majorRadius", "minorRadius", "height"]:
+			if not _valid_fixture_number(geometry.get(field, null)) or float(geometry.get(field)) <= 0.0:
+				return _fail("gate fixture has invalid named geometries")
+		if not _valid_fixture_vector(geometry.get("offset", null)):
+			return _fail("gate fixture has invalid named geometries")
+	return true
+
+
+func _valid_fixture_garrison_block(value: Variant) -> bool:
+	if typeof(value) != TYPE_DICTIONARY:
+		return _fail("garrison fixture is missing its garrison module block")
+	var block := value as Dictionary
+	if not _exact_integer(block.get("containMax", null)) or int(block.get("containMax")) <= 0:
+		return _fail("garrison fixture has an invalid containMax")
 	return true
 
 
@@ -2580,6 +2784,9 @@ func _reset() -> void:
 	source_sha256 = ""
 	source_bytes = 0
 	castle_gameplay_blockers.clear()
+	castle_required_capabilities.clear()
+	map_fixtures.clear()
+	fixtures_omitted.clear()
 	_map_runtime_profile = DEFAULT_MAP_RUNTIME_PROFILE
 	height_samples = PackedByteArray()
 	passability_bits = PackedByteArray()
