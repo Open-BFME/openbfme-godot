@@ -9,6 +9,7 @@ from ``lotr.str`` for the non-redistributable pack.
 
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 import json
 from pathlib import PurePosixPath
@@ -18,6 +19,7 @@ from typing import Any, Iterable
 from .catalog import InstallCatalog
 from .faction_census import (
     EVA_PATH,
+    FX_LIST_PATH,
     SCIENCE_PATH,
     SOUND_EFFECTS_PATH,
     SPECIAL_POWER_PATH,
@@ -1282,31 +1284,148 @@ def _eva_semantic_field_coverage(source: bytes) -> dict[str, Any]:
 # binding for objects retail announces at construction completion; the two
 # never disagree on one object (verified against the oracle corpus at compose
 # time - a disagreement raises rather than picking one silently).
+#
+# Two more retail create hooks feed the same map:
+# - SAGE ``ChildObject`` / ``ObjectReskin`` inherit the parent's authored
+#   fields (``ChildObject MordorSauron_RingHero MordorSauron`` keeps
+#   ``VoiceCreated = EVA:SauronCreated``).
+# - Fortress heroes comment ``VoiceCreated`` out and rehook the announcement
+#   to spawn FX (lurtz.ini:670-671; fxlist.ini:12021-12027
+#   ``EvaEventOwner = LurtzCreated``). ``InitialSpawnFX`` is that hook.
+#   ``RespawnAsTemplate`` is the last-resort follow for the foot Witch-King,
+#   which authors no spawn FX and converts into the fellbeast object that
+#   does (witchking.ini:371).
 _EVA_CREATED_VOICE = re.compile(r"^eva:([A-Za-z0-9_+.-]+)\s*$", re.IGNORECASE)
 _EVA_CREATED_OBJECT_PREFIX = "data/ini/object/"
+_EVA_CREATED_FX_HEADER = re.compile(r"^FXList\s+([A-Za-z0-9_+.-]+)\s*$", re.IGNORECASE)
 MAX_EVA_CREATED_BINDINGS = 4_096
+MAX_EVA_CREATED_FX_LISTS = 8_192
+MAX_EVA_CREATED_ANCESTRY = 64
+
+
+def _fx_list_eva_event_owners(source: bytes) -> dict[str, tuple[str, ...]]:
+    """Index ``EvaEvent / EvaEventOwner`` tokens per FXList.
+
+    ``InitialSpawnFX`` names one of these lists; the nested ``EvaEventOwner``
+    is the eva.ini block the announcer fires when that spawn FX plays.
+    """
+
+    owners: dict[str, list[str]] = {}
+    current_list: str | None = None
+    section_stack: list[str] = []
+    for line in _ini_lines(source):
+        header = _EVA_CREATED_FX_HEADER.fullmatch(line)
+        if header is not None and current_list is None:
+            current_list = header.group(1)
+            owners.setdefault(current_list.casefold(), [])
+            if len(owners) > MAX_EVA_CREATED_FX_LISTS:
+                raise ValueError("eva created-event FXList count exceeds limit")
+            continue
+        if current_list is None:
+            continue
+        if line.casefold() == "end":
+            if section_stack:
+                section_stack.pop()
+            else:
+                current_list = None
+            continue
+        if "=" in line:
+            key, _, value = line.partition("=")
+            if (
+                key.strip().casefold() == "evaeventowner"
+                and section_stack
+                and section_stack[-1] == "evaevent"
+            ):
+                token = value.strip()
+                if token:
+                    owners[current_list.casefold()].append(token)
+            continue
+        section_stack.append(line.split()[0].casefold())
+    return {key: tuple(values) for key, values in owners.items()}
+
+
+def _eva_created_ancestry(
+    index: dict[str, Any], target: Any
+) -> tuple[Any, ...]:
+    """Root-to-child ancestry. Annotation parents on plain Object stop the walk."""
+
+    current = target
+    if (
+        target.kind.casefold() == "object"
+        and target.parent is not None
+        and target.parent.casefold() not in index
+    ):
+        current = replace(target, parent=None)
+    chain = [current]
+    seen = {current.name.casefold()}
+    while current.parent:
+        parent = index.get(current.parent.casefold())
+        if parent is None:
+            if current.kind.casefold() == "object":
+                break
+            raise ValueError(
+                f"eva-created-binding-unresolved-parent:{target.name}:{current.parent}"
+            )
+        key = parent.name.casefold()
+        if key in seen or len(chain) >= MAX_EVA_CREATED_ANCESTRY:
+            raise ValueError(f"eva-created-binding-cycle:{target.name}")
+        seen.add(key)
+        chain.append(parent)
+        current = parent
+    return tuple(reversed(chain))
+
+
+def _eva_effective_field(
+    ancestry: tuple[Any, ...], key: str, *, recursive: bool = False
+) -> tuple[str, ...]:
+    selected: tuple[str, ...] = ()
+    for item in ancestry:
+        values = item.values(key, recursive=recursive)
+        if values:
+            selected = values
+    return selected
+
+
+def _eva_event_from_voice_values(obj_name: str, key: str, values: tuple[str, ...]) -> str | None:
+    event: str | None = None
+    for value in values:
+        match = _EVA_CREATED_VOICE.fullmatch(value.strip())
+        if match is None:
+            if value.strip().casefold().startswith("eva:"):
+                raise ValueError(
+                    f"eva-created-binding-unresolved:{obj_name}:{key}:{value.strip()}"
+                )
+            continue
+        candidate = match.group(1)
+        if event is not None and event.casefold() != candidate.casefold():
+            raise ValueError(
+                f"eva-created-binding-conflict:{obj_name}:{key}:{event}:{candidate}"
+            )
+        event = candidate
+    return event
 
 
 def _eva_created_event_bindings(catalog: InstallCatalog) -> dict[str, str]:
-    """Project every Object's authored ``EVA:`` creation voice into one map.
+    """Project every Object's authored create-EVA hook into one map.
 
-    Retail keys creation announcements per OBJECT, not through a generic
-    "created" event: ``VoiceCreated = EVA:<event>`` (or, for objects announced
-    at construction completion, ``VoiceFullyCreated = EVA:<event>``) names the
-    eva.ini block the announcer fires when that object appears. The runtime's
-    hero-created signal carries the created object id, so this map is how it
-    resolves to the event retail authored for it. ``VoiceCreated`` - the
-    created-moment voice - wins when both are authored; they never disagree in
-    pure RotWK 2.01 and a disagreement raises rather than guessing.
+    Retail keys creation announcements per OBJECT. Three authored sources,
+    in precedence order:
 
-    Scope: the object corpus (``data/ini/object/**.ini``). The ``.inc``
-    includes author no ``EVA:`` creation voice at all (byte-checked), and the
-    fields are object-level, so the bounded CST reader's top-level assignments
-    are the complete population.
+    1. ``VoiceCreated = EVA:<event>`` (else ``VoiceFullyCreated = EVA:<event>``),
+       with ``ChildObject`` / ``ObjectReskin`` inheriting the parent when the
+       child does not override the field.
+    2. ``InitialSpawnFX`` -> fxlist.ini ``EvaEvent.EvaEventOwner`` when that
+       owner names an authored eva.ini block. This is the fortress-hero create
+       hook (VoiceCreated commented out as "rehooked to spawn FX").
+    3. ``RespawnAsTemplate`` follow, when the object itself authors neither
+       hook but converts into one that does (foot Witch-King -> fellbeast).
+
+    ``VoiceCreated`` wins when both a voice field and a spawn-FX owner name
+    an event; they never disagree in pure RotWK 2.01 and a disagreement
+    raises rather than guessing.
     """
 
-    created: dict[str, str] = {}
-    fully: dict[str, str] = {}
+    index: dict[str, Any] = {}
     paths = sorted(
         (
             entry.name
@@ -1319,38 +1438,90 @@ def _eva_created_event_bindings(catalog: InstallCatalog) -> dict[str, str]:
     for path in paths:
         document = parse_sage_document(_read_document(catalog, path).source, path)
         for obj in document.objects:
-            for key, table in (("VoiceCreated", created), ("VoiceFullyCreated", fully)):
-                for value in obj.values(key):
-                    match = _EVA_CREATED_VOICE.fullmatch(value.strip())
-                    if match is None:
-                        if value.strip().casefold().startswith("eva:"):
-                            raise ValueError(
-                                f"eva-created-binding-unresolved:{obj.name}:{key}:{value.strip()}"
-                            )
-                        continue
-                    event = match.group(1)
-                    existing = table.get(obj.name)
-                    if existing is not None and existing.casefold() != event.casefold():
-                        raise ValueError(
-                            f"eva-created-binding-conflict:{obj.name}:{key}:{existing}:{event}"
-                        )
-                    table[obj.name] = event
-    if len(created.keys() | fully.keys()) > MAX_EVA_CREATED_BINDINGS:
-        raise ValueError("eva created-event binding count exceeds limit")
-    bindings: dict[str, str] = {}
-    for name in sorted(created.keys() | fully.keys(), key=str.casefold):
-        created_event = created.get(name)
-        fully_event = fully.get(name)
+            index[obj.name.casefold()] = obj
+
+    authored_events = {
+        names[0].casefold(): names[0]
+        for names in _eva_event_side_sounds(_read_document(catalog, EVA_PATH).source).values()
+    }
+    fx_owners = _fx_list_eva_event_owners(_read_document(catalog, FX_LIST_PATH).source)
+
+    voice_bindings: dict[str, str] = {}
+    spawn_bindings: dict[str, str] = {}
+    respawn_as: dict[str, str] = {}
+    for obj in index.values():
+        ancestry = _eva_created_ancestry(index, obj)
+        created_event = _eva_event_from_voice_values(
+            obj.name, "VoiceCreated", _eva_effective_field(ancestry, "VoiceCreated")
+        )
+        fully_event = _eva_event_from_voice_values(
+            obj.name,
+            "VoiceFullyCreated",
+            _eva_effective_field(ancestry, "VoiceFullyCreated"),
+        )
         if (
             created_event is not None
             and fully_event is not None
             and created_event.casefold() != fully_event.casefold()
         ):
             raise ValueError(
-                f"eva-created-binding-conflict:{name}:{created_event}:{fully_event}"
+                f"eva-created-binding-conflict:{obj.name}:{created_event}:{fully_event}"
             )
-        bindings[name] = created_event if created_event is not None else fully_event  # type: ignore[assignment]
-    return bindings
+        if created_event is not None or fully_event is not None:
+            voice_bindings[obj.name] = (
+                created_event if created_event is not None else fully_event
+            )  # type: ignore[assignment]
+
+        spawn_values = _eva_effective_field(ancestry, "InitialSpawnFX", recursive=True)
+        if spawn_values:
+            owners = fx_owners.get(spawn_values[-1].strip().casefold(), ())
+            chosen: str | None = None
+            for owner in owners:
+                event = authored_events.get(owner.casefold())
+                if event is None:
+                    raise ValueError(
+                        f"eva-created-binding-unresolved:{obj.name}:InitialSpawnFX:{owner}"
+                    )
+                if chosen is not None and chosen.casefold() != event.casefold():
+                    raise ValueError(
+                        f"eva-created-binding-conflict:{obj.name}:InitialSpawnFX:{chosen}:{event}"
+                    )
+                chosen = event
+            if chosen is not None:
+                spawn_bindings[obj.name] = chosen
+
+        templates = _eva_effective_field(ancestry, "RespawnAsTemplate", recursive=True)
+        if templates:
+            token = templates[-1].strip()
+            if token:
+                respawn_as[obj.name] = token
+
+    bindings: dict[str, str] = dict(voice_bindings)
+    for name, event in spawn_bindings.items():
+        existing = bindings.get(name)
+        if existing is None:
+            bindings[name] = event
+            continue
+        if existing.casefold() != event.casefold():
+            raise ValueError(
+                f"eva-created-binding-conflict:{name}:{existing}:{event}"
+            )
+    for name, template in respawn_as.items():
+        if name in bindings:
+            continue
+        event = bindings.get(template)
+        if event is None:
+            folded = template.casefold()
+            event = next(
+                (value for key, value in bindings.items() if key.casefold() == folded),
+                None,
+            )
+        if event is not None:
+            bindings[name] = event
+
+    if len(bindings) > MAX_EVA_CREATED_BINDINGS:
+        raise ValueError("eva created-event binding count exceeds limit")
+    return dict(sorted(bindings.items(), key=lambda item: item[0].casefold()))
 
 
 def _validate_faction_audio_report(report: Any, faction: str, template: str) -> dict[str, Any]:
@@ -1489,11 +1660,12 @@ def build_faction_audio_extension(
     eva_side_map["semanticFieldCoverage"] = _eva_semantic_field_coverage(
         eva_document.source
     )
-    # Retail announces unit/hero creation PER OBJECT (VoiceCreated =
-    # EVA:<event>), not via one generic id: the runtime's hero-created signal
-    # carries the created object id and resolves it through this map. An
-    # object retail gives no EVA creation voice (the Witch-King's is commented
-    # out in pure 2.01) stays unmapped and fails closed at runtime.
+    # Retail announces unit/hero creation PER OBJECT, not via one generic id:
+    # VoiceCreated = EVA:<event> (with ChildObject inherit) plus spawn-FX
+    # EvaEventOwner on InitialSpawnFX for fortress heroes whose VoiceCreated
+    # line was rehooked. The runtime's hero-created signal carries the created
+    # object id and resolves it through this map. An object retail gives no
+    # create hook stays unmapped and fails closed at runtime.
     eva_side_map["createdEvents"] = _eva_created_event_bindings(catalog)
     unresolved = _object(report.get("unresolved"), "faction census unresolved")
     return {

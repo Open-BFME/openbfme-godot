@@ -12,7 +12,9 @@ extends SceneTree
 ##         OtherEvaEventsToBlock mutes the blocked pair while the blocker
 ##         sounds, MillisecondsToWaitBeforePlaying defers and then plays, and
 ##         eva.hero_created resolves the created object to its authored
-##         per-unit event (failing closed where retail authors nothing).
+##         per-unit event, including ChildObject inherit and spawn-FX
+##         EvaEventOwner for fortress heroes (failing closed where retail
+##         authors nothing).
 ##
 ## Pack roots come from whatever OPENBFME_CONTENT selects; the runner never
 ## reads or writes the shared selection itself.
@@ -24,7 +26,7 @@ const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
 # autoloads are registered. Loaded inside _run, after they exist.
 const SLICE_SCRIPT_PATH := "res://src/retail_slice/retail_vertical_slice.gd"
 
-const EXPECTED_CHECKS_NEW := 24
+const EXPECTED_CHECKS_NEW := 26
 const EXPECTED_CHECKS_OLD := 8
 
 var passed := 0
@@ -108,7 +110,7 @@ func _run_new_schema_checks(events: Dictionary, semantics: Dictionary, created_e
 	_check("new_schema_compiles_suppression_and_delay_fields", has_block and has_delay)
 	_check(
 		"new_schema_carries_created_events_map",
-		created_events.size() == 142,
+		created_events.size() == 237,
 		"createdEvents=%d" % created_events.size()
 	)
 
@@ -210,13 +212,36 @@ func _run_new_schema_checks(events: Dictionary, semantics: Dictionary, created_e
 		_routed_events_since(isengard, log_mark).has(expected_uruk_sound),
 		"expected=%s routed=%s" % [expected_uruk_sound, str(_routed_events_since(isengard, log_mark))]
 	)
-	# Pure 2.01 comments out the Witch-King's binding (witchking.ini:313-314):
-	# unmapped, fail closed, nothing substituted.
-	_sync_batch(mordor, _hero_created_events("MordorWitchKing", 81, 80_000_000))
+	# Production ring-hero id is the ChildObject, which inherits SauronCreated.
+	base = 75_000_000
+	var expected_sauron_sound := String((events.get("SauronCreated", {}) as Dictionary).get("Mordor", ""))
+	log_mark = (mordor.routing_log as Array).size()
+	_sync_batch(mordor, _hero_created_events("MordorSauron_RingHero", 76, base))
 	_check(
-		"created_unmapped_witch_king_fails_closed",
-		_has_diagnostic(mordor, "eva_created_unauthored:MordorWitchKing:81"),
-		str(mordor.eva_diagnostics)
+		"created_ring_hero_inherits_parent_voice_created",
+		_routed_events_since(mordor, log_mark).has(expected_sauron_sound),
+		"expected=%s routed=%s" % [expected_sauron_sound, str(_routed_events_since(mordor, log_mark))]
+	)
+	# Fortress heroes: VoiceCreated is commented out and rehooked to spawn FX
+	# EvaEventOwner. The remake's only hero-create EVA path is eva.hero_created,
+	# so those object ids must map.
+	base = 80_000_000
+	var expected_witch_king_sound := String((events.get("WitchKingCreated", {}) as Dictionary).get("Mordor", ""))
+	log_mark = (mordor.routing_log as Array).size()
+	_sync_batch(mordor, _hero_created_events("MordorWitchKingOnFellBeast", 81, base))
+	_check(
+		"created_witch_king_resolves_spawn_fx_owner",
+		_routed_events_since(mordor, log_mark).has(expected_witch_king_sound),
+		"expected=%s routed=%s" % [expected_witch_king_sound, str(_routed_events_since(mordor, log_mark))]
+	)
+	base = 85_000_000
+	var expected_lurtz_sound := String((events.get("LurtzCreated", {}) as Dictionary).get("Isengard", ""))
+	log_mark = (isengard.routing_log as Array).size()
+	_sync_batch(isengard, _hero_created_events("IsengardLurtz", 86, base))
+	_check(
+		"created_lurtz_resolves_spawn_fx_owner",
+		_routed_events_since(isengard, log_mark).has(expected_lurtz_sound),
+		"expected=%s routed=%s" % [expected_lurtz_sound, str(_routed_events_since(isengard, log_mark))]
 	)
 	# A unit the local side cannot build keeps failing closed on the side map.
 	_sync_batch(men, _hero_created_events("MordorBlackRider", 91, 90_000_000))

@@ -1527,15 +1527,15 @@ func _play_structure_eva(event: Dictionary, role: String, sequence: int, now_mse
 
 
 func _play_created_eva(event: Dictionary, sequence: int, now_msec: int) -> void:
-	## Retail keys creation announcements per OBJECT: the object INI's
-	## VoiceCreated = EVA:<event> (compiled into the eva document's
-	## createdEvents map) names the announcer event for the created thing.
-	## "HeroCreated" itself is authored by no retail side, so it only remains
-	## as the legacy path for packs predating the createdEvents schema, where
-	## it fails closed exactly as before. An object retail gives no EVA
-	## creation voice (pure 2.01 comments out the Witch-King's) fails closed
-	## here; a unit whose event authors no line for the local side fails
-	## closed one step deeper, on the side map.
+	## Retail keys creation announcements per OBJECT: VoiceCreated = EVA:<event>
+	## (ChildObject inherits the parent) and spawn-FX EvaEventOwner on
+	## InitialSpawnFX (fortress heroes whose VoiceCreated was rehooked) are
+	## compiled into createdEvents. "HeroCreated" itself is authored by no
+	## retail side, so it only remains as the legacy path for packs predating
+	## the createdEvents schema, where it fails closed exactly as before. An
+	## object retail gives no create hook fails closed here; a unit whose
+	## event authors no line for the local side fails closed one step deeper,
+	## on the side map.
 	var created_map: Variant = structure_audio_contract.get("eva_created_events", {})
 	if typeof(created_map) != TYPE_DICTIONARY or (created_map as Dictionary).is_empty():
 		_play_eva_announcement("HeroCreated", sequence, now_msec)
