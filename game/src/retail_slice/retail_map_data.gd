@@ -32,6 +32,24 @@ const CASTLE_SIEGE_BLOCKERS: Array[String] = [
 	"wall-mounted-defenses",
 	"skirmish-ai-libraries",
 ]
+## v2 contract schema: the document carries the derived per-map requirement
+## set ("required") instead of the one-size-fits-all v1 blocker array, and the
+## runtime computes blockers = required - implemented at load time. Canonical
+## order: the v1 order is preserved as a subsequence, with "scaleable-walls"
+## next to its sibling wall-traversal capability.
+const CASTLE_SIEGE_CONTRACT_VERSION := 2
+const CASTLE_SIEGE_CAPABILITIES: Array[String] = [
+	"walkable-walls",
+	"scaleable-walls",
+	"defendable-gates",
+	"wall-garrisons",
+	"wall-mounted-defenses",
+	"skirmish-ai-libraries",
+]
+## Capabilities this runtime implements. Empty today: every required
+## capability is still a named gap. Lanes L3+ move names from required into
+## this list; a map ships when its computed blockers reach empty.
+const CASTLE_SIEGE_IMPLEMENTED: Array[String] = []
 const MAX_WATER_VERTICES := 4096
 ## BFME2 1.06 CREEP_OBJECTFILTER lair set (gamedata.ini line 87): every lair
 ## placement on the five converted maps carries originalOwner PlyrCreeps.
@@ -399,6 +417,10 @@ func _load_castle_siege_contract(value: Variant) -> bool:
 	if typeof(value) != TYPE_DICTIONARY:
 		return _fail("castleSiege must be an object")
 	var contract := value as Dictionary
+	if contract.has("version"):
+		return _load_castle_siege_contract_v2(contract)
+	# v1: the admission lane's seal. The mounted pack predates per-map
+	# capability derivation, so this exact shape must keep loading.
 	if (
 		contract.size() != 4
 		or String(contract.get("family", "")) != CASTLE_SIEGE_FAMILY
@@ -414,6 +436,41 @@ func _load_castle_siege_contract(value: Variant) -> bool:
 		if typeof(blockers[index]) != TYPE_STRING or String(blockers[index]) != CASTLE_SIEGE_BLOCKERS[index]:
 			return _fail("invalid castleSiege blocker inventory")
 	castle_gameplay_blockers.assign(blockers)
+	return true
+
+
+func _load_castle_siege_contract_v2(contract: Dictionary) -> bool:
+	# v2: the document carries the derived per-map requirement set; blockers
+	# are computed as required - implemented, never authored.
+	var version: Variant = contract.get("version", null)
+	if (
+		contract.size() != 5
+		or (typeof(version) != TYPE_INT and typeof(version) != TYPE_FLOAT)
+		or float(version) != float(CASTLE_SIEGE_CONTRACT_VERSION)
+		or String(contract.get("family", "")) != CASTLE_SIEGE_FAMILY
+		or String(contract.get("gameplayStatus", "")) != CASTLE_SIEGE_STATUS
+		or String(contract.get("admissionPolicy", "")) != CASTLE_SIEGE_ADMISSION_POLICY
+		or typeof(contract.get("required", null)) != TYPE_ARRAY
+	):
+		return _fail("invalid castleSiege admission contract")
+	var required := contract.get("required", []) as Array
+	if required.is_empty():
+		return _fail("invalid castleSiege capability inventory")
+	var previous_rank := -1
+	var seen := {}
+	for entry in required:
+		if typeof(entry) != TYPE_STRING:
+			return _fail("invalid castleSiege capability inventory")
+		var capability := String(entry)
+		var rank: int = CASTLE_SIEGE_CAPABILITIES.find(capability)
+		if rank < 0 or rank <= previous_rank or seen.has(capability):
+			return _fail("invalid castleSiege capability inventory")
+		seen[capability] = true
+		previous_rank = rank
+	for entry in required:
+		var capability := String(entry)
+		if not CASTLE_SIEGE_IMPLEMENTED.has(capability):
+			castle_gameplay_blockers.append(capability)
 	return true
 
 
