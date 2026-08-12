@@ -1035,7 +1035,7 @@ def _eva_audio_extension(
         neutral = row.neutral()
         neutral.pop("id")
         multisounds[row.id] = neutral
-    dropped = _prune_unplayable_definitions(events, multisounds, missing_samples)
+    dropped, pruned = _prune_unplayable_definitions(events, multisounds, missing_samples)
 
     ordered_new_samples: list[tuple[str, str]] = []
     known_sample_keys = {item.casefold() for item in existing_samples}
@@ -1070,9 +1070,34 @@ def _eva_audio_extension(
         item[0]: f"assets/audio/{audio_slug}/{PurePosixPath(item[1]).stem.casefold()}.wav"
         for item in ordered_new_samples
     }
+    dropped_keys = {item.casefold() for item in dropped}
+    orphans: list[dict[str, str]] = []
+    for _key in sorted(eva_events, key=str.casefold):
+        authored, pairs = eva_events[_key]
+        for sound_side, sound in pairs:
+            if sound.casefold() in dropped_keys:
+                orphans.append({"event": authored, "side": sound_side, "sound": sound})
+    installed = {entry.name.casefold(): entry.name for entry in _effective_entries(catalog).values()}
+    counterparts: dict[str, str] = {}
+    for sample_id in missing_samples:
+        candidate = _MISSING_SAMPLE_COUNTERPARTS.get(sample_id.casefold())
+        if candidate is not None and candidate.casefold() in installed:
+            counterparts[sample_id] = installed[candidate.casefold()]
     diagnostics = {
         "missingSamples": sorted(missing_samples, key=str.casefold),
+        # NAMED, NEVER APPLIED. Which file EA meant is the owner's call, not the
+        # compiler's; recording the candidate keeps the decision available
+        # without smuggling it into a pack.
+        "missingSampleCounterparts": dict(sorted(counterparts.items(), key=lambda item: item[0].casefold())),
         "droppedDefinitions": sorted(dropped, key=str.casefold),
+        "prunedDefinitions": pruned,
+        "orphanedSideMapLeaves": orphans,
+        "orphanPolicy": (
+            "recorded-not-pruned: the side map stays the faithful projection of "
+            "retail's authored eva.ini, so a leaf naming a dropped definition is "
+            "reported here rather than edited out. At runtime it fails closed on "
+            "the registry lookup (missing_event), never on a substitute."
+        ),
     }
     return resources, events, multisounds, samples, diagnostics
 
@@ -1081,26 +1106,44 @@ def _prune_unplayable_definitions(
     events: dict[str, Any],
     multisounds: dict[str, Any],
     missing_samples: tuple[str, ...],
-) -> list[str]:
+) -> tuple[list[str], list[dict[str, Any]]]:
     """Drop leaves whose sample does not exist, and definitions left empty.
 
     Runs to a fixpoint: a multisound whose every subsound was dropped is itself
-    unplayable, and any parent referencing it loses that leaf in turn. Returns
-    the ids of the definitions that were removed.
+    unplayable, and any parent referencing it loses that leaf in turn.
+
+    Returns (dropped, pruned).  ``dropped`` names definitions removed outright;
+    ``pruned`` names definitions that SURVIVED IN EDITED FORM, with the leaves
+    they lost.  Reporting only the first set hides the more misleading case: a
+    multisound retail authored as "Angmar line + region cheer" that now plays
+    only the cheer still resolves at runtime, so nothing downstream would ever
+    surface it.  Both sets are facts about retail's own broken references and
+    both belong in the pack's disclosure.
     """
 
     if not missing_samples:
-        return []
+        return [], []
     unplayable = {item.casefold() for item in missing_samples}
     dropped: list[str] = []
+    pruned: dict[str, dict[str, Any]] = {}
     changed = True
     while changed:
         changed = False
-        for table, field in ((events, "sounds"), (multisounds, "subsounds")):
+        for table, field, kind in (
+            (events, "sounds", "event"),
+            (multisounds, "subsounds", "multisound"),
+        ):
             for definition_id in list(table):
                 rows = table[definition_id][field]
                 kept = [row for row in rows if str(row["id"]).casefold() not in unplayable]
                 if len(kept) != len(rows):
+                    record = pruned.setdefault(
+                        definition_id, {"id": definition_id, "kind": kind, "removed": []}
+                    )
+                    for row in rows:
+                        leaf = str(row["id"])
+                        if leaf.casefold() in unplayable and leaf not in record["removed"]:
+                            record["removed"].append(leaf)
                     table[definition_id][field] = kept
                     changed = True
                 if not kept:
@@ -1108,7 +1151,94 @@ def _prune_unplayable_definitions(
                     dropped.append(definition_id)
                     unplayable.add(definition_id.casefold())
                     changed = True
-    return dropped
+    # A definition that was pruned and then dropped is reported as dropped only:
+    # naming it twice would overstate how much survived in edited form.
+    survivors = [
+        dict(record, removed=sorted(record["removed"], key=str.casefold))
+        for definition_id, record in pruned.items()
+        if definition_id not in dropped
+    ]
+    return dropped, sorted(survivors, key=lambda row: str(row["id"]).casefold())
+
+
+# RotWK 2.01 names four announcer samples that ship under no name, and for each
+# one the install DOES ship a file whose stem differs only by an EA prefix typo
+# (`KUAngUpg_` for `kuupg_`, `Rova` for `Rhoa`). Recorded so the disclosure can
+# name the counterpart; every entry is re-checked against the install at compose
+# time, so this table can name a file but never invent one. NOTHING IS MAPPED:
+# rebinding a broken id onto a lookalike is the substitution this pipeline
+# refuses, and it stays the owner's call.
+_MISSING_SAMPLE_COUNTERPARTS = {
+    "kuangupg_sanct2": "data/audio/sounds/kuupg_sanct2.wav",
+    "kuangupg_sanctum": "data/audio/sounds/kuupg_sanctum.wav",
+    "kuwar_losrova": "data/audio/sounds/kuwar_losrhoa.wav",
+    "kuwar_unirova": "data/audio/sounds/kuwar_unirhoa.wav",
+}
+# Retail authors these EVA block fields; the compiler emits only the four in
+# ``_eva_event_semantics``. Counted from the bytes at compose time rather than
+# listed here, so the declaration cannot drift away from the file.
+_EVA_COMPILED_SEMANTIC_FIELDS = {
+    "priority": "priority",
+    "timebetweeneventsms": "cooldownMs",
+    "quiettimems": "quietTimeMs",
+    "expirationtimems": "expirationMs",
+}
+# What retail_slice_audio._play_eva_announcement actually reads today.
+_EVA_RUNTIME_CONSUMED_FIELDS = ("cooldownMs", "priority")
+# Structural, not semantics: these build the side map itself.
+_EVA_STRUCTURAL_FIELDS = frozenset({"side", "sound"})
+
+
+def _eva_semantic_field_coverage(source: bytes) -> dict[str, Any]:
+    """Declare which eva.ini block fields this pack's semantics carry.
+
+    An announcer document that silently omits `OtherEvaEventsToBlock` implies a
+    completeness it does not have. Naming the omissions - with the count retail
+    authors - keeps a reader from mistaking "not implemented" for "not used".
+    """
+
+    authored: dict[str, int] = {}
+    depth = 0
+    inside = False
+    for line in _ini_lines(source):
+        header = _EVA_BLOCK_HEADER.fullmatch(line)
+        if header is not None and not inside:
+            inside = True
+            depth = 0
+            continue
+        if not inside:
+            continue
+        stripped = line.strip()
+        if stripped.casefold() == "end":
+            if depth == 0:
+                inside = False
+            else:
+                depth -= 1
+            continue
+        if "=" not in stripped:
+            if stripped:
+                depth += 1
+            continue
+        name = stripped.split("=", 1)[0].strip()
+        folded = name.casefold()
+        if folded in _EVA_COMPILED_SEMANTIC_FIELDS or folded in _EVA_STRUCTURAL_FIELDS:
+            continue
+        authored[name] = authored.get(name, 0) + 1
+    compiled_counts: dict[str, int] = {}
+    for folded, emitted in _EVA_COMPILED_SEMANTIC_FIELDS.items():
+        if emitted in _EVA_RUNTIME_CONSUMED_FIELDS:
+            continue
+        compiled_counts[emitted] = sum(
+            1
+            for line in _ini_lines(source)
+            if line.strip().split("=", 1)[0].strip().casefold() == folded
+            and "=" in line
+        )
+    return {
+        "compiledAndConsumedByRuntime": sorted(_EVA_RUNTIME_CONSUMED_FIELDS),
+        "compiledButUnconsumed": dict(sorted(compiled_counts.items())),
+        "authoredButNotCompiled": dict(sorted(authored.items())),
+    }
 
 
 def _validate_faction_audio_report(report: Any, faction: str, template: str) -> dict[str, Any]:
@@ -1242,6 +1372,11 @@ def build_faction_audio_extension(
     # a derived view - but the pack carries WHY a named sound will never play,
     # so a fail-closed announcement at runtime can be told apart from a bug.
     eva_side_map["unplayableRetailReferences"] = eva_diagnostics
+    # ... and WHICH PART of the retail schema these semantics carry, so the
+    # document cannot be read as a complete compilation of eva.ini.
+    eva_side_map["semanticFieldCoverage"] = _eva_semantic_field_coverage(
+        eva_document.source
+    )
     unresolved = _object(report.get("unresolved"), "faction census unresolved")
     return {
         "resources": resources,
@@ -1250,6 +1385,7 @@ def build_faction_audio_extension(
             "data/eva_events.json": eva_side_map,
         },
         "evaDiagnostics": eva_diagnostics,
+        "evaSemanticFieldCoverage": eva_side_map["semanticFieldCoverage"],
         "files": {
             "audioEvents": "data/audio_events.json",
             "evaEvents": "data/eva_events.json",

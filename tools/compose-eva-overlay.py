@@ -149,6 +149,7 @@ def main() -> int:
         "evaEventCount": len(extension["runtime_data"]["data/eva_events.json"]["events"]),
         "unresolvedDiagnostics": extension["unresolvedDiagnostics"],
         "unplayableRetailReferences": extension["evaDiagnostics"],
+        "semanticFieldCoverage": extension["evaSemanticFieldCoverage"],
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.receipt.parent.mkdir(parents=True, exist_ok=True)

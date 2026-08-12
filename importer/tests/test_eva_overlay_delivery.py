@@ -221,7 +221,14 @@ def test_the_six_intact_sides_lose_nothing(side: str) -> None:
     _resources, events, _multisounds, _samples, diagnostics = _eva_audio_extension(
         catalog, side, side.casefold(), {}, {}
     )
-    assert diagnostics == {"missingSamples": [], "droppedDefinitions": []}
+    # Angmar is the only side with broken retail references; every disclosure
+    # record must stay EMPTY for the other six, so a non-empty one is a real
+    # regression rather than noise.
+    assert diagnostics["missingSamples"] == []
+    assert diagnostics["missingSampleCounterparts"] == {}
+    assert diagnostics["droppedDefinitions"] == []
+    assert diagnostics["prunedDefinitions"] == []
+    assert diagnostics["orphanedSideMapLeaves"] == []
     assert events
 
 
@@ -250,3 +257,115 @@ def test_bfme2_keeps_reading_its_big_catalog() -> None:
     module = _compose_module()
     base = _rotwk_catalog()
     assert module.oracle_catalog(PRIVATE_ROOT, "bfme2", base) is base
+
+
+# --- disclosure completeness (adversarial review, 2026-08-12) -----------------
+#
+# The first cut of the prune reported only definitions it deleted outright. It
+# stayed silent about definitions it QUIETLY EDITED and about side-map leaves it
+# left pointing at something it had just removed. Both are behaviour changes a
+# reader of the receipt would not have seen.
+
+
+def _angmar_extension():
+    from openbfme_importer.faction_profile import _eva_audio_extension
+
+    catalog = _rotwk_catalog()
+    return _eva_audio_extension(catalog, "Angmar", "angmar", {}, {})
+
+
+def test_every_pruned_definition_is_disclosed_not_just_the_deleted_ones() -> None:
+    _resources, events, multisounds, _samples, diagnostics = _angmar_extension()
+
+    # Deleted outright: every leaf was unplayable.
+    assert diagnostics["droppedDefinitions"] == [
+        "CampThrallWORLostRhovanion",
+        "CampThrallWORUnifyRhovanion",
+    ]
+
+    # Edited but surviving. BOTH of these were previously undeclared - the
+    # multisound now plays only the region cheer where retail authored the
+    # Angmar line plus the cheer.
+    pruned = {row["id"]: row for row in diagnostics["prunedDefinitions"]}
+    assert set(pruned) == {"CampThrallUpgradeSanctum", "WarAngmarUnifyRhovanionMS"}
+    assert pruned["CampThrallUpgradeSanctum"]["kind"] == "event"
+    assert pruned["CampThrallUpgradeSanctum"]["removed"] == [
+        "KUAngUpg_Sanct2",
+        "KUAngUpg_Sanctum",
+    ]
+    assert pruned["WarAngmarUnifyRhovanionMS"]["kind"] == "multisound"
+    assert pruned["WarAngmarUnifyRhovanionMS"]["removed"] == [
+        "CampThrallWORUnifyRhovanion"
+    ]
+
+    assert [row["id"] for row in events["CampThrallUpgradeSanctum"]["sounds"]] == [
+        "KUAngUpg_WKSnctm"
+    ]
+    assert [
+        row["id"] for row in multisounds["WarAngmarUnifyRhovanionMS"]["subsounds"]
+    ] == ["LivingWorldRegionCheerEvil"]
+
+
+def test_side_map_leaves_orphaned_by_a_prune_are_recorded() -> None:
+    _resources, _events, _multisounds, _samples, diagnostics = _angmar_extension()
+    assert diagnostics["orphanedSideMapLeaves"] == [
+        {
+            "event": "WorldLostRhovanion",
+            "side": "PlayerAngmar",
+            "sound": "CampThrallWORLostRhovanion",
+        }
+    ]
+    # The policy is named in the artifact itself, so a reader never has to infer
+    # whether a dangling leaf was intentional.
+    assert "recorded-not-pruned" in diagnostics["orphanPolicy"]
+
+
+def test_missing_samples_are_never_mapped_onto_their_shipped_counterparts() -> None:
+    _resources, events, multisounds, samples, diagnostics = _angmar_extension()
+    counterparts = diagnostics["missingSampleCounterparts"]
+    assert set(counterparts) == {
+        "KUAngUpg_Sanct2",
+        "KUAngUpg_Sanctum",
+        "KUWar_LosRova",
+        "KUWar_UniRova",
+    }
+    # Every counterpart named must really be in the install - a disclosure that
+    # invents a filename is worse than no disclosure.
+    catalog = _rotwk_catalog()
+    installed = {entry.name.casefold() for entry in catalog.entries}
+    for missing_id, counterpart in counterparts.items():
+        assert counterpart.casefold() in installed
+        # NAMED, NOT APPLIED: the broken id must resolve to nothing, and no
+        # definition may quietly reference the counterpart in its place.
+        assert missing_id not in samples
+        for table, field in ((events, "sounds"), (multisounds, "subsounds")):
+            for definition in table.values():
+                for row in definition[field]:
+                    assert row["id"] != missing_id
+
+
+def test_eva_document_declares_the_schema_fields_it_does_not_compile() -> None:
+    from openbfme_importer.faction_profile import _eva_semantic_field_coverage
+
+    catalog = _rotwk_catalog()
+    source = _rotwk_eva_source(catalog)
+    coverage = _eva_semantic_field_coverage(source)
+    assert coverage["compiledAndConsumedByRuntime"] == ["cooldownMs", "priority"]
+    assert coverage["compiledButUnconsumed"] == {"expirationMs": 309, "quietTimeMs": 2}
+    # Authored by retail, never compiled. Counted from the bytes so the claim
+    # cannot drift away from the file.
+    assert coverage["authoredButNotCompiled"] == {
+        "AlwaysPlayFromHomeBase": 48,
+        "CountAsJumpToLocation": 97,
+        "MillisecondsToWaitBeforePlaying": 20,
+        "OtherEvaEventsToBlock": 8,
+    }
+    # MiscEvaData is not authored in this document at all; declaring it as an
+    # omission would be a fabricated gap.
+    assert "MiscEvaData" not in coverage["authoredButNotCompiled"]
+
+
+def _rotwk_eva_source(catalog) -> bytes:
+    from openbfme_importer.faction_profile import _read_document, EVA_PATH
+
+    return _read_document(catalog, EVA_PATH).source
