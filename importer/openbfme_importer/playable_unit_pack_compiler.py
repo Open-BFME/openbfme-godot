@@ -2132,6 +2132,11 @@ def compile_playable_unit_pack_recipe(
             **({"fxBindings": fx_bindings} if fx_bindings is not None else {}),
             "production": deepcopy(descriptor["production"]),
             "composition": deepcopy(descriptor["composition"]),
+            **(
+                {"kindOf": deepcopy(descriptor["kindOf"])}
+                if isinstance(descriptor.get("kindOf"), Mapping)
+                else {}
+            ),
             "gameplay": deepcopy(descriptor["gameplay"]),
             "simulation": deepcopy(descriptor["gameplay"]["simulation"]),
             "capabilities": deepcopy(descriptor["capabilities"]),

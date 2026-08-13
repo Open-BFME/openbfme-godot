@@ -279,6 +279,12 @@ static func simulation_rule(document: Dictionary, require_producer: bool = true)
 				row["crush_deceleration_percent"] = float(crush["crushDecelerationPercent"])
 			if crush.has("crushKnockback"):
 				row["crush_knockback"] = float(crush["crushKnockback"])
+			if crush.has("crushRevengeWeaponId"):
+				row["crush_revenge_weapon_id"] = String(crush["crushRevengeWeaponId"])
+			if crush.has("crushRevengeDamage"):
+				row["crush_revenge_damage"] = int(crush["crushRevengeDamage"])
+		if typeof(resolved.get("stances")) == TYPE_DICTIONARY:
+			row["stances"] = (resolved.get("stances", {}) as Dictionary).duplicate(true)
 	for field in ["displayName", "buildCost", "buildTimeSeconds", "commandPoints", "memberCount", "memberHealth", "speed", "visionRange"]:
 		if not row.has(field):
 			return {}
@@ -371,6 +377,13 @@ static func simulation_rule(document: Dictionary, require_producer: bool = true)
 			and typeof(row.get("autoAcquireEnemiesWhenIdle")) == TYPE_DICTIONARY
 		):
 			output["mood_attack_check_rate_ms"] = milliseconds
+	# Crush is flattened onto `row` from resolved.crush above. Copy it onto
+	# the returned rule so normalized_unit_rule / _add_battalion can see it.
+	# The previous pass wrote the keys on `row` and then dropped them.
+	_copy_optional_crush_fields(output, row)
+	_copy_optional_kind_of(output, document)
+	if typeof(row.get("stances")) == TYPE_DICTIONARY:
+		output["stances"] = (row.get("stances", {}) as Dictionary).duplicate(true)
 	return output
 
 
@@ -568,6 +581,21 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 		output["shroud_clearing_range_source"] = shroud_clearing
 	if max_turn_without_reform > 0.0:
 		output["max_turn_without_reform_degrees"] = max_turn_without_reform
+	if turn_rate > 0.0 and movement.has("turnRateDegreesPerSecond"):
+		# Provenance, not a gameplay flag: pin fixtures invent 180 deg/s with
+		# no source and must keep snapping. Live locomotor TurnTime sets this.
+		output["turn_rate_source"] = "locomotor"
+	if movement.has("waitForFormation"):
+		output["wait_for_formation"] = bool(movement.get("waitForFormation"))
+	if combat.has("flankingBonus"):
+		var flanking_bonus := float(combat.get("flankingBonus", 0.0))
+		if is_finite(flanking_bonus) and flanking_bonus > 0.0:
+			output["flanking_bonus"] = flanking_bonus
+	if typeof(simulation.get("stances")) == TYPE_DICTIONARY:
+		output["stances"] = (simulation.get("stances", {}) as Dictionary).duplicate(true)
+	var kind_tokens: Variant = simulation.get("kind_of", [])
+	if typeof(kind_tokens) == TYPE_ARRAY and not (kind_tokens as Array).is_empty():
+		output["kind_of"] = (kind_tokens as Array).duplicate()
 	_copy_optional_crush_fields(output, simulation)
 	if simulation.get("highlander_body") == true:
 		output["highlander_body"] = true
@@ -1102,6 +1130,31 @@ static func _resolved_weapon_modes(value: Variant) -> Dictionary:
 	return output
 
 
+static func _kind_of_tokens(document: Dictionary) -> Array:
+	## Pack path: registration.kindOf. Descriptor path: top-level kindOf.
+	## Absent-unless-set: empty when neither document authored tokens.
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	var kind_of: Variant = registration.get("kindOf", document.get("kindOf", null))
+	if typeof(kind_of) != TYPE_DICTIONARY:
+		return []
+	var tokens: Array = []
+	var seen: Dictionary = {}
+	for field in ["container", "primaryMember"]:
+		for token_value in (kind_of as Dictionary).get(field, []) as Array:
+			var token := String(token_value).strip_edges()
+			if token == "" or seen.has(token):
+				continue
+			seen[token] = true
+			tokens.append(token)
+	return tokens
+
+
+static func _copy_optional_kind_of(output: Dictionary, document: Dictionary) -> void:
+	var tokens := _kind_of_tokens(document)
+	if not tokens.is_empty():
+		output["kind_of"] = tokens
+
+
 static func _copy_optional_crush_fields(output: Dictionary, simulation: Dictionary) -> void:
 	## Absent-unless-set: only copy crush keys the document actually authored.
 	var crush: Dictionary = simulation.get("crush", {}) as Dictionary
@@ -1113,6 +1166,8 @@ static func _copy_optional_crush_fields(output: Dictionary, simulation: Dictiona
 		["min_crush_velocity_percent", "minCrushVelocityPercent"],
 		["crush_deceleration_percent", "crushDecelerationPercent"],
 		["crush_knockback", "crushKnockback"],
+		["crush_revenge_weapon_id", "crushRevengeWeaponId"],
+		["crush_revenge_damage", "crushRevengeDamage"],
 	]
 	for pair_value in pairs:
 		var pair: Array = pair_value
@@ -1127,13 +1182,13 @@ static func _copy_optional_crush_fields(output: Dictionary, simulation: Dictiona
 			raw = crush.get(snake)
 		if raw == null:
 			continue
-		if snake == "crush_weapon_id":
+		if snake in ["crush_weapon_id", "crush_revenge_weapon_id"]:
 			var weapon_id := String(raw).strip_edges()
 			if weapon_id != "":
 				output[snake] = weapon_id
 			continue
 		if typeof(raw) in [TYPE_INT, TYPE_FLOAT] and is_finite(float(raw)):
-			if snake in ["crusher_level", "crushable_level", "crush_damage"]:
+			if snake in ["crusher_level", "crushable_level", "crush_damage", "crush_revenge_damage"]:
 				output[snake] = int(raw)
 			else:
 				output[snake] = float(raw)

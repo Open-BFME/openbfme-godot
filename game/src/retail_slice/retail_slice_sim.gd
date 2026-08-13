@@ -4294,11 +4294,13 @@ func _add_battalion(
 		entities[id]["max_turn_without_reform_degrees"] = float(
 			unit_rule["max_turn_without_reform_degrees"]
 		)
-	for crush_int_key in ["crusher_level", "crushable_level", "crush_damage"]:
+	for crush_int_key in ["crusher_level", "crushable_level", "crush_damage", "crush_revenge_damage"]:
 		if unit_rule.has(crush_int_key):
 			entities[id][crush_int_key] = int(unit_rule[crush_int_key])
 	if unit_rule.has("crush_weapon_id"):
 		entities[id]["crush_weapon_id"] = String(unit_rule["crush_weapon_id"])
+	if unit_rule.has("crush_revenge_weapon_id"):
+		entities[id]["crush_revenge_weapon_id"] = String(unit_rule["crush_revenge_weapon_id"])
 	for crush_float_key in [
 		"min_crush_velocity_percent",
 		"crush_deceleration_percent",
@@ -4306,6 +4308,12 @@ func _add_battalion(
 	]:
 		if unit_rule.has(crush_float_key):
 			entities[id][crush_float_key] = float(unit_rule[crush_float_key])
+	if unit_rule.has("flanking_bonus"):
+		entities[id]["flanking_bonus"] = float(unit_rule["flanking_bonus"])
+	if unit_rule.has("wait_for_formation"):
+		entities[id]["wait_for_formation"] = bool(unit_rule["wait_for_formation"])
+	if typeof(unit_rule.get("kind_of")) == TYPE_ARRAY and not (unit_rule.get("kind_of") as Array).is_empty():
+		entities[id]["kind_of"] = (unit_rule.get("kind_of") as Array).duplicate()
 	# Body policy is optional authoritative state. Keep the key absent for
 	# ordinary ActiveBody units so their snapshots/hashes do not change.
 	if unit_rule.get("highlander_body") == true:
@@ -16161,6 +16169,11 @@ func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, tar
 				if float(weapon_effect.get("damage", 0.0)) > 0.0:
 					outgoing_damage = float(weapon_effect.get("damage"))
 				var swing_damage := maxi(1, roundi(outgoing_damage * float(_stance_state(row).get("damageMultiplier", 1.0)) * _ability_outgoing_multiplier(row)))
+				if target_kind == "battalion" and entities.has(target_id):
+					swing_damage = maxi(
+						1,
+						roundi(float(swing_damage) * _flanking_outgoing_multiplier(row, entities[target_id]))
+					)
 				_apply_member_damage(
 					attacker_id,
 					member_index,
@@ -17316,6 +17329,16 @@ func _try_cavalry_trample(row: Dictionary) -> void:
 		_emit_event("combat.crush", int(row.get("id", 0)), best_id, payload)
 	# Alias kept so existing slice/knockback listeners still see a pulse.
 	_emit_event("combat.trample", int(row.get("id", 0)), best_id, payload)
+	# CrushRevengeWeapon: victim reflects authored nugget damage at the
+	# crusher. Weapon id without authored damage is fail-closed (no invent).
+	if victim.has("crush_revenge_damage"):
+		var revenge := int(victim.get("crush_revenge_damage", 0))
+		if revenge > 0 and int(row.get("health", 0)) > 0:
+			_apply_damage(best_id, int(row.get("id", 0)), revenge, "battalion")
+			_emit_event("combat.crush_revenge", best_id, int(row.get("id", 0)), {
+				"amount": revenge,
+				"weapon": String(victim.get("crush_revenge_weapon_id", "")),
+			})
 	var knockback_strength := TRAMPLE_KNOCKBACK_STRENGTH
 	if has_authored and row.has("crush_knockback"):
 		knockback_strength = maxf(0.0, float(row.get("crush_knockback", TRAMPLE_KNOCKBACK_STRENGTH)))
@@ -17477,6 +17500,31 @@ func _incoming_damage_factor(attacker_id: int, target: Dictionary, target_kind: 
 	return weapon_factor * _member_body_damage_factor(
 		target, damage_type, components
 	)
+
+
+func _flanking_outgoing_multiplier(attacker: Dictionary, target: Dictionary) -> float:
+	## weapon.ini FlankingBonus is extra outgoing damage when the hit is
+	## behind the target facing. GondorSword 50% → 1.5x. Absent → 1.0.
+	var bonus := float(attacker.get("flanking_bonus", 0.0))
+	if bonus <= 0.0 or not is_finite(bonus):
+		return 1.0
+	if not _is_flanking_hit(int(attacker.get("id", 0)), target):
+		return 1.0
+	return 1.0 + bonus / 100.0
+
+
+func _is_flanking_hit(attacker_id: int, target: Dictionary) -> bool:
+	if not entities.has(attacker_id):
+		return false
+	var facing := Vector2(target.get("facing", Vector2.ZERO))
+	if facing.length_squared() <= 0.000001:
+		return false
+	var origin := Vector2(target.get("position", Vector2.ZERO))
+	var attacker_at := Vector2((entities[attacker_id] as Dictionary).get("position", Vector2.ZERO))
+	var from_target := attacker_at - origin
+	if from_target.length_squared() <= 0.000001:
+		return false
+	return facing.normalized().dot(from_target.normalized()) < 0.0
 
 
 func _member_body_damage_factor(

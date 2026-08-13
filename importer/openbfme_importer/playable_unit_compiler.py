@@ -592,6 +592,8 @@ def _resolved_ranged_definition_field(
 
 
 _PRE_ATTACK_TYPES = frozenset({"PER_POSITION", "PER_SHOT", "PER_ATTACK"})
+_YES_NO_TOKENS = frozenset({"YES", "NO"})
+_STANCE_CYCLE_ORDER = ("HoldGround", "Battle", "Aggressive")
 
 
 def _token_from_expression(expression: str) -> str:
@@ -637,6 +639,20 @@ def _resolved_token_definition_field(
             {"sourceIni": row["sourceIni"], "line": row["line"]}
             for row in equivalent
         ]
+    return result
+
+
+def _resolved_yes_no_definition_field(
+    definition: Mapping[str, Sequence[Mapping[str, object]]] | None,
+    field: str,
+) -> dict[str, object] | None:
+    """Resolve an authored Yes/No token to a bool (WaitForFormation = Yes)."""
+
+    token = _resolved_token_definition_field(definition, field, _YES_NO_TOKENS)
+    if token is None:
+        return None
+    result = dict(token)
+    result["value"] = str(token["value"]).casefold() == "yes"
     return result
 
 
@@ -1405,6 +1421,20 @@ def _crush_contract(
             )
             if damage is not None:
                 crush["crushDamage"] = damage
+    revenge_row = member_fields.get("CrushRevengeWeapon")
+    if isinstance(revenge_row, Mapping):
+        revenge_id = str(revenge_row.get("expression", "")).strip()
+        if revenge_id:
+            crush["crushRevengeWeaponId"] = revenge_id
+            revenge_damage = _base_weapon_damage(
+                documents,
+                revenge_id,
+                constants,
+                cache=named_definition_cache,
+                cache_lock=cache_lock,
+            )
+            if revenge_damage is not None:
+                crush["crushRevengeDamage"] = revenge_damage
     return crush
 
 
@@ -1498,8 +1528,33 @@ def _simulation_contract(
             "sourceIni": str(display.get("sourceIni", "")),
             "line": int(display.get("line", 0)),
         }
-    locomotor_id = _default_set_target(member_lineage, "LocomotorSet", "Locomotor")
-    speed = _resolved_set_field(member_lineage, "LocomotorSet", "Speed", constants)
+    is_horde = _is_horde_composition(container_lineage, members)
+    container_locomotor_id = (
+        _default_set_target(container_lineage, "LocomotorSet", "Locomotor")
+        if is_horde
+        else None
+    )
+    member_locomotor_id = _default_set_target(member_lineage, "LocomotorSet", "Locomotor")
+    container_speed = (
+        _resolved_set_field(container_lineage, "LocomotorSet", "Speed", constants)
+        if is_horde
+        else None
+    )
+    member_speed = _resolved_set_field(member_lineage, "LocomotorSet", "Speed", constants)
+    # Horde movement (TurnTime / WaitForFormation / MaxTurnWithoutReform) is
+    # authored on the container LocomotorSet. Fall back to the member set when
+    # the horde object has none so fixtures that only author a member loco
+    # stay resolvable. Member Speed is kept separately when both exist.
+    if is_horde and container_locomotor_id:
+        locomotor_id = container_locomotor_id
+        speed = container_speed if container_speed is not None else member_speed
+        if container_speed is not None and member_speed is not None:
+            member_speed_row = dict(member_speed)
+            member_speed_row["definitionId"] = member_locomotor_id
+            resolved["memberSpeed"] = member_speed_row
+    else:
+        locomotor_id = member_locomotor_id
+        speed = member_speed
     if speed is None:
         missing.append("speed")
     else:
@@ -1539,6 +1594,11 @@ def _simulation_contract(
         )
         if max_turn is not None:
             movement["maxTurnWithoutReformDegrees"] = max_turn
+        wait_for_formation = _resolved_yes_no_definition_field(
+            locomotor, "WaitForFormation"
+        )
+        if wait_for_formation is not None:
+            movement["waitForFormation"] = wait_for_formation
     for field in ("acceleration", "braking", "turnRateDegreesPerSecond"):
         if field not in movement:
             missing.append(field)
@@ -1715,6 +1775,18 @@ def _simulation_contract(
         )
         if pre_attack_type is not None:
             combat["preAttackType"] = pre_attack_type
+        flanking_bonus = _flanking_bonus_field(
+            weapon,
+            damage_owner,
+            documents,
+            weapon_id,
+            warhead_id,
+            constants,
+            named_definition_cache=named_definition_cache,
+            cache_lock=cache_lock,
+        )
+        if flanking_bonus is not None:
+            combat["flankingBonus"] = flanking_bonus
         pre_attack_random = _resolved_definition_field(
             weapon, "PreAttackRandomAmount", constants
         )
@@ -1839,6 +1911,16 @@ def _simulation_contract(
     )
     if fear_resistance is not None:
         resolved["fearResistant"] = fear_resistance
+    stances = _stance_template_contract(
+        container_lineage,
+        member_lineage,
+        documents,
+        constants,
+        named_definition_cache=named_definition_cache,
+        cache_lock=cache_lock,
+    )
+    if stances is not None:
+        resolved["stances"] = stances
     # The runtime simulates one aggregate object. A produced horde's own
     # HordeAIUpdate owns that aggregate policy; its payload member's
     # AIUpdateInterface governs individual SAGE members that are not separate
@@ -2084,6 +2166,272 @@ def _fear_resistance_contract(
         "sourceIni": anchor.source_virtual_path,
         "line": anchor.line,
         "emotionSource": {"sourceIni": EMOTIONS_PATH},
+    }
+
+
+def _is_horde_composition(
+    container_lineage: Sequence[SageObject],
+    members: Sequence[Mapping[str, object]],
+) -> bool:
+    """True when the object is a horde container (HordeContain or many members)."""
+
+    if sum(int(row.get("count", 0)) for row in members) > 1:
+        return True
+    for block in _effective_top_blocks(container_lineage):
+        if (block.kind or "").casefold() in {"hordecontain", "horsehordecontain"}:
+            return True
+    return False
+
+
+def _flanking_bonus_field(
+    weapon: Mapping[str, Sequence[Mapping[str, object]]] | None,
+    damage_owner: Mapping[str, Sequence[Mapping[str, object]]] | None,
+    documents: Mapping[str, bytes],
+    weapon_id: str | None,
+    warhead_id: str | None,
+    constants: Mapping[str, int | float],
+    *,
+    named_definition_cache: dict[
+        tuple[str, str], dict[str, list[dict[str, object]]] | None
+    ]
+    | None = None,
+    cache_lock: threading.Lock | None = None,
+) -> dict[str, object] | None:
+    """Compile DamageNugget FlankingBonus (weapon.ini:5378 GondorSword = 50%)."""
+
+    for owner in (damage_owner, weapon):
+        field = _resolved_definition_field(
+            owner, "FlankingBonus", constants, resolve=_resolved_percent_expression
+        )
+        if field is not None:
+            return field
+    for identifier in (warhead_id, weapon_id):
+        if not identifier:
+            continue
+        nuggets = _weapon_damage_nuggets(
+            documents,
+            identifier,
+            cache=named_definition_cache,
+            cache_lock=cache_lock,
+        )
+        if not nuggets:
+            continue
+        resolved: list[dict[str, object]] = []
+        for nugget in nuggets:
+            fields = nugget["fields"]
+            assert isinstance(fields, Mapping)
+            if fields.get("requiredupgradenames") or fields.get("specialobjectfilter"):
+                continue
+            field = _resolved_definition_field(
+                fields,
+                "FlankingBonus",
+                constants,
+                resolve=_resolved_percent_expression,
+            )
+            if field is not None:
+                resolved.append(field)
+        unique = {_digest(row["value"]): row for row in resolved}
+        if len(unique) == 1:
+            return next(iter(unique.values()))
+    return None
+
+
+def _authored_stance_template(
+    lineage: Sequence[SageObject],
+) -> tuple[str, SageAssignment] | None:
+    found: list[tuple[str, SageAssignment]] = []
+    for block in _effective_top_blocks(lineage):
+        if (block.header_key or "").casefold() != "behavior":
+            continue
+        if block.kind.casefold() != "stancesbehavior":
+            continue
+        rows = [
+            row
+            for row in block.assignments
+            if row.key.casefold() == "stancetemplate"
+        ]
+        if len(rows) != 1:
+            continue
+        tokens = _tokens(rows[0].value)
+        if tokens:
+            found.append((tokens[0], rows[0]))
+    return found[-1] if found else None
+
+
+def _stance_template_attribute_modifiers(
+    documents: Mapping[str, bytes], template_id: str
+) -> dict[str, str] | None:
+    """Pair Stance names with AttributeModifier ids from one StanceTemplate."""
+
+    header = re.compile(
+        rf"^StanceTemplate\s+{re.escape(template_id)}\s*$", re.IGNORECASE
+    )
+    stance_header = re.compile(r"^Stance\s+(\S+)\s*$", re.IGNORECASE)
+    matches: list[dict[str, str]] = []
+    for path, payload in sorted(documents.items(), key=lambda item: item[0].casefold()):
+        try:
+            lines = payload.decode("cp1252").splitlines()
+        except UnicodeDecodeError:
+            continue
+        active = False
+        stance_names: list[str] = []
+        modifier_ids: list[str] = []
+        for raw in lines:
+            stripped = raw.strip()
+            clean = stripped.split(";", 1)[0].split("//", 1)[0].strip()
+            if not active:
+                if raw.lstrip() == raw and header.fullmatch(clean):
+                    active = True
+                continue
+            if raw.lstrip() == raw and clean.casefold() == "end":
+                if len(stance_names) == len(modifier_ids) and stance_names:
+                    matches.append(dict(zip(stance_names, modifier_ids)))
+                active = False
+                break
+            stance_match = stance_header.fullmatch(clean)
+            if stance_match is not None:
+                stance_names.append(stance_match.group(1))
+                continue
+            if "=" in clean:
+                key, expression = (part.strip() for part in clean.split("=", 1))
+            else:
+                parts = clean.split(None, 1)
+                if len(parts) != 2:
+                    continue
+                key, expression = parts
+            if key.casefold() == "attributemodifier" and expression:
+                modifier_ids.append(expression.split()[0])
+    if not matches:
+        return None
+    semantic = {_digest(value): value for value in matches}
+    return next(iter(semantic.values())) if len(semantic) == 1 else None
+
+
+def _stance_modifier_state(
+    documents: Mapping[str, bytes],
+    list_id: str,
+    stance_name: str,
+    constants: Mapping[str, int | float],
+    *,
+    named_definition_cache: dict[
+        tuple[str, str], dict[str, list[dict[str, object]]] | None
+    ]
+    | None = None,
+    cache_lock: threading.Lock | None = None,
+) -> dict[str, object] | None:
+    definition = _named_definition_values(
+        documents,
+        "ModifierList",
+        list_id,
+        cache=named_definition_cache,
+        cache_lock=cache_lock,
+    )
+    if definition is None:
+        return None
+    result: dict[str, object] = {
+        "name": stance_name,
+        "damageMultiplier": 1.0,
+        "incomingDamageMultiplier": 1.0,
+        "visionMultiplier": 1.0,
+        "speedMultiplier": 1.0,
+        "modifiers": [],
+        "attributeModifierId": list_id,
+    }
+    modifiers: list[dict[str, object]] = []
+    for row in definition.get("modifier", ()):
+        expression = str(row.get("expression", "")).strip()
+        tokens = expression.split()
+        if len(tokens) != 2:
+            return None
+        field_name = tokens[0].upper()
+        percent = _resolved_percent_expression(tokens[1], constants)
+        if percent is None:
+            return None
+        modifiers.append(
+            {
+                "field": field_name,
+                "percent": float(percent),
+                "expression": expression,
+                "sourceIni": str(row.get("sourceIni", "")),
+                "line": int(row.get("line", 0)),
+            }
+        )
+        if field_name == "DAMAGE_MULT":
+            result["damageMultiplier"] = float(percent) / 100.0
+        elif field_name == "ARMOR":
+            result["incomingDamageMultiplier"] = 1.0 - float(percent) / 100.0
+        elif field_name == "VISION":
+            result["visionMultiplier"] = 1.0 + float(percent) / 100.0
+        elif field_name == "SPEED":
+            result["speedMultiplier"] = float(percent) / 100.0
+        else:
+            return None
+    result["modifiers"] = modifiers
+    return result
+
+
+def _stance_template_contract(
+    container_lineage: Sequence[SageObject],
+    member_lineage: Sequence[SageObject],
+    documents: Mapping[str, bytes],
+    constants: Mapping[str, int | float],
+    *,
+    named_definition_cache: dict[
+        tuple[str, str], dict[str, list[dict[str, object]]] | None
+    ]
+    | None = None,
+    cache_lock: threading.Lock | None = None,
+) -> dict[str, object] | None:
+    """Compile StancesBehavior StanceTemplate + ModifierList rows.
+
+    Absent StancesBehavior stays absent. An authored template whose
+    HoldGround/Aggressive AttributeModifier cannot be resolved is omitted
+    rather than invented (sim then keeps 1.0 multipliers).
+    """
+
+    authored = _authored_stance_template(container_lineage)
+    if authored is None:
+        authored = _authored_stance_template(member_lineage)
+    if authored is None:
+        return None
+    template_id, assignment = authored
+    mapping = _stance_template_attribute_modifiers(documents, template_id)
+    if mapping is None:
+        return None
+    states: dict[str, object] = {}
+    for stance in _STANCE_CYCLE_ORDER:
+        if stance == "Battle":
+            states[stance] = {
+                "name": "Battle",
+                "damageMultiplier": 1.0,
+                "incomingDamageMultiplier": 1.0,
+                "visionMultiplier": 1.0,
+                "speedMultiplier": 1.0,
+                "modifiers": [],
+                "source": {"status": "neutral-no-ModifierList"},
+            }
+            continue
+        modifier_id = mapping.get(stance)
+        if not modifier_id:
+            return None
+        state = _stance_modifier_state(
+            documents,
+            modifier_id,
+            stance,
+            constants,
+            named_definition_cache=named_definition_cache,
+            cache_lock=cache_lock,
+        )
+        if state is None:
+            return None
+        states[stance] = state
+    return {
+        "template": template_id,
+        "default": "Battle",
+        "cycleOrder": list(_STANCE_CYCLE_ORDER),
+        "states": states,
+        "sourceIni": assignment.source_virtual_path,
+        "line": assignment.line,
     }
 
 
@@ -2953,6 +3301,7 @@ def _scalar_fields(ancestry: Sequence[SageObject]) -> dict[str, dict[str, object
         "CrusherLevel",
         "CrushableLevel",
         "CrushWeapon",
+        "CrushRevengeWeapon",
         "MinCrushVelocityPercent",
         "CrushDecelerationPercent",
         "CrushKnockback",
@@ -5058,6 +5407,18 @@ def _weapon_mode_profile(
     )
     if pre_attack_type is not None:
         profile["preAttackType"] = pre_attack_type
+    flanking_bonus = _flanking_bonus_field(
+        definition,
+        definition,
+        documents,
+        weapon_id,
+        None,
+        constants,
+        named_definition_cache=named_definition_cache,
+        cache_lock=cache_lock,
+    )
+    if flanking_bonus is not None:
+        profile["flankingBonus"] = flanking_bonus
     pre_attack_random = _resolved_definition_field(
         definition, "PreAttackRandomAmount", constants
     )
