@@ -221,6 +221,7 @@ const LOCAL_MENU_BACKDROPS: Array[String] = [
 	"res://data/base/assets/ui/menu/backdrop_mordor_gate.png",
 ]
 const BACKDROP_CYCLE_SECONDS := 12.0
+const WEATHER_SCRIPT_PATH := "res://src/ui/openbfme_menu_weather.gd"
 
 @onready var center: Control = $Center
 @onready var backdrop_art: TextureRect = $BackdropArt
@@ -318,6 +319,7 @@ var _local_backdrop_index := 0
 var _local_backdrop_timer := 0.0
 var _backdrop_fade: TextureRect = null
 var _backdrop_fading := false
+var _backdrop_weather: Control = null
 
 
 func _ready() -> void:
@@ -1039,9 +1041,53 @@ func _apply_local_backdrop_index(index: int, fade: bool) -> bool:
 		backdrop_art.texture = texture
 		backdrop_art.visible = true
 		backdrop_art.modulate = Color.WHITE
+		_sync_backdrop_weather(path)
 		return true
 	_crossfade_backdrop(texture)
+	_sync_backdrop_weather(path)
 	return true
+
+
+func _sync_backdrop_weather(path: String) -> void:
+	var weather := _ensure_backdrop_weather()
+	if weather == null:
+		return
+	if weather.has_method("set_source"):
+		weather.call("set_source", path)
+	weather.visible = backdrop_art != null and backdrop_art.visible
+
+
+func _ensure_backdrop_weather() -> Control:
+	if _backdrop_weather != null and is_instance_valid(_backdrop_weather):
+		_place_backdrop_weather(_backdrop_weather)
+		return _backdrop_weather
+	var existing := get_node_or_null("BackdropWeather") as Control
+	if existing != null:
+		_backdrop_weather = existing
+		_place_backdrop_weather(_backdrop_weather)
+		return _backdrop_weather
+	var script: Resource = load(WEATHER_SCRIPT_PATH)
+	if script == null:
+		push_warning("[MainMenu] menu weather script is unavailable; painted plates stay still.")
+		return null
+	var weather := (script as GDScript).new() as Control
+	weather.name = "BackdropWeather"
+	weather.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(weather)
+	_backdrop_weather = weather
+	_place_backdrop_weather(weather)
+	return weather
+
+
+func _place_backdrop_weather(weather: Control) -> void:
+	if weather.get_parent() != self:
+		return
+	var after: Node = _backdrop_fade if _backdrop_fade != null else backdrop_art
+	if after == null:
+		return
+	var wanted := after.get_index() + 1
+	if weather.get_index() != wanted:
+		move_child(weather, wanted)
 
 
 func _load_backdrop_texture(path: String) -> Texture2D:
@@ -1096,6 +1142,7 @@ func _show_backdrop_image_path(path: String) -> bool:
 	var atmosphere := get_node_or_null("Atmosphere") as Control
 	if atmosphere != null:
 		atmosphere.visible = false
+	_sync_backdrop_weather(path)
 	return true
 
 
@@ -4276,7 +4323,7 @@ const FULL_WINDOW_PAGES := [PAGE_WOTR, PAGE_MY_HEROES]
 ## shows black rather than whatever the compositor last had.
 func _shell_chrome_nodes() -> Array[Control]:
 	var nodes: Array[Control] = []
-	for node_name in ["Atmosphere", "BackdropArt", "BarScrim", "Footer"]:
+	for node_name in ["Atmosphere", "BackdropArt", "BackdropWeather", "BarScrim", "Footer"]:
 		if has_node(node_name):
 			nodes.append(get_node(node_name) as Control)
 	for node_name in ["Title", "TitleVersion", "Subtitle"]:
@@ -4538,24 +4585,21 @@ func _on_retail() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	## Clicking the backdrop dismisses an open bar flyout, matching retail where
-	## the list closes as soon as the pointer commits anywhere else. Presses that
-	## land on a flyout row or a bar button are consumed by those buttons and
-	## never reach here.
-	if not _shell_flyout_is_open():
+	if event.is_action_pressed("fullscreen"):
+		toggle_fullscreen()
+		get_viewport().set_input_as_handled()
 		return
-	var mouse := event as InputEventMouseButton
-	if mouse == null or not mouse.pressed:
+	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed and _shell_flyout_is_open():
+		## Clicking the backdrop dismisses an open bar flyout, matching retail
+		## where the list closes as soon as the pointer commits anywhere else.
+		var mouse := event as InputEventMouseButton
+		for button in _bar_buttons():
+			if button.visible and button.get_global_rect().has_point(mouse.global_position):
+				return
+		_close_shell_flyouts()
+		get_viewport().set_input_as_handled()
 		return
-	for button in _bar_buttons():
-		if button.visible and button.get_global_rect().has_point(mouse.global_position):
-			return
-	_close_shell_flyouts()
-	get_viewport().set_input_as_handled()
-
-
-func _unhandled_key_input(event: InputEvent) -> void:
-	if not event.pressed or event.echo:
+	if not (event is InputEventKey) or not event.pressed or event.echo:
 		return
 	if event.keycode == KEY_ESCAPE and _shell_flyout_is_open():
 		# An open bar flyout is the innermost surface; ESC dismisses it first.
@@ -4571,15 +4615,6 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 	elif event.keycode == KEY_F10:
 		_show_page(PAGE_MAIN if current_page == PAGE_DEVELOPER else PAGE_DEVELOPER)
-		get_viewport().set_input_as_handled()
-	elif event.keycode == KEY_F11:
-		# F11 IS FULLSCREEN, EVERYWHERE IN THE SHELL. It is bound here rather than on
-		# any one page because the owner's complaint was that there is no way to put
-		# the GAME fullscreen at all - so the binding has to work on the menu, on the
-		# setup screen and on the strategic screen alike, and this node is the only
-		# one all three are inside. `wotr_screen` consumes F1 and ESCAPE and nothing
-		# else, so the key reaches here from every page.
-		toggle_fullscreen()
 		get_viewport().set_input_as_handled()
 
 

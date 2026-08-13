@@ -75,6 +75,39 @@ const CREEP_LAIR_TYPE_NAMES: Array[String] = [
 	"BarrowWightLair", "CaveTrollLair", "CaveTrollLairSnow", "FireDrakeLair",
 	"MoriarGoblinLair", "MoriarGoblinLairSnow", "SpiderLair", "WargLair",
 ]
+## Neutral capturable camps. CaptureFlag is CAPTURABLE; Inn / Outpost /
+## SignalFire are LINKED_TO_FLAG and change owner when the paired flag does.
+## Health is the StructureBody / HighlanderBody MaxHealth from the INI.
+const CAPTURABLE_NEUTRAL_TYPES := {
+	"CaptureFlag": {
+		"kind": "capture_flag",
+		"capturable": true,
+		"linked_to_flag": false,
+		"max_health": 1,
+		"unattackable": true,
+	},
+	"Inn": {
+		"kind": "inn",
+		"capturable": false,
+		"linked_to_flag": true,
+		"max_health": 3000,
+		"unattackable": false,
+	},
+	"Outpost": {
+		"kind": "outpost",
+		"capturable": false,
+		"linked_to_flag": true,
+		"max_health": 1000,
+		"unattackable": false,
+	},
+	"SignalFire": {
+		"kind": "signal_fire",
+		"capturable": false,
+		"linked_to_flag": true,
+		"max_health": 1000,
+		"unattackable": false,
+	},
+}
 const MAX_WAYPOINTS := 256
 const MAX_GENERIC_PROPS := 72
 const MAX_OBJECT_BINDING_RECORDS := 512
@@ -235,6 +268,10 @@ var local_named_waypoints: Dictionary = {}
 var player_start_count := 0
 var standing_water_count := 0
 var river_count := 0
+var standing_water_materials: Array[Dictionary] = []
+var active_time_of_day := "AFTERNOON"
+var map_weather_name := "NORMAL"
+var atmosphere_source := "gamedata.ini TimeOfDay/Weather defaults"
 var source_binary_packaged := true
 var horizontal_scale := 0.0
 var vertical_scale := 0.0
@@ -261,6 +298,7 @@ var bound_structure_placements: Array[Dictionary] = []
 ## families (goblin/spider/wight/drake) still surface here so the sim can fail
 ## closed into a recorded provisional instead of silently dropping the camp.
 var creep_lair_placements: Array[Dictionary] = []
+var capturable_placements: Array[Dictionary] = []
 var bound_prop_type_ids: Array[String] = []
 var bound_structure_type_ids: Array[String] = []
 var logical_prop_type_ids: Array[String] = []
@@ -281,6 +319,7 @@ var navigation_ford_corridor_count := 0
 var navigation_build_count := 0
 var route_query_count := 0
 var _navigation_grid: AStarGrid2D
+var _water_navigation_grid: AStarGrid2D
 var _water_cells := PackedByteArray()
 var _ford_corridor_cells: Dictionary = {}
 
@@ -424,6 +463,7 @@ func load_from_pack(
 		return false
 	if not _load_water(water):
 		return false
+	_load_optional_atmosphere()
 	if _validation_cancelled():
 		return false
 	if profile_init:
@@ -1278,6 +1318,7 @@ func _load_water(document: Dictionary) -> bool:
 				return _fail("invalid standing-water vertex")
 			local_points.append(source_to_local(source_point))
 		standing_water_polygons.append(local_points)
+		standing_water_materials.append(_standing_water_material(area))
 		total_vertices += local_points.size()
 
 	for river_value in rivers:
@@ -1298,12 +1339,58 @@ func _load_water(document: Dictionary) -> bool:
 			"name": String(river.get("name", "")),
 			"id": int(river.get("id", -1)),
 			"sections": local_sections,
+			"uv_scroll_speed": float(river.get("uvScrollSpeed", 0.0)),
+			"additive": bool(river.get("additive", false)),
+			"textures": _dictionary(river.get("textures", {})),
+			"color_rgb": _array(river.get("colorRgb", [255, 255, 255])),
+			"alpha": float(river.get("alpha", 1.0)),
 		})
 	if total_vertices > MAX_WATER_VERTICES:
 		return _fail("unbounded cooked water geometry")
 	if not _derive_ford_gates():
 		return false
 	return true
+
+
+func _standing_water_material(area: Dictionary) -> Dictionary:
+	return {
+		"name": String(area.get("name", "")),
+		"id": int(area.get("id", -1)),
+		"uv_scroll_speed": float(area.get("uvScrollSpeed", 0.0)),
+		"additive": bool(area.get("additive", false)),
+		"bump_map": String(area.get("bumpMap", "")),
+		"sky_texture": String(area.get("skyTexture", "")),
+		"shader": String(area.get("shader", "")),
+		"depth_colors": String(area.get("depthColors", "")),
+	}
+
+
+func _load_optional_atmosphere() -> void:
+	active_time_of_day = "AFTERNOON"
+	map_weather_name = "NORMAL"
+	atmosphere_source = "gamedata.ini TimeOfDay=AFTERNOON Weather=NORMAL"
+	var environment_path := map_root.path_join("environment.json")
+	if environment_path == "" or not FileAccess.file_exists(environment_path):
+		return
+	if not ModLoader.path_is_within(map_root, environment_path) or not ModLoader.path_is_within(pack_root, environment_path):
+		return
+	var value: Variant = ModLoader._read_json(environment_path)
+	if typeof(value) != TYPE_DICTIONARY:
+		return
+	var document := value as Dictionary
+	if String(document.get("schema", "")) != "openbfme.fords-environment":
+		return
+	var time_row: Variant = document.get("activeTimeOfDay", {})
+	if typeof(time_row) == TYPE_DICTIONARY:
+		var named := String((time_row as Dictionary).get("name", "")).strip_edges().to_upper()
+		if named in ["MORNING", "AFTERNOON", "EVENING", "NIGHT"]:
+			active_time_of_day = named
+	var weather_row: Variant = document.get("mapWeather", {})
+	if typeof(weather_row) == TYPE_DICTIONARY:
+		var weather_name := String((weather_row as Dictionary).get("name", "")).strip_edges().to_upper()
+		if weather_name in ["NORMAL", "SNOWY"]:
+			map_weather_name = weather_name
+	atmosphere_source = environment_path
 
 
 func _derive_ford_gates() -> bool:
@@ -1421,6 +1508,7 @@ func _route_normalized_object_placements(normalized_objects: Array[Dictionary]) 
 	bound_prop_placements.clear()
 	bound_structure_placements.clear()
 	creep_lair_placements.clear()
+	capturable_placements.clear()
 	var vegetation: Array[Dictionary] = []
 	var rocks: Array[Dictionary] = []
 	var observed_bound_props := 0
@@ -1441,6 +1529,23 @@ func _route_normalized_object_placements(normalized_objects: Array[Dictionary]) 
 				"source_index": int(placement["source_index"]),
 				"position": Vector2(lair_local.x, lair_local.z),
 				"yaw": float(placement["yaw"]),
+				"binding_status": status if status != "" else "unresolved",
+			})
+		if CAPTURABLE_NEUTRAL_TYPES.has(type_name):
+			var contract: Dictionary = CAPTURABLE_NEUTRAL_TYPES[type_name]
+			var camp_local := Vector3(placement["position"])
+			var properties: Dictionary = placement.get("properties", {}) as Dictionary
+			capturable_placements.append({
+				"type_name": type_name,
+				"structure_kind": String(contract.get("kind", "")),
+				"source_index": int(placement["source_index"]),
+				"position": Vector2(camp_local.x, camp_local.z),
+				"yaw": float(placement["yaw"]),
+				"original_owner": String(properties.get("originalOwner", "")),
+				"capturable": bool(contract.get("capturable", false)),
+				"linked_to_flag": bool(contract.get("linked_to_flag", false)),
+				"unattackable": bool(contract.get("unattackable", false)),
+				"maximum_health": int(contract.get("max_health", 1)),
 				"binding_status": status if status != "" else "unresolved",
 			})
 		if status == "bound":
@@ -2075,6 +2180,7 @@ func _build_map_outline() -> void:
 func _build_navigation() -> bool:
 	navigation_ready = false
 	_navigation_grid = null
+	_water_navigation_grid = null
 	# The declared playable border is camera metadata. Retail maps may author
 	# player starts just outside it (Rivendell's Player_2 sits two cells below
 	# its border), and navigation must still reach those starts; the
@@ -2158,6 +2264,7 @@ func _build_navigation() -> bool:
 			if is_ford_corridor_cell(cell):
 				navigation_ford_corridor_count += 1
 	navigation_build_count += 1
+	_build_water_navigation_grid()
 	# Ford-corridor topology is a per-map contract (Fords of Isen II). Maps
 	# without authored ford crossings only require a non-empty walkable grid;
 	# their cooked water still blocks cells through the mask above.
@@ -2251,6 +2358,70 @@ func query_route(from_local: Vector2, to_local: Vector2) -> Dictionary:
 		"cells": id_path,
 		"ford_name": _ford_name_for_cells(id_path),
 	}
+
+
+func query_water_route(from_local: Vector2, to_local: Vector2) -> Dictionary:
+	## Naval pathing: cooked water cells only. Land units keep query_route.
+	route_query_count += 1
+	if _water_navigation_grid == null:
+		return {"valid": false, "reason": "water-navigation-unavailable", "points": [], "cells": []}
+	if not is_local_inside_navigation(from_local) or not is_local_inside_navigation(to_local):
+		return {"valid": false, "reason": "outside-playable-area", "points": [], "cells": []}
+	var start_cell := local_to_grid_cell(from_local)
+	var destination_cell := local_to_grid_cell(to_local)
+	if not is_water_navigation_walkable(destination_cell):
+		return {"valid": false, "reason": "blocked-destination", "points": [], "cells": []}
+	if not is_water_navigation_walkable(start_cell):
+		start_cell = _nearest_water_cell(start_cell, 12)
+		if start_cell.x < 0:
+			return {"valid": false, "reason": "blocked-origin", "points": [], "cells": []}
+	var id_path: Array[Vector2i] = _water_navigation_grid.get_id_path(start_cell, destination_cell, false)
+	if id_path.is_empty() or id_path.size() > MAX_ROUTE_CELLS:
+		return {"valid": false, "reason": "no-bounded-water-route", "points": [], "cells": []}
+	return {
+		"valid": true,
+		"reason": "",
+		"points": _compress_route_points(id_path, to_local),
+		"cells": id_path,
+		"surface": "water",
+	}
+
+
+func is_water_navigation_walkable(cell: Vector2i) -> bool:
+	return (
+		_water_navigation_grid != null
+		and is_grid_inside_navigation(cell)
+		and not _water_navigation_grid.is_point_solid(cell)
+	)
+
+
+func _build_water_navigation_grid() -> void:
+	_water_navigation_grid = AStarGrid2D.new()
+	_water_navigation_grid.region = Rect2i(navigation_grid_min, navigation_grid_max - navigation_grid_min + Vector2i.ONE)
+	_water_navigation_grid.cell_size = Vector2.ONE
+	_water_navigation_grid.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_NEVER
+	_water_navigation_grid.default_compute_heuristic = AStarGrid2D.HEURISTIC_MANHATTAN
+	_water_navigation_grid.default_estimate_heuristic = AStarGrid2D.HEURISTIC_MANHATTAN
+	_water_navigation_grid.update()
+	for grid_y in range(navigation_grid_min.y, navigation_grid_max.y + 1):
+		for grid_x in range(navigation_grid_min.x, navigation_grid_max.x + 1):
+			var cell := Vector2i(grid_x, grid_y)
+			if not is_water_cell(cell):
+				_water_navigation_grid.set_point_solid(cell, true)
+
+
+func _nearest_water_cell(origin: Vector2i, radius: int) -> Vector2i:
+	if is_water_navigation_walkable(origin):
+		return origin
+	for distance in range(1, radius + 1):
+		for dx in range(-distance, distance + 1):
+			for dy in range(-distance, distance + 1):
+				if maxi(absi(dx), absi(dy)) != distance:
+					continue
+				var candidate := origin + Vector2i(dx, dy)
+				if is_water_navigation_walkable(candidate):
+					return candidate
+	return Vector2i(-1, -1)
 
 
 func query_ford_probe(ford_name: String) -> Dictionary:
@@ -2739,6 +2910,7 @@ func simulation_configuration() -> Dictionary:
 		# Authored PlyrCreeps lairs. The simulation only seeds them when its
 		# opt-in creep rule is enabled; carrying them here is inert otherwise.
 		"creep_lair_placements": creep_lair_placements.duplicate(true),
+		"capturable_placements": capturable_placements.duplicate(true),
 		# Lane L2b castle fixtures in sim-local space. Inert unless the sim's
 		# opt-in "enable_castle_fixtures" rule is enabled; the deferred tally
 		# names every admitted-but-unseeded placement by reason.
@@ -3040,12 +3212,17 @@ func _reset() -> void:
 	player_starts.clear()
 	local_player_starts.clear()
 	standing_water_polygons.clear()
+	standing_water_materials.clear()
+	active_time_of_day = "AFTERNOON"
+	map_weather_name = "NORMAL"
+	atmosphere_source = "gamedata.ini TimeOfDay/Weather defaults"
 	river_strips.clear()
 	ford_gates.clear()
 	generic_prop_placements.clear()
 	bound_prop_placements.clear()
 	bound_structure_placements.clear()
 	creep_lair_placements.clear()
+	capturable_placements.clear()
 	bound_prop_type_ids.clear()
 	bound_structure_type_ids.clear()
 	logical_prop_type_ids.clear()
@@ -3087,6 +3264,7 @@ func _reset() -> void:
 	navigation_build_count = 0
 	route_query_count = 0
 	_navigation_grid = null
+	_water_navigation_grid = null
 	_water_cells = PackedByteArray()
 	_ford_corridor_cells.clear()
 

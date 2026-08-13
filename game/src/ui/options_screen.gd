@@ -58,6 +58,10 @@ var mute_toggle: CheckButton
 var accept_btn: Button
 var cancel_btn: Button
 var reset_btn: Button
+var controller_family_opt: OptionButton
+var _binding_rows: Dictionary = {}
+var _pending_bindings: Dictionary = {}
+var _listen_action := ""
 var _loading := false
 
 
@@ -132,6 +136,9 @@ func apply_and_persist() -> void:
 	var health := health_toggle.button_pressed
 	if UserSettingsScript.save_controls(scroll, health) == OK:
 		_apply_scroll_speed(scroll)
+	var family := UserSettingsScript.CONTROLLER_FAMILIES[controller_family_opt.selected] if controller_family_opt != null else UserSettingsScript.DEFAULT_CONTROLLER_FAMILY
+	if UserSettingsScript.save_bindings(_pending_bindings, family) == OK:
+		UserSettingsScript.apply_bindings_to_input_map(_pending_bindings)
 	if UserSettingsScript.save_audio(float(music_slider.value), float(sfx_slider.value), mute_toggle.button_pressed) == OK:
 		_apply_audio_live(float(music_slider.value), float(sfx_slider.value), mute_toggle.button_pressed)
 
@@ -142,6 +149,7 @@ func _apply_stored() -> void:
 	_apply_graphics(String(UserSettingsScript.load_graphics()["preset"]))
 	var controls := UserSettingsScript.load_controls()
 	_apply_scroll_speed(float(controls["scroll_speed"]))
+	UserSettingsScript.apply_bindings_to_input_map()
 	var audio := UserSettingsScript.load_audio()
 	_apply_audio_live(float(audio["music_volume"]), float(audio["voice_sfx_volume"]), bool(audio["muted"]))
 
@@ -258,6 +266,12 @@ func _load_from_store() -> void:
 	music_slider.value = float(audio["music_volume"])
 	sfx_slider.value = float(audio["voice_sfx_volume"])
 	mute_toggle.button_pressed = bool(audio["muted"])
+	_pending_bindings = UserSettingsScript.load_bindings()
+	if controller_family_opt != null:
+		var family := UserSettingsScript.load_controller_family()
+		var family_idx := UserSettingsScript.CONTROLLER_FAMILIES.find(family)
+		controller_family_opt.select(family_idx if family_idx >= 0 else 0)
+	_refresh_binding_rows()
 	_loading = false
 	_update_slider_labels()
 
@@ -359,24 +373,20 @@ func _build_controls_column(parent: Control) -> void:
 	_build_key_bindings(panel)
 
 
-## THE KEYBOARD SECTION - THE "KEY SETTINGS" THAT USED TO DO NOTHING.
-##
-## The owner's report was "the key settings does nothing", and this column was the
-## reason: it offered a scroll-speed slider and a health-bar toggle and never said
-## a word about the keyboard, while the game quietly bound four keys nobody could
-## discover. What goes here is the honest version of a key-settings panel:
-##
-##   * EVERY BINDING, BY NAME, read from `OpenBFMEUserSettings.KEY_BINDINGS` so
-##     this list cannot drift away from the code that reads the keycodes.
-##   * NO REBIND CONTROL, because there is nothing a rebind could be written to
-##     (see `KEYBIND_REMAP_GAP`). A row of "click to rebind" buttons that discarded
-##     the result would be exactly the dead control this repository forbids, and it
-##     is the specific complaint being answered here - so the gap is stated in
-##     words on the panel instead.
-##
-## Every row is a Label with `MOUSE_FILTER_IGNORE`: it is a readout, it does not
-## take a click, and it does not sit in the focus chain pretending it might.
 func _build_key_bindings(panel: Control) -> void:
+	var heading_row := HBoxContainer.new()
+	heading_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	heading_row.add_theme_constant_override("separation", 8)
+	panel.add_child(heading_row)
+	var heading_icon := TextureRect.new()
+	heading_icon.name = "KeyBindingsIcon"
+	heading_icon.custom_minimum_size = Vector2(28, 28)
+	heading_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	heading_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	var rebind_icon := UserSettingsScript.glyph_path("rebind", "listen")
+	if rebind_icon != "":
+		heading_icon.texture = UserSettingsScript.load_glyph_texture(rebind_icon)
+	heading_row.add_child(heading_icon)
 	var heading := Label.new()
 	heading.name = "KeyBindingsHeading"
 	heading.text = "Key Settings"
@@ -384,39 +394,215 @@ func _build_key_bindings(panel: Control) -> void:
 	heading.add_theme_color_override("font_color", Color("b7dc94"))
 	heading.add_theme_font_size_override("font_size", 15)
 	heading.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_child(heading)
+	heading_row.add_child(heading)
+	var family_row := HBoxContainer.new()
+	family_row.name = "ControllerFamilyRow"
+	family_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	family_row.add_theme_constant_override("separation", 8)
+	panel.add_child(family_row)
+	var family_icon := TextureRect.new()
+	family_icon.name = "ControllerFamilyIcon"
+	family_icon.custom_minimum_size = Vector2(32, 32)
+	family_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	family_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	family_row.add_child(family_icon)
+	controller_family_opt = OptionButton.new()
+	controller_family_opt.name = "ControllerFamilyOpt"
+	controller_family_opt.add_item("Xbox controller")
+	controller_family_opt.add_item("Steam Controller")
+	controller_family_opt.item_selected.connect(_on_controller_family_changed)
+	family_row.add_child(controller_family_opt)
+	var hint := Label.new()
+	hint.name = "KeyBindingHint"
+	hint.text = "Click a row, then press a key or controller button."
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.add_theme_color_override("font_color", Color("9aa78d"))
+	hint.add_theme_font_size_override("font_size", 11)
+	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(hint)
+	var scroll := ScrollContainer.new()
+	scroll.name = "KeyBindingScroll"
+	scroll.custom_minimum_size = Vector2(0, 260)
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	panel.add_child(scroll)
 	var rows := VBoxContainer.new()
 	rows.name = "KeyBindingRows"
-	rows.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	rows.add_theme_constant_override("separation", 2)
-	panel.add_child(rows)
-	for binding_value in UserSettingsScript.KEY_BINDINGS:
-		var binding := binding_value as Dictionary
-		var row := Label.new()
-		row.name = "KeyBinding%s" % String(binding["key"])
-		row.text = "%s        %s" % [String(binding["key"]), String(binding["action"])]
-		row.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		row.add_theme_color_override("font_color", Color("d8e6da"))
-		row.add_theme_font_size_override("font_size", 14)
-		row.tooltip_text = "Read in %s" % String(binding["where"])
-		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rows.add_theme_constant_override("separation", 3)
+	scroll.add_child(rows)
+	_binding_rows.clear()
+	for spec_value in UserSettingsScript.REMAPPABLE_ACTIONS:
+		var spec := spec_value as Dictionary
+		var action_id := String(spec["id"])
+		var row := Button.new()
+		row.name = "KeyBinding_%s" % action_id
+		row.custom_minimum_size = Vector2(0, 34)
+		row.pressed.connect(_begin_rebind.bind(action_id))
+		var box := HBoxContainer.new()
+		box.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		box.offset_left = 6
+		box.offset_right = -6
+		box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		box.add_theme_constant_override("separation", 6)
+		row.add_child(box)
+		var action_label := Label.new()
+		action_label.name = "ActionLabel"
+		action_label.text = String(spec["label"])
+		action_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		action_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		action_label.add_theme_color_override("font_color", Color("d8e6da"))
+		action_label.add_theme_font_size_override("font_size", 13)
+		box.add_child(action_label)
+		var key_icon := TextureRect.new()
+		key_icon.name = "KeyIcon"
+		key_icon.custom_minimum_size = Vector2(28, 28)
+		key_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		key_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		key_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		box.add_child(key_icon)
+		var key_caption := Label.new()
+		key_caption.name = "KeyCaption"
+		key_caption.custom_minimum_size = Vector2(36, 0)
+		key_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		key_caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		key_caption.add_theme_color_override("font_color", Color("f0e6c8"))
+		key_caption.add_theme_font_size_override("font_size", 12)
+		box.add_child(key_caption)
+		var joy_icon := TextureRect.new()
+		joy_icon.name = "JoyIcon"
+		joy_icon.custom_minimum_size = Vector2(28, 28)
+		joy_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		joy_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		joy_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		box.add_child(joy_icon)
+		var joy_caption := Label.new()
+		joy_caption.name = "JoyCaption"
+		joy_caption.custom_minimum_size = Vector2(40, 0)
+		joy_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		joy_caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		joy_caption.add_theme_color_override("font_color", Color("c9d4b8"))
+		joy_caption.add_theme_font_size_override("font_size", 11)
+		box.add_child(joy_caption)
 		rows.add_child(row)
-	var gap := Label.new()
-	gap.name = "KeyBindingGap"
-	gap.text = UserSettingsScript.KEYBIND_REMAP_GAP
-	gap.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	gap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	gap.add_theme_color_override("font_color", Color("9aa78d"))
-	gap.add_theme_font_size_override("font_size", 11)
-	gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_child(gap)
+		_binding_rows[action_id] = {
+			"button": row,
+			"key_icon": key_icon,
+			"key_caption": key_caption,
+			"joy_icon": joy_icon,
+			"joy_caption": joy_caption,
+		}
+	_pending_bindings = UserSettingsScript.load_bindings()
+	_refresh_binding_rows()
+
+
+func _on_controller_family_changed(_index: int) -> void:
+	if _loading:
+		return
+	_refresh_binding_rows()
+
+
+func _begin_rebind(action_id: String) -> void:
+	_listen_action = action_id
+	_refresh_binding_rows()
+
+
+func _steal_binding(field: String, value: int, keep_action: String) -> void:
+	if value < 0:
+		return
+	for other_id in _pending_bindings.keys():
+		if String(other_id) == keep_action:
+			continue
+		var other: Dictionary = _pending_bindings[other_id] as Dictionary
+		if int(other.get(field, -2)) == value:
+			other[field] = 0 if field == "key" else -1
+			_pending_bindings[other_id] = other
+
+
+func _refresh_binding_rows() -> void:
+	var family := UserSettingsScript.CONTROLLER_FAMILIES[controller_family_opt.selected] if controller_family_opt != null else UserSettingsScript.DEFAULT_CONTROLLER_FAMILY
+	var family_icon := find_child("ControllerFamilyIcon", true, false) as TextureRect
+	if family_icon != null:
+		var icon_path := UserSettingsScript.glyph_path("controller", family)
+		family_icon.texture = UserSettingsScript.load_glyph_texture(icon_path)
+	var listen_path := UserSettingsScript.glyph_path("rebind", "listen")
+	for spec_value in UserSettingsScript.REMAPPABLE_ACTIONS:
+		var spec := spec_value as Dictionary
+		var action_id := String(spec["id"])
+		var widgets: Dictionary = _binding_rows.get(action_id, {}) as Dictionary
+		var row: Button = widgets.get("button") as Button
+		if row == null:
+			continue
+		var bind: Dictionary = _pending_bindings.get(action_id, {"key": spec["default_key"], "joy": spec["default_joy"]}) as Dictionary
+		var keycode := int(bind.get("key", spec["default_key"]))
+		var joy := int(bind.get("joy", spec["default_joy"]))
+		var key_icon := widgets.get("key_icon") as TextureRect
+		var key_caption := widgets.get("key_caption") as Label
+		var joy_icon := widgets.get("joy_icon") as TextureRect
+		var joy_caption := widgets.get("joy_caption") as Label
+		if _listen_action == action_id:
+			row.tooltip_text = "Press a key or controller button. Esc cancels."
+			if key_icon != null:
+				key_icon.texture = UserSettingsScript.load_glyph_texture(listen_path)
+			if key_caption != null:
+				key_caption.text = "…"
+			if joy_icon != null:
+				joy_icon.texture = null
+			if joy_caption != null:
+				joy_caption.text = ""
+			continue
+		var key_text := UserSettingsScript.keycode_label(keycode)
+		var joy_text := UserSettingsScript.joy_label(joy, family)
+		row.tooltip_text = "%s — click to rebind" % String(spec["label"])
+		if key_icon != null:
+			key_icon.texture = UserSettingsScript.key_picture(keycode)
+		if key_caption != null:
+			key_caption.text = key_text
+		if joy_icon != null:
+			var joy_path := UserSettingsScript.joy_glyph_path(joy, family)
+			joy_icon.texture = UserSettingsScript.load_glyph_texture(joy_path)
+		if joy_caption != null:
+			joy_caption.text = joy_text
+
+
+func _input(event: InputEvent) -> void:
+	if _listen_action == "" or not visible:
+		return
+	if event is InputEventKey and (event as InputEventKey).pressed and not (event as InputEventKey).echo:
+		var key := event as InputEventKey
+		if key.physical_keycode == KEY_ESCAPE:
+			_listen_action = ""
+			_refresh_binding_rows()
+			get_viewport().set_input_as_handled()
+			return
+		var row: Dictionary = _pending_bindings.get(_listen_action, {}) as Dictionary
+		row["key"] = int(key.physical_keycode)
+		if not row.has("joy"):
+			row["joy"] = -1
+		_steal_binding("key", int(key.physical_keycode), _listen_action)
+		_pending_bindings[_listen_action] = row
+		_listen_action = ""
+		_refresh_binding_rows()
+		get_viewport().set_input_as_handled()
+	elif event is InputEventJoypadButton and (event as InputEventJoypadButton).pressed:
+		var joy := event as InputEventJoypadButton
+		var row: Dictionary = _pending_bindings.get(_listen_action, {}) as Dictionary
+		row["joy"] = int(joy.button_index)
+		if not row.has("key"):
+			row["key"] = 0
+		_steal_binding("joy", int(joy.button_index), _listen_action)
+		_pending_bindings[_listen_action] = row
+		_listen_action = ""
+		_refresh_binding_rows()
+		get_viewport().set_input_as_handled()
 
 
 func _make_column(parent: Control, node_name: String, heading: String) -> VBoxContainer:
 	var panel := Panel.new()
 	panel.name = node_name
 	panel.theme_type_variation = "OverlayPanel"
-	panel.custom_minimum_size = Vector2(480, 430)
+	panel.custom_minimum_size = Vector2(480, 560)
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	parent.add_child(panel)
 	var box := VBoxContainer.new()

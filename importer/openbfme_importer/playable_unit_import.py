@@ -186,11 +186,14 @@ def _required_audio_ids(descriptor: Mapping[str, object]) -> set[str]:
 
 
 def _required_string_ids(descriptor: Mapping[str, object]) -> set[str]:
+    from .playable_unit_compiler import command_string_ids
+
     result: set[str] = set()
-    for command in descriptor["presentation"]["ui"]["commands"]:
+    ui = descriptor["presentation"]["ui"]
+    for command in list(ui.get("commands", [])) + list(ui.get("selectionCommands", [])):
         fields = command.get("fields", {})
         for field in ("TextLabel", "DescriptLabel"):
-            result.update(str(value) for value in fields.get(field, []) if str(value))
+            result.update(command_string_ids(*fields.get(field, [])))
     for ability in descriptor.get("abilities", []):
         if not isinstance(ability, Mapping):
             continue

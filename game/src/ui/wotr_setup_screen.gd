@@ -2128,11 +2128,8 @@ var show_absences := false
 ## a stranger looking at the screen no longer reads a note telling them it is not
 ## retail's. The binding is F1, which is the binding `wotr_screen.gd` already uses
 ## for the strategic screen's diagnosis, so the two screens answer the same key.
-func _unhandled_key_input(event: InputEvent) -> void:
-	var key := event as InputEventKey
-	if key == null or not key.pressed or key.echo:
-		return
-	if key.keycode == KEY_F1:
+func _unhandled_input(event: InputEvent) -> void:
+	if event.is_action_pressed("diagnostics"):
 		toggle_absences()
 		get_viewport().set_input_as_handled()
 

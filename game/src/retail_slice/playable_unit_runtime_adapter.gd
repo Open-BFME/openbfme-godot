@@ -24,6 +24,191 @@ static func _has_authored_command_socket_evidence(route: Dictionary) -> bool:
 	return true
 
 
+static func selection_commands(document: Dictionary) -> Array:
+	## The unit's own CommandSet (palantir when this unit is selected).
+	## Distinct from ui.commands, which is the producer construct/train dump.
+	var ui := _document_ui(document)
+	var rows: Variant = ui.get("selectionCommands", [])
+	if typeof(rows) != TYPE_ARRAY:
+		return []
+	var output: Array = []
+	for value in rows as Array:
+		if typeof(value) != TYPE_DICTIONARY:
+			continue
+		var row := value as Dictionary
+		var command_id := String(row.get("commandId", "")).strip_edges()
+		if command_id == "":
+			continue
+		output.append(row)
+	return output
+
+
+static func selection_command_ids(document: Dictionary) -> PackedStringArray:
+	var ids: PackedStringArray = PackedStringArray()
+	for row_value in selection_commands(document):
+		ids.append(String((row_value as Dictionary).get("commandId", "")))
+	return ids
+
+
+static func playable_lookup_aliases(raw_id: String) -> PackedStringArray:
+	## Entity rows carry `bfme2.object.gondor-fighter-horde`. Playable-unit
+	## documents register as `GondorFighterHorde` / `gondorfighter`. Try every
+	## spelling the two sides actually use.
+	var aliases: PackedStringArray = PackedStringArray()
+	var seen: Dictionary = {}
+	for candidate in _alias_candidates(raw_id):
+		if candidate == "" or seen.has(candidate):
+			continue
+		seen[candidate] = true
+		aliases.append(candidate)
+	return aliases
+
+
+static func _alias_candidates(raw_id: String) -> PackedStringArray:
+	var raw := raw_id.strip_edges()
+	var out: PackedStringArray = PackedStringArray()
+	if raw == "":
+		return out
+	out.append(raw)
+	var folded := raw.to_lower()
+	out.append(folded)
+	var slug := folded
+	if slug.begins_with("bfme2.object."):
+		slug = slug.substr("bfme2.object.".length())
+	var compact := slug.replace("-", "").replace("_", "")
+	if compact != "":
+		out.append(compact)
+	var pascal := ""
+	for part in slug.replace("_", "-").split("-"):
+		if part.is_empty():
+			continue
+		pascal += part.substr(0, 1).to_upper() + part.substr(1)
+	if pascal != "":
+		out.append(pascal)
+	return out
+
+
+static func resolve_playable_document(db: Object, row: Dictionary) -> Dictionary:
+	## Same recipe as RetailBattalion._member_source_geometry_radius: prefer
+	## the bundle's sourceObjectId + member index, then horde/object ids.
+	## An empty Dictionary is a miss, never a hit.
+	if db == null:
+		return {}
+	var unit_type := String(row.get("unit_type", ""))
+	var member_id := String(row.get("object_id", ""))
+	var source_object_id := ""
+	if db.has_method("get_bundle_object"):
+		for candidate in playable_lookup_aliases(member_id):
+			var definition: Variant = db.call("get_bundle_object", candidate)
+			if typeof(definition) == TYPE_DICTIONARY and not (definition as Dictionary).is_empty():
+				source_object_id = String((definition as Dictionary).get("sourceObjectId", ""))
+				if source_object_id != "":
+					break
+		if source_object_id == "":
+			for candidate in playable_lookup_aliases(unit_type):
+				var horde_def: Variant = db.call("get_bundle_object", candidate)
+				if typeof(horde_def) == TYPE_DICTIONARY and not (horde_def as Dictionary).is_empty():
+					source_object_id = String((horde_def as Dictionary).get("sourceObjectId", ""))
+					if source_object_id != "":
+						break
+	var raw_ids: PackedStringArray = PackedStringArray()
+	if source_object_id != "":
+		raw_ids.append(source_object_id)
+	if unit_type != "":
+		raw_ids.append(unit_type)
+	if member_id != "":
+		raw_ids.append(member_id)
+	return resolve_playable_document_by_ids(db, raw_ids)
+
+
+static func resolve_playable_document_by_ids(db: Object, raw_ids: PackedStringArray) -> Dictionary:
+	if db == null:
+		return {}
+	var aliases: PackedStringArray = PackedStringArray()
+	var seen: Dictionary = {}
+	for raw in raw_ids:
+		for alias in playable_lookup_aliases(String(raw)):
+			if seen.has(alias):
+				continue
+			seen[alias] = true
+			aliases.append(alias)
+	if db.has_method("get_playable_unit_runtime_for_member"):
+		for alias in aliases:
+			var by_member: Variant = db.call("get_playable_unit_runtime_for_member", alias)
+			if typeof(by_member) == TYPE_DICTIONARY and not (by_member as Dictionary).is_empty():
+				return by_member as Dictionary
+	if db.has_method("get_playable_unit_runtime"):
+		for alias in aliases:
+			var by_id: Variant = db.call("get_playable_unit_runtime", alias)
+			if typeof(by_id) == TYPE_DICTIONARY and not (by_id as Dictionary).is_empty():
+				return by_id as Dictionary
+	return {}
+
+
+static func authored_mounted_mesh(document: Dictionary) -> Dictionary:
+	## Retail ModelConditionState = MOUNTED model. Missing converted GLB is a
+	## named gap, never a stand-in horse.
+	var visual := _document_visual(document)
+	var mounted_token := ""
+	for leaf_value in visual.get("authoredVisualLeaves", []) as Array:
+		if typeof(leaf_value) != TYPE_DICTIONARY:
+			continue
+		var leaf := leaf_value as Dictionary
+		var conditions: Array = leaf.get("conditions", []) as Array
+		var mounted := false
+		for token_value in conditions:
+			if String(token_value).to_upper() == "MOUNTED":
+				mounted = true
+				break
+		if not mounted:
+			continue
+		var identifier := String(leaf.get("identifier", ""))
+		if identifier != "":
+			mounted_token = identifier
+		var output := String(leaf.get("output", ""))
+		var kind := String(leaf.get("kind", ""))
+		if kind == "model" or identifier.to_upper().ends_with("_SKN"):
+			if output.to_lower().ends_with(".glb"):
+				return {"id": identifier, "path": output, "gap": ""}
+			return {
+				"id": identifier,
+				"path": output,
+				"gap": "mounted-model-unconverted:%s" % (identifier if identifier != "" else output),
+			}
+	var composed: Dictionary = visual.get("presentationComposition", {}) as Dictionary
+	if String(composed.get("form", "")) == "mounted-container-payload":
+		return {"id": String(composed.get("visualPrimaryObjectId", "")), "path": "", "gap": ""}
+	if mounted_token.to_upper().ends_with("_SKL"):
+		mounted_token = mounted_token.substr(0, mounted_token.length() - 4) + "_SKN"
+	if mounted_token != "":
+		return {"id": mounted_token, "path": "", "gap": "mounted-model-missing:%s" % mounted_token}
+	return {"id": "", "path": "", "gap": "mounted-model-missing"}
+
+
+static func _document_ui(document: Dictionary) -> Dictionary:
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	if typeof(registration.get("ui")) == TYPE_DICTIONARY:
+		return registration.get("ui") as Dictionary
+	var presentation: Dictionary = document.get("presentation", {}) as Dictionary
+	if typeof(presentation.get("ui")) == TYPE_DICTIONARY:
+		return presentation.get("ui") as Dictionary
+	return {}
+
+
+static func _document_visual(document: Dictionary) -> Dictionary:
+	if typeof(document.get("authoredVisualLeaves")) == TYPE_ARRAY:
+		return document
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	if typeof(registration.get("visual")) == TYPE_DICTIONARY:
+		return registration.get("visual") as Dictionary
+	var presentation: Dictionary = document.get("presentation", {}) as Dictionary
+	if typeof(presentation.get("visual")) == TYPE_DICTIONARY:
+		return presentation.get("visual") as Dictionary
+	if typeof(document.get("visual")) == TYPE_DICTIONARY:
+		return document.get("visual") as Dictionary
+	return {}
+
+
 static func is_ring_hero_summon(document: Dictionary) -> bool:
 	## Exact compiled provenance; command-point/category guesses misclassified
 	## ordinary zero-CP heroes and hid malformed ring routes.

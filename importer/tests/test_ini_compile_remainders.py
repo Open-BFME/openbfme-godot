@@ -130,6 +130,7 @@ End
             b"End\n"
             b"CommandSet RemainderInfantryHordeCommandSet\n"
             b"  1 = Command_Stop\n"
+            b"  2 = Command_ToggleStance\n"
             b"End\n"
         ),
         "data/ini/commandbutton.ini": (
@@ -152,6 +153,12 @@ End
             b"  ButtonImage = SBStop\n"
             b"  TextLabel = CONTROLBAR:Stop\n"
             b"  DescriptLabel = CONTROLBAR:ToolTipStop\n"
+            b"End\n"
+            b"CommandButton Command_ToggleStance\n"
+            b"  Command = TOGGLE_STANCE\n"
+            b"  ButtonImage = UCCommon_HoldGroundStance UCCommon_BattleStance UCCommon_AggresiveStance\n"
+            b"  TextLabel = CONTROLBAR:ToggleStanceHoldGround CONTROLBAR:ToggleStanceBattle CONTROLBAR:ToggleStanceAggressive\n"
+            b"  DescriptLabel = CONTROLBAR:ToolTipToggleStanceHoldGround CONTROLBAR:ToolTipToggleStanceBattle CONTROLBAR:ToolTipToggleStanceAggressive\n"
             b"End\n"
         ),
         "data/ini/gamedata.ini": (
@@ -223,7 +230,7 @@ End
             b"ModifierList FighterHordeStanceAggressive\n"
             b"    Modifier = ARMOR -15%\n"
             b"    Modifier = DAMAGE_MULT 125%\n"
-            b"    Modifier = VISION 100%\n"
+            b"    Modifier = VISION 100% // Hmm not sure how this works, is it additive?\n"
             b"End\n"
             b"ModifierList FighterHordeStanceHoldGround\n"
             b"    Modifier = ARMOR 25%\n"
@@ -328,3 +335,37 @@ def test_stance_template_compiles_fighter_horde_modifiers() -> None:
 def test_absent_stance_template_is_not_invented() -> None:
     resolved = _resolved("RemainderSoloMember")
     assert "stances" not in resolved
+
+
+def test_unit_selection_commands_are_own_commandset_not_construct() -> None:
+    result = compile_playable_unit_descriptor(
+        "RemainderInfantryHorde", _remainder_documents()
+    )
+    ui = result["presentation"]["ui"]
+    selection = ui["selectionCommands"]
+    assert [row["commandId"] for row in selection] == [
+        "Command_Stop",
+        "Command_ToggleStance",
+    ]
+    assert selection[0]["commandSetId"] == "RemainderInfantryHordeCommandSet"
+    stance_fields = selection[1]["fields"]
+    assert stance_fields["TextLabel"] == [
+        "CONTROLBAR:ToggleStanceHoldGround",
+        "CONTROLBAR:ToggleStanceBattle",
+        "CONTROLBAR:ToggleStanceAggressive",
+    ]
+    assert stance_fields["DescriptLabel"] == [
+        "CONTROLBAR:ToolTipToggleStanceHoldGround",
+        "CONTROLBAR:ToolTipToggleStanceBattle",
+        "CONTROLBAR:ToolTipToggleStanceAggressive",
+    ]
+    from openbfme_importer.playable_unit_import import _required_string_ids
+
+    required = _required_string_ids(result)
+    assert "CONTROLBAR:ToggleStanceHoldGround" in required
+    assert "CONTROLBAR:Stop" in required
+    assert "CONTROLBAR:RemainderInfantry" in required
+    construct_ids = [row["commandId"] for row in ui["commands"]]
+    assert construct_ids
+    assert "Command_Stop" not in construct_ids
+    assert all("Build" in command_id or "Construct" in command_id for command_id in construct_ids)

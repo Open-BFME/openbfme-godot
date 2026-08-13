@@ -1078,7 +1078,6 @@ var back_button: Button
 ## and on the setup screen too and this screen is not their parent. This screen
 ## deliberately does not consume F11; it falls through to the shell.
 const KEY_BINDINGS := OpenBFMEUserSettings.KEY_BINDINGS
-const KEYBIND_REMAP_GAP := OpenBFMEUserSettings.KEYBIND_REMAP_GAP
 
 ## THE HUD-OFF STATE. The owner asked for "a good way to get rid of the ui so it
 ## can get out of my way and just play the game", and F2 is that way: every island
@@ -2082,15 +2081,12 @@ func build() -> void:
 ## because a permanent control labelled DIAGNOSTICS is a developer surface, but a
 ## diagnosis nobody can reach is worse than an ugly button - so the binding is
 ## real, and it is the only thing that replaced the button.
-func _unhandled_key_input(event: InputEvent) -> void:
-	var key := event as InputEventKey
-	if key == null or not key.pressed or key.echo:
-		return
-	if key.keycode == KEY_F1:
+func _unhandled_input(event: InputEvent) -> void:
+	if event.is_action_pressed("diagnostics"):
 		toggle_diagnostics()
 		get_viewport().set_input_as_handled()
 		return
-	if key.keycode == KEY_F2:
+	if event.is_action_pressed("hide_hud"):
 		# F2 IS "LESS", AND IT HAS THREE STOPS. It used to take EVERY island down and
 		# bring every one back, which the owner reported as the defect it is: an
 		# all-or-nothing key is a screenshot key, not a way to look at Middle-earth
@@ -2101,10 +2097,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		# It is F2 and not a letter key because letters over a map are where camera
 		# and selection bindings live in this genre, and F1 is already the diagnosis
 		# one key along.
-		set_view_mode(view_mode + (-1 if key.shift_pressed else 1))
+		var shift := event is InputEventKey and (event as InputEventKey).shift_pressed
+		set_view_mode(view_mode + (-1 if shift else 1))
 		get_viewport().set_input_as_handled()
 		return
-	if key.keycode == KEY_ESCAPE:
+	if event.is_action_pressed("pause_menu"):
 		# ESCAPE IS THE SHELL, and it is the ONLY way to reach it - which is the
 		# point of moving MAIN MENU off the standings panel rather than merely
 		# reframing it there. A battle report is modal over the top of everything,
@@ -2188,10 +2185,8 @@ func _draw_pause_shell() -> void:
 		names.shell_label("APT:Pause", "PAUSED"),
 		HudScript.type_size(card.size.y * 0.16, HudScript.TYPE_SUBJECT, 12, 34),
 		2.0, HudScript.PARCHMENT)
-	# THE KEY REFERENCE, under the head and above the capsules. This is the honest
-	# answer to "the key settings does nothing": the bindings are real, they are
-	# listed where ESCAPE puts them, and the one thing that is NOT offered - remap -
-	# says so on the last line rather than being mocked up as a control.
+	# THE KEY REFERENCE, under the head and above the capsules. Current bindings
+	# (including remaps from OPTIONS) are listed where ESCAPE puts them.
 	var keys_top := card.position - pause_shell.position + Vector2(0.0, card.size.y * 0.30)
 	var key_size := HudScript.type_size(card.size.y * 0.11, HudScript.TYPE_CAPTION, 9, 18)
 	var key_step := float(key_size) * 1.55
@@ -6448,12 +6443,8 @@ func _conversion_gap_lines() -> Array[String]:
 			+ "empty authored boxes would be a list pretending to have rows. The territory's "
 			+ "member regions are named in the card text instead")
 	absent.append("retail's ornate shell frame and title rules - FrameT/B/L/R, FrameCorner*, Ruler and MainMenuRuler all name textures no archive ships (SCShellUserInterface512_001.tga, MainMenuRuleruserinterface.tga), so every plate, rule and frame here is drawn in retail's language and is this project's own")
-	# THE KEYBOARD, AND THE ONE THING THE OPTIONS SCREEN DOES NOT OFFER. The
-	# bindings themselves are on the pause shell and on the OPTIONS screen's Key
-	# Settings column, where a player looks for them; the reason there is no rebind
-	# control is an engineering fact about this program, so it goes here.
-	absent.append("%s The bindings themselves are ESC (pause), F1 (this overlay), "
-		% KEYBIND_REMAP_GAP
+	absent.append("Hotkeys remapped from OPTIONS → Key Settings (keyboard and "
+		+ "Xbox or Steam Controller). Current defaults: ESC (pause), F1 (this overlay), "
 		+ "F2 (hide the HUD) and F11 (fullscreen, persisted through the same "
 		+ "settings file the startup path reads).")
 	# THE OPPONENT'S LAST HAND-OFF, in full. The glass gets the war ("Angmar took

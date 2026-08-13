@@ -103,11 +103,9 @@ static func source_union_radius_from_pieces(geometry: Dictionary) -> float:
 			minor = major
 		if major <= 0.0:
 			major = minor
-		var offset: Dictionary = piece.get("offset", {}) as Dictionary
-		var offset_x := float(offset.get("x", 0.0)) if not offset.is_empty() else 0.0
-		var offset_y := float(offset.get("y", 0.0)) if not offset.is_empty() else 0.0
-		half_x = maxf(half_x, absf(offset_x) + major)
-		half_y = maxf(half_y, absf(offset_y) + minor)
+		var piece_offset := _piece_ground_offset(piece)
+		half_x = maxf(half_x, absf(piece_offset.x) + major)
+		half_y = maxf(half_y, absf(piece_offset.y) + minor)
 		measured = true
 	if not measured:
 		return 0.0
@@ -117,9 +115,11 @@ static func source_union_radius_from_pieces(geometry: Dictionary) -> float:
 
 static func effective_world_pick_radius(compiled_world: float, visual_world: float) -> float:
 	## Retail Geometry is a floor, never a ceiling against the body the player
-	## can see. A fortress keep whose intact AABB outruns the 64-unit box
-	## (fortress.ini:1254-1306 contact points at X:-90 Y:82) must pick at the
-	## visual edge.
+	## can see. MenFortressCitadel's compiled union is 52 (fortress.ini:996-1033
+	## primary 49 + towers); the converted keep mesh half-extents are ~63 x 67,
+	## so the visual must win. MenFortress itself compiles to 74 (64-box + plots)
+	## which already covers that mesh — contact points at X:-90 Y:82 are repair
+	## sockets, not pick geometry.
 	var compiled := compiled_world if is_finite(compiled_world) and compiled_world > 0.0 else 0.0
 	var visual := visual_world if is_finite(visual_world) and visual_world > 0.0 else 0.0
 	return maxf(compiled, visual)
@@ -153,11 +153,8 @@ static func geometry_piece_candidates(
 			minor = major
 		if major <= 0.0:
 			major = minor
-		var offset: Dictionary = piece.get("offset", {}) as Dictionary
-		var world := origin + Vector2(
-			float(offset.get("x", 0.0)) * scale,
-			float(offset.get("y", 0.0)) * scale
-		)
+		var piece_offset := _piece_ground_offset(piece)
+		var world := origin + Vector2(piece_offset.x * scale, piece_offset.y * scale)
 		var shape := String(piece.get("shape", "CYLINDER")).to_upper()
 		var candidate := {
 			"id": entity_id,
@@ -170,6 +167,16 @@ static func geometry_piece_candidates(
 			candidate["half_z"] = maxf(MINIMUM_SELECTION_RADIUS, minor * scale + SELECTION_MARGIN)
 		candidates.append(candidate)
 	return candidates
+
+
+static func _piece_ground_offset(piece: Dictionary) -> Vector2:
+	## JSON null (Python None) is a present key with a non-Dictionary value.
+	## Casting that with `as Dictionary` aborts the caller in Godot 4.7.
+	var value: Variant = piece.get("offset", {})
+	if typeof(value) != TYPE_DICTIONARY:
+		return Vector2.ZERO
+	var offset := value as Dictionary
+	return Vector2(float(offset.get("x", 0.0)), float(offset.get("y", 0.0)))
 
 
 static func _geometry_number(geometry: Dictionary, key: String) -> float:

@@ -1186,6 +1186,26 @@ func _validate_playable_unit_documents_batch(root: String, documents: Array) -> 
 	return results
 
 
+func _command_string_ids(raw: String) -> PackedStringArray:
+	## Retail toggle buttons put several CONTROLBAR ids on one TextLabel line.
+	var found: PackedStringArray = PackedStringArray()
+	var seen: Dictionary = {}
+	var regex := RegEx.new()
+	if regex.compile("(?:CONTROLBAR|OBJECT|TOOLTIP):[A-Za-z0-9_]+") != OK:
+		if raw.strip_edges() != "":
+			found.append(raw.strip_edges())
+		return found
+	for match in regex.search_all(raw):
+		var token := match.get_string()
+		if seen.has(token):
+			continue
+		seen[token] = true
+		found.append(token)
+	if found.is_empty() and raw.strip_edges() != "":
+		found.append(raw.strip_edges())
+	return found
+
+
 func _validate_playable_unit_runtime(root: String, document: Dictionary) -> bool:
 	if (
 		String(document.get("schema", "")) != "openbfme.playable-unit-runtime"
@@ -1379,13 +1399,17 @@ func _validate_playable_unit_runtime(root: String, document: Dictionary) -> bool
 					return false
 				source_null_string_ids[String(source_null_id_value)] = true
 		var required_string_ids: Dictionary = {}
-		for command_value in (registration.ui as Dictionary).get("commands", []):
+		var ui_command_rows: Array = []
+		ui_command_rows.append_array((registration.ui as Dictionary).get("commands", []) as Array)
+		ui_command_rows.append_array((registration.ui as Dictionary).get("selectionCommands", []) as Array)
+		for command_value in ui_command_rows:
 			if typeof(command_value) != TYPE_DICTIONARY:
 				return false
 			var fields := (command_value as Dictionary).get("fields", {}) as Dictionary
 			for field in ["TextLabel", "DescriptLabel"]:
 				for string_id_value in fields.get(field, []):
-					required_string_ids[String(string_id_value)] = true
+					for token in _command_string_ids(String(string_id_value)):
+						required_string_ids[token] = true
 		# Coverage, not exact size: ability-bearing heroes bind strings for
 		# their powers (Athelas, BladeMaster, …) beyond the train command's
 		# label/tooltip. Every command-referenced id must be bound with
@@ -2592,7 +2616,18 @@ func get_spellbook_runtime() -> Dictionary:
 
 
 func get_playable_unit_runtime(object_id: String) -> Dictionary:
-	return (playable_unit_runtimes.get(object_id, {}) as Dictionary).duplicate(true)
+	if playable_unit_runtimes.has(object_id):
+		return (playable_unit_runtimes[object_id] as Dictionary).duplicate(true)
+	var folded := object_id.to_lower()
+	var packed: Variant = playable_unit_runtime_pack_index.get(folded, [])
+	if typeof(packed) == TYPE_ARRAY and not (packed as Array).is_empty():
+		var last: Variant = (packed as Array)[(packed as Array).size() - 1]
+		if typeof(last) == TYPE_DICTIONARY:
+			return (last as Dictionary).duplicate(true)
+	for key_value in playable_unit_runtimes.keys():
+		if String(key_value).to_lower() == folded:
+			return (playable_unit_runtimes[key_value] as Dictionary).duplicate(true)
+	return {}
 
 
 func get_playable_unit_runtime_for_member(member_object_id: String) -> Dictionary:

@@ -1042,7 +1042,7 @@ def _named_definition_values(
                 matches.append(dict(values))
                 active = False
                 break
-            clean = stripped.split(";", 1)[0].strip()
+            clean = stripped.split(";", 1)[0].split("//", 1)[0].strip()
             if "=" not in clean:
                 continue
             key, expression = (part.strip() for part in clean.split("=", 1))
@@ -3988,9 +3988,10 @@ def _ui_binding(
     member_lineage: Sequence[SageObject],
     command_audio: Mapping[str, Sequence[Mapping[str, object]]],
     portrait_sizes: Mapping[str, tuple[int, int]] | None = None,
+    command_sets: Mapping[str, IniBlock] | None = None,
 ) -> dict[str, object]:
     portraits = _portrait_image_ids(target_lineage, member_lineage, portrait_sizes)
-    return {
+    binding: dict[str, object] = {
         "commands": [
             {
                 "commandId": str(row["commandId"]),
@@ -4010,6 +4011,89 @@ def _ui_binding(
         ],
         "portraitImageIds": portraits,
     }
+    selection = _unit_selection_commands(
+        target_lineage, command_sets or {}, command_buttons
+    )
+    if selection:
+        binding["selectionCommands"] = selection
+    return binding
+
+
+_COMMAND_STRING_ID = re.compile(
+    r"(?:CONTROLBAR|OBJECT|TOOLTIP):[A-Za-z0-9_]+", re.IGNORECASE
+)
+
+
+def command_string_ids(*values: object) -> list[str]:
+    """Split a retail commandbutton TextLabel / DescriptLabel into string ids.
+
+    Toggle stance / formation buttons author several CONTROLBAR ids on one
+    line (spaces or tabs). ContentDB requires each id to be bound; treating
+    the whole line as one key skips the unit as invalid-runtime.
+    """
+
+    found: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        text = str(raw).strip()
+        if not text:
+            continue
+        tokens = _COMMAND_STRING_ID.findall(text)
+        if not tokens:
+            tokens = [text]
+        for token in tokens:
+            if token in seen:
+                continue
+            seen.add(token)
+            found.append(token)
+    return found
+
+
+def _unit_selection_commands(
+    target_lineage: Sequence[SageObject],
+    command_sets: Mapping[str, IniBlock],
+    command_buttons: Mapping[str, IniBlock],
+) -> list[dict[str, object]]:
+    """The unit's own CommandSet — palantir when THIS unit is selected.
+
+    Distinct from ``ui.commands``, which is the producer train/construct
+    button that builds the unit.
+    """
+    command_values = [
+        value
+        for row in _effective_values(target_lineage, "CommandSet")
+        if (value := _first((row.value,))) is not None
+    ]
+    if not command_values:
+        return []
+    command_set = command_sets.get(command_values[0].casefold())
+    if command_set is None:
+        return []
+    rows: list[dict[str, object]] = []
+    for slot, command_id in _command_slots(command_set):
+        button = command_buttons.get(command_id.casefold())
+        fields: dict[str, object] = {}
+        kinds: list[str] = []
+        if button is not None:
+            for field in ("ButtonImage", "TextLabel", "DescriptLabel"):
+                values = [str(value) for value in button.values(field) if str(value).strip()]
+                if not values:
+                    continue
+                if field in {"TextLabel", "DescriptLabel"}:
+                    values = command_string_ids(*values)
+                if values:
+                    fields[field] = values
+            kinds = [str(value) for value in button.values("Command") if str(value).strip()]
+        rows.append(
+            {
+                "slot": slot,
+                "commandId": command_id,
+                "commandSetId": command_set.name,
+                "commandKinds": kinds,
+                "fields": fields,
+            }
+        )
+    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -8400,6 +8484,7 @@ def compile_playable_unit_descriptor(
         member_lineage,
         command_audio,
         _mapped_image_size_index(faction_graph),
+        command_sets,
     )
     # Localization ids this unit's own command buttons reference. Retail
     # authors some of these with no record in data/lotr.str at all (the RotWK

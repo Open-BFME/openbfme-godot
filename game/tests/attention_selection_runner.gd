@@ -198,6 +198,10 @@ func _test_battalion_always_has_a_selection_ring() -> void:
 	var visual := Node3D.new()
 	battalion.add_child(visual)
 	visual.position = Vector3(1.4, 0.0, -0.6)
+	## Retail members are yawed +90° (`retail_battalion.gd` _build_members).
+	## A local AABB centre of (0.25, 0, -0.10) must land at (-0.10, 0, -0.25)
+	## after that yaw — adding the local offset raw parks the ring on the side.
+	visual.rotation.y = PI * 0.5
 	battalion.member_visuals[0] = visual
 	battalion.member_health_ratios[0] = 1.0
 	battalion.member_visual_centers[0] = Vector3(0.25, 0.0, -0.10)
@@ -209,7 +213,7 @@ func _test_battalion_always_has_a_selection_ring() -> void:
 	_check("ring_is_visible_when_selected", ring != null and ring.visible)
 	if ring != null:
 		battalion._update_legal_safe_member_overlays()
-		var expected := visual.position + Vector3(0.25, 0.0, -0.10)
+		var expected := visual.position + visual.basis * Vector3(0.25, 0.0, -0.10)
 		_check(
 			"ring_centers_on_the_live_visual",
 			absf(ring.position.x - expected.x) < 0.001 and absf(ring.position.z - expected.z) < 0.001

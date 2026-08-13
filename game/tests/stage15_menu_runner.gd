@@ -242,7 +242,7 @@ func _run() -> void:
 		_check("the_shells_chrome_is_hidden_while_the_game_is_up", menu.shell_chrome_is_hidden())
 		var still_up: Array[String] = []
 		for path in ["Center/Title", "Center/Subtitle", "Center/BuildVersion",
-				"Footer", "Atmosphere", "BarScrim"]:
+				"Footer", "Atmosphere", "BackdropWeather", "BarScrim"]:
 			var node := menu.get_node_or_null(path) as Control
 			if node != null and node.visible:
 				still_up.append(path)
@@ -381,35 +381,33 @@ func _run() -> void:
 		str(SettingsScript.load_display()))
 	# THE KEY IS BOUND, not merely implemented. A method nothing calls is a feature
 	# nobody can reach, which is the shape of every complaint this round answers.
-	_check("f11_is_actually_bound_to_a_key", menu.has_method("_unhandled_key_input"))
+	_check("f11_is_actually_bound_to_a_key", menu.has_method("_unhandled_input"))
 	SettingsScript.save_display(
 		String(display_before["window_mode"]), String(display_before["resolution"]))
 
-	# THE KEY SETTINGS COLUMN. "The key settings does nothing" was true: this column
-	# never mentioned the keyboard. It lists every binding now, and it states in
-	# words that rebinding is not offered rather than showing a rebind row that would
-	# discard the change.
+	# THE KEY SETTINGS COLUMN. Every remappable action is a click-to-rebind
+	# row; the Xbox / Steam Controller family picker sits above them.
 	var key_heading := menu.find_child("KeyBindingsHeading", true, false) as Label
 	var key_rows := menu.find_child("KeyBindingRows", true, false) as VBoxContainer
-	var key_gap := menu.find_child("KeyBindingGap", true, false) as Label
 	_check("the_options_screen_has_a_key_settings_section",
 		key_heading != null and key_rows != null
-			and key_rows.get_child_count() == SettingsScript.KEY_BINDINGS.size(),
+			and key_rows.get_child_count() == SettingsScript.REMAPPABLE_ACTIONS.size(),
 		"heading=%s rows=%d of %d" % [key_heading != null,
 			key_rows.get_child_count() if key_rows != null else -1,
-			SettingsScript.KEY_BINDINGS.size()])
-	_check("the_key_settings_section_states_why_rebinding_is_absent",
-		key_gap != null and key_gap.text == SettingsScript.KEYBIND_REMAP_GAP)
-	# NOT ONE OF THE ROWS IS A CONTROL. A list of keys that looks pressable and is
-	# not is the exact defect this round exists to remove, so the rows are Labels
-	# that refuse the mouse entirely.
-	var pressable: Array[String] = []
+			SettingsScript.REMAPPABLE_ACTIONS.size()])
+	_check("the_key_settings_section_offers_rebind_rows",
+		key_rows != null and key_rows.get_child_count() == SettingsScript.REMAPPABLE_ACTIONS.size())
+	var rebind_buttons := 0
 	if key_rows != null:
 		for row in key_rows.get_children():
-			if row is BaseButton or (row as Control).mouse_filter != Control.MOUSE_FILTER_IGNORE:
-				pressable.append(String((row as Node).name))
-	_check("no_key_settings_row_pretends_to_be_a_control",
-		pressable.is_empty(), ", ".join(pressable))
+			if row is Button:
+				rebind_buttons += 1
+	_check("every_key_settings_row_is_a_rebind_button",
+		rebind_buttons == SettingsScript.REMAPPABLE_ACTIONS.size(),
+		"buttons=%d" % rebind_buttons)
+	var family_opt := menu.find_child("ControllerFamilyOpt", true, false) as OptionButton
+	_check("controller_family_picker_is_present",
+		family_opt != null and family_opt.item_count == 2)
 
 	# ONE build identity, under the title. The bottom-left copy printed the same
 	# string a second time and is gone; a shell that says the same thing twice is

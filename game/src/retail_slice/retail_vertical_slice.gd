@@ -30,6 +30,7 @@ const UserSettingsScript = preload("res://src/ui/user_settings.gd")
 const ControlServerScript = preload("res://src/debug/retail_control_server.gd")
 const MemberRenderBatcherScript = preload("res://src/view/member_render_batcher.gd")
 const ScriptWorldScript = preload("res://src/retail_slice/retail_slice_script_world.gd")
+const AtmosphereScript = preload("res://src/retail_slice/retail_sage_atmosphere.gd")
 const ScriptExecutorScript = preload("res://src/script/script_executor.gd")
 ## The six values below are DEFINED IN `retail_slice_ids.gd` and re-exported here
 ## so every existing `RetailVerticalSlice.SOLDIER_OBJECT_ID` reader is unchanged.
@@ -1601,8 +1602,10 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 	# skirmish RULES toggle can ride this later). Only added when requested, so
 	# every existing runner's rules — and the pinned battle signature — stay
 	# byte-identical.
-	if OS.get_environment("OPENBFME_CREEP_LAIRS") == "1":
+	if OS.get_environment("OPENBFME_CREEP_LAIRS") != "0":
 		rules["enable_creep_lairs"] = true
+	if OS.get_environment("OPENBFME_CAPTURABLE_NEUTRALS") != "0":
+		rules["enable_capturable_neutrals"] = true
 	# THE FOG TOGGLE. Retail skirmish and MP always run with shroud on, so this
 	# is ON by default here - but ONLY here, in the scene that launches a real
 	# match. Every runner that builds a `RetailSliceSim` directly (the 3000-tick
@@ -2849,6 +2852,8 @@ func _spawn_all_presentations(expected_members: int) -> void:
 			# Lair visuals are the battlefield's already-bound lifecycle
 			# structures; _sync_creep_lair_visuals drives them from sim state.
 			continue
+		if String(simulation.structure(id).get("presentation", "")) == "bound-map-prop":
+			continue
 		_spawn_structure(id)
 
 
@@ -3070,8 +3075,12 @@ func _all_battalion_retail_visuals_loaded() -> bool:
 func _presentable_structure_ids() -> Array[int]:
 	var ids: Array[int] = []
 	for id in simulation.structure_ids():
-		if int(simulation.structure(id).get("team", -1)) != SimScript.CREEP_TEAM:
-			ids.append(id)
+		var row: Dictionary = simulation.structure(id)
+		if int(row.get("team", -1)) == SimScript.CREEP_TEAM:
+			continue
+		if String(row.get("presentation", "")) == "bound-map-prop":
+			continue
+		ids.append(id)
 	ids.sort()
 	return ids
 
@@ -3092,6 +3101,8 @@ func _all_structure_retail_visuals_loaded() -> bool:
 	for id in simulation.structure_ids():
 		if int(simulation.structure(id).get("team", -1)) == SimScript.CREEP_TEAM:
 			continue  # lairs/holes ride the battlefield's bound lifecycle visuals
+		if String(simulation.structure(id).get("presentation", "")) == "bound-map-prop":
+			continue
 		var structure: RetailStructure = structure_nodes.get(id)
 		if structure == null:
 			return false
@@ -3311,7 +3322,7 @@ func _notification(what: int) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("pause_menu") or (event is InputEventKey and (event as InputEventKey).pressed and not (event as InputEventKey).echo and (event as InputEventKey).keycode == KEY_ESCAPE):
+	if event.is_action_pressed("pause_menu"):
 		# Esc priority: close the options overlay → cancel armed cast/construct →
 		# close spellbook → pause.
 		if options_overlay != null and options_overlay.visible:
@@ -3341,6 +3352,19 @@ func _unhandled_input(event: InputEvent) -> void:
 		toggle_escape_menu()
 		get_viewport().set_input_as_handled()
 		return
+	if ready_ok and simulation != null and not simulation.selected_ids.is_empty():
+		if event.is_action_pressed("attack_move"):
+			_arm_attack_move()
+			get_viewport().set_input_as_handled()
+			return
+		if event.is_action_pressed("stop_units"):
+			_stop_selected_units()
+			get_viewport().set_input_as_handled()
+			return
+		if event.is_action_pressed("stance_cycle"):
+			_toggle_selected_stance()
+			get_viewport().set_input_as_handled()
+			return
 	if event is InputEventKey:
 		var key := event as InputEventKey
 		if key.pressed and not key.echo:
@@ -3380,21 +3404,6 @@ func _unhandled_input(event: InputEvent) -> void:
 				_cheat_level_up_selected()
 				get_viewport().set_input_as_handled()
 				return
-			# Retail order hotkeys (rebindable through the project input map):
-			# A = attack-move, S = stop, Z = cycle stance.
-			if ready_ok and not simulation.selected_ids.is_empty():
-				if event.is_action_pressed("attack_move"):
-					_arm_attack_move()
-					get_viewport().set_input_as_handled()
-					return
-				if event.is_action_pressed("stop_units"):
-					_stop_selected_units()
-					get_viewport().set_input_as_handled()
-					return
-				if event.is_action_pressed("stance_cycle"):
-					_toggle_selected_stance()
-					get_viewport().set_input_as_handled()
-					return
 			if key.keycode >= KEY_1 and key.keycode <= KEY_9 and ready_ok:
 				var group := int(key.keycode - KEY_0)
 				if key.ctrl_pressed:
@@ -3596,15 +3605,11 @@ func _select_same_type_on_screen(point: Vector2) -> void:
 
 
 func _selected_hero_for_ability(unit_id: String) -> int:
-	## The ability buttons address a converted hero unit type; the cast itself
-	## acts on the selected living hero entity of that type.
+	## Ability buttons address a converted unit type; the cast acts on the
+	## selected living entity of that type (heroes and infantry capture).
 	for id in simulation.selected_ids:
 		var row: Dictionary = simulation.entity(id)
-		if (
-			int(row.get("health", 0)) > 0
-			and String(row.get("unit_type", "")) == unit_id
-			and String(row.get("category", "")) == "hero"
-		):
+		if int(row.get("health", 0)) > 0 and String(row.get("unit_type", "")) == unit_id:
 			return id
 	return 0
 
@@ -3748,6 +3753,22 @@ func _handle_right_click(point: Vector2) -> void:
 		hud.set_feedback("Construction placement cancelled.")
 		_sync_presentation()
 		return
+	var capturable_id := _closest_capturable_structure(point)
+	if capturable_id != 0 and _selected_can_capture():
+		var capturer_id := _selected_capturer_id()
+		if capturer_id != 0:
+			var capture_result: Dictionary = _apply_local_command("cast_ability", {
+				"hero_id": capturer_id,
+				"ability_id": "Command_CaptureBuilding",
+				"target_point": Vector2(simulation.structure(capturable_id).get("position", point)),
+			})
+			_report_ability_cast(
+				String(simulation.entity(capturer_id).get("unit_type", "")),
+				"Command_CaptureBuilding",
+				capture_result
+			)
+			_sync_presentation()
+			return
 	var enemy_id := _right_click_target(point)
 	if enemy_id != 0:
 		var accepted := int(_apply_local_command("issue_attack", {"ids": simulation.selected_ids.duplicate(), "target_id": enemy_id}))
@@ -3950,6 +3971,40 @@ func _selection_target_structure(structure_id: int) -> int:
 
 func _closest_structure(point: Vector2, team: int) -> int:
 	return SelectionPick.closest_hit(point, _structure_pick_candidates(simulation.living_structure_ids(team)))
+
+
+func _closest_capturable_structure(point: Vector2) -> int:
+	if simulation == null:
+		return 0
+	var ids: Array = []
+	for structure_id in simulation.structure_ids():
+		var row: Dictionary = simulation.structure(structure_id)
+		if int(row.get("health", 0)) <= 0:
+			continue
+		if not bool(row.get("capturable", false)):
+			continue
+		if int(row.get("team", -1)) != SimScript.NEUTRAL_TEAM:
+			continue
+		ids.append(structure_id)
+	return SelectionPick.closest_hit(point, _structure_pick_candidates(ids), SelectionPick.ORDER_MARGIN)
+
+
+func _selected_can_capture() -> bool:
+	return _selected_capturer_id() != 0
+
+
+func _selected_capturer_id() -> int:
+	if simulation == null:
+		return 0
+	for id in simulation.selected_ids:
+		var row: Dictionary = simulation.entity(id)
+		if int(row.get("health", 0)) <= 0:
+			continue
+		for rule_value in simulation.ability_rules_for_unit(String(row.get("unit_type", ""))):
+			var effect: Dictionary = (rule_value as Dictionary).get("effect", {})
+			if String(effect.get("kind", "")) == "capture-building" and bool((rule_value as Dictionary).get("castable", false)):
+				return id
+	return 0
 
 
 func _closest_hostile_battalion(point: Vector2) -> int:
@@ -4185,6 +4240,8 @@ func _sync_presentation() -> void:
 	for id in simulation.structure_ids():
 		if int(simulation.structure(id).get("team", -1)) == SimScript.CREEP_TEAM:
 			continue  # lairs/holes ride the battlefield's bound lifecycle visuals
+		if String(simulation.structure(id).get("presentation", "")) == "bound-map-prop":
+			continue
 		if not structure_nodes.has(id):
 			_spawn_structure(id)
 		var structure: RetailStructure = structure_nodes[id]
@@ -4212,6 +4269,7 @@ func _sync_presentation() -> void:
 		audio_system.sync_events(simulation.events)
 	_consume_structure_projectile_events()
 	_consume_power_fx_events()
+	_sync_sage_atmosphere()
 	if _profile_sync:
 		presentation_profile["audio_us"] = presentation_profile.get("audio_us", 0) + (Time.get_ticks_usec() - _profile_mark)
 		_profile_mark = Time.get_ticks_usec()
@@ -4224,6 +4282,7 @@ func _sync_presentation() -> void:
 		_feed_event_index = simulation.events.size()
 		_power_fx_event_index = simulation.events.size()
 		_structure_projectile_event_index = simulation.events.size()
+		_atmosphere_event_index = simulation.events.size()
 		if audio_system != null:
 			audio_system.acknowledge_event_history_compaction(simulation.events.size())
 	if _profile_sync:
@@ -7741,6 +7800,10 @@ func _update_camera(delta: float) -> void:
 		input_direction.y -= 1.0
 	if Input.is_action_pressed("cam_back"):
 		input_direction.y += 1.0
+	if Input.is_action_pressed("cam_rotate_left"):
+		camera_user_yaw = wrapf(camera_user_yaw + delta * 1.35, -PI, PI)
+	if Input.is_action_pressed("cam_rotate_right"):
+		camera_user_yaw = wrapf(camera_user_yaw - delta * 1.35, -PI, PI)
 	# Retail edge scroll: the cursor resting on a screen border pans the map.
 	if DisplayServer.get_name() != "headless" and not _camera_orbiting and _right_drag_origin == Vector2.INF:
 		var edge := 12.0
@@ -7888,7 +7951,50 @@ func _grant_test_resources() -> void:
 
 var _power_fx_event_index := 0
 var _structure_projectile_event_index := 0
+var _atmosphere_event_index := 0
 var structure_projectile_nodes: Dictionary = {}
+
+
+func _sync_sage_atmosphere() -> void:
+	if battlefield == null:
+		return
+	if battlefield.weather_fx != null and camera != null:
+		battlefield.weather_fx.set_camera_anchor(camera.global_position)
+	_consume_tree_sway_events()
+	_sync_change_weather()
+
+
+func _consume_tree_sway_events() -> void:
+	if battlefield == null or battlefield.tree_sway == null or simulation == null:
+		return
+	var events: Array = simulation.events
+	while _atmosphere_event_index < events.size():
+		var event := events[_atmosphere_event_index] as Dictionary
+		_atmosphere_event_index += 1
+		if String(event.get("kind", "")) != "presentation.ui":
+			continue
+		if String(event.get("op", "")) != "SET_TREE_SWAY":
+			continue
+		var values: Array = event.get("values", []) as Array
+		var sway_error: String = battlefield.tree_sway.apply_set_tree_sway(values)
+		if sway_error != "":
+			push_warning(sway_error)
+
+
+func _sync_change_weather() -> void:
+	if battlefield == null or battlefield.weather_fx == null or simulation == null:
+		return
+	var weather_name := "NONE"
+	var effects: Array = simulation.active_weather_effects()
+	for entry_value in effects:
+		var entry: Dictionary = entry_value
+		var named := String(entry.get("weather", "")).strip_edges().to_upper()
+		if AtmosphereScript.is_weather_data(named):
+			weather_name = named
+	if battlefield.weather_fx.weather_data_name != weather_name:
+		var weather_error: String = battlefield.weather_fx.set_weather_data(weather_name)
+		if weather_error != "":
+			push_warning(weather_error)
 
 
 func _consume_structure_projectile_events() -> void:
@@ -8191,6 +8297,7 @@ func _apply_stored_display_settings() -> void:
 	var display := UserSettingsScript.load_display()
 	OptionsScreenScript.apply_display_settings(String(display["window_mode"]), String(display["resolution"]))
 	OptionsScreenScript.apply_graphics_preset(String(UserSettingsScript.load_graphics()["preset"]), get_viewport())
+	UserSettingsScript.apply_bindings_to_input_map()
 
 
 func _exit_tree() -> void:

@@ -1294,16 +1294,9 @@ var _right_drag_distance := 0.0
 ## Both are presentation and reach nothing.
 var keyboard_pan_enabled := true
 var edge_scroll_enabled := true
-## The keys the held-key pan reads, as `keycode -> (across, forward)` in the
-## camera's own ground plane. WASD and the arrows both, because the owner asked
-## for WASD and an arrow-key player who finds nothing on the arrows reads that as
-## the camera being broken rather than as a different binding.
-##
-## `forward` is POSITIVE NORTH: W and Up push the camera the way it is looking,
-## which after a yaw is not the map's north but the picture's up, which is what
-## the player means. Q/E are deliberately NOT bound here - the orbit is a
-## middle-drag, and binding rotation to letters next to W would make a mis-hit
-## reframe the whole board.
+## Default letter/arrow map the camera pan still means. Runtime drive reads
+## remappable cam_* InputMap actions (those defaults plus the left stick).
+## Q/E stay unbound here — orbit is middle-drag.
 const PAN_KEYS := {
 	KEY_W: Vector2(0.0, 1.0), KEY_UP: Vector2(0.0, 1.0),
 	KEY_S: Vector2(0.0, -1.0), KEY_DOWN: Vector2(0.0, -1.0),
@@ -6113,9 +6106,14 @@ func _recover_from_the_wall(fraction: float) -> void:
 func _pan_axis() -> Vector2:
 	var axis := Vector2.ZERO
 	if keyboard_pan_enabled and not _a_text_field_has_the_keyboard():
-		for key in PAN_KEYS:
-			if Input.is_key_pressed(key):
-				axis += PAN_KEYS[key] as Vector2
+		if Input.is_action_pressed("cam_forward"):
+			axis += Vector2(0.0, 1.0)
+		if Input.is_action_pressed("cam_back"):
+			axis += Vector2(0.0, -1.0)
+		if Input.is_action_pressed("cam_left"):
+			axis += Vector2(-1.0, 0.0)
+		if Input.is_action_pressed("cam_right"):
+			axis += Vector2(1.0, 0.0)
 	if edge_scroll_enabled and not _dragging:
 		axis += _edge_scroll_axis() * EDGE_SCROLL_MULTIPLIER
 	return Vector2(clampf(axis.x, -1.0, 1.0), clampf(axis.y, -1.0, 1.0))

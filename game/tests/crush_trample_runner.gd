@@ -14,7 +14,7 @@ extends SceneTree
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const AdapterScript = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 
-const EXPECTED_CHECKS := 13
+const EXPECTED_CHECKS := 15
 const EPSILON := 0.0001
 
 ## Authored crush damage. The invented TRAMPLE_DAMAGE_FACTOR=0.5 path yields
@@ -39,6 +39,7 @@ func _run() -> void:
 	_test_knight_crush_is_authored_80()
 	_test_crush_gates()
 	_test_adapter_copies_crush_and_turn_fields()
+	_test_simulation_rule_preserves_resolved_crush()
 	_test_cavalry_row_receives_authored_turn()
 	_finish()
 
@@ -360,6 +361,75 @@ func _test_adapter_copies_crush_and_turn_fields() -> void:
 			and is_equal_approx(float(infantry.get("turn_rate_degrees_per_second", 0.0)), 180.0)
 			and is_equal_approx(float(infantry.get("max_turn_without_reform_degrees", 0.0)), 45.0),
 		"turn=%s reform=%s" % [infantry.get("turn_rate_degrees_per_second"), infantry.get("max_turn_without_reform_degrees")]
+	)
+
+
+func _test_simulation_rule_preserves_resolved_crush() -> void:
+	## THE PIPELINE BUG. simulation_rule used to flatten resolved.crush onto
+	## an intermediate row and then drop it, so normalized_unit_rule never
+	## saw 250 even after a recook.
+	var document := {
+		"objectId": "GondorKnightsofDolAmroth",
+		"category": "cavalry",
+		"registration": {
+			"simulation": {
+				"status": "ready",
+				"resolved": {
+					"displayNameId": "OBJECT:GondorKnightsofDol",
+					"buildCost": 800,
+					"buildTimeSeconds": 30.0,
+					"commandPoints": 20,
+					"memberCount": 1,
+					"memberHealth": 400,
+					"speed": 90.0,
+					"visionRange": 175.0,
+					"combat": {
+						"attackRange": 20.0,
+						"delayBetweenShotsMs": 1000.0,
+						"preAttackDelayMs": 200.0,
+						"firingDurationMs": 200.0,
+						"damage": 80,
+					},
+					"movement": {
+						"acceleration": 30.0,
+						"braking": 30.0,
+						"turnRateDegreesPerSecond": 360.0,
+						"maxTurnWithoutReformDegrees": 100.0,
+					},
+					"formation": {"positions": [{"x": 0.0, "y": 0.0}]},
+					"crush": {
+						"crusherLevel": 2,
+						"crushableLevel": 1,
+						"crushWeaponId": "DolAmrothLancerCrush",
+						"crushDamage": DOL_AMROTH_CRUSH_DAMAGE,
+						"minCrushVelocityPercent": 40,
+						"crushDecelerationPercent": 20,
+						"crushKnockback": 10.0,
+					},
+				},
+			},
+		},
+	}
+	var simulation: Dictionary = AdapterScript.simulation_rule(document, false)
+	_check(
+		"simulation_rule_keeps_resolved_crush_damage",
+		not simulation.is_empty()
+			and int(simulation.get("crush_damage", 0)) == DOL_AMROTH_CRUSH_DAMAGE
+			and int(simulation.get("crusher_level", 0)) == 2
+			and String(simulation.get("crush_weapon_id", "")) == "DolAmrothLancerCrush",
+		"crush_damage=%d crusher=%d empty=%s" % [
+			int(simulation.get("crush_damage", 0)),
+			int(simulation.get("crusher_level", 0)),
+			str(simulation.is_empty()),
+		]
+	)
+	var rule: Dictionary = AdapterScript.normalized_unit_rule(simulation, 0.1)
+	_check(
+		"normalized_unit_rule_keeps_simulation_crush",
+		not rule.is_empty()
+			and int(rule.get("crush_damage", 0)) == DOL_AMROTH_CRUSH_DAMAGE
+			and int(rule.get("crusher_level", 0)) == 2,
+		"crush_damage=%d empty=%s" % [int(rule.get("crush_damage", 0)), str(rule.is_empty())]
 	)
 
 

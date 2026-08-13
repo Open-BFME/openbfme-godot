@@ -2833,13 +2833,16 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
         )
     ):
         raise PlayableUnitPackCompilerError("UI binding metadata is invalid")
+    ui_commands = list(runtime.get("ui", {}).get("commands", []) or [])
+    ui_commands.extend(runtime.get("ui", {}).get("selectionCommands", []) or [])
+    from .playable_unit_compiler import command_string_ids
+
     required_string_ids = {
-        str(value)
-        for command in runtime.get("ui", {}).get("commands", [])
+        token
+        for command in ui_commands
         if isinstance(command, Mapping)
         for field in ("TextLabel", "DescriptLabel")
-        for value in command.get("fields", {}).get(field, [])
-        if value
+        for token in command_string_ids(*command.get("fields", {}).get(field, []))
     }
     # Hero ability buttons (mount toggles, special powers) carry their own
     # label/tooltip ids and are just as bindable as a train command's.

@@ -33,6 +33,16 @@ const CASTLE_CIVILIAN_TEAM := 9998
 ## First structure id handed to seeded castle fixtures (creep structures take
 ## 60001+, creep guards 70001+, dynamic structures 3000+).
 const CASTLE_FIXTURE_FIRST_ID := 80001
+const CAPTURABLE_NEUTRAL_FIRST_ID := 90001
+## Outpost AutoDepositUpdate from gamedata.ini OUTPOST_MONEY_*.
+const OUTPOST_DEPOSIT_MS := 10000
+const OUTPOST_DEPOSIT_AMOUNT := 60
+const OUTPOST_CAPTURE_BONUS := 0
+## CaptureBuilding.inc shared by every infantry/hero capture button.
+const CAPTURE_BUILDING_RANGE_SOURCE := 15.0
+const CAPTURE_BUILDING_UNPACK_MS := 1.0
+const CAPTURE_BUILDING_PREPARATION_MS := 15000.0
+const CAPTURE_BUILDING_PACK_MS := 1.0
 const CREEP_VISION_SOURCE := 200.0  # gamedata.ini line 61 CREEP_VISION
 const CREEP_LAIR_MAX_HEALTH := 2000  # StructureBody MaxHealth, all six lairs
 const CREEP_LAIR_DAMAGED_HEALTH := 1000  # authored damage tiers 1000/500
@@ -1470,6 +1480,9 @@ var retail_formation_movement := false
 var _creep_lair_placements: Array = []
 var _next_creep_guard_id := 70001
 var _next_creep_structure_id := 60001
+var capturable_neutrals_enabled := false
+var _capturable_placements: Array = []
+var _next_capturable_structure_id := CAPTURABLE_NEUTRAL_FIRST_ID
 ## Map-authored castle structures (opt-in gameplay rule
 ## "enable_castle_fixtures"; default off keeps every legacy runner and the
 ## pinned scenario byte-identical — the fog lane's absent-unless-enabled
@@ -1668,6 +1681,9 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	_next_creep_structure_id = 60001
 	if creep_lairs_enabled:
 		_seed_creep_lairs()
+	_next_capturable_structure_id = CAPTURABLE_NEUTRAL_FIRST_ID
+	if capturable_neutrals_enabled:
+		_seed_capturable_neutrals()
 	_next_castle_fixture_id = CASTLE_FIXTURE_FIRST_ID
 	if castle_fixtures_enabled:
 		_seed_castle_fixtures()
@@ -1683,6 +1699,20 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 
 
 func _apply_map_configuration(configuration: Dictionary) -> void:
+	_capturable_placements = []
+	var configured_camps: Variant = configuration.get("capturable_placements", [])
+	if typeof(configured_camps) == TYPE_ARRAY:
+		for camp_value in configured_camps as Array:
+			if typeof(camp_value) != TYPE_DICTIONARY:
+				continue
+			var camp := camp_value as Dictionary
+			if (
+				typeof(camp.get("position")) != TYPE_VECTOR2
+				or String(camp.get("type_name", "")) == ""
+				or typeof(camp.get("source_index")) != TYPE_INT
+			):
+				continue
+			_capturable_placements.append(camp.duplicate(true))
 	var configured_spawns: Variant = configuration.get("spawn_positions", {})
 	var configured_gates: Variant = configuration.get("ford_gates", [])
 	var configured_starts: Variant = configuration.get("player_starts", {})
@@ -1888,6 +1918,7 @@ func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 	# menu) resolves false, so the default match — and the pinned battle
 	# signature — stays byte-identical.
 	creep_lairs_enabled = bool(_rules.get("enable_creep_lairs", false))
+	capturable_neutrals_enabled = bool(_rules.get("enable_capturable_neutrals", false))
 	# Map-authored castle fixtures (lane L2b). Absent-unless-enabled, same
 	# hashed-rules contract as the fog lane's enable_fog_of_war: the key
 	# only lives in `_rules` (which is hashed) when a match opts in. An
@@ -2335,10 +2366,23 @@ func _compiled_armor_table(table_value: Variant) -> Dictionary:
 		if typeof(row) != TYPE_DICTIONARY:
 			continue
 		scalars[String(key_value)] = float((row as Dictionary).get("percent", default_percent)) / 100.0
-	return {
+	var compiled := {
 		"damage_scalar": float((table.get("damageScalar", {}) as Dictionary).get("percent", 100.0)) / 100.0,
 		"scalars": scalars,
 	}
+	## SoldierArmor authors FlankedPenalty = 50% (armor.ini:762). The compiler
+	## already emits table.flankedPenalty; dropping it here forced a silent
+	## 1.0. Absent stays absent.
+	var flanked_value: Variant = table.get("flankedPenalty", table.get("flanked_penalty", null))
+	if typeof(flanked_value) == TYPE_DICTIONARY:
+		var percent := float((flanked_value as Dictionary).get("percent", 0.0))
+		if is_finite(percent) and percent > 0.0:
+			compiled["flanked_penalty"] = percent / 100.0
+	elif typeof(flanked_value) in [TYPE_FLOAT, TYPE_INT]:
+		var raw := float(flanked_value)
+		if is_finite(raw) and raw > 0.0:
+			compiled["flanked_penalty"] = raw if raw <= 1.0 else raw / 100.0
+	return compiled
 
 
 func _compiled_armor_rule(document: Dictionary) -> Dictionary:
@@ -3172,6 +3216,7 @@ func _configure_playable_unit_runtime_contracts() -> void:
 			_unit_ability_rules[unit_type] = _scaled_ability_rules(
 				ability_rows, float(_rules.get("source_map_transform_scale", 0.0))
 			)
+		_ensure_capture_building_ability(unit_type, document_value as Dictionary)
 		# ExperienceLevel chain (converted doc rows) registers per unit type;
 		# units whose chain retail never authored carry no rule and never gain
 		# XP — their kill payout is the recorded default, recorded per victim.
@@ -4294,6 +4339,8 @@ func _add_battalion(
 		entities[id]["max_turn_without_reform_degrees"] = float(
 			unit_rule["max_turn_without_reform_degrees"]
 		)
+	if String(unit_rule.get("turn_rate_source", "")) != "":
+		entities[id]["turn_rate_source"] = String(unit_rule["turn_rate_source"])
 	for crush_int_key in ["crusher_level", "crushable_level", "crush_damage", "crush_revenge_damage"]:
 		if unit_rule.has(crush_int_key):
 			entities[id][crush_int_key] = int(unit_rule[crush_int_key])
@@ -4374,7 +4421,10 @@ func _add_battalion(
 	_spatial_sync(entities[id])
 	for tech_id_value in (team_upgrades.get(team, {}) as Dictionary).keys():
 		_apply_equipment_to_horde(entities[id], _equipment_ids_for_forge_upgrade(String(tech_id_value)))
-	if String(unit_rule.get("category", "")) == "hero":
+	if (
+		String(unit_rule.get("category", "")) == "hero"
+		or not (_unit_ability_rules.get(String(entities[id].get("unit_type", "")), []) as Array).is_empty()
+	):
 		_attach_hero_ability_state(entities[id])
 	var has_registered_experience := not (
 		_unit_experience_rules.get(String(entities[id].get("unit_type", "")), {}) as Dictionary
@@ -12287,9 +12337,18 @@ func _apply_group_speed_cap(accepted_ids: Array[int]) -> void:
 	##
 	## Deterministic: min over the accepted set is order-independent, and the
 	## accepted set is already built in caller-supplied id order.
-	if not retail_formation_movement:
-		# Leave the key absent entirely so the row - and therefore the state hash
-		# - stays byte-identical for every run that has not opted in.
+	## Per-row WaitForFormation, not the global retail_formation_movement flag.
+	## Pin fixtures do not author the field, so they stay absent-unless-set.
+	## A mixed group that includes at least one waiter coheres at the slowest
+	## authored speed; only waiters receive the key.
+	var waiters: Array[int] = []
+	if retail_formation_movement:
+		waiters = accepted_ids.duplicate()
+	else:
+		for id in accepted_ids:
+			if bool((entities[id] as Dictionary).get("wait_for_formation", false)):
+				waiters.append(id)
+	if waiters.is_empty():
 		return
 	var slowest := INF
 	for id in accepted_ids:
@@ -12297,7 +12356,7 @@ func _apply_group_speed_cap(accepted_ids: Array[int]) -> void:
 		slowest = minf(slowest, maxf(0.0, float(row.get("speed", 0.0))))
 	if slowest == INF:
 		return
-	for id in accepted_ids:
+	for id in waiters:
 		(entities[id] as Dictionary)["group_speed_cap"] = slowest
 
 
@@ -13697,6 +13756,56 @@ func ability_rules_for_unit(unit_type: String) -> Array:
 	return (_unit_ability_rules.get(unit_type, []) as Array).duplicate(true)
 
 
+func _ensure_capture_building_ability(unit_type: String, document: Dictionary) -> void:
+	## Hordes author Command_CaptureBuilding on the CommandSet but do not
+	## compile CaptureBuilding.inc as an ability row (AISpecialPowerUpdate is
+	## unsupported). Bind the shared include so infantry can capture flags.
+	var existing: Array = _unit_ability_rules.get(unit_type, []) as Array
+	for rule_value in existing:
+		var effect: Dictionary = (rule_value as Dictionary).get("effect", {})
+		if String(effect.get("kind", "")) == "capture-building":
+			return
+	var has_command := false
+	for command_value in PlayableUnitAdapter.selection_commands(document):
+		if String((command_value as Dictionary).get("commandId", "")) == "Command_CaptureBuilding":
+			has_command = true
+			break
+	if not has_command:
+		return
+	var capture_rows: Array[Dictionary] = [{
+		"ability_id": "Command_CaptureBuilding",
+		"slot": 12,
+		"special_power_id": "SpecialAbilityCaptureBuilding",
+		"targeting": "enemy-object",
+		"cooldown_ticks": 0,
+		"required_level": 1,
+		"level_gate_resolved": true,
+		"castable": true,
+		"availability_reason": "",
+		"limitations": ["capture uses CaptureBuilding.inc StartAbilityRange/PreparationTime"],
+		"effect": {
+			"kind": "capture-building",
+			"startAbilityRange": CAPTURE_BUILDING_RANGE_SOURCE,
+			"unpackMs": CAPTURE_BUILDING_UNPACK_MS,
+			"preparationMs": CAPTURE_BUILDING_PREPARATION_MS,
+			"packMs": CAPTURE_BUILDING_PACK_MS,
+			"doCaptureFx": true,
+			"sourceIni": "data/ini/object/includes/CaptureBuilding.inc",
+		},
+		"icon_id": "UPBeacon",
+		"label_id": "CONTROLBAR:CaptureBuilding",
+		"tooltip_id": "CONTROLBAR:ToolTipCaptureBuilding",
+		"fallback_label": "Capture Building",
+		"fallback_tooltip": "Take control of targeted structure",
+	}]
+	var scaled := _scaled_ability_rules(
+		capture_rows, float(_rules.get("source_map_transform_scale", 0.0))
+	)
+	var combined: Array = existing.duplicate()
+	combined.append_array(scaled)
+	_unit_ability_rules[unit_type] = combined
+
+
 func ability_states_for(hero_id: int) -> Dictionary:
 	if not entities.has(hero_id):
 		return {}
@@ -13744,10 +13853,8 @@ func cast_ability(hero_id: int, ability_id: String, target_point: Vector2, team:
 	var row: Dictionary = entities[hero_id]
 	if team >= 0 and int(row.get("team", -1)) != team:
 		return {"ok": false, "reason": "wrong-owner"}
-	if String(row.get("category", "")) != "hero":
-		return {"ok": false, "reason": "not-a-hero"}
 	if int(row.get("health", 0)) <= 0:
-		return {"ok": false, "reason": "hero-defeated"}
+		return {"ok": false, "reason": "unit-defeated"}
 	var rule: Dictionary = {}
 	for rule_value in _unit_ability_rules.get(String(row.get("unit_type", "")), []) as Array:
 		if String((rule_value as Dictionary).get("ability_id", "")) == ability_id:
@@ -14158,6 +14265,7 @@ func _step_capture_channel(row: Dictionary) -> bool:
 	if tick_index >= int(channel.get("complete_tick", tick_index + 1)):
 		structure["team"] = team
 		_award_auto_deposit_capture(structure, team)
+		_transfer_linked_capture(structure, team)
 		row.erase("capture_channel")
 		row["state"] = "idle"
 		_emit_event("structure.captured", int(row.get("id", 0)), structure_id, {
@@ -16894,14 +17002,24 @@ func _deflect_around_structures(
 		var seated_radius := distance + applied
 		position = center + direction * seated_radius
 		if travel_step.length_squared() > 0.000001:
-			position = _tangential_slide_point(center, seated_radius, direction, travel_step)
+			var slide_dest := Vector2(row.get("destination", position))
+			var live_route: Array = row.get("route", [])
+			if not live_route.is_empty():
+				slide_dest = Vector2(live_route[0])
+			position = _tangential_slide_point(
+				center, seated_radius, direction, travel_step, slide_dest
+			)
 		if push_budget <= 0.0:
 			break
 	return position
 
 
 func _tangential_slide_point(
-	center: Vector2, radius: float, radial_direction: Vector2, travel_step: Vector2
+	center: Vector2,
+	radius: float,
+	radial_direction: Vector2,
+	travel_step: Vector2,
+	destination: Vector2 = Vector2.INF
 ) -> Vector2:
 	## TANGENTIAL SLIDE. The radial push alone deadlocks whenever a blocking
 	## structure's centre sits on the line of travel: the push
@@ -16953,8 +17071,21 @@ func _tangential_slide_point(
 	## Inside the band the fixed side (+1, counter-clockwise in the sim's X/Z
 	## frame) applies; it is a pure function of the two vectors, so every peer
 	## computes it identically.
+	## Dest-side when a remaining waypoint is known: both lockstep peers hold
+	## the same destination, so this does not re-open the FMA sign hazard that
+	## forced a fixed +1 on-axis. Walking a 1-point LOS through a building
+	## is exactly on-axis; +1 then orbits the long way. The shorter remaining
+	## distance is the short side of the disc.
 	var cross := radial_direction.cross(travel_step)
 	var side := signf(cross) if absf(cross) > 0.000001 else 1.0
+	if destination != Vector2.INF:
+		var perp := Vector2(-radial_direction.y, radial_direction.x)
+		var left := center + radial_direction * radius + perp * travel_step.length()
+		var right := center + radial_direction * radius - perp * travel_step.length()
+		var left_gap := left.distance_squared_to(destination)
+		var right_gap := right.distance_squared_to(destination)
+		if absf(left_gap - right_gap) > 0.000001:
+			side = 1.0 if left_gap < right_gap else -1.0
 	var tangent := Vector2(-radial_direction.y, radial_direction.x) * side
 	var slid := center + radial_direction * radius + tangent * travel_step.length()
 	var seated := slid - center
@@ -17133,6 +17264,24 @@ const RETAIL_MAX_TURN_WITHOUT_REFORM_DEGREES := 45.0
 const RETAIL_CAVALRY_MAX_TURN_WITHOUT_REFORM_DEGREES := 100.0
 
 
+func _should_honor_turn_rate(row: Dictionary) -> bool:
+	## Authored TurnTime reaches the row as turn_rate_degrees_per_second.
+	## Pin fixtures invent 180 with no source and must keep snapping.
+	## Adapter-normalized units set turn_rate_source when the locomotor
+	## compiled the rate. retail_formation_movement remains the old opt-in.
+	if retail_formation_movement:
+		return true
+	if String(row.get("turn_rate_source", "")) != "":
+		return true
+	return float(row.get("max_turn_without_reform_degrees", 0.0)) > 0.0
+
+
+func _should_reform(row: Dictionary) -> bool:
+	if retail_formation_movement:
+		return true
+	return float(row.get("max_turn_without_reform_degrees", 0.0)) > 0.0
+
+
 func _retail_reform_threshold_degrees(row: Dictionary) -> float:
 	## Per-row override first so a pack that later extracts MaxTurnWithoutReform
 	## wins without touching this code; otherwise the authored class default.
@@ -17193,13 +17342,12 @@ func _step_route(row: Dictionary) -> void:
 	var position := Vector2(row["position"])
 	var waypoint := Vector2(route[0])
 	var base_speed := float(row["speed"])
-	if retail_formation_movement:
+	var group_cap := float(row.get("group_speed_cap", 0.0))
+	if group_cap > 0.0 and (retail_formation_movement or bool(row.get("wait_for_formation", false))):
 		# WaitForFormation (locomotor.ini:713) - a group order advances at the
 		# slowest authored speed in the group so the selection arrives together
 		# instead of stringing out by unit class.
-		var group_cap := float(row.get("group_speed_cap", 0.0))
-		if group_cap > 0.0:
-			base_speed = minf(base_speed, group_cap)
+		base_speed = minf(base_speed, group_cap)
 	var max_speed := base_speed * float(_stance_state(row).get("speedMultiplier", 1.0)) * float(_formation_effects(row).get("speed_multiplier", 1.0)) * _ability_speed_multiplier(row)
 	# Fall back to a snappy ramp (10x max speed per second) when accel/brake
 	# were not authored, so missing fields never pin units at zero velocity.
@@ -17222,10 +17370,13 @@ func _step_route(row: Dictionary) -> void:
 	var step_distance := current_speed * TICK_SECONDS
 	var movement_direction := position.direction_to(waypoint)
 	if movement_direction.length_squared() > 0.000001:
-		if retail_formation_movement:
-			if _step_retail_heading(row, movement_direction, braking):
+		if _should_honor_turn_rate(row):
+			var reforming := _step_retail_heading(row, movement_direction, braking)
+			if reforming and _should_reform(row):
 				# Reforming: the horde pivots about its own centre and does not
-				# translate this tick.
+				# translate this tick. Only when MaxTurnWithoutReform is on the
+				# row (or the old formation flag). Otherwise wheel: turn and
+				# still walk — no invented 45° stop.
 				return
 		else:
 			row["facing"] = movement_direction
@@ -17254,7 +17405,11 @@ func _step_route(row: Dictionary) -> void:
 		row["route_stall_ticks"] = stall_ticks
 		if stall_ticks >= 3:
 			row["route_stall_ticks"] = 0
-			route.pop_front()
+			# Never drop the last waypoint — that is the order destination. A
+			# 1-point LOS route through a building would otherwise abandon the
+			# click after three stalled ticks on the ring.
+			if route.size() > 1:
+				route.pop_front()
 	else:
 		row["route_stall_ticks"] = 0
 	row["position"] = position
@@ -17497,9 +17652,35 @@ func _incoming_damage_factor(attacker_id: int, target: Dictionary, target_kind: 
 		var attacker_effect := _applied_weapon_effect(entities[attacker_id] as Dictionary)
 		if not attacker_effect.is_empty():
 			weapon_factor = _damage_scalar_factor(attacker_effect.get("scalars", []) as Array, target, target_kind)
-	return weapon_factor * _member_body_damage_factor(
+	var factor := weapon_factor * _member_body_damage_factor(
 		target, damage_type, components
 	)
+	if target_kind == "battalion" and _is_flanking_hit(attacker_id, target):
+		factor *= _flanked_penalty_multiplier(target)
+	return factor
+
+
+func _active_armor_table(target: Dictionary) -> Dictionary:
+	var rule: Dictionary = _unit_armor.get(String(target.get("object_id", "")), {})
+	if rule.is_empty() or bool(rule.get("passthrough", false)):
+		return {}
+	var table := rule
+	var active := String(target.get("active_armor_upgrade", ""))
+	if active != "":
+		var upgrades: Dictionary = rule.get("upgrades", {})
+		if (target.get("applied_upgrades", {}) as Dictionary).has(active) and upgrades.has(active):
+			table = upgrades[active]
+	return table
+
+
+func _flanked_penalty_multiplier(target: Dictionary) -> float:
+	## armor.ini FlankedPenalty is extra incoming damage when hit from behind
+	## the facing hemisphere. SoldierArmor authors 50% → 1.5x. No field → 1.0.
+	var table := _active_armor_table(target)
+	var penalty := float(table.get("flanked_penalty", 0.0))
+	if not is_finite(penalty) or penalty <= 0.0:
+		return 1.0
+	return 1.0 + penalty
 
 
 func _flanking_outgoing_multiplier(attacker: Dictionary, target: Dictionary) -> float:
@@ -18618,6 +18799,117 @@ func _castle_fixture_team(owner: String) -> int:
 	return CASTLE_CIVILIAN_TEAM
 
 
+func _seed_capturable_neutrals() -> void:
+	## Map-authored Inn / Outpost / SignalFire / CaptureFlag become live
+	## NEUTRAL structures. The flag is CAPTURABLE; LINKED_TO_FLAG buildings
+	## follow the nearest flag. Visuals stay on the bound map props.
+	if _capturable_placements.is_empty():
+		return
+	if not _structure_armor.has("capture_flag"):
+		_structure_armor["capture_flag"] = {"set_id": "CaptureFlag-highlander", "damage_scalar": 1.0, "scalars": {"default": 1.0}}
+	if not _structure_armor.has("inn"):
+		_structure_armor["inn"] = {"set_id": "NeutralInn-provisional", "damage_scalar": 1.0, "scalars": {"default": 1.0}}
+	if not _structure_armor.has("outpost"):
+		_structure_armor["outpost"] = {"set_id": "NeutralOutpost-provisional", "damage_scalar": 1.0, "scalars": {"default": 1.0}}
+	if not _structure_armor.has("signal_fire"):
+		_structure_armor["signal_fire"] = {"set_id": "NeutralSignalFire-provisional", "damage_scalar": 1.0, "scalars": {"default": 1.0}}
+	var placements := _capturable_placements.duplicate(true)
+	placements.sort_custom(
+		func(a, b): return int((a as Dictionary).get("source_index", 0)) < int((b as Dictionary).get("source_index", 0))
+	)
+	var seeded: Array[int] = []
+	for placement_value in placements:
+		var placement: Dictionary = placement_value
+		var structure_id := _next_capturable_structure_id
+		_next_capturable_structure_id += 1
+		var kind := String(placement.get("structure_kind", ""))
+		var max_health := maxi(1, int(placement.get("maximum_health", 1)))
+		_note_structure_table_mutation()
+		var row := {
+			"id": structure_id,
+			"team": NEUTRAL_TEAM,
+			"structure_kind": kind,
+			"name": String(placement.get("type_name", kind)),
+			"type_name": String(placement.get("type_name", "")),
+			"source_index": int(placement.get("source_index", -1)),
+			"position": Vector2(placement.get("position", Vector2.ZERO)),
+			"yaw": float(placement.get("yaw", 0.0)),
+			"rally": Vector2(placement.get("position", Vector2.ZERO)),
+			"health": max_health,
+			"maximum_health": max_health,
+			"construction_progress": 1.0,
+			"level": 1,
+			"completed_upgrades": [],
+			"damage_remainders": {},
+			"queue": [],
+			"upgrade_queue": [],
+			"capturable": bool(placement.get("capturable", false)),
+			"linked_to_flag": bool(placement.get("linked_to_flag", false)),
+			"unattackable": bool(placement.get("unattackable", false)),
+			"presentation": "bound-map-prop",
+			"linked_structure_id": 0,
+		}
+		if kind == "outpost":
+			row["auto_deposit_amount"] = OUTPOST_DEPOSIT_AMOUNT
+			row["auto_deposit_interval_ms"] = OUTPOST_DEPOSIT_MS
+			row["auto_deposit_capture_bonus"] = OUTPOST_CAPTURE_BONUS
+			_initialize_structure_auto_deposit(row)
+		structures[structure_id] = row
+		seeded.append(structure_id)
+		_emit_event("structure.neutral_seeded", 0, structure_id, {
+			"type_name": String(placement.get("type_name", "")),
+			"kind": kind,
+			"source_index": int(placement.get("source_index", -1)),
+		})
+	_link_capture_flags(seeded)
+
+
+func _link_capture_flags(seeded_ids: Array[int]) -> void:
+	## Pair each CAPTURABLE flag with the nearest LINKED_TO_FLAG building.
+	## The map does not encode the link; retail places the pair together.
+	var flags: Array[int] = []
+	var buildings: Array[int] = []
+	for structure_id in seeded_ids:
+		var row: Dictionary = structures.get(structure_id, {})
+		if row.is_empty():
+			continue
+		if bool(row.get("capturable", false)):
+			flags.append(structure_id)
+		elif bool(row.get("linked_to_flag", false)):
+			buildings.append(structure_id)
+	for flag_id in flags:
+		var flag: Dictionary = structures[flag_id]
+		var origin := Vector2(flag.get("position", Vector2.ZERO))
+		var best_id := 0
+		var best_distance := INF
+		for building_id in buildings:
+			var building: Dictionary = structures[building_id]
+			if int(building.get("linked_structure_id", 0)) != 0:
+				continue
+			var distance := origin.distance_to(Vector2(building.get("position", Vector2.ZERO)))
+			if distance < best_distance:
+				best_distance = distance
+				best_id = building_id
+		if best_id == 0:
+			continue
+		flag["linked_structure_id"] = best_id
+		(structures[best_id] as Dictionary)["linked_structure_id"] = flag_id
+
+
+func _transfer_linked_capture(flag_row: Dictionary, team: int) -> void:
+	var linked_id := int(flag_row.get("linked_structure_id", 0))
+	if linked_id == 0 or not structures.has(linked_id):
+		return
+	var linked: Dictionary = structures[linked_id]
+	linked["team"] = team
+	_award_auto_deposit_capture(linked, team)
+	_emit_event("structure.linked_captured", 0, linked_id, {
+		"team": team,
+		"flag_id": int(flag_row.get("id", 0)),
+		"structure_kind": String(linked.get("structure_kind", "")),
+	})
+
+
 func _seed_castle_fixtures() -> void:
 	## Lane L2b: map-authored castle structures become live sim structures,
 	## following the creep-lair seeding precedent (deterministic source_index
@@ -19427,11 +19719,13 @@ func _assign_route(row: Dictionary, destination: Vector2) -> bool:
 		row["route_ford"] = ""
 		return true
 	# Parity path ledger: refuse ground routes that cross impassable cells.
-	_ensure_parity()
-	if not parity.can_path_between(Vector2(row["position"]), destination):
-		last_route_rejection = "parity-path-impassable"
-		return false
-	var result := _query_route(Vector2(row["position"]), destination)
+	# Ships use the water grid; the land ledger would reject every river.
+	if not _is_naval_row(row):
+		_ensure_parity()
+		if not parity.can_path_between(Vector2(row["position"]), destination):
+			last_route_rejection = "parity-path-impassable"
+			return false
+	var result := _query_route_for_row(row, Vector2(row["position"]), destination)
 	if not bool(result.get("valid", false)):
 		last_route_rejection = String(result.get("reason", "route-rejected"))
 		return false
@@ -19459,6 +19753,27 @@ func _query_route(from: Vector2, to: Vector2) -> Dictionary:
 	# The non-retail fallback remains bounded and direct. The selected retail
 	# slice cannot reach this branch because configuration requires a provider.
 	return {"valid": true, "reason": "", "points": [to], "cells": [], "ford_name": ""}
+
+
+func _query_route_for_row(row: Dictionary, from: Vector2, to: Vector2) -> Dictionary:
+	if _is_naval_row(row) and route_provider != null and route_provider.has_method("query_water_route"):
+		var water_value: Variant = route_provider.call("query_water_route", from, to)
+		if typeof(water_value) == TYPE_DICTIONARY:
+			return water_value as Dictionary
+		return {"valid": false, "reason": "water-navigation-unavailable", "points": [], "cells": []}
+	return _query_route(from, to)
+
+
+func _is_naval_row(row: Dictionary) -> bool:
+	var category := String(row.get("category", "")).strip_edges().to_lower()
+	if category == "naval":
+		return true
+	var kinds: Array = row.get("kind_of", []) as Array
+	for kind_value in kinds:
+		var kind := String(kind_value).to_upper()
+		if kind == "SHIP" or kind == "NAVAL_UNIT":
+			return true
+	return false
 
 
 func _team_defeated(team: int) -> bool:
@@ -19627,7 +19942,7 @@ func _stamp_order_sequence(ids: Array[int]) -> int:
 
 
 func _clear_pending_route(row: Dictionary, settle_destination: bool) -> void:
-	if retail_formation_movement and row.has("group_speed_cap"):
+	if row.has("group_speed_cap") and (retail_formation_movement or bool(row.get("wait_for_formation", false))):
 		# The group cohesion cap belongs to one order, not to the unit.
 		row["group_speed_cap"] = 0.0
 	row["route"] = []

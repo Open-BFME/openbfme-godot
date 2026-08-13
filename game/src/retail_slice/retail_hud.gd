@@ -59,6 +59,7 @@ const TooltipScript = preload("res://src/retail_slice/retail_tooltip.gd")
 const SideCommandBarScript = preload("res://src/retail_slice/retail_side_command_bar.gd")
 const PowersOrbScript = preload("res://src/retail_slice/retail_powers_orb.gd")
 const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
+var last_selection_command_ids: PackedStringArray = PackedStringArray()
 const RETAIL_TOOLTIP_HOVER_DELAY := 0.4
 const RETAIL_TRAIN_ICON_ID := "BGBarracks_Soldiers"
 const RETAIL_TRAIN_LABEL_ID := "CONTROLBAR:ConstructGondorFighterHorde"
@@ -1363,6 +1364,14 @@ func set_unit_selection_state(selected_ids: Array[int], entities: Dictionary, cu
 			builders_only = false
 			break
 	_update_hero_ability_buttons(selected_ids, entities, current_tick)
+	last_selection_command_ids = PackedStringArray()
+	if has_units:
+		var first_for_commands: Dictionary = entities.get(selected_ids[0], {}) as Dictionary
+		last_selection_command_ids = selected_unit_command_ids(
+			_playable_document_for_unit_row(first_for_commands)
+		)
+		for train_button_value in train_buttons.values():
+			(train_button_value as Button).visible = false
 	for button_value in unit_action_buttons.values():
 		var button := button_value as Button
 		var action_id := String(button.get_meta("action_id", ""))
@@ -1373,6 +1382,8 @@ func set_unit_selection_state(selected_ids: Array[int], entities: Dictionary, cu
 			# Retail: the porter's builds live ONLY on the right-edge side
 			# command bar (REF-29/32); the palantir sockets keep his orders.
 			button.visible = false
+		elif last_selection_command_ids.size() > 0:
+			button.visible = has_units and _action_in_unit_command_set(action_id, last_selection_command_ids)
 		elif action_id == "stop" or action_id == "stance":
 			# The porter's palantir carries Stop + stance (the two icons at the
 			# dish's upper right in REF-32); attack-move/formation stay combat-only.
@@ -1403,6 +1414,33 @@ func set_unit_selection_state(selected_ids: Array[int], entities: Dictionary, cu
 	# Keep stance/formation chrome in sync with the live selection.
 	set_active_stance(String(first.get("stance", "Battle")))
 	set_active_formation(String(first.get("formation_mode", "Line")))
+
+
+func selected_unit_command_ids(document: Dictionary) -> PackedStringArray:
+	return PlayableUnitAdapter.selection_command_ids(document)
+
+
+func _playable_document_for_unit_row(row: Dictionary) -> Dictionary:
+	var db: Object = _bound_content_db
+	if db == null:
+		var tree := get_tree()
+		if tree != null:
+			db = tree.root.get_node_or_null("ContentDB")
+	return PlayableUnitAdapter.resolve_playable_document(db, row)
+
+
+func _action_in_unit_command_set(action_id: String, command_ids: PackedStringArray) -> bool:
+	for command_id in command_ids:
+		var folded := String(command_id).to_lower().replace("_", "")
+		if action_id == "stop" and folded.contains("stop"):
+			return true
+		if action_id == "attack_move" and folded.contains("attackmove"):
+			return true
+		if action_id == "stance" and folded.contains("stance"):
+			return true
+		if action_id == "formation" and folded.contains("formation"):
+			return true
+	return false
 
 
 func _ability_spec_for(unit_id: String, ability_id: String) -> Dictionary:
@@ -2810,6 +2848,8 @@ func _update_retail_selection_portrait(production: Array) -> void:
 
 
 func _show_retail_portrait(unit_id: String) -> void:
+	if selection_portrait == null:
+		return
 	selection_portrait.texture = _retail_portrait_textures.get(unit_id) as Texture2D
 	selection_portrait.visible = selection_portrait.texture != null
 	if selection_portrait.visible:

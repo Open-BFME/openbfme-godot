@@ -26,6 +26,10 @@ const AssetFactoryScript = preload("res://src/view/asset_factory.gd")
 const RetailStructureScript = preload("res://src/retail_slice/retail_structure.gd")
 const RetailAnimatedPropControllerScript = preload("res://src/retail_slice/retail_animated_prop_controller.gd")
 const RetailParticleControllerScript = preload("res://src/retail_slice/retail_particle_controller.gd")
+const WaterSurfaceScript = preload("res://src/retail_slice/retail_water_surface.gd")
+const TreeSwayScript = preload("res://src/retail_slice/retail_tree_sway.gd")
+const WeatherFxScript = preload("res://src/retail_slice/retail_weather_fx.gd")
+const AtmosphereScript = preload("res://src/retail_slice/retail_sage_atmosphere.gd")
 const MAIN_CAMERA_EXCLUDED_PROP_TYPES := {
 	# FarmTemplate's retail INI declares DefaultModelConditionState Model=None.
 	# GBFarm_WB is only selected by ModelConditionState=WORLD_BUILDER, so the
@@ -54,6 +58,10 @@ var terrain_cliff_cell_count := 0
 var passability_debug_enabled := false
 var water_surface_count := 0
 var water_triangle_count := 0
+var water_material: ShaderMaterial
+var water_contract: Dictionary = {}
+var tree_sway
+var weather_fx
 var road_material_source_driven := false
 var road_material_count := 0
 var road_source_edge_count := 0
@@ -157,6 +165,10 @@ func configure(map_data: RetailMapData) -> bool:
 		profile_last_ms = Time.get_ticks_msec()
 	if not _build_water(map_data):
 		return _abort_configuration("source water could not be built")
+	if not _bind_tree_sway():
+		return _abort_configuration(error if error != "" else "tree sway could not be bound")
+	if not _bind_weather_fx(map_data):
+		return _abort_configuration(error if error != "" else "weather presenter could not be bound")
 	if profile_init:
 		print("RETAIL_BATTLEFIELD_PHASE name=water delta_ms=%d" % (Time.get_ticks_msec() - profile_last_ms))
 	if not _record_ford_gate_diagnostics(map_data):
@@ -912,8 +924,8 @@ func _build_water(map_data: RetailMapData) -> bool:
 	if map_data.standing_water_polygons.is_empty() and map_data.river_strips.is_empty():
 		# Maps without authored water are valid; the surface layer stays empty.
 		return true
-	for polygon_value in map_data.standing_water_polygons:
-		var polygon: PackedVector3Array = polygon_value
+	for polygon_index in map_data.standing_water_polygons.size():
+		var polygon: PackedVector3Array = map_data.standing_water_polygons[polygon_index]
 		var polygon_2d := PackedVector2Array()
 		for point in polygon:
 			polygon_2d.append(Vector2(point.x, point.z))
@@ -921,10 +933,11 @@ func _build_water(map_data: RetailMapData) -> bool:
 		if triangles.is_empty():
 			continue
 		var base := vertices.size()
+		var vertex_color := _water_vertex_color(map_data)
 		for point in polygon:
 			vertices.append(point + Vector3.UP * 0.025)
 			normals.append(Vector3.UP)
-			colors.append(Color(0.06, 0.25, 0.32, 0.82))
+			colors.append(vertex_color)
 		for triangle_index in triangles:
 			indices.append(base + int(triangle_index))
 		water_surface_count += 1
@@ -933,6 +946,7 @@ func _build_water(map_data: RetailMapData) -> bool:
 		var sections: Array = river.get("sections", [])
 		if sections.size() < 2:
 			continue
+		var river_color := _water_vertex_color(map_data)
 		for section_index in range(sections.size() - 1):
 			var first: PackedVector3Array = sections[section_index]
 			var second: PackedVector3Array = sections[section_index + 1]
@@ -942,7 +956,7 @@ func _build_water(map_data: RetailMapData) -> bool:
 			for point in [first[0], first[1], second[0], second[1]]:
 				vertices.append((point as Vector3) + Vector3.UP * 0.03)
 				normals.append(Vector3.UP)
-				colors.append(Color(0.08, 0.30, 0.39, 0.80))
+				colors.append(river_color)
 			indices.append_array(PackedInt32Array([
 				base, base + 2, base + 1,
 				base + 1, base + 2, base + 3,
@@ -959,33 +973,66 @@ func _build_water(map_data: RetailMapData) -> bool:
 	arrays[Mesh.ARRAY_INDEX] = indices
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	var material := ShaderMaterial.new()
-	var shader := Shader.new()
-	shader.code = """
-shader_type spatial;
-render_mode blend_mix, depth_prepass_alpha, cull_disabled;
-varying vec3 local_position;
-void vertex() {
-	local_position = VERTEX;
-}
-void fragment() {
-	float ripple = sin((local_position.x + local_position.z) * 0.42 + TIME * 1.6) * 0.035;
-	ALBEDO = COLOR.rgb + vec3(ripple * 0.25, ripple * 0.65, ripple);
-	METALLIC = 0.12;
-	ROUGHNESS = 0.18;
-	SPECULAR = 0.78;
-	ALPHA = 0.80;
-}
-"""
-	material.shader = shader
+	var water_builder = WaterSurfaceScript.new()
+	var material := water_builder.build_material(
+		map_data.active_time_of_day,
+		map_data.pack_root,
+		_primary_water_row(map_data)
+	)
+	if material == null:
+		return _fail_configuration(
+			"source water material could not be built: %s" % String(water_builder.error)
+		)
+	water_material = material
+	water_contract = water_builder.last_contract.duplicate(true)
 	mesh.surface_set_material(0, material)
 	water_mesh_instance = MeshInstance3D.new()
 	water_mesh_instance.name = "SourceCookedWaterGeometry"
 	water_mesh_instance.mesh = mesh
 	water_mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	water_mesh_instance.set_meta("source", "cooked-standing-areas-and-river-strips")
+	water_mesh_instance.set_meta("water_contract", water_contract.duplicate(true))
 	add_child(water_mesh_instance)
 	water_triangle_count = indices.size() / 3
+	return true
+
+
+func _primary_water_row(map_data: RetailMapData) -> Dictionary:
+	if not map_data.standing_water_materials.is_empty():
+		return map_data.standing_water_materials[0]
+	if not map_data.river_strips.is_empty():
+		return map_data.river_strips[0]
+	return {}
+
+
+func _water_vertex_color(map_data: RetailMapData) -> Color:
+	var water_set: Dictionary = AtmosphereScript.water_set(map_data.active_time_of_day)
+	if water_set.is_empty():
+		water_set = AtmosphereScript.water_set(AtmosphereScript.DEFAULT_TIME_OF_DAY)
+	return AtmosphereScript.color_rgb8(water_set.get("vertex_color_rgb8", [225, 225, 225]))
+
+
+func _bind_tree_sway() -> bool:
+	if tree_sway != null and is_instance_valid(tree_sway):
+		tree_sway.queue_free()
+	tree_sway = TreeSwayScript.new()
+	tree_sway.name = "RetailTreeSway"
+	add_child(tree_sway)
+	tree_sway.bind_prop_container(retail_prop_container)
+	set_meta("tree_sway", tree_sway.runtime_contract())
+	return true
+
+
+func _bind_weather_fx(map_data: RetailMapData) -> bool:
+	if weather_fx != null and is_instance_valid(weather_fx):
+		weather_fx.queue_free()
+	weather_fx = WeatherFxScript.new()
+	weather_fx.name = "RetailWeatherFx"
+	add_child(weather_fx)
+	var weather_error: String = weather_fx.configure(map_data.map_weather_name, map_data.local_transform_scale)
+	if weather_error != "":
+		return _fail_configuration(weather_error)
+	set_meta("weather_fx", weather_fx.runtime_contract())
 	return true
 
 
@@ -1647,6 +1694,10 @@ func _clear_generated() -> void:
 	terrain_cliff_info_texture = null
 	water_surface_count = 0
 	water_triangle_count = 0
+	water_material = null
+	water_contract.clear()
+	tree_sway = null
+	weather_fx = null
 	road_material_source_driven = false
 	road_material_count = 0
 	road_source_edge_count = 0
@@ -1694,6 +1745,8 @@ func _clear_generated() -> void:
 		"particle_diagnostics",
 		"last_structure_damage_route",
 		"structure_damage_route_log",
+		"tree_sway",
+		"weather_fx",
 	]:
 		if has_meta(metadata_key):
 			remove_meta(metadata_key)

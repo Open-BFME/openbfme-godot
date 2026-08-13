@@ -4,6 +4,7 @@ extends Node3D
 
 const ShadowDecalScript = preload("res://src/retail_slice/retail_shadow_decal.gd")
 const FormationScript = preload("res://src/retail_slice/retail_formation.gd")
+const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const DEFAULT_OBJECT_ID := "bfme2.object.gondor-fighter"
 const ARCHER_OBJECT_ID := "bfme2.object.gondor-archer"
 const RANGER_OBJECT_ID := "bfme2.object.gondor-ranger"
@@ -287,15 +288,24 @@ func sync_mount_presentation(mounted: bool) -> void:
 	if not mounted:
 		mount_visual_gap = ""
 		return
-	var definition: Dictionary = ContentDB.get_bundle_object(object_id)
-	var visual: Dictionary = definition.get("visual", {}) as Dictionary
-	if visual.is_empty():
-		visual = definition.get("presentation", {}) as Dictionary
-	var composition: Dictionary = visual.get("presentationComposition", {}) as Dictionary
-	if String(composition.get("form", "")) != "mounted-container-payload":
-		mount_visual_gap = "pack-has-no-mounted-container-payload"
+	var playable: Dictionary = PlayableUnitAdapter.resolve_playable_document(
+		ContentDB,
+		{"object_id": object_id, "unit_type": object_id}
+	)
+	var mesh: Dictionary = PlayableUnitAdapter.authored_mounted_mesh(playable)
+	if playable.is_empty():
+		var definition: Dictionary = ContentDB.get_bundle_object(object_id)
+		if not definition.is_empty():
+			mesh = PlayableUnitAdapter.authored_mounted_mesh(definition)
+			if mesh.is_empty():
+				mesh = PlayableUnitAdapter.authored_mounted_mesh({"registration": definition})
+	var gap := String(mesh.get("gap", "mounted-model-missing"))
+	if String(mesh.get("path", "")).to_lower().ends_with(".glb"):
+		mount_visual_gap = ""
 		return
-	mount_visual_gap = ""
+	if String(mesh.get("id", "")) != "" and gap == "":
+		gap = "mounted-model-missing:%s" % String(mesh.get("id"))
+	mount_visual_gap = gap if gap != "" else "mounted-model-missing"
 
 
 func sync_banner_carrier(spawned: bool, banner_object_id: String, offset_source: Vector2) -> void:
@@ -840,7 +850,12 @@ func _member_selection_anchor(member_index: int) -> Vector3:
 	var offset: Vector3 = member_visual_centers.get(member_index, Vector3.ZERO)
 	if visual == null or not is_instance_valid(visual):
 		return offset
-	return visual.position + offset
+	## member_visual_centers is the mesh AABB centre in the member visual's
+	## local space. Every imported member is yawed PI/2 in _build_members
+	## (and again when the formation heading is applied), so adding the local
+	## offset to visual.position parks the ring a body-width to the side.
+	## Rotate the offset through the live basis first.
+	return visual.position + visual.basis * offset
 
 
 func _ensure_synthetic_member_selection_rings() -> void:

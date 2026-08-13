@@ -44,7 +44,7 @@ const TROLL_SOURCE_RADIUS := 17.6
 ## function without propagating. Completion is marked only at the END of each
 ## test body, and the exact check count must match EXPECTED_CHECKS.
 const EXPECTED_TESTS := 14
-const EXPECTED_CHECKS := 72
+const EXPECTED_CHECKS := 73
 ## Floor kept so a content-less run still fails closed if it aborts early.
 const MINIMUM_CHECKS := 40
 
@@ -473,23 +473,29 @@ func _test_pieces_union_beats_primary_probe() -> void:
 
 
 func _test_visual_aabb_is_a_floor_over_compiled_geometry() -> void:
-	## THE BUG. MenFortress compiled Geometry is the 64-unit BOX plus plots
-	## (fortress.ini:1254-1300, union 74). The visible keep is larger — repair
-	## contact points go to X:-90 Y:82 (:1305-1306). Compiled geometry is a
-	## floor, never a ceiling against the body the player can see.
-	var compiled_64 := Pick.world_radius_from_source(64.0, FORDS_SOURCE_SCALE)
+	## Live keep mesh (construction-intact-gbfortress.glb accessor AABB) is
+	## ~63.36 x 66.85 source half-extents — NOT the repair contact points at
+	## X:-90 Y:82 (fortress.ini:1305-1306). MenFortress compiled union is 74
+	## (64-box + plots), so the visual does not grow that object. The
+	## load-bearing case is MenFortressCitadel: primary 49 + towers = 52
+	## (fortress.ini:996-1033), which the 66.85 mesh does outrun.
+	var compiled_52 := Pick.world_radius_from_source(52.0, FORDS_SOURCE_SCALE)
 	var compiled_74 := Pick.world_radius_from_source(74.0, FORDS_SOURCE_SCALE)
-	var visual_bounds := AABB(Vector3(-90.0, 0.0, -82.0), Vector3(174.0, 75.0, 164.0))
-	var visual := Pick.world_radius_from_visual_bounds(visual_bounds, FORDS_SOURCE_SCALE)
-	_check("keep_visual_is_larger_than_the_64_box", visual > compiled_64)
-	_check("keep_visual_is_larger_than_the_74_union", visual > compiled_74)
+	var keep_mesh := AABB(Vector3(-63.36, 0.0, -66.85), Vector3(126.72, 75.0, 133.70))
+	var visual := Pick.world_radius_from_visual_bounds(keep_mesh, FORDS_SOURCE_SCALE)
+	_check("live_keep_mesh_does_not_outrun_menfortress_74", visual < compiled_74)
 	_check(
-		"effective_pick_takes_the_visual_floor",
-		is_equal_approx(Pick.effective_world_pick_radius(compiled_74, visual), visual)
+		"effective_menfortress_stays_on_compiled_74",
+		is_equal_approx(Pick.effective_world_pick_radius(compiled_74, visual), compiled_74)
+	)
+	_check("citadel_visual_outruns_compiled_52", visual > compiled_52)
+	_check(
+		"effective_citadel_takes_the_visual_floor",
+		is_equal_approx(Pick.effective_world_pick_radius(compiled_52, visual), visual)
 	)
 	_check(
 		"compiled_stays_the_floor_when_visual_is_smaller",
-		is_equal_approx(Pick.effective_world_pick_radius(compiled_74, compiled_64), compiled_74)
+		is_equal_approx(Pick.effective_world_pick_radius(compiled_74, compiled_52), compiled_74)
 	)
 	var structure_script: GDScript = load("res://src/retail_slice/retail_structure.gd")
 	_check("structure_script_compiles", structure_script != null and structure_script.can_instantiate())
@@ -500,18 +506,18 @@ func _test_visual_aabb_is_a_floor_over_compiled_geometry() -> void:
 	root.add_child(structure)
 	structure.structure_kind = "fortress"
 	structure.selection_radius_source = "compiled-retail-geometry"
-	structure.pick_radius = compiled_74
+	structure.pick_radius = compiled_52
 	structure._source_unit_scale = FORDS_SOURCE_SCALE
-	structure._apply_visual_bounds_selection_radius(visual_bounds, FORDS_SOURCE_SCALE)
-	_check("structure_pick_grows_to_the_visible_keep", structure.pick_radius >= visual - 0.001)
+	structure._apply_visual_bounds_selection_radius(keep_mesh, FORDS_SOURCE_SCALE)
+	_check("citadel_structure_pick_grows_to_the_mesh", structure.pick_radius >= visual - 0.001)
 	var origin := Vector2(20.0, -8.0)
 	structure.global_position = Vector3(origin.x, 0.0, origin.y)
 	var candidates: Array = structure.structure_pick_candidates(11)
 	_check("structure_emits_pick_candidates", not candidates.is_empty())
 	var visual_edge := origin + Vector2(visual * 0.92, 0.0)
-	_check("click_on_the_visible_keep_edge_selects", Pick.closest_hit(visual_edge, candidates) == 11)
-	var compiled_only := [{"id": 11, "position": origin, "radius": compiled_74}]
-	_check("compiled_union_alone_would_miss_the_keep_edge", Pick.closest_hit(visual_edge, compiled_only) == 0)
+	_check("click_on_the_citadel_visual_edge_selects", Pick.closest_hit(visual_edge, candidates) == 11)
+	var compiled_only := [{"id": 11, "position": origin, "radius": compiled_52}]
+	_check("compiled_52_circle_alone_misses_the_citadel_edge", Pick.closest_hit(visual_edge, compiled_only) == 0)
 	structure.queue_free()
 	_completed.append("visual-floor")
 

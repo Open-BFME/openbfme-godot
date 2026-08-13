@@ -203,6 +203,7 @@ func _apply_stored_display_settings() -> void:
 		String(display.get("window_mode", "windowed")),
 		String(display.get("resolution", "1920x1080"))
 	)
+	settings_script.call("apply_bindings_to_input_map")
 
 
 func _apply_loaded_scene(packed: Resource) -> void:
