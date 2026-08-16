@@ -2317,13 +2317,18 @@ func _playable_unit_projection(document: Dictionary) -> Dictionary:
 				# the clip always finishes before the randomized reload.
 				# Play at the authored min (deterministic; deferred Max jitter)
 				# and idle until the next shot — do not stretch across reload.
-				states["attackRangedFire"] = {
+				var fire_ranges: Dictionary = _clip_speed_ranges(ranked, fire_clips)
+				var fire_state := {
 					"clips": fire_clips,
 					"mode": "once",
 					"useWeaponTiming": false,
-					"AnimationSpeedFactorRange": _clip_speed_ranges(ranked, fire_clips),
+					"AnimationSpeedFactorRange": fire_ranges,
 					"clipProperties": _clip_properties(ranked, fire_clips),
 				}
+				var min_factor := _authored_min_speed_factor(fire_ranges)
+				if min_factor > 0.0:
+					fire_state["speedFactor"] = min_factor
+				states["attackRangedFire"] = fire_state
 	var presentations: Dictionary = visual.get("corePresentations", {}) as Dictionary
 	for state_value in presentations.keys():
 		var state := String(state_value)
@@ -2407,6 +2412,20 @@ func _conditioned_attack_clips(ranked: Array, condition_prefix: String) -> Array
 		if matched and identifier != "" and not result.has(identifier):
 			result.append(identifier)
 	return result
+
+
+func _authored_min_speed_factor(ranges: Dictionary) -> float:
+	## Deterministic fire-clip speed: the authored AnimationSpeedFactorRange min.
+	## Max jitter stays deferred (gondorarcher.ini:262 is 1.2 1.3).
+	var found := 0.0
+	for clip_value in ranges.keys():
+		var values: Variant = ranges[clip_value]
+		if typeof(values) != TYPE_ARRAY or (values as Array).is_empty():
+			continue
+		var low := float((values as Array)[0])
+		if low > 0.0 and (found == 0.0 or low < found):
+			found = low
+	return found
 
 
 func _clip_speed_ranges(ranked: Array, clips: Array[String]) -> Dictionary:

@@ -426,7 +426,7 @@ func _test_firing_animation_finishes_early_at_authored_speed() -> void:
 					"attack": [
 						{"identifier": "GUArcher_ATKD", "conditions": ["FIRING_OR_PREATTACK_B"]},
 						{"identifier": "GUArcher_ATKF1", "conditions": ["PREATTACK_A"]},
-						{"identifier": "GUArcher_ATKF2", "conditions": ["FIRING_OR_RELOADING_A"]},
+						{"identifier": "GUArcher_ATKF2", "conditions": ["FIRING_OR_RELOADING_A"], "AnimationSpeedFactorRange": [1.2, 1.3]},
 						{"identifier": "GUArcher_RUNB", "conditions": ["ATTACKING", "MOVING"]},
 					],
 				},
