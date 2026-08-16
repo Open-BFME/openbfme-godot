@@ -5890,6 +5890,115 @@ def test_screech_rows_project_the_engine_hardcoded_terror_emotion() -> None:
     )
 
 
+def test_screech_accepts_duplicate_modules_that_author_the_same_range() -> None:
+    # MordorWitchKingOnFellBeast authors SpecialAbilityScreech twice: the
+    # fell-beast module tag and its own, both EffectRange = 180 with different
+    # trigger sounds. Duplicate tags that agree on the range are not an
+    # ambiguity, so the row compiles at the one range retail authored.
+    documents = _batch3_hero_documents()
+    _with_hero_modules(
+        documents,
+        "  Behavior = SpecialPowerModule ModuleTag_ScreechStarter\n"
+        "    SpecialPowerTemplate = SpecialAbilityFixtureScreech\n"
+        "    UpdateModuleStartsAttack = Yes\n"
+        "  End\n"
+        "  Behavior = SpecialAbilityUpdate ModuleTag_ScreechUpdate\n"
+        "    SpecialPowerTemplate = SpecialAbilityFixtureScreech\n"
+        "    UnpackTime = 1\n"
+        "    EffectRange = 180\n"
+        "    TriggerSound = FixtureScreechA\n"
+        "    PackTime = 3000\n"
+        "  End\n"
+        "  Behavior = SpecialAbilityUpdate ModuleTag_MountScreechUpdate\n"
+        "    SpecialPowerTemplate = SpecialAbilityFixtureScreech\n"
+        "    UnpackTime = 1\n"
+        "    EffectRange = 180\n"
+        "    TriggerSound = FixtureScreechB\n"
+        "    PackTime = 3000\n"
+        "  End\n",
+    )
+    command_sets = documents["data/ini/commandset.ini"].decode()
+    documents["data/ini/commandset.ini"] = command_sets.replace(
+        "  16 = Command_FixtureHorn\nEnd",
+        "  16 = Command_FixtureHorn\n  17 = Command_FixtureScreech\nEnd",
+        1,
+    ).encode()
+    documents["data/ini/commandbutton.ini"] += (
+        b"\nCommandButton Command_FixtureScreech\n"
+        b"  Command = SPECIAL_POWER\n"
+        b"  SpecialPower = SpecialAbilityFixtureScreech\n"
+        b"  TextLabel = CONTROLBAR:FixtureScreech\n"
+        b"  DescriptLabel = CONTROLBAR:ToolTipFixtureScreech\n"
+        b"  ButtonImage = HSFixtureScreech\n"
+        b"End\n"
+    )
+    documents["data/ini/specialpower.ini"] += (
+        b"SpecialPower SpecialAbilityFixtureScreech\n"
+        b"  Enum = SPECIAL_SCREECH\n"
+        b"  ReloadTime = 180000\n"
+        b"End\n"
+    )
+    documents["data/ini/emotions.ini"] = _FIXTURE_EMOTIONS
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    row = _abilities_by_id(descriptor)["Command_FixtureScreech"]
+    assert row["implementation"]["status"] == "implemented"
+    assert row["effect"]["kind"] == "terror"
+    assert row["effect"]["radius"] == 180
+
+
+def test_screech_still_fails_closed_when_duplicate_modules_disagree() -> None:
+    documents = _batch3_hero_documents()
+    _with_hero_modules(
+        documents,
+        "  Behavior = SpecialPowerModule ModuleTag_ScreechStarter\n"
+        "    SpecialPowerTemplate = SpecialAbilityFixtureScreech\n"
+        "    UpdateModuleStartsAttack = Yes\n"
+        "  End\n"
+        "  Behavior = SpecialAbilityUpdate ModuleTag_ScreechUpdate\n"
+        "    SpecialPowerTemplate = SpecialAbilityFixtureScreech\n"
+        "    UnpackTime = 1\n"
+        "    EffectRange = 180\n"
+        "  End\n"
+        "  Behavior = SpecialAbilityUpdate ModuleTag_MountScreechUpdate\n"
+        "    SpecialPowerTemplate = SpecialAbilityFixtureScreech\n"
+        "    UnpackTime = 1\n"
+        "    EffectRange = 240\n"
+        "  End\n",
+    )
+    command_sets = documents["data/ini/commandset.ini"].decode()
+    documents["data/ini/commandset.ini"] = command_sets.replace(
+        "  16 = Command_FixtureHorn\nEnd",
+        "  16 = Command_FixtureHorn\n  17 = Command_FixtureScreech\nEnd",
+        1,
+    ).encode()
+    documents["data/ini/commandbutton.ini"] += (
+        b"\nCommandButton Command_FixtureScreech\n"
+        b"  Command = SPECIAL_POWER\n"
+        b"  SpecialPower = SpecialAbilityFixtureScreech\n"
+        b"  TextLabel = CONTROLBAR:FixtureScreech\n"
+        b"  DescriptLabel = CONTROLBAR:ToolTipFixtureScreech\n"
+        b"  ButtonImage = HSFixtureScreech\n"
+        b"End\n"
+    )
+    documents["data/ini/specialpower.ini"] += (
+        b"SpecialPower SpecialAbilityFixtureScreech\n"
+        b"  Enum = SPECIAL_SCREECH\n"
+        b"  ReloadTime = 180000\n"
+        b"End\n"
+    )
+    documents["data/ini/emotions.ini"] = _FIXTURE_EMOTIONS
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    row = _abilities_by_id(descriptor)["Command_FixtureScreech"]
+    assert row["implementation"]["status"] == "unimplemented"
+    assert "disagreeing EffectRange" in row["implementation"]["reason"]
+    assert row["effect"] == {"kind": "none"}
+
+
 def test_missing_reload_time_defaults_to_zero_cooldown() -> None:
     # Retail may omit ReloadTime entirely (Dain's Stubborn Pride): the engine
     # default is zero milliseconds, not an unresolvable expression.

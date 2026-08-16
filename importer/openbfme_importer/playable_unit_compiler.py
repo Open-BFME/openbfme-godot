@@ -9261,7 +9261,17 @@ def _hero_ability_effect(
             )
             is not None
         ]
-        if len(ranges) != 1 or float(ranges[0]) <= 0.0:
+        # MordorWitchKingOnFellBeast binds SpecialAbilityScreech twice — the
+        # fell-beast module tag and its own, differing only in TriggerSound —
+        # and both author EffectRange = 180. Duplicate tags that agree are not
+        # an ambiguity; only disagreeing ranges leave the projection unknown.
+        distinct_ranges = {float(value) for value in ranges}
+        if len(distinct_ranges) > 1:
+            raise PlayableUnitCompilerError(
+                f"{label} SPECIAL_SCREECH has disagreeing EffectRange values: "
+                + ", ".join(str(value) for value in sorted(distinct_ranges))
+            )
+        if len(ranges) < 1 or float(ranges[0]) <= 0.0:
             raise PlayableUnitCompilerError(
                 f"{label} SPECIAL_SCREECH needs exactly one positive EffectRange"
             )
