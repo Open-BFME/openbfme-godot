@@ -3,7 +3,7 @@ extends SceneTree
 
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 
-const EXPECTED_CHECKS := 5
+const EXPECTED_CHECKS := 8
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
 var _watchdog := RunnerWatchdogScript.new()
 var passed := 0
@@ -19,6 +19,7 @@ func _run() -> void:
 	_test_naval_row_classification()
 	_test_land_row_is_not_naval()
 	_test_assign_route_uses_water_for_ships()
+	_test_naval_row_never_borrows_the_land_grid()
 	_finish()
 
 
@@ -65,6 +66,41 @@ func _test_assign_route_uses_water_for_ships() -> void:
 	_check("infantry_uses_land_query", land_ok and provider.land_queries == 1, "land=%d" % provider.land_queries)
 
 
+func _test_naval_row_never_borrows_the_land_grid() -> void:
+	## A ship whose route provider cannot answer for water has no navigable
+	## domain. It must be refused by name; borrowing query_route would path a
+	## hull across land and report success.
+	var ship := {
+		"position": Vector2.ZERO,
+		"category": "naval",
+		"kind_of": ["SHIP"],
+		"flying": false,
+	}
+	var land_only = SimScript.new()
+	var provider := _LandOnlyProvider.new()
+	land_only.route_provider = provider
+	var borrowed := bool(land_only._assign_route(ship.duplicate(true), Vector2(20, 0)))
+	_check(
+		"land_only_provider_refuses_ship_by_name",
+		not borrowed and String(land_only.last_route_rejection) == "water-navigation-unavailable",
+		"assigned=%s reason=%s" % [borrowed, land_only.last_route_rejection],
+	)
+	_check(
+		"land_only_provider_is_never_queried_for_a_ship",
+		provider.land_queries == 0,
+		"land=%d" % provider.land_queries,
+	)
+
+	var no_provider = SimScript.new()
+	no_provider.route_provider = null
+	var fabricated := bool(no_provider._assign_route(ship.duplicate(true), Vector2(20, 0)))
+	_check(
+		"absent_provider_refuses_ship_instead_of_fabricating_a_route",
+		not fabricated and String(no_provider.last_route_rejection) == "water-navigation-unavailable",
+		"assigned=%s reason=%s" % [fabricated, no_provider.last_route_rejection],
+	)
+
+
 func _finish() -> void:
 	if passed + failed != EXPECTED_CHECKS:
 		failed += 1
@@ -90,3 +126,12 @@ class _WaterProvider:
 class _PassParity:
 	func can_path_between(_from: Vector2, _to: Vector2) -> bool:
 		return true
+
+
+class _LandOnlyProvider:
+	## Deliberately has no query_water_route: the shape a ship must refuse.
+	var land_queries := 0
+
+	func query_route(_from: Vector2, to: Vector2) -> Dictionary:
+		land_queries += 1
+		return {"valid": true, "reason": "", "points": [to], "cells": [], "ford_name": ""}

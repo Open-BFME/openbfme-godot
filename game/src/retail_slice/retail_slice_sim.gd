@@ -13381,6 +13381,7 @@ func tick() -> void:
 	_step_structure_eviction()
 	_step_battalion_separation()
 	_step_construction()
+	_step_auto_heal_updates()
 	_step_hero_regeneration()
 	_step_hero_abilities()
 	_step_slow_death_core()
@@ -13503,6 +13504,10 @@ func _step_hero_regeneration() -> void:
 		var row: Dictionary = entities[id]
 		if String(row.get("category", "")) != "hero":
 			continue
+		if row.has("auto_heal_behavior"):
+			# An authored AutoHealBehavior contract is the real regeneration
+			# rate; the provisional percentage would stack a second heal on top.
+			continue
 		var health := int(row.get("health", 0))
 		var maximum := int(row.get("maximum_health", 0))
 		if health <= 0 or health >= maximum:
@@ -13533,6 +13538,131 @@ func _step_hero_regeneration() -> void:
 		for value in health_values:
 			aggregate += int(value)
 		row["health"] = aggregate
+
+
+# --- AutoHealBehavior (authored self-heal cadence) ---
+# Retail's AutoHealBehavior is a flat HealingAmount applied every HealingDelay
+# milliseconds, restarted StartHealingDelay after the object was last damaged
+# when HealOnlyIfNotInCombat is authored. Heroes carry HERO_HEAL_AMOUNT (30) on
+# a 1000ms pulse behind a HERO_HEAL_DELAY (15000ms) restart, which is nothing
+# like the provisional percentage above. Only the importer's closed executable
+# subset arms here: area heals, button bursts, upgrade-triggered activation and
+# containment heals stay authored evidence with no timer.
+
+
+func _attach_auto_heal_contract(row: Dictionary, contract: Dictionary) -> void:
+	if String(contract.get("extraction", "")) != "typed" or row.has("auto_heal_behavior"):
+		return
+	var executable := bool(contract.get("executable", false))
+	if not executable and String(contract.get("runtime_status", "")) == "executable":
+		executable = true
+	if not executable:
+		return
+	var fields := contract.get("fields", {}) as Dictionary
+	if not bool(_module_contract_value(fields, "StartsActive", false)):
+		return
+	var amount := int(_module_contract_value(fields, "HealingAmount", 0))
+	var delay_milliseconds := float(_module_contract_value(fields, "HealingDelay", 0.0))
+	if amount <= 0 or delay_milliseconds <= 0.0:
+		return
+	var delay_ticks := _ship_contract_delay_ticks(delay_milliseconds)
+	if delay_ticks < 1:
+		push_error(
+			"[RetailSliceSim] AutoHealBehavior %s authors HealingDelay %.0fms, below one %.0fms sim tick; healing refused rather than run at an invented rate"
+			% [String(contract.get("tag", "")), delay_milliseconds, TICK_SECONDS * 1000.0]
+		)
+		return
+	row["auto_heal_behavior"] = {
+		"healing_amount": amount,
+		"healing_delay_ticks": delay_ticks,
+		"start_delay_ticks": _ship_contract_delay_ticks(
+			float(_module_contract_value(fields, "StartHealingDelay", 0.0))
+		),
+		"heal_only_if_not_in_combat": bool(
+			_module_contract_value(fields, "HealOnlyIfNotInCombat", false)
+		),
+		"armed_tick": tick_index,
+		"next_heal_tick": -1,
+		"tag": String(contract.get("tag", "")),
+		"source_ini": String(contract.get("sourceIni", contract.get("source_ini", ""))),
+		"line": int(contract.get("line", 0)),
+	}
+
+
+func _step_auto_heal_updates() -> void:
+	for id in entity_ids():
+		if not entities.has(id):
+			continue
+		var row := entities[id] as Dictionary
+		if not row.has("auto_heal_behavior") and not row.has("module_contracts"):
+			_attach_module_contracts(row)
+		if row.has("auto_heal_behavior"):
+			_apply_auto_heal_pulse(row, true)
+	for id in structure_ids():
+		if not structures.has(id):
+			continue
+		var row := structures[id] as Dictionary
+		if (
+			not row.has("auto_heal_behavior")
+			and not bool(row.get("structure_module_contracts_attached", false))
+		):
+			_attach_structure_module_contracts(row)
+		if row.has("auto_heal_behavior"):
+			_apply_auto_heal_pulse(row, false)
+
+
+func _apply_auto_heal_pulse(row: Dictionary, battalion: bool) -> void:
+	var policy := row.get("auto_heal_behavior", {}) as Dictionary
+	if policy.is_empty():
+		return
+	var health := int(row.get("health", 0))
+	var maximum := int(row.get("maximum_health", 0))
+	# Dead stays dead: AutoHealBehavior never resurrects.
+	if health <= 0 or maximum <= 0:
+		return
+	if health >= maximum:
+		# Undamaged objects bank nothing; the restart delay is measured from the
+		# next damage, not from the last pulse.
+		policy["next_heal_tick"] = -1
+		return
+	var start_delay := int(policy.get("start_delay_ticks", 0))
+	var anchor := int(policy.get("armed_tick", 0)) + start_delay
+	if bool(policy.get("heal_only_if_not_in_combat", false)):
+		anchor = int(row.get("last_damage_tick", -1000000)) + start_delay
+	var next_heal := int(policy.get("next_heal_tick", -1))
+	if next_heal < 0 or next_heal < anchor:
+		next_heal = maxi(anchor, tick_index)
+	if tick_index < next_heal:
+		policy["next_heal_tick"] = next_heal
+		return
+	policy["next_heal_tick"] = next_heal + maxi(1, int(policy.get("healing_delay_ticks", 1)))
+	var amount := int(policy.get("healing_amount", 0))
+	if amount <= 0:
+		return
+	if not battalion:
+		row["health"] = mini(maximum, health + amount)
+		return
+	var health_values: Array = row.get("member_health", [])
+	var member_maximum := int(row.get("member_maximum_health", 0))
+	if health_values.is_empty() or member_maximum <= 0:
+		row["health"] = mini(maximum, health + amount)
+		return
+	var remaining := amount
+	for index in range(health_values.size()):
+		if remaining <= 0:
+			break
+		var current := int(health_values[index])
+		# A dead member is not healed back into the battalion.
+		if current <= 0 or current >= member_maximum:
+			continue
+		var healed := mini(remaining, member_maximum - current)
+		health_values[index] = current + healed
+		remaining -= healed
+	row["member_health"] = health_values
+	var aggregate := 0
+	for value in health_values:
+		aggregate += int(value)
+	row["health"] = aggregate
 
 
 # --- Hero ability surface (converted SPECIAL_POWER rows) ---
@@ -13925,6 +14055,8 @@ func _attach_module_contracts(row: Dictionary) -> void:
 			_attach_slow_death_core_contract(row, contract)
 		elif folded == "attributemodifierauraupdate":
 			_attach_attribute_modifier_aura_contract(row, contract)
+		elif folded == "autohealbehavior":
+			_attach_auto_heal_contract(row, contract)
 		elif folded == "lifetimeupdate":
 			_attach_lifetime_update_contract(row, contract)
 		elif folded == "stancesbehavior":
@@ -14031,6 +14163,15 @@ func _attach_module_contracts(row: Dictionary) -> void:
 
 func module_contracts_for_unit_type(unit_type: String) -> Array:
 	return (_unit_module_contracts.get(unit_type, []) as Array).duplicate(true)
+
+
+func register_unit_module_contracts(unit_type: String, contracts: Array) -> void:
+	## Index unit-carried moduleContracts by unit type, the same way
+	## register_structure_module_contracts indexes the structure table. Headless
+	## fixtures and scenario documents both reach the attach path through here.
+	if unit_type.strip_edges() == "" or contracts.is_empty():
+		return
+	_unit_module_contracts[unit_type] = contracts.duplicate(true)
 
 
 func register_structure_module_contracts(key: String, contracts: Array) -> void:
@@ -15126,6 +15267,8 @@ func _attach_structure_module_contracts(row: Dictionary) -> void:
 			_attach_ship_slow_death_contract(row, contract)
 		elif folded == "attributemodifierauraupdate":
 			_attach_attribute_modifier_aura_contract(row, contract)
+		elif folded == "autohealbehavior":
+			_attach_auto_heal_contract(row, contract)
 		elif folded == "lifetimeupdate":
 			_attach_lifetime_update_contract(row, contract)
 		elif folded == "stancesbehavior":
@@ -29479,7 +29622,13 @@ func _query_route(from: Vector2, to: Vector2) -> Dictionary:
 
 
 func _query_route_for_row(row: Dictionary, from: Vector2, to: Vector2) -> Dictionary:
-	if _is_naval_row(row) and route_provider != null and route_provider.has_method("query_water_route"):
+	if _is_naval_row(row):
+		# Water is the only domain a hull has. A provider that cannot answer for
+		# water leaves the ship with no route at all — the land grid is not a
+		# substitute, and neither is _query_route's direct fallback, which would
+		# hand back a confident straight line across dry ground.
+		if route_provider == null or not route_provider.has_method("query_water_route"):
+			return {"valid": false, "reason": "water-navigation-unavailable", "points": [], "cells": []}
 		var water_value: Variant = route_provider.call("query_water_route", from, to)
 		if typeof(water_value) == TYPE_DICTIONARY:
 			return water_value as Dictionary
