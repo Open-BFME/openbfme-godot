@@ -138,6 +138,10 @@ ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE: Mapping[str, tuple[str, str]] = {
         "game/src/retail_slice/retail_battalion.gd",
         "game/tests/sub_objects_upgrade_runtime_runner.gd",
     ),
+    "AnimationSoundClientBehavior": (
+        "game/src/retail_slice/retail_slice_audio.gd",
+        "game/tests/animation_sound_client_behavior_runtime_runner.gd",
+    ),
 }
 
 
@@ -5939,6 +5943,116 @@ def compile_random_sound_selectors(
     return rows
 
 
+_ANIMATION_SOUND_LINE_RE = re.compile(
+    r"^Sound:\s*(?P<event>\S+)\s+(?P<groups>Animation:.+)$"
+)
+_ANIMATION_SOUND_GROUP_RE = re.compile(
+    r"Animation:\s*(?P<animation>\S+)\s+Frames:\s*(?P<frames>[0-9]+(?:\s+[0-9]+)*)"
+)
+_ANIMATION_SOUND_SUPPORTED = frozenset({"animationsound", "maxupdaterangecap"})
+
+
+def _strip_animation_sound_comments(raw: str) -> str:
+    text = raw.strip()
+    for marker in ("//", ";,;", ";"):
+        index = text.find(marker)
+        if index >= 0:
+            text = text[:index].strip()
+    return text
+
+
+def _animation_sound_row_has_closed_runtime(fields: Mapping[str, object]) -> bool:
+    sounds = fields.get("AnimationSound")
+    return isinstance(sounds, list) and bool(sounds)
+
+
+def compile_animation_sound_client_behaviors(
+    lineage: Sequence[SageObject], target_id: str
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for block in _module_blocks(lineage, "AnimationSoundClientBehavior"):
+        authored = {a.key.casefold() for a in block.assignments}
+        unknown = authored - _ANIMATION_SOUND_SUPPORTED
+        if unknown or block.blocks:
+            raise ModuleContractError(
+                f"{target_id} AnimationSoundClientBehavior unsupported fields: "
+                + ", ".join(sorted(unknown))
+            )
+        sounds: list[dict[str, object]] = []
+        deferred: list[dict[str, object]] = []
+        for assignment in block.assignments:
+            if assignment.key.casefold() != "animationsound":
+                continue
+            raw = _strip_animation_sound_comments(assignment.value)
+            if "requiredmc:" in raw.casefold():
+                deferred.append(
+                    {
+                        "name": assignment.key,
+                        "authored": assignment.value,
+                        "sourceIni": assignment.source_virtual_path,
+                        "line": assignment.line,
+                        "reason": "required-model-condition-gate-without-runtime-oracle",
+                    }
+                )
+                continue
+            match = _ANIMATION_SOUND_LINE_RE.fullmatch(raw)
+            groups = (
+                list(_ANIMATION_SOUND_GROUP_RE.finditer(match.group("groups")))
+                if match is not None
+                else []
+            )
+            remainder = (
+                _ANIMATION_SOUND_GROUP_RE.sub("", match.group("groups")).strip()
+                if match is not None
+                else raw
+            )
+            if match is None or not groups or remainder:
+                deferred.append(
+                    {
+                        "name": assignment.key,
+                        "authored": assignment.value,
+                        "sourceIni": assignment.source_virtual_path,
+                        "line": assignment.line,
+                        "reason": "unparsed-animation-sound-line",
+                    }
+                )
+                continue
+            for group in groups:
+                sounds.append(
+                    {
+                        "eventId": match.group("event"),
+                        "animation": group.group("animation"),
+                        "frames": [int(value) for value in group.group("frames").split()],
+                        "authored": assignment.value,
+                        "sourceIni": assignment.source_virtual_path,
+                        "line": assignment.line,
+                    }
+                )
+        fields: dict[str, object] = {"AnimationSound": sounds}
+        cap = _number_field(
+            _assignment_map(block).get("maxupdaterangecap"),
+            f"{target_id} AnimationSoundClientBehavior MaxUpdateRangeCap",
+        )
+        if cap is not None:
+            fields["MaxUpdateRangeCap"] = cap
+        if deferred:
+            fields["deferredAnimationSound"] = deferred
+        rows.append(
+            _row(
+                "AnimationSoundClientBehavior",
+                block,
+                fields,
+                runtime_status=(
+                    "executable"
+                    if _animation_sound_row_has_closed_runtime(fields)
+                    else "deferred"
+                ),
+            )
+        )
+    rows.sort(key=lambda row: (str(row["sourceIni"]).casefold(), int(row["line"])))
+    return rows
+
+
 _RADIATE_FEAR_FIELDS = frozenset({
     "initiallyactive", "triggeredby", "whichspecialpower", "generateterror",
     "generatefear", "generateuncontrollablefear", "emotionpulseradius",
@@ -8221,6 +8335,7 @@ TYPED_MODULE_KINDS: frozenset[str] = frozenset(
         "ThreatFinderUpdate",
         "ModelConditionSoundSelectorClientBehavior",
         "RandomSoundSelectorClientBehavior",
+        "AnimationSoundClientBehavior",
         "RadiateFearUpdate",
         "PoisonedBehavior",
         "DamageFieldUpdate",
@@ -8467,6 +8582,7 @@ def compile_all_module_contracts(
     rows.extend(compile_threat_finder_updates(lineage, target_id))
     rows.extend(compile_model_condition_sound_selectors(lineage, target_id))
     rows.extend(compile_random_sound_selectors(lineage, target_id))
+    rows.extend(compile_animation_sound_client_behaviors(lineage, target_id))
     rows.extend(compile_radiate_fear_updates(lineage, target_id))
     rows.extend(compile_poisoned_behaviors(lineage, target_id))
     rows.extend(compile_damage_field_updates(lineage, target_id))
@@ -8546,6 +8662,7 @@ def validate_module_contracts(rows: object, *, label: str) -> None:
             (module == "BezierProjectileBehavior" and _bezier_common_landing_shape(fields))
             or (module == "GeometryUpgrade" and _geometry_upgrade_row_has_closed_runtime(fields))
             or (module == "SubObjectsUpgrade" and _sub_objects_upgrade_row_has_closed_runtime(fields))
+            or (module == "AnimationSoundClientBehavior" and _animation_sound_row_has_closed_runtime(fields))
             or (module == "QueueProductionExitUpdate" and _queue_exit_row_has_closed_runtime(fields))
             or (module == "SpawnBehavior" and _spawn_reclaim_row_has_closed_runtime(fields))
             or (module == "SlowDeathBehavior" and _slow_death_row_has_closed_runtime(row))

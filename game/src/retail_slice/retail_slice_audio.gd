@@ -194,6 +194,9 @@ var playable_unit_weapon_sfx: Dictionary = {}
 ## object_id -> authored bodyfall event id for siege/monster units (their own
 ## class — a machine or monster never borrows the human BodyFallSoldier).
 var playable_unit_bodyfall: Dictionary = {}
+## object_id -> authored AnimationSoundClientBehavior rows (clip + frame).
+## When present, bodyfall/weapon animation sounds pick by clip, not lowest id.
+var playable_unit_animation_sounds: Dictionary = {}
 ## object id -> the unit's OWN authored `SoundImpact` AudioEvent id.
 ##
 ## NOT the per-hit sound. Retail's `SoundImpact` is the CRUSH / KNOCKBACK thud:
@@ -310,6 +313,7 @@ func configure(selected_pack_root: String, enable_playback: bool = true, active_
 	playable_unit_categories.clear()
 	playable_unit_weapon_sfx.clear()
 	playable_unit_bodyfall.clear()
+	playable_unit_animation_sounds.clear()
 	playable_unit_impact.clear()
 	generic_weapon_swing_fallbacks.clear()
 	damage_fx_gaps.clear()
@@ -1401,7 +1405,7 @@ func _consume_event(event: Dictionary) -> void:
 	elif kind == "battalion.defeated":
 		var defeated_object_id := _object_id_for_event(event, target_id)
 		_play_routed(route_roster_voice(defeated_object_id, "death", sequence), voice_player)
-		_play_sfx(_route_bodyfall(defeated_object_id, sequence))
+		_play_sfx(_route_bodyfall(defeated_object_id, sequence, String(event.get("clip", "")), int(event.get("frame", -1))))
 		_entity_object_ids.erase(target_id)
 		# Pure RotWK 2.01 has no generic UnitLost/BattalionLost EVA block.
 		# The unit's own authored death voice above is therefore the complete,
@@ -1409,7 +1413,7 @@ func _consume_event(event: Dictionary) -> void:
 	elif kind == "battalion.member_defeated":
 		# Every fallen member lands its own class bodyfall (horde wipes are not
 		# a single thud); the battalion's die voice still fires once at defeat.
-		_play_sfx(_route_bodyfall(_object_id_for_event(event, target_id), sequence))
+		_play_sfx(_route_bodyfall(_object_id_for_event(event, target_id), sequence, String(event.get("clip", "")), int(event.get("frame", -1))))
 	elif kind == "combat.swing":
 		# BATTALION-LEVEL CADENCE MARKER ONLY - deliberately silent.
 		#
@@ -1562,12 +1566,20 @@ func route_crush_impact(object_id: String, sequence: int) -> Dictionary:
 	return route_audio_event(impact_id, sequence)
 
 
-func _route_bodyfall(object_id: String, sequence: int) -> Dictionary:
+func _route_bodyfall(object_id: String, sequence: int, clip: String = "", frame: int = -1) -> Dictionary:
 	## THE UNIT'S OWN authored bodyfall first, for every category — see
 	## `_bodyfall_id_for_document`. Only a unit that binds none at all reaches
 	## the class rule below (horse impact for cavalry, the generic soldier leaf
 	## for infantry/heroes), and siege/monster still fails closed rather than
 	## borrowing a human thud.
+	##
+	## When typed AnimationSoundClientBehavior rows are attached, a clip pick
+	## wins. The lowest-id bodyfall is only the authored-clip-absent fallback.
+	var typed := select_animation_sound(object_id, clip, frame, "bodyfall")
+	if not typed.is_empty():
+		return route_audio_event(String(typed.get("eventId", "")), sequence)
+	if playable_unit_animation_sounds.has(object_id) and clip != "":
+		return _rejection("animation-sound-clip-unmatched", clip, object_id, "sfx", sequence)
 	var doc_bodyfall := String(playable_unit_bodyfall.get(object_id, ""))
 	if doc_bodyfall != "":
 		return route_audio_event(doc_bodyfall, sequence)
@@ -1991,11 +2003,104 @@ func _load_playable_unit_audio_routes() -> void:
 			playable_unit_bodyfall[object_id] = bodyfall_id
 			if unit_id != object_id:
 				playable_unit_bodyfall[unit_id] = bodyfall_id
+		bind_animation_sound_contracts(object_id, PlayableUnitAdapter.module_contracts(document))
+		if unit_id != object_id:
+			bind_animation_sound_contracts(unit_id, PlayableUnitAdapter.module_contracts(document))
 		var impact_id := _impact_id_for_document(document, bindings)
 		if impact_id != "":
 			playable_unit_impact[object_id] = impact_id
 			if unit_id != object_id:
 				playable_unit_impact[unit_id] = impact_id
+
+
+func bind_animation_sound_contracts(object_id: String, contracts: Array) -> int:
+	## Attach compile-shaped AnimationSoundClientBehavior rows. Empty object_id
+	## is ignored. Existing rows for the id are replaced.
+	if object_id == "":
+		return 0
+	var sounds: Array = []
+	for contract_value in contracts:
+		if typeof(contract_value) != TYPE_DICTIONARY:
+			continue
+		var contract := contract_value as Dictionary
+		if String(contract.get("module", "")) != "AnimationSoundClientBehavior":
+			continue
+		if String(contract.get("extraction", "")) != "typed":
+			continue
+		var status := String(contract.get("runtimeStatus", contract.get("runtime_status", "")))
+		if status != "executable":
+			continue
+		var fields: Dictionary = contract.get("fields", {}) as Dictionary
+		for sound_value in fields.get("AnimationSound", []) as Array:
+			if typeof(sound_value) != TYPE_DICTIONARY:
+				continue
+			var sound := sound_value as Dictionary
+			var event_id := String(sound.get("eventId", ""))
+			var animation := String(sound.get("animation", ""))
+			if event_id == "" or animation == "":
+				continue
+			sounds.append({
+				"eventId": event_id,
+				"animation": animation,
+				"frames": (sound.get("frames", []) as Array).duplicate(),
+			})
+	if sounds.is_empty():
+		playable_unit_animation_sounds.erase(object_id)
+		return 0
+	playable_unit_animation_sounds[object_id] = sounds
+	return sounds.size()
+
+
+func select_animation_sound(object_id: String, clip: String, frame: int = -1, event_contains: String = "") -> Dictionary:
+	## Pick the authored AnimationSound for this clip (and optional frame).
+	## Clip match is exact, then suffix-after-dot, then casefolded containment.
+	## A supplied frame must appear in the binding's Frames list. Unknown clips
+	## fail closed (empty) instead of falling back to lowest event id.
+	if clip == "" or not playable_unit_animation_sounds.has(object_id):
+		return {}
+	var clip_folded := clip.to_lower()
+	var clip_leaf := _animation_clip_leaf(clip_folded)
+	var needle := event_contains.to_lower()
+	for sound_value in playable_unit_animation_sounds[object_id] as Array:
+		var sound := sound_value as Dictionary
+		var event_id := String(sound.get("eventId", ""))
+		if needle != "" and not event_id.to_lower().contains(needle):
+			continue
+		var animation := String(sound.get("animation", "")).to_lower()
+		var anim_leaf := _animation_clip_leaf(animation)
+		var matched := (
+			animation == clip_folded
+			or anim_leaf == clip_folded
+			or anim_leaf == clip_leaf
+			or clip_folded.ends_with(anim_leaf)
+			or animation.ends_with(clip_leaf)
+		)
+		if not matched:
+			continue
+		if frame >= 0:
+			var frames: Array = sound.get("frames", []) as Array
+			var hit := false
+			for frame_value in frames:
+				if int(frame_value) == frame:
+					hit = true
+					break
+			if not hit:
+				continue
+		return {
+			"eventId": event_id,
+			"animation": String(sound.get("animation", "")),
+			"frames": (sound.get("frames", []) as Array).duplicate(),
+			"source": "typed-animation-sound",
+		}
+	return {}
+
+
+func _animation_clip_leaf(name: String) -> String:
+	## Last dotted token, never Godot's get_basename (that treats DIEA as an extension).
+	var folded := name.to_lower().replace("\\", "/").get_file()
+	if folded.contains("."):
+		return folded.get_slice(".", folded.get_slice_count(".") - 1)
+	return folded
 
 
 func _bodyfall_id_for_document(bindings: Dictionary) -> String:
@@ -2007,12 +2112,9 @@ func _bodyfall_id_for_document(bindings: Dictionary) -> String:
 	## `BodyFallGeneric1`; Boromir authors `BodyFallGenericNoArmor`. Both were
 	## already shipped in the packs and neither was ever played.
 	##
-	## NAMED LIMITATION, not a silent one. Retail binds each bodyfall to a
-	## SPECIFIC animation (`AnimationSound = Sound:BodyFallGenericNoArmor
-	## Animation:GUBoromir_SKL.GUBoromir_DTHA`), but the importer drops the
-	## `Animation:` attribute, so a unit that binds several bodyfalls cannot be
-	## told apart here. The pick is therefore deterministic (lowest id) rather
-	## than animation-correct, and closing it is an importer emission change.
+	## Lowest-id remains the authored-clip-absent fallback. Typed
+	## AnimationSoundClientBehavior rows pick by clip/frame via
+	## `select_animation_sound` when a death event names the playing clip.
 	var ids: Array = bindings.keys()
 	ids.sort_custom(func(a: Variant, b: Variant) -> bool: return String(a).to_lower() < String(b).to_lower())
 	for event_id_value in ids:
@@ -2736,6 +2838,7 @@ func stop_all() -> void:
 	roster_voice_form_routes.clear()
 	playable_unit_weapon_sfx.clear()
 	playable_unit_bodyfall.clear()
+	playable_unit_animation_sounds.clear()
 	_structure_damage_stage.clear()
 	_stream_cache.clear()
 	_clear_ambient_players()
