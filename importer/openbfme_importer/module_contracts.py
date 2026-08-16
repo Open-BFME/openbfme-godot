@@ -162,6 +162,10 @@ ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE: Mapping[str, tuple[str, str]] = {
         "game/src/retail_slice/fx_timing.gd",
         "game/tests/test_fx_timing_delays.gd",
     ),
+    "AnimationState": (
+        "game/src/retail_slice/animation_state_select.gd",
+        "game/tests/animation_state_select_runtime_runner.gd",
+    ),
 }
 
 
@@ -933,6 +937,182 @@ def compile_model_condition_upgrades(
                 ),
             )
         )
+    rows.sort(key=lambda row: (str(row["sourceIni"]).casefold(), int(row["line"])))
+    return rows
+
+
+_ANIMATION_STATE_KINDS = frozenset(
+    {"animationstate", "idleanimationstate", "transitionstate"}
+)
+_ANIMATION_STATE_SUPPORTED = frozenset(
+    {
+        "statename",
+        "flags",
+        "animationname",
+        "animationmode",
+        "animationblendtime",
+        "animationpriority",
+        "animationspeedfactorrange",
+    }
+)
+_ANIMATION_STATE_DEFERRED = frozenset(
+    {
+        "particlesysbone",
+        "enteringstatefx",
+        "fxevent",
+        "shareanimation",
+        "usewapontiming",
+        "similarrestart",
+        "animationmustcompleteblend",
+        "frameforpristinebonepositions",
+        "allowrepeatinrandompick",
+        "distance",
+        "fadebeginframe",
+        "fadeendframe",
+        "fadingin",
+    }
+)
+_ANIMATION_STATE_KIND_LABELS = {
+    "animationstate": "AnimationState",
+    "idleanimationstate": "IdleAnimationState",
+    "transitionstate": "TransitionState",
+}
+
+
+def _animation_state_row_has_closed_runtime(fields: Mapping[str, object]) -> bool:
+    animations = fields.get("animations")
+    if not isinstance(animations, list):
+        return False
+    return any(
+        isinstance(row, Mapping) and str(row.get("animationName", "")).strip()
+        for row in animations
+    )
+
+
+def _compile_animation_entry(
+    block: SageBlock, target_id: str
+) -> tuple[dict[str, object] | None, list[dict[str, object]]]:
+    amap = _assignment_map(block)
+    deferred: list[dict[str, object]] = []
+    authored = {a.key.casefold() for a in block.assignments}
+    unknown = authored - _ANIMATION_STATE_SUPPORTED - _ANIMATION_STATE_DEFERRED
+    for name in sorted(authored & _ANIMATION_STATE_DEFERRED | unknown):
+        assignment = amap[name]
+        deferred.append(
+            {
+                "name": assignment.key,
+                "authored": assignment.value,
+                "sourceIni": assignment.source_virtual_path,
+                "line": assignment.line,
+                "reason": (
+                    "unclassified-animation-state-field"
+                    if name in unknown
+                    else "drawable-fx-or-share-without-runtime-oracle"
+                ),
+            }
+        )
+    name = _string_field(amap.get("animationname"))
+    if name is None:
+        return None, deferred
+    entry: dict[str, object] = {"animationName": str(name["value"])}
+    mode = _string_field(amap.get("animationmode"))
+    if mode is not None:
+        entry["mode"] = str(mode["value"]).strip().upper()
+    blend = _number_field(
+        amap.get("animationblendtime"),
+        f"{target_id} AnimationState AnimationBlendTime",
+    )
+    if blend is not None:
+        entry["blendTime"] = blend["value"]
+    priority = _number_field(
+        amap.get("animationpriority"),
+        f"{target_id} AnimationState AnimationPriority",
+    )
+    if priority is not None:
+        entry["priority"] = priority["value"]
+    speed = amap.get("animationspeedfactorrange")
+    if speed is not None:
+        _effective_top_blocks, tokens_fn, _walk_blocks = _walk_helpers()
+        tokens = list(tokens_fn(speed.value))
+        if len(tokens) != 2:
+            raise ModuleContractError(
+                f"{target_id} AnimationState AnimationSpeedFactorRange "
+                f"must be two numbers: {speed.value!r}"
+            )
+        try:
+            entry["speedFactorRange"] = [float(tokens[0]), float(tokens[1])]
+        except ValueError as exc:
+            raise ModuleContractError(
+                f"{target_id} AnimationState AnimationSpeedFactorRange "
+                f"must be two numbers: {speed.value!r}"
+            ) from exc
+    return entry, deferred
+
+
+def compile_animation_states(
+    lineage: Sequence[SageObject], target_id: str
+) -> list[dict[str, object]]:
+    """Typed AnimationState / IdleAnimationState / TransitionState rows.
+
+    Nested ParticleSysBone / EnteringStateFX stay deferred so pack cook does
+    not fail closed on the 2k+ bone-FX sites. A row is executable when it
+    names at least one AnimationName.
+    """
+
+    rows: list[dict[str, object]] = []
+    for kind in ("AnimationState", "IdleAnimationState", "TransitionState"):
+        for block in _module_blocks(lineage, kind):
+            fields: dict[str, object] = {
+                "stateKind": _ANIMATION_STATE_KIND_LABELS[kind.casefold()],
+                "conditions": {
+                    "value": [str(token) for token in block.header_tokens],
+                },
+                "animations": [],
+            }
+            deferred: list[dict[str, object]] = []
+            amap = _assignment_map(block)
+            state_name = _string_field(amap.get("statename"))
+            if state_name is not None:
+                fields["StateName"] = state_name
+            flags = _token_list_field(amap.get("flags"))
+            if flags is not None:
+                fields["Flags"] = flags
+            direct, extra = _compile_animation_entry(block, target_id)
+            deferred.extend(extra)
+            if direct is not None:
+                fields["animations"].append(direct)
+            for child in block.blocks:
+                if child.kind.casefold() != "animation":
+                    deferred.append(
+                        {
+                            "name": child.kind,
+                            "authored": child.raw_header,
+                            "sourceIni": child.source_virtual_path,
+                            "line": child.line,
+                            "reason": "nested-non-animation-block-deferred",
+                        }
+                    )
+                    continue
+                entry, child_deferred = _compile_animation_entry(child, target_id)
+                deferred.extend(child_deferred)
+                if entry is not None:
+                    if child.header_tokens:
+                        entry["tag"] = str(child.header_tokens[0])
+                    fields["animations"].append(entry)
+            if deferred:
+                fields["deferredFields"] = deferred
+            rows.append(
+                _row(
+                    "AnimationState",
+                    block,
+                    fields,
+                    runtime_status=(
+                        "executable"
+                        if _animation_state_row_has_closed_runtime(fields)
+                        else "deferred"
+                    ),
+                )
+            )
     rows.sort(key=lambda row: (str(row["sourceIni"]).casefold(), int(row["line"])))
     return rows
 
@@ -8906,6 +9086,7 @@ TYPED_MODULE_KINDS: frozenset[str] = frozenset(
         "SubObjectsUpgrade",
         "TransitionDamageFX",
         "ModelConditionUpgrade",
+        "AnimationState",
         "InactiveBody",
         "SpawnPointProductionExitUpdate",
         "SupplyCenterProductionExitUpdate",
@@ -9035,6 +9216,7 @@ def compile_all_module_contracts(
     rows.extend(compile_sub_objects_upgrades(lineage, target_id))
     rows.extend(compile_transition_damage_fx(lineage, target_id))
     rows.extend(compile_model_condition_upgrades(lineage, target_id))
+    rows.extend(compile_animation_states(lineage, target_id))
     rows.extend(compile_inactive_bodies(lineage, target_id))
     rows.extend(compile_spawn_point_production_exits(lineage, target_id))
     rows.extend(compile_supply_center_production_exits(lineage, target_id))
@@ -9215,6 +9397,7 @@ def validate_module_contracts(rows: object, *, label: str) -> None:
             or (module == "SubObjectsUpgrade" and _sub_objects_upgrade_row_has_closed_runtime(fields))
             or (module == "TransitionDamageFX" and _transition_damage_fx_row_has_closed_runtime(fields))
             or (module == "ModelConditionUpgrade" and _model_condition_upgrade_row_has_closed_runtime(fields))
+            or (module == "AnimationState" and _animation_state_row_has_closed_runtime(fields))
             or (module == "AnimationSoundClientBehavior" and _animation_sound_row_has_closed_runtime(fields))
             or (module == "QueueProductionExitUpdate" and _queue_exit_row_has_closed_runtime(fields))
             or (module == "SpawnBehavior" and _spawn_reclaim_row_has_closed_runtime(fields))

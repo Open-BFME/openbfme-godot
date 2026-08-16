@@ -6,6 +6,7 @@ const ShadowDecalScript = preload("res://src/retail_slice/retail_shadow_decal.gd
 const FormationScript = preload("res://src/retail_slice/retail_formation.gd")
 const AnimationTimingScript = preload("res://src/retail_slice/retail_animation_timing.gd")
 const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
+const AnimationStateSelectScript = preload("res://src/retail_slice/animation_state_select.gd")
 const DEFAULT_OBJECT_ID := "bfme2.object.gondor-fighter"
 const ARCHER_OBJECT_ID := "bfme2.object.gondor-archer"
 const RANGER_OBJECT_ID := "bfme2.object.gondor-ranger"
@@ -156,6 +157,9 @@ var _last_sub_object_hide: Array = []
 var model_condition_upgrade_contracts: Array = []
 var model_condition_flags: Array = []
 var _permanent_model_condition_flags: Dictionary = {}
+## Typed AnimationState rows (moduleContracts or pack authoredAnimationStates).
+var animation_state_contracts: Array = []
+var last_animation_state_receipt: Dictionary = {}
 var equipment_contract: Dictionary = {}
 var equipment_contract_ready := false
 var unresolved_animation_track_count := 0
@@ -450,6 +454,57 @@ func collect_model_condition_upgrade_contracts(source: Dictionary) -> Array:
 	return out
 
 
+func bind_animation_state_contracts(source: Dictionary) -> int:
+	## Prefer typed AnimationState moduleContracts; current packs still ship
+	## the same rows as visual.authoredAnimationStates until recook.
+	animation_state_contracts = collect_animation_state_contracts(source)
+	if animation_state_contracts.is_empty():
+		animation_state_contracts = collect_authored_animation_states(source)
+	return animation_state_contracts.size()
+
+
+func collect_animation_state_contracts(source: Dictionary) -> Array:
+	var out: Array = []
+	for row_value in _module_contract_arrays(source):
+		if typeof(row_value) != TYPE_DICTIONARY:
+			continue
+		var row := (row_value as Dictionary).duplicate(true)
+		if String(row.get("module", "")) != "AnimationState":
+			continue
+		if not row.has("runtimeStatus") and row.has("runtime_status"):
+			row["runtimeStatus"] = String(row.get("runtime_status", ""))
+		out.append(row)
+	return out
+
+
+func collect_authored_animation_states(source: Dictionary) -> Array:
+	var out: Array = []
+	for visual_value in _visual_documents(source):
+		for row_value in (visual_value.get("authoredAnimationStates", []) as Array):
+			if typeof(row_value) != TYPE_DICTIONARY:
+				continue
+			var row := (row_value as Dictionary).duplicate(true)
+			if String(row.get("runtimeSupport", "")).begins_with("excluded"):
+				continue
+			if String(row.get("identifier", "")) == "":
+				continue
+			out.append(row)
+	return out
+
+
+func _visual_documents(source: Dictionary) -> Array:
+	var found: Array = []
+	var registration: Dictionary = source.get("registration", {}) as Dictionary
+	for raw_value in [
+		source.get("visual", {}),
+		registration.get("visual", {}),
+		((registration.get("gameplay", {}) as Dictionary).get("visual", {})),
+	]:
+		if typeof(raw_value) == TYPE_DICTIONARY and not (raw_value as Dictionary).is_empty():
+			found.append(raw_value)
+	return found
+
+
 func apply_model_condition_upgrades(applied_upgrades: Dictionary) -> Dictionary:
 	## Grant/clear typed ModelConditionUpgrade flags. Temp-duration and
 	## range-remove rows stay inert until a duration clock exists.
@@ -577,10 +632,13 @@ func _bind_sub_object_upgrade_contracts_from_content(definition: Dictionary) -> 
 	if not playable.is_empty():
 		bind_sub_object_upgrade_contracts(playable)
 		bind_model_condition_upgrade_contracts(playable)
+		bind_animation_state_contracts(playable)
 	if sub_object_upgrade_contracts.is_empty():
 		bind_sub_object_upgrade_contracts(definition)
 	if model_condition_upgrade_contracts.is_empty():
 		bind_model_condition_upgrade_contracts(definition)
+	if animation_state_contracts.is_empty():
+		bind_animation_state_contracts(definition)
 
 
 func _module_contract_arrays(source: Dictionary) -> Array:
@@ -1555,13 +1613,18 @@ func _play_member_state(member_index: int, state: String, action_token: int, res
 	):
 		play_state = "selectionTransition"
 	var requested := member_clip_for_state(member_index, play_state)
+	var authored: Dictionary = AnimationStateSelectScript.select(animation_state_contracts, conditions)
+	last_animation_state_receipt = authored.duplicate(true)
+	if int(authored.get("specificity", -1)) > 0 and String(authored.get("clip", "")) != "":
+		requested = String(authored.get("clip", ""))
 	if requested == "":
 		return
 	_sync_member_authored_state_labels(member_index, requested)
 	member_action_states[member_index] = play_state
 	member_current_clips[member_index] = requested
+	var apply_phase := not restart or bool(authored.get("randomStart", false))
 	for player_value in member_animation_players.get(member_index, []):
-		_play_member_clip(player_value as AnimationPlayer, requested, play_state, member_index, 0.10, not restart, action_token)
+		_play_member_clip(player_value as AnimationPlayer, requested, play_state, member_index, 0.10, apply_phase, action_token)
 	if play_state.begins_with("attack") and action_token >= 0:
 		_last_action_token = maxi(_last_action_token, action_token)
 

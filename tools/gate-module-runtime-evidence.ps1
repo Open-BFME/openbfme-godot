@@ -77,11 +77,11 @@ try {
     Assert-ProofTrue (Test-Path -LiteralPath $manifestTool -PathType Leaf) "Missing evidence manifest tool."
     Assert-ProofTrue (Test-Path -LiteralPath $python -PathType Leaf) "Pinned importer Python is missing."
     Assert-ProofTrue ($TimeoutSeconds -gt 0) "TimeoutSeconds must be positive."
-    $manifestText = (& $python $manifestTool --require-count 50)
+    $manifestText = (& $python $manifestTool --require-count 51)
     Assert-ProofTrue ($LASTEXITCODE -eq 0) "Evidence manifest generation failed."
     $manifest = ($manifestText | Out-String | ConvertFrom-Json)
     Assert-ProofTrue ([string]$manifest.schema -eq "openbfme.module-runtime-evidence-gate") "Evidence manifest schema changed."
-    Assert-ProofTrue ([int]$manifest.runnerCount -eq 50) "Executable evidence must name exactly 50 unique runners at this baseline."
+    Assert-ProofTrue ([int]$manifest.runnerCount -eq 51) "Executable evidence must name exactly 51 unique runners at this baseline."
     $runners = @($manifest.runners)
     if (-not [string]::IsNullOrWhiteSpace($Runner)) {
         $runners = @($runners | Where-Object { (Split-Path -Leaf ([string]$_.runner)) -eq $Runner })
