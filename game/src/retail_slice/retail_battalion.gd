@@ -129,10 +129,9 @@ var clip_sets: Dictionary = {}
 var clip_modes: Dictionary = {}
 var attack_uses_weapon_timing := false
 var authored_animation_speed_ranges: Dictionary = {}
-## Per routed state/clip receipts copied from the sealed capability. Values are
-## deliberately raw: retail's AnimationBlendTime unit conversion and
-## AnimationPriority zero/selection law are not yet backed by an executable
-## unit-animation oracle, so neither value is allowed to change playback.
+## Per routed state/clip receipts copied from the sealed capability.
+## AnimationBlendTime is frames at 30 FPS. AnimationPriority zero/selection
+## law is still not applied to playback.
 var authored_animation_clip_properties: Dictionary = {}
 ## StateName is exact only where the compiler linked the authored state label
 ## to a concrete animation identifier. Keep both sides of the last transition
@@ -1623,8 +1622,9 @@ func _play_member_state(member_index: int, state: String, action_token: int, res
 	member_action_states[member_index] = play_state
 	member_current_clips[member_index] = requested
 	var apply_phase := not restart or bool(authored.get("randomStart", false))
+	var blend := _authored_blend_seconds(play_state, requested, authored)
 	for player_value in member_animation_players.get(member_index, []):
-		_play_member_clip(player_value as AnimationPlayer, requested, play_state, member_index, 0.10, apply_phase, action_token)
+		_play_member_clip(player_value as AnimationPlayer, requested, play_state, member_index, blend, apply_phase, action_token)
 	if play_state.begins_with("attack") and action_token >= 0:
 		_last_action_token = maxi(_last_action_token, action_token)
 
@@ -1679,6 +1679,17 @@ func _has_authored_transition_script(active_conditions: Array) -> bool:
 	return false
 
 
+func _authored_blend_seconds(state: String, clip: String, authored: Dictionary) -> float:
+	var seconds := float(authored.get("blendSeconds", -1.0))
+	if seconds >= 0.0:
+		return seconds
+	var receipt: Dictionary = authored_animation_property_receipt(state, clip)
+	seconds = float(receipt.get("animationBlendSeconds", -1.0))
+	if seconds >= 0.0:
+		return seconds
+	return 0.10
+
+
 func authored_animation_property_receipt(state: String, clip: String) -> Dictionary:
 	## Consume the authored values without silently assigning made-up runtime
 	## semantics. Animated props have a separately evidenced relative-weight
@@ -1688,8 +1699,10 @@ func authored_animation_property_receipt(state: String, clip: String) -> Diction
 		return {}
 	var receipt := (properties as Dictionary).duplicate(true)
 	if receipt.has("animationBlendTimeRaw"):
-		receipt["animationBlendRuntimeSupport"] = "deferred-raw-unit-conversion-unproven"
-		receipt["animationBlendApplied"] = false
+		var seconds := AnimationStateSelectScript.blend_seconds(receipt.get("animationBlendTimeRaw", null))
+		receipt["animationBlendRuntimeSupport"] = "frames-at-30fps"
+		receipt["animationBlendSeconds"] = seconds
+		receipt["animationBlendApplied"] = seconds >= 0.0
 	if receipt.has("animationPriority"):
 		receipt["animationPriorityRuntimeSupport"] = "deferred-unit-selection-law-and-zero-semantics-unproven"
 		receipt["animationPriorityApplied"] = false

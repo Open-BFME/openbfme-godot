@@ -6,7 +6,7 @@ extends SceneTree
 const BATTALION_SCRIPT_PATH := "res://src/retail_slice/retail_battalion.gd"
 const RunnerWatchdogScript = preload("res://tests/runner_watchdog.gd")
 const EXPECTED_TESTS := 3
-const EXPECTED_CHECKS := 32
+const EXPECTED_CHECKS := 33
 
 var _watchdog := RunnerWatchdogScript.new()
 var passed := 0
@@ -99,8 +99,9 @@ func _runtime_receipt_test(capability: Dictionary) -> void:
 	battalion._build_clip_map(capability)
 	var idle_receipt: Dictionary = battalion.authored_animation_property_receipt("idle", "FIXTURE_IDLE")
 	_check(int(idle_receipt.get("animationBlendTimeRaw", -1)) == 15, "runtime consumes raw blend")
-	_check(idle_receipt.get("animationBlendApplied") == false, "blend is not assigned invented timing")
-	_check(String(idle_receipt.get("animationBlendRuntimeSupport", "")).contains("conversion-unproven"), "blend defer reason is explicit")
+	_check(idle_receipt.get("animationBlendApplied") == true, "blend conversion is applied")
+	_check(String(idle_receipt.get("animationBlendRuntimeSupport", "")) == "frames-at-30fps", "blend unit is frames at 30 FPS")
+	_check(is_equal_approx(float(idle_receipt.get("animationBlendSeconds", -1.0)), 0.5), "15 frames convert to 0.5s")
 	_check(int(idle_receipt.get("animationPriority", -1)) == 0, "runtime consumes zero priority without dropping it")
 	_check(idle_receipt.get("animationPriorityApplied") == false, "priority is not assigned invented selection semantics")
 	_check(String(idle_receipt.get("animationPriorityRuntimeSupport", "")).contains("zero-semantics-unproven"), "priority defer reason is explicit")

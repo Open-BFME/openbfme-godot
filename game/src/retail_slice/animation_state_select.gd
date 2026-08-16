@@ -7,8 +7,8 @@ extends RefCounted
 ## subset wins. IdleAnimationState is the empty-condition (specificity 0) row.
 ##
 ## AnimationPriority and ParticleSysBone stay deferred on this slice.
-## AnimationBlendTime conversion is proven here (frames at 30 FPS) but the
-## battalion still uses its existing 0.10s transition until the blend slice.
+## AnimationBlendTime is frames at 30 FPS; the battalion applies that
+## conversion on state transitions.
 
 const RETAIL_ANIMATION_FPS := 30.0
 const MODULE := "AnimationState"
