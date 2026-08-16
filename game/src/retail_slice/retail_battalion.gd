@@ -278,6 +278,8 @@ func configure(
 	formation_positions: Array = []
 ) -> void:
 	entity_id = id
+	if not is_in_group("retail_battalion"):
+		add_to_group("retail_battalion")
 	team = battalion_team
 	object_id = configured_object_id if configured_object_id != "" else DEFAULT_OBJECT_ID
 	var definition: Dictionary = ContentDB.get_bundle_object(object_id)
@@ -2044,6 +2046,20 @@ func reflowing_member_count(tolerance: float = 0.08) -> int:
 
 func clip_for_state(state: String) -> String:
 	return String(clip_map.get(state, ""))
+
+
+func death_animation_pick(member_index: int = -1) -> Dictionary:
+	## Clip the presenter is already playing (or will play) for this death.
+	## Frame stays -1 at event time: the sim death event is not the authored
+	## AnimationSound frame. Clip match is enough to beat lowest-id fallback.
+	var clip := ""
+	if member_index >= 0:
+		clip = String(member_current_clips.get(member_index, ""))
+		if clip == "":
+			clip = member_clip_for_state(member_index, "death")
+	if clip == "":
+		clip = String(clip_map.get("death", ""))
+	return {"clip": clip, "frame": -1, "source": "live-battalion-clip"}
 
 
 func member_clip_for_state(member_index: int, state: String) -> String:

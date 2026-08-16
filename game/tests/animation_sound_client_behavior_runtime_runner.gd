@@ -7,7 +7,7 @@ extends SceneTree
 
 const Watchdog := preload("res://tests/runner_watchdog.gd")
 const AudioScript := preload("res://src/retail_slice/retail_slice_audio.gd")
-const EXPECTED_CHECKS := 8
+const EXPECTED_CHECKS := 10
 
 var passed := 0
 var failed := 0
@@ -49,6 +49,21 @@ func _run() -> void:
 	audio.playable_unit_bodyfall["hero"] = "BodyFallAardvark"
 	var fallback: Dictionary = audio.select_animation_sound("hero", "")
 	_check("empty clip does not invent a typed pick", fallback.is_empty())
+	var battalion_script: GDScript = load("res://src/retail_slice/retail_battalion.gd") as GDScript
+	var battalion = battalion_script.new()
+	battalion.entity_id = 42
+	battalion.member_current_clips[0] = "GUHero_SKL.GUHero_DTHB"
+	battalion.add_to_group("retail_battalion")
+	get_root().add_child(battalion)
+	var resolved: Dictionary = audio.resolve_death_animation({
+		"kind": "battalion.member_defeated",
+		"target_id": 42,
+		"member_index": 0,
+	})
+	_check("live death without event clip uses the battalion death clip", String(resolved.get("clip", "")) == "GUHero_SKL.GUHero_DTHB" and String(resolved.get("source", "")) == "live-battalion-clip")
+	var live_routed: Dictionary = audio._route_bodyfall("hero", 2, String(resolved.get("clip", "")), int(resolved.get("frame", -1)))
+	_check("live death bodyfall uses the authored clip pick, not lowest-id", String(live_routed.get("event_id", live_routed.get("id", ""))) == "BodyFallGenericNoArmor" or String(live_routed.get("event_id", "")) == "BodyFallGenericNoArmor")
+	battalion.queue_free()
 	audio.queue_free()
 	_finish()
 

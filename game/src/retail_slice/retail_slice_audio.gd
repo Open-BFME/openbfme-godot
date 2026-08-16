@@ -1404,8 +1404,9 @@ func _consume_event(event: Dictionary) -> void:
 			_play_eva_announcement("GenericBuildingComplete-Builder", sequence, eva_clock)
 	elif kind == "battalion.defeated":
 		var defeated_object_id := _object_id_for_event(event, target_id)
+		var death_anim := resolve_death_animation(event)
 		_play_routed(route_roster_voice(defeated_object_id, "death", sequence), voice_player)
-		_play_sfx(_route_bodyfall(defeated_object_id, sequence, String(event.get("clip", "")), int(event.get("frame", -1))))
+		_play_sfx(_route_bodyfall(defeated_object_id, sequence, String(death_anim.get("clip", "")), int(death_anim.get("frame", -1))))
 		_entity_object_ids.erase(target_id)
 		# Pure RotWK 2.01 has no generic UnitLost/BattalionLost EVA block.
 		# The unit's own authored death voice above is therefore the complete,
@@ -1413,7 +1414,8 @@ func _consume_event(event: Dictionary) -> void:
 	elif kind == "battalion.member_defeated":
 		# Every fallen member lands its own class bodyfall (horde wipes are not
 		# a single thud); the battalion's die voice still fires once at defeat.
-		_play_sfx(_route_bodyfall(_object_id_for_event(event, target_id), sequence, String(event.get("clip", "")), int(event.get("frame", -1))))
+		var member_death := resolve_death_animation(event)
+		_play_sfx(_route_bodyfall(_object_id_for_event(event, target_id), sequence, String(member_death.get("clip", "")), int(member_death.get("frame", -1))))
 	elif kind == "combat.swing":
 		# BATTALION-LEVEL CADENCE MARKER ONLY - deliberately silent.
 		#
@@ -1564,6 +1566,37 @@ func route_crush_impact(object_id: String, sequence: int) -> Dictionary:
 	if impact_id == "":
 		return _rejection("no_authored_sound_impact", "", object_id, "sfx", sequence)
 	return route_audio_event(impact_id, sequence)
+
+
+func resolve_death_animation(event: Dictionary) -> Dictionary:
+	## Prefer clip/frame already on the sim event. When the combat lane has
+	## not threaded them yet, use the live battalion's playing death clip so
+	## AnimationSound does not fall back to lowest-id.
+	var clip := String(event.get("clip", ""))
+	var frame := int(event.get("frame", -1))
+	if clip != "":
+		return {"clip": clip, "frame": frame, "source": "event"}
+	var pick := _live_battalion_death_pick(int(event.get("target_id", 0)), int(event.get("member_index", -1)))
+	if not pick.is_empty() and String(pick.get("clip", "")) != "":
+		if frame >= 0:
+			pick["frame"] = frame
+		return pick
+	return {"clip": "", "frame": frame, "source": "absent"}
+
+
+func _live_battalion_death_pick(target_id: int, member_index: int) -> Dictionary:
+	var tree := get_tree()
+	if tree == null or target_id <= 0:
+		return {}
+	for node in tree.get_nodes_in_group("retail_battalion"):
+		if node == null or not node.has_method("death_animation_pick"):
+			continue
+		if int(node.get("entity_id")) != target_id:
+			continue
+		var pick: Dictionary = node.call("death_animation_pick", member_index)
+		if typeof(pick) == TYPE_DICTIONARY:
+			return pick
+	return {}
 
 
 func _route_bodyfall(object_id: String, sequence: int, clip: String = "", frame: int = -1) -> Dictionary:
@@ -2114,7 +2147,8 @@ func _bodyfall_id_for_document(bindings: Dictionary) -> String:
 	##
 	## Lowest-id remains the authored-clip-absent fallback. Typed
 	## AnimationSoundClientBehavior rows pick by clip/frame via
-	## `select_animation_sound` when a death event names the playing clip.
+	## `select_animation_sound` when a death event names the playing clip,
+	## or when `resolve_death_animation` reads it from the live battalion.
 	var ids: Array = bindings.keys()
 	ids.sort_custom(func(a: Variant, b: Variant) -> bool: return String(a).to_lower() < String(b).to_lower())
 	for event_id_value in ids:
