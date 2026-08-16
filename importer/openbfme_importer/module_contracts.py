@@ -186,6 +186,10 @@ ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE: Mapping[str, tuple[str, str]] = {
         "game/src/retail_slice/retail_ability_fx_controller.gd",
         "game/tests/drawable_fx_list_runtime_runner.gd",
     ),
+    "AttackPose": (
+        "game/src/retail_slice/retail_battalion.gd",
+        "game/tests/attack_pose_animation_state_runtime_runner.gd",
+    ),
 }
 
 

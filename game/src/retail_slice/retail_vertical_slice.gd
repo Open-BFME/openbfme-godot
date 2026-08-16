@@ -4388,6 +4388,9 @@ func _sync_presentation() -> void:
 			maxf(SimScript.TICK_SECONDS, float(entity.get("pre_attack_ticks", 1)) * SimScript.TICK_SECONDS)
 		)
 		battalion.set_attack_reload_seconds(_entity_attack_reload_seconds(entity))
+		battalion.set_weapon_condition_deferred_reasons(
+			simulation.weapon_condition_deferred_reasons(id)
+		)
 		battalion.sync_member_states(
 			Array(entity.get("member_health", [])),
 			int(entity.get("member_maximum_health", 1)),
@@ -4397,7 +4400,8 @@ func _sync_presentation() -> void:
 			Array(entity.get("member_weapon_modes", [])),
 			_member_attack_target_globals(entity),
 			Array(entity.get("member_corpse_expire_ticks", [])),
-			simulation.tick_index
+			simulation.tick_index,
+			simulation.member_weapon_condition_tokens(id)
 		)
 		var facing := _entity_facing(entity)
 		battalion.set_facing_direction(facing, float(entity.get("turn_rate_degrees_per_second", 720.0)))

@@ -163,6 +163,10 @@ var _permanent_model_condition_flags: Dictionary = {}
 ## Typed AnimationState rows (moduleContracts or pack authoredAnimationStates).
 var animation_state_contracts: Array = []
 var last_animation_state_receipt: Dictionary = {}
+## Per-member SAGE weapon-cycle tokens from
+## `simulation.member_weapon_condition_tokens`, index-aligned with member_health.
+var member_weapon_condition_tokens: Dictionary = {}
+var last_weapon_condition_deferred_reasons: Array = []
 var particle_sys_bone_contracts: Array = []
 var last_particle_sys_bone_receipt: Dictionary = {}
 var entering_state_fx_contracts: Array = []
@@ -1625,7 +1629,8 @@ func sync_member_states(
 	weapon_modes: Array = [],
 	target_globals: Array = [],
 	corpse_expire_ticks: Array = [],
-	authoritative_tick: int = 0
+	authoritative_tick: int = 0,
+	weapon_condition_tokens: Array = []
 ) -> void:
 	var maximum := maxi(1, member_maximum_health)
 	var normalized_state := battalion_state if clip_map.has(battalion_state) else "idle"
@@ -1635,6 +1640,10 @@ func sync_member_states(
 	if battalion_state_changed:
 		_sync_selection_layout(normalized_state)
 	for member_index in range(member_count):
+		var pose_tokens: Array = []
+		if member_index < weapon_condition_tokens.size() and typeof(weapon_condition_tokens[member_index]) == TYPE_ARRAY:
+			pose_tokens = (weapon_condition_tokens[member_index] as Array).duplicate()
+		member_weapon_condition_tokens[member_index] = pose_tokens
 		var prior_ratio := float(member_health_ratios.get(member_index, 1.0))
 		var member_health := int(health_values[member_index]) if member_index < health_values.size() else maximum
 		var ratio := clampf(float(member_health) / float(maximum), 0.0, 1.0)
@@ -1691,7 +1700,7 @@ func sync_member_states(
 
 func _play_member_state(member_index: int, state: String, action_token: int, restart: bool) -> void:
 	var play_state := state
-	var conditions := _drawable_conditions_for_state(state)
+	var conditions := _drawable_conditions_for_state(state, member_index)
 	var receipt: Dictionary = apply_member_drawable_scripts(member_index, conditions)
 	last_drawable_script_receipt = receipt.duplicate(true)
 	if bool(receipt.get("allow_to_continue", false)):
@@ -1730,7 +1739,7 @@ func _play_member_state(member_index: int, state: String, action_token: int, res
 	_sync_member_particle_sys_bones(member_index, authored, conditions)
 
 
-func _drawable_conditions_for_state(state: String) -> Array:
+func _drawable_conditions_for_state(state: String, member_index: int = -1) -> Array:
 	var conditions: Array = []
 	if state == "selected" or state == "selectionTransition":
 		conditions.append("SELECTED")
@@ -1744,6 +1753,11 @@ func _drawable_conditions_for_state(state: String) -> Array:
 		var flag := String(flag_value).to_upper()
 		if flag != "" and not conditions.has(flag):
 			conditions.append(flag)
+	if member_index >= 0:
+		for token_value in member_weapon_condition_tokens.get(member_index, []) as Array:
+			var token := String(token_value).to_upper()
+			if token != "" and not conditions.has(token):
+				conditions.append(token)
 	return conditions
 
 
@@ -2801,10 +2815,18 @@ func _resolve_animation_name(player: AnimationPlayer, requested: String) -> Stri
 ## the slice from the sim's unit rule (firing duration + the reload the sim
 ## actually waits out); 0 leaves fire clips at their authored speed.
 var attack_reload_seconds := 0.0
+## Authored min of AnimationSpeedFactorRange for the fire clip
+## (gondorarcher.ini:262 is 1.2 1.3). Scales attack_ranged_fire playback so
+## the clip finishes before reload. 0 means use pack-bound ranges.
+var attack_fire_speed_factor := 0.0
 
 
 func set_attack_reload_seconds(value: float) -> void:
 	attack_reload_seconds = value if is_finite(value) and value > 0.0 else 0.0
+
+
+func set_weapon_condition_deferred_reasons(reasons: Array) -> void:
+	last_weapon_condition_deferred_reasons = reasons.duplicate()
 
 
 func _play_member_clip(player: AnimationPlayer, requested: String, state: String, member_index: int, blend: float, apply_phase: bool, action_token: int = 0, authored: Dictionary = {}) -> void:
@@ -2834,6 +2856,8 @@ func _play_member_clip(player: AnimationPlayer, requested: String, state: String
 
 
 func _authored_animation_speed_factor(state: String, clip: String, member_index: int, action_token: int) -> float:
+	if state == "attack_ranged_fire" and attack_fire_speed_factor > 0.0:
+		return attack_fire_speed_factor
 	var values: Variant = authored_animation_speed_ranges.get("%s|%s" % [state, clip], [])
 	# SAGE samples uniformly when entering the animation state. Keep that
 	# authored behavior deterministic for lockstep/replays using stable runtime
