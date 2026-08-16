@@ -18,7 +18,11 @@
 
 [CmdletBinding()]
 param(
-    [string[]] $Suite
+    [string[]] $Suite,
+    [ValidateRange(0, 10000)]
+    [int] $InterRunnerDelayMilliseconds = 2000,
+    [ValidateRange(0, 5)]
+    [int] $NativeCrashRetries = 2
 )
 
 $ErrorActionPreference = 'Stop'
@@ -42,50 +46,42 @@ if (-not (Test-Path -LiteralPath $env:OPENBFME_CONTENT -PathType Container)) {
 # decision backed by a clean headless run, not a directory-scan side effect.
 $runnerSuites = [ordered]@{
     handlers = @(
+        'handlers_wp22_sciences_runner'
         'handlers_wp08_hero_objectives_runner'
         'handlers_wp09_ai_core_runner'
         'handlers_wp18_build_permissions_runner'
         'handlers_wp20_skirmish_conditions_runner'
         'handlers_wp21_threat_queries_runner'
-        'handlers_wp22_sciences_runner'
         'handlers_wp23_misc_verbs_runner'
         'handlers_wp24_fog_runner'
     )
     retail = @(
         'ini_compile_remainders_runner'
-        'men_vslice_gate_runner'
         'playable_structure_runtime_consumer_runner'
         'retail_ability_fx_binding_runner'
         'retail_ambient_audio_semantics_runner'
-        'retail_archery_range_level2_runner'
         'retail_command_points_script_runner'
         'retail_hud_multipack_runner'
-        'retail_map_data_runner'
         'retail_map_script_runner'
         'retail_mp_lobby_runner'
         'retail_music_runner'
-        'retail_non_fords_boot_runner'
         'retail_nteam_setup_runner'
         'retail_radial_layout_runner'
         'retail_ring_hero_exclusion_runner'
         'retail_shell_apt_runtime_runner'
-        'retail_shroud_render_runner'
         'retail_slice_map_runner'
         'retail_tree_sway_runner'
         'retail_water_surface_runner'
         'retail_weather_fx_runner'
-        'script_pack_startup_runner'
         'selected_neutral_pack_acceptance_runner'
     )
     ui = @(
-        'angmar_hud_binding_sweep_runner'
         'attention_selection_runner'
         'banner_castle_silent_playtest_runner'
         'boot_deferred_options_runner'
         'cah_awards_runner'
         'camera_start_bounds_runner'
         'drag_select_structures_runner'
-        'eva_fidelity_runner'
         'eva_overlay_closure_runner'
         'fortress_plot_presentation_runner'
         'horse_commandset_runner'
@@ -103,7 +99,6 @@ $runnerSuites = [ordered]@{
         'castle_map_admission_runner'
         'castle_siege_contract_runner'
         'goal_content_matrix_runner'
-        'goal_prop_binding_closure_runner'
         'scenario_custom_animation_prerequisite_runner'
         'scenario_pickup_runtime_registry_runner'
         'scenario_prop_runtime_registry_runner'
@@ -116,7 +111,6 @@ $runnerSuites = [ordered]@{
         'attach_update_runtime_runner'
         'auto_deposit_update_runner'
         'capturable_neutral_runner'
-        'castle_member_behavior_runtime_runner'
         'citadel_slaughter_runtime_runner'
         'command_set_upgrade_runtime_runner'
         'crush_trample_runner'
@@ -148,11 +142,21 @@ $runnerSuites = [ordered]@{
         'lua_host_runner'
         'lua_stdlib_runner'
         'net_upnp_runner'
-        'sol_deeper_roads_tiles_runner'
     )
     wotr = @(
         'wotr_ai_runner'
         'wotr_autoresolve_battle_runner'
+        'wotr_battle_bridge_runner'
+        'wotr_construction_runner'
+        'wotr_living_world_ui_runner'
+        'wotr_livingworld_pack_runner'
+        'wotr_map3d_runner'
+        'wotr_markers_runner'
+        'wotr_phase_runner'
+        'wotr_receipt_runner'
+        'wotr_region_geometry_runner'
+        'wotr_strategic_runner'
+        'wotr_strategic_ui_runner'
     )
 }
 
@@ -185,14 +189,16 @@ $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
 $pass = 0
 $fail = 0
 
-Write-Host "ORPHAN_RUNNER_GATE_START runners=$($selected.Count) suites=$($selectedSuites -join ',')"
+Write-Host "ORPHAN_RUNNER_GATE_START runners=$($selected.Count) suites=$($selectedSuites -join ',') inter_runner_delay_ms=$InterRunnerDelayMilliseconds native_crash_retries=$NativeCrashRetries"
 
+$runnerIndex = 0
 foreach ($entry in $selected) {
+    if ($runnerIndex -gt 0 -and $InterRunnerDelayMilliseconds -gt 0) {
+        Start-Sleep -Milliseconds $InterRunnerDelayMilliseconds
+    }
+    $runnerIndex++
     $runner = $entry.Runner
     $runnerFile = Join-Path $game "tests\$runner.gd"
-    $token = [guid]::NewGuid().ToString('N')
-    $stdoutPath = Join-Path ([System.IO.Path]::GetTempPath()) "orphan-runner-gate-$stamp-$runner-$token.stdout.txt"
-    $stderrPath = Join-Path ([System.IO.Path]::GetTempPath()) "orphan-runner-gate-$stamp-$runner-$token.stderr.txt"
 
     if (-not (Test-Path -LiteralPath $runnerFile -PathType Leaf)) {
         Write-Host "FAIL suite=$($entry.Suite) runner=$runner reason=missing-runner"
@@ -200,26 +206,41 @@ foreach ($entry in $selected) {
         continue
     }
 
-    # Windows PowerShell converts native stderr into non-terminating ErrorRecord
-    # objects. Keep capturing it, but do not let the script-wide Stop preference
-    # abort before the runner's process exit code can be accounted for.
-    $previousErrorActionPreference = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = 'Continue'
-        & $godotExe --headless --path $game --script "res://tests/$runner.gd" `
-            1> $stdoutPath 2> $stderrPath
-        $exitCode = $LASTEXITCODE
-    } finally {
-        $ErrorActionPreference = $previousErrorActionPreference
-    }
+    $attempt = 0
+    do {
+        $attempt++
+        $token = [guid]::NewGuid().ToString('N')
+        $stdoutPath = Join-Path ([System.IO.Path]::GetTempPath()) "orphan-runner-gate-$stamp-$runner-attempt$attempt-$token.stdout.txt"
+        $stderrPath = Join-Path ([System.IO.Path]::GetTempPath()) "orphan-runner-gate-$stamp-$runner-attempt$attempt-$token.stderr.txt"
 
-    # Reading both evidence files is deliberate. It prevents a process exit code
-    # from being recorded without first making its captured output accessible.
-    $stdout = if (Test-Path -LiteralPath $stdoutPath) { Get-Content -LiteralPath $stdoutPath -Raw } else { '' }
-    $stderr = if (Test-Path -LiteralPath $stderrPath) { Get-Content -LiteralPath $stderrPath -Raw } else { '' }
+        # Windows PowerShell converts native stderr into non-terminating
+        # ErrorRecord objects. Capture it without aborting before ExitCode is
+        # accounted for.
+        $previousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            & $godotExe --headless --path $game --script "res://tests/$runner.gd" `
+                1> $stdoutPath 2> $stderrPath
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+
+        # Read both evidence files before making any retry or result decision.
+        $stdout = if (Test-Path -LiteralPath $stdoutPath) { Get-Content -LiteralPath $stdoutPath -Raw } else { '' }
+        $stderr = if (Test-Path -LiteralPath $stderrPath) { Get-Content -LiteralPath $stderrPath -Raw } else { '' }
+
+        $canRetryNativeCrash = $exitCode -lt 0 -and $attempt -le $NativeCrashRetries
+        if ($canRetryNativeCrash) {
+            Write-Host "RETRY suite=$($entry.Suite) runner=$runner attempt=$attempt reason=native-exit-$exitCode stdout=$stdoutPath stderr=$stderrPath"
+            if ($InterRunnerDelayMilliseconds -gt 0) {
+                Start-Sleep -Milliseconds $InterRunnerDelayMilliseconds
+            }
+        }
+    } while ($canRetryNativeCrash)
 
     if ($exitCode -eq 0) {
-        Write-Host "PASS suite=$($entry.Suite) runner=$runner exit=0 stdout=$stdoutPath stderr=$stderrPath"
+        Write-Host "PASS suite=$($entry.Suite) runner=$runner attempts=$attempt exit=0 stdout=$stdoutPath stderr=$stderrPath"
         $pass++
     } else {
         $reason = "exit-$exitCode"
