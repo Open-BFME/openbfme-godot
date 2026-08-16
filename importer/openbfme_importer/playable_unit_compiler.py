@@ -5911,6 +5911,124 @@ def _weapon_knockback_fields(
     return {}
 
 
+def _weapon_damage_through_warheads(
+    documents: Mapping[str, bytes],
+    weapon_id: str,
+    constants: Mapping[str, int | float],
+    label: str,
+    *,
+    named_definition_cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None,
+    cache_lock: threading.Lock | None,
+) -> tuple[dict[str, object], list[str], list[str]]:
+    """Base damage of a weapon, following its authored warhead chain.
+
+    Returns the aggregated damage, the weapon ids the damage components came
+    from, and the ids of warheads retail authored as empty Weapons.
+
+    ProjectileNugget warhead chain: the launcher authors no damage, its
+    authored warheads do.  Retail fires every ProjectileNugget per shot, so
+    every distinct warhead must resolve and their base damages combine.  One
+    bounded hop, never recursive.  A warhead authored with no nugget sections
+    at all is retail's explicit no-op (RohanEntRockThrow fires one purely to
+    spawn a shroud revealer) and contributes nothing; a warhead that authors
+    a payload we cannot convert stays a recorded gap.
+    """
+
+    base = _base_weapon_damage(
+        documents,
+        weapon_id,
+        constants,
+        cache=named_definition_cache,
+        cache_lock=cache_lock,
+    )
+    if base is not None:
+        return base, [weapon_id], []
+    summary = _weapon_nugget_summary(documents, weapon_id)
+    warhead_ids = sorted(summary["warheads"].values(), key=str.casefold)
+    if not warhead_ids:
+        unsupported_kinds = sorted(
+            (
+                kind
+                for key, kind in summary["kinds"].items()
+                if key != "damagenugget"
+            ),
+            key=str.casefold,
+        )
+        detail = (
+            f"; its damage payload uses unsupported nugget kinds: "
+            + ", ".join(
+                _annotated_nugget_kind(kind) for kind in unsupported_kinds
+            )
+            if unsupported_kinds
+            else ""
+        )
+        raise PlayableUnitCompilerError(
+            f"{label} weapon {weapon_id} has no resolvable base DamageNugget "
+            f"damage and no authored warhead{detail}"
+        )
+    warhead_bases: list[dict[str, object]] = []
+    damage_weapon_ids: list[str] = []
+    empty_warhead_ids: list[str] = []
+    for warhead_id in warhead_ids:
+        warhead_base = _base_weapon_damage(
+            documents,
+            warhead_id,
+            constants,
+            cache=named_definition_cache,
+            cache_lock=cache_lock,
+        )
+        if warhead_base is None:
+            warhead_summary = _weapon_nugget_summary(documents, warhead_id)
+            if warhead_summary["found"] and not warhead_summary["kinds"]:
+                empty_warhead_ids.append(warhead_id)
+                continue
+            unsupported_kinds = sorted(
+                (
+                    kind
+                    for key, kind in warhead_summary["kinds"].items()
+                    if key != "damagenugget"
+                ),
+                key=str.casefold,
+            )
+            detail = (
+                "; its damage payload uses unsupported nugget kinds: "
+                + ", ".join(
+                    _annotated_nugget_kind(kind) for kind in unsupported_kinds
+                )
+                if unsupported_kinds
+                else ""
+            )
+            raise PlayableUnitCompilerError(
+                f"{label} weapon {weapon_id} warhead {warhead_id} has no "
+                f"resolvable base DamageNugget damage{detail}"
+            )
+        warhead_bases.append(warhead_base)
+        damage_weapon_ids.append(warhead_id)
+    if not warhead_bases:
+        raise PlayableUnitCompilerError(
+            f"{label} weapon {weapon_id} authors no damage and every authored "
+            f"warhead is empty: {', '.join(empty_warhead_ids)}"
+        )
+    combined_components: list[dict[str, object]] = []
+    combined_excluded: list[dict[str, object]] = []
+    for warhead_base in warhead_bases:
+        combined_components.extend(warhead_base["components"])  # type: ignore[arg-type]
+        combined_excluded.extend(warhead_base.get("excludedNuggets", ()))  # type: ignore[arg-type]
+    base = {
+        "value": sum(
+            warhead_base["value"] for warhead_base in warhead_bases  # type: ignore[misc]
+        ),
+        "semantic": (
+            "base authored DamageNugget damage total from the weapon's "
+            "authored ProjectileNugget warheads"
+        ),
+        "components": combined_components,
+    }
+    if combined_excluded:
+        base["excludedNuggets"] = combined_excluded
+    return base, damage_weapon_ids, empty_warhead_ids
+
+
 def _ability_weapon_leaf(
     documents: Mapping[str, bytes],
     weapon_id: str,
@@ -5933,88 +6051,14 @@ def _ability_weapon_leaf(
         raise PlayableUnitCompilerError(
             f"{label} references a missing or ambiguous Weapon: {weapon_id}"
         )
-    base = _base_weapon_damage(
+    base, damage_weapon_ids, _empty_warhead_ids = _weapon_damage_through_warheads(
         documents,
         weapon_id,
         constants,
-        cache=named_definition_cache,
+        label,
+        named_definition_cache=named_definition_cache,
         cache_lock=cache_lock,
     )
-    damage_weapon_ids = [weapon_id]
-    if base is None:
-        # ProjectileNugget warhead chain: the launcher authors no damage, its
-        # authored warheads do.  Retail fires every ProjectileNugget per
-        # shot, so every distinct warhead must resolve and their base
-        # damages combine.  One bounded hop, never recursive.
-        summary = _weapon_nugget_summary(documents, weapon_id)
-        warhead_ids = sorted(summary["warheads"].values(), key=str.casefold)
-        if not warhead_ids:
-            unsupported_kinds = sorted(
-                (
-                    kind
-                    for key, kind in summary["kinds"].items()
-                    if key != "damagenugget"
-                ),
-                key=str.casefold,
-            )
-            detail = (
-                f"; its damage payload uses unsupported nugget kinds: "
-                + ", ".join(
-                    _annotated_nugget_kind(kind) for kind in unsupported_kinds
-                )
-                if unsupported_kinds
-                else ""
-            )
-            raise PlayableUnitCompilerError(
-                f"{label} weapon {weapon_id} has no resolvable base DamageNugget "
-                f"damage and no authored warhead{detail}"
-            )
-        warhead_bases: list[dict[str, object]] = []
-        for warhead_id in warhead_ids:
-            warhead_base = _base_weapon_damage(
-                documents,
-                warhead_id,
-                constants,
-                cache=named_definition_cache,
-                cache_lock=cache_lock,
-            )
-            if warhead_base is None:
-                warhead_summary = _weapon_nugget_summary(documents, warhead_id)
-                unsupported_kinds = sorted(
-                    (
-                        kind
-                        for key, kind in warhead_summary["kinds"].items()
-                        if key != "damagenugget"
-                    ),
-                    key=str.casefold,
-                )
-                detail = (
-                    "; its damage payload uses unsupported nugget kinds: "
-                    + ", ".join(
-                        _annotated_nugget_kind(kind) for kind in unsupported_kinds
-                    )
-                    if unsupported_kinds
-                    else ""
-                )
-                raise PlayableUnitCompilerError(
-                    f"{label} weapon {weapon_id} warhead {warhead_id} has no "
-                    f"resolvable base DamageNugget damage{detail}"
-                )
-            warhead_bases.append(warhead_base)
-        combined_components: list[dict[str, object]] = []
-        combined_excluded: list[dict[str, object]] = []
-        for warhead_base in warhead_bases:
-            combined_components.extend(warhead_base["components"])  # type: ignore[arg-type]
-            combined_excluded.extend(warhead_base.get("excludedNuggets", ()))  # type: ignore[arg-type]
-        base = {
-            "value": sum(
-                warhead_base["value"] for warhead_base in warhead_bases  # type: ignore[misc]
-            ),
-            "components": combined_components,
-        }
-        if combined_excluded:
-            base["excludedNuggets"] = combined_excluded
-        damage_weapon_ids = list(warhead_ids)
     radius = 0.0
     damage_scalar_authored = False
     for damage_weapon_id in damage_weapon_ids:
@@ -6155,18 +6199,21 @@ def _weapon_mode_profile(
         pre_attack_random["deterministicUse"] = "deferred"
         profile["preAttackRandomAmountMs"] = pre_attack_random
     if "damage" not in profile:
-        nugget_damage = _base_weapon_damage(
-            documents,
-            weapon_id,
-            constants,
-            cache=named_definition_cache,
-            cache_lock=cache_lock,
-        )
-        if nugget_damage is None:
-            raise PlayableUnitCompilerError(
-                f"{label} weapon {weapon_id} has no resolvable Damage"
+        nugget_damage, damage_weapon_ids, empty_warhead_ids = (
+            _weapon_damage_through_warheads(
+                documents,
+                weapon_id,
+                constants,
+                label,
+                named_definition_cache=named_definition_cache,
+                cache_lock=cache_lock,
             )
+        )
         profile["damage"] = nugget_damage
+        if damage_weapon_ids != [weapon_id]:
+            profile["damageWarheadIds"] = damage_weapon_ids
+        if empty_warhead_ids:
+            profile["emptyWarheadIds"] = empty_warhead_ids
     if "attackRange" not in profile:
         raise PlayableUnitCompilerError(
             f"{label} weapon {weapon_id} has no resolvable AttackRange"

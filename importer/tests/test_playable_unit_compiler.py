@@ -4479,6 +4479,152 @@ def test_weapon_toggle_rows_record_the_authored_contract() -> None:
     assert profile["weaponSlot"] == "PRIMARY"
 
 
+def _weapon_toggle_documents(weapon_ini: bytes, weapon_id: str) -> dict[str, bytes]:
+    """Fixture hero with one TOGGLE_WEAPONSET button bound to ``weapon_id``."""
+
+    documents = _hero_ability_documents()
+    text = documents["data/ini/object/units/test_units.ini"].decode()
+    documents["data/ini/object/units/test_units.ini"] = text.replace(
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY AbilityHeroSword\n"
+        "  End\n",
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY AbilityHeroSword\n"
+        "  End\n"
+        "  WeaponSet\n"
+        "    Conditions = WEAPONSET_TOGGLE_1\n"
+        f"    Weapon = PRIMARY {weapon_id}\n"
+        "  End\n",
+        1,
+    ).encode()
+    command_sets = documents["data/ini/commandset.ini"].decode()
+    documents["data/ini/commandset.ini"] = command_sets.replace(
+        "  9 = Command_FixtureBroken\nEnd",
+        "  9 = Command_FixtureBroken\n  10 = Command_FixtureToggle\nEnd",
+        1,
+    ).encode()
+    documents["data/ini/commandbutton.ini"] += (
+        b"\nCommandButton Command_FixtureToggle\n"
+        b"  Command = TOGGLE_WEAPONSET\n"
+        b"  FlagsUsedForToggle = WEAPONSET_TOGGLE_1\n"
+        b"  TextLabel = CONTROLBAR:FixtureToggle\n"
+        b"  DescriptLabel = CONTROLBAR:ToolTipFixtureToggle\n"
+        b"  ButtonImage = HSFixtureToggle\n"
+        b"End\n"
+    )
+    documents["data/ini/weapon.ini"] += weapon_ini
+    return documents
+
+
+def test_weapon_mode_damage_resolves_through_the_authored_projectile_warhead() -> None:
+    # Retail bow modes (HaldirBow) author no DamageNugget of their own: the
+    # ProjectileNugget names a warhead Weapon and the warhead carries the
+    # damage.  The mode profile must follow that authored hop.
+    documents = _weapon_toggle_documents(
+        b"\nWeapon FixtureWarheadBow\n"
+        b"  AttackRange = 320.0\n"
+        b"  ProjectileNugget\n"
+        b"    ProjectileTemplateName = FixtureArrow\n"
+        b"    WarheadTemplateName = FixtureWarheadBowWarhead\n"
+        b"  End\n"
+        b"End\n"
+        b"\nWeapon FixtureWarheadBowWarhead\n"
+        b"  DamageNugget\n"
+        b"    Damage = 120\n"
+        b"    Radius = 0.0\n"
+        b"    DamageType = HERO_RANGED\n"
+        b"  End\n"
+        b"End\n",
+        "FixtureWarheadBow",
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    toggle = _abilities_by_id(descriptor)["Command_FixtureToggle"]
+    assert toggle["implementation"]["status"] == "implemented"
+    profile = descriptor["gameplay"]["simulation"]["resolved"]["weaponModes"][
+        "weaponset_toggle_1"
+    ]
+    assert profile["weaponId"] == "FixtureWarheadBow"
+    assert profile["damage"]["value"] == 120
+    assert profile["damageWarheadIds"] == ["FixtureWarheadBowWarhead"]
+
+
+def test_weapon_mode_damage_skips_an_authored_empty_warhead() -> None:
+    # RohanEntRockThrow fires a second ProjectileNugget purely to spawn a
+    # shroud revealer, and retail authors its warhead as an empty Weapon so
+    # the engine does not assert.  An empty warhead contributes nothing; it
+    # is not an unresolved gap.
+    documents = _weapon_toggle_documents(
+        b"\nWeapon FixtureRockThrow\n"
+        b"  AttackRange = 400.0\n"
+        b"  ProjectileNugget\n"
+        b"    ProjectileTemplateName = FixtureRock\n"
+        b"    WarheadTemplateName = FixtureRockWarhead\n"
+        b"  End\n"
+        b"  ProjectileNugget\n"
+        b"    ProjectileTemplateName = FixtureRevealer\n"
+        b"    WarheadTemplateName = FixtureDummyWarhead\n"
+        b"  End\n"
+        b"End\n"
+        b"\nWeapon FixtureRockWarhead\n"
+        b"  DamageNugget\n"
+        b"    Damage = 250\n"
+        b"    Radius = 20.0\n"
+        b"    DamageType = SIEGE\n"
+        b"  End\n"
+        b"End\n"
+        b"\nWeapon FixtureDummyWarhead\n"
+        b"End\n",
+        "FixtureRockThrow",
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    toggle = _abilities_by_id(descriptor)["Command_FixtureToggle"]
+    assert toggle["implementation"]["status"] == "implemented"
+    profile = descriptor["gameplay"]["simulation"]["resolved"]["weaponModes"][
+        "weaponset_toggle_1"
+    ]
+    assert profile["damage"]["value"] == 250
+    assert profile["damageWarheadIds"] == ["FixtureRockWarhead"]
+    assert profile["emptyWarheadIds"] == ["FixtureDummyWarhead"]
+
+
+def test_weapon_mode_damage_fails_closed_when_a_warhead_is_unsupported() -> None:
+    # A warhead that authors a payload we cannot convert is a real gap, and
+    # must stay one -- only a warhead with no authored nuggets at all is
+    # treated as the authored no-op.
+    documents = _weapon_toggle_documents(
+        b"\nWeapon FixtureFloodThrow\n"
+        b"  AttackRange = 400.0\n"
+        b"  ProjectileNugget\n"
+        b"    ProjectileTemplateName = FixtureRock\n"
+        b"    WarheadTemplateName = FixtureFloodWarhead\n"
+        b"  End\n"
+        b"End\n"
+        b"\nWeapon FixtureFloodWarhead\n"
+        b"  FireLogicNugget\n"
+        b"    LogicType = DECREASE_BURN_RATE\n"
+        b"    Radius = 40.0\n"
+        b"    Damage = 10\n"
+        b"  End\n"
+        b"End\n",
+        "FixtureFloodThrow",
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    toggle = _abilities_by_id(descriptor)["Command_FixtureToggle"]
+    assert toggle["implementation"]["status"] == "unimplemented"
+    assert "FixtureFloodWarhead" in toggle["implementation"]["reason"]
+
+
 def test_lock_weapon_create_projects_permanent_primary_slot() -> None:
     documents = _hero_ability_documents()
     text = documents["data/ini/object/units/test_units.ini"].decode()
