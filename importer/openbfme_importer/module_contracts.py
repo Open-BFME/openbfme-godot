@@ -150,6 +150,14 @@ ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE: Mapping[str, tuple[str, str]] = {
         "game/src/retail_slice/damage_creation.gd",
         "game/tests/test_damage_creation_list.gd",
     ),
+    "TransitionDamageFX": (
+        "game/src/retail_slice/transition_damage_fx.gd",
+        "game/tests/transition_damage_fx_runtime_runner.gd",
+    ),
+    "FxTiming": (
+        "game/src/retail_slice/fx_timing.gd",
+        "game/tests/test_fx_timing_delays.gd",
+    ),
 }
 
 
@@ -667,6 +675,150 @@ def compile_sub_objects_upgrades(
                 runtime_status=(
                     "executable"
                     if _sub_objects_upgrade_row_has_closed_runtime(fields)
+                    else "deferred"
+                ),
+            )
+        )
+    rows.sort(key=lambda row: (str(row["sourceIni"]).casefold(), int(row["line"])))
+    return rows
+
+
+_TRANSITION_DAMAGE_FX_KEY_RE = re.compile(
+    r"^(?P<stage>Damaged|ReallyDamaged|Rubble)"
+    r"(?P<kind>FXList|ParticleSystem|OCL)(?P<index>\d+)$",
+    re.IGNORECASE,
+)
+_TRANSITION_DAMAGE_FX_LIST_RE = re.compile(
+    r"Loc:\s*X:([+-]?(?:\d+\.?\d*|\.\d+))\s+Y:([+-]?(?:\d+\.?\d*|\.\d+))"
+    r"\s+Z:([+-]?(?:\d+\.?\d*|\.\d+))\s+FXList:(\S+)",
+    re.IGNORECASE,
+)
+_TRANSITION_DAMAGE_FX_PSYS_RE = re.compile(
+    r"Bone:(\S+)\s+RandomBone:(Yes|No)\s+PSys:(\S+)",
+    re.IGNORECASE,
+)
+
+
+def _strip_ini_line_comment(raw: str) -> str:
+    text = raw.strip()
+    for marker in ("//", ";,;", ";"):
+        index = text.find(marker)
+        if index >= 0:
+            text = text[:index].strip()
+    return text
+
+
+def _transition_damage_fx_row_has_closed_runtime(fields: Mapping[str, object]) -> bool:
+    effects = fields.get("effects")
+    if not isinstance(effects, list):
+        return False
+    return any(
+        isinstance(row, Mapping) and row.get("kind") in {"FXList", "ParticleSystem"}
+        for row in effects
+    )
+
+
+def compile_transition_damage_fx(
+    lineage: Sequence[SageObject], target_id: str
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for block in _behavior_blocks(lineage, "TransitionDamageFX"):
+        effects: list[dict[str, object]] = []
+        deferred: list[dict[str, object]] = []
+        for assignment in block.assignments:
+            key_match = _TRANSITION_DAMAGE_FX_KEY_RE.fullmatch(assignment.key)
+            if key_match is None:
+                raise ModuleContractError(
+                    f"{target_id} TransitionDamageFX unsupported field: {assignment.key}"
+                )
+            stage = {
+                "damaged": "Damaged",
+                "reallydamaged": "ReallyDamaged",
+                "rubble": "Rubble",
+            }[key_match.group("stage").casefold()]
+            kind = {
+                "fxlist": "FXList",
+                "particlesystem": "ParticleSystem",
+                "ocl": "OCL",
+            }[key_match.group("kind").casefold()]
+            raw = _strip_ini_line_comment(assignment.value)
+            if kind == "OCL":
+                deferred.append(
+                    {
+                        "name": assignment.key,
+                        "authored": assignment.value,
+                        "sourceIni": assignment.source_virtual_path,
+                        "line": assignment.line,
+                        "reason": "ocl-debris-spawn-without-runtime-oracle",
+                    }
+                )
+                continue
+            if kind == "FXList":
+                parsed = _TRANSITION_DAMAGE_FX_LIST_RE.fullmatch(raw)
+                if parsed is None:
+                    deferred.append(
+                        {
+                            "name": assignment.key,
+                            "authored": assignment.value,
+                            "sourceIni": assignment.source_virtual_path,
+                            "line": assignment.line,
+                            "reason": "unparsed-transition-fxlist",
+                        }
+                    )
+                    continue
+                effects.append(
+                    {
+                        "stage": stage,
+                        "kind": "FXList",
+                        "index": int(key_match.group("index")),
+                        "fxList": parsed.group(4),
+                        "loc": {
+                            "x": float(parsed.group(1)),
+                            "y": float(parsed.group(2)),
+                            "z": float(parsed.group(3)),
+                        },
+                        "authored": assignment.value,
+                        "sourceIni": assignment.source_virtual_path,
+                        "line": assignment.line,
+                    }
+                )
+                continue
+            parsed = _TRANSITION_DAMAGE_FX_PSYS_RE.fullmatch(raw)
+            if parsed is None:
+                deferred.append(
+                    {
+                        "name": assignment.key,
+                        "authored": assignment.value,
+                        "sourceIni": assignment.source_virtual_path,
+                        "line": assignment.line,
+                        "reason": "unparsed-transition-particle-system",
+                    }
+                )
+                continue
+            effects.append(
+                {
+                    "stage": stage,
+                    "kind": "ParticleSystem",
+                    "index": int(key_match.group("index")),
+                    "particleSystem": parsed.group(3),
+                    "bone": parsed.group(1),
+                    "randomBone": parsed.group(2).casefold() == "yes",
+                    "authored": assignment.value,
+                    "sourceIni": assignment.source_virtual_path,
+                    "line": assignment.line,
+                }
+            )
+        fields: dict[str, object] = {"effects": effects}
+        if deferred:
+            fields["deferredFields"] = deferred
+        rows.append(
+            _row(
+                "TransitionDamageFX",
+                block,
+                fields,
+                runtime_status=(
+                    "executable"
+                    if _transition_damage_fx_row_has_closed_runtime(fields)
                     else "deferred"
                 ),
             )
@@ -8527,7 +8679,6 @@ OPAQUE_DEFERRED_MODULE_KINDS: frozenset[str] = frozenset(
         "TerrainResourceClientBehavior",
         "TooltipUpgrade",
         "ToppleUpdate",
-        "TransitionDamageFX",
         "UpgradeDie",
         "UpgradeSoundSelectorClientBehavior",
         "VeterancyCrateCollide",
@@ -8644,6 +8795,7 @@ TYPED_MODULE_KINDS: frozenset[str] = frozenset(
         "ScavengerSpecialPower",
         "GeometryUpgrade",
         "SubObjectsUpgrade",
+        "TransitionDamageFX",
         "InactiveBody",
         "SpawnPointProductionExitUpdate",
         "SupplyCenterProductionExitUpdate",
@@ -8771,6 +8923,7 @@ def compile_all_module_contracts(
     rows.extend(compile_attribute_modifier_upgrades(lineage, target_id))
     rows.extend(compile_geometry_upgrades(lineage, target_id))
     rows.extend(compile_sub_objects_upgrades(lineage, target_id))
+    rows.extend(compile_transition_damage_fx(lineage, target_id))
     rows.extend(compile_inactive_bodies(lineage, target_id))
     rows.extend(compile_spawn_point_production_exits(lineage, target_id))
     rows.extend(compile_supply_center_production_exits(lineage, target_id))
@@ -8949,6 +9102,7 @@ def validate_module_contracts(rows: object, *, label: str) -> None:
             (module == "BezierProjectileBehavior" and _bezier_common_landing_shape(fields))
             or (module == "GeometryUpgrade" and _geometry_upgrade_row_has_closed_runtime(fields))
             or (module == "SubObjectsUpgrade" and _sub_objects_upgrade_row_has_closed_runtime(fields))
+            or (module == "TransitionDamageFX" and _transition_damage_fx_row_has_closed_runtime(fields))
             or (module == "AnimationSoundClientBehavior" and _animation_sound_row_has_closed_runtime(fields))
             or (module == "QueueProductionExitUpdate" and _queue_exit_row_has_closed_runtime(fields))
             or (module == "SpawnBehavior" and _spawn_reclaim_row_has_closed_runtime(fields))
