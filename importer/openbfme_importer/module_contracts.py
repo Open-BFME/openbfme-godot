@@ -110,6 +110,10 @@ EXECUTABLE_TYPED_MODULE_KINDS: frozenset[str] = frozenset(
 # Some module kinds have a closed executable subset while other authored field
 # shapes remain explicitly deferred.  They must not enter the kind-level set.
 ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE: Mapping[str, tuple[str, str]] = {
+    "AutoHealBehavior": (
+        _SIM_CONSUMER,
+        "game/tests/auto_heal_timer_runtime_runner.gd",
+    ),
     "BezierProjectileBehavior": (
         _SIM_CONSUMER,
         "game/tests/bezier_projectile_runtime_runner.gd",
@@ -141,6 +145,10 @@ ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE: Mapping[str, tuple[str, str]] = {
     "AnimationSoundClientBehavior": (
         "game/src/retail_slice/retail_slice_audio.gd",
         "game/tests/animation_sound_client_behavior_runtime_runner.gd",
+    ),
+    "DamageCreationList": (
+        "game/src/retail_slice/damage_creation.gd",
+        "game/tests/test_damage_creation_list.gd",
     ),
 }
 
@@ -2197,6 +2205,278 @@ def compile_attribute_modifier_aura_updates(
                 "line": block.line,
             }
         rows.append(_row("AttributeModifierAuraUpdate", block, fields))
+    rows.sort(key=lambda row: (str(row["sourceIni"]).casefold(), int(row["line"])))
+    return rows
+
+
+_AUTO_HEAL_SUPPORTED = frozenset(
+    {
+        "startsactive",
+        "healingamount",
+        "healingdelay",
+        "starthealingdelay",
+        "healonlyifnotincombat",
+        "triggeredby",
+        "radius",
+        "buttontriggered",
+        "singleburst",
+        "affectscontained",
+        "healonlyothers",
+        "kindof",
+        "nonstackable",
+        "unithealpulsefx",
+        "respawnnearbyhordemembers",
+        "respawnfxlist",
+        "respawnminimumdelay",
+    }
+)
+# Authoring any of these leaves the closed self-heal subset: the heal stops
+# being "this object, on its own timer" and needs a system nobody runs yet.
+_AUTO_HEAL_DEFERRING_FIELDS: Mapping[str, str] = {
+    "triggeredby": "upgrade-triggered-activation-without-runtime-oracle",
+    "radius": "area-heal-without-runtime-oracle",
+    "buttontriggered": "button-triggered-burst-without-runtime-oracle",
+    "singleburst": "button-triggered-burst-without-runtime-oracle",
+    "affectscontained": "contained-heal-without-runtime-oracle",
+    "healonlyothers": "others-only-heal-without-runtime-oracle",
+    "kindof": "kind-filtered-heal-without-runtime-oracle",
+    "nonstackable": "stacking-policy-without-runtime-oracle",
+    "unithealpulsefx": "presentation-field-without-runtime-oracle",
+    "respawnnearbyhordemembers": "horde-respawn-heal-without-runtime-oracle",
+    "respawnfxlist": "horde-respawn-heal-without-runtime-oracle",
+    "respawnminimumdelay": "horde-respawn-heal-without-runtime-oracle",
+}
+_AUTO_HEAL_TRAILING_COMMENT = re.compile(r"(?://|;).*$")
+
+
+def _auto_heal_flag(
+    assignment: SageAssignment | None, label: str
+) -> dict[str, object] | None:
+    """Yes/No tolerant of the trailing `// ...` retail authors on StartsActive."""
+
+    if assignment is None:
+        return None
+    folded = _AUTO_HEAL_TRAILING_COMMENT.sub("", assignment.value).strip().casefold()
+    if folded not in {"yes", "no"}:
+        raise ModuleContractError(f"{label} must be Yes or No: {assignment.value!r}")
+    return {
+        "authored": assignment.value,
+        "value": folded == "yes",
+        "sourceIni": assignment.source_virtual_path,
+        "line": assignment.line,
+    }
+
+
+def _auto_heal_scalar(
+    assignment: SageAssignment | None,
+    label: str,
+    *,
+    numeric_defines: Mapping[str, int | float] | None,
+    numeric_define_provenance: Mapping[str, Mapping[str, object]] | None,
+) -> dict[str, object] | None:
+    """A literal number, or a GameData define resolved with its own receipt.
+
+    An unresolvable expression keeps the authored text and omits ``value`` so a
+    caller cannot mistake "we do not know this magnitude" for a magnitude.
+    """
+
+    if assignment is None:
+        return None
+    authored = _AUTO_HEAL_TRAILING_COMMENT.sub("", assignment.value).strip()
+    field: dict[str, object] = {
+        "authored": assignment.value,
+        "sourceIni": assignment.source_virtual_path,
+        "line": assignment.line,
+    }
+    literal = re.fullmatch(r"[+-]?(?:\d+\.?\d*|\.\d+)", authored)
+    if literal is not None:
+        text = literal.group(0)
+        field["value"] = int(text) if re.fullmatch(r"[+-]?\d+", text) else float(text)
+        return field
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", authored) is None:
+        raise ModuleContractError(f"{label} is neither a number nor a define: {authored!r}")
+    field["expression"] = authored
+    from .playable_unit_compiler import _evaluated_define_body
+
+    bodies = {
+        str(name).casefold(): str(value)
+        for name, value in (numeric_defines or {}).items()
+        if not isinstance(value, bool) and isinstance(value, (int, float))
+    }
+    resolved = _evaluated_define_body(authored, bodies)
+    if resolved is None or isinstance(resolved, bool):
+        return field
+    provenance = (
+        None
+        if numeric_define_provenance is None
+        else numeric_define_provenance.get(authored.casefold())
+    )
+    if provenance is None:
+        return field
+    field["value"] = int(resolved) if float(resolved).is_integer() else float(resolved)
+    field["defineProvenance"] = dict(provenance)
+    return field
+
+
+def compile_auto_heal_behaviors(
+    lineage: Sequence[SageObject],
+    target_id: str,
+    *,
+    numeric_defines: Mapping[str, int | float] | None = None,
+    numeric_define_provenance: Mapping[str, Mapping[str, object]] | None = None,
+) -> list[dict[str, object]]:
+    """Compile the self-only regeneration timer retail authors on heroes.
+
+    Executable subset: ``StartsActive = Yes`` with a positive integral
+    ``HealingAmount`` and a positive ``HealingDelay``, and nothing that widens
+    the heal past the object itself.  ``StartHealingDelay`` is the
+    damage-anchored restart delay; ``HealOnlyIfNotInCombat`` says whether damage
+    restarts it at all.  Every other authored shape is a deferred row that names
+    why.
+    """
+
+    rows: list[dict[str, object]] = []
+    for block in _behavior_blocks(lineage, "AutoHealBehavior"):
+        counts: dict[str, int] = {}
+        for assignment in block.assignments:
+            folded = assignment.key.casefold()
+            counts[folded] = counts.get(folded, 0) + 1
+        duplicated = sorted(key for key, count in counts.items() if count > 1)
+        if duplicated:
+            raise ModuleContractError(
+                f"{target_id} AutoHealBehavior duplicate fields: " + ", ".join(duplicated)
+            )
+        amap = _assignment_map(block)
+        unknown = set(amap) - _AUTO_HEAL_SUPPORTED
+        if unknown:
+            raise ModuleContractError(
+                f"{target_id} AutoHealBehavior unsupported fields: "
+                + ", ".join(sorted(unknown))
+            )
+        fields: dict[str, object] = {}
+        unsupported: list[dict[str, object]] = []
+        for key, label in (
+            ("StartsActive", "StartsActive"),
+            ("HealOnlyIfNotInCombat", "HealOnlyIfNotInCombat"),
+        ):
+            flag = _auto_heal_flag(
+                amap.get(key.casefold()), f"{target_id} AutoHealBehavior {label}"
+            )
+            if flag is not None:
+                fields[key] = flag
+        amount = _auto_heal_scalar(
+            amap.get("healingamount"),
+            f"{target_id} AutoHealBehavior HealingAmount",
+            numeric_defines=numeric_defines,
+            numeric_define_provenance=numeric_define_provenance,
+        )
+        if amount is not None:
+            fields["HealingAmount"] = amount
+        for key in ("HealingDelay", "StartHealingDelay"):
+            duration = _auto_heal_scalar(
+                amap.get(key.casefold()),
+                f"{target_id} AutoHealBehavior {key}",
+                numeric_defines=numeric_defines,
+                numeric_define_provenance=numeric_define_provenance,
+            )
+            if duration is None:
+                continue
+            if "value" in duration:
+                numeric = float(duration.pop("value"))
+                if not numeric.is_integer() or numeric < 0:
+                    raise ModuleContractError(
+                        f"{target_id} AutoHealBehavior {key} must be non-negative "
+                        f"integer milliseconds: {duration['authored']!r}"
+                    )
+                duration["milliseconds"] = int(numeric)
+            fields[key] = duration
+        for folded, reason in sorted(_AUTO_HEAL_DEFERRING_FIELDS.items()):
+            assignment = amap.get(folded)
+            if assignment is None:
+                continue
+            unsupported.append(
+                {
+                    "name": assignment.key,
+                    "authored": assignment.value,
+                    "sourceIni": assignment.source_virtual_path,
+                    "line": assignment.line,
+                    "reason": reason,
+                }
+            )
+        if amount is None or "HealingDelay" not in fields:
+            unsupported.append(
+                {
+                    "name": "HealingAmount" if amount is None else "HealingDelay",
+                    "reason": "incomplete-heal-cadence",
+                    "sourceIni": block.source_virtual_path,
+                    "line": block.line,
+                }
+            )
+        for key in ("HealingAmount", "HealingDelay", "StartHealingDelay"):
+            field = fields.get(key)
+            if isinstance(field, dict) and "expression" in field and "value" not in field and "milliseconds" not in field:
+                unsupported.append(
+                    {
+                        "name": key,
+                        "authored": field["authored"],
+                        "sourceIni": field["sourceIni"],
+                        "line": field["line"],
+                        "reason": "unresolved-define-expression",
+                    }
+                )
+        starts_active = fields.get("StartsActive")
+        if not isinstance(starts_active, dict) or not bool(starts_active.get("value")):
+            unsupported.append(
+                {
+                    "name": "StartsActive",
+                    "reason": "starts-inactive",
+                    "sourceIni": block.source_virtual_path,
+                    "line": block.line,
+                }
+            )
+        if isinstance(amount, dict) and "value" in amount:
+            numeric_amount = float(amount["value"])
+            if numeric_amount <= 0.0:
+                unsupported.append(
+                    {
+                        "name": "HealingAmount",
+                        "authored": amount["authored"],
+                        "sourceIni": amount["sourceIni"],
+                        "line": amount["line"],
+                        "reason": "non-positive-healing-amount",
+                    }
+                )
+            elif not numeric_amount.is_integer():
+                unsupported.append(
+                    {
+                        "name": "HealingAmount",
+                        "authored": amount["authored"],
+                        "sourceIni": amount["sourceIni"],
+                        "line": amount["line"],
+                        "reason": "fractional-healing-amount",
+                    }
+                )
+        delay = fields.get("HealingDelay")
+        if isinstance(delay, dict) and int(delay.get("milliseconds", 0)) <= 0 and "milliseconds" in delay:
+            unsupported.append(
+                {
+                    "name": "HealingDelay",
+                    "authored": delay["authored"],
+                    "sourceIni": delay["sourceIni"],
+                    "line": delay["line"],
+                    "reason": "non-positive-healing-delay",
+                }
+            )
+        if unsupported:
+            fields["unsupportedSemantics"] = unsupported
+        rows.append(
+            _row(
+                "AutoHealBehavior",
+                block,
+                fields,
+                runtime_status="deferred" if unsupported else "executable",
+            )
+        )
     rows.sort(key=lambda row: (str(row["sourceIni"]).casefold(), int(row["line"])))
     return rows
 
@@ -8275,6 +8555,7 @@ TYPED_MODULE_KINDS: frozenset[str] = frozenset(
     {
         "AttributeModifierUpgrade",
         "AttributeModifierAuraUpdate",
+        "AutoHealBehavior",
         "AIUpdateInterface",
         "StancesBehavior",
         "HordeContain",
@@ -8511,6 +8792,12 @@ def compile_all_module_contracts(
     ))
     rows.extend(compile_horde_transport_contains(lineage, target_id))
     rows.extend(compile_attribute_modifier_aura_updates(lineage, target_id))
+    rows.extend(compile_auto_heal_behaviors(
+        lineage,
+        target_id,
+        numeric_defines=numeric_defines,
+        numeric_define_provenance=numeric_define_provenance,
+    ))
     rows.extend(compile_lifetime_updates(lineage, target_id))
     rows.extend(compile_ai_update_interfaces(lineage, target_id))
     rows.extend(compile_stances_behaviors(lineage, target_id))
