@@ -26222,6 +26222,9 @@ func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, tar
 			})
 		if int(hit_ticks[member_index]) == tick_index:
 			hit_ticks[member_index] = -1
+			# The weapon-release instant for EVERY mode (a melee swing releases
+			# too); the projectile-only bookkeeping below is a separate question.
+			_mark_member_release(attacker_id, member_index)
 			if String(weapon_modes[member_index]) != "close":
 				release_tokens[member_index] = int(release_tokens[member_index]) + 1
 				_emit_event("combat.member_fire", attacker_id, target_id, {
@@ -26323,6 +26326,9 @@ func _clear_member_attack_schedule(row: Dictionary) -> void:
 		hit_ticks[index] = -1
 	row["member_attack_start_ticks"] = start_ticks
 	row["member_attack_hit_ticks"] = hit_ticks
+	# Leaving the engagement (or swapping weapon sets) ends the firing span, so
+	# the derived FIRING_*/RELOADING window goes with the schedule.
+	_member_fire_ticks.erase(int(row.get("id", 0)))
 	# Leaving the firing engagement drops the PER_POSITION last-target so the
 	# next acquire (including the same unit after an idle) charges windup.
 	# Only touch the keys if they already exist — adding them on the pin
@@ -26418,6 +26424,183 @@ func _apply_weapon_mode(row: Dictionary, mode: String) -> bool:
 	if prior != "" and prior != mode:
 		_clear_member_attack_schedule(row)
 	return true
+
+
+## Retail WeaponSlot -> the letter SAGE suffixes onto the weapon-cycle model
+## conditions (PREATTACK_A, FIRING_B, ...). The retail corpus authors exactly
+## three slots (playable_unit_compiler._WEAPON_SLOT_NAMES: PRIMARY, SECONDARY,
+## TERTIARY), so the `_D` family has no source in this game's data and is never
+## produced here — see `weapon_condition_deferred_reasons`.
+const WEAPON_SLOT_CONDITION_LETTERS := {
+	"primary": "A",
+	"secondary": "B",
+	"tertiary": "C",
+}
+
+## Live WeaponSet condition -> its model-condition token. The compiled weapon
+## mode keys ARE the authored WeaponSet condition, lower-cased
+## (playable_unit_compiler._conditional_weapon_modes), so this table only
+## restates which of them retail also raises as a model condition. A live mode
+## that is not listed is receipted, never uppercased into an invented token.
+const LIVE_WEAPON_SET_CONDITION_MODES := {
+	"weaponset_toggle_1": "WEAPONSET_TOGGLE_1",
+	"weaponset_toggle_2": "WEAPONSET_TOGGLE_2",
+	"weaponset_toggle_3": "WEAPONSET_TOGGLE_3",
+	"weaponset_toggle_4": "WEAPONSET_TOGGLE_4",
+	"mounted": "MOUNTED",
+	"close_range": "CLOSE_RANGE",
+}
+
+## Tick each member last RELEASED its weapon: entity id -> member index -> tick.
+##
+## Everything else the weapon cycle needs is already authoritative —
+## `member_attack_start_ticks` / `member_attack_hit_ticks` bracket the windup —
+## but the release tick is destroyed the moment it is used: `_step_member_attacks`
+## sets `member_attack_hit_ticks[i] = -1` on the firing tick, so afterwards
+## "firing" and "idle" look identical on the row.
+##
+## That one fact is recorded HERE and not on the entity row on purpose: every row
+## key is walked by `_authoritative_state()`, so a new per-member array would move
+## the pinned 3000-tick hash (`tests/retail_state_pin_runner.gd`) for a value no
+## rule reads. This table is tick-derived observation, exactly like `events`.
+##
+## Stated rather than hidden (AGENTS.md rule 5): `restore()` clears it, so a
+## member that was inside its FiringDuration when the snapshot was taken reports
+## no FIRING_* until its next release. PREATTACK_*, the pre-attack half of the
+## composites and every weapon-set condition read authoritative keys and survive.
+var _member_fire_ticks: Dictionary = {}
+
+
+func member_weapon_condition_tokens(entity_id: int) -> Array:
+	## Live SAGE weapon-cycle model conditions, one token Array per battalion
+	## member, index-aligned with `member_health`. The presenter unions these into
+	## the condition set it hands `AnimationStateSelect.select()`; retail binds
+	## PREATTACK_A -> ATKF1 and FIRING_OR_RELOADING_A -> ATKF2 on the archer
+	## (gondorarcher.ini:236-288).
+	##
+	## Derived on demand from the authoritative combat schedule — nothing here is
+	## stored on the entity row. A member with no resolvable weapon slot, or a
+	## battalion that is not attacking, yields the weapon-set conditions only;
+	## `weapon_condition_deferred_reasons` says why.
+	var out: Array = []
+	if not entities.has(entity_id):
+		return out
+	var row := entities[entity_id] as Dictionary
+	var member_health_values: Array = row.get("member_health", [])
+	var start_ticks: Array = row.get("member_attack_start_ticks", [])
+	var hit_ticks: Array = row.get("member_attack_hit_ticks", [])
+	var member_modes: Array = row.get("member_weapon_modes", [])
+	var modes := row.get("weapon_modes", {}) as Dictionary
+	var attacking := String(row.get("state", "")) == "attack"
+	var set_tokens := _live_weapon_set_condition_tokens(row)
+	var marks := _member_fire_ticks.get(entity_id, {}) as Dictionary
+	for member_index in range(member_health_values.size()):
+		var tokens: Array = []
+		if int(member_health_values[member_index]) <= 0:
+			out.append(tokens)
+			continue
+		for token in set_tokens:
+			tokens.append(token)
+		if not attacking:
+			out.append(tokens)
+			continue
+		var mode_key := String(row.get("active_weapon_mode", ""))
+		if member_index < member_modes.size():
+			# The mode this member's in-flight shot was scheduled with, which is
+			# what its slot letter must name.
+			mode_key = String(member_modes[member_index])
+		var mode := modes.get(mode_key, {}) as Dictionary
+		var letter := String(WEAPON_SLOT_CONDITION_LETTERS.get(String(mode.get("weapon_slot", "")), ""))
+		if letter == "":
+			out.append(tokens)
+			continue
+		var start := int(start_ticks[member_index]) if member_index < start_ticks.size() else -1
+		var hit := int(hit_ticks[member_index]) if member_index < hit_ticks.size() else -1
+		var firing_ticks := maxi(0, int(mode.get("firing_duration_ticks", row.get("firing_duration_ticks", 0))))
+		var fire_tick := int(marks.get(member_index, -1))
+		var since_release := tick_index - fire_tick if fire_tick >= 0 else -1
+		# The swing has begun (its start tick was consumed) and the release tick
+		# is still ahead: PreAttackDelay is running for this member.
+		var preattack := start < 0 and hit > tick_index
+		var firing := since_release >= 0 and since_release < firing_ticks
+		# The third segment of the sim's cadence (windup + FiringDuration +
+		# DelayBetweenShots-or-ClipReloadTime): released, done firing, waiting for
+		# the next swing. Retail folds it into FIRING_OR_RELOADING.
+		var reloading := since_release >= firing_ticks and fire_tick >= 0 and not preattack
+		if preattack:
+			tokens.append("PREATTACK_%s" % letter)
+		if firing:
+			tokens.append("FIRING_%s" % letter)
+		if preattack or firing:
+			tokens.append("FIRING_OR_PREATTACK_%s" % letter)
+		if firing or reloading:
+			tokens.append("FIRING_OR_RELOADING_%s" % letter)
+		out.append(tokens)
+	return out
+
+
+func weapon_condition_deferred_reasons(entity_id: int) -> Array:
+	## Why a weapon-cycle model condition is NOT being raised. Fail-loud
+	## companion to `member_weapon_condition_tokens`: a consumer that sees no
+	## PREATTACK_A must be able to tell "not winding up" from "this unit's data
+	## cannot name a slot".
+	var out: Array = []
+	if not entities.has(entity_id):
+		return ["entity-missing"]
+	var row := entities[entity_id] as Dictionary
+	var active := String(row.get("active_weapon_mode", ""))
+	var mode := (row.get("weapon_modes", {}) as Dictionary).get(active, {}) as Dictionary
+	if not WEAPON_SLOT_CONDITION_LETTERS.has(String(mode.get("weapon_slot", ""))):
+		# No authored WeaponSlot means no letter, and a guessed PRIMARY would be
+		# an invented animation state.
+		out.append("weapon-slot-unauthored:%s" % active)
+	if maxi(0, int(mode.get("firing_duration_ticks", row.get("firing_duration_ticks", 0)))) <= 0:
+		out.append("firing-duration-zero:%s" % active)
+	if (
+		active != ""
+		and active != String(row.get("default_weapon_mode", ""))
+		and active != String(row.get("close_weapon_mode", ""))
+		and not LIVE_WEAPON_SET_CONDITION_MODES.has(active)
+	):
+		out.append("weapon-set-condition-unmapped:%s" % active)
+	# Structural, not per-unit: `_apply_weapon_mode` installs a set in one tick
+	# and clears the member schedule, so there is no swap-in-progress span for
+	# SWAPPING_TO_WEAPONSET_* to describe.
+	out.append("swapping-to-weaponset-not-modelled")
+	# PRIMARY/SECONDARY/TERTIARY is the whole retail slot corpus.
+	out.append("weapon-slot-d-absent-from-retail-corpus")
+	return out
+
+
+func _live_weapon_set_condition_tokens(row: Dictionary) -> Array:
+	var out: Array = []
+	var active := String(row.get("active_weapon_mode", ""))
+	var close := String(row.get("close_weapon_mode", ""))
+	if active != "" and active == close:
+		# The close profile is built from the WeaponSet conditioned on
+		# CLOSE_RANGE (retail_vertical_slice._retail_unit_rule), whatever the
+		# rule chose to key it under.
+		out.append("CLOSE_RANGE")
+	elif LIVE_WEAPON_SET_CONDITION_MODES.has(active):
+		out.append(String(LIVE_WEAPON_SET_CONDITION_MODES[active]))
+	for flag_value in row.get("weapon_set_flags", []) as Array:
+		var flag := String(flag_value).to_upper()
+		if flag != "" and not out.has(flag):
+			out.append(flag)
+	return out
+
+
+func _mark_member_release(attacker_id: int, member_index: int) -> void:
+	var marks := _member_fire_ticks.get(attacker_id, {}) as Dictionary
+	marks[member_index] = tick_index
+	_member_fire_ticks[attacker_id] = marks
+	if _member_fire_ticks.size() > entities.size():
+		# Entities are removed from a dozen places with no shared hook, so the
+		# observation table is pruned here instead. Self-limiting: after one pass
+		# it cannot exceed the live entity count again until another id dies.
+		for key in _member_fire_ticks.keys():
+			if not entities.has(int(key)):
+				_member_fire_ticks.erase(key)
 
 
 func _ensure_member_target_assignments(attacker: Dictionary, target: Dictionary) -> void:
@@ -30253,6 +30436,9 @@ func restore(bytes: PackedByteArray) -> bool:
 	selected_ids.clear()
 	reset_control_groups()
 	events.clear()
+	# Tick-derived, not authoritative: see `_member_fire_ticks`. A restored member
+	# reports no FIRING_* until its next release rather than a guessed window.
+	_member_fire_ticks.clear()
 	last_command_result = null
 	_state_hash_static_digest.clear()
 	return true
