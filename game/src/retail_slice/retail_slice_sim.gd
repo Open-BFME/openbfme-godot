@@ -24621,14 +24621,32 @@ func _step_economy() -> void:
 	# descriptor-backed structures carry their next-payment frame in hashed
 	# structure state, just as the SAGE module xfers m_depositOnFrame.
 	_step_auto_deposit_updates()
-	var interval := maxi(1, int(_rules.get("farm_payout_ticks", 50)))
-	if tick_index % interval != 0:
-		return
+	
+	var legacy_interval := maxi(1, int(_rules.get("farm_payout_ticks", 50)))
+	var legacy_payout_due := (tick_index % legacy_interval == 0)
+	
 	for id in structure_ids():
 		var row: Dictionary = structures[id]
 		var income := int(row.get("income_per_payout", 0))
 		if income <= 0 or int(row.get("health", 0)) <= 0 or float(row.get("construction_progress", 0.0)) < 1.0:
 			continue
+		
+		# Determine if this structure is due for payout
+		var payout_due := false
+		if row.has("income_interval_ticks") and row.has("next_income_tick"):
+			# Descriptor-authored per-structure cadence (retail IncomeInterval)
+			var next_payout: int = int(row.get("next_income_tick", -1))
+			if tick_index >= next_payout:
+				var interval_ticks: int = int(row.get("income_interval_ticks", 1))
+				row["next_income_tick"] = tick_index + interval_ticks
+				payout_due = true
+		else:
+			# Legacy global farm_payout_ticks cadence
+			payout_due = legacy_payout_due
+		
+		if not payout_due:
+			continue
+		
 		var team := int(row.get("team", -1))
 		income = _income_with_upgrade_bonus(team, row, income)
 		income = _ai_resource_handicap(team, income)
