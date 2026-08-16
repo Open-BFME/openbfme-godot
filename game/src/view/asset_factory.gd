@@ -293,16 +293,18 @@ static func preload_models_threaded(paths: Array) -> void:
 			continue
 		if ResourceLoader.exists(path):
 			# Imported resources load fast through the engine; keep that path.
-			_try_load_model(path)
+			_warm_model_cache(path)
 			continue
 		if not FileAccess.file_exists(path):
 			continue
 		threaded.append(path)
 	if threaded.is_empty():
 		return
-	if threaded.size() == 1 or OS.get_processor_count() <= 1:
+	if threaded.size() == 1 or OS.get_processor_count() <= 1 or not parallel_glb_parse_supported():
+		if not parallel_glb_parse_supported():
+			_announce_serial_glb_parse()
 		for path in threaded:
-			_try_load_model(path)
+			_warm_model_cache(path)
 		return
 	var parsed: Array = []
 	parsed.resize(threaded.size())
@@ -318,15 +320,49 @@ static func preload_models_threaded(paths: Array) -> void:
 	for index in threaded.size():
 		var entry: Variant = parsed[index]
 		if typeof(entry) != TYPE_DICTIONARY:
-			# Parse failed on the worker: the lazy path retries and applies the
-			# established failure handling at the call site.
+			# Parse failed on the worker. Retry on this thread and say which
+			# path, both times: a batch that quietly warms 23 of 24 models
+			# leaves the twenty-fourth to fail later, somewhere else.
+			push_warning("[AssetFactory] threaded GLB parse failed, retrying serially: %s" % threaded[index])
+			if not _warm_model_cache(threaded[index]):
+				push_error("[AssetFactory] GLB parse failed on the worker and on retry: %s" % threaded[index])
 			continue
 		var node: Node3D = (entry["document"] as GLTFDocument).generate_scene(entry["state"] as GLTFState) as Node3D
-		if node != null:
-			_cache_model(threaded[index], node)
-			# _cache_model stores a duplicate; the generated original is never
-			# parented on this warm path and must be freed or it leaks at exit.
-			node.free()
+		if node == null:
+			push_error("[AssetFactory] GLB parsed but generated no scene: %s" % threaded[index])
+			continue
+		_cache_model(threaded[index], node)
+		# _cache_model stores a duplicate; the generated original is never
+		# parented on this warm path and must be freed or it leaks at exit.
+		node.free()
+
+
+## Warm the cache for one path on THIS thread and report whether it landed.
+##
+## _try_load_model hands back a fresh Node3D the caller owns (a duplicate on a
+## cache hit, the generated scene on a miss) while the cache keeps its own copy.
+## Node is not reference-counted, so a warm path that ignores that return value
+## leaks one node tree per call -- which the batch preload did on both of its
+## serial branches, and those branches now carry every headless run.
+static func _warm_model_cache(path: String) -> bool:
+	var node := _try_load_model(path)
+	if node == null:
+		return false
+	node.free()
+	return true
+
+
+static var _announced_serial_glb_parse := false
+
+
+## Say it once, out loud, per process: the batch preload is not using the worker
+## pool and why. A quiet degradation to a slower path is how "it got slower
+## sometime last month" becomes unattributable.
+static func _announce_serial_glb_parse() -> void:
+	if _announced_serial_glb_parse:
+		return
+	_announced_serial_glb_parse = true
+	print("[AssetFactory] GLB batch preload is SERIAL: the %s renderer's texture storage is not thread-safe (see parallel_glb_parse_supported)." % DisplayServer.get_name())
 
 
 static func _try_load_model(path: String) -> Node3D:
@@ -374,6 +410,32 @@ static func clear_mesh_cache() -> void:
 
 static func mesh_cache_size() -> int:
 	return _mesh_cache.size()
+
+
+static func has_cached_model(path: String) -> bool:
+	var cached: Variant = _mesh_cache.get(path)
+	return cached is Node and is_instance_valid(cached)
+
+
+## Whether GLB parsing may be dispatched to the worker pool.
+##
+## GLTFDocument.append_from_file does not only read geometry: it builds the
+## ImageTextures for the GLB's materials, and that calls into RenderingServer's
+## texture storage. Every hardware backend declares its texture RID owner
+## thread-safe and marshals the call; the headless DUMMY renderer does not --
+## servers/rendering/dummy/storage/texture_storage.h declares a plain
+## `RID_PtrOwner<DummyTexture> texture_owner;`. Two workers allocating a texture
+## at the same moment race that owner, one RID never lands in the pool, and the
+## follow-up texture_2d_initialize reports `Parameter "t" is null.` at
+## texture_storage.h:85 -- leaving the prop holding a texture that was never
+## initialized. It is a data race, so it fires perhaps once per two hundred
+## parses: rare enough to have been logged as noise in six runner logs under
+## .private/scratch and never chased.
+##
+## MEASURED (glb_preload_thread_safety_runner, 2026-08-16, 30 iterations over
+## the same 24 pack GLBs): threaded 4 occurrences, serial 0.
+static func parallel_glb_parse_supported() -> bool:
+	return DisplayServer.get_name() != "headless"
 
 static func _load_gltf(path: String) -> Node3D:
 	if ResourceLoader.exists(path):
