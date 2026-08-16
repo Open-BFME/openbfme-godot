@@ -4,8 +4,9 @@ extends SceneTree
 ## Retail authors heroes as HERO_HEAL_AMOUNT (30) every 1000ms restarted
 ## HERO_HEAL_DELAY (15000ms) after the last damage; this runner proves the
 ## authored milliseconds, the damage-anchored restart, the max-health cap, the
-## ungated (HealOnlyIfNotInCombat = No) cadence, the structure path, and that a
-## sub-tick HealingDelay refuses instead of inventing a rate.
+## ungated (HealOnlyIfNotInCombat = No) cadence, the HealOnlyIfNotUnderAttack
+## gate, the structure path, and that a sub-tick HealingDelay refuses instead of
+## inventing a rate.
 const Sim = preload("res://src/retail_slice/retail_slice_sim.gd")
 var passed := 0
 var failed := 0
@@ -33,6 +34,7 @@ func _process(_delta: float) -> bool:
 
 func _run() -> void:
 	_gated_hero_cadence()
+	_under_attack_gate_pauses_and_resumes()
 	_ungated_cadence_ignores_damage()
 	_max_health_cap_and_dead_members()
 	_structure_self_heal()
@@ -99,6 +101,53 @@ func _gated_hero_cadence() -> void:
 	sim.tick_index = 111
 	sim._step_hero_regeneration()
 	_check("provisional_hero_regen_yields_to_authored_contract", int(hero["health"]) == 80)
+
+
+func _under_attack_gate_pauses_and_resumes() -> void:
+	# HealOnlyIfNotUnderAttack with no HealOnlyIfNotInCombat: the pulse is
+	# suppressed while incoming damage is still landing and restarts
+	# StartHealingDelay after the last hit. Magnitudes are the retail hearth
+	# heal (menhordes.ini:2816 ModuleTag_HearthHeal): HealingAmount 30,
+	# HealingDelay 5000ms = 50 ticks, StartHealingDelay 7500ms = 75 ticks.
+	var sim := _new_sim()
+	var contract := _contract()
+	var fields := contract["fields"] as Dictionary
+	fields.erase("HealOnlyIfNotInCombat")
+	fields["HealOnlyIfNotUnderAttack"] = {"value": true}
+	fields["HealingAmount"] = {"value": 30}
+	fields["HealingDelay"] = {"milliseconds": 5000}
+	fields["StartHealingDelay"] = {"milliseconds": 7500}
+	sim.register_unit_module_contracts("FixtureHero", [contract])
+	sim._add_battalion(6, Sim.PLAYER_TEAM, Vector2.ZERO, "FixtureHero", "FixtureHero", "FixtureHero", 0, _hero_rule())
+	var hero := sim.entities[6] as Dictionary
+	hero["member_health"] = [10]
+	hero["health"] = 10
+	hero["last_damage_tick"] = 0
+
+	var policy := hero.get("auto_heal_behavior", {}) as Dictionary
+	_check("under_attack_gate_recorded", bool(policy.get("heal_only_if_not_under_attack", false)))
+	_check("under_attack_start_delay_7500ms_equals_75ticks", int(policy.get("start_delay_ticks", -1)) == 75)
+
+	for tick in range(1, 75):
+		sim.tick_index = tick
+		sim._step_auto_heal_updates()
+	_check("under_attack_window_blocks_heal", int(hero["health"]) == 10)
+
+	sim.tick_index = 75
+	sim._step_auto_heal_updates()
+	_check("heals_authored_amount_after_window", int(hero["health"]) == 40)
+
+	# Damage inside the cadence pauses the heal again and rebases the window on
+	# the new hit, not on the pulse that was already scheduled.
+	hero["last_damage_tick"] = 80
+	for tick in range(76, 155):
+		sim.tick_index = tick
+		sim._step_auto_heal_updates()
+	_check("new_damage_pauses_healing_again", int(hero["health"]) == 40)
+
+	sim.tick_index = 155
+	sim._step_auto_heal_updates()
+	_check("healing_resumes_after_under_attack_window", int(hero["health"]) == 70)
 
 
 func _ungated_cadence_ignores_damage() -> void:

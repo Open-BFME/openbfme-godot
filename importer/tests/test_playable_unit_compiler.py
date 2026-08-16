@@ -5696,6 +5696,46 @@ def test_stealth_toggle_rows_emit_measured_fields() -> None:
     assert effect["affects"] == "ANY +HERO +DOZER ALLIES"
 
 
+def test_toggle_hidden_without_effect_duration_is_an_untimed_cloak() -> None:
+    # RotWK authors EffectDuration on exactly one ToggleHiddenSpecialAbilityUpdate
+    # (wormtongue.ini). Thranduil's Elven Cloak, the Elven horde's and the
+    # create-a-hero cloak all omit it: the toggle holds until the player
+    # recasts it or an authored ForbiddenCondition breaks it.
+    documents = _batch3_hero_documents()
+    documents["data/ini/object/units/test_units.ini"] = documents[
+        "data/ini/object/units/test_units.ini"
+    ].replace(b"    EffectDuration = 80000\n", b"", 1)
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    row = _abilities_by_id(descriptor)["Command_FixtureWildWalk"]
+    assert row["implementation"]["status"] == "implemented"
+    effect = row["effect"]
+    assert effect["kind"] == "stealth-toggle"
+    assert effect["untimed"] is True
+    assert "effectDurationMs" not in effect
+    assert effect["forbiddenConditions"] == ["TAKING_DAMAGE", "USING_ABILITY"]
+
+
+def test_toggle_hidden_with_an_unresolvable_duration_still_fails_closed() -> None:
+    documents = _batch3_hero_documents()
+    documents["data/ini/object/units/test_units.ini"] = documents[
+        "data/ini/object/units/test_units.ini"
+    ].replace(
+        b"    EffectDuration = 80000\n",
+        b"    EffectDuration = INVENTED_CLOAK_DURATION\n",
+        1,
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    row = _abilities_by_id(descriptor)["Command_FixtureWildWalk"]
+    assert row["implementation"]["status"] == "unimplemented"
+    assert "unresolvable EffectDuration" in row["implementation"]["reason"]
+    assert row["effect"] == {"kind": "none"}
+
+
 def test_teleport_rows_emit_measured_fields() -> None:
     descriptor = compile_playable_unit_descriptor(
         "AbilityHero", _batch3_hero_documents()

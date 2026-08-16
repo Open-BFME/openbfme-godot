@@ -108,6 +108,49 @@ def test_shapes_outside_the_closed_subset_stay_deferred(body: str, reason: str) 
     assert reason in reasons
 
 
+HEARTH_HEAL_BODY = """    StartsActive = No
+    HealOnlyIfNotUnderAttack = Yes
+    HealOnlyIfNotInCombat = Yes
+    TriggeredBy = Upgrade_MiniHordeLvl3
+    HealingAmount = 30
+    Radius = 100
+    StartHealingDelay = 7500
+    HealingDelay = 5000
+    UnitHealPulseFX = FX_SpellHealUnitHealBuff
+    NonStackable = Yes
+    RespawnNearbyHordeMembers = Yes
+    RespawnFXList = FX_BannerCarrierSpawnUnit
+    RespawnMinimumDelay = 200"""
+
+
+def test_hearth_heal_under_attack_gate_is_typed_not_a_hard_error() -> None:
+    # Verbatim ModuleTag_HearthHeal body from GondorKnightsofDolHorde
+    # (menhordes.ini:2816-2830); RotWK authors the same pair of gates on the
+    # five other faction respawn hordes. The row stays deferred for the area
+    # heal and the upgrade trigger, but the under-attack gate is not a reason
+    # to waive the whole unit out of a faction pack.
+    rows = compile_auto_heal_behaviors(_lineage(_block(HEARTH_HEAL_BODY)), "FixtureObject")
+    assert len(rows) == 1
+    fields = rows[0]["fields"]
+    assert fields["HealOnlyIfNotUnderAttack"]["value"] is True
+    assert fields["HealOnlyIfNotInCombat"]["value"] is True
+    assert fields["StartHealingDelay"]["milliseconds"] == 7500
+    assert rows[0]["runtimeStatus"] == "deferred"
+    reasons = {item["reason"] for item in fields["unsupportedSemantics"]}
+    assert "area-heal-without-runtime-oracle" in reasons
+    assert not any("underattack" in str(item.get("name", "")).casefold() for item in fields["unsupportedSemantics"])
+
+
+def test_under_attack_gate_alone_keeps_the_closed_cadence_executable() -> None:
+    body = CLOSED_BODY.replace(
+        "HealOnlyIfNotInCombat = Yes", "HealOnlyIfNotUnderAttack = Yes"
+    )
+    rows = compile_auto_heal_behaviors(_lineage(_block(body)), "FixtureObject")
+    assert rows[0]["runtimeStatus"] == "executable"
+    assert rows[0]["fields"]["HealOnlyIfNotUnderAttack"]["value"] is True
+    assert "HealOnlyIfNotInCombat" not in rows[0]["fields"]
+
+
 def test_named_defines_resolve_with_provenance() -> None:
     body = CLOSED_BODY.replace("HealingAmount = 30", "HealingAmount = HERO_HEAL_AMOUNT").replace(
         "StartHealingDelay = 15000", "StartHealingDelay = HERO_HEAL_DELAY"

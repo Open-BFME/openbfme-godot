@@ -14,6 +14,11 @@ const MAX_RETAINED_STRUCTURE_TARGETS_PER_KIND := 256
 ## Positions are X/Z world coordinates stored as Vector2 values.
 
 const TICK_SECONDS := 0.1
+## Expiry tick for a cloak retail authors no duration for (a bare
+## ToggleHiddenSpecialAbilityUpdate). It is not a timer: at 0.1s ticks this is
+## roughly 3.4 years of simulated match time, so only a recast or a
+## ForbiddenCondition ever ends the cloak.
+const STEALTH_UNTIMED_EXPIRY_TICK := 0x3FFFFFFF
 const PLAYER_TEAM := 0
 const ENEMY_TEAM := 1
 # Unowned map structures (capture-building tier-1 targets). No player or AI
@@ -14102,8 +14107,10 @@ func _scaled_ability_rules(rules: Array[Dictionary], source_scale: float) -> Arr
 			"stealth-toggle":
 				# ToggleHiddenSpecialAbilityUpdate / InvisibilitySpecialPower:
 				# EffectDuration is milliseconds; an authored BroadcastRadius
-				# (ally cloak) binds to map scale. Zero stays zero: an
-				# unauthored duration keeps the cast fail-closed.
+				# (ally cloak) binds to map scale. Zero stays zero: a duration
+				# the converter could not resolve keeps the cast fail-closed,
+				# while a leaf retail authors no duration for arrives flagged
+				# `untimed` and cloaks until recast instead.
 				var stealth_ms := float(effect.get("effectDurationMs", 0.0))
 				effect["duration_ticks"] = maxi(1, roundi(stealth_ms / (TICK_SECONDS * 1000.0))) if stealth_ms > 0.0 else 0
 				effect["broadcast_radius_scaled"] = float(effect.get("broadcastRadius", 0.0)) * scale
@@ -24724,13 +24731,17 @@ func _apply_ability_stealth_toggle(hero_row: Dictionary, effect: Dictionary) -> 
 	## enemy auto-acquisition; the authored ForbiddenConditions break the
 	## cloak early. Recasting the toggle drops it (retail toggle-hidden).
 	var duration_ticks := int(effect.get("duration_ticks", 0))
-	if duration_ticks <= 0:
+	var untimed := bool(effect.get("untimed", false))
+	if duration_ticks <= 0 and not untimed:
 		return {"ok": false, "reason": "stealth-fields-missing"}
 	if _stealth_active(hero_row):
 		_clear_stealth(hero_row)
 		return {"ok": true, "reason": "", "effect": "stealth-toggle", "affected": 1, "engaged": false}
 	var forbidden: Array = (effect.get("forbiddenConditions", []) as Array).duplicate()
-	var until_tick := tick_index + duration_ticks
+	# A ToggleHiddenSpecialAbilityUpdate that authors no EffectDuration holds
+	# until the player recasts it or a ForbiddenCondition breaks it, so it gets
+	# an expiry tick no run reaches instead of a timer retail never authored.
+	var until_tick := STEALTH_UNTIMED_EXPIRY_TICK if untimed else tick_index + duration_ticks
 	_grant_stealth(hero_row, until_tick, forbidden)
 	var affected := 1
 	var broadcast := float(effect.get("broadcast_radius_scaled", 0.0))

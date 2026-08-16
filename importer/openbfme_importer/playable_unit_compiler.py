@@ -8791,13 +8791,24 @@ def _hero_ability_effect(
             )
         if hidden_modules:
             block = hidden_modules[0]
-            duration = _resolved_expression(
-                (block.values("EffectDuration") or ("",))[-1], constants
+            # RotWK authors EffectDuration on exactly one
+            # ToggleHiddenSpecialAbilityUpdate (wormtongue.ini). Thranduil's
+            # Elven Cloak, the Elven horde's and the create-a-hero cloak all
+            # omit it: the toggle holds until the player recasts it or an
+            # authored ForbiddenCondition breaks it. An authored duration that
+            # will not resolve is still a gap.
+            authored_duration = bool(block.values("EffectDuration"))
+            duration = (
+                _resolved_expression(
+                    (block.values("EffectDuration") or ("",))[-1], constants
+                )
+                if authored_duration
+                else None
             )
-            if duration is None or float(duration) <= 0.0:
+            if authored_duration and (duration is None or float(duration) <= 0.0):
                 raise PlayableUnitCompilerError(
-                    f"{label} ToggleHiddenSpecialAbilityUpdate has no "
-                    "resolvable EffectDuration"
+                    f"{label} ToggleHiddenSpecialAbilityUpdate has an "
+                    "unresolvable EffectDuration"
                 )
             # Retail binds the toggle to the object's FIRST InvisibilityUpdate
             # (the authored ordering contract in thranduil.ini); its nugget
@@ -8825,11 +8836,14 @@ def _hero_ability_effect(
             ]
             effect = {
                 "kind": "stealth-toggle",
-                "effectDurationMs": duration,
                 "forbiddenConditions": forbidden,
                 "sourceIni": block.source_virtual_path,
                 "line": block.line,
             }
+            if duration is None:
+                effect["untimed"] = True
+            else:
+                effect["effectDurationMs"] = duration
         else:
             block = invisibility_modules[0]
             duration = _resolved_expression(

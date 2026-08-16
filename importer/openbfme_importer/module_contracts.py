@@ -3000,6 +3000,7 @@ _AUTO_HEAL_SUPPORTED = frozenset(
         "healingdelay",
         "starthealingdelay",
         "healonlyifnotincombat",
+        "healonlyifnotunderattack",
         "triggeredby",
         "radius",
         "buttontriggered",
@@ -3139,9 +3140,12 @@ def compile_auto_heal_behaviors(
     Executable subset: ``StartsActive = Yes`` with a positive integral
     ``HealingAmount`` and a positive ``HealingDelay``, and nothing that widens
     the heal past the object itself.  ``StartHealingDelay`` is the
-    damage-anchored restart delay; ``HealOnlyIfNotInCombat`` says whether damage
-    restarts it at all.  Every other authored shape is a deferred row that names
-    why.
+    damage-anchored restart delay; ``HealOnlyIfNotInCombat`` and
+    ``HealOnlyIfNotUnderAttack`` say whether damage restarts it at all — RotWK
+    authors the pair together on the six faction respawn hordes
+    (``menhordes.ini:2816`` and its five siblings), where the window is the
+    authored ``StartHealingDelay`` and no separate magnitude exists.  Every
+    other authored shape is a deferred row that names why.
     """
 
     rows: list[dict[str, object]] = []
@@ -3167,6 +3171,7 @@ def compile_auto_heal_behaviors(
         for key, label in (
             ("StartsActive", "StartsActive"),
             ("HealOnlyIfNotInCombat", "HealOnlyIfNotInCombat"),
+            ("HealOnlyIfNotUnderAttack", "HealOnlyIfNotUnderAttack"),
         ):
             flag = _auto_heal_flag(
                 amap.get(key.casefold()), f"{target_id} AutoHealBehavior {label}"
