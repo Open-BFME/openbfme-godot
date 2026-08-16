@@ -144,6 +144,9 @@ var member_previous_authored_state_labels: Dictionary = {}
 ## member's authored animation state changes so CurDrawableSetTransitionAnimState
 ## and CurDrawableAllowToContinue can read Prev.
 var _drawable_scripts: Array = []
+## Last BeginScript receipt from the live `_play_member_state` path. Empty until
+## a member state change actually executes authored drawable scripts.
+var last_drawable_script_receipt: Dictionary = {}
 var equipment_contract: Dictionary = {}
 var equipment_contract_ready := false
 var unresolved_animation_track_count := 0
@@ -1149,17 +1152,16 @@ func set_selected(value: bool) -> void:
 	if source_selection_decal != null:
 		source_selection_decal.set_selected(selected and production_exit_progress >= 1.0)
 	if selected and not was_selected and current_state == "idle":
-		# Retail (gondorfighter.ini:519-531 / :664-670): idle → TRANS_IdleToSelected
-		# (ATNA once) then loop STATE_Selected (ATNB) until an order. Missing
-		# clips fail closed and stay idle — do not invent a pose.
+		# Retail (gondorfighter.ini:519-531 / :664-670): SELECTED BeginScript
+		# decides whether Prev == STATE_Idle plays TRANS_IdleToSelected.
+		# `_play_member_state` runs those scripts; the compiled ATNA map is
+		# only the authored-script-absent fallback.
 		for member_index in range(member_count):
 			if float(member_health_ratios.get(member_index, 0.0)) <= 0.0:
 				continue
 			if String(member_action_states.get(member_index, "idle")) != "idle":
 				continue
-			if String(clip_map.get("selectionTransition", "")) != "":
-				_play_member_state(member_index, "selectionTransition", -1, true)
-			elif String(clip_map.get("selected", "")) != "":
+			if String(clip_map.get("selected", "")) != "" or String(clip_map.get("selectionTransition", "")) != "":
 				_play_member_state(member_index, "selected", -1, true)
 	elif not selected and was_selected:
 		for member_index in range(member_count):
@@ -1294,16 +1296,79 @@ func sync_member_states(
 
 
 func _play_member_state(member_index: int, state: String, action_token: int, restart: bool) -> void:
-	var requested := member_clip_for_state(member_index, state)
+	var play_state := state
+	var conditions := _drawable_conditions_for_state(state)
+	var receipt: Dictionary = apply_member_drawable_scripts(member_index, conditions)
+	last_drawable_script_receipt = receipt.duplicate(true)
+	if bool(receipt.get("allow_to_continue", false)):
+		restart = false
+	var transition := String(receipt.get("transition_anim_state", ""))
+	if transition != "":
+		var mapped := _clip_state_for_transition_name(transition)
+		if mapped != "" and member_clip_for_state(member_index, mapped) != "":
+			play_state = mapped
+	elif (
+		state == "selected"
+		and String(member_action_states.get(member_index, "idle")) == "idle"
+		and not _has_authored_transition_script(conditions)
+		and member_clip_for_state(member_index, "selectionTransition") != ""
+	):
+		play_state = "selectionTransition"
+	var requested := member_clip_for_state(member_index, play_state)
 	if requested == "":
 		return
 	_sync_member_authored_state_labels(member_index, requested)
-	member_action_states[member_index] = state
+	member_action_states[member_index] = play_state
 	member_current_clips[member_index] = requested
 	for player_value in member_animation_players.get(member_index, []):
-		_play_member_clip(player_value as AnimationPlayer, requested, state, member_index, 0.10, not restart, action_token)
-	if state.begins_with("attack") and action_token >= 0:
+		_play_member_clip(player_value as AnimationPlayer, requested, play_state, member_index, 0.10, not restart, action_token)
+	if play_state.begins_with("attack") and action_token >= 0:
 		_last_action_token = maxi(_last_action_token, action_token)
+
+
+func _drawable_conditions_for_state(state: String) -> Array:
+	if state == "selected" or state == "selectionTransition":
+		return ["SELECTED"]
+	if state == "run":
+		return ["MOVING"]
+	if state.begins_with("attack"):
+		return ["ATTACKING"]
+	if state == "death":
+		return ["DYING"]
+	return []
+
+
+func _clip_state_for_transition_name(transition: String) -> String:
+	var folded := transition.to_lower().replace("_", "")
+	if folded == "transidletoselected":
+		return "selectionTransition"
+	return ""
+
+
+func _has_authored_transition_script(active_conditions: Array) -> bool:
+	var active: Dictionary = {}
+	for value in active_conditions:
+		active[String(value).to_upper()] = true
+	for script_value in _drawable_scripts:
+		if typeof(script_value) != TYPE_DICTIONARY:
+			continue
+		var script := script_value as Dictionary
+		var matches := true
+		for condition_value in script.get("conditions", []) as Array:
+			if not active.has(String(condition_value).to_upper()):
+				matches = false
+				break
+		if not matches:
+			continue
+		for action_value in script.get("actions", []) as Array:
+			if typeof(action_value) != TYPE_DICTIONARY:
+				continue
+			var action := action_value as Dictionary
+			var operation := String(action.get("operation", ""))
+			var raw := String(action.get("raw", "")).to_lower()
+			if operation == "set-transition-animation-state" or raw.contains("curdrawablesettransitionanimstate"):
+				return true
+	return false
 
 
 func authored_animation_property_receipt(state: String, clip: String) -> Dictionary:
