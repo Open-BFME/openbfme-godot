@@ -24,9 +24,14 @@ from .sage_cst import SageCstError, parse_sage_document
 
 
 SCHEMA = "openbfme.hero-catalog"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 TEMPLATE_SCHEMA = "openbfme.authored-hero-template"
 _NO_BUILD_ROUTE = "is not targeted by an authored UNIT_BUILD command"
+_ADMISSION_ROUTES = frozenset({"unit-build", "mp-roster", "ring-roster", "runtime-owned"})
+_RUNTIME_OWNED_REASON = (
+    "authored hero has no UNIT_BUILD route and no PlayerTemplate roster seat; "
+    "summon, ring, campaign, and scenario admission remain runtime-owned"
+)
 
 
 class HeroCatalogError(ValueError):
@@ -108,6 +113,60 @@ def _template(
     return descriptor
 
 
+def _roster_seats(
+    templates: Mapping[str, Any], key: str
+) -> dict[str, list[str]]:
+    """Map each hero identity to the PlayerTemplates that seat it on `key`.
+
+    Retail admits skirmish/multiplayer heroes through the PlayerTemplate roster
+    (BuildableHeroesMP / BuildableRingHeroesMP), not through a CommandButton, so
+    a hero with a roster seat is emitted by faction import even though the
+    catalog — which compiles without a faction graph — cannot build its
+    producer surface here.
+    """
+    seats: dict[str, list[str]] = defaultdict(list)
+    for template in templates.values():
+        for authored in template.values(key):
+            for token in re.findall(r"[A-Za-z0-9_.-]+", authored):
+                folded = token.casefold()
+                if folded == "createahero":
+                    continue
+                if template.name not in seats[folded]:
+                    seats[folded].append(template.name)
+    return {identity: sorted(names) for identity, names in seats.items()}
+
+
+def _route(row: Mapping[str, object]) -> str:
+    admission = row.get("admission")
+    return str(admission.get("route", "")) if isinstance(admission, Mapping) else ""
+
+
+def _deferred_admission(
+    object_id: str,
+    mp_roster: Mapping[str, Sequence[str]],
+    ring_roster: Mapping[str, Sequence[str]],
+) -> tuple[dict[str, object], str]:
+    folded = object_id.casefold()
+    if folded in mp_roster:
+        seats = list(mp_roster[folded])
+        return (
+            {"route": "mp-roster", "playerTemplates": seats},
+            "authored on PlayerTemplate BuildableHeroesMP ("
+            + ", ".join(seats)
+            + "); the roster producer surface needs a faction graph, which this "
+            "catalog does not compile with",
+        )
+    if folded in ring_roster:
+        seats = list(ring_roster[folded])
+        return (
+            {"route": "ring-roster", "playerTemplates": seats},
+            "authored on PlayerTemplate BuildableRingHeroesMP ("
+            + ", ".join(seats)
+            + "); ring admission is owned by the ring-system runtime",
+        )
+    return {"route": "runtime-owned"}, _RUNTIME_OWNED_REASON
+
+
 def compile_hero_catalog(
     documents: Mapping[str, bytes], *, game: str = "bfme2"
 ) -> dict[str, object]:
@@ -143,6 +202,8 @@ def compile_hero_catalog(
         ):
             targets.append(target)
     targets.sort(key=lambda item: (item.name.casefold(), item.name))
+    mp_roster = _roster_seats(prepared.player_templates, "BuildableHeroesMP")
+    ring_roster = _roster_seats(prepared.player_templates, "BuildableRingHeroesMP")
     rows: list[dict[str, object]] = []
     for target in targets:
         try:
@@ -177,23 +238,27 @@ def compile_hero_catalog(
                 ) from exc
             descriptor = _template(target, lineage, kind_of, role)
             status = "deferred"
-            reason = (
-                "authored hero has no UNIT_BUILD route; summon, ring, campaign, "
-                "and scenario admission remain runtime-owned"
+            admission, reason = _deferred_admission(
+                target.name, mp_roster, ring_roster
             )
         else:
             validate_playable_unit_descriptor(descriptor)
             if descriptor.get("objectId") != target.name:
                 descriptor = _template(target, lineage, kind_of, role)
                 status = "deferred"
+                admission, _ = _deferred_admission(
+                    target.name, mp_roster, ring_roster
+                )
                 reason = "authored producer resolves to a different object identity"
             else:
                 status = "descriptor-ready"
+                admission = {"route": "unit-build"}
         row: dict[str, object] = {
             "objectId": target.name,
             "side": _side(target),
             "role": role,
             "runtimeStatus": status,
+            "admission": admission,
             "descriptor": descriptor,
         }
         if reason:
@@ -205,6 +270,8 @@ def compile_hero_catalog(
         "runtimeDeferredCount": sum(row["runtimeStatus"] == "deferred" for row in rows),
         "summonedCount": sum(row["role"] == "summoned" for row in rows),
         "variantCount": sum(row["role"] == "variant" for row in rows),
+        "mpRosterCount": sum(_route(row) == "mp-roster" for row in rows),
+        "ringRosterCount": sum(_route(row) == "ring-roster" for row in rows),
     }
     result: dict[str, object] = {
         "schema": SCHEMA,
@@ -239,12 +306,33 @@ def validate_hero_catalog(value: Mapping[str, object]) -> None:
             raise HeroCatalogError(f"hero {object_id} status is invalid")
         if descriptor.get("objectId") != object_id:
             raise HeroCatalogError(f"hero {object_id} descriptor identity is invalid")
+        admission = row.get("admission")
+        if not isinstance(admission, Mapping) or admission.get("route") not in _ADMISSION_ROUTES:
+            raise HeroCatalogError(f"hero {object_id} admission route is invalid")
+        seats = admission.get("playerTemplates")
+        if admission["route"] in {"mp-roster", "ring-roster"}:
+            if not isinstance(seats, list) or not seats or not all(
+                isinstance(seat, str) and seat for seat in seats
+            ):
+                raise HeroCatalogError(
+                    f"hero {object_id} roster admission names no PlayerTemplate"
+                )
+        elif seats is not None:
+            raise HeroCatalogError(
+                f"hero {object_id} admission carries an unexpected roster seat"
+            )
+        if admission["route"] == "unit-build" and row.get("runtimeStatus") != "descriptor-ready":
+            raise HeroCatalogError(
+                f"hero {object_id} claims a UNIT_BUILD route while deferred"
+            )
     expected = {
         "heroCount": len(rows),
         "descriptorReadyCount": sum(row.get("runtimeStatus") == "descriptor-ready" for row in rows),
         "runtimeDeferredCount": sum(row.get("runtimeStatus") == "deferred" for row in rows),
         "summonedCount": sum(row.get("role") == "summoned" for row in rows),
         "variantCount": sum(row.get("role") == "variant" for row in rows),
+        "mpRosterCount": sum(_route(row) == "mp-roster" for row in rows),
+        "ringRosterCount": sum(_route(row) == "ring-roster" for row in rows),
     }
     if dict(summary) != expected:
         raise HeroCatalogError("hero summary disagrees with rows")

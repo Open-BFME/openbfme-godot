@@ -48,7 +48,43 @@ def test_catalog_accounts_for_hero_family_without_fake_route() -> None:
         "runtimeDeferredCount": 3,
         "summonedCount": 0,
         "variantCount": 1,
+        "mpRosterCount": 0,
+        "ringRosterCount": 0,
     }
+
+
+def _roster_documents() -> dict[str, bytes]:
+    documents = _documents()
+    documents["data/ini/playertemplate.ini"] = b"""
+PlayerTemplate FactionMen
+ Side = Men
+ BuildableHeroesMP = CreateAHero TestHero
+ BuildableRingHeroesMP = TestHeroVariant
+End
+"""
+    return documents
+
+
+def test_catalog_separates_roster_admission_from_runtime_owned_heroes() -> None:
+    result = compile_hero_catalog(_roster_documents())
+    validate_hero_catalog(result)
+    rows = {row["objectId"]: row for row in result["heroes"]}
+    assert rows["TestHero"]["admission"] == {
+        "route": "mp-roster",
+        "playerTemplates": ["FactionMen"],
+    }
+    assert rows["TestHeroVariant"]["admission"] == {
+        "route": "ring-roster",
+        "playerTemplates": ["FactionMen"],
+    }
+    assert rows["OrdinarySoldier"]["admission"] == {"route": "runtime-owned"}
+    # A roster hero is not "no route": faction import emits it through the
+    # PlayerTemplate roster surface, and the catalog must say so.
+    assert "BuildableHeroesMP" in str(rows["TestHero"]["deferredReason"])
+    assert "BuildableRingHeroesMP" in str(rows["TestHeroVariant"]["deferredReason"])
+    assert "summon" in str(rows["OrdinarySoldier"]["deferredReason"])
+    assert result["summary"]["mpRosterCount"] == 1
+    assert result["summary"]["ringRosterCount"] == 1
 
 
 def test_catalog_rejects_unknown_game() -> None:
@@ -57,11 +93,18 @@ def test_catalog_rejects_unknown_game() -> None:
 
 
 @pytest.mark.parametrize(
-    ("catalog_name", "game", "expected_count"),
-    (("bfme2.json", "bfme2", 113), ("rotwk-layered.json", "rotwk", 139)),
+    ("catalog_name", "game", "expected_count", "expected_mp", "expected_ring"),
+    (
+        ("bfme2.json", "bfme2", 113, 22, 2),
+        ("rotwk-layered.json", "rotwk", 139, 36, 2),
+    ),
 )
 def test_effective_retail_direct_hero_family_is_completely_accounted_for(
-    catalog_name: str, game: str, expected_count: int
+    catalog_name: str,
+    game: str,
+    expected_count: int,
+    expected_mp: int,
+    expected_ring: int,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
     path = repo / ".private" / "retail-work" / "catalog" / catalog_name
@@ -71,3 +114,11 @@ def test_effective_retail_direct_hero_family_is_completely_accounted_for(
     result = compile_hero_catalog(documents, game=game)
     assert result["summary"]["heroCount"] == expected_count
     assert result["summary"]["descriptorReadyCount"] + result["summary"]["runtimeDeferredCount"] == expected_count
+    # The retail admission split is measured, not assumed: heroes seated on a
+    # PlayerTemplate roster are emitted by faction import, the rest are owned by
+    # summon, ring, campaign and scenario runtimes.
+    assert result["summary"]["mpRosterCount"] == expected_mp
+    assert result["summary"]["ringRosterCount"] == expected_ring
+    for row in result["heroes"]:
+        if row["admission"]["route"] == "mp-roster":
+            assert row["admission"]["playerTemplates"], row["objectId"]
