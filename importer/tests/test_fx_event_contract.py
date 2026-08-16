@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from openbfme_importer.module_contracts import compile_fx_events
+from openbfme_importer.module_contracts import (
+    compile_fx_events,
+    validate_module_contracts,
+)
 from openbfme_importer.sage_cst import parse_sage_document
 
 
@@ -49,3 +52,6 @@ End
     assert step["fields"]["FireWhenSkipped"]["value"] is True
     assert step["fields"]["skippedCuePolicy"] == "fire-when-skipped"
     assert splat["line"] != step["line"]
+    assert splat["line"] == splat["fields"]["frame"]["line"]
+    assert step["line"] == step["fields"]["frame"]["line"]
+    validate_module_contracts(rows, label="playable-unit")

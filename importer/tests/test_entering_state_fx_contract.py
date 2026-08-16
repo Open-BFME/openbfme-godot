@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from openbfme_importer.module_contracts import compile_entering_state_fx
+from openbfme_importer.module_contracts import (
+    compile_entering_state_fx,
+    validate_module_contracts,
+)
 from openbfme_importer.sage_cst import parse_sage_document
 
 
@@ -56,3 +59,29 @@ End
     deferred = row["fields"]["deferredFields"]
     assert deferred[0]["name"] == "FXEvent"
     assert deferred[0]["reason"] == "compiled-as-fxevent-row"
+
+
+def test_entering_state_fx_multiple_assignments_in_one_state_keep_distinct_lines() -> None:
+    rows = compile_entering_state_fx(
+        _lineage(
+            """
+Object FixtureObject
+  Draw = W3DScriptedModelDraw ModuleTag_Draw
+    AnimationState = DAMAGED
+      EnteringStateFX = FX_BuildingDamaged
+      EnteringStateFX = FX_BuildingReallyDamaged
+    End
+  End
+End
+"""
+        ),
+        "FixtureObject",
+    )
+    assert len(rows) == 2
+    assert [row["fields"]["fxList"]["value"] for row in rows] == [
+        "FX_BuildingDamaged",
+        "FX_BuildingReallyDamaged",
+    ]
+    assert len({row["line"] for row in rows}) == 2
+    assert all(row["line"] == row["fields"]["fxList"]["line"] for row in rows)
+    validate_module_contracts(rows, label="playable-unit")

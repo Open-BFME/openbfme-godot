@@ -375,6 +375,7 @@ def _row(
     runtime_status: str | None = None,
     extraction: str = "typed",
     carrier: str = "",
+    line: int | None = None,
 ) -> dict[str, object]:
     status = runtime_status
     if status is None:
@@ -392,7 +393,7 @@ def _row(
         "extraction": extraction,
         "carrier": carrier or (block.header_key or ""),
         "sourceIni": block.source_virtual_path,
-        "line": block.line,
+        "line": block.line if line is None else line,
         "tag": block.instance_tag or "",
     }
 
@@ -1165,6 +1166,26 @@ def _particle_sys_bone_row_has_closed_runtime(fields: Mapping[str, object]) -> b
     )
 
 
+def _particle_sys_bone_options(tokens: Sequence[str]) -> list[str]:
+    """Join ``FollowBone: no`` so a space after the colon stays one option."""
+
+    options: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = str(tokens[index])
+        if (
+            token.endswith(":")
+            and index + 1 < len(tokens)
+            and ":" not in str(tokens[index + 1])
+        ):
+            options.append(f"{token}{tokens[index + 1]}")
+            index += 2
+            continue
+        options.append(token)
+        index += 1
+    return options
+
+
 def _particle_sys_bone_tokens(authored: str) -> list[str]:
     tokens: list[str] = []
     for match in _PARTICLE_SYS_BONE_TOKEN_RE.finditer(authored):
@@ -1195,20 +1216,12 @@ def compile_particle_sys_bones(
                     f"FXParticleSystem at {assignment.source_virtual_path}:"
                     f"{assignment.line}"
                 )
-            options = tokens[2:]
+            options = _particle_sys_bone_options(tokens[2:])
             follow_values = [
-                option.split(":", 1)[1]
+                option.split(":", 1)[1].strip()
                 for option in options
                 if option.casefold().startswith("followbone:")
             ]
-            if len(follow_values) > 1 or any(
-                value.casefold() not in {"yes", "no"}
-                for value in follow_values
-            ):
-                raise ModuleContractError(
-                    f"{target_id} ParticleSysBone has an invalid FollowBone "
-                    f"option at {assignment.source_virtual_path}:{assignment.line}"
-                )
             fields: dict[str, object] = {
                 "stateKind": state_kind,
                 "conditions": {"value": [str(token) for token in conditions]},
@@ -1225,17 +1238,34 @@ def compile_particle_sys_bones(
                     "line": assignment.line,
                 },
             }
-            if follow_values:
+            if len(follow_values) == 1 and follow_values[0].casefold() in {"yes", "no"}:
                 fields["FollowBone"] = {
                     "authored": follow_values[0],
                     "value": follow_values[0].casefold() == "yes",
                 }
+                extra = [
+                    option
+                    for option in options
+                    if not option.casefold().startswith("followbone:")
+                ]
+                if extra:
+                    fields["deferredFields"] = [
+                        {
+                            "name": "options",
+                            "authored": " ".join(extra),
+                            "reason": "unclassified-particle-sys-bone-option",
+                        }
+                    ]
             elif options:
                 fields["deferredFields"] = [
                     {
                         "name": "options",
                         "authored": " ".join(options),
-                        "reason": "unclassified-particle-sys-bone-option",
+                        "reason": (
+                            "invalid-follow-bone-option"
+                            if follow_values
+                            else "unclassified-particle-sys-bone-option"
+                        ),
                     }
                 ]
             rows.append(
@@ -1248,6 +1278,7 @@ def compile_particle_sys_bones(
                         if _particle_sys_bone_row_has_closed_runtime(fields)
                         else "deferred"
                     ),
+                    line=assignment.line,
                 )
             )
     rows.sort(key=lambda row: (str(row["sourceIni"]).casefold(), int(row["line"])))
@@ -1272,7 +1303,7 @@ def compile_entering_state_fx(
         conditions = list(block.model_condition_tokens or block.header_tokens)
         state_kind = _PARTICLE_SYS_BONE_KIND_LABELS[block.kind.casefold()]
         deferred: list[dict[str, object]] = []
-        fx_assignment = None
+        fx_assignments: list[SageAssignment] = []
         for assignment in block.assignments:
             folded = assignment.key.casefold()
             if folded == "fxevent":
@@ -1286,33 +1317,33 @@ def compile_entering_state_fx(
                     }
                 )
             elif folded == "enteringstatefx":
-                fx_assignment = assignment
-        if fx_assignment is None:
-            continue
-        fields: dict[str, object] = {
-            "stateKind": state_kind,
-            "conditions": {"value": [str(token) for token in conditions]},
-            "fxList": {
-                "authored": fx_assignment.value,
-                "value": fx_assignment.value.strip(),
-                "sourceIni": fx_assignment.source_virtual_path,
-                "line": fx_assignment.line,
-            },
-        }
-        if deferred:
-            fields["deferredFields"] = deferred
-        rows.append(
-            _row(
-                "EnteringStateFX",
-                block,
-                fields,
-                runtime_status=(
-                    "executable"
-                    if _entering_state_fx_row_has_closed_runtime(fields)
-                    else "deferred"
-                ),
+                fx_assignments.append(assignment)
+        for fx_assignment in fx_assignments:
+            fields: dict[str, object] = {
+                "stateKind": state_kind,
+                "conditions": {"value": [str(token) for token in conditions]},
+                "fxList": {
+                    "authored": fx_assignment.value,
+                    "value": fx_assignment.value.strip(),
+                    "sourceIni": fx_assignment.source_virtual_path,
+                    "line": fx_assignment.line,
+                },
+            }
+            if deferred:
+                fields["deferredFields"] = list(deferred)
+            rows.append(
+                _row(
+                    "EnteringStateFX",
+                    block,
+                    fields,
+                    runtime_status=(
+                        "executable"
+                        if _entering_state_fx_row_has_closed_runtime(fields)
+                        else "deferred"
+                    ),
+                    line=fx_assignment.line,
+                )
             )
-        )
     rows.sort(key=lambda row: (str(row["sourceIni"]).casefold(), int(row["line"])))
     return rows
 
@@ -1351,26 +1382,27 @@ def compile_fx_events(
                 continue
             match = _FX_EVENT_RE.fullmatch(assignment.value.strip())
             if match is None:
-                row = _row(
-                    "FXEvent",
-                    block,
-                    {
-                        "stateKind": state_kind,
-                        "conditions": {"value": [str(token) for token in conditions]},
-                        "deferredFields": [
-                            {
-                                "name": assignment.key,
-                                "authored": assignment.value,
-                                "sourceIni": assignment.source_virtual_path,
-                                "line": assignment.line,
-                                "reason": "unparsed-fxevent-line",
-                            }
-                        ],
-                    },
-                    runtime_status="deferred",
+                rows.append(
+                    _row(
+                        "FXEvent",
+                        block,
+                        {
+                            "stateKind": state_kind,
+                            "conditions": {"value": [str(token) for token in conditions]},
+                            "deferredFields": [
+                                {
+                                    "name": assignment.key,
+                                    "authored": assignment.value,
+                                    "sourceIni": assignment.source_virtual_path,
+                                    "line": assignment.line,
+                                    "reason": "unparsed-fxevent-line",
+                                }
+                            ],
+                        },
+                        runtime_status="deferred",
+                        line=assignment.line,
+                    )
                 )
-                row["line"] = assignment.line
-                rows.append(row)
                 continue
             fields: dict[str, object] = {
                 "stateKind": state_kind,
@@ -1397,18 +1429,19 @@ def compile_fx_events(
                     else "ignore"
                 ),
             }
-            row = _row(
-                "FXEvent",
-                block,
-                fields,
-                runtime_status=(
-                    "executable"
-                    if _fx_event_row_has_closed_runtime(fields)
-                    else "deferred"
-                ),
+            rows.append(
+                _row(
+                    "FXEvent",
+                    block,
+                    fields,
+                    runtime_status=(
+                        "executable"
+                        if _fx_event_row_has_closed_runtime(fields)
+                        else "deferred"
+                    ),
+                    line=assignment.line,
+                )
             )
-            row["line"] = assignment.line
-            rows.append(row)
     rows.sort(key=lambda row: (str(row["sourceIni"]).casefold(), int(row["line"])))
     return rows
 
