@@ -10,6 +10,7 @@ const AnimationStateSelectScript = preload("res://src/retail_slice/animation_sta
 const ParticleSysBoneScript = preload("res://src/retail_slice/particle_sys_bone.gd")
 const EnteringStateFXScript = preload("res://src/retail_slice/entering_state_fx.gd")
 const ClipFrameClockScript = preload("res://src/retail_slice/clip_frame_clock.gd")
+const FXEventScript = preload("res://src/retail_slice/fx_event.gd")
 const DEFAULT_OBJECT_ID := "bfme2.object.gondor-fighter"
 const ARCHER_OBJECT_ID := "bfme2.object.gondor-archer"
 const RANGER_OBJECT_ID := "bfme2.object.gondor-ranger"
@@ -170,6 +171,8 @@ var _last_entering_state_conditions: Array = []
 var _entering_state_fx_primed: bool = false
 var member_clip_frame_clocks: Dictionary = {}
 var last_clip_frame_receipt: Dictionary = {}
+var fx_event_contracts: Array = []
+var last_fx_event_receipt: Dictionary = {}
 var equipment_contract: Dictionary = {}
 var equipment_contract_ready := false
 var unresolved_animation_track_count := 0
@@ -485,6 +488,25 @@ func bind_entering_state_fx_contracts(source: Dictionary) -> int:
 	return entering_state_fx_contracts.size()
 
 
+func bind_fx_event_contracts(source: Dictionary) -> int:
+	fx_event_contracts = collect_fx_event_contracts(source)
+	return fx_event_contracts.size()
+
+
+func collect_fx_event_contracts(source: Dictionary) -> Array:
+	var out: Array = []
+	for row_value in _module_contract_arrays(source):
+		if typeof(row_value) != TYPE_DICTIONARY:
+			continue
+		var row := (row_value as Dictionary).duplicate(true)
+		if String(row.get("module", "")) != "FXEvent":
+			continue
+		if not row.has("runtimeStatus") and row.has("runtime_status"):
+			row["runtimeStatus"] = String(row.get("runtime_status", ""))
+		out.append(row)
+	return out
+
+
 func collect_entering_state_fx_contracts(source: Dictionary) -> Array:
 	var out: Array = []
 	for row_value in _module_contract_arrays(source):
@@ -698,6 +720,7 @@ func _bind_sub_object_upgrade_contracts_from_content(definition: Dictionary) -> 
 		bind_animation_state_contracts(playable)
 		bind_particle_sys_bone_contracts(playable)
 		bind_entering_state_fx_contracts(playable)
+		bind_fx_event_contracts(playable)
 	if sub_object_upgrade_contracts.is_empty():
 		bind_sub_object_upgrade_contracts(definition)
 	if model_condition_upgrade_contracts.is_empty():
@@ -708,6 +731,8 @@ func _bind_sub_object_upgrade_contracts_from_content(definition: Dictionary) -> 
 		bind_particle_sys_bone_contracts(definition)
 	if entering_state_fx_contracts.is_empty():
 		bind_entering_state_fx_contracts(definition)
+	if fx_event_contracts.is_empty():
+		bind_fx_event_contracts(definition)
 
 
 func _module_contract_arrays(source: Dictionary) -> Array:
@@ -1699,6 +1724,7 @@ func _play_member_state(member_index: int, state: String, action_token: int, res
 	if play_state.begins_with("attack") and action_token >= 0:
 		_last_action_token = maxi(_last_action_token, action_token)
 	_prime_member_clip_frame_clock(member_index)
+	_sync_member_fx_events(member_index, authored)
 	_sync_member_particle_sys_bones(member_index, authored, conditions)
 
 
@@ -1807,6 +1833,16 @@ func _sync_member_particle_sys_bones(member_index: int, authored: Dictionary, ac
 	last_particle_sys_bone_receipt = applied.duplicate(true)
 	set_meta("particle_sys_bone_source", String(applied.get("source", "")))
 	set_meta("particle_sys_bone_applied", int(applied.get("applied", 0)))
+
+
+func _sync_member_fx_events(member_index: int, authored: Dictionary, clock_override: Dictionary = {}) -> Dictionary:
+	var clock: Dictionary = clock_override.duplicate(true) if not clock_override.is_empty() else member_clip_frame(member_index)
+	var selected: Array = authored.get("conditions", []) as Array
+	var receipt: Dictionary = FXEventScript.select(fx_event_contracts, selected, clock)
+	last_fx_event_receipt = receipt.duplicate(true)
+	set_meta("fx_event_source", String(receipt.get("source", "")))
+	set_meta("fx_event_applied", int(receipt.get("applied", 0)))
+	return receipt
 
 
 func _sync_entering_state_fx(authored: Dictionary) -> void:
@@ -2768,6 +2804,7 @@ func _process(_delta: float) -> void:
 	for member_index in range(member_count):
 		if member_animation_players.has(member_index):
 			_tick_member_clip_frame_clock(member_index)
+			_sync_member_fx_events(member_index, last_animation_state_receipt)
 	if current_state == "death" or current_clip == "":
 		return
 	# The source GLB clips intentionally preserve their one-shot metadata. The

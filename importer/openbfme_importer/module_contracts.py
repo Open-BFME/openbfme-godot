@@ -178,6 +178,10 @@ ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE: Mapping[str, tuple[str, str]] = {
         "game/src/retail_slice/clip_frame_clock.gd",
         "game/tests/clip_frame_clock_runtime_runner.gd",
     ),
+    "FXEvent": (
+        "game/src/retail_slice/fx_event.gd",
+        "game/tests/fx_event_runtime_runner.gd",
+    ),
 }
 
 
@@ -1278,7 +1282,7 @@ def compile_entering_state_fx(
                         "authored": assignment.value,
                         "sourceIni": assignment.source_virtual_path,
                         "line": assignment.line,
-                        "reason": "frame-cued-fxevent-without-clip-clock",
+                        "reason": "compiled-as-fxevent-row",
                     }
                 )
             elif folded == "enteringstatefx":
@@ -1309,6 +1313,102 @@ def compile_entering_state_fx(
                 ),
             )
         )
+    rows.sort(key=lambda row: (str(row["sourceIni"]).casefold(), int(row["line"])))
+    return rows
+
+
+_FX_EVENT_RE = re.compile(
+    r"(?is)^\s*Frame\s*:\s*(?P<frame>\d+)(?:\s+(?P<skipped>FireWhenSkipped))?\s+Name\s*:\s*(?P<name>\S+)\s*$"
+)
+
+
+def _fx_event_row_has_closed_runtime(fields: Mapping[str, object]) -> bool:
+    frame = fields.get("frame")
+    fx_list = fields.get("fxList")
+    return (
+        isinstance(frame, Mapping)
+        and isinstance(frame.get("value"), int)
+        and int(frame["value"]) >= 0
+        and isinstance(fx_list, Mapping)
+        and str(fx_list.get("value", "")).strip() != ""
+    )
+
+
+def compile_fx_events(
+    lineage: Sequence[SageObject], target_id: str
+) -> list[dict[str, object]]:
+    """Typed FXEvent rows. Frame cues fire from the clip/frame clock."""
+
+    rows: list[dict[str, object]] = []
+    _effective_top_blocks, _tokens, walk_blocks = _walk_helpers()
+    for block in walk_blocks(_effective_top_blocks(lineage)):
+        if block.kind.casefold() not in _PARTICLE_SYS_BONE_PARENTS:
+            continue
+        conditions = list(block.model_condition_tokens or block.header_tokens)
+        state_kind = _PARTICLE_SYS_BONE_KIND_LABELS[block.kind.casefold()]
+        for assignment in block.assignments:
+            if assignment.key.casefold() != "fxevent":
+                continue
+            match = _FX_EVENT_RE.fullmatch(assignment.value.strip())
+            if match is None:
+                row = _row(
+                    "FXEvent",
+                    block,
+                    {
+                        "stateKind": state_kind,
+                        "conditions": {"value": [str(token) for token in conditions]},
+                        "deferredFields": [
+                            {
+                                "name": assignment.key,
+                                "authored": assignment.value,
+                                "sourceIni": assignment.source_virtual_path,
+                                "line": assignment.line,
+                                "reason": "unparsed-fxevent-line",
+                            }
+                        ],
+                    },
+                    runtime_status="deferred",
+                )
+                row["line"] = assignment.line
+                rows.append(row)
+                continue
+            fields: dict[str, object] = {
+                "stateKind": state_kind,
+                "conditions": {"value": [str(token) for token in conditions]},
+                "frame": {
+                    "authored": assignment.value,
+                    "value": int(match.group("frame")),
+                    "sourceIni": assignment.source_virtual_path,
+                    "line": assignment.line,
+                },
+                "fxList": {
+                    "authored": assignment.value,
+                    "value": match.group("name").strip(),
+                    "sourceIni": assignment.source_virtual_path,
+                    "line": assignment.line,
+                },
+                "FireWhenSkipped": {
+                    "authored": match.group("skipped") or "",
+                    "value": match.group("skipped") is not None,
+                },
+                "skippedCuePolicy": (
+                    "fire-when-skipped"
+                    if match.group("skipped") is not None
+                    else "ignore"
+                ),
+            }
+            row = _row(
+                "FXEvent",
+                block,
+                fields,
+                runtime_status=(
+                    "executable"
+                    if _fx_event_row_has_closed_runtime(fields)
+                    else "deferred"
+                ),
+            )
+            row["line"] = assignment.line
+            rows.append(row)
     rows.sort(key=lambda row: (str(row["sourceIni"]).casefold(), int(row["line"])))
     return rows
 
@@ -9310,6 +9410,7 @@ TYPED_MODULE_KINDS: frozenset[str] = frozenset(
         "AnimationState",
         "ParticleSysBone",
         "EnteringStateFX",
+        "FXEvent",
         "InactiveBody",
         "SpawnPointProductionExitUpdate",
         "SupplyCenterProductionExitUpdate",
@@ -9442,6 +9543,7 @@ def compile_all_module_contracts(
     rows.extend(compile_animation_states(lineage, target_id))
     rows.extend(compile_particle_sys_bones(lineage, target_id))
     rows.extend(compile_entering_state_fx(lineage, target_id))
+    rows.extend(compile_fx_events(lineage, target_id))
     rows.extend(compile_inactive_bodies(lineage, target_id))
     rows.extend(compile_spawn_point_production_exits(lineage, target_id))
     rows.extend(compile_supply_center_production_exits(lineage, target_id))
@@ -9626,6 +9728,7 @@ def validate_module_contracts(rows: object, *, label: str) -> None:
             or (module == "AnimationState" and _animation_state_row_has_closed_runtime(fields))
             or (module == "ParticleSysBone" and _particle_sys_bone_row_has_closed_runtime(fields))
             or (module == "EnteringStateFX" and _entering_state_fx_row_has_closed_runtime(fields))
+            or (module == "FXEvent" and _fx_event_row_has_closed_runtime(fields))
             or (module == "AnimationSoundClientBehavior" and _animation_sound_row_has_closed_runtime(fields))
             or (module == "QueueProductionExitUpdate" and _queue_exit_row_has_closed_runtime(fields))
             or (module == "SpawnBehavior" and _spawn_reclaim_row_has_closed_runtime(fields))

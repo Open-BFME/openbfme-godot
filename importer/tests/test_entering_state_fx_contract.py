@@ -55,4 +55,4 @@ End
     assert row["fields"]["fxList"]["value"] == "FX_BuildingDamaged"
     deferred = row["fields"]["deferredFields"]
     assert deferred[0]["name"] == "FXEvent"
-    assert deferred[0]["reason"] == "frame-cued-fxevent-without-clip-clock"
+    assert deferred[0]["reason"] == "compiled-as-fxevent-row"

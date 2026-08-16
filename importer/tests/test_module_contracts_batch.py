@@ -3910,7 +3910,7 @@ def test_opaque_and_typed_sets_disjoint() -> None:
         "QueueProductionExitUpdate", "SlowDeathBehavior", "SpawnBehavior", "SpecialDisguiseUpdate",
         "SubObjectsUpgrade", "AnimationSoundClientBehavior", "TransitionDamageFX",
         "ModelConditionUpgrade", "AnimationState", "ParticleSysBone",
-        "EnteringStateFX", "ClipFrameClock",
+        "EnteringStateFX", "ClipFrameClock", "FXEvent",
     }
     for module, (consumer_path, test_path) in ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE.items():
         assert (root / consumer_path).is_file()

@@ -1,8 +1,7 @@
 class_name EnteringStateFX
 extends RefCounted
 ## Fire authored EnteringStateFX lists when the AnimationState selector
-## enters a new condition set. FXEvent frame cues stay deferred — they need
-## the clip/frame clock, not state entry.
+## enters a new condition set. Frame-cued FXEvent rows are a sibling kind.
 
 const MODULE := "EnteringStateFX"
 
