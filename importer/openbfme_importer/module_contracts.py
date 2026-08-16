@@ -730,6 +730,16 @@ _TRANSITION_DAMAGE_FX_PSYS_RE = re.compile(
     r"Bone:(\S+)\s+RandomBone:(Yes|No)\s+PSys:(\S+)",
     re.IGNORECASE,
 )
+# The eight castle gate doors swap damage-state model pieces here
+# (helmsdeepbuildings.ini:6262 and its Minas Tirith / Erebor / Orthanc / Rohan
+# siblings), and two Minas Tirith wall segments author RubbleNeighbor
+# (ministirithbuildings.ini:369, twice in one block). Both are authored retail
+# fields of this module: they defer with a reason so the object still compiles.
+_TRANSITION_DAMAGE_SUB_OBJECT_RE = re.compile(
+    r"^(?P<stage>Pristine|Damaged|ReallyDamaged|Rubble)"
+    r"(?P<action>Show|Hide)SubObject$",
+    re.IGNORECASE,
+)
 
 
 def _strip_ini_line_comment(raw: str) -> str:
@@ -761,6 +771,31 @@ def compile_transition_damage_fx(
         for assignment in block.assignments:
             key_match = _TRANSITION_DAMAGE_FX_KEY_RE.fullmatch(assignment.key)
             if key_match is None:
+                if _TRANSITION_DAMAGE_SUB_OBJECT_RE.fullmatch(assignment.key):
+                    deferred.append(
+                        {
+                            "name": assignment.key,
+                            "authored": assignment.value,
+                            "subObjects": _strip_ini_line_comment(
+                                assignment.value
+                            ).split(),
+                            "sourceIni": assignment.source_virtual_path,
+                            "line": assignment.line,
+                            "reason": "sub-object-visibility-without-drawable-oracle",
+                        }
+                    )
+                    continue
+                if assignment.key.casefold() == "rubbleneighbor":
+                    deferred.append(
+                        {
+                            "name": assignment.key,
+                            "authored": assignment.value,
+                            "sourceIni": assignment.source_virtual_path,
+                            "line": assignment.line,
+                            "reason": "rubble-neighbor-spawn-without-runtime-oracle",
+                        }
+                    )
+                    continue
                 raise ModuleContractError(
                     f"{target_id} TransitionDamageFX unsupported field: {assignment.key}"
                 )

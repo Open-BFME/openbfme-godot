@@ -72,6 +72,7 @@ from .playable_unit_compiler import (
     _effective_top_blocks,
     _geometry_contract,
     _kind_of,
+    _numeric_define_provenance,
     _numeric_defines,
     _object_index,
 )
@@ -147,6 +148,7 @@ def compile_map_object_descriptor(
     *,
     raw: Mapping[str, Any] | None = None,
     defines: Mapping[str, int | float] | None = None,
+    define_provenance: Mapping[str, Mapping[str, object]] | None = None,
     game: str = "bfme2",
 ) -> dict[str, Any]:
     """Compile one map-referenced object type into a descriptor document.
@@ -154,6 +156,9 @@ def compile_map_object_descriptor(
     The descriptor carries the authored health, armor, geometry and module
     contracts exactly as the playable compilers extract them; no production
     routes are required because map objects are placed, never constructed.
+    Module contracts see the same define table and provenance the playable
+    compilers pass, so a define-valued field (``ExitDelay =
+    STANDARD_HORDE_EXIT_DELAY`` on the castle strongholds) resolves here too.
     """
 
     if raw is None:
@@ -164,6 +169,11 @@ def compile_map_object_descriptor(
     if defines is None:
         try:
             defines = _numeric_defines(documents)
+        except PlayableUnitCompilerError as exc:
+            raise CastleFixturesError(str(exc)) from exc
+    if define_provenance is None:
+        try:
+            define_provenance = _numeric_define_provenance(documents, defines)
         except PlayableUnitCompilerError as exc:
             raise CastleFixturesError(str(exc)) from exc
     item, ancestry = _compile_lineage(type_name, raw)
@@ -177,7 +187,12 @@ def compile_map_object_descriptor(
         raise CastleFixturesError(str(exc)) from exc
     geometry = _geometry_contract(ancestry, defines)
     try:
-        modules = compile_all_module_contracts(ancestry, item.name)
+        modules = compile_all_module_contracts(
+            ancestry,
+            item.name,
+            numeric_defines=defines,
+            numeric_define_provenance=define_provenance,
+        )
     except ModuleContractError as exc:
         raise CastleFixturesError(str(exc)) from exc
     descriptor: dict[str, Any] = {
@@ -455,6 +470,7 @@ def build_map_fixtures(
     raw: Mapping[str, Any] | None = None,
     index: Mapping[str, ObjectTypeInfo] | None = None,
     defines: Mapping[str, int | float] | None = None,
+    define_provenance: Mapping[str, Mapping[str, object]] | None = None,
     game: str = "bfme2",
 ) -> dict[str, Any]:
     """Build the ``openbfme.sage-map-fixtures`` document for one map.
@@ -481,6 +497,11 @@ def build_map_fixtures(
             defines = _numeric_defines(documents)
         except PlayableUnitCompilerError as exc:
             raise CastleFixturesError(str(exc)) from exc
+    if define_provenance is None:
+        try:
+            define_provenance = _numeric_define_provenance(documents, defines)
+        except PlayableUnitCompilerError as exc:
+            raise CastleFixturesError(str(exc)) from exc
     derivation = derive_map_capabilities(
         index, (str(row.get("typeName", "")) for row in rows)
     )
@@ -500,7 +521,12 @@ def build_map_fixtures(
         folded = type_name.casefold()
         if folded not in descriptors:
             descriptors[folded] = compile_map_object_descriptor(
-                type_name, documents, raw=raw, defines=defines, game=game
+                type_name,
+                documents,
+                raw=raw,
+                defines=defines,
+                define_provenance=define_provenance,
+                game=game,
             )
         descriptor = descriptors[folded]
         if _health_value_or_none(descriptor) is None:
@@ -918,10 +944,17 @@ def make_effective_assets_fixtures_builder(
     raw = _object_index(documents)
     index = build_retail_object_index(documents)
     defines = _numeric_defines(documents)
+    define_provenance = _numeric_define_provenance(documents, defines)
 
     def build_fixtures(target: Any, parsed: Any) -> dict[str, Any]:
         return build_map_fixtures(
-            documents, parsed.objects, raw=raw, index=index, defines=defines, game=game
+            documents,
+            parsed.objects,
+            raw=raw,
+            index=index,
+            defines=defines,
+            define_provenance=define_provenance,
+            game=game,
         )
 
     return build_fixtures

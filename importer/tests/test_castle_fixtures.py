@@ -53,10 +53,19 @@ _DOCUMENTS = {
         b"  Behavior = KeepObjectDie ModuleTag_Rubble\n"
         b"    CollapsingTime = 10000\n"
         b"  End\n"
+        # Field-for-field the Erebor gate (ereborbuildings.ini:6406); all 32
+        # GateOpenAndCloseBehavior blocks in the RotWK effective-assets tree
+        # author this whole set, which is why the contract requires it.
         b"  Behavior = GateOpenAndCloseBehavior ModuleTag_GATE\n"
         b"    ResetTimeInMilliseconds = 5000\n"
         b"    OpenByDefault = Yes\n"
         b"    PercentOpenForPathing = 50\n"
+        b"    SoundOpeningGateLoop = GateOpenStart\n"
+        b"    SoundClosingGateLoop = GateCloseStart\n"
+        b"    SoundFinishedOpeningGate = GateOpenEnd\n"
+        b"    SoundFinishedClosingGate = GateCloseEnd\n"
+        b"    TimeBeforePlayingOpenSound = 9500\n"
+        b"    TimeBeforePlayingClosedSound = 9500\n"
         b"  End\n"
         b"  Geometry = BOX\n"
         b"  GeometryMajorRadius = 130.0\n"
@@ -89,14 +98,25 @@ _DOCUMENTS = {
         b"    Conditions = None\n"
         b"    Armor = TestStructureArmor\n"
         b"  End\n"
+        # Field-for-field the Erebor garrisonable tower
+        # (ereborbuildings.ini:5279), the retail shape the L1 oracle pins.
         b"  Behavior = HordeGarrisonContain ModuleTag_hordeGarrison\n"
+        b"    ObjectStatusOfContained = UNSELECTABLE CAN_ATTACK ENCLOSED\n"
         b"    ContainMax = 3\n"
+        b"    DamagePercentToUnits = 0%\n"
+        b"    PassengerFilter = GENERIC_FACTION_GARRISONABLE\n"
         b"    AllowEnemiesInside = No\n"
         b"    AllowAlliesInside = No\n"
         b"    AllowNeutralInside = Yes\n"
         b"    AllowOwnPlayerInsideOverride = Yes\n"
         b"    NumberOfExitPaths = 1\n"
+        b"    PassengerBonePrefix = PassengerBone:ARROW_ KindOf:INFANTRY\n"
+        b"    EntryOffset = X:50.0 Y:0.0 Z:0.0\n"
+        b"    EntryPosition = X:20.0 Y:0.0 Z:0.0\n"
+        b"    ExitOffset = X:50.0 Y:0.0 Z:0.0\n"
+        b"    EnterSound = RuinedTowerEnterSound\n"
         b"    KillPassengersOnDeath = No\n"
+        b"    ShowPips = No\n"
         b"  End\n"
         b"  Geometry = BOX\n"
         b"  GeometryMajorRadius = 14.0\n"
@@ -166,8 +186,25 @@ _DOCUMENTS = {
         b"    Conditions = None\n"
         b"    Armor = TestStructureArmor\n"
         b"  End\n"
+        # Field-for-field the Erebor throne (ereborbuildings.ini:5594) apart
+        # from the capacity; every castle-map keep authors this whole block.
         b"  Behavior = CitadelSlaughterHordeContain ModuleTag_Slaughter\n"
+        b"    PassengerFilter = GENERIC_FACTION_SLAUGHTERABLE\n"
+        b"    ObjectStatusOfContained = UNSELECTABLE ENCLOSED\n"
+        b"    CashBackPercent = 200%\n"
         b"    ContainMax = 20\n"
+        b"    AllowEnemiesInside = No\n"
+        b"    AllowAlliesInside = No\n"
+        b"    AllowNeutralInside = No\n"
+        b"    AllowOwnPlayerInsideOverride = Yes\n"
+        b"    EnterSound = MordorSlaughterhouseEnterSound\n"
+        b"    EntryOffset = X:-117.0 Y:-150.0 Z:0.0\n"
+        b"    EntryPosition = X:-117.0 Y:-30.0 Z:0.0\n"
+        b"    ExitOffset = X:-117.0 Y:-150.0 Z:0.0\n"
+        b"    StatusForRingEntry = HOLDING_THE_RING\n"
+        b"    UpgradeForRingEntry = Upgrade_RingHero Upgrade_FortressRingHero\n"
+        b"    ObjectToDestroyForRingEntry = NONE +TheDroppedRing\n"
+        b"    FXForRingEntry = FX_OneRingFlare\n"
         b"  End\n"
         b"End\n"
         b"\n"
@@ -254,6 +291,9 @@ def test_admission_compiles_gate_health_armor_geometry_and_modules() -> None:
     gate = _module_row(descriptor, "GateOpenAndCloseBehavior")
     assert gate["fields"]["ResetTimeInMilliseconds"]["authored"].strip() == "5000"
     assert gate["fields"]["OpenByDefault"]["authored"].strip().casefold() == "yes"
+    assert gate["fields"]["TimeBeforePlayingOpenSound"]["milliseconds"] == 9500
+    assert gate["fields"]["TimeBeforePlayingClosedSound"]["milliseconds"] == 9500
+    assert gate["fields"]["SoundFinishedOpeningGate"]["value"] == "GateOpenEnd"
     keep = _module_row(descriptor, "KeepObjectDie")
     assert keep["module"] == "KeepObjectDie"
 
