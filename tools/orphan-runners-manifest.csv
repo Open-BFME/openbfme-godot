@@ -1,5 +1,5 @@
-﻿"Index","Runner","Status","ErrorSample"
-"1","ai_dispatch_coverage_runner.gd","pass",""
+﻿"Index","Runner","Status","ErrorSample","FailureBucket"
+"1","ai_dispatch_coverage_runner.gd","pass","",""
 "2","ai_library_composition_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -15,10 +15,10 @@ ERROR: Parse JSON failed. Error at line 0: Unknown error getting token
        [0] _run (res://tests/ai_library_composition_runner.gd:75)
 AI_LIBRARY_COMPOSITE FAIL private fixture parses 
 AI_LIBRARY_COMPOSITE FAIL liveness: 1 checks ran, 26 expected â€” a section returned early
-"
-"3","angmar_hud_binding_sweep_runner.gd","pass",""
-"4","animation_authored_properties_runtime_runner.gd","pass",""
-"5","animation_speed_factor_range_runner.gd","pass",""
+","a"
+"3","angmar_hud_binding_sweep_runner.gd","fail","RESULT angmar_hud_binding_sweep passed=4 failed=1",""
+"4","animation_authored_properties_runtime_runner.gd","pass","",""
+"5","animation_speed_factor_range_runner.gd","pass","",""
 "6","archer_cadence_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -74,8 +74,8 @@ ERROR: ARCHER_CADENCE_FAIL liveness: ran 53 checks, expected 56 - a function abo
    at: push_error (core/variant/variant_utility.cpp:1023)
    GDScript backtrace (most recent call first):
        [0] _run (res://tests/archer_cadence_runner.gd:86)
-"
-"7","attach_update_runtime_runner.gd","pass",""
+","b"
+"7","attach_update_runtime_runner.gd","pass","",""
 "8","attack_cursor_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -119,10 +119,10 @@ ERROR: Condition ""CryptoCore::b64_decode(&w[0], buf.size(), &arr_len, (unsigned
        [0] configure (res://src/retail_slice/retail_cursor_controller.gd:103)
        [1] _test_configure_refuses_malformed_rows (res://tests/attack_cursor_runner.gd:138)
        [2] _run (res://tests/attack_cursor_runner.gd:56)
-"
-"9","attention_selection_runner.gd","pass",""
-"10","authored_field_consumption_runner.gd","pass",""
-"11","auto_deposit_update_runner.gd","pass",""
+","b"
+"9","attention_selection_runner.gd","pass","",""
+"10","authored_field_consumption_runner.gd","pass","",""
+"11","auto_deposit_update_runner.gd","pass","",""
 "12","banner_carrier_presentation_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -159,9 +159,9 @@ WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted 
    at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
 WARNING: 126 ObjectDB instances were leaked at exit (run with `--verbose` for details).
    at: cleanup (core/object/object.cpp:2535)
-"
-"13","banner_castle_silent_playtest_runner.gd","pass",""
-"14","boot_deferred_options_runner.gd","pass",""
+","b"
+"13","banner_castle_silent_playtest_runner.gd","pass","",""
+"14","boot_deferred_options_runner.gd","pass","",""
 "15","boot_startup_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -289,8 +289,8 @@ ERROR: [OpenBFME menu] the 'wotr setup screen' script could not be compiled: res
        [5] _check_heavy_screens_are_not_compiled_for_a_menu (res://tests/boot_startup_runner.gd:223)
        [6] _init (res://tests/boot_startup_runner.gd:171)
        [7] _check_loading_surface_has_content (res://tests/boot_startup_runner.gd:334)
-"
-"16","cah_awards_runner.gd","pass",""
+","c"
+"16","cah_awards_runner.gd","pass","",""
 "17","cah_capture_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [cah-capture] writing to user://cah-capture
@@ -9264,10 +9264,10 @@ SCRIPT ERROR: Cannot call method 'save_png' on a null value.
    at: _process (res://tests/cah_capture_runner.gd:214)
    GDScript backtrace (most recent call first):
        [0] _process (res://tests/cah_capture_runner.gd:214)
-"
-"18","camera_start_bounds_runner.gd","pass",""
-"19","capturable_neutral_runner.gd","pass",""
-"20","castle_fixture_spawn_runner.gd","pass",""
+","c"
+"18","camera_start_bounds_runner.gd","pass","",""
+"19","capturable_neutral_runner.gd","pass","",""
+"20","castle_fixture_spawn_runner.gd","pass","",""
 "21","castle_fixtures_loader_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -9381,12 +9381,12 @@ Unicode parsing error: Unpaired surrogate (dd37)
 Unicode parsing error: Unpaired surrogate (dd10)
 Unicode parsing error: Unpaired surrogate (dd7d)
 Unicode parsing error: Unpaired surrogate (dd46)
-"
-"22","castle_map_admission_runner.gd","pass",""
-"23","castle_member_behavior_runtime_runner.gd","pass",""
-"24","castle_siege_contract_runner.gd","pass",""
-"25","citadel_slaughter_runtime_runner.gd","pass",""
-"26","command_set_upgrade_runtime_runner.gd","pass",""
+","a"
+"22","castle_map_admission_runner.gd","pass","",""
+"23","castle_member_behavior_runtime_runner.gd","fail","CASTLE_MEMBER_BEHAVIOR_RUNTIME_RESULT passed=13 failed=4",""
+"24","castle_siege_contract_runner.gd","pass","",""
+"25","citadel_slaughter_runtime_runner.gd","pass","",""
+"26","command_set_upgrade_runtime_runner.gd","pass","",""
 "27","content_validation_guarantee_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -9522,8 +9522,8 @@ WARNING: ContentDB: skipped 1 playable unit(s) in pack: playableUnit.linkescape:
        [2] _refused (res://tests/content_validation_guarantee_runner.gd:103)
        [3] _check_link_escape_is_refused (res://tests/content_validation_guarantee_runner.gd:249)
        [4] _run (res://tests/content_validation_guarantee_runner.gd:53)
-"
-"28","crush_trample_runner.gd","pass",""
+","a"
+"28","crush_trample_runner.gd","pass","",""
 "29","diagnostics_log_runner.gd","pass","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -9563,8 +9563,8 @@ DIAG_LOG PASS per_frame_events_are_rate_limited
 DIAG_LOG PASS dropped_samples_are_counted_so_the_rate_is_not_mistaken_for_the_truth
 DIAG_LOG_RESULT passed=30 failed=0
 
-"
-"30","drag_select_structures_runner.gd","pass",""
+",""
+"30","drag_select_structures_runner.gd","pass","",""
 "31","drawable_script_runtime_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -9622,16 +9622,16 @@ SCRIPT ERROR: Invalid assignment of property or key '_drawable_scripts' with val
    at: _run (res://tests/drawable_script_runtime_runner.gd:170)
    GDScript backtrace (most recent call first):
        [0] _run (res://tests/drawable_script_runtime_runner.gd:170)
-"
-"32","dual_weapon_behavior_runtime_runner.gd","pass",""
-"33","dynamic_portal_runtime_runner.gd","pass",""
-"34","emotion_tracker_runtime_runner.gd","pass",""
-"35","eva_fidelity_runner.gd","pass",""
-"36","eva_overlay_closure_runner.gd","pass",""
-"37","experience_own_guys_die_runtime_runner.gd","pass",""
-"38","flammable_update_runtime_runner.gd","pass",""
-"39","fortress_plot_presentation_runner.gd","pass",""
-"40","foundation_monitor_runtime_runner.gd","pass",""
+","b"
+"32","dual_weapon_behavior_runtime_runner.gd","pass","",""
+"33","dynamic_portal_runtime_runner.gd","pass","",""
+"34","emotion_tracker_runtime_runner.gd","pass","",""
+"35","eva_fidelity_runner.gd","fail","EVA_FIDELITY_RESULT passed=0 failed=1",""
+"36","eva_overlay_closure_runner.gd","pass","",""
+"37","experience_own_guys_die_runtime_runner.gd","pass","",""
+"38","flammable_update_runtime_runner.gd","pass","",""
+"39","fortress_plot_presentation_runner.gd","pass","",""
+"40","foundation_monitor_runtime_runner.gd","pass","",""
 "41","goal_content_matrix_runner.gd","pass","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -9714,31 +9714,10 @@ GOAL_MATRIX PASS maps/rotwk.map.wor-high-pass
 GOAL_MATRIX PASS maps/rotwk.map.wor-iron-hills
 GOAL_MATRIX PASS maps/rotwk.map.wor-isengard
 
-"
-"42","goal_prop_binding_closure_runner.gd","pass","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
-
-[ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
-[ContentDB] interface-art: 915 images from C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/bfme2-men-vslice/7de517bf146582f10741750b50d63f9955c42d1fe2aa13200757fc6fb29f217a/data/interface-art/index.json
-[ContentDB] interface-art: 1115 images from C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b/data/interface-art/index.json
-[ContentDB] legacy-demo: packs=23 units=33 buildings=42 factions=4 powers=10 research=7 maps=4
-[ContentDB] playable: factions=7 (angmar, dwarves, elves, isengard, men, mordor, wild) units=137 structures=148 skipped_units=0
-GOAL_PROP_BINDING_CLOSURE FAIL focused_configure_fords-of-isen-ii | bound retail GLB could not instantiate a mesh
-GOAL_PROP_BINDING_CLOSURE FAIL focused_spawn_fords-of-isen-ii | declared=1270 spawned=0
-GOAL_PROP_BINDING_CLOSURE FAIL focused_meshes_fords-of-isen-ii | props=0 meshes=0
-GOAL_PROP_BINDING_SPAWN rotwk.map.fords-of-isen-ii configured=false props=0 meshes=0 unresolved=0
-GOAL_PROP_BINDING_CLOSURE FAIL official_rotwk_load_count | loaded=74 expected=72
-GOAL_PROP_BINDING_CLOSURE PASS aggregate_bound_placements
-GOAL_PROP_BINDING_CLOSURE PASS focused_bound_fords-of-isen-ii
-GOAL_PROP_BINDING_MAP rotwk.map.fords-of-isen-ii bound=1270 logical=114 unresolved=0
-GOAL_PROP_BINDING_CLOSURE FAIL focused_bound_rhun | boundPlacementCount=0
-GOAL_PROP_BINDING_MAP rotwk.map.rhun bound=0 logical=0 unresolved=0
-GOAL_PROP_BINDING_CLOSURE FAIL focused_bound_osgiliath | boundPlacementCount=0
-GOAL_PROP_BINDING_MAP rotwk.map.osgiliath bound=0 logical=0 unresolved=0
-GOAL_PROP_BINDING_CLOSURE_RESULT passed=2 failed=6 maps=74 bound=97966 logical=4073 unresolved=26795
-
-"
-"43","grab_fling_passenger_runtime_runner.gd","pass",""
-"44","grab_tree_live_binding_runner.gd","pass",""
+",""
+"42","goal_prop_binding_closure_runner.gd","fail","GOAL_PROP_BINDING_CLOSURE_RESULT passed=2 failed=6",""
+"43","grab_fling_passenger_runtime_runner.gd","pass","",""
+"44","grab_tree_live_binding_runner.gd","pass","",""
 "45","handlers_wp01_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -9819,7 +9798,7 @@ WARNING: 18 ObjectDB instances were leaked at exit (run with `--verbose` for det
    at: cleanup (core/object/object.cpp:2535)
 ERROR: 2 resources still in use at exit (run with --verbose for details).
    at: clear (core/io/resource.cpp:822)
-"
+","b"
 "46","handlers_wp05_camera_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -9880,7 +9859,7 @@ WARNING: 30 ObjectDB instances were leaked at exit (run with `--verbose` for det
    at: cleanup (core/object/object.cpp:2535)
 ERROR: 2 resources still in use at exit (run with --verbose for details).
    at: clear (core/io/resource.cpp:822)
-"
+","b"
 "47","handlers_wp06_audio_video_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -9939,7 +9918,7 @@ WARNING: 24 ObjectDB instances were leaked at exit (run with `--verbose` for det
    at: cleanup (core/object/object.cpp:2535)
 ERROR: 2 resources still in use at exit (run with --verbose for details).
    at: clear (core/io/resource.cpp:822)
-"
+","b"
 "48","handlers_wp07_ui_radar_vfx_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -10014,8 +9993,8 @@ WARNING: 24 ObjectDB instances were leaked at exit (run with `--verbose` for det
    at: cleanup (core/object/object.cpp:2535)
 ERROR: 2 resources still in use at exit (run with --verbose for details).
    at: clear (core/io/resource.cpp:822)
-"
-"49","handlers_wp08_hero_objectives_runner.gd","pass",""
+","b"
+"49","handlers_wp08_hero_objectives_runner.gd","pass","",""
 "50","handlers_wp09_ai_core_runner.gd","pass","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -10100,7 +10079,7 @@ HANDLERS_WP09 MEMBERS served_actions=2 served_conditions=2 blocked=1 wp21_handof
 HANDLERS_WP09 COVERAGE actions implemented=268 conditions implemented=40 blocked=51
 HANDLERS_WP09_RESULT passed=73 failed=0
 
-"
+",""
 "51","handlers_wp10_ai_economy_status_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -10152,7 +10131,7 @@ WARNING: 24 ObjectDB instances were leaked at exit (run with `--verbose` for det
    at: cleanup (core/object/object.cpp:2535)
 ERROR: 2 resources still in use at exit (run with --verbose for details).
    at: clear (core/io/resource.cpp:822)
-"
+","b"
 "52","handlers_wp10_object_lists_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -10179,7 +10158,7 @@ WARNING: 13 ObjectDB instances were leaked at exit (run with `--verbose` for det
    at: cleanup (core/object/object.cpp:2535)
 ERROR: 2 resources still in use at exit (run with --verbose for details).
    at: clear (core/io/resource.cpp:822)
-"
+","b"
 "53","handlers_wp11_ai_basebuilding_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -10261,7 +10240,7 @@ WARNING: 32 ObjectDB instances were leaked at exit (run with `--verbose` for det
    at: cleanup (core/object/object.cpp:2535)
 ERROR: 2 resources still in use at exit (run with --verbose for details).
    at: clear (core/io/resource.cpp:822)
-"
+","b"
 "54","handlers_wp11_ai_basebuilding_tail_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -10300,7 +10279,7 @@ WARNING: 11 ObjectDB instances were leaked at exit (run with `--verbose` for det
    at: cleanup (core/object/object.cpp:2535)
 ERROR: 2 resources still in use at exit (run with --verbose for details).
    at: clear (core/io/resource.cpp:822)
-"
+","b"
 "55","handlers_wp13_ai_powers_combat_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -10373,7 +10352,7 @@ WARNING: 48 ObjectDB instances were leaked at exit (run with `--verbose` for det
    at: cleanup (core/object/object.cpp:2535)
 ERROR: 2 resources still in use at exit (run with --verbose for details).
    at: clear (core/io/resource.cpp:822)
-"
+","b"
 "56","handlers_wp14_ai_pathing_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -10411,7 +10390,7 @@ WARNING: 15 ObjectDB instances were leaked at exit (run with `--verbose` for det
    at: cleanup (core/object/object.cpp:2535)
 ERROR: 2 resources still in use at exit (run with --verbose for details).
    at: clear (core/io/resource.cpp:822)
-"
+","b"
 "57","handlers_wp15_ai_teams_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -10491,7 +10470,7 @@ WARNING: 43 ObjectDB instances were leaked at exit (run with `--verbose` for det
    at: cleanup (core/object/object.cpp:2535)
 ERROR: 2 resources still in use at exit (run with --verbose for details).
    at: clear (core/io/resource.cpp:822)
-"
+","b"
 "58","handlers_wp16_ai_units_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -10563,7 +10542,7 @@ WARNING: 34 ObjectDB instances were leaked at exit (run with `--verbose` for det
    at: cleanup (core/object/object.cpp:2535)
 ERROR: 2 resources still in use at exit (run with --verbose for details).
    at: clear (core/io/resource.cpp:822)
-"
+","c"
 "59","handlers_wp17_ai_players_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -10626,8 +10605,8 @@ WARNING: 30 ObjectDB instances were leaked at exit (run with `--verbose` for det
    at: cleanup (core/object/object.cpp:2535)
 ERROR: 2 resources still in use at exit (run with --verbose for details).
    at: clear (core/io/resource.cpp:822)
-"
-"60","handlers_wp18_build_permissions_runner.gd","pass",""
+","b"
+"60","handlers_wp18_build_permissions_runner.gd","pass","",""
 "61","handlers_wp19_map_spawn_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -10662,7 +10641,7 @@ WARNING: 13 ObjectDB instances were leaked at exit (run with `--verbose` for det
    at: cleanup (core/object/object.cpp:2535)
 ERROR: 2 resources still in use at exit (run with --verbose for details).
    at: clear (core/io/resource.cpp:822)
-"
+","b"
 "62","handlers_wp20_skirmish_conditions_runner.gd","pass","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -10710,7 +10689,7 @@ HANDLERS_WP20 PASS a_four_argument_distance_test_is_rejected
 HANDLERS_WP20 PASS a_three_argument_model_condition_test_is_rejected
 HANDLERS_WP20_RESULT passed=38 failed=0
 
-"
+",""
 "63","handlers_wp21_threat_queries_runner.gd","pass","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -10745,7 +10724,7 @@ HANDLERS_WP21 PASS a_five_argument_team_threat_record_is_rejected
 HANDLERS_WP21 PASS a_bad_arity_record_never_reached_the_world
 HANDLERS_WP21_RESULT passed=25 failed=0
 
-"
+",""
 "64","handlers_wp22_sciences_runner.gd","pass","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -10790,7 +10769,7 @@ HANDLERS_WP22 PASS a_one_argument_acquired_science_test_is_rejected
 HANDLERS_WP22 PASS a_zero_argument_level_cap_test_is_rejected
 HANDLERS_WP22_RESULT passed=35 failed=0
 
-"
+",""
 "65","handlers_wp23_misc_verbs_runner.gd","pass","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -10854,7 +10833,7 @@ HANDLERS_WP23 PASS a_two_argument_emotion_is_rejected
 HANDLERS_WP23 PASS a_two_argument_home_base_bind_is_rejected
 HANDLERS_WP23_RESULT passed=54 failed=0
 
-"
+",""
 "66","handlers_wp24_fog_runner.gd","pass","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -10895,10 +10874,10 @@ HANDLERS_WP24 PASS a_named_permanent_reveal_reports_blocked
 HANDLERS_WP24 PASS blocked_names_never_reach_the_world
 HANDLERS_WP24_RESULT passed=31 failed=0
 
-"
-"67","hero_banner_spell_recharge_upgrade_runtime_runner.gd","pass",""
-"68","horde_collision_markers_runtime_runner.gd","pass",""
-"69","horse_commandset_runner.gd","pass",""
+",""
+"67","hero_banner_spell_recharge_upgrade_runtime_runner.gd","pass","",""
+"68","horde_collision_markers_runtime_runner.gd","pass","",""
+"69","horse_commandset_runner.gd","pass","",""
 "70","house_color_borrow_scope_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -10946,7 +10925,7 @@ WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted 
    at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
 WARNING: 223 ObjectDB instances were leaked at exit (run with `--verbose` for details).
    at: cleanup (core/object/object.cpp:2535)
-"
+","b"
 "71","hud_command_feedback_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 HUD_COMMAND_FEEDBACK PASS minimap_press_centres_the_camera
@@ -10983,13 +10962,13 @@ SCRIPT ERROR: Invalid call. Nonexistent function 'clear_mesh_cache' in base 'GDS
    GDScript backtrace (most recent call first):
        [0] reload (res://src/content/content_db.gd:259)
        [1] _ready (res://src/content/content_db.gd:242)
-"
-"72","inactive_body_runtime_runner.gd","pass",""
-"73","ini_compile_remainders_runner.gd","pass",""
-"74","input_bindings_runner.gd","pass",""
-"75","interface_art_index_runner.gd","pass",""
-"76","invisibility_update_runtime_runner.gd","pass",""
-"77","lan_discovery_runner.gd","pass",""
+","a"
+"72","inactive_body_runtime_runner.gd","pass","",""
+"73","ini_compile_remainders_runner.gd","pass","",""
+"74","input_bindings_runner.gd","pass","",""
+"75","interface_art_index_runner.gd","pass","",""
+"76","invisibility_update_runtime_runner.gd","pass","",""
+"77","lan_discovery_runner.gd","pass","",""
 "78","leak_assertion_runner.gd","pass","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -11070,11 +11049,11 @@ LEAK_ASSERTION PASS probe_output_free_of_marker(Orphan StringName)
 LEAK_ASSERTION PASS probe_output_free_of_marker(Resources still in use at exit)
 LEAK_ASSERTION_RESULT passed=19 failed=0
 
-"
-"79","leak_probe_runner.gd","pass",""
-"80","load_probe_runner.gd","pass",""
-"81","load_stopwatch_runner.gd","pass",""
-"82","lua_host_runner.gd","pass",""
+",""
+"79","leak_probe_runner.gd","pass","",""
+"80","load_probe_runner.gd","pass","",""
+"81","load_stopwatch_runner.gd","pass","",""
+"82","lua_host_runner.gd","pass","",""
 "83","lua_stdlib_runner.gd","pass","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -11299,7 +11278,7 @@ LUA_STDLIB PASS tinsert_sets_n_to_getn_plus_one
 LUA_STDLIB PASS foreach_returns_no_values_when_it_completes
 LUA_STDLIB_RESULT passed=215 failed=0
 
-"
+",""
 "84","lua_vm_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -12129,7 +12108,7 @@ ERROR: Stack underflow! (Engine Bug)
    at: exit_function (modules/gdscript/gdscript.h:529)
 ERROR: Stack underflow! (Engine Bug)
    at: exit_function (modules/gdscript/gdscript.h:529)
-"
+","b"
 "85","manifest_dead_route_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -12163,122 +12142,10 @@ MANIFEST_DEAD_ROUTE PASS fully-resolved unit keeps both routes
 MANIFEST_DEAD_ROUTE PASS all-resolved manifest records no exclusions
 MANIFEST_DEAD_ROUTE_RESULT passed=24 failed=0
 
-"
-"86","men_vslice_gate_runner.gd","pass","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
-
-[ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
-[ContentDB] interface-art: 915 images from C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/bfme2-men-vslice/7de517bf146582f10741750b50d63f9955c42d1fe2aa13200757fc6fb29f217a/data/interface-art/index.json
-[ContentDB] interface-art: 1115 images from C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b/data/interface-art/index.json
-[ContentDB] legacy-demo: packs=23 units=33 buildings=42 factions=4 powers=10 research=7 maps=4
-[ContentDB] playable: factions=7 (angmar, dwarves, elves, isengard, men, mordor, wild) units=137 structures=148 skipped_units=0
-=== MEN VSLICE GATE START 2026-08-16T00:22:39 ===
-OPENBFME_CONTENT=C:\Users\Jonathan\Desktop\open-bfme\.private\content-packs
-GATE PASS contentdb_present
-pack_roots=[""res://data/base"",""res://mods/example_hard_orcs"",""C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/bfme2-neutral-vslice/8ab38217d80c443437dfb1adf2c4589466ef77729d9cb39c329a083acf4bc027"",""C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-neutral-vslice/8e192543df7d4352b663ce68dfd34bc2fddce69928f0cb0bd79b283a9082a26b"",""C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-cursors-vslice/11236cb6a57396ccf3bfad7d4406f89dc7e0e95b3d9db34c0063c6c1c1d760d2"",""C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-music-vslice/f10d95389a1ab51a7a20b3f549fc6b90291db51f7e68693e4d157f1a67eada8d"",""C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/bfme2-men-vslice/7de517bf146582f10741750b50d63f9955c42d1fe2aa13200757fc6fb29f217a"",""C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-angmar-vslice/662cf4579b1de1a58e2475ad649702529180aae25b20c918929f15fa921c13e7"",""C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-dwarves-vslice/e783da9805a341c4161716eb6f2b5135244f97b786e4ce26072a1e79665fae8b"",""C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-elves-vslice/b611283b0768e4cf76ace4cf8ed5ab7219c2f9dcd394470c765710b009d03a24"",""C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-isengard-vslice/2bf5ee4cc86c94d5cdfe735515a94a3e69ea4ac5ee4f8d531b3d356d721ad748"",""C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-mordor-vslice/25ba4870eaa468298f6e0f44c1c92c038c08b8903c9643138443c05c8f33882b"",""C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-wild-vslice/e5b455f96950e3b63c78687b04c46b71ec291f6c48e928e7ea1a5f0fe112d464"",""C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b"",""C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/bfme2-skirmish-maps-private/f9c14cfa4c25e68509373390741fc82e5892f050a2305a19fa3efaca0f39a5b0"",""C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-playable-maps-private/1739b61386b8242aafee7c46c2f2639f950dd8d5d7292687d2c10702b1e9972b"",""C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-angmar-eva-overlay/96820c3d3abe5379ce36f123fc846810feca3756db625dfeb3ca1202d9ee958c"",""C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-dwarves-eva-overlay/75f1642049f4a491b45901db02600cc70fe78a95909c8d20c6d0c25e146fd13c"",""C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-elves-eva-overlay/51d90549e45b6c04e98a95c10bc03a709e8767c121d6d454a5d71bf338a78ab6"",""C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-isengard-eva-overlay/5228196e4ebd593c0698a65f78ed16aaabb9821c6e51ea6c8626f73fe7960375"",""C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-eva-overlay/c59262c328a3041b3da684cdab826619ee7a3dcee85b68b137e68a869bc8741d"",""C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-mordor-eva-overlay/d7e608b0e0f1a0d4151d6f33cf4fd42fec794c314792d8637f6b68bada627dab"",""C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-wild-eva-overlay/98a12fe7b1277b51c23044916e267e7bd86f150da5c14dce61900b0ee1edfc8e""]
-GATE PASS pack_roots_min2
-playable_units=137
-playable_structures=148
-GATE PASS playable_units_ge_14
-GATE PASS playable_structures_ge_20
-unit_object_ids=[""AngmarBannerDireSnowTroll"",""AngmarBannerHillTroll"",""AngmarBannerSnowTroll"",""AngmarDarkDunedainHorde"",""AngmarDarkRangerHorde"",""AngmarDireWolfHorde"",""AngmarHillTrollHorde"",""AngmarHwaldar"",""AngmarInfantryBanner"",""AngmarKarsh"",""AngmarMorgramir"",""AngmarNecromancerBanner"",""AngmarNecromancerHorde"",""AngmarPorter"",""AngmarRogash"",""AngmarSnowTrollHorde"",""AngmarThrallMaster"",""AngmarTrollSling"",""AngmarWitchking"",""Drogoth"",""DwarvenAxeThrowerHorde"",""DwarvenBanner"",""DwarvenBattleWagon"",""DwarvenCaptainofDale"",""DwarvenCatapult"",""DwarvenDain"",""DwarvenDemolisher"",""DwarvenGimli"",""DwarvenGloin"",""DwarvenGuardianHorde"",""DwarvenMenOfDaleHorde"",""DwarvenPhalanxHorde"",""DwarvenPorter"",""DwarvenZerkerHorde"",""ElvenArwen"",""ElvenBanner"",""ElvenElrond"",""ElvenGaladriel_RingHero"",""ElvenGlorfindel"",""ElvenHaldir"",""ElvenLegolas"",""ElvenLorienArcherHorde"",""ElvenLorienWarriorHorde"",""ElvenMirkwoodArcherBanner"",""ElvenMirkwoodArcherHorde"",""ElvenMithlondSentryHorde"",""ElvenPorter"",""ElvenRivendellArcherBanner"",""ElvenRivendellArcherHorde"",""ElvenRivendellLancerBanner"",""ElvenRivendellLancerHorde"",""ElvenThranduil"",""GoblinArcherHorde"",""GoblinCaveTroll"",""GoblinFighterHorde"",""GoblinSpiderRiderHorde"",""GondorAragornMP"",""GondorArcherHorde"",""GondorBoromir"",""GondorCavalryBanner"",""GondorFaramir"",""GondorFighterHorde"",""GondorGandalf"",""GondorInfantryBanner"",""GondorKnightHorde"",""GondorKnightsofDolHorde"",""GondorRangerHorde"",""GondorTowerShieldGuardHorde"",""GondorTrebuchet"",""IsengardBallista"",""IsengardBannerOrc"",""IsengardBatteringRam"",""IsengardBerserkerHorde"",""IsengardBeserker"",""IsengardExplosiveMine"",""IsengardFighterHorde"",""IsengardLurtz"",""IsengardPikemanHorde"",""IsengardPorter"",""IsengardSaruman"",""IsengardSharku"",""IsengardUrukCrossbowHorde"",""IsengardWargPackHorde"",""IsengardWargRiderBanner"",""IsengardWargRiderHorde"",""IsengardWildmanAxeHorde"",""IsengardWildmanHorde"",""IsengardWormTongue"",""KhamulFellBeast"",""MenPorter"",""MordorArcherHorde"",""MordorAttackTroll"",""MordorBannerOrc"",""MordorBatteringRam"",""MordorBlackOrcHorde"",""MordorBlackRiderHorde"",""MordorCatapult"",""MordorCorsairBanner"",""MordorCorsairsOfUmbarHorde"",""MordorDrummerTroll"",""MordorEasterlingHorde"",""MordorFighterHorde"",""MordorGothmog"",""MordorHaradrimArcherHorde"",""MordorHaradrimRiderBanner"",""MordorHaradrimRiderHorde"",""MordorMountainTroll"",""MordorMouthOfSauron"",""MordorMumakil"",""MordorPorter"",""MordorSauron_RingHero"",""MordorWitchKingOnFellBeast"",""MordorWorker"",""MorgomirFellBeast"",""NoldorWarriorHorde"",""RohanBanner"",""RohanEomer"",""RohanEowyn"",""RohanGenericEnt"",""RohanRohirrimHorde"",""RohanSpearmenHorde"",""RohanTheoden"",""RohanTreeBerd"",""WildAzog"",""WildBabyDrakeHorde"",""WildBannerGoblin"",""WildBannerMarauder"",""WildBannerSpiderRider"",""WildBannerSpiderling"",""WildGoblinKing"",""WildMarauderHorde"",""WildMarauderSwordBanner"",""WildMarauderSwordHorde"",""WildMountainGiant"",""WildPorter"",""WildShelob"",""WildSpiderlingHorde""]
-structure_object_ids=[""AngmarBarracks"",""AngmarBattleTowerExpansion"",""AngmarCatapultExpansion"",""AngmarDen"",""AngmarForgeWorks"",""AngmarFortress"",""AngmarFortressCitadel"",""AngmarFortressExpansionPadCorner"",""AngmarFortressExpansionPadSide"",""AngmarHallofTwilight"",""AngmarKennelExpansion"",""AngmarMill"",""AngmarSentryTower"",""AngmarWallCatapultSmall"",""AngmarWallCliffCap"",""AngmarWallGateSmall"",""AngmarWallHubSmall"",""AngmarWallHubSmallExpansion"",""AngmarWallPosternGateSmall"",""AngmarWallSegmentSmall"",""AngmarWallTowerSmall"",""DwarfBarracks"",""DwarvenArcheryRange"",""DwarvenCastleWallCatapult"",""DwarvenCastleWallGate"",""DwarvenCastleWallHub"",""DwarvenCastleWallSegment"",""DwarvenCastleWallTower"",""DwarvenCatapultExpansion"",""DwarvenEreborTowerTowerExpansion"",""DwarvenFortress"",""DwarvenFortressCitadel"",""DwarvenFortressExpansionPadCorner"",""DwarvenFortressExpansionPadSide"",""DwarvenHallExpansion"",""DwarvenHearth"",""DwarvenMineShaft"",""DwarvenSentryTower"",""DwarvenSiegeWorks"",""DwarvenStatue"",""DwarvenWallCliffCap"",""DwarvenWallHubSmall"",""DwarvenWallHubSmallExpansion"",""DwarvenWallPosternGate"",""DwarvenWallSegmentSmall"",""ElvenBarracks"",""ElvenBattleTower"",""ElvenCastleWallGate"",""ElvenCastleWallHub"",""ElvenCastleWallHubExpansion"",""ElvenCastleWallSegment"",""ElvenCitadel"",""ElvenEntMoot"",""ElvenFloodgateExpansion"",""ElvenFortress"",""ElvenFortressCrystalMoat"",""ElvenFortressExpansionPadCorner"",""ElvenFortressExpansionPadSide"",""ElvenGreenPasture"",""ElvenMallornTree"",""ElvenMirrorOfGaladriel"",""ElvenStatue"",""ElvenVigilantEntExpansion"",""ElvenWallCliffCap"",""ElvenWatchtowerExpansion"",""EregionForge"",""GoblinCave"",""GoblinFissure"",""GondorArcherRange"",""GondorBarracks"",""GondorBattleTower"",""GondorCastleWallHub"",""GondorCastleWallSegment"",""GondorCastleWallTower"",""GondorCastleWallTrebuchet"",""GondorFarm"",""GondorForge"",""GondorMarketPlace"",""GondorStable"",""GondorStatue"",""GondorWell"",""GondorWorkshop"",""IsengardArmory"",""IsengardBallistaExpansion"",""IsengardBattleTower"",""IsengardCastleWallGate"",""IsengardCastleWallHub"",""IsengardCastleWallHubExpansion"",""IsengardCastleWallSegment"",""IsengardFortress"",""IsengardFortressCitadel"",""IsengardFortressExpansionPadCorner"",""IsengardFortressExpansionPadSide"",""IsengardFurnace"",""IsengardLumberMill"",""IsengardMineLauncherExpansion"",""IsengardSiegeWorks"",""IsengardTavern"",""IsengardTowerExpansion"",""IsengardUrukPit"",""IsengardWallCliffCap"",""IsengardWargPit"",""IsengardWargSentry"",""MenArrowTowerExpansion"",""MenFortress"",""MenFortressCitadel"",""MenFortressExpansionPadCorner"",""MenFortressExpansionPadSide"",""MenGarrisonTowerExpansion"",""MenTrebuchetExpansion"",""MenTrebuchetSideExpansion"",""MenWallCliffCap"",""MenWallGate"",""MenWallHubSmall"",""MenWallHubSmallExpansion"",""MenWallHubSmallOuter"",""MenWallPosternGate"",""MenWallSegmentSmall"",""MordorBase"",""MordorBase_DEMO"",""MordorBattleTower"",""MordorFortress"",""MordorFortressBarricadeExpansion"",""MordorFortressCitadel"",""MordorFortressExpansionPadCorner"",""MordorFortressLavaMoat"",""MordorGateWatchersExpansion"",""MordorHaradrimPalace"",""MordorLumberMill"",""MordorMumakilPen"",""MordorOrcPit"",""MordorSiegeWorks"",""MordorSlaughterHouse"",""MordorTrollCage"",""MordorWallCatapultExpansion"",""WildArrowDenExpansion"",""WildBurrowsExpansion"",""WildFortress"",""WildFortressCitadel"",""WildFortressExpansionPadCorner"",""WildFortressExpansionPadSide"",""WildGiantSentryExpansion"",""WildLumberMill"",""WildMineShaft"",""WildSentryTower"",""WildSpiderHolesExpansion"",""WildSpiderPit"",""WildTreasureTrove""]
-GATE PASS core_unit_GondorFighterHorde
-GATE PASS core_unit_GondorArcherHorde
-GATE PASS core_unit_GondorTowerShieldGuardHorde
-GATE PASS core_unit_GondorKnightHorde
-GATE PASS core_unit_GondorRangerHorde
-GATE PASS core_unit_GondorTrebuchet
-GATE PASS core_unit_MenPorter
-GATE PASS core_hero_GondorAragornMP
-GATE PASS core_hero_GondorBoromir
-GATE PASS core_hero_GondorFaramir
-GATE PASS core_hero_GondorGandalf
-GATE PASS core_hero_RohanEomer
-GATE PASS core_hero_RohanEowyn
-GATE PASS core_hero_RohanTheoden
-GATE PASS core_structure_MenFortress
-GATE PASS core_structure_GondorFarm
-GATE PASS core_structure_GondorBarracks
-GATE PASS core_structure_GondorArcherRange
-GATE PASS core_structure_GondorStable
-GATE PASS core_structure_GondorWorkshop
-GATE PASS spellbook_runtime
-spellbook_schema=openbfme.spellbook-runtime id=MenSpellBook
-GATE PASS ui_image_UCCommon_Stop
-GATE PASS ui_image_UCCommon_AttackMove
-GATE PASS ui_image_UCCommon_BattleStance
-GATE PASS ui_image_UCCommon_HoldGroundStance
-GATE FAIL five_maps_pack_exists (C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/bfme2-five-maps-106-private)
-GATE FAIL five_maps_catalog_exists (C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/bfme2-five-maps-106-private/data/maps.json)
-GATE FAIL five_maps_catalog_schema ()
-catalog_map_ids=[]
-GATE FAIL catalog_has_bfme2_map_fords-of-isen-ii (missing from five-maps catalog)
-GATE FAIL catalog_has_bfme2_map_rivendell (missing from five-maps catalog)
-GATE FAIL catalog_has_bfme2_map_mount-doom (missing from five-maps catalog)
-GATE FAIL catalog_has_bfme2_map_dagorlad (missing from five-maps catalog)
-GATE FAIL catalog_has_bfme2_map_mordor (missing from five-maps catalog)
-MAP_FAIL bfme2.map.fords-of-isen-ii no catalog row
-GATE FAIL map_load_bfme2_map_fords-of-isen-ii (map failed load/water/passability)
-MAP_FAIL bfme2.map.rivendell no catalog row
-GATE FAIL map_load_bfme2_map_rivendell (map failed load/water/passability)
-MAP_FAIL bfme2.map.mount-doom no catalog row
-GATE FAIL map_load_bfme2_map_mount-doom (map failed load/water/passability)
-MAP_FAIL bfme2.map.dagorlad no catalog row
-GATE FAIL map_load_bfme2_map_dagorlad (map failed load/water/passability)
-MAP_FAIL bfme2.map.mordor no catalog row
-GATE FAIL map_load_bfme2_map_mordor (map failed load/water/passability)
-RETAIL_INIT_PHASE name=ready delta_ms=1164 total_ms=1164
-RETAIL_INIT_PHASE name=environment delta_ms=1 total_ms=1165
-RETAIL_INIT_PHASE name=hud delta_ms=80 total_ms=1245
-RETAIL_INIT_PHASE name=content delta_ms=804 total_ms=2049
-RETAIL_INIT_PHASE name=retail_command_ui delta_ms=1403 total_ms=3452
-RETAIL_INIT_PHASE name=map_art delta_ms=7 total_ms=3459
-RETAIL_INIT_PHASE name=map_data delta_ms=1405 total_ms=4864
-RETAIL_INIT_PHASE name=battlefield delta_ms=3032 total_ms=7896
-[RetailSliceSim] structure armor: kind 'castle_wall_hub' has no compiled armor.ini table; structure damage uses the recorded provisional scalar 0.25
-[RetailSliceSim] structure armor: kind 'statue' has no compiled armor.ini table; structure damage uses the recorded provisional scalar 0.25
-[RetailSliceSim] unit 'Wolf' has no authored damageType; its structure damage uses each kind's DEFAULT armor scalar
-RETAIL_INIT_PHASE name=simulation delta_ms=886 total_ms=8782
-RETAIL_INIT_PHASE name=presentations delta_ms=2146 total_ms=10928
-RETAIL_INIT_PHASE name=audio delta_ms=837 total_ms=11765
-RETAIL_INIT_PHASE name=ready_complete delta_ms=31 total_ms=11796
-[RetailSliceSim] unit 'CaveTroll_Slaved' has no authored damageType; its structure damage uses each kind's DEFAULT armor scalar
-[RetailSliceSim] unit 'NeutralWarg' has no authored damageType; its structure damage uses each kind's DEFAULT armor scalar
-GATE PASS slice_boot_fords
-boot1={""battalions"":7,""elapsed_ms"":23,""faction"":""men"",""failure_reason"":"""",""fieldable"":17,""map_id"":""bfme2.map.fords-of-isen-ii"",""producible"":17,""ready_ok"":true,""seed_structure_kinds"":[""fortress""],""structure_kinds"":[""fortress"",""archery_range"",""barracks"",""battle_tower"",""castle_wall_hub"",""farm"",""forge"",""marketplace"",""stable"",""statue"",""well"",""workshop"",""arrow_tower_expansion"",""garrison_tower_expansion"",""trebuchet_expansion"",""trebuchet_side_expansion"",""wall_hub_small"",""wall_hub_small_expansion"",""wall_hub_small_outer""],""structures"":22}
-GATE FAIL seed_fortress_only (expected 2 fortresses, got 22)
-GATE PASS kind_archery_named
-GATE PASS kind_barracks_named
-GATE PASS kind_workshop_named
-RETAIL_INIT_PHASE name=ready delta_ms=699 total_ms=699
-RETAIL_INIT_PHASE name=environment delta_ms=1 total_ms=700
-RETAIL_INIT_PHASE name=hud delta_ms=61 total_ms=761
-RETAIL_INIT_PHASE name=content delta_ms=776 total_ms=1537
-GATE FAIL slice_boot_rivendell (Slice map 'bfme2.map.rivendell' is unavailable: it is neither in the registered content nor in the bfme2-five-maps-106-private pack catalog.)
-boot2={""battalions"":0,""elapsed_ms"":45002,""error"":""Slice map 'bfme2.map.rivendell' is unavailable: it is neither in the registered content nor in the bfme2-five-maps-106-private pack catalog."",""faction"":""men"",""failure_reason"":""Slice map 'bfme2.map.rivendell' is unavailable: it is neither in the registered content nor in the bfme2-five-maps-106-private pack catalog."",""fieldable"":17,""map_id"":""bfme2.map.rivendell"",""producible"":17,""ready_ok"":false,""seed_structure_kinds"":[""fortress""],""structure_kinds"":[""fortress"",""archery_range"",""barracks"",""battle_tower"",""castle_wall_hub"",""farm"",""forge"",""marketplace"",""stable"",""statue"",""well"",""workshop"",""arrow_tower_expansion"",""garrison_tower_expansion"",""trebuchet_expansion"",""trebuchet_side_expansion"",""wall_hub_small"",""wall_hub_small_expansion"",""wall_hub_small_outer""],""structures"":0}
-RETAIL_INIT_PHASE name=ready delta_ms=649 total_ms=649
-RETAIL_INIT_PHASE name=environment delta_ms=1 total_ms=650
-RETAIL_INIT_PHASE name=hud delta_ms=79 total_ms=729
-RETAIL_INIT_PHASE name=content delta_ms=692 total_ms=1421
-GATE FAIL slice_boot_dagorlad (Slice map 'bfme2.map.dagorlad' is unavailable: it is neither in the registered content nor in the bfme2-five-maps-106-private pack catalog.)
-boot3={""battalions"":0,""elapsed_ms"":45004,""error"":""Slice map 'bfme2.map.dagorlad' is unavailable: it is neither in the registered content nor in the bfme2-five-maps-106-private pack catalog."",""faction"":""men"",""failure_reason"":""Slice map 'bfme2.map.dagorlad' is unavailable: it is neither in the registered content nor in the bfme2-five-maps-106-private pack catalog."",""fieldable"":17,""map_id"":""bfme2.map.dagorlad"",""producible"":17,""ready_ok"":false,""seed_structure_kinds"":[""fortress""],""structure_kinds"":[""fortress"",""archery_range"",""barracks"",""battle_tower"",""castle_wall_hub"",""farm"",""forge"",""marketplace"",""stable"",""statue"",""well"",""workshop"",""arrow_tower_expansion"",""garrison_tower_expansion"",""trebuchet_expansion"",""trebuchet_side_expansion"",""wall_hub_small"",""wall_hub_small_expansion"",""wall_hub_small_outer""],""structures"":0}
-RETAIL_INIT_PHASE name=ready delta_ms=1330 total_ms=1330
-RETAIL_INIT_PHASE name=environment delta_ms=1 total_ms=1331
-RETAIL_INIT_PHASE name=hud delta_ms=88 total_ms=1419
-RETAIL_INIT_PHASE name=content delta_ms=1321 total_ms=2740
-GATE FAIL slice_boot_mount_doom (Slice map 'bfme2.map.mount-doom' is unavailable: it is neither in the registered content nor in the bfme2-five-maps-106-private pack catalog.)
-boot_mount_doom={""battalions"":0,""elapsed_ms"":45004,""error"":""Slice map 'bfme2.map.mount-doom' is unavailable: it is neither in the registered content nor in the bfme2-five-maps-106-private pack catalog."",""faction"":""men"",""failure_reason"":""Slice map 'bfme2.map.mount-doom' is unavailable: it is neither in the registered content nor in the bfme2-five-maps-106-private pack catalog."",""fieldable"":17,""map_id"":""bfme2.map.mount-doom"",""producible"":17,""ready_ok"":false,""seed_structure_kinds"":[""fortress""],""structure_kinds"":[""fortress"",""archery_range"",""barracks"",""battle_tower"",""castle_wall_hub"",""farm"",""forge"",""marketplace"",""stable"",""statue"",""well"",""workshop"",""arrow_tower_expansion"",""garrison_tower_expansion"",""trebuchet_expansion"",""trebuchet_side_expansion"",""wall_hub_small"",""wall_hub_small_expansion"",""wall_hub_small_outer""],""structures"":0}
-RETAIL_INIT_PHASE name=ready delta_ms=880 total_ms=880
-RETAIL_INIT_PHASE name=environment delta_ms=1 total_ms=881
-RETAIL_INIT_PHASE name=hud delta_ms=104 total_ms=985
-RETAIL_INIT_PHASE name=content delta_ms=1028 total_ms=2013
-
-Unicode parsing error, some characters were replaced with ï¿½ (U+FFFD): Invalid unicode codepoint (d8432460), cannot represent as UTF-16
-Unicode parsing error, some characters were replaced with ï¿½ (U+FFFD): Invalid unicode codepoint (d8432460), cannot represent as UTF-16
-Unicode parsing error, some characters were replaced with ï¿½ (U+FFFD): Invalid unicode codepoint (d8432460), cannot represent as UTF-16
-"
-"87","menu_backdrop_weather_runner.gd","pass",""
-"88","menu_instant_runner.gd","pass",""
+","b"
+"86","men_vslice_gate_runner.gd","fail","GATE_RESULT passed=34 failed=18",""
+"87","menu_backdrop_weather_runner.gd","pass","",""
+"88","menu_instant_runner.gd","pass","",""
 "89","menu_match_cycle_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -12467,8 +12334,8 @@ WARNING: [ModLoader] Content selection has an unsafe supplementalPacks path: ../
        [3] _run (res://tests/menu_match_cycle_runner.gd:78)
        [4] _section_cycles (res://tests/menu_match_cycle_runner.gd:306)
        [5] _settled_counts (res://tests/menu_match_cycle_runner.gd:466)
-"
-"90","minimap_geometry_guard_runner.gd","pass",""
+","b"
+"90","minimap_geometry_guard_runner.gd","pass","",""
 "91","minimap_parchment_capture_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -13458,7 +13325,7 @@ ERROR: Parameter ""t"" is null.
    at: texture_2d_get (./servers/rendering/dummy/storage/texture_storage.h:110)
    GDScript backtrace (most recent call first):
        [0] _process (res://tests/minimap_parchment_capture_runner.gd:392)
-"
+","c"
 "92","mp_eight_peer_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -13818,9 +13685,9 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [4] _test_lockstep_phase (res://tests/mp_eight_peer_runner.gd:339)
        [5] _run (res://tests/mp_eight_peer_runner.gd:51)
        [6] _test_lobby_panel_fits_the_real_panel (res://tests/mp_eight_peer_runner.gd:121)
-"
-"93","naval_water_route_runner.gd","pass",""
-"94","net_upnp_runner.gd","pass",""
+","a"
+"93","naval_water_route_runner.gd","pass","",""
+"94","net_upnp_runner.gd","pass","",""
 "95","object_status_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -13934,8 +13801,8 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [3] _fixture (res://tests/object_status_runner.gd:130)
        [4] _test_empty_status_refuses (res://tests/object_status_runner.gd:114)
        [5] _run (res://tests/object_status_runner.gd:23)
-"
-"96","open_field_route_runner.gd","pass",""
+","b"
+"96","open_field_route_runner.gd","pass","",""
 "97","options_pause_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -13990,7 +13857,7 @@ SCRIPT ERROR: Invalid call. Nonexistent function 'contract_from_definition' in b
        [7] _ready (res://src/retail_slice/retail_vertical_slice.gd:341)
        [8] _run (res://tests/options_pause_runner.gd:48)
 OPTIONS_PAUSE FAIL slice_ready (Cooked Fords data was valid, but source geometry could not be built: particle runtime contract failed: selected ripple emitter could not be constructed)
-"
+","c"
 "98","parity_systems_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -14035,9 +13902,9 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
        [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
        [3] _run (res://tests/parity_systems_runner.gd:24)
-"
-"99","passive_area_effect_heal_runner.gd","pass",""
-"100","playable_structure_runtime_consumer_runner.gd","pass",""
+","b"
+"99","passive_area_effect_heal_runner.gd","pass","",""
+"100","playable_structure_runtime_consumer_runner.gd","pass","",""
 "101","refund_die_runtime_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -14345,7 +14212,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
        [3] _sim (res://tests/refund_die_runtime_runner.gd:65)
        [4] _run (res://tests/refund_die_runtime_runner.gd:47)
-"
+","b"
 "102","render_member_batching_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -14462,7 +14329,7 @@ WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted 
    at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
 WARNING: 136 ObjectDB instances were leaked at exit (run with `--verbose` for details).
    at: cleanup (core/object/object.cpp:2535)
-"
+","b"
 "103","repair_special_power_runtime_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 REPAIR_SPECIAL_POWER_RUNTIME_RESULT passed=18 failed=0
@@ -14647,8 +14514,8 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
        [3] _sim (res://tests/repair_special_power_runtime_runner.gd:62)
        [4] _run (res://tests/repair_special_power_runtime_runner.gd:53)
-"
-"104","retail_ability_fx_binding_runner.gd","pass",""
+","a"
+"104","retail_ability_fx_binding_runner.gd","pass","",""
 "105","retail_ai_ladder_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -14707,8 +14574,8 @@ SCRIPT ERROR: Invalid call. Nonexistent function 'contract_from_definition' in b
        [7] _ready (res://src/retail_slice/retail_vertical_slice.gd:341)
        [8] _run (res://tests/retail_ai_ladder_runner.gd:75)
 RETAIL_AI_LADDER FAIL slice_ready (Cooked Fords data was valid, but source geometry could not be built: particle runtime contract failed: selected ripple emitter could not be constructed)
-"
-"106","retail_ambient_audio_semantics_runner.gd","pass",""
+","c"
+"106","retail_ambient_audio_semantics_runner.gd","pass","",""
 "107","retail_apt_vm_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -14884,8 +14751,8 @@ WARNING: 40 ObjectDB instances were leaked at exit (run with `--verbose` for det
    at: cleanup (core/object/object.cpp:2535)
 ERROR: 2 resources still in use at exit (run with --verbose for details).
    at: clear (core/io/resource.cpp:822)
-"
-"108","retail_archery_range_level2_runner.gd","pass",""
+","b"
+"108","retail_archery_range_level2_runner.gd","fail","RETAIL_ARCHERY_RANGE_LEVEL2 FAIL source_profile_configured",""
 "109","retail_build_permissions_script_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -14987,7 +14854,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
        [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
        [3] _run (res://tests/retail_build_permissions_script_runner.gd:106)
-"
+","b"
 "110","retail_build_plots_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -15862,8 +15729,8 @@ ERROR: RETAIL_BUILD_PLOTS FAIL faction_slice_boots (Cooked Fords data was valid,
    GDScript backtrace (most recent call first):
        [0] _check (res://tests/retail_build_plots_runner.gd:769)
        [1] _test_mode_on_non_men_and_cross_faction (res://tests/retail_build_plots_runner.gd:511)
-"
-"111","retail_command_points_script_runner.gd","pass",""
+","b"
+"111","retail_command_points_script_runner.gd","pass","",""
 "112","retail_control_api_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -15946,7 +15813,7 @@ ERROR: Parse JSON failed. Error at line 0: Expected key
        [2] _pump (res://tests/retail_control_api_runner.gd:101)
        [3] _await_reply (res://tests/retail_control_api_runner.gd:122)
        [4] _run (res://tests/retail_control_api_runner.gd:299)
-"
+","b"
 "113","retail_dualrun_trace_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -15996,7 +15863,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
        [3] _make_sim (res://tests/retail_dualrun_trace_runner.gd:50)
        [4] _run (res://tests/retail_dualrun_trace_runner.gd:262)
-"
+","b"
 "114","retail_fog_of_war_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -16387,7 +16254,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [3] _sim_with_fog (res://tests/retail_fog_of_war_runner.gd:521)
        [4] _test_a_click_into_fog_is_a_move_order (res://tests/retail_fog_of_war_runner.gd:1174)
        [5] _run (res://tests/retail_fog_of_war_runner.gd:100)
-"
+","b"
 "115","retail_hero_ability_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -17654,8 +17521,8 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [4] _determinism_sim (res://tests/retail_hero_ability_runner.gd:1129)
        [5] _run_determinism_checks (res://tests/retail_hero_ability_runner.gd:1227)
        [6] _run (res://tests/retail_hero_ability_runner.gd:495)
-"
-"116","retail_hud_multipack_runner.gd","pass",""
+","b"
+"116","retail_hud_multipack_runner.gd","pass","",""
 "117","retail_input_probe_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -17723,7 +17590,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'statue' has no compiled armor con
        [3] _initialize_content_and_match (res://src/retail_slice/retail_vertical_slice.gd:589)
        [4] _ready (res://src/retail_slice/retail_vertical_slice.gd:341)
        [5] _run (res://tests/retail_input_probe_runner.gd:58)
-"
+","a"
 "118","retail_knockback_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -18116,7 +17983,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [4] _make_battle_sim (res://tests/retail_knockback_runner.gd:336)
        [5] _scenario_hash_sensitivity (res://tests/retail_knockback_runner.gd:387)
        [6] _run (res://tests/retail_knockback_runner.gd:198)
-"
+","b"
 "119","retail_lockstep_determinism_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -18259,9 +18126,9 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
        [3] _make_sim (res://tests/retail_lockstep_determinism_runner.gd:36)
        [4] _run (res://tests/retail_lockstep_determinism_runner.gd:172)
-"
-"120","retail_map_data_runner.gd","pass",""
-"121","retail_map_script_runner.gd","pass",""
+","b"
+"120","retail_map_data_runner.gd","fail","RETAIL_MAP_DATA_RESULT passed=2 failed=5",""
+"121","retail_map_script_runner.gd","pass","",""
 "122","retail_mp_lobby_runner.gd","pass","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -18314,7 +18181,7 @@ RETAIL_INIT_PHASE name=audio delta_ms=786 total_ms=13699
 RETAIL_INIT_PHASE name=ready_complete delta_ms=33 total_ms=13732
 RETAIL_MP_LOBBY_RESULT passed=27 failed=0
 
-"
+",""
 "123","retail_mp_menu_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -18407,7 +18274,7 @@ WARNING: [ModLoader] Falling back to the DURABLE pack in user data because OPENB
        [1] list_pack_roots (res://src/content/mod_loader.gd:269)
        [2] reload (res://src/content/content_db.gd:304)
        [3] _run (res://tests/retail_mp_menu_runner.gd:189)
-"
+","a"
 "124","retail_mp_two_peer_smoke_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -18535,7 +18402,7 @@ WARNING: RING_GOLLUM_FALLBACK scripted spawn absent after tick 5; deterministic 
 RETAIL_MP_SMOKE FAIL lockstep_ticks_to_60_identical_hashes (host_tick=30 guest_tick=30 desync=false/true sampled=[30])
 RETAIL_MP_SMOKE FAIL guest_construct_lands_as_team_1_on_both_sims (guest=false host=false)
 RETAIL_MP_SMOKE FAIL lockstep_hashes_stay_equal_through_control_scenario (sampled=[30])
-"
+","b"
 "125","retail_multiteam_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -18752,9 +18619,9 @@ ERROR: [RetailSliceSim] structure armor: kind 'statue' has no compiled armor con
        [3] _make_sim (res://tests/retail_multiteam_runner.gd:79)
        [4] _run_default_reproducibility_checks (res://tests/retail_multiteam_runner.gd:176)
        [5] _run (res://tests/retail_multiteam_runner.gd:69)
-"
-"126","retail_music_runner.gd","pass",""
-"127","retail_non_fords_boot_runner.gd","pass",""
+","b"
+"126","retail_music_runner.gd","pass","",""
+"127","retail_non_fords_boot_runner.gd","fail","RETAIL_NON_FORDS_BOOT FAIL adorn_river_is_explicitly_selected",""
 "128","retail_nteam_match_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -18998,8 +18865,8 @@ ERROR: [RetailSliceSim] structure armor: kind 'statue' has no compiled armor con
        [4] _build_cross_faction (res://tests/retail_nteam_match_runner.gd:336)
        [5] _run_cross_faction (res://tests/retail_nteam_match_runner.gd:399)
        [6] _run (res://tests/retail_nteam_match_runner.gd:68)
-"
-"129","retail_nteam_setup_runner.gd","pass",""
+","b"
+"129","retail_nteam_setup_runner.gd","pass","",""
 "130","retail_perf_soak_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -19067,7 +18934,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'statue' has no compiled armor con
        [3] _initialize_content_and_match (res://src/retail_slice/retail_vertical_slice.gd:586)
        [4] _ready (res://src/retail_slice/retail_vertical_slice.gd:341)
        [5] _run (res://tests/retail_perf_soak_runner.gd:31)
-"
+","b"
 "131","retail_playtest_bot_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -19243,8 +19110,8 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
        [3] _make_sim (res://tests/retail_playtest_bot_runner.gd:37)
        [4] _run (res://tests/retail_playtest_bot_runner.gd:245)
-"
-"132","retail_radial_layout_runner.gd","pass",""
+","b"
+"132","retail_radial_layout_runner.gd","pass","",""
 "133","retail_ranger_playable_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -19292,8 +19159,8 @@ ERROR: [RetailSliceSim] structure armor: kind 'statue' has no compiled armor con
        [5] _run (res://tests/retail_ranger_playable_runner.gd:32)
 RETAIL_RANGER_PLAYABLE FAIL overlay_registers_typed_ranger_content
 RETAIL_RANGER_PLAYABLE FAIL level_one_hud_shows_locked_ranger_and_upgrade
-"
-"134","retail_ring_hero_exclusion_runner.gd","pass",""
+","b"
+"134","retail_ring_hero_exclusion_runner.gd","pass","",""
 "135","retail_script_census_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -19343,7 +19210,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [3] _make_sim (res://tests/retail_script_census_runner.gd:314)
        [4] _run (res://tests/retail_script_census_runner.gd:60)
 RETAIL_SCRIPT_CENSUS FAIL NAMED_CREATED/totals expected 8, 38/4027 implemented, 16/118 unimplemented
-"
+","b"
 "136","retail_script_purchase_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -19409,7 +19276,7 @@ WARNING: 25 ObjectDB instances were leaked at exit (run with `--verbose` for det
    at: cleanup (core/object/object.cpp:2535)
 ERROR: 4 resources still in use at exit (run with --verbose for details).
    at: clear (core/io/resource.cpp:822)
-"
+","b"
 "137","retail_script_wiring_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -20232,19 +20099,10 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [3] _make_sim (res://tests/retail_script_wiring_runner.gd:167)
        [4] _test_peer_adoption_through_the_wired_path (res://tests/retail_script_wiring_runner.gd:685)
        [5] _run (res://tests/retail_script_wiring_runner.gd:98)
-"
-"138","retail_shell_apt_runtime_runner.gd","pass",""
-"139","retail_shroud_render_runner.gd","pass","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
-
-[ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
-[ContentDB] interface-art: 915 images from C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/bfme2-men-vslice/7de517bf146582f10741750b50d63f9955c42d1fe2aa13200757fc6fb29f217a/data/interface-art/index.json
-[ContentDB] interface-art: 1115 images from C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b/data/interface-art/index.json
-[ContentDB] legacy-demo: packs=23 units=33 buildings=42 factions=4 powers=10 research=7 maps=4
-[ContentDB] playable: factions=7 (angmar, dwarves, elves, isengard, men, mordor, wild) units=137 structures=148 skipped_units=0
-
-RETAIL_SHROUD_RENDER FAIL this runner renders and cannot run headless
-"
-"140","retail_slice_map_runner.gd","pass",""
+","b"
+"138","retail_shell_apt_runtime_runner.gd","pass","",""
+"139","retail_shroud_render_runner.gd","fail","RETAIL_SHROUD_RENDER FAIL this runner renders and cannot run headless",""
+"140","retail_slice_map_runner.gd","pass","",""
 "141","retail_slice_script_world_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -23122,7 +22980,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [3] _make_sim (res://tests/retail_slice_script_world_runner.gd:256)
        [4] _test_units_set_reference (res://tests/retail_slice_script_world_runner.gd:3451)
        [5] _run (res://tests/retail_slice_script_world_runner.gd:171)
-"
+","b"
 "142","retail_spellbook_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -24592,7 +24450,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
        [3] _hud_integration_checks (res://tests/retail_spellbook_runner.gd:868)
        [4] _run (res://tests/retail_spellbook_runner.gd:59)
-"
+","b"
 "143","retail_state_boundary_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -26215,8 +26073,8 @@ WARNING: 73 ObjectDB instances were leaked at exit (run with `--verbose` for det
    at: cleanup (core/object/object.cpp:2535)
 ERROR: 4 resources still in use at exit (run with --verbose for details).
    at: clear (core/io/resource.cpp:822)
-"
-"144","retail_tree_sway_runner.gd","pass",""
+","b"
+"144","retail_tree_sway_runner.gd","pass","",""
 "145","retail_upgrade_crossfaction_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -26403,7 +26261,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'statue' has no compiled armor con
        [4] _build_twin (res://tests/retail_upgrade_crossfaction_runner.gd:313)
        [5] _run_twin_determinism (res://tests/retail_upgrade_crossfaction_runner.gd:326)
        [6] _run (res://tests/retail_upgrade_crossfaction_runner.gd:84)
-"
+","b"
 "146","retail_upgrade_parity_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -27493,9 +27351,9 @@ WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted 
    at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
 WARNING: 1396 ObjectDB instances were leaked at exit (run with `--verbose` for details).
    at: cleanup (core/object/object.cpp:2535)
-"
-"147","retail_water_surface_runner.gd","pass",""
-"148","retail_weather_fx_runner.gd","pass",""
+","b"
+"147","retail_water_surface_runner.gd","pass","",""
+"148","retail_weather_fx_runner.gd","pass","",""
 "149","scavenger_bounty_runtime_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -27681,7 +27539,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
        [3] _sim (res://tests/scavenger_bounty_runtime_runner.gd:162)
        [4] _run (res://tests/scavenger_bounty_runtime_runner.gd:98)
-"
+","b"
 "150","scenario_custom_animation_prerequisite_runner.gd","pass","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -27697,7 +27555,7 @@ PASS: deferred presentation receipt is exposed
 PASS: no animation clip is fabricated
 SCENARIO_CUSTOM_ANIMATION_PREREQUISITE passed=6 failed=0
 
-"
+",""
 "151","scenario_map_placement_live_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -27806,7 +27664,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'statue' has no compiled armor con
        [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
        [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
        [3] _run (res://tests/scenario_map_placement_live_runner.gd:170)
-"
+","b"
 "152","scenario_noncombatant_runtime_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -27848,10 +27706,10 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
        [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
        [3] _run (res://tests/scenario_noncombatant_runtime_runner.gd:24)
-"
-"153","scenario_pickup_runtime_registry_runner.gd","pass",""
-"154","scenario_prop_runtime_registry_runner.gd","pass",""
-"155","scenario_runtime_registry_runner.gd","pass",""
+","b"
+"153","scenario_pickup_runtime_registry_runner.gd","pass","",""
+"154","scenario_prop_runtime_registry_runner.gd","pass","",""
+"155","scenario_runtime_registry_runner.gd","pass","",""
 "156","scenario_runtime_sim_wiring_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -27890,7 +27748,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
        [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
        [3] _run (res://tests/scenario_runtime_sim_wiring_runner.gd:18)
-"
+","b"
 "157","scenario_structure_prop_instantiation_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -27956,7 +27814,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
        [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
        [3] _run (res://tests/scenario_structure_prop_instantiation_runner.gd:80)
-"
+","b"
 "158","script_executor_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -28025,8 +27883,8 @@ WARNING: 8 ObjectDB instances were leaked at exit (run with `--verbose` for deta
    at: cleanup (core/object/object.cpp:2535)
 ERROR: 1 resources still in use at exit (run with --verbose for details).
    at: clear (core/io/resource.cpp:822)
-"
-"159","script_pack_startup_runner.gd","pass",""
+","b"
+"159","script_pack_startup_runner.gd","fail","SCRIPT_PACK_STARTUP_RESULT passed=0 failed=2",""
 "160","script_vocabulary_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -28140,7 +27998,7 @@ ERROR: SageScriptVocabulary.register_id_map: id 1 maps to unknown action 'NOT_A_
        [0] register_id_map (res://src/script/script_vocabulary.gd:197)
        [1] _test_identity_resolution (res://tests/script_vocabulary_runner.gd:344)
        [2] _run (res://tests/script_vocabulary_runner.gd:59)
-"
+","b"
 "161","script_world_namespace_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -28362,7 +28220,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [3] _make_sim (res://tests/script_world_namespace_runner.gd:156)
        [4] _test_map_namespace_install_seam (res://tests/script_world_namespace_runner.gd:405)
        [5] _run (res://tests/script_world_namespace_runner.gd:73)
-"
+","b"
 "162","script_world_surface_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -41523,7 +41381,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [4] _verify_read_only_sweep (res://tests/script_world_surface_runner.gd:1436)
        [5] _run (res://tests/script_world_surface_runner.gd:210)
 FAIL state_hash unchanged across the read-only probe sweep (211 calls)
-"
+","b"
 "163","selected_lair_allegiance_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -41592,7 +41450,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'statue' has no compiled armor con
        [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
        [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
        [3] _run (res://tests/selected_lair_allegiance_runner.gd:46)
-"
+","b"
 "164","selected_neutral_fords_visual_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -41635,8 +41493,8 @@ ERROR: [RetailSliceSim] structure armor: kind 'statue' has no compiled armor con
        [3] _initialize_content_and_match (res://src/retail_slice/retail_vertical_slice.gd:591)
        [4] _ready (res://src/retail_slice/retail_vertical_slice.gd:346)
        [5] _run (res://tests/selected_neutral_fords_visual_runner.gd:29)
-"
-"165","selected_neutral_pack_acceptance_runner.gd","pass",""
+","b"
+"165","selected_neutral_pack_acceptance_runner.gd","pass","",""
 "166","selected_neutral_rock_prop_death_fx_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -41679,7 +41537,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'statue' has no compiled armor con
        [3] _initialize_content_and_match (res://src/retail_slice/retail_vertical_slice.gd:591)
        [4] _ready (res://src/retail_slice/retail_vertical_slice.gd:346)
        [5] _run (res://tests/selected_neutral_rock_prop_death_fx_runner.gd:26)
-"
+","b"
 "167","ship_scenario_admission_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -41689,8 +41547,8 @@ Unicode parsing error: Unpaired trail surrogate (9760 [lead?] ddda)
 Unicode parsing error: Unpaired surrogate (ddda)
 Unicode parsing error: Unpaired surrogate (ddda)
 Unicode parsing error: Unpaired surrogate (ddda)
-"
-"168","side_command_frame_runner.gd","pass",""
+","a"
+"168","side_command_frame_runner.gd","pass","",""
 "169","siege_deploy_special_power_runtime_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -41764,7 +41622,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
        [3] _sim (res://tests/siege_deploy_special_power_runtime_runner.gd:87)
        [4] _run (res://tests/siege_deploy_special_power_runtime_runner.gd:43)
-"
+","b"
 "170","sim_ai_wave_bench_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -41961,7 +41819,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [3] _make_sim (res://tests/sim_ai_wave_bench_runner.gd:93)
        [4] _measure (res://tests/sim_ai_wave_bench_runner.gd:67)
        [5] _run (res://tests/sim_ai_wave_bench_runner.gd:36)
-"
+","b"
 "171","sim_scale_bench_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -42158,9 +42016,9 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [3] _make_sim (res://tests/sim_scale_bench_runner.gd:112)
        [4] _measure (res://tests/sim_scale_bench_runner.gd:82)
        [5] _run (res://tests/sim_scale_bench_runner.gd:44)
-"
-"172","sol_deeper_roads_tiles_runner.gd","pass",""
-"173","sol_slice_gate_adversarial_runner.gd","pass",""
+","b"
+"172","sol_deeper_roads_tiles_runner.gd","fail","SOL_DEEPER_MAPS_RESULT passed=2 failed=2",""
+"173","sol_slice_gate_adversarial_runner.gd","pass","",""
 "174","spawn_behavior_scenario_runtime_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -42235,7 +42093,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
        [3] _sim (res://tests/spawn_behavior_scenario_runtime_runner.gd:21)
        [4] _run (res://tests/spawn_behavior_scenario_runtime_runner.gd:18)
-"
+","b"
 "175","special_power_contract_runtime_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -42373,7 +42231,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
        [3] _sim (res://tests/special_power_contract_runtime_runner.gd:77)
        [4] _run (res://tests/special_power_contract_runtime_runner.gd:53)
-"
+","b"
 "176","structure_deflection_perf_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -42414,7 +42272,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
        [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
        [3] _run (res://tests/structure_deflection_perf_runner.gd:92)
-"
+","b"
 "177","structure_radial_command_set_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -42485,7 +42343,7 @@ SCRIPT ERROR: Invalid call. Nonexistent function 'new' in base 'GDScript'.
        [4] _run (res://tests/structure_radial_command_set_runner.gd:74)
 STRUCTURE_RADIAL FAIL slice_boots (Retail pack mounted, but capability validation failed: battalion_count=0 expected=2, battalion_retail_visuals)
 STRUCTURE_RADIAL FAIL liveness: expected 32 checks, ran 2 (sections completed: [])
-"
+","a"
 "178","team_sequential_execution_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -42707,8 +42565,8 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [3] _fixture (res://tests/team_sequential_execution_runner.gd:232)
        [4] _test_unknown_script_refuses (res://tests/team_sequential_execution_runner.gd:216)
        [5] _run (res://tests/team_sequential_execution_runner.gd:30)
-"
-"179","terrain_object_ground_height_runner.gd","pass",""
+","b"
+"179","terrain_object_ground_height_runner.gd","pass","",""
 "180","trebuchet_vision_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -42764,7 +42622,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'statue' has no compiled armor con
        [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
        [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
        [3] _run (res://tests/trebuchet_vision_runner.gd:139)
-"
+","a"
 "181","trebuchet_world_fx_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -42797,7 +42655,7 @@ WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted 
    at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
 WARNING: 26 ObjectDB instances were leaked at exit (run with `--verbose` for details).
    at: cleanup (core/object/object.cpp:2535)
-"
+","b"
 "182","wait_for_formation_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -42926,7 +42784,7 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [3] _bare_sim (res://tests/wait_for_formation_runner.gd:50)
        [4] _test_mixed_group_caps_only_waiters (res://tests/wait_for_formation_runner.gd:126)
        [5] _run (res://tests/wait_for_formation_runner.gd:23)
-"
+","b"
 "183","wall_hub_behavior_runtime_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -43096,8 +42954,8 @@ ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor con
        [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
        [3] _sim (res://tests/wall_hub_behavior_runtime_runner.gd:54)
        [4] _run (res://tests/wall_hub_behavior_runtime_runner.gd:39)
-"
-"184","well_statue_aura_runner.gd","pass",""
+","b"
+"184","well_statue_aura_runner.gd","pass","",""
 "185","workspace_content_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -43165,7 +43023,7 @@ WARNING: [ModLoader] Falling back to the DURABLE pack in user data because OPENB
        [0] _diagnose (res://src/content/mod_loader.gd:1105)
        [1] list_pack_roots (res://src/content/mod_loader.gd:269)
        [2] _run (res://tests/workspace_content_runner.gd:91)
-"
+","a"
 "186","wotr_ai_play_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [play] window at (0, 0) - watch it.
@@ -43658,7 +43516,7 @@ WARNING: [WotrStrings] NO gamedata #define TABLE, so a region bonus retail autho
        [6] _mount_through_the_menu (res://tests/wotr_ai_play_runner.gd:378)
        [7] _process (res://tests/wotr_ai_play_runner.gd:112)
 [play] BROKEN: no seating in this document gives the AI armies the auto-resolve bindings cover, so no AI attack can resolve at all
-"
+","b"
 "187","wotr_ai_runner.gd","pass","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [ModLoader] content source=external active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
@@ -43667,8 +43525,8 @@ WARNING: [WotrStrings] NO gamedata #define TABLE, so a region bonus retail autho
 Unicode parsing error, some characters were replaced with ï¿½ (U+FFFD): Invalid unicode codepoint (d87d72e0), cannot represent as UTF-16
 Unicode parsing error, some characters were replaced with ï¿½ (U+FFFD): Invalid unicode codepoint (d87d72e0), cannot represent as UTF-16
 Unicode parsing error, some characters were replaced with ï¿½ (U+FFFD): Invalid unicode codepoint (d87d72e0), cannot represent as UTF-16
-"
-"188","wotr_autoresolve_battle_runner.gd","pass",""
+",""
+"188","wotr_autoresolve_battle_runner.gd","pass","",""
 "189","wotr_autoresolve_capture_runner.gd","error","Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
 
 [WotrStrategicUI] NO STRATEGIC-UI BUNDLE, so the living-world HUD keeps its diagnostic chrome instead of retail's gold frames, palantir, END TURN button and tray cards. Retail ships all of it as APT movies; nothing has converted them here. Looked at: user://livingmap-regions/strategic-ui.json [beside the region geometry]. Produce one with: python -m openbfme_importer.retail_strategic_apt_convert --effective-assets <view> --output <dir>, then point OPENBFME_STRATEGIC_UI at <dir>.
@@ -45078,4 +44936,26 @@ SCRIPT ERROR: Cannot call method 'save_png' on a null value.
    at: _process (res://tests/wotr_autoresolve_capture_runner.gd:127)
    GDScript backtrace (most recent call first):
        [0] _process (res://tests/wotr_autoresolve_capture_runner.gd:127)
-"
+","b"
+"190","wotr_autoresolve_runner.gd","fail","ERROR: Parse JSON failed. Error at line 0: Unexpected character",""
+"191","wotr_battle_bridge_runner.gd","pass","",""
+"192","wotr_capture_runner.gd","timeout","Timeout after 180 seconds (exit 124). ERROR: [capture] the shell refused to open War of the Ring: fewer than two of the campaign's factions are converted, so no War of the Ring session can be seated",""
+"193","wotr_construction_runner.gd","pass","",""
+"194","wotr_frame_budget_runner.gd","fail","  FAIL  the_run_has_a_real_window (this is a headless display server; a frame budget asserted here would assert nothing)",""
+"195","wotr_living_world_ui_runner.gd","pass","",""
+"196","wotr_livingworld_pack_runner.gd","pass","",""
+"197","wotr_map_stage_runner.gd","fail","ERROR: [stage] no map bundle: Retail's 3D strategic map is NOT loaded, so the strategic screen is drawing its flat 2D region graph instead.",""
+"198","wotr_map3d_runner.gd","pass","",""
+"199","wotr_markers_runner.gd","pass","",""
+"200","wotr_perf_runner.gd","fail","ERROR: [perf] the shell refused to open War of the Ring: fewer than two of the campaign's factions are converted, so no War of the Ring session can be seated",""
+"201","wotr_phase_runner.gd","pass","",""
+"202","wotr_play_construction_runner.gd","fail","Process exited 1 without a structured result; see orphan-runner-sweepB-wotr_play_construction_runner-20260816-013405-141-0774ae765b3f42f6b0bc1b9eced3aa8c.stdout.txt",""
+"203","wotr_playability_runner.gd","fail","ERROR: [WotrMap] Retail's 3D strategic map is NOT loaded, so the strategic screen is drawing its flat 2D region graph instead.",""
+"204","wotr_receipt_runner.gd","pass","",""
+"205","wotr_region_card_runner.gd","fail","ERROR: Parse JSON failed. Error at line 0: Unexpected character",""
+"206","wotr_region_geometry_runner.gd","pass","",""
+"207","wotr_round_trip_runner.gd","fail","WOTR_ROUND_TRIP FAIL the_menu_records_why_war_of_the_ring_is_unavailable",""
+"208","wotr_setup_capture_runner.gd","timeout","Timeout after 180 seconds (exit 124). SCRIPT ERROR: Cannot call method 'stop' on a null value.",""
+"209","wotr_setup_runner.gd","fail","SCRIPT ERROR: Cannot call method 'stop' on a null value.",""
+"210","wotr_strategic_runner.gd","pass","",""
+"211","wotr_strategic_ui_runner.gd","pass","",""
