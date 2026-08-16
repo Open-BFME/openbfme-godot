@@ -613,9 +613,13 @@ def main(argv: list[str] | None = None) -> int:
         # Never --select here: intermediate faction packs must not clobber selection.
         # Waive only honest residual converter-gap coverage when the fresh
         # batch proved it exists. Never pass --allow-incomplete-pack (that
-        # would hide pack-build failures).
+        # would hide pack-build failures). Both flags are required:
+        # --allow-incomplete waives only the batch tool's own pre-check and
+        # forwards nothing, so without --allow-incomplete-coverage the CLI
+        # still refuses the proven-residual coverage before the cook.
         if has_residual_gaps:
             proof_cmd.append("--allow-incomplete")
+            proof_cmd.append("--allow-incomplete-coverage")
         _run("pack-proof all seven factions (publish only)", proof_cmd, env)
         map_cmd = [
             str(python),
