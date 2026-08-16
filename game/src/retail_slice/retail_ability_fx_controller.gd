@@ -178,11 +178,17 @@ static func _merge_fx_bindings(registry: Dictionary, block: Dictionary) -> void:
 				var fallback := _parse_authored_color(String(scalars.get("color1", "")))
 				if fallback.a > 0.0:
 					color = Color(fallback.r, fallback.g, fallback.b, 1.0)
+		var audio_value: Variant = row.get("audioEventIds", [])
 		registry[fx_id] = {
 			"ground_aligned": ground_aligned,
 			"color": color,
 			"has_authored_color": has_authored_color,
 			"particle_system_ids": (systems_value as Array).duplicate(),
+			"audio_event_ids": (
+				(audio_value as Array).duplicate()
+				if typeof(audio_value) == TYPE_ARRAY
+				else []
+			),
 		}
 
 
@@ -277,6 +283,8 @@ func configure(
 	_height_provider = height_provider
 	_resolved_fx_list_ids = resolved_fx_list_ids.duplicate(true)
 	_ability_animation_states = ability_animation_states.duplicate(true)
+	if not is_in_group("retail_ability_fx"):
+		add_to_group("retail_ability_fx")
 
 
 func resolve_cast_animation_states(event: Dictionary) -> Array[String]:
@@ -293,6 +301,70 @@ func resolve_cast_animation_states(event: Dictionary) -> Array[String]:
 	for phase in ABILITY_PHASE_PREFERENCE:
 		result.append("ability:%s:%s" % [state, phase])
 	return result
+
+
+func expand_fx_lists(fx_lists: Array) -> Dictionary:
+	## Shared FXList expansion: authored ids -> converted particle/audio intents.
+	## EnteringStateFX / FXEvent use this; they do not grow a second player.
+	var ids := _string_array(fx_lists)
+	var particles: Array[String] = []
+	var audio: Array[String] = []
+	var resolved: Array[String] = []
+	var unresolved: Array[String] = []
+	for fx_id in ids:
+		var entry_value: Variant = _resolved_fx_list_ids.get(fx_id, null)
+		if typeof(entry_value) != TYPE_DICTIONARY or (entry_value as Dictionary).is_empty():
+			unresolved.append(fx_id)
+			continue
+		var entry := entry_value as Dictionary
+		resolved.append(fx_id)
+		for system_value in entry.get("particle_system_ids", []) as Array:
+			var system_id := String(system_value)
+			if system_id != "" and not particles.has(system_id):
+				particles.append(system_id)
+		for audio_value in entry.get("audio_event_ids", []) as Array:
+			var audio_id := String(audio_value)
+			if audio_id != "" and not audio.has(audio_id):
+				audio.append(audio_id)
+	return {
+		"source": "typed-drawable-fx-list",
+		"fxLists": ids,
+		"particleSystemIds": particles,
+		"audioEventIds": audio,
+		"resolvedFxLists": resolved,
+		"unresolvedFxLists": unresolved,
+	}
+
+
+func present_drawable_fx_lists(
+	fx_lists: Array,
+	point: Vector2 = Vector2.ZERO,
+	source: String = "drawable"
+) -> Dictionary:
+	## Present a drawable-authored FXList id through the same expansion and
+	## cue path ability casts already use.
+	var ids := _string_array(fx_lists)
+	if ids.is_empty():
+		return {"source": "typed-drawable-fx-list", "applied": 0}
+	_record_unresolved(ids)
+	var expansion: Dictionary = expand_fx_lists(ids)
+	var style: Dictionary = _authored_style(ids)
+	var family := "none"
+	if style.has("family"):
+		family = String(style["family"])
+	elif not (expansion.get("particleSystemIds", []) as Array).is_empty():
+		family = "column"
+	_present(point, 0.0, family, {
+		"source": source,
+		"fx_lists": ids,
+		"fx_resolved": bool(style.get("resolved", false)),
+		"particle_system_ids": (expansion.get("particleSystemIds", []) as Array).duplicate(),
+		"audio_event_ids": (expansion.get("audioEventIds", []) as Array).duplicate(),
+	}, style.get("color", null))
+	expansion["applied"] = ids.size()
+	expansion["cuesPresented"] = cues_presented
+	expansion["family"] = family
+	return expansion
 
 
 func present_ability_cast(event: Dictionary) -> void:

@@ -55,3 +55,42 @@ End
     assert splat["line"] == splat["fields"]["frame"]["line"]
     assert step["line"] == step["fields"]["frame"]["line"]
     validate_module_contracts(rows, label="playable-unit")
+
+
+def test_fx_event_parses_obsolete_bare_frame_name_and_keeps_collision_lines() -> None:
+    rows = compile_fx_events(
+        _lineage(
+            """
+Object FixtureObject
+  Draw = W3DScriptedModelDraw ModuleTag_Draw
+    AnimationState = MOVING
+      Animation = Run
+        AnimationName = SKL.RUNA
+        AnimationMode = LOOP
+      End
+      FXEvent = 1 FX_OrcFletcherDust
+      FXEvent = 14 FX_OrcFletcherStep
+      FXEvent = Frame:9 ExtraToken Name:FX_StillUnparsed
+    End
+  End
+End
+"""
+        ),
+        "FixtureObject",
+    )
+    assert len(rows) == 3
+    executable = [row for row in rows if row["runtimeStatus"] == "executable"]
+    deferred = [row for row in rows if row["runtimeStatus"] == "deferred"]
+    assert len(executable) == 2
+    assert len(deferred) == 1
+    dust = next(row for row in executable if row["fields"]["fxList"]["value"] == "FX_OrcFletcherDust")
+    step = next(row for row in executable if row["fields"]["fxList"]["value"] == "FX_OrcFletcherStep")
+    assert dust["fields"]["frame"]["value"] == 1
+    assert step["fields"]["frame"]["value"] == 14
+    assert dust["fields"]["skippedCuePolicy"] == "ignore"
+    assert dust["line"] != step["line"]
+    assert dust["line"] == dust["fields"]["frame"]["line"]
+    assert step["line"] == step["fields"]["frame"]["line"]
+    assert deferred[0]["fields"]["deferredFields"][0]["reason"] == "unparsed-fxevent-line"
+    assert "FX_StillUnparsed" in str(deferred[0]["fields"]["deferredFields"][0]["authored"])
+    validate_module_contracts(executable, label="playable-unit")

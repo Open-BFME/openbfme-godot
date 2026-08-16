@@ -173,6 +173,8 @@ var member_clip_frame_clocks: Dictionary = {}
 var last_clip_frame_receipt: Dictionary = {}
 var fx_event_contracts: Array = []
 var last_fx_event_receipt: Dictionary = {}
+var drawable_fx_controller: Node = null
+var last_drawable_fx_receipt: Dictionary = {}
 var equipment_contract: Dictionary = {}
 var equipment_contract_ready := false
 var unresolved_animation_track_count := 0
@@ -1842,6 +1844,8 @@ func _sync_member_fx_events(member_index: int, authored: Dictionary, clock_overr
 	last_fx_event_receipt = receipt.duplicate(true)
 	set_meta("fx_event_source", String(receipt.get("source", "")))
 	set_meta("fx_event_applied", int(receipt.get("applied", 0)))
+	if int(receipt.get("applied", 0)) > 0:
+		_present_authored_fx_lists(receipt.get("fxLists", []) as Array, "FXEvent")
 	return receipt
 
 
@@ -1858,6 +1862,38 @@ func _sync_entering_state_fx(authored: Dictionary) -> void:
 	last_entering_state_fx_receipt = receipt.duplicate(true)
 	set_meta("entering_state_fx_source", String(receipt.get("source", "")))
 	set_meta("entering_state_fx_applied", int(receipt.get("applied", 0)))
+	if int(receipt.get("applied", 0)) > 0:
+		_present_authored_fx_lists(receipt.get("fxLists", []) as Array, "EnteringStateFX")
+
+
+func _present_authored_fx_lists(fx_lists: Array, source: String) -> Dictionary:
+	## Hand drawable-authored FXList ids to the shared ability FX controller.
+	if drawable_fx_controller == null and is_inside_tree():
+		var tree := get_tree()
+		if tree != null:
+			var controllers: Array = tree.get_nodes_in_group("retail_ability_fx")
+			if not controllers.is_empty():
+				drawable_fx_controller = controllers[0] as Node
+	if drawable_fx_controller == null or not drawable_fx_controller.has_method("present_drawable_fx_lists"):
+		last_drawable_fx_receipt = {
+			"source": "typed-drawable-fx-list",
+			"applied": 0,
+			"deferred": "shared-fx-controller-unbound",
+			"fxLists": fx_lists.duplicate(),
+		}
+		return last_drawable_fx_receipt
+	var origin := Vector2.ZERO
+	if is_inside_tree():
+		origin = Vector2(global_position.x, global_position.z)
+	var presented: Dictionary = drawable_fx_controller.call(
+		"present_drawable_fx_lists", fx_lists, origin, source
+	)
+	if typeof(presented) != TYPE_DICTIONARY:
+		return {}
+	last_drawable_fx_receipt = (presented as Dictionary).duplicate(true)
+	set_meta("drawable_fx_source", String(last_drawable_fx_receipt.get("source", "")))
+	set_meta("drawable_fx_applied", int(last_drawable_fx_receipt.get("applied", 0)))
+	return last_drawable_fx_receipt
 
 
 func apply_member_drawable_scripts(member_index: int, active_conditions: Array) -> Dictionary:

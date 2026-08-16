@@ -182,6 +182,10 @@ ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE: Mapping[str, tuple[str, str]] = {
         "game/src/retail_slice/fx_event.gd",
         "game/tests/fx_event_runtime_runner.gd",
     ),
+    "DrawableFxList": (
+        "game/src/retail_slice/retail_ability_fx_controller.gd",
+        "game/tests/drawable_fx_list_runtime_runner.gd",
+    ),
 }
 
 
@@ -1351,6 +1355,9 @@ def compile_entering_state_fx(
 _FX_EVENT_RE = re.compile(
     r"(?is)^\s*Frame\s*:\s*(?P<frame>\d+)(?:\s+(?P<skipped>FireWhenSkipped))?\s+Name\s*:\s*(?P<name>\S+)\s*$"
 )
+_FX_EVENT_BARE_RE = re.compile(
+    r"(?is)^\s*(?P<frame>\d+)\s+(?P<name>\S+)\s*$"
+)
 
 
 def _fx_event_row_has_closed_runtime(fields: Mapping[str, object]) -> bool:
@@ -1381,6 +1388,8 @@ def compile_fx_events(
             if assignment.key.casefold() != "fxevent":
                 continue
             match = _FX_EVENT_RE.fullmatch(assignment.value.strip())
+            if match is None:
+                match = _FX_EVENT_BARE_RE.fullmatch(assignment.value.strip())
             if match is None:
                 rows.append(
                     _row(
@@ -1420,12 +1429,12 @@ def compile_fx_events(
                     "line": assignment.line,
                 },
                 "FireWhenSkipped": {
-                    "authored": match.group("skipped") or "",
-                    "value": match.group("skipped") is not None,
+                    "authored": match.groupdict().get("skipped") or "",
+                    "value": match.groupdict().get("skipped") is not None,
                 },
                 "skippedCuePolicy": (
                     "fire-when-skipped"
-                    if match.group("skipped") is not None
+                    if match.groupdict().get("skipped") is not None
                     else "ignore"
                 ),
             }
