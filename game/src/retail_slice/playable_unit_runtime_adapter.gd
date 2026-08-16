@@ -209,6 +209,115 @@ static func _document_visual(document: Dictionary) -> Dictionary:
 	return {}
 
 
+static func ship_particle_attachments(document: Dictionary) -> Array[Dictionary]:
+	## Project importer-preserved Draw-state ParticleSysBone sites into a narrow
+	## runtime binding. Particle resources are presentation-owned; malformed
+	## rows fail the whole surface closed instead of moving FX to the hull root.
+	if String(document.get("category", "")) != "naval":
+		return []
+	var visual := _document_visual(document)
+	var raw: Variant = visual.get("particleAttachments", [])
+	if typeof(raw) != TYPE_ARRAY:
+		return []
+	var output: Array[Dictionary] = []
+	for value in raw as Array:
+		if typeof(value) != TYPE_DICTIONARY:
+			return []
+		var row := value as Dictionary
+		var anchor := String(row.get("anchorBone", "")).strip_edges()
+		var particle := String(row.get("particleSystemId", "")).strip_edges()
+		var source_ini := String(row.get("sourceIni", "")).strip_edges()
+		var conditions_value: Variant = row.get("modelConditions", [])
+		var options_value: Variant = row.get("options", [])
+		if (
+			String(row.get("field", "")) != "ParticleSysBone"
+			or anchor == "" or particle == "" or source_ini == ""
+			or int(row.get("line", 0)) <= 0
+			or typeof(row.get("followBone")) != TYPE_BOOL
+			or typeof(conditions_value) != TYPE_ARRAY
+			or typeof(options_value) != TYPE_ARRAY
+		):
+			return []
+		var conditions: Array[String] = []
+		for condition_value in conditions_value as Array:
+			var condition := String(condition_value).strip_edges().to_upper()
+			if condition == "" or conditions.has(condition):
+				return []
+			conditions.append(condition)
+		conditions.sort()
+		var options: Array[String] = []
+		for option_value in options_value as Array:
+			var option := String(option_value).strip_edges()
+			if option == "":
+				return []
+			options.append(option)
+		output.append({
+			"anchor_bone": anchor,
+			"particle_system_id": particle,
+			"follow_bone": bool(row.get("followBone", false)),
+			"model_conditions": conditions,
+			"options": options,
+			"draw_module_kind": String(row.get("drawModuleKind", "")),
+			"draw_module_tag": String(row.get("drawModuleTag", "")),
+			"source_ini": source_ini,
+			"line": int(row.get("line", 0)),
+		})
+	return output
+
+
+static func ship_particle_attachments_for_conditions(
+	document: Dictionary, active_conditions: Array
+) -> Array[Dictionary]:
+	## SAGE chooses the most-specific matching ModelConditionState. Apply that
+	## same deterministic mux to the attachment rows and retain every particle
+	## authored in the selected state.
+	var attachments := ship_particle_attachments(document)
+	if attachments.is_empty():
+		return []
+	var active: Dictionary = {}
+	for value in active_conditions:
+		var token := String(value).strip_edges().to_upper()
+		if token != "":
+			active[token] = true
+	var best_specificity := -1
+	var best_condition_sets: Dictionary = {}
+	for row in attachments:
+		var conditions := row.get("model_conditions", []) as Array
+		var matches := true
+		for condition_value in conditions:
+			if not active.has(String(condition_value)):
+				matches = false
+				break
+		if matches:
+			var specificity := conditions.size()
+			if specificity > best_specificity:
+				best_specificity = specificity
+				best_condition_sets.clear()
+			if specificity == best_specificity:
+				best_condition_sets[",".join(conditions)] = true
+	if best_specificity < 0:
+		return []
+	# Two distinct, equally-specific state sets matching at once have no
+	# evidence-closed precedence in the descriptor. Fail closed instead of
+	# combining particles from two mutually exclusive SAGE states.
+	if best_condition_sets.size() != 1:
+		return []
+	var selected_condition_set := String(best_condition_sets.keys()[0])
+	var selected: Array[Dictionary] = []
+	for row in attachments:
+		var conditions := row.get("model_conditions", []) as Array
+		if conditions.size() != best_specificity or ",".join(conditions) != selected_condition_set:
+			continue
+		var matches := true
+		for condition_value in conditions:
+			if not active.has(String(condition_value)):
+				matches = false
+				break
+		if matches:
+			selected.append(row.duplicate(true))
+	return selected
+
+
 static func is_ring_hero_summon(document: Dictionary) -> bool:
 	## Exact compiled provenance; command-point/category guesses misclassified
 	## ordinary zero-CP heroes and hid malformed ring routes.

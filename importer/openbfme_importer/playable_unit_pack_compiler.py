@@ -2890,6 +2890,22 @@ def compile_playable_unit_pack_recipe(
             "visual": {
                 "components": components,
                 **(
+                    {
+                        "particleAttachments": deepcopy(
+                            descriptor["presentation"]["particleAttachments"]
+                        )
+                    }
+                    if isinstance(
+                        descriptor.get("presentation"), Mapping
+                    )
+                    and isinstance(
+                        descriptor["presentation"].get("particleAttachments"),
+                        list,
+                    )
+                    and descriptor["presentation"]["particleAttachments"]
+                    else {}
+                ),
+                **(
                     {"memberPresentations": member_presentations}
                     if member_presentations
                     else {}

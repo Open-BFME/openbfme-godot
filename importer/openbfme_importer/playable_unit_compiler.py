@@ -3003,6 +3003,13 @@ def _member_rows(
     payloads: list[dict[str, object]] = []
     consumed_modules: set[tuple[str, int, str, str]] = set()
     for block in _effective_top_blocks(ancestry):
+        # Only HordeContain defines the produced aggregate's member
+        # composition. HordeTransportContain.InitialPayload is cargo already
+        # inside an independently simulated carrier; treating that passenger
+        # as the ship's primary member replaces the hull health, visuals, and
+        # presentation attachments with the internal archer descriptor.
+        if block.kind.casefold() != "hordecontain":
+            continue
         assignments = list(block.assignments)
         for nested in _walk_blocks(block.blocks):
             assignments.extend(nested.assignments)
@@ -4564,6 +4571,72 @@ def _public_bone_contract(
                     "runtimeSupport": "typed-deferred-model-attachment",
                 }
             )
+    return result
+
+
+_PARTICLE_SYS_BONE_FIELD = re.compile(r'"([^"]*)"|(\S+)')
+
+
+def _particle_attachment_contract(
+    ancestry: Sequence[SageObject],
+) -> list[dict[str, object]]:
+    """Preserve effective Draw-state ``ParticleSysBone`` attachment sites.
+
+    Ship hull damage, wake, and projectile presentations are authored as
+    repeated rows inside model-condition states.  Keeping only model roots
+    loses both the bone and the state mux, so retain the exact effective Draw
+    module, condition tokens, authored options, and source receipt here.
+    """
+
+    result: list[dict[str, object]] = []
+    for draw in _effective_top_blocks(ancestry):
+        if (draw.header_key or "").casefold() != "draw":
+            continue
+        for state in _walk_blocks(draw.blocks):
+            for assignment in state.assignments:
+                if assignment.key.casefold() != "particlesysbone":
+                    continue
+                fields = []
+                for match in _PARTICLE_SYS_BONE_FIELD.finditer(assignment.value):
+                    quoted, bare = match.group(1), match.group(2)
+                    fields.append(quoted if quoted is not None else bare)
+                if len(fields) < 2 or not fields[0] or not fields[1]:
+                    raise PlayableUnitCompilerError(
+                        "ParticleSysBone requires a bone and particle system at "
+                        f"{assignment.source_virtual_path}:{assignment.line}"
+                    )
+                options = fields[2:]
+                follow_values = [
+                    option.split(":", 1)[1]
+                    for option in options
+                    if option.casefold().startswith("followbone:")
+                ]
+                if len(follow_values) > 1 or any(
+                    value.casefold() not in {"yes", "no"}
+                    for value in follow_values
+                ):
+                    raise PlayableUnitCompilerError(
+                        "ParticleSysBone has an invalid FollowBone option at "
+                        f"{assignment.source_virtual_path}:{assignment.line}"
+                    )
+                row: dict[str, object] = {
+                    "field": "ParticleSysBone",
+                    "anchorBone": fields[0],
+                    "particleSystemId": fields[1],
+                    "options": options,
+                    "followBone": (
+                        follow_values[0].casefold() == "yes"
+                        if follow_values
+                        else False
+                    ),
+                    "modelConditions": list(state.model_condition_tokens),
+                    "drawModuleKind": draw.kind,
+                    "sourceIni": assignment.source_virtual_path,
+                    "line": assignment.line,
+                }
+                if draw.instance_tag is not None:
+                    row["drawModuleTag"] = draw.instance_tag
+                result.append(row)
     return result
 # Attribute-modifier kinds the runtime can apply; anything else is recorded as
 # a limitation instead of being silently dropped.  The timed-modifier core in
@@ -10115,6 +10188,11 @@ def compile_playable_unit_descriptor(
     category = _category(
         target_kinds, member_kinds, bool(members[0]["objectId"] != target.name)
     )
+    member_particle_attachments = (
+        _particle_attachment_contract(member_lineage)
+        if category == "naval"
+        else []
+    )
     visual_refs = _nested_references(member_lineage)
     if primary_member is not target:
         target_refs = _nested_references(target_lineage)
@@ -10579,6 +10657,11 @@ def compile_playable_unit_descriptor(
                     (resolved_audio or {}).items(), key=lambda item: item[0].casefold()
                 )
             },
+            **(
+                {"particleAttachments": member_particle_attachments}
+                if member_particle_attachments
+                else {}
+            ),
         },
         "runtimeModules": runtime_modules,
         "runtimeModuleEvidence": module_evidence,
@@ -11061,6 +11144,34 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
     if not isinstance(ui, Mapping) or not isinstance(audio_routes, Mapping):
         raise PlayableUnitCompilerError(
             "playable-unit UI/audio presentation is invalid"
+        )
+    particle_attachments = presentation.get("particleAttachments", [])
+    if not isinstance(particle_attachments, list) or any(
+        not isinstance(row, Mapping)
+        or row.get("field") != "ParticleSysBone"
+        or not isinstance(row.get("anchorBone"), str)
+        or not row.get("anchorBone")
+        or not isinstance(row.get("particleSystemId"), str)
+        or not row.get("particleSystemId")
+        or not isinstance(row.get("options"), list)
+        or any(not isinstance(option, str) or not option for option in row["options"])
+        or not isinstance(row.get("followBone"), bool)
+        or not isinstance(row.get("modelConditions"), list)
+        or any(
+            not isinstance(condition, str) or not condition
+            for condition in row["modelConditions"]
+        )
+        or not isinstance(row.get("drawModuleKind"), str)
+        or not row.get("drawModuleKind")
+        or not isinstance(row.get("sourceIni"), str)
+        or not row.get("sourceIni")
+        or not isinstance(row.get("line"), int)
+        or isinstance(row.get("line"), bool)
+        or int(row["line"]) <= 0
+        for row in particle_attachments
+    ):
+        raise PlayableUnitCompilerError(
+            "playable-unit ParticleSysBone attachments are invalid"
         )
     commands = ui.get("commands")
     portraits = ui.get("portraitImageIds")
