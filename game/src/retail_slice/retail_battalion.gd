@@ -1763,6 +1763,20 @@ func member_has_authored_state_label(member_index: int, label: String, previous:
 	return labels.has(label)
 
 
+func _sync_member_particle_sys_bones(member_index: int, authored: Dictionary, active_conditions: Array) -> void:
+	var selected: Array = authored.get("conditions", []) as Array
+	var picked: Dictionary = ParticleSysBoneScript.select(
+		particle_sys_bone_contracts, selected, active_conditions
+	)
+	var visual := member_visuals.get(member_index) as Node
+	var applied: Dictionary = ParticleSysBoneScript.apply(
+		visual, picked.get("attachments", []) as Array, {}, entity_id + member_index
+	)
+	last_particle_sys_bone_receipt = applied.duplicate(true)
+	set_meta("particle_sys_bone_source", String(applied.get("source", "")))
+	set_meta("particle_sys_bone_applied", int(applied.get("applied", 0)))
+
+
 func apply_member_drawable_scripts(member_index: int, active_conditions: Array) -> Dictionary:
 	## Execute authored BeginScript rows against one member mesh. Prev is the
 	## member's current authored StateName set — call this before swapping labels

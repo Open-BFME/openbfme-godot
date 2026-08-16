@@ -3909,7 +3909,7 @@ def test_opaque_and_typed_sets_disjoint() -> None:
         "AutoHealBehavior", "BezierProjectileBehavior", "DamageCreationList", "FxTiming", "GeometryUpgrade",
         "QueueProductionExitUpdate", "SlowDeathBehavior", "SpawnBehavior", "SpecialDisguiseUpdate",
         "SubObjectsUpgrade", "AnimationSoundClientBehavior", "TransitionDamageFX",
-        "ModelConditionUpgrade", "AnimationState",
+        "ModelConditionUpgrade", "AnimationState", "ParticleSysBone",
     }
     for module, (consumer_path, test_path) in ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE.items():
         assert (root / consumer_path).is_file()
