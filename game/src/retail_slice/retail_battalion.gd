@@ -8,6 +8,7 @@ const AnimationTimingScript = preload("res://src/retail_slice/retail_animation_t
 const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const AnimationStateSelectScript = preload("res://src/retail_slice/animation_state_select.gd")
 const ParticleSysBoneScript = preload("res://src/retail_slice/particle_sys_bone.gd")
+const EnteringStateFXScript = preload("res://src/retail_slice/entering_state_fx.gd")
 const DEFAULT_OBJECT_ID := "bfme2.object.gondor-fighter"
 const ARCHER_OBJECT_ID := "bfme2.object.gondor-archer"
 const RANGER_OBJECT_ID := "bfme2.object.gondor-ranger"
@@ -162,6 +163,10 @@ var animation_state_contracts: Array = []
 var last_animation_state_receipt: Dictionary = {}
 var particle_sys_bone_contracts: Array = []
 var last_particle_sys_bone_receipt: Dictionary = {}
+var entering_state_fx_contracts: Array = []
+var last_entering_state_fx_receipt: Dictionary = {}
+var _last_entering_state_conditions: Array = []
+var _entering_state_fx_primed: bool = false
 var equipment_contract: Dictionary = {}
 var equipment_contract_ready := false
 var unresolved_animation_track_count := 0
@@ -472,6 +477,25 @@ func bind_particle_sys_bone_contracts(source: Dictionary) -> int:
 	return particle_sys_bone_contracts.size()
 
 
+func bind_entering_state_fx_contracts(source: Dictionary) -> int:
+	entering_state_fx_contracts = collect_entering_state_fx_contracts(source)
+	return entering_state_fx_contracts.size()
+
+
+func collect_entering_state_fx_contracts(source: Dictionary) -> Array:
+	var out: Array = []
+	for row_value in _module_contract_arrays(source):
+		if typeof(row_value) != TYPE_DICTIONARY:
+			continue
+		var row := (row_value as Dictionary).duplicate(true)
+		if String(row.get("module", "")) != "EnteringStateFX":
+			continue
+		if not row.has("runtimeStatus") and row.has("runtime_status"):
+			row["runtimeStatus"] = String(row.get("runtime_status", ""))
+		out.append(row)
+	return out
+
+
 func collect_particle_sys_bone_contracts(source: Dictionary) -> Array:
 	var out: Array = []
 	for row_value in _module_contract_arrays(source):
@@ -670,6 +694,7 @@ func _bind_sub_object_upgrade_contracts_from_content(definition: Dictionary) -> 
 		bind_model_condition_upgrade_contracts(playable)
 		bind_animation_state_contracts(playable)
 		bind_particle_sys_bone_contracts(playable)
+		bind_entering_state_fx_contracts(playable)
 	if sub_object_upgrade_contracts.is_empty():
 		bind_sub_object_upgrade_contracts(definition)
 	if model_condition_upgrade_contracts.is_empty():
@@ -678,6 +703,8 @@ func _bind_sub_object_upgrade_contracts_from_content(definition: Dictionary) -> 
 		bind_animation_state_contracts(definition)
 	if particle_sys_bone_contracts.is_empty():
 		bind_particle_sys_bone_contracts(definition)
+	if entering_state_fx_contracts.is_empty():
+		bind_entering_state_fx_contracts(definition)
 
 
 func _module_contract_arrays(source: Dictionary) -> Array:
@@ -1656,6 +1683,7 @@ func _play_member_state(member_index: int, state: String, action_token: int, res
 	last_animation_state_receipt = authored.duplicate(true)
 	if int(authored.get("specificity", -1)) > 0 and String(authored.get("clip", "")) != "":
 		requested = String(authored.get("clip", ""))
+	_sync_entering_state_fx(authored)
 	if requested == "":
 		return
 	_sync_member_authored_state_labels(member_index, requested)
@@ -1775,6 +1803,21 @@ func _sync_member_particle_sys_bones(member_index: int, authored: Dictionary, ac
 	last_particle_sys_bone_receipt = applied.duplicate(true)
 	set_meta("particle_sys_bone_source", String(applied.get("source", "")))
 	set_meta("particle_sys_bone_applied", int(applied.get("applied", 0)))
+
+
+func _sync_entering_state_fx(authored: Dictionary) -> void:
+	var selected: Array = authored.get("conditions", []) as Array
+	var previous: Array = _last_entering_state_conditions
+	if not _entering_state_fx_primed:
+		previous = ["__UNSET__"]
+	var receipt: Dictionary = EnteringStateFXScript.select(
+		entering_state_fx_contracts, selected, previous
+	)
+	_entering_state_fx_primed = true
+	_last_entering_state_conditions = selected.duplicate()
+	last_entering_state_fx_receipt = receipt.duplicate(true)
+	set_meta("entering_state_fx_source", String(receipt.get("source", "")))
+	set_meta("entering_state_fx_applied", int(receipt.get("applied", 0)))
 
 
 func apply_member_drawable_scripts(member_index: int, active_conditions: Array) -> Dictionary:

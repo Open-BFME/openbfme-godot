@@ -170,6 +170,10 @@ ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE: Mapping[str, tuple[str, str]] = {
         "game/src/retail_slice/particle_sys_bone.gd",
         "game/tests/particle_sys_bone_runtime_runner.gd",
     ),
+    "EnteringStateFX": (
+        "game/src/retail_slice/entering_state_fx.gd",
+        "game/tests/entering_state_fx_runtime_runner.gd",
+    ),
 }
 
 
@@ -1238,6 +1242,69 @@ def compile_particle_sys_bones(
                     ),
                 )
             )
+    rows.sort(key=lambda row: (str(row["sourceIni"]).casefold(), int(row["line"])))
+    return rows
+
+
+def _entering_state_fx_row_has_closed_runtime(fields: Mapping[str, object]) -> bool:
+    fx_list = fields.get("fxList")
+    return isinstance(fx_list, Mapping) and str(fx_list.get("value", "")).strip() != ""
+
+
+def compile_entering_state_fx(
+    lineage: Sequence[SageObject], target_id: str
+) -> list[dict[str, object]]:
+    """Typed EnteringStateFX rows. FXEvent frame cues stay deferred."""
+
+    rows: list[dict[str, object]] = []
+    _effective_top_blocks, _tokens, walk_blocks = _walk_helpers()
+    for block in walk_blocks(_effective_top_blocks(lineage)):
+        if block.kind.casefold() not in _PARTICLE_SYS_BONE_PARENTS:
+            continue
+        conditions = list(block.model_condition_tokens or block.header_tokens)
+        state_kind = _PARTICLE_SYS_BONE_KIND_LABELS[block.kind.casefold()]
+        deferred: list[dict[str, object]] = []
+        fx_assignment = None
+        for assignment in block.assignments:
+            folded = assignment.key.casefold()
+            if folded == "fxevent":
+                deferred.append(
+                    {
+                        "name": assignment.key,
+                        "authored": assignment.value,
+                        "sourceIni": assignment.source_virtual_path,
+                        "line": assignment.line,
+                        "reason": "frame-cued-fxevent-without-clip-clock",
+                    }
+                )
+            elif folded == "enteringstatefx":
+                fx_assignment = assignment
+        if fx_assignment is None:
+            continue
+        fields: dict[str, object] = {
+            "stateKind": state_kind,
+            "conditions": {"value": [str(token) for token in conditions]},
+            "fxList": {
+                "authored": fx_assignment.value,
+                "value": fx_assignment.value.strip(),
+                "sourceIni": fx_assignment.source_virtual_path,
+                "line": fx_assignment.line,
+            },
+        }
+        if deferred:
+            fields["deferredFields"] = deferred
+        rows.append(
+            _row(
+                "EnteringStateFX",
+                block,
+                fields,
+                runtime_status=(
+                    "executable"
+                    if _entering_state_fx_row_has_closed_runtime(fields)
+                    else "deferred"
+                ),
+            )
+        )
     rows.sort(key=lambda row: (str(row["sourceIni"]).casefold(), int(row["line"])))
     return rows
 
@@ -9238,6 +9305,7 @@ TYPED_MODULE_KINDS: frozenset[str] = frozenset(
         "ModelConditionUpgrade",
         "AnimationState",
         "ParticleSysBone",
+        "EnteringStateFX",
         "InactiveBody",
         "SpawnPointProductionExitUpdate",
         "SupplyCenterProductionExitUpdate",
@@ -9369,6 +9437,7 @@ def compile_all_module_contracts(
     rows.extend(compile_model_condition_upgrades(lineage, target_id))
     rows.extend(compile_animation_states(lineage, target_id))
     rows.extend(compile_particle_sys_bones(lineage, target_id))
+    rows.extend(compile_entering_state_fx(lineage, target_id))
     rows.extend(compile_inactive_bodies(lineage, target_id))
     rows.extend(compile_spawn_point_production_exits(lineage, target_id))
     rows.extend(compile_supply_center_production_exits(lineage, target_id))
@@ -9552,6 +9621,7 @@ def validate_module_contracts(rows: object, *, label: str) -> None:
             or (module == "ModelConditionUpgrade" and _model_condition_upgrade_row_has_closed_runtime(fields))
             or (module == "AnimationState" and _animation_state_row_has_closed_runtime(fields))
             or (module == "ParticleSysBone" and _particle_sys_bone_row_has_closed_runtime(fields))
+            or (module == "EnteringStateFX" and _entering_state_fx_row_has_closed_runtime(fields))
             or (module == "AnimationSoundClientBehavior" and _animation_sound_row_has_closed_runtime(fields))
             or (module == "QueueProductionExitUpdate" and _queue_exit_row_has_closed_runtime(fields))
             or (module == "SpawnBehavior" and _spawn_reclaim_row_has_closed_runtime(fields))
