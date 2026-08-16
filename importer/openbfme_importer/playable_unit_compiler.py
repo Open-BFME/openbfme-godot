@@ -1882,6 +1882,13 @@ def _simulation_contract(
             "physicsbehavior",
             "slowdeathbehavior",
             "squishcollide",
+            # An animation graph cannot create a weapon, a damage route or an
+            # attack: it selects which clip plays. It is listed here because
+            # typing it (the animation lane) otherwise silently demotes retail's
+            # whole passive wildlife slice out of `noncombatant` and back into a
+            # combat gap. This list is evidence, not a category: extend it only
+            # for a module proven unable to deal damage.
+            "animationstate",
         }
         module_kinds = {
             str(row.get("module", "")).casefold() for row in module_contracts
