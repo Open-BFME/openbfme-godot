@@ -7,6 +7,7 @@ extends Node3D
 const ShadowDecalScript = preload("res://src/retail_slice/retail_shadow_decal.gd")
 const SelectionPick = preload("res://src/retail_slice/retail_selection_pick.gd")
 const UnitAdapterScript = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
+const TransitionDamageFXScript = preload("res://src/retail_slice/transition_damage_fx.gd")
 const LIFECYCLE_SCHEMA := "openbfme.building-lifecycle-presentation"
 const LIFECYCLE_SCHEMA_VERSION := 0
 const LIFECYCLE_SCHEMA_VERSION_V1 := 1
@@ -132,6 +133,9 @@ var scenario_descriptor_maximum_health: Variant = null
 var scenario_authoritative_maximum_health := 0
 var _lifecycle: Dictionary = {}
 var _drawable_scripts: Array = []
+## Typed TransitionDamageFX rows. Empty means no authored crossing FX.
+var transition_damage_fx_contracts: Array = []
+var last_transition_damage_fx: Dictionary = {}
 var _resolved_paths: Dictionary = {}
 var _fixture_visuals: Dictionary = {}
 var _loaded_visuals: Dictionary = {}
@@ -1423,12 +1427,14 @@ func _bind_structure_document_facts(bundle_object_id: String) -> void:
 	_level_presentations.clear()
 	_level_health_additions.clear()
 	body_module = ""
+	transition_damage_fx_contracts.clear()
 	var scenario_document := _scenario_structure_document_for_bundle_id(bundle_object_id)
 	if not scenario_document.is_empty():
 		var scenario_gameplay: Dictionary = (scenario_document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary
 		var scenario_health: Variant = (scenario_gameplay.get("health", {}) as Dictionary).get("primary", {})
 		if typeof(scenario_health) == TYPE_DICTIONARY:
 			body_module = String((scenario_health as Dictionary).get("module", ""))
+		bind_transition_damage_fx_contracts(scenario_document)
 		return
 	for source_id_value in ContentDB.get_playable_structure_runtimes().keys():
 		var source_id := String(source_id_value)
@@ -1436,6 +1442,7 @@ func _bind_structure_document_facts(bundle_object_id: String) -> void:
 			continue
 		var document: Dictionary = ContentDB.get_playable_structure_runtime(source_id)
 		var gameplay: Dictionary = (document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary
+		bind_transition_damage_fx_contracts(document)
 		# Retail Body module, verbatim. `ImmortalBody` is the fortress build
 		# plot's body: it can never lose health, which is why retail floats no
 		# health bar over an empty plot (user bug #9).
@@ -1988,6 +1995,7 @@ func _load_visual(relative_path: String, role: String) -> Node3D:
 
 
 func _activate_phase(phase: String) -> void:
+	var previous := current_lifecycle_phase
 	if int(_lifecycle.get("schemaVersion", -1)) == LIFECYCLE_SCHEMA_VERSION_V1:
 		_activate_v1_phase(phase)
 	else:
@@ -1995,6 +2003,11 @@ func _activate_phase(phase: String) -> void:
 	# A phase swap re-instantiates the body: the live level's authored
 	# sub-object visibility re-applies on the fresh visual.
 	_apply_level_sub_objects()
+	last_transition_damage_fx = TransitionDamageFXScript.select_crossing(
+		transition_damage_fx_contracts, previous, phase
+	)
+	set_meta("transition_damage_fx_source", String(last_transition_damage_fx.get("source", "")))
+	set_meta("transition_damage_fx_applied", int(last_transition_damage_fx.get("applied", 0)))
 
 
 func _activate_v0_phase(phase: String) -> void:
@@ -2678,6 +2691,28 @@ func _sync_water_fx() -> void:
 	water_fx_present = true
 	if not active_particle_system_ids.has(WELL_WATER_FX_ID):
 		active_particle_system_ids.append(WELL_WATER_FX_ID)
+
+
+func bind_transition_damage_fx_contracts(source: Dictionary) -> int:
+	transition_damage_fx_contracts.clear()
+	for row_value in UnitAdapterScript.module_contracts(source):
+		if typeof(row_value) != TYPE_DICTIONARY:
+			continue
+		var row := (row_value as Dictionary).duplicate(true)
+		if String(row.get("module", "")) != "TransitionDamageFX":
+			continue
+		if not row.has("runtimeStatus") and row.has("runtime_status"):
+			row["runtimeStatus"] = String(row.get("runtime_status", ""))
+		transition_damage_fx_contracts.append(row)
+	if transition_damage_fx_contracts.is_empty():
+		for row_value in source.get("moduleContracts", []) as Array:
+			if typeof(row_value) != TYPE_DICTIONARY:
+				continue
+			var raw := row_value as Dictionary
+			if String(raw.get("module", "")) != "TransitionDamageFX":
+				continue
+			transition_damage_fx_contracts.append(raw.duplicate(true))
+	return transition_damage_fx_contracts.size()
 
 
 func _set_contract_error(message: String) -> void:

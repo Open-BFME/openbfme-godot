@@ -34,7 +34,7 @@ def test_manifest_is_exactly_the_executable_evidence_registry() -> None:
     }
     actual = {row["runner"] for row in document["runners"]}
     assert document["schema"] == "openbfme.module-runtime-evidence-gate"
-    assert document["runnerCount"] == 45
+    assert document["runnerCount"] == 49
     assert actual == expected
     assert all((ROOT / path).is_file() for path in actual)
 
@@ -42,7 +42,7 @@ def test_manifest_is_exactly_the_executable_evidence_registry() -> None:
 def test_gate_runs_every_dynamic_runner_and_fails_closed() -> None:
     text = GATE.read_text(encoding="utf-8")
     assert "module-runtime-evidence-manifest.py" in text
-    assert "--require-count 45" in text
+    assert "--require-count 49" in text
     assert "foreach ($row in $runners)" in text
     assert "Invoke-EvidenceRunner" in text
     assert "failed=0" in text
@@ -54,4 +54,4 @@ def test_gate_runs_every_dynamic_runner_and_fails_closed() -> None:
 def test_retail_gate_invokes_the_module_runtime_evidence_gate() -> None:
     text = RETAIL_GATE.read_text(encoding="utf-8")
     assert '"gate-module-runtime-evidence.ps1"' in text
-    assert "MODULE_RUNTIME_EVIDENCE_GATE PASS runners=45" in text
+    assert "MODULE_RUNTIME_EVIDENCE_GATE PASS runners=49" in text
