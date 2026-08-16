@@ -43,9 +43,16 @@ def _write_coverage(root: Path, faction: str, *, complete: bool, gaps: int) -> P
     return path
 
 
-def _write_pack(root: Path, unit_names: list[str]) -> Path:
+def _write_pack(
+    root: Path, unit_names: list[str], *, catalog_identity: str | None = None
+) -> Path:
     units = root / "data" / "playable-units"
     units.mkdir(parents=True, exist_ok=True)
+    if catalog_identity is not None:
+        (root / "pack.json").write_text(
+            json.dumps({"sourceCatalogIdentitySha256": catalog_identity}),
+            encoding="utf-8",
+        )
     for name in unit_names:
         (units / f"{name}.json").write_text("{}", encoding="utf-8")
     return root
@@ -171,6 +178,44 @@ class PlayableUnitRegressionGateTests(unittest.TestCase):
                     more, content_root, "rotwk-men-vslice"
                 )
             )
+
+    def test_different_catalog_identity_is_not_an_incumbent(self) -> None:
+        """A RotWK-contaminated historical pack cannot set BFME2's roster."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            content_root = Path(raw)
+            pack_root = content_root / "bfme2-men-vslice"
+            _write_pack(
+                pack_root / "rotwk-mislabeled",
+                ["bfme2-unit", "rotwk-only-unit"],
+                catalog_identity="r" * 64,
+            )
+            fresh = _write_pack(
+                Path(raw) / "cook",
+                ["bfme2-unit"],
+                catalog_identity="b" * 64,
+            )
+            blocker = cli._playable_unit_regression_blocker(
+                fresh, content_root, "bfme2-men-vslice"
+            )
+        self.assertIsNone(blocker)
+
+    def test_same_catalog_identity_still_blocks_a_roster_drop(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            content_root = Path(raw)
+            pack_root = content_root / "bfme2-men-vslice"
+            _write_pack(
+                pack_root / "incumbent",
+                ["u0", "u1"],
+                catalog_identity="b" * 64,
+            )
+            fresh = _write_pack(
+                Path(raw) / "cook", ["u0"], catalog_identity="b" * 64
+            )
+            blocker = cli._playable_unit_regression_blocker(
+                fresh, content_root, "bfme2-men-vslice"
+            )
+        self.assertIsNotNone(blocker)
 
 
 class GateOverrideSurfaceTests(unittest.TestCase):

@@ -465,6 +465,17 @@ def build_contract(
     current_bindings = _mapping(
         runtime.get(PARTICLE_BINDINGS_PATH), "Fords particle bindings"
     )
+    current_family = _mapping(
+        current_bindings.get("familyResolution"), "Fords familyResolution"
+    )
+    fx_family_proven = (
+        current_family.get("status") == "proven-effective-fx-manager-family"
+        and current_family.get("noGeneralPrecedenceRule") is False
+        and _mapping(
+            current_family.get("duplicateSemantics"),
+            "Fords particle duplicateSemantics",
+        ).get("crossFamilyPrecedence") == "proven-fx-manager-only"
+    )
 
     fx_payload = _read_bound(root, FX_LIST_PATH, sources)
     all_fx_lists = parse_fx_lists(fx_payload)
@@ -654,12 +665,21 @@ def build_contract(
             }
         else:
             duplicate_ids.append(system_id)
-            resolution = {
-                "status": "unresolved-cross-family-precedence",
-                "selectedKind": None,
-                "crossFamilyPrecedenceProven": False,
-                "requiredHandling": "preserve-both-candidates-fail-closed",
-            }
+            resolution = (
+                {
+                    "status": "proven-effective-fx-manager-family",
+                    "selectedKind": "FXParticleSystem",
+                    "crossFamilyPrecedenceProven": True,
+                    "generalizesToOtherDuplicateIdentifiers": True,
+                }
+                if fx_family_proven
+                else {
+                    "status": "unresolved-cross-family-precedence",
+                    "selectedKind": None,
+                    "crossFamilyPrecedenceProven": False,
+                    "requiredHandling": "preserve-both-candidates-fail-closed",
+                }
+            )
         definition_rows.append(
             {
                 "particleSystemId": system_id,
@@ -713,9 +733,6 @@ def build_contract(
         fx_id for fx_id in selected_fx if fx_id.casefold() not in current_fx_ids
     ]
 
-    current_family = _mapping(
-        current_bindings.get("familyResolution"), "Fords familyResolution"
-    )
     runtime_patch = {
         "targetRuntimeDataPath": PARTICLE_BINDINGS_PATH,
         "definitionRegistryAppend": [
@@ -761,11 +778,24 @@ def build_contract(
         "unresolvedDuplicateIdentifierSystemIdsAppend": [
             system_id
             for system_id in duplicate_ids
-            if system_id.casefold()
+            if not fx_family_proven
+            and system_id.casefold()
             not in {
                 str(value).casefold()
                 for value in current_family.get(
                     "unresolvedDuplicateIdentifierSystemIds", []
+                )
+            }
+        ],
+        "provenFxDuplicateIdentifierSystemIdsAppend": [
+            system_id
+            for system_id in duplicate_ids
+            if fx_family_proven
+            and system_id.casefold()
+            not in {
+                str(value).casefold()
+                for value in current_family.get(
+                    "duplicateIdentifierSystemIds", []
                 )
             }
         ],

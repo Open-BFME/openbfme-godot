@@ -929,6 +929,7 @@ func enable_playable_unit_content(runtimes: Dictionary, producer_kinds: Dictiona
 	var pending_portraits: Array[Dictionary] = []
 	var seen: Dictionary = {}
 	var occupied_routes: Dictionary = {}
+	var occupied_route_owners: Dictionary = {}
 	var occupied_hero_ordinals: Dictionary = {}
 	for index in _retail_command_specs.size():
 		var value := _retail_command_specs[index] as Dictionary
@@ -969,7 +970,15 @@ func enable_playable_unit_content(runtimes: Dictionary, producer_kinds: Dictiona
 			):
 				return "Playable-unit HUD runtime '%s' has an invalid or colliding producer slot." % object_id
 			if occupied_routes.has(slot_key) and String(occupied_routes[slot_key]) != semantic_key:
-				return "Playable-unit HUD runtime '%s' has conflicting command-set variants in one producer slot." % object_id
+				return (
+					"Playable-unit HUD runtime '%s' route '%s' conflicts with runtime '%s' in producer slot '%s'."
+					% [
+						object_id,
+						String(route_spec.get("command_id", "")),
+						String(occupied_route_owners.get(slot_key, "")),
+						slot_key,
+					]
+				)
 			if surface == "hero-roster":
 				var ordinal_key := "%s:%d" % [producer_kind, roster_ordinal]
 				if occupied_hero_ordinals.has(ordinal_key):
@@ -978,6 +987,7 @@ func enable_playable_unit_content(runtimes: Dictionary, producer_kinds: Dictiona
 			route_spec["producer_kind"] = producer_kind
 			route_spec["runtime_object_id"] = object_id
 			occupied_routes[slot_key] = semantic_key
+			occupied_route_owners[slot_key] = object_id
 			surfaces[surface] = true
 		if surfaces.size() != 1:
 			return "Playable-unit HUD runtime '%s' has conflicting production surfaces." % object_id
@@ -985,7 +995,7 @@ func enable_playable_unit_content(runtimes: Dictionary, producer_kinds: Dictiona
 		var unit_id := String(spec.get("unit_id", ""))
 		if unit_id == "":
 			return "Playable-unit HUD runtime '%s' has no runtime unit id." % object_id
-		# Converted SPECIAL_POWER abilities (hero docs): retain the projected
+		# Converted SPECIAL_POWER abilities: retain the projected
 		# rows so build() can lay out palantir sockets from authored slots.
 		var ability_rows := PlayableUnitAdapter.ability_rules(document)
 		if not ability_rows.is_empty():
@@ -1477,14 +1487,15 @@ func _ability_button_tooltip(unit_id: String, ability_id: String, level: int, re
 
 
 func _update_hero_ability_buttons(selected_ids: Array[int], entities: Dictionary, current_tick: int) -> void:
-	## Show the selected hero's converted SPECIAL_POWER abilities with live
+	## Show the selected unit's converted SPECIAL_POWER abilities with live
 	## cooldown sweep and level-gated state. Buttons never leave the converted
-	## doc surface: no ability row, no button.
+	## doc surface: no ability row, no button. Retail's Dwarven Demolisher proves
+	## this surface is not hero-only.
 	var hero_unit_id := ""
 	var hero_row: Dictionary = {}
 	for selected_id in selected_ids:
 		var row: Dictionary = entities.get(selected_id, {}) as Dictionary
-		if String(row.get("category", "")) == "hero" and _hero_ability_specs.has(String(row.get("unit_type", ""))):
+		if PlayableUnitAdapter.has_ability_surface(row, _hero_ability_specs):
 			hero_unit_id = String(row.get("unit_type", ""))
 			hero_row = row
 			break
@@ -4337,7 +4348,7 @@ func _radial_button_position(index: int, count: int, button_size: Vector2, slot:
 	# the old count-scaled property and angular extent grows only as far as needed
 	# for 64px buttons, never an invented full-360 ring.
 	var panel_dish_center := RETAIL_DISH_CENTER - Vector2(command_panel.position.x, 0.0)
-	var wheel_center := command_panel.position + panel_dish_center
+	var authored_center := command_panel.position + panel_dish_center
 	var first_center := RETAIL_COMMAND_SLOT_SOURCE[0] + RETAIL_COMMAND_SLOT_SIZE * 0.5
 	var last_center := RETAIL_COMMAND_SLOT_SOURCE[-1] + RETAIL_COMMAND_SLOT_SIZE * 0.5
 	var first_angle := (first_center - panel_dish_center).angle()
@@ -4346,21 +4357,29 @@ func _radial_button_position(index: int, count: int, button_size: Vector2, slot:
 		last_angle += TAU
 	# Seven entries sit at the oracle arc's measured outer radius (131px).
 	# Larger ranges keep growing instead of regressing to one fixed radius.
-	var radius := clampf(131.0 + 8.0 * float(count - 7), 117.0, 168.0)
+	var radius_x := clampf(131.0 + 8.0 * float(count - 7), 117.0, 168.0)
+	# Expanded faction pages can contain up to twelve commands. A circular arc
+	# taller than the panel was formerly clamped row-by-row at the bottom edge;
+	# that collapsed two Angmar buttons onto each other. Use the same authored
+	# angular arc on the largest ellipse that fits the current panel and button
+	# size. This is count/faction/UI-size independent and needs no post-clamp.
+	var half := button_size * 0.5
+	var radius_y := minf(radius_x, maxf(1.0, command_panel.size.y * 0.5 - half.y - 2.0))
+	var minimum_center := command_panel.position + half + Vector2(radius_x, radius_y)
+	var maximum_center := command_panel.position + command_panel.size - half - Vector2(radius_x, radius_y)
+	var wheel_center := Vector2(
+		clampf(authored_center.x, minimum_center.x, maximum_center.x),
+		clampf(authored_center.y, minimum_center.y, maximum_center.y)
+	)
 	# Rectangles collide on the diagonal even when their centres are one width
 	# apart. The sqrt(2) chord makes at least one screen axis clear by 2px.
 	var min_chord := sqrt(2.0) * (maxf(button_size.x, button_size.y) + 2.0)
-	var min_step := 2.0 * asin(clampf(min_chord / (2.0 * radius), 0.0, 1.0))
+	var min_step := 2.0 * asin(clampf(min_chord / (2.0 * minf(radius_x, radius_y)), 0.0, 1.0))
 	var authored_sweep := last_angle - first_angle
 	var sweep := minf(TAU - min_step, maxf(authored_sweep, min_step * float(count - 1)))
 	var midpoint := (first_angle + last_angle) * 0.5
 	var angle := midpoint - sweep * 0.5 + sweep * float(index) / float(count - 1)
-	var position := wheel_center + Vector2(cos(angle), sin(angle)) * radius - button_size * 0.5
-	# The bottom authored socket is flush with the 360px dock edge. Expanded
-	# ranges may reach that edge but never cross it and clip off-screen.
-	position.x = clampf(position.x, command_panel.position.x, command_panel.position.x + command_panel.size.x - button_size.x)
-	position.y = clampf(position.y, command_panel.position.y, command_panel.position.y + command_panel.size.y - button_size.y)
-	return position
+	return wheel_center + Vector2(cos(angle) * radius_x, sin(angle) * radius_y) - half
 
 
 func _set_radial_socket_surface_active(active: bool, occupied: Dictionary = {}, hide_all_empty: bool = false) -> void:
@@ -5006,7 +5025,10 @@ func _refresh_powers_dock(purchased: Array, states: Dictionary = {}) -> void:
 		# With sim state, castability is the doc-verdict; without it nothing
 		# is docked (fail closed — no invented cast buttons).
 		if not state_powers.is_empty():
-			if bool((state_powers.get(power_id, {}) as Dictionary).get("castable", false)):
+			var state_row := state_powers.get(power_id, {}) as Dictionary
+			# NONPRESSABLE is triggered by buying its science; it never becomes a
+			# later cast button in the palantir dock.
+			if bool(state_row.get("castable", false)) and not bool(state_row.get("nonpressable", false)):
 				castable.append(power_id)
 	# The authored dock order is the cast command set (MenSpellBookCommandSet
 	# slot), not purchase-click order: the retail palantir column is the cast

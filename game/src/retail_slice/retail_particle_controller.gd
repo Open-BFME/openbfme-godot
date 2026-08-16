@@ -2,10 +2,9 @@ class_name RetailParticleController
 extends Node3D
 ## Fail-closed presenter for the bounded Fords retail particle handoff.
 ##
-## The retail evidence leaves ten cross-family name collisions unresolved. This
-## controller therefore validates every converted definition and texture but
-## instantiates only the one explicitly declared provisional selection:
-## WaterRipplesSmall/FXParticleSystem on the seven WtrRiplsSmall map anchors.
+## Retail registers only TheFXParticleSystemManager. The selected sealed pack's
+## older contract is admitted only at its exact census/oracle identity and is
+## upgraded to that proven FX-family rule without changing pack bytes.
 
 const MAX_DOCUMENT_BYTES := 2 * 1024 * 1024
 const MAX_DEFINITION_BYTES := 256 * 1024
@@ -60,6 +59,7 @@ const RIPPLE_SOURCE_MODEL := "art/w3d/p_/p_wtrriplssmall.w3d"
 const RIPPLE_ANCHOR_RESOURCE_ID := "fords-particle-anchor-wtrripls-small"
 const RIPPLE_ANCHOR_BONE := "waterRippleBone"
 const RIPPLE_ORACLE_SHA256 := "5dacb5477f89ba3dfcfa0b3450ade12fe7ebd79e4c7221463efd44e390108905"
+const LEGACY_SELECTED_CENSUS_SHA256 := "135e52baa19ebe7e922fdea7904e6725d3e3e7985cce923d35332a7ff83a3265"
 # P_WtrRiplsSmall pivot WATERRIPPLEBONE, converted from W3D X/Y/Z to
 # Godot-source X/Z/-Y before the map's source-to-local transform is applied.
 const RIPPLE_ANCHOR_OFFSET_SOURCE := Vector3(1.3329274654388428, 0.0, -0.6909178495407104)
@@ -79,6 +79,7 @@ var diagnostics: Array[Dictionary] = []
 
 var _definition_by_key: Dictionary = {}
 var _texture_image_by_id: Dictionary = {}
+var _legacy_family_resolution_upgraded := false
 
 
 func configure_from_pack(
@@ -146,16 +147,9 @@ func configure_document(
 		return false
 	contract_ready = true
 	presentation_ready = instantiated_emitter_count == EXPECTED_RIPPLE_PLACEMENT_COUNT
-	# The selected family is explicitly provisional and the SAGE-to-Godot
-	# lifetime/size-rate oracle is not proven.  Visible output is source-driven,
-	# but it must not be reported as 1:1 particle parity yet.
+	# Family selection is proven. The SAGE-to-Godot lifetime/size-rate visual
+	# oracle is still not exact, so this remains presentation-ready but not 1:1.
 	parity_ready = false
-	diagnostics.append({
-		"code": "cross-family-precedence-unresolved",
-		"systemIds": EXPECTED_UNRESOLVED_SYSTEM_IDS.duplicate(),
-		"count": EXPECTED_UNRESOLVED_SYSTEM_IDS.size(),
-		"impact": "structure construction, damage, and collapse emitters remain disabled",
-	})
 	diagnostics.append({
 		"code": "water-ripple-render-translation-provisional",
 		"systemId": "WaterRipplesSmall",
@@ -174,6 +168,8 @@ func _validate_contract(document: Dictionary, pack_root: String) -> bool:
 		return _fail("particle runtime source census identity is invalid")
 	if not _validate_family_resolution(document.get("familyResolution", {})):
 		return false
+	if _legacy_family_resolution_upgraded and String(document.get("sourceCensusAggregateSha256", "")) != LEGACY_SELECTED_CENSUS_SHA256:
+		return _fail("legacy particle family proof is not from the exact selected census")
 	if not _validate_registry(document.get("definitionRegistry", []), pack_root):
 		return false
 	if not _validate_bindings(document.get("objectBindings", [])):
@@ -194,7 +190,7 @@ func _validate_family_resolution(value: Variant) -> bool:
 		or _string_array(family.get("duplicateIdentifierSystemIds", [])) != EXPECTED_DUPLICATE_SYSTEM_IDS
 		or _string_array(family.get("unresolvedDuplicateIdentifierSystemIds", [])) != EXPECTED_UNRESOLVED_SYSTEM_IDS
 	):
-		return _fail("particle cross-family blocker changed or was generalized")
+		return _validate_proven_family_resolution(family)
 	var selections_value: Variant = family.get("provisionalRuntimeSelections", [])
 	if typeof(selections_value) != TYPE_ARRAY or (selections_value as Array).size() != 1:
 		return _fail("particle runtime must declare exactly one provisional selection")
@@ -211,8 +207,42 @@ func _validate_family_resolution(value: Variant) -> bool:
 		or String(selection.get("oracleAggregateSha256", "")) != RIPPLE_ORACLE_SHA256
 	):
 		return _fail("WaterRipplesSmall provisional selection evidence changed")
-	provisional_runtime_selection_count = 1
-	unresolved_family_selection_count = EXPECTED_UNRESOLVED_SYSTEM_IDS.size()
+	# Compatibility admission for the exact selected sealed pack. Retail binary
+	# evidence now proves these old unresolved rows all select the FX candidate.
+	_legacy_family_resolution_upgraded = true
+	provisional_runtime_selection_count = 0
+	unresolved_family_selection_count = 0
+	return true
+
+
+func _validate_proven_family_resolution(family: Dictionary) -> bool:
+	if (
+		String(family.get("status", "")) != "proven-effective-fx-manager-family"
+		or bool(family.get("noGeneralPrecedenceRule", true))
+		or _string_array(family.get("duplicateIdentifierSystemIds", [])) != EXPECTED_DUPLICATE_SYSTEM_IDS
+		or not _string_array(family.get("unresolvedDuplicateIdentifierSystemIds", [])).is_empty()
+	):
+		return _fail("particle FX-manager family proof changed")
+	var semantics_value: Variant = family.get("duplicateSemantics", {})
+	if typeof(semantics_value) != TYPE_DICTIONARY:
+		return _fail("particle duplicate semantics are missing")
+	var semantics := semantics_value as Dictionary
+	if String(semantics.get("crossFamilyPrecedence", "")) != "proven-fx-manager-only" or bool(semantics.get("legacySubsystemActive", true)):
+		return _fail("particle FX-manager-only evidence changed")
+	var selections_value: Variant = family.get("runtimeSelections", [])
+	if typeof(selections_value) != TYPE_ARRAY or (selections_value as Array).size() != EXPECTED_DUPLICATE_SYSTEM_IDS.size():
+		return _fail("particle proven runtime selection closure changed")
+	var seen: Dictionary = {}
+	for value in selections_value as Array:
+		if typeof(value) != TYPE_DICTIONARY:
+			return _fail("particle proven runtime selection is invalid")
+		var selection := value as Dictionary
+		var system_id := String(selection.get("particleSystemId", ""))
+		if seen.has(system_id) or not EXPECTED_DUPLICATE_SYSTEM_IDS.has(system_id) or String(selection.get("selectedKind", "")) != "FXParticleSystem" or String(selection.get("status", "")) != "proven-effective-fx-manager-family" or not bool(selection.get("crossFamilyPrecedenceProven", false)):
+			return _fail("particle proven runtime selection changed")
+		seen[system_id] = true
+	provisional_runtime_selection_count = 0
+	unresolved_family_selection_count = 0
 	return true
 
 
@@ -374,7 +404,15 @@ func _validate_bindings(value: Variant) -> bool:
 				return _fail("particle bound system lacks family resolution")
 			var resolution := resolution_value as Dictionary
 			var status := String(resolution.get("status", ""))
-			if status == "unresolved-cross-family-precedence":
+			if status == "proven-effective-fx-manager-family":
+				if not EXPECTED_DUPLICATE_SYSTEM_IDS.has(system_id) or String(resolution.get("selectedKind", "")) != "FXParticleSystem" or not bool(resolution.get("crossFamilyPrecedenceProven", false)):
+					return _fail("proven particle family selection changed")
+			elif status == "unresolved-cross-family-precedence":
+				if _legacy_family_resolution_upgraded and EXPECTED_BOUND_UNRESOLVED_SYSTEM_IDS.has(system_id):
+					if resolution.get("selectedKind", "sentinel") != null:
+						return _fail("unresolved particle family was silently selected")
+					unresolved_seen[system_id] = true
+					continue
 				if resolution.get("selectedKind", "sentinel") != null or not EXPECTED_BOUND_UNRESOLVED_SYSTEM_IDS.has(system_id):
 					return _fail("unresolved particle family was silently selected")
 				unresolved_seen[system_id] = true
@@ -388,7 +426,8 @@ func _validate_bindings(value: Variant) -> bool:
 					or String(resolution.get("oracleAggregateSha256", "")) != RIPPLE_ORACLE_SHA256
 				):
 					return _fail("unexpected provisional particle selection")
-				provisional_seen += 1
+				if not _legacy_family_resolution_upgraded:
+					provisional_seen += 1
 			elif status != "exact-single-authored-family":
 				return _fail("particle binding has an unsupported family resolution")
 		if type_name == "WtrRiplsSmall" and not _validate_ripple_binding(binding):
@@ -401,7 +440,10 @@ func _validate_bindings(value: Variant) -> bool:
 	unresolved_ids.sort()
 	var expected_sorted := EXPECTED_BOUND_UNRESOLVED_SYSTEM_IDS.duplicate()
 	expected_sorted.sort()
-	if unresolved_ids != expected_sorted or provisional_seen != 1:
+	if _legacy_family_resolution_upgraded:
+		if unresolved_ids != expected_sorted or provisional_seen != 0:
+			return _fail("legacy particle family-resolution coverage changed")
+	elif not unresolved_ids.is_empty() or provisional_seen != 0:
 		return _fail("particle family-resolution coverage changed")
 	return true
 
@@ -483,7 +525,7 @@ func _instantiate_ripples(placements: Array[Dictionary], local_scale: float, pre
 		return _fail("selected ripple texture could not create a runtime image")
 	var container := Node3D.new()
 	container.name = "RetailWaterRipples"
-	container.set_meta("presentation", "provisional-explicit-retail-particle-selection")
+	container.set_meta("presentation", "proven-effective-fx-manager-family")
 	for placement in placements:
 		var emitter := _make_ripple_emitter(texture, local_scale)
 		if emitter == null:
@@ -497,7 +539,7 @@ func _instantiate_ripples(placements: Array[Dictionary], local_scale: float, pre
 		emitter.set_meta("source_type", "WtrRiplsSmall")
 		emitter.set_meta("particle_system_id", "WaterRipplesSmall")
 		emitter.set_meta("selected_kind", "FXParticleSystem")
-		emitter.set_meta("selection_status", "provisional-explicit-runtime-selection")
+		emitter.set_meta("selection_status", "proven-effective-fx-manager-family")
 		emitter.set_meta("anchor_bone", RIPPLE_ANCHOR_BONE)
 		container.add_child(emitter)
 		source_placement_indices.append(source_index)
@@ -635,6 +677,7 @@ func _reset() -> void:
 	diagnostics.clear()
 	_definition_by_key.clear()
 	_texture_image_by_id.clear()
+	_legacy_family_resolution_upgraded = false
 
 
 func _fail(message: String) -> bool:

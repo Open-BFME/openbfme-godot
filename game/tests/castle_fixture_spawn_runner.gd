@@ -18,7 +18,9 @@ extends SceneTree
 ##     rules["enable_castle_fixtures"] (default off, byte-identical off);
 ##   * the fixture/objects cross-check (L2a follow-up F5) refuses a fixtures
 ##     document that disagrees with the cooked objects.
-## Counts (609/587 Erebor, 403/260 Carn Dum) are pinned by the oracle pytest
+## Loader counts (609/589 Erebor, 403/260 Carn Dum) are pinned by the oracle pytest;
+## the live combined registry path claims two FireDrake rows before the generic
+## castle lane and therefore materializes 587 castle fixtures plus two lairs.
 ## suite in importer/tests/test_castle_fixtures_oracle.py.
 
 const Watchdog := preload("res://tests/runner_watchdog.gd")
@@ -146,6 +148,19 @@ func _sim_rules(flag: bool) -> Dictionary:
 	return rules
 
 
+func _with_rotwk_scenario_rules(rules: Dictionary) -> Dictionary:
+	var selected := rules.duplicate(true)
+	var content_db = root.get_node_or_null("ContentDB")
+	selected["game"] = "rotwk"
+	selected["enable_scenario_map_placements"] = true
+	if content_db != null:
+		selected["scenario_unit_runtimes"] = content_db.get_scenario_unit_runtimes("rotwk")
+		selected["scenario_structure_runtimes"] = content_db.get_scenario_structure_runtimes("rotwk")
+		selected["scenario_prop_runtimes"] = content_db.get_scenario_prop_runtimes("rotwk")
+		selected["scenario_pickup_runtimes"] = content_db.get_scenario_pickup_runtimes("rotwk")
+	return selected
+
+
 func _run() -> void:
 	MapDataScript = load("res://src/retail_slice/retail_map_data.gd")
 	SimScript = load("res://src/retail_slice/retail_slice_sim.gd")
@@ -178,7 +193,7 @@ func _run() -> void:
 		"classification=%s object_id=%s" % [String(gate_placement.get("classification", "")), String(gate_placement.get("object_id", ""))]
 	)
 	var lair_rows := 0
-	for lair in erebor.creep_lair_placements:
+	for lair in erebor.scenario_object_placements:
 		if String((lair as Dictionary).get("type_name", "")) == "FireDrakeLair":
 			lair_rows += 1
 	_check(
@@ -191,10 +206,10 @@ func _run() -> void:
 	)
 
 	# --- item 5, config derivation -------------------------------------------
-	_check("erebor_seed_count_587", erebor.castle_fixture_placements.size() == 587, "got %d" % erebor.castle_fixture_placements.size())
+	_check("erebor_seed_count_589", erebor.castle_fixture_placements.size() == 589, "got %d" % erebor.castle_fixture_placements.size())
 	_check(
 		"erebor_deferred_tally_named",
-		erebor.castle_fixture_deferred == {"capturable-flag": 4, "creep-lair-owned": 2, "inert-scenery": 16},
+		erebor.castle_fixture_deferred == {"capturable-flag": 4, "inert-scenery": 16},
 		"got %s" % str(erebor.castle_fixture_deferred)
 	)
 	var gate_seed := _seed_row_for(erebor, gate_index)
@@ -213,8 +228,8 @@ func _run() -> void:
 	var erebor_config: Dictionary = erebor.simulation_configuration()
 	_check(
 		"erebor_simulation_configuration_carries_fixtures",
-		(erebor_config.get("castle_fixture_placements", []) as Array).size() == 587
-			and erebor_config.get("castle_fixture_deferred", {}) == {"capturable-flag": 4, "creep-lair-owned": 2, "inert-scenery": 16},
+		(erebor_config.get("castle_fixture_placements", []) as Array).size() == 589
+			and erebor_config.get("castle_fixture_deferred", {}) == {"capturable-flag": 4, "inert-scenery": 16},
 		"keys=%s" % str(erebor_config.keys())
 	)
 
@@ -340,7 +355,7 @@ func _run() -> void:
 	)
 
 	# --- sim: gate on -----------------------------------------------------------
-	var erebor_rules_on := _sim_rules(true)
+	var erebor_rules_on := _with_rotwk_scenario_rules(_sim_rules(true))
 	erebor_rules_on["source_map_transform_scale"] = float(erebor.local_transform_scale)
 	var sim_on = SimScript.new()
 	sim_on.setup(erebor_config, erebor_rules_on)
@@ -490,28 +505,28 @@ func _run() -> void:
 		"before=%d after=%d" % [wall_health_before, int(attack_target.get("health", 0))]
 	)
 
-	# Creep-lane precedence: both flags on, lairs seed exactly once, as lairs.
+	# Registry ownership precedence: scenario admission claims the exact source
+	# indices before the generic castle-fixture lane can seed them.
 	var sim_both = SimScript.new()
-	var both_rules := _sim_rules(true)
-	both_rules["enable_creep_lairs"] = true
+	var both_rules := _with_rotwk_scenario_rules(_sim_rules(true))
 	sim_both.setup(erebor_config, both_rules)
 	var lair_structures := 0
 	var lair_fixtures := 0
 	for structure_id in sim_both.structure_ids():
 		var row: Dictionary = sim_both.structures[structure_id]
-		if String(row.get("structure_kind", "")) == "creep_lair":
+		if String(row.get("structure_kind", "")) == "lair" and String(row.get("source_object_id", "")) == "FireDrakeLair":
 			lair_structures += 1
 		if String(row.get("castle_fixture_type", "")) == "FireDrakeLair":
 			lair_fixtures += 1
 	_check(
-		"creep_lairs_seed_once_under_both_flags",
+		"scenario_lairs_own_source_indices_under_both_lanes",
 		lair_structures == 2 and lair_fixtures == 0,
 		"lairs=%d lair_fixtures=%d" % [lair_structures, lair_fixtures]
 	)
 
 	# Snapshot/restore carries the seeded structures and the flag state.
 	var sim_restore = SimScript.new()
-	sim_restore.setup(erebor_config, _sim_rules(true))
+	sim_restore.setup(erebor_config, _with_rotwk_scenario_rules(_sim_rules(true)))
 	var snapshot: PackedByteArray = sim_restore.snapshot()
 	var hash_at_snapshot := String(sim_restore.state_hash())
 	for _tick in range(10):

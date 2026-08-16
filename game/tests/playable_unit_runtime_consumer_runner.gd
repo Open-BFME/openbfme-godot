@@ -36,6 +36,64 @@ func _run() -> void:
 	_check(all_runtimes.size() == 1 and all_runtimes.has("FixtureMonster"), "runtime indexes by source object id")
 	var document: Dictionary = content_db.get_playable_unit_runtime("FixtureMonster")
 	_check(String(document.get("_pack_file_key", "")) == "playableUnit.fixturemonster", "pack declaration identity retained")
+	var missing_packaged_clip := document.duplicate(true)
+	var missing_clip_visual := (
+		(missing_packaged_clip.get("registration", {}) as Dictionary).get("visual", {})
+		as Dictionary
+	)
+	(
+		(missing_clip_visual.get("authoredStateLabels", []) as Array)[0]
+		as Dictionary
+	)["linkedAnimations"] = [{"identifier": "fixture_missing", "conditions": ["USER_9"]}]
+	_check(
+		not content_db._validate_playable_unit_runtime(pack_root, missing_packaged_clip),
+		"state label cannot name a packaged clip absent from the document closure"
+	)
+	var unsealed_packaged_clip := document.duplicate(true)
+	(unsealed_packaged_clip.get("resourceIds", []) as Array).erase("fixture-model")
+	_check(
+		not content_db._validate_playable_unit_runtime(pack_root, unsealed_packaged_clip),
+		"state label cannot rely on a component resource absent from resourceIds"
+	)
+	var cross_object_packaged_clip := document.duplicate(true)
+	var cross_object_visual := (
+		(cross_object_packaged_clip.get("registration", {}) as Dictionary).get("visual", {})
+		as Dictionary
+	)
+	(
+		(cross_object_visual.get("authoredAnimationStates", []) as Array)[0]
+		as Dictionary
+	)["ownerObjectId"] = "OtherObject"
+	_check(
+		not content_db._validate_playable_unit_runtime(pack_root, cross_object_packaged_clip),
+		"state label cannot cross-link another object's packaged animation"
+	)
+	var wrong_leaf_packaged_clip := document.duplicate(true)
+	var wrong_leaf_visual := (
+		(wrong_leaf_packaged_clip.get("registration", {}) as Dictionary).get("visual", {})
+		as Dictionary
+	)
+	(
+		(wrong_leaf_visual.get("authoredAnimationStates", []) as Array)[0]
+		as Dictionary
+	)["sourceW3d"] = "art/w3d/different_clip.w3d"
+	_check(
+		not content_db._validate_playable_unit_runtime(pack_root, wrong_leaf_packaged_clip),
+		"hierarchical state label rejects a packaged animation with the wrong source leaf"
+	)
+	var fractional_animation_property := document.duplicate(true)
+	var fractional_idle := (
+		(
+			((fractional_animation_property.get("registration", {}) as Dictionary)
+			.get("visual", {}) as Dictionary).get("coreAnimations", {}) as Dictionary
+		).get("idle", [])[0] as Dictionary
+	)
+	fractional_idle["AnimationBlendTime"] = 10.5
+	((fractional_idle.get("authoredProperties", []) as Array)[0] as Dictionary)["value"] = 10.5
+	_check(
+		not content_db._validate_playable_unit_runtime(pack_root, fractional_animation_property),
+		"fractional JSON animation properties fail closed"
+	)
 	var projected_member: Dictionary = content_db.get_bundle_object("bfme2.object.fixture-monster")
 	_check(String(projected_member.get("sourceObjectId", "")) == "FixtureMonster", "runtime projects a generic bundle member")
 	_check(String((projected_member.get("presentation", {}) as Dictionary).get("model", "")) == "assets/models/fixture.glb", "runtime projects the converted model")
@@ -396,6 +454,51 @@ func _run() -> void:
 	_check(ability_rules.size() == 1, "adapter projects the registration's ability rows")
 	_check(int((ability_rules[0] as Dictionary).get("cooldown_ticks", 0)) == 700, "ability cooldown becomes deterministic ticks")
 	_check(bool((ability_rules[0] as Dictionary).get("castable", false)), "implemented ability is castable")
+	var flagged_doc := ability_doc.duplicate(true)
+	var flagged_row := (((flagged_doc["registration"] as Dictionary)["abilities"] as Array)[0] as Dictionary)
+	flagged_row["specialPowerContract"] = {
+		"flags": ["NEEDS_OBJECT_FILTER"],
+		"objectFilter": ["KINGSFAVOR_OBJECTFILTER"],
+		"sourceIni": "data/ini/specialpower.ini",
+	}
+	var flagged_rules := Adapter.ability_rules(flagged_doc)
+	_check(flagged_rules.size() == 1 and ((flagged_rules[0] as Dictionary).get("special_power_contract", {}) as Dictionary).get("flags", []) == ["NEEDS_OBJECT_FILTER"], "adapter preserves the exact Kings Favor flag contract")
+	flagged_row["specialPowerContract"] = {"flags": ["INVENTED_FLAG"]}
+	_check(Adapter.ability_rules(flagged_doc).is_empty(), "adapter refuses unsupported SpecialPower flags")
+	flagged_row["specialPowerContract"] = {"flags": ["LIMIT_DISTANCE"]}
+	_check(Adapter.ability_rules(flagged_doc).is_empty(), "adapter refuses LIMIT_DISTANCE without MaxCastRange")
+	flagged_row["specialPowerContract"] = {"flags": ["PATHABLE_ONLY"]}
+	_check(Adapter.ability_rules(flagged_doc).is_empty(), "adapter refuses PATHABLE_ONLY on a non-point ability")
+	flagged_row["targeting"] = "point"
+	_check(Adapter.ability_rules(flagged_doc).size() == 1, "adapter preserves PATHABLE_ONLY for exact runtime target validation")
+	flagged_row["targeting"] = "self"
+	flagged_row["specialPowerContract"] = {
+		"flags": ["LIMIT_DISTANCE", "NO_FORBIDDEN_OBJECTS"],
+		"maxCastRange": 200,
+		"forbiddenObjectFilter": ["NO_SUMMON_NEAR_OBJECT_FILTER"],
+		"forbiddenObjectRange": 60,
+	}
+	_check(Adapter.ability_rules(flagged_doc).size() == 1, "adapter admits the complete Oathbreakers placement gate")
+
+	# These graph kinds are emitted by the typed compiler and have independent
+	# executable runtime gates. Keep the ContentDB boundary synchronized: stale
+	# effect-kind validation previously dropped eight real RotWK heroes even
+	# though their packs and consumers were valid.
+	for effect_kind in ["activate-module-graph", "weapon-mode-special-power", "dominate-enemy", "stop-special-power", "unleash-special-power"]:
+		var graph_doc := ability_doc.duplicate(true)
+		var graph_suffix: String = String(effect_kind).replace("-", "_")
+		graph_doc["objectId"] = "FixtureGraphHero_%s" % graph_suffix
+		var graph_ability := (((graph_doc["registration"] as Dictionary)["abilities"] as Array)[0] as Dictionary)
+		(graph_ability["effect"] as Dictionary)["kind"] = effect_kind
+		graph_ability["id"] = "Command_%s" % graph_suffix
+		_write_json(pack_root.path_join("data/playable-units/graph_%s.json" % graph_suffix), graph_doc)
+		_check(content_db._load_playable_unit_runtimes(pack_root, {
+			"playableUnit.graph_%s" % graph_suffix: "data/playable-units/graph_%s.json" % graph_suffix,
+		}), "typed executable ability graph '%s' passes ContentDB validation" % effect_kind)
+		_check(
+			not content_db.get_playable_unit_runtime("FixtureGraphHero_%s" % graph_suffix).is_empty(),
+			"typed executable ability graph '%s' is indexed" % effect_kind
+		)
 
 	var malformed_abilities := ability_doc.duplicate(true)
 	malformed_abilities["objectId"] = "FixtureBrokenAbilityHero"
@@ -419,7 +522,12 @@ func _run() -> void:
 		"targetCount": 6,
 		"modifierApplication": "cumulative-per-level",
 		"levels": [
-			{"experienceId": "FixtureLevel1", "rank": 1, "requiredExperience": 1, "experienceAward": 3, "line": 2},
+			{
+				"experienceId": "FixtureLevel1", "rank": 1, "requiredExperience": 1, "experienceAward": 3,
+				"experienceAwardOwnGuysDie": 2, "line": 2,
+				"selectionDecal": {"textureId": "decal_G_level1", "minRadius": 5, "maxRadius": 20, "opacityMin": 0.25, "opacityMax": 1.0, "maxSelectedUnits": 1, "style": "SHADOW_ALPHA_DECAL"},
+				"levelUpPresentation": {"informUpdateModule": true, "emotionType": "CHEER", "showLevelUpTint": true, "levelUpTintColorRgb": [255, 128, 0], "levelUpTintPreColorTimeMs": 100, "levelUpTintSustainColorTimeMs": 200, "levelUpTintPostColorTimeMs": 300},
+			},
 			{
 				"experienceId": "FixtureLevel2", "rank": 2, "requiredExperience": 50, "experienceAward": 4, "line": 9,
 				"attributeModifiers": [{
@@ -475,6 +583,13 @@ func _run() -> void:
 			and Array((projected_levels[2] as Dictionary).get("unsupported_modifiers", [])).has("SPEED")
 			and String((projected_levels[1] as Dictionary).get("selection_decal_texture_id", "")) == "decal_G_level2",
 		"adapter records unsupported modifiers and the rank decal leaf"
+	)
+	_check(
+		projected_levels.size() == 3
+			and int((projected_levels[0] as Dictionary).get("experience_award_own_guys_die", 0)) == 2
+			and ((projected_levels[0] as Dictionary).get("selection_decal", {}) as Dictionary).get("style", "") == "SHADOW_ALPHA_DECAL"
+			and ((projected_levels[0] as Dictionary).get("level_up_presentation", {}) as Dictionary).get("emotionType", "") == "CHEER",
+		"adapter preserves own-team death XP and selection/level-up presentation contracts"
 	)
 	var malformed_experience := experience_doc.duplicate(true)
 	((malformed_experience["registration"] as Dictionary)["experience"] as Dictionary)["maxLevel"] = 4
@@ -693,6 +808,23 @@ func _fixture_document() -> Dictionary:
 		"recipeSha256": "2".repeat(64),
 		"resourceIds": ["fixture-model", "fixture-ui", "fixture-audio"],
 		"registration": {
+			"abilities": [{
+				"id": "Command_FixtureDisguise",
+				"specialPowerId": "SpecialAbilityFixtureDisguise",
+				"slot": 2,
+				"targeting": "self",
+				"button": {},
+				"effect": {"kind": "special-disguise"},
+				"implementation": {"status": "implemented"},
+			}, {
+				"id": "Command_FixtureDeploy",
+				"specialPowerId": "SpecialAbilityFixtureDeploy",
+				"slot": 3,
+				"targeting": "self",
+				"button": {},
+				"effect": {"kind": "toggle-deploy"},
+				"implementation": {"status": "implemented"},
+			}],
 			"production": [{
 				"producerObjectId": "UniversalMonsterPen",
 				"commandSetId": "UniversalMonsterPenCommandSet",
@@ -744,15 +876,70 @@ func _fixture_document() -> Dictionary:
 				"components": [{
 					"default": true,
 					"output": "assets/models/fixture.glb",
+					"ownerObjectId": "FixtureMonster",
 					"resourceId": "fixture-model",
 					"sourceW3d": "art/w3d/fixture.w3d",
 				}],
 				"coreAnimations": {
-					"idle": [{"identifier": "fixture_idle"}],
+					"idle": [{
+						"identifier": "fixture_idle",
+						"AnimationBlendTime": 10,
+						"authoredProperties": [{
+							"key": "AnimationBlendTime",
+							"value": 10,
+							"provenance": {
+								"definingObject": "FixtureMonster",
+								"inheritanceDistance": 0,
+								"line": 80,
+								"virtualPath": "data/ini/object/fixture.ini",
+							},
+						}],
+					}],
 					"move": [{"identifier": "fixture_move"}],
 					"attack": [{"identifier": "fixture_attack"}],
 					"death": [{"identifier": "fixture_death"}],
 				},
+				"authoredAnimationStates": [{
+					"conditions": ["USER_9"],
+					"identifier": "Fixture_SKL.fixture_extra",
+					"modelSourceW3d": "art/w3d/fixture.w3d",
+					"ownerObjectId": "FixtureMonster",
+					"runtimeSupport": "packaged-unimplemented",
+					"sourceW3d": "art/w3d/fixture_extra.w3d",
+				}, {
+					"conditions": ["USER_10"],
+					"identifier": "fixture_missing",
+					"modelSourceW3d": "art/w3d/fixture.w3d",
+					"ownerObjectId": "FixtureMonster",
+					"runtimeExclusionReason": "zero-byte-retail-w3d-placeholder",
+					"runtimeSupport": "excluded-zero-byte-placeholder",
+					"sourceW3d": "art/w3d/fixture_missing.w3d",
+				}],
+				"authoredStateLabels": [{
+					"StateName": "STATE_Extra.",
+					"conditions": ["USER_9"],
+					"linkedAnimations": [{"identifier": "Fixture_SKL.fixture_extra", "conditions": ["USER_9"]}],
+					"ownerObjectId": "FixtureMonster",
+					"provenance": {
+						"definingObject": "FixtureMonster",
+						"inheritanceDistance": 0,
+						"line": 90,
+						"virtualPath": "data/ini/object/fixture.ini",
+					},
+					"runtimeSupport": "packaged-unimplemented",
+				}, {
+					"StateName": "STATE_Missing",
+					"conditions": ["USER_10"],
+					"linkedAnimations": [{"identifier": "fixture_missing", "conditions": ["USER_10"]}],
+					"ownerObjectId": "FixtureMonster",
+					"provenance": {
+						"definingObject": "FixtureMonster",
+						"inheritanceDistance": 0,
+						"line": 91,
+						"virtualPath": "data/ini/object/fixture.ini",
+					},
+					"runtimeSupport": "packaged-unimplemented",
+				}],
 			},
 			"ui": {
 				"portraitImageIds": ["UPFixtureMonster"],

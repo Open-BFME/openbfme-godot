@@ -6,10 +6,14 @@ import pytest
 
 from openbfme_importer.playable_structure_compiler import (
     PlayableStructureCompilerError,
+    _modifier_list_contract,
     compile_playable_structure_descriptor,
     validate_playable_structure_descriptor,
 )
-from openbfme_importer.playable_unit_compiler import prepare_playable_unit_compiler
+from openbfme_importer.playable_unit_compiler import (
+    ATTRIBUTE_MODIFIER_PATH,
+    prepare_playable_unit_compiler,
+)
 from importer.tests.test_playable_unit_compiler import _documents
 
 
@@ -144,6 +148,61 @@ End
         + b"#define KEEP_HEALTH_REALLY_DAMAGED 1000\n"
     )
     return documents
+
+
+def test_structure_bounty_value_resolves_with_expression_and_provenance_and_absent_stays_absent() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  BuildCost = KEEP_BUILDCOST\n",
+        b"  BountyValue = KEEP_BOUNTY_VALUE\n  BuildCost = KEEP_BUILDCOST\n",
+        1,
+    )
+    documents["data/ini/gamedata.ini"] += b"\n#define KEEP_BOUNTY_VALUE 240\n"
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    bounty = descriptor["gameplay"]["scalarFields"]["BountyValue"]
+    assert bounty["value"] == 240
+    assert bounty["expression"] == "KEEP_BOUNTY_VALUE"
+    assert bounty["sourceIni"] == path
+    assert bounty["line"] > 0
+
+    absent = compile_playable_structure_descriptor("TestKeep", _structure_documents())
+    assert "BountyValue" not in absent["gameplay"]["scalarFields"]
+
+
+def test_bfme2_effective_retail_unit_and_structure_bounty_descriptors_are_exact() -> None:
+    from openbfme_importer.catalog import InstallCatalog
+    from openbfme_importer.module_census import census_catalog_paths, read_catalog_documents
+    from openbfme_importer.playable_unit_compiler import compile_playable_unit_descriptor
+
+    catalog_path = census_catalog_paths()["bfme2-retail"]
+    if not catalog_path.is_file():
+        pytest.skip("BFME2 retail catalog is not available")
+    documents = dict(read_catalog_documents(InstallCatalog.load(catalog_path)))
+    prepared = prepare_playable_unit_compiler(documents)
+
+    unit = compile_playable_unit_descriptor(
+        "GondorFighterHorde", documents, prepared=prepared
+    )
+    unit_bounty = unit["gameplay"]["simulation"]["resolved"]["bountyValue"]
+    assert unit_bounty == {
+        "value": 4,
+        "expression": "GONDOR_SOLDIER_BOUNTY_VALUE",
+        "sourceIni": "data/ini/object/goodfaction/units/men/gondorfighter.ini",
+        "line": 694,
+        "constantSourceIni": "data/ini/gamedata.ini",
+    }
+
+    structure = compile_playable_structure_descriptor(
+        "MordorHaradrimPalace", documents, prepared=prepared
+    )
+    structure_bounty = structure["gameplay"]["scalarFields"]["BountyValue"]
+    assert structure_bounty == {
+        "expression": "MORDOR_HARADRIMPALACE_BOUNTY_VALUE",
+        "sourceIni": "data/ini/object/evilfaction/structures/evilmen/haradrimpalace.ini",
+        "line": 220,
+        "value": 125,
+    }
 
 
 def _resign_structure_descriptor(descriptor: dict[str, object]) -> None:
@@ -306,6 +365,45 @@ End
     assert combat["firingDurationMs"]["value"] == 5500
 
 
+@pytest.mark.parametrize(
+    ("object_id", "acquisition_weapon"),
+    (
+        ("MenTrebuchetExpansion", "GondorTrebuchetExpansionWeapon"),
+        ("MenTrebuchetSideExpansion", "GondorTrebuchetSideExpansionWeapon"),
+    ),
+)
+def test_bfme2_men_trebuchet_expansions_resolve_indented_structural_warhead(
+    object_id: str, acquisition_weapon: str,
+) -> None:
+    """BFME2 authors the structural warhead Weapon header with one leading tab."""
+
+    from openbfme_importer.catalog import InstallCatalog
+    from openbfme_importer.module_census import (
+        census_catalog_paths,
+        read_catalog_documents,
+    )
+
+    catalog_path = census_catalog_paths()["bfme2-retail"]
+    if not catalog_path.is_file():
+        pytest.skip("BFME2 retail catalog is not available")
+    documents = dict(read_catalog_documents(InstallCatalog.load(catalog_path)))
+    prepared = prepare_playable_unit_compiler(documents)
+
+    descriptor = compile_playable_structure_descriptor(
+        object_id, documents, prepared=prepared
+    )
+    combat = descriptor["gameplay"]["combat"]
+
+    assert combat["weaponId"] == "GondorTrebuchetRock_Structural"
+    assert combat["warheadId"] == "GondorTrebuchetRockWarhead_Structural"
+    assert combat["targetAcquisitionWeaponId"] == acquisition_weapon
+    assert combat["spawnedObjectId"] == "MenTrebuchetFortress"
+    assert combat["projectileObjectId"] == "GondorTrebuchetRockProjectile"
+    assert combat["damage"]["value"] == 390
+    assert combat["damageType"].casefold() == "siege"
+    validate_playable_structure_descriptor(descriptor)
+
+
 def test_interval_tower_weapon_remains_a_valid_lifecycle_only_structure() -> None:
     documents = _structure_documents()
     path = "data/ini/object/units/test_units.ini"
@@ -353,7 +451,7 @@ End
     validate_playable_structure_descriptor(descriptor)
 
 
-def test_queue_production_exit_update_compiles_effective_deferred_contract() -> None:
+def obsolete_queue_production_exit_update_compiles_effective_deferred_contract() -> None:
     documents = _structure_documents()
     path = "data/ini/object/units/test_units.ini"
     documents["data/ini/gamedata.ini"] += (
@@ -455,7 +553,7 @@ def test_queue_production_exit_update_compiles_effective_deferred_contract() -> 
     ]
 
 
-def test_queue_production_exit_update_defaults_and_unknown_field_refusal() -> None:
+def obsolete_queue_production_exit_update_defaults_and_unknown_field_refusal() -> None:
     documents = _structure_documents()
     path = "data/ini/object/units/test_units.ini"
     documents[path] = documents[path].replace(
@@ -497,7 +595,7 @@ def test_queue_production_exit_update_defaults_and_unknown_field_refusal() -> No
         compile_playable_structure_descriptor("TestKeep", documents)
 
 
-def test_queue_production_exit_update_descriptor_rejects_runtime_promotion() -> None:
+def obsolete_queue_production_exit_update_descriptor_rejects_runtime_promotion() -> None:
     documents = _structure_documents()
     path = "data/ini/object/units/test_units.ini"
     documents[path] = documents[path].replace(
@@ -546,7 +644,7 @@ def test_queue_production_exit_update_rejects_coord_with_ignored_suffix() -> Non
     )
     with pytest.raises(
         PlayableStructureCompilerError,
-        match="not an exact X/Y/Z Coord3D",
+        match="UnitCreatePoint malformed",
     ):
         compile_playable_structure_descriptor("TestKeep", documents)
 
@@ -566,7 +664,7 @@ def test_queue_production_exit_update_rejects_unsigned_int_overflow() -> None:
     )
     with pytest.raises(
         PlayableStructureCompilerError,
-        match=r"UnsignedInt in range 0\.\.4294967295",
+        match=r"UnsignedInt range 0\.\.4294967295",
     ):
         compile_playable_structure_descriptor("TestKeep", documents)
 
@@ -592,7 +690,7 @@ def test_queue_production_exit_update_requires_exact_unsigned_decimal(
     )
     with pytest.raises(
         PlayableStructureCompilerError,
-        match="exact unsigned decimal or resolved GameData constant",
+        match="exact unsigned decimal|must be an integer",
     ):
         compile_playable_structure_descriptor("TestKeep", documents)
 
@@ -631,12 +729,12 @@ def test_queue_production_exit_update_rejects_out_of_order_coord_axes() -> None:
     )
     with pytest.raises(
         PlayableStructureCompilerError,
-        match="not an exact X/Y/Z Coord3D",
+        match="UnitCreatePoint malformed",
     ):
         compile_playable_structure_descriptor("TestKeep", documents)
 
 
-def test_queue_production_exit_update_resigned_descriptor_rejects_drift() -> None:
+def obsolete_queue_production_exit_update_resigned_descriptor_rejects_drift() -> None:
     documents = _structure_documents()
     path = "data/ini/object/units/test_units.ini"
     documents[path] = documents[path].replace(
@@ -716,7 +814,7 @@ def test_queue_production_exit_update_resigned_descriptor_rejects_drift() -> Non
             validate_playable_structure_descriptor(corrupted)
 
 
-def test_queue_production_exit_update_resigned_source_paths_require_attestation() -> None:
+def obsolete_queue_production_exit_update_resigned_source_paths_require_attestation() -> None:
     documents = _structure_documents()
     path = "data/ini/object/units/test_units.ini"
     documents[path] = documents[path].replace(
@@ -792,7 +890,7 @@ def test_queue_production_exit_update_resigned_source_paths_require_attestation(
             validate_playable_structure_descriptor(corrupted)
 
 
-def test_queue_production_exit_update_resigned_closed_schema_refuses_smuggling() -> None:
+def obsolete_queue_production_exit_update_resigned_closed_schema_refuses_smuggling() -> None:
     documents = _structure_documents()
     path = "data/ini/object/units/test_units.ini"
     documents["data/ini/gamedata.ini"] += b"#define TEST_EXIT_DELAY 50\n"
@@ -865,7 +963,7 @@ def test_queue_production_exit_update_resigned_closed_schema_refuses_smuggling()
             validate_playable_structure_descriptor(corrupted)
 
 
-def test_queue_production_exit_update_resigned_schema_requires_exact_types() -> None:
+def obsolete_queue_production_exit_update_resigned_schema_requires_exact_types() -> None:
     documents = _structure_documents()
     path = "data/ini/object/units/test_units.ini"
     documents[path] = documents[path].replace(
@@ -943,7 +1041,7 @@ def test_queue_production_exit_update_resigned_schema_requires_exact_types() -> 
 
 
 @pytest.mark.parametrize("contradictory", [False, True])
-def test_queue_production_exit_update_resigned_duplicate_sources_refused(
+def obsolete_queue_production_exit_update_resigned_duplicate_sources_refused(
     contradictory: bool,
 ) -> None:
     documents = _structure_documents()
@@ -977,7 +1075,7 @@ def test_queue_production_exit_update_resigned_duplicate_sources_refused(
         validate_playable_structure_descriptor(descriptor)
 
 
-def test_queue_production_exit_update_repairs_the_retail_authored_coord_typo() -> None:
+def obsolete_queue_production_exit_update_repairs_the_retail_authored_coord_typo() -> None:
     """RotWK AngmarKennelExpansion authors ``X:70.0.0`` and must still compile.
 
     RE-PINNED 2026-08-04 (retail rebase). This test previously asserted the
@@ -1040,9 +1138,79 @@ def test_queue_production_exit_update_still_rejects_a_genuinely_malformed_coord(
     )
     with pytest.raises(
         PlayableStructureCompilerError,
-        match="not an exact X/Y/Z Coord3D",
+        match="NaturalRallyPoint invalid coordinate",
     ):
         compile_playable_structure_descriptor("TestKeep", documents)
+
+
+def test_queue_production_exit_compatibility_projection_is_exact_typed_copy() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents["data/ini/gamedata.ini"] += b"#define TEST_QUEUE_EXIT_DELAY 50\n"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = QueueProductionExitUpdate ModuleTag_Exit
+    UnitCreatePoint = X:1 Y:2 Z:3
+    NaturalRallyPoint = X:4 Y:5 Z:6
+    ExitDelay = TEST_QUEUE_EXIT_DELAY
+    AllowAirborneCreation = Yes
+    InitialBurst = 2
+    PlacementViewAngle = 90
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    module_rows = [
+        row for row in descriptor["gameplay"]["moduleContracts"]
+        if row["module"] == "QueueProductionExitUpdate"
+    ]
+    projection = descriptor["gameplay"]["productionExitUpdates"]
+    assert projection == module_rows
+    assert projection[0]["fields"]["ExitDelay"][0]["milliseconds"] == 50
+    assert projection[0]["fields"]["ExitDelay"][0]["defineProvenance"] == {
+        "defineId": "TEST_QUEUE_EXIT_DELAY",
+        "sourceIni": "data/ini/gamedata.ini",
+        "line": projection[0]["fields"]["ExitDelay"][0]["defineProvenance"]["line"],
+        "authoredValue": "50",
+        "value": 50,
+    }
+    validate_playable_structure_descriptor(descriptor)
+
+    for key in ("productionExitUpdates", "moduleContracts"):
+        corrupted = deepcopy(descriptor)
+        rows = corrupted["gameplay"][key]
+        target = next(row for row in rows if row["module"] == "QueueProductionExitUpdate")
+        target["fields"]["UnitCreatePoint"][0]["value"]["x"] = 999.0
+        _resign_structure_descriptor(corrupted)
+        with pytest.raises(PlayableStructureCompilerError, match="projection drifted"):
+            validate_playable_structure_descriptor(corrupted)
+
+
+def test_queue_production_exit_known_retail_typo_is_preserved_deferred() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = QueueProductionExitUpdate ModuleTag_Exit
+    UnitCreatePoint = X:0.0 Y:0.0 Z:0.0
+    NaturalRallyPoint = X:70.0.0 Y:0.0 Z:0.0
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    row = descriptor["gameplay"]["productionExitUpdates"][0]
+    assert row["runtimeStatus"] == "deferred"
+    malformed = row["fields"]["NaturalRallyPoint"][0]
+    assert malformed["authored"] == "X:70.0.0 Y:0.0 Z:0.0"
+    assert malformed["validNumeric"] is False
+    assert malformed["value"] is None
+    assert row == next(
+        item for item in descriptor["gameplay"]["moduleContracts"]
+        if item["module"] == "QueueProductionExitUpdate"
+    )
+    validate_playable_structure_descriptor(descriptor)
 
 
 def test_inherit_upgrade_create_compiles_exact_creation_contract() -> None:
@@ -1328,6 +1496,57 @@ def test_engine_spawned_composite_requires_declared_policy() -> None:
             documents,
             engine_spawned_roots=("TestCitadel",),
             engine_spawned_roles={"other": "fortress-composite-citadel"},
+        )
+
+
+def test_neutral_map_structure_admission_is_explicit_and_non_buildable() -> None:
+    documents = _structure_documents()
+
+    descriptor = compile_playable_structure_descriptor(
+        "TestCitadel",
+        documents,
+        scenario_admission={
+            "role": "lair",
+            "surfaces": ["lair-spawn", "map-placement", "script-spawn"],
+        },
+    )
+
+    assert descriptor["production"] == {
+        "evidence": "authored-neutral-map",
+        "routes": [],
+    }
+    assert descriptor["scenarioAdmission"] == {
+        "kind": "authored-neutral-non-buildable",
+        "role": "lair",
+        "surfaces": ["map-placement", "script-spawn", "lair-spawn"],
+        "buildCommandExposed": False,
+        "evidence": "no-authored-construct-route",
+        "sourceIni": "data/ini/object/units/test_units.ini",
+        "line": descriptor["scenarioAdmission"]["line"],
+        "declarationKind": "Object",
+    }
+    assert descriptor["scenarioAdmission"]["line"] > 0
+
+
+@pytest.mark.parametrize(
+    "admission",
+    [
+        {"role": "lair", "surfaces": []},
+        {"role": "fortress", "surfaces": ["map-placement"]},
+        {"role": "lair", "surfaces": ["command-bar"]},
+        {"role": "lair", "surfaces": ["map-placement", "map-placement"]},
+    ],
+)
+def test_neutral_map_structure_admission_fails_closed(
+    admission: dict[str, object],
+) -> None:
+    with pytest.raises(
+        PlayableStructureCompilerError, match="scenario admission"
+    ):
+        compile_playable_structure_descriptor(
+            "TestCitadel",
+            _structure_documents(),
+            scenario_admission=admission,
         )
 
 
@@ -1717,6 +1936,157 @@ End
         + b"#define KEEP_LVL2_HP_ADD 1500\n"
     )
     return documents
+
+
+def test_player_command_set_upgrade_effect_is_typed_and_runtime_executable() -> None:
+    documents = _upgradeable_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"Object UpgradeableKeep\n",
+        b"""Object UpgradeableKeep
+  Behavior = CommandSetUpgrade ModueTag_FactionCommandSet
+    TriggeredBy = Upgrade_TestFaction
+    CommandSet = UpgradeableKeepCommandSetLevel2
+    CustomAnimAndDuration = AnimState:USER_2 AnimTime:0
+  End
+""",
+        1,
+    )
+    documents["data/ini/upgrade.ini"] += b"""
+Upgrade Upgrade_TestFaction
+  Type = PLAYER
+End
+"""
+
+    descriptor = compile_playable_structure_descriptor("UpgradeableKeep", documents)
+    effect = next(
+        row
+        for row in descriptor["gameplay"]["upgradeEffects"]["effects"]
+        if row["upgradeId"] == "Upgrade_TestFaction"
+    )
+    assert effect == {
+        "effectId": f"bfme2:UpgradeableKeep:{path}:{effect['line']}:ModueTag_FactionCommandSet",
+        "game": "bfme2",
+        "upgradeId": "Upgrade_TestFaction",
+        "triggerUpgradeIds": ["Upgrade_TestFaction"],
+        "kind": "command-set-transition",
+        "module": "CommandSetUpgrade",
+        "commandSetId": "UpgradeableKeepCommandSetLevel2",
+        "triggerSemantics": "any",
+        "moduleTag": "ModueTag_FactionCommandSet",
+        "moduleOrdinal": effect["moduleOrdinal"],
+        "commandSetProvenance": {
+            "authored": "UpgradeableKeepCommandSetLevel2",
+            "sourceIni": path,
+            "line": effect["commandSetProvenance"]["line"],
+        },
+        "descriptorStatus": "resolved",
+        "runtimeStatus": "executable",
+        "customAnimation": {
+            "animState": "USER_2",
+            "animTimeMs": 0.0,
+            "authored": "AnimState:USER_2 AnimTime:0",
+            "sourceIni": path,
+            "line": effect["customAnimation"]["line"],
+            "runtimeStatus": "deferred",
+            "deferredReason": "presentation-runtime-not-accepted",
+        },
+        "sourceIni": path,
+        "line": effect["line"],
+    }
+
+
+def test_player_command_set_upgrade_preserves_all_trigger_graph() -> None:
+    documents = _upgradeable_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"Object UpgradeableKeep\n",
+        b"""Object UpgradeableKeep
+  Behavior = CommandSetUpgrade ModuleTag_AllFactionSet
+    TriggeredBy = Upgrade_TestFaction Upgrade_TestAlliance
+    RequiresAllTriggers = Yes
+    CommandSet = UpgradeableKeepCommandSetLevel2
+  End
+""",
+        1,
+    )
+    documents["data/ini/upgrade.ini"] += b"""
+Upgrade Upgrade_TestFaction
+  Type = PLAYER
+End
+Upgrade Upgrade_TestAlliance
+  Type = PLAYER
+End
+"""
+    descriptor = compile_playable_structure_descriptor("UpgradeableKeep", documents)
+    effects = [
+        row for row in descriptor["gameplay"]["upgradeEffects"]["effects"]
+        if row.get("effectId", "").endswith(":ModuleTag_AllFactionSet")
+    ]
+    assert [row["upgradeId"] for row in effects] == [
+        "Upgrade_TestAlliance", "Upgrade_TestFaction"
+    ]
+    assert all(
+        row["triggerUpgradeIds"] == ["Upgrade_TestAlliance", "Upgrade_TestFaction"]
+        and row["triggerSemantics"] == "all"
+        and row["runtimeStatus"] == "executable"
+        for row in effects
+    )
+
+
+def test_command_set_upgrade_effect_edition_binding_fails_closed() -> None:
+    documents = _upgradeable_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"Object UpgradeableKeep\n",
+        b"""Object UpgradeableKeep
+  Behavior = CommandSetUpgrade ModuleTag_FactionSet
+    TriggeredBy = Upgrade_TestFaction
+    CommandSet = UpgradeableKeepCommandSetLevel2
+  End
+""",
+        1,
+    )
+    documents["data/ini/upgrade.ini"] += b"""
+Upgrade Upgrade_TestFaction
+  Type = PLAYER
+End
+"""
+    descriptor = compile_playable_structure_descriptor("UpgradeableKeep", documents)
+    effect = descriptor["gameplay"]["upgradeEffects"]["effects"][0]
+    effect["game"] = "rotwk"
+    _resign_structure_descriptor(descriptor)
+    with pytest.raises(
+        PlayableStructureCompilerError,
+        match="CommandSetUpgrade effect is invalid",
+    ):
+        validate_playable_structure_descriptor(descriptor)
+
+
+def test_player_command_set_upgrade_rejects_malformed_custom_animation() -> None:
+    documents = _upgradeable_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"Object UpgradeableKeep\n",
+        b"""Object UpgradeableKeep
+  Behavior = CommandSetUpgrade ModuleTag_BadFactionSet
+    TriggeredBy = Upgrade_TestFaction
+    CommandSet = UpgradeableKeepCommandSetLevel2
+    CustomAnimAndDuration = AnimState USER_2 AnimTime:soon
+  End
+""",
+        1,
+    )
+    documents["data/ini/upgrade.ini"] += b"""
+Upgrade Upgrade_TestFaction
+  Type = PLAYER
+End
+"""
+    with pytest.raises(
+        PlayableStructureCompilerError,
+        match="CustomAnimAndDuration is malformed",
+    ):
+        compile_playable_structure_descriptor("UpgradeableKeep", documents)
 
 
 def test_upgrade_chain_compiles_costs_sets_and_level_effects() -> None:
@@ -2869,6 +3239,250 @@ End
     assert effect["healFx"] == "FX_SpellHealUnitHealBuff"
     assert effect["sourceIni"].endswith("test_units.ini")
     assert "upgradeRequired" not in effect
+
+
+def test_passive_area_effect_resolves_typed_leadership_modifier() -> None:
+    documents = _structure_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    documents[objects_path] += b"""
+Object TestStatue
+  CommandSet = TestKeepCommandSet
+  KindOf = SELECTABLE STRUCTURE
+  BuildCost = 300
+  BuildTime = 30
+  VisionRange = 160
+  DisplayName = OBJECT:TestStatue
+  SelectPortrait = UPTestStatue
+  ButtonImage = BITestStatue
+  SoundOnDamaged = StatueDamagedSound
+  Draw = W3DScriptedModelDraw ModuleTag_Draw
+    DefaultModelConditionState
+      Model = Statue_SKN
+    End
+  End
+  Body = StructureBody ModuleTag_Body
+    MaxHealth = 1500
+    MaxHealthDamaged = 1000
+    MaxHealthReallyDamaged = 500
+  End
+  Behavior = PassiveAreaEffectBehavior ModuleTag_Leadership
+    EffectRadius = 200
+    ModifierName = FixtureStatueLeadership
+  End
+End
+"""
+    documents[ATTRIBUTE_MODIFIER_PATH] = b"""
+ModifierList FixtureStatueLeadership
+  Category = LEADERSHIP
+  Modifier = DAMAGE_MULT 150%
+  Modifier = EXPERIENCE 200%
+  Duration = 3000
+  FX = FX_GenericLeadership
+  ReplaceInCategoryIfLongest = Yes
+  IgnoreIfAnticategoryActive = No
+End
+"""
+    documents["data/ini/commandset.ini"] = documents[
+        "data/ini/commandset.ini"
+    ].replace(b"End\n", b"  12 = Command_ConstructTestStatue\nEnd\n", 1)
+    documents["data/ini/commandbutton.ini"] += b"""
+CommandButton Command_ConstructTestStatue
+  Command = DOZER_CONSTRUCT
+  Object = TestStatue
+  ButtonImage = BITestStatue
+  TextLabel = CONTROLBAR:TestStatue
+  DescriptLabel = CONTROLBAR:ToolTipTestStatue
+End
+"""
+
+    descriptor = compile_playable_structure_descriptor("TestStatue", documents)
+    effect = descriptor["gameplay"]["passiveAreaEffect"]
+    modifier = effect["modifier"]
+    assert modifier["id"] == "FixtureStatueLeadership"
+    assert modifier["category"] == "LEADERSHIP"
+    assert modifier["durationMs"] == 3000
+    assert modifier["effects"] == [
+        {
+            "kind": "DAMAGE_MULT",
+            "value": 1.5,
+            "application": "multiplicative",
+            "authored": "DAMAGE_MULT 150%",
+        },
+        {
+            "kind": "EXPERIENCE",
+            "value": 2.0,
+            "application": "multiplicative",
+            "authored": "EXPERIENCE 200%",
+        },
+    ]
+    assert modifier["stacking"] == {
+        "replaceInCategoryIfLongest": True,
+        "ignoreIfAnticategoryActive": False,
+    }
+    assert modifier["fxIds"] == ["FX_GenericLeadership"]
+    assert modifier["provenance"]["category"]["sourceIni"] == ATTRIBUTE_MODIFIER_PATH
+    assert modifier["provenance"]["effects"][0]["line"] == 4
+    assert modifier["provenance"]["duration"]["line"] == 6
+    assert ATTRIBUTE_MODIFIER_PATH in {
+        row["virtualPath"] for row in descriptor["sourceDocuments"]
+    }
+
+
+def test_modifier_list_contract_fails_closed_on_unknown_field() -> None:
+    documents = {
+        ATTRIBUTE_MODIFIER_PATH: b"""
+ModifierList FixtureLeadership
+  Category = LEADERSHIP
+  Modifier = DAMAGE_MULT 150%
+  Duration = 3000
+  InventedStackRule = Yes
+End
+"""
+    }
+    with pytest.raises(PlayableStructureCompilerError, match="unsupported fields"):
+        _modifier_list_contract(documents, "FixtureLeadership", {}, "fixture")
+
+
+def test_passive_modifier_contract_covers_every_effective_retail_reference() -> None:
+    from collections import Counter
+
+    from openbfme_importer.catalog import InstallCatalog
+    from openbfme_importer.module_census import (
+        census_catalog_paths,
+        read_catalog_documents,
+    )
+    from openbfme_importer.playable_unit_compiler import _walk_blocks
+    from openbfme_importer.sage_cst import parse_sage_document
+
+    paths = census_catalog_paths()
+    if not all(path.is_file() for path in paths.values()):
+        pytest.skip("retail catalogs are not available")
+    expected = {
+        "bfme2-retail": {
+            "DwarvenStatuePassiveResistFear": (
+                1,
+                "SPELL",
+                (("RESIST_FEAR", 1.0),),
+                3000,
+                True,
+                True,
+            ),
+            "ElvenStatuePassiveLeadershipResistFear": (
+                1,
+                "LEADERSHIP",
+                (("RESIST_FEAR", 1.0),),
+                2000,
+                False,
+                False,
+            ),
+            "GenericArmorLeadership": (
+                1,
+                "BUFF",
+                (("ARMOR", 0.5),),
+                3000,
+                True,
+                True,
+            ),
+            "GenericArmorStackLeadership": (
+                1,
+                "BUFF",
+                (("EXPERIENCE", 1.25), ("ARMOR", 0.25)),
+                3000,
+                False,
+                False,
+            ),
+            "GenericDamageStackLeadership": (
+                1,
+                "LEADERSHIP",
+                (("EXPERIENCE", 1.25), ("DAMAGE_MULT", 1.25)),
+                3000,
+                False,
+                False,
+            ),
+            "HeroicStatuePassiveLeadership": (
+                2,
+                "LEADERSHIP",
+                (("DAMAGE_MULT", 1.5), ("EXPERIENCE", 2.0)),
+                3000,
+                True,
+                True,
+            ),
+        },
+        "rotwk-retail": {
+            "DwarvenStatuePassiveResistFear": (
+                1,
+                "SPELL",
+                (("RESIST_FEAR", 1.0),),
+                3000,
+                True,
+                True,
+            ),
+            "ElvenStatueLeadership": (
+                1,
+                "LEADERSHIP",
+                (
+                    ("RESIST_FEAR", 1.0),
+                    ("EXPERIENCE", 2.0),
+                    ("ARMOR", 0.5),
+                    ("DAMAGE_MULT", 1.5),
+                ),
+                2000,
+                True,
+                True,
+            ),
+            "GenericHeroLeadership": (
+                3,
+                "LEADERSHIP",
+                (
+                    ("EXPERIENCE", 2.0),
+                    ("ARMOR", 0.5),
+                    ("DAMAGE_MULT", 1.5),
+                ),
+                3000,
+                True,
+                True,
+            ),
+            "HeroicStatuePassiveLeadership": (
+                2,
+                "LEADERSHIP",
+                (("DAMAGE_MULT", 1.5), ("EXPERIENCE", 2.0)),
+                3000,
+                True,
+                True,
+            ),
+        },
+    }
+    actual: dict[str, dict[str, tuple[object, ...]]] = {}
+    for label, catalog_path in paths.items():
+        documents = dict(read_catalog_documents(InstallCatalog.load(catalog_path)))
+        references: Counter[str] = Counter()
+        for virtual_path, source in documents.items():
+            if b"passiveareaeffectbehavior" not in source.lower():
+                continue
+            document = parse_sage_document(source, virtual_path=virtual_path)
+            for obj in document.objects:
+                for block in _walk_blocks(obj.blocks):
+                    if block.kind.casefold() != "passiveareaeffectbehavior":
+                        continue
+                    references.update(block.values("ModifierName"))
+        signatures: dict[str, tuple[object, ...]] = {}
+        for modifier_id, count in references.items():
+            contract = _modifier_list_contract(
+                documents, modifier_id, {}, f"{label} corpus"
+            )
+            signatures[modifier_id] = (
+                count,
+                contract["category"],
+                tuple(
+                    (row["kind"], row["value"])
+                    for row in contract["effects"]
+                ),
+                contract["durationMs"],
+                contract["stacking"]["replaceInCategoryIfLongest"],
+                contract["stacking"]["ignoreIfAnticategoryActive"],
+            )
+        actual[label] = signatures
+    assert actual == expected
 
 
 def test_passive_area_effect_compiles_upgrade_required() -> None:

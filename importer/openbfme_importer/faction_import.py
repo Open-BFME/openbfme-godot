@@ -86,6 +86,10 @@ from .retail_ability_fx_ingress import (
     harvest_fx_ids,
     texture_index_for,
 )
+from .special_disguise_prerequisite import (
+    build_special_disguise_prerequisite,
+    special_disguise_visual_targets,
+)
 from .spellbook_pack_compiler import (
     SpellbookPackCompilerError,
     compile_spellbook_pack_recipe,
@@ -1321,7 +1325,10 @@ def _convert_one_plan_object(
                         f"faction census: {missing_banners[0]}"
                     )
             images, audio = _resolved_media(
-                faction_graph, draft, effective_root=effective_root
+                faction_graph,
+                draft,
+                effective_root=effective_root,
+                catalog=catalog,
             )
             strings = (
                 _resolved_strings(catalog, draft, graph=faction_graph)
@@ -1345,6 +1352,10 @@ def _convert_one_plan_object(
             targets.update(
                 str(member["objectId"]) for member in composition["members"]
             )
+            disguise_targets = special_disguise_visual_targets(
+                descriptor, documents
+            )
+            targets.update(disguise_targets)
             closure_kwargs = (
                 {
                     "catalog": catalog,
@@ -1358,6 +1369,18 @@ def _convert_one_plan_object(
                 sorted(targets, key=str.casefold),
                 **closure_kwargs,
             )
+            special_disguise = build_special_disguise_prerequisite(
+                descriptor,
+                documents,
+                closure,
+                game=game,
+                texture_index=(
+                    texture_index_for(effective_root, assets_fp)
+                    if disguise_targets
+                    else {}
+                ),
+                effective_root=effective_root,
+            )
             recipe = compile_playable_unit_pack_recipe(
                 descriptor,
                 closure,
@@ -1368,6 +1391,7 @@ def _convert_one_plan_object(
                     assets_fp,
                     str(descriptor["objectId"]),
                 ),
+                special_disguise,
             )
             assert_pack_recipe_catalog_identity(
                 recipe, catalog, object_id=object_id

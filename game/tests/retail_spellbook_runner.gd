@@ -484,7 +484,13 @@ func _summon_checks(doc: Dictionary) -> void:
 		rohan_sim.tick()
 	_check("rohan_summons_persist_for_lifetime", int(rohan_sim.entity(int(spawned[0])).get("health", 0)) > 0)
 	rohan_sim.tick()
-	_check("rohan_summons_fade_at_authored_lifetime", int(rohan_sim.entity(int(spawned[0])).get("health", -1)) == 0 and not _last_power_event(rohan_sim, "power.summon_expired").is_empty(), "tick=%d" % (rohan_sim.tick_index - lifetime_tick))
+	var expired_rohan: Dictionary = rohan_sim.entity(int(spawned[0]))
+	_check(
+		"rohan_summons_fade_at_authored_lifetime",
+		(expired_rohan.is_empty() or int(expired_rohan.get("health", -1)) == 0)
+			and not _last_power_event(rohan_sim, "power.summon_expired").is_empty(),
+		"tick=%d row=%s" % [rohan_sim.tick_index - lifetime_tick, str(expired_rohan)]
+	)
 	# Dunedain: three hordes of ten rangers (warhead damage through the bow chain).
 	var dun_sim = _effect_sim(doc)
 	dun_sim.purchase_power(0, "SpellBookHeal")
@@ -641,8 +647,14 @@ func _lone_tower_checks(doc: Dictionary) -> void:
 
 
 func _taint_entry(row: Dictionary) -> Dictionary:
-	## The one key the terrain-taint aura writes into the shared table.
-	return Dictionary(row.get("timed_modifiers", {})).get("taint:GenericBuff", {}) as Dictionary
+	## Terrain-taint keys carry the authored ModifierList id. BFME2 ElvenGrove
+	## uses GenericArmorLeadership; RotWK uses GenericBuff. Select the sole
+	## taint namespace entry instead of hardcoding one edition's leaf id.
+	var table := row.get("timed_modifiers", {}) as Dictionary
+	for key_value in table.keys():
+		if String(key_value).begins_with("taint:"):
+			return table[key_value] as Dictionary
+	return {}
 
 
 func _modifier_value(entry: Dictionary, kind: String) -> float:
@@ -670,9 +682,12 @@ func _elven_wood_checks(doc: Dictionary) -> void:
 		"grove_aura_applies_converted_armor_modifier",
 		int(taint.get("expires_tick", -1)) == sim.tick_index + 30
 			and is_equal_approx(_modifier_value(taint, "ARMOR"), 0.5)
-			and is_equal_approx(_modifier_value(taint, "DAMAGE_MULT"), 1.5)
+			# BFME2 ElvenGrove binds GenericArmorLeadership, which authors
+			# ARMOR 50% and no DAMAGE_MULT row. Absence is neutral 1.0; 1.5
+			# is RotWK GenericBuff and must not leak across edition packs.
+			and is_equal_approx(_modifier_value(taint, "DAMAGE_MULT"), 1.0)
 			and is_equal_approx(sim._ability_incoming_multiplier(buffed), 0.5)
-			and is_equal_approx(sim._ability_outgoing_multiplier(buffed), 1.5),
+			and is_equal_approx(sim._ability_outgoing_multiplier(buffed), 1.0),
 		"taint=%s incoming=%s outgoing=%s" % [taint, sim._ability_incoming_multiplier(buffed), sim._ability_outgoing_multiplier(buffed)]
 	)
 	var hero_check := true
@@ -829,7 +844,13 @@ func _hud_integration_checks(content_db, doc: Dictionary) -> void:
 	_check("orb_rows_match_purchase_slots_and_costs", order_ok)
 	_check("orb_labels_and_tooltips_are_pack_strings", labels_ok)
 	_check("orb_display_name_is_pack_string", hud.power_display_name("SpellBookHeal") == "Heal", hud.power_display_name("SpellBookHeal"))
-	var bind_error: String = hud.bind_retail_train_commands(content_db, selected_pack_root, true)
+	# The BFME2 supplemental pack owns this tree and its icons, while the active
+	# RotWK host owns the validated APT command-bar shell. Give the HUD the full
+	# mounted-root set so its documented host-APT fallback can compose those two
+	# pack-owned surfaces without demanding a nonexistent SGCommandBar crop.
+	var bind_error: String = hud.bind_retail_train_commands(
+		content_db, selected_pack_root, true, host_mod_loader.list_pack_roots()
+	)
 	_check("retail_art_binds_for_orb", bind_error == "", bind_error)
 	var buttons_ok: bool = hud.power_buttons.size() == 12
 	var icons_bound := true
@@ -1373,31 +1394,35 @@ func _finish() -> void:
 
 
 func _men_spellbook_document(content_db) -> Dictionary:
-	## The registry spellbook slot is last-pack-wins across mounted packs; the
-	## Men gate needs the active pack's own Men spellbook document.
-	var soldier_definition: Dictionary = content_db.get_bundle_object("bfme2.object.gondor-fighter")
-	var pack_root := String(soldier_definition.get("_pack_root", ""))
-	if pack_root == "":
-		return {}
+	## This section's retail oracle is explicitly the BFME2 1.06 Men tree (its
+	## expected third slot is Elven Wood). Object ids are intentionally shared
+	## by the BFME2 supplement and the active RotWK pack, so looking the pack up
+	## through `bfme2.object.gondor-fighter` is last-pack-wins and can silently
+	## return RotWK's Rebuild tree. Select the declared BFME2 pack identity
+	## instead; the per-faction checks below independently cover active RotWK.
 	var mod_loader = root.get_node_or_null("ModLoader")
-	var pack_document := {}
 	if mod_loader != null:
-		pack_document = mod_loader._read_json(pack_root.path_join("pack.json")) as Dictionary
-	var files: Dictionary = pack_document.get("files", {}) as Dictionary
-	var keys: Array[String] = []
-	for key_value in files.keys():
-		if String(key_value).begins_with("spellbook."):
-			keys.append(String(key_value))
-	keys.sort()
-	for key in keys:
-		var relative := String(files.get(key, ""))
-		if relative == "":
-			continue
-		var document := {}
-		if mod_loader != null:
-			document = mod_loader._read_json(mod_loader.resolve_pack_path(pack_root, relative)) as Dictionary
-		if document.is_empty() or String(document.get("schema", "")) != "openbfme.spellbook-runtime":
-			continue
-		if String((document.get("target", {}) as Dictionary).get("faction", "")) == "Men":
-			return document
+		for pack_root_value in mod_loader.list_pack_roots():
+			var pack_root := String(pack_root_value)
+			var pack_document := mod_loader._read_json(pack_root.path_join("pack.json")) as Dictionary
+			if String(pack_document.get("id", "")) != "bfme2-men-vslice":
+				continue
+			var files: Dictionary = pack_document.get("files", {}) as Dictionary
+			var keys: Array[String] = []
+			for key_value in files.keys():
+				if String(key_value).begins_with("spellbook."):
+					keys.append(String(key_value))
+			keys.sort()
+			for key in keys:
+				var relative := String(files.get(key, ""))
+				if relative == "":
+					continue
+				var document := mod_loader._read_json(
+					mod_loader.resolve_pack_path(pack_root, relative)
+				) as Dictionary
+				if (
+					String(document.get("schema", "")) == "openbfme.spellbook-runtime"
+					and String((document.get("target", {}) as Dictionary).get("faction", "")) == "Men"
+				):
+					return document
 	return content_db.get_spellbook_runtime() if content_db.has_method("get_spellbook_runtime") else {}

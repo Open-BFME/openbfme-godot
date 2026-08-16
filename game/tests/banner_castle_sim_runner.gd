@@ -1411,12 +1411,12 @@ func _test_tangential_slide_near_zero_band() -> void:
 		var cross: float = radial.cross(step)
 		_check(
 			absf(cross) <= 0.000001,
-			"the probe step is inside the near-zero band (perturbation %g)" % perturbation,
+			"the probe step is inside the near-zero band (perturbation %.9f)" % perturbation,
 			"cross=%.12f" % cross
 		)
 		_check(
 			sim._tangential_slide_point(centre, radius, radial, step).is_equal_approx(fixed_side),
-			"a near-axis step takes the FIXED side, not a cancelling cross sign (%g)" % perturbation,
+			"a near-axis step takes the FIXED side, not a cancelling cross sign (%.9f)" % perturbation,
 			"got=%s fixed=%s cross=%.12f" % [
 				str(sim._tangential_slide_point(centre, radius, radial, step)), str(fixed_side), cross
 			]

@@ -742,6 +742,157 @@ def test_descriptor_resolves_tree_costs_prerequisites_and_effect_leaves() -> Non
     assert descriptor["descriptorSha256"] == _compile()["descriptorSha256"]
 
 
+def test_weather_and_allegiance_modules_preserve_fields_and_provenance() -> None:
+    documents = _documents()
+    documents["data/ini/gamedata.ini"] += (
+        b"#define TEST_FREEZING_RAIN_DURATION 150000\n"
+        b"#define TEST_CREEP_OBJECTFILTER ANY +CaveTrollLair +WargLair ENEMIES\n"
+    )
+    path = "data/ini/object/system/test_system.ini"
+    freezing = b"""  Behavior = FreezingRainSpecialPower ModuleTag_Heal
+    SpecialPowerTemplate = SpellBookTestHeal
+    AttributeModifierAffects = ALL ENEMIES
+    AntiCategory = LEADERSHIP
+    AttributeModifierWeatherBased = Yes
+    WeatherDuration = TEST_FREEZING_RAIN_DURATION
+    ChangeWeather = RAINY
+    AvailableAtStart = No
+    BurnRateModifier = -100
+    BurnDecayModifier = 20
+  End
+"""
+    allegiance = b"""  Behavior = UntamedAllegianceSpecialPower ModuleTag_Volley
+    SpecialPowerTemplate = SpellBookTestVolley
+    TargetEnemy = Yes
+    AttributeModifierAffects = TEST_CREEP_OBJECTFILTER
+    AttributeModifierRange = 60
+    AvailableAtStart = No
+  End
+"""
+    original = documents[path]
+    documents[path] = original.replace(
+        b"""  Behavior = PlayerHealSpecialPower ModuleTag_Heal
+    SpecialPowerTemplate = SpellBookTestHeal
+    HealAmount = 0.5
+    HealFX = FX_TestHealBuff
+    HealOCL = OCL_TestHealPing
+    AvailableAtStart = No
+  End
+""",
+        freezing,
+        1,
+    ).replace(
+        b"""  Behavior = OCLSpecialPower ModuleTag_Volley
+    SpecialPowerTemplate = SpellBookTestVolley
+    OCL = OCL_TestVolley
+    TriggerFX = FX_TestHealBuff
+    AttributeModifier = TestRallyModifier
+    AttributeModifierAffects = TEST_BUFF_FILTER
+    UpgradeName = Upgrade_TestBlessing
+    Weapon = TestVolleyWeapon
+    CreateLocation = CREATE_AT_LOCATION
+    AvailableAtStart = No
+  End
+""",
+        allegiance,
+        1,
+    )
+    assert documents[path] != original
+
+    descriptor = compile_spellbook_descriptor(_graph(documents), documents)
+    powers = {row["id"]: row for row in descriptor["powers"]}
+    freezing_effect = powers["SpellBookTestHeal"]["effect"]
+    allegiance_effect = powers["SpellBookTestVolley"]["effect"]
+
+    assert freezing_effect["module"] == "FreezingRainSpecialPower"
+    assert freezing_effect["moduleTag"] == "ModuleTag_Heal"
+    assert freezing_effect["sourceIni"] == path
+    assert isinstance(freezing_effect["line"], int) and freezing_effect["line"] > 0
+    freezing_fields = {row["key"]: row for row in freezing_effect["fields"]}
+    assert freezing_fields["SpecialPowerTemplate"]["value"] == "SpellBookTestHeal"
+    assert freezing_fields["AttributeModifierAffects"]["value"] == "ALL ENEMIES"
+    assert freezing_fields["AntiCategory"]["value"] == "LEADERSHIP"
+    assert freezing_fields["AttributeModifierWeatherBased"]["value"] == "Yes"
+    assert freezing_fields["WeatherDuration"] == {
+        "key": "WeatherDuration",
+        "value": "TEST_FREEZING_RAIN_DURATION",
+        "resolved": 150000,
+    }
+    assert freezing_fields["ChangeWeather"]["value"] == "RAINY"
+    assert freezing_fields["BurnRateModifier"]["resolved"] == -100
+    assert freezing_fields["BurnDecayModifier"]["resolved"] == 20
+
+    assert allegiance_effect["module"] == "UntamedAllegianceSpecialPower"
+    assert allegiance_effect["moduleTag"] == "ModuleTag_Volley"
+    assert allegiance_effect["sourceIni"] == path
+    assert isinstance(allegiance_effect["line"], int) and allegiance_effect["line"] > 0
+    allegiance_fields = {row["key"]: row for row in allegiance_effect["fields"]}
+    assert allegiance_fields["SpecialPowerTemplate"]["value"] == "SpellBookTestVolley"
+    assert allegiance_fields["TargetEnemy"]["value"] == "Yes"
+    assert allegiance_fields["AttributeModifierAffects"] == {
+        "key": "AttributeModifierAffects",
+        "value": "TEST_CREEP_OBJECTFILTER",
+        "resolvedText": "ANY +CaveTrollLair +WargLair ENEMIES",
+    }
+    assert allegiance_fields["AttributeModifierRange"]["resolved"] == 60
+    assert allegiance_fields["AvailableAtStart"]["value"] == "No"
+
+
+def test_scavenger_effect_survives_descriptor_recipe_and_runtime_packaging() -> None:
+    documents = _documents()
+    system_path = "data/ini/object/system/test_system.ini"
+    original = documents[system_path]
+    documents[system_path] = original.replace(
+        b"""  Behavior = PlayerHealSpecialPower ModuleTag_Heal
+    SpecialPowerTemplate = SpellBookTestHeal
+    HealAmount = 0.5
+    HealFX = FX_TestHealBuff
+    HealOCL = OCL_TestHealPing
+    AvailableAtStart = No
+  End
+""",
+        b"""  Behavior = ScavengerSpecialPower ModuleTag_Heal
+    SpecialPowerTemplate = SpellBookTestHeal
+    BountyPercent = 1.0
+    AvailableAtStart = No
+    RequirementsFilterMPSkirmish = SPELL_BOOK_REQUIREMENTS_FILTER
+    RequirementsFilterStrategic = SPELL_BOOK_REQUIREMENTS_FILTER_STRATEGIC
+  End
+""",
+        1,
+    )
+    documents["data/ini/commandbutton.ini"] = documents[
+        "data/ini/commandbutton.ini"
+    ].replace(b"Options = NEED_TARGET_POS", b"Options = NONPRESSABLE", 1)
+    assert documents[system_path] != original
+
+    descriptor = _compile_with(documents, _graph(documents))
+    recipe = compile_spellbook_pack_recipe(descriptor)
+    runtime = compose_spellbook_runtime_document(descriptor, recipe)
+    powers = {
+        row["id"]: row
+        for row in runtime["registration"]["powerTree"]["powers"]
+    }
+    power = powers["SpellBookTestHeal"]
+    effect = power["effect"]
+    fields = {row["key"]: row for row in effect["fields"]}
+
+    assert power["cast"]["options"] == ["NONPRESSABLE"]
+    assert effect["module"] == "ScavengerSpecialPower"
+    assert effect["moduleTag"] == "ModuleTag_Heal"
+    assert effect["sourceIni"] == system_path
+    assert isinstance(effect["line"], int) and effect["line"] > 0
+    assert fields["SpecialPowerTemplate"]["value"] == "SpellBookTestHeal"
+    assert fields["BountyPercent"]["resolved"] == 1.0
+    assert fields["AvailableAtStart"]["value"] == "No"
+    assert fields["RequirementsFilterMPSkirmish"]["value"] == (
+        "SPELL_BOOK_REQUIREMENTS_FILTER"
+    )
+    assert fields["RequirementsFilterStrategic"]["value"] == (
+        "SPELL_BOOK_REQUIREMENTS_FILTER_STRATEGIC"
+    )
+
+
 def test_grantable_science_qualifier_is_preserved() -> None:
     documents = _documents()
     documents["data/ini/science.ini"] = documents["data/ini/science.ini"].replace(

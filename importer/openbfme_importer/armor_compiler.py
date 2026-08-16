@@ -9,8 +9,9 @@ the default-conditions block is the base set, while upgrade-gated blocks
 ``ArmorSetFlag``.  ``WeaponSetUpgrade`` behaviors swap either the weapon
 (forged blades) or an upgrade-gated projectile warhead (fire arrows).
 
-Every emitted number carries its INI line of provenance; anything referenced
-but unresolvable fails closed instead of inventing a value.
+Every emitted number carries its INI line of provenance. Malformed authored
+definitions fail closed; an object reference for which no Armor definition is
+authored records the engine's null-armor passthrough instead of inventing one.
 """
 
 from __future__ import annotations
@@ -135,6 +136,32 @@ def _row_provenance(row: Mapping[str, object]) -> dict[str, object]:
         "sourceIni": str(row.get("sourceIni", "")),
         "line": int(row.get("line", 0)),
     }
+
+
+def _definition_is_authored(
+    documents: Mapping[str, bytes], kind: str, identifier: str
+) -> bool:
+    """Whether an exact named-definition header occurs in the source corpus.
+
+    ``_named_definition_values`` deliberately returns ``None`` for both an
+    absent definition and conflicting duplicate definitions.  Those cases do
+    not have the same engine contract: only absence resolves to a null pointer;
+    an authored-but-ambiguous definition remains a compiler failure.
+    """
+
+    header = re.compile(
+        rf"^{re.escape(kind)}\s+{re.escape(identifier)}\s*$", re.IGNORECASE
+    )
+    for payload in documents.values():
+        try:
+            lines = payload.decode("cp1252").splitlines()
+        except UnicodeDecodeError:
+            continue
+        for raw in lines:
+            clean = raw.strip().split(";", 1)[0].split("//", 1)[0].strip()
+            if header.fullmatch(clean):
+                return True
+    return False
 
 
 def compile_armor_table(
@@ -369,6 +396,32 @@ def compile_armor_contract(
             "unique Armor row"
         )
     base_row, base_set_id = resolved_base
+    base_provenance = _row_provenance(
+        {
+            "sourceIni": base_row.source_virtual_path,
+            "line": base_row.line,
+        }
+    )
+    if not _definition_is_authored(documents, "Armor", base_set_id):
+        # SAGE assigns the lookup result even when it is null
+        # (INI::parseArmorTemplate), then ActiveBody clears current armor when
+        # no template exists. Damage therefore remains unmodified. Retail
+        # BFME2 exercises this path: Outpost and SignalFire both reference the
+        # absent TechStructureArmor definition.
+        return {
+            "setId": None,
+            "authoredSetId": base_set_id,
+            "semantic": (
+                f"authored Armor reference '{base_set_id}' has no definition; "
+                "the SAGE engine resolves it to null and applies unmodified "
+                "damage (100% of every damage type)"
+            ),
+            **base_provenance,
+            "upgrades": [],
+            "danglingUpgrades": [],
+            "excludedUpgradeSets": [],
+            "conditionalSets": [],
+        }
     contract: dict[str, object] = {
         "setId": base_set_id,
         "table": compile_armor_table(
@@ -378,12 +431,7 @@ def compile_armor_contract(
             cache_lock=cache_lock,
             game=game,
         ),
-        **_row_provenance(
-            {
-                "sourceIni": base_row.source_virtual_path,
-                "line": base_row.line,
-            }
-        ),
+        **base_provenance,
         "upgrades": [],
         "danglingUpgrades": [],
         "excludedUpgradeSets": [],
@@ -1017,6 +1065,7 @@ def compile_weapon_upgrades(
     *,
     named_definition_cache: dict | None = None,
     cache_lock: "threading.Lock | None" = None,
+    allow_authored_noop: bool = False,
 ) -> list[dict[str, object]]:
     """Compile each WeaponSetUpgrade behavior's authored damage effect.
 
@@ -1174,26 +1223,41 @@ def compile_weapon_upgrades(
                             if "bow" in candidate.casefold()
                         )
                     )
+                    scenario_authored_noop = (
+                        allow_authored_noop
+                        and upgraded_weapon_id is None
+                        and bool(base_weapon_ids)
+                    )
                     if not (
                         duplicate_player_weapon
                         or default_equipped_noldor_silverthorn
+                        or scenario_authored_noop
                     ):
                         details = "; ".join(failures)
                         raise ArmorCompilerError(
                             f"WeaponSetUpgrade '{upgrade_id}' has no unique "
                             f"upgrade-gated weapon effect: {details}"
                         )
-                    entry.update(
-                        {
-                            "kind": "production-legality",
-                            "semantic": (
+                    entry.update({
+                        "kind": (
+                            "authored-scenario-noop"
+                            if scenario_authored_noop
+                            else "production-legality"
+                        ),
+                        "semantic": (
+                            "scenario-only object retains an authored "
+                            "WeaponSetUpgrade whose effective WeaponSets "
+                            "already equip the referenced weapon; no combat "
+                            "delta is synthesized"
+                            if scenario_authored_noop
+                            else (
                                 "WeaponSetUpgrade authors no damage delta; "
                                 "base WeaponSets already carry the upgraded "
                                 f"weapons {list(base_weapon_ids)}"
-                            ),
-                            "unresolvedEffectNotes": list(failures),
-                        }
-                    )
+                            )
+                        ),
+                        "unresolvedEffectNotes": list(failures),
+                    })
                     by_upgrade_id[upgrade_id.casefold()] = entry
                     upgrades.append(entry)
                     continue

@@ -41,8 +41,12 @@ func _run() -> void:
 	var selected_pack_root := String(
 		PackCapabilityScript.resolve_host_slice_pack(content_db.pack_meta).get("root", "")
 	)
-	var external_root := OS.get_environment("OPENBFME_CONTENT")
-	_check("selected_private_pack_root_available", selected_pack_root != "" and external_root != "" and mod_loader.path_is_within(external_root, selected_pack_root), selected_pack_root)
+	var mounted_pack_roots: Array = content_db.pack_roots
+	var bfme2_oracle_root := _mounted_pack_root_by_id(mounted_pack_roots, mod_loader, "bfme2-men-vslice")
+	_check("selected_host_pack_root_is_mounted", selected_pack_root != "" and mounted_pack_roots.has(selected_pack_root), selected_pack_root)
+	# The roster/SFX block below is specifically the BFME2 1.06 oracle. Keep
+	# that edition boundary explicit even when a RotWK host pack is active.
+	_check("bfme2_audio_oracle_pack_is_explicitly_mounted", bfme2_oracle_root != "", bfme2_oracle_root)
 	if selected_pack_root == "":
 		_finish([])
 		return
@@ -60,6 +64,25 @@ func _run() -> void:
 	)
 	audio.observability_enabled = true
 	_check("legacy_soldier_music_compatibility_and_production_observability_ready", compatibility_ready and production_default_observability_ok)
+	var transport_arrow_before := _routing_log_count(audio.routing_log, "ArrowDrawBow", true)
+	var transport_fallback_before := _routing_log_count(audio.routing_log, "ImpactHorse", true)
+	audio._consume_event({
+		"sequence": 9001,
+		"tick": 0,
+		"kind": "transport.enter",
+		"entity_id": 500,
+		"target_id": 10,
+		"sound": "",
+		"carrier_object_id": "ElvenTransportShip",
+		"passenger_object_id": "GondorFighterHorde",
+		"voice_candidates": ["MissingTransportEntryFixture", "ArrowDrawBow", "ImpactHorse"],
+	})
+	_check(
+		"accepted_transport_entry_routes_first_resolvable_candidate_once",
+		_routing_log_count(audio.routing_log, "ArrowDrawBow", true) == transport_arrow_before + 1
+		and _routing_log_count(audio.routing_log, "ImpactHorse", true) == transport_fallback_before,
+		str(audio.last_route_result),
+	)
 	_check("retail_playback_is_enabled", audio.playback_enabled)
 	_check("non_spatial_players_use_real_godot_players", audio.music_player is AudioStreamPlayer and audio.voice_player is AudioStreamPlayer and audio.sfx_player is AudioStreamPlayer)
 	_check("strict_four_unit_roster_audio_ready", audio.has_complete_roster_audio_closure())
@@ -93,7 +116,7 @@ func _run() -> void:
 				str(routed)
 			)
 			_check("%s_uses_content_db_v1" % label, String(routed.get("source", "")) == "content-db-v1", str(routed))
-			_check("%s_is_contained_header_valid_private_wav" % label, _is_valid_private_wav_route(routed, mod_loader, external_root), str(routed))
+			_check("%s_is_contained_header_valid_private_wav" % label, _is_valid_private_wav_route(routed, mod_loader, mounted_pack_roots, bfme2_oracle_root), str(routed))
 			var bound_by_kind: Dictionary = audio.roster_voice_routes.get(object_id, {})
 			var route_definition: Dictionary = bound_by_kind.get(kind, {})
 			var total_weight := _route_total_weight(route_definition)
@@ -114,7 +137,7 @@ func _run() -> void:
 	if audio.ambient_emitters.is_empty():
 		_check("missing_ambient_pack_closure_fails_visibly", not ambient_diagnostics.is_empty() and _diagnostics_have_prefix(ambient_diagnostics, "missing-event:"), str(ambient_diagnostics))
 	else:
-		_check("available_ambient_streams_create_spatial_players", _valid_spatial_ambient_players(audio.ambient_emitters, mod_loader, external_root), str(ambient_diagnostics))
+		_check("available_ambient_streams_create_spatial_players", _valid_spatial_ambient_players(audio.ambient_emitters, mod_loader, mounted_pack_roots), str(ambient_diagnostics))
 	var unsupported_semantics: Array[String] = audio._ambient_parameter_gaps("FocusedAmbient", {
 		"parameters": [
 			{"field": "Control", "value": "loop"},
@@ -127,7 +150,17 @@ func _run() -> void:
 			{"field": "SubmixSlider", "value": "Ambient"},
 		]
 	})
-	_check("unsupported_range_loop_submix_priority_pitch_semantics_fail_visibly", _diagnostics_have_prefix(unsupported_semantics, "unsupported-attenuation-curve:") and _diagnostics_have_prefix(unsupported_semantics, "unsupported-loop-scheduler:") and _diagnostics_have_prefix(unsupported_semantics, "unsupported-submixslider:") and _diagnostics_have_prefix(unsupported_semantics, "unsupported-priority:") and _diagnostics_have_prefix(unsupported_semantics, "unsupported-pitchshift:"), str(unsupported_semantics))
+	_check("remaining_ambient_scheduler_and_mixer_gaps_fail_visibly", _diagnostics_have_prefix(unsupported_semantics, "unsupported-attenuation-curve:") and _diagnostics_have_prefix(unsupported_semantics, "unsupported-loop-scheduler:") and _diagnostics_have_prefix(unsupported_semantics, "unsupported-submixslider:") and _diagnostics_have_prefix(unsupported_semantics, "unproven-priority-arbitration:") and _diagnostics_have_prefix(unsupported_semantics, "unproven-concurrent-limit-scheduler:") and _diagnostics_have_prefix(unsupported_semantics, "unproven-retail-audio-rng-seed:"), str(unsupported_semantics))
+	var typed_ambient: Dictionary = audio._ambient_runtime_parameters("FocusedAmbient", {
+		"control": "loop", "priority": "lowest", "limit": "2",
+		"pitchshift": "-5 5", "delay": "5000 15000",
+		"minrange": "AMB_MIN_RANGE", "maxrange": "AMB_MAX_RANGE",
+		"volume": "75", "volumeshift": "-15",
+		"type": "world everyone", "submixslider": "Ambient",
+	}, 17)
+	_check("ambient_macro_ranges_resolve_from_authored_soundeffects_defines", is_equal_approx(float(typed_ambient.min_range), 300.0) and is_equal_approx(float(typed_ambient.max_range), 800.0), str(typed_ambient))
+	_check("ambient_pitch_delay_and_gain_ranges_are_typed", float(typed_ambient.pitch_scale) >= 0.95 and float(typed_ambient.pitch_scale) <= 1.05 and float(typed_ambient.delay_ms) >= 5000.0 and float(typed_ambient.delay_ms) <= 15000.0 and float(typed_ambient.linear_gain) >= 0.6375 and float(typed_ambient.linear_gain) <= 0.75 and int(typed_ambient.limit) == 2, str(typed_ambient))
+	_check("ambient_typed_random_substitute_is_deterministic_and_labeled", typed_ambient == audio._ambient_runtime_parameters("FocusedAmbient", {"control": "loop", "priority": "lowest", "limit": "2", "pitchshift": "-5 5", "delay": "5000 15000", "minrange": "AMB_MIN_RANGE", "maxrange": "AMB_MAX_RANGE", "volume": "75", "volumeshift": "-15", "type": "world everyone", "submixslider": "Ambient"}, 17) and String(typed_ambient.selection).contains("unproven-retail-rng-seed"), str(typed_ambient))
 
 	var soldier_select_1: Dictionary = audio.route_roster_voice(AudioScript.SOLDIER_OBJECT_ID, "select", 1)
 	var soldier_select_2: Dictionary = audio.route_roster_voice(AudioScript.SOLDIER_OBJECT_ID, "select", 2)
@@ -140,7 +173,7 @@ func _run() -> void:
 
 	for event_id in AudioScript.REQUIRED_SFX_EVENT_IDS:
 		var routed_sfx: Dictionary = audio.route_audio_event(event_id, 1)
-		_check("sfx_%s_routes_to_private_leaf" % event_id.to_snake_case(), bool(routed_sfx.get("ok", false)) and mod_loader.path_is_within(external_root, String(routed_sfx.get("path", ""))), str(routed_sfx))
+		_check("sfx_%s_routes_to_private_leaf" % event_id.to_snake_case(), bool(routed_sfx.get("ok", false)) and _owning_mounted_pack_root(String(routed_sfx.get("path", "")), mod_loader, mounted_pack_roots) == bfme2_oracle_root, str(routed_sfx))
 	var bow_1: Dictionary = audio.route_audio_event("ArrowDrawBow", 1)
 	var bow_2: Dictionary = audio.route_audio_event("ArrowDrawBow", 2)
 	var bow_11: Dictionary = audio.route_audio_event("ArrowDrawBow", 11)
@@ -249,7 +282,7 @@ func _run() -> void:
 	])
 	_check("knight_attack_structure_ack_is_target_classed", _routing_log_has(audio.routing_log, "GondorKnightVoiceAttackBuilding", true))
 	_check("knight_attack_unit_ack_stays_generic", _routing_log_has(audio.routing_log, "GondorKnightVoiceAttack", true))
-	_check("trebuchet_swing_routes_launch_voice", _routing_log_has(audio.routing_log, "TrebuchetLaunchVoice", true))
+	_check("trebuchet_swing_routes_authored_primary_weapon_fx", _routing_log_has(audio.routing_log, "TrebuchetWeapon", true), str(audio.playable_unit_weapon_sfx.get("bfme2.object.gondor-trebuchet", {})))
 	# WHAT THIS NOW GATES: a per-hit event routes NO sound at all, and the gap is
 	# counted by damage type.
 	#
@@ -332,8 +365,8 @@ func _run() -> void:
 		{"sequence": 4, "kind": "combat.hit_structure", "entity_id": 1, "target_id": 3000, "structure_kind": "farm", "health": 600, "maximum_health": 2000},
 		{"sequence": 5, "kind": "structure.destroyed", "entity_id": 1, "target_id": 3000, "structure_kind": "farm"},
 	])
-	_check("farm_damaged_band_plays_doc_wood_exactly_once", _routing_log_count(audio2.routing_log, "BuildingLightDamageWood", true) == 1, str(_routing_log_count(audio2.routing_log, "BuildingLightDamageWood", true)))
-	_check("farm_really_damaged_band_plays_doc_heavy_wood", _routing_log_count(audio2.routing_log, "BuildingHeavyDamageWood", true) >= 1, str(_routing_log_count(audio2.routing_log, "BuildingHeavyDamageWood", true)))
+	_check("farm_damaged_band_plays_doc_wood_exactly_once", _routing_log_count(audio2.routing_log, "BuildingLightDamageWood", true) == 1 and _routing_log_has_source(audio2.routing_log, "BuildingLightDamageWood", "retail-source-exact-registry-compatibility"), str(_routing_log_count(audio2.routing_log, "BuildingLightDamageWood", true)))
+	_check("farm_really_damaged_band_plays_doc_heavy_wood", _routing_log_count(audio2.routing_log, "BuildingHeavyDamageWood", true) >= 1 and _routing_log_has_source(audio2.routing_log, "BuildingHeavyDamageWood", "retail-source-exact-registry-compatibility"), str(_routing_log_count(audio2.routing_log, "BuildingHeavyDamageWood", true)))
 	_check("farm_destroy_routes_sink_sfx", _routing_log_has(audio2.routing_log, "BuildingSink", true))
 	var farm_doc_select: Dictionary = audio2.play_structure_select("farm")
 	_check("farm_select_prefers_doc_contract", bool(farm_doc_select.get("ok", false)) and String(farm_doc_select.get("event_id", "")) == "GondorFarmSelect", str(farm_doc_select))
@@ -357,15 +390,25 @@ func _run() -> void:
 	# carries only a host-registry copy (republish pending), faction Camp*
 	# routing must fail closed — recorded rejection, never a substitute — and
 	# the gap is reported as a readiness diagnostic instead of being hidden.
+	# Host-slice capability resolution may legitimately choose the BFME2 Men
+	# supplement while the active selection is RotWK. Edition-scoped faction and
+	# EVA assertions follow the actual active pack, not that host capability.
+	var selected_identity: Dictionary = mod_loader.call("pack_identity", String(mod_loader.get("active_pack_root")))
+	var active_edition_prefix := "rotwk" if String(selected_identity.get("packId", "")).begins_with("rotwk-") else "bfme2"
 	var elves_pack_root := ""
+	var elves_audio_pack_root := ""
 	for pack_root_value in content_db.pack_roots:
-		if String(pack_root_value).contains("bfme2-elves-vslice"):
+		var mounted_id := String((mod_loader.call("pack_identity", String(pack_root_value)) as Dictionary).get("packId", ""))
+		if mounted_id == "%s-elves-vslice" % active_edition_prefix:
 			elves_pack_root = String(pack_root_value)
+		elif mounted_id == "%s-elves-eva-overlay" % active_edition_prefix:
+			elves_audio_pack_root = String(pack_root_value)
 	_check("elves_pack_mounted_for_audio", elves_pack_root != "", elves_pack_root)
 	var elves_registry_present := false
 	var elves_eva_map: Dictionary = {}
-	if elves_pack_root != "":
-		var elves_audio_path := String(mod_loader.call("resolve_pack_path", elves_pack_root, "data/audio_events.json"))
+	var elves_eva_semantics: Dictionary = {}
+	if elves_audio_pack_root != "":
+		var elves_audio_path := String(mod_loader.call("resolve_pack_path", elves_audio_pack_root, "data/audio_events.json"))
 		var elves_audio_doc: Variant = _read_json_quiet(elves_audio_path)
 		elves_registry_present = (
 			typeof(elves_audio_doc) == TYPE_DICTIONARY
@@ -378,9 +421,11 @@ func _run() -> void:
 		var eva_doc: Variant = _read_json_quiet(String(mod_loader.call("resolve_pack_path", String(pack_root_value), "data/eva_events.json")))
 		if typeof(eva_doc) == TYPE_DICTIONARY and String((eva_doc as Dictionary).get("schema", "")) == "openbfme.eva-events":
 			elves_eva_map = (eva_doc as Dictionary).get("events", {}) as Dictionary
+			elves_eva_semantics = (eva_doc as Dictionary).get("semantics", {}) as Dictionary
 	_check("elves_pack_ships_v1_audio_registry", elves_registry_present)
 	_check("eva_side_map_resolves_from_mounted_packs", not elves_eva_map.is_empty() and String((elves_eva_map.get("UnderAttackResource", {}) as Dictionary).get("Elves", "")) == "CampElfUnderAttackResource")
-	var elves_faction_audio_mounted: bool = not content_db.get_retail_audio_event("ElfBarracksSelect").is_empty() and not content_db.get_retail_audio_event("CampElfUnderAttackCamp").is_empty()
+	var elves_structure_audio_mounted: bool = not content_db.get_retail_audio_event("ElfBarracksSelect").is_empty()
+	var elves_camp_audio_mounted: bool = not content_db.get_retail_audio_event("CampElfUnderAttackCamp").is_empty()
 	if elves_registry_present and not elves_eva_map.is_empty():
 		var elves_scoped: Dictionary = {}
 		for unit_id in content_db.get_playable_unit_runtimes().keys():
@@ -394,24 +439,27 @@ func _run() -> void:
 			"select": {"barracks": "ElfBarracksSelect"},
 			"eva_damaged": {"barracks": "StructureUnderAttack"},
 			"eva_events": elves_eva_map,
+			"eva_semantics": elves_eva_semantics,
 		}, "Elves")
 		audio3.sync_events([
-			{"sequence": 1, "kind": "voice.select", "entity_id": 1, "target_id": 0, "object_id": "bfme2.object.elven-arwen"},
-			{"sequence": 2, "kind": "construction.started", "entity_id": 3, "target_id": 3000, "object_id": "bfme2.object.elven-porter"},
-			{"sequence": 3, "kind": "eva.base_under_attack", "entity_id": 0, "target_id": 3000, "structure_kind": "barracks"},
-			{"sequence": 4, "kind": "eva.enemy_defeated", "entity_id": 0, "target_id": 0},
-			{"sequence": 5, "kind": "construction.completed", "entity_id": 3, "target_id": 3000, "structure_kind": "barracks", "team": 0},
+			{"sequence": 1, "tick": 10, "kind": "voice.select", "entity_id": 1, "target_id": 0, "object_id": "bfme2.object.elven-arwen"},
+			{"sequence": 2, "tick": 20, "kind": "construction.started", "entity_id": 3, "target_id": 3000, "object_id": "bfme2.object.elven-porter"},
+			{"sequence": 3, "tick": 30, "kind": "eva.base_under_attack", "entity_id": 0, "target_id": 3000, "structure_kind": "barracks"},
+			{"sequence": 4, "tick": 40, "kind": "eva.enemy_defeated", "entity_id": 0, "target_id": 0},
+			{"sequence": 5, "tick": 50, "kind": "construction.completed", "entity_id": 3, "target_id": 3000, "structure_kind": "barracks", "team": 0},
 		])
 		_check("elves_starting_arwen_routes_own_select", _routing_log_has(audio3.routing_log, "ArwenVoiceSelectMS", true))
 		_check("elves_porter_routes_own_build_voice", _routing_log_has(audio3.routing_log, "ElfBuilderVoiceBuild", true))
 		var elven_barracks_select: Dictionary = audio3.play_structure_select("barracks")
-		if elves_faction_audio_mounted:
+		if elves_structure_audio_mounted:
 			_check("elves_structure_select_routes_elven_event", bool(elven_barracks_select.get("ok", false)) and String(elven_barracks_select.get("event_id", "")) == "ElfBarracksSelect", str(elven_barracks_select))
+		else:
+			_check("elves_structure_select_fails_closed_without_faction_content", not bool(elven_barracks_select.get("ok", true)) and String(elven_barracks_select.get("reason", "")) != "", str(elven_barracks_select))
+		if elves_camp_audio_mounted:
 			_check("elves_base_under_attack_plays_camp_elf", _routing_log_has(audio3.routing_log, "CampElfUnderAttackCamp", true))
 			_check("elves_enemy_defeated_plays_camp_elf", _routing_log_has(audio3.routing_log, "CampElfDieEnemy", true))
 			_check("elves_construction_complete_plays_elf_sting", _routing_log_has(audio3.routing_log, "ElfBuilderVoiceCompleteGeneric", true))
 		else:
-			_check("elves_structure_select_fails_closed_without_faction_content", not bool(elven_barracks_select.get("ok", true)) and String(elven_barracks_select.get("reason", "")) != "", str(elven_barracks_select))
 			_check("elves_camp_events_fail_closed_without_faction_content", _routing_log_count(audio3.routing_log, "CampElfUnderAttackCamp", true) == 0 and _routing_log_count(audio3.routing_log, "CampElfDieEnemy", true) == 0)
 			# Flat registries merge across packs: an event another pack's nested
 			# closure legitimately carries may still resolve (never a substitute —
@@ -426,13 +474,15 @@ func _run() -> void:
 	# contract routes base-under-attack, defeat, and construction-complete
 	# announcements for the active men match.
 	var men_eva_map: Dictionary = {}
+	var men_eva_semantics: Dictionary = {}
 	for pack_root_value in content_db.pack_roots:
 		var root := String(pack_root_value)
-		if not root.contains("bfme2-men-eva-overlay"):
+		if String((mod_loader.call("pack_identity", root) as Dictionary).get("packId", "")) != "%s-men-eva-overlay" % active_edition_prefix:
 			continue
 		var eva_doc: Variant = _read_json_quiet(String(mod_loader.call("resolve_pack_path", root, "data/eva_events.json")))
 		if typeof(eva_doc) == TYPE_DICTIONARY and String((eva_doc as Dictionary).get("schema", "")) == "openbfme.eva-events":
 			men_eva_map = (eva_doc as Dictionary).get("events", {}) as Dictionary
+			men_eva_semantics = (eva_doc as Dictionary).get("semantics", {}) as Dictionary
 	_check("men_eva_overlay_ships_side_map", not men_eva_map.is_empty())
 	if not men_eva_map.is_empty():
 		var audio4 = AudioScript.new()
@@ -441,12 +491,13 @@ func _run() -> void:
 		audio4.configure(selected_pack_root, true, {}, {
 			"eva_damaged": {"farm": "UnderAttackResource"},
 			"eva_events": men_eva_map,
+			"eva_semantics": men_eva_semantics,
 		}, "Men")
 		audio4.sync_events([
-			{"sequence": 1, "kind": "eva.base_under_attack", "entity_id": 0, "target_id": 3000, "structure_kind": "farm"},
-			{"sequence": 2, "kind": "eva.enemy_defeated", "entity_id": 0, "target_id": 0},
-			{"sequence": 3, "kind": "eva.ally_defeated", "entity_id": 0, "target_id": 0},
-			{"sequence": 4, "kind": "construction.completed", "entity_id": 3, "target_id": 3000, "structure_kind": "farm", "team": 0},
+			{"sequence": 1, "tick": 10, "kind": "eva.base_under_attack", "entity_id": 0, "target_id": 3000, "structure_kind": "farm"},
+			{"sequence": 2, "tick": 20, "kind": "eva.enemy_defeated", "entity_id": 0, "target_id": 0},
+			{"sequence": 3, "tick": 30, "kind": "eva.ally_defeated", "entity_id": 0, "target_id": 0},
+			{"sequence": 4, "tick": 40, "kind": "construction.completed", "entity_id": 3, "target_id": 3000, "structure_kind": "farm", "team": 0},
 		])
 		_check("men_base_under_attack_plays_camp_soldier", _routing_log_has(audio4.routing_log, "CampSoldierUnderAttackResource", true))
 		_check("men_enemy_defeated_plays_camp_soldier", _routing_log_has(audio4.routing_log, "CampSoldierDieEnemy", true))
@@ -455,21 +506,25 @@ func _run() -> void:
 		audio4.dispose()
 		audio4.free()
 
-	# Fixture-driven EVA arbitration/trigger contract. The mounted packs predate
-	# schema v1 semantics; exact retail samples ride the next batch republish, so
-	# reuse contained event routes while pinning the logical per-faction EVA ids.
+	# Fixture-driven EVA arbitration/trigger contract. Keep the logical EVA ids
+	# synthetic and contained, but route them through the exact Men SideSound
+	# targets authored in eva.ini.  A previous fixture used BodyFallGeneric2 for
+	# both rows merely because an older pack happened to contain that unrelated
+	# world SFX.  That hid a cross-pack dependency and turned a correct selected
+	# audio registry into `missing_event` after the faction republish.
 	var fixture_events := {
 		"CannotBuildDueToCPLimit": {"Men": "ArrowDrawBow"},
 		"CannotBuildDueToFunds": {"Men": "BodyFallSoldier"},
-		"UnitUnderAttack": {"Men": "BodyFallGeneric2"},
+		"UnitUnderAttack": {"Men": "CampSoldierUnderAttack"},
 		"StructureUnderAttack": {"Men": "BuildingLightDamageStone"},
 		"CampDestroyed": {"Men": "BuildingSink"},
 		"RingPickedUpLocal": {"Men": "ImpactHorse"},
-		"AlliedPlayerGainsRing": {"Men": "BodyFallGeneric2"},
+		"AlliedPlayerGainsRing": {"Men": "CampSoldierRingOwn-Ally"},
 		"EnemyPlayerGainsRing": {"Men": "BuildingHeavyDamageStone"},
 		"UpgradeForgedBladesReady": {"Men": "SwordShingClean1ForHordes"},
 		"UpgradeFlameArrowsReady": {"Men": "ArrowDrawBow"},
 		"UpgradeHeavyArmorReady": {"Men": "BodyFallSoldier"},
+		"MissingRegistryFixture": {"Men": "DefinitelyMissingRetailEvaSound"},
 	}
 	var fixture_semantics := {
 		"CannotBuildDueToCPLimit": {"priority": 7, "cooldownMs": 60000},
@@ -483,6 +538,7 @@ func _run() -> void:
 		"UpgradeForgedBladesReady": {"priority": 6, "cooldownMs": 1000},
 		"UpgradeFlameArrowsReady": {"priority": 6, "cooldownMs": 1000},
 		"UpgradeHeavyArmorReady": {"priority": 6, "cooldownMs": 1000},
+		"MissingRegistryFixture": {"priority": 1, "cooldownMs": 1000},
 	}
 	var eva_fixture = AudioScript.new()
 	root.add_child(eva_fixture)
@@ -492,6 +548,23 @@ func _run() -> void:
 		"eva_damaged": {"fortress": "StructureUnderAttack"},
 		"eva_die": {"fortress": "CampDestroyed"},
 	}, "Men")
+	_check(
+		"eva_fixture_uses_authored_men_unit_under_attack_route",
+		String((fixture_events["UnitUnderAttack"] as Dictionary).get("Men", "")) == "CampSoldierUnderAttack"
+			and not content_db.get_retail_audio_event("CampSoldierUnderAttack").is_empty()
+	)
+	_check(
+		"eva_fixture_uses_authored_men_allied_ring_route",
+		String((fixture_events["AlliedPlayerGainsRing"] as Dictionary).get("Men", "")) == "CampSoldierRingOwn-Ally"
+			and not content_db.get_retail_audio_event("CampSoldierRingOwn-Ally").is_empty()
+	)
+	var missing_fixture_route: Dictionary = eva_fixture.play_eva_event("MissingRegistryFixture", 99, 500)
+	_check(
+		"eva_fixture_missing_selected_sound_fails_without_fallback",
+		not bool(missing_fixture_route.get("ok", true))
+			and String(missing_fixture_route.get("reason", "")) == "missing_event",
+		str(missing_fixture_route)
+	)
 	var cp_first: Dictionary = eva_fixture.play_eva_event("CannotBuildDueToCPLimit", 100, 1000)
 	var cp_repeat: Dictionary = eva_fixture.play_eva_event("CannotBuildDueToCPLimit", 101, 1001)
 	_check("eva_command_limit_routes_per_faction_event", bool(cp_first.get("ok", false)) and String(cp_first.get("eva_id", "")) == "CannotBuildDueToCPLimit", str(cp_first))
@@ -558,13 +631,14 @@ func _short_id(object_id: String) -> String:
 	return object_id.trim_prefix("bfme2.object.").replace("-", "_")
 
 
-func _is_valid_private_wav_route(route: Dictionary, mod_loader: Node, external_root: String) -> bool:
+func _is_valid_private_wav_route(route: Dictionary, mod_loader: Node, mounted_roots: Array, expected_pack_root: String = "") -> bool:
 	var path := String(route.get("path", ""))
 	var stream: Variant = route.get("stream")
+	var owning_root := _owning_mounted_pack_root(path, mod_loader, mounted_roots)
 	if (
 		not bool(route.get("ok", false))
-		or external_root == ""
-		or not mod_loader.call("path_is_within", external_root, path)
+		or owning_root == ""
+		or (expected_pack_root != "" and owning_root != expected_pack_root)
 		or not path.to_lower().ends_with(".wav")
 		or not FileAccess.file_exists(path)
 		or not (stream is AudioStreamWAV)
@@ -577,6 +651,24 @@ func _is_valid_private_wav_route(route: Dictionary, mod_loader: Node, external_r
 	file.seek(8)
 	var wave := file.get_buffer(4).get_string_from_ascii()
 	return riff == "RIFF" and wave == "WAVE" and (stream as AudioStreamWAV).get_data().size() > 0
+
+
+func _mounted_pack_root_by_id(mounted_roots: Array, mod_loader: Node, expected_id: String) -> String:
+	for root_value in mounted_roots:
+		var candidate := String(root_value)
+		var identity: Dictionary = mod_loader.call("pack_identity", candidate)
+		if String(identity.get("packId", "")) == expected_id:
+			return candidate
+	return ""
+
+
+func _owning_mounted_pack_root(path: String, mod_loader: Node, mounted_roots: Array) -> String:
+	var owner := ""
+	for root_value in mounted_roots:
+		var candidate := String(root_value)
+		if mod_loader.call("path_is_within", candidate, path) and candidate.length() > owner.length():
+			owner = candidate
+	return owner
 
 
 func _route_total_weight(route: Dictionary) -> int:
@@ -610,6 +702,13 @@ func _routing_log_count(log: Array[Dictionary], event_id: String, expected_ok: b
 	return count
 
 
+func _routing_log_has_source(log: Array[Dictionary], event_id: String, source: String) -> bool:
+	for row in log:
+		if String(row.get("event_id", "")) == event_id and bool(row.get("ok", false)) and String(row.get("source", "")) == source:
+			return true
+	return false
+
+
 func _diagnostics_have_prefix(diagnostics: Array[String], prefix: String) -> bool:
 	for diagnostic in diagnostics:
 		if diagnostic.begins_with(prefix):
@@ -617,13 +716,13 @@ func _diagnostics_have_prefix(diagnostics: Array[String], prefix: String) -> boo
 	return false
 
 
-func _valid_spatial_ambient_players(emitters: Array[Dictionary], mod_loader: Node, external_root: String) -> bool:
+func _valid_spatial_ambient_players(emitters: Array[Dictionary], mod_loader: Node, mounted_roots: Array) -> bool:
 	if emitters.size() != AudioScript.FORDS_AMBIENT_PLACEMENT_COUNT:
 		return false
 	for emitter in emitters:
 		var player: Variant = emitter.get("player")
 		var path := String(emitter.get("path", ""))
-		if not (player is AudioStreamPlayer3D) or not mod_loader.path_is_within(external_root, path) or not FileAccess.file_exists(path):
+		if not (player is AudioStreamPlayer3D) or _owning_mounted_pack_root(path, mod_loader, mounted_roots) == "" or not FileAccess.file_exists(path):
 			return false
 		if (player as AudioStreamPlayer3D).stream == null or (player as AudioStreamPlayer3D).position != emitter.get("position"):
 			return false
@@ -632,24 +731,9 @@ func _valid_spatial_ambient_players(emitters: Array[Dictionary], mod_loader: Nod
 
 ## KNOWN-FAILING ROWS, PINNED BY NAME.
 ##
-## These seven are open pack/registry gaps that predate this lane - they fail
-## identically on a pre-lane tree - and they are not this runner's to fix. The
-## runner used to exit 1 because of them, which made its harness step
-## (tools/gate-m2-focused.ps1, Invoke-ProofChecked) unpassable no matter what the
-## RESULT line said: the whole focused gate died at this step. Pinning them BY
-## NAME instead of by count turns the step into a real ratchet - an eighth
-## failure is red, AND a name dropping off this list unexpectedly (because it was
-## fixed, or because the row stopped running) is red too, so the list cannot rot
-## quietly into a permanent excuse.
-const EXPECTED_FAILURES: Array[String] = [
-	"elves_pack_mounted_for_audio",
-	"elves_pack_ships_v1_audio_registry",
-	"eva_side_map_resolves_from_mounted_packs",
-	"farm_damaged_band_plays_doc_wood_exactly_once",
-	"farm_really_damaged_band_plays_doc_heavy_wood",
-	"men_eva_overlay_ships_side_map",
-	"trebuchet_swing_routes_launch_voice",
-]
+## Kept as an explicit name ratchet. It is empty now: any future failure is red,
+## and a deliberately accepted gap must be reviewed and named here.
+const EXPECTED_FAILURES: Array[String] = []
 
 var failure_labels: Array[String] = []
 

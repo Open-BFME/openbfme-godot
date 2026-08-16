@@ -1016,6 +1016,11 @@ func _test_team_behavior_state_is_hash_inert_until_written_and_reset_by_setup() 
 	)
 	var world := _make_world(sim)
 	world.bind_team(TEAM_NAME, SimScript.PLAYER_TEAM)
+	# Binding a team raises retail's one-frame TEAM_CREATED edge. That edge is
+	# independently hash-visible until Team::updateState consumes it, so clear
+	# the fixture/setup event before isolating TEAM_STATE's empty-is-absent
+	# contract below. The default team alias itself remains hash-inert.
+	sim.clear_team_created_edges()
 	var teams := world.teams()
 	_check("fixture: a TEAM_STATE write lands", teams.set_state(TEAM_NAME, "AI_SYNTH_HOLD"))
 	_check(

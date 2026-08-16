@@ -248,9 +248,14 @@ func _check_compiled_projectile_art(battalion_script: GDScript, controller_scrip
 			and String(evil.get("_pack_root", "")) == fixture_root
 			and String((evil.get("entry", {}) as Dictionary).get("projectileObjectId", "")) == "EvilFactionArrow"
 	)
+	var mounted_good := resolver._compiled_projectile_art(
+		{"_pack_root": fixture_root}, "GoodFactionArrow"
+	) as Dictionary
 	_check(
-		"compiled_art_never_borrows_a_foreign_projectile_row",
-		(resolver._compiled_projectile_art({"_pack_root": fixture_root}, "GoodFactionArrow") as Dictionary).is_empty()
+		"compiled_art_resolves_exact_requested_id_from_owning_mounted_pack",
+		not mounted_good.is_empty()
+			and String(mounted_good.get("_pack_root", "")) != fixture_root
+			and String((mounted_good.get("entry", {}) as Dictionary).get("projectileObjectId", "")) == "GoodFactionArrow"
 	)
 	var art_controller = controller_script.new()
 	root.add_child(art_controller)

@@ -67,6 +67,66 @@ def test_moving_turn_animation_keeps_move_classification() -> None:
     assert _state(row) == "move"
 
 
+def test_ship_turret_none_condition_is_its_authored_default_model() -> None:
+    descriptor = _descriptor("SiegeUnit")
+    descriptor["category"] = "naval"
+    descriptor["kindOf"]["container"].append("SHIP")
+    descriptor["kindOf"]["primaryMember"].append("SHIP")
+    _rehash_descriptor(descriptor)
+    closure = _closure(descriptor)
+    member = descriptor["composition"]["primaryMemberObjectId"]
+    turret_model = f"art/w3d/fi/{str(member).casefold()}_turret.w3d"
+    closure["exactLeaves"].append(
+        _leaf(
+            member,
+            "FixtureTurret",
+            "model",
+            turret_model,
+            ["NONE"],
+            "ModelConditionState NONE",
+            "W3DScriptedModelDraw ModuleTag_TurretDraw",
+        )
+    )
+    attack = next(
+        row
+        for row in closure["exactLeaves"]
+        if row.get("kind") == "animation" and row.get("conditions") == ["FIRING_A"]
+    )
+    attack["conditions"] = ["FIRING_OR_PREATTACK_A"]
+    attack["provenance"]["scopePath"][0] = (
+        "W3DScriptedModelDraw ModuleTag_TurretDraw"
+    )
+    closure["scannedW3d"].append(
+        {
+            "virtualPath": turret_model,
+            "byteLength": 1,
+            "sha256": hashlib.sha256(turret_model.encode()).hexdigest(),
+            "headerIds": {
+                "virtualPath": turret_model,
+                "modelIds": ["FixtureTurret"],
+                "hierarchyIds": ["FIXTURE_TURRET_SKL"],
+                "animationIds": [],
+            },
+            "modelReferences": [],
+            "warnings": [],
+        }
+    )
+    closure["w3dDependencyClosure"]["readBoundary"]["uniqueVirtualPaths"].append(
+        turret_model
+    )
+    closure["w3dDependencyClosure"]["readBoundary"]["uniqueReadCount"] += 1
+    closure["w3dDependencyClosure"]["readBoundary"]["byteLength"] += 1
+    _rehash_closure(closure)
+
+    recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+
+    attack_binding = recipe["runtimeRegistration"]["visual"]["coreAnimations"][
+        "attack"
+    ][0]
+    assert attack_binding["modelSourceW3d"] == turret_model
+    validate_playable_unit_pack_recipe(recipe)
+
+
 def test_selected_animation_state_maps_to_selected() -> None:
     # Retail gondorfighter.ini:519-521 / gondorarcher.ini:499-505: AnimationState
     # = SELECTED loops ATNB (GUManMocap_ATNB / GUArcher_ATNB).
@@ -738,6 +798,94 @@ def test_same_compiler_emits_complete_category_recipes(
     recipe = compile_playable_unit_pack_recipe(descriptor, _closure(descriptor))
     validate_playable_unit_pack_recipe(recipe)
     assert recipe["category"] == category
+
+
+def test_naval_core_presentations_preserve_authored_sink_contract() -> None:
+    descriptor = _descriptor("SiegeUnit")
+    descriptor["category"] = "naval"
+    descriptor["kindOf"]["container"].append("SHIP")
+    descriptor["kindOf"]["primaryMember"].append("SHIP")
+    resolved = descriptor["gameplay"]["simulation"].setdefault("resolved", {})
+    resolved["combat"] = {"weaponSlot": "PRIMARY"}
+    resolved["moduleContracts"] = [
+        {
+            "module": "ShipSlowDeathBehavior",
+            "instanceTag": "ModuleTag_Death",
+            "extraction": "typed",
+            "runtimeStatus": "executable",
+            "sourceIni": "data/ini/object/fixture_ship.ini",
+            "line": 42,
+            "fields": {
+                "SinkDelay": {"milliseconds": 3000},
+                "SinkRate": {"value": 0.40},
+                "DestructionDelay": {"milliseconds": 10000},
+            },
+        }
+    ]
+    _rehash_descriptor(descriptor)
+    closure = _closure(descriptor)
+    closure["exactLeaves"] = [
+        row for row in closure["exactLeaves"] if row.get("kind") != "animation"
+    ]
+    _rehash_closure(closure)
+
+    recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+    presentations = recipe["runtimeRegistration"]["visual"]["corePresentations"]
+
+    assert presentations["idle"]["binding"] == "static-hull"
+    assert presentations["move"]["binding"] == "transform-locomotion"
+    assert presentations["attack"]["binding"] == "weapon-effect"
+    assert presentations["death"]["binding"] == "ship-sink"
+    assert presentations["death"]["contract"] == resolved["moduleContracts"][0]
+    assert recipe["runtimeRegistration"]["visual"]["coreAnimations"] == {}
+    validate_playable_unit_pack_recipe(recipe)
+
+
+def test_drawable_scripts_are_shipped_with_runtime_registration() -> None:
+    descriptor = _descriptor("HeroUnit")
+    closure = _closure(descriptor)
+    member_id = descriptor["composition"]["primaryMemberObjectId"]
+    closure["objects"] = [
+        {
+            "name": member_id,
+            "drawModules": [
+                {
+                    "moduleKind": "W3DScriptedModelDraw",
+                    "drawableActions": [],
+                    "states": [
+                        {
+                            "family": "DefaultModelConditionState",
+                            "conditions": [],
+                            "lifecyclePhases": ["intact"],
+                            "drawableActions": [
+                                {
+                                    "operation": "hide-sub-object",
+                                    "arguments": ["BOW"],
+                                    "supported": True,
+                                    "raw": 'CurDrawableHideSubObject("BOW")',
+                                    "provenance": {
+                                        "definingObject": member_id,
+                                        "virtualPath": "unit.ini",
+                                        "line": 42,
+                                        "inheritanceDistance": 0,
+                                        "scopePath": ["Draw", "Default", "BeginScript"],
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
+    _rehash_closure(closure)
+
+    recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+
+    scripts = recipe["runtimeRegistration"]["visual"]["drawableScripts"]
+    assert scripts[0]["targetObject"] == member_id
+    assert scripts[0]["conditions"] == []
+    assert scripts[0]["actions"][0]["operation"] == "hide-sub-object"
     # The compiler resolves simulation numbers under `gameplay.simulation`, but
     # every runtime consumer reads `registration.simulation` - and the recipe is
     # what bridges them. Pinned here because a break in this ONE deepcopy makes
@@ -792,6 +940,165 @@ def test_recipe_is_deterministic_under_visual_leaf_reordering() -> None:
     second = compile_playable_unit_pack_recipe(descriptor, shuffled)
     assert first["resources"] == second["resources"]
     assert first["runtimeRegistration"] == second["runtimeRegistration"]
+
+
+def test_animation_blend_and_priority_project_with_exact_source_receipts() -> None:
+    descriptor = _descriptor("HeroUnit")
+    closure = _closure(descriptor)
+    idle = next(
+        row
+        for row in closure["exactLeaves"]
+        if row["kind"] == "animation" and row["conditions"] == []
+    )
+    provenance = idle["provenance"]
+    closure["objects"] = [
+        {
+            "name": idle["targetObject"],
+            "drawModules": [
+                {
+                    "states": [
+                        {
+                            "family": "idleanimationstate",
+                            "conditions": [],
+                            "provenance": provenance,
+                            "properties": [
+                                {
+                                    "key": "AnimationBlendTime",
+                                    "value": "15",
+                                    "provenance": {
+                                        **provenance,
+                                        "line": 41,
+                                    },
+                                },
+                                {
+                                    "key": "AnimationPriority",
+                                    "value": "6",
+                                    "provenance": {
+                                        **provenance,
+                                        "line": 42,
+                                    },
+                                },
+                                {
+                                    "key": "StateName",
+                                    "value": "STATE_Idle",
+                                    "provenance": {
+                                        **provenance,
+                                        "line": 40,
+                                    },
+                                },
+                            ]
+                        }
+                    ]
+                }
+            ],
+        }
+    ]
+    _rehash_closure(closure)
+
+    recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+    authored = recipe["runtimeRegistration"]["visual"]["authoredAnimationStates"]
+    binding = next(row for row in authored if row["sourceW3d"] == idle["physicalVirtualPaths"][0])
+    assert binding["AnimationBlendTime"] == 15
+    assert binding["AnimationPriority"] == 6
+    receipts = binding["authoredProperties"]
+    assert [(row["key"], row["value"], row["provenance"]["line"]) for row in receipts] == [
+        ("AnimationBlendTime", 15, 41),
+        ("AnimationPriority", 6, 42),
+    ]
+    state_labels = recipe["runtimeRegistration"]["visual"]["authoredStateLabels"]
+    assert len(state_labels) == 1
+    assert state_labels[0]["StateName"] == "STATE_Idle"
+    assert state_labels[0]["provenance"]["line"] == 40
+    assert state_labels[0]["runtimeSupport"] == "packaged-unimplemented"
+    assert state_labels[0]["linkedAnimations"] == [
+        {"identifier": idle["identifier"], "conditions": []}
+    ]
+
+
+@pytest.mark.parametrize("label", ["", "two words", "9State", "x" * 256])
+def test_state_name_contract_rejects_malformed_label(label: str) -> None:
+    descriptor = _descriptor("HeroUnit")
+    closure = _closure(descriptor)
+    idle = next(
+        row
+        for row in closure["exactLeaves"]
+        if row["kind"] == "animation" and row["conditions"] == []
+    )
+    closure["objects"] = [
+        {
+            "name": idle["targetObject"],
+            "drawModules": [
+                {
+                    "states": [
+                        {
+                            "family": "idleanimationstate",
+                            "conditions": [],
+                            "provenance": idle["provenance"],
+                            "properties": [
+                                {
+                                    "key": "StateName",
+                                    "value": label,
+                                    "provenance": idle["provenance"],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ],
+        }
+    ]
+    _rehash_closure(closure)
+    with pytest.raises(PlayableUnitPackCompilerError, match="StateName"):
+        compile_playable_unit_pack_recipe(descriptor, closure)
+
+
+@pytest.mark.parametrize("second_label", ["STATE_Idle", "Idle"])
+def test_state_name_contract_preserves_authored_duplicate_and_alias_receipts(
+    second_label: str,
+) -> None:
+    descriptor = _descriptor("HeroUnit")
+    closure = _closure(descriptor)
+    idle = next(
+        row
+        for row in closure["exactLeaves"]
+        if row["kind"] == "animation" and row["conditions"] == []
+    )
+    state_name = {
+        "key": "StateName",
+        "value": "STATE_Idle",
+        "provenance": idle["provenance"],
+    }
+    second_state_name = deepcopy(state_name)
+    second_state_name["value"] = second_label
+    second_state_name["provenance"] = {
+        **second_state_name["provenance"],
+        "line": 2,
+    }
+    closure["objects"] = [
+        {
+            "name": idle["targetObject"],
+            "drawModules": [
+                {
+                    "states": [
+                        {
+                            "family": "idleanimationstate",
+                            "conditions": [],
+                            "provenance": idle["provenance"],
+                            "properties": [state_name, second_state_name],
+                        }
+                    ]
+                }
+            ],
+        }
+    ]
+    _rehash_closure(closure)
+    recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+    labels = recipe["runtimeRegistration"]["visual"]["authoredStateLabels"]
+    assert [row["StateName"] for row in labels] == ["STATE_Idle", second_label]
+    assert [row["provenance"]["line"] for row in labels] == [
+        state_name["provenance"]["line"],
+        2,
+    ]
 
 
 def test_selected_states_compile_into_core_animations() -> None:
@@ -1258,18 +1565,84 @@ def test_non_core_authored_animation_is_packaged_and_explicitly_unsupported() ->
     assert any(path in resource["patterns"] for resource in recipe["resources"])
 
 
-def test_mixed_member_horde_fails_until_per_member_presentation_exists() -> None:
+def test_mixed_member_horde_carries_exact_per_member_presentations() -> None:
     descriptor = _descriptor("InfantryHorde")
     descriptor["composition"]["members"].append(
         {"objectId": "SecondMember", "count": 1}
     )
     _rehash_descriptor(descriptor)
-    with pytest.raises(
-        PlayableUnitPackCompilerError, match="secondary member presentation"
-    ):
-        compile_playable_unit_pack_recipe(
-            descriptor, _closure(_descriptor("InfantryHorde"))
+    closure = _closure(_descriptor("InfantryHorde"))
+    primary = descriptor["composition"]["primaryMemberObjectId"]
+    primary_slug = str(primary).casefold()
+    secondary_slug = "secondmember"
+    secondary_leaves = []
+    path_map = {}
+    for row in list(closure["exactLeaves"]):
+        if row["targetObject"] != primary:
+            continue
+        copied = deepcopy(row)
+        copied["targetObject"] = "SecondMember"
+        copied["identifier"] = str(copied["identifier"]).replace(
+            str(primary), "SecondMember"
         )
+        copied["provenance"]["definingObject"] = "SecondMember"
+        replacement_paths = []
+        for path in copied["physicalVirtualPaths"]:
+            replacement = str(path).replace(primary_slug, secondary_slug)
+            path_map[str(path)] = replacement
+            replacement_paths.append(replacement)
+        copied["physicalVirtualPaths"] = replacement_paths
+        secondary_leaves.append(copied)
+    closure["exactLeaves"].extend(secondary_leaves)
+    for row in list(closure["scannedW3d"]):
+        source = str(row["virtualPath"])
+        if source not in path_map:
+            continue
+        copied = deepcopy(row)
+        copied["virtualPath"] = path_map[source]
+        copied["headerIds"]["virtualPath"] = path_map[source]
+        copied["headerIds"]["modelIds"] = [
+            str(value).replace(str(primary), "SecondMember")
+            for value in copied["headerIds"]["modelIds"]
+        ]
+        copied["headerIds"]["hierarchyIds"] = (
+            ["SECONDMEMBER_SKL"]
+            if copied["headerIds"]["hierarchyIds"]
+            else []
+        )
+        copied["headerIds"]["animationIds"] = [
+            str(value)
+            .replace(str(primary).upper(), "SECONDMEMBER")
+            .replace(str(primary), "SecondMember")
+            for value in copied["headerIds"]["animationIds"]
+        ]
+        closure["scannedW3d"].append(copied)
+    for row in list(closure["w3dDependencyClosure"]["embeddedTextures"]):
+        source = str(row["sourceW3dVirtualPath"])
+        if source in path_map:
+            copied = deepcopy(row)
+            copied["sourceW3dVirtualPath"] = path_map[source]
+            copied["provenance"]["virtualPath"] = path_map[source]
+            closure["w3dDependencyClosure"]["embeddedTextures"].append(copied)
+    closure["targets"].append({"name": "SecondMember", "status": "resolved"})
+    closure["targets"].sort(key=lambda row: str(row["name"]).casefold())
+    _rehash_closure(closure)
+
+    recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+    validate_playable_unit_pack_recipe(recipe)
+
+    presentations = recipe["runtimeRegistration"]["visual"]["memberPresentations"]
+    assert [(row["objectId"], row["count"]) for row in presentations] == [
+        ("InfantryMember", 10),
+        ("SecondMember", 1),
+    ]
+    assert all(set(row["coreAnimations"]) == {"idle", "move", "attack", "death"} for row in presentations)
+    assert {
+        row["defaultModelSourceW3d"] for row in presentations
+    } == {
+        "art/w3d/fi/infantrymember_skn.w3d",
+        "art/w3d/fi/secondmember_skn.w3d",
+    }
 
 
 def test_mounted_container_payload_converts_explicitly() -> None:
@@ -2130,6 +2503,59 @@ def test_randomizer_shell_records_explicit_core_animation_exclusions() -> None:
     assert visual["authoredAnimationStates"] == []
     assert sum(row["default"] is True for row in visual["components"]) == 1
     validate_playable_unit_pack_recipe(recipe)
+
+
+def test_scenario_static_presentations_cover_partial_shell_exclusions() -> None:
+    descriptor = _descriptor("MonsterUnit")
+    recipe = compile_playable_unit_pack_recipe(
+        descriptor, _static_shell_closure(descriptor)
+    )
+    runtime = recipe["runtimeRegistration"]
+    runtime["production"] = []
+    runtime["scenarioAdmission"] = {
+        "role": "creature",
+        "surfaces": ["map-placement"],
+    }
+    visual = runtime["visual"]
+    default_model = next(
+        row["sourceW3d"] for row in visual["components"] if row["default"]
+    )
+    visual["corePresentations"] = {
+        "idle": {
+            "binding": "static-model",
+            "modelSourceW3d": default_model,
+            "evidence": "fixture authored static model",
+        },
+        "move": {
+            "binding": "transform-locomotion",
+            "modelSourceW3d": default_model,
+            "evidence": "fixture authored movement",
+        },
+        "death": {
+            "binding": "object-removal",
+            "modelSourceW3d": default_model,
+            "evidence": "fixture authored removal",
+        },
+    }
+    visual["coreAnimationExclusions"] = [
+        row for row in visual["coreAnimationExclusions"] if row["state"] == "attack"
+    ]
+    unsigned = dict(recipe)
+    unsigned.pop("recipeSha256")
+    recipe["recipeSha256"] = hashlib.sha256(
+        json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+    validate_playable_unit_pack_recipe(recipe)
+
+    visual["coreAnimationExclusions"] = []
+    unsigned = dict(recipe)
+    unsigned.pop("recipeSha256")
+    recipe["recipeSha256"] = hashlib.sha256(
+        json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    with pytest.raises(PlayableUnitPackCompilerError, match="core animation"):
+        validate_playable_unit_pack_recipe(recipe)
 
 
 def test_shell_with_authored_animation_is_not_a_randomizer_shell() -> None:

@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from openbfme_importer import sage_cst
-from openbfme_importer.catalog import CatalogEntry
+from openbfme_importer.catalog import CatalogEntry, InstallCatalog
 from openbfme_importer.paths import default_state_root
 from openbfme_importer.module_census import (
     MODULE_CARRIER_KEYS,
@@ -32,8 +32,10 @@ from openbfme_importer.module_census import (
     generate_retail_module_census,
     module_kind_from_assignment,
     object_family,
+    read_catalog_documents,
     scan_module_support,
 )
+from openbfme_importer.sage_ini import parse_flat_named_blocks
 
 ROOT = Path(__file__).resolve().parents[2]
 CENSUS_PATH = ROOT / "game" / "data" / "retail_module_census.json"
@@ -272,6 +274,22 @@ def test_scan_module_support_measures_the_pipeline_closure(tmp_path: Path) -> No
     assert support.status("fakeorphanupdate") == "unhandled"
 
 
+def test_scan_module_support_keeps_explicit_refusal_authoritative(tmp_path: Path) -> None:
+    package = _write_fake_package(tmp_path)
+    used = package / "used.py"
+    used.write_text(
+        used.read_text(encoding="utf-8")
+        + "\nPREREQUISITE_NAME = 'FakeRefusedPower'\n",
+        encoding="utf-8",
+    )
+
+    support = scan_module_support(["FakeRefusedPower"], package_dir=package)
+
+    assert support.status("fakerefusedpower") == "refused"
+    assert "fakerefusedpower" not in support.consumed
+    assert support.refused["fakerefusedpower"] == ("used.py",)
+
+
 def test_scan_module_support_rejects_missing_roots(tmp_path: Path) -> None:
     package = tmp_path / "empty_pkg"
     package.mkdir()
@@ -421,6 +439,133 @@ def test_committed_census_totals_are_coherent() -> None:
             assert member["consumedBy"]
         if member["status"] == "refused":
             assert member["refusedBy"] and not member["consumedBy"]
+
+
+def test_new_runtime_and_deferred_contract_kinds_replace_only_stale_refusals() -> None:
+    census = _committed_census()
+    members = {member["name"]: member for member in census["members"]}
+    for name in (
+        "FreezingRainSpecialPower",
+        "DeflectSpecialPower",
+        "ManTheWallsSpecialPower",
+        "SplitHordeSpecialPower",
+        "ToggleDeploySpecialAbilityUpdate",
+        "UntamedAllegianceSpecialPower",
+    ):
+        assert members[name]["status"] == "consumed"
+        assert members[name]["refusedBy"] == []
+        assert members[name]["refusalReasons"] == []
+    assert members["FreezingRainSpecialPower"]["consumedBy"] == [
+        "spellbook_compiler.py"
+    ]
+    assert members["UntamedAllegianceSpecialPower"]["consumedBy"] == [
+        "spellbook_compiler.py"
+    ]
+    assert members["ManTheWallsSpecialPower"]["classification"] == "E"
+    assert members["ManTheWallsSpecialPower"]["consumedBy"] == [
+        "playable_unit_compiler.py"
+    ]
+    assert members["ToggleDeploySpecialAbilityUpdate"]["consumedBy"] == [
+        "module_contracts.py",
+        "playable_unit_compiler.py",
+    ]
+    for name in ("DeflectSpecialPower", "SplitHordeSpecialPower"):
+        assert members[name]["consumedBy"] == ["module_contracts.py"]
+        assert members[name]["refusedBy"] == []
+        assert members[name]["refusalReasons"] == []
+
+    refused = {
+        member["name"] for member in census["members"] if member["status"] == "refused"
+    }
+    assert refused == set()
+    assert members["SpecialDisguiseUpdate"]["consumedBy"] == [
+        "module_contracts.py",
+        "playable_unit_compiler.py",
+        "special_disguise_prerequisite.py",
+    ]
+    assert members["SpecialDisguiseUpdate"]["refusedBy"] == []
+    assert members["ScavengerSpecialPower"]["consumedBy"] == [
+        "module_contracts.py",
+        "spellbook_compiler.py",
+    ]
+    assert members["ScavengerSpecialPower"]["refusedBy"] == []
+    assert sum(member["status"] == "consumed" for member in census["members"]) == 245
+    assert sum(member["status"] == "refused" for member in census["members"]) == 0
+    assert {
+        tree: sum(
+            member["declarationSites"][tree]
+            for member in census["members"]
+            if member["status"] == "refused"
+        )
+        for tree in ("bfme2-retail", "rotwk-retail")
+    } == {"bfme2-retail": 0, "rotwk-retail": 0}
+
+
+@pytest.mark.skipif(not _RETAIL_AVAILABLE, reason="retail catalogs unavailable")
+def test_man_the_walls_is_exact_inert_legacy_authoring_in_both_editions() -> None:
+    expected_carriers = {
+        "bfme2-retail": [
+            (
+                "GondorGreatKeep",
+                "data/ini/object/goodfaction/structures/men/campsandcastles.ini",
+                2928,
+            )
+        ],
+        "rotwk-retail": [
+            (
+                "ArnorGreatKeep",
+                "data/ini/object/goodfaction/structures/arnor/arnorcampsandcastles.ini",
+                2923,
+            ),
+            (
+                "GondorGreatKeep",
+                "data/ini/object/goodfaction/structures/men/campsandcastles.ini",
+                2927,
+            ),
+        ],
+    }
+    actual_carriers: dict[str, list[tuple[str, str, int]]] = {}
+    for label, path in _RETAIL_CATALOGS.items():
+        documents = dict(read_catalog_documents(InstallCatalog.load(path)))
+        assert not any(
+            block.name.casefold() == "command_specialabilitymanthewalls"
+            for block in parse_flat_named_blocks(
+                documents["data/ini/commandbutton.ini"], "CommandButton"
+            )
+        )
+        assert not any(
+            block.name.casefold() == "battletowercommandset"
+            for block in parse_flat_named_blocks(
+                documents["data/ini/commandset.ini"], "CommandSet"
+            )
+        )
+
+        carriers: list[tuple[str, str, int]] = []
+        for virtual_path, source in documents.items():
+            if b"manthewallsspecialpower" not in source.lower():
+                continue
+            for obj in sage_cst.parse_sage_document(source, virtual_path).objects:
+                modules = [
+                    block
+                    for block in obj.blocks
+                    if block.kind.casefold() == "manthewallsspecialpower"
+                ]
+                if not modules:
+                    continue
+                assert len(modules) == 1
+                assert [
+                    (row.key, row.value) for row in modules[0].assignments
+                ] == [("SpecialPowerTemplate", "ManTheWallsSpecialPower")]
+                top = {row.key.casefold(): row.value for row in obj.assignments}
+                assert top["commandset"] == "BattleTowerCommandSet"
+                kind_of = {token.casefold() for token in top["kindof"].split()}
+                assert kind_of.isdisjoint(
+                    {"garrison", "garrisonable_until_destroyed"}
+                )
+                carriers.append((obj.name, virtual_path, modules[0].line))
+        actual_carriers[label] = sorted(carriers)
+
+    assert actual_carriers == expected_carriers
 
 
 # ---------------------------------------------------------------------------

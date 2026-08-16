@@ -23,6 +23,7 @@ from openbfme_importer.playable_structure_compiler import (
     compile_playable_structure_descriptor,
 )
 from openbfme_importer.playable_unit_compiler import (
+    _geometry_contact_point,
     _geometry_footprint,
     _geometry_offset,
     compile_playable_unit_descriptor,
@@ -62,6 +63,19 @@ _INFANTRY_GEOMETRY = """
   GeometryIsSmall = Yes
 """
 
+_CONTACT_POINTS = """
+  GeometryContactPoint = X:80 Y: -48 Z:7 Grab
+  GeometryContactPoint = X:-32.763 Y:-46.121 Z:0
+  GeometryContactPoint = X:47.546 Y:-38.677 Z:0 Repair
+"""
+
+_PUBLIC_BONES = """
+  Draw = W3DScriptedModelDraw ModuleTag_PublicBones
+    ExtraPublicBone = ARROW_01
+    ExtraPublicBone = SIEGELADDER
+  End
+"""
+
 
 def _with_object_geometry(
     documents: dict[str, bytes], object_name: str, geometry: str
@@ -94,6 +108,32 @@ class GeometryOffsetTests(unittest.TestCase):
 
     def test_empty_offset_is_absent(self) -> None:
         self.assertIsNone(_geometry_offset("   "))
+
+    def test_contact_point_parses_spaced_axes_and_purpose(self) -> None:
+        self.assertEqual(
+            _geometry_contact_point("X:80 Y: -48 Z:7 Grab"),
+            {
+                "position": {"x": 80.0, "y": -48.0, "z": 7.0},
+                "authored": "X:80 Y: -48 Z:7 Grab",
+                "purpose": "GRAB",
+                "purposeAuthored": "Grab",
+                "runtimeSupport": "typed-deferred",
+            },
+        )
+
+    def test_contact_point_without_purpose_is_preserved(self) -> None:
+        self.assertEqual(
+            _geometry_contact_point("X:-32.763 Y:-46.121 Z:0"),
+            {
+                "position": {"x": -32.763, "y": -46.121, "z": 0.0},
+                "authored": "X:-32.763 Y:-46.121 Z:0",
+                "runtimeSupport": "typed-deferred",
+            },
+        )
+
+    def test_malformed_contact_point_fails_closed(self) -> None:
+        self.assertIsNone(_geometry_contact_point("X:10 Y:20 Grab"))
+        self.assertIsNone(_geometry_contact_point("X:10 Y:20 Z:30 Grab Extra"))
 
 
 class GeometryFootprintTests(unittest.TestCase):
@@ -154,7 +194,9 @@ class GeometryFootprintTests(unittest.TestCase):
 class StructureGeometryContractTests(unittest.TestCase):
     def test_structure_descriptor_carries_the_authored_footprint(self) -> None:
         documents = _with_object_geometry(
-            _structure_documents(), "TestKeep", _BARRACKS_GEOMETRY
+            _structure_documents(),
+            "TestKeep",
+            _BARRACKS_GEOMETRY + _CONTACT_POINTS + _PUBLIC_BONES,
         )
 
         descriptor = compile_playable_structure_descriptor("TestKeep", documents)
@@ -174,6 +216,26 @@ class StructureGeometryContractTests(unittest.TestCase):
         self.assertEqual(
             geometry["pieces"][1]["offset"], {"x": -22.0, "y": -30.0, "z": 0.0}
         )
+        contacts = descriptor["gameplay"]["geometryContactPoints"]
+        self.assertEqual(
+            [row.get("purpose", "") for row in contacts],
+            ["GRAB", "", "REPAIR"],
+        )
+        self.assertEqual(
+            contacts[0]["position"], {"x": 80.0, "y": -48.0, "z": 7.0}
+        )
+        self.assertEqual(
+            contacts[0]["sourceIni"], "data/ini/object/units/test_units.ini"
+        )
+        self.assertGreater(contacts[0]["line"], 0)
+        self.assertEqual(
+            [row["bone"] for row in descriptor["gameplay"]["publicBones"]],
+            ["ARROW_01", "SIEGELADDER"],
+        )
+        self.assertEqual(
+            descriptor["gameplay"]["publicBones"][0]["drawModuleTag"],
+            "ModuleTag_PublicBones",
+        )
 
     def test_structure_without_geometry_carries_no_row(self) -> None:
         descriptor = compile_playable_structure_descriptor(
@@ -188,7 +250,9 @@ class UnitGeometryContractTests(unittest.TestCase):
         # The horde container authors no Geometry of its own; retail picks a
         # horde by hit-testing one member's body.
         documents = _with_object_geometry(
-            _structure_documents(), "InfantryMember", _INFANTRY_GEOMETRY
+            _structure_documents(),
+            "InfantryMember",
+            _INFANTRY_GEOMETRY + _CONTACT_POINTS + _PUBLIC_BONES,
         )
 
         descriptor = compile_playable_unit_descriptor("InfantryHorde", documents)
@@ -201,6 +265,14 @@ class UnitGeometryContractTests(unittest.TestCase):
         self.assertEqual(
             geometry["footprint"],
             {"majorRadius": 8.0, "minorRadius": 8.0, "radius": 8.0},
+        )
+        self.assertEqual(
+            descriptor["gameplay"]["geometryContactPoints"][2]["purpose"],
+            "REPAIR",
+        )
+        self.assertEqual(
+            descriptor["gameplay"]["publicBones"][1]["bone"],
+            "SIEGELADDER",
         )
 
     def test_unit_without_geometry_carries_no_row(self) -> None:

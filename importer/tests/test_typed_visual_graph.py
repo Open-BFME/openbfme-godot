@@ -86,8 +86,12 @@ Object VisualBase
       Texture = BaseColor.tga BaseSnow.tga
     End
     IdleAnimationState
+      StateName = STATE_Idle
       Animation = Idle
         AnimationName = BASE_SKL.BASE_IDLE
+        AnimationBlendTime = 15
+        AnimationPriority = 6
+        AnimationSpeedFactorRange = 0.9 1.1
       End
     End
   End
@@ -143,6 +147,32 @@ End
                 if prop.key == "OkToChangeModelColor"
             ).enabled
         )
+        speed = next(
+            prop
+            for prop in item.draw_modules[0].states[1].properties
+            if prop.key == "AnimationSpeedFactorRange"
+        )
+        self.assertEqual(speed.value, "0.9 1.1")
+        self.assertEqual(
+            speed.provenance.scope_path[-1], "Animation Idle"
+        )
+        animation_properties = {
+            prop.key: prop
+            for prop in item.draw_modules[0].states[1].properties
+        }
+        self.assertEqual(animation_properties["AnimationBlendTime"].value, "15")
+        self.assertEqual(animation_properties["AnimationPriority"].value, "6")
+        self.assertEqual(
+            animation_properties["AnimationBlendTime"].provenance.scope_path[-1],
+            "Animation Idle",
+        )
+        state_name = next(
+            prop
+            for prop in item.draw_modules[0].states[1].properties
+            if prop.key == "StateName"
+        )
+        self.assertEqual(state_name.value, "STATE_Idle")
+        self.assertEqual(state_name.provenance.scope_path[-1], "IdleAnimationState")
 
     def test_same_tag_replaces_the_inherited_module_without_asset_fallback(self) -> None:
         documents = {
@@ -474,6 +504,61 @@ End
             ["BaseModel"],
         )
         self.assertEqual(graph.references[0].status, "resolved")
+        state = graph.objects[0].draw_modules[0].states[0]
+        self.assertEqual(len(state.drawable_actions), 1)
+        self.assertEqual(
+            state.drawable_actions[0].neutral(),
+            {
+                "operation": "hide-sub-object",
+                "arguments": ["BOW"],
+                "supported": True,
+                "raw": 'CurDrawableHideSubObject("BOW")',
+                "provenance": {
+                    "definingObject": "IncludedVisual",
+                    "virtualPath": "state.inc",
+                    "line": 3,
+                    "inheritanceDistance": 0,
+                    "scopePath": [
+                        "W3DScriptedModelDraw ModuleTag_Main",
+                        "DefaultModelConditionState",
+                        "BeginScript",
+                    ],
+                },
+            },
+        )
+
+    def test_drawable_script_control_flow_is_retained_as_an_explicit_gap(self) -> None:
+        documents = {
+            "entry.ini": b'''Object Scripted
+ Draw = W3DScriptedModelDraw ModuleTag_Main
+  ModelConditionState = USER_1
+   Model = BaseModel
+   BeginScript
+    if (condition)
+      CurDrawableShowSubObject("SWORD")
+    return
+   EndScript
+  End
+ End
+End
+'''
+        }
+
+        graph = resolve_typed_visual_documents(
+            "entry.ini", documents, ["Scripted"], _index()
+        )
+
+        actions = graph.objects[0].draw_modules[0].states[0].drawable_actions
+        self.assertEqual(
+            [(action.operation, action.supported) for action in actions],
+            [
+                ("unsupported-script-control-flow", False),
+                ("show-sub-object", True),
+                ("unsupported-script-control-flow", False),
+            ],
+        )
+        self.assertEqual(actions[0].raw, "if (condition)")
+        self.assertEqual(actions[1].arguments, ("SWORD",))
 
     def test_authored_tga_resolves_only_to_unique_compiled_dds_stem(self) -> None:
         documents = {

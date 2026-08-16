@@ -76,6 +76,7 @@ var controller_script
 
 
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
+const ModLoaderScript := preload("res://src/content/mod_loader.gd")
 # Turns a GDScript runtime error inside `_run` — which unwinds past every
 # `quit()` and would otherwise leave this headless process idling forever —
 # into a loud non-zero exit. See tests/runner_watchdog.gd.
@@ -118,19 +119,45 @@ func _run() -> void:
 	)
 	_check("contract_and_presentation_are_ready", bool(controller.contract_declared) and bool(controller.contract_ready) and bool(controller.presentation_ready))
 	_check("all_private_definition_and_texture_leaves_validated", int(controller.validated_definition_count) == 35 and int(controller.validated_texture_count) == 15)
-	_check("only_explicit_provisional_selection_is_enabled", int(controller.provisional_runtime_selection_count) == 1 and int(controller.instantiated_emitter_count) == 7)
-	_check("ten_cross_family_collisions_remain_unselected", int(controller.unresolved_family_selection_count) == 10 and _has_diagnostic(controller.diagnostics, "cross-family-precedence-unresolved"))
+	_check("sealed_legacy_contract_is_promoted_by_exact_retail_proof", int(controller.provisional_runtime_selection_count) == 0 and int(controller.unresolved_family_selection_count) == 0 and int(controller.instantiated_emitter_count) == 7)
+	_check("cross_family_blocker_is_retired", not _has_diagnostic(controller.diagnostics, "cross-family-precedence-unresolved"))
 	_check("provisional_render_is_not_claimed_as_parity", not bool(controller.parity_ready) and _has_diagnostic(controller.diagnostics, "water-ripple-render-translation-provisional"))
 	_check("source_indices_are_deterministic", controller.source_placement_indices == [11, 18, 25, 32, 39, 46, 53], str(controller.source_placement_indices))
 	var ripple_container := presentation.get_node_or_null("RetailWaterRipples")
 	_check("seven_visible_gpu_emitters_instantiated", ripple_container != null and ripple_container.get_child_count() == 7 and _gpu_emitter_count(ripple_container) == 7)
 	if ripple_container != null and ripple_container.get_child_count() == 7:
 		var first := ripple_container.get_child(0) as GPUParticles3D
-		_check("retail_selection_metadata_is_explicit", String(first.get_meta("particle_system_id", "")) == "WaterRipplesSmall" and String(first.get_meta("selected_kind", "")) == "FXParticleSystem" and String(first.get_meta("selection_status", "")) == "provisional-explicit-runtime-selection")
+		_check("retail_selection_metadata_is_explicit", String(first.get_meta("particle_system_id", "")) == "WaterRipplesSmall" and String(first.get_meta("selected_kind", "")) == "FXParticleSystem" and String(first.get_meta("selection_status", "")) == "proven-effective-fx-manager-family")
 		_check("source_anchor_offset_is_applied_before_map_transform", first.position.is_equal_approx(Vector3(0.23329276, 0.2, 0.23090822)), str(first.position))
 	else:
 		_check("retail_selection_metadata_is_explicit", false)
 		_check("source_anchor_offset_is_applied_before_map_transform", false)
+
+	var proven_controller = controller_script.new()
+	root.add_child(proven_controller)
+	_check(
+		"generated_proven_family_contract_is_consumed",
+		bool(proven_controller.configure_document(
+			_proven_contract(document), fixture_root,
+			fixture_root.path_join("maps/fords-of-isen-ii"), 0.1,
+			Callable(self, "_source_to_local"), presentation
+		)) and int(proven_controller.provisional_runtime_selection_count) == 0 and int(proven_controller.unresolved_family_selection_count) == 0,
+		String(proven_controller.error)
+	)
+	var selected_particle_root := _selected_particle_pack_root()
+	var selected_controller = controller_script.new()
+	root.add_child(selected_controller)
+	_check("selected_particle_pack_is_present", selected_particle_root != "", selected_particle_root)
+	_check(
+		"selected_sealed_particle_pack_resolves_all_families",
+		selected_particle_root != "" and bool(selected_controller.configure_from_pack(
+			selected_particle_root,
+			selected_particle_root.path_join("maps/fords-of-isen-ii"),
+			0.1, Callable(self, "_source_to_local"), presentation
+		)) and int(selected_controller.provisional_runtime_selection_count) == 0 and int(selected_controller.unresolved_family_selection_count) == 0,
+		String(selected_controller.error)
+	)
+	print("RETAIL_PARTICLE_SELECTED_PACK id=%s digest=%s" % [selected_particle_root.get_base_dir().get_file(), selected_particle_root.get_file()])
 
 	var corrupted := document.duplicate(true)
 	var corrupted_binding: Dictionary = (corrupted.objectBindings as Array)[3]
@@ -185,6 +212,8 @@ func _run() -> void:
 		controller.diagnostics.size(),
 	])
 	controller.queue_free()
+	proven_controller.queue_free()
+	selected_controller.queue_free()
 	corrupt_controller.queue_free()
 	unresolved_controller.queue_free()
 	missing_texture_controller.queue_free()
@@ -227,7 +256,7 @@ func _contract_document() -> Dictionary:
 	return {
 		"schema": "openbfme.fords-particle-bindings",
 		"schemaVersion": 0,
-		"sourceCensusAggregateSha256": "fixture-census".sha256_text(),
+		"sourceCensusAggregateSha256": "135e52baa19ebe7e922fdea7904e6725d3e3e7985cce923d35332a7ff83a3265",
 		"definitionRegistry": registry,
 		"familyResolution": {
 			"status": "provisional-selection-with-cross-family-precedence-unresolved",
@@ -262,6 +291,61 @@ func _contract_document() -> Dictionary:
 			},
 		],
 	}
+
+
+func _selected_particle_pack_root() -> String:
+	var loader = ModLoaderScript.new()
+	var result := ""
+	for pack_root in loader.list_pack_roots():
+		var pack_path := loader.resolve_pack_path(pack_root, "pack.json")
+		if pack_path == "":
+			continue
+		var pack_value: Variant = loader._read_json(pack_path)
+		if typeof(pack_value) != TYPE_DICTIONARY:
+			continue
+		var files_value: Variant = (pack_value as Dictionary).get("files", {})
+		if typeof(files_value) == TYPE_DICTIONARY and (files_value as Dictionary).has("fordsParticleBindings"):
+			result = pack_root
+			break
+	loader.free()
+	return result
+
+
+func _proven_contract(source: Dictionary) -> Dictionary:
+	var document := source.duplicate(true)
+	var selections: Array[Dictionary] = []
+	for system_id in DUPLICATE_IDS:
+		selections.append({
+			"particleSystemId": system_id,
+			"selectedKind": "FXParticleSystem",
+			"status": "proven-effective-fx-manager-family",
+			"crossFamilyPrecedenceProven": true,
+			"generalizesToOtherDuplicateIdentifiers": true,
+		})
+	document["familyResolution"] = {
+		"status": "proven-effective-fx-manager-family",
+		"noGeneralPrecedenceRule": false,
+		"duplicateIdentifierSystemIds": DUPLICATE_IDS.duplicate(),
+		"unresolvedDuplicateIdentifierSystemIds": [],
+		"runtimeSelections": selections,
+		"duplicateSemantics": {
+			"crossFamilyPrecedence": "proven-fx-manager-only",
+			"legacySubsystemActive": false,
+			"repeatedFxParticleSystemSyntax": "proven-last-definition-wins",
+		},
+	}
+	for binding_value in document.objectBindings as Array:
+		var binding := binding_value as Dictionary
+		for system_value in binding.systems as Array:
+			var system := system_value as Dictionary
+			if DUPLICATE_IDS.has(String(system.particleSystemId)):
+				system["familyResolution"] = {
+					"selectedKind": "FXParticleSystem",
+					"status": "proven-effective-fx-manager-family",
+					"crossFamilyPrecedenceProven": true,
+					"generalizesToOtherDuplicateIdentifiers": true,
+				}
+	return document
 
 
 func _structure_binding(type_name: String, count: int, include_medium_smoke: bool) -> Dictionary:

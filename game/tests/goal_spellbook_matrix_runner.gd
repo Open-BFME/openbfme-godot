@@ -271,6 +271,28 @@ const TERRAIN_REVEAL_EXPECTATIONS := {
 		"reveal_radius_source": 250.0,
 		"unconverted_behaviors": [], "auras": [],
 	},
+	# specialpower.ini:940-947 SpellBookEnshroudingMist: radius 150 and tier-2
+	# recharge; science.ini:117-121 costs 10. OCL_SpecialPowerEnshroudingMist
+	# creates EnshroudingMistPing. system.ini:1997-2025 authors a 60000ms
+	# lifetime, enemy GenericDebuff aura, and the CAMOUFLAGE broadcast below.
+	"elves/SpellBookEnshroudingMist": {
+		"kind": "field_ping", "cost": 10, "cooldown_tier": 2, "cursor_radius": 150.0,
+		"object_id": "EnshroudingMistPing", "lifetime_ms": 60000,
+		"reveal_radius_source": 0.0, "unconverted_behaviors": [],
+		"auras": [{
+			"id": "GenericDebuff", "category": "DEBUFF",
+			"range_source": 200.0, "refresh_ms": 2000, "duration_ms": 3000,
+			"modifiers": {"ARMOR": -0.25, "DAMAGE_MULT": 0.75},
+			"target_enemy": true,
+		}],
+		"invisibility_updates": [{
+			"enabled": true, "update_ms": 1000, "broadcast": true,
+			"broadcast_range_source": 150.0, "detection_range_source": 100.0,
+			"invisibility_type": "CAMOUFLAGE",
+			"broadcast_filter": "ANY +HORDE +HERO +DOZER +RohanEntFir_Summoned +RohanEntBirch_Summoned +RohanEntFir +RohanEntBirch +RohanEntAsh +MordorMountainTroll +MordorDrummerTroll +MordorAttackTroll +WildMountainGiant +GoblinCaveTroll +CaveTroll_Slaved +MordorCaveTroll_Summoned +MordorAttackTroll_Summoned +WildMountainGiant_Summoned -Drogoth -GondorGwaihir_Summoned -GondorGwaihir -MordorFellBeast -MordorWitchKingOnFellBeast -ElvenFortressEagle -SpellBookDragonStrikeDragon -KhamulFellBeast -MorgomirFellBeast ALLIES",
+			"source_ini": "data/ini/object/system/system.ini", "line": 2018,
+		}],
+	},
 	# specialpower.ini:1103-1110 SpellBookPalantirVision: RadiusCursorRadius
 	#   300.0, ReloadTime SPELL_RECHARGE_TIME_TIER_1.
 	# science.ini:324-329 SCIENCE_PalantirVision SciencePurchasePointCostMP = 5.
@@ -308,22 +330,9 @@ const TERRAIN_REVEAL_EXPECTATIONS := {
 const REVEAL_COST_ONLY_EXPECTATIONS := {
 	"mordor/SpellBookEyeofSauron": {"cost": 5, "cooldown_tier": 1, "cursor_radius": 75.0},
 }
-# Named, counted fail-closed powers in the terrain/reveal batch. Enshrouding
-# Mist's headline effect is the camouflage broadcast. The 2026-08-05 cook
-# CONVERTS all of InvisibilityUpdate's authored values into the leaf's
-# invisibilityUpdates rows (nugget type CAMOUFLAGE, ELVEN_MIST_CAMOUFLAGE_
-# DETECTION_RANGE = gamedata.ini:144, BroadcastRange
-# ENSHROUDING_MIST_EFFECT_RADIUS = gamedata.ini:22, BroadcastObjectFilter
-# ELVEN_MIST_OBJECT_FILTER = gamedata.ini:145; source cited on the rows), but
-# the sim does not CONSUME invisibilityUpdates yet, so the power stays
-# fail-closed — data-in-pack without runtime consumption is stage 2 of 4, and
-# unlocking it would greenwash a power whose point is concealment behind its
-# secondary GenericDebuff aura. The sim lock now keys on the presence of
-# unconsumed invisibilityUpdates data, so implementing consumption is the only
-# way to unlock this row.
-const TERRAIN_REVEAL_BLOCKED := {
-	"elves/SpellBookEnshroudingMist": "ping 'EnshroudingMistPing' camouflage broadcast is converted but not consumed: the sim does not yet apply invisibilityUpdates (CAMOUFLAGE nugget, detection range, broadcast range and filter ship in the pack unread)",
-}
+# Named fail-closed terrain/reveal rows. Empty after the typed Enshrouding Mist
+# camouflage broadcast gained an authored runtime consumer and live coverage.
+const TERRAIN_REVEAL_BLOCKED := {}
 ## Zero as of 2026-08-04: all seven faction packs are now cooked from the same
 ## PURE RETAIL 2.01 oracle (editions/rotwk/cache/effective-assets), so every
 ## summon row is asserted against its literal. The earlier wording said "layered
@@ -432,7 +441,7 @@ const WEATHER_ALLEGIANCE_EXPECTATIONS := {
 ## directions, so it stopped being a minimum the moment it started failing on a
 ## run that moved UP. A constant called MIN that rejects larger values is a trap
 ## for the next person to read it.
-const EXPECTED_CASTABLE_POWER_COUNT := 65
+const EXPECTED_CASTABLE_POWER_COUNT := 67
 ## RATCHET, in the same shape as retail_slice_runner's passed-count floor, and
 ## added in round 18 to close this runner's biggest blind spot: every check here
 ## accepted `castable=false` as long as the lock carried a NAMED reason, so a
@@ -462,7 +471,9 @@ const EXPECTED_CASTABLE_POWER_COUNT := 65
 ##
 ## The value moved 70 -> 65 this round. That is NOT a regression: five powers
 ## that were being counted as working are now counted as INERT — see
-## EXPECTED_INERT_POWER_KEYS.
+## EXPECTED_INERT_POWER_KEYS. The later 65 -> 67 move is separately earned by
+## the typed Enshrouding Mist camouflage lane and focused Scavenger bounty lane;
+## both identities were removed from the locked set in the same change.
 const EXPECTED_EXCLUDED_PENDING := 1
 ## Named, counted exclusions. One entry as of 2026-08-04; see the
 ## isengard/SpellBookDragonStrike row above for why it is excluded rather than
@@ -479,7 +490,6 @@ const EXPECTED_LOCKED_POWER_KEYS := {
 	"dwarves/SpellBookBombard": true,
 	"dwarves/SpellBookCitadel": true,
 	"dwarves/SpellBookUndermine": true,
-	"elves/SpellBookEnshroudingMist": true,
 	"elves/SpellBookFlood": true,
 	"isengard/SpellBookDevastation": true,
 	"isengard/SpellBookDragonStrike": true,
@@ -487,7 +497,6 @@ const EXPECTED_LOCKED_POWER_KEYS := {
 	"isengard/SpellBookWatcherAlly": true,
 	"mordor/SpellBookBarricade": true,
 	"mordor/SpellBookEvilBombard": true,
-	"wild/SpellBookScavenger": true,
 	"wild/SpellBookWatcherAlly": true,
 }
 
@@ -577,9 +586,26 @@ func _run() -> void:
 	var structures: Dictionary = {}
 	if content_db.has_method("get_playable_structure_runtimes"):
 		structures = content_db.call("get_playable_structure_runtimes") as Dictionary
-
+	var diagnostic_faction := OS.get_environment("OPENBFME_GOAL_DIAGNOSTIC_FACTION").strip_edges().to_lower()
+	var aggregate_only := OS.get_environment("OPENBFME_GOAL_AGGREGATE_ONLY").strip_edges() == "1"
+	print("SPELLBOOK_MATRIX_MODE faction=%s powers=%s aggregate_only=%s" % [
+		diagnostic_faction,
+		OS.get_environment("OPENBFME_GOAL_DIAGNOSTIC_POWERS").strip_edges(),
+		aggregate_only,
+	])
 	for faction_id in FACTIONS:
+		if diagnostic_faction != "" and faction_id != diagnostic_faction:
+			continue
 		_matrix_faction_spellbook(faction_id, structures)
+	if diagnostic_faction != "" and not aggregate_only:
+		print("SPELLBOOK_MATRIX_DIAGNOSTIC faction=%s totals=%s passed=%d failed=%d" % [
+			diagnostic_faction,
+			str((report.get("spellbooks", {}) as Dictionary).get(diagnostic_faction, {}).get("totals", {})),
+			passed,
+			failed,
+		])
+		quit(0 if failed == 0 else 1)
+		return
 
 	_check(
 		"runner", "castable_power_count_is_exact",
@@ -764,6 +790,7 @@ func _matrix_faction_spellbook(faction_id: String, structures: Dictionary) -> vo
 		"unit_rules": builder_unit_rules,
 		"starting_resources": 1000000,
 		"source_map_transform_scale": 0.1,
+		"retail_faction_sides": manifest_script.retail_faction_sides(),
 	})
 	if String(sim.configuration_error) != "":
 		_check(faction_id, "sim_configure", false, String(sim.configuration_error))
@@ -823,11 +850,26 @@ func _matrix_faction_spellbook(faction_id: String, structures: Dictionary) -> vo
 	sim.team_power_points[0] = 100000
 
 	var order: Array = sim._spellbook_order.duplicate()
+	var diagnostic_power := OS.get_environment("OPENBFME_GOAL_DIAGNOSTIC_POWER").strip_edges()
+	var diagnostic_powers: Array[String] = []
+	for value in OS.get_environment("OPENBFME_GOAL_DIAGNOSTIC_POWERS").split(",", false):
+		var selected := String(value).strip_edges()
+		if selected != "":
+			diagnostic_powers.append(selected)
+	var aggregate_only := OS.get_environment("OPENBFME_GOAL_AGGREGATE_ONLY").strip_edges() == "1"
 	var castable_count := 0
 	var unsupported_count := 0
 	var cast_ok_count := 0
+	var processed_count := 0
 	for power_id_value in order:
 		var power_id := String(power_id_value)
+		if diagnostic_power != "" and power_id != diagnostic_power:
+			continue
+		if not diagnostic_powers.is_empty() and power_id not in diagnostic_powers:
+			continue
+		processed_count += 1
+		var power_started_ms := Time.get_ticks_msec()
+		print("SPELLBOOK_MATRIX_POWER_START faction=%s power=%s" % [faction_id, power_id])
 		var row: Dictionary = sim._spellbook_powers.get(power_id, {}) as Dictionary
 		var power_report: Dictionary = {
 			"castable": bool(row.get("castable", false)),
@@ -854,6 +896,8 @@ func _matrix_faction_spellbook(faction_id: String, structures: Dictionary) -> vo
 			)
 			power_report["status"] = "unsupported"
 			faction_report["powers"][power_id] = power_report
+			print("SPELLBOOK_MATRIX_POWER_DONE faction=%s power=%s status=unsupported elapsed_ms=%d" % [
+				faction_id, power_id, Time.get_ticks_msec() - power_started_ms])
 			continue
 		# CASTS, BUT CHANGES NOTHING. Counted under its own name and NOT as
 		# castable — see EXPECTED_INERT_POWER_KEYS for the evidence and for why the
@@ -868,6 +912,12 @@ func _matrix_faction_spellbook(faction_id: String, structures: Dictionary) -> vo
 		else:
 			castable_count += 1
 			total_castable += 1
+		if aggregate_only:
+			power_report["status"] = "aggregate-castable-inert" if inert else "aggregate-castable"
+			faction_report["powers"][power_id] = power_report
+			print("SPELLBOOK_MATRIX_POWER_DONE faction=%s power=%s status=%s elapsed_ms=%d" % [
+				faction_id, power_id, power_report["status"], Time.get_ticks_msec() - power_started_ms])
+			continue
 		# Seed a friendly battalion so heal/rally-style powers have allies in range.
 		_ensure_ally_for_cast(sim, 0)
 		# Purchase may require prerequisites already owned — buy in tree order.
@@ -920,7 +970,15 @@ func _matrix_faction_spellbook(faction_id: String, structures: Dictionary) -> vo
 		var entity_ids_before: Array[int] = sim.entity_ids().duplicate()
 		var production_before: Dictionary = _structure_production_multipliers(sim)
 		var rally_before: Dictionary = _battalion_rally_fields(sim)
-		var cast: Dictionary = sim.cast_power(0, power_id, cast_point)
+		var cast: Dictionary
+		if bool(row.get("nonpressable", false)):
+			var consumed := sim._consumed_nonpressable_powers.get(0, {}) as Dictionary
+			cast = {
+				"ok": consumed.has(power_id),
+				"reason": "activated-on-purchase" if consumed.has(power_id) else "nonpressable-not-activated",
+			}
+		else:
+			cast = sim.cast_power(0, power_id, cast_point)
 		var cast_ok := bool(cast.get("ok", false))
 		var cast_reason := String(cast.get("reason", ""))
 		# Empty-target outcomes prove the effect filter ran, but they are NOT
@@ -1006,9 +1064,13 @@ func _matrix_faction_spellbook(faction_id: String, structures: Dictionary) -> vo
 			)
 			power_report["status"] = "castable-inert-production/" + String(power_report.get("status", ""))
 		faction_report["powers"][power_id] = power_report
+		print("SPELLBOOK_MATRIX_POWER_DONE faction=%s power=%s status=%s elapsed_ms=%d" % [
+			faction_id, power_id, power_report.get("status", "unknown"),
+			Time.get_ticks_msec() - power_started_ms])
 
 	faction_report["totals"] = {
-		"powers": order.size(),
+		"powers": processed_count,
+		"configured_powers": order.size(),
 		"castable": castable_count,
 		"unsupported_named": unsupported_count,
 		"cast_ok": cast_ok_count,
@@ -1393,18 +1455,33 @@ func _assert_terrain_reveal_effect(faction_id: String, power_id: String, row: Di
 			"modifiers": modifiers,
 			"target_enemy": aura.get("target_enemy", null),
 		})
+	var actual_invisibility: Array = []
+	for policy_value in Array(effect.get("invisibility_updates", [])):
+		var policy := policy_value as Dictionary
+		actual_invisibility.append({
+			"enabled": bool(policy.get("enabled", false)),
+			"update_ms": _ticks_to_ms(int(policy.get("update_ticks", 0))),
+			"broadcast": bool(policy.get("broadcast", false)),
+			"broadcast_range_source": float(policy.get("broadcast_range_source", -1.0)),
+			"detection_range_source": float(policy.get("detection_range_source", -1.0)),
+			"invisibility_type": String(policy.get("invisibility_type", "")),
+			"broadcast_filter": " ".join(Array(policy.get("broadcast_filter", []))),
+			"source_ini": String(policy.get("source_ini", "")),
+			"line": int(policy.get("line", 0)),
+		})
 	var ping_ok := (
 		String(effect.get("object_id", "")) == String(expected.get("object_id", ""))
 		and _ticks_to_ms(int(effect.get("lifetime_ticks", 0))) == int(expected.get("lifetime_ms", 0))
 		and is_equal_approx(float(effect.get("reveal_radius_source", -1.0)), float(expected.get("reveal_radius_source", -2.0)))
 		and Array(effect.get("unconverted_behaviors", [])) == Array(expected.get("unconverted_behaviors", []))
 		and actual_auras == Array(expected.get("auras", []))
+		and actual_invisibility == Array(expected.get("invisibility_updates", []))
 	)
 	_check(faction_id, "terrain_reveal_effect_" + power_id, ping_ok,
-		"object=%s lifetime_ms=%d reveal=%s unconverted=%s auras=%s expected=%s" % [
+		"object=%s lifetime_ms=%d reveal=%s unconverted=%s auras=%s invisibility=%s expected=%s" % [
 			effect.get("object_id"), _ticks_to_ms(int(effect.get("lifetime_ticks", 0))),
 			effect.get("reveal_radius_source"), effect.get("unconverted_behaviors"),
-			actual_auras, expected])
+			actual_auras, actual_invisibility, expected])
 
 
 func _assert_terrain_reveal_runtime(sim, faction_id: String, power_id: String, row: Dictionary, cast_point: Vector2) -> void:
@@ -1553,6 +1630,9 @@ func _assert_terrain_reveal_runtime(sim, faction_id: String, power_id: String, r
 			"caster must still hold its reveal when the opponent is checked; team0=%s" % [
 				sim.team_revealed_regions(0)])
 	# Stat-bearing auras must land on a covered unit of the authored relation.
+	var camouflage_id := 0
+	if not Array(expected.get("invisibility_updates", [])).is_empty():
+		camouflage_id = _place_filter_eligible_ally(sim, cast_point)
 	var stat_auras: Array = []
 	for aura_value in Array(expected.get("auras", [])):
 		if not (aura_value as Dictionary).get("modifiers", {}).is_empty():
@@ -1560,10 +1640,11 @@ func _assert_terrain_reveal_runtime(sim, faction_id: String, power_id: String, r
 	if not stat_auras.is_empty():
 		var aura: Dictionary = stat_auras[0] as Dictionary
 		var refresh_ticks := maxi(1, int(float(aura.get("refresh_ms", 0)) / 1000.0 / SimScript.TICK_SECONDS))
-		var covered_id := _place_filter_eligible_ally(sim, cast_point)
+		var target_team := 1 if bool(aura.get("target_enemy", false)) else 0
+		var covered_id := _place_filter_eligible_target(sim, target_team, cast_point)
 		_advance_effect_lifecycle(sim, refresh_ticks * 2)
 		var applied := false
-		for id in sim.living_ids(0):
+		for id in sim.living_ids(target_team):
 			var unit: Dictionary = sim.entity(id)
 			if Vector2(unit.get("position", Vector2.ZERO)).distance_to(cast_point) > float(aura.get("range_source", 0.0)) * scale:
 				continue
@@ -1571,8 +1652,12 @@ func _assert_terrain_reveal_runtime(sim, faction_id: String, power_id: String, r
 				if String(key_value).begins_with("field-ping:%s:%s" % [String(expected.get("object_id", "")), String(aura.get("id", ""))]):
 					applied = true
 		_check(faction_id, "field_ping_aura_applies_" + power_id, applied,
-			"no covered unit carried the authored %s window; eligible_id=%d roster=%s" % [
-				String(aura.get("id", "")), covered_id, _ally_roster(sim)])
+			"no covered team %d unit carried the authored %s window; eligible_id=%d roster=%s" % [
+				target_team, String(aura.get("id", "")), covered_id, _team_roster(sim, target_team)])
+	if camouflage_id != 0:
+		_check(faction_id, "field_ping_camouflage_applies_" + power_id,
+			sim._stealth_active(sim.entity(camouflage_id)),
+			"eligible_id=%d entity=%s" % [camouflage_id, sim.entity(camouflage_id)])
 	_advance_effect_lifecycle(sim, lifetime_ticks)
 	var survivor := false
 	for ping_value in sim._field_pings:
@@ -1586,6 +1671,10 @@ func _assert_terrain_reveal_runtime(sim, faction_id: String, power_id: String, r
 	_check(faction_id, "field_ping_reveal_region_cleared_" + power_id,
 		sim.team_revealed_regions(0).is_empty(),
 		"regions=%s" % [sim.team_revealed_regions(0)])
+	if camouflage_id != 0:
+		_check(faction_id, "field_ping_camouflage_revoked_" + power_id,
+			not sim._stealth_active(sim.entity(camouflage_id)),
+			"eligible_id=%d entity=%s" % [camouflage_id, sim.entity(camouflage_id)])
 
 
 func _assert_weather_allegiance_effect(faction_id: String, power_id: String, row: Dictionary) -> void:
@@ -1666,7 +1755,7 @@ func _stage_weather_allegiance_targets(sim, row: Dictionary, cast_point: Vector2
 		"weather_anticategory":
 			return {"enemy_id": _clone_battalion_onto_team(sim, 1, cast_point)}
 		"creep_allegiance":
-			return _seed_creep_lairs_for_allegiance(sim, cast_point, float(effect.get("range_source", 0.0)))
+			return _seed_scenario_lairs_for_allegiance(sim, cast_point, float(effect.get("range_source", 0.0)))
 	return {}
 
 
@@ -1702,33 +1791,38 @@ func _clone_battalion_onto_team(sim, team: int, point: Vector2) -> int:
 	return new_id
 
 
-func _seed_creep_lairs_for_allegiance(sim, cast_point: Vector2, range_source: float) -> Dictionary:
+func _seed_scenario_lairs_for_allegiance(sim, cast_point: Vector2, range_source: float) -> Dictionary:
 	## Two lairs of authored types: one inside the power's radius (must defect,
-	## with its guards) and one well outside it (must NOT). Seeded through the
-	## sim's own creep path so the guards, their unit rules and the lair roster
-	## are the real thing.
+	## with its guards) and one well outside it (must NOT). Both structures and
+	## their children come from the selected RotWK scenario descriptors, so this
+	## exercises the exact SpawnBehavior -> SlavedUpdate graph and faction
+	## CommandSetUpgrade rather than the retired provisional creep table.
 	var scale: float = sim._spellbook_world_scale()
 	var radius := range_source * scale
 	var far_point := cast_point + Vector2(radius * 5.0 + 10.0, 0.0)
-	sim.creep_lairs_enabled = true
-	sim._creep_lair_placements = [
-		{"type_name": "CaveTrollLair", "position": cast_point, "yaw": 0.0, "source_index": 0, "binding_status": "matrix-test"},
-		{"type_name": "SpiderLair", "position": far_point, "yaw": 0.0, "source_index": 1, "binding_status": "matrix-test"},
-	]
-	sim._seed_creep_lairs()
-	var near_id := 0
-	var far_id := 0
-	for structure_id in sim.structure_ids(SimScript.CREEP_TEAM):
-		var lair: Dictionary = sim.structure(structure_id)
-		if String(lair.get("structure_kind", "")) != "creep_lair":
-			continue
-		if String(lair.get("creep_type_name", "")) == "CaveTrollLair":
-			near_id = structure_id
-		elif String(lair.get("creep_type_name", "")) == "SpiderLair":
-			far_id = structure_id
+	var content_db = root.get_node_or_null("ContentDB")
+	if content_db == null:
+		return {}
+	# This fixture is the RotWK spellbook matrix. Install only the sealed neutral
+	# scenario tables needed by this cast, after faction configuration, so the
+	# neutral rows cannot enter ordinary production validation or HUD registries.
+	sim._rules["game"] = "rotwk"
+	for key in ["scenario_unit_runtimes", "scenario_structure_runtimes"]:
+		sim._rules[key] = content_db.call("get_%s" % key, "rotwk")
+	var near_id: int = sim.spawn_scenario_structure(
+		"CaveTrollLair", SimScript.CREEP_TEAM, cast_point, "map-placement", 60001
+	)
+	var far_id: int = sim.spawn_scenario_structure(
+		"SpiderLair", SimScript.CREEP_TEAM, far_point, "map-placement", 60002
+	)
+	# SpawnBehavior's InitialBurst is stepped by the sim, not hand-constructed.
+	sim._step_spawn_behaviors()
 	var guard_ids: Array = []
 	if near_id != 0:
-		guard_ids = (sim.structure(near_id).get("creep_guard_ids", []) as Array).duplicate()
+		guard_ids = (
+			(sim.structure(near_id).get("spawn_behavior", {}) as Dictionary)
+			.get("spawned_ids", []) as Array
+		).duplicate()
 	return {"near_lair_id": near_id, "far_lair_id": far_id, "near_guard_ids": guard_ids}
 
 
@@ -1846,54 +1940,81 @@ func _assert_creep_allegiance_runtime(sim, faction_id: String, power_id: String,
 	var guard_ids: Array = staged.get("near_guard_ids", []) as Array
 	var near: Dictionary = sim.structure(near_id)
 	var far: Dictionary = sim.structure(far_id)
+	var faction_upgrade := "Upgrade_%sFaction" % String({
+		"angmar": "Angmar", "dwarves": "Dwarf", "elves": "Elf",
+		"isengard": "Isengard", "men": "Men", "mordor": "Mordor", "wild": "Wild",
+	}.get(faction_id, ""))
 	_check(faction_id, "creep_allegiance_lair_defects_" + power_id,
 		near_id != 0
 		and int(near.get("team", -1)) == 0
-		and int(near.get("creep_defected_team", -1)) == 0
-		and int(near.get("creep_next_respawn_tick", -1)) == 0,
+		and String(near.get("scenario_game", "")) == "rotwk"
+		and String(near.get("source_object_id", "")) == "CaveTrollLair"
+		and String(near.get("command_set_id", "")) == "NeutralTrollCaveCommandSet"
+		and (near.get("completed_upgrades", []) as Array).has(faction_upgrade),
 		"near_lair=%s" % [near])
 	# The authored radius is the whole targeting rule: a lair outside it keeps
 	# its creep owner. Without this the power would read as "convert every lair".
 	_check(faction_id, "creep_allegiance_respects_radius_" + power_id,
 		far_id != 0 and int(far.get("team", -1)) == SimScript.CREEP_TEAM
-		and not far.has("creep_defected_team"),
+		and String(far.get("scenario_game", "")) == "rotwk"
+		and String(far.get("command_set_id", "")) == "EmptyCommandSet"
+		and not (far.get("completed_upgrades", []) as Array).has(faction_upgrade),
 		"far_lair=%s radius_source=%s" % [far, expected.get("range_source")])
 	var guards_ok := not guard_ids.is_empty()
 	for guard_value in guard_ids:
 		var guard: Dictionary = sim.entity(int(guard_value))
-		guards_ok = guards_ok and int(guard.get("team", -1)) == 0 and not guard.has("creep_lair_id")
+		guards_ok = (
+			guards_ok
+			and int(guard.get("team", -1)) == 0
+			and int(guard.get("spawn_behavior_parent_id", 0)) == near_id
+			and int((guard.get("slaved_update", {}) as Dictionary).get("master_id", 0)) == near_id
+		)
 	_check(faction_id, "creep_allegiance_guards_follow_lair_" + power_id, guards_ok,
 		"guards=%s" % [guard_ids])
-	# The defected lair must stop producing rather than invent units: retail
-	# switches it to *_FromDefectedLair templates that are not in the pack.
+	# Allegiance changes ownership and the authored CommandSetUpgrade surface; it
+	# does not rewrite or disable the independent SpawnBehavior contract.
 	_advance_effect_lifecycle(sim, 60)
 	var defected: Dictionary = sim.structure(near_id)
-	_check(faction_id, "creep_allegiance_defected_lair_does_not_produce_" + power_id,
-		Array(defected.get("creep_guard_ids", [])).is_empty()
-		and int(defected.get("creep_next_respawn_tick", -1)) == 0
+	var spawned_ids := (
+		(defected.get("spawn_behavior", {}) as Dictionary).get("spawned_ids", []) as Array
+	)
+	var spawn_policy := defected.get("spawn_behavior", {}) as Dictionary
+	_check(faction_id, "creep_allegiance_preserves_authored_spawn_behavior_" + power_id,
+		spawned_ids == guard_ids
+		and (spawn_policy.get("templates", []) as Array) == ["CaveTroll_Slaved"]
+		and int(spawn_policy.get("replace_ticks", 0)) == 1200
 		and int(defected.get("team", -1)) == 0,
 		"defected_lair=%s" % [defected])
 
 
 func _place_filter_eligible_ally(sim, point: Vector2) -> int:
+	return _place_filter_eligible_target(sim, 0, point)
+
+
+func _place_filter_eligible_target(sim, team: int, point: Vector2) -> int:
 	## GENERIC_BUFF_RECIPIENT_OBJECT_FILTER (gamedata.ini:82) is
 	## `ANY +INFANTRY +CAVALRY ... -DOZER -HERO -STRUCTURE ...`, so a fortress
 	## roster whose first row is a builder or a hero can never carry the buff.
 	## Stand the first row the authored filter actually accepts in the field.
-	for entity_id in sim.living_ids(0):
+	for entity_id in sim.living_ids(team):
 		var entity: Dictionary = sim.entity(entity_id)
 		if bool(entity.get("is_builder", false)):
 			continue
 		if String(entity.get("category", "")) == "hero":
 			continue
 		entity["position"] = point
+		sim._spatial_sync(entity)
 		return entity_id
 	return 0
 
 
 func _ally_roster(sim) -> Array:
+	return _team_roster(sim, 0)
+
+
+func _team_roster(sim, team: int) -> Array:
 	var roster: Array = []
-	for entity_id in sim.living_ids(0):
+	for entity_id in sim.living_ids(team):
 		var entity: Dictionary = sim.entity(entity_id)
 		roster.append("%d:%s:%s%s" % [
 			entity_id, String(entity.get("object_id", "")), String(entity.get("category", "")),

@@ -713,8 +713,9 @@ func _test_battalion_eligibility_matrix() -> void:
 			and String(gated.get("required_upgrade", "")) == "Upgrade_TechnologyGondorFireArrows",
 		str(gated)
 	)
-	# Eligibility is compiled evidence: a purchase row without a compiled
-	# weapon/armor/level effect fails the whole setup closed.
+	# Eligibility is compiled evidence. A purchase row without a compiled
+	# weapon/armor/level effect is omitted from the command surface while the
+	# otherwise playable unit remains admitted.
 	var broken_rules := _fixture_rules()
 	var broken_doc := _fighter_doc()
 	((broken_doc["registration"] as Dictionary)["simulation"] as Dictionary)["resolved"] = {
@@ -724,10 +725,18 @@ func _test_battalion_eligibility_matrix() -> void:
 	((broken_doc["registration"] as Dictionary)["gameplay"] as Dictionary).erase("levelUpgrades")
 	(broken_rules["playable_unit_runtimes"] as Dictionary)["GondorFighterHorde"] = broken_doc
 	var broken_sim := _new_sim(broken_rules)
+	var broken_unit_type: String = String(UnitAdapterScript.simulation_rule(broken_doc).get("unit_type", ""))
+	var broken_member_id: String = UnitAdapterScript.runtime_member_id(broken_doc)
 	_check(
-		"purchase_without_compiled_effect_fails_closed",
-		broken_sim.configuration_error.contains("Upgrade_GondorForgedBlades"),
-		broken_sim.configuration_error
+		"purchase_without_compiled_effect_is_deferred_from_surface",
+		broken_sim.configuration_error == ""
+			and not broken_sim._unit_upgrade_commands.has(broken_unit_type)
+			and broken_sim.units_without_upgrade_commands.has(broken_member_id),
+		"error=%s commands=%s gaps=%s" % [
+			broken_sim.configuration_error,
+			str(broken_sim._unit_upgrade_commands),
+			str(broken_sim.units_without_upgrade_commands),
+		]
 	)
 
 
@@ -870,21 +879,40 @@ func _test_legacy_forge_fallback() -> void:
 
 const LEVEL_SWAP_GAP_REASONS := {
 	"GondorWorkshop": "bounded-workshop model-state evidence path binds no upgrade-chain levels",
+	"GoblinFissure": "selected hull exposes no applied staged node at one authored level",
 }
 const LEVEL_SWAP_UNMATCHED_TOKENS := {
+	"AngmarBarracks": ["V1S", "V2S"],
+	"AngmarDen": ["BaseS", "V1S", "V2S"],
+	"AngmarFortressCitadel": ["IceDoorL", "IceDoorR", "IceM1_1", "IceM1_2", "IceM3_1", "IceM3_2", "IceMunMist_01D2", "IceMunMist_03AD2", "IceMunMist_03BD2"],
+	"AngmarHallofTwilight": ["V2Glow_1", "V2Glow_2", "V2Glow_3", "V2Glow_4", "V2_RuneGlow"],
+	"AngmarMill": ["BaseWall"],
+	"DwarvenFortressCitadel": ["DBFRBARREL"],
+	"GoblinCave": ["DrawFloorBase", "DrawFloorV1"],
+	"GoblinFissure": ["DrawFloor", "DrawFloorV2"],
 	"GondorArcherRange": ["V1_PIECE*", "V2_PIECE*"],
 	"GondorBarracks": ["V1FLAG", "V1_PIECE*", "V2A", "V2_PIECE*"],
+	"GondorFarm": ["V1_PIECE*", "V2_PIECE*"],
 	"GondorForge": ["V1_PIECE*", "V2FLAG", "V2_PIECE*"],
 	"GondorStable": ["V1_PIECE*", "V2_PIECE*"],
 	"IsengardArmory": ["DrawFloor_Bib", "DrawFloor_V1"],
+	"IsengardFurnace": ["DrawFloor_Bib", "DrawFloor_V1", "V2_PIECE*"],
+	"IsengardLumberMill": ["DrawFloor_Bib", "DrawFloor_V1"],
+	"IsengardSiegeWorks": ["DrawFloor_Bib", "DrawFloor_V1"],
+	"IsengardTavern": ["V1_PIECE*", "V2", "V2FLAG", "V2_PIECE*"],
 	"IsengardUrukPit": ["DrawFloor_Bib", "DrawFloor_V1"],
 	"IsengardWargPit": ["DrawFloor_Bib", "DrawFloor_V1"],
+	"MordorFortressCitadel": ["MBFDPyres1"],
 	"MordorHaradrimPalace": ["Banner_Harad02", "Banner_Harad03", "Banner_Harad04", "DrawFloorV1", "DrawFloorV2", "V1A", "V1_PIECE*", "V2B", "V2_PIECE*"],
+	"MordorLumberMill": ["DrawFloor_Bib", "DrawFloor_V1"],
 	"MordorMumakilPen": ["BANNER01", "BANNER02", "BANNER03", "DrawFloorV1", "DrawFloorV2", "V1_PIECE*", "V2_PIECE*"],
 	"MordorOrcPit": ["DrawFloorV1", "DrawFloorV2", "V1", "V1SPIKES", "V1_PIECE*", "V2_PIECE*", "bib"],
 	"MordorSiegeWorks": ["Bib", "DrawFloorV1", "DrawFloorV2", "V1", "V2_Piece*"],
+	"MordorSlaughterHouse": ["DrawFloor_Bib", "DrawFloor_V1", "V2_PIECE*"],
 	"MordorTavern": ["V1_PIECE*", "V2", "V2FLAG", "V2_PIECE*"],
 	"MordorTrollCage": ["Bib", "DrawFloorV1", "DrawFloorV2", "V1", "V1_PIECE*", "V2_PIECE*"],
+	"WildLumberMill": ["DrawFloor_Bib", "DrawFloor_V1"],
+	"WildSpiderPit": ["DrawFloorV1", "ModuleTag_DrawFloor"],
 }
 
 
@@ -955,7 +983,7 @@ func _audit_structure(content_db: Object, object_id: String, roots: Array) -> Di
 	node.configure(entity, bundle_id, 0.0)
 	if node.contract_error != "":
 		report["contract_error"] = node.contract_error
-		node.queue_free()
+		node.free()
 		return report
 	var health_adds := {}
 	for step_value in Array(chain.get("steps", [])):
@@ -1015,8 +1043,8 @@ func _audit_structure(content_db: Object, object_id: String, roots: Array) -> Di
 		node_two.configure(bogus, bundle_id, 0.0)
 		if node_two.contract_error == "":
 			(report["vanished"] as Array).append("%s: non-authored health pool did not fail closed" % object_id)
-		node_two.queue_free()
-	node.queue_free()
+		node_two.free()
+	node.free()
 	return report
 
 
@@ -1039,8 +1067,9 @@ func _audit_farm_staged_presentation(content_db: Object, roots: Array) -> void:
 	var document: Dictionary = content_db.get_playable_structure_runtime("GondorFarm")
 	var gameplay: Dictionary = (document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary
 	_check(
-		"pinned_farm_doc_records_no_staged_presentation_yet",
-		not gameplay.has("upgradeChain") and not gameplay.has("structureLevelPresentation"),
+		"selected_farm_doc_carries_staged_presentation",
+		gameplay.has("structureLevelPresentation")
+			and not (gameplay.get("structureLevelPresentation", {}) as Dictionary).is_empty(),
 		str(gameplay.keys())
 	)
 	var lifecycle: Dictionary = ((document.get("registration", {}) as Dictionary).get("presentation", {}) as Dictionary).get("buildingLifecycle", {}) as Dictionary
@@ -1097,7 +1126,7 @@ func _audit_farm_staged_presentation(content_db: Object, roots: Array) -> void:
 		if visible_names.is_empty():
 			ok = false
 			print("farm staged L%d vanished" % lvl)
-	node.queue_free()
+	node.free()
 	_check("compiled_farm_presentation_stages_real_glb_nodes", ok, "")
 
 

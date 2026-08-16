@@ -383,6 +383,35 @@ def python_runtime_attestation() -> dict[str, Any]:
     """
 
     base = Path(sys.base_prefix).expanduser().resolve()
+    raw_base_executable = getattr(sys, "_base_executable", None)
+    if not isinstance(raw_base_executable, str) or not raw_base_executable:
+        raise RuntimeError("Python runtime does not expose its base executable")
+    try:
+        base_executable = Path(raw_base_executable).expanduser().resolve(strict=True)
+        expected_base_executable = (base / "python.exe").resolve(strict=True)
+        invocation_launcher = Path(sys.executable).expanduser().resolve(strict=True)
+        invocation_prefix = Path(sys.prefix).expanduser().resolve(strict=True)
+    except OSError as exc:
+        raise RuntimeError("Python runtime executable identity is unavailable") from exc
+    if base_executable != expected_base_executable:
+        raise RuntimeError(
+            "Python base executable escaped the pinned base runtime: "
+            f"{base_executable} (expected {expected_base_executable})"
+        )
+    expected_invocation_launcher = (
+        expected_base_executable
+        if invocation_prefix == base
+        else (invocation_prefix / "Scripts" / "python.exe").resolve(strict=True)
+    )
+    if invocation_launcher != expected_invocation_launcher:
+        raise RuntimeError(
+            "Python invocation launcher escaped its active environment: "
+            f"{invocation_launcher} (expected {expected_invocation_launcher})"
+        )
+    if _is_link_or_junction(base_executable) or _is_link_or_junction(
+        invocation_launcher
+    ):
+        raise RuntimeError("Python runtime executable is a link or junction")
     version_tag = f"python{sys.version_info.major}{sys.version_info.minor}"
     base_dll = base / f"{version_tag}.dll"
     if os.name != "nt" or not base_dll.is_file():
@@ -440,7 +469,12 @@ def python_runtime_attestation() -> dict[str, Any]:
         digest.update(b"\n")
     return {
         "version": sys.version.split()[0],
-        "launcher_sha256": sha256_file(Path(sys.executable).resolve()),
+        # Historical field name retained for provenance compatibility: this is
+        # the pinned base runtime executable, not a venv redirector shim.
+        "launcher_sha256": sha256_file(base_executable),
+        "base_executable": str(base_executable),
+        "venv_launcher_sha256": sha256_file(invocation_launcher),
+        "venv_launcher": str(invocation_launcher),
         "base_dll_sha256": sha256_file(base_dll),
         "tree_sha256": digest.hexdigest(),
         "file_count": len(unique),

@@ -27,6 +27,7 @@ from .effective_assets_identity import (
     verify_effective_assets,
 )
 from .game import RETAIL_GAME_IDS, workspace_root
+from .hero_catalog import compile_hero_catalog
 from .paths import (
     default_godot_content_root,
     default_state_root,
@@ -40,7 +41,28 @@ from .pipeline import (
     bundle_digest,
     update_selection_entry,
 )
-from .playable_unit_import import import_playable_unit
+from .playable_unit_import import (
+    build_scenario_unit_visual_closure_batch,
+    compile_scenario_unit_recipe,
+    compile_unit_recipe,
+    import_playable_unit,
+)
+from .playable_unit_compiler import prepare_playable_unit_compiler
+from .module_census import read_catalog_documents
+from .neutral_mob_catalog import compile_neutral_mob_catalog
+from .neutral_dependency_pack_compiler import (
+    compile_neutral_dependency_pack_artifact,
+    discover_neutral_dependencies,
+)
+from .neutral_pack_profile import (
+    compile_neutral_unit_pack_artifact,
+    compose_neutral_pack_profile,
+)
+from .neutral_prop_pack_compiler import compile_neutral_prop_pack_artifact
+from .retail_ability_fx_ingress import build_texture_index
+from .neutral_prop_death_fx import build_audio_sample_index
+from .neutral_structure_pack_compiler import compile_neutral_structure_pack_artifact
+from .ship_catalog import compile_ship_catalog
 from . import publish_gate
 from .faction_census import (
     census_playable_faction,
@@ -472,6 +494,45 @@ def _resolved(args: argparse.Namespace, catalog: InstallCatalog):
     return resolve_profile(ImportProfile.load(selected), catalog)
 
 
+def _map_placement_root_ids(paths: Sequence[Path]) -> list[str]:
+    """Read exact non-road identities from cooked map-object documents."""
+
+    identities: dict[str, str] = {}
+    for source in paths:
+        path = Path(source).expanduser().resolve(strict=True)
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            not isinstance(value, Mapping)
+            or value.get("schema") != "openbfme.sage-map-objects"
+            or value.get("schemaVersion") != 0
+            or not isinstance(value.get("objects"), list)
+        ):
+            raise ValueError(f"map objects document is invalid: {path}")
+        rows = value["objects"]
+        if value.get("count") != len(rows):
+            raise ValueError(f"map objects count disagrees with rows: {path}")
+        for index, row in enumerate(rows):
+            if not isinstance(row, Mapping):
+                raise ValueError(f"map object row {index} is invalid: {path}")
+            road_type = row.get("roadType", 0)
+            if not isinstance(road_type, int) or isinstance(road_type, bool):
+                raise ValueError(f"map object row {index} roadType is invalid: {path}")
+            if road_type != 0:
+                continue
+            object_id = row.get("typeName")
+            if not isinstance(object_id, str) or not object_id.strip():
+                raise ValueError(f"map object row {index} typeName is invalid: {path}")
+            object_id = object_id.strip()
+            key = object_id.casefold()
+            previous = identities.get(key)
+            if previous is not None and previous != object_id:
+                raise ValueError(
+                    f"map object identity has a case collision: {previous!r}, {object_id!r}"
+                )
+            identities[key] = object_id
+    return sorted(identities.values(), key=lambda value: (value.casefold(), value))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="openbfme-import",
@@ -634,6 +695,93 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         required=True,
         help="read-only effective-assets root produced by extract-all-assets",
+    )
+
+    ship_catalog = sub.add_parser(
+        "compile-ship-catalog",
+        help=(
+            "compile every effective retail KindOf SHIP object, including "
+            "non-buildable inheritance and scenario variants"
+        ),
+    )
+    ship_catalog.add_argument("--install", required=True)
+    _add_game_argument(ship_catalog)
+    ship_catalog.add_argument("--reindex", action="store_true")
+    ship_catalog.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help=(
+            "catalog output path (default: private workspace reports/"
+            "<game>-ship-catalog.json)"
+        ),
+    )
+
+    neutral_mob_catalog = sub.add_parser(
+        "compile-neutral-mob-catalog",
+        help=(
+            "compile every effective neutral mob, creep, and lair object, "
+            "including map/summon/scenario-only variants"
+        ),
+    )
+    neutral_mob_catalog.add_argument("--install", required=True)
+    _add_game_argument(neutral_mob_catalog)
+    neutral_mob_catalog.add_argument("--reindex", action="store_true")
+    neutral_mob_catalog.add_argument(
+        "--map-objects",
+        type=Path,
+        action="append",
+        default=[],
+        help=(
+            "cooked openbfme.sage-map-objects document whose non-road object "
+            "identities are exact scenario roots (repeat for multiple maps)"
+        ),
+    )
+    neutral_mob_catalog.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help=(
+            "catalog output path (default: private workspace reports/"
+            "<game>-neutral-mob-catalog.json)"
+        ),
+    )
+    neutral_mob_catalog.add_argument(
+        "--recipe-assets-root",
+        type=Path,
+        default=None,
+        help=(
+            "also compile exact visual/media recipes for every descriptor-ready "
+            "neutral unit, structure, and prop using this effective-assets root"
+        ),
+    )
+    hero_catalog = sub.add_parser(
+        "compile-hero-catalog",
+        help=(
+            "compile every effective retail hero-family object, including "
+            "summon, ring, campaign, and ability-owned variants"
+        ),
+    )
+    hero_catalog.add_argument("--install", required=True)
+    _add_game_argument(hero_catalog)
+    hero_catalog.add_argument("--reindex", action="store_true")
+    hero_catalog.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help=(
+            "catalog output path (default: private workspace reports/"
+            "<game>-hero-catalog.json)"
+        ),
+    )
+    ship_catalog.add_argument(
+        "--recipe-assets-root",
+        type=Path,
+        default=None,
+        help=(
+            "also run each buildable ship through the existing full unit "
+            "recipe pipeline using this effective-assets root"
+        ),
     )
     _add_game_argument(ring_system)
     ring_system.add_argument(
@@ -1758,6 +1906,528 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
 
             progress_emit("catalog", "loading / verifying install catalog")
         catalog = _load_or_build_catalog(args)
+        if args.command == "compile-hero-catalog":
+            document = compile_hero_catalog(
+                dict(read_catalog_documents(catalog)), game=args.game
+            )
+            output_path = (
+                ensure_external_to_repo(Path(args.output), repo_root_from_module())
+                if args.output is not None
+                else _workspace_root(args) / "reports" / f"{args.game}-hero-catalog.json"
+            )
+            write_json_atomic(output_path, document)
+            summary = document["summary"]
+            _render(
+                {
+                    "ready": int(summary["runtimeDeferredCount"]) == 0,
+                    "catalog_complete": int(summary["heroCount"]) > 0,
+                    "game": args.game,
+                    "report": str(output_path),
+                    "catalog_sha256": document["catalogSha256"],
+                    "hero_count": summary["heroCount"],
+                    "descriptor_ready_count": summary["descriptorReadyCount"],
+                    "runtime_deferred_count": summary["runtimeDeferredCount"],
+                    "summoned_count": summary["summonedCount"],
+                    "variant_count": summary["variantCount"],
+                },
+                args.json,
+            )
+            return 0
+        if args.command == "compile-neutral-mob-catalog":
+            documents = dict(read_catalog_documents(catalog))
+            prepared_unit_inputs = prepare_playable_unit_compiler(documents)
+            compile_kwargs: dict[str, object] = {
+                "game": args.game,
+                "prepared": prepared_unit_inputs,
+            }
+            if args.map_objects:
+                compile_kwargs["map_placement_object_ids"] = (
+                    _map_placement_root_ids(args.map_objects)
+                )
+            document = compile_neutral_mob_catalog(documents, **compile_kwargs)
+            output_path = (
+                ensure_external_to_repo(Path(args.output), repo_root_from_module())
+                if args.output is not None
+                else _workspace_root(args)
+                / "reports"
+                / f"{args.game}-neutral-mob-catalog.json"
+            )
+            write_json_atomic(output_path, document)
+            integration_path: Path | None = None
+            profile_path: Path | None = None
+            profile_output_path = output_path.with_name(
+                f"{output_path.stem}-pack-profile.json"
+            )
+            integration_rows: list[dict[str, object]] = []
+            profile_artifacts: list[dict[str, object]] = []
+            if args.recipe_assets_root is not None:
+                # A previous green profile must never survive a red rerun and
+                # masquerade as the current catalog result.
+                profile_output_path.unlink(missing_ok=True)
+                assets_root = Path(args.recipe_assets_root).expanduser().resolve(
+                    strict=True
+                )
+                artifact_root = output_path.parent / f"{output_path.stem}-artifacts"
+                structure_rows = [
+                    row for row in document["neutralMobs"]
+                    if row.get("runtimeDomain") == "structure"
+                    and row.get("runtimeStatus") == "descriptor-ready"
+                ]
+                structure_closure = (
+                    build_retail_visual_closure(
+                        assets_root,
+                        [str(row["objectId"]) for row in structure_rows],
+                    )
+                    if structure_rows
+                    else None
+                )
+                prop_rows = [
+                    row for row in document["neutralMobs"]
+                    if row.get("runtimeDomain") == "prop"
+                    and row.get("runtimeStatus") == "descriptor-ready"
+                ]
+                prop_closure = (
+                    build_retail_visual_closure(
+                        assets_root,
+                        [str(row["objectId"]) for row in prop_rows],
+                    )
+                    if prop_rows
+                    else None
+                )
+                prop_effect_documents = {
+                    relative: (assets_root / relative).read_bytes()
+                    for relative in (
+                        "data/ini/fxlist.ini",
+                        "data/ini/particlesystem.ini",
+                        "data/ini/fxparticlesystem.ini",
+                        "data/ini/soundeffects.ini",
+                    )
+                } if (prop_rows or structure_rows) else {}
+                prop_fx_texture_index = (
+                    build_texture_index(assets_root) if (prop_rows or structure_rows) else {}
+                )
+                prop_audio_sample_index = (
+                    build_audio_sample_index(assets_root) if prop_rows else {}
+                )
+                unit_rows = [
+                    row for row in document["neutralMobs"]
+                    if row.get("runtimeDomain") == "unit"
+                    and row.get("runtimeStatus") == "descriptor-ready"
+                ]
+                unit_closures = build_scenario_unit_visual_closure_batch(
+                    catalog,
+                    assets_root,
+                    [row["descriptor"] for row in unit_rows],
+                )
+                for row in document["neutralMobs"]:
+                    domain = str(row.get("runtimeDomain", ""))
+                    object_id = str(row["objectId"])
+                    if row.get("runtimeStatus") != "descriptor-ready":
+                        integration_rows.append({
+                            "objectId": object_id,
+                            "runtimeDomain": domain,
+                            "status": "deferred",
+                            "reason": str(row.get("deferredReason", "descriptor is deferred")),
+                        })
+                        continue
+                    try:
+                        if domain == "unit":
+                            descriptor, closure, recipe = compile_scenario_unit_recipe(
+                                catalog, assets_root, row["descriptor"],
+                                game=args.game,
+                                prebuilt_visual_closure=unit_closures[object_id],
+                                prepared=prepared_unit_inputs,
+                                source_documents=documents,
+                            )
+                            artifact = compile_neutral_unit_pack_artifact(
+                                descriptor,
+                                closure,
+                                recipe,
+                                game=args.game,
+                                catalog_descriptor=row["descriptor"],
+                            )
+                            artifacts = (
+                                ("descriptor", descriptor),
+                                ("visual-closure", closure),
+                                ("recipe", recipe),
+                                ("artifact", artifact),
+                            )
+                            integrated_sha = descriptor["descriptorSha256"]
+                            recipe_sha = recipe["recipeSha256"]
+                        elif domain == "structure" and structure_closure is not None:
+                            role = "lair" if row.get("role") == "lair" else "neutral-structure"
+                            surfaces = ["map-placement", "script-spawn", "object-creation-list"]
+                            if role == "lair":
+                                surfaces.append("lair-spawn")
+                            artifact = compile_neutral_structure_pack_artifact(
+                                object_id, documents, structure_closure,
+                                role=role, surfaces=surfaces, game=args.game,
+                                effect_documents=prop_effect_documents,
+                                fx_texture_index=prop_fx_texture_index,
+                            )
+                            artifacts = (
+                                ("descriptor", artifact["descriptor"]),
+                                ("visual-recipe", artifact["visualRecipe"]),
+                                ("lifecycle-evidence", artifact["lifecycleEvidence"]),
+                                ("runtime", artifact["runtime"]),
+                                ("artifact", artifact),
+                            )
+                            integrated_sha = artifact["descriptor"]["descriptorSha256"]
+                            recipe_sha = artifact["visualRecipe"]["recipeSha256"]
+                        elif domain == "prop" and prop_closure is not None:
+                            artifact = compile_neutral_prop_pack_artifact(
+                                object_id, documents, prop_closure, game=args.game,
+                                effect_documents=prop_effect_documents,
+                                fx_texture_index=prop_fx_texture_index,
+                                audio_sample_index=prop_audio_sample_index,
+                            )
+                            artifacts = (
+                                ("descriptor", artifact["descriptor"]),
+                                ("visual-recipe", artifact["visualRecipe"]),
+                                ("runtime", artifact["runtime"]),
+                                ("artifact", artifact),
+                            )
+                            integrated_sha = artifact["runtime"]["descriptorSha256"]
+                            recipe_sha = artifact["visualRecipe"]["recipeSha256"]
+                        else:
+                            raise ValueError(f"unsupported neutral runtime domain: {domain}")
+                    except (FileNotFoundError, ValueError) as exc:
+                        integration_rows.append(
+                            {
+                                "objectId": object_id,
+                                "runtimeDomain": domain,
+                                "status": "deferred",
+                                "reason": str(exc),
+                            }
+                        )
+                        continue
+                    object_root = artifact_root / object_id.casefold()
+                    for name, value in artifacts:
+                        write_json_atomic(object_root / f"{name}.json", value)
+                    profile_artifacts.append(artifact)
+                    integration_rows.append(
+                        {
+                            "objectId": object_id,
+                            "runtimeDomain": domain,
+                            "status": "recipe-ready",
+                            "baseDescriptorSha256": row["descriptor"][
+                                "descriptorSha256"
+                            ],
+                            "integratedDescriptorSha256": integrated_sha,
+                            "recipeSha256": recipe_sha,
+                            "artifactDirectory": (
+                                f"{output_path.stem}-artifacts/"
+                                f"{object_id.casefold()}"
+                            ),
+                        }
+                    )
+                canonical_deferred = sum(
+                    row["status"] == "deferred" for row in integration_rows
+                )
+                dependency_artifact: dict[str, object] | None = None
+                dependency_status: dict[str, object] = {
+                    "status": "deferred",
+                    "reason": "canonical neutral artifact graph is incomplete",
+                }
+                if canonical_deferred == 0:
+                    try:
+                        dependency_plan = discover_neutral_dependencies(
+                            document,
+                            profile_artifacts,
+                            documents,
+                            game=args.game,
+                        )
+                        dependency_closure = build_retail_visual_closure(
+                            assets_root,
+                            dependency_plan["pickupObjectIds"],
+                        )
+                        dependency_artifact = compile_neutral_dependency_pack_artifact(
+                            dependency_plan,
+                            documents,
+                            dependency_closure,
+                            game=args.game,
+                            prepared=prepared_unit_inputs,
+                        )
+                        dependency_root = artifact_root / "_dependencies"
+                        write_json_atomic(dependency_root / "plan.json", dependency_plan)
+                        write_json_atomic(
+                            dependency_root / "visual-closure.json", dependency_closure
+                        )
+                        write_json_atomic(
+                            dependency_root / "artifact.json", dependency_artifact
+                        )
+                        for pickup in dependency_artifact["pickupArtifacts"]:
+                            pickup_root = dependency_root / str(
+                                pickup["objectId"]
+                            ).casefold()
+                            for name, value in (
+                                ("descriptor", pickup["descriptor"]),
+                                ("visual-recipe", pickup["visualRecipe"]),
+                                ("runtime", pickup["runtime"]),
+                                ("artifact", pickup),
+                            ):
+                                write_json_atomic(pickup_root / f"{name}.json", value)
+                        dependency_status = {
+                            "status": (
+                                "recipe-ready"
+                                if dependency_artifact["runtimeSummary"]["ready"]
+                                else "deferred"
+                            ),
+                            "artifactSha256": dependency_artifact["artifactSha256"],
+                            "artifactDirectory": (
+                                f"{output_path.stem}-artifacts/_dependencies"
+                            ),
+                            "summary": dependency_artifact["summary"],
+                            "runtimeSummary": dependency_artifact["runtimeSummary"],
+                        }
+                        if dependency_status["status"] == "deferred":
+                            dependency_status["reason"] = (
+                                "reachable neutral gameplay contracts are not executable"
+                            )
+                    except (FileNotFoundError, ValueError) as exc:
+                        dependency_status = {
+                            "status": "deferred",
+                            "reason": str(exc),
+                        }
+                integration = {
+                    "schema": "openbfme.neutral-recipe-integration",
+                    "schemaVersion": 0,
+                    "game": args.game,
+                    "neutralMobCatalogSha256": document["catalogSha256"],
+                    "rows": integration_rows,
+                    "dependencyClosure": dependency_status,
+                    "summary": {
+                        "candidateCount": len(integration_rows),
+                        "recipeReadyCount": sum(
+                            row["status"] == "recipe-ready"
+                            for row in integration_rows
+                        ),
+                        "deferredCount": sum(
+                            row["status"] == "deferred" for row in integration_rows
+                        ),
+                    },
+                }
+                integration["integrationSha256"] = hashlib.sha256(
+                    json.dumps(
+                        integration,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                ).hexdigest()
+                integration_path = output_path.with_name(
+                    f"{output_path.stem}-recipe-integration.json"
+                )
+                write_json_atomic(integration_path, integration)
+                if (
+                    integration["summary"]["deferredCount"] == 0
+                    and dependency_artifact is not None
+                    and dependency_artifact["runtimeSummary"]["ready"] is True
+                ):
+                    profile = compose_neutral_pack_profile(
+                        document,
+                        profile_artifacts,
+                        dependency_artifact=dependency_artifact,
+                        version=str(document["catalogSha256"])[:16],
+                    )
+                    profile_path = profile_output_path
+                    write_json_atomic(profile_path, profile)
+            summary = document["summary"]
+            recipe_ready = sum(
+                row["status"] == "recipe-ready" for row in integration_rows
+            )
+            recipe_deferred = sum(
+                row["status"] == "deferred" for row in integration_rows
+            )
+            dependency_deferred = (
+                args.recipe_assets_root is not None
+                and (
+                    dependency_artifact is None
+                    or dependency_artifact["runtimeSummary"]["ready"] is not True
+                )
+            )
+            _render(
+                {
+                    "ready": (
+                        int(summary["runtimeDeferredCount"]) == 0
+                        and recipe_deferred == 0
+                        and not dependency_deferred
+                    ),
+                    "catalog_complete": int(summary["neutralMobCount"]) > 0,
+                    "game": args.game,
+                    "report": str(output_path),
+                    "catalog_sha256": document["catalogSha256"],
+                    "neutral_mob_count": summary["neutralMobCount"],
+                    "descriptor_ready_count": summary["descriptorReadyCount"],
+                    "runtime_deferred_count": summary["runtimeDeferredCount"],
+                    "lair_count": summary["lairCount"],
+                    "horde_count": summary["hordeCount"],
+                    "recipe_integration": (
+                        str(integration_path) if integration_path is not None else None
+                    ),
+                    "pack_profile": str(profile_path) if profile_path is not None else None,
+                    "recipe_ready_count": recipe_ready,
+                    "recipe_deferred_count": recipe_deferred,
+                    "dependency_ready": (
+                        not dependency_deferred
+                        if args.recipe_assets_root is not None
+                        else None
+                    ),
+                },
+                args.json,
+            )
+            return 0 if recipe_deferred == 0 and not dependency_deferred else 6
+        if args.command == "compile-ship-catalog":
+            documents = dict(read_catalog_documents(catalog))
+            ship_document = compile_ship_catalog(documents, game=args.game)
+            output_path = (
+                ensure_external_to_repo(
+                    Path(args.output), repo_root_from_module()
+                )
+                if args.output is not None
+                else _workspace_root(args)
+                / "reports"
+                / f"{args.game}-ship-catalog.json"
+            )
+            write_json_atomic(output_path, ship_document)
+
+            integration_path: Path | None = None
+            integration_rows: list[dict[str, object]] = []
+            if args.recipe_assets_root is not None:
+                assets_root = Path(args.recipe_assets_root).expanduser().resolve(
+                    strict=True
+                )
+                artifact_root = output_path.parent / f"{output_path.stem}-artifacts"
+                for row in ship_document["ships"]:
+                    if row["runtimeStatus"] != "descriptor-ready":
+                        continue
+                    object_id = str(row["objectId"])
+                    authored_producer_ids = tuple(
+                        sorted(
+                            {
+                                str(producer["producerObjectId"])
+                                for producer in row["descriptor"].get(
+                                    "production", []
+                                )
+                                if isinstance(producer, Mapping)
+                                and producer.get("producerObjectId")
+                            },
+                            key=str.casefold,
+                        )
+                    )
+                    try:
+                        graph, descriptor, closure, recipe = compile_unit_recipe(
+                            catalog,
+                            assets_root,
+                            object_id,
+                            game=args.game,
+                            faction=str(row["side"]),
+                            admitted_producer_ids=authored_producer_ids,
+                            scenario_admission_role=(
+                                str(row["role"])
+                                if row["role"] != "buildable"
+                                else None
+                            ),
+                        )
+                    except (FileNotFoundError, ValueError) as exc:
+                        integration_rows.append(
+                            {
+                                "objectId": object_id,
+                                "status": "deferred",
+                                "reason": str(exc),
+                            }
+                        )
+                        continue
+                    object_root = artifact_root / object_id.casefold()
+                    for name, value in (
+                        ("faction-graph", graph),
+                        ("descriptor", descriptor),
+                        ("visual-closure", closure),
+                        ("recipe", recipe),
+                    ):
+                        write_json_atomic(object_root / f"{name}.json", value)
+                    integration_rows.append(
+                        {
+                            "objectId": object_id,
+                            "status": "recipe-ready",
+                            "baseDescriptorSha256": row["descriptor"][
+                                "descriptorSha256"
+                            ],
+                            "integratedDescriptorSha256": descriptor[
+                                "descriptorSha256"
+                            ],
+                            "recipeSha256": recipe["recipeSha256"],
+                            "artifactDirectory": (
+                                f"{output_path.stem}-artifacts/"
+                                f"{object_id.casefold()}"
+                            ),
+                        }
+                    )
+                integration = {
+                    "schema": "openbfme.ship-recipe-integration",
+                    "schemaVersion": 1,
+                    "game": args.game,
+                    "shipCatalogSha256": ship_document["catalogSha256"],
+                    "rows": integration_rows,
+                    "summary": {
+                        "candidateCount": len(integration_rows),
+                        "recipeReadyCount": sum(
+                            row["status"] == "recipe-ready"
+                            for row in integration_rows
+                        ),
+                        "deferredCount": sum(
+                            row["status"] == "deferred" for row in integration_rows
+                        ),
+                    },
+                }
+                integration["integrationSha256"] = hashlib.sha256(
+                    json.dumps(
+                        integration,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                ).hexdigest()
+                integration_path = output_path.with_name(
+                    f"{output_path.stem}-recipe-integration.json"
+                )
+                write_json_atomic(integration_path, integration)
+
+            summary = ship_document["summary"]
+            recipe_ready = sum(
+                row["status"] == "recipe-ready" for row in integration_rows
+            )
+            recipe_deferred = sum(
+                row["status"] == "deferred" for row in integration_rows
+            )
+            _render(
+                {
+                    # Catalog completeness is not runtime readiness. Five
+                    # template/scenario ships are deliberately emitted as
+                    # deferred rows today, so printing ready=True here made a
+                    # successful inventory look like naval gameplay parity.
+                    "ready": (
+                        int(summary["runtimeDeferredCount"]) == 0
+                        and recipe_deferred == 0
+                    ),
+                    "catalog_complete": int(summary["shipCount"]) > 0,
+                    "game": args.game,
+                    "report": str(output_path),
+                    "catalog_sha256": ship_document["catalogSha256"],
+                    "ship_count": summary["shipCount"],
+                    "buildable_descriptor_count": summary[
+                        "buildableDescriptorCount"
+                    ],
+                    "runtime_deferred_count": summary["runtimeDeferredCount"],
+                    "recipe_integration": (
+                        str(integration_path) if integration_path is not None else None
+                    ),
+                    "recipe_ready_count": recipe_ready,
+                    "recipe_deferred_count": recipe_deferred,
+                },
+                args.json,
+            )
+            return 0 if recipe_deferred == 0 else 6
         if args.command == "import-faction":
             from .progress import emit as progress_emit
 

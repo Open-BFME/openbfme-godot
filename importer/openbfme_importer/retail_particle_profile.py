@@ -5,11 +5,10 @@ effective-assets manifest, and the matching private effective tree.  It emits
 only exact particle definition conversions, one conversion per physical render
 texture, the source-authored ripple anchor, and a normalized binding document.
 
-Seven Fords systems exist in both SAGE particle-definition families.  A sealed
-retail-binary oracle proves one unqualified runtime manager namespace and
-last-definition-wins for repeated FX syntax, but not cross-family precedence.
-Both candidates remain preserved; only WaterRipplesSmall receives the oracle's
-explicit, non-general provisional FX runtime selection.
+Several Fords systems exist in both SAGE particle-definition families.  The
+retail binaries contain only the FX particle INI load literal and register only
+TheFXParticleSystemManager.  The legacy candidates remain preserved as authored
+source evidence, while duplicate runtime references resolve to the FX family.
 """
 
 from __future__ import annotations
@@ -62,7 +61,7 @@ _SUBSYSTEM_LEGEND_PATH = "data/ini/default/subsystemlegend.ini"
 _RIPPLE_OBJECT_SOURCE_PATH = "data/ini/object/civilian/civilianprop.ini"
 _RIPPLE_ANCHOR_PATH = "art/w3d/p_/p_wtrriplssmall.w3d"
 _RIPPLE_ANCHOR_BONE = "waterRippleBone"
-_RIPPLE_PROVISIONAL_FAMILY = "FXParticleSystem"
+_EFFECTIVE_RUNTIME_FAMILY = "FXParticleSystem"
 _MAX_INPUT_BYTES = 64 * 1024 * 1024
 _MAX_SOURCE_BYTES = 32 * 1024 * 1024
 
@@ -771,8 +770,8 @@ def _validate_family_oracle(
         "C1": "PROVEN",
         "C2": "PROVEN",
         "C3": "PROVEN",
-        "C4": "UNRESOLVED",
-        "C5": "UNRESOLVED",
+        "C4": "PROVEN",
+        "C5": "PROVEN",
         "C6": "CORROBORATION_ONLY",
     }
     claims = [
@@ -801,6 +800,7 @@ def _validate_family_oracle(
     declaration = _mapping(
         binary.get("fx_declaration_parser"), "oracle FX declaration parser"
     )
+    ini_loading = _mapping(binary.get("ini_loading"), "oracle INI loading")
     proven_binary_values = {
         "managerSubsystem": registration.get("subsystem_literal"),
         "managerGlobal": registration.get("manager_global"),
@@ -811,6 +811,12 @@ def _validate_family_oracle(
         "declarationManagerLoad": declaration.get("manager_global_load_va"),
         "declarationFindTarget": declaration.get("find_target_va"),
         "repeatedFxSyntax": declaration.get("duplicate_semantics"),
+        "registeredParticleSubsystem": ini_loading.get(
+            "registered_particle_subsystem"
+        ),
+        "managerInitBeforeLegend": ini_loading.get("manager_init_before_legend"),
+        "fxIniLiteralPresent": ini_loading.get("fx_ini_literal_present"),
+        "legacyIniLiteralPresent": ini_loading.get("legacy_ini_literal_present"),
     }
     if proven_binary_values != {
         "managerSubsystem": "TheFXParticleSystemManager",
@@ -822,6 +828,10 @@ def _validate_family_oracle(
         "declarationManagerLoad": "0x5FD0DF",
         "declarationFindTarget": "0x5F90DA",
         "repeatedFxSyntax": "last_definition_wins",
+        "registeredParticleSubsystem": "TheFXParticleSystemManager",
+        "managerInitBeforeLegend": True,
+        "fxIniLiteralPresent": True,
+        "legacyIniLiteralPresent": False,
     }:
         raise ValueError("particle-family oracle binary contract mismatch")
 
@@ -849,9 +859,9 @@ def _validate_family_oracle(
         guidance.get("preserve_both_source_declarations") is not True
         or guidance.get("preserve_family_and_source_provenance") is not True
         or guidance.get("emit_single_runtime_binding") is not True
-        or guidance.get("current_provisional_choice_for_WaterRipplesSmall")
-        != _RIPPLE_PROVISIONAL_FAMILY
-        or guidance.get("choice_is_retail_precedence_proof") is not False
+        or guidance.get("selected_kind_for_duplicate_identifiers")
+        != _EFFECTIVE_RUNTIME_FAMILY
+        or guidance.get("choice_is_retail_precedence_proof") is not True
     ):
         raise ValueError("particle-family oracle converter guidance mismatch")
 
@@ -871,21 +881,23 @@ def _validate_family_oracle(
         },
         "duplicateSemantics": {
             "repeatedFxParticleSystemSyntax": "proven-last-definition-wins",
-            "crossFamilyPrecedence": "unresolved",
-            "legacySubsystemActive": "unresolved",
+            "crossFamilyPrecedence": "proven-fx-manager-only",
+            "legacySubsystemActive": False,
         },
     }
-    selection = {
-        "status": "provisional-explicit-runtime-selection",
-        "selectedKind": _RIPPLE_PROVISIONAL_FAMILY,
-        "crossFamilyPrecedenceProven": False,
-        "generalizesToOtherDuplicateIdentifiers": False,
-        "visibleFieldsMateriallyEquivalent": True,
-        "materialDiscriminator": "priority/culling",
-        "reason": _text(guidance.get("reason"), "oracle provisional reason"),
-        "oracleAggregateSha256": oracle_digest,
+    selections = {
+        system: {
+            "status": "proven-effective-fx-manager-family",
+            "selectedKind": _EFFECTIVE_RUNTIME_FAMILY,
+            "crossFamilyPrecedenceProven": True,
+            "generalizesToOtherDuplicateIdentifiers": True,
+            "reason": _text(guidance.get("reason"), "oracle family reason"),
+            "oracleAggregateSha256": oracle_digest,
+        }
+        for system, families in _SYSTEM_FAMILIES.items()
+        if len(families) > 1
     }
-    return evidence, {"WaterRipplesSmall": selection}
+    return evidence, selections
 
 
 def _validate_definition_row(
@@ -1525,7 +1537,7 @@ def build_retail_fords_particle_plan(
         [system for system, families in _SYSTEM_FAMILIES.items() if len(families) > 1],
         key=lambda value: (value.casefold(), value),
     )
-    provisional_systems = sorted(
+    selected_systems = sorted(
         runtime_selections, key=lambda value: (value.casefold(), value)
     )
     unresolved_duplicate_systems = [
@@ -1534,28 +1546,28 @@ def build_retail_fords_particle_plan(
         if system not in runtime_selections
     ]
     family_resolution = {
-        "status": "provisional-selection-with-cross-family-precedence-unresolved",
+        "status": "proven-effective-fx-manager-family",
         "runtimeNamespace": deepcopy(oracle_evidence["runtimeNamespace"]),
         "duplicateSemantics": deepcopy(oracle_evidence["duplicateSemantics"]),
         "duplicateIdentifierSystemIds": duplicate_family_systems,
-        "provisionalRuntimeSelections": [
+        "runtimeSelections": [
             {
                 "particleSystemId": system,
                 **deepcopy(dict(runtime_selections[system])),
             }
-            for system in provisional_systems
+            for system in selected_systems
         ],
         "unresolvedDuplicateIdentifierSystemIds": unresolved_duplicate_systems,
-        "noGeneralPrecedenceRule": True,
+        "noGeneralPrecedenceRule": False,
         "retailAuthoredEvidence": {
             "subsystemLegend": subsystem_evidence,
             "fxListCommentNamesParticleSystemIni": authored_fx_comment,
         },
-        "blocker": (
-            "The retail oracle proves one unqualified runtime namespace and "
-            "last-definition-wins for repeated FX syntax, but cross-family precedence "
-            "remains unresolved. Preserve both authored candidates. The explicit "
-            "WaterRipplesSmall FX selection is provisional and does not generalize."
+        "proof": (
+            "Retail registers only TheFXParticleSystemManager; both supported retail "
+            "game.dat binaries contain the FX particle INI literal and no legacy "
+            "ParticleSystem.ini load literal. Duplicate runtime names therefore bind "
+            "to the preserved FXParticleSystem candidate."
         ),
     }
 
@@ -1614,8 +1626,8 @@ def build_retail_fords_particle_plan(
             "substitutesAllowed": False,
             "genericFallbackAllowed": False,
             "textureGrouping": "one-resource-per-exact-physical-source",
-            "duplicateFamilySelection": (
-                "oracle-bounded-provisional-water-only-no-general-precedence-rule"
+                "duplicateFamilySelection": (
+                    "oracle-proven-effective-fx-manager-family"
             ),
             "profileFragmentValidatedByImportProfile": profile_validated,
         },
@@ -1652,7 +1664,7 @@ def build_retail_fords_particle_plan(
             ),
             "fxRootCount": sum(len(row["fxRoots"]) for row in target_rows),
             "fxListCount": len(fx_lists),
-            "provisionalRuntimeSelectionCount": len(provisional_systems),
+                "runtimeSelectionCount": len(selected_systems),
             "unresolvedFamilySelectionCount": len(unresolved_duplicate_systems),
         },
     }

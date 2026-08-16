@@ -116,6 +116,13 @@ static func _merge_fx_bindings(registry: Dictionary, block: Dictionary) -> void:
 	if String(block.get("schema", "")) != "openbfme.ability-fx-bindings" or int(block.get("schemaVersion", -1)) != 0:
 		return
 	var scalars_by_system: Dictionary = {}
+	var family_value: Variant = block.get("familyResolution", {})
+	var duplicate_ids: Dictionary = {}
+	if typeof(family_value) == TYPE_DICTIONARY:
+		var ids_value: Variant = (family_value as Dictionary).get("duplicateIdentifierSystemIds", [])
+		if typeof(ids_value) == TYPE_ARRAY:
+			for id_value in ids_value as Array:
+				duplicate_ids[String(id_value).to_lower()] = true
 	var registry_value: Variant = block.get("definitionRegistry", [])
 	if typeof(registry_value) == TYPE_ARRAY:
 		for row_value in registry_value as Array:
@@ -123,6 +130,15 @@ static func _merge_fx_bindings(registry: Dictionary, block: Dictionary) -> void:
 				continue
 			var row := row_value as Dictionary
 			var definition_id := String(row.get("definitionId", ""))
+			var kind := String(row.get("kind", ""))
+			var is_duplicate := duplicate_ids.has(definition_id.to_lower())
+			# Both candidates remain in the sealed registry. Retail registers only
+			# TheFXParticleSystemManager, so duplicate names consume the FX row even
+			# from older sealed documents whose family ledger was still unresolved.
+			if is_duplicate and kind != "FXParticleSystem":
+				continue
+			if row.has("selectedForRuntime") and not bool(row.get("selectedForRuntime", false)):
+				continue
 			if definition_id == "" or scalars_by_system.has(definition_id):
 				continue
 			if typeof(row.get("authoredScalars", null)) == TYPE_DICTIONARY:

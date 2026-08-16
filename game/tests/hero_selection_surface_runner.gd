@@ -376,7 +376,7 @@ func _run_ability_surface_checks(aragorn: Dictionary, gandalf: Dictionary, minio
 	_check("mount system" in String(mount.get("reason", "")), "unimplemented ability keeps its converted reason")
 	_check(not bool(sim.cast_ability(1, "Command_FixtureLeadership", Vector2.ZERO).get("ok", false)), "passive NONPRESSABLE ability never casts")
 	_check(String(sim.cast_ability(1, "Command_Nope", Vector2.ZERO).get("reason", "")) == "unknown-ability", "unknown ability ids fail closed")
-	_check(String(sim.cast_ability(100, "Command_FixtureHeal", Vector2.ZERO).get("reason", "")) == "not-a-hero", "non-hero entities cannot cast")
+	_check(String(sim.cast_ability(100, "Command_FixtureHeal", Vector2.ZERO).get("reason", "")) == "unknown-ability", "a non-hero without an authored ability row still cannot cast")
 
 	var cast_events: Array = []
 	for event in sim.events:
@@ -512,9 +512,9 @@ func _run_experience_gate_checks(aragorn: Dictionary, aragorn_id: String) -> voi
 	var levels: Array = experience_rule.get("levels", [])
 	_check(
 		levels.size() == 10
-			and int((levels[1] as Dictionary).get("required_experience", 0)) == 90
-			and int((levels[2] as Dictionary).get("required_experience", 0)) == 180,
-		"Glorfindel thresholds match the authored INI values (GLORFINDEL_LVL2/3_EXP_NEEDED 90/180)"
+			and int((levels[1] as Dictionary).get("required_experience", 0)) == 50
+			and int((levels[2] as Dictionary).get("required_experience", 0)) == 100,
+		"Glorfindel thresholds match RotWK 2.01 gamedata.ini GLORFINDEL_LVL2/3_EXP_NEEDED 50/100"
 	)
 	_check(
 		levels.size() == 10
@@ -553,7 +553,7 @@ func _run_experience_gate_checks(aragorn: Dictionary, aragorn_id: String) -> voi
 	var g_row: Dictionary = g_sim.entity(10)
 	_check(int(g_row.get("level", 0)) == 1, "Glorfindel enters at rank 1")
 	_check(String(g_sim.cast_ability(10, "Command_SpecialAbilityGlorfindelBladeOfPurity", Vector2.ZERO).get("reason", "")) == "level-required", "Glorfindel's lvl-3 ability is unavailable at rank 1")
-	g_sim._award_experience(g_row, 179)
+	g_sim._award_experience(g_row, 99)
 	_check(
 		int(g_row.get("level", 0)) == 2
 			and String(g_sim.cast_ability(10, "Command_SpecialAbilityGlorfindelBladeOfPurity", Vector2.ZERO).get("reason", "")) == "level-required",

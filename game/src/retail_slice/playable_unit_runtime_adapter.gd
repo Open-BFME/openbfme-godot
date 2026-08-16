@@ -314,6 +314,32 @@ static func producer_bindings(document: Dictionary) -> Array[Dictionary]:
 	return output
 
 
+static func scenario_admission(document: Dictionary, surface: String) -> Dictionary:
+	## Non-buildable retail Objects are addressable only from authored scenario
+	## surfaces. Returning this contract is deliberately separate from
+	## producer_bindings(), which remains empty and therefore cannot leak these
+	## ships into an ordinary command bar or faction roster.
+	if surface not in ["map-placement", "script-spawn", "tutorial-script", "object-creation-list", "lair-spawn", "horde-payload"]:
+		return {}
+	var registration := document.get("registration", {}) as Dictionary
+	if not (registration.get("production", []) as Array).is_empty():
+		return {}
+	var value: Variant = registration.get("scenarioAdmission")
+	if typeof(value) != TYPE_DICTIONARY:
+		return {}
+	var admission := value as Dictionary
+	if (
+		String(admission.get("kind", "")) != "authored-non-buildable"
+		or String(admission.get("role", "")) not in ["inheritance-template", "scenario-only", "creature", "horde", "summoned-hero"]
+		or bool(admission.get("buildCommandExposed", true))
+		or not (admission.get("surfaces", []) as Array).has(surface)
+		or String(admission.get("sourceIni", "")) == ""
+		or int(admission.get("line", 0)) <= 0
+	):
+		return {}
+	return admission.duplicate(true)
+
+
 static func _select_portrait_id(portraits: Variant) -> String:
 	## Prefer the authored SelectPortrait over the button icon when the
 	## document declares both: hero portraits are "HP*" (192px), unit
@@ -396,10 +422,21 @@ static func simulation_rule(document: Dictionary, require_producer: bool = true)
 	if typeof(simulation) != TYPE_DICTIONARY:
 		return {}
 	var row := simulation as Dictionary
+	var resolved: Dictionary = {}
+	var slow_death_core_pending := false
 	if row.has("status"):
-		if String(row.get("status", "")) != "ready" or typeof(row.get("resolved")) != TYPE_DICTIONARY:
+		var status := String(row.get("status", ""))
+		var missing: Array = row.get("missing", []) as Array
+		slow_death_core_pending = (
+			status == "unresolved"
+			and missing == ["moduleContracts.SlowDeathBehavior"]
+		)
+		if (
+			(status != "ready" and not slow_death_core_pending)
+			or typeof(row.get("resolved")) != TYPE_DICTIONARY
+		):
 			return {}
-		var resolved := row.get("resolved", {}) as Dictionary
+		resolved = row.get("resolved", {}) as Dictionary
 		row = {
 			"displayName": _resolved_value(resolved.get("displayNameId")),
 			"buildCost": _resolved_value(resolved.get("buildCost")),
@@ -415,6 +452,8 @@ static func simulation_rule(document: Dictionary, require_producer: bool = true)
 			"fearResistant": _resolved_value(resolved.get("fearResistant")),
 			"weaponModes": _resolved_weapon_modes(resolved.get("weaponModes", {})),
 		}
+		if resolved.has("bountyValue"):
+			row["bountyValue"] = _resolved_value(resolved.get("bountyValue"))
 		if resolved.has("permanentWeaponLocks"):
 			row["permanentWeaponLocks"] = resolved["permanentWeaponLocks"]
 		for body_field in ["innateArmorScalar", "autoHealMultiplier"]:
@@ -470,14 +509,29 @@ static func simulation_rule(document: Dictionary, require_producer: bool = true)
 				row["crush_revenge_damage"] = int(crush["crushRevengeDamage"])
 		if typeof(resolved.get("stances")) == TYPE_DICTIONARY:
 			row["stances"] = (resolved.get("stances", {}) as Dictionary).duplicate(true)
-	for field in ["displayName", "buildCost", "buildTimeSeconds", "commandPoints", "memberCount", "memberHealth", "speed", "visionRange"]:
+	var scenario_only: bool = (
+		not require_producer
+		and _resolved_value(resolved.get("scenarioOnly")) == true
+		and String((resolved.get("scenarioOnly", {}) as Dictionary).get("disposition", ""))
+		== "explicit-scenario-admission"
+	)
+	# The importer keeps passive wildlife unresolved until this exact typed
+	# runtime consumer is independently accepted. Admit only that one missing
+	# seam, and only on explicit scenario-only objects; every other unresolved
+	# simulation remains fail-closed.
+	if slow_death_core_pending and not scenario_only:
+		return {}
+	var required_fields := ["displayName", "memberCount", "memberHealth", "speed", "visionRange"]
+	if not scenario_only:
+		required_fields.append_array(["buildCost", "buildTimeSeconds", "commandPoints"])
+	for field in required_fields:
 		if not row.has(field):
 			return {}
 	if (
 		String(row.displayName).strip_edges() == ""
-		or int(row.buildCost) < 0
-		or float(row.buildTimeSeconds) <= 0.0
-		or (int(row.commandPoints) <= 0 and not is_ring_hero_summon(document))
+		or (not scenario_only and int(row.buildCost) < 0)
+		or (not scenario_only and float(row.buildTimeSeconds) <= 0.0)
+		or (not scenario_only and int(row.commandPoints) <= 0 and not is_ring_hero_summon(document))
 		or int(row.memberCount) <= 0
 		or int(row.memberHealth) <= 0
 		or float(row.speed) < 0.0
@@ -498,9 +552,6 @@ static func simulation_rule(document: Dictionary, require_producer: bool = true)
 		"source_object_id": String(document.get("objectId", "")),
 		"category": String(document.get("category", "")),
 		"display_name": display_name,
-		"default_cost": int(row.buildCost),
-		"default_build_ticks": maxi(1, roundi(float(row.buildTimeSeconds) / TICK_SECONDS)),
-		"default_command_points": int(row.commandPoints),
 		"member_count": int(row.memberCount),
 		"member_health": int(row.memberHealth),
 		"speed_source": float(row.speed),
@@ -513,6 +564,16 @@ static func simulation_rule(document: Dictionary, require_producer: bool = true)
 		"producers": producers,
 		"prerequisites": (producers[0].get("prerequisites", []) as Array).duplicate() if not producers.is_empty() else [],
 	}
+	if scenario_only:
+		output["scenario_only"] = true
+	else:
+		output["default_cost"] = int(row.buildCost)
+		output["default_build_ticks"] = maxi(1, roundi(float(row.buildTimeSeconds) / TICK_SECONDS))
+		output["default_command_points"] = int(row.commandPoints)
+	if row.has("bountyValue"):
+		if float(row.bountyValue) < 0.0 or float(row.bountyValue) != float(int(row.bountyValue)):
+			return {}
+		output["bounty_value"] = int(row.bountyValue)
 	if row.has("shroudClearingRange"):
 		output["shroud_clearing_range_source"] = float(row["shroudClearingRange"])
 	if row.has("destroyDie"):
@@ -614,13 +675,18 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 		return {}
 	var movement: Dictionary = simulation.get("movement", {}) as Dictionary
 	var combat: Dictionary = simulation.get("combat", {}) as Dictionary
+	var noncombatant: bool = (
+		bool(simulation.get("scenario_only", false))
+		and String(combat.get("disposition", "")) == "noncombatant"
+	)
 	var formation: Dictionary = simulation.get("formation", {}) as Dictionary
 	for field in ["acceleration", "braking", "turnRateDegreesPerSecond"]:
 		if not movement.has(field):
 			return {}
-	for field in ["attackRange", "delayBetweenShotsMs", "preAttackDelayMs", "firingDurationMs", "damage"]:
-		if not combat.has(field):
-			return {}
+	if not noncombatant:
+		for field in ["attackRange", "delayBetweenShotsMs", "preAttackDelayMs", "firingDurationMs", "damage"]:
+			if not combat.has(field):
+				return {}
 	var positions_value: Variant = formation.get("positions", [])
 	if typeof(positions_value) != TYPE_ARRAY or (positions_value as Array).size() != int(simulation.get("member_count", 0)):
 		return {}
@@ -649,16 +715,16 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 	var braking := float(movement.get("braking", -1.0)) * HORDE_LOCOMOTION_RESPONSE_SCALE
 	var turn_rate := float(movement.get("turnRateDegreesPerSecond", -1.0))
 	var max_turn_without_reform := float(movement.get("maxTurnWithoutReformDegrees", 0.0))
-	var attack_range := float(combat.get("attackRange", -1.0))
+	var attack_range := float(combat.get("attackRange", 0.0 if noncombatant else -1.0))
 	var minimum_range := float(combat.get("minimumAttackRange", 0.0))
-	var delay_ms := float(combat.get("delayBetweenShotsMs", -1.0))
-	var pre_attack_ms := float(combat.get("preAttackDelayMs", -1.0))
-	var firing_ms := float(combat.get("firingDurationMs", -1.0))
+	var delay_ms := float(combat.get("delayBetweenShotsMs", 0.0 if noncombatant else -1.0))
+	var pre_attack_ms := float(combat.get("preAttackDelayMs", 0.0 if noncombatant else -1.0))
+	var firing_ms := float(combat.get("firingDurationMs", 0.0 if noncombatant else -1.0))
 	var damage := int(combat.get("damage", 0))
 	for numeric in [speed, vision, acceleration, braking, turn_rate, attack_range, delay_ms, pre_attack_ms, firing_ms]:
 		if not is_finite(float(numeric)) or float(numeric) < 0.0:
 			return {}
-	if damage <= 0:
+	if damage <= 0 and not noncombatant:
 		return {}
 	var period_ms := delay_ms
 	var clip_reload := _resolved_clip_reload_ms(combat)
@@ -750,6 +816,8 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 			"pre_attack_type_source": String(pre_attack["source"]),
 		},
 	}
+	if noncombatant:
+		output["noncombatant"] = true
 	var permanent_locks: Array = simulation.get("permanent_weapon_locks", []) as Array
 	if not permanent_locks.is_empty():
 		if not permanent_locks.has(String(output["default_weapon_slot"])):
@@ -992,6 +1060,48 @@ static func audio_event_ids(document: Dictionary, kind: String) -> Array[String]
 	return output
 
 
+static func transport_entry_audio_event_ids(document: Dictionary, carrier_object_id: String) -> Array[String]:
+	## Passenger acknowledgement candidates for one accepted ship entry.
+	## Retail authors these on the PASSENGER object, not the transport. Keep the
+	## specific carrier field ahead of the generic transport field and preserve
+	## each descriptor row's authored order. Unknown carrier identities may use
+	## only the explicitly authored generic route; no faction guess is made.
+	var field_order: Array[String] = []
+	match carrier_object_id.to_lower():
+		"elventransportship":
+			field_order.append("VoiceEnterUnitElvenTransportShip")
+		"evilmentransportship":
+			field_order.append("VoiceEnterUnitEvilMenTransportShip")
+	field_order.append("VoiceEnterUnitTransportShip")
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	var routes_value: Variant = registration.get("audioRoutes", {})
+	if typeof(routes_value) != TYPE_DICTIONARY:
+		return []
+	var routes := routes_value as Dictionary
+	var owner_order: Array[String] = ["container", "primaryMember"]
+	var remaining: Array[String] = []
+	for owner_value in routes.keys():
+		var owner := String(owner_value)
+		if not owner_order.has(owner):
+			remaining.append(owner)
+	remaining.sort_custom(func(a: String, b: String) -> bool: return a.naturalnocasecmp_to(b) < 0)
+	owner_order.append_array(remaining)
+	var output: Array[String] = []
+	for field in field_order:
+		for owner in owner_order:
+			var owner_value: Variant = routes.get(owner)
+			if typeof(owner_value) != TYPE_DICTIONARY:
+				continue
+			var owner_routes := owner_value as Dictionary
+			for authored_field_value in owner_routes.keys():
+				if String(authored_field_value).to_lower() != field.to_lower():
+					continue
+				for row_value in owner_routes[authored_field_value] as Array:
+					if typeof(row_value) == TYPE_DICTIONARY:
+						_append_unique_string(output, String((row_value as Dictionary).get("id", "")))
+	return output
+
+
 static func production_audio_event_ids(document: Dictionary) -> Dictionary:
 	var output := {"purchase": [], "purchase_by_command": {}, "created": []}
 	var registration: Dictionary = document.get("registration", {}) as Dictionary
@@ -1044,6 +1154,7 @@ static func module_contracts(document: Dictionary) -> Array:
 	##   simulation.resolved.moduleContracts (units)
 	##   registration.gameplay.moduleContracts (structures)
 	##   registration.moduleContracts (legacy top-level)
+	##   document.moduleContracts (neutral scenario props)
 	var registration: Dictionary = document.get("registration", {}) as Dictionary
 	var simulation: Dictionary = registration.get("simulation", {}) as Dictionary
 	var resolved: Dictionary = simulation.get("resolved", {}) as Dictionary
@@ -1053,6 +1164,8 @@ static func module_contracts(document: Dictionary) -> Array:
 		raw = gameplay.get("moduleContracts", null)
 	if raw == null or (typeof(raw) == TYPE_ARRAY and (raw as Array).is_empty()):
 		raw = registration.get("moduleContracts", [])
+	if raw == null or (typeof(raw) == TYPE_ARRAY and (raw as Array).is_empty()):
+		raw = document.get("moduleContracts", [])
 	if typeof(raw) != TYPE_ARRAY:
 		return []
 	var out: Array = []
@@ -1073,8 +1186,117 @@ static func module_contracts(document: Dictionary) -> Array:
 			"line": int(row.get("line", 0)),
 			"tag": String(row.get("tag", "")),
 			"executable": String(row.get("runtimeStatus", "")) == "executable",
+			"effect_graph": (row.get("effectGraph", {}) as Dictionary).duplicate(true),
 		})
 	return out
+
+
+static func bezier_trajectory_contract(document: Dictionary) -> Dictionary:
+	## Return the one evidence-closed trajectory subgraph, never the deferred
+	## impact policy. Flight progress remains an explicit external launch input.
+	var found: Dictionary = {}
+	for row_value in module_contracts(document):
+		var row := row_value as Dictionary
+		if String(row.get("module", "")) != "BezierProjectileBehavior":
+			continue
+		if not found.is_empty():
+			return {}
+		var fields := row.get("fields", {}) as Dictionary
+		var graph := row.get("effect_graph", {}) as Dictionary
+		var trajectory := graph.get("trajectory", {}) as Dictionary
+		var eligibility := graph.get("executionEligibility", {}) as Dictionary
+		var runtime_status := String(row.get("runtime_status", ""))
+		var eligibility_status := String(eligibility.get("runtimeStatus", ""))
+		if (
+			runtime_status not in ["deferred", "executable"]
+			or bool(row.get("executable", false)) != (runtime_status == "executable")
+			or String(row.get("extraction", "")) != "typed"
+			or String(row.get("source_ini", "")).strip_edges() == ""
+			or int(row.get("line", 0)) <= 0
+			or String(graph.get("kind", "")) != "bezier-projectile"
+			or String(trajectory.get("kind", "")) != "cubic-bezier-envelope"
+			or String(trajectory.get("runtimeStatus", "")) != "executable"
+			or String(trajectory.get("progressAuthority", "")) != "external-authored-projectile-flight"
+			or eligibility_status != runtime_status
+			or typeof(eligibility.get("blockers")) != TYPE_ARRAY
+			or ((eligibility.get("blockers") as Array).is_empty()) != (runtime_status == "executable")
+		):
+			return {}
+		var bindings := {
+			"firstHeight": ["FirstHeight", "value"],
+			"secondHeight": ["SecondHeight", "value"],
+			"firstIndentRatio": ["FirstPercentIndent", "ratio"],
+			"secondIndentRatio": ["SecondPercentIndent", "ratio"],
+		}
+		for graph_key_value in bindings.keys():
+			var graph_key := String(graph_key_value)
+			var binding := bindings[graph_key] as Array
+			var field_value: Variant = fields.get(String(binding[0]))
+			if typeof(field_value) != TYPE_DICTIONARY:
+				return {}
+			var field := field_value as Dictionary
+			var scalar: Variant = field.get(String(binding[1]))
+			if (
+				typeof(scalar) not in [TYPE_INT, TYPE_FLOAT]
+				or typeof(trajectory.get(graph_key)) not in [TYPE_INT, TYPE_FLOAT]
+				or not is_equal_approx(float(trajectory.get(graph_key)), float(scalar))
+				or String(field.get("authored", "")).strip_edges() == ""
+				or String(field.get("sourceIni", "")).strip_edges() == ""
+				or int(field.get("line", 0)) <= 0
+			):
+				return {}
+		var arrival := graph.get("arrival", {}) as Dictionary
+		if runtime_status == "executable":
+			var arrival_bindings := {
+				"crushStyle": ["CrushStyle", "value"],
+				"dieOnImpact": ["DieOnImpact", "value"],
+				"tumbleRandomly": ["TumbleRandomly", "value"],
+				"bounceCount": ["BounceCount", "value"],
+				"bounceDistance": ["BounceDistance", "value"],
+				"bounceFirstHeight": ["BounceFirstHeight", "value"],
+				"bounceSecondHeight": ["BounceSecondHeight", "value"],
+				"bounceFirstIndentRatio": ["BounceFirstPercentIndent", "ratio"],
+				"bounceSecondIndentRatio": ["BounceSecondPercentIndent", "ratio"],
+				"groundHitFxId": ["GroundHitFX", "value"],
+				"groundBounceFxId": ["GroundBounceFX", "value"],
+			}
+			if (
+				String(arrival.get("kind", "")) != "authored-ground-impact-bounce"
+				or String(arrival.get("runtimeStatus", "")) != "executable"
+				or String(arrival.get("terminalPolicy", "")) not in [
+					"remove-on-final-impact", "land-and-clear-projectile-state"
+				]
+			):
+				return {}
+			for graph_key_value in arrival_bindings.keys():
+				var graph_key := String(graph_key_value)
+				var binding := arrival_bindings[graph_key] as Array
+				var field_value: Variant = fields.get(String(binding[0]))
+				if typeof(field_value) != TYPE_DICTIONARY:
+					return {}
+				var expected: Variant = (field_value as Dictionary).get(String(binding[1]))
+				if arrival.get(graph_key) != expected:
+					if (
+						typeof(arrival.get(graph_key)) not in [TYPE_INT, TYPE_FLOAT]
+						or typeof(expected) not in [TYPE_INT, TYPE_FLOAT]
+						or not is_equal_approx(float(arrival.get(graph_key)), float(expected))
+					):
+						return {}
+		elif not arrival.is_empty():
+			return {}
+		found = {
+			"module": "BezierProjectileBehavior",
+			"trajectory": trajectory.duplicate(true),
+			"deferredBlockers": (eligibility.get("blockers") as Array).duplicate(true),
+			"sourceIni": String(row.get("source_ini", "")),
+			"line": int(row.get("line", 0)),
+			"tag": String(row.get("tag", "")),
+			"carrier": String(row.get("carrier", "")),
+			"activation": "conditional-explicit-runtime-request",
+			"runtimeStatus": runtime_status,
+			"arrival": arrival.duplicate(true),
+		}
+	return found
 
 
 static func module_contracts_by_kind(document: Dictionary) -> Dictionary:
@@ -1195,6 +1417,22 @@ static func experience_rule_from_contract(experience_value: Variant) -> Dictiona
 			level_row["unsupported_modifiers"] = unsupported
 		if String(row.get("selectionDecalTextureId", "")) != "":
 			level_row["selection_decal_texture_id"] = String(row.get("selectionDecalTextureId", ""))
+		if row.has("experienceAwardOwnGuysDie"):
+			var own_guys_award: Variant = row.get("experienceAwardOwnGuysDie")
+			if typeof(own_guys_award) not in [TYPE_INT, TYPE_FLOAT] or float(own_guys_award) < 0.0:
+				return {}
+			level_row["experience_award_own_guys_die"] = int(own_guys_award)
+		for pair_value in [
+			["selectionDecal", "selection_decal"],
+			["levelUpPresentation", "level_up_presentation"],
+		]:
+			var pair: Array = pair_value
+			var authored: Variant = row.get(String(pair[0]))
+			if authored == null:
+				continue
+			if typeof(authored) != TYPE_DICTIONARY:
+				return {}
+			level_row[String(pair[1])] = (authored as Dictionary).duplicate(true)
 		levels.append(level_row)
 	var grant_rank_rows := 0
 	for level_row in levels:
@@ -1247,18 +1485,74 @@ static func ability_rules(document: Dictionary) -> Array[Dictionary]:
 		var ability_id := String(row.get("id", ""))
 		var slot := int(row.get("slot", 0))
 		var targeting := String(row.get("targeting", ""))
-		if ability_id == "" or slot < 1 or targeting not in ["self", "point", "enemy-object"]:
+		if ability_id == "" or slot < 1 or targeting not in ["self", "point", "enemy-object", "object"]:
 			return []
 		var button: Dictionary = row.get("button", {}) as Dictionary
 		var effect: Dictionary = row.get("effect", {}) as Dictionary
 		var effect_kind := String(effect.get("kind", ""))
-		if effect_kind not in ["none", "weapon-blast", "heal", "summon", "attribute-modifier", "leadership-aura", "weapon-toggle", "terror", "mount-toggle", "capture-building", "experience-grant", "arrow-storm", "stealth-toggle", "teleport", "curse", "leadership-strip"]:
+		if effect_kind not in ["none", "weapon-blast", "heal", "summon", "attribute-modifier", "leadership-aura", "weapon-toggle", "terror", "mount-toggle", "capture-building", "experience-grant", "arrow-storm", "stealth-toggle", "teleport", "curse", "leadership-strip", "activate-module-graph", "weapon-mode-special-power", "dominate-enemy", "grab-passenger", "fling-passenger", "repair-structure", "stop-special-power", "siege-deploy", "toggle-deploy", "special-disguise", "unleash-special-power"]:
+			return []
+		if effect_kind == "activate-module-graph" and not _valid_activate_module_graph(effect):
+			return []
+		if effect_kind == "weapon-mode-special-power" and not _valid_weapon_mode_special_power(effect):
+			return []
+		if effect_kind == "dominate-enemy" and not _valid_dominate_enemy(effect):
+			return []
+		if effect_kind == "grab-passenger" and not _valid_grab_passenger(effect):
+			return []
+		if effect_kind == "fling-passenger" and not _valid_fling_passenger(effect):
+			return []
+		if effect_kind == "repair-structure" and not _valid_repair_structure(effect):
+			return []
+		if effect_kind == "stop-special-power" and not _valid_stop_special_power(effect):
+			return []
+		if effect_kind == "siege-deploy" and not _valid_siege_deploy(effect):
+			return []
+		if effect_kind == "toggle-deploy" and not _valid_toggle_deploy(effect):
+			return []
+		if effect_kind == "special-disguise":
+			if not _valid_special_disguise(effect, document):
+				return []
+			effect = effect.duplicate(true)
+			var disguise_envelope := (document.get("registration", {}) as Dictionary).get("specialDisguisePresentationPrerequisite", {}) as Dictionary
+			var disguise_closure := disguise_envelope.get("closure", {}) as Dictionary
+			effect["presentationPrerequisiteSha256"] = String(disguise_closure.get("aggregateSha256", ""))
+		if effect_kind == "unleash-special-power" and not _valid_unleash_special_power(effect):
 			return []
 		var implementation: Dictionary = row.get("implementation", {}) as Dictionary
 		var status := String(implementation.get("status", ""))
 		if status not in ["implemented", "unimplemented", "passive"]:
 			return []
 		var gate: Dictionary = row.get("levelGate", {}) as Dictionary
+		var special_power_contract: Dictionary = row.get("specialPowerContract", {}) as Dictionary
+		for bool_key in ["publicTimer", "sharedSyncedTimer"]:
+			if special_power_contract.has(bool_key) and typeof(special_power_contract[bool_key]) != TYPE_BOOL:
+				return []
+		for numeric_key in ["forbiddenObjectRange", "viewObjectRange", "viewObjectDurationMs", "maxCastRange", "unitCost"]:
+			if special_power_contract.has(numeric_key) and (
+				typeof(special_power_contract[numeric_key]) not in [TYPE_INT, TYPE_FLOAT]
+				or not is_finite(float(special_power_contract[numeric_key]))
+				or float(special_power_contract[numeric_key]) < 0.0
+			):
+				return []
+		for list_key in ["flags", "objectFilter", "forbiddenObjectFilter", "preventActivationConditions", "unitCostDeathTypes"]:
+			if special_power_contract.has(list_key) and typeof(special_power_contract[list_key]) != TYPE_ARRAY:
+				return []
+		var power_flags: Array = special_power_contract.get("flags", []) as Array
+		for flag_value in power_flags:
+			if String(flag_value) not in ["LIMIT_DISTANCE", "NEEDS_OBJECT_FILTER", "NO_FORBIDDEN_OBJECTS", "PATHABLE_ONLY"]:
+				return []
+		if power_flags.has("NEEDS_OBJECT_FILTER") and (special_power_contract.get("objectFilter", []) as Array).is_empty():
+			return []
+		if power_flags.has("LIMIT_DISTANCE") and float(special_power_contract.get("maxCastRange", 0.0)) <= 0.0:
+			return []
+		if power_flags.has("PATHABLE_ONLY") and targeting != "point":
+			return []
+		if power_flags.has("NO_FORBIDDEN_OBJECTS") and (
+			(special_power_contract.get("forbiddenObjectFilter", []) as Array).is_empty()
+			or float(special_power_contract.get("forbiddenObjectRange", 0.0)) <= 0.0
+		):
+			return []
 		var raw_level: Variant = gate.get("requiredLevel")
 		var label_id := _first_string(button.get("iconIds", []))
 		var text_id := _first_string(button.get("labelIds", []))
@@ -1284,8 +1578,454 @@ static func ability_rules(document: Dictionary) -> Array[Dictionary]:
 			"unit_specific_sound_id": String(row.get("unitSpecificSoundId", "")),
 			"radius_cursor_type": String(button.get("radiusCursorType", "")),
 			"options": (button.get("options", []) as Array).duplicate(),
+			"special_power_contract": special_power_contract.duplicate(true),
 		})
 	return output
+
+
+static func has_ability_surface(row: Dictionary, ability_specs: Dictionary) -> bool:
+	## Converted special powers are keyed by runtime unit id, not by the broad
+	## hero/siege/infantry category. The Dwarven Demolisher is the retail proof
+	## that a non-hero selected unit can own an authored palantir ability row.
+	var unit_id := String(row.get("unit_type", ""))
+	return unit_id != "" and ability_specs.has(unit_id)
+
+
+static func _valid_activate_module_graph(effect: Dictionary) -> bool:
+	if String(effect.get("specialPowerTemplateId", "")) == "" or typeof(effect.get("routes")) != TYPE_ARRAY or (effect.get("routes", []) as Array).is_empty():
+		return false
+	for numeric_key in ["startAbilityRange", "effectRange", "unpackingVariation"]:
+		if effect.has(numeric_key) and (typeof(effect[numeric_key]) not in [TYPE_INT, TYPE_FLOAT] or not is_finite(float(effect[numeric_key])) or float(effect[numeric_key]) < 0.0):
+			return false
+	if effect.has("mustFinishAbility") and typeof(effect["mustFinishAbility"]) != TYPE_BOOL:
+		return false
+	if effect.has("timingMs") and typeof(effect["timingMs"]) != TYPE_DICTIONARY:
+		return false
+	var timing := effect.get("timingMs", {}) as Dictionary
+	for key in timing:
+		if String(key) not in ["StartDelay", "PreparationTime", "PersistentPrepTime", "UnpackTime", "PackTime", "SpecialPowerDuration"] or typeof(timing[key]) not in [TYPE_INT, TYPE_FLOAT] or not is_finite(float(timing[key])) or float(timing[key]) < 0.0:
+			return false
+	for route_value in effect.get("routes", []) as Array:
+		if typeof(route_value) != TYPE_DICTIONARY:
+			return false
+		var route := route_value as Dictionary
+		if String(route.get("moduleTag", "")) == "" or String(route.get("targetMode", "")) not in ["SELF", "CURRENT_TARGET", "LOCATION"] or typeof(route.get("effect")) != TYPE_DICTIONARY:
+			return false
+		if String((route.get("effect", {}) as Dictionary).get("kind", "none")) not in ["weapon-blast", "heal", "summon", "attribute-modifier", "weapon-toggle", "terror", "mount-toggle", "experience-grant", "arrow-storm", "stealth-toggle", "teleport", "curse", "leadership-strip", "trigger-fx"]:
+			return false
+	return true
+
+
+static func _valid_weapon_mode_special_power(effect: Dictionary) -> bool:
+	if String(effect.get("specialPowerTemplateId", "")).strip_edges() == "":
+		return false
+	if typeof(effect.get("durationMs")) not in [TYPE_INT, TYPE_FLOAT]:
+		return false
+	if not is_finite(float(effect.get("durationMs", -1.0))) or float(effect.get("durationMs", -1.0)) <= 0.0:
+		return false
+	if typeof(effect.get("startsPaused")) != TYPE_BOOL:
+		return false
+	if effect.has("weaponSetFlags"):
+		if typeof(effect.get("weaponSetFlags")) != TYPE_ARRAY:
+			return false
+		for flag_value in effect.get("weaponSetFlags", []) as Array:
+			if typeof(flag_value) != TYPE_STRING or String(flag_value).strip_edges() == "":
+				return false
+	if effect.has("lockWeaponSlot") and String(effect.get("lockWeaponSlot", "")) != "SECONDARY":
+		return false
+	if effect.has("attributeModifier"):
+		if typeof(effect.get("attributeModifier")) != TYPE_DICTIONARY:
+			return false
+		var modifier := effect.get("attributeModifier", {}) as Dictionary
+		if String(modifier.get("id", "")).strip_edges() == "" or typeof(modifier.get("modifiers")) != TYPE_ARRAY:
+			return false
+		if (modifier.get("modifiers", []) as Array).is_empty() or typeof(modifier.get("unsupportedModifiers", [])) != TYPE_ARRAY:
+			return false
+		for modifier_value in modifier.get("modifiers", []) as Array:
+			if typeof(modifier_value) != TYPE_DICTIONARY:
+				return false
+	return effect.has("attributeModifier") or effect.has("weaponSetFlags") or effect.has("lockWeaponSlot")
+
+
+static func _valid_dominate_enemy(effect: Dictionary) -> bool:
+	if String(effect.get("specialPowerTemplateId", "")).strip_edges() == "":
+		return false
+	if typeof(effect.get("startAbilityRange")) not in [TYPE_INT, TYPE_FLOAT] or not is_finite(float(effect.get("startAbilityRange", -1.0))) or float(effect.get("startAbilityRange", -1.0)) < 0.0:
+		return false
+	if String(effect.get("affectsFilter", "")).strip_edges() == "" or typeof(effect.get("permanentlyConvert")) != TYPE_BOOL:
+		return false
+	if not bool(effect.get("permanentlyConvert", false)):
+		if typeof(effect.get("temporaryDefectDurationMs")) not in [TYPE_INT, TYPE_FLOAT] or not is_finite(float(effect.get("temporaryDefectDurationMs", -1.0))) or float(effect.get("temporaryDefectDurationMs", -1.0)) <= 0.0:
+			return false
+	if typeof(effect.get("unpackingVariation")) != TYPE_INT or int(effect.get("unpackingVariation", -1)) < 0:
+		return false
+	if effect.has("dominateRadius") and (typeof(effect.get("dominateRadius")) not in [TYPE_INT, TYPE_FLOAT] or not is_finite(float(effect.get("dominateRadius", -1.0))) or float(effect.get("dominateRadius", -1.0)) < 0.0):
+		return false
+	if effect.has("timingMs"):
+		if typeof(effect.get("timingMs")) != TYPE_DICTIONARY:
+			return false
+		for key in (effect.get("timingMs", {}) as Dictionary).keys():
+			var value: Variant = (effect.get("timingMs", {}) as Dictionary)[key]
+			if String(key) not in ["UnpackTime", "PreparationTime", "FreezeAfterTriggerDuration", "TriggerModelConditionDuration"] or typeof(value) not in [TYPE_INT, TYPE_FLOAT] or not is_finite(float(value)) or float(value) < 0.0:
+				return false
+	if effect.has("triggerModelCondition"):
+		if typeof(effect.get("triggerModelCondition")) != TYPE_DICTIONARY:
+			return false
+		var condition := effect.get("triggerModelCondition", {}) as Dictionary
+		if String(condition.get("namespace", "")) == "" or String(condition.get("value", "")) == "":
+			return false
+	return true
+
+
+static func _valid_fling_passenger(effect: Dictionary) -> bool:
+	if String(effect.get("specialPowerTemplateId", "")).strip_edges() == "" or typeof(effect.get("mustFinishAbility")) != TYPE_BOOL:
+		return false
+	if typeof(effect.get("timingMs")) != TYPE_DICTIONARY:
+		return false
+	var timing := effect.get("timingMs", {}) as Dictionary
+	if typeof(timing.get("UnpackTime")) not in [TYPE_INT, TYPE_FLOAT] or float(timing.get("UnpackTime", -1.0)) < 0.0:
+		return false
+	if timing.has("PackTime") and (typeof(timing.get("PackTime")) not in [TYPE_INT, TYPE_FLOAT] or float(timing.get("PackTime", -1.0)) < 0.0):
+		return false
+	var has_velocity := typeof(effect.get("velocity")) == TYPE_DICTIONARY
+	var has_warhead := typeof(effect.get("landingWarhead")) == TYPE_DICTIONARY
+	if has_velocity != has_warhead:
+		return false
+	if has_velocity:
+		var velocity := effect.get("velocity", {}) as Dictionary
+		for axis in ["x", "y", "z"]:
+			if typeof(velocity.get(axis)) not in [TYPE_INT, TYPE_FLOAT] or not is_finite(float(velocity.get(axis, 0.0))):
+				return false
+		var warhead := effect.get("landingWarhead", {}) as Dictionary
+		if String(warhead.get("id", "")) == "" or typeof(warhead.get("radius")) not in [TYPE_INT, TYPE_FLOAT] or float(warhead.get("radius", -1.0)) < 0.0 or String(warhead.get("damageType", "")) == "" or String(warhead.get("deathType", "")) == "" or String(warhead.get("forceKillObjectFilter", "")) == "":
+			return false
+	if effect.has("customAnimation"):
+		if typeof(effect.get("customAnimation")) != TYPE_DICTIONARY:
+			return false
+		var animation := effect.get("customAnimation", {}) as Dictionary
+		if String(animation.get("state", "")) == "" or typeof(animation.get("durationMs")) != TYPE_INT or int(animation.get("durationMs", -1)) < 0:
+			return false
+	return has_velocity or effect.has("customAnimation")
+
+
+static func _valid_grab_passenger(effect: Dictionary) -> bool:
+	if String(effect.get("specialPowerTemplateId", "")).strip_edges() == "" or typeof(effect.get("updateModuleStartsAttack")) != TYPE_BOOL or typeof(effect.get("allowTree")) != TYPE_BOOL:
+		return false
+	for key in ["acquire", "containment", "targetAdmission"]:
+		if typeof(effect.get(key)) != TYPE_DICTIONARY:
+			return false
+	var acquire := effect.get("acquire", {}) as Dictionary
+	if typeof(acquire.get("startAbilityRange")) not in [TYPE_INT, TYPE_FLOAT] or float(acquire.get("startAbilityRange", -1.0)) < 0.0 or typeof(acquire.get("timingMs")) != TYPE_DICTIONARY or typeof(acquire.get("animation")) != TYPE_DICTIONARY:
+		return false
+	var acquire_timing := acquire.get("timingMs", {}) as Dictionary
+	for timing_key in ["UnpackTime", "PreparationTime", "PersistentPrepTime", "PackTime"]:
+		if typeof(acquire_timing.get(timing_key)) not in [TYPE_INT, TYPE_FLOAT] or float(acquire_timing.get(timing_key, -1.0)) < 0.0:
+			return false
+	var acquire_animation := acquire.get("animation", {}) as Dictionary
+	if String(acquire_animation.get("state", "")) == "" or typeof(acquire_animation.get("durationMs")) != TYPE_INT or int(acquire_animation.get("durationMs", -1)) < 0 or typeof(acquire_animation.get("triggerTimeMs")) != TYPE_INT or int(acquire_animation.get("triggerTimeMs", -1)) < 0:
+		return false
+	var containment := effect.get("containment", {}) as Dictionary
+	if typeof(containment.get("slots")) != TYPE_INT or int(containment.get("slots", 0)) < 1 or String(containment.get("passengerFilter", "")) == "":
+		return false
+	for relation_key in ["allowEnemiesInside", "allowNeutralInside", "allowAlliesInside"]:
+		if typeof(containment.get(relation_key)) != TYPE_BOOL:
+			return false
+	var admission := effect.get("targetAdmission", {}) as Dictionary
+	if String(admission.get("passengerFilter", "")) == "" or typeof(admission.get("treeObjectIds", [])) != TYPE_ARRAY:
+		return false
+	if typeof(effect.get("releaseAbilities", [])) != TYPE_ARRAY:
+		return false
+	for release_value in effect.get("releaseAbilities", []) as Array:
+		if typeof(release_value) != TYPE_DICTIONARY or not _valid_fling_passenger(release_value as Dictionary):
+			return false
+	return true
+
+
+static func _valid_repair_structure(effect: Dictionary) -> bool:
+	if String(effect.get("specialPowerTemplateId", "")) == "" or typeof(effect.get("targeting")) != TYPE_DICTIONARY or typeof(effect.get("repairRate")) != TYPE_DICTIONARY or typeof(effect.get("contactPoint")) != TYPE_DICTIONARY or typeof(effect.get("economy")) != TYPE_DICTIONARY:
+		return false
+	var targeting := effect.get("targeting", {}) as Dictionary
+	if typeof(targeting.get("kindOf")) != TYPE_ARRAY or String(targeting.get("relation", "")) != "ALLY" or (targeting.get("kindOf", []) as Array) != ["STRUCTURE"] or typeof(targeting.get("requiresDamaged")) != TYPE_BOOL or String(targeting.get("rangeMode", "")) != "REPAIR_CONTACT_POINT":
+		return false
+	var rate := effect.get("repairRate", {}) as Dictionary
+	if String(rate.get("status", "")) not in ["authored", "engine-default-unresolved"]:
+		return false
+	if String(rate.get("status", "")) == "authored" and (typeof(rate.get("maxHealthFractionPerSecond")) not in [TYPE_INT, TYPE_FLOAT] or float(rate.get("maxHealthFractionPerSecond", -1.0)) <= 0.0):
+		return false
+	var contact := effect.get("contactPoint", {}) as Dictionary
+	return String(contact.get("name", "")) == "Repair" and typeof(contact.get("authored")) == TYPE_BOOL
+
+
+static func _valid_stop_special_power(effect: Dictionary) -> bool:
+	if (
+		String(effect.get("specialPowerTemplateId", "")).strip_edges() == ""
+		or String(effect.get("stopPowerTemplateId", "")).strip_edges() == ""
+		or String(effect.get("targetMode", "")) != "SELF"
+		or typeof(effect.get("interruptsCurrentOrder")) != TYPE_BOOL
+		or not bool(effect.get("interruptsCurrentOrder", false))
+		or typeof(effect.get("linkedModule")) != TYPE_DICTIONARY
+	):
+		return false
+	var linked := effect.get("linkedModule", {}) as Dictionary
+	return (
+		String(linked.get("kind", "")).strip_edges() != ""
+		and String(linked.get("sourceIni", "")).strip_edges() != ""
+		and typeof(linked.get("line")) == TYPE_INT
+		and int(linked.get("line", 0)) > 0
+	)
+
+
+static func _valid_siege_deploy(effect: Dictionary) -> bool:
+	if (
+		String(effect.get("specialPowerTemplateId", "")).strip_edges() == ""
+		or String(effect.get("targetMode", "")) != "TARGET_STRUCTURE"
+		or typeof(effect.get("lowerDelayMs")) != TYPE_INT
+		or int(effect.get("lowerDelayMs", -1)) < 0
+		or typeof(effect.get("raiseDelayMs")) != TYPE_INT
+		or int(effect.get("raiseDelayMs", -1)) < 0
+		or typeof(effect.get("evacuatePassengersOnDeploy")) != TYPE_BOOL
+		or typeof(effect.get("skipAdjustPosition")) != TYPE_BOOL
+		or String(effect.get("initiateSoundId", "")).strip_edges() == ""
+		or typeof(effect.get("modelReceipts")) != TYPE_ARRAY
+	):
+		return false
+	if effect.has("extraWallDistanceSource") and (
+		typeof(effect.get("extraWallDistanceSource")) not in [TYPE_INT, TYPE_FLOAT]
+		or not is_finite(float(effect.get("extraWallDistanceSource", -1.0)))
+		or float(effect.get("extraWallDistanceSource", -1.0)) < 0.0
+	):
+		return false
+	return true
+
+
+static func _valid_toggle_deploy(effect: Dictionary) -> bool:
+	## This is the DeployStyleAIUpdate-backed SELF toggle, not the wall-targeted
+	## SiegeDeploySpecialPower contract. Times and modifier values remain data-
+	## driven for mods, while every runtime-significant leaf is typed fail-closed.
+	if (
+		String(effect.get("specialPowerTemplateId", "")).strip_edges() == ""
+		or String(effect.get("targetMode", "")) != "SELF"
+		or typeof(effect.get("ignoreFacingCheck")) != TYPE_BOOL
+		or not bool(effect.get("ignoreFacingCheck", false))
+		or typeof(effect.get("autoAcquireEnabled")) != TYPE_BOOL
+		or typeof(effect.get("autoAcquireModes")) != TYPE_ARRAY
+		or typeof(effect.get("mustDeployToAttack")) != TYPE_BOOL
+		or typeof(effect.get("moodAttackCheckRateMs")) not in [TYPE_INT, TYPE_FLOAT]
+		or not is_finite(float(effect.get("moodAttackCheckRateMs", -1.0)))
+		or float(effect.get("moodAttackCheckRateMs", -1.0)) < 0.0
+		or typeof(effect.get("unpackTimeMs")) not in [TYPE_INT, TYPE_FLOAT]
+		or not is_finite(float(effect.get("unpackTimeMs", -1.0)))
+		or float(effect.get("unpackTimeMs", -1.0)) <= 0.0
+		or typeof(effect.get("packTimeMs")) not in [TYPE_INT, TYPE_FLOAT]
+		or not is_finite(float(effect.get("packTimeMs", -1.0)))
+		or float(effect.get("packTimeMs", -1.0)) <= 0.0
+		or String(effect.get("deployedAttributeModifierId", "")).strip_edges() == ""
+		or String(effect.get("soundDeployId", "")).strip_edges() == ""
+		or String(effect.get("soundUndeployId", "")).strip_edges() == ""
+		or typeof(effect.get("autoAbility")) != TYPE_BOOL
+		or typeof(effect.get("triggerWhenReady")) != TYPE_BOOL
+		or typeof(effect.get("autoAbilityBlockedModelConditions")) != TYPE_ARRAY
+		or typeof(effect.get("deployStyle")) != TYPE_DICTIONARY
+		or typeof(effect.get("deployedAttributeModifier")) != TYPE_DICTIONARY
+	):
+		return false
+	for mode_value in effect.get("autoAcquireModes", []) as Array:
+		if typeof(mode_value) != TYPE_STRING or String(mode_value).strip_edges() == "":
+			return false
+	for condition_value in effect.get("autoAbilityBlockedModelConditions", []) as Array:
+		if typeof(condition_value) != TYPE_STRING or String(condition_value).strip_edges() == "":
+			return false
+	var style := effect.get("deployStyle", {}) as Dictionary
+	if (
+		String(style.get("tag", "")).strip_edges() == ""
+		or String(style.get("sourceIni", "")).strip_edges() == ""
+		or typeof(style.get("line")) != TYPE_INT
+		or int(style.get("line", 0)) <= 0
+	):
+		return false
+	var modifier := effect.get("deployedAttributeModifier", {}) as Dictionary
+	if (
+		String(modifier.get("id", "")) != String(effect.get("deployedAttributeModifierId", ""))
+		or typeof(modifier.get("modifiers")) != TYPE_ARRAY
+		or (modifier.get("modifiers", []) as Array).is_empty()
+		or typeof(modifier.get("durationMs")) not in [TYPE_INT, TYPE_FLOAT]
+		or float(modifier.get("durationMs", -1.0)) != 0.0
+	):
+		return false
+	for leaf_value in modifier.get("modifiers", []) as Array:
+		if typeof(leaf_value) != TYPE_DICTIONARY:
+			return false
+		var leaf := leaf_value as Dictionary
+		if (
+			String(leaf.get("kind", "")).strip_edges() == ""
+			or String(leaf.get("application", "")) not in ["additive", "multiplicative"]
+			or typeof(leaf.get("value")) not in [TYPE_INT, TYPE_FLOAT]
+			or not is_finite(float(leaf.get("value", 0.0)))
+		):
+			return false
+	return true
+
+
+static func _valid_special_disguise(effect: Dictionary, document: Dictionary) -> bool:
+	## Runtime activation is independently binary-proven, but presentation is
+	## admitted only when the immutable prerequisite envelope binds the same
+	## descriptor, module fields, identities, and aggregate digest. The closure
+	## remains presentation-only: it never registers a replacement simulation
+	## object for either disguise template.
+	if (
+		String(effect.get("specialPowerTemplateId", "")) == ""
+		or String(effect.get("targetMode", "")) != "SELF"
+		or String(effect.get("ownerObjectId", "")) != String(document.get("objectId", ""))
+		or String(effect.get("ownerDisguiseTemplateId", "")) == ""
+		or String(effect.get("hostileDisguiseTemplateId", "")) == ""
+		or String(effect.get("disguiseFxId", "")) == ""
+		or typeof(effect.get("forceMountedWhenDisguising")) != TYPE_BOOL
+		or not bool(effect.get("forceMountedWhenDisguising", false))
+		or typeof(effect.get("opacityTarget")) not in [TYPE_INT, TYPE_FLOAT]
+		or not is_finite(float(effect.get("opacityTarget", -1.0)))
+		or float(effect.get("opacityTarget", -1.0)) < 0.0
+		or float(effect.get("opacityTarget", -1.0)) > 1.0
+		or typeof(effect.get("deferredBoundaries")) != TYPE_ARRAY
+	):
+		return false
+	for key in ["unpackTimeMs", "preparationTimeMs", "persistentPrepTimeMs", "packTimeMs"]:
+		if typeof(effect.get(key)) not in [TYPE_INT, TYPE_FLOAT] or not is_finite(float(effect.get(key, -1.0))) or float(effect.get(key, -1.0)) <= 0.0:
+			return false
+	var expected_boundaries := ["critical-hit-ordering", "death-reset-ordering", "user1-stealth-ordering", "viewer-perspective"]
+	var boundaries: Array = (effect.get("deferredBoundaries", []) as Array).duplicate()
+	boundaries.sort()
+	if boundaries != expected_boundaries:
+		return false
+	var registration := document.get("registration", {}) as Dictionary
+	var envelope := registration.get("specialDisguisePresentationPrerequisite", {}) as Dictionary
+	var closure := envelope.get("closure", {}) as Dictionary
+	var digest := String(closure.get("aggregateSha256", ""))
+	if (
+		String(closure.get("schema", "")) != "openbfme.special-disguise-presentation-prerequisite"
+		or int(closure.get("schemaVersion", -1)) != 0
+		or String(closure.get("edition", "")) not in ["bfme2", "rotwk"]
+		or String(closure.get("runtimeStatus", "")) != "sealed-deferred-no-runtime-activation"
+		or closure.get("presentationOnly") != true
+		or closure.get("authoritativeEntityRegistration") != false
+		or String(closure.get("objectId", "")) != String(document.get("objectId", ""))
+		or String(closure.get("descriptorSha256", "")) != String(document.get("descriptorSha256", ""))
+		or String(closure.get("aggregateSha256", "")) != digest
+		or not _is_lower_sha256(digest)
+	):
+		return false
+	var identities := closure.get("presentationIdentities", {}) as Dictionary
+	if (
+		String(identities.get("ownerObjectId", "")) != String(effect.get("ownerObjectId", ""))
+		or String(identities.get("nonOwnerDisguiseTemplateId", "")) != String(effect.get("ownerDisguiseTemplateId", ""))
+		or String(identities.get("hostilePerspectiveTemplateId", "")) != String(effect.get("hostileDisguiseTemplateId", ""))
+	):
+		return false
+	var roles: Array[String] = []
+	for leaf_value in closure.get("visualLeafBindings", []) as Array:
+		if typeof(leaf_value) != TYPE_DICTIONARY:
+			return false
+		var role := String((leaf_value as Dictionary).get("role", ""))
+		if role != "" and not roles.has(role):
+			roles.append(role)
+	roles.sort()
+	if roles != ["non-owner-disguised-presentation", "owner-base-presentation", "owner-disguised-presentation", "owner-mounted-presentation"]:
+		return false
+	var receipt := closure.get("moduleReceipt", {}) as Dictionary
+	if String(receipt.get("kind", receipt.get("module", ""))) != "SpecialDisguiseUpdate" or typeof(receipt.get("fields")) != TYPE_DICTIONARY:
+		return false
+	var fields := receipt.get("fields", {}) as Dictionary
+	var exact := {
+		"SpecialPowerTemplate": String(effect.get("specialPowerTemplateId", "")),
+		"DisguiseAsTemplate": String(effect.get("ownerDisguiseTemplateId", "")),
+		"DisguisedAsTemplate_EnemyPerspective": String(effect.get("hostileDisguiseTemplateId", "")),
+		"DisguiseFX": String(effect.get("disguiseFxId", "")),
+	}
+	for key in exact:
+		if _receipt_token(fields.get(key, {}) as Dictionary) != String(exact[key]):
+			return false
+	for pair_value in [["UnpackTime", "unpackTimeMs"], ["PreparationTime", "preparationTimeMs"], ["PersistentPrepTime", "persistentPrepTimeMs"], ["PackTime", "packTimeMs"]]:
+		var pair: Array = pair_value
+		if not is_equal_approx(_receipt_number(fields.get(String(pair[0]), {}) as Dictionary), float(effect.get(String(pair[1]), -1.0))):
+			return false
+	if not is_equal_approx(_receipt_number(fields.get("OpacityTarget", {}) as Dictionary), float(effect.get("opacityTarget", -1.0))):
+		return false
+	if _receipt_yes_no(fields.get("ForceMountedWhenDisguising", {}) as Dictionary) != true:
+		return false
+	var has_modifier := effect.has("triggerAttributeModifierId") or effect.has("attributeModifierDurationMs") or effect.has("triggerAttributeModifier")
+	if has_modifier:
+		# RotWK's generic SpecialAbilityUpdate parser stores these fields, but
+		# the exact 2.01 SpecialDisguise body/callgraph contains no proven
+		# application read. Unofficial-2.02 authors Rider2Tracker here; keep that
+		# row unavailable until an external retail trace closes the call path.
+		return false
+	else:
+		if fields.has("TriggerAttributeModifier") or fields.has("AttributeModifierDuration"):
+			return false
+	return true
+
+
+static func _is_lower_sha256(value: String) -> bool:
+	if value.length() != 64 or value != value.to_lower():
+		return false
+	for code in value.to_ascii_buffer():
+		if not (code >= 48 and code <= 57) and not (code >= 97 and code <= 102):
+			return false
+	return true
+
+
+static func _receipt_token(receipt: Dictionary) -> String:
+	var authored := String(receipt.get("authored", receipt.get("value", ""))).strip_edges()
+	return authored.split(" ", false)[0] if authored != "" else ""
+
+
+static func _receipt_number(receipt: Dictionary) -> float:
+	if receipt.has("milliseconds"):
+		return float(receipt.get("milliseconds", NAN))
+	if receipt.has("value") and typeof(receipt.get("value")) in [TYPE_INT, TYPE_FLOAT]:
+		return float(receipt.get("value"))
+	var authored := String(receipt.get("authored", "")).strip_edges()
+	return authored.to_float() if authored.is_valid_float() else NAN
+
+
+static func _receipt_yes_no(receipt: Dictionary) -> Variant:
+	if receipt.has("value") and typeof(receipt.get("value")) == TYPE_BOOL:
+		return bool(receipt.get("value"))
+	var authored := String(receipt.get("authored", "")).strip_edges().to_lower()
+	if authored == "yes":
+		return true
+	if authored == "no":
+		return false
+	return null
+
+
+static func _valid_unleash_special_power(effect: Dictionary) -> bool:
+	if (
+		String(effect.get("specialPowerTemplateId", "")).strip_edges() == ""
+		or String(effect.get("targetMode", "")) != "SELF_OWNED_SLAVE"
+		or String(effect.get("spawnedObjectId", "")).strip_edges() == ""
+		or typeof(effect.get("timingMs")) != TYPE_DICTIONARY
+		or typeof(effect.get("awardXpForTriggering")) not in [TYPE_INT, TYPE_FLOAT]
+		or float(effect.get("awardXpForTriggering", -1.0)) < 0.0
+		or typeof(effect.get("instant")) != TYPE_BOOL
+		or typeof(effect.get("creationGateUpgradeIds")) != TYPE_ARRAY
+		or (effect.get("creationGateUpgradeIds", []) as Array).is_empty()
+		or typeof(effect.get("slaveWatcher")) != TYPE_DICTIONARY
+	):
+		return false
+	var timing := effect.get("timingMs", {}) as Dictionary
+	if typeof(timing.get("UnpackTime")) not in [TYPE_INT, TYPE_FLOAT] or float(timing.get("UnpackTime", -1.0)) < 0.0:
+		return false
+	for gate_value in effect.get("creationGateUpgradeIds", []) as Array:
+		if typeof(gate_value) != TYPE_STRING or String(gate_value).strip_edges() == "":
+			return false
+	var watcher := effect.get("slaveWatcher", {}) as Dictionary
+	return (
+		String(watcher.get("removeUpgradeId", "")).strip_edges() != ""
+		and String(watcher.get("grantUpgradeId", "")).strip_edges() != ""
+		and String(watcher.get("sourceIni", "")).strip_edges() != ""
+		and typeof(watcher.get("line")) == TYPE_INT
+		and int(watcher.get("line", 0)) > 0
+	)
 
 
 static func runtime_object_id(source_id: String) -> String:

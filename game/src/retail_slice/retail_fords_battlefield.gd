@@ -26,6 +26,7 @@ const AssetFactoryScript = preload("res://src/view/asset_factory.gd")
 const RetailStructureScript = preload("res://src/retail_slice/retail_structure.gd")
 const RetailAnimatedPropControllerScript = preload("res://src/retail_slice/retail_animated_prop_controller.gd")
 const RetailParticleControllerScript = preload("res://src/retail_slice/retail_particle_controller.gd")
+const RetailScenarioDeathFxControllerScript = preload("res://src/retail_slice/retail_scenario_death_fx_controller.gd")
 const WaterSurfaceScript = preload("res://src/retail_slice/retail_water_surface.gd")
 const TreeSwayScript = preload("res://src/retail_slice/retail_tree_sway.gd")
 const WeatherFxScript = preload("res://src/retail_slice/retail_weather_fx.gd")
@@ -108,6 +109,8 @@ var particle_diagnostics: Array[Dictionary] = []
 var observability_enabled := false
 var structure_damage_route_log: Array[Dictionary] = []
 var last_structure_damage_route: Dictionary = {}
+var scenario_prop_death_route_log: Array[Dictionary] = []
+var last_scenario_prop_death_route: Dictionary = {}
 var unresolved_prop_placement_count := 0
 var unresolved_prop_type_ids: Array[String] = []
 var retail_prop_container: Node3D
@@ -247,16 +250,31 @@ func configure(map_data: RetailMapData) -> bool:
 				particle_controller != null
 				and particle_contract_ready
 				and particle_presentation_ready
-				and particle_validated_definition_count == 35
-				and particle_validated_texture_count == 15
-				and particle_provisional_selection_count == 1
-				and particle_unresolved_family_selection_count == 10
-				and particle_emitter_count == 7
+				and particle_validated_definition_count == RetailParticleControllerScript.EXPECTED_DEFINITION_COUNT
+				and particle_validated_texture_count == RetailParticleControllerScript.EXPECTED_TEXTURE_COUNT
+				and particle_provisional_selection_count == 0
+				and particle_unresolved_family_selection_count == 0
+				and particle_emitter_count == RetailParticleControllerScript.EXPECTED_RIPPLE_PLACEMENT_COUNT
 			)
 		)
 	)
 	if animated_prop_contract_active and not animated_prop_parity_ready and error == "":
 		error = "animated retail prop runtime retained exact geometry but failed animation parity"
+	if not source_driven and error == "":
+		error = "source-driven aggregate mismatch: particle=%s terrain=%s roads=%s" % [
+			JSON.stringify({
+				"active": particle_contract_active,
+				"contractReady": particle_contract_ready,
+				"presentationReady": particle_presentation_ready,
+				"definitions": particle_validated_definition_count,
+				"textures": particle_validated_texture_count,
+				"provisional": particle_provisional_selection_count,
+				"unresolved": particle_unresolved_family_selection_count,
+				"emitters": particle_emitter_count,
+			}),
+			JSON.stringify({"material": terrain_material_source_driven, "grid": terrain_exact_grid_ready, "vertices": terrain_vertex_count, "triangles": terrain_triangle_count}),
+			JSON.stringify({"exact": roads_exact, "vacuous": roads_vacuous, "geometryOnly": roads_geometry_only}),
+		]
 	return source_driven
 
 
@@ -1323,6 +1341,113 @@ func _record_structure_damage_route(result: Dictionary) -> Dictionary:
 	return result
 
 
+func route_scenario_prop_death_effect(
+	request: Dictionary,
+	audio_route: Callable = Callable(),
+	shake_route: Callable = Callable()
+) -> Dictionary:
+	## Consume only the exact FXListDie receipt carried by the selected neutral
+	## descriptor. The current artifact marks this contract deferred and does not
+	## ship the FXList expansion, so the authoritative route is retained while
+	## presentation fails closed. No generic burst, sound, camera shake, damage,
+	## health, or removal timing is synthesized here.
+	var valid := (
+		String(request.get("schema", "")) == "openbfme.scenario-prop-removal-presentation-route"
+		and int(request.get("schemaVersion", -1)) == 0
+		and String(request.get("objectId", "")) != ""
+		and String(request.get("module", "")) == "FXListDie"
+		and String(request.get("carrier", "")) == "Behavior"
+		and String(request.get("deathFx", "")).is_valid_identifier()
+		and String(request.get("sourceIni", "")) != ""
+		and int(request.get("line", 0)) > 0
+		and String(request.get("trigger", "")) == "authoritative-scenario-prop-removal"
+		and typeof(request.get("position")) == TYPE_VECTOR3
+	)
+	if not valid:
+		return _record_scenario_prop_death_route({
+			"ok": false,
+			"presented": false,
+			"reason": "invalid-scenario-prop-fxlistdie-route",
+		})
+	var runtime_status := String(request.get("runtimeStatus", ""))
+	var sealed_value: Variant = request.get("deathFxBinding")
+	if sealed_value != null:
+		if typeof(sealed_value) != TYPE_DICTIONARY:
+			return _record_scenario_prop_death_route({
+				"ok": false, "presented": false,
+				"reason": "scenario-prop-death-fx-binding-is-invalid",
+			})
+		var sealed := sealed_value as Dictionary
+		if (
+			String(sealed.get("schema", "")) != "openbfme.neutral-prop-death-fx-binding"
+			or int(sealed.get("schemaVersion", -1)) != 0
+			or String(sealed.get("objectId", "")) != String(request.get("objectId", ""))
+			or String(sealed.get("fxListId", "")) != String(request.get("deathFx", ""))
+			or String(sealed.get("presentationStatus", "")) != "sealed-authored-route"
+			or typeof(sealed.get("authoredNuggets")) != TYPE_ARRAY
+			or (sealed.get("authoredNuggets", []) as Array).is_empty()
+		):
+			return _record_scenario_prop_death_route({
+				"ok": false, "presented": false,
+				"reason": "scenario-prop-death-fx-binding-drifted",
+			})
+		var controller = RetailScenarioDeathFxControllerScript.new()
+		controller.name = "ScenarioDeathFx_%s_%d" % [String(request.get("objectId", "")), scenario_prop_death_route_log.size()]
+		add_child(controller)
+		if not controller.execute(
+			sealed,
+			String(request.get("packRoot", "")),
+			Vector3(request.get("position", Vector3.INF)),
+			float(request.get("sourceYaw", 0.0)),
+			float(request.get("sourceScale", 0.0)),
+			String(request.get("surfaceKind", "")),
+			controller,
+			audio_route,
+			shake_route
+		):
+			var failure := {
+				"ok": false, "presented": false,
+				"reason": "sealed-scenario-prop-death-fx-execution-failed",
+				"detail": String(controller.error),
+				"objectId": request.get("objectId"), "deathFx": request.get("deathFx"),
+			}
+			controller.queue_free()
+			return _record_scenario_prop_death_route(failure)
+		var sealed_result: Dictionary = controller.route_receipt.duplicate(true)
+		sealed_result["consumed"] = true
+		sealed_result["objectId"] = request.get("objectId")
+		sealed_result["deathFx"] = request.get("deathFx")
+		return _record_scenario_prop_death_route(sealed_result)
+	if runtime_status != "deferred":
+		return _record_scenario_prop_death_route({
+			"ok": false,
+			"presented": false,
+			"reason": "scenario-prop-fxlistdie-runtime-status-unexpected",
+			"objectId": String(request.get("objectId", "")),
+			"deathFx": String(request.get("deathFx", "")),
+		})
+	var result := request.duplicate(true)
+	result["ok"] = true
+	result["presented"] = false
+	result["status"] = "authored-fxlist-deferred-no-fabricated-presentation"
+	return _record_scenario_prop_death_route(result)
+
+
+func _record_scenario_prop_death_route(result: Dictionary) -> Dictionary:
+	last_scenario_prop_death_route = result.duplicate(true)
+	set_meta("last_scenario_prop_death_route", last_scenario_prop_death_route.duplicate(true))
+	if observability_enabled:
+		scenario_prop_death_route_log.append(last_scenario_prop_death_route.duplicate(true))
+		if scenario_prop_death_route_log.size() > 128:
+			scenario_prop_death_route_log = scenario_prop_death_route_log.slice(64)
+		set_meta("scenario_prop_death_route_log", scenario_prop_death_route_log.duplicate(true))
+	else:
+		scenario_prop_death_route_log.clear()
+		if has_meta("scenario_prop_death_route_log"):
+			remove_meta("scenario_prop_death_route_log")
+	return result
+
+
 func _build_bound_retail_structures(map_data: RetailMapData) -> bool:
 	bound_retail_structure_type_ids.assign(map_data.bound_structure_type_ids)
 	if map_data.bound_structure_placements.size() != map_data.bound_structure_placement_count:
@@ -1745,6 +1870,8 @@ func _clear_generated() -> void:
 		"particle_diagnostics",
 		"last_structure_damage_route",
 		"structure_damage_route_log",
+		"last_scenario_prop_death_route",
+		"scenario_prop_death_route_log",
 		"tree_sway",
 		"weather_fx",
 	]:
@@ -1773,6 +1900,8 @@ func _clear_generated() -> void:
 	particle_diagnostics.clear()
 	structure_damage_route_log.clear()
 	last_structure_damage_route.clear()
+	scenario_prop_death_route_log.clear()
+	last_scenario_prop_death_route.clear()
 	particle_controller = null
 	unresolved_prop_placement_count = 0
 	unresolved_prop_type_ids.clear()

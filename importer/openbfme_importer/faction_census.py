@@ -520,12 +520,27 @@ _COMMAND_AUDIO_VALUE_FIELDS = frozenset(
 )
 _AUDIO_SENTINELS = frozenset({"none", "null", "nosound", "0"})
 
+# These passenger-owned routes are parsed by the generic Voice* rule below.
+# Keep their exact authored spellings as executable importer evidence as well:
+# the exhaustive ledger must not confuse generic prefix support with an absent
+# mapping, and the runtime adapter consumes these same three keys on accepted
+# ship entry.
+_TRANSPORT_ENTRY_VOICE_FIELDS = frozenset(
+    {
+        "VoiceEnterUnitElvenTransportShip",
+        "VoiceEnterUnitEvilMenTransportShip",
+        "VoiceEnterUnitTransportShip",
+    }
+)
+
 
 def _object_audio_reference_ordinals(field: str) -> tuple[int, ...]:
     """Return token positions defined by the BFME2 Object audio field schema."""
 
     folded = field.casefold()
     if folded == "initiatevoice":
+        return (0,)
+    if folded in {value.casefold() for value in _TRANSPORT_ENTRY_VOICE_FIELDS}:
         return (0,)
     if folded.startswith("voice") and folded != "voicepriority":
         return (0,)
@@ -536,6 +551,48 @@ def _object_audio_reference_ordinals(field: str) -> tuple[int, ...]:
     if folded in _OBJECT_AUDIO_VALUE_FIELDS:
         return (0,)
     return ()
+
+
+def object_audio_definition_ids(
+    object_id: str, field: str, value: str
+) -> tuple[str, ...]:
+    """Return only runtime audio-definition ids from one Object assignment.
+
+    SAGE overloads Voice fields with three distinct grammars: ``NoSound`` is
+    an authored silence sentinel, ``EVA:<event>`` addresses the announcer
+    event table, and ``+SOUND:<id>`` adds a normal audio definition.  Only the
+    last form (plus ordinary event ids) belongs in a unit audio route.  Keeping
+    this classification beside the census tokenizer prevents graphless imports
+    from treating namespace/category tokens as sound-event identifiers.
+    """
+
+    return tuple(
+        identifier
+        for identifier, _authored_identifier in object_audio_definition_routes(
+            object_id, field, value
+        )
+    )
+
+
+def object_audio_definition_routes(
+    object_id: str, field: str, value: str
+) -> tuple[tuple[str, str], ...]:
+    """Return ``(runtime id, authored id)`` pairs for a direct sound route."""
+
+    if value.lstrip().casefold().startswith("eva:"):
+        return ()
+    tokens = _audio_reference_tokens(value)
+    result: list[tuple[str, str]] = []
+    for ordinal in _object_audio_reference_ordinals(field):
+        if ordinal >= len(tokens):
+            continue
+        authored_identifier = tokens[ordinal]
+        identifier = normalize_faction_voice_event(
+            object_id, field, authored_identifier
+        )
+        if identifier and identifier.casefold() not in _AUDIO_SENTINELS:
+            result.append((identifier, authored_identifier))
+    return tuple(result)
 
 
 def _command_audio_reference_ordinals(

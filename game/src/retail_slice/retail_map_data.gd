@@ -69,12 +69,6 @@ const MAP_FIXTURE_ROLES: Array[String] = [
 ]
 const MAX_MAP_FIXTURES := 2048
 const MAX_WATER_VERTICES := 4096
-## BFME2 1.06 CREEP_OBJECTFILTER lair set (gamedata.ini line 87): every lair
-## placement on the five converted maps carries originalOwner PlyrCreeps.
-const CREEP_LAIR_TYPE_NAMES: Array[String] = [
-	"BarrowWightLair", "CaveTrollLair", "CaveTrollLairSnow", "FireDrakeLair",
-	"MoriarGoblinLair", "MoriarGoblinLairSnow", "SpiderLair", "WargLair",
-]
 ## Neutral capturable camps. CaptureFlag is CAPTURABLE; Inn / Outpost /
 ## SignalFire are LINKED_TO_FLAG and change owner when the paired flag does.
 ## Health is the StructureBody / HighlanderBody MaxHealth from the INI.
@@ -292,12 +286,11 @@ var ford_gates: Array[Dictionary] = []
 var generic_prop_placements: Array[Dictionary] = []
 var bound_prop_placements: Array[Dictionary] = []
 var bound_structure_placements: Array[Dictionary] = []
-## Authored creep-lair placements (retail PlyrCreeps camps), exposed to the
-## deterministic simulation independent of visual binding: bound lair types
-## keep their lifecycle visual in bound_structure_placements, unconverted lair
-## families (goblin/spider/wight/drake) still surface here so the sim can fail
-## closed into a recorded provisional instead of silently dropping the camp.
-var creep_lair_placements: Array[Dictionary] = []
+## Every non-road authored Object placement, preserved for the descriptor-backed
+## scenario registries. Runtime admission remains fail-closed: carrying a row
+## here does not make it spawnable unless exactly one selected registry admits
+## its source type on the map-placement surface.
+var scenario_object_placements: Array[Dictionary] = []
 var capturable_placements: Array[Dictionary] = []
 var bound_prop_type_ids: Array[String] = []
 var bound_structure_type_ids: Array[String] = []
@@ -758,11 +751,6 @@ func _castle_fixture_seed_disposition(record: Dictionary) -> String:
 	## castle_fixtures.castle_fixture_seed_disposition and pinned to the same
 	## oracle counts (Erebor seeds 587, Carn Dum 260; both suites assert).
 	var type_name := String(record.get("typeName", "")).to_lower()
-	for lair_type in CREEP_LAIR_TYPE_NAMES:
-		# Creep-lair placements belong to the creep lane's routing; seeding
-		# them here too would double-spawn every lair.
-		if lair_type.to_lower() == type_name:
-			return "creep-lair-owned"
 	var kind_of := _array(record.get("kindOf", []))
 	if kind_of.has("INERT"):
 		# Indestructible scenery (Carn Dum's high-pass rocks, mine carts).
@@ -1507,7 +1495,7 @@ func _route_normalized_object_placements(normalized_objects: Array[Dictionary]) 
 	generic_prop_placements.clear()
 	bound_prop_placements.clear()
 	bound_structure_placements.clear()
-	creep_lair_placements.clear()
+	scenario_object_placements.clear()
 	capturable_placements.clear()
 	var vegetation: Array[Dictionary] = []
 	var rocks: Array[Dictionary] = []
@@ -1517,20 +1505,18 @@ func _route_normalized_object_placements(normalized_objects: Array[Dictionary]) 
 	var observed_unresolved := 0
 	for placement_value in normalized_objects:
 		var placement: Dictionary = placement_value
+		var scenario_local := Vector3(placement["position"])
+		scenario_object_placements.append({
+			"type_name": String(placement["source_type"]),
+			"source_index": int(placement["source_index"]),
+			"source_position": Vector3(placement["source_position"]),
+			"position": Vector2(scenario_local.x, scenario_local.z),
+			"yaw": float(placement["yaw"]),
+			"properties": (placement.get("properties", {}) as Dictionary).duplicate(true),
+		})
 		var type_name := String(placement["source_type"])
 		var binding: Dictionary = _object_binding_by_type.get(type_name, {})
 		var status := String(binding.get("status", ""))
-		if CREEP_LAIR_TYPE_NAMES.has(type_name):
-			# Sim-facing lair record, independent of the visual binding route
-			# below (bound lairs also keep their lifecycle-structure placement).
-			var lair_local := Vector3(placement["position"])
-			creep_lair_placements.append({
-				"type_name": type_name,
-				"source_index": int(placement["source_index"]),
-				"position": Vector2(lair_local.x, lair_local.z),
-				"yaw": float(placement["yaw"]),
-				"binding_status": status if status != "" else "unresolved",
-			})
 		if CAPTURABLE_NEUTRAL_TYPES.has(type_name):
 			var contract: Dictionary = CAPTURABLE_NEUTRAL_TYPES[type_name]
 			var camp_local := Vector3(placement["position"])
@@ -2907,9 +2893,7 @@ func simulation_configuration() -> Dictionary:
 		"team_start_indices": team_start_indices,
 		"script_waypoints": local_named_waypoints.duplicate(true),
 		"ford_gates": _simulation_ford_gates(),
-		# Authored PlyrCreeps lairs. The simulation only seeds them when its
-		# opt-in creep rule is enabled; carrying them here is inert otherwise.
-		"creep_lair_placements": creep_lair_placements.duplicate(true),
+		"scenario_object_placements": scenario_object_placements.duplicate(true),
 		"capturable_placements": capturable_placements.duplicate(true),
 		# Lane L2b castle fixtures in sim-local space. Inert unless the sim's
 		# opt-in "enable_castle_fixtures" rule is enabled; the deferred tally
@@ -3221,7 +3205,6 @@ func _reset() -> void:
 	generic_prop_placements.clear()
 	bound_prop_placements.clear()
 	bound_structure_placements.clear()
-	creep_lair_placements.clear()
 	capturable_placements.clear()
 	bound_prop_type_ids.clear()
 	bound_structure_type_ids.clear()

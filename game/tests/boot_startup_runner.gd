@@ -55,6 +55,9 @@ const LAZY_PATHS: Array[String] = [
 	"res://src/ui/wotr_setup_screen.gd",
 	"res://src/ui/multiplayer_lobby.gd",
 ]
+const LAZY_PATH_IDS: Array[String] = [
+	"slice", "wotr_screen", "wotr_setup_screen", "multiplayer_lobby",
+]
 
 ## Wall-clock ceiling for the child boot. Generous: a cold filesystem on a slow
 ## machine is not a regression.
@@ -193,13 +196,17 @@ func _check_heavy_screens_are_not_compiled_for_a_menu() -> void:
 		if bool(menu.call("lazy_script_is_compiled", lazy_id)):
 			_fail("'%s' was compiled during the menu's _ready; it belongs behind its navigation" % lazy_id)
 
-	# 2. NOT EVEN IN THE RESOURCE CACHE. Stronger than the check above and immune
-	#    to the menu lying about its own bookkeeping: if someone re-adds a
-	#    `preload`, the script is in Godot's cache whatever the menu says.
-	#    `retail_vertical_slice.gd` is the expensive one - 57 files / ~60k lines.
-	for path in LAZY_PATHS:
+	# 2. NOT EVEN IN THE RESOURCE CACHE, unless this exact menu queued its
+	#    intentional loader-thread warm. Godot enters a threaded request in the
+	#    global cache before the menu collects/compiles it, so cache presence alone
+	#    cannot distinguish that warm from an eager preload. The bookkeeping check
+	#    keeps the exception exact: unrelated cached heavy screens still fail.
+	for path_index in LAZY_PATHS.size():
+		var path := LAZY_PATHS[path_index]
 		_checks += 1
-		if ResourceLoader.has_cached(path):
+		var lazy_id := LAZY_PATH_IDS[path_index]
+		var intentionally_warming := bool(menu.call("lazy_script_warm_was_requested", lazy_id))
+		if ResourceLoader.has_cached(path) and not intentionally_warming:
 			_fail("%s is already in the resource cache after a bare menu _ready - something still preloads it" % path)
 
 	# 3. A FAILED LAZY LOAD IS NAMED, NOT SILENT. Point retail's GAME SETUP screen
@@ -253,14 +260,18 @@ func _check_heavy_screens_are_not_compiled_for_a_menu() -> void:
 	_checks += 1
 	if String(menu.call("wotr_unavailable_reason")).contains("no_such_screen.gd"):
 		_fail("the compile-failure reason survived a successful compile; it is now a stale refusal")
-	var first_script = menu.call("_lazy_script", "wotr_setup_screen")
+	var first_script: Variant = menu.call("_lazy_script", "wotr_setup_screen")
 	menu.call("show_page", "main")
 	menu.call("show_page", "wotr_setup")
 	_checks += 1
 	if menu.call("_lazy_script", "wotr_setup_screen") != first_script:
 		_fail("navigating to the GAME SETUP screen twice re-resolved its script; the cache is not caching")
 
-	menu.queue_free()
+	first_script = null
+	menu.call("cleanup_for_test")
+	root.remove_child(menu)
+	menu.free()
+	packed = null
 	await process_frame
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 import hashlib
 import json
+import math
 from pathlib import PurePosixPath
 import re
 from typing import Iterable, Mapping
@@ -20,6 +21,10 @@ from .profile import (
     normalize_texture_atlas_crops,
 )
 from .retail_ability_fx_ingress import AbilityFxIngressError, fx_recipe_parts
+from .special_disguise_prerequisite import (
+    SpecialDisguisePrerequisiteError,
+    validate_special_disguise_prerequisite,
+)
 
 
 SCHEMA = "openbfme.playable-unit-pack-recipe"
@@ -36,6 +41,7 @@ _ATTACK_TOKENS = {
     "FIRING_C",
     "FIRING_D",
     "FIRING_E",
+    "FIRING_OR_PREATTACK_A",
     "PREATTACK_A",
     "PREATTACK_B",
     "PREATTACK_C",
@@ -85,6 +91,7 @@ _EXCLUDED_HERO_FORM_CONDITIONS = {
     "user_2",
     "user_3",
 }
+_STATE_LABEL_TOKEN = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
 
 
 def _is_required_galadriel_ring_skin(row: Mapping[str, object]) -> bool:
@@ -183,6 +190,277 @@ def _draw_key(row: Mapping[str, object]) -> tuple[str, str]:
     if not isinstance(scope, list) or not scope or not isinstance(scope[0], str):
         raise PlayableUnitPackCompilerError("visual draw scope is missing")
     return target.casefold(), scope[0].casefold()
+
+
+def _animation_speed_factor_range(
+    visual_closure: Mapping[str, object], row: Mapping[str, object]
+) -> tuple[float, float] | None:
+    """Return the authored per-animation speed range sharing this exact scope.
+
+    The visual closure retains source scope/provenance for both the
+    ``AnimationName`` reference and its sibling properties. Matching the full
+    scope prevents a range from one animation variant leaking into another.
+    """
+
+    matches = _animation_property_matches(
+        visual_closure, row, "AnimationSpeedFactorRange"
+    )
+    if not matches:
+        return None
+    values = {str(prop.get("value", "")) for prop in matches}
+    if len(values) != 1:
+        raise PlayableUnitPackCompilerError("animation speed range is ambiguous")
+    tokens = next(iter(values)).split()
+    if len(tokens) != 2:
+        raise PlayableUnitPackCompilerError("AnimationSpeedFactorRange requires two values")
+    try:
+        low, high = (float(token) for token in tokens)
+    except ValueError as exc:
+        raise PlayableUnitPackCompilerError(
+            "AnimationSpeedFactorRange contains a non-number"
+        ) from exc
+    if not math.isfinite(low) or not math.isfinite(high) or low <= 0.0 or high < low:
+        raise PlayableUnitPackCompilerError("AnimationSpeedFactorRange is invalid")
+    return low, high
+
+
+def _animation_scope_identity(
+    provenance: object, label: str
+) -> tuple[str, str, int, tuple[str, ...]]:
+    """Return the source scope that owns an animation reference/property.
+
+    A scope path alone is not an identity: inherited Draw blocks can reuse the
+    same module/state/animation names.  The defining object, source document,
+    and inheritance distance are part of the exact provenance boundary.
+    """
+
+    if not isinstance(provenance, Mapping):
+        raise PlayableUnitPackCompilerError(f"{label} provenance is invalid")
+    defining_object = provenance.get("definingObject")
+    virtual_path = provenance.get("virtualPath")
+    inheritance_distance = provenance.get("inheritanceDistance")
+    scope = provenance.get("scopePath")
+    if (
+        not isinstance(defining_object, str)
+        or not defining_object
+        or not isinstance(virtual_path, str)
+        or not virtual_path
+        or isinstance(inheritance_distance, bool)
+        or not isinstance(inheritance_distance, int)
+        or inheritance_distance < 0
+        or not isinstance(scope, list)
+        or not scope
+        or any(not isinstance(item, str) or not item for item in scope)
+    ):
+        raise PlayableUnitPackCompilerError(f"{label} scope provenance is invalid")
+    return (
+        defining_object.casefold(),
+        virtual_path.replace("\\", "/").casefold(),
+        inheritance_distance,
+        tuple(scope),
+    )
+
+
+def _animation_property_matches(
+    visual_closure: Mapping[str, object],
+    row: Mapping[str, object],
+    property_name: str,
+) -> list[Mapping[str, object]]:
+    """Find only sibling properties in the animation reference's exact scope."""
+
+    target = str(row.get("targetObject", ""))
+    if not target:
+        raise PlayableUnitPackCompilerError("animation property target is invalid")
+    identity = _animation_scope_identity(
+        row.get("provenance"), "animation property reference"
+    )
+    matches: list[Mapping[str, object]] = []
+    for object_value in _rows(
+        visual_closure.get("objects", []), "visual closure objects"
+    ):
+        if str(object_value.get("name", "")).casefold() != target.casefold():
+            continue
+        for module in _rows(object_value.get("drawModules", []), "visual draw modules"):
+            for state in _rows(module.get("states", []), "visual draw states"):
+                for prop in _rows(state.get("properties", []), "visual state properties"):
+                    if str(prop.get("key", "")).casefold() != property_name.casefold():
+                        continue
+                    if _animation_scope_identity(
+                        prop.get("provenance"), f"{property_name} property"
+                    ) == identity:
+                        matches.append(prop)
+    return matches
+
+
+def _animation_nonnegative_integer_property(
+    visual_closure: Mapping[str, object],
+    row: Mapping[str, object],
+    property_name: str,
+) -> tuple[int, tuple[Mapping[str, object], ...]] | None:
+    """Parse one retail integer animation property without scope fallback."""
+
+    matches = _animation_property_matches(visual_closure, row, property_name)
+    if not matches:
+        return None
+    # SAGE scalar assignment semantics are last-authored-wins.  Retail relies
+    # on this directly (IsengardUrukCrossbow's IDLE block assigns
+    # AnimationPriority = 1 and then = 4).  The exact scope matcher above
+    # prevents values from another Animation block or inherited owner leaking
+    # in; source line order resolves repetitions inside this one block.
+    ordered: list[tuple[int, Mapping[str, object]]] = []
+    for prop in matches:
+        provenance = prop.get("provenance")
+        assert isinstance(provenance, Mapping)
+        line = provenance.get("line")
+        if isinstance(line, bool) or not isinstance(line, int) or line <= 0:
+            raise PlayableUnitPackCompilerError(
+                f"{property_name} source line is invalid"
+            )
+        ordered.append((line, prop))
+    ordered.sort(key=lambda item: item[0])
+    if any(left[0] == right[0] for left, right in zip(ordered, ordered[1:])):
+        raise PlayableUnitPackCompilerError(
+            f"{property_name} has duplicate assignments at one source line"
+        )
+    raw = str(ordered[-1][1].get("value", ""))
+    if re.fullmatch(r"[0-9]+", raw) is None:
+        raise PlayableUnitPackCompilerError(
+            f"{property_name} requires one non-negative integer"
+        )
+    value = int(raw)
+    if value > 2_147_483_647:
+        raise PlayableUnitPackCompilerError(f"{property_name} is out of range")
+    return value, tuple(prop for _line, prop in ordered)
+
+
+def _authored_state_labels(
+    visual_closure: Mapping[str, object],
+    relevant_targets: set[str],
+    animation_rows: Iterable[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    """Project ``StateName`` at its enclosing state, never onto one clip.
+
+    Retail authors ``StateName`` as a sibling of one or more ``Animation``
+    blocks.  It labels the state envelope.  Animation links are therefore
+    derived only when their provenance is the same source state scope (or a
+    descendant Animation block) and their inherited conditions agree.
+    """
+
+    animations = list(animation_rows)
+    result: list[dict[str, object]] = []
+    for object_row in _rows(visual_closure.get("objects", []), "visual objects"):
+        target = str(object_row.get("name", ""))
+        if target.casefold() not in relevant_targets:
+            continue
+        for module in _rows(object_row.get("drawModules", []), "visual draw modules"):
+            for state in _rows(module.get("states", []), "visual draw states"):
+                labels = [
+                    prop
+                    for prop in _rows(
+                        state.get("properties", []), "visual state properties"
+                    )
+                    if str(prop.get("key", "")).casefold() == "statename"
+                ]
+                if not labels:
+                    continue
+                label_tokens = [str(row.get("value", "")) for row in labels]
+                label_identity: tuple[str, str, int, tuple[str, ...]] | None = None
+                for label_row, label in zip(labels, label_tokens, strict=True):
+                    if len(label) > 255 or _STATE_LABEL_TOKEN.fullmatch(label) is None:
+                        raise PlayableUnitPackCompilerError(
+                            "StateName requires one bounded identifier token"
+                        )
+                    current_identity = _animation_scope_identity(
+                        label_row.get("provenance"), "StateName property"
+                    )
+                    if label_identity is None:
+                        label_identity = current_identity
+                    elif current_identity != label_identity:
+                        raise PlayableUnitPackCompilerError(
+                            "StateName aliases have conflicting source scopes"
+                        )
+                assert label_identity is not None
+                state_identity = _animation_scope_identity(
+                    state.get("provenance"), "StateName enclosing state"
+                )
+                if label_identity != state_identity:
+                    raise PlayableUnitPackCompilerError(
+                        "StateName provenance does not match its enclosing state"
+                    )
+                raw_conditions = state.get("conditions", [])
+                if not isinstance(raw_conditions, list) or any(
+                    not isinstance(condition, str) or not condition
+                    for condition in raw_conditions
+                ):
+                    raise PlayableUnitPackCompilerError(
+                        "StateName enclosing state conditions are invalid"
+                    )
+                conditions = list(raw_conditions)
+                linked: list[dict[str, object]] = []
+                state_scope = label_identity[3]
+                for animation in animations:
+                    if str(animation.get("targetObject", "")).casefold() != target.casefold():
+                        continue
+                    animation_identity = _animation_scope_identity(
+                        animation.get("provenance"), "StateName linked animation"
+                    )
+                    if animation_identity[:3] != label_identity[:3]:
+                        continue
+                    animation_scope = animation_identity[3]
+                    if animation_scope[: len(state_scope)] != state_scope:
+                        continue
+                    animation_conditions = animation.get("conditions", [])
+                    if animation_conditions != conditions:
+                        raise PlayableUnitPackCompilerError(
+                            "StateName linked animation conditions disagree with state"
+                        )
+                    identifier = animation.get("identifier")
+                    if not isinstance(identifier, str) or not identifier:
+                        raise PlayableUnitPackCompilerError(
+                            "StateName linked animation identifier is invalid"
+                        )
+                    linked.append(
+                        {
+                            "identifier": identifier,
+                            "conditions": deepcopy(conditions),
+                        }
+                    )
+                linked.sort(
+                    key=lambda row: (
+                        str(row["identifier"]).casefold(), str(row["identifier"])
+                    )
+                )
+                state_provenance = state.get("provenance")
+                assert isinstance(state_provenance, Mapping)
+                state_family = state.get("family")
+                if not isinstance(state_family, str) or not state_family:
+                    raise PlayableUnitPackCompilerError(
+                        "StateName enclosing state family is invalid"
+                    )
+                for label_row, label in zip(labels, label_tokens, strict=True):
+                    label_provenance = label_row.get("provenance")
+                    assert isinstance(label_provenance, Mapping)
+                    result.append(
+                        {
+                            "ownerObjectId": target,
+                            "drawModule": state_scope[0],
+                            "stateFamily": state_family,
+                            "conditions": deepcopy(conditions),
+                            "StateName": label,
+                            "linkedAnimations": deepcopy(linked),
+                            "provenance": deepcopy(dict(label_provenance)),
+                            "stateProvenance": deepcopy(dict(state_provenance)),
+                            "runtimeSupport": "packaged-unimplemented",
+                        }
+                    )
+    result.sort(
+        key=lambda row: (
+            str(row["ownerObjectId"]).casefold(),
+            str(row["provenance"].get("virtualPath", "")).casefold(),
+            int(row["provenance"].get("line", 0)),
+        )
+    )
+    return result
 
 
 def _state(row: Mapping[str, object]) -> str | None:
@@ -801,6 +1079,7 @@ def compile_playable_unit_pack_recipe(
     descriptor: Mapping[str, object],
     visual_closure: Mapping[str, object],
     fx_closure: Mapping[str, object] | None = None,
+    special_disguise_prerequisite: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Compile conversion resources and generic runtime registration for one unit.
 
@@ -817,6 +1096,36 @@ def compile_playable_unit_pack_recipe(
         )
     except AbilityFxIngressError as exc:
         raise PlayableUnitPackCompilerError(str(exc)) from exc
+    disguise_resources: list[dict[str, object]] = []
+    disguise_runtime: dict[str, object] | None = None
+    disguise_required_leaf_digests: set[str] = set()
+    if special_disguise_prerequisite is not None:
+        try:
+            validate_special_disguise_prerequisite(special_disguise_prerequisite)
+        except SpecialDisguisePrerequisiteError as exc:
+            raise PlayableUnitPackCompilerError(str(exc)) from exc
+        if (
+            special_disguise_prerequisite.get("objectId") != descriptor.get("objectId")
+            or special_disguise_prerequisite.get("descriptorSha256")
+            != descriptor.get("descriptorSha256")
+        ):
+            raise PlayableUnitPackCompilerError(
+                "disguise prerequisite descriptor binding drifted"
+            )
+        disguise_resources = [
+            deepcopy(dict(row))
+            for row in special_disguise_prerequisite.get("resources", [])
+            if isinstance(row, Mapping)
+        ]
+        disguise_required_leaf_digests = {
+            str(value)
+            for value in special_disguise_prerequisite.get(
+                "requiredVisualLeafSha256s", []
+            )
+        }
+        disguise_runtime = {
+            "closure": deepcopy(dict(special_disguise_prerequisite)),
+        }
     if (
         visual_closure.get("schema") != "openbfme.retail-visual-closure"
         or visual_closure.get("schemaVersion") != 1
@@ -883,6 +1192,7 @@ def compile_playable_unit_pack_recipe(
         and isinstance(row.get("conditions"), list)
         and bool(row.get("conditions"))
         and not _is_required_galadriel_ring_skin(row)
+        and _digest(row) not in disguise_required_leaf_digests
         and {
             str(value).casefold() for value in row.get("conditions", [])
         }.issubset(_EXCLUDED_HERO_FORM_CONDITIONS)
@@ -1101,14 +1411,21 @@ def compile_playable_unit_pack_recipe(
     container_id = str(composition["containerObjectId"])
     member_rows = _rows(composition.get("members"), "composition members")
     member_ids = {str(row.get("objectId", "")) for row in member_rows}
-    if len({identifier.casefold() for identifier in member_ids}) != 1:
-        raise PlayableUnitPackCompilerError(
-            "secondary member presentation contract is not available"
-        )
     relevant_targets = {
         container_id.casefold(),
         *(identifier.casefold() for identifier in member_ids),
     }
+    if disguise_runtime is not None:
+        disguise_document = disguise_runtime["closure"]
+        assert isinstance(disguise_document, Mapping)
+        identities = disguise_document["presentationIdentities"]
+        assert isinstance(identities, Mapping)
+        relevant_targets.update(
+            {
+                str(identities["nonOwnerDisguiseTemplateId"]).casefold(),
+                str(identities["hostilePerspectiveTemplateId"]).casefold(),
+            }
+        )
     exact = [
         row
         for row in exact_rows
@@ -1127,6 +1444,82 @@ def compile_playable_unit_pack_recipe(
         for row in _rows(visual_closure.get("semanticLeaves"), "semantic visual leaves")
         if str(row.get("targetObject", "")).casefold() in relevant_targets
     ]
+    drawable_scripts: list[dict[str, object]] = []
+    auxiliary_draw_model_refs: set[tuple[str, int, str]] = set()
+    for object_row in _rows(visual_closure.get("objects", []), "visual objects"):
+        target_object = str(object_row.get("name", ""))
+        if target_object.casefold() not in relevant_targets:
+            continue
+        for module_row in _rows(object_row.get("drawModules"), "visual draw modules"):
+            module_kind = str(module_row.get("moduleKind", ""))
+            if module_kind.casefold() != "w3dscriptedmodeldraw":
+                for reference in _rows(
+                    module_row.get("references", []), "auxiliary draw references"
+                ):
+                    if reference.get("kind") != "model":
+                        continue
+                    provenance = reference.get("provenance", {})
+                    if isinstance(provenance, Mapping):
+                        auxiliary_draw_model_refs.add(
+                            (
+                                str(provenance.get("virtualPath", "")).casefold(),
+                                int(provenance.get("line", 0)),
+                                str(reference.get("identifier", "")).casefold(),
+                            )
+                        )
+                for state in _rows(
+                    module_row.get("states", []), "auxiliary draw states"
+                ):
+                    for reference in _rows(
+                        state.get("references", []),
+                        "auxiliary draw state references",
+                    ):
+                        if reference.get("kind") != "model":
+                            continue
+                        provenance = reference.get("provenance", {})
+                        if isinstance(provenance, Mapping):
+                            auxiliary_draw_model_refs.add(
+                                (
+                                    str(
+                                        provenance.get("virtualPath", "")
+                                    ).casefold(),
+                                    int(provenance.get("line", 0)),
+                                    str(
+                                        reference.get("identifier", "")
+                                    ).casefold(),
+                                )
+                            )
+            module_actions = _rows(
+                module_row.get("drawableActions", []), "module drawable actions"
+            )
+            if module_actions:
+                drawable_scripts.append(
+                    {
+                        "targetObject": target_object,
+                        "moduleKind": module_kind,
+                        "conditions": [],
+                        "lifecyclePhases": ["intact"],
+                        "actions": deepcopy(module_actions),
+                    }
+                )
+            for state_row in _rows(module_row.get("states"), "visual states"):
+                actions = _rows(
+                    state_row.get("drawableActions", []), "state drawable actions"
+                )
+                if not actions:
+                    continue
+                drawable_scripts.append(
+                    {
+                        "targetObject": target_object,
+                        "moduleKind": module_kind,
+                        "stateFamily": str(state_row.get("family", "")),
+                        "conditions": deepcopy(state_row.get("conditions", [])),
+                        "lifecyclePhases": deepcopy(
+                            state_row.get("lifecyclePhases", [])
+                        ),
+                        "actions": deepcopy(actions),
+                    }
+                )
     target_rows = _rows(visual_closure.get("targets"), "visual targets")
     resolved_targets = {
         str(row.get("name", "")).casefold()
@@ -1227,7 +1620,41 @@ def compile_playable_unit_pack_recipe(
         path
         for row in model_rows
         if str(row.get("targetObject", "")).casefold() == member_id.casefold()
-        and row.get("conditions") == []
+        # Retail uses both DefaultModelConditionState and the explicit
+        # ModelConditionState NONE spelling for a draw's default. MordorBalrog
+        # deliberately uses NONE because copying the body's particles into
+        # every conditional model would be wrong. They are the same default
+        # selection rule; auxiliary draw modules are excluded below by their
+        # independent draw-key/None-model evidence.
+            and (
+                row.get("conditions") == []
+                or (
+                    {
+                        str(value).casefold()
+                        for value in row.get("conditions", [])
+                    }
+                    == {"none"}
+                    # NONE also appears on independent turret/subcomponent
+                    # draws. The body default is the draw that owns the
+                    # object's authored idle state; an attack-only turret can
+                    # therefore never compete for the visual primary.
+                    and any(
+                        _draw_key(animation) == _draw_key(row)
+                        and _state(animation) == "idle"
+                        for animation in animation_rows
+                    )
+                )
+            )
+        and not any(
+            "w3dsailmodeldraw" in str(scope).casefold()
+            for scope in row.get("provenance", {}).get("scopePath", [])
+        )
+        and (
+            str(row.get("provenance", {}).get("virtualPath", "")).casefold(),
+            int(row.get("provenance", {}).get("line", 0)),
+            str(row.get("identifier", "")).casefold(),
+        )
+        not in auxiliary_draw_model_refs
         for path in _paths(row, "primary model")
     }
     member_hidden_by_default = any(
@@ -1246,6 +1673,30 @@ def compile_playable_unit_pack_recipe(
     # the composition's visual primary and the hidden member contributes no
     # model — while any other member-defaultless shape keeps failing closed.
     mounted_presentation = False
+    if descriptor.get("category") == "naval":
+        # Ship `InitialPayload` rows are internal deck archers/passengers, not
+        # the visible composition root. The authored hull's
+        # W3DScriptedModelDraw is authoritative; W3DSailModelDraw modules are
+        # additive sub-models and cannot compete for the primary model.
+        hull_models = {
+            path
+            for row in model_rows
+            if str(row.get("targetObject", "")).casefold()
+            == container_id.casefold()
+            and row.get("conditions") == []
+            and not any(
+                "w3dsailmodeldraw" in str(scope).casefold()
+                for scope in row.get("provenance", {}).get("scopePath", [])
+            )
+            and any(
+                "moduletag_hulldraw" in str(scope).casefold()
+                for scope in row.get("provenance", {}).get("scopePath", [])
+            )
+            for path in _paths(row, "naval hull model")
+        }
+        if len(hull_models) == 1:
+            primary_models = hull_models
+            mounted_presentation = True
     if not primary_models:
         mount_models = {
             path
@@ -1299,8 +1750,16 @@ def compile_playable_unit_pack_recipe(
             model_conditions.setdefault(path, set()).update(
                 str(item) for item in conditions
             )
+            # SAGE uses both ``DefaultModelConditionState`` and the explicit
+            # ``ModelConditionState NONE`` spelling for a draw module's
+            # unconditional/default model.  The latter is common on ship
+            # turrets; treating NONE as a real runtime condition leaves their
+            # authored attack animation without a compatible model owner.
+            default_conditions = not conditions or {
+                str(item).casefold() for item in conditions
+            } == {"none"}
             model_has_unconditional[path] = (
-                model_has_unconditional.get(path, False) or not conditions
+                model_has_unconditional.get(path, False) or default_conditions
             )
             model_occurrences.setdefault(path, []).append(
                 {
@@ -1336,6 +1795,116 @@ def compile_playable_unit_pack_recipe(
         state = _state(row)
         if state is not None:
             state_rows.setdefault(state, []).append(row)
+    required_states = _required_states(descriptor)
+    core_presentations: dict[str, dict[str, object]] = {}
+    scenario_admission = descriptor.get("scenarioAdmission")
+    scenario_nonbuildable = (
+        isinstance(scenario_admission, Mapping)
+        and descriptor.get("production") == []
+    )
+    simulation = descriptor.get("gameplay", {}).get("simulation", {})
+    resolved_simulation = (
+        simulation.get("resolved", {}) if isinstance(simulation, Mapping) else {}
+    )
+    if descriptor.get("category") == "naval":
+        module_contracts = (
+            resolved_simulation.get("moduleContracts", [])
+            if isinstance(resolved_simulation, Mapping)
+            else []
+        )
+        sink_contracts = [
+            row
+            for row in module_contracts
+            if isinstance(row, Mapping)
+            and row.get("module") == "ShipSlowDeathBehavior"
+            and row.get("extraction") == "typed"
+        ]
+        for state in required_states:
+            if state_rows[state]:
+                continue
+            if state == "death" and len(sink_contracts) == 1:
+                core_presentations[state] = {
+                    "binding": "ship-sink",
+                    "modelSourceW3d": default_model,
+                    "contract": deepcopy(sink_contracts[0]),
+                }
+            elif state == "idle":
+                core_presentations[state] = {
+                    "binding": "static-hull",
+                    "modelSourceW3d": default_model,
+                    "evidence": "authored-unconditional-hull-model",
+                }
+            elif state == "move":
+                core_presentations[state] = {
+                    "binding": "transform-locomotion",
+                    "modelSourceW3d": default_model,
+                    "evidence": "authored-movement-without-hull-clip",
+                }
+            elif state == "attack" and isinstance(
+                resolved_simulation, Mapping
+            ) and isinstance(resolved_simulation.get("combat"), Mapping):
+                core_presentations[state] = {
+                    "binding": "weapon-effect",
+                    "modelSourceW3d": default_model,
+                    "evidence": "authored-combat-without-hull-clip",
+                }
+    elif scenario_nonbuildable and isinstance(resolved_simulation, Mapping):
+        # Scenario-only retail Objects include cinematic movers, temporary
+        # familiars, spectral cavalry, and effect swarms. Several author a
+        # state whose W3D was never shipped, or intentionally author no clip
+        # for a state at all. Preserve their exact model/movement/combat/death
+        # evidence as presentation bindings. Produced units never enter this
+        # lane and retain the strict core-animation gate.
+        slow_deaths = resolved_simulation.get("slowDeaths", [])
+        if not isinstance(slow_deaths, list):
+            slow_deaths = []
+        for state in required_states:
+            if state_rows[state]:
+                continue
+            if state == "idle":
+                core_presentations[state] = {
+                    "binding": "static-model",
+                    "modelSourceW3d": default_model,
+                    "evidence": "authored-scenario-model-without-resolved-idle-clip",
+                }
+            elif state == "move" and (
+                isinstance(resolved_simulation.get("movement"), Mapping)
+                or isinstance(resolved_simulation.get("speed"), (int, float))
+            ):
+                core_presentations[state] = {
+                    "binding": "transform-locomotion",
+                    "modelSourceW3d": default_model,
+                    "evidence": "authored-scenario-movement-without-resolved-body-clip",
+                }
+            elif state == "attack" and isinstance(
+                resolved_simulation.get("combat"), Mapping
+            ):
+                core_presentations[state] = {
+                    "binding": "weapon-effect",
+                    "modelSourceW3d": default_model,
+                    "evidence": "authored-scenario-combat-without-resolved-body-clip",
+                }
+            elif state == "death" and slow_deaths and all(
+                isinstance(contract, Mapping)
+                and contract.get("module") == "SlowDeathBehavior"
+                and isinstance(contract.get("sourceIni"), str)
+                and isinstance(contract.get("line"), int)
+                and not isinstance(contract.get("line"), bool)
+                and int(contract.get("line", 0)) > 0
+                for contract in slow_deaths
+            ):
+                core_presentations[state] = {
+                    "binding": "slow-death",
+                    "modelSourceW3d": default_model,
+                    "contracts": deepcopy(slow_deaths),
+                    "evidence": "authored-scenario-slow-death-without-resolved-body-clip",
+                }
+            elif state == "death":
+                core_presentations[state] = {
+                    "binding": "object-removal",
+                    "modelSourceW3d": default_model,
+                    "evidence": "authored-scenario-body-without-death-animation-or-slow-death",
+                }
     for row in retail_absent_animation_gaps:
         state = _state(row)
         fallback_state = "move" if _is_turn_animation(row) else state
@@ -1344,15 +1913,19 @@ def compile_playable_unit_pack_recipe(
                 "visual closure is not conversion-ready: retail-absent animation has no authored state fallback"
             )
         if fallback_state in _SELECTION_STATES:
-            # SELECTED / idle→selected are optional capability states. A
-            # missing ATNA variant must not fail the whole unit compile.
             continue
-        if not state_rows.get(fallback_state):
+        if (
+            not state_rows.get(fallback_state)
+            and fallback_state not in core_presentations
+        ):
             raise PlayableUnitPackCompilerError(
                 "visual closure is not conversion-ready: retail-absent animation has no authored state fallback"
             )
-    required_states = _required_states(descriptor)
-    missing_states = [state for state in required_states if not state_rows[state]]
+    missing_states = [
+        state
+        for state in required_states
+        if not state_rows[state] and state not in core_presentations
+    ]
     core_animation_exclusions: list[dict[str, object]] = []
     if missing_states:
         # A build-variation randomizer shell (retail RohanGenericEnt) authors
@@ -1436,6 +2009,31 @@ def compile_playable_unit_pack_recipe(
                     "animation draw module has no compatible default model"
                 )
         semantic_state = _state(row)
+        speed_factor_range = _animation_speed_factor_range(visual_closure, row)
+        authored_integer_properties: dict[str, int] = {}
+        authored_property_receipts: list[dict[str, object]] = []
+        for property_name in ("AnimationBlendTime", "AnimationPriority"):
+            parsed_property = _animation_nonnegative_integer_property(
+                visual_closure, row, property_name
+            )
+            if parsed_property is None:
+                continue
+            property_value, property_rows = parsed_property
+            authored_integer_properties[property_name] = property_value
+            for property_row in property_rows:
+                property_provenance = property_row.get("provenance")
+                # The parser above has already validated this mapping as part
+                # of the exact scope identity. Preserve every authored site,
+                # including repeated equal assignments, for source-ledger
+                # coverage without allowing them to change the resolved value.
+                assert isinstance(property_provenance, Mapping)
+                authored_property_receipts.append(
+                    {
+                        "key": property_name,
+                        "value": property_value,
+                        "provenance": deepcopy(dict(property_provenance)),
+                    }
+                )
         for path in _paths(row, "authored animation"):
             separate_death = (
                 semantic_state == "death"
@@ -1484,6 +2082,17 @@ def compile_playable_unit_pack_recipe(
                 "modelSourceW3d": owner,
                 "ownerObjectId": str(row.get("targetObject", "")),
                 "drawModule": draw_key[1],
+                **(
+                    {"AnimationSpeedFactorRange": list(speed_factor_range)}
+                    if speed_factor_range is not None
+                    else {}
+                ),
+                **authored_integer_properties,
+                **(
+                    {"authoredProperties": deepcopy(authored_property_receipts)}
+                    if authored_property_receipts
+                    else {}
+                ),
             }
             authored_animation_states.append(
                 {
@@ -1547,6 +2156,8 @@ def compile_playable_unit_pack_recipe(
             if state not in required_states:
                 continue
             if state == "death" and death_swap_paths:
+                continue
+            if state in core_presentations:
                 continue
             if core_animation_exclusions:
                 continue
@@ -1712,7 +2323,10 @@ def compile_playable_unit_pack_recipe(
                 "ownerObjectId": model_owners[model_path],
                 "drawModule": model_draw_keys[model_path][1],
                 "role": (
-                    "primary-container" if mounted_presentation else "primary-member"
+                    "primary-container"
+                    if mounted_presentation
+                    and container_id.casefold() != member_id.casefold()
+                    else "primary-member"
                 )
                 if model_path == default_model
                 else "auxiliary-or-conditional",
@@ -2109,15 +2723,120 @@ def compile_playable_unit_pack_recipe(
             outputs.append(output)
         audio_bindings[str(identifier)] = sorted(set(outputs), key=str.casefold)
     resources.extend(fx_resources)
+    resource_rows_by_id = {
+        str(row.get("id", "")).casefold(): row
+        for row in resources
+        if isinstance(row, Mapping)
+    }
+    for resource in disguise_resources:
+        key = str(resource.get("id", "")).casefold()
+        prior = resource_rows_by_id.get(key)
+        if prior is not None:
+            if prior != resource:
+                raise PlayableUnitPackCompilerError(
+                    "disguise prerequisite resource ownership drifted"
+                )
+            continue
+        resources.append(resource)
+        resource_rows_by_id[key] = resource
     _validate_resource_values(resources)
+
+    if disguise_runtime is not None:
+        disguise_document = disguise_runtime["closure"]
+        assert isinstance(disguise_document, Mapping)
+        source_to_resource_ids = {
+            str(pattern).casefold(): str(resource["id"])
+            for resource in resources
+            for pattern in resource.get("patterns", [])
+        }
+        required_sources = {
+            str(path)
+            for row in disguise_document["visualLeafBindings"]
+            for path in row.get("physicalVirtualPaths", [])
+        }
+        missing_sources = sorted(
+            source for source in required_sources
+            if source.casefold() not in source_to_resource_ids
+        )
+        if missing_sources:
+            raise PlayableUnitPackCompilerError(
+                "disguise prerequisite visual resources are absent: "
+                + ", ".join(missing_sources)
+            )
+        disguise_runtime["visualResourceIds"] = sorted(
+            {source_to_resource_ids[source.casefold()] for source in required_sources},
+            key=str.casefold,
+        )
+        disguise_runtime["resourceIds"] = sorted(
+            {
+                *disguise_runtime["visualResourceIds"],
+                *(str(row["id"]) for row in disguise_resources),
+            },
+            key=str.casefold,
+        )
+
+    authored_state_labels = _authored_state_labels(
+        visual_closure, relevant_targets, animation_rows
+    )
 
     core_animations: dict[str, object] = {
         state: rows
         for state, rows in state_bindings.items()
-        if rows or not core_animation_exclusions
+        if rows
+        or (
+            not core_animation_exclusions
+            and state not in core_presentations
+        )
     }
     if death_swap_binding is not None and "death" in core_animations:
         core_animations["death"] = death_swap_binding
+
+    member_presentations: list[dict[str, object]] = []
+    member_counts: dict[str, tuple[str, int]] = {}
+    for member_row in member_rows:
+        object_id = str(member_row.get("objectId", ""))
+        count = member_row.get("count")
+        if not object_id or isinstance(count, bool) or not isinstance(count, int):
+            raise PlayableUnitPackCompilerError("composition member is invalid")
+        spelling, total = member_counts.get(object_id.casefold(), (object_id, 0))
+        member_counts[object_id.casefold()] = (spelling, total + count)
+    if len(member_counts) > 1:
+        for member_key, (object_id, count) in sorted(member_counts.items()):
+            default_candidates = [
+                component
+                for component in components
+                if str(component.get("ownerObjectId", "")).casefold() == member_key
+                and model_has_unconditional.get(str(component.get("sourceW3d", "")), False)
+            ]
+            if len(default_candidates) != 1:
+                raise PlayableUnitPackCompilerError(
+                    "member presentation does not identify one default model: "
+                    + object_id
+                )
+            member_core: dict[str, list[dict[str, object]]] = {}
+            for state in required_states:
+                bindings = [
+                    deepcopy(row)
+                    for row in authored_animation_states
+                    if str(row.get("ownerObjectId", "")).casefold() == member_key
+                    and row.get("semanticState") == state
+                    and row.get("runtimeSupport") == "generic-core"
+                ]
+                if not bindings:
+                    raise PlayableUnitPackCompilerError(
+                        f"member presentation has no core animation binding: {object_id}:{state}"
+                    )
+                member_core[state] = bindings
+            default_component = default_candidates[0]
+            member_presentations.append(
+                {
+                    "objectId": object_id,
+                    "count": count,
+                    "defaultModelSourceW3d": default_component["sourceW3d"],
+                    "componentResourceId": default_component["resourceId"],
+                    "coreAnimations": member_core,
+                }
+            )
 
     recipe: dict[str, object] = {
         "schema": SCHEMA,
@@ -2127,10 +2846,28 @@ def compile_playable_unit_pack_recipe(
         "traits": deepcopy(descriptor["traits"]),
         "descriptorSha256": descriptor["descriptorSha256"],
         "visualClosureSha256": closure_digest,
+        **(
+            {
+                "specialDisguisePrerequisiteSha256":
+                    special_disguise_prerequisite["aggregateSha256"]
+            }
+            if special_disguise_prerequisite is not None
+            else {}
+        ),
         "resources": resources,
         "runtimeRegistration": {
             **({"fxBindings": fx_bindings} if fx_bindings is not None else {}),
+            **(
+                {"specialDisguisePresentationPrerequisite": disguise_runtime}
+                if disguise_runtime is not None
+                else {}
+            ),
             "production": deepcopy(descriptor["production"]),
+            **(
+                {"scenarioAdmission": deepcopy(descriptor["scenarioAdmission"])}
+                if isinstance(descriptor.get("scenarioAdmission"), Mapping)
+                else {}
+            ),
             "composition": deepcopy(descriptor["composition"]),
             **(
                 {"kindOf": deepcopy(descriptor["kindOf"])}
@@ -2153,14 +2890,28 @@ def compile_playable_unit_pack_recipe(
             "visual": {
                 "components": components,
                 **(
+                    {"memberPresentations": member_presentations}
+                    if member_presentations
+                    else {}
+                ),
+                **(
                     {
                         "presentationComposition": {
-                            "form": "mounted-container-payload",
+                            "form": (
+                                "naval-container-payload"
+                                if descriptor.get("category") == "naval"
+                                else "mounted-container-payload"
+                            ),
                             "visualPrimaryObjectId": container_id,
-                            "hiddenMemberObjectId": member_id,
+                            (
+                                "payloadMemberObjectId"
+                                if descriptor.get("category") == "naval"
+                                else "hiddenMemberObjectId"
+                            ): member_id,
                         }
                     }
                     if mounted_presentation
+                    and container_id.casefold() != member_id.casefold()
                     else {}
                 ),
                 **(
@@ -2170,11 +2921,21 @@ def compile_playable_unit_pack_recipe(
                 ),
                 "coreAnimations": core_animations,
                 **(
+                    {"corePresentations": core_presentations}
+                    if core_presentations
+                    else {}
+                ),
+                **(
                     {"coreAnimationExclusions": core_animation_exclusions}
                     if core_animation_exclusions
                     else {}
                 ),
                 "authoredAnimationStates": authored_animation_states,
+                **(
+                    {"authoredStateLabels": authored_state_labels}
+                    if authored_state_labels
+                    else {}
+                ),
                 **(
                     {"abilityAnimations": ability_animations}
                     if ability_animations
@@ -2182,6 +2943,11 @@ def compile_playable_unit_pack_recipe(
                 ),
                 "authoredVisualLeaves": authored_visual_leaves,
                 "authoredVisualSemantics": authored_visual_semantics,
+                **(
+                    {"drawableScripts": drawable_scripts}
+                    if drawable_scripts
+                    else {}
+                ),
                 "unsupportedVisualReferences": deepcopy(
                     [
                         *[
@@ -2304,6 +3070,89 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
     runtime = value.get("runtimeRegistration")
     if not isinstance(runtime, Mapping):
         raise PlayableUnitPackCompilerError("runtime registration is invalid")
+    disguise_envelope = runtime.get("specialDisguisePresentationPrerequisite")
+    if disguise_envelope is not None:
+        if not isinstance(disguise_envelope, Mapping):
+            raise PlayableUnitPackCompilerError(
+                "disguise prerequisite runtime envelope is invalid"
+            )
+        disguise_document = disguise_envelope.get("closure")
+        if not isinstance(disguise_document, Mapping):
+            raise PlayableUnitPackCompilerError(
+                "disguise prerequisite runtime document is invalid"
+            )
+        try:
+            validate_special_disguise_prerequisite(disguise_document)
+        except SpecialDisguisePrerequisiteError as exc:
+            raise PlayableUnitPackCompilerError(str(exc)) from exc
+        if (
+            value.get("specialDisguisePrerequisiteSha256")
+            != disguise_document.get("aggregateSha256")
+            or disguise_document.get("descriptorSha256")
+            != value.get("descriptorSha256")
+            or disguise_document.get("objectId") != value.get("objectId")
+        ):
+            raise PlayableUnitPackCompilerError(
+                "disguise prerequisite recipe binding drifted"
+            )
+        visual_resource_ids = disguise_envelope.get("visualResourceIds")
+        resource_ids = disguise_envelope.get("resourceIds")
+        closure_resources = disguise_document.get("resources")
+        if (
+            not isinstance(visual_resource_ids, list)
+            or not visual_resource_ids
+            or not isinstance(resource_ids, list)
+            or not isinstance(closure_resources, list)
+            or set(resource_ids)
+            != {
+                *visual_resource_ids,
+                *(
+                    str(row.get("id", ""))
+                    for row in closure_resources
+                    if isinstance(row, Mapping)
+                ),
+            }
+            or any(identifier not in resources_by_id for identifier in resource_ids)
+        ):
+            raise PlayableUnitPackCompilerError(
+                "disguise prerequisite resource binding drifted"
+            )
+        required_visual_sources = {
+            str(path)
+            for leaf in disguise_document.get("visualLeafBindings", [])
+            if isinstance(leaf, Mapping)
+            for path in leaf.get("physicalVirtualPaths", [])
+        }
+        bound_visual_ids = {
+            str(resource_id)
+            for resource_id in visual_resource_ids
+            if isinstance(resource_id, str)
+        }
+        expected_visual_ids = {
+            str(resource_id)
+            for resource_id, resource in resources_by_id.items()
+            if any(
+                str(pattern) in required_visual_sources
+                for pattern in resource.get("patterns", [])
+            )
+        }
+        if (
+            bound_visual_ids != expected_visual_ids
+            or any(
+                not any(
+                    source in resources_by_id[resource_id].get("patterns", [])
+                    for resource_id in bound_visual_ids
+                )
+                for source in required_visual_sources
+            )
+        ):
+            raise PlayableUnitPackCompilerError(
+                "disguise prerequisite visual ownership drifted"
+            )
+    elif "specialDisguisePrerequisiteSha256" in value:
+        raise PlayableUnitPackCompilerError(
+            "disguise prerequisite recipe binding is incomplete"
+        )
     visual = runtime.get("visual")
     if not isinstance(visual, Mapping):
         raise PlayableUnitPackCompilerError("runtime visual registration is invalid")
@@ -2348,7 +3197,19 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
         container_object.casefold() != member_object.casefold()
         and default_owner.casefold() == container_object.casefold()
     )
-    if mounted:
+    if mounted and value.get("category") == "naval":
+        if (
+            not isinstance(presentation_composition, Mapping)
+            or presentation_composition.get("form") != "naval-container-payload"
+            or presentation_composition.get("visualPrimaryObjectId")
+            != container_object
+            or presentation_composition.get("payloadMemberObjectId") != member_object
+            or default_component.get("role") != "primary-container"
+        ):
+            raise PlayableUnitPackCompilerError(
+                "naval presentation composition is invalid"
+            )
+    elif mounted:
         # A mounted-container-payload recipe is only consistent whole: the
         # marker names the hidden member, the default component is owned by
         # the container mount, and the member's authored default stays hidden.
@@ -2391,7 +3252,158 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
         for row in authored
     }
     authored_sources = {source for source, _ in authored_keys}
-    covered_animation_states = {str(state) for state in core} | {
+    composition_members = _rows(composition.get("members"), "runtime composition members")
+    expected_member_counts: dict[str, tuple[str, int]] = {}
+    for row in composition_members:
+        object_id = row.get("objectId")
+        count = row.get("count")
+        if (
+            not isinstance(object_id, str)
+            or not object_id
+            or isinstance(count, bool)
+            or not isinstance(count, int)
+            or count <= 0
+        ):
+            raise PlayableUnitPackCompilerError("runtime composition member is invalid")
+        spelling, total = expected_member_counts.get(object_id.casefold(), (object_id, 0))
+        expected_member_counts[object_id.casefold()] = (spelling, total + count)
+    member_presentations = visual.get("memberPresentations", [])
+    if not isinstance(member_presentations, list):
+        raise PlayableUnitPackCompilerError("member presentations are invalid")
+    if len(expected_member_counts) > 1:
+        if len(member_presentations) != len(expected_member_counts):
+            raise PlayableUnitPackCompilerError("member presentations are incomplete")
+        seen_member_presentations: set[str] = set()
+        for presentation in member_presentations:
+            if not isinstance(presentation, Mapping):
+                raise PlayableUnitPackCompilerError("member presentation is invalid")
+            object_id = presentation.get("objectId")
+            count = presentation.get("count")
+            source = presentation.get("defaultModelSourceW3d")
+            resource_id = presentation.get("componentResourceId")
+            member_core = presentation.get("coreAnimations")
+            key = object_id.casefold() if isinstance(object_id, str) else ""
+            expected = expected_member_counts.get(key)
+            component = component_by_model.get(str(source), {})
+            if (
+                set(presentation)
+                != {
+                    "objectId",
+                    "count",
+                    "defaultModelSourceW3d",
+                    "componentResourceId",
+                    "coreAnimations",
+                }
+                or expected is None
+                or key in seen_member_presentations
+                or count != expected[1]
+                or not isinstance(source, str)
+                or not isinstance(resource_id, str)
+                or component.get("resourceId") != resource_id
+                or str(component.get("ownerObjectId", "")).casefold() != key
+                or not isinstance(member_core, Mapping)
+                or set(member_core) != set(_required_states(runtime))
+            ):
+                raise PlayableUnitPackCompilerError("member presentation is invalid")
+            seen_member_presentations.add(key)
+            for state, bindings in member_core.items():
+                if not isinstance(bindings, list) or not bindings:
+                    raise PlayableUnitPackCompilerError(
+                        "member core animation bindings are invalid"
+                    )
+                for binding in bindings:
+                    if (
+                        not isinstance(binding, Mapping)
+                        or binding.get("semanticState") != state
+                        or binding.get("runtimeSupport") != "generic-core"
+                        or str(binding.get("ownerObjectId", "")).casefold() != key
+                        or (str(binding.get("sourceW3d", "")), str(binding.get("identifier", "")))
+                        not in authored_keys
+                    ):
+                        raise PlayableUnitPackCompilerError(
+                            "member core animation binding is invalid"
+                        )
+    elif member_presentations:
+        raise PlayableUnitPackCompilerError(
+            "single-member composition has member presentations"
+        )
+    presentations = visual.get("corePresentations", {})
+    if not isinstance(presentations, Mapping):
+        raise PlayableUnitPackCompilerError("runtime core presentations are invalid")
+    naval_bindings = {
+        "idle": "static-hull",
+        "move": "transform-locomotion",
+        "attack": "weapon-effect",
+        "death": "ship-sink",
+    }
+    scenario_bindings = {
+        "idle": "static-model",
+        "move": "transform-locomotion",
+        "attack": "weapon-effect",
+        "death": "slow-death",
+    }
+    scenario_admission = runtime.get("scenarioAdmission")
+    scenario_nonbuildable = (
+        isinstance(scenario_admission, Mapping)
+        and runtime.get("production") == []
+    )
+    if presentations and value.get("category") != "naval" and not scenario_nonbuildable:
+        raise PlayableUnitPackCompilerError(
+            "core presentations require a naval or scenario-only unit"
+        )
+    expected_bindings = (
+        naval_bindings if value.get("category") == "naval" else scenario_bindings
+    )
+    for state, presentation in presentations.items():
+        binding = presentation.get("binding") if isinstance(presentation, Mapping) else None
+        binding_matches = binding == expected_bindings.get(str(state)) or (
+            scenario_nonbuildable
+            and state == "death"
+            and binding == "object-removal"
+        )
+        if (
+            state not in _required_states(runtime)
+            or not isinstance(presentation, Mapping)
+            or not binding_matches
+            or presentation.get("modelSourceW3d") not in component_by_model
+        ):
+            raise PlayableUnitPackCompilerError(
+                "runtime core presentations are invalid"
+            )
+        if state == "death" and value.get("category") == "naval":
+            contract = presentation.get("contract")
+            if (
+                not isinstance(contract, Mapping)
+                or contract.get("module") != "ShipSlowDeathBehavior"
+                or contract.get("extraction") != "typed"
+            ):
+                raise PlayableUnitPackCompilerError(
+                    "ship sink presentation contract is invalid"
+                )
+        elif state == "death" and binding == "slow-death":
+            contracts = presentation.get("contracts")
+            if (
+                not isinstance(contracts, list)
+                or not contracts
+                or any(
+                    not isinstance(contract, Mapping)
+                    or contract.get("module") != "SlowDeathBehavior"
+                    or not isinstance(contract.get("sourceIni"), str)
+                    or not contract.get("sourceIni")
+                    or not isinstance(contract.get("line"), int)
+                    or isinstance(contract.get("line"), bool)
+                    or contract.get("line") <= 0
+                    for contract in contracts
+                )
+            ):
+                raise PlayableUnitPackCompilerError(
+                    "scenario slow-death presentation contract is invalid"
+                )
+        elif not isinstance(presentation.get("evidence"), str):
+            raise PlayableUnitPackCompilerError(
+                "runtime core presentation evidence is invalid"
+            )
+    covered_animation_states = {str(state) for state in core} | set(presentations) | {
         str(row.get("semanticState"))
         for row in authored
         if isinstance(row.get("semanticState"), str)
@@ -2511,12 +3523,17 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
     ):
         raise PlayableUnitPackCompilerError("core animation exclusions are invalid")
     if animation_exclusions:
+        expected_excluded_states = [
+            state
+            for state in _required_states(runtime)
+            if state not in covered_animation_states
+        ]
         if (
             core
             or death_swaps
             or authored
             or [str(row.get("state", "")) for row in animation_exclusions]
-            != list(_required_states(runtime))
+            != expected_excluded_states
             or any(
                 set(row) != {"state", "runtimeSupport", "runtimeExclusionReason"}
                 or row["runtimeSupport"] != "excluded-randomizer-shell"
@@ -2527,6 +3544,14 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
             raise PlayableUnitPackCompilerError(
                 "core animation exclusions are invalid"
             )
+    excluded_states = {
+        str(row.get("state", "")) for row in animation_exclusions
+    }
+    required_state_set = set(_required_states(runtime))
+    if required_state_set != (
+        required_state_set & covered_animation_states
+    ) | excluded_states:
+        raise PlayableUnitPackCompilerError("core animation coverage is incomplete")
     visual_leaves = _rows(visual.get("authoredVisualLeaves"), "authored visual leaves")
     for leaf in visual_leaves:
         resource_id = leaf.get("resourceId")
@@ -2661,7 +3686,15 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
             and isinstance(row.get("identifier"), str)
             and bool(row.get("identifier"))
             and valid_conditions
-            and bool(conditions)
+            and (
+                bool(conditions)
+                or (
+                    scenario_nonbuildable
+                    and _state(row) == "idle"
+                    and isinstance(presentations.get("idle"), Mapping)
+                    and presentations["idle"].get("binding") == "static-model"
+                )
+            )
             and valid_graph_provenance
             and not row.get("physicalVirtualPaths", [])
             and not row.get("candidates", [])
@@ -2670,7 +3703,13 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
             and exclusion_reason == "retail-absent-animation-state-covered"
             and _state(row) is not None
             and row.get("semanticState") == _state(row)
-            and str(row.get("semanticState")) in covered_animation_states
+            and (
+                str(row.get("semanticState")) in covered_animation_states
+                or (
+                    str(row.get("semanticState")) in _SELECTION_STATES
+                    and "idle" in covered_animation_states
+                )
+            )
         )
         is_retail_absent_extra_mesh = (
             row.get("status") == "missing"

@@ -26,6 +26,7 @@ from .sage_cst import (
     SageIncludeRef,
     SageObject,
     SageScript,
+    SageScriptLine,
     SageSourceLocation,
     resolve_sage_documents,
 )
@@ -73,6 +74,14 @@ _REFERENCE_KEYS = {
     "particlename": ("visual", "particle", "particle"),
 }
 _RECOLOUR_KEYS = frozenset({"recolorhouse", "oktochangemodelcolor"})
+_ANIMATION_PROPERTY_KEYS = frozenset(
+    {
+        "animationblendtime",
+        "animationpriority",
+        "animationspeedfactorrange",
+    }
+)
+_STATE_PROPERTY_KEYS = frozenset({"statename"})
 _BOOLEAN_KEYS = frozenset(
     {"recolorhouse", "oktochangemodelcolor", "shadowoverridelodvisibility"}
 )
@@ -183,6 +192,33 @@ class TypedVisualProperty:
 
 
 @dataclass(frozen=True, slots=True)
+class TypedDrawableAction:
+    """One authored statement from a W3DScriptedModelDraw script body.
+
+    The old visual pass retained ``BeginScript`` as opaque CST evidence but
+    dropped its behavior from the typed graph.  Keep every non-empty statement
+    here.  Known CurDrawable calls receive a stable operation name; control
+    flow and unknown calls remain explicit unsupported rows so coverage can
+    never confuse preservation with runtime support.
+    """
+
+    operation: str
+    arguments: tuple[str, ...]
+    supported: bool
+    raw: str
+    provenance: VisualProvenance
+
+    def neutral(self) -> dict[str, object]:
+        return {
+            "operation": self.operation,
+            "arguments": list(self.arguments),
+            "supported": self.supported,
+            "raw": self.raw,
+            "provenance": self.provenance.neutral(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class TypedVisualState:
     family: str
     conditions: tuple[str, ...]
@@ -190,6 +226,7 @@ class TypedVisualState:
     provenance: VisualProvenance
     references: tuple[TypedAssetReference, ...]
     properties: tuple[TypedVisualProperty, ...]
+    drawable_actions: tuple[TypedDrawableAction, ...]
 
     def neutral(self) -> dict[str, object]:
         return {
@@ -199,6 +236,7 @@ class TypedVisualState:
             "provenance": self.provenance.neutral(),
             "references": [item.neutral() for item in self.references],
             "properties": [item.neutral() for item in self.properties],
+            "drawableActions": [item.neutral() for item in self.drawable_actions],
         }
 
 
@@ -211,6 +249,7 @@ class TypedDrawModule:
     states: tuple[TypedVisualState, ...]
     references: tuple[TypedAssetReference, ...]
     properties: tuple[TypedVisualProperty, ...]
+    drawable_actions: tuple[TypedDrawableAction, ...]
 
     def neutral(self) -> dict[str, object]:
         result: dict[str, object] = {
@@ -220,6 +259,7 @@ class TypedDrawModule:
             "states": [item.neutral() for item in self.states],
             "references": [item.neutral() for item in self.references],
             "properties": [item.neutral() for item in self.properties],
+            "drawableActions": [item.neutral() for item in self.drawable_actions],
         }
         if self.instance_tag is not None:
             result["instanceTag"] = self.instance_tag
@@ -359,6 +399,7 @@ class _PendingState:
     provenance: VisualProvenance
     reference_indexes: list[int]
     properties: list[TypedVisualProperty]
+    drawable_actions: list[TypedDrawableAction]
 
 
 @dataclass(slots=True)
@@ -370,6 +411,7 @@ class _PendingModule:
     states: list[_PendingState]
     reference_indexes: list[int]
     properties: list[TypedVisualProperty]
+    drawable_actions: list[TypedDrawableAction]
 
 
 @dataclass(slots=True)
@@ -487,7 +529,12 @@ def _enabled(key: str, value: str) -> bool | None:
 
 def _is_visual_property(key: str) -> bool:
     folded = key.casefold()
-    return folded.startswith("shadow") or folded in _RECOLOUR_KEYS
+    return (
+        folded.startswith("shadow")
+        or folded in _RECOLOUR_KEYS
+        or folded in _ANIMATION_PROPERTY_KEYS
+        or folded in _STATE_PROPERTY_KEYS
+    )
 
 
 def _scope_name(block: SageBlock) -> str:
@@ -497,6 +544,33 @@ def _scope_name(block: SageBlock) -> str:
     elif block.header_tokens:
         value += " " + " ".join(block.header_tokens)
     return value
+
+
+def _sibling_scope_names(items: tuple[object, ...]) -> dict[int, str]:
+    """Return occurrence-safe scope names for sibling authored blocks.
+
+    SAGE permits repeated anonymous blocks (and repeated named blocks) inside
+    one state.  A textual scope path alone therefore is not an occurrence
+    identity: NeutralWarg, for example, has two anonymous ``Animation`` blocks
+    with different priorities.  Preserve the compact historical name when it
+    is unique, and ordinalize only colliding sibling names in source order.
+    """
+
+    blocks = [item for item in items if isinstance(item, SageBlock)]
+    totals: dict[str, int] = {}
+    for block in blocks:
+        folded = _scope_name(block).casefold()
+        totals[folded] = totals.get(folded, 0) + 1
+    seen: dict[str, int] = {}
+    result: dict[int, str] = {}
+    for block in blocks:
+        name = _scope_name(block)
+        folded = name.casefold()
+        seen[folded] = seen.get(folded, 0) + 1
+        result[id(block)] = (
+            f"{name} #{seen[folded]}" if totals[folded] > 1 else name
+        )
+    return result
 
 
 def _unexpected_body_item(item: object, owner: str) -> TypeError:
@@ -533,7 +607,7 @@ def _is_nonphysical_cst_evidence(item: object) -> bool:
 
 def _provenance(
     defining_object: SageObject,
-    source: SageAssignment | SageBlock,
+    source: SageAssignment | SageBlock | SageScriptLine,
     inheritance_distance: int,
     scope_path: tuple[str, ...],
 ) -> VisualProvenance:
@@ -547,6 +621,136 @@ def _provenance(
 
 
 _NUMERIC_TOKEN = re.compile(r"-?\d+(?:\.\d+)?")
+_DRAWABLE_CALL = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)\)\s*;?$")
+_DRAWABLE_OPERATIONS: dict[str, tuple[str, int | None]] = {
+    "curdrawablehidesubobject": ("hide-sub-object", 1),
+    "curdrawableshowsubobject": ("show-sub-object", 1),
+    "curdrawablehidesubobjectpermanently": ("hide-sub-object-permanently", 1),
+    "curdrawableshowsubobjectpermanently": ("show-sub-object-permanently", 1),
+    "curdrawablehidemodule": ("hide-module", 1),
+    "curdrawableshowmodule": ("show-module", 1),
+    "curdrawablesettransitionanimstate": ("set-transition-animation-state", 1),
+    "curdrawableplaysound": ("play-sound", 1),
+    "curdrawableallowtocontinue": ("allow-to-continue", 0),
+}
+_DRAWABLE_CONTROL_FLOW = frozenset({"if", "return"})
+
+
+def _script_arguments(value: str) -> tuple[str, ...] | None:
+    """Parse a CurDrawable argument list without interpreting escapes broadly."""
+
+    if not value.strip():
+        return ()
+    result: list[str] = []
+    start = 0
+    quote: str | None = None
+    escaped = False
+    for index, character in enumerate(value):
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+        elif character in {'"', "'"}:
+            quote = character
+        elif character == ",":
+            result.append(value[start:index].strip())
+            start = index + 1
+    if quote is not None:
+        return None
+    result.append(value[start:].strip())
+    parsed: list[str] = []
+    for token in result:
+        if not token:
+            return None
+        if len(token) >= 2 and token[0] == token[-1] and token[0] in {'"', "'"}:
+            token = token[1:-1]
+        parsed.append(token)
+    return tuple(parsed)
+
+
+def _drawable_action(
+    line: SageScriptLine,
+    defining_object: SageObject,
+    inheritance_distance: int,
+    scope_path: tuple[str, ...],
+) -> TypedDrawableAction | None:
+    raw = line.text.strip()
+    if not raw:
+        return None
+    match = _DRAWABLE_CALL.fullmatch(raw)
+    operation = "unsupported-script-statement"
+    arguments: tuple[str, ...] = ()
+    supported = False
+    if match is not None:
+        parsed = _script_arguments(match.group(2))
+        rule = _DRAWABLE_OPERATIONS.get(match.group(1).casefold())
+        if match.group(1).casefold() in _DRAWABLE_CONTROL_FLOW:
+            operation = "unsupported-script-control-flow"
+        elif parsed is not None and rule is not None:
+            operation, arity = rule
+            arguments = parsed
+            supported = arity is None or len(parsed) == arity
+            if not supported:
+                operation = "unsupported-script-statement"
+        elif parsed is not None:
+            arguments = parsed
+    elif raw.split(None, 1)[0].casefold() in _DRAWABLE_CONTROL_FLOW:
+        # Retained as a typed, unsupported control-flow statement. Naming the
+        # retail tokens here makes the exhaustive ledger distinguish deliberate
+        # deferral from an unknown script vocabulary gap.
+        operation = "unsupported-script-control-flow"
+    return TypedDrawableAction(
+        operation=operation,
+        arguments=arguments,
+        supported=supported,
+        raw=raw,
+        provenance=_provenance(
+            defining_object,
+            line,
+            inheritance_distance,
+            (*scope_path, "BeginScript"),
+        ),
+    )
+
+
+def _collect_drawable_actions(
+    items: tuple[object, ...],
+    *,
+    defining_object: SageObject,
+    inheritance_distance: int,
+    scope_path: tuple[str, ...],
+    stop_at_states: bool,
+) -> list[TypedDrawableAction]:
+    result: list[TypedDrawableAction] = []
+    sibling_scopes = _sibling_scope_names(items)
+    for item in items:
+        if isinstance(item, SageScript):
+            for line in item.lines:
+                action = _drawable_action(
+                    line, defining_object, inheritance_distance, scope_path
+                )
+                if action is not None:
+                    result.append(action)
+            continue
+        if isinstance(item, (SageAssignment, SageIncludeRef)):
+            continue
+        if not isinstance(item, SageBlock):
+            raise _unexpected_body_item(item, "drawable script traversal")
+        if stop_at_states and item.kind.casefold() in _STATE_KINDS:
+            continue
+        result.extend(
+            _collect_drawable_actions(
+                item.items,
+                defining_object=defining_object,
+                inheritance_distance=inheritance_distance,
+                scope_path=(*scope_path, sibling_scopes[id(item)]),
+                stop_at_states=stop_at_states,
+            )
+        )
+    return result
 
 
 def _append_reference(
@@ -692,6 +896,7 @@ def _walk_assignments(
     properties: list[TypedVisualProperty],
     stop_at_states: bool,
 ) -> None:
+    sibling_scopes = _sibling_scope_names(items)
     for item in items:
         if isinstance(item, SageAssignment):
             reference_indexes.extend(
@@ -725,7 +930,7 @@ def _walk_assignments(
             item.items,
             defining_object=defining_object,
             inheritance_distance=inheritance_distance,
-            scope_path=(*scope_path, _scope_name(item)),
+            scope_path=(*scope_path, sibling_scopes[id(item)]),
             conditions=conditions,
             lifecycle_phases=lifecycle_phases,
             pending_references=pending_references,
@@ -744,6 +949,7 @@ def _collect_states(
     pending_references: list[_PendingReference],
 ) -> list[_PendingState]:
     states: list[_PendingState] = []
+    sibling_scopes = _sibling_scope_names(block.items)
     for item in block.items:
         if isinstance(item, SageAssignment):
             continue
@@ -755,7 +961,7 @@ def _collect_states(
         if folded in _STATE_KINDS:
             conditions = tuple(item.header_tokens)
             phases = _lifecycle(conditions)
-            scope = (*module_scope, _scope_name(item))
+            scope = (*module_scope, sibling_scopes[id(item)])
             references: list[int] = []
             properties: list[TypedVisualProperty] = []
             _walk_assignments(
@@ -780,6 +986,13 @@ def _collect_states(
                     ),
                     reference_indexes=references,
                     properties=properties,
+                    drawable_actions=_collect_drawable_actions(
+                        item.items,
+                        defining_object=defining_object,
+                        inheritance_distance=inheritance_distance,
+                        scope_path=scope,
+                        stop_at_states=True,
+                    ),
                 )
             )
             continue
@@ -788,7 +1001,7 @@ def _collect_states(
                 item,
                 defining_object=defining_object,
                 inheritance_distance=inheritance_distance,
-                module_scope=(*module_scope, _scope_name(item)),
+                module_scope=(*module_scope, sibling_scopes[id(item)]),
                 pending_references=pending_references,
             )
         )
@@ -1369,6 +1582,13 @@ def resolve_typed_visual_graph(
                     ),
                     reference_indexes=module_reference_indexes,
                     properties=module_properties,
+                    drawable_actions=_collect_drawable_actions(
+                        block.items,
+                        defining_object=effective.defining_object,
+                        inheritance_distance=effective.inheritance_distance,
+                        scope_path=scope,
+                        stop_at_states=True,
+                    ),
                 )
             )
         pending_objects.append(
@@ -1401,6 +1621,7 @@ def resolve_typed_visual_graph(
                         state.provenance,
                         tuple(resolved[index] for index in state.reference_indexes),
                         tuple(state.properties),
+                        tuple(state.drawable_actions),
                     )
                 )
             modules.append(
@@ -1412,6 +1633,7 @@ def resolve_typed_visual_graph(
                     tuple(states),
                     tuple(resolved[index] for index in module.reference_indexes),
                     tuple(module.properties),
+                    tuple(module.drawable_actions),
                 )
             )
         if not coverage:

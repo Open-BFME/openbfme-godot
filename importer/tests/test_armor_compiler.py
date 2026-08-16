@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from openbfme_importer.catalog import InstallCatalog
 from openbfme_importer.armor_compiler import (
     ArmorCompilerError,
     base_weapon_targets,
@@ -13,6 +16,7 @@ from openbfme_importer.playable_unit_compiler import (
     _ancestry,
     prepare_playable_unit_compiler,
 )
+from openbfme_importer.module_census import read_catalog_documents
 
 
 ARMOR_INI = b"""
@@ -317,7 +321,7 @@ def test_armor_contract_defaults_armor_set_flag() -> None:
     assert "default is PLAYER_UPGRADE" in upgrade["armorSetFlagSemantic"]
 
 
-def test_armor_contract_fails_closed_on_missing_referenced_set() -> None:
+def test_armor_contract_records_missing_authored_set_as_engine_passthrough() -> None:
     payload = _object_document(
         "  KindOf = INFANTRY\n"
         "  ArmorSet\n"
@@ -327,8 +331,52 @@ def test_armor_contract_fails_closed_on_missing_referenced_set() -> None:
     )
     documents = _documents(payload)
     lineage, _ = _lineage(documents)
-    with pytest.raises(ArmorCompilerError, match="MissingArmor"):
+    contract = compile_armor_contract(documents, lineage)
+    assert contract["setId"] is None
+    assert contract["authoredSetId"] == "MissingArmor"
+    assert "unmodified damage" in contract["semantic"]
+    assert contract["sourceIni"] == "data/ini/object/test.ini"
+    assert contract["line"] > 0
+    assert contract["upgrades"] == []
+
+
+def test_armor_contract_still_fails_closed_on_malformed_known_set() -> None:
+    payload = _object_document(
+        "  KindOf = INFANTRY\n"
+        "  ArmorSet\n"
+        "    Conditions = None\n"
+        "    Armor = TestNoDefaultArmor\n"
+        "  End\n"
+    )
+    documents = _documents(payload)
+    lineage, _ = _lineage(documents)
+    with pytest.raises(ArmorCompilerError, match="no DEFAULT"):
         compile_armor_contract(documents, lineage)
+
+
+def test_bfme2_outpost_and_signal_fire_use_retail_null_armor_damage() -> None:
+    repo = Path(__file__).resolve().parents[2]
+    catalog_path = repo / ".private" / "retail-work" / "catalog" / "bfme2.json"
+    if not catalog_path.is_file():
+        pytest.skip("operator BFME2 retail catalog is unavailable")
+    documents = dict(read_catalog_documents(InstallCatalog.load(catalog_path)))
+    prepared = prepare_playable_unit_compiler(documents)
+
+    for object_id in ("Outpost", "SignalFire"):
+        target = prepared.objects[object_id.casefold()]
+        contract = compile_armor_contract(
+            documents,
+            _ancestry(prepared.objects, target),
+            named_definition_cache=prepared.named_definition_cache,
+            cache_lock=prepared.cache_lock,
+            game="bfme2",
+        )
+        assert contract["setId"] is None
+        assert contract["authoredSetId"] == "TechStructureArmor"
+        assert "unmodified damage (100%" in contract["semantic"]
+        assert "table" not in contract
+        assert str(contract["sourceIni"]).startswith("data/ini/object/")
+        assert int(contract["line"]) > 0
 
 
 def test_armor_contract_records_a_dangling_upgrade_as_an_engine_no_op() -> None:
@@ -1045,10 +1093,10 @@ def test_structure_descriptor_carries_compiled_armor() -> None:
     assert "data/ini/armor.ini" in provenance_paths
 
 
-def test_unit_descriptor_fails_closed_on_unresolvable_armor_set() -> None:
+def test_unit_descriptor_records_absent_authored_armor_as_passthrough() -> None:
     from openbfme_importer.playable_unit_compiler import (
-        PlayableUnitCompilerError,
         compile_playable_unit_descriptor,
+        validate_playable_unit_descriptor,
     )
 
     documents = _integration_documents()
@@ -1058,8 +1106,12 @@ def test_unit_descriptor_fails_closed_on_unresolvable_armor_set() -> None:
         "Armor = TestArmor", "Armor = MissingArmor", 1
     ).encode("utf-8")
 
-    with pytest.raises(PlayableUnitCompilerError, match="MissingArmor"):
-        compile_playable_unit_descriptor("InfantryHorde", documents)
+    descriptor = compile_playable_unit_descriptor("InfantryHorde", documents)
+    validate_playable_unit_descriptor(descriptor)
+    armor = descriptor["gameplay"]["simulation"]["resolved"]["armor"]
+    assert armor["setId"] is None
+    assert armor["authoredSetId"] == "MissingArmor"
+    assert "unmodified damage" in armor["semantic"]
 
 
 def test_status_bits_dummy_upgrade_resolves_gated_nugget_effect() -> None:

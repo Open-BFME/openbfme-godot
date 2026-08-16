@@ -161,7 +161,20 @@ const PIN_TICKS := 3000
 ## doorway lerp exactly`, deviation 0.349998 before the fix), not here. Reading
 ## "the pin did not move" as "nothing changed" would be wrong.
 ## ---------------------------------------------------------------------------
-const EXPECTED_HASH := "a436bb5989a026ee0be6674ac514c1035784dbe6fc92281ddfbb78cc79e0a05a"
+## ---------------------------------------------------------------------------
+## RE-MINT 2026-08-15 - PROVISIONAL CREEP STATE RETIREMENT ONLY.
+##
+## Superseded value: a436bb5989a026ee0be6674ac514c1035784dbe6fc92281ddfbb78cc79e0a05a
+## New value:        0e4bcdbf7e9a8579ccf559f0ac3d83284413e7196ad1249d2eafd3eafd1dcadc
+##
+## The retired hard-coded creep lane had four inert keys in every authoritative
+## snapshot: creep_lairs_enabled=false, creep_lair_placements=[], and the two
+## next-creep ID cursors. The selected descriptor/scenario lane supersedes it.
+## A scratch-only diagnostic inserted exactly those four keys into the current
+## final snapshot and reproduced the superseded hash byte-for-byte. No entity,
+## structure, position, economy, command, RNG, or gameplay value differed.
+## ---------------------------------------------------------------------------
+const EXPECTED_HASH := "0e4bcdbf7e9a8579ccf559f0ac3d83284413e7196ad1249d2eafd3eafd1dcadc"
 const SUBMIT_THROUGH_TICK := 1500
 
 

@@ -57,6 +57,17 @@ func _wizard_blast_bindings() -> Dictionary:
 				"authoredScalars": {"color1": "R:255 G:255 B:255 0", "lifetime": "35 35"},
 			},
 			{
+				"kind": "ParticleSystem",
+				"definitionId": "GandalfWaveBlastWave",
+				"definitionResourceId": "fx-gondorgandalf-def-particlesystem-gandalfwaveblastwave",
+				"textureResourceIds": ["fx-gondorgandalf-tex-legacy-red"],
+				"authoredScalars": {
+					"isgroundaligned": "Yes",
+					"color1": "R:255 G:0 B:0 0",
+					"sizerate": "1 1",
+				},
+			},
+			{
 				"kind": "FXParticleSystem",
 				"definitionId": "GandalfWaveBlastWave",
 				"definitionResourceId": "fx-gondorgandalf-def-fxparticlesystem-gandalfwaveblastwave",
@@ -68,6 +79,10 @@ func _wizard_blast_bindings() -> Dictionary:
 				},
 			},
 		],
+		"familyResolution": {
+			"duplicateIdentifierSystemIds": ["GandalfWaveBlastWave"],
+			"crossFamilyPrecedenceProven": false,
+		},
 		"textures": [],
 		"presentableFxListIds": ["FX_TelekinesisAtBone"],
 		"unresolved": [],

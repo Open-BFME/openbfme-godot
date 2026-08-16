@@ -111,6 +111,7 @@ static func default_manifest() -> Dictionary:
 		"structure_build_rules": SimScript.STRUCTURE_BUILD_RULES.duplicate(true),
 		"structure_inherit_upgrades": {},
 		"deferred_structure_inherit_upgrades": {},
+		"structure_production_exit_updates": {},
 		"deferred_structure_production_exit_updates": {},
 		"structure_auto_deposit_updates": {},
 		"deferred_structure_auto_deposit_updates": {},
@@ -163,6 +164,7 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 	var structure_source_by_kind: Dictionary = {}
 	var structure_max_health: Dictionary = {}
 	var structure_build_rules: Dictionary = {}
+	var structure_bounty_values: Dictionary = {}
 	var structure_armor: Dictionary = {}
 	var structure_upgrade_chains: Dictionary = {}
 	var structure_research: Dictionary = {}
@@ -171,6 +173,7 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 	var structure_create_grants: Dictionary = {}
 	var structure_inherit_upgrades: Dictionary = {}
 	var deferred_structure_inherit_upgrades: Dictionary = {}
+	var structure_production_exit_updates: Dictionary = {}
 	var deferred_structure_production_exit_updates: Dictionary = {}
 	var structure_auto_deposit_updates: Dictionary = {}
 	var deferred_structure_auto_deposit_updates: Dictionary = {}
@@ -215,18 +218,26 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 				deferred_structure_auto_deposit_updates[object_id] = (
 					deferred_auto_deposit as Array
 				).duplicate(true)
-			var deferred_exit: Variant = (
-				registration.get("gameplay", {}) as Dictionary
-			).get("productionExitUpdates")
+			var composite_gameplay := registration.get("gameplay", {}) as Dictionary
+			var deferred_exit: Variant = composite_gameplay.get("productionExitUpdates")
 			if deferred_exit != null:
 				var deferred_exit_error := _validate_structure_production_exit_updates(
-					object_id, deferred_exit
+					object_id, deferred_exit, composite_gameplay.get("moduleContracts")
 				)
 				if deferred_exit_error != "":
 					return {"_error": deferred_exit_error}
-				deferred_structure_production_exit_updates[object_id] = (
-					deferred_exit as Array
-				).duplicate(true)
+				var executable_exit_rows: Array = []
+				var deferred_exit_rows: Array = []
+				for exit_value in deferred_exit as Array:
+					var exit_row := exit_value as Dictionary
+					if String(exit_row.get("runtimeStatus", "")) == "executable":
+						executable_exit_rows.append(exit_row.duplicate(true))
+					else:
+						deferred_exit_rows.append(exit_row.duplicate(true))
+				if not executable_exit_rows.is_empty():
+					structure_production_exit_updates[object_id] = executable_exit_rows
+				if not deferred_exit_rows.is_empty():
+					deferred_structure_production_exit_updates[object_id] = deferred_exit_rows
 			var deferred_inherit: Variant = (
 				registration.get("gameplay", {}) as Dictionary
 			).get("inheritUpgradesOnCreate")
@@ -307,6 +318,11 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 		structure_source_by_kind[kind] = object_id
 		structure_object_ids[kind] = PlayableUnitAdapter._runtime_id(object_id)
 		structure_max_health[kind] = maximum_health
+		var bounty_value := _scalar_number(scalar_fields, "BountyValue")
+		if bounty_value >= 0.0:
+			if bounty_value != float(int(bounty_value)):
+				return {"_error": "structure '%s' has non-integral BountyValue" % object_id}
+			structure_bounty_values[kind] = int(bounty_value)
 		var health_contract := (
 			(registration.get("gameplay", {}) as Dictionary).get("health", {})
 			as Dictionary
@@ -377,21 +393,26 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 			if inherit_error != "":
 				return {"_error": inherit_error}
 			structure_inherit_upgrades[kind] = (inherit_upgrades as Array).duplicate(true)
-		var production_exit_updates: Variant = (
-			registration.get("gameplay", {}) as Dictionary
-		).get("productionExitUpdates")
+		var structure_gameplay := registration.get("gameplay", {}) as Dictionary
+		var production_exit_updates: Variant = structure_gameplay.get("productionExitUpdates")
 		if production_exit_updates != null:
 			var production_exit_error := _validate_structure_production_exit_updates(
-				object_id, production_exit_updates
+				object_id, production_exit_updates, structure_gameplay.get("moduleContracts")
 			)
 			if production_exit_error != "":
 				return {"_error": production_exit_error}
-			# Parsed producer geometry/cadence evidence only. RetailSliceSim has
-			# no model-space exit transform, rally path, exit-door delay, burst,
-			# or airborne-creation implementation yet.
-			deferred_structure_production_exit_updates[object_id] = (
-				production_exit_updates as Array
-			).duplicate(true)
+			var executable_exit_rows: Array = []
+			var deferred_exit_rows: Array = []
+			for exit_value in production_exit_updates as Array:
+				var exit_row := exit_value as Dictionary
+				if String(exit_row.get("runtimeStatus", "")) == "executable":
+					executable_exit_rows.append(exit_row.duplicate(true))
+				else:
+					deferred_exit_rows.append(exit_row.duplicate(true))
+			if not executable_exit_rows.is_empty():
+				structure_production_exit_updates[kind] = executable_exit_rows
+			if not deferred_exit_rows.is_empty():
+				deferred_structure_production_exit_updates[object_id] = deferred_exit_rows
 		var auto_deposit_updates: Variant = (
 			registration.get("gameplay", {}) as Dictionary
 		).get("autoDepositUpdates")
@@ -871,6 +892,9 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 		# pad art without guessing faction identity from object-name strings.
 		"fortress_composite_object_ids": fortress_composite_object_ids,
 		"structure_max_health": structure_max_health,
+		# Absent stays absent. Scavenger may only pay for a structure whose own
+		# effective object descriptor authors BountyValue.
+		"structure_bounty_values": structure_bounty_values,
 		"structure_build_rules": structure_build_rules,
 		# Compiled armor.ini table per kind (fractions); kinds whose structure
 		# document carries no armor block are absent here and become recorded
@@ -899,6 +923,7 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 		# is materialized. Keeping these separate prevents importer coverage
 		# from masquerading as live runtime coverage.
 		"deferred_structure_inherit_upgrades": deferred_structure_inherit_upgrades,
+		"structure_production_exit_updates": structure_production_exit_updates,
 		"deferred_structure_production_exit_updates": deferred_structure_production_exit_updates,
 		"structure_auto_deposit_updates": structure_auto_deposit_updates,
 		"deferred_structure_auto_deposit_updates": deferred_structure_auto_deposit_updates,
@@ -959,7 +984,9 @@ static func faction_scoped_unit_runtimes(prefixes: Array, unit_runtimes: Diction
 	if pack_index.is_empty():
 		return unit_runtimes
 	var faction_roots: Dictionary = {}
+	var faction_structure_ids: Dictionary = {}
 	for object_id in _matching_ids(structure_runtimes, prefixes):
+		faction_structure_ids[String(object_id).to_lower()] = true
 		var root := String((structure_runtimes[object_id] as Dictionary).get("_pack_root", ""))
 		if root != "":
 			faction_roots[root] = true
@@ -969,6 +996,36 @@ static func faction_scoped_unit_runtimes(prefixes: Array, unit_runtimes: Diction
 	for object_id in _matching_ids(scoped, prefixes):
 		var variants: Array = pack_index.get(String(object_id).to_lower(), []) as Array
 		if variants.size() < 2:
+			continue
+		# Prefer the copy whose pack owns the exact producer structure named by
+		# its production route. This matters when an active RotWK faction and its
+		# BFME2 supplemental dependency both contribute same-prefix structures:
+		# both roots are broadly faction-owned, but their command-set layouts can
+		# differ (for example Gondor Barracks Tower Guard slot 2 vs 3). Pack load
+		# order must not select the supplemental unit against the active
+		# producer's command set.
+		var producer_owned_variant: Dictionary = {}
+		for variant_value in variants:
+			var candidate := variant_value as Dictionary
+			var candidate_root := String(candidate.get("_pack_root", ""))
+			var registration := candidate.get("registration", {}) as Dictionary
+			for route_value in registration.get("production", []) as Array:
+				var route := route_value as Dictionary
+				var producer_id := String(route.get("producerObjectId", ""))
+				if (
+					producer_id == ""
+					or not faction_structure_ids.has(producer_id.to_lower())
+					or not structure_runtimes.has(producer_id)
+				):
+					continue
+				var producer := structure_runtimes[producer_id] as Dictionary
+				if candidate_root != "" and String(producer.get("_pack_root", "")) == candidate_root:
+					producer_owned_variant = candidate
+					break
+			if not producer_owned_variant.is_empty():
+				break
+		if not producer_owned_variant.is_empty():
+			scoped[object_id] = producer_owned_variant
 			continue
 		for variant_value in variants:
 			var variant := variant_value as Dictionary
@@ -1188,6 +1245,94 @@ static func _validate_structure_inherit_upgrades(object_id: String, rules_value:
 
 
 static func _validate_structure_production_exit_updates(
+	object_id: String, rules_value: Variant, module_contracts_value: Variant = null
+) -> String:
+	if typeof(rules_value) != TYPE_ARRAY or (rules_value as Array).is_empty():
+		return "structure '%s' productionExitUpdates is not a non-empty array" % object_id
+	var first_value: Variant = (rules_value as Array)[0]
+	if typeof(first_value) != TYPE_DICTIONARY:
+		return "structure '%s' productionExitUpdates contains a non-dictionary row" % object_id
+	# Fresh descriptors expose the compiler-authoritative module-contract rows
+	# verbatim. Older BFME2 packs carry the pre-promotion compatibility shape;
+	# keep that strict parser below until those immutable packs are replaced.
+	if (first_value as Dictionary).has("fields"):
+		return _validate_canonical_production_exit_updates(
+			object_id, rules_value as Array, module_contracts_value
+		)
+	return _validate_legacy_production_exit_updates(object_id, rules_value)
+
+
+static func _validate_canonical_production_exit_updates(
+	object_id: String, rules: Array, module_contracts_value: Variant
+) -> String:
+	if typeof(module_contracts_value) != TYPE_ARRAY:
+		return "structure '%s' canonical QueueProductionExitUpdate lacks moduleContracts authority" % object_id
+	var authoritative_rows: Array = []
+	for contract_value in module_contracts_value as Array:
+		if typeof(contract_value) != TYPE_DICTIONARY:
+			return "structure '%s' moduleContracts contains a non-dictionary row" % object_id
+		var contract := contract_value as Dictionary
+		if String(contract.get("module", "")) == "QueueProductionExitUpdate":
+			authoritative_rows.append(contract)
+	if rules != authoritative_rows:
+		return "structure '%s' QueueProductionExitUpdate compatibility projection drifted from moduleContracts" % object_id
+	var executable_fields := {
+		"UnitCreatePoint": true,
+		"NaturalRallyPoint": true,
+		"ExitDelay": true,
+		"PlacementViewAngle": true,
+		"NoExitPath": true,
+	}
+	for row_value in rules:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			return "structure '%s' productionExitUpdates contains a non-dictionary row" % object_id
+		var row := row_value as Dictionary
+		if (
+			not _has_exact_dictionary_keys(
+				row,
+				["carrier", "extraction", "fields", "line", "module", "runtimeStatus", "sourceIni", "tag"]
+			)
+			or String(row.get("carrier", "")) != "Behavior"
+			or String(row.get("extraction", "")) != "typed"
+			or String(row.get("module", "")) != "QueueProductionExitUpdate"
+			or not String(row.get("runtimeStatus", "")) in ["executable", "deferred"]
+			or typeof(row.get("fields")) != TYPE_DICTIONARY
+			or typeof(row.get("sourceIni")) != TYPE_STRING
+			or String(row.get("sourceIni", "")) == ""
+			or typeof(row.get("tag")) != TYPE_STRING
+			or String(row.get("tag", "")) == ""
+			or not _is_json_integral(row.get("line"))
+			or int(row.get("line", 0)) <= 0
+		):
+			return "structure '%s' has an invalid canonical QueueProductionExitUpdate row" % object_id
+		if String(row.get("runtimeStatus", "")) == "deferred":
+			continue
+		var fields := row.get("fields", {}) as Dictionary
+		for field_value in fields.keys():
+			if not executable_fields.has(String(field_value)):
+				return "structure '%s' executable QueueProductionExitUpdate has unsupported fields" % object_id
+		var create_points: Variant = fields.get("UnitCreatePoint")
+		if typeof(create_points) != TYPE_ARRAY or (create_points as Array).is_empty():
+			return "structure '%s' executable QueueProductionExitUpdate lacks UnitCreatePoint" % object_id
+		for coordinate_name in ["UnitCreatePoint", "NaturalRallyPoint"]:
+			var coordinate_rows: Variant = fields.get(coordinate_name, [])
+			if typeof(coordinate_rows) != TYPE_ARRAY:
+				return "structure '%s' executable QueueProductionExitUpdate has malformed coordinates" % object_id
+			for coordinate_value in coordinate_rows as Array:
+				if typeof(coordinate_value) != TYPE_DICTIONARY:
+					return "structure '%s' executable QueueProductionExitUpdate has malformed coordinates" % object_id
+				var coordinate := coordinate_value as Dictionary
+				var value: Variant = coordinate.get("value")
+				if coordinate.get("validNumeric") != true or typeof(value) != TYPE_DICTIONARY:
+					return "structure '%s' executable QueueProductionExitUpdate has invalid numeric coordinates" % object_id
+				for axis in ["x", "y", "z"]:
+					var axis_value: Variant = (value as Dictionary).get(axis)
+					if typeof(axis_value) not in [TYPE_INT, TYPE_FLOAT]:
+						return "structure '%s' executable QueueProductionExitUpdate has invalid numeric coordinates" % object_id
+	return ""
+
+
+static func _validate_legacy_production_exit_updates(
 	object_id: String, rules_value: Variant
 ) -> String:
 	# The composed runtime envelope intentionally carries only the

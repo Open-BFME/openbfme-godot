@@ -42,6 +42,11 @@ func _run() -> void:
 	var samples: PackedFloat32Array = PackedFloat32Array()
 	var node_samples: PackedInt64Array = PackedInt64Array()
 	var sync_samples: PackedFloat32Array = PackedFloat32Array()
+	# Per-structure module-contract arrays are attached once and must then be
+	# tick-invariant. Re-attachment appends duplicates every tick, which is the
+	# quadratic-slowdown/OOM bug class (elves ElvenWood crash). Snapshot the
+	# sizes after the first frame and re-compare later.
+	var contract_size_snapshot: Dictionary = {}
 	for frame in WARMUP_FRAMES + SOAK_FRAMES:
 		var tick_start := Time.get_ticks_usec()
 		for _tick in SIM_TICKS_PER_FRAME:
@@ -57,6 +62,19 @@ func _run() -> void:
 			slice._sync_presentation()
 		var sync_us := Time.get_ticks_usec() - sync_start
 		await process_frame
+		if frame == 0:
+			contract_size_snapshot = _capture_structure_contract_sizes(slice, {})
+		elif frame == WARMUP_FRAMES:
+			# Fail fast: with the re-attach bug every tick appends rows, so by
+			# the end of warmup (720 ticks) growth is unambiguous and waiting
+			# out the full (quadratically slowed) soak proves nothing more.
+			var early_growth := _structure_contract_growth(slice, contract_size_snapshot)
+			if early_growth != "":
+				_check("soak_structure_contract_arrays_tick_invariant", false, early_growth)
+				slice.free()
+				_finish()
+				return
+			contract_size_snapshot = _capture_structure_contract_sizes(slice, contract_size_snapshot)
 		if frame >= WARMUP_FRAMES and frame % 60 == 0:
 			var nodes := int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT))
 			var objects := float(Performance.get_monitor(Performance.OBJECT_COUNT))
@@ -110,7 +128,19 @@ func _run() -> void:
 		# metric prints remain for manual review, and the run stays visible
 		# rather than silently green.
 		_check("soak_presentation_cost_plateaus_at_equal_army_size", true, "no comparable-army pair; review samples")
-	_check("soak_orphan_nodes_bounded", int(Performance.get_monitor(Performance.OBJECT_ORPHAN_NODE_COUNT)) < 400, "orphans=%d" % orphans)
+	# The asset factory's static _mesh_cache intentionally holds detached model
+	# prototypes, and Godot counts every one as an orphan node (~400+ at retail
+	# content scale). Clear the cache first so this check measures true leaks
+	# only; post-clear the count is 0 today. Nothing after this point touches
+	# cached models (the remaining checks read simulation dictionaries only).
+	load("res://src/view/asset_factory.gd").clear_mesh_cache()
+	var orphans_after_cache_clear := int(Performance.get_monitor(Performance.OBJECT_ORPHAN_NODE_COUNT))
+	print("RETAIL_PERF_SOAK_ORPHANS pre_clear=%d post_clear=%d" % [orphans, orphans_after_cache_clear])
+	_check(
+		"soak_orphan_nodes_bounded",
+		orphans_after_cache_clear < 50,
+		"orphans=%d after clear_mesh_cache (pre-clear=%d; cache prototypes are intentional, not leaks)" % [orphans_after_cache_clear, orphans]
+	)
 	_check(
 		"soak_consumed_event_histories_bounded",
 		slice.simulation.events.size() <= SimScript.MAX_RETAINED_EVENT_HISTORY
@@ -118,6 +148,8 @@ func _run() -> void:
 		and slice.audio_system.routing_log.size() <= slice.audio_system.MAX_OBSERVABILITY_LOG_ENTRIES,
 		"simulation=%d intent=%d routing=%d" % [slice.simulation.events.size(), slice.audio_system.intent_log.size(), slice.audio_system.routing_log.size()]
 	)
+	var final_growth := _structure_contract_growth(slice, contract_size_snapshot)
+	_check("soak_structure_contract_arrays_tick_invariant", final_growth == "", final_growth)
 	var target_churn := SimScript.new()
 	for target_id in SimScript.MAX_RETAINED_EVENT_HISTORY + 1:
 		target_churn.events.append({"kind": "combat.hit_structure", "target_id": target_id})
@@ -129,6 +161,48 @@ func _run() -> void:
 	)
 	slice.free()
 	_finish()
+
+
+const PINNED_STRUCTURE_CONTRACT_ARRAYS: Array[String] = [
+	"object_creation_upgrades",
+	"passive_area_effect_heals",
+]
+
+
+func _capture_structure_contract_sizes(slice, previous: Dictionary) -> Dictionary:
+	## Sizes keyed by structure id. Carries `previous` forward so structures
+	## built mid-soak are pinned from their own first sighting.
+	var sizes := previous.duplicate(true)
+	for structure_id in slice.simulation.structure_ids():
+		if sizes.has(structure_id):
+			continue
+		var row: Dictionary = slice.simulation.structures[structure_id]
+		var entry := {}
+		for array_key in PINNED_STRUCTURE_CONTRACT_ARRAYS:
+			entry[array_key] = (row.get(array_key, []) as Array).size()
+		sizes[structure_id] = entry
+	return sizes
+
+
+func _structure_contract_growth(slice, snapshot: Dictionary) -> String:
+	## Empty string when every pinned array still has its snapshot size;
+	## otherwise a detail string naming the first offenders.
+	var offenders: Array[String] = []
+	for structure_id in slice.simulation.structure_ids():
+		if not snapshot.has(structure_id):
+			continue
+		var row: Dictionary = slice.simulation.structures[structure_id]
+		var expected: Dictionary = snapshot[structure_id]
+		for array_key in PINNED_STRUCTURE_CONTRACT_ARRAYS:
+			var size_now := (row.get(array_key, []) as Array).size()
+			if size_now != int(expected.get(array_key, 0)):
+				offenders.append("structure=%d %s %d->%d kind=%s" % [
+					int(structure_id), array_key, int(expected.get(array_key, 0)),
+					size_now, String(row.get("structure_kind", row.get("kind", "?"))),
+				])
+				if offenders.size() >= 5:
+					return "; ".join(offenders) + "; ..."
+	return "; ".join(offenders)
 
 
 func _keep_match_alive(slice) -> void:

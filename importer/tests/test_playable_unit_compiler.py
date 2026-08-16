@@ -6,19 +6,27 @@ import json
 
 import pytest
 
+from openbfme_importer.catalog import InstallCatalog
+from openbfme_importer.module_census import census_catalog_paths, read_catalog_documents
 from openbfme_importer.playable_unit_compiler import (
     PlayableUnitCompilerError,
     _ancestry,
     _apply_nugget_damage_types,
+    _audio_routes,
     _default_set_target,
     _numeric_defines,
     _object_index,
     _permanent_weapon_locks,
+    _hero_ability_effect,
     compile_playable_unit_descriptor,
     playable_object_kind_of,
     prepare_playable_unit_compiler,
     validate_playable_unit_descriptor,
 )
+from openbfme_importer.sage_cst import parse_sage_document
+
+
+_RETAIL_CATALOGS = census_catalog_paths()
 
 
 def _object(
@@ -40,7 +48,12 @@ def _object(
         else ""
     )
     special_block = (
-        "  Behavior = RespawnUpdate ModuleTag_Respawn\n    DeathAnim = DYING\n  End\n"
+        "  Behavior = RespawnUpdate ModuleTag_Respawn\n"
+        "    DeathAnim = DYING\n"
+        "    AutoRespawnAtObjectFilter = NONE +CASTLE_KEEP\n"
+        "    ButtonImage = HIFixtureRespawn\n"
+        "    RespawnRules = AutoSpawn:No Cost:500 Time:60000 Health:100%\n"
+        "  End\n"
         if special
         else ""
     )
@@ -213,6 +226,33 @@ def test_compiles_categories_without_object_specific_rules(
     assert len(result["descriptorSha256"]) == 64
 
 
+def test_graphless_audio_routes_classify_silence_eva_and_additive_sound() -> None:
+    documents = _documents()
+    path = "data/ini/object/units/test_units.ini"
+    marker = b"Object InfantryHorde\n"
+    documents[path] = documents[path].replace(
+        marker,
+        marker
+        + b"  VoiceCreated = EVA:InfantryCreated\n"
+        + b"  VoiceCreated = +SOUND:InfantryCreatedSound\n"
+        + b"  VoiceFear = NoSound\n",
+        1,
+    )
+
+    result = compile_playable_unit_descriptor("InfantryHorde", documents)
+    routes = result["presentation"]["audioRoutes"]["container"]
+
+    assert [row["id"] for row in routes["VoiceCreated"]] == [
+        "InfantryCreatedSound"
+    ]
+    assert "VoiceFear" not in routes
+    assert all(
+        row["id"] not in {"NoSound", "EVA", "+SOUND", "SOUND"}
+        for rows in routes.values()
+        for row in rows
+    )
+
+
 def _shroud_documents() -> dict[str, bytes]:
     """`_documents()` with a ShroudClearingRange injected into two objects.
 
@@ -285,6 +325,24 @@ def test_an_object_with_no_shroud_clearing_range_compiles_without_the_key() -> N
     resolved = result["gameplay"]["simulation"]["resolved"]
     assert "shroudClearingRange" not in resolved
     assert resolved["visionRange"]["value"] == 300
+
+
+def test_bounty_value_is_resolved_from_retail_define_without_defaulting_absent() -> None:
+    documents = dict(_documents())
+    key = "data/ini/object/units/test_units.ini"
+    text = documents[key].decode("utf-8")
+    marker = "Object MonsterUnit\n"
+    assert marker in text
+    documents[key] = text.replace(
+        marker, marker + "  BountyValue = MONSTER_BOUNTY_VALUE\n", 1
+    ).encode("utf-8")
+    documents["data/ini/gamedata.ini"] += b"#define MONSTER_BOUNTY_VALUE 75\n"
+    monster = compile_playable_unit_descriptor("MonsterUnit", documents)
+    bounty = monster["gameplay"]["simulation"]["resolved"]["bountyValue"]
+    assert bounty["value"] == 75
+    assert bounty["expression"] == "MONSTER_BOUNTY_VALUE"
+    hero = compile_playable_unit_descriptor("HeroUnit", documents)
+    assert "bountyValue" not in hero["gameplay"]["simulation"]["resolved"]
 
 
 def test_prepared_inputs_preserve_descriptor_identity() -> None:
@@ -801,17 +859,87 @@ End
     ]
 
 
-def test_special_modules_are_reported_as_unsupported_extensions() -> None:
-    result = compile_playable_unit_descriptor("MonsterUnit", _documents())
+def test_schema_audio_routes_never_treat_numeric_voice_priority_as_event() -> None:
+    prepared = prepare_playable_unit_compiler(_documents())
+    member = prepared.objects["infantrymember"]
 
-    assert "RespawnUpdate" in result["specialCapabilities"]
-    assert len(result["unsupportedCapabilities"]) == 1
-    unsupported = result["unsupportedCapabilities"][0]
-    assert unsupported["id"] == "module:container:RespawnUpdate:ModuleTag_Respawn"
-    assert unsupported["reason"] == (
-        "authored Behavior is not consumed by the shared runtime adapter"
+    routes = _audio_routes(_ancestry(prepared.objects, member))
+
+    assert "VoicePriority" not in routes
+    assert all(
+        row["id"] != "43"
+        for owner_rows in routes.values()
+        for row in owner_rows
     )
-    assert len(unsupported["semanticSha256"]) == 64
+    assert routes["VoiceSelect"][0]["id"] == "InfantryMemberVoiceSelect"
+
+
+def test_typed_closed_slow_death_is_executable_contract_not_unsupported_extension() -> None:
+    documents = _documents()
+    key = "data/ini/object/units/test_units.ini"
+    documents[key] = documents[key].replace(
+        b"Object MonsterUnit\n",
+        b"Object MonsterUnit\n"
+        b"  Behavior = SlowDeathBehavior ModuleTag_UnmappedDeath\n"
+        b"    DeathTypes = ALL\n"
+        b"  End\n",
+        1,
+    )
+
+    result = compile_playable_unit_descriptor("MonsterUnit", documents)
+
+    assert "RespawnUpdate" not in result["specialCapabilities"]
+    assert "SlowDeathBehavior" not in result["specialCapabilities"]
+    assert result["unsupportedCapabilities"] == []
+    contract = next(
+        row for row in result["gameplay"]["simulation"]["resolved"]["moduleContracts"]
+        if row["module"] == "SlowDeathBehavior"
+    )
+    assert contract["runtimeStatus"] == "executable"
+    assert contract["fields"]["deathTypes"] == "ALL"
+    assert contract["effectGraph"]["executionEligibility"] == {
+        "status": "evidence-closed-core",
+        "blockers": [],
+        "runtimeStatus": "executable",
+    }
+
+
+def test_nonshipping_special_power_contracts_stay_deferred_on_mod_objects() -> None:
+    documents = _documents()
+    key = "data/ini/object/units/test_units.ini"
+    documents[key] = documents[key].replace(
+        b"Object MonsterUnit\n",
+        b"Object MonsterUnit\n"
+        b"  Behavior = DeflectSpecialPower ModuleTag_ModDeflect\n"
+        b"    SpecialPowerTemplate = SpecialAbilityModDeflect\n"
+        b"  End\n"
+        b"  Behavior = SplitHordeSpecialPower ModuleTag_ModSplit\n"
+        b"    SpecialPowerTemplate = SpecialAbilityModSplit\n"
+        b"  End\n",
+        1,
+    )
+
+    descriptor = compile_playable_unit_descriptor("MonsterUnit", documents)
+    validate_playable_unit_descriptor(descriptor)
+    contracts = {
+        row["module"]: row
+        for row in descriptor["gameplay"]["simulation"]["resolved"][
+            "moduleContracts"
+        ]
+        if row["module"] in {"DeflectSpecialPower", "SplitHordeSpecialPower"}
+    }
+    assert set(contracts) == {"DeflectSpecialPower", "SplitHordeSpecialPower"}
+    for row in contracts.values():
+        assert row["runtimeStatus"] == "deferred"
+        assert row["effectGraph"]["subclassFields"] == []
+        assert row["effectGraph"]["executionEligibility"] == {
+            "runtimeStatus": "deferred",
+            "shippingAdmission": False,
+            "retailOwnerMatch": False,
+            "disposition": "unadmitted-owner",
+        }
+    assert "DeflectSpecialPower" not in descriptor["specialCapabilities"]
+    assert "SplitHordeSpecialPower" not in descriptor["specialCapabilities"]
 
 
 def test_target_command_set_upgrade_is_not_falsely_consumed() -> None:
@@ -837,9 +965,13 @@ def test_target_command_set_upgrade_is_not_falsely_consumed() -> None:
     )
     assert evidence["ownerRole"] == "container"
     assert evidence["consumed"] is False
+    assert any(
+        row["id"].endswith(":CommandSetUpgrade:ModuleTag_HeroLevel")
+        for row in result["unsupportedCapabilities"]
+    )
 
 
-def test_only_payload_contributing_horde_module_is_consumed() -> None:
+def test_typed_unused_horde_module_is_not_duplicated_as_unsupported() -> None:
     documents = _documents()
     objects = documents["data/ini/object/units/test_units.ini"].decode("utf-8")
     objects = objects.replace(
@@ -862,7 +994,7 @@ def test_only_payload_contributing_horde_module_is_consumed() -> None:
         "ModuleTag_HordeContain": True,
         "ModuleTag_UnusedContain": False,
     }
-    assert any(
+    assert not any(
         "ModuleTag_UnusedContain" in row["id"]
         for row in result["unsupportedCapabilities"]
     )
@@ -1060,8 +1192,6 @@ def test_validation_rejects_rehashed_malformed_nested_reference() -> None:
 def test_validation_cross_checks_module_evidence_fields() -> None:
     corrupted = compile_playable_unit_descriptor("MonsterUnit", _documents())
     corrupted["runtimeModules"] = ["FakeModule"]
-    corrupted["unsupportedCapabilities"][0]["id"] = "module:fake"
-    corrupted["unsupportedCapabilities"][0]["semanticSha256"] = "0" * 64
     unsigned = dict(corrupted)
     unsigned.pop("descriptorSha256")
     corrupted["descriptorSha256"] = hashlib.sha256(
@@ -1075,6 +1205,64 @@ def test_validation_cross_checks_module_evidence_fields() -> None:
     ).hexdigest()
 
     with pytest.raises(PlayableUnitCompilerError, match="runtime modules disagree"):
+        validate_playable_unit_descriptor(corrupted)
+
+
+def test_validation_rejects_rehashed_typed_contract_identity_tamper() -> None:
+    corrupted = compile_playable_unit_descriptor("MonsterUnit", _documents())
+    contracts = corrupted["gameplay"]["simulation"]["resolved"]["moduleContracts"]
+    respawn = next(row for row in contracts if row["module"] == "RespawnUpdate")
+    respawn["tag"] = "ModuleTag_Tampered"
+    unsigned = dict(corrupted)
+    unsigned.pop("descriptorSha256")
+    corrupted["descriptorSha256"] = hashlib.sha256(
+        json.dumps(
+            unsigned,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+    with pytest.raises(
+        PlayableUnitCompilerError,
+        match="typed module contracts disagree with runtime module evidence",
+    ):
+        validate_playable_unit_descriptor(corrupted)
+
+
+def test_validation_rejects_rehashed_typed_module_in_unsupported_capabilities() -> None:
+    corrupted = compile_playable_unit_descriptor("MonsterUnit", _documents())
+    evidence = next(
+        row
+        for row in corrupted["runtimeModuleEvidence"]
+        if row["kind"] == "RespawnUpdate"
+    )
+    corrupted["unsupportedCapabilities"] = [
+        {
+            "id": "module:container:RespawnUpdate:ModuleTag_Respawn",
+            "reason": "authored Behavior is not consumed by the shared runtime adapter",
+            "semanticSha256": evidence["semanticSha256"],
+        }
+    ]
+    corrupted["specialCapabilities"] = ["RespawnUpdate"]
+    unsigned = dict(corrupted)
+    unsigned.pop("descriptorSha256")
+    corrupted["descriptorSha256"] = hashlib.sha256(
+        json.dumps(
+            unsigned,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+    with pytest.raises(
+        PlayableUnitCompilerError,
+        match="unsupported modules disagree with special capabilities",
+    ):
         validate_playable_unit_descriptor(corrupted)
 
 
@@ -2133,6 +2321,20 @@ def _hero_ability_documents() -> dict[str, bytes]:
 SpecialPower SpecialAbilityFixtureBlast
   Enum = SPECIAL_GENERAL_TARGETLESS
   ReloadTime = 60000
+  PublicTimer = Yes
+  SharedSyncedTimer = No
+  ObjectFilter = ANY +HERO -STRUCTURE
+  ForbiddenObjectFilter = ANY +MACHINE
+  ForbiddenObjectRange = 75
+  ViewObjectRange = 300
+  ViewObjectDuration = 5000
+  MaxCastRange = 450
+  UnitCost = 2
+  UnitCostDeathType = NORMAL CRUSHED
+  PreventActivationConditions = MOVING FIRING_A
+  UnitSpecificSoundToUseAsInitiateIntendToDoVoice = FixtureIntent
+  UnitSpecificSoundToUseAsEnterStateInitiateIntendToDoVoice = FixtureEnter
+  EvaEventToPlayOnSuccess = FixtureSuccess
 End
 SpecialPower SpecialAbilityFixtureHeal
   Enum = SPECIAL_ATHELAS
@@ -2143,6 +2345,10 @@ End
 SpecialPower SpecialAbilityFixtureSummon
   Enum = SPECIAL_SPAWN_OATHBREAKERS
   ReloadTime = 120000
+  Flags = LIMIT_DISTANCE NO_FORBIDDEN_OBJECTS
+  MaxCastRange = 200
+  ForbiddenObjectFilter = NO_SUMMON_NEAR_OBJECT_FILTER
+  ForbiddenObjectRange = 60
 End
 SpecialPower SpecialAbilityFixtureRage
   Enum = SPECIAL_HERO_MODE
@@ -2238,6 +2444,23 @@ def test_hero_abilities_emit_each_effect_kind_with_evidence() -> None:
     assert blast["slot"] == 2
     assert blast["specialPowerId"] == "SpecialAbilityFixtureBlast"
     assert blast["cooldownMs"] == 60000
+    assert blast["specialPowerContract"] == {
+        "publicTimer": True,
+        "sharedSyncedTimer": False,
+        "objectFilter": ["ANY", "+HERO", "-STRUCTURE"],
+        "forbiddenObjectFilter": ["ANY", "+MACHINE"],
+        "preventActivationConditions": ["MOVING", "FIRING_A"],
+        "unitCostDeathTypes": ["NORMAL", "CRUSHED"],
+        "forbiddenObjectRange": 75,
+        "viewObjectRange": 300,
+        "viewObjectDurationMs": 5000,
+        "maxCastRange": 450,
+        "unitCost": 2,
+        "initiateIntentSoundId": "FixtureIntent",
+        "enterStateIntentSoundId": "FixtureEnter",
+        "successEvaEventId": "FixtureSuccess",
+        "sourceIni": "data/ini/specialpower.ini",
+    }
     assert blast["targeting"] == "enemy-object"
     assert blast["levelGate"] == {
         "upgradeIds": ["Upgrade_FixtureBlast"],
@@ -2276,6 +2499,13 @@ def test_hero_abilities_emit_each_effect_kind_with_evidence() -> None:
 
     summon = abilities["Command_FixtureSummon"]
     assert summon["implementation"]["status"] == "implemented"
+    assert summon["specialPowerContract"] == {
+        "flags": ["LIMIT_DISTANCE", "NO_FORBIDDEN_OBJECTS"],
+        "forbiddenObjectFilter": ["NO_SUMMON_NEAR_OBJECT_FILTER"],
+        "forbiddenObjectRange": 60,
+        "maxCastRange": 200,
+        "sourceIni": "data/ini/specialpower.ini",
+    }
     assert summon["effect"]["kind"] == "summon"
     assert summon["effect"]["oclId"] == "OCL_FixtureSummon"
     assert summon["effect"]["createLocation"] == "CREATE_AT_LOCATION"
@@ -2315,6 +2545,404 @@ def test_hero_abilities_emit_each_effect_kind_with_evidence() -> None:
     assert grace["effect"]["amount"] == 500
     assert grace["effect"]["radius"] == 150
     assert grace["effect"]["healFxId"] == "FX_FixtureGrace"
+
+
+def test_activate_module_special_power_emits_ordered_resolved_effect_graph() -> None:
+    document = parse_sage_document(
+        b"""
+Object AbilityHero
+  Behavior = PlayerHealSpecialPower ModuleTag_Heal
+    SpecialPowerTemplate = SpecialAbilityActivateeDummy
+    HealAmount = 1.0
+    HealAsPercent = Yes
+    HealAffects = INFANTRY HERO
+    HealRadius = 100
+  End
+  Behavior = ActivateModuleSpecialPower ModuleTag_Activate
+    SpecialPowerTemplate = SpecialAbilityFixtureActivate
+    StartAbilityRange = FIXTURE_ACTIVATE_RANGE
+    SpecialPowerDuration = CREATE_A_HERO_POWER_DURATION
+    TriggerSpecialPower = ModuleTag_Heal OBJECTPOS
+  End
+End
+""",
+        virtual_path="data/ini/object/units/activate_fixture.ini",
+    )
+    lineage = [document.objects[0]]
+    blocks = list(document.objects[0].blocks)
+    activate = next(block for block in blocks if block.kind == "ActivateModuleSpecialPower")
+    limitations: list[str] = []
+    effect = _hero_ability_effect(
+        "AbilityHero/Activate", [activate], [], [], {}, None, {}, {},
+        {"FIXTURE_ACTIVATE_RANGE": 300, "CREATE_A_HERO_POWER_DURATION": 15000},
+        {}, limitations,
+        member_lineage=lineage,
+        behavior_modules=blocks,
+        named_definition_cache={},
+        cache_lock=None,
+    )
+    assert effect["kind"] == "activate-module-graph"
+    assert effect["startAbilityRange"] == 300
+    assert effect["timingMs"] == {"SpecialPowerDuration": 15000}
+    assert effect["routes"][0]["moduleTag"] == "ModuleTag_Heal"
+    assert effect["routes"][0]["targetMode"] == "CURRENT_TARGET"
+    assert effect["routes"][0]["effect"]["kind"] == "heal"
+    assert effect["routes"][0]["effect"]["amount"] == 1.0
+
+
+def test_activate_module_special_power_does_not_rebind_itself_when_templates_match() -> None:
+    document = parse_sage_document(
+        b"""
+Object AbilityHero
+  Behavior = PlayerHealSpecialPower ModuleTag_Heal
+    SpecialPowerTemplate = SpecialAbilityShared
+    HealAmount = 1.0
+    HealAsPercent = Yes
+    HealAffects = HERO
+    HealRadius = 100
+  End
+  Behavior = ActivateModuleSpecialPower ModuleTag_Activate
+    SpecialPowerTemplate = SpecialAbilityShared
+    StartAbilityRange = 200
+    TriggerSpecialPower = ModuleTag_Heal OBJECTPOS
+  End
+End
+""",
+        virtual_path="data/ini/object/units/activate_shared_template_fixture.ini",
+    )
+    lineage = [document.objects[0]]
+    blocks = list(document.objects[0].blocks)
+    activate = next(block for block in blocks if block.kind == "ActivateModuleSpecialPower")
+    effect = _hero_ability_effect(
+        "AbilityHero/SharedActivate", [activate], [], [], {}, None, {}, {}, {}, {}, [],
+        member_lineage=lineage,
+        behavior_modules=blocks,
+        named_definition_cache={},
+        cache_lock=None,
+    )
+    assert effect["kind"] == "activate-module-graph"
+    assert effect["routes"][0]["effect"]["kind"] == "heal"
+
+
+def test_weapon_mode_special_power_emits_resolved_mode_and_modifier() -> None:
+    document = parse_sage_document(
+        b"""
+Object AbilityHero
+  Behavior = WeaponModeSpecialPowerUpdate ModuleTag_Mode
+    SpecialPowerTemplate = SpecialAbilityFixtureMode
+    Duration = FIXTURE_MODE_DURATION
+    AttributeModifier = FixtureModeBonus
+    WeaponSetFlags = WEAPONSET_TOGGLE_1
+    StartsPaused = Yes
+  End
+End
+""",
+        virtual_path="data/ini/object/units/weapon_mode_fixture.ini",
+    )
+    lineage = [document.objects[0]]
+    mode = document.objects[0].blocks[0]
+    from openbfme_importer.sage_ini import parse_flat_named_blocks
+    modifier_block = parse_flat_named_blocks(
+        b"ModifierList FixtureModeBonus\n  Category = SPELL\n  Modifier = DAMAGE_MULT 150%\nEnd\n",
+        "ModifierList",
+    )[0]
+    effect = _hero_ability_effect(
+        "AbilityHero/Mode", [mode], [], [], {"fixturemodebonus": modifier_block},
+        None, {}, {}, {"FIXTURE_MODE_DURATION": 25000}, {}, [],
+        member_lineage=lineage,
+        behavior_modules=[mode],
+        named_definition_cache={},
+        cache_lock=None,
+    )
+    assert effect["kind"] == "weapon-mode-special-power"
+    assert effect["durationMs"] == 25000
+    assert effect["startsPaused"] is True
+    assert effect["weaponSetFlags"] == ["WEAPONSET_TOGGLE_1"]
+    assert effect["attributeModifier"]["id"] == "FixtureModeBonus"
+    assert effect["attributeModifier"]["modifiers"] == [
+        {"kind": "DAMAGE_MULT", "value": 1.5, "application": "multiplicative"}
+    ]
+
+
+def test_dominate_enemy_special_power_emits_resolved_allegiance_graph() -> None:
+    document = parse_sage_document(
+        b"""
+Object AbilityHero
+  Behavior = DominateEnemySpecialPower ModuleTag_Dominate
+    SpecialPowerTemplate = SpecialAbilityFixtureDominate
+    StartAbilityRange = FIXTURE_DOMINATE_RANGE
+    AttributeModifierAffects = FIXTURE_DOMINATE_FILTER ENEMIES NEUTRAL
+    DominateRadius = 60
+    DominatedFX = FX_Dominated
+    TriggerFX = FX_Trigger
+    PermanentlyConvert = Yes
+    UnpackTime = 2000
+    FreezeAfterTriggerDuration = 2500
+  End
+End
+""",
+        virtual_path="data/ini/object/units/dominate_fixture.ini",
+    )
+    lineage = [document.objects[0]]
+    dominate = document.objects[0].blocks[0]
+    effect = _hero_ability_effect(
+        "AbilityHero/Dominate", [dominate], [], [], {}, None, {}, {},
+        {"FIXTURE_DOMINATE_RANGE": 200},
+        {"fixture_dominate_filter": ("ANY", "-HERO")}, [],
+        member_lineage=lineage,
+        behavior_modules=[dominate],
+        named_definition_cache={},
+        cache_lock=None,
+    )
+    assert effect["kind"] == "dominate-enemy"
+    assert effect["startAbilityRange"] == 200
+    assert effect["dominateRadius"] == 60
+    assert effect["affectsFilter"] == "ANY -HERO ENEMIES NEUTRAL"
+    assert effect["permanentlyConvert"] is True
+    assert effect["timingMs"] == {
+        "UnpackTime": 2000, "FreezeAfterTriggerDuration": 2500,
+    }
+
+
+def test_grab_passenger_special_power_emits_typed_grab_graph() -> None:
+    document = parse_sage_document(
+        b"""
+Object AbilityMonster
+  Behavior = GrabPassengerSpecialPower ModuleTag_Grab
+    SpecialPowerTemplate = SpecialAbilityGrabPassenger
+    UpdateModuleStartsAttack = Yes
+    AllowTree = Yes
+    InitiateFX = FX_TrollGrabInitiate
+  End
+  Behavior = SpecialAbilityUpdate ModuleTag_GrabUpdate
+    SpecialPowerTemplate = SpecialAbilityGrabPassenger
+    StartAbilityRange = 8
+    UnpackTime = 300
+    PreparationTime = 1
+    PersistentPrepTime = 630
+    PackTime = 1000
+    GrabPassengerAnimAndDuration = AnimState:EATING AnimTime:3000 TriggerTime:1400
+    AwardXPForTriggering = 0
+    RejectedConditions = WEAPON_TOGGLE
+  End
+  Behavior = TransportContain ModuleTag_Contain
+    ObjectStatusOfContained = UNSELECTABLE
+    PassengerFilter = ANY +CLUB +ORC
+    ManualPickUpFilter = ANY +CLUB -ORC
+    Slots = 1
+    ShowPips = No
+    AllowEnemiesInside = Yes
+    AllowNeutralInside = Yes
+    AllowAlliesInside = Yes
+    DamagePercentToUnits = 0%
+    TypeOneForWeaponSet = CLUB
+    TypeOneForWeaponState = CLUB
+    PassengerBonePrefix = PassengerBone:Trunk KindOf:CLUB
+    EjectPassengersOnDeath = No
+  End
+End
+""",
+        virtual_path="data/ini/object/units/grab_fixture.ini",
+    )
+    lineage = [document.objects[0]]
+    grab = document.objects[0].blocks[0]
+    blocks = list(document.objects[0].blocks)
+    effect = _hero_ability_effect(
+        "AbilityMonster/Grab", [grab], [], [], {}, None, {}, {}, {}, {}, [],
+        member_lineage=lineage,
+        behavior_modules=blocks,
+        named_definition_cache={},
+        cache_lock=None,
+    )
+    assert effect["kind"] == "grab-passenger"
+    assert effect["specialPowerTemplateId"] == "SpecialAbilityGrabPassenger"
+    assert effect["allowTree"] is True
+    assert effect["acquire"]["startAbilityRange"] == 8
+    assert effect["acquire"]["timingMs"] == {
+        "UnpackTime": 300, "PreparationTime": 1,
+        "PersistentPrepTime": 630, "PackTime": 1000,
+    }
+    assert effect["containment"]["slots"] == 1
+    assert effect["containment"]["manualPickUpFilter"] == "ANY +CLUB -ORC"
+    assert effect["targetAdmission"]["treeKindOf"] == "CLUB"
+
+
+def test_fling_passenger_special_ability_emits_resolved_landing_graph() -> None:
+    document = parse_sage_document(
+        b"""
+Object AbilityMonster
+  Behavior = FlingPassengerSpecialAbilityUpdate ModuleTag_Fling
+    SpecialPowerTemplate = SpecialAbilityFixtureFling
+    UnpackTime = 1250
+    FlingPassengerVelocity = X:0 Y:0 Z:0
+    FlingPassengerLandingWarhead = FixtureLandingWarhead
+    MustFinishAbility = Yes
+  End
+End
+""",
+        virtual_path="data/ini/object/units/fling_fixture.ini",
+    )
+    weapon = b"""
+Weapon FixtureLandingWarhead
+  DamageNugget
+    SpecialObjectFilter = NONE +INFANTRY -HERO
+    Radius = 0
+    DamageType = CRUSH
+    DeathType = CRUSHED
+    ForceKillObjectFilter = NONE +INFANTRY -HERO
+  End
+End
+"""
+    lineage = [document.objects[0]]
+    fling = document.objects[0].blocks[0]
+    effect = _hero_ability_effect(
+        "AbilityMonster/Fling", [fling], [], [], {}, None, {},
+        {"data/ini/weapon.ini": weapon}, {}, {}, [],
+        member_lineage=lineage,
+        behavior_modules=[fling],
+        named_definition_cache={},
+        cache_lock=None,
+    )
+    assert effect["kind"] == "fling-passenger"
+    assert effect["timingMs"] == {"UnpackTime": 1250}
+    assert effect["velocity"] == {"x": 0.0, "y": 0.0, "z": 0.0}
+    assert effect["mustFinishAbility"] is True
+    assert effect["landingWarhead"] == {
+        "id": "FixtureLandingWarhead",
+        "radius": 0,
+        "damageType": "CRUSH",
+        "deathType": "CRUSHED",
+        "specialObjectFilter": "NONE +INFANTRY -HERO",
+        "forceKillObjectFilter": "NONE +INFANTRY -HERO",
+        "sourceIni": "data/ini/weapon.ini",
+        "line": 3,
+    }
+
+
+def test_repair_special_power_emits_target_rate_contact_and_economy_seams() -> None:
+    document = parse_sage_document(
+        b"""
+Object Repairer
+  Behavior = WorkerAIUpdate ModuleTag_Worker
+    RepairHealthPercentPerSecond = 0.2%
+    SpecialContactPoints = Repair
+  End
+  Behavior = RepairSpecialPower ModuleTag_Repair
+    SpecialPowerTemplate = SpecialRepairStructure
+  End
+End
+""",
+        virtual_path="data/ini/object/units/repair_fixture.ini",
+    )
+    lineage = [document.objects[0]]
+    blocks = list(document.objects[0].blocks)
+    repair = blocks[1]
+    effect = _hero_ability_effect(
+        "Repairer/Repair", [repair], [], [], {}, None, {}, {}, {}, {}, [],
+        member_lineage=lineage, behavior_modules=blocks,
+        named_definition_cache={}, cache_lock=None,
+    )
+    assert effect["kind"] == "repair-structure"
+    assert effect["targeting"] == {
+        "relation": "ALLY", "kindOf": ["STRUCTURE"],
+        "requiresDamaged": True, "rangeMode": "REPAIR_CONTACT_POINT",
+    }
+    assert effect["repairRate"]["maxHealthFractionPerSecond"] == 0.002
+    assert effect["contactPoint"]["authored"] is True
+    assert effect["economy"] == {
+        "status": "no-authored-resource-field", "resourceCost": None,
+    }
+
+
+def test_horde_dispatch_special_power_emits_member_effect_and_payload() -> None:
+    document = parse_sage_document(
+        b"""
+Object FixtureHorde
+  Behavior = HordeContain ModuleTag_HordeContain
+    InitialPayload = FixtureMember 5
+  End
+  Behavior = HordeDispatchSpecialPower ModuleTag_Dispatch
+    SpecialPowerTemplate = SpecialAbilityFixtureDispatch
+    UpdateModuleStartsAttack = Yes
+    StartsPaused = No
+  End
+  Behavior = WeaponModeSpecialPowerUpdate ModuleTag_MemberWeaponMode
+    SpecialPowerTemplate = SpecialAbilityFixtureDispatch
+    Duration = 20000
+    WeaponSetFlags = WEAPONSET_TOGGLE_1
+    StartsPaused = No
+  End
+End
+""",
+        virtual_path="data/ini/object/units/horde_dispatch_fixture.ini",
+    )
+    lineage = [document.objects[0]]
+    blocks = list(document.objects[0].blocks)
+    dispatch = blocks[1]
+    effect = _hero_ability_effect(
+        "FixtureHorde/Dispatch", [dispatch], [], [], {}, None, {}, {}, {}, {}, [],
+        member_lineage=lineage, behavior_modules=blocks,
+        named_definition_cache={}, cache_lock=None,
+    )
+    assert effect["kind"] == "horde-dispatch"
+    assert effect["specialPowerTemplateId"] == "SpecialAbilityFixtureDispatch"
+    assert effect["startsPaused"] is False
+    assert effect["updateModuleStartsAttack"] is True
+    assert effect["memberObjectId"] == "FixtureMember"
+    assert effect["memberCount"] == 5
+    assert effect["targeting"] == "PER_MEMBER_INHERIT_EFFECT"
+    assert effect["memberEffect"]["kind"] == "weapon-mode-special-power"
+    assert effect["memberEffect"]["durationMs"] == 20000
+
+
+def test_horde_dispatch_graphs_cover_exact_effective_retail_corpora() -> None:
+    from openbfme_importer.catalog import InstallCatalog
+    from openbfme_importer.module_census import (
+        census_catalog_paths,
+        read_catalog_documents,
+    )
+
+    actual: dict[str, list[tuple[object, ...]]] = {}
+    for edition, path in census_catalog_paths().items():
+        documents = dict(read_catalog_documents(InstallCatalog.load(path)))
+        prepared = prepare_playable_unit_compiler(documents)
+        signatures: list[tuple[object, ...]] = []
+        for object_id in ("GoblinFighterHorde", "ElvenMithlondSentryHorde"):
+            descriptor = compile_playable_unit_descriptor(
+                object_id, documents, prepared=prepared,
+                game="rotwk" if edition == "rotwk-retail" else "bfme2",
+            )
+            rows = [
+                row for row in descriptor["gameplay"]["simulation"]["resolved"]["moduleContracts"]
+                if row["module"] == "HordeDispatchSpecialPower"
+            ]
+            assert len(rows) == 1
+            row = rows[0]
+            graph = row["effectGraph"]
+            member = graph["memberEffect"]
+            signatures.append((
+                graph["specialPowerTemplateId"], graph["memberObjectId"],
+                graph["memberCount"], graph["updateModuleStartsAttack"],
+                member["kind"], member.get("durationMs"),
+                tuple(sorted(member.get("timingMs", {}).items())),
+                member.get("startAbilityRange"), member.get("mustFinishAbility"),
+                row["commandExposure"]["status"], row["runtimeStatus"],
+            ))
+        actual[edition] = signatures
+    expected = [
+        (
+            "SpecialAbilityGoblinFighterPoisonedBlades", "GoblinFighter", 20,
+            False, "weapon-mode-special-power", 20000, (), None, None,
+            "exposed", "deferred",
+        ),
+        (
+            "SpecialAbilityZephyrStrike", "ElvenMithlondSentry", 15, True,
+            "weapon-blast", None,
+            (("FreezeAfterTriggerDuration", 2500), ("PackTime", 1), ("UnpackTime", 1700)),
+            80, True, "not-in-effective-command-set", "deferred",
+        ),
+    ]
+    assert actual == {"bfme2-retail": expected, "rotwk-retail": expected}
 
 
 def test_hero_abilities_fail_closed_per_ability_never_faked() -> None:
@@ -2838,9 +3466,24 @@ ExperienceLevel FixtureTroopLevel1
   TargetNames = FIXTURE_TROOPS
   RequiredExperience = 1
   ExperienceAward = FIXTURE_AWARD_1
+  ExperienceAwardOwnGuysDie = 2
+  InformUpdateModule = Yes
+  EmotionType = CHEER
+  ShowLevelUpTint = Yes
+  LevelUpTintColor = R:255 G:128 B:0
+  LevelUpTintPreColorTime = 100
+  LevelUpTintSustainColorTime = 200
+  LevelUpTintPostColorTime = 300
   Rank = 1
   SelectionDecal
     Texture = decal_G_level1
+    Texture2 = decal_G_level1_extra
+    MinRadius = 5
+    MaxRadius = 20
+    OpacityMin = 25%
+    OpacityMax = 100%
+    MaxSelectedUnits = 1
+    Style = SHADOW_ALPHA_DECAL
   End
 End
 ExperienceLevel FixtureTroopLevel2
@@ -2917,7 +3560,27 @@ def test_experience_chain_compiles_thresholds_awards_and_modifiers() -> None:
     assert [row["requiredExperience"] for row in levels] == [1, 50, 100]
     assert [row["experienceAward"] for row in levels] == [3, 4, 5]
     assert levels[0]["experienceId"] == "FixtureTroopLevel1"
+    assert levels[0]["experienceAwardOwnGuysDie"] == 2
     assert levels[0]["selectionDecalTextureId"] == "decal_G_level1"
+    assert levels[0]["selectionDecal"] == {
+        "textureId": "decal_G_level1",
+        "texture2Id": "decal_G_level1_extra",
+        "minRadius": 5,
+        "maxRadius": 20,
+        "opacityMin": 0.25,
+        "opacityMax": 1.0,
+        "maxSelectedUnits": 1,
+        "style": "SHADOW_ALPHA_DECAL",
+    }
+    assert levels[0]["levelUpPresentation"] == {
+        "informUpdateModule": True,
+        "emotionType": "CHEER",
+        "showLevelUpTint": True,
+        "levelUpTintColorRgb": [255, 128, 0],
+        "levelUpTintPreColorTimeMs": 100,
+        "levelUpTintSustainColorTimeMs": 200,
+        "levelUpTintPostColorTimeMs": 300,
+    }
     assert "attributeModifiers" not in levels[0]
     rank_two_modifiers = levels[1]["attributeModifiers"]
     assert len(rank_two_modifiers) == 1
@@ -3039,6 +3702,19 @@ def test_experience_missing_source_is_recorded() -> None:
 
     validate_playable_unit_descriptor(descriptor)
     assert descriptor["experience"]["status"] == "unavailable"
+
+
+@pytest.mark.parametrize("expression", ["MISSING_PERCENT_DEFINE", "25%%"])
+def test_experience_selection_decal_percent_expression_fails_closed(
+    expression: str,
+) -> None:
+    documents = _experience_documents(
+        _TROOP_CHAIN.replace("OpacityMin = 25%", f"OpacityMin = {expression}"),
+        defines=_TROOP_DEFINES,
+    )
+
+    with pytest.raises(PlayableUnitCompilerError, match="SelectionDecal opacitymin"):
+        compile_playable_unit_descriptor("InfantryHorde", documents)
 
 
 def test_experience_unresolvable_threshold_fails_closed() -> None:
@@ -4884,6 +5560,8 @@ def _batch3_hero_documents() -> dict[str, bytes]:
         b"  Enum = SPECIAL_KINGS_FAVOR\n"
         b"  ReloadTime = 180000\n"
         b"  RadiusCursorRadius = 100.0\n"
+        b"  Flags = NEEDS_OBJECT_FILTER\n"
+        b"  ObjectFilter = KINGSFAVOR_OBJECTFILTER\n"
         b"End\n"
         b"SpecialPower SpecialAbilityArrowStorm\n"
         b"  Enum = SPECIAL_ARROW_STORM\n"
@@ -4955,6 +5633,10 @@ def test_experience_grant_rows_emit_measured_fields() -> None:
     assert row["implementation"]["status"] == "implemented"
     assert row["cooldownMs"] == 180000
     assert row["targeting"] == "point"
+    assert row["specialPowerContract"]["flags"] == ["NEEDS_OBJECT_FILTER"]
+    assert row["specialPowerContract"]["objectFilter"] == [
+        "KINGSFAVOR_OBJECTFILTER"
+    ]
     effect = row["effect"]
     assert effect["kind"] == "experience-grant"
     assert effect["experience"] == 50
@@ -5151,7 +5833,7 @@ def test_batch3_rows_fail_closed_on_missing_magnitudes() -> None:
     assert row["effect"] == {"kind": "none"}
 
 
-def test_screech_rows_record_the_engine_hardcoded_gap() -> None:
+def test_screech_rows_project_the_engine_hardcoded_terror_emotion() -> None:
     documents = _batch3_hero_documents()
     _with_hero_modules(
         documents,
@@ -5187,16 +5869,25 @@ def test_screech_rows_record_the_engine_hardcoded_gap() -> None:
         b"  ReloadTime = 180000\n"
         b"End\n"
     )
+    documents["data/ini/emotions.ini"] = _FIXTURE_EMOTIONS
 
     descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
 
     validate_playable_unit_descriptor(descriptor)
     row = _abilities_by_id(descriptor)["Command_FixtureScreech"]
-    assert row["implementation"]["status"] == "unimplemented"
-    reason = row["implementation"]["reason"]
-    assert "engine-hardcoded" in reason
-    assert "EffectRange 180" in reason
-    assert row["effect"] == {"kind": "none"}
+    assert row["implementation"]["status"] == "implemented"
+    effect = row["effect"]
+    assert effect["kind"] == "terror"
+    assert effect["radius"] == 180
+    assert effect["durationMs"] == 9000
+    assert effect["emotionNuggetId"] == "Terror_Base"
+    assert effect["engineEnum"] == "SPECIAL_SCREECH"
+    assert effect["modifiers"][0]["kind"] == "DAMAGE_MULT"
+    assert effect["modifiers"][0]["value"] == 0.0
+    assert any(
+        "engine SPECIAL_SCREECH" in item
+        for item in row["implementation"]["limitations"]
+    )
 
 
 def test_missing_reload_time_defaults_to_zero_cooldown() -> None:
@@ -5205,16 +5896,7 @@ def test_missing_reload_time_defaults_to_zero_cooldown() -> None:
     documents = _batch3_hero_documents()
     documents["data/ini/specialpower.ini"] = documents[
         "data/ini/specialpower.ini"
-    ].replace(
-        b"SpecialPower SpecialAbilityFixtureBlast\n"
-        b"  Enum = SPECIAL_GENERAL_TARGETLESS\n"
-        b"  ReloadTime = 60000\n"
-        b"End\n",
-        b"SpecialPower SpecialAbilityFixtureBlast\n"
-        b"  Enum = SPECIAL_GENERAL_TARGETLESS\n"
-        b"End\n",
-        1,
-    )
+    ].replace(b"  ReloadTime = 60000\n", b"", 1)
 
     descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
 
@@ -5222,6 +5904,80 @@ def test_missing_reload_time_defaults_to_zero_cooldown() -> None:
     row = _abilities_by_id(descriptor)["Command_FixtureBlast"]
     assert row["implementation"]["status"] == "implemented"
     assert row["cooldownMs"] == 0
+
+
+def test_special_power_contract_rejects_unknown_fields_fail_closed() -> None:
+    documents = _batch3_hero_documents()
+    documents["data/ini/specialpower.ini"] = documents[
+        "data/ini/specialpower.ini"
+    ].replace(
+        b"  ReloadTime = 60000\n",
+        b"  ReloadTime = 60000\n  InventedPowerGate = Yes\n",
+        1,
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    row = _abilities_by_id(descriptor)["Command_FixtureBlast"]
+    assert row["implementation"]["status"] == "unimplemented"
+    assert "inventedpowergate" in row["implementation"]["reason"]
+
+
+@pytest.mark.parametrize(
+    ("flags", "expected_reason"),
+    [
+        ("INVENTED_FLAG", "unsupported Flags"),
+        ("WATER_OK", "unsupported Flags"),
+        ("LIMIT_DISTANCE", "has no MaxCastRange"),
+        ("NEEDS_OBJECT_FILTER", "has no ObjectFilter"),
+        ("NO_FORBIDDEN_OBJECTS", "has no complete ForbiddenObjectFilter"),
+    ],
+)
+def test_special_power_flags_fail_closed_without_a_complete_runtime_gate(
+    flags: str, expected_reason: str
+) -> None:
+    documents = _hero_ability_documents()
+    documents["data/ini/specialpower.ini"] = documents[
+        "data/ini/specialpower.ini"
+    ].replace(
+        b"  Flags = LIMIT_DISTANCE NO_FORBIDDEN_OBJECTS\n"
+        b"  MaxCastRange = 200\n"
+        b"  ForbiddenObjectFilter = NO_SUMMON_NEAR_OBJECT_FILTER\n"
+        b"  ForbiddenObjectRange = 60\n",
+        b"",
+        1,
+    ).replace(
+        b"  ReloadTime = 120000\n",
+        f"  ReloadTime = 120000\n  Flags = {flags}\n".encode(),
+        1,
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    row = _abilities_by_id(descriptor)["Command_FixtureSummon"]
+    assert row["implementation"]["status"] == "unimplemented"
+    assert expected_reason in row["implementation"]["reason"]
+    assert row["effect"] == {"kind": "none"}
+
+
+def test_pathable_only_special_power_is_preserved_for_runtime_target_validation() -> None:
+    documents = _hero_ability_documents()
+    documents["data/ini/specialpower.ini"] = documents[
+        "data/ini/specialpower.ini"
+    ].replace(
+        b"  Flags = LIMIT_DISTANCE NO_FORBIDDEN_OBJECTS\n"
+        b"  MaxCastRange = 200\n"
+        b"  ForbiddenObjectFilter = NO_SUMMON_NEAR_OBJECT_FILTER\n"
+        b"  ForbiddenObjectRange = 60\n",
+        b"  Flags = PATHABLE_ONLY\n",
+        1,
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    row = _abilities_by_id(descriptor)["Command_FixtureSummon"]
+    assert row["implementation"]["status"] == "implemented"
+    assert row["specialPowerContract"]["flags"] == ["PATHABLE_ONLY"]
 
 
 def test_multi_warhead_launchers_combine_every_authored_warhead() -> None:
@@ -5724,3 +6480,133 @@ def test_sub_object_upgrade_compiles_fire_plane_show_token() -> None:
         }
     ]
     assert isinstance(upgrades[0]["line"], int) and upgrades[0]["line"] > 0
+
+
+@pytest.mark.parametrize(
+    ("label", "game", "toggle_line", "style_line"),
+    [
+        ("bfme2-retail", "bfme2", 421, 380),
+        ("rotwk-retail", "rotwk", 422, 381),
+    ],
+)
+def test_retail_dwarven_demolisher_emits_exact_nonhero_toggle_ability(
+    label: str, game: str, toggle_line: int, style_line: int
+) -> None:
+    catalog_path = _RETAIL_CATALOGS[label]
+    if not catalog_path.is_file():
+        pytest.skip(f"{label} retail catalog unavailable")
+    documents = dict(
+        read_catalog_documents(InstallCatalog.load(catalog_path))
+    )
+    descriptor = compile_playable_unit_descriptor(
+        "DwarvenDemolisher", documents, game=game
+    )
+    validate_playable_unit_descriptor(descriptor)
+    assert descriptor["category"] == "siege"
+    assert len(descriptor["abilities"]) == 1
+    ability = descriptor["abilities"][0]
+    assert ability["id"] == "Command_SpecialAbilityDwarvenDemolisherDeploy"
+    assert ability["slot"] == 2
+    assert ability["targeting"] == "self"
+    assert ability["cooldownMs"] == 0
+    assert ability["button"]["options"] == [
+        "OK_FOR_MULTI_EXECUTE",
+        "OK_FOR_MULTI_SELECT",
+    ]
+    assert ability["effect"] == {
+        "kind": "toggle-deploy",
+        "autoAcquireEnabled": True,
+        "autoAcquireModes": ["ATTACK_BUILDINGS"],
+        "moodAttackCheckRateMs": 2500,
+        "mustDeployToAttack": False,
+        "unpackTimeMs": 2000,
+        "packTimeMs": 2000,
+        "deployedAttributeModifierId": "DwarvenDemolisherDeployModifier",
+        "sourceIni": "data/ini/object/goodfaction/units/dwarven/dwarvenram.ini",
+        "line": toggle_line,
+        "specialPowerTemplateId": "SpecialAbilityDwarvenDemolisherDeploy",
+        "targetMode": "SELF",
+        "ignoreFacingCheck": True,
+        "soundDeployId": "DwarfDemolisherDeployMS",
+        "soundUndeployId": "DwarfDemolisherUndeployMS",
+        "deployStyle": {
+            "tag": "ModuleTag_03",
+            "sourceIni": "data/ini/object/goodfaction/units/dwarven/dwarvenram.ini",
+            "line": style_line,
+        },
+        "deployedAttributeModifier": {
+            "id": "DwarvenDemolisherDeployModifier",
+            "modifiers": [
+                {"kind": "ARMOR", "value": 1.0, "application": "additive"}
+            ],
+            "sourceIni": "data/ini/attributemodifier.ini",
+            "category": "SPELL",
+            "durationMs": 0,
+        },
+        "autoAbility": True,
+        "triggerWhenReady": True,
+        "autoAbilityBlockedModelConditions": [
+            "UNPACKING",
+            "DEPLOYED",
+            "PACKING",
+            "MOVING",
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ("label", "game", "module_line"),
+    [
+        ("bfme2-retail", "bfme2", 1056),
+        ("rotwk-retail", "rotwk", 1045),
+    ],
+)
+def test_canonical_retail_eowyn_emits_binary_closed_disguise_ability(
+    label: str, game: str, module_line: int
+) -> None:
+    catalog_path = _RETAIL_CATALOGS[label]
+    if not catalog_path.is_file():
+        pytest.skip(f"{label} retail catalog unavailable")
+    documents = dict(read_catalog_documents(InstallCatalog.load(catalog_path)))
+    descriptor = compile_playable_unit_descriptor(
+        "RohanEowyn", documents, game=game,
+        scenario_admission={"role": "scenario-only", "surfaces": ["script-spawn"]},
+    )
+    validate_playable_unit_descriptor(descriptor)
+    ability = next(
+        row for row in descriptor["abilities"]
+        if row["specialPowerId"] == "SpecialAbilityDisguise"
+    )
+
+    assert ability["implementation"] == {
+        "status": "implemented",
+        "reason": "",
+        "limitations": [
+            "special-disguise-viewer-perspective-deferred",
+            "special-disguise-death-reset-ordering-deferred",
+            "special-disguise-critical-hit-ordering-deferred",
+            "special-disguise-user1-stealth-ordering-deferred",
+        ],
+    }
+    assert ability["levelGate"]["requiredLevel"] == 4
+    assert ability["effect"] == {
+        "kind": "special-disguise",
+        "specialPowerTemplateId": "SpecialAbilityDisguise",
+        "targetMode": "SELF",
+        "unpackTimeMs": 1000,
+        "preparationTimeMs": 1,
+        "persistentPrepTimeMs": 250,
+        "packTimeMs": 1000,
+        "opacityTarget": pytest.approx(0.3),
+        "ownerObjectId": "RohanEowyn",
+        "ownerDisguiseTemplateId": "RohanEowynDisguised",
+        "hostileDisguiseTemplateId": "RohanRohirrimHorde",
+        "disguiseFxId": "FX_DisguiseExit",
+        "forceMountedWhenDisguising": True,
+        "deferredBoundaries": [
+            "critical-hit-ordering", "death-reset-ordering",
+            "user1-stealth-ordering", "viewer-perspective",
+        ],
+        "sourceIni": "data/ini/object/goodfaction/units/men/eowyn.ini",
+        "line": module_line,
+    }

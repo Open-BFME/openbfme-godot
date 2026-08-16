@@ -425,6 +425,12 @@ def scan_module_support(
             folded = node.value.casefold()
             if folded in vocab:
                 consumed.setdefault(folded, set()).add(path.name)
+    # An explicit refusal is authoritative.  A module may contain prerequisite
+    # or diagnostic literals without admitting the module kind to the shipping
+    # compiler; do not let those incidental names turn a refused kind into a
+    # false consumed result.
+    for folded in refused:
+        consumed.pop(folded, None)
     return ModuleSupport(
         consumer_files=consumer_files,
         consumed={key: tuple(sorted(value)) for key, value in sorted(consumed.items())},
@@ -550,7 +556,6 @@ _CLASSIFICATION_GROUPS: tuple[dict[str, tuple[str, str]], ...] = (
             "FreezingRainSpecialPower",
             "GrabPassengerSpecialPower",
             "HordeDispatchSpecialPower",
-            "ManTheWallsSpecialPower",
             "PlayerUpgradeSpecialPower",
             "RepairSpecialPower",
             "ScavengerSpecialPower",
@@ -885,6 +890,13 @@ _CLASSIFICATION_GROUPS: tuple[dict[str, tuple[str, str]], ...] = (
         "engine before scheduling any work",
         ("HordeTransportContainDamage",),
     ),
+    _group(
+        "E",
+        "legacy GreatKeep authoring is inert in both retail trees: the carrier "
+        "references absent BattleTowerCommandSet, the only command button is "
+        "commented out, and garrison KindOf flags are commented out",
+        ("ManTheWallsSpecialPower",),
+    ),
 )
 
 
@@ -1024,7 +1036,51 @@ def build_module_census(
             member["knownFailClosedSubset"] = (
                 "RotWK AngmarKennelExpansion malformed NaturalRallyPoint"
             )
-            member["runtimeExecutableSubset"] = "none; descriptor evidence only"
+            member["runtimeExecutableSubset"] = (
+                "row-level only: UnitCreatePoint, NaturalRallyPoint, ExitDelay, "
+                "PlacementViewAngle, and NoExitPath with valid numeric coordinates; "
+                "UseReturnToFormation, AllowAirborneCreation, InitialBurst, "
+                "CanRallyToSlaughter, and malformed coordinates remain deferred"
+            )
+        elif folded == "slavedupdate" and member["status"] == "consumed":
+            member["runtimeExecutableSubset"] = (
+                "all canonical typed gameplay fields; FadeOutRange, FadeTime, "
+                "and UseSlaverAsControlForEvaObjectSightedEvents retain explicit "
+                "presentation receipts"
+            )
+        elif folded == "spawnbehavior" and member["status"] == "consumed":
+            member["runtimeExecutableSubset"] = (
+                "row-level only: the binary-proven full-initial enabled-reclaim "
+                "shape (SpawnNumber, matching InitialBurst, SpawnReplaceDelay, "
+                "SpawnTemplateName, CanReclaimOrphans=Yes); 6 authored/8 effective "
+                "BFME2 rows and 9 authored/13 effective RotWK rows"
+            )
+            member["runtimeDeferredSubset"] = (
+                "all other row shapes; FadeInTime, "
+                "KillSpawnsBasedOnModelConditionState, SpawnInsideBuilding, "
+                "RespectCommandLimit, OneShot, SpawnedRequireSpawner, "
+                "ShareUpgrades, and TriggeredBy keep the row deferred"
+            )
+        elif folded == "squishcollide" and member["status"] == "consumed":
+            member["runtimeExecutableSubset"] = (
+                "entire canonical fieldless marker schema; authored victim "
+                "collision admission only"
+            )
+        elif folded == "rebuildholeexposeddie" and member["status"] == "consumed":
+            member["runtimeExecutableSubset"] = (
+                "all canonical rows; TransferAttackers is canonically No, while "
+                "FadeInTimeSeconds retains an explicit presentation receipt"
+            )
+        elif folded == "rebuildholebehavior" and member["status"] == "consumed":
+            member["runtimeExecutableSubset"] = (
+                "all canonical rows, including WorkerObjectName completion evidence "
+                "and exact per-frame health regeneration remainder"
+            )
+        elif folded == "salvagecratecollide" and member["status"] == "consumed":
+            member["runtimeExecutableSubset"] = (
+                "all canonical rows under the binary-oracle active/dead/parsed-ignored "
+                "field partition"
+            )
         elif folded == "autodepositupdate" and member["status"] == "consumed":
             member["compilerConsumedSubset"] = (
                 "consumer recognition is implemented; 29 BFME2 and 37 RotWK "

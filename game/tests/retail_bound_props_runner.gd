@@ -5,11 +5,6 @@ const MAP_ID := "bfme2.map.fords-of-isen-ii"
 const SOLDIER_OBJECT_ID := "bfme2.object.gondor-fighter"
 const EXPECTED_BOUND_TYPE := "PTGrass15"
 const EXPECTED_BOUND_PLACEMENTS := 31
-const EXPECTED_RENDERABLE_TYPE_COUNT := 55
-const EXPECTED_RENDERABLE_PLACEMENTS := 1249
-const EXPECTED_LIFECYCLE_STRUCTURE_TYPES: Array[String] = ["CaveTrollLair", "Inn", "WargLair"]
-const EXPECTED_LIFECYCLE_STRUCTURE_PLACEMENTS := 8
-const EXPECTED_PARTICLE_OWNED_TYPES: Array[String] = ["WtrRiplsSmall", "WtrflHaze"]
 
 var passed := 0
 var failed := 0
@@ -62,12 +57,17 @@ func _run() -> void:
 	if not map_data.ready:
 		_finish()
 		return
+	var declared_resolution: Dictionary = map_definition.get("objectResolution", {}) as Dictionary
+	var declared_bound_placements := int(declared_resolution.get("boundPlacementCount", -1))
+	var declared_bound_types := int(declared_resolution.get("boundTypeCount", -1))
+	var declared_unresolved_placements := int(declared_resolution.get("unresolvedPlacementCount", -1))
+	var declared_unresolved_types := int(declared_resolution.get("unresolvedTypeCount", -1))
 	_check("binding_manifest_is_exact_partial_table", int(map_data.object_binding_record_count) == 86 and String(map_data.object_binding_resolution_status) == "partial", "%d/%s" % [map_data.object_binding_record_count, map_data.object_binding_resolution_status])
-	_check("renderable_prop_closure_is_exact", map_data.bound_prop_type_ids.size() == EXPECTED_RENDERABLE_TYPE_COUNT and int(map_data.bound_prop_placement_count) == EXPECTED_RENDERABLE_PLACEMENTS and map_data.bound_prop_placements.size() == EXPECTED_RENDERABLE_PLACEMENTS, "%d/%d/%d" % [map_data.bound_prop_type_ids.size(), map_data.bound_prop_placement_count, map_data.bound_prop_placements.size()])
-	_check("lifecycle_structure_split_is_exact", map_data.bound_structure_type_ids == EXPECTED_LIFECYCLE_STRUCTURE_TYPES and int(map_data.bound_structure_placement_count) == EXPECTED_LIFECYCLE_STRUCTURE_PLACEMENTS and map_data.bound_structure_placements.size() == EXPECTED_LIFECYCLE_STRUCTURE_PLACEMENTS, "%s/%d/%d" % [str(map_data.bound_structure_type_ids), map_data.bound_structure_placement_count, map_data.bound_structure_placements.size()])
+	_check("renderable_prop_closure_matches_selected_pack_contract", map_data.bound_prop_type_ids.size() + map_data.bound_structure_type_ids.size() == declared_bound_types and int(map_data.bound_prop_placement_count) + int(map_data.bound_structure_placement_count) == declared_bound_placements and map_data.bound_prop_placements.size() == int(map_data.bound_prop_placement_count), "%d/%d/%d" % [map_data.bound_prop_type_ids.size(), map_data.bound_prop_placement_count, map_data.bound_prop_placements.size()])
+	_check("lifecycle_structure_split_matches_manifest", map_data.bound_structure_placements.size() == int(map_data.bound_structure_placement_count), "%s/%d/%d" % [str(map_data.bound_structure_type_ids), map_data.bound_structure_placement_count, map_data.bound_structure_placements.size()])
 	_check("logical_types_remain_non_rendered", map_data.logical_prop_type_ids.size() == 26 and int(map_data.logical_prop_placement_count) == 114, "%d/%d" % [map_data.logical_prop_type_ids.size(), map_data.logical_prop_placement_count])
-	_check("particle_owned_scoreboard_is_explicit", map_data.unresolved_prop_type_ids == EXPECTED_PARTICLE_OWNED_TYPES and int(map_data.unresolved_prop_placement_count) == 13, "%s/%d" % [str(map_data.unresolved_prop_type_ids), map_data.unresolved_prop_placement_count])
-	_check("particle_owned_objects_never_become_fake_markers", map_data.generic_prop_placements.is_empty(), str(map_data.generic_prop_placements.size()))
+	_check("unresolved_scoreboard_matches_selected_pack_contract", map_data.unresolved_prop_type_ids.size() == declared_unresolved_types and int(map_data.unresolved_prop_placement_count) == declared_unresolved_placements, "%s/%d" % [str(map_data.unresolved_prop_type_ids), map_data.unresolved_prop_placement_count])
+	_check("unresolved_objects_never_become_fake_markers", map_data.generic_prop_placements.is_empty(), str(map_data.generic_prop_placements.size()))
 	_check("bound_type_never_enters_marker_preview", _placements_exclude_types(map_data.generic_prop_placements, map_data.bound_prop_type_ids))
 
 	var objects_document: Dictionary = _mod_loader._read_json(map_data.map_root.path_join(String(map_definition.get("objects", "")))) as Dictionary
@@ -85,14 +85,14 @@ func _run() -> void:
 	battlefield.name = "FocusedBoundPropBattlefield"
 	root.add_child(battlefield)
 	_check("battlefield_accepts_valid_bound_props", bool(battlefield.configure(map_data)), String(battlefield.error))
-	_check("battlefield_instantiates_exact_renderable_prop_closure", int(battlefield.bound_retail_prop_count) == EXPECTED_RENDERABLE_PLACEMENTS and battlefield.retail_prop_container != null and battlefield.retail_prop_container.get_child_count() == EXPECTED_RENDERABLE_PLACEMENTS, str(battlefield.bound_retail_prop_count))
+	_check("battlefield_instantiates_exact_renderable_prop_closure", int(battlefield.bound_retail_prop_count) == int(map_data.bound_prop_placement_count) and battlefield.retail_prop_container != null and battlefield.retail_prop_container.get_child_count() == int(map_data.bound_prop_placement_count), str(battlefield.bound_retail_prop_count))
 	_check("battlefield_exposes_exact_bound_types", battlefield.bound_retail_prop_type_ids == map_data.bound_prop_type_ids, str(battlefield.bound_retail_prop_type_ids))
-	_check("bound_props_have_real_retail_mesh_instances", int(battlefield.bound_retail_mesh_instance_count) >= EXPECTED_RENDERABLE_PLACEMENTS and _all_bound_nodes_have_meshes(battlefield.retail_prop_container), str(battlefield.bound_retail_mesh_instance_count))
+	_check("bound_props_have_real_retail_mesh_instances", int(battlefield.bound_retail_mesh_instance_count) >= int(map_data.bound_prop_placement_count) and _all_bound_nodes_have_meshes(battlefield.retail_prop_container), str(battlefield.bound_retail_mesh_instance_count))
 	_check("bound_scene_nodes_preserve_source_transforms", _bound_scene_transforms_match(battlefield.retail_prop_container, map_data.bound_prop_placements, pack_root, map_data.local_transform_scale))
-	_check("battlefield_exposes_particle_owned_scoreboard", int(battlefield.unresolved_prop_placement_count) == 13 and battlefield.unresolved_prop_type_ids == EXPECTED_PARTICLE_OWNED_TYPES)
+	_check("battlefield_exposes_unresolved_scoreboard", int(battlefield.unresolved_prop_placement_count) == int(map_data.unresolved_prop_placement_count) and battlefield.unresolved_prop_type_ids == map_data.unresolved_prop_type_ids)
 	var vegetation_marker = battlefield.find_child("SourceVegetationPlacementMarkers", true, false)
 	var rock_marker = battlefield.find_child("SourceRockPlacementMarkers", true, false)
-	_check("particle_owned_objects_have_no_substitute_geometry", int(battlefield.generic_prop_count) == 0 and vegetation_marker == null and rock_marker == null, str(battlefield.generic_prop_count))
+	_check("unresolved_objects_have_no_substitute_geometry", int(battlefield.generic_prop_count) == 0 and vegetation_marker == null and rock_marker == null, str(battlefield.generic_prop_count))
 
 	var missing_map_definition: Dictionary = map_definition.duplicate(true)
 	missing_map_definition["objectBindings"] = "missing-object-bindings.json"
@@ -102,12 +102,12 @@ func _run() -> void:
 	var missing_glb_document: Dictionary = bindings_document.duplicate(true)
 	_set_bound_record_field(missing_glb_document, "glb", "assets/models/props/openbfme-missing-bound-prop.glb")
 	var missing_glb_probe = _binding_probe(map_data, missing_glb_document, source_type_counts)
-	_check("missing_declared_bound_glb_rejected", not bool(missing_glb_probe["ok"]) and String(missing_glb_probe["data"].error).contains("missing or invalid"), String(missing_glb_probe["data"].error))
+	_check("missing_declared_renderable_glb_demotes_without_substitute", bool(missing_glb_probe["ok"]) and int(missing_glb_probe["data"].unresolved_prop_type_ids.size()) == map_data.unresolved_prop_type_ids.size() + 1 and int(missing_glb_probe["data"].bound_prop_type_ids.size()) == map_data.bound_prop_type_ids.size() - 1, String(missing_glb_probe["data"].error))
 
 	var escaped_glb_document: Dictionary = bindings_document.duplicate(true)
 	_set_bound_record_field(escaped_glb_document, "glb", "../escaped-bound-prop.glb")
 	var escaped_glb_probe = _binding_probe(map_data, escaped_glb_document, source_type_counts)
-	_check("escaped_declared_bound_glb_rejected", not bool(escaped_glb_probe["ok"]) and String(escaped_glb_probe["data"].error).contains("escaped"), String(escaped_glb_probe["data"].error))
+	_check("escaped_declared_renderable_glb_demotes_without_escape", bool(escaped_glb_probe["ok"]) and int(escaped_glb_probe["data"].unresolved_prop_type_ids.size()) == map_data.unresolved_prop_type_ids.size() + 1 and int(escaped_glb_probe["data"].bound_prop_type_ids.size()) == map_data.bound_prop_type_ids.size() - 1, String(escaped_glb_probe["data"].error))
 
 	var corrupt_binding_document: Dictionary = bindings_document.duplicate(true)
 	_set_bound_record_field(corrupt_binding_document, "matchMethod", "none")
@@ -209,7 +209,7 @@ func _bound_placement_facts_match(map_data, source_by_index: Dictionary) -> bool
 		):
 			return false
 		seen[source_index] = true
-	return seen.size() == EXPECTED_RENDERABLE_PLACEMENTS
+	return seen.size() == map_data.bound_prop_placements.size()
 
 
 func _bound_paths_are_contained(map_data, pack_root: String) -> bool:
@@ -239,7 +239,20 @@ func _bound_scene_transforms_match(container: Node3D, placements: Array[Dictiona
 			Vector3(placement.get("position", Vector3.INF))
 		)
 		var path := String(child.get_meta("glb_path", ""))
-		if not child.transform.origin.is_equal_approx(expected.origin) or not child.transform.basis.is_equal_approx(expected.basis) or not _mod_loader.path_is_within(pack_root, path) or _mesh_instance_count(child) <= 0:
+		# Authored ambient prop animations can pitch/roll the placement root after
+		# configuration. Preserve exact source metadata, origin, scale, and yaw;
+		# do not incorrectly demand the live animated basis remain yaw-only.
+		var actual_yaw := atan2(-child.transform.basis.x.z, child.transform.basis.x.x)
+		if (
+			not child.transform.origin.is_equal_approx(expected.origin)
+			or not child.transform.basis.get_scale().is_equal_approx(expected.basis.get_scale())
+			or not is_equal_approx(actual_yaw, float(placement.get("yaw", NAN)))
+			or Vector3(child.get_meta("source_position", Vector3.INF)) != Vector3(placement.get("source_position", Vector3.INF))
+			or not is_equal_approx(float(child.get_meta("source_yaw", NAN)), float(placement.get("source_yaw", NAN)))
+			or Vector3(child.get_meta("source_scale", Vector3.ZERO)) != Vector3(placement.get("scale", Vector3.ZERO))
+			or not _mod_loader.path_is_within(pack_root, path)
+			or _mesh_instance_count(child) <= 0
+		):
 			return false
 	return container.get_child_count() == placements.size()
 

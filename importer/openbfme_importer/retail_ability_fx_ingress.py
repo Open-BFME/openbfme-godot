@@ -14,12 +14,12 @@ a descriptor authored, it walks
     FXList -> (nested FXList)* -> ParticleSystem / FXParticleSystem -> texture
 
 and returns the exact conversion resources plus a payload-free runtime binding
-document.  It never invents art: an id with no authored ``FXList`` block, a
+document. Cross-family candidates remain preserved, while runtime selection
+uses the retail-proven ``TheFXParticleSystemManager`` family. It never invents
+art: an id with no authored ``FXList`` block, a
 particle system with no definition in either family, and a ``ParticleName`` whose
 render leaf is absent or ambiguous are each recorded as an explicit unresolved
-row and contribute no resource.  Cross-family duplicates (a name authored as
-both ``ParticleSystem`` and ``FXParticleSystem``) preserve both candidates and
-are reported unresolved, matching the sealed Fords precedence blocker.
+row and contribute no resource.
 
 Resource ids are namespaced by the owning unit/spellbook slug because the
 playable-unit profile extension gives every resource exactly one runtime owner.
@@ -625,9 +625,14 @@ def build_ability_fx_closure(
         else:
             duplicate_ids.append(system_id)
             resolution = {
-                "status": "unresolved-cross-family-precedence",
-                "selectedKind": None,
+                "status": "proven-effective-fx-manager-family",
+                "selectedKind": "FXParticleSystem",
+                "crossFamilyPrecedenceProven": True,
             }
+        for candidate in candidates:
+            candidate["selectedForRuntime"] = (
+                candidate["kind"] == resolution["selectedKind"]
+            )
         definition_rows.append(
             {
                 "particleSystemId": system_id,
@@ -695,7 +700,10 @@ def build_ability_fx_closure(
         ],
         "familyResolution": {
             "duplicateIdentifierSystemIds": sorted(duplicate_ids, key=str.casefold),
-            "crossFamilyPrecedenceProven": False,
+            "crossFamilyPrecedenceProven": True,
+            "selectedKind": "FXParticleSystem",
+            "status": "proven-effective-fx-manager-family",
+            "legacySubsystemActive": False,
         },
         "textures": [
             texture_rows[key] for key in sorted(texture_rows)
@@ -766,6 +774,23 @@ def validate_ability_fx_closure(value: Mapping[str, object]) -> None:
     registry = bindings.get("definitionRegistry")
     if not isinstance(registry, list):
         raise AbilityFxIngressError("ability FX definition registry is invalid")
+    family = bindings.get("familyResolution")
+    if not isinstance(family, Mapping):
+        raise AbilityFxIngressError("ability FX family resolution is invalid")
+    duplicate_ids = family.get("duplicateIdentifierSystemIds")
+    if not isinstance(duplicate_ids, list) or any(
+        not isinstance(value, str) for value in duplicate_ids
+    ):
+        raise AbilityFxIngressError("ability FX duplicate family ids are invalid")
+    duplicate_keys = {value.casefold() for value in duplicate_ids}
+    if (
+        family.get("crossFamilyPrecedenceProven") is not True
+        or family.get("selectedKind") != "FXParticleSystem"
+        or family.get("status") != "proven-effective-fx-manager-family"
+        or family.get("legacySubsystemActive") is not False
+    ):
+        raise AbilityFxIngressError("ability FX family proof is invalid")
+    candidates_by_id: dict[str, list[Mapping[str, object]]] = {}
     for row in registry:
         if not isinstance(row, Mapping):
             raise AbilityFxIngressError("ability FX definition registry row is invalid")
@@ -781,6 +806,21 @@ def validate_ability_fx_closure(value: Mapping[str, object]) -> None:
                 raise AbilityFxIngressError(
                     "ability FX definition references an unowned texture"
                 )
+        if not isinstance(row.get("selectedForRuntime"), bool):
+            raise AbilityFxIngressError("ability FX runtime family selection is missing")
+        definition_id = str(row.get("definitionId", ""))
+        if not definition_id:
+            raise AbilityFxIngressError("ability FX definition id is invalid")
+        candidates_by_id.setdefault(definition_id.casefold(), []).append(row)
+    for definition_id, candidates in candidates_by_id.items():
+        selected = [row for row in candidates if row.get("selectedForRuntime") is True]
+        if len(selected) != 1:
+            raise AbilityFxIngressError("ability FX runtime family selection is ambiguous")
+        if definition_id in duplicate_keys:
+            if len(candidates) != 2 or selected[0].get("kind") != "FXParticleSystem":
+                raise AbilityFxIngressError("ability FX proven duplicate selection changed")
+        elif len(candidates) != 1:
+            raise AbilityFxIngressError("ability FX undeclared duplicate candidates exist")
 
 
 def fx_recipe_parts(

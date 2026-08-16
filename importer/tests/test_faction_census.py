@@ -12,11 +12,25 @@ from openbfme_importer.faction_census import (
     PlayableFaction,
     census_men_faction,
     census_playable_faction,
+    object_audio_definition_routes,
     resolve_playable_faction,
 )
 from openbfme_importer.sage_ini import IniBlock
 
 from importer.tests.test_big import make_big
+
+
+def test_object_audio_schema_distinguishes_silence_eva_sound_and_alias() -> None:
+    assert object_audio_definition_routes("Cow", "VoiceSelect", "NoSound") == ()
+    assert object_audio_definition_routes(
+        "CaveTroll_Slaved", "VoiceCreated", "EVA:CaveTrollCreated"
+    ) == ()
+    assert object_audio_definition_routes(
+        "BarrowWight", "VoiceCreated", "+SOUND:BarrowWightVoxCreated"
+    ) == (("BarrowWightVoxCreated", "BarrowWightVoxCreated"),)
+    assert object_audio_definition_routes(
+        "MordorBatteringRam", "Sound", "INITIAL UrukVoiceDie"
+    ) == (("OrcVoiceDie", "UrukVoiceDie"),)
 
 
 def _player_template(

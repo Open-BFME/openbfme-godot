@@ -35,6 +35,7 @@ func _run() -> void:
 	_test_unseeded_ring_state()
 	_test_sim_waypoint_gate()
 	_test_document_contract_precedence()
+	_test_canonical_runtime_wrapper()
 	var a = _make_sim(true)
 	var b = _make_sim(true)
 	_check(String(a.configuration_error) == "" and String(b.configuration_error) == "", "synthetic compiled contracts configure")
@@ -223,6 +224,49 @@ func _test_document_contract_precedence() -> void:
 	var late_structure := {"structure_kind": "fortress"}
 	sim._mark_ring_delivery_structure(late_structure)
 	_check(late_structure.has("ring_delivery"), "structure built mid-match receives ring delivery contract")
+
+
+func _test_canonical_runtime_wrapper() -> void:
+	# The selected RotWK Men pack ships this canonical importer shape. The
+	# runtime must consume its registration directly; requiring a second,
+	# hand-authored playableUnit copy of Gollum is the gap this regression pins.
+	var sim = Sim.new()
+	sim.setup({}, {
+		"enable_base_loop": true, "allow_ring_heroes": true,
+		"spawn_initial_battalions": false, "logic_random_seed": 8675309,
+		"source_map_transform_scale": 0.1, "unit_rules": {},
+		"ring_system": {
+			"schema": "openbfme.ring-system-runtime", "schemaVersion": 0,
+			"registration": {
+				"objects": {
+					"NeutralGollum": {
+						"objectId": "NeutralGollum", "kindOf": ["HERO", "NEUTRALGOLLUM"],
+						"body": {"kind": "ActiveBody", "maxHealth": 200},
+						"locomotors": {"normal": 45, "wander": 32},
+						"camouflage": {"type": "CAMOUFLAGE", "detectionRange": 120},
+					},
+					GOLLUM: {
+						"objectId": GOLLUM, "parentObjectId": "NeutralGollum",
+						"animalAI": {"fleeRange": 300, "fleeDistance": 800, "wanderPercentage": 80, "maxWanderDistance": 50},
+						"ringMechanic": {"role": "ring-gollum", "dropsRingOnDeath": true},
+					},
+					"TheDroppedRing": {"objectId": "TheDroppedRing", "ringMechanic": {"attach": {"scanRange": 10, "parentStatus": "HOLDING_THE_RING", "filter": {}}}},
+				},
+				"system": {"modeToken": "ringheroes", "evaEvents": [], "ringHeroesByFaction": {"Men": ["ElvenGaladriel_RingHero"]}, "spawn": {"objectId": GOLLUM, "team": "PlyrCreeps", "waypointFamily": "SpawnPoint_SkirmishGollum_"}},
+				"delivery": {}, "routes": {}, "upgrades": {}, "objectCreationLists": {}, "excludedObjects": [],
+			},
+		},
+	})
+	for i in range(1, 9):
+		sim.register_script_waypoint("SpawnPoint_SkirmishGollum_%d" % i, Vector2(i * 3.0, 0.0))
+	for _i in range(6):
+		sim.tick()
+	var gollum := int(sim._ring_state().get("gollum_id", 0))
+	_check(String(sim.configuration_error) == "", "canonical importer ring runtime configures")
+	_check(gollum > 0 and _living_gollums(sim) == 1, "canonical importer ring runtime spawns Gollum without a duplicate playableUnit")
+	if gollum > 0:
+		var row := sim.entities[gollum] as Dictionary
+		_check(int(row.get("member_maximum_health", 0)) == 200 and is_equal_approx(float(row.get("speed", 0.0)), 4.5), "canonical Gollum health and speed come from retail descriptor fields")
 
 
 func _rules_for(enabled: bool) -> Dictionary:

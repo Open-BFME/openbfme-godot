@@ -2,6 +2,7 @@ extends Node
 ## Loads JSON content packs. Mods override by id (later packs win).
 
 const BootProfile = preload("res://src/core/boot_profile.gd")
+const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 
 const MAX_MAP_CATALOG_ROWS := 256
 const MAX_MAP_CATALOG_BYTES := 1024 * 1024
@@ -22,6 +23,11 @@ const MAX_PLAYABLE_UNIT_RUNTIME_BYTES := 4 * 1024 * 1024
 const MAX_PLAYABLE_UNIT_RUNTIMES_PER_PACK := 2_048
 const MAX_PLAYABLE_STRUCTURE_RUNTIME_BYTES := 4 * 1024 * 1024
 const MAX_PLAYABLE_STRUCTURE_RUNTIMES_PER_PACK := 2_048
+const MAX_SCENARIO_PROP_RUNTIME_BYTES := 4 * 1024 * 1024
+const MAX_SCENARIO_PROP_RUNTIMES_PER_PACK := 256
+const MAX_SCENARIO_PICKUP_RUNTIME_BYTES := 4 * 1024 * 1024
+const MAX_SCENARIO_PICKUP_RUNTIMES_PER_PACK := 256
+const MAX_NEUTRAL_PACK_RECEIPT_BYTES := 4 * 1024 * 1024
 const PLAYABLE_STRUCTURE_LIFECYCLE_PHASES: Array[String] = [
 	"construction", "intact", "damaged", "really-damaged", "rubble", "post-rubble",
 ]
@@ -32,7 +38,27 @@ const PLAYABLE_STRUCTURE_ANIMATION_MODES: Array[String] = [
 	"none", "manual-progress", "loop", "loop-random", "once",
 ]
 const PLAYABLE_STRUCTURE_PRODUCTION_EVIDENCE: Array[String] = [
-	"authored-construct-command", "authored-wall-upgrade-command", "engine-spawned-composite", "wall-template",
+	"authored-construct-command", "authored-wall-upgrade-command", "authored-neutral-map", "engine-spawned-composite", "wall-template",
+]
+const SCENARIO_UNIT_ROLES: Array[String] = [
+	"inheritance-template", "scenario-only", "creature", "horde", "summoned-hero",
+]
+const SCENARIO_UNIT_SURFACES: Array[String] = [
+	"map-placement", "script-spawn", "tutorial-script", "object-creation-list", "lair-spawn", "horde-payload",
+]
+const SCENARIO_STRUCTURE_ROLES: Array[String] = ["lair", "neutral-structure"]
+const SCENARIO_STRUCTURE_SURFACES: Array[String] = [
+	"map-placement", "script-spawn", "object-creation-list", "lair-spawn",
+]
+const SCENARIO_PROP_SURFACES: Array[String] = [
+	"map-placement", "script-spawn", "object-creation-list",
+]
+const SCENARIO_PICKUP_SURFACES: Array[String] = ["object-creation-list"]
+const NEUTRAL_PROP_OBJECT_IDS: Array[String] = [
+	"RockBigTroll",
+	"SpiderWebs01", "SpiderWebs02", "SpiderWebs03", "SpiderWebs04",
+	"SpiderWebs05", "SpiderWebs06", "SpiderWebs07", "SpiderWebs08",
+	"SpiderWebs09", "SpiderWebs10", "SpiderWebs11",
 ]
 
 var units: Dictionary = {}
@@ -72,6 +98,10 @@ var spellbook_visual_bindings: Dictionary = {}
 ## verbatim reason. Surfaced for the runners rather than silently substituted.
 var spellbook_unconverted_visuals: Array[String] = []
 var playable_unit_runtimes: Dictionary = {}
+## Edition -> object id -> authored non-buildable runtime. The edition layer is
+## mandatory: BFME2 and RotWK intentionally share many object ids but their
+## effective INI lineage/provenance is not interchangeable.
+var scenario_unit_runtimes: Dictionary = {}
 ## Every admitted copy of a playableUnit.* document: casefolded object id to
 ## the load-ordered list of per-pack documents. Shared retail units (the
 ## evil-faction MordorWorker ships in the isengard/mordor/wild packs, each
@@ -102,6 +132,20 @@ var animation_capability_pack_index: Dictionary = {}
 ## them as exclusions instead of the roster silently narrowing.
 var skipped_playable_unit_documents: Array[String] = []
 var playable_structure_runtimes: Dictionary = {}
+## Edition-scoped scenario registries. None participates in faction production,
+## commands or HUD projection.
+var scenario_structure_runtimes: Dictionary = {}
+## Passive retail props admitted only by explicit scenario surfaces. They are
+## intentionally not units or structures and therefore never enter faction,
+## producer, command-bar, HUD, bundle-object or animation registries.
+var scenario_prop_runtimes: Dictionary = {}
+## Active authored crate pickups admitted only from neutral treasure OCL leaves.
+## This registry is deliberately disjoint from units, structures, passive props,
+## faction production and HUD registries.
+var scenario_pickup_runtimes: Dictionary = {}
+## Sealed neutral profile receipts keyed by edition. These bind the live
+## scenario registries back to the exact catalog and dependency artifact.
+var neutral_pack_receipts: Dictionary = {}
 var animation_capabilities: Dictionary = {}
 var bundle_maps: Dictionary = {}
 ## Map ids that a pack published through a `mapCatalog` document, in authored
@@ -229,12 +273,17 @@ func reload() -> void:
 	spellbook_visual_bindings.clear()
 	spellbook_unconverted_visuals.clear()
 	playable_unit_runtimes.clear()
+	scenario_unit_runtimes.clear()
 	playable_unit_runtime_pack_index.clear()
 	playable_unit_runtime_member_index.clear()
 	bundle_object_pack_index.clear()
 	animation_capability_pack_index.clear()
 	skipped_playable_unit_documents.clear()
 	playable_structure_runtimes.clear()
+	scenario_structure_runtimes.clear()
+	scenario_prop_runtimes.clear()
+	scenario_pickup_runtimes.clear()
+	neutral_pack_receipts.clear()
 	animation_capabilities.clear()
 	bundle_maps.clear()
 	catalog_map_ids.clear()
@@ -345,7 +394,16 @@ func _load_bundle_v0(root: String, meta: Dictionary) -> void:
 	## Index the plan's consolidated v0 documents for the presentation bridge.
 	## The legacy match catalogs above remain separate until the authoritative
 	## simulation consumes the v0 schema directly.
-	if String(meta.get("schema", "")) != "openbfme.content-pack" or int(meta.get("schemaVersion", -1)) != 0:
+	var pack_id := String(meta.get("id", ""))
+	var is_content_pack_v0 := String(meta.get("schema", "")) == "openbfme.content-pack" and int(meta.get("schemaVersion", -1)) == 0
+	var is_sealed_neutral_profile := (
+		pack_id in ["bfme2-neutral-vslice", "rotwk-neutral-vslice"]
+		and bool(meta.get("profile_build_complete", false))
+		and String(meta.get("neutralCatalogSha256", "")) != ""
+		and String(meta.get("neutralDependencyArtifactSha256", "")) != ""
+		and String(meta.get("neutralProfileReceiptSha256", "")) != ""
+	)
+	if not is_content_pack_v0 and not is_sealed_neutral_profile:
 		return
 	var files: Variant = meta.get("files", {})
 	if typeof(files) != TYPE_DICTIONARY:
@@ -360,11 +418,18 @@ func _load_bundle_v0(root: String, meta: Dictionary) -> void:
 	_load_spellbook_runtimes(root, declared)
 	_load_cah_system_runtime(root, declared)
 	_load_ring_system_runtime(root, declared)
+	if not _load_neutral_pack_receipt(root, declared, meta):
+		push_warning("ContentDB: rejected neutral pack receipt at %s" % root)
+		return
 	_profile_db("  rules+runtimes+spellbook", pack_mark)
 	_load_playable_unit_runtimes(root, declared)
 	_profile_db("  playable_units", pack_mark)
 	_load_playable_structure_runtimes(root, declared)
 	_profile_db("  playable_structures", pack_mark)
+	_load_scenario_prop_runtimes(root, declared)
+	_profile_db("  scenario_props", pack_mark)
+	_load_scenario_pickup_runtimes(root, declared)
+	_profile_db("  scenario_pickups", pack_mark)
 	_load_declared_rows(root, String(declared.get("animationCapabilities", "")), "capabilities", animation_capabilities)
 	_load_retail_ui_manifest(root, String(declared.get("uiManifest", "")))
 	_load_retail_strings(root, String(declared.get("strings", "")))
@@ -705,13 +770,43 @@ func _load_ring_system_runtime(root: String, declared: Dictionary) -> void:
 	if relative == "" or not ModLoader.is_safe_relative_path(relative):
 		return
 	var document := _read_declared_document_bounded(root, relative, MAX_PLAYABLE_UNIT_RUNTIME_BYTES)
-	if document.is_empty() or String(document.get("schema", "")) != "openbfme.ring-system" \
-			or int(document.get("schemaVersion", -1)) != 0:
+	if document.is_empty() or int(document.get("schemaVersion", -1)) != 0:
 		return
-	for required in ["waypointFamily", "spawnTeam", "modeToken", "evaEvents"]:
-		if not document.has(required):
+	var schema := String(document.get("schema", ""))
+	if schema == "openbfme.ring-system-runtime":
+		# Canonical importer output: the signed runtime envelope owns one
+		# registration table. Validate the exact consumer boundary here instead
+		# of silently treating this fresh document as the retired flat schema.
+		var registration_value: Variant = document.get("registration", {})
+		if typeof(registration_value) != TYPE_DICTIONARY:
 			return
-	if not document.has("heroesByFaction") and not document.has("perFactionHeroes"):
+		var registration := registration_value as Dictionary
+		var system_value: Variant = registration.get("system", {})
+		var objects_value: Variant = registration.get("objects", {})
+		if typeof(system_value) != TYPE_DICTIONARY or typeof(objects_value) != TYPE_DICTIONARY:
+			return
+		var system := system_value as Dictionary
+		var spawn_value: Variant = system.get("spawn", {})
+		if typeof(spawn_value) != TYPE_DICTIONARY or typeof(system.get("ringHeroesByFaction", {})) != TYPE_DICTIONARY \
+				or typeof(system.get("evaEvents", [])) != TYPE_ARRAY:
+			return
+		var spawn := spawn_value as Dictionary
+		var gollum_id := String(spawn.get("objectId", ""))
+		var gollum_value: Variant = (objects_value as Dictionary).get(gollum_id, {})
+		if gollum_id == "" or String(spawn.get("waypointFamily", "")) == "" \
+				or String(spawn.get("team", "")) == "" or typeof(gollum_value) != TYPE_DICTIONARY:
+			return
+		var parent_id := String((gollum_value as Dictionary).get("parentObjectId", ""))
+		if parent_id == "" or typeof((objects_value as Dictionary).get(parent_id, {})) != TYPE_DICTIONARY:
+			return
+	elif schema == "openbfme.ring-system":
+		# Retained for explicitly old packs; fresh cooks emit the runtime envelope.
+		for required in ["waypointFamily", "spawnTeam", "modeToken", "evaEvents"]:
+			if not document.has(required):
+				return
+		if not document.has("heroesByFaction") and not document.has("perFactionHeroes"):
+			return
+	else:
 		return
 	document["_source"] = ModLoader.resolve_pack_path(root, relative)
 	document["_pack_root"] = root
@@ -840,6 +935,7 @@ func _load_playable_unit_runtimes(root: String, declared: Dictionary) -> bool:
 		push_warning("ContentDB: playable unit count exceeds pack limit at %s" % root)
 		return false
 	var pending: Dictionary = {}
+	var pending_scenario: Dictionary = {}
 	var pending_folded: Dictionary = {}
 	var skipped: Array[String] = []
 	var relatives: Array[String] = []
@@ -868,11 +964,20 @@ func _load_playable_unit_runtimes(root: String, declared: Dictionary) -> bool:
 			continue
 		var object_id := String(document["objectId"])
 		var folded := object_id.to_lower()
+		var registration := document.get("registration", {}) as Dictionary
+		var is_scenario := registration.has("scenarioAdmission")
 		if pending_folded.has(folded):
 			skipped.append("%s:duplicate-id" % key)
 			continue
-		var collision := false
-		for existing_id_value in playable_unit_runtimes.keys():
+		var game := _scenario_game_for_pack(root) if is_scenario else ""
+		if is_scenario and not _scenario_game_valid(game):
+			skipped.append("%s:scenario-receipt-game-missing" % key)
+			continue
+		var edition_scenario_registry := _scenario_game_registry(scenario_unit_runtimes, game, is_scenario)
+		var target_registry := edition_scenario_registry if is_scenario else playable_unit_runtimes
+		var opposite_registry := playable_unit_runtimes if is_scenario else edition_scenario_registry
+		var collision := _registry_contains_folded_id(opposite_registry, folded)
+		for existing_id_value in target_registry.keys():
 			if String(existing_id_value).to_lower() == folded and String(existing_id_value) != object_id:
 				collision = true
 				break
@@ -882,9 +987,20 @@ func _load_playable_unit_runtimes(root: String, declared: Dictionary) -> bool:
 		document["_source"] = ModLoader.resolve_pack_path(root, relative)
 		document["_pack_root"] = root
 		document["_pack_file_key"] = key
-		pending[object_id] = document
+		if is_scenario:
+			document["_scenario_game"] = game
+			pending_scenario[object_id] = document
+		else:
+			pending[object_id] = document
 		pending_folded[folded] = object_id
 	_profile_db("    units.admit", admit_mark)
+	# Scenario rows stop here: no projection, member index, bundle object,
+	# animation capability, producer or faction/HUD registry is authored for
+	# content which the compiler explicitly proved non-buildable.
+	for object_id_value in pending_scenario.keys():
+		var scenario_document := pending_scenario[object_id_value] as Dictionary
+		var game := String(scenario_document.get("_scenario_game", "")).to_lower()
+		_scenario_game_registry(scenario_unit_runtimes, game, true)[String(object_id_value)] = scenario_document
 	var project_mark := Time.get_ticks_msec()
 	var projections: Dictionary = {}
 	var hero_ordinals: Dictionary = {}
@@ -1005,6 +1121,12 @@ func _load_playable_unit_runtimes(root: String, declared: Dictionary) -> bool:
 			"ContentDB: skipped %d playable unit(s) in %s: %s"
 			% [skipped.size(), root.get_file(), ", ".join(skipped)]
 		)
+	# These loaders are also used as validated delta-admission seams by tools
+	# and tests. Any admitted/replaced unit or per-pack copy makes generation
+	# snapshots stale even though a full reload() did not run.
+	_registry_snapshots.erase("unit_runtimes")
+	_registry_snapshots.erase("unit_pack_index")
+	_erase_scenario_registry_snapshots("scenario_unit_runtimes")
 	return true
 
 
@@ -1207,6 +1329,13 @@ func _command_string_ids(raw: String) -> PackedStringArray:
 
 
 func _validate_playable_unit_runtime(root: String, document: Dictionary) -> bool:
+	var preliminary_registration: Variant = document.get("registration")
+	if (
+		typeof(preliminary_registration) == TYPE_DICTIONARY
+		and (preliminary_registration as Dictionary).has("scenarioAdmission")
+		and not _neutral_receipt_row_for(root, String(document.get("objectId", "")), "unit").is_empty()
+	):
+		return _validate_receipt_bound_scenario_unit_runtime(root, document)
 	if (
 		String(document.get("schema", "")) != "openbfme.playable-unit-runtime"
 		or int(document.get("schemaVersion", -1)) != 0
@@ -1234,7 +1363,14 @@ func _validate_playable_unit_runtime(root: String, document: Dictionary) -> bool
 	for required in ["production", "composition", "gameplay", "simulation", "capabilities", "visual", "ui", "imageBindings", "audioRoutes", "audioBindings", "audioResolution", "unsupportedCapabilities"]:
 		if not registration.has(required):
 			return false
-	if typeof(registration.production) != TYPE_ARRAY or (registration.production as Array).is_empty():
+	if typeof(registration.production) != TYPE_ARRAY:
+		return false
+	var scenario_admitted := _validate_playable_unit_scenario_admission(
+		registration.get("scenarioAdmission"), category
+	)
+	if (registration.production as Array).is_empty() != scenario_admitted:
+		# Exactly one fielding surface owns the document: ordinary authored
+		# production, or explicit map/tutorial/script admission. Never both.
 		return false
 	for route_value in registration.production as Array:
 		if typeof(route_value) != TYPE_DICTIONARY:
@@ -1278,10 +1414,10 @@ func _validate_playable_unit_runtime(root: String, document: Dictionary) -> bool
 				# TOGGLE_WEAPONSET rows author no SpecialPower template.
 				or (String(ability.get("specialPowerId", "")) == "" and String(ability.get("command", "")) != "TOGGLE_WEAPONSET")
 				or int(ability.get("slot", 0)) < 1
-				or String(ability.get("targeting", "")) not in ["self", "point", "enemy-object"]
+				or String(ability.get("targeting", "")) not in ["self", "point", "enemy-object", "object"]
 				or typeof(ability.get("button")) != TYPE_DICTIONARY
 				or typeof(effect) != TYPE_DICTIONARY
-				or String((effect as Dictionary).get("kind", "")) not in ["none", "weapon-blast", "heal", "summon", "attribute-modifier", "leadership-aura", "weapon-toggle", "terror", "mount-toggle", "capture-building", "experience-grant", "arrow-storm", "stealth-toggle", "teleport", "curse", "leadership-strip"]
+				or String((effect as Dictionary).get("kind", "")) not in ["none", "weapon-blast", "heal", "summon", "attribute-modifier", "leadership-aura", "weapon-toggle", "terror", "mount-toggle", "capture-building", "experience-grant", "arrow-storm", "stealth-toggle", "teleport", "curse", "leadership-strip", "activate-module-graph", "weapon-mode-special-power", "dominate-enemy", "stop-special-power", "siege-deploy", "special-disguise", "toggle-deploy", "unleash-special-power"]
 				or typeof(implementation) != TYPE_DICTIONARY
 				or String((implementation as Dictionary).get("status", "")) not in ["implemented", "unimplemented", "passive"]
 			):
@@ -1317,6 +1453,8 @@ func _validate_playable_unit_runtime(root: String, document: Dictionary) -> bool
 			continue
 	if default_count != 1 or default_resolved != 1:
 		return false
+	if not _validate_playable_unit_core_presentations(visual, components as Array, category):
+		return false
 	for state_key_value in (core as Dictionary).keys():
 		var state_key := String(state_key_value)
 		var state_value: Variant = (core as Dictionary)[state_key_value]
@@ -1337,8 +1475,15 @@ func _validate_playable_unit_runtime(root: String, document: Dictionary) -> bool
 		if typeof(state_value) != TYPE_ARRAY or (state_value as Array).is_empty():
 			return false
 		for binding_value in state_value as Array:
-			if typeof(binding_value) != TYPE_DICTIONARY or String((binding_value as Dictionary).get("identifier", "")) == "":
+			if (
+				typeof(binding_value) != TYPE_DICTIONARY
+				or not _validate_playable_animation_binding(binding_value as Dictionary)
+			):
 				return false
+	if not _validate_playable_state_labels(
+		root, document, visual, core as Dictionary, resource_ids as Array
+	):
+		return false
 	for bindings_key in ["imageBindings", "audioBindings"]:
 		var bindings: Variant = registration.get(bindings_key)
 		if typeof(bindings) != TYPE_DICTIONARY:
@@ -1423,6 +1568,356 @@ func _validate_playable_unit_runtime(root: String, document: Dictionary) -> bool
 		for string_id_value in string_bindings.keys():
 			if String(string_id_value).strip_edges() == "" or typeof(string_bindings[string_id_value]) != TYPE_STRING or String(string_bindings[string_id_value]).strip_edges() == "":
 				return false
+	return true
+
+
+func _neutral_receipt_row_for(root: String, object_id: String, domain: String) -> Dictionary:
+	for receipt_value in neutral_pack_receipts.values():
+		if typeof(receipt_value) != TYPE_DICTIONARY:
+			continue
+		var receipt := receipt_value as Dictionary
+		if String(receipt.get("_pack_root", "")) != root:
+			continue
+		for row_value in receipt.get("rows", []) as Array:
+			if typeof(row_value) != TYPE_DICTIONARY:
+				continue
+			var row := row_value as Dictionary
+			if String(row.get("objectId", "")).to_lower() == object_id.to_lower() and String(row.get("runtimeDomain", "")) == domain:
+				return row
+	return {}
+
+
+func _validate_receipt_bound_scenario_unit_runtime(root: String, document: Dictionary) -> bool:
+	var object_id := String(document.get("objectId", ""))
+	var row := _neutral_receipt_row_for(root, object_id, "unit")
+	if (
+		row.is_empty()
+		or String(document.get("schema", "")) != "openbfme.playable-unit-runtime"
+		or int(document.get("schemaVersion", -1)) != 0
+		or object_id == ""
+		or String(document.get("category", "")) not in ["infantry", "ranged-infantry", "cavalry", "hero", "siege", "monster", "naval"]
+		or String(document.get("descriptorSha256", "")) != String(row.get("descriptorSha256", ""))
+		or String(document.get("recipeSha256", "")) != String(row.get("recipeSha256", ""))
+	):
+		return false
+	var resources_value: Variant = document.get("resourceIds")
+	var registration_value: Variant = document.get("registration")
+	if typeof(resources_value) != TYPE_ARRAY or (resources_value as Array).is_empty() or typeof(registration_value) != TYPE_DICTIONARY:
+		return false
+	var registration := registration_value as Dictionary
+	if typeof(registration.get("production")) != TYPE_ARRAY or not (registration.get("production") as Array).is_empty():
+		return false
+	if not _validate_playable_unit_scenario_admission(registration.get("scenarioAdmission"), String(document.get("category", ""))):
+		return false
+	for required in ["composition", "gameplay", "simulation", "capabilities", "visual", "ui", "imageBindings", "audioRoutes", "audioBindings"]:
+		if not registration.has(required):
+			return false
+	var visual_value: Variant = registration.get("visual")
+	if typeof(visual_value) != TYPE_DICTIONARY:
+		return false
+	var components_value: Variant = (visual_value as Dictionary).get("components")
+	if typeof(components_value) != TYPE_ARRAY or (components_value as Array).is_empty():
+		return false
+	var default_count := 0
+	for component_value in components_value as Array:
+		if typeof(component_value) != TYPE_DICTIONARY:
+			return false
+		var component := component_value as Dictionary
+		if bool(component.get("default", false)):
+			default_count += 1
+			var output := String(component.get("output", ""))
+			if output == "" or resolve_asset(output, root) == "":
+				return false
+	if default_count != 1:
+		return false
+	var seen_resources: Dictionary = {}
+	for resource_value in resources_value as Array:
+		var resource_id := String(resource_value)
+		if resource_id == "" or seen_resources.has(resource_id.to_lower()):
+			return false
+		seen_resources[resource_id.to_lower()] = true
+	return true
+
+
+func _validate_playable_animation_binding(binding: Dictionary) -> bool:
+	if String(binding.get("identifier", "")).strip_edges() == "":
+		return false
+	for key in ["AnimationBlendTime", "AnimationPriority"]:
+		if binding.has(key):
+			var value: Variant = binding[key]
+			# JSON numbers arrive as floats in runtime pack documents even when
+			# the compiler proved an exact integer. Accept only integral JSON
+			# values; fractions, booleans, and negatives still fail closed.
+			if (
+				typeof(value) not in [TYPE_INT, TYPE_FLOAT]
+				or not is_finite(float(value))
+				or float(value) != float(int(value))
+				or int(value) < 0
+			):
+				return false
+	if binding.has("authoredProperties"):
+		var rows: Variant = binding.authoredProperties
+		if typeof(rows) != TYPE_ARRAY:
+			return false
+		var seen: Dictionary = {}
+		for row_value in rows as Array:
+			if typeof(row_value) != TYPE_DICTIONARY:
+				return false
+			var row := row_value as Dictionary
+			var key := String(row.get("key", ""))
+			if key not in ["AnimationBlendTime", "AnimationPriority"] or seen.has(key):
+				return false
+			if not binding.has(key) or row.get("value") != binding.get(key):
+				return false
+			if not _validate_visual_property_provenance(row.get("provenance")):
+				return false
+			seen[key] = true
+		if seen.size() != int(binding.has("AnimationBlendTime")) + int(binding.has("AnimationPriority")):
+			return false
+	elif binding.has("AnimationBlendTime") or binding.has("AnimationPriority"):
+		return false
+	return true
+
+
+func _validate_visual_property_provenance(value: Variant) -> bool:
+	if typeof(value) != TYPE_DICTIONARY:
+		return false
+	var row := value as Dictionary
+	return (
+		String(row.get("definingObject", "")).strip_edges() != ""
+		and String(row.get("virtualPath", "")).strip_edges() != ""
+		and int(row.get("line", 0)) > 0
+		and int(row.get("inheritanceDistance", -1)) >= 0
+	)
+
+
+func _validate_playable_state_labels(
+	root: String,
+	document: Dictionary,
+	visual: Dictionary,
+	core: Dictionary,
+	resource_ids: Array
+) -> bool:
+	var labels_value: Variant = visual.get("authoredStateLabels", [])
+	if typeof(labels_value) != TYPE_ARRAY:
+		return false
+	var known_identifiers: Dictionary = {}
+	for state_value in core.values():
+		if typeof(state_value) != TYPE_ARRAY:
+			continue
+		for binding_value in state_value as Array:
+			if typeof(binding_value) == TYPE_DICTIONARY:
+				known_identifiers[String((binding_value as Dictionary).get("identifier", ""))] = true
+	var sealed_resource_ids: Dictionary = {}
+	for resource_id_value in resource_ids:
+		if typeof(resource_id_value) != TYPE_STRING:
+			return false
+		sealed_resource_ids[String(resource_id_value).to_lower()] = true
+	var packaged_components_by_owner: Dictionary = {}
+	for component_value in visual.get("components", []) as Array:
+		if typeof(component_value) != TYPE_DICTIONARY:
+			return false
+		var component := component_value as Dictionary
+		var component_owner := String(component.get("ownerObjectId", ""))
+		var resource_id := String(component.get("resourceId", ""))
+		var output := String(component.get("output", ""))
+		var source_w3d := String(component.get("sourceW3d", ""))
+		if (
+			component_owner != ""
+			and resource_id != ""
+			and sealed_resource_ids.has(resource_id.to_lower())
+			and output != ""
+			and resolve_asset(output, root) != ""
+		):
+			var owner_components: Array = packaged_components_by_owner.get(
+				component_owner.to_lower(), []
+			) as Array
+			owner_components.append({"sourceW3d": source_w3d, "resourceId": resource_id})
+			packaged_components_by_owner[component_owner.to_lower()] = owner_components
+	var packaged_animation_states: Dictionary = {}
+	var authored_states_value: Variant = visual.get("authoredAnimationStates", [])
+	if typeof(authored_states_value) != TYPE_ARRAY:
+		return false
+	for state_value in authored_states_value as Array:
+		if typeof(state_value) != TYPE_DICTIONARY:
+			return false
+		var state := state_value as Dictionary
+		var state_identifier := String(state.get("identifier", ""))
+		if state_identifier == "":
+			continue
+		var state_rows: Array = packaged_animation_states.get(state_identifier.to_lower(), []) as Array
+		state_rows.append(state)
+		packaged_animation_states[state_identifier.to_lower()] = state_rows
+	var seen: Dictionary = {}
+	for row_value in labels_value as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			return false
+		var row := row_value as Dictionary
+		var label := String(row.get("StateName", ""))
+		var folded := label.to_lower()
+		if not _is_playable_state_label_token(label) or label.length() > 255:
+			return false
+		if String(row.get("runtimeSupport", "")) != "packaged-unimplemented":
+			return false
+		if not _validate_visual_property_provenance(row.get("provenance")):
+			return false
+		var label_owner := String(row.get("ownerObjectId", ""))
+		var linked_value: Variant = row.get("linkedAnimations")
+		if typeof(linked_value) != TYPE_ARRAY:
+			return false
+		for linked_row_value in linked_value as Array:
+			if typeof(linked_row_value) != TYPE_DICTIONARY:
+				return false
+			var linked := linked_row_value as Dictionary
+			var linked_identifier := String(linked.get("identifier", ""))
+			if linked_identifier == "" or typeof(linked.get("conditions")) != TYPE_ARRAY:
+				return false
+			if known_identifiers.has(linked_identifier):
+				continue
+			if label_owner == "":
+				return false
+			var sealed_match := false
+			for state_value in packaged_animation_states.get(
+				linked_identifier.to_lower(), []
+			) as Array:
+				var state := state_value as Dictionary
+				var state_owner := String(state.get("ownerObjectId", ""))
+				var source_w3d := String(state.get("sourceW3d", ""))
+				var model_source_w3d := String(state.get("modelSourceW3d", ""))
+				var runtime_support := String(state.get("runtimeSupport", ""))
+				var matching_component := false
+				for component_value in packaged_components_by_owner.get(
+					state_owner.to_lower(), []
+				) as Array:
+					var component := component_value as Dictionary
+					if String(component.get("sourceW3d", "")).to_lower() == model_source_w3d.to_lower():
+						matching_component = true
+						break
+				var identity_matches := (
+					state_owner.to_lower() == label_owner.to_lower()
+					and source_w3d != ""
+					and source_w3d.get_file().get_basename().to_lower()
+					== linked_identifier.get_slice(".", linked_identifier.get_slice_count(".") - 1).to_lower()
+					and model_source_w3d != ""
+					and typeof(state.get("conditions")) == TYPE_ARRAY
+					and (state.get("conditions", []) as Array) == (linked.get("conditions", []) as Array)
+				)
+				var packaged_match := runtime_support == "packaged-unimplemented" and matching_component
+				var excluded_zero_byte_match := (
+					runtime_support == "excluded-zero-byte-placeholder"
+					and String(state.get("runtimeExclusionReason", "")) == "zero-byte-retail-w3d-placeholder"
+					and matching_component
+				)
+				if identity_matches and (packaged_match or excluded_zero_byte_match):
+					sealed_match = true
+					break
+			if not sealed_match:
+				return false
+		var label_identity := "%s|%s|%s|%s|%s|%s" % [
+			folded,
+			label_owner.to_lower(),
+			String(row.get("stateFamily", "")).to_lower(),
+			JSON.stringify(row.get("conditions", [])),
+			JSON.stringify(linked_value),
+			JSON.stringify(row.get("provenance", {})),
+		]
+		if seen.has(label_identity):
+			return false
+		seen[label_identity] = true
+	return true
+
+
+func _is_playable_state_label_token(label: String) -> bool:
+	if label == "":
+		return false
+	for index in label.length():
+		var code := label.unicode_at(index)
+		var is_alpha := (code >= 65 and code <= 90) or (code >= 97 and code <= 122)
+		var is_digit := code >= 48 and code <= 57
+		if index == 0:
+			if not is_alpha and code != 95:
+				return false
+		elif not is_alpha and not is_digit and code not in [45, 46, 95]:
+			return false
+	return true
+
+
+func _validate_playable_unit_scenario_admission(value: Variant, _category: String) -> bool:
+	if value == null:
+		return false
+	if typeof(value) != TYPE_DICTIONARY:
+		return false
+	var admission := value as Dictionary
+	if (
+		admission.size() != 8
+		or String(admission.get("kind", "")) != "authored-non-buildable"
+		or String(admission.get("role", "")) not in SCENARIO_UNIT_ROLES
+		or admission.get("buildCommandExposed", true) != false
+		or String(admission.get("evidence", "")) != "no-authored-unit-build-route"
+		or String(admission.get("sourceIni", "")).strip_edges() == ""
+		or int(admission.get("line", 0)) <= 0
+		or String(admission.get("declarationKind", "")) not in ["Object", "ChildObject"]
+	):
+		return false
+	return _validate_scenario_surfaces(admission.get("surfaces"), SCENARIO_UNIT_SURFACES)
+
+
+func _validate_scenario_surfaces(value: Variant, allowed: Array[String]) -> bool:
+	if typeof(value) != TYPE_ARRAY or (value as Array).is_empty():
+		return false
+	var seen: Dictionary = {}
+	for surface_value in value as Array:
+		if typeof(surface_value) != TYPE_STRING:
+			return false
+		var surface := String(surface_value)
+		if surface not in allowed or seen.has(surface):
+			return false
+		seen[surface] = true
+	return true
+
+
+func _validate_playable_unit_core_presentations(visual: Dictionary, components: Array, category: String) -> bool:
+	var value: Variant = visual.get("corePresentations", {})
+	if typeof(value) != TYPE_DICTIONARY:
+		return false
+	var presentations := value as Dictionary
+	if not presentations.is_empty() and category != "naval":
+		return false
+	var component_sources: Dictionary = {}
+	for component_value in components:
+		if typeof(component_value) == TYPE_DICTIONARY:
+			component_sources[String((component_value as Dictionary).get("sourceW3d", ""))] = true
+	var expected := {
+		"idle": "static-hull",
+		"move": "transform-locomotion",
+		"attack": "weapon-effect",
+		"death": "ship-sink",
+	}
+	for state_value in presentations.keys():
+		var state := String(state_value)
+		var row_value: Variant = presentations[state_value]
+		if typeof(row_value) != TYPE_DICTIONARY or not expected.has(state):
+			return false
+		var row := row_value as Dictionary
+		if (
+			String(row.get("binding", "")) != String(expected[state])
+			or not component_sources.has(String(row.get("modelSourceW3d", "")))
+		):
+			return false
+		if state == "death":
+			var contract_value: Variant = row.get("contract")
+			if typeof(contract_value) != TYPE_DICTIONARY:
+				return false
+			var contract := contract_value as Dictionary
+			if (
+				String(contract.get("module", "")) != "ShipSlowDeathBehavior"
+				or String(contract.get("extraction", "")) != "typed"
+				or String(contract.get("sourceIni", "")) == ""
+				or int(contract.get("line", 0)) <= 0
+			):
+				return false
+		elif String(row.get("evidence", "")) == "":
+			return false
 	return true
 
 
@@ -1540,6 +2035,7 @@ func _append_ability_state(
 	result: Dictionary, state: String, phase: String, bindings: Array
 ) -> void:
 	var clips: Array[String] = []
+	var clip_properties: Dictionary = {}
 	for binding_value in bindings:
 		if typeof(binding_value) != TYPE_DICTIONARY:
 			continue
@@ -1548,14 +2044,20 @@ func _append_ability_state(
 			continue
 		if not clips.has(identifier):
 			clips.append(identifier)
+		var properties := _playable_animation_properties(binding_value as Dictionary)
+		if not properties.is_empty():
+			clip_properties[identifier] = properties
 	if clips.is_empty():
 		return
 	clips.sort_custom(func(a: String, b: String) -> bool: return a.naturalnocasecmp_to(b) < 0)
-	result["ability:%s:%s" % [state, phase]] = {
+	var projected := {
 		"clips": clips,
 		"mode": "loop" if phase == "prepare" else "once",
 		"useWeaponTiming": false,
 	}
+	if not clip_properties.is_empty():
+		projected["clipProperties"] = clip_properties
+	result["ability:%s:%s" % [state, phase]] = projected
 
 
 func _selection_animation_states(visual: Dictionary) -> Dictionary:
@@ -1593,24 +2095,40 @@ func _selection_animation_states(visual: Dictionary) -> Dictionary:
 			selected_ranked.append({
 				"identifier": identifier,
 				"rank": _playable_clip_rank("selected", identifier, conditions),
+				"properties": _playable_animation_properties(row),
 			})
 		elif semantic == "selectionTransition" or _conditions_are_idle_to_selected(conds):
 			transition_ranked.append({
 				"identifier": identifier,
 				"rank": _playable_clip_rank("selectionTransition", identifier, conditions),
+				"properties": _playable_animation_properties(row),
 			})
 	if not transition_ranked.is_empty():
+		var transition_clips := _ranked_clip_identifiers(transition_ranked)
 		result["selectionTransition"] = {
-			"clips": _ranked_clip_identifiers(transition_ranked),
+			"clips": transition_clips,
 			"mode": "once",
 			"useWeaponTiming": false,
+			"clipProperties": _ranked_clip_properties(transition_ranked, transition_clips),
 		}
 	if not selected_ranked.is_empty():
+		var selected_clips := _ranked_clip_identifiers(selected_ranked)
 		result["selected"] = {
-			"clips": _ranked_clip_identifiers(selected_ranked),
+			"clips": selected_clips,
 			"mode": "loop",
 			"useWeaponTiming": false,
+			"clipProperties": _ranked_clip_properties(selected_ranked, selected_clips),
 		}
+	return result
+
+
+func _ranked_clip_properties(ranked: Array[Dictionary], clips: Array[String]) -> Dictionary:
+	var result: Dictionary = {}
+	for row in ranked:
+		var identifier := String(row.get("identifier", ""))
+		var properties: Variant = row.get("properties", {})
+		if identifier in clips and typeof(properties) == TYPE_DICTIONARY and not (properties as Dictionary).is_empty():
+			result[identifier] = (properties as Dictionary).duplicate(true)
 	return result
 
 
@@ -1738,6 +2256,10 @@ func _playable_unit_projection(document: Dictionary) -> Dictionary:
 					"condition_count": conditions.size(),
 					"conditions": conditions,
 					"rank": _playable_clip_rank(state, identifier, conditions),
+					"speed_range": binding.get("AnimationSpeedFactorRange", []),
+					"animation_blend_time_raw": binding.get("AnimationBlendTime", null),
+					"animation_priority": binding.get("AnimationPriority", null),
+					"authored_properties": binding.get("authoredProperties", []),
 				})
 		elif typeof(raw_bindings) == TYPE_DICTIONARY:
 			# separate-model death: no clip identifiers on the primary visual.
@@ -1752,14 +2274,28 @@ func _playable_unit_projection(document: Dictionary) -> Dictionary:
 			return String(a["identifier"]).naturalnocasecmp_to(String(b["identifier"])) < 0
 		)
 		var clips: Array[String] = []
+		var speed_ranges: Dictionary = {}
+		var clip_properties: Dictionary = {}
 		for entry in ranked:
 			var identifier := String(entry["identifier"])
 			if not clips.has(identifier):
 				clips.append(identifier)
+			var speed_range: Variant = entry.get("speed_range", [])
+			if typeof(speed_range) == TYPE_ARRAY and (speed_range as Array).size() == 2:
+				speed_ranges[identifier] = (speed_range as Array).duplicate()
+			var properties := _projected_animation_properties(
+				entry.get("animation_blend_time_raw"),
+				entry.get("animation_priority"),
+				entry.get("authored_properties", [])
+			)
+			if not properties.is_empty():
+				clip_properties[identifier] = properties
 		states[state] = {
 			"clips": clips,
 			"mode": "loop" if state in ["idle", "move", "selected"] else "once",
 			"useWeaponTiming": state == "attack",
+			"AnimationSpeedFactorRange": speed_ranges,
+			"clipProperties": clip_properties,
 		}
 		if state == "attack":
 			# Retail splits the ranged attack into PREATTACK (windup) and
@@ -1773,7 +2309,7 @@ func _playable_unit_projection(document: Dictionary) -> Dictionary:
 			# "firing animation doesn't play correctly".
 			var pre_clips := _conditioned_attack_clips(ranked, "PREATTACK")
 			if not pre_clips.is_empty():
-				states["attackRangedPre"] = {"clips": pre_clips, "mode": "once", "useWeaponTiming": false}
+				states["attackRangedPre"] = {"clips": pre_clips, "mode": "once", "useWeaponTiming": false, "AnimationSpeedFactorRange": _clip_speed_ranges(ranked, pre_clips), "clipProperties": _clip_properties(ranked, pre_clips)}
 			var fire_clips := _conditioned_attack_clips(ranked, "FIRING_OR_RELOADING")
 			if not fire_clips.is_empty():
 				# Retail comments UseWeaponTiming OUT (gondorarcher.ini:261)
@@ -1785,8 +2321,23 @@ func _playable_unit_projection(document: Dictionary) -> Dictionary:
 					"clips": fire_clips,
 					"mode": "once",
 					"useWeaponTiming": false,
-					"speedFactor": 1.2,
+					"AnimationSpeedFactorRange": _clip_speed_ranges(ranked, fire_clips),
+					"clipProperties": _clip_properties(ranked, fire_clips),
 				}
+	var presentations: Dictionary = visual.get("corePresentations", {}) as Dictionary
+	for state_value in presentations.keys():
+		var state := String(state_value)
+		var row := presentations[state_value] as Dictionary
+		var projected := {
+			"clips": [],
+			"mode": "loop" if state in ["idle", "move"] else "once",
+			"useWeaponTiming": state == "attack",
+			"presentationBinding": String(row.get("binding", "")),
+			"modelSourceW3d": String(row.get("modelSourceW3d", "")),
+		}
+		if state == "death":
+			projected["contract"] = (row.get("contract", {}) as Dictionary).duplicate(true)
+		states[state] = projected
 	var ability_states := _ability_animation_states(visual)
 	for ability_state_value in ability_states.keys():
 		var ability_state := String(ability_state_value)
@@ -1805,18 +2356,40 @@ func _playable_unit_projection(document: Dictionary) -> Dictionary:
 			"sourceObjectId": source_member,
 			"animationCapabilityId": capability_id,
 			"presentation": {"model": model},
+			"drawableScripts": visual.get("drawableScripts", []),
 			"_source": String(document.get("_source", "")),
 			"_pack_root": root,
 		},
 		"capability": {
 			"id": capability_id,
 			"states": states,
+			"authoredStateLabels": (visual.get("authoredStateLabels", []) as Array).duplicate(true),
+			"authoredStateLabelRuntimeSupport": "linked-animation-current-and-previous-label-predicates",
 			"unresolvedAnimationTracks": 0,
 			"source": "openbfme.playable-unit-runtime",
 			"_source": String(document.get("_source", "")),
 			"_pack_root": root,
 		},
 	}
+
+
+func _projected_animation_properties(blend_value: Variant, priority_value: Variant, receipts_value: Variant) -> Dictionary:
+	var properties: Dictionary = {}
+	if blend_value != null:
+		properties["animationBlendTimeRaw"] = int(blend_value)
+	if priority_value != null:
+		properties["animationPriority"] = int(priority_value)
+	if typeof(receipts_value) == TYPE_ARRAY and not (receipts_value as Array).is_empty():
+		properties["authoredProperties"] = (receipts_value as Array).duplicate(true)
+	return properties
+
+
+func _playable_animation_properties(binding: Dictionary) -> Dictionary:
+	return _projected_animation_properties(
+		binding.get("AnimationBlendTime", null),
+		binding.get("AnimationPriority", null),
+		binding.get("authoredProperties", [])
+	)
 
 
 func _conditioned_attack_clips(ranked: Array, condition_prefix: String) -> Array[String]:
@@ -1833,6 +2406,34 @@ func _conditioned_attack_clips(ranked: Array, condition_prefix: String) -> Array
 		var identifier := String(entry.get("identifier", ""))
 		if matched and identifier != "" and not result.has(identifier):
 			result.append(identifier)
+	return result
+
+
+func _clip_speed_ranges(ranked: Array, clips: Array[String]) -> Dictionary:
+	var result: Dictionary = {}
+	for entry_value in ranked:
+		var entry := entry_value as Dictionary
+		var identifier := String(entry.get("identifier", ""))
+		var values: Variant = entry.get("speed_range", [])
+		if identifier in clips and typeof(values) == TYPE_ARRAY and (values as Array).size() == 2:
+			result[identifier] = (values as Array).duplicate()
+	return result
+
+
+func _clip_properties(ranked: Array, clips: Array[String]) -> Dictionary:
+	var result: Dictionary = {}
+	for entry_value in ranked:
+		var entry := entry_value as Dictionary
+		var identifier := String(entry.get("identifier", ""))
+		if identifier not in clips:
+			continue
+		var properties := _projected_animation_properties(
+			entry.get("animation_blend_time_raw"),
+			entry.get("animation_priority"),
+			entry.get("authored_properties", [])
+		)
+		if not properties.is_empty():
+			result[identifier] = properties
 	return result
 
 
@@ -1909,6 +2510,7 @@ func _load_playable_structure_runtimes(root: String, declared: Dictionary) -> bo
 		push_warning("ContentDB: playable structure count exceeds pack limit at %s" % root)
 		return false
 	var pending: Dictionary = {}
+	var pending_scenario: Dictionary = {}
 	var pending_folded: Dictionary = {}
 	var skipped: Array[String] = []
 	var relatives: Array[String] = []
@@ -1930,11 +2532,98 @@ func _load_playable_structure_runtimes(root: String, declared: Dictionary) -> bo
 			continue
 		var object_id := String(document["objectId"])
 		var folded := object_id.to_lower()
+		var registration := document.get("registration", {}) as Dictionary
+		var production := registration.get("production", {}) as Dictionary
+		var is_scenario := String(production.get("evidence", "")) == "authored-neutral-map"
 		if pending_folded.has(folded):
 			skipped.append("%s:duplicate-id" % key)
 			continue
-		var collision := false
-		for existing_id_value in playable_structure_runtimes.keys():
+		var game := _scenario_game_for_pack(root) if is_scenario else ""
+		if is_scenario and not _scenario_game_valid(game):
+			skipped.append("%s:scenario-receipt-game-missing" % key)
+			continue
+		var edition_scenario_registry := _scenario_game_registry(scenario_structure_runtimes, game, is_scenario)
+		var target_registry := edition_scenario_registry if is_scenario else playable_structure_runtimes
+		var opposite_registry := playable_structure_runtimes if is_scenario else edition_scenario_registry
+		var collision := _registry_contains_folded_id(opposite_registry, folded)
+		for existing_id_value in target_registry.keys():
+			if String(existing_id_value).to_lower() == folded and String(existing_id_value) != object_id:
+				collision = true
+				break
+		if collision:
+			skipped.append("%s:id-collision" % key)
+			continue
+		document["_source"] = ModLoader.resolve_pack_path(root, relative)
+		document["_pack_root"] = root
+		document["_pack_file_key"] = key
+		if is_scenario:
+			document["_scenario_game"] = game
+			pending_scenario[object_id] = document
+		else:
+			pending[object_id] = document
+		pending_folded[folded] = object_id
+	for object_id_value in pending.keys():
+		playable_structure_runtimes[String(object_id_value)] = pending[object_id_value]
+	for object_id_value in pending_scenario.keys():
+		var scenario_document := pending_scenario[object_id_value] as Dictionary
+		var game := String(scenario_document.get("_scenario_game", "")).to_lower()
+		_scenario_game_registry(scenario_structure_runtimes, game, true)[String(object_id_value)] = scenario_document
+	if not skipped.is_empty():
+		push_warning(
+			"ContentDB: skipped %d playable structure(s) in %s: %s"
+			% [skipped.size(), root.get_file(), ", ".join(skipped)]
+		)
+	# A direct validated delta load mutates the same authoritative registry as a
+	# generation reload. Drop its defensive snapshot so subsequent manifest and
+	# runtime consumers observe the admitted rows, not a pre-delta copy.
+	_registry_snapshots.erase("structure_runtimes")
+	_erase_scenario_registry_snapshots("scenario_structure_runtimes")
+	return true
+
+
+func _load_scenario_prop_runtimes(root: String, declared: Dictionary) -> bool:
+	## Neutral props are their own descriptor/runtime domain. Loading them through
+	## the unit or structure paths would make passive scenery faction-fieldable,
+	## so this seam recognizes only neutralProp.* declarations and publishes only
+	## to scenario_prop_runtimes.
+	var keys: Array[String] = []
+	for value in declared.keys():
+		var key := String(value)
+		if key.begins_with("neutralProp."):
+			keys.append(key)
+	keys.sort_custom(func(a: String, b: String) -> bool: return a.naturalnocasecmp_to(b) < 0)
+	if keys.size() > MAX_SCENARIO_PROP_RUNTIMES_PER_PACK:
+		push_warning("ContentDB: neutral prop count exceeds pack limit at %s" % root)
+		return false
+	var pending: Dictionary = {}
+	var pending_folded: Dictionary = {}
+	var skipped: Array[String] = []
+	for key in keys:
+		var relative := String(declared.get(key, ""))
+		if relative == "" or not ModLoader.is_safe_relative_path(relative):
+			skipped.append("%s:unsafe-path" % key)
+			continue
+		var document := _read_declared_document_bounded(root, relative, MAX_SCENARIO_PROP_RUNTIME_BYTES)
+		if not _validate_scenario_prop_runtime(document):
+			skipped.append("%s:invalid-runtime" % key)
+			continue
+		var game := _scenario_game_for_pack(root)
+		if not _scenario_game_valid(game) or String(document.get("game", "")).to_lower() != game:
+			skipped.append("%s:receipt-game-mismatch" % key)
+			continue
+		var object_id := String(document.get("objectId", ""))
+		var folded := object_id.to_lower()
+		if pending_folded.has(folded):
+			skipped.append("%s:duplicate-id" % key)
+			continue
+		var collision := (
+			_registry_contains_folded_id(playable_unit_runtimes, folded)
+			or _registry_contains_folded_id(_scenario_game_registry(scenario_unit_runtimes, game), folded)
+			or _registry_contains_folded_id(playable_structure_runtimes, folded)
+			or _registry_contains_folded_id(_scenario_game_registry(scenario_structure_runtimes, game), folded)
+		)
+		var edition_props := _scenario_game_registry(scenario_prop_runtimes, game, true)
+		for existing_id_value in edition_props.keys():
 			if String(existing_id_value).to_lower() == folded and String(existing_id_value) != object_id:
 				collision = true
 				break
@@ -1947,16 +2636,539 @@ func _load_playable_structure_runtimes(root: String, declared: Dictionary) -> bo
 		pending[object_id] = document
 		pending_folded[folded] = object_id
 	for object_id_value in pending.keys():
-		playable_structure_runtimes[String(object_id_value)] = pending[object_id_value]
+		var scenario_document := pending[object_id_value] as Dictionary
+		_scenario_game_registry(scenario_prop_runtimes, String(scenario_document.get("game", "")), true)[String(object_id_value)] = scenario_document
 	if not skipped.is_empty():
 		push_warning(
-			"ContentDB: skipped %d playable structure(s) in %s: %s"
+			"ContentDB: skipped %d neutral prop(s) in %s: %s"
 			% [skipped.size(), root.get_file(), ", ".join(skipped)]
 		)
+	_erase_scenario_registry_snapshots("scenario_prop_runtimes")
+	return true
+
+
+func _validate_scenario_prop_runtime(document: Dictionary) -> bool:
+	var object_id := String(document.get("objectId", ""))
+	if (
+		String(document.get("schema", "")) != "openbfme.neutral-prop-descriptor"
+		or int(document.get("schemaVersion", -1)) != 0
+		or String(document.get("game", "")) not in ["bfme2", "rotwk"]
+		or object_id not in NEUTRAL_PROP_OBJECT_IDS
+		or String(document.get("requestedObjectId", "")) != object_id
+		or String(document.get("declarationKind", "")) not in ["Object", "ChildObject"]
+		or not _is_sha256(String(document.get("descriptorSha256", "")))
+		or document.get("production") != []
+	):
+		return false
+	var admission_value: Variant = document.get("scenarioAdmission")
+	if typeof(admission_value) != TYPE_DICTIONARY:
+		return false
+	var admission := admission_value as Dictionary
+	if (
+		admission.size() != 4
+		or String(admission.get("kind", "")) != "authored-passive-prop"
+		or admission.get("surfaces") != SCENARIO_PROP_SURFACES
+		or admission.get("buildCommandExposed") != false
+		or String(admission.get("evidence", "")) != "bounded-retail-neutral-prop-family"
+	):
+		return false
+	var kind_of_value: Variant = document.get("kindOf")
+	if typeof(kind_of_value) != TYPE_DICTIONARY:
+		return false
+	var kind_of := kind_of_value as Dictionary
+	if (
+		typeof(kind_of.get("authored")) != TYPE_ARRAY
+		or (kind_of.get("authored") as Array).is_empty()
+		or typeof(kind_of.get("effective")) != TYPE_ARRAY
+		or typeof(kind_of.get("defineProvenance")) != TYPE_ARRAY
+	):
+		return false
+	var effective := kind_of.get("effective") as Array
+	if not effective.has("IMMOBILE") or (not effective.has("INERT") and not effective.has("OPTIMIZED_PROP")):
+		return false
+	for forbidden in ["ARCHER", "CAVALRY", "CREEP", "GIANT", "HERO", "HORDE", "INFANTRY", "MACHINE", "MONSTER", "SHIP", "SIEGEENGINE", "STRUCTURE", "TRANSPORT", "TROLL"]:
+		if effective.has(forbidden):
+			return false
+	var presentation_value: Variant = document.get("presentation")
+	if typeof(presentation_value) != TYPE_DICTIONARY:
+		return false
+	var presentation := presentation_value as Dictionary
+	var references_value: Variant = presentation.get("sourceReferences")
+	if (
+		typeof(presentation.get("drawModules")) != TYPE_ARRAY
+		or (presentation.get("drawModules") as Array).is_empty()
+		or typeof(references_value) != TYPE_DICTIONARY
+		or typeof((references_value as Dictionary).get("model")) != TYPE_ARRAY
+		or ((references_value as Dictionary).get("model") as Array).is_empty()
+	):
+		return false
+	for field in ["inheritance", "moduleContracts", "geometryContactPoints", "publicBones", "sourceDocuments"]:
+		if typeof(document.get(field)) != TYPE_ARRAY:
+			return false
+	var has_bezier := false
+	for module_value in document.get("moduleContracts") as Array:
+		if typeof(module_value) != TYPE_DICTIONARY:
+			return false
+		if String((module_value as Dictionary).get("module", "")) == "BezierProjectileBehavior":
+			has_bezier = true
+	if has_bezier and not _validate_neutral_prop_bezier_contract(document):
+		return false
+	if (document.get("inheritance") as Array).is_empty() or (document.get("sourceDocuments") as Array).is_empty():
+		return false
+	for row_value in document.get("sourceDocuments") as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			return false
+		var row := row_value as Dictionary
+		if String(row.get("virtualPath", "")) == "" or not _is_sha256(String(row.get("semanticSha256", ""))):
+			return false
+	return true
+
+
+func _validate_neutral_prop_bezier_contract(document: Dictionary) -> bool:
+	var trajectory := PlayableUnitAdapter.bezier_trajectory_contract(document)
+	if trajectory.is_empty():
+		return false
+	var capabilities_value: Variant = document.get("runtimeCapabilities")
+	var evidence_value: Variant = document.get("runtimeModuleEvidence")
+	if typeof(capabilities_value) != TYPE_ARRAY or typeof(evidence_value) != TYPE_ARRAY:
+		return false
+	var capability_found := false
+	var capability_evidence: Dictionary = {}
+	for value in capabilities_value as Array:
+		if typeof(value) != TYPE_DICTIONARY:
+			return false
+		var capability := value as Dictionary
+		if String(capability.get("kind", "")) != "projectile-capable":
+			continue
+		if capability_found:
+			return false
+		if (
+			String(capability.get("kind", "")) != "projectile-capable"
+			or String(capability.get("activation", "")) != "authored-projectile-launch"
+			or String(capability.get("runtimeStatus", "")) != "deferred"
+			or typeof(capability.get("moduleEvidence")) != TYPE_DICTIONARY
+		):
+			return false
+		capability_found = true
+		capability_evidence = (capability.get("moduleEvidence") as Dictionary).duplicate(true)
+	var evidence_found := false
+	for value in evidence_value as Array:
+		if typeof(value) != TYPE_DICTIONARY:
+			return false
+		var evidence := value as Dictionary
+		if String(evidence.get("kind", "")) != "BezierProjectileBehavior":
+			continue
+		if evidence_found:
+			return false
+		if (
+			evidence.get("consumed") != false
+			or String(evidence.get("sourceIni", "")) != String(trajectory.get("sourceIni", ""))
+			or int(evidence.get("line", 0)) != int(trajectory.get("line", 0))
+			or String(evidence.get("instanceTag", "")) != String(trajectory.get("tag", ""))
+			or not _is_sha256(String(evidence.get("semanticSha256", "")))
+		):
+			return false
+		evidence_found = true
+	if not capability_found or not evidence_found:
+		return false
+	return (
+		String(capability_evidence.get("kind", "")) == "BezierProjectileBehavior"
+		and String(capability_evidence.get("sourceIni", "")) == String(trajectory.get("sourceIni", ""))
+		and int(capability_evidence.get("line", 0)) == int(trajectory.get("line", 0))
+		and String(capability_evidence.get("instanceTag", "")) == String(trajectory.get("tag", ""))
+		and capability_evidence.get("consumed") == false
+	)
+
+
+func _neutral_pickup_slug(object_id: String) -> String:
+	var slug := ""
+	for index in object_id.length():
+		var code := object_id.unicode_at(index)
+		if (code >= 48 and code <= 57) or (code >= 65 and code <= 90) or (code >= 97 and code <= 122):
+			slug += String.chr(code).to_lower()
+	return slug
+
+
+func _load_neutral_pack_receipt(root: String, declared: Dictionary, meta: Dictionary) -> bool:
+	var relative := String(declared.get("neutralPackProfileReceipt", ""))
+	var has_neutral_files := false
+	for key_value in declared.keys():
+		var key := String(key_value)
+		if key.begins_with("neutralProp.") or key.begins_with("neutralPickup."):
+			has_neutral_files = true
+			break
+	if relative == "":
+		return not has_neutral_files
+	if relative != "data/neutral/pack-profile-receipt.json" or not ModLoader.is_safe_relative_path(relative):
+		return false
+	var document := _read_declared_document_bounded(root, relative, MAX_NEUTRAL_PACK_RECEIPT_BYTES)
+	if not _validate_neutral_pack_receipt(document, declared, meta):
+		return false
+	var game := String(document.get("game", ""))
+	# Replacing one edition retires only that edition's prior rows. The other
+	# retail game's same-named objects remain independently addressable.
+	if neutral_pack_receipts.has(game):
+		var scenario_registry_names: Array[String] = [
+			"scenario_unit_runtimes", "scenario_structure_runtimes",
+			"scenario_prop_runtimes", "scenario_pickup_runtimes",
+		]
+		var scenario_registries: Array[Dictionary] = [
+			scenario_unit_runtimes, scenario_structure_runtimes,
+			scenario_prop_runtimes, scenario_pickup_runtimes,
+		]
+		for index in scenario_registries.size():
+			scenario_registries[index][game] = {}
+			_erase_scenario_registry_snapshots(scenario_registry_names[index])
+	document["_source"] = ModLoader.resolve_pack_path(root, relative)
+	document["_pack_root"] = root
+	document["_pack_file_key"] = "neutralPackProfileReceipt"
+	neutral_pack_receipts[game] = document
+	_registry_snapshots.erase("neutral_pack_receipts")
+	return true
+
+
+func _remove_receipt_scenario_rows(receipt: Dictionary) -> void:
+	# Retained for direct-test/backward call sites; removal is edition-scoped.
+	var game := String(receipt.get("game", "")).to_lower()
+	if not _scenario_game_valid(game):
+		return
+	var registries := {
+		"unit": scenario_unit_runtimes,
+		"structure": scenario_structure_runtimes,
+		"prop": scenario_prop_runtimes,
+		"active-pickup": scenario_pickup_runtimes,
+	}
+	for field in ["rows", "dependencyRows"]:
+		for row_value in receipt.get(field, []) as Array:
+			if typeof(row_value) != TYPE_DICTIONARY:
+				continue
+			var row := row_value as Dictionary
+			var registry_value: Variant = registries.get(String(row.get("runtimeDomain", "")))
+			if typeof(registry_value) != TYPE_DICTIONARY:
+				continue
+			var registry := _scenario_game_registry(registry_value as Dictionary, game)
+			var folded := String(row.get("objectId", "")).to_lower()
+			for key_value in registry.keys():
+				if String(key_value).to_lower() == folded:
+					registry.erase(key_value)
+	for snapshot_key in ["scenario_unit_runtimes", "scenario_structure_runtimes", "scenario_prop_runtimes", "scenario_pickup_runtimes"]:
+		_erase_scenario_registry_snapshots(snapshot_key)
+
+
+func _validate_neutral_pack_receipt(document: Dictionary, declared: Dictionary, meta: Dictionary) -> bool:
+	var game := String(document.get("game", ""))
+	var expected_object_count := 69 if game == "bfme2" else 83 if game == "rotwk" else 0
+	var expected_pickup_count := 2 if game == "bfme2" else 1 if game == "rotwk" else 0
+	var expected_domains := (
+		{"unit": 42, "structure": 15, "prop": 12}
+		if game == "bfme2"
+		else {"unit": 48, "structure": 23, "prop": 12}
+	)
+	if (
+		String(document.get("schema", "")) != "openbfme.neutral-pack-profile-receipt"
+		or int(document.get("schemaVersion", -1)) != 0
+		or expected_object_count == 0
+		or int(document.get("objectCount", -1)) != expected_object_count
+		or int(document.get("dependencyObjectCount", -1)) != expected_pickup_count
+		or not _is_sha256(String(document.get("catalogSha256", "")))
+		or not _is_sha256(String(document.get("dependencyArtifactSha256", "")))
+		or not _is_sha256(String(document.get("receiptSha256", "")))
+		or String(meta.get("id", "")) != "%s-neutral-vslice" % game
+		or String(meta.get("neutralCatalogSha256", "")) != String(document.get("catalogSha256", ""))
+		or String(meta.get("neutralDependencyArtifactSha256", "")) != String(document.get("dependencyArtifactSha256", ""))
+		or String(meta.get("neutralProfileReceiptSha256", "")) != String(document.get("receiptSha256", ""))
+	):
+		return false
+	var rows_value: Variant = document.get("rows")
+	var dependency_rows_value: Variant = document.get("dependencyRows")
+	if typeof(rows_value) != TYPE_ARRAY or (rows_value as Array).size() != expected_object_count or typeof(dependency_rows_value) != TYPE_ARRAY or (dependency_rows_value as Array).size() != expected_pickup_count:
+		return false
+	var seen: Dictionary = {}
+	var domains := {"unit": 0, "structure": 0, "prop": 0}
+	for row_value in rows_value as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			return false
+		var row := row_value as Dictionary
+		var object_id := String(row.get("objectId", ""))
+		var folded := object_id.to_lower()
+		var domain := String(row.get("runtimeDomain", ""))
+		var key := String(row.get("packFileKey", ""))
+		var path := String(row.get("runtimePath", ""))
+		var prefix := "playableUnit." if domain == "unit" else "playableStructure." if domain == "structure" else "neutralProp." if domain == "prop" else ""
+		if (
+			object_id == "" or seen.has(folded) or prefix == ""
+			or not key.begins_with(prefix)
+			or String(declared.get(key, "")) != path
+			or not ModLoader.is_safe_relative_path(path)
+			or not _is_sha256(String(row.get("artifactSha256", "")))
+			or not _is_sha256(String(row.get("descriptorSha256", "")))
+			or not _is_sha256(String(row.get("recipeSha256", "")))
+		):
+			return false
+		seen[folded] = true
+		domains[domain] = int(domains[domain]) + 1
+	if domains != expected_domains:
+		return false
+	for row_value in dependency_rows_value as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			return false
+		var row := row_value as Dictionary
+		var object_id := String(row.get("objectId", ""))
+		var folded := object_id.to_lower()
+		var key := String(row.get("packFileKey", ""))
+		var path := String(row.get("runtimePath", ""))
+		if (
+			object_id == "" or seen.has(folded)
+			or String(row.get("runtimeDomain", "")) != "active-pickup"
+			or key != "neutralPickup.%s" % _neutral_pickup_slug(object_id)
+			or path != "data/neutral-pickups/%s.json" % _neutral_pickup_slug(object_id)
+			or String(declared.get(key, "")) != path
+			or not _is_sha256(String(row.get("artifactSha256", "")))
+			or not _is_sha256(String(row.get("descriptorSha256", "")))
+			or not _is_sha256(String(row.get("recipeSha256", "")))
+			or not _is_sha256(String(row.get("runtimeSha256", "")))
+		):
+			return false
+		seen[folded] = true
+	return true
+
+
+func _load_scenario_pickup_runtimes(root: String, declared: Dictionary) -> bool:
+	var keys: Array[String] = []
+	for value in declared.keys():
+		var key := String(value)
+		if key.begins_with("neutralPickup."):
+			keys.append(key)
+	keys.sort_custom(func(a: String, b: String) -> bool: return a.naturalnocasecmp_to(b) < 0)
+	if keys.size() > MAX_SCENARIO_PICKUP_RUNTIMES_PER_PACK:
+		push_warning("ContentDB: neutral pickup count exceeds pack limit at %s" % root)
+		return false
+	var pending: Dictionary = {}
+	var pending_folded: Dictionary = {}
+	var skipped: Array[String] = []
+	for key in keys:
+		var relative := String(declared.get(key, ""))
+		var key_slug := key.trim_prefix("neutralPickup.")
+		if (
+			key_slug == ""
+			or relative != "data/neutral-pickups/%s.json" % key_slug
+			or not ModLoader.is_safe_relative_path(relative)
+		):
+			skipped.append("%s:invalid-binding" % key)
+			continue
+		var document := _read_declared_document_bounded(root, relative, MAX_SCENARIO_PICKUP_RUNTIME_BYTES)
+		if not _validate_scenario_pickup_runtime(document):
+			skipped.append("%s:invalid-runtime" % key)
+			continue
+		var game := _scenario_game_for_pack(root)
+		if not _scenario_game_valid(game) or String(document.get("game", "")).to_lower() != game:
+			skipped.append("%s:receipt-game-mismatch" % key)
+			continue
+		var object_id := String(document.get("objectId", ""))
+		var folded := object_id.to_lower()
+		if key_slug != _neutral_pickup_slug(object_id) or pending_folded.has(folded):
+			skipped.append("%s:identity-drift" % key)
+			continue
+		var collision := (
+			_registry_contains_folded_id(playable_unit_runtimes, folded)
+			or _registry_contains_folded_id(_scenario_game_registry(scenario_unit_runtimes, game), folded)
+			or _registry_contains_folded_id(playable_structure_runtimes, folded)
+			or _registry_contains_folded_id(_scenario_game_registry(scenario_structure_runtimes, game), folded)
+			or _registry_contains_folded_id(_scenario_game_registry(scenario_prop_runtimes, game), folded)
+		)
+		var edition_pickups := _scenario_game_registry(scenario_pickup_runtimes, game, true)
+		for existing_id_value in edition_pickups.keys():
+			if String(existing_id_value).to_lower() == folded and String(existing_id_value) != object_id:
+				collision = true
+				break
+		if collision:
+			skipped.append("%s:id-collision" % key)
+			continue
+		document["_source"] = ModLoader.resolve_pack_path(root, relative)
+		document["_pack_root"] = root
+		document["_pack_file_key"] = key
+		pending[object_id] = document
+		pending_folded[folded] = object_id
+	for object_id_value in pending.keys():
+		var scenario_document := pending[object_id_value] as Dictionary
+		_scenario_game_registry(scenario_pickup_runtimes, String(scenario_document.get("game", "")), true)[String(object_id_value)] = scenario_document
+	if not skipped.is_empty():
+		push_warning(
+			"ContentDB: skipped %d neutral pickup(s) in %s: %s"
+			% [skipped.size(), root.get_file(), ", ".join(skipped)]
+		)
+	_erase_scenario_registry_snapshots("scenario_pickup_runtimes")
+	return true
+
+
+func _validate_scenario_pickup_runtime(document: Dictionary) -> bool:
+	var allowed_root := [
+		"schema", "schemaVersion", "game", "objectId", "runtimeDomain",
+		"runtimeStatus", "descriptorSha256", "recipeSha256", "resourceIds",
+		"production", "scenarioAdmission", "kindOf", "geometry",
+		"pickupContract", "binaryOracleReceipt", "deletionContract",
+		"presentation", "runtimeSha256", "_source", "_pack_root", "_pack_file_key",
+	]
+	for key_value in document.keys():
+		if String(key_value) not in allowed_root:
+			return false
+	for metadata_key in ["_source", "_pack_root", "_pack_file_key"]:
+		if document.has(metadata_key) and String(document.get(metadata_key, "")) == "":
+			return false
+	var object_id := String(document.get("objectId", ""))
+	if (
+		String(document.get("schema", "")) != "openbfme.neutral-pickup-runtime"
+		or int(document.get("schemaVersion", -1)) != 0
+		or String(document.get("game", "")) not in ["bfme2", "rotwk"]
+		or object_id.strip_edges() == ""
+		or object_id.length() > 256
+		or _neutral_pickup_slug(object_id) == ""
+		or String(document.get("runtimeDomain", "")) != "active-pickup"
+		or String(document.get("runtimeStatus", "")) != "executable"
+		or not _is_sha256(String(document.get("descriptorSha256", "")))
+		or not _is_sha256(String(document.get("recipeSha256", "")))
+		or not _is_sha256(String(document.get("runtimeSha256", "")))
+		or document.get("production") != []
+	):
+		return false
+	var admission_value: Variant = document.get("scenarioAdmission")
+	if typeof(admission_value) != TYPE_DICTIONARY:
+		return false
+	var admission := admission_value as Dictionary
+	if (
+		admission.size() != 4
+		or String(admission.get("kind", "")) != "authored-ocl-pickup-leaf"
+		or admission.get("surfaces") != SCENARIO_PICKUP_SURFACES
+		or admission.get("buildCommandExposed") != false
+		or String(admission.get("evidence", "")) != "reachable-neutral-lair-treasure-ocl"
+	):
+		return false
+	var kind_of_value: Variant = document.get("kindOf")
+	if typeof(kind_of_value) != TYPE_DICTIONARY:
+		return false
+	var effective_value: Variant = (kind_of_value as Dictionary).get("effective")
+	if typeof(effective_value) != TYPE_ARRAY:
+		return false
+	var effective := effective_value as Array
+	for required_kind in ["CRATE", "IMMOBILE", "UNATTACKABLE"]:
+		if not effective.has(required_kind):
+			return false
+	for forbidden_kind in ["STRUCTURE", "HORDE", "INFANTRY", "CAVALRY", "HERO", "SHIP"]:
+		if effective.has(forbidden_kind):
+			return false
+	var geometry_value: Variant = document.get("geometry")
+	if typeof(geometry_value) != TYPE_DICTIONARY:
+		return false
+	var footprint_value: Variant = (geometry_value as Dictionary).get("footprint")
+	if typeof(footprint_value) != TYPE_DICTIONARY:
+		return false
+	var radius_value: Variant = (footprint_value as Dictionary).get("radius")
+	if typeof(radius_value) not in [TYPE_INT, TYPE_FLOAT] or float(radius_value) <= 0.0:
+		return false
+	var contract_value: Variant = document.get("pickupContract")
+	if typeof(contract_value) != TYPE_DICTIONARY:
+		return false
+	var contract := contract_value as Dictionary
+	var fields_value: Variant = contract.get("fields")
+	if (
+		String(contract.get("module", "")) != "SalvageCrateCollide"
+		or String(contract.get("extraction", "")) != "typed"
+		or String(contract.get("runtimeStatus", "")) != "executable"
+		or typeof(fields_value) != TYPE_DICTIONARY
+	):
+		return false
+	var fields := fields_value as Dictionary
+	for required_field in ["ForbiddenKindOf", "LevelUpChance", "LevelUpRadius", "AllowAIPickup"]:
+		if typeof(fields.get(required_field)) != TYPE_DICTIONARY:
+			return false
+	var forbidden_value: Variant = (fields.get("ForbiddenKindOf") as Dictionary).get("value")
+	if typeof(forbidden_value) != TYPE_ARRAY or (forbidden_value as Array).is_empty():
+		return false
+	for token_value in forbidden_value as Array:
+		if String(token_value).strip_edges() == "":
+			return false
+	var level_ratio_value: Variant = (fields.get("LevelUpChance") as Dictionary).get("ratio")
+	var level_radius_value: Variant = (fields.get("LevelUpRadius") as Dictionary).get("value")
+	var allow_ai_value: Variant = (fields.get("AllowAIPickup") as Dictionary).get("value")
+	if (
+		typeof(level_ratio_value) not in [TYPE_INT, TYPE_FLOAT]
+		or float(level_ratio_value) < 0.0
+		or float(level_ratio_value) > 1.0
+		or typeof(level_radius_value) not in [TYPE_INT, TYPE_FLOAT]
+		or float(level_radius_value) < 0.0
+		or typeof(allow_ai_value) != TYPE_BOOL
+	):
+		return false
+	var has_resource := fields.has("ResourceChance") or fields.has("MinResource") or fields.has("MaxResource")
+	if has_resource and not (fields.has("ResourceChance") and fields.has("MinResource") and fields.has("MaxResource")):
+		return false
+	if has_resource:
+		var resource_ratio_value: Variant = (fields.get("ResourceChance") as Dictionary).get("ratio")
+		var minimum_value: Variant = (fields.get("MinResource") as Dictionary).get("value")
+		var maximum_value: Variant = (fields.get("MaxResource") as Dictionary).get("value")
+		if (
+			typeof(resource_ratio_value) not in [TYPE_INT, TYPE_FLOAT]
+			or float(resource_ratio_value) < 0.0
+			or float(resource_ratio_value) > 1.0
+			or typeof(minimum_value) not in [TYPE_INT, TYPE_FLOAT]
+			or typeof(maximum_value) not in [TYPE_INT, TYPE_FLOAT]
+			or floor(float(minimum_value)) != float(minimum_value)
+			or floor(float(maximum_value)) != float(maximum_value)
+			or int(minimum_value) < 0
+			or int(maximum_value) < int(minimum_value)
+		):
+			return false
+	for identifier_field in ["Upgrade", "ExecuteFX"]:
+		if fields.has(identifier_field):
+			if typeof(fields.get(identifier_field)) != TYPE_DICTIONARY or String((fields.get(identifier_field) as Dictionary).get("value", "")).strip_edges() == "":
+				return false
+	var oracle_value: Variant = document.get("binaryOracleReceipt")
+	if typeof(oracle_value) != TYPE_DICTIONARY:
+		return false
+	var oracle := oracle_value as Dictionary
+	var authored_fields: Array = fields.keys()
+	authored_fields.sort_custom(func(a: Variant, b: Variant) -> bool: return String(a).naturalnocasecmp_to(String(b)) < 0)
+	if (
+		String(oracle.get("domain", "")) != "active-collision-pickup"
+		or oracle.get("activeWhenAuthored") != ["AllowAIPickup", "LevelUpChance", "MaxResource", "MinResource", "Upgrade"]
+		or oracle.get("deadBranchWhenAuthored") != ["LevelUpRadius"]
+		or oracle.get("parsedIgnoredWhenAuthored") != ["BannerChance", "PorterChance", "ResourceChance"]
+		or oracle.get("authoredFields") != authored_fields
+	):
+		return false
+	var resources_value: Variant = document.get("resourceIds")
+	var presentation_value: Variant = document.get("presentation")
+	if typeof(resources_value) != TYPE_ARRAY or (resources_value as Array).is_empty() or typeof(presentation_value) != TYPE_DICTIONARY:
+		return false
+	var presentation := presentation_value as Dictionary
+	if typeof(presentation.get("lifecycleStates")) != TYPE_ARRAY or typeof(presentation.get("bibStates")) != TYPE_ARRAY:
+		return false
+	if document.has("deletionContract"):
+		var deletion_value: Variant = document.get("deletionContract")
+		if typeof(deletion_value) != TYPE_DICTIONARY:
+			return false
+		var deletion := deletion_value as Dictionary
+		if String(deletion.get("module", "")) != "DeletionUpdate" or String(deletion.get("extraction", "")) != "typed" or String(deletion.get("runtimeStatus", "")) != "executable":
+			return false
+	var resource_seen: Dictionary = {}
+	for resource_value in resources_value as Array:
+		var resource_id := String(resource_value)
+		if resource_id == "" or not resource_id.begins_with("neutral-pickup-") or resource_seen.has(resource_id.to_lower()):
+			return false
+		resource_seen[resource_id.to_lower()] = true
 	return true
 
 
 func _validate_playable_structure_runtime(root: String, document: Dictionary) -> bool:
+	var preliminary_registration: Variant = document.get("registration")
+	if typeof(preliminary_registration) == TYPE_DICTIONARY:
+		var preliminary_production: Variant = (preliminary_registration as Dictionary).get("production")
+		if (
+			typeof(preliminary_production) == TYPE_DICTIONARY
+			and String((preliminary_production as Dictionary).get("evidence", "")) == "authored-neutral-map"
+			and not _neutral_receipt_row_for(root, String(document.get("objectId", "")), "structure").is_empty()
+		):
+			return _validate_receipt_bound_scenario_structure_runtime(root, document)
 	var object_id := String(document.get("objectId", ""))
 	if (
 		String(document.get("schema", "")) != "openbfme.playable-structure-runtime"
@@ -1981,6 +3193,14 @@ func _validate_playable_structure_runtime(root: String, document: Dictionary) ->
 		return false
 	if not _validate_playable_structure_production(registration.get("production")):
 		return false
+	var production := registration.get("production") as Dictionary
+	var scenario_admitted := _validate_playable_structure_scenario_admission(
+		registration.get("scenarioAdmission")
+	)
+	if (String(production.get("evidence", "")) == "authored-neutral-map") != scenario_admitted:
+		# Neutral map structures require the compiler's exact non-buildable
+		# admission contract; ordinary production evidence must not carry one.
+		return false
 	var gameplay_value: Variant = registration.get("gameplay")
 	if typeof(gameplay_value) != TYPE_DICTIONARY:
 		return false
@@ -1994,7 +3214,166 @@ func _validate_playable_structure_runtime(root: String, document: Dictionary) ->
 	var presentation := presentation_value as Dictionary
 	if typeof(presentation.get("ui")) != TYPE_DICTIONARY or typeof(presentation.get("audioRoutes")) != TYPE_DICTIONARY:
 		return false
-	return _validate_playable_structure_lifecycle(root, presentation.get("buildingLifecycle"), gameplay, registration.get("production") as Dictionary, maximum_health, object_id)
+	return _validate_playable_structure_lifecycle(root, presentation.get("buildingLifecycle"), gameplay, production, maximum_health, object_id)
+
+
+func _validate_receipt_bound_scenario_structure_runtime(root: String, document: Dictionary) -> bool:
+	var object_id := String(document.get("objectId", ""))
+	var row := _neutral_receipt_row_for(root, object_id, "structure")
+	if (
+		row.is_empty()
+		or String(document.get("schema", "")) != "openbfme.playable-structure-runtime"
+		or int(document.get("schemaVersion", -1)) != 0
+		or object_id == ""
+		or String(document.get("descriptorSha256", "")) != String(row.get("descriptorSha256", ""))
+		or String(document.get("recipeSha256", "")) != String(row.get("recipeSha256", ""))
+		or not _is_sha256(String(document.get("runtimeSha256", "")))
+	):
+		return false
+	var registration_value: Variant = document.get("registration")
+	if typeof(registration_value) != TYPE_DICTIONARY:
+		return false
+	var registration := registration_value as Dictionary
+	var production_value: Variant = registration.get("production")
+	if typeof(production_value) != TYPE_DICTIONARY:
+		return false
+	var production := production_value as Dictionary
+	if String(production.get("evidence", "")) != "authored-neutral-map" or typeof(production.get("routes")) != TYPE_ARRAY or not (production.get("routes") as Array).is_empty():
+		return false
+	if not _validate_playable_structure_scenario_admission(registration.get("scenarioAdmission")):
+		return false
+	for required in ["gameplay", "presentation", "unsupportedVisualReferences"]:
+		if not registration.has(required):
+			return false
+	if typeof(registration.get("gameplay")) != TYPE_DICTIONARY or typeof(registration.get("presentation")) != TYPE_DICTIONARY or typeof(registration.get("unsupportedVisualReferences")) != TYPE_ARRAY:
+		return false
+	var presentation := registration.get("presentation") as Dictionary
+	var request_value: Variant = presentation.get("deferredCustomAnimationRequest")
+	if request_value != null:
+		if typeof(request_value) != TYPE_DICTIONARY or not _validate_deferred_custom_animation_request(root, object_id, request_value as Dictionary, row):
+			return false
+	elif row.has("customAnimationPresentationSha256") or row.has("customAnimationEdgeCount"):
+		return false
+	return true
+
+
+func _validate_deferred_custom_animation_request(root: String, object_id: String, request: Dictionary, receipt_row: Dictionary) -> bool:
+	if (
+		String(request.get("schema", "")) != "openbfme.neutral-custom-animation-presentation"
+		or int(request.get("schemaVersion", -1)) != 0
+		or String(request.get("objectId", "")) != object_id
+		or String(request.get("game", "")) != _scenario_game_for_pack(root)
+		or String(request.get("animState", "")) != "USER_2"
+		or float(request.get("animTimeMs", -1.0)) != 0.0
+		or String(request.get("runtimeStatus", "")) != "deferred"
+		or String(request.get("deferredReason", "")) != "custom-animation-timing-oracle-unresolved"
+		or request.get("activationAllowed", true) != false
+		or request.get("particleEmissionAllowed", true) != false
+		or request.get("fabricatedClip", true) != false
+		or not _is_sha256(String(request.get("requestSha256", "")))
+		or String(request.get("requestSha256", "")) != String(receipt_row.get("customAnimationPresentationSha256", ""))
+		or typeof(request.get("edgeIds")) != TYPE_ARRAY
+		or (request.get("edgeIds") as Array).size() != int(receipt_row.get("customAnimationEdgeCount", -1))
+	):
+		return false
+	var attachments_value: Variant = request.get("attachments")
+	if typeof(attachments_value) != TYPE_ARRAY or (attachments_value as Array).size() != 2:
+		return false
+	var expected_particles := ["UntamedAllegiance", "UntamedAllegiance2"]
+	for index in 2:
+		var attachment_value: Variant = (attachments_value as Array)[index]
+		if typeof(attachment_value) != TYPE_DICTIONARY:
+			return false
+		var attachment := attachment_value as Dictionary
+		if (
+			String(attachment.get("particleSystemId", "")) != expected_particles[index]
+			or String(attachment.get("bone", "")) != "None"
+			or attachment.get("options") != ["HouseColor:Yes"]
+			or String(attachment.get("authored", "")) != "None %s HouseColor:Yes" % expected_particles[index]
+			or String(attachment.get("sourceObject", "")).strip_edges() == ""
+			or String(attachment.get("sourceIni", "")).strip_edges() == ""
+			or int(attachment.get("line", 0)) <= 0
+		):
+			return false
+	var closure_value: Variant = request.get("particleClosure")
+	if typeof(closure_value) != TYPE_DICTIONARY:
+		return false
+	var closure := closure_value as Dictionary
+	var bindings_value: Variant = closure.get("runtimeBindings")
+	var resources_value: Variant = closure.get("resources")
+	if (
+		String(closure.get("schema", "")) != "openbfme.ability-fx-closure"
+		or int(closure.get("schemaVersion", -1)) != 0
+		or not _is_sha256(String(closure.get("aggregateSha256", "")))
+		or typeof(bindings_value) != TYPE_DICTIONARY
+		or typeof(resources_value) != TYPE_ARRAY
+		or (resources_value as Array).is_empty()
+	):
+		return false
+	var bindings := bindings_value as Dictionary
+	if bindings.get("authoredParticleSystemIds") != expected_particles or bindings.get("presentableParticleSystemIds") != expected_particles or bindings.get("unresolved") != []:
+		return false
+	var resource_ids: Dictionary = {}
+	for resource_value in resources_value as Array:
+		if typeof(resource_value) != TYPE_DICTIONARY:
+			return false
+		var resource := resource_value as Dictionary
+		var resource_id := String(resource.get("id", ""))
+		var converter := String(resource.get("converter", ""))
+		var relative := String(resource.get("output", ""))
+		if resource_id == "" or resource_ids.has(resource_id.to_lower()) or converter not in ["texture", "sage-particle-definition"]:
+			return false
+		if (converter == "texture" and not relative.to_lower().ends_with(".png")) or (converter == "sage-particle-definition" and not relative.to_lower().ends_with(".json")):
+			return false
+		var absolute := ModLoader.resolve_pack_path(root, relative)
+		if absolute == "" or not ModLoader.path_is_within(root, absolute) or not FileAccess.file_exists(absolute):
+			return false
+		resource_ids[resource_id.to_lower()] = {"converter": converter, "output": relative}
+	var registry_value: Variant = bindings.get("definitionRegistry")
+	if typeof(registry_value) != TYPE_ARRAY:
+		return false
+	var selected_systems: Dictionary = {}
+	for definition_value in registry_value as Array:
+		if typeof(definition_value) != TYPE_DICTIONARY:
+			return false
+		var definition := definition_value as Dictionary
+		if definition.get("selectedForRuntime", false) == true:
+			var definition_id := String(definition.get("definitionResourceId", "")).to_lower()
+			var definition_resource := resource_ids.get(definition_id, {}) as Dictionary
+			if definition_resource.get("converter") != "sage-particle-definition" or definition_resource.get("output") != definition.get("definitionOutputJson"):
+				return false
+			var texture_ids_value: Variant = definition.get("textureResourceIds")
+			if typeof(texture_ids_value) != TYPE_ARRAY or (texture_ids_value as Array).is_empty():
+				return false
+			for texture_id_value in texture_ids_value as Array:
+				var texture_resource := resource_ids.get(String(texture_id_value).to_lower(), {}) as Dictionary
+				if texture_resource.get("converter") != "texture":
+					return false
+			selected_systems[String(definition.get("definitionId", ""))] = true
+	if selected_systems.size() != 2:
+		return false
+	for particle_id in expected_particles:
+		if not selected_systems.has(particle_id):
+			return false
+	return true
+
+
+func _validate_playable_structure_scenario_admission(value: Variant) -> bool:
+	if typeof(value) != TYPE_DICTIONARY:
+		return false
+	var admission := value as Dictionary
+	if (
+		admission.size() != 8
+		or String(admission.get("kind", "")) != "authored-neutral-non-buildable"
+		or String(admission.get("role", "")) not in SCENARIO_STRUCTURE_ROLES
+		or admission.get("buildCommandExposed", true) != false
+		or String(admission.get("evidence", "")) != "no-authored-construct-route"
+		or String(admission.get("sourceIni", "")).strip_edges() == ""
+		or int(admission.get("line", 0)) <= 0
+		or String(admission.get("declarationKind", "")) not in ["Object", "ChildObject"]
+	):
+		return false
+	return _validate_scenario_surfaces(admission.get("surfaces"), SCENARIO_STRUCTURE_SURFACES)
 
 
 func _validate_playable_structure_production(value: Variant) -> bool:
@@ -2058,6 +3437,8 @@ func _validate_playable_structure_gameplay(gameplay: Dictionary) -> int:
 			var slot_row := slot_value as Dictionary
 			if int(slot_row.get("slot", 0)) < 1 or String(slot_row.get("commandId", "")).strip_edges() == "":
 				return 0
+	if gameplay.has("upgradeEffects") and not _validate_structure_upgrade_effect_graph(gameplay.get("upgradeEffects")):
+		return 0
 	var health_value: Variant = gameplay.get("health")
 	if typeof(health_value) != TYPE_DICTIONARY:
 		return 0
@@ -2065,6 +3446,78 @@ func _validate_playable_structure_gameplay(gameplay: Dictionary) -> int:
 	if typeof(primary_value) != TYPE_DICTIONARY:
 		return 0
 	return _playable_structure_health_number((primary_value as Dictionary).get("maxHealth"))
+
+
+func _validate_structure_upgrade_effect_graph(value: Variant) -> bool:
+	if typeof(value) != TYPE_DICTIONARY:
+		return false
+	var graph := value as Dictionary
+	if typeof(graph.get("effects")) != TYPE_ARRAY or typeof(graph.get("unsupportedEffects")) != TYPE_ARRAY or typeof(graph.get("sourceIni")) != TYPE_ARRAY:
+		return false
+	var command_groups: Dictionary = {}
+	for effect_value in graph.get("effects") as Array:
+		if typeof(effect_value) != TYPE_DICTIONARY:
+			return false
+		var effect := effect_value as Dictionary
+		if String(effect.get("kind", "")) != "command-set-transition":
+			continue
+		var triggers_value: Variant = effect.get("triggerUpgradeIds")
+		var provenance_value: Variant = effect.get("commandSetProvenance")
+		if (
+			String(effect.get("game", "")) not in ["bfme2", "rotwk"]
+			or String(effect.get("effectId", "")).strip_edges() == ""
+			or String(effect.get("upgradeId", "")).strip_edges() == ""
+			or String(effect.get("triggerSemantics", "")) not in ["any", "all"]
+			or String(effect.get("module", "")) != "CommandSetUpgrade"
+			or String(effect.get("commandSetId", "")).strip_edges() == ""
+			or String(effect.get("descriptorStatus", "")) != "resolved"
+			or String(effect.get("runtimeStatus", "")) != "executable"
+			or String(effect.get("sourceIni", "")).strip_edges() == ""
+			or int(effect.get("line", 0)) <= 0
+			or typeof(triggers_value) != TYPE_ARRAY
+			or (triggers_value as Array).is_empty()
+			or not (triggers_value as Array).has(String(effect.get("upgradeId", "")))
+			or typeof(provenance_value) != TYPE_DICTIONARY
+		):
+			return false
+		var provenance := provenance_value as Dictionary
+		if String(provenance.get("authored", "")).strip_edges() != String(effect.get("commandSetId", "")) or String(provenance.get("sourceIni", "")) != String(effect.get("sourceIni", "")) or int(provenance.get("line", 0)) <= int(effect.get("line", 0)):
+			return false
+		if effect.has("customAnimation"):
+			var custom_value: Variant = effect.get("customAnimation")
+			if typeof(custom_value) != TYPE_DICTIONARY:
+				return false
+			var custom := custom_value as Dictionary
+			if String(custom.get("animState", "")).strip_edges() == "" or float(custom.get("animTimeMs", -1.0)) < 0.0 or String(custom.get("runtimeStatus", "")) != "deferred" or String(custom.get("deferredReason", "")) != "presentation-runtime-not-accepted":
+				return false
+		var effect_id := String(effect.get("effectId", ""))
+		var signature := {
+			"game": effect.get("game"), "triggerSemantics": effect.get("triggerSemantics"),
+			"commandSetId": effect.get("commandSetId"), "moduleTag": effect.get("moduleTag"),
+			"moduleOrdinal": effect.get("moduleOrdinal"), "commandSetProvenance": effect.get("commandSetProvenance"),
+		}
+		var group := command_groups.get(effect_id, {"triggers": (triggers_value as Array).duplicate(), "signature": signature, "edges": {}}) as Dictionary
+		if group.get("triggers") != triggers_value or group.get("signature") != signature:
+			return false
+		var edges := group.get("edges", {}) as Dictionary
+		var edge_key := String(effect.get("upgradeId", "")).to_lower()
+		if edges.has(edge_key):
+			return false
+		edges[edge_key] = true
+		group["edges"] = edges
+		command_groups[effect_id] = group
+	for group_value in command_groups.values():
+		var group := group_value as Dictionary
+		var expected: Dictionary = {}
+		for trigger_value in group.get("triggers", []) as Array:
+			expected[String(trigger_value).to_lower()] = true
+		var edges := group.get("edges", {}) as Dictionary
+		if edges.size() != expected.size():
+			return false
+		for expected_key in expected.keys():
+			if not edges.has(expected_key):
+				return false
+	return true
 
 
 func _playable_structure_health_number(value: Variant) -> int:
@@ -2628,6 +4081,167 @@ func get_playable_unit_runtime(object_id: String) -> Dictionary:
 		if String(key_value).to_lower() == folded:
 			return (playable_unit_runtimes[key_value] as Dictionary).duplicate(true)
 	return {}
+
+
+func get_scenario_unit_runtime(game: String, object_id: String, surface: String) -> Dictionary:
+	## Explicit map/tutorial/script lookup. This never participates in producer
+	## bindings or command-bar rosters: only a document carrying the exact
+	## authored-non-buildable admission contract can be returned here.
+	if surface not in SCENARIO_UNIT_SURFACES:
+		return {}
+	var document := _get_casefolded_runtime(_scenario_game_registry(scenario_unit_runtimes, game), object_id)
+	if document.is_empty():
+		return {}
+	var registration := document.get("registration", {}) as Dictionary
+	var admission_value: Variant = registration.get("scenarioAdmission")
+	if (
+		not _validate_playable_unit_scenario_admission(admission_value, String(document.get("category", "")))
+		or not ((admission_value as Dictionary).get("surfaces", []) as Array).has(surface)
+		or not (registration.get("production", []) as Array).is_empty()
+	):
+		return {}
+	return document.duplicate(true)
+
+
+func get_scenario_structure_runtime(game: String, object_id: String, surface: String) -> Dictionary:
+	if surface not in SCENARIO_STRUCTURE_SURFACES:
+		return {}
+	var document := _get_casefolded_runtime(_scenario_game_registry(scenario_structure_runtimes, game), object_id)
+	if document.is_empty():
+		return {}
+	var registration := document.get("registration", {}) as Dictionary
+	var production := registration.get("production", {}) as Dictionary
+	var admission_value: Variant = registration.get("scenarioAdmission")
+	if (
+		String(production.get("evidence", "")) != "authored-neutral-map"
+		or not (production.get("routes", []) as Array).is_empty()
+		or not _validate_playable_structure_scenario_admission(admission_value)
+		or not ((admission_value as Dictionary).get("surfaces", []) as Array).has(surface)
+	):
+		return {}
+	return document.duplicate(true)
+
+
+func get_scenario_structure_deferred_custom_animation_request(game: String, object_id: String) -> Dictionary:
+	## Evidence-only seam.  Callers can inspect the sealed prerequisite, but no
+	## presenter receives a model condition or emitter activation from this API.
+	var document := _get_casefolded_runtime(_scenario_game_registry(scenario_structure_runtimes, game), object_id)
+	if document.is_empty():
+		return {}
+	var registration := document.get("registration", {}) as Dictionary
+	var presentation := registration.get("presentation", {}) as Dictionary
+	var request_value: Variant = presentation.get("deferredCustomAnimationRequest")
+	if typeof(request_value) != TYPE_DICTIONARY:
+		return {}
+	var request := request_value as Dictionary
+	if String(request.get("runtimeStatus", "")) != "deferred" or request.get("activationAllowed", true) != false or request.get("particleEmissionAllowed", true) != false:
+		return {}
+	return request.duplicate(true)
+
+
+func get_scenario_prop_runtime(game: String, object_id: String, surface: String) -> Dictionary:
+	## Props are reachable only through the three authored passive-placement
+	## surfaces. Revalidate at lookup so direct registry mutation also fails
+	## closed, matching the scenario unit/structure seams.
+	if surface not in SCENARIO_PROP_SURFACES:
+		return {}
+	var document := _get_casefolded_runtime(_scenario_game_registry(scenario_prop_runtimes, game), object_id)
+	if document.is_empty() or not _validate_scenario_prop_runtime(document):
+		return {}
+	var admission := document.get("scenarioAdmission", {}) as Dictionary
+	if not (admission.get("surfaces", []) as Array).has(surface):
+		return {}
+	return document.duplicate(true)
+
+
+func get_scenario_pickup_runtime(game: String, object_id: String, surface: String) -> Dictionary:
+	if surface not in SCENARIO_PICKUP_SURFACES:
+		return {}
+	var document := _get_casefolded_runtime(_scenario_game_registry(scenario_pickup_runtimes, game), object_id)
+	if document.is_empty() or not _validate_scenario_pickup_runtime(document):
+		return {}
+	var admission := document.get("scenarioAdmission", {}) as Dictionary
+	if not (admission.get("surfaces", []) as Array).has(surface):
+		return {}
+	return document.duplicate(true)
+
+
+func get_scenario_pickup_runtimes(game: String) -> Dictionary:
+	var edition := game.to_lower()
+	return _registry_snapshot("scenario_pickup_runtimes:%s" % edition, _scenario_game_registry(scenario_pickup_runtimes, edition))
+
+
+func get_scenario_unit_runtimes(game: String) -> Dictionary:
+	var edition := game.to_lower()
+	return _registry_snapshot("scenario_unit_runtimes:%s" % edition, _scenario_game_registry(scenario_unit_runtimes, edition))
+
+
+func get_scenario_structure_runtimes(game: String) -> Dictionary:
+	var edition := game.to_lower()
+	return _registry_snapshot("scenario_structure_runtimes:%s" % edition, _scenario_game_registry(scenario_structure_runtimes, edition))
+
+
+func get_scenario_prop_runtimes(game: String) -> Dictionary:
+	var edition := game.to_lower()
+	return _registry_snapshot("scenario_prop_runtimes:%s" % edition, _scenario_game_registry(scenario_prop_runtimes, edition))
+
+
+func get_neutral_pack_receipt(game: String) -> Dictionary:
+	var document := neutral_pack_receipts.get(game.to_lower(), {}) as Dictionary
+	return document.duplicate(true)
+
+
+func get_neutral_pack_receipts() -> Dictionary:
+	return _registry_snapshot("neutral_pack_receipts", neutral_pack_receipts)
+
+
+func _get_casefolded_runtime(registry: Dictionary, object_id: String) -> Dictionary:
+	var folded := object_id.to_lower()
+	if registry.has(object_id) and typeof(registry[object_id]) == TYPE_DICTIONARY:
+		var exact := registry[object_id] as Dictionary
+		return exact if String(exact.get("objectId", "")).to_lower() == folded else {}
+	for key_value in registry.keys():
+		if String(key_value).to_lower() == folded and typeof(registry[key_value]) == TYPE_DICTIONARY:
+			var candidate := registry[key_value] as Dictionary
+			return candidate if String(candidate.get("objectId", "")).to_lower() == folded else {}
+	return {}
+
+
+static func _scenario_game_valid(game: String) -> bool:
+	return game.to_lower() in ["bfme2", "rotwk"]
+
+
+func _scenario_game_for_pack(root: String) -> String:
+	for game_value in neutral_pack_receipts.keys():
+		var receipt := neutral_pack_receipts[game_value] as Dictionary
+		if String(receipt.get("_pack_root", "")) == root:
+			return String(game_value).to_lower()
+	return ""
+
+
+func _scenario_game_registry(registry: Dictionary, game: String, create: bool = false) -> Dictionary:
+	var edition := game.to_lower()
+	if not _scenario_game_valid(edition):
+		return {}
+	var value: Variant = registry.get(edition)
+	if typeof(value) == TYPE_DICTIONARY:
+		return value as Dictionary
+	if not create:
+		return {}
+	registry[edition] = {}
+	return registry[edition] as Dictionary
+
+
+func _erase_scenario_registry_snapshots(name: String) -> void:
+	_registry_snapshots.erase("%s:bfme2" % name)
+	_registry_snapshots.erase("%s:rotwk" % name)
+
+
+func _registry_contains_folded_id(registry: Dictionary, folded_id: String) -> bool:
+	for key_value in registry.keys():
+		if String(key_value).to_lower() == folded_id:
+			return true
+	return false
 
 
 func get_playable_unit_runtime_for_member(member_object_id: String) -> Dictionary:

@@ -80,6 +80,36 @@ const FORDS_AMBIENT_TYPE_EVENT_IDS: Dictionary = {
 	"AmbStream_AmonHenForest1": "AmbientAmonHenForest1Stream",
 }
 const FORDS_AMBIENT_PLACEMENT_COUNT := 50
+## Retail soundeffects.ini:229-230. The audio-event document preserves macro
+## tokens, so runtime resolves only these two exact authored defines.
+const FORDS_AMBIENT_RANGE_DEFINES := {
+	"AMB_MIN_RANGE": 300.0,
+	"AMB_MAX_RANGE": 800.0,
+}
+
+## Effective retail soundeffects.ini:8050-8070. The currently published Men
+## packs contain these exact WAV leaves (because GondorFarm references them)
+## but their global audio-events registry omitted the two logical event rows.
+## Keep this bounded compatibility bridge source-exact and fail closed if any
+## authored leaf is absent; it can be retired once the registry emits them.
+const AUTHORED_STRUCTURE_DAMAGE_EVENTS := {
+	"BuildingLightDamageWood": {
+		"samples": ["WIBuild_damaW1a", "WIBuild_damaW1b", "WIBuild_damaR1d"],
+		"parameters": [
+			{"field": "Volume", "value": "110"}, {"field": "VolumeShift", "value": "-10"},
+			{"field": "PitchShift", "value": "-10 10"}, {"field": "Priority", "value": "normal"},
+			{"field": "Type", "value": "world shrouded everyone"}, {"field": "SubmixSlider", "value": "SoundFX"},
+		],
+	},
+	"BuildingHeavyDamageWood": {
+		"samples": ["WIBuild_damaW2a", "WIBuild_damaW2b"],
+		"parameters": [
+			{"field": "Volume", "value": "110"}, {"field": "VolumeShift", "value": "-10"},
+			{"field": "PitchShift", "value": "-10 10"}, {"field": "Priority", "value": "normal"},
+			{"field": "Type", "value": "world shrouded everyone"}, {"field": "SubmixSlider", "value": "SoundFX"},
+		],
+	},
+}
 
 const MUSIC_STATES: Array[String] = ["explore", "battle", "victory", "defeat"]
 const MUSIC_CROSSFADE_SECONDS := 1.5
@@ -149,6 +179,7 @@ var _music_rng := RandomNumberGenerator.new()
 # is exposed separately and never substitutes Soldier samples for another unit.
 var voice_streams: Dictionary = {"select": [], "attack": []}
 var audio_event_routes: Dictionary = {}
+var typed_selector_intents: Array[Dictionary] = []
 var declared_structure_lifecycle_audio_active := false
 var roster_voice_routes: Dictionary = {}
 ## Alt-form (mounted/knight) voice candidates per object/kind, bound from the
@@ -272,6 +303,7 @@ func configure(selected_pack_root: String, enable_playback: bool = true, active_
 	music_director = null
 	voice_streams = {"select": [], "attack": []}
 	audio_event_routes.clear()
+	typed_selector_intents.clear()
 	roster_voice_routes.clear()
 	roster_voice_form_routes.clear()
 	playable_unit_audio_events.clear()
@@ -709,6 +741,7 @@ func _instantiate_fords_ambient_emitter(placement: Dictionary) -> void:
 		return
 	var definition: Dictionary = route.get("definition", {})
 	var parameters := _ambient_parameters(definition)
+	var runtime_parameters := _ambient_runtime_parameters(event_id, parameters, placement_index)
 	for gap in _ambient_parameter_gaps(event_id, definition, parameters):
 		_add_ambient_diagnostic(gap)
 	var player := AudioStreamPlayer3D.new()
@@ -716,16 +749,20 @@ func _instantiate_fords_ambient_emitter(placement: Dictionary) -> void:
 	player.stream = stream as AudioStream
 	var source_position := position_value as Array
 	player.position = Vector3(float(source_position[0]), float(source_position[1]), float(source_position[2]))
-	var min_range := _strict_positive_float(String(parameters.get("minrange", "")))
-	var max_range := _strict_positive_float(String(parameters.get("maxrange", "")))
+	var min_range := float(runtime_parameters.get("min_range", -1.0))
+	var max_range := float(runtime_parameters.get("max_range", -1.0))
 	if min_range > 0.0 and max_range >= min_range:
 		player.unit_size = min_range
 		player.max_distance = max_range
+	player.pitch_scale = float(runtime_parameters.get("pitch_scale", 1.0))
+	var linear_gain := float(runtime_parameters.get("linear_gain", 1.0))
+	player.volume_db = linear_to_db(linear_gain) if linear_gain > 0.0 else -80.0
 	player.set_meta("retail_audio_event_id", event_id)
 	player.set_meta("retail_audio_type_name", type_name)
 	player.set_meta("retail_audio_placement_index", placement_index)
 	player.set_meta("retail_audio_path", path)
 	player.set_meta("retail_audio_parameters", parameters.duplicate(true))
+	player.set_meta("retail_audio_runtime_parameters", runtime_parameters.duplicate(true))
 	player.set_meta("retail_audio_loop_control", String(parameters.get("control", "")).to_lower() == "loop")
 	add_child(player)
 	ambient_players.append(player)
@@ -782,8 +819,8 @@ func _ambient_parameters(definition: Dictionary) -> Dictionary:
 func _ambient_parameter_gaps(event_id: String, definition: Dictionary, parameters: Dictionary = {}) -> Array[String]:
 	var parsed := parameters if not parameters.is_empty() else _ambient_parameters(definition)
 	var gaps: Array[String] = []
-	var min_range := _strict_positive_float(String(parsed.get("minrange", "")))
-	var max_range := _strict_positive_float(String(parsed.get("maxrange", "")))
+	var min_range := _resolve_ambient_distance(String(parsed.get("minrange", "")))
+	var max_range := _resolve_ambient_distance(String(parsed.get("maxrange", "")))
 	if min_range <= 0.0 or max_range < min_range:
 		gaps.append("unsupported-range:%s:%s:%s" % [event_id, String(parsed.get("minrange", "missing")), String(parsed.get("maxrange", "missing"))])
 	else:
@@ -792,12 +829,75 @@ func _ambient_parameter_gaps(event_id: String, definition: Dictionary, parameter
 		gaps.append("unsupported-loop-scheduler:%s" % event_id)
 	else:
 		gaps.append("unsupported-control:%s:%s" % [event_id, String(parsed.get("control", "missing"))])
-	for field in ["priority", "limit", "pitchshift", "delay", "volumeshift", "volume", "submixslider", "attack", "decay"]:
-		if parsed.has(field):
-			gaps.append("unsupported-%s:%s:%s" % [field, event_id, String(parsed[field])])
+	if parsed.has("priority"):
+		gaps.append("unproven-priority-arbitration:%s:%s" % [event_id, String(parsed.priority)])
+	if parsed.has("limit"):
+		gaps.append("unproven-concurrent-limit-scheduler:%s:%s" % [event_id, String(parsed.limit)])
+	if parsed.has("pitchshift") or parsed.has("delay") or parsed.has("volumeshift"):
+		gaps.append("unproven-retail-audio-rng-seed:%s" % event_id)
+	if parsed.has("volume") or parsed.has("volumeshift"):
+		gaps.append("unproven-miles-to-godot-gain-equivalence:%s" % event_id)
+	if parsed.has("submixslider"):
+		gaps.append("unsupported-submixslider:%s:%s" % [event_id, String(parsed.submixslider)])
+	if parsed.has("attack") or parsed.has("decay"):
+		gaps.append("unsupported-attack-decay-envelope:%s" % event_id)
 	if not String(parsed.get("type", "")).to_lower().split(" ").has("world"):
 		gaps.append("unsupported-type:%s:%s" % [event_id, String(parsed.get("type", "missing"))])
 	return gaps
+
+
+func _ambient_runtime_parameters(event_id: String, parameters: Dictionary, placement_index: int) -> Dictionary:
+	var pitch := _number_range(String(parameters.get("pitchshift", "0")), 0.0)
+	var delay := _number_range(String(parameters.get("delay", "0")), 0.0)
+	var volume_shift := _number_range(String(parameters.get("volumeshift", "0")), 0.0)
+	var pitch_fraction := _ambient_fraction("%s:%d:pitch" % [event_id, placement_index])
+	var delay_fraction := _ambient_fraction("%s:%d:delay" % [event_id, placement_index])
+	var volume_fraction := _ambient_fraction("%s:%d:volume" % [event_id, placement_index])
+	var pitch_percent := lerpf(float(pitch.x), float(pitch.y), pitch_fraction)
+	var delay_ms := lerpf(float(delay.x), float(delay.y), delay_fraction)
+	# Retail AudioEventRTS chooses VolumeShift uniformly between 1+shift and 1.
+	var shift_percent := lerpf(float(volume_shift.x), float(volume_shift.y), volume_fraction)
+	var volume_percent := clampf(float(String(parameters.get("volume", "100"))), 0.0, 100.0)
+	return {
+		"min_range": _resolve_ambient_distance(String(parameters.get("minrange", ""))),
+		"max_range": _resolve_ambient_distance(String(parameters.get("maxrange", ""))),
+		"pitch_percent": pitch_percent,
+		"pitch_scale": maxf(0.01, 1.0 + pitch_percent / 100.0),
+		"delay_ms": maxf(0.0, delay_ms),
+		"volume_percent": volume_percent,
+		"volume_shift_percent": shift_percent,
+		"linear_gain": (volume_percent / 100.0) * clampf(1.0 + shift_percent / 100.0, 0.0, 1.0),
+		"control": String(parameters.get("control", "")).to_lower(),
+		"priority": String(parameters.get("priority", "")).to_lower(),
+		"limit": maxi(0, int(String(parameters.get("limit", "0")))),
+		"type_tokens": Array(String(parameters.get("type", "")).to_lower().split(" ", false)),
+		"submix": String(parameters.get("submixslider", "")),
+		"attack_sample_id": String(parameters.get("attack", "")),
+		"decay_sample_id": String(parameters.get("decay", "")),
+		"selection": "deterministic-substitute-unproven-retail-rng-seed",
+	}
+
+
+func _resolve_ambient_distance(value: String) -> float:
+	if FORDS_AMBIENT_RANGE_DEFINES.has(value):
+		return float(FORDS_AMBIENT_RANGE_DEFINES[value])
+	return _strict_positive_float(value)
+
+
+func _number_range(value: String, fallback: float) -> Vector2:
+	var tokens := value.split(" ", false)
+	if tokens.is_empty() or not String(tokens[0]).is_valid_float():
+		return Vector2(fallback, fallback)
+	var first := float(tokens[0])
+	var second := first
+	if tokens.size() >= 2 and String(tokens[1]).is_valid_float():
+		second = float(tokens[1])
+	return Vector2(minf(first, second), maxf(first, second))
+
+
+func _ambient_fraction(key: String) -> float:
+	var prefix := key.sha256_text().substr(0, 8)
+	return float(prefix.hex_to_int()) / 4294967295.0
 
 
 func _strict_positive_float(value: String) -> float:
@@ -1248,6 +1348,29 @@ func _consume_event(event: Dictionary) -> void:
 		_play_first_unit_event(summoned_object_id, "created", sequence)
 	elif kind == "production.queued":
 		_play_first_unit_event(String(event.get("unit_type", "")), "purchase", sequence, String(event.get("command_id", "")))
+	elif kind == "audio.typed_selector":
+		var event_id := String(event.get("event_id", ""))
+		var routed := route_audio_event(event_id, sequence)
+		var receipt := {"sequence": sequence, "entity_id": entity_id, "event_id": event_id, "sound_role": String(event.get("sound_role", "")), "priority": int(event.get("priority", 0)), "rng_receipt": String(event.get("rng_receipt", "")), "accepted": bool(routed.get("ok", false)), "reason": String(routed.get("reason", ""))}
+		typed_selector_intents.append(receipt)
+		_play_routed(routed, voice_player)
+	elif kind == "transport.enter":
+		# The contain module's mechanical EnterSound and the passenger object's
+		# VoiceEnterUnit* acknowledgement are separate authored routes. The sim
+		# emits this event only after containment succeeds, so rejected/full loads
+		# cannot make either sound. Specific-ship candidates precede the generic
+		# transport candidate; take the first resolvable route exactly once.
+		var enter_sound := String(event.get("sound", ""))
+		if enter_sound != "":
+			_play_sfx(route_audio_event(enter_sound, sequence))
+		for candidate_value in event.get("voice_candidates", []) as Array:
+			var candidate := String(candidate_value)
+			if candidate == "":
+				continue
+			var acknowledgement := route_audio_event(candidate, sequence)
+			if bool(acknowledgement.get("ok", false)):
+				_play_routed(acknowledgement, voice_player)
+				break
 	elif kind.begins_with("music."):
 		_set_music(kind.trim_prefix("music."))
 	elif kind == "voice.select":
@@ -1499,11 +1622,39 @@ func _play_structure_stage_sound(doc_id: String, generic_id: String, sequence: i
 	## generic plays instead — the same fallback the slice always used — so a
 	## converted-but-unmounted id never silences a building.
 	if doc_id != "":
+		_ensure_authored_structure_damage_route(doc_id)
 		var doc_result := route_audio_event(doc_id, sequence)
 		if bool(doc_result.get("ok", false)):
 			_play_sfx(doc_result)
 			return
 	_play_sfx(route_audio_event(generic_id, sequence))
+
+
+func _ensure_authored_structure_damage_route(event_id: String) -> void:
+	var key := event_id.to_lower()
+	if audio_event_routes.has(key) or not AUTHORED_STRUCTURE_DAMAGE_EVENTS.has(event_id):
+		return
+	var content_db := get_node_or_null("/root/ContentDB")
+	if content_db == null:
+		return
+	var authored: Dictionary = AUTHORED_STRUCTURE_DAMAGE_EVENTS[event_id]
+	var leaves: Array[Dictionary] = []
+	for sample_value in authored.get("samples", []):
+		var sample_id := String(sample_value)
+		var relative := "audio/men/%s.wav" % sample_id.to_lower()
+		var path := String(content_db.call("resolve_asset", relative, pack_root))
+		if path == "" or not _is_resolved_audio_path(path) or not _has_supported_audio_header(path):
+			return
+		leaves.append({"sample_id": sample_id, "path": path, "stream": null, "validated_path": true, "weight": 1})
+	if leaves.size() != Array(authored.get("samples", [])).size():
+		return
+	audio_event_routes[key] = {
+		"event_id": event_id,
+		"source": "retail-source-exact-registry-compatibility",
+		"definition": {"parameters": Array(authored.get("parameters", [])).duplicate(true)},
+		"leaves": leaves,
+	}
+	route_failures.erase(key)
 
 
 func _structure_contract_event(role: String, structure_kind: String) -> String:
@@ -2055,6 +2206,98 @@ func play_declared_structure_event(event_id: String, sequence: int, structure_id
 		"entity_id": structure_id,
 		"phase": phase,
 		"event_id": event_id,
+		"accepted": bool(result.get("ok", false)),
+		"reason": String(result.get("reason", "")),
+	})
+	return _observable_route_result(result) if bool(result.get("ok", false)) else result.duplicate(true)
+
+
+func play_sealed_scenario_event(
+	event_id: String,
+	audio_closure: Dictionary,
+	outputs: Array,
+	route_pack_root: String,
+	origin: Vector3,
+	sequence: int
+) -> Dictionary:
+	## A neutral-prop death closure is intentionally self-contained: it may be
+	## supplied before the newly addressed pack has been selected, so it cannot
+	## borrow a same-named ContentDB event. Rebuild the one authored AudioEvent
+	## from its sealed closure and send it through the normal retail SFX mixer.
+	## There is no filename/event fallback and every sealed leaf is contained and
+	## header-validated before deterministic weighted selection.
+	if (
+		event_id == "" or not event_id.is_valid_identifier()
+		or route_pack_root == "" or origin == Vector3.INF or sequence <= 0
+		or typeof(audio_closure.get("rootIds")) != TYPE_ARRAY
+		or not (audio_closure.get("rootIds", []) as Array).has(event_id)
+		or typeof(audio_closure.get("sampleIds")) != TYPE_ARRAY
+		or outputs.is_empty()
+	):
+		return _rejection("invalid_sealed_scenario_event", event_id, "", "scenario-death-fx", sequence)
+	var sample_ids := audio_closure.get("sampleIds", []) as Array
+	if sample_ids.size() != outputs.size():
+		return _rejection("sealed_scenario_sample_binding_drifted", event_id, "", "scenario-death-fx", sequence)
+	var mod_loader := get_node_or_null("/root/ModLoader")
+	if mod_loader == null:
+		return _rejection("sealed_scenario_pack_resolver_is_unavailable", event_id, "", "scenario-death-fx", sequence)
+	var output_by_sample: Dictionary = {}
+	for index in sample_ids.size():
+		var sample_id := String(sample_ids[index])
+		var relative := String(outputs[index])
+		var resolved := String(mod_loader.call("resolve_pack_path", route_pack_root, relative))
+		if (
+			sample_id == "" or output_by_sample.has(sample_id.to_lower())
+			or resolved == "" or not FileAccess.file_exists(resolved)
+			or not bool(mod_loader.call("path_is_within", route_pack_root, resolved))
+			or not _is_resolved_audio_path(resolved)
+			or not _has_supported_audio_header(resolved)
+		):
+			return _rejection("sealed_scenario_sample_is_invalid", event_id, "", "scenario-death-fx", sequence)
+		output_by_sample[sample_id.to_lower()] = {"id": sample_id, "path": resolved}
+	var definition: Dictionary = {}
+	for row_value in audio_closure.get("events", []) as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			return _rejection("sealed_scenario_audio_closure_is_invalid", event_id, "", "scenario-death-fx", sequence)
+		var row := row_value as Dictionary
+		if String(row.get("id", "")).nocasecmp_to(event_id) == 0:
+			if not definition.is_empty():
+				return _rejection("sealed_scenario_event_is_ambiguous", event_id, "", "scenario-death-fx", sequence)
+			definition = row
+	if definition.is_empty() or typeof(definition.get("sounds")) != TYPE_ARRAY:
+		return _rejection("sealed_scenario_event_definition_is_missing", event_id, "", "scenario-death-fx", sequence)
+	var leaves: Array[Dictionary] = []
+	for reference_value in definition.get("sounds", []) as Array:
+		if typeof(reference_value) != TYPE_DICTIONARY:
+			return _rejection("sealed_scenario_event_reference_is_invalid", event_id, "", "scenario-death-fx", sequence)
+		var reference := reference_value as Dictionary
+		var sample_id := String(reference.get("id", ""))
+		var weight := _reference_weight(reference)
+		var bound := output_by_sample.get(sample_id.to_lower(), {}) as Dictionary
+		if bound.is_empty() or weight <= 0:
+			return _rejection("sealed_scenario_event_reference_is_unbound", event_id, "", "scenario-death-fx", sequence)
+		leaves.append({
+			"sample_id": String(bound.get("id", "")),
+			"path": String(bound.get("path", "")),
+			"stream": null,
+			"validated_path": true,
+			"weight": weight,
+		})
+	if leaves.is_empty():
+		return _rejection("sealed_scenario_event_has_no_leaves", event_id, "", "scenario-death-fx", sequence)
+	var result := _route_definition({
+		"event_id": event_id,
+		"source": "sealed-neutral-prop-death-fx",
+		"definition": definition.duplicate(true),
+		"leaves": leaves,
+	}, sequence, "", "scenario-death-fx")
+	result["origin"] = origin
+	result["sealedLeafCount"] = leaves.size()
+	if bool(result.get("ok", false)):
+		_play_sfx(result)
+	_append_bounded_observability(intent_log, {
+		"kind": "scenario.prop.death.audio", "sequence": sequence,
+		"event_id": event_id, "origin": origin,
 		"accepted": bool(result.get("ok", false)),
 		"reason": String(result.get("reason", "")),
 	})

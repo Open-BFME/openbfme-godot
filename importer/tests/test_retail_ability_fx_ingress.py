@@ -337,19 +337,25 @@ class TestClosure:
             == "authored definition has no convertible render leaf"
         )
 
-    def test_cross_family_duplicate_preserves_both_candidates_unresolved(self) -> None:
+    def test_cross_family_duplicate_preserves_both_and_selects_proven_fx_candidate(self) -> None:
         closure = _closure(["FX_TelekinesisAtBone"], legacy=True)
         bindings = closure["runtimeBindings"]
         assert bindings["familyResolution"] == {
             "duplicateIdentifierSystemIds": ["GandalfWaveBlastWave"],
-            "crossFamilyPrecedenceProven": False,
+            "crossFamilyPrecedenceProven": True,
+            "selectedKind": "FXParticleSystem",
+            "status": "proven-effective-fx-manager-family",
+            "legacySubsystemActive": False,
         }
-        kinds = sorted(
-            row["kind"]
+        candidates = sorted(
+            (row["kind"], row["selectedForRuntime"])
             for row in bindings["definitionRegistry"]
             if row["definitionId"] == "GandalfWaveBlastWave"
         )
-        assert kinds == ["FXParticleSystem", "ParticleSystem"]
+        assert candidates == [
+            ("FXParticleSystem", True),
+            ("ParticleSystem", False),
+        ]
 
     def test_resources_are_namespaced_by_owner(self) -> None:
         gandalf = _closure(["FX_TelekinesisAtBone"], namespace="GondorGandalf")

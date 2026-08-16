@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import copy
 from pathlib import Path
 import tempfile
 import unittest
@@ -182,6 +183,70 @@ class PrivateMenDamageEffectsTests(unittest.TestCase):
         self.assertEqual(coverage["missingFxListIds"], [])
         self.assertEqual(coverage["resourceDeltaCount"], 0)
         self.assertEqual(self.current_contract["summary"], self.contract["summary"])
+
+    def test_proven_fx_manager_family_propagates_to_new_damage_duplicates(self) -> None:
+        profile = copy.deepcopy(self.profile)
+        family = profile["runtime_data"][
+            "effects/fords-particle-bindings.json"
+        ]["familyResolution"]
+        new_damage_duplicates = {
+            "FireBuildingLarge",
+            "FireBuildingMedium",
+            "FireBuildingSmall",
+            "SmokeBuildingMedium",
+        }
+        duplicate_ids = [
+            value
+            for value in family["duplicateIdentifierSystemIds"]
+            if value not in new_damage_duplicates
+        ]
+        family.update(
+            {
+                "status": "proven-effective-fx-manager-family",
+                "noGeneralPrecedenceRule": False,
+                "duplicateSemantics": {
+                    "crossFamilyPrecedence": "proven-fx-manager-only",
+                    "legacySubsystemActive": False,
+                    "repeatedFxParticleSystemSyntax": "proven-last-definition-wins",
+                },
+                "runtimeSelections": [
+                    {
+                        "particleSystemId": system_id,
+                        "status": "proven-effective-fx-manager-family",
+                        "selectedKind": "FXParticleSystem",
+                        "crossFamilyPrecedenceProven": True,
+                        "generalizesToOtherDuplicateIdentifiers": True,
+                    }
+                    for system_id in duplicate_ids
+                ],
+                "unresolvedDuplicateIdentifierSystemIds": [],
+                "duplicateIdentifierSystemIds": duplicate_ids,
+            }
+        )
+        contract = build_contract(EFFECTIVE_ROOT, profile, self.manifest)
+        definitions = {
+            row["particleSystemId"]: row for row in contract["particleDefinitions"]
+        }
+        self.assertEqual(
+            definitions["FireBuildingMedium"]["familyResolution"],
+            {
+                "status": "proven-effective-fx-manager-family",
+                "selectedKind": "FXParticleSystem",
+                "crossFamilyPrecedenceProven": True,
+                "generalizesToOtherDuplicateIdentifiers": True,
+            },
+        )
+        patch = contract["profileFragmentProposal"]["runtimeDataPatch"]
+        self.assertEqual(patch["unresolvedDuplicateIdentifierSystemIdsAppend"], [])
+        self.assertEqual(
+            patch["provenFxDuplicateIdentifierSystemIdsAppend"],
+            [
+                "FireBuildingLarge",
+                "FireBuildingMedium",
+                "FireBuildingSmall",
+                "SmokeBuildingMedium",
+            ],
+        )
 
 
 if __name__ == "__main__":

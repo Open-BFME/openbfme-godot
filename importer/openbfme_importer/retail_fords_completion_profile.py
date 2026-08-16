@@ -327,10 +327,10 @@ EXPECTED_SUMMARIES: dict[str, dict[str, int]] = {
         "particleSystemIdCount": 10,
         "placementCount": 15,
         "profileResourceCount": 27,
-        "provisionalRuntimeSelectionCount": 1,
+        "runtimeSelectionCount": 7,
         "targetTypeCount": 4,
         "textureResourceCount": 9,
-        "unresolvedFamilySelectionCount": 6,
+        "unresolvedFamilySelectionCount": 0,
     },
     AMBIENT_AUDIO_SCHEMA: {
         "ambientStreamCount": 1,
@@ -1017,21 +1017,49 @@ def _merge_men_damage_effects_runtime(
         patch.get("unresolvedDuplicateIdentifierSystemIdsAppend"),
         "Men damage unresolved duplicate append",
     )
+    new_proven_fx = _array(
+        patch.get("provenFxDuplicateIdentifierSystemIdsAppend", []),
+        "Men damage proven FX duplicate append",
+    )
     for system_id in new_unresolved:
         if system_id in duplicate_ids or system_id in unresolved_ids:
             raise ValueError("Men damage-effects unresolved duplicate append collides")
         duplicate_ids.append(system_id)
         unresolved_ids.append(system_id)
-    if not set(MEN_DAMAGE_EFFECTS_DUPLICATE_IDS) <= set(unresolved_ids):
-        raise ValueError("Men damage-effects cross-family blocker is incomplete")
-    family["blocker"] = (
-        "The retail oracle proves one unqualified runtime namespace and "
-        "last-definition-wins for repeated FX syntax, but cross-family precedence "
-        "remains unresolved for all ten Men damage systems. Preserve both authored "
-        "candidates and fail closed; the explicit WaterRipplesSmall provisional FX "
-        "selection does not generalize."
-    )
-    return len(registry_append), len(upserts), len(new_unresolved)
+    selections = _array(family.get("runtimeSelections", []), "particle runtime selections")
+    selection_ids = {
+        str(_mapping(row, "particle runtime selection").get("particleSystemId"))
+        for row in selections
+    }
+    for system_id in new_proven_fx:
+        if system_id in duplicate_ids or system_id in unresolved_ids or system_id in selection_ids:
+            raise ValueError("Men damage-effects proven FX duplicate append collides")
+        duplicate_ids.append(system_id)
+        selections.append(
+            {
+                "particleSystemId": system_id,
+                "status": "proven-effective-fx-manager-family",
+                "selectedKind": "FXParticleSystem",
+                "crossFamilyPrecedenceProven": True,
+                "generalizesToOtherDuplicateIdentifiers": True,
+            }
+        )
+        selection_ids.add(system_id)
+    if family.get("status") == "proven-effective-fx-manager-family":
+        if set(duplicate_ids) != selection_ids or unresolved_ids:
+            raise ValueError("Men damage-effects proven FX family closure is incomplete")
+        family["proof"] = (
+            "Retail registers only TheFXParticleSystemManager and the supported "
+            "game.dat binaries have no legacy ParticleSystem.ini load literal."
+        )
+    else:
+        if not set(MEN_DAMAGE_EFFECTS_DUPLICATE_IDS) <= set(unresolved_ids):
+            raise ValueError("Men damage-effects cross-family blocker is incomplete")
+        family["blocker"] = (
+            "Cross-family precedence is not proven by this input contract; preserve "
+            "both authored candidates and fail closed."
+        )
+    return len(registry_append), len(upserts), len(new_unresolved) + len(new_proven_fx)
 
 
 def _merge_men_damage_audio_registry(

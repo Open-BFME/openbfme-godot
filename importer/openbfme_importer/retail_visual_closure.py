@@ -913,12 +913,21 @@ def _object_summaries(graph: TypedVisualGraph) -> list[dict[str, object]]:
                 "provenance": module.provenance.neutral(),
                 "referenceCount": len(module.references)
                 + sum(len(state.references) for state in module.states),
+                "drawableActions": [
+                    action.neutral() for action in module.drawable_actions
+                ],
                 "states": [
                     {
                         "family": state.family,
                         "conditions": list(state.conditions),
                         "lifecyclePhases": list(state.lifecycle_phases),
                         "referenceCount": len(state.references),
+                        "drawableActions": [
+                            action.neutral() for action in state.drawable_actions
+                        ],
+                        "properties": [
+                            prop.neutral() for prop in state.properties
+                        ],
                         "provenance": state.provenance.neutral(),
                     }
                     for state in module.states

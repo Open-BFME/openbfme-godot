@@ -8,7 +8,7 @@ visual bindings and resolved audio/image leaves when those stages are ready.
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -20,7 +20,21 @@ import threading
 
 from .module_contracts import (
     ModuleContractError,
+    compile_activate_module_special_powers,
     compile_all_module_contracts,
+    compile_dominate_enemy_special_powers,
+    compile_grab_passenger_special_powers,
+    compile_fling_passenger_special_ability_updates,
+    compile_transport_contains,
+    compile_temporarily_defect_update_default,
+    compile_repair_special_powers,
+    compile_horde_dispatch_special_powers,
+    compile_stop_special_powers,
+    compile_siege_deploy_special_powers,
+    compile_toggle_deploy_special_ability_updates,
+    compile_special_disguise_updates,
+    compile_unleash_special_powers,
+    compile_weapon_mode_special_power_updates,
     validate_module_contracts,
 )
 from .retail_men_damage_effects import parse_fx_lists
@@ -37,6 +51,7 @@ from .sage_audio import (
     faction_voice_equivalence_provenance,
     normalize_faction_voice_event,
 )
+from .faction_census import object_audio_definition_routes
 
 
 SCHEMA = "openbfme.playable-unit-descriptor"
@@ -64,6 +79,9 @@ class PlayableUnitCompilerInputs:
     command_buttons: Mapping[str, IniBlock]
     player_templates: Mapping[str, IniBlock]
     numeric_defines: Mapping[str, int | float]
+    numeric_define_provenance: Mapping[str, Mapping[str, object]]
+    token_defines: Mapping[str, tuple[str, ...]]
+    token_define_provenance: Mapping[str, Mapping[str, object]]
     object_parse_errors: Mapping[str, str]
     # Lazy per-kind indexes filled during a faction batch (not part of identity).
     flat_kind_cache: dict[str, tuple[IniBlock, ...]] = field(
@@ -681,7 +699,6 @@ def _resolved_percent_expression(
     expression: str, constants: Mapping[str, int | float]
 ) -> int | float | None:
     """Resolve one percent-suffixed expression (``100.0%``) to its number."""
-
     token = expression.strip()
     if token.endswith("%"):
         token = token[:-1].strip()
@@ -1035,7 +1052,13 @@ def _named_definition_values(
             stripped = raw.strip()
             if not active:
                 header_text = stripped.split(";", 1)[0].split("//", 1)[0].strip()
-                if raw.lstrip() == raw and header.fullmatch(header_text):
+                # BFME2 1.06 authors GondorTrebuchetRockWarhead_Structural's
+                # top-level ``Weapon`` header with one leading tab. SAGE
+                # accepts that whitespace; the definition still closes at the
+                # next column-zero End. Match the exact stripped header while
+                # retaining the column-zero terminator below so nested nugget
+                # End rows cannot truncate the definition.
+                if header.fullmatch(header_text):
                     active = True
                 continue
             if raw.lstrip() == raw and stripped.casefold() == "end":
@@ -1447,6 +1470,7 @@ def _simulation_contract(
     documents: Mapping[str, bytes],
     container_lineage: Sequence[SageObject],
     *,
+    token_defines: Mapping[str, tuple[str, ...]] | None = None,
     flat_kind_cache: dict[str, tuple[IniBlock, ...]] | None = None,
     named_definition_cache: dict[
         tuple[str, str], dict[str, list[dict[str, object]]] | None
@@ -1458,8 +1482,26 @@ def _simulation_contract(
     destroy_die_policies: Sequence[Mapping[str, object]] = (),
     module_contracts: Sequence[Mapping[str, object]] = (),
     slow_death_fades: Sequence[Mapping[str, object]] = (),
+    scenario_admission: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     resolved: dict[str, object] = {}
+    scenario_only = (
+        isinstance(scenario_admission, Mapping)
+        and isinstance(scenario_admission.get("role"), str)
+        and isinstance(scenario_admission.get("surfaces"), list)
+        and bool(scenario_admission.get("surfaces"))
+    )
+    if scenario_only:
+        source_owner = member_lineage[-1]
+        resolved["scenarioOnly"] = {
+            "value": True,
+            "disposition": "explicit-scenario-admission",
+            "evidence": "no-authored-unit-build-route",
+            "sourceIni": source_owner.source_virtual_path,
+            "line": source_owner.line,
+            "role": str(scenario_admission.get("role", "")),
+            "surfaces": list(scenario_admission.get("surfaces", [])),
+        }
     required = {
         "buildCost": (container_fields, "BuildCost"),
         "buildTimeSeconds": (container_fields, "BuildTime"),
@@ -1470,7 +1512,15 @@ def _simulation_contract(
     for output_name, (owner, source_name) in required.items():
         row = _resolved_scalar(owner, source_name, constants)
         if row is None:
-            missing.append(output_name)
+            # Scenario-only objects have no production route, so the exact
+            # absence of production numbers is evidence rather than a zero.
+            # A present-but-malformed row still fails closed.
+            if not (
+                scenario_only
+                and source_name in {"BuildCost", "BuildTime", "CommandPoints"}
+                and source_name not in owner
+            ):
+                missing.append(output_name)
         else:
             resolved[output_name] = row
     health = _effective_body_health(member_lineage, constants)
@@ -1511,6 +1561,14 @@ def _simulation_contract(
     )
     if shroud_clearing is not None:
         resolved["shroudClearingRange"] = shroud_clearing
+    bounty = _resolved_scalar(member_fields, "BountyValue", constants)
+    if "BountyValue" in member_fields and bounty is None:
+        missing.append("bountyValue")
+    elif bounty is not None:
+        if float(bounty["value"]) < 0.0:
+            missing.append("bountyValue.nonNegative")
+        else:
+            resolved["bountyValue"] = bounty
     member_count = sum(int(row.get("count", 0)) for row in members)
     if member_count <= 0:
         missing.append("memberCount")
@@ -1817,7 +1875,48 @@ def _simulation_contract(
             }
         resolved["combat"] = combat
     else:
-        missing.append("combat.weapon")
+        kind_of = set(_kind_of(member_lineage, token_defines))
+        passive_modules = {
+            "aiupdateinterface",
+            "animalaiupdate",
+            "physicsbehavior",
+            "slowdeathbehavior",
+            "squishcollide",
+        }
+        module_kinds = {
+            str(row.get("module", "")).casefold() for row in module_contracts
+        }
+        explicitly_passive = bool(
+            kind_of & {"INERT", "NOT_AUTOACQUIRABLE", "NO_COLLIDE"}
+        )
+        explicitly_hostile = bool(kind_of & {"CAN_ATTACK", "CREEP", "MONSTER"})
+        has_crush_weapon = isinstance(member_fields.get("CrushWeapon"), Mapping)
+        if (
+            scenario_only
+            and explicitly_passive
+            and not explicitly_hostile
+            and not has_crush_weapon
+            and module_kinds <= passive_modules
+        ):
+            resolved["combat"] = {
+                "disposition": "noncombatant",
+                "evidence": "no-effective-weapon-or-damage-route",
+                "kindOfEvidence": sorted(
+                    kind_of & {"INERT", "NOT_AUTOACQUIRABLE", "NO_COLLIDE"}
+                ),
+            }
+            if any(
+                str(row.get("module", "")).casefold() == "slowdeathbehavior"
+                and row.get("runtimeStatus") != "executable"
+                for row in module_contracts
+            ):
+                # SlowDeath is not evidence of a combat weapon, but its
+                # destruction lifecycle is still gameplay.  Keep the exact
+                # scenario noncombatant proof while failing readiness on the
+                # typed deferred contract instead of inventing combat.
+                missing.append("moduleContracts.SlowDeathBehavior")
+        else:
+            missing.append("combat.weapon")
     permanent_weapon_locks = _permanent_weapon_locks(member_lineage, weapon_id)
     if permanent_weapon_locks:
         resolved["permanentWeaponLocks"] = permanent_weapon_locks
@@ -1844,9 +1943,10 @@ def _simulation_contract(
         resolved["weaponModeGaps"] = weapon_mode_gaps
     combat_value = resolved.get("combat", {})
     if isinstance(combat_value, Mapping):
-        for field in ("attackRange", "delayBetweenShotsMs", "preAttackDelayMs", "firingDurationMs", "damage"):
-            if field not in combat_value:
-                missing.append(f"combat.{field}")
+        if combat_value.get("disposition") != "noncombatant":
+            for field in ("attackRange", "delayBetweenShotsMs", "preAttackDelayMs", "firingDurationMs", "damage"):
+                if field not in combat_value:
+                    missing.append(f"combat.{field}")
     # Armor/forge-upgrade section (armor.ini ArmorSet tables + WeaponSetUpgrade
     # effects). A referenced set or effect that cannot be resolved fails the
     # descriptor closed; an object with no authored ArmorSet records the SAGE
@@ -1891,6 +1991,7 @@ def _simulation_contract(
                 constants,
                 named_definition_cache=named_definition_cache,
                 cache_lock=cache_lock,
+                allow_authored_noop=scenario_admission is not None,
             )
             if weapon_upgrades:
                 combat_value["upgrades"] = weapon_upgrades
@@ -2592,6 +2693,11 @@ def prepare_playable_unit_compiler(
 
     object_parse_errors: dict[str, str] = {}
     objects = _object_index(documents, object_parse_errors)
+    token_defines, token_define_provenance = _token_defines(documents)
+    numeric_defines = _numeric_defines(documents)
+    numeric_define_provenance = _numeric_define_provenance(
+        documents, numeric_defines
+    )
     return PlayableUnitCompilerInputs(
         documents=documents,
         objects=objects,
@@ -2602,7 +2708,10 @@ def prepare_playable_unit_compiler(
             _required_document(documents, COMMAND_BUTTON_PATH), "CommandButton"
         ),
         player_templates=player_templates,
-        numeric_defines=_numeric_defines(documents),
+        numeric_defines=numeric_defines,
+        numeric_define_provenance=numeric_define_provenance,
+        token_defines=token_defines,
+        token_define_provenance=token_define_provenance,
         object_parse_errors=object_parse_errors,
     )
 
@@ -3000,13 +3109,47 @@ def _horde_containers(
     return tuple(sorted(result, key=lambda item: item.name.casefold()))
 
 
-def _kind_of(ancestry: Sequence[SageObject]) -> tuple[str, ...]:
+def _expanded_kind_token(
+    token: str,
+    defines: Mapping[str, tuple[str, ...]],
+    *,
+    stack: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    prefix = token[0] if token.startswith(("+", "-")) else ""
+    bare = token[1:] if prefix else token
+    key = bare.casefold()
+    expansion = defines.get(key)
+    if expansion is None or key in stack:
+        return (token,)
+    result: list[str] = []
+    for child in expansion:
+        child_prefix = child[0] if child.startswith(("+", "-")) else ""
+        inherited = child_prefix or prefix
+        child_bare = child[1:] if child_prefix else child
+        expanded = _expanded_kind_token(
+            f"{inherited}{child_bare}" if inherited else child_bare,
+            defines,
+            stack=stack + (key,),
+        )
+        result.extend(expanded)
+    return tuple(result)
+
+
+def _kind_of(
+    ancestry: Sequence[SageObject],
+    token_defines: Mapping[str, tuple[str, ...]] | None = None,
+) -> tuple[str, ...]:
     kinds: set[str] = set()
+    defines = token_defines or {}
     for item in ancestry:
         for row in item.assignments:
             if row.key.casefold() != "kindof":
                 continue
-            tokens = tuple(token.upper() for token in _tokens(row.value))
+            tokens = tuple(
+                expanded.upper()
+                for token in _tokens(row.value)
+                for expanded in _expanded_kind_token(token, defines)
+            )
             if any(token.startswith(("+", "-")) for token in tokens):
                 for token in tokens:
                     if token.startswith("+") and len(token) > 1:
@@ -3028,7 +3171,30 @@ def playable_object_kind_of(
     target = prepared.objects.get(object_id.casefold())
     if target is None:
         raise PlayableUnitCompilerError(f"effective Object is missing: {object_id}")
-    return _kind_of(_ancestry(prepared.objects, target))
+    return _kind_of(_ancestry(prepared.objects, target), prepared.token_defines)
+
+
+def playable_object_kind_of_provenance(
+    prepared: PlayableUnitCompilerInputs, object_id: str
+) -> list[dict[str, object]]:
+    """Source receipts for token-list defines used by effective KindOf rows."""
+
+    target = prepared.objects.get(object_id.casefold())
+    if target is None:
+        raise PlayableUnitCompilerError(f"effective Object is missing: {object_id}")
+    rows: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for item in _ancestry(prepared.objects, target):
+        for assignment in item.assignments:
+            if assignment.key.casefold() != "kindof":
+                continue
+            for token in _tokens(assignment.value):
+                key = token.removeprefix("+").removeprefix("-").casefold()
+                provenance = prepared.token_define_provenance.get(key)
+                if provenance is not None and key not in seen:
+                    rows.append(dict(provenance))
+                    seen.add(key)
+    return rows
 
 
 def _category(
@@ -3298,6 +3464,7 @@ def _scalar_fields(ancestry: Sequence[SageObject]) -> dict[str, dict[str, object
         "LocomotorSet",
         "ArmorSet",
         "ExperienceValue",
+        "BountyValue",
         "CrusherLevel",
         "CrushableLevel",
         "CrushWeapon",
@@ -3364,14 +3531,10 @@ def _audio_routes(
     result: dict[str, list[dict[str, object]]] = defaultdict(list)
     for assignment in _effective_recursive_assignments(ancestry):
         folded = assignment.key.casefold()
-        authored_identifier = _first((assignment.value,))
         if authored_edges is None:
-            if not folded.startswith(("voice", "sound", "eva")):
-                continue
-            normalized_identifier = normalize_faction_voice_event(
-                ancestry[-1].name, assignment.key, authored_identifier
+            identifiers = object_audio_definition_routes(
+                ancestry[-1].name, assignment.key, assignment.value
             )
-            identifiers = [(normalized_identifier, authored_identifier)]
         else:
             tokens = _tokens(assignment.value)
             identifiers = sorted(
@@ -3749,6 +3912,51 @@ def _runtime_module_evidence(
             int(row["line"]),
         ),
     )
+
+
+def _module_occurrence_identity(
+    row: Mapping[str, object], *, contract: bool
+) -> tuple[str, int, str, str]:
+    """Return the authored Behavior identity shared by evidence and contracts.
+
+    Typed module contracts deliberately do not carry an owner role: their
+    source span, module kind, and instance tag identify the exact effective
+    Behavior occurrence.  Runtime evidence does carry the role so container
+    and primary-member diagnostics remain useful, but that role must not make
+    a typed occurrence appear unsupported.
+    """
+
+    return (
+        str(row.get("sourceIni", "")).casefold(),
+        int(row.get("line", 0)),
+        str(row.get("tag" if contract else "instanceTag", "")).casefold(),
+        str(row.get("module" if contract else "kind", "")).casefold(),
+    )
+
+
+def _untyped_unsupported_module_evidence(
+    module_evidence: Sequence[Mapping[str, object]],
+    module_contracts: Sequence[Mapping[str, object]],
+) -> list[Mapping[str, object]]:
+    """Keep only unsupported authored Behaviors lacking a typed contract.
+
+    A typed contract is the authoritative census receipt regardless of its
+    row-level runtimeStatus.  Executable rows are implemented and deferred
+    rows already carry their precise deferral evidence; mirroring either in
+    unsupportedCapabilities makes the coverage denominator contradict itself.
+    """
+
+    typed = {
+        _module_occurrence_identity(row, contract=True)
+        for row in module_contracts
+        if row.get("carrier") == "Behavior"
+    }
+    return [
+        row
+        for row in module_evidence
+        if row.get("consumed") is not True
+        and _module_occurrence_identity(row, contract=False) not in typed
+    ]
 
 
 def _behavior_module_identities(
@@ -4131,33 +4339,232 @@ _ABILITY_SUPPORT_MODULE_KINDS = frozenset(
         "modelconditionspecialabilityupdate",
         "specialpowertimerrefreshspecialpower",
         "unpausespecialpowerupgrade",
+        "activatemodulespecialpower",
+        "weaponmodespecialpowerupdate",
+        "dominateenemyspecialpower",
+        "grabpassengerspecialpower",
+        "flingpassengerspecialabilityupdate",
+        "repairspecialpower",
+        "hordedispatchspecialpower",
+        "stopspecialpower",
+        "siegedeployspecialpower",
+        "toggledeployspecialabilityupdate",
+        "specialdisguiseupdate",
+        "unleashspecialpower",
     }
 )
 # Module kinds whose runtime systems do not exist yet; the ability is recorded
 # as unimplemented instead of faking the behavior.
 _ABILITY_UNIMPLEMENTED_MODULE_KINDS = {
-    "specialdisguiseupdate": "disguise needs the disguise system",
-    "weaponmodespecialpowerupdate": "weapon-mode toggle needs the weapon-set system",
     "teleporttocasterspecialpower": "teleport-to-caster needs the caster-anchor system",
-    "dominateenemyspecialpower": "domination needs the allegiance system",
-    "untamedallegiancespecialpower": "allegiance change needs the allegiance system",
-    "grabpassengerspecialpower": "grab needs the passenger system",
-    "flingpassengerspecialabilityupdate": "fling needs the passenger system",
     "storeobjectsspecialpower": "object storage needs the garrison system",
-    "stopspecialpower": "stop needs the order-interrupt system",
-    "specialenemysenseupdate": "enemy sense needs the detection system",
-    "siegedeployspecialpower": "siege deploy needs the deploy system",
-    "repairspecialpower": "repair needs the structure-repair system",
-    "hordedispatchspecialpower": "horde dispatch needs the horde-spawn system",
-    "unleashspecialpower": "unleash needs the weapon-set system",
-    "toggledeployspecialabilityupdate": "deploy toggle needs the deploy system",
-    "splithordespecialpower": "horde split needs the horde system",
-    "scavengerspecialpower": "scavenger needs the loot system",
-    "manthewallsspecialpower": "man-the-walls needs the garrison system",
-    "freezingrainspecialpower": "freezing rain needs the weather system",
-    "deflectspecialpower": "deflect needs the status-effect system",
-    "activatemodulespecialpower": "module activation needs the module system",
 }
+
+# Effective retail carries ManTheWallsSpecialPower on legacy GreatKeep objects,
+# but neither edition supplies BattleTowerCommandSet, its only CommandButton is
+# commented out, and the carriers comment out both garrison KindOf flags.  Name
+# the measured inert authoring so the census does not misreport a runtime gap.
+_RETAIL_INERT_LEGACY_MODULE_KINDS = {
+    "manthewallsspecialpower": "no effective command or garrison route",
+}
+
+_GEOMETRY_CONTACT_AXIS = re.compile(
+    r"(?i)([XYZ])\s*:\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))"
+)
+_SCENARIO_ADMISSION_ROLES = frozenset(
+    {"inheritance-template", "scenario-only", "creature", "horde", "summoned-hero"}
+)
+_SCENARIO_ADMISSION_SURFACES = frozenset(
+    {
+        "map-placement",
+        "script-spawn",
+        "tutorial-script",
+        "object-creation-list",
+        "lair-spawn",
+        "horde-payload",
+    }
+)
+_RETAIL_GEOMETRY_CONTACT_PURPOSES = frozenset(
+    {"BOMB", "GRAB", "MENU", "RAM", "REPAIR", "SWOOP"}
+)
+
+
+def _geometry_contact_point(token: str) -> dict[str, object] | None:
+    """Parse one SAGE ``GeometryContactPoint`` without losing its purpose.
+
+    Retail permits whitespace between an axis colon and its value (``Y: -48``),
+    which a regular whitespace-token parser misreads.  The optional trailing
+    token is gameplay-significant: repair workers, rams, grab attacks, and
+    flying swoops select different contact-point families.
+    """
+
+    matches = list(_GEOMETRY_CONTACT_AXIS.finditer(token))
+    axes: dict[str, float] = {}
+    for match in matches:
+        axis = match.group(1).lower()
+        if axis in axes:
+            return None
+        value = float(match.group(2))
+        if not math.isfinite(value):
+            return None
+        axes[axis] = value
+    if set(axes) != {"x", "y", "z"}:
+        return None
+    remainder = _GEOMETRY_CONTACT_AXIS.sub(" ", token).replace(",", " ").split()
+    if len(remainder) > 1:
+        return None
+    result: dict[str, object] = {
+        "position": {axis: axes[axis] for axis in ("x", "y", "z")},
+        "authored": token.strip(),
+    }
+    if remainder:
+        purpose = remainder[0]
+        result["purpose"] = purpose.upper()
+        result["purposeAuthored"] = purpose
+        result["runtimeSupport"] = (
+            "typed-deferred"
+            if purpose.upper() in _RETAIL_GEOMETRY_CONTACT_PURPOSES
+            else "unsupported-purpose"
+        )
+    else:
+        result["runtimeSupport"] = "typed-deferred"
+    return result
+
+
+def _numeric_define_provenance(
+    documents: Mapping[str, bytes],
+    values: Mapping[str, int | float],
+) -> dict[str, dict[str, object]]:
+    """Bind resolved constants to their first effective authored declaration."""
+
+    result: dict[str, dict[str, object]] = {}
+    for path, payload in documents.items():
+        normalized = path.replace("\\", "/")
+        folded_path = normalized.casefold()
+        if not folded_path.startswith("data/ini/") or not folded_path.endswith((".ini", ".inc")):
+            continue
+        for match in _DEFINE_LINE_PATTERN.finditer(payload):
+            name = match.group(1).decode("ascii")
+            key = name.casefold()
+            if key in result or key not in values:
+                continue
+            body = _stripped_define_body(match.group(2).decode("latin-1"))
+            result[key] = {
+                "defineId": name,
+                "sourceIni": normalized,
+                "line": payload.count(b"\n", 0, match.start()) + 1,
+                "authoredValue": body,
+                "value": values[key],
+            }
+    return result
+
+
+def _token_defines(
+    documents: Mapping[str, bytes],
+) -> tuple[dict[str, tuple[str, ...]], dict[str, dict[str, object]]]:
+    """Return authored token-list defines and their exact source provenance.
+
+    SAGE permits a named token list in ``KindOf`` (retail's
+    ``NATUREUNITS_KINDOF`` is the important example).  Numeric define handling
+    cannot represent those lists, so keep a separate, fail-closed table.  The
+    first effective declaration wins, matching ``_numeric_defines``.
+    """
+
+    values: dict[str, tuple[str, ...]] = {}
+    provenance: dict[str, dict[str, object]] = {}
+    for path, payload in documents.items():
+        normalized = path.replace("\\", "/")
+        if not normalized.casefold().startswith("data/ini/") or not normalized.casefold().endswith((".ini", ".inc")):
+            continue
+        for match in _DEFINE_LINE_PATTERN.finditer(payload):
+            name = match.group(1).decode("ascii")
+            key = name.casefold()
+            if key in values:
+                continue
+            body = _stripped_define_body(match.group(2).decode("latin-1"))
+            tokens = tuple(_tokens(body))
+            if not tokens:
+                continue
+            values[key] = tokens
+            provenance[key] = {
+                "defineId": name,
+                "sourceIni": normalized,
+                "line": payload.count(b"\n", 0, match.start()) + 1,
+                "authoredValue": body,
+                "tokens": list(tokens),
+            }
+    return values, provenance
+
+
+def _geometry_contact_points(
+    ancestry: Sequence[SageObject],
+) -> list[dict[str, object]]:
+    """Return the effective repeated contact-point rows with source receipts."""
+
+    result: list[dict[str, object]] = []
+    for row in _effective_values(ancestry, "GeometryContactPoint"):
+        parsed = _geometry_contact_point(row.value)
+        if parsed is None:
+            raise PlayableUnitCompilerError(
+                "invalid GeometryContactPoint at "
+                f"{row.source_virtual_path}:{row.line}: {row.value.strip()}"
+            )
+        result.append(
+            {
+                **parsed,
+                "sourceIni": row.source_virtual_path,
+                "line": row.line,
+            }
+        )
+    return result
+
+
+def _public_bone_contract(
+    ancestry: Sequence[SageObject],
+) -> list[dict[str, object]]:
+    """Preserve effective Draw-module ``ExtraPublicBone`` attachment points.
+
+    Passenger placement, garrison firing, siege docking, and several FX routes
+    address these bones by name.  They are repeated module rows, so descriptor
+    order and the owning Draw module are part of the contract.
+    """
+
+    result: list[dict[str, object]] = []
+    for block in _effective_top_blocks(ancestry):
+        rows = tuple(
+            row
+            for row in block.assignments
+            if row.key.casefold() == "extrapublicbone"
+        )
+        if not rows:
+            continue
+        if (block.header_key or "").casefold() != "draw":
+            raise PlayableUnitCompilerError(
+                "ExtraPublicBone is outside a Draw module at "
+                f"{block.source_virtual_path}:{block.line}"
+            )
+        for row in rows:
+            tokens = row.value.split()
+            if len(tokens) != 1:
+                raise PlayableUnitCompilerError(
+                    "ExtraPublicBone requires one bone name at "
+                    f"{row.source_virtual_path}:{row.line}"
+                )
+            result.append(
+                {
+                    "bone": tokens[0],
+                    "drawModuleKind": block.kind,
+                    **(
+                        {"drawModuleTag": block.instance_tag}
+                        if block.instance_tag is not None
+                        else {}
+                    ),
+                    "sourceIni": row.source_virtual_path,
+                    "line": row.line,
+                    "runtimeSupport": "typed-deferred-model-attachment",
+                }
+            )
+    return result
 # Attribute-modifier kinds the runtime can apply; anything else is recorded as
 # a limitation instead of being silently dropped.  The timed-modifier core in
 # the sim compounds DAMAGE_MULT/SPEED/VISION/EXPERIENCE/CRUSH/HEALTH, sums
@@ -4281,8 +4688,9 @@ def _experience_level_rows(source: bytes) -> tuple[dict[str, object], ...]:
     parser would close each block early.  The gating fields (TargetNames,
     Rank, Upgrades) plus the full per-level economy leaves
     (RequiredExperience, ExperienceAward, AttributeModifiers, LevelUpFx and
-    the rank SelectionDecal texture) are captured; every other assignment is
-    ignored by design.
+    the complete nested SelectionDecal and level-up presentation/emotion
+    contract) are captured. Unknown assignments remain visible to the caller
+    through the raw row rather than being silently reinterpreted.
     """
 
     if len(source) > 8 * 1024 * 1024 or b"\0" in source:
@@ -4303,9 +4711,18 @@ def _experience_level_rows(source: bytes) -> tuple[dict[str, object], ...]:
     rank: int | None = None
     required_experience = ""
     experience_award = ""
+    experience_award_own_guys_die = ""
     attribute_modifiers: tuple[str, ...] = ()
     level_up_fx = ""
     decal_texture = ""
+    selection_decal: dict[str, str] = {}
+    inform_update_module = ""
+    emotion_type = ""
+    show_level_up_tint = ""
+    level_up_tint_color = ""
+    level_up_tint_pre = ""
+    level_up_tint_sustain = ""
+    level_up_tint_post = ""
     for line_number, raw in enumerate(text.splitlines(), start=1):
         line = re.sub(r"\s+", " ", raw.split(";", 1)[0].split("//", 1)[0]).strip()
         if not line:
@@ -4325,9 +4742,18 @@ def _experience_level_rows(source: bytes) -> tuple[dict[str, object], ...]:
                 rank = None
                 required_experience = ""
                 experience_award = ""
+                experience_award_own_guys_die = ""
                 attribute_modifiers = ()
                 level_up_fx = ""
                 decal_texture = ""
+                selection_decal = {}
+                inform_update_module = ""
+                emotion_type = ""
+                show_level_up_tint = ""
+                level_up_tint_color = ""
+                level_up_tint_pre = ""
+                level_up_tint_sustain = ""
+                level_up_tint_post = ""
             continue
         if depth == 0 and header.fullmatch(line):
             raise PlayableUnitCompilerError(
@@ -4344,9 +4770,18 @@ def _experience_level_rows(source: bytes) -> tuple[dict[str, object], ...]:
                         "upgrades": upgrades,
                         "requiredExperience": required_experience,
                         "experienceAward": experience_award,
+                        "experienceAwardOwnGuysDie": experience_award_own_guys_die,
                         "attributeModifiers": attribute_modifiers,
                         "levelUpFx": level_up_fx,
                         "selectionDecalTexture": decal_texture,
+                        "selectionDecal": selection_decal,
+                        "informUpdateModule": inform_update_module,
+                        "emotionType": emotion_type,
+                        "showLevelUpTint": show_level_up_tint,
+                        "levelUpTintColor": level_up_tint_color,
+                        "levelUpTintPreColorTime": level_up_tint_pre,
+                        "levelUpTintSustainColorTime": level_up_tint_sustain,
+                        "levelUpTintPostColorTime": level_up_tint_post,
                     }
                 )
                 active = None
@@ -4356,9 +4791,13 @@ def _experience_level_rows(source: bytes) -> tuple[dict[str, object], ...]:
         if "=" in line:
             key, value = (part.strip() for part in line.split("=", 1))
             folded = key.casefold()
-            if depth == 1 and folded == "texture" and not decal_texture:
-                # The rank chevron leaf of the nested SelectionDecal section.
-                decal_texture = value.split()[0] if value.split() else ""
+            if depth == 1 and folded in {
+                "texture", "texture2", "minradius", "maxradius", "opacitymin",
+                "opacitymax", "maxselectedunits", "style",
+            }:
+                selection_decal[folded] = value
+                if folded == "texture" and not decal_texture:
+                    decal_texture = value.split()[0] if value.split() else ""
             elif folded == "targetnames":
                 target_names = value
             elif folded == "upgrades":
@@ -4369,10 +4808,26 @@ def _experience_level_rows(source: bytes) -> tuple[dict[str, object], ...]:
                 required_experience = value
             elif folded == "experienceaward":
                 experience_award = value
+            elif folded == "experienceawardownguysdie":
+                experience_award_own_guys_die = value
             elif folded in {"attributemodifiers", "attributemodifier"}:
                 attribute_modifiers = _tokens(value)
             elif folded == "levelupfx":
                 level_up_fx = value
+            elif folded == "informupdatemodule":
+                inform_update_module = value
+            elif folded == "emotiontype":
+                emotion_type = value
+            elif folded == "showleveluptint":
+                show_level_up_tint = value
+            elif folded == "leveluptintcolor":
+                level_up_tint_color = value
+            elif folded == "leveluptintprecolortime":
+                level_up_tint_pre = value
+            elif folded == "leveluptintsustaincolortime":
+                level_up_tint_sustain = value
+            elif folded == "leveluptintpostcolortime":
+                level_up_tint_post = value
             continue
         depth += 1
     if active is not None:
@@ -4648,6 +5103,8 @@ def _experience_contract(
     documents: Mapping[str, bytes],
     constants: Mapping[str, int | float],
     creation_grant: Mapping[str, object] | None = None,
+    *,
+    allow_unauthored_award: bool = False,
 ) -> dict[str, object]:
     """Compile the authored ExperienceLevel chain of one playable unit."""
 
@@ -4723,8 +5180,13 @@ def _experience_contract(
             # A non-empty unresolved expression is always malformed.
             if (
                 award_expression
-                or creation_grant is None
-                or rank > int(creation_grant["rank"])
+                or (
+                    not allow_unauthored_award
+                    and (
+                        creation_grant is None
+                        or rank > int(creation_grant["rank"])
+                    )
+                )
             ):
                 raise PlayableUnitCompilerError(
                     f"{level_label} has no resolvable ExperienceAward"
@@ -4749,6 +5211,20 @@ def _experience_contract(
             level["experienceAward"] = award
         else:
             level["experienceAwardStatus"] = "unauthored"
+        own_guys_expression = str(
+            row.get("experienceAwardOwnGuysDie", "")
+        ).strip()
+        if own_guys_expression:
+            own_guys_award = _resolved_expression(own_guys_expression, constants)
+            if own_guys_award is None:
+                raise PlayableUnitCompilerError(
+                    f"{level_label} has unresolvable ExperienceAwardOwnGuysDie"
+                )
+            level["experienceAwardOwnGuysDie"] = (
+                math.floor(own_guys_award)
+                if isinstance(own_guys_award, float)
+                else own_guys_award
+            )
         if any(
             expression
             and _resolved_expression(expression, {}) is None
@@ -4781,9 +5257,92 @@ def _experience_contract(
         decal_texture = str(row.get("selectionDecalTexture", "")).strip()
         if decal_texture:
             level["selectionDecalTextureId"] = decal_texture
+        raw_decal = row.get("selectionDecal", {})
+        if isinstance(raw_decal, Mapping) and raw_decal:
+            decal: dict[str, object] = {}
+            for output_key, source_key in (
+                ("minRadius", "minradius"),
+                ("maxRadius", "maxradius"),
+                ("opacityMin", "opacitymin"),
+                ("opacityMax", "opacitymax"),
+                ("maxSelectedUnits", "maxselectedunits"),
+            ):
+                expression = str(raw_decal.get(source_key, "")).strip()
+                if not expression:
+                    continue
+                resolved = (
+                    _resolved_percent_expression(expression, constants)
+                    if source_key in {"opacitymin", "opacitymax"}
+                    else _resolved_expression(expression, constants)
+                )
+                if resolved is None:
+                    raise PlayableUnitCompilerError(
+                        f"{level_label} has unresolvable SelectionDecal {source_key}"
+                    )
+                decal[output_key] = (
+                    float(resolved) / 100.0
+                    if source_key in {"opacitymin", "opacitymax"}
+                    and expression.endswith("%")
+                    else resolved
+                )
+            for output_key, source_key in (
+                ("textureId", "texture"),
+                ("texture2Id", "texture2"),
+                ("style", "style"),
+            ):
+                authored = str(raw_decal.get(source_key, "")).strip()
+                if authored:
+                    decal[output_key] = authored
+            level["selectionDecal"] = decal
         level_up_fx = str(row.get("levelUpFx", "")).strip()
         if level_up_fx:
             level["levelUpFxId"] = level_up_fx
+        presentation: dict[str, object] = {}
+        inform = str(row.get("informUpdateModule", "")).strip()
+        if inform:
+            folded_inform = inform.casefold()
+            if folded_inform not in {"yes", "no"}:
+                raise PlayableUnitCompilerError(
+                    f"{level_label} has invalid InformUpdateModule"
+                )
+            presentation["informUpdateModule"] = folded_inform == "yes"
+        emotion = str(row.get("emotionType", "")).strip()
+        if emotion:
+            presentation["emotionType"] = emotion
+        show_tint = str(row.get("showLevelUpTint", "")).strip()
+        if show_tint:
+            folded_tint = show_tint.casefold()
+            if folded_tint not in {"yes", "no"}:
+                raise PlayableUnitCompilerError(
+                    f"{level_label} has invalid ShowLevelUpTint"
+                )
+            presentation["showLevelUpTint"] = folded_tint == "yes"
+        tint_color = str(row.get("levelUpTintColor", "")).strip()
+        if tint_color:
+            channels = [
+                int(token)
+                for token in re.findall(r"(?<![A-Za-z])\d+", tint_color)
+            ]
+            if len(channels) != 3 or any(channel > 255 for channel in channels):
+                raise PlayableUnitCompilerError(
+                    f"{level_label} has invalid LevelUpTintColor"
+                )
+            presentation["levelUpTintColorRgb"] = channels
+        for output_key, row_key in (
+            ("levelUpTintPreColorTimeMs", "levelUpTintPreColorTime"),
+            ("levelUpTintSustainColorTimeMs", "levelUpTintSustainColorTime"),
+            ("levelUpTintPostColorTimeMs", "levelUpTintPostColorTime"),
+        ):
+            expression = str(row.get(row_key, "")).strip()
+            if expression:
+                resolved = _resolved_expression(expression, constants)
+                if resolved is None:
+                    raise PlayableUnitCompilerError(
+                        f"{level_label} has unresolvable {row_key}"
+                    )
+                presentation[output_key] = resolved
+        if presentation:
+            level["levelUpPresentation"] = presentation
         levels.append(level)
     # An ExperienceLevel row describes progression at that rank; it does not
     # itself grant the rank at object creation. Ordinary objects start at rank
@@ -5908,6 +6467,42 @@ def _weapon_toggle_row(
     return row
 
 
+def _ability_behavior_modules(
+    lineages: Sequence[Sequence[SageObject]], documents: Mapping[str, bytes]
+) -> list[SageBlock]:
+    """Return effective plus one-level included Behavior modules in authored order."""
+
+    behavior_modules = [
+        block
+        for lineage in lineages
+        for block in _effective_top_blocks(lineage)
+        if (block.header_key or "").casefold() == "behavior"
+    ]
+    included_paths: set[str] = set()
+    for lineage in lineages:
+        for item in lineage:
+            for ref in item.includes:
+                include_path = str(ref.relative_virtual_path)
+                folded = include_path.casefold()
+                if folded in included_paths:
+                    continue
+                included_paths.add(folded)
+                payload = _optional_document(documents, include_path)
+                if payload is None:
+                    continue
+                try:
+                    fragment = parse_sage_body_fragment(payload, include_path)
+                except SageCstError:
+                    continue
+                behavior_modules.extend(
+                    block
+                    for block in fragment.items
+                    if isinstance(block, SageBlock)
+                    and (block.header_key or "").casefold() == "behavior"
+                )
+    return behavior_modules
+
+
 def _hero_abilities(
     target: SageObject,
     target_lineage: Sequence[SageObject],
@@ -5958,41 +6553,10 @@ def _hero_abilities(
     lineages: list[Sequence[SageObject]] = [target_lineage]
     if member_lineage[-1].name.casefold() != target_lineage[-1].name.casefold():
         lineages.append(member_lineage)
-    behavior_modules: list[SageBlock] = []
-    for lineage in lineages:
-        behavior_modules.extend(
-            block
-            for block in _effective_top_blocks(lineage)
-            if (block.header_key or "").casefold() == "behavior"
-        )
-    # Object-body #include directives (retail's shared CaptureBuilding.inc)
-    # author Behavior modules the plain object parse leaves as unexpanded
-    # refs.  Expand each authored include one level deep against the supplied
-    # document view so those modules bind like any other authored Behavior;
-    # a missing or unparsable include contributes nothing (fail-closed: the
-    # dependent ability then stays a recorded gap).
-    included_paths: set[str] = set()
-    for lineage in lineages:
-        for item in lineage:
-            for ref in item.includes:
-                include_path = str(ref.relative_virtual_path)
-                folded = include_path.casefold()
-                if folded in included_paths:
-                    continue
-                included_paths.add(folded)
-                payload = _optional_document(documents, include_path)
-                if payload is None:
-                    continue
-                try:
-                    fragment = parse_sage_body_fragment(payload, include_path)
-                except SageCstError:
-                    continue
-                behavior_modules.extend(
-                    block
-                    for block in fragment.items
-                    if isinstance(block, SageBlock)
-                    and (block.header_key or "").casefold() == "behavior"
-                )
+    # Includes author real Behavior modules (CaptureBuilding.inc,
+    # ZephyrStrike.inc), so module graphs must see them even when no command
+    # currently exposes the associated SpecialPower.
+    behavior_modules = _ability_behavior_modules(lineages, documents)
     hero_names = frozenset(
         item.name.casefold() for lineage in lineages for item in lineage
     )
@@ -6081,6 +6645,7 @@ def _hero_abilities(
             documents,
             constants,
             filter_defines,
+            target_lineage,
             member_lineage,
             named_definition_cache=named_definition_cache,
             cache_lock=cache_lock,
@@ -6172,6 +6737,7 @@ def _hero_ability_row(
     documents: Mapping[str, bytes],
     constants: Mapping[str, int | float],
     filter_defines: Mapping[str, tuple[str, ...]],
+    target_lineage: Sequence[SageObject],
     member_lineage: Sequence[SageObject],
     *,
     named_definition_cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None,
@@ -6273,6 +6839,11 @@ def _hero_ability_row(
         "targeting": (
             "point"
             if "NEED_TARGET_POS" in options
+            else "object"
+            if any(block.kind.casefold() == "siegedeployspecialpower" for block in bound)
+            and "NEED_TARGET_ENEMY_OBJECT" in options
+            and "NEED_TARGET_ALLY_OBJECT" in options
+            and "NEED_TARGET_NEUTRAL_OBJECT" in options
             else "enemy-object"
             if "NEED_TARGET_ENEMY_OBJECT" in options
             else "self"
@@ -6297,6 +6868,139 @@ def _hero_ability_row(
         status = "unimplemented"
         reason = f"effective SpecialPower is missing: {power_id}"
     if status == "implemented" and power_block is not None:
+        # Preserve the complete effective SpecialPower gate/timer contract, not
+        # just Enum and ReloadTime. These fields govern whether an otherwise
+        # compiled hero/spellbook ability may activate and what synchronized
+        # state/UI feedback it owns.
+        special_power_contract: dict[str, object] = {}
+        allowed_special_power_fields = {
+            "enum", "reloadtime", "publictimer", "sharedsyncedtimer",
+            "flags",
+            "initiateatlocationsound", "initiatesound", "radiuscursorradius",
+            "objectfilter", "forbiddenobjectfilter", "forbiddenobjectrange",
+            "viewobjectrange", "viewobjectduration", "maxcastrange", "unitcost",
+            "unitcostdeathtype", "preventactivationconditions",
+            "unitspecificsoundtouseasinitiateintendtodovoice",
+            "unitspecificsoundtouseasenterstateinitiateintendtodovoice",
+            "evaeventtoplayonsuccess",
+        }
+        authored_field_counts = Counter(
+            field.casefold() for field, _value in power_block.assignments
+        )
+        unknown_power_fields = sorted(
+            set(authored_field_counts) - allowed_special_power_fields
+        )
+        duplicate_power_fields = sorted(
+            field for field, count in authored_field_counts.items() if count > 1
+        )
+        if unknown_power_fields:
+            status = "unimplemented"
+            reason = (
+                f"SpecialPower {power_id} has unsupported fields: "
+                + ", ".join(unknown_power_fields)
+            )
+        elif duplicate_power_fields:
+            status = "unimplemented"
+            reason = (
+                f"SpecialPower {power_id} duplicates fields: "
+                + ", ".join(duplicate_power_fields)
+            )
+        for output_key, source_key in (
+            ("publicTimer", "PublicTimer"),
+            ("sharedSyncedTimer", "SharedSyncedTimer"),
+        ):
+            values = power_block.values(source_key)
+            if values:
+                authored = values[-1].strip().casefold()
+                if authored not in {"yes", "no"}:
+                    status = "unimplemented"
+                    reason = f"SpecialPower {power_id} has invalid {source_key}"
+                    break
+                special_power_contract[output_key] = authored == "yes"
+        for output_key, source_key in (
+            ("flags", "Flags"),
+            ("objectFilter", "ObjectFilter"),
+            ("forbiddenObjectFilter", "ForbiddenObjectFilter"),
+            ("preventActivationConditions", "PreventActivationConditions"),
+            ("unitCostDeathTypes", "UnitCostDeathType"),
+        ):
+            values = power_block.values(source_key)
+            if values:
+                special_power_contract[output_key] = list(_tokens(values[-1]))
+        for output_key, source_key in (
+            ("forbiddenObjectRange", "ForbiddenObjectRange"),
+            ("viewObjectRange", "ViewObjectRange"),
+            ("viewObjectDurationMs", "ViewObjectDuration"),
+            ("maxCastRange", "MaxCastRange"),
+            ("unitCost", "UnitCost"),
+        ):
+            values = power_block.values(source_key)
+            if not values:
+                continue
+            resolved = _resolved_expression(values[-1], constants)
+            if resolved is None:
+                status = "unimplemented"
+                reason = f"SpecialPower {power_id} has unresolvable {source_key}"
+                break
+            special_power_contract[output_key] = resolved
+        for output_key, source_key in (
+            (
+                "initiateIntentSoundId",
+                "UnitSpecificSoundToUseAsInitiateIntendToDoVoice",
+            ),
+            (
+                "enterStateIntentSoundId",
+                "UnitSpecificSoundToUseAsEnterStateInitiateIntendToDoVoice",
+            ),
+            ("successEvaEventId", "EvaEventToPlayOnSuccess"),
+        ):
+            values = power_block.values(source_key)
+            if values:
+                special_power_contract[output_key] = values[-1].strip()
+        flags = special_power_contract.get("flags", [])
+        if "flags" in special_power_contract and isinstance(flags, list):
+            flags = [str(flag).upper() for flag in flags]
+            special_power_contract["flags"] = flags
+            supported_flags = {
+                "LIMIT_DISTANCE",
+                "NEEDS_OBJECT_FILTER",
+                "NO_FORBIDDEN_OBJECTS",
+                "PATHABLE_ONLY",
+            }
+            unsupported_flags = sorted(
+                set(flags) - supported_flags
+            )
+            if unsupported_flags:
+                status = "unimplemented"
+                reason = (
+                    f"SpecialPower {power_id} has unsupported Flags: "
+                    + ", ".join(unsupported_flags)
+                )
+            elif "NEEDS_OBJECT_FILTER" in flags and not special_power_contract.get(
+                "objectFilter"
+            ):
+                status = "unimplemented"
+                reason = f"SpecialPower {power_id} NEEDS_OBJECT_FILTER has no ObjectFilter"
+            elif "LIMIT_DISTANCE" in flags and float(
+                special_power_contract.get("maxCastRange", 0)
+            ) <= 0.0:
+                status = "unimplemented"
+                reason = f"SpecialPower {power_id} LIMIT_DISTANCE has no MaxCastRange"
+            elif "PATHABLE_ONLY" in flags and row["targeting"] != "point":
+                status = "unimplemented"
+                reason = f"SpecialPower {power_id} PATHABLE_ONLY has no point target"
+            elif "NO_FORBIDDEN_OBJECTS" in flags and (
+                not special_power_contract.get("forbiddenObjectFilter")
+                or float(special_power_contract.get("forbiddenObjectRange", 0)) <= 0.0
+            ):
+                status = "unimplemented"
+                reason = (
+                    f"SpecialPower {power_id} NO_FORBIDDEN_OBJECTS has no complete "
+                    "ForbiddenObjectFilter/ForbiddenObjectRange"
+                )
+        if special_power_contract:
+            special_power_contract["sourceIni"] = SPECIAL_POWER_PATH
+            row["specialPowerContract"] = special_power_contract
         enum = _first(power_block.values("Enum"))
         if enum is not None:
             row["enum"] = enum
@@ -6396,6 +7100,7 @@ def _hero_ability_row(
                 filter_defines,
                 limitations,
                 power_enum=str(row.get("enum", "")),
+                target_lineage=target_lineage,
                 member_lineage=member_lineage,
                 behavior_modules=behavior_modules,
                 radius_cursor_radius=row.get("radiusCursorRadius"),
@@ -6406,6 +7111,31 @@ def _hero_ability_row(
             status = "unimplemented"
             reason = str(error)
             effect = {"kind": "none"}
+        if status == "implemented" and effect.get("kind") == "toggle-deploy":
+            for source_field, output_field in (
+                ("AutoAbility", "autoAbility"),
+                ("TriggerWhenReady", "triggerWhenReady"),
+            ):
+                authored = _first(button.values(source_field))
+                if authored is None or authored.strip().casefold() not in {"yes", "no"}:
+                    status = "unimplemented"
+                    reason = f"{label} needs an exact Yes/No {source_field}"
+                    break
+                effect[output_field] = authored.strip().casefold() == "yes"
+            blocked_conditions = [
+                token
+                for value in button.values("AutoAbilityDisallowedOnModelCondition")
+                for token in _tokens(value)
+            ]
+            if status == "implemented":
+                if not blocked_conditions:
+                    status = "unimplemented"
+                    reason = (
+                        f"{label} has no AutoAbilityDisallowedOnModelCondition "
+                        "contract"
+                    )
+                else:
+                    effect["autoAbilityBlockedModelConditions"] = blocked_conditions
         if status == "implemented" and effect.get("kind") == "none":
             status = "unimplemented"
             reason = reason or "no convertible effect leaf is bound to this ability"
@@ -6460,6 +7190,7 @@ def _hero_ability_effect(
     limitations: list[str],
     *,
     power_enum: str = "",
+    target_lineage: Sequence[SageObject] = (),
     member_lineage: Sequence[SageObject] = (),
     behavior_modules: Sequence[SageBlock] = (),
     radius_cursor_radius: int | float | None = None,
@@ -6476,6 +7207,940 @@ def _hero_ability_effect(
     weapon_modules = modules_of("weaponfirespecialabilityupdate")
     hero_mode_modules = modules_of("heromodespecialabilityupdate")
     mount_modules = modules_of("togglemountedspecialabilityupdate")
+
+    def typed_effect_graph(
+        module: SageBlock,
+        compiler: object,
+    ) -> dict[str, object]:
+        lineage = target_lineage or member_lineage
+        if not lineage:
+            raise PlayableUnitCompilerError(
+                f"{label} {module.kind} has no effective owner lineage"
+            )
+        try:
+            contracts = compiler(lineage, label)  # type: ignore[operator]
+        except ModuleContractError as error:
+            raise PlayableUnitCompilerError(str(error)) from error
+        matches = [
+            row for row in contracts
+            if int(row.get("line", 0)) == module.line
+            and str(row.get("sourceIni", "")).casefold()
+            == module.source_virtual_path.casefold()
+            and str(row.get("tag", "")).casefold()
+            == str(module.instance_tag or "").casefold()
+        ]
+        if len(matches) != 1 or not isinstance(matches[0].get("effectGraph"), Mapping):
+            raise PlayableUnitCompilerError(
+                f"{label} {module.kind} effect graph identity is ambiguous"
+            )
+        return dict(matches[0]["effectGraph"])
+
+    stop_modules = modules_of("stopspecialpower")
+    if stop_modules:
+        if len(stop_modules) != 1:
+            raise PlayableUnitCompilerError(f"{label} matches multiple StopSpecialPower modules")
+        return typed_effect_graph(stop_modules[0], compile_stop_special_powers)
+
+    siege_deploy_modules = modules_of("siegedeployspecialpower")
+    if siege_deploy_modules:
+        if len(siege_deploy_modules) != 1:
+            raise PlayableUnitCompilerError(
+                f"{label} matches multiple SiegeDeploySpecialPower modules"
+            )
+        return typed_effect_graph(
+            siege_deploy_modules[0], compile_siege_deploy_special_powers
+        )
+
+    toggle_deploy_modules = modules_of("toggledeployspecialabilityupdate")
+    if toggle_deploy_modules:
+        if len(toggle_deploy_modules) != 1:
+            raise PlayableUnitCompilerError(
+                f"{label} matches multiple ToggleDeploySpecialAbilityUpdate modules"
+            )
+        effect = typed_effect_graph(
+            toggle_deploy_modules[0], compile_toggle_deploy_special_ability_updates
+        )
+        modifier_id = str(effect.get("deployedAttributeModifierId", ""))
+        if modifier_id == "":
+            raise PlayableUnitCompilerError(
+                f"{label} ToggleDeploySpecialAbilityUpdate has no deployed modifier"
+            )
+        effect["deployedAttributeModifier"] = _ability_modifier_leaf(
+            modifier_blocks, modifier_id, constants, label
+        )
+        return effect
+
+    disguise_modules = modules_of("specialdisguiseupdate")
+    if disguise_modules:
+        if len(disguise_modules) != 1:
+            raise PlayableUnitCompilerError(
+                f"{label} matches multiple SpecialDisguiseUpdate modules"
+            )
+        lineage = target_lineage or member_lineage
+        if not lineage:
+            raise PlayableUnitCompilerError(
+                f"{label} SpecialDisguiseUpdate has no effective owner lineage"
+            )
+        try:
+            contracts = compile_special_disguise_updates(lineage, lineage[-1].name)
+        except ModuleContractError as error:
+            raise PlayableUnitCompilerError(str(error)) from error
+        module = disguise_modules[0]
+        matches = [
+            row for row in contracts
+            if int(row.get("line", 0)) == module.line
+            and str(row.get("sourceIni", "")).casefold()
+            == module.source_virtual_path.casefold()
+            and str(row.get("tag", "")).casefold()
+            == str(module.instance_tag or "").casefold()
+        ]
+        if len(matches) != 1 or not isinstance(matches[0].get("effectGraph"), Mapping):
+            raise PlayableUnitCompilerError(
+                f"{label} SpecialDisguiseUpdate effect graph identity is ambiguous"
+            )
+        if matches[0].get("runtimeStatus") != "executable":
+            eligibility = matches[0]["effectGraph"].get("executionEligibility", {})
+            reason = (
+                eligibility.get("reason")
+                if isinstance(eligibility, Mapping)
+                else "runtime row is deferred"
+            )
+            raise PlayableUnitCompilerError(
+                f"{label} SpecialDisguiseUpdate is deferred: {reason}"
+            )
+        limitations.extend(
+            [
+                "special-disguise-viewer-perspective-deferred",
+                "special-disguise-death-reset-ordering-deferred",
+                "special-disguise-critical-hit-ordering-deferred",
+                "special-disguise-user1-stealth-ordering-deferred",
+            ]
+        )
+        return dict(matches[0]["effectGraph"])
+
+    unleash_modules = modules_of("unleashspecialpower")
+    if unleash_modules:
+        if len(unleash_modules) != 1:
+            raise PlayableUnitCompilerError(f"{label} matches multiple UnleashSpecialPower modules")
+        return typed_effect_graph(unleash_modules[0], compile_unleash_special_powers)
+
+    dispatch_modules = modules_of("hordedispatchspecialpower")
+    if dispatch_modules:
+        if len(dispatch_modules) != 1 or not member_lineage:
+            raise PlayableUnitCompilerError(
+                f"{label} needs exactly one resolvable HordeDispatchSpecialPower"
+            )
+        dispatch = dispatch_modules[0]
+        try:
+            compiled_dispatches = compile_horde_dispatch_special_powers(
+                target_lineage or member_lineage, label
+            )
+        except ModuleContractError as error:
+            raise PlayableUnitCompilerError(str(error)) from error
+        contracts = [
+            row for row in compiled_dispatches
+            if int(row.get("line", 0)) == dispatch.line
+            and str(row.get("tag", "")).casefold()
+            == str(dispatch.instance_tag or "").casefold()
+        ]
+        if len(contracts) != 1:
+            raise PlayableUnitCompilerError(
+                f"{label} HordeDispatchSpecialPower contract identity is ambiguous"
+            )
+        contract = contracts[0]
+        fields = contract["fields"]
+        template_field = fields["SpecialPowerTemplate"]
+        assert isinstance(template_field, Mapping)
+        template_id = str(template_field["value"])
+        member_bound = [
+            candidate for candidate in behavior_modules
+            if candidate is not dispatch
+            and (_first(candidate.values("SpecialPowerTemplate")) or "").casefold()
+            == template_id.casefold()
+        ]
+        if not member_bound:
+            raise PlayableUnitCompilerError(
+                f"{label} HordeDispatchSpecialPower has no member receiver for {template_id}"
+            )
+        member_effect = _hero_ability_effect(
+            f"{label} member dispatch", member_bound, burst_heal_modules,
+            gate_upgrades, modifier_blocks, ocl_source, objects, documents,
+            constants, filter_defines, limitations,
+            power_enum=template_id, member_lineage=member_lineage,
+            target_lineage=target_lineage,
+            behavior_modules=behavior_modules,
+            radius_cursor_radius=radius_cursor_radius,
+            named_definition_cache=named_definition_cache, cache_lock=cache_lock,
+        )
+        if member_effect.get("kind") == "none":
+            raise PlayableUnitCompilerError(
+                f"{label} HordeDispatchSpecialPower member effect is unresolved"
+            )
+        member_count: int | float | None = None
+        payload_object = member_lineage[-1].name
+        for contain in behavior_modules:
+            if contain.kind.casefold() != "hordecontain":
+                continue
+            for payload in contain.values("InitialPayload"):
+                tokens = payload.split()
+                if len(tokens) != 2:
+                    continue
+                candidate_count = _resolved_expression(tokens[1], constants)
+                if candidate_count is None or float(candidate_count) <= 0:
+                    raise PlayableUnitCompilerError(
+                        f"{label} HordeDispatchSpecialPower member count is unresolved"
+                    )
+                if member_count is not None:
+                    raise PlayableUnitCompilerError(
+                        f"{label} HordeDispatchSpecialPower payload is ambiguous"
+                    )
+                payload_object = tokens[0]
+                member_count = candidate_count
+        if member_count is None:
+            raise PlayableUnitCompilerError(
+                f"{label} HordeDispatchSpecialPower has no HordeContain payload"
+            )
+        return {
+            "kind": "horde-dispatch",
+            "specialPowerTemplateId": template_id,
+            "startsPaused": bool(fields["StartsPaused"]["value"]),
+            "updateModuleStartsAttack": bool(
+                fields.get("UpdateModuleStartsAttack", {}).get("value", False)
+            ),
+            "memberObjectId": payload_object,
+            "memberCount": member_count,
+            "memberEffect": member_effect,
+            "targeting": "PER_MEMBER_INHERIT_EFFECT",
+            "sourceIni": str(contract["sourceIni"]),
+            "line": int(contract["line"]),
+        }
+
+    repair_modules = modules_of("repairspecialpower")
+    if repair_modules:
+        if len(repair_modules) != 1 or not member_lineage:
+            raise PlayableUnitCompilerError(
+                f"{label} needs exactly one resolvable RepairSpecialPower"
+            )
+        repair = repair_modules[0]
+        try:
+            compiled_repairs = compile_repair_special_powers(member_lineage, label)
+        except ModuleContractError as error:
+            raise PlayableUnitCompilerError(str(error)) from error
+        contracts = [
+            row for row in compiled_repairs
+            if int(row.get("line", 0)) == repair.line
+            and str(row.get("tag", "")).casefold()
+            == str(repair.instance_tag or "").casefold()
+        ]
+        if len(contracts) != 1:
+            raise PlayableUnitCompilerError(
+                f"{label} RepairSpecialPower contract identity is ambiguous"
+            )
+        contract = contracts[0]
+        template_field = contract["fields"]["SpecialPowerTemplate"]
+        assert isinstance(template_field, Mapping)
+        rates: list[tuple[float, SageAssignment]] = []
+        contact_rows: list[SageAssignment] = []
+        for candidate in behavior_modules:
+            if candidate.kind.casefold() not in {"workeraiupdate", "hordeworkeraiupdate"}:
+                continue
+            for assignment in candidate.assignments:
+                if assignment.key.casefold() == "repairhealthpercentpersecond":
+                    text = assignment.value.strip()
+                    if not text.endswith("%"):
+                        raise PlayableUnitCompilerError(
+                            f"{label} repair rate is not a percentage"
+                        )
+                    try:
+                        rate = float(text[:-1]) / 100.0
+                    except ValueError as error:
+                        raise PlayableUnitCompilerError(
+                            f"{label} repair rate is malformed"
+                        ) from error
+                    if rate <= 0:
+                        raise PlayableUnitCompilerError(
+                            f"{label} repair rate must be positive"
+                        )
+                    rates.append((rate, assignment))
+                elif assignment.key.casefold() == "specialcontactpoints":
+                    if "repair" in {token.casefold() for token in assignment.value.split()}:
+                        contact_rows.append(assignment)
+        if len(rates) > 1 or len(contact_rows) > 1:
+            raise PlayableUnitCompilerError(
+                f"{label} repair worker seam is ambiguous"
+            )
+        effect: dict[str, object] = {
+            "kind": "repair-structure",
+            "specialPowerTemplateId": str(template_field["value"]),
+            "targeting": {
+                "relation": "ALLY", "kindOf": ["STRUCTURE"],
+                "requiresDamaged": True, "rangeMode": "REPAIR_CONTACT_POINT",
+            },
+            "repairRate": {
+                "status": "authored" if rates else "engine-default-unresolved",
+                "maxHealthFractionPerSecond": rates[0][0] if rates else None,
+                "sourceIni": rates[0][1].source_virtual_path if rates else "",
+                "line": rates[0][1].line if rates else 0,
+            },
+            "contactPoint": {
+                "name": "Repair", "authored": bool(contact_rows),
+                "sourceIni": contact_rows[0].source_virtual_path if contact_rows else "",
+                "line": contact_rows[0].line if contact_rows else 0,
+            },
+            "economy": {
+                "status": "no-authored-resource-field", "resourceCost": None,
+            },
+            "sourceIni": str(contract["sourceIni"]),
+            "line": int(contract["line"]),
+        }
+        return effect
+
+    fling_modules = modules_of("flingpassengerspecialabilityupdate")
+    if fling_modules:
+        if len(fling_modules) != 1 or not member_lineage:
+            raise PlayableUnitCompilerError(
+                f"{label} needs exactly one resolvable FlingPassengerSpecialAbilityUpdate"
+            )
+        fling = fling_modules[0]
+        try:
+            compiled_flings = compile_fling_passenger_special_ability_updates(
+                member_lineage, label
+            )
+        except ModuleContractError as error:
+            raise PlayableUnitCompilerError(str(error)) from error
+        contracts = [
+            row for row in compiled_flings
+            if int(row.get("line", 0)) == fling.line
+            and str(row.get("tag", "")).casefold()
+            == str(fling.instance_tag or "").casefold()
+        ]
+        if len(contracts) != 1:
+            raise PlayableUnitCompilerError(
+                f"{label} FlingPassengerSpecialAbilityUpdate contract identity is ambiguous"
+            )
+        contract = contracts[0]
+        fields = contract["fields"]
+
+        def resolve_fling_time(key: str) -> int | float | None:
+            raw = fields.get(key)
+            if raw is None:
+                return None
+            assert isinstance(raw, Mapping)
+            if "milliseconds" in raw:
+                return int(raw["milliseconds"])
+            define = raw.get("define")
+            if isinstance(define, str) and define in constants:
+                return constants[define]
+            raise PlayableUnitCompilerError(
+                f"{label} FlingPassengerSpecialAbilityUpdate has unresolvable {key}"
+            )
+
+        template_field = fields["SpecialPowerTemplate"]
+        assert isinstance(template_field, Mapping)
+        effect: dict[str, object] = {
+            "kind": "fling-passenger",
+            "specialPowerTemplateId": str(template_field["value"]),
+            "mustFinishAbility": bool(
+                fields.get("MustFinishAbility", {}).get("value", False)
+            ),
+            "timingMs": {"UnpackTime": resolve_fling_time("UnpackTime")},
+            "sourceIni": str(contract["sourceIni"]),
+            "line": int(contract["line"]),
+        }
+        pack_time = resolve_fling_time("PackTime")
+        if pack_time is not None:
+            effect["timingMs"]["PackTime"] = pack_time  # type: ignore[index]
+        velocity = fields.get("FlingPassengerVelocity")
+        if isinstance(velocity, Mapping):
+            effect["velocity"] = dict(velocity["value"])
+        custom = fields.get("CustomAnimAndDuration")
+        if isinstance(custom, Mapping):
+            effect["customAnimation"] = {
+                "state": str(custom["animState"]),
+                "durationMs": int(custom["animTimeMilliseconds"]),
+            }
+        warhead_field = fields.get("FlingPassengerLandingWarhead")
+        if isinstance(warhead_field, Mapping):
+            warhead_id = str(warhead_field["value"])
+            nuggets = _weapon_damage_nuggets(
+                documents, warhead_id,
+                cache=named_definition_cache, cache_lock=cache_lock,
+            )
+            if nuggets is None or len(nuggets) != 1:
+                raise PlayableUnitCompilerError(
+                    f"{label} landing warhead {warhead_id} is missing or ambiguous"
+                )
+            nugget_fields = nuggets[0]["fields"]
+            assert isinstance(nugget_fields, Mapping)
+
+            def one_expression(key: str) -> str:
+                values = nugget_fields.get(key, [])
+                if not isinstance(values, list) or len(values) != 1:
+                    raise PlayableUnitCompilerError(
+                        f"{label} landing warhead {warhead_id} requires one {key}"
+                    )
+                value = values[0]
+                assert isinstance(value, Mapping)
+                expression = str(value.get("expression", "")).strip()
+                if not expression:
+                    raise PlayableUnitCompilerError(
+                        f"{label} landing warhead {warhead_id} has empty {key}"
+                    )
+                return expression
+
+            radius_expression = one_expression("radius")
+            radius = _resolved_expression(radius_expression, constants)
+            if radius is None or float(radius) < 0:
+                raise PlayableUnitCompilerError(
+                    f"{label} landing warhead {warhead_id} has unresolvable radius"
+                )
+            effect["landingWarhead"] = {
+                "id": warhead_id,
+                "radius": radius,
+                "damageType": one_expression("damagetype"),
+                "deathType": one_expression("deathtype"),
+                "specialObjectFilter": _projected_object_filter(
+                    one_expression("specialobjectfilter").split(), filter_defines
+                ),
+                "forceKillObjectFilter": _projected_object_filter(
+                    one_expression("forcekillobjectfilter").split(), filter_defines
+                ),
+                "sourceIni": WEAPON_PATH,
+                "line": int(nuggets[0]["line"]),
+            }
+        return effect
+
+    grab_modules = modules_of("grabpassengerspecialpower")
+    if grab_modules:
+        if len(grab_modules) != 1 or not member_lineage:
+            raise PlayableUnitCompilerError(
+                f"{label} needs exactly one resolvable GrabPassengerSpecialPower"
+            )
+        grab = grab_modules[0]
+        try:
+            compiled_grabs = compile_grab_passenger_special_powers(
+                member_lineage, label
+            )
+        except ModuleContractError as error:
+            raise PlayableUnitCompilerError(str(error)) from error
+        contracts = [
+            row for row in compiled_grabs
+            if int(row.get("line", 0)) == grab.line
+            and str(row.get("tag", "")).casefold()
+            == str(grab.instance_tag or "").casefold()
+        ]
+        if len(contracts) != 1:
+            raise PlayableUnitCompilerError(
+                f"{label} GrabPassengerSpecialPower contract identity is ambiguous"
+            )
+        contract = contracts[0]
+        fields = contract["fields"]
+        template_field = fields["SpecialPowerTemplate"]
+        starts_attack_field = fields["UpdateModuleStartsAttack"]
+        assert isinstance(template_field, Mapping)
+        assert isinstance(starts_attack_field, Mapping)
+        effect: dict[str, object] = {
+            "kind": "grab-passenger",
+            "specialPowerTemplateId": str(template_field["value"]),
+            "updateModuleStartsAttack": bool(starts_attack_field["value"]),
+            "allowTree": bool(fields.get("AllowTree", {}).get("value", False)),
+            "sourceIni": str(contract["sourceIni"]),
+            "line": int(contract["line"]),
+        }
+        initiate_fx = fields.get("InitiateFX")
+        if isinstance(initiate_fx, Mapping):
+            effect["initiateFxId"] = str(initiate_fx["value"])
+        template_id = str(template_field["value"])
+        paired_updates = [
+            candidate for candidate in behavior_modules
+            if candidate.kind.casefold() == "specialabilityupdate"
+            and (_first(candidate.values("SpecialPowerTemplate")) or "").casefold()
+            == template_id.casefold()
+            and candidate.values("GrabPassengerAnimAndDuration")
+        ]
+        if len(paired_updates) != 1:
+            raise PlayableUnitCompilerError(
+                f"{label} GrabPassengerSpecialPower needs one paired SpecialAbilityUpdate"
+            )
+        paired = paired_updates[0]
+        allowed_paired = {
+            "specialpowertemplate", "startabilityrange", "unpacktime",
+            "preparationtime", "persistentpreptime", "packtime",
+            "grabpassengeranimandduration", "grabpassengerhealgainpercent",
+            "awardxpfortriggering", "rejectedconditions",
+        }
+        paired_keys = {assignment.key.casefold() for assignment in paired.assignments}
+        if paired_keys - allowed_paired or len(paired_keys) != len(paired.assignments):
+            raise PlayableUnitCompilerError(
+                f"{label} GrabPassenger SpecialAbilityUpdate has unsupported fields"
+            )
+
+        def paired_number(key: str, *, required: bool = False) -> int | float | None:
+            values = paired.values(key)
+            if not values:
+                if required:
+                    raise PlayableUnitCompilerError(
+                        f"{label} GrabPassenger SpecialAbilityUpdate requires {key}"
+                    )
+                return None
+            if len(values) != 1:
+                raise PlayableUnitCompilerError(
+                    f"{label} GrabPassenger SpecialAbilityUpdate duplicates {key}"
+                )
+            resolved = _resolved_expression(values[0], constants)
+            if resolved is None or float(resolved) < 0:
+                raise PlayableUnitCompilerError(
+                    f"{label} GrabPassenger SpecialAbilityUpdate has invalid {key}"
+                )
+            return resolved
+
+        animation_values = paired.values("GrabPassengerAnimAndDuration")
+        if len(animation_values) != 1:
+            raise PlayableUnitCompilerError(
+                f"{label} GrabPassenger SpecialAbilityUpdate needs one animation"
+            )
+        animation_match = re.fullmatch(
+            r"\s*AnimState\s*:\s*([A-Za-z_][A-Za-z0-9_]*)\s+"
+            r"AnimTime\s*:\s*(\d+)\s+TriggerTime\s*:\s*(\d+)\s*",
+            animation_values[0], re.IGNORECASE,
+        )
+        if animation_match is None:
+            raise PlayableUnitCompilerError(
+                f"{label} GrabPassenger animation contract is malformed"
+            )
+        effect["acquire"] = {
+            "startAbilityRange": paired_number("StartAbilityRange", required=True),
+            "timingMs": {
+                key: paired_number(key, required=True)
+                for key in ("UnpackTime", "PreparationTime", "PersistentPrepTime", "PackTime")
+            },
+            "animation": {
+                "state": animation_match.group(1),
+                "durationMs": int(animation_match.group(2)),
+                "triggerTimeMs": int(animation_match.group(3)),
+            },
+            "rejectedConditions": list(_module_tokens(paired, "RejectedConditions")),
+            "sourceIni": paired.source_virtual_path,
+            "line": paired.line,
+        }
+        heal_gain = paired_number("GrabPassengerHealGainPercent")
+        if heal_gain is not None:
+            effect["acquire"]["healGainPercent"] = heal_gain  # type: ignore[index]
+        award_xp = paired_number("AwardXPForTriggering")
+        if award_xp is not None:
+            effect["acquire"]["awardXp"] = award_xp  # type: ignore[index]
+
+        try:
+            contain_rows = compile_transport_contains(member_lineage, label)
+        except ModuleContractError as error:
+            raise PlayableUnitCompilerError(str(error)) from error
+        if len(contain_rows) != 1:
+            raise PlayableUnitCompilerError(
+                f"{label} GrabPassengerSpecialPower needs one TransportContain"
+            )
+        contain = contain_rows[0]
+        contain_fields = contain["fields"]
+        effect["containment"] = {
+            "slots": int(contain_fields["Slots"]["value"]),
+            "passengerFilter": _projected_object_filter(
+                list(contain_fields["PassengerFilter"]["value"]), filter_defines
+            ),
+            "manualPickUpFilter": _projected_object_filter(
+                list(contain_fields.get("ManualPickUpFilter", contain_fields["PassengerFilter"])["value"]),
+                filter_defines,
+            ),
+            "objectStatusOfContained": list(contain_fields["ObjectStatusOfContained"]["value"]),
+            "allowEnemiesInside": bool(contain_fields["AllowEnemiesInside"]["value"]),
+            "allowNeutralInside": bool(contain_fields["AllowNeutralInside"]["value"]),
+            "allowAlliesInside": bool(contain_fields["AllowAlliesInside"]["value"]),
+            "weaponSetTypes": [
+                str(item["value"])
+                for key in ("TypeOneForWeaponSet", "TypeTwoForWeaponSet")
+                for item in contain_fields.get(key, [])
+            ],
+            "weaponStateTypes": [
+                str(item["value"])
+                for key in ("TypeOneForWeaponState", "TypeTwoForWeaponState")
+                for item in contain_fields.get(key, [])
+            ],
+            "sourceIni": str(contain["sourceIni"]),
+            "line": int(contain["line"]),
+        }
+        tree_object_ids: list[str] = []
+        if effect["allowTree"]:
+            for candidate in objects.values():
+                try:
+                    candidate_lineage = _ancestry(objects, candidate)
+                except PlayableUnitCompilerError:
+                    continue
+                kind_tokens = {
+                    token.upper()
+                    for assignment in _effective_values(candidate_lineage, "KindOf")
+                    for token in assignment.value.split()
+                }
+                if "CLUB" in kind_tokens and "SELECTABLE" in kind_tokens and (
+                    "TREE" in kind_tokens or "SHRUBBERY" in kind_tokens
+                ):
+                    tree_object_ids.append(candidate.name)
+            tree_object_ids.sort(key=str.casefold)
+            if objects and not tree_object_ids:
+                raise PlayableUnitCompilerError(
+                    f"{label} allows tree grab but effective Object corpus has no selectable CLUB tree"
+                )
+        effect["targetAdmission"] = {
+            "passengerFilter": effect["containment"]["manualPickUpFilter"],  # type: ignore[index]
+            "treeKindOf": "CLUB" if effect["allowTree"] else "",
+            "treeObjectIds": tree_object_ids,
+            "sourceIni": "data/ini/object/nature/naturetrees.ini" if tree_object_ids else "",
+        }
+        release_rows: list[dict[str, object]] = []
+        for release in behavior_modules:
+            if release.kind.casefold() != "flingpassengerspecialabilityupdate":
+                continue
+            release_rows.append(_hero_ability_effect(
+                f"{label} -> {release.instance_tag or release.kind}", [release],
+                burst_heal_modules, gate_upgrades, modifier_blocks, ocl_source,
+                objects, documents, constants, filter_defines, limitations,
+                member_lineage=member_lineage, behavior_modules=behavior_modules,
+                named_definition_cache=named_definition_cache, cache_lock=cache_lock,
+            ))
+        if release_rows:
+            effect["releaseAbilities"] = release_rows
+        return effect
+
+    dominate_modules = modules_of("dominateenemyspecialpower")
+    if dominate_modules:
+        if len(dominate_modules) != 1 or not member_lineage:
+            raise PlayableUnitCompilerError(
+                f"{label} needs exactly one resolvable DominateEnemySpecialPower"
+            )
+        dominate = dominate_modules[0]
+        try:
+            compiled_domination = compile_dominate_enemy_special_powers(
+                member_lineage, label
+            )
+        except ModuleContractError as error:
+            raise PlayableUnitCompilerError(str(error)) from error
+        contracts = [
+            row for row in compiled_domination
+            if int(row.get("line", 0)) == dominate.line
+            and str(row.get("tag", "")).casefold()
+            == str(dominate.instance_tag or "").casefold()
+        ]
+        if len(contracts) != 1:
+            raise PlayableUnitCompilerError(
+                f"{label} DominateEnemySpecialPower contract identity is ambiguous"
+            )
+        contract = contracts[0]
+        fields = contract["fields"]
+
+        def resolve_domination_number(key: str, *, required: bool = False) -> int | float | None:
+            raw = fields.get(key)
+            if raw is None:
+                if required:
+                    raise PlayableUnitCompilerError(
+                        f"{label} DominateEnemySpecialPower requires {key}"
+                    )
+                return None
+            if not isinstance(raw, Mapping):
+                raise PlayableUnitCompilerError(
+                    f"{label} DominateEnemySpecialPower malformed {key}"
+                )
+            if "milliseconds" in raw:
+                return int(raw["milliseconds"])
+            if "value" in raw and isinstance(raw["value"], (int, float)) and not isinstance(raw["value"], bool):
+                return raw["value"]
+            define = raw.get("define")
+            if isinstance(define, str) and define in constants:
+                return constants[define]
+            raise PlayableUnitCompilerError(
+                f"{label} DominateEnemySpecialPower has unresolvable {key}"
+            )
+
+        template_field = fields["SpecialPowerTemplate"]
+        filter_field = fields["AttributeModifierAffects"]
+        assert isinstance(template_field, Mapping) and isinstance(filter_field, Mapping)
+        effect = {
+            "kind": "dominate-enemy",
+            "specialPowerTemplateId": str(template_field["value"]),
+            "startAbilityRange": resolve_domination_number("StartAbilityRange", required=True),
+            "affectsFilter": _projected_object_filter(
+                list(filter_field["value"]), filter_defines
+            ),
+            "permanentlyConvert": bool(
+                fields.get("PermanentlyConvert", {}).get("value", False)
+            ),
+            "unpackingVariation": int(
+                fields.get("UnpackingVariation", {}).get("value", 0)
+            ),
+            "sourceIni": str(contract["sourceIni"]),
+            "line": int(contract["line"]),
+        }
+        if not effect["permanentlyConvert"]:
+            default_object_source = _optional_document(
+                documents, "data/ini/default/object.ini"
+            )
+            if default_object_source is None:
+                raise PlayableUnitCompilerError(
+                    f"{label} temporary domination requires data/ini/default/object.ini"
+                )
+            try:
+                defect = compile_temporarily_defect_update_default(
+                    default_object_source
+                )
+            except ModuleContractError as error:
+                raise PlayableUnitCompilerError(str(error)) from error
+            duration_field = defect["fields"]["DefectDuration"]
+            if "milliseconds" in duration_field:
+                effect["temporaryDefectDurationMs"] = int(
+                    duration_field["milliseconds"]
+                )
+            else:
+                define = duration_field.get("define")
+                if not isinstance(define, str) or define not in constants:
+                    raise PlayableUnitCompilerError(
+                        f"{label} temporary defect duration define is unresolved"
+                    )
+                effect["temporaryDefectDurationMs"] = constants[define]
+            effect["temporaryDefectSourceIni"] = str(defect["sourceIni"])
+            effect["temporaryDefectLine"] = int(defect["line"])
+        radius = resolve_domination_number("DominateRadius")
+        if radius is not None:
+            effect["dominateRadius"] = radius
+        timings: dict[str, int | float] = {}
+        for key in (
+            "UnpackTime", "PreparationTime", "FreezeAfterTriggerDuration",
+            "TriggerModelConditionDuration",
+        ):
+            value = resolve_domination_number(key)
+            if value is not None:
+                timings[key] = value
+        if timings:
+            effect["timingMs"] = timings
+        for source_key, target_key in (
+            ("DominatedFX", "dominatedFxId"), ("TriggerFX", "triggerFxId"),
+            ("TriggerSound", "triggerSoundId"),
+        ):
+            raw = fields.get(source_key)
+            if isinstance(raw, Mapping):
+                effect[target_key] = str(raw["value"])
+        condition = fields.get("TriggerModelCondition")
+        if isinstance(condition, Mapping):
+            effect["triggerModelCondition"] = {
+                "namespace": str(condition["namespace"]),
+                "value": str(condition["value"]),
+            }
+        return effect
+
+    weapon_mode_modules = modules_of("weaponmodespecialpowerupdate")
+    if weapon_mode_modules:
+        if len(weapon_mode_modules) != 1 or not member_lineage:
+            raise PlayableUnitCompilerError(
+                f"{label} needs exactly one resolvable WeaponModeSpecialPowerUpdate"
+            )
+        weapon_mode = weapon_mode_modules[0]
+        try:
+            compiled_modes = compile_weapon_mode_special_power_updates(
+                member_lineage, label
+            )
+        except ModuleContractError as error:
+            raise PlayableUnitCompilerError(str(error)) from error
+        contracts = [
+            row for row in compiled_modes
+            if int(row.get("line", 0)) == weapon_mode.line
+            and str(row.get("tag", "")).casefold()
+            == str(weapon_mode.instance_tag or "").casefold()
+        ]
+        if len(contracts) != 1:
+            raise PlayableUnitCompilerError(
+                f"{label} WeaponModeSpecialPowerUpdate contract identity is ambiguous"
+            )
+        fields = contracts[0]["fields"]
+        duration_field = fields["Duration"]
+        assert isinstance(duration_field, Mapping)
+        if "milliseconds" in duration_field:
+            duration_ms: int | float = int(duration_field["milliseconds"])
+        else:
+            define = duration_field.get("define")
+            if not isinstance(define, str) or define not in constants:
+                raise PlayableUnitCompilerError(
+                    f"{label} WeaponModeSpecialPowerUpdate has unresolvable Duration"
+                )
+            duration_ms = constants[define]
+        if float(duration_ms) < 0:
+            raise PlayableUnitCompilerError(
+                f"{label} WeaponModeSpecialPowerUpdate has negative Duration"
+            )
+        template_field = fields["SpecialPowerTemplate"]
+        starts_paused_field = fields["StartsPaused"]
+        assert isinstance(template_field, Mapping)
+        assert isinstance(starts_paused_field, Mapping)
+        effect: dict[str, object] = {
+            "kind": "weapon-mode-special-power",
+            "specialPowerTemplateId": str(template_field["value"]),
+            "durationMs": duration_ms,
+            "startsPaused": bool(starts_paused_field["value"]),
+            "sourceIni": str(contracts[0]["sourceIni"]),
+            "line": int(contracts[0]["line"]),
+        }
+        flag_field = fields.get("WeaponSetFlags")
+        if isinstance(flag_field, Mapping):
+            effect["weaponSetFlags"] = list(flag_field["value"])
+        slot_field = fields.get("LockWeaponSlot")
+        if isinstance(slot_field, Mapping):
+            effect["lockWeaponSlot"] = str(slot_field["value"])
+        modifier_field = fields.get("AttributeModifier")
+        if isinstance(modifier_field, Mapping):
+            modifier_id = str(modifier_field["value"])
+            modifier = _ability_modifier_leaf(
+                modifier_blocks, modifier_id, constants, label
+            )
+            effect["attributeModifier"] = modifier
+            if modifier.get("unsupportedModifiers"):
+                limitations.append(
+                    "modifier kinds not applied by the runtime: "
+                    + ", ".join(modifier["unsupportedModifiers"])  # type: ignore[arg-type]
+                )
+        return effect
+
+    activate_modules = modules_of("activatemodulespecialpower")
+    if activate_modules:
+        if len(activate_modules) != 1 or not member_lineage:
+            raise PlayableUnitCompilerError(
+                f"{label} needs exactly one resolvable ActivateModuleSpecialPower"
+            )
+        activate = activate_modules[0]
+        try:
+            compiled = compile_activate_module_special_powers(member_lineage, label)
+        except ModuleContractError as error:
+            raise PlayableUnitCompilerError(str(error)) from error
+        contracts = [
+            row for row in compiled
+            if int(row.get("line", 0)) == activate.line
+            and str(row.get("tag", "")).casefold()
+            == str(activate.instance_tag or "").casefold()
+        ]
+        if len(contracts) != 1:
+            raise PlayableUnitCompilerError(
+                f"{label} ActivateModuleSpecialPower contract identity is ambiguous"
+            )
+        contract = contracts[0]
+        fields = contract["fields"]
+
+        def resolved_contract_expression(key: str, *, required: bool = False) -> int | float | None:
+            raw = fields.get(key)
+            if raw is None:
+                if required:
+                    raise PlayableUnitCompilerError(
+                        f"{label} ActivateModuleSpecialPower requires {key}"
+                    )
+                return None
+            if not isinstance(raw, Mapping):
+                raise PlayableUnitCompilerError(
+                    f"{label} ActivateModuleSpecialPower {key} is malformed"
+                )
+            if "milliseconds" in raw:
+                return int(raw["milliseconds"])
+            if "value" in raw:
+                value = raw["value"]
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    return value
+            define = raw.get("define")
+            if isinstance(define, str) and define in constants:
+                return constants[define]
+            raise PlayableUnitCompilerError(
+                f"{label} ActivateModuleSpecialPower has unresolvable {key}"
+            )
+
+        start_range = resolved_contract_expression("StartAbilityRange", required=True)
+        assert start_range is not None
+        template_field = fields["SpecialPowerTemplate"]
+        must_finish_field = fields.get("MustFinishAbility", {})
+        variation_field = fields.get("UnpackingVariation", {})
+        assert isinstance(template_field, Mapping)
+        assert isinstance(must_finish_field, Mapping)
+        assert isinstance(variation_field, Mapping)
+        graph: dict[str, object] = {
+            "kind": "activate-module-graph",
+            "specialPowerTemplateId": str(template_field["value"]),
+            "startAbilityRange": start_range,
+            "mustFinishAbility": bool(must_finish_field.get("value", False)),
+            "unpackingVariation": int(variation_field.get("value", 0)),
+            "routes": [],
+        }
+        effect_range = resolved_contract_expression("EffectRange")
+        if effect_range is not None:
+            graph["effectRange"] = effect_range
+        timing: dict[str, int | float] = {}
+        for key in (
+            "StartDelay", "PreparationTime", "PersistentPrepTime", "UnpackTime",
+            "PackTime", "SpecialPowerDuration",
+        ):
+            value = resolved_contract_expression(key)
+            if value is not None:
+                timing[key] = value
+        if timing:
+            graph["timingMs"] = timing
+
+        all_behavior_modules = list(behavior_modules)
+        route_rows: list[dict[str, object]] = []
+        for route_value in fields["TriggerSpecialPower"]:
+            route = route_value
+            assert isinstance(route, Mapping)
+            target_tag = str(route["moduleTag"])
+            target_blocks = [
+                candidate for candidate in all_behavior_modules
+                if str(candidate.instance_tag or "").casefold() == target_tag.casefold()
+            ]
+            if len(target_blocks) != 1:
+                raise PlayableUnitCompilerError(
+                    f"{label} ActivateModuleSpecialPower target {target_tag} is not unique"
+                )
+            target = target_blocks[0]
+            target_template_field = route["targetSpecialPowerTemplate"]
+            assert isinstance(target_template_field, Mapping)
+            target_template = str(target_template_field["value"])
+            target_bound = [
+                candidate for candidate in all_behavior_modules
+                if candidate is target
+                or (
+                    candidate is not activate
+                    and (_first(candidate.values("SpecialPowerTemplate")) or "").casefold()
+                    == target_template.casefold()
+                )
+            ]
+            leaf = _hero_ability_effect(
+                f"{label} -> {target_tag}", target_bound, burst_heal_modules,
+                gate_upgrades, modifier_blocks, ocl_source, objects, documents,
+                constants, filter_defines, limitations,
+                power_enum=target_template,
+                target_lineage=target_lineage,
+                member_lineage=member_lineage,
+                behavior_modules=behavior_modules,
+                radius_cursor_radius=radius_cursor_radius,
+                named_definition_cache=named_definition_cache,
+                cache_lock=cache_lock,
+            )
+            if leaf.get("kind") == "none":
+                trigger_fx = _first(target.values("TriggerFX"))
+                if trigger_fx:
+                    leaf = {"kind": "trigger-fx", "fxId": trigger_fx}
+                else:
+                    raise PlayableUnitCompilerError(
+                        f"{label} ActivateModuleSpecialPower target {target_tag} has no effect leaf"
+                    )
+            route_rows.append({
+                "moduleTag": target_tag,
+                "targetMode": str(route["targetMode"]),
+                "authoredTargetMode": str(route["authoredTargetMode"]),
+                "targetModuleKind": str(route["targetModuleKind"]),
+                "targetSpecialPowerTemplateId": target_template,
+                "effect": leaf,
+                "sourceIni": str(route["sourceIni"]),
+                "line": int(route["line"]),
+            })
+        graph["routes"] = route_rows
+        return graph
 
     if power_enum.casefold() == "special_infantry_capture_building":
         # Capture building (the ubiquitous CaptureBuilding.inc): the bound
@@ -6845,6 +8510,45 @@ def _hero_ability_effect(
         )
         if start_range is not None:
             effect["startAbilityRange"] = start_range
+        timing: dict[str, int | float] = {}
+        for timer_key in (
+            "UnpackTime", "PreparationTime", "PersistentPrepTime", "PackTime",
+            "FreezeAfterTriggerDuration",
+        ):
+            authored = block.values(timer_key)
+            if not authored:
+                continue
+            resolved = _resolved_expression(authored[-1], constants)
+            if resolved is None or float(resolved) < 0.0:
+                raise PlayableUnitCompilerError(
+                    f"{label} {timer_key} is unresolved"
+                )
+            timing[timer_key] = resolved
+        if timing:
+            effect["timingMs"] = timing
+        for authored_key, output_key in (
+            ("MustFinishAbility", "mustFinishAbility"),
+            ("SkipContinue", "skipContinue"),
+        ):
+            authored = block.values(authored_key)
+            if not authored:
+                continue
+            folded = authored[-1].strip().casefold()
+            if folded not in {"yes", "no"}:
+                raise PlayableUnitCompilerError(
+                    f"{label} {authored_key} is malformed"
+                )
+            effect[output_key] = folded == "yes"
+        award_xp = block.values("AwardXPForTriggering")
+        if award_xp:
+            resolved_xp = _resolved_expression(award_xp[-1], constants)
+            if resolved_xp is None or float(resolved_xp) < 0.0:
+                raise PlayableUnitCompilerError(
+                    f"{label} AwardXPForTriggering is unresolved"
+                )
+            effect["awardXpForTriggering"] = resolved_xp
+        effect["updateSourceIni"] = block.source_virtual_path
+        effect["updateLine"] = block.line
         if "attackRange" not in effect and "startAbilityRange" not in effect:
             limitations.append("ability weapon authors no AttackRange/StartAbilityRange")
         return effect
@@ -7261,16 +8965,40 @@ def _hero_ability_effect(
     anti_category: str | None = None
     modifier_module: SageBlock | None = None
     if hero_mode_modules:
-        modifier_module = hero_mode_modules[0]
-        tokens = _module_tokens(modifier_module, "HeroAttributeModifier")
+        timing_module = hero_mode_modules[0]
+        modifier_module = timing_module
+        tokens = _module_tokens(timing_module, "HeroAttributeModifier")
         if len(tokens) > 1:
             raise PlayableUnitCompilerError(
                 f"{label} has an ambiguous HeroAttributeModifier"
             )
         modifier_id = tokens[0] if tokens else None
         duration = _resolved_expression(
-            (modifier_module.values("HeroEffectDuration") or ("",))[-1], constants
+            (timing_module.values("HeroEffectDuration") or ("",))[-1], constants
         )
+        if modifier_id is None:
+            # Retail's Carnage family splits the contract across two modules:
+            # HeroModeSpecialAbilityUpdate owns the exact duration while the
+            # paired SpecialPowerModule owns AttributeModifier and its target.
+            # Both are already restricted to this SpecialPowerTemplate by the
+            # bound-module resolver, so require one unambiguous authored leaf.
+            starters = [
+                block
+                for block in modules_of("specialpowermodule")
+                if _module_tokens(block, "AttributeModifier")
+            ]
+            if len(starters) > 1:
+                raise PlayableUnitCompilerError(
+                    f"{label} has ambiguous HeroMode AttributeModifier starters"
+                )
+            if starters:
+                modifier_module = starters[0]
+                starter_tokens = _module_tokens(modifier_module, "AttributeModifier")
+                if len(starter_tokens) != 1:
+                    raise PlayableUnitCompilerError(
+                        f"{label} HeroMode starter needs exactly one AttributeModifier"
+                    )
+                modifier_id = starter_tokens[0]
     else:
         timing = [
             block
@@ -7429,11 +9157,10 @@ def _hero_ability_effect(
 
     if power_enum.casefold() == "special_screech":
         # Screech / Terrible Fury / Instill Terror: the fear push is
-        # hardcoded in the retail engine behind Enum SPECIAL_SCREECH — the
-        # bound SpecialAbilityUpdate authors only an EffectRange plus the
-        # animation envelope (no GenerateTerror, weapon, or modifier leaf),
-        # so there is no authored magnitude to convert without inventing the
-        # emotion push.
+        # hardcoded in the retail engine behind Enum SPECIAL_SCREECH. The
+        # bound update authors EffectRange and the global TERROR EmotionNugget
+        # authors the flee duration and command lock; project exactly those
+        # leaves through the existing terror runtime.
         ranges = [
             resolved
             for module in modules_of("specialabilityupdate")
@@ -7444,16 +9171,63 @@ def _hero_ability_effect(
             )
             is not None
         ]
-        range_text = (
-            f"EffectRange {ranges[0]}" if ranges else "no EffectRange resolves"
+        if len(ranges) != 1 or float(ranges[0]) <= 0.0:
+            raise PlayableUnitCompilerError(
+                f"{label} SPECIAL_SCREECH needs exactly one positive EffectRange"
+            )
+        emotions_source = _optional_document(documents, EMOTIONS_PATH)
+        if emotions_source is None:
+            raise PlayableUnitCompilerError(
+                f"{label} SPECIAL_SCREECH requires {EMOTIONS_PATH}"
+            )
+        resolved_nuggets: list[tuple[IniBlock, int | float]] = []
+        for nugget in _named_blocks(emotions_source, "EmotionNugget").values():
+            if (_first(nugget.values("Type")) or "").casefold() != "terror":
+                continue
+            duration = _resolved_expression(
+                (nugget.values("Duration") or ("",))[-1], constants
+            )
+            if duration is not None and float(duration) > 0.0:
+                resolved_nuggets.append((nugget, duration))
+        if len(resolved_nuggets) != 1:
+            raise PlayableUnitCompilerError(
+                f"{label} SPECIAL_SCREECH needs exactly one authored TERROR "
+                f"EmotionNugget with Duration; found {len(resolved_nuggets)}"
+            )
+        nugget, duration = resolved_nuggets[0]
+        if (_first(nugget.values("PreventPlayerCommands")) or "").casefold() != "yes":
+            raise PlayableUnitCompilerError(
+                f"{label} SPECIAL_SCREECH TERROR nugget {nugget.name} has no "
+                "PreventPlayerCommands lock"
+            )
+        limitations.append(
+            "engine SPECIAL_SCREECH TERROR flee is projected as the authored "
+            "no-fight command lock; retail authors no scatter displacement"
         )
-        raise PlayableUnitCompilerError(
-            f"{label} SPECIAL_SCREECH fear push is engine-hardcoded: the "
-            f"bound SpecialAbilityUpdate authors only the cast envelope "
-            f"({range_text}), no convertible effect leaf — needs the screech "
-            "emotion system"
+        module = next(
+            item
+            for item in modules_of("specialabilityupdate")
+            if item.values("EffectRange")
         )
-
+        return {
+            "kind": "terror",
+            "radius": ranges[0],
+            "durationMs": duration,
+            "modifiers": [{
+                "kind": "DAMAGE_MULT",
+                "value": 0.0,
+                "application": "multiplicative",
+                "semantic": (
+                    "SPECIAL_SCREECH TERROR victims cannot fight while "
+                    "RUN_AWAY_PANIC / PreventPlayerCommands holds"
+                ),
+            }],
+            "emotionNuggetId": nugget.name,
+            "emotionSource": {"sourceIni": EMOTIONS_PATH},
+            "engineEnum": "SPECIAL_SCREECH",
+            "sourceIni": module.source_virtual_path,
+            "line": module.line,
+        }
     return {"kind": "none"}
 
 
@@ -7825,6 +9599,101 @@ def _level_up_upgrades(
     return rows, frozenset(consumed)
 
 
+def _bind_horde_dispatch_graphs(
+    rows: Sequence[dict[str, object]],
+    target_lineage: Sequence[SageObject],
+    member_lineage: Sequence[SageObject],
+    behavior_modules: Sequence[SageBlock],
+    command_sets: Mapping[str, IniBlock],
+    command_buttons: Mapping[str, IniBlock],
+    objects: Mapping[str, SageObject],
+    documents: Mapping[str, bytes],
+    constants: Mapping[str, int | float],
+    *,
+    named_definition_cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None,
+    cache_lock: threading.Lock | None,
+) -> list[dict[str, object]]:
+    """Bind dispatch modules even when retail omits their CommandSet button."""
+
+    dispatch_blocks = [
+        block for block in behavior_modules
+        if block.kind.casefold() == "hordedispatchspecialpower"
+    ]
+    if not dispatch_blocks:
+        return list(rows)
+    modifier_source = _optional_document(documents, ATTRIBUTE_MODIFIER_PATH)
+    modifier_blocks = (
+        _named_blocks(modifier_source, "ModifierList")
+        if modifier_source is not None else {}
+    )
+    gamedata_source = _optional_document(documents, GAME_DATA_PATH)
+    filter_defines = (
+        _ability_list_defines(gamedata_source)
+        if gamedata_source is not None else {}
+    )
+    ocl_source = _optional_document(documents, OBJECT_CREATION_LIST_PATH)
+    command_values = [
+        assignment.value.strip()
+        for assignment in _effective_values(target_lineage, "CommandSet")
+        if assignment.value.strip()
+    ]
+    exposed_ids: set[str] = set()
+    for command_set_id in command_values:
+        command_set = command_sets.get(command_set_id.casefold())
+        if command_set is not None:
+            exposed_ids.update(value.casefold() for _, value in command_set.assignments)
+
+    result: list[dict[str, object]] = []
+    for row in rows:
+        if row.get("module") != "HordeDispatchSpecialPower":
+            result.append(row)
+            continue
+        matches = [
+            block for block in dispatch_blocks
+            if int(row["line"]) == block.line
+            and str(row["sourceIni"]).casefold() == block.source_virtual_path.casefold()
+            and str(row.get("tag", "")).casefold()
+            == str(block.instance_tag or "").casefold()
+        ]
+        if len(matches) != 1:
+            raise PlayableUnitCompilerError(
+                "HordeDispatchSpecialPower graph identity is ambiguous"
+            )
+        block = matches[0]
+        fields = row["fields"]
+        assert isinstance(fields, Mapping)
+        template_field = fields["SpecialPowerTemplate"]
+        assert isinstance(template_field, Mapping)
+        template = str(template_field["value"])
+        graph = _hero_ability_effect(
+            f"HordeDispatchSpecialPower {block.instance_tag or ''}", [block], [],
+            [], modifier_blocks, ocl_source, objects, documents, constants,
+            filter_defines, [], power_enum=template,
+            target_lineage=target_lineage, member_lineage=member_lineage,
+            behavior_modules=behavior_modules,
+            named_definition_cache=named_definition_cache, cache_lock=cache_lock,
+        )
+        button_ids = sorted(
+            (
+                button.name for button in command_buttons.values()
+                if template.casefold() in {
+                    value.casefold() for value in _module_tokens(button, "SpecialPower")
+                }
+            ),
+            key=str.casefold,
+        )
+        exposed = [item for item in button_ids if item.casefold() in exposed_ids]
+        enriched = dict(row)
+        enriched["effectGraph"] = graph
+        enriched["commandExposure"] = {
+            "commandButtonIds": button_ids,
+            "exposedCommandButtonIds": exposed,
+            "status": "exposed" if exposed else "not-in-effective-command-set",
+        }
+        result.append(enriched)
+    return result
+
+
 def compile_playable_unit_descriptor(
     target_id: str,
     documents: Mapping[str, bytes],
@@ -7837,11 +9706,43 @@ def compile_playable_unit_descriptor(
     prepared: PlayableUnitCompilerInputs | None = None,
     game: str = "bfme2",
     engine_spawned_banner_carrier: bool = False,
+    scenario_admission_role: str | None = None,
+    scenario_admission: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Compile one source-backed descriptor or fail on an unresolved core edge."""
 
     if not target_id or len(target_id) > 256:
         raise PlayableUnitCompilerError("target Object id is invalid")
+    if scenario_admission_role is not None and scenario_admission is not None:
+        raise PlayableUnitCompilerError("scenario admission inputs conflict")
+    if scenario_admission_role not in {None, "inheritance-template", "scenario-only"}:
+        raise PlayableUnitCompilerError("scenario admission role is invalid")
+    if scenario_admission_role is not None:
+        # Backward-compatible naval catalog API. New callers provide the
+        # explicit role/surface contract below.
+        scenario_admission = {
+            "role": scenario_admission_role,
+            "surfaces": ["map-placement", "script-spawn", "tutorial-script"],
+        }
+    if scenario_admission is not None:
+        role = scenario_admission.get("role")
+        surfaces = scenario_admission.get("surfaces")
+        if (
+            set(scenario_admission) != {"role", "surfaces"}
+            or not isinstance(role, str)
+            or not role
+            or not isinstance(surfaces, (list, tuple))
+            or not surfaces
+            or role not in _SCENARIO_ADMISSION_ROLES
+            or any(
+                not isinstance(item, str)
+                or item not in _SCENARIO_ADMISSION_SURFACES
+                for item in surfaces
+            )
+            or len(set(surfaces)) != len(surfaces)
+        ):
+            raise PlayableUnitCompilerError("scenario admission contract is invalid")
+        scenario_admission = {"role": role, "surfaces": list(surfaces)}
     if prepared is None:
         prepared = prepare_playable_unit_compiler(documents)
     elif prepared.documents is not documents:
@@ -7983,12 +9884,20 @@ def compile_playable_unit_descriptor(
                 direct_error = error
         else:
             direct_error = error
-    if is_roster_hero and is_ring_hero:
+    if scenario_admission is not None:
+        # Explicit scenario admission owns the exact requested Object. Retail
+        # may also expose that object through a lair/neutral CommandSet, but
+        # that is not a player-faction producer and must not leak into HUD or
+        # producible registries.
+        producers = ()
+    elif is_roster_hero and is_ring_hero:
         raise PlayableUnitCompilerError(
             f"hero {target.name} has conflicting BuildableHeroesMP and "
             "BuildableRingHeroesMP roster routes"
         )
-    if is_roster_hero or is_ring_hero:
+    if scenario_admission is not None:
+        pass
+    elif is_roster_hero or is_ring_hero:
         if is_ring_hero and len(ring_matches) != 1:
             raise PlayableUnitCompilerError(
                 f"PlayerTemplate {player_template_id} has duplicate "
@@ -8066,7 +9975,7 @@ def compile_playable_unit_descriptor(
         producers = direct_producers
     elif "BANNER" in {
         kind.upper()
-        for kind in _kind_of(_ancestry(objects, target))
+        for kind in _kind_of(_ancestry(objects, target), prepared.token_defines)
     } or engine_spawned_banner_carrier:
         # Banner carriers are not UNIT_BUILD targets. Hordes spawn them via
         # BannerCarriersAllowed when the battalion reaches min level. Keep a
@@ -8082,7 +9991,12 @@ def compile_playable_unit_descriptor(
                 "sourceField": "BannerCarriersAllowed",
                 "evidence": (
                     "kindof-banner"
-                    if "BANNER" in {kind.upper() for kind in _kind_of(_ancestry(objects, target))}
+                    if "BANNER" in {
+                        kind.upper()
+                        for kind in _kind_of(
+                            _ancestry(objects, target), prepared.token_defines
+                        )
+                    }
                     else "banner-carriers-allowed-edge"
                 ),
                 "ui": {},
@@ -8090,7 +10004,16 @@ def compile_playable_unit_descriptor(
         )
     else:
         assert direct_error is not None
-        containers = _horde_containers(target.name, objects)
+        if (
+            scenario_admission is not None
+            and "is not targeted by an authored UNIT_BUILD command" in str(direct_error)
+        ):
+            # Admission is for the exact requested identity. In particular,
+            # do not reinterpret RohanPeasant as its produced horde container.
+            producers = ()
+            containers = ()
+        else:
+            containers = _horde_containers(target.name, objects)
         reachable: list[tuple[SageObject, tuple[dict[str, object], ...]]] = []
         for container in containers:
             try:
@@ -8129,7 +10052,9 @@ def compile_playable_unit_descriptor(
                     )
                 except PlayableUnitCompilerError:
                     continue
-        if len(reachable) == 1:
+        if scenario_admission is not None and not containers:
+            pass
+        elif len(reachable) == 1:
             target, producers = reachable[0]
         else:
             raise direct_error
@@ -8156,6 +10081,8 @@ def compile_playable_unit_descriptor(
     # member's block is the footprint a runtime needs (the container Object has
     # none of its own).
     member_geometry = _geometry_contract(member_lineage, prepared.numeric_defines)
+    member_geometry_contact_points = _geometry_contact_points(member_lineage)
+    member_public_bones = _public_bone_contract(member_lineage)
     container_audio_edges = (
         frozenset().union(
             *(
@@ -8183,8 +10110,8 @@ def compile_playable_unit_descriptor(
         named_definition_cache=prepared.named_definition_cache,
         cache_lock=prepared.cache_lock,
     )
-    target_kinds = _kind_of(target_lineage)
-    member_kinds = _kind_of(member_lineage)
+    target_kinds = _kind_of(target_lineage, prepared.token_defines)
+    member_kinds = _kind_of(member_lineage, prepared.token_defines)
     category = _category(
         target_kinds, member_kinds, bool(members[0]["objectId"] != target.name)
     )
@@ -8253,14 +10180,31 @@ def compile_playable_unit_descriptor(
         )
     try:
         module_contracts = compile_all_module_contracts(
-            target_lineage, target_lineage[-1].name
+            target_lineage,
+            target_lineage[-1].name,
+            numeric_defines=prepared.numeric_defines,
+            numeric_define_provenance=prepared.numeric_define_provenance,
         )
         if target_lineage[-1].name.casefold() != member_lineage[-1].name.casefold():
             member_contracts = compile_all_module_contracts(
-                member_lineage, member_lineage[-1].name
+                member_lineage,
+                member_lineage[-1].name,
+                numeric_defines=prepared.numeric_defines,
+                numeric_define_provenance=prepared.numeric_define_provenance,
             )
             # Prefer container contracts first, then primary-member contracts.
             module_contracts = module_contracts + member_contracts
+        ability_lineages = [target_lineage]
+        if target_lineage[-1].name.casefold() != member_lineage[-1].name.casefold():
+            ability_lineages.append(member_lineage)
+        module_contracts = _bind_horde_dispatch_graphs(
+            module_contracts, target_lineage, member_lineage,
+            _ability_behavior_modules(ability_lineages, documents),
+            command_sets, command_buttons, objects, documents,
+            prepared.numeric_defines,
+            named_definition_cache=prepared.named_definition_cache,
+            cache_lock=prepared.cache_lock,
+        )
     except ModuleContractError as error:
         raise PlayableUnitCompilerError(str(error)) from error
     consumed_member_modules: frozenset[tuple[str, int, str, str]] = frozenset()
@@ -8281,9 +10225,9 @@ def compile_playable_unit_descriptor(
     runtime_modules = sorted(
         {str(row["kind"]) for row in module_evidence}, key=str.casefold
     )
-    unsupported_module_evidence = [
-        row for row in module_evidence if row["consumed"] is not True
-    ]
+    unsupported_module_evidence = _untyped_unsupported_module_evidence(
+        module_evidence, module_contracts
+    )
     unsupported_modules = sorted(
         {str(row["kind"]) for row in unsupported_module_evidence}, key=str.casefold
     )
@@ -8354,6 +10298,7 @@ def compile_playable_unit_descriptor(
         prepared.numeric_defines,
         documents,
         target_lineage,
+        token_defines=prepared.token_defines,
         flat_kind_cache=prepared.flat_kind_cache,
         named_definition_cache=prepared.named_definition_cache,
         cache_lock=prepared.cache_lock,
@@ -8362,6 +10307,7 @@ def compile_playable_unit_descriptor(
         destroy_die_policies=destroy_die_policies,
         module_contracts=module_contracts,
         slow_death_fades=slow_death_fades,
+        scenario_admission=scenario_admission,
     )
     combined_kinds = tuple(sorted(set(target_kinds) | set(member_kinds)))
     capabilities, unsupported_capabilities, traits = _capability_contract(
@@ -8374,7 +10320,15 @@ def compile_playable_unit_descriptor(
     )
     abilities: list[dict[str, object]] = []
     ability_power_blocks: dict[str, IniBlock] = {}
-    if category == "hero":
+    # Retail special-power buttons are not hero-exclusive.  The Dwarven
+    # Demolisher is a siege unit whose ToggleDeploySpecialAbilityUpdate is
+    # exposed through its ordinary CommandSet; compile that authored command
+    # surface through the same deterministic ability path.
+    has_nonhero_command_ability = any(
+        row.get("module") == "ToggleDeploySpecialAbilityUpdate"
+        for row in module_contracts
+    )
+    if category == "hero" or has_nonhero_command_ability:
         abilities, ability_power_blocks = _hero_abilities(
             target,
             target_lineage,
@@ -8394,6 +10348,7 @@ def compile_playable_unit_descriptor(
         documents,
         prepared.numeric_defines,
         experience_level_create,
+        allow_unauthored_award=scenario_admission is not None,
     )
     used_paths = {
         COMMAND_SET_PATH,
@@ -8519,6 +10474,22 @@ def compile_playable_unit_descriptor(
         "traits": traits,
         "capabilities": capabilities,
         "production": list(producers),
+        **(
+            {
+                "scenarioAdmission": {
+                    "kind": "authored-non-buildable",
+                    "role": scenario_admission["role"],
+                    "surfaces": list(scenario_admission["surfaces"]),
+                    "buildCommandExposed": False,
+                    "evidence": "no-authored-unit-build-route",
+                    "sourceIni": requested_target.source_virtual_path,
+                    "line": requested_target.line,
+                    "declarationKind": requested_target.kind,
+                }
+            }
+            if scenario_admission is not None
+            else {}
+        ),
         "composition": {
             "containerObjectId": target.name,
             "members": list(members),
@@ -8536,6 +10507,16 @@ def compile_playable_unit_descriptor(
             **(
                 {"geometry": member_geometry}
                 if member_geometry is not None
+                else {}
+            ),
+            **(
+                {"geometryContactPoints": member_geometry_contact_points}
+                if member_geometry_contact_points
+                else {}
+            ),
+            **(
+                {"publicBones": member_public_bones}
+                if member_public_bones
                 else {}
             ),
             **(
@@ -8613,9 +10594,10 @@ def compile_playable_unit_descriptor(
         ],
         "sourceDocuments": _source_rows(documents, used_paths, semantic_scopes),
     }
-    if category == "hero":
-        # Hero-only contract: SPECIAL_POWER command abilities. Non-hero
-        # descriptors stay byte-stable (no key emitted).
+    if category == "hero" or abilities:
+        # SPECIAL_POWER command abilities are usually heroic, but retail also
+        # exposes them on ordinary units (the Dwarven Demolisher deploy toggle
+        # is the measured case). Empty non-hero descriptors stay byte-stable.
         descriptor["abilities"] = abilities
     # Every playable unit carries its experience economy contract (compiled
     # chain, or the recorded reason there is none).
@@ -8690,8 +10672,51 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
             )
         capability_ids.add(str(row["id"]))
     production = value.get("production")
-    if not isinstance(production, list) or not production:
-        raise PlayableUnitCompilerError("playable-unit descriptor has no producer")
+    scenario_admission = value.get("scenarioAdmission")
+    if not isinstance(production, list):
+        raise PlayableUnitCompilerError("playable-unit descriptor production is invalid")
+    if scenario_admission is None:
+        if not production:
+            raise PlayableUnitCompilerError("playable-unit descriptor has no producer")
+    else:
+        if (
+            production
+            or not isinstance(scenario_admission, Mapping)
+            or set(scenario_admission) != {
+                "kind",
+                "role",
+                "surfaces",
+                "buildCommandExposed",
+                "evidence",
+                "sourceIni",
+                "line",
+                "declarationKind",
+            }
+            or scenario_admission.get("kind") != "authored-non-buildable"
+            or scenario_admission.get("role") not in _SCENARIO_ADMISSION_ROLES
+            or not isinstance(scenario_admission.get("surfaces"), list)
+            or not scenario_admission.get("surfaces")
+            or any(
+                not isinstance(item, str)
+                or item not in _SCENARIO_ADMISSION_SURFACES
+                for item in scenario_admission.get("surfaces", [])
+            )
+            or len(set(scenario_admission.get("surfaces", [])))
+            != len(scenario_admission.get("surfaces", []))
+            or scenario_admission.get("buildCommandExposed") is not False
+            or scenario_admission.get("evidence")
+            != "no-authored-unit-build-route"
+            or not isinstance(scenario_admission.get("sourceIni"), str)
+            or not scenario_admission.get("sourceIni")
+            or not isinstance(scenario_admission.get("line"), int)
+            or isinstance(scenario_admission.get("line"), bool)
+            or int(scenario_admission.get("line", 0)) <= 0
+            or scenario_admission.get("declarationKind")
+            not in {"Object", "ChildObject"}
+        ):
+            raise PlayableUnitCompilerError(
+                "playable-unit scenario admission contract is invalid"
+            )
     for row in production:
         if not isinstance(row, Mapping):
             raise PlayableUnitCompilerError("playable-unit production row is invalid")
@@ -9276,8 +11301,29 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
         raise PlayableUnitCompilerError(
             "playable-unit unsupported-capability rows are invalid"
         )
+    typed_contracts = (
+        module_contracts_value
+        if isinstance(module_contracts_value, list)
+        else []
+    )
+    evidence_identities = {
+        _module_occurrence_identity(row, contract=False)
+        for row in module_evidence
+    }
+    typed_contract_identities = {
+        _module_occurrence_identity(row, contract=True)
+        for row in typed_contracts
+        if row.get("carrier") == "Behavior"
+    }
+    if not typed_contract_identities <= evidence_identities:
+        raise PlayableUnitCompilerError(
+            "playable-unit typed module contracts disagree with runtime module evidence"
+        )
+    untyped_unsupported_evidence = _untyped_unsupported_module_evidence(
+        module_evidence, typed_contracts
+    )
     unsupported_modules = {
-        str(row["kind"]) for row in module_evidence if row["consumed"] is False
+        str(row["kind"]) for row in untyped_unsupported_evidence
     }
     expected_unsupported = [
         {
@@ -9286,21 +11332,17 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
             "reason": "authored Behavior is not consumed by the shared runtime adapter",
             "semanticSha256": row["semanticSha256"],
         }
-        for row in module_evidence
-        if row["consumed"] is False
+        for row in untyped_unsupported_evidence
     ]
     if unsupported_modules != set(special) or unsupported != expected_unsupported:
         raise PlayableUnitCompilerError(
             "playable-unit unsupported modules disagree with special capabilities"
         )
     abilities = value.get("abilities")
-    if category == "hero":
-        if not isinstance(abilities, list):
-            raise PlayableUnitCompilerError("playable-unit hero abilities are invalid")
-    elif abilities is not None:
-        raise PlayableUnitCompilerError(
-            "playable-unit non-hero descriptor must not carry abilities"
-        )
+    if category == "hero" and not isinstance(abilities, list):
+        raise PlayableUnitCompilerError("playable-unit hero abilities are invalid")
+    if abilities is not None and not isinstance(abilities, list):
+        raise PlayableUnitCompilerError("playable-unit abilities are invalid")
     for row in abilities or []:
         slot = row.get("slot") if isinstance(row, Mapping) else None
         if (
@@ -9316,7 +11358,7 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
                 # TOGGLE_WEAPONSET commands author no SpecialPower template.
                 and row.get("command") != "TOGGLE_WEAPONSET"
             )
-            or row.get("targeting") not in {"self", "point", "enemy-object"}
+            or row.get("targeting") not in {"self", "point", "enemy-object", "object"}
             or not isinstance(row.get("sourceIni"), str)
             or not row.get("sourceIni")
         ):
@@ -9388,6 +11430,18 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
             "teleport",
             "curse",
             "leadership-strip",
+            "activate-module-graph",
+            "weapon-mode-special-power",
+            "dominate-enemy",
+            "grab-passenger",
+            "fling-passenger",
+            "repair-structure",
+            "horde-dispatch",
+                "stop-special-power",
+                "siege-deploy",
+                "toggle-deploy",
+                "special-disguise",
+                "unleash-special-power",
         }:
             raise PlayableUnitCompilerError("playable-unit ability effect is invalid")
         implementation = row.get("implementation")
@@ -9487,8 +11541,13 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
             award_unknown = (
                 award is None
                 and level_row.get("experienceAwardStatus") == "unauthored"
-                and creation_grant is not None
-                and rank <= initial_rank
+                and (
+                    scenario_admission is not None
+                    or (
+                        creation_grant is not None
+                        and rank <= initial_rank
+                    )
+                )
             )
             if (
                 not isinstance(rank, int)
@@ -9590,5 +11649,6 @@ __all__ = [
     "compile_playable_unit_descriptor",
     "prepare_playable_unit_compiler",
     "playable_object_kind_of",
+    "playable_object_kind_of_provenance",
     "validate_playable_unit_descriptor",
 ]

@@ -63,7 +63,19 @@ const PIN_TICKS := 1500
 ## added no third. See the sibling runner's round-19 note for why this fixture
 ## does not exercise the new pathing at its sampled tick, and for the coverage
 ## gap that follows from a pin that only ever samples the final state.
-const EXPECTED_HASH := "b0acc61e2a60c4b8e810986b168db12055e8a42ae92bc551dd8df01135c33774"
+##
+## RE-MINT 2026-08-15 - EXPLICIT CUMULATIVE BASELINE, NOT CREEP-ONLY.
+## Superseded value: b0acc61e2a60c4b8e810986b168db12055e8a42ae92bc551dd8df01135c33774
+## New value:        b0a3b163289930cbe9d24d4e4cad97f70b8315acfd4a970797d2de905412bfc0
+##
+## A recursive mint-commit -> current snapshot audit found exactly 20 changed
+## leaves. Sixteen predate this tranche: empty damage-component, permanent
+## weapon-lock and weapon-mode state on four entities; empty banner/damage
+## registries; the accepted fog-reveal closure; and entity 3's documented
+## structure-eviction displacement. The remaining four are the inert creep
+## keys retired above. HEAD -> working tree differs by only those four keys,
+## and reinserting them reproduces HEAD's 0ae2055f...14c2 byte-for-byte.
+const EXPECTED_HASH := "b0a3b163289930cbe9d24d4e4cad97f70b8315acfd4a970797d2de905412bfc0"
 
 const PLAYER := "PinPlayer"
 const ENEMY := "PinEnemy"

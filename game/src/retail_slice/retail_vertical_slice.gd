@@ -10,6 +10,7 @@ const ExpansionMountScript = preload("res://src/retail_slice/retail_expansion_mo
 const LockstepSessionScript = preload("res://src/retail_slice/retail_lockstep_session.gd")
 const BattalionScript = preload("res://src/retail_slice/retail_battalion.gd")
 const StructureScript = preload("res://src/retail_slice/retail_structure.gd")
+const ScenarioVisualScript = preload("res://src/retail_slice/retail_scenario_visual.gd")
 const OrderIndicatorScript = preload("res://src/retail_slice/retail_order_indicator.gd")
 const AttackTargetIndicatorScript = preload("res://src/retail_slice/retail_attack_target_indicator.gd")
 const RallyIndicatorScript = preload("res://src/retail_slice/retail_rally_indicator.gd")
@@ -171,6 +172,9 @@ func _resolve_mp_settings(game_state_override: Node = null) -> void:
 var _mp_desync_reported := false
 var _mp_last_pause_command_tick := -1
 var battalion_nodes: Dictionary = {}
+var scenario_unit_nodes: Dictionary = {}
+var scenario_prop_nodes: Dictionary = {}
+var scenario_visual_provisionals: Dictionary = {}
 ## Arrow-art resolution diagnostics aggregated from every spawned battalion
 ## (borrowed Good arrow, unresolved art, rejected binding). Deduplicated by
 ## code+projectile; also mirrored onto this node's meta for probes.
@@ -1557,6 +1561,7 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 	for extra_builder_id in extra_unit_rules.keys():
 		unit_rules[extra_builder_id] = extra_unit_rules[extra_builder_id]
 	var rules := {
+		"game": "rotwk",
 		"enable_base_loop": true,
 		"starting_resources": 1200,
 		"command_point_cap": 200,
@@ -1598,12 +1603,14 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 			if typeof(ring_system_value) == TYPE_DICTIONARY and not (ring_system_value as Dictionary).is_empty():
 				rules["ring_system"] = (ring_system_value as Dictionary).duplicate(true)
 	rules["source_map_transform_scale"] = source_map_data.local_transform_scale
-	# Neutral creep lairs are strictly opt-in (menu-independent env seam; a
-	# skirmish RULES toggle can ride this later). Only added when requested, so
-	# every existing runner's rules — and the pinned battle signature — stay
-	# byte-identical.
-	if OS.get_environment("OPENBFME_CREEP_LAIRS") != "0":
-		rules["enable_creep_lairs"] = true
+	# A selected neutral pack promotes exact map Object identities through the
+	# edition-scoped scenario registries.
+	if OS.get_environment("OPENBFME_SCENARIO_MAP_PLACEMENTS") != "0" and (
+		not ContentDB.get_scenario_unit_runtimes(String(rules.get("game", ""))).is_empty()
+		or not ContentDB.get_scenario_structure_runtimes(String(rules.get("game", ""))).is_empty()
+		or not ContentDB.get_scenario_prop_runtimes(String(rules.get("game", ""))).is_empty()
+	):
+		rules["enable_scenario_map_placements"] = true
 	if OS.get_environment("OPENBFME_CAPTURABLE_NEUTRALS") != "0":
 		rules["enable_capturable_neutrals"] = true
 	# THE FOG TOGGLE. Retail skirmish and MP always run with shroud on, so this
@@ -1620,7 +1627,7 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 	# runner that drives this scene and pins a hash would see it. None do today;
 	# the ones that pin build their own sim.
 	#
-	# MULTIPLAYER FOOTGUN, same class as OPENBFME_CREEP_LAIRS above: this writes
+	# MULTIPLAYER FOOTGUN: this writes
 	# into `rules`, and `rules` is a HASHED STATIC KEY of the authoritative
 	# state. One peer launching with OPENBFME_FOG_OF_WAR=0 while the others do
 	# not produces a different rules hash on that peer and the match desyncs at
@@ -2841,20 +2848,16 @@ func _retail_rule_number(value: Variant) -> float:
 func _spawn_all_presentations(expected_members: int) -> void:
 	_clear_presentations()
 	for id in simulation.entity_ids():
-		if int(simulation.entity(id).get("team", -1)) == SimScript.CREEP_TEAM:
-			# Creep guard presentation fails closed to a recorded provisional:
-			# guard art rides other packs (wild goblincavetroll; riderless
-			# IUWarg is unvalidated), so no battalion visual is invented here.
+		if simulation.entity(id).has("scenario_source_object_id"):
+			_sync_scenario_unit_visual(id, simulation.entity(id))
 			continue
 		_spawn_battalion(id, expected_members)
 	for id in simulation.structure_ids():
-		if int(simulation.structure(id).get("team", -1)) == SimScript.CREEP_TEAM:
-			# Lair visuals are the battlefield's already-bound lifecycle
-			# structures; _sync_creep_lair_visuals drives them from sim state.
-			continue
+		var row: Dictionary = simulation.structure(id)
 		if String(simulation.structure(id).get("presentation", "")) == "bound-map-prop":
 			continue
 		_spawn_structure(id)
+	_sync_scenario_prop_visuals()
 
 
 func _spawn_battalion(id: int, expected_members: int) -> void:
@@ -2940,6 +2943,8 @@ func _spawn_structure(id: int) -> void:
 	# plus the owning TEAM's own faction packs for cross-faction rosters.
 	var presentation_manifest := _presentation_manifest_for_team(int(entity.get("team", -1)))
 	var allowed_roots: Array = [selected_pack_root]
+	if map_pack_root != "" and not allowed_roots.has(map_pack_root):
+		allowed_roots.append(map_pack_root)
 	allowed_roots.append_array(faction_manifest.get("faction_pack_roots", []) as Array)
 	for team_root_value in presentation_manifest.get("faction_pack_roots", []) as Array:
 		if not allowed_roots.has(team_root_value):
@@ -2951,7 +2956,19 @@ func _spawn_structure(id: int) -> void:
 	# records a provisional and keeps the local manifest's (wrong-model)
 	# fallback — fail closed, never a crash.
 	var structure_object_id := ""
-	if entity.has("castle_piece_of_fortress"):
+	var scenario_document: Dictionary = {}
+	if entity.has("scenario_lifecycle_receipt"):
+		var scenario_source_id := String(entity.get("source_object_id", entity.get("object_id", "")))
+		var scenario_surface := String(entity.get("scenario_spawn_surface", "map-placement"))
+		scenario_document = ContentDB.get_scenario_structure_runtime(String(gameplay_rules.get("game", "")), scenario_source_id, scenario_surface)
+		var scenario_registration: Dictionary = scenario_document.get("registration", {}) as Dictionary
+		var scenario_presentation: Dictionary = scenario_registration.get("presentation", {}) as Dictionary
+		var scenario_lifecycle: Dictionary = scenario_presentation.get("buildingLifecycle", {}) as Dictionary
+		structure_object_id = String(scenario_lifecycle.get("objectId", ""))
+		var scenario_pack_root := String(scenario_document.get("_pack_root", ""))
+		if scenario_pack_root != "" and not allowed_roots.has(scenario_pack_root):
+			allowed_roots.append(scenario_pack_root)
+	elif entity.has("castle_piece_of_fortress"):
 		structure_object_id = String(entity.get("object_id", ""))
 	else:
 		structure_object_id = String((presentation_manifest.get("structure_object_ids", {}) as Dictionary).get(kind, ""))
@@ -2963,10 +2980,21 @@ func _spawn_structure(id: int) -> void:
 	if structure_object_id == "":
 		# Fortress expansion structures resolve from their expansion documents.
 		structure_object_id = String((_expansion_object_ids.get(kind, {}) as Dictionary).get("object_id", ""))
-	structure.configure(entity, structure_object_id, source_map_data.local_transform_scale)
+	structure.configure(entity, structure_object_id, source_map_data.local_transform_scale, String(gameplay_rules.get("game", "")))
 	var position := Vector2(entity["position"])
 	structure.position = Vector3(position.x, _presentation_height(position) - 0.35 + float(entity.get("elevation", 0.0)), position.y)
-	structure.rotation.y = -float(entity.get("facing_radians", 0.0))
+	structure.rotation.y = float(entity.get("yaw", -float(entity.get("facing_radians", 0.0))))
+	if not scenario_document.is_empty():
+		structure.set_meta("presentation", "selected-neutral-scenario-structure")
+		structure.set_meta("source_object_id", String(scenario_document.get("objectId", "")))
+		structure.set_meta("source_index", int(entity.get("scenario_source_index", -1)))
+		structure.set_meta("source_position", entity.get("scenario_source_position", Vector3.INF))
+		structure.set_meta("source_yaw", float(entity.get("yaw", 0.0)))
+		structure.set_meta("pack_root", String(scenario_document.get("_pack_root", "")))
+		var replaced = battlefield.bound_structure_node_by_source_index(int(entity.get("scenario_source_index", -1))) if battlefield != null else null
+		if replaced is Node3D:
+			(replaced as Node3D).visible = false
+			(replaced as Node3D).set_meta("replaced_by_selected_neutral_scenario", id)
 	add_child(structure)
 	var spawned_weapon_object_id := String(entity.get("spawned_weapon_object_id", ""))
 	if spawned_weapon_object_id != "":
@@ -3013,6 +3041,113 @@ func _spawn_structure(id: int) -> void:
 	_assign_geometry_light_layer(structure, OBJECT_LIGHT_LAYER)
 	structure_nodes[id] = structure
 
+
+func _sync_scenario_unit_visual(id: int, entity: Dictionary) -> void:
+	var surface := String(entity.get("scenario_spawn_surface", "map-placement"))
+	var source_id := String(entity.get("scenario_source_object_id", ""))
+	var document: Dictionary = ContentDB.get_scenario_unit_runtime(String(gameplay_rules.get("game", "")), source_id, surface)
+	if document.is_empty():
+		scenario_visual_provisionals["unit:%d" % id] = "selected-neutral-unit-document-unavailable:%s" % source_id
+		return
+	var visual := scenario_unit_nodes.get(id) as RetailScenarioVisual
+	if visual == null:
+		visual = ScenarioVisualScript.new()
+		var presentation_row := entity.duplicate(true)
+		var at := Vector2(entity.get("position", Vector2.ZERO))
+		presentation_row["presentation_height"] = _presentation_height_for_entity(entity, at)
+		if not visual.configure(document, presentation_row, source_map_data.local_transform_scale, "unit"):
+			scenario_visual_provisionals["unit:%d" % id] = String(visual.contract_error)
+			visual.free()
+			return
+		add_child(visual)
+		_assign_geometry_light_layer(visual, INFANTRY_LIGHT_LAYER | OBJECT_LIGHT_LAYER)
+		scenario_unit_nodes[id] = visual
+	var row := entity.duplicate(true)
+	var position2 := Vector2(entity.get("position", Vector2.ZERO))
+	row["presentation_height"] = _presentation_height_for_entity(entity, position2)
+	visual.visible = shroud_overlay.unit_visible(position2)
+	visual.sync_state(row)
+
+
+func _sync_scenario_prop_visuals() -> void:
+	for id_value in simulation.scenario_props.keys():
+		var id := int(id_value)
+		var row := simulation.scenario_props[id] as Dictionary
+		var surface := String(row.get("scenario_spawn_surface", "map-placement"))
+		var source_id := String(row.get("source_object_id", ""))
+		var document: Dictionary = ContentDB.get_scenario_prop_runtime(String(gameplay_rules.get("game", "")), source_id, surface)
+		if document.is_empty():
+			scenario_visual_provisionals["prop:%d" % id] = "selected-neutral-prop-document-unavailable:%s" % source_id
+			continue
+		var visual := scenario_prop_nodes.get(id) as RetailScenarioVisual
+		if visual == null:
+			visual = ScenarioVisualScript.new()
+			var presentation_row := row.duplicate(true)
+			var at := Vector2(row.get("position", Vector2.ZERO))
+			presentation_row["presentation_height"] = _presentation_height(at)
+			if not visual.configure(document, presentation_row, source_map_data.local_transform_scale, "prop"):
+				scenario_visual_provisionals["prop:%d" % id] = String(visual.contract_error)
+				visual.free()
+				continue
+			add_child(visual)
+			_assign_geometry_light_layer(visual, OBJECT_LIGHT_LAYER)
+			scenario_prop_nodes[id] = visual
+		var sync_row := row.duplicate(true)
+		var position2 := Vector2(row.get("position", Vector2.ZERO))
+		sync_row["presentation_height"] = _presentation_height(position2)
+		visual.visible = shroud_overlay.structure_visible(position2)
+		visual.sync_state(sync_row)
+	_remove_absent_scenario_visuals(scenario_prop_nodes, simulation.scenario_props, true)
+
+
+func _remove_absent_scenario_visuals(
+	nodes: Dictionary, authoritative: Dictionary, route_prop_removal: bool = false
+) -> void:
+	var removed: Array = []
+	for id_value in nodes.keys():
+		var id := int(id_value)
+		var node := nodes[id] as Node
+		if authoritative.has(id):
+			continue
+		if node != null and is_instance_valid(node):
+			if route_prop_removal and node is RetailScenarioVisual:
+				var request: Dictionary = (node as RetailScenarioVisual).consume_authoritative_removal_presentation()
+				if not request.is_empty() and battlefield != null:
+					var at := Vector3(request.get("position", Vector3.INF))
+					request["surfaceKind"] = _scenario_prop_surface_kind(at)
+					battlefield.route_scenario_prop_death_effect(
+						request,
+						Callable(audio_system, "play_sealed_scenario_event") if audio_system != null else Callable(),
+						Callable(self, "_route_scenario_subtle_view_shake")
+					)
+			node.queue_free()
+		removed.append(id)
+	for id in removed:
+		nodes.erase(id)
+
+
+func _scenario_prop_surface_kind(at: Vector3) -> String:
+	if source_map_data == null or not source_map_data.ready or at == Vector3.INF:
+		return ""
+	var cell := source_map_data.local_to_grid_cell(Vector2(at.x, at.z))
+	return "water" if source_map_data.is_water_cell(cell) else "land"
+
+
+func _route_scenario_subtle_view_shake(shake_type: String, origin: Vector3) -> bool:
+	## The FXList carries the retail enum, not invented amplitude/duration
+	## scalars. Route that exact enum through the camera presentation seam and
+	## retain its world origin; camera motion remains the shared camera system's
+	## responsibility.
+	if shake_type != "SUBTLE" or camera == null or origin == Vector3.INF:
+		return false
+	var receipt := {
+		"type": "SUBTLE", "intensityEnum": 0,
+		"origin": origin, "source": "scenario-prop-fxlistdie",
+	}
+	camera.set_meta("last_view_shake_route", receipt)
+	set_meta("last_scenario_view_shake_route", receipt)
+	return true
+
 func _on_structure_lifecycle_route_requested(request: Dictionary, structure: RetailStructure) -> void:
 	structure_lifecycle_route_sequence += 1
 	var audio_event := String(request.get("audioEvent", ""))
@@ -3058,6 +3193,18 @@ func _on_structure_lifecycle_route_requested(request: Dictionary, structure: Ret
 func _all_battalion_retail_visuals_loaded() -> bool:
 	for id in simulation.entity_ids():
 		var entity: Dictionary = simulation.entity(id)
+		if entity.has("scenario_source_object_id"):
+			var scenario_visual = scenario_unit_nodes.get(id)
+			if (
+				scenario_visual == null
+				or not (scenario_visual is RetailScenarioVisual)
+				or String(scenario_visual.object_id) != String(entity.get("scenario_source_object_id", ""))
+				or String(scenario_visual.pack_root) == ""
+				or int(scenario_visual.mesh_instance_count) <= 0
+				or not String(scenario_visual.contract_error).is_empty()
+			):
+				return false
+			continue
 		if int(entity.get("team", -1)) == SimScript.CREEP_TEAM:
 			continue  # recorded provisional: creep guards carry no battalion visual yet
 		var battalion: RetailBattalion = battalion_nodes.get(id)
@@ -3076,7 +3223,7 @@ func _presentable_structure_ids() -> Array[int]:
 	var ids: Array[int] = []
 	for id in simulation.structure_ids():
 		var row: Dictionary = simulation.structure(id)
-		if int(row.get("team", -1)) == SimScript.CREEP_TEAM:
+		if int(row.get("team", -1)) == SimScript.CREEP_TEAM and not row.has("scenario_lifecycle_receipt"):
 			continue
 		if String(row.get("presentation", "")) == "bound-map-prop":
 			continue
@@ -3099,8 +3246,7 @@ func _structure_nodes_match_ids(expected_ids: Array[int]) -> bool:
 
 func _all_structure_retail_visuals_loaded() -> bool:
 	for id in simulation.structure_ids():
-		if int(simulation.structure(id).get("team", -1)) == SimScript.CREEP_TEAM:
-			continue  # lairs/holes ride the battlefield's bound lifecycle visuals
+		var row: Dictionary = simulation.structure(id)
 		if String(simulation.structure(id).get("presentation", "")) == "bound-map-prop":
 			continue
 		var structure: RetailStructure = structure_nodes.get(id)
@@ -4144,8 +4290,11 @@ func _sync_presentation() -> void:
 	var ring_presentation: Dictionary = simulation.ring_presentation_contract()
 	for id in simulation.entity_ids():
 		var entity: Dictionary = simulation.entity(id)
+		if entity.has("scenario_source_object_id"):
+			_sync_scenario_unit_visual(id, entity)
+			continue
 		if int(entity.get("team", -1)) == SimScript.CREEP_TEAM:
-			continue  # recorded provisional: creep guards have no battalion visual yet
+			continue  # provisional-only creep guards have no descriptor visual
 		if bool(entity.get("is_banner_carrier", false)):
 			# The authoritative carrier entity is presented by its owning horde's
 			# authored banner visual, not as a second synthetic battalion.
@@ -4226,6 +4375,7 @@ func _sync_presentation() -> void:
 	for id in removed_battalions:
 		battalion_nodes.erase(id)
 		order_indicators.erase(id)
+	_remove_absent_scenario_visuals(scenario_unit_nodes, simulation.entities)
 	if _profile_sync:
 		presentation_profile["battalions_us"] = presentation_profile.get("battalions_us", 0) + (Time.get_ticks_usec() - _profile_mark)
 		_profile_mark = Time.get_ticks_usec()
@@ -4238,12 +4388,13 @@ func _sync_presentation() -> void:
 		presentation_profile["member_lod_us"] = presentation_profile.get("member_lod_us", 0) + (Time.get_ticks_usec() - _profile_mark)
 		_profile_mark = Time.get_ticks_usec()
 	for id in simulation.structure_ids():
-		if int(simulation.structure(id).get("team", -1)) == SimScript.CREEP_TEAM:
-			continue  # lairs/holes ride the battlefield's bound lifecycle visuals
+		var structure_row: Dictionary = simulation.structure(id)
 		if String(simulation.structure(id).get("presentation", "")) == "bound-map-prop":
 			continue
 		if not structure_nodes.has(id):
 			_spawn_structure(id)
+		if not structure_nodes.has(id):
+			continue
 		var structure: RetailStructure = structure_nodes[id]
 		# `structure.visible`, NOT `_visual_root.visible`: sync_state() below
 		# rewrites the visual root every frame from the contract-error flag.
@@ -4260,7 +4411,8 @@ func _sync_presentation() -> void:
 				true,
 				float(structure_upgrade_queue[0].get("progress", 0.0))
 			)
-	_sync_creep_lair_visuals()
+	_remove_absent_scenario_visuals(structure_nodes, simulation.structures)
+	_sync_scenario_prop_visuals()
 	_sync_rally_indicator()
 	if _profile_sync:
 		presentation_profile["structures_us"] = presentation_profile.get("structures_us", 0) + (Time.get_ticks_usec() - _profile_mark)
@@ -4287,49 +4439,6 @@ func _sync_presentation() -> void:
 			audio_system.acknowledge_event_history_compaction(simulation.events.size())
 	if _profile_sync:
 		presentation_profile["hud_us"] = presentation_profile.get("hud_us", 0) + (Time.get_ticks_usec() - _profile_mark)
-
-
-## Recorded provisional creep visuals: sim lairs whose bound lifecycle visual
-## is absent (unconverted lair families) or whose phase drive was rejected.
-var creep_visual_provisionals: Dictionary = {}
-
-
-func _sync_creep_lair_visuals() -> void:
-	## Binds sim creep lairs to the battlefield's already-shipped bound
-	## lifecycle structures (intact/damaged/really-damaged/collapse and the
-	## converted rebuild-hole art). Missing visuals fail closed into a recorded
-	## provisional — never a crash, never a silent disappearance.
-	if simulation == null or battlefield == null or not bool(simulation.creep_lairs_enabled):
-		return
-	for id in simulation.structure_ids():
-		var row: Dictionary = simulation.structure(id)
-		if int(row.get("team", -1)) != SimScript.CREEP_TEAM or String(row.get("structure_kind", "")) != "creep_lair":
-			continue
-		var source_index := int(row.get("source_index", -1))
-		var node = battlefield.bound_structure_node_by_source_index(source_index)
-		if node == null or not (node is RetailStructure):
-			if not creep_visual_provisionals.has(source_index):
-				creep_visual_provisionals[source_index] = "no-bound-lifecycle-visual:%s" % String(row.get("creep_type_name", ""))
-			continue
-		var structure := node as RetailStructure
-		var health := int(row.get("health", 0))
-		# sync_state drives the authored damage phases (intact/damaged/really-
-		# damaged/collapsing) from live health facts with the structure's own
-		# declared-phase guards; a contract rejection hides the visual and is
-		# recorded below rather than crashing or silently vanishing.
-		structure.sync_state({
-			"health": health,
-			"maximum_health": int(row.get("maximum_health", SimScript.CREEP_LAIR_MAX_HEALTH)),
-			"construction_progress": 1.0,
-			"level": 1,
-			"upgrade_queue": [],
-		})
-		if String(structure.contract_error) != "" and not creep_visual_provisionals.has(source_index):
-			creep_visual_provisionals[source_index] = "lifecycle-contract:%s" % String(structure.contract_error)
-		# Converted rebuild-hole art follows the sim hole entity exactly.
-		structure.set_authoritative_rebuild_hole_present(
-			health <= 0 and int(row.get("creep_hole_id", 0)) != 0
-		)
 
 
 func _entity_facing(entity: Dictionary) -> Vector2:
@@ -6682,7 +6791,6 @@ func _script_named_member_handle(named_row: Dictionary, owner_team: int) -> Dict
 			String(row.get("object_id", "")),
 			structure_kind,
 			structure_object_id,
-			String(row.get("creep_type_name", "")),
 			String(row.get("map_type_name", "")),
 			String(row.get("building_type", "")),
 			String(row.get("kind", "")),
@@ -7800,10 +7908,14 @@ func _update_camera(delta: float) -> void:
 		input_direction.y -= 1.0
 	if Input.is_action_pressed("cam_back"):
 		input_direction.y += 1.0
+	# SAGE +yaw orbits toward SAGE +X (camera south → east, view turns left
+	# in source space). `_sage_vector_to_local` reflects Y
+	# (`godot = (sage.x, -sage.y)`), so that same +yaw is screen-right.
+	# Rotate-left must decrease user yaw or Q/E come out backwards.
 	if Input.is_action_pressed("cam_rotate_left"):
-		camera_user_yaw = wrapf(camera_user_yaw + delta * 1.35, -PI, PI)
-	if Input.is_action_pressed("cam_rotate_right"):
 		camera_user_yaw = wrapf(camera_user_yaw - delta * 1.35, -PI, PI)
+	if Input.is_action_pressed("cam_rotate_right"):
+		camera_user_yaw = wrapf(camera_user_yaw + delta * 1.35, -PI, PI)
 	# Retail edge scroll: the cursor resting on a screen border pans the map.
 	if DisplayServer.get_name() != "headless" and not _camera_orbiting and _right_drag_origin == Vector2.INF:
 		var edge := 12.0
@@ -7820,7 +7932,9 @@ func _update_camera(delta: float) -> void:
 				input_direction.y += 1.0
 	if input_direction.length_squared() > 0.0:
 		var forward := _camera_forward_local()
-		var right := Vector2(-forward.y, forward.x)
+		# Screen-right after the sage Y flip. `(-fz, fx)` is the other
+		# horizontal and made A/D (and edge scroll) run backwards.
+		var right := Vector2(forward.y, -forward.x)
 		var movement := right * input_direction.x - forward * input_direction.y
 		camera_focus += movement.normalized() * delta * OPENBFME_KEYBOARD_SCROLL_BASE_LOCAL_PER_SECOND * keyboard_scroll_speed_scale * FORDS_CAMERA_SCROLL_SPEED_SCALAR
 		_clamp_camera_focus()
@@ -8275,11 +8389,12 @@ func _seat_home_camera_yaw(from_local: Vector2) -> float:
 
 
 func _clear_presentations() -> void:
-	for collection in [battalion_nodes, structure_nodes, order_indicators]:
+	for collection in [battalion_nodes, scenario_unit_nodes, scenario_prop_nodes, structure_nodes, order_indicators]:
 		for node_value in (collection as Dictionary).values():
 			if node_value is Node and is_instance_valid(node_value):
 				(node_value as Node).queue_free()
 		(collection as Dictionary).clear()
+	scenario_visual_provisionals.clear()
 
 
 func cleanup_for_test() -> void:

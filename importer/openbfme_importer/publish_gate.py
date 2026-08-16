@@ -239,8 +239,33 @@ def pack_playable_unit_count(pack_root: Path | str) -> int:
     )
 
 
+def _pack_catalog_identity(pack_root: Path | str) -> str | None:
+    """Catalog identity the bundle claims to have been compiled against.
+
+    Pack ids are product labels, not sufficient source identity.  Historical
+    developer cooks accidentally published expansion-layer objects under the
+    BFME2 Men id.  Treating those as incumbents makes the regression gate demand
+    that a clean BFME2 cook retain objects its retail tree does not contain.
+    Missing identities remain comparable for legacy packs; only a proven
+    mismatch is excluded.
+    """
+
+    path = Path(pack_root) / "pack.json"
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(document, dict):
+        return None
+    identity = document.get("sourceCatalogIdentitySha256")
+    return identity if isinstance(identity, str) and identity else None
+
+
 def incumbent_playable_unit_ids(
-    content_root: Path | str, pack_id: str
+    content_root: Path | str,
+    pack_id: str,
+    *,
+    catalog_identity: str | None = None,
 ) -> tuple[set[str] | None, str | None]:
     """Richest already-published bundle for *pack_id*: (unit ids, digest).
 
@@ -258,6 +283,13 @@ def incumbent_playable_unit_ids(
         # `.building` is publish_to_godot's staging name; a crashed copy must
         # never become the baseline other cooks are measured against.
         if not child.is_dir() or child.name.endswith(".building"):
+            continue
+        incumbent_identity = _pack_catalog_identity(child)
+        if (
+            catalog_identity is not None
+            and incumbent_identity is not None
+            and incumbent_identity != catalog_identity
+        ):
             continue
         ids = pack_playable_unit_ids(child)
         if best_ids is None or len(ids) > len(best_ids):
@@ -284,7 +316,10 @@ def playable_unit_regression_blocker(
     operator would only discover in game.
     """
 
-    incumbent, bundle = incumbent_playable_unit_ids(content_root, pack_id)
+    fresh_identity = _pack_catalog_identity(pack_root)
+    incumbent, bundle = incumbent_playable_unit_ids(
+        content_root, pack_id, catalog_identity=fresh_identity
+    )
     if incumbent is None:
         return None
     fresh = pack_playable_unit_ids(pack_root)

@@ -29,7 +29,7 @@
 			"m3_pack_expansion",
 			"pipeline"
 		],
-		"consumerFileCount": 75,
+		"consumerFileCount": 77,
 		"consumerFiles": [
 			"armor_compiler",
 			"big",
@@ -56,6 +56,7 @@
 			"map_prop_bindings",
 			"mapped_image",
 			"module_contracts",
+			"neutral_prop_death_fx",
 			"pack_recipe_catalog_identity",
 			"paths",
 			"pipeline",
@@ -90,6 +91,7 @@
 			"sage_scb",
 			"sage_scripts",
 			"sage_string",
+			"special_disguise_prerequisite",
 			"spellbook_compiler",
 			"spellbook_import",
 			"spellbook_pack_compiler",
@@ -118,7 +120,8 @@
 			"classificationNote": "draw module: model/effect presentation only",
 			"status": "consumed",
 			"consumedBy": [
-				"m3_pack_expansion.py"
+				"m3_pack_expansion.py",
+				"playable_unit_pack_compiler.py"
 			],
 			"refusedBy": [],
 			"refusalReasons": [],
@@ -189,7 +192,9 @@
 			"status": "consumed",
 			"consumedBy": [
 				"m3_pack_expansion.py",
+				"module_contracts.py",
 				"playable_unit_compiler.py",
+				"playable_unit_pack_compiler.py",
 				"spellbook_compiler.py"
 			],
 			"refusedBy": [],
@@ -256,7 +261,8 @@
 			"classificationNote": "physics/collision/projectile runtime",
 			"status": "consumed",
 			"consumedBy": [
-				"module_contracts.py"
+				"module_contracts.py",
+				"playable_unit_compiler.py"
 			],
 			"refusedBy": [],
 			"refusalReasons": [],
@@ -290,6 +296,7 @@
 			"classificationNote": "AI/movement runtime system (movement is engine-baked in retail)",
 			"status": "consumed",
 			"consumedBy": [
+				"module_contracts.py",
 				"playable_unit_compiler.py"
 			],
 			"refusedBy": [],
@@ -425,7 +432,8 @@
 			"status": "consumed",
 			"consumedBy": [
 				"armor_compiler.py",
-				"playable_structure_compiler.py"
+				"playable_structure_compiler.py",
+				"playable_unit_compiler.py"
 			],
 			"refusedBy": [],
 			"refusalReasons": [],
@@ -455,7 +463,8 @@
 			"classificationNote": "physics/collision/projectile runtime",
 			"status": "consumed",
 			"consumedBy": [
-				"module_contracts.py"
+				"module_contracts.py",
+				"playable_unit_compiler.py"
 			],
 			"refusedBy": [],
 			"refusalReasons": [],
@@ -477,7 +486,8 @@
 				"object/nature",
 				"object/neutral",
 				"object/obsolete"
-			]
+			],
+			"runtimeExecutableSubset": "entire canonical fieldless marker schema; authored victim collision admission only"
 		},
 		{
 			"name": "StructureBody",
@@ -548,7 +558,9 @@
 			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
 			"status": "consumed",
 			"consumedBy": [
-				"playable_unit_compiler.py"
+				"module_contracts.py",
+				"playable_unit_compiler.py",
+				"special_disguise_prerequisite.py"
 			],
 			"refusedBy": [],
 			"refusalReasons": [],
@@ -732,7 +744,8 @@
 			"classificationNote": "physics/collision/projectile runtime",
 			"status": "consumed",
 			"consumedBy": [
-				"m3_pack_expansion.py"
+				"m3_pack_expansion.py",
+				"module_contracts.py"
 			],
 			"refusedBy": [],
 			"refusalReasons": [],
@@ -765,6 +778,7 @@
 			"classificationNote": "aura/modifier ticking runtime",
 			"status": "consumed",
 			"consumedBy": [
+				"module_contracts.py",
 				"playable_unit_compiler.py",
 				"spellbook_compiler.py"
 			],
@@ -831,6 +845,7 @@
 			"classificationNote": "per-tick or timer-driven simulation behaviour",
 			"status": "consumed",
 			"consumedBy": [
+				"module_contracts.py",
 				"spellbook_compiler.py"
 			],
 			"refusedBy": [],
@@ -895,6 +910,7 @@
 			"classificationNote": "per-tick or timer-driven simulation behaviour",
 			"status": "consumed",
 			"consumedBy": [
+				"module_contracts.py",
 				"playable_unit_compiler.py"
 			],
 			"refusedBy": [],
@@ -926,6 +942,7 @@
 			"classificationNote": "structure lifecycle runtime (build/collapse/rebuild/topple)",
 			"status": "consumed",
 			"consumedBy": [
+				"module_contracts.py",
 				"playable_structure_pack_compiler.py",
 				"retail_men_lifecycle_profile.py"
 			],
@@ -957,7 +974,8 @@
 			"classificationNote": "flattened into ability gating inside the abilities contract",
 			"status": "consumed",
 			"consumedBy": [
-				"playable_unit_compiler.py"
+				"playable_unit_compiler.py",
+				"special_disguise_prerequisite.py"
 			],
 			"refusedBy": [],
 			"refusalReasons": [],
@@ -1074,6 +1092,8 @@
 			"classificationNote": "combat-stance/weapon-choice runtime behaviour",
 			"status": "consumed",
 			"consumedBy": [
+				"module_contracts.py",
+				"playable_unit_compiler.py",
 				"retail_unit_rules.py"
 			],
 			"refusedBy": [],
@@ -1312,6 +1332,7 @@
 			"classificationNote": "static production exit/rally geometry for the existing production lane",
 			"status": "consumed",
 			"consumedBy": [
+				"module_contracts.py",
 				"playable_structure_compiler.py"
 			],
 			"refusedBy": [],
@@ -1333,7 +1354,7 @@
 			],
 			"compilerConsumedSubset": "syntactically valid declarations reached by playable-structure descriptor compilation",
 			"knownFailClosedSubset": "RotWK AngmarKennelExpansion malformed NaturalRallyPoint",
-			"runtimeExecutableSubset": "none; descriptor evidence only"
+			"runtimeExecutableSubset": "row-level only: UnitCreatePoint, NaturalRallyPoint, ExitDelay, PlacementViewAngle, and NoExitPath with valid numeric coordinates; UseReturnToFormation, AllowAirborneCreation, InitialBurst, CanRallyToSlaughter, and malformed coordinates remain deferred"
 		},
 		{
 			"name": "GeometryUpgrade",
@@ -1464,6 +1485,7 @@
 			"classificationNote": "container/garrison/transport runtime system",
 			"status": "consumed",
 			"consumedBy": [
+				"module_contracts.py",
 				"playable_unit_compiler.py",
 				"retail_unit_rules.py",
 				"spellbook_compiler.py"
@@ -1665,6 +1687,7 @@
 			"classificationNote": "AI/movement runtime system (movement is engine-baked in retail)",
 			"status": "consumed",
 			"consumedBy": [
+				"module_contracts.py",
 				"playable_unit_compiler.py"
 			],
 			"refusedBy": [],
@@ -1724,6 +1747,7 @@
 			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
 			"status": "consumed",
 			"consumedBy": [
+				"module_contracts.py",
 				"playable_unit_compiler.py"
 			],
 			"refusedBy": [],
@@ -1784,7 +1808,8 @@
 			"classificationNote": "client-side visual/UI update; no simulation semantics",
 			"status": "consumed",
 			"consumedBy": [
-				"module_contracts.py"
+				"module_contracts.py",
+				"neutral_prop_death_fx.py"
 			],
 			"refusedBy": [],
 			"refusalReasons": [],
@@ -2182,6 +2207,7 @@
 			"classificationNote": "combat-stance/weapon-choice runtime behaviour",
 			"status": "consumed",
 			"consumedBy": [
+				"module_contracts.py",
 				"retail_unit_rules.py"
 			],
 			"refusedBy": [],
@@ -2273,6 +2299,7 @@
 			"classificationNote": "per-tick or timer-driven simulation behaviour",
 			"status": "consumed",
 			"consumedBy": [
+				"module_contracts.py",
 				"spellbook_compiler.py"
 			],
 			"refusedBy": [],
@@ -2413,6 +2440,7 @@
 			"classificationNote": "per-tick or timer-driven simulation behaviour",
 			"status": "consumed",
 			"consumedBy": [
+				"module_contracts.py",
 				"spellbook_compiler.py"
 			],
 			"refusedBy": [],
@@ -2489,7 +2517,8 @@
 				"object/goodfaction",
 				"object/neutral",
 				"object/obsolete"
-			]
+			],
+			"runtimeExecutableSubset": "all canonical typed gameplay fields; FadeOutRange, FadeTime, and UseSlaverAsControlForEvaObjectSightedEvents retain explicit presentation receipts"
 		},
 		{
 			"name": "AudioLoopUpgrade",
@@ -2553,7 +2582,8 @@
 			"classificationNote": "special-ability update; timed/conditional effect needs runtime",
 			"status": "consumed",
 			"consumedBy": [
-				"playable_unit_compiler.py"
+				"playable_unit_compiler.py",
+				"special_disguise_prerequisite.py"
 			],
 			"refusedBy": [],
 			"refusalReasons": [],
@@ -2580,6 +2610,7 @@
 			"classificationNote": "death-event runtime behaviour",
 			"status": "consumed",
 			"consumedBy": [
+				"module_contracts.py",
 				"playable_structure_compiler.py"
 			],
 			"refusedBy": [],
@@ -2635,7 +2666,8 @@
 			"classificationNote": "AI/movement runtime system (movement is engine-baked in retail)",
 			"status": "consumed",
 			"consumedBy": [
-				"module_contracts.py"
+				"module_contracts.py",
+				"playable_unit_compiler.py"
 			],
 			"refusedBy": [],
 			"refusalReasons": [],
@@ -2799,6 +2831,7 @@
 			"classificationNote": "stealth/detection runtime system",
 			"status": "consumed",
 			"consumedBy": [
+				"module_contracts.py",
 				"playable_unit_compiler.py",
 				"spellbook_compiler.py"
 			],
@@ -3139,7 +3172,8 @@
 			"classificationNote": "aura/modifier ticking runtime",
 			"status": "consumed",
 			"consumedBy": [
-				"module_contracts.py"
+				"module_contracts.py",
+				"playable_structure_compiler.py"
 			],
 			"refusedBy": [],
 			"refusalReasons": [],
@@ -3183,7 +3217,9 @@
 				"object/evilfaction",
 				"object/goodfaction",
 				"object/neutral"
-			]
+			],
+			"runtimeExecutableSubset": "row-level only: the binary-proven full-initial enabled-reclaim shape (SpawnNumber, matching InitialBurst, SpawnReplaceDelay, SpawnTemplateName, CanReclaimOrphans=Yes); 6 authored/8 effective BFME2 rows and 9 authored/13 effective RotWK rows",
+			"runtimeDeferredSubset": "all other row shapes; FadeInTime, KillSpawnsBasedOnModelConditionState, SpawnInsideBuilding, RespectCommandLimit, OneShot, SpawnedRequireSpawner, ShareUpgrades, and TriggeredBy keep the row deferred"
 		},
 		{
 			"name": "StealthUpdate",
@@ -3221,7 +3257,8 @@
 			"classificationNote": "draw module: model/effect presentation only",
 			"status": "consumed",
 			"consumedBy": [
-				"module_contracts.py"
+				"module_contracts.py",
+				"playable_unit_pack_compiler.py"
 			],
 			"refusedBy": [],
 			"refusalReasons": [],
@@ -3288,7 +3325,8 @@
 			"families": [
 				"crate.ini",
 				"object/civilian"
-			]
+			],
+			"runtimeExecutableSubset": "all canonical rows under the binary-oracle active/dead/parsed-ignored field partition"
 		},
 		{
 			"name": "AimWeaponBehavior",
@@ -3605,7 +3643,8 @@
 			"classificationNote": "death-event runtime behaviour",
 			"status": "consumed",
 			"consumedBy": [
-				"module_contracts.py"
+				"module_contracts.py",
+				"playable_unit_pack_compiler.py"
 			],
 			"refusedBy": [],
 			"refusalReasons": [],
@@ -3683,14 +3722,13 @@
 			],
 			"classification": "C",
 			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
-			"status": "refused",
-			"consumedBy": [],
-			"refusedBy": [
+			"status": "consumed",
+			"consumedBy": [
+				"module_contracts.py",
 				"playable_unit_compiler.py"
 			],
-			"refusalReasons": [
-				"module activation needs the module system"
-			],
+			"refusedBy": [],
+			"refusalReasons": [],
 			"declarationSites": {
 				"bfme2-retail": 6,
 				"rotwk-retail": 12
@@ -3929,6 +3967,7 @@
 			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
 			"status": "consumed",
 			"consumedBy": [
+				"module_contracts.py",
 				"playable_unit_compiler.py"
 			],
 			"refusedBy": [],
@@ -4061,14 +4100,13 @@
 			],
 			"classification": "C",
 			"classificationNote": "special-ability update; timed/conditional effect needs runtime",
-			"status": "refused",
-			"consumedBy": [],
-			"refusedBy": [
+			"status": "consumed",
+			"consumedBy": [
+				"module_contracts.py",
 				"playable_unit_compiler.py"
 			],
-			"refusalReasons": [
-				"weapon-mode toggle needs the weapon-set system"
-			],
+			"refusedBy": [],
+			"refusalReasons": [],
 			"declarationSites": {
 				"bfme2-retail": 3,
 				"rotwk-retail": 9
@@ -4218,14 +4256,13 @@
 			],
 			"classification": "C",
 			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
-			"status": "refused",
-			"consumedBy": [],
-			"refusedBy": [
+			"status": "consumed",
+			"consumedBy": [
+				"module_contracts.py",
 				"playable_unit_compiler.py"
 			],
-			"refusalReasons": [
-				"domination needs the allegiance system"
-			],
+			"refusedBy": [],
+			"refusalReasons": [],
 			"declarationSites": {
 				"bfme2-retail": 4,
 				"rotwk-retail": 5
@@ -4349,14 +4386,13 @@
 			],
 			"classification": "C",
 			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
-			"status": "refused",
-			"consumedBy": [],
-			"refusedBy": [
+			"status": "consumed",
+			"consumedBy": [
+				"module_contracts.py",
 				"playable_unit_compiler.py"
 			],
-			"refusalReasons": [
-				"grab needs the passenger system"
-			],
+			"refusedBy": [],
+			"refusalReasons": [],
 			"declarationSites": {
 				"bfme2-retail": 4,
 				"rotwk-retail": 4
@@ -4840,14 +4876,13 @@
 			],
 			"classification": "C",
 			"classificationNote": "special-ability update; timed/conditional effect needs runtime",
-			"status": "refused",
-			"consumedBy": [],
-			"refusedBy": [
+			"status": "consumed",
+			"consumedBy": [
+				"module_contracts.py",
 				"playable_unit_compiler.py"
 			],
-			"refusalReasons": [
-				"fling needs the passenger system"
-			],
+			"refusedBy": [],
+			"refusalReasons": [],
 			"declarationSites": {
 				"bfme2-retail": 2,
 				"rotwk-retail": 3
@@ -4945,14 +4980,13 @@
 			],
 			"classification": "C",
 			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
-			"status": "refused",
-			"consumedBy": [],
-			"refusedBy": [
+			"status": "consumed",
+			"consumedBy": [
+				"module_contracts.py",
 				"playable_unit_compiler.py"
 			],
-			"refusalReasons": [
-				"repair needs the structure-repair system"
-			],
+			"refusedBy": [],
+			"refusalReasons": [],
 			"declarationSites": {
 				"bfme2-retail": 2,
 				"rotwk-retail": 3
@@ -5175,14 +5209,13 @@
 			],
 			"classification": "C",
 			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
-			"status": "refused",
-			"consumedBy": [],
-			"refusedBy": [
+			"status": "consumed",
+			"consumedBy": [
+				"module_contracts.py",
 				"playable_unit_compiler.py"
 			],
-			"refusalReasons": [
-				"horde dispatch needs the horde-spawn system"
-			],
+			"refusedBy": [],
+			"refusalReasons": [],
 			"declarationSites": {
 				"bfme2-retail": 2,
 				"rotwk-retail": 2
@@ -5374,7 +5407,8 @@
 			"families": [
 				"object/evilfaction",
 				"object/neutral"
-			]
+			],
+			"runtimeExecutableSubset": "all canonical rows, including WorkerObjectName completion evidence and exact per-frame health regeneration remainder"
 		},
 		{
 			"name": "SiegeAIUpdate",
@@ -5408,14 +5442,13 @@
 			],
 			"classification": "C",
 			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
-			"status": "refused",
-			"consumedBy": [],
-			"refusedBy": [
+			"status": "consumed",
+			"consumedBy": [
+				"module_contracts.py",
 				"playable_unit_compiler.py"
 			],
-			"refusalReasons": [
-				"siege deploy needs the deploy system"
-			],
+			"refusedBy": [],
+			"refusalReasons": [],
 			"declarationSites": {
 				"bfme2-retail": 2,
 				"rotwk-retail": 2
@@ -5435,14 +5468,12 @@
 			],
 			"classification": "C",
 			"classificationNote": "stealth/detection runtime system",
-			"status": "refused",
-			"consumedBy": [],
-			"refusedBy": [
-				"playable_unit_compiler.py"
+			"status": "consumed",
+			"consumedBy": [
+				"module_contracts.py"
 			],
-			"refusalReasons": [
-				"enemy sense needs the detection system"
-			],
+			"refusedBy": [],
+			"refusalReasons": [],
 			"declarationSites": {
 				"bfme2-retail": 2,
 				"rotwk-retail": 2
@@ -5463,14 +5494,13 @@
 			],
 			"classification": "C",
 			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
-			"status": "refused",
-			"consumedBy": [],
-			"refusedBy": [
+			"status": "consumed",
+			"consumedBy": [
+				"module_contracts.py",
 				"playable_unit_compiler.py"
 			],
-			"refusalReasons": [
-				"stop needs the order-interrupt system"
-			],
+			"refusedBy": [],
+			"refusalReasons": [],
 			"declarationSites": {
 				"bfme2-retail": 2,
 				"rotwk-retail": 2
@@ -5765,16 +5795,14 @@
 			"carriers": [
 				"behavior"
 			],
-			"classification": "C",
-			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
-			"status": "refused",
-			"consumedBy": [],
-			"refusedBy": [
+			"classification": "E",
+			"classificationNote": "legacy GreatKeep authoring is inert in both retail trees: the carrier references absent BattleTowerCommandSet, the only command button is commented out, and garrison KindOf flags are commented out",
+			"status": "consumed",
+			"consumedBy": [
 				"playable_unit_compiler.py"
 			],
-			"refusalReasons": [
-				"man-the-walls needs the garrison system"
-			],
+			"refusedBy": [],
+			"refusalReasons": [],
 			"declarationSites": {
 				"bfme2-retail": 1,
 				"rotwk-retail": 2
@@ -6044,14 +6072,12 @@
 			],
 			"classification": "C",
 			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
-			"status": "refused",
-			"consumedBy": [],
-			"refusedBy": [
-				"playable_unit_compiler.py"
+			"status": "consumed",
+			"consumedBy": [
+				"module_contracts.py"
 			],
-			"refusalReasons": [
-				"deflect needs the status-effect system"
-			],
+			"refusedBy": [],
+			"refusalReasons": [],
 			"declarationSites": {
 				"bfme2-retail": 1,
 				"rotwk-retail": 1
@@ -6098,6 +6124,7 @@
 			"classificationNote": "AI/movement runtime system (movement is engine-baked in retail)",
 			"status": "consumed",
 			"consumedBy": [
+				"module_contracts.py",
 				"playable_unit_compiler.py"
 			],
 			"refusedBy": [],
@@ -6221,14 +6248,12 @@
 			],
 			"classification": "C",
 			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
-			"status": "refused",
-			"consumedBy": [],
-			"refusedBy": [
-				"playable_unit_compiler.py"
+			"status": "consumed",
+			"consumedBy": [
+				"spellbook_compiler.py"
 			],
-			"refusalReasons": [
-				"freezing rain needs the weather system"
-			],
+			"refusedBy": [],
+			"refusalReasons": [],
 			"declarationSites": {
 				"bfme2-retail": 1,
 				"rotwk-retail": 1
@@ -6348,14 +6373,13 @@
 			],
 			"classification": "C",
 			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
-			"status": "refused",
-			"consumedBy": [],
-			"refusedBy": [
-				"playable_unit_compiler.py"
+			"status": "consumed",
+			"consumedBy": [
+				"module_contracts.py",
+				"spellbook_compiler.py"
 			],
-			"refusalReasons": [
-				"scavenger needs the loot system"
-			],
+			"refusedBy": [],
+			"refusalReasons": [],
 			"declarationSites": {
 				"bfme2-retail": 1,
 				"rotwk-retail": 1
@@ -6425,14 +6449,14 @@
 			],
 			"classification": "C",
 			"classificationNote": "stealth/detection runtime system",
-			"status": "refused",
-			"consumedBy": [],
-			"refusedBy": [
-				"playable_unit_compiler.py"
+			"status": "consumed",
+			"consumedBy": [
+				"module_contracts.py",
+				"playable_unit_compiler.py",
+				"special_disguise_prerequisite.py"
 			],
-			"refusalReasons": [
-				"disguise needs the disguise system"
-			],
+			"refusedBy": [],
+			"refusalReasons": [],
 			"declarationSites": {
 				"bfme2-retail": 1,
 				"rotwk-retail": 1
@@ -6502,14 +6526,12 @@
 			],
 			"classification": "C",
 			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
-			"status": "refused",
-			"consumedBy": [],
-			"refusedBy": [
-				"playable_unit_compiler.py"
+			"status": "consumed",
+			"consumedBy": [
+				"module_contracts.py"
 			],
-			"refusalReasons": [
-				"horde split needs the horde system"
-			],
+			"refusedBy": [],
+			"refusalReasons": [],
 			"declarationSites": {
 				"bfme2-retail": 1,
 				"rotwk-retail": 1
@@ -6654,14 +6676,13 @@
 			],
 			"classification": "C",
 			"classificationNote": "special-ability update; timed/conditional effect needs runtime",
-			"status": "refused",
-			"consumedBy": [],
-			"refusedBy": [
+			"status": "consumed",
+			"consumedBy": [
+				"module_contracts.py",
 				"playable_unit_compiler.py"
 			],
-			"refusalReasons": [
-				"deploy toggle needs the deploy system"
-			],
+			"refusedBy": [],
+			"refusalReasons": [],
 			"declarationSites": {
 				"bfme2-retail": 1,
 				"rotwk-retail": 1
@@ -6681,14 +6702,12 @@
 			],
 			"classification": "C",
 			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
-			"status": "refused",
-			"consumedBy": [],
-			"refusedBy": [
-				"playable_unit_compiler.py"
+			"status": "consumed",
+			"consumedBy": [
+				"spellbook_compiler.py"
 			],
-			"refusalReasons": [
-				"allegiance change needs the allegiance system"
-			],
+			"refusedBy": [],
+			"refusalReasons": [],
 			"declarationSites": {
 				"bfme2-retail": 1,
 				"rotwk-retail": 1
@@ -6833,14 +6852,13 @@
 			],
 			"classification": "C",
 			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
-			"status": "refused",
-			"consumedBy": [],
-			"refusedBy": [
+			"status": "consumed",
+			"consumedBy": [
+				"module_contracts.py",
 				"playable_unit_compiler.py"
 			],
-			"refusalReasons": [
-				"unleash needs the weapon-set system"
-			],
+			"refusedBy": [],
+			"refusalReasons": [],
 			"declarationSites": {
 				"bfme2-retail": 1,
 				"rotwk-retail": 0

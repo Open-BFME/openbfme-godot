@@ -598,6 +598,30 @@ func lazy_script_is_compiled(key: String) -> bool:
 	return _lazy_scripts.has(key)
 
 
+func lazy_script_warm_was_requested(key: String) -> bool:
+	## Distinguish an intentionally queued background compile from an eager
+	## preload. Godot enters a resource in its global cache as soon as
+	## `load_threaded_request()` accepts it, before this menu has collected the
+	## Script into `_lazy_scripts`.
+	return _lazy_warm_requested.has(key)
+
+
+func cleanup_for_test() -> void:
+	## Tests may tear the shell down before its background warm is collected by
+	## the skirmish sweep. Drain those accepted requests before SceneTree.quit(),
+	## otherwise Godot reports the two in-flight Script resources as leaked
+	## RefCounted instances. This does not alter normal navigation or ownership.
+	_drain_lazy_warm_requests()
+
+
+func _drain_lazy_warm_requests() -> void:
+	for path_value in _lazy_warm_requested.values():
+		var path := String(path_value)
+		if path != "":
+			ResourceLoader.load_threaded_get(path)
+	_lazy_warm_requested.clear()
+
+
 ## True while `_wotr_unavailable_reason` is holding a SCRIPT COMPILE failure
 ## rather than a living-world document verdict. The two are both honest refusals
 ## and both belong on the same surface, but only one of them can be withdrawn:
@@ -850,6 +874,10 @@ func _start_shell_music() -> void:
 
 
 func _exit_tree() -> void:
+	# A forced shutdown can arrive before the stepped sweep has collected the two
+	# background Script warms. They are accepted ResourceLoader requests and must
+	# be joined here just like the classification worker below.
+	_drain_lazy_warm_requests()
 	# The worker is bound to this menu's validation helpers. Cancel between
 	# validations and join before the Node can be freed; no deferred callback can
 	# ever target a dead menu.

@@ -231,6 +231,25 @@ func _run() -> void:
 			str(chip_overlaps)
 		)
 
+	# Angmar's main/upgrades/hero pages exercise 8/7/6 entries. Verify the
+	# expanded-page geometry remains collision-free when theme/layout scaling
+	# changes the actual button box instead of assuming the 64px capture size.
+	for scaled_size_value in [48.0, 64.0, 72.0]:
+		var scaled_size: Vector2 = Vector2.ONE * float(scaled_size_value)
+		var scaled_failures: Array[String] = []
+		var scaled_counts := [7, 8, 9] if scaled_size_value <= 64.0 else [7, 8]
+		for count in scaled_counts:
+			var scaled_rects: Array[Rect2] = []
+			for index in count:
+				scaled_rects.append(Rect2(hud._radial_button_position(index, count, scaled_size), scaled_size))
+			for index in scaled_rects.size():
+				if not panel_rect.encloses(scaled_rects[index]):
+					scaled_failures.append("size=%d count=%d outside=%s" % [int(scaled_size_value), count, str(scaled_rects[index])])
+				for other in range(index + 1, scaled_rects.size()):
+					if scaled_rects[index].intersects(scaled_rects[other]):
+						scaled_failures.append("size=%d count=%d overlap=%d/%d" % [int(scaled_size_value), count, index, other])
+		_check("angmar_page_geometry_is_clear_at_%dpx_layout_scale" % int(scaled_size_value), scaled_failures.is_empty(), str(scaled_failures))
+
 	# --- why the separation oracle is a distance and not a rectangle ----------
 	#
 	# Retail's authored slots 4 and 5 overlap as 64px BOXES by 17x4 px. If that

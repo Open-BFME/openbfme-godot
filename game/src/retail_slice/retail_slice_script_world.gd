@@ -574,7 +574,7 @@ func _census_teams_for_player(player: String) -> Dictionary:
 	## here.
 	##
 	## The enemies set is the hostile ROSTERED combatants plus the creep
-	## owner when creep camps are seeded (retail's PlyrCreeps is at war with
+	## owner when descriptor-backed creep objects are present (retail's PlyrCreeps is at war with
 	## every player, and creep camp structures carry countable retail type
 	## names). The neutral capturable-structure owner is EXCLUDED: retail's
 	## PlyrCivilian relation is Neutral, not Enemy. Sets are sorted, so
@@ -608,7 +608,10 @@ func _census_teams_for_player(player: String) -> Dictionary:
 					continue
 				if _relation_between(anchor_team, team) == wanted_relation:
 					teams.append(team)
-			if player == THIS_PLAYERS_ENEMIES_TOKEN and sim.creep_lairs_enabled:
+			if player == THIS_PLAYERS_ENEMIES_TOKEN and (
+				not sim.structure_ids(RetailSliceSim.CREEP_TEAM).is_empty()
+				or not sim.living_ids(RetailSliceSim.CREEP_TEAM).is_empty()
+			):
 				teams.append(RetailSliceSim.CREEP_TEAM)
 			teams.sort()
 			return {"teams": teams}

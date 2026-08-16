@@ -4,6 +4,7 @@ extends Node3D
 
 const ShadowDecalScript = preload("res://src/retail_slice/retail_shadow_decal.gd")
 const FormationScript = preload("res://src/retail_slice/retail_formation.gd")
+const AnimationTimingScript = preload("res://src/retail_slice/retail_animation_timing.gd")
 const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const DEFAULT_OBJECT_ID := "bfme2.object.gondor-fighter"
 const ARCHER_OBJECT_ID := "bfme2.object.gondor-archer"
@@ -126,7 +127,19 @@ var clip_map: Dictionary = {}
 var clip_sets: Dictionary = {}
 var clip_modes: Dictionary = {}
 var attack_uses_weapon_timing := false
-var attack_fire_speed_factor := 1.0
+var authored_animation_speed_ranges: Dictionary = {}
+## Per routed state/clip receipts copied from the sealed capability. Values are
+## deliberately raw: retail's AnimationBlendTime unit conversion and
+## AnimationPriority zero/selection law are not yet backed by an executable
+## unit-animation oracle, so neither value is allowed to change playback.
+var authored_animation_clip_properties: Dictionary = {}
+## StateName is exact only where the compiler linked the authored state label
+## to a concrete animation identifier. Keep both sides of the last transition
+## so drawable predicates can query STATE_X and PREV_STATE_X without guessing
+## from our semantic state names.
+var authored_state_label_links: Dictionary = {}
+var member_current_authored_state_labels: Dictionary = {}
+var member_previous_authored_state_labels: Dictionary = {}
 var equipment_contract: Dictionary = {}
 var equipment_contract_ready := false
 var unresolved_animation_track_count := 0
@@ -523,15 +536,63 @@ func _build_clip_map(capability: Dictionary) -> void:
 		"selected": _clips(states.get("selected", {})),
 	}
 	clip_modes.clear()
+	authored_animation_speed_ranges.clear()
+	authored_animation_clip_properties.clear()
+	authored_state_label_links.clear()
+	member_current_authored_state_labels.clear()
+	member_previous_authored_state_labels.clear()
 	for state_name in ["idle", "move", "attack", "death", "selectionTransition", "selected"]:
 		var state_value: Variant = states.get(state_name, {})
 		if typeof(state_value) == TYPE_DICTIONARY:
 			clip_modes[state_name] = String((state_value as Dictionary).get("mode", "loop"))
+	for route in {
+		"idle": "idle", "run": "move", "attack": "attack",
+		"attack_melee": "attackMelee", "attack_ranged_pre": "attackRangedPre",
+		"attack_ranged_fire": "attackRangedFire", "death": "death",
+		"selectionTransition": "selectionTransition", "selected": "selected",
+	}.keys():
+		var capability_state := String({
+			"idle": "idle", "run": "move", "attack": "attack",
+			"attack_melee": "attackMelee", "attack_ranged_pre": "attackRangedPre",
+			"attack_ranged_fire": "attackRangedFire", "death": "death",
+			"selectionTransition": "selectionTransition", "selected": "selected",
+		}[route])
+		var row: Dictionary = states.get(capability_state, states.get("attack", {}) if String(route).begins_with("attack") else {}) as Dictionary
+		var ranges: Dictionary = row.get("AnimationSpeedFactorRange", {}) as Dictionary
+		for clip_value in ranges.keys():
+			authored_animation_speed_ranges["%s|%s" % [String(route), String(clip_value)]] = (ranges[clip_value] as Array).duplicate()
+		var properties: Variant = row.get("clipProperties", {})
+		if typeof(properties) == TYPE_DICTIONARY:
+			for clip_value in (properties as Dictionary).keys():
+				var property_value: Variant = (properties as Dictionary)[clip_value]
+				if typeof(property_value) == TYPE_DICTIONARY:
+					authored_animation_clip_properties["%s|%s" % [String(route), String(clip_value)]] = (property_value as Dictionary).duplicate(true)
+	var labels_value: Variant = capability.get("authoredStateLabels", [])
+	if typeof(labels_value) == TYPE_ARRAY:
+		for label_value in labels_value as Array:
+			if typeof(label_value) != TYPE_DICTIONARY:
+				continue
+			var label_row := label_value as Dictionary
+			var label := String(label_row.get("StateName", ""))
+			var linked_value: Variant = label_row.get("linkedAnimations", [])
+			if label == "" or typeof(linked_value) != TYPE_ARRAY:
+				continue
+			for linked_row_value in linked_value as Array:
+				if typeof(linked_row_value) != TYPE_DICTIONARY:
+					continue
+				var identifier := String((linked_row_value as Dictionary).get("identifier", ""))
+				if identifier == "":
+					continue
+				if not authored_state_label_links.has(identifier):
+					authored_state_label_links[identifier] = []
+				var linked_labels := authored_state_label_links[identifier] as Array
+				if not linked_labels.has(label):
+					linked_labels.append(label)
+	for identifier_value in authored_state_label_links.keys():
+		(authored_state_label_links[identifier_value] as Array).sort_custom(
+			func(a: Variant, b: Variant) -> bool: return String(a).naturalnocasecmp_to(String(b)) < 0
+		)
 	attack_uses_weapon_timing = bool((states.get("attack", {}) as Dictionary).get("useWeaponTiming", false))
-	var fire_state: Dictionary = states.get("attackRangedFire", {}) as Dictionary
-	attack_fire_speed_factor = float(fire_state.get("speedFactor", 1.0))
-	if attack_fire_speed_factor <= 0.0:
-		attack_fire_speed_factor = 1.0
 	equipment_contract = (capability.get("equipment", {}) as Dictionary).duplicate(true)
 	equipment_contract_ready = bool(equipment_contract.get("validated", false))
 	unresolved_animation_track_count = int(capability.get("unresolvedAnimationTracks", 0))
@@ -1227,12 +1288,56 @@ func _play_member_state(member_index: int, state: String, action_token: int, res
 	var requested := member_clip_for_state(member_index, state)
 	if requested == "":
 		return
+	_sync_member_authored_state_labels(member_index, requested)
 	member_action_states[member_index] = state
 	member_current_clips[member_index] = requested
 	for player_value in member_animation_players.get(member_index, []):
-		_play_member_clip(player_value as AnimationPlayer, requested, state, member_index, 0.10, not restart)
+		_play_member_clip(player_value as AnimationPlayer, requested, state, member_index, 0.10, not restart, action_token)
 	if state.begins_with("attack") and action_token >= 0:
 		_last_action_token = maxi(_last_action_token, action_token)
+
+
+func authored_animation_property_receipt(state: String, clip: String) -> Dictionary:
+	## Consume the authored values without silently assigning made-up runtime
+	## semantics. Animated props have a separately evidenced relative-weight
+	## law; playable-unit AnimationPriority (especially zero) does not.
+	var properties: Variant = authored_animation_clip_properties.get("%s|%s" % [state, clip], {})
+	if typeof(properties) != TYPE_DICTIONARY or (properties as Dictionary).is_empty():
+		return {}
+	var receipt := (properties as Dictionary).duplicate(true)
+	if receipt.has("animationBlendTimeRaw"):
+		receipt["animationBlendRuntimeSupport"] = "deferred-raw-unit-conversion-unproven"
+		receipt["animationBlendApplied"] = false
+	if receipt.has("animationPriority"):
+		receipt["animationPriorityRuntimeSupport"] = "deferred-unit-selection-law-and-zero-semantics-unproven"
+		receipt["animationPriorityApplied"] = false
+	return receipt
+
+
+func current_authored_state_labels(member_index: int) -> Array:
+	return (member_current_authored_state_labels.get(member_index, []) as Array).duplicate()
+
+
+func previous_authored_state_labels(member_index: int) -> Array:
+	return (member_previous_authored_state_labels.get(member_index, []) as Array).duplicate()
+
+
+func member_has_authored_state_label(member_index: int, label: String, previous: bool = false) -> bool:
+	var labels := previous_authored_state_labels(member_index) if previous else current_authored_state_labels(member_index)
+	return labels.has(label)
+
+
+func _sync_member_authored_state_labels(member_index: int, clip: String) -> void:
+	var next_labels := (authored_state_label_links.get(clip, []) as Array).duplicate()
+	var current_labels := current_authored_state_labels(member_index)
+	if next_labels == current_labels:
+		return
+	member_previous_authored_state_labels[member_index] = current_labels
+	member_current_authored_state_labels[member_index] = next_labels
+	var visual := member_visuals.get(member_index) as Node3D
+	if visual != null:
+		visual.set_meta("authored_state_labels", next_labels.duplicate())
+		visual.set_meta("previous_authored_state_labels", current_labels.duplicate())
 
 
 func set_attack_target(target: Node3D, target_height: float, travel_seconds: float) -> void:
@@ -1510,6 +1615,7 @@ func set_action_state(state: String, force: bool = false, action_token: int = -1
 		var requested := member_clip_for_state(member_index, normalized)
 		member_current_clips[member_index] = requested
 		member_action_states[member_index] = normalized
+		_sync_member_authored_state_labels(member_index, requested)
 		for player_value in member_animation_players.get(member_index, []):
 			_play_member_clip(player_value as AnimationPlayer, requested, normalized, member_index, 0.12, true)
 	_play_banner_clip(normalized)
@@ -2036,21 +2142,28 @@ func set_attack_reload_seconds(value: float) -> void:
 	attack_reload_seconds = value if is_finite(value) and value > 0.0 else 0.0
 
 
-func _play_member_clip(player: AnimationPlayer, requested: String, state: String, member_index: int, blend: float, apply_phase: bool) -> void:
+func _play_member_clip(player: AnimationPlayer, requested: String, state: String, member_index: int, blend: float, apply_phase: bool, action_token: int = 0) -> void:
 	var playable := _resolve_animation_name(player, requested)
 	if playable == "":
 		return
-	var jitter := 0.96 + float(posmod(entity_id * 5 + member_index * 7, 7)) * (0.08 / 6.0)
-	player.speed_scale = jitter
+	player.speed_scale = _authored_animation_speed_factor(state, requested, member_index, action_token)
 	if state == "attack_ranged_fire":
 		# Retail comments UseWeaponTiming OUT (gondorarcher.ini:251/261) and
 		# authors AnimationSpeedFactorRange = 1.2 1.3 (:262) so the fire clip
 		# always finishes before the randomized reload. Play at that authored
 		# factor and idle until the next shot — do not stretch across reload.
-		player.speed_scale = attack_fire_speed_factor if attack_fire_speed_factor > 0.0 else 1.0
+		player.speed_scale = _authored_animation_speed_factor(state, requested, member_index, action_token)
 	player.play(playable, blend)
 	if apply_phase and state in ["idle", "run", "victory", "selected"] and player.current_animation_length > 0.0:
 		player.seek(player.current_animation_length * phase_for_member(member_index, state), true)
+
+
+func _authored_animation_speed_factor(state: String, clip: String, member_index: int, action_token: int) -> float:
+	var values: Variant = authored_animation_speed_ranges.get("%s|%s" % [state, clip], [])
+	# SAGE samples uniformly when entering the animation state. Keep that
+	# authored behavior deterministic for lockstep/replays using stable runtime
+	# identities; exact retail global-RNG stream alignment remains an oracle gap.
+	return AnimationTimingScript.speed_factor(values, entity_id, member_index, action_token, clip)
 
 
 func _process(_delta: float) -> void:

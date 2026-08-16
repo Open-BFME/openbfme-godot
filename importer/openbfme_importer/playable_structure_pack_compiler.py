@@ -415,6 +415,42 @@ def compile_structure_visual_recipe(
         bib_identifiers,
         exclusions,
     ) = _phase_rows(visual_closure, target_object_id)
+    drawable_scripts: list[dict[str, object]] = []
+    for object_row in _rows(visual_closure.get("objects", []), "visual objects"):
+        if str(object_row.get("name", "")).casefold() != target_object_id.casefold():
+            continue
+        for module_row in _rows(object_row.get("drawModules", []), "visual draw modules"):
+            module_kind = str(module_row.get("moduleKind", ""))
+            module_actions = _rows(
+                module_row.get("drawableActions", []), "module drawable actions"
+            )
+            if module_actions:
+                drawable_scripts.append(
+                    {
+                        "targetObject": target_object_id,
+                        "moduleKind": module_kind,
+                        "conditions": [],
+                        "lifecyclePhases": ["intact"],
+                        "actions": deepcopy(module_actions),
+                    }
+                )
+            for state_row in _rows(module_row.get("states", []), "visual states"):
+                actions = _rows(
+                    state_row.get("drawableActions", []), "state drawable actions"
+                )
+                if actions:
+                    drawable_scripts.append(
+                        {
+                            "targetObject": target_object_id,
+                            "moduleKind": module_kind,
+                            "stateFamily": str(state_row.get("family", "")),
+                            "conditions": deepcopy(state_row.get("conditions", [])),
+                            "lifecyclePhases": deepcopy(
+                                state_row.get("lifecyclePhases", [])
+                            ),
+                            "actions": deepcopy(actions),
+                        }
+                    )
     if not model_phases:
         raise PlayableStructurePackCompilerError(
             f"structure has no resolved lifecycle model: {target_object_id}"
@@ -963,6 +999,7 @@ def compile_structure_visual_recipe(
         "lifecycleStates": states,
         "bibStates": bib_states,
         "drawModuleOrder": draw_module_order,
+        **({"drawableScripts": drawable_scripts} if drawable_scripts else {}),
         "phaseCoverage": {
             "covered": covered_phases,
             "missing": [
@@ -1324,6 +1361,34 @@ def _select_phase_states(
                 )
                 candidates = active
                 outputs = active_outputs
+        if len(outputs) > 1 and phase == "post-rubble":
+            # SAGE has distinct POST_RUBBLE and POST_COLLAPSE conditions, but
+            # the compact runtime lifecycle exposes one post-rubble slot.
+            # When retail authors both, preserve the state whose exact
+            # condition names that slot; POST_COLLAPSE remains packed and
+            # recorded as an unpresented secondary. BFME2 Outpost,
+            # SignalFire, and ShipWright all exercise this general shape.
+            exact = [
+                state
+                for state in candidates
+                if any(
+                    set(_exact_condition_set(conditions)) == {"POST_RUBBLE"}
+                    for conditions in state.get("sourceConditionSets", [])
+                )
+            ]
+            exact_outputs = {str(state["output"]) for state in exact}
+            if len(exact_outputs) == 1:
+                notes.append(
+                    {
+                        "kind": "phase-visual",
+                        "phase": "post-rubble",
+                        "reason": "exact-post-rubble-canonical",
+                        "sourceW3d": str(exact[0].get("sourceW3d", "")),
+                        "unpresentedOutputs": sorted(outputs - exact_outputs),
+                    }
+                )
+                candidates = exact
+                outputs = exact_outputs
         if len(outputs) > 1:
             raise PlayableStructurePackCompilerError(
                 f"structure phase visual is ambiguous among exact canonical "
@@ -2114,7 +2179,11 @@ def compose_structure_runtime_document(
         authored_construction_states = any(
             "construction" in state["phases"] for state in states
         )
-        if evidence_kind in {"engine-spawned-composite", "wall-template"}:
+        if evidence_kind in {
+            "engine-spawned-composite",
+            "wall-template",
+            "authored-neutral-map",
+        }:
             construction_status = f"never-constructed-{evidence_kind}"
         elif not authored_construction_states:
             construction_status = "no-authored-construction-states"
@@ -2366,9 +2435,19 @@ def compose_structure_runtime_document(
         "lifecycleEvidenceSha256": lifecycle_evidence["evidenceSha256"],
         "registration": {
             "production": deepcopy(descriptor["production"]),
+            **(
+                {"scenarioAdmission": deepcopy(descriptor["scenarioAdmission"])}
+                if "scenarioAdmission" in descriptor
+                else {}
+            ),
             "gameplay": deepcopy(descriptor["gameplay"]),
             "presentation": {
                 "buildingLifecycle": lifecycle,
+                **(
+                    {"drawableScripts": deepcopy(visual_recipe["drawableScripts"])}
+                    if "drawableScripts" in visual_recipe
+                    else {}
+                ),
                 "ui": deepcopy(descriptor["presentation"]["ui"]),
                 "audioRoutes": deepcopy(descriptor["presentation"]["audioRoutes"]),
                 # Converted construct-button / selection-portrait crops (and

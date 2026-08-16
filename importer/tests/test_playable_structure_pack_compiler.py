@@ -9,6 +9,7 @@ from openbfme_importer.playable_structure_lifecycle_evidence import (
 )
 from openbfme_importer.playable_structure_pack_compiler import (
     PlayableStructurePackCompilerError,
+    _select_phase_states,
     compile_structure_visual_recipe,
     compose_structure_runtime_document,
     validate_structure_visual_recipe,
@@ -25,6 +26,33 @@ _ANIMATION_IDLE = "art/w3d/fx/keep_idla.w3d"
 _ANIMATION_COLLAPSE = "art/w3d/fx/keep_levera.w3d"
 _ANIMATION_GHOST = "art/w3d/fx/keep_ghosta.w3d"
 _HIERARCHY_MAIN = "art/w3d/fx/keep_skl.w3d"
+
+
+def test_post_rubble_prefers_the_exact_post_rubble_authored_state() -> None:
+    states = [
+        {
+            "output": "post-rubble-generic.glb",
+            "phases": ["post-rubble"],
+            "sourceConditionSets": [["POST_RUBBLE"]],
+            "sourceW3d": "art/w3d/gbgenrubble.w3d",
+            "drawModules": ["ModuleTag_Draw"],
+        },
+        {
+            "output": "post-collapse-object-rubble.glb",
+            "phases": ["post-rubble"],
+            "sourceConditionSets": [["POST_COLLAPSE"]],
+            "sourceW3d": "art/w3d/nboutpost_r.w3d",
+            "drawModules": ["ModuleTag_Draw"],
+        },
+    ]
+    notes: list[dict[str, object]] = []
+
+    selected = _select_phase_states(states, ["ModuleTag_Draw"], notes)
+
+    assert selected["post-rubble"]["output"] == "post-rubble-generic.glb"
+    assert any(
+        row.get("reason") == "exact-post-rubble-canonical" for row in notes
+    )
 
 
 def _leaf(
@@ -274,6 +302,55 @@ def test_recipe_is_deterministic_and_validates() -> None:
         "covered": ["construction", "intact", "damaged", "rubble"],
         "missing": ["really-damaged", "post-rubble"],
     }
+
+
+def test_drawable_scripts_flow_from_visual_closure_into_runtime_presentation() -> None:
+    from importer.tests.test_playable_structure_compiler import _structure_documents
+    from openbfme_importer.playable_structure_compiler import (
+        compile_playable_structure_descriptor,
+    )
+
+    documents = _structure_documents()
+    closure = _closure()
+    for row in closure["exactLeaves"]:
+        row["targetObject"] = "TestKeep"
+    closure["objects"] = [
+        {
+            "name": "TestKeep",
+            "drawModules": [
+                {
+                    "moduleKind": "W3DScriptedModelDraw",
+                    "drawableActions": [],
+                    "states": [
+                        {
+                            "family": "DefaultModelConditionState",
+                            "conditions": [],
+                            "lifecyclePhases": ["intact"],
+                            "drawableActions": [
+                                {
+                                    "operation": "hide-sub-object",
+                                    "arguments": ["FLAG"],
+                                    "supported": True,
+                                    "raw": 'CurDrawableHideSubObject("FLAG")',
+                                    "provenance": {"virtualPath": "keep.ini", "line": 7},
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
+    _rehash(closure)
+    recipe = compile_structure_visual_recipe("TestKeep", closure)
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    evidence = compile_structure_lifecycle_evidence("TestKeep", documents)
+
+    document = compose_structure_runtime_document(descriptor, recipe, evidence)
+
+    scripts = document["registration"]["presentation"]["drawableScripts"]
+    assert scripts[0]["targetObject"] == "TestKeep"
+    assert scripts[0]["actions"][0]["operation"] == "hide-sub-object"
 
 
 def test_phase_grouping_and_converters() -> None:
@@ -1412,6 +1489,45 @@ def test_runtime_document_omits_unauthored_construction_phase() -> None:
         "phase": "construction",
         "reason": "no-authored-construction-states",
     } in lifecycle["compositionExclusions"]
+
+
+def test_neutral_map_runtime_preserves_admission_and_never_constructs() -> None:
+    from importer.tests.test_playable_structure_compiler import (
+        _structure_documents,
+    )
+    from openbfme_importer.playable_structure_compiler import (
+        compile_playable_structure_descriptor,
+    )
+
+    documents = _structure_documents()
+    descriptor = compile_playable_structure_descriptor(
+        "TestCitadel",
+        documents,
+        scenario_admission={
+            "role": "lair",
+            "surfaces": ["map-placement", "lair-spawn"],
+        },
+    )
+    closure = _closure(include_construction=False)
+    for row in closure["exactLeaves"]:
+        row["targetObject"] = "TestCitadel"
+    _rehash(closure)
+    recipe = compile_structure_visual_recipe("TestCitadel", closure)
+    evidence = compile_structure_lifecycle_evidence("TestCitadel", documents)
+
+    document = compose_structure_runtime_document(descriptor, recipe, evidence)
+
+    assert document["registration"]["scenarioAdmission"] == descriptor[
+        "scenarioAdmission"
+    ]
+    assert document["registration"]["production"] == {
+        "evidence": "authored-neutral-map",
+        "routes": [],
+    }
+    lifecycle = document["registration"]["presentation"]["buildingLifecycle"]
+    assert lifecycle["simulationFacts"]["construction"] == {
+        "status": "never-constructed-authored-neutral-map"
+    }
 
 
 def test_runtime_document_rejects_identity_mismatch() -> None:

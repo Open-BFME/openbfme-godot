@@ -69,6 +69,19 @@ _CAST_COMMAND = "spell_book"
 _MAX_EFFECT_MODULES = 512
 _MAX_NESTED_BLOCKS = 65_536
 
+# The compiler deliberately admits spell-power module kinds dynamically so a
+# mod can add a new Behavior without changing an importer allow-list.  The
+# module census cannot infer that dynamic consumption from ``block.kind``, so
+# name the retail kinds whose typed Godot runtime seams are independently
+# covered.  This is evidence for the census, never an admission gate.
+_SPELLBOOK_RUNTIME_EFFECT_MODULE_KINDS = frozenset(
+    {
+        "FreezingRainSpecialPower",
+        "ScavengerSpecialPower",
+        "UntamedAllegianceSpecialPower",
+    }
+)
+
 # Behavior-module fields bound to typed effect leaves.  Any other
 # reference-shaped field on a spell-power module fails closed below.
 _MODULE_OCL_FIELDS = frozenset({"ocl", "healocl", "elvenwoodocl", "taintocl"})

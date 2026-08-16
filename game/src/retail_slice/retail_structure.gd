@@ -43,6 +43,7 @@ const V1_NEXT_PHASES := {
 }
 const DEFAULT_TARGET_HEIGHT := 7.0
 const MAX_ROUTE_DOCUMENT_BYTES := 2 * 1024 * 1024
+const MAX_DRAWABLE_AUDIO_RECEIPTS := 128
 signal lifecycle_route_requested(request: Dictionary)
 
 var entity_id := 0
@@ -78,6 +79,9 @@ var active_visual_mode := ""
 var active_entering_fx := ""
 var active_audio_event := ""
 var active_particle_system_ids: Array[String] = []
+var drawable_actions_applied := 0
+var drawable_action_gaps: Array[Dictionary] = []
+var drawable_audio_requests: Array[Dictionary] = []
 var transition_error := ""
 var route_dispatch_error := ""
 var route_blockers: Array[Dictionary] = []
@@ -124,7 +128,10 @@ var _pack_root := ""
 ## Host/faction pack roots the lifecycle route registry may resolve from
 ## (structure pack first, then the selected host pack and faction pack roots).
 var _allowed_pack_roots: Array[String] = []
+var scenario_descriptor_maximum_health: Variant = null
+var scenario_authoritative_maximum_health := 0
 var _lifecycle: Dictionary = {}
+var _drawable_scripts: Array = []
 var _resolved_paths: Dictionary = {}
 var _fixture_visuals: Dictionary = {}
 var _loaded_visuals: Dictionary = {}
@@ -138,12 +145,15 @@ var _build_fill: Sprite3D
 var _visual_root: Node3D
 var _model_host: Node3D
 var _active_body: Node3D
+var _geometry_upgrade_baseline: Dictionary = {}
 var _active_bib: Node3D
 var _active_door: Node3D
 var _rebuild_hole_visual: Node3D
 var _runtime_route_registry: Dictionary = {}
 var _source_unit_scale := 0.0
 var _pending_route_phase := ""
+var _pending_drawable_audio_requests: Array[Dictionary] = []
+var _drawable_audio_activation_key := ""
 var _bounded_phase_paths: Dictionary = {}
 var _health_bar_width := 3.6
 var _visual_top_y := DEFAULT_TARGET_HEIGHT
@@ -157,6 +167,7 @@ var water_fx_present := false
 var _structure_upgrade_ids: Dictionary = {}
 var _well_water_authored := false
 var _well_water_resolved := false
+var _scenario_game := ""
 const HEALTH_BAR_SCREEN_WIDTH_PX := 64
 const HEALTH_BAR_SCREEN_HEIGHT_PX := 5
 const HEALTH_BAR_ROOF_GAP := 0.12
@@ -171,11 +182,17 @@ const WELL_WATER_FX_ID := "WellHealFX"
 
 
 func _enter_tree() -> void:
+	if not _pending_drawable_audio_requests.is_empty():
+		var pending := _pending_drawable_audio_requests.duplicate(true)
+		_pending_drawable_audio_requests.clear()
+		_emit_drawable_audio_requests(pending)
 	if _pending_route_phase != "":
 		_publish_v1_route_request(_pending_route_phase)
 
 
-func configure(entity: Dictionary, bundle_object_id: String = "", source_unit_scale: float = 0.0) -> void:
+func configure(entity: Dictionary, bundle_object_id: String = "", source_unit_scale: float = 0.0, scenario_game: String = "") -> void:
+	_scenario_game = scenario_game.to_lower() if scenario_game.to_lower() in ["bfme2", "rotwk"] else ""
+	scenario_authoritative_maximum_health = int(entity.get("maximum_health", 0))
 	_prepare_identity(entity, bundle_object_id)
 	_source_unit_scale = source_unit_scale if is_finite(source_unit_scale) and source_unit_scale > 0.0 else 0.0
 	_seed_selection_radius()
@@ -213,6 +230,9 @@ func configure_fixture(
 
 
 func sync_state(entity: Dictionary) -> void:
+	# Remove the previous GeometryUpgrade overlay before level/phase presenters
+	# establish this frame's selected-model baseline.
+	_restore_geometry_upgrade_baseline()
 	var entity_maximum := int(entity.get("maximum_health", 0))
 	var bounded_workshop := presentation_mode == "bounded-workshop-model-state-evidence"
 	var lifecycle_maximum := entity_maximum if bounded_workshop else maximum_health_for_lifecycle(_lifecycle)
@@ -284,6 +304,7 @@ func sync_state(entity: Dictionary) -> void:
 		_build_fill.scale.x = maxf(0.001, construction_ratio)
 		_build_fill.offset.x = (construction_ratio - 1.0) * HEALTH_BAR_SCREEN_WIDTH_PX * 0.5
 	_ingest_structure_upgrades(entity)
+	apply_geometry_upgrade_visibility(entity.get("geometry_visibility", {}) as Dictionary)
 	_sync_aura_visibility()
 	_sync_water_fx()
 	_update_lifecycle_metadata()
@@ -795,6 +816,7 @@ static func _validate_v1_composed_simulation_facts(facts: Dictionary) -> String:
 		# absent instead of inventing a build scrub.
 		if String(construction.get("status", "")) not in [
 			"never-constructed-engine-spawned-composite",
+			"never-constructed-authored-neutral-map",
 			"never-constructed-wall-template",
 			"no-authored-construction-states",
 		]:
@@ -1348,6 +1370,24 @@ func _configure_selected_pack_contract(bundle_object_id: String) -> void:
 			}
 			break
 	if definition.is_empty():
+		var scenario_document := _scenario_structure_document_for_bundle_id(bundle_object_id)
+		if not scenario_document.is_empty():
+			var scenario_presentation: Dictionary = ((scenario_document.get("registration", {}) as Dictionary).get("presentation", {}) as Dictionary).duplicate(true)
+			var scenario_lifecycle: Dictionary = scenario_presentation.get("buildingLifecycle", {}) as Dictionary
+			var scenario_facts: Dictionary = scenario_lifecycle.get("simulationFacts", {}) as Dictionary
+			scenario_descriptor_maximum_health = scenario_facts.get("maximumHealth")
+			if scenario_authoritative_maximum_health > 0:
+				scenario_facts["maximumHealth"] = scenario_authoritative_maximum_health
+				scenario_lifecycle["simulationFacts"] = scenario_facts
+				scenario_presentation["buildingLifecycle"] = scenario_lifecycle
+				set_meta("scenario_descriptor_maximum_health", scenario_descriptor_maximum_health)
+				set_meta("scenario_authoritative_maximum_health", scenario_authoritative_maximum_health)
+			definition = {
+				"_pack_root": String(scenario_document.get("_pack_root", "")),
+				"kind": "structure",
+				"presentation": scenario_presentation,
+			}
+	if definition.is_empty():
 		_set_contract_error("structure bundle object is not registered")
 		return
 	_pack_root = String(definition.get("_pack_root", ""))
@@ -1383,6 +1423,13 @@ func _bind_structure_document_facts(bundle_object_id: String) -> void:
 	_level_presentations.clear()
 	_level_health_additions.clear()
 	body_module = ""
+	var scenario_document := _scenario_structure_document_for_bundle_id(bundle_object_id)
+	if not scenario_document.is_empty():
+		var scenario_gameplay: Dictionary = (scenario_document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary
+		var scenario_health: Variant = (scenario_gameplay.get("health", {}) as Dictionary).get("primary", {})
+		if typeof(scenario_health) == TYPE_DICTIONARY:
+			body_module = String((scenario_health as Dictionary).get("module", ""))
+		return
 	for source_id_value in ContentDB.get_playable_structure_runtimes().keys():
 		var source_id := String(source_id_value)
 		if UnitAdapterScript._runtime_id(source_id) != bundle_object_id:
@@ -1525,6 +1572,56 @@ func _apply_subobject_tokens(root: Node, tokens: Array, shown: bool, matched: Di
 		_set_named_visibility(root, token, shown, matched)
 
 
+func apply_geometry_upgrade_visibility(state: Dictionary) -> Dictionary:
+	## Real structure-model seam for the simulation's authoritative
+	## GeometryUpgrade fold. Tokens retain SAGE's exact-or-trailing-* matching;
+	## unresolved names are reported, never approximated to a nearby mesh.
+	if _active_body == null or not is_instance_valid(_active_body):
+		return {"matched_count": 0, "unmatched_tokens": [], "status": "model-body-unavailable"}
+	# Restore the state observed immediately before the previous geometry fold.
+	# sync_state applies level/phase visibility first, so each new baseline is the
+	# exact selected-model state this upgrade layer must overlay, not a guess.
+	_restore_geometry_upgrade_baseline()
+	var matched: Dictionary = {}
+	var shown := _string_array(state.get("show", []))
+	var hidden := _string_array(state.get("hide", []))
+	for token in shown + hidden:
+		_capture_geometry_upgrade_baseline(_active_body, token)
+	_apply_subobject_tokens(_active_body, shown, true, matched)
+	_apply_subobject_tokens(_active_body, hidden, false, matched)
+	var unmatched: Array[String] = []
+	for token in shown + hidden:
+		var found := false
+		for node_name in matched.keys():
+			if _subobject_token_matches(token, String(node_name)):
+				found = true
+				break
+		if not found:
+			unmatched.append(token)
+	unmatched.sort()
+	set_meta("geometry_upgrade_matched_nodes", matched.duplicate(true))
+	set_meta("geometry_upgrade_unmatched_tokens", unmatched.duplicate())
+	return {"matched_count": matched.size(), "matched_nodes": matched, "unmatched_tokens": unmatched, "status": "applied"}
+
+
+func _restore_geometry_upgrade_baseline() -> void:
+	for baseline_value in _geometry_upgrade_baseline.values():
+		var baseline := baseline_value as Dictionary
+		var node: Variant = baseline.get("node")
+		if node is Node3D and is_instance_valid(node):
+			(node as Node3D).visible = bool(baseline.get("visible", true))
+	_geometry_upgrade_baseline.clear()
+
+
+func _capture_geometry_upgrade_baseline(root: Node, token: String) -> void:
+	if root is Node3D and _subobject_token_matches(token, root.name):
+		var identity := root.get_instance_id()
+		if not _geometry_upgrade_baseline.has(identity):
+			_geometry_upgrade_baseline[identity] = {"node": root, "visible": (root as Node3D).visible}
+	for child in root.get_children():
+		_capture_geometry_upgrade_baseline(child, token)
+
+
 func _subobject_token_matches(token: String, node_name: String) -> bool:
 	## Exact authored names first; the SAGE prefix wildcard (V1_PIECE*) matches
 	## by prefix, never by substring.
@@ -1634,6 +1731,7 @@ func _configure_contract(presentation: Dictionary, lifecycle: Dictionary) -> voi
 		_set_contract_error(contract_validation_error)
 		return
 	_lifecycle = lifecycle.duplicate(true)
+	_drawable_scripts = (presentation.get("drawableScripts", []) as Array).duplicate(true)
 	var millimeters := float(presentation.get("heightMillimeters", 0.0))
 	_target_height = millimeters / 1000.0 if millimeters > 0.0 else DEFAULT_TARGET_HEIGHT
 	var preflight_error := _preflight_required_paths()
@@ -2026,6 +2124,7 @@ func _activate_v1_phase(phase: String) -> void:
 		_health_back.visible = show_health_bar
 	retail_mesh_path = String(_resolved_paths.get(body_path, body_path)) if body_path != "" else ""
 	if body != null:
+		_apply_drawable_scripts_for_phase(body, row, phase)
 		_apply_declared_phase_animation(body, phase, construction_ratio)
 	else:
 		active_animation_clip = ""
@@ -2035,6 +2134,85 @@ func _activate_v1_phase(phase: String) -> void:
 		_rebuild_hole_visual.visible = true
 	_update_lifecycle_metadata()
 	_publish_v1_route_request(phase)
+
+
+func _apply_drawable_scripts_for_phase(body: Node3D, row: Dictionary, phase: String) -> void:
+	drawable_actions_applied = 0
+	drawable_action_gaps.clear()
+	if body == null or _drawable_scripts.is_empty():
+		_drawable_audio_activation_key = ""
+		return
+
+	var conditions: Array[String] = []
+	for set_value in row.get("sourceConditionSets", []) as Array:
+		for condition_value in set_value as Array:
+			var condition := String(condition_value)
+			if not conditions.has(condition):
+				conditions.append(condition)
+	if phase == "intact" and not conditions.has("NONE"):
+		conditions.append("NONE")
+	var asset_factory = load("res://src/view/asset_factory.gd")
+	var result: Dictionary = asset_factory.apply_drawable_scripts(
+		body, {"sourceObjectId": _bundle_object_id, "drawableScripts": _drawable_scripts}, conditions
+	)
+	drawable_actions_applied = int(result.get("applied", 0))
+	drawable_action_gaps = (result.get("unhandled", []) as Array).duplicate(true)
+	# Drawable scripts are re-applied while synchronizing the same visible
+	# phase. Audio is an activation edge, not a per-frame side effect: the body
+	# instance plus phase/condition ordering gives that edge a stable view-local
+	# identity. This presentation sequence is deliberately outside sim hashes.
+	var activation_key := "%d|%s|%s" % [body.get_instance_id(), phase, "\u001f".join(conditions)]
+	if activation_key == _drawable_audio_activation_key:
+		return
+	_drawable_audio_activation_key = activation_key
+	var requests: Array[Dictionary] = []
+	for intent_value in result.get("audio_intents", []) as Array:
+		if typeof(intent_value) != TYPE_DICTIONARY:
+			continue
+		var intent := (intent_value as Dictionary).duplicate(true)
+		var event_id := String(intent.get("event_id", ""))
+		if event_id == "":
+			continue
+		intent["entityId"] = entity_id
+		intent["objectId"] = _bundle_object_id
+		intent["phase"] = phase
+		intent["audioEvent"] = event_id
+		intent["routeKind"] = "drawable-script.play-sound"
+		requests.append(intent)
+	if requests.is_empty():
+		return
+	drawable_audio_requests.append_array(requests)
+	if drawable_audio_requests.size() > MAX_DRAWABLE_AUDIO_RECEIPTS:
+		drawable_audio_requests = drawable_audio_requests.slice(
+			drawable_audio_requests.size() - MAX_DRAWABLE_AUDIO_RECEIPTS
+		)
+	if is_inside_tree():
+		_emit_drawable_audio_requests(requests)
+	else:
+		_pending_drawable_audio_requests.append_array(requests)
+
+
+func _scenario_structure_document_for_bundle_id(bundle_object_id: String) -> Dictionary:
+	if bundle_object_id == "" or _scenario_game == "" or not ContentDB.has_method("get_scenario_structure_runtimes"):
+		return {}
+	for document_value in ContentDB.get_scenario_structure_runtimes(_scenario_game).values():
+		if typeof(document_value) != TYPE_DICTIONARY:
+			continue
+		var document := document_value as Dictionary
+		var registration: Dictionary = document.get("registration", {}) as Dictionary
+		var presentation: Dictionary = registration.get("presentation", {}) as Dictionary
+		var lifecycle: Dictionary = presentation.get("buildingLifecycle", {}) as Dictionary
+		if String(lifecycle.get("objectId", "")) == bundle_object_id:
+			return document
+	return {}
+
+
+func _emit_drawable_audio_requests(requests: Array[Dictionary]) -> void:
+	# Reuse the authoritative lifecycle route consumed by RetailSliceAudio.
+	# Signal emission is synchronous and preserves source script/action order.
+	for request in requests:
+		last_route_request = request.duplicate(true)
+		lifecycle_route_requested.emit(request.duplicate(true))
 
 
 func _door_path_for_phase(phase: String) -> String:
@@ -2385,6 +2563,9 @@ func _playable_structure_document() -> Dictionary:
 			var folded_bundle := _bundle_object_id.to_lower().replace("bfme2.object.", "").replace("-", "")
 			if folded_source == folded_bundle:
 				return document
+	var scenario_document := _scenario_structure_document_for_bundle_id(_bundle_object_id)
+	if not scenario_document.is_empty():
+		return scenario_document
 	return {}
 
 

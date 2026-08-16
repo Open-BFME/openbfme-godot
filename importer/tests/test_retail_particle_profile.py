@@ -635,23 +635,27 @@ def make_inputs(root: Path) -> tuple[dict, dict, dict]:
                 "find_target_va": "0x5F90DA",
                 "duplicate_semantics": "last_definition_wins",
             },
+            "ini_loading": {
+                "registered_particle_subsystem": "TheFXParticleSystemManager",
+                "manager_init_before_legend": True,
+                "fx_ini_literal_present": True,
+                "legacy_ini_literal_present": False,
+            },
         },
         "claims": [
             {"id": "C1", "grade": "PROVEN"},
             {"id": "C2", "grade": "PROVEN"},
             {"id": "C3", "grade": "PROVEN"},
-            {"id": "C4", "grade": "UNRESOLVED"},
-            {"id": "C5", "grade": "UNRESOLVED"},
+            {"id": "C4", "grade": "PROVEN"},
+            {"id": "C5", "grade": "PROVEN"},
             {"id": "C6", "grade": "CORROBORATION_ONLY"},
         ],
         "converter_guidance": {
             "preserve_both_source_declarations": True,
             "preserve_family_and_source_provenance": True,
             "emit_single_runtime_binding": True,
-            "current_provisional_choice_for_WaterRipplesSmall": (
-                "FXParticleSystem"
-            ),
-            "choice_is_retail_precedence_proof": False,
+            "selected_kind_for_duplicate_identifiers": "FXParticleSystem",
+            "choice_is_retail_precedence_proof": True,
             "reason": (
                 "Retail registers the FX manager and the two visible definitions are "
                 "materially equivalent apart from priority/culling"
@@ -681,8 +685,8 @@ class RetailParticleProfileTests(unittest.TestCase):
         self.assertEqual(first["summary"]["profileResourceCount"], 27)
         self.assertEqual(first["summary"]["directAttachmentCount"], 11)
         self.assertEqual(first["summary"]["fxRootCount"], 13)
-        self.assertEqual(first["summary"]["provisionalRuntimeSelectionCount"], 1)
-        self.assertEqual(first["summary"]["unresolvedFamilySelectionCount"], 6)
+        self.assertEqual(first["summary"]["runtimeSelectionCount"], 7)
+        self.assertEqual(first["summary"]["unresolvedFamilySelectionCount"], 0)
         self.assertTrue(first["policy"]["profileFragmentValidatedByImportProfile"])
 
         resources = first["profileFragment"]["resources"]
@@ -734,7 +738,7 @@ class RetailParticleProfileTests(unittest.TestCase):
             planner.FORDS_PARTICLE_BINDINGS_SCHEMA,
         )
 
-    def test_oracle_selects_only_provisional_water_runtime_family(
+    def test_oracle_selects_effective_fx_runtime_family_for_all_duplicates(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -744,12 +748,12 @@ class RetailParticleProfileTests(unittest.TestCase):
         resolution = plan["familyResolution"]
         self.assertEqual(
             resolution["status"],
-            "provisional-selection-with-cross-family-precedence-unresolved",
+            "proven-effective-fx-manager-family",
         )
         self.assertEqual(len(resolution["duplicateIdentifierSystemIds"]), 7)
-        self.assertEqual(len(resolution["provisionalRuntimeSelections"]), 1)
+        self.assertEqual(len(resolution["runtimeSelections"]), 7)
         self.assertEqual(
-            len(resolution["unresolvedDuplicateIdentifierSystemIds"]), 6
+            len(resolution["unresolvedDuplicateIdentifierSystemIds"]), 0
         )
         self.assertEqual(
             resolution["runtimeNamespace"]["status"],
@@ -761,7 +765,7 @@ class RetailParticleProfileTests(unittest.TestCase):
         )
         self.assertEqual(
             resolution["duplicateSemantics"]["crossFamilyPrecedence"],
-            "unresolved",
+            "proven-fx-manager-only",
         )
         declarations = resolution["retailAuthoredEvidence"]["subsystemLegend"][
             "declarationsInAuthoredFileOrder"
@@ -791,10 +795,10 @@ class RetailParticleProfileTests(unittest.TestCase):
         water_resolution = ripple["systems"][0]["familyResolution"]
         self.assertEqual(water_resolution["selectedKind"], "FXParticleSystem")
         self.assertEqual(
-            water_resolution["status"], "provisional-explicit-runtime-selection"
+            water_resolution["status"], "proven-effective-fx-manager-family"
         )
-        self.assertFalse(water_resolution["crossFamilyPrecedenceProven"])
-        self.assertFalse(water_resolution["generalizesToOtherDuplicateIdentifiers"])
+        self.assertTrue(water_resolution["crossFamilyPrecedenceProven"])
+        self.assertTrue(water_resolution["generalizesToOtherDuplicateIdentifiers"])
         cave = next(
             row
             for row in plan["profileFragment"]["runtimeData"]["objectBindings"]
@@ -805,10 +809,10 @@ class RetailParticleProfileTests(unittest.TestCase):
             for row in cave["systems"]
             if row["particleSystemId"] == "PCTMediumDust"
         )
-        self.assertIsNone(medium_dust["familyResolution"]["selectedKind"])
+        self.assertEqual(medium_dust["familyResolution"]["selectedKind"], "FXParticleSystem")
         self.assertEqual(
             medium_dust["familyResolution"]["status"],
-            "unresolved-cross-family-precedence",
+            "proven-effective-fx-manager-family",
         )
 
     def test_resealed_definition_span_mutation_still_fails_closed(self) -> None:

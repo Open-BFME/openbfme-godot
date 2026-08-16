@@ -50,6 +50,8 @@ from .playable_unit_compiler import (
     _experience_level_rows,
     _first,
     _geometry_contract,
+    _geometry_contact_points,
+    _public_bone_contract,
     _kind_of,
     _level_modifier_leaf,
     _named_blocks,
@@ -96,6 +98,23 @@ _RADIAL_PAGE_RANGE_FIELDS = (
     ("CommandRangeCount", "commandRangeCount"),
 )
 _HEALTH_FIELDS = ("MaxHealth", "MaxHealthDamaged", "MaxHealthReallyDamaged")
+_PASSIVE_MODIFIER_FIELDS = frozenset(
+    {
+        "category",
+        "modifier",
+        "duration",
+        "fx",
+        "replaceincategoryiflongest",
+        "ignoreifanticategoryactive",
+    }
+)
+_PASSIVE_MODIFIER_CATEGORIES = frozenset({"BUFF", "LEADERSHIP", "SPELL"})
+_PASSIVE_MODIFIER_EFFECTS = {
+    "armor": "incoming-damage-reduction",
+    "damage_mult": "multiplicative",
+    "experience": "multiplicative",
+    "resist_fear": "resistance",
+}
 
 
 class PlayableStructureCompilerError(ValueError):
@@ -641,8 +660,164 @@ def _resource_behavior_radius(
     return None
 
 
+def _modifier_list_contract(
+    documents: Mapping[str, bytes],
+    modifier_id: str,
+    defines: Mapping[str, int | float],
+    label: str,
+) -> dict[str, object]:
+    """Resolve one passive-area ``ModifierList`` without guessing semantics."""
+
+    definition = _named_definition_values(documents, "ModifierList", modifier_id)
+    if definition is None:
+        raise PlayableStructureCompilerError(
+            f"{label} references a missing or ambiguous ModifierList: {modifier_id}"
+        )
+    unknown = set(definition) - _PASSIVE_MODIFIER_FIELDS
+    if unknown:
+        raise PlayableStructureCompilerError(
+            f"ModifierList {modifier_id} has unsupported fields: "
+            + ", ".join(sorted(unknown))
+        )
+
+    def _one_row(field: str, *, required: bool) -> Mapping[str, object] | None:
+        rows = definition.get(field.casefold(), ())
+        if len(rows) > 1:
+            raise PlayableStructureCompilerError(
+                f"ModifierList {modifier_id} authors duplicate {field}"
+            )
+        if not rows:
+            if required:
+                raise PlayableStructureCompilerError(
+                    f"ModifierList {modifier_id} requires {field}"
+                )
+            return None
+        return rows[0]
+
+    category_row = _one_row("Category", required=True)
+    assert category_row is not None
+    category = str(category_row.get("expression", "")).strip().upper()
+    if category not in _PASSIVE_MODIFIER_CATEGORIES:
+        raise PlayableStructureCompilerError(
+            f"ModifierList {modifier_id} has unsupported Category: {category!r}"
+        )
+
+    modifier_rows = definition.get("modifier", ())
+    if not modifier_rows:
+        raise PlayableStructureCompilerError(
+            f"ModifierList {modifier_id} requires at least one Modifier"
+        )
+    effects: list[dict[str, object]] = []
+    effect_provenance: list[dict[str, object]] = []
+    for row in modifier_rows:
+        authored = str(row.get("expression", "")).strip()
+        tokens = authored.split()
+        if len(tokens) != 2:
+            raise PlayableStructureCompilerError(
+                f"ModifierList {modifier_id} has malformed Modifier: {authored!r}"
+            )
+        kind = tokens[0].upper()
+        application = _PASSIVE_MODIFIER_EFFECTS.get(kind.casefold())
+        if application is None:
+            raise PlayableStructureCompilerError(
+                f"ModifierList {modifier_id} has unsupported Modifier kind: {kind}"
+            )
+        percent = _numeric_value(
+            tokens[1], defines, f"ModifierList {modifier_id} {kind}"
+        )
+        effects.append(
+            {
+                "kind": kind,
+                "value": float(percent) / 100.0,
+                "application": application,
+                "authored": authored,
+            }
+        )
+        effect_provenance.append(
+            {
+                "sourceIni": str(row.get("sourceIni", "")),
+                "line": int(row.get("line", 0)),
+            }
+        )
+
+    duration_row = _one_row("Duration", required=True)
+    assert duration_row is not None
+    duration = _numeric_value(
+        str(duration_row.get("expression", "")),
+        defines,
+        f"ModifierList {modifier_id} Duration",
+    )
+    if (
+        isinstance(duration, bool)
+        or float(duration) < 0
+        or not float(duration).is_integer()
+    ):
+        raise PlayableStructureCompilerError(
+            f"ModifierList {modifier_id} Duration must be non-negative integer "
+            "milliseconds"
+        )
+
+    stacking: dict[str, bool] = {}
+    stacking_provenance: dict[str, dict[str, object]] = {}
+    for authored_key, output_key in (
+        ("ReplaceInCategoryIfLongest", "replaceInCategoryIfLongest"),
+        ("IgnoreIfAnticategoryActive", "ignoreIfAnticategoryActive"),
+    ):
+        row = _one_row(authored_key, required=False)
+        value = False
+        if row is not None:
+            token = str(row.get("expression", "")).strip().casefold()
+            if token not in {"yes", "no"}:
+                raise PlayableStructureCompilerError(
+                    f"ModifierList {modifier_id} {authored_key} must be Yes or No"
+                )
+            value = token == "yes"
+            stacking_provenance[output_key] = {
+                "sourceIni": str(row.get("sourceIni", "")),
+                "line": int(row.get("line", 0)),
+            }
+        stacking[output_key] = value
+
+    fx_rows = definition.get("fx", ())
+    fx_ids = [str(row.get("expression", "")).strip() for row in fx_rows]
+    if any(not token or len(token.split()) != 1 for token in fx_ids):
+        raise PlayableStructureCompilerError(
+            f"ModifierList {modifier_id} has malformed FX"
+        )
+    result: dict[str, object] = {
+        "id": modifier_id,
+        "category": category,
+        "effects": effects,
+        "durationMs": int(duration),
+        "stacking": stacking,
+        "provenance": {
+            "category": {
+                "sourceIni": str(category_row.get("sourceIni", "")),
+                "line": int(category_row.get("line", 0)),
+            },
+            "effects": effect_provenance,
+            "duration": {
+                "sourceIni": str(duration_row.get("sourceIni", "")),
+                "line": int(duration_row.get("line", 0)),
+            },
+            "stacking": stacking_provenance,
+            "fx": [
+                {
+                    "sourceIni": str(row.get("sourceIni", "")),
+                    "line": int(row.get("line", 0)),
+                }
+                for row in fx_rows
+            ],
+        },
+    }
+    if fx_ids:
+        result["fxIds"] = fx_ids
+    return result
+
+
 def _passive_area_effect_contract(
     lineage: Sequence[SageObject],
+    documents: Mapping[str, bytes],
     defines: Mapping[str, int | float],
     target_id: str,
 ) -> dict[str, object] | None:
@@ -678,6 +853,12 @@ def _passive_area_effect_contract(
         modifier = _first(block.values("ModifierName"))
         if modifier is not None:
             row["modifierName"] = modifier
+            row["modifier"] = _modifier_list_contract(
+                documents,
+                modifier,
+                defines,
+                f"{target_id} {block.kind}",
+            )
         # fortress.ini:898 House of Healing healer is UpgradeRequired, not
         # always-on. Wells (well.ini:228-234) omit the field.
         upgrade_required = _first(block.values("UpgradeRequired"))
@@ -955,26 +1136,6 @@ def _inherit_upgrade_create_contract(
     return rows
 
 
-_QUEUE_EXIT_SUPPORTED_FIELDS = frozenset(
-    {
-        "unitcreatepoint",
-        "naturalrallypoint",
-        "exitdelay",
-        "allowairbornecreation",
-        "initialburst",
-    }
-)
-_QUEUE_EXIT_DEFERRED_FIELDS = frozenset(
-    {
-        # BFME accepts these inside QueueProductionExitUpdate, but the local
-        # Generals module-data oracle does not define their behavior.
-        "placementviewangle",
-        "usereturntoformation",
-        "noexitpath",
-    }
-)
-
-
 def _effective_block_assignment(
     block: SageBlock, key: str
 ) -> SageAssignment | None:
@@ -991,62 +1152,6 @@ def _effective_block_assignment(
         row for row in block.assignments if row.key.casefold() == folded
     )
     return rows[-1] if rows else None
-
-
-_QUEUE_EXIT_COORD_PATTERN = re.compile(
-    r"(?i)^\s*X\s*:\s*"
-    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s+"
-    r"Y\s*:\s*"
-    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s+"
-    r"Z\s*:\s*"
-    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*$"
-)
-
-
-def _queue_exit_coord_values(
-    authored: str,
-    label: str,
-) -> dict[str, float]:
-    match = _QUEUE_EXIT_COORD_PATTERN.fullmatch(authored)
-    if match is None:
-        # Known RotWK typo: AngmarKennelExpansion authors ``X:70.0.0`` (extra
-        # ``.0``) instead of ``X:70.0``. Accept a single extra trailing ``.0``
-        # on any axis so the structure still compiles from retail bytes.
-        repaired = re.sub(
-            r"(?i)(X|Y|Z)\s*:\s*([+-]?(?:\d+\.\d+|\d+|\.\d+))\.0(?=\s|$)",
-            r"\1:\2",
-            authored.strip(),
-        )
-        match = _QUEUE_EXIT_COORD_PATTERN.fullmatch(repaired)
-    if match is None:
-        raise PlayableStructureCompilerError(
-            f"{label} is not an exact X/Y/Z Coord3D: {authored!r}"
-        )
-    x_token, y_token, z_token = match.groups()
-    return {
-        "x": float(x_token),
-        "y": float(y_token),
-        "z": float(z_token),
-    }
-
-
-def _queue_exit_coord(
-    assignment: SageAssignment | None,
-    label: str,
-) -> dict[str, object]:
-    if assignment is None:
-        return {
-            "authored": "",
-            "value": {"x": 0.0, "y": 0.0, "z": 0.0},
-            "defaulted": True,
-        }
-    values = _queue_exit_coord_values(assignment.value, label)
-    return {
-        "authored": assignment.value,
-        "value": values,
-        "sourceIni": assignment.source_virtual_path,
-        "line": assignment.line,
-    }
 
 
 def _queue_exit_number(
@@ -1114,98 +1219,6 @@ def _queue_exit_bool(
         "sourceIni": assignment.source_virtual_path,
         "line": assignment.line,
     }
-
-
-def _queue_production_exit_contract(
-    lineage: Sequence[SageObject],
-    defines: Mapping[str, int | float],
-    target_id: str,
-) -> list[dict[str, object]]:
-    """Compile QueueProductionExitUpdate without claiming live simulation.
-
-    The local Generals GPL module-data and implementation source the five
-    supported fields.  BFME-only fields are retained as explicit deferred
-    assignments; an unknown field fails closed.
-    """
-
-    modules = [
-        block
-        for block in _walk_blocks(_effective_top_blocks(lineage))
-        if block.kind.casefold() == "queueproductionexitupdate"
-    ]
-    rows: list[dict[str, object]] = []
-    for block in modules:
-        authored_keys = {row.key.casefold() for row in block.assignments}
-        unknown = authored_keys - (
-            _QUEUE_EXIT_SUPPORTED_FIELDS | _QUEUE_EXIT_DEFERRED_FIELDS
-        )
-        if unknown:
-            raise PlayableStructureCompilerError(
-                f"{target_id} {block.kind} has unsupported fields: "
-                + ", ".join(sorted(unknown))
-            )
-        deferred_fields: list[dict[str, object]] = []
-        for field_name in sorted(_QUEUE_EXIT_DEFERRED_FIELDS):
-            assignment = _effective_block_assignment(block, field_name)
-            if assignment is None:
-                continue
-            deferred_fields.append(
-                {
-                    "name": assignment.key,
-                    "authored": assignment.value,
-                    "sourceIni": assignment.source_virtual_path,
-                    "line": assignment.line,
-                    "reason": "bfme-field-without-local-runtime-oracle",
-                }
-            )
-        rows.append(
-            {
-                "module": "QueueProductionExitUpdate",
-                "unitCreatePoint": _queue_exit_coord(
-                    _effective_block_assignment(block, "UnitCreatePoint"),
-                    f"{target_id} {block.kind} UnitCreatePoint",
-                ),
-                "naturalRallyPoint": _queue_exit_coord(
-                    _effective_block_assignment(block, "NaturalRallyPoint"),
-                    f"{target_id} {block.kind} NaturalRallyPoint",
-                ),
-                "exitDelay": {
-                    **_queue_exit_number(
-                        _effective_block_assignment(block, "ExitDelay"),
-                        defines,
-                        f"{target_id} {block.kind} ExitDelay",
-                        integral=True,
-                    ),
-                    # INI::parseDurationUnsignedInt parses the authored duration;
-                    # preserve that millisecond unit. A frame conversion needs a
-                    # BFME tick oracle and is intentionally not invented here.
-                    "unit": "milliseconds",
-                },
-                "allowAirborneCreation": _queue_exit_bool(
-                    _effective_block_assignment(
-                        block, "AllowAirborneCreation"
-                    ),
-                    f"{target_id} {block.kind} AllowAirborneCreation",
-                ),
-                "initialBurst": _queue_exit_number(
-                    _effective_block_assignment(block, "InitialBurst"),
-                    defines,
-                    f"{target_id} {block.kind} InitialBurst",
-                    integral=True,
-                ),
-                "deferredFields": deferred_fields,
-                "runtimeStatus": "deferred",
-                "sourceIni": block.source_virtual_path,
-                "line": block.line,
-            }
-        )
-    rows.sort(
-        key=lambda row: (
-            str(row["sourceIni"]).casefold(),
-            int(row["line"]),
-        )
-    )
-    return rows
 
 
 _AUTO_DEPOSIT_SUPPORTED_FIELDS = frozenset(
@@ -1706,6 +1719,7 @@ def _structure_level_presentation(
 
 _PLAYER_UPGRADE_COMMAND = "player_upgrade"
 _SUPPORTED_UPGRADE_EFFECT_KINDS = {
+    "commandsetupgrade",
     "costmodifierupgrade",
     "refunddie",
     "terrainresourcebehavior",
@@ -2183,6 +2197,7 @@ def _upgrade_effects(
     lineage: Sequence[SageObject],
     documents: Mapping[str, bytes],
     defines: Mapping[str, int | float],
+    game: str,
 ) -> dict[str, object] | None:
     """Compile this structure's own effect modules bound to PLAYER upgrades.
 
@@ -2206,6 +2221,106 @@ def _upgrade_effects(
     unsupported: list[dict[str, object]] = []
     for block in _walk_blocks(_effective_top_blocks(lineage)):
         kind = block.kind.casefold()
+        if kind == "commandsetupgrade":
+            triggers = sorted(
+                {
+                    token
+                    for value in block.values("TriggeredBy")
+                    for token in _tokens(value)
+                    if token.casefold() in player_upgrades
+                },
+                key=str.casefold,
+            )
+            if not triggers:
+                continue
+            command_rows = [
+                row
+                for row in block.assignments
+                if row.key.casefold() == "commandset"
+            ]
+            if len(command_rows) != 1 or not command_rows[0].value.strip():
+                raise PlayableStructureCompilerError(
+                    f"{label} CommandSetUpgrade lacks one exact CommandSet"
+                )
+            command_row = command_rows[0]
+            requires_all_values = list(block.values("RequiresAllTriggers"))
+            if any(
+                value.strip().casefold()
+                not in {"yes", "true", "1", "no", "false", "0"}
+                for value in requires_all_values
+            ):
+                raise PlayableStructureCompilerError(
+                    f"{label} CommandSetUpgrade RequiresAllTriggers is malformed"
+                )
+            trigger_semantics = (
+                "all"
+                if any(
+                    value.strip().casefold() in {"yes", "true", "1"}
+                    for value in requires_all_values
+                )
+                else "any"
+            )
+            custom_rows = [
+                row
+                for row in block.assignments
+                if row.key.casefold() == "customanimandduration"
+            ]
+            if len(custom_rows) > 1:
+                raise PlayableStructureCompilerError(
+                    f"{label} CommandSetUpgrade repeats CustomAnimAndDuration"
+                )
+            custom_animation: dict[str, object] | None = None
+            if custom_rows:
+                custom_row = custom_rows[0]
+                match = re.fullmatch(
+                    r"\s*AnimState:([A-Za-z_][A-Za-z0-9_]*)\s+"
+                    r"AnimTime:([0-9]+(?:\.[0-9]+)?)\s*",
+                    custom_row.value,
+                    re.IGNORECASE,
+                )
+                if match is None:
+                    raise PlayableStructureCompilerError(
+                        f"{label} CommandSetUpgrade CustomAnimAndDuration is malformed"
+                    )
+                custom_animation = {
+                    "animState": match.group(1),
+                    "animTimeMs": float(match.group(2)),
+                    "authored": custom_row.value,
+                    "sourceIni": custom_row.source_virtual_path,
+                    "line": int(custom_row.line),
+                    "runtimeStatus": "deferred",
+                    "deferredReason": "presentation-runtime-not-accepted",
+                }
+            effect_id = (
+                f"{game.casefold()}:{target_id}:{block.source_virtual_path}:"
+                f"{block.line}:{block.instance_tag or ''}"
+            )
+            for trigger in triggers:
+                effect: dict[str, object] = {
+                    "effectId": effect_id,
+                    "game": game.casefold(),
+                    "upgradeId": trigger,
+                    "triggerUpgradeIds": triggers,
+                    "triggerSemantics": trigger_semantics,
+                    "kind": "command-set-transition",
+                    "module": block.kind,
+                    "moduleTag": block.instance_tag or "",
+                    "moduleOrdinal": int(block.item_ordinal),
+                    "commandSetId": command_row.value.strip(),
+                    "commandSetProvenance": {
+                        "authored": command_row.value,
+                        "sourceIni": command_row.source_virtual_path,
+                        "line": int(command_row.line),
+                    },
+                    "descriptorStatus": "resolved",
+                    "runtimeStatus": "executable",
+                    "sourceIni": block.source_virtual_path,
+                    "line": int(block.line),
+                }
+                if custom_animation is not None:
+                    effect["customAnimation"] = dict(custom_animation)
+                effects.append(effect)
+            continue
         if kind not in _SUPPORTED_UPGRADE_EFFECT_KINDS:
             bound = [
                 token
@@ -2215,8 +2330,7 @@ def _upgrade_effects(
                 if token.casefold() in player_upgrades
             ]
             for token in sorted(set(bound), key=str.casefold):
-                unsupported.append(
-                    {
+                row: dict[str, object] = {
                         "upgradeId": token,
                         "module": block.kind,
                         "sourceIni": block.source_virtual_path,
@@ -2226,7 +2340,68 @@ def _upgrade_effects(
                             "structure upgrade effect"
                         ),
                     }
-                )
+                if kind == "commandsetupgrade":
+                    command_set_id = _first(block.values("CommandSet"))
+                    if command_set_id is None:
+                        raise PlayableStructureCompilerError(
+                            f"{label} CommandSetUpgrade lacks CommandSet"
+                        )
+                    requires_all_values = list(block.values("RequiresAllTriggers"))
+                    if any(
+                        value.strip().casefold()
+                        not in {"yes", "true", "1", "no", "false", "0"}
+                        for value in requires_all_values
+                    ):
+                        raise PlayableStructureCompilerError(
+                            f"{label} CommandSetUpgrade RequiresAllTriggers is malformed"
+                        )
+                    custom_rows = list(block.values("CustomAnimAndDuration"))
+                    if len(custom_rows) > 1:
+                        raise PlayableStructureCompilerError(
+                            f"{label} CommandSetUpgrade repeats CustomAnimAndDuration"
+                        )
+                    custom_animation: dict[str, object] | None = None
+                    if custom_rows:
+                        match = re.fullmatch(
+                            r"\s*AnimState:([A-Za-z_][A-Za-z0-9_]*)\s+"
+                            r"AnimTime:([0-9]+(?:\.[0-9]+)?)\s*",
+                            custom_rows[0],
+                            re.IGNORECASE,
+                        )
+                        if match is None:
+                            raise PlayableStructureCompilerError(
+                                f"{label} CommandSetUpgrade CustomAnimAndDuration is malformed"
+                            )
+                        custom_animation = {
+                            "animState": match.group(1),
+                            "animTimeMs": float(match.group(2)),
+                            "authored": custom_rows[0],
+                            "runtimeStatus": "deferred",
+                            "deferredReason": "presentation-runtime-not-accepted",
+                        }
+                    row.update(
+                        {
+                            "commandSetId": command_set_id,
+                            "triggerSemantics": (
+                                "all"
+                                if any(
+                                    value.strip().casefold() in {"yes", "true", "1"}
+                                    for value in requires_all_values
+                                )
+                                else "any"
+                            ),
+                            "moduleTag": block.instance_tag or "",
+                            "descriptorStatus": "resolved",
+                            "runtimeStatus": "deferred",
+                            "reason": (
+                                "typed CommandSetUpgrade transition has no "
+                                "generic accepted effect-graph consumer"
+                            ),
+                        }
+                    )
+                    if custom_animation is not None:
+                        row["customAnimation"] = custom_animation
+                unsupported.append(row)
             continue
         if kind == "costmodifierupgrade":
             triggers = [
@@ -2847,6 +3022,67 @@ def _upgrade_chain(
     return chain
 
 
+_STRUCTURE_SCENARIO_SURFACE_ORDER = (
+    "map-placement",
+    "script-spawn",
+    "object-creation-list",
+    "lair-spawn",
+)
+_STRUCTURE_SCENARIO_ROLES = frozenset({"lair", "neutral-structure"})
+
+
+def _structure_scenario_admission(
+    target: SageObject, value: Mapping[str, object] | None
+) -> dict[str, object] | None:
+    """Normalize explicit non-buildable neutral structure admission.
+
+    This is intentionally separate from ``engine-spawned-composite``: retail
+    map lairs are authored world objects, not fortress pieces manufactured by
+    an engine composite.  Callers supply only role/surfaces; source identity
+    and the no-construct-route receipt come from the compiled Object itself.
+    """
+
+    if value is None:
+        return None
+    if set(value) != {"role", "surfaces"}:
+        raise PlayableStructureCompilerError(
+            "structure scenario admission fields are invalid"
+        )
+    role = value.get("role")
+    raw_surfaces = value.get("surfaces")
+    if role not in _STRUCTURE_SCENARIO_ROLES or not isinstance(raw_surfaces, Sequence):
+        raise PlayableStructureCompilerError(
+            "structure scenario admission role or surfaces are invalid"
+        )
+    if isinstance(raw_surfaces, (str, bytes)) or any(
+        not isinstance(item, str) for item in raw_surfaces
+    ):
+        raise PlayableStructureCompilerError(
+            "structure scenario admission surfaces are invalid"
+        )
+    surfaces = [
+        item for item in _STRUCTURE_SCENARIO_SURFACE_ORDER if item in raw_surfaces
+    ]
+    if (
+        not surfaces
+        or len(surfaces) != len(raw_surfaces)
+        or len(set(raw_surfaces)) != len(raw_surfaces)
+    ):
+        raise PlayableStructureCompilerError(
+            "structure scenario admission contains an unsupported surface"
+        )
+    return {
+        "kind": "authored-neutral-non-buildable",
+        "role": role,
+        "surfaces": surfaces,
+        "buildCommandExposed": False,
+        "evidence": "no-authored-construct-route",
+        "sourceIni": target.source_virtual_path,
+        "line": target.line,
+        "declarationKind": target.kind,
+    }
+
+
 def compile_playable_structure_descriptor(
     target_id: str,
     documents: Mapping[str, bytes],
@@ -2856,6 +3092,7 @@ def compile_playable_structure_descriptor(
     engine_spawned_roles: Mapping[str, str] | None = None,
     wall_template_roots: Iterable[str] = (),
     source_null_command_sets: Iterable[str] = (),
+    scenario_admission: Mapping[str, object] | None = None,
     game: str = "bfme2",
 ) -> dict[str, object]:
     """Compile one source-backed structure descriptor or fail closed."""
@@ -2877,6 +3114,8 @@ def compile_playable_structure_descriptor(
     # SAGE selection/collision volume. Retail hit-tests a click against this
     # footprint; without it a runtime has nothing but a guessed radius.
     geometry_contract = _geometry_contract(lineage, prepared.numeric_defines)
+    geometry_contact_points = _geometry_contact_points(lineage)
+    public_bones = _public_bone_contract(lineage)
     kinds = _kind_of(lineage)
     if not STRUCTURE_KIND_TOKENS & set(kinds):
         raise PlayableStructureCompilerError(
@@ -2899,16 +3138,29 @@ def compile_playable_structure_descriptor(
             "engine-spawned composite roles name undeclared roots"
         )
     wall_keys = {value.casefold() for value in wall_template_roots}
+    normalized_scenario_admission = _structure_scenario_admission(
+        target, scenario_admission
+    )
     if production:
+        if normalized_scenario_admission is not None:
+            raise PlayableStructureCompilerError(
+                "scenario-admitted structure also has authored production"
+            )
         production_evidence = "authored-construct-command"
         production = [*production, *upgrade_routes]
     elif upgrade_routes:
+        if normalized_scenario_admission is not None:
+            raise PlayableStructureCompilerError(
+                "scenario-admitted structure also has authored wall production"
+            )
         production_evidence = "authored-wall-upgrade-command"
         production = upgrade_routes
     elif target.name.casefold() in spawned_keys:
         production_evidence = "engine-spawned-composite"
     elif target.name.casefold() in wall_keys:
         production_evidence = "wall-template"
+    elif normalized_scenario_admission is not None:
+        production_evidence = "authored-neutral-map"
     else:
         raise PlayableStructureCompilerError(
             f"Object {target_id} is not targeted by an authored construct "
@@ -2999,21 +3251,19 @@ def compile_playable_structure_descriptor(
         lineage,
         documents,
         prepared.numeric_defines,
+        game,
     )
     resource_behavior = _resource_behavior_radius(
         lineage, prepared.numeric_defines, target.name
     )
     passive_area_effect = _passive_area_effect_contract(
-        lineage, prepared.numeric_defines, target.name
+        lineage, documents, prepared.numeric_defines, target.name
     )
     create_grants = _grant_upgrade_create_contract(
         lineage, documents, target.name
     )
     inherit_upgrades = _inherit_upgrade_create_contract(
         lineage, documents, prepared.numeric_defines, target.name
-    )
-    production_exit_updates = _queue_production_exit_contract(
-        lineage, prepared.numeric_defines, target.name
     )
     auto_deposit_updates = _auto_deposit_contract(
         lineage,
@@ -3023,9 +3273,22 @@ def compile_playable_structure_descriptor(
     )
     combat = _structure_combat_contract(lineage, documents, prepared)
     try:
-        module_contracts = compile_all_module_contracts(lineage, target.name)
+        module_contracts = compile_all_module_contracts(
+            lineage,
+            target.name,
+            numeric_defines=prepared.numeric_defines,
+            numeric_define_provenance=prepared.numeric_define_provenance,
+        )
     except ModuleContractError as error:
         raise PlayableStructureCompilerError(str(error)) from error
+    # Compatibility projection only: QueueProductionExitUpdate has one typed
+    # authority in moduleContracts.  Never independently reparse, default, or
+    # repair these fields here.
+    production_exit_updates = json.loads(json.dumps([
+        row
+        for row in module_contracts
+        if row.get("module") == "QueueProductionExitUpdate"
+    ]))
     audio = {
         key: value
         for key, value in sorted(_audio_routes(lineage).items())
@@ -3038,6 +3301,12 @@ def compile_playable_structure_descriptor(
         }
         | {item.source_virtual_path for item in lineage}
         | ({"data/ini/armor.ini"} if armor.get("setId") is not None else set())
+        | (
+            {ATTRIBUTE_MODIFIER_PATH}
+            if passive_area_effect is not None
+            and isinstance(passive_area_effect.get("modifier"), Mapping)
+            else set()
+        )
         | (
             {str(path) for path in upgrade_chain.get("sourceIni", [])}
             if upgrade_chain is not None
@@ -3123,6 +3392,11 @@ def compile_playable_structure_descriptor(
             "evidence": production_evidence,
             "routes": production,
         },
+        **(
+            {"scenarioAdmission": normalized_scenario_admission}
+            if normalized_scenario_admission is not None
+            else {}
+        ),
         "gameplay": {
             "health": health,
             "armor": armor,
@@ -3199,6 +3473,12 @@ def compile_playable_structure_descriptor(
                 if geometry_contract is not None
                 else {}
             ),
+            **(
+                {"geometryContactPoints": geometry_contact_points}
+                if geometry_contact_points
+                else {}
+            ),
+            **({"publicBones": public_bones} if public_bones else {}),
             **({"combat": combat} if combat is not None else {}),
             "scalarFields": _resolved_scalar_fields(
                 scalars,
@@ -3209,6 +3489,7 @@ def compile_playable_structure_descriptor(
                         "VisionRange",
                         "ShroudClearingRange",
                         "CommandPoints",
+                        "BountyValue",
                     }
                 ),
                 prepared.numeric_defines,
@@ -3274,6 +3555,7 @@ def validate_playable_structure_descriptor(value: Mapping[str, object]) -> None:
         "authored-wall-upgrade-command",
         "engine-spawned-composite",
         "wall-template",
+        "authored-neutral-map",
     }:
         raise PlayableStructureCompilerError(
             "structure descriptor production evidence is invalid"
@@ -3290,6 +3572,54 @@ def validate_playable_structure_descriptor(value: Mapping[str, object]) -> None:
         raise PlayableStructureCompilerError(
             "structure descriptor claims non-authored evidence with routes"
         )
+    scenario_admission = value.get("scenarioAdmission")
+    if evidence == "authored-neutral-map":
+        admission_fields = {
+            "kind",
+            "role",
+            "surfaces",
+            "buildCommandExposed",
+            "evidence",
+            "sourceIni",
+            "line",
+            "declarationKind",
+        }
+        declaration_kind = (
+            scenario_admission.get("declarationKind")
+            if isinstance(scenario_admission, Mapping)
+            else None
+        )
+        if (
+            not isinstance(scenario_admission, Mapping)
+            or set(scenario_admission) != admission_fields
+            or scenario_admission.get("kind")
+            != "authored-neutral-non-buildable"
+            or scenario_admission.get("role") not in _STRUCTURE_SCENARIO_ROLES
+            or not isinstance(scenario_admission.get("surfaces"), list)
+            or not scenario_admission.get("surfaces")
+            or any(
+                surface not in _STRUCTURE_SCENARIO_SURFACE_ORDER
+                for surface in scenario_admission.get("surfaces", [])
+            )
+            or len(set(scenario_admission.get("surfaces", [])))
+            != len(scenario_admission.get("surfaces", []))
+            or scenario_admission.get("buildCommandExposed") is not False
+            or scenario_admission.get("evidence")
+            != "no-authored-construct-route"
+            or not isinstance(scenario_admission.get("sourceIni"), str)
+            or not scenario_admission.get("sourceIni")
+            or not isinstance(scenario_admission.get("line"), int)
+            or isinstance(scenario_admission.get("line"), bool)
+            or int(scenario_admission.get("line", 0)) <= 0
+            or declaration_kind not in {"Object", "ChildObject"}
+        ):
+            raise PlayableStructureCompilerError(
+                "structure descriptor scenario admission is invalid"
+            )
+    elif scenario_admission is not None:
+        raise PlayableStructureCompilerError(
+            "non-neutral structure descriptor carries scenario admission"
+        )
     role = value.get("compositeRole")
     if role is not None and (
         evidence != "engine-spawned-composite"
@@ -3304,6 +3634,60 @@ def validate_playable_structure_descriptor(value: Mapping[str, object]) -> None:
         raise PlayableStructureCompilerError(
             "structure descriptor gameplay is invalid"
         )
+    upgrade_effect_graph = gameplay.get("upgradeEffects")
+    if upgrade_effect_graph is not None:
+        if (
+            not isinstance(upgrade_effect_graph, Mapping)
+            or not isinstance(upgrade_effect_graph.get("effects"), list)
+            or not isinstance(upgrade_effect_graph.get("unsupportedEffects"), list)
+            or not isinstance(upgrade_effect_graph.get("sourceIni"), list)
+        ):
+            raise PlayableStructureCompilerError(
+                "structure descriptor upgrade effect graph is invalid"
+            )
+        for effect in upgrade_effect_graph["effects"]:
+            if not isinstance(effect, Mapping) or effect.get("kind") != "command-set-transition":
+                continue
+            triggers = effect.get("triggerUpgradeIds")
+            provenance = effect.get("commandSetProvenance")
+            custom = effect.get("customAnimation")
+            if (
+                effect.get("game") not in {"bfme2", "rotwk"}
+                or not isinstance(effect.get("effectId"), str)
+                or not effect["effectId"]
+                or not effect["effectId"].startswith(
+                    f"{effect.get('game')}:{value.get('objectId')}:"
+                )
+                or not isinstance(effect.get("upgradeId"), str)
+                or not effect["upgradeId"]
+                or not isinstance(triggers, list)
+                or not triggers
+                or effect["upgradeId"] not in triggers
+                or len({str(token).casefold() for token in triggers}) != len(triggers)
+                or effect.get("triggerSemantics") not in {"any", "all"}
+                or effect.get("module") != "CommandSetUpgrade"
+                or not isinstance(effect.get("commandSetId"), str)
+                or not effect["commandSetId"]
+                or effect.get("descriptorStatus") != "resolved"
+                or effect.get("runtimeStatus") != "executable"
+                or not isinstance(provenance, Mapping)
+                or provenance.get("authored") != effect["commandSetId"]
+                or provenance.get("sourceIni") != effect.get("sourceIni")
+                or not isinstance(provenance.get("line"), int)
+                or int(provenance["line"]) <= int(effect.get("line", 0))
+                or (
+                    custom is not None
+                    and (
+                        not isinstance(custom, Mapping)
+                        or custom.get("runtimeStatus") != "deferred"
+                        or custom.get("deferredReason")
+                        != "presentation-runtime-not-accepted"
+                    )
+                )
+            ):
+                raise PlayableStructureCompilerError(
+                    "structure descriptor CommandSetUpgrade effect is invalid"
+                )
     combat = gameplay.get("combat")
     if combat is not None:
         if not isinstance(combat, Mapping) or not all(
@@ -3387,349 +3771,11 @@ def validate_playable_structure_descriptor(value: Mapping[str, object]) -> None:
             raise PlayableStructureCompilerError(
                 "structure descriptor create grant row is invalid"
             )
-    production_exit_updates = gameplay.get("productionExitUpdates", [])
-    if not isinstance(production_exit_updates, list):
+    compatibility_production_exit_updates = gameplay.get("productionExitUpdates", [])
+    if not isinstance(compatibility_production_exit_updates, list):
         raise PlayableStructureCompilerError(
             "structure descriptor production exit updates are invalid"
         )
-    production_exit_source_paths: set[str] = set()
-    if production_exit_updates:
-        source_documents = value.get("sourceDocuments")
-        if not isinstance(source_documents, list):
-            raise PlayableStructureCompilerError(
-                "structure descriptor production exit source evidence is missing"
-            )
-        production_exit_source_hashes: dict[str, str] = {}
-        for source in source_documents:
-            if (
-                not isinstance(source, Mapping)
-                or set(source) != {"virtualPath", "sha256"}
-                or not isinstance(source.get("virtualPath"), str)
-                or not source.get("virtualPath")
-                or not isinstance(source.get("sha256"), str)
-                or re.fullmatch(r"[0-9a-f]{64}", str(source.get("sha256")))
-                is None
-            ):
-                raise PlayableStructureCompilerError(
-                    "structure descriptor production exit source document "
-                    "schema is invalid"
-                )
-            normalized_path = (
-                str(source["virtualPath"]).replace("\\", "/").casefold()
-            )
-            if normalized_path in production_exit_source_hashes:
-                if (
-                    production_exit_source_hashes[normalized_path]
-                    != source["sha256"]
-                ):
-                    raise PlayableStructureCompilerError(
-                        "structure descriptor production exit source document "
-                        "hashes contradict"
-                    )
-                raise PlayableStructureCompilerError(
-                    "structure descriptor production exit source document "
-                    "path is duplicated"
-                )
-            production_exit_source_hashes[normalized_path] = str(
-                source["sha256"]
-            )
-        production_exit_source_paths = set(production_exit_source_hashes)
-
-    def require_production_exit_source(source_ini: object) -> bool:
-        return (
-            isinstance(source_ini, str)
-            and bool(source_ini)
-            and source_ini.replace("\\", "/").casefold()
-            in production_exit_source_paths
-        )
-
-    for row in production_exit_updates:
-        if (
-            not isinstance(row, Mapping)
-            or set(row)
-            != {
-                "module",
-                "unitCreatePoint",
-                "naturalRallyPoint",
-                "exitDelay",
-                "allowAirborneCreation",
-                "initialBurst",
-                "deferredFields",
-                "runtimeStatus",
-                "sourceIni",
-                "line",
-            }
-        ):
-            raise PlayableStructureCompilerError(
-                "structure descriptor production exit update row is invalid"
-            )
-        for field_name in ("unitCreatePoint", "naturalRallyPoint"):
-            field = row.get(field_name)
-            coordinates = (
-                field.get("value") if isinstance(field, Mapping) else None
-            )
-            authored_coordinates: Mapping[str, float] | None = None
-            if (
-                isinstance(field, Mapping)
-                and isinstance(field.get("authored"), str)
-                and field.get("authored")
-            ):
-                try:
-                    authored_coordinates = _queue_exit_coord_values(
-                        str(field["authored"]),
-                        f"structure descriptor {field_name}",
-                    )
-                except PlayableStructureCompilerError:
-                    authored_coordinates = None
-            if (
-                not isinstance(field, Mapping)
-                or (
-                    set(field)
-                    not in (
-                        {"authored", "value", "defaulted"},
-                        {"authored", "value", "sourceIni", "line"},
-                    )
-                )
-                or not isinstance(field.get("authored"), str)
-                or not isinstance(coordinates, Mapping)
-                or set(coordinates) != {"x", "y", "z"}
-                or any(
-                    not isinstance(coordinates[axis], float)
-                    for axis in ("x", "y", "z")
-                )
-                or (
-                    "defaulted" in field
-                    and field.get("defaulted") is not True
-                )
-                or (
-                    field.get("defaulted") is True
-                    and (
-                        field.get("authored") != ""
-                        or dict(coordinates)
-                        != {"x": 0.0, "y": 0.0, "z": 0.0}
-                    )
-                )
-                or (
-                    "defaulted" not in field
-                    and (
-                        not field.get("authored")
-                        or authored_coordinates is None
-                        or any(
-                            float(coordinates[axis])
-                            != float(authored_coordinates[axis])
-                            for axis in ("x", "y", "z")
-                        )
-                        or not require_production_exit_source(
-                            field.get("sourceIni")
-                        )
-                        or not isinstance(field.get("line"), int)
-                        or isinstance(field.get("line"), bool)
-                        or int(field["line"]) <= 0
-                    )
-                )
-            ):
-                raise PlayableStructureCompilerError(
-                    "structure descriptor production exit coordinate is invalid"
-                )
-        for field_name, value_type in (
-            ("exitDelay", int),
-            ("initialBurst", int),
-            ("allowAirborneCreation", bool),
-        ):
-            field = row.get(field_name)
-            authored_unsigned_matches = True
-            if isinstance(field, Mapping) and value_type is int:
-                authored = field.get("authored")
-                stored = field.get("value")
-                resolved_define = field.get("resolvedDefine")
-                if (
-                    isinstance(authored, str)
-                    and re.fullmatch(r"[0-9]+", authored)
-                ):
-                    authored_unsigned_matches = (
-                        resolved_define is None
-                        and not isinstance(stored, bool)
-                        and isinstance(stored, int)
-                        and int(authored) == stored
-                    )
-                elif (
-                    isinstance(authored, str)
-                    and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", authored)
-                    and isinstance(resolved_define, Mapping)
-                ):
-                    authored_unsigned_matches = (
-                        set(resolved_define) == {"name", "value"}
-                        and resolved_define.get("name") == authored
-                        and not isinstance(resolved_define.get("value"), bool)
-                        and isinstance(resolved_define.get("value"), int)
-                        and resolved_define.get("value") == stored
-                    )
-                else:
-                    authored_unsigned_matches = False
-            if (
-                not isinstance(field, Mapping)
-                or (
-                    set(field)
-                    not in (
-                        (
-                            {"authored", "value", "defaulted", "unit"}
-                            if field_name == "exitDelay"
-                            else {"authored", "value", "defaulted"}
-                        ),
-                        (
-                            {"authored", "value", "sourceIni", "line", "unit"}
-                            if field_name == "exitDelay"
-                            else {"authored", "value", "sourceIni", "line"}
-                        ),
-                        (
-                            {
-                                "authored",
-                                "value",
-                                "sourceIni",
-                                "line",
-                                "unit",
-                                "resolvedDefine",
-                            }
-                            if field_name == "exitDelay"
-                            else {
-                                "authored",
-                                "value",
-                                "sourceIni",
-                                "line",
-                                "resolvedDefine",
-                            }
-                        ),
-                    )
-                )
-                or not isinstance(field.get("authored"), str)
-                or (
-                    value_type is int
-                    and (
-                        not isinstance(field.get("value"), int)
-                        or isinstance(field.get("value"), bool)
-                    )
-                )
-                or (
-                    value_type is bool
-                    and not isinstance(field.get("value"), bool)
-                )
-                or (
-                    "defaulted" in field
-                    and field.get("defaulted") is not True
-                )
-                or (value_type is bool and "resolvedDefine" in field)
-                or not authored_unsigned_matches
-                or (
-                    value_type is int
-                    and (
-                        isinstance(field.get("value"), bool)
-                        or int(field["value"]) < 0
-                        or int(field["value"]) > 4_294_967_295
-                    )
-                )
-                or (
-                    field_name == "exitDelay"
-                    and field.get("unit") != "milliseconds"
-                )
-                or (
-                    field_name != "exitDelay"
-                    and "unit" in field
-                )
-                or (
-                    field.get("defaulted") is True
-                    and (
-                        (
-                            field_name == "allowAirborneCreation"
-                            and (
-                                field.get("authored") != "No"
-                                or field.get("value") is not False
-                            )
-                        )
-                        or (
-                            field_name != "allowAirborneCreation"
-                            and (
-                                field.get("authored") != "0"
-                                or int(field.get("value", -1)) != 0
-                            )
-                        )
-                    )
-                )
-                or (
-                    "defaulted" not in field
-                    and (
-                        not field.get("authored")
-                        or (
-                            field_name == "allowAirborneCreation"
-                            and (
-                                str(field.get("authored", ""))
-                                .strip()
-                                .casefold()
-                                not in {"yes", "no"}
-                                or bool(field.get("value"))
-                                != (
-                                    str(field.get("authored", ""))
-                                    .strip()
-                                    .casefold()
-                                    == "yes"
-                                )
-                            )
-                        )
-                        or not require_production_exit_source(
-                            field.get("sourceIni")
-                        )
-                        or not isinstance(field.get("line"), int)
-                        or isinstance(field.get("line"), bool)
-                        or int(field["line"]) <= 0
-                    )
-                )
-            ):
-                raise PlayableStructureCompilerError(
-                    "structure descriptor production exit scalar is invalid"
-                )
-        deferred_fields = row.get("deferredFields")
-        if not isinstance(deferred_fields, list):
-            raise PlayableStructureCompilerError(
-                "structure descriptor production exit deferred fields are invalid"
-            )
-        seen_deferred: set[str] = set()
-        for deferred in deferred_fields:
-            name = (
-                str(deferred.get("name", "")).casefold()
-                if isinstance(deferred, Mapping)
-                else ""
-            )
-            if (
-                not isinstance(deferred, Mapping)
-                or set(deferred)
-                != {"name", "authored", "sourceIni", "line", "reason"}
-                or name not in _QUEUE_EXIT_DEFERRED_FIELDS
-                or name in seen_deferred
-                or not isinstance(deferred.get("authored"), str)
-                or not deferred.get("authored")
-                or not require_production_exit_source(
-                    deferred.get("sourceIni")
-                )
-                or not isinstance(deferred.get("line"), int)
-                or isinstance(deferred.get("line"), bool)
-                or int(deferred["line"]) <= 0
-                or deferred.get("reason")
-                != "bfme-field-without-local-runtime-oracle"
-            ):
-                raise PlayableStructureCompilerError(
-                    "structure descriptor production exit deferred field is invalid"
-                )
-            seen_deferred.add(name)
-        if (
-            row.get("module") != "QueueProductionExitUpdate"
-            or row.get("runtimeStatus") != "deferred"
-            or not require_production_exit_source(row.get("sourceIni"))
-            or not isinstance(row.get("line"), int)
-            or isinstance(row.get("line"), bool)
-            or int(row["line"]) <= 0
-        ):
-            raise PlayableStructureCompilerError(
-                "structure descriptor production exit update row is invalid"
-            )
     module_contracts = gameplay.get("moduleContracts", [])
     try:
         validate_module_contracts(
@@ -3737,6 +3783,16 @@ def validate_playable_structure_descriptor(value: Mapping[str, object]) -> None:
         )
     except ModuleContractError as error:
         raise PlayableStructureCompilerError(str(error)) from error
+    expected_production_exit_updates = [
+        row
+        for row in module_contracts
+        if isinstance(row, Mapping)
+        and row.get("module") == "QueueProductionExitUpdate"
+    ]
+    if compatibility_production_exit_updates != expected_production_exit_updates:
+        raise PlayableStructureCompilerError(
+            "structure descriptor production exit compatibility projection drifted from moduleContracts"
+        )
     auto_deposit_updates = gameplay.get("autoDepositUpdates", [])
     if not isinstance(auto_deposit_updates, list):
         raise PlayableStructureCompilerError(

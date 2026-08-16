@@ -86,6 +86,7 @@ static func make_bundle_object_visual(object_id: String, side: int, source_unit_
 		# keeps the mesh in the GLB but does not hide it, so the AABB floor
 		# snap treats a 40-source-unit fire billboard as the wheels.
 		_hide_default_upgrade_subobjects(loaded)
+		var drawable_result := apply_drawable_scripts(loaded, definition, [])
 		if is_finite(source_unit_scale) and source_unit_scale > 0.0:
 			# Retail W3D geometry and the cooked map share SAGE world units. The
 			# selected-map runtime therefore applies its single validated source-to-
@@ -123,6 +124,8 @@ static func make_bundle_object_visual(object_id: String, side: int, source_unit_
 		root.set_meta("content_object_id", object_id)
 		root.set_meta("animation_capability_id", String(definition.get("animationCapabilityId", "")))
 		root.set_meta("team_tinted_surfaces", tinted_surfaces)
+		root.set_meta("drawable_actions_applied", int(drawable_result.get("applied", 0)))
+		root.set_meta("drawable_actions_unhandled", drawable_result.get("unhandled", []))
 		root.set_meta("house_color_surfaces", house_colored)
 		var retail_color_status := "retail-house-color-masked" if house_colored > 0 else "source-OkToChangeModelColor-awaiting-exact-house-color-no-invented-tint"
 		root.set_meta("team_color_status", retail_color_status if private_retail else "fallback-team-tint")
@@ -515,6 +518,73 @@ static func set_named_subobject_visible(root: Node, token: String, shown: bool) 
 	for child in root.get_children():
 		matched += set_named_subobject_visible(child, token, shown)
 	return matched
+
+
+static func apply_drawable_scripts(root: Node, definition: Dictionary, active_conditions: Array) -> Dictionary:
+	## Execute typed W3DScriptedModelDraw sub-object operations. The default
+	## model-condition state passes an empty condition set. Unknown statements
+	## and operations without a runtime consumer remain explicit diagnostics.
+	var active: Dictionary = {}
+	for value in active_conditions:
+		active[String(value).to_upper()] = true
+	var source_object := String(definition.get("sourceObjectId", definition.get("id", "")))
+	var applied := 0
+	var unhandled: Array[Dictionary] = []
+	var audio_intents: Array[Dictionary] = []
+	var script_index := -1
+	for script_value in definition.get("drawableScripts", []) as Array:
+		script_index += 1
+		if typeof(script_value) != TYPE_DICTIONARY:
+			unhandled.append({"reason": "invalid-script-row"})
+			continue
+		var script := script_value as Dictionary
+		var target := String(script.get("targetObject", ""))
+		if source_object != "" and target != "" and target.to_lower() != source_object.to_lower():
+			continue
+		var matches := true
+		for condition_value in script.get("conditions", []) as Array:
+			if not active.has(String(condition_value).to_upper()):
+				matches = false
+				break
+		if not matches:
+			continue
+		var action_index := -1
+		for action_value in script.get("actions", []) as Array:
+			action_index += 1
+			if typeof(action_value) != TYPE_DICTIONARY:
+				unhandled.append({"reason": "invalid-action-row"})
+				continue
+			var action := action_value as Dictionary
+			var operation := String(action.get("operation", ""))
+			var arguments: Array = action.get("arguments", []) as Array
+			if not bool(action.get("supported", false)):
+				unhandled.append({"operation": operation, "reason": "importer-unsupported", "raw": String(action.get("raw", ""))})
+				continue
+			if operation in ["hide-sub-object", "hide-sub-object-permanently", "show-sub-object", "show-sub-object-permanently"] and arguments.size() == 1:
+				var shown := operation.begins_with("show-")
+				var match_count := set_named_subobject_visible(root, String(arguments[0]), shown)
+				if match_count > 0:
+					applied += 1
+				else:
+					unhandled.append({"operation": operation, "reason": "sub-object-not-found", "argument": String(arguments[0])})
+			elif operation == "allow-to-continue" and arguments.is_empty():
+				applied += 1
+			elif operation == "play-sound" and arguments.size() == 1 and String(arguments[0]) != "":
+				# CurDrawablePlaySound carries a logical AudioEvent id, never a file
+				# name. Keep this view helper audio-agnostic and emit an ordered typed
+				# intent for the structure presenter/audio registry to resolve.
+				audio_intents.append({
+					"event_id": String(arguments[0]),
+					"source_object_id": source_object if source_object != "" else target,
+					"target_object_id": target,
+					"conditions": (script.get("conditions", []) as Array).duplicate(true),
+					"script_index": script_index,
+					"action_index": action_index,
+				})
+				applied += 1
+			else:
+				unhandled.append({"operation": operation, "reason": "runtime-unsupported", "arguments": arguments.duplicate(true)})
+	return {"applied": applied, "unhandled": unhandled, "audio_intents": audio_intents}
 
 
 static func _house_color_pack_root(definition: Dictionary) -> String:

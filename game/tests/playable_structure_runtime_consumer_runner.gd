@@ -296,8 +296,73 @@ func _run_faction_manifest_checks() -> void:
 		"manifest keeps the exact deferred production-exit evidence without promoting it"
 	)
 	_check(
-		not manifest.has("structure_production_exit_updates"),
-		"manifest exposes no executable QueueProductionExitUpdate contract"
+		(manifest.get("structure_production_exit_updates", {}) as Dictionary).is_empty(),
+		"legacy deferred QueueProductionExitUpdate is not promoted"
+	)
+	var canonical_exit := [{
+		"carrier": "Behavior",
+		"extraction": "typed",
+		"fields": {
+			"UnitCreatePoint": [{
+				"authored": "X:14 Y:0 Z:0",
+				"components": {"x": "14", "y": "0", "z": "0"},
+				"value": {"x": 14.0, "y": 0.0, "z": 0.0},
+				"validNumeric": true,
+				"sourceIni": "data/ini/object/fixture.ini",
+				"line": 50,
+			}],
+			"NaturalRallyPoint": [{
+				"authored": "X:40 Y:0 Z:0",
+				"components": {"x": "40", "y": "0", "z": "0"},
+				"value": {"x": 40.0, "y": 0.0, "z": 0.0},
+				"validNumeric": true,
+				"sourceIni": "data/ini/object/fixture.ini",
+				"line": 51,
+			}],
+		},
+		"line": 49,
+		"module": "QueueProductionExitUpdate",
+		"runtimeStatus": "executable",
+		"sourceIni": "data/ini/object/fixture.ini",
+		"tag": "ModuleTag_Exit",
+	}]
+	_check(
+		FactionManifest._validate_structure_production_exit_updates(
+			"FixtureMonsterPen", canonical_exit, canonical_exit
+		) == "",
+		"manifest accepts the exact compiler-authoritative executable QueueProductionExitUpdate projection"
+	)
+	var drifted_canonical := canonical_exit.duplicate(true)
+	(
+		((drifted_canonical[0] as Dictionary).get("fields", {}) as Dictionary)
+		.get("UnitCreatePoint", [])[0] as Dictionary
+	)["value"] = {"x": 99.0, "y": 0.0, "z": 0.0}
+	_check(
+		FactionManifest._validate_structure_production_exit_updates(
+			"FixtureMonsterPen", drifted_canonical, canonical_exit
+		).contains("projection drifted"),
+		"manifest rejects a canonical compatibility projection that drifts from moduleContracts"
+	)
+	var invalid_status_canonical := canonical_exit.duplicate(true)
+	(invalid_status_canonical[0] as Dictionary)["runtimeStatus"] = "simulation-backed"
+	_check(
+		FactionManifest._validate_structure_production_exit_updates(
+			"FixtureMonsterPen", invalid_status_canonical, invalid_status_canonical
+		).contains("invalid canonical"),
+		"manifest rejects an unrecognized canonical QueueProductionExitUpdate status"
+	)
+	var invalid_numeric_canonical := canonical_exit.duplicate(true)
+	var invalid_coordinate: Dictionary = (
+		((invalid_numeric_canonical[0] as Dictionary).get("fields", {}) as Dictionary)
+		.get("UnitCreatePoint", [])[0] as Dictionary
+	)
+	invalid_coordinate["validNumeric"] = false
+	invalid_coordinate["value"] = null
+	_check(
+		FactionManifest._validate_structure_production_exit_updates(
+			"FixtureMonsterPen", invalid_numeric_canonical, invalid_numeric_canonical
+		).contains("invalid numeric coordinates"),
+		"manifest rejects an invalid coordinate promoted to executable even when both projections match"
 	)
 	var promoted_exit_structures := structures.duplicate(true)
 	var promoted_exit_pen: Dictionary = (
@@ -721,6 +786,32 @@ func _run_cross_pack_producer_checks(content_db) -> void:
 	var worker_rule: Dictionary = (manifest.get("unit_production_rules", {}) as Dictionary).get("bfme2.object.fixture-worker", {}) as Dictionary
 	_check(String(worker_rule.get("producer_source_object_id", "")) == "FixtureMill", "manifest scopes the faction's own pack copy for a shared unit")
 	_check(String(worker_rule.get("producer_kind", "")) == "mill", "scoped shared unit resolves its own producer kind")
+
+	# A supplemental pack can also own other same-prefix structures. That broad
+	# root membership must not let its older copy of a unit win over the pack
+	# that owns the exact producer structure and command-set layout.
+	var mixed_roots_structures: Dictionary = content_db.get_playable_structure_runtimes().duplicate(true)
+	mixed_roots_structures["FixtureLegacyFortress"] = {"_pack_root": foreign_root}
+	# Adversarial selected-pack shape: every faction's structures are present in
+	# the global registry, so the foreign variant's exact producer also exists.
+	# Producer existence/root equality alone must not let a non-Fixture producer
+	# win the Fixture faction's same-name unit slot.
+	mixed_roots_structures["ForeignMill"] = {"_pack_root": foreign_root}
+	var reversed_variants: Array = (pack_index.get("fixtureworker", []) as Array).duplicate(true)
+	reversed_variants.reverse()
+	var mixed_pack_index: Dictionary = pack_index.duplicate(true)
+	mixed_pack_index["fixtureworker"] = reversed_variants
+	var producer_scoped: Dictionary = FactionManifest.faction_scoped_unit_runtimes(
+		["fixture"], content_db.get_playable_unit_runtimes(), mixed_roots_structures, mixed_pack_index
+	)
+	var producer_scoped_routes: Array = (
+		(producer_scoped.get("FixtureWorker", {}) as Dictionary).get("registration", {}) as Dictionary
+	).get("production", [])
+	_check(
+		not producer_scoped_routes.is_empty()
+		and String((producer_scoped_routes[0] as Dictionary).get("producerObjectId", "")) == "FixtureMill",
+		"exact producer pack outranks supplemental same-prefix root and variant load order"
+	)
 
 	# With no provable faction pack root the registry document stands, so the
 	# foreign producer still fails closed instead of being silently adopted.

@@ -77,6 +77,12 @@ func _run() -> void:
 		while int(slice.simulation.winner) == -1 and int(slice.simulation.tick_index) < MAXIMUM_MATCH_TICKS:
 			slice.step_for_test(mini(ADVANCE_CHUNK_TICKS, MAXIMUM_MATCH_TICKS - int(slice.simulation.tick_index)))
 			_observe_defeat_chain(slice.simulation.events, player_fortress_id, defeat_chain)
+			# A chunk is intentionally synchronous for deterministic ordering, but
+			# the lifecycle runner must return to SceneTree between chunks so both
+			# its 180-second timer and runner_watchdog can actually fire. Without
+			# this yield a slow/non-terminating match monopolizes the main thread and
+			# makes every advertised wall-clock bound inert.
+			await process_frame
 		if int(slice.simulation.winner) != 1:
 			_fail("match %d did not reach the default enemy-AI defeat by tick %d" % [match_index + 1, int(slice.simulation.tick_index)])
 			return
