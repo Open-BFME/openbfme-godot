@@ -1929,6 +1929,8 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                     "runtime_deferred_count": summary["runtimeDeferredCount"],
                     "summoned_count": summary["summonedCount"],
                     "variant_count": summary["variantCount"],
+                    "mp_roster_count": summary["mpRosterCount"],
+                    "ring_roster_count": summary["ringRosterCount"],
                 },
                 args.json,
             )

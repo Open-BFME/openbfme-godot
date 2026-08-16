@@ -13,7 +13,7 @@ def test_cli_writes_complete_hero_catalog_and_keeps_deferrals_visible(
     output = tmp_path / "heroes.json"
     expected = {
         "schema": "openbfme.hero-catalog",
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "game": "rotwk",
         "heroes": [],
         "summary": {
@@ -22,6 +22,8 @@ def test_cli_writes_complete_hero_catalog_and_keeps_deferrals_visible(
             "runtimeDeferredCount": 78,
             "summonedCount": 5,
             "variantCount": 20,
+            "mpRosterCount": 36,
+            "ringRosterCount": 2,
         },
         "catalogSha256": "e" * 64,
     }
@@ -53,3 +55,7 @@ def test_cli_writes_complete_hero_catalog_and_keeps_deferrals_visible(
     assert rendered["catalog_complete"] is True
     assert rendered["ready"] is False
     assert rendered["hero_count"] == 139
+    # An operator reading the summary must see which admission route the
+    # deferred heroes actually have, not just that they are deferred.
+    assert rendered["mp_roster_count"] == 36
+    assert rendered["ring_roster_count"] == 2
