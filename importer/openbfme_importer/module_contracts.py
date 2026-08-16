@@ -134,6 +134,10 @@ ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE: Mapping[str, tuple[str, str]] = {
         _SIM_CONSUMER,
         "game/tests/special_disguise_runtime_runner.gd",
     ),
+    "SubObjectsUpgrade": (
+        "game/src/retail_slice/retail_battalion.gd",
+        "game/tests/sub_objects_upgrade_runtime_runner.gd",
+    ),
 }
 
 
@@ -539,6 +543,118 @@ def compile_geometry_upgrades(
                 runtime_status=(
                     "executable"
                     if _geometry_upgrade_row_has_closed_runtime(fields)
+                    else "deferred"
+                ),
+            )
+        )
+    rows.sort(key=lambda row: (str(row["sourceIni"]).casefold(), int(row["line"])))
+    return rows
+
+
+_SUB_OBJECTS_UPGRADE_SUPPORTED = frozenset(
+    {
+        "triggeredby",
+        "showsubobjects",
+        "hidesubobjects",
+        "conflictswith",
+        "requiresalltriggers",
+        "upgradetexture",
+        "recolorhouse",
+        "excludesubobjects",
+        "skipfadeoncreate",
+        "hidesubobjectsonremove",
+        "fadetimeinseconds",
+        "customanimandduration",
+    }
+)
+_SUB_OBJECTS_UPGRADE_DEFERRED = frozenset(
+    {
+        "upgradetexture",
+        "recolorhouse",
+        "excludesubobjects",
+        "skipfadeoncreate",
+        "hidesubobjectsonremove",
+        "fadetimeinseconds",
+        "customanimandduration",
+    }
+)
+
+
+def _sub_objects_upgrade_row_has_closed_runtime(fields: Mapping[str, object]) -> bool:
+    """True for TriggeredBy + Show/Hide tokens covered by the battalion consumer.
+
+    Texture swaps, house recolor, fade, and HideSubObjectsOnRemove stay deferred.
+    """
+
+    triggers = fields.get("TriggeredBy")
+    if not isinstance(triggers, Mapping) or not isinstance(triggers.get("value"), list):
+        return False
+    if not triggers["value"] or "deferredFields" in fields:
+        return False
+    return any(
+        isinstance(fields.get(key), Mapping)
+        and isinstance(fields[key].get("value"), list)
+        and bool(fields[key]["value"])
+        for key in ("ShowSubObjects", "HideSubObjects")
+    )
+
+
+def compile_sub_objects_upgrades(
+    lineage: Sequence[SageObject], target_id: str
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for block in _behavior_blocks(lineage, "SubObjectsUpgrade"):
+        authored = {a.key.casefold() for a in block.assignments}
+        unknown = authored - _SUB_OBJECTS_UPGRADE_SUPPORTED
+        if unknown:
+            raise ModuleContractError(
+                f"{target_id} SubObjectsUpgrade unsupported fields: "
+                + ", ".join(sorted(unknown))
+            )
+        amap = _assignment_map(block)
+        fields: dict[str, object] = {}
+        for key, compiler in (
+            ("TriggeredBy", _token_list_field),
+            ("ShowSubObjects", _token_list_field),
+            ("HideSubObjects", _token_list_field),
+            ("ConflictsWith", _token_list_field),
+        ):
+            value = compiler(amap.get(key.casefold()))
+            if value is not None:
+                fields[key] = value
+        requires = _yes_no_field(
+            amap.get("requiresalltriggers"),
+            f"{target_id} SubObjectsUpgrade RequiresAllTriggers",
+        )
+        if requires is not None:
+            fields["RequiresAllTriggers"] = requires
+        deferred: list[dict[str, object]] = []
+        for name in sorted(_SUB_OBJECTS_UPGRADE_DEFERRED):
+            assignment = amap.get(name)
+            if assignment is not None:
+                deferred.append(
+                    {
+                        "name": assignment.key,
+                        "authored": assignment.value,
+                        "sourceIni": assignment.source_virtual_path,
+                        "line": assignment.line,
+                        "reason": "texture-swap-fade-or-hide-on-remove-without-runtime-oracle",
+                    }
+                )
+        if deferred:
+            fields["deferredFields"] = deferred
+        if "TriggeredBy" not in fields:
+            raise ModuleContractError(
+                f"{target_id} SubObjectsUpgrade requires TriggeredBy"
+            )
+        rows.append(
+            _row(
+                "SubObjectsUpgrade",
+                block,
+                fields,
+                runtime_status=(
+                    "executable"
+                    if _sub_objects_upgrade_row_has_closed_runtime(fields)
                     else "deferred"
                 ),
             )
@@ -8131,6 +8247,7 @@ TYPED_MODULE_KINDS: frozenset[str] = frozenset(
         "SpecialEnemySenseUpdate",
         "ScavengerSpecialPower",
         "GeometryUpgrade",
+        "SubObjectsUpgrade",
         "InactiveBody",
         "SpawnPointProductionExitUpdate",
         "SupplyCenterProductionExitUpdate",
@@ -8257,6 +8374,7 @@ def compile_all_module_contracts(
     rows: list[dict[str, object]] = []
     rows.extend(compile_attribute_modifier_upgrades(lineage, target_id))
     rows.extend(compile_geometry_upgrades(lineage, target_id))
+    rows.extend(compile_sub_objects_upgrades(lineage, target_id))
     rows.extend(compile_inactive_bodies(lineage, target_id))
     rows.extend(compile_spawn_point_production_exits(lineage, target_id))
     rows.extend(compile_supply_center_production_exits(lineage, target_id))
@@ -8427,6 +8545,7 @@ def validate_module_contracts(rows: object, *, label: str) -> None:
         row_evidence = module in ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE and (
             (module == "BezierProjectileBehavior" and _bezier_common_landing_shape(fields))
             or (module == "GeometryUpgrade" and _geometry_upgrade_row_has_closed_runtime(fields))
+            or (module == "SubObjectsUpgrade" and _sub_objects_upgrade_row_has_closed_runtime(fields))
             or (module == "QueueProductionExitUpdate" and _queue_exit_row_has_closed_runtime(fields))
             or (module == "SpawnBehavior" and _spawn_reclaim_row_has_closed_runtime(fields))
             or (module == "SlowDeathBehavior" and _slow_death_row_has_closed_runtime(row))

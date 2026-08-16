@@ -3907,7 +3907,7 @@ def test_opaque_and_typed_sets_disjoint() -> None:
         )
     assert set(ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE) == {
         "BezierProjectileBehavior", "GeometryUpgrade", "QueueProductionExitUpdate", "SlowDeathBehavior", "SpawnBehavior",
-        "SpecialDisguiseUpdate",
+        "SpecialDisguiseUpdate", "SubObjectsUpgrade",
     }
     for module, (consumer_path, test_path) in ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE.items():
         assert (root / consumer_path).is_file()

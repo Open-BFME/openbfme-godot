@@ -147,6 +147,11 @@ var _drawable_scripts: Array = []
 ## Last BeginScript receipt from the live `_play_member_state` path. Empty until
 ## a member state change actually executes authored drawable scripts.
 var last_drawable_script_receipt: Dictionary = {}
+## Typed SubObjectsUpgrade rows (TriggeredBy + Show/HideSubObjects). Empty means
+## the Fire Stones path still uses the named hardcoded FirePlane fallback.
+var sub_object_upgrade_contracts: Array = []
+var _last_sub_object_show: Array = []
+var _last_sub_object_hide: Array = []
 var equipment_contract: Dictionary = {}
 var equipment_contract_ready := false
 var unresolved_animation_track_count := 0
@@ -296,6 +301,7 @@ func configure(
 		var visual_row: Variant = definition.get("visual", {})
 		if typeof(visual_row) == TYPE_DICTIONARY:
 			_drawable_scripts = ((visual_row as Dictionary).get("drawableScripts", []) as Array).duplicate(true)
+	_bind_sub_object_upgrade_contracts_from_content(definition)
 	_build_members(expected_members, formation_positions)
 	_resolve_selection_radius()
 	_configure_source_selection_decal(definition)
@@ -371,22 +377,18 @@ func sync_banner_carrier(spawned: bool, banner_object_id: String, offset_source:
 
 
 func sync_upgrade_visuals(applied_upgrades: Dictionary) -> void:
-	## Retail WeaponSetUpgrade + SubObjectsUpgrade for Fire Stones
-	## (trebuchet.ini:525-531). The fire plane stays hidden until the upgrade
-	## is on the battalion; showing it is the authored visual flip.
+	## WeaponSetUpgrade still binds the flaming projectile. Sub-object
+	## visibility prefers typed SubObjectsUpgrade rows; the FirePlane name
+	## guess is only the loud fallback when no typed contract is attached.
+	var visibility: Dictionary = apply_sub_object_upgrades(applied_upgrades)
 	var upgrade_id := _fire_stones_upgrade_id(applied_upgrades)
 	var wanted := upgrade_id != ""
 	if wanted == fire_upgrade_active and fire_upgrade_id == upgrade_id:
+		set_meta("fire_plane_nodes_shown", int(visibility.get("shown", 0)))
+		set_meta("sub_object_upgrade_source", String(visibility.get("source", "")))
 		return
 	fire_upgrade_active = wanted
 	fire_upgrade_id = upgrade_id
-	var shown := 0
-	var asset_factory = load("res://src/view/asset_factory.gd")
-	for visual_value in member_visuals.values():
-		if visual_value is Node:
-			shown += int(asset_factory.set_named_subobject_visible(
-				visual_value as Node, "FirePlane", wanted
-			))
 	if wanted:
 		var flaming := _compiled_flaming_projectile_object_id()
 		if flaming != "":
@@ -395,8 +397,167 @@ func sync_upgrade_visuals(applied_upgrades: Dictionary) -> void:
 		projectile_object_id = _compiled_projectile_object_id(object_id)
 	set_meta("fire_upgrade_active", fire_upgrade_active)
 	set_meta("fire_upgrade_id", fire_upgrade_id)
-	set_meta("fire_plane_nodes_shown", shown)
+	set_meta("fire_plane_nodes_shown", int(visibility.get("shown", 0)))
 	set_meta("fire_projectile_object_id", projectile_object_id)
+	set_meta("sub_object_upgrade_source", String(visibility.get("source", "")))
+
+
+func bind_sub_object_upgrade_contracts(source: Dictionary) -> int:
+	## Attach compile-shaped SubObjectsUpgrade rows from a pack document.
+	sub_object_upgrade_contracts = collect_sub_object_upgrade_contracts(source)
+	return sub_object_upgrade_contracts.size()
+
+
+func collect_sub_object_upgrade_contracts(source: Dictionary) -> Array:
+	var out: Array = []
+	for row_value in _module_contract_arrays(source):
+		if typeof(row_value) != TYPE_DICTIONARY:
+			continue
+		var row := (row_value as Dictionary).duplicate(true)
+		if String(row.get("module", "")) != "SubObjectsUpgrade":
+			continue
+		if not row.has("runtimeStatus") and row.has("runtime_status"):
+			row["runtimeStatus"] = String(row.get("runtime_status", ""))
+		out.append(row)
+	return out
+
+
+func apply_sub_object_upgrades(applied_upgrades: Dictionary) -> Dictionary:
+	## Execute typed SubObjectsUpgrade Show/Hide tokens. Deferred texture-swap
+	## / HideOnRemove rows stay inert. Absent contracts fall back to FirePlane
+	## and name that fallback on the receipt.
+	var asset_factory = load("res://src/view/asset_factory.gd")
+	var active: Dictionary = {}
+	for key_value in applied_upgrades.keys():
+		active[String(key_value).to_lower()] = true
+	var executable: Array = []
+	for contract_value in sub_object_upgrade_contracts:
+		if typeof(contract_value) != TYPE_DICTIONARY:
+			continue
+		var contract := contract_value as Dictionary
+		if String(contract.get("module", "")) != "SubObjectsUpgrade":
+			continue
+		if String(contract.get("extraction", "")) != "typed":
+			continue
+		if String(contract.get("runtimeStatus", contract.get("runtime_status", ""))) != "executable":
+			continue
+		var fields: Dictionary = contract.get("fields", {}) as Dictionary
+		if fields.has("deferredFields"):
+			continue
+		if _sub_object_upgrade_triggers_match(fields, active):
+			executable.append(fields)
+	if executable.is_empty() and not sub_object_upgrade_contracts.is_empty():
+		var restored := _restore_last_sub_object_upgrades(asset_factory)
+		return {"source": "typed-sub-objects-upgrade", "applied": 0, "show": [], "hide": [], "shown": restored}
+	if executable.is_empty():
+		var upgrade_id := _fire_stones_upgrade_id(applied_upgrades)
+		var wanted := upgrade_id != ""
+		var shown := 0
+		for visual_value in member_visuals.values():
+			if visual_value is Node:
+				shown += int(asset_factory.set_named_subobject_visible(visual_value as Node, "FirePlane", wanted))
+		return {
+			"source": "hardcoded-fireplane-absent-typed-contract",
+			"applied": 1 if wanted or shown > 0 else 0,
+			"show": ["FirePlane"] if wanted else [],
+			"hide": [],
+			"shown": shown,
+		}
+	_restore_last_sub_object_upgrades(asset_factory)
+	var show_tokens: Array = []
+	var hide_tokens: Array = []
+	for fields in executable:
+		for token_value in ((fields.get("ShowSubObjects", {}) as Dictionary).get("value", []) as Array):
+			var token := String(token_value)
+			if token != "" and not show_tokens.has(token):
+				show_tokens.append(token)
+		for token_value in ((fields.get("HideSubObjects", {}) as Dictionary).get("value", []) as Array):
+			var token := String(token_value)
+			if token != "" and not hide_tokens.has(token):
+				hide_tokens.append(token)
+	var flipped := 0
+	for visual_value in member_visuals.values():
+		if not (visual_value is Node):
+			continue
+		for token in hide_tokens:
+			flipped += int(asset_factory.set_named_subobject_visible(visual_value as Node, String(token), false))
+		for token in show_tokens:
+			flipped += int(asset_factory.set_named_subobject_visible(visual_value as Node, String(token), true))
+	_last_sub_object_show = show_tokens.duplicate()
+	_last_sub_object_hide = hide_tokens.duplicate()
+	return {
+		"source": "typed-sub-objects-upgrade",
+		"applied": executable.size(),
+		"show": show_tokens,
+		"hide": hide_tokens,
+		"shown": flipped,
+	}
+
+
+func _bind_sub_object_upgrade_contracts_from_content(definition: Dictionary) -> void:
+	var playable: Dictionary = PlayableUnitAdapter.resolve_playable_document(
+		ContentDB, {"object_id": object_id, "unit_type": object_id}
+	)
+	if not playable.is_empty():
+		bind_sub_object_upgrade_contracts(playable)
+	if sub_object_upgrade_contracts.is_empty():
+		bind_sub_object_upgrade_contracts(definition)
+
+
+func _module_contract_arrays(source: Dictionary) -> Array:
+	var candidates: Array = []
+	var registration: Dictionary = source.get("registration", {}) as Dictionary
+	var gameplay: Dictionary = registration.get("gameplay", {}) as Dictionary
+	if gameplay.is_empty() and typeof(source.get("gameplay")) == TYPE_DICTIONARY:
+		gameplay = source.get("gameplay", {}) as Dictionary
+	var simulation: Dictionary = gameplay.get("simulation", {}) as Dictionary
+	if simulation.is_empty():
+		simulation = registration.get("simulation", {}) as Dictionary
+	var resolved: Dictionary = simulation.get("resolved", {}) as Dictionary
+	for raw_value in [
+		resolved.get("moduleContracts", []),
+		gameplay.get("moduleContracts", []),
+		registration.get("moduleContracts", []),
+		source.get("moduleContracts", []),
+	]:
+		if typeof(raw_value) != TYPE_ARRAY:
+			continue
+		for row_value in raw_value as Array:
+			candidates.append(row_value)
+	return candidates
+
+
+func _sub_object_upgrade_triggers_match(fields: Dictionary, active: Dictionary) -> bool:
+	for conflict_value in ((fields.get("ConflictsWith", {}) as Dictionary).get("value", []) as Array):
+		if active.has(String(conflict_value).to_lower()):
+			return false
+	var triggers: Array = ((fields.get("TriggeredBy", {}) as Dictionary).get("value", []) as Array)
+	var requires_all := bool((fields.get("RequiresAllTriggers", {}) as Dictionary).get("value", false))
+	if requires_all:
+		if triggers.is_empty():
+			return false
+		for trigger_value in triggers:
+			if not active.has(String(trigger_value).to_lower()):
+				return false
+		return true
+	for trigger_value in triggers:
+		if active.has(String(trigger_value).to_lower()):
+			return true
+	return false
+
+
+func _restore_last_sub_object_upgrades(asset_factory: GDScript) -> int:
+	var flipped := 0
+	for visual_value in member_visuals.values():
+		if not (visual_value is Node):
+			continue
+		for token in _last_sub_object_show:
+			flipped += int(asset_factory.set_named_subobject_visible(visual_value as Node, String(token), false))
+		for token in _last_sub_object_hide:
+			flipped += int(asset_factory.set_named_subobject_visible(visual_value as Node, String(token), true))
+	_last_sub_object_show.clear()
+	_last_sub_object_hide.clear()
+	return flipped
 
 
 func fire_plane_visible_count() -> int:
