@@ -160,10 +160,9 @@ const DEFAULT_STRUCTURE_ARMOR: Dictionary = {
 	},
 }
 # A structure kind with no compiled armor table (legacy defaults other than
-# the fortress, or a stale pack document) uses this provisional scalar. It is
+# the fortress, or a stale pack document) has its damage refused loudly. It is
 # recorded once per kind at configure — an explicit interim value, never a
 # silent default.
-const STRUCTURE_ARMOR_PROVISIONAL_SCALAR := 0.25
 ## Structure kinds with no compiled armor table (recorded provisionals).
 var structure_armor_provisional_kinds: Array[String] = []
 ## Unit object ids whose document carries no armor block at all (stale pack):
@@ -2440,15 +2439,15 @@ func _configure_faction_manifest() -> bool:
 
 
 func _record_structure_armor_provisionals() -> void:
-	## Every structure kind must have either a compiled armor table or a
-	## recorded provisional — the armor layer is never a silent 0.25.
+	## Every structure kind must have a compiled armor table. Kinds without one
+	## are recorded and logged (loud failure on damage application).
 	structure_armor_provisional_kinds.clear()
 	for kind_value in _structure_kinds:
 		var kind := String(kind_value)
 		if _structure_armor.has(kind):
 			continue
 		structure_armor_provisional_kinds.append(kind)
-		print("[RetailSliceSim] structure armor: kind '%s' has no compiled armor.ini table; structure damage uses the recorded provisional scalar %.2f" % [kind, STRUCTURE_ARMOR_PROVISIONAL_SCALAR])
+		push_error("[RetailSliceSim] structure armor: kind '%s' has no compiled armor contract; structure damage will be refused for that kind" % kind)
 
 
 func _compiled_armor_table(table_value: Variant) -> Dictionary:
@@ -28613,16 +28612,21 @@ func _apply_structure_damage(attacker_id: int, target_id: int, amount: int, dama
 			return
 		body_amount = highlander_amount
 	# Every structure kind scales by its own compiled armor.ini table; kinds
-	# without one use the recorded provisional (logged once at configure).
+	# without one refuse damage (loud failure logged at configure).
 	var kind := String(target.get("structure_kind", ""))
 	var table: Dictionary = _structure_armor.get(kind, {})
-	var scalar := STRUCTURE_ARMOR_PROVISIONAL_SCALAR
-	if not table.is_empty():
-		var scalars: Dictionary = table.get("scalars", {})
-		if not damage_components.is_empty():
-			scalar = float(table.get("damage_scalar", 1.0)) * _weighted_armor_scalar(scalars, damage_components, damage_type)
-		else:
-			scalar = float(table.get("damage_scalar", 1.0)) * float(scalars.get(damage_type.to_lower(), scalars.get("default", 1.0)))
+	if table.is_empty():
+		_emit_event("combat.damage_refused", attacker_id, target_id, {
+			"reason": "missing-compiled-structure-armor",
+			"target": "structure %s" % kind,
+		})
+		return
+	var scalars: Dictionary = table.get("scalars", {})
+	var scalar := 1.0
+	if not damage_components.is_empty():
+		scalar = float(table.get("damage_scalar", 1.0)) * _weighted_armor_scalar(scalars, damage_components, damage_type)
+	else:
+		scalar = float(table.get("damage_scalar", 1.0)) * float(scalars.get(damage_type.to_lower(), scalars.get("default", 1.0)))
 	var remainder_by_type: Dictionary = target.get("damage_remainders", {})
 	var accumulated := (
 		float(remainder_by_type.get(damage_type, 0.0))
