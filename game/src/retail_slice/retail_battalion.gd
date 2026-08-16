@@ -9,6 +9,7 @@ const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtim
 const AnimationStateSelectScript = preload("res://src/retail_slice/animation_state_select.gd")
 const ParticleSysBoneScript = preload("res://src/retail_slice/particle_sys_bone.gd")
 const EnteringStateFXScript = preload("res://src/retail_slice/entering_state_fx.gd")
+const ClipFrameClockScript = preload("res://src/retail_slice/clip_frame_clock.gd")
 const DEFAULT_OBJECT_ID := "bfme2.object.gondor-fighter"
 const ARCHER_OBJECT_ID := "bfme2.object.gondor-archer"
 const RANGER_OBJECT_ID := "bfme2.object.gondor-ranger"
@@ -167,6 +168,8 @@ var entering_state_fx_contracts: Array = []
 var last_entering_state_fx_receipt: Dictionary = {}
 var _last_entering_state_conditions: Array = []
 var _entering_state_fx_primed: bool = false
+var member_clip_frame_clocks: Dictionary = {}
+var last_clip_frame_receipt: Dictionary = {}
 var equipment_contract: Dictionary = {}
 var equipment_contract_ready := false
 var unresolved_animation_track_count := 0
@@ -1695,6 +1698,7 @@ func _play_member_state(member_index: int, state: String, action_token: int, res
 		_play_member_clip(player_value as AnimationPlayer, requested, play_state, member_index, blend, apply_phase, action_token, authored)
 	if play_state.begins_with("attack") and action_token >= 0:
 		_last_action_token = maxi(_last_action_token, action_token)
+	_prime_member_clip_frame_clock(member_index)
 	_sync_member_particle_sys_bones(member_index, authored, conditions)
 
 
@@ -2222,6 +2226,65 @@ func clip_for_state(state: String) -> String:
 	return String(clip_map.get(state, ""))
 
 
+func member_clip_frame(member_index: int) -> Dictionary:
+	var stored: Dictionary = member_clip_frame_clocks.get(member_index, {}) as Dictionary
+	if stored.is_empty():
+		return ClipFrameClockScript._empty_sample()
+	return stored.duplicate(true)
+
+
+func _member_animation_player(member_index: int) -> AnimationPlayer:
+	var players: Array = member_animation_players.get(member_index, []) as Array
+	if players.is_empty():
+		return null
+	return players[0] as AnimationPlayer
+
+
+func _prime_member_clip_frame_clock(member_index: int) -> Dictionary:
+	var sampled: Dictionary = ClipFrameClockScript.prime(_member_animation_player(member_index))
+	if String(sampled.get("clip", "")) == "":
+		sampled["clip"] = String(member_current_clips.get(member_index, ""))
+	sampled["primed"] = true
+	member_clip_frame_clocks[member_index] = sampled
+	last_clip_frame_receipt = sampled.duplicate(true)
+	set_meta("clip_frame_source", String(sampled.get("source", "")))
+	set_meta("clip_frame", float(sampled.get("frame", -1.0)))
+	return sampled
+
+
+func _tick_member_clip_frame_clock(member_index: int) -> Dictionary:
+	var previous: Dictionary = member_clip_frame_clocks.get(member_index, {}) as Dictionary
+	var sampled: Dictionary = ClipFrameClockScript.sample(_member_animation_player(member_index))
+	if String(sampled.get("clip", "")) == "":
+		sampled["clip"] = String(member_current_clips.get(member_index, ""))
+	if previous.is_empty() or not bool(previous.get("primed", false)) or String(previous.get("clip", "")) != String(sampled.get("clip", "")):
+		return _prime_member_clip_frame_clock(member_index)
+	sampled["primed"] = true
+	sampled["previousFrame"] = float(previous.get("frame", -1.0))
+	member_clip_frame_clocks[member_index] = sampled
+	last_clip_frame_receipt = sampled.duplicate(true)
+	set_meta("clip_frame_source", String(sampled.get("source", "")))
+	set_meta("clip_frame", float(sampled.get("frame", -1.0)))
+	return sampled
+
+
+func set_member_manual_frame(member_index: int, frame: float) -> Dictionary:
+	## MANUAL playback: an external driver sets the authored frame. Autoplay
+	## stays skipped (`manualDeferred`); the clock follows the seek.
+	var previous: Dictionary = member_clip_frame_clocks.get(member_index, {}) as Dictionary
+	var sampled: Dictionary = ClipFrameClockScript.seek_manual(_member_animation_player(member_index), frame)
+	if String(sampled.get("clip", "")) == "":
+		sampled["clip"] = String(member_current_clips.get(member_index, ""))
+	sampled["primed"] = true
+	sampled["previousFrame"] = float(previous.get("frame", -1.0))
+	sampled["manualSeekable"] = true
+	member_clip_frame_clocks[member_index] = sampled
+	last_clip_frame_receipt = sampled.duplicate(true)
+	set_meta("clip_frame_source", String(sampled.get("source", "")))
+	set_meta("clip_frame", float(sampled.get("frame", -1.0)))
+	return sampled
+
+
 func death_animation_pick(member_index: int = -1) -> Dictionary:
 	## Clip the presenter is already playing (or will play) for this death.
 	## Frame stays -1 at event time: the sim death event is not the authored
@@ -2702,6 +2765,9 @@ func _process(_delta: float) -> void:
 	_update_root_presentation(_delta)
 	_update_member_positions(_delta)
 	_settle_finished_corpses()
+	for member_index in range(member_count):
+		if member_animation_players.has(member_index):
+			_tick_member_clip_frame_clock(member_index)
 	if current_state == "death" or current_clip == "":
 		return
 	# The source GLB clips intentionally preserve their one-shot metadata. The

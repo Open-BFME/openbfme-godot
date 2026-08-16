@@ -174,6 +174,10 @@ ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE: Mapping[str, tuple[str, str]] = {
         "game/src/retail_slice/entering_state_fx.gd",
         "game/tests/entering_state_fx_runtime_runner.gd",
     ),
+    "ClipFrameClock": (
+        "game/src/retail_slice/clip_frame_clock.gd",
+        "game/tests/clip_frame_clock_runtime_runner.gd",
+    ),
 }
 
 
