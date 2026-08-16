@@ -400,8 +400,17 @@ def test_catalog_rejects_unknown_game() -> None:
         "expected_unsupported",
     ),
     (
-        ("bfme2.json", "bfme2", 69, (42, 15, 12), 37),
-        ("rotwk-layered.json", "rotwk", 83, (48, 23, 12), 60),
+        # Unit-domain unsupportedCapabilities count: authored Behaviors
+        # that still lack a typed moduleContracts occurrence. This is a
+        # pytest exact-count coverage denominator, not a contracts/*.json
+        # policy_digest. AnimationState typing (b56c09c) is Draw-nested and
+        # does not shrink this set; the drop is the Behavior kinds the
+        # animation lane promoted the same night (ModelConditionUpgrade,
+        # SubObjectsUpgrade, TransitionDamageFX,
+        # AnimationSoundClientBehavior) leaving the unsupported bag.
+        # Re-measured 2026-08-16: 37→30 (bfme2), 60→48 (rotwk).
+        ("bfme2.json", "bfme2", 69, (42, 15, 12), 30),
+        ("rotwk-layered.json", "rotwk", 83, (48, 23, 12), 48),
     ),
 )
 def test_effective_retail_neutral_mob_family_is_completely_accounted_for(
@@ -503,7 +512,7 @@ def test_rotwk_canonical_effective_assets_preserve_exact_domains_and_prop_ids() 
         "mapPlacementAddedCount": 0,
     }
     _assert_unit_unsupported_capabilities_are_untyped(
-        result, expected_count=60
+        result, expected_count=48
     )
     _assert_exact_neutral_bezier_contracts(result, game="rotwk")
     rows = {row["objectId"]: row for row in result["neutralMobs"]}

@@ -64,11 +64,27 @@ PINNED_UNAFFECTED_DIGESTS = {
     # is the honest answer, not a gap. Nothing in `coreAnimations`, the death
     # swap routing, the auxiliary static/hierarchy routing or the experience
     # contract changed by one byte.
+    #
+    # Re-pinned 2026-08-16 while investigating b56c09c AnimationState
+    # typing fallout. Procedure: dump the 1ad9bd0 pin-era recipes and the
+    # working-tree recipes, then also compile with the importer tree at
+    # b56c09c^ (`.private/scratch/deathpin-pin-era-*.json` vs
+    # `deathpin-current-*.json` vs `deathpin-pre-anim-*.json`).
+    # b56c09c is a no-op on these fixtures — current == b56c09c^
+    # byte-for-byte. The fixture INI authors only
+    # Draw/DefaultModelConditionState, so compile_animation_states emits
+    # nothing and no new typed AnimationState rows appear. The pin was
+    # already stale against earlier authored-correct compiler work:
+    # VoicePriority left audioRoutes (it is not an audio event, so the
+    # bogus `audio/43.wav` resource disappeared), `kindOf` is now copied
+    # onto the recipe, and InfantryHorde gained its HordeContain
+    # moduleContracts row (SiegeUnit still has none). Death routing,
+    # coreAnimations, and authoredAnimationStates did not move.
     ("InfantryHorde", False): (
-        "ee66bf03da4e5092749572093c13aa1f71a2e592fe9752180cc520f10d7bc474"
+        "6b668bf71b505f83834c0a8481ec82a029218af2f52187190afce47844bb9ce0"
     ),
     ("SiegeUnit", True): (
-        "6467e4d1193ccb08a72abbf5c0ee00d915fc2d9c54ed8924ac80b24b1bd48e07"
+        "92d923cc0763b1db9f4378362fcbfef7e09c8e6ef5fb7bd353f44b223dd5cd7e"
     ),
 }
 
