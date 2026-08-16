@@ -5198,29 +5198,23 @@ class ImportPipeline:
             .resolve()
         )
         final_attestation = getattr(self, "_w3d_final_attestation", None)
-        final_plugin = final_attestation.get("plugin", {}) if final_attestation else {}
-        # The plugin lives under the state root, which is external to this
-        # repository but may still sit inside some unrelated checkout. Only an
-        # exact top-level match is this plugin's own commit.
-        value = final_plugin.get("commit") or git_revision_at_exact_root(plugin)
-        submodule_value = final_plugin.get(
-            "submodule_commit"
-        ) or git_revision_at_exact_root(
-            plugin / "io_mesh_w3d" / "blender_addon_updater"
-        )
+        # Only tools that actually participated belong in provenance. A
+        # media-only pack has no W3D final attestation; probing the available
+        # plugin here both overstates the recipe and races unrelated Blender
+        # work that may be materialising transient __pycache__ files. Actual
+        # W3D batches still receive the strict begin/end attestation above.
+        if final_attestation is not None:
+            final_plugin = final_attestation.get("plugin", {})
+            value = final_plugin.get("commit")
+            submodule_value = final_plugin.get("submodule_commit")
+        else:
+            value = None
+            submodule_value = None
         if value:
-            from .bootstrap import _reject_python_bytecode
-
-            if final_attestation is None:
-                _reject_python_bytecode(plugin, "OpenSAGE W3D plugin")
             report["opensage_w3d_plugin"] = {
                 "commit": value,
                 "submodule_commit": submodule_value,
-                "worktree_clean": bool(
-                    final_attestation.get("plugin_worktree_clean", False)
-                    if final_attestation is not None
-                    else git_worktree_clean_at_exact_root(plugin)
-                ),
+                "worktree_clean": bool(final_attestation.get("plugin_worktree_clean", False)),
                 "python_bytecode_free": True,
             }
         return report

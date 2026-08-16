@@ -57,6 +57,27 @@ def _exact_plugin_git(
 
 
 class BlenderToolCacheTests(unittest.TestCase):
+    def test_media_only_tool_report_does_not_attest_unused_w3d_plugin(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            pipeline = object.__new__(ImportPipeline)
+            pipeline.state_root = Path(raw) / "state"
+            pipeline._python_runtime_report = {"version": "test"}
+            pipeline._w3d_final_attestation = None
+
+            with (
+                mock.patch(
+                    "openbfme_importer.pipeline.discover_executable",
+                    return_value=None,
+                ),
+                mock.patch(
+                    "openbfme_importer.pipeline.git_revision_at_exact_root"
+                ) as plugin_revision,
+            ):
+                report = pipeline._canonical_tool_report()
+
+            self.assertNotIn("opensage_w3d_plugin", report)
+            plugin_revision.assert_not_called()
+
     def test_prepare_removes_only_bounded_cache_then_attests_exact_tree(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             state_root = Path(raw) / "state"
