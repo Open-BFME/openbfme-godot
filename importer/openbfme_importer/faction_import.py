@@ -1149,6 +1149,18 @@ def _convert_one_plan_object(
                     for item in (descriptor.get("kindOf") or [])
                     if isinstance(item, str)
                 }
+                # Only the fortress center-generic plot composite may
+                # take this exclusion (the primary path above already
+                # handles it before the visual closure runs). Any other
+                # BASE_FOUNDATION object (fortress, expansion pads)
+                # converts as a real structure, so a "no resolved
+                # lifecycle model" failure there is a cook/converter
+                # failure and must stay a loud converter-gap with the
+                # real reason - never be re-marked as a content
+                # exclusion, which once masked a broken toolchain's pad
+                # cook failures as "excluded" and failed the fortress
+                # closure with the wrong diagnosis.
+                and object_id.casefold().endswith("fortresscentergeneric")
             ):
                 row.update(
                     {

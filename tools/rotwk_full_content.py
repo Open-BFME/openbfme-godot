@@ -64,6 +64,147 @@ def _load_object(path: Path) -> dict[str, Any]:
     return value
 
 
+HOST_PROFILE_NAME = "men-fords-v1.generated.json"
+
+
+def _ensure_men_host_profile(
+    state_root: Path,
+    *,
+    python: Path,
+    env: dict[str, str],
+    layered: Path,
+) -> Path:
+    """Return the Men/Fords host profile, deriving it when absent.
+
+    ``publish-faction-to-slice`` extends this generated BFME2 Men host
+    skeleton and fails closed when it is missing -- before this check ran,
+    that refusal fired only at the pack-proof stage, AFTER the ~45-minute
+    seven-faction convert. Derivation uses only the documented generators:
+    ``m3_pack_expansion compose`` for the hash-bound skeleton and the
+    ``living-world`` CLI for the strategic document the RotWK Men host pack
+    owns. When any hash-bound input is absent this raises BEFORE the convert
+    and names every missing artifact.
+    """
+
+    candidates = [
+        state_root / "profiles" / HOST_PROFILE_NAME,
+        workspace_root(state_root, "rotwk") / "profiles" / HOST_PROFILE_NAME,
+    ]
+    existing = next((p for p in candidates if p.is_file()), None)
+    if existing is not None:
+        print(f"HOST_PROFILE {existing}", flush=True)
+        return existing
+
+    recipe_path = ROOT / "importer" / "profiles" / "men-fords-v1.json"
+    base_profile = state_root / "profiles" / "men-fords-v0-complete.generated.json"
+    census = state_root / "reports" / "men-faction-leaf-census.json"
+    assets = state_root / "cache" / "effective-assets"
+    manifest = assets / ".openbfme" / "manifest.json"
+    catalog_path = state_root / "catalog" / "bfme2.json"
+    missing = [
+        str(path)
+        for path in (recipe_path, base_profile, census, manifest, catalog_path)
+        if not path.is_file()
+    ]
+    if not assets.is_dir():
+        missing.append(str(assets))
+    if missing:
+        raise RuntimeError(
+            "Men/Fords host profile is missing and its documented generator "
+            "inputs are absent from the state root: " + "; ".join(missing)
+        )
+    recipe = _load_object(recipe_path)
+    targets = (((recipe.get("pack") or {}).get("m3Recipe") or {}).get("targets") or {})
+    objects = [
+        *list(targets.get("buildings") or []),
+        *list(targets.get("units") or []),
+        *list(targets.get("selectionTransitions") or []),
+    ]
+    if not objects:
+        raise RuntimeError(f"host profile recipe carries no targets: {recipe_path}")
+    from openbfme_importer.retail_visual_closure import (  # noqa: E402
+        default_visual_closure_report_name,
+    )
+
+    closure = (
+        state_root / "reports" / default_visual_closure_report_name(objects)
+    )
+    if not closure.is_file():
+        raise RuntimeError(
+            f"host profile visual closure missing: {closure}; generate it with "
+            f"openbfme-import visual-closure --game bfme2 --objects <recipe targets>"
+        )
+    from openbfme_importer.catalog import InstallCatalog  # noqa: E402
+
+    bfme2_catalog_identity = InstallCatalog.load(catalog_path).identity_sha256()
+
+    living_world = (
+        workspace_root(state_root, "rotwk") / "reports" / "rotwk-living-world.json"
+    )
+    if not living_world.is_file():
+        _run(
+            "generate living-world strategic document",
+            [
+                str(python),
+                str(ROOT / "tools" / "openbfme_import.py"),
+                "living-world",
+                "--install",
+                str(layered),
+                "--game",
+                "rotwk",
+            ],
+            env,
+        )
+    living_world_doc = _load_object(living_world)
+    if living_world_doc.get("schema") != "openbfme.living-world":
+        raise RuntimeError(f"living-world document schema is invalid: {living_world}")
+
+    composing = state_root / "profiles" / "men-fords-v1.composing.json"
+    _run(
+        "compose men-fords-v1 host profile (m3 expansion)",
+        [
+            str(python),
+            "-m",
+            "openbfme_importer.m3_pack_expansion",
+            "compose",
+            "--recipe",
+            str(recipe_path),
+            "--base-profile",
+            str(base_profile),
+            "--census",
+            str(census),
+            "--visual-closure",
+            str(closure),
+            "--assets-root",
+            str(assets),
+            "--effective-manifest",
+            str(manifest),
+            "--expected-catalog-identity",
+            bfme2_catalog_identity,
+            "--output",
+            str(composing),
+            "--private-root",
+            str(ROOT / ".private"),
+        ],
+        env,
+    )
+    profile = _load_object(composing)
+    runtime_data = profile.get("runtime_data")
+    pack_files = (profile.get("pack") or {}).get("files")
+    if not isinstance(runtime_data, dict) or not isinstance(pack_files, dict):
+        composing.unlink(missing_ok=True)
+        raise RuntimeError(f"composed host profile is malformed: {composing}")
+    # Single-owner overlay: the RotWK Men host pack ships the generated
+    # living-world document (faction_slice_profile preserves it only there).
+    runtime_data["data/living-world.json"] = living_world_doc
+    pack_files["livingWorld"] = "data/living-world.json"
+    out = state_root / "profiles" / HOST_PROFILE_NAME
+    write_json_atomic(out, profile)
+    composing.unlink(missing_ok=True)
+    print(f"HOST_PROFILE derived via documented pipeline -> {out}", flush=True)
+    return out
+
+
 def _serial_publication_rows(state_root: Path) -> list[dict[str, Any]]:
     """Load and fail closed on the seven receipts produced by serial proof runs."""
 
@@ -411,6 +552,12 @@ def main(argv: list[str] | None = None) -> int:
                 + (probe.stderr or probe.stdout).strip()
             )
         _run("effective-assets identity", verify_cmd, env)
+        # Fail fast or derive the Men/Fords host profile BEFORE the ~45-minute
+        # convert: the pack proof refuses closed without it, and deriving it
+        # afterwards wastes the whole convert when the state root is fresh.
+        _ensure_men_host_profile(
+            state_root, python=python, env=env, layered=layered
+        )
         convert_cmd = [
             str(python),
             str(ROOT / "tools" / "rotwk_faction_convert_batch.py"),

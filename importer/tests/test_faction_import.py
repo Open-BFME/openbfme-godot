@@ -450,14 +450,18 @@ End
     assert spellbook["family"] == "spellbook"
 
 
-def test_foundation_without_visuals_is_excluded_with_descriptor_evidence() -> None:
+def test_non_center_generic_foundation_cook_failure_is_a_loud_gap() -> None:
     documents, graph = _fixture()
     from openbfme_importer.playable_structure_pack_compiler import (
         PlayableStructurePackCompilerError,
     )
 
-    # Non-CenterGeneric BASE_FOUNDATION still uses the legacy exception path
-    # (only *FortressCenterGeneric early-exits before visual closure).
+    # A non-CenterGeneric BASE_FOUNDATION object (fortress, expansion
+    # pads) converts as a real structure: a "no resolved lifecycle model"
+    # failure is a cook/converter failure and must surface as a loud
+    # converter-gap with the real reason, never be re-marked as an
+    # exclusion (which once masked a broken toolchain's pad cook
+    # failures and failed the fortress closure misdiagnosed).
     descriptor = {
         "objectId": "UniversalFactory",
         "descriptorSha256": "5" * 64,
@@ -489,9 +493,10 @@ def test_foundation_without_visuals_is_excluded_with_descriptor_evidence() -> No
         )
 
     row = next(r for r in coverage["objects"] if r["id"] == "UniversalFactory")
-    assert row["status"] == "excluded"
-    assert "foundation composite" in row["reason"]
-    assert row["descriptorSha256"] == "5" * 64
+    assert row["status"] == "converter-gap"
+    assert row["reason"] == (
+        "structure has no resolved lifecycle model: UniversalFactory"
+    )
 
 
 def test_fortress_center_generic_skips_visual_closure() -> None:
