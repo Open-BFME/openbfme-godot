@@ -5175,17 +5175,36 @@ def main() -> None:
     if not args.model.expanduser().resolve().is_file():
         raise FileNotFoundError(args.model.expanduser().resolve())
     initialize_w3d_converter(args.plugin_root)
-    report = convert_w3d_job(
-        model=args.model,
-        asset_kind=args.asset_kind,
-        animations=args.animations,
-        required_equipment=args.required_equipment,
-        excluded_optional_meshes=args.excluded_optional_meshes,
-        proven_root_rigid_bake=args.proven_root_rigid_bake,
-        proven_pivot_only_model=args.proven_pivot_only_model,
-        retail_absent_textures=args.retail_absent_textures,
-        output=args.output,
-    )
+    try:
+        report = convert_w3d_job(
+            model=args.model,
+            asset_kind=args.asset_kind,
+            animations=args.animations,
+            required_equipment=args.required_equipment,
+            excluded_optional_meshes=args.excluded_optional_meshes,
+            proven_root_rigid_bake=args.proven_root_rigid_bake,
+            proven_pivot_only_model=args.proven_pivot_only_model,
+            retail_absent_textures=args.retail_absent_textures,
+            output=args.output,
+        )
+    except W3DConversionPhaseError as error:
+        # The sanitized message is fixed, so a host that only sees the
+        # traceback cannot tell one failure from another. Emit the bounded
+        # evidence the multi-job driver already reports, then re-raise so the
+        # process still exits non-zero.
+        print(
+            "OPENBFME_W3D_FAIL "
+            + json.dumps(
+                {
+                    "failure_phase": error.failure_phase,
+                    "failure_kind": error.failure_kind,
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
+        raise
     print("OPENBFME_W3D_OK " + json.dumps(report, sort_keys=True))
 
 

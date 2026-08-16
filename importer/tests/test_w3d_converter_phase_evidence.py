@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import contextlib
 import importlib.util
+import io
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -1629,6 +1631,91 @@ class W3dConverterPhaseEvidenceTests(unittest.TestCase):
         )
         self.assertEqual(ledger.success_replays, 1)
         self.assertEqual(ledger.failure_replays, 0)
+
+    def _run_main_with_conversion_error(
+        self, error: BaseException, root: Path
+    ) -> tuple[BaseException, str, str]:
+        model = root / "private-model.w3d"
+        model.write_bytes(b"fixture")
+        namespace = types.SimpleNamespace(
+            plugin_root=root / "plugin",
+            model=model,
+            asset_kind="animated",
+            animations=[root / "private-animation.w3d"],
+            required_equipment=[],
+            excluded_optional_meshes=[],
+            proven_root_rigid_bake=False,
+            proven_pivot_only_model=False,
+            retail_absent_textures=[],
+            output=root / "private-output.glb",
+        )
+
+        def fail(**_kwargs):
+            raise error
+
+        out = io.StringIO()
+        err = io.StringIO()
+        with (
+            mock.patch.object(CONVERTER, "parse_args", lambda: namespace),
+            mock.patch.object(CONVERTER, "initialize_w3d_converter", lambda _root: None),
+            mock.patch.object(CONVERTER, "convert_w3d_job", fail),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            with self.assertRaises(type(error)) as raised:
+                CONVERTER.main()
+        return raised.exception, out.getvalue(), err.getvalue()
+
+    def test_single_job_main_prints_sanitized_evidence_to_stderr(self) -> None:
+        error = CONVERTER.W3DConversionPhaseError(
+            "animation-output-capture-accounting", "runtime"
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            raised, stdout, stderr = self._run_main_with_conversion_error(error, root)
+
+        self.assertIs(raised, error)
+        self.assertNotIn("OPENBFME_W3D_OK", stdout)
+        lines = [line for line in stderr.splitlines() if line.strip()]
+        self.assertEqual(len(lines), 1)
+        marker, payload = lines[0].split(" ", 1)
+        self.assertEqual(marker, "OPENBFME_W3D_FAIL")
+        self.assertEqual(
+            json.loads(payload),
+            {
+                "failure_kind": "runtime",
+                "failure_phase": "animation-output-capture-accounting",
+            },
+        )
+        # The marker is the only new surface: it must not carry retail paths.
+        self.assertNotIn("private-model", stderr)
+        self.assertNotIn("private-output", stderr)
+
+    def test_single_job_main_reports_every_phase_and_kind_pair(self) -> None:
+        for phase, kind in (
+            ("model-hierarchy-dependency-validation", "value"),
+            ("generated-image-validation", "assertion"),
+            ("geometry-validation", "control-flow"),
+        ):
+            with self.subTest(phase=phase, kind=kind):
+                error = CONVERTER.W3DConversionPhaseError(phase, kind)
+                with tempfile.TemporaryDirectory() as raw:
+                    _raised, _stdout, stderr = self._run_main_with_conversion_error(
+                        error, Path(raw)
+                    )
+                self.assertEqual(
+                    json.loads(stderr.split(" ", 1)[1]),
+                    {"failure_kind": kind, "failure_phase": phase},
+                )
+
+    def test_single_job_main_leaves_other_failures_untouched(self) -> None:
+        secret = "PRIVATE_UNRELATED_FAILURE"
+        with tempfile.TemporaryDirectory() as raw:
+            _raised, stdout, stderr = self._run_main_with_conversion_error(
+                RuntimeError(secret), Path(raw)
+            )
+        self.assertEqual(stdout, "")
+        self.assertNotIn("OPENBFME_W3D_FAIL", stderr)
 
     def test_invalid_evidence_fails_closed_without_echoing_values(self) -> None:
         for phase, kind in (
