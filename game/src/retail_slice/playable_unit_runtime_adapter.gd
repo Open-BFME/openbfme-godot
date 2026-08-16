@@ -265,6 +265,99 @@ static func ship_particle_attachments(document: Dictionary) -> Array[Dictionary]
 	return output
 
 
+static func _optional_resolved_string(value: Variant) -> String:
+	## An absent descriptor field is null, and String(null) is not a conversion.
+	var resolved: Variant = _resolved_value(value)
+	if typeof(resolved) != TYPE_STRING and typeof(resolved) != TYPE_STRING_NAME:
+		return ""
+	return String(resolved).strip_edges()
+
+
+static func ship_weapon_attack(
+	document: Dictionary, source_unit_scale: float, tick_seconds: float = TICK_SECONDS
+) -> Dictionary:
+	## Project a naval descriptor's resolved combat block into the structure
+	## weapon row the sim already fires (`structures[id]["attack"]`).
+	##
+	## Only four of RotWK's thirteen effective SHIP objects author a weapon the
+	## runtime can execute, and the refusals matter as much as the admissions:
+	## the corsair/battleship rangefinder weapons compile a weaponId with no
+	## damage and no range, and ElvenFireShip authors AttackRange = 0. Naming
+	## each refusal is the point — an invented range or damage would let a hull
+	## fire numbers retail never wrote.
+	if String(document.get("category", "")) != "naval":
+		return {"ok": false, "reason": "not-a-naval-document"}
+	if source_unit_scale <= 0.0 or tick_seconds <= 0.0:
+		return {"ok": false, "reason": "invalid-source-scale-or-tick"}
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	var simulation: Variant = registration.get("simulation", {})
+	if typeof(simulation) != TYPE_DICTIONARY:
+		return {"ok": false, "reason": "no-simulation-block"}
+	var resolved: Variant = (simulation as Dictionary).get("resolved", {})
+	if typeof(resolved) != TYPE_DICTIONARY:
+		return {"ok": false, "reason": "no-resolved-simulation-block"}
+	var raw_combat: Variant = (resolved as Dictionary).get("combat")
+	if typeof(raw_combat) != TYPE_DICTIONARY or (raw_combat as Dictionary).is_empty():
+		return {"ok": false, "reason": "no-authored-weapon"}
+	var combat := raw_combat as Dictionary
+	var weapon_id := _optional_resolved_string(combat.get("weaponId"))
+	if weapon_id == "":
+		return {"ok": false, "reason": "weapon-id-missing"}
+	var damage_value: Variant = _resolved_value(combat.get("damage"))
+	if typeof(damage_value) not in [TYPE_INT, TYPE_FLOAT] or float(damage_value) <= 0.0:
+		return {"ok": false, "reason": "damage-not-authored:%s" % weapon_id}
+	var range_value: Variant = _resolved_value(combat.get("attackRange"))
+	if typeof(range_value) not in [TYPE_INT, TYPE_FLOAT] or float(range_value) <= 0.0:
+		return {"ok": false, "reason": "attack-range-not-positive:%s" % weapon_id}
+	var minimum_value: Variant = _resolved_value(combat.get("minimumAttackRange"))
+	var minimum_source := 0.0
+	if typeof(minimum_value) in [TYPE_INT, TYPE_FLOAT]:
+		minimum_source = maxf(0.0, float(minimum_value))
+	if minimum_source >= float(range_value):
+		return {"ok": false, "reason": "minimum-range-not-below-attack-range:%s" % weapon_id}
+	# DelayBetweenShots is the one field retail routinely leaves unwritten, and
+	# the importer says so in the row's `semantic` instead of pretending it was
+	# authored. Carry that distinction through rather than losing it here.
+	var delay_row: Variant = combat.get("delayBetweenShotsMs")
+	var delay_value: Variant = _resolved_value(delay_row)
+	if typeof(delay_value) not in [TYPE_INT, TYPE_FLOAT] or float(delay_value) < 0.0:
+		return {"ok": false, "reason": "delay-between-shots-unresolved:%s" % weapon_id}
+	var delay_source := "authored"
+	if typeof(delay_row) == TYPE_DICTIONARY and String((delay_row as Dictionary).get("semantic", "")) != "":
+		delay_source = "sage-default"
+	var pre_attack_value: Variant = _resolved_value(combat.get("preAttackDelayMs"))
+	var pre_attack_ms := 0.0
+	if typeof(pre_attack_value) in [TYPE_INT, TYPE_FLOAT]:
+		pre_attack_ms = maxf(0.0, float(pre_attack_value))
+	var attack := {
+		"weapon_id": weapon_id,
+		"damage": float(damage_value),
+		"damage_type": _optional_resolved_string(combat.get("damageType")).to_lower(),
+		"range": float(range_value) * source_unit_scale,
+		"range_source": float(range_value),
+		"minimum_range": minimum_source * source_unit_scale,
+		"minimum_range_source": minimum_source,
+		"period_ticks": maxi(1, roundi(float(delay_value) / (tick_seconds * 1000.0))),
+		"pre_attack_ticks": maxi(0, roundi(pre_attack_ms / (tick_seconds * 1000.0))),
+		"delay_between_shots_ms": float(delay_value),
+		"delay_between_shots_source": delay_source,
+		"cooldown": 0,
+		"affects": "ENEMIES",
+	}
+	var projectile_id := _optional_resolved_string(combat.get("projectileObjectId"))
+	var projectile_speed: Variant = _resolved_value(combat.get("projectileSpeed"))
+	if projectile_id != "":
+		# A projectile object without a speed has no flight time to compute, and
+		# guessing one would move the impact tick. Refuse the pair, not half.
+		if typeof(projectile_speed) not in [TYPE_INT, TYPE_FLOAT] or float(projectile_speed) <= 0.0:
+			return {"ok": false, "reason": "projectile-speed-not-authored:%s" % weapon_id}
+		attack["projectile_object_id"] = projectile_id
+		attack["projectile_speed"] = float(projectile_speed) * source_unit_scale
+		attack["projectile_speed_source"] = float(projectile_speed)
+		attack["next_projectile_token"] = 1
+	return {"ok": true, "reason": "", "attack": attack}
+
+
 static func ship_particle_attachments_for_conditions(
 	document: Dictionary, active_conditions: Array
 ) -> Array[Dictionary]:
