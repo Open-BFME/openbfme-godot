@@ -245,68 +245,95 @@ func _section_cycles(game_state: Node, content_db: Node, menu_scene: PackedScene
 	print("MENU_MATCH_CYCLE baseline objects=%d resources=%d nodes=%d orphans=%d children=%d" % [
 		baseline["objects"], baseline["resources"], baseline["nodes"], baseline["orphans"], baseline_children,
 	])
+	_static_cache_census("baseline")
 	_check("cycle1_teardown_leaves_no_orphans", int(baseline["orphans"]) == 0, "orphans=%d" % int(baseline["orphans"]))
 
-	# ---- Cycle 2: fresh menu, stale GameState, different (legacy) config ---
+	# ---- Cycles 2 and 3: fresh menu, stale GameState, legacy config ---------
 	# Production never resets GameState between matches; the menu's validated
 	# rewrite is what protects the second launch. Prove the hazard is real,
-	# then prove the rewrite covers it.
-	_check("cycle2_sees_cycle1_stale_roster", (game_state.get("retail_team_setup") as Array).size() == cycle1_setup.size(),
-		"stale=%d" % (game_state.get("retail_team_setup") as Array).size())
-	var menu2 = menu_scene.instantiate()
-	root.add_child(menu2)
-	# Wait for the skirmish list, not for two frames. The army dropdowns are
-	# populated off the boot path; selecting a faction in an empty dropdown
-	# silently keeps the default, which is how this cycle came to record a
-	# faction nobody had chosen.
-	var cycle2_ready_frames := 0
-	while not bool(menu2.get("_skirmish_options_ready")) and cycle2_ready_frames < 1200:
-		cycle2_ready_frames += 1
-		await process_frame
-	_check("cycle2_menu_ready", menu2.theme != null and bool(menu2.get("_skirmish_options_ready")),
-		"frames=%d" % cycle2_ready_frames)
-	var setup2 = menu2.get_node("Center/SoloFlyout")
-	_check("cycle2_fresh_menu_defaults_two_rows", int(setup2.player_row_count) == 2)
+	# then prove the rewrite covers it. Cycle 3 repeats cycle 2 exactly: a
+	# per-match retention only shows up as a slope, and two cycles cannot tell
+	# a one-off warm-up apart from one.
 	# Angmar when converted, else cycle 1's row-1 faction: either way the
 	# faction set is a subset of cycle 1's, so the object baseline stays strict.
-	var cycle2_enemy := "angmar" if converted.has("angmar") else cycle1_row1
-	_select_faction(setup2.row_army_opts[0], "men")
-	_select_faction(setup2.row_army_opts[1], cycle2_enemy)
-	var cycle2_error := String(menu2.retail_launch_error())
-	_check("cycle2_launch_gate_open", cycle2_error == "", cycle2_error)
-	_check("cycle2_selection_applies", bool(menu2.apply_skirmish_selection()))
-	_check("cycle2_rewrite_clears_stale_roster", (game_state.get("retail_team_setup") as Array).is_empty(),
-		"size=%d" % (game_state.get("retail_team_setup") as Array).size())
-	_check("cycle2_is_single_player", String(game_state.get("retail_mp_mode")) == "")
-	_check("cycle2_enemy_faction_recorded", String(game_state.get("retail_enemy_faction")) == cycle2_enemy,
-		String(game_state.get("retail_enemy_faction")))
-	menu2.queue_free()
-	await process_frame
-	await process_frame
+	var repeat_enemy := "angmar" if converted.has("angmar") else cycle1_row1
+	var previous_roster_size := cycle1_setup.size()
+	for cycle_index in [2, 3]:
+		var label := "cycle%d" % cycle_index
+		_check("%s_sees_previous_stale_roster" % label,
+			(game_state.get("retail_team_setup") as Array).size() == previous_roster_size,
+			"stale=%d expected=%d" % [(game_state.get("retail_team_setup") as Array).size(), previous_roster_size])
+		_probe_objects("%s_before_menu" % label)
+		var repeat_menu = menu_scene.instantiate()
+		root.add_child(repeat_menu)
+		# Wait for the skirmish list, not for two frames. The army dropdowns are
+		# populated off the boot path; selecting a faction in an empty dropdown
+		# silently keeps the default, which is how this cycle came to record a
+		# faction nobody had chosen.
+		var ready_frames := 0
+		while not bool(repeat_menu.get("_skirmish_options_ready")) and ready_frames < 1200:
+			ready_frames += 1
+			await process_frame
+		_check("%s_menu_ready" % label, repeat_menu.theme != null and bool(repeat_menu.get("_skirmish_options_ready")),
+			"frames=%d" % ready_frames)
+		var repeat_setup = repeat_menu.get_node("Center/SoloFlyout")
+		_check("%s_fresh_menu_defaults_two_rows" % label, int(repeat_setup.player_row_count) == 2)
+		# Stay on cycle 1's map for the same reason row 1 stays on cycle 1's
+		# faction: the object baseline below is strict, and a map's first match
+		# in a process warms per-map state that is a cache, not a leak. MEASURED
+		# (2026-08-16): letting these cycles fall through to the default map ran
+		# cycle 1 on evendim and cycles 2-3 on fords-of-isen-ii, which showed as
+		# a flat +7 objects at cycle 2 and then +0 at cycle 3 — a first touch
+		# wearing a leak's clothes. Same map for every cycle, and a real
+		# retention has nowhere to hide.
+		if cycle1_map != "":
+			_check("%s_reuses_cycle1_map" % label, _select_map_by_id(repeat_menu, repeat_setup, cycle1_map), cycle1_map)
+		_select_faction(repeat_setup.row_army_opts[0], "men")
+		_select_faction(repeat_setup.row_army_opts[1], repeat_enemy)
+		var repeat_error := String(repeat_menu.retail_launch_error())
+		_check("%s_launch_gate_open" % label, repeat_error == "", repeat_error)
+		_check("%s_selection_applies" % label, bool(repeat_menu.apply_skirmish_selection()))
+		_check("%s_rewrite_clears_stale_roster" % label, (game_state.get("retail_team_setup") as Array).is_empty(),
+			"size=%d" % (game_state.get("retail_team_setup") as Array).size())
+		_check("%s_is_single_player" % label, String(game_state.get("retail_mp_mode")) == "")
+		_check("%s_enemy_faction_recorded" % label, String(game_state.get("retail_enemy_faction")) == repeat_enemy,
+			String(game_state.get("retail_enemy_faction")))
+		previous_roster_size = 0
+		repeat_menu.queue_free()
+		await process_frame
+		await process_frame
+		_probe_objects("%s_after_menu_free" % label)
 
-	var cycle2_ok := await _boot_tick_teardown_slice(slice_scene, "cycle2", 2, cycle2_enemy)
-	if not cycle2_ok:
-		return
+		var repeat_ok := await _boot_tick_teardown_slice(slice_scene, label, 2, repeat_enemy)
+		if not repeat_ok:
+			return
 
-	var counts := await _settled_counts()
-	_check("cycle2_objects_return_to_baseline", int(counts["objects"]) <= int(baseline["objects"]),
-		"objects %d > baseline %d" % [counts["objects"], baseline["objects"]])
-	_check("cycle2_resources_return_to_baseline", int(counts["resources"]) <= int(baseline["resources"]),
-		"resources %d > baseline %d" % [counts["resources"], baseline["resources"]])
-	_check("cycle2_nodes_return_to_baseline", int(counts["nodes"]) <= int(baseline["nodes"]),
-		"nodes %d > baseline %d" % [counts["nodes"], baseline["nodes"]])
-	_check("cycle2_no_orphan_nodes", int(counts["orphans"]) <= int(baseline["orphans"]),
-		"orphans %d > baseline %d" % [counts["orphans"], baseline["orphans"]])
-	_check("cycle2_root_children_return_to_autoload_set", root.get_child_count() == baseline_children,
-		"children %d != baseline %d" % [root.get_child_count(), baseline_children])
+		var counts := await _settled_counts()
+		_static_cache_census(label)
+		# THE RETENTION CHECK. Objects must come back to the warm baseline
+		# exactly — not "close to". Nodes, resources and orphans already did;
+		# for a long time the object counter did not, and nothing said why.
+		_check("%s_objects_return_to_baseline" % label, int(counts["objects"]) <= int(baseline["objects"]),
+			"objects %d > baseline %d (delta %d)" % [
+				counts["objects"], baseline["objects"], int(counts["objects"]) - int(baseline["objects"]),
+			])
+		_check("%s_resources_return_to_baseline" % label, int(counts["resources"]) <= int(baseline["resources"]),
+			"resources %d > baseline %d" % [counts["resources"], baseline["resources"]])
+		_check("%s_nodes_return_to_baseline" % label, int(counts["nodes"]) <= int(baseline["nodes"]),
+			"nodes %d > baseline %d" % [counts["nodes"], baseline["nodes"]])
+		_check("%s_no_orphan_nodes" % label, int(counts["orphans"]) <= int(baseline["orphans"]),
+			"orphans %d > baseline %d" % [counts["orphans"], baseline["orphans"]])
+		_check("%s_root_children_return_to_autoload_set" % label, root.get_child_count() == baseline_children,
+			"children %d != baseline %d" % [root.get_child_count(), baseline_children])
 
-	# Integrated reset seam: after the full double cycle, one reset_match call
+	# Integrated reset seam: after the full triple cycle, one reset_match call
 	# returns the whole retail selection to its defaults.
 	game_state.call("reset_match")
 	_check_reset_defaults(game_state, "post_cycle")
 
 
 func _boot_tick_teardown_slice(slice_scene: PackedScene, label: String, expected_teams: int, expected_enemy: String) -> bool:
+	_probe_objects("%s_before_slice" % label)
 	var slice = slice_scene.instantiate()
 	root.add_child(slice)
 	var booted: bool = await _pump_until(func() -> bool:
@@ -316,6 +343,12 @@ func _boot_tick_teardown_slice(slice_scene: PackedScene, label: String, expected
 		slice.queue_free()
 		await process_frame
 		return false
+	# The map and enemy each cycle actually booted. Printed because the object
+	# baseline is only meaningful when these match across cycles — a silent map
+	# change once read as a seven-object leak.
+	print("MENU_MATCH_CYCLE config %s map=%s enemy=%s" % [
+		label, str(slice.get("map_id")), str(slice.get("enemy_faction")),
+	])
 	var sim = slice.get("simulation")
 	var roster: Array = sim.get("_team_roster") as Array
 	_check("%s_sim_seats_expected_team_count" % label, roster.size() == expected_teams,
@@ -327,12 +360,15 @@ func _boot_tick_teardown_slice(slice_scene: PackedScene, label: String, expected
 		return int(sim.tick_index) >= TARGET_TICK, TICK_DEADLINE_MS)
 	_check("%s_sim_ticks_to_60" % label, ticked and int(sim.tick_index) >= TARGET_TICK,
 		"tick=%d" % int(sim.tick_index))
+	_probe_objects("%s_after_ticks" % label)
 	# Back to menu: the HUD's main-menu exit runs cleanup + scene free; the
 	# runner owns scene lifecycle, so it runs the same teardown surface.
 	slice.cleanup_for_test()
+	_probe_objects("%s_after_cleanup" % label)
 	slice.queue_free()
 	await process_frame
 	await process_frame
+	_probe_objects("%s_after_slice_free" % label)
 	return true
 
 
@@ -444,6 +480,22 @@ func _select_map_with_capacity(menu, setup, minimum_capacity: int) -> String:
 	return ""
 
 
+## Select a named map row on a freshly instantiated menu. The repeat cycles use
+## it to stay on cycle 1's map: see the object-baseline note in _section_cycles.
+func _select_map_by_id(menu, setup, map_id: String) -> bool:
+	var map_rows: Array = setup.map_rows
+	for index in range(map_rows.size()):
+		var row: Dictionary = map_rows[index]
+		if String(row.get("map_id", "")) != map_id:
+			continue
+		var button := row["button"] as Button
+		if button == null or button.disabled:
+			return false
+		menu._on_map_row_pressed(index)
+		return true
+	return false
+
+
 func _select_faction(option: OptionButton, faction_id: String) -> void:
 	for index in range(option.item_count):
 		if String(option.get_item_metadata(index)) == faction_id:
@@ -469,6 +521,67 @@ func _settled_counts() -> Dictionary:
 		"nodes": int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)),
 		"orphans": int(Performance.get_monitor(Performance.OBJECT_ORPHAN_NODE_COUNT)),
 	}
+
+
+## Object-count probe. ObjectDB ids encode a slot plus a validator rather than a
+## monotonic counter, so live instances cannot be enumerated from a script; what
+## localizes a retention is the counter read at each step of a cycle, which says
+## WHICH step of menu -> match -> menu failed to give its objects back.
+func _probe_objects(label: String) -> int:
+	var count := int(Performance.get_monitor(Performance.OBJECT_COUNT))
+	print("MENU_MATCH_CYCLE probe %s objects=%d nodes=%d resources=%d orphans=%d" % [
+		label,
+		count,
+		int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)),
+		int(Performance.get_monitor(Performance.OBJECT_RESOURCE_COUNT)),
+		int(Performance.get_monitor(Performance.OBJECT_ORPHAN_NODE_COUNT)),
+	])
+	return count
+
+
+## Sizes of the process-lifetime caches a match can grow. OBJECT_COUNT says a
+## cycle kept something; ObjectDB ids cannot be enumerated from a script, so this
+## is how a retention gets a name: whichever row moves between two identical
+## cycles is the one holding the objects.
+const CENSUS_STATIC_CACHES := [
+	["asset_factory", "res://src/view/asset_factory.gd", ["_mesh_cache", "_private_retail_pack_cache"]],
+	["house_color", "res://src/retail_slice/retail_house_color.gd",
+		["team_color_overrides", "_stem_to_mask_path", "_mask_textures", "_materials"]],
+	["selection_decal", "res://src/retail_slice/retail_selection_decal.gd",
+		["_source_image_cache", "_merged_texture_cache"]],
+	["faction_manifest", "res://src/retail_slice/retail_faction_manifest.gd", ["_retail_faction_sides_cache"]],
+	["archer_projectile", "res://src/retail_slice/retail_archer_projectile_controller.gd", ["_validated_asset_cache"]],
+	["pack_capability", "res://src/content/pack_capability.gd", ["_declaration_cache"]],
+	["script_vocabulary", "res://src/script/script_vocabulary.gd", ["_actions", "_conditions", "_id_maps"]],
+	["user_settings", "res://src/ui/user_settings.gd", ["_key_pictures"]],
+	["boot_profile", "res://src/core/boot_profile.gd", ["_marks", "_sinks", "_failure_sinks"]],
+]
+
+
+func _static_cache_census(label: String) -> void:
+	var parts: Array = []
+	for entry_value in CENSUS_STATIC_CACHES:
+		var entry: Array = entry_value
+		var script_resource: Variant = load(String(entry[1]))
+		if script_resource == null:
+			continue
+		for field_value in entry[2] as Array:
+			var field := String(field_value)
+			var value: Variant = script_resource.get(field)
+			var size := -1
+			if value is Dictionary:
+				size = (value as Dictionary).size()
+			elif value is Array:
+				size = (value as Array).size()
+			parts.append("%s.%s=%d" % [String(entry[0]), field, size])
+	var mod_loader := root.get_node_or_null("ModLoader")
+	if mod_loader != null:
+		parts.append("mod_loader.diagnostics=%d" % (mod_loader.get("diagnostics") as Array).size())
+	var content_db := root.get_node_or_null("ContentDB")
+	if content_db != null:
+		parts.append("content_db.registry_snapshots=%d" % (content_db.get("_registry_snapshots") as Dictionary).size())
+		parts.append("content_db.bundle_objects=%d" % (content_db.get("bundle_objects") as Dictionary).size())
+	print("MENU_MATCH_CYCLE census %s %s" % [label, " ".join(PackedStringArray(parts))])
 
 
 func _pump_until(predicate: Callable, deadline_ms: int) -> bool:
