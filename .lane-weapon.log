@@ -1,0 +1,184 @@
+﻿Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
+
+[ModLoader] content source=workspace active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
+[ContentDB] interface-art: 915 images from C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/bfme2-men-vslice/7de517bf146582f10741750b50d63f9955c42d1fe2aa13200757fc6fb29f217a/data/interface-art/index.json
+[ContentDB] interface-art: 1115 images from C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b/data/interface-art/index.json
+[ContentDB] legacy-demo: packs=23 units=33 buildings=42 factions=4 powers=10 research=7 maps=4
+[ContentDB] playable: factions=7 (angmar, dwarves, elves, isengard, men, mordor, wild) units=137 structures=148 skipped_units=0
+SHIP_WEAPON PASS elven_bombard_admits_the_authored_weapon
+SHIP_WEAPON PASS elven_bombard_range_band_scales_from_source
+SHIP_WEAPON PASS elven_bombard_fire_rate_is_the_authored_fifty_ticks
+SHIP_WEAPON PASS elven_bombard_projectile_and_speed_travel_together
+SHIP_WEAPON PASS elven_bombard_delay_is_recorded_as_authored
+SHIP_WEAPON PASS evil_bombard_pre_attack_delay_is_three_ticks
+SHIP_WEAPON PASS fire_ship_ram_admits_at_the_authored_range
+SHIP_WEAPON PASS unwritten_delay_is_marked_a_sage_default_not_an_authored_rate
+SHIP_WEAPON PASS zero_attack_range_is_refused_by_name
+SHIP_WEAPON PASS rangefinder_without_damage_is_refused_by_name
+SHIP_WEAPON PASS transport_without_a_combat_block_is_refused_by_name
+SHIP_WEAPON PASS a_land_document_never_reaches_the_naval_weapon_projection
+Godot_v4.7-stable_win64_console.exe : ERROR: [RetailSliceSim] structure armor: kind 'fortress' has no compiled armor 
+contract; structure damage will be refused for that kind
+At C:\Users\Jonathan\AppData\Local\Temp\ps-script-99383a7c-d2e7-40ea-b065-9da2fb6589d4.ps1:94 char:79
++ ... nsole.exe"; & $g --headless --path game --script "res://tests/ship_we ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (ERROR: [RetailS...d for that kind:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_weapon_runtime_runner.gd:333)
+       [4] _test_bombard_ship_fires_on_authored_numbers (res://tests/ship_weapon_runtime_runner.gd:129)
+       [5] _run (res://tests/ship_weapon_runtime_runner.gd:39)
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_weapon_runtime_runner.gd:333)
+       [4] _test_bombard_ship_fires_on_authored_numbers (res://tests/ship_weapon_runtime_runner.gd:129)
+       [5] _run (res://tests/ship_weapon_runtime_runner.gd:39)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_weapon_runtime_runner.gd:333)
+       [4] _test_bombard_ship_fires_on_authored_numbers (res://tests/ship_weapon_runtime_runner.gd:129)
+       [5] _run (res://tests/ship_weapon_runtime_runner.gd:39)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_weapon_runtime_runner.gd:333)
+       [4] _test_bombard_ship_fires_on_authored_numbers (res://tests/ship_weapon_runtime_runner.gd:129)
+       [5] _run (res://tests/ship_weapon_runtime_runner.gd:39)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_weapon_runtime_runner.gd:333)
+       [4] _test_bombard_ship_fires_on_authored_numbers (res://tests/ship_weapon_runtime_runner.gd:129)
+       [5] _run (res://tests/ship_weapon_runtime_runner.gd:39)
+SHIP_WEAPON PASS authored_weapon_launches_at_the_enemy_in_band
+SHIP_WEAPON PASS impact_tick_comes_from_the_authored_projectile_speed
+SHIP_WEAPON PASS shell_is_still_in_flight_before_the_authored_impact_tick
+SHIP_WEAPON PASS impact_applies_the_authored_damage
+SHIP_WEAPON PASS authored_fire_rate_gates_the_second_shell
+SHIP_WEAPON PASS second_shell_launches_once_the_authored_rate_elapses
+ERROR: [RetailSliceSim] structure armor: kind 'fortress' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_weapon_runtime_runner.gd:333)
+       [4] _test_range_band_is_honored (res://tests/ship_weapon_runtime_runner.gd:179)
+       [5] _run (res://tests/ship_weapon_runtime_runner.gd:40)
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_weapon_runtime_runner.gd:333)
+       [4] _test_range_band_is_honored (res://tests/ship_weapon_runtime_runner.gd:179)
+       [5] _run (res://tests/ship_weapon_runtime_runner.gd:40)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_weapon_runtime_runner.gd:333)
+       [4] _test_range_band_is_honored (res://tests/ship_weapon_runtime_runner.gd:179)
+       [5] _run (res://tests/ship_weapon_runtime_runner.gd:40)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_weapon_runtime_runner.gd:333)
+       [4] _test_range_band_is_honored (res://tests/ship_weapon_runtime_runner.gd:179)
+       [5] _run (res://tests/ship_weapon_runtime_runner.gd:40)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_weapon_runtime_runner.gd:333)
+       [4] _test_range_band_is_honored (res://tests/ship_weapon_runtime_runner.gd:179)
+       [5] _run (res://tests/ship_weapon_runtime_runner.gd:40)
+SHIP_WEAPON PASS target_inside_the_authored_minimum_range_is_not_engaged
+ERROR: [RetailSliceSim] structure armor: kind 'fortress' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_weapon_runtime_runner.gd:333)
+       [4] _test_range_band_is_honored (res://tests/ship_weapon_runtime_runner.gd:188)
+       [5] _run (res://tests/ship_weapon_runtime_runner.gd:40)
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_weapon_runtime_runner.gd:333)
+       [4] _test_range_band_is_honored (res://tests/ship_weapon_runtime_runner.gd:188)
+       [5] _run (res://tests/ship_weapon_runtime_runner.gd:40)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_weapon_runtime_runner.gd:333)
+       [4] _test_range_band_is_honored (res://tests/ship_weapon_runtime_runner.gd:188)
+       [5] _run (res://tests/ship_weapon_runtime_runner.gd:40)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_weapon_runtime_runner.gd:333)
+       [4] _test_range_band_is_honored (res://tests/ship_weapon_runtime_runner.gd:188)
+       [5] _run (res://tests/ship_weapon_runtime_runner.gd:40)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_weapon_runtime_runner.gd:333)
+       [4] _test_range_band_is_honored (res://tests/ship_weapon_runtime_runner.gd:188)
+       [5] _run (res://tests/ship_weapon_runtime_runner.gd:40)
+SHIP_WEAPON PASS target_beyond_the_authored_attack_range_is_not_engaged
+SHIP_WEAPON_RESULT passed=20 failed=0

@@ -13565,13 +13565,17 @@ func _attach_auto_heal_contract(row: Dictionary, contract: Dictionary) -> void:
 	var delay_milliseconds := float(_module_contract_value(fields, "HealingDelay", 0.0))
 	if amount <= 0 or delay_milliseconds <= 0.0:
 		return
-	var delay_ticks := _ship_contract_delay_ticks(delay_milliseconds)
-	if delay_ticks < 1:
+	var tick_milliseconds := TICK_SECONDS * 1000.0
+	var exact_ticks := delay_milliseconds / tick_milliseconds
+	# A cadence the tick rate cannot express would be rounded, i.e. healed at a
+	# rate nobody authored. Refuse and say so instead.
+	if exact_ticks < 1.0 or not is_equal_approx(exact_ticks, float(roundi(exact_ticks))):
 		push_error(
-			"[RetailSliceSim] AutoHealBehavior %s authors HealingDelay %.0fms, below one %.0fms sim tick; healing refused rather than run at an invented rate"
-			% [String(contract.get("tag", "")), delay_milliseconds, TICK_SECONDS * 1000.0]
+			"[RetailSliceSim] AutoHealBehavior %s authors HealingDelay %.0fms, which is not a whole %.0fms sim tick; healing refused rather than run at a rounded rate"
+			% [String(contract.get("tag", "")), delay_milliseconds, tick_milliseconds]
 		)
 		return
+	var delay_ticks := roundi(exact_ticks)
 	row["auto_heal_behavior"] = {
 		"healing_amount": amount,
 		"healing_delay_ticks": delay_ticks,

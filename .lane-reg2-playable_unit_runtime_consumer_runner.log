@@ -1,0 +1,161 @@
+﻿Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
+
+[ModLoader] content source=workspace active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
+[ContentDB] interface-art: 915 images from C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/bfme2-men-vslice/7de517bf146582f10741750b50d63f9955c42d1fe2aa13200757fc6fb29f217a/data/interface-art/index.json
+[ContentDB] interface-art: 1115 images from C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b/data/interface-art/index.json
+[ContentDB] legacy-demo: packs=23 units=33 buildings=42 factions=4 powers=10 research=7 maps=4
+[ContentDB] playable: factions=7 (angmar, dwarves, elves, isengard, men, mordor, wild) units=137 structures=148 skipped_units=0
+[RetailSliceSim] unit 'bfme2.object.fixture-monster' has no compiled armor block (stale pack); incoming damage uses the recorded SAGE passthrough 1.0
+[RetailSliceSim] unit 'bfme2.object.fixture-monster' has no authored damageType; its structure damage uses each kind's DEFAULT armor scalar
+Godot_v4.7-stable_win64_console.exe : ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor 
+contract; structure damage will be refused for that kind
+At C:\Users\Jonathan\AppData\Local\Temp\ps-script-f17b543e-6246-4127-804d-c9f19a0ea2f0.ps1:94 char:278
++ ... runner")) { & $g --headless --path game --script "res://tests/$r.gd"  ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (ERROR: [RetailS...d for that kind:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] _run (res://tests/playable_unit_runtime_consumer_runner.gd:168)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] _run (res://tests/playable_unit_runtime_consumer_runner.gd:168)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] _run (res://tests/playable_unit_runtime_consumer_runner.gd:168)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] _run (res://tests/playable_unit_runtime_consumer_runner.gd:168)
+[RetailSliceSim] unit 'bfme2.object.fixture-locked' has no authored damageType; its structure damage uses each kind's DEFAULT armor scalar
+WARNING: ContentDB: skipped 1 playable unit(s) in playable-unit-runtime-consumer-fixture: 
+playableUnit.broken:invalid-runtime
+   at: push_warning (core/variant/variant_utility.cpp:1033)
+   GDScript backtrace (most recent call first):
+       [0] _load_playable_unit_runtimes (res://src/content/content_db.gd:1120)
+       [1] _run (res://tests/playable_unit_runtime_consumer_runner.gd:363)
+WARNING: ContentDB: skipped 1 playable unit(s) in playable-unit-runtime-consumer-fixture: 
+playableUnit.unprovenhero:invalid-runtime
+   at: push_warning (core/variant/variant_utility.cpp:1033)
+   GDScript backtrace (most recent call first):
+       [0] _load_playable_unit_runtimes (res://src/content/content_db.gd:1120)
+       [1] _run (res://tests/playable_unit_runtime_consumer_runner.gd:410)
+WARNING: ContentDB: skipped 1 playable unit(s) in playable-unit-runtime-consumer-fixture: 
+playableUnit.routelesshero:invalid-runtime
+   at: push_warning (core/variant/variant_utility.cpp:1033)
+   GDScript backtrace (most recent call first):
+       [0] _load_playable_unit_runtimes (res://src/content/content_db.gd:1120)
+       [1] _run (res://tests/playable_unit_runtime_consumer_runner.gd:418)
+WARNING: ContentDB: skipped 1 playable unit(s) in playable-unit-runtime-consumer-fixture: 
+playableUnit.brokenability:invalid-runtime
+   at: push_warning (core/variant/variant_utility.cpp:1033)
+   GDScript backtrace (most recent call first):
+       [0] _load_playable_unit_runtimes (res://src/content/content_db.gd:1120)
+       [1] _run (res://tests/playable_unit_runtime_consumer_runner.gd:508)
+[RetailSliceSim] unit 'bfme2.object.fixture-monster' has no compiled armor block (stale pack); incoming damage uses the recorded SAGE passthrough 1.0
+[RetailSliceSim] unit 'bfme2.object.fixture-monster' has no authored damageType; its structure damage uses each kind's DEFAULT armor scalar
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] _run (res://tests/playable_unit_runtime_consumer_runner.gd:605)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] _run (res://tests/playable_unit_runtime_consumer_runner.gd:605)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] _run (res://tests/playable_unit_runtime_consumer_runner.gd:605)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] _run (res://tests/playable_unit_runtime_consumer_runner.gd:605)
+[RetailSliceSim] unit 'bfme2.object.fixture-monster' has no compiled armor block (stale pack); incoming damage uses the recorded SAGE passthrough 1.0
+[RetailSliceSim] unit 'bfme2.object.fixture-monster' has no authored damageType; its structure damage uses each kind's DEFAULT armor scalar
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] _run (res://tests/playable_unit_runtime_consumer_runner.gd:692)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] _run (res://tests/playable_unit_runtime_consumer_runner.gd:692)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] _run (res://tests/playable_unit_runtime_consumer_runner.gd:692)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] _run (res://tests/playable_unit_runtime_consumer_runner.gd:692)
+[RetailSliceSim] unit 'bfme2.object.fixture-monster' has no compiled armor block (stale pack); incoming damage uses the recorded SAGE passthrough 1.0
+[RetailSliceSim] unit 'bfme2.object.fixture-monster' has no authored damageType; its structure damage uses each kind's DEFAULT armor scalar
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] _run (res://tests/playable_unit_runtime_consumer_runner.gd:749)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] _run (res://tests/playable_unit_runtime_consumer_runner.gd:749)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] _run (res://tests/playable_unit_runtime_consumer_runner.gd:749)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] _run (res://tests/playable_unit_runtime_consumer_runner.gd:749)
+[RetailSliceSim] unit 'bfme2.object.fixture-victim' has no authored damageType; its structure damage uses each kind's DEFAULT armor scalar
+[RetailSliceSim] unit 'bfme2.object.fixture-ordinary' has no authored damageType; its structure damage uses each kind's DEFAULT armor scalar
+PLAYABLE_UNIT_RUNTIME_CONSUMER_OK passed=113 failed=0

@@ -125,6 +125,11 @@ var _level_health_additions: Dictionary = {}
 
 
 var _bundle_object_id := ""
+## Memoized playable-structure document for `_bundle_object_id`. Resolution walks
+## the whole structure registry when the bundle id is not itself a source object
+## id, so it is resolved once per identity — see _playable_structure_document.
+var _resolved_structure_document: Dictionary = {}
+var _resolved_structure_document_cached := false
 var _pack_root := ""
 ## Host/faction pack roots the lifecycle route registry may resolve from
 ## (structure pack first, then the selected host pack and faction pack roots).
@@ -195,17 +200,38 @@ func _enter_tree() -> void:
 
 
 func configure(entity: Dictionary, bundle_object_id: String = "", source_unit_scale: float = 0.0, scenario_game: String = "") -> void:
+	var profile := OS.get_environment("OPENBFME_PROFILE_INIT") == "1"
+	var mark := Time.get_ticks_msec()
+	var steps: Array = []
 	_scenario_game = scenario_game.to_lower() if scenario_game.to_lower() in ["bfme2", "rotwk"] else ""
 	scenario_authoritative_maximum_health = int(entity.get("maximum_health", 0))
 	_prepare_identity(entity, bundle_object_id)
+	if profile:
+		steps.append("identity=%d" % (Time.get_ticks_msec() - mark))
+		mark = Time.get_ticks_msec()
 	_source_unit_scale = source_unit_scale if is_finite(source_unit_scale) and source_unit_scale > 0.0 else 0.0
 	_seed_selection_radius()
 	_build_visual_root()
+	if profile:
+		steps.append("visual_root=%d" % (Time.get_ticks_msec() - mark))
+		mark = Time.get_ticks_msec()
 	_configure_selected_pack_contract(bundle_object_id)
+	if profile:
+		steps.append("pack_contract=%d" % (Time.get_ticks_msec() - mark))
+		mark = Time.get_ticks_msec()
 	_build_markers()
+	if profile:
+		steps.append("markers=%d" % (Time.get_ticks_msec() - mark))
+		mark = Time.get_ticks_msec()
 	_ingest_structure_upgrades(entity)
 	_configure_area_effect_presentation()
+	if profile:
+		steps.append("upgrades_area=%d" % (Time.get_ticks_msec() - mark))
+		mark = Time.get_ticks_msec()
 	sync_state(entity)
+	if profile:
+		steps.append("sync_state=%d" % (Time.get_ticks_msec() - mark))
+		print("RETAIL_STRUCTURE_CONFIGURE object=%s %s" % [bundle_object_id, " ".join(PackedStringArray(steps))])
 
 
 func configure_fixture(
@@ -1216,6 +1242,9 @@ func _prepare_identity(entity: Dictionary, bundle_object_id: String) -> void:
 	entity_id = int(entity.get("id", 0))
 	team = int(entity.get("team", 0))
 	structure_kind = String(entity.get("structure_kind", entity.get("kind", "fortress")))
+	if bundle_object_id != _bundle_object_id:
+		_resolved_structure_document = {}
+		_resolved_structure_document_cached = false
 	_bundle_object_id = bundle_object_id
 	name = "RetailStructure_%d_%s" % [entity_id, structure_kind]
 
@@ -2555,14 +2584,37 @@ func _passive_area_effect_from_document() -> Dictionary:
 
 
 func _playable_structure_document() -> Dictionary:
+	## MEASURED (Fords boot, 2026-08-16): the fallback scan below used to call
+	## ContentDB.get_playable_structure_runtime() once per registered structure,
+	## and that getter deep-copies the whole document on every call. A lair, whose
+	## bundle id never matches a source object id directly, therefore deep-copied
+	## all 148 structure documents to find its own — 96-130 ms per structure, and
+	## this function runs at least twice per structure (aura ring + well water FX).
+	## Across the twelve neutral lairs/inns Fords seeds that was ~1.3 s of the
+	## boot budget spent copying documents nothing mutates.
+	##
+	## The scan now reads ContentDB's shared per-generation registry snapshot
+	## (already an isolated copy — see content_db.gd _registry_snapshot) and the
+	## resolved document is memoized per structure. Both are read-only uses; a
+	## caller that needs to mutate must take its own duplicate.
+	if _resolved_structure_document_cached:
+		return _resolved_structure_document
+	_resolved_structure_document_cached = true
+	_resolved_structure_document = _resolve_playable_structure_document()
+	return _resolved_structure_document
+
+
+func _resolve_playable_structure_document() -> Dictionary:
 	if not ContentDB.has_method("get_playable_structure_runtime"):
 		return {}
 	var direct: Variant = ContentDB.get_playable_structure_runtime(_bundle_object_id)
 	if typeof(direct) == TYPE_DICTIONARY and not (direct as Dictionary).is_empty():
 		return direct as Dictionary
 	if ContentDB.has_method("get_playable_structure_runtimes"):
-		for source_id_value in ContentDB.get_playable_structure_runtimes().keys():
-			var document: Dictionary = ContentDB.get_playable_structure_runtime(String(source_id_value))
+		var runtimes: Dictionary = ContentDB.get_playable_structure_runtimes()
+		var folded_bundle := _bundle_object_id.to_lower().replace("bfme2.object.", "").replace("-", "")
+		for source_id_value in runtimes.keys():
+			var document: Dictionary = runtimes[source_id_value] as Dictionary
 			var object_id := String(document.get("objectId", ""))
 			if object_id == _bundle_object_id or String(document.get("id", "")) == _bundle_object_id:
 				return document
@@ -2572,9 +2624,7 @@ func _playable_structure_document() -> Dictionary:
 				life = (registration.get("presentation", {}) as Dictionary).get("buildingLifecycle", {}) as Dictionary
 			if String(life.get("objectId", "")) == _bundle_object_id:
 				return document
-			var folded_source := object_id.to_lower()
-			var folded_bundle := _bundle_object_id.to_lower().replace("bfme2.object.", "").replace("-", "")
-			if folded_source == folded_bundle:
+			if object_id.to_lower() == folded_bundle:
 				return document
 	var scenario_document := _scenario_structure_document_for_bundle_id(_bundle_object_id)
 	if not scenario_document.is_empty():

@@ -3003,12 +3003,18 @@ def _member_rows(
     payloads: list[dict[str, object]] = []
     consumed_modules: set[tuple[str, int, str, str]] = set()
     for block in _effective_top_blocks(ancestry):
-        # Only HordeContain defines the produced aggregate's member
-        # composition. HordeTransportContain.InitialPayload is cargo already
-        # inside an independently simulated carrier; treating that passenger
-        # as the ship's primary member replaces the hull health, visuals, and
-        # presentation attachments with the internal archer descriptor.
-        if block.kind.casefold() != "hordecontain":
+        # Only the horde member-composition contains define the produced
+        # aggregate's members: HordeContain (infantry hordes) and
+        # HorseHordeContain (cavalry hordes -- GondorKnightHorde authors
+        # GondorCavalry as its InitialPayload there). Restricting to
+        # "hordecontain" alone silently emptied every cavalry horde's
+        # member list and broke the single riders' composition too.
+        # HordeTransportContain.InitialPayload stays excluded: that is
+        # cargo already inside an independently simulated carrier, and
+        # treating that passenger as the ship's primary member replaces
+        # the hull health, visuals, and presentation attachments with the
+        # internal archer descriptor.
+        if block.kind.casefold() not in {"hordecontain", "horsehordecontain"}:
             continue
         assignments = list(block.assignments)
         for nested in _walk_blocks(block.blocks):

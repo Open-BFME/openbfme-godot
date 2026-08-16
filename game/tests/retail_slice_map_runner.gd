@@ -74,6 +74,19 @@ func _run() -> void:
 	_check("slice_ready", bool(slice.ready_ok), String(slice.failure_reason))
 	var initialization_total_ms := int(slice.initialization_metrics_ms.get("ready_complete", -1))
 	_check("initialization_completes_before_watchdog", initialization_total_ms >= 0 and initialization_total_ms <= INITIALIZATION_WATCHDOG_MS, "%d ms" % initialization_total_ms)
+	# A default boot classifies the faction roster and assembles its manifest
+	# ONCE. It used to do both twice — the `ready` phase and the match-side
+	# initialization repeating identical work against the same registry
+	# generation — which cost half a second of the readiness budget above.
+	var roster_profile: Dictionary = slice.roster_resolution_profile
+	_check(
+		"boot_resolves_faction_roster_once",
+		int(roster_profile.get("classify_calls", 0)) == 1 and int(roster_profile.get("manifest_calls", 0)) == 1,
+		"classify_calls=%d manifest_calls=%d" % [
+			int(roster_profile.get("classify_calls", 0)),
+			int(roster_profile.get("manifest_calls", 0)),
+		]
+	)
 	_check("map_id_matches_requested", String(slice.map_id) == requested_map, String(slice.map_id))
 	if bool(expected.get("five_maps_pack", false)):
 		_check("map_pack_is_five_maps_supplement", String(slice.map_pack_root).contains(FIVE_MAPS_PACK_ID), String(slice.map_pack_root))

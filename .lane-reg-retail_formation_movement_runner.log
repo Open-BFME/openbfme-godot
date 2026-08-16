@@ -1,0 +1,546 @@
+﻿Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
+
+[ModLoader] content source=workspace active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
+[ContentDB] interface-art: 915 images from C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/bfme2-men-vslice/7de517bf146582f10741750b50d63f9955c42d1fe2aa13200757fc6fb29f217a/data/interface-art/index.json
+[ContentDB] interface-art: 1115 images from C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b/data/interface-art/index.json
+[ContentDB] legacy-demo: packs=23 units=33 buildings=42 factions=4 powers=10 research=7 maps=4
+[ContentDB] playable: factions=7 (angmar, dwarves, elves, isengard, men, mordor, wild) units=137 structures=148 skipped_units=0
+Godot_v4.7-stable_win64_console.exe : ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor 
+contract; structure damage will be refused for that kind
+At C:\Users\Jonathan\AppData\Local\Temp\ps-script-12e061ba-81f2-441b-9af9-e947d9632408.ps1:94 char:195
++ ... runner")) { & $g --headless --path game --script "res://tests/$r.gd"  ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (ERROR: [RetailS...d for that kind:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_turn_rate_limits_heading_change (res://tests/retail_formation_movement_runner.gd:163)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:407)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_turn_rate_limits_heading_change (res://tests/retail_formation_movement_runner.gd:163)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:407)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_turn_rate_limits_heading_change (res://tests/retail_formation_movement_runner.gd:163)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:407)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_turn_rate_limits_heading_change (res://tests/retail_formation_movement_runner.gd:163)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:407)
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_legacy_default_snaps_heading_in_one_tick (res://tests/retail_formation_movement_runner.gd:184)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:408)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_legacy_default_snaps_heading_in_one_tick (res://tests/retail_formation_movement_runner.gd:184)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:408)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_legacy_default_snaps_heading_in_one_tick (res://tests/retail_formation_movement_runner.gd:184)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:408)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_legacy_default_snaps_heading_in_one_tick (res://tests/retail_formation_movement_runner.gd:184)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:408)
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_reform_beyond_threshold_pivots_in_place (res://tests/retail_formation_movement_runner.gd:203)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:409)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_reform_beyond_threshold_pivots_in_place (res://tests/retail_formation_movement_runner.gd:203)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:409)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_reform_beyond_threshold_pivots_in_place (res://tests/retail_formation_movement_runner.gd:203)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:409)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_reform_beyond_threshold_pivots_in_place (res://tests/retail_formation_movement_runner.gd:203)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:409)
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_cavalry_reform_threshold_is_wider (res://tests/retail_formation_movement_runner.gd:234)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:410)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_cavalry_reform_threshold_is_wider (res://tests/retail_formation_movement_runner.gd:234)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:410)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_cavalry_reform_threshold_is_wider (res://tests/retail_formation_movement_runner.gd:234)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:410)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_cavalry_reform_threshold_is_wider (res://tests/retail_formation_movement_runner.gd:234)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:410)
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_group_move_caps_at_slowest_authored_speed (res://tests/retail_formation_movement_runner.gd:259)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:411)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_group_move_caps_at_slowest_authored_speed (res://tests/retail_formation_movement_runner.gd:259)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:411)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_group_move_caps_at_slowest_authored_speed (res://tests/retail_formation_movement_runner.gd:259)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:411)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_group_move_caps_at_slowest_authored_speed (res://tests/retail_formation_movement_runner.gd:259)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:411)
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_single_unit_order_is_capped_at_its_own_speed (res://tests/retail_formation_movement_runner.gd:285)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:412)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_single_unit_order_is_capped_at_its_own_speed (res://tests/retail_formation_movement_runner.gd:285)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:412)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_single_unit_order_is_capped_at_its_own_speed (res://tests/retail_formation_movement_runner.gd:285)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:412)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_single_unit_order_is_capped_at_its_own_speed (res://tests/retail_formation_movement_runner.gd:285)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:412)
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_arrival_releases_the_group_cap (res://tests/retail_formation_movement_runner.gd:296)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:413)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_arrival_releases_the_group_cap (res://tests/retail_formation_movement_runner.gd:296)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:413)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_arrival_releases_the_group_cap (res://tests/retail_formation_movement_runner.gd:296)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:413)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_arrival_releases_the_group_cap (res://tests/retail_formation_movement_runner.gd:296)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:413)
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_legacy_default_has_no_group_cap (res://tests/retail_formation_movement_runner.gd:314)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:414)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_legacy_default_has_no_group_cap (res://tests/retail_formation_movement_runner.gd:314)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:414)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_legacy_default_has_no_group_cap (res://tests/retail_formation_movement_runner.gd:314)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:414)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_legacy_default_has_no_group_cap (res://tests/retail_formation_movement_runner.gd:314)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:414)
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_block_formation_uses_authored_anisotropic_spacing 
+(res://tests/retail_formation_movement_runner.gd:335)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:415)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_block_formation_uses_authored_anisotropic_spacing 
+(res://tests/retail_formation_movement_runner.gd:335)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:415)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_block_formation_uses_authored_anisotropic_spacing 
+(res://tests/retail_formation_movement_runner.gd:335)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:415)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_block_formation_uses_authored_anisotropic_spacing 
+(res://tests/retail_formation_movement_runner.gd:335)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:415)
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_legacy_block_formation_stays_isotropic (res://tests/retail_formation_movement_runner.gd:347)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:416)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_legacy_block_formation_stays_isotropic (res://tests/retail_formation_movement_runner.gd:347)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:416)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_legacy_block_formation_stays_isotropic (res://tests/retail_formation_movement_runner.gd:347)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:416)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_legacy_block_formation_stays_isotropic (res://tests/retail_formation_movement_runner.gd:347)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:416)
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_retail_movement_consumes_no_rng (res://tests/retail_formation_movement_runner.gd:366)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:417)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_retail_movement_consumes_no_rng (res://tests/retail_formation_movement_runner.gd:366)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:417)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_retail_movement_consumes_no_rng (res://tests/retail_formation_movement_runner.gd:366)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:417)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _test_retail_movement_consumes_no_rng (res://tests/retail_formation_movement_runner.gd:366)
+       [5] _run (res://tests/retail_formation_movement_runner.gd:417)
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _trace_replay (res://tests/retail_formation_movement_runner.gd:387)
+       [5] _test_retail_movement_replays_identically (res://tests/retail_formation_movement_runner.gd:380)
+       [6] _run (res://tests/retail_formation_movement_runner.gd:418)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _trace_replay (res://tests/retail_formation_movement_runner.gd:387)
+       [5] _test_retail_movement_replays_identically (res://tests/retail_formation_movement_runner.gd:380)
+       [6] _run (res://tests/retail_formation_movement_runner.gd:418)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _trace_replay (res://tests/retail_formation_movement_runner.gd:387)
+       [5] _test_retail_movement_replays_identically (res://tests/retail_formation_movement_runner.gd:380)
+       [6] _run (res://tests/retail_formation_movement_runner.gd:418)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _trace_replay (res://tests/retail_formation_movement_runner.gd:387)
+       [5] _test_retail_movement_replays_identically (res://tests/retail_formation_movement_runner.gd:380)
+       [6] _run (res://tests/retail_formation_movement_runner.gd:418)
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _trace_replay (res://tests/retail_formation_movement_runner.gd:387)
+       [5] _test_retail_movement_replays_identically (res://tests/retail_formation_movement_runner.gd:381)
+       [6] _run (res://tests/retail_formation_movement_runner.gd:418)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _trace_replay (res://tests/retail_formation_movement_runner.gd:387)
+       [5] _test_retail_movement_replays_identically (res://tests/retail_formation_movement_runner.gd:381)
+       [6] _run (res://tests/retail_formation_movement_runner.gd:418)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _trace_replay (res://tests/retail_formation_movement_runner.gd:387)
+       [5] _test_retail_movement_replays_identically (res://tests/retail_formation_movement_runner.gd:381)
+       [6] _run (res://tests/retail_formation_movement_runner.gd:418)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _make_sim (res://tests/retail_formation_movement_runner.gd:59)
+       [4] _trace_replay (res://tests/retail_formation_movement_runner.gd:387)
+       [5] _test_retail_movement_replays_identically (res://tests/retail_formation_movement_runner.gd:381)
+       [6] _run (res://tests/retail_formation_movement_runner.gd:418)
+RETAIL_FORMATION_MOVEMENT passed=31 failed=0

@@ -1423,6 +1423,7 @@
 			"classificationNote": "per-tick or timer-driven simulation behaviour",
 			"status": "consumed",
 			"consumedBy": [
+				"module_contracts.py",
 				"playable_unit_compiler.py"
 			],
 			"refusedBy": [],

@@ -1,0 +1,43 @@
+﻿Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
+
+[ModLoader] content source=workspace active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
+[ContentDB] interface-art: 915 images from C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/bfme2-men-vslice/7de517bf146582f10741750b50d63f9955c42d1fe2aa13200757fc6fb29f217a/data/interface-art/index.json
+[ContentDB] interface-art: 1115 images from C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b/data/interface-art/index.json
+[ContentDB] legacy-demo: packs=23 units=33 buildings=42 factions=4 powers=10 research=7 maps=4
+[ContentDB] playable: factions=7 (angmar, dwarves, elves, isengard, men, mordor, wild) units=137 structures=148 skipped_units=0
+HANDLERS_WP14 PASS registration_reports_no_errors ([])
+HANDLERS_WP14 PASS the_wp14_subset_package_is_present (["WP01-core-script-state", "WP02-blocked-fog-of-war", "WP03-blocked-transport-garrison", "WP04-blocked-misc-missing", "WP05-camera", "WP06-audio-video", "WP07-ui-radar-vfx", "WP08-hero-objectives", "WP09-experience-upgrades-spellbook-ai-core", "WP10-ai-economy-objectstatus", "WP10-object-lists", "WP11-basebuilding-ai", "WP11-basebuilding-ai-tail", "WP13-ai-powers-combat", "WP14-ai-pathing", "WP15-teams", "WP16-ai-units", "WP16-named-created", "WP17-ai-players", "WP17-player-command-points", "WP18-build-permissions", "WP19-map-spawn", "WP20-skirmish-conditions", "WP21-threat-queries", "WP22-sciences", "WP23-misc-verbs", "WP24-fog"])
+HANDLERS_WP14 PASS the_catalog_package_name_remains_free_for_the_completing_package (["WP01-core-script-state", "WP02-blocked-fog-of-war", "WP03-blocked-transport-garrison", "WP04-blocked-misc-missing", "WP05-camera", "WP06-audio-video", "WP07-ui-radar-vfx", "WP08-hero-objectives", "WP09-experience-upgrades-spellbook-ai-core", "WP10-ai-economy-objectstatus", "WP10-object-lists", "WP11-basebuilding-ai", "WP11-basebuilding-ai-tail", "WP13-ai-powers-combat", "WP14-ai-pathing", "WP15-teams", "WP16-ai-units", "WP16-named-created", "WP17-ai-players", "WP17-player-command-points", "WP18-build-permissions", "WP19-map-spawn", "WP20-skirmish-conditions", "WP21-threat-queries", "WP22-sciences", "WP23-misc-verbs", "WP24-fog"])
+HANDLERS_WP14 PASS every_served_member_is_registered ([])
+HANDLERS_WP14 PASS the_subset_is_two_members (served=2)
+HANDLERS_WP14 PASS no_served_member_is_blocked ([])
+HANDLERS_WP14 PASS both_members_count_as_coverage
+HANDLERS_WP14 PASS the_unowned_move_is_served (status=0)
+HANDLERS_WP14 PASS team_then_type_list_reach_orders_move_to_with_an_any_owner_target (["orders.move_to|1|Synthetic Harvest Team|nearest_type:SYNTH_RESOURCE_LIST|owner:"])
+HANDLERS_WP14 PASS team_scope_is_distinct_from_unit_and_player_scope
+HANDLERS_WP14 PASS the_owned_move_is_served (status=0)
+HANDLERS_WP14 PASS team_type_list_and_owner_arrive_in_signature_order (["orders.move_to|1|Synthetic Raid Team|nearest_type:SYNTH_FARM_LIST|owner:<Synthetic Enemy>"])
+HANDLERS_WP14 PASS an_empty_authored_player_refuses_rather_than_becoming_any_owner (status=3)
+HANDLERS_WP14 PASS the_refused_empty_player_does_not_reach_the_world_at_all ([])
+HANDLERS_WP14 PASS the_refusal_is_recorded_as_a_gap_naming_the_sentinel (["action TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE_OWNED_BY_PLAYER reason=world-refused count=1 first_script=\'fixture\' first_tick=0 detail=target_nearest_type treats an empty owner as \'any owner\', so an authored empty PLAYER on TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE_OWNED_BY_PLAYER cannot be expressed - serving it would silently turn the owned spelling into the any-owner spelling; NEEDED: an explicit any-owner tag on the nearest-type target instead of the empty-string sentinel"])
+HANDLERS_WP14 PASS a_world_without_an_orders_facet_refuses_the_unowned_move (status=3)
+HANDLERS_WP14 PASS the_unowned_refusal_names_the_missing_facet_method (["action TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE reason=world-refused count=1 first_script=\'fixture\' first_tick=0 detail=world does not implement orders.move_to"])
+HANDLERS_WP14 PASS a_world_without_an_orders_facet_refuses_the_owned_move (status=3 gaps=["action TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE_OWNED_BY_PLAYER reason=world-refused count=1 first_script=\'fixture\' first_tick=0 detail=world does not implement orders.move_to", "action TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE reason=world-refused count=1 first_script=\'fixture\' first_tick=0 detail=world does not implement orders.move_to"])
+HANDLERS_WP14 PASS a_short_unowned_move_argument_list_is_rejected
+HANDLERS_WP14 PASS a_long_unowned_move_argument_list_is_rejected
+HANDLERS_WP14 PASS a_short_owned_move_argument_list_is_rejected
+HANDLERS_WP14 PASS a_long_owned_move_argument_list_is_rejected
+HANDLERS_WP14 PASS a_mis_coded_player_slot_is_rejected_before_dispatch
+HANDLERS_WP14 PASS an_unobserved_team_code_is_accepted_and_still_read_as_text (status=0 calls=["orders.move_to|1|Synthetic Harvest Team|nearest_type:SYNTH_RESOURCE_LIST|owner:"])
+HANDLERS_WP14_RESULT passed=24 failed=0
+Godot_v4.7-stable_win64_console.exe : WARNING: 15 ObjectDB instances were leaked at exit (run with `--verbose` for 
+details).
+At C:\Users\Jonathan\AppData\Local\Temp\ps-script-12e061ba-81f2-441b-9af9-e947d9632408.ps1:94 char:195
++ ... runner")) { & $g --headless --path game --script "res://tests/$r.gd"  ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (WARNING: 15 Obj...` for details).:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+   at: cleanup (core/object/object.cpp:2535)
+ERROR: 2 resources still in use at exit (run with --verbose for details).
+   at: clear (core/io/resource.cpp:822)

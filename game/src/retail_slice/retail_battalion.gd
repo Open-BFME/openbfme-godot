@@ -7,6 +7,7 @@ const FormationScript = preload("res://src/retail_slice/retail_formation.gd")
 const AnimationTimingScript = preload("res://src/retail_slice/retail_animation_timing.gd")
 const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const AnimationStateSelectScript = preload("res://src/retail_slice/animation_state_select.gd")
+const ParticleSysBoneScript = preload("res://src/retail_slice/particle_sys_bone.gd")
 const DEFAULT_OBJECT_ID := "bfme2.object.gondor-fighter"
 const ARCHER_OBJECT_ID := "bfme2.object.gondor-archer"
 const RANGER_OBJECT_ID := "bfme2.object.gondor-ranger"
@@ -159,6 +160,8 @@ var _permanent_model_condition_flags: Dictionary = {}
 ## Typed AnimationState rows (moduleContracts or pack authoredAnimationStates).
 var animation_state_contracts: Array = []
 var last_animation_state_receipt: Dictionary = {}
+var particle_sys_bone_contracts: Array = []
+var last_particle_sys_bone_receipt: Dictionary = {}
 var equipment_contract: Dictionary = {}
 var equipment_contract_ready := false
 var unresolved_animation_track_count := 0
@@ -462,6 +465,40 @@ func bind_animation_state_contracts(source: Dictionary) -> int:
 	return animation_state_contracts.size()
 
 
+func bind_particle_sys_bone_contracts(source: Dictionary) -> int:
+	particle_sys_bone_contracts = collect_particle_sys_bone_contracts(source)
+	if particle_sys_bone_contracts.is_empty():
+		particle_sys_bone_contracts = collect_pack_particle_attachments(source)
+	return particle_sys_bone_contracts.size()
+
+
+func collect_particle_sys_bone_contracts(source: Dictionary) -> Array:
+	var out: Array = []
+	for row_value in _module_contract_arrays(source):
+		if typeof(row_value) != TYPE_DICTIONARY:
+			continue
+		var row := (row_value as Dictionary).duplicate(true)
+		if String(row.get("module", "")) != "ParticleSysBone":
+			continue
+		if not row.has("runtimeStatus") and row.has("runtime_status"):
+			row["runtimeStatus"] = String(row.get("runtime_status", ""))
+		out.append(row)
+	return out
+
+
+func collect_pack_particle_attachments(source: Dictionary) -> Array:
+	var out: Array = []
+	for visual_value in _visual_documents(source):
+		for row_value in (visual_value.get("particleAttachments", []) as Array):
+			if typeof(row_value) != TYPE_DICTIONARY:
+				continue
+			var row := (row_value as Dictionary).duplicate(true)
+			if String(row.get("field", "ParticleSysBone")) != "ParticleSysBone":
+				continue
+			out.append(row)
+	return out
+
+
 func collect_animation_state_contracts(source: Dictionary) -> Array:
 	var out: Array = []
 	for row_value in _module_contract_arrays(source):
@@ -632,12 +669,15 @@ func _bind_sub_object_upgrade_contracts_from_content(definition: Dictionary) -> 
 		bind_sub_object_upgrade_contracts(playable)
 		bind_model_condition_upgrade_contracts(playable)
 		bind_animation_state_contracts(playable)
+		bind_particle_sys_bone_contracts(playable)
 	if sub_object_upgrade_contracts.is_empty():
 		bind_sub_object_upgrade_contracts(definition)
 	if model_condition_upgrade_contracts.is_empty():
 		bind_model_condition_upgrade_contracts(definition)
 	if animation_state_contracts.is_empty():
 		bind_animation_state_contracts(definition)
+	if particle_sys_bone_contracts.is_empty():
+		bind_particle_sys_bone_contracts(definition)
 
 
 func _module_contract_arrays(source: Dictionary) -> Array:
@@ -1627,6 +1667,7 @@ func _play_member_state(member_index: int, state: String, action_token: int, res
 		_play_member_clip(player_value as AnimationPlayer, requested, play_state, member_index, blend, apply_phase, action_token)
 	if play_state.begins_with("attack") and action_token >= 0:
 		_last_action_token = maxi(_last_action_token, action_token)
+	_sync_member_particle_sys_bones(member_index, authored, conditions)
 
 
 func _drawable_conditions_for_state(state: String) -> Array:

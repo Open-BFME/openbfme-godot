@@ -1,0 +1,20 @@
+﻿Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
+
+[ModLoader] content source=workspace active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
+[ContentDB] interface-art: 915 images from C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/bfme2-men-vslice/7de517bf146582f10741750b50d63f9955c42d1fe2aa13200757fc6fb29f217a/data/interface-art/index.json
+[ContentDB] interface-art: 1115 images from C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b/data/interface-art/index.json
+[ContentDB] legacy-demo: packs=23 units=33 buildings=42 factions=4 powers=10 research=7 maps=4
+[ContentDB] playable: factions=7 (angmar, dwarves, elves, isengard, men, mordor, wild) units=137 structures=148 skipped_units=0
+WATER_SURFACE PASS four_water_sets_are_named
+WATER_SURFACE PASS afternoon_diffuse_is_water_ini
+WATER_SURFACE PASS transparency_is_water_ini
+WATER_SURFACE PASS afternoon_material_builds
+WATER_SURFACE PASS afternoon_albedo_is_vertex_times_diffuse
+WATER_SURFACE PASS afternoon_scroll_and_repeat_are_bound
+WATER_SURFACE PASS missing_pack_texture_is_named_not_invented
+WATER_SURFACE PASS night_material_builds
+WATER_SURFACE PASS night_scroll_is_zero
+WATER_SURFACE PASS unknown_time_of_day_returns_null
+WATER_SURFACE PASS unknown_time_of_day_names_the_gap
+WATER_SURFACE PASS battlefield_water_no_longer_hardcodes_teal
+RETAIL_WATER_SURFACE_RESULT passed=12 failed=0

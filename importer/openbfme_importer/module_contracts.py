@@ -166,6 +166,10 @@ ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE: Mapping[str, tuple[str, str]] = {
         "game/src/retail_slice/animation_state_select.gd",
         "game/tests/animation_state_select_runtime_runner.gd",
     ),
+    "ParticleSysBone": (
+        "game/src/retail_slice/particle_sys_bone.gd",
+        "game/tests/particle_sys_bone_runtime_runner.gd",
+    ),
 }
 
 
@@ -1109,6 +1113,127 @@ def compile_animation_states(
                     runtime_status=(
                         "executable"
                         if _animation_state_row_has_closed_runtime(fields)
+                        else "deferred"
+                    ),
+                )
+            )
+    rows.sort(key=lambda row: (str(row["sourceIni"]).casefold(), int(row["line"])))
+    return rows
+
+
+_PARTICLE_SYS_BONE_TOKEN_RE = re.compile(r'"([^"]*)"|(\S+)')
+_PARTICLE_SYS_BONE_PARENTS = frozenset(
+    {
+        "modelconditionstate",
+        "defaultmodelconditionstate",
+        "conditionstate",
+        "animationstate",
+        "idleanimationstate",
+        "transitionstate",
+    }
+)
+_PARTICLE_SYS_BONE_KIND_LABELS = {
+    "modelconditionstate": "ModelConditionState",
+    "defaultmodelconditionstate": "ModelConditionState",
+    "conditionstate": "ModelConditionState",
+    "animationstate": "AnimationState",
+    "idleanimationstate": "IdleAnimationState",
+    "transitionstate": "TransitionState",
+}
+
+
+def _particle_sys_bone_row_has_closed_runtime(fields: Mapping[str, object]) -> bool:
+    bone = fields.get("bone")
+    system = fields.get("particleSystem")
+    return (
+        isinstance(bone, Mapping)
+        and str(bone.get("value", "")).strip() != ""
+        and isinstance(system, Mapping)
+        and str(system.get("value", "")).strip() != ""
+    )
+
+
+def _particle_sys_bone_tokens(authored: str) -> list[str]:
+    tokens: list[str] = []
+    for match in _PARTICLE_SYS_BONE_TOKEN_RE.finditer(authored):
+        quoted, bare = match.group(1), match.group(2)
+        tokens.append(quoted if quoted is not None else bare)
+    return tokens
+
+
+def compile_particle_sys_bones(
+    lineage: Sequence[SageObject], target_id: str
+) -> list[dict[str, object]]:
+    """Typed ParticleSysBone rows from Draw ModelConditionState / AnimationState."""
+
+    rows: list[dict[str, object]] = []
+    _effective_top_blocks, _tokens, walk_blocks = _walk_helpers()
+    for block in walk_blocks(_effective_top_blocks(lineage)):
+        if block.kind.casefold() not in _PARTICLE_SYS_BONE_PARENTS:
+            continue
+        conditions = list(block.model_condition_tokens or block.header_tokens)
+        state_kind = _PARTICLE_SYS_BONE_KIND_LABELS[block.kind.casefold()]
+        for assignment in block.assignments:
+            if assignment.key.casefold() != "particlesysbone":
+                continue
+            tokens = _particle_sys_bone_tokens(assignment.value)
+            if len(tokens) < 2 or not tokens[0] or not tokens[1]:
+                raise ModuleContractError(
+                    f"{target_id} ParticleSysBone requires a bone and "
+                    f"FXParticleSystem at {assignment.source_virtual_path}:"
+                    f"{assignment.line}"
+                )
+            options = tokens[2:]
+            follow_values = [
+                option.split(":", 1)[1]
+                for option in options
+                if option.casefold().startswith("followbone:")
+            ]
+            if len(follow_values) > 1 or any(
+                value.casefold() not in {"yes", "no"}
+                for value in follow_values
+            ):
+                raise ModuleContractError(
+                    f"{target_id} ParticleSysBone has an invalid FollowBone "
+                    f"option at {assignment.source_virtual_path}:{assignment.line}"
+                )
+            fields: dict[str, object] = {
+                "stateKind": state_kind,
+                "conditions": {"value": [str(token) for token in conditions]},
+                "bone": {
+                    "authored": assignment.value,
+                    "value": tokens[0],
+                    "sourceIni": assignment.source_virtual_path,
+                    "line": assignment.line,
+                },
+                "particleSystem": {
+                    "authored": assignment.value,
+                    "value": tokens[1],
+                    "sourceIni": assignment.source_virtual_path,
+                    "line": assignment.line,
+                },
+            }
+            if follow_values:
+                fields["FollowBone"] = {
+                    "authored": follow_values[0],
+                    "value": follow_values[0].casefold() == "yes",
+                }
+            elif options:
+                fields["deferredFields"] = [
+                    {
+                        "name": "options",
+                        "authored": " ".join(options),
+                        "reason": "unclassified-particle-sys-bone-option",
+                    }
+                ]
+            rows.append(
+                _row(
+                    "ParticleSysBone",
+                    block,
+                    fields,
+                    runtime_status=(
+                        "executable"
+                        if _particle_sys_bone_row_has_closed_runtime(fields)
                         else "deferred"
                     ),
                 )
@@ -2758,6 +2883,31 @@ def _auto_heal_scalar(
     field["value"] = int(resolved) if float(resolved).is_integer() else float(resolved)
     field["defineProvenance"] = dict(provenance)
     return field
+
+
+def _auto_heal_row_has_closed_runtime(fields: Mapping[str, object]) -> bool:
+    """True only for the self-only cadence the sim's auto-heal step runs.
+
+    Mirrors `compile_auto_heal_behaviors`: any recorded unsupported semantic, a
+    missing magnitude, or an unresolved define keeps the row deferred.
+    """
+
+    if "unsupportedSemantics" in fields:
+        return False
+    starts_active = fields.get("StartsActive")
+    amount = fields.get("HealingAmount")
+    delay = fields.get("HealingDelay")
+    if not isinstance(starts_active, Mapping) or starts_active.get("value") is not True:
+        return False
+    if not isinstance(amount, Mapping) or not isinstance(delay, Mapping):
+        return False
+    amount_value = amount.get("value")
+    delay_ms = delay.get("milliseconds")
+    if isinstance(amount_value, bool) or not isinstance(amount_value, (int, float)):
+        return False
+    if isinstance(delay_ms, bool) or not isinstance(delay_ms, int):
+        return False
+    return float(amount_value) > 0.0 and float(amount_value).is_integer() and delay_ms > 0
 
 
 def compile_auto_heal_behaviors(
@@ -9087,6 +9237,7 @@ TYPED_MODULE_KINDS: frozenset[str] = frozenset(
         "TransitionDamageFX",
         "ModelConditionUpgrade",
         "AnimationState",
+        "ParticleSysBone",
         "InactiveBody",
         "SpawnPointProductionExitUpdate",
         "SupplyCenterProductionExitUpdate",
@@ -9217,6 +9368,7 @@ def compile_all_module_contracts(
     rows.extend(compile_transition_damage_fx(lineage, target_id))
     rows.extend(compile_model_condition_upgrades(lineage, target_id))
     rows.extend(compile_animation_states(lineage, target_id))
+    rows.extend(compile_particle_sys_bones(lineage, target_id))
     rows.extend(compile_inactive_bodies(lineage, target_id))
     rows.extend(compile_spawn_point_production_exits(lineage, target_id))
     rows.extend(compile_supply_center_production_exits(lineage, target_id))
@@ -9392,12 +9544,14 @@ def validate_module_contracts(rows: object, *, label: str) -> None:
                 f"{label} executable moduleContracts row for {module} must be typed"
             )
         row_evidence = module in ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE and (
-            (module == "BezierProjectileBehavior" and _bezier_common_landing_shape(fields))
+            (module == "AutoHealBehavior" and _auto_heal_row_has_closed_runtime(fields))
+            or (module == "BezierProjectileBehavior" and _bezier_common_landing_shape(fields))
             or (module == "GeometryUpgrade" and _geometry_upgrade_row_has_closed_runtime(fields))
             or (module == "SubObjectsUpgrade" and _sub_objects_upgrade_row_has_closed_runtime(fields))
             or (module == "TransitionDamageFX" and _transition_damage_fx_row_has_closed_runtime(fields))
             or (module == "ModelConditionUpgrade" and _model_condition_upgrade_row_has_closed_runtime(fields))
             or (module == "AnimationState" and _animation_state_row_has_closed_runtime(fields))
+            or (module == "ParticleSysBone" and _particle_sys_bone_row_has_closed_runtime(fields))
             or (module == "AnimationSoundClientBehavior" and _animation_sound_row_has_closed_runtime(fields))
             or (module == "QueueProductionExitUpdate" and _queue_exit_row_has_closed_runtime(fields))
             or (module == "SpawnBehavior" and _spawn_reclaim_row_has_closed_runtime(fields))

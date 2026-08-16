@@ -1,0 +1,573 @@
+﻿Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
+
+[ModLoader] content source=workspace active=C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b
+[ContentDB] interface-art: 915 images from C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/bfme2-men-vslice/7de517bf146582f10741750b50d63f9955c42d1fe2aa13200757fc6fb29f217a/data/interface-art/index.json
+[ContentDB] interface-art: 1115 images from C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs/rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b/data/interface-art/index.json
+[ContentDB] legacy-demo: packs=23 units=33 buildings=42 factions=4 powers=10 research=7 maps=4
+[ContentDB] playable: factions=7 (angmar, dwarves, elves, isengard, men, mordor, wild) units=137 structures=148 skipped_units=0
+Godot_v4.7-stable_win64_console.exe : ERROR: [RetailSliceSim] structure armor: kind 'fortress' has no compiled armor 
+contract; structure damage will be refused for that kind
+At C:\Users\Jonathan\AppData\Local\Temp\ps-script-554f0f45-5737-45af-ac60-54810098fb60.ps1:94 char:79
++ ... nsole.exe"; & $g --headless --path game --script "res://tests/ship_si ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (ERROR: [RetailS...d for that kind:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_authored_contract_projects (res://tests/ship_sink_death_runtime_runner.gd:48)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:39)
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_authored_contract_projects (res://tests/ship_sink_death_runtime_runner.gd:48)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:39)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_authored_contract_projects (res://tests/ship_sink_death_runtime_runner.gd:48)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:39)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_authored_contract_projects (res://tests/ship_sink_death_runtime_runner.gd:48)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:39)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_authored_contract_projects (res://tests/ship_sink_death_runtime_runner.gd:48)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:39)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-fighter
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_authored_contract_projects (res://tests/ship_sink_death_runtime_runner.gd:48)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:39)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-archer
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_authored_contract_projects (res://tests/ship_sink_death_runtime_runner.gd:48)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:39)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-fighter
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_authored_contract_projects (res://tests/ship_sink_death_runtime_runner.gd:48)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:39)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-tower-guard
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_authored_contract_projects (res://tests/ship_sink_death_runtime_runner.gd:48)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:39)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-knight
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_authored_contract_projects (res://tests/ship_sink_death_runtime_runner.gd:48)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:39)
+SHIP_SINK_DEATH PASS authored_sink_delay_is_zero_ticks
+SHIP_SINK_DEATH PASS authored_destruction_delay_is_one_hundred_ticks
+SHIP_SINK_DEATH PASS authored_sink_rate_is_carried_in_source_units
+SHIP_SINK_DEATH PASS initial_phase_sound_is_the_authored_event
+ERROR: [RetailSliceSim] structure armor: kind 'fortress' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_authored_timeline_erases_the_hull (res://tests/ship_sink_death_runtime_runner.gd:67)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:40)
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_authored_timeline_erases_the_hull (res://tests/ship_sink_death_runtime_runner.gd:67)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:40)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_authored_timeline_erases_the_hull (res://tests/ship_sink_death_runtime_runner.gd:67)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:40)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_authored_timeline_erases_the_hull (res://tests/ship_sink_death_runtime_runner.gd:67)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:40)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_authored_timeline_erases_the_hull (res://tests/ship_sink_death_runtime_runner.gd:67)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:40)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-fighter
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_authored_timeline_erases_the_hull (res://tests/ship_sink_death_runtime_runner.gd:67)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:40)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-archer
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_authored_timeline_erases_the_hull (res://tests/ship_sink_death_runtime_runner.gd:67)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:40)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-fighter
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_authored_timeline_erases_the_hull (res://tests/ship_sink_death_runtime_runner.gd:67)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:40)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-tower-guard
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_authored_timeline_erases_the_hull (res://tests/ship_sink_death_runtime_runner.gd:67)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:40)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-knight
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_authored_timeline_erases_the_hull (res://tests/ship_sink_death_runtime_runner.gd:67)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:40)
+SHIP_SINK_DEATH PASS lethal_damage_begins_the_authored_sink
+SHIP_SINK_DEATH PASS sinking_announces_the_authored_initial_sound
+SHIP_SINK_DEATH PASS zero_sink_delay_settles_on_the_first_tick
+SHIP_SINK_DEATH PASS hull_survives_the_whole_authored_destruction_delay
+SHIP_SINK_DEATH PASS hull_is_erased_on_the_authored_destruction_tick
+SHIP_SINK_DEATH PASS destruction_is_announced
+SHIP_SINK_DEATH PASS settling_used_only_the_authored_rate
+ERROR: [RetailSliceSim] structure armor: kind 'fortress' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_transport_excludes_faded (res://tests/ship_sink_death_runtime_runner.gd:106)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:41)
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_transport_excludes_faded (res://tests/ship_sink_death_runtime_runner.gd:106)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:41)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_transport_excludes_faded (res://tests/ship_sink_death_runtime_runner.gd:106)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:41)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_transport_excludes_faded (res://tests/ship_sink_death_runtime_runner.gd:106)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:41)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_transport_excludes_faded (res://tests/ship_sink_death_runtime_runner.gd:106)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:41)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-fighter
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_transport_excludes_faded (res://tests/ship_sink_death_runtime_runner.gd:106)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:41)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-archer
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_transport_excludes_faded (res://tests/ship_sink_death_runtime_runner.gd:106)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:41)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-fighter
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_transport_excludes_faded (res://tests/ship_sink_death_runtime_runner.gd:106)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:41)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-tower-guard
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_transport_excludes_faded (res://tests/ship_sink_death_runtime_runner.gd:106)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:41)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-knight
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_transport_excludes_faded (res://tests/ship_sink_death_runtime_runner.gd:106)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:41)
+SHIP_SINK_DEATH PASS authored_faded_exclusion_refuses_the_sink
+SHIP_SINK_DEATH PASS refused_death_type_leaves_no_sink_phase
+SHIP_SINK_DEATH PASS ordinary_death_still_sinks_the_transport
+ERROR: [RetailSliceSim] structure armor: kind 'fortress' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_fire_ship_has_no_sink_to_inherit (res://tests/ship_sink_death_runtime_runner.gd:126)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:42)
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_fire_ship_has_no_sink_to_inherit (res://tests/ship_sink_death_runtime_runner.gd:126)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:42)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_fire_ship_has_no_sink_to_inherit (res://tests/ship_sink_death_runtime_runner.gd:126)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:42)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_fire_ship_has_no_sink_to_inherit (res://tests/ship_sink_death_runtime_runner.gd:126)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:42)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_fire_ship_has_no_sink_to_inherit (res://tests/ship_sink_death_runtime_runner.gd:126)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:42)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-fighter
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_fire_ship_has_no_sink_to_inherit (res://tests/ship_sink_death_runtime_runner.gd:126)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:42)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-archer
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_fire_ship_has_no_sink_to_inherit (res://tests/ship_sink_death_runtime_runner.gd:126)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:42)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-fighter
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_fire_ship_has_no_sink_to_inherit (res://tests/ship_sink_death_runtime_runner.gd:126)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:42)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-tower-guard
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_fire_ship_has_no_sink_to_inherit (res://tests/ship_sink_death_runtime_runner.gd:126)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:42)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-knight
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_fire_ship_has_no_sink_to_inherit (res://tests/ship_sink_death_runtime_runner.gd:126)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:42)
+SHIP_SINK_DEATH PASS fire_ship_dies_without_a_sink_phase
+SHIP_SINK_DEATH PASS fire_ship_emits_no_sinking_event
+SHIP_SINK_DEATH PASS fire_ship_hull_is_never_erased_by_an_invented_clock
+ERROR: [RetailSliceSim] structure armor: kind 'fortress' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_mid_sink_snapshot_finishes_on_the_same_tick (res://tests/ship_sink_death_runtime_runner.gd:142)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:43)
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_mid_sink_snapshot_finishes_on_the_same_tick (res://tests/ship_sink_death_runtime_runner.gd:142)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:43)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_mid_sink_snapshot_finishes_on_the_same_tick (res://tests/ship_sink_death_runtime_runner.gd:142)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:43)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_mid_sink_snapshot_finishes_on_the_same_tick (res://tests/ship_sink_death_runtime_runner.gd:142)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:43)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_mid_sink_snapshot_finishes_on_the_same_tick (res://tests/ship_sink_death_runtime_runner.gd:142)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:43)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-fighter
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_mid_sink_snapshot_finishes_on_the_same_tick (res://tests/ship_sink_death_runtime_runner.gd:142)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:43)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-archer
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_mid_sink_snapshot_finishes_on_the_same_tick (res://tests/ship_sink_death_runtime_runner.gd:142)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:43)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-fighter
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_mid_sink_snapshot_finishes_on_the_same_tick (res://tests/ship_sink_death_runtime_runner.gd:142)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:43)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-tower-guard
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_mid_sink_snapshot_finishes_on_the_same_tick (res://tests/ship_sink_death_runtime_runner.gd:142)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:43)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-knight
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_mid_sink_snapshot_finishes_on_the_same_tick (res://tests/ship_sink_death_runtime_runner.gd:142)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:43)
+ERROR: [RetailSliceSim] structure armor: kind 'fortress' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_mid_sink_snapshot_finishes_on_the_same_tick (res://tests/ship_sink_death_runtime_runner.gd:147)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:43)
+ERROR: [RetailSliceSim] structure armor: kind 'farm' has no compiled armor contract; structure damage will be refused 
+for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_mid_sink_snapshot_finishes_on_the_same_tick (res://tests/ship_sink_death_runtime_runner.gd:147)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:43)
+ERROR: [RetailSliceSim] structure armor: kind 'barracks' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_mid_sink_snapshot_finishes_on_the_same_tick (res://tests/ship_sink_death_runtime_runner.gd:147)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:43)
+ERROR: [RetailSliceSim] structure armor: kind 'archery_range' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_mid_sink_snapshot_finishes_on_the_same_tick (res://tests/ship_sink_death_runtime_runner.gd:147)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:43)
+ERROR: [RetailSliceSim] structure armor: kind 'stable' has no compiled armor contract; structure damage will be 
+refused for that kind
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _record_structure_armor_provisionals (res://src/retail_slice/retail_slice_sim.gd:2450)
+       [1] _apply_gameplay_rules (res://src/retail_slice/retail_slice_sim.gd:1931)
+       [2] setup (res://src/retail_slice/retail_slice_sim.gd:1638)
+       [3] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [4] _test_mid_sink_snapshot_finishes_on_the_same_tick (res://tests/ship_sink_death_runtime_runner.gd:147)
+       [5] _run (res://tests/ship_sink_death_runtime_runner.gd:43)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-fighter
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_mid_sink_snapshot_finishes_on_the_same_tick (res://tests/ship_sink_death_runtime_runner.gd:147)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:43)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-archer
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_mid_sink_snapshot_finishes_on_the_same_tick (res://tests/ship_sink_death_runtime_runner.gd:147)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:43)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-fighter
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_mid_sink_snapshot_finishes_on_the_same_tick (res://tests/ship_sink_death_runtime_runner.gd:147)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:43)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-tower-guard
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_mid_sink_snapshot_finishes_on_the_same_tick (res://tests/ship_sink_death_runtime_runner.gd:147)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:43)
+ERROR: RetailSliceSim missing selected-pack unit rule for bfme2.object.gondor-knight
+   at: push_error (core/variant/variant_utility.cpp:1023)
+   GDScript backtrace (most recent call first):
+       [0] _add_battalion (res://src/retail_slice/retail_slice_sim.gd:4389)
+       [1] setup (res://src/retail_slice/retail_slice_sim.gd:1673)
+       [2] _sim (res://tests/ship_sink_death_runtime_runner.gd:208)
+       [3] _test_mid_sink_snapshot_finishes_on_the_same_tick (res://tests/ship_sink_death_runtime_runner.gd:147)
+       [4] _run (res://tests/ship_sink_death_runtime_runner.gd:43)
+SHIP_SINK_DEATH PASS mid_sink_snapshot_restores
+SHIP_SINK_DEATH PASS restored_hull_is_erased_on_the_same_authored_tick
+SHIP_SINK_DEATH_RESULT passed=19 failed=0

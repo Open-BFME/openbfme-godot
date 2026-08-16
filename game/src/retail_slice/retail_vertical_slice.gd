@@ -315,6 +315,14 @@ var presentation_profile: Dictionary = {}
 var initialization_metrics_ms: Dictionary = {}
 var _initialization_started_ms := 0
 var _initialization_last_ms := 0
+## Boot cost attribution for faction roster work: how many times the boot path
+## re-ran _classify_faction_units / FactionManifest.from_registries and what
+## that cost. Read by tests/boot_roster_resolution_runner.gd and printed under
+## OPENBFME_PROFILE_BOOT=1; the repeated resolutions used to be invisible.
+var roster_resolution_profile: Dictionary = {}
+## True while the manifest `_ready` resolved is still valid for the match-side
+## resolution (no override, no failure). Cleared as soon as it is consumed.
+var _ready_phase_manifest_is_reusable := false
 
 
 func _ready() -> void:
@@ -328,7 +336,14 @@ func _ready() -> void:
 	# always wins; the later in-match call stays idempotent). Every non-join
 	# boot passes an empty override and keeps the historical resolution.
 	_resolve_mp_settings()
-	faction_manifest = _resolve_faction_manifest(_early_local_presentation_faction())
+	var early_presentation_faction := _early_local_presentation_faction()
+	faction_manifest = _resolve_faction_manifest(early_presentation_faction)
+	# The match-side resolution below repeats this work only when it can differ:
+	# an override was in force here, the registries changed under us, or this
+	# resolution failed. See _initialize_content_and_match.
+	_ready_phase_manifest_is_reusable = (
+		early_presentation_faction == "" and not faction_manifest.has("_error")
+	)
 	if DisplayServer.get_name() != "headless":
 		# Windowed runs load phase-by-phase behind a progress bar; headless
 		# runners keep the original single-pass initialization.
@@ -342,11 +357,23 @@ func _ready() -> void:
 
 
 func _initialize_content_and_match() -> void:
+	var content_reloaded := false
 	if not ContentDB.bundle_objects.has(SOLDIER_OBJECT_ID):
 		ContentDB.reload()
+		content_reloaded = true
 	# Re-resolve after the potential reload so a data-driven faction manifest
 	# always reflects the registries the match will actually run against.
-	faction_manifest = _resolve_faction_manifest()
+	#
+	# MEASURED (Fords boot, 2026-08-16): when nothing reloaded, this repeated the
+	# identical _classify_faction_units + FactionManifest.from_registries the
+	# `ready` phase had just run — 392 ms of classification plus 108 ms of
+	# manifest assembly, against the same registry generation and the same
+	# faction. The `ready` result is reused only when it cannot differ: no
+	# presentation-faction override was applied, it did not fail, and the
+	# registries were not reloaded under it.
+	if content_reloaded or not _ready_phase_manifest_is_reusable:
+		faction_manifest = _resolve_faction_manifest()
+	_ready_phase_manifest_is_reusable = false
 	if faction_manifest.has("_error"):
 		_fail("Faction manifest failed: %s" % String(faction_manifest.get("_error", "")))
 		return
@@ -1005,6 +1032,14 @@ func _mark_initialization_phase(phase: String) -> void:
 	initialization_metrics_ms[phase] = now - _initialization_started_ms
 	if DisplayServer.get_name() == "headless":
 		print("RETAIL_INIT_PHASE name=%s delta_ms=%d total_ms=%d" % [phase, now - _initialization_last_ms, now - _initialization_started_ms])
+	if OS.get_environment("OPENBFME_PROFILE_BOOT") == "1":
+		print("BOOT_PROFILE roster phase=%s classify_calls=%d classify_ms=%d manifest_calls=%d manifest_ms=%d" % [
+			phase,
+			int(roster_resolution_profile.get("classify_calls", 0)),
+			int(roster_resolution_profile.get("classify_ms", 0)),
+			int(roster_resolution_profile.get("manifest_calls", 0)),
+			int(roster_resolution_profile.get("manifest_ms", 0)),
+		])
 	_initialization_last_ms = now
 	if _loading_screen == null:
 		return
@@ -1763,16 +1798,20 @@ func _resolve_faction_manifest(faction_override: String = "") -> Dictionary:
 	var allow_ring_heroes: bool = false
 	if game_state != null:
 		allow_ring_heroes = game_state.get("retail_allow_ring_heroes") == true
+	var manifest_mark := Time.get_ticks_msec()
 	# Only honestly fieldable units reach the manifest: the manifest gate is
 	# deliberately fail-closed for anything it can see, so unfieldable
 	# documents stay out here with their recorded exclusion reason instead.
 	# Men with empty registries returns default_manifest() inside from_registries.
-	return FactionManifestScript.from_registries(
+	var manifest := FactionManifestScript.from_registries(
 		faction,
 		fieldable_unit_runtimes,
 		ContentDB.get_playable_structure_runtimes(),
 		allow_ring_heroes
 	)
+	roster_resolution_profile["manifest_calls"] = int(roster_resolution_profile.get("manifest_calls", 0)) + 1
+	roster_resolution_profile["manifest_ms"] = int(roster_resolution_profile.get("manifest_ms", 0)) + (Time.get_ticks_msec() - manifest_mark)
+	return manifest
 
 
 func _men_uses_full_pack_manifest() -> bool:
@@ -1815,6 +1854,7 @@ func _classify_faction_units(
 	## exact reason recorded. Builder candidates stay available to the
 	## manifest's builder discovery even when their own combat numbers are
 	## unresolved — a porter needs movement, not a weapon.
+	var classify_mark := Time.get_ticks_msec()
 	fieldable_unit_runtimes.clear()
 	producible_unit_runtimes.clear()
 	unit_roster_exclusions.clear()
@@ -1942,6 +1982,8 @@ func _classify_faction_units(
 		producible_unit_runtimes[object_id] = document
 
 	_add_created_heroes(slug, cah_system_override, game_state_override, content_db_override)
+	roster_resolution_profile["classify_calls"] = int(roster_resolution_profile.get("classify_calls", 0)) + 1
+	roster_resolution_profile["classify_ms"] = int(roster_resolution_profile.get("classify_ms", 0)) + (Time.get_ticks_msec() - classify_mark)
 
 
 func _add_created_heroes(
@@ -3311,8 +3353,12 @@ func _faction_structure_audio_contract() -> Dictionary:
 	}
 	var structure_object_ids: Dictionary = faction_manifest.get("structure_object_ids", {}) as Dictionary
 	var docs_by_runtime_id := {}
-	for object_id_value in ContentDB.get_playable_structure_runtimes().keys():
-		var document: Dictionary = ContentDB.get_playable_structure_runtime(String(object_id_value))
+	# Read the shared per-generation registry snapshot rather than asking for one
+	# deep copy per registered structure: this loop is read-only and the
+	# per-document getter copies the whole document on every call.
+	var structure_runtimes: Dictionary = ContentDB.get_playable_structure_runtimes()
+	for object_id_value in structure_runtimes.keys():
+		var document: Dictionary = structure_runtimes[object_id_value] as Dictionary
 		docs_by_runtime_id[PlayableUnitAdapter._runtime_id(String(document.get("objectId", "")))] = document
 	for kind_value in structure_object_ids.keys():
 		var kind := String(kind_value)

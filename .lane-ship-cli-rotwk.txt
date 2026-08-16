@@ -1,0 +1,11 @@
+﻿ready: True
+catalog_complete: True
+game: rotwk
+report: C:\Users\Jonathan\Desktop\open-bfme\.private\retail-work\editions\rotwk\reports\rotwk-ship-catalog.json
+catalog_sha256: f0233ecd1021d7507204a437b2466d2acc05163b6a2aae8d737b1a8078fb6550
+ship_count: 13
+buildable_descriptor_count: 8
+runtime_deferred_count: 0
+recipe_integration: None
+recipe_ready_count: 0
+recipe_deferred_count: 0

@@ -1,0 +1,10 @@
+SCRIPT ERROR: Parse Error: Cannot infer the type of "verdict" variable because the value doesn't have a set type.
+   at: GDScript::reload (res://tests/spellbook_signature_runtime_support.gd:23)
+SCRIPT ERROR: Compile Error: Failed to compile depended scripts.
+   at: GDScript::reload (res://tests/specialpower_required_sciences_runtime_runner.gd:0)
+ERROR: Failed to load script "res://tests/specialpower_required_sciences_runtime_runner.gd" with error "Compilation failed".
+   at: load (modules/gdscript/gdscript_resource_format.cpp:46)
+SCRIPT ERROR: Invalid call. Nonexistent function 'new' in base 'GDScript'.
+   at: _run (res://tests/specialpower_required_sciences_runtime_runner.gd:5)
+   GDScript backtrace (most recent call first):
+       [0] _run (res://tests/specialpower_required_sciences_runtime_runner.gd:5)
