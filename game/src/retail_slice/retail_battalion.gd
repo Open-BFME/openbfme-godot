@@ -2322,17 +2322,25 @@ func set_member_manual_frame(member_index: int, frame: float) -> Dictionary:
 
 
 func death_animation_pick(member_index: int = -1) -> Dictionary:
-	## Clip the presenter is already playing (or will play) for this death.
-	## Frame stays -1 at event time: the sim death event is not the authored
-	## AnimationSound frame. Clip match is enough to beat lowest-id fallback.
+	## Clip + authored frame from the clip/frame clock. Frame stays -1 only
+	## when the clock has not primed yet (clock-absent first-clip fallback).
 	var clip := ""
+	var frame := -1
+	var source := "live-battalion-clip"
 	if member_index >= 0:
 		clip = String(member_current_clips.get(member_index, ""))
+		var clock: Dictionary = member_clip_frame(member_index)
+		var clock_frame := float(clock.get("frame", -1.0))
+		if clock_frame >= 0.0:
+			frame = int(floor(clock_frame))
+			source = "live-battalion-clock"
+			if clip == "":
+				clip = String(clock.get("clip", ""))
 		if clip == "":
 			clip = member_clip_for_state(member_index, "death")
 	if clip == "":
 		clip = String(clip_map.get("death", ""))
-	return {"clip": clip, "frame": -1, "source": "live-battalion-clip"}
+	return {"clip": clip, "frame": frame, "source": source}
 
 
 func member_clip_for_state(member_index: int, state: String) -> String:

@@ -8,6 +8,7 @@ const OBSERVABILITY_LOG_TRIM_COUNT := 512
 
 const UserSettingsScript = preload("res://src/ui/user_settings.gd")
 const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
+const ClipFrameClockScript = preload("res://src/retail_slice/clip_frame_clock.gd")
 const MusicDirectorScript = preload("res://src/core/music_director.gd")
 const DiagLogScript = preload("res://src/core/diag_log.gd")
 
@@ -197,6 +198,9 @@ var playable_unit_bodyfall: Dictionary = {}
 ## object_id -> authored AnimationSoundClientBehavior rows (clip + frame).
 ## When present, bodyfall/weapon animation sounds pick by clip, not lowest id.
 var playable_unit_animation_sounds: Dictionary = {}
+var last_animation_sound_clock_receipt: Dictionary = {}
+var _animation_sound_sequence := 0
+var _consumed_clip_frames: Dictionary = {}
 ## object id -> the unit's OWN authored `SoundImpact` AudioEvent id.
 ##
 ## NOT the per-hit sound. Retail's `SoundImpact` is the CRUSH / KNOCKBACK thud:
@@ -1612,6 +1616,8 @@ func _route_bodyfall(object_id: String, sequence: int, clip: String = "", frame:
 	if not typed.is_empty():
 		return route_audio_event(String(typed.get("eventId", "")), sequence)
 	if playable_unit_animation_sounds.has(object_id) and clip != "":
+		if frame >= 0:
+			return _rejection("animation-sound-frame-pending", clip, object_id, "sfx", sequence)
 		return _rejection("animation-sound-clip-unmatched", clip, object_id, "sfx", sequence)
 	var doc_bodyfall := String(playable_unit_bodyfall.get(object_id, ""))
 	if doc_bodyfall != "":
@@ -2126,6 +2132,101 @@ func select_animation_sound(object_id: String, clip: String, frame: int = -1, ev
 			"source": "typed-animation-sound",
 		}
 	return {}
+
+
+func advance_animation_sounds(
+	object_id: String,
+	clip: String,
+	previous_frame: float,
+	current_frame: float,
+	length_frames: float = -1.0,
+	backwards: bool = false
+) -> Array:
+	## Fire each authored (clip, frame) pair the playhead just crossed.
+	## LNDA frame 1 and frame 14 are different events on the same clip.
+	if clip == "" or not playable_unit_animation_sounds.has(object_id):
+		return []
+	var fired: Array = []
+	var clip_folded := clip.to_lower()
+	var clip_leaf := _animation_clip_leaf(clip_folded)
+	for sound_value in playable_unit_animation_sounds[object_id] as Array:
+		var sound := sound_value as Dictionary
+		var animation := String(sound.get("animation", "")).to_lower()
+		var anim_leaf := _animation_clip_leaf(animation)
+		var matched := (
+			animation == clip_folded
+			or anim_leaf == clip_folded
+			or anim_leaf == clip_leaf
+			or clip_folded.ends_with(anim_leaf)
+			or animation.ends_with(clip_leaf)
+		)
+		if not matched:
+			continue
+		for frame_value in sound.get("frames", []) as Array:
+			var cue := float(frame_value)
+			if not ClipFrameClockScript.crossed(previous_frame, current_frame, cue, length_frames, backwards):
+				continue
+			fired.append({
+				"eventId": String(sound.get("eventId", "")),
+				"animation": String(sound.get("animation", "")),
+				"frame": int(cue),
+				"source": "typed-animation-sound-clock",
+			})
+	return fired
+
+
+func consume_battalion_animation_sound_clocks() -> Array:
+	## Live path: fire authored AnimationSound rows as each battalion clock
+	## crosses their frames. Primed seeks (previousFrame < 0) do not fire.
+	var tree := get_tree()
+	if tree == null:
+		return []
+	var fired: Array = []
+	for node in tree.get_nodes_in_group("retail_battalion"):
+		if node == null or not node.has_method("member_clip_frame"):
+			continue
+		var object_id := String(node.get("object_id"))
+		var member_count := int(node.get("member_count"))
+		for member_index in range(member_count):
+			var clock: Dictionary = node.call("member_clip_frame", member_index)
+			if typeof(clock) != TYPE_DICTIONARY:
+				continue
+			var clip := String(clock.get("clip", ""))
+			if clip == "":
+				clip = String((node.get("member_current_clips") as Dictionary).get(member_index, ""))
+			var current := float(clock.get("frame", -1.0))
+			if current < 0.0 or clip == "":
+				continue
+			var cursor_key := "%s:%d:%s" % [int(node.get("entity_id")), member_index, clip]
+			var previous := float(_consumed_clip_frames.get(cursor_key, -1.0))
+			_consumed_clip_frames[cursor_key] = current
+			if previous < 0.0 or is_equal_approx(previous, current):
+				continue
+			var crossed: Array = advance_animation_sounds(
+				object_id,
+				clip,
+				previous,
+				current,
+				float(clock.get("lengthFrames", -1.0)),
+				bool(clock.get("backwards", false))
+			)
+			for row_value in crossed:
+				var row := row_value as Dictionary
+				_animation_sound_sequence += 1
+				_play_sfx(route_audio_event(String(row.get("eventId", "")), _animation_sound_sequence))
+				fired.append(row)
+	last_animation_sound_clock_receipt = {
+		"source": "typed-animation-sound-clock",
+		"applied": fired.size(),
+		"events": fired.duplicate(true),
+	}
+	return fired
+
+
+func _process(_delta: float) -> void:
+	if playable_unit_animation_sounds.is_empty():
+		return
+	consume_battalion_animation_sound_clocks()
 
 
 func _animation_clip_leaf(name: String) -> String:
