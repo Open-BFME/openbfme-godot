@@ -5927,7 +5927,6 @@ def test_special_power_contract_rejects_unknown_fields_fail_closed() -> None:
     ("flags", "expected_reason"),
     [
         ("INVENTED_FLAG", "unsupported Flags"),
-        ("WATER_OK", "unsupported Flags"),
         ("LIMIT_DISTANCE", "has no MaxCastRange"),
         ("NEEDS_OBJECT_FILTER", "has no ObjectFilter"),
         ("NO_FORBIDDEN_OBJECTS", "has no complete ForbiddenObjectFilter"),
@@ -5978,6 +5977,30 @@ def test_pathable_only_special_power_is_preserved_for_runtime_target_validation(
     row = _abilities_by_id(descriptor)["Command_FixtureSummon"]
     assert row["implementation"]["status"] == "implemented"
     assert row["specialPowerContract"]["flags"] == ["PATHABLE_ONLY"]
+
+
+def test_water_ok_special_power_is_preserved_for_runtime_target_validation() -> None:
+    # WATER_OK is PATHABLE_ONLY's complement: retail authors it on the point
+    # powers whose target location may be a water cell (Drogoth's Incinerate,
+    # and the spellbook powers dropped across rivers). The flag is a target
+    # admission rule the runtime honors, not an unmodelled effect.
+    documents = _hero_ability_documents()
+    documents["data/ini/specialpower.ini"] = documents[
+        "data/ini/specialpower.ini"
+    ].replace(
+        b"  Flags = LIMIT_DISTANCE NO_FORBIDDEN_OBJECTS\n"
+        b"  MaxCastRange = 200\n"
+        b"  ForbiddenObjectFilter = NO_SUMMON_NEAR_OBJECT_FILTER\n"
+        b"  ForbiddenObjectRange = 60\n",
+        b"  Flags = WATER_OK\n",
+        1,
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    row = _abilities_by_id(descriptor)["Command_FixtureSummon"]
+    assert row["implementation"]["status"] == "implemented"
+    assert row["specialPowerContract"]["flags"] == ["WATER_OK"]
 
 
 def test_multi_warhead_launchers_combine_every_authored_warhead() -> None:

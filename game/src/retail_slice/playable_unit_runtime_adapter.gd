@@ -1742,7 +1742,7 @@ static func ability_rules(document: Dictionary) -> Array[Dictionary]:
 				return []
 		var power_flags: Array = special_power_contract.get("flags", []) as Array
 		for flag_value in power_flags:
-			if String(flag_value) not in ["LIMIT_DISTANCE", "NEEDS_OBJECT_FILTER", "NO_FORBIDDEN_OBJECTS", "PATHABLE_ONLY"]:
+			if String(flag_value) not in ["LIMIT_DISTANCE", "NEEDS_OBJECT_FILTER", "NO_FORBIDDEN_OBJECTS", "PATHABLE_ONLY", "WATER_OK"]:
 				return []
 		if power_flags.has("NEEDS_OBJECT_FILTER") and (special_power_contract.get("objectFilter", []) as Array).is_empty():
 			return []

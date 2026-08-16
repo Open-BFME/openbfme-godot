@@ -13860,7 +13860,8 @@ func _step_hero_regeneration() -> void:
 # --- AutoHealBehavior (authored self-heal cadence) ---
 # Retail's AutoHealBehavior is a flat HealingAmount applied every HealingDelay
 # milliseconds, restarted StartHealingDelay after the object was last damaged
-# when HealOnlyIfNotInCombat is authored. Heroes carry HERO_HEAL_AMOUNT (30) on
+# when HealOnlyIfNotInCombat or HealOnlyIfNotUnderAttack is authored. Heroes
+# carry HERO_HEAL_AMOUNT (30) on
 # a 1000ms pulse behind a HERO_HEAL_DELAY (15000ms) restart, which is nothing
 # like the provisional percentage above. Only the importer's closed executable
 # subset arms here: area heals, button bursts, upgrade-triggered activation and
@@ -13901,6 +13902,9 @@ func _attach_auto_heal_contract(row: Dictionary, contract: Dictionary) -> void:
 		),
 		"heal_only_if_not_in_combat": bool(
 			_module_contract_value(fields, "HealOnlyIfNotInCombat", false)
+		),
+		"heal_only_if_not_under_attack": bool(
+			_module_contract_value(fields, "HealOnlyIfNotUnderAttack", false)
 		),
 		"armed_tick": tick_index,
 		"next_heal_tick": -1,
@@ -13948,7 +13952,14 @@ func _apply_auto_heal_pulse(row: Dictionary, battalion: bool) -> void:
 		return
 	var start_delay := int(policy.get("start_delay_ticks", 0))
 	var anchor := int(policy.get("armed_tick", 0)) + start_delay
-	if bool(policy.get("heal_only_if_not_in_combat", false)):
+	# Either authored gate hangs the pulse on the last damage the object took:
+	# HealOnlyIfNotInCombat while the fight is on, HealOnlyIfNotUnderAttack while
+	# incoming damage is still landing. The window is the authored
+	# StartHealingDelay in both cases; retail authors no separate magnitude.
+	if (
+		bool(policy.get("heal_only_if_not_in_combat", false))
+		or bool(policy.get("heal_only_if_not_under_attack", false))
+	):
 		anchor = int(row.get("last_damage_tick", -1000000)) + start_delay
 	var next_heal := int(policy.get("next_heal_tick", -1))
 	if next_heal < 0 or next_heal < anchor:
@@ -23000,6 +23011,23 @@ func _validate_special_power_activation(row: Dictionary, contract: Dictionary, t
 			or not bool(route_provider.call("is_navigation_walkable", route_provider.call("local_to_grid_cell", target_point)))
 		):
 			return {"ok": false, "reason": "target-unpathable"}
+	elif targeting == "point" and not flags.has("WATER_OK"):
+		# WATER_OK is PATHABLE_ONLY's complement and retail never authors the
+		# two together: it is the permission to land a point power on a water
+		# cell. RotWK authors it on 24 SpecialPowers — Drogoth's Incinerate and
+		# the spellbook powers dropped across rivers — so a point power that
+		# does NOT carry it refuses the same cell. The refusal only fires on a
+		# cell a map authority calls water; with no authority attached there is
+		# no water to refuse, and nothing is substituted for the answer.
+		if (
+			route_provider != null
+			and route_provider.has_method("is_local_inside_navigation")
+			and route_provider.has_method("local_to_grid_cell")
+			and route_provider.has_method("is_water_cell")
+			and bool(route_provider.call("is_local_inside_navigation", target_point))
+			and bool(route_provider.call("is_water_cell", route_provider.call("local_to_grid_cell", target_point)))
+		):
+			return {"ok": false, "reason": "target-over-water"}
 	var forbidden_range := float(contract.get("forbiddenObjectRangeScaled", 0.0))
 	if forbidden_range > 0.0:
 		for candidate_id in entity_ids():

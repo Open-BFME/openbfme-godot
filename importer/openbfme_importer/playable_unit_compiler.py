@@ -7052,6 +7052,10 @@ def _hero_ability_row(
                 "NEEDS_OBJECT_FILTER",
                 "NO_FORBIDDEN_OBJECTS",
                 "PATHABLE_ONLY",
+                # WATER_OK is PATHABLE_ONLY's complement, never co-authored
+                # with it: the target location may be a water cell.  The sim
+                # gates a point cast on it the same way it gates PATHABLE_ONLY.
+                "WATER_OK",
             }
             unsupported_flags = sorted(
                 set(flags) - supported_flags
