@@ -26,11 +26,12 @@ func _run() -> void:
 		_typed_row("AnimationState", ["MOVING"], "SKL.RUNA", "LOOP", 10, []),
 		_typed_row("AnimationState", ["MOVING", "USER_1"], "SKL.RUN_UPGRADE", "LOOP", 8, []),
 		_typed_row("AnimationState", ["DYING"], "SKL.DTHA", "ONCE", 0, []),
+		_typed_row("AnimationState", ["MOVING"], "SKL.RUNB", "LOOP", 10, [], 8),
 	]
 	var idle: Dictionary = AnimationStateSelectScript.select(contracts, [])
 	_check("idle wins when no model conditions are set", String(idle.get("clip", "")) == "SKL.IDLE" and int(idle.get("specificity", -1)) == 0)
 	var moving: Dictionary = AnimationStateSelectScript.select(contracts, ["MOVING"])
-	_check("AnimationState MOVING beats idle", String(moving.get("clip", "")) == "SKL.RUNA" and int(moving.get("specificity", -1)) == 1)
+	_check("AnimationState MOVING beats idle", String(moving.get("clip", "")) == "SKL.RUNB" and int(moving.get("specificity", -1)) == 1)
 	var upgraded: Dictionary = AnimationStateSelectScript.select(contracts, ["MOVING", "USER_1"])
 	_check("most-specific MOVING USER_1 subset wins", String(upgraded.get("clip", "")) == "SKL.RUN_UPGRADE" and int(upgraded.get("specificity", -1)) == 2)
 	var dying: Dictionary = AnimationStateSelectScript.select(contracts, ["DYING"])
@@ -38,7 +39,7 @@ func _run() -> void:
 	_check("RANDOMSTART is visible on the idle row", bool(idle.get("randomStart", false)))
 	_check("AnimationBlendTime 15 frames is 0.5s at 30 FPS", is_equal_approx(float(AnimationStateSelectScript.blend_seconds(15)), 0.5))
 	_check("AnimationBlendTime 0 is an instant cut", is_equal_approx(float(AnimationStateSelectScript.blend_seconds(0)), 0.0))
-	_check("priority remains deferred on this slice", bool(moving.get("priorityDeferred", false)))
+	_check("equal-specificity AnimationPriority prefers the higher row", String(moving.get("clip", "")) == "SKL.RUNB" and int(moving.get("priority", -1)) == 8)
 	var battalion_script: GDScript = load("res://src/retail_slice/retail_battalion.gd") as GDScript
 	_check("battalion consumer loads", battalion_script != null and battalion_script.can_instantiate())
 	if battalion_script != null and battalion_script.can_instantiate():
@@ -64,7 +65,7 @@ func _run() -> void:
 	_finish()
 
 
-func _typed_row(state_kind: String, conditions: Array, clip: String, mode: String, blend: int, flags: Array) -> Dictionary:
+func _typed_row(state_kind: String, conditions: Array, clip: String, mode: String, blend: int, flags: Array, priority: int = 0) -> Dictionary:
 	return {
 		"module": "AnimationState",
 		"runtimeStatus": "executable",
@@ -77,6 +78,7 @@ func _typed_row(state_kind: String, conditions: Array, clip: String, mode: Strin
 				"animationName": clip,
 				"mode": mode,
 				"blendTime": blend,
+				"priority": priority,
 			}],
 		},
 	}

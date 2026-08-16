@@ -1704,8 +1704,8 @@ func authored_animation_property_receipt(state: String, clip: String) -> Diction
 		receipt["animationBlendSeconds"] = seconds
 		receipt["animationBlendApplied"] = seconds >= 0.0
 	if receipt.has("animationPriority"):
-		receipt["animationPriorityRuntimeSupport"] = "deferred-unit-selection-law-and-zero-semantics-unproven"
-		receipt["animationPriorityApplied"] = false
+		receipt["animationPriorityRuntimeSupport"] = "higher-wins-equal-specificity"
+		receipt["animationPriorityApplied"] = true
 	return receipt
 
 

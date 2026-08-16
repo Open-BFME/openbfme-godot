@@ -6,7 +6,8 @@ extends RefCounted
 ## are a subset of the current model-condition flags, then the most specific
 ## subset wins. IdleAnimationState is the empty-condition (specificity 0) row.
 ##
-## AnimationPriority and ParticleSysBone stay deferred on this slice.
+## ParticleSysBone stays deferred. AnimationPriority breaks equal-specificity
+## ties (higher wins; missing/zero is a real value, not "unset").
 ## AnimationBlendTime is frames at 30 FPS; the battalion applies that
 ## conversion on state transitions.
 
@@ -33,6 +34,7 @@ static func select(contracts: Array, active_conditions: Array) -> Dictionary:
 			active[flag] = true
 	var best: Dictionary = {}
 	var best_specificity := -1
+	var best_priority := -1
 	for contract_value in contracts:
 		if typeof(contract_value) != TYPE_DICTIONARY:
 			continue
@@ -42,13 +44,13 @@ static func select(contracts: Array, active_conditions: Array) -> Dictionary:
 		if not _conditions_match(row.get("conditions", []) as Array, active):
 			continue
 		var specificity: int = (row.get("conditions", []) as Array).size()
+		var priority := _row_priority(row)
 		if specificity < best_specificity:
 			continue
-		if specificity == best_specificity and not best.is_empty():
-			## Equal specificity: keep first authored order. AnimationPriority
-			## is the documented tie-break and is not applied on this slice.
+		if specificity == best_specificity and not best.is_empty() and priority <= best_priority:
 			continue
 		best_specificity = specificity
+		best_priority = priority
 		best = row
 	if best.is_empty():
 		return {
@@ -79,7 +81,7 @@ static func select(contracts: Array, active_conditions: Array) -> Dictionary:
 		"blendSeconds": blend_seconds(animation.get("blendTime", null)),
 		"blendRuntimeSupport": "frames-at-30fps",
 		"priority": animation.get("priority", null),
-		"priorityDeferred": true,
+		"priorityDeferred": false,
 		"speedFactorRange": (animation.get("speedFactorRange", []) as Array).duplicate(),
 		"flags": flags.duplicate(),
 	}
@@ -125,15 +127,31 @@ static func _conditions_match(required: Array, active: Dictionary) -> bool:
 	return true
 
 
+static func _row_priority(row: Dictionary) -> int:
+	var animation: Dictionary = _pick_animation(row)
+	var raw: Variant = animation.get("priority", null)
+	if raw == null:
+		return 0
+	return int(raw)
+
+
 static func _pick_animation(row: Dictionary) -> Dictionary:
 	var animations: Array = row.get("animations", []) as Array
+	var best: Dictionary = {}
+	var best_priority := -1
 	for animation_value in animations:
 		if typeof(animation_value) != TYPE_DICTIONARY:
 			continue
 		var animation := animation_value as Dictionary
-		if String(animation.get("animationName", "")) != "":
-			return animation
-	return {}
+		if String(animation.get("animationName", "")) == "":
+			continue
+		var priority := 0
+		if animation.get("priority", null) != null:
+			priority = int(animation.get("priority", 0))
+		if best.is_empty() or priority > best_priority:
+			best = animation
+			best_priority = priority
+	return best
 
 
 static func _field_tokens(value: Variant) -> Array:
