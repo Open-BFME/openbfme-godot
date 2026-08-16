@@ -35,6 +35,7 @@ from .playable_unit_compiler import (
     _named_blocks,
     _named_definition_values,
     _numeric_defines as _playable_numeric_defines,
+    _resolved_multiplicative_expression,
     _default_weapon_slot,
     _permanent_weapon_locks,
     _resolved_expression,
@@ -296,7 +297,18 @@ def _field_contract(
 def compile_rank_science_grants(
     documents: Mapping[str, bytes],
 ) -> list[dict[str, object]]:
-    """Compile Rank.ini spell-point grants with exact authored receipts."""
+    """Compile the Rank.ini player ladder with exact authored receipts.
+
+    Two authored fields per ``Rank`` make the ladder executable:
+    ``SkillPointsNeededDefault`` is the threshold that promotes the player and
+    ``SciencePurchasePointsGranted`` is the spell-point award that promotion
+    pays.  Thresholds must ascend with rank, or the ladder has no single
+    crossing point and the grant cannot be attributed to one rank.
+
+    ``SkillPointsNeededCampaign`` is deliberately NOT compiled: it is the
+    single-player campaign ladder and no runtime consumes a campaign player
+    rank, so emitting it would ship an unconsumed contract.
+    """
 
     source = _document(documents, RANK_PATH)
     if source is None:
@@ -328,6 +340,26 @@ def compile_rank_science_grants(
             raise SpellbookCompilerError(
                 f"Rank {rank} has unresolved SciencePurchasePointsGranted: {authored}"
             )
+        threshold_authored = _one_value(
+            block, "SkillPointsNeededDefault", f"Rank {rank}"
+        )
+        if threshold_authored is None:
+            raise SpellbookCompilerError(
+                f"Rank {rank} has no authored SkillPointsNeededDefault"
+            )
+        threshold = _resolved_multiplicative_expression(
+            threshold_authored.strip(), constants
+        )
+        if (
+            threshold is None
+            or isinstance(threshold, bool)
+            or float(threshold) < 0
+            or not float(threshold).is_integer()
+        ):
+            raise SpellbookCompilerError(
+                f"Rank {rank} has unresolved SkillPointsNeededDefault: "
+                f"{threshold_authored}"
+            )
         rows.append(
             {
                 "rank": rank,
@@ -339,11 +371,28 @@ def compile_rank_science_grants(
                         source, "Rank", block.name, "SciencePurchasePointsGranted"
                     ),
                 },
+                "skillPointsNeededDefault": {
+                    "authored": threshold_authored.strip(),
+                    "value": int(threshold),
+                    "sourceIni": RANK_PATH,
+                    "line": _flat_assignment_line(
+                        source, "Rank", block.name, "SkillPointsNeededDefault"
+                    ),
+                },
             }
         )
     rows.sort(key=lambda row: int(row["rank"]))
     if not rows:
         raise SpellbookCompilerError(f"{RANK_PATH} has no Rank definitions")
+    previous = -1
+    for row in rows:
+        threshold_value = int(row["skillPointsNeededDefault"]["value"])
+        if threshold_value <= previous:
+            raise SpellbookCompilerError(
+                f"Rank {row['rank']} SkillPointsNeededDefault does not ascend: "
+                f"{threshold_value} follows {previous}"
+            )
+        previous = threshold_value
     return rows
 
 

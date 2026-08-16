@@ -5951,6 +5951,17 @@ func configure_spellbook_runtime(document: Dictionary) -> bool:
 			return false
 		seen_slots[slot] = true
 	_spellbook_order = ordered
+	# The compiled Rank ladder rides with the spellbook document. A pack cooked
+	# before that contract existed carries no rankScienceGrants at all: the
+	# ladder then stays unconfigured and every rank call refuses with that
+	# reason instead of inventing a spell-point grant.
+	if power_tree.has("rankScienceGrants"):
+		if not configure_player_rank_science_grants(power_tree.get("rankScienceGrants", []) as Array):
+			_spellbook_error = "spellbook rank ladder is malformed: %s" % _player_rank_ladder_error
+			return false
+	else:
+		_player_rank_ladder.clear()
+		_player_rank_ladder_error = "the compiled spellbook document carries no rankScienceGrants"
 	_reset_spellbook_match_state()
 	_spellbook_ready = true
 	_state_hash_static_digest.clear()
@@ -7980,6 +7991,312 @@ func award_power_kill(team: int) -> void:
 		_kills_toward_power_point[team] = 0
 		team_power_points[team] = power_points(team) + 1
 		_emit_event("power.point_earned", 0, 0, {"team": team, "points": power_points(team)})
+
+
+## Rank.ini player ladder: SkillPointsNeededDefault is the threshold that
+## promotes the player, SciencePurchasePointsGranted is the spell-point award
+## that promotion pays. Configuration arrives with the compiled spellbook
+## document (registration.powerTree.rankScienceGrants) or directly through
+## configure_player_rank_science_grants.
+##
+## DEFERRED, stated rather than hidden: these ledgers are NOT part of
+## _authoritative_state(). Nothing in live play awards player skill points yet
+## ??? the earn rate (skill points per kill/damage) is unresolved from retail
+## data, exactly like the PROVISIONAL power-point rate above ??? so the ladder
+## cannot advance during a match and has no live state to snapshot. When that
+## earn rate lands, these three ledgers must join the authoritative state and
+## the state pin has to be re-minted deliberately by the owner.
+var _player_rank_ladder: Array[Dictionary] = []
+var _player_rank_ladder_error := ""
+var _team_player_rank: Dictionary = {}
+var _team_player_skill_points: Dictionary = {}
+var _team_player_rank_granted: Dictionary = {}
+
+const RANK_SCIENCE_PURCHASE_POINTS_GRANTED_FIELD := "SciencePurchasePointsGranted"
+const RANK_SKILL_POINTS_NEEDED_FIELD := "SkillPointsNeededDefault"
+
+
+func configure_player_rank_science_grants(rows: Array) -> bool:
+	## Bind the compiled Rank ladder. Fails closed on a malformed row, a
+	## non-ascending rank, a non-ascending threshold, or a missing grant: a
+	## ladder that cannot say which rank a crossing belongs to must not run.
+	var ladder: Array[Dictionary] = []
+	_player_rank_ladder_error = ""
+	var previous_rank := 0
+	var previous_threshold := -1
+	for row_value in rows:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			return _reject_player_rank_ladder("rank ladder row is malformed")
+		var row := row_value as Dictionary
+		var rank := int(row.get("rank", 0))
+		if rank <= previous_rank:
+			return _reject_player_rank_ladder(
+				"rank ladder ranks do not ascend: %d follows %d" % [rank, previous_rank]
+			)
+		var granted := _rank_ladder_integer(row, "sciencePurchasePointsGranted")
+		if granted < 0:
+			return _reject_player_rank_ladder(
+				"Rank %d has no resolved %s" % [rank, RANK_SCIENCE_PURCHASE_POINTS_GRANTED_FIELD]
+			)
+		var threshold := _rank_ladder_integer(row, "skillPointsNeededDefault")
+		if threshold < 0:
+			return _reject_player_rank_ladder(
+				"Rank %d has no resolved %s" % [rank, RANK_SKILL_POINTS_NEEDED_FIELD]
+			)
+		if threshold <= previous_threshold:
+			return _reject_player_rank_ladder(
+				"Rank %d %s does not ascend: %d follows %d"
+				% [rank, RANK_SKILL_POINTS_NEEDED_FIELD, threshold, previous_threshold]
+			)
+		previous_rank = rank
+		previous_threshold = threshold
+		ladder.append({
+			"rank": rank,
+			"granted": granted,
+			"skill_points_needed": threshold,
+			"granted_receipt": (row.get("sciencePurchasePointsGranted", {}) as Dictionary).duplicate(true),
+			"threshold_receipt": (row.get("skillPointsNeededDefault", {}) as Dictionary).duplicate(true),
+		})
+	if ladder.is_empty():
+		return _reject_player_rank_ladder("rank ladder carries no ranks")
+	if ladder == _player_rank_ladder:
+		# Rank.ini is a system file, so a cross-faction team document carries
+		# the same ladder. Re-binding an identical ladder must not wipe the
+		# per-team rank ledgers that are already standing.
+		return true
+	_player_rank_ladder = ladder
+	_team_player_rank.clear()
+	_team_player_skill_points.clear()
+	_team_player_rank_granted.clear()
+	return true
+
+
+func _reject_player_rank_ladder(reason: String) -> bool:
+	_player_rank_ladder.clear()
+	_player_rank_ladder_error = reason
+	return false
+
+
+func _rank_ladder_integer(row: Dictionary, key: String) -> int:
+	var contract: Dictionary = row.get(key, {}) as Dictionary
+	var value: Variant = contract.get("value")
+	if typeof(value) not in [TYPE_INT, TYPE_FLOAT]:
+		return -1
+	var number := float(value)
+	if not is_finite(number) or number < 0.0 or number != floor(number):
+		return -1
+	return int(number)
+
+
+func player_rank_ladder_error() -> String:
+	return _player_rank_ladder_error
+
+
+func player_rank_ladder_size() -> int:
+	return _player_rank_ladder.size()
+
+
+func player_rank(team: int) -> int:
+	return int(_team_player_rank.get(team, 0))
+
+
+func player_skill_points(team: int) -> int:
+	return int(_team_player_skill_points.get(team, 0))
+
+
+func advance_player_rank(team: int, rank: int) -> Dictionary:
+	## Promote a player to `rank`, paying every authored
+	## SciencePurchasePointsGranted the promotion crosses. Idempotent: a rank
+	## already reached grants nothing and says so with granted = 0.
+	if _player_rank_ladder.is_empty():
+		return {"ok": false, "reason": "rank-ladder-unavailable", "detail": _player_rank_ladder_error}
+	if not _is_combatant_team(team):
+		return {"ok": false, "reason": "not-a-combatant-team"}
+	var known := false
+	for entry in _player_rank_ladder:
+		if int(entry.get("rank", 0)) == rank:
+			known = true
+			break
+	if not known:
+		return {"ok": false, "reason": "unknown-rank", "rank": rank}
+	var granted_total := 0
+	var crossed: Array[int] = []
+	var ledger: Dictionary = _team_player_rank_granted.get(team, {}) as Dictionary
+	for entry in _player_rank_ladder:
+		var entry_rank := int(entry.get("rank", 0))
+		if entry_rank > rank or ledger.has(entry_rank):
+			continue
+		ledger[entry_rank] = int(entry.get("granted", 0))
+		granted_total += int(entry.get("granted", 0))
+		crossed.append(entry_rank)
+	_team_player_rank_granted[team] = ledger
+	_team_player_rank[team] = maxi(player_rank(team), rank)
+	if granted_total > 0:
+		team_power_points[team] = power_points(team) + granted_total
+		_emit_event("power.rank_granted", 0, 0, {
+			"team": team,
+			"rank": player_rank(team),
+			"granted": granted_total,
+			"points": power_points(team),
+		})
+	return {
+		"ok": true,
+		"reason": "",
+		"rank": player_rank(team),
+		"granted": granted_total,
+		"crossed_ranks": crossed,
+		"points": power_points(team),
+	}
+
+
+func award_player_skill_points(team: int, amount: int) -> Dictionary:
+	## Bank skill points and promote across every threshold they reach. This is
+	## the authored trigger for the spell-point grant; the amount per kill is
+	## the caller's contract, not this function's invention.
+	if _player_rank_ladder.is_empty():
+		return {"ok": false, "reason": "rank-ladder-unavailable", "detail": _player_rank_ladder_error}
+	if not _is_combatant_team(team):
+		return {"ok": false, "reason": "not-a-combatant-team"}
+	if amount < 0:
+		return {"ok": false, "reason": "negative-skill-points"}
+	_team_player_skill_points[team] = player_skill_points(team) + amount
+	var reached := player_rank(team)
+	for entry in _player_rank_ladder:
+		if int(entry.get("skill_points_needed", 0)) <= player_skill_points(team):
+			reached = maxi(reached, int(entry.get("rank", 0)))
+	var verdict := advance_player_rank(team, reached) if reached > 0 else {"ok": true, "reason": "", "rank": 0, "granted": 0}
+	verdict["skill_points"] = player_skill_points(team)
+	return verdict
+
+
+## Retail field identities this file consumes from the compiled spellbook
+## document. Packs cooked before the field-contract receipts landed carry the
+## resolved values without them; the accessors below say so instead of
+## inventing a receipt.
+const SCIENCE_PURCHASE_POINT_COST_FIELD := "SciencePurchasePointCost"
+const SCIENCE_PURCHASE_POINT_COST_MP_FIELD := "SciencePurchasePointCostMP"
+const SCIENCE_IS_GRANTABLE_FIELD := "IsGrantable"
+const SCIENCE_PREREQUISITE_SCIENCES_FIELD := "PrerequisiteSciences"
+
+
+func _spellbook_science_document_rows(team: int) -> Array:
+	## The Science rows of the document this team plays: its cross-faction
+	## override when it has one, otherwise the global document.
+	var document := _spellbook_document
+	if _team_spellbooks.has(team):
+		document = (_team_spellbooks[team] as Dictionary).get("document", {}) as Dictionary
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	var power_tree: Dictionary = registration.get("powerTree", {}) as Dictionary
+	return power_tree.get("sciences", []) as Array
+
+
+func _spellbook_science_document_row(team: int, science_id: String) -> Dictionary:
+	if science_id == "":
+		return {}
+	for row_value in _spellbook_science_document_rows(team):
+		if typeof(row_value) != TYPE_DICTIONARY:
+			continue
+		var row := row_value as Dictionary
+		if String(row.get("id", "")) == science_id:
+			return row
+	return {}
+
+
+func _science_field_receipt(row: Dictionary, field: String) -> Dictionary:
+	return ((row.get("fieldContracts", {}) as Dictionary).get(field, {}) as Dictionary).duplicate(true)
+
+
+func science_purchase_cost(science_id: String, multiplayer: bool) -> int:
+	## Retail authors two purchase costs per Science: SciencePurchasePointCost
+	## for skirmish/campaign and SciencePurchasePointCostMP for multiplayer.
+	## The palantir spends the one matching the match kind. A science the
+	## document does not carry, or one whose cost did not resolve, returns -1 ???
+	## never 0, which would read as "free".
+	var row := _spellbook_science_document_row(PLAYER_TEAM, science_id)
+	if row.is_empty():
+		return -1
+	var cost_key := "pointCostMP" if multiplayer else "pointCost"
+	var cost_value: Variant = (row.get(cost_key, {}) as Dictionary).get("value")
+	if typeof(cost_value) not in [TYPE_INT, TYPE_FLOAT]:
+		return -1
+	var cost := float(cost_value)
+	if not is_finite(cost) or cost < 0.0 or cost != floor(cost):
+		return -1
+	return int(cost)
+
+
+func science_purchase_cost_receipt(science_id: String, multiplayer: bool) -> Dictionary:
+	## The authored source receipt behind science_purchase_cost, when the pack
+	## carries field contracts. Empty for packs cooked before they existed.
+	var row := _spellbook_science_document_row(PLAYER_TEAM, science_id)
+	if row.is_empty():
+		return {}
+	return _science_field_receipt(
+		row,
+		SCIENCE_PURCHASE_POINT_COST_MP_FIELD if multiplayer else SCIENCE_PURCHASE_POINT_COST_FIELD,
+	)
+
+
+func science_is_grantable(science_id: String) -> bool:
+	## Science IsGrantable = Yes marks a science that may be handed to a player
+	## outside the purchase flow (rank rewards, scripts). A science the document
+	## does not carry is not grantable ??? fail closed.
+	var row := _spellbook_science_document_row(PLAYER_TEAM, science_id)
+	if row.is_empty():
+		return false
+	return bool(row.get("isGrantable", false))
+
+
+func grant_science(team: int, science_id: String) -> Dictionary:
+	## Grant one science without spending purchase points, the way a rank
+	## reward or a map script does. Gated exactly by the authored contract:
+	## IsGrantable = Yes, PrerequisiteSciences satisfied, not already owned.
+	if not _is_combatant_team(team):
+		return {"ok": false, "reason": "not-a-combatant-team"}
+	var row := _spellbook_science_document_row(team, science_id)
+	if row.is_empty():
+		return {"ok": false, "reason": "unknown-science"}
+	if not bool(row.get("isGrantable", false)):
+		return {
+			"ok": false,
+			"reason": "science-not-grantable",
+			"receipt": _science_field_receipt(row, SCIENCE_IS_GRANTABLE_FIELD),
+		}
+	if _science_owned(team, science_id):
+		return {"ok": false, "reason": "already-owned"}
+	if not _science_prerequisites_met(team, row):
+		return {
+			"ok": false,
+			"reason": "prerequisites-unmet",
+			"receipt": _science_field_receipt(row, SCIENCE_PREREQUISITE_SCIENCES_FIELD),
+		}
+	(_team_sciences[team] as Array).append(science_id)
+	_emit_event("science.granted", 0, 0, {"team": team, "science_id": science_id})
+	return {
+		"ok": true,
+		"reason": "",
+		"science_id": science_id,
+		"receipt": _science_field_receipt(row, SCIENCE_IS_GRANTABLE_FIELD),
+	}
+
+
+func _science_prerequisites_met(team: int, row: Dictionary) -> bool:
+	## PrerequisiteSciences is an OR of AND groups: any fully owned group
+	## admits the science, and an empty group list has no prerequisite at all.
+	var groups: Array = row.get("prerequisiteGroups", []) as Array
+	if groups.is_empty():
+		return true
+	for group_value in groups:
+		if typeof(group_value) != TYPE_ARRAY:
+			return false
+		var satisfied := true
+		for member_value in group_value as Array:
+			if not _science_owned(team, String(member_value)):
+				satisfied = false
+				break
+		if satisfied:
+			return true
+	return false
 
 
 func _cast_spellbook_scavenger(team: int, effect: Dictionary) -> Dictionary:
