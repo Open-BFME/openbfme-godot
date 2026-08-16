@@ -8001,8 +8001,8 @@ func award_power_kill(team: int) -> void:
 ##
 ## DEFERRED, stated rather than hidden: these ledgers are NOT part of
 ## _authoritative_state(). Nothing in live play awards player skill points yet
-## ??? the earn rate (skill points per kill/damage) is unresolved from retail
-## data, exactly like the PROVISIONAL power-point rate above ??? so the ladder
+## — the earn rate (skill points per kill/damage) is unresolved from retail
+## data, exactly like the PROVISIONAL power-point rate above — so the ladder
 ## cannot advance during a match and has no live state to snapshot. When that
 ## earn rate lands, these three ledgers must join the authoritative state and
 ## the state pin has to be re-minted deliberately by the owner.
@@ -8210,7 +8210,7 @@ func science_purchase_cost(science_id: String, multiplayer: bool) -> int:
 	## Retail authors two purchase costs per Science: SciencePurchasePointCost
 	## for skirmish/campaign and SciencePurchasePointCostMP for multiplayer.
 	## The palantir spends the one matching the match kind. A science the
-	## document does not carry, or one whose cost did not resolve, returns -1 ???
+	## document does not carry, or one whose cost did not resolve, returns -1 —
 	## never 0, which would read as "free".
 	var row := _spellbook_science_document_row(PLAYER_TEAM, science_id)
 	if row.is_empty():
@@ -8240,7 +8240,7 @@ func science_purchase_cost_receipt(science_id: String, multiplayer: bool) -> Dic
 func science_is_grantable(science_id: String) -> bool:
 	## Science IsGrantable = Yes marks a science that may be handed to a player
 	## outside the purchase flow (rank rewards, scripts). A science the document
-	## does not carry is not grantable ??? fail closed.
+	## does not carry is not grantable — fail closed.
 	var row := _spellbook_science_document_row(PLAYER_TEAM, science_id)
 	if row.is_empty():
 		return false
