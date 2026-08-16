@@ -34,6 +34,7 @@ from .playable_unit_compiler import (
     _kind_of,
     _named_blocks,
     _named_definition_values,
+    _numeric_defines as _playable_numeric_defines,
     _default_weapon_slot,
     _permanent_weapon_locks,
     _resolved_expression,
@@ -46,7 +47,7 @@ from .playable_unit_import import FACTIONS, ROTWK_FACTIONS
 from .retail_men_damage_effects import parse_fx_lists
 from .sage_cst import SageBlock, SageObject
 from .sage_gameplay import _digest as _gameplay_digest
-from .sage_ini import IniBlock
+from .sage_ini import IniBlock, parse_flat_named_blocks
 from .sage_particles import parse_particle_definitions, select_particle_definition
 
 
@@ -62,6 +63,7 @@ UPGRADE_PATH = "data/ini/upgrade.ini"
 FX_PARTICLE_PATH = "data/ini/fxparticlesystem.ini"
 PLAYER_TEMPLATE_PATH = "data/ini/playertemplate.ini"
 LOCOMOTOR_PATH = "data/ini/locomotor.ini"
+RANK_PATH = "data/ini/rank.ini"
 
 _SPELL_BOOK_KIND = "SPELL_BOOK"
 _PURCHASE_COMMAND = "purchase_science"
@@ -239,6 +241,110 @@ def _one_value(block: IniBlock, field: str, label: str) -> str | None:
     if len(values) > 1:
         raise SpellbookCompilerError(f"{label} has ambiguous {field}")
     return values[0] if values else None
+
+
+def _document(documents: Mapping[str, bytes], path: str) -> bytes | None:
+    for candidate, payload in documents.items():
+        if candidate.replace("\\", "/").casefold() == path.casefold():
+            return payload
+    return None
+
+
+def _flat_assignment_line(
+    source: bytes, kind: str, name: str, field: str
+) -> int:
+    header = re.compile(
+        rf"^\s*{re.escape(kind)}\s+{re.escape(name)}\s*(?:;.*)?$",
+        re.IGNORECASE,
+    )
+    assignment = re.compile(rf"^\s*{re.escape(field)}\s*=", re.IGNORECASE)
+    active = False
+    found = 0
+    for line_number, raw in enumerate(source.decode("cp1252").splitlines(), 1):
+        if not active:
+            active = header.match(raw) is not None
+            continue
+        if raw.strip().casefold() == "end":
+            break
+        if assignment.match(raw):
+            found = line_number
+    if found <= 0:
+        raise SpellbookCompilerError(
+            f"{kind} {name} has no line receipt for {field}"
+        )
+    return found
+
+
+def _field_contract(
+    source: bytes,
+    block: IniBlock,
+    field: str,
+    value: object,
+    source_ini: str,
+) -> dict[str, object] | None:
+    authored_values = block.values(field)
+    if not authored_values:
+        return None
+    return {
+        "authored": " ".join(item.strip() for item in authored_values),
+        "value": value,
+        "sourceIni": source_ini,
+        "line": _flat_assignment_line(source, block.kind, block.name, field),
+    }
+
+
+def compile_rank_science_grants(
+    documents: Mapping[str, bytes],
+) -> list[dict[str, object]]:
+    """Compile Rank.ini spell-point grants with exact authored receipts."""
+
+    source = _document(documents, RANK_PATH)
+    if source is None:
+        raise SpellbookCompilerError(f"spellbook source document is missing: {RANK_PATH}")
+    constants = _playable_numeric_defines(documents)
+    rows: list[dict[str, object]] = []
+    seen: set[int] = set()
+    for block in parse_flat_named_blocks(source, "Rank"):
+        if not block.name.isdigit() or int(block.name) < 1:
+            raise SpellbookCompilerError(f"Rank has invalid identity: {block.name}")
+        rank = int(block.name)
+        if rank in seen:
+            raise SpellbookCompilerError(f"Rank is ambiguous: {rank}")
+        seen.add(rank)
+        authored = _one_value(
+            block, "SciencePurchasePointsGranted", f"Rank {rank}"
+        )
+        if authored is None:
+            raise SpellbookCompilerError(
+                f"Rank {rank} has no authored SciencePurchasePointsGranted"
+            )
+        resolved = _resolved_expression(authored.strip(), constants)
+        if (
+            resolved is None
+            or isinstance(resolved, bool)
+            or float(resolved) < 0
+            or not float(resolved).is_integer()
+        ):
+            raise SpellbookCompilerError(
+                f"Rank {rank} has unresolved SciencePurchasePointsGranted: {authored}"
+            )
+        rows.append(
+            {
+                "rank": rank,
+                "sciencePurchasePointsGranted": {
+                    "authored": authored.strip(),
+                    "value": int(resolved),
+                    "sourceIni": RANK_PATH,
+                    "line": _flat_assignment_line(
+                        source, "Rank", block.name, "SciencePurchasePointsGranted"
+                    ),
+                },
+            }
+        )
+    rows.sort(key=lambda row: int(row["rank"]))
+    if not rows:
+        raise SpellbookCompilerError(f"{RANK_PATH} has no Rank definitions")
+    return rows
 
 
 def _definition_rows(
@@ -2320,13 +2426,16 @@ def compile_spellbook_descriptor(
             )
         ):
             raise SpellbookCompilerError(f"{label} has an invalid IsGrantable")
+        science_source = _document(documents, SCIENCE_PATH)
+        assert science_source is not None
+        point_cost = _required_scalar(
+            block, "SciencePurchasePointCost", constants, label
+        )
         row: dict[str, object] = {
             "id": block.name,
             "definitionSha256": digest,
             "isGrantable": grantable_tokens[0].casefold() == "yes",
-            "pointCost": _required_scalar(
-                block, "SciencePurchasePointCost", constants, label
-            ),
+            "pointCost": point_cost,
             "prerequisiteGroups": [list(group) for group in groups],
             "prerequisites": flat,
         }
@@ -2344,6 +2453,23 @@ def compile_spellbook_descriptor(
             row["pointCostMP"] = mp_cost
         if purchase is not None:
             row["purchase"] = purchase
+        contracts = {
+            "IsGrantable": _field_contract(
+                science_source, block, "IsGrantable", row["isGrantable"], SCIENCE_PATH
+            ),
+            "PrerequisiteSciences": _field_contract(
+                science_source, block, "PrerequisiteSciences", row["prerequisiteGroups"], SCIENCE_PATH
+            ),
+            "SciencePurchasePointCost": _field_contract(
+                science_source, block, "SciencePurchasePointCost", point_cost["value"], SCIENCE_PATH
+            ),
+            "SciencePurchasePointCostMP": _field_contract(
+                science_source, block, "SciencePurchasePointCostMP", None if mp_cost is None else mp_cost["value"], SCIENCE_PATH
+            ),
+        }
+        row["fieldContracts"] = {
+            key: value for key, value in contracts.items() if value is not None
+        }
         return row
 
     for slot, command_id in _command_slots(store_set):
@@ -2458,6 +2584,29 @@ def compile_spellbook_descriptor(
             "requiredSciences": required,
             "cast": {"slot": slot, **_button_leaf_fields(button)},
         }
+        special_source = _document(documents, SPECIAL_POWER_PATH)
+        assert special_source is not None
+        object_filter = _one_value(block, "ObjectFilter", label)
+        forbidden_filter = _one_value(block, "ForbiddenObjectFilter", label)
+        forbidden_range = _optional_scalar(
+            block, "ForbiddenObjectRange", constants, label
+        )
+        if object_filter is not None:
+            row["objectFilter"] = list(_tokens(resolver._text_define(object_filter.strip())))
+        if forbidden_filter is not None:
+            row["forbiddenObjectFilter"] = list(_tokens(resolver._text_define(forbidden_filter.strip())))
+        if forbidden_range is not None:
+            row["forbiddenObjectRange"] = forbidden_range
+        special_contracts = {
+            "ReloadTime": _field_contract(special_source, block, "ReloadTime", row["reloadTimeMs"]["value"], SPECIAL_POWER_PATH),
+            "RequiredSciences": _field_contract(special_source, block, "RequiredSciences", required, SPECIAL_POWER_PATH),
+            "ObjectFilter": _field_contract(special_source, block, "ObjectFilter", row.get("objectFilter", []), SPECIAL_POWER_PATH),
+            "ForbiddenObjectFilter": _field_contract(special_source, block, "ForbiddenObjectFilter", row.get("forbiddenObjectFilter", []), SPECIAL_POWER_PATH),
+            "ForbiddenObjectRange": _field_contract(special_source, block, "ForbiddenObjectRange", None if forbidden_range is None else forbidden_range["value"], SPECIAL_POWER_PATH),
+        }
+        row["fieldContracts"] = {
+            key: value for key, value in special_contracts.items() if value is not None
+        }
         if flags:
             row["flags"] = flags
         if sound is not None:
@@ -2537,6 +2686,12 @@ def compile_spellbook_descriptor(
         used_paths.append(EXPERIENCE_LEVELS_PATH)
     if resolver.used_locomotor:
         used_paths.append(LOCOMOTOR_PATH)
+    rank_source = _document(documents, RANK_PATH)
+    rank_science_grants = (
+        compile_rank_science_grants(documents) if rank_source is not None else []
+    )
+    if rank_source is not None:
+        used_paths.append(RANK_PATH)
     used_paths.extend(
         sorted(
             {item.source_virtual_path for item in lineage},
@@ -2580,6 +2735,11 @@ def compile_spellbook_descriptor(
         },
         "sciences": science_rows,
         "powers": power_rows,
+        **(
+            {"rankScienceGrants": rank_science_grants}
+            if rank_science_grants
+            else {}
+        ),
         "leaves": {
             "objectCreationLists": [
                 resolver.ocls[key] for key in sorted(resolver.ocls)
@@ -2803,5 +2963,6 @@ __all__ = [
     "SCHEMA_VERSION",
     "SpellbookCompilerError",
     "compile_spellbook_descriptor",
+    "compile_rank_science_grants",
     "validate_spellbook_descriptor",
 ]

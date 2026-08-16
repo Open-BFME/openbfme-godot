@@ -483,21 +483,29 @@ def test_drawable_script_aliases_promote_only_executable_operations() -> None:
     )
     assert sound["status"] == "runtime-tested"
 
-    # Parsed but still semantically unsupported commands never receive an
-    # alias merely because their normalized label occurs in diagnostics/tests.
-    assert (
-        "curdrawablesettransitionanimstate"
-        not in module._EXECUTABLE_SCRIPT_OPERATION_ALIASES
-    )
-    unsupported = module._feature_evidence(
+    selected.values["set-transition-animation-state"] = ["pack/data/unit.json"]
+    transition = module._feature_evidence(
         "CurDrawableSetTransitionAnimState",
         {"curdrawablesettransitionanimstate": ["typed_visual_graph.py"]},
         selected,
         {"set-transition-animation-state": ["asset_factory.gd"]},
         {"set-transition-animation-state": ["drawable_script_runtime_runner.gd"]},
-        aliases=module._EXECUTABLE_SCRIPT_OPERATION_ALIASES.get(
-            "curdrawablesettransitionanimstate", ()
-        ),
+        aliases=module._EXECUTABLE_SCRIPT_OPERATION_ALIASES[
+            "curdrawablesettransitionanimstate"
+        ],
+    )
+    assert transition["status"] == "runtime-tested"
+
+    # Parsed but still semantically unsupported commands never receive an
+    # alias merely because their normalized label occurs in diagnostics/tests.
+    assert "if" not in module._EXECUTABLE_SCRIPT_OPERATION_ALIASES
+    unsupported = module._feature_evidence(
+        "if",
+        {"if": ["typed_visual_graph.py"]},
+        selected,
+        {"unsupported-script-control-flow": ["asset_factory.gd"]},
+        {"unsupported-script-control-flow": ["drawable_script_runtime_runner.gd"]},
+        aliases=module._EXECUTABLE_SCRIPT_OPERATION_ALIASES.get("if", ()),
     )
     assert unsupported["status"] == "importer-mentioned"
 

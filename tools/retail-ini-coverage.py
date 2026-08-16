@@ -80,6 +80,12 @@ _EXECUTABLE_SCRIPT_OPERATION_ALIASES: dict[str, tuple[str, ...]] = {
     "curdrawablehidesubobject": ("hide-sub-object",),
     "curdrawableshowsubobject": ("show-sub-object",),
     "curdrawableplaysound": ("play-sound", "audio_intents"),
+    "curdrawablehidesubobjectpermanently": ("hide-sub-object-permanently",),
+    "curdrawableshowsubobjectpermanently": ("show-sub-object-permanently",),
+    "curdrawablehidemodule": ("hide-module",),
+    "curdrawableshowmodule": ("show-module",),
+    "curdrawablesettransitionanimstate": ("set-transition-animation-state", "transition_anim_state"),
+    "curdrawableallowtocontinue": ("allow-to-continue",),
 }
 
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")

@@ -520,17 +520,41 @@ static func set_named_subobject_visible(root: Node, token: String, shown: bool) 
 	return matched
 
 
+static func set_named_draw_module_visible(root: Node, token: String, shown: bool) -> int:
+	## Hide or show one W3DScriptedModelDraw instance by its authored tag
+	## (Draw_Trebuchet, ModuleTag_DrawLight). Exact name match; no prefix guess.
+	var matched := 0
+	var want := token.strip_edges().to_lower()
+	if want == "":
+		return 0
+	if root.name.to_lower() == want and root is Node3D:
+		(root as Node3D).visible = shown
+		matched += 1
+	for child in root.get_children():
+		matched += set_named_draw_module_visible(child, token, shown)
+	return matched
+
+
 static func apply_drawable_scripts(root: Node, definition: Dictionary, active_conditions: Array) -> Dictionary:
-	## Execute typed W3DScriptedModelDraw sub-object operations. The default
+	## Execute typed W3DScriptedModelDraw BeginScript operations. The default
 	## model-condition state passes an empty condition set. Unknown statements
 	## and operations without a runtime consumer remain explicit diagnostics.
+	##
+	## Permanent hide/show bits survive later non-permanent Show/Hide. Prev
+	## predicates (Prev == "STATE_X" / CurDrawablePrevAnimationState()) gate
+	## SetTransitionAnimState and AllowToContinue. Unknown `if` bodies fail
+	## closed instead of executing their inner commands.
 	var active: Dictionary = {}
 	for value in active_conditions:
 		active[String(value).to_upper()] = true
 	var source_object := String(definition.get("sourceObjectId", definition.get("id", "")))
+	var previous_labels := _drawable_previous_labels(definition, root)
+	var permanent_hidden := _drawable_permanent_set(root, "drawable_permanently_hidden")
 	var applied := 0
 	var unhandled: Array[Dictionary] = []
 	var audio_intents: Array[Dictionary] = []
+	var transition_anim_state := ""
+	var allow_to_continue := false
 	var script_index := -1
 	for script_value in definition.get("drawableScripts", []) as Array:
 		script_index += 1
@@ -548,6 +572,7 @@ static func apply_drawable_scripts(root: Node, definition: Dictionary, active_co
 				break
 		if not matches:
 			continue
+		var skip_depth := 0
 		var action_index := -1
 		for action_value in script.get("actions", []) as Array:
 			action_index += 1
@@ -555,36 +580,269 @@ static func apply_drawable_scripts(root: Node, definition: Dictionary, active_co
 				unhandled.append({"reason": "invalid-action-row"})
 				continue
 			var action := action_value as Dictionary
+			var raw := String(action.get("raw", "")).strip_edges()
 			var operation := String(action.get("operation", ""))
 			var arguments: Array = action.get("arguments", []) as Array
-			if not bool(action.get("supported", false)):
-				unhandled.append({"operation": operation, "reason": "importer-unsupported", "raw": String(action.get("raw", ""))})
+			if skip_depth > 0:
+				if _drawable_raw_is_if(raw):
+					if not _drawable_if_is_self_contained(raw):
+						skip_depth += 1
+				elif _drawable_raw_is_end(raw):
+					skip_depth -= 1
 				continue
-			if operation in ["hide-sub-object", "hide-sub-object-permanently", "show-sub-object", "show-sub-object-permanently"] and arguments.size() == 1:
-				var shown := operation.begins_with("show-")
-				var match_count := set_named_subobject_visible(root, String(arguments[0]), shown)
-				if match_count > 0:
-					applied += 1
-				else:
-					unhandled.append({"operation": operation, "reason": "sub-object-not-found", "argument": String(arguments[0])})
-			elif operation == "allow-to-continue" and arguments.is_empty():
+			var gate := _drawable_parse_if(raw, previous_labels)
+			if not gate.is_empty():
+				if bool(gate.get("unknown", false)):
+					unhandled.append({"operation": operation, "reason": "runtime-unsupported", "raw": raw})
+					if not bool(gate.get("self_contained", false)):
+						skip_depth = 1
+					continue
+				if not bool(gate.get("matched", false)):
+					if not bool(gate.get("self_contained", false)):
+						skip_depth = 1
+					continue
+				var gated_op := String(gate.get("operation", ""))
+				if gated_op != "":
+					var gated_args: Array = gate.get("arguments", []) as Array
+					var gated := _drawable_execute_operation(
+						root, gated_op, gated_args, true, source_object, target, script,
+						script_index, action_index, permanent_hidden, audio_intents
+					)
+					applied += int(gated.get("applied", 0))
+					unhandled.append_array(gated.get("unhandled", []) as Array)
+					if String(gated.get("transition_anim_state", "")) != "":
+						transition_anim_state = String(gated.get("transition_anim_state", ""))
+					if bool(gated.get("allow_to_continue", false)):
+						allow_to_continue = true
+				continue
+			if _drawable_raw_is_prev_assign(raw) or _drawable_raw_is_then(raw) or _drawable_raw_is_end(raw):
 				applied += 1
-			elif operation == "play-sound" and arguments.size() == 1 and String(arguments[0]) != "":
-				# CurDrawablePlaySound carries a logical AudioEvent id, never a file
-				# name. Keep this view helper audio-agnostic and emit an ordered typed
-				# intent for the structure presenter/audio registry to resolve.
-				audio_intents.append({
-					"event_id": String(arguments[0]),
-					"source_object_id": source_object if source_object != "" else target,
-					"target_object_id": target,
-					"conditions": (script.get("conditions", []) as Array).duplicate(true),
-					"script_index": script_index,
-					"action_index": action_index,
-				})
+				continue
+			if not bool(action.get("supported", false)):
+				unhandled.append({"operation": operation, "reason": "importer-unsupported", "raw": raw})
+				continue
+			var executed := _drawable_execute_operation(
+				root, operation, arguments, true, source_object, target, script,
+				script_index, action_index, permanent_hidden, audio_intents
+			)
+			applied += int(executed.get("applied", 0))
+			unhandled.append_array(executed.get("unhandled", []) as Array)
+			if String(executed.get("transition_anim_state", "")) != "":
+				transition_anim_state = String(executed.get("transition_anim_state", ""))
+			if bool(executed.get("allow_to_continue", false)):
+				allow_to_continue = true
+	root.set_meta("drawable_permanently_hidden", permanent_hidden.duplicate(true))
+	return {
+		"applied": applied,
+		"unhandled": unhandled,
+		"audio_intents": audio_intents,
+		"transition_anim_state": transition_anim_state,
+		"allow_to_continue": allow_to_continue,
+	}
+
+
+static func _drawable_previous_labels(definition: Dictionary, root: Node) -> Dictionary:
+	var labels: Dictionary = {}
+	var values: Array = definition.get("previousStateLabels", []) as Array
+	if values.is_empty() and root.has_meta("previous_authored_state_labels"):
+		values = root.get_meta("previous_authored_state_labels") as Array
+	if values.is_empty() and root.has_meta("authored_state_labels"):
+		# Before a clip swap, current labels are Prev for the incoming script.
+		values = root.get_meta("authored_state_labels") as Array
+	for value in values:
+		var label := String(value)
+		if label != "":
+			labels[label] = true
+			labels[label.to_upper()] = true
+	return labels
+
+
+static func _drawable_permanent_set(root: Node, meta_name: String) -> Dictionary:
+	var stored: Dictionary = {}
+	if root.has_meta(meta_name):
+		var meta_value: Variant = root.get_meta(meta_name)
+		if typeof(meta_value) == TYPE_DICTIONARY:
+			stored = (meta_value as Dictionary).duplicate(true)
+	return stored
+
+
+static func _drawable_raw_is_if(raw: String) -> bool:
+	return raw.strip_edges().to_lower().begins_with("if ") or raw.strip_edges().to_lower() == "if"
+
+
+static func _drawable_raw_is_then(raw: String) -> bool:
+	return raw.strip_edges().to_lower() == "then"
+
+
+static func _drawable_raw_is_end(raw: String) -> bool:
+	return raw.strip_edges().to_lower() == "end"
+
+
+static func _drawable_raw_is_prev_assign(raw: String) -> bool:
+	var folded := raw.strip_edges().to_lower().replace(" ", "")
+	return folded.begins_with("prev=curdrawableprevanimationstate()")
+
+
+static func _drawable_if_is_self_contained(raw: String) -> bool:
+	var folded := raw.strip_edges().to_lower()
+	return folded.contains(" then ") and folded.ends_with(" end")
+
+
+static func _drawable_parse_if(raw: String, previous_labels: Dictionary) -> Dictionary:
+	var text := raw.strip_edges()
+	if not _drawable_raw_is_if(text):
+		return {}
+	var body := text.substr(2).strip_edges()
+	var predicate := body
+	var inline := ""
+	var self_contained := false
+	var then_at := body.to_lower().find(" then")
+	if then_at >= 0:
+		predicate = body.substr(0, then_at).strip_edges()
+		var rest := body.substr(then_at + 5).strip_edges()
+		if rest.to_lower().ends_with(" end"):
+			inline = rest.substr(0, rest.length() - 4).strip_edges()
+			self_contained = true
+		elif rest == "":
+			inline = ""
+		else:
+			inline = rest
+			self_contained = rest.to_lower().ends_with("end")
+	var pred := _drawable_eval_prev_predicate(predicate, previous_labels)
+	if pred.get("unknown", true):
+		return {"unknown": true, "self_contained": self_contained}
+	var parsed_inline := _drawable_parse_inline_command(inline)
+	return {
+		"unknown": false,
+		"matched": bool(pred.get("matched", false)),
+		"self_contained": self_contained,
+		"operation": String(parsed_inline.get("operation", "")),
+		"arguments": parsed_inline.get("arguments", []),
+	}
+
+
+static func _drawable_eval_prev_predicate(predicate: String, previous_labels: Dictionary) -> Dictionary:
+	var text := predicate.strip_edges()
+	var quote_match := RegEx.new()
+	quote_match.compile("(?i)^(?:Prev|CurDrawablePrevAnimationState\\(\\))\\s*==\\s*[\"']([^\"']+)[\"']\\s*$")
+	var found := quote_match.search(text)
+	if found == null:
+		return {"unknown": true}
+	var label := found.get_string(1)
+	return {
+		"unknown": false,
+		"matched": previous_labels.has(label) or previous_labels.has(label.to_upper()),
+		"label": label,
+	}
+
+
+static func _drawable_parse_inline_command(inline: String) -> Dictionary:
+	var text := inline.strip_edges()
+	if text == "":
+		return {}
+	var call := RegEx.new()
+	call.compile("^([A-Za-z_][A-Za-z0-9_]*)\\s*\\((.*)\\)\\s*;?$")
+	var found := call.search(text)
+	if found == null:
+		return {}
+	var name := found.get_string(1).to_lower()
+	var args_raw := found.get_string(2).strip_edges()
+	var args: Array = []
+	if args_raw != "":
+		var token := args_raw
+		if token.length() >= 2 and token[0] in ["\"", "'"] and token[token.length() - 1] == token[0]:
+			token = token.substr(1, token.length() - 2)
+		args.append(token)
+	if name == "curdrawablesettransitionanimstate":
+		return {"operation": "set-transition-animation-state", "arguments": args}
+	if name == "curdrawableallowtocontinue":
+		return {"operation": "allow-to-continue", "arguments": []}
+	if name == "curdrawablehidesubobjectpermanently":
+		return {"operation": "hide-sub-object-permanently", "arguments": args}
+	if name == "curdrawableshowsubobjectpermanently":
+		return {"operation": "show-sub-object-permanently", "arguments": args}
+	if name == "curdrawablehidesubobject":
+		return {"operation": "hide-sub-object", "arguments": args}
+	if name == "curdrawableshowsubobject":
+		return {"operation": "show-sub-object", "arguments": args}
+	if name == "curdrawablehidemodule":
+		return {"operation": "hide-module", "arguments": args}
+	if name == "curdrawableshowmodule":
+		return {"operation": "show-module", "arguments": args}
+	if name == "curdrawableplaysound":
+		return {"operation": "play-sound", "arguments": args}
+	return {}
+
+
+static func _drawable_execute_operation(
+	root: Node,
+	operation: String,
+	arguments: Array,
+	supported: bool,
+	source_object: String,
+	target: String,
+	script: Dictionary,
+	script_index: int,
+	action_index: int,
+	permanent_hidden: Dictionary,
+	audio_intents: Array[Dictionary]
+) -> Dictionary:
+	var applied := 0
+	var unhandled: Array[Dictionary] = []
+	var transition_anim_state := ""
+	var allow_to_continue := false
+	if not supported:
+		unhandled.append({"operation": operation, "reason": "importer-unsupported"})
+		return {"applied": 0, "unhandled": unhandled}
+	if operation in ["hide-sub-object", "hide-sub-object-permanently", "show-sub-object", "show-sub-object-permanently"] and arguments.size() == 1:
+		var token := String(arguments[0])
+		var folded := token.to_lower().replace(" ", "")
+		var permanent := operation.ends_with("permanently")
+		var shown := operation.begins_with("show-")
+		if shown and not permanent and bool(permanent_hidden.get(folded, false)):
+			applied += 1
+		else:
+			var match_count := set_named_subobject_visible(root, token, shown)
+			if match_count > 0:
 				applied += 1
+				if permanent and not shown:
+					permanent_hidden[folded] = true
+				elif permanent and shown:
+					permanent_hidden.erase(folded)
 			else:
-				unhandled.append({"operation": operation, "reason": "runtime-unsupported", "arguments": arguments.duplicate(true)})
-	return {"applied": applied, "unhandled": unhandled, "audio_intents": audio_intents}
+				unhandled.append({"operation": operation, "reason": "sub-object-not-found", "argument": token})
+	elif operation in ["hide-module", "show-module"] and arguments.size() == 1:
+		var module_token := String(arguments[0])
+		var module_shown := operation == "show-module"
+		var module_matches := set_named_draw_module_visible(root, module_token, module_shown)
+		if module_matches > 0:
+			applied += 1
+		else:
+			unhandled.append({"operation": operation, "reason": "draw-module-not-found", "argument": module_token})
+	elif operation == "set-transition-animation-state" and arguments.size() == 1 and String(arguments[0]) != "":
+		transition_anim_state = String(arguments[0])
+		applied += 1
+	elif operation == "allow-to-continue" and arguments.is_empty():
+		allow_to_continue = true
+		applied += 1
+	elif operation == "play-sound" and arguments.size() == 1 and String(arguments[0]) != "":
+		audio_intents.append({
+			"event_id": String(arguments[0]),
+			"source_object_id": source_object if source_object != "" else target,
+			"target_object_id": target,
+			"conditions": (script.get("conditions", []) as Array).duplicate(true),
+			"script_index": script_index,
+			"action_index": action_index,
+		})
+		applied += 1
+	else:
+		unhandled.append({"operation": operation, "reason": "runtime-unsupported", "arguments": arguments.duplicate(true)})
+	return {
+		"applied": applied,
+		"unhandled": unhandled,
+		"transition_anim_state": transition_anim_state,
+		"allow_to_continue": allow_to_continue,
+	}
 
 
 static func _house_color_pack_root(definition: Dictionary) -> String:

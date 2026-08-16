@@ -1,7 +1,7 @@
 extends SceneTree
 
 const Watchdog := preload("res://tests/runner_watchdog.gd")
-const EXPECTED_CHECKS := 27
+const EXPECTED_CHECKS := 42
 
 var passed := 0
 var failed := 0
@@ -87,6 +87,97 @@ func _run() -> void:
 	_check("target object mismatch emits no audio", (wrong_source.get("audio_intents", []) as Array).is_empty())
 	var control_flow: Dictionary = asset_factory.apply_drawable_scripts(visual_root, {"drawableScripts": [{"actions": [{"operation": "set-transition", "arguments": ["A", "B"], "supported": true}]}]}, [])
 	_check("unimplemented control flow remains explicit", (control_flow.get("unhandled", []) as Array).size() == 1 and String(((control_flow.get("unhandled", []) as Array)[0] as Dictionary).get("reason", "")) == "runtime-unsupported")
+
+	bow.visible = true
+	var permanent_hide: Dictionary = asset_factory.apply_drawable_scripts(visual_root, {"drawableScripts": [{"actions": [
+		{"operation": "hide-sub-object-permanently", "arguments": ["BOW"], "supported": true, "raw": "CurDrawableHideSubObjectPermanently(\"BOW\")"},
+	]}]}, [])
+	_check("permanent hide conceals BOW", not bow.visible and int(permanent_hide.get("applied", 0)) == 1)
+	var blocked_show: Dictionary = asset_factory.apply_drawable_scripts(visual_root, {"drawableScripts": [{"actions": [
+		{"operation": "show-sub-object", "arguments": ["BOW"], "supported": true, "raw": "CurDrawableShowSubObject(\"BOW\")"},
+	]}]}, [])
+	_check("show-sub-object cannot clear a permanent hide", not bow.visible and int(blocked_show.get("applied", 0)) == 1)
+	var permanent_show: Dictionary = asset_factory.apply_drawable_scripts(visual_root, {"drawableScripts": [{"actions": [
+		{"operation": "show-sub-object-permanently", "arguments": ["BOW"], "supported": true, "raw": "CurDrawableShowSubObjectPermanently(\"BOW\")"},
+	]}]}, [])
+	_check("show-sub-object-permanently clears the permanent hide", bow.visible and int(permanent_show.get("applied", 0)) == 1)
+
+	var trebuchet := Node3D.new()
+	trebuchet.name = "Draw_Trebuchet"
+	visual_root.add_child(trebuchet)
+	var hide_module: Dictionary = asset_factory.apply_drawable_scripts(visual_root, {"drawableScripts": [{"actions": [
+		{"operation": "hide-module", "arguments": ["Draw_Trebuchet"], "supported": true, "raw": "CurDrawableHideModule(\"Draw_Trebuchet\")"},
+	]}]}, [])
+	_check("hide-module conceals the named draw module", not trebuchet.visible and int(hide_module.get("applied", 0)) == 1)
+	var show_module: Dictionary = asset_factory.apply_drawable_scripts(visual_root, {"drawableScripts": [{"actions": [
+		{"operation": "show-module", "arguments": ["Draw_Trebuchet"], "supported": true, "raw": "CurDrawableShowModule(\"Draw_Trebuchet\")"},
+	]}]}, [])
+	_check("show-module reveals the named draw module", trebuchet.visible and int(show_module.get("applied", 0)) == 1)
+	var missing_module: Dictionary = asset_factory.apply_drawable_scripts(visual_root, {"drawableScripts": [{"actions": [
+		{"operation": "hide-module", "arguments": ["Draw_Missing"], "supported": true, "raw": "CurDrawableHideModule(\"Draw_Missing\")"},
+	]}]}, [])
+	_check("missing draw module fails closed", (missing_module.get("unhandled", []) as Array).size() == 1)
+
+	var matching_prev: Dictionary = asset_factory.apply_drawable_scripts(visual_root, {
+		"previousStateLabels": ["STATE_Idle"],
+		"drawableScripts": [{"actions": [
+			{"operation": "unsupported-script-statement", "arguments": [], "supported": false, "raw": "Prev = CurDrawablePrevAnimationState()"},
+			{"operation": "unsupported-script-control-flow", "arguments": [], "supported": false, "raw": "if Prev == \"STATE_Idle\""},
+			{"operation": "unsupported-script-control-flow", "arguments": [], "supported": false, "raw": "then"},
+			{"operation": "set-transition-animation-state", "arguments": ["TRANS_IdleToSelected"], "supported": true, "raw": "CurDrawableSetTransitionAnimState(\"TRANS_IdleToSelected\")"},
+			{"operation": "unsupported-script-control-flow", "arguments": [], "supported": false, "raw": "end"},
+		]}],
+	}, [])
+	_check("matching Prev executes set-transition-animation-state", String(matching_prev.get("transition_anim_state", "")) == "TRANS_IdleToSelected" and int(matching_prev.get("applied", 0)) >= 1)
+	_check("matching Prev does not leave the transition as a gap", (matching_prev.get("unhandled", []) as Array).is_empty())
+	var mismatch_prev: Dictionary = asset_factory.apply_drawable_scripts(visual_root, {
+		"previousStateLabels": ["STATE_Selected"],
+		"drawableScripts": [{"actions": [
+			{"operation": "set-transition-animation-state", "arguments": ["TRANS_IdleToSelected"], "supported": true, "raw": "if Prev == \"STATE_Idle\" then CurDrawableSetTransitionAnimState(\"TRANS_IdleToSelected\") end"},
+		]}],
+	}, [])
+	_check("non-matching Prev skips the authored transition", String(mismatch_prev.get("transition_anim_state", "")) == "" and (mismatch_prev.get("unhandled", []) as Array).is_empty())
+	var continue_ok: Dictionary = asset_factory.apply_drawable_scripts(visual_root, {
+		"previousStateLabels": ["STATE_Firing"],
+		"drawableScripts": [{"actions": [
+			{"operation": "allow-to-continue", "arguments": [], "supported": true, "raw": "if CurDrawablePrevAnimationState() == \"STATE_Firing\" then CurDrawableAllowToContinue() end"},
+		]}],
+	}, [])
+	_check("matching previous animation allows continuation", bool(continue_ok.get("allow_to_continue", false)) and int(continue_ok.get("applied", 0)) == 1)
+	var continue_skip: Dictionary = asset_factory.apply_drawable_scripts(visual_root, {
+		"previousStateLabels": ["STATE_Idle"],
+		"drawableScripts": [{"actions": [
+			{"operation": "allow-to-continue", "arguments": [], "supported": true, "raw": "if CurDrawablePrevAnimationState() == \"STATE_Firing\" then CurDrawableAllowToContinue() end"},
+		]}],
+	}, [])
+	_check("non-matching previous animation does not continue", not bool(continue_skip.get("allow_to_continue", false)))
+	sword.visible = false
+	var unknown_if: Dictionary = asset_factory.apply_drawable_scripts(visual_root, {"drawableScripts": [{"actions": [
+		{"operation": "unsupported-script-control-flow", "arguments": [], "supported": false, "raw": "if (condition)"},
+		{"operation": "show-sub-object", "arguments": ["SWORD"], "supported": true, "raw": "CurDrawableShowSubObject(\"SWORD\")"},
+		{"operation": "unsupported-script-control-flow", "arguments": [], "supported": false, "raw": "end"},
+	]}]}, [])
+	_check("unknown if fails closed and skips its body", not sword.visible)
+	_check("unknown if remains an explicit gap", (unknown_if.get("unhandled", []) as Array).size() == 1)
+
+	var battalion_script: GDScript = load("res://src/retail_slice/retail_battalion.gd") as GDScript
+	_check("battalion consumer loads", battalion_script != null and battalion_script.can_instantiate())
+	if battalion_script != null and battalion_script.can_instantiate():
+		var battalion = battalion_script.new()
+		battalion.member_count = 1
+		battalion.member_health_ratios[0] = 1.0
+		battalion.member_visuals[0] = visual_root
+		battalion._drawable_scripts = [{
+			"targetObject": "",
+			"conditions": ["SELECTED"],
+			"actions": [
+				{"operation": "set-transition-animation-state", "arguments": ["TRANS_IdleToSelected"], "supported": true, "raw": "if Prev == \"STATE_Idle\" then CurDrawableSetTransitionAnimState(\"TRANS_IdleToSelected\") end"},
+			],
+		}]
+		battalion.member_current_authored_state_labels[0] = ["STATE_Idle"]
+		var receipt: Dictionary = battalion.apply_member_drawable_scripts(0, ["SELECTED"])
+		_check("battalion consumes set-transition-animation-state from Prev", String(receipt.get("transition_anim_state", "")) == "TRANS_IdleToSelected")
+		battalion.free()
 
 	var structure_script: GDScript = load("res://src/retail_slice/retail_structure.gd") as GDScript
 	_check("structure consumer loads", structure_script != null)

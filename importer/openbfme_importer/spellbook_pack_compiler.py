@@ -317,6 +317,11 @@ def compile_spellbook_pack_recipe(
             "spellBook": deepcopy(dict(spellbook)),
             "sciences": deepcopy(descriptor["sciences"]),
             "powers": deepcopy(descriptor["powers"]),
+            **(
+                {"rankScienceGrants": deepcopy(descriptor["rankScienceGrants"])}
+                if "rankScienceGrants" in descriptor
+                else {}
+            ),
             "leaves": deepcopy(descriptor["leaves"]),
             "imageBindings": image_bindings,
             "imageBindingMetadata": image_metadata,
@@ -433,6 +438,11 @@ def compose_spellbook_runtime_document(
             "powerTree": {
                 "sciences": deepcopy(registration["sciences"]),
                 "powers": deepcopy(registration["powers"]),
+                **(
+                    {"rankScienceGrants": deepcopy(registration["rankScienceGrants"])}
+                    if "rankScienceGrants" in registration
+                    else {}
+                ),
             },
             "leaves": deepcopy(dict(registration["leaves"])),  # type: ignore[arg-type]
             "presentation": {

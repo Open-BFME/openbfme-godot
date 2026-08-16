@@ -907,6 +907,50 @@ def test_grantable_science_qualifier_is_preserved() -> None:
     )
     assert row["isGrantable"] is True
     assert row["isGrantableQualifierSciences"] == ["SCIENCE_ELVES"]
+    contracts = row["fieldContracts"]
+    assert contracts["IsGrantable"]["authored"] == "Yes SCIENCE_ELVES"
+    assert contracts["IsGrantable"]["value"] is True
+    assert contracts["PrerequisiteSciences"]["value"] == [
+        ["SCIENCE_ELVES"], ["SCIENCE_GOOD"]
+    ]
+    assert contracts["SciencePurchasePointCost"]["value"] == 5
+    assert contracts["SciencePurchasePointCostMP"]["value"] == 5
+    assert all(
+        contract["sourceIni"] == "data/ini/science.ini"
+        and isinstance(contract["line"], int)
+        and contract["line"] > 0
+        for contract in contracts.values()
+    )
+
+
+def test_special_power_field_contracts_keep_targeting_and_timer_receipts() -> None:
+    documents = _documents()
+    documents["data/ini/specialpower.ini"] = documents[
+        "data/ini/specialpower.ini"
+    ].replace(
+        b"  ReloadTime = SPELL_RECHARGE_TIME_TIER_1\n",
+        b"  ReloadTime = SPELL_RECHARGE_TIME_TIER_1\n"
+        b"  ObjectFilter = ANY +INFANTRY\n"
+        b"  ForbiddenObjectFilter = NONE +MACHINE\n"
+        b"  ForbiddenObjectRange = 60\n",
+        1,
+    )
+    descriptor = _compile_with(documents, _graph(documents))
+    power = next(
+        row for row in descriptor["powers"] if row["id"] == "SpellBookTestHeal"
+    )
+    contracts = power["fieldContracts"]
+    assert contracts["ReloadTime"]["value"] == 30_000
+    assert contracts["RequiredSciences"]["value"] == ["SCIENCE_TestHeal"]
+    assert contracts["ObjectFilter"]["value"] == ["ANY", "+INFANTRY"]
+    assert contracts["ForbiddenObjectFilter"]["value"] == ["NONE", "+MACHINE"]
+    assert contracts["ForbiddenObjectRange"]["value"] == 60
+    assert all(
+        contract["sourceIni"] == "data/ini/specialpower.ini"
+        and isinstance(contract["line"], int)
+        and contract["line"] > 0
+        for contract in contracts.values()
+    )
 
 
 def _leaf(draft: dict[str, object], object_id: str) -> dict[str, object]:

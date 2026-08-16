@@ -140,6 +140,10 @@ var authored_animation_clip_properties: Dictionary = {}
 var authored_state_label_links: Dictionary = {}
 var member_current_authored_state_labels: Dictionary = {}
 var member_previous_authored_state_labels: Dictionary = {}
+## Typed W3DScriptedModelDraw BeginScript rows from the pack. Applied when a
+## member's authored animation state changes so CurDrawableSetTransitionAnimState
+## and CurDrawableAllowToContinue can read Prev.
+var _drawable_scripts: Array = []
 var equipment_contract: Dictionary = {}
 var equipment_contract_ready := false
 var unresolved_animation_track_count := 0
@@ -284,6 +288,11 @@ func configure(
 	_configure_combat_visual_contract(definition)
 	name = "RetailBattalion_%d" % id
 	_build_clip_map(capability)
+	_drawable_scripts = (definition.get("drawableScripts", []) as Array).duplicate(true)
+	if _drawable_scripts.is_empty():
+		var visual_row: Variant = definition.get("visual", {})
+		if typeof(visual_row) == TYPE_DICTIONARY:
+			_drawable_scripts = ((visual_row as Dictionary).get("drawableScripts", []) as Array).duplicate(true)
 	_build_members(expected_members, formation_positions)
 	_resolve_selection_radius()
 	_configure_source_selection_decal(definition)
@@ -1325,6 +1334,21 @@ func previous_authored_state_labels(member_index: int) -> Array:
 func member_has_authored_state_label(member_index: int, label: String, previous: bool = false) -> bool:
 	var labels := previous_authored_state_labels(member_index) if previous else current_authored_state_labels(member_index)
 	return labels.has(label)
+
+
+func apply_member_drawable_scripts(member_index: int, active_conditions: Array) -> Dictionary:
+	## Execute authored BeginScript rows against one member mesh. Prev is the
+	## member's current authored StateName set — call this before swapping labels
+	## to the destination clip.
+	var visual := member_visuals.get(member_index) as Node
+	if visual == null:
+		return {}
+	var asset_factory = load("res://src/view/asset_factory.gd")
+	return asset_factory.apply_drawable_scripts(visual, {
+		"sourceObjectId": object_id,
+		"previousStateLabels": current_authored_state_labels(member_index),
+		"drawableScripts": _drawable_scripts,
+	}, active_conditions)
 
 
 func _sync_member_authored_state_labels(member_index: int, clip: String) -> void:
