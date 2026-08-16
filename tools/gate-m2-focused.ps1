@@ -17,17 +17,9 @@ $focusedRunners = [ordered]@{
     'bound_props_runtime' = @('retail_bound_props_runner.gd', '(?m)^RETAIL_BOUND_PROPS_RESULT passed=30 failed=0\s*$')
     'builder_construction_runtime' = @('retail_builder_construction_runner.gd', '(?m)^RETAIL_BUILDER_CONSTRUCTION_RESULT passed=12 failed=0\s*$')
     'environment_runtime' = @('retail_environment_runner.gd', '(?m)^RETAIL_ENVIRONMENT_RESULT passed=33 failed=0\s*$')
-    # Re-pinned 105/0 -> 138/7, and the runner now exits 0 on its declared
-    # ratchet. CORRECTION to this lane's first attempt, which asserted the runner
-    # crashed and hung: it does not. Measured on a pre-lane tree (c883b48, its own
-    # runner and its own game/src) it completes in 17s at 138/7 and exits 1. The
-    # 105/0 pin was simply STALE, and because Invoke-ProofChecked fails any
-    # nonzero exit, this step was unpassable no matter what the pin said.
-    # The seven failures are open pack/registry gaps that predate the lane and are
-    # now pinned BY NAME inside the runner (EXPECTED_FAILURES), so an eighth
-    # failure is red AND a name silently dropping off is red. See the runner for
-    # the list.
-    'four_unit_audio' = @('retail_four_unit_audio_runner.gd', '(?m)^RETAIL_FOUR_UNIT_AUDIO_RESULT passed=138 failed=7 missing=0\s*$')
+    # The runner validates every routed leaf against its actual mounted owner,
+    # keeps the BFME2 oracle pack explicit, and has no accepted failures.
+    'four_unit_audio' = @('retail_four_unit_audio_runner.gd', '(?m)^RETAIL_FOUR_UNIT_AUDIO_RESULT passed=159 failed=0 missing=0\s*$')
     # Owner playtest report D ("attack sounds still sound awful"): the per-hit
     # layer must stay silent-with-a-counted-DamageFX-gap instead of firing the
     # target's SoundImpact horse thud, and the authored weapon sound must fire
@@ -61,7 +53,7 @@ $focusedRunners = [ordered]@{
     'member_health_overlay_runtime' = @('retail_member_health_overlay_runner.gd', '(?m)^RETAIL_MEMBER_HEALTH_OVERLAY_RESULT passed=68 failed=0\s*$')
     'selection_decal_runtime' = @('retail_selection_decal_runner.gd', '(?m)^RETAIL_SELECTION_DECAL_RESULT passed=15 failed=0\s*$')
     'neutral_lifecycle_runtime' = @('retail_neutral_lifecycle_runner.gd', '(?m)^RETAIL_NEUTRAL_LIFECYCLE_RESULT passed=51 failed=0\s*$')
-    'particle_runtime' = @('retail_particle_runtime_runner.gd', '(?m)^RETAIL_PARTICLE_RUNTIME_RESULT passed=17 failed=0\s*$')
+    'particle_runtime' = @('retail_particle_runtime_runner.gd', '(?m)^RETAIL_PARTICLE_RUNTIME_RESULT passed=20 failed=0\s*$')
     'production_queue_runtime' = @('retail_production_queue_runner.gd', '(?m)^RETAIL_PRODUCTION_QUEUE_RESULT passed=16 failed=0\s*$')
     'road_placement_runtime' = @('retail_road_placement_runner.gd', '(?m)^RETAIL_ROAD_RESULT passed=15 failed=0\s*$')
     'road_visual_runtime' = @('retail_road_visual_runner.gd', '(?m)^RETAIL_ROAD_VISUAL_RESULT passed=27 failed=0\s*$')

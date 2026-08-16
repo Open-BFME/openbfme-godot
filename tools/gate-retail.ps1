@@ -51,33 +51,34 @@ $publishRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot ".private\content-pac
 # SILENTLY is not. When the selection legitimately moves, re-measure and update
 # these constants in the same change that moves it, and say so - the same
 # conscious-update pattern the state pins use.
-# RE-MEASURED 2026-08-10 (fortress upgrade-catalog republish). Two changes are
-# folded in here, and both are stated rather than absorbed silently:
-#   1. The pin had ALREADY drifted before this change - it still described the
-#      2026-08-04 pure-retail rebase set, while the live selection had moved to
-#      the 08-05/08-10 publishes, and it named neither rotwk-cursors-vslice nor
-#      the real rotwk-skirmish-maps-private digest. Section B could not have
-#      passed against the live selection as pinned.
-#   2. Six faction bundles were republished so the fortress upgrade catalogs
-#      reach the game (2 -> 6/7/5 rows per faction). rotwk-men-vslice is
-#      DELIBERATELY unchanged: its cook is blocked by a pre-existing CaH
-#      animation-lane gap (cah-model-chss_uk_u_skn fails W3D
-#      model-scene-mesh-bind), which predates this lane and is named in the
-#      commit rather than worked around.
-$expectedSelectionSha256 = "932abb5c9e9d45f758ea69b2ab8c66b733a1516f44741150e5e8a5c9e7144ef1"
-$expectedSelectionActivePack = "rotwk-men-vslice/d9a12509ba2591245c50a7109a90ef4a348f82ac9e08b4290e0aaac070238a2e"
+# RE-MEASURED 2026-08-15 after the current-source faction and neutral recooks,
+# the exact EVA overlays, and the new RotWK Men pack were transactionally
+# selected and address-checked in both content roots.
+$expectedSelectionSha256 = "e3cf65197b36fc855f852f18ce7e53a698fca34ff004d29e0b25d31f0326285c"
+$expectedSelectionActivePack = "rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b"
+# Re-pinned 2026-08-15 after the current-source faction/neutral recooks and
+# exact EVA overlays were transactionally selected and address-checked.
 $expectedSelectionSupplementalPacks = @(
-    "bfme2-men-vslice/ce02105e952ce91faa2b2cab429e2be01200c939e6553ef8be5b2deb8e591383",
+    "bfme2-men-vslice/7de517bf146582f10741750b50d63f9955c42d1fe2aa13200757fc6fb29f217a",
     "bfme2-skirmish-maps-private/f9c14cfa4c25e68509373390741fc82e5892f050a2305a19fa3efaca0f39a5b0",
-    "rotwk-skirmish-maps-private/fbc3018d6f6f13d1690edaa3d9cbd0a83d569d2a817cb546ee0269642174bdea",
-    "rotwk-elves-vslice/5e512d70d98f21ac150fb77c6891e1526aa13beac9eb510ae526e25ab4f7a603",
-    "rotwk-dwarves-vslice/005243a7689f5b042dc6346768fe5740f553ac458d84bf5cf25110b448aa7d15",
-    "rotwk-isengard-vslice/5834304546f6e9a407bdd376e912a4f71f13f86e62710c285ccf356912b48bf1",
-    "rotwk-mordor-vslice/4961cca5a980b54333dd170b73241d4d5743e258b4db4d08da9ebe1f722cbe02",
-    "rotwk-wild-vslice/93f99f5f8ba0ed6b12535d4b6540ed5b98810523bb84ada03bca5d2df55f3d6f",
-    "rotwk-angmar-vslice/a9e3233564318ea52770203a960ec726c3365d7a5b56f743c871540808205f58",
+    "rotwk-elves-vslice/b611283b0768e4cf76ace4cf8ed5ab7219c2f9dcd394470c765710b009d03a24",
+    "rotwk-dwarves-vslice/e783da9805a341c4161716eb6f2b5135244f97b786e4ce26072a1e79665fae8b",
+    "rotwk-isengard-vslice/2bf5ee4cc86c94d5cdfe735515a94a3e69ea4ac5ee4f8d531b3d356d721ad748",
+    "rotwk-mordor-vslice/25ba4870eaa468298f6e0f44c1c92c038c08b8903c9643138443c05c8f33882b",
+    "rotwk-wild-vslice/e5b455f96950e3b63c78687b04c46b71ec291f6c48e928e7ea1a5f0fe112d464",
+    "rotwk-angmar-vslice/662cf4579b1de1a58e2475ad649702529180aae25b20c918929f15fa921c13e7",
     "rotwk-music-vslice/f10d95389a1ab51a7a20b3f549fc6b90291db51f7e68693e4d157f1a67eada8d",
-    "rotwk-cursors-vslice/11236cb6a57396ccf3bfad7d4406f89dc7e0e95b3d9db34c0063c6c1c1d760d2"
+    "rotwk-playable-maps-private/1739b61386b8242aafee7c46c2f2639f950dd8d5d7292687d2c10702b1e9972b",
+    "rotwk-cursors-vslice/11236cb6a57396ccf3bfad7d4406f89dc7e0e95b3d9db34c0063c6c1c1d760d2",
+    "rotwk-men-eva-overlay/c59262c328a3041b3da684cdab826619ee7a3dcee85b68b137e68a869bc8741d",
+    "rotwk-elves-eva-overlay/51d90549e45b6c04e98a95c10bc03a709e8767c121d6d454a5d71bf338a78ab6",
+    "rotwk-dwarves-eva-overlay/75f1642049f4a491b45901db02600cc70fe78a95909c8d20c6d0c25e146fd13c",
+    "rotwk-isengard-eva-overlay/5228196e4ebd593c0698a65f78ed16aaabb9821c6e51ea6c8626f73fe7960375",
+    "rotwk-mordor-eva-overlay/d7e608b0e0f1a0d4151d6f33cf4fd42fec794c314792d8637f6b68bada627dab",
+    "rotwk-wild-eva-overlay/98a12fe7b1277b51c23044916e267e7bd86f150da5c14dce61900b0ee1edfc8e",
+    "rotwk-angmar-eva-overlay/96820c3d3abe5379ce36f123fc846810feca3756db625dfeb3ca1202d9ee958c",
+    "bfme2-neutral-vslice/8ab38217d80c443437dfb1adf2c4589466ef77729d9cb39c329a083acf4bc027",
+    "rotwk-neutral-vslice/8e192543df7d4352b663ce68dfd34bc2fddce69928f0cb0bd79b283a9082a26b"
 )
 $stateRoot = if (-not [string]::IsNullOrWhiteSpace($env:OPENBFME_IMPORT_ROOT)) {
     [IO.Path]::GetFullPath($env:OPENBFME_IMPORT_ROOT)
@@ -384,6 +385,10 @@ try {
     }
     Write-Host "$gate runtime pack explicitly selected root=$($env:OPENBFME_CONTENT)"
     $godot = Resolve-ProofGodot $GodotPath $repoRoot
+    # Every importer claim marked executable names a focused runtime runner.
+    # Run the registry-derived set as one gate so adding/removing an executable
+    # claim cannot leave its evidence outside the real retail cadence.
+    [void](Invoke-ProofPriorGate $gate "module_runtime_evidence" (Join-Path $PSScriptRoot "gate-module-runtime-evidence.ps1") $godot '(?m)^MODULE_RUNTIME_EVIDENCE_GATE PASS runners=43 checks=[1-9][0-9]* registered=43\s*$')
     Invoke-GodotPassedFloor "stage11_12_groups_and_routes" "stage11_12_runner.gd" '(?m)^STAGE 11/12 TESTS: ([0-9]+) passed, 0 failed\s*$' 26
     Invoke-GodotPassedFloor "stage14_15_base_loop" "stage14_15_sim_runner.gd" '(?m)^STAGE 14/15 SIM TESTS: ([0-9]+) passed, 0 failed\s*$' 31
     Invoke-GodotPassedFloor "stage15_menu_and_audio" "stage15_menu_runner.gd" '(?m)^STAGE15_MENU_RESULT passed=([0-9]+) failed=0\s*$' 22
