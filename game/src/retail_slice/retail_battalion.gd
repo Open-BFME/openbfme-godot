@@ -1664,7 +1664,7 @@ func _play_member_state(member_index: int, state: String, action_token: int, res
 	var apply_phase := not restart or bool(authored.get("randomStart", false))
 	var blend := _authored_blend_seconds(play_state, requested, authored)
 	for player_value in member_animation_players.get(member_index, []):
-		_play_member_clip(player_value as AnimationPlayer, requested, play_state, member_index, blend, apply_phase, action_token)
+		_play_member_clip(player_value as AnimationPlayer, requested, play_state, member_index, blend, apply_phase, action_token, authored)
 	if play_state.begins_with("attack") and action_token >= 0:
 		_last_action_token = maxi(_last_action_token, action_token)
 	_sync_member_particle_sys_bones(member_index, authored, conditions)
@@ -2621,19 +2621,29 @@ func set_attack_reload_seconds(value: float) -> void:
 	attack_reload_seconds = value if is_finite(value) and value > 0.0 else 0.0
 
 
-func _play_member_clip(player: AnimationPlayer, requested: String, state: String, member_index: int, blend: float, apply_phase: bool, action_token: int = 0) -> void:
+func _play_member_clip(player: AnimationPlayer, requested: String, state: String, member_index: int, blend: float, apply_phase: bool, action_token: int = 0, authored: Dictionary = {}) -> void:
 	var playable := _resolve_animation_name(player, requested)
 	if playable == "":
 		return
-	player.speed_scale = _authored_animation_speed_factor(state, requested, member_index, action_token)
-	if state == "attack_ranged_fire":
+	if bool(authored.get("manualDeferred", false)):
+		return
+	var keep_seconds := player.current_animation_position if bool(authored.get("maintainFrame", false)) else -1.0
+	var factor := _authored_animation_speed_factor(state, requested, member_index, action_token)
+	if bool(authored.get("playBackwards", false)):
+		factor = -absf(factor if factor != 0.0 else 1.0)
+	if state == "attack_ranged_fire" and not bool(authored.get("playBackwards", false)):
 		# Retail comments UseWeaponTiming OUT (gondorarcher.ini:251/261) and
 		# authors AnimationSpeedFactorRange = 1.2 1.3 (:262) so the fire clip
 		# always finishes before the randomized reload. Play at that authored
 		# factor and idle until the next shot — do not stretch across reload.
-		player.speed_scale = _authored_animation_speed_factor(state, requested, member_index, action_token)
+		factor = _authored_animation_speed_factor(state, requested, member_index, action_token)
+	player.speed_scale = factor
 	player.play(playable, blend)
-	if apply_phase and state in ["idle", "run", "victory", "selected"] and player.current_animation_length > 0.0:
+	if keep_seconds >= 0.0 and player.current_animation_length > 0.0:
+		player.seek(minf(keep_seconds, player.current_animation_length), true)
+	elif bool(authored.get("startFrameLast", false)) and player.current_animation_length > 0.0:
+		player.seek(player.current_animation_length, true)
+	elif apply_phase and state in ["idle", "run", "victory", "selected"] and player.current_animation_length > 0.0:
 		player.seek(player.current_animation_length * phase_for_member(member_index, state), true)
 
 

@@ -6,7 +6,7 @@ extends SceneTree
 
 const Watchdog := preload("res://tests/runner_watchdog.gd")
 const AnimationStateSelectScript := preload("res://src/retail_slice/animation_state_select.gd")
-const EXPECTED_CHECKS := 10
+const EXPECTED_CHECKS := 12
 
 var passed := 0
 var failed := 0
@@ -27,6 +27,8 @@ func _run() -> void:
 		_typed_row("AnimationState", ["MOVING", "USER_1"], "SKL.RUN_UPGRADE", "LOOP", 8, []),
 		_typed_row("AnimationState", ["DYING"], "SKL.DTHA", "ONCE", 0, []),
 		_typed_row("AnimationState", ["MOVING"], "SKL.RUNB", "LOOP", 10, [], 8),
+		_typed_row("AnimationState", ["DYING", "DEATH_2"], "SKL.DTHB", "ONCE_BACKWARDS", 0, ["MAINTAIN_FRAME_ACROSS_STATES"]),
+		_typed_row("AnimationState", ["PACKING_UP"], "SKL.PACK", "MANUAL", 0, []),
 	]
 	var idle: Dictionary = AnimationStateSelectScript.select(contracts, [])
 	_check("idle wins when no model conditions are set", String(idle.get("clip", "")) == "SKL.IDLE" and int(idle.get("specificity", -1)) == 0)
@@ -40,6 +42,10 @@ func _run() -> void:
 	_check("AnimationBlendTime 15 frames is 0.5s at 30 FPS", is_equal_approx(float(AnimationStateSelectScript.blend_seconds(15)), 0.5))
 	_check("AnimationBlendTime 0 is an instant cut", is_equal_approx(float(AnimationStateSelectScript.blend_seconds(0)), 0.0))
 	_check("equal-specificity AnimationPriority prefers the higher row", String(moving.get("clip", "")) == "SKL.RUNB" and int(moving.get("priority", -1)) == 8)
+	var backwards: Dictionary = AnimationStateSelectScript.select(contracts, ["DYING", "DEATH_2"])
+	_check("ONCE_BACKWARDS and MAINTAIN_FRAME are executable", bool(backwards.get("playBackwards", false)) and bool(backwards.get("maintainFrame", false)))
+	var manual: Dictionary = AnimationStateSelectScript.select(contracts, ["PACKING_UP"])
+	_check("MANUAL stays a deferred receipt", bool(manual.get("manualDeferred", false)) and String(manual.get("clip", "")) == "SKL.PACK")
 	var battalion_script: GDScript = load("res://src/retail_slice/retail_battalion.gd") as GDScript
 	_check("battalion consumer loads", battalion_script != null and battalion_script.can_instantiate())
 	if battalion_script != null and battalion_script.can_instantiate():

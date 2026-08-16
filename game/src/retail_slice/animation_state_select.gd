@@ -77,6 +77,9 @@ static func select(contracts: Array, active_conditions: Array) -> Dictionary:
 		"randomStart": _has_flag(flags, "RANDOMSTART"),
 		"startFrameFirst": _has_flag(flags, "START_FRAME_FIRST"),
 		"startFrameLast": _has_flag(flags, "START_FRAME_LAST"),
+		"playBackwards": String(animation.get("mode", "")).to_upper().contains("BACKWARDS"),
+		"maintainFrame": _has_maintain_frame(flags),
+		"manualDeferred": String(animation.get("mode", "")).to_upper() == "MANUAL",
 		"blendTimeRaw": animation.get("blendTime", null),
 		"blendSeconds": blend_seconds(animation.get("blendTime", null)),
 		"blendRuntimeSupport": "frames-at-30fps",
@@ -193,6 +196,13 @@ static func _field_animations(value: Variant) -> Array:
 			"speedFactorRange": row.get("speedFactorRange", row.get("AnimationSpeedFactorRange", [])),
 		})
 	return out
+
+
+static func _has_maintain_frame(flags: Array) -> bool:
+	for value in flags:
+		if String(value).to_upper().begins_with("MAINTAIN_FRAME"):
+			return true
+	return false
 
 
 static func _has_flag(flags: Array, name: String) -> bool:
