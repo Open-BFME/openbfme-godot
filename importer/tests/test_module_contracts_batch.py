@@ -3887,7 +3887,7 @@ def test_opaque_and_typed_sets_disjoint() -> None:
     )
 
     assert not (OPAQUE_DEFERRED_MODULE_KINDS & TYPED_MODULE_KINDS)
-    assert len(OPAQUE_DEFERRED_MODULE_KINDS) == 88
+    assert len(OPAQUE_DEFERRED_MODULE_KINDS) == 87
     assert len(EXECUTABLE_TYPED_MODULE_KINDS) == 65
     assert {
         "DeployStyleAIUpdate",
@@ -3909,6 +3909,7 @@ def test_opaque_and_typed_sets_disjoint() -> None:
         "AutoHealBehavior", "BezierProjectileBehavior", "DamageCreationList", "FxTiming", "GeometryUpgrade",
         "QueueProductionExitUpdate", "SlowDeathBehavior", "SpawnBehavior", "SpecialDisguiseUpdate",
         "SubObjectsUpgrade", "AnimationSoundClientBehavior", "TransitionDamageFX",
+        "ModelConditionUpgrade",
     }
     for module, (consumer_path, test_path) in ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE.items():
         assert (root / consumer_path).is_file()

@@ -154,6 +154,10 @@ ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE: Mapping[str, tuple[str, str]] = {
         "game/src/retail_slice/transition_damage_fx.gd",
         "game/tests/transition_damage_fx_runtime_runner.gd",
     ),
+    "ModelConditionUpgrade": (
+        "game/src/retail_slice/retail_battalion.gd",
+        "game/tests/model_condition_upgrade_runtime_runner.gd",
+    ),
     "FxTiming": (
         "game/src/retail_slice/fx_timing.gd",
         "game/tests/test_fx_timing_delays.gd",
@@ -819,6 +823,112 @@ def compile_transition_damage_fx(
                 runtime_status=(
                     "executable"
                     if _transition_damage_fx_row_has_closed_runtime(fields)
+                    else "deferred"
+                ),
+            )
+        )
+    rows.sort(key=lambda row: (str(row["sourceIni"]).casefold(), int(row["line"])))
+    return rows
+
+
+_MODEL_CONDITION_UPGRADE_SUPPORTED = frozenset(
+    {
+        "triggeredby",
+        "addconditionflags",
+        "removeconditionflags",
+        "permanent",
+        "requiresalltriggers",
+        "conflictswith",
+        "addtempconditionflag",
+        "tempconditiontime",
+        "removeconditionflagsinrange",
+    }
+)
+_MODEL_CONDITION_UPGRADE_DEFERRED = frozenset(
+    {
+        "addtempconditionflag",
+        "tempconditiontime",
+        "removeconditionflagsinrange",
+    }
+)
+
+
+def _model_condition_upgrade_row_has_closed_runtime(fields: Mapping[str, object]) -> bool:
+    triggers = fields.get("TriggeredBy")
+    if not isinstance(triggers, Mapping) or not isinstance(triggers.get("value"), list):
+        return False
+    if not triggers["value"] or "deferredFields" in fields:
+        return False
+    return any(
+        isinstance(fields.get(key), Mapping)
+        and isinstance(fields[key].get("value"), list)
+        and bool(fields[key]["value"])
+        for key in ("AddConditionFlags", "RemoveConditionFlags")
+    )
+
+
+def compile_model_condition_upgrades(
+    lineage: Sequence[SageObject], target_id: str
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for block in _behavior_blocks(lineage, "ModelConditionUpgrade"):
+        authored = {a.key.casefold() for a in block.assignments}
+        unknown = authored - _MODEL_CONDITION_UPGRADE_SUPPORTED
+        if unknown:
+            raise ModuleContractError(
+                f"{target_id} ModelConditionUpgrade unsupported fields: "
+                + ", ".join(sorted(unknown))
+            )
+        amap = _assignment_map(block)
+        fields: dict[str, object] = {}
+        for key, compiler in (
+            ("TriggeredBy", _token_list_field),
+            ("AddConditionFlags", _token_list_field),
+            ("RemoveConditionFlags", _token_list_field),
+            ("ConflictsWith", _token_list_field),
+        ):
+            value = compiler(amap.get(key.casefold()))
+            if value is not None:
+                fields[key] = value
+        requires = _yes_no_field(
+            amap.get("requiresalltriggers"),
+            f"{target_id} ModelConditionUpgrade RequiresAllTriggers",
+        )
+        if requires is not None:
+            fields["RequiresAllTriggers"] = requires
+        permanent = _yes_no_field(
+            amap.get("permanent"),
+            f"{target_id} ModelConditionUpgrade Permanent",
+        )
+        if permanent is not None:
+            fields["Permanent"] = permanent
+        deferred: list[dict[str, object]] = []
+        for name in sorted(_MODEL_CONDITION_UPGRADE_DEFERRED):
+            assignment = amap.get(name)
+            if assignment is not None:
+                deferred.append(
+                    {
+                        "name": assignment.key,
+                        "authored": assignment.value,
+                        "sourceIni": assignment.source_virtual_path,
+                        "line": assignment.line,
+                        "reason": "temp-or-range-condition-without-runtime-oracle",
+                    }
+                )
+        if deferred:
+            fields["deferredFields"] = deferred
+        if "TriggeredBy" not in fields:
+            raise ModuleContractError(
+                f"{target_id} ModelConditionUpgrade requires TriggeredBy"
+            )
+        rows.append(
+            _row(
+                "ModelConditionUpgrade",
+                block,
+                fields,
+                runtime_status=(
+                    "executable"
+                    if _model_condition_upgrade_row_has_closed_runtime(fields)
                     else "deferred"
                 ),
             )
@@ -8650,7 +8760,6 @@ OPAQUE_DEFERRED_MODULE_KINDS: frozenset[str] = frozenset(
         "HordeSiegeEngineContain",
         "HordeTransportContainDamage",
         "LaserUpdate",
-        "ModelConditionUpgrade",
         "OathbreakersFadeAwayBehavior",
         "OilSpillUpdate",
         "PartTheHeavensUpdate",
@@ -8796,6 +8905,7 @@ TYPED_MODULE_KINDS: frozenset[str] = frozenset(
         "GeometryUpgrade",
         "SubObjectsUpgrade",
         "TransitionDamageFX",
+        "ModelConditionUpgrade",
         "InactiveBody",
         "SpawnPointProductionExitUpdate",
         "SupplyCenterProductionExitUpdate",
@@ -8924,6 +9034,7 @@ def compile_all_module_contracts(
     rows.extend(compile_geometry_upgrades(lineage, target_id))
     rows.extend(compile_sub_objects_upgrades(lineage, target_id))
     rows.extend(compile_transition_damage_fx(lineage, target_id))
+    rows.extend(compile_model_condition_upgrades(lineage, target_id))
     rows.extend(compile_inactive_bodies(lineage, target_id))
     rows.extend(compile_spawn_point_production_exits(lineage, target_id))
     rows.extend(compile_supply_center_production_exits(lineage, target_id))
@@ -9103,6 +9214,7 @@ def validate_module_contracts(rows: object, *, label: str) -> None:
             or (module == "GeometryUpgrade" and _geometry_upgrade_row_has_closed_runtime(fields))
             or (module == "SubObjectsUpgrade" and _sub_objects_upgrade_row_has_closed_runtime(fields))
             or (module == "TransitionDamageFX" and _transition_damage_fx_row_has_closed_runtime(fields))
+            or (module == "ModelConditionUpgrade" and _model_condition_upgrade_row_has_closed_runtime(fields))
             or (module == "AnimationSoundClientBehavior" and _animation_sound_row_has_closed_runtime(fields))
             or (module == "QueueProductionExitUpdate" and _queue_exit_row_has_closed_runtime(fields))
             or (module == "SpawnBehavior" and _spawn_reclaim_row_has_closed_runtime(fields))

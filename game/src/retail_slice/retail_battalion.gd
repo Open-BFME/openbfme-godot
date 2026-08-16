@@ -152,6 +152,10 @@ var last_drawable_script_receipt: Dictionary = {}
 var sub_object_upgrade_contracts: Array = []
 var _last_sub_object_show: Array = []
 var _last_sub_object_hide: Array = []
+## Typed ModelConditionUpgrade flags granted by completed upgrades.
+var model_condition_upgrade_contracts: Array = []
+var model_condition_flags: Array = []
+var _permanent_model_condition_flags: Dictionary = {}
 var equipment_contract: Dictionary = {}
 var equipment_contract_ready := false
 var unresolved_animation_track_count := 0
@@ -381,6 +385,8 @@ func sync_upgrade_visuals(applied_upgrades: Dictionary) -> void:
 	## visibility prefers typed SubObjectsUpgrade rows; the FirePlane name
 	## guess is only the loud fallback when no typed contract is attached.
 	var visibility: Dictionary = apply_sub_object_upgrades(applied_upgrades)
+	var conditions: Dictionary = apply_model_condition_upgrades(applied_upgrades)
+	set_meta("model_condition_upgrade_source", String(conditions.get("source", "")))
 	var upgrade_id := _fire_stones_upgrade_id(applied_upgrades)
 	var wanted := upgrade_id != ""
 	if wanted == fire_upgrade_active and fire_upgrade_id == upgrade_id:
@@ -420,6 +426,74 @@ func collect_sub_object_upgrade_contracts(source: Dictionary) -> Array:
 			row["runtimeStatus"] = String(row.get("runtime_status", ""))
 		out.append(row)
 	return out
+
+
+func bind_model_condition_upgrade_contracts(source: Dictionary) -> int:
+	## Attach compile-shaped ModelConditionUpgrade rows from a pack document.
+	model_condition_upgrade_contracts = collect_model_condition_upgrade_contracts(source)
+	return model_condition_upgrade_contracts.size()
+
+
+func collect_model_condition_upgrade_contracts(source: Dictionary) -> Array:
+	var out: Array = []
+	for row_value in _module_contract_arrays(source):
+		if typeof(row_value) != TYPE_DICTIONARY:
+			continue
+		var row := (row_value as Dictionary).duplicate(true)
+		if String(row.get("module", "")) != "ModelConditionUpgrade":
+			continue
+		if not row.has("runtimeStatus") and row.has("runtime_status"):
+			row["runtimeStatus"] = String(row.get("runtime_status", ""))
+		out.append(row)
+	return out
+
+
+func apply_model_condition_upgrades(applied_upgrades: Dictionary) -> Dictionary:
+	## Grant/clear typed ModelConditionUpgrade flags. Temp-duration and
+	## range-remove rows stay inert until a duration clock exists.
+	var active: Dictionary = {}
+	for key_value in applied_upgrades.keys():
+		active[String(key_value).to_lower()] = true
+	var granted: Dictionary = _permanent_model_condition_flags.duplicate()
+	var source := "absent-typed-contract"
+	if not model_condition_upgrade_contracts.is_empty():
+		source = "typed-model-condition-upgrade"
+	for contract_value in model_condition_upgrade_contracts:
+		if typeof(contract_value) != TYPE_DICTIONARY:
+			continue
+		var contract := contract_value as Dictionary
+		if String(contract.get("module", "")) != "ModelConditionUpgrade":
+			continue
+		if String(contract.get("extraction", "")) != "typed":
+			continue
+		if String(contract.get("runtimeStatus", contract.get("runtime_status", ""))) != "executable":
+			continue
+		var fields: Dictionary = contract.get("fields", {}) as Dictionary
+		if fields.has("deferredFields"):
+			continue
+		if not _sub_object_upgrade_triggers_match(fields, active):
+			continue
+		var permanent := bool((fields.get("Permanent", {}) as Dictionary).get("value", false))
+		for flag_value in ((fields.get("AddConditionFlags", {}) as Dictionary).get("value", []) as Array):
+			var flag := String(flag_value).to_upper()
+			if flag == "":
+				continue
+			granted[flag] = true
+			if permanent:
+				_permanent_model_condition_flags[flag] = true
+		for flag_value in ((fields.get("RemoveConditionFlags", {}) as Dictionary).get("value", []) as Array):
+			var flag := String(flag_value).to_upper()
+			granted.erase(flag)
+			if permanent:
+				_permanent_model_condition_flags.erase(flag)
+	model_condition_flags = granted.keys()
+	model_condition_flags.sort()
+	set_meta("model_condition_flags", model_condition_flags.duplicate())
+	set_meta("model_condition_upgrade_source", source)
+	return {
+		"source": source,
+		"flags": model_condition_flags.duplicate(),
+	}
 
 
 func apply_sub_object_upgrades(applied_upgrades: Dictionary) -> Dictionary:
@@ -500,8 +574,11 @@ func _bind_sub_object_upgrade_contracts_from_content(definition: Dictionary) -> 
 	)
 	if not playable.is_empty():
 		bind_sub_object_upgrade_contracts(playable)
+		bind_model_condition_upgrade_contracts(playable)
 	if sub_object_upgrade_contracts.is_empty():
 		bind_sub_object_upgrade_contracts(definition)
+	if model_condition_upgrade_contracts.is_empty():
+		bind_model_condition_upgrade_contracts(definition)
 
 
 func _module_contract_arrays(source: Dictionary) -> Array:
@@ -1488,15 +1565,20 @@ func _play_member_state(member_index: int, state: String, action_token: int, res
 
 
 func _drawable_conditions_for_state(state: String) -> Array:
+	var conditions: Array = []
 	if state == "selected" or state == "selectionTransition":
-		return ["SELECTED"]
-	if state == "run":
-		return ["MOVING"]
-	if state.begins_with("attack"):
-		return ["ATTACKING"]
-	if state == "death":
-		return ["DYING"]
-	return []
+		conditions.append("SELECTED")
+	elif state == "run":
+		conditions.append("MOVING")
+	elif state.begins_with("attack"):
+		conditions.append("ATTACKING")
+	elif state == "death":
+		conditions.append("DYING")
+	for flag_value in model_condition_flags:
+		var flag := String(flag_value).to_upper()
+		if flag != "" and not conditions.has(flag):
+			conditions.append(flag)
+	return conditions
 
 
 func _clip_state_for_transition_name(transition: String) -> String:
