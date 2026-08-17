@@ -11,6 +11,10 @@ from pathlib import Path
 import pytest
 
 from openbfme_importer.playable_unit_compiler import (
+    _canonical_bytes,
+    _digest,
+    _ini_block_semantic,
+    _named_blocks,
     compile_playable_unit_descriptor,
     prepare_playable_unit_compiler,
     validate_playable_unit_descriptor,
@@ -167,3 +171,101 @@ def test_rotwk_carnage_uses_split_retail_hero_mode_contract() -> None:
         assert row["effect"]["durationMs"] == duration_ms
         assert row["effect"]["affectsSelf"] is True
         assert row["effect"]["modifiers"]
+
+
+def test_rotwk_azog_fury_resolves_its_cross_file_retail_contract() -> None:
+    """Azog explicitly reuses one CaH SpecialPower, not the CaH power catalog."""
+
+    root = EDITIONS["rotwk"]
+    if not root.is_dir():
+        pytest.skip("private rotwk effective-assets oracle is not present")
+    documents = _documents(root)
+    prepared = prepare_playable_unit_compiler(documents)
+
+    descriptor = compile_playable_unit_descriptor(
+        "WildAzog",
+        documents,
+        prepared=prepared,
+        game="rotwk",
+        scenario_admission={
+            "role": "scenario-only",
+            "surfaces": ["script-spawn"],
+        },
+    )
+    validate_playable_unit_descriptor(descriptor)
+    fury = next(
+        row for row in descriptor["abilities"] if row["id"] == "Command_AzogFury"
+    )
+
+    assert fury["slot"] == 3
+    assert fury["specialPowerId"] == "SpecialAbilityCreateAHeroBattleRage_Level3"
+    assert fury["cooldownMs"] == 120000
+    assert fury["levelGate"] == {
+        "upgradeIds": ["Upgrade_AzogFury"],
+        "requiredLevel": 4,
+        "sourceIni": "data/ini/experiencelevels.ini",
+    }
+    assert fury["specialPowerContract"] == {
+        "publicTimer": False,
+        "sourceIni": "data/ini/createaherospecialpowers.ini",
+    }
+    assert fury["implementation"]["status"] == "implemented"
+    assert fury["effect"]["kind"] == "attribute-modifier"
+    assert fury["effect"]["modifierId"] == "CreateAHeroBattleRageBonus_Level3"
+    assert fury["effect"]["durationMs"] == 60000
+    assert fury["effect"]["range"] == 1
+    assert fury["effect"]["affectsSelf"] is True
+    assert fury["effect"]["affectsFilter"] == "ANY +CAVALRY +INFANTRY"
+    assert fury["effect"]["sourceIni"] == (
+        "data/ini/attributemodifier.ini"
+    )
+    assert fury["effect"]["modifiers"] == [
+        {"kind": "ARMOR", "value": 0.3, "application": "additive"},
+        {"kind": "DAMAGE_MULT", "value": 2.0, "application": "multiplicative"},
+    ]
+    assert fury["effect"]["category"] == "BUFF"
+    assert fury["effect"]["fxIds"] == ["FX_CAHBattleRage60"]
+    assert {module["sourceIni"] for module in fury["modules"]} == {
+        "data/ini/object/evilfaction/units/wild/azog.ini"
+    }
+
+    source_rows = {
+        row["virtualPath"]: row for row in descriptor["sourceDocuments"]
+    }
+    resolved_abilities = {
+        "kind": "ResolvedHeroAbilities",
+        "abilities": descriptor["abilities"],
+    }
+    cah_blocks = _named_blocks(
+        documents["data/ini/createaherospecialpowers.ini"], "SpecialPower"
+    )
+    cah_semantic = [
+        resolved_abilities,
+        _ini_block_semantic(
+            "SpecialPower",
+            cah_blocks["specialabilitycreateaherobattlerage_level3"],
+        ),
+    ]
+    cah_semantic.sort(key=_canonical_bytes)
+    assert source_rows["data/ini/createaherospecialpowers.ini"][
+        "semanticSha256"
+    ] == _digest(cah_semantic)
+
+    primary_blocks = _named_blocks(
+        documents["data/ini/specialpower.ini"], "SpecialPower"
+    )
+    primary_semantic = [
+        resolved_abilities,
+        *(
+            _ini_block_semantic("SpecialPower", primary_blocks[power_id])
+            for power_id in (
+                "specialabilityfakeleadership2",
+                "specialabilitykingsfavor",
+                "specialabilitycapturebuilding",
+            )
+        ),
+    ]
+    primary_semantic.sort(key=_canonical_bytes)
+    assert source_rows["data/ini/specialpower.ini"]["semanticSha256"] == _digest(
+        primary_semantic
+    )

@@ -6650,7 +6650,7 @@ def _hero_abilities(
     cache_lock: threading.Lock | None,
     button_overrides: Sequence[str] | None = None,
     extra_power_documents: Sequence[str] = (),
-) -> tuple[list[dict[str, object]], dict[str, IniBlock]]:
+) -> tuple[list[dict[str, object]], dict[tuple[str, str], IniBlock]]:
     """Emit the converted SPECIAL_POWER ability rows for one hero.
 
     Returns the ability rows plus the authored SpecialPower blocks they
@@ -6703,12 +6703,21 @@ def _hero_abilities(
 
     special_power_source = _optional_document(documents, SPECIAL_POWER_PATH)
     power_blocks: dict[str, IniBlock] = {}
+    power_block_sources: dict[str, str] = {}
     if special_power_source is not None:
         power_blocks = _named_blocks(special_power_source, "SpecialPower")
+        power_block_sources.update(
+            (power_id, SPECIAL_POWER_PATH) for power_id in power_blocks
+        )
     for extra_path in extra_power_documents:
         extra_source = _optional_document(documents, extra_path)
         if extra_source is not None:
-            power_blocks.update(_named_blocks(extra_source, "SpecialPower"))
+            extra_blocks = _named_blocks(extra_source, "SpecialPower")
+            power_blocks.update(extra_blocks)
+            power_block_sources.update(
+                (power_id, extra_path) for power_id in extra_blocks
+            )
+    referenced_cah_power_blocks: dict[str, IniBlock] | None = None
     modifier_source = _optional_document(documents, ATTRIBUTE_MODIFIER_PATH)
     modifier_blocks: dict[str, IniBlock] = {}
     if modifier_source is not None:
@@ -6728,7 +6737,7 @@ def _hero_abilities(
     )
 
     abilities: list[dict[str, object]] = []
-    used_power_blocks: dict[str, IniBlock] = {}
+    used_power_blocks: dict[tuple[str, str], IniBlock] = {}
     if button_overrides is None:
         slot_bindings = list(_command_slots(command_set))
         binding_source = f"CommandSet {command_set.name}"
@@ -6763,6 +6772,35 @@ def _hero_abilities(
             continue
         if command_kinds != {"special_power"}:
             continue
+        # A small number of ordinary retail heroes explicitly reference a
+        # SpecialPower kept in createaherospecialpowers.ini (Azog's Fury is
+        # one). Resolve only the ids reached by this real CommandButton graph;
+        # do not merge the CaH-only power catalog into every normal hero.
+        referenced_power_ids = list(_module_tokens(button, "SpecialPower"))
+        for trigger_id in _module_tokens(button, "CommandTrigger"):
+            trigger_button = command_buttons.get(trigger_id.casefold())
+            if trigger_button is not None:
+                referenced_power_ids.extend(
+                    _module_tokens(trigger_button, "SpecialPower")
+                )
+        missing_power_ids = [
+            power_id
+            for power_id in referenced_power_ids
+            if power_id.casefold() not in power_blocks
+        ]
+        if missing_power_ids:
+            cah_source = _optional_document(documents, CREATE_A_HERO_SPECIAL_POWER_PATH)
+            if cah_source is not None:
+                if referenced_cah_power_blocks is None:
+                    referenced_cah_power_blocks = _named_blocks(
+                        cah_source, "SpecialPower"
+                    )
+                for power_id in missing_power_ids:
+                    folded = power_id.casefold()
+                    fallback = referenced_cah_power_blocks.get(folded)
+                    if fallback is not None:
+                        power_blocks[folded] = fallback
+                        power_block_sources[folded] = CREATE_A_HERO_SPECIAL_POWER_PATH
         ability = _hero_ability_row(
             slot,
             button,
@@ -6778,6 +6816,7 @@ def _hero_abilities(
             documents,
             constants,
             filter_defines,
+            power_block_sources,
             target_lineage,
             member_lineage,
             named_definition_cache=named_definition_cache,
@@ -6785,7 +6824,12 @@ def _hero_abilities(
         )
         power_block = power_blocks.get(str(ability["specialPowerId"]).casefold())
         if power_block is not None:
-            used_power_blocks[power_block.name.casefold()] = power_block
+            source_path = power_block_sources.get(
+                power_block.name.casefold(), SPECIAL_POWER_PATH
+            )
+            used_power_blocks[
+                (source_path.casefold(), power_block.name.casefold())
+            ] = power_block
         abilities.append(ability)
     return abilities, used_power_blocks
 
@@ -6870,6 +6914,7 @@ def _hero_ability_row(
     documents: Mapping[str, bytes],
     constants: Mapping[str, int | float],
     filter_defines: Mapping[str, tuple[str, ...]],
+    power_block_sources: Mapping[str, str],
     target_lineage: Sequence[SageObject],
     member_lineage: Sequence[SageObject],
     *,
@@ -6997,6 +7042,7 @@ def _hero_ability_row(
         row["unitSpecificSoundId"] = unit_sound
 
     power_block = power_blocks.get(power_id.casefold())
+    power_source_path = power_block_sources.get(power_id.casefold(), SPECIAL_POWER_PATH)
     if power_block is None:
         status = "unimplemented"
         reason = f"effective SpecialPower is missing: {power_id}"
@@ -7136,7 +7182,7 @@ def _hero_ability_row(
                     "ForbiddenObjectFilter/ForbiddenObjectRange"
                 )
         if special_power_contract:
-            special_power_contract["sourceIni"] = SPECIAL_POWER_PATH
+            special_power_contract["sourceIni"] = power_source_path
             row["specialPowerContract"] = special_power_contract
         enum = _first(power_block.values("Enum"))
         if enum is not None:
@@ -10546,7 +10592,7 @@ def compile_playable_unit_descriptor(
         (),
     )
     abilities: list[dict[str, object]] = []
-    ability_power_blocks: dict[str, IniBlock] = {}
+    ability_power_blocks: dict[tuple[str, str], IniBlock] = {}
     # Retail special-power buttons are not hero-exclusive.  The Dwarven
     # Demolisher is a siege unit whose ToggleDeploySpecialAbilityUpdate is
     # exposed through its ordinary CommandSet; compile that authored command
@@ -10589,7 +10635,7 @@ def compile_playable_unit_descriptor(
     if upgrade_commands or level_upgrades:
         used_paths.add(UPGRADE_PATH)
     if ability_power_blocks:
-        used_paths.add(SPECIAL_POWER_PATH)
+        used_paths.update(path for path, _power_id in ability_power_blocks)
     for producer in producers:
         source = producer.get("source", {})
         if isinstance(source, Mapping):
@@ -10621,8 +10667,8 @@ def compile_playable_unit_descriptor(
         semantic_scopes[path.casefold()].append(
             {"kind": "ResolvedExperienceLevels", "experience": experience}
         )
-    for power_block in ability_power_blocks.values():
-        semantic_scopes[SPECIAL_POWER_PATH].append(
+    for (power_source_path, _power_id), power_block in ability_power_blocks.items():
+        semantic_scopes[power_source_path].append(
             _ini_block_semantic("SpecialPower", power_block)
         )
     for producer in producers:

@@ -2421,6 +2421,72 @@ def _abilities_by_id(descriptor: dict[str, object]) -> dict[str, dict[str, objec
     }
 
 
+def _move_fixture_rage_power_to_cah(documents: dict[str, bytes]) -> None:
+    block = (
+        b"SpecialPower SpecialAbilityFixtureRage\n"
+        b"  Enum = SPECIAL_HERO_MODE\n"
+        b"  ReloadTime = 45000\n"
+        b"End\n"
+    )
+    assert documents["data/ini/specialpower.ini"].count(block) == 1
+    documents["data/ini/specialpower.ini"] = documents[
+        "data/ini/specialpower.ini"
+    ].replace(block, b"", 1)
+    documents["data/ini/createaherospecialpowers.ini"] = block.replace(
+        b"End\n", b"  PublicTimer = No\nEnd\n", 1
+    )
+
+
+def test_normal_hero_resolves_only_its_referenced_cah_special_power() -> None:
+    documents = _hero_ability_documents()
+    _move_fixture_rage_power_to_cah(documents)
+    baseline = compile_playable_unit_descriptor("AbilityHero", documents)
+    # A same-name CaH declaration must not override a primary SpecialPower.
+    documents["data/ini/createaherospecialpowers.ini"] += b"""
+SpecialPower SpecialAbilityFixtureHeal
+  Enum = SPECIAL_ATHELAS
+  ReloadTime = 1
+End
+"""
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    abilities = _abilities_by_id(descriptor)
+    rage = abilities["Command_FixtureRage"]
+    assert rage["implementation"]["status"] == "implemented"
+    assert rage["cooldownMs"] == 45000
+    assert rage["specialPowerContract"]["sourceIni"] == (
+        "data/ini/createaherospecialpowers.ini"
+    )
+    assert abilities["Command_FixtureHeal"]["cooldownMs"] == 90000
+    baseline_sources = {
+        row["virtualPath"]: row["semanticSha256"]
+        for row in baseline["sourceDocuments"]
+    }
+    actual_sources = {
+        row["virtualPath"]: row["semanticSha256"]
+        for row in descriptor["sourceDocuments"]
+    }
+    assert "data/ini/createaherospecialpowers.ini" in actual_sources
+    assert actual_sources == baseline_sources
+
+
+def test_referenced_cah_special_power_still_fails_closed_on_unsupported_fields() -> None:
+    documents = _hero_ability_documents()
+    _move_fixture_rage_power_to_cah(documents)
+    documents["data/ini/createaherospecialpowers.ini"] = documents[
+        "data/ini/createaherospecialpowers.ini"
+    ].replace(b"  ReloadTime = 45000\n", b"  InventedField = 1\n", 1)
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    rage = _abilities_by_id(descriptor)["Command_FixtureRage"]
+    assert rage["implementation"]["status"] == "unimplemented"
+    assert "unsupported fields: inventedfield" in rage["implementation"]["reason"]
+    assert rage["effect"] == {"kind": "none"}
+
+
 def test_hero_abilities_emit_each_effect_kind_with_evidence() -> None:
     documents = _hero_ability_documents()
 
