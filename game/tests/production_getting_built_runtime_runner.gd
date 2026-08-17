@@ -1,9 +1,12 @@
 extends SceneTree
 const Sim=preload("res://src/retail_slice/retail_slice_sim.gd")
-const EXPECTED:=23
+const EXPECTED:=25
 var passed:=0;var failed:=0
 func _initialize()->void:call_deferred("_run")
 func _run()->void:
+	var late:=_sim();var late_structure:Dictionary=late.structures[50];late._attach_structure_module_contracts(late_structure)
+	_check("empty_probe_is_byte_inert",not late_structure.has("structure_module_contracts_attempted") and not late_structure.has("structure_module_contracts_attached") and not late_structure.has("module_contracts"))
+	late.register_structure_module_contracts("barracks",[_production()]);late._attach_structure_module_contracts(late_structure);_check("later_registration_attaches",bool(late_structure.get("structure_module_contracts_attached",false)) and late_structure.has("production_update"))
 	var sim:=_sim();var structure:Dictionary=sim.structures[50];sim._structure_module_contracts["barracks"]=[_production(),_getting(),_building()];sim._attach_structure_module_contracts(structure)
 	_check("production_attaches",structure.has("production_update"));_check("getting_built_attaches",structure.has("getting_built_behavior"));_check("building_receipts",((structure.get("building_behavior",{}) as Dictionary).get("unsupported_semantics",[]) as Array).has("model_subobject_binding:FireName"));_check("queue_limit_consumed",int((structure["production_update"] as Dictionary).get("maximum_queue_entries",0))==1);_check("spawn_define_resolved",int((structure["getting_built_behavior"] as Dictionary).get("spawn_ticks",0))==20);_check("rebuild_timer_exact",int((structure["getting_built_behavior"] as Dictionary).get("rebuild_ticks",0))==30)
 	var production_receipts:=(structure["production_update"] as Dictionary).get("unsupported_semantics",[]) as Array;var build_receipts:=(structure["getting_built_behavior"] as Dictionary).get("unsupported_semantics",[]) as Array

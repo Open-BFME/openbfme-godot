@@ -9061,7 +9061,7 @@ func _cast_spellbook_weather_modifier(team: int, power_id: String, effect: Dicti
 	## WeatherDuration, and every unit the authored filter accepts carries the
 	## modifier leaf's rows for exactly that window.
 	var expire_tick := tick_index + int(effect.get("duration_ticks", 1))
-	var source_key := "weather:%d:%s:%d" % [team, power_id, _next_event_sequence]
+	var source_key := "weather:%d:%s:%d" % [team, power_id, tick_index]
 	var entry := {
 		"kind": "weather_modifier",
 		"team": team,
@@ -9093,7 +9093,7 @@ func _cast_spellbook_weather_anticategory(team: int, power_id: String, effect: D
 	## accepts loses its leadership grants for the weather window, reusing the
 	## same suppression field the Horn of Gondor strip writes.
 	var expire_tick := tick_index + int(effect.get("duration_ticks", 1))
-	var source_key := "weather:%d:%s:%d" % [team, power_id, _next_event_sequence]
+	var source_key := "weather:%d:%s:%d" % [team, power_id, tick_index]
 	var entry := {
 		"kind": "weather_anticategory",
 		"team": team,
@@ -15787,17 +15787,13 @@ static func _scenario_document_admits(kind: String, document: Dictionary, surfac
 func _attach_structure_module_contracts(row: Dictionary) -> void:
 	## Attach structure moduleContracts for death consumers (CreateObjectDie).
 	## Does NOT write into _unit_module_contracts (that table is unit-scoped).
-	## Idempotent: several per-tick steps probe lazily, and re-running the
-	## attach appends duplicate object_creation_upgrades / passive_area_effect
-	## rows every tick (quadratic slowdown, unbounded memory, stacked heals).
-	## `..._attempted` also covers structures whose lookup found no contracts,
-	## which never set `..._attached` and would otherwise re-probe every tick.
-	if (
-		bool(row.get("structure_module_contracts_attached", false))
-		or bool(row.get("structure_module_contracts_attempted", false))
-	):
+	## Contracts-present rows carry the authoritative attached receipt, which
+	## prevents duplicate object_creation_upgrades / passive_area_effect rows.
+	## A no-contract lookup stays byte-inert: recording a derived "attempted"
+	## memo on the structure moved the frozen state pin and also prevented a
+	## later registry load from attaching the contract it had just supplied.
+	if bool(row.get("structure_module_contracts_attached", false)):
 		return
-	row["structure_module_contracts_attempted"] = true
 	var keys: Array = [
 		String(row.get("source_object_id", "")),
 		String(row.get("object_id", "")),
@@ -25199,8 +25195,8 @@ func _apply_ability_leadership_strip(hero_row: Dictionary, effect: Dictionary) -
 		return {"ok": false, "reason": "leadership-strip-fields-missing"}
 	var team := int(hero_row.get("team", -1))
 	var origin := Vector2(hero_row.get("position", Vector2.ZERO))
-	var suppression_source := "horn:%d:%d:%d" % [
-		int(hero_row.get("id", 0)), tick_index, _next_event_sequence
+	var suppression_source := "horn:%d:%d" % [
+		int(hero_row.get("id", 0)), tick_index
 	]
 	var affected := 0
 	for id in _ability_enemies_near(team, origin, radius):
@@ -31129,7 +31125,11 @@ func state_hash() -> String:
 
 
 func snapshot() -> PackedByteArray:
-	return var_to_bytes(_authoritative_state())
+	# Event ordering is continuation metadata, not gameplay state: include it in
+	# the restorable envelope without moving the owner-signed authoritative hash.
+	var state := _authoritative_state()
+	state["next_event_sequence"] = _next_event_sequence
+	return var_to_bytes(state)
 
 
 func restore(bytes: PackedByteArray) -> bool:

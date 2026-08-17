@@ -97,9 +97,8 @@ func _run() -> void:
 	(killer.structures[750] as Dictionary).erase("horde_transport")
 	(killer.structures[750] as Dictionary).erase("structure_module_contracts_attached")
 	# This fixture deliberately replaces the registered contract after the first
-	# lazy attach. Clear both idempotence receipts so the replacement is actually
+	# lazy attach. Clear the real attachment receipt so the replacement is
 	# re-read; shipping structures never rewrite their sealed registry this way.
-	(killer.structures[750] as Dictionary).erase("structure_module_contracts_attempted")
 	killer._structure_module_contracts["FixtureTransportShip"] = [{"module": "HordeTransportContain", "fields": kill_fields, "extraction": "typed", "tag": "Kill", "line": 1}, _slow_death_contract()]
 	_check("kill_policy_passenger_loads", bool(killer.load_transport_entity(750, 21).get("ok", false)))
 	killer._apply_structure_damage(0, 750, 1000)
