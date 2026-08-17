@@ -472,9 +472,7 @@ def python_runtime_attestation() -> dict[str, Any]:
         # Historical field name retained for provenance compatibility: this is
         # the pinned base runtime executable, not a venv redirector shim.
         "launcher_sha256": sha256_file(base_executable),
-        "base_executable": str(base_executable),
         "venv_launcher_sha256": sha256_file(invocation_launcher),
-        "venv_launcher": str(invocation_launcher),
         "base_dll_sha256": sha256_file(base_dll),
         "tree_sha256": digest.hexdigest(),
         "file_count": len(unique),
