@@ -430,7 +430,7 @@ static func has_cached_model(path: String) -> bool:
 ## texture_storage.h:85 -- leaving the prop holding a texture that was never
 ## initialized. It is a data race, so it fires perhaps once per two hundred
 ## parses: rare enough to have been logged as noise in six runner logs under
-## .private/scratch and never chased.
+## workspace/scratch and never chased.
 ##
 ## MEASURED (glb_preload_thread_safety_runner, 2026-08-16, 30 iterations over
 ## the same 24 pack GLBs): threaded 4 occurrences, serial 0.

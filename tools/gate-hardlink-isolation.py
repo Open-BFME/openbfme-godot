@@ -26,7 +26,7 @@ OPEN_EXISTING = 3
 FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
 FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
-DEFAULT_EVIDENCE_ROOT = ".private/orchestration/wotr/disposable"
+DEFAULT_EVIDENCE_ROOT = "workspace/orchestration/wotr/disposable"
 
 
 class GateError(RuntimeError):

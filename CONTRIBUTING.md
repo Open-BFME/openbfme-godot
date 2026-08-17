@@ -12,7 +12,7 @@ Small, tested changes beat large rewrites. Public repo is source-only alpha.
 ## Never commit
 
 - Retail BFME/BFME2/RotWK archives or extracts
-- Converted models, textures, maps, audio, packs under `.private/`
+- Converted models, textures, maps, audio, packs under `workspace/`
 - Secrets, personal absolute paths, private keys
 - Agent-only instruction dumps meant for private workflows
 

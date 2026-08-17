@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-if not defined OPENBFME_IMPORT_ROOT set "OPENBFME_IMPORT_ROOT=%CD%\.private\retail-work"
+if not defined OPENBFME_IMPORT_ROOT set "OPENBFME_IMPORT_ROOT=%CD%\workspace\retail-work"
 set "RESOLVED_IMPORT_ROOT="
 for /f "tokens=1,* delims==" %%A in ('powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File tools\bootstrap-importer-python.ps1 -PrintStateRoot') do if /i "%%A"=="OPENBFME_IMPORT_ROOT" set "RESOLVED_IMPORT_ROOT=%%B"
 if not defined RESOLVED_IMPORT_ROOT exit /b 1

@@ -34,7 +34,7 @@ powershell -File tools\rotwk-systems.ps1 -RotwkInstall C:\Path\To\RotWK
 7. Pack proof: `tools/rotwk_faction_pack_proof.py` (no `selection.json` unless `--select`)
 8. `tools/check-product-contracts.py --check`
 
-Ledgers land under `.private/retail-work/reports/` (JSONL + summary %).
+Ledgers land under `workspace/retail-work/reports/` (JSONL + summary %).
 
 OpenSAGE comparison checklist: [OPENSAGE_GAP_MATRIX.md](OPENSAGE_GAP_MATRIX.md).
 
@@ -78,7 +78,7 @@ Without `--publish`, the game uses the already-selected pack.
 
 RotWK `terrain.big` is thin; multiplayer terrain mostly lives in BFME2 base.
 `tools/rotwk_layered_install.py` builds junctions under
-`.private/retail-work/editions/rotwk/layered-install/`.
+`workspace/retail-work/editions/rotwk/layered-install/`.
 
 ## Related scripts
 

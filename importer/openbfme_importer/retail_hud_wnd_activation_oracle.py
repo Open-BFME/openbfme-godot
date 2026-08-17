@@ -111,7 +111,7 @@ def _canonical(value: object) -> bytes:
 
 def _private_root(path: Path | str) -> Path:
     root = Path(path).resolve()
-    if ".private" not in {part.casefold() for part in root.parts} or not root.is_dir():
+    if "workspace" not in {part.casefold() for part in root.parts} or not root.is_dir():
         raise ValueError("effective-assets must be an existing private directory")
     return root
 

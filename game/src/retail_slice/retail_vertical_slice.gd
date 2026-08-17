@@ -3322,7 +3322,7 @@ func _faction_eva_side() -> String:
 	##
 	## That absence was a gap, not a decision: RotWK's retail eva.ini declares
 	## `Side = Angmar` and `Side = PlayerAngmar` (144 Angmar references in
-	## .private/retail-work/editions/rotwk/cache/effective-assets/data/ini/eva.ini,
+	## workspace/retail-work/editions/rotwk/cache/effective-assets/data/ini/eva.ini,
 	## the PURE retail tree - the layered tree also shows Arnor and Rohan, which
 	## are community-patch additions and deliberately not mapped).
 	##
@@ -7273,7 +7273,7 @@ func build_replay_simulation(sim) -> Dictionary:
 	## a bare `sim.setup(map_configuration, gameplay_rules)`. That is only a
 	## fraction of what a live match is configured with, and the shortfall was
 	## measurable at TICK ZERO, before a single order was issued
-	## (.private/scratch/opus29-divergence-probe.out.log):
+	## (workspace/scratch/opus29-divergence-probe.out.log):
 	##   live   16 structures, 7 castle contracts, 5 expansion rules, 12 powers
 	##   bare    2 structures, 0 castle contracts, 0 expansion rules,  0 powers
 	## The bare mirror was fighting on a map with no castle walls, no gate, no

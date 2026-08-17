@@ -840,7 +840,7 @@ public partial class MainWindow : Window
                 if (item.Percent is double value) Progress.Value = value;
                 StatusText.Text = $"{item.Phase}: {item.Message}";
             });
-            var stateRoot = Path.Combine(_service.Options.InstallRoot, ".private", "retail-work");
+            var stateRoot = Path.Combine(_service.Options.InstallRoot, "workspace", "retail-work");
             var code = await _service.Importer.RunAsync(AppContext.BaseDirectory, game, path,
                 stateRoot, progress, token);
             if (code != 0)

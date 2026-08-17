@@ -251,8 +251,8 @@ def _canonical(value: object) -> bytes:
 
 def _private_file(path: Path | str, label: str) -> Path:
     resolved = Path(path).resolve()
-    if ".private" not in {part.casefold() for part in resolved.parts}:
-        raise ValueError(f"{label} must stay under .private")
+    if "workspace" not in {part.casefold() for part in resolved.parts}:
+        raise ValueError(f"{label} must stay under workspace")
     if not resolved.is_file():
         raise ValueError(f"{label} is missing")
     return resolved
@@ -845,8 +845,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(payload, end="")
     else:
         output = args.output.resolve()
-        if ".private" not in {part.casefold() for part in output.parts}:
-            raise ValueError("oracle output must stay under .private")
+        if "workspace" not in {part.casefold() for part in output.parts}:
+            raise ValueError("oracle output must stay under workspace")
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(payload, encoding="utf-8")
     return 0

@@ -8,7 +8,7 @@ extends SceneTree
 ## #MULTIPLY( PLAYER_SKILL_POINTS_DELTA_DEFAULT n ) skill points (60 * n).
 
 const Sim = preload("res://src/retail_slice/retail_slice_sim.gd")
-const ORACLE_ROOT := "res://../.private/retail-work/editions/rotwk/cache/effective-assets/data/ini/"
+const ORACLE_ROOT := "res://../workspace/retail-work/editions/rotwk/cache/effective-assets/data/ini/"
 const WATCHDOG_FRAMES := 600
 
 var _frames := 0

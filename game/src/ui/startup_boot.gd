@@ -82,8 +82,8 @@ func _ready() -> void:
 ## boot splash is Open BFME's own ring mark; neither is presented as retail art.
 ##
 ## Each entry names the retail source file that would satisfy it. All of them sit
-## under `.private/retail-work/`, where the runtime cannot and must not read from
-## - retail payloads never leave `.private`, and retail art is never committed.
+## under `workspace/retail-work/`, where the runtime cannot and must not read from
+## - retail payloads never leave `workspace`, and retail art is never committed.
 ## Closing these is an IMPORTER task (owner: the importer stream): convert the
 ## plate into the active pack's `assets/ui/...` and register it in that pack's
 ## `data/ui_manifest.json` under one of the ids `main_menu.gd` already looks for

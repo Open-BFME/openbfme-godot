@@ -10,10 +10,10 @@ from tests.retail_inputs import retail_file
 
 
 ROOT = Path(__file__).resolve().parents[2]
-ASSETS = ROOT / ".private" / "retail-work" / "cache" / "effective-assets"
+ASSETS = ROOT / "workspace" / "retail-work" / "cache" / "effective-assets"
 MANIFEST = ASSETS / ".openbfme" / "manifest.json"
 GAME_DAT = retail_file("game.dat")
-OPENSAGE = ROOT / ".private" / "scratch" / "opensage-source"
+OPENSAGE = ROOT / "workspace" / "scratch" / "opensage-source"
 
 pytestmark = pytest.mark.skipif(
     not all(path.is_file() for path in (MANIFEST, GAME_DAT)),

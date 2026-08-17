@@ -150,7 +150,7 @@ def test_selection_transition_evidence_uses_scoped_status_not_completion_claims(
 
 
 def test_generated_candidate_outputs_are_contained_below_private_root(tmp_path: Path) -> None:
-    private_root = tmp_path / ".private"
+    private_root = tmp_path / "workspace"
     job_root = private_root / "scratch" / "jobs" / "fixture"
     public_root = tmp_path / "importer"
     job_root.mkdir(parents=True)
@@ -405,7 +405,7 @@ def test_building_runtime_contract_attaches_to_composed_profile_once(tmp_path: P
 def test_path_composer_binds_parsed_inputs_to_the_same_raw_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    private_root = tmp_path / ".private"
+    private_root = tmp_path / "workspace"
     private_root.mkdir()
     recipe_path = tmp_path / "recipe.json"
     base_path = tmp_path / "base.json"
@@ -514,9 +514,9 @@ def test_required_upgrade_definitions_are_hash_bound_and_icon_complete() -> None
 
 
 def test_effective_ranger_runtime_contract_is_exact_and_incomplete() -> None:
-    effective = ROOT / ".private" / "retail-work" / "cache" / "effective-assets"
+    effective = ROOT / "workspace" / "retail-work" / "cache" / "effective-assets"
     generated_path = (
-        ROOT / ".private" / "retail-work" / "profiles" / "men-fords-v1.generated.json"
+        ROOT / "workspace" / "retail-work" / "profiles" / "men-fords-v1.generated.json"
     )
     manifest_path = effective / ".openbfme" / "manifest.json"
     if not generated_path.is_file() or not manifest_path.is_file():
@@ -663,7 +663,7 @@ def test_effective_ranger_runtime_contract_is_exact_and_incomplete() -> None:
 def test_effective_trebuchet_contract_and_object_bindings_are_source_complete() -> None:
     effective = (
         ROOT
-        / ".private"
+        / "workspace"
         / "scratch"
         / "jobs"
         / "bfme2-106-policy-bound-catalog"
@@ -671,9 +671,9 @@ def test_effective_trebuchet_contract_and_object_bindings_are_source_complete() 
         / "cache"
         / "effective-assets"
     )
-    base_path = ROOT / ".private/retail-work/profiles/men-fords-v0-complete.generated.json"
-    census_path = ROOT / ".private/retail-work/reports/men-faction-leaf-census.json"
-    closure_path = ROOT / ".private/retail-work/reports/retail-visual-closure-b48e2bd09a6789b6.json"
+    base_path = ROOT / "workspace/retail-work/profiles/men-fords-v0-complete.generated.json"
+    census_path = ROOT / "workspace/retail-work/reports/men-faction-leaf-census.json"
+    closure_path = ROOT / "workspace/retail-work/reports/retail-visual-closure-b48e2bd09a6789b6.json"
     manifest_path = effective / ".openbfme/manifest.json"
     required = (base_path, census_path, closure_path, manifest_path)
     if not all(path.is_file() for path in required):

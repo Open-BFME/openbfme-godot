@@ -9,7 +9,7 @@ neighbourhoods remain intact.
 
 The emitted manifest contains retail virtual paths and source digests.  A
 caller handling retail data must therefore place the destination in the
-repository's gitignored ``.private`` workspace.
+repository's gitignored ``workspace`` workspace.
 """
 
 from __future__ import annotations

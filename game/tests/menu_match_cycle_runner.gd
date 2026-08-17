@@ -374,7 +374,7 @@ func _boot_tick_teardown_slice(slice_scene: PackedScene, label: String, expected
 
 # ---------------------------------------------------------------------------
 # Section 3: publish-gate negatives against synthetic OS-cache fixtures.
-# The real user:// selection and .private content are never touched: every
+# The real user:// selection and workspace content are never touched: every
 # ModLoader call below passes explicit fixture cache/selection paths.
 # ---------------------------------------------------------------------------
 func _section_publish_gate_negatives(mod_loader: Node) -> void:

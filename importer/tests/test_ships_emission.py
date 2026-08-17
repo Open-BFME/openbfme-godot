@@ -107,7 +107,7 @@ def test_ship_descriptor_preserves_sink_voice_and_particle_sites() -> None:
 
 def test_retail_rotwk_catalog_emits_all_effective_ship_descriptors() -> None:
     repo = Path(__file__).resolve().parents[2]
-    catalog_path = repo / ".private" / "retail-work" / "catalog" / "rotwk-layered.json"
+    catalog_path = repo / "workspace" / "retail-work" / "catalog" / "rotwk-layered.json"
     if not catalog_path.is_file():
         pytest.skip("operator RotWK catalog is unavailable")
 

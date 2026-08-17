@@ -38,12 +38,12 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "importer"))
 
-PRIVATE_ROOT = ROOT / ".private" / "retail-work"
+PRIVATE_ROOT = ROOT / "workspace" / "retail-work"
 if (
     not (PRIVATE_ROOT / "editions" / "rotwk" / "cache" / "effective-assets").is_dir()
     and ROOT.parent.name == "worktrees"
 ):
-    PRIVATE_ROOT = ROOT.parents[2] / ".private" / "retail-work"
+    PRIVATE_ROOT = ROOT.parents[2] / "workspace" / "retail-work"
 EFFECTIVE_ASSETS = PRIVATE_ROOT / "editions" / "rotwk" / "cache" / "effective-assets"
 CATALOG_PATH = PRIVATE_ROOT / "catalog" / "rotwk.json"
 

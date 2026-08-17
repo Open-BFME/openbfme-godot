@@ -2,7 +2,7 @@ extends SceneTree
 ## Selection presentation + at-attention animation.
 ##
 ## Retail truth (PURE RETAIL rotwk tree,
-## .private/retail-work/editions/rotwk/cache/effective-assets/data/ini):
+## workspace/retail-work/editions/rotwk/cache/effective-assets/data/ini):
 ##   * object/goodfaction/units/men/gondorfighter.ini:519-531
 ##       AnimationState = SELECTED, StateName = STATE_Selected, loop ATNB
 ##       (GUManMocap_ATNB). Script: if previous state was STATE_Idle, play

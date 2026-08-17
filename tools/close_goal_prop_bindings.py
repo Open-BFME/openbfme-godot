@@ -1044,7 +1044,7 @@ def main(argv: list[str] | None = None) -> int:
         "--pack",
         type=Path,
         default=ROOT
-        / ".private"
+        / "workspace"
         / "content-packs"
         / "rotwk-skirmish-maps-private"
         / "goal-official-72",
@@ -1053,7 +1053,7 @@ def main(argv: list[str] | None = None) -> int:
         "--effective-assets",
         type=Path,
         default=ROOT
-        / ".private"
+        / "workspace"
         / "retail-work"
         / "editions"
         / "rotwk"
@@ -1063,13 +1063,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--content-packs-root",
         type=Path,
-        default=ROOT / ".private" / "content-packs",
+        default=ROOT / "workspace" / "content-packs",
     )
     parser.add_argument(
         "--preferred-reuse-pack",
         type=Path,
         default=ROOT
-        / ".private"
+        / "workspace"
         / "content-packs"
         / "rotwk-skirmish-maps-private"
         / "bc6ab08983077de7d58bb99c620a75a7abb7f5eb55dcd13426cc64c156f8c039",
@@ -1077,7 +1077,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--state-root",
         type=Path,
-        default=ROOT / ".private" / "retail-work",
+        default=ROOT / "workspace" / "retail-work",
     )
     parser.add_argument("--stats", required=True, type=Path)
     parser.add_argument("--summary", required=True, type=Path)

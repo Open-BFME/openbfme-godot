@@ -15,9 +15,9 @@ from tests.retail_inputs import retail_file
 
 
 ROOT = Path(__file__).resolve().parents[2]
-ASSETS = ROOT / ".private" / "retail-work" / "cache" / "effective-assets"
+ASSETS = ROOT / "workspace" / "retail-work" / "cache" / "effective-assets"
 GAME_DAT = retail_file("game.dat")
-OUTPUT = ROOT / ".private" / "scratch" / "hud-libingameui-content-oracle"
+OUTPUT = ROOT / "workspace" / "scratch" / "hud-libingameui-content-oracle"
 MOVIES = (
     "InGameHelpBox",
     "InGameHeroSelect",
@@ -194,5 +194,5 @@ def test_changed_retail_source_and_game_dat_fail_closed(tmp_path: Path) -> None:
     ):
         build_contract_from_payloads(_payloads(), bytes(changed_game))
 
-    with pytest.raises(HudLibInGameUiContentOracleError, match="under .private"):
+    with pytest.raises(HudLibInGameUiContentOracleError, match="under workspace"):
         write_contract(build_contract(ASSETS, GAME_DAT), tmp_path / "contract.json")

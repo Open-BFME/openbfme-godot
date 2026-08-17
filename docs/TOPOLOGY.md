@@ -1,8 +1,8 @@
 # Repository topology
 
-> **READ THIS FIRST — fail closed.** Production truth is not “whatever is large, nearby, or recently edited.” Use the classifications below before searching, editing, generating, or cleaning. This map mirrors `.private/INDEX.json`.
+> **READ THIS FIRST — fail closed.** Production truth is not “whatever is large, nearby, or recently edited.” Use the classifications below before searching, editing, generating, or cleaning. This map mirrors `workspace/INDEX.json`.
 
-`.private/INDEX.json` is itself local and gitignored by `.gitignore:19` (`/.private/`), so Git status will not show changes to it.
+`workspace/INDEX.json` is itself local and gitignored by `.gitignore:19` (`/workspace/`), so Git status will not show changes to it.
 
 **Measurement provenance.** Unless a row or warning gives an R1a command, every inventory quantity below (sizes, file/identity/worktree/commit counts, and approximate or `+` figures) is topology-council-measured and was not independently re-verified in R1a. Hashes, schema versions, and source line locators are identifiers rather than inventory measurements.
 
@@ -10,11 +10,11 @@
 
 ### W1 — HARDLINK HAZARD (critical; repaired)
 
-**REPAIRED:** the tracked/live-to-evidence file-identity intersection was reduced from 1,128 to 0 with zero byte changes. Evidence paths and bytes are unchanged. The repair addressed 25,880 evidence aliases: Strategy A detached the live side, so those evidence aliases kept their existing file identities; Strategy B detached 46 evidence aliases, so those 46 received new identities. `.private/orchestration/wotr/**` remains load-bearing evidence: **NEVER delete it or edit it in place.** `tools/gate-hardlink-isolation.py` now fail-closed enforces that no Git-tracked file shares an NTFS file identity with disposable evidence.
+**REPAIRED:** the tracked/live-to-evidence file-identity intersection was reduced from 1,128 to 0 with zero byte changes. Evidence paths and bytes are unchanged. The repair addressed 25,880 evidence aliases: Strategy A detached the live side, so those evidence aliases kept their existing file identities; Strategy B detached 46 evidence aliases, so those 46 received new identities. `workspace/orchestration/wotr/**` remains load-bearing evidence: **NEVER delete it or edit it in place.** `tools/gate-hardlink-isolation.py` now fail-closed enforces that no Git-tracked file shares an NTFS file identity with disposable evidence.
 
 ### W2 — IMMUTABLE PACKS (critical)
 
-`.private/content-packs/**` identities are content-addressed and immutable. Only `.private/content-packs/selection.json` decides what is live. **Never hand-edit a pack. Never assume “unselected” means “deletable.”**
+`workspace/content-packs/**` identities are content-addressed and immutable. Only `workspace/content-packs/selection.json` decides what is live. **Never hand-edit a pack. Never assume “unselected” means “deletable.”**
 
 ### Tooling hazard — WSL Git LFS status (high)
 
@@ -85,13 +85,13 @@ User-local or retail-derived inputs that cannot be committed and may be irreplac
 
 | Root | Purpose | Producer / generator | Reproducible | Normal-run load-bearing | Legal class | Retention | Notes |
 |---|---|---|:---:|:---:|---|---|---|
-| `.private/retail-work/editions/rotwk/layered-install/layer-0-rotwk` | Symlink to the user-owned RotWK retail installation (external drive); zero local payload bytes. | `user-owned` | no | no | `retail-derived` | Retain symlink and external retail install; never publish. | — |
-| `.private/retail-work/editions/rotwk/layered-install/layer-1-bfme2` | Symlink to the user-owned BFME2 retail installation (external drive); zero local payload bytes. | `user-owned` | no | no | `retail-derived` | Retain symlink and external retail install; never publish. | — |
-| `_bfme2_extract/` | 25M local BFME2 retail extraction used as canonical input. | `UNKNOWN` | no | no | `retail-derived` | Retain pending provenance review; never publish. | No in-repository generator was found; producer provenance remains UNKNOWN. |
+| `workspace/retail-work/editions/rotwk/layered-install/layer-0-rotwk` | Symlink to the user-owned RotWK retail installation (external drive); zero local payload bytes. | `user-owned` | no | no | `retail-derived` | Retain symlink and external retail install; never publish. | — |
+| `workspace/retail-work/editions/rotwk/layered-install/layer-1-bfme2` | Symlink to the user-owned BFME2 retail installation (external drive); zero local payload bytes. | `user-owned` | no | no | `retail-derived` | Retain symlink and external retail install; never publish. | — |
+| `workspace/retail-extract/` | 25M local BFME2 retail extraction used as canonical input. | `UNKNOWN` | no | no | `retail-derived` | Retain pending provenance review; never publish. | No in-repository generator was found; producer provenance remains UNKNOWN. |
 | `reference/` | 55M of retail reference screenshots. | `user-owned` | no | no | `retail-derived` | Retain as canonical visual input; never publish. | — |
-| `.private/onboard.config.json` | User-specific onboarding and retail-location configuration. | `user-owned` | no | no | `user-owned` | Retain locally; back up as appropriate; never publish secrets or local paths. | — |
-| `.private/retail-oracle/` | Canonical local retail oracle material. | `user-owned` | no | no | `retail-derived` | Retain; never publish; review before any maintenance. | — |
-| `.private/retail-work/oracle/` | 871M of user-owned retail behaviour recordings. | `user-owned` | no | no | `user-owned` | Irreplaceable: preserve and back up; never clean automatically. | Canonical behaviour evidence, not reproducible from repository state alone. |
+| `workspace/onboard.config.json` | User-specific onboarding and retail-location configuration. | `user-owned` | no | no | `user-owned` | Retain locally; back up as appropriate; never publish secrets or local paths. | — |
+| `workspace/retail-oracle/` | Canonical local retail oracle material. | `user-owned` | no | no | `retail-derived` | Retain; never publish; review before any maintenance. | — |
+| `workspace/retail-work/oracle/` | 871M of user-owned retail behaviour recordings. | `user-owned` | no | no | `user-owned` | Irreplaceable: preserve and back up; never clean automatically. | Canonical behaviour evidence, not reproducible from repository state alone. |
 
 ## `PRIVATE_CANONICAL_OUTPUT`
 
@@ -99,27 +99,27 @@ Private produced state treated as canonical rather than disposable; preserve and
 
 | Root | Purpose | Producer / generator | Reproducible | Normal-run load-bearing | Legal class | Retention | Notes |
 |---|---|---|:---:|:---:|---|---|---|
-| `.private/content-packs/` | 62G content-addressed pack store with 70 identities; 11 selected identities total 8.3G (topology-council figures; not R1a-reverified). | `importer pack publishing pipeline` | yes | no | `retail-derived` | Preserve identities immutably; never hand-edit; selection.json alone controls live selection. | The directory as a whole is not load-bearing: only selection.json and its 11 named identities are. The 59 unselected identities are separately UNKNOWN_REQUIRES_REVIEW and are not deletable. |
-| `.private/content-packs/selection.json` | Sole authority selecting the live active and supplemental packs. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain and change only through the supported publisher; never hand-edit identities. | — |
-| `.private/content-packs/rotwk-men-vslice/315a3f8a4d18511f33ce8dd0c7db180615bcad2dd17bcb48d27de9bc3d65accf` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
-| `.private/content-packs/bfme2-men-vslice/ce02105e952ce91faa2b2cab429e2be01200c939e6553ef8be5b2deb8e591383` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
-| `.private/content-packs/bfme2-skirmish-maps-private/f9c14cfa4c25e68509373390741fc82e5892f050a2305a19fa3efaca0f39a5b0` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
-| `.private/content-packs/rotwk-skirmish-maps-private/goal-official-72` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
-| `.private/content-packs/rotwk-elves-vslice/954f784cf4601f78c975d86033db77c17b96e82e7e61d77d9b35c8b43dcf32ea` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
-| `.private/content-packs/rotwk-dwarves-vslice/3f5e0425fd417727a65ca2184cf65e6fa86a6d4146ffc68a5c15763cbb6e9b4f` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
-| `.private/content-packs/rotwk-isengard-vslice/e7f788e77ae7cfbbd8e316a8e1b04d8258d6157c3fc392a0a82693c98fc695a8` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
-| `.private/content-packs/rotwk-mordor-vslice/2f3d3560414ad0a5a9c83543941d79abfaac0919c83de13f23d6f076bd253df1` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
-| `.private/content-packs/rotwk-wild-vslice/550de11892765cf87a25e4d458b090d9c35100dbc76549b3dd6f1bc037ef9314` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
-| `.private/content-packs/rotwk-angmar-vslice/ff280f464d167f434710926b965865258e05f0b2a6244f4f5adc5aed892c500f` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
-| `.private/content-packs/rotwk-music-vslice/f10d95389a1ab51a7a20b3f549fc6b90291db51f7e68693e4d157f1a67eada8d` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
-| `.private/retail-work/packs/` | Canonical private pack composition outputs. | `importer pipeline` | yes | no | `retail-derived` | Retain as canonical output; regenerate only through supported tooling. | — |
-| `.private/retail-work/catalog/` | Canonical retail catalog outputs. | `importer pipeline` | yes | no | `retail-derived` | Retain as canonical output; never publish. | — |
-| `.private/retail-work/profiles/` | Canonical importer/build profiles. | `user-owned` | no | no | `user-owned` | Retain; inputs to repeatable private production. | — |
-| `.private/retail-work/reports/` | Canonical private reports; only the named living-world report is optionally load-bearing. | `importer and report tools` | yes | no | `retail-derived` | Retain; do not bulk-clean. | — |
-| `.private/retail-work/reports/rotwk-living-world.json` | Optional WotR living-world runtime/presentation report. | `living-world report generator` | yes | yes | `retail-derived` | Retain while used by run_game.bat:35-42. | — |
-| `.private/retail-work/strategic-ui/` | Optional WotR strategic UI presentation output. | `strategic UI importer` | yes | yes | `retail-derived` | Retain while used by run_game.bat:35-42. | — |
-| `.private/retail-work/livingmap*` | Optional WotR living-map presentation outputs. | `living-map tooling` | yes | yes | `retail-derived` | Retain while used by run_game.bat:35-42. | — |
-| `.private/retail-work/livingworld*` | Optional WotR living-world presentation outputs. | `living-world tooling` | yes | yes | `retail-derived` | Retain while used by run_game.bat:35-42. | The fail-closed load-bearing list below narrows this to livingworld-* paths. |
+| `workspace/content-packs/` | 62G content-addressed pack store with 70 identities; 11 selected identities total 8.3G (topology-council figures; not R1a-reverified). | `importer pack publishing pipeline` | yes | no | `retail-derived` | Preserve identities immutably; never hand-edit; selection.json alone controls live selection. | The directory as a whole is not load-bearing: only selection.json and its 11 named identities are. The 59 unselected identities are separately UNKNOWN_REQUIRES_REVIEW and are not deletable. |
+| `workspace/content-packs/selection.json` | Sole authority selecting the live active and supplemental packs. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain and change only through the supported publisher; never hand-edit identities. | — |
+| `workspace/content-packs/rotwk-men-vslice/315a3f8a4d18511f33ce8dd0c7db180615bcad2dd17bcb48d27de9bc3d65accf` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
+| `workspace/content-packs/bfme2-men-vslice/ce02105e952ce91faa2b2cab429e2be01200c939e6553ef8be5b2deb8e591383` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
+| `workspace/content-packs/bfme2-skirmish-maps-private/f9c14cfa4c25e68509373390741fc82e5892f050a2305a19fa3efaca0f39a5b0` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
+| `workspace/content-packs/rotwk-skirmish-maps-private/goal-official-72` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
+| `workspace/content-packs/rotwk-elves-vslice/954f784cf4601f78c975d86033db77c17b96e82e7e61d77d9b35c8b43dcf32ea` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
+| `workspace/content-packs/rotwk-dwarves-vslice/3f5e0425fd417727a65ca2184cf65e6fa86a6d4146ffc68a5c15763cbb6e9b4f` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
+| `workspace/content-packs/rotwk-isengard-vslice/e7f788e77ae7cfbbd8e316a8e1b04d8258d6157c3fc392a0a82693c98fc695a8` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
+| `workspace/content-packs/rotwk-mordor-vslice/2f3d3560414ad0a5a9c83543941d79abfaac0919c83de13f23d6f076bd253df1` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
+| `workspace/content-packs/rotwk-wild-vslice/550de11892765cf87a25e4d458b090d9c35100dbc76549b3dd6f1bc037ef9314` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
+| `workspace/content-packs/rotwk-angmar-vslice/ff280f464d167f434710926b965865258e05f0b2a6244f4f5adc5aed892c500f` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
+| `workspace/content-packs/rotwk-music-vslice/f10d95389a1ab51a7a20b3f549fc6b90291db51f7e68693e4d157f1a67eada8d` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
+| `workspace/retail-work/packs/` | Canonical private pack composition outputs. | `importer pipeline` | yes | no | `retail-derived` | Retain as canonical output; regenerate only through supported tooling. | — |
+| `workspace/retail-work/catalog/` | Canonical retail catalog outputs. | `importer pipeline` | yes | no | `retail-derived` | Retain as canonical output; never publish. | — |
+| `workspace/retail-work/profiles/` | Canonical importer/build profiles. | `user-owned` | no | no | `user-owned` | Retain; inputs to repeatable private production. | — |
+| `workspace/retail-work/reports/` | Canonical private reports; only the named living-world report is optionally load-bearing. | `importer and report tools` | yes | no | `retail-derived` | Retain; do not bulk-clean. | — |
+| `workspace/retail-work/reports/rotwk-living-world.json` | Optional WotR living-world runtime/presentation report. | `living-world report generator` | yes | yes | `retail-derived` | Retain while used by run_game.bat:35-42. | — |
+| `workspace/retail-work/strategic-ui/` | Optional WotR strategic UI presentation output. | `strategic UI importer` | yes | yes | `retail-derived` | Retain while used by run_game.bat:35-42. | — |
+| `workspace/retail-work/livingmap*` | Optional WotR living-map presentation outputs. | `living-map tooling` | yes | yes | `retail-derived` | Retain while used by run_game.bat:35-42. | — |
+| `workspace/retail-work/livingworld*` | Optional WotR living-world presentation outputs. | `living-world tooling` | yes | yes | `retail-derived` | Retain while used by run_game.bat:35-42. | The fail-closed load-bearing list below narrows this to livingworld-* paths. |
 
 ## `LIVE_EVIDENCE_CHAIN`
 
@@ -127,7 +127,7 @@ Active ledgers, receipts, evidence, baselines, and linked history whose integrit
 
 | Root | Purpose | Producer / generator | Reproducible | Normal-run load-bearing | Legal class | Retention | Notes |
 |---|---|---|:---:|:---:|---|---|---|
-| `.private/orchestration/wotr/` | Live WotR ledger.json, 15 receipt files, 21 top-level evidence entries (96 files recursively), baselines, logs, and disposable/ history. | `WotR orchestration and gate commands` | no | no | `user-owned` | Preserve intact; never edit in place, delete, or use as a sandbox. | REPAIRED: the tracked/live-to-evidence identity intersection is 0, down from 1,128, with zero byte changes. Evidence paths and bytes are unchanged; Strategy A preserved evidence-alias identities by detaching the live side, while Strategy B gave new identities to 46 detached evidence aliases. `tools/gate-hardlink-isolation.py` enforces the invariant. R1a counts remain 15 receipts, 21 top-level evidence entries, and 96 evidence files recursively. |
+| `workspace/orchestration/wotr/` | Live WotR ledger.json, 15 receipt files, 21 top-level evidence entries (96 files recursively), baselines, logs, and disposable/ history. | `WotR orchestration and gate commands` | no | no | `user-owned` | Preserve intact; never edit in place, delete, or use as a sandbox. | REPAIRED: the tracked/live-to-evidence identity intersection is 0, down from 1,128, with zero byte changes. Evidence paths and bytes are unchanged; Strategy A preserved evidence-alias identities by detaching the live side, while Strategy B gave new identities to 46 detached evidence aliases. `tools/gate-hardlink-isolation.py` enforces the invariant. R1a counts remain 15 receipts, 21 top-level evidence entries, and 96 evidence files recursively. |
 
 ## `SESSION_WORKSPACE`
 
@@ -135,9 +135,9 @@ Per-agent or per-task working state; not source truth and not automatically safe
 
 | Root | Purpose | Producer / generator | Reproducible | Normal-run load-bearing | Legal class | Retention | Notes |
 |---|---|---|:---:|:---:|---|---|---|
-| `.private/scratch/jobs/` | Loop-v1 task storage consumed by tools/t0_gate.py; the topology council reported 143252 files recursively, not R1a-reverified. | `loop-v1 task runner` | yes | no | `user-owned` | Review via registry before removal; two entries are registered Git worktrees and may only be removed with git worktree remove, never rm. | — |
-| `.private/scratch/sol-task-03-*` | Solver task workspaces. | `solver task runner` | yes | no | `user-owned` | Session history; review before cleanup. | The angmar-active-hardlinks workspace is separately UNKNOWN_REQUIRES_REVIEW. |
-| `.private/review/` | Private review workspaces and artifacts. | `review workflows` | yes | no | `user-owned` | Session history; retain until its review is closed. | — |
+| `workspace/scratch/jobs/` | Loop-v1 task storage consumed by tools/t0_gate.py; the topology council reported 143252 files recursively, not R1a-reverified. | `loop-v1 task runner` | yes | no | `user-owned` | Review via registry before removal; two entries are registered Git worktrees and may only be removed with git worktree remove, never rm. | — |
+| `workspace/scratch/sol-task-03-*` | Solver task workspaces. | `solver task runner` | yes | no | `user-owned` | Session history; review before cleanup. | The angmar-active-hardlinks workspace is separately UNKNOWN_REQUIRES_REVIEW. |
+| `workspace/review/` | Private review workspaces and artifacts. | `review workflows` | yes | no | `user-owned` | Session history; retain until its review is closed. | — |
 | `.claude/worktrees/` | Agent-created Git worktrees. | `Claude worktree workflow` | yes | no | `clean` | Manage only with Git worktree commands; never delete as ordinary directories. | The named branch with commits not on main is separately UNKNOWN_REQUIRES_REVIEW. |
 
 ## `THIRD_PARTY_REFERENCE`
@@ -146,13 +146,13 @@ Pinned external reference clones; useful comparison material, never OpenBFME pro
 
 | Root | Purpose | Producer / generator | Reproducible | Normal-run load-bearing | Legal class | Retention | Notes |
 |---|---|---|:---:|:---:|---|---|---|
-| `.private/scratch/Open-BFME-research/` | Reference clone of dginovker/Open-BFME at 9d353722. | `source` | yes | no | `clean` | Keep pristine or reclone; never confuse with project source. | — |
-| `.private/scratch/opensage-source/` | Reference clone/worktree of OpenSAGE/OpenSAGE at 588ac477. | `source` | yes | no | `clean` | Keep pristine or reclone; never confuse with project source. | Verified pristine with zero local commits. |
-| `.private/scratch/OpenSAGE-research/` | Reference clone/worktree of OpenSAGE/OpenSAGE at 588ac477. | `source` | yes | no | `clean` | Keep pristine or reclone; never confuse with project source. | Verified pristine with zero local commits. |
-| `.private/scratch/opensage-hud-semantics/` | Reference clone/worktree of OpenSAGE/OpenSAGE at 588ac477. | `source` | yes | no | `clean` | Keep pristine or reclone; never confuse with project source. | Verified pristine with zero local commits. |
-| `.private/scratch/opensage-camera-oracle/` | Reference clone/worktree of OpenSAGE/OpenSAGE at 588ac477. | `source` | yes | no | `clean` | Keep pristine or reclone; never confuse with project source. | Verified pristine with zero local commits. |
-| `.private/scratch/opensage-road-reference/` | Reference clone/worktree of OpenSAGE/OpenSAGE at 588ac477. | `source` | yes | no | `clean` | Keep pristine or reclone; never confuse with project source. | Verified pristine with zero local commits. |
-| `.private/scratch/fords-skybox-oracle/OpenSAGE/` | Reference clone/worktree of OpenSAGE/OpenSAGE at 588ac477. | `source` | yes | no | `clean` | Keep pristine or reclone; never confuse with project source. | Verified pristine with zero local commits. |
+| `workspace/scratch/Open-BFME-research/` | Reference clone of dginovker/Open-BFME at 9d353722. | `source` | yes | no | `clean` | Keep pristine or reclone; never confuse with project source. | — |
+| `workspace/scratch/opensage-source/` | Reference clone/worktree of OpenSAGE/OpenSAGE at 588ac477. | `source` | yes | no | `clean` | Keep pristine or reclone; never confuse with project source. | Verified pristine with zero local commits. |
+| `workspace/scratch/OpenSAGE-research/` | Reference clone/worktree of OpenSAGE/OpenSAGE at 588ac477. | `source` | yes | no | `clean` | Keep pristine or reclone; never confuse with project source. | Verified pristine with zero local commits. |
+| `workspace/scratch/opensage-hud-semantics/` | Reference clone/worktree of OpenSAGE/OpenSAGE at 588ac477. | `source` | yes | no | `clean` | Keep pristine or reclone; never confuse with project source. | Verified pristine with zero local commits. |
+| `workspace/scratch/opensage-camera-oracle/` | Reference clone/worktree of OpenSAGE/OpenSAGE at 588ac477. | `source` | yes | no | `clean` | Keep pristine or reclone; never confuse with project source. | Verified pristine with zero local commits. |
+| `workspace/scratch/opensage-road-reference/` | Reference clone/worktree of OpenSAGE/OpenSAGE at 588ac477. | `source` | yes | no | `clean` | Keep pristine or reclone; never confuse with project source. | Verified pristine with zero local commits. |
+| `workspace/scratch/fords-skybox-oracle/OpenSAGE/` | Reference clone/worktree of OpenSAGE/OpenSAGE at 588ac477. | `source` | yes | no | `clean` | Keep pristine or reclone; never confuse with project source. | Verified pristine with zero local commits. |
 
 ## `GENERATED_CACHE`
 
@@ -160,18 +160,18 @@ Reproducible generated state, subject to load-bearing and authorization checks b
 
 | Root | Purpose | Producer / generator | Reproducible | Normal-run load-bearing | Legal class | Retention | Notes |
 |---|---|---|:---:|:---:|---|---|---|
-| `.private/retail-work/editions/rotwk/jobs/` | 48G staging area (topology-council figure; not R1a-reverified); largest single reclaimable object. | `importer/openbfme_importer/pipeline.py (rmtree and re-stage per run)` | yes | no | `retail-derived` | Regenerable, but remove only under an authorized cleanup packet. | — |
-| `.private/retail-work/jobs/` | 19G importer job staging (topology-council figure; not R1a-reverified). | `importer pipeline` | yes | no | `retail-derived` | Regenerable; remove only under an authorized cleanup packet. | — |
-| `.private/retail-work/cache/` | 13G generated retail-work cache (topology-council figure; not R1a-reverified). | `importer pipeline` | yes | no | `retail-derived` | Regenerable; remove only under an authorized cleanup packet. | — |
-| `.private/retail-work/editions/rotwk/cache/` | 25G edition cache (topology-council figure; not R1a-reverified). | `importer pipeline` | yes | no | `retail-derived` | Regenerable except behavior-bearing use must be checked; remove only under an authorized cleanup packet. | The livingworldaitemplate.ini path is optionally load-bearing and separately listed. |
-| `.private/retail-work/editions/rotwk/cache/layered-effective-assets/data/ini/livingworldaitemplate.ini` | Optional behaviour-bearing WotR INI consumed by the normal launcher path. | `importer pipeline` | yes | yes | `retail-derived` | Retain while used by run_game.bat:9-15. | — |
-| `.private/retail-work/tools/` | 1.8G bootstrapped private toolchain. | `bootstrap-tools + tool-manifest.json` | yes | no | `clean` | Regenerable, but load-bearing subpath must be retained for importer/gates. | — |
-| `.private/retail-work/tools/python-3.12-env` | Python environment required by importer/gates, not by game runtime. | `bootstrap-tools + tool-manifest.json` | yes | yes | `clean` | Retain for importer/gate operation; regenerate only with pinned bootstrap tooling. | — |
+| `workspace/retail-work/editions/rotwk/jobs/` | 48G staging area (topology-council figure; not R1a-reverified); largest single reclaimable object. | `importer/openbfme_importer/pipeline.py (rmtree and re-stage per run)` | yes | no | `retail-derived` | Regenerable, but remove only under an authorized cleanup packet. | — |
+| `workspace/retail-work/jobs/` | 19G importer job staging (topology-council figure; not R1a-reverified). | `importer pipeline` | yes | no | `retail-derived` | Regenerable; remove only under an authorized cleanup packet. | — |
+| `workspace/retail-work/cache/` | 13G generated retail-work cache (topology-council figure; not R1a-reverified). | `importer pipeline` | yes | no | `retail-derived` | Regenerable; remove only under an authorized cleanup packet. | — |
+| `workspace/retail-work/editions/rotwk/cache/` | 25G edition cache (topology-council figure; not R1a-reverified). | `importer pipeline` | yes | no | `retail-derived` | Regenerable except behavior-bearing use must be checked; remove only under an authorized cleanup packet. | The livingworldaitemplate.ini path is optionally load-bearing and separately listed. |
+| `workspace/retail-work/editions/rotwk/cache/layered-effective-assets/data/ini/livingworldaitemplate.ini` | Optional behaviour-bearing WotR INI consumed by the normal launcher path. | `importer pipeline` | yes | yes | `retail-derived` | Retain while used by run_game.bat:9-15. | — |
+| `workspace/retail-work/tools/` | 1.8G bootstrapped private toolchain. | `bootstrap-tools + tool-manifest.json` | yes | no | `clean` | Regenerable, but load-bearing subpath must be retained for importer/gates. | — |
+| `workspace/retail-work/tools/python-3.12-env` | Python environment required by importer/gates, not by game runtime. | `bootstrap-tools + tool-manifest.json` | yes | yes | `clean` | Retain for importer/gate operation; regenerate only with pinned bootstrap tooling. | — |
 | `dist/` | 35G distribution output, including a 3.63G retail-derived release-shaped ZIP (topology-council figures; not R1a-reverified). | `release/build commands` | yes | no | `retail-derived` | Gitignored; never upload without legal review; remove only under authorized cleanup. | Manual-upload hazard only, not a commit-leak vector. |
 | `build/` | Generated build output. | `build commands` | yes | no | `clean` | Regenerable; remove only under an authorized cleanup packet. | — |
 | `captures/` | Generated capture output. | `capture commands` | yes | no | `retail-derived` | Regenerable evidence; review before authorized cleanup. | — |
 | `.captures/` | Generated hidden capture output. | `capture commands` | yes | no | `retail-derived` | Regenerable evidence; review before authorized cleanup. | — |
-| `.private/capture-*` | Generated private capture runs. | `capture commands` | yes | no | `retail-derived` | Regenerable evidence; review before authorized cleanup. | — |
+| `workspace/capture-*` | Generated private capture runs. | `capture commands` | yes | no | `retail-derived` | Regenerable evidence; review before authorized cleanup. | — |
 | `.pytest_cache/` | Pytest cache. | `pytest` | yes | no | `clean` | Regenerable; safe only under a separately authorized cleanup. | — |
 | `.ruff_cache/` | Ruff cache. | `ruff` | yes | no | `clean` | Regenerable; safe only under a separately authorized cleanup. | — |
 | `game/.godot/` | Godot import/editor cache. | `Godot editor/import` | yes | no | `clean` | Regenerable; safe only under a separately authorized cleanup. | — |
@@ -182,32 +182,32 @@ State with unresolved provenance, pins, hardlinks, commits, or retention require
 
 | Root | Purpose | Producer / generator | Reproducible | Normal-run load-bearing | Legal class | Retention | Notes |
 |---|---|---|:---:|:---:|---|---|---|
-| `.private/content-packs/<59 unselected identities>/` | Pack identities not named by current selection.json. | `importer pack publishing pipeline` | yes | no | `retail-derived` | Do not delete or edit; reconcile all pins and provenance first. | Unselected does not mean deletable: tools/gate-retail.ps1:50-62 pins a different selection, and tools/close_goal_prop_bindings.py:1073-1076 pins rotwk-skirmish-maps-private/bc6ab089.... |
-| `.private/scratch/sol-task-03-angmar-active-hardlinks/` | Hardlink farm into content-packs; creator script unknown. | `UNKNOWN` | no | no | `retail-derived` | Do not edit or delete until hardlinks and provenance are reviewed. | Topology-council estimate, not R1a-reverified: unique contribution is about 316KB and deletion would free approximately zero bytes. |
+| `workspace/content-packs/<59 unselected identities>/` | Pack identities not named by current selection.json. | `importer pack publishing pipeline` | yes | no | `retail-derived` | Do not delete or edit; reconcile all pins and provenance first. | Unselected does not mean deletable: tools/gate-retail.ps1:50-62 pins a different selection, and tools/close_goal_prop_bindings.py:1073-1076 pins rotwk-skirmish-maps-private/bc6ab089.... |
+| `workspace/scratch/sol-task-03-angmar-active-hardlinks/` | Hardlink farm into content-packs; creator script unknown. | `UNKNOWN` | no | no | `retail-derived` | Do not edit or delete until hardlinks and provenance are reviewed. | Topology-council estimate, not R1a-reverified: unique contribution is about 316KB and deletion would free approximately zero bytes. |
 | `.claude/worktrees/bfme2-godot-port-optimize-018cf3` | Registered worktree for branch `claude/bfme2-godot-port-optimize-018cf3` at 05888eb, with 3 commits not on main. | `Claude worktree workflow` | no | no | `clean` | Preserve; inspect and reconcile commits before any Git worktree removal. | — |
 
 ## Exact load-bearing private paths
 
-This is the complete verified private set for a normal supported run, including optional WotR presentation and importer/gate support. **Every other path under `.private/` is explicitly not load-bearing for a normal run.** “Optional” means the base game may start without it; when that supported behavior/presentation or importer/gate path is requested, it is load-bearing.
+This is the complete verified private set for a normal supported run, including optional WotR presentation and importer/gate support. **Every other path under `workspace/` is explicitly not load-bearing for a normal run.** “Optional” means the base game may start without it; when that supported behavior/presentation or importer/gate path is requested, it is load-bearing.
 
-- `.private/content-packs/selection.json`
-- `.private/content-packs/rotwk-men-vslice/315a3f8a4d18511f33ce8dd0c7db180615bcad2dd17bcb48d27de9bc3d65accf`
-- `.private/content-packs/bfme2-men-vslice/ce02105e952ce91faa2b2cab429e2be01200c939e6553ef8be5b2deb8e591383`
-- `.private/content-packs/bfme2-skirmish-maps-private/f9c14cfa4c25e68509373390741fc82e5892f050a2305a19fa3efaca0f39a5b0`
-- `.private/content-packs/rotwk-skirmish-maps-private/goal-official-72`
-- `.private/content-packs/rotwk-elves-vslice/954f784cf4601f78c975d86033db77c17b96e82e7e61d77d9b35c8b43dcf32ea`
-- `.private/content-packs/rotwk-dwarves-vslice/3f5e0425fd417727a65ca2184cf65e6fa86a6d4146ffc68a5c15763cbb6e9b4f`
-- `.private/content-packs/rotwk-isengard-vslice/e7f788e77ae7cfbbd8e316a8e1b04d8258d6157c3fc392a0a82693c98fc695a8`
-- `.private/content-packs/rotwk-mordor-vslice/2f3d3560414ad0a5a9c83543941d79abfaac0919c83de13f23d6f076bd253df1`
-- `.private/content-packs/rotwk-wild-vslice/550de11892765cf87a25e4d458b090d9c35100dbc76549b3dd6f1bc037ef9314`
-- `.private/content-packs/rotwk-angmar-vslice/ff280f464d167f434710926b965865258e05f0b2a6244f4f5adc5aed892c500f`
-- `.private/content-packs/rotwk-music-vslice/f10d95389a1ab51a7a20b3f549fc6b90291db51f7e68693e4d157f1a67eada8d`
-- `.private/retail-work/editions/rotwk/cache/layered-effective-assets/data/ini/livingworldaitemplate.ini`
-- `.private/retail-work/reports/rotwk-living-world.json`
-- `.private/retail-work/livingmap*`
-- `.private/retail-work/livingworld-*`
-- `.private/retail-work/strategic-ui`
-- `.private/retail-work/tools/python-3.12-env`
+- `workspace/content-packs/selection.json`
+- `workspace/content-packs/rotwk-men-vslice/315a3f8a4d18511f33ce8dd0c7db180615bcad2dd17bcb48d27de9bc3d65accf`
+- `workspace/content-packs/bfme2-men-vslice/ce02105e952ce91faa2b2cab429e2be01200c939e6553ef8be5b2deb8e591383`
+- `workspace/content-packs/bfme2-skirmish-maps-private/f9c14cfa4c25e68509373390741fc82e5892f050a2305a19fa3efaca0f39a5b0`
+- `workspace/content-packs/rotwk-skirmish-maps-private/goal-official-72`
+- `workspace/content-packs/rotwk-elves-vslice/954f784cf4601f78c975d86033db77c17b96e82e7e61d77d9b35c8b43dcf32ea`
+- `workspace/content-packs/rotwk-dwarves-vslice/3f5e0425fd417727a65ca2184cf65e6fa86a6d4146ffc68a5c15763cbb6e9b4f`
+- `workspace/content-packs/rotwk-isengard-vslice/e7f788e77ae7cfbbd8e316a8e1b04d8258d6157c3fc392a0a82693c98fc695a8`
+- `workspace/content-packs/rotwk-mordor-vslice/2f3d3560414ad0a5a9c83543941d79abfaac0919c83de13f23d6f076bd253df1`
+- `workspace/content-packs/rotwk-wild-vslice/550de11892765cf87a25e4d458b090d9c35100dbc76549b3dd6f1bc037ef9314`
+- `workspace/content-packs/rotwk-angmar-vslice/ff280f464d167f434710926b965865258e05f0b2a6244f4f5adc5aed892c500f`
+- `workspace/content-packs/rotwk-music-vslice/f10d95389a1ab51a7a20b3f549fc6b90291db51f7e68693e4d157f1a67eada8d`
+- `workspace/retail-work/editions/rotwk/cache/layered-effective-assets/data/ini/livingworldaitemplate.ini`
+- `workspace/retail-work/reports/rotwk-living-world.json`
+- `workspace/retail-work/livingmap*`
+- `workspace/retail-work/livingworld-*`
+- `workspace/retail-work/strategic-ui`
+- `workspace/retail-work/tools/python-3.12-env`
 
 Notes:
 
@@ -217,8 +217,8 @@ Notes:
 
 ## How to tell shipped from not shipped
 
-**Source truth** is the tracked files at main `HEAD` plus exactly the immutable content-pack identities named by `.private/content-packs/selection.json`. Anything under `.private/scratch/`, `.private/orchestration/`, `dist/`, `build/`, `.claude/`, or a research clone is evidence, generated state, third-party reference, or history—never production source. A feature counts as shipped only when the tracked tree contains it **and a live call path reaches it**. A design oracle, unselected pack, test, receipt, branch-only commit, generated archive, or apparently implemented but unreachable function is not proof that it ships.
+**Source truth** is the tracked files at main `HEAD` plus exactly the immutable content-pack identities named by `workspace/content-packs/selection.json`. Anything under `workspace/scratch/`, `workspace/orchestration/`, `dist/`, `build/`, `.claude/`, or a research clone is evidence, generated state, third-party reference, or history—never production source. A feature counts as shipped only when the tracked tree contains it **and a live call path reaches it**. A design oracle, unselected pack, test, receipt, branch-only commit, generated archive, or apparently implemented but unreachable function is not proof that it ships.
 
 ## Maintenance rule
 
-Keep this document and `.private/INDEX.json` synchronized. Unknown, hardlinked, registered-worktree, canonical, selected, or evidence-chain state must be preserved until a separately authorized workflow proves a safe operation. This topology grants no cleanup authority.
+Keep this document and `workspace/INDEX.json` synchronized. Unknown, hardlinked, registered-worktree, canonical, selected, or evidence-chain state must be preserved until a separately authorized workflow proves a safe operation. This topology grants no cleanup authority.

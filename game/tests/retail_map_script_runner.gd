@@ -4,7 +4,7 @@ extends SceneTree
 ## map-script interpreter. Synthetic fixtures use the exact decoded JSON
 ## shape produced by the skirmish contract extractor; the final check loads
 ## one real decoded skirmish script source from the Part 1 contract JSON
-## (skip-if-absent, since .private is not present on every checkout).
+## (skip-if-absent, since workspace is not present on every checkout).
 ##
 ## Invocation:
 ##   Godot_v4.7-stable_win64_console.exe --headless --path game \
@@ -13,7 +13,7 @@ extends SceneTree
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const MapScriptsScript = preload("res://src/retail_slice/retail_map_scripts.gd")
 
-const CONTRACT_RELATIVE_PATH := ".private/retail-work/reports/skirmish-script-contract/skirmish_script_contract.json"
+const CONTRACT_RELATIVE_PATH := "workspace/retail-work/reports/skirmish-script-contract/skirmish_script_contract.json"
 const COUNTER_MONEY := 987654
 const TIMER_MONEY := 765432
 ## SET_MILLISECOND_TIMER carries SECONDS despite its name - see
@@ -35,7 +35,7 @@ const TIMER_SECONDS := 3.0
 ## This runner's count is ENVIRONMENT-DEPENDENT: _test_real_contract_payload
 ## makes three checks against a real decoded skirmish source, but only ONE
 ## (a recorded skip) when the Part 1 contract JSON is absent, which it is on any
-## checkout without .private. A single fixed number would false-fail in CI, so
+## checkout without workspace. A single fixed number would false-fail in CI, so
 ## both branches are pinned and the branch actually taken selects which applies.
 ## The skip branch therefore cannot satisfy the full-run guard, and vice versa.
 const EXPECTED_CHECKS_WITH_CONTRACT := 13

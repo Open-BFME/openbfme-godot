@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 
-if not defined OPENBFME_IMPORT_ROOT set "OPENBFME_IMPORT_ROOT=%~dp0.private\retail-work"
+if not defined OPENBFME_IMPORT_ROOT set "OPENBFME_IMPORT_ROOT=%~dp0workspace\retail-work"
 call "%~dp0tools\resolve-retail-install.bat"
 if errorlevel 1 exit /b 1
 
@@ -22,7 +22,7 @@ if not exist "%PYTHON%" set "PYTHON=python"
 set "PYTHONPATH=%~dp0importer;%PYTHONPATH%"
 
 REM Men + ranger overlay content selection for slice/Godot launch.
-if not defined OPENBFME_CONTENT set "OPENBFME_CONTENT=%~dp0.private\content-packs"
+if not defined OPENBFME_CONTENT set "OPENBFME_CONTENT=%~dp0workspace\content-packs"
 if not defined OPENBFME_REVIEWED_RANGER_OVERLAY_SHA256 set "OPENBFME_REVIEWED_RANGER_OVERLAY_SHA256=3e6399441fdfec38009ba2465e9249d57acb961934907c5839f5744be48df116"
 
 REM Detach GUI from this console so parent pipes cannot raise 0x800700E8.

@@ -75,8 +75,8 @@ def test_private_retail_selection_is_deterministic_and_fail_closed(
     tmp_path: Path,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
-    plan = repo / ".private/scratch/hud-apt-profile/plan.json"
-    assets = repo / ".private/retail-work/cache/effective-assets"
+    plan = repo / "workspace/scratch/hud-apt-profile/plan.json"
+    assets = repo / "workspace/retail-work/cache/effective-assets"
     if not plan.is_file() or not assets.is_dir():
         pytest.skip("private BFME2 retail HUD closure is unavailable")
     first = tmp_path / "first.json"

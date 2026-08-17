@@ -23,8 +23,8 @@ from openbfme_importer.playable_unit_compiler import (
 
 REPO = Path(__file__).resolve().parents[2]
 EDITIONS = {
-    "bfme2": REPO / ".private/retail-work/cache/effective-assets",
-    "rotwk": REPO / ".private/retail-work/editions/rotwk/cache/effective-assets",
+    "bfme2": REPO / "workspace/retail-work/cache/effective-assets",
+    "rotwk": REPO / "workspace/retail-work/editions/rotwk/cache/effective-assets",
 }
 OWNERS = {
     "ElvenGaladriel_RingHero": "Command_SpecialAbilityTerribleFury",

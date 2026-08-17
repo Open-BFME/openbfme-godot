@@ -27,9 +27,9 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-PRIVATE_ROOT = ROOT / ".private" / "retail-work"
+PRIVATE_ROOT = ROOT / "workspace" / "retail-work"
 if not (PRIVATE_ROOT / "editions/rotwk/cache/effective-assets").is_dir() and ROOT.parent.name == "worktrees":
-    PRIVATE_ROOT = ROOT.parents[2] / ".private" / "retail-work"
+    PRIVATE_ROOT = ROOT.parents[2] / "workspace" / "retail-work"
 OBJECT_INI_ROOT = PRIVATE_ROOT / "editions/rotwk/cache/effective-assets/data/ini/object"
 EVA_INI = PRIVATE_ROOT / "editions/rotwk/cache/effective-assets/data/ini/eva.ini"
 FXLIST_INI = PRIVATE_ROOT / "editions/rotwk/cache/effective-assets/data/ini/fxlist.ini"

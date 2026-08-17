@@ -3,7 +3,7 @@ extends SceneTree
 ## firing animation must finish early at the authored speed factor.
 ##
 ## Retail truth (PURE RotWK 2.01 tree,
-## .private/retail-work/editions/rotwk/cache/effective-assets/data/ini):
+## workspace/retail-work/editions/rotwk/cache/effective-assets/data/ini):
 ##   * weapon.ini:4230-4241 GondorArcherBow: DelayBetweenShots = 0,
 ##     PreAttackDelay = 1000 (gamedata.ini:1857), PreAttackType = PER_POSITION
 ##     (:4233), PreAttackRandomAmount = 200 (:4232, compiled, deterministic
@@ -30,7 +30,7 @@ extends SceneTree
 ##     the randomized reload.
 ##
 ## Run:
-##   OPENBFME_CONTENT=<repo>/.private/content-packs godot --headless --path game \
+##   OPENBFME_CONTENT=<repo>/workspace/content-packs godot --headless --path game \
 ##     --script res://tests/archer_cadence_runner.gd
 
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")

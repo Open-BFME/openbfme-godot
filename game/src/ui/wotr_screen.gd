@@ -6311,7 +6311,7 @@ func _conversion_gap_lines() -> Array[String]:
 		absent.append("retail's region territory shapes (regions are markers, not filled territories)")
 	# THE STRATEGIC APT SCREENS, kept current after an actual survey of the
 	# cache: the movies AND their bitmap sheets are extracted under
-	# .private/retail-work/cache/effective-assets (LivingWorldUI, StrategicHUD,
+	# workspace/retail-work/cache/effective-assets (LivingWorldUI, StrategicHUD,
 	# StrategicPalantir, StrategicDetails*, StrategicEndTurnButton,
 	# StrategicPlayerStatus, TimeLine - .apt/.const/.dat/_geometry plus
 	# apt_Strategic*_N.tga). PRESENT AND NOT YET BOUND is a different claim
@@ -6346,7 +6346,7 @@ func _conversion_gap_lines() -> Array[String]:
 		# block carried a measured gap saying the bundle shipped BFME2's
 		# `apt_StrategicPalantir_1.tga` (cc4ce1696fed) against a RotWK oracle, with a
 		# pixel census of the difference. The bundle has since been reconverted from
-		# `.private/retail-work/editions/rotwk/layered-install` - its own `source`
+		# `workspace/retail-work/editions/rotwk/layered-install` - its own `source`
 		# block names that root - and the palantir atlas it now carries hashes
 		# cd13947c49ba, which is RotWK's. The gap is therefore DELETED rather than
 		# reworded: a named gap that has been closed and is still printed is a

@@ -62,11 +62,11 @@ from openbfme_importer.sage_particles import (  # noqa: E402
 
 
 DEFAULT_CATALOGS = {
-    "bfme2": ROOT / ".private/retail-work/catalog/bfme2.json",
-    "rotwk": ROOT / ".private/retail-work/catalog/rotwk.json",
+    "bfme2": ROOT / "workspace/retail-work/catalog/bfme2.json",
+    "rotwk": ROOT / "workspace/retail-work/catalog/rotwk.json",
 }
-DEFAULT_SELECTION = ROOT / ".private/content-packs/selection.json"
-DEFAULT_OUT = ROOT / ".private/retail-work/reports/retail-ini-coverage"
+DEFAULT_SELECTION = ROOT / "workspace/content-packs/selection.json"
+DEFAULT_OUT = ROOT / "workspace/retail-work/reports/retail-ini-coverage"
 MODULE_CENSUS = ROOT / "game/data/retail_module_census.json"
 GAME_LABELS = {"bfme2": "BFME2 1.06", "rotwk": "RotWK 2.01"}
 GAMES = ("bfme2", "rotwk")

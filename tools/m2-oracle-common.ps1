@@ -24,8 +24,8 @@ function Assert-M2OracleTrue {
 function Get-M2OracleContext {
     param([string]$RepoRoot)
     $root = [IO.Path]::GetFullPath($RepoRoot)
-    $profilePath = Join-Path $root ".private\retail-work\profiles\men-fords-v0-complete.generated.json"
-    $contentRoot = [IO.Path]::GetFullPath((Join-Path $root ".private\content-packs"))
+    $profilePath = Join-Path $root "workspace\retail-work\profiles\men-fords-v0-complete.generated.json"
+    $contentRoot = [IO.Path]::GetFullPath((Join-Path $root "workspace\content-packs"))
     $selectionPath = Join-Path $contentRoot "selection.json"
     Assert-M2OracleTrue (Test-Path -LiteralPath $profilePath -PathType Leaf) "Missing strict completion profile: $profilePath"
     Assert-M2OracleTrue (Test-Path -LiteralPath $selectionPath -PathType Leaf) "Missing private pack selection: $selectionPath"
@@ -57,7 +57,7 @@ function Get-M2OracleContext {
     $identity = Get-ProofWorkingTreeIdentity $root
     return [pscustomobject]@{
         repoRoot = $root
-        oracleRoot = [IO.Path]::GetFullPath((Join-Path $root ".private\retail-work\oracle"))
+        oracleRoot = [IO.Path]::GetFullPath((Join-Path $root "workspace\retail-work\oracle"))
         contentRoot = $contentRoot
         profileSha256 = $profileSha256
         bundleSha256 = $bundleSha256

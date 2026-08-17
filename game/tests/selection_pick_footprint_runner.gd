@@ -3,7 +3,7 @@ extends SceneTree
 ## world-unit radius.
 ##
 ## Retail truth (PURE RETAIL rotwk tree,
-## .private/retail-work/editions/rotwk/cache/effective-assets/data/ini):
+## workspace/retail-work/editions/rotwk/cache/effective-assets/data/ini):
 ##   * object/goodfaction/structures/men/barracks.ini
 ##       Geometry = CYLINDER 8.0 (rally probe) plus AdditionalGeometry BOX
 ##       45.0 x 50.0 -> union footprint 45 x 50 SOURCE half-extents.

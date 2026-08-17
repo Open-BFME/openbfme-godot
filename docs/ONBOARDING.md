@@ -14,11 +14,11 @@ guessing. That is intentional (see [Glossary](#glossary)).
   layer them). Optional: BFME2 alone for comparison only
 - Godot **4.7** for Windows (console build preferred so you can see log text)
 - Python 3.12 on PATH once so tools can bootstrap a **private** env under
-  `.private/` (after that, the private env is used; first gate may download
+  `workspace/` (after that, the private env is used; first gate may download
   pinned packages over the network)
-- Lots of free disk for `.private/` (full multi-faction work is tens of GB)
+- Lots of free disk for `workspace/` (full multi-faction work is tens of GB)
 
-Everything converted stays in the ignored `.private/` folder. Do not commit it.
+Everything converted stays in the ignored `workspace/` folder. Do not commit it.
 
 ## Glossary (words we use a lot)
 
@@ -26,7 +26,7 @@ Everything converted stays in the ignored `.private/` folder. Do not commit it.
 |---|---|
 | **RotWK** | *Rise of the Witch-king* (the expansion). Our main target. |
 | **BFME2** | *Battle for Middle-earth II* base game. Required under RotWK. |
-| **Pack** | Converted game content the Godot client loads (factions, maps, assets). Lives under `.private/content-packs` after you convert. |
+| **Pack** | Converted game content the Godot client loads (factions, maps, assets). Lives under `workspace/content-packs` after you convert. |
 | **Fail closed** | If required data is missing or invalid, **stop and report an error**. Do not invent fake art or silent placeholders for "parity" paths. |
 | **Gate** | Automated check script (headless). Green = that check passed. |
 | **Doctor** | Install / tool health check (`run_doctor.bat` or importer `doctor`). |
@@ -43,8 +43,8 @@ Set these in Command Prompt before running tools (or put them in a `.bat` you ke
 | `OPENBFME_GODOT` | Full path to Godot 4.7 `.exe` (preferred). Also accepted: `GODOT_CONSOLE`, `GODOT_EXE`, `GODOT`. |
 | `ROTWK_INSTALL` | Folder that contains RotWK `game.dat`. |
 | `BFME2_INSTALL` | BFME2 install when layering / Men wizard needs it. |
-| `OPENBFME_CONTENT` | Where packs live (default: `.private\content-packs`). |
-| `OPENBFME_IMPORT_ROOT` | Importer workspace (default: `.private\retail-work`). |
+| `OPENBFME_CONTENT` | Where packs live (default: `workspace\content-packs`). |
+| `OPENBFME_IMPORT_ROOT` | Importer workspace (default: `workspace\retail-work`). |
 
 How Godot is found (`tools/resolve-godot.bat`):
 
@@ -78,7 +78,7 @@ run_rotwk_systems.bat
 run_rotwk_one_button.bat "%ROTWK_INSTALL%"
 
 :: First-time: convert multi-map pack, SELECT it, then launch
-:: (--publish writes .private\content-packs\selection.json)
+:: (--publish writes workspace\content-packs\selection.json)
 run_rotwk_one_button.bat "%ROTWK_INSTALL%" --multi-map --build --publish --launch
 ```
 
@@ -110,7 +110,7 @@ run_retail_slice.bat --test
 
 ```bat
 run_doctor.bat
-set "PY=.private\retail-work\tools\python-3.12-env\Scripts\python.exe"
+set "PY=workspace\retail-work\tools\python-3.12-env\Scripts\python.exe"
 %PY% tools\openbfme_import.py doctor --install "C:\Path\To\BFME2"
 %PY% tools\openbfme_import.py import-faction --install "C:\Path\To\BFME2" --faction men --convert
 %PY% tools\openbfme_import.py publish-faction-to-slice --install "C:\Path\To\BFME2" --faction men --select
@@ -161,7 +161,7 @@ worse": `--allow-incomplete-coverage`, `--allow-stale-coverage`,
 | Doctor rejects install | Point at the **install root** (folder with `game.dat` or `lotrbfme2.exe`), not a random subfolder |
 | Godot not found | Set `OPENBFME_GODOT` or copy the exe under `.tools\godot\` |
 | Gate / test fails | Read the error; check [STATUS.md](../STATUS.md). Fail closed is normal when data is incomplete |
-| Convert stopped mid-way | Run the **same** command again (resumes). Avoid deleting `.private` as a first step |
+| Convert stopped mid-way | Run the **same** command again (resumes). Avoid deleting `workspace` as a first step |
 | Before you publish code | `powershell -File tools\export-scan.ps1` |
 
 ## Related

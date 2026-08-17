@@ -55,7 +55,7 @@ const WorldScript = preload("res://src/retail_slice/retail_slice_script_world.gd
 const ExecutorScript = preload("res://src/script/script_executor.gd")
 const ManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
 
-const CONTRACT_RELATIVE_PATH := ".private/retail-work/reports/skirmish-script-contract/skirmish_script_contract.json"
+const CONTRACT_RELATIVE_PATH := "workspace/retail-work/reports/skirmish-script-contract/skirmish_script_contract.json"
 const RUN_TICKS := 600
 ## Combat begins AFTER the purchase scripts' first post-counter evaluation
 ## window (evaluationInterval 10s = 100 ticks), so the run provably contains

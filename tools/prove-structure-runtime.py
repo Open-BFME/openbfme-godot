@@ -40,7 +40,7 @@ from openbfme_importer.retail_visual_closure import (  # noqa: E402
 
 DEFAULT_ROOT = (
     Path(__file__).resolve().parents[1]
-    / ".private"
+    / "workspace"
     / "retail-work"
     / "cache"
     / "effective-assets"

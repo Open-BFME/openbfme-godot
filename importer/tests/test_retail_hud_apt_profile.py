@@ -18,12 +18,12 @@ from openbfme_importer.retail_hud_apt_profile import (
 
 
 REPO = Path(__file__).resolve().parents[2]
-ROOT = REPO / ".private" / "retail-work" / "cache" / "effective-assets"
+ROOT = REPO / "workspace" / "retail-work" / "cache" / "effective-assets"
 MANIFEST = ROOT / ".openbfme" / "manifest.json"
-CATALOG = REPO / ".private" / "retail-work" / "catalog" / "bfme2.json"
-ORACLE = REPO / ".private" / "scratch" / "hud-apt-oracle" / "REPORT.md"
+CATALOG = REPO / "workspace" / "retail-work" / "catalog" / "bfme2.json"
+ORACLE = REPO / "workspace" / "scratch" / "hud-apt-oracle" / "REPORT.md"
 EXTERNAL_MOVIES = (
-    REPO / ".private" / "scratch" / "hud-external-movies" / "contract-a.json"
+    REPO / "workspace" / "scratch" / "hud-external-movies" / "contract-a.json"
 )
 
 

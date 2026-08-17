@@ -27,7 +27,7 @@ extends SceneTree
 ##                           pinned by non-commuting actions
 ##   9. determinism        - two independently built executors agree on full
 ##                           state snapshots for 200 ticks
-##  10. real corpus        - optional .private decoded source, skip-if-absent
+##  10. real corpus        - optional workspace decoded source, skip-if-absent
 ##
 ## All fixtures are SYNTHETIC decoded records in the exact sage_scb.py shape;
 ## the runner passes with no retail install present.
@@ -42,7 +42,7 @@ const GapLog := preload("res://src/script/script_gaps.gd")
 const ParamTypes := preload("res://src/script/script_param_types.gd")
 const Vocabulary := preload("res://src/script/script_vocabulary.gd")
 
-const CONTRACT_RELATIVE_PATH := ".private/retail-work/reports/skirmish-script-contract/skirmish_script_contract.json"
+const CONTRACT_RELATIVE_PATH := "workspace/retail-work/reports/skirmish-script-contract/skirmish_script_contract.json"
 
 ## The interpreter runs at 10 ticks per second. Every expected value below is
 ## a LITERAL derived from that and from the authored payload - never an
@@ -58,7 +58,7 @@ const TICKS_PER_SECOND := 10
 ## lower it to make a run go green.
 ##
 ## Section 10 is the one branch whose check count is not fixed: the decoded
-## .private corpus is skip-if-absent, so it contributes one check when the
+## workspace corpus is skip-if-absent, so it contributes one check when the
 ## contract is missing (or unreadable) and two when it loads. That branch is
 ## reported by _contract_branch_checks rather than pinned, so the guard stays
 ## exact in both environments instead of false-failing in the one without the
@@ -765,7 +765,7 @@ func _test_twin_determinism() -> void:
 	)
 
 
-# --- 10. Optional real decoded corpus (.private, skip-if-absent) -----------
+# --- 10. Optional real decoded corpus (workspace, skip-if-absent) -----------
 
 
 func _contract_path() -> String:

@@ -91,7 +91,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--state-root",
         type=Path,
         default=None,
-        help="importer state root (default: .private/retail-work); its catalog is required",
+        help="importer state root (default: workspace/retail-work); its catalog is required",
     )
     return parser
 
@@ -100,7 +100,7 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
 
-    state_root = args.state_root or (ROOT / ".private" / "retail-work")
+    state_root = args.state_root or (ROOT / "workspace" / "retail-work")
     catalog_file = catalog_path(state_root, args.game)
     if not catalog_file.is_file():
         parser.error("state-root catalog is required (not found: %s)" % catalog_file)

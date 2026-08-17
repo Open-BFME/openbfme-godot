@@ -13,7 +13,7 @@ REM   run_rotwk_one_button.bat C:\Path\To\RotWK --multi-map --launch
 REM   run_rotwk_one_button.bat C:\Path\To\RotWK --multi-map --build --publish --launch
 REM   run_rotwk_one_button.bat C:\Path\To\RotWK --profile path\to\profile.json --publish --launch
 
-if not defined OPENBFME_IMPORT_ROOT set "OPENBFME_IMPORT_ROOT=%~dp0.private\retail-work"
+if not defined OPENBFME_IMPORT_ROOT set "OPENBFME_IMPORT_ROOT=%~dp0workspace\retail-work"
 
 set "LAUNCH=0"
 set "PS_EXTRA="

@@ -18,7 +18,7 @@ const USER_PACK_SELECTION := "user://content-packs/selection.json"
 const PACK_CACHE_SETTING := "openbfme/content/user_pack_cache"
 const PACK_SELECTION_SETTING := "openbfme/content/user_pack_selection"
 const WORKSPACE_CONTENT_SETTING := "openbfme/content/workspace_content_root"
-const WORKSPACE_CONTENT_RELATIVE := ".private/content-packs"
+const WORKSPACE_CONTENT_RELATIVE := "workspace/content-packs"
 const SELECTION_SCHEMA := "openbfme.pack-selection"
 const SELECTION_VERSION := 0
 ## Strict parity profile. When requested, the mounted set is EXACTLY the
@@ -61,7 +61,7 @@ var suppressed_ambient_roots: Array[String] = []
 ## profile's pack-id namespace (BFME2 supplements in a RotWK parity run).
 var refused_foreign_packs: Array[String] = []
 ## Which selection source won the last list_pack_roots scan:
-## "external" (OPENBFME_CONTENT), "workspace" (repo .private/content-packs),
+## "external" (OPENBFME_CONTENT), "workspace" (repo workspace/content-packs),
 ## "durable" (user:// cache), or "" when no selection is active.
 var active_content_source := ""
 ## Absolute path of the selection document (or explicit bundle root) that the
@@ -221,7 +221,7 @@ func list_pack_roots() -> Array[String]:
 	active_content_source = "external" if external_selected != "" else ""
 
 	# Workspace-first: when no explicit OPENBFME_CONTENT override is set, a repo
-	# checkout's .private/content-packs selection is the freshest published
+	# checkout's workspace/content-packs selection is the freshest published
 	# truth, so editor playtests must never silently fall back to a stale
 	# durable cache copy of the same ruleset. Any workspace that exists but
 	# cannot be loaded is diagnosed loudly before the durable fallback runs.
@@ -398,7 +398,7 @@ func _record_diagnostic_identity(mounted_roots: Array[String]) -> void:
 func workspace_content_root() -> String:
 	## Repo-checkout content workspace holding the freshest published selection.
 	## An explicit project-setting override always wins (test seam). Implicit
-	## detection of <repo>/.private/content-packs applies only to non-exported
+	## detection of <repo>/workspace/content-packs applies only to non-exported
 	## runs whose durable cache settings are at their defaults — a test fixture
 	## that overrides the cache owns the whole resolution and must not be
 	## hijacked by the developer's real workspace.

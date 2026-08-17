@@ -49,7 +49,7 @@ extends RefCounted
 ## by transcribing that list, for three reasons: by-type is what retail's own
 ## comment DESCRIBES; it reproduces retail's list exactly, entry for entry, for
 ## all seven factions; and a positional list transcribed into GDScript would be a
-## retail payload living outside `.private`, which `AGENTS.md` forbids.
+## retail payload living outside `workspace`, which `AGENTS.md` forbids.
 ##
 ## ============================================================================
 ## WHAT TYPED CONVERSION CARRIES, AND WHAT RUNTIME APPLIES

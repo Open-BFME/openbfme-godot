@@ -10,10 +10,10 @@ from openbfme_importer.retail_hud_timeline_playback_oracle import build_contract
 
 
 ROOT = Path(__file__).resolve().parents[2]
-BASE = ROOT / ".private" / "scratch" / "hud-261-source-conversion"
+BASE = ROOT / "workspace" / "scratch" / "hud-261-source-conversion"
 PLAN = BASE / "plan-a.json"
 SCENE = BASE / "bundle-a" / "data" / "ui" / "palantir" / "scene-contract.json"
-ASSETS = ROOT / ".private" / "retail-work" / "cache" / "effective-assets"
+ASSETS = ROOT / "workspace" / "retail-work" / "cache" / "effective-assets"
 
 pytestmark = pytest.mark.skipif(
     not PLAN.is_file() or not SCENE.is_file(),

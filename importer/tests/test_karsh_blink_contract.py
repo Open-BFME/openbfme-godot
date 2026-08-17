@@ -16,7 +16,7 @@ from openbfme_importer.playable_unit_compiler import (
 
 
 REPO = Path(__file__).resolve().parents[2]
-ROOT = REPO / ".private/retail-work/editions/rotwk/cache/effective-assets"
+ROOT = REPO / "workspace/retail-work/editions/rotwk/cache/effective-assets"
 KARSH = "AngmarKarsh"
 COMMAND = "Command_KarshBlink"
 

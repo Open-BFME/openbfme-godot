@@ -15,7 +15,7 @@ from tests.retail_inputs import retail_file
 
 
 ROOT = Path(__file__).resolve().parents[2]
-ASSETS = ROOT / ".private" / "retail-work" / "cache" / "effective-assets"
+ASSETS = ROOT / "workspace" / "retail-work" / "cache" / "effective-assets"
 GAME_DAT = retail_file("game.dat")
 SOURCE_NAMES = (
     "InGameSideCommandBar.apt",

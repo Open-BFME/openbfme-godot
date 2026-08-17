@@ -104,14 +104,14 @@ class RetailFordsCompletionProfileTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         profile_path = (
             root
-            / ".private"
+            / "workspace"
             / "retail-work"
             / "profiles"
             / "men-fords-v0-complete.generated.json"
         )
         report_path = (
             root
-            / ".private"
+            / "workspace"
             / "retail-work"
             / "reports"
             / "retail-men-building-lifecycle.json"
@@ -282,7 +282,7 @@ class RetailFordsCompletionProfileTests(unittest.TestCase):
     ) -> None:
         root = Path(__file__).resolve().parents[2]
         contract_path = (
-            root / ".private" / "scratch" / "men-damage-audio" / "contract-a.json"
+            root / "workspace" / "scratch" / "men-damage-audio" / "contract-a.json"
         )
         if not contract_path.is_file():
             self.skipTest("private Men damage-audio contract is not present")
@@ -325,11 +325,11 @@ class RetailFordsCompletionProfileTests(unittest.TestCase):
     def test_private_men_damage_effects_adds_only_sealed_delta(self) -> None:
         root = Path(__file__).resolve().parents[2]
         contract_path = (
-            root / ".private" / "scratch" / "men-damage-effects" / "contract-a.json"
+            root / "workspace" / "scratch" / "men-damage-effects" / "contract-a.json"
         )
         profile_path = (
             root
-            / ".private"
+            / "workspace"
             / "retail-work"
             / "profiles"
             / "men-fords-v0-complete.generated.json"

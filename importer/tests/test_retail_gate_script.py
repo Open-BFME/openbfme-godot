@@ -23,7 +23,7 @@ def test_batch_wrapper_forwards_only_to_hardened_gate() -> None:
 def test_default_profile_is_exact_private_generated_completion_profile() -> None:
     text = _gate_text()
     assert (
-        '".private\\retail-work\\profiles\\men-fords-v0-complete.generated.json"'
+        '"workspace\\retail-work\\profiles\\men-fords-v0-complete.generated.json"'
         in text
     )
     assert '$expectedProfileId = "men-fords-v0-complete-generated"' in text
@@ -316,7 +316,7 @@ def test_build_and_explicit_release_paths_are_exact() -> None:
     assert 'Join-Path $stateRoot "packs\\$expectedPackId"' in text
     assert '[IO.Path]::GetFullPath([string]$first.pack) -eq $expectedBuildPackPath' in text
     assert '[IO.Path]::GetFullPath([string]$second.pack) -eq $expectedBuildPackPath' in text
-    assert 'Join-Path $repoRoot ".private\\content-packs"' in text
+    assert 'Join-Path $repoRoot "workspace\\content-packs"' in text
     assert (
         'Join-Path $publishRoot "$expectedPackId\\$($second.bundle_sha256)"'
         in text

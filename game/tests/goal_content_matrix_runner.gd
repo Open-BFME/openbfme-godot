@@ -1,7 +1,7 @@
 extends SceneTree
 ## Goal matrix: factions, maps (load_from_pack), production, spellbooks.
 ## Uses the same ContentDB/selection/load paths as the live game.
-## Env: OPENBFME_CONTENT must point at .private/content-packs.
+## Env: OPENBFME_CONTENT must point at workspace/content-packs.
 
 const FACTIONS: Array[String] = [
 	"men", "elves", "dwarves", "isengard", "mordor", "wild", "angmar",

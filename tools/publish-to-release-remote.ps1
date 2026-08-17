@@ -52,7 +52,7 @@ function Write-Step { param([string]$Text) Write-Host "PUBLISH_CHECK $Text" }
 
 $python = $env:OPENBFME_IMPORTER_PYTHON
 if ([string]::IsNullOrWhiteSpace($python)) {
-    $candidate = Join-Path $repoRoot ".private\retail-work\tools\python-3.12-env\Scripts\python.exe"
+    $candidate = Join-Path $repoRoot "workspace\retail-work\tools\python-3.12-env\Scripts\python.exe"
     if (Test-Path -LiteralPath $candidate -PathType Leaf) { $python = $candidate }
     else { $python = "python" }
 }

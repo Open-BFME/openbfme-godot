@@ -31,8 +31,8 @@ sys.path.insert(0, str(REPO_ROOT / "importer"))
 from openbfme_importer.pipeline import bundle_digest  # noqa: E402
 
 
-def default_workspace_root() -> Path:
-    return REPO_ROOT / ".private" / "content-packs"
+def default_.private_root() -> Path:
+    return REPO_ROOT / "workspace" / "content-packs"
 
 
 def default_durable_root() -> Path | None:
@@ -75,12 +75,12 @@ def check_root(label: str, root: Path) -> tuple[list[dict], list[dict]]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--workspace-root", type=Path, default=default_workspace_root())
+    parser.add_argument("--.private-root", type=Path, default=default_.private_root())
     parser.add_argument("--durable-root", type=Path, default=default_durable_root())
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
-    roots: list[tuple[str, Path]] = [("workspace", args.workspace_root)]
+    roots: list[tuple[str, Path]] = [("workspace", args..private_root)]
     if args.durable_root is not None and (args.durable_root / "selection.json").is_file():
         roots.append(("durable", args.durable_root))
 
@@ -119,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
             "    python -m openbfme_importer.cli apply-selection-transaction \\\n"
             "      --active-pack <pack-id>/<new-sha256> \\\n"
             "      --supplemental-pack <each supplement, in order> \\\n"
-            "      --godot-content-root .private/content-packs \\\n"
+            "      --godot-content-root workspace/content-packs \\\n"
             "      --durable-root \"%APPDATA%\\Godot\\app_userdata\\Open BFME\\content-packs\""
         )
         return 1

@@ -17,17 +17,17 @@ $gameRoot = Join-Path $repoRoot "game"
 $manifestTool = Join-Path $PSScriptRoot "module-runtime-evidence-manifest.py"
 $stateRoot = if (-not [string]::IsNullOrWhiteSpace($env:OPENBFME_IMPORT_ROOT)) {
     [IO.Path]::GetFullPath($env:OPENBFME_IMPORT_ROOT)
-} else { Join-Path $repoRoot ".private\retail-work" }
+} else { Join-Path $repoRoot "workspace\retail-work" }
 $python = Join-Path $stateRoot "tools\python-3.12-env\Scripts\python.exe"
 $resolvedReportPath = if ([string]::IsNullOrWhiteSpace($ReportPath)) {
-    Join-Path $repoRoot ".private\retail-work\reports\module-runtime-evidence-gate.json"
+    Join-Path $repoRoot "workspace\retail-work\reports\module-runtime-evidence-gate.json"
 } else { [IO.Path]::GetFullPath($ReportPath) }
 $forbiddenDiagnostics = '(?i)(?:SCRIPT ERROR|Parse Error|ObjectDB instances leaked|RID allocations|watchdog (?:abort|timeout)|Parameter [^\r\n]+ is null)'
 
 function Invoke-EvidenceRunner {
     param([string]$RunnerPath, [string]$Godot)
     $name = Split-Path -Leaf $RunnerPath
-    $scratch = Join-Path $repoRoot ".private\scratch\module-runtime-evidence"
+    $scratch = Join-Path $repoRoot "workspace\scratch\module-runtime-evidence"
     New-Item -ItemType Directory -Force -Path $scratch | Out-Null
     $token = [Guid]::NewGuid().ToString("N")
     $stdoutPath = Join-Path $scratch "$token.stdout.log"

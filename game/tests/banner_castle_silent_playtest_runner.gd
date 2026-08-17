@@ -28,7 +28,7 @@ func _run() -> void:
 	if (content_db.pack_roots as Array).is_empty():
 		# Older bare --script launches did not discover the workspace cache.
 		# Reload the repository selection explicitly; never rewrite selection.json.
-		var workspace := ProjectSettings.globalize_path("res://../.private/content-packs")
+		var workspace := ProjectSettings.globalize_path("res://../workspace/content-packs")
 		OS.set_environment("OPENBFME_CONTENT", workspace)
 		content_db.reload()
 	_check(not (content_db.pack_roots as Array).is_empty(), "selected content roots loaded")

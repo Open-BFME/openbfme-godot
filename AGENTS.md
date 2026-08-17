@@ -15,7 +15,7 @@ Work at the repository top level. **Do not create branches or worktrees.**
 | `launcher/` | WPF launcher, shipped artifact |
 | `tools/` | Gates, publish/release scripts, one-shot operators |
 | `contracts/` | Machine-validated product policy. Editing one? See "digests" below |
-| `.private/` | Retail-derived material, packs, evidence. **Never commit, never publish** |
+| `workspace/` | Retail-derived material, packs, evidence. **Never commit, never publish** |
 
 ## Run the right lane
 
@@ -88,7 +88,7 @@ is absent from the private workspace. Produce that artefact and it goes away.
 
 1. **Packs are immutable, and now they are sealed.** A directory named `<sha256>`
    promises its bytes hash to that name. Published pack files under
-   `.private/content-packs/` and the durable mirror are marked read-only, so an
+   `workspace/content-packs/` and the durable mirror are marked read-only, so an
    in-place cook fails with an access error **at the moment you make the mistake**.
    That error is the guard working, not a bug — do not chmod your way past it.
 
@@ -106,9 +106,9 @@ is absent from the private workspace. Produce that artefact and it goes away.
 
 2. **Bare `pytest` lies.** It picks up the wrong Pillow and fabricates ~40
    failures. Use `run_importer_tests.bat`, or the pinned interpreter at
-   `.private\retail-work\tools\python-3.12-env\Scripts\python.exe`. Either way set
-   `BFME2_INSTALL=<repo>\.private\retail-work\editions\rotwk\layered-install\layer-1-bfme2`
-   — the resolver never probes `.private` on its own.
+   `workspace\retail-work\tools\python-3.12-env\Scripts\python.exe`. Either way set
+   `BFME2_INSTALL=<repo>\workspace\retail-work\editions\rotwk\layered-install\layer-1-bfme2`
+   — the resolver never probes `workspace` on its own.
 
 3. **Editing a contract or provenance file breaks its seal.** `contracts/*.json`
    carry a `policy_digest` (see `tools/check-product-contracts.py`); packs carry
@@ -124,7 +124,7 @@ is absent from the private workspace. Produce that artefact and it goes away.
    confidently wrong numbers that passed review. If a path falls back — to a cached
    pack, a PATH binary, a default — it must say so loudly or fail closed.
 
-6. **`.private/` is retail material.** Never commit it, never publish converted
+6. **`workspace/` is retail material.** Never commit it, never publish converted
    retail bytes. The publication-boundary CI job scans for this, and for
    developer-machine paths (home directories, drive letters) in tracked files.
 
@@ -132,5 +132,5 @@ is absent from the private workspace. Produce that artefact and it goes away.
 
 A failing test first, then the fix, then the named baseline delta, then say which
 pack/commit the numbers came from. Report honestly: if a lane is red, say so with
-its output. Known-good baselines live in `.private/playtest-program.md`, not in
+its output. Known-good baselines live in `workspace/playtest-program.md`, not in
 anyone's memory.

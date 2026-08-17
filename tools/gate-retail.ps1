@@ -22,7 +22,7 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $gameRoot = Join-Path $repoRoot "game"
 $cli = Join-Path $repoRoot "tools\openbfme_import.py"
 $pythonBootstrap = Join-Path $PSScriptRoot "bootstrap-importer-python.ps1"
-$profilePath = [IO.Path]::GetFullPath((Join-Path $repoRoot ".private\retail-work\profiles\men-fords-v0-complete.generated.json"))
+$profilePath = [IO.Path]::GetFullPath((Join-Path $repoRoot "workspace\retail-work\profiles\men-fords-v0-complete.generated.json"))
 $expectedProfileId = "men-fords-v0-complete-generated"
 $expectedProfileSha256 = "0bc2e76708d3c13b0aeac45afe375e4f120acdf329344b79d683f42e5d667c9d"
 $expectedPackId = "bfme2-men-vslice"
@@ -34,7 +34,7 @@ $expectedPackId = "bfme2-men-vslice"
 # importer_tests step below.
 $minimumImporterTestCount = 2491
 $maximumImporterSkipCount = 86
-$publishRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot ".private\content-packs"))
+$publishRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot "workspace\content-packs"))
 
 # ---------------------------------------------------------------------------
 # SECTION B PIN - the private multi-pack selection.
@@ -83,7 +83,7 @@ $expectedSelectionSupplementalPacks = @(
 $stateRoot = if (-not [string]::IsNullOrWhiteSpace($env:OPENBFME_IMPORT_ROOT)) {
     [IO.Path]::GetFullPath($env:OPENBFME_IMPORT_ROOT)
 } else {
-    [IO.Path]::GetFullPath((Join-Path $repoRoot ".private\retail-work"))
+    [IO.Path]::GetFullPath((Join-Path $repoRoot "workspace\retail-work"))
 }
 $env:OPENBFME_IMPORT_ROOT = $stateRoot
 $expectedBuildPackPath = [IO.Path]::GetFullPath((Join-Path $stateRoot "packs\$expectedPackId"))

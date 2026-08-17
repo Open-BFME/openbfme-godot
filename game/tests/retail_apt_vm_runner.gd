@@ -5,7 +5,7 @@ extends SceneTree
 ## family (stack in/out, operand decoding, alignment), branch loops,
 ## host-call recording, the fail-closed unimplemented halt, plus execution
 ## of real exported fixtures (skip-if-absent) from
-## .private/retail-work/reports/apt-vm-fixtures/apt_vm_fixtures.json.
+## workspace/retail-work/reports/apt-vm-fixtures/apt_vm_fixtures.json.
 ##
 ## SKIPPED opcodes from the corpus burn-down (d2_opcodes.csv): none - all
 ## 87 measured opcode values are implemented.
@@ -15,7 +15,7 @@ extends SceneTree
 
 const AptVmScript = preload("res://src/apt/apt_vm.gd")
 
-const FIXTURE_RELATIVE := "../.private/retail-work/reports/apt-vm-fixtures/apt_vm_fixtures.json"
+const FIXTURE_RELATIVE := "../workspace/retail-work/reports/apt-vm-fixtures/apt_vm_fixtures.json"
 ## Pinned deterministic AptRuntimeHost state digest after driving all three
 ## MainMenu fixture scripts against the tier-3 widget tree (re-pin only when
 ## the fixture file or the host state model changes).

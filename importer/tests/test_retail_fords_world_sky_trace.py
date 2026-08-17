@@ -127,17 +127,17 @@ class FordsWorldSkyTracePrivateIntegrationTests(unittest.TestCase):
         cls.repo = Path(__file__).resolve().parents[2]
         cls.paths = {
             "effective_assets_root": cls.repo
-            / ".private/retail-work/cache/effective-assets",
+            / "workspace/retail-work/cache/effective-assets",
             "manifest_path": cls.repo
-            / ".private/retail-work/cache/effective-assets/.openbfme/manifest.json",
-            "catalog_path": cls.repo / ".private/retail-work/catalog/bfme2.json",
+            / "workspace/retail-work/cache/effective-assets/.openbfme/manifest.json",
+            "catalog_path": cls.repo / "workspace/retail-work/catalog/bfme2.json",
             "game_dat_path": retail_file("game.dat"),
             "skybox_oracle_path": cls.repo
-            / ".private/scratch/fords-skybox-oracle/contract-a.json",
+            / "workspace/scratch/fords-skybox-oracle/contract-a.json",
             "water_reflection_contract_path": cls.repo
-            / ".private/scratch/fords-water-reflection/contract-a.json",
+            / "workspace/scratch/fords-water-reflection/contract-a.json",
             "opensage_root": cls.repo
-            / ".private/scratch/fords-skybox-oracle/OpenSAGE",
+            / "workspace/scratch/fords-skybox-oracle/OpenSAGE",
         }
         if not all(path.exists() for path in cls.paths.values()):
             raise unittest.SkipTest("private Fords world-sky evidence is unavailable")

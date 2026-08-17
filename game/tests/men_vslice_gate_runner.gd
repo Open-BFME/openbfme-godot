@@ -3,12 +3,12 @@ extends SceneTree
 ## five selectable maps with water, and full slice ready_ok twice.
 ##
 ## Run:
-##   OPENBFME_CONTENT=../.private/content-packs godot --headless --path . \
+##   OPENBFME_CONTENT=../workspace/content-packs godot --headless --path . \
 ##     --script res://tests/men_vslice_gate_runner.gd
 ##
 ## Exit 0 only when every gate line prints PASS and both slice boots succeed.
 
-const LOG_RELATIVE := "../.private/scratch/jobs/men-vslice-gate/gate.log"
+const LOG_RELATIVE := "../workspace/scratch/jobs/men-vslice-gate/gate.log"
 const EXPECTED_MAPS: Array[String] = [
 	"bfme2.map.fords-of-isen-ii",
 	"bfme2.map.rivendell",

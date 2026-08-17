@@ -7,7 +7,7 @@ identity must resolve to, so a Mordor archer stops borrowing the Gondor
 sidecar's Good arrow from a foreign pack and a RotWK-only mount has visible
 arrows of its own.
 
-Oracle: ``.private/retail-work/editions/rotwk/cache/effective-assets`` -- the
+Oracle: ``workspace/retail-work/editions/rotwk/cache/effective-assets`` -- the
 PURE effective-assets view, never ``layered-effective-assets``.
 """
 
@@ -28,12 +28,12 @@ from openbfme_importer.projectile_art_compiler import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
-PRIVATE_ROOT = ROOT / ".private" / "retail-work"
+PRIVATE_ROOT = ROOT / "workspace" / "retail-work"
 if (
     not (PRIVATE_ROOT / "editions" / "rotwk" / "cache" / "effective-assets").is_dir()
     and ROOT.parent.name == "worktrees"
 ):
-    PRIVATE_ROOT = ROOT.parents[2] / ".private" / "retail-work"
+    PRIVATE_ROOT = ROOT.parents[2] / "workspace" / "retail-work"
 EFFECTIVE_ASSETS = PRIVATE_ROOT / "editions" / "rotwk" / "cache" / "effective-assets"
 
 private_sources = pytest.mark.skipif(

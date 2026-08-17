@@ -213,7 +213,7 @@ public static class ContentPackCatalog
     /// <summary>
     /// Resolve the content root the UI and Play must both use.
     /// Order when no override: OPENBFME_CONTENT → install
-    /// <c>.private/content-packs</c> → nearby repo workspace → Godot user cache.
+    /// <c>workspace/content-packs</c> → nearby repo workspace → Godot user cache.
     /// An explicit override always wins and is never replaced by a richer root
     /// (so the pack list and OPENBFME_CONTENT cannot disagree).
     /// Prefer roots that actually contain packs/mods; a bare/stale
@@ -314,7 +314,7 @@ public static class ContentPackCatalog
         if (!string.IsNullOrWhiteSpace(env))
             Add(env, "environment");
 
-        Add(Path.Combine(Path.GetFullPath(installRoot), ".private", "content-packs"), "install");
+        Add(Path.Combine(Path.GetFullPath(installRoot), "workspace", "content-packs"), "install");
 
         foreach (var seed in new[]
                  {
@@ -360,11 +360,11 @@ public static class ContentPackCatalog
 
         for (var depth = 0; depth < 8 && !string.IsNullOrEmpty(current); depth++)
         {
-            var candidate = Path.Combine(current, ".private", "content-packs");
+            var candidate = Path.Combine(current, "workspace", "content-packs");
             if (Directory.Exists(candidate))
                 yield return candidate;
 
-            // Repo layout: open-bfme/.private/content-packs while exe lives under launcher/...
+            // Repo layout: open-bfme/workspace/content-packs while exe lives under launcher/...
             var parent = Directory.GetParent(current);
             if (parent is null) yield break;
             current = parent.FullName;
@@ -639,7 +639,7 @@ public static class ContentPackCatalog
     }
 
     public static string DefaultContentRoot(string installRoot) =>
-        Path.Combine(Path.GetFullPath(installRoot), ".private", "content-packs");
+        Path.Combine(Path.GetFullPath(installRoot), "workspace", "content-packs");
 
     private static void TryAddEntry(
         string packJson,
@@ -692,7 +692,7 @@ public static class ContentPackCatalog
                 yield return Path.Combine(install.FullName, "mods");
         }
 
-        // Repo game/mods next to .private/content-packs → ../../game/mods
+        // Repo game/mods next to workspace/content-packs → ../../game/mods
         string? repoGuess = null;
         try
         {

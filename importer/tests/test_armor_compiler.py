@@ -356,7 +356,7 @@ def test_armor_contract_still_fails_closed_on_malformed_known_set() -> None:
 
 def test_bfme2_outpost_and_signal_fire_use_retail_null_armor_damage() -> None:
     repo = Path(__file__).resolve().parents[2]
-    catalog_path = repo / ".private" / "retail-work" / "catalog" / "bfme2.json"
+    catalog_path = repo / "workspace" / "retail-work" / "catalog" / "bfme2.json"
     if not catalog_path.is_file():
         pytest.skip("operator BFME2 retail catalog is unavailable")
     documents = dict(read_catalog_documents(InstallCatalog.load(catalog_path)))

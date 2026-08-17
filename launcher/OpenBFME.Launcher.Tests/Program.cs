@@ -1233,7 +1233,7 @@ static Task TestDiagnosticsRunLayout()
 static Task TestDiagnosticsRedaction()
 {
     var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-    var scrubbed = Redaction.Scrub($"mounted {home}\\Desktop\\open-bfme\\.private\\content-packs");
+    var scrubbed = Redaction.Scrub($"mounted {home}\\Desktop\\open-bfme\\workspace\\content-packs");
     Check(!scrubbed.Contains(home, StringComparison.OrdinalIgnoreCase), "the user's home directory leaked");
     // The SHAPE has to survive: "which content root did it mount" is the evidence,
     // and ImporterRunner.Redact's <private-path> answer would destroy it. That is
@@ -1392,7 +1392,7 @@ static Task TestBugReportExcludesForeignFiles()
     {
         // A run directory is a directory: anything can land in it - a crash dump,
         // a copied pack, a screenshot. AGENTS.md rule 6 says converted retail
-        // bytes never leave .private, so the exporter copies by ALLOW LIST and
+        // bytes never leave workspace, so the exporter copies by ALLOW LIST and
         // this proves it, rather than trusting that nothing else will ever appear.
         var run = Path.Combine(logs, "20260801T000000Z-sim-77");
         Directory.CreateDirectory(run);
@@ -1558,7 +1558,7 @@ static Task TestContentPackCatalog()
     var install = NewRoot("content-catalog");
     try
     {
-        var content = Path.Combine(install, ".private", "content-packs");
+        var content = Path.Combine(install, "workspace", "content-packs");
         var hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         var bundle = Path.Combine(content, "rotwk-men-vslice", hash);
         Directory.CreateDirectory(bundle);
@@ -1619,7 +1619,7 @@ static Task TestContentPackCatalog()
         var staleInstall = NewRoot("content-stale");
         try
         {
-            var staleContent = Path.Combine(staleInstall, ".private", "content-packs");
+            var staleContent = Path.Combine(staleInstall, "workspace", "content-packs");
             Directory.CreateDirectory(staleContent);
             File.WriteAllText(Path.Combine(staleContent, "selection.json"), """
                 {

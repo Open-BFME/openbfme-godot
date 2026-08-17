@@ -450,7 +450,7 @@ class W3DInputStageTests(unittest.TestCase):
             )
             self.assertFalse(output.exists())
             with self.assertRaisesRegex(
-                W3DInputStageError, "must stay under its ignored .private"
+                W3DInputStageError, "must stay under its ignored workspace"
             ):
                 build_w3d_input_stage(source, output)
             self.assertFalse(output.exists())

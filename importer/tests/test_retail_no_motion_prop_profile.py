@@ -325,7 +325,7 @@ class RetailNoMotionPropProfileTests(unittest.TestCase):
             return build_retail_no_motion_prop_plan({}, {}, {}, {}, {}, {}, {}, root)
 
     def test_exact_header_only_model_builds_two_resource_fragment(self) -> None:
-        scratch = repo_root_from_module() / ".private" / "scratch"
+        scratch = repo_root_from_module() / "workspace" / "scratch"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as raw:
             root = Path(raw)
@@ -361,7 +361,7 @@ class RetailNoMotionPropProfileTests(unittest.TestCase):
             self.assertEqual(len(ImportProfile.load(path).resources), 2)
 
     def test_build_is_deterministic_for_identical_source_evidence(self) -> None:
-        scratch = repo_root_from_module() / ".private" / "scratch"
+        scratch = repo_root_from_module() / "workspace" / "scratch"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as raw:
             root = Path(raw)
@@ -373,7 +373,7 @@ class RetailNoMotionPropProfileTests(unittest.TestCase):
             self.assertEqual(declared, _canonical_sha256(basis))
 
     def test_source_digest_mismatch_fails_before_transform(self) -> None:
-        scratch = repo_root_from_module() / ".private" / "scratch"
+        scratch = repo_root_from_module() / "workspace" / "scratch"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as raw:
             with self.assertRaisesRegex(ValueError, "digest mismatch"):
@@ -382,7 +382,7 @@ class RetailNoMotionPropProfileTests(unittest.TestCase):
                 )
 
     def test_wrong_header_timing_cannot_be_admitted(self) -> None:
-        scratch = repo_root_from_module() / ".private" / "scratch"
+        scratch = repo_root_from_module() / "workspace" / "scratch"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as raw:
             with self.assertRaisesRegex(ValueError, "does not exactly match"):

@@ -236,7 +236,7 @@ trees but share one interpreter identity:
 
 - both start from the hash-pinned `python-build-standalone` 3.12.13+20260718
   distribution provisioned by `tools/Install-PinnedPython.ps1`;
-- contributor setup keeps it under `.private/retail-work/tools/`;
+- contributor setup keeps it under `workspace/retail-work/tools/`;
 - the Windows release workflow installs the same archive under
   `RUNNER_TEMP`, creates a fresh venv from it, and passes that venv interpreter
   to `New-PinnedPythonRuntime.ps1`;

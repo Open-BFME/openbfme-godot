@@ -6,7 +6,7 @@ reviewer attention is spent on parity and design rather than on contract
 and containment violations.
 
 Every check here exists because the recorded incident history says it
-happened: .private/orchestration/metrics.json reports pathLockViolations 2,
+happened: workspace/orchestration/metrics.json reports pathLockViolations 2,
 canonicalPublicationIncidents 1, testWeakeningIncidents 1, and
 firstPassAccepted 0 of 13.
 
@@ -66,8 +66,8 @@ TWO_REVIEWER_RISK = {"high"}
 # Owner-only state. A worker touching these is a canonical-publication
 # incident, which has happened once.
 OWNER_ONLY = [
-    ".private/orchestration/",
-    ".private/content-packs/selection.json",
+    "workspace/orchestration/",
+    "workspace/content-packs/selection.json",
     "AGENTS.md",
     "DIRECTION.md",
     "contracts/",
@@ -75,10 +75,10 @@ OWNER_ONLY = [
 
 # Never commit-reachable. The release firewall.
 CONTAINMENT_PREFIXES = [
-    ".private/", "dist/", "reference/", "_bfme2_extract/", "build/",
+    "workspace/", "dist/", "reference/", "workspace/retail-extract/", "build/",
 ]
 
-# Retail-derived payload extensions. Outside .private these are a leak.
+# Retail-derived payload extensions. Outside workspace these are a leak.
 RETAIL_EXTENSIONS = {
     ".big", ".w3d", ".dds", ".tga", ".bik", ".vp6", ".wnd", ".apt", ".ru",
     ".ini.big", ".manifest", ".relo", ".imp",
@@ -394,7 +394,7 @@ def check_repo_state(repo, task, rep):
 
 
 def check_locks(repo, task, rep):
-    locks_file = Path(repo) / ".private" / "orchestration" / "locks.json"
+    locks_file = Path(repo) / "workspace" / "orchestration" / "locks.json"
     if not locks_file.exists():
         rep.skip("R3 lock overlap", "no locks.json")
         return
@@ -605,7 +605,7 @@ def main(argv=None):
     repo = Path(args.repo).resolve()
     worktree = Path(args.worktree).resolve() if args.worktree else repo
 
-    task_file = repo / ".private" / "scratch" / "jobs" / args.task_id / "task.yaml"
+    task_file = repo / "workspace" / "scratch" / "jobs" / args.task_id / "task.yaml"
     if not task_file.is_file():
         print(f"T0 SETUP ERROR: no packet at {task_file}", file=sys.stderr)
         return 2

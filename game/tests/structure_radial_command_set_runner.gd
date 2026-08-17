@@ -15,7 +15,7 @@ extends SceneTree
 ## EXTERNAL ORACLE, re-derived here, never typed in: the mounted pack's compiled
 ## playable-structure documents (`registration.gameplay.trainedCommandSets`),
 ## cross-cited to the pure RotWK retail tree
-## (.private/retail-work/editions/rotwk/cache/effective-assets/data/ini):
+## (workspace/retail-work/editions/rotwk/cache/effective-assets/data/ini):
 ##   * commandset.ini:5771-5773  SellableCommandSet  6 = Command_Sell
 ##   * commandset.ini GondorBarracksCommandSet slots 1-4 + 6 = Command_Sell
 ##   * commandbutton.ini:3554-3562  Command_Sell (SELL, BCSell, InPalantir Yes)
@@ -38,7 +38,7 @@ extends SceneTree
 ##   7. Unit palantir unchanged: the porter keeps stop + stance, no radial.
 ##
 ## Run:
-##   OPENBFME_CONTENT=<repo>/.private/content-packs godot --headless --path game \
+##   OPENBFME_CONTENT=<repo>/workspace/content-packs godot --headless --path game \
 ##     --script res://tests/structure_radial_command_set_runner.gd
 
 const BOOT_DEADLINE_MS := 300000

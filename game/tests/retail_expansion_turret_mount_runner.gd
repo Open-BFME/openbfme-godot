@@ -7,7 +7,7 @@ extends SceneTree
 ## its deck with an authored local offset.
 ##
 ## ORACLE (pure RotWK 2.01 tree,
-## .private/retail-work/cache/effective-assets/data/ini):
+## workspace/retail-work/cache/effective-assets/data/ini):
 ##   object/goodfaction/structures/men/trebuchetexpansion.ini:314-321
 ##       Behavior = ObjectCreationUpgrade MakeTheFreeTreb2
 ##           ThingToSpawn = MenTrebuchetFortress

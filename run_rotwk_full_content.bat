@@ -16,7 +16,7 @@ if "%~1"=="" (
 REM Pass all original args through after --install. First arg is always the
 REM RotWK install root, followed by optional owner flags.
 
-if not defined OPENBFME_IMPORT_ROOT set "OPENBFME_IMPORT_ROOT=%~dp0.private\retail-work"
+if not defined OPENBFME_IMPORT_ROOT set "OPENBFME_IMPORT_ROOT=%~dp0workspace\retail-work"
 set "PY=%OPENBFME_IMPORT_ROOT%\tools\python-3.12-env\Scripts\python.exe"
 if not exist "%PY%" set "PY=python"
 set "PYTHONPATH=%~dp0importer;%PYTHONPATH%"

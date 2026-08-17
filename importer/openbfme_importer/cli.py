@@ -26,7 +26,7 @@ from .effective_assets_identity import (
     EffectiveAssetsIdentityError,
     verify_effective_assets,
 )
-from .game import RETAIL_GAME_IDS, workspace_root
+from .game import RETAIL_GAME_IDS, .private_root
 from .hero_catalog import compile_hero_catalog
 from .paths import (
     default_godot_content_root,
@@ -372,8 +372,8 @@ def _catalog_install_root(args: argparse.Namespace) -> Path:
     return requested
 
 
-def _workspace_root(args: argparse.Namespace) -> Path:
-    return workspace_root(_state_root(args), args.game)
+def _.private_root(args: argparse.Namespace) -> Path:
+    return .private_root(_state_root(args), args.game)
 
 
 DEFAULT_GAME = "rotwk"
@@ -553,7 +553,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--state-root",
         default=str(default_state_root()),
-        help="private cache/pack root (defaults to the ignored .private workspace)",
+        help="private cache/pack root (defaults to the ignored workspace workspace)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -1463,7 +1463,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
     # `default_state_root()` is consulted directly by helpers that never see
     # `args` (tool discovery is the load-bearing one: it resolves the pinned
     # ffmpeg/blender under <state-root>/tools). Without this, an explicit
-    # --state-root left those helpers pointing at the checkout's own .private,
+    # --state-root left those helpers pointing at the checkout's own workspace,
     # and a missing pinned ffmpeg silently fell through to whatever is on PATH
     # — which then fails the pinned-hash attest on every audio conversion.
     # Scoped to this invocation. A bare `os.environ[...] = ...` here outlives
@@ -1880,7 +1880,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                 raise SystemExit(
                     "ffmpeg is required; run bootstrap-tools or set OPENBFME_FFMPEG"
                 )
-            output_root = _workspace_root(args) / "videos"
+            output_root = _.private_root(args) / "videos"
             report = convert_videos(
                 Path(args.install).expanduser().resolve(),
                 output_root,
@@ -1913,7 +1913,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
             output_path = (
                 ensure_external_to_repo(Path(args.output), repo_root_from_module())
                 if args.output is not None
-                else _workspace_root(args) / "reports" / f"{args.game}-hero-catalog.json"
+                else _.private_root(args) / "reports" / f"{args.game}-hero-catalog.json"
             )
             write_json_atomic(output_path, document)
             summary = document["summary"]
@@ -1979,7 +1979,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
             output_path = (
                 ensure_external_to_repo(Path(args.output), repo_root_from_module())
                 if args.output is not None
-                else _workspace_root(args)
+                else _.private_root(args)
                 / "reports"
                 / f"{args.game}-neutral-mob-catalog.json"
             )
@@ -2332,7 +2332,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                     Path(args.output), repo_root_from_module()
                 )
                 if args.output is not None
-                else _workspace_root(args)
+                else _.private_root(args)
                 / "reports"
                 / f"{args.game}-ship-catalog.json"
             )
@@ -2521,7 +2521,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
             cook_catalog = pipeline.catalog
             report_root = _state_root(args) / "reports" / "faction-import"
             if args.game != "bfme2":
-                report_root = _workspace_root(args) / "reports" / "faction-import"
+                report_root = _.private_root(args) / "reports" / "faction-import"
             if args.convert:
                 artifact_root = report_root / faction_key / "objects"
 
@@ -2591,7 +2591,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
             if args.game != "bfme2":
                 raise ValueError("import-unit currently supports BFME2 1.06 only")
             canonical_profile = args.base_profile or (
-                _workspace_root(args) / "profiles" / "men-fords-v1.generated.json"
+                _.private_root(args) / "profiles" / "men-fords-v1.generated.json"
             )
             # import-unit rebuilds and republishes the whole host pack when the
             # profile delta is an update, so it can regress the roster exactly
@@ -2627,7 +2627,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                 )
             from .progress import emit as progress_emit
 
-            workspace = _workspace_root(args)
+            workspace = _.private_root(args)
             coverage_root = Path(
                 args.coverage_root
                 or (workspace / "reports" / "faction-import")
@@ -2789,7 +2789,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
             # Both are host-pack lanes; both resolve against the SAME catalog
             # and effective-assets tree the cook itself uses, so a pack can
             # never ship a binding its own conversion cannot answer.
-            oracle_root = _workspace_root(args) / "cache" / "effective-assets"
+            oracle_root = _.private_root(args) / "cache" / "effective-assets"
             cah_model_resources = None
             cah_texture_resources = None
             interface_art = None
@@ -3068,7 +3068,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
             )
             profile_output = Path(
                 args.profile_output
-                or (_workspace_root(args) / "profiles" / f"{pack_id}.generated.json")
+                or (_.private_root(args) / "profiles" / f"{pack_id}.generated.json")
             ).expanduser()
             pipeline = ImportPipeline(catalog, _state_root(args), game=args.game)
             composed = compose_music_profile(
@@ -3175,7 +3175,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                 raise ValueError(f"cursor lane cannot compile a pack: {exc}") from exc
             profile_output = Path(
                 args.profile_output
-                or (_workspace_root(args) / "profiles" / f"{pack_id}.generated.json")
+                or (_.private_root(args) / "profiles" / f"{pack_id}.generated.json")
             ).expanduser()
             pipeline = ImportPipeline(catalog, _state_root(args), game=args.game)
             composed = compose_cursor_profile(
@@ -3260,7 +3260,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
         if args.command == "census-assets":
             report = census_assets(catalog).neutral()
             report_path = (
-                _workspace_root(args) / "reports" / f"{args.game}-asset-census.json"
+                _.private_root(args) / "reports" / f"{args.game}-asset-census.json"
             )
             write_json_atomic(report_path, report)
             payload = (
@@ -3289,7 +3289,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
         if args.command == "census-maps":
             report = census_multiplayer_maps(catalog)
             report_path = (
-                _workspace_root(args)
+                _.private_root(args)
                 / "reports"
                 / f"{args.game}-multiplayer-map-census.json"
             )
@@ -3330,7 +3330,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                 "factions": rows,
             }
             report_path = (
-                _workspace_root(args)
+                _.private_root(args)
                 / "reports"
                 / f"{args.game}-playable-factions.json"
             )
@@ -3359,7 +3359,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                 )
             else:
                 document_path = (
-                    _workspace_root(args)
+                    _.private_root(args)
                     / "reports"
                     / f"{args.game}-living-world.json"
                 )
@@ -3396,7 +3396,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
 
             report = census_strategic_surface(catalog, args.game)
             report_path = (
-                _workspace_root(args)
+                _.private_root(args)
                 / "reports"
                 / f"{args.game}-strategic-census.json"
             )
@@ -3429,7 +3429,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                 ),
             )
             report_path = (
-                _workspace_root(args)
+                _.private_root(args)
                 / "reports"
                 / f"{faction.short_name}-faction-leaf-census.json"
             )
@@ -3463,7 +3463,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                 )
             profile = build_men_leaf_profile(catalog)
             profile_path = (
-                _workspace_root(args) / "profiles" / "men-command-leaves.generated.json"
+                _.private_root(args) / "profiles" / "men-command-leaves.generated.json"
             )
             write_json_atomic(profile_path, profile)
             payload = (
@@ -3518,7 +3518,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                     ),
                 )
                 generated_name = f"{args.game}-{map_set}-maps.generated.json"
-            generated_path = _workspace_root(args) / "profiles" / generated_name
+            generated_path = _.private_root(args) / "profiles" / generated_name
             write_json_atomic(generated_path, profile)
             payload = (
                 json.dumps(profile, indent=2, sort_keys=True, ensure_ascii=False) + "\n"

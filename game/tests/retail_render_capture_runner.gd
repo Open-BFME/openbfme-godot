@@ -2,7 +2,7 @@ extends SceneTree
 ## Non-headless private capture gate for the composed Men/Fords retail slice.
 
 const SCENE_PATH := "res://scenes/retail_vertical_slice.tscn"
-const PRIVATE_SCRATCH_PATH := "res://../.private/scratch"
+const PRIVATE_SCRATCH_PATH := "res://../workspace/scratch"
 const DEFAULT_VIEWPORT := Vector2i(1920, 1080)
 const MAX_READY_FRAMES := 2400
 const SETTLE_FRAMES := 12
@@ -30,7 +30,7 @@ func _run() -> void:
 	var output := ProjectSettings.globalize_path(OS.get_environment("OPENBFME_CAPTURE_PATH")).simplify_path().replace("\\", "/")
 	var private_scratch_root := ProjectSettings.globalize_path(PRIVATE_SCRATCH_PATH).simplify_path().replace("\\", "/")
 	if output == "" or output.get_extension().to_lower() != "png" or not _path_is_within(private_scratch_root, output):
-		_fail("OPENBFME_CAPTURE_PATH must be a contained PNG below the repository .private/scratch root")
+		_fail("OPENBFME_CAPTURE_PATH must be a contained PNG below the repository workspace/scratch root")
 		return
 	if FileAccess.file_exists(output) or DirAccess.dir_exists_absolute(output):
 		_fail("OPENBFME_CAPTURE_PATH must not already exist")

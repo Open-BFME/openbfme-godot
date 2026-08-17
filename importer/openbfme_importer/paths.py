@@ -97,7 +97,7 @@ def default_state_root() -> Path:
     configured = os.environ.get("OPENBFME_IMPORT_ROOT", "").strip()
     if configured:
         return Path(configured).expanduser().resolve()
-    return (repo_root_from_module() / ".private" / "retail-work").resolve()
+    return (repo_root_from_module() / "workspace" / "retail-work").resolve()
 
 
 def ensure_external_to_repo(path: Path, repo_root: Path) -> Path:
@@ -114,12 +114,12 @@ def ensure_external_to_repo(path: Path, repo_root: Path) -> Path:
         relative = resolved.relative_to(repository)
     except ValueError:
         return resolved
-    private_root = (repository / ".private").resolve()
+    private_root = (repository / "workspace").resolve()
     if resolved == private_root or private_root in resolved.parents:
         return resolved
     raise ValueError(
         "retail-derived output inside the repository must stay under its "
-        f"ignored .private directory: {relative}"
+        f"ignored workspace directory: {relative}"
     )
 
 
@@ -209,4 +209,4 @@ def default_godot_content_root() -> Path:
     configured = os.environ.get("OPENBFME_CONTENT_ROOT", "").strip()
     if configured:
         return Path(configured).expanduser().resolve()
-    return (repo_root_from_module() / ".private" / "content-packs").resolve()
+    return (repo_root_from_module() / "workspace" / "content-packs").resolve()

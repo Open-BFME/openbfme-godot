@@ -332,7 +332,7 @@ func _test_castle_bse_pads() -> void:
 # Vector2.ZERO, see the BSE fixture above) and every expansion pad within 64
 # source units of it. At the retail map transform that is a citadel exactly on
 # the fortress centre and pads 1.64-2.40 sim units out (measured live,
-# .private/scratch/opus24-probe1.out.log). Movement deflection gives every
+# workspace/scratch/opus24-probe1.out.log). Movement deflection gives every
 # completed structure a blocking disc, so treating those pieces as independent
 # obstacles rings the fortress with a ~5.2-unit wall - wider than any melee
 # AttackRange even after round 20 made the range gate surface-to-surface (a
@@ -432,7 +432,7 @@ func _make_castle_pathing_sim() -> Object:
 
 ## Spawn a melee horde whose AttackRange is retail's 11.5 source units at the
 ## retail transform (0.305 sim) - the same figure the live slice reports for a
-## melee row (.private/scratch/opus24-probe1.out.log).
+## melee row (workspace/scratch/opus24-probe1.out.log).
 func _add_melee_horde(sim: Object, horde_id: int, team: int, at: Vector2) -> Dictionary:
 	sim._next_dynamic_id[team] = horde_id + 100
 	sim._add_battalion(
@@ -598,7 +598,7 @@ func _test_castle_corridor_is_bounded() -> void:
 	## and must close behind the unit.
 	##
 	## Numbers are measured off the seeded MenFortress, which reproduces the live
-	## slice geometry in .private/scratch/opus24-probe1.out.log: fortress radius
+	## slice geometry in workspace/scratch/opus24-probe1.out.log: fortress radius
 	## 4.6 on the origin, citadel radius 2.8 exactly on it, side pads 1.643 out,
 	## corner pads 2.398 out, every piece radius 2.8, so the pass threshold is
 	## 2.8 + CASTLE_CORRIDOR_MARGIN = 3.15 and the two decisive spacings are
@@ -862,7 +862,7 @@ func _test_structure_deflection_tangential_slide() -> void:
 	## offsetting the fixture barracks 1.5 units off the axis, and left it open.
 	##
 	## MEASURED deadlock, reproduced exactly by this fixture with the slide
-	## removed (.private/scratch/opus26-banner-FAILFIRST-tangential.err.log):
+	## removed (workspace/scratch/opus26-banner-FAILFIRST-tangential.err.log):
 	## an attacker at (80, 200) ordered onto a fortress at (100, 200) with a
 	## barracks at (90, 200) parks at (87.2, 200.0) — precisely
 	## barracks + (-2.8, 0) — with route length 1 still unconsumed after 600
@@ -1180,7 +1180,7 @@ func _add_wall_melee_horde(sim: Object, horde_id: int, team: int, at: Vector2) -
 	## 1.15 there. MEASURED on the failing-first run: an attacker ordered onto the
 	## fortress settled at 1.110 from its centre, i.e. it engaged at 1.15, not at
 	## the 0.305 the helper's comment claims
-	## (.private/scratch/opus28-banner_castle_sim_runner-FAILFIRST.err.log).
+	## (workspace/scratch/opus28-banner_castle_sim_runner-FAILFIRST.err.log).
 	##
 	## Patch the MODE as well so the range gate actually sees retail's melee
 	## reach. The existing 71 checks in this file deliberately keep the un-patched

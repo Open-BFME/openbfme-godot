@@ -187,7 +187,7 @@ def _canonical(value: object) -> bytes:
 
 def _private_root(path: Path | str) -> Path:
     root = Path(path).resolve()
-    if ".private" not in {part.casefold() for part in root.parts} or not root.is_dir():
+    if "workspace" not in {part.casefold() for part in root.parts} or not root.is_dir():
         raise ValueError("effective-assets must be an existing private directory")
     return root
 
@@ -499,8 +499,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     output = args.output.resolve()
-    if ".private" not in {part.casefold() for part in output.parts}:
-        raise ValueError("built-in oracle output must remain under .private")
+    if "workspace" not in {part.casefold() for part in output.parts}:
+        raise ValueError("built-in oracle output must remain under workspace")
     result = build_contract(
         args.effective_assets,
         json.loads(args.manifest.read_text(encoding="utf-8")),

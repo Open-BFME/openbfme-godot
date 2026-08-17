@@ -30,11 +30,11 @@ from openbfme_importer.sage_scripts import (
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_GDSCRIPT = ROOT / "game/src/retail_slice/retail_map_scripts.gd"
-CATALOG = ROOT / ".private/retail-work/catalog/rotwk.json"
-BFME2_CATALOG = ROOT / ".private/retail-work/catalog/bfme2.json"
+CATALOG = ROOT / "workspace/retail-work/catalog/rotwk.json"
+BFME2_CATALOG = ROOT / "workspace/retail-work/catalog/bfme2.json"
 CONTRACT = (
     ROOT
-    / ".private/retail-work/reports/skirmish-script-contract"
+    / "workspace/retail-work/reports/skirmish-script-contract"
     / "skirmish_script_contract.json"
 )
 

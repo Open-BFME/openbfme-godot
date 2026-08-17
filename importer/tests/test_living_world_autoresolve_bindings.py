@@ -41,16 +41,16 @@ _WANTED = (
 )
 
 
-def _private_workspace() -> pathlib.Path | None:
-    """The nearest ``.private/retail-work`` that carries ALL THREE inputs.
+def _private_.private() -> pathlib.Path | None:
+    """The nearest ``workspace/retail-work`` that carries ALL THREE inputs.
 
-    A git worktree under ``.claude/worktrees/`` gets its own partial ``.private``,
+    A git worktree under ``.claude/worktrees/`` gets its own partial ``workspace``,
     so the search walks upward until it finds one that is complete rather than
-    stopping at the first ``.private`` it sees and skipping for the wrong reason.
+    stopping at the first ``workspace`` it sees and skipping for the wrong reason.
     """
 
     for parent in pathlib.Path(__file__).resolve().parents:
-        root = parent / ".private" / "retail-work"
+        root = parent / "workspace" / "retail-work"
         if all((root / relative).is_file() for _what, relative in _WANTED):
             return root
     return None
@@ -666,10 +666,10 @@ End
 
 @pytest.fixture(scope="module")
 def real_manifest() -> dict[str, Any]:
-    root = _private_workspace()
+    root = _private_.private()
     if root is None:
         pytest.skip(
-            "no .private/retail-work above this file carries all of "
+            "no workspace/retail-work above this file carries all of "
             + ", ".join(str(relative) for _what, relative in _WANTED)
             + "; this pin measures a private retail workspace and cannot be "
             "reconstructed from the repository"

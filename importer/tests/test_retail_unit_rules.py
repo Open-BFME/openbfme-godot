@@ -12,7 +12,7 @@ from openbfme_importer.retail_unit_rules import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
-EFFECTIVE = ROOT / ".private" / "retail-work" / "cache" / "effective-assets"
+EFFECTIVE = ROOT / "workspace" / "retail-work" / "cache" / "effective-assets"
 SOURCE_PATHS = (
     "data/ini/gamedata.ini",
     "data/ini/locomotor.ini",
@@ -33,7 +33,7 @@ def _shroud_corpora() -> list[tuple[str, Path]]:
     Two reasons this does not just reuse the module-level ``EFFECTIVE``:
 
     1. ``ROOT`` is ``parents[2]`` of this file, which inside a git WORKTREE is
-       the worktree root - and a worktree has no ``.private``. The corpus is
+       the worktree root - and a worktree has no ``workspace``. The corpus is
        only ever in the main checkout, so the root is resolved by walking up
        until one is found. Without this the test SKIPS in every worktree, which
        is exactly how it silently failed to gate anything.
@@ -46,12 +46,12 @@ def _shroud_corpora() -> list[tuple[str, Path]]:
     """
     root = Path(__file__).resolve()
     for candidate in root.parents:
-        if (candidate / ".private" / "retail-work").is_dir():
+        if (candidate / "workspace" / "retail-work").is_dir():
             root = candidate
             break
     else:
         return []
-    private = root / ".private" / "retail-work"
+    private = root / "workspace" / "retail-work"
     candidates = [
         ("bfme2-1.06", private / "cache" / "effective-assets"),
         ("rotwk", private / "editions" / "rotwk" / "cache" / "effective-assets"),
@@ -112,7 +112,7 @@ def test_at_least_one_retail_corpus_is_available_for_shroud_gating() -> None:
     importer half of the fog lane gates nothing - which is precisely the state
     this change was asked to fix.
     """
-    if not (Path(__file__).resolve().parents[3] / ".private").exists() and not _shroud_corpora():
+    if not (Path(__file__).resolve().parents[3] / "workspace").exists() and not _shroud_corpora():
         pytest.skip("no private retail corpus on this machine at all")
     assert _shroud_corpora(), (
         "no retail effective-assets corpus resolved; the ShroudClearingRange "

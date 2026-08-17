@@ -11,10 +11,10 @@ from tests.retail_inputs import retail_file
 
 
 ROOT = Path(__file__).resolve().parents[2]
-ASSETS = ROOT / ".private" / "retail-work" / "cache" / "effective-assets"
-PLAN = ROOT / ".private" / "scratch" / "hud-261-source-conversion" / "plan-a.json"
-EXTERNAL = ROOT / ".private" / "scratch" / "hud-external-movies" / "contract-a.json"
-WND = ROOT / ".private" / "scratch" / "hud-wnd-activation-oracle" / "contract-a.json"
+ASSETS = ROOT / "workspace" / "retail-work" / "cache" / "effective-assets"
+PLAN = ROOT / "workspace" / "scratch" / "hud-261-source-conversion" / "plan-a.json"
+EXTERNAL = ROOT / "workspace" / "scratch" / "hud-external-movies" / "contract-a.json"
+WND = ROOT / "workspace" / "scratch" / "hud-wnd-activation-oracle" / "contract-a.json"
 GAME_DAT = retail_file("game.dat")
 
 pytestmark = pytest.mark.skipif(

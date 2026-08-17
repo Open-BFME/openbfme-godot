@@ -11,7 +11,7 @@ complete retail shell/HUD first, then Create-a-Hero, campaigns, and War of the
 Ring.
 
 Content is converted locally from a user-owned RotWK install (BFME2 base as the
-importer catalog layers it). Retail and converted packs stay under `.private`.
+importer catalog layers it). Retail and converted packs stay under `workspace`.
 This public tree is **code + fixtures only**.
 
 **BFME2 1.06 alone is not the parity baseline.** Use `--game bfme2` only for
@@ -163,5 +163,5 @@ strategy and must not block RotWK systems work.
 
 Do not reject work as out of scope merely because it is not Men/Fords or not
 BFME2. Reject work that invents retail behavior, weakens fail-closed gates,
-writes retail payloads outside `.private`, or expands synthetic product surface
+writes retail payloads outside `workspace`, or expands synthetic product surface
 without integration-owner authority.

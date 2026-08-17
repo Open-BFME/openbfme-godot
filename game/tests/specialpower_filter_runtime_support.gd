@@ -8,7 +8,7 @@ extends RefCounted
 ## then drives the compiled gate in both directions.
 
 const Sim = preload("res://src/retail_slice/retail_slice_sim.gd")
-const ORACLE := "res://../.private/retail-work/editions/rotwk/cache/effective-assets/data/ini/specialpower.ini"
+const ORACLE := "res://../workspace/retail-work/editions/rotwk/cache/effective-assets/data/ini/specialpower.ini"
 const SOURCE_SCALE := 0.1
 const FORBIDDEN_RANGE_SOURCE := 60.0
 

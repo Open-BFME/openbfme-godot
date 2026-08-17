@@ -59,7 +59,7 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 if ([string]::IsNullOrWhiteSpace($StateRoot)) {
-    $StateRoot = Join-Path $repoRoot ".private\retail-work"
+    $StateRoot = Join-Path $repoRoot "workspace\retail-work"
 }
 $StateRoot = [IO.Path]::GetFullPath($StateRoot)
 $env:OPENBFME_IMPORT_ROOT = $StateRoot

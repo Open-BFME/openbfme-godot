@@ -723,7 +723,7 @@ def build_contract(asset_root: Path | str, game_dat: Path | str) -> dict[str, An
     """Build the oracle from the contained effective-assets directory."""
 
     root = Path(asset_root).expanduser().resolve()
-    if ".private" not in {part.casefold() for part in root.parts} or not root.is_dir():
+    if "workspace" not in {part.casefold() for part in root.parts} or not root.is_dir():
         raise HudSideCommandOracleError(
             "effective-assets must be an existing private directory"
         )

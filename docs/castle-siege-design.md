@@ -4,11 +4,11 @@
 > document. Every feasibility grade is an engineering estimate.
 > **Author lane:** `opus-castle-design` (branch `opus-castle-design`, base `6051250`)
 > **Date:** 2026-08-11
-> **Retail oracle:** `.private/retail-work/editions/rotwk/cache/effective-assets` (pure 2.01).
+> **Retail oracle:** `workspace/retail-work/editions/rotwk/cache/effective-assets` (pure 2.01).
 > The contaminated layered tree was never opened.
-> **Secondary oracle (shared SAGE only):** `.private/scratch/opensage-source`. Not authority
+> **Secondary oracle (shared SAGE only):** `workspace/scratch/opensage-source`. Not authority
 > on BFME horde/wall behavior.
-> **Predecessor:** `.private/orchestration/fable-wave/report-castle-maps.md`
+> **Predecessor:** `workspace/orchestration/fable-wave/report-castle-maps.md`
 
 ## 1. Problem statement
 
@@ -29,7 +29,7 @@ implementation here, and an ordered lane decomposition.
 ### 1.1 Finding A — the shipped pack does not yet carry the contract
 
 The admission lane's work has **not** reached the mounted pack. All ten castle maps in
-`.private/content-packs/rotwk-skirmish-maps-private/` currently have
+`workspace/content-packs/rotwk-skirmish-maps-private/` currently have
 `"category": "wotr-battle"` and **no `castleSiege` key**; `content_db.gd:2518`
 `LOBBY_MAP_CATEGORIES := ["skirmish"]` therefore excludes them from the lobby entirely.
 `castle_map_admission_runner.gd` injects the contract synthetically over immutable
@@ -1160,7 +1160,7 @@ decision.)*
   review, **not verified by a fix in this lane**.
 - One cross-lane claim was investigated and **disproved**: a report that the importer
   silently drops space-indented `ArmorSet` blocks was traced to a researcher reading
-  `.private/retail-work/cache/effective-assets` — a different, non-current tree — instead of
+  `workspace/retail-work/cache/effective-assets` — a different, non-current tree — instead of
   the `editions/rotwk` oracle. `sage_cst.parse_sage_document` handles space indentation
   correctly. Recorded here so it is not "fixed".
 - The performance claim in section 4.1 is an inference from an O(structures) loop, not a

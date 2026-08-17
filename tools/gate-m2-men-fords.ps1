@@ -14,8 +14,8 @@ $ErrorActionPreference = "Stop"
 
 $gate = "M2_MEN_FORDS_GATE"
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$profilePath = [IO.Path]::GetFullPath((Join-Path $repoRoot ".private\retail-work\profiles\men-fords-v0-complete.generated.json"))
-$contentRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot ".private\content-packs"))
+$profilePath = [IO.Path]::GetFullPath((Join-Path $repoRoot "workspace\retail-work\profiles\men-fords-v0-complete.generated.json"))
+$contentRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot "workspace\content-packs"))
 $selectionPath = Join-Path $contentRoot "selection.json"
 $retailGate = Join-Path $PSScriptRoot "gate-retail.ps1"
 $focusedGate = Join-Path $PSScriptRoot "gate-m2-focused.ps1"
@@ -24,7 +24,7 @@ $expectedPackId = "bfme2-men-vslice"
 $forbiddenDiagnostics = '(?i)\b(?:ERROR|WARNING|leak(?:ed|s|ing)?|orphan(?:ed|s)?|ObjectDB instances|RID allocations|resources still in use|SCRIPT ERROR)\b'
 $requiredCaptureIds = $script:M2OracleCaptureIds
 $approvalPath = if ([string]::IsNullOrWhiteSpace($OracleApproval)) {
-    Join-Path $repoRoot ".private\retail-work\oracle\m2-men-fords-approval.json"
+    Join-Path $repoRoot "workspace\retail-work\oracle\m2-men-fords-approval.json"
 } else {
     [IO.Path]::GetFullPath($OracleApproval)
 }
@@ -90,7 +90,7 @@ try {
     Assert-M2 ([string]$pack.id -eq $expectedPackId) "Selected bundle has the wrong pack ID."
     Assert-M2 ([bool]$pack.profile_build_complete) "Selected bundle is not a strict completion build."
     Assert-M2 (-not [bool]$pack.vertical_slice_complete) "Readiness marker changed before final oracle approval."
-    Assert-M2 (-not (Test-Path -LiteralPath (Join-Path $repoRoot ".private\retail-work\packs\bfme2-men-vslice.building"))) "A failed completion-pack transaction remains."
+    Assert-M2 (-not (Test-Path -LiteralPath (Join-Path $repoRoot "workspace\retail-work\packs\bfme2-men-vslice.building"))) "A failed completion-pack transaction remains."
 
     $focusedArguments = @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $focusedGate)
     if (-not [string]::IsNullOrWhiteSpace($GodotPath)) { $focusedArguments += @("-GodotPath", $GodotPath) }
@@ -107,7 +107,7 @@ try {
     Assert-M2 ([int]$approval.unresolvedSeverity0 -eq 0 -and [int]$approval.unresolvedSeverity1 -eq 0) "Oracle approval retains high-severity differences."
     Assert-M2 (-not [string]::IsNullOrWhiteSpace([string]$approval.approvedBy)) "Oracle approval has no integration owner."
     $captureManifestPath = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $approvalPath) ([string]$approval.captureManifest)))
-    $oracleRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot ".private\retail-work\oracle"))
+    $oracleRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot "workspace\retail-work\oracle"))
     Assert-M2 ($captureManifestPath.StartsWith($oracleRoot, [StringComparison]::OrdinalIgnoreCase)) "Capture manifest escaped the private oracle root."
     $captureManifestSha256 = (Get-FileHash -LiteralPath $captureManifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
     Assert-M2 ($captureManifestSha256 -eq [string]$approval.captureManifestSha256) "Capture manifest hash disagrees with approval."

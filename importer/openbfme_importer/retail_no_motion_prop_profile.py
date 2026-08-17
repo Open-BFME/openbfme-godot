@@ -9,7 +9,7 @@ no motion-bearing child.  The generated ``w3d-hierarchical`` rule carries that
 same exact proof contract into the conversion pipeline.
 
 The returned plan is payload-free.  Retail bytes are read only below the
-caller-provided ``.private`` effective-assets root and are never written.
+caller-provided ``workspace`` effective-assets root and are never written.
 """
 
 from __future__ import annotations
@@ -385,12 +385,12 @@ def _validate_visual_target(
 
 def _private_root(value: Path | str) -> Path:
     root = Path(value).expanduser().resolve()
-    private = (repo_root_from_module() / ".private").resolve()
+    private = (repo_root_from_module() / "workspace").resolve()
     try:
         root.relative_to(private)
     except ValueError as exc:
         raise ValueError(
-            "effective-assets root must remain below repository .private"
+            "effective-assets root must remain below repository workspace"
         ) from exc
     if not root.is_dir():
         raise ValueError("effective-assets root is not a directory")

@@ -16,7 +16,7 @@ extends SceneTree
 ## anything ("drag-selection box doesn't select buildings").
 ##
 ## Run:
-##   OPENBFME_CONTENT=<repo>/.private/content-packs godot --headless --path game \
+##   OPENBFME_CONTENT=<repo>/workspace/content-packs godot --headless --path game \
 ##     --script res://tests/drag_select_structures_runner.gd
 
 const BOOT_DEADLINE_MS := 300000

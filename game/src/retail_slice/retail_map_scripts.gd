@@ -28,7 +28,7 @@ extends RefCounted
 ##
 ## Input format: decoded Script payload dictionaries exactly as produced by
 ## the skirmish contract extractor
-## (.private/retail-work/reports/skirmish-script-contract/skirmish_script_contract.json,
+## (workspace/retail-work/reports/skirmish-script-contract/skirmish_script_contract.json,
 ## sources[i].scripts[j].payload), which mirrors the importer's sage_scb JSON.
 ##
 ## Execution model: call step(sim) once per sim tick after sim.tick(). Every

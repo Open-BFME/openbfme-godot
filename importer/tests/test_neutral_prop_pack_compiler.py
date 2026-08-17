@@ -255,7 +255,7 @@ def test_exact_retail_neutral_prop_family_is_pack_ready(
     catalog_name: str, game: str, effective_relative: str
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
-    retail = repo / ".private" / "retail-work"
+    retail = repo / "workspace" / "retail-work"
     catalog_path = retail / "catalog" / catalog_name
     effective_root = retail / effective_relative
     if not catalog_path.is_file() or not (

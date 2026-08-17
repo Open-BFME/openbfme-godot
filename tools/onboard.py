@@ -18,12 +18,12 @@ The wizard walks four fail-closed steps:
    pinned deterministic battle signature, plus menu_skirmish_runner) and print
    a pass/fail summary with launch instructions.
 
-Everything retail-derived stays under the ignored ``.private`` workspace; the
+Everything retail-derived stays under the ignored ``workspace`` workspace; the
 wizard never copies or distributes retail bytes. Non-interactive mode for CI:
 
     python tools/onboard.py --install D:\\Games\\BFME2 --godot C:\\path\\Godot.exe --yes
 
-All state the wizard persists lives in ``.private/onboard.config.json``
+All state the wizard persists lives in ``workspace/onboard.config.json``
 (untracked; override with ``--config``).
 """
 
@@ -43,9 +43,9 @@ from typing import Any, Callable, Mapping, Sequence
 REPO_ROOT = Path(__file__).resolve().parents[1]
 IMPORTER_CLI = REPO_ROOT / "tools" / "openbfme_import.py"
 GAME_ROOT = REPO_ROOT / "game"
-DEFAULT_CONFIG_PATH = REPO_ROOT / ".private" / "onboard.config.json"
-DEFAULT_STATE_ROOT = REPO_ROOT / ".private" / "retail-work"
-DEFAULT_CONTENT_ROOT = REPO_ROOT / ".private" / "content-packs"
+DEFAULT_CONFIG_PATH = REPO_ROOT / "workspace" / "onboard.config.json"
+DEFAULT_STATE_ROOT = REPO_ROOT / "workspace" / "retail-work"
+DEFAULT_CONTENT_ROOT = REPO_ROOT / "workspace" / "content-packs"
 BOOTSTRAP_SCRIPT = REPO_ROOT / "tools" / "bootstrap-importer-python.ps1"
 
 CONFIG_SCHEMA = "openbfme.onboard-config"
@@ -127,19 +127,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--config",
         type=Path,
         default=DEFAULT_CONFIG_PATH,
-        help="local untracked wizard config (default: .private/onboard.config.json)",
+        help="local untracked wizard config (default: workspace/onboard.config.json)",
     )
     parser.add_argument(
         "--state-root",
         type=Path,
         default=None,
-        help="private importer state root (default: .private/retail-work)",
+        help="private importer state root (default: workspace/retail-work)",
     )
     parser.add_argument(
         "--content-root",
         type=Path,
         default=None,
-        help="private Godot content-packs root (default: .private/content-packs)",
+        help="private Godot content-packs root (default: workspace/content-packs)",
     )
     parser.add_argument(
         "--skip-gates",
@@ -564,7 +564,7 @@ def step_prerequisites(ctx: WizardContext) -> None:
             raise OnboardError(f"bootstrap script missing: {BOOTSTRAP_SCRIPT}")
         if not _confirm(
             "Importer Python env is missing. Bootstrap it now (downloads pinned "
-            "Python 3.12 + packages into .private)?",
+            "Python 3.12 + packages into workspace)?",
             non_interactive=ctx.args.yes,
         ):
             raise OnboardError(
@@ -856,7 +856,7 @@ def print_summary(ctx: WizardContext, outcomes: Sequence[GateOutcome]) -> bool:
         print("  - Launch the slice:     run_retail_slice.bat")
         print("  - Headless smoke test:  run_retail_slice.bat --test")
         print("  - In-game settings persist under Godot user:// (user_settings)")
-        print("  - Pack selection lives in .private/content-packs/selection.json")
+        print("  - Pack selection lives in workspace/content-packs/selection.json")
         print("  - Docs: docs/ONBOARDING.md")
     else:
         print("RESULT: FAIL — one or more verification gates did not pass.")

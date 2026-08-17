@@ -22,7 +22,7 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $privateCaptureRoot = [System.IO.Path]::GetFullPath(
-    (Join-Path $repoRoot ".private\retail-work\oracle\captures")
+    (Join-Path $repoRoot "workspace\retail-work\oracle\captures")
 )
 
 function Find-Ffmpeg {

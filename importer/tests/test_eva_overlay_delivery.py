@@ -28,9 +28,9 @@ from openbfme_importer.faction_profile import _FACTION_PLAYER_TEMPLATES
 
 
 ROOT = Path(__file__).resolve().parents[2]
-PRIVATE_ROOT = ROOT / ".private" / "retail-work"
+PRIVATE_ROOT = ROOT / "workspace" / "retail-work"
 if not (PRIVATE_ROOT / "editions/rotwk/cache/effective-assets").is_dir() and ROOT.parent.name == "worktrees":
-    PRIVATE_ROOT = ROOT.parents[2] / ".private" / "retail-work"
+    PRIVATE_ROOT = ROOT.parents[2] / "workspace" / "retail-work"
 EVA_INI = PRIVATE_ROOT / "editions/rotwk/cache/effective-assets/data/ini/eva.ini"
 
 _SIDE_LINE = re.compile(rb"^\s*Side\s*=\s*([A-Za-z0-9_]+)\s*$", re.IGNORECASE | re.MULTILINE)

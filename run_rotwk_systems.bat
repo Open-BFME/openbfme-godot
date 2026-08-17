@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions
 cd /d "%~dp0"
-if not defined OPENBFME_IMPORT_ROOT set "OPENBFME_IMPORT_ROOT=%~dp0.private\retail-work"
+if not defined OPENBFME_IMPORT_ROOT set "OPENBFME_IMPORT_ROOT=%~dp0workspace\retail-work"
 
 rem Optional first argument: RotWK install directory (folder with game.dat).
 rem Additional PowerShell switches are not forwarded here; use tools\rotwk-systems.ps1 directly for advanced flags.

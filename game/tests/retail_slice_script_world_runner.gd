@@ -3274,7 +3274,7 @@ func _test_twin_worlds_agree() -> void:
 # RETAIL SEMANTICS ARE SOURCED, NOT GUESSED (C&C Generals/Zero Hour GPL
 # ScriptEngine + ScriptConditions, the codebase BFME's ScriptEngine derives
 # from; the BFME binary reversal under
-# .private/scratch/Open-BFME-research/reverse/whale_scriptengine confirms the
+# workspace/scratch/Open-BFME-research/reverse/whale_scriptengine confirms the
 # identical template shape for every member):
 #   evaluateNamedUnitExists      theUnit && !theUnit->isEffectivelyDead()
 #   evaluateNamedCreated         getUnitNamed(...) != NULL  (dead flag NOT read)

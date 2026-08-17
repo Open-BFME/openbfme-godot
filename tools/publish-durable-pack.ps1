@@ -3,7 +3,7 @@
 # Launches that cannot see the repo workspace (exported builds, installs on
 # another machine) resolve content from the durable Godot user cache
 # (user://content-packs). This script mirrors the current workspace selection
-# (.private/content-packs/selection.json plus every pack bundle it names) into
+# (workspace/content-packs/selection.json plus every pack bundle it names) into
 # that cache so such launches play the same content as env-driven runs.
 #
 # Release firewall: this copies retail-derived bytes ONLY into the local user
@@ -33,7 +33,7 @@ $ErrorActionPreference = "Stop"
 if ($WorkspaceRoot -eq "") {
     # $PSScriptRoot is not available in param defaults under Windows PowerShell 5.1.
     $repoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-    $WorkspaceRoot = Join-Path $repoRoot ".private\content-packs"
+    $WorkspaceRoot = Join-Path $repoRoot "workspace\content-packs"
 }
 
 function Get-BundleContentDigest([string]$Root) {

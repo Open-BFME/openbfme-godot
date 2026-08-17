@@ -73,7 +73,7 @@ extends SceneTree
 ## is not drawn at all. That is a legitimate state and worth a picture ONCE - it
 ## is what a machine with no converted bundle gets - but a review set taken in it
 ## is a review of the fallback, not of the screen. The bundle in this checkout is
-## `.private/retail-work/strategic-ui`.
+## `workspace/retail-work/strategic-ui`.
 ## Do NOT pass `--position`: this runner places its own window, and an engine-level
 ## `--position` fights the per-frame re-assert.
 

@@ -30,7 +30,7 @@ from openbfme_importer.map_profile import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CATALOG_PATH = REPO_ROOT / ".private" / "retail-work" / "catalog" / "rotwk.json"
+CATALOG_PATH = REPO_ROOT / "workspace" / "retail-work" / "catalog" / "rotwk.json"
 
 #: Retail authors these names; title-casing the directory produces the WRONG
 #: string, not merely an ugly one.  Keyed by retail map directory.

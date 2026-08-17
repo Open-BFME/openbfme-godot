@@ -120,7 +120,7 @@ jobs:
           dotnet-version: "8.0.x"
       - name: Run OpenBfme.Sim test suite
         # The dual-run oracle compares the C# sim against a GDScript trace that
-        # lives under /.private/ and is therefore absent here by design. It used
+        # lives under /workspace/ and is therefore absent here by design. It used
         # to return early and report Passed, so this job has been claiming a
         # cross-language guarantee it never checked. The test now fails closed;
         # this variable is the explicit, auditable declaration that public CI

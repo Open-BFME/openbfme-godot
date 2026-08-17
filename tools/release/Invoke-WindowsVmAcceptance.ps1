@@ -47,7 +47,7 @@ function Invoke-HiddenProcess {
 
 function Resolve-SelectedPack {
     param([string]$InstallRoot)
-    $contentRoot = Join-Path $InstallRoot ".private\content-packs"
+    $contentRoot = Join-Path $InstallRoot "workspace\content-packs"
     $selectionPath = Join-Path $contentRoot "selection.json"
     if (-not (Test-Path -LiteralPath $selectionPath -PathType Leaf)) {
         throw "Packaged launcher did not publish a pack selection."
@@ -169,7 +169,7 @@ try {
 
     $oldContent = $env:OPENBFME_CONTENT
     try {
-        $env:OPENBFME_CONTENT = Join-Path $installA ".private\content-packs"
+        $env:OPENBFME_CONTENT = Join-Path $installA "workspace\content-packs"
         & (Join-Path $repo "tools\release\Test-WindowsExport.ps1") `
             -Executable $game `
             -LogRoot (Join-Path $logs "game")

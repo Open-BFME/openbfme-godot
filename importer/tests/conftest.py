@@ -65,7 +65,7 @@ def pytest_configure(config: pytest.Config) -> None:
         "Digest-deterministic converters (cursor/texture-atlas/native-corpus) "
         "will fail for environment reasons and any pass/fail count taken from "
         "this run is not a baseline. Use "
-        ".private/retail-work/tools/python-3.12-env/Scripts/python.exe (or run "
+        "workspace/retail-work/tools/python-3.12-env/Scripts/python.exe (or run "
         "tools/bootstrap-importer-python.ps1)."
     )
     if not allowed:

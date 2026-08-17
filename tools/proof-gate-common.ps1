@@ -56,7 +56,7 @@ function Get-ProofWorkingTreeIdentity {
     Assert-ProofTrue ([string]::Equals($discoveredRoot, $expectedRoot, [StringComparison]::OrdinalIgnoreCase)) "RepoRoot '$RepoRoot' is not itself a Git repository root (git top-level: '$topLevel'); its identity would be inherited from an enclosing checkout."
     $revision = (& git -C $RepoRoot rev-parse HEAD).Trim()
     Assert-ProofTrue ($LASTEXITCODE -eq 0 -and $revision -match '^[0-9a-f]{40}$') "Git revision could not be resolved."
-    $temporary = Join-Path $RepoRoot ".private\scratch\proof-working-tree.diff"
+    $temporary = Join-Path $RepoRoot "workspace\scratch\proof-working-tree.diff"
     New-Item -ItemType Directory -Force (Split-Path -Parent $temporary) | Out-Null
     & git -c core.safecrlf=false -C $RepoRoot diff --binary HEAD --output=$temporary -- . 2>$null
     Assert-ProofTrue ($LASTEXITCODE -eq 0) "Git working-tree diff could not be captured."

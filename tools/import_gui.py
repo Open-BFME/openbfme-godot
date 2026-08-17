@@ -40,13 +40,13 @@ DEFAULT_INSTALL = _default_retail_install()
 DEFAULT_STATE = Path(
     os.environ.get(
         "OPENBFME_IMPORT_ROOT",
-        str(REPO_ROOT / ".private" / "retail-work"),
+        str(REPO_ROOT / "workspace" / "retail-work"),
     )
 )
 DEFAULT_CONTENT = Path(
     os.environ.get(
         "OPENBFME_CONTENT_ROOT",
-        str(REPO_ROOT / ".private" / "content-packs"),
+        str(REPO_ROOT / "workspace" / "content-packs"),
     )
 )
 

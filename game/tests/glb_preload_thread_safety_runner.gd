@@ -20,7 +20,7 @@ extends SceneTree
 ## reports `Parameter "t" is null.` at texture_storage.h:85. The prop still
 ## loads — with a texture that was never initialized. That is the exact failure
 ## observed intermittently in the Fords boot profiles and in four other runner
-## logs under .private/scratch, and it is a silent-wrong-content bug, not a
+## logs under workspace/scratch, and it is a silent-wrong-content bug, not a
 ## cosmetic error line.
 ##
 ## This runner is the stress harness for it: it collects real GLB paths from the

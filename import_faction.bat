@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 
-if not defined OPENBFME_IMPORT_ROOT set "OPENBFME_IMPORT_ROOT=%~dp0.private\retail-work"
+if not defined OPENBFME_IMPORT_ROOT set "OPENBFME_IMPORT_ROOT=%~dp0workspace\retail-work"
 
 set "FACTION=%~1"
 if not defined FACTION set /p "FACTION=Faction (men, elves, dwarves, isengard, mordor, wild, angmar): "

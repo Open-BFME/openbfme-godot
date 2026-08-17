@@ -8,7 +8,7 @@ extends SceneTree
 ## retail_state_pin_runner.gd cannot move.
 ##
 ## Authored sources (PURE RETAIL tree,
-## .private/retail-work/editions/rotwk/cache/effective-assets/data/ini):
+## workspace/retail-work/editions/rotwk/cache/effective-assets/data/ini):
 ##
 ##   locomotor.ini:709   NormalMeleeHordeLocomotor TurnTime = 2000  -> 180 deg/s
 ##   locomotor.ini:717   MaxTurnWithoutReform = 45  "Try to turn beyond this
@@ -21,7 +21,7 @@ extends SceneTree
 ##   menhordes.ini:350   GondorFighterHordeBlock RankInfo depth 12 / lateral 10
 ##
 ## Full extraction with the complete citation set:
-## .private/scratch/opus17-formation-extraction.md
+## workspace/scratch/opus17-formation-extraction.md
 ##
 ## Deterministic by construction: fixed 0.1 s ticks, no wall clock, no RNG draw
 ## (asserted), and every iteration over a fixed literal id order.

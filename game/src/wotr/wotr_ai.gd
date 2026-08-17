@@ -75,7 +75,7 @@ const BuildingsScript = preload("res://src/wotr/wotr_buildings.gd")
 ## template` document today, so there is nothing schema-shaped to load; the file
 ## is 781 bytes of one flat `Key = Integer` block and parsing it here is honest
 ## in a way that hardcoding its twenty numbers into GDScript would not be
-## (retail payloads do not live outside `.private`). The staging rule in
+## (retail payloads do not live outside `workspace`). The staging rule in
 ## `tools/wotr-data-staging.ps1` names the missing converter, so a release that
 ## ships without these weights REPORTS the AI as degraded instead of quietly
 ## shipping an opponent with no retail taste.

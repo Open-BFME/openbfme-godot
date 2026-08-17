@@ -1,7 +1,7 @@
 # Launcher UX review + GitHub release readiness
 
 Date: 2026-08-05 (integrity/provenance pass). Original: 2026-08-02, orchestrator
-UX/branding pass + Sol engineering review (`.private/scratch/sol_launcher_review.md`).
+UX/branding pass + Sol engineering review (`workspace/scratch/sol_launcher_review.md`).
 
 ## Branding (done)
 
@@ -106,7 +106,7 @@ and record where the bytes came from.
 
 ## Sol engineering findings (summary)
 
-Full write-up: `.private/scratch/sol_launcher_review.md`.
+Full write-up: `workspace/scratch/sol_launcher_review.md`.
 
 | Sev | Finding | Status after this pass |
 |-----|---------|------------------------|

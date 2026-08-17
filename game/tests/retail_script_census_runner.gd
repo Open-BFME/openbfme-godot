@@ -17,7 +17,7 @@ extends SceneTree
 ##
 ## DIAGNOSTIC runner: it is expected green whenever the contract JSON is
 ## present and SKIPs (exit 0, stated) when it is not - the contract lives in
-## .private/retail-work and is not part of the repository. Override the
+## workspace/retail-work and is not part of the repository. Override the
 ## location with OPENBFME_SCRIPT_CONTRACT.
 ##
 ## Invocation:
@@ -29,7 +29,7 @@ const WorldScript = preload("res://src/retail_slice/retail_slice_script_world.gd
 const ExecutorScript = preload("res://src/script/script_executor.gd")
 const ManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
 
-const CONTRACT_RELATIVE_PATH := ".private/retail-work/reports/skirmish-script-contract/skirmish_script_contract.json"
+const CONTRACT_RELATIVE_PATH := "workspace/retail-work/reports/skirmish-script-contract/skirmish_script_contract.json"
 const CENSUS_TICKS := 600
 const TOP_GAPS := 30
 

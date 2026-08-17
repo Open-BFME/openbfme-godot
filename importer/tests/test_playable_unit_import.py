@@ -1010,9 +1010,9 @@ def test_effective_bfme2_neutral_recipe_blockers_are_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
-    catalog_path = repo / ".private" / "retail-work" / "catalog" / "bfme2.json"
+    catalog_path = repo / "workspace" / "retail-work" / "catalog" / "bfme2.json"
     effective_root = (
-        repo / ".private" / "retail-work" / "cache" / "effective-assets"
+        repo / "workspace" / "retail-work" / "cache" / "effective-assets"
     )
     if not catalog_path.is_file() or not effective_root.is_dir():
         pytest.skip("operator BFME2 retail recipe inputs are not available")
@@ -1119,7 +1119,7 @@ def test_effective_bfme2_neutral_recipe_blockers_are_closed(
 
 def test_effective_bfme2_neutral_audio_routes_resolve_exactly() -> None:
     repo = Path(__file__).resolve().parents[2]
-    catalog_path = repo / ".private" / "retail-work" / "catalog" / "bfme2.json"
+    catalog_path = repo / "workspace" / "retail-work" / "catalog" / "bfme2.json"
     if not catalog_path.is_file():
         pytest.skip("operator BFME2 retail catalog is not available")
     catalog = InstallCatalog.load(catalog_path)

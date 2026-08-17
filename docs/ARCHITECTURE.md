@@ -17,7 +17,7 @@ User-owned BFME2 installation
         -> Godot presentation, input, audio, and local UI state
 ```
 
-Only the importer may understand BFME2 source formats. Runtime code consumes versioned OpenBFME pack schemas. Retail payloads stay under `.private` and are never committed, logged, exported, or transferred between multiplayer peers.
+Only the importer may understand BFME2 source formats. Runtime code consumes versioned OpenBFME pack schemas. Retail payloads stay under `workspace` and are never committed, logged, exported, or transferred between multiplayer peers.
 
 ## State ownership
 

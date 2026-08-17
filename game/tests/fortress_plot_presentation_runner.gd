@@ -56,7 +56,7 @@ func _run() -> void:
 	var content_db = root.get_node_or_null("/root/ContentDB")
 	_content_db = content_db
 	if content_db != null and (content_db.pack_roots as Array).is_empty():
-		var workspace := ProjectSettings.globalize_path("res://../.private/content-packs")
+		var workspace := ProjectSettings.globalize_path("res://../workspace/content-packs")
 		OS.set_environment("OPENBFME_CONTENT", workspace)
 		content_db.reload()
 	_check("content_roots_loaded", content_db != null and not (content_db.pack_roots as Array).is_empty())

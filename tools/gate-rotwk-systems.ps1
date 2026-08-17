@@ -19,7 +19,7 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $stateRoot = if (-not [string]::IsNullOrWhiteSpace($env:OPENBFME_IMPORT_ROOT)) {
     [IO.Path]::GetFullPath($env:OPENBFME_IMPORT_ROOT)
 } else {
-    [IO.Path]::GetFullPath((Join-Path $repoRoot ".private\retail-work"))
+    [IO.Path]::GetFullPath((Join-Path $repoRoot "workspace\retail-work"))
 }
 $env:OPENBFME_IMPORT_ROOT = $stateRoot
 $env:PYTHONPATH = Join-Path $repoRoot "importer"
@@ -190,7 +190,7 @@ print('FACTION_DISCOVERY_OK', ','.join(names))
     }
 
     # Optional: note selection when present (not a mount/boot claim).
-    $selection = Join-Path $repoRoot ".private\content-packs\selection.json"
+    $selection = Join-Path $repoRoot "workspace\content-packs\selection.json"
     if (Test-Path -LiteralPath $selection) {
         $sel = Get-Content -LiteralPath $selection -Raw | ConvertFrom-Json
         if (-not [string]::IsNullOrWhiteSpace([string]$sel.activePack)) {

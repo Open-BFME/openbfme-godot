@@ -78,7 +78,7 @@ MAP_PACK_ID = "rotwk-skirmish-maps-private"
 def resolve_selected_pack(content_root: Path, pack_id: str = MAP_PACK_ID) -> Path:
     """Resolve the SELECTED map pack from the workspace selection.json.
 
-    The runtime is workspace-first: `.private/content-packs/selection.json`
+    The runtime is .private-first: `workspace/content-packs/selection.json`
     names the mounted bundles as `<pack-id>/<bundle-dir>`.  The name-addressed
     `goal-official-72` sibling directory is NOT the mounted pack (selection
     points at a hash-addressed copy), so the default target must be derived
@@ -417,7 +417,7 @@ def main(argv: list[str] | None = None) -> int:
         "--profile",
         type=Path,
         default=ROOT
-        / ".private"
+        / "workspace"
         / "retail-work"
         / "profiles"
         / "rotwk-playable-maps.generated.json",
@@ -425,7 +425,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--state-root",
         type=Path,
-        default=ROOT / ".private" / "retail-work",
+        default=ROOT / "workspace" / "retail-work",
     )
     parser.add_argument("--game", default="rotwk")
     parser.add_argument("--force", action="store_true")
@@ -438,7 +438,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.pack is None:
         try:
-            pack = resolve_selected_pack(ROOT / ".private" / "content-packs")
+            pack = resolve_selected_pack(ROOT / "workspace" / "content-packs")
         except RepairRefusal as exc:
             raise SystemExit(f"cannot resolve the selected map pack: {exc}")
     else:

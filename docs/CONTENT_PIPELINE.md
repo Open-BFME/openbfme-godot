@@ -24,7 +24,7 @@ only for a bounded defect or measured bottleneck with equivalent output evidence
 All retail inputs and derived retail payloads stay in the ignored private workspace:
 
 ```text
-.private/retail-work/
+workspace/retail-work/
   catalog/                 metadata-only effective-view indexes
   cache/sources/           verified extracted source entries
   jobs/                    isolated converter work roots
@@ -33,7 +33,7 @@ All retail inputs and derived retail payloads stay in the ignored private worksp
   profiles/                generated private build profiles
   reports/                 plans, diagnostics, census and provenance
 
-.private/content-packs/
+workspace/content-packs/
   selection.json           selected immutable private pack
   <pack-id>/<bundle-id>/   self-contained published bundle
 ```
@@ -150,7 +150,7 @@ Loose repository and user packs remain a separate development/modding lane descr
 source, in this order:
 
 1. **External override** - `OPENBFME_CONTENT` (developer/CI, ephemeral).
-2. **Repo workspace** - `<repo>/.private/content-packs/selection.json`, detected
+2. **Repo workspace** - `<repo>/workspace/content-packs/selection.json`, detected
    automatically for non-exported runs when the durable cache settings are at their
    defaults (`openbfme/content/workspace_content_root` overrides the location).
 3. **Durable user cache** - `user://content-packs/selection.json`.

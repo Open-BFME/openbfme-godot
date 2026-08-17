@@ -10,8 +10,8 @@ extends SceneTree
 
 const Sim = preload("res://src/retail_slice/retail_slice_sim.gd")
 const Adapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
-const OBJECT_ROOT := "res://../.private/retail-work/editions/rotwk/cache/effective-assets/data/ini/object/"
-const ORACLE_ROOT := "res://../.private/retail-work/editions/rotwk/cache/effective-assets/data/ini/"
+const OBJECT_ROOT := "res://../workspace/retail-work/editions/rotwk/cache/effective-assets/data/ini/object/"
+const ORACLE_ROOT := "res://../workspace/retail-work/editions/rotwk/cache/effective-assets/data/ini/"
 const SOURCE_SCALE := 0.1
 const WATCHDOG_FRAMES := 1800
 

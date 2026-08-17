@@ -4,7 +4,7 @@ extends RefCounted
 ##
 ## Clean-room implementation: opcode values, operand encodings, and stack
 ## semantics are ported/adapted from the local OpenSAGE ActionScript source
-## (.private/scratch/opensage-source/.../Gui/Apt/ActionScript/, GPLv3). No
+## (workspace/scratch/opensage-source/.../Gui/Apt/ActionScript/, GPLv3). No
 ## decompilation material was referenced. The 0xB7 (EA_PushLong) operand
 ## width (little-endian Int32) comes from the corpus width validation in the
 ## APT inventory report (b7_width_validation.csv), not from any SWF table.

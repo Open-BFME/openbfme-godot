@@ -11,10 +11,10 @@ command logs (Phase D step 4 unchanged).
 ## Why module-first
 
 The BFME2 1.06 + RotWK 2.01 corpus was measured on 2026-07-22 (report:
-`.private/retail-work/reports/rotwk-201-gap-analysis/`, adversarially re-derived):
+`workspace/retail-work/reports/rotwk-201-gap-analysis/`, adversarially re-derived):
 the union module vocabulary is 339 distinct types (206 Behavior, 100
 LocomotorSet/Locomotor, 18 Draw, 10 Body, 5 ClientUpdate - byte-exact per
-`.private/retail-work/reports/requirement-graph/`), of which only 6 are
+`workspace/retail-work/reports/requirement-graph/`), of which only 6 are
 RotWK-only. SAGE objects are
 bags of data-configured modules; implementing the vocabulary generically makes every
 faction, RotWK, and data-only mods (Edain-class) consumers of the same machinery.

@@ -5,7 +5,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$privateRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot ".private"))
+$privateRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot "workspace"))
 $runImporter = Join-Path $repoRoot "run_importer.bat"
 $runRetail = Join-Path $repoRoot "run_retail_slice.bat"
 $bootstrap = Join-Path $PSScriptRoot "bootstrap-importer-python.ps1"
@@ -22,7 +22,7 @@ function Assert-UnderPrivate {
     $resolved = [IO.Path]::GetFullPath($Path)
     $prefix = $privateRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     if (-not $resolved.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
-        throw "$Label escaped the repository .private root: '$resolved'."
+        throw "$Label escaped the repository workspace root: '$resolved'."
     }
 }
 
@@ -90,9 +90,9 @@ try {
     $retailConfigured = Invoke-BatchPathProbe $runRetail
     Assert-Equal $contentOverride ([IO.Path]::GetFullPath($retailConfigured.OPENBFME_CONTENT)) "Retail environment override"
 
-    & git -C $repoRoot check-ignore -q -- ".private/retail-work/private-workspace-test.probe"
+    & git -C $repoRoot check-ignore -q -- "workspace/retail-work/private-.private-test.probe"
     if ($LASTEXITCODE -ne 0) {
-        throw "The repository .private workspace is not ignored by git."
+        throw "The repository workspace workspace is not ignored by git."
     }
 
     $legacyEnvironmentToken = "LOCAL" + "APPDATA"

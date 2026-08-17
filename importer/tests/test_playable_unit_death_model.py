@@ -52,7 +52,7 @@ PINNED_UNAFFECTED_DIGESTS = {
     #
     # Evidence, not assertion: both recipe bodies were dumped from an exported
     # HEAD tree and from the working tree and diffed
-    # (`.private/scratch/opus35-deathpin-HEAD.json` vs `-WORKING.json`, dumper
+    # (`workspace/scratch/opus35-deathpin-HEAD.json` vs `-WORKING.json`, dumper
     # `opus35-deathpin-dump.py`). The ENTIRE diff, for both fixtures, is:
     #
     #     "audioRoutes": { ... "primaryMember": {...},
@@ -68,7 +68,7 @@ PINNED_UNAFFECTED_DIGESTS = {
     # Re-pinned 2026-08-16 while investigating b56c09c AnimationState
     # typing fallout. Procedure: dump the 1ad9bd0 pin-era recipes and the
     # working-tree recipes, then also compile with the importer tree at
-    # b56c09c^ (`.private/scratch/deathpin-pin-era-*.json` vs
+    # b56c09c^ (`workspace/scratch/deathpin-pin-era-*.json` vs
     # `deathpin-current-*.json` vs `deathpin-pre-anim-*.json`).
     # b56c09c is a no-op on these fixtures — current == b56c09c^
     # byte-for-byte. The fixture INI authors only

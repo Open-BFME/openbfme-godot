@@ -15,7 +15,7 @@ $forbiddenExtensions = @(
     ".big", ".w3d", ".dds", ".tga", ".map", ".scb", ".apt", ".dat", ".ini", ".wnd",
     ".pem", ".key", ".pfx", ".p12", ".env", ".log", ".pyc", ".pyo", ".pth"
 )
-# The importer intentionally names its user-local .private state in source and
+# The importer intentionally names its user-local workspace state in source and
 # documentation. Archive-entry checks below reject actual private payloads.
 $keyHeaderPattern = "-----BEGIN " + "[A-Z ]*PRIVATE KEY-----"
 $forbiddenText = "(?i)(?:[A-Z]:\\Users\\(?!MyUser\\)[A-Za-z0-9._-]+\\|/home/[A-Za-z0-9._-]+/|gamepacks?[/\\]|AGENTS\.md|BFME All In One Launcher[/\\]settings\.json|$keyHeaderPattern|gh[opsu]_[A-Za-z0-9_]{20,})"
@@ -43,7 +43,7 @@ try {
             if (-not $canonicalNames.Add($name.TrimEnd("/"))) {
                 $violations.Add("duplicate Windows archive path: $name")
             }
-            if ($name -match '(?i)(^|/)(?:\.private|gamepacks?)(?:/|$)|(^|/)AGENTS\.md$') {
+            if ($name -match '(?i)(^|/)(?:\workspace|gamepacks?)(?:/|$)|(^|/)AGENTS\.md$') {
                 $violations.Add("forbidden private or agent path: $name")
             }
             $extension = [IO.Path]::GetExtension($name).ToLowerInvariant()

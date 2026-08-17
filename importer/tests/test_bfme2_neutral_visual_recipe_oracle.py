@@ -24,8 +24,8 @@ from openbfme_importer.retail_visual_closure import build_retail_visual_closure
 
 
 REPO = Path(__file__).resolve().parents[2]
-ASSETS = REPO / ".private/retail-work/cache/effective-assets"
-CATALOG = REPO / ".private/retail-work/catalog/bfme2.json"
+ASSETS = REPO / "workspace/retail-work/cache/effective-assets"
+CATALOG = REPO / "workspace/retail-work/catalog/bfme2.json"
 
 pytestmark = pytest.mark.skipif(
     not ASSETS.is_dir() or not CATALOG.is_file(),

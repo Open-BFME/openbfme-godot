@@ -9,7 +9,7 @@ extends RefCounted
 
 const Sim = preload("res://src/retail_slice/retail_slice_sim.gd")
 const Adapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
-const ORACLE := "res://../.private/retail-work/editions/rotwk/cache/effective-assets/data/ini/experiencelevels.ini"
+const ORACLE := "res://../workspace/retail-work/editions/rotwk/cache/effective-assets/data/ini/experiencelevels.ini"
 
 
 func run(tree: SceneTree, signature: String) -> Dictionary:

@@ -4030,7 +4030,7 @@ def test_upgrade_sound_selector_exact_retail_owners_and_wav_byte_receipt() -> No
 
     root = Path(__file__).resolve().parents[2]
     descriptor_path = (
-        root / ".private" / "retail-work" / "reports" / "faction-import"
+        root / "workspace" / "retail-work" / "reports" / "faction-import"
         / "dwarves" / "objects" / "dwarvenguardianhorde" / "descriptor.json"
     )
     if not descriptor_path.is_file():
@@ -4043,7 +4043,7 @@ def test_upgrade_sound_selector_exact_retail_owners_and_wav_byte_receipt() -> No
     ]
     assert resolved[event_ids[0]] == resolved[event_ids[1]]
     effective_assets = (
-        root / ".private" / "retail-work" / "editions" / "rotwk" / "cache"
+        root / "workspace" / "retail-work" / "editions" / "rotwk" / "cache"
         / "effective-assets"
     )
     receipts: dict[str, list[dict[str, str]]] = {}

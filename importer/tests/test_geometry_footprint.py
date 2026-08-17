@@ -8,7 +8,7 @@ click against that footprint. Without it in the compiled documents a runtime has
 nothing to pick against but a guessed world-unit radius.
 
 Oracle (PURE RETAIL rotwk tree,
-``.private/retail-work/editions/rotwk/cache/effective-assets/data/ini``):
+``workspace/retail-work/editions/rotwk/cache/effective-assets/data/ini``):
 ``object/goodfaction/structures/men/barracks.ini`` authors a CYLINDER 8.0 rally
 probe plus four ``AdditionalGeometry`` BOX pieces -- 20 x 20 at offset
 ``X:-22 Y:-30`` and 45 x 50 at the origin, per model-state family -- so the

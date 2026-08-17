@@ -15,16 +15,16 @@ from openbfme_importer.retail_men_damage_effects import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EFFECTIVE_ROOT = REPO_ROOT / ".private" / "retail-work" / "cache" / "effective-assets"
+EFFECTIVE_ROOT = REPO_ROOT / "workspace" / "retail-work" / "cache" / "effective-assets"
 PROFILE_PATH = (
     REPO_ROOT
-    / ".private"
+    / "workspace"
     / "retail-work"
     / "profiles"
     / "men-fords-v0-complete.generated.json"
 )
 CONTRACT_PATH = (
-    REPO_ROOT / ".private" / "scratch" / "men-damage-effects" / "contract-a.json"
+    REPO_ROOT / "workspace" / "scratch" / "men-damage-effects" / "contract-a.json"
 )
 PRIVATE_READY = (
     PROFILE_PATH.is_file()

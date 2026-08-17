@@ -180,7 +180,7 @@ public partial class App : System.Windows.Application
                 var rejection = RetailDiscovery.ExplainRejection(options.RetailPath);
                 if (rejection is not null) throw new InvalidOperationException(rejection);
 
-                var state = Path.Combine(options.InstallRoot, ".private", "retail-work");
+                var state = Path.Combine(options.InstallRoot, "workspace", "retail-work");
                 var exit = await service.Importer.RunAsync(
                     AppContext.BaseDirectory,
                     options.ImportGame,

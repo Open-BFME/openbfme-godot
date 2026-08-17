@@ -390,7 +390,7 @@ const BORDER_HDR_GAIN := 2.1
 ## and four white outlines. A blind review of the two-seat capture reported
 ## exactly the visible half of it - "no faction ownership colour on the map, only
 ## a red selection wash" - because the red seat was the only one whose band
-## survived its own gain. Measured on `.private/capture-r4e/12-retail-aspect.png`
+## survived its own gain. Measured on `workspace/capture-r4e/12-retail-aspect.png`
 ## over the map area, at band strength (saturation >= 0.55, value >= 0.55) the
 ## red seat covered 24051 pixels and the blue seat 704, a 34:1 split between two
 ## seats holding NINE REGIONS EACH.

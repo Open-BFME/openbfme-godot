@@ -19,7 +19,7 @@ function Assert-PhysicalScratchPath {
     $candidateFull = [IO.Path]::GetFullPath($Candidate)
     $prefix = $rootFull + '\'
     if ($candidateFull -ne $rootFull -and -not $candidateFull.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
-        throw "Capture path escapes .private/scratch."
+        throw "Capture path escapes workspace/scratch."
     }
     $relative = if ($candidateFull -eq $rootFull) { "" } else { $candidateFull.Substring($prefix.Length) }
     $cursor = $rootFull
@@ -55,14 +55,14 @@ function Get-PackTreeDigest {
 }
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$privateScratch = [IO.Path]::GetFullPath((Join-Path $repoRoot ".private\scratch"))
+$privateScratch = [IO.Path]::GetFullPath((Join-Path $repoRoot "workspace\scratch"))
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $OutputRoot = Join-Path $privateScratch "jobs\m2-oracle-first-capture-tranche"
 }
 $outputRootFull = [IO.Path]::GetFullPath($OutputRoot)
 $scratchPrefix = $privateScratch.TrimEnd('\') + '\'
 if (-not $outputRootFull.StartsWith($scratchPrefix, [StringComparison]::OrdinalIgnoreCase)) {
-    throw "OutputRoot must remain below .private/scratch."
+    throw "OutputRoot must remain below workspace/scratch."
 }
 Assert-PhysicalScratchPath $privateScratch $outputRootFull
 

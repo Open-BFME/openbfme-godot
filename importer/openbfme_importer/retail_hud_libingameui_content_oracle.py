@@ -117,8 +117,8 @@ def _canonical(value: object) -> bytes:
 
 def _private(path: Path | str, label: str) -> Path:
     resolved = Path(path).resolve()
-    if ".private" not in {part.casefold() for part in resolved.parts}:
-        raise HudLibInGameUiContentOracleError(f"{label} must remain under .private")
+    if "workspace" not in {part.casefold() for part in resolved.parts}:
+        raise HudLibInGameUiContentOracleError(f"{label} must remain under workspace")
     return resolved
 
 

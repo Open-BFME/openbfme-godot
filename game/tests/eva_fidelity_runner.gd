@@ -4,7 +4,7 @@ extends SceneTree
 ##
 ## Two modes, selected by OPENBFME_EVA_FIDELITY_MODE:
 ##
-##   old - pointed at the live selection (`.private/content-packs`): packs that
+##   old - pointed at the live selection (`workspace/content-packs`): packs that
 ##         predate the blockEvents/delayMs/createdEvents schema must behave
 ##         exactly as before (no suppression, no deferral, legacy HeroCreated
 ##         fail-closed path).

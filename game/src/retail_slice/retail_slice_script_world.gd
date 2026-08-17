@@ -5258,7 +5258,7 @@ class SliceUnits:
 	##
 	## RETAIL SEMANTICS, SOURCED (C&C Generals/Zero Hour GPL ScriptEngine, the
 	## codebase BFME's ScriptEngine derives from - the BFME binary reversal in
-	## .private/scratch/Open-BFME-research/reverse/whale_scriptengine confirms
+	## workspace/scratch/Open-BFME-research/reverse/whale_scriptengine confirms
 	## the identical template/parameter shape for every member below):
 	##   * The name table is AsciiString -> Object* (ScriptEngine.h
 	##     m_namedObjects), ONE LIVE OBJECT PER NAME, compared with strcmp -

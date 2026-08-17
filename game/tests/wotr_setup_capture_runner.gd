@@ -19,11 +19,11 @@ extends SceneTree
 ## pointing at the document and bundles.
 ##
 ## POINT `OPENBFME_SHELL_ART` AT THE **ROTWK** EFFECTIVE-ASSETS ROOT, not the
-## edition-neutral one. `.private/retail-work/cache/effective-assets` is BFME2's
+## edition-neutral one. `workspace/retail-work/cache/effective-assets` is BFME2's
 ## layer: its `apt_MenuExport_*` sheets are the GREEN menu set, its
 ## `apt_MainMenu_1` is a pre-order advertisement, and it has no
 ## `apt_MenuExport_3` at all. The thorned BLUE-STEEL shell this screen's oracle
-## shows is on `.private/retail-work/editions/rotwk/cache/layered-effective-
+## shows is on `workspace/retail-work/editions/rotwk/cache/layered-effective-
 ## assets`, and `wotr_setup_chrome.ART_PIECES` is measured against THOSE sheets.
 ## `OPENBFME_SHELL_FONT` wants `<that root>/albertusmt.otf`.
 

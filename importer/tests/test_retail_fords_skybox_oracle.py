@@ -78,10 +78,10 @@ class FordsSkyboxOraclePrivateIntegrationTests(unittest.TestCase):
         cls.repo = Path(__file__).resolve().parents[2]
         cls.paths = {
             "effective_assets_root": cls.repo
-            / ".private/retail-work/cache/effective-assets",
+            / "workspace/retail-work/cache/effective-assets",
             "manifest_path": cls.repo
-            / ".private/retail-work/cache/effective-assets/.openbfme/manifest.json",
-            "catalog_path": cls.repo / ".private/retail-work/catalog/bfme2.json",
+            / "workspace/retail-work/cache/effective-assets/.openbfme/manifest.json",
+            "catalog_path": cls.repo / "workspace/retail-work/catalog/bfme2.json",
             "game_dat_path": retail_file("game.dat"),
         }
         if not all(path.exists() for path in cls.paths.values()):

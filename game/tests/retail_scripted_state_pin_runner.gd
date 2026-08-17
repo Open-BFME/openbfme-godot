@@ -47,7 +47,7 @@ const PIN_TICKS := 1500
 ## again, 269127f3... -> 0ae2055f..., from the SAME single cause as the sibling
 ## `retail_state_pin_runner` (bisected there: reverting `_step_structure_eviction`
 ## alone restores the previous value exactly;
-## .private/scratch/opus25-retail_scripted_state_pin_runner-REVERT-*.out.log).
+## workspace/scratch/opus25-retail_scripted_state_pin_runner-REVERT-*.out.log).
 ##
 ## Re-minting to 0ae2055f... would bury the OLDER drift under a fresh green,
 ## and that older drift has never been explained. The honest state is: this pin
@@ -58,7 +58,7 @@ const PIN_TICKS := 1500
 ## assumed: round 19's four structure-pathing hunks were each reverted alone on
 ## this tree and this runner re-run, and the value is 0ae2055f...14c2 in all six
 ## variants — new, revert-slide, revert-prodexit, revert-engaged, revert-budget,
-## revert-all (.private/scratch/opus26-pin-scripted-*.out.log). So the red is
+## revert-all (workspace/scratch/opus26-pin-scripted-*.out.log). So the red is
 ## unchanged and still has exactly the two stacked causes named above; round 19
 ## added no third. See the sibling runner's round-19 note for why this fixture
 ## does not exercise the new pathing at its sampled tick, and for the coverage

@@ -23,18 +23,18 @@ class RetailArcherProjectileProfileTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.repo = repo_root_from_module()
-        cls.effective = cls.repo / ".private" / "retail-work" / "cache" / "effective-assets"
+        cls.effective = cls.repo / "workspace" / "retail-work" / "cache" / "effective-assets"
         cls.manifest_path = cls.effective / ".openbfme" / "manifest.json"
-        cls.catalog_path = cls.repo / ".private" / "retail-work" / "catalog" / "bfme2.json"
+        cls.catalog_path = cls.repo / "workspace" / "retail-work" / "catalog" / "bfme2.json"
         cls.base_path = (
             cls.repo
-            / ".private"
+            / "workspace"
             / "retail-work"
             / "profiles"
             / "men-fords-v0-complete.generated.json"
         )
         cls.report_path = (
-            cls.repo / ".private" / "scratch" / "combat-visual-parity" / "REPORT.md"
+            cls.repo / "workspace" / "scratch" / "combat-visual-parity" / "REPORT.md"
         )
         required = (
             cls.manifest_path,

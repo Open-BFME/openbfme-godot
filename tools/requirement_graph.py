@@ -31,10 +31,10 @@ from openbfme_importer.sage_particles import _lines as lex_ini_lines
 
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / ".private/retail-work/reports/requirement-graph"
+OUT = ROOT / "workspace/retail-work/reports/requirement-graph"
 CATALOGS = {
-    "bfme2": ROOT / ".private/retail-work/catalog/bfme2.json",
-    "rotwk": ROOT / ".private/retail-work/catalog/rotwk.json",
+    "bfme2": ROOT / "workspace/retail-work/catalog/bfme2.json",
+    "rotwk": ROOT / "workspace/retail-work/catalog/rotwk.json",
 }
 GAMES = ("bfme2", "rotwk")
 GAME_LABELS = {"bfme2": "BFME2 1.06", "rotwk": "RotWK 2.01"}
@@ -545,7 +545,7 @@ def build_reconciliation(surfaces: dict[str, dict], coverage: dict) -> list[dict
         "Predicate: importer-parsed Object/ChildObject/ObjectReskin definitions, duplicates included.")
     prior_note = (
         "Verified byte-exact against the prior adversarially re-derived corpus "
-        "measurement (.private/retail-work/reports/rotwk-201-gap-analysis/"
+        "measurement (workspace/retail-work/reports/rotwk-201-gap-analysis/"
         "rotwk_201_analysis.json: union 339 = Behavior 206 + LocomotorSet/Locomotor 100 "
         "+ Draw 18 + Body 10 + ClientUpdate 5). The '~350 (210/96/23/10/11)' quoted in "
         "engine/DESIGN.md is a rounded paraphrase of that same measurement whose "

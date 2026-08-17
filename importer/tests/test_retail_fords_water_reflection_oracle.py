@@ -103,18 +103,18 @@ class FordsWaterReflectionOraclePrivateIntegrationTests(unittest.TestCase):
         cls.repo = Path(__file__).resolve().parents[2]
         cls.paths = {
             "effective_assets_root": cls.repo
-            / ".private/retail-work/cache/effective-assets",
+            / "workspace/retail-work/cache/effective-assets",
             "manifest_path": cls.repo
-            / ".private/retail-work/cache/effective-assets/.openbfme/manifest.json",
-            "catalog_path": cls.repo / ".private/retail-work/catalog/bfme2.json",
+            / "workspace/retail-work/cache/effective-assets/.openbfme/manifest.json",
+            "catalog_path": cls.repo / "workspace/retail-work/catalog/bfme2.json",
             "environment_report_path": cls.repo
-            / ".private/retail-work/reports/retail-fords-environment-c1f300fcf6fed6f2.json",
+            / "workspace/retail-work/reports/retail-fords-environment-c1f300fcf6fed6f2.json",
             "visual_closure_path": cls.repo
-            / ".private/retail-work/reports/retail-visual-closure-0d51ad8d31ca6e6c.json",
+            / "workspace/retail-work/reports/retail-visual-closure-0d51ad8d31ca6e6c.json",
             "static_prop_plan_path": cls.repo
-            / ".private/retail-work/reports/retail-static-prop-plan-0d51ad8d31ca6e6c.json",
+            / "workspace/retail-work/reports/retail-static-prop-plan-0d51ad8d31ca6e6c.json",
             "cooked_map_directory": cls.repo
-            / ".private/retail-work/packs/bfme2-men-vslice/maps/fords-of-isen-ii",
+            / "workspace/retail-work/packs/bfme2-men-vslice/maps/fords-of-isen-ii",
         }
         required = list(cls.paths.values())[:-1] + [
             cls.paths["cooked_map_directory"] / "objects.json",

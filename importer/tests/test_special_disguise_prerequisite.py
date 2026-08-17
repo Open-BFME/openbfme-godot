@@ -39,7 +39,7 @@ from importer.tests.test_playable_unit_import import _base_profile
 
 
 REPO = Path(__file__).resolve().parents[2]
-PRIVATE = REPO / ".private" / "retail-work"
+PRIVATE = REPO / "workspace" / "retail-work"
 CASES = {
     "bfme2": (
         PRIVATE / "cache" / "effective-assets",
@@ -363,7 +363,7 @@ def test_canonical_rotwk_recipe_does_not_invent_fanpatch_cancel_fx() -> None:
 
 
 def test_current_selected_rotwk_eowyn_pack_fails_new_prerequisite_closure() -> None:
-    selection_path = REPO / ".private/content-packs/selection.json"
+    selection_path = REPO / "workspace/content-packs/selection.json"
     if not selection_path.is_file():
         pytest.skip("selected private packs are unavailable")
     selection = json.loads(selection_path.read_text(encoding="utf-8"))
@@ -371,7 +371,7 @@ def test_current_selected_rotwk_eowyn_pack_fails_new_prerequisite_closure() -> N
     if not active.startswith("rotwk-men-vslice/"):
         pytest.skip("RotWK Men is not the selected active pack")
     runtime_path = (
-        REPO / ".private/content-packs" / active
+        REPO / "workspace/content-packs" / active
         / "data/playable-units/rohaneowyn.json"
     )
     runtime = json.loads(runtime_path.read_text(encoding="utf-8"))

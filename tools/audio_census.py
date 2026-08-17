@@ -218,7 +218,7 @@ def census_retail_weapon_chain(extract_root: Path) -> dict:
 
 
 def _selected_pack_dirs(repo: Path) -> list[Path]:
-    selection = repo / ".private" / "content-packs" / "selection.json"
+    selection = repo / "workspace" / "content-packs" / "selection.json"
     if not selection.is_file():
         return []
     document = json.loads(selection.read_text(encoding="utf-8"))
@@ -227,7 +227,7 @@ def _selected_pack_dirs(repo: Path) -> list[Path]:
     for entry in entries:
         if not entry:
             continue
-        candidate = repo / ".private" / "content-packs" / entry
+        candidate = repo / "workspace" / "content-packs" / entry
         if candidate.is_dir():
             roots.append(candidate)
     return roots
@@ -322,8 +322,8 @@ def main() -> int:
     args = parser.parse_args()
     repo = Path(args.repo).resolve()
 
-    retail = census_retail_objects(repo / "_bfme2_extract")
-    weapons = census_retail_weapon_chain(repo / "_bfme2_extract")
+    retail = census_retail_objects(repo / "workspace/retail-extract")
+    weapons = census_retail_weapon_chain(repo / "workspace/retail-extract")
     packs = [census_pack(path) for path in _selected_pack_dirs(repo)]
     packs = [row for row in packs if row and row["units"]]
 
@@ -339,7 +339,7 @@ def main() -> int:
             count = retail["fields"].get(field, 0)
             print("%s %-24s %s %6d %s" % (bar, field, bar, count, bar if args.markdown else ""))
     else:
-        print("(no _bfme2_extract/data/ini/object tree available)")
+        print("(no workspace/retail-extract/data/ini/object tree available)")
 
     print()
     print("== N: RETAIL WEAPON AUDIO CHAIN (Weapon -> FireFX -> FXList -> Sound) ==")

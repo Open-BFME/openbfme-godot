@@ -2,7 +2,7 @@ extends SceneTree
 ## Fortress command-surface gate (bugs A/B/C of the castle system).
 ##
 ## Retail oracle (PURE RotWK retail tree,
-## .private/retail-work/editions/rotwk/cache/effective-assets/data/ini):
+## workspace/retail-work/editions/rotwk/cache/effective-assets/data/ini):
 ##
 ##   * commandset.ini <Faction>FortressExpansionPad{Corner,Side}CommandSet gives
 ##     every fortress build plot that faction's own building menu — Angmar's
@@ -25,10 +25,10 @@ extends SceneTree
 ##   3. The CastleUpgrade purchase path: a fortress improvement contract is
 ##      purchasable and its trigger hands out the real upgrade to the whole
 ##      castle. Driven by a fixture surface because no shipped pack carries the
-##      castleUpgrades surface yet (see .private/scratch/opus16-fortress-report.md).
+##      castleUpgrades surface yet (see workspace/scratch/opus16-fortress-report.md).
 ##
 ## Run:
-##   OPENBFME_CONTENT=<repo>/.private/content-packs godot --headless --path game \
+##   OPENBFME_CONTENT=<repo>/workspace/content-packs godot --headless --path game \
 ##     --script res://tests/fortress_command_surface_runner.gd
 ## One faction per process: OPENBFME_SLICE_FACTION selects it (default angmar).
 

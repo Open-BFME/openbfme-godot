@@ -22,7 +22,7 @@ from importer.tests.test_sage_map import _synthetic_map
 
 def _retail_catalog_path() -> Path | None:
     for parent in Path(__file__).resolve().parents:
-        candidate = parent / ".private" / "retail-work" / "catalog" / "rotwk.json"
+        candidate = parent / "workspace" / "retail-work" / "catalog" / "rotwk.json"
         if candidate.is_file():
             return candidate
     return None

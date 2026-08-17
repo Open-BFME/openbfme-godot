@@ -12,10 +12,10 @@ from tests.retail_inputs import retail_file
 
 
 ROOT = Path(__file__).resolve().parents[2]
-FRAME = ROOT / ".private" / "scratch" / "hud-frame-selection" / "contract-a.json"
+FRAME = ROOT / "workspace" / "scratch" / "hud-frame-selection" / "contract-a.json"
 MAP = (
     ROOT
-    / ".private"
+    / "workspace"
     / "content-packs"
     / "bfme2-five-maps-106-private"
     / "maps"
@@ -26,7 +26,7 @@ SETUP = MAP.with_name("setup.json")
 GAME_DAT = retail_file("game.dat")
 SIDE_APT = (
     ROOT
-    / ".private"
+    / "workspace"
     / "retail-work"
     / "cache"
     / "effective-assets"

@@ -43,7 +43,7 @@ from openbfme_importer.effective_assets_identity import (  # noqa: E402
 )
 from openbfme_importer.effective_assets_catalog import EffectiveAssetsCatalog  # noqa: E402
 from openbfme_importer.faction_import import convert_faction_import  # noqa: E402
-from openbfme_importer.game import workspace_root  # noqa: E402
+from openbfme_importer.game import .private_root  # noqa: E402
 from openbfme_importer.paths import (  # noqa: E402
     ensure_external_to_repo,
     repo_root_from_module,
@@ -55,7 +55,7 @@ from openbfme_importer.util import write_json_atomic  # noqa: E402
 def faction_import_report_root(state_root: Path, game: str) -> Path:
     """Match CLI layout: BFME2 uses state root; RotWK uses editions/rotwk."""
 
-    return workspace_root(state_root, game) / "reports" / "faction-import"
+    return .private_root(state_root, game) / "reports" / "faction-import"
 
 
 def _load_catalog(state_root: Path, game: str, install: Path) -> InstallCatalog:
@@ -197,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
 
     state_root = args.state_root
     if state_root is None:
-        state_root = ROOT / ".private" / "retail-work"
+        state_root = ROOT / "workspace" / "retail-work"
     state_root = ensure_external_to_repo(
         Path(state_root).expanduser().resolve(), repo_root_from_module()
     )

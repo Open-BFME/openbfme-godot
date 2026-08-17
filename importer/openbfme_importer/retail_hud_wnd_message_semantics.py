@@ -225,7 +225,7 @@ def build_contract(
     effective_assets: Path | str, manifest: Mapping[str, Any], game_dat: Path | str
 ) -> dict[str, Any]:
     root = Path(effective_assets).resolve()
-    if ".private" not in {part.casefold() for part in root.parts}:
+    if "workspace" not in {part.casefold() for part in root.parts}:
         raise ValueError("effective-assets must be private")
     wnd_path = root / "window/controlbar.wnd"
     wnd_payload = wnd_path.read_bytes()

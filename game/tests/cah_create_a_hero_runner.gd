@@ -6,7 +6,7 @@ extends SceneTree
 ## retail's own authored numbers rather than read off a cooked pack, so the gate
 ## runs on a machine with no retail install and still asserts against real
 ## values. The numbers below are transcribed from PURE RETAIL
-## (`.private/retail-work/editions/rotwk/cache/effective-assets`), NOT from the
+## (`workspace/retail-work/editions/rotwk/cache/effective-assets`), NOT from the
 ## patched `layered-effective-assets` tree - the 2.02 Unofficial Patch rewrote
 ## every Create-a-Hero attribute ladder and the object's cost, and a gate
 ## written against the patched numbers would pass while shipping wrong heroes.

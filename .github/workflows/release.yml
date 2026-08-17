@@ -129,7 +129,7 @@ jobs:
       - name: Run source gates
         shell: powershell
         env:
-          # Public CI has no dual-run oracle trace under .private (same as ci.yml).
+          # Public CI has no dual-run oracle trace under workspace (same as ci.yml).
           OPENBFME_DUALRUN_OPTIONAL: "1"
         run: |
           & $env:OPENBFME_RELEASE_PYTHON -m pip install --require-hashes -r importer/requirements-win.txt

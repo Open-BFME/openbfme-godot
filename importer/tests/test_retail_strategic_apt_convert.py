@@ -18,7 +18,7 @@ from openbfme_importer.retail_hud_apt_convert import (
 from openbfme_importer.sage_apt import canonical_sha256
 
 
-PRIVATE_ROOT = Path(__file__).resolve().parents[2] / ".private" / "retail-work"
+PRIVATE_ROOT = Path(__file__).resolve().parents[2] / "workspace" / "retail-work"
 #: THE ROTWK EDITION'S OWN VIEW.  This lane cooks Rise of the Witch King's
 #: strategic screens, so it reads the RotWK overlay (RotWK's archives over
 #: BFME2's) -- NOT ``cache/effective-assets``, which is the plain BFME2

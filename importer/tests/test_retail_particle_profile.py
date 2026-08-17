@@ -580,7 +580,7 @@ def make_inputs(root: Path) -> tuple[dict, dict, dict]:
         entry = entry_by_path[path]
         oracle_sources.append(
             {
-                "path": f".private/retail-work/cache/effective-assets/{path}",
+                "path": f"workspace/retail-work/cache/effective-assets/{path}",
                 "bytes": entry["size"],
                 "sha256": entry["sha256"],
             }

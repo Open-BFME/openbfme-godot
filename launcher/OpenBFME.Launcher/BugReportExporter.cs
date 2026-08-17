@@ -18,7 +18,7 @@ namespace OpenBFME.Launcher;
 ///
 /// <para>WHAT IT MUST NOT CONTAIN, and why the copy is an ALLOW LIST rather than a
 /// directory zip. Everything in this repository's threat model points one way:
-/// retail bytes never leave <c>.private</c> (AGENTS.md rule 6) and the CI
+/// retail bytes never leave <c>workspace</c> (AGENTS.md rule 6) and the CI
 /// publication boundary scans for developer-machine paths. A run directory is a
 /// directory somebody could drop anything into — a crash dump, a copied pack, a
 /// screenshot. So the exporter copies exactly the five contract documents by

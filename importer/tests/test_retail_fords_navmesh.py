@@ -92,9 +92,9 @@ class RetailFordsNavmeshPrivateIntegrationTests(unittest.TestCase):
         cls.repo = Path(__file__).resolve().parents[2]
         cls.map_root = (
             cls.repo
-            / ".private/content-packs/bfme2-five-maps-106-private/maps/fords-of-isen-ii"
+            / "workspace/content-packs/bfme2-five-maps-106-private/maps/fords-of-isen-ii"
         )
-        cls.effective_root = cls.repo / ".private/retail-work/cache/effective-assets"
+        cls.effective_root = cls.repo / "workspace/retail-work/cache/effective-assets"
         cls.runtime_source = cls.repo / "game/src/retail_slice/retail_map_data.gd"
         if not all(
             path.exists()
@@ -254,7 +254,7 @@ class SecondMapNavigationContractIntegrationTests(unittest.TestCase):
         cls.effective_root = (
             Path(override)
             if override
-            else cls.repo / ".private/retail-work/cache/effective-assets"
+            else cls.repo / "workspace/retail-work/cache/effective-assets"
         )
         source = cls.effective_root / cls.SOURCE
         if not source.is_file():

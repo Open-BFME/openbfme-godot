@@ -23,8 +23,8 @@ assets, runtime retail packs, oracle captures and importer work products remain 
 below:
 
 ```text
-.private/retail-work
-.private/content-packs
+workspace/retail-work
+workspace/content-packs
 ```
 
 They are non-redistributable, gitignored, excluded from exported builds and never
@@ -54,7 +54,7 @@ lawfully owned installation runs the importer locally to create a private pack.
 
 Before any shareable source archive or binary:
 
-- build from a clean export root that never contains `.private`;
+- build from a clean export root that never contains `workspace`;
 - reject retail virtual payloads, known metadata, source paths and known payload
   digests at the export boundary;
 - scan archives, installers, symbols, logs, screenshots, fixtures and support bundles;

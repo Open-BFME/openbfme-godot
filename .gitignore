@@ -11,12 +11,12 @@ game/.import/
 **/*.tmp
 
 # Lane A — never commit
-_bfme2_extract/
-**/_bfme2_extract/
+workspace/retail-extract/
+**/workspace/retail-extract/
 
 # Private retail development workspace. Payloads may live here locally but are
 # never part of git, exports, or the later code-only public-release tree.
-/.private/
+/workspace/
 
 # Raw generation dumps
 _imagine_raw/
@@ -63,7 +63,7 @@ dev/null/
 .captures/
 captures/
 game/.captures/
-game/.private/
+game/workspace/
 
 # Python and Ruff caches
 .pytest_cache/

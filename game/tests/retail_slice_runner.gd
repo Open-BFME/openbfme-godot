@@ -7,9 +7,9 @@ const WatchdogScript = preload("res://tests/runner_watchdog.gd")
 ## it; never lower it to make a red run green. Measured 2026-08-04 (round 13)
 ## against the workspace selection (all seven RotWK faction packs):
 ## passed=366 failed=34, where the 34 are exactly the KNOWN_FAILURE_NAMES pins
-## (.private/scratch/opus20-slice-repinned.log). Previous value 363, whose note
+## (workspace/scratch/opus20-slice-repinned.log). Previous value 363, whose note
 ## claimed a 363/39 run; the run that actually preceded this change measured
-## 361/44 (.private/scratch/opus20-slice-baseline.log), i.e. the old floor was
+## 361/44 (workspace/scratch/opus20-slice-baseline.log), i.e. the old floor was
 ## above its own measurement and the gate could not pass. The +5 here are the
 ## five literals re-pinned from the pure retail tree in this change
 ## (capture_row_compiles_castable, theoden_mount_row_compiles_castable,
@@ -19,7 +19,7 @@ const WatchdogScript = preload("res://tests/runner_watchdog.gd")
 ## side is those five plus the five allowlist rows removed below.
 ##
 ## RAISED 366 -> 372, round 21 (2026-08-05), measured
-## .private/scratch/opus29-retail_slice_runner-P2.out.log: passed=372 failed=32,
+## workspace/scratch/opus29-retail_slice_runner-P2.out.log: passed=372 failed=32,
 ## where the 32 are exactly the remaining KNOWN_FAILURE_NAMES pins. The +6 are
 ## +2 from the two live-vs-replay signature names, which PASS for the first time
 ## in this repository's history and left the allowlist in this change (see the
@@ -37,7 +37,7 @@ const ACCEPTANCE_MIN_PASSED := 374
 ## retail_gate_unexpected_failure_* / retail_gate_update_allowlist_*).
 ##
 ## ORACLE ROOT. Every literal in this runner is pinned against the PURE retail
-## tree, .private/retail-work/editions/rotwk/cache/effective-assets, because
+## tree, workspace/retail-work/editions/rotwk/cache/effective-assets, because
 ## that is the tree the published packs are compiled from. The sibling
 ## layered-effective-assets tree is NOT the oracle: it rewrites magnitudes in
 ## place and pushes retail's values behind `;,;` / `;;,;;` / `;;.;;` markers, so
@@ -64,12 +64,12 @@ const ACCEPTANCE_MIN_PASSED := 374
 ## note that used to sit on these described a men pack that no longer exists.
 ## Against the current pure-retail packs the match resolves inside the runner's
 ## bound and both victory presentation rows follow, measured green in
-## .private/scratch/opus20-slice-baseline.log (all three reported by
+## workspace/scratch/opus20-slice-baseline.log (all three reported by
 ## retail_gate_update_allowlist_*). Also removed: two members of the structure
 ## lifecycle family, see the note on that block.
 const KNOWN_FAILURE_NAMES := {
 	# Reason (derived from the live detail `18/18 seeds=["fortress"]`,
-	# .private/scratch/opus10-slice-workspace.log): all 18 seeded structures
+	# workspace/scratch/opus10-slice-workspace.log): all 18 seeded structures
 	# resolve, but the manifest contributes a single seed kind ("fortress")
 	# rather than the per-kind set the check expects, so the kind comparison
 	# cannot match. Inherited pin, not root-caused beyond that observation -
@@ -87,7 +87,7 @@ const KNOWN_FAILURE_NAMES := {
 	# same day for the rebuilt men pack, but with the pack now compiled from the
 	# pure effective-assets tree those two castle pieces seed with a lifecycle
 	# that matches their bundle document. Measured green in
-	# .private/scratch/opus20-slice-baseline.log (both reported by
+	# workspace/scratch/opus20-slice-baseline.log (both reported by
 	# retail_gate_update_allowlist_*), so the family is back to 3000..3013.
 	"structure_3000_starts_exact_private_lifecycle": true,
 	"structure_3001_starts_exact_private_lifecycle": true,
@@ -164,7 +164,7 @@ const KNOWN_FAILURE_NAMES := {
 	# of what configures a live match: no castle contracts, no expansion rules,
 	# no spellbook, no team roster. The shortfall was measurable at TICK ZERO,
 	# before a single order was issued
-	# (.private/scratch/opus29-divergence-probe.out.log):
+	# (workspace/scratch/opus29-divergence-probe.out.log):
 	#     live   16 structures, 7 castle contracts, 5 expansion rules, 12 powers
 	#     replay  2 structures, 0 castle contracts, 0 expansion rules,  0 powers
 	# The "replay" was fighting on a map with no castle walls, no gate and no
@@ -185,10 +185,10 @@ const KNOWN_FAILURE_NAMES := {
 	# and mirrors the live boot+reset lifecycle, and _run_reference_battle now
 	# also takes the LIVE run's reinforcement unit and the live loop's tick
 	# budgets instead of re-deriving its own. Measured identical at tick zero
-	# (.private/scratch/opus29-divergence-probe4.out.log: mirror signature
+	# (workspace/scratch/opus29-divergence-probe4.out.log: mirror signature
 	# 4FA0ADCB == live 4FA0ADCB, zero snapshot diffs, zero event diffs) and
 	# green end-to-end for both scenarios
-	# (.private/scratch/opus29-retail_slice_runner-P1.out.log). Both names are
+	# (workspace/scratch/opus29-retail_slice_runner-P1.out.log). Both names are
 	# therefore REMOVED from this table.
 	#
 	# WHAT DID NOT MOVE: the live sim. The live battle signature measured
@@ -228,7 +228,7 @@ const KNOWN_FAILURE_NAMES := {
 	#   only ranged units ever landed a blow. _castle_footprint_pass_through
 	#   opened the castle group to an attacker ordered onto any member.
 	#     battle live 27E260C4 -> BE952534 ; defeat live 73F18FCC -> 784042B8
-	#     (.private/scratch/opus24-slice-baseline.err.log vs
+	#     (workspace/scratch/opus24-slice-baseline.err.log vs
 	#     opus24-retail_slice_runner-after.err.log)
 	#   The round-17 note claimed "replay and battle still agree with each other
 	#   in both runs, so lockstep determinism is intact". THAT SENTENCE WAS
@@ -248,14 +248,14 @@ const KNOWN_FAILURE_NAMES := {
 	#         is pin-neutral. retail_scripted_state_pin moved too and was
 	#         deliberately NOT re-minted; see its header.
 	#     battle live BE952534 -> 0E54F536 ; defeat live 784042B8 -> E4FD956C
-	#     (.private/scratch/opus25-retail_slice_runner-FINAL.err.log)
+	#     (workspace/scratch/opus25-retail_slice_runner-FINAL.err.log)
 	#
 	#   DRIFT 4 (2026-08-04, round 19) structure eviction, and NARROWER than the
 	#   last two: only the defeat run moved, which is what the change predicts -
 	#   the defeat run is the only one of the two whose units spend time inside
 	#   structure footprints.
 	#     battle live 0E54F536 UNCHANGED ; defeat live E4FD956C -> F0B6A476
-	#     (.private/scratch/opus26-retail_slice_runner-FINAL.err.log)
+	#     (workspace/scratch/opus26-retail_slice_runner-FINAL.err.log)
 	#
 	#   DRIFT 5 (2026-08-05, round 20) surface-to-surface weapon range, and this
 	#   one moves BOTH scenarios where round 19 moved only the defeat run. Round
@@ -267,7 +267,7 @@ const KNOWN_FAILURE_NAMES := {
 	#   what OpenSAGE's partial Weapon.cs port omits. Every battalion that ever
 	#   shoots a building starts shooting it earlier and from further out.
 	#     battle live 0E54F536 -> 4BD653C3 ; defeat live F0B6A476 -> 13E08D05
-	#     (.private/scratch/opus28-retail_slice_runner-{BEFORE,AFTER}.err.log)
+	#     (workspace/scratch/opus28-retail_slice_runner-{BEFORE,AFTER}.err.log)
 	#   Unit-vs-unit range is UNCHANGED (see _target_footprint_radius for the
 	#   measured reason), which is why retail_member_combat held at 98/0 and
 	#   both pure-sim pin runners were byte-identical across it.
@@ -340,7 +340,7 @@ const EXPECTED_BATTLE_SIGNATURES := {
 ## pin is stale" are two different, separately visible facts.
 ##
 ## Measured 2026-08-05 (round 21), men v-slice workspace selection
-## (.private/scratch/opus29-retail_slice_runner-P1.out.log). The live values are
+## (workspace/scratch/opus29-retail_slice_runner-P1.out.log). The live values are
 ## unchanged from round 20; the replay values became equal to them in this round
 ## when build_replay_simulation landed.
 ##
@@ -1494,7 +1494,7 @@ func _run() -> void:
 		# stronger than folding damage_add alone: it catches a dropped or
 		# mis-parsed DAMAGE_MULT even when retail authors no multiplier.
 		# PURE-RETAIL oracle
-		# (.private/retail-work/editions/rotwk/cache/effective-assets):
+		# (workspace/retail-work/editions/rotwk/cache/effective-assets):
 		#   data/ini/experiencelevels.ini:10974  ExperienceLevel GoodLevel2
 		#     AttributeModifiers = GoodTroopBonusRank2   (:10978, one list only)
 		#   data/ini/attributemodifier.ini:2762  ModifierList GoodTroopBonusRank2
@@ -1677,7 +1677,7 @@ func _run() -> void:
 		# id space: a live archer's pierce arrow vs a KnightArmor cavalry
 		# battalion lands at exactly 45% of its compiled damage.
 		# PURE-RETAIL oracle
-		# (.private/retail-work/editions/rotwk/cache/effective-assets):
+		# (workspace/retail-work/editions/rotwk/cache/effective-assets):
 		#   data/ini/armor.ini:946  Armor KnightArmor
 		#   data/ini/armor.ini:949    Armor = PIERCE   45%
 		# and the men pack records exactly that provenance on the knight
@@ -2387,7 +2387,7 @@ func _run_hero_ability_batch2_probes(slice) -> void:
 	)
 	# --- Theoden mount/dismount ---
 	# PURE-RETAIL magnitudes (data/ini under
-	# .private/retail-work/editions/rotwk/cache/effective-assets):
+	# workspace/retail-work/editions/rotwk/cache/effective-assets):
 	#   object/goodfaction/units/men/theoden.ini:864-868  LocomotorSet
 	#     Condition = SET_NORMAL   (:866)
 	#     Speed     = NORMAL_GOOD_HERO_SPEED          (:867)
@@ -2449,7 +2449,7 @@ func _run_hero_ability_batch2_probes(slice) -> void:
 	# --- Capture building (tier-1: neutral capturable, synthetic structure) ---
 	# PURE-RETAIL magnitudes. The oracle root for every literal in this runner is
 	# the pure effective-assets tree
-	# (.private/retail-work/editions/rotwk/cache/effective-assets), because that
+	# (workspace/retail-work/editions/rotwk/cache/effective-assets), because that
 	# is the tree the published packs are compiled from.
 	#   data/ini/object/includes/capturebuilding.inc:7-13
 	#     Behavior = SpecialAbilityUpdate ModuleTag_CaptureBuildingUpdate
@@ -3300,7 +3300,7 @@ func _group_within(simulation, ids: Array[int], point: Vector2, radius: float) -
 ## deterministic_replay_signature. THREE things make it a mirror rather than a
 ## lookalike, all of which it lacked before round 21 (see
 ## build_replay_simulation in retail_vertical_slice.gd and
-## .private/scratch/opus29-divergence-probe4.out.log):
+## workspace/scratch/opus29-divergence-probe4.out.log):
 ##   1. the sim is configured through the slice's own match-configuration path,
 ##      so it has the castle contracts, expansion rules and spellbook the live
 ##      match has. A bare setup() gave it 2 structures against the live 16;
@@ -4006,7 +4006,7 @@ func _finish() -> void:
 	## without-documents branch those checks never run, so their names are
 	## never observed failing, and the "known failure now passes" direction
 	## fired for all of them at once: measured 2026-08-04 against
-	## .private/retail-work/packs/bfme2-men-vslice the runner reported
+	## workspace/retail-work/packs/bfme2-men-vslice the runner reported
 	## failed=48 = 9 real failures + 39 = KNOWN_FAILURE_NAMES.size() spurious
 	## retail_gate_update_allowlist_* rows. That is what broke
 	## tools/gate-retail.ps1, whose regex demands failed=0 against exactly that

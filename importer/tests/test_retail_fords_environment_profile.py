@@ -95,12 +95,12 @@ class FordsEnvironmentProfilePrivateIntegrationTests(unittest.TestCase):
         cls.repo = Path(__file__).resolve().parents[2]
         cls.paths = {
             "effective_assets_root": cls.repo
-            / ".private/retail-work/cache/effective-assets",
+            / "workspace/retail-work/cache/effective-assets",
             "manifest_path": cls.repo
-            / ".private/retail-work/cache/effective-assets/.openbfme/manifest.json",
-            "catalog_path": cls.repo / ".private/retail-work/catalog/bfme2.json",
+            / "workspace/retail-work/cache/effective-assets/.openbfme/manifest.json",
+            "catalog_path": cls.repo / "workspace/retail-work/catalog/bfme2.json",
             "environment_report_path": cls.repo
-            / ".private/retail-work/reports/retail-fords-environment-c1f300fcf6fed6f2.json",
+            / "workspace/retail-work/reports/retail-fords-environment-c1f300fcf6fed6f2.json",
         }
         if not all(path.exists() for path in cls.paths.values()):
             raise unittest.SkipTest("private BFME2 retail environment evidence is unavailable")

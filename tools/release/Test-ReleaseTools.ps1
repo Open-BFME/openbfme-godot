@@ -171,9 +171,9 @@ try {
     }
 
     $privatePayload = Join-Path $temp "private-payload"
-    [void](New-Item -ItemType Directory -Path (Join-Path $privatePayload ".private"))
+    [void](New-Item -ItemType Directory -Path (Join-Path $privatePayload "workspace"))
     [IO.File]::WriteAllText(
-        (Join-Path $privatePayload ".private\receipt.json"),
+        (Join-Path $privatePayload "workspace\receipt.json"),
         "{}",
         [Text.UTF8Encoding]::new($false)
     )
@@ -182,14 +182,14 @@ try {
     $privateOutput = @(& powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
         -File (Join-Path $PSScriptRoot "Test-ReleaseArtifact.ps1") -Path $privateArchive 2>&1)
     if ($LASTEXITCODE -eq 0 -or ($privateOutput -join "`n") -notmatch "forbidden private or agent path") {
-        throw "Release artifact scanner accepted a .private payload."
+        throw "Release artifact scanner accepted a workspace payload."
     }
 
     $portablePayload = Join-Path $temp "portable-payload"
     [void](New-Item -ItemType Directory -Path $portablePayload)
     [IO.File]::WriteAllText(
         (Join-Path $portablePayload "README.txt"),
-        "Runtime state is stored under .private/retail-work and is never packaged.",
+        "Runtime state is stored under workspace/retail-work and is never packaged.",
         [Text.UTF8Encoding]::new($false)
     )
     $portableArchive = Join-Path $temp "portable.zip"

@@ -389,7 +389,7 @@ func _check_compiled_projectile_art(battalion_script: GDScript, controller_scrip
 func _content_db() -> Node:
 	var content_db := root.get_node_or_null("/root/ContentDB")
 	if content_db != null and (content_db.pack_roots as Array).is_empty():
-		var workspace := ProjectSettings.globalize_path("res://../.private/content-packs")
+		var workspace := ProjectSettings.globalize_path("res://../workspace/content-packs")
 		if DirAccess.dir_exists_absolute(workspace):
 			OS.set_environment("OPENBFME_CONTENT", workspace)
 			content_db.reload()

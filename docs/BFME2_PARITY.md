@@ -53,7 +53,7 @@ contract is policy-and-validation-only and cannot support a completeness claim.
 Private generator outputs (when present) live under:
 
 ```text
-.private/retail-work/reports/compatibility/
+workspace/retail-work/reports/compatibility/
 ```
 
 Human documents do not copy faction, hero, map, power, or asset denominators.

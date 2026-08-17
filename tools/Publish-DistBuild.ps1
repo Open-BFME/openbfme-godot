@@ -60,7 +60,7 @@
 
 .PARAMETER ContentRoot
     Pack cache to publish from. Default: whatever Build-PlayableBundle resolves,
-    which is OPENBFME_CONTENT then .private/content-packs in this worktree then
+    which is OPENBFME_CONTENT then workspace/content-packs in this worktree then
     in the main one. The resolved path and the packs selection.json names are
     printed and recorded, never assumed.
 

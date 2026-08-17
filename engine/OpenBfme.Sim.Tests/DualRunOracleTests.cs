@@ -34,7 +34,7 @@ namespace OpenBfme.Sim.Tests;
 /// </summary>
 public class DualRunOracleTests
 {
-    private const string TraceRelativePath = ".private/retail-work/reports/dualrun/gdscript_trace.json";
+    private const string TraceRelativePath = "workspace/retail-work/reports/dualrun/gdscript_trace.json";
     private const string FarmTemplate = "farm";
     private const string BarracksTemplate = "barracks";
     private const string BattalionTemplate = "soldier";
@@ -50,7 +50,7 @@ public class DualRunOracleTests
         // A missing trace must never look like a pass. xunit 2.9 has no dynamic
         // skip, so the only honest options are "ran and asserted" or "failed
         // loudly". Silence is what let this report Passed while executing
-        // nothing, on every CI run, because /.private/ is gitignored.
+        // nothing, on every CI run, because /workspace/ is gitignored.
         var explicitOverride = Environment.GetEnvironmentVariable("OPENBFME_DUALRUN_TRACE");
         var tracePath = LocateTrace();
         if (tracePath == null)
@@ -70,7 +70,7 @@ public class DualRunOracleTests
                     "Produce the trace with game/tests/retail_dualrun_trace_runner.gd, point " +
                     "OPENBFME_DUALRUN_TRACE at one, or set OPENBFME_DUALRUN_OPTIONAL=1 to declare " +
                     "in the caller that the trace is intentionally unavailable (public CI has no " +
-                    "access to .private). Do not make this silent again.");
+                    "access to workspace). Do not make this silent again.");
             }
 
             _output.WriteLine(

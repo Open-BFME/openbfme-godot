@@ -18,7 +18,7 @@
 
 > **Not a finished game.** Not a download of BFME2/RotWK. You need a legal RotWK 2.01
 > install (BFME2 base as the importer layers it). Converted packs stay under local
-> `.private/` and are never committed.
+> `workspace/` and are never committed.
 
 ## Quick start (Windows)
 
@@ -36,7 +36,7 @@ powershell -File tools\gate-rotwk-systems.ps1 -SkipLiveRetail
 run_rotwk_one_button.bat "%ROTWK_INSTALL%"
 
 :: Fresh machine: convert multi-map pack, select it, optional launch
-:: ( --publish rewrites .private\content-packs\selection.json )
+:: ( --publish rewrites workspace\content-packs\selection.json )
 run_rotwk_one_button.bat "%ROTWK_INSTALL%" --multi-map --build --publish --launch
 
 :: Or launch if a pack is already selected
@@ -59,7 +59,7 @@ formats. Default content baseline is **RotWK 2.01** (`importer` CLI
 | `engine/` | Deterministic sim library (.NET) |
 | `tools/` | Onboard, RotWK systems factory, gates, release tooling |
 | `contracts/` | Product / modding policy JSON |
-| `.private/` | **Local only** - retail inputs and converted packs (gitignored) |
+| `workspace/` | **Local only** - retail inputs and converted packs (gitignored) |
 
 Development is **systems-first** against RotWK data (maps, convert, binding,
 packs, sim), not a permanent one-map freeze. Product ladder and non-goals:
@@ -86,7 +86,7 @@ This tree is large and uneven. A practical way in:
 
 Agents help orientation and drafts. Treat their claims as unproven until a
 human check and a real gate or play session agree. Never let a tool commit
-retail assets, secrets, or paths under `.private/`.
+retail assets, secrets, or paths under `workspace/`.
 
 ## Credits and inspiration
 

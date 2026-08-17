@@ -53,7 +53,7 @@ $forbiddenExtensions = @(
 $textExtensions = @(
     ".cfg", ".gd", ".godot", ".json", ".md", ".ps1", ".py", ".txt", ".tscn"
 )
-$forbiddenText = '(?i)(?:[A-Z]:[\\/]BFME2(?:[\\/]|$)|_bfme2_extract|EA Games|Electronic Arts|OpenSAGE(?:\.|/|\\)|Sage\.Game|Sage\.Ini)'
+$forbiddenText = '(?i)(?:[A-Z]:[\\/]BFME2(?:[\\/]|$)|workspace/retail-extract|EA Games|Electronic Arts|OpenSAGE(?:\.|/|\\)|Sage\.Game|Sage\.Ini)'
 $ignoredSegments = @(".godot", ".import")
 $rootPrefix = $scanRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
 
@@ -92,7 +92,7 @@ foreach ($file in $files) {
     $relative = $file.FullName.Substring($rootPrefix.Length).Replace('\', '/')
     $totalBytes += [long]$file.Length
     $segments = @($relative -split '/')
-    if ($segments -contains "_bfme2_extract") {
+    if ($segments -contains "workspace/retail-extract") {
         $violations.Add("forbidden directory: $relative")
     }
     if ($forbiddenExtensions -contains $file.Extension.ToLowerInvariant()) {
@@ -213,7 +213,7 @@ foreach ($relative in $tracked) {
         $trackedViolations.Add("tracked retail-format extension: $relative")
         continue
     }
-    if (@($relative -split '/') -contains "_bfme2_extract") {
+    if (@($relative -split '/') -contains "workspace/retail-extract") {
         $trackedViolations.Add("tracked forbidden directory: $relative")
         continue
     }

@@ -2950,11 +2950,11 @@ def _load_json(path: Path, label: str, maximum: int = 64 * 1024 * 1024) -> Mappi
 
 
 def validated_private_output_path(output_path: Path, private_root: Path) -> Path:
-    """Resolve an output below an existing canonical `.private` root."""
+    """Resolve an output below an existing canonical `workspace` root."""
 
     root = private_root.resolve(strict=True)
-    if not root.is_dir() or root.name.casefold() != ".private":
-        raise ValueError("private output root must be an existing .private directory")
+    if not root.is_dir() or root.name.casefold() != "workspace":
+        raise ValueError("private output root must be an existing workspace directory")
     parent = output_path.parent.resolve(strict=True)
     resolved = parent / output_path.name
     try:
@@ -3117,7 +3117,7 @@ def write_m3_expansion_report(
             "",
             "## Scope and containment",
             "",
-            "- Generated retail-derived data and converted payloads remain below `.private/`.",
+            "- Generated retail-derived data and converted payloads remain below `workspace/`.",
             "- Tracked changes are limited to importer source, profile recipe, and tests.",
             "- No file under `game/` was modified and no Godot gate was run.",
             "",

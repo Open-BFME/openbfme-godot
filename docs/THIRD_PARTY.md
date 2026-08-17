@@ -19,7 +19,7 @@ tree and selected-package digests belong in generated tool/provenance manifests 
 | Generated OBJ meshes | Tools-authored stand-in geometry | Repository-authored output; generator/input provenance required | Legal-safe development lane only unless separately approved for release |
 | Generated WAV music beds | Adaptive explore/battle/victory stand-ins | Procedural output; generator not yet committed - see *Open provenance items* | Legal-safe development lane only; not retail audiovisual parity evidence |
 | Procedural SFX (`tools/gen_sfx.py`) | 51 placeholder combat/UI/ambient sound effects | Repository-authored; synthesised from committed source, reproducible byte-for-byte | Shippable repository-authored lane; stands in for retail audio the player supplies locally |
-| User-owned BFME2 1.06 / RotWK 2.01 installation | Private compatibility extraction, conversion and oracle observation | Proprietary retail content; non-redistributable project lane | Inputs and all derived payloads remain below `.private`; never shipped, committed or transferred by a server |
+| User-owned BFME2 1.06 / RotWK 2.01 installation | Private compatibility extraction, conversion and oracle observation | Proprietary retail content; non-redistributable project lane | Inputs and all derived payloads remain below `workspace`; never shipped, committed or transferred by a server |
 
 Donor material is accepted only through a bounded provenance review. No donor runtime
 types or source are copied merely because a format tool is used for observation.

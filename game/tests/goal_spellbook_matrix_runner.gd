@@ -17,7 +17,7 @@ const SUMMON_SCOPE := {
 	"angmar": ["SpellBookSummonOrcs", "SpellBookSummonGiants", "SpellBookSummonWights"],
 }
 # Literal RotWK summon expectations, pinned against the PURE retail tree
-# .private/retail-work/editions/rotwk/cache/effective-assets — the tree the
+# workspace/retail-work/editions/rotwk/cache/effective-assets — the tree the
 # published packs are compiled from. The sibling layered-effective-assets tree
 # is NOT the oracle: it rewrites magnitudes in place and pushes retail's values
 # behind `;,;` / `;;,;;` markers, so a citation taken from it reads as
@@ -121,7 +121,7 @@ const COOLDOWN_MS_BY_TIER := {1: 180000, 2: 360000, 3: 540000, 4: 720000, 6: 120
 # ---------------------------------------------------------------------------
 # TERRAIN-TAINT and REVEAL families. Same discipline as the summon table above:
 # every number is a literal read off the PURE RETAIL 2.01 oracle at
-# .private/retail-work/editions/rotwk/cache/effective-assets/data/ini, so the
+# workspace/retail-work/editions/rotwk/cache/effective-assets/data/ini, so the
 # runner can never derive its expectations from the effect dictionary it tests.
 # Shared defines (data/ini/gamedata.ini):
 #   :185  SPELLBOOK_TAINT_RADIUS        175
@@ -190,7 +190,7 @@ const TERRAIN_REVEAL_EXPECTATIONS := {
 	},
 	# Men's Elven Wood is a DIFFERENT power from the Elves' one above and its
 	# oracle is a different tree: the men spellbook is compiled from BFME2 1.06
-	# (.private/retail-work/cache/effective-assets), not from RotWK, so every
+	# (workspace/retail-work/cache/effective-assets), not from RotWK, so every
 	# literal here is read there and none of them may be copied from the Elves
 	# row. 1.06 rebalanced this power and the `; ;` markers in that tree record
 	# it (old value commented to the right of the live one):
@@ -356,7 +356,7 @@ const UNTAMED_ALLEGIANCE_ROW := {
 # WEATHER / GLOBAL and LAIR-CONVERSION families (round 15, batch 2). Same
 # discipline as the tables above: every number is a literal read off the PURE
 # RETAIL 2.01 oracle at
-# .private/retail-work/editions/rotwk/cache/effective-assets/data/ini, so the
+# workspace/retail-work/editions/rotwk/cache/effective-assets/data/ini, so the
 # runner can never derive its expectations from the effect dictionary it tests.
 #
 # Shared defines (data/ini/gamedata.ini):
@@ -452,7 +452,7 @@ const EXPECTED_CASTABLE_POWER_COUNT := 67
 ## unreadable INVULNERABLE row beside it).
 ##
 ## MEASURED, not guessed. The true count on arrival at round 18 was 68 of 84
-## powers, from .private/scratch/opus25-spellbook-BASELINE.json:
+## powers, from workspace/scratch/opus25-spellbook-BASELINE.json:
 ##   angmar 10, dwarves 9, elves 10, isengard 8, men 11, mordor 10, wild 10.
 ## The two restorations above bring it to 70 (angmar 11, men 12).
 ##
@@ -481,7 +481,7 @@ const EXPECTED_EXCLUDED_PENDING := 1
 const EXPECTED_PENDING_MISMATCH_KEYS := {"isengard/SpellBookDragonStrike": true}
 
 ## THE LOCKED SET, PINNED BY IDENTITY. Measured on this tree
-## (.private/scratch/opus26-spellbook-BASELINE.json, 14 of 84). Set equality, so
+## (workspace/scratch/opus26-spellbook-BASELINE.json, 14 of 84). Set equality, so
 ## it fails in BOTH directions: a newly locked power fails, and an UNLOCKED one
 ## fails too and demands that the change which earned it says so here. A count
 ## alone could never see a swap.
@@ -505,7 +505,7 @@ const EXPECTED_LOCKED_POWER_KEYS := {
 ## A power that compiles, purchases and CASTS can still have a payload that
 ## nothing in the sim consumes, and the castable count could not tell the
 ## difference. Five powers are in exactly that state, and they are a FAMILY, not
-## one straggler. Measured with .private/scratch/opus26-snowbind-probe.out.log,
+## one straggler. Measured with workspace/scratch/opus26-snowbind-probe.out.log,
 ## which dumps every compiled `attribute_modifier` effect:
 ##
 ##   angmar/SpellBookSnowbind        production_mult 0.01  ANY ENEMIES ALLIES +STRUCTURE
@@ -1192,7 +1192,7 @@ func _assert_summon_runtime(sim, faction_id: String, power_id: String, row: Dict
 	## FADED: retail's LifetimeUpdate DeathType = FADED routes the expiry into a
 	## SlowDeathBehavior whose DeathTypes row is `NONE +FADED` — a fade-out, not a
 	## corpse. Oracle is the PURE retail tree; paths below are relative to
-	## .private/retail-work/editions/rotwk/cache/effective-assets/data/ini
+	## workspace/retail-work/editions/rotwk/cache/effective-assets/data/ini
 	## (NOT the sibling layered-effective-assets tree, which rewrites several of
 	## these magnitudes in place — re-cited 2026-08-04, round 13):
 	##   object/goodfaction/generic/tombombadil.ini:535-538    MinLifetime/MaxLifetime 60000, DeathType = FADED
@@ -2125,7 +2125,7 @@ func _assert_modifier_row_contracts() -> void:
 			sim._parse_modifier_row("")])
 
 	# --- 1a. one contract per shape found in the PURE RETAIL census -----------
-	# Census over .private/retail-work/editions/rotwk/cache/effective-assets
+	# Census over workspace/retail-work/editions/rotwk/cache/effective-assets
 	# (all .ini/.inc, comments stripped): 894 `Modifier =` rows, KIND_PCT 386,
 	# KIND_PLAIN 363, MULTI 145, BARE_FLAG **0**.
 	#

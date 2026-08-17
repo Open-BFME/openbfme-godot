@@ -16,7 +16,7 @@ extends SceneTree
 ##     imageBindingMetadata (the validator's declared-vs-decoded rule)
 ##
 ## Run:
-##   OPENBFME_CONTENT=<repo>/.private/content-packs godot --headless --path game \
+##   OPENBFME_CONTENT=<repo>/workspace/content-packs godot --headless --path game \
 ##     --script res://tests/angmar_hud_binding_sweep_runner.gd
 
 const BOOT_DEADLINE_MS := 300000

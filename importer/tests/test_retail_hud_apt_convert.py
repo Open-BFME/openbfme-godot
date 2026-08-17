@@ -506,8 +506,8 @@ def test_private_retail_contract_is_deterministic_and_fail_closed(
     tmp_path: Path,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
-    plan = repo / ".private/scratch/hud-261-source-conversion/plan.json"
-    assets = repo / ".private/retail-work/cache/effective-assets"
+    plan = repo / "workspace/scratch/hud-261-source-conversion/plan.json"
+    assets = repo / "workspace/retail-work/cache/effective-assets"
     if not plan.is_file() or not assets.is_dir():
         pytest.skip("private BFME2 retail HUD closure is unavailable")
     first = tmp_path / "first.json"
@@ -1192,8 +1192,8 @@ def test_private_261_source_bundle_needs_no_planner_at_conversion_time(
     tmp_path: Path,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
-    plan_path = repo / ".private/scratch/hud-261-source-conversion/plan.json"
-    assets = repo / ".private/retail-work/cache/effective-assets"
+    plan_path = repo / "workspace/scratch/hud-261-source-conversion/plan.json"
+    assets = repo / "workspace/retail-work/cache/effective-assets"
     if not plan_path.is_file() or not assets.is_dir():
         pytest.skip("private BFME2 retail HUD closure is unavailable")
     plan = json.loads(plan_path.read_text(encoding="utf-8"))

@@ -60,7 +60,7 @@ const PIN_TICKS := 3000
 ## Superseded value: b177804c0457caccc670a6c8e3aa7f2cb74f76f8a1feeef93e3d0128feac0301
 ## New value:        e5ba939111c0efad0d5d2b581b3fc86bae900a142782126334a33957e00a9f4d
 ##
-## WHY, measured (bisect logs: .private/scratch/opus18-pin-*.log):
+## WHY, measured (bisect logs: workspace/scratch/opus18-pin-*.log):
 ##
 ## 1. The old value was minted against `retail_slice_sim.gd` at 55f0d874
 ##    (2026-07-27 07:32) and is exactly reproducible from that file today - the
@@ -97,7 +97,7 @@ const PIN_TICKS := 3000
 ##
 ## WHY, measured. Round 18 made two changes to structure pathing. Each was
 ## reverted ALONE on this tree and this runner re-run
-## (.private/scratch/opus25-retail_state_pin_runner-REVERT-{evict,corridor,all}.out.log):
+## (workspace/scratch/opus25-retail_state_pin_runner-REVERT-{evict,corridor,all}.out.log):
 ##
 ##   revert the bounded-castle CORRIDOR only  -> a436bb59... (unchanged)
 ##       The corridor is pin-NEUTRAL. Neither pinned scenario issues an attack
@@ -125,7 +125,7 @@ const PIN_TICKS := 3000
 ## path, a total (rather than per-structure) eviction push budget, and three new
 ## eviction exemptions (production exit, live engagement, hoisted id list).
 ## Every hunk was reverted ALONE on this tree and this runner re-run
-## (.private/scratch/opus26-pin-{state,scripted}-{new,revert-*}.out.log):
+## (workspace/scratch/opus26-pin-{state,scripted}-{new,revert-*}.out.log):
 ##
 ##   revert the tangential SLIDE      -> a436bb59… (unchanged)
 ##   revert the production-exit SKIP  -> a436bb59… (unchanged)

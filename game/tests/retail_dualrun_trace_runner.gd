@@ -6,7 +6,7 @@ extends SceneTree
 ## team resources, entity counts, per-entity position/health every
 ## SAMPLE_INTERVAL ticks — plus the command log and the scenario constants the
 ## C# OpenBfme.Sim replay (DualRunOracleTests.cs) mirrors. The trace is written
-## to .private/retail-work/reports/dualrun/gdscript_trace.json.
+## to workspace/retail-work/reports/dualrun/gdscript_trace.json.
 ##
 ## Scope honesty: the C# engine implements a small module subset, so the
 ## scenario stays inside the genuine overlap — farm income, unit training
@@ -239,7 +239,7 @@ func _initial_state(sim) -> Dictionary:
 func _trace_output_path() -> String:
 	var game_dir := ProjectSettings.globalize_path("res://").rstrip("/")
 	var repo_root := game_dir.get_base_dir()
-	return repo_root.path_join(".private/retail-work/reports/dualrun/gdscript_trace.json")
+	return repo_root.path_join("workspace/retail-work/reports/dualrun/gdscript_trace.json")
 
 
 func _expected_player_resources(constants: Dictionary, tick: int) -> int:

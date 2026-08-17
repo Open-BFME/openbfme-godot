@@ -24,7 +24,7 @@
     "parser_identity_rule": "The feature graph records the parser/source-schema revision and digest used to classify assignments.",
     "unknown_rule": "Keep unknown kinds, fields, targets, and roots visible as unresolved coverage rows.",
     "identifier_rule": "Discover retail identifiers from source data; do not encode faction, hero, map, power, object, or asset identifier lists in this contract.",
-    "retail_payload_boundary": ".private only"
+    "retail_payload_boundary": "workspace only"
   },
   "product_domains": [
     {
@@ -610,7 +610,7 @@
   "generated_outputs": {
     "claim_status": "blocked-until-generator-validator-and-current-reports-exist",
     "claim_rule": "No completeness claim may be emitted from this policy file alone.",
-    "private_root": ".private/retail-work/reports/compatibility",
+    "private_root": "workspace/retail-work/reports/compatibility",
     "feature_graph": "rotwk-201-feature-graph.json",
     "evidence_catalog": "rotwk-201-evidence-catalog.json",
     "coverage_matrix": "rotwk-201-coverage-matrix.json",

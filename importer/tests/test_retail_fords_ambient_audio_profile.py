@@ -67,14 +67,14 @@ class FordsAmbientAudioPrivateIntegrationTests(unittest.TestCase):
         cls.repo = Path(__file__).resolve().parents[2]
         cls.paths = {
             "effective_assets_root": cls.repo
-            / ".private/retail-work/cache/effective-assets",
+            / "workspace/retail-work/cache/effective-assets",
             "manifest_path": cls.repo
-            / ".private/retail-work/cache/effective-assets/.openbfme/manifest.json",
-            "catalog_path": cls.repo / ".private/retail-work/catalog/bfme2.json",
+            / "workspace/retail-work/cache/effective-assets/.openbfme/manifest.json",
+            "catalog_path": cls.repo / "workspace/retail-work/catalog/bfme2.json",
             "map_objects_path": cls.repo
-            / ".private/retail-work/packs/bfme2-men-vslice/maps/fords-of-isen-ii/objects.json",
+            / "workspace/retail-work/packs/bfme2-men-vslice/maps/fords-of-isen-ii/objects.json",
             "complete_profile_path": cls.repo
-            / ".private/retail-work/profiles/men-fords-v0-full.generated.json",
+            / "workspace/retail-work/profiles/men-fords-v0-full.generated.json",
             "runtime_audio_path": cls.repo
             / "game/src/retail_slice/retail_slice_audio.gd",
         }

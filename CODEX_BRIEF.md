@@ -3,7 +3,7 @@
 ## Task Summary
 Map unmapped retail combat fields into the Godot 4.7 runtime and importer, close a known armor fallback defect, and promote high-usage rows to runtime coverage. Priority: RotWK 2.01.
 
-## Key Unmapped Gaps (from .private\retail-work\reports\retail-ini-coverage\)
+## Key Unmapped Gaps (from workspace\retail-work\reports\retail-ini-coverage\)
 
 ### 1. **field:object.DamageCreationList** (CRITICAL)
 - **Status**: Fully UNMAPPED (665 RotWK sites, 605 BFME2)
@@ -48,9 +48,9 @@ Promote these to runtime testing ONLY if a real consumer exists or you add one:
 ## Environment Setup
 
 ```
-BFME2_INSTALL=C:\Users\Jonathan\Desktop\open-bfme\.private\retail-work\editions\rotwk\layered-install\layer-1-bfme2
-PYTHONPATH=importer;.private\retail-work\tools\python-3.12-env\Lib\site-packages
-Python: .private\retail-work\tools\cpython-3.12.13\python.exe
+BFME2_INSTALL=C:\Users\Jonathan\Desktop\open-bfme\workspace\retail-work\editions\rotwk\layered-install\layer-1-bfme2
+PYTHONPATH=importer;workspace\retail-work\tools\python-3.12-env\Lib\site-packages
+Python: workspace\retail-work\tools\cpython-3.12.13\python.exe
 Godot: resolve via tools\resolve-godot.bat, then run: <godot> --headless --path game --script res://tests/<runner>.gd
 Importer tests: run_importer_tests.bat
 ```
@@ -115,7 +115,7 @@ Importer tests: run_importer_tests.bat
 ## Constraints & Rules (MANDATORY)
 
 1. **No branches, no worktrees** — work on current worktree; commit to current branch only
-2. **No pack modifications** — never touch .private/selection.json or run apply-selection-transaction
+2. **No pack modifications** — never touch workspace/selection.json or run apply-selection-transaction
 3. **Packs are immutable and sealed** — do not re-cook or modify pack contents
 4. **Touch only combat/damage/FX files**:
    - game/src/retail_slice/ (damage, FX, armor)
@@ -128,8 +128,8 @@ Importer tests: run_importer_tests.bat
 6. **No silent fallbacks** — if a path can't find data, it must fail loudly or error
 7. **Failing test first, then fix** — write runner that fails, then implement to green
 8. **Environment variables must be set**:
-   - BFME2_INSTALL=.private\retail-work\editions\rotwk\layered-install\layer-1-bfme2
-   - PYTHONPATH=importer;.private\retail-work\tools\python-3.12-env\Lib\site-packages
+   - BFME2_INSTALL=workspace\retail-work\editions\rotwk\layered-install\layer-1-bfme2
+   - PYTHONPATH=importer;workspace\retail-work\tools\python-3.12-env\Lib\site-packages
 9. **Redirect Godot runner output to %TEMP%** — uniquely-named files; read and report results
 10. **All runners must be rerunnable commands** — every claim needs evidence
 11. **Run `python tools\check_pack_addresses.py` before declaring done** — must still be green
@@ -168,9 +168,9 @@ python tools\check-product-contracts.py
 ## Codex House Rules (Append to Every Brief, Verbatim)
 
 - Commit on the current worktree branch; NEVER push; NEVER merge to main; NEVER `git stash` (shared stash stack)
-- Godot runs: env OPENBFME_CONTENT=C:\Users\Jonathan\Desktop\open-bfme\.private\content-packs; exe C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe; redirect runner output to uniquely-named %TEMP% files and read the file
-- Python: C:\Users\Jonathan\Desktop\open-bfme\.private\retail-work\tools\python-3.12.13\python.exe with PYTHONPATH pointing at the worktree's importer/
-- Retail INI oracle: .private\retail-work\editions\rotwk\cache\effective-assets — NEVER layered-effective-assets (contaminated)
+- Godot runs: env OPENBFME_CONTENT=C:\Users\Jonathan\Desktop\open-bfme\workspace\content-packs; exe C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe; redirect runner output to uniquely-named %TEMP% files and read the file
+- Python: C:\Users\Jonathan\Desktop\open-bfme\workspace\retail-work\tools\python-3.12.13\python.exe with PYTHONPATH pointing at the worktree's importer/
+- Retail INI oracle: workspace\retail-work\editions\rotwk\cache\effective-assets — NEVER layered-effective-assets (contaminated)
 - No pack builds/publishes/selection changes unless the brief explicitly authorizes them
 - Commit messages end: Co-Authored-By: Codex Sol <noreply@openai.com>
 - An Opus adversarial review gates the merge — write reports for a hostile reviewer; every claim needs a rerunnable command

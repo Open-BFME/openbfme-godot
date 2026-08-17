@@ -30,7 +30,7 @@ $ErrorActionPreference = 'Stop'
 $godotExe = 'C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe'
 $repo = Split-Path -Parent $PSScriptRoot
 $game = Join-Path $repo 'game'
-$env:OPENBFME_CONTENT = 'C:\Users\Jonathan\Desktop\open-bfme\.private\content-packs'
+$env:OPENBFME_CONTENT = 'C:\Users\Jonathan\Desktop\open-bfme\workspace\content-packs'
 
 if (-not (Test-Path -LiteralPath $godotExe -PathType Leaf)) {
     throw "Godot executable not found: $godotExe"

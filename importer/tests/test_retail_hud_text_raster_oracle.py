@@ -12,13 +12,13 @@ from tests.retail_inputs import retail_file
 
 
 ROOT = Path(__file__).resolve().parents[2]
-ASSETS = ROOT / ".private" / "retail-work" / "cache" / "effective-assets"
+ASSETS = ROOT / "workspace" / "retail-work" / "cache" / "effective-assets"
 APT = ASSETS / "Palantir.apt"
 CONST = ASSETS / "Palantir.const"
 DAT = ASSETS / "Palantir.dat"
 OTF = ASSETS / "albertusmt.otf"
 GAME_DAT = retail_file("game.dat")
-OPENSAGE = ROOT / ".private" / "scratch" / "opensage-hud-semantics"
+OPENSAGE = ROOT / "workspace" / "scratch" / "opensage-hud-semantics"
 
 pytestmark = pytest.mark.skipif(
     not all(path.is_file() for path in (APT, CONST, DAT, OTF, GAME_DAT)),

@@ -1,9 +1,9 @@
 """Lane L1 oracle: the per-map castle capability matrix from pure retail bytes.
 
-Oracle: ``.private/retail-work/editions/rotwk/cache/effective-assets`` (PURE
+Oracle: ``workspace/retail-work/editions/rotwk/cache/effective-assets`` (PURE
 RotWK 2.01), never ``layered-effective-assets`` and never the stale
-``.private/retail-work/cache/effective-assets`` tree.  Map object placements
-come from the retail map archives via ``.private/retail-work/catalog/rotwk.json``.
+``workspace/retail-work/cache/effective-assets`` tree.  Map object placements
+come from the retail map archives via ``workspace/retail-work/catalog/rotwk.json``.
 
 The pinned matrix is the brief's (docs/castle-siege-design.md section 1.2).
 Two traps are pinned by name:
@@ -37,12 +37,12 @@ from openbfme_importer.sage_map import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
-PRIVATE_ROOT = ROOT / ".private" / "retail-work"
+PRIVATE_ROOT = ROOT / "workspace" / "retail-work"
 if (
     not (PRIVATE_ROOT / "editions" / "rotwk" / "cache" / "effective-assets").is_dir()
     and ROOT.parent.name == "worktrees"
 ):
-    PRIVATE_ROOT = ROOT.parents[2] / ".private" / "retail-work"
+    PRIVATE_ROOT = ROOT.parents[2] / "workspace" / "retail-work"
 EFFECTIVE_ASSETS = PRIVATE_ROOT / "editions" / "rotwk" / "cache" / "effective-assets"
 CATALOG_PATH = PRIVATE_ROOT / "catalog" / "rotwk.json"
 

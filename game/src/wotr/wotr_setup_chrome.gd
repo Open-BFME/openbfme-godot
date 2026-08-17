@@ -24,7 +24,7 @@ extends RefCounted
 ##     the menu SHELLMAP, which is why no apt sheet carries it).
 ##
 ## `load_art()` reads those files - RETAIL PAYLOAD, so only ever from a root
-## under `.private` or a mounted pack, named by `OPENBFME_SHELL_ART` or a pack
+## under `workspace` or a mounted pack, named by `OPENBFME_SHELL_ART` or a pack
 ## root - and every draw call below then places CROPS of them. The crop
 ## rectangles were measured off the sheets by alpha-component bounds and are
 ## recorded here, one comment each; they are this project's measurements of
@@ -154,13 +154,13 @@ static var art_reason := "load_art() has not run"
 ## missing ANY sheet is skipped and named, and with no root the chrome stays
 ## hand-built and the screen records why.
 ##
-## IT MUST BE THE **ROTWK** ROOT: `.private/retail-work/editions/rotwk/cache/
+## IT MUST BE THE **ROTWK** ROOT: `workspace/retail-work/editions/rotwk/cache/
 ## effective-assets`. (This pointer named `layered-effective-assets` until
 ## 2026-08-04. The six sheets are byte-identical in both RotWK roots — the
 ## layered tree overrides data/ini, not art — but every other oracle in the
 ## repo now cites the pure tree, so naming the layered one here was a
 ## trip-hazard rather than a difference.) The edition-neutral
-## `.private/retail-work/cache/effective-assets` is BFME2's layer and every
+## `workspace/retail-work/cache/effective-assets` is BFME2's layer and every
 ## rectangle in `ART_PIECES` would
 ## be wrong on it - BFME2's `apt_MenuExport_*` sheets are the GREEN menu set at
 ## different sizes, its `apt_MainMenu_1` is a pre-order advertisement for the

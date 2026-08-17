@@ -30,8 +30,8 @@ func _run() -> void:
 		_fail("live soak requires a non-headless Forward+ window")
 		return
 	var output := OS.get_environment("OPENBFME_M2_SOAK_OUTPUT").replace("\\", "/")
-	if output == "" or not output.contains("/.private/") or output.get_extension().to_lower() != "json":
-		_fail("OPENBFME_M2_SOAK_OUTPUT must be a JSON file below .private")
+	if output == "" or not output.contains("/workspace/") or output.get_extension().to_lower() != "json":
+		_fail("OPENBFME_M2_SOAK_OUTPUT must be a JSON file below workspace")
 		return
 	var duration := DEFAULT_DURATION_SECONDS
 	var duration_text := OS.get_environment("OPENBFME_M2_SOAK_SECONDS")

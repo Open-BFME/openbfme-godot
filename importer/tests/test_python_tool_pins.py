@@ -70,13 +70,13 @@ def test_runtime_attestation_pins_executables_without_host_paths() -> None:
                 for component in value.replace("\\", "/").split("/")
                 if component
             }
-            assert ".private" not in components
+            assert "workspace" not in components
             assert "retail-work" not in components
 
     assert_portable(receipt)
     for private_path in (
-        ".private/retail-work/tools/python.exe",
-        r".private\retail-work\tools\python.exe",
+        "workspace/retail-work/tools/python.exe",
+        r"workspace\retail-work\tools\python.exe",
         "retail-work/tools/python.exe",
     ):
         with pytest.raises(AssertionError):

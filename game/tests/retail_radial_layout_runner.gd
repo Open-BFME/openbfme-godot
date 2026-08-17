@@ -24,7 +24,7 @@ extends SceneTree
 ## front of the full `fortress_command_surface_runner` match.
 ##
 ## Run:
-##   OPENBFME_CONTENT=<repo>/.private/content-packs godot --headless --path game \
+##   OPENBFME_CONTENT=<repo>/workspace/content-packs godot --headless --path game \
 ##     --script res://tests/retail_radial_layout_runner.gd
 
 const RADIAL_BUTTON_SIZE := Vector2(64, 64)

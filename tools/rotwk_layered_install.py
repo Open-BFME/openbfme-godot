@@ -5,7 +5,7 @@ RotWK's own terrain.big is thin; most multiplayer map terrain textures live in
 the BFME2 base. The private layered-install tree (junctions) is the supported
 way to present both installs as one catalog:
 
-  .private/retail-work/editions/rotwk/layered-install/
+  workspace/retail-work/editions/rotwk/layered-install/
     layer-0-rotwk -> <RotWK install>
     layer-1-bfme2 -> <BFME2 install>
 
@@ -119,7 +119,7 @@ def _ensure_junction(link: Path, target: Path) -> None:
 if __name__ == "__main__":
     import sys
 
-    state = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".private/retail-work")
+    state = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("workspace/retail-work")
     path = layered_rotwk_install(state)
     if path is None:
         print("LAYERED_INSTALL missing")

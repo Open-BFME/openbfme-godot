@@ -17,10 +17,10 @@ from tools.repair_goal_pack_map_scripts import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-CATALOG = ROOT / ".private/retail-work/catalog/rotwk.json"
+CATALOG = ROOT / "workspace/retail-work/catalog/rotwk.json"
 ORACLE_PACK = (
     ROOT
-    / ".private/content-packs/rotwk-skirmish-maps-private"
+    / "workspace/content-packs/rotwk-skirmish-maps-private"
     / "95d51e53fa194e1de097b46a25b38e03fbf7b8a3292e01973ff0e8c3a00be686"
 )
 REAL_MAP = "maps/map mp adorn river/map mp adorn river.map"
@@ -180,7 +180,7 @@ def test_compose_refuses_undecodable_map_source() -> None:
         )
 
 
-def test_resolve_selected_pack_reads_workspace_selection(tmp_path: Path) -> None:
+def test_resolve_selected_pack_reads_.private_selection(tmp_path: Path) -> None:
     with pytest.raises(RepairRefusal, match="selection is missing"):
         resolve_selected_pack(tmp_path)
 

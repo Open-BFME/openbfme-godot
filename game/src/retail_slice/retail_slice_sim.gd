@@ -1482,7 +1482,7 @@ var scenario_map_placements_enabled := false
 ##      move order caps every member of the group at the slowest authored speed
 ##      so the group arrives together instead of scattering by class.
 ##
-## See .private/scratch/opus17-formation-extraction.md for the full citation set.
+## See workspace/scratch/opus17-formation-extraction.md for the full citation set.
 var retail_formation_movement := false
 var _scenario_map_placements: Array = []
 var _scenario_map_seeded_source_indices: Dictionary = {}
@@ -6459,7 +6459,7 @@ func _parse_modifier_row(value: String) -> Dictionary:
 	##
 	## SHAPES ARE A CENSUS, NOT A GUESS. Round 18 counted every `Modifier =` row
 	## in the PURE RETAIL oracle tree
-	## (.private/retail-work/editions/rotwk/cache/effective-assets, all .ini/.inc,
+	## (workspace/retail-work/editions/rotwk/cache/effective-assets, all .ini/.inc,
 	## comments stripped): 894 rows total, and they fall into exactly three
 	## authored shapes —
 	##
@@ -8673,7 +8673,7 @@ func _cast_spellbook_attribute_modifier(team: int, effect: Dictionary, point: Ve
 	# matrix, casting mordor/SpellBookIndustry moved an ally from
 	# rally_until_tick 3601 / rally_damage_mult 1.5 to 3001 / 1.0 — a live 150%
 	# rally buff ended early by a power whose entire authored payload is an
-	# economy multiplier (.private/scratch/opus29-spellbook-A.out.log).
+	# economy multiplier (workspace/scratch/opus29-spellbook-A.out.log).
 	#
 	# `authored_rows` is what makes this checkable rather than guessable: it
 	# distinguishes a leaf that authored DAMAGE_MULT 100% (a deliberate neutral
@@ -27540,7 +27540,7 @@ func _structure_footprint_radius(structure_row: Dictionary) -> float:
 ## number is a gift of free weapon reach and free acquisition range against
 ## exactly the structures whose real size is unknown. Censused across every
 ## playable-structure document in every pack on disk
-## (.private/scratch/opus29-footprint-census.txt, 196 documents that carry
+## (workspace/scratch/opus29-footprint-census.txt, 196 documents that carry
 ## geometry): the median authored radius is 48, the 10th percentile is 15, and
 ## 104 of the 196 are BELOW 50. A 50.0 fallback over-expands most of them.
 ##
@@ -27650,7 +27650,7 @@ func _target_footprint_radius(target_id: int, target_kind: String) -> float:
 ## by coincidence, and the alias hid the actual bound.
 ##
 ## DERIVED from the one castle the pack ships (MenFortress on Fords of Isen II,
-## measured in .private/scratch/opus24-probe1.out.log): every castle piece
+## measured in workspace/scratch/opus24-probe1.out.log): every castle piece
 ## carries the default 2.8 STRUCTURE_BLOCK_RADIUS; attacking the fortress centre
 ## from outside puts the furthest corner pad 2.398 off the walking line, and
 ## attacking an east corner pad from the east puts the two west pads 3.392 off
@@ -27705,7 +27705,7 @@ func _castle_footprint_pass_through(position: Vector2, attack_target_id: int, at
 	## pads within 64 source units of it. At the Fords of Isen II transform
 	## (0.02649232738129) that is a citadel exactly on the fortress centre and
 	## pads 1.64-2.40 sim units out — measured live, every enemy castle piece in
-	## .private/scratch/opus24-probe1.out.log. Each piece carries the default
+	## workspace/scratch/opus24-probe1.out.log. Each piece carries the default
 	## 2.8 STRUCTURE_BLOCK_RADIUS, so exempting only the ordered target left the
 	## fortress ringed by a ~5.2-unit wall of its own sub-structures. Retail melee
 	## ranges are ~11.5 source units = 0.305 sim, and the MOVEMENT ring is 5.2, so
@@ -27713,7 +27713,7 @@ func _castle_footprint_pass_through(position: Vector2, attack_target_id: int, at
 	## than the 1.9604 footprint the range gate now subtracts (round 20), so the
 	## corridor is still required: they parked on the ring at distance 4.4-5.1 in state
 	## `run` and only ranged units ever landed a blow
-	## (.private/scratch/opus09-live1.out.log:35,52 — 17,521 ticks to kill a
+	## (workspace/scratch/opus09-live1.out.log:35,52 — 17,521 ticks to kill a
 	## fortress, all of it archer damage).
 	##
 	## THE RULE: a member is passable only if the segment [unit -> target centre]
@@ -27725,7 +27725,7 @@ func _castle_footprint_pass_through(position: Vector2, attack_target_id: int, at
 	## empty set on the first line, so that path stays byte-identical.
 	##
 	## MEASURED against the one castle the pack ships (MenFortress on Fords of
-	## Isen II, .private/scratch/opus24-probe1.out.log: fortress radius 4.6 at
+	## Isen II, workspace/scratch/opus24-probe1.out.log: fortress radius 4.6 at
 	## the origin, citadel radius 2.8 exactly on it, two side pads 1.643 out and
 	## four corner pads 2.398 out, all radius 2.8):
 	##   attacking the fortress centre from outside  -> every piece is on the
@@ -27896,7 +27896,7 @@ func _deflect_around_structures(
 			# up walled melee out of every fortress it was ordered onto. But
 			# opening it completely let the attacker walk to the target's CENTRE —
 			# measured d=0.24 then d=0.00 in the live slice
-			# (.private/scratch/opus24-probe2.out.log).
+			# (workspace/scratch/opus24-probe2.out.log).
 			#
 			# Now that the range gate is surface-to-surface the wall is reachable
 			# and standing off it is correct, so the target reasserts its OWN
@@ -28091,7 +28091,7 @@ func _step_structure_eviction() -> void:
 			# end-of-tick position is exactly STRUCTURE_EVICTION_STEP (0.35) off
 			# the authored lerp for the whole time it is inside the producer's
 			# disc, and then the two reconverge byte for byte
-			# (.private/scratch/opus26-pin-positions-{new,revert-prodexit}.json.tick*):
+			# (workspace/scratch/opus26-pin-positions-{new,revert-prodexit}.json.tick*):
 			#   t=211  penetration 1.7851 vs 1.4351   (0.3500 apart)
 			#   t=214  penetration 1.2681 vs 0.9181   (0.3500 apart)
 			#   t=217  penetration 0.5030 vs 0.1530   (0.3500 apart)
@@ -28118,7 +28118,7 @@ func _step_structure_eviction() -> void:
 		# says, so it gets no corridor. Measured need: the live slice parks a unit
 		# with attack_range 0.0 in state `idle` at d=0.00 on the enemy fortress
 		# CENTRE while still holding it as a target
-		# (.private/scratch/opus25-probe1.out.log:`3:idle:t2001:d0.00`) — the
+		# (workspace/scratch/opus25-probe1.out.log:`3:idle:t2001:d0.00`) — the
 		# weapon-mode gate returns "unsupported-close", drops the route and idles,
 		# but never clears the target, so a permanent corridor kept a unit clipped
 		# inside the wall for the whole match. Gating on state, not on target,

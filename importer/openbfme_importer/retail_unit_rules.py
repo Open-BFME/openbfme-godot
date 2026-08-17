@@ -949,9 +949,9 @@ def extract_retail_unit_rules(
             "engineSemantics": {
                 "distance": "SAGE source distances; runtime multiplies by RetailMapData.local_transform_scale",
                 "weaponRange": "center-to-center target position distance",
-                "weaponRangeOracle": ".private/scratch/opensage-source/src/OpenSage.Game/Logic/Object/Weapon/Weapon.cs:54",
-                "locomotorUnitsOracle": ".private/scratch/opensage-source/src/OpenSage.Game/Data/Ini/IniParser.cs:472",
-                "turnTimeOracle": ".private/scratch/opensage-source/src/OpenSage.Game/Logic/Object/LocomotorTemplate.cs:94",
+                "weaponRangeOracle": "workspace/scratch/opensage-source/src/OpenSage.Game/Logic/Object/Weapon/Weapon.cs:54",
+                "locomotorUnitsOracle": "workspace/scratch/opensage-source/src/OpenSage.Game/Data/Ini/IniParser.cs:472",
+                "turnTimeOracle": "workspace/scratch/opensage-source/src/OpenSage.Game/Logic/Object/LocomotorTemplate.cs:94",
             },
             "sources": [
                 {"ini": source.path, "sha256": source.sha256, "byteCount": len(source.payload)}

@@ -16,7 +16,7 @@ from openbfme_importer.retail_hud_host_bridge_oracle import (
 ROOT = Path(__file__).resolve().parents[2]
 SCENE = (
     ROOT
-    / ".private"
+    / "workspace"
     / "scratch"
     / "hud-apt-clip-actions"
     / "bundle-a"
@@ -27,7 +27,7 @@ SCENE = (
 )
 WND = (
     ROOT
-    / ".private"
+    / "workspace"
     / "retail-work"
     / "cache"
     / "effective-assets"
@@ -35,7 +35,7 @@ WND = (
     / "controlbar.wnd"
 )
 OPENSAGE = (
-    ROOT / ".private" / "scratch" / "hud-apt-text-buttons" / "opensage-src"
+    ROOT / "workspace" / "scratch" / "hud-apt-text-buttons" / "opensage-src"
 )
 
 

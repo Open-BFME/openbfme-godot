@@ -33,7 +33,7 @@ def main() -> int:
         "--audio-census",
         type=Path,
         default=None,
-        help="faction leaf census report (e.g. .private/retail-work/reports/"
+        help="faction leaf census report (e.g. workspace/retail-work/reports/"
         "<faction>-faction-leaf-census.json); when given, the composed pack "
         "ships the faction's schemaVersion-1 audio registry, its converted "
         "audio samples, and the eva.ini announcer side map instead of the "
@@ -43,7 +43,7 @@ def main() -> int:
         "--state-root",
         type=Path,
         default=None,
-        help="importer state root (default: .private/retail-work); when its "
+        help="importer state root (default: workspace/retail-work); when its "
         "catalog exists, the composed pack is stamped with the source catalog "
         "identity that m3-bound builds require",
     )
@@ -57,7 +57,7 @@ def main() -> int:
     # Freshly composed profiles bind to the catalog they were composed against;
     # inherited m3 markers otherwise fail the build's source catalog identity
     # check with no stamping path (mirrors cli.py's publish handler).
-    state_root = args.state_root or (ROOT / ".private" / "retail-work")
+    state_root = args.state_root or (ROOT / "workspace" / "retail-work")
     catalog_path = state_root / "catalog" / "bfme2.json"
     catalog = None
     if catalog_path.is_file():

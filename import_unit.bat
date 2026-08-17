@@ -2,8 +2,8 @@
 setlocal
 cd /d "%~dp0"
 
-if not defined OPENBFME_IMPORT_ROOT set "OPENBFME_IMPORT_ROOT=%~dp0.private\retail-work"
-if not defined OPENBFME_CONTENT set "OPENBFME_CONTENT=%~dp0.private\content-packs"
+if not defined OPENBFME_IMPORT_ROOT set "OPENBFME_IMPORT_ROOT=%~dp0workspace\retail-work"
+if not defined OPENBFME_CONTENT set "OPENBFME_CONTENT=%~dp0workspace\content-packs"
 call "%~dp0tools\resolve-retail-install.bat"
 if errorlevel 1 exit /b 1
 

@@ -14,9 +14,9 @@ $ErrorActionPreference = "Stop"
 $gate = "M2_RELIABILITY"
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $gameRoot = Join-Path $repoRoot "game"
-$contentRoot = Join-Path $repoRoot ".private\content-packs"
+$contentRoot = Join-Path $repoRoot "workspace\content-packs"
 $selectionPath = Join-Path $contentRoot "selection.json"
-$profilePath = Join-Path $repoRoot ".private\retail-work\profiles\men-fords-v0-complete.generated.json"
+$profilePath = Join-Path $repoRoot "workspace\retail-work\profiles\men-fords-v0-complete.generated.json"
 $expectedProfileSha256 = "0bc2e76708d3c13b0aeac45afe375e4f120acdf329344b79d683f42e5d667c9d"
 $minimumRetailSliceChecks = 208
 $forbiddenDiagnostics = '(?i)\b(?:ERROR|WARNING|leak(?:ed|s|ing)?|orphan(?:ed|s)?|ObjectDB instances|RID allocations|resources still in use|SCRIPT ERROR)\b'
@@ -62,7 +62,7 @@ try {
     $env:OPENBFME_M2_GIT_REVISION = [string]$identity.revision
     $env:OPENBFME_M2_DIRTY_STATE_DIGEST = [string]$identity.dirtyStateDigest
 
-    $lifecycleRawOutput = Join-Path $repoRoot ".private\scratch\m2-match-lifecycle-raw.json"
+    $lifecycleRawOutput = Join-Path $repoRoot "workspace\scratch\m2-match-lifecycle-raw.json"
     $env:OPENBFME_M2_LIFECYCLE_OUTPUT = $lifecycleRawOutput
     [void](Invoke-ProofChecked $gate "match_lifecycle" $godot @("--headless", "--audio-driver", "WASAPI", "--path", $gameRoot, "--script", "res://tests/m2_match_lifecycle_runner.gd") '(?m)^M2_MATCH_LIFECYCLE_RESULT matches=3 starts=3 teardowns=3 signature=[0-9A-F]{8} bundle=[0-9a-f]{64}\s*$' $forbiddenDiagnostics)
     $matchLifecycle = Read-ProofJson $lifecycleRawOutput
@@ -81,11 +81,11 @@ try {
     Assert-ProofTrue ($signatures.Count -eq 1) "Three clean restarts did not reproduce one signature."
 
     $outputPath = if ([string]::IsNullOrWhiteSpace($Output)) {
-        Join-Path $repoRoot ".private\retail-work\oracle\m2-men-fords-reliability.json"
+        Join-Path $repoRoot "workspace\retail-work\oracle\m2-men-fords-reliability.json"
     } else { [IO.Path]::GetFullPath($Output) }
-    $privateRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot ".private"))
-    Assert-ProofTrue ($outputPath.StartsWith($privateRoot, [StringComparison]::OrdinalIgnoreCase)) "Reliability evidence escaped .private."
-    $rawOutput = Join-Path $repoRoot ".private\scratch\m2-live-soak-raw.json"
+    $privateRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot "workspace"))
+    Assert-ProofTrue ($outputPath.StartsWith($privateRoot, [StringComparison]::OrdinalIgnoreCase)) "Reliability evidence escaped workspace."
+    $rawOutput = Join-Path $repoRoot "workspace\scratch\m2-live-soak-raw.json"
     $env:OPENBFME_M2_SOAK_OUTPUT = $rawOutput
     $env:OPENBFME_M2_SOAK_SECONDS = [string]$DurationSeconds
     $soakOutput = Invoke-ProofChecked $gate "live_soak" $godot @("--audio-driver", "WASAPI", "--path", $gameRoot, "--script", "res://tests/m2_live_soak_runner.gd") '(?m)^M2_LIVE_SOAK_RESULT ' $forbiddenDiagnostics

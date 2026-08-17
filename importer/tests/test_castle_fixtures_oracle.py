@@ -1,8 +1,8 @@
 """Lane L2a oracle: castle map-object admission + fixtures from pure retail bytes.
 
-Oracle: ``.private/retail-work/editions/rotwk/cache/effective-assets`` (PURE
+Oracle: ``workspace/retail-work/editions/rotwk/cache/effective-assets`` (PURE
 RotWK 2.01) only, plus the retail map archives via
-``.private/retail-work/catalog/rotwk.json``.  Every pinned number below is
+``workspace/retail-work/catalog/rotwk.json``.  Every pinned number below is
 authored retail data, read from the INI/map bytes — never derived from this
 lane's own output:
 
@@ -51,12 +51,12 @@ from openbfme_importer.sage_map import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
-PRIVATE_ROOT = ROOT / ".private" / "retail-work"
+PRIVATE_ROOT = ROOT / "workspace" / "retail-work"
 if (
     not (PRIVATE_ROOT / "editions" / "rotwk" / "cache" / "effective-assets").is_dir()
     and ROOT.parent.name == "worktrees"
 ):
-    PRIVATE_ROOT = ROOT.parents[2] / ".private" / "retail-work"
+    PRIVATE_ROOT = ROOT.parents[2] / "workspace" / "retail-work"
 EFFECTIVE_ASSETS = PRIVATE_ROOT / "editions" / "rotwk" / "cache" / "effective-assets"
 CATALOG_PATH = PRIVATE_ROOT / "catalog" / "rotwk.json"
 

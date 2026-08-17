@@ -195,7 +195,7 @@ def test_retail_passive_prop_family_is_exactly_twelve(
     catalog_name: str, game: str
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
-    catalog_path = repo / ".private" / "retail-work" / "catalog" / catalog_name
+    catalog_path = repo / "workspace" / "retail-work" / "catalog" / catalog_name
     if not catalog_path.is_file():
         pytest.skip("operator retail catalog is not available")
     documents = dict(read_catalog_documents(InstallCatalog.load(catalog_path)))

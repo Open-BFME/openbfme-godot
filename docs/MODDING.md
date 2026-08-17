@@ -2,7 +2,7 @@
 
 You can ship **project-authored** packs (JSON + assets). You cannot ship EA's
 retail files. For retail play you convert **your** install into a private pack
-under `.private/` (see [ONBOARDING.md](ONBOARDING.md)).
+under `workspace/` (see [ONBOARDING.md](ONBOARDING.md)).
 
 Two ideas, keep them separate:
 
@@ -112,7 +112,7 @@ match what you want to replace).
 
 **Do not** put retail `.big` / `.w3d` / `.dds` extracts into a public mod.
 Convert through the importer if you need retail-derived content, and keep that
-under `.private/`.
+under `workspace/`.
 
 ## Production direction (not fully implemented)
 

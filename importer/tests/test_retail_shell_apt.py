@@ -19,7 +19,7 @@ from openbfme_importer.sage_apt import (
 )
 
 
-PRIVATE_ROOT = Path(__file__).resolve().parents[2] / ".private" / "retail-work"
+PRIVATE_ROOT = Path(__file__).resolve().parents[2] / "workspace" / "retail-work"
 EFFECTIVE_ASSETS = PRIVATE_ROOT / "cache" / "effective-assets"
 MANIFEST = EFFECTIVE_ASSETS / ".openbfme" / "manifest.json"
 CATALOG = PRIVATE_ROOT / "catalog" / "bfme2.json"

@@ -157,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
 
     state_root = args.state_root
     if state_root is None:
-        state_root = ROOT / ".private" / "retail-work"
+        state_root = ROOT / "workspace" / "retail-work"
     state_root = ensure_external_to_repo(
         Path(state_root).expanduser().resolve(), repo_root_from_module()
     )

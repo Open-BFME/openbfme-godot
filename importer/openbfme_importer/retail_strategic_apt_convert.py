@@ -27,8 +27,8 @@ substitutes no art.  Screens whose visible states are behind script-driven
 playback keep their draws grouped under the authored frame LABELS -- authored
 identities, not invented selections -- and everything the APT data does not
 actually carry is a named gap in the manifest, never a synthesized stand-in.
-Retail payloads never leave ``.private``: the CLI refuses an output directory
-outside a ``.private`` tree.
+Retail payloads never leave ``workspace``: the CLI refuses an output directory
+outside a ``workspace`` tree.
 """
 
 from __future__ import annotations
@@ -1495,11 +1495,11 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     root = Path(args.effective_assets).expanduser().resolve()
     output = Path(args.output).expanduser().resolve()
-    # Retail payloads NEVER leave .private: the cooked bundle carries retail
-    # art verbatim, so the destination must sit inside a .private tree.
-    if ".private" not in {part.casefold() for part in output.parts}:
+    # Retail payloads NEVER leave workspace: the cooked bundle carries retail
+    # art verbatim, so the destination must sit inside a workspace tree.
+    if "workspace" not in {part.casefold() for part in output.parts}:
         raise StrategicAptConvertError(
-            "strategic bundle output must stay below a .private directory"
+            "strategic bundle output must stay below a workspace directory"
         )
     sources = {
         relative: root.joinpath(*relative.split("/"))

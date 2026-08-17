@@ -484,7 +484,7 @@ def test_effective_retail_neutral_mob_family_is_completely_accounted_for(
     expected_unsupported: int,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
-    catalog_path = repo / ".private" / "retail-work" / "catalog" / catalog_name
+    catalog_path = repo / "workspace" / "retail-work" / "catalog" / catalog_name
     if not catalog_path.is_file():
         pytest.skip("operator retail catalog is not available")
     documents = dict(read_catalog_documents(InstallCatalog.load(catalog_path)))
@@ -546,7 +546,7 @@ def test_rotwk_canonical_effective_assets_preserve_exact_domains_and_prop_ids() 
     repo = Path(__file__).resolve().parents[2]
     effective_root = (
         repo
-        / ".private"
+        / "workspace"
         / "retail-work"
         / "editions"
         / "rotwk"
@@ -652,9 +652,9 @@ def test_retail_map_placed_passive_units_have_closed_scenario_simulation(
     passive_ids: set[str],
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
-    private = repo / ".private" / "retail-work"
+    private = repo / "workspace" / "retail-work"
     catalog_path = private / catalog_relative
-    selection_path = repo / ".private" / "content-packs" / "selection.json"
+    selection_path = repo / "workspace" / "content-packs" / "selection.json"
     if not catalog_path.is_file() or not selection_path.is_file():
         pytest.skip("operator retail catalog/map selection is unavailable")
     selection = json.loads(selection_path.read_text(encoding="utf-8"))
@@ -678,7 +678,7 @@ def test_retail_map_placed_passive_units_have_closed_scenario_simulation(
     )
     rows = {row["objectId"].casefold(): row for row in result["neutralMobs"]}
     counts: Counter[str] = Counter()
-    map_root = repo / ".private" / "content-packs" / selected[0]
+    map_root = repo / "workspace" / "content-packs" / selected[0]
     for path in map_root.rglob("objects.json"):
         document = json.loads(path.read_text(encoding="utf-8"))
         for placement in document["objects"]:

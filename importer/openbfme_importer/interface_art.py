@@ -6,7 +6,7 @@ texture atlases.  A ``CommandButton``'s ``ButtonImage`` and an ``Object``'s
 atlas texture plus the exact pixel rectangle to cut out of it.
 
 This module walks that chain end to end against the retail oracle
-(``.private/retail-work/editions/rotwk/cache/effective-assets`` — rulebook S1)
+(``workspace/retail-work/editions/rotwk/cache/effective-assets`` — rulebook S1)
 and asserts that every referenced id has a shipped PNG in the mounted content
 packs.  It is the judge for parity-graph node ``ui.interface-art``.
 
@@ -39,8 +39,8 @@ class InterfaceArtError(ValueError):
 
 
 #: Rulebook S1: this is the only retail oracle.
-DEFAULT_ORACLE_ROOT = Path(".private/retail-work/editions/rotwk/cache/effective-assets")
-DEFAULT_PACKS_ROOT = Path(".private/content-packs")
+DEFAULT_ORACLE_ROOT = Path("workspace/retail-work/editions/rotwk/cache/effective-assets")
+DEFAULT_PACKS_ROOT = Path("workspace/content-packs")
 DEFAULT_SELECTION = DEFAULT_PACKS_ROOT / "selection.json"
 
 #: Documented pack path scheme emitted by the interface-art lane.

@@ -91,7 +91,7 @@ public sealed class LauncherService
         };
         start.Environment["OPENBFME_CONTENT"] = selection.ContentRoot;
         // Prefer the paths the player just set in the UI, then discovery. Conversion
-        // packs remain under .private/content-packs.
+        // packs remain under workspace/content-packs.
         var bfme2 = RetailDiscovery.IsRetailInstall(bfme2Path)
             ? Path.GetFullPath(bfme2Path!)
             : AllInOneRetailProvisioner.ResolveExisting("bfme2", Options.InstallRoot);

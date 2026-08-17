@@ -107,7 +107,7 @@ def test_effective_retail_direct_hero_family_is_completely_accounted_for(
     expected_ring: int,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
-    path = repo / ".private" / "retail-work" / "catalog" / catalog_name
+    path = repo / "workspace" / "retail-work" / "catalog" / catalog_name
     if not path.is_file():
         pytest.skip("operator retail catalog is not available")
     documents = dict(read_catalog_documents(InstallCatalog.load(path)))

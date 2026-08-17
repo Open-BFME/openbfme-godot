@@ -28,7 +28,7 @@ parameter accepts one or more names. Every runner uses the pinned Godot console
 executable with --headless --path game --script res://tests/<runner>.gd.
 
 The gate fixes OPENBFME_CONTENT to
-C:\Users\Jonathan\Desktop\open-bfme\.private\content-packs, redirects each
+C:\Users\Jonathan\Desktop\open-bfme\workspace\content-packs, redirects each
 process to unique files under %TEMP%, reads both files, prints one PASS or FAIL
 record per runner, and exits nonzero if any process does.
 
@@ -48,7 +48,7 @@ Final unfiltered result:
 The definitive run emitted one RETRY record for
 handlers_wp22_sciences_runner after native exit -1073741819; attempt 2 returned
 exit 0. The other 98 runners passed on attempt 1. The complete summary log is
-.private/scratch/orphan-runners-20260815/orphan-runner-gate-definitive-20260816-024217-701.txt.
+workspace/scratch/orphan-runners-20260815/orphan-runner-gate-definitive-20260816-024217-701.txt.
 
 Rerun from the repository root:
 
@@ -68,7 +68,7 @@ and stderr files named orphan-runner-sweepB-<runner>-<timestamp>-<guid>.*.txt.
 | Timeout | 2 | wotr_capture_runner, wotr_setup_capture_runner |
 
 The machine-readable result is persisted as
-.private/scratch/orphan-runners-20260815/orphan-runner-sweepB-results-20260816-013405-141.csv.
+workspace/scratch/orphan-runners-20260815/orphan-runner-sweepB-results-20260816-013405-141.csv.
 The 22 rows are indices 190-211 in tools/orphan-runners-manifest.csv.
 
 ## Sweep A false-green correction
@@ -136,8 +136,8 @@ Bucket (a), the post-settle rerun list:
 The corresponding evidence is addressed by the original three-digit index, for
 example:
 
-    .private/scratch/orphan-runners-20260815/002-ai_library_composition_runner-*.stdout.txt
-    .private/scratch/orphan-runners-20260815/002-ai_library_composition_runner-*.stderr.txt
+    workspace/scratch/orphan-runners-20260815/002-ai_library_composition_runner-*.stdout.txt
+    workspace/scratch/orphan-runners-20260815/002-ai_library_composition_runner-*.stderr.txt
 
 ## Phantom References (Not Actual Wiring)
 
@@ -162,22 +162,22 @@ Rerun the phantom audit:
 
 The original temporary directory continued filling after the 376-file handoff
 and completed at 423 files: 211 stdout/stderr pairs plus results.csv. All 423
-were copied to .private/scratch/orphan-runners-20260815/. Sweep B, focused
+were copied to workspace/scratch/orphan-runners-20260815/. Sweep B, focused
 retests, and post-settle reruns were also copied there. The definitive gate
 added 200 per-attempt stdout/stderr files and its summary log, bringing the
 persistent directory to 679 readable files.
 
 Git ignore proof:
 
-    .gitignore:19:/.private/  .private/scratch/orphan-runners-20260815
+    .gitignore:19:/workspace/  workspace/scratch/orphan-runners-20260815
 
 Rerunnable checks:
 
     (Import-Csv tools\orphan-runners-manifest.csv).Count
     Import-Csv tools\orphan-runners-manifest.csv | Group-Object Status
     Import-Csv tools\orphan-runners-manifest.csv | Where-Object FailureBucket | Group-Object FailureBucket
-    (Get-ChildItem .private\scratch\orphan-runners-20260815 -File).Count
-    git check-ignore -v .private/scratch/orphan-runners-20260815
+    (Get-ChildItem workspace\scratch\orphan-runners-20260815 -File).Count
+    git check-ignore -v workspace/scratch/orphan-runners-20260815
     git diff --check -- tools/gate-orphan-runners.ps1 tools/orphan-runners-manifest.csv ORPHAN_RUNNERS_REPORT.md
 
 No runner was deleted or weakened. No pack was built, published, modified, or

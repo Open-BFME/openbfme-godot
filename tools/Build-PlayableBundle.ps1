@@ -109,9 +109,9 @@
     Pack cache to stage from. Default search order:
       1. -ContentRoot
       2. $env:OPENBFME_CONTENT
-      3. <this worktree>/.private/content-packs
-      4. <main worktree>/.private/content-packs
-    Nothing under .private/ is ever copied anywhere git can see.
+      3. <this worktree>/workspace/content-packs
+      4. <main worktree>/workspace/content-packs
+    Nothing under workspace/ is ever copied anywhere git can see.
 
 .PARAMETER Godot
     Godot editor binary. Default: $env:OPENBFME_GODOT (required if not passed)
@@ -275,14 +275,14 @@ try {
     if ($ContentRoot -eq '') {
         $candidates = New-Object 'System.Collections.Generic.List[string]'
         if ((Test-Path Env:OPENBFME_CONTENT) -and $env:OPENBFME_CONTENT -ne '') { $candidates.Add($env:OPENBFME_CONTENT) }
-        $candidates.Add((Join-Path $repoRoot '.private\content-packs'))
+        $candidates.Add((Join-Path $repoRoot 'workspace\content-packs'))
         Push-Location $repoRoot
         try {
             $commonDir = (& git rev-parse --path-format=absolute --git-common-dir 2>$null | Out-String).Trim()
         } finally { Pop-Location }
         if ($commonDir -ne '') {
             $mainWorktree = [IO.Path]::GetDirectoryName(([IO.Path]::GetFullPath($commonDir)).TrimEnd('\', '/'))
-            if ($mainWorktree -ne '') { $candidates.Add((Join-Path $mainWorktree '.private\content-packs')) }
+            if ($mainWorktree -ne '') { $candidates.Add((Join-Path $mainWorktree 'workspace\content-packs')) }
         }
         foreach ($candidate in $candidates) {
             if (Test-Path -LiteralPath (Join-Path $candidate 'selection.json') -PathType Leaf) {
@@ -474,7 +474,7 @@ try {
         # times now - so that one is refused, for ANY absent bundle and not only
         # for the two the menu entry needs.
         if ($Release -and -not $AllowMissingWotrData) {
-            throw (New-BundleRefusal -Problem ("A release would ship War of the Ring with $($wotrMissing.Count) of its converted bundle(s) missing:`n           " + ($wotrMissing -join "`n           ")) -Remedy 'Produce the artefacts into the private workspace (they are found by schema, so any path under .private/retail-work works), or pass -AllowMissingWotrData to ship a release that states in its own output, in BUILD-INFO and in the notes exactly what the player is losing.')
+            throw (New-BundleRefusal -Problem ("A release would ship War of the Ring with $($wotrMissing.Count) of its converted bundle(s) missing:`n           " + ($wotrMissing -join "`n           ")) -Remedy 'Produce the artefacts into the private workspace (they are found by schema, so any path under workspace/retail-work works), or pass -AllowMissingWotrData to ship a release that states in its own output, in BUILD-INFO and in the notes exactly what the player is losing.')
         }
     } else {
         Write-BundleGood "every War of the Ring bundle the loaders declare is present ($($wotrPlan.rules.Count) of $($wotrPlan.rules.Count))"

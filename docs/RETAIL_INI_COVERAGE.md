@@ -24,8 +24,8 @@ on unrelated objects or factions.
 Run it from the repository root with the pinned importer Python:
 
 ```powershell
-$python = '.private\retail-work\tools\cpython-3.12.13\python.exe'
-$env:PYTHONPATH = 'importer;.private\retail-work\tools\python-3.12-env\Lib\site-packages'
+$python = 'workspace\retail-work\tools\cpython-3.12.13\python.exe'
+$env:PYTHONPATH = 'importer;workspace\retail-work\tools\python-3.12-env\Lib\site-packages'
 & $python tools\retail-ini-coverage.py
 & $python tools\retail-ini-coverage.py --check
 ```
@@ -50,7 +50,7 @@ accounting, not a gameplay-parity percentage, and must not be replaced by a
 self-reported progress estimate.
 
 The generated report is retail-derived and stays under
-`.private/retail-work/reports/retail-ini-coverage/`. Its main entry points are:
+`workspace/retail-work/reports/retail-ini-coverage/`. Its main entry points are:
 
 - `SUMMARY.md`: corpus identity, totals, and evidence distribution.
 - `GAPS.md`: usage-weighted mapping backlog.
@@ -151,11 +151,11 @@ inventing a producer route:
 
 ```powershell
 $import = 'tools\openbfme_import.py'
-& $python $import --state-root .private\retail-work compile-hero-catalog `
+& $python $import --state-root workspace\retail-work compile-hero-catalog `
   --install $env:BFME2_INSTALL --game bfme2
-& $python $import --state-root .private\retail-work compile-neutral-mob-catalog `
+& $python $import --state-root workspace\retail-work compile-neutral-mob-catalog `
   --install $env:BFME2_INSTALL --game bfme2
-& $python $import --state-root .private\retail-work compile-ship-catalog `
+& $python $import --state-root workspace\retail-work compile-ship-catalog `
   --install $env:BFME2_INSTALL --game bfme2
 ```
 

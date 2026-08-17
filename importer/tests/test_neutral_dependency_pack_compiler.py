@@ -28,7 +28,7 @@ from openbfme_importer.retail_visual_closure import build_retail_visual_closure
 
 
 ROOT = Path(__file__).resolve().parents[2]
-PRIVATE = ROOT / ".private" / "retail-work"
+PRIVATE = ROOT / "workspace" / "retail-work"
 EDITION_PATHS = {
     "bfme2": {
         "catalog": PRIVATE / "catalog" / "bfme2.json",

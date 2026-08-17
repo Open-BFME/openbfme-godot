@@ -882,7 +882,7 @@ class _RealCatalogTestsBase(unittest.TestCase):
             raise unittest.SkipTest("abstract base")
         path = (
             repo_root_from_module()
-            / ".private"
+            / "workspace"
             / "retail-work"
             / "catalog"
             / f"{cls.game}.json"

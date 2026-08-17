@@ -13,7 +13,7 @@ from tests.retail_inputs import retail_file
 ROOT = Path(__file__).resolve().parents[2]
 SCENE = (
     ROOT
-    / ".private"
+    / "workspace"
     / "scratch"
     / "hud-apt-clip-actions"
     / "bundle-a"
@@ -22,7 +22,7 @@ SCENE = (
     / "palantir"
     / "scene-contract.json"
 )
-ASSETS = ROOT / ".private" / "retail-work" / "cache" / "effective-assets"
+ASSETS = ROOT / "workspace" / "retail-work" / "cache" / "effective-assets"
 MANIFEST = ASSETS / ".openbfme" / "manifest.json"
 GAME_DAT = retail_file("game.dat")
 

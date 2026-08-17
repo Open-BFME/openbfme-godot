@@ -196,7 +196,7 @@ func load_from(path: String) -> bool:
 			+ "same 24 strategic screens with DIFFERENT art (the palantir ring, "
 			+ "the stats plaque and the green-instead-of-blue-steel shell "
 			+ "plate), so this would draw the wrong edition. Reconvert with "
-			+ "--effective-assets .private/retail-work/editions/rotwk/cache/"
+			+ "--effective-assets workspace/retail-work/editions/rotwk/cache/"
 			+ "effective-assets.") % [
 				aggregate if not aggregate.is_empty() else "(unstated)",
 				ROTWK_SOURCE_AGGREGATE_SHA256])

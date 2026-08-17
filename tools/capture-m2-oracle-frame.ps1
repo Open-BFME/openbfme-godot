@@ -41,10 +41,10 @@ function Resolve-M2Ffmpeg {
 
 function Assert-M2PrivatePhysicalFile {
     param([string]$Path, [string]$RepoRoot)
-    $privateRoot = [IO.Path]::GetFullPath((Join-Path $RepoRoot ".private")).TrimEnd('\')
+    $privateRoot = [IO.Path]::GetFullPath((Join-Path $RepoRoot "workspace")).TrimEnd('\')
     $candidate = [IO.Path]::GetFullPath($Path)
     $prefix = $privateRoot + '\'
-    Assert-M2OracleTrue ($candidate.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) "Existing frame must remain below the repository .private root."
+    Assert-M2OracleTrue ($candidate.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) "Existing frame must remain below the repository workspace root."
     Assert-M2OracleTrue (Test-Path -LiteralPath $candidate -PathType Leaf) "Existing private frame is missing."
     Assert-M2OracleTrue ([IO.Path]::GetExtension($candidate).Equals(".png", [StringComparison]::OrdinalIgnoreCase)) "Existing private frame must be a PNG."
 

@@ -27,8 +27,8 @@ func _initialize() -> void:
 
 func _run() -> void:
 	var output := OS.get_environment("OPENBFME_M2_LIFECYCLE_OUTPUT").replace("\\", "/")
-	if output == "" or not output.contains("/.private/") or output.get_extension().to_lower() != "json":
-		_fail("OPENBFME_M2_LIFECYCLE_OUTPUT must be a JSON file below .private")
+	if output == "" or not output.contains("/workspace/") or output.get_extension().to_lower() != "json":
+		_fail("OPENBFME_M2_LIFECYCLE_OUTPUT must be a JSON file below workspace")
 		return
 	var packed := load(SCENE_PATH) as PackedScene
 	if packed == null:

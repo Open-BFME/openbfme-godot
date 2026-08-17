@@ -31,7 +31,7 @@ extends RefCounted
 ##
 ## Per-unit member speeds are not in any pack yet (the importer extracts only the
 ## horde's LocomotorSet Speed), so this is the authored median rather than a
-## per-unit lookup. See .private/scratch/opus17-formation-extraction.md #12.
+## per-unit lookup. See workspace/scratch/opus17-formation-extraction.md #12.
 const CATCH_UP_FACTOR := 1.1
 ## Combat has no authored member-speed margin of its own; retail instead controls
 ## who leaves the block at all via RanksToReleaseWhenAttacking (melee hordes

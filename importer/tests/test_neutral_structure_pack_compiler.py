@@ -106,7 +106,7 @@ ACTIVE_MAP_STRUCTURE_CASES = (
 
 def test_bfme2_fangorn_capability_classification_binds_exact_artifact_descriptor() -> None:
     repo = Path(__file__).resolve().parents[2]
-    retail = repo / ".private" / "retail-work"
+    retail = repo / "workspace" / "retail-work"
     catalog_path = retail / "catalog" / "bfme2.json"
     effective_root = retail / "cache" / "effective-assets"
     if not catalog_path.is_file() or not effective_root.is_dir():
@@ -230,7 +230,7 @@ def test_map_rooted_buildable_artifact_preserves_authored_production() -> None:
 
 def test_exact_rotwk_static_construction_w3d_contracts() -> None:
     repo = Path(__file__).resolve().parents[2]
-    retail = repo / ".private" / "retail-work"
+    retail = repo / "workspace" / "retail-work"
     catalog_path = retail / "catalog" / "rotwk-layered.json"
     effective_root = retail / "editions" / "rotwk" / "cache" / "layered-effective-assets"
     if not catalog_path.is_file() or not (
@@ -366,12 +366,12 @@ def test_exact_active_map_structure_placements_are_descriptor_covered(
     expected_placements: dict[str, int],
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
-    retail = repo / ".private" / "retail-work"
+    retail = repo / "workspace" / "retail-work"
     catalog_path = retail / "catalog" / catalog_name
     effective_root = retail / effective_relative
     objects_path = (
         repo
-        / ".private"
+        / "workspace"
         / "content-packs"
         / map_pack_id
         / map_pack_digest
@@ -464,7 +464,7 @@ def test_exact_retail_neutral_structure_family_is_pack_ready(
     custom_edge_count: int,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
-    retail = repo / ".private" / "retail-work"
+    retail = repo / "workspace" / "retail-work"
     catalog_path = retail / "catalog" / catalog_name
     effective_root = retail / effective_relative
     if not catalog_path.is_file() or not (
@@ -543,7 +543,7 @@ def test_exact_retail_neutral_structure_family_is_pack_ready(
         )
         map_root = (
             repo
-            / ".private"
+            / "workspace"
             / "content-packs"
             / "rotwk-playable-maps-private"
             / map_digest

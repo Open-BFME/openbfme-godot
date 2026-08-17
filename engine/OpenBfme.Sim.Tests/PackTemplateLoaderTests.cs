@@ -407,7 +407,7 @@ public class PackTemplateLoaderTests
 
     /// <summary>
     /// Walks up from the test bin dir to the repo root, reads
-    /// .private/content-packs/selection.json, and resolves the active pack's
+    /// workspace/content-packs/selection.json, and resolves the active pack's
     /// data/objects.json. Returns null (test skips) when anything is absent.
     /// </summary>
     private static string? FindActivePackObjectsJson()
@@ -415,7 +415,7 @@ public class PackTemplateLoaderTests
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir != null)
         {
-            var selectionPath = Path.Combine(dir.FullName, ".private", "content-packs", "selection.json");
+            var selectionPath = Path.Combine(dir.FullName, "workspace", "content-packs", "selection.json");
             if (File.Exists(selectionPath))
             {
                 using var selection = JsonDocument.Parse(File.ReadAllText(selectionPath));
@@ -425,7 +425,7 @@ public class PackTemplateLoaderTests
                     return null;
                 }
                 var objectsPath = Path.Combine(
-                    dir.FullName, ".private", "content-packs",
+                    dir.FullName, "workspace", "content-packs",
                     activePack.GetString()!.Replace('/', Path.DirectorySeparatorChar),
                     "data", "objects.json");
                 return File.Exists(objectsPath) ? objectsPath : null;

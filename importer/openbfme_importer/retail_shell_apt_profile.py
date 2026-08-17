@@ -77,7 +77,7 @@ def _load_json(path: Path | str, context: str) -> dict[str, Any]:
 
 def _private_root(path: Path | str) -> Path:
     root = Path(path).expanduser().resolve()
-    if ".private" not in {part.casefold() for part in root.parts} or not root.is_dir():
+    if "workspace" not in {part.casefold() for part in root.parts} or not root.is_dir():
         raise ValueError("effective-assets root must be an existing private directory")
     return root
 

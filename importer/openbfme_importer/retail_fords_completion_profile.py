@@ -285,7 +285,7 @@ MEN_ORDER_HINT_RUNTIME = {
     },
 }
 DEFAULT_MEN_LIFECYCLE_REPORT_PATH = Path(
-    ".private/retail-work/reports/retail-men-building-lifecycle.json"
+    "workspace/retail-work/reports/retail-men-building-lifecycle.json"
 )
 
 EXPECTED_SUMMARIES: dict[str, dict[str, int]] = {

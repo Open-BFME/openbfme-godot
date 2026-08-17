@@ -21,7 +21,7 @@
 #
 #     2. THE WORKSPACE. Bundles are found BY SCHEMA, not by path. Nothing here
 #        knows that the marker models happen to live in
-#        .private/retail-work/livingworld-markers; it knows that a loader accepts
+#        workspace/retail-work/livingworld-markers; it knows that a loader accepts
 #        `openbfme.living-world-markers` and goes looking for a document that
 #        declares it.
 #
@@ -45,7 +45,7 @@ $script:WotrLoaderDirectory = 'game/src/wotr'
 
 # The workspace subtrees searched for converted bundles, repo-relative. Scanned
 # to a depth of two, which is the layout every converter writes.
-$script:WotrWorkspaceRelative = '.private/retail-work'
+$script:WotrWorkspaceRelative = 'workspace/retail-work'
 
 # A .json bigger than this is not a bundle manifest or a living-world document -
 # it is a catalog or an asset census - and is skipped rather than read. This can

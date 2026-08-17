@@ -95,8 +95,8 @@ def _sha(payload: bytes) -> str:
 
 def _private_root(path: Path | str) -> Path:
     root = Path(path).resolve()
-    if ".private" not in {part.casefold() for part in root.parts}:
-        raise ValueError("effective-assets must remain under .private")
+    if "workspace" not in {part.casefold() for part in root.parts}:
+        raise ValueError("effective-assets must remain under workspace")
     return root
 
 

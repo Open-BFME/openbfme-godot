@@ -811,7 +811,7 @@ def main(argv: list[str] | None = None) -> int:
 
     state_root = args.state_root
     if state_root is None:
-        state_root = ROOT / ".private" / "retail-work"
+        state_root = ROOT / "workspace" / "retail-work"
     state_root = ensure_external_to_repo(
         Path(state_root).expanduser().resolve(), repo_root_from_module()
     )
@@ -1246,7 +1246,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.publish and args.select and pairs_match:
                 # Fail-closed: selection.json must exist and activePack must
                 # equal pack_id/<bundle-hash> for this published directory.
-                selection_path = ROOT / ".private" / "content-packs" / "selection.json"
+                selection_path = ROOT / "workspace" / "content-packs" / "selection.json"
                 if not selection_path.is_file():
                     proof["catalogProof"]["ok"] = False
                     proof["catalogProof"]["reason"] = (

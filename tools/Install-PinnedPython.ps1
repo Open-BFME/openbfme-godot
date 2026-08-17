@@ -18,7 +18,7 @@ if ([string]::IsNullOrWhiteSpace($StateRoot)) {
     if (-not [string]::IsNullOrWhiteSpace($env:OPENBFME_IMPORT_ROOT)) {
         $StateRoot = $env:OPENBFME_IMPORT_ROOT
     } else {
-        $StateRoot = Join-Path $repoRoot ".private\retail-work"
+        $StateRoot = Join-Path $repoRoot "workspace\retail-work"
     }
 }
 $StateRoot = [IO.Path]::GetFullPath($StateRoot)

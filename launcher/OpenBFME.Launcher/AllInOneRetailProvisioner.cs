@@ -50,8 +50,8 @@ public sealed class AllInOneRetailProvisioner
     };
 
     /// <summary>Relative install folders under the OpenBFME install root.</summary>
-    public const string Bfme2RelativeInstall = @".private\retail-installs\bfme2";
-    public const string RotwkRelativeInstall = @".private\retail-installs\rotwk";
+    public const string Bfme2RelativeInstall = @"workspace\retail-installs\bfme2";
+    public const string RotwkRelativeInstall = @"workspace\retail-installs\rotwk";
 
     private readonly HttpClient _http;
 

@@ -85,7 +85,7 @@ function New-Fixture {
 
 function New-WorkspaceFixture {
     <#
-        A workspace-shaped directory carrying only the MANIFESTS of the real
+        A .private-shaped directory carrying only the MANIFESTS of the real
         bundles - not their payloads - which is all the plan reads. Cheap enough
         to build one per test.
     #>
@@ -93,7 +93,7 @@ function New-WorkspaceFixture {
     $root = Join-Path $Scratch "$Name-workspace"
     if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
     [void](New-Item -ItemType Directory -Path $root -Force)
-    $source = Join-Path (Get-BundleMainWorktree -RepoRoot $repoRoot) '.private\retail-work'
+    $source = Join-Path (Get-BundleMainWorktree -RepoRoot $repoRoot) 'workspace\retail-work'
     # ENUMERATED, NOT LISTED. This was a hardcoded list of five directory names
     # and it went stale the moment a sixth bundle landed - the auto-resolve
     # converter - which is EXACTLY the failure mode the guard under test exists

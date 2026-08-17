@@ -32,7 +32,7 @@ See [STATUS.md](../STATUS.md).
 Yes. Clone the repo and point [Codex](https://openai.com/codex/) (or a similar
 agent) at it. Ask for entry points, how convert -> pack -> launch works, and
 fix ideas with a small check command. Confirm with real gates; never commit
-`.private/` or retail files.
+`workspace/` or retail files.
 
 ## Where does OpenSAGE fit?
 

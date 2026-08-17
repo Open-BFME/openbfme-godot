@@ -105,7 +105,7 @@ evidence from the original game plus OpenBFME. For M2:
 6. Finalize only after every required row and reliability condition passes for the same
    identity.
 
-Oracle artifacts remain below `.private/retail-work/oracle`. Tools may capture and
+Oracle artifacts remain below `workspace/retail-work/oracle`. Tools may capture and
 validate evidence, but they do not operate the original game, invent a camera state or
 auto-approve a visual judgment.
 

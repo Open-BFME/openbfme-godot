@@ -92,7 +92,7 @@ def test_conversion_of_one_retail_movie_produces_valid_ogg() -> None:
     assert sources, "retail install unexpectedly has no movies"
     smallest = min(sources, key=lambda source: source.size)
     output_root = (
-        ROOT / ".private" / "retail-work" / "scratch" / "video-lane-test"
+        ROOT / "workspace" / "retail-work" / "scratch" / "video-lane-test"
     )
     report = convert_videos(
         ROTWK_INSTALL,

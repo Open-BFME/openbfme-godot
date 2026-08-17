@@ -294,7 +294,7 @@ func _render_and_assert() -> void:
 	)
 
 	var output := ProjectSettings.globalize_path(
-		"res://../.private/scratch/opusfog-shroud-shader.png"
+		"res://../workspace/scratch/opusfog-shroud-shader.png"
 	)
 	if DirAccess.make_dir_recursive_absolute(output.get_base_dir()) == OK:
 		if image.save_png(output) == OK and FileAccess.file_exists(output):
