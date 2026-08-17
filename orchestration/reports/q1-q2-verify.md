@@ -140,3 +140,7 @@ never fail the suite, either raise `BUDGET_FIRST_FRAME_AT_MS`/
 `BUDGET_SHELL_VISIBLE_AT_MS` deliberately with a dated comment, or accept that
 the runner is load-sensitive and keep it out of gates — where, usefully, it
 already is.
+
+## Closure (orchestrator, 2026-08-17)
+FIX-FIRST item resolved: `python tools\seal_published_packs.py` → `SEAL_PACKS DONE action=sealed packs=200 files_changed=45144`.
+Proof: rotwk-men-vslice/4f92c8a4… 4639 files writable=0 and rotwk-angmar-vslice/48b89cf7… 2582 files writable=0 in BOTH roots; `PACK_ADDRESS_CHECK PASS packs=200 roots=2`. Q1/Q2 ACCEPTED.
