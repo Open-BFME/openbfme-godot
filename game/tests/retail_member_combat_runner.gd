@@ -902,10 +902,11 @@ func _run_projectile_and_radius_contract() -> void:
 	for _index in 10:
 		sim.advance(1)
 		if not sim.projectiles.is_empty():
-			launch_tick = sim.tick_index
 			var ids: Array = sim.projectiles.keys()
 			ids.sort()
-			impact_tick = int((sim.projectiles[ids[0]] as Dictionary).get("impact_tick", -1))
+			var projectile := sim.projectiles[ids[0]] as Dictionary
+			launch_tick = int(projectile.get("launch_tick", -1))
+			impact_tick = int(projectile.get("impact_tick", -1))
 			break
 	_check("projectile_launch_is_observable", launch_tick >= 0 and sim.projectiles.size() == 1)
 	_check("projectile_does_not_damage_on_release_tick", int((sim.entities[2] as Dictionary).get("health", 0)) == target_before)
@@ -1000,6 +1001,8 @@ func _projectile_sim(affects: String, projectile_capable: bool = true):
 	sim._add_battalion(3, SimScript.ENEMY_TEAM, Vector2(8.0, 0.0), "Splash", "ProjectileTarget", "ProjectileTarget", 0, target_rule)
 	sim._add_battalion(4, SimScript.ENEMY_TEAM, Vector2(16.0, 0.0), "Outside", "ProjectileTarget", "ProjectileTarget", 0, target_rule)
 	sim._add_battalion(5, SimScript.PLAYER_TEAM, Vector2(8.0, 0.0), "Ally", "ProjectileTarget", "ProjectileTarget", 0, target_rule)
+	for entity_id in [1, 2, 3, 4, 5]:
+		(sim.entities[entity_id] as Dictionary)["auto_acquire_enabled"] = false
 	sim._spatial_rebuild()
 	return sim
 

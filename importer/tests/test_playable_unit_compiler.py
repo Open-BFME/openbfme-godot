@@ -7007,6 +7007,27 @@ End
             "damageFXType": "BIG_ROCK",
         },
     ]
+    combat: dict[str, object] = {"damage": damage}
+    _apply_nugget_damage_types(combat)
+    assert combat["damageType"] == "SIEGE"
+    assert combat["damageComponents"] == [
+        {
+            "damageType": "SIEGE",
+            "value": 200,
+            "radius": 20,
+            "damageTaperOff": 0,
+            "deathType": "EXPLODED",
+            "damageFXType": "BIG_ROCK",
+        },
+        {
+            "damageType": "SIEGE",
+            "value": 200,
+            "radius": 100,
+            "damageTaperOff": 50,
+            "deathType": "EXPLODED",
+            "damageFXType": "BIG_ROCK",
+        },
+    ]
 
 
 def test_zero_radius_melee_keeps_direct_damage_and_no_projectile_semantic() -> None:
@@ -7032,6 +7053,31 @@ End
     assert damage["value"] == 75
     assert damage["components"][0]["radius"] == 0
     assert damage["components"][0]["damageTaperOff"] == 0
+    combat: dict[str, object] = {"damage": damage}
+    _apply_nugget_damage_types(combat)
+    assert combat["damageType"] == "CAVALRY"
+    assert "damageComponents" not in combat
+
+
+def test_bfme2_gondor_trebuchet_compiles_retail_radius_components() -> None:
+    catalog_path = _RETAIL_CATALOGS["bfme2-retail"]
+    if not catalog_path.is_file():
+        pytest.skip("BFME2 retail catalog is not available")
+    documents = dict(read_catalog_documents(InstallCatalog.load(catalog_path)))
+    descriptor = compile_playable_unit_descriptor(
+        "GondorTrebuchet",
+        documents,
+        prepared=prepare_playable_unit_compiler(documents),
+    )
+    combat = descriptor["gameplay"]["simulation"]["resolved"]["combat"]
+
+    assert combat["projectileSpeed"]["value"] == 321
+    assert combat["projectileObjectId"] == "GondorTrebuchetRockProjectile"
+    assert combat["radiusDamageAffects"] == "ENEMIES NEUTRALS ALLIES"
+    assert [
+        (row["radius"], row["damageTaperOff"])
+        for row in combat["damageComponents"]
+    ] == [(20.0, 0), (100.0, 50)]
 
 
 def test_sub_object_upgrade_compiles_fire_plane_show_token() -> None:

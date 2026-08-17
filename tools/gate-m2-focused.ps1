@@ -43,7 +43,10 @@ $focusedRunners = [ordered]@{
     'hud_apt_runtime' = @('retail_hud_apt_runtime_runner.gd', '(?m)^HUD_APT_RUNTIME_SUMMARY passed=67 failed=0\s*$')
     'hud_wnd_runtime' = @('retail_hud_wnd_runtime_runner.gd', '(?m)^RETAIL_HUD_WND_RUNTIME_RESULT passed=62 failed=0\s*$')
     'linear_fog_runtime' = @('retail_linear_fog_runner.gd', '(?m)^RETAIL_LINEAR_FOG_RESULT passed=23 failed=0\s*$')
-    'member_combat_runtime' = @('retail_member_combat_runner.gd', '(?m)^RETAIL_MEMBER_COMBAT_RESULT passed=49 failed=0\s*$')
+    # Re-measured 2026-08-17 after Q13 added authoritative projectile flight,
+    # retail radius/taper, relation masks, and target-death acceptance checks.
+    'member_combat_runtime' = @('retail_member_combat_runner.gd', '(?m)^RETAIL_MEMBER_COMBAT_RESULT passed=111 failed=0\s*$')
+	'projectile_table_runtime' = @('projectile_table_runtime_runner.gd', '(?m)^PROJECTILE_TABLE_RUNTIME_RESULT passed=4 failed=0\s*$')
     # Pinned 13 while the runner emitted 15 on clean main - pre-existing gate rot,
     # red before this lane touched anything. Re-pinned to 40 because this lane
     # rewrote the runner and owning a runner means owning its pin.

@@ -15,7 +15,8 @@ extends SceneTree
 
 const Sim := preload("res://src/retail_slice/retail_slice_sim.gd")
 const Watchdog := preload("res://tests/runner_watchdog.gd")
-const EXPECTED_CHECKS := 22
+const EXPECTED_CHECKS := 23
+const PRE_PROJECTILE_LANE_NO_FIRE_HASH := "f8e9830ffe895af6b9f43a24bf8456e97585b579a8996bf3bfb27a9d6e5f37b6"
 
 ## Fixture shaped like the archer: 3-tick windup, 2-tick firing duration,
 ## 5-tick reload. One member, so the stagger window cannot interleave cycles.
@@ -39,7 +40,21 @@ func _run() -> void:
 	_run_archer_cycle()
 	_run_weapon_set_conditions()
 	_run_deferred_reasons()
+	_run_no_projectile_hash_contract()
 	_finish()
+
+
+func _run_no_projectile_hash_contract() -> void:
+	var sim = _sim(_archer_rule())
+	var authoritative: Dictionary = sim._authoritative_state()
+	var actual := String(sim.state_hash())
+	_check(
+		"a match with no projectile fired keeps the pre-lane hash and absent table",
+		actual == PRE_PROJECTILE_LANE_NO_FIRE_HASH
+			and not authoritative.has("projectiles")
+			and not authoritative.has("next_projectile_id"),
+		"expected=%s actual=%s keys=%s" % [PRE_PROJECTILE_LANE_NO_FIRE_HASH, actual, str(authoritative.keys())]
+	)
 
 
 func _run_archer_cycle() -> void:

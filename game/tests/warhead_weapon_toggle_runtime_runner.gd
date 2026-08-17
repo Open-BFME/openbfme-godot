@@ -16,6 +16,7 @@ extends SceneTree
 const Sim = preload("res://src/retail_slice/retail_slice_sim.gd")
 const Adapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const INI_ROOT := "res://../workspace/retail-work/editions/rotwk/cache/effective-assets/data/ini/"
+const BFME2_WEAPON_ORACLE := "res://../workspace/retail-extract/data/ini/weapon.ini"
 const SOURCE_SCALE := 0.1
 const WATCHDOG_FRAMES := 1800
 
@@ -81,6 +82,15 @@ func _run() -> void:
 	var rock_damage := rock_unit_damage * 2.0
 	var rock_range := _define(gamedata, "ROHAN_TREEBEARD_ROCK_RANGE")
 	_check("oracle_resolves_rock_range", rock_range > 0.0)
+
+	# --- Gondor trebuchet: the compiler-facing warhead component contract -----
+	var trebuchet_warhead := _block(_read(BFME2_WEAPON_ORACLE), "Weapon GondorTrebuchetRockWarhead")
+	var trebuchet_radii := _numeric_fields(trebuchet_warhead, "Radius")
+	var trebuchet_tapers := _numeric_fields(trebuchet_warhead, "DamageTaperOff")
+	_check(
+		"compiled_trebuchet_warhead_keeps_two_radius_and_taper_components radii=%s tapers=%s" % [str(trebuchet_radii), str(trebuchet_tapers)],
+		trebuchet_radii == [20.0, 100.0] and trebuchet_tapers == [50.0]
+	)
 
 	# --- adapter: the compiled mode carries the warhead damage ---------------
 	var haldir := Adapter.normalized_unit_rule(
@@ -278,6 +288,18 @@ func _damage_expressions(block: String) -> Array:
 		var trimmed := _normalized(_strip_comment(String(line)))
 		if trimmed.begins_with("Damage ="):
 			output.append(trimmed.substr("Damage =".length()).strip_edges())
+	return output
+
+
+func _numeric_fields(block: String, wanted_key: String) -> Array:
+	## The importer pytest owns the compiled component assertion. This runner
+	## independently binds those values to the real retail INI bytes; an absent
+	## first DamageTaperOff is the SAGE default zero asserted by the pytest.
+	var output: Array = []
+	for line in block.split("\n"):
+		var trimmed := _normalized(_strip_comment(String(line)))
+		if trimmed.begins_with(wanted_key + " ="):
+			output.append(trimmed.substr((wanted_key + " =").length()).strip_edges().to_float())
 	return output
 
 
