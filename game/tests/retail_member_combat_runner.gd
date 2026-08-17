@@ -122,6 +122,7 @@ func _run() -> void:
 	_run_mood_attack_check_cadence_contract()
 	_run_corpse_lifecycle_contract()
 	_run_ai_visual_acquisition_contract()
+	_run_projectile_and_radius_contract()
 
 	var replay = _make_sim()
 	_check("replay_attack_order_is_accepted", replay.issue_attack([1], 101) == 1)
@@ -889,6 +890,118 @@ func _run_ai_visual_acquisition_contract() -> void:
 	(sim.entities[101] as Dictionary)["route"] = []
 	sim._update_enemy_ai()
 	_check("ai_acquires_only_inside_source_vision", int(sim.entity(101).get("target_id", 0)) == 1, str(sim.entity(101)))
+
+
+func _run_projectile_and_radius_contract() -> void:
+	var sim = _projectile_sim("ENEMIES")
+	var target_before := int((sim.entities[2] as Dictionary).get("health", 0))
+	var attackers: Array[int] = [1]
+	_check("projectile_attack_order_is_accepted", sim.issue_attack(attackers, 2) == 1)
+	var launch_tick := -1
+	var impact_tick := -1
+	for _index in 10:
+		sim.advance(1)
+		if not sim.projectiles.is_empty():
+			launch_tick = sim.tick_index
+			var ids: Array = sim.projectiles.keys()
+			ids.sort()
+			impact_tick = int((sim.projectiles[ids[0]] as Dictionary).get("impact_tick", -1))
+			break
+	_check("projectile_launch_is_observable", launch_tick >= 0 and sim.projectiles.size() == 1)
+	_check("projectile_does_not_damage_on_release_tick", int((sim.entities[2] as Dictionary).get("health", 0)) == target_before)
+	_check(
+		"projectile_flight_ticks_use_distance_speed_formula",
+		impact_tick - launch_tick == maxi(1, ceili(5.0 / 10.0 / SimScript.TICK_SECONDS)),
+		"launch=%d impact=%d" % [launch_tick, impact_tick]
+	)
+	while sim.tick_index < impact_tick:
+		sim.advance(1)
+	_check("projectile_direct_damage_lands_on_impact", int((sim.entities[2] as Dictionary).get("health", 0)) == target_before - 200)
+	_check("outer_radius_nugget_applies_linear_taper", int((sim.entities[3] as Dictionary).get("health", 0)) == 915, str((sim.entities[3] as Dictionary).get("member_health", [])))
+	_check("radius_damage_excludes_outside_battalion", int((sim.entities[4] as Dictionary).get("health", 0)) == 1000)
+	_check("enemy_only_radius_spares_allies", int((sim.entities[5] as Dictionary).get("health", 0)) == 1000)
+	_check("projectile_impact_clears_authoritative_row", sim.projectiles.is_empty())
+
+	var retarget = _projectile_sim("ENEMIES")
+	(retarget.entities[2] as Dictionary)["member_health"] = [1000, 1000]
+	(retarget.entities[2] as Dictionary)["member_maximum_health"] = 1000
+	(retarget.entities[2] as Dictionary)["health"] = 2000
+	retarget.issue_attack(attackers, 2)
+	while retarget.projectiles.is_empty():
+		retarget.advance(1)
+	var projectile_ids: Array = retarget.projectiles.keys()
+	projectile_ids.sort()
+	var stored_member := int((retarget.projectiles[projectile_ids[0]] as Dictionary).get("member_index", -1))
+	var health_values: Array = (retarget.entities[2] as Dictionary)["member_health"]
+	health_values[stored_member] = 0
+	(retarget.entities[2] as Dictionary)["member_health"] = health_values
+	(retarget.entities[2] as Dictionary)["health"] = 1000
+	var retarget_impact := int((retarget.projectiles[projectile_ids[0]] as Dictionary)["impact_tick"])
+	while retarget.tick_index < retarget_impact:
+		retarget.advance(1)
+	_check("dead_stored_member_retargets_live_member", int((retarget.entities[2] as Dictionary).get("health", 0)) == 800)
+
+	var cancelled = _projectile_sim("ENEMIES")
+	cancelled.issue_attack(attackers, 2)
+	while cancelled.projectiles.is_empty():
+		cancelled.advance(1)
+	(cancelled.entities[2] as Dictionary)["member_health"] = [0]
+	(cancelled.entities[2] as Dictionary)["health"] = 0
+	var cancel_ids: Array = cancelled.projectiles.keys()
+	cancel_ids.sort()
+	var cancel_impact := int((cancelled.projectiles[cancel_ids[0]] as Dictionary)["impact_tick"])
+	while cancelled.tick_index < cancel_impact:
+		cancelled.advance(1)
+	_check("dead_target_cancels_projectile", cancelled.projectiles.is_empty() and _count_event(cancelled.events, "combat.projectile_cancelled", 1) == 1)
+
+	var melee = _projectile_sim("ENEMIES", false)
+	var melee_before := int((melee.entities[2] as Dictionary).get("health", 0))
+	melee.issue_attack(attackers, 2)
+	var melee_hit_tick := -1
+	for _index in 10:
+		melee.advance(1)
+		if int((melee.entities[2] as Dictionary).get("health", 0)) < melee_before:
+			melee_hit_tick = melee.tick_index
+			break
+	_check("melee_keeps_instant_release_damage", melee_hit_tick >= 0 and int((melee.entities[2] as Dictionary).get("health", 0)) == melee_before - 200)
+	_check("melee_never_allocates_projectile_state", melee.projectiles.is_empty())
+
+
+func _projectile_sim(affects: String, projectile_capable: bool = true):
+	var attacker_rule := _unit_rule("ProjectileAttacker", 1, 200, 20.0, 20.0)
+	attacker_rule["category"] = "siege"
+	attacker_rule["damage_type"] = "siege"
+	attacker_rule["damage_components"] = [
+		{"value": 100.0, "damage_type": "siege", "radius": 2.0, "damage_taper_off": 0.0, "death_type": "EXPLODED", "damage_fx_type": "BIG_ROCK"},
+		{"value": 100.0, "damage_type": "siege", "radius": 10.0, "damage_taper_off": 50.0, "death_type": "EXPLODED", "damage_fx_type": "BIG_ROCK"},
+	]
+	attacker_rule["radius_damage_affects"] = affects
+	if projectile_capable:
+		attacker_rule["projectile_object_id"] = "FixtureRockProjectile"
+		attacker_rule["projectile_speed"] = 10.0
+	var target_rule := _unit_rule("ProjectileTarget", 1, 1, 1.0, 20.0)
+	target_rule["member_health"] = 1000
+	var sim = SimScript.new()
+	var rules := {
+		SimScript.SOLDIER_OBJECT_ID: target_rule,
+		SimScript.ARCHER_OBJECT_ID: target_rule,
+		SimScript.TOWER_GUARD_OBJECT_ID: target_rule,
+		SimScript.KNIGHT_OBJECT_ID: target_rule,
+		"ProjectileAttacker": attacker_rule,
+		"ProjectileTarget": target_rule,
+	}
+	sim.setup({}, {"unit_rules": rules, "spawn_initial_battalions": false})
+	sim.ai_enabled = false
+	sim.base_loop_enabled = false
+	sim.entities.clear()
+	sim.structures.clear()
+	sim._add_battalion(1, SimScript.PLAYER_TEAM, Vector2.ZERO, "Attacker", "ProjectileAttacker", "ProjectileAttacker", 0, attacker_rule)
+	sim._add_battalion(2, SimScript.ENEMY_TEAM, Vector2(5.0, 0.0), "Primary", "ProjectileTarget", "ProjectileTarget", 0, target_rule)
+	sim._add_battalion(3, SimScript.ENEMY_TEAM, Vector2(8.0, 0.0), "Splash", "ProjectileTarget", "ProjectileTarget", 0, target_rule)
+	sim._add_battalion(4, SimScript.ENEMY_TEAM, Vector2(16.0, 0.0), "Outside", "ProjectileTarget", "ProjectileTarget", 0, target_rule)
+	sim._add_battalion(5, SimScript.PLAYER_TEAM, Vector2(8.0, 0.0), "Ally", "ProjectileTarget", "ProjectileTarget", 0, target_rule)
+	sim._spatial_rebuild()
+	return sim
 
 
 func _unit_rules(member_count: int, member_damage: int) -> Dictionary:
