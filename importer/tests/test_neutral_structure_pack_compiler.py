@@ -14,6 +14,7 @@ from openbfme_importer.module_census import read_catalog_documents
 from openbfme_importer.neutral_mob_catalog import compile_neutral_mob_catalog
 from openbfme_importer.neutral_structure_pack_compiler import (
     NeutralStructurePackCompilerError,
+    compile_neutral_structure_map_placement_evidence,
     compile_neutral_structure_pack_artifact,
     validate_neutral_structure_pack_artifact,
 )
@@ -64,6 +65,42 @@ ROTWK_NEUTRAL_STRUCTURES = (
     "SpiderLairHole",
     "WargLair",
     "WargLairHole",
+)
+
+ACTIVE_MAP_STRUCTURE_CASES = (
+    (
+        "bfme2.json",
+        "bfme2",
+        "cache/effective-assets",
+        "bfme2-skirmish-maps-private",
+        "f9c14cfa4c25e68509373390741fc82e5892f050a2305a19fa3efaca0f39a5b0",
+        "bfme2.map.evendim",
+        "maps/evendim/objects.json",
+        "d0f74a14ec8529b722fe1760ab11e3fb76fe6c2e49482692965abecd81e54d1a",
+        {
+            "CaptureFlag": 13,
+            "Outpost": 4,
+            "ShipWright": 8,
+            "SignalFire": 1,
+        },
+    ),
+    (
+        "rotwk-layered.json",
+        "rotwk",
+        "editions/rotwk/cache/effective-assets",
+        "rotwk-playable-maps-private",
+        "1739b61386b8242aafee7c46c2f2639f950dd8d5d7292687d2c10702b1e9972b",
+        "rotwk.map.adorn-river",
+        "maps/adorn-river/objects.json",
+        "db4378f022c094b61f884ce7bcd353a2e11ab20ef50db5a006fcd5ab26d514ac",
+        {
+            "CaptureFlag": 6,
+            "OsgiliathRuin11": 1,
+            "Outpost": 4,
+            "RuinedTower": 4,
+            "SignalFire": 2,
+        },
+    ),
 )
 
 
@@ -200,6 +237,100 @@ def test_neutral_structure_artifact_rejects_cross_object_asset_drift() -> None:
 
     with pytest.raises(NeutralStructurePackCompilerError, match="cross-document"):
         validate_neutral_structure_pack_artifact(broken)
+
+
+@pytest.mark.parametrize(
+    (
+        "catalog_name",
+        "game",
+        "effective_relative",
+        "map_pack_id",
+        "map_pack_digest",
+        "map_id",
+        "objects_relative",
+        "objects_sha256",
+        "expected_placements",
+    ),
+    ACTIVE_MAP_STRUCTURE_CASES,
+)
+def test_exact_active_map_structure_placements_are_descriptor_covered(
+    catalog_name: str,
+    game: str,
+    effective_relative: str,
+    map_pack_id: str,
+    map_pack_digest: str,
+    map_id: str,
+    objects_relative: str,
+    objects_sha256: str,
+    expected_placements: dict[str, int],
+) -> None:
+    repo = Path(__file__).resolve().parents[2]
+    retail = repo / ".private" / "retail-work"
+    catalog_path = retail / "catalog" / catalog_name
+    effective_root = retail / effective_relative
+    objects_path = (
+        repo
+        / ".private"
+        / "content-packs"
+        / map_pack_id
+        / map_pack_digest
+        / objects_relative
+    )
+    if not catalog_path.is_file() or not (
+        effective_root / ".openbfme" / "manifest.json"
+    ).is_file() or not objects_path.is_file():
+        pytest.skip("operator retail catalog/effective assets/map pack are unavailable")
+
+    objects_bytes = objects_path.read_bytes()
+    assert hashlib.sha256(objects_bytes).hexdigest() == objects_sha256
+    documents = dict(read_catalog_documents(InstallCatalog.load(catalog_path)))
+    prepared = prepare_playable_unit_compiler(documents)
+    closure = build_retail_visual_closure(effective_root, expected_placements)
+    effect_documents = {
+        relative: (effective_root / relative).read_bytes()
+        for relative in (
+            "data/ini/fxlist.ini",
+            "data/ini/particlesystem.ini",
+            "data/ini/fxparticlesystem.ini",
+        )
+    }
+    texture_index = build_texture_index(effective_root)
+    artifacts = []
+    for object_id, placement_count in expected_placements.items():
+        source = {"mapId": map_id, "objectsBytes": objects_bytes}
+        evidence = compile_neutral_structure_map_placement_evidence(
+            object_id, [source]
+        )
+        artifact = compile_neutral_structure_pack_artifact(
+            object_id,
+            documents,
+            closure,
+            role="neutral-structure",
+            surfaces=["map-placement"],
+            prepared=prepared,
+            game=game,
+            effect_documents=effect_documents,
+            fx_texture_index=texture_index,
+            map_placement_sources=[source],
+        )
+        assert evidence["placementCount"] == placement_count
+        assert evidence["maps"] == [
+            {
+                "mapId": map_id,
+                "objectsSha256": objects_sha256,
+                "placementCount": placement_count,
+                "sourceIndices": evidence["maps"][0]["sourceIndices"],
+            }
+        ]
+        assert artifact["mapPlacementEvidence"] == evidence
+        assert artifact["runtime"]["registration"]["mapPlacementEvidence"] == evidence
+        artifacts.append(artifact)
+
+    assert len(artifacts) == len(expected_placements)
+    assert sum(
+        artifact["mapPlacementEvidence"]["placementCount"]
+        for artifact in artifacts
+    ) == sum(expected_placements.values())
 
 
 @pytest.mark.parametrize(

@@ -99,6 +99,42 @@ def test_cli_recipe_assets_root_compiles_all_neutral_domains(
     output = tmp_path / "neutral-mobs.json"
     assets = tmp_path / "assets"
     assets.mkdir()
+    for relative in (
+        "data/ini/fxlist.ini",
+        "data/ini/particlesystem.ini",
+        "data/ini/fxparticlesystem.ini",
+        "data/ini/soundeffects.ini",
+    ):
+        target = assets / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"")
+    map_root = tmp_path / "maps" / "fixture"
+    map_root.mkdir(parents=True)
+    (map_root / "map.json").write_text(
+        json.dumps(
+            {
+                "schema": "openbfme.map",
+                "schemaVersion": 0,
+                "id": "bfme2.map.fixture",
+            }
+        ),
+        encoding="utf-8",
+    )
+    objects = map_root / "objects.json"
+    objects.write_text(
+        json.dumps(
+            {
+                "schema": "openbfme.sage-map-objects",
+                "schemaVersion": 0,
+                "count": 1,
+                "objects": [
+                    {"index": 7, "typeName": "NeutralLair", "roadType": 0}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    objects_bytes = objects.read_bytes()
     unit_descriptor = {
         "objectId": "NeutralWolf",
         "descriptorSha256": "a" * 64,
@@ -123,6 +159,13 @@ def test_cli_recipe_assets_root_compiles_all_neutral_domains(
                 "descriptor": {"descriptorSha256": "b" * 64},
             },
             {
+                "objectId": "AbsentLair",
+                "role": "lair",
+                "runtimeDomain": "structure",
+                "runtimeStatus": "descriptor-ready",
+                "descriptor": {"descriptorSha256": "7" * 64},
+            },
+            {
                 "objectId": "SpiderWebs01",
                 "role": "ambient-or-scenario",
                 "runtimeDomain": "prop",
@@ -131,13 +174,13 @@ def test_cli_recipe_assets_root_compiles_all_neutral_domains(
             },
         ],
         "summary": {
-            "neutralMobCount": 3,
-            "descriptorReadyCount": 3,
+            "neutralMobCount": 4,
+            "descriptorReadyCount": 4,
             "runtimeDeferredCount": 0,
-            "lairCount": 1,
+            "lairCount": 2,
             "hordeCount": 0,
             "unitDomainCount": 1,
-            "structureDomainCount": 1,
+            "structureDomainCount": 2,
             "propDomainCount": 1,
         },
         "catalogSha256": "d" * 64,
@@ -220,6 +263,8 @@ def test_cli_recipe_assets_root_compiles_all_neutral_domains(
         mock.patch.object(
             cli, "build_retail_visual_closure", side_effect=[closure, closure, closure]
         ) as build_visual_closure,
+        mock.patch.object(cli, "build_texture_index", return_value={}),
+        mock.patch.object(cli, "build_audio_sample_index", return_value={}),
         mock.patch.object(
             cli,
             "compile_neutral_structure_pack_artifact",
@@ -256,6 +301,8 @@ def test_cli_recipe_assets_root_compiles_all_neutral_domains(
                 str(output),
                 "--recipe-assets-root",
                 str(assets),
+                "--map-objects",
+                str(objects),
             ]
         )
 
@@ -280,30 +327,65 @@ def test_cli_recipe_assets_root_compiles_all_neutral_domains(
         catalog_descriptor=unit_descriptor,
     )
     assert build_visual_closure.call_args_list == [
-        mock.call(assets.resolve(), ["NeutralLair"]),
+        mock.call(assets.resolve(), ["NeutralLair", "AbsentLair"]),
         mock.call(assets.resolve(), ["SpiderWebs01"]),
         mock.call(assets.resolve(), ["TreasureChest1"]),
     ]
-    compile_structure.assert_called_once_with(
-        "NeutralLair",
+    common_structure_kwargs = {
+        "role": "lair",
+        "surfaces": [
+            "map-placement", "script-spawn", "object-creation-list", "lair-spawn"
+        ],
+        "game": "bfme2",
+        "effect_documents": {
+            "data/ini/fxlist.ini": b"",
+            "data/ini/particlesystem.ini": b"",
+            "data/ini/fxparticlesystem.ini": b"",
+            "data/ini/soundeffects.ini": b"",
+        },
+        "fx_texture_index": {},
+    }
+    assert compile_structure.call_args_list == [
+        mock.call(
+            "NeutralLair",
+            {"neutral.ini": b"x"},
+            closure,
+            **common_structure_kwargs,
+            map_placement_sources=[
+                {"mapId": "bfme2.map.fixture", "objectsBytes": objects_bytes}
+            ],
+        ),
+        mock.call(
+            "AbsentLair",
+            {"neutral.ini": b"x"},
+            closure,
+            **common_structure_kwargs,
+            map_placement_sources=[],
+        ),
+    ]
+    compile_prop.assert_called_once_with(
+        "SpiderWebs01",
         {"neutral.ini": b"x"},
         closure,
-        role="lair",
-        surfaces=["map-placement", "script-spawn", "object-creation-list", "lair-spawn"],
         game="bfme2",
-    )
-    compile_prop.assert_called_once_with(
-        "SpiderWebs01", {"neutral.ini": b"x"}, closure, game="bfme2"
+        effect_documents={
+            "data/ini/fxlist.ini": b"",
+            "data/ini/particlesystem.ini": b"",
+            "data/ini/fxparticlesystem.ini": b"",
+            "data/ini/soundeffects.ini": b"",
+        },
+        fx_texture_index={},
+        audio_sample_index={},
     )
     compose_profile.assert_called_once_with(
         expected,
-        [unit_artifact, structure_artifact, prop_artifact],
+        [unit_artifact, structure_artifact, structure_artifact, prop_artifact],
         dependency_artifact=dependency_artifact,
         version="dddddddddddddddd",
     )
     discover_dependencies.assert_called_once_with(
         expected,
-        [unit_artifact, structure_artifact, prop_artifact],
+        [unit_artifact, structure_artifact, structure_artifact, prop_artifact],
         {"neutral.ini": b"x"},
         game="bfme2",
     )
@@ -317,11 +399,11 @@ def test_cli_recipe_assets_root_compiles_all_neutral_domains(
     integration_path = tmp_path / "neutral-mobs-recipe-integration.json"
     integration = json.loads(integration_path.read_text(encoding="utf-8"))
     assert [row["objectId"] for row in integration["rows"]] == [
-        "NeutralWolf", "NeutralLair", "SpiderWebs01"
+        "NeutralWolf", "NeutralLair", "AbsentLair", "SpiderWebs01"
     ]
     assert integration["summary"] == {
-        "candidateCount": 3,
-        "recipeReadyCount": 3,
+        "candidateCount": 4,
+        "recipeReadyCount": 4,
         "deferredCount": 0,
     }
     assert (tmp_path / "neutral-mobs-artifacts" / "neutralwolf" / "recipe.json").is_file()
@@ -329,7 +411,7 @@ def test_cli_recipe_assets_root_compiles_all_neutral_domains(
         (tmp_path / "neutral-mobs-pack-profile.json").read_text(encoding="utf-8")
     ) == profile
     rendered = json.loads(capsys.readouterr().out)
-    assert rendered["recipe_ready_count"] == 3
+    assert rendered["recipe_ready_count"] == 4
     assert rendered["recipe_deferred_count"] == 0
     assert rendered["dependency_ready"] is True
     assert rendered["pack_profile"].endswith("neutral-mobs-pack-profile.json")

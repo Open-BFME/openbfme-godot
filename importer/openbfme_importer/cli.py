@@ -1942,10 +1942,39 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                 "game": args.game,
                 "prepared": prepared_unit_inputs,
             }
+            map_placement_sources: list[dict[str, object]] = []
+            map_placement_identities: list[dict[str, str]] = []
             if args.map_objects:
+                map_object_paths = [
+                    Path(source).expanduser().resolve(strict=True)
+                    for source in args.map_objects
+                ]
                 compile_kwargs["map_placement_object_ids"] = (
-                    _map_placement_root_ids(args.map_objects)
+                    _map_placement_root_ids(map_object_paths)
                 )
+                for path in map_object_paths:
+                    map_path = path.with_name("map.json")
+                    map_document = json.loads(map_path.read_text(encoding="utf-8"))
+                    if (
+                        not isinstance(map_document, Mapping)
+                        or map_document.get("schema") != "openbfme.map"
+                        or map_document.get("schemaVersion") != 0
+                        or not isinstance(map_document.get("id"), str)
+                        or not str(map_document["id"]).strip()
+                    ):
+                        raise ValueError(f"map document is invalid: {map_path}")
+                    objects_bytes = path.read_bytes()
+                    objects_document = json.loads(objects_bytes.decode("utf-8"))
+                    identities = {
+                        str(row["typeName"]).casefold(): str(row["typeName"])
+                        for row in objects_document["objects"]
+                        if int(row["roadType"]) == 0
+                    }
+                    map_placement_sources.append({
+                        "mapId": str(map_document["id"]).strip(),
+                        "objectsBytes": objects_bytes,
+                    })
+                    map_placement_identities.append(identities)
             document = compile_neutral_mob_catalog(documents, **compile_kwargs)
             output_path = (
                 ensure_external_to_repo(Path(args.output), repo_root_from_module())
@@ -2061,11 +2090,27 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                             surfaces = ["map-placement", "script-spawn", "object-creation-list"]
                             if role == "lair":
                                 surfaces.append("lair-spawn")
+                            structure_map_sources: list[dict[str, object]] = []
+                            for source, identities in zip(
+                                map_placement_sources,
+                                map_placement_identities,
+                                strict=True,
+                            ):
+                                matched_id = identities.get(object_id.casefold())
+                                if matched_id is None:
+                                    continue
+                                if matched_id != object_id:
+                                    raise ValueError(
+                                        "map object identity has a case collision: "
+                                        f"{object_id!r}, {matched_id!r}"
+                                    )
+                                structure_map_sources.append(source)
                             artifact = compile_neutral_structure_pack_artifact(
                                 object_id, documents, structure_closure,
                                 role=role, surfaces=surfaces, game=args.game,
                                 effect_documents=prop_effect_documents,
                                 fx_texture_index=prop_fx_texture_index,
+                                map_placement_sources=structure_map_sources,
                             )
                             artifacts = (
                                 ("descriptor", artifact["descriptor"]),
