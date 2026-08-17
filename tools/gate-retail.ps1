@@ -54,7 +54,7 @@ $publishRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot ".private\content-pac
 # RE-MEASURED 2026-08-15 after the current-source faction and neutral recooks,
 # the exact EVA overlays, and the new RotWK Men pack were transactionally
 # selected and address-checked in both content roots.
-$expectedSelectionSha256 = "e3cf65197b36fc855f852f18ce7e53a698fca34ff004d29e0b25d31f0326285c"
+$expectedSelectionSha256 = "dcadd25179a531ab888befb329af66fabaefc25381aa9088feb1cdf1dbffddf3"
 $expectedSelectionActivePack = "rotwk-men-vslice/3be646b007e086152f6136b19549c9ec5a62a099d107e10e635ad5d39c5b317b"
 # Re-pinned 2026-08-15 after the current-source faction/neutral recooks and
 # exact EVA overlays were transactionally selected and address-checked.
@@ -77,8 +77,8 @@ $expectedSelectionSupplementalPacks = @(
     "rotwk-mordor-eva-overlay/d7e608b0e0f1a0d4151d6f33cf4fd42fec794c314792d8637f6b68bada627dab",
     "rotwk-wild-eva-overlay/98a12fe7b1277b51c23044916e267e7bd86f150da5c14dce61900b0ee1edfc8e",
     "rotwk-angmar-eva-overlay/96820c3d3abe5379ce36f123fc846810feca3756db625dfeb3ca1202d9ee958c",
-    "bfme2-neutral-vslice/8ab38217d80c443437dfb1adf2c4589466ef77729d9cb39c329a083acf4bc027",
-    "rotwk-neutral-vslice/8e192543df7d4352b663ce68dfd34bc2fddce69928f0cb0bd79b283a9082a26b"
+    "bfme2-neutral-vslice/ccc75c1d6e3272581f6a98ca0d8d56f4040b0ae68d14cda8c1afc6152c8819ce",
+    "rotwk-neutral-vslice/6032e4568e34970105370ffe86dd7e88ca4b11c1350b3b1815fbd95bc0edc278"
 )
 $stateRoot = if (-not [string]::IsNullOrWhiteSpace($env:OPENBFME_IMPORT_ROOT)) {
     [IO.Path]::GetFullPath($env:OPENBFME_IMPORT_ROOT)
@@ -453,6 +453,11 @@ try {
     # enabled in the shell while nothing gated the code behind that button.
     # Floor is the measured value from 2026-08-05.
     Invoke-GodotPassedFloor "cah_create_a_hero" "cah_create_a_hero_runner.gd" '(?m)^CAH_CREATE_A_HERO_OK passed=([0-9]+) failed=0\s*$' 66
+    # Fast synthetic structure-contract coverage. These fixtures do not read
+    # the mounted private selection, so keep them in deterministic SECTION A.
+    Invoke-GodotPassedFloor "structure_armor_tables" "test_structure_armor_tables.gd" '(?m)^STRUCTURE_ARMOR_TABLES_RESULT passed=([0-9]+) failed=0\s*$' 9
+    Invoke-GodotPassedFloor "scenario_structure_armor_projection" "scenario_structure_armor_projection_runner.gd" '(?m)^SCENARIO_STRUCTURE_ARMOR_PROJECTION_RESULT passed=([0-9]+) failed=0\s*$' 8
+    Invoke-GodotPassedFloor "capturable_neutral" "capturable_neutral_runner.gd" '(?m)^CAPTURABLE_NEUTRAL_RESULT passed=([0-9]+) failed=0\s*$' 12
 
     # The release firewall belongs to SECTION A: it is about the repository, not
     # about anyone's mounted content, and it must run even when SECTION B is
@@ -521,6 +526,10 @@ try {
         # a red run green.
         Invoke-GodotPassedFloor "menu_availability_sweep" "menu_sweep_runner.gd" '(?m)^MENU_SWEEP_RESULT passed=([0-9]+) failed=0\s*$' 36
         Invoke-GodotPassedFloor "hud_string_completeness" "hud_string_completeness_runner.gd" '(?m)^HUD_STRINGS_RESULT passed=([0-9]+) failed=0 ' 5
+        # Selected neutral-pack receipts and live map-placement behavior must
+        # move with the exact SECTION B selection pin above.
+        Invoke-GodotPassedFloor "selected_neutral_pack_acceptance" "selected_neutral_pack_acceptance_runner.gd" '(?m)^SELECTED_NEUTRAL_PACK_ACCEPTANCE_OK passed=([0-9]+)\s*$' 35
+        Invoke-GodotPassedFloor "scenario_map_placement_live" "scenario_map_placement_live_runner.gd" '(?m)^SCENARIO_MAP_PLACEMENT_LIVE_OK passed=([0-9]+)\s*$' 77
         # ADDED 2026-08-04. These goal/behaviour runners existed and were green
         # but nothing ran them in a gate, so a regression in any of them could
         # ship unnoticed. Like the two above they assert about the mounted

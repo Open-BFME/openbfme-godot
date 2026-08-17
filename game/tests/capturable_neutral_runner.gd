@@ -4,7 +4,7 @@ extends SceneTree
 
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 
-const EXPECTED_CHECKS := 8
+const EXPECTED_CHECKS := 12
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
 var _watchdog := RunnerWatchdogScript.new()
 var passed := 0
@@ -21,6 +21,7 @@ func _run() -> void:
 	_test_seed_pairs_flag_to_inn()
 	_test_infantry_capture_transfers_linked_inn()
 	_test_uncapturable_inn_is_not_a_direct_target()
+	_test_scenario_registry_does_not_steal_capturable_sources()
 	_finish()
 
 
@@ -69,6 +70,10 @@ func _rules(enable: bool) -> Dictionary:
 		"spawn_initial_battalions": false,
 		"enable_capturable_neutrals": enable,
 		"source_map_transform_scale": 1.0,
+		"faction_manifest": {
+			"spawn_roster": [],
+			"structure_armor": _fixture_structure_armor(),
+		},
 		"unit_rules": {
 			"test.fighter": {
 				"horde_id": "test.fighter",
@@ -100,6 +105,17 @@ func _rules(enable: bool) -> Dictionary:
 			},
 		},
 	}
+
+
+func _fixture_structure_armor() -> Dictionary:
+	var armor := {}
+	for kind_value in SimScript.STRUCTURE_KINDS:
+		armor[String(kind_value)] = {
+			"set_id": "FixtureArmor",
+			"damage_scalar": 1.0,
+			"scalars": {"default": 1.0},
+		}
+	return armor
 
 
 func _make_sim(enable: bool):
@@ -193,6 +209,64 @@ func _test_uncapturable_inn_is_not_a_direct_target() -> void:
 		not bool(cast.get("ok", false)) and String(cast.get("reason", "")) == "no-capturable-structure",
 		str(cast)
 	)
+
+
+func _test_scenario_registry_does_not_steal_capturable_sources() -> void:
+	var config := _config()
+	config["scenario_object_placements"] = [
+		{"type_name": "CaptureFlag", "source_index": 2, "position": Vector2(10.0, 0.0), "source_position": Vector3(10.0, 0.0, 0.0), "yaw": 0.0, "properties": {}},
+		{"type_name": "Inn", "source_index": 3, "position": Vector2(12.0, 0.5), "source_position": Vector3(12.0, 0.5, 0.0), "yaw": 0.0, "properties": {}},
+	]
+	var rules := _rules(true)
+	rules["game"] = "rotwk"
+	rules["enable_scenario_map_placements"] = true
+	rules["scenario_structure_runtimes"] = {
+		"CaptureFlag": _scenario_structure("CaptureFlag", "captureflag"),
+		"Inn": _scenario_structure("Inn", "inn"),
+	}
+	var sim = SimScript.new()
+	sim.setup({}, rules)
+	sim.ai_enabled = false
+	sim.structures.clear()
+	sim._scenario_map_seeded_source_indices.clear()
+	sim._scenario_map_placements = (config.get("scenario_object_placements", []) as Array).duplicate(true)
+	sim._capturable_placements = (config.get("capturable_placements", []) as Array).duplicate(true)
+	sim._next_scenario_structure_id = SimScript.SCENARIO_STRUCTURE_FIRST_ID
+	sim._next_capturable_structure_id = SimScript.CAPTURABLE_NEUTRAL_FIRST_ID
+	sim._seed_scenario_map_placements()
+	sim._seed_capturable_neutrals()
+	var ids := _flag_and_inn(sim)
+	var flag: Dictionary = sim.structures.get(int(ids.get("flag", 0)), {}) as Dictionary
+	var inn: Dictionary = sim.structures.get(int(ids.get("inn", 0)), {}) as Dictionary
+	_check("scenario_overlap_keeps_exactly_one_flag_and_inn", sim.structures.size() == 2 and not flag.is_empty() and not inn.is_empty(), str(sim.structures))
+	_check("scenario_overlap_preserves_neutral_capturable_flag", int(flag.get("team", -1)) == SimScript.NEUTRAL_TEAM and bool(flag.get("capturable", false)))
+	_check("scenario_overlap_preserves_inn_linkage", int(flag.get("linked_structure_id", 0)) == int(ids.get("inn", 0)) and int(inn.get("linked_structure_id", 0)) == int(ids.get("flag", 0)))
+	sim._unit_ability_rules["test.fighter"] = sim._scaled_ability_rules([{
+		"ability_id": "Command_CaptureBuilding", "slot": 12, "targeting": "enemy-object", "cooldown_ticks": 0,
+		"required_level": 1, "level_gate_resolved": true, "castable": true,
+		"effect": {"kind": "capture-building", "startAbilityRange": 15.0, "unpackMs": 1.0, "preparationMs": 100.0, "packMs": 1.0},
+	}], 1.0)
+	sim._add_battalion(23, 0, Vector2(10.0, 0.0), "Fighter", "test.fighter", "test.fighter", 0)
+	var cast := sim.cast_ability(23, "Command_CaptureBuilding", Vector2(10.0, 0.0))
+	sim.advance(3)
+	_check("scenario_overlap_capture_transfers_linked_pair", bool(cast.get("ok", false)) and int(flag.get("team", -1)) == 0 and int(inn.get("team", -1)) == 0, str(cast))
+
+
+func _scenario_structure(object_id: String, slug: String) -> Dictionary:
+	return {
+		"objectId": object_id,
+		"slug": slug,
+		"registration": {
+			"production": {"evidence": "authored-neutral-map", "routes": []},
+			"scenarioAdmission": {"kind": "authored-neutral-non-buildable", "role": "neutral-structure", "surfaces": ["map-placement"], "buildCommandExposed": false},
+			"gameplay": {
+				"armor": {"setId": null, "semantic": "fixture explicitly authors unmodified damage"},
+				"health": {"primary": {"module": "ActiveBody", "maxHealth": {"value": 1000}}},
+				"moduleContracts": [], "scalarFields": {},
+			},
+			"presentation": {"buildingLifecycle": {"simulationFacts": {"maximumHealth": 1000}}},
+		},
+	}
 
 
 func _finish() -> void:

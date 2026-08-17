@@ -1906,6 +1906,8 @@ func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 	_configure_ring_mechanic_contract()
 	if not _configure_faction_manifest():
 		return
+	if not _configure_scenario_structure_armor_projection():
+		return
 	_unit_prerequisites.clear()
 	_unit_prerequisite_any_groups.clear()
 	_structure_upgrade_contracts.clear()
@@ -2488,6 +2490,102 @@ func _compiled_armor_table(table_value: Variant) -> Dictionary:
 		if is_finite(raw) and raw > 0.0:
 			compiled["flanked_penalty"] = raw if raw <= 1.0 else raw / 100.0
 	return compiled
+
+
+static func _scenario_structure_kind(document: Dictionary) -> String:
+	## Lairs intentionally share one MonsterLair table. Other neutral structures
+	## do not: CaptureFlag, Outpost, SignalFire, ruins, and towers can carry
+	## different ArmorSets despite sharing the admission role `neutral-structure`.
+	var registration := document.get("registration", {}) as Dictionary
+	var admission := registration.get("scenarioAdmission", {}) as Dictionary
+	var role := String(admission.get("role", ""))
+	if role == "lair":
+		return "lair"
+	if role != "neutral-structure":
+		return ""
+	var source := String(document.get("slug", "")).strip_edges().to_lower()
+	if source == "":
+		source = String(document.get("objectId", "")).strip_edges().to_lower()
+	var normalized := ""
+	for index in source.length():
+		var code := source.unicode_at(index)
+		if (code >= 48 and code <= 57) or (code >= 97 and code <= 122):
+			normalized += String.chr(code)
+		elif normalized != "" and not normalized.ends_with("_"):
+			normalized += "_"
+	return normalized.trim_suffix("_")
+
+
+func _scenario_structure_armor_projection(document: Dictionary) -> Dictionary:
+	var registration := document.get("registration", {}) as Dictionary
+	var gameplay := registration.get("gameplay", {}) as Dictionary
+	if not gameplay.has("armor"):
+		return {"present": false}
+	var armor_value: Variant = gameplay.get("armor")
+	if typeof(armor_value) != TYPE_DICTIONARY:
+		return {"error": "armor is not a dictionary"}
+	var armor := armor_value as Dictionary
+	if not armor.has("setId"):
+		return {"error": "armor has no setId"}
+	var set_id_value: Variant = armor.get("setId")
+	if set_id_value == null:
+		var semantic := String(armor.get("semantic", "")).strip_edges()
+		if semantic == "" or armor.has("table"):
+			return {"error": "null setId lacks exact passthrough evidence"}
+		return {"present": true, "table": {
+			"set_id": "",
+			"damage_scalar": 1.0,
+			"scalars": {"default": 1.0},
+			"passthrough": true,
+		}}
+	if typeof(set_id_value) != TYPE_STRING or String(set_id_value).strip_edges() == "":
+		return {"error": "setId is not a nonempty string"}
+	if typeof(armor.get("table")) != TYPE_DICTIONARY:
+		return {"error": "typed ArmorSet has no compiled table"}
+	var table := _compiled_armor_table(armor.get("table"))
+	if table.is_empty():
+		return {"error": "compiled armor table is empty"}
+	table["set_id"] = String(set_id_value)
+	return {"present": true, "table": table}
+
+
+func _configure_scenario_structure_armor_projection() -> bool:
+	var registry_value: Variant = _rules.get("scenario_structure_runtimes", {})
+	if typeof(registry_value) != TYPE_DICTIONARY:
+		configuration_error = "Scenario structure runtime registry is not a dictionary"
+		return false
+	var registry := registry_value as Dictionary
+	var object_ids: Array = registry.keys()
+	object_ids.sort_custom(func(a, b): return String(a).naturalnocasecmp_to(String(b)) < 0)
+	var contracts_by_kind: Dictionary = {}
+	var sources_by_kind: Dictionary = {}
+	for object_id_value in object_ids:
+		var document_value: Variant = registry.get(object_id_value)
+		if typeof(document_value) != TYPE_DICTIONARY:
+			continue
+		var document := document_value as Dictionary
+		var kind := _scenario_structure_kind(document)
+		if kind == "":
+			continue
+		var projection := _scenario_structure_armor_projection(document)
+		if projection.has("error"):
+			configuration_error = "Scenario structure '%s' armor is invalid: %s" % [String(document.get("objectId", object_id_value)), String(projection.get("error", ""))]
+			return false
+		var contract: Dictionary = (projection.get("table", {}) as Dictionary).duplicate(true) if bool(projection.get("present", false)) else {}
+		if contracts_by_kind.has(kind):
+			if (contracts_by_kind.get(kind, {}) as Dictionary) != contract:
+				configuration_error = "Scenario structure kind collision '%s': %s and %s carry unequal armor contracts" % [kind, String(sources_by_kind.get(kind, "")), String(document.get("objectId", object_id_value))]
+				return false
+			continue
+		contracts_by_kind[kind] = contract
+		sources_by_kind[kind] = String(document.get("objectId", object_id_value))
+		if contract.is_empty():
+			continue
+		if _structure_armor.has(kind) and (_structure_armor.get(kind, {}) as Dictionary) != contract:
+			configuration_error = "Scenario structure kind collision '%s': faction and %s carry unequal armor contracts" % [kind, String(document.get("objectId", object_id_value))]
+			return false
+		_structure_armor[kind] = contract.duplicate(true)
+	return true
 
 
 func _compiled_armor_rule(document: Dictionary) -> Dictionary:
@@ -14847,7 +14945,7 @@ func spawn_scenario_structure(
 		"id": structure_id,
 		"team": team,
 		"kind": "structure",
-		"structure_kind": String(rule.get("role", "neutral-structure")),
+		"structure_kind": String(rule.get("structure_kind", "")),
 		"name": String(document.get("objectId", object_id)),
 		"source_object_id": String(document.get("objectId", object_id)),
 		"object_id": String(document.get("objectId", object_id)),
@@ -15215,6 +15313,7 @@ static func _scenario_structure_instantiation_rule(document: Dictionary) -> Dict
 	var result := {
 		"maximum_health": int(maximum_value),
 		"role": String(admission.get("role", "")),
+		"structure_kind": _scenario_structure_kind(document),
 		"admission": admission.duplicate(true),
 		"lifecycle": lifecycle.duplicate(true),
 		"gameplay": gameplay.duplicate(true),
@@ -15222,6 +15321,8 @@ static func _scenario_structure_instantiation_rule(document: Dictionary) -> Dict
 			document, PlayableUnitAdapter.module_contracts(document)
 		),
 	}
+	if String(result.get("structure_kind", "")) == "":
+		return {}
 	var geometry_value: Variant = gameplay.get("geometry", {})
 	if typeof(geometry_value) == TYPE_DICTIONARY:
 		var footprint_radius := SelectionPick.source_footprint_radius(geometry_value as Dictionary)
@@ -29412,6 +29513,20 @@ func _seed_scenario_map_placements() -> void:
 				return ai < bi
 			return String((a as Dictionary).get("type_name", "")) < String((b as Dictionary).get("type_name", ""))
 	)
+	# Capturable rows carry richer gameplay than the generic scenario structure
+	# contract (neutral ownership, capturable/link fields, paired transfer). When
+	# that lane is enabled it owns its authored source indices; generic registry
+	# admission must not steal them merely because CaptureFlag/Outpost now also
+	# have descriptor-backed scenario documents.
+	var capturable_source_indices: Dictionary = {}
+	if capturable_neutrals_enabled:
+		for capturable_value in _capturable_placements:
+			if typeof(capturable_value) != TYPE_DICTIONARY:
+				continue
+			var capturable := capturable_value as Dictionary
+			var capturable_index := int(capturable.get("source_index", -1))
+			if capturable_index >= 0:
+				capturable_source_indices[capturable_index] = true
 	var seen_source_indices: Dictionary = {}
 	for placement_value in placements:
 		var placement := placement_value as Dictionary
@@ -29423,6 +29538,11 @@ func _seed_scenario_map_placements() -> void:
 		var contract := scenario_spawn_contract(object_id, "map-placement")
 		var kind := String(contract.get("kind", ""))
 		if kind == "":
+			continue
+		# Unit/prop admission still outranks a malformed cross-domain capturable
+		# row at the same source index. Only the generic STRUCTURE path yields to
+		# the richer capturable structure contract.
+		if kind == "structure" and capturable_source_indices.has(source_index):
 			continue
 		var properties := placement.get("properties", {}) as Dictionary
 		var team := _castle_fixture_team(String(properties.get("originalOwner", "")))

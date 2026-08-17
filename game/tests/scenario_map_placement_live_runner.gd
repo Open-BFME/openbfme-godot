@@ -1,6 +1,6 @@
 extends SceneTree
 
-const BFME2_NEUTRAL_DIGEST := "8ab38217d80c443437dfb1adf2c4589466ef77729d9cb39c329a083acf4bc027"
+const BFME2_NEUTRAL_DIGEST := "ccc75c1d6e3272581f6a98ca0d8d56f4040b0ae68d14cda8c1afc6152c8819ce"
 
 ## Live selected-pack proof for descriptor-backed map placement on Fords. The
 ## Source-index ownership proves the same six source rows can never be seeded
@@ -40,11 +40,11 @@ func _run() -> void:
 		_finish()
 		return
 	var content_db = root.get_node_or_null("ContentDB")
-	_check(content_db != null and content_db.get_scenario_structure_runtimes("rotwk").size() == 23, "selected_rotwk_structure_registry_live")
+	_check(content_db != null and content_db.get_scenario_structure_runtimes("rotwk").size() == 28, "selected_rotwk_structure_registry_live")
 	_check(content_db != null and content_db.get_scenario_unit_runtimes("rotwk").size() == 48, "selected_rotwk_unit_registry_live")
 	_check(content_db != null and content_db.get_scenario_prop_runtimes("rotwk").size() == 12, "selected_rotwk_prop_registry_live")
 	_check(content_db != null and content_db.get_scenario_pickup_runtimes("rotwk").size() == 1, "selected_rotwk_pickup_registry_live")
-	_check(content_db != null and content_db.get_scenario_structure_runtimes("bfme2").size() == 15, "selected_bfme2_structure_registry_live")
+	_check(content_db != null and content_db.get_scenario_structure_runtimes("bfme2").size() == 19, "selected_bfme2_structure_registry_live")
 	_check(content_db != null and content_db.get_scenario_unit_runtimes("bfme2").size() == 42, "selected_bfme2_unit_registry_live")
 	_check(content_db != null and content_db.get_scenario_prop_runtimes("bfme2").size() == 12, "selected_bfme2_prop_registry_live")
 	_check(content_db != null and content_db.get_scenario_pickup_runtimes("bfme2").size() == 2, "selected_bfme2_pickup_registry_live")
@@ -60,6 +60,44 @@ func _run() -> void:
 	_check(String(rules.get("game", "")) == "rotwk", "live_match_selects_rotwk_edition")
 	sim.setup(configuration.duplicate(true), rules)
 	sim.ai_enabled = false
+	var capture_flags: Array[Dictionary] = []
+	var linked_inns: Array[Dictionary] = []
+	for structure_id in sim.structure_ids():
+		var placed := sim.structures[structure_id] as Dictionary
+		if String(placed.get("structure_kind", "")) == "capture_flag":
+			capture_flags.append(placed)
+		elif String(placed.get("structure_kind", "")) == "inn" and bool(placed.get("linked_to_flag", false)):
+			linked_inns.append(placed)
+	_check(capture_flags.size() == 2 and linked_inns.size() == 2, "fords_keeps_two_rich_capture_pairs", "flags=%d inns=%d" % [capture_flags.size(), linked_inns.size()])
+	var capture_contracts_ok := true
+	for flag in capture_flags:
+		var linked_id := int(flag.get("linked_structure_id", 0))
+		capture_contracts_ok = capture_contracts_ok and int(flag.get("team", -1)) == Sim.NEUTRAL_TEAM and bool(flag.get("capturable", false)) and sim.structures.has(linked_id)
+		if sim.structures.has(linked_id):
+			var linked := sim.structures[linked_id] as Dictionary
+			capture_contracts_ok = capture_contracts_ok and int(linked.get("linked_structure_id", 0)) == int(flag.get("id", 0)) and bool(linked.get("linked_to_flag", false))
+	_check(capture_contracts_ok, "fords_capture_flags_retain_neutral_link_contract")
+	var capture_probe = Sim.new()
+	capture_probe.setup(configuration.duplicate(true), rules.duplicate(true))
+	var capture_transfer_ok := false
+	for probe_id in capture_probe.structure_ids():
+		var probe_flag := capture_probe.structures[probe_id] as Dictionary
+		if String(probe_flag.get("structure_kind", "")) != "capture_flag":
+			continue
+		var linked_id := int(probe_flag.get("linked_structure_id", 0))
+		var probe_type := "scenario.capture.probe"
+		(capture_probe._rules.get("unit_rules", {}) as Dictionary)[probe_type] = _capture_probe_rule()
+		capture_probe._unit_ability_rules[probe_type] = capture_probe._scaled_ability_rules([{
+			"ability_id": "Command_CaptureBuilding", "slot": 12, "targeting": "enemy-object", "cooldown_ticks": 0,
+			"required_level": 1, "level_gate_resolved": true, "castable": true,
+			"effect": {"kind": "capture-building", "startAbilityRange": 15.0, "unpackMs": 1.0, "preparationMs": 100.0, "packMs": 1.0},
+		}], 1.0)
+		capture_probe._add_battalion(59001, Sim.PLAYER_TEAM, Vector2(probe_flag.get("position", Vector2.ZERO)), "Capture Probe", probe_type, probe_type, 0)
+		var cast := capture_probe.cast_ability(59001, "Command_CaptureBuilding", Vector2(probe_flag.get("position", Vector2.ZERO)))
+		capture_probe.advance(3)
+		capture_transfer_ok = bool(cast.get("ok", false)) and int(probe_flag.get("team", -1)) == Sim.PLAYER_TEAM and capture_probe.structures.has(linked_id) and int((capture_probe.structures[linked_id] as Dictionary).get("team", -1)) == Sim.PLAYER_TEAM
+		break
+	_check(capture_transfer_ok, "fords_real_capture_channel_transfers_linked_pair")
 
 	var expected_indices := [42, 43, 249, 250, 499, 500]
 	var observed_indices: Array[int] = []
@@ -170,7 +208,7 @@ func _run() -> void:
 	bfme2.setup(configuration.duplicate(true), bfme2_rules)
 	bfme2.ai_enabled = false
 	_check((bfme2._rules.get("scenario_unit_runtimes", {}) as Dictionary).size() == 42, "bfme2_match_snapshots_42_units")
-	_check((bfme2._rules.get("scenario_structure_runtimes", {}) as Dictionary).size() == 15, "bfme2_match_snapshots_15_structures")
+	_check((bfme2._rules.get("scenario_structure_runtimes", {}) as Dictionary).size() == 19, "bfme2_match_snapshots_19_structures")
 	_check((bfme2._rules.get("scenario_prop_runtimes", {}) as Dictionary).size() == 12, "bfme2_match_snapshots_12_props")
 	_check((bfme2._rules.get("scenario_pickup_runtimes", {}) as Dictionary).size() == 2, "bfme2_match_snapshots_2_pickups")
 	var shared_cave := (bfme2._rules.get("scenario_structure_runtimes", {}) as Dictionary).get("CaveTrollLair", {}) as Dictionary
@@ -220,6 +258,19 @@ func _first_diff(a: Variant, b: Variant, path: String = "$") -> String:
 			if diff != "": return diff
 		return ""
 	return "" if a == b else "%s %s != %s" % [path, str(a), str(b)]
+
+
+func _capture_probe_rule() -> Dictionary:
+	return {
+		"horde_id": "scenario.capture.probe", "member_count": 1, "member_health": 100, "member_damage": 10,
+		"speed": 20.0, "speed_source": 20.0, "acceleration": 20.0, "acceleration_source": 20.0,
+		"turn_rate_degrees_per_second": 180.0, "braking": 20.0, "braking_source": 20.0,
+		"attack_range": 20.0, "attack_range_source": 20.0, "minimum_attack_range": 0.0, "minimum_attack_range_source": 0.0,
+		"vision_range": 40.0, "vision_range_source": 40.0, "delay_between_shots_ms": 600.0,
+		"pre_attack_delay_ms": 200.0, "firing_duration_ms": 200.0, "attack_period_ticks": 10,
+		"pre_attack_ticks": 2, "firing_duration_ticks": 2, "formation_positions": [Vector3.ZERO],
+		"provenance": {}, "category": "infantry",
+	}
 
 
 func _finish() -> void:

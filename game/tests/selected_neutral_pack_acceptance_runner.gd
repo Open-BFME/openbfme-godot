@@ -1,13 +1,13 @@
 extends SceneTree
 
-const BFME2_PACK := "bfme2-neutral-vslice/8ab38217d80c443437dfb1adf2c4589466ef77729d9cb39c329a083acf4bc027"
-const ROTWK_PACK := "rotwk-neutral-vslice/8e192543df7d4352b663ce68dfd34bc2fddce69928f0cb0bd79b283a9082a26b"
-const BFME2_CATALOG := "9d119a3de2c2f8a84db9b9b9cf26da4e6630e5e9d075583f028703ea455e88d7"
-const BFME2_PROFILE := "ab8eb46b27013bed43e0736eb841e6d0fc271bc26d628d822962c8fea47f9dd9"
-const BFME2_DEPENDENCY := "e134de472d1e6b96e660270d8c3d9b7ba6dd4302004e7d4ba061449fcc53e055"
-const ROTWK_CATALOG := "b9357884e75c178e463ce61fa7502add5c79f599d85a41708e2aabae4f6afa2a"
-const ROTWK_PROFILE := "b676545573715b0eb7a86c9ffbb2145ada76120246cbc4f947707fb3b61528a8"
-const ROTWK_DEPENDENCY := "9408673a31f3ed8ce0e0c51eefedd33f0d61c5f88c7b9e3cada095378c45acc0"
+const BFME2_PACK := "bfme2-neutral-vslice/ccc75c1d6e3272581f6a98ca0d8d56f4040b0ae68d14cda8c1afc6152c8819ce"
+const ROTWK_PACK := "rotwk-neutral-vslice/6032e4568e34970105370ffe86dd7e88ca4b11c1350b3b1815fbd95bc0edc278"
+const BFME2_CATALOG := "f44d335b6c967bb28a9bb6341f77ab5fbc4b4d84f87b37ca18194a61293c5f89"
+const BFME2_PROFILE := "929570a2c4fb3b966e60c4f95fa9d6f2c86b58aa46743f8368400281ed6354c9"
+const BFME2_DEPENDENCY := "66b2f853b9ffbb671d74394cbeab5d0d6e752f54c5d98c942939c646dda61dfe"
+const ROTWK_CATALOG := "50bff32c12c50fd84a4e7960048dec9e62b3bd396e16395b0db2bfa37eabc10d"
+const ROTWK_PROFILE := "571eaa23b654611c9b59521f2e5db6e2022cb7f3cfaa04882bf76c4d06384d1e"
+const ROTWK_DEPENDENCY := "2aed05d7ede3ab396c78da77ddfdcedf5e49bd051bacaef13e670231d2fd94ec"
 
 var passed := 0
 var failed := 0
@@ -33,13 +33,13 @@ func _run() -> void:
 	_check(receipts.size() == 2 and receipts.has("bfme2") and receipts.has("rotwk"), "exactly two edition receipts are indexed")
 	var bfme2 := db.get_neutral_pack_receipt("bfme2") as Dictionary
 	var rotwk := db.get_neutral_pack_receipt("rotwk") as Dictionary
-	_check(_receipt_identity(bfme2, BFME2_CATALOG, BFME2_PROFILE, BFME2_DEPENDENCY, 69, 2, BFME2_PACK), "BFME2 receipt binds selected pack and sealed identities")
-	_check(_receipt_identity(rotwk, ROTWK_CATALOG, ROTWK_PROFILE, ROTWK_DEPENDENCY, 83, 1, ROTWK_PACK), "RotWK receipt binds selected pack and sealed identities")
+	_check(_receipt_identity(bfme2, BFME2_CATALOG, BFME2_PROFILE, BFME2_DEPENDENCY, 73, 2, BFME2_PACK), "BFME2 receipt binds selected pack and sealed identities")
+	_check(_receipt_identity(rotwk, ROTWK_CATALOG, ROTWK_PROFILE, ROTWK_DEPENDENCY, 88, 1, ROTWK_PACK), "RotWK receipt binds selected pack and sealed identities")
 	var rotwk_meta := _pack_meta(db.pack_meta, "rotwk-neutral-vslice", ROTWK_PACK)
 	var receipt_unsigned := rotwk.duplicate(true)
 	for metadata_key in ["_source", "_pack_root", "_pack_file_key"]:
 		receipt_unsigned.erase(metadata_key)
-	_check(not rotwk_meta.is_empty() and db._validate_neutral_pack_receipt(receipt_unsigned, rotwk_meta.get("files", {}) as Dictionary, rotwk_meta), "selected RotWK receipt independently revalidates")
+	_check(not rotwk_meta.is_empty() and db._validate_neutral_pack_receipt(receipt_unsigned, rotwk_meta.get("files", {}) as Dictionary, rotwk_meta), "selected RotWK receipt satisfies runtime schema and declared binding validation")
 	var tampered_receipt := receipt_unsigned.duplicate(true)
 	tampered_receipt.catalogSha256 = "0".repeat(64)
 	_check(not db._validate_neutral_pack_receipt(tampered_receipt, rotwk_meta.get("files", {}) as Dictionary, rotwk_meta), "receipt validator rejects catalog identity drift")
@@ -74,8 +74,8 @@ func _run() -> void:
 	var bfme2_structures: Dictionary = db.get_scenario_structure_runtimes("bfme2")
 	var bfme2_props: Dictionary = db.get_scenario_prop_runtimes("bfme2")
 	var bfme2_pickups: Dictionary = db.get_scenario_pickup_runtimes("bfme2")
-	_check(units.size() == 48 and structures.size() == 23 and props.size() == 12 and pickups.size() == 1, "live RotWK domain counts are 48/23/12/1")
-	_check(bfme2_units.size() == 42 and bfme2_structures.size() == 15 and bfme2_props.size() == 12 and bfme2_pickups.size() == 2, "live BFME2 domain counts are 42/15/12/2")
+	_check(units.size() == 48 and structures.size() == 28 and props.size() == 12 and pickups.size() == 1, "live RotWK domain counts are 48/28/12/1")
+	_check(bfme2_units.size() == 42 and bfme2_structures.size() == 19 and bfme2_props.size() == 12 and bfme2_pickups.size() == 2, "live BFME2 domain counts are 42/19/12/2")
 
 	var expected := _receipt_domain_ids(rotwk)
 	_check(_folded_ids(units) == expected.unit, "unit registry identities exactly match RotWK receipt")
@@ -95,12 +95,12 @@ func _run() -> void:
 			if all_ids.has(folded):
 				duplicate = true
 			all_ids[folded] = true
-	_check(not duplicate and all_ids.size() == 84, "scenario registries have no duplicate or cross-domain identity")
+	_check(not duplicate and all_ids.size() == 89, "scenario registries have no duplicate or cross-domain identity")
 	var shared := 0
 	var bfme2_all := _union_ids([bfme2_units, bfme2_structures, bfme2_props, bfme2_pickups])
 	for folded_value in all_ids.keys():
 		if bfme2_all.has(folded_value): shared += 1
-	_check(shared == 67, "both editions retain all 67 shared identities independently")
+	_check(shared == 70, "edition registries expose the expected 70-identity intersection")
 
 	var receipt_rows := _receipt_rows_by_id(rotwk)
 	var provenance_ok := true
@@ -143,7 +143,7 @@ func _run() -> void:
 			or db.playable_unit_runtime_member_index.has(object_id)
 		):
 			no_production_leak = false
-	_check(no_production_leak, "neutral identities do not enter playable, member, producer or HUD registries")
+	_check(no_production_leak, "neutral identities do not enter playable unit, structure or member registries")
 	_check(db.get_playable_faction_ids().size() == 7, "neutral packs do not create a faction or HUD roster")
 
 	# Re-admitting an already-selected edition begins an atomic replacement
@@ -157,7 +157,7 @@ func _run() -> void:
 		and db.get_scenario_prop_runtimes("rotwk").is_empty()
 		and db.get_scenario_pickup_runtimes("rotwk").is_empty()
 		and db.get_scenario_unit_runtimes("bfme2").size() == 42
-		and db.get_scenario_structure_runtimes("bfme2").size() == 15
+		and db.get_scenario_structure_runtimes("bfme2").size() == 19
 		and db.get_scenario_prop_runtimes("bfme2").size() == 12
 		and db.get_scenario_pickup_runtimes("bfme2").size() == 2,
 		"same-edition replacement invalidates only RotWK snapshots and preserves BFME2",

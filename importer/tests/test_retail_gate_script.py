@@ -88,6 +88,50 @@ def test_gate_fails_closed_on_identity_readiness_and_incomplete_marker() -> None
         )
 
 
+def test_neutral_structure_evidence_is_wired_at_exact_selection_and_floors() -> None:
+    text = _gate_text()
+    assert (
+        '$expectedSelectionSha256 = '
+        '"dcadd25179a531ab888befb329af66fabaefc25381aa9088feb1cdf1dbffddf3"'
+        in text
+    )
+    assert (
+        '"bfme2-neutral-vslice/'
+        'ccc75c1d6e3272581f6a98ca0d8d56f4040b0ae68d14cda8c1afc6152c8819ce"'
+        in text
+    )
+    assert (
+        '"rotwk-neutral-vslice/'
+        '6032e4568e34970105370ffe86dd7e88ca4b11c1350b3b1815fbd95bc0edc278"'
+        in text
+    )
+    for runner, marker, minimum in (
+        ("test_structure_armor_tables.gd", "STRUCTURE_ARMOR_TABLES_RESULT", 9),
+        (
+            "scenario_structure_armor_projection_runner.gd",
+            "SCENARIO_STRUCTURE_ARMOR_PROJECTION_RESULT",
+            8,
+        ),
+        ("capturable_neutral_runner.gd", "CAPTURABLE_NEUTRAL_RESULT", 12),
+        (
+            "selected_neutral_pack_acceptance_runner.gd",
+            "SELECTED_NEUTRAL_PACK_ACCEPTANCE_OK",
+            35,
+        ),
+        (
+            "scenario_map_placement_live_runner.gd",
+            "SCENARIO_MAP_PLACEMENT_LIVE_OK",
+            77,
+        ),
+    ):
+        assert re.search(
+            rf'Invoke-GodotPassedFloor\s+"[^"]+"\s+"{re.escape(runner)}"'
+            rf".*{re.escape(marker)}.*\s{minimum}$",
+            text,
+            re.MULTILINE,
+        )
+
+
 def test_importer_tests_step_runs_the_whole_suite_not_just_unittest() -> None:
     """RE-PINNED 2026-08-04.
 

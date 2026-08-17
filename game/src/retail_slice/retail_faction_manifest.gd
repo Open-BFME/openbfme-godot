@@ -1952,16 +1952,34 @@ static func _content_db_pack_index() -> Dictionary:
 
 static func _compiled_structure_armor(document: Dictionary) -> Dictionary:
 	## Normalize a playableStructure document's compiled armor.ini contract to
-	## the fraction table the simulation consumes. {} when the document has no
-	## armor block (stale pack) or records the no-authored-set SAGE passthrough
-	## (the simulation's recorded provisional path covers both, loudly).
+	## the fraction table the simulation consumes. A missing armor block remains
+	## a stale-pack gap. An explicit null setId is different: the importer proved
+	## the object ancestry authors no ArmorSet, so SAGE applies unmodified damage.
 	var registration: Dictionary = document.get("registration", {}) as Dictionary
 	var gameplay: Dictionary = registration.get("gameplay", {}) as Dictionary
+	if not gameplay.has("armor"):
+		return {}
 	var armor_value: Variant = gameplay.get("armor", null)
 	if typeof(armor_value) != TYPE_DICTIONARY:
 		return {}
 	var armor := armor_value as Dictionary
-	if armor.get("setId") == null or String(armor.get("setId", "")) == "":
+	if not armor.has("setId"):
+		return {}
+	var set_id_value: Variant = armor.get("setId")
+	if set_id_value == null:
+		var semantic := String(armor.get("semantic", "")).strip_edges()
+		if semantic == "" or armor.has("table"):
+			return {}
+		return {
+			"set_id": "",
+			"damage_scalar": 1.0,
+			"scalars": {"default": 1.0},
+			"passthrough": true,
+			"semantic": semantic,
+		}
+	if typeof(set_id_value) != TYPE_STRING or String(set_id_value).strip_edges() == "":
+		return {}
+	if typeof(armor.get("table")) != TYPE_DICTIONARY:
 		return {}
 	var table: Dictionary = armor.get("table", {}) as Dictionary
 	var scalars := {}
@@ -1976,7 +1994,7 @@ static func _compiled_structure_armor(document: Dictionary) -> Dictionary:
 			continue
 		scalars[String(key_value)] = float((row as Dictionary).get("percent", default_percent)) / 100.0
 	return {
-		"set_id": String(armor.get("setId", "")),
+		"set_id": String(set_id_value),
 		"damage_scalar": float((table.get("damageScalar", {}) as Dictionary).get("percent", 100.0)) / 100.0,
 		"scalars": scalars,
 	}
