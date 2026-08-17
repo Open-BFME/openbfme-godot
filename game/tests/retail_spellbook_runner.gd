@@ -17,6 +17,8 @@ const EXPECTED_POWER_ORDER := [
 	"SpellBookDunedainAllies", "SpellBookArmyoftheDead", "SpellBookEarthquake",
 ]
 const EXPECTED_COSTS := [5, 5, 5, 10, 10, 10, 10, 15, 15, 15, 25, 25]
+# Exact selected-document identity; this runner does not promote the module.
+const CLOUDBREAK_MODULE := "CloudBreakSpecialPower"
 
 
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
@@ -54,6 +56,7 @@ func _run() -> void:
 	_command_points_upgrade_checks(doc)
 	_sim_pause_checks(doc)
 	_sim_ui_state_checks(doc)
+	_cloud_break_selected_document_checks(content_db, doc)
 	_per_faction_checks(content_db)
 	_cross_faction_match_checks(content_db)
 	_hud_integration_checks(content_db, doc)
@@ -708,6 +711,29 @@ func _elven_wood_checks(doc: Dictionary) -> void:
 
 
 func _cloud_break_checks(doc: Dictionary) -> void:
+	# Four fields that the old consumer silently ignored must fail closed when
+	# their selected-document values are changed.  These are product tests, not
+	# a module-registry promotion: each damaged document must relock the power.
+	var tamper_cases := {
+		"ReEnableAntiCategory": ["No", null],
+		"AttributeModifierWeatherBased": ["No", null],
+		"SunbeamObject": ["MissingCloudBreakSunbeam", null],
+		"ObjectSpacing": ["301", 301],
+	}
+	for field_name in tamper_cases:
+		var replacement := tamper_cases[field_name] as Array
+		var damaged_doc := _tamper_cloud_break_field(doc, field_name, replacement)
+		var damaged_sim = SimScript.new()
+		var configured := damaged_sim.configure_spellbook_runtime(damaged_doc)
+		var damaged_power: Dictionary = damaged_sim.spellbook_power("SpellBookCloudBreak")
+		_check(
+			"cloud_break_rejects_tampered_%s" % field_name.to_snake_case(),
+			configured
+				and not bool(damaged_power.get("castable", true))
+				and String(damaged_power.get("locked_reason", "")).contains(field_name),
+			String(damaged_power.get("locked_reason", ""))
+		)
+
 	var sim = _effect_sim(doc)
 	sim.purchase_power(0, "SpellBookHeal")
 	sim.purchase_power(0, "SpellBookArrowVolleyGood")
@@ -722,6 +748,13 @@ func _cloud_break_checks(doc: Dictionary) -> void:
 		"cloud_break_stuns_enemies_for_weather_duration",
 		bool(cast.get("ok", false)) and stunned >= 1 and int(enemy_after.get("stun_until_tick", -1)) == cast_tick + 300 and (enemy_after.get("route", []) as Array).is_empty(),
 		str(cast)
+	)
+	var cloud_event := _last_power_event(sim, "power.cloudbreak")
+	_check(
+		"cloud_break_event_receipts_selected_sunbeam_spacing",
+		String(cloud_event.get("sunbeam_object_id", "")) == "CloudBreakSunbeam"
+			and float(cloud_event.get("object_spacing_source", -1.0)) == 300.0,
+		str(cloud_event)
 	)
 	var frozen := Vector2(sim.entity(101)["position"])
 	# AI orders from tick 15 must not move a stunned battalion; once the
@@ -739,6 +772,207 @@ func _cloud_break_checks(doc: Dictionary) -> void:
 			recovered = true
 			break
 	_check("battalion_recovers_after_duration", recovered)
+	_cloud_break_cancellation_checks(doc)
+
+func _cloud_break_selected_document_checks(content_db, bfme2_doc: Dictionary) -> void:
+	var mod_loader = root.get_node_or_null("ModLoader")
+	_check("cloud_break_selected_pack_loader_available", mod_loader != null)
+	if mod_loader == null:
+		return
+	var pack_roots: Array = mod_loader.list_pack_roots()
+	var fixtures := [
+		["bfme2_men", 695, bfme2_doc],
+		["rotwk_men", 695, _faction_spellbook_doc(mod_loader, pack_roots, "Men", "men-vslice")],
+		["rotwk_elves", 864, _faction_spellbook_doc(mod_loader, pack_roots, "Elves", "elves-vslice")],
+		["rotwk_dwarves", 864, _faction_spellbook_doc(mod_loader, pack_roots, "Dwarves", "dwarves-vslice")],
+	]
+	for fixture_value in fixtures:
+		var fixture := fixture_value as Array
+		var effect := _spellbook_power_effect(fixture[2] as Dictionary, "SpellBookCloudBreak")
+		_check(
+			"cloud_break_%s_selected_provenance_exact" % String(fixture[0]),
+			_cloud_break_effect_exact(effect, int(fixture[1])),
+			str(effect)
+		)
+
+
+func _cloud_break_effect_exact(effect: Dictionary, expected_line: int) -> bool:
+	var fields := _module_field_map(effect)
+	return (
+		String(effect.get("module", "")) == CLOUDBREAK_MODULE
+		and String(effect.get("moduleTag", "")) == "ModuleTag_CloudBreak"
+		and String(effect.get("sourceIni", "")) == "data/ini/object/system/system.ini"
+		and int(effect.get("line", -1)) == expected_line
+		and String((fields.get("SpecialPowerTemplate", {}) as Dictionary).get("value", "")) == "SpellBookCloudBreak"
+		and String((fields.get("SunbeamObject", {}) as Dictionary).get("value", "")) == "CloudBreakSunbeam"
+		and int((fields.get("ObjectSpacing", {}) as Dictionary).get("resolved", -1)) == 300
+		and String((fields.get("AttributeModifierAffects", {}) as Dictionary).get("value", "")) == "ANY +INFANTRY +CAVALRY +MONSTER -HERO ENEMIES"
+		and String((fields.get("ReEnableAntiCategory", {}) as Dictionary).get("value", "")) == "Yes"
+		and String((fields.get("AttributeModifierWeatherBased", {}) as Dictionary).get("value", "")) == "Yes"
+		and int((fields.get("WeatherDuration", {}) as Dictionary).get("resolved", -1)) == 30000
+		and String((fields.get("ChangeWeather", {}) as Dictionary).get("value", "")) == "SUNNY"
+	)
+
+
+func _spellbook_power_effect(document: Dictionary, power_id: String) -> Dictionary:
+	var powers: Array = (
+		((document.get("registration", {}) as Dictionary).get("powerTree", {}) as Dictionary)
+			.get("powers", []) as Array
+	)
+	for power_value in powers:
+		var power := power_value as Dictionary
+		if String(power.get("id", "")) == power_id:
+			return power.get("effect", {}) as Dictionary
+	return {}
+
+
+func _module_field_map(row: Dictionary) -> Dictionary:
+	var result := {}
+	for field_value in row.get("fields", []) as Array:
+		var field := field_value as Dictionary
+		result[String(field.get("key", ""))] = field
+	return result
+
+
+func _tamper_cloud_break_field(
+	document: Dictionary, field_name: String, replacement: Array
+) -> Dictionary:
+	var damaged := document.duplicate(true)
+	var field := (
+		_module_field_map(
+			_spellbook_power_effect(damaged, "SpellBookCloudBreak")
+		).get(field_name, {}) as Dictionary
+	)
+	field["value"] = replacement[0]
+	if replacement[1] != null:
+		field["resolved"] = replacement[1]
+	return damaged
+
+func _cloud_break_cancellation_checks(doc: Dictionary) -> void:
+	for case_value in [
+		{"power": "SpellBookDarkness", "kind": "weather_modifier"},
+		{"power": "SpellBookFreezingRain", "kind": "weather_anticategory"},
+	]:
+		var case := case_value as Dictionary
+		var sim = _effect_sim(doc)
+		sim.purchase_power(0, "SpellBookHeal")
+		sim.purchase_power(0, "SpellBookArrowVolleyGood")
+		sim.purchase_power(0, "SpellBookCloudBreak")
+		var power_id := String(case.get("power", ""))
+		var kind := String(case.get("kind", ""))
+		var target: Dictionary = sim.entity(1)
+		var horn_source := "horn:coincident-fixture"
+		var expire_tick: int = sim.tick_index + 300
+		if kind == "weather_modifier":
+			sim._cast_spellbook_weather_modifier(
+				1, power_id, _cloud_break_weather_fixture(kind, "ANY ENEMIES")
+			)
+			sim._cast_spellbook_weather_modifier(
+				0, "OwnWeatherFixture", _cloud_break_weather_fixture(kind, "ANY ALLIES")
+			)
+		else:
+			sim._cast_spellbook_weather_anticategory(
+				1, power_id, _cloud_break_weather_fixture(kind, "ANY ENEMIES")
+			)
+			sim._cast_spellbook_weather_anticategory(
+				0, "OwnWeatherFixture", _cloud_break_weather_fixture(kind, "ANY ALLIES")
+			)
+			sim._set_leadership_suppression_source(target, horn_source, expire_tick)
+		var state := bytes_to_var(sim.snapshot()) as Dictionary
+		_cloud_break_make_legacy_weather_snapshot(state, kind, target["id"])
+		var snapshot := var_to_bytes(state)
+		var first := _cloud_break_restore_continuation(snapshot, kind, target["id"])
+		var second := _cloud_break_restore_continuation(snapshot, kind, target["id"])
+		_check(
+			"cloud_break_cancels_%s_window_and_payload" % power_id.to_snake_case(),
+			bool(first.get("ok", false)) and first == second,
+			"first=%s second=%s" % [first, second]
+		)
+
+
+func _cloud_break_weather_fixture(kind: String, affects: String) -> Dictionary:
+	return {
+		"duration_ticks": 300, "weather": "FIXTURE", "affects": affects,
+		"modifier_id": "SelectedFixture",
+		"modifiers": [{"kind": "DAMAGE_MULT", "value": 1.25}],
+		"anti_category": "LEADERSHIP", "kind": kind,
+	}
+
+
+func _cloud_break_make_legacy_weather_snapshot(
+	state: Dictionary, kind: String, target_id: int
+) -> void:
+	var weather: Array = state.get("weather_effects", []) as Array
+	var target: Dictionary = (state.get("entities", {}) as Dictionary)[target_id]
+	if kind == "weather_modifier":
+		var table: Dictionary = target.get("timed_modifiers", {}) as Dictionary
+		var old_payload: Dictionary = {}
+		for entry_value in weather:
+			var entry := entry_value as Dictionary
+			var old_source := String(entry.get("source_key", ""))
+			if old_payload.is_empty():
+				old_payload = (table.get(old_source, {}) as Dictionary).duplicate(true)
+			entry.erase("source_key")
+			table.erase(old_source)
+		table["weather:SelectedFixture"] = old_payload
+	else:
+		var sources: Dictionary = target.get("leadership_suppression_sources", {}) as Dictionary
+		for entry_value in weather:
+			var entry := entry_value as Dictionary
+			sources.erase(String(entry.get("source_key", "")))
+			entry.erase("source_key")
+		target["leadership_suppression_sources"] = sources
+
+
+func _cloud_break_restore_continuation(
+	snapshot: PackedByteArray, kind: String, target_id: int
+) -> Dictionary:
+	var sim = SimScript.new()
+	if not sim.restore(snapshot):
+		return {"ok": false, "reason": "restore"}
+	if kind == "weather_modifier":
+		sim._cast_spellbook_weather_modifier(
+			0, "OwnWeatherFixture2", _cloud_break_weather_fixture(kind, "ANY ALLIES")
+		)
+	else:
+		sim._cast_spellbook_weather_anticategory(
+			0, "OwnWeatherFixture2", _cloud_break_weather_fixture(kind, "ANY ALLIES")
+		)
+	var before: Array = sim.active_weather_effects()
+	var before_sources := {}
+	for entry_value in before:
+		var source := String((entry_value as Dictionary).get("source_key", ""))
+		before_sources[source] = true
+	var cast: Dictionary = sim.cast_power(0, "SpellBookCloudBreak", Vector2.ZERO)
+	var after: Array = sim.active_weather_effects()
+	var target: Dictionary = sim.entity(target_id)
+	var enemy_payload := false
+	var retained_payloads := 0
+	if kind == "weather_modifier":
+		var table: Dictionary = target.get("timed_modifiers", {}) as Dictionary
+		for entry_value in before:
+			var entry := entry_value as Dictionary
+			var present := table.has(String(entry.get("source_key", "")))
+			if int(entry.get("team", -1)) == 1:
+				enemy_payload = enemy_payload or present
+			elif present:
+				retained_payloads += 1
+	else:
+		var sources: Dictionary = target.get("leadership_suppression_sources", {}) as Dictionary
+		enemy_payload = sources.keys().any(func(key): return String(key).contains(":1:SpellBookFreezingRain:"))
+		retained_payloads = int(sources.has("horn:coincident-fixture"))
+		for entry_value in after:
+			retained_payloads += int(sources.has(String((entry_value as Dictionary).get("source_key", ""))))
+	var all_owned := after.size() == 2
+	for entry_value in after:
+		all_owned = all_owned and int((entry_value as Dictionary).get("team", -1)) == 0
+	return {
+		"ok": bool(cast.get("ok", false))
+			and before_sources.size() == before.size()
+			and not before_sources.has("")
+			and all_owned and not enemy_payload and retained_payloads >= 2,
+		"hash": sim.state_hash(), "sources": before_sources.keys(),
+	}
 
 func _sim_economy_checks(doc: Dictionary) -> void:
 	var sim = SimScript.new()

@@ -7835,11 +7835,23 @@ func _spellbook_cloudbreak_support(field_values: Dictionary, field_resolved: Dic
 	var weather := String(field_values.get("ChangeWeather", ""))
 	if duration_ms <= 0.0 or affects == "" or weather == "":
 		return {"ok": false, "reason": "cloud break duration, affects filter, or weather is not converted"}
+	var required := {
+		"ReEnableAntiCategory": "Yes",
+		"AttributeModifierWeatherBased": "Yes",
+		"SunbeamObject": "CloudBreakSunbeam",
+	}
+	for authored in required:
+		if String(field_values.get(authored, "")) != String(required[authored]):
+			return {"ok": false, "reason": "cloud break %s is not the supported authored value" % authored}
+	if int(field_resolved.get("ObjectSpacing", -1)) != 300:
+		return {"ok": false, "reason": "cloud break ObjectSpacing is not the supported authored value"}
 	return {"ok": true, "effect": {
 		"kind": "cloudbreak_stun",
 		"duration_ticks": maxi(1, roundi(duration_ms / 1000.0 / TICK_SECONDS)),
 		"affects": affects,
 		"weather": weather,
+		"sunbeam_object_id": String(field_values.get("SunbeamObject", "")),
+		"object_spacing_source": float(field_resolved.get("ObjectSpacing", 0.0)),
 	}}
 
 
@@ -9011,8 +9023,37 @@ func _cast_spellbook_cloudbreak(team: int, effect: Dictionary, point: Vector2) -
 		row["target_id"] = 0
 		row["state"] = "idle"
 		stunned += 1
-	_emit_event("power.cloudbreak", 0, 0, {"team": team, "weather": String(effect.get("weather", "")), "stunned": stunned, "duration_ticks": duration_ticks})
+	_revoke_opposing_weather_for_cloudbreak(team)
+	_emit_event("power.cloudbreak", 0, 0, {
+		"team": team,
+		"weather": String(effect.get("weather", "")),
+		"stunned": stunned,
+		"duration_ticks": duration_ticks,
+		"sunbeam_object_id": String(effect.get("sunbeam_object_id", "")),
+		"object_spacing_source": float(effect.get("object_spacing_source", 0.0)),
+	})
 	return {"ok": true, "reason": "", "battalions": stunned}
+
+
+func _revoke_opposing_weather_for_cloudbreak(team: int) -> void:
+	var retained: Array[Dictionary] = []
+	for entry in _weather_effects:
+		if int(entry.get("team", -1)) == team:
+			retained.append(entry)
+			continue
+		match String(entry.get("kind", "")):
+			"weather_modifier":
+				var key := String(entry.get("source_key", ""))
+				for id in entity_ids():
+					(entities[id].get("timed_modifiers", {}) as Dictionary).erase(key)
+			"weather_anticategory":
+				for id in entity_ids():
+					_erase_leadership_suppression_source(
+						entities[id], String(entry.get("source_key", ""))
+					)
+			_:
+				retained.append(entry)
+	_weather_effects = retained
 
 
 func _cast_spellbook_weather_modifier(team: int, power_id: String, effect: Dictionary) -> Dictionary:
@@ -9020,10 +9061,12 @@ func _cast_spellbook_weather_modifier(team: int, power_id: String, effect: Dicti
 	## WeatherDuration, and every unit the authored filter accepts carries the
 	## modifier leaf's rows for exactly that window.
 	var expire_tick := tick_index + int(effect.get("duration_ticks", 1))
+	var source_key := "weather:%d:%s:%d" % [team, power_id, _next_event_sequence]
 	var entry := {
 		"kind": "weather_modifier",
 		"team": team,
 		"power_id": power_id,
+		"source_key": source_key,
 		"modifier_id": String(effect.get("modifier_id", "")),
 		"modifiers": (effect.get("modifiers", []) as Array).duplicate(true),
 		"affects": String(effect.get("affects", "")),
@@ -9050,10 +9093,12 @@ func _cast_spellbook_weather_anticategory(team: int, power_id: String, effect: D
 	## accepts loses its leadership grants for the weather window, reusing the
 	## same suppression field the Horn of Gondor strip writes.
 	var expire_tick := tick_index + int(effect.get("duration_ticks", 1))
+	var source_key := "weather:%d:%s:%d" % [team, power_id, _next_event_sequence]
 	var entry := {
 		"kind": "weather_anticategory",
 		"team": team,
 		"power_id": power_id,
+		"source_key": source_key,
 		"anti_category": String(effect.get("anti_category", "")),
 		"affects": String(effect.get("affects", "")),
 		"weather": String(effect.get("weather", "")),
@@ -9079,7 +9124,7 @@ func _cast_spellbook_weather_anticategory(team: int, power_id: String, effect: D
 func _apply_weather_modifier(entry: Dictionary) -> int:
 	var team := int(entry.get("team", -1))
 	var affects := String(entry.get("affects", ""))
-	var key := "weather:%s" % String(entry.get("modifier_id", ""))
+	var key := String(entry.get("source_key", ""))
 	var expire_tick := int(entry.get("expire_tick", -1))
 	var modifiers: Array = entry.get("modifiers", []) as Array
 	var affected := 0
@@ -9094,10 +9139,60 @@ func _apply_weather_modifier(entry: Dictionary) -> int:
 	return affected
 
 
+func _set_leadership_suppression_source(row: Dictionary, source_key: String, expire_tick: int) -> void:
+	if source_key == "":
+		return
+	_refresh_leadership_suppression(row)
+	var sources: Dictionary = row.get("leadership_suppression_sources", {}) as Dictionary
+	sources[source_key] = maxi(expire_tick, int(sources.get(source_key, -1)))
+	row["leadership_suppression_sources"] = sources
+	_refresh_leadership_suppression(row)
+
+
+func _erase_leadership_suppression_source(row: Dictionary, source_key: String) -> void:
+	var sources: Dictionary = row.get("leadership_suppression_sources", {}) as Dictionary
+	if not sources.has(source_key):
+		_refresh_leadership_suppression(row)
+		return
+	sources.erase(source_key)
+	if sources.is_empty():
+		row.erase("leadership_suppression_sources")
+		row.erase("leadership_suppressed_until_tick")
+	else:
+		row["leadership_suppression_sources"] = sources
+	_refresh_leadership_suppression(row)
+
+
+func _refresh_leadership_suppression(row: Dictionary) -> int:
+	var sources: Dictionary = row.get("leadership_suppression_sources", {}) as Dictionary
+	var legacy := int(row.get("leadership_suppressed_until_tick", -1))
+	if sources.is_empty() and legacy > tick_index:
+		sources["legacy"] = legacy
+	var effective := -1
+	for source_key in sources.keys():
+		var expire_tick := int(sources[source_key])
+		if expire_tick <= tick_index:
+			sources.erase(source_key)
+		else:
+			effective = maxi(effective, expire_tick)
+	if sources.is_empty():
+		row.erase("leadership_suppression_sources")
+	else:
+		row["leadership_suppression_sources"] = sources
+	if effective > tick_index:
+		row["leadership_suppressed_until_tick"] = effective
+	else:
+		row.erase("leadership_suppressed_until_tick")
+	return effective
+
+
 func _apply_weather_anticategory(entry: Dictionary) -> int:
 	var team := int(entry.get("team", -1))
 	var affects := String(entry.get("affects", ""))
 	var expire_tick := int(entry.get("expire_tick", -1))
+	var source_key := String(entry.get("source_key", ""))
+	if source_key == "":
+		source_key = "weather:legacy:%d:%d" % [team, expire_tick]
 	var affected := 0
 	for id in entity_ids():
 		var row: Dictionary = entities[id]
@@ -9105,11 +9200,7 @@ func _apply_weather_anticategory(entry: Dictionary) -> int:
 			continue
 		if not _spellbook_member_affects(row, affects, int(row.get("team", -1)) == team):
 			continue
-		# EXTEND, never clobber: a second, shorter cast must not cut a longer
-		# suppression short. Retail stacks these as overlapping windows.
-		row["leadership_suppressed_until_tick"] = maxi(
-			expire_tick, int(row.get("leadership_suppressed_until_tick", -1))
-		)
+		_set_leadership_suppression_source(row, source_key, expire_tick)
 		affected += 1
 	return affected
 
@@ -9146,11 +9237,73 @@ func active_weather_effects() -> Array:
 		rows.append({
 			"team": int(entry.get("team", -1)),
 			"power_id": String(entry.get("power_id", "")),
+			"source_key": String(entry.get("source_key", "")),
 			"kind": String(entry.get("kind", "")),
 			"weather": String(entry.get("weather", "")),
 			"expire_tick": int(entry.get("expire_tick", -1)),
 		})
 	return rows
+
+
+func _migrate_restored_weather_sources() -> void:
+	if _weather_effects.is_empty():
+		return
+	var migrated_sources := {}
+	for index in range(_weather_effects.size()):
+		var entry: Dictionary = _weather_effects[index]
+		if String(entry.get("source_key", "")) == "":
+			entry["source_key"] = "weather:legacy:%d:%s:%d:%d" % [
+				int(entry.get("team", -1)), String(entry.get("power_id", "")),
+				int(entry.get("expire_tick", -1)), index,
+			]
+			migrated_sources[String(entry["source_key"])] = true
+	if migrated_sources.is_empty():
+		return
+	for id in entity_ids():
+		var row: Dictionary = entities[id]
+		var table: Dictionary = row.get("timed_modifiers", {}) as Dictionary
+		var old_weather_payloads := {}
+		for entry in _weather_effects:
+			var source_key := String(entry.get("source_key", ""))
+			if not migrated_sources.has(source_key):
+				continue
+			var old_key := "weather:%s" % String(entry.get("modifier_id", ""))
+			if String(entry.get("kind", "")) == "weather_modifier" and table.has(old_key):
+				old_weather_payloads[old_key] = table[old_key]
+		var sources: Dictionary = (
+			row.get("leadership_suppression_sources", {}) as Dictionary
+		).duplicate(true)
+		var legacy_deadline := int(row.get("leadership_suppressed_until_tick", -1))
+		var weather_deadline := -1
+		for entry in _weather_effects:
+			var team := int(entry.get("team", -1))
+			if not _spellbook_member_affects(
+				row, String(entry.get("affects", "")), int(row.get("team", -1)) == team
+			):
+				continue
+			var source_key := String(entry.get("source_key", ""))
+			match String(entry.get("kind", "")):
+				"weather_modifier":
+					var old_key := "weather:%s" % String(entry.get("modifier_id", ""))
+					if old_weather_payloads.has(old_key) and not table.has(source_key):
+						table[source_key] = (old_weather_payloads[old_key] as Dictionary).duplicate(true)
+				"weather_anticategory":
+					var expire_tick := int(entry.get("expire_tick", -1))
+					sources[source_key] = expire_tick
+					weather_deadline = maxi(weather_deadline, expire_tick)
+		for old_key in old_weather_payloads.keys():
+			table.erase(old_key)
+		row["timed_modifiers"] = table
+		if legacy_deadline > tick_index and (
+			weather_deadline < 0 or legacy_deadline > weather_deadline
+		):
+			sources["legacy"] = maxi(legacy_deadline, int(sources.get("legacy", -1)))
+		row.erase("leadership_suppressed_until_tick")
+		if sources.is_empty():
+			row.erase("leadership_suppression_sources")
+		else:
+			row["leadership_suppression_sources"] = sources
+		_refresh_leadership_suppression(row)
 
 
 func _cast_spellbook_creep_allegiance(team: int, effect: Dictionary, point: Vector2) -> Dictionary:
@@ -18551,7 +18704,7 @@ func _reconcile_attribute_modifier_upgrades(row: Dictionary) -> void:
 		if (
 			bool(stacking.get("ignoreIfAnticategoryActive", false))
 			and category == "LEADERSHIP"
-			and int(row.get("leadership_suppressed_until_tick", -1)) > tick_index
+			and _refresh_leadership_suppression(row) > tick_index
 		):
 			continue
 		table[_attribute_modifier_upgrade_key(policy)] = {
@@ -22139,7 +22292,7 @@ func _step_passive_area_effect_modifiers() -> void:
 					continue
 				if Vector2(target.get("position", Vector2.ZERO)).distance_to(origin) > radius:
 					continue
-				if bool(stacking.get("ignoreIfAnticategoryActive", false)) and category == "LEADERSHIP" and int(target.get("leadership_suppressed_until_tick", -1)) > tick_index:
+				if bool(stacking.get("ignoreIfAnticategoryActive", false)) and category == "LEADERSHIP" and _refresh_leadership_suppression(target) > tick_index:
 					continue
 				var key := "passive:%s:%s" % [category, modifier_id]
 				if bool(stacking.get("replaceInCategoryIfLongest", false)) or bool(rule.get("non_stackable", false)):
@@ -25046,6 +25199,9 @@ func _apply_ability_leadership_strip(hero_row: Dictionary, effect: Dictionary) -
 		return {"ok": false, "reason": "leadership-strip-fields-missing"}
 	var team := int(hero_row.get("team", -1))
 	var origin := Vector2(hero_row.get("position", Vector2.ZERO))
+	var suppression_source := "horn:%d:%d:%d" % [
+		int(hero_row.get("id", 0)), tick_index, _next_event_sequence
+	]
 	var affected := 0
 	for id in _ability_enemies_near(team, origin, radius):
 		var target: Dictionary = entities[id]
@@ -25058,10 +25214,8 @@ func _apply_ability_leadership_strip(hero_row: Dictionary, effect: Dictionary) -
 		for key in stripped:
 			table.erase(key)
 		target["timed_modifiers"] = table
-		# Same EXTEND contract as the weather anti-category lane.
-		target["leadership_suppressed_until_tick"] = maxi(
-			tick_index + duration_ticks,
-			int(target.get("leadership_suppressed_until_tick", -1)),
+		_set_leadership_suppression_source(
+			target, suppression_source, tick_index + duration_ticks
 		)
 		affected += 1
 	if affected == 0:
@@ -25210,7 +25364,7 @@ func _recompute_leadership_auras() -> void:
 					continue
 				if not _ability_filter_accepts(ally, filter_text):
 					continue
-				if tick_index < int(ally.get("leadership_suppressed_until_tick", -1)):
+				if tick_index < _refresh_leadership_suppression(ally):
 					# An anti-category strip (Horn of Gondor) suppresses new
 					# leadership grants for its authored duration.
 					continue
@@ -25240,8 +25394,7 @@ func _step_hero_abilities() -> void:
 		# field leaves the row so default rows never carry it).
 		if row.has("stealth_until_tick") and tick_index >= int(row["stealth_until_tick"]):
 			_clear_stealth(row)
-		if row.has("leadership_suppressed_until_tick") and tick_index >= int(row["leadership_suppressed_until_tick"]):
-			row.erase("leadership_suppressed_until_tick")
+		_refresh_leadership_suppression(row)
 		if row.has("ability_hold_until_tick") and tick_index >= int(row["ability_hold_until_tick"]):
 			row.erase("ability_hold_until_tick")
 		var table: Dictionary = row.get("timed_modifiers", {}) as Dictionary
@@ -31323,6 +31476,7 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	cah_award_results = state.get("cah_award_results", {})
 	_next_dynamic_id = state["next_dynamic_id"]
 	_next_dynamic_structure_id = int(state["next_dynamic_structure_id"])
+	_next_event_sequence = int(state.get("next_event_sequence", 1))
 	_next_order_sequence = int(state["next_order_sequence"])
 	_typed_audio_roll_sequence = int(state.get("typed_audio_roll_sequence", 0))
 	_team_ai_state = state.get("team_ai_state", {})
@@ -31365,6 +31519,7 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 		if typeof(weather_value) == TYPE_DICTIONARY:
 			adopted_weather.append(weather_value as Dictionary)
 	_weather_effects = adopted_weather
+	_migrate_restored_weather_sources()
 	expansion_pads = state["expansion_pads"]
 	_expansion_build_rules = state["expansion_build_rules"]
 	_next_expansion_structure_id = int(state["next_expansion_structure_id"])

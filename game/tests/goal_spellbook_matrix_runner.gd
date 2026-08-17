@@ -1856,9 +1856,10 @@ func _assert_weather_modifier_runtime(sim, faction_id: String, power_id: String,
 		and int(window.get("team", -1)) == 0
 		and String(window.get("weather", "")) == String(expected.get("weather", ""))
 		and String(window.get("kind", "")) == "weather_modifier"
+		and String(window.get("source_key", "")).begins_with("weather:0:%s:" % power_id)
 		and int(window.get("expire_tick", -1)) == cast_tick + duration_ticks,
 		"window=%s cast_tick=%d duration_ticks=%d" % [window, cast_tick, duration_ticks])
-	var key := "weather:%s" % String(expected.get("modifier_id", ""))
+	var key := String(window.get("source_key", ""))
 	# 1) the cast itself must land the authored rows on a living ally.
 	var applied_at_cast := false
 	for entity_id in sim.living_ids(0):
