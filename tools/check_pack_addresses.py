@@ -12,7 +12,7 @@ digest and swap the selection with apply-selection-transaction. This check
 makes the mistake loud within seconds instead of surviving until an audit.
 
 Usage:
-    python tools/check_pack_addresses.py [--durable-root PATH] [--json]
+    python tools/check_pack_addresses.py [--packs-root PATH] [--json]
 
 Exit codes: 0 all addresses honest / 1 drift found / 2 could not evaluate.
 """
@@ -31,7 +31,7 @@ sys.path.insert(0, str(REPO_ROOT / "importer"))
 from openbfme_importer.pipeline import bundle_digest  # noqa: E402
 
 
-def default_.private_root() -> Path:
+def default_packs_root() -> Path:
     return REPO_ROOT / "workspace" / "content-packs"
 
 
@@ -75,12 +75,12 @@ def check_root(label: str, root: Path) -> tuple[list[dict], list[dict]]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--.private-root", type=Path, default=default_.private_root())
+    parser.add_argument("--packs-root", type=Path, default=default_packs_root())
     parser.add_argument("--durable-root", type=Path, default=default_durable_root())
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
-    roots: list[tuple[str, Path]] = [("workspace", args..private_root)]
+    roots: list[tuple[str, Path]] = [("workspace", args.packs_root)]
     if args.durable_root is not None and (args.durable_root / "selection.json").is_file():
         roots.append(("durable", args.durable_root))
 
