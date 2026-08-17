@@ -156,3 +156,13 @@ Rules for this lane:
 5. `python tools\check_pack_addresses.py` PASS (you rebuilt no packs — this lane changes compiler output but does NOT republish; note that the change reaches shipped content only on the next recook, and add that as a queue row).
 6. `powershell -ExecutionPolicy Bypass -File tools\gate-hygiene.ps1` PASS; `git status --porcelain` clean; commits prefixed `feat(sim):` / `feat(importer):` / `test(...)`, explicit paths, no logs.
 7. Report orchestration/reports/projectile-splash-pipeline.md: design choices (taper interpretation, cadence charged at launch, what happens on target death), before/after runner table, hash movement, named unsupported semantics (scatter, HitPercentage, CanBeDodged, MinWeaponSpeed/MaxWeaponSpeed/ScaleWeaponSpeed, DelayTime per nugget, HitPassengerPercentage), and anything left undone.
+
+## House rules
+
+- Commit on the current worktree branch; NEVER push; NEVER merge to main; NEVER `git stash` (shared stash stack).
+- Godot runs: env `OPENBFME_CONTENT=C:\Users\Jonathan\Desktop\open-bfme\.private\content-packs`; exe `C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe`; redirect runner output to uniquely-named `%TEMP%` files and read the file.
+- Python: `C:\Users\Jonathan\Desktop\open-bfme\.private\retail-work\tools\python-3.12-env\Scripts\python.exe` with `PYTHONPATH` pointing at the worktree's `importer/`.
+- Retail INI oracle: `.private\retail-work\editions\rotwk\cache\effective-assets` — NEVER `layered-effective-assets` (contaminated).
+- No pack builds/publishes/selection changes unless the brief explicitly authorizes them.
+- Commit messages end: `Co-Authored-By: Codex Sol <noreply@openai.com>`.
+- An Opus adversarial review gates the merge — write reports for a hostile reviewer; every claim needs a rerunnable command.
