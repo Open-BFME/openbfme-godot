@@ -1253,6 +1253,26 @@ def _base_weapon_damage(
         }
         if len(damage_types) == 1:
             component["damageType"] = next(iter(damage_types.values()))
+        for output_name, source_name in (
+            ("radius", "Radius"),
+            ("damageTaperOff", "DamageTaperOff"),
+        ):
+            resolved_field = _resolved_definition_field(fields, source_name, constants)
+            if resolved_field is not None:
+                component[output_name] = resolved_field["value"]
+        for output_name, source_name in (
+            ("deathType", "DeathType"),
+            ("damageFXType", "DamageFXType"),
+        ):
+            values = {
+                str(value.get("expression", "")).casefold(): str(
+                    value.get("expression", "")
+                )
+                for value in fields.get(source_name.casefold(), ())
+                if str(value.get("expression", ""))
+            }
+            if len(values) == 1:
+                component[output_name] = next(iter(values.values()))
         components.append(component)
     if not components:
         return None
@@ -1291,9 +1311,14 @@ def _typed_damage_components(damage: object) -> list[dict[str, object]] | None:
         value = component.get("value")
         if not isinstance(value, (int, float)) or isinstance(value, bool):
             return None
-        rows.append(
-            {"damageType": str(component.get("damageType", "")), "value": value}
-        )
+        row: dict[str, object] = {
+            "damageType": str(component.get("damageType", "")),
+            "value": value,
+        }
+        for field in ("radius", "damageTaperOff", "deathType", "damageFXType"):
+            if field in component:
+                row[field] = component[field]
+        rows.append(row)
     return rows or None
 
 
@@ -1318,13 +1343,15 @@ def _apply_nugget_damage_types(combat: dict[str, object]) -> None:
     authored = {str(row["damageType"]) for row in rows if row["damageType"]}
     if not authored:
         return
+    radius_bearing = any(float(row.get("radius", 0.0)) > 0.0 for row in rows)
     if len(authored) == 1 and all(row["damageType"] for row in rows):
         combat["damageType"] = next(iter(authored))
         combat["damageTypeSemantic"] = (
             "the weapon authors no flat DamageType; every base DamageNugget "
             "authors the same type"
         )
-        return
+        if not radius_bearing:
+            return
     combat["damageComponents"] = rows
     combat["damageComponentsSemantic"] = (
         "the weapon authors no flat DamageType and its base DamageNuggets "
@@ -1742,6 +1769,17 @@ def _simulation_contract(
             if warhead is not None:
                 damage_owner = warhead
                 combat["warheadId"] = warhead_id
+                radius_affects = {
+                    str(row.get("expression", "")).casefold(): str(
+                        row.get("expression", "")
+                    )
+                    for row in warhead.get("radiusdamageaffects", ())
+                    if str(row.get("expression", ""))
+                }
+                if len(radius_affects) == 1:
+                    combat["radiusDamageAffects"] = next(
+                        iter(radius_affects.values())
+                    )
                 damage = _resolved_definition_field(warhead, "Damage", constants)
                 if damage is not None:
                     combat["damage"] = damage
@@ -6242,6 +6280,7 @@ def _weapon_mode_profile(
     for output_name, source_name in (
         ("attackRange", "AttackRange"),
         ("minimumAttackRange", "MinimumAttackRange"),
+        ("projectileSpeed", "WeaponSpeed"),
         ("delayBetweenShotsMs", "DelayBetweenShots"),
         ("preAttackDelayMs", "PreAttackDelay"),
         ("firingDurationMs", "FiringDuration"),

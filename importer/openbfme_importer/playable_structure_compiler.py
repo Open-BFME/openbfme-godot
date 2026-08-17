@@ -244,6 +244,15 @@ def _structure_combat_contract(
             )
         combat["warheadId"] = warhead_id
         damage_owner = warhead
+        radius_affects = {
+            str(row.get("expression", "")).casefold(): str(
+                row.get("expression", "")
+            )
+            for row in warhead.get("radiusdamageaffects", ())
+            if str(row.get("expression", ""))
+        }
+        if len(radius_affects) == 1:
+            combat["radiusDamageAffects"] = next(iter(radius_affects.values()))
         damage = _resolved_definition_field(
             warhead, "Damage", prepared.numeric_defines
         )
