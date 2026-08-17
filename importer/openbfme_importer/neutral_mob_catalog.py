@@ -202,7 +202,6 @@ def _map_root_is_active_structure(effective_kind_of: Sequence[str]) -> bool:
     return "STRUCTURE" in kinds and bool(
         kinds
         & {
-            "SELECTABLE",
             "CAPTURABLE",
             "LINKED_TO_FLAG",
             "AUTO_RALLYPOINT",
@@ -592,10 +591,15 @@ def validate_neutral_mob_catalog(value: Mapping[str, object]) -> None:
         if map_placement_root and status == "descriptor-ready":
             admission = descriptor.get("scenarioAdmission")
             if (
-                domain != "structure"
-                or "STRUCTURE" not in descriptor.get("kindOf", [])
-                or not isinstance(admission, Mapping)
+                not isinstance(admission, Mapping)
                 or "map-placement" not in admission.get("surfaces", [])
+                or (
+                    map_placement_added
+                    and (
+                        domain != "structure"
+                        or "STRUCTURE" not in descriptor.get("kindOf", [])
+                    )
+                )
             ):
                 raise NeutralMobCatalogError(
                     f"neutral-mob {object_id} map placement admission is invalid"

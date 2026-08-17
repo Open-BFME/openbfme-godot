@@ -288,14 +288,14 @@ def test_exact_map_roots_admit_only_active_retail_structures() -> None:
         "data/ini/object/neutral/creeps.ini"
     ].replace(
         b"KindOf = STRUCTURE IMMOBILE\nEnd\nObject WargLair",
-        b"KindOf = STRUCTURE IMMOBILE SELECTABLE\n"
+        b"KindOf = STRUCTURE IMMOBILE SELECTABLE FS_FACTORY\n"
         b" Body = ActiveBody ModuleTag_Body\n"
         b"  MaxHealth = 500\n"
         b" End\n"
         b"End\n"
         b"Object PassiveMapRock\n"
         b" Side = Neutral\n"
-        b" KindOf = STRUCTURE IMMOBILE INERT\n"
+        b" KindOf = STRUCTURE IMMOBILE SELECTABLE INERT\n"
         b"End\n"
         b"Object WargLair",
     )
@@ -306,6 +306,7 @@ def test_exact_map_roots_admit_only_active_retail_structures() -> None:
             "NeutralTree",
             "NeutralBarracks",
             "PassiveMapRock",
+            "NeutralWolf",
             "*Waypoints/Waypoint",
         ),
     )
@@ -324,7 +325,17 @@ def test_exact_map_roots_admit_only_active_retail_structures() -> None:
         "script-spawn",
         "object-creation-list",
     ]
-    assert catalog["summary"]["mapPlacementRootCount"] == 1
+    # A map-root identity already owned by the neutral family stays in its
+    # authored runtime domain. Its exact scenario admission is valid evidence;
+    # map rooting must not reinterpret a creature such as NeutralWolf as a
+    # structure just because this same compile also adds active structures.
+    assert rows["NeutralWolf"]["mapPlacementRoot"] is True
+    assert rows["NeutralWolf"]["mapPlacementAdded"] is False
+    assert rows["NeutralWolf"]["runtimeDomain"] == "unit"
+    assert "map-placement" in rows["NeutralWolf"]["descriptor"][
+        "scenarioAdmission"
+    ]["surfaces"]
+    assert catalog["summary"]["mapPlacementRootCount"] == 2
     assert catalog["summary"]["mapPlacementAddedCount"] == 1
 
 
@@ -547,6 +558,7 @@ def test_rotwk_canonical_effective_assets_preserve_exact_domains_and_prop_ids() 
                 "Crow": 24,
                 "Dove_white_in_game": 34,
                 "FireDrakeLair": 6,
+                "Inn": 4,
                 "MoriarGoblinLair": 20,
                 "MoriarGoblinLairSnow": 4,
                 "WargLair": 4,
@@ -566,6 +578,7 @@ def test_rotwk_canonical_effective_assets_preserve_exact_domains_and_prop_ids() 
                 "Crow": 90,
                 "Dove_white_in_game": 69,
                 "FireDrakeLair": 24,
+                "Inn": 67,
                 "MoriarGoblinLair": 111,
                 "MoriarGoblinLairSnow": 26,
                 "RockBigTroll": 3,
@@ -600,7 +613,12 @@ def test_retail_map_placed_passive_units_have_closed_scenario_simulation(
     if len(selected) != 1:
         pytest.skip("canonical selected map pack is unavailable")
     documents = dict(read_catalog_documents(InstallCatalog.load(catalog_path)))
-    result = compile_neutral_mob_catalog(documents, game=game)
+    # `Inn` is outside the historical neutral-family heuristic, but the exact
+    # selected retail maps root it as active scenario gameplay. Admission must
+    # therefore come from the generic map-root + effective KindOf contract.
+    result = compile_neutral_mob_catalog(
+        documents, game=game, map_placement_object_ids=("Inn",)
+    )
     rows = {row["objectId"].casefold(): row for row in result["neutralMobs"]}
     counts: Counter[str] = Counter()
     map_root = repo / ".private" / "content-packs" / selected[0]
@@ -612,6 +630,28 @@ def test_retail_map_placed_passive_units_have_closed_scenario_simulation(
                 row = rows[key]
                 counts[row["objectId"]] += 1
     assert dict(sorted(counts.items())) == expected
+    inn = rows["inn"]
+    assert inn["runtimeStatus"] == "descriptor-ready"
+    assert inn["runtimeDomain"] == "structure"
+    assert inn["mapPlacementRoot"] is True
+    assert inn["mapPlacementAdded"] is True
+    assert "LINKED_TO_FLAG" in inn["descriptor"]["kindOf"]
+    assert "CAPTURABLE" not in inn["descriptor"]["kindOf"]
+    health = inn["descriptor"]["gameplay"]["health"]["primary"]
+    assert health["module"] == "StructureBody"
+    assert health["maxHealth"]["value"] == 3000
+    assert health["maxHealthDamaged"]["value"] == 2000
+    assert health["maxHealthReallyDamaged"]["value"] == 1000
+    armor = inn["descriptor"]["gameplay"]["armor"]
+    if game == "bfme2":
+        assert armor["authoredSetId"] == "TechStructureArmor"
+        assert armor["setId"] is None
+        assert "100%" in armor["semantic"]
+        assert "table" not in armor
+    else:
+        assert armor["setId"] == "StructureArmor"
+        assert armor["table"]["default"]["percent"] == 60.0
+        assert armor["table"]["scalars"]["siege"]["percent"] == 150.0
     for object_id in passive_ids:
         catalog_row = rows[object_id.casefold()]
         assert catalog_row["runtimeStatus"] == "descriptor-ready"
