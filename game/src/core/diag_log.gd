@@ -482,7 +482,7 @@ static func source_reason(source: String) -> String:
 		"external":
 			return "OPENBFME_CONTENT named this content root."
 		"workspace":
-			return "No OPENBFME_CONTENT; the repository workspace workspace/content-packs selection won."
+			return "No OPENBFME_CONTENT; the repository workspace/content-packs selection won."
 		"durable":
 			return (
 				"FALLBACK: neither OPENBFME_CONTENT nor the workspace selection was usable, "

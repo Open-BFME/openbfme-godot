@@ -90,9 +90,9 @@ try {
     $retailConfigured = Invoke-BatchPathProbe $runRetail
     Assert-Equal $contentOverride ([IO.Path]::GetFullPath($retailConfigured.OPENBFME_CONTENT)) "Retail environment override"
 
-    & git -C $repoRoot check-ignore -q -- "workspace/retail-work/private-.private-test.probe"
+    & git -C $repoRoot check-ignore -q -- ".private/retail-work/private-workspace-test.probe"
     if ($LASTEXITCODE -ne 0) {
-        throw "The repository workspace workspace is not ignored by git."
+        throw "The repository .private workspace is not ignored by git."
     }
 
     $legacyEnvironmentToken = "LOCAL" + "APPDATA"

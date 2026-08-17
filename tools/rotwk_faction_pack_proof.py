@@ -26,7 +26,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "importer"))
 
-from openbfme_importer.game import .private_root  # noqa: E402
+from openbfme_importer.game import workspace_root  # noqa: E402
 from openbfme_importer.paths import (  # noqa: E402
     ensure_external_to_repo,
     repo_root_from_module,
@@ -47,7 +47,7 @@ KNOWN_FACTIONS = (
 
 
 def _default_coverage_root(state_root: Path, game: str) -> Path:
-    return .private_root(state_root, game) / "reports" / "faction-import"
+    return workspace_root(state_root, game) / "reports" / "faction-import"
 
 
 def _parse_cli_json(text: str) -> dict[str, Any]:
@@ -267,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
                 flush=True,
             )
 
-    workspace = .private_root(state_root, args.game)
+    workspace = workspace_root(state_root, args.game)
     coverage_root = (
         Path(args.coverage_root).expanduser().resolve()
         if args.coverage_root

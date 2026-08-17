@@ -59,6 +59,8 @@ build/
 # claude/distracted-herschel-c99a60, whose only unique content this was.
 dev/null/
 
+# Lane run artifacts (temporary debugging logs)
+/.lane-*
 # Session/oracle captures (local only; not product source)
 .captures/
 captures/

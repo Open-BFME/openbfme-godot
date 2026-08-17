@@ -37,8 +37,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 WRITE_BITS = stat.S_IWRITE | stat.S_IWGRP | stat.S_IWOTH
 
 
-def default_.private_root() -> Path:
-    return REPO_ROOT / "workspace" / "content-packs"
+def default_workspace_root() -> Path:
+    return REPO_ROOT / ".private" / "content-packs"
 
 
 def default_durable_root() -> Path | None:
@@ -77,7 +77,7 @@ def apply(path: Path, unseal: bool) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--.private-root", type=Path, default=default_.private_root())
+    parser.add_argument("--workspace-root", type=Path, default=default_workspace_root())
     parser.add_argument("--durable-root", type=Path, default=default_durable_root())
     parser.add_argument(
         "--unseal",
@@ -94,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     roots: list[tuple[str, Path]] = []
-    for label, root in (("workspace", args..private_root), ("durable", args.durable_root)):
+    for label, root in (("workspace", args.workspace_root), ("durable", args.durable_root)):
         if root is not None and (root / "selection.json").is_file():
             roots.append((label, root))
     if not roots:

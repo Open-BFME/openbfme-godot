@@ -78,7 +78,7 @@ MAP_PACK_ID = "rotwk-skirmish-maps-private"
 def resolve_selected_pack(content_root: Path, pack_id: str = MAP_PACK_ID) -> Path:
     """Resolve the SELECTED map pack from the workspace selection.json.
 
-    The runtime is .private-first: `workspace/content-packs/selection.json`
+    The runtime is workspace-first: `workspace/content-packs/selection.json`
     names the mounted bundles as `<pack-id>/<bundle-dir>`.  The name-addressed
     `goal-official-72` sibling directory is NOT the mounted pack (selection
     points at a hash-addressed copy), so the default target must be derived

@@ -8,13 +8,18 @@
     "algorithm": "sha256",
     "canonicalization": "UTF-8 JSON with lexicographically sorted keys and no insignificant whitespace",
     "envelope": "All top-level fields and nested values except policy_digest.value.",
-    "value": "81411f7c1242a68a18268797d658d96ce92924186b1b4083955f3aef87ef6525"
+    "value": "f336693b9111d6c9a01ba0ce99a1e9ce32f1000ec199feb999db5ec8738587dd"
   },
   "classification_policy": {
     "authority": "full effective BFME2 1.06 retail catalog",
     "winner_rule": "Classify every definition surviving archive precedence and inheritance resolution.",
     "reference_rule": "Inventory every parsed assignment and classify it as scalar, reference, collection-reference, or opaque-unresolved. Record every reference target, including fields absent from prior schemas.",
-    "assignment_classification_values": ["scalar", "reference", "collection-reference", "opaque-unresolved"],
+    "assignment_classification_values": [
+      "scalar",
+      "reference",
+      "collection-reference",
+      "opaque-unresolved"
+    ],
     "assignment_failure_rule": "An unclassified assignment or opaque assignment without an explicit owner disposition blocks reference closure.",
     "parser_identity_rule": "The feature graph records the parser/source-schema revision and digest used to classify assignments.",
     "unknown_rule": "Keep unknown kinds, fields, targets, and roots visible as unresolved coverage rows.",
@@ -280,87 +285,220 @@
   "evidence_lanes": [
     {
       "id": "source-provenance",
-      "required_fields": ["source_identity", "source_kind", "archive_precedence", "source_digest", "inheritance_override_chain"]
+      "required_fields": [
+        "source_identity",
+        "source_kind",
+        "archive_precedence",
+        "source_digest",
+        "inheritance_override_chain"
+      ]
     },
     {
       "id": "classification",
-      "required_fields": ["product_domain", "semantic_tags", "discovery_reason", "classification_state"]
+      "required_fields": [
+        "product_domain",
+        "semantic_tags",
+        "discovery_reason",
+        "classification_state"
+      ]
     },
     {
       "id": "reference-resolution",
-      "required_fields": ["source_identity", "reference_field", "target_identity", "resolution_state", "evidence_source"]
+      "required_fields": [
+        "source_identity",
+        "reference_field",
+        "target_identity",
+        "resolution_state",
+        "evidence_source"
+      ]
     },
     {
       "id": "conversion",
-      "required_fields": ["tool_identity", "recipe_identity", "input_digest", "artifact_digest", "result"]
+      "required_fields": [
+        "tool_identity",
+        "recipe_identity",
+        "input_digest",
+        "artifact_digest",
+        "result"
+      ]
     },
     {
       "id": "runtime-loading",
-      "required_fields": ["pack_identity", "runtime_recipe", "expected", "observed", "result"]
+      "required_fields": [
+        "pack_identity",
+        "runtime_recipe",
+        "expected",
+        "observed",
+        "result"
+      ]
     },
     {
       "id": "gameplay-oracle",
-      "required_fields": ["requirement_id", "capture_recipe", "expected", "observed", "tolerance", "reviewer_approval", "result"]
+      "required_fields": [
+        "requirement_id",
+        "capture_recipe",
+        "expected",
+        "observed",
+        "tolerance",
+        "reviewer_approval",
+        "result"
+      ]
     },
     {
       "id": "interaction-oracle",
-      "required_fields": ["requirement_id", "capture_recipe", "expected", "observed", "reviewer_approval", "result"]
+      "required_fields": [
+        "requirement_id",
+        "capture_recipe",
+        "expected",
+        "observed",
+        "reviewer_approval",
+        "result"
+      ]
     },
     {
       "id": "visual-oracle",
-      "required_fields": ["requirement_id", "capture_recipe", "expected", "observed", "tolerance", "artifact_digest", "reviewer_approval", "result"]
+      "required_fields": [
+        "requirement_id",
+        "capture_recipe",
+        "expected",
+        "observed",
+        "tolerance",
+        "artifact_digest",
+        "reviewer_approval",
+        "result"
+      ]
     },
     {
       "id": "audio-oracle",
-      "required_fields": ["requirement_id", "capture_recipe", "expected", "observed", "tolerance", "artifact_digest", "reviewer_approval", "result"]
+      "required_fields": [
+        "requirement_id",
+        "capture_recipe",
+        "expected",
+        "observed",
+        "tolerance",
+        "artifact_digest",
+        "reviewer_approval",
+        "result"
+      ]
     },
     {
       "id": "persistence",
-      "required_fields": ["schema_identity", "round_trip_recipe", "expected", "observed", "result"]
+      "required_fields": [
+        "schema_identity",
+        "round_trip_recipe",
+        "expected",
+        "observed",
+        "result"
+      ]
     },
     {
       "id": "containment",
-      "required_fields": ["audit_recipe", "private_roots", "public_escape_count", "result"]
+      "required_fields": [
+        "audit_recipe",
+        "private_roots",
+        "public_escape_count",
+        "result"
+      ]
     },
     {
       "id": "determinism",
-      "required_fields": ["scenario_identity", "platforms", "command_digest", "state_digests", "result"]
+      "required_fields": [
+        "scenario_identity",
+        "platforms",
+        "command_digest",
+        "state_digests",
+        "result"
+      ]
     },
     {
       "id": "serialization",
-      "required_fields": ["schema_identity", "compatibility_version", "round_trip_digest", "result"]
+      "required_fields": [
+        "schema_identity",
+        "compatibility_version",
+        "round_trip_digest",
+        "result"
+      ]
     },
     {
       "id": "network-faults",
-      "required_fields": ["scenario_identity", "latency", "jitter", "loss", "reordering", "result"]
+      "required_fields": [
+        "scenario_identity",
+        "latency",
+        "jitter",
+        "loss",
+        "reordering",
+        "result"
+      ]
     },
     {
       "id": "reconnect-and-recovery",
-      "required_fields": ["scenario_identity", "checkpoint_identity", "command_tail_digest", "final_state_digest", "result"]
+      "required_fields": [
+        "scenario_identity",
+        "checkpoint_identity",
+        "command_tail_digest",
+        "final_state_digest",
+        "result"
+      ]
     },
     {
       "id": "scale",
-      "required_fields": ["scenario_identity", "player_count", "load_basis", "headroom", "measurements", "result"]
+      "required_fields": [
+        "scenario_identity",
+        "player_count",
+        "load_basis",
+        "headroom",
+        "measurements",
+        "result"
+      ]
     },
     {
       "id": "security-validation",
-      "required_fields": ["scenario_identity", "validation_rule", "expected_rejection", "observed", "result"]
+      "required_fields": [
+        "scenario_identity",
+        "validation_rule",
+        "expected_rejection",
+        "observed",
+        "result"
+      ]
     },
     {
       "id": "schema-validation",
-      "required_fields": ["schema_identity", "pack_identity", "validator_identity", "result"]
+      "required_fields": [
+        "schema_identity",
+        "pack_identity",
+        "validator_identity",
+        "result"
+      ]
     },
     {
       "id": "compatibility-hash",
-      "required_fields": ["pack_identity", "category", "canonicalization", "digest", "result"]
+      "required_fields": [
+        "pack_identity",
+        "category",
+        "canonicalization",
+        "digest",
+        "result"
+      ]
     },
     {
       "id": "override-behavior",
-      "required_fields": ["base_pack", "override_pack", "resolved_sources", "expected", "observed", "result"]
+      "required_fields": [
+        "base_pack",
+        "override_pack",
+        "resolved_sources",
+        "expected",
+        "observed",
+        "result"
+      ]
     },
     {
       "id": "dedicated-server-policy",
-      "required_fields": ["server_config", "pack_identity", "code_plugin_state", "result"]
+      "required_fields": [
+        "server_config",
+        "pack_identity",
+        "code_plugin_state",
+        "result"
+      ]
     }
   ],
   "evidence_record_contract": {
@@ -381,7 +519,12 @@
       "staleness_inputs",
       "result"
     ],
-    "result_values": ["pass", "failure", "blocker", "not-applicable"],
+    "result_values": [
+      "pass",
+      "failure",
+      "blocker",
+      "not-applicable"
+    ],
     "not_applicable_rule": "Require an owner-approved reason tied to the product domain and requirement."
   },
   "claim_profiles": [
@@ -389,13 +532,19 @@
       "id": "current-milestone",
       "claim": "bounded milestone complete",
       "domain_policy": "Only the explicitly named milestone subset is applicable; every exclusion or deferment is visible and does not contribute to a BFME2-complete claim.",
-      "required_domains": ["retail-skirmish", "retail-shell"]
+      "required_domains": [
+        "retail-skirmish",
+        "retail-shell"
+      ]
     },
     {
       "id": "bfme2-106-skirmish-complete",
       "claim": "BFME2 1.06 skirmish compatibility complete",
       "domain_policy": "Only included skirmish and shell requirements contribute. Campaign and War of the Ring domains are explicitly excluded and cannot be implied by this claim.",
-      "required_domains": ["retail-skirmish", "retail-shell"],
+      "required_domains": [
+        "retail-skirmish",
+        "retail-shell"
+      ],
       "blocking_rule": "Every included required retail domain must have complete non-stale coverage. Deferred or excluded work cannot contribute to this claim."
     },
     {

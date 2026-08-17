@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "importer"))
 sys.path.insert(0, str(ROOT / "tools"))
 
-from openbfme_importer.game import .private_root  # noqa: E402
+from openbfme_importer.game import workspace_root  # noqa: E402
 from openbfme_importer.faction_policy import implicit_object_roots  # noqa: E402
 from openbfme_importer.paths import (  # noqa: E402
     ensure_external_to_repo,
@@ -88,7 +88,7 @@ def _ensure_men_host_profile(
 
     candidates = [
         state_root / "profiles" / HOST_PROFILE_NAME,
-        .private_root(state_root, "rotwk") / "profiles" / HOST_PROFILE_NAME,
+        workspace_root(state_root, "rotwk") / "profiles" / HOST_PROFILE_NAME,
     ]
     existing = next((p for p in candidates if p.is_file()), None)
     if existing is not None:
@@ -139,7 +139,7 @@ def _ensure_men_host_profile(
     bfme2_catalog_identity = InstallCatalog.load(catalog_path).identity_sha256()
 
     living_world = (
-        .private_root(state_root, "rotwk") / "reports" / "rotwk-living-world.json"
+        workspace_root(state_root, "rotwk") / "reports" / "rotwk-living-world.json"
     )
     if not living_world.is_file():
         _run(
@@ -208,7 +208,7 @@ def _ensure_men_host_profile(
 def _serial_publication_rows(state_root: Path) -> list[dict[str, Any]]:
     """Load and fail closed on the seven receipts produced by serial proof runs."""
 
-    coverage_root = .private_root(state_root, "rotwk") / "reports" / "faction-import"
+    coverage_root = workspace_root(state_root, "rotwk") / "reports" / "faction-import"
     rows: list[dict[str, Any]] = []
     for faction in FACTIONS:
         path = coverage_root / f"{faction}-publication.json"
@@ -335,7 +335,7 @@ def _assert_convert_batch_ok(state_root: Path, *, convert_exit: int) -> bool:
 
 
 def _fortress_proof(state_root: Path) -> dict[str, list[str]]:
-    coverage_root = .private_root(state_root, "rotwk") / "reports" / "faction-import"
+    coverage_root = workspace_root(state_root, "rotwk") / "reports" / "faction-import"
     result: dict[str, list[str]] = {}
     for faction in FACTIONS:
         coverage = _load_object(coverage_root / f"{faction}-coverage.json")

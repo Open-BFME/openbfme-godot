@@ -85,7 +85,7 @@ function New-Fixture {
 
 function New-WorkspaceFixture {
     <#
-        A .private-shaped directory carrying only the MANIFESTS of the real
+        A workspace-shaped directory carrying only the MANIFESTS of the real
         bundles - not their payloads - which is all the plan reads. Cheap enough
         to build one per test.
     #>
