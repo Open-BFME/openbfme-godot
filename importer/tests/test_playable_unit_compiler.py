@@ -4349,6 +4349,134 @@ def test_terror_without_emotion_source_keeps_the_gap_row() -> None:
     assert screech["effect"] == {"kind": "none"}
 
 
+def test_elven_grace_enum_binds_the_unique_button_triggered_burst_heal() -> None:
+    documents = _hero_ability_documents()
+    object_path = "data/ini/object/units/test_units.ini"
+    documents[object_path] = documents[object_path].replace(
+        b"    TriggerFX = FX_FixtureGrace\n", b"", 1
+    ).replace(
+        b"    UnitHealPulseFX = FX_FixtureGrace\n",
+        b"    UnitHealPulseFX = FX_UnrelatedPresentationOnly\n",
+        1,
+    )
+    documents["data/ini/specialpower.ini"] = documents[
+        "data/ini/specialpower.ini"
+    ].replace(
+        b"SpecialPower SpecialAbilityFixtureGrace\n"
+        b"  Enum = SPECIAL_ATHELAS\n",
+        b"SpecialPower SpecialAbilityFixtureGrace\n"
+        b"  Enum = SPECIAL_ELVEN_GRACE\n",
+        1,
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    grace = _abilities_by_id(descriptor)["Command_FixtureGrace"]
+    assert grace["implementation"]["status"] == "implemented"
+    assert grace["effect"]["kind"] == "heal"
+    assert grace["effect"]["amount"] == 500
+    assert grace["effect"]["radius"] == 150
+    assert grace["effect"]["healFxId"] == "FX_UnrelatedPresentationOnly"
+
+
+def test_elven_grace_enum_refuses_ambiguous_button_triggered_heals() -> None:
+    documents = _hero_ability_documents()
+    object_path = "data/ini/object/units/test_units.ini"
+    documents[object_path] = documents[object_path].replace(
+        b"    TriggerFX = FX_FixtureGrace\n", b"", 1
+    ).replace(
+        b"  Behavior = AutoHealBehavior ModuleTag_GraceHealing\n",
+        b"  Behavior = AutoHealBehavior ModuleTag_OtherButtonHeal\n"
+        b"    ButtonTriggered = Yes\n"
+        b"    HealingAmount = 1\n"
+        b"    Radius = 1\n"
+        b"    SingleBurst = Yes\n"
+        b"  End\n"
+        b"  Behavior = AutoHealBehavior ModuleTag_GraceHealing\n",
+        1,
+    )
+    documents["data/ini/specialpower.ini"] = documents[
+        "data/ini/specialpower.ini"
+    ].replace(
+        b"SpecialPower SpecialAbilityFixtureGrace\n"
+        b"  Enum = SPECIAL_ATHELAS\n",
+        b"SpecialPower SpecialAbilityFixtureGrace\n"
+        b"  Enum = SPECIAL_ELVEN_GRACE\n",
+        1,
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    grace = _abilities_by_id(descriptor)["Command_FixtureGrace"]
+    assert grace["implementation"]["status"] == "unimplemented"
+    assert grace["effect"] == {"kind": "none"}
+
+
+def test_hero_mode_without_modifier_binds_authored_hero_weapon_set() -> None:
+    documents = _hero_ability_documents()
+    object_path = "data/ini/object/units/test_units.ini"
+    documents[object_path] = documents[object_path].replace(
+        b"  WeaponSet\n"
+        b"    Conditions = None\n"
+        b"    Weapon = PRIMARY AbilityHeroSword\n"
+        b"  End\n",
+        b"  WeaponSet\n"
+        b"    Conditions = None\n"
+        b"    Weapon = PRIMARY AbilityHeroSword\n"
+        b"  End\n"
+        b"  WeaponSet\n"
+        b"    Conditions = WEAPONSET_HERO_MODE\n"
+        b"    Weapon = PRIMARY FixtureDeadeyeBow\n"
+        b"  End\n",
+        1,
+    ).replace(
+        b"    HeroAttributeModifier = FixtureRage\n", b"", 1
+    )
+    documents["data/ini/weapon.ini"] += (
+        b"\nWeapon FixtureDeadeyeBow\n"
+        b"  AttackRange = 400\n"
+        b"  DelayBetweenShots = 500\n"
+        b"  PreAttackDelay = 100\n"
+        b"  FiringDuration = 100\n"
+        b"  DamageNugget\n"
+        b"    Damage = 250\n"
+        b"    DamageType = HERO_RANGED\n"
+        b"  End\n"
+        b"End\n"
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    rage = _abilities_by_id(descriptor)["Command_FixtureRage"]
+    assert rage["implementation"]["status"] == "implemented"
+    assert rage["effect"] == {
+        "kind": "weapon-mode-special-power",
+        "specialPowerTemplateId": "SpecialAbilityFixtureRage",
+        "durationMs": 20000,
+        "startsPaused": False,
+        "weaponSetFlags": ["WEAPONSET_HERO_MODE"],
+        "sourceIni": object_path,
+        "line": rage["effect"]["line"],
+    }
+
+
+def test_modifierless_hero_mode_without_authored_weapon_set_fails_closed() -> None:
+    documents = _hero_ability_documents()
+    object_path = "data/ini/object/units/test_units.ini"
+    documents[object_path] = documents[object_path].replace(
+        b"    HeroAttributeModifier = FixtureRage\n", b"", 1
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    rage = _abilities_by_id(descriptor)["Command_FixtureRage"]
+    assert rage["implementation"]["status"] == "unimplemented"
+    assert "WEAPONSET_HERO_MODE" in rage["implementation"]["reason"]
+    assert rage["effect"] == {"kind": "none"}
+
+
 def test_weapon_blast_knockback_compiles_from_meta_impact_nugget() -> None:
     documents = _hero_ability_documents()
     documents["data/ini/weapon.ini"] = documents["data/ini/weapon.ini"].replace(
@@ -6798,6 +6926,93 @@ def test_sub_object_upgrade_compiles_fire_plane_show_token() -> None:
         }
     ]
     assert isinstance(upgrades[0]["line"], int) and upgrades[0]["line"] > 0
+
+
+@pytest.mark.parametrize(
+    ("label", "game", "grace_radius", "grace_line", "deadeye_level"),
+    [
+        ("bfme2-retail", "bfme2", 1, 540, 4),
+        ("rotwk-retail", "rotwk", 200, 529, 7),
+    ],
+)
+def test_canonical_retail_elven_grace_and_deadeye_effects_are_implemented(
+    label: str,
+    game: str,
+    grace_radius: int,
+    grace_line: int,
+    deadeye_level: int,
+) -> None:
+    catalog_path = _RETAIL_CATALOGS[label]
+    if not catalog_path.is_file():
+        pytest.skip(f"{label} retail catalog unavailable")
+    documents = dict(read_catalog_documents(InstallCatalog.load(catalog_path)))
+    prepared = prepare_playable_unit_compiler(documents)
+
+    elrond = compile_playable_unit_descriptor(
+        "ElvenElrond",
+        documents,
+        prepared=prepared,
+        game=game,
+        scenario_admission={"role": "scenario-only", "surfaces": ["script-spawn"]},
+    )
+    validate_playable_unit_descriptor(elrond)
+    grace = next(
+        row for row in elrond["abilities"]
+        if row["id"] == "Command_SpecialAbilityElrondElvenGrace"
+    )
+    assert grace["implementation"] == {
+        "status": "implemented",
+        "reason": "",
+        "limitations": [],
+    }
+    assert grace["targeting"] == "self"
+    assert grace["cooldownMs"] == 90000
+    assert grace["effect"] == {
+        "kind": "heal",
+        "amount": 600,
+        "amountKind": "flat",
+        "radius": grace_radius,
+        "affects": "HERO",
+        "onlyOthers": False,
+        "healFxId": "FX_AragornAthelas",
+        "module": "AutoHealBehavior",
+        "sourceIni": "data/ini/object/goodfaction/units/elven/elrond.ini",
+        "line": grace_line,
+    }
+
+    thranduil = compile_playable_unit_descriptor(
+        "ElvenThranduil",
+        documents,
+        prepared=prepared,
+        game=game,
+        scenario_admission={"role": "scenario-only", "surfaces": ["script-spawn"]},
+    )
+    validate_playable_unit_descriptor(thranduil)
+    deadeye = next(
+        row for row in thranduil["abilities"]
+        if row["id"] == "Command_SpecialAbilityDeadEye"
+    )
+    assert deadeye["implementation"] == {
+        "status": "implemented",
+        "reason": "",
+        "limitations": [],
+    }
+    assert deadeye["targeting"] == "self"
+    assert deadeye["cooldownMs"] == 120000
+    assert deadeye["levelGate"] == {
+        "upgradeIds": ["Upgrade_ThranduilDeadeye"],
+        "requiredLevel": deadeye_level,
+        "sourceIni": "data/ini/experiencelevels.ini",
+    }
+    assert deadeye["effect"] == {
+        "kind": "weapon-mode-special-power",
+        "specialPowerTemplateId": "SpecialAbilityThranduilDeadeye",
+        "durationMs": 20000,
+        "startsPaused": True,
+        "weaponSetFlags": ["WEAPONSET_HERO_MODE"],
+        "sourceIni": "data/ini/object/goodfaction/units/elven/thranduil.ini",
+        "line": 489,
+    }
 
 
 @pytest.mark.parametrize(

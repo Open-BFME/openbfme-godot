@@ -9150,6 +9150,57 @@ def _hero_ability_effect(
                         f"{label} HeroMode starter needs exactly one AttributeModifier"
                     )
                 modifier_id = starter_tokens[0]
+        if modifier_id is None:
+            # SPECIAL_HERO_MODE is also the engine-owned timed switch for an
+            # authored WEAPONSET_HERO_MODE WeaponSet (Thranduil's Deadeye).
+            # That retail shape intentionally has no AttributeModifier: the
+            # alternate weapon is the complete gameplay payload.  Reuse the
+            # same typed weapon-mode graph/runtime as WeaponModeSpecialPower-
+            # Update, and fail closed unless the alternate profile itself
+            # resolves from the effective object and weapon documents.
+            if power_enum.casefold() != "special_hero_mode":
+                raise PlayableUnitCompilerError(
+                    f"{label} modifier-less HeroModeSpecialAbilityUpdate needs "
+                    "Enum SPECIAL_HERO_MODE"
+                )
+            if duration is None or float(duration) < 0.0:
+                raise PlayableUnitCompilerError(
+                    f"{label} HeroModeSpecialAbilityUpdate has no resolvable "
+                    "HeroEffectDuration"
+                )
+            modes, _mode_gaps = _conditional_weapon_modes(
+                member_lineage,
+                documents,
+                constants,
+                named_definition_cache=named_definition_cache,
+                cache_lock=cache_lock,
+            )
+            hero_mode_key = "weaponset_hero_mode"
+            if hero_mode_key not in modes:
+                raise PlayableUnitCompilerError(
+                    f"{label} HeroModeSpecialAbilityUpdate has no resolvable "
+                    "WEAPONSET_HERO_MODE WeaponSet"
+                )
+            starters = modules_of("specialpowermodule")
+            starts_paused = any(
+                (_first(block.values("StartsPaused")) or "no").casefold() == "yes"
+                for block in starters
+            )
+            template_ids = _module_tokens(timing_module, "SpecialPowerTemplate")
+            if len(template_ids) != 1:
+                raise PlayableUnitCompilerError(
+                    f"{label} HeroModeSpecialAbilityUpdate needs exactly one "
+                    "SpecialPowerTemplate"
+                )
+            return {
+                "kind": "weapon-mode-special-power",
+                "specialPowerTemplateId": template_ids[0],
+                "durationMs": duration,
+                "startsPaused": starts_paused,
+                "weaponSetFlags": ["WEAPONSET_HERO_MODE"],
+                "sourceIni": timing_module.source_virtual_path,
+                "line": timing_module.line,
+            }
     else:
         timing = [
             block
@@ -9273,6 +9324,16 @@ def _hero_ability_effect(
             pulse = (_first(block.values("UnitHealPulseFX")) or "").casefold()
             if pulse and pulse in trigger_fxes:
                 heal_candidates.append(block)
+    if (
+        not heal_candidates
+        and power_enum.casefold() == "special_elven_grace"
+        and len(burst_heal_modules) == 1
+    ):
+        # SPECIAL_ELVEN_GRACE is the retail engine dispatch that presses the
+        # owner's sole ButtonTriggered/SingleBurst AutoHealBehavior.  Elrond
+        # authors no TriggeredBy or shared TriggerFX seam, so the enum plus a
+        # unique typed burst-heal module is the complete, non-guessed binding.
+        heal_candidates.append(burst_heal_modules[0])
     if len(heal_candidates) > 1:
         raise PlayableUnitCompilerError(
             f"{label} has an ambiguous burst-heal binding"
