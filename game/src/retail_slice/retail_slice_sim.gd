@@ -14369,10 +14369,16 @@ func _scaled_ability_rules(rules: Array[Dictionary], source_scale: float) -> Arr
 				effect["duration_ticks"] = maxi(1, roundi(stealth_ms / (TICK_SECONDS * 1000.0))) if stealth_ms > 0.0 else 0
 				effect["broadcast_radius_scaled"] = float(effect.get("broadcastRadius", 0.0)) * scale
 			"teleport":
-				# TeleportSpecialAbilityUpdate: MaxDistance gates the cast like
-				# a range; BusyForDuration holds the hero after arrival.
+				# TeleportSpecialAbilityUpdate: an authored MaxDistance gates the
+				# cast like a range; omission is unlimited. BusyForDuration holds
+				# the hero after arrival. DestinationWeaponName fires at arrival.
 				effect["range"] = float(effect.get("maxDistance", 0.0)) * scale
 				effect["busy_ticks"] = maxi(0, roundi(float(effect.get("busyForDurationMs", 0.0)) / (TICK_SECONDS * 1000.0)))
+				if effect.has("destinationWeapon"):
+					var destination_weapon := (effect.get("destinationWeapon", {}) as Dictionary).duplicate(true)
+					destination_weapon["knockback_radius"] = float(destination_weapon.get("knockbackRadius", 0.0)) * scale
+					destination_weapon["knockback_strength"] = float(destination_weapon.get("knockbackStrength", 0.0)) * scale
+					effect["destinationWeapon"] = destination_weapon
 			"curse":
 				# CurseSpecialPower: StartAbilityRange gates the cast; the
 				# radius cursor bounds target selection; CursePercentage is
@@ -23322,7 +23328,10 @@ func _validate_special_power_activation(row: Dictionary, contract: Dictionary, t
 			return {"ok": false, "reason": "activation-condition:%s" % condition}
 		if bool((row.get("object_status", {}) as Dictionary).get(condition, false)):
 			return {"ok": false, "reason": "activation-condition:%s" % condition}
-	var origin := Vector2(row.get("position", Vector2.ZERO))
+	# Retail's SpecialPower validator passes the candidate destination to the
+	# NO_FORBIDDEN_OBJECTS partition query. Targeted casts therefore scan around
+	# their destination, not around the caster.
+	var origin := Vector2(row.get("position", Vector2.ZERO)) if targeting == "self" else target_point
 	var flags: Array = contract.get("flags", []) as Array
 	if flags.has("PATHABLE_ONLY"):
 		# Retail's PATHABLE_ONLY is a target-location admission rule.  Unlike
@@ -23363,6 +23372,12 @@ func _validate_special_power_activation(row: Dictionary, contract: Dictionary, t
 			var candidate := entities[candidate_id] as Dictionary
 			if origin.distance_to(Vector2(candidate.get("position", origin))) <= forbidden_range and _ability_token_filter_accepts(candidate, contract.get("forbiddenObjectFilter", []) as Array):
 				return {"ok": false, "reason": "forbidden-object-nearby", "object_id": candidate_id}
+		for structure_id in structure_ids():
+			var candidate := structures[structure_id] as Dictionary
+			if int(candidate.get("health", 0)) <= 0:
+				continue
+			if origin.distance_to(Vector2(candidate.get("position", origin))) <= forbidden_range and _ability_token_filter_accepts(candidate, contract.get("forbiddenObjectFilter", []) as Array):
+				return {"ok": false, "reason": "forbidden-object-nearby", "object_id": structure_id, "object_kind": "structure"}
 	if targeting in ["enemy-object", "object"] and not (contract.get("objectFilter", []) as Array).is_empty():
 		var matched := false
 		for candidate_id in entity_ids():
@@ -25121,13 +25136,20 @@ func _break_stealth(row: Dictionary, condition: String) -> void:
 
 
 func _apply_ability_teleport(hero_row: Dictionary, effect: Dictionary, point: Vector2) -> Dictionary:
-	## TeleportSpecialAbilityUpdate (Shelob Tunnel): deterministic relocation
-	## to a walkable point inside the authored MaxDistance (the generic range
-	## gate enforces it), then the authored BusyForDuration holds the hero.
-	if float(effect.get("range", 0.0)) <= 0.0:
-		return {"ok": false, "reason": "teleport-fields-missing"}
-	if not _position_walkable(point):
-		return {"ok": false, "reason": "destination-unwalkable"}
+	## TeleportSpecialAbilityUpdate: deterministic relocation to the requested
+	## point. A positive authored MaxDistance is enforced by the generic cast
+	## gate; omission is the retail unlimited/default form. This module does not
+	## itself author a pathability gate, so relocation must not invent one.
+	var destination_weapon := effect.get("destinationWeapon", {}) as Dictionary
+	if not destination_weapon.is_empty() and (
+		String(destination_weapon.get("affects", "")) != "ENEMIES"
+		or int(destination_weapon.get("damage", -1)) != 0
+		or float(destination_weapon.get("knockback_radius", 0.0)) <= 0.0
+		or float(destination_weapon.get("knockback_strength", 0.0)) <= 0.0
+		or float(destination_weapon.get("knockbackTaperOff", 0.0)) <= 0.0
+		or float(destination_weapon.get("knockbackZMult", 0.0)) <= 0.0
+	):
+		return {"ok": false, "reason": "teleport-destination-weapon-invalid"}
 	hero_row["position"] = point
 	_spatial_sync(hero_row)
 	hero_row["target_id"] = 0
@@ -25141,7 +25163,23 @@ func _apply_ability_teleport(hero_row: Dictionary, effect: Dictionary, point: Ve
 	var busy_ticks := int(effect.get("busy_ticks", 0))
 	if busy_ticks > 0:
 		hero_row["ability_hold_until_tick"] = tick_index + busy_ticks
-	return {"ok": true, "reason": "", "effect": "teleport", "affected": 1}
+	var destination_affected := 0
+	if not destination_weapon.is_empty():
+		destination_affected = _apply_knockback(
+			point,
+			float(destination_weapon["knockback_radius"]),
+			float(destination_weapon["knockback_strength"]),
+			int(hero_row.get("team", -1)),
+			0,
+			"teleport-destination",
+			int(hero_row.get("id", 0)),
+			float(destination_weapon["knockbackTaperOff"]),
+			float(destination_weapon["knockbackZMult"]),
+		)
+		var fire_fx_id := String(destination_weapon.get("fireFxId", ""))
+		if fire_fx_id != "":
+			_emit_event("ability.graph_fx", int(hero_row.get("id", 0)), 0, {"fx_id": fire_fx_id, "point": point})
+	return {"ok": true, "reason": "", "effect": "teleport", "affected": 1, "destination_affected": destination_affected}
 
 
 func _apply_ability_curse(hero_row: Dictionary, effect: Dictionary, point: Vector2) -> Dictionary:
@@ -28362,7 +28400,7 @@ func _resume_order_after_knockdown(row: Dictionary) -> bool:
 	return false
 
 
-func _apply_knockback(center: Vector2, radius: float, strength: float, source_team: int, damage: int, damage_reason: String, source_id: int = 0) -> int:
+func _apply_knockback(center: Vector2, radius: float, strength: float, source_team: int, damage: int, damage_reason: String, source_id: int = 0, taper_off: float = 0.0, z_mult: float = 1.0) -> int:
 	## Deterministic radial knockback: sweep enemy battalions in ascending id
 	## order, throw each away from the center (clamped to walkable ground),
 	## knock them down for KNOCKDOWN_DURATION_TICKS, and apply the optional
@@ -28397,12 +28435,17 @@ func _apply_knockback(center: Vector2, radius: float, strength: float, source_te
 				_apply_damage(source_id, id, damage, "battalion")
 			continue
 		var direction := (position - center) / distance if distance > 0.001 else Vector2.RIGHT
+		# The generic deterministic MetaImpact representation applies the proven
+		# radial amount. ShockWaveTaperOff and ShockWaveZMult are retained in the
+		# event receipt, but their retail force curve is not projected into this
+		# 2D sim until the remaining engine helper semantics are proven.
+		var applied_strength := strength
 		# Try the full throw first, then shorter deterministic fractions so a
 		# victim near water/cliff lands on the nearest walkable spot instead
 		# of being stranded on unwalkable cells.
 		var landed := position
 		for fraction in [1.0, 0.5, 0.25]:
-			var candidate := position + direction * strength * float(fraction)
+			var candidate := position + direction * applied_strength * float(fraction)
 			if _position_walkable(candidate):
 				landed = candidate
 				break
@@ -28423,12 +28466,17 @@ func _apply_knockback(center: Vector2, radius: float, strength: float, source_te
 		row["state"] = "knocked_down"
 		if damage > 0:
 			_apply_damage(source_id, id, damage, "battalion")
-		_emit_event("combat.knockback", source_id, id, {
+		var knockback_event := {
 			"reason": damage_reason,
 			"center": [snappedf(center.x, 0.001), snappedf(center.y, 0.001)],
 			"landed": [snappedf(landed.x, 0.001), snappedf(landed.y, 0.001)],
 			"knockdown_ticks": KNOCKDOWN_DURATION_TICKS,
-		})
+		}
+		if taper_off > 0.0:
+			knockback_event["shockwave_taper_off"] = taper_off
+			knockback_event["shockwave_z_mult"] = z_mult
+			knockback_event["generic_metaimpact_projection"] = true
+		_emit_event("combat.knockback", source_id, id, knockback_event)
 		affected += 1
 	return affected
 

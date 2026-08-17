@@ -479,6 +479,35 @@ func _run() -> void:
 		"forbiddenObjectRange": 60,
 	}
 	_check(Adapter.ability_rules(flagged_doc).size() == 1, "adapter admits the complete Oathbreakers placement gate")
+	var teleport_doc := ability_doc.duplicate(true)
+	var teleport_row := (((teleport_doc["registration"] as Dictionary)["abilities"] as Array)[0] as Dictionary)
+	teleport_row["targeting"] = "point"
+	teleport_row["effect"] = {
+		"kind": "teleport", "busyForDurationMs": 1800,
+		"destinationWeapon": {
+			"weaponId": "CreateaHeroBlinkDestination", "damage": 0,
+			"affects": "ENEMIES", "knockbackStrength": 50.0,
+			"knockbackRadius": 55.0, "knockbackTaperOff": 0.75,
+			"knockbackZMult": 1.2, "fireFxId": "FX_Blink",
+		},
+	}
+	_check(Adapter.ability_rules(teleport_doc).size() == 1, "adapter admits nullable-distance teleport with exact destination weapon")
+	for tampered_key in ["knockbackStrength", "knockbackRadius", "knockbackTaperOff", "knockbackZMult"]:
+		var tampered_teleport := teleport_doc.duplicate(true)
+		var tampered_row := (((tampered_teleport["registration"] as Dictionary)["abilities"] as Array)[0] as Dictionary)
+		var tampered_effect := tampered_row["effect"] as Dictionary
+		((tampered_effect["destinationWeapon"] as Dictionary))[tampered_key] = 0
+		_check(Adapter.ability_rules(tampered_teleport).is_empty(), "adapter refuses teleport destination weapon without positive %s" % tampered_key)
+	var damaged_teleport := teleport_doc.duplicate(true)
+	var damaged_row := (((damaged_teleport["registration"] as Dictionary)["abilities"] as Array)[0] as Dictionary)
+	var damaged_effect := damaged_row["effect"] as Dictionary
+	((damaged_effect["destinationWeapon"] as Dictionary))["damage"] = 1
+	_check(Adapter.ability_rules(damaged_teleport).is_empty(), "adapter refuses invented destination-weapon damage")
+	var allied_teleport := teleport_doc.duplicate(true)
+	var allied_row := (((allied_teleport["registration"] as Dictionary)["abilities"] as Array)[0] as Dictionary)
+	var allied_effect := allied_row["effect"] as Dictionary
+	((allied_effect["destinationWeapon"] as Dictionary))["affects"] = "ALLIES"
+	_check(Adapter.ability_rules(allied_teleport).is_empty(), "adapter refuses non-enemy Blink destination impact")
 
 	# These graph kinds are emitted by the typed compiler and have independent
 	# executable runtime gates. Keep the ContentDB boundary synchronized: stale

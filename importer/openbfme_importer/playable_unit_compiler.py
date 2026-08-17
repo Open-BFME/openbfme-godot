@@ -5911,6 +5911,97 @@ def _weapon_knockback_fields(
     return {}
 
 
+def _teleport_destination_weapon_fields(
+    documents: Mapping[str, bytes],
+    weapon_id: str,
+    constants: Mapping[str, int | float],
+    label: str,
+    *,
+    named_definition_cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None,
+    cache_lock: threading.Lock | None,
+) -> dict[str, object]:
+    """Compile the exact zero-damage MetaImpact weapon fired after teleport.
+
+    Karsh's Blink authors this as a destination weapon rather than as a normal
+    attack.  It has no DamageNugget: its only simulation payload is an
+    enemy-only radial throw.  Every magnitude is required here so an authored
+    but incomplete destination weapon cannot silently turn into relocation
+    without its arrival impact.
+    """
+
+    definition = _named_definition_values(
+        documents,
+        "Weapon",
+        weapon_id,
+        cache=named_definition_cache,
+        cache_lock=cache_lock,
+    )
+    if definition is None:
+        raise PlayableUnitCompilerError(
+            f"{label} destination weapon is missing or ambiguous: {weapon_id}"
+        )
+    affects_rows = definition.get("radiusdamageaffects", ())
+    affects = (
+        _tokens(str(affects_rows[0].get("expression", "")))
+        if len(affects_rows) == 1
+        else ()
+    )
+    if tuple(token.upper() for token in affects) != ("ENEMIES",):
+        raise PlayableUnitCompilerError(
+            f"{label} destination weapon {weapon_id} is not exactly enemy-only"
+        )
+    if _weapon_damage_nuggets(
+        documents,
+        weapon_id,
+        cache=named_definition_cache,
+        cache_lock=cache_lock,
+    ):
+        raise PlayableUnitCompilerError(
+            f"{label} destination weapon {weapon_id} authors unconverted damage"
+        )
+    nuggets = _weapon_damage_nuggets(
+        documents,
+        weapon_id,
+        nugget_kind="metaimpactnugget",
+        cache=named_definition_cache,
+        cache_lock=cache_lock,
+    )
+    if nuggets is None or len(nuggets) != 1:
+        raise PlayableUnitCompilerError(
+            f"{label} destination weapon {weapon_id} needs one MetaImpactNugget"
+        )
+    fields = nuggets[0]["fields"]
+    assert isinstance(fields, Mapping)
+    resolved: dict[str, int | float] = {}
+    for source_key, output_key in (
+        ("ShockWaveAmount", "knockbackStrength"),
+        ("ShockWaveRadius", "knockbackRadius"),
+        ("ShockWaveTaperOff", "knockbackTaperOff"),
+        ("ShockWaveZMult", "knockbackZMult"),
+    ):
+        value = _resolved_definition_field(fields, source_key, constants)
+        if value is None or float(value["value"]) <= 0.0:
+            raise PlayableUnitCompilerError(
+                f"{label} destination weapon {weapon_id} has no resolvable {source_key}"
+            )
+        resolved[output_key] = value["value"]  # type: ignore[assignment]
+    fire_fx_rows = definition.get("firefx", ())
+    fire_fx = (
+        str(fire_fx_rows[0].get("expression", "")).strip()
+        if len(fire_fx_rows) == 1
+        else ""
+    )
+    return {
+        "weaponId": weapon_id,
+        "damage": 0,
+        "affects": "ENEMIES",
+        **resolved,
+        **({"fireFxId": fire_fx} if fire_fx else {}),
+        "sourceIni": str(affects_rows[0].get("sourceIni", "")),
+        "line": int(affects_rows[0].get("line", 0)),
+    }
+
+
 def _weapon_damage_through_warheads(
     documents: Mapping[str, bytes],
     weapon_id: str,
@@ -7293,6 +7384,24 @@ def _hero_ability_row(
         except PlayableUnitCompilerError as error:
             status = "unimplemented"
             reason = str(error)
+            effect = {"kind": "none"}
+        if (
+            status == "implemented"
+            and effect.get("kind") == "teleport"
+            and str(row.get("enum", "")).upper() == "SPECIAL_BALROG_WINGS"
+        ):
+            # The destination weapon, nullable MaxDistance, busy envelope, and
+            # destination-centered forbidden-object scan are independently
+            # converted. Do not promote Karsh Blink until the later
+            # SPECIAL_BALROG_WINGS destination admission is represented. Its
+            # flip/cliff rejection and highest-layer==1 checks are binary-
+            # proven, while the structure circle's raw caster +0xB8 radius
+            # field is not yet identified.
+            status = "unimplemented"
+            reason = (
+                f"{label} SPECIAL_BALROG_WINGS flip/cliff/layer admission "
+                "is not represented and its raw structure radius is unresolved"
+            )
             effect = {"kind": "none"}
         if status == "implemented" and effect.get("kind") == "toggle-deploy":
             for source_field, output_field in (
@@ -8991,36 +9100,44 @@ def _hero_ability_effect(
 
     teleport_modules = modules_of("teleportspecialabilityupdate")
     if teleport_modules:
-        # TeleportSpecialAbilityUpdate (Shelob Tunnel): MaxDistance gates the
-        # cast like a range; BusyForDuration holds the hero after arrival.
+        # TeleportSpecialAbilityUpdate: an authored positive MaxDistance gates
+        # the cast like a range.  Its absence is the engine's unlimited/default
+        # form (Karsh Blink), not a missing magnitude. BusyForDuration holds the
+        # hero after arrival.
         if len(teleport_modules) > 1:
             raise PlayableUnitCompilerError(
                 f"{label} matches multiple TeleportSpecialAbilityUpdate modules"
             )
         block = teleport_modules[0]
-        max_distance = _resolved_expression(
-            (block.values("MaxDistance") or ("",))[-1], constants
-        )
-        if max_distance is None or float(max_distance) <= 0.0:
-            raise PlayableUnitCompilerError(
-                f"{label} TeleportSpecialAbilityUpdate has no resolvable "
-                "MaxDistance"
-            )
+        max_distance: int | float | None = None
+        max_distance_rows = block.values("MaxDistance")
+        if max_distance_rows:
+            max_distance = _resolved_expression(max_distance_rows[-1], constants)
+            if max_distance is None or float(max_distance) <= 0.0:
+                raise PlayableUnitCompilerError(
+                    f"{label} TeleportSpecialAbilityUpdate has an invalid "
+                    "MaxDistance"
+                )
         busy = _resolved_expression(
             (block.values("BusyForDuration") or ("",))[-1], constants
         )
         effect = {
             "kind": "teleport",
-            "maxDistance": max_distance,
             "busyForDurationMs": busy if busy is not None else 0,
             "sourceIni": block.source_virtual_path,
             "line": block.line,
         }
+        if max_distance is not None:
+            effect["maxDistance"] = max_distance
         destination_weapon = _first(block.values("DestinationWeaponName"))
         if destination_weapon is not None:
-            limitations.append(
-                f"authored DestinationWeaponName ({destination_weapon}) is "
-                "not fired at the arrival point"
+            effect["destinationWeapon"] = _teleport_destination_weapon_fields(
+                documents,
+                destination_weapon,
+                constants,
+                label,
+                named_definition_cache=named_definition_cache,
+                cache_lock=cache_lock,
             )
         return effect
 

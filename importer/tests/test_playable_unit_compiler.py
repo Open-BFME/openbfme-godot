@@ -5918,7 +5918,7 @@ def _batch3_hero_documents() -> dict[str, bytes]:
         b"  RadiusCursorRadius = THRANDUIL_MOVEUNSEEN_EFFECT_RADIUS\n"
         b"End\n"
         b"SpecialPower SpecialAbilityFixtureTunnel\n"
-        b"  Enum = SPECIAL_BALROG_WINGS\n"
+        b"  Enum = SPECIAL_GENERAL_TARGETLESS\n"
         b"  ReloadTime = 90000\n"
         b"End\n"
         b"SpecialPower SpecialAbilityCurseEnemy\n"
@@ -6165,7 +6165,8 @@ def test_batch3_rows_fail_closed_on_missing_magnitudes() -> None:
     assert "InvisibilityUpdate" in row["implementation"]["reason"]
     assert row["effect"] == {"kind": "none"}
 
-    # Teleport without an authored MaxDistance.
+    # Teleport without an authored MaxDistance uses the engine's unlimited
+    # default (Karsh Blink); omission is not a missing magnitude.
     documents = _batch3_hero_documents()
     documents[path] = documents[path].replace(
         b"    MaxDistance = WILD_SHELOB_TUNNEL_DISTANCE\n", b"", 1
@@ -6173,9 +6174,9 @@ def test_batch3_rows_fail_closed_on_missing_magnitudes() -> None:
     descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
     validate_playable_unit_descriptor(descriptor)
     row = _abilities_by_id(descriptor)["Command_FixtureTunnel"]
-    assert row["implementation"]["status"] == "unimplemented"
-    assert "no resolvable MaxDistance" in row["implementation"]["reason"]
-    assert row["effect"] == {"kind": "none"}
+    assert row["implementation"]["status"] == "implemented"
+    assert row["effect"]["kind"] == "teleport"
+    assert "maxDistance" not in row["effect"]
 
     # Curse whose power authors no RadiusCursorRadius target circle.
     documents = _batch3_hero_documents()

@@ -33,30 +33,34 @@ func _object_filter() -> Dictionary:
 	## at the same point must not be refused by the filter.
 	var sim = _fixture()
 	(sim.entities[2] as Dictionary)["kind_of"] = ["STRUCTURE"]
-	var refused: Dictionary = sim.cast_ability(1, "Fixture", Vector2(5, 0), 0)
+	var refused: Dictionary = sim.cast_ability(1, "Fixture", Vector2(20, 0), 0)
 	if String(refused.get("reason", "")) != "object-filter-refused":
 		return {"ok": false, "detail": "a -STRUCTURE target was admitted: %s" % str(refused)}
 	var admitted_sim = _fixture()
 	(admitted_sim.entities[2] as Dictionary)["kind_of"] = ["HERO"]
-	var admitted: Dictionary = admitted_sim.cast_ability(1, "Fixture", Vector2(5, 0), 0)
+	var admitted: Dictionary = admitted_sim.cast_ability(1, "Fixture", Vector2(20, 0), 0)
 	if String(admitted.get("reason", "")) == "object-filter-refused":
 		return {"ok": false, "detail": "a +HERO target was refused: %s" % str(admitted)}
 	return {"ok": true, "detail": "structure refused, hero admitted"}
 
 
 func _forbidden_object_filter() -> Dictionary:
-	## A MACHINE inside the authored radius refuses the cast; the same object
-	## outside the forbidden filter does not.
+	## A MACHINE beside the destination refuses the cast even though it is far
+	## from the caster; the same object outside the filter does not.
 	var sim = _fixture()
-	(sim.entities[2] as Dictionary)["kind_of"] = ["MACHINE"]
-	var refused: Dictionary = sim.cast_ability(1, "Fixture", Vector2(5, 0), 0)
+	(sim.entities[2] as Dictionary)["kind_of"] = ["HERO"]
+	(sim.entities[3] as Dictionary)["kind_of"] = ["MACHINE"]
+	(sim.entities[3] as Dictionary)["position"] = Vector2(20.5, 0)
+	sim._spatial_sync(sim.entities[3] as Dictionary)
+	var refused: Dictionary = sim.cast_ability(1, "Fixture", Vector2(20, 0), 0)
 	if String(refused.get("reason", "")) != "forbidden-object-nearby":
 		return {"ok": false, "detail": "a nearby MACHINE did not refuse the cast: %s" % str(refused)}
-	if int(refused.get("object_id", 0)) != 2:
+	if int(refused.get("object_id", 0)) != 3:
 		return {"ok": false, "detail": "the refusal named no forbidden object: %s" % str(refused)}
 	var allowed_sim = _fixture()
 	(allowed_sim.entities[2] as Dictionary)["kind_of"] = ["HERO"]
-	var allowed: Dictionary = allowed_sim.cast_ability(1, "Fixture", Vector2(5, 0), 0)
+	(allowed_sim.entities[3] as Dictionary)["kind_of"] = ["HERO"]
+	var allowed: Dictionary = allowed_sim.cast_ability(1, "Fixture", Vector2(20, 0), 0)
 	if String(allowed.get("reason", "")) == "forbidden-object-nearby":
 		return {"ok": false, "detail": "a non-MACHINE object refused the cast: %s" % str(allowed)}
 	return {"ok": true, "detail": "MACHINE refused at range, HERO ignored"}
@@ -67,15 +71,19 @@ func _forbidden_object_range() -> Dictionary:
 	## other range: 60 source units is 6.0 sim units at this fixture's scale.
 	var radius := FORBIDDEN_RANGE_SOURCE * SOURCE_SCALE
 	var sim = _fixture()
-	(sim.entities[2] as Dictionary)["kind_of"] = ["MACHINE"]
-	(sim.entities[2] as Dictionary)["position"] = Vector2(radius - 0.5, 0)
-	var inside: Dictionary = sim.cast_ability(1, "Fixture", Vector2(5, 0), 0)
+	(sim.entities[2] as Dictionary)["kind_of"] = ["HERO"]
+	(sim.entities[3] as Dictionary)["kind_of"] = ["MACHINE"]
+	(sim.entities[3] as Dictionary)["position"] = Vector2(20.0 + radius - 0.5, 0)
+	sim._spatial_sync(sim.entities[3] as Dictionary)
+	var inside: Dictionary = sim.cast_ability(1, "Fixture", Vector2(20, 0), 0)
 	if String(inside.get("reason", "")) != "forbidden-object-nearby":
 		return {"ok": false, "detail": "a MACHINE inside %.1f did not refuse: %s" % [radius, str(inside)]}
 	var outside_sim = _fixture()
-	(outside_sim.entities[2] as Dictionary)["kind_of"] = ["MACHINE"]
-	(outside_sim.entities[2] as Dictionary)["position"] = Vector2(radius + 0.5, 0)
-	var outside: Dictionary = outside_sim.cast_ability(1, "Fixture", Vector2(5, 0), 0)
+	(outside_sim.entities[2] as Dictionary)["kind_of"] = ["HERO"]
+	(outside_sim.entities[3] as Dictionary)["kind_of"] = ["MACHINE"]
+	(outside_sim.entities[3] as Dictionary)["position"] = Vector2(20.0 + radius + 0.5, 0)
+	outside_sim._spatial_sync(outside_sim.entities[3] as Dictionary)
+	var outside: Dictionary = outside_sim.cast_ability(1, "Fixture", Vector2(20, 0), 0)
 	if String(outside.get("reason", "")) == "forbidden-object-nearby":
 		return {"ok": false, "detail": "a MACHINE outside %.1f still refused: %s" % [radius, str(outside)]}
 	return {"ok": true, "detail": "refused inside %.1f, admitted outside" % radius}
@@ -92,7 +100,8 @@ func _fixture():
 	sim.entities.clear()
 	sim.structures.clear()
 	_spawn(sim, 1, 0, Vector2.ZERO)
-	_spawn(sim, 2, 1, Vector2(5, 0))
+	_spawn(sim, 2, 1, Vector2(20, 0))
+	_spawn(sim, 3, 1, Vector2(100, 0))
 	var contract := {
 		"objectFilter": ["NONE", "+HERO", "-STRUCTURE"],
 		"forbiddenObjectFilter": ["NONE", "+MACHINE"],

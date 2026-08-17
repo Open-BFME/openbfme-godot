@@ -455,8 +455,8 @@ func _long_tail_ability_rules() -> Array[Dictionary]:
 
 
 class NavStub extends RefCounted:
-	## Minimal route provider: only the walkability probe, so the teleport
-	## destination check can fail closed without a full navigation mesh.
+	## Minimal route provider whose boundary excludes x >= 90. Teleport itself
+	## authors no pathability test; this proves it does not borrow movement's.
 	func is_local_inside_navigation(position: Vector2) -> bool:
 		return position.x < 90.0
 
@@ -1052,18 +1052,66 @@ func _run_teleport_checks() -> void:
 	_spawn(short, 5, 0, Vector2.ZERO, HERO_OBJECT_ID, HERO_UNIT_TYPE)
 	short._unit_ability_rules[HERO_UNIT_TYPE] = short._scaled_ability_rules(_long_tail_variant("Command_TestTunnel", func(effect: Dictionary) -> void: effect["maxDistance"] = 10.0), 0.0)
 	_check("teleport_beyond_max_distance_fails_closed", String(short.cast_ability(5, "Command_TestTunnel", Vector2(30.0, 30.0)).get("reason", "")) == "out-of-range")
-	# An unwalkable destination fails closed (walkability probe stubbed).
+	# TeleportSpecialAbilityUpdate itself authors no pathability test. A route
+	# provider that rejects the point must not invent one for this module.
 	short._unit_ability_rules[HERO_UNIT_TYPE] = short._scaled_ability_rules(_long_tail_ability_rules(), 0.0)
 	short.route_provider = NavStub.new()
 	var blocked: Dictionary = short.cast_ability(5, "Command_TestTunnel", Vector2(95.0, 0.0))
 	short.route_provider = null
 	_check(
-		"teleport_unwalkable_destination_fails_closed",
-		String(blocked.get("reason", "")) == "destination-unwalkable" and Vector2((short.entities[5] as Dictionary).get("position", Vector2.ZERO)) == Vector2.ZERO
+		"teleport_does_not_invent_walkability_gate",
+		bool(blocked.get("ok", false)) and Vector2((short.entities[5] as Dictionary).get("position", Vector2.ZERO)) == Vector2(95.0, 0.0)
 	)
-	# An unauthored MaxDistance stays uncast-able.
-	short._unit_ability_rules[HERO_UNIT_TYPE] = short._scaled_ability_rules(_long_tail_variant("Command_TestTunnel", func(effect: Dictionary) -> void: effect.erase("maxDistance")), 0.0)
-	_check("teleport_unmeasured_distance_fails_closed", String(short.cast_ability(5, "Command_TestTunnel", Vector2(1.0, 0.0)).get("reason", "")) == "teleport-fields-missing")
+	# An unauthored MaxDistance is unlimited (Karsh Blink).
+	var unlimited = _fresh_sim()
+	_spawn(unlimited, 5, 0, Vector2.ZERO, HERO_OBJECT_ID, HERO_UNIT_TYPE)
+	unlimited._unit_ability_rules[HERO_UNIT_TYPE] = unlimited._scaled_ability_rules(_long_tail_variant("Command_TestTunnel", func(effect: Dictionary) -> void: effect.erase("maxDistance")), 0.0)
+	_check("teleport_absent_max_distance_is_unlimited", bool(unlimited.cast_ability(5, "Command_TestTunnel", Vector2(1000.0, 0.0)).get("ok", false)))
+	# The independently proven NO_FORBIDDEN_OBJECTS partition query is centered
+	# on the requested destination and includes structure objects.
+	var admission = _fresh_sim()
+	_spawn(admission, 5, 0, Vector2.ZERO, HERO_OBJECT_ID, HERO_UNIT_TYPE)
+	var admission_rules := _long_tail_variant("Command_TestTunnel", func(effect: Dictionary) -> void: effect.erase("maxDistance"))
+	for admission_rule_value in admission_rules:
+		var admission_rule := admission_rule_value as Dictionary
+		if String(admission_rule.get("ability_id", "")) == "Command_TestTunnel":
+			admission_rule["special_power_contract"] = {
+				"flags": ["NO_FORBIDDEN_OBJECTS"],
+				"forbiddenObjectFilter": ["NONE", "+STRUCTURE"],
+				"forbiddenObjectRange": 10.0,
+			}
+	admission._unit_ability_rules[HERO_UNIT_TYPE] = admission._scaled_ability_rules(admission_rules, 0.1)
+	admission.structures[900] = {"id": 900, "team": 1, "health": 1000, "position": Vector2(30.5, 30.0), "kind_of": ["STRUCTURE"]}
+	var structure_refusal: Dictionary = admission.cast_ability(5, "Command_TestTunnel", Vector2(30.0, 30.0))
+	_check("teleport_forbidden_structure_scan_is_destination_centered", String(structure_refusal.get("reason", "")) == "forbidden-object-nearby" and int(structure_refusal.get("object_id", 0)) == 900 and String(structure_refusal.get("object_kind", "")) == "structure")
+
+	# Karsh's destination weapon is enemy-only and zero-damage. The exact taper
+	# and Z multiplier are retained while the generic 2D MetaImpact projection
+	# applies the proven radial amount; Karsh itself remains deferred.
+	var impact = _fresh_sim()
+	var impact_hero: Dictionary = _spawn(impact, 5, 0, Vector2.ZERO, HERO_OBJECT_ID, HERO_UNIT_TYPE)
+	var enemy: Dictionary = _spawn(impact, 105, 1, Vector2(32.75, 30.0), SimScript.SOLDIER_OBJECT_ID, SimScript.SOLDIER_HORDE_ID)
+	var ally: Dictionary = _spawn(impact, 6, 0, Vector2(27.25, 30.0), SimScript.SOLDIER_OBJECT_ID, SimScript.SOLDIER_HORDE_ID)
+	impact._unit_ability_rules[HERO_UNIT_TYPE] = impact._scaled_ability_rules(_long_tail_variant("Command_TestTunnel", func(effect: Dictionary) -> void:
+		effect.erase("maxDistance")
+		effect["destinationWeapon"] = {
+			"weaponId": "CreateaHeroBlinkDestination", "damage": 0, "affects": "ENEMIES",
+			"knockbackStrength": 50.0, "knockbackRadius": 55.0,
+			"knockbackTaperOff": 0.75, "knockbackZMult": 1.2, "fireFxId": "FX_Blink",
+		}
+	), 0.1)
+	var enemy_health := int(enemy.get("health", 0))
+	var ally_position := Vector2(ally.get("position", Vector2.ZERO))
+	var impact_cast: Dictionary = impact.cast_ability(5, "Command_TestTunnel", Vector2(30.0, 30.0))
+	var impact_event: Dictionary = {}
+	for event_value in impact.events:
+		var event := event_value as Dictionary
+		if String(event.get("kind", "")) == "combat.knockback" and String(event.get("reason", "")) == "teleport-destination":
+			impact_event = event
+	_check("teleport_destination_weapon_relocates_and_hits_once", bool(impact_cast.get("ok", false)) and int(impact_cast.get("destination_affected", 0)) == 1 and Vector2(impact_hero.get("position", Vector2.ZERO)) == Vector2(30.0, 30.0))
+	_check("teleport_destination_weapon_is_enemy_only_zero_damage", int(enemy.get("health", 0)) == enemy_health and bool(enemy.get("knocked_down", false)) and Vector2(ally.get("position", Vector2.ZERO)) == ally_position and not bool(ally.get("knocked_down", false)))
+	_check("teleport_destination_weapon_projects_proven_radial_amount", Vector2(enemy.get("position", Vector2.ZERO)).is_equal_approx(Vector2(37.75, 30.0)) and bool(impact_event.get("generic_metaimpact_projection", false)))
+	_check("teleport_destination_weapon_receipts_taper_and_z", is_equal_approx(float(impact_event.get("shockwave_taper_off", 0.0)), 0.75) and is_equal_approx(float(impact_event.get("shockwave_z_mult", 0.0)), 1.2))
 
 
 func _run_curse_checks() -> void:

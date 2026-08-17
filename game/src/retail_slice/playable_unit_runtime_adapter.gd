@@ -1706,6 +1706,8 @@ static func ability_rules(document: Dictionary) -> Array[Dictionary]:
 			return []
 		if effect_kind == "repair-structure" and not _valid_repair_structure(effect):
 			return []
+		if effect_kind == "teleport" and not _valid_teleport(effect):
+			return []
 		if effect_kind == "stop-special-power" and not _valid_stop_special_power(effect):
 			return []
 		if effect_kind == "siege-deploy" and not _valid_siege_deploy(effect):
@@ -1783,6 +1785,43 @@ static func ability_rules(document: Dictionary) -> Array[Dictionary]:
 			"special_power_contract": special_power_contract.duplicate(true),
 		})
 	return output
+
+
+static func _valid_teleport(effect: Dictionary) -> bool:
+	for numeric_key in ["busyForDurationMs", "maxDistance"]:
+		if effect.has(numeric_key) and (
+			typeof(effect[numeric_key]) not in [TYPE_INT, TYPE_FLOAT]
+			or not is_finite(float(effect[numeric_key]))
+			or float(effect[numeric_key]) < 0.0
+		):
+			return false
+	if effect.has("maxDistance") and float(effect["maxDistance"]) <= 0.0:
+		return false
+	if not effect.has("destinationWeapon"):
+		return true
+	if typeof(effect["destinationWeapon"]) != TYPE_DICTIONARY:
+		return false
+	var weapon := effect["destinationWeapon"] as Dictionary
+	if (
+		typeof(weapon.get("weaponId")) != TYPE_STRING
+		or String(weapon.get("weaponId", "")) == ""
+		or typeof(weapon.get("affects")) != TYPE_STRING
+		or String(weapon.get("affects", "")) != "ENEMIES"
+		or typeof(weapon.get("damage")) not in [TYPE_INT, TYPE_FLOAT]
+		or not is_finite(float(weapon.get("damage", -1)))
+		or float(weapon.get("damage", -1)) != 0.0
+	):
+		return false
+	if weapon.has("fireFxId") and typeof(weapon["fireFxId"]) != TYPE_STRING:
+		return false
+	for numeric_key in ["knockbackStrength", "knockbackRadius", "knockbackTaperOff", "knockbackZMult"]:
+		if (
+			typeof(weapon.get(numeric_key)) not in [TYPE_INT, TYPE_FLOAT]
+			or not is_finite(float(weapon[numeric_key]))
+			or float(weapon[numeric_key]) <= 0.0
+		):
+			return false
+	return true
 
 
 static func has_ability_surface(row: Dictionary, ability_specs: Dictionary) -> bool:
