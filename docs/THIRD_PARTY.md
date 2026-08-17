@@ -9,7 +9,7 @@
 
 This ledger records engineering provenance; it is not a legal opinion. Exact executable,
 tree and selected-package digests belong in generated tool/provenance manifests or
-`STATUS.md`, not copied into this document.
+`docs/state/` or generated reports, not copied into this document.
 
 ## Content and donor sources
 

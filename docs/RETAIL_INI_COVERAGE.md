@@ -24,7 +24,7 @@ on unrelated objects or factions.
 Run it from the repository root with the pinned importer Python:
 
 ```powershell
-$python = 'workspace\retail-work\tools\cpython-3.12.13\python.exe'
+$python = 'workspace\retail-work\tools\python-3.12-env\Scripts\python.exe'
 $env:PYTHONPATH = 'importer;workspace\retail-work\tools\python-3.12-env\Lib\site-packages'
 & $python tools\retail-ini-coverage.py
 & $python tools\retail-ini-coverage.py --check

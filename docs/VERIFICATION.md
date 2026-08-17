@@ -29,7 +29,7 @@ Git revision + dirty-state digest + profile digest + bundle digest
 
 Evidence from another tuple is stale unless the validating schema explicitly proves
 that none of its inputs changed. Current counts, hashes and benchmark values live in
-`STATUS.md` or generated reports, not in this document.
+`docs/state/` or generated reports, not in this document.
 
 ## Gate hierarchy
 
@@ -153,7 +153,7 @@ conversion cold/warm/resume time and network recovery-not only averages.
 M2 uses its identity-bound live-soak and restart requirements from the current
 milestone contract. Later scale gates qualify the maximum legal eight-player BFME2
 command-point/member/projectile load plus the plan's headroom. Numeric results and
-thresholds live in generated reports or `STATUS.md`.
+thresholds live in generated reports or `docs/state/`.
 
 ## Test admission
 

@@ -1,136 +1,101 @@
 # AGENTS.md — read this before you touch anything
 
 Open-BFME is a Godot 4.7 remake of *BFME2: Rise of the Witch-king* (2.01).
-Retail assets are converted from the operator's own install; none ship here.
-
 Work at the repository top level. **Do not create branches or worktrees.**
 
-## Where things are
+## Layout
 
 | Path | What it is |
 |---|---|
 | `game/` | Godot runtime: sim, script engine, HUD/menus, test runners |
 | `importer/` | Python asset pipeline (retail → content packs) + its pytest suite |
-| `engine/` | C# determinism oracle. NOT the shipping sim — a cross-check partner, run by CI |
+| `engine/` | C# determinism oracle. Not the shipping sim — a cross-check partner, run by CI |
 | `launcher/` | WPF launcher, shipped artifact |
 | `tools/` | Gates, publish/release scripts, one-shot operators |
-| `contracts/` | Machine-validated product policy. Editing one? See "digests" below |
-| `workspace/` | Retail-derived material, packs, evidence. **Never commit, never publish** |
+| `contracts/` | Machine-validated product policy. Editing one? See rule 3 |
+| `orchestration/` | Tracked: `queue.md`, `briefs/`, `reports/` |
+| `docs/state/` | Tracked live ledgers (parity, playtest, recook, cook reports) |
+| `workspace/` | Git-ignored local retail material + packs + toolchain + logs. Canonical paths in `workspace/manifest.json` |
+
+## Retail material
+
+Retail-derived files live under `workspace/`; use them freely. Git ignores `workspace/` and the publication-boundary CI scans tracked files for retail bytes and machine-absolute paths — that is the whole policy. Canonical keys in `workspace/manifest.json`: `retailInstall`, `pinnedPython`, `packsRoot`, `retailExtract`, `logsRoot`.
 
 ## Run the right lane
 
 | Goal | Command | Notes |
 |---|---|---|
-| Importer tests | `run_importer_tests.bat` | Needs `BFME2_INSTALL` (see below) |
-| Godot runner | `<godot> --headless --path game --script res://tests/<runner>.gd` | Resolve via `tools\resolve-godot.bat` |
+| Importer tests | `run_importer_tests.bat` | Pinned interpreter `workspace\retail-work\tools\python-3.12-env\Scripts\python.exe`; `BFME2_INSTALL=<repo>\workspace\retail-work\editions\rotwk\layered-install\layer-1-bfme2`. Baseline 2026-08-17: 6 failed / 0 errors, all pre-existing (queue Q6) |
+| Godot runner | `<godot> --headless --path game --script res://tests/<runner>.gd` | Resolve via `tools\resolve-godot.bat`. Spellbook baseline: 218/0 |
 | Offline systems gate | `tools\gate-rotwk-systems.ps1 -SkipLiveRetail` | |
 | Retail gate | `run_retail_pipeline_tests.bat` | |
 | Launch the game | `run_game.bat` | |
-| Pack address check | `python tools\check_pack_addresses.py` | Seconds. Run it after any pack work |
+| Pack address check | `python tools\check_pack_addresses.py` | Seconds. Run after any pack work |
+| Dist pipeline | `powershell -File tools\Test-DistPipeline.ps1` | Baseline: 25 checks |
 
 ## Publishing a build
 
-When a major thing lands, the beta gets a number and a folder you can copy to
-another machine and run. Four steps, one command each.
+When a major thing lands, the beta gets a number and a folder you can copy to another machine and run. Four steps, one command each.
 
 | Step | Command | Notes |
 |---|---|---|
-| 1. Bump the number | edit `VERSION` (e.g. `0.2.1` → `0.2.2`) | One line. The only place the version is decided |
+| 1. Bump the number | edit `VERSION` (e.g. `0.2.1` → `0.2.2`) | The only place the version is decided |
 | 2. Restate it everywhere | `powershell -File tools\Write-BuildInfo.ps1` | Then match `config/version` in `game\project.godot` and the label in `game\scenes\boot.tscn`. Commit all four |
-| 3. Write the notes | `docs\patch-notes\v<version>.md` | Owner-facing plain language: what changed for the player, and a `## Known gaps` section. The publish refuses without it |
-| 4. Publish | `powershell -File tools\Publish-DistBuild.ps1 -Godot <godot.exe> -AllowEnvDependentContent -AllowPackOwnedWotrData -AllowMissingWotrData` | Lands in `dist\v<version>\`. Add `-Rc` for the release candidate (launcher included), `-Zip` to hand it over a share |
+| 3. Write the notes | `docs\patch-notes\v<version>.md` | Owner-facing: what changed for the player, plus `## Known gaps`. Publish refuses without it |
+| 4. Publish | `powershell -File tools\Publish-DistBuild.ps1 -Godot <godot.exe> -AllowEnvDependentContent -AllowPackOwnedWotrData -AllowMissingWotrData` | Lands in `dist\v<version>\`. `-Rc` adds the launcher; `-Zip` for a share |
 
-`powershell -File tools\Test-DistPipeline.ps1` checks steps 1-3 in ten to
-fifteen seconds — run it before you spend an hour and a half on step 4. Two switches
-exist because that hour and a half is real: `-PreflightOnly` runs every check
-and the hand-off binding and stops before building; `-FinishOnly` verifies an
-already-built `dist\v<version>\` and redoes only the notes, stamp and launcher
-(it stamps the commit the BUNDLE records, not HEAD, and refuses if the two
-differ unless you pass `-AllowFinishFromOtherCommit`).
+`powershell -File tools\Test-DistPipeline.ps1` checks steps 1–3 in ten to fifteen seconds. `-PreflightOnly` runs every check and the hand-off binding, then stops; `-FinishOnly` verifies an already-built `dist\v<version>\` and redoes notes, stamp and launcher (stamps the commit the BUNDLE records, not HEAD; refuses a mismatch unless `-AllowFinishFromOtherCommit`).
 
-**Step 4 needs three switches today, and every one of them is a real defect
-somewhere else.** None is a preference; each is listed with what retires it.
+**Step 4 needs three switches today, and every one of them is a real defect somewhere else.**
 
 | Switch | Why it is needed today | What retires it |
 |---|---|---|
-| `-Godot <path>` | `tools\resolve-godot.ps1` deliberately refuses to know about maintainer-machine paths, and this machine's Godot lives in one (`C:\Users\Jonathan\Downloads\godot47\`). Nothing is wrong; the resolver is doing its job | Drop the binary in `.tools\godot\`, or set `OPENBFME_GODOT`, and the flag stops being needed |
-| `-AllowEnvDependentContent` | The exported build does not resolve `content-packs\` beside its own exe. With no environment set it finds *something* — 11 packs instead of 14, almost certainly the stale durable pack in the user profile — so the folder is `run-with-log.bat`-only, not double-clickable. The publish refuses without this flag, deliberately | Bundle-relative content resolution in the game. Until then every published folder is bat-launcher-only and its patch notes say so |
-| `-AllowPackOwnedWotrData` | The active content pack now builds `data\living-world.json` into itself, and the staging rule was written when only the private workspace could supply it. Without the flag **no release can be built from the current pack set at all** | Either the packs stop carrying it, or the staging plan learns that a pack-supplied document is the normal case. The flag only reaches documents; directory bundles still refuse |
+| `-Godot <path>` | `tools\resolve-godot.ps1` refuses maintainer-machine paths; this machine's Godot lives in one. The resolver is doing its job | Drop the binary in `.tools\godot\`, or set `OPENBFME_GODOT` |
+| `-AllowEnvDependentContent` | The exported build does not resolve `content-packs\` beside its own exe. With no environment it finds something — 11 packs instead of 14, almost certainly the stale durable pack — so the folder is `run-with-log.bat`-only | Bundle-relative content resolution in the game |
+| `-AllowPackOwnedWotrData` | The active pack now builds `data\living-world.json` into itself; the staging rule still expects that document only from workspace. Without the flag no release can be built from the current pack set | Packs stop carrying it, or staging treats a pack-supplied document as normal. Flag reaches documents only; directory bundles still refuse |
 
-`-AllowMissingWotrData` is also needed while `OPENBFME_LIVING_WORLD_AI_TEMPLATE`
-is absent from the private workspace. Produce that artefact and it goes away.
+`-AllowMissingWotrData` is also needed while `OPENBFME_LIVING_WORLD_AI_TEMPLATE` is absent from workspace. Produce that artefact and it goes away.
 
-- **`dist\` and `build\` are git-ignored and stay that way.** The published
-  folder carries converted retail content packs. `Publish-DistBuild.ps1` asks git
-  twice — before and after the build — whether the dist root is ignored *and*
-  whether git tracks anything under it, and refuses on either. Patch notes, the
-  scripts and this file are committed; nothing under `dist\` ever is.
-- **`Publish-DistBuild.ps1` does not reimplement the build.** It wraps
-  `tools\Build-PlayableBundle.ps1`, which exports, stages the packs
-  `selection.json` names, proves the staged bytes hash to the source packs and
-  boots the result headless twice. Fix build behaviour there, not in the wrapper.
-- **A published folder should run with no environment set, and today's do not.**
-  The wrapped build boots the export once with `OPENBFME_CONTENT` and once
-  without, and the publish refuses if the two runs disagree. That refusal is
-  firing on every build right now, so `-AllowEnvDependentContent` is required
-  and the folder is `run-with-log.bat`-only. Say that to testers; the patch
-  notes lead with it. Do not treat the flag as routine once the game resolves
-  content beside its own exe — at that point its absence is a regression.
-- **`-Rc` builds the launcher and the install root it reads.** The launcher has
-  no "browse to a game" control: it follows `current.json` to
-  `versions\<version>\` and verifies those files by hash. The publish writes that
-  layout and then runs `tools\release\Test-LauncherHeadless.ps1` against the exe
-  it just produced. This is the LOCAL release-candidate shape — publishing to
-  GitHub is a different path (`tools\release\Publish-FirstPlaytestRc.ps1`) and
-  needs signing keys.
+- **`dist\` and `build\` are git-ignored and stay that way.** `Publish-DistBuild.ps1` asks git twice — before and after the build — whether the dist root is ignored *and* whether git tracks anything under it, and refuses on either. Patch notes, the scripts and this file are committed; nothing under `dist\` ever is.
+- **`Publish-DistBuild.ps1` does not reimplement the build.** It wraps `tools\Build-PlayableBundle.ps1`. Fix build behaviour there.
+- **A published folder should run with no environment set, and today's do not.** The wrapped build boots once with `OPENBFME_CONTENT` and once without; the publish refuses if they disagree. That refusal is firing, so `-AllowEnvDependentContent` is required and the folder is `run-with-log.bat`-only. Do not treat the flag as routine once the game resolves content beside its own exe.
+- **`-Rc` builds the launcher and the install root it reads.** The launcher follows `current.json` to `versions\<version>\` and verifies those files by hash. GitHub publish is a different path (`tools\release\Publish-FirstPlaytestRc.ps1`) and needs signing keys.
 
 ## The rules that have actually bitten us
 
-1. **Packs are immutable, and now they are sealed.** A directory named `<sha256>`
-   promises its bytes hash to that name. Published pack files under
-   `workspace/content-packs/` and the durable mirror are marked read-only, so an
-   in-place cook fails with an access error **at the moment you make the mistake**.
-   That error is the guard working, not a bug — do not chmod your way past it.
+1. **Packs are immutable, and now they are sealed.** A directory named `<sha256>` promises its bytes hash to that name. Published pack files under `workspace/content-packs/` and the durable mirror are marked read-only, so an in-place cook fails with an access error **at the moment you make the mistake**. That error is the guard working — do not chmod your way past it.
 
-   The flow that works: cook into a staging directory OUTSIDE the pack, compute
-   `bundle_digest` on it, copy to `<root>/<pack-id>/<new-digest>` in **both** roots,
-   then swap with `apply-selection-transaction` (it stages, verifies both roots, and
-   is all-or-nothing). Sealing costs this nothing — publishing writes a new
-   directory, and the read-only bit propagates when it is copied.
+   Cook into a staging directory outside the pack, compute `bundle_digest` on it, copy to `<root>/<pack-id>/<new-digest>` in **both** roots, then swap with `apply-selection-transaction` (stages, verifies both roots, all-or-nothing).
 
-   `python tools\check_pack_addresses.py` proves every selected pack's bytes match
-   its name (seconds — run it before claiming done); `tools\publish-durable-pack.ps1
-   -Verify` proves the two roots agree; `python tools\seal_published_packs.py`
-   re-seals, and `--unseal` is there for a deliberate re-address or deletion.
-   This rule was broken three times in one night before the seal existed.
+   `python tools\check_pack_addresses.py` proves every selected pack's bytes match its name; `tools\publish-durable-pack.ps1 -Verify` proves the two roots agree; `python tools\seal_published_packs.py` re-seals, and `--unseal` is there for a deliberate re-address or deletion.
 
-2. **Bare `pytest` lies.** It picks up the wrong Pillow and fabricates ~40
-   failures. Use `run_importer_tests.bat`, or the pinned interpreter at
-   `workspace\retail-work\tools\python-3.12-env\Scripts\python.exe`. Either way set
-   `BFME2_INSTALL=<repo>\workspace\retail-work\editions\rotwk\layered-install\layer-1-bfme2`
-   — the resolver never probes `workspace` on its own.
+2. **Bare `pytest` lies.** It picks up the wrong Pillow and fabricates ~40 failures. Use `run_importer_tests.bat`, or the pinned interpreter at `workspace\retail-work\tools\python-3.12-env\Scripts\python.exe`. Either way set `BFME2_INSTALL=<repo>\workspace\retail-work\editions\rotwk\layered-install\layer-1-bfme2` — the resolver never probes `workspace` on its own.
 
-3. **Editing a contract or provenance file breaks its seal.** `contracts/*.json`
-   carry a `policy_digest` (see `tools/check-product-contracts.py`); packs carry
-   `provenance/manifest.json`. Change the content, re-seal or regenerate, or CI
-   goes red with a mismatch that looks unrelated to your change.
+3. **Editing a contract or provenance file breaks its seal.** `contracts/*.json` carry a `policy_digest` (see `tools/check-product-contracts.py`); packs carry `provenance/manifest.json`. Change the content, re-seal or regenerate, or CI goes red with a mismatch that looks unrelated to your change.
 
-4. **Zero grep hits does not mean dead.** Script handlers under
-   `game/src/script/handlers/` are loaded by a directory scan; ~35 test runners in
-   `game/tests/` are real coverage that no gate currently invokes. Prove deadness
-   with evidence, not silence.
+4. **Zero grep hits does not mean dead.** Script handlers under `game/src/script/handlers/` are loaded by a directory scan; ~35 test runners in `game/tests/` are real coverage that no gate currently invokes. Prove deadness with evidence, not silence.
 
-5. **No silent fallbacks.** A stale pack and a wrong ffmpeg once produced
-   confidently wrong numbers that passed review. If a path falls back — to a cached
-   pack, a PATH binary, a default — it must say so loudly or fail closed.
+5. **No silent fallbacks.** A stale pack and a wrong ffmpeg once produced confidently wrong numbers that passed review. If a path falls back — to a cached pack, a PATH binary, a default — it must say so loudly or fail closed.
 
-6. **`workspace/` is retail material.** Never commit it, never publish converted
-   retail bytes. The publication-boundary CI job scans for this, and for
-   developer-machine paths (home directories, drive letters) in tracked files.
+6. **`workspace/` is ordinary local material.** The policy is the Retail material paragraph above — do not invent a second one.
+
+7. **Mechanical find-replace sweeps corrupt identifiers** (`workspace_root` was rewritten to a dotted-private `_root` form twice). Targeted edits only; oracle for a disputed name is `git show <pre-change-commit>:<path>`.
+
+8. **Aggregate test counts hide regressions** — judge failure-by-failure against the named baseline. `py_compile` cannot catch a runtime `NameError`; run the tests.
+
+9. **Hash-pinned artifacts** (generated profiles, evidence CSVs, contract `policy_digest`) are oracles: never edit the pin to match the file; regenerate through the real pipeline or restore the file. Reseal contracts with the recipe in `tools/check-product-contracts.py`.
+
+10. **Implementor self-reports are unproven** until a fresh-context verifier re-runs the Definition of Done.
+
+## Work protocol
+
+- Claim a row in `orchestration/queue.md` before starting.
+- Brief in `orchestration/briefs/`, report in `orchestration/reports/`.
+- All logs to `workspace/logs/`. Root `.lane-*` is git-ignored and forbidden.
+- One lane mutates the tree at a time.
+- `git add` by explicit path. Banned: `git add -A`, `git reset`, `git restore`, `git clean`, `git stash`, `git commit --amend`.
+- State which pack/commit numbers came from.
 
 ## Definition of done
 
-A failing test first, then the fix, then the named baseline delta, then say which
-pack/commit the numbers came from. Report honestly: if a lane is red, say so with
-its output. Known-good baselines live in `workspace/playtest-program.md`, not in
-anyone's memory.
+A failing test first, then the fix, then the named baseline delta, then say which pack/commit the numbers came from. Report honestly: if a lane is red, say so with its output. Known-good baselines live in `docs/state/` and `orchestration/queue.md`, not in anyone's memory.

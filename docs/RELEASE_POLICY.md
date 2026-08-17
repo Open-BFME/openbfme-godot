@@ -107,7 +107,7 @@ A package is releasable only when:
 - licenses/notices for included third parties are present;
 - installer/uninstaller and rollback behavior are tested;
 - diagnostics are sanitized; and
-- known limitations are recorded in `STATUS.md`.
+- known limitations are recorded in `docs/state/` or `orchestration/queue.md`.
 
 M2 private completion is governed solely by
 `run_m2_acceptance.bat -IntegrationOwnerPublish`; it is not by itself authorization for

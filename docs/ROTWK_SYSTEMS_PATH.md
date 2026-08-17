@@ -1,7 +1,7 @@
 # RotWK systems path
 
 Operator commands for the systems-first factory. Product ladder:
-`DIRECTION.md`. Volatile numbers: `STATUS.md`.
+`DIRECTION.md`. Volatile numbers: `docs/state/` and `orchestration/queue.md`.
 
 Validate offline:
 

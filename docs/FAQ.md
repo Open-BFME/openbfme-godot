@@ -3,8 +3,10 @@
 ## What is OpenBFME?
 
 A Godot engine project plus a Python importer. It converts *Rise of the
-Witch-king* / BFME2 content **on your PC** from a game install you own. This
-Git repo is **code only** - no EA game files.
+Witch-king* / BFME2 content **on your PC** from a game install you own.
+Retail-derived files live under `workspace/`; use them freely. Git ignores
+`workspace/` and the publication-boundary CI scans tracked files for retail
+bytes and machine-absolute paths — that is the whole policy.
 
 ## Do I need the game?
 
@@ -19,7 +21,7 @@ quietly inventing content. That keeps bugs visible.
 ## Is it playable?
 
 Developer alpha. Skirmish shell and convert tools exist; coverage is uneven.
-See [STATUS.md](../STATUS.md).
+See [orchestration/queue.md](../orchestration/queue.md) and [docs/state/](state/).
 
 ## RotWK or BFME2?
 
@@ -31,8 +33,7 @@ See [STATUS.md](../STATUS.md).
 
 Yes. Clone the repo and point [Codex](https://openai.com/codex/) (or a similar
 agent) at it. Ask for entry points, how convert -> pack -> launch works, and
-fix ideas with a small check command. Confirm with real gates; never commit
-`workspace/` or retail files.
+fix ideas with a small check command. Confirm with real gates.
 
 ## Where does OpenSAGE fit?
 
@@ -53,7 +54,7 @@ Lockstep + lobby foundations exist. Not a polished online service yet.
 
 ## How do I help?
 
-[CONTRIBUTING.md](../CONTRIBUTING.md). Small, tested changes. No retail in Git.
+[CONTRIBUTING.md](../CONTRIBUTING.md). Small, tested changes.
 
 ## License
 

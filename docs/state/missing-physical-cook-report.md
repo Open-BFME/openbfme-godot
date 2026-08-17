@@ -120,6 +120,6 @@ The illustrative `tools/apply-selection-transaction.py --add-pack` command does 
 
 - Focused converter regression: `15 passed, 1 skipped in 5.49s`.
 - Full pinned importer lane: `9 failed, 3686 passed, 17 skipped, 2 warnings, 975 subtests passed in 2126.44s (0:35:26)`.
-- Full-lane log: `.private/scratch/phase2-importer-tests.log`.
+- Full-lane log: `workspace/scratch/phase2-importer-tests.log`.
 - The nine full-lane failures are listed in that log and cover current neutral catalogs, module census regeneration, official-map/inheritance corpora, the selected Eowyn pack, and W3D census provenance. The focused media-attestation regression is green.
 - Tracked fix commit: `6487e6c` (`Fix media-only converter tool attestation`).

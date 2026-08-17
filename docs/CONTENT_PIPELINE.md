@@ -21,7 +21,11 @@ only for a bounded defect or measured bottleneck with equivalent output evidence
 
 ## Containment
 
-All retail inputs and derived retail payloads stay in the ignored private workspace:
+Retail-derived files live under `workspace/`; use them freely. Git ignores
+`workspace/` and the publication-boundary CI scans tracked files for retail
+bytes and machine-absolute paths — that is the whole policy. Canonical layout
+is in `workspace/manifest.json` (`retailInstall`, `pinnedPython`, `packsRoot`,
+`retailExtract`, `logsRoot`).
 
 ```text
 workspace/retail-work/
@@ -34,14 +38,9 @@ workspace/retail-work/
   reports/                 plans, diagnostics, census and provenance
 
 workspace/content-packs/
-  selection.json           selected immutable private pack
+  selection.json           selected immutable pack
   <pack-id>/<bundle-id>/   self-contained published bundle
 ```
-
-Retail payload bytes must not enter Git, repository-authored fixtures, logs, support
-bundles, screenshots intended for distribution, public exports, or network traffic.
-Repository tests use legal-safe synthetic fixtures. Virtual retail filenames and
-digests may appear only as non-payload provenance metadata in contained reports.
 
 ## Deterministic, resumable flow
 
@@ -83,7 +82,7 @@ bundle bytes; a changed recipe or tool identity mints a new provenance identity 
 when its semantic output is equivalent.
 
 The current cold-build benchmark and its measurement environment are volatile status,
-so they live only in `STATUS.md` or generated benchmark reports. The established
+so they live only in `docs/state/` or generated benchmark reports. The established
 baseline must be protected: compare like-for-like cold, warm and resumed runs, and do
 not accept a material regression without a recorded cause and integration-owner
 approval.

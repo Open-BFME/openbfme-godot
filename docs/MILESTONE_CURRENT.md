@@ -1,6 +1,6 @@
 # Current objective
 
-Systems-first RotWK iteration. Full ladder: `DIRECTION.md`. Evidence: `STATUS.md`.
+Systems-first RotWK iteration. Full ladder: `DIRECTION.md`. Evidence: `docs/state/` and `orchestration/queue.md`.
 
 ## Context
 

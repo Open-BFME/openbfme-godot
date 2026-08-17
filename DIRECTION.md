@@ -1,7 +1,8 @@
 # Product direction
 
-Stable product target and system ladder. Volatile evidence: `STATUS.md`.
-Machine-readable policy: `contracts/rotwk-201-product-scope.json`.
+Stable product target and system ladder. Live evidence: `docs/state/` and
+`orchestration/queue.md`. Machine-readable policy:
+`contracts/rotwk-201-product-scope.json`.
 
 ## North star
 
@@ -10,9 +11,9 @@ A modern, moddable RTS engine in Godot that reproduces **Rise of the Witch-king
 complete retail shell/HUD first, then Create-a-Hero, campaigns, and War of the
 Ring.
 
-Content is converted locally from a user-owned RotWK install (BFME2 base as the
-importer catalog layers it). Retail and converted packs stay under `workspace`.
-This public tree is **code + fixtures only**.
+Retail-derived files live under `workspace/`; use them freely. Git ignores
+`workspace/` and the publication-boundary CI scans tracked files for retail
+bytes and machine-absolute paths — that is the whole policy.
 
 **BFME2 1.06 alone is not the parity baseline.** Use `--game bfme2` only for
 comparison. RotWK is a superset; targeting it once avoids a second full parity
@@ -29,7 +30,7 @@ Work advances by **major systems**, in short iterations, against **RotWK data**:
 2. Implement or harden it with fail-closed conversion/runtime behavior.
 3. Attach a focused automated check.
 4. Prove it on **more than one** map and/or faction when the system claims generality.
-5. Record evidence in `STATUS.md`; move to the next system.
+5. Record evidence in `docs/state/` or `orchestration/queue.md`; move to the next system.
 
 Progress metrics: reusable factories (cook, closure, bind, pack, sim, script/AI),
 coverage/gap burn-down, and "RotWK pack still boots" smoke - **not** "Fords M2
@@ -85,8 +86,8 @@ system is accepted.
 16. **One-button convert-and-play** - thin UX over green systems (last, not first).
 
 The active **iteration objective** (which system is in flight) lives in
-[docs/MILESTONE_CURRENT.md](docs/MILESTONE_CURRENT.md). Volatile evidence lives in
-[STATUS.md](STATUS.md).
+[docs/MILESTONE_CURRENT.md](docs/MILESTONE_CURRENT.md). Live work and evidence
+live in [orchestration/queue.md](orchestration/queue.md) and [docs/state/](docs/state/).
 
 ## Meaning of parity
 
@@ -133,7 +134,7 @@ skirmish-complete result.
 - Multiplayer is server-refereed deterministic lockstep and self-hostable.
 - No Steam, ranked-service, or mandatory-account dependency.
 - Gameplay and presentation mods are versioned and hashed separately.
-- Private parity never silently uses synthetic or generic replacement art.
+- Parity mode never silently uses synthetic or generic replacement art.
 - Campaigns and War of the Ring are **in product scope**. They sit later on the
   system ladder because they depend on skirmish conversion, factions, heroes,
   and scripting systems.
@@ -142,7 +143,8 @@ skirmish-complete result.
 
 The active systems-iteration objective is
 [docs/MILESTONE_CURRENT.md](docs/MILESTONE_CURRENT.md).
-Current evidence and blockers live only in [STATUS.md](STATUS.md).
+Current evidence and blockers live in [orchestration/queue.md](orchestration/queue.md)
+and [docs/state/](docs/state/).
 Machine-readable policy: [contracts/rotwk-201-product-scope.json](contracts/rotwk-201-product-scope.json).
 
 Historical Men/Fords M2 tooling (`run_m2_acceptance.bat`, oracle capture IDs)
@@ -163,5 +165,4 @@ strategy and must not block RotWK systems work.
 
 Do not reject work as out of scope merely because it is not Men/Fords or not
 BFME2. Reject work that invents retail behavior, weakens fail-closed gates,
-writes retail payloads outside `workspace`, or expands synthetic product surface
-without integration-owner authority.
+or expands synthetic product surface without integration-owner authority.

@@ -2,7 +2,7 @@
 
 **Owner:** integration owner  
 **Owns:** cross-project parity checklist (oracle only)  
-**Does not own:** product scope (`DIRECTION.md`) or volatile gate numbers (`STATUS.md`)  
+**Does not own:** product scope (`DIRECTION.md`) or volatile gate numbers (`docs/state/`, `orchestration/queue.md`)  
 **Update trigger:** new OpenSAGE demo surfaces, or OpenBFME systems-ladder moves  
 **Validation:** map each row to `docs/MILESTONE_CURRENT.md` systems and a focused proof
 

@@ -1,51 +1,26 @@
 # Contributing
 
-Small, tested changes beat large rewrites. Public repo is source-only alpha.
+Small, tested changes beat large rewrites.
 
-## Read first
+## Pick work
 
-1. [README.md](README.md)
-2. [DIRECTION.md](DIRECTION.md)
-3. [STATUS.md](STATUS.md)
-4. The guide for the area you touch (`docs/`)
+Claim a row in [orchestration/queue.md](orchestration/queue.md) before you
+start. Brief in `orchestration/briefs/`, report in `orchestration/reports/`.
+Product strategy: [DIRECTION.md](DIRECTION.md). Agent contract and lanes:
+[AGENTS.md](AGENTS.md).
 
-## Never commit
+## Definition of done
 
-- Retail BFME/BFME2/RotWK archives or extracts
-- Converted models, textures, maps, audio, packs under `workspace/`
-- Secrets, personal absolute paths, private keys
-- Agent-only instruction dumps meant for private workflows
+A failing test first, then the fix, then the named baseline delta, then say
+which pack/commit the numbers came from. Baselines live in `docs/state/` and
+`orchestration/queue.md`. If a lane is red, say so with its output.
 
-Public fixtures must be project-authored. If retail or a secret lands in a
-commit, stop and report - do not "fix forward" while it remains in history.
+## Git
 
-```bat
-powershell -File tools\export-scan.ps1
-```
+Stage by explicit path. Banned: `git add -A`, `git reset`, `git restore`,
+`git clean`, `git stash`, `git commit --amend`. Do not create branches or
+worktrees. All logs go to `workspace/logs/`.
 
-## PR shape
-
-- One observable outcome
-- Named source or oracle when claiming parity
-- Explicit non-goals
-- Smallest command that can disprove the change
-- No silent generic fallbacks inventing retail behavior
-
-Example checks:
-
-```bat
-powershell -File tools\gate-rotwk-systems.ps1 -SkipLiveRetail
-run_importer_tests.bat
-run_retail_slice.bat --test
-```
-
-Report what you ran. Warnings, leaked paths, or weakened asserts are failures.
-
-## Product rules (short)
-
-- Parity baseline: **RotWK 2.01** (systems-first).
-- BFME2 is base/comparison, not a second full product freeze.
-- Integration owner owns pack selection / final publish gates.
-
-Details: [docs/CONTENT_PIPELINE.md](docs/CONTENT_PIPELINE.md),
-[docs/VERIFICATION.md](docs/VERIFICATION.md).
+Retail-derived files live under `workspace/`; use them freely. Git ignores
+`workspace/` and the publication-boundary CI scans tracked files for retail
+bytes and machine-absolute paths — that is the whole policy.

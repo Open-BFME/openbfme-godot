@@ -16,7 +16,7 @@ for a private contact channel without including sensitive details.
 
 ## High-priority reports
 
-- Retail or converted retail content escaping the private workspace.
+- Retail or converted retail content escaping `workspace/`.
 - Archive extraction, path traversal, symlink, junction, or reparse-point escape.
 - Unsafe external-tool execution or argument injection.
 - Secrets, credentials, tokens, or private paths entering an export.
@@ -35,8 +35,8 @@ for a private contact channel without including sensitive details.
 - suggested correction, if known.
 
 Do not attach a BFME installation, extracted source entry, converted retail asset,
-private pack, or original-game capture. Use synthetic fixtures or describe the
-private evidence without transmitting it.
+workspace pack, or original-game capture. Use synthetic fixtures or describe the
+workspace evidence without transmitting it.
 
 ## Supported versions
 

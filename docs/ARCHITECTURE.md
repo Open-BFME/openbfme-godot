@@ -3,7 +3,7 @@ Owns: Component boundaries, authoritative state ownership, stable runtime data f
 Does not own: Current progress, milestone acceptance, retail completeness counts, or task scheduling.
 Last verified commit: `efe6a6c1f7ab76ae84436faed4e9a02298a4a194`
 Update trigger: An accepted architecture decision changes a boundary, authority, protocol, or pack contract.
-Validation: Review boundary tests and architecture-decision evidence against the current implementation; volatile results belong in `STATUS.md`.
+Validation: Review boundary tests and architecture-decision evidence against the current implementation; volatile results belong in `docs/state/` and `orchestration/queue.md`.
 
 # OpenBFME architecture
 
@@ -17,7 +17,7 @@ User-owned BFME2 installation
         -> Godot presentation, input, audio, and local UI state
 ```
 
-Only the importer may understand BFME2 source formats. Runtime code consumes versioned OpenBFME pack schemas. Retail payloads stay under `workspace` and are never committed, logged, exported, or transferred between multiplayer peers.
+Only the importer may understand BFME2 source formats. Runtime code consumes versioned OpenBFME pack schemas. Retail-derived files live under `workspace/`; use them freely. Git ignores `workspace/` and the publication-boundary CI scans tracked files for retail bytes and machine-absolute paths — that is the whole policy.
 
 ## State ownership
 

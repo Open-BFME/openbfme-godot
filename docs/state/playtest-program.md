@@ -78,8 +78,8 @@ S3 transport/garrison. OWNER-GATED: victory-screen trio, client-random counter.
 - After P1+P2: run retail_map_script_runner.gd over the full cooked corpus and dump
   SageScriptGapLog — that becomes the FIRST true runtime gap census (none exists today).
 
-### Lane 2b — runtime census results (2026-08-08, .private/scratch/runtime-script-gap-census-20260808.md)
-- HEADLINE C1 SCOPED (report: .private/scratch/c1-map-scripts-scoping-20260808.md):
+### Lane 2b — runtime census results (2026-08-08, workspace/scratch/runtime-script-gap-census-20260808.md)
+- HEADLINE C1 SCOPED (report: workspace/scratch/c1-map-scripts-scoping-20260808.md):
   the importer composite lane already cooks map scripts; goal-official-72 was hand-
   assembled WITHOUT them (rotwk_map_cook_corpus.py was a red herring — throwaway
   diagnostic). C1a in flight: in-place pack repair (close_goal_prop_bindings
@@ -121,7 +121,7 @@ S3 transport/garrison. OWNER-GATED: victory-screen trio, client-random counter.
   planned to unmount; build-id label; options multi-monitor rework) + boot.tscn/
   project.godot. Uncommitted; needs review as its own change before ANY commit
   from game/. my_heroes_screen.gd + retail_slice_sim.gd churn also observed.
-- Validator hardening DONE (untracked .private/scratch/agent-loop): spot tier
+- Validator hardening DONE (untracked workspace/scratch/agent-loop): spot tier
   default (~10s, manifest-sampled, escalates loudly when manifest absent), deep
   tier flagged (~33s, full bundle_digest recompute), contamination check now
   provenance-aware (bridges REPORTED, unmarked bfme2-content FAILS), self-test
@@ -157,12 +157,12 @@ S3 transport/garrison. OWNER-GATED: victory-screen trio, client-random counter.
 CaH lane went quiet (0 source writes in 15 min) without cleaning up, so the
 workspace men pack was restored from the AUTHENTIC durable copy. The cooked
 system.json (256,913 B, from the 00:13 experiment) is preserved at
-.private/scratch/cah-drift-preserved-20260809/system.json.cooked-0013 alongside
+workspace/scratch/cah-drift-preserved-20260809/system.json.cooked-0013 alongside
 the published bytes — nothing lost, and it is derived output the compiler can
 regenerate anyway (that compiler has since changed, so the cook was likely
 stale). Now: PACK_ADDRESS_CHECK PASS packs=18 roots=2; durable -Verify exit 0.
 When the CaH compiler work lands, cook to a STAGING dir and republish a new
-digest — see the nudge at .private/scratch/NUDGE-cah-lane.md.
+digest — see the nudge at workspace/scratch/NUDGE-cah-lane.md.
 
 ## (historical) LIVE HAZARD 2026-08-09 00:13 — published pack mutated in place (CaH lane)
 The durable men pack d44afb09... is AUTHENTIC (bytes == name). The WORKSPACE copy

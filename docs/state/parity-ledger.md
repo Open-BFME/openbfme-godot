@@ -2,7 +2,7 @@
 
 # RotWK 1:1 Feature-Parity Ledger
 Owner goal (2026-08-05): 100% feature parity with BFME2 RotWK 2.01 (pure retail; patch 2.02 becomes an optional import later).
-Oracle: `.private/retail-work/editions/rotwk/cache/effective-assets` ONLY. Layered tree = quarantined fan patch.
+Oracle: `workspace/retail-work/editions/rotwk/cache/effective-assets` ONLY. Layered tree = quarantined fan patch.
 Every round updates this ledger. Status: DONE (dual-reviewed + verified) / LIVE (shipped, review pending) / FLIGHT (worker active) / QUEUED (task filed) / GAP (named, no owner yet).
 
 ## Content & data

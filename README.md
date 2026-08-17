@@ -5,8 +5,7 @@
 <h1 align="center">OpenBFME</h1>
 
 <p align="center">
-  Experimental open-source RTS engine in Godot for <strong>Rise of the Witch-king 2.01</strong>.<br>
-  Converts content locally from a game install you own. No EA assets in this repo.
+  Experimental open-source RTS engine in Godot for <strong>Rise of the Witch-king 2.01</strong>.
 </p>
 
 <p align="center">
@@ -16,77 +15,25 @@
   <img alt="License: Unlicense" src="https://img.shields.io/badge/license-Unlicense-blue">
 </p>
 
-> **Not a finished game.** Not a download of BFME2/RotWK. You need a legal RotWK 2.01
-> install (BFME2 base as the importer layers it). Converted packs stay under local
-> `workspace/` and are never committed.
+OpenBFME is a Godot 4.7 remake of *BFME2: Rise of the Witch-king* (2.01),
+focused on single-player skirmish across all 7 factions. Layout, lanes, and
+the agent contract: [AGENTS.md](AGENTS.md). Product strategy: [DIRECTION.md](DIRECTION.md).
 
-## Quick start (Windows)
+Retail-derived files live under `workspace/`; use them freely. Git ignores
+`workspace/` and the publication-boundary CI scans tracked files for retail
+bytes and machine-absolute paths — that is the whole policy.
+
+## How to run (Windows)
 
 ```bat
-git clone https://github.com/Open-BFME/openbfme-godot.git
-cd openbfme-godot
-
 set OPENBFME_GODOT=C:\Path\To\Godot_v4.7-stable_win64_console.exe
 set ROTWK_INSTALL=C:\Path\To\RotWK
-
-:: Tools check without a game install (first run may download pinned Python packages)
-powershell -File tools\gate-rotwk-systems.ps1 -SkipLiveRetail
-
-:: Factory path only (does not select a play pack by itself)
-run_rotwk_one_button.bat "%ROTWK_INSTALL%"
-
-:: Fresh machine: convert multi-map pack, select it, optional launch
-:: ( --publish rewrites workspace\content-packs\selection.json )
 run_rotwk_one_button.bat "%ROTWK_INSTALL%" --multi-map --build --publish --launch
-
-:: Or launch if a pack is already selected
-run_game.bat
 ```
 
-Godot is resolved from `OPENBFME_GODOT`, or `.tools\godot\`, or `godot` on PATH.
-There is no machine-specific fallback path. Details: [docs/ONBOARDING.md](docs/ONBOARDING.md).
-
-## What this is
-
-OpenBFME is a **code-only** Godot 4.7 project plus a Python importer for SAGE
-formats. Default content baseline is **RotWK 2.01** (`importer` CLI
-`DEFAULT_GAME = "rotwk"`). BFME2 alone is optional comparison (`--game bfme2`).
-
-| Path | Role |
-|---|---|
-| `game/` | Godot client (menu, skirmish, HUD, multiplayer foundations) |
-| `importer/` | Discover -> extract -> convert -> pack (errors stop; no silent fakes) |
-| `engine/` | Deterministic sim library (.NET) |
-| `tools/` | Onboard, RotWK systems factory, gates, release tooling |
-| `contracts/` | Product / modding policy JSON |
-| `workspace/` | **Local only** - retail inputs and converted packs (gitignored) |
-
-Development is **systems-first** against RotWK data (maps, convert, binding,
-packs, sim), not a permanent one-map freeze. Product ladder and non-goals:
-[DIRECTION.md](DIRECTION.md). Active systems work:
-[docs/MILESTONE_CURRENT.md](docs/MILESTONE_CURRENT.md).
-
-## Status (honest)
-
-- Public **source** alpha. No polished installer or official binary drop.
-- Skirmish shell, multi-faction import path, map cook / binding tooling, and
-  headless gates exist in-tree. Coverage is uneven.
-- Men/Fords remains the deepest **legacy** gate surface; it is not the product strategy.
-- Volatile evidence: [STATUS.md](STATUS.md).
-
-## Exploring with Codex (or similar)
-
-This tree is large and uneven. A practical way in:
-
-1. Clone the repo.
-2. Point [Codex](https://openai.com/codex/) (or another code agent) at the checkout.
-3. Ask for a map of entry points (`run_rotwk_*`, `game/`, `importer/`), current
-   gaps vs `STATUS.md` / `DIRECTION.md`, and concrete fix suggestions with a
-   focused test or command.
-
-Agents help orientation and drafts. Treat their claims as unproven until a
-human check and a real gate or play session agree. Never let a tool commit
-retail assets, secrets, or paths under `workspace/`.
+Already converted: `run_game.bat`. Offline tools check:
+`powershell -File tools\gate-rotwk-systems.ps1 -SkipLiveRetail`.
+Setup detail: [docs/ONBOARDING.md](docs/ONBOARDING.md).
 
 ## Credits and inspiration
 
@@ -104,24 +51,6 @@ and conversion tooling lean on work pioneered by the community, especially:
 
 Those projects keep their own licenses. This repo's source is Unlicense; we do
 not relicense OpenSAGE code by referencing it.
-
-## Docs
-
-| Doc | Use it for |
-|---|---|
-| [docs/ONBOARDING.md](docs/ONBOARDING.md) | Setup, glossary, convert, launch |
-| [docs/MODDING.md](docs/MODDING.md) | Example pack from `game/mods/` |
-| [docs/ROTWK_SYSTEMS_PATH.md](docs/ROTWK_SYSTEMS_PATH.md) | Operator commands for systems tools |
-| [docs/CONTENT_PIPELINE.md](docs/CONTENT_PIPELINE.md) | Import / packs / private files |
-| [docs/FAQ.md](docs/FAQ.md) | Common questions (plain language) |
-| [docs/README.md](docs/README.md) | Full doc map |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute without leaking retail |
-
-## Contributing
-
-Narrow PRs with a focused check. Never commit retail or converted packs, secrets,
-or absolute personal paths. Run `powershell -File tools\export-scan.ps1` before
-proposing a public-facing change.
 
 ## License
 

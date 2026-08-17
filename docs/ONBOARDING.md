@@ -18,7 +18,9 @@ guessing. That is intentional (see [Glossary](#glossary)).
   pinned packages over the network)
 - Lots of free disk for `workspace/` (full multi-faction work is tens of GB)
 
-Everything converted stays in the ignored `workspace/` folder. Do not commit it.
+Retail-derived files live under `workspace/`; use them freely. Git ignores
+`workspace/` and the publication-boundary CI scans tracked files for retail
+bytes and machine-absolute paths — that is the whole policy.
 
 ## Glossary (words we use a lot)
 
@@ -160,13 +162,13 @@ worse": `--allow-incomplete-coverage`, `--allow-stale-coverage`,
 |---|---|
 | Doctor rejects install | Point at the **install root** (folder with `game.dat` or `lotrbfme2.exe`), not a random subfolder |
 | Godot not found | Set `OPENBFME_GODOT` or copy the exe under `.tools\godot\` |
-| Gate / test fails | Read the error; check [STATUS.md](../STATUS.md). Fail closed is normal when data is incomplete |
+| Gate / test fails | Read the error; check [orchestration/queue.md](../orchestration/queue.md) and [docs/state/](state/). Fail closed is normal when data is incomplete |
 | Convert stopped mid-way | Run the **same** command again (resumes). Avoid deleting `workspace` as a first step |
 | Before you publish code | `powershell -File tools\export-scan.ps1` |
 
 ## Related
 
-- [CONTENT_PIPELINE.md](CONTENT_PIPELINE.md) - how import stays private  
+- [CONTENT_PIPELINE.md](CONTENT_PIPELINE.md) - import / packs / workspace  
 - [MODDING.md](MODDING.md) - simple pack example from the repo  
 - [FAQ.md](FAQ.md)  
 - [DIRECTION.md](../DIRECTION.md) - product goals  
