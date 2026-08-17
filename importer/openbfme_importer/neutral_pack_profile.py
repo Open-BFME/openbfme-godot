@@ -74,6 +74,141 @@ def _scenario_admission(descriptor: Mapping[str, object], label: str) -> dict[st
     return deepcopy(dict(admission))
 
 
+def _validate_authored_production_routes(
+    production: Mapping[str, object], label: str
+) -> None:
+    """Validate the exact generic structure route shape at the neutral boundary."""
+
+    evidence = production.get("evidence")
+    routes = production.get("routes")
+    if set(production) != {"evidence", "routes"} or evidence not in {
+        "authored-construct-command",
+        "authored-wall-upgrade-command",
+    } or not isinstance(routes, list) or not routes:
+        raise NeutralPackProfileError(f"{label} production routes are invalid")
+    seen: set[tuple[str, str, int, str]] = set()
+    prior_sort_key: tuple[str, str, int, str] | None = None
+    for route in routes:
+        if not isinstance(route, Mapping):
+            raise NeutralPackProfileError(f"{label} production route is invalid")
+        base_fields = {
+            "surface",
+            "commandId",
+            "commandKind",
+            "builderObjectId",
+            "commandSetId",
+            "slot",
+            "prerequisites",
+        }
+        expected_fields = set(base_fields)
+        if evidence == "authored-wall-upgrade-command":
+            expected_fields.add("upgrade")
+        if "buttonImageId" in route:
+            expected_fields.add("buttonImageId")
+        string_fields = ("commandId", "builderObjectId", "commandSetId")
+        prerequisites = route.get("prerequisites")
+        slot = route.get("slot")
+        if (
+            set(route) != expected_fields
+            or any(not isinstance(route.get(field), str) or not route.get(field) for field in string_fields)
+            or not isinstance(slot, int)
+            or isinstance(slot, bool)
+            or slot <= 0
+            or not isinstance(prerequisites, list)
+            or any(not isinstance(item, str) or not item for item in prerequisites)
+            or prerequisites != sorted(set(prerequisites), key=str.casefold)
+            or (
+                "buttonImageId" in route
+                and (
+                    not isinstance(route.get("buttonImageId"), str)
+                    or not route.get("buttonImageId")
+                )
+            )
+        ):
+            raise NeutralPackProfileError(f"{label} production route is invalid")
+        if evidence == "authored-construct-command":
+            if route.get("surface") != "construct" or route.get("commandKind") not in {
+                "dozer_construct",
+                "porter_construct",
+                "foundation_construct",
+            }:
+                raise NeutralPackProfileError(f"{label} production route is invalid")
+        else:
+            upgrades = route.get("upgrade")
+            if (
+                route.get("surface") != "wall-upgrade"
+                or route.get("commandKind") != "object_upgrade"
+                or not isinstance(upgrades, list)
+                or any(not isinstance(item, str) or not item for item in upgrades)
+                or upgrades != sorted(set(upgrades), key=str.casefold)
+            ):
+                raise NeutralPackProfileError(f"{label} production route is invalid")
+        sort_key = (
+            str(route["builderObjectId"]).casefold(),
+            str(route["commandSetId"]).casefold(),
+            int(slot),
+            str(route["commandId"]).casefold(),
+        )
+        if sort_key in seen or (prior_sort_key is not None and sort_key < prior_sort_key):
+            raise NeutralPackProfileError(f"{label} production routes are invalid")
+        seen.add(sort_key)
+        prior_sort_key = sort_key
+
+
+def _is_authored_map_buildable(
+    descriptor: Mapping[str, object],
+    row: Mapping[str, object],
+    artifact: Mapping[str, object],
+    *,
+    domain: str,
+    label: str,
+) -> bool:
+    production = descriptor.get("production")
+    if not isinstance(production, Mapping) or production.get("evidence") not in {
+        "authored-construct-command",
+        "authored-wall-upgrade-command",
+    }:
+        return False
+    if descriptor.get("scenarioAdmission") is not None:
+        raise NeutralPackProfileError(
+            f"{label} authored production contradicts scenario admission"
+        )
+    if domain != "structure":
+        raise NeutralPackProfileError(f"{label} authored production is not a structure")
+    if row.get("mapPlacementRoot") is not True or row.get("mapPlacementAdded") is not True:
+        raise NeutralPackProfileError(
+            f"{label} authored producer is not an exact map-added neutral root"
+        )
+    _validate_authored_production_routes(production, label)
+    catalog_descriptor = row.get("descriptor")
+    if (
+        not isinstance(catalog_descriptor, Mapping)
+        or catalog_descriptor.get("scenarioAdmission") is not None
+        or catalog_descriptor.get("production") != production
+    ):
+        raise NeutralPackProfileError(
+            f"{label} catalog authored production drifted"
+        )
+    map_evidence = artifact.get("mapPlacementEvidence")
+    runtime = artifact.get("runtime")
+    registration = runtime.get("registration") if isinstance(runtime, Mapping) else None
+    if (
+        not isinstance(map_evidence, Mapping)
+        or map_evidence.get("objectId") != descriptor.get("objectId")
+        or not isinstance(map_evidence.get("placementCount"), int)
+        or isinstance(map_evidence.get("placementCount"), bool)
+        or int(map_evidence.get("placementCount", 0)) <= 0
+        or not isinstance(registration, Mapping)
+        or registration.get("mapPlacementEvidence") != map_evidence
+        or registration.get("production") != production
+        or registration.get("scenarioAdmission") is not None
+    ):
+        raise NeutralPackProfileError(
+            f"{label} map placement provenance is invalid"
+        )
+    return True
+
+
 def _resource_ownership(recipe: Mapping[str, object], label: str) -> dict[str, object]:
     raw = recipe.get("resources")
     if not isinstance(raw, list) or not raw:
@@ -406,9 +541,20 @@ def compose_neutral_pack_profile(
             "descriptorSha256"
         ):
             raise NeutralPackProfileError(f"neutral {object_id} catalog binding drifted")
-        admission = _scenario_admission(descriptor, f"neutral {object_id}")
-        if admission != row["descriptor"].get("scenarioAdmission"):
-            raise NeutralPackProfileError(f"neutral {object_id} admission drifted")
+        label = f"neutral {object_id}"
+        authored_map_buildable = _is_authored_map_buildable(
+            descriptor,
+            row,
+            artifact,
+            domain=domain,
+            label=label,
+        )
+        if authored_map_buildable:
+            admission = None
+        else:
+            admission = _scenario_admission(descriptor, label)
+            if admission != row["descriptor"].get("scenarioAdmission"):
+                raise NeutralPackProfileError(f"neutral {object_id} admission drifted")
         if artifact.get("role") not in (None, row.get("role")):
             # Structure artifacts normalize ordinary structures to this role.
             if not (

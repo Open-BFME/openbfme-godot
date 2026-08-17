@@ -126,6 +126,143 @@ def _bounded_fixture(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def _arnor_battle_tower_fixture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    """Exact retail-shaped two-porter map-root producer for profile tests."""
+
+    _bounded_fixture(monkeypatch)
+    monkeypatch.setitem(subject.EXPECTED_COUNTS, "rotwk", 1)
+    documents = _structure_documents()
+    object_path = "data/ini/object/units/test_units.ini"
+    documents[object_path] = (
+        documents[object_path]
+        .replace(b"TestKeep", b"ArnorBattleTower")
+        .replace(b"PorterBuilder", b"ArnorPorter")
+        .replace(b"PorterCommandSet", b"ArnorPorterCommandSet")
+    )
+    documents[object_path] += b"""
+ChildObject ArnorPorterNoSelect ArnorPorter
+End
+"""
+    documents["data/ini/commandset.ini"] = (
+        documents["data/ini/commandset.ini"]
+        .replace(b"TestKeep", b"ArnorBattleTower")
+        .replace(b"PorterCommandSet", b"ArnorPorterCommandSet")
+        .replace(
+            b"Command_ConstructArnorBattleTower",
+            b"Command_PorterConstructArnorSentryTower",
+        )
+        .replace(
+            b"  1 = Command_PorterConstructArnorSentryTower",
+            b"  8 = Command_PorterConstructArnorSentryTower",
+        )
+    )
+    documents["data/ini/commandbutton.ini"] = (
+        documents["data/ini/commandbutton.ini"]
+        .replace(b"TestKeep", b"ArnorBattleTower")
+        .replace(
+            b"Command_ConstructArnorBattleTower",
+            b"Command_PorterConstructArnorSentryTower",
+        )
+        .replace(b"PORTER_CONSTRUCT", b"DOZER_CONSTRUCT")
+        .replace(b"BIArnorBattleTower", b"BGBattleTower")
+    )
+    closure = _structure_closure()
+    closure["targets"] = [{"name": "ArnorBattleTower", "status": "resolved"}]
+    for leaf in closure["exactLeaves"]:
+        leaf["targetObject"] = "ArnorBattleTower"
+        leaf["provenance"]["definingObject"] = "ArnorBattleTower"
+    closure.pop("aggregateSha256", None)
+    closure["aggregateSha256"] = _digest(closure)
+    objects_bytes = json.dumps(
+        {
+            "schema": "openbfme.sage-map-objects",
+            "schemaVersion": 0,
+            "count": 1,
+            "objects": [
+                {"index": 37, "typeName": "ArnorBattleTower", "roadType": 0}
+            ],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    tower = compile_neutral_structure_pack_artifact(
+        "ArnorBattleTower",
+        documents,
+        closure,
+        role="neutral-structure",
+        surfaces=["map-placement"],
+        game="rotwk",
+        map_placement_sources=[
+            {"mapId": "wor-ang-fornost", "objectsBytes": objects_bytes}
+        ],
+    )
+    prop = compile_neutral_prop_pack_artifact(
+        "RockBigTroll", _prop_documents(), _prop_closure("RockBigTroll"), game="rotwk"
+    )
+    artifacts = [tower, prop]
+    catalog: dict[str, object] = {
+        "schema": "openbfme.neutral-mob-catalog",
+        "schemaVersion": 2,
+        "game": "rotwk",
+        "neutralMobs": [
+            {
+                "objectId": "ArnorBattleTower",
+                "side": "Arnor",
+                "runtimeDomain": "structure",
+                "role": "ambient-or-scenario",
+                "runtimeStatus": "descriptor-ready",
+                "mapPlacementRoot": True,
+                "mapPlacementAdded": True,
+                "descriptor": deepcopy(tower["descriptor"]),
+            },
+            {
+                "objectId": "RockBigTroll",
+                "side": "Neutral",
+                "runtimeDomain": "prop",
+                "role": "ambient-or-scenario",
+                "runtimeStatus": "descriptor-ready",
+                "mapPlacementRoot": False,
+                "mapPlacementAdded": False,
+                "descriptor": deepcopy(prop["descriptor"]),
+            },
+        ],
+        "summary": {"mapPlacementAddedCount": 1},
+    }
+    catalog["catalogSha256"] = _digest(catalog)
+    return artifacts, catalog
+
+
+def _resign_authored_tower_fixture(
+    tower: dict[str, object], catalog: dict[str, object]
+) -> None:
+    descriptor = tower["descriptor"]
+    descriptor.pop("descriptorSha256", None)
+    descriptor["descriptorSha256"] = _digest(descriptor)
+    runtime = tower["runtime"]
+    runtime["descriptorSha256"] = descriptor["descriptorSha256"]
+    runtime["registration"]["production"] = deepcopy(descriptor["production"])
+    if "scenarioAdmission" in descriptor:
+        runtime["registration"]["scenarioAdmission"] = deepcopy(
+            descriptor["scenarioAdmission"]
+        )
+    else:
+        runtime["registration"].pop("scenarioAdmission", None)
+    runtime.pop("runtimeSha256", None)
+    runtime["runtimeSha256"] = _digest(runtime)
+    tower.pop("artifactSha256", None)
+    tower["artifactSha256"] = _digest(tower)
+    row = next(
+        value
+        for value in catalog["neutralMobs"]
+        if value["objectId"] == "ArnorBattleTower"
+    )
+    row["descriptor"] = deepcopy(descriptor)
+    catalog.pop("catalogSha256", None)
+    catalog["catalogSha256"] = _digest(catalog)
+
+
 def _dependency_artifact(catalog: dict[str, object]) -> dict[str, object]:
     resource = {
         "id": "structure-treasurechest1-intact-pchesttreasure",
@@ -161,7 +298,7 @@ def _dependency_artifact(catalog: dict[str, object]) -> dict[str, object]:
         ),
     }
     return {
-        "game": "bfme2",
+        "game": catalog["game"],
         "catalogSha256": catalog["catalogSha256"],
         "artifactSha256": "6" * 64,
         "plan": {"schema": "fixture-neutral-dependency-plan"},
@@ -322,6 +459,102 @@ def test_complete_neutral_profile_is_deterministic_and_cook_loadable(
     loaded = ImportProfile.load(path)
     assert loaded.pack_id == "bfme2-neutral-vslice"
     assert len(loaded.resources) == len(first["resources"])
+
+
+def test_profile_keeps_exact_map_rooted_arnor_production_without_neutral_exposure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifacts, catalog = _arnor_battle_tower_fixture(monkeypatch)
+    profile = compose_neutral_pack_profile(
+        catalog,
+        artifacts,
+        dependency_artifact=_dependency_artifact(catalog),
+        version="fixture",
+    )
+
+    tower = artifacts[0]
+    routes = tower["descriptor"]["production"]["routes"]
+    assert routes == [
+        {
+            "surface": "construct",
+            "commandId": "Command_PorterConstructArnorSentryTower",
+            "commandKind": "dozer_construct",
+            "builderObjectId": builder,
+            "commandSetId": "ArnorPorterCommandSet",
+            "slot": 8,
+            "prerequisites": ["Upgrade_StoneWork"],
+            "buttonImageId": "BGBattleTower",
+        }
+        for builder in ("ArnorPorter", "ArnorPorterNoSelect")
+    ]
+    runtime = profile["runtime_data"][
+        "data/playable-structures/arnorbattletower.json"
+    ]
+    assert runtime["registration"]["production"]["routes"] == routes
+    assert "scenarioAdmission" not in runtime["registration"]
+    assert runtime["registration"]["mapPlacementEvidence"]["maps"][0][
+        "mapId"
+    ] == "wor-ang-fornost"
+    assert not any(
+        key.startswith(("faction", "hud", "commandSet", "producer"))
+        for key in profile["pack"]["files"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("tamper", "message"),
+    (
+        ("scenario-admission", "scenario admission"),
+        ("missing-map-evidence", "map placement provenance"),
+        ("malformed-route", "production route"),
+        ("ordinary-producer", "map-added"),
+    ),
+)
+def test_profile_rejects_unproven_or_malformed_map_rooted_producer(
+    tamper: str, message: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifacts, catalog = _arnor_battle_tower_fixture(monkeypatch)
+    tower = artifacts[0]
+    if tamper == "scenario-admission":
+        tower["descriptor"]["scenarioAdmission"] = {
+            "role": "neutral-structure",
+            "surfaces": ["map-placement"],
+        }
+        _resign_authored_tower_fixture(tower, catalog)
+        # Isolate the profile admission boundary from the underlying artifact
+        # validator, which independently rejects this contradictory shape.
+        monkeypatch.setattr(
+            subject, "validate_neutral_structure_pack_artifact", lambda value: None
+        )
+    elif tamper == "missing-map-evidence":
+        tower.pop("mapPlacementEvidence")
+        tower["runtime"]["registration"].pop("mapPlacementEvidence")
+        tower["runtime"].pop("runtimeSha256")
+        tower["runtime"]["runtimeSha256"] = _digest(tower["runtime"])
+        tower.pop("artifactSha256")
+        tower["artifactSha256"] = _digest(tower)
+    elif tamper == "malformed-route":
+        tower["descriptor"]["production"]["routes"][0]["slot"] = "8"
+        _resign_authored_tower_fixture(tower, catalog)
+    else:
+        row = next(
+            value
+            for value in catalog["neutralMobs"]
+            if value["objectId"] == "ArnorBattleTower"
+        )
+        row["mapPlacementAdded"] = False
+        catalog["summary"]["mapPlacementAddedCount"] = 0
+        monkeypatch.setitem(subject.EXPECTED_COUNTS, "rotwk", 2)
+        catalog.pop("catalogSha256")
+        catalog["catalogSha256"] = _digest(catalog)
+
+    with pytest.raises(NeutralPackProfileError, match=message):
+        compose_neutral_pack_profile(
+            catalog,
+            artifacts,
+            dependency_artifact=_dependency_artifact(catalog),
+            version="fixture",
+        )
 
 
 def test_profile_packages_deferred_custom_animation_resources_and_receipt(
