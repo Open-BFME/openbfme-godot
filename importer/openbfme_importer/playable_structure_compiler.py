@@ -3142,17 +3142,15 @@ def compile_playable_structure_descriptor(
         target, scenario_admission
     )
     if production:
-        if normalized_scenario_admission is not None:
-            raise PlayableStructureCompilerError(
-                "scenario-admitted structure also has authored production"
-            )
+        # A selected-map root can also be an ordinary retail-buildable
+        # structure. Map rooting is catalog provenance in that case; it must
+        # neither erase exact construct routes nor falsely classify the Object
+        # as scenario-nonbuildable.
+        normalized_scenario_admission = None
         production_evidence = "authored-construct-command"
         production = [*production, *upgrade_routes]
     elif upgrade_routes:
-        if normalized_scenario_admission is not None:
-            raise PlayableStructureCompilerError(
-                "scenario-admitted structure also has authored wall production"
-            )
+        normalized_scenario_admission = None
         production_evidence = "authored-wall-upgrade-command"
         production = upgrade_routes
     elif target.name.casefold() in spawned_keys:

@@ -1528,6 +1528,26 @@ def test_neutral_map_structure_admission_is_explicit_and_non_buildable() -> None
     assert descriptor["scenarioAdmission"]["line"] > 0
 
 
+def test_map_rooted_authored_buildable_preserves_construct_routes() -> None:
+    documents = _structure_documents()
+
+    descriptor = compile_playable_structure_descriptor(
+        "TestKeep",
+        documents,
+        scenario_admission={
+            "role": "neutral-structure",
+            "surfaces": ["map-placement"],
+        },
+    )
+
+    # Map placement is catalog provenance. It must not reclassify an exact
+    # authored producer as scenario-only or erase its command-set routes.
+    assert descriptor["production"]["evidence"] == "authored-construct-command"
+    assert len(descriptor["production"]["routes"]) == 1
+    assert descriptor["production"]["routes"][0]["slot"] == 1
+    assert "scenarioAdmission" not in descriptor
+
+
 @pytest.mark.parametrize(
     "admission",
     [

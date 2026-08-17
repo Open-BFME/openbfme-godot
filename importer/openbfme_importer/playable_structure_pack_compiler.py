@@ -1505,7 +1505,7 @@ def _phase_evidence_clips(
     """Return (clips, from_idle_family) for one lifecycle phase."""
 
     clips: list[dict[str, object]] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
     idle_family = False
     for state in evidence_states:
         conditions = state.get("conditions", [])
@@ -1519,7 +1519,11 @@ def _phase_evidence_clips(
         if state_clips and family == "idleanimationstate":
             idle_family = True
         for clip in state_clips:
-            key = (str(clip["clip"]), str(clip["rawMode"]))
+            key = (
+                str(clip["clip"]),
+                str(clip["rawMode"]),
+                _draw_module_key(clip.get("drawModule", "")),
+            )
             if key in seen:
                 continue
             seen.add(key)
@@ -1573,6 +1577,13 @@ def _assert_self_referential_construction_clip(
     )
 
 
+def _draw_module_key(value: object) -> str:
+    """Return the authored module tag shared by INI and closure evidence."""
+
+    parts = str(value).split()
+    return parts[-1].casefold() if parts else ""
+
+
 def _phase_animation(
     evidence_states: Sequence[Mapping[str, object]],
     phase: str,
@@ -1586,9 +1597,97 @@ def _phase_animation(
 
     source_phase = "rubble" if phase == "collapsing" else phase
     clips, idle_family = _phase_evidence_clips(evidence_states, source_phase)
+    if phase == "construction":
+        if not state_draw_modules:
+            raise PlayableStructurePackCompilerError(
+                "structure construction model has no selected draw-module provenance"
+            )
+        selected_model_state_present = any(
+            str(state.get("family", "")).casefold()
+            in {"modelconditionstate", "defaultmodelconditionstate"}
+            and _draw_module_key(state.get("drawModule", ""))
+            in state_draw_modules
+            and isinstance(state.get("conditions"), list)
+            and _canonical_match(
+                source_phase,
+                _exact_condition_set(
+                    [str(value) for value in state.get("conditions", [])]
+                ),
+            )
+            for state in evidence_states
+        )
+        if not selected_model_state_present:
+            raise PlayableStructurePackCompilerError(
+                "structure construction model has no selected draw-module provenance"
+            )
+        all_clips = clips
+        clips = [
+            clip
+            for clip in all_clips
+            if _draw_module_key(clip.get("drawModule", ""))
+            in state_draw_modules
+        ]
+        all_manual = sorted(
+            {
+                str(clip["clip"])
+                for clip in all_clips
+                if str(clip.get("rawMode", "")).upper() == "MANUAL"
+            }
+        )
+        selected_manual = sorted(
+            {
+                str(clip["clip"])
+                for clip in clips
+                if str(clip.get("rawMode", "")).upper() == "MANUAL"
+            }
+        )
+        if len(selected_manual) == 1 and selected_manual != all_manual:
+            notes.append(
+                {
+                    "kind": "animation-clip",
+                    "phase": phase,
+                    "clip": selected_manual[0],
+                    "reason": "manual-construction-clip-primary-draw-module",
+                    "competingClips": all_manual,
+                }
+            )
+        elif all_clips and not clips:
+            notes.append(
+                {
+                    "kind": "animation-clip",
+                    "phase": phase,
+                    "reason": "secondary-draw-module-animation-excluded",
+                    "clips": sorted(
+                        {str(clip["clip"]) for clip in all_clips}
+                    ),
+                }
+            )
+    authored_animation_state = any(
+        str(state.get("family", "")).casefold().endswith("animationstate")
+        and (
+            not state_draw_modules
+            or _draw_module_key(state.get("drawModule", ""))
+            in state_draw_modules
+        )
+        and isinstance(state.get("conditions"), list)
+        and _canonical_match(
+            source_phase,
+            _exact_condition_set(
+                [str(value) for value in state.get("conditions", [])]
+            ),
+        )
+        for state in evidence_states
+    )
     if phase == "rubble":
         # The rubble-entry clip is presented on the collapsing phase (the Men
         # contract); retained rubble is static.
+        return {"clip": None, "mode": "none"}
+    if phase == "construction" and not clips and not authored_animation_state:
+        # Some exact retail construction ModelConditionStates are intentionally
+        # static: the alternate W3D is authored, but there is no AnimationState
+        # for it. Preserve that absence explicitly. Any authored animation row
+        # continues through the strict MANUAL resolution below and therefore
+        # still fails if its clip is missing, malformed, or ambiguous.
         return {"clip": None, "mode": "none"}
     available: list[dict[str, object]] = []
     unbundled: list[dict[str, str]] = []
@@ -2304,8 +2403,9 @@ def compose_structure_runtime_document(
             _bundled_clips(state),
             notes,
             state_draw_modules=frozenset(
-                str(module).casefold()
+                _draw_module_key(module)
                 for module in state.get("drawModules", [])
+                if _draw_module_key(module)
             ),
             phase_model_source=str(state.get("sourceW3d", "")),
             embedded_clip_ids=frozenset(
@@ -2389,9 +2489,12 @@ def compose_structure_runtime_document(
         )
     if construction_status is None:
         assert construction_animation is not None
+        construction_mode = str(construction_animation.get("mode", ""))
         simulation_facts["construction"] = {
             "buildTimeSeconds": _scalar_number(descriptor, "BuildTime"),
-            "animationMode": "MANUAL",
+            "animationMode": (
+                "NONE" if construction_mode == "none" else "MANUAL"
+            ),
             "animation": construction_animation["clip"],
         }
     else:

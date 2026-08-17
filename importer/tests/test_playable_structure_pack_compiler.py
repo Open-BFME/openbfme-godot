@@ -9,6 +9,8 @@ from openbfme_importer.playable_structure_lifecycle_evidence import (
 )
 from openbfme_importer.playable_structure_pack_compiler import (
     PlayableStructurePackCompilerError,
+    _phase_animation,
+    _phase_evidence_clips,
     _select_phase_states,
     compile_structure_visual_recipe,
     compose_structure_runtime_document,
@@ -676,6 +678,135 @@ def test_construction_manual_clip_prefers_the_selected_models_draw_module() -> N
     )
 
 
+@pytest.mark.parametrize("secondary_carrier", ["W3DModelDraw", "W3DScriptedModelDraw"])
+def test_same_clip_mode_dedup_retains_draw_module_identity(
+    secondary_carrier: str,
+) -> None:
+    def state(carrier: str, tag: str) -> dict[str, object]:
+        draw = f"{carrier} {tag}"
+        scope = [
+            draw,
+            "AnimationState ACTIVELY_BEING_CONSTRUCTED PARTIALLY_CONSTRUCTED",
+            "Animation Build",
+        ]
+        return {
+            "family": "AnimationState",
+            "conditions": [
+                "ACTIVELY_BEING_CONSTRUCTED",
+                "PARTIALLY_CONSTRUCTED",
+            ],
+            "drawModule": draw,
+            "assignments": [
+                {
+                    "key": "AnimationName",
+                    "rawValue": "Keep_SKL.Keep_CONSA",
+                    "provenance": {"scopePath": scope},
+                },
+                {
+                    "key": "AnimationMode",
+                    "rawValue": "MANUAL",
+                    "provenance": {"scopePath": scope},
+                },
+            ],
+        }
+
+    states = [
+        state(secondary_carrier, "ModuleTag_Door"),
+        state("W3DScriptedModelDraw", "ModuleTag_Draw"),
+        {
+            "family": "ModelConditionState",
+            "conditions": [
+                "ACTIVELY_BEING_CONSTRUCTED",
+                "PARTIALLY_CONSTRUCTED",
+            ],
+            "drawModule": "W3DScriptedModelDraw ModuleTag_Draw",
+            "assignments": [],
+        },
+    ]
+    clips, _idle = _phase_evidence_clips(states, "construction")
+    assert [row["drawModule"].split()[-1] for row in clips] == [
+        "ModuleTag_Door",
+        "ModuleTag_Draw",
+    ]
+    # The downstream selector must bind the selected primary row even though
+    # the identical secondary row appeared first in authored order.
+    selected = _phase_animation(
+        states,
+        "construction",
+        {"keep_consa"},
+        [],
+        state_draw_modules=frozenset({"moduletag_draw"}),
+        phase_model_source="art/w3d/fx/keep_cons.w3d",
+    )
+    assert selected == {"clip": "keep_consa", "mode": "manual-progress"}
+
+
+@pytest.mark.parametrize("secondary_carrier", ["W3DModelDraw", "W3DScriptedModelDraw"])
+def test_construction_same_clip_secondary_first_keeps_primary_module(
+    secondary_carrier: str,
+) -> None:
+    from importer.tests.test_playable_structure_compiler import (
+        _structure_documents,
+    )
+    from openbfme_importer.playable_structure_compiler import (
+        compile_playable_structure_descriptor,
+    )
+
+    documents = _structure_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    source = documents[objects_path].decode("utf-8")
+    secondary_draw = (
+        f"  Draw = {secondary_carrier} ModuleTag_Door\n"
+        "    AnimationState = ACTIVELY_BEING_CONSTRUCTED PARTIALLY_CONSTRUCTED\n"
+        "      Animation = DoorBuild\n"
+        "        AnimationName = Keep_SKL.Keep_CONSA\n"
+        "        AnimationMode = MANUAL\n"
+        "      End\n"
+        "    End\n"
+        "  End\n"
+    )
+    # Put the secondary state before the selected body draw so extraction
+    # order cannot decide which module owns an identical clip/mode pair.
+    source = source.replace(
+        "  Draw = W3DScriptedModelDraw ModuleTag_Draw",
+        secondary_draw + "  Draw = W3DScriptedModelDraw ModuleTag_Draw",
+        1,
+    )
+    documents[objects_path] = source.encode("utf-8")
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    closure = _closure()
+    for row in closure["exactLeaves"]:
+        row["targetObject"] = "TestKeep"
+        row["provenance"]["scopePath"][0] = (
+            "W3DScriptedModelDraw ModuleTag_Draw"
+        )
+    secondary_leaf = deepcopy(
+        next(
+            row
+            for row in closure["exactLeaves"]
+            if row["identifier"] == "Keep_CONSA"
+        )
+    )
+    secondary_leaf["provenance"]["scopePath"][0] = (
+        f"{secondary_carrier} ModuleTag_Door"
+    )
+    closure["exactLeaves"].insert(0, secondary_leaf)
+    _rehash(closure)
+    recipe = compile_structure_visual_recipe("TestKeep", closure)
+    evidence = compile_structure_lifecycle_evidence("TestKeep", documents)
+
+    document = compose_structure_runtime_document(descriptor, recipe, evidence)
+    lifecycle = document["registration"]["presentation"]["buildingLifecycle"]
+    construction = next(
+        row for row in lifecycle["phases"] if row["phase"] == "construction"
+    )
+    assert construction["animation"] == {
+        "clip": "keep_consa",
+        "mode": "manual-progress",
+    }
+
+
 def test_construction_manual_clip_stays_fail_closed_without_module_match() -> None:
     from importer.tests.test_playable_structure_compiler import (
         _structure_documents,
@@ -728,7 +859,8 @@ def test_construction_manual_clip_stays_fail_closed_without_module_match() -> No
     evidence = compile_structure_lifecycle_evidence("TestKeep", documents)
 
     with pytest.raises(
-        PlayableStructurePackCompilerError, match="exactly one bundled MANUAL"
+        PlayableStructurePackCompilerError,
+        match="no selected draw-module provenance",
     ):
         compose_structure_runtime_document(descriptor, recipe, evidence)
 
@@ -1230,6 +1362,226 @@ def test_runtime_document_requires_manual_construction_clip() -> None:
 
     with pytest.raises(
         PlayableStructurePackCompilerError, match="exactly one bundled MANUAL"
+    ):
+        compose_structure_runtime_document(descriptor, recipe, evidence)
+
+
+def test_runtime_document_preserves_authored_static_construction_state() -> None:
+    from importer.tests.test_playable_structure_compiler import (
+        _structure_documents,
+    )
+    from openbfme_importer.playable_structure_compiler import (
+        compile_playable_structure_descriptor,
+    )
+
+    documents = _structure_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    source = documents[objects_path].decode("utf-8")
+    animation = """    AnimationState = ACTIVELY_BEING_CONSTRUCTED PARTIALLY_CONSTRUCTED
+      Animation = Build
+        AnimationName = Keep_SKL.Keep_CONSA
+        AnimationMode = MANUAL
+      End
+    End
+"""
+    assert animation in source
+    documents[objects_path] = source.replace(animation, "", 1).encode("utf-8")
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    closure = _closure()
+    closure["exactLeaves"] = [
+        row for row in closure["exactLeaves"]
+        if row["identifier"] != "Keep_CONSA"
+    ]
+    closure["scannedW3d"] = [
+        row for row in closure["scannedW3d"]
+        if row["virtualPath"] != _ANIMATION_CONSTRUCTION
+    ]
+    dependency = closure["w3dDependencyClosure"]
+    dependency["embeddedTextures"] = [
+        row for row in dependency["embeddedTextures"]
+        if row["sourceW3dVirtualPath"] != _ANIMATION_CONSTRUCTION
+    ]
+    for row in closure["exactLeaves"]:
+        row["targetObject"] = "TestKeep"
+    _rehash(closure)
+    recipe = compile_structure_visual_recipe("TestKeep", closure)
+    evidence = compile_structure_lifecycle_evidence("TestKeep", documents)
+
+    document = compose_structure_runtime_document(descriptor, recipe, evidence)
+    lifecycle = document["registration"]["presentation"]["buildingLifecycle"]
+    construction = next(
+        row for row in lifecycle["phases"] if row["phase"] == "construction"
+    )
+    assert construction["animation"] == {"clip": None, "mode": "none"}
+    assert lifecycle["simulationFacts"]["construction"] == {
+        "buildTimeSeconds": 45.0,
+        "animationMode": "NONE",
+        "animation": None,
+    }
+
+
+def test_empty_authored_construction_animation_state_fails_closed() -> None:
+    from importer.tests.test_playable_structure_compiler import (
+        _structure_documents,
+    )
+    from openbfme_importer.playable_structure_compiler import (
+        compile_playable_structure_descriptor,
+    )
+
+    documents = _structure_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    source = documents[objects_path].decode("utf-8")
+    animation = """    AnimationState = ACTIVELY_BEING_CONSTRUCTED PARTIALLY_CONSTRUCTED
+      Animation = Build
+        AnimationName = Keep_SKL.Keep_CONSA
+        AnimationMode = MANUAL
+      End
+    End
+"""
+    assert animation in source
+    documents[objects_path] = source.replace(
+        animation,
+        "    AnimationState = ACTIVELY_BEING_CONSTRUCTED PARTIALLY_CONSTRUCTED\n    End\n",
+        1,
+    ).encode("utf-8")
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    closure = _closure()
+    for row in closure["exactLeaves"]:
+        row["targetObject"] = "TestKeep"
+        row["provenance"]["scopePath"][0] = (
+            "W3DScriptedModelDraw ModuleTag_Draw"
+        )
+    _rehash(closure)
+    recipe = compile_structure_visual_recipe("TestKeep", closure)
+    evidence = compile_structure_lifecycle_evidence("TestKeep", documents)
+
+    with pytest.raises(
+        PlayableStructurePackCompilerError,
+        match="exactly one bundled MANUAL",
+    ):
+        compose_structure_runtime_document(descriptor, recipe, evidence)
+
+
+def test_static_primary_construction_ignores_secondary_manual_clip() -> None:
+    from importer.tests.test_playable_structure_compiler import (
+        _structure_documents,
+    )
+    from openbfme_importer.playable_structure_compiler import (
+        compile_playable_structure_descriptor,
+    )
+
+    documents = _structure_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    source = documents[objects_path].decode("utf-8")
+    primary_animation = """    AnimationState = ACTIVELY_BEING_CONSTRUCTED PARTIALLY_CONSTRUCTED
+      Animation = Build
+        AnimationName = Keep_SKL.Keep_CONSA
+        AnimationMode = MANUAL
+      End
+    End
+"""
+    assert primary_animation in source
+    source = source.replace(primary_animation, "", 1)
+    secondary_draw = """  Draw = W3DScriptedModelDraw ModuleTag_Door
+    AnimationState = ACTIVELY_BEING_CONSTRUCTED PARTIALLY_CONSTRUCTED
+      Animation = DoorBuild
+        AnimationName = KEEP_DOOR_SKL.KEEP_DOOR_BLD
+        AnimationMode = MANUAL
+      End
+    End
+  End
+"""
+    source = source.replace(
+        "  Draw = W3DFloorDraw ModuleTag_Bib",
+        secondary_draw + "  Draw = W3DFloorDraw ModuleTag_Bib",
+        1,
+    )
+    documents[objects_path] = source.encode("utf-8")
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    closure = _closure()
+    closure["exactLeaves"] = [
+        row for row in closure["exactLeaves"]
+        if row["identifier"] != "Keep_CONSA"
+    ]
+    closure["scannedW3d"] = [
+        row for row in closure["scannedW3d"]
+        if row["virtualPath"] != _ANIMATION_CONSTRUCTION
+    ]
+    dependency = closure["w3dDependencyClosure"]
+    dependency["embeddedTextures"] = [
+        row for row in dependency["embeddedTextures"]
+        if row["sourceW3dVirtualPath"] != _ANIMATION_CONSTRUCTION
+    ]
+    for row in closure["exactLeaves"]:
+        row["targetObject"] = "TestKeep"
+        row["provenance"]["scopePath"][0] = (
+            "W3DScriptedModelDraw ModuleTag_Draw"
+        )
+    door_leaf = _leaf(
+        "KEEP_DOOR_SKL.KEEP_DOOR_BLD",
+        "animation",
+        "art/w3d/fx/keep_door_bld.w3d",
+        ["construction"],
+        ["ACTIVELY_BEING_CONSTRUCTED", "PARTIALLY_CONSTRUCTED"],
+    )
+    door_leaf["targetObject"] = "TestKeep"
+    door_leaf["provenance"]["scopePath"][0] = (
+        "W3DScriptedModelDraw ModuleTag_Door"
+    )
+    closure["exactLeaves"].append(door_leaf)
+    closure["scannedW3d"].extend([
+        _scan(
+            "art/w3d/fx/keep_door_bld.w3d",
+            animation_ids=["KEEP_DOOR_SKL.KEEP_DOOR_BLD"],
+        ),
+        _scan(
+            "art/w3d/fx/keep_door_skl.w3d",
+            hierarchy_ids=["KEEP_DOOR_SKL"],
+        ),
+    ])
+    _rehash(closure)
+    recipe = compile_structure_visual_recipe("TestKeep", closure)
+    evidence = compile_structure_lifecycle_evidence("TestKeep", documents)
+
+    document = compose_structure_runtime_document(descriptor, recipe, evidence)
+    lifecycle = document["registration"]["presentation"]["buildingLifecycle"]
+    construction = next(
+        row for row in lifecycle["phases"] if row["phase"] == "construction"
+    )
+    assert construction["animation"] == {"clip": None, "mode": "none"}
+    assert lifecycle["simulationFacts"]["construction"] == {
+        "buildTimeSeconds": 45.0,
+        "animationMode": "NONE",
+        "animation": None,
+    }
+
+
+def test_construction_without_selected_draw_provenance_fails_closed() -> None:
+    descriptor, recipe, evidence = _keep_fixture()
+    construction = next(
+        row
+        for row in recipe["lifecycleStates"]
+        if "construction" in row["phases"]
+    )
+    construction["drawModules"] = []
+    unsigned = dict(recipe)
+    unsigned.pop("recipeSha256", None)
+    recipe["recipeSha256"] = hashlib.sha256(
+        json.dumps(
+            unsigned,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+    with pytest.raises(
+        PlayableStructurePackCompilerError,
+        match="no dedicated construction visual|no selected draw-module provenance",
     ):
         compose_structure_runtime_document(descriptor, recipe, evidence)
 

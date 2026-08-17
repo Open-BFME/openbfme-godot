@@ -56,6 +56,22 @@ func _run() -> void:
 	)
 	_check(presenter_error == "", "loaded composed lifecycle passes the RetailStructure v1 contract: %s" % presenter_error)
 
+	# Exact retail can author a construction ModelConditionState with no
+	# AnimationState. The runtime accepts that explicit static contract while
+	# continuing to reject every mixed or malformed NONE/MANUAL pairing.
+	var static_document := _static_construction_document(
+		_fixture_document("StaticPen", "staticpen", "fixturemonsterpen")
+	)
+	_write_json(pack_root.path_join("data/playable-structures/staticpen.json"), static_document)
+	_check(content_db._load_playable_structure_runtimes(pack_root, {
+		"playableStructure.staticpen": "data/playable-structures/staticpen.json",
+	}), "explicit static construction declaration loads")
+	var static_lifecycle := _lifecycle_of(content_db.get_playable_structure_runtime("StaticPen"))
+	var static_error: String = structure_script.validate_lifecycle_contract(
+		static_lifecycle, "staticpen", "", 3000, _runtime_id("StaticPen")
+	)
+	_check(static_error == "", "static construction passes the RetailStructure v1 contract: %s" % static_error)
+
 	# Reduced chains: no authored damage thresholds and a never-constructed
 	# composite must load and pass the presenter contract too.
 	var reduced := _fixture_document("ReducedPen", "reducedpen", "fixturemonsterpen", 3000, false, false)
@@ -124,7 +140,21 @@ func _run() -> void:
 		_lifecycle_of(broken)["objectId"] = "bfme2.object.someone-else")
 	_check_skipped_variant(content_db, pack_root, "construction_not_manual", func(broken: Dictionary) -> void:
 		var phases: Array = _lifecycle_of(broken).get("phases", [])
-		((phases[0] as Dictionary).get("animation", {}) as Dictionary)["mode"] = "loop")
+		((phases[0] as Dictionary).get("animation", {}) as Dictionary)["mode"] = "none"
+		((phases[0] as Dictionary).get("animation", {}) as Dictionary)["clip"] = null)
+	_check_skipped_variant(content_db, pack_root, "manual_facts_missing_clip", func(broken: Dictionary) -> void:
+		((_lifecycle_of(broken).get("simulationFacts", {}) as Dictionary).get("construction", {}) as Dictionary)["animation"] = null)
+	_check_skipped_variant(content_db, pack_root, "static_phase_declares_clip", func(broken: Dictionary) -> void:
+		_static_construction_document(broken)
+		var phases: Array = _lifecycle_of(broken).get("phases", [])
+		((phases[0] as Dictionary).get("animation", {}) as Dictionary)["clip"] = "fixture_abld")
+	_check_skipped_variant(content_db, pack_root, "static_facts_declare_clip", func(broken: Dictionary) -> void:
+		_static_construction_document(broken)
+		((_lifecycle_of(broken).get("simulationFacts", {}) as Dictionary).get("construction", {}) as Dictionary)["animation"] = "fixture_abld")
+	_check_skipped_variant(content_db, pack_root, "static_phase_manual_facts_mismatch", func(broken: Dictionary) -> void:
+		_static_construction_document(broken)
+		((_lifecycle_of(broken).get("simulationFacts", {}) as Dictionary).get("construction", {}) as Dictionary)["animationMode"] = "MANUAL"
+		((_lifecycle_of(broken).get("simulationFacts", {}) as Dictionary).get("construction", {}) as Dictionary)["animation"] = "fixture_abld")
 	_check_skipped_variant(content_db, pack_root, "evidence_profile_drift", func(broken: Dictionary) -> void:
 		_lifecycle_of(broken).erase("evidenceProfile"))
 	_check_skipped_variant(content_db, pack_root, "damage_rule_hidden_despite_thresholds", func(broken: Dictionary) -> void:
@@ -1003,6 +1033,19 @@ func _fixture_unit_document(object_id: String, producer_object_id: String, damag
 
 func _lifecycle_of(document: Dictionary) -> Dictionary:
 	return ((document.get("registration", {}) as Dictionary).get("presentation", {}) as Dictionary).get("buildingLifecycle", {}) as Dictionary
+
+
+func _static_construction_document(document: Dictionary) -> Dictionary:
+	var lifecycle := _lifecycle_of(document)
+	var phases: Array = lifecycle.get("phases", []) as Array
+	var phase_animation := (phases[0] as Dictionary).get("animation", {}) as Dictionary
+	phase_animation["mode"] = "none"
+	phase_animation["clip"] = null
+	var facts := lifecycle.get("simulationFacts", {}) as Dictionary
+	var construction := facts.get("construction", {}) as Dictionary
+	construction["animationMode"] = "NONE"
+	construction["animation"] = null
+	return document
 
 
 func _check_skipped_variant(content_db, pack_root: String, label: String, mutate: Callable) -> void:

@@ -590,9 +590,22 @@ def validate_neutral_mob_catalog(value: Mapping[str, object]) -> None:
                 )
         if map_placement_root and status == "descriptor-ready":
             admission = descriptor.get("scenarioAdmission")
+            production = descriptor.get("production")
+            authored_buildable = (
+                domain == "structure"
+                and isinstance(production, Mapping)
+                and production.get("evidence")
+                in {"authored-construct-command", "authored-wall-upgrade-command"}
+                and isinstance(production.get("routes"), list)
+                and bool(production.get("routes"))
+                and admission is None
+            )
+            scenario_admitted = (
+                isinstance(admission, Mapping)
+                and "map-placement" in admission.get("surfaces", [])
+            )
             if (
-                not isinstance(admission, Mapping)
-                or "map-placement" not in admission.get("surfaces", [])
+                not (scenario_admitted or authored_buildable)
                 or (
                     map_placement_added
                     and (

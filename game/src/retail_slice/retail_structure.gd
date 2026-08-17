@@ -717,6 +717,17 @@ static func _validate_v1_lifecycle_contract(
 		var phase_error := _validate_v1_phase_row(phase_row, expected_phase, expected_next)
 		if phase_error != "":
 			return phase_error
+	if not construction_omitted:
+		var construction: Dictionary = facts["construction"]
+		var construction_phase := phases[0] as Dictionary
+		var construction_animation := construction_phase.get("animation") as Dictionary
+		var expected_phase_mode := (
+			"manual-progress"
+			if String(construction.get("animationMode", "")) == "MANUAL"
+			else "none"
+		)
+		if String(construction_animation.get("mode", "")) != expected_phase_mode:
+			return "buildingLifecycle construction facts and phase animation disagree"
 
 	if typeof(lifecycle.get("bib")) != TYPE_DICTIONARY:
 		# A composed structure without an authored W3DFloorDraw has a proven
@@ -765,11 +776,7 @@ static func _validate_v1_simulation_facts(facts: Dictionary, maximum: int) -> St
 	):
 		return "buildingLifecycle initial health is not proven full-health placement data"
 	var construction: Dictionary = facts["construction"]
-	if (
-		not _finite_positive_variant(construction.get("buildTimeSeconds"))
-		or String(construction.get("animationMode", "")) != "MANUAL"
-		or String(construction.get("animation", "")).strip_edges() == ""
-	):
+	if not _valid_construction_facts(construction):
 		return "buildingLifecycle construction facts are incomplete"
 	var capture: Dictionary = facts["captureInitialState"]
 	if (
@@ -852,9 +859,7 @@ static func _validate_v1_composed_simulation_facts(facts: Dictionary) -> String:
 		]:
 			return "buildingLifecycle construction omission is not explicit"
 	elif (
-		not _finite_positive_variant(construction.get("buildTimeSeconds"))
-		or String(construction.get("animationMode", "")) != "MANUAL"
-		or String(construction.get("animation", "")).strip_edges() == ""
+		not _valid_construction_facts(construction)
 	):
 		return "buildingLifecycle construction facts are incomplete"
 	var collapse: Dictionary = facts["collapse"]
@@ -979,8 +984,8 @@ static func _validate_v1_phase_row(row: Dictionary, phase: String, expected_next
 			return "buildingLifecycle phase %s none animation declares a clip" % phase
 	elif typeof(clip) != TYPE_STRING or String(clip).strip_edges() == "" or visual_mode != "glb":
 		return "buildingLifecycle phase %s active animation lacks a rendered clip" % phase
-	if phase == "construction" and mode != "manual-progress":
-		return "buildingLifecycle construction animation is not manual-progress"
+	if phase == "construction" and mode not in ["none", "manual-progress"]:
+		return "buildingLifecycle construction animation is neither static nor manual-progress"
 	if String(row.get("transitionAuthority", "")) != "deterministic-simulation":
 		return "buildingLifecycle phase %s transition authority is not deterministic simulation" % phase
 	var actual_next: Variant = row.get("nextPhase")
@@ -1114,8 +1119,8 @@ static func _validate_clip_contract(value: Variant) -> String:
 			return "buildingLifecycle.clips.%s none mode declares names" % phase
 		if mode != "none" and names.is_empty():
 			return "buildingLifecycle.clips.%s active mode has no names" % phase
-		if phase == "construction" and mode != "manual-progress":
-			return "buildingLifecycle construction clip is not manual-progress"
+		if phase == "construction" and mode not in ["none", "manual-progress"]:
+			return "buildingLifecycle construction clip is neither static nor manual-progress"
 	return ""
 
 
@@ -1138,6 +1143,21 @@ static func _is_exact_integer(value: Variant) -> bool:
 
 static func _finite_positive_variant(value: Variant) -> bool:
 	return typeof(value) in [TYPE_INT, TYPE_FLOAT] and is_finite(float(value)) and float(value) > 0.0
+
+
+static func _valid_construction_facts(construction: Dictionary) -> bool:
+	if not _finite_positive_variant(construction.get("buildTimeSeconds")):
+		return false
+	var mode := String(construction.get("animationMode", ""))
+	var animation: Variant = construction.get("animation")
+	return (
+		(mode == "NONE" and animation == null)
+		or (
+			mode == "MANUAL"
+			and typeof(animation) == TYPE_STRING
+			and String(animation).strip_edges() != ""
+		)
+	)
 
 
 static func _finite_zero_variant(value: Variant) -> bool:

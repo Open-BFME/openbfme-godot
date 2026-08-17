@@ -339,6 +339,58 @@ def test_exact_map_roots_admit_only_active_retail_structures() -> None:
     assert catalog["summary"]["mapPlacementAddedCount"] == 1
 
 
+def test_map_rooted_authored_buildable_uses_catalog_provenance() -> None:
+    documents = _documents()
+    documents["data/ini/object/neutral/creeps.ini"] += b"""
+Object NeutralTower
+ Side = Neutral
+ KindOf = STRUCTURE IMMOBILE SELECTABLE FS_FACTORY
+ Body = ActiveBody ModuleTag_Body
+  MaxHealth = 500
+ End
+End
+Object NeutralPorter
+ Side = Neutral
+ CommandSet = NeutralPorterCommandSet
+ KindOf = INFANTRY
+End
+"""
+    documents["data/ini/commandset.ini"] += b"""
+CommandSet NeutralPorterCommandSet
+ 8 = Command_ConstructNeutralTower
+End
+"""
+    documents["data/ini/commandbutton.ini"] += b"""
+CommandButton Command_ConstructNeutralTower
+ Command = DOZER_CONSTRUCT
+ Object = NeutralTower
+End
+"""
+
+    catalog = compile_neutral_mob_catalog(
+        documents, map_placement_object_ids=("NeutralTower",)
+    )
+    tower = next(
+        row for row in catalog["neutralMobs"] if row["objectId"] == "NeutralTower"
+    )
+    assert tower["runtimeStatus"] == "descriptor-ready"
+    assert tower["mapPlacementRoot"] is True
+    assert tower["mapPlacementAdded"] is True
+    assert "scenarioAdmission" not in tower["descriptor"]
+    assert tower["descriptor"]["production"] == {
+        "evidence": "authored-construct-command",
+        "routes": [{
+            "surface": "construct",
+            "commandId": "Command_ConstructNeutralTower",
+            "commandKind": "dozer_construct",
+            "builderObjectId": "NeutralPorter",
+            "commandSetId": "NeutralPorterCommandSet",
+            "slot": 8,
+            "prerequisites": [],
+        }],
+    }
+
+
 def test_lair_text_does_not_turn_an_inherited_creature_into_a_structure() -> None:
     documents = _documents()
     documents["data/ini/object/neutral/creeps.ini"] += b"""
@@ -571,6 +623,7 @@ def test_rotwk_canonical_effective_assets_preserve_exact_domains_and_prop_ids() 
             "editions/rotwk/catalog/rotwk.json",
             "rotwk-playable-maps-private/",
             {
+                "ArnorBattleTower": 1,
                 "BarrowWightLair": 43,
                 "CaveTrollLair": 53,
                 "CaveTrollLairSnow": 14,
@@ -617,7 +670,11 @@ def test_retail_map_placed_passive_units_have_closed_scenario_simulation(
     # selected retail maps root it as active scenario gameplay. Admission must
     # therefore come from the generic map-root + effective KindOf contract.
     result = compile_neutral_mob_catalog(
-        documents, game=game, map_placement_object_ids=("Inn",)
+        documents,
+        game=game,
+        map_placement_object_ids=(
+            ("Inn", "ArnorBattleTower") if game == "rotwk" else ("Inn",)
+        ),
     )
     rows = {row["objectId"].casefold(): row for row in result["neutralMobs"]}
     counts: Counter[str] = Counter()
@@ -652,6 +709,26 @@ def test_retail_map_placed_passive_units_have_closed_scenario_simulation(
         assert armor["setId"] == "StructureArmor"
         assert armor["table"]["default"]["percent"] == 60.0
         assert armor["table"]["scalars"]["siege"]["percent"] == 150.0
+        # ArnorBattleTower is both map-rooted and retail-buildable. The map
+        # root adds catalog provenance only: it must retain both exact porter
+        # routes instead of being rewritten as scenario-nonbuildable.
+        battle_tower = rows["arnorbattletower"]
+        assert battle_tower["runtimeStatus"] == "descriptor-ready"
+        assert battle_tower["mapPlacementRoot"] is True
+        assert battle_tower["mapPlacementAdded"] is True
+        production = battle_tower["descriptor"]["production"]
+        assert production["evidence"] == "authored-construct-command"
+        assert [row["builderObjectId"] for row in production["routes"]] == [
+            "ArnorPorter",
+            "ArnorPorterNoSelect",
+        ]
+        assert all(
+            row["commandId"] == "Command_PorterConstructArnorSentryTower"
+            and row["commandSetId"] == "ArnorPorterCommandSet"
+            and row["slot"] == 8
+            for row in production["routes"]
+        )
+        assert "scenarioAdmission" not in battle_tower["descriptor"]
     for object_id in passive_ids:
         catalog_row = rows[object_id.casefold()]
         assert catalog_row["runtimeStatus"] == "descriptor-ready"

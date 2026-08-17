@@ -3592,6 +3592,22 @@ func _validate_playable_structure_lifecycle(root: String, value: Variant, gamepl
 				return false
 		elif status != "no-authored-construction-states":
 			return false
+	else:
+		var animation_mode := String(construction.get("animationMode", ""))
+		var animation: Variant = construction.get("animation")
+		var manual := (
+			animation_mode == "MANUAL"
+			and typeof(animation) == TYPE_STRING
+			and String(animation).strip_edges() != ""
+		)
+		var static_construction := animation_mode == "NONE" and animation == null
+		if (
+			typeof(construction.get("buildTimeSeconds")) not in [TYPE_INT, TYPE_FLOAT]
+			or not is_finite(float(construction.get("buildTimeSeconds", 0.0)))
+			or float(construction.get("buildTimeSeconds", 0.0)) <= 0.0
+			or not (manual or static_construction)
+		):
+			return false
 	var expected_phases: Array[String] = []
 	for candidate_value in PLAYABLE_STRUCTURE_PRESENTED_PHASES:
 		var candidate := String(candidate_value)
@@ -3614,6 +3630,16 @@ func _validate_playable_structure_lifecycle(root: String, value: Variant, gamepl
 		if phase not in ["post-rubble", "post-collapse"]:
 			expected_next = expected_phases[index + 1]
 		if not _validate_playable_structure_phase_row(root, row, expected_next):
+			return false
+	if not construction_omitted:
+		var construction_phase := phases[0] as Dictionary
+		var construction_animation := construction_phase.get("animation") as Dictionary
+		var expected_phase_mode := (
+			"manual-progress"
+			if String(construction.get("animationMode", "")) == "MANUAL"
+			else "none"
+		)
+		if String(construction_animation.get("mode", "")) != expected_phase_mode:
 			return false
 	var coverage := lifecycle.get("phaseCoverage") as Dictionary
 	var declared_covered: Variant = coverage.get("covered")
@@ -3703,7 +3729,7 @@ func _validate_playable_structure_phase_row(root: String, row: Dictionary, expec
 			return false
 	elif typeof(clip) != TYPE_STRING or String(clip).strip_edges() == "" or visual_mode != "glb":
 		return false
-	if String(row.get("phase", "")) == "construction" and mode != "manual-progress":
+	if String(row.get("phase", "")) == "construction" and mode not in ["none", "manual-progress"]:
 		return false
 	var next_phase: Variant = row.get("nextPhase")
 	if expected_next != null:

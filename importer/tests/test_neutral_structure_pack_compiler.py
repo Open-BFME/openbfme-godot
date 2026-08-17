@@ -199,6 +199,107 @@ def test_neutral_structure_artifact_is_deterministic_and_non_buildable() -> None
     }
 
 
+def test_map_rooted_buildable_artifact_preserves_authored_production() -> None:
+    documents = _structure_documents()
+    closure = _closure()
+    for row in closure["exactLeaves"]:
+        row["targetObject"] = "TestKeep"
+    _rehash(closure)
+
+    artifact = compile_neutral_structure_pack_artifact(
+        "TestKeep",
+        documents,
+        closure,
+        role="neutral-structure",
+        surfaces=["map-placement"],
+    )
+
+    descriptor = artifact["descriptor"]
+    assert descriptor["production"]["evidence"] == "authored-construct-command"
+    assert len(descriptor["production"]["routes"]) == 1
+    assert "scenarioAdmission" not in descriptor
+    assert artifact["runtime"]["registration"]["production"] == descriptor["production"]
+    assert "scenarioAdmission" not in artifact["runtime"]["registration"]
+    assert artifact["sourceIdentity"] == {
+        "declarationKind": "Object",
+        "sourceIni": "data/ini/object/units/test_units.ini",
+        "line": artifact["sourceIdentity"]["line"],
+    }
+    assert artifact["sourceIdentity"]["line"] > 0
+
+
+def test_exact_rotwk_static_construction_w3d_contracts() -> None:
+    repo = Path(__file__).resolve().parents[2]
+    retail = repo / ".private" / "retail-work"
+    catalog_path = retail / "catalog" / "rotwk-layered.json"
+    effective_root = retail / "editions" / "rotwk" / "cache" / "layered-effective-assets"
+    if not catalog_path.is_file() or not (
+        effective_root / ".openbfme" / "manifest.json"
+    ).is_file():
+        pytest.skip("operator RotWK layered corpus is unavailable")
+
+    catalog = InstallCatalog.load(catalog_path)
+    documents = dict(read_catalog_documents(catalog))
+    prepared = prepare_playable_unit_compiler(documents)
+    object_ids = ("AmonSulKeep", "AngForStronghold")
+    closure = build_retail_visual_closure(
+        effective_root,
+        object_ids,
+        catalog=catalog,
+    )
+    assert closure["aggregateSha256"] == (
+        "a5c0a846f4a43c88943fe600164ebe42c479447375ed2f8b974b167ba165197f"
+    )
+    assert closure["summary"]["unresolvedReferenceCount"] == 0
+    assert closure["summary"]["graphDiagnosticCount"] == 0
+
+    expected = {
+        "AmonSulKeep": ("art/w3d/cb/cbamonsulkeep.w3d", 45.0),
+        "AngForStronghold": ("art/w3d/kb/kbforsh.w3d", 15.0),
+    }
+    for object_id, (source_w3d, build_time) in expected.items():
+        artifact = compile_neutral_structure_pack_artifact(
+            object_id,
+            documents,
+            closure,
+            role="neutral-structure",
+            surfaces=["map-placement"],
+            prepared=prepared,
+            game="rotwk",
+        )
+        lifecycle = artifact["runtime"]["registration"]["presentation"][
+            "buildingLifecycle"
+        ]
+        phase = next(
+            row for row in lifecycle["phases"] if row["phase"] == "construction"
+        )
+        assert phase["animation"] == {"clip": None, "mode": "none"}
+        assert lifecycle["simulationFacts"]["construction"] == {
+            "buildTimeSeconds": build_time,
+            "animationMode": "NONE",
+            "animation": None,
+        }
+        state = next(
+            row
+            for row in artifact["visualRecipe"]["lifecycleStates"]
+            if row["resourceId"] == phase["visual"]["modelResourceId"]
+        )
+        assert state["sourceW3d"] == source_w3d
+        construction_leaves = [
+            row
+            for row in closure["exactLeaves"]
+            if row["targetObject"] == object_id
+            and "construction" in row["lifecyclePhases"]
+        ]
+        assert construction_leaves
+        assert {row["kind"] for row in construction_leaves} == {"model"}
+        assert {
+            path
+            for row in construction_leaves
+            for path in row["physicalVirtualPaths"]
+        } == {source_w3d}
+
+
 @pytest.mark.parametrize(
     ("role", "surfaces", "message"),
     (

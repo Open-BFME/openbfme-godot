@@ -2,9 +2,9 @@
 
 Neutral lairs and authored scenario structures use the ordinary structure
 descriptor, visual-closure recipe, and lifecycle runtime contracts.  This
-module is the admission boundary which joins those three generic compilers
-without putting the objects on a faction build menu or inventing a construct
-route.
+module is the admission boundary which joins those three generic compilers.
+It never invents a construct route; a map-rooted retail-buildable Object keeps
+the exact route already authored for it.
 """
 
 from __future__ import annotations
@@ -38,7 +38,10 @@ from .playable_structure_pack_compiler import (
     compose_structure_runtime_document,
     validate_structure_visual_recipe,
 )
-from .playable_unit_compiler import PlayableUnitCompilerInputs
+from .playable_unit_compiler import (
+    PlayableUnitCompilerInputs,
+    prepare_playable_unit_compiler,
+)
 
 
 SCHEMA = "openbfme.neutral-structure-pack-artifact"
@@ -300,8 +303,10 @@ def compile_neutral_structure_pack_artifact(
 ) -> dict[str, object]:
     """Compile one exact neutral structure pack artifact or fail closed.
 
-    The caller supplies a sealed retail visual closure.  This function never
-    searches a fallback asset root and never admits a production route.
+    The caller supplies a sealed retail visual closure. This function never
+    searches a fallback asset root. A map-rooted Object that already has exact
+    authored production retains those routes; only route-less roots receive
+    the scenario-nonbuildable admission contract.
     """
 
     if game not in {"bfme2", "rotwk"}:
@@ -309,6 +314,17 @@ def compile_neutral_structure_pack_artifact(
     if not isinstance(target_id, str) or not target_id or len(target_id) > 256:
         raise NeutralStructurePackCompilerError("neutral structure identity is invalid")
     admission = _normalized_admission(role, surfaces)
+    if prepared is None:
+        prepared = prepare_playable_unit_compiler(documents)
+    elif prepared.documents is not documents:
+        raise NeutralStructurePackCompilerError(
+            "prepared compiler inputs belong to a different document mapping"
+        )
+    target = prepared.objects.get(target_id.casefold())
+    if target is None:
+        raise NeutralStructurePackCompilerError(
+            f"neutral structure effective Object is missing: {target_id}"
+        )
     try:
         descriptor = compile_playable_structure_descriptor(
             target_id,
@@ -383,7 +399,11 @@ def compile_neutral_structure_pack_artifact(
             f"neutral structure {target_id} is not package-ready: {exc}"
         ) from exc
 
-    scenario = descriptor["scenarioAdmission"]
+    source_identity = {
+        "declarationKind": target.kind,
+        "sourceIni": target.source_virtual_path,
+        "line": target.line,
+    }
     artifact: dict[str, object] = {
         "schema": SCHEMA,
         "schemaVersion": SCHEMA_VERSION,
@@ -391,11 +411,7 @@ def compile_neutral_structure_pack_artifact(
         "objectId": target_id,
         "role": role,
         "surfaces": list(admission["surfaces"]),
-        "sourceIdentity": {
-            "declarationKind": scenario["declarationKind"],
-            "sourceIni": scenario["sourceIni"],
-            "line": scenario["line"],
-        },
+        "sourceIdentity": source_identity,
         "descriptor": descriptor,
         "visualRecipe": recipe,
         "lifecycleEvidence": evidence,
@@ -476,22 +492,48 @@ def validate_neutral_structure_pack_artifact(value: Mapping[str, object]) -> Non
     production = descriptor.get("production")
     scenario = descriptor.get("scenarioAdmission")
     source_identity = value.get("sourceIdentity")
-    if (
-        not isinstance(production, Mapping)
-        or production.get("evidence") != "authored-neutral-map"
-        or production.get("routes") != []
-        or not isinstance(scenario, Mapping)
-        or scenario.get("role") != admission["role"]
-        or scenario.get("surfaces") != admission["surfaces"]
-        or scenario.get("buildCommandExposed") is not False
-        or not isinstance(source_identity, Mapping)
-        or source_identity
-        != {
+    source_documents = descriptor.get("sourceDocuments")
+    valid_source_identity = (
+        isinstance(source_identity, Mapping)
+        and set(source_identity) == {"declarationKind", "sourceIni", "line"}
+        and source_identity.get("declarationKind") in {"Object", "ChildObject"}
+        and isinstance(source_identity.get("sourceIni"), str)
+        and bool(source_identity.get("sourceIni"))
+        and isinstance(source_identity.get("line"), int)
+        and not isinstance(source_identity.get("line"), bool)
+        and int(source_identity.get("line", 0)) > 0
+        and isinstance(source_documents, list)
+        and source_identity.get("sourceIni")
+        in {
+            row.get("virtualPath")
+            for row in source_documents
+            if isinstance(row, Mapping)
+        }
+    )
+    scenario_nonbuildable = (
+        isinstance(production, Mapping)
+        and production.get("evidence") == "authored-neutral-map"
+        and production.get("routes") == []
+        and isinstance(scenario, Mapping)
+        and scenario.get("role") == admission["role"]
+        and scenario.get("surfaces") == admission["surfaces"]
+        and scenario.get("buildCommandExposed") is False
+        and source_identity
+        == {
             "declarationKind": scenario.get("declarationKind"),
             "sourceIni": scenario.get("sourceIni"),
             "line": scenario.get("line"),
         }
-    ):
+    )
+    authored_buildable = (
+        isinstance(production, Mapping)
+        and production.get("evidence")
+        in {"authored-construct-command", "authored-wall-upgrade-command"}
+        and isinstance(production.get("routes"), list)
+        and bool(production.get("routes"))
+        and scenario is None
+    )
+    if not valid_source_identity or not (scenario_nonbuildable or authored_buildable):
         raise NeutralStructurePackCompilerError(
             "neutral structure artifact admission or source provenance is invalid"
         )
