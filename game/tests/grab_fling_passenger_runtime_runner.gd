@@ -86,9 +86,20 @@ func _sim() -> RetailSliceSim:
 	var sim: RetailSliceSim = Sim.new()
 	var rules := {}
 	for object_id in [Sim.SOLDIER_OBJECT_ID, Sim.SOLDIER_HORDE_ID, Sim.ARCHER_OBJECT_ID, Sim.TOWER_GUARD_OBJECT_ID, Sim.KNIGHT_OBJECT_ID]: rules[object_id] = _fixture_rule("Baseline", ["INFANTRY"])
-	sim.setup({}, {"unit_rules": rules, "source_map_transform_scale": 0.1, "physics_gravity_source_per_second_squared": 100.0})
+	sim.setup({}, {"unit_rules": rules, "faction_manifest": {"structure_armor": _fixture_structure_armor()}, "source_map_transform_scale": 0.1, "physics_gravity_source_per_second_squared": 100.0})
 	sim.ai_enabled=false; sim.base_loop_enabled=false; sim.entities.clear(); sim.structures.clear()
 	return sim
+
+
+func _fixture_structure_armor() -> Dictionary:
+	var armor := {}
+	for kind_value in Sim.STRUCTURE_KINDS:
+		armor[String(kind_value)] = {
+			"set_id": "FixtureArmor",
+			"damage_scalar": 1.0,
+			"scalars": {"default": 1.0},
+		}
+	return armor
 
 
 func _spawn(sim: RetailSliceSim, id: int, team: int, point: Vector2, source_id: String, kinds: Array) -> void:
