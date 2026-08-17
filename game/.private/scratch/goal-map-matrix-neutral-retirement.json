@@ -1,0 +1,349 @@
+{
+	"maps": {
+		"bfme2.map.evendim": {
+			"detail": "",
+			"ok": true
+		},
+		"bfme2.map.fords-of-isen-ii": {
+			"detail": "",
+			"ok": true
+		},
+		"bfme2.map.grey-mountains": {
+			"detail": "",
+			"ok": true
+		},
+		"bfme2.map.harlindon": {
+			"detail": "",
+			"ok": true
+		},
+		"bfme2.map.tournament-hills": {
+			"detail": "",
+			"ok": true
+		},
+		"bfme2.map.tournament-udun": {
+			"detail": "",
+			"ok": true
+		},
+		"bfme2.map.weather-hills": {
+			"detail": "",
+			"ok": true
+		},
+		"bfme2.map.withered-heath": {
+			"detail": "",
+			"ok": true
+		},
+		"official_rotwk_all_load": {
+			"detail": "rotwk_load_ok=74 expected=72",
+			"ok": false
+		},
+		"official_rotwk_count": {
+			"detail": "rotwk_maps=74 expected=72",
+			"ok": false
+		},
+		"rotwk.map.adorn-river": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.amon-sul-fortress": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.anfalas": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.argonath": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.brown-lands": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.evendim": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.fall-back-4p": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.fall-back-8p": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.fords-of-isen-ii": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.grey-mountains": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.harlindon": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.paths-of-the-dead": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.the-heubris": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.tournament-gundabad": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.tournament-hills": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.tournament-mp1": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.tournament-rhudaur": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.tournament-udun": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.tournament-westmarch": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.umbar": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.weather-hills": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.weathertop": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.withered-heath": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-ang-amon-sul": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-ang-angmar": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-ang-barrow-downs": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-ang-carn-dum": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-ang-fornost": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-ang-gundabad": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-ang-north-downs": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-ang-rhudaur": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-arnor": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-belfalas": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-black-gate": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-buckland": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-cair-andros": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-cardolan": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-carrock": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-celduin": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-dagorlad": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-dead-marshes": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-dol-guldur": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-dunland": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-enedwaith": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-erebor": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-ettenmoors": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-fangorn": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-forlindon": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-forodwaith": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-gap-of-rohan": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-gondor": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-grey-havens": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-harad": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-harlindon": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-helms-deep": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-high-pass": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-iron-hills": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-isengard": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-ithilien": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-lorien": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-lostriand": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-minas-morgul": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-minas-tirith": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-minhiriath": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-mirkwood": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-mordor": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-mount-doom": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-osgiliath": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-redhorn-pass": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-rhun": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-rivendell": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-rohan": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-shire": {
+			"detail": "",
+			"ok": true
+		},
+		"rotwk.map.wor-tower-hills": {
+			"detail": "",
+			"ok": true
+		}
+	},
+	"summary": {
+		"bundle_map_count": 82,
+		"failed": 2,
+		"load_fail": 0,
+		"load_ok": 82,
+		"passed": 82,
+		"rotwk_load_ok": 74,
+		"rotwk_map_count": 74
+	}
+}

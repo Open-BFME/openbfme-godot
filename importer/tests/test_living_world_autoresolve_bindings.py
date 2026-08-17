@@ -41,7 +41,7 @@ _WANTED = (
 )
 
 
-def _private_.private() -> pathlib.Path | None:
+def workspace_root() -> pathlib.Path | None:
     """The nearest ``workspace/retail-work`` that carries ALL THREE inputs.
 
     A git worktree under ``.claude/worktrees/`` gets its own partial ``workspace``,
@@ -666,7 +666,7 @@ End
 
 @pytest.fixture(scope="module")
 def real_manifest() -> dict[str, Any]:
-    root = _private_.private()
+    root = _private_workspace()
     if root is None:
         pytest.skip(
             "no workspace/retail-work above this file carries all of "

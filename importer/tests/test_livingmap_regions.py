@@ -402,7 +402,7 @@ _WANTED = (
 )
 
 
-def _private_.private() -> pathlib.Path | None:
+def workspace_root() -> pathlib.Path | None:
     for parent in pathlib.Path(__file__).resolve().parents:
         root = parent / "workspace" / "retail-work"
         if all((root / relative).is_file() for _what, relative in _WANTED):
@@ -431,7 +431,7 @@ def test_pin_the_real_layers_cover_retails_own_regions(
     regions and nothing for others, which is worse than the uniform substitute it
     replaced.
     """
-    root = _private_.private()
+    root = _private_workspace()
     if root is None:
         pytest.skip(
             "no workspace/retail-work carrying catalog/rotwk.json and "
@@ -469,7 +469,7 @@ def test_pin_the_seledge_gap_still_describes_the_shipped_asset(tmp_path):
     winner comes from the BFME2 layer), the model does not cover retail's region
     set, and it carries BFME2 region names that are not RotWK regions.
     """
-    root = _private_.private()
+    root = _private_workspace()
     if root is None:
         pytest.skip(
             "no workspace/retail-work carrying catalog/rotwk.json and "

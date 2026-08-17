@@ -188,6 +188,6 @@ def test_changed_retail_source_and_game_dat_fail_closed() -> None:
         build_contract_from_payloads(_payloads(), bytes(changed_game))
 
 
-def test_output_cannot_escape_private_.private(tmp_path: Path) -> None:
+def test_output_cannot_escape_workspace(tmp_path: Path) -> None:
     with pytest.raises(HudLibInGameUiActionOracleError, match="under workspace"):
         write_contract(build_contract(ASSETS, GAME_DAT), tmp_path / "contract.json")

@@ -13002,3 +13002,590 @@ index 0000000000000000000000000000000000000000..821c6c4adb9386b7919f4b32fdbdfd50
 +}
 
 collab: Wait
+diff --git a/.gitignore b/.gitignore
+index 04e5ac0f31fe202827d11808268c94ac73caaa25..489af2ff781f023db1e79ad6612ddc788d01368f
+--- a/.gitignore
++++ b/.gitignore
+@@ -10,13 +10,12 @@
+ **/*.obj.import
+ **/*.tmp
+ 
+-# Lane A — never commit
+-workspace/retail-extract/
+-**/workspace/retail-extract/
+-
+-# Private retail development workspace. Payloads may live here locally but are
+-# never part of git, exports, or the later code-only public-release tree.
+-/workspace/
++# Retail development workspace. Payloads may live here locally but are
++# never part of git, exports, or the later code-only public-release tree.
++/workspace/
++
++# Root-level lane debris from local tools belongs under workspace/logs/.
++/.lane-*
+ 
+ # Raw generation dumps
+ _imagine_raw/
+@@ -62,8 +61,7 @@
+ # Session/oracle captures (local only; not product source)
+ .captures/
+ captures/
+-game/.captures/
+-game/workspace/
++game/.captures/
+ 
+ # Python and Ruff caches
+ .pytest_cache/
+diff --git a/workspace/manifest.json b/workspace/manifest.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..821c6c4adb9386b7919f4b32fdbdfd508202fe7d
+--- /dev/null
++++ b/workspace/manifest.json
+@@ -0,0 +1,7 @@
++{
++  "retailInstall": "workspace/retail-work/editions/rotwk/layered-install/layer-1-bfme2",
++  "pinnedPython": "workspace/retail-work/tools/python-3.12-env/Scripts/python.exe",
++  "packsRoot": "workspace/content-packs",
++  "retailExtract": "workspace/retail-extract",
++  "logsRoot": "workspace/logs"
++}
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'Write-Output process-launch-ok' in C:\Users\Jonathan\Desktop\open-bfme
+2026-08-17T16:14:47.236068Z ERROR codex_core::tools::router: error=Exit code: -1073741502
+Wall time: 0 seconds
+Output:
+
+ exited -1073741502 in 9ms:
+diff --git a/.gitignore b/.gitignore
+index 04e5ac0f31fe202827d11808268c94ac73caaa25..489af2ff781f023db1e79ad6612ddc788d01368f
+--- a/.gitignore
++++ b/.gitignore
+@@ -10,13 +10,12 @@
+ **/*.obj.import
+ **/*.tmp
+ 
+-# Lane A — never commit
+-workspace/retail-extract/
+-**/workspace/retail-extract/
+-
+-# Private retail development workspace. Payloads may live here locally but are
+-# never part of git, exports, or the later code-only public-release tree.
+-/workspace/
++# Retail development workspace. Payloads may live here locally but are
++# never part of git, exports, or the later code-only public-release tree.
++/workspace/
++
++# Root-level lane debris from local tools belongs under workspace/logs/.
++/.lane-*
+ 
+ # Raw generation dumps
+ _imagine_raw/
+@@ -62,8 +61,7 @@
+ # Session/oracle captures (local only; not product source)
+ .captures/
+ captures/
+-game/.captures/
+-game/workspace/
++game/.captures/
+ 
+ # Python and Ruff caches
+ .pytest_cache/
+diff --git a/workspace/manifest.json b/workspace/manifest.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..821c6c4adb9386b7919f4b32fdbdfd508202fe7d
+--- /dev/null
++++ b/workspace/manifest.json
+@@ -0,0 +1,7 @@
++{
++  "retailInstall": "workspace/retail-work/editions/rotwk/layered-install/layer-1-bfme2",
++  "pinnedPython": "workspace/retail-work/tools/python-3.12-env/Scripts/python.exe",
++  "packsRoot": "workspace/content-packs",
++  "retailExtract": "workspace/retail-extract",
++  "logsRoot": "workspace/logs"
++}
+
+codex
+The process-launch failure is persisting after cleanup waits, so I can’t safely continue file regeneration or verification through the shell yet. I’m checking for a non-shell Windows process-control path to identify and clear only orphaned Git/Python children; I will not reboot, kill unrelated work, or alter repository state as a workaround.
+diff --git a/.gitignore b/.gitignore
+index 04e5ac0f31fe202827d11808268c94ac73caaa25..489af2ff781f023db1e79ad6612ddc788d01368f
+--- a/.gitignore
++++ b/.gitignore
+@@ -10,13 +10,12 @@
+ **/*.obj.import
+ **/*.tmp
+ 
+-# Lane A — never commit
+-workspace/retail-extract/
+-**/workspace/retail-extract/
+-
+-# Private retail development workspace. Payloads may live here locally but are
+-# never part of git, exports, or the later code-only public-release tree.
+-/workspace/
++# Retail development workspace. Payloads may live here locally but are
++# never part of git, exports, or the later code-only public-release tree.
++/workspace/
++
++# Root-level lane debris from local tools belongs under workspace/logs/.
++/.lane-*
+ 
+ # Raw generation dumps
+ _imagine_raw/
+@@ -62,8 +61,7 @@
+ # Session/oracle captures (local only; not product source)
+ .captures/
+ captures/
+-game/.captures/
+-game/workspace/
++game/.captures/
+ 
+ # Python and Ruff caches
+ .pytest_cache/
+diff --git a/workspace/manifest.json b/workspace/manifest.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..821c6c4adb9386b7919f4b32fdbdfd508202fe7d
+--- /dev/null
++++ b/workspace/manifest.json
+@@ -0,0 +1,7 @@
++{
++  "retailInstall": "workspace/retail-work/editions/rotwk/layered-install/layer-1-bfme2",
++  "pinnedPython": "workspace/retail-work/tools/python-3.12-env/Scripts/python.exe",
++  "packsRoot": "workspace/content-packs",
++  "retailExtract": "workspace/retail-extract",
++  "logsRoot": "workspace/logs"
++}
+
+diff --git a/.gitignore b/.gitignore
+index 04e5ac0f31fe202827d11808268c94ac73caaa25..489af2ff781f023db1e79ad6612ddc788d01368f
+--- a/.gitignore
++++ b/.gitignore
+@@ -10,13 +10,12 @@
+ **/*.obj.import
+ **/*.tmp
+ 
+-# Lane A — never commit
+-workspace/retail-extract/
+-**/workspace/retail-extract/
+-
+-# Private retail development workspace. Payloads may live here locally but are
+-# never part of git, exports, or the later code-only public-release tree.
+-/workspace/
++# Retail development workspace. Payloads may live here locally but are
++# never part of git, exports, or the later code-only public-release tree.
++/workspace/
++
++# Root-level lane debris from local tools belongs under workspace/logs/.
++/.lane-*
+ 
+ # Raw generation dumps
+ _imagine_raw/
+@@ -62,8 +61,7 @@
+ # Session/oracle captures (local only; not product source)
+ .captures/
+ captures/
+-game/.captures/
+-game/workspace/
++game/.captures/
+ 
+ # Python and Ruff caches
+ .pytest_cache/
+diff --git a/workspace/manifest.json b/workspace/manifest.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..821c6c4adb9386b7919f4b32fdbdfd508202fe7d
+--- /dev/null
++++ b/workspace/manifest.json
+@@ -0,0 +1,7 @@
++{
++  "retailInstall": "workspace/retail-work/editions/rotwk/layered-install/layer-1-bfme2",
++  "pinnedPython": "workspace/retail-work/tools/python-3.12-env/Scripts/python.exe",
++  "packsRoot": "workspace/content-packs",
++  "retailExtract": "workspace/retail-extract",
++  "logsRoot": "workspace/logs"
++}
+
+diff --git a/.gitignore b/.gitignore
+index 04e5ac0f31fe202827d11808268c94ac73caaa25..489af2ff781f023db1e79ad6612ddc788d01368f
+--- a/.gitignore
++++ b/.gitignore
+@@ -10,13 +10,12 @@
+ **/*.obj.import
+ **/*.tmp
+ 
+-# Lane A — never commit
+-workspace/retail-extract/
+-**/workspace/retail-extract/
+-
+-# Private retail development workspace. Payloads may live here locally but are
+-# never part of git, exports, or the later code-only public-release tree.
+-/workspace/
++# Retail development workspace. Payloads may live here locally but are
++# never part of git, exports, or the later code-only public-release tree.
++/workspace/
++
++# Root-level lane debris from local tools belongs under workspace/logs/.
++/.lane-*
+ 
+ # Raw generation dumps
+ _imagine_raw/
+@@ -62,8 +61,7 @@
+ # Session/oracle captures (local only; not product source)
+ .captures/
+ captures/
+-game/.captures/
+-game/workspace/
++game/.captures/
+ 
+ # Python and Ruff caches
+ .pytest_cache/
+diff --git a/workspace/manifest.json b/workspace/manifest.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..821c6c4adb9386b7919f4b32fdbdfd508202fe7d
+--- /dev/null
++++ b/workspace/manifest.json
+@@ -0,0 +1,7 @@
++{
++  "retailInstall": "workspace/retail-work/editions/rotwk/layered-install/layer-1-bfme2",
++  "pinnedPython": "workspace/retail-work/tools/python-3.12-env/Scripts/python.exe",
++  "packsRoot": "workspace/content-packs",
++  "retailExtract": "workspace/retail-extract",
++  "logsRoot": "workspace/logs"
++}
+
+mcp: node_repl/js started
+mcp: node_repl/js (failed)
+diff --git a/.gitignore b/.gitignore
+index 04e5ac0f31fe202827d11808268c94ac73caaa25..489af2ff781f023db1e79ad6612ddc788d01368f
+--- a/.gitignore
++++ b/.gitignore
+@@ -10,13 +10,12 @@
+ **/*.obj.import
+ **/*.tmp
+ 
+-# Lane A — never commit
+-workspace/retail-extract/
+-**/workspace/retail-extract/
+-
+-# Private retail development workspace. Payloads may live here locally but are
+-# never part of git, exports, or the later code-only public-release tree.
+-/workspace/
++# Retail development workspace. Payloads may live here locally but are
++# never part of git, exports, or the later code-only public-release tree.
++/workspace/
++
++# Root-level lane debris from local tools belongs under workspace/logs/.
++/.lane-*
+ 
+ # Raw generation dumps
+ _imagine_raw/
+@@ -62,8 +61,7 @@
+ # Session/oracle captures (local only; not product source)
+ .captures/
+ captures/
+-game/.captures/
+-game/workspace/
++game/.captures/
+ 
+ # Python and Ruff caches
+ .pytest_cache/
+diff --git a/workspace/manifest.json b/workspace/manifest.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..821c6c4adb9386b7919f4b32fdbdfd508202fe7d
+--- /dev/null
++++ b/workspace/manifest.json
+@@ -0,0 +1,7 @@
++{
++  "retailInstall": "workspace/retail-work/editions/rotwk/layered-install/layer-1-bfme2",
++  "pinnedPython": "workspace/retail-work/tools/python-3.12-env/Scripts/python.exe",
++  "packsRoot": "workspace/content-packs",
++  "retailExtract": "workspace/retail-extract",
++  "logsRoot": "workspace/logs"
++}
+
+diff --git a/.gitignore b/.gitignore
+index 04e5ac0f31fe202827d11808268c94ac73caaa25..489af2ff781f023db1e79ad6612ddc788d01368f
+--- a/.gitignore
++++ b/.gitignore
+@@ -10,13 +10,12 @@
+ **/*.obj.import
+ **/*.tmp
+ 
+-# Lane A — never commit
+-workspace/retail-extract/
+-**/workspace/retail-extract/
+-
+-# Private retail development workspace. Payloads may live here locally but are
+-# never part of git, exports, or the later code-only public-release tree.
+-/workspace/
++# Retail development workspace. Payloads may live here locally but are
++# never part of git, exports, or the later code-only public-release tree.
++/workspace/
++
++# Root-level lane debris from local tools belongs under workspace/logs/.
++/.lane-*
+ 
+ # Raw generation dumps
+ _imagine_raw/
+@@ -62,8 +61,7 @@
+ # Session/oracle captures (local only; not product source)
+ .captures/
+ captures/
+-game/.captures/
+-game/workspace/
++game/.captures/
+ 
+ # Python and Ruff caches
+ .pytest_cache/
+diff --git a/workspace/manifest.json b/workspace/manifest.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..821c6c4adb9386b7919f4b32fdbdfd508202fe7d
+--- /dev/null
++++ b/workspace/manifest.json
+@@ -0,0 +1,7 @@
++{
++  "retailInstall": "workspace/retail-work/editions/rotwk/layered-install/layer-1-bfme2",
++  "pinnedPython": "workspace/retail-work/tools/python-3.12-env/Scripts/python.exe",
++  "packsRoot": "workspace/content-packs",
++  "retailExtract": "workspace/retail-extract",
++  "logsRoot": "workspace/logs"
++}
+
+collab: Wait
+diff --git a/.gitignore b/.gitignore
+index 04e5ac0f31fe202827d11808268c94ac73caaa25..489af2ff781f023db1e79ad6612ddc788d01368f
+--- a/.gitignore
++++ b/.gitignore
+@@ -10,13 +10,12 @@
+ **/*.obj.import
+ **/*.tmp
+ 
+-# Lane A — never commit
+-workspace/retail-extract/
+-**/workspace/retail-extract/
+-
+-# Private retail development workspace. Payloads may live here locally but are
+-# never part of git, exports, or the later code-only public-release tree.
+-/workspace/
++# Retail development workspace. Payloads may live here locally but are
++# never part of git, exports, or the later code-only public-release tree.
++/workspace/
++
++# Root-level lane debris from local tools belongs under workspace/logs/.
++/.lane-*
+ 
+ # Raw generation dumps
+ _imagine_raw/
+@@ -62,8 +61,7 @@
+ # Session/oracle captures (local only; not product source)
+ .captures/
+ captures/
+-game/.captures/
+-game/workspace/
++game/.captures/
+ 
+ # Python and Ruff caches
+ .pytest_cache/
+diff --git a/workspace/manifest.json b/workspace/manifest.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..821c6c4adb9386b7919f4b32fdbdfd508202fe7d
+--- /dev/null
++++ b/workspace/manifest.json
+@@ -0,0 +1,7 @@
++{
++  "retailInstall": "workspace/retail-work/editions/rotwk/layered-install/layer-1-bfme2",
++  "pinnedPython": "workspace/retail-work/tools/python-3.12-env/Scripts/python.exe",
++  "packsRoot": "workspace/content-packs",
++  "retailExtract": "workspace/retail-extract",
++  "logsRoot": "workspace/logs"
++}
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'Write-Output process-launch-ok' in C:\Users\Jonathan\Desktop\open-bfme
+2026-08-17T16:17:30.570925Z ERROR codex_core::tools::router: error=Exit code: -1073741502
+Wall time: 0 seconds
+Output:
+
+ exited -1073741502 in 4ms:
+diff --git a/.gitignore b/.gitignore
+index 04e5ac0f31fe202827d11808268c94ac73caaa25..489af2ff781f023db1e79ad6612ddc788d01368f
+--- a/.gitignore
++++ b/.gitignore
+@@ -10,13 +10,12 @@
+ **/*.obj.import
+ **/*.tmp
+ 
+-# Lane A — never commit
+-workspace/retail-extract/
+-**/workspace/retail-extract/
+-
+-# Private retail development workspace. Payloads may live here locally but are
+-# never part of git, exports, or the later code-only public-release tree.
+-/workspace/
++# Retail development workspace. Payloads may live here locally but are
++# never part of git, exports, or the later code-only public-release tree.
++/workspace/
++
++# Root-level lane debris from local tools belongs under workspace/logs/.
++/.lane-*
+ 
+ # Raw generation dumps
+ _imagine_raw/
+@@ -62,8 +61,7 @@
+ # Session/oracle captures (local only; not product source)
+ .captures/
+ captures/
+-game/.captures/
+-game/workspace/
++game/.captures/
+ 
+ # Python and Ruff caches
+ .pytest_cache/
+diff --git a/workspace/manifest.json b/workspace/manifest.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..821c6c4adb9386b7919f4b32fdbdfd508202fe7d
+--- /dev/null
++++ b/workspace/manifest.json
+@@ -0,0 +1,7 @@
++{
++  "retailInstall": "workspace/retail-work/editions/rotwk/layered-install/layer-1-bfme2",
++  "pinnedPython": "workspace/retail-work/tools/python-3.12-env/Scripts/python.exe",
++  "packsRoot": "workspace/content-packs",
++  "retailExtract": "workspace/retail-extract",
++  "logsRoot": "workspace/logs"
++}
+
+Windows can no longer initialize any child process (0xC0000142) after the bulk Git-blob regeneration attempt. Repository work is paused mid-repair; a Codex app restart is needed before safe recovery and verification can continue.
+  ✓ Record pre-move status, pack-address output, and importer baseline
+  ✓ Commit exactly the three in-flight coverage files
+  ✓ Move private/workspace assets and tracked log debris
+  → Update ignore rules, tracked references, workspace configs, digests, and manifest
+  • Run all required verification and write hostile-review report
+  • Create the pure rename commit and confirm final state
+diff --git a/.gitignore b/.gitignore
+index 04e5ac0f31fe202827d11808268c94ac73caaa25..489af2ff781f023db1e79ad6612ddc788d01368f
+--- a/.gitignore
++++ b/.gitignore
+@@ -10,13 +10,12 @@
+ **/*.obj.import
+ **/*.tmp
+ 
+-# Lane A — never commit
+-workspace/retail-extract/
+-**/workspace/retail-extract/
+-
+-# Private retail development workspace. Payloads may live here locally but are
+-# never part of git, exports, or the later code-only public-release tree.
+-/workspace/
++# Retail development workspace. Payloads may live here locally but are
++# never part of git, exports, or the later code-only public-release tree.
++/workspace/
++
++# Root-level lane debris from local tools belongs under workspace/logs/.
++/.lane-*
+ 
+ # Raw generation dumps
+ _imagine_raw/
+@@ -62,8 +61,7 @@
+ # Session/oracle captures (local only; not product source)
+ .captures/
+ captures/
+-game/.captures/
+-game/workspace/
++game/.captures/
+ 
+ # Python and Ruff caches
+ .pytest_cache/
+diff --git a/workspace/manifest.json b/workspace/manifest.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..821c6c4adb9386b7919f4b32fdbdfd508202fe7d
+--- /dev/null
++++ b/workspace/manifest.json
+@@ -0,0 +1,7 @@
++{
++  "retailInstall": "workspace/retail-work/editions/rotwk/layered-install/layer-1-bfme2",
++  "pinnedPython": "workspace/retail-work/tools/python-3.12-env/Scripts/python.exe",
++  "packsRoot": "workspace/content-packs",
++  "retailExtract": "workspace/retail-extract",
++  "logsRoot": "workspace/logs"
++}
+
+codex
+Stage 1 is paused mid-repair. Windows stopped initializing all child processes with `0xC0000142`, so I cannot safely finish or verify the tree.
+
+Current state:
+
+- Physical rename completed.
+- Pack integrity passed: `packs=42 roots=2`.
+- Godot passed: `218/0`.
+- Dist pipeline passed with execution-policy bypass.
+- Importer exposed an over-broad replacement bug; repair is incomplete.
+- Rename commit and report have not been created.
+- Do not run or commit the current working tree.
+
+Please restart the Codex app, reopen this thread, and say **continue**. A full Windows reboot is unnecessary unless restarting Codex does not restore shell execution.
+
+
+diff --git a/.gitignore b/.gitignore
+index 04e5ac0f31fe202827d11808268c94ac73caaa25..489af2ff781f023db1e79ad6612ddc788d01368f
+--- a/.gitignore
++++ b/.gitignore
+@@ -10,13 +10,12 @@
+ **/*.obj.import
+ **/*.tmp
+ 
+-# Lane A — never commit
+-workspace/retail-extract/
+-**/workspace/retail-extract/
+-
+-# Private retail development workspace. Payloads may live here locally but are
+-# never part of git, exports, or the later code-only public-release tree.
+-/workspace/
++# Retail development workspace. Payloads may live here locally but are
++# never part of git, exports, or the later code-only public-release tree.
++/workspace/
++
++# Root-level lane debris from local tools belongs under workspace/logs/.
++/.lane-*
+ 
+ # Raw generation dumps
+ _imagine_raw/
+@@ -62,8 +61,7 @@
+ # Session/oracle captures (local only; not product source)
+ .captures/
+ captures/
+-game/.captures/
+-game/workspace/
++game/.captures/
+ 
+ # Python and Ruff caches
+ .pytest_cache/
+diff --git a/workspace/manifest.json b/workspace/manifest.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..821c6c4adb9386b7919f4b32fdbdfd508202fe7d
+--- /dev/null
++++ b/workspace/manifest.json
+@@ -0,0 +1,7 @@
++{
++  "retailInstall": "workspace/retail-work/editions/rotwk/layered-install/layer-1-bfme2",
++  "pinnedPython": "workspace/retail-work/tools/python-3.12-env/Scripts/python.exe",
++  "packsRoot": "workspace/content-packs",
++  "retailExtract": "workspace/retail-extract",
++  "logsRoot": "workspace/logs"
++}
+
+tokens used
+298,280
+Stage 1 is paused mid-repair. Windows stopped initializing all child processes with `0xC0000142`, so I cannot safely finish or verify the tree.
+
+Current state:
+
+- Physical rename completed.
+- Pack integrity passed: `packs=42 roots=2`.
+- Godot passed: `218/0`.
+- Dist pipeline passed with execution-policy bypass.
+- Importer exposed an over-broad replacement bug; repair is incomplete.
+- Rename commit and report have not been created.
+- Do not run or commit the current working tree.
+
+Please restart the Codex app, reopen this thread, and say **continue**. A full Windows reboot is unnecessary unless restarting Codex does not restore shell execution.
+
+

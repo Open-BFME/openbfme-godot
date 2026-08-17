@@ -180,7 +180,7 @@ def test_compose_refuses_undecodable_map_source() -> None:
         )
 
 
-def test_resolve_selected_pack_reads_.private_selection(tmp_path: Path) -> None:
+def test_resolve_selected_pack_reads_workspace_selection(tmp_path: Path) -> None:
     with pytest.raises(RepairRefusal, match="selection is missing"):
         resolve_selected_pack(tmp_path)
 
