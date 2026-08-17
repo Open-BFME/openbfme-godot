@@ -1260,6 +1260,11 @@ def _base_weapon_damage(
             resolved_field = _resolved_definition_field(fields, source_name, constants)
             if resolved_field is not None:
                 component[output_name] = resolved_field["value"]
+        if "radius" in component and "damageTaperOff" not in component:
+            # SAGE's unauthored taper is zero (full damage through the edge).
+            # Materialize it only beside an authored Radius so ordinary
+            # no-radius nugget output does not gain a synthetic field.
+            component["damageTaperOff"] = 0
         for output_name, source_name in (
             ("deathType", "DeathType"),
             ("damageFXType", "DamageFXType"),
@@ -1780,7 +1785,15 @@ def _simulation_contract(
                     combat["radiusDamageAffects"] = next(
                         iter(radius_affects.values())
                     )
-                damage = _resolved_definition_field(warhead, "Damage", constants)
+                damage = _base_weapon_damage(
+                    documents,
+                    warhead_id,
+                    constants,
+                    cache=named_definition_cache,
+                    cache_lock=cache_lock,
+                )
+                if damage is None:
+                    damage = _resolved_definition_field(warhead, "Damage", constants)
                 if damage is not None:
                     combat["damage"] = damage
         if "damage" not in combat:
@@ -1837,10 +1850,10 @@ def _simulation_contract(
         }
         if len(unique_damage_types) == 1:
             combat["damageType"] = next(iter(unique_damage_types.values()))
-        elif not unique_damage_types:
-            # No flat Weapon-level DamageType row: the type rides the
-            # DamageNuggets the damage total was aggregated from.
-            _apply_nugget_damage_types(combat)
+        # Nugget metadata is still required when every nugget shares the same
+        # type (retail trebuchet: two SIEGE radii). This helper preserves the
+        # flat type while publishing radius-bearing component rows.
+        _apply_nugget_damage_types(combat)
         for output_name, source_name in (
             ("clipSize", "ClipSize"),
             ("clipReloadTimeMs", "ClipReloadTime"),
@@ -6328,6 +6341,34 @@ def _weapon_mode_profile(
     if pre_attack_random is not None:
         pre_attack_random["deterministicUse"] = "deferred"
         profile["preAttackRandomAmountMs"] = pre_attack_random
+    projectile_ids = {
+        str(row.get("expression", "")).casefold(): str(row.get("expression", ""))
+        for row in definition.get("projectiletemplatename", ())
+        if str(row.get("expression", ""))
+    }
+    if len(projectile_ids) == 1:
+        profile["projectileObjectId"] = next(iter(projectile_ids.values()))
+    warhead_ids = {
+        str(row.get("expression", "")).casefold(): str(row.get("expression", ""))
+        for key in ("warheadtemplatename", "warhead")
+        for row in definition.get(key, ())
+        if str(row.get("expression", ""))
+    }
+    if len(warhead_ids) == 1:
+        warhead = _named_definition_values(
+            documents,
+            "Weapon",
+            next(iter(warhead_ids.values())),
+            cache=named_definition_cache,
+            cache_lock=cache_lock,
+        )
+        radius_affects = {
+            str(row.get("expression", "")).casefold(): str(row.get("expression", ""))
+            for row in (warhead or {}).get("radiusdamageaffects", ())
+            if str(row.get("expression", ""))
+        }
+        if len(radius_affects) == 1:
+            profile["radiusDamageAffects"] = next(iter(radius_affects.values()))
     if "damage" not in profile:
         nugget_damage, damage_weapon_ids, empty_warhead_ids = (
             _weapon_damage_through_warheads(
@@ -6373,6 +6414,7 @@ def _weapon_mode_profile(
     }
     if len(damage_types) == 1:
         profile["damageType"] = next(iter(damage_types.values()))
+    _apply_nugget_damage_types(profile)
     profile["sourceIni"] = WEAPON_PATH
     return profile
 

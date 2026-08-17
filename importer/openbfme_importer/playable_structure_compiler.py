@@ -253,9 +253,17 @@ def _structure_combat_contract(
         }
         if len(radius_affects) == 1:
             combat["radiusDamageAffects"] = next(iter(radius_affects.values()))
-        damage = _resolved_definition_field(
-            warhead, "Damage", prepared.numeric_defines
+        damage = _base_weapon_damage(
+            documents,
+            warhead_id,
+            prepared.numeric_defines,
+            cache=prepared.named_definition_cache,
+            cache_lock=prepared.cache_lock,
         )
+        if damage is None:
+            damage = _resolved_definition_field(
+                warhead, "Damage", prepared.numeric_defines
+            )
         if damage is not None:
             combat["damage"] = damage
     if "damage" not in combat:
@@ -286,8 +294,7 @@ def _structure_combat_contract(
     }
     if len(damage_types) == 1:
         combat["damageType"] = next(iter(damage_types.values()))
-    elif not damage_types:
-        _apply_nugget_damage_types(combat)
+    _apply_nugget_damage_types(combat)
 
     required = {
         "attackRange",
