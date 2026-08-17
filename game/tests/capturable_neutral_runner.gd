@@ -4,7 +4,7 @@ extends SceneTree
 
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 
-const EXPECTED_CHECKS := 12
+const EXPECTED_CHECKS := 13
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
 var _watchdog := RunnerWatchdogScript.new()
 var passed := 0
@@ -115,6 +115,12 @@ func _fixture_structure_armor() -> Dictionary:
 			"damage_scalar": 1.0,
 			"scalars": {"default": 1.0},
 		}
+	for kind in ["capture_flag", "inn", "outpost", "signal_fire"]:
+		armor[kind] = {
+			"set_id": "FixtureArmor-%s" % kind,
+			"damage_scalar": 1.0,
+			"scalars": {"default": 1.0},
+		}
 	return armor
 
 
@@ -218,6 +224,9 @@ func _test_scenario_registry_does_not_steal_capturable_sources() -> void:
 		{"type_name": "Inn", "source_index": 3, "position": Vector2(12.0, 0.5), "source_position": Vector3(12.0, 0.5, 0.0), "yaw": 0.0, "properties": {}},
 	]
 	var rules := _rules(true)
+	var fixture_armor := (rules.get("faction_manifest", {}) as Dictionary).get("structure_armor", {}) as Dictionary
+	fixture_armor.erase("capture_flag")
+	fixture_armor.erase("inn")
 	rules["game"] = "rotwk"
 	rules["enable_scenario_map_placements"] = true
 	rules["scenario_structure_runtimes"] = {
@@ -241,6 +250,7 @@ func _test_scenario_registry_does_not_steal_capturable_sources() -> void:
 	_check("scenario_overlap_keeps_exactly_one_flag_and_inn", sim.structures.size() == 2 and not flag.is_empty() and not inn.is_empty(), str(sim.structures))
 	_check("scenario_overlap_preserves_neutral_capturable_flag", int(flag.get("team", -1)) == SimScript.NEUTRAL_TEAM and bool(flag.get("capturable", false)))
 	_check("scenario_overlap_preserves_inn_linkage", int(flag.get("linked_structure_id", 0)) == int(ids.get("inn", 0)) and int(inn.get("linked_structure_id", 0)) == int(ids.get("flag", 0)))
+	_check("scenario_overlap_uses_descriptor_capture_armor", String((sim._structure_armor.get("capture_flag", {}) as Dictionary).get("set_id", "")) == "")
 	sim._unit_ability_rules["test.fighter"] = sim._scaled_ability_rules([{
 		"ability_id": "Command_CaptureBuilding", "slot": 12, "targeting": "enemy-object", "cooldown_ticks": 0,
 		"required_level": 1, "level_gate_resolved": true, "castable": true,

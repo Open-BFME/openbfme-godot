@@ -6,6 +6,7 @@ const ParitySystems = preload("res://src/retail_slice/retail_slice_parity.gd")
 const FogOfWarScript = preload("res://src/retail_slice/retail_fog_of_war.gd")
 const CommandScript = preload("res://src/retail_slice/retail_command.gd")
 const SelectionPick = preload("res://src/retail_slice/retail_selection_pick.gd")
+const StructureArmorContract = preload("res://src/retail_slice/structure_armor_contract.gd")
 
 const MAX_RETAINED_EVENT_HISTORY := 2048
 const MAX_RETAINED_EVENTS_PER_KIND := 32
@@ -2496,57 +2497,11 @@ static func _scenario_structure_kind(document: Dictionary) -> String:
 	## Lairs intentionally share one MonsterLair table. Other neutral structures
 	## do not: CaptureFlag, Outpost, SignalFire, ruins, and towers can carry
 	## different ArmorSets despite sharing the admission role `neutral-structure`.
-	var registration := document.get("registration", {}) as Dictionary
-	var admission := registration.get("scenarioAdmission", {}) as Dictionary
-	var role := String(admission.get("role", ""))
-	if role == "lair":
-		return "lair"
-	if role != "neutral-structure":
-		return ""
-	var source := String(document.get("slug", "")).strip_edges().to_lower()
-	if source == "":
-		source = String(document.get("objectId", "")).strip_edges().to_lower()
-	var normalized := ""
-	for index in source.length():
-		var code := source.unicode_at(index)
-		if (code >= 48 and code <= 57) or (code >= 97 and code <= 122):
-			normalized += String.chr(code)
-		elif normalized != "" and not normalized.ends_with("_"):
-			normalized += "_"
-	return normalized.trim_suffix("_")
+	return StructureArmorContract.scenario_document_kind(document)
 
 
 func _scenario_structure_armor_projection(document: Dictionary) -> Dictionary:
-	var registration := document.get("registration", {}) as Dictionary
-	var gameplay := registration.get("gameplay", {}) as Dictionary
-	if not gameplay.has("armor"):
-		return {"present": false}
-	var armor_value: Variant = gameplay.get("armor")
-	if typeof(armor_value) != TYPE_DICTIONARY:
-		return {"error": "armor is not a dictionary"}
-	var armor := armor_value as Dictionary
-	if not armor.has("setId"):
-		return {"error": "armor has no setId"}
-	var set_id_value: Variant = armor.get("setId")
-	if set_id_value == null:
-		var semantic := String(armor.get("semantic", "")).strip_edges()
-		if semantic == "" or armor.has("table"):
-			return {"error": "null setId lacks exact passthrough evidence"}
-		return {"present": true, "table": {
-			"set_id": "",
-			"damage_scalar": 1.0,
-			"scalars": {"default": 1.0},
-			"passthrough": true,
-		}}
-	if typeof(set_id_value) != TYPE_STRING or String(set_id_value).strip_edges() == "":
-		return {"error": "setId is not a nonempty string"}
-	if typeof(armor.get("table")) != TYPE_DICTIONARY:
-		return {"error": "typed ArmorSet has no compiled table"}
-	var table := _compiled_armor_table(armor.get("table"))
-	if table.is_empty():
-		return {"error": "compiled armor table is empty"}
-	table["set_id"] = String(set_id_value)
-	return {"present": true, "table": table}
+	return StructureArmorContract.normalize_registration_armor(document)
 
 
 func _configure_scenario_structure_armor_projection() -> bool:
@@ -29610,14 +29565,10 @@ func _seed_capturable_neutrals() -> void:
 	## follow the nearest flag. Visuals stay on the bound map props.
 	if _capturable_placements.is_empty():
 		return
-	if not _structure_armor.has("capture_flag"):
-		_structure_armor["capture_flag"] = {"set_id": "CaptureFlag-highlander", "damage_scalar": 1.0, "scalars": {"default": 1.0}}
+	## Inn has no selected neutral descriptor yet. Keep that one gap explicit;
+	## descriptor-backed CaptureFlag / Outpost / SignalFire must never fall back.
 	if not _structure_armor.has("inn"):
 		_structure_armor["inn"] = {"set_id": "NeutralInn-provisional", "damage_scalar": 1.0, "scalars": {"default": 1.0}}
-	if not _structure_armor.has("outpost"):
-		_structure_armor["outpost"] = {"set_id": "NeutralOutpost-provisional", "damage_scalar": 1.0, "scalars": {"default": 1.0}}
-	if not _structure_armor.has("signal_fire"):
-		_structure_armor["signal_fire"] = {"set_id": "NeutralSignalFire-provisional", "damage_scalar": 1.0, "scalars": {"default": 1.0}}
 	var placements := _capturable_placements.duplicate(true)
 	placements.sort_custom(
 		func(a, b): return int((a as Dictionary).get("source_index", 0)) < int((b as Dictionary).get("source_index", 0))
@@ -29627,9 +29578,16 @@ func _seed_capturable_neutrals() -> void:
 		var placement: Dictionary = placement_value
 		if _scenario_map_seeded_source_indices.has(int(placement.get("source_index", -1))):
 			continue
+		var kind := StructureArmorContract.scenario_runtime_kind(String(placement.get("type_name", placement.get("structure_kind", ""))))
+		var authored_kind := StructureArmorContract.scenario_runtime_kind(String(placement.get("structure_kind", "")))
+		if kind == "" or authored_kind != kind:
+			configuration_error = "Capturable placement '%s' has inconsistent runtime kind '%s'" % [String(placement.get("type_name", "")), String(placement.get("structure_kind", ""))]
+			return
+		if not _structure_armor.has(kind):
+			configuration_error = "Capturable placement '%s' has no compiled armor contract" % String(placement.get("type_name", ""))
+			return
 		var structure_id := _next_capturable_structure_id
 		_next_capturable_structure_id += 1
-		var kind := String(placement.get("structure_kind", ""))
 		var max_health := maxi(1, int(placement.get("maximum_health", 1)))
 		_note_structure_table_mutation()
 		var row := {

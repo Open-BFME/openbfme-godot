@@ -60,6 +60,12 @@ func _run() -> void:
 	_check(String(rules.get("game", "")) == "rotwk", "live_match_selects_rotwk_edition")
 	sim.setup(configuration.duplicate(true), rules)
 	sim.ai_enabled = false
+	var capture_armor := sim._structure_armor.get("capture_flag", {}) as Dictionary
+	var signal_fire_armor := sim._structure_armor.get("signal_fire", {}) as Dictionary
+	var inn_armor := sim._structure_armor.get("inn", {}) as Dictionary
+	_check(bool(capture_armor.get("passthrough", false)) and String(capture_armor.get("set_id", "")) == "", "capture_flag_uses_selected_explicit_null_armor")
+	_check(String(signal_fire_armor.get("set_id", "")) == "StructureArmor" and is_equal_approx(float((signal_fire_armor.get("scalars", {}) as Dictionary).get("default", 0.0)), 0.6), "signal_fire_uses_selected_structure_armor")
+	_check(String(inn_armor.get("set_id", "")) == "NeutralInn-provisional", "inn_armor_gap_remains_explicit")
 	var capture_flags: Array[Dictionary] = []
 	var linked_inns: Array[Dictionary] = []
 	for structure_id in sim.structure_ids():

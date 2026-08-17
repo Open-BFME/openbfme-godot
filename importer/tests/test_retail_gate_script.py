@@ -110,9 +110,9 @@ def test_neutral_structure_evidence_is_wired_at_exact_selection_and_floors() -> 
         (
             "scenario_structure_armor_projection_runner.gd",
             "SCENARIO_STRUCTURE_ARMOR_PROJECTION_RESULT",
-            8,
+            14,
         ),
-        ("capturable_neutral_runner.gd", "CAPTURABLE_NEUTRAL_RESULT", 12),
+        ("capturable_neutral_runner.gd", "CAPTURABLE_NEUTRAL_RESULT", 13),
         (
             "selected_neutral_pack_acceptance_runner.gd",
             "SELECTED_NEUTRAL_PACK_ACCEPTANCE_OK",
@@ -121,7 +121,7 @@ def test_neutral_structure_evidence_is_wired_at_exact_selection_and_floors() -> 
         (
             "scenario_map_placement_live_runner.gd",
             "SCENARIO_MAP_PLACEMENT_LIVE_OK",
-            77,
+            80,
         ),
     ):
         assert re.search(

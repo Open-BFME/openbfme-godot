@@ -14,6 +14,7 @@ extends RefCounted
 
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
+const StructureArmorContract = preload("res://src/retail_slice/structure_armor_contract.gd")
 
 const DEFAULT_FACTION := "men"
 ## Historical single-faction host pack id. This is a FAST-PATH hint, never an
@@ -1955,49 +1956,10 @@ static func _compiled_structure_armor(document: Dictionary) -> Dictionary:
 	## the fraction table the simulation consumes. A missing armor block remains
 	## a stale-pack gap. An explicit null setId is different: the importer proved
 	## the object ancestry authors no ArmorSet, so SAGE applies unmodified damage.
-	var registration: Dictionary = document.get("registration", {}) as Dictionary
-	var gameplay: Dictionary = registration.get("gameplay", {}) as Dictionary
-	if not gameplay.has("armor"):
+	var projection := StructureArmorContract.normalize_registration_armor(document)
+	if projection.has("error") or not bool(projection.get("present", false)):
 		return {}
-	var armor_value: Variant = gameplay.get("armor", null)
-	if typeof(armor_value) != TYPE_DICTIONARY:
-		return {}
-	var armor := armor_value as Dictionary
-	if not armor.has("setId"):
-		return {}
-	var set_id_value: Variant = armor.get("setId")
-	if set_id_value == null:
-		var semantic := String(armor.get("semantic", "")).strip_edges()
-		if semantic == "" or armor.has("table"):
-			return {}
-		return {
-			"set_id": "",
-			"damage_scalar": 1.0,
-			"scalars": {"default": 1.0},
-			"passthrough": true,
-			"semantic": semantic,
-		}
-	if typeof(set_id_value) != TYPE_STRING or String(set_id_value).strip_edges() == "":
-		return {}
-	if typeof(armor.get("table")) != TYPE_DICTIONARY:
-		return {}
-	var table: Dictionary = armor.get("table", {}) as Dictionary
-	var scalars := {}
-	var default_percent := 100.0
-	var default_value: Variant = table.get("default", {})
-	if typeof(default_value) == TYPE_DICTIONARY:
-		default_percent = float((default_value as Dictionary).get("percent", 100.0))
-	scalars["default"] = default_percent / 100.0
-	for key_value in (table.get("scalars", {}) as Dictionary).keys():
-		var row: Variant = (table.get("scalars", {}) as Dictionary).get(key_value)
-		if typeof(row) != TYPE_DICTIONARY:
-			continue
-		scalars[String(key_value)] = float((row as Dictionary).get("percent", default_percent)) / 100.0
-	return {
-		"set_id": String(set_id_value),
-		"damage_scalar": float((table.get("damageScalar", {}) as Dictionary).get("percent", 100.0)) / 100.0,
-		"scalars": scalars,
-	}
+	return (projection.get("table", {}) as Dictionary).duplicate(true)
 
 
 static func _structure_construct_icon(document: Dictionary) -> Dictionary:

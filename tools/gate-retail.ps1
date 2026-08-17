@@ -456,8 +456,8 @@ try {
     # Fast synthetic structure-contract coverage. These fixtures do not read
     # the mounted private selection, so keep them in deterministic SECTION A.
     Invoke-GodotPassedFloor "structure_armor_tables" "test_structure_armor_tables.gd" '(?m)^STRUCTURE_ARMOR_TABLES_RESULT passed=([0-9]+) failed=0\s*$' 9
-    Invoke-GodotPassedFloor "scenario_structure_armor_projection" "scenario_structure_armor_projection_runner.gd" '(?m)^SCENARIO_STRUCTURE_ARMOR_PROJECTION_RESULT passed=([0-9]+) failed=0\s*$' 8
-    Invoke-GodotPassedFloor "capturable_neutral" "capturable_neutral_runner.gd" '(?m)^CAPTURABLE_NEUTRAL_RESULT passed=([0-9]+) failed=0\s*$' 12
+    Invoke-GodotPassedFloor "scenario_structure_armor_projection" "scenario_structure_armor_projection_runner.gd" '(?m)^SCENARIO_STRUCTURE_ARMOR_PROJECTION_RESULT passed=([0-9]+) failed=0\s*$' 14
+    Invoke-GodotPassedFloor "capturable_neutral" "capturable_neutral_runner.gd" '(?m)^CAPTURABLE_NEUTRAL_RESULT passed=([0-9]+) failed=0\s*$' 13
 
     # The release firewall belongs to SECTION A: it is about the repository, not
     # about anyone's mounted content, and it must run even when SECTION B is
@@ -529,7 +529,7 @@ try {
         # Selected neutral-pack receipts and live map-placement behavior must
         # move with the exact SECTION B selection pin above.
         Invoke-GodotPassedFloor "selected_neutral_pack_acceptance" "selected_neutral_pack_acceptance_runner.gd" '(?m)^SELECTED_NEUTRAL_PACK_ACCEPTANCE_OK passed=([0-9]+)\s*$' 35
-        Invoke-GodotPassedFloor "scenario_map_placement_live" "scenario_map_placement_live_runner.gd" '(?m)^SCENARIO_MAP_PLACEMENT_LIVE_OK passed=([0-9]+)\s*$' 77
+        Invoke-GodotPassedFloor "scenario_map_placement_live" "scenario_map_placement_live_runner.gd" '(?m)^SCENARIO_MAP_PLACEMENT_LIVE_OK passed=([0-9]+)\s*$' 80
         # ADDED 2026-08-04. These goal/behaviour runners existed and were green
         # but nothing ran them in a gate, so a regression in any of them could
         # ship unnoticed. Like the two above they assert about the mounted
