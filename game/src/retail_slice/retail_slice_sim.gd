@@ -1291,6 +1291,10 @@ var respawn_schedules: Dictionary = {} # entity id -> authored due/cost/template
 ## empty-is-absent below.
 var physics_objects: Dictionary = {}
 var _next_physics_object_id := 50000
+## Ordinary weapon projectiles are authoritative sim rows, separate from the
+## physics-object table used by fling/Bezier carriers.
+var projectiles: Dictionary = {}
+var _next_projectile_id := 70000
 ## Created-hero award contracts are derived from their ordinary playable-unit
 ## runtime documents. Mutable tallies/results remain absent for hero-less
 ## matches so the historical snapshot signature does not move.
@@ -1541,6 +1545,8 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	respawn_schedules.clear()
 	physics_objects.clear()
 	_next_physics_object_id = 50000
+	projectiles.clear()
+	_next_projectile_id = 70000
 	_shared_ability_cooldowns.clear()
 	_note_structure_table_mutation()
 	_structure_footprint_radius_cache.clear()
@@ -2962,7 +2968,7 @@ func _damage_scalar_factor(scalars: Array, target: Dictionary, target_kind: Stri
 	return 1.0
 
 
-func _compiled_damage_components(combat: Dictionary) -> Array:
+func _compiled_damage_components(combat: Dictionary, source_scale: float = 1.0) -> Array:
 	## Normalize the compiler's damageComponents rows. [] when the weapon has a
 	## single authored damageType (the ordinary path) or authors none at all.
 	var rows: Array = []
@@ -2973,10 +2979,19 @@ func _compiled_damage_components(combat: Dictionary) -> Array:
 		var value := float(row.get("value", 0.0))
 		if value <= 0.0:
 			continue
-		rows.append({
+		var normalized := {
 			"damage_type": String(row.get("damageType", "")).to_lower(),
 			"value": value,
-		})
+		}
+		if row.has("radius"):
+			normalized["radius"] = maxf(0.0, float(row.get("radius", 0.0)) * source_scale)
+		if row.has("damageTaperOff"):
+			normalized["damage_taper_off"] = clampf(float(row.get("damageTaperOff", 0.0)), 0.0, 100.0)
+		if row.has("deathType"):
+			normalized["death_type"] = String(row.get("deathType", "NORMAL"))
+		if row.has("damageFXType"):
+			normalized["damage_fx_type"] = String(row.get("damageFXType", ""))
+		rows.append(normalized)
 	return rows
 
 
@@ -3371,7 +3386,9 @@ func _configure_playable_unit_runtime_contracts() -> void:
 		configured_unit_rules[member_id] = unit_rule
 		var doc_combat: Dictionary = simulation.get("combat", {}) as Dictionary
 		var doc_damage_type := String(doc_combat.get("damageType", "")).to_lower()
-		var doc_damage_components := _compiled_damage_components(doc_combat)
+		var doc_damage_components := _compiled_damage_components(
+			doc_combat, float(_rules.get("source_map_transform_scale", 1.0))
+		)
 		if not doc_damage_components.is_empty():
 			# A multi-nugget weapon whose nuggets author different types
 			# (ArwenSword: HERO ARWEN_DAMAGE + SLASH 20) carries no single
@@ -4491,6 +4508,12 @@ func _add_battalion(
 		fallback_weapon["pre_attack_type"] = String(unit_rule["pre_attack_type"])
 	if unit_rule.has("pre_attack_random_amount_ms"):
 		fallback_weapon["pre_attack_random_amount_ms"] = float(unit_rule["pre_attack_random_amount_ms"])
+	for optional_weapon_field in [
+		"projectile_object_id", "projectile_speed", "projectile_speed_source",
+		"radius_damage_affects", "damage_components", "damage_type",
+	]:
+		if unit_rule.has(optional_weapon_field):
+			fallback_weapon[optional_weapon_field] = unit_rule[optional_weapon_field]
 	var weapon_modes: Dictionary = (unit_rule.get("weapon_modes", {}) as Dictionary).duplicate(true)
 	if weapon_modes.is_empty():
 		weapon_modes["default"] = fallback_weapon
@@ -4545,7 +4568,7 @@ func _add_battalion(
 		"vision_range": float(unit_rule["vision_range"]),
 		"vision_range_source": float(unit_rule["vision_range_source"]),
 		"damage_type": _recorded_damage_type(object_id, unit_rule),
-		"damage_components": (_unit_damage_components.get(object_id, []) as Array).duplicate(true),
+		"damage_components": (unit_rule.get("damage_components", _unit_damage_components.get(object_id, [])) as Array).duplicate(true),
 		"delay_between_shots_ms": float(unit_rule["delay_between_shots_ms"]),
 		"pre_attack_delay_ms": float(unit_rule["pre_attack_delay_ms"]),
 		"firing_duration_ms": float(unit_rule["firing_duration_ms"]),
@@ -4646,6 +4669,13 @@ func _add_battalion(
 		entities[id]["pre_attack_type"] = String(unit_rule["pre_attack_type"])
 	if unit_rule.has("pre_attack_random_amount_ms"):
 		entities[id]["pre_attack_random_amount_ms"] = float(unit_rule["pre_attack_random_amount_ms"])
+	# Absent-unless-authored keeps melee and no-projectile state byte-identical.
+	for optional_projectile_field in [
+		"projectile_object_id", "projectile_speed", "projectile_speed_source",
+		"radius_damage_affects",
+	]:
+		if unit_rule.has(optional_projectile_field):
+			entities[id][optional_projectile_field] = unit_rule[optional_projectile_field]
 	# ShroudClearingRange, the deshroud radius. Absent unless the compiled rule
 	# authors one, exactly like the body scalars below and for the same reason:
 	# a key that appears unconditionally would change every unit's snapshot and
@@ -13902,6 +13932,7 @@ func tick() -> void:
 		_step_production()
 	_step_pending_power_effects()
 	_step_physics_objects()
+	_step_projectiles()
 	_step_scenario_bezier_projectiles()
 	_step_ship_runtime()
 	_step_lifetime_updates()
@@ -22014,6 +22045,161 @@ func _step_physics_objects() -> void:
 				_step_physics_recovery_phase(row, "recovered")
 
 
+func _step_projectiles() -> void:
+	if projectiles.is_empty():
+		return
+	var ids: Array = projectiles.keys()
+	ids.sort()
+	for id_value in ids:
+		var projectile_id := int(id_value)
+		if not projectiles.has(projectile_id):
+			continue
+		var projectile := projectiles[projectile_id] as Dictionary
+		if tick_index < int(projectile.get("impact_tick", tick_index)):
+			continue
+		_resolve_member_projectile_impact(projectile_id, projectile)
+
+
+func _resolve_member_projectile_impact(projectile_id: int, projectile: Dictionary) -> void:
+	var attacker_id := int(projectile.get("attacker_id", 0))
+	var target_id := int(projectile.get("target_id", 0))
+	var target_kind := String(projectile.get("target_kind", "battalion"))
+	var forced_member := int(projectile.get("member_index", -1))
+	var target_live := _target_alive(target_id, target_kind)
+	if target_live and target_kind == "battalion":
+		var target := entities.get(target_id, {}) as Dictionary
+		var health_values: Array = target.get("member_health", [])
+		if forced_member < 0 or forced_member >= health_values.size() or int(health_values[forced_member]) <= 0:
+			forced_member = -1
+			for index in health_values.size():
+				if int(health_values[index]) > 0:
+					forced_member = index
+					break
+		target_live = forced_member >= 0
+	if not target_live:
+		_emit_event("combat.projectile_cancelled", attacker_id, target_id, {
+			"projectile_token": projectile_id,
+			"projectile_object_id": String(projectile.get("projectile_object_id", "")),
+		})
+		projectiles.erase(projectile_id)
+		return
+	var components := projectile.get("damage_components", []) as Array
+	var death_type := "NORMAL"
+	if not components.is_empty():
+		death_type = String((components[0] as Dictionary).get("death_type", "NORMAL"))
+	_apply_member_damage(
+		attacker_id,
+		int(projectile.get("attacker_member_index", -1)),
+		target_id,
+		maxi(1, int(projectile.get("amount", 1))),
+		target_kind,
+		int(projectile.get("attack_sequence", 0)),
+		forced_member,
+		String(projectile.get("damage_type", "")),
+		death_type,
+		components
+	)
+	# Upgrade-gated projectile nuggets share the shell's impact boundary; none
+	# are allowed to leak damage onto the launch tick.
+	if entities.has(attacker_id):
+		_apply_member_bonus_nuggets(
+			attacker_id,
+			int(projectile.get("attacker_member_index", -1)),
+			entities[attacker_id] as Dictionary,
+			target_id,
+			target_kind,
+			forced_member,
+			{"bonus_nuggets": projectile.get("bonus_nuggets", [])}
+		)
+	var origin := Vector2(projectile.get("origin", Vector2.ZERO))
+	for component_value in components:
+		if typeof(component_value) != TYPE_DICTIONARY:
+			continue
+		var component := component_value as Dictionary
+		var radius := maxf(0.0, float(component.get("radius", 0.0)))
+		if radius <= 0.0:
+			continue
+		_apply_radius_damage(
+			attacker_id,
+			origin,
+			radius,
+			float(component.get("value", 0.0)),
+			String(component.get("damage_type", projectile.get("damage_type", ""))),
+			float(component.get("damage_taper_off", 0.0)),
+			String(projectile.get("radius_damage_affects", "ENEMIES")),
+			target_id,
+			String(component.get("death_type", "NORMAL"))
+		)
+	_emit_event("combat.projectile_impact", attacker_id, target_id, {
+		"projectile_token": projectile_id,
+		"projectile_object_id": String(projectile.get("projectile_object_id", "")),
+		"origin": origin,
+	})
+	projectiles.erase(projectile_id)
+
+
+func _radius_relation_allowed(attacker_team: int, victim_team: int, affects: String) -> bool:
+	var tokens: Array[String] = []
+	for token_value in affects.to_upper().split(" ", false):
+		var token := String(token_value).strip_edges()
+		if token != "" and not tokens.has(token):
+			tokens.append(token)
+	if _is_hostile(attacker_team, victim_team):
+		return tokens.has("ENEMIES")
+	if _is_combatant_team(victim_team):
+		return tokens.has("ALLIES")
+	return tokens.has("NEUTRALS")
+
+
+func _tapered_radius_amount(amount: float, distance: float, radius: float, taper_off: float) -> int:
+	if amount <= 0.0 or radius <= 0.0 or distance > radius:
+		return 0
+	# OpenSAGE's DamageTaperOff reading: a percentage of the base damage is
+	# removed linearly across the radius. Thus taper=50 leaves 50% at the edge.
+	var edge_loss := clampf(taper_off, 0.0, 100.0) / 100.0
+	var multiplier := 1.0 - edge_loss * clampf(distance / radius, 0.0, 1.0)
+	return maxi(0, roundi(amount * multiplier))
+
+
+func _apply_radius_damage(
+	attacker_id: int,
+	origin: Vector2,
+	radius: float,
+	amount: float,
+	damage_type: String,
+	taper_off: float,
+	affects: String,
+	exclude_target_id: int,
+	death_type: String = "NORMAL"
+) -> void:
+	if not entities.has(attacker_id):
+		return
+	var attacker_team := int((entities[attacker_id] as Dictionary).get("team", -1))
+	for candidate in _spatial_gather_sorted(origin, radius):
+		if candidate == exclude_target_id or not entities.has(candidate):
+			continue
+		var target := entities[candidate] as Dictionary
+		if int(target.get("health", 0)) <= 0 or not _radius_relation_allowed(attacker_team, int(target.get("team", -1)), affects):
+			continue
+		var distance := origin.distance_to(Vector2(target.get("position", Vector2.ZERO)))
+		var tapered_amount := _tapered_radius_amount(amount, distance, radius, taper_off)
+		if tapered_amount > 0:
+			_apply_member_damage(attacker_id, -1, candidate, tapered_amount, "battalion", 0, -1, damage_type, death_type)
+	var structure_keys: Array = structure_ids()
+	structure_keys.sort()
+	for structure_id_value in structure_keys:
+		var structure_id := int(structure_id_value)
+		if structure_id == exclude_target_id or not structures.has(structure_id):
+			continue
+		var target := structures[structure_id] as Dictionary
+		if int(target.get("health", 0)) <= 0 or not _radius_relation_allowed(attacker_team, int(target.get("team", -1)), affects):
+			continue
+		var distance := origin.distance_to(Vector2(target.get("position", Vector2.ZERO)))
+		var tapered_amount := _tapered_radius_amount(amount, distance, radius, taper_off)
+		if tapered_amount > 0:
+			_apply_structure_damage(attacker_id, structure_id, tapered_amount, damage_type)
+
+
 func _step_airborne_physics_object(id: int, row: Dictionary, gravity_source: float) -> void:
 	row["position"] = Vector2(row.get("position", Vector2.ZERO)) + Vector2(row.get("horizontal_velocity", Vector2.ZERO)) * TICK_SECONDS
 	var vertical_velocity := float(row.get("vertical_velocity_source", 0.0))
@@ -27030,37 +27216,34 @@ func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, tar
 						1,
 						roundi(float(swing_damage) * _flanking_outgoing_multiplier(row, entities[target_id]))
 					)
-				_apply_member_damage(
-					attacker_id,
-					member_index,
-					target_id,
-					swing_damage,
-					target_kind,
-					int(row.get("attack_sequence", 0)),
-					forced_target
-				)
-				# Upgrade-gated bonus nuggets (fire arrows' authored flame
-				# component) land as their own typed hits on the same victim.
-				for nugget_value in weapon_effect.get("bonus_nuggets", []) as Array:
-					if not _target_alive(target_id, target_kind):
-						break
-					var nugget: Dictionary = nugget_value
-					var bonus_target: Dictionary = structures.get(target_id, {}) if target_kind == "structure" else entities.get(target_id, {})
-					var bonus_factor := _damage_scalar_factor(nugget.get("scalars", []) as Array, bonus_target, target_kind)
-					var bonus_amount := maxi(0, roundi(float(nugget.get("damage", 0.0)) * bonus_factor))
-					if bonus_amount <= 0:
-						continue
+				if _member_weapon_has_projectile(row):
+					_launch_member_projectile(
+						attacker_id,
+						member_index,
+						row,
+						target_id,
+						target_kind,
+						forced_target,
+						swing_damage,
+						weapon_effect,
+						int(release_tokens[member_index])
+					)
+				else:
 					_apply_member_damage(
 						attacker_id,
 						member_index,
 						target_id,
-						bonus_amount,
+						swing_damage,
 						target_kind,
 						int(row.get("attack_sequence", 0)),
-						forced_target,
-						String(nugget.get("damage_type", ""))
+						forced_target
 					)
-				_apply_hero_cleave(attacker_id, row, target_id, swing_damage)
+					# Upgrade-gated bonus nuggets remain instant only on an instant
+					# weapon; projectile-capable weapons carry them to impact below.
+					_apply_member_bonus_nuggets(
+						attacker_id, member_index, row, target_id, target_kind,
+						forced_target, weapon_effect
+					)
 	row["member_attack_start_ticks"] = start_ticks
 	row["member_attack_hit_ticks"] = hit_ticks
 	row["member_attack_tokens"] = tokens
@@ -27070,32 +27253,104 @@ func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, tar
 	row["attack_windup"] = maxi(0, int(row.get("attack_windup", 0)) - 1)
 
 
-# Provisional hero cleave: a hero's melee swing carries a small splash to
-# other enemy battalions beside the primary target (retail heroes sweep
-# multiple soldiers per swing; exact magnitudes are an M3 extraction item).
-const HERO_CLEAVE_RADIUS := 1.6
-const HERO_CLEAVE_DAMAGE_FRACTION := 0.35
+func _member_weapon_has_projectile(row: Dictionary) -> bool:
+	return (
+		String(row.get("projectile_object_id", "")) != ""
+		and float(row.get("projectile_speed", 0.0)) > 0.0
+	)
 
 
-func _apply_hero_cleave(attacker_id: int, row: Dictionary, primary_target_id: int, swing_damage: int) -> void:
-	if String(row.get("category", "")) != "hero":
+func _scaled_projectile_components(components: Array, outgoing_amount: int) -> Array:
+	var total := 0.0
+	for component_value in components:
+		if typeof(component_value) == TYPE_DICTIONARY:
+			total += maxf(0.0, float((component_value as Dictionary).get("value", 0.0)))
+	if total <= 0.0:
+		return []
+	var scale := float(outgoing_amount) / total
+	var output: Array = []
+	for component_value in components:
+		if typeof(component_value) != TYPE_DICTIONARY:
+			continue
+		var component := (component_value as Dictionary).duplicate(true)
+		component["value"] = maxf(0.0, float(component.get("value", 0.0)) * scale)
+		output.append(component)
+	return output
+
+
+func _launch_member_projectile(
+	attacker_id: int,
+	member_index: int,
+	row: Dictionary,
+	target_id: int,
+	target_kind: String,
+	forced_target: int,
+	swing_damage: int,
+	weapon_effect: Dictionary,
+	release_token: int
+) -> void:
+	var target: Dictionary = structures.get(target_id, {}) if target_kind == "structure" else entities.get(target_id, {})
+	if target.is_empty():
 		return
-	if float(row.get("attack_range_source", 0.0)) > 100.0:
-		return
-	var cleave_damage := maxi(1, roundi(float(swing_damage) * HERO_CLEAVE_DAMAGE_FRACTION))
-	var origin := Vector2(row.get("position", Vector2.ZERO))
-	# Cleave only reaches a small disc, so the old full hostile scan is a
-	# neighbourhood query. Sorted: damage lands in ascending id order.
-	var team := int(row.get("team", PLAYER_TEAM))
-	for candidate in _spatial_gather_sorted(origin, HERO_CLEAVE_RADIUS):
-		if candidate == primary_target_id or not entities.has(candidate):
+	var launch_origin := Vector2(row.get("position", Vector2.ZERO))
+	var impact_origin := Vector2(target.get("position", Vector2.ZERO))
+	var distance := launch_origin.distance_to(impact_origin)
+	var speed := float(row.get("projectile_speed", 0.0))
+	var flight_ticks := maxi(1, ceili(distance / speed / TICK_SECONDS))
+	var projectile_id := _next_projectile_id
+	_next_projectile_id += 1
+	projectiles[projectile_id] = {
+		"id": projectile_id,
+		"attacker_id": attacker_id,
+		"attacker_member_index": member_index,
+		"member_index": forced_target,
+		"target_id": target_id,
+		"target_kind": target_kind,
+		"origin": impact_origin,
+		"launch_origin": launch_origin,
+		"launch_tick": tick_index,
+		"impact_tick": tick_index + flight_ticks,
+		"projectile_object_id": String(row.get("projectile_object_id", "")),
+		"amount": swing_damage,
+		"damage_components": _scaled_projectile_components(row.get("damage_components", []) as Array, swing_damage),
+		"damage_type": String(row.get("damage_type", "")),
+		"radius_damage_affects": String(row.get("radius_damage_affects", "ENEMIES")),
+		"release_token": release_token,
+		"attack_sequence": int(row.get("attack_sequence", 0)),
+		"bonus_nuggets": (weapon_effect.get("bonus_nuggets", []) as Array).duplicate(true),
+	}
+	_emit_event("combat.projectile_launched", attacker_id, target_id, {
+		"projectile_token": projectile_id,
+		"impact_tick": tick_index + flight_ticks,
+		"projectile_object_id": String(row.get("projectile_object_id", "")),
+		"member_index": member_index,
+		"member_release_token": release_token,
+	})
+
+
+func _apply_member_bonus_nuggets(
+	attacker_id: int,
+	member_index: int,
+	row: Dictionary,
+	target_id: int,
+	target_kind: String,
+	forced_target: int,
+	weapon_effect: Dictionary
+) -> void:
+	for nugget_value in weapon_effect.get("bonus_nuggets", []) as Array:
+		if not _target_alive(target_id, target_kind):
+			break
+		var nugget: Dictionary = nugget_value
+		var bonus_target: Dictionary = structures.get(target_id, {}) if target_kind == "structure" else entities.get(target_id, {})
+		var bonus_factor := _damage_scalar_factor(nugget.get("scalars", []) as Array, bonus_target, target_kind)
+		var bonus_amount := maxi(0, roundi(float(nugget.get("damage", 0.0)) * bonus_factor))
+		if bonus_amount <= 0:
 			continue
-		var candidate_row: Dictionary = entities[candidate]
-		if int(candidate_row.get("health", 0)) <= 0 or not _is_hostile(team, int(candidate_row.get("team", -1))):
-			continue
-		if origin.distance_to(Vector2(candidate_row.get("position", Vector2.ZERO))) > HERO_CLEAVE_RADIUS:
-			continue
-		_apply_member_damage(attacker_id, -1, candidate, cleave_damage, "battalion", int(row.get("attack_sequence", 0)))
+		_apply_member_damage(
+			attacker_id, member_index, target_id, bonus_amount, target_kind,
+			int(row.get("attack_sequence", 0)), forced_target,
+			String(nugget.get("damage_type", ""))
+		)
 
 
 func _clear_member_attack_schedule(row: Dictionary) -> void:
@@ -27191,6 +27446,14 @@ func _apply_weapon_mode(row: Dictionary, mode: String) -> bool:
 		# authors that field, so every current-corpus mode transition releases.
 		row["permanent_weapon_locks"] = []
 	row["active_weapon_mode"] = mode
+	for optional_projectile_field in [
+		"projectile_object_id", "projectile_speed", "projectile_speed_source",
+		"radius_damage_affects",
+	]:
+		if not selected.has(optional_projectile_field):
+			row.erase(optional_projectile_field)
+	if not selected.has("damage_components"):
+		row["damage_components"] = []
 	for field in [
 		"attack_range", "attack_range_source", "minimum_attack_range",
 		"minimum_attack_range_source", "delay_between_shots_ms",
@@ -27198,7 +27461,9 @@ func _apply_weapon_mode(row: Dictionary, mode: String) -> bool:
 		"firing_duration_ms", "attack_period_ticks",
 		"pre_attack_ticks", "firing_duration_ticks", "member_damage", "clip_size",
 		"clip_reload_time_ms", "continuous_fire_one", "continuous_fire_coast_ticks",
-		"continuous_fire_rate_multiplier",
+		"continuous_fire_rate_multiplier", "projectile_object_id", "projectile_speed",
+		"projectile_speed_source", "radius_damage_affects", "damage_components",
+		"damage_type",
 	]:
 		if selected.has(field):
 			row[field] = selected[field]
@@ -28724,10 +28989,11 @@ func _apply_member_damage(
 	attack_sequence: int,
 	forced_target_member: int = -1,
 	damage_type_override: String = "",
-	death_type: String = "NORMAL"
+	death_type: String = "NORMAL",
+	damage_components_override: Variant = null
 ) -> void:
 	if target_kind == "structure":
-		_apply_structure_damage(attacker_id, target_id, amount, damage_type_override)
+		_apply_structure_damage(attacker_id, target_id, amount, damage_type_override, damage_components_override)
 		return
 	if not entities.has(target_id):
 		return
@@ -28753,7 +29019,11 @@ func _apply_member_damage(
 	var damage_type := damage_type_override
 	# A multi-nugget weapon resolves each component against its own armor
 	# column; an explicit override replaces the mix rather than blending in.
-	var damage_components := _damage_components_for(attacker_id, damage_type_override)
+	var damage_components := (
+		damage_components_override as Array
+		if typeof(damage_components_override) == TYPE_ARRAY
+		else _damage_components_for(attacker_id, damage_type_override)
+	)
 	var weapon_factor := 1.0
 	if entities.has(attacker_id):
 		var attacker: Dictionary = entities[attacker_id]
@@ -29683,7 +29953,13 @@ func _choose_target_member(
 	return -1
 
 
-func _apply_structure_damage(attacker_id: int, target_id: int, amount: int, damage_type_override: String = "") -> void:
+func _apply_structure_damage(
+	attacker_id: int,
+	target_id: int,
+	amount: int,
+	damage_type_override: String = "",
+	damage_components_override: Variant = null
+) -> void:
 	if not structures.has(target_id):
 		return
 	var target: Dictionary = structures[target_id]
@@ -29701,7 +29977,11 @@ func _apply_structure_damage(attacker_id: int, target_id: int, amount: int, dama
 		})
 		return
 	var damage_type := damage_type_override
-	var damage_components := _damage_components_for(attacker_id, damage_type_override)
+	var damage_components := (
+		damage_components_override as Array
+		if typeof(damage_components_override) == TYPE_ARRAY
+		else _damage_components_for(attacker_id, damage_type_override)
+	)
 	if damage_type == "":
 		damage_type = "default"
 		if entities.has(attacker_id):
@@ -31435,6 +31715,9 @@ func _authoritative_state() -> Dictionary:
 	if not physics_objects.is_empty() or _next_physics_object_id != 50000:
 		state["physics_objects"] = physics_objects
 		state["next_physics_object_id"] = _next_physics_object_id
+	if not projectiles.is_empty() or _next_projectile_id != 70000:
+		state["projectiles"] = projectiles
+		state["next_projectile_id"] = _next_projectile_id
 	if not pickup_objects.is_empty() or _next_pickup_object_id != 60000:
 		state["pickup_objects"] = pickup_objects
 		state["next_pickup_object_id"] = _next_pickup_object_id
@@ -31648,6 +31931,8 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	create_object_die_pending = state.get("create_object_die_pending", [])
 	physics_objects = state.get("physics_objects", {})
 	_next_physics_object_id = int(state.get("next_physics_object_id", 50000))
+	projectiles = state.get("projectiles", {})
+	_next_projectile_id = int(state.get("next_projectile_id", 70000))
 	pickup_objects = state.get("pickup_objects", {})
 	_next_pickup_object_id = int(state.get("next_pickup_object_id", 60000))
 	_shared_ability_cooldowns = state.get("shared_ability_cooldowns", {})
@@ -31858,6 +32143,3 @@ func transfer_entities_to_team(entity_ids: Array, new_team: int) -> Dictionary:
 		if not bool(result.get("ok", false)):
 			return result
 	return {"ok": true, "reason": ""}
-
-
-

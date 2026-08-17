@@ -971,6 +971,7 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 			"continuous_fire_coast_ticks": maxi(0, roundi(float(combat.get("continuousFireCoastMs", 0.0)) / (TICK_SECONDS * 1000.0))),
 			"continuous_fire_rate_multiplier": 1.0,
 		}
+		_copy_projectile_weapon_fields(weapon_modes["default"], combat, source_scale)
 	var output := {
 		"horde_id": String(simulation.get("unit_type", "")),
 		"member_count": int(simulation.get("member_count", 0)),
@@ -1018,6 +1019,7 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 			"pre_attack_type_source": String(pre_attack["source"]),
 		},
 	}
+	_copy_projectile_weapon_fields(output, combat, source_scale)
 	if noncombatant:
 		output["noncombatant"] = true
 	var permanent_locks: Array = simulation.get("permanent_weapon_locks", []) as Array
@@ -1184,7 +1186,7 @@ static func _normalized_weapon_mode(mode_key: String, profile: Dictionary, sourc
 	if period_ms <= 0.0 and clip_reload_ms > 0.0:
 		period_ms = clip_reload_ms
 	var pre_attack := _resolved_pre_attack_type(profile)
-	return {
+	var output := {
 		"name": String(profile.get("weaponId", mode_key)),
 		"weapon_slot": String(profile.get("weaponSlot", "")).to_lower(),
 		"attack_range": attack_range * source_scale,
@@ -1206,6 +1208,49 @@ static func _normalized_weapon_mode(mode_key: String, profile: Dictionary, sourc
 		"continuous_fire_coast_ticks": maxi(0, roundi(float(profile.get("continuousFireCoastMs", 0.0)) / (TICK_SECONDS * 1000.0))),
 		"continuous_fire_rate_multiplier": 1.0,
 	}
+	_copy_projectile_weapon_fields(output, profile, source_scale)
+	return output
+
+
+static func _copy_projectile_weapon_fields(output: Dictionary, combat: Dictionary, source_scale: float) -> void:
+	## Optional ordinary-weapon projectile contract. A partial id/speed pair is
+	## deliberately omitted so melee and malformed legacy rows retain the instant
+	## path instead of acquiring a guessed flight time.
+	var projectile_id := String(combat.get("projectileObjectId", "")).strip_edges()
+	var projectile_speed := float(combat.get("projectileSpeed", 0.0))
+	if projectile_id != "" and is_finite(projectile_speed) and projectile_speed > 0.0:
+		output["projectile_object_id"] = projectile_id
+		output["projectile_speed"] = projectile_speed * source_scale
+		output["projectile_speed_source"] = projectile_speed
+	var affects := String(combat.get("radiusDamageAffects", "")).strip_edges()
+	if affects != "":
+		output["radius_damage_affects"] = affects
+	var components: Array = []
+	for component_value in combat.get("damageComponents", []) as Array:
+		if typeof(component_value) != TYPE_DICTIONARY:
+			continue
+		var component := component_value as Dictionary
+		var value := float(component.get("value", 0.0))
+		if value <= 0.0:
+			continue
+		var normalized := {
+			"value": value,
+			"damage_type": String(component.get("damageType", "")).to_lower(),
+		}
+		if component.has("radius"):
+			normalized["radius"] = maxf(0.0, float(component.get("radius", 0.0)) * source_scale)
+		if component.has("damageTaperOff"):
+			normalized["damage_taper_off"] = clampf(float(component.get("damageTaperOff", 0.0)), 0.0, 100.0)
+		if component.has("deathType"):
+			normalized["death_type"] = String(component.get("deathType", "NORMAL"))
+		if component.has("damageFXType"):
+			normalized["damage_fx_type"] = String(component.get("damageFXType", ""))
+		components.append(normalized)
+	if not components.is_empty():
+		output["damage_components"] = components
+	var damage_type := String(combat.get("damageType", "")).to_lower()
+	if damage_type != "":
+		output["damage_type"] = damage_type
 
 
 static func _normalized_permanent_weapon_locks(value: Variant) -> Array[String]:
