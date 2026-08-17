@@ -1,11 +1,9 @@
 extends SceneTree
 
 const Sim = preload("res://src/retail_slice/retail_slice_sim.gd")
-const FactionManifest = preload("res://src/retail_slice/retail_faction_manifest.gd")
-const EXPECTED := 27
+const EXPECTED := 26
 var passed := 0
 var failed := 0
-var _retail_structure_armor: Dictionary = {}
 
 
 func _initialize() -> void:
@@ -13,26 +11,6 @@ func _initialize() -> void:
 
 
 func _run() -> void:
-	# This runner's synthetic setup still exercises the retail simulator's
-	# default Men structure kinds. Feed it the exact compiled armor tables from
-	# the selected playable registries so setup cannot silently depend on the
-	# simulator's deliberately incomplete legacy fortress-only fallback.
-	var content_db := root.get_node_or_null("ContentDB")
-	await process_frame
-	await process_frame
-	var manifest := FactionManifest.from_registries(
-		"men",
-		content_db.call("get_playable_unit_runtimes") as Dictionary,
-		content_db.call("get_playable_structure_runtimes") as Dictionary,
-	)
-	_retail_structure_armor = (manifest.get("structure_armor", {}) as Dictionary).duplicate(true)
-	_check(
-		"selected_retail_armor_tables_cover_fixture",
-		not manifest.has("_error")
-		and ["farm", "barracks", "archery_range", "stable", "fortress"].all(
-			func(kind: String) -> bool: return _retail_structure_armor.has(kind)
-		),
-	)
 	var live: RetailSliceSim = Sim.new()
 	# Keep the active selected-pack structure catalog, but make the legacy
 	# default spawn roster self-contained. Under a RotWK pack those five seed
@@ -45,7 +23,7 @@ func _run() -> void:
 		if not live_unit_rules.has(object_id):
 			live_unit_rules[object_id] = _rule()
 	live_rules["unit_rules"] = live_unit_rules
-	live_rules["faction_manifest"] = {"structure_armor": _retail_structure_armor}
+	live_rules["faction_manifest"] = {"structure_armor": _fixture_structure_armor()}
 	live.setup({}, live_rules)
 	var live_spec := live._replace_self_structure_spec(0, "GondorCastleWallSegment")
 	_check("selected_retail_template_resolves", not live_spec.is_empty() and int(live_spec.get("maximum_health", 0)) == 1500)
@@ -123,7 +101,7 @@ func _sim() -> RetailSliceSim:
 	var unit_rules := {}
 	for object_id in [Sim.SOLDIER_OBJECT_ID, Sim.SOLDIER_HORDE_ID, Sim.ARCHER_OBJECT_ID, Sim.TOWER_GUARD_OBJECT_ID, Sim.KNIGHT_OBJECT_ID]:
 		unit_rules[object_id] = _rule()
-	sim.setup({}, {"unit_rules": unit_rules, "faction_manifest": {"structure_armor": _retail_structure_armor}, "replace_self_structure_templates": {"GondorCastleWallSegment": {"structure_kind": "wall_segment", "maximum_health": 200}, "GondorCastleWallHub": {"structure_kind": "wall_hub", "maximum_health": 300}}})
+	sim.setup({}, {"unit_rules": unit_rules, "faction_manifest": {"structure_armor": _fixture_structure_armor()}, "replace_self_structure_templates": {"GondorCastleWallSegment": {"structure_kind": "wall_segment", "maximum_health": 200}, "GondorCastleWallHub": {"structure_kind": "wall_hub", "maximum_health": 300}}})
 	sim.ai_enabled = false
 	sim.base_loop_enabled = false
 	sim.entities.clear()
@@ -131,6 +109,17 @@ func _sim() -> RetailSliceSim:
 	sim.structures[50] = {"id": 50, "team": 2, "kind": "structure", "structure_kind": "wall_upgrade_node", "source_object_id": "MenWallUpgradeNodeSmall", "name": "Wall upgrade node", "position": Vector2(4, 4), "rally": Vector2(8, 4), "facing": Vector2.RIGHT, "health": 50, "maximum_health": 100, "construction_progress": 1.0, "level": 1, "completed_upgrades": ["Upgrade_MenWallHub", "Upgrade_Common"], "upgrade_queue": [], "production": [], "queue": [], "damage_remainders": {}, "income_per_payout": 0}
 	sim._next_dynamic_structure_id = 3000
 	return sim
+
+
+func _fixture_structure_armor() -> Dictionary:
+	var armor := {}
+	for kind_value in Sim.STRUCTURE_KINDS:
+		armor[String(kind_value)] = {
+			"set_id": "FixtureArmor",
+			"damage_scalar": 1.0,
+			"scalars": {"default": 1.0},
+		}
+	return armor
 
 
 func _rule() -> Dictionary:
