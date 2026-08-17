@@ -4431,7 +4431,8 @@ func _add_battalion(
 	object_id: String = SOLDIER_OBJECT_ID,
 	unit_type: String = SOLDIER_HORDE_ID,
 	command_points: int = -1,
-	unit_rule_override: Dictionary = {}
+	unit_rule_override: Dictionary = {},
+	cached_build_cost: int = -1
 ) -> void:
 	var unit_rules_value: Variant = _rules.get("unit_rules", {})
 	var unit_rule: Dictionary = (
@@ -4624,6 +4625,12 @@ func _add_battalion(
 		# extraction is an importer follow-up; absent means not resistant).
 		"fear_resistant": bool(unit_rule.get("fear_resistant", false)),
 	}
+	if cached_build_cost >= 0 and _contracts_have_executable_refund_die(
+		_unit_module_contracts.get(unit_type, []) as Array
+	):
+		# Production supplies the queue item's final charged price after every
+		# authored cost modifier; death must never recompute it from current rules.
+		entities[id]["cached_build_cost"] = cached_build_cost
 	# Optional sealed scenario policy. False is the historical combatant default
 	# and must remain absent, otherwise every ordinary unit gains a meaningless
 	# state byte and moves the frozen cross-platform pin.
@@ -5614,20 +5621,48 @@ func _step_battalion_upgrades() -> void:
 
 
 func _apply_structure_death_refund(building: Dictionary) -> void:
-	## Authored RefundDie rows (Siege Materials): the dying structure's own
-	## document declares the refund while the team owns the technology and
-	## maintains the required building.
+	## Compatibility entry point retained for focused runners and old callers.
+	## RefundDie is an Object DieMux, not a structure-only behavior.
 	if not bool(building.get("structure_module_contracts_attached", false)):
 		_attach_structure_module_contracts(building)
-	var team := int(building.get("team", -1))
-	var kind := String(building.get("structure_kind", ""))
-	var typed_policies := building.get("refund_die", []) as Array
+	_apply_refund_die_on_death(building)
+
+
+func _apply_refund_die_on_death(owner: Dictionary) -> void:
+	## Retail game.dat RefundDie::onDie: the death edge is delivered once by the
+	## DieMux, then UNDER_CONSTRUCTION/SOLD, current owner, prerequisites and the
+	## object's cached build cost are evaluated in that order.  A failed check is
+	## not a deferred opportunity: there is no second death callback later.
+	var typed_policies := owner.get("refund_die", []) as Array
 	if not typed_policies.is_empty():
-		var build_rule: Dictionary = _structure_build_rules.get(kind, {}) as Dictionary
-		var build_cost_value: Variant = build_rule.get("cost")
+		if bool(owner.get("refund_die_death_dispatched", false)):
+			return
+		owner["refund_die_death_dispatched"] = true
+		var statuses := owner.get("object_status", {}) as Dictionary
+		var death_blocker := ""
+		if (
+			bool(statuses.get("UNDER_CONSTRUCTION", false))
+			or (
+				owner.has("construction_progress")
+				and float(owner.get("construction_progress", 1.0)) < 1.0
+			)
+		):
+			death_blocker = "UNDER_CONSTRUCTION"
+		elif bool(statuses.get("SOLD", false)):
+			death_blocker = "SOLD"
+		if death_blocker != "":
+			for policy_index in typed_policies.size():
+				var blocked_policy := typed_policies[policy_index] as Dictionary
+				blocked_policy["death_blocker"] = death_blocker
+				typed_policies[policy_index] = blocked_policy
+			owner["refund_die"] = typed_policies
+			return
+		var team := int(owner.get("team", -1))
+		if not team_resources.has(team):
+			return
+		var build_cost_value: Variant = owner.get("cached_build_cost")
 		for policy_index in typed_policies.size():
 			var policy := typed_policies[policy_index] as Dictionary
-			if bool(policy.get("consumed", false)): continue
 			var upgrade_required := String(policy.get("upgrade_required", ""))
 			if upgrade_required != "" and not (team_upgrades.get(team, {}) as Dictionary).has(upgrade_required): continue
 			var building_filter := policy.get("building_required", []) as Array
@@ -5638,15 +5673,16 @@ func _apply_structure_death_refund(building: Dictionary) -> void:
 				policy["unsupported_semantics"] = unsupported
 				typed_policies[policy_index] = policy
 				continue
-			var amount := roundi(float(build_cost_value) * float(policy.get("fraction", 0.0)))
-			policy["consumed"] = true
+			var amount := ceili(float(build_cost_value) * float(policy.get("fraction", 0.0)))
 			policy["refund_amount"] = amount
 			typed_policies[policy_index] = policy
 			if amount <= 0: continue
 			team_resources[team] = resources_for_team(team) + amount
-			_emit_event("economy.refund", int(building.get("id", 0)), 0, {"team": team, "amount": amount, "upgrade_id": upgrade_required, "building_required": building_filter, "module": "RefundDie"})
-		building["refund_die"] = typed_policies
+			_emit_event("economy.refund", int(owner.get("id", 0)), 0, {"team": team, "amount": amount, "upgrade_id": upgrade_required, "building_required": building_filter, "module": "RefundDie"})
+		owner["refund_die"] = typed_policies
 		return
+	var team := int(owner.get("team", -1))
+	var kind := String(owner.get("structure_kind", ""))
 	# Compatibility only for stale structure documents predating typed
 	# moduleContracts. A typed row never falls through and cannot double-refund.
 	var bundle: Dictionary = structure_upgrade_effects_for_team(team).get(kind, {})
@@ -5665,7 +5701,7 @@ func _apply_structure_death_refund(building: Dictionary) -> void:
 		if refund <= 0:
 			continue
 		team_resources[team] = resources_for_team(team) + refund
-		_emit_event("economy.refund", int(building.get("id", 0)), 0, {"team": team, "amount": refund, "upgrade_id": upgrade_id})
+		_emit_event("economy.refund", int(owner.get("id", 0)), 0, {"team": team, "amount": refund, "upgrade_id": upgrade_id})
 
 
 func _team_has_required_building_filter(team: int, filter: Array) -> bool:
@@ -5677,10 +5713,21 @@ func _team_has_required_building_filter(team: int, filter: Array) -> bool:
 	for structure_id in structure_ids(team):
 		var candidate := structures[structure_id] as Dictionary
 		if int(candidate.get("health", 0)) <= 0: continue
+		var candidate_status := candidate.get("object_status", {}) as Dictionary
+		if (
+			bool(candidate_status.get("EFFECTIVELY_DEAD", false))
+			or bool(candidate_status.get("DESTROYED", false))
+		):
+			continue
 		var traits := {"STRUCTURE": true}
 		for value in [candidate.get("source_object_id", ""), candidate.get("object_id", ""), candidate.get("structure_kind", ""), candidate.get("category", "")]:
 			if String(value) != "": traits[String(value).to_upper()] = true
-		for kind_value in candidate.get("kind_of", []) as Array: traits[String(kind_value).to_upper()] = true
+		var inert := false
+		for kind_value in candidate.get("kind_of", []) as Array:
+			var kind_token := String(kind_value).to_upper()
+			traits[kind_token] = true
+			if kind_token == "INERT": inert = true
+		if inert: continue
 		for object_id_value in registry.keys():
 			if String(registry[object_id_value]).to_lower() == String(candidate.get("structure_kind", "")).to_lower(): traits[String(object_id_value).to_upper()] = true
 		var positive: Array[String] = []
@@ -10385,6 +10432,7 @@ func issue_expansion_construct(team: int, fortress_id: int, expansion_kind: Stri
 		"expansion_of_fortress": fortress_id,
 		"expansion_pad_index": pad_index,
 	}
+	_stamp_refund_die_creation_cost(structures[structure_id] as Dictionary, cost)
 	var attack_value: Variant = rule.get("attack")
 	if typeof(attack_value) == TYPE_DICTIONARY and not (attack_value as Dictionary).is_empty():
 		var attack := (attack_value as Dictionary).duplicate(true)
@@ -14533,6 +14581,8 @@ func _attach_module_contracts(row: Dictionary) -> void:
 			_attach_foundation_ai_contract(row, contract)
 		elif folded == "monitorconditionupdate":
 			_attach_monitor_condition_contract(row, contract)
+		elif folded == "refunddie":
+			_attach_refund_die_contract(row, contract)
 		elif folded == "dualweaponbehavior":
 			_attach_dual_weapon_contract(row, contract)
 		elif folded == "attachupdate":
@@ -14571,6 +14621,38 @@ func register_structure_module_contracts(key: String, contracts: Array) -> void:
 	if key.strip_edges() == "" or contracts.is_empty():
 		return
 	_structure_module_contracts[key] = contracts.duplicate(true)
+
+
+static func _contracts_have_executable_refund_die(contracts: Array) -> bool:
+	for contract_value in contracts:
+		if typeof(contract_value) != TYPE_DICTIONARY:
+			continue
+		var contract := contract_value as Dictionary
+		if String(contract.get("module", "")).to_lower() != "refunddie":
+			continue
+		if bool(contract.get("executable", false)) or String(
+			contract.get("runtimeStatus", contract.get("runtime_status", ""))
+		) == "executable":
+			return true
+	return false
+
+
+func _stamp_refund_die_creation_cost(row: Dictionary, cost: int) -> void:
+	## Preserve the creation-time/charged price only for objects that actually
+	## carry an executable RefundDie row. Unrelated objects retain their exact
+	## legacy state bytes and state pins.
+	if cost < 0 or row.has("cached_build_cost"):
+		return
+	for key_value in [
+		row.get("source_object_id", ""), row.get("object_id", ""),
+		row.get("structure_kind", ""), row.get("kind", ""),
+	]:
+		var key := String(key_value)
+		if key != "" and _contracts_have_executable_refund_die(
+			_structure_module_contracts.get(key, []) as Array
+		):
+			row["cached_build_cost"] = cost
+			return
 
 
 func _configure_playable_structure_module_contracts() -> void:
@@ -19206,8 +19288,14 @@ func _attach_dual_weapon_contract(row: Dictionary, contract: Dictionary) -> void
 
 
 func _attach_refund_die_contract(row: Dictionary, contract: Dictionary) -> void:
+	var executable := bool(contract.get("executable", false))
+	if not executable:
+		executable = String(contract.get("runtimeStatus", contract.get("runtime_status", ""))) == "executable"
+	if not executable:
+		return
 	if String(contract.get("extraction", "")) != "typed":
 		return
+	_cache_refund_die_build_cost(row)
 	var fields := contract.get("fields", {}) as Dictionary
 	var allowed := {"RefundPercent": true, "UpgradeRequired": true, "BuildingRequired": true}
 	for key_value in fields.keys():
@@ -19247,14 +19335,41 @@ func _attach_refund_die_contract(row: Dictionary, contract: Dictionary) -> void:
 		"percent": percent,
 		"upgrade_required": upgrade_required,
 		"building_required": building_required,
-		"death_scope": "all-structure-deaths-module-defined",
-		"consumed": false,
+		"death_scope": "object-death-edge",
 		"unsupported_semantics": [],
 		"source_ini": String(contract.get("sourceIni", "")),
 		"tag": String(contract.get("tag", "")),
 		"line": int(contract.get("line", 0)),
 	})
 	row["refund_die"] = policies
+
+
+func _cache_refund_die_build_cost(row: Dictionary) -> void:
+	## Object::getBuildCost is cached per object in retail. Resolve it once when
+	## the executable module attaches; later rule/owner changes cannot rewrite it.
+	if row.has("cached_build_cost"):
+		return
+	var direct: Variant = row.get("build_cost")
+	if typeof(direct) in [TYPE_INT, TYPE_FLOAT] and float(direct) >= 0.0:
+		row["cached_build_cost"] = float(direct)
+		return
+	var structure_kind := String(row.get("structure_kind", ""))
+	if structure_kind != "":
+		var team := int(row.get("team", -1))
+		var build_rules := structure_build_rules_for_team(team)
+		var structure_rule := build_rules.get(structure_kind, {}) as Dictionary
+		if structure_rule.is_empty():
+			structure_rule = _expansion_build_rules.get(structure_kind, {}) as Dictionary
+		var structure_cost: Variant = structure_rule.get("cost")
+		if typeof(structure_cost) in [TYPE_INT, TYPE_FLOAT] and float(structure_cost) >= 0.0:
+			row["cached_build_cost"] = float(structure_cost)
+		return
+	var unit_type := String(row.get("unit_type", ""))
+	var production_rule := _unit_production_rules.get(unit_type, {}) as Dictionary
+	if not production_rule.is_empty():
+		var unit_cost := _production_rule_value(unit_type, "cost_rule", "default_cost")
+		if unit_cost >= 0:
+			row["cached_build_cost"] = unit_cost
 
 
 func _attach_wall_hub_contract(row: Dictionary, contract: Dictionary) -> void:
@@ -25520,7 +25635,10 @@ func _step_production() -> void:
 		var committed_command_points := int(item.get("command_points", 60))
 		# QueueProductionExitUpdate uses a create point at the producer doorway,
 		# reveals the horde there, and only then sends it to the rally point.
-		_add_battalion(new_id, team, door_point, display_name, object_id, unit_type, committed_command_points)
+		_add_battalion(
+			new_id, team, door_point, display_name, object_id, unit_type,
+			committed_command_points, {}, int(item.get("cost", -1))
+		)
 		if bool(production_rule.get("is_ring_hero", false)):
 			var ring_hero: Dictionary = entities[new_id]
 			ring_hero["ring_hero"] = true
@@ -26238,6 +26356,7 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 		structures[structure_id]["source_object_id"] = String((constructed_sources as Array)[0])
 	elif typeof(constructed_sources) in [TYPE_STRING, TYPE_STRING_NAME]:
 		structures[structure_id]["source_object_id"] = String(constructed_sources)
+	_stamp_refund_die_creation_cost(structures[structure_id] as Dictionary, cost)
 	_mark_ring_delivery_structure(structures[structure_id] as Dictionary)
 	if bool(build_rule.get("highlander_body", false)):
 		structures[structure_id]["highlander_body"] = true
@@ -28595,6 +28714,10 @@ func _apply_playable_unit_death_policy(
 	if _keep_object_die_matches(row, death_type):
 		destroy_object = false
 	if int(row.get("health", 0)) <= 0:
+		# RefundDie is a generic Object DieMux behavior (MordorTributeCart is the
+		# retail non-structure carrier), so battalion/object deaths share the same
+		# once-only dispatch as structures.
+		_apply_refund_die_on_death(row)
 		_schedule_fire_weapon_when_dead(row, death_type, "entity")
 		var slow_death_started := _begin_slow_death_core(row, death_type)
 		# A matched DestroyDie used to erase the object on the SAME tick, which

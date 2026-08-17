@@ -388,7 +388,7 @@ try {
     # Every importer claim marked executable names a focused runtime runner.
     # Run the registry-derived set as one gate so adding/removing an executable
     # claim cannot leave its evidence outside the real retail cadence.
-    [void](Invoke-ProofPriorGate $gate "module_runtime_evidence" (Join-Path $PSScriptRoot "gate-module-runtime-evidence.ps1") $godot '(?m)^MODULE_RUNTIME_EVIDENCE_GATE PASS runners=57 checks=[1-9][0-9]* registered=57\s*$')
+    [void](Invoke-ProofPriorGate $gate "module_runtime_evidence" (Join-Path $PSScriptRoot "gate-module-runtime-evidence.ps1") $godot '(?m)^MODULE_RUNTIME_EVIDENCE_GATE PASS runners=58 checks=[1-9][0-9]* registered=58\s*$')
     Invoke-GodotPassedFloor "stage11_12_groups_and_routes" "stage11_12_runner.gd" '(?m)^STAGE 11/12 TESTS: ([0-9]+) passed, 0 failed\s*$' 26
     Invoke-GodotPassedFloor "stage14_15_base_loop" "stage14_15_sim_runner.gd" '(?m)^STAGE 14/15 SIM TESTS: ([0-9]+) passed, 0 failed\s*$' 31
     Invoke-GodotPassedFloor "stage15_menu_and_audio" "stage15_menu_runner.gd" '(?m)^STAGE15_MENU_RESULT passed=([0-9]+) failed=0\s*$' 22

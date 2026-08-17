@@ -1518,7 +1518,7 @@ Object FixtureObject
   End
   Behavior = RefundDie ModuleTag_Refund
     UpgradeRequired = Upgrade_Fixture
-    BuildingRequired = ANY +FixtureMarket
+    BuildingRequired = ANY +GondorMarketPlace
     RefundPercent = 50%
   End
 End
@@ -1534,7 +1534,23 @@ End
     assert compile_siege_docking_behaviors(lineage, "FixtureObject")[0]["fields"] == {}
     refund = compile_refund_die_behaviors(lineage, "FixtureObject")[0]
     assert refund["fields"]["RefundPercent"]["fraction"] == 0.5
-    assert refund["fields"]["BuildingRequired"]["value"] == ["ANY", "+FixtureMarket"]
+    assert refund["fields"]["BuildingRequired"]["value"] == ["ANY", "+GondorMarketPlace"]
+    assert refund["runtimeStatus"] == "executable"
+    assert refund["effectGraph"] == {
+        "kind": "refund-on-death",
+        "executionEligibility": {
+            "runtimeStatus": "executable",
+            "blockers": [],
+        },
+        "deathDispatch": "once-per-object-death-edge",
+        "ownerResolution": "current-controlling-player-at-death",
+        "costBasis": "object-cached-build-cost",
+        "rounding": "ceil",
+        "deathGuards": ["UNDER_CONSTRUCTION", "SOLD"],
+        "requirementCandidateRejects": [
+            "EFFECTIVELY_DEAD", "DESTROYED", "KINDOF_INERT",
+        ],
+    }
 
 
 @pytest.mark.parametrize(
@@ -1557,6 +1573,25 @@ End
 """)
     with pytest.raises(ModuleContractError):
         compiler(lineage, "FixtureObject")
+
+
+def test_refund_die_arbitrary_mod_object_filter_stays_row_deferred() -> None:
+    lineage = _lineage("""
+Object ModObject
+  Behavior = RefundDie ModuleTag_ModFilter
+    RefundPercent = 37.5%
+    BuildingRequired = ALL +STRUCTURE -IMMOBILE
+  End
+End
+""", "ModObject")
+    row = compile_refund_die_behaviors(lineage, "ModObject")[0]
+    assert row["extraction"] == "typed"
+    assert row["runtimeStatus"] == "deferred"
+    assert row["effectGraph"]["executionEligibility"] == {
+        "runtimeStatus": "deferred",
+        "blockers": ["typed-row-shape"],
+    }
+    validate_module_contracts([row], label="mod RefundDie")
 
 
 def test_spread_invisibility_attach_and_clearance_contracts() -> None:
@@ -3911,6 +3946,7 @@ def test_opaque_and_typed_sets_disjoint() -> None:
         "SubObjectsUpgrade", "AnimationSoundClientBehavior", "TransitionDamageFX",
         "ModelConditionUpgrade", "AnimationState", "ParticleSysBone",
         "EnteringStateFX", "ClipFrameClock", "FXEvent", "DrawableFxList", "AttackPose",
+        "RefundDie",
     }
     for module, (consumer_path, test_path) in ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE.items():
         assert (root / consumer_path).is_file()
@@ -5690,6 +5726,9 @@ def test_typed_class_c_contracts_accept_every_effective_retail_site() -> None:
             "conditionalRefundRows": sum(
                 "UpgradeRequired" in row["fields"] for row in refund_rows
             ),
+            "refundRuntimeStatus": dict(sorted(Counter(
+                row["runtimeStatus"] for row in refund_rows
+            ).items())),
         }
         actual_stealth_clearance[label] = {
             "invisibilityNuggets": sum(len(row["fields"]["InvisibilityNugget"]) for row in invis_rows),
@@ -5992,11 +6031,13 @@ def test_typed_class_c_contracts_accept_every_effective_retail_site() -> None:
             "nuggetRows": 40, "offsetRows": 3,
             "indefiniteDeletionRows": 5, "defineDeletionRows": 3,
             "conditionalRefundRows": 17,
+            "refundRuntimeStatus": {"executable": 18},
         },
         "rotwk-retail": {
             "nuggetRows": 51, "offsetRows": 6,
             "indefiniteDeletionRows": 5, "defineDeletionRows": 3,
             "conditionalRefundRows": 29,
+            "refundRuntimeStatus": {"executable": 30},
         },
     }
     assert actual_stealth_clearance == {

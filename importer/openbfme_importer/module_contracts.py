@@ -126,6 +126,10 @@ ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE: Mapping[str, tuple[str, str]] = {
         _SIM_CONSUMER,
         "game/tests/queue_production_exit_exact_runtime_runner.gd",
     ),
+    "RefundDie": (
+        _SIM_CONSUMER,
+        "game/tests/refund_die_runtime_runner.gd",
+    ),
     "SpawnBehavior": (
         _SIM_CONSUMER,
         "game/tests/spawn_reclaim_binary_runtime_runner.gd",
@@ -4733,9 +4737,83 @@ def compile_refund_die_behaviors(
             if not building["value"]:
                 raise ModuleContractError(f"{target_id} RefundDie BuildingRequired empty")
             fields["BuildingRequired"] = building
-        rows.append(_row("RefundDie", block, fields))
+        row = _row(
+            "RefundDie",
+            block,
+            fields,
+            runtime_status=(
+                "executable"
+                if _refund_die_row_has_closed_runtime(fields)
+                else "deferred"
+            ),
+        )
+        row["effectGraph"] = _refund_die_effect_graph(fields)
+        rows.append(row)
     rows.sort(key=lambda row: (str(row["sourceIni"]).casefold(), int(row["line"])))
     return rows
+
+
+def _refund_die_row_has_closed_runtime(fields: Mapping[str, object]) -> bool:
+    """Admit only the exact typed row shape proven against retail game.dat."""
+
+    if set(fields) - {"RefundPercent", "UpgradeRequired", "BuildingRequired"}:
+        return False
+    refund = fields.get("RefundPercent")
+    if not isinstance(refund, Mapping):
+        return False
+    percent = refund.get("percent")
+    fraction = refund.get("fraction")
+    if (
+        not isinstance(percent, (int, float))
+        or isinstance(percent, bool)
+        or not isinstance(fraction, (int, float))
+        or isinstance(fraction, bool)
+        or percent < 0
+        or percent > 100
+        or abs(float(fraction) - float(percent) / 100.0) > 1e-12
+    ):
+        return False
+    upgrade = fields.get("UpgradeRequired")
+    if upgrade is not None and (
+        not isinstance(upgrade, Mapping)
+        or not isinstance(upgrade.get("value"), str)
+        or not upgrade["value"]
+    ):
+        return False
+    building = fields.get("BuildingRequired")
+    if building is not None:
+        if not isinstance(building, Mapping) or not isinstance(
+            building.get("value"), list
+        ):
+            return False
+        # The generic SAGE ObjectFilter grammar is substantially wider than
+        # this consumer.  Admit only the two exact retail RefundDie filters;
+        # arbitrary mod filters remain typed evidence but row-deferred.
+        if building["value"] not in (
+            ["ANY", "+GondorMarketPlace"],
+            ["ANY", "+ArnorMarketPlace"],
+        ):
+            return False
+    return True
+
+
+def _refund_die_effect_graph(fields: Mapping[str, object]) -> dict[str, object]:
+    executable = _refund_die_row_has_closed_runtime(fields)
+    return {
+        "kind": "refund-on-death",
+        "executionEligibility": {
+            "runtimeStatus": "executable" if executable else "deferred",
+            "blockers": [] if executable else ["typed-row-shape"],
+        },
+        "deathDispatch": "once-per-object-death-edge",
+        "ownerResolution": "current-controlling-player-at-death",
+        "costBasis": "object-cached-build-cost",
+        "rounding": "ceil",
+        "deathGuards": ["UNDER_CONSTRUCTION", "SOLD"],
+        "requirementCandidateRejects": [
+            "EFFECTIVELY_DEAD", "DESTROYED", "KINDOF_INERT"
+        ],
+    }
 
 
 _FIRE_WEAPON_UPDATE_FIELDS = frozenset(
@@ -9817,6 +9895,7 @@ def validate_module_contracts(rows: object, *, label: str) -> None:
             or (module == "FXEvent" and _fx_event_row_has_closed_runtime(fields))
             or (module == "AnimationSoundClientBehavior" and _animation_sound_row_has_closed_runtime(fields))
             or (module == "QueueProductionExitUpdate" and _queue_exit_row_has_closed_runtime(fields))
+            or (module == "RefundDie" and _refund_die_row_has_closed_runtime(fields))
             or (module == "SpawnBehavior" and _spawn_reclaim_row_has_closed_runtime(fields))
             or (module == "SlowDeathBehavior" and _slow_death_row_has_closed_runtime(row))
             or (
@@ -9843,6 +9922,19 @@ def validate_module_contracts(rows: object, *, label: str) -> None:
             if status != expected_status or row.get("effectGraph") != _bezier_effect_graph(fields):
                 raise ModuleContractError(
                     f"{label} BezierProjectileBehavior trajectory graph drifted"
+                )
+        if module == "RefundDie" and extraction == "typed":
+            expected_status = (
+                "executable"
+                if _refund_die_row_has_closed_runtime(fields)
+                else "deferred"
+            )
+            if (
+                status != expected_status
+                or row.get("effectGraph") != _refund_die_effect_graph(fields)
+            ):
+                raise ModuleContractError(
+                    f"{label} RefundDie execution graph drifted"
                 )
         identity = (module.casefold(), line, source.casefold())
         if identity in seen:
