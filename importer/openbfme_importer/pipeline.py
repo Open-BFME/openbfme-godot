@@ -1305,7 +1305,7 @@ def _w3d_plugin_attestation_sha256(attestation: Mapping[str, str]) -> str:
 # adapter by MAX_JOB_OUTPUT_CAPTURE_BYTES). The warning-text guards in
 # _finalize_w3d_bundle_job must evaluate that real content; an unbounded or
 # missing log fails the job closed so it can never reach the conversion cache.
-_W3D_MULTI_JOB_MAX_OUTPUT_LOG_CHARS = 1024 * 1024
+_W3D_MULTI_JOB_MAX_OUTPUT_LOG_CHARS = 2 * 1024 * 1024
 
 
 def _entry_cache_key(entry: CatalogEntry) -> str:
@@ -6869,6 +6869,8 @@ class ImportPipeline:
                 metadata.get("format") != 1
                 or metadata.get("key") != key
                 or not isinstance(metadata.get("combined_log"), str)
+                or len(metadata.get("combined_log", ""))
+                > _W3D_MULTI_JOB_MAX_OUTPUT_LOG_CHARS
                 or metadata.get("output_size") != cached_output.stat().st_size
                 or metadata.get("output_sha256") != sha256_file(cached_output)
             ):

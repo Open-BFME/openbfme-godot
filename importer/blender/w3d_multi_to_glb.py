@@ -26,11 +26,12 @@ from pathlib import Path
 from typing import Any, Iterator
 
 
-# Real per-job output is a few KiB in practice (import prints plus the glTF
-# exporter); the single-job path passes it through unbounded. Multi-job
-# markers must stay single-line JSON, so the per-job capture is bounded: a
-# job that overflows fails closed instead of risking a truncated guard line.
-MAX_JOB_OUTPUT_CAPTURE_BYTES = 1024 * 1024
+# Multi-job markers must stay single-line JSON, so the per-job capture is
+# bounded. Four attested retail jobs legitimately emit about 1.62 MiB of
+# Blender mesh-validation output; 2 MiB admits those complete logs while
+# retaining a narrow fail-closed ceiling. Never truncate: a guard line can
+# occur at the end of the output.
+MAX_JOB_OUTPUT_CAPTURE_BYTES = 2 * 1024 * 1024
 
 
 def _failure_evidence(module: Any, error: BaseException) -> tuple[str | None, str | None]:
@@ -121,16 +122,23 @@ def _read_bounded_job_output(capture_paths: list[Path]) -> str:
     """
 
     chunks: list[bytes] = []
-    total = 0
+    byte_counts: list[int] = []
     for path in capture_paths:
         data = path.read_bytes()
-        total += len(data)
+        byte_counts.append(len(data))
         chunks.append(data)
+    combined = b"\n".join(chunks)
+    total = len(combined)
     if total > MAX_JOB_OUTPUT_CAPTURE_BYTES:
+        stdout_bytes = byte_counts[0] if byte_counts else 0
+        stderr_bytes = byte_counts[1] if len(byte_counts) > 1 else 0
         raise RuntimeError(
-            "W3D multi-job conversion output exceeded the bounded per-job capture"
+            "W3D multi-job conversion output exceeded the bounded per-job capture "
+            f"(total_bytes={total}, stdout_bytes={stdout_bytes}, "
+            f"stderr_bytes={stderr_bytes}, "
+            f"limit_bytes={MAX_JOB_OUTPUT_CAPTURE_BYTES})"
         )
-    return b"\n".join(chunks).decode("utf-8", errors="replace")
+    return combined.decode("utf-8", errors="replace")
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:

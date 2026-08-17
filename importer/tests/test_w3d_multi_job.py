@@ -255,6 +255,65 @@ class W3DMultiJobTests(unittest.TestCase):
             )
             self.assertEqual(len(finalized), 2)
 
+    def test_late_guard_text_above_one_mib_reaches_finalize_and_is_never_cached(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            pipeline = _make_pipeline(root)
+            pack = root / "pack"
+            pack.mkdir()
+            prepared = [_prepared_item(root, pack, 0, "asset-late-warning")]
+            output_log = (
+                "x" * (1024 * 1024 + 32)
+                + "\nWarning: texture not found: late_diff.tga"
+            )
+            self.assertLess(
+                len(output_log), _W3D_MULTI_JOB_MAX_OUTPUT_LOG_CHARS
+            )
+            stdout = "\n".join(
+                [
+                    _ok_marker("asset-late-warning", output_log),
+                    'OPENBFME_W3D_MULTI_DONE {"jobs": 1}',
+                ]
+            )
+
+            outputs, errors = _run_chunk(pipeline, prepared, stdout)
+
+            self.assertEqual(outputs, {})
+            self.assertEqual(set(errors), {0})
+            self.assertIn("missing texture", str(errors[0]))
+            self.assertFalse(
+                (pipeline.converted_cache_root / "key-asset-late-warning").exists()
+            )
+
+    def test_conversion_cache_accepts_known_loud_log_and_rejects_over_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            pipeline = _make_pipeline(root)
+            target = root / "pack" / "model.glb"
+            target.parent.mkdir()
+            target.write_bytes(b"retail-glb" * 256)
+
+            accepted_key = "key-known-loud"
+            accepted_log = "x" * 1_623_935
+            pipeline._populate_w3d_cache(accepted_key, target, accepted_log)
+            target.unlink()
+            self.assertEqual(
+                pipeline._copy_w3d_cache_hit(accepted_key, target), accepted_log
+            )
+
+            rejected_key = "key-over-cap"
+            pipeline._populate_w3d_cache(
+                rejected_key,
+                target,
+                "x" * (_W3D_MULTI_JOB_MAX_OUTPUT_LOG_CHARS + 1),
+            )
+            target.unlink()
+            self.assertIsNone(pipeline._copy_w3d_cache_hit(rejected_key, target))
+            self.assertFalse(target.exists())
+            self.assertFalse(
+                (pipeline.converted_cache_root / rejected_key).exists()
+            )
+
     def test_clean_multi_batch_finalizes_and_caches_real_output(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -550,7 +609,18 @@ class W3DMultiWrapperTests(unittest.TestCase):
             # The overflowing job fails closed (never an OK marker to cache);
             # the quiet job is unaffected.
             self.assertEqual(ok_ids, ["job-quiet"])
-            self.assertIn("bounded per-job capture", fail_payloads["job-loud"]["error"])
+            failure = fail_payloads["job-loud"]["error"]
+            self.assertIn("bounded per-job capture", failure)
+            self.assertIn(
+                f"total_bytes={MULTI.MAX_JOB_OUTPUT_CAPTURE_BYTES + 2}", failure
+            )
+            self.assertIn(
+                f"stdout_bytes={MULTI.MAX_JOB_OUTPUT_CAPTURE_BYTES + 1}", failure
+            )
+            self.assertIn("stderr_bytes=0", failure)
+            self.assertIn(
+                f"limit_bytes={MULTI.MAX_JOB_OUTPUT_CAPTURE_BYTES}", failure
+            )
 
     def test_wrapper_read_bounded_output_fails_closed_over_limit(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -563,10 +633,31 @@ class W3DMultiWrapperTests(unittest.TestCase):
                 MULTI._read_bounded_job_output([small, large]),
                 "stdout text\nstderr text",
             )
-            oversized = root / "oversized.log"
-            oversized.write_bytes(b"x" * (MULTI.MAX_JOB_OUTPUT_CAPTURE_BYTES + 1))
-            with self.assertRaisesRegex(RuntimeError, "bounded per-job capture"):
-                MULTI._read_bounded_job_output([small, oversized])
+            exact_stdout = root / "exact-stdout.log"
+            exact_stdout.write_bytes(b"x" * (1024 * 1024))
+            exact_stderr = root / "exact-stderr.log"
+            exact_stderr.write_bytes(b"y" * (1024 * 1024 - 1))
+            self.assertEqual(
+                len(
+                    MULTI._read_bounded_job_output(
+                        [exact_stdout, exact_stderr]
+                    )
+                ),
+                MULTI.MAX_JOB_OUTPUT_CAPTURE_BYTES,
+            )
+            oversized_stderr = root / "oversized-stderr.log"
+            oversized_stderr.write_bytes(b"y" * (1024 * 1024))
+            with self.assertRaisesRegex(
+                RuntimeError,
+                (
+                    "bounded per-job capture.*"
+                    f"total_bytes={MULTI.MAX_JOB_OUTPUT_CAPTURE_BYTES + 1}.*"
+                    f"stdout_bytes={1024 * 1024}.*"
+                    f"stderr_bytes={1024 * 1024}.*"
+                    f"limit_bytes={MULTI.MAX_JOB_OUTPUT_CAPTURE_BYTES}"
+                ),
+            ):
+                MULTI._read_bounded_job_output([exact_stdout, oversized_stderr])
 
 
 if __name__ == "__main__":
