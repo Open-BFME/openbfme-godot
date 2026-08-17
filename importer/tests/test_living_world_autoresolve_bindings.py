@@ -666,7 +666,7 @@ End
 
 @pytest.fixture(scope="module")
 def real_manifest() -> dict[str, Any]:
-    root = _private_workspace()
+    root = workspace_root()
     if root is None:
         pytest.skip(
             "no workspace/retail-work above this file carries all of "

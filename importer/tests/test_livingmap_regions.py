@@ -431,7 +431,7 @@ def test_pin_the_real_layers_cover_retails_own_regions(
     regions and nothing for others, which is worse than the uniform substitute it
     replaced.
     """
-    root = _private_workspace()
+    root = workspace_root()
     if root is None:
         pytest.skip(
             "no workspace/retail-work carrying catalog/rotwk.json and "
@@ -469,7 +469,7 @@ def test_pin_the_seledge_gap_still_describes_the_shipped_asset(tmp_path):
     winner comes from the BFME2 layer), the model does not cover retail's region
     set, and it carries BFME2 region names that are not RotWK regions.
     """
-    root = _private_workspace()
+    root = workspace_root()
     if root is None:
         pytest.skip(
             "no workspace/retail-work carrying catalog/rotwk.json and "
