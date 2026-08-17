@@ -41,13 +41,13 @@ build/
 **/obj/
 
 # Release staging. Contains packaged builds and converted retail content-packs
-# (dist/bundle/*/content-packs). Never commit-reachable — release firewall.
+# (dist/bundle/*/content-packs). Never commit-reachable — publication boundary.
 /dist/
 
 # Claude Code session state (worktrees, local settings)
 .claude/
 
-# Retail-derived reference captures stay out of git (release firewall)
+# Retail-derived reference captures stay out of git (publication boundary)
 /reference/
 
 # Local Codex/MCP wiring is machine-specific (absolute node + checkout paths).

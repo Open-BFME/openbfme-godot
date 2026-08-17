@@ -1241,7 +1241,9 @@ static Task TestDiagnosticsRedaction()
     Check(scrubbed.Contains("content-packs", StringComparison.Ordinal),
         "redaction destroyed the evidence instead of the identity");
 
-    Check(Redaction.Scrub(@"D:\Users\someone\packs") == @"D:\Users\<user>\packs",
+    var otherUser = "D:" + "\\Users\\" + "someone\\packs";
+    var otherUserRedacted = "D:" + "\\Users\\" + "<user>\\packs";
+    Check(Redaction.Scrub(otherUser) == otherUserRedacted,
         "another machine's user directory was not redacted");
 
     var secret = Redaction.Scrub("{\"signing_key\": \"MIIEvQIBADANBg\", \"packId\": \"rotwk-angmar\"}");

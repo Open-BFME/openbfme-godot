@@ -459,7 +459,7 @@ try {
     Invoke-GodotPassedFloor "scenario_structure_armor_projection" "scenario_structure_armor_projection_runner.gd" '(?m)^SCENARIO_STRUCTURE_ARMOR_PROJECTION_RESULT passed=([0-9]+) failed=0\s*$' 14
     Invoke-GodotPassedFloor "capturable_neutral" "capturable_neutral_runner.gd" '(?m)^CAPTURABLE_NEUTRAL_RESULT passed=([0-9]+) failed=0\s*$' 13
 
-    # The release firewall belongs to SECTION A: it is about the repository, not
+    # The publication-boundary scan belongs to SECTION A: it is about the repository, not
     # about anyone's mounted content, and it must run even when SECTION B is
     # skipped.
     [void](Invoke-ProofChecked $gate "export_firewall_self_test" "powershell.exe" @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "test-export-scan.ps1")) '(?m)^EXPORT_SCAN_SELF_TEST PASS ')

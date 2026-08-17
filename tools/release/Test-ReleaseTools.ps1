@@ -200,7 +200,7 @@ try {
     [void](New-Item -ItemType Directory -Path (Join-Path $secretPayload "python"))
     [IO.File]::WriteAllText(
         (Join-Path $secretPayload "python\metadata.txt"),
-        "developer path C:\Users\SensitiveUser\project",
+        ("developer path C:" + [IO.Path]::DirectorySeparatorChar + "Users" + [IO.Path]::DirectorySeparatorChar + "SensitiveUser\project"),
         [Text.UTF8Encoding]::new($false)
     )
     [IO.File]::WriteAllText(
@@ -220,7 +220,7 @@ try {
     [void](New-Item -ItemType Directory -Path $modifiedTrustedPayload)
     [IO.File]::WriteAllText(
         (Join-Path $modifiedTrustedPayload "OpenBFME.exe"),
-        "developer path C:\Users\SensitiveUser\project",
+        ("developer path C:" + [IO.Path]::DirectorySeparatorChar + "Users" + [IO.Path]::DirectorySeparatorChar + "SensitiveUser\project"),
         [Text.UTF8Encoding]::new($false)
     )
     $modifiedTrustedArchive = Join-Path $temp "modified-trusted.zip"

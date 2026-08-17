@@ -98,7 +98,7 @@ else {
     Write-Step "working_tree=clean"
 }
 
-# --- 3. Release firewall (not skippable) -------------------------------------
+# --- 3. Publication boundary (not skippable) -------------------------------------
 
 & (Join-Path $PSScriptRoot "export-scan.ps1")
 if ($LASTEXITCODE -ne 0) {

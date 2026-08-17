@@ -6,7 +6,7 @@
 .DESCRIPTION
     tools/Publish-DistBuild.ps1 exports Godot, stages several gigabytes of
     content and boots the result twice. Discovering a drifted version string or
-    a hole in the release firewall at the END of that is paying thirty minutes
+    a hole in the publication boundary at the END of that is paying thirty minutes
     to learn something knowable in fifteen seconds, so it is knowable here.
 
     Two kinds of check, and the second kind is the one that matters:

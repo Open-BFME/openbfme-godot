@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Release firewall: reject retail-derived bytes and developer-machine
+    Publication boundary: reject retail-derived bytes and developer-machine
     specifics before anything is published.
 
 .DESCRIPTION
@@ -185,8 +185,6 @@ $allowList = @{
     "README.md"                             = @("hardcoded release target")
     "docs/ONBOARDING.md"                    = @("hardcoded release target")
     "docs/BUILD_AND_RELEASE.md"             = @("hardcoded release target")
-    # Release readiness notes name the active repo when recording blockers.
-    "STATUS.md"                             = @("hardcoded release target")
 }
 
 $trackedViolations = [Collections.Generic.List[string]]::new()

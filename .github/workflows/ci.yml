@@ -34,7 +34,7 @@ concurrency:
 
 jobs:
   publication-boundary:
-    name: publication boundary (release firewall)
+    name: publication boundary
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -52,6 +52,10 @@ jobs:
       - name: Scan for retail bytes and developer-machine specifics
         shell: powershell
         run: ./tools/export-scan.ps1
+
+      - name: Root hygiene (allowlist, lane debris, machine paths)
+        shell: powershell
+        run: ./tools/gate-hygiene.ps1
 
   launcher-mcp:
     name: launcher MCP surface

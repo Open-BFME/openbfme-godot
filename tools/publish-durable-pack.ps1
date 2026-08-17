@@ -6,7 +6,7 @@
 # (workspace/content-packs/selection.json plus every pack bundle it names) into
 # that cache so such launches play the same content as env-driven runs.
 #
-# Release firewall: this copies retail-derived bytes ONLY into the local user
+# Publication boundary: this copies retail-derived bytes ONLY into the local user
 # cache under %APPDATA%. It never stages them into the repository or any
 # distributable artifact.
 [CmdletBinding()]

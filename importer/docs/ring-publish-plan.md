@@ -5,11 +5,11 @@ has ended. These commands intentionally separate conversion, publication, and
 selection. Do not add `--select` to any build command.
 
 ```powershell
-$python = 'C:\Users\Jonathan\Desktop\open-bfme\workspace\retail-work\tools\python-3.12-env\Scripts\python.exe'
-$state = 'C:\Users\Jonathan\Desktop\open-bfme\workspace\retail-work'
+$python = 'workspace\retail-work\tools\python-3.12-env\Scripts\python.exe'
+$state = 'workspace\retail-work'
 $workspace = "$state\editions\rotwk"
 $assets = "$workspace\cache\effective-assets"
-$content = 'C:\Users\Jonathan\Desktop\open-bfme\workspace\content-packs'
+$content = 'workspace\content-packs'
 
 & $python tools\rotwk_faction_convert_batch.py --install F:\RotWK --game rotwk --state-root $state --assets-root $assets --faction men --faction elves --faction dwarves --faction isengard --faction mordor --faction wild --faction angmar
 & $python tools\openbfme_import.py --state-root $state compile-cah-system --game rotwk --assets-root $assets

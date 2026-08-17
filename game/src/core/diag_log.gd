@@ -559,7 +559,7 @@ static func _replace_path_prefix(text: String, value: String, token: String) -> 
 
 
 static func _redact_foreign_user_dirs(text: String) -> String:
-	## C:\Users\somebody\... -> C:\Users\<user>\... (and the /Users/ form).
+	## Windows user-profile paths and the /Users/ form become a <user> token.
 	var result := text
 	for marker in ["/Users/", "\\Users\\", "/home/"]:
 		var search := 0

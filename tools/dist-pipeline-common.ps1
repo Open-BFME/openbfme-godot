@@ -19,7 +19,7 @@
        a mismatch refuses the publish rather than shipping a build that calls
        itself two different things in two different screens.
 
-    2. THE RELEASE FIREWALL. A dist build contains converted retail bytes. It
+    2. THE PUBLICATION BOUNDARY. A dist build contains converted retail bytes. It
        must be unreachable from git on every branch, and "unreachable" is asked
        of git, never assumed: the directory must be ignored AND must have no
        tracked files under it. Both are checked, because .gitignore does not

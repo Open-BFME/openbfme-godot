@@ -73,7 +73,7 @@ OWNER_ONLY = [
     "contracts/",
 ]
 
-# Never commit-reachable. The release firewall.
+# Never commit-reachable. The publication boundary.
 CONTAINMENT_PREFIXES = [
     "workspace/", "dist/", "reference/", "workspace/retail-extract/", "build/",
 ]

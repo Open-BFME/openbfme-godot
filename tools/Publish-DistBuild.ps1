@@ -37,7 +37,7 @@
     tools/dist-pipeline-common.ps1. Bumping the number is editing one file and
     running tools/Write-BuildInfo.ps1.
 
-    THE RELEASE FIREWALL IS CHECKED, NOT ASSUMED. dist\ carries converted retail
+    THE PUBLICATION BOUNDARY IS CHECKED, NOT ASSUMED. dist\ carries converted retail
     bytes. Before the build and again after it, git is asked whether the dist
     root is ignored and whether it tracks anything there. Either answer being
     wrong stops the publish.
@@ -235,7 +235,7 @@ try {
     $notesSource = Get-DistPatchNotesPath -RepoRoot $repoRoot -Version $Version
     Write-DistStep "patch notes         $notesSource"
 
-    # -- the release firewall, before anything is written --------------------
+    # -- publication boundary, before anything is written --------------------
     if ($DistRoot -eq '') { $DistRoot = Join-Path $mainWorktree 'dist' }
     $DistRoot = [IO.Path]::GetFullPath($DistRoot)
     [void](Assert-DistReleaseFirewall -RepoRoot $repoRoot -DistRoot $DistRoot)
@@ -534,7 +534,7 @@ set "OPENBFME_CONTENT=%~dp0content-packs"
     # ---------------------------------------------------- firewall, again
     # After writing, not only before: the answer that matters is about the
     # bytes that now exist, not about an empty directory.
-    Write-DistHeading 'Release firewall'
+    Write-DistHeading 'Publication boundary'
     [void](Assert-DistReleaseFirewall -RepoRoot $repoRoot -DistRoot $DistRoot)
     [void](Assert-DistReleaseFirewall -RepoRoot $repoRoot -DistRoot $bundleRoot)
     Write-DistGood 'the published folder is git-ignored and git tracks nothing in it'
