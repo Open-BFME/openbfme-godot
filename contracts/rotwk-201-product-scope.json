@@ -8,7 +8,7 @@
     "algorithm": "sha256",
     "canonicalization": "UTF-8 JSON with lexicographically sorted keys and no insignificant whitespace",
     "envelope": "All top-level fields and nested values except policy_digest.value.",
-    "value": "fb82e9d2474d0b28280888fc10e1687cdc8bc2946d7b350c3bb25d10a747ae52"
+    "value": "2a4f3fa12aecadbe64ca73064d696e0d67fe0c33ab3499decdc663cd7d8108c5"
   },
   "classification_policy": {
     "authority": "full effective RotWK 2.01 retail catalog (BFME2 base + expansion overlay)",

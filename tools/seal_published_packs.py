@@ -38,7 +38,7 @@ WRITE_BITS = stat.S_IWRITE | stat.S_IWGRP | stat.S_IWOTH
 
 
 def default_workspace_root() -> Path:
-    return REPO_ROOT / ".private" / "content-packs"
+    return REPO_ROOT / "workspace" / "content-packs"
 
 
 def default_durable_root() -> Path | None:
