@@ -12,10 +12,9 @@ func _initialize() -> void:
 
 func _run() -> void:
 	var live: RetailSliceSim = Sim.new()
-	# Keep the active selected-pack structure catalog, but make the legacy
-	# default spawn roster self-contained. Under a RotWK pack those five seed
-	# ids are intentionally not BFME2 ids; asking the pack to resolve them made
-	# this runner print engine errors even though replacement assertions passed.
+	# Keep this runtime contract probe independent of whichever immutable pack is
+	# selected. Canonical retail ownership and fields are pinned by importer
+	# tests; this runner proves that an admitted replacement template executes.
 	live._ensure_parity()
 	var live_rules := live._rules.duplicate(true)
 	var live_unit_rules := (live_rules.get("unit_rules", {}) as Dictionary).duplicate(true)
@@ -24,9 +23,12 @@ func _run() -> void:
 			live_unit_rules[object_id] = _rule()
 	live_rules["unit_rules"] = live_unit_rules
 	live_rules["faction_manifest"] = {"structure_armor": _fixture_structure_armor()}
+	live_rules["replace_self_structure_templates"] = {
+		"GondorCastleWallSegment": {"structure_kind": "wall_segment", "maximum_health": 1500},
+	}
 	live.setup({}, live_rules)
 	var live_spec := live._replace_self_structure_spec(0, "GondorCastleWallSegment")
-	_check("selected_retail_template_resolves", not live_spec.is_empty() and int(live_spec.get("maximum_health", 0)) == 1500)
+	_check("admitted_fixture_template_resolves", not live_spec.is_empty() and int(live_spec.get("maximum_health", 0)) == 1500)
 	var sim := _sim()
 	var wall := sim.structures[50] as Dictionary
 	sim._attach_replace_self_contract(wall, _contract())
