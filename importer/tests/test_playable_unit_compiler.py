@@ -12,6 +12,7 @@ from openbfme_importer.playable_unit_compiler import (
     PlayableUnitCompilerError,
     _ancestry,
     _apply_nugget_damage_types,
+    _base_weapon_damage,
     _audio_routes,
     _default_set_target,
     _numeric_defines,
@@ -6951,6 +6952,86 @@ def test_partially_typed_nuggets_do_not_spread_the_authored_type() -> None:
         {"damageType": "HERO", "value": 10},
         {"damageType": "", "value": 5},
     ]
+
+
+def test_damage_nugget_components_keep_retail_radius_and_fx_semantics() -> None:
+    documents = {
+        "data/ini/weapon.ini": b"""
+Weapon TestSiegeWarhead
+  DamageNugget
+    Damage = 200
+    Radius = 20
+    DamageTaperOff = 0
+    DamageType = SIEGE
+    DamageFXType = BIG_ROCK
+    DeathType = EXPLODED
+  End
+  DamageNugget
+    Damage = 200
+    Radius = 100
+    DamageTaperOff = 50
+    DamageType = SIEGE
+    DamageFXType = BIG_ROCK
+    DeathType = EXPLODED
+  End
+End
+""",
+    }
+
+    damage = _base_weapon_damage(documents, "TestSiegeWarhead", {})
+
+    assert damage is not None
+    assert damage["components"] == [
+        {
+            "value": 200,
+            "expression": "200",
+            "sourceIni": "data/ini/weapon.ini",
+            "line": 4,
+            "constantSourceIni": None,
+            "damageType": "SIEGE",
+            "radius": 20,
+            "damageTaperOff": 0,
+            "deathType": "EXPLODED",
+            "damageFXType": "BIG_ROCK",
+        },
+        {
+            "value": 200,
+            "expression": "200",
+            "sourceIni": "data/ini/weapon.ini",
+            "line": 12,
+            "constantSourceIni": None,
+            "damageType": "SIEGE",
+            "radius": 100,
+            "damageTaperOff": 50,
+            "deathType": "EXPLODED",
+            "damageFXType": "BIG_ROCK",
+        },
+    ]
+
+
+def test_zero_radius_melee_keeps_direct_damage_and_no_projectile_semantic() -> None:
+    documents = {
+        "data/ini/weapon.ini": b"""
+Weapon TestMelee
+  MeleeWeapon = Yes
+  DamageNugget
+    Damage = 75
+    Radius = 0
+    DamageTaperOff = 0
+    DamageType = CAVALRY
+    DamageFXType = SWORD_SLASH
+    DeathType = NORMAL
+  End
+End
+""",
+    }
+
+    damage = _base_weapon_damage(documents, "TestMelee", {})
+
+    assert damage is not None
+    assert damage["value"] == 75
+    assert damage["components"][0]["radius"] == 0
+    assert damage["components"][0]["damageTaperOff"] == 0
 
 
 def test_sub_object_upgrade_compiles_fire_plane_show_token() -> None:
