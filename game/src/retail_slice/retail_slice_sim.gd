@@ -27323,6 +27323,9 @@ func _launch_member_projectile(
 		"projectile_token": projectile_id,
 		"impact_tick": tick_index + flight_ticks,
 		"projectile_object_id": String(row.get("projectile_object_id", "")),
+		"team": int(row.get("team", -1)),
+		"launch_position": launch_origin,
+		"target_position": impact_origin,
 		"member_index": member_index,
 		"member_release_token": release_token,
 	})

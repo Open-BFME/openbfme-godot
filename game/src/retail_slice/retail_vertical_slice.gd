@@ -8169,12 +8169,15 @@ func _consume_structure_projectile_events() -> void:
 		var kind := String(event.get("kind", ""))
 		if kind not in [
 			"combat.structure_projectile_launched",
+			"combat.projectile_launched",
 			"power.structure_weapon_hit",
+			"combat.projectile_impact",
 			"combat.structure_projectile_cancelled",
+			"combat.projectile_cancelled",
 		]:
 			continue
 		var key := "%d:%d" % [int(event.get("entity_id", 0)), int(event.get("projectile_token", 0))]
-		if kind in ["power.structure_weapon_hit", "combat.structure_projectile_cancelled"]:
+		if kind in ["power.structure_weapon_hit", "combat.projectile_impact", "combat.structure_projectile_cancelled", "combat.projectile_cancelled"]:
 			var old := structure_projectile_nodes.get(key) as Node
 			if old != null and is_instance_valid(old):
 				old.queue_free()
@@ -8183,6 +8186,11 @@ func _consume_structure_projectile_events() -> void:
 		var start := event.get("launch_position", Vector2.ZERO) as Vector2
 		var finish := event.get("target_position", start) as Vector2
 		var projectile_id := String(event.get("projectile_object_id", ""))
+		# RetailBattalion already owns the id-keyed arrow-art controller. Keep
+		# ordinary arrow launch behind the same sim release event without creating
+		# a second visual here; siege/non-arrow projectiles use this general path.
+		if kind == "combat.projectile_launched" and BattalionScript.VISIBLE_ARROW_PROJECTILE_IDS.has(projectile_id):
+			continue
 		var runtime_projectile_id := PlayableUnitAdapter._runtime_id(projectile_id)
 		var asset_factory = load("res://src/view/asset_factory.gd")
 		var projectile: Node3D = null
@@ -8223,7 +8231,7 @@ func _consume_structure_projectile_events() -> void:
 		var key := String(key_value)
 		var separator := key.find(":")
 		var owner_id := int(key.left(separator)) if separator >= 0 else 0
-		if simulation.structures.has(owner_id):
+		if simulation.structures.has(owner_id) or simulation.entities.has(owner_id):
 			continue
 		var orphan := structure_projectile_nodes.get(key) as Node
 		if orphan != null and is_instance_valid(orphan):
