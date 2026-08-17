@@ -1359,9 +1359,14 @@ func _consume_event(event: Dictionary) -> void:
 	elif kind == "audio.typed_selector":
 		var event_id := String(event.get("event_id", ""))
 		var routed := route_audio_event(event_id, sequence)
-		var receipt := {"sequence": sequence, "entity_id": entity_id, "event_id": event_id, "sound_role": String(event.get("sound_role", "")), "priority": int(event.get("priority", 0)), "rng_receipt": String(event.get("rng_receipt", "")), "accepted": bool(routed.get("ok", false)), "reason": String(routed.get("reason", ""))}
+		var byte_check := _typed_selector_byte_receipt_check(event, routed)
+		var accepted := bool(routed.get("ok", false)) and bool(byte_check.get("match", false))
+		var reason := String(routed.get("reason", ""))
+		if bool(routed.get("ok", false)) and not bool(byte_check.get("match", false)):
+			reason = "wav-byte-identity-receipt-mismatch"
+		var receipt := {"sequence": sequence, "entity_id": entity_id, "object_id": String(event.get("object_id", "")), "event_id": event_id, "logical_event_ids": Array(event.get("logical_event_ids", [event_id])).duplicate(), "sound_role": String(event.get("sound_role", "")), "priority": int(event.get("priority", 0)), "rng_receipt": String(event.get("rng_receipt", "")), "selector_receipt": String(event.get("selector_receipt", "")), "wav_set_byte_identity_receipt": (event.get("wav_set_byte_identity_receipt", {}) as Dictionary).duplicate(true), "selected_path": String(byte_check.get("selected_path", "")), "selected_sha256": String(byte_check.get("selected_sha256", "")), "byte_identity_match": bool(byte_check.get("match", false)), "accepted": accepted, "reason": reason}
 		typed_selector_intents.append(receipt)
-		_play_routed(routed, voice_player)
+		if accepted: _play_routed(routed, voice_player)
 	elif kind == "transport.enter":
 		# The contain module's mechanical EnterSound and the passenger object's
 		# VoiceEnterUnit* acknowledgement are separate authored routes. The sim
@@ -2373,6 +2378,31 @@ func route_audio_event(event_id: String, sequence: int) -> Dictionary:
 	if route.is_empty():
 		return _rejection(String(route_failures.get(key, "missing_event")), event_id, "", "sfx", sequence)
 	return _route_definition(route, sequence, "", "sfx")
+
+
+func _typed_selector_byte_receipt_check(event: Dictionary, routed: Dictionary) -> Dictionary:
+	var receipt_value: Variant = event.get("wav_set_byte_identity_receipt", {})
+	if typeof(receipt_value) != TYPE_DICTIONARY or (receipt_value as Dictionary).is_empty():
+		return {"match": true, "selected_path": String(routed.get("path", "")), "selected_sha256": ""}
+	if not bool(routed.get("ok", false)):
+		return {"match": false, "selected_path": "", "selected_sha256": ""}
+	var receipt := receipt_value as Dictionary
+	var logical_ids: Variant = event.get("logical_event_ids", [])
+	if typeof(logical_ids) != TYPE_ARRAY or logical_ids != receipt.get("logicalEventIds", []):
+		return {"match": false, "selected_path": String(routed.get("path", "")), "selected_sha256": ""}
+	var selected_path := String(routed.get("path", ""))
+	if selected_path == "" or not FileAccess.file_exists(selected_path):
+		return {"match": false, "selected_path": selected_path, "selected_sha256": ""}
+	var selected_sha := FileAccess.get_sha256(selected_path).to_lower()
+	var normalized_path := selected_path.replace("\\", "/").to_lower()
+	for leaf_value in receipt.get("leaves", []) as Array:
+		if typeof(leaf_value) != TYPE_DICTIONARY: continue
+		var leaf := leaf_value as Dictionary
+		var cooked_path := String(leaf.get("cookedPath", "")).replace("\\", "/").to_lower()
+		var expected_sha := String(leaf.get("cookedSha256", ""))
+		if cooked_path != "" and normalized_path.ends_with("/" + cooked_path) and expected_sha == selected_sha:
+			return {"match": true, "selected_path": selected_path, "selected_sha256": selected_sha}
+	return {"match": false, "selected_path": selected_path, "selected_sha256": selected_sha}
 
 
 # Retail select voices for the legacy men structure roster, kept as the

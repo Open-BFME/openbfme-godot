@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections import Counter
 from copy import deepcopy
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -71,6 +73,7 @@ from openbfme_importer.module_contracts import (
     compile_threat_finder_updates,
     compile_model_condition_sound_selectors,
     compile_random_sound_selectors,
+    compile_upgrade_sound_selectors,
     compile_radiate_fear_updates,
     compile_poisoned_behaviors,
     compile_damage_field_updates,
@@ -3922,7 +3925,7 @@ def test_opaque_and_typed_sets_disjoint() -> None:
     )
 
     assert not (OPAQUE_DEFERRED_MODULE_KINDS & TYPED_MODULE_KINDS)
-    assert len(OPAQUE_DEFERRED_MODULE_KINDS) == 87
+    assert len(OPAQUE_DEFERRED_MODULE_KINDS) == 86
     assert len(EXECUTABLE_TYPED_MODULE_KINDS) == 65
     assert {
         "DeployStyleAIUpdate",
@@ -3946,13 +3949,145 @@ def test_opaque_and_typed_sets_disjoint() -> None:
         "SubObjectsUpgrade", "AnimationSoundClientBehavior", "TransitionDamageFX",
         "ModelConditionUpgrade", "AnimationState", "ParticleSysBone",
         "EnteringStateFX", "ClipFrameClock", "FXEvent", "DrawableFxList", "AttackPose",
-        "RefundDie",
+        "RefundDie", "UpgradeSoundSelectorClientBehavior",
     }
     for module, (consumer_path, test_path) in ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE.items():
         assert (root / consumer_path).is_file()
         runner = root / test_path
         assert runner.is_file()
         assert module in runner.read_text(encoding="utf-8")
+
+
+def test_upgrade_sound_selector_preserves_retail_guardian_attack_mux() -> None:
+    lineage = _lineage(
+        """
+Object DwarvenGuardian
+  ClientBehavior = UpgradeSoundSelectorClientBehavior ModuleTag_UpgradeSoundSelector
+    SoundUpgrade = Upgrade_DwarvenSiegeHammer
+      VoiceAttack = DwarfGuardianVoiceAttackHammer
+      VoiceAttack = DwarfGuardianVoiceEnterStateAttackHammer
+    End
+  End
+End
+""",
+        "DwarvenGuardian",
+    )
+    row = compile_upgrade_sound_selectors(lineage, "DwarvenGuardianHorde")[0]
+    assert row["runtimeStatus"] == "executable"
+    assert row["fields"]["SoundUpgrade"] == [{
+        "requiredUpgrades": ["Upgrade_DwarvenSiegeHammer"],
+        "excludedUpgrades": [],
+        "sounds": {
+            "VoiceAttack": [
+                "DwarfGuardianVoiceAttackHammer",
+                "DwarfGuardianVoiceEnterStateAttackHammer",
+            ],
+        },
+        "sourceIni": "data/ini/object/fixture.ini",
+        "line": 4,
+    }]
+    all_rows = compile_all_module_contracts(lineage, "DwarvenGuardianHorde")
+    assert all_rows == [row]
+    validate_module_contracts(all_rows, label="DwarvenGuardianHorde")
+
+
+def test_upgrade_sound_selector_exact_retail_owners_and_wav_byte_receipt() -> None:
+    from openbfme_importer.catalog import InstallCatalog
+    from openbfme_importer.module_census import census_catalog_paths, read_catalog_documents
+
+    catalogs = {
+        label: InstallCatalog.load(path)
+        for label, path in census_catalog_paths().items()
+    }
+    executable: dict[str, list[tuple[str, dict[str, object]]]] = {}
+    for label, catalog in catalogs.items():
+        executable[label] = []
+        for virtual_path, source in read_catalog_documents(catalog):
+            if (
+                not virtual_path.casefold().startswith("data/ini/object/")
+                or b"upgradesoundselectorclientbehavior" not in source.lower()
+            ):
+                continue
+            for obj in parse_sage_document(source, virtual_path=virtual_path).objects:
+                for row in compile_upgrade_sound_selectors([obj], obj.name):
+                    if row["runtimeStatus"] == "executable":
+                        executable[label].append((obj.name, row))
+    assert {
+        label: [(owner, row["sourceIni"], row["line"]) for owner, row in rows]
+        for label, rows in executable.items()
+    } == {
+        "bfme2-retail": [(
+            "DwarvenGuardian",
+            "data/ini/object/goodfaction/units/dwarven/dwarvenguardian.ini",
+            729,
+        )],
+        "rotwk-retail": [(
+            "DwarvenGuardian",
+            "data/ini/object/goodfaction/units/dwarven/dwarvenguardian.ini",
+            720,
+        )],
+    }
+
+    root = Path(__file__).resolve().parents[2]
+    descriptor_path = (
+        root / ".private" / "retail-work" / "reports" / "faction-import"
+        / "dwarves" / "objects" / "dwarvenguardianhorde" / "descriptor.json"
+    )
+    if not descriptor_path.is_file():
+        pytest.skip("private DwarvenGuardianHorde descriptor is unavailable")
+    descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
+    resolved = descriptor["presentation"]["resolvedAudio"]
+    event_ids = [
+        "DwarfGuardianVoiceAttackHammer",
+        "DwarfGuardianVoiceEnterStateAttackHammer",
+    ]
+    assert resolved[event_ids[0]] == resolved[event_ids[1]]
+    effective_assets = (
+        root / ".private" / "retail-work" / "editions" / "rotwk" / "cache"
+        / "effective-assets"
+    )
+    receipts: dict[str, list[dict[str, str]]] = {}
+    for event_id in event_ids:
+        receipts[event_id] = []
+        for virtual_path in resolved[event_id]:
+            payload = (effective_assets / virtual_path).read_bytes()
+            receipts[event_id].append({
+                "virtualPath": virtual_path,
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            })
+    assert receipts[event_ids[0]] == receipts[event_ids[1]]
+    assert [leaf["sha256"] for leaf in receipts[event_ids[0]]] == [
+        "a80547e91ad15beba994e45fa4762b32eb7ff353734a21fd8b06b1283aa11ebb",
+        "f9509bf1e939b7d90f1bd9276b326985ef2cce90c49edd9bdaa433ed5bfaa5f3",
+        "9968e3e707f0fe443df157669bb4010a226d9feb2b265504ee8ad7f3b0648cff",
+    ]
+    for catalog in catalogs.values():
+        catalog_hashes: list[str] = []
+        for leaf in receipts[event_ids[0]]:
+            entry = catalog.resolve_exact(leaf["virtualPath"])
+            assert entry is not None
+            payload = catalog.open_archive_for(entry).read_entry(
+                catalog.as_entry(entry), max_bytes=10 * 1024 * 1024
+            )
+            catalog_hashes.append(hashlib.sha256(payload).hexdigest())
+        assert catalog_hashes == [leaf["sha256"] for leaf in receipts[event_ids[0]]]
+
+
+@pytest.mark.parametrize("body", [
+    "SoundUpgrade = Upgrade_DwarvenSiegeHammer\n      UnknownSound = Bad\n    End",
+    "SoundUpgrade =\n      VoiceAttack = DwarfGuardianVoiceAttackHammer\n    End",
+    "SoundUpgrade = Upgrade_DwarvenSiegeHammer\n      VoiceAttack = ../bad\n    End",
+    "SoundUpgrade = Upgrade_DwarvenSiegeHammer\n      ExcludedUpgrades = Upgrade_Bad Upgrade_Bad\n      VoiceAttack = DwarfGuardianVoiceAttackHammer\n    End",
+])
+def test_upgrade_sound_selector_fails_closed_on_unknown_or_malformed(body: str) -> None:
+    lineage = _lineage(
+        "Object FixtureObject\n"
+        "  ClientBehavior = UpgradeSoundSelectorClientBehavior ModuleTag_Test\n"
+        f"    {body}\n"
+        "  End\nEnd"
+    )
+    with pytest.raises(ModuleContractError):
+        compile_upgrade_sound_selectors(lineage, "FixtureObject")
 
 
 def test_bezier_projectile_behavior_types_complete_grammar_and_partial_runtime() -> None:

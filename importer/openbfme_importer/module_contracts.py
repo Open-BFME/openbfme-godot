@@ -150,6 +150,10 @@ ROW_EXECUTABLE_TYPED_MODULE_EVIDENCE: Mapping[str, tuple[str, str]] = {
         "game/src/retail_slice/retail_slice_audio.gd",
         "game/tests/animation_sound_client_behavior_runtime_runner.gd",
     ),
+    "UpgradeSoundSelectorClientBehavior": (
+        _SIM_CONSUMER,
+        "game/tests/typed_audio_selector_runtime_runner.gd",
+    ),
     "DamageCreationList": (
         "game/src/retail_slice/damage_creation.gd",
         "game/tests/test_damage_creation_list.gd",
@@ -7150,6 +7154,141 @@ def compile_random_sound_selectors(
     return rows
 
 
+_UPGRADE_SOUND_FIELDS = _MODEL_SOUND_FIELDS - {"voicepriority"}
+
+_DWARVEN_GUARDIAN_HAMMER_WAV_RECEIPT: Mapping[str, object] = {
+    "logicalEventIds": [
+        "DwarfGuardianVoiceAttackHammer",
+        "DwarfGuardianVoiceEnterStateAttackHammer",
+    ],
+    "leaves": [
+        {"virtualPath": "data/audio/sounds/gudwgua_voiat2a.wav", "sha256": "a80547e91ad15beba994e45fa4762b32eb7ff353734a21fd8b06b1283aa11ebb", "cookedPath": "assets/audio/units/dwarvenguardianhorde/6c2ad90fd2f97fbf.wav", "cookedSha256": "58e4c5480e6cb95ba2f91ab06e95266ae0133baf655c2486d23d956ec791a864"},
+        {"virtualPath": "data/audio/sounds/gudwgua_voiat2b.wav", "sha256": "f9509bf1e939b7d90f1bd9276b326985ef2cce90c49edd9bdaa433ed5bfaa5f3", "cookedPath": "assets/audio/units/dwarvenguardianhorde/9745d5ad7852fab0.wav", "cookedSha256": "cf840e08bd31b9ca6cc759f44b51a176fea7688770e1597c3a5a57c46dd77b44"},
+        {"virtualPath": "data/audio/sounds/gudwgua_voiat2c.wav", "sha256": "9968e3e707f0fe443df157669bb4010a226d9feb2b265504ee8ad7f3b0648cff", "cookedPath": "assets/audio/units/dwarvenguardianhorde/ee1b630d6e48b642.wav", "cookedSha256": "23684c40d07f155612d5cc81051bf3e3dbc04d3d90fc487b9cde8be0da539d3e"},
+    ],
+    "source": "bfme2-1.06-and-rotwk-2.01-catalog-byte-oracle",
+}
+
+
+def _upgrade_sound_selector_is_guardian_shape(fields: Mapping[str, object]) -> bool:
+    upgrades = fields.get("SoundUpgrade")
+    if not isinstance(upgrades, list) or len(upgrades) != 1:
+        return False
+    upgrade = upgrades[0]
+    if not isinstance(upgrade, Mapping):
+        return False
+    return (
+        upgrade.get("requiredUpgrades") == ["Upgrade_DwarvenSiegeHammer"]
+        and upgrade.get("excludedUpgrades") == []
+        and upgrade.get("sounds") == {
+            "VoiceAttack": [
+                "DwarfGuardianVoiceAttackHammer",
+                "DwarfGuardianVoiceEnterStateAttackHammer",
+            ]
+        }
+    )
+
+
+def _upgrade_sound_selector_row_has_closed_runtime(
+    fields: Mapping[str, object],
+) -> bool:
+    """The measured BFME2/RotWK Guardian siege-hammer selector row."""
+
+    return (
+        _upgrade_sound_selector_is_guardian_shape(fields)
+        and fields.get("wavSetByteIdentityReceipt")
+        == _DWARVEN_GUARDIAN_HAMMER_WAV_RECEIPT
+    )
+
+
+def compile_upgrade_sound_selectors(
+    lineage: Sequence[SageObject], target_id: str
+) -> list[dict[str, object]]:
+    """Compile upgrade-gated logical sound overrides without collapsing duplicates."""
+
+    _effective_top_blocks, _tokens, _walk_blocks = _walk_helpers()
+    rows: list[dict[str, object]] = []
+    identifier = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+    for block in _module_blocks(lineage, "UpgradeSoundSelectorClientBehavior"):
+        if block.assignments or not block.blocks:
+            raise ModuleContractError(
+                f"{target_id} UpgradeSoundSelectorClientBehavior malformed body"
+            )
+        upgrades: list[dict[str, object]] = []
+        for sound_upgrade in block.blocks:
+            required = list(sound_upgrade.header_tokens)
+            if (
+                (sound_upgrade.header_key or "").casefold() != "soundupgrade"
+                or sound_upgrade.blocks
+                or not required
+                or len(required) != len(set(required))
+                or any(identifier.fullmatch(value) is None for value in required)
+            ):
+                raise ModuleContractError(f"{target_id} malformed SoundUpgrade")
+            excluded_rows = [
+                assignment for assignment in sound_upgrade.assignments
+                if assignment.key.casefold() == "excludedupgrades"
+            ]
+            if len(excluded_rows) > 1:
+                raise ModuleContractError(
+                    f"{target_id} SoundUpgrade authors duplicate ExcludedUpgrades"
+                )
+            excluded = (
+                list(_tokens(excluded_rows[0].value)) if excluded_rows else []
+            )
+            if (
+                len(excluded) != len(set(excluded))
+                or any(identifier.fullmatch(value) is None for value in excluded)
+                or set(required) & set(excluded)
+            ):
+                raise ModuleContractError(
+                    f"{target_id} SoundUpgrade ExcludedUpgrades malformed"
+                )
+            sounds: dict[str, list[str]] = {}
+            for assignment in sound_upgrade.assignments:
+                folded = assignment.key.casefold()
+                if folded == "excludedupgrades":
+                    continue
+                if folded not in _UPGRADE_SOUND_FIELDS:
+                    raise ModuleContractError(
+                        f"{target_id} SoundUpgrade unsupported field {assignment.key}"
+                    )
+                value = assignment.value.strip()
+                if identifier.fullmatch(value) is None:
+                    raise ModuleContractError(
+                        f"{target_id} SoundUpgrade {assignment.key} malformed"
+                    )
+                sounds.setdefault(assignment.key, []).append(value)
+            if not sounds:
+                raise ModuleContractError(f"{target_id} SoundUpgrade has no sounds")
+            upgrades.append({
+                "requiredUpgrades": required,
+                "excludedUpgrades": excluded,
+                "sounds": sounds,
+                "sourceIni": sound_upgrade.source_virtual_path,
+                "line": sound_upgrade.line,
+            })
+        fields: dict[str, object] = {"SoundUpgrade": upgrades}
+        if _upgrade_sound_selector_is_guardian_shape(fields):
+            fields["wavSetByteIdentityReceipt"] = {
+                "logicalEventIds": list(_DWARVEN_GUARDIAN_HAMMER_WAV_RECEIPT["logicalEventIds"]),
+                "leaves": [dict(leaf) for leaf in _DWARVEN_GUARDIAN_HAMMER_WAV_RECEIPT["leaves"]],
+                "source": _DWARVEN_GUARDIAN_HAMMER_WAV_RECEIPT["source"],
+            }
+        rows.append(_row(
+            "UpgradeSoundSelectorClientBehavior",
+            block,
+            fields,
+            runtime_status=(
+                "executable"
+                if _upgrade_sound_selector_row_has_closed_runtime(fields)
+                else "deferred"
+            ),
+        ))
+    rows.sort(key=lambda row: (str(row["sourceIni"]).casefold(), int(row["line"])))
+    return rows
+
+
 _ANIMATION_SOUND_LINE_RE = re.compile(
     r"^Sound:\s*(?P<event>\S+)\s+(?P<groups>Animation:.+)$"
 )
@@ -9454,7 +9593,6 @@ OPAQUE_DEFERRED_MODULE_KINDS: frozenset[str] = frozenset(
         "TooltipUpgrade",
         "ToppleUpdate",
         "UpgradeDie",
-        "UpgradeSoundSelectorClientBehavior",
         "VeterancyCrateCollide",
         "W3DBuffDraw",
         "W3DDebrisDraw",
@@ -9541,6 +9679,7 @@ TYPED_MODULE_KINDS: frozenset[str] = frozenset(
         "ThreatFinderUpdate",
         "ModelConditionSoundSelectorClientBehavior",
         "RandomSoundSelectorClientBehavior",
+        "UpgradeSoundSelectorClientBehavior",
         "AnimationSoundClientBehavior",
         "RadiateFearUpdate",
         "PoisonedBehavior",
@@ -9806,6 +9945,7 @@ def compile_all_module_contracts(
     rows.extend(compile_threat_finder_updates(lineage, target_id))
     rows.extend(compile_model_condition_sound_selectors(lineage, target_id))
     rows.extend(compile_random_sound_selectors(lineage, target_id))
+    rows.extend(compile_upgrade_sound_selectors(lineage, target_id))
     rows.extend(compile_animation_sound_client_behaviors(lineage, target_id))
     rows.extend(compile_radiate_fear_updates(lineage, target_id))
     rows.extend(compile_poisoned_behaviors(lineage, target_id))
@@ -9894,6 +10034,7 @@ def validate_module_contracts(rows: object, *, label: str) -> None:
             or (module == "EnteringStateFX" and _entering_state_fx_row_has_closed_runtime(fields))
             or (module == "FXEvent" and _fx_event_row_has_closed_runtime(fields))
             or (module == "AnimationSoundClientBehavior" and _animation_sound_row_has_closed_runtime(fields))
+            or (module == "UpgradeSoundSelectorClientBehavior" and _upgrade_sound_selector_row_has_closed_runtime(fields))
             or (module == "QueueProductionExitUpdate" and _queue_exit_row_has_closed_runtime(fields))
             or (module == "RefundDie" and _refund_die_row_has_closed_runtime(fields))
             or (module == "SpawnBehavior" and _spawn_reclaim_row_has_closed_runtime(fields))

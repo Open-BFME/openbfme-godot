@@ -14644,6 +14644,8 @@ func _attach_module_contracts(row: Dictionary) -> void:
 			_attach_model_condition_sound_selector(row, contract)
 		elif folded == "randomsoundselectorclientbehavior":
 			_attach_random_sound_selector(row, contract)
+		elif folded == "upgradesoundselectorclientbehavior":
+			_attach_upgrade_sound_selector(row, contract)
 		elif folded == "largegroupaudioupdate":
 			_attach_large_group_audio_contract(row, contract)
 		elif folded == "firespreadupdate":
@@ -15891,6 +15893,8 @@ func _attach_structure_module_contracts(row: Dictionary) -> void:
 			_attach_model_condition_sound_selector(row, contract)
 		elif folded == "randomsoundselectorclientbehavior":
 			_attach_random_sound_selector(row, contract)
+		elif folded == "upgradesoundselectorclientbehavior":
+			_attach_upgrade_sound_selector(row, contract)
 		elif folded == "largegroupaudioupdate":
 			_attach_large_group_audio_contract(row, contract)
 		elif folded == "firespreadupdate":
@@ -20723,6 +20727,45 @@ func _attach_random_sound_selector(row: Dictionary, contract: Dictionary) -> voi
 	row["random_sound_selector"] = {"chance_fraction": float(ratio), "reroll_every_frame": bool(_module_contract_value(fields, "RerollOnEveryFrame", false)), "voice_priority": int(_module_contract_value(fields, "VoicePriority", 0)), "unsupported_semantics": ["reroll_every_frame_requires_presentation_frame_clock"] if bool(_module_contract_value(fields, "RerollOnEveryFrame", false)) else [], "rng_receipt": "presentation_sequence_hash_not_gameplay_rng"}
 
 
+func _attach_upgrade_sound_selector(row: Dictionary, contract: Dictionary) -> void:
+	if String(contract.get("extraction", "")) != "typed" or String(contract.get("runtimeStatus", "")) != "executable": return
+	var fields := contract.get("fields", {}) as Dictionary
+	var clauses_value: Variant = fields.get("SoundUpgrade", [])
+	if typeof(clauses_value) != TYPE_ARRAY or (clauses_value as Array).is_empty(): return
+	var byte_receipt_value: Variant = fields.get("wavSetByteIdentityReceipt", {})
+	if typeof(byte_receipt_value) != TYPE_DICTIONARY: return
+	var byte_receipt := byte_receipt_value as Dictionary
+	if typeof(byte_receipt.get("logicalEventIds", [])) != TYPE_ARRAY or typeof(byte_receipt.get("leaves", [])) != TYPE_ARRAY or (byte_receipt.get("leaves", []) as Array).is_empty(): return
+	for leaf_value in byte_receipt.get("leaves", []) as Array:
+		if typeof(leaf_value) != TYPE_DICTIONARY: return
+		var leaf := leaf_value as Dictionary
+		if String(leaf.get("virtualPath", "")) == "" or String(leaf.get("cookedPath", "")) == "": return
+		for sha_key in ["sha256", "cookedSha256"]:
+			var sha := String(leaf.get(sha_key, ""))
+			if sha.length() != 64 or sha != sha.to_lower(): return
+			for index in sha.length():
+				if not "0123456789abcdef".contains(sha.substr(index, 1)): return
+	var clauses: Array[Dictionary] = []
+	for clause_value in clauses_value as Array:
+		if typeof(clause_value) != TYPE_DICTIONARY: return
+		var clause := clause_value as Dictionary
+		var required: Variant = clause.get("requiredUpgrades", [])
+		var excluded: Variant = clause.get("excludedUpgrades", [])
+		var sounds: Variant = clause.get("sounds", {})
+		if typeof(required) != TYPE_ARRAY or (required as Array).is_empty() or typeof(excluded) != TYPE_ARRAY or typeof(sounds) != TYPE_DICTIONARY or (sounds as Dictionary).is_empty(): return
+		for sound_ids_value in (sounds as Dictionary).values():
+			if typeof(sound_ids_value) != TYPE_ARRAY or (sound_ids_value as Array).is_empty(): return
+			for sound_id_value in sound_ids_value as Array:
+				if String(sound_id_value) == "": return
+		clauses.append({"required_upgrades": (required as Array).duplicate(), "excluded_upgrades": (excluded as Array).duplicate(), "sounds": (sounds as Dictionary).duplicate(true), "line": int(clause.get("line", 0))})
+	var selectors := row.get("upgrade_sound_selectors", []) as Array
+	var identity := "%s:%d" % [String(contract.get("tag", "")), int(contract.get("line", 0))]
+	for selector_value in selectors:
+		if String((selector_value as Dictionary).get("identity", "")) == identity: return
+	selectors.append({"clauses": clauses, "identity": identity, "receipt": "retail-upgrade-sound-logical-ids-preserved", "wav_set_byte_identity_receipt": byte_receipt.duplicate(true)})
+	row["upgrade_sound_selectors"] = selectors
+
+
 func _attach_large_group_audio_contract(row: Dictionary, contract: Dictionary) -> void:
 	if String(contract.get("extraction", "")) != "typed" or row.has("large_group_audio"): return
 	var fields := contract.get("fields", {}) as Dictionary; var key := _typed_contract_tokens(fields, "Key")
@@ -20735,7 +20778,27 @@ func emit_typed_audio_intent(entity_id: int, sound_role: String) -> Dictionary:
 	var row := entities[entity_id] as Dictionary
 	if not row.has("model_condition_sound_selectors"): _attach_module_contracts(row)
 	var field := _audio_sound_field(sound_role); var active := _audio_active_conditions(row); var candidates: Array[Dictionary] = []
+	var owned_upgrades: Dictionary = {}
+	for upgrade_value in row.get("completed_upgrades", []) as Array: owned_upgrades[String(upgrade_value).to_lower()] = true
+	for upgrade_value in (row.get("applied_upgrades", {}) as Dictionary).keys(): owned_upgrades[String(upgrade_value).to_lower()] = true
+	for selector_value in row.get("upgrade_sound_selectors", []) as Array:
+		for clause_value in (selector_value as Dictionary).get("clauses", []) as Array:
+			var clause := clause_value as Dictionary; var matches := true
+			for required_value in clause.get("required_upgrades", []) as Array:
+				if not owned_upgrades.has(String(required_value).to_lower()): matches = false; break
+			if not matches: continue
+			for excluded_value in clause.get("excluded_upgrades", []) as Array:
+				if owned_upgrades.has(String(excluded_value).to_lower()): matches = false; break
+			if not matches: continue
+			var ids_value: Variant = (clause.get("sounds", {}) as Dictionary).get(field, [])
+			if typeof(ids_value) != TYPE_ARRAY or (ids_value as Array).is_empty(): continue
+			var ids := (ids_value as Array).duplicate()
+			if ids != ((selector_value as Dictionary).get("wav_set_byte_identity_receipt", {}) as Dictionary).get("logicalEventIds", []): continue
+			candidates.append({"event_id": String(ids[0]), "logical_event_ids": ids, "priority": 2147483647, "line": int(clause.get("line", 0)), "selector_receipt": String((selector_value as Dictionary).get("receipt", "")), "wav_set_byte_identity_receipt": ((selector_value as Dictionary).get("wav_set_byte_identity_receipt", {}) as Dictionary).duplicate(true)})
+	# An active upgrade selector overrides the ordinary model-condition route.
+	var upgrade_candidates := not candidates.is_empty()
 	for selector_value in row.get("model_condition_sound_selectors", []) as Array:
+		if upgrade_candidates: break
 		for state_value in (selector_value as Dictionary).get("states", []) as Array:
 			var state := state_value as Dictionary; var matches := true
 			for condition_value in state.get("conditions", []) as Array:
@@ -20752,7 +20815,7 @@ func emit_typed_audio_intent(entity_id: int, sound_role: String) -> Dictionary:
 		if bool(random.get("reroll_every_frame", false)): return {"ok": false, "reason": "presentation-frame-reroll-unsupported", "rng_receipt": random.get("rng_receipt", "")}
 		var roll := _audio_sequence_roll(entity_id, sound_role); if roll >= float(random.get("chance_fraction", 0.0)): return {"ok": false, "reason": "random-selector-suppressed", "roll": roll, "rng_receipt": random.get("rng_receipt", "")}
 		selected["priority"] = maxi(int(selected.get("priority", 0)), int(random.get("voice_priority", 0))); selected["roll"] = roll; selected["rng_receipt"] = random.get("rng_receipt", "")
-	_emit_event("audio.typed_selector", entity_id, 0, {"event_id": String(selected.get("event_id", "")), "sound_role": sound_role, "priority": int(selected.get("priority", 0)), "rng_receipt": String(selected.get("rng_receipt", "model_condition_exact"))})
+	_emit_event("audio.typed_selector", entity_id, 0, {"object_id": String(row.get("object_id", "")), "event_id": String(selected.get("event_id", "")), "logical_event_ids": Array(selected.get("logical_event_ids", [selected.get("event_id", "")])).duplicate(), "sound_role": sound_role, "priority": int(selected.get("priority", 0)), "rng_receipt": String(selected.get("rng_receipt", "model_condition_exact")), "selector_receipt": String(selected.get("selector_receipt", "")), "wav_set_byte_identity_receipt": (selected.get("wav_set_byte_identity_receipt", {}) as Dictionary).duplicate(true)})
 	selected["ok"] = true; selected["reason"] = ""; return selected
 
 
