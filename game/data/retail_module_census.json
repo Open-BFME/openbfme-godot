@@ -432,6 +432,7 @@
 			"status": "consumed",
 			"consumedBy": [
 				"armor_compiler.py",
+				"module_contracts.py",
 				"playable_structure_compiler.py",
 				"playable_unit_compiler.py"
 			],
@@ -617,6 +618,7 @@
 			"classificationNote": "client-side audio; no simulation semantics",
 			"status": "consumed",
 			"consumedBy": [
+				"module_contracts.py",
 				"playable_structure_pack_compiler.py",
 				"retail_men_lifecycle_profile.py"
 			],

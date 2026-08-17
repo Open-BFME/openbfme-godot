@@ -32,15 +32,15 @@ $env:PYTHONPATH = 'importer;.private\retail-work\tools\python-3.12-env\Lib\site-
 
 ## Current measured baseline
 
-The 2026-08-15 ledger is pinned to selection SHA-256
+The 2026-08-17 ledger is pinned to selection SHA-256
 `e3cf65197b36fc855f852f18ce7e53a698fca34ff004d29e0b25d31f0326285c`.
 Generation and `--check` both pass byte-for-byte. The strict completion command,
 `--check --require-complete`, intentionally fails because the port is not 1:1:
 
-- 10,983 of 11,119 feature signatures are incomplete.
-- 1,075,196 of 1,114,761 authored semantic sites are incomplete.
-- 174 of 245 object-module kinds remain below the strict completed state;
-  71 currently have runtime-tested evidence.
+- 10,978 of 11,119 feature signatures are incomplete.
+- 1,070,686 of 1,114,761 authored semantic sites are incomplete.
+- 173 of 245 object-module kinds remain below the strict completed state;
+  72 currently have runtime-tested evidence.
 - 6,260 of 8,947 effective objects are not emitted.
 - 85,652 catalog-proven retail assets are absent from the selected packs.
 - Unknown semantic lines and selected-pack address drift are both zero.
