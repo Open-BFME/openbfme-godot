@@ -35,7 +35,11 @@ Retail-derived files live under `workspace/`; use them freely. Git ignores `work
 
 ## Publishing a build
 
-When a major thing lands, the beta gets a number and a folder you can copy to another machine and run. Four steps, one command each.
+**Release artifacts live in `dist<version>\` — nowhere else.** `workspace/content-packs/` is the
+working selection, not a release. When a cook lands and the selection changes (new pack
+digests, re-pinned `gate-retail.ps1`), the lane is not finished until it has produced a
+versioned `dist<version>\` build (steps below) and named that version in its report and
+queue row. Owner ruling 2026-08-17. Four steps, one command each.
 
 | Step | Command | Notes |
 |---|---|---|
