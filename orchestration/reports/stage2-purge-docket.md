@@ -93,5 +93,21 @@ Projected freed: ~677 MB (du -m on the dirs) + ~164 KB (logs + JSONs).
 
 ## Execution record
 
-Filled in after the DELETEs run: exact freed bytes, verification that only
-approved-class paths were removed, and `check_pack_addresses.py` result.
+Executed 2026-08-17 after this docket was committed (`84e00ba`).
+
+- Deleted: 27 capture-session dirs (all `cah-capture-*`, `cah-v2-*`,
+  `cah-base-*`, `cap-r*`, `capture-r4*`), 21 loose top-level logs
+  (`attach-*` x6, `dual-*` x5, `refund-*` x6, `foundation-*` x3,
+  `drawable-*` x1), and `workspace/orchestration/{queue,locks,metrics}.json`.
+- **Freed bytes: ~677 MB** (sum of `du -sm` over the deleted dirs = 677 MB,
+  plus 104,204 B of logs and 60,269 B of JSON ≈ 0.16 MB). Free-space delta
+  on C: moved from 211,464 MB to 212,084 MB free (~620 MB; residual
+  difference is unrelated disk noise on a live machine).
+- Post-deletion verification: `ls` over every approved-class pattern returns
+  "No such file or directory"; every HOLD entry above still exists
+  (wall-*/spawn-watchdog logs, both .ps1 scripts, scratch-oldsel, tmp-review,
+  worktrees, GROK-HANDOFF.md, claims/, wotr/ and all of retail-work/ verified
+  present).
+- Zero deletions outside the approved classes.
+- `python tools/check_pack_addresses.py` after deletions:
+  `PACK_ADDRESS_CHECK PASS packs=42 roots=2`.
