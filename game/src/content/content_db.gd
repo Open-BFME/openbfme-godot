@@ -2876,19 +2876,16 @@ func _remove_receipt_scenario_rows(receipt: Dictionary) -> void:
 
 func _validate_neutral_pack_receipt(document: Dictionary, declared: Dictionary, meta: Dictionary) -> bool:
 	var game := String(document.get("game", ""))
-	var expected_object_count := 69 if game == "bfme2" else 83 if game == "rotwk" else 0
-	var expected_pickup_count := 2 if game == "bfme2" else 1 if game == "rotwk" else 0
-	var expected_domains := (
-		{"unit": 42, "structure": 15, "prop": 12}
-		if game == "bfme2"
-		else {"unit": 48, "structure": 23, "prop": 12}
-	)
+	var expected_object_count := int(document.get("objectCount", -1))
+	var expected_pickup_count := int(document.get("dependencyObjectCount", -1))
 	if (
 		String(document.get("schema", "")) != "openbfme.neutral-pack-profile-receipt"
 		or int(document.get("schemaVersion", -1)) != 0
-		or expected_object_count == 0
-		or int(document.get("objectCount", -1)) != expected_object_count
-		or int(document.get("dependencyObjectCount", -1)) != expected_pickup_count
+		or game not in ["bfme2", "rotwk"]
+		or expected_object_count <= 0
+		or expected_object_count > MAX_PLAYABLE_UNIT_RUNTIMES_PER_PACK + MAX_PLAYABLE_STRUCTURE_RUNTIMES_PER_PACK + MAX_SCENARIO_PROP_RUNTIMES_PER_PACK
+		or expected_pickup_count < 0
+		or expected_pickup_count > MAX_SCENARIO_PICKUP_RUNTIMES_PER_PACK
 		or not _is_sha256(String(document.get("catalogSha256", "")))
 		or not _is_sha256(String(document.get("dependencyArtifactSha256", "")))
 		or not _is_sha256(String(document.get("receiptSha256", "")))
@@ -2926,7 +2923,12 @@ func _validate_neutral_pack_receipt(document: Dictionary, declared: Dictionary, 
 			return false
 		seen[folded] = true
 		domains[domain] = int(domains[domain]) + 1
-	if domains != expected_domains:
+	if (
+		int(domains.get("unit", 0)) > MAX_PLAYABLE_UNIT_RUNTIMES_PER_PACK
+		or int(domains.get("structure", 0)) > MAX_PLAYABLE_STRUCTURE_RUNTIMES_PER_PACK
+		or int(domains.get("prop", 0)) > MAX_SCENARIO_PROP_RUNTIMES_PER_PACK
+		or int(domains.get("unit", 0)) + int(domains.get("structure", 0)) + int(domains.get("prop", 0)) != expected_object_count
+	):
 		return false
 	for row_value in dependency_rows_value as Array:
 		if typeof(row_value) != TYPE_DICTIONARY:

@@ -43,6 +43,28 @@ func _run() -> void:
 	var tampered_receipt := receipt_unsigned.duplicate(true)
 	tampered_receipt.catalogSha256 = "0".repeat(64)
 	_check(not db._validate_neutral_pack_receipt(tampered_receipt, rotwk_meta.get("files", {}) as Dictionary, rotwk_meta), "receipt validator rejects catalog identity drift")
+	# Receipt cardinality is descriptor-driven, not a frozen retail census. A
+	# newly compiled map-rooted structure must validate through the same strict
+	# row/path/hash envelope without teaching ContentDB a new magic total.
+	var expanded_receipt := receipt_unsigned.duplicate(true)
+	var expanded_rows := expanded_receipt.get("rows", []) as Array
+	var fixture_row := (expanded_rows[0] as Dictionary).duplicate(true)
+	fixture_row["objectId"] = "FixtureMapStructure"
+	fixture_row["runtimeDomain"] = "structure"
+	fixture_row["packFileKey"] = "playableStructure.fixture-map-structure"
+	fixture_row["runtimePath"] = "data/playable-structures/fixture-map-structure.json"
+	expanded_rows.append(fixture_row)
+	expanded_receipt["rows"] = expanded_rows
+	expanded_receipt["objectCount"] = expanded_rows.size()
+	expanded_receipt["receiptSha256"] = "1".repeat(64)
+	var expanded_declared := (rotwk_meta.get("files", {}) as Dictionary).duplicate(true)
+	expanded_declared[fixture_row["packFileKey"]] = fixture_row["runtimePath"]
+	var expanded_meta := rotwk_meta.duplicate(true)
+	expanded_meta["neutralProfileReceiptSha256"] = expanded_receipt["receiptSha256"]
+	_check(db._validate_neutral_pack_receipt(expanded_receipt, expanded_declared, expanded_meta), "receipt validator accepts a bounded descriptor-driven structure count")
+	var mismatched_count := expanded_receipt.duplicate(true)
+	mismatched_count["objectCount"] = int(expanded_receipt["objectCount"]) + 1
+	_check(not db._validate_neutral_pack_receipt(mismatched_count, expanded_declared, expanded_meta), "receipt validator rejects a declared object-count mismatch")
 
 	var units: Dictionary = db.get_scenario_unit_runtimes("rotwk")
 	var structures: Dictionary = db.get_scenario_structure_runtimes("rotwk")
