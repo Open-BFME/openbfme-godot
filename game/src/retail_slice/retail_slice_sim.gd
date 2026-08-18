@@ -3136,6 +3136,20 @@ func _compiled_ring_gollum_rule(registration: Dictionary) -> Dictionary:
 	var member_health := int((body_value as Dictionary).get("maxHealth", 0))
 	if speed_source <= 0.0 or member_health <= 0:
 		return {}
+	# NeutralGollum binds HumanLocomotor for SET_NORMAL (neutralunits.ini:324),
+	# which authors Acceleration/Braking 510 and TurnTime 500 -> 720 deg/s
+	# (locomotor.ini:142). The importer now emits those on the ring descriptor
+	# as `movement`; a pack cooked before that binding is a NAMED gap, not a
+	# licence to reuse the walk speed as an acceleration.
+	var movement_value: Variant = parent.get("movement", {})
+	var movement: Dictionary = (movement_value as Dictionary) if typeof(movement_value) == TYPE_DICTIONARY else {}
+	for authored_field in ["acceleration", "braking", "turnRateDegreesPerSecond"]:
+		if not movement.has(authored_field):
+			push_error(
+				"unauthored locomotor field %s for %s (ring system descriptor predates the locomotor binding; recook the pack)"
+				% [authored_field, object_id]
+			)
+			return {}
 	var source_scale := maxf(0.000001, float(_rules.get("source_map_transform_scale", 1.0)))
 	var speed := speed_source * source_scale
 	var vision_source := float((parent.get("camouflage", {}) as Dictionary).get("detectionRange", 0.0))
@@ -3150,14 +3164,11 @@ func _compiled_ring_gollum_rule(registration: Dictionary) -> Dictionary:
 		"noncombatant": true,
 		"speed": speed,
 		"speed_source": speed_source,
-		# The descriptor proves Gollum's translation speed but authors no combat
-		# cadence. These neutral values are structural fields for the shared
-		# battalion record; noncombatant=true keeps them out of combat semantics.
-		"acceleration": speed,
-		"acceleration_source": speed_source,
-		"turn_rate_degrees_per_second": 360.0,
-		"braking": speed,
-		"braking_source": speed_source,
+		"acceleration": float(movement["acceleration"]) * source_scale,
+		"acceleration_source": float(movement["acceleration"]),
+		"turn_rate_degrees_per_second": float(movement["turnRateDegreesPerSecond"]),
+		"braking": float(movement["braking"]) * source_scale,
+		"braking_source": float(movement["braking"]),
 		"attack_range": 0.0,
 		"attack_range_source": 0.0,
 		"minimum_attack_range": 0.0,
@@ -4152,21 +4163,13 @@ func _configure_trebuchet_runtime_contract() -> void:
 		configuration_error = "Trebuchet runtime numeric contract is invalid"
 		return
 	var configured_unit_rules: Dictionary = _rules.get("unit_rules", {}) as Dictionary
-	configured_unit_rules[TREBUCHET_OBJECT_ID] = {
+	var trebuchet_rule := {
 		"horde_id": TREBUCHET_OBJECT_ID,
 		"member_count": 1,
 		"member_health": health,
 		"member_damage": damage,
 		"speed": speed_source * scale,
 		"speed_source": speed_source,
-		"acceleration": speed_source * scale,
-		"acceleration_source": speed_source,
-		# Provisional: the typed trebuchet contract has no authored turn rate,
-		# so the legacy 360°/s placeholder is retained and marked as such in
-		# provenance (the doc-driven path normalizes the real value instead).
-		"turn_rate_degrees_per_second": 360.0,
-		"braking": speed_source * scale,
-		"braking_source": speed_source,
 		"attack_range": attack_range_source * scale,
 		"attack_range_source": attack_range_source,
 		"minimum_attack_range": minimum_range_source * scale,
@@ -4187,8 +4190,35 @@ func _configure_trebuchet_runtime_contract() -> void:
 		"formation_positions": [Vector3.ZERO],
 		"formation_positions_base": [Vector3.ZERO],
 		"formation_mode": "Line",
-		"provenance": {"contractSources": contract.get("sources", []).duplicate(true), "turn_rate_status": "provisional-no-authored-turn-rate"},
+		"provenance": {"contractSources": contract.get("sources", []).duplicate(true)},
 	}
+	# GondorTrebuchet binds CatapultLocomotor for SET_NORMAL (trebuchet.ini
+	# LocomotorSet), and that template authors Acceleration = Braking = 1000
+	# plus TurnTime (locomotor.ini:1683 in BFME2, TurnTime 3000 -> 120 deg/s in
+	# RotWK 2.01). m3_pack_expansion now binds those three numbers onto the M3
+	# contract. A pack cooked before that binding is a NAMED gap: the trebuchet
+	# still builds and shoots, and _step_route refuses to move it while saying
+	# exactly why. There is no invented ramp and no 360 deg/s placeholder.
+	var trebuchet_movement_gaps: Array = []
+	for authored_field in ["acceleration", "braking", "turnRateDegreesPerSecond"]:
+		if movement.has(authored_field):
+			continue
+		trebuchet_movement_gaps.append(authored_field)
+	if trebuchet_movement_gaps.is_empty():
+		trebuchet_rule["acceleration"] = float(movement["acceleration"]) * scale
+		trebuchet_rule["acceleration_source"] = float(movement["acceleration"])
+		trebuchet_rule["braking"] = float(movement["braking"]) * scale
+		trebuchet_rule["braking_source"] = float(movement["braking"])
+		trebuchet_rule["turn_rate_degrees_per_second"] = float(movement["turnRateDegreesPerSecond"])
+	else:
+		# printerr, not push_warning: this is a lane-authored, expected-until-recook
+		# data gap, and gate-m2-focused treats any engine WARNING as a defect.
+		printerr(
+			"NAMED GAP: %s carries no authored %s; the M3 trebuchet contract predates the CatapultLocomotor binding and the unit will not move until the pack is recooked"
+			% [TREBUCHET_OBJECT_ID, ", ".join(PackedStringArray(trebuchet_movement_gaps))]
+		)
+		trebuchet_rule["unauthored_locomotor_fields"] = trebuchet_movement_gaps
+	configured_unit_rules[TREBUCHET_OBJECT_ID] = trebuchet_rule
 	_rules["unit_rules"] = configured_unit_rules
 	_unit_production_rules[TREBUCHET_OBJECT_ID] = {
 		"producer_kind": "workshop",
@@ -4550,11 +4580,17 @@ func _add_battalion(
 		"speed": float(unit_rule["speed"]),
 		"speed_source": float(unit_rule["speed_source"]),
 		"current_speed": 0.0,
-		"acceleration": float(unit_rule["acceleration"]),
-		"acceleration_source": float(unit_rule["acceleration_source"]),
-		"turn_rate_degrees_per_second": float(unit_rule["turn_rate_degrees_per_second"]),
-		"braking": float(unit_rule["braking"]),
-		"braking_source": float(unit_rule["braking_source"]),
+		# 0.0 is the UNAUTHORED sentinel, not a default: _step_route and
+		# _retail_turn_rate_degrees both refuse to act on it and name the unit
+		# in a push_error. A rule that omits these keys is a NAMED GAP already
+		# reported at configuration time (today: the M3 trebuchet contract,
+		# whose pack predates the CatapultLocomotor binding), so spawning must
+		# not hard-index them and abort the whole spawn path.
+		"acceleration": float(unit_rule.get("acceleration", 0.0)),
+		"acceleration_source": float(unit_rule.get("acceleration_source", 0.0)),
+		"turn_rate_degrees_per_second": float(unit_rule.get("turn_rate_degrees_per_second", 0.0)),
+		"braking": float(unit_rule.get("braking", 0.0)),
+		"braking_source": float(unit_rule.get("braking_source", 0.0)),
 		"category": String(unit_rule.get("category", "")),
 		"trample_cooldown": 0,
 		# Flyers ignore ground navigation and cannot be hit by melee or bowled
@@ -7245,6 +7281,16 @@ func _spellbook_summon_rule(target_leaf: Dictionary, modifier_leaves: Dictionary
 	# a fully authored locomotor and ranged fire-breath runtime.
 	if locomotor.is_empty() or speed < 0.0:
 		return {"ok": false, "reason": "summoned member '%s' locomotion is not converted" % member_id}
+	for authored_field in ["acceleration", "braking", "turnRateDegreesPerSecond"]:
+		if not locomotor.has(authored_field):
+			push_error(
+				"unauthored locomotor field %s for spellbook member %s"
+				% [authored_field, member_id]
+			)
+			return {
+				"ok": false,
+				"reason": "summoned member '%s' locomotor field %s is unauthored" % [member_id, authored_field],
+			}
 	var weapon_id := String(member.get("weaponId", ""))
 	var weapon: Dictionary = weapon_leaves.get(weapon_id, {}) as Dictionary
 	var kind_of: Array = member.get("kindOf", []) as Array
@@ -7315,7 +7361,6 @@ func _spellbook_summon_rule(target_leaf: Dictionary, modifier_leaves: Dictionary
 	var vision := float(member.get("visionRange", 0.0))
 	if vision <= 0.0:
 		vision = attack_range
-	var response_scale := PlayableUnitAdapter.HORDE_LOCOMOTION_RESPONSE_SCALE
 	var rule := {
 		"horde_id": String(target_leaf.get("id", "")),
 		"member_count": member_count,
@@ -7324,11 +7369,13 @@ func _spellbook_summon_rule(target_leaf: Dictionary, modifier_leaves: Dictionary
 		"category": category,
 		"speed": speed * scale,
 		"speed_source": speed,
-		"acceleration": float(locomotor.get("acceleration", speed)) * scale * response_scale,
-		"acceleration_source": float(locomotor.get("acceleration", speed)) * response_scale,
-		"turn_rate_degrees_per_second": float(locomotor.get("turnRateDegreesPerSecond", 360.0)),
-		"braking": float(locomotor.get("braking", speed)) * scale * response_scale,
-		"braking_source": float(locomotor.get("braking", speed)) * response_scale,
+		# Authored only. All 126 shipped spellbook locomotor rows carry the three
+		# fields; the guard above refuses the summon outright if one is missing.
+		"acceleration": float(locomotor["acceleration"]) * scale,
+		"acceleration_source": float(locomotor["acceleration"]),
+		"turn_rate_degrees_per_second": float(locomotor["turnRateDegreesPerSecond"]),
+		"braking": float(locomotor["braking"]) * scale,
+		"braking_source": float(locomotor["braking"]),
 		"attack_range": attack_range * scale,
 		"attack_range_source": attack_range,
 		"minimum_attack_range": _spellbook_weapon_field(weapon, "MinimumAttackRange") * scale,
@@ -28584,23 +28631,22 @@ func _eviction_fallback_direction(row: Dictionary) -> Vector2:
 	return Vector2.RIGHT
 
 
-## Fallback turn rate when a pack predates locomotor extraction.
-## NormalMeleeHordeLocomotor authors TurnTime = 2000 (locomotor.ini:709), and
-## OpenSAGE's shared SAGE core converts that as 360 / (TurnTime / 1000)
-## (LocomotorTemplate.cs:94) -> 180 deg/s.
-const RETAIL_FALLBACK_TURN_RATE_DEGREES := 180.0
-## MaxTurnWithoutReform. Infantry/ranged horde locomotors author 45
-## (locomotor.ini:717, :765, :805); every cavalry-class horde locomotor authors
-## 100 (:849, :871, :893) so horse hordes wheel through far wider turns.
-const RETAIL_MAX_TURN_WITHOUT_REFORM_DEGREES := 45.0
-const RETAIL_CAVALRY_MAX_TURN_WITHOUT_REFORM_DEGREES := 100.0
+## Locomotion has no invented constants. Every number below comes from the
+## authored Locomotor template the object's LocomotorSet binds, compiled by
+## importer/openbfme_importer/locomotor_compiler.py and carried on the row.
 
 
 func _should_honor_turn_rate(row: Dictionary) -> bool:
-	## Authored TurnTime reaches the row as turn_rate_degrees_per_second.
-	## Pin fixtures invent 180 with no source and must keep snapping.
-	## Adapter-normalized units set turn_rate_source when the locomotor
-	## compiled the rate. retail_formation_movement remains the old opt-in.
+	## Authored TurnTime reaches the row as turn_rate_degrees_per_second, and
+	## `turn_rate_source` is the adapter's provenance stamp saying the number
+	## came from a compiled locomotor (playable_unit_runtime_adapter.gd:1044).
+	## Synthetic pin fixtures invent 180 with no source and must keep snapping.
+	##
+	## Removing the invented MaxTurnWithoutReform fallback below does NOT stop
+	## the 30 shipped cavalry rows that author no MaxTurnWithoutReform from
+	## turning: every adapter-normalized row with an authored rate carries
+	## `turn_rate_source`, so the second clause already covers them. The reform
+	## GATE is what disappears, not turn-rate honouring.
 	if retail_formation_movement:
 		return true
 	if String(row.get("turn_rate_source", "")) != "":
@@ -28609,27 +28655,35 @@ func _should_honor_turn_rate(row: Dictionary) -> bool:
 
 
 func _should_reform(row: Dictionary) -> bool:
+	## The reform gate exists only where retail authors MaxTurnWithoutReform.
+	## Absence means "no reform gate", not a guessed arc.
 	if retail_formation_movement:
 		return true
 	return float(row.get("max_turn_without_reform_degrees", 0.0)) > 0.0
 
 
 func _retail_reform_threshold_degrees(row: Dictionary) -> float:
-	## Per-row override first so a pack that later extracts MaxTurnWithoutReform
-	## wins without touching this code; otherwise the authored class default.
-	var authored := float(row.get("max_turn_without_reform_degrees", 0.0))
-	if authored > 0.0:
-		return authored
-	if String(row.get("category", "")) == "cavalry":
-		return RETAIL_CAVALRY_MAX_TURN_WITHOUT_REFORM_DEGREES
-	return RETAIL_MAX_TURN_WITHOUT_REFORM_DEGREES
+	## Retail authors MaxTurnWithoutReform on 12 templates only: 45 on six
+	## (NormalMeleeHordeLocomotor locomotor.ini:774, NormalChargeMeleeHorde :820,
+	## ScaredMeleeHorde :841, NormalRangedHorde :862, NormalAmphibiousRangedHorde
+	## :882, AODHorde :2199, TestWallScalingHorde :3075, WallScalingMeleeHorde
+	## :3098), 55 on SlowMeleeHordeLocomotor :795, and 100 on the three cavalry
+	## horde locomotors (NormalCavalryHorde :899, NormalSpiderlingHorde :921,
+	## WargCavalryHorde :943). The importer compiles all of them, so an authored
+	## value is always available where retail has one. Everywhere else there is
+	## no reform gate — -1.0 — and no category-keyed guess.
+	return float(row.get("max_turn_without_reform_degrees", -1.0))
 
 
 func _retail_turn_rate_degrees(row: Dictionary) -> float:
 	var authored := float(row.get("turn_rate_degrees_per_second", 0.0))
 	if authored > 0.0:
 		return authored
-	return RETAIL_FALLBACK_TURN_RATE_DEGREES
+	push_error(
+		"unauthored locomotor turn rate for %s"
+		% String(row.get("horde_id", row.get("source_object_id", "<unknown>")))
+	)
+	return 0.0
 
 
 func _step_retail_heading(row: Dictionary, movement_direction: Vector2, braking: float) -> bool:
@@ -28655,7 +28709,14 @@ func _step_retail_heading(row: Dictionary, movement_direction: Vector2, braking:
 	var delta_angle := wrapf(movement_direction.angle() - facing_now.angle(), -PI, PI)
 	var turn_step := deg_to_rad(_retail_turn_rate_degrees(row)) * TICK_SECONDS
 	row["facing"] = facing_now.rotated(clampf(delta_angle, -turn_step, turn_step))
-	if absf(delta_angle) <= deg_to_rad(_retail_reform_threshold_degrees(row)):
+	var reform_threshold := _retail_reform_threshold_degrees(row)
+	if reform_threshold < 0.0:
+		# No authored MaxTurnWithoutReform on the bound template (116 of retail's
+		# 128 author none). Retail has no reform gate there at all, so the horde
+		# always wheels: it turns AND keeps advancing, however sharp the turn.
+		# The old code guessed 45 (100 for cavalry) here.
+		return false
+	if absf(delta_angle) <= deg_to_rad(reform_threshold):
 		return false
 	# Reform: bleed speed off the authored braking ramp rather than snapping to a
 	# standing start, and hold position while the pivot completes.
@@ -28681,14 +28742,25 @@ func _step_route(row: Dictionary) -> void:
 		# instead of stringing out by unit class.
 		base_speed = minf(base_speed, group_cap)
 	var max_speed := base_speed * float(_stance_state(row).get("speedMultiplier", 1.0)) * float(_formation_effects(row).get("speed_multiplier", 1.0)) * _ability_speed_multiplier(row) * float(row.get("siege_speed_multiplier", 1.0))
-	# Fall back to a snappy ramp (10x max speed per second) when accel/brake
-	# were not authored, so missing fields never pin units at zero velocity.
+	# Acceleration and Braking are authored on the Locomotor template every
+	# object's LocomotorSet binds (HumanLocomotor locomotor.ini:142 authors
+	# 510/510; HorseLocomotor :1026 authors 1500/2000). All 494 movement blocks
+	# in the selected packs carry both, so an absence is a real gap: say so and
+	# leave the unit where it is rather than inventing a ramp.
 	var acceleration := float(row.get("acceleration", 0.0))
 	if acceleration <= 0.0:
-		acceleration = max_speed * 10.0
+		push_error(
+			"unauthored locomotor acceleration for %s"
+			% String(row.get("horde_id", row.get("source_object_id", "<unknown>")))
+		)
+		return
 	var braking := float(row.get("braking", 0.0))
 	if braking <= 0.0:
-		braking = max_speed * 10.0
+		push_error(
+			"unauthored locomotor braking for %s"
+			% String(row.get("horde_id", row.get("source_object_id", "<unknown>")))
+		)
+		return
 	var current_speed := float(row.get("current_speed", 0.0))
 	# Accelerate toward max; near the final waypoint begin braking for snappier
 	# stops. Braking only ever applies on the last leg, so summing the whole

@@ -34,7 +34,7 @@ const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 ## exits 0. Pinning the number of checks a healthy run makes turns that silent
 ## abort into a loud failure. Raise it deliberately when tests are added; never
 ## lower it to make a run go green.
-const EXPECTED_CHECKS := 31
+const EXPECTED_CHECKS := 34
 
 const EPSILON := 0.0001
 
@@ -202,6 +202,11 @@ func _test_reform_beyond_threshold_pivots_in_place() -> void:
 	## do not translate and tick 4 does.
 	var sim = _make_sim(true)
 	var row := _prepare(sim, 1, Vector2.ZERO, Vector2.RIGHT, 10.0, "")
+	# AUTHORED, not guessed: NormalMeleeHordeLocomotor MaxTurnWithoutReform = 45.
+	# The sim no longer supplies a 45 of its own when the row omits the field —
+	# absence now means "no reform gate at all" — so the fixture must carry the
+	# value it is testing, exactly as the shipped packs do (126 of 494 rows).
+	row["max_turn_without_reform_degrees"] = 45.0
 	sim.issue_move([1], _destination_at(row, 90.0))
 
 	for tick_index in range(3):
@@ -225,6 +230,36 @@ func _test_reform_beyond_threshold_pivots_in_place() -> void:
 	)
 
 
+func _test_unauthored_reform_threshold_never_reforms() -> void:
+	## Retail authors MaxTurnWithoutReform on 12 of its 128 Locomotor templates.
+	## For the other 116 there is no reform gate in the data, so there must not
+	## be one in the sim either: the horde wheels through any angle, turning at
+	## its authored rate while it keeps advancing. The deleted
+	## sim constants (45 for everything, 100 keyed off category == cavalry)
+	## invented that gate,
+	## and the 100 hit 30 shipped cavalry rows whose templates author nothing
+	## (HumanLocomotor, HorseLocomotor, WargLocomotor, WargSentryLocomotor,
+	## NormalHorseHordeMemberLocomotor, HeroHumanScalingLocomotorNoBackwards).
+	var sim = _make_sim(true)
+	var row := _prepare(sim, 1, Vector2.ZERO, Vector2.RIGHT, 10.0, "cavalry")
+	_check(
+		not row.has("max_turn_without_reform_degrees"),
+		"unauthored_row_carries_no_reform_field"
+	)
+	_check_close(
+		float(sim._retail_reform_threshold_degrees(row)),
+		-1.0,
+		"unauthored_reform_threshold_is_no_gate"
+	)
+	sim.issue_move([1], _destination_at(row, 170.0))
+	sim._step_route(row)
+	_check(
+		Vector2(row["position"]).length() > EPSILON,
+		"unauthored_row_wheels_through_a_sharp_turn",
+		"a row with no authored MaxTurnWithoutReform must never reform"
+	)
+
+
 func _test_cavalry_reform_threshold_is_wider() -> void:
 	## Cavalry-class horde locomotors author MaxTurnWithoutReform = 100
 	## (locomotor.ini:849, :871, :893) against infantry's 45, so a 60-degree turn
@@ -234,6 +269,11 @@ func _test_cavalry_reform_threshold_is_wider() -> void:
 	var sim = _make_sim(true)
 	var horse := _prepare(sim, 1, Vector2.ZERO, Vector2.RIGHT, 10.0, "cavalry")
 	var foot := _prepare(sim, 2, Vector2(0.0, 60.0), Vector2.RIGHT, 10.0, "infantry")
+	# Both thresholds are AUTHORED on the row now. The sim used to key 100 off
+	# `category == "cavalry"`, which is a guess for the 30 shipped cavalry rows
+	# whose templates author nothing at all.
+	horse["max_turn_without_reform_degrees"] = 100.0
+	foot["max_turn_without_reform_degrees"] = 45.0
 	sim.issue_move([1], _destination_at(horse, 60.0))
 	sim.issue_move([2], _destination_at(foot, 60.0))
 	sim._step_route(horse)
@@ -408,6 +448,7 @@ func _run() -> void:
 	_test_legacy_default_snaps_heading_in_one_tick()
 	_test_reform_beyond_threshold_pivots_in_place()
 	_test_cavalry_reform_threshold_is_wider()
+	_test_unauthored_reform_threshold_never_reforms()
 	_test_group_move_caps_at_slowest_authored_speed()
 	_test_single_unit_order_is_capped_at_its_own_speed()
 	_test_arrival_releases_the_group_cap()

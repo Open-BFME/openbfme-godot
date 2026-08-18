@@ -50,6 +50,11 @@ from .sage_cst import SageBlock, SageObject
 from .sage_gameplay import _digest as _gameplay_digest
 from .sage_ini import IniBlock, parse_flat_named_blocks
 from .sage_particles import parse_particle_definitions, select_particle_definition
+from .locomotor_compiler import (
+    compile_locomotor_templates,
+    resolve_locomotor_template,
+    turn_rate_degrees_per_second,
+)
 
 
 SCHEMA = "openbfme.spellbook-descriptor"
@@ -1715,66 +1720,31 @@ class _LeafResolver:
         locomotor_name: str,
         label: str,
     ) -> None:
-        definition = _named_definition_values(
-            self._documents, "Locomotor", locomotor_name
+        # ONE canonical locomotor reader (locomotor_compiler).
+        template = resolve_locomotor_template(
+            compile_locomotor_templates(self._documents, self._constants),
+            locomotor_name,
         )
-        if definition is None:
+        if template is None:
             raise SpellbookCompilerError(
                 f"{label} references a missing Locomotor: {locomotor_name}"
             )
         self.used_locomotor = True
         row: dict[str, object] = {"id": locomotor_name}
         # Per-object Speed is authored on the Object's LocomotorSet block;
-        # response fields live in the shared locomotor.ini definition.
+        # response fields live in the shared locomotor definition.
         speed = _resolved_set_field(lineage, "LocomotorSet", "Speed", self._constants)
         if speed is not None:
             row["speed"] = speed["value"]
-        for output_name, source_name in (
-            ("acceleration", "Acceleration"),
-            ("braking", "Braking"),
-        ):
-            rows = definition.get(source_name.casefold(), ())
-            if len(rows) != 1:
-                continue
-            expression = str(rows[0].get("expression", ""))
-            # Locomotor rows carry trailing `//` comments (the shared parser
-            # strips `;` only); the authored value is the numeric prefix.
-            cleaned = expression.split("//", 1)[0].split(";", 1)[0].strip()
-            resolved = self._resolve_numeric(cleaned)
-            if resolved is None:
-                raise SpellbookCompilerError(
-                    f"{label} Locomotor {locomotor_name} has an unresolved {source_name}: {expression}"
-                )
-            row[output_name] = resolved
-        turn_rate_rows = definition.get("turnrate", ())
-        turn_time_rows = definition.get("turntime", ())
-        if len(turn_rate_rows) == 1:
-            cleaned = (
-                str(turn_rate_rows[0].get("expression", ""))
-                .split("//", 1)[0]
-                .split(";", 1)[0]
-                .strip()
-            )
-            resolved = self._resolve_numeric(cleaned)
-            if resolved is None:
-                raise SpellbookCompilerError(
-                    f"{label} Locomotor {locomotor_name} has an unresolved TurnRate"
-                )
-            row["turnRateDegreesPerSecond"] = resolved
-        elif len(turn_time_rows) == 1:
-            cleaned = (
-                str(turn_time_rows[0].get("expression", ""))
-                .split("//", 1)[0]
-                .split(";", 1)[0]
-                .strip()
-            )
-            resolved = self._resolve_numeric(cleaned)
-            if resolved is None or float(resolved) <= 0.0:
-                raise SpellbookCompilerError(
-                    f"{label} Locomotor {locomotor_name} has an unresolved TurnTime"
-                )
-            # Mirrors the playable-unit lane: 360 degrees over TurnTime (ms).
-            row["turnRateDegreesPerSecond"] = 360000.0 / float(resolved)
+        fields = template["fields"]
+        assert isinstance(fields, Mapping)
+        for key in ("acceleration", "braking"):
+            field = fields.get(key)
+            if isinstance(field, Mapping):
+                row[key] = field["value"]
+        turn_rate = turn_rate_degrees_per_second(template)
+        if turn_rate is not None:
+            row["turnRateDegreesPerSecond"] = turn_rate["value"]
         leaf["locomotor"] = row
 
     def particle_reference(self, identifier: str, label: str) -> None:

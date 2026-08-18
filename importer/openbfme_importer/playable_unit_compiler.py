@@ -47,6 +47,36 @@ from .sage_cst import (
     parse_sage_document,
 )
 from .sage_ini import IniBlock, parse_flat_named_blocks
+from .locomotor_compiler import (
+    compile_locomotor_templates,
+    compile_object_locomotor_sets,
+    lineage_locomotor_sets,
+    resolve_locomotor_template,
+    turn_rate_degrees_per_second,
+)
+
+# Compiled-template field -> emitted `movement` key. Everything the mover or
+# the formation code may need, sourced only from an authored assignment; a
+# field retail does not author is simply absent, never defaulted.
+_LOCOMOTOR_MOVEMENT_FIELDS: tuple[tuple[str, str], ...] = (
+    ("acceleration", "acceleration"),
+    ("braking", "braking"),
+    ("turnTime", "turnTimeMs"),
+    ("turnTimeDamaged", "turnTimeDamagedMs"),
+    ("fastTurnRadius", "fastTurnRadius"),
+    ("slowTurnRadius", "slowTurnRadius"),
+    ("minTurnSpeed", "minTurnSpeed"),
+    ("turnPivotOffset", "turnPivotOffset"),
+    ("maxTurnWithoutReform", "maxTurnWithoutReformDegrees"),
+    ("canMoveBackwards", "canMoveBackwards"),
+    ("backingUpSpeed", "backingUpSpeed"),
+    ("closeEnoughDist", "closeEnoughDist"),
+    ("surfaces", "surfaces"),
+    ("zAxisBehavior", "zAxisBehavior"),
+    ("appearance", "appearance"),
+    ("formationPriority", "formationPriority"),
+    ("waitForFormation", "waitForFormation"),
+)
 from .sage_audio import (
     faction_voice_equivalence_provenance,
     normalize_faction_voice_event,
@@ -1730,51 +1760,44 @@ def _simulation_contract(
     else:
         speed["definitionId"] = locomotor_id
         resolved["speed"] = speed
-    locomotor = (
-        _named_definition_values(
-            documents,
-            "Locomotor",
-            locomotor_id,
-            cache=named_definition_cache,
-            cache_lock=cache_lock,
-        )
-        if locomotor_id
-        else None
-    )
+    # ONE canonical locomotor reader (locomotor_compiler). It scans every
+    # document, not just data/ini/locomotor.ini, because retail also authors
+    # templates in data/ini/object/cinematic/cinematiclocomotor.ini
+    # (Cine_DragonLocomotor, bound by CINE_GrnDrgn_Flying).
     movement: dict[str, object] = {}
-    if locomotor is not None:
-        for output_name, source_name in (
-            ("acceleration", "Acceleration"),
-            ("braking", "Braking"),
-        ):
-            field = _resolved_definition_field(locomotor, source_name, constants)
-            if field is not None:
-                movement[output_name] = field
-        turn_rate = _resolved_definition_field(locomotor, "TurnRate", constants)
-        if turn_rate is None:
-            turn_time = _resolved_definition_field(locomotor, "TurnTime", constants)
-            if turn_time is not None and float(turn_time["value"]) > 0.0:
-                turn_rate = dict(turn_time)
-                turn_rate["value"] = 360000.0 / float(turn_time["value"])
-                turn_rate["semantic"] = "360 degrees divided by TurnTime seconds"
-        if turn_rate is not None:
-            movement["turnRateDegreesPerSecond"] = turn_rate
-        max_turn = _resolved_definition_field(
-            locomotor, "MaxTurnWithoutReform", constants
+    if locomotor_id:
+        template = resolve_locomotor_template(
+            compile_locomotor_templates(documents, constants), locomotor_id
         )
-        if max_turn is not None:
-            movement["maxTurnWithoutReformDegrees"] = max_turn
-        wait_for_formation = _resolved_yes_no_definition_field(
-            locomotor, "WaitForFormation"
-        )
-        if wait_for_formation is not None:
-            movement["waitForFormation"] = wait_for_formation
-    for field in ("acceleration", "braking", "turnRateDegreesPerSecond"):
-        if field not in movement:
-            missing.append(field)
+        if template is not None:
+            fields = template.get("fields", {})
+            assert isinstance(fields, Mapping)
+            for source_name, output_name in _LOCOMOTOR_MOVEMENT_FIELDS:
+                field = fields.get(source_name)
+                if isinstance(field, Mapping):
+                    movement[output_name] = dict(field)
+            # Retail authors no `TurnRate` anywhere in the corpus (grep over
+            # locomotor.ini and cinematiclocomotor.ini: zero hits); `TurnTime`
+            # in milliseconds is the only authored source, converted the way
+            # OpenSAGE's shared SAGE core does (LocomotorTemplate.cs:94).
+            turn_rate = turn_rate_degrees_per_second(template)
+            if turn_rate is not None:
+                movement["turnRateDegreesPerSecond"] = turn_rate
+    for field_name in ("acceleration", "braking", "turnRateDegreesPerSecond"):
+        if field_name not in movement:
+            missing.append(field_name)
     if movement:
         movement["locomotorId"] = locomotor_id
         resolved["movement"] = movement
+    # Deliverable 1: the per-object condition table travels with the unit, so
+    # SET_WANDER / SET_PANIC / SET_MOUNTED speeds stop being invisible to the
+    # runtime. Speed stays per-object; response fields stay on the template.
+    locomotor_sets = lineage_locomotor_sets(
+        compile_object_locomotor_sets(documents, constants),
+        [row.name for row in (container_lineage if is_horde else member_lineage)],
+    )
+    if locomotor_sets:
+        resolved["locomotorSets"] = locomotor_sets
     crush = _crush_contract(
         member_fields,
         documents,

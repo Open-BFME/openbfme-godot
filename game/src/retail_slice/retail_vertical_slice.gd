@@ -1508,18 +1508,28 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 	var builder_definition := ContentDB.get_bundle_object(BUILDER_OBJECT_ID)
 	var builder_simulation: Dictionary = builder_definition.get("simulation", {}) as Dictionary
 	if not builder_definition.is_empty() and not builder_simulation.is_empty():
-		unit_rules[BUILDER_OBJECT_ID] = {
+		# MenPorter binds HumanLocomotor (porter.ini LocomotorSet), which
+		# authors Acceleration/Braking 510 and TurnTime 500 -> 720 deg/s
+		# (locomotor.ini:142). The 60.0 accel/braking and 360 deg/s that used to
+		# sit here were invented; a bundle that carries no authored movement is
+		# now a NAMED gap instead.
+		var builder_movement_value: Variant = builder_simulation.get("movement", {})
+		var builder_movement: Dictionary = (
+			(builder_movement_value as Dictionary)
+			if typeof(builder_movement_value) == TYPE_DICTIONARY
+			else {}
+		)
+		var builder_movement_gaps: Array = []
+		for authored_field in ["acceleration", "braking", "turnRateDegreesPerSecond"]:
+			if not builder_movement.has(authored_field):
+				builder_movement_gaps.append(authored_field)
+		var builder_rule := {
 			"horde_id": BUILDER_OBJECT_ID,
 			"member_count": 1,
 			"member_health": maxi(1, int(builder_simulation.get("health", 500))),
 			"member_damage": 1,
 			"speed": float(builder_simulation.get("speed", 60.0)) * source_map_data.local_transform_scale,
 			"speed_source": float(builder_simulation.get("speed", 60.0)),
-			"acceleration": 60.0 * source_map_data.local_transform_scale * PlayableUnitAdapter.HORDE_LOCOMOTION_RESPONSE_SCALE,
-			"acceleration_source": 60.0 * PlayableUnitAdapter.HORDE_LOCOMOTION_RESPONSE_SCALE,
-			"turn_rate_degrees_per_second": 360.0,
-			"braking": 60.0 * source_map_data.local_transform_scale * PlayableUnitAdapter.HORDE_LOCOMOTION_RESPONSE_SCALE,
-			"braking_source": 60.0 * PlayableUnitAdapter.HORDE_LOCOMOTION_RESPONSE_SCALE,
 			"attack_range": 0.0,
 			"attack_range_source": 0.0,
 			"minimum_attack_range": 0.0,
@@ -1537,6 +1547,20 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 			"is_builder": true,
 			"provenance": {"source": "data/ini/object/goodfaction/units/men/porter.ini", "constants": "data/ini/gamedata.ini"},
 		}
+		if builder_movement_gaps.is_empty():
+			builder_rule["acceleration"] = float(builder_movement["acceleration"]) * source_map_data.local_transform_scale
+			builder_rule["acceleration_source"] = float(builder_movement["acceleration"])
+			builder_rule["braking"] = float(builder_movement["braking"]) * source_map_data.local_transform_scale
+			builder_rule["braking_source"] = float(builder_movement["braking"])
+			builder_rule["turn_rate_degrees_per_second"] = float(builder_movement["turnRateDegreesPerSecond"])
+		else:
+			# printerr, not push_warning: expected-until-recook data gap.
+			printerr(
+				"NAMED GAP: %s host bundle carries no authored %s; the builder will not move until the pack is recooked"
+				% [BUILDER_OBJECT_ID, ", ".join(PackedStringArray(builder_movement_gaps))]
+			)
+			builder_rule["unauthored_locomotor_fields"] = builder_movement_gaps
+		unit_rules[BUILDER_OBJECT_ID] = builder_rule
 	elif men_slice and not full_men:
 		return {"_error": "missing selected-pack MenPorter simulation contract"}
 	# Data-driven builders (including MenPorter when only playableUnit exists).
@@ -2793,13 +2817,13 @@ func _convert_retail_unit_rule(source_rules: Dictionary, tick_ms: float) -> Dict
 		"category": category,
 		"speed": speed_raw * source_map_data.local_transform_scale,
 		"speed_source": speed_raw,
-		# HORDE_LOCOMOTION_RESPONSE_SCALE snappens proven accel/braking slightly
-		# (not a retail number claim; see playable_unit_runtime_adapter.gd).
-		"acceleration": acceleration_raw * source_map_data.local_transform_scale * PlayableUnitAdapter.HORDE_LOCOMOTION_RESPONSE_SCALE,
-		"acceleration_source": acceleration_raw * PlayableUnitAdapter.HORDE_LOCOMOTION_RESPONSE_SCALE,
+		# Authored Acceleration/Braking, unscaled — the 1.5x horde-response
+		# multiplier was never a retail number.
+		"acceleration": acceleration_raw * source_map_data.local_transform_scale,
+		"acceleration_source": acceleration_raw,
 		"turn_rate_degrees_per_second": turn_rate_raw,
-		"braking": braking_raw * source_map_data.local_transform_scale * PlayableUnitAdapter.HORDE_LOCOMOTION_RESPONSE_SCALE,
-		"braking_source": braking_raw * PlayableUnitAdapter.HORDE_LOCOMOTION_RESPONSE_SCALE,
+		"braking": braking_raw * source_map_data.local_transform_scale,
+		"braking_source": braking_raw,
 		"attack_range": attack_range_raw * source_map_data.local_transform_scale,
 		"attack_range_source": attack_range_raw,
 		"minimum_attack_range": minimum_range_raw * source_map_data.local_transform_scale,

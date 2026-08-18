@@ -27,6 +27,11 @@ from .sage_cst import (
     parse_sage_document,
 )
 from .sage_ini import IniBlock, parse_flat_named_blocks
+from .locomotor_compiler import (
+    compile_locomotor_templates,
+    resolve_locomotor_template,
+    turn_rate_degrees_per_second,
+)
 
 
 SCHEMA = "openbfme.ring-system-descriptor"
@@ -194,7 +199,9 @@ def _nested_blocks(block: SageBlock, kind: str) -> list[SageBlock]:
 
 
 def _compile_gollum(
-    objects: Mapping[str, SageObject], armor_source: bytes
+    objects: Mapping[str, SageObject],
+    armor_source: bytes,
+    documents: Mapping[str, bytes],
 ) -> tuple[dict[str, object], dict[str, object]]:
     lineage = _lineage(objects, NEUTRAL_GOLLUM)
     body = _one_module(lineage, "ActiveBody", header_key="Body")
@@ -210,6 +217,38 @@ def _compile_gollum(
             locomotors[key] = _number(_value(row, "Speed"), f"Gollum {key} speed")
     if set(locomotors) != {"normal", "wander"}:
         raise RingSystemCompilerError("NeutralGollum locomotors are incomplete")
+    # Response fields come from the ONE canonical locomotor reader. NeutralGollum
+    # binds HumanLocomotor for SET_NORMAL (neutralunits.ini:324), which authors
+    # Acceleration = Braking = 510 and TurnTime = 500 -> 720 deg/s
+    # (locomotor.ini:142). Without these the runtime had to invent
+    # acceleration = walk speed and a 360 deg/s turn.
+    normal_locomotor = ""
+    for row in _modules(lineage, "LocomotorSet"):
+        if _value(row, "Condition").casefold() == "set_normal":
+            normal_locomotor = _value(row, "Locomotor").split()[0]
+    template = resolve_locomotor_template(
+        compile_locomotor_templates(documents), normal_locomotor
+    )
+    if template is None:
+        raise RingSystemCompilerError(
+            f"NeutralGollum binds an undefined Locomotor: {normal_locomotor}"
+        )
+    template_fields = template["fields"]
+    turn_rate = turn_rate_degrees_per_second(template)
+    if (
+        "acceleration" not in template_fields
+        or "braking" not in template_fields
+        or turn_rate is None
+    ):
+        raise RingSystemCompilerError(
+            f"Locomotor {normal_locomotor} authors no acceleration/braking/turn rate"
+        )
+    movement = {
+        "locomotorId": normal_locomotor,
+        "acceleration": template_fields["acceleration"]["value"],
+        "braking": template_fields["braking"]["value"],
+        "turnRateDegreesPerSecond": turn_rate["value"],
+    }
 
     armor_id = _value(_one_module(lineage, "ArmorSet"), "Armor")
     armors = _named_blocks(armor_source, "Armor")
@@ -252,6 +291,7 @@ def _compile_gollum(
             ),
         },
         "locomotors": locomotors,
+        "movement": movement,
         "ringMechanic": {"role": "gollum", "seenEvaEvent": "GollumSeen"},
     }
 
@@ -937,7 +977,7 @@ def compile_ring_system_descriptor(
         objects[key] = obj
 
     gollum, ring_gollum = _compile_gollum(
-        objects, _document(documents, "data/ini/armor.ini")
+        objects, _document(documents, "data/ini/armor.ini"), documents
     )
     ring = _compile_ring(objects)
     player_templates = _compile_player_templates(documents)

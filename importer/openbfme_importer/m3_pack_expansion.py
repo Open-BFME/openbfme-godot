@@ -20,6 +20,11 @@ from .paths import safe_relative_parts
 from .profile import MAX_PATTERNS_PER_RESOURCE, MAX_RESOURCES
 from .sage_cst import SageAssignment, SageBlock, SageObject, parse_sage_document
 from .sage_ini import IniBlock, parse_flat_named_blocks
+from .locomotor_compiler import (
+    compile_locomotor_templates,
+    resolve_locomotor_template,
+    turn_rate_degrees_per_second,
+)
 from .retail_unit_rules import (
     RANGER_UNIT_SPEC,
     extract_retail_unit_rules,
@@ -111,6 +116,7 @@ ARCHERY_RANGE_PATH = "data/ini/object/goodfaction/structures/men/archerrange.ini
 WEAPON_PATH = "data/ini/weapon.ini"
 WORKSHOP_PATH = "data/ini/object/goodfaction/structures/men/workshop.ini"
 TREBUCHET_PATH = "data/ini/object/goodfaction/units/men/trebuchet.ini"
+LOCOMOTOR_PATH = "data/ini/locomotor.ini"
 GOOD_SUBOBJECTS_PATH = "data/ini/object/goodfaction/goodfactionsubobjects.ini"
 TREBUCHET_PROJECTILE_W3D = "art/w3d/gu/gusiegtrerk.w3d"
 TREBUCHET_PROJECTILE_OUTPUT = "assets/models/m3/projectiles/gondor-trebuchet-rock.glb"
@@ -1438,6 +1444,7 @@ def build_trebuchet_runtime_contract(
         WORKSHOP_PATH,
         TREBUCHET_PATH,
         GOOD_SUBOBJECTS_PATH,
+        LOCOMOTOR_PATH,
     )
     attested = _profile_attested_paths(profile)
     manifest = _effective_manifest_index(effective_manifest)
@@ -1540,6 +1547,37 @@ def build_trebuchet_runtime_contract(
     locomotor_fields = {row.key.casefold(): row for row in locomotor.assignments}
     if set(("locomotor", "speed")) - set(locomotor_fields):
         raise ValueError("Trebuchet locomotor binding is incomplete")
+    # Response fields come from the ONE canonical locomotor reader. Speed stays
+    # per-object (LocomotorSet), Acceleration/Braking/TurnTime live on the bound
+    # template (CatapultLocomotor, locomotor.ini:1683). Without these three the
+    # runtime had to invent acceleration = speed and 360 deg/s.
+    trebuchet_locomotor_name = locomotor_fields["locomotor"].value.split()[0]
+    trebuchet_template = resolve_locomotor_template(
+        compile_locomotor_templates({LOCOMOTOR_PATH: sources[LOCOMOTOR_PATH]}, constants),
+        trebuchet_locomotor_name,
+    )
+    if trebuchet_template is None:
+        raise ValueError(
+            f"Trebuchet binds an undefined Locomotor: {trebuchet_locomotor_name}"
+        )
+    trebuchet_template_fields = trebuchet_template["fields"]
+    trebuchet_turn_rate = turn_rate_degrees_per_second(trebuchet_template)
+    if (
+        "acceleration" not in trebuchet_template_fields
+        or "braking" not in trebuchet_template_fields
+        or trebuchet_turn_rate is None
+    ):
+        raise ValueError(
+            f"Locomotor {trebuchet_locomotor_name} authors no acceleration/braking/turn rate"
+        )
+    trebuchet_movement = {
+        "mode": "existing-generic-unit-path",
+        "speed": number(locomotor_fields["speed"].value, "Trebuchet speed"),
+        "sourceTemplate": trebuchet_locomotor_name,
+        "acceleration": trebuchet_template_fields["acceleration"]["value"],
+        "braking": trebuchet_template_fields["braking"]["value"],
+        "turnRateDegreesPerSecond": trebuchet_turn_rate["value"],
+    }
     body = block(trebuchet, "ActiveBody")
     health_rows = [row for row in body.assignments if row.key.casefold() == "maxhealth"]
     if len(health_rows) != 1:
@@ -1739,11 +1777,7 @@ def build_trebuchet_runtime_contract(
             "objectId": trebuchet.name,
             "maximumHealth": number(health_rows[0].value, "Trebuchet health"),
             "visionRange": number(assignment(trebuchet, "VisionRange").value, "vision"),
-            "movement": {
-                "mode": "existing-generic-unit-path",
-                "speed": number(locomotor_fields["speed"].value, "Trebuchet speed"),
-                "sourceTemplate": locomotor_fields["locomotor"].value.split()[0],
-            },
+            "movement": trebuchet_movement,
             "models": deepcopy(unit_models[0]),
         },
         "combat": combat,

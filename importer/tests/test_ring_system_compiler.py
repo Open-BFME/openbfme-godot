@@ -110,6 +110,20 @@ End
 ChildObject NeutralGollum_RingStealer NeutralGollum
 End
 """,
+        # NeutralGollum binds HumanLocomotor for SET_NORMAL; these are the
+        # retail-authored values (locomotor.ini:142).
+        "data/ini/locomotor.ini": b"""
+Locomotor HumanLocomotor
+	TurnTime              = 500
+	Acceleration = 510
+	Braking  = 510
+End
+Locomotor HumanWanderLocomotor
+	TurnTime              = 1500
+	Acceleration = 510
+	Braking  = 510
+End
+""",
         "data/ini/armor.ini": b"""
 Armor GollumArmor
   Armor = MAGIC 500%
