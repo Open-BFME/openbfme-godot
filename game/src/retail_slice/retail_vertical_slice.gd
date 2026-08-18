@@ -4363,6 +4363,9 @@ func _sync_presentation() -> void:
 		battalion.set_health(int(entity["health"]), int(entity["maximum_health"]))
 		battalion.set_experience_level(int(entity.get("level", 1)))
 		battalion.sync_upgrade_visuals(entity.get("applied_upgrades", {}) as Dictionary)
+		# Q34: the sim's mount toggle (retail_slice_sim.gd ~:24744/:24774 sets
+		# row["mounted"]) drives the instantaneous MOUNTED skin swap.
+		battalion.sync_mount_presentation(bool(entity.get("mounted", false)))
 		battalion.sync_banner_carrier(
 			bool(entity.get("banner_carrier_spawned", false)),
 			String(entity.get("banner_carrier_object_id", "")),
