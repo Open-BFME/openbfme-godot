@@ -320,3 +320,133 @@ powershell -ExecutionPolicy Bypass -File tools\gate-m2-focused.ps1 -GodotPath <g
 python tools\check_pack_addresses.py
 powershell -ExecutionPolicy Bypass -File tools\gate-hygiene.ps1
 ```
+
+---
+
+# Round 2 — re-verification of the Q13 fix lane
+
+Date: 2026-08-17
+Under review: `1480f77..e1b3f70` (`d6e3acb`, `f000569`, `abcaf99`, `e1b3f70`)
+Fix report: `orchestration/reports/q13-fixes.md`; brief `orchestration/briefs/q13-fixes-grok.md`
+Owner ruling accepted upstream: `combat.damage.value` = sum of every warhead DamageNugget at
+zero distance; GondorTrebuchet **780 stays**, now pinned and labelled.
+
+**Verdict: ACCEPT. Q13 can close.** All four blocking findings are genuinely fixed, each with
+evidence I reproduced myself rather than read from the fix lane's report.
+
+## F1 — provenance restored, 780 pinned — FIXED (one cosmetic residual)
+
+Re-ran my own A/B compile (12 units, same BFME2 catalog, HEAD `importer/` vs `d47d1f6`
+compilers in a temp tree). Raw: `%TEMP%\q13ab\r2new.json` vs `old.json`.
+
+| Unit | top-level keys removed | `damage` keys removed | `damage.value` |
+|---|---|---|---|
+| `GondorFighter` (melee) | — | — | **combat block IDENTICAL to `d47d1f6`** |
+| `GondorArcher` | none | none | 25 → 25 |
+| `GondorRanger` | none | none | 65 → 65 |
+| `IsengardUrukCrossbow` | none | none | 65 → 65 |
+| `GondorTrebuchet` | none | `equivalentSources` | 390 → **780** |
+
+`expression`, `sourceIni`, `line`, `constantSourceIni` are back at the top of `damage` with
+their original values on every warhead weapon; the additions are `components`, `semantic`,
+`valueSemantic = "sum-of-nugget-damage-at-zero-distance"`. Round 1's "provenance keys removed"
+defect is gone.
+
+Residual, **non-blocking**: the trebuchet's `damage.equivalentSources`
+(`[{line 3248}, {line 3259}]`) is still dropped. No information is lost — `components[]` now
+carries both nuggets with their own `line` 3248 / 3259, which is strictly richer than the old
+dedup marker. Worth one line in a follow-up row, not a re-open.
+
+## F2 — `damageTypeSemantic` truthful — FIXED
+
+`_authored_flat_damage_type` excludes DamageType rows whose `line` belongs to a DamageNugget
+block (`_named_definition_values` is a flat line scan, which is what produced the false
+"flat type" reading), and `_apply_nugget_damage_types(..., flat_damage_type=)` now names the
+real source and **never re-assigns a disagreeing flat type**. Three call sites updated
+consistently (unit `_simulation_contract`, `_weapon_mode_profile`, structure
+`_structure_combat_contract`).
+
+Confirmed on real retail data by my A/B: every sampled weapon authors DamageType only inside
+nuggets, so the emitted string "the weapon authors no flat DamageType; every base DamageNugget
+authors the same type" is now literally true, and `damageType` is unchanged in every case
+(PIERCE/PIERCE, SIEGE/SIEGE). Both branches are pinned by new pytests
+(`test_flat_damage_type_semantic_names_the_flat_source` asserts `"no flat DamageType" not in`
+the string; `test_nugget_only_damage_type_semantic_names_the_nugget_source` asserts it is).
+
+## F3 — weapon-mode wipe removed, with a real failing-first proof — FIXED
+
+`retail_slice_sim.gd` `_apply_weapon_mode` no longer blanks `damage_components`; the mode still
+overwrites them when it compiles its own mix.
+
+I did not take the new checks on trust. I copied `game/` out of tree to
+`%TEMP%\q13ab\game-old`, replaced **only** `src/retail_slice/retail_slice_sim.gd` with
+`git show fabb94e:…` (the one-hunk difference), and ran the **round-2 runner** against it:
+
+```
+RETAIL_MEMBER_COMBAT FAIL damage_components_survive_attack_ticks ([])
+RETAIL_MEMBER_COMBAT FAIL damage_components_survive_weapon_mode_toggle (close [])
+RETAIL_MEMBER_COMBAT_RESULT passed=113 failed=2
+```
+
+Log: `workspace/logs/q13v2-failing-first-on-fabb94e.txt`. The `([])` is the wipe itself. At
+HEAD the same runner is 115/0. That is a genuine failing-first test for F3, not a green
+assertion.
+
+Behavioural note on the new semantics: a mode without its own components now inherits the
+unit-rule mix, which is exactly pre-Q13 behaviour; a mode *with* components overrides it, which
+is new but unreachable until packs carry mode-level `damageComponents`. Projectile fields are
+still erased on a mode that lacks them, so no phantom splash can leak across a mode switch.
+
+## F4 — the gate step Q13 added now passes — FIXED
+
+`projectile_table_runtime_runner` seeds `structure_kinds: ["fortress"]`, so the Q11
+structure-armor `ERROR:` lines are no longer emitted. Emulating the gate's own check against my
+fresh run:
+
+```
+member_combat_runtime    markerMatches=True  noForbiddenDiagnostics=False
+projectile_table_runtime markerMatches=True  noForbiddenDiagnostics=True
+```
+
+Zero forbidden diagnostics in the projectile-table log (grep count 0). The step Q13 introduced
+would now pass. `member_combat_runtime` still trips the regex on the same Q11 armor errors —
+that step and that error class both predate Q13 (123 such lines at HEAD, 103 in the pre-lane
+log), so it is not this lane's defect, but it does mean the focused gate cannot go green on
+Q11 alone even after Q15 revives it.
+
+## Runners and suite — reproduced independently
+
+| Item | Claimed | I measured | Log |
+|---|---|---|---|
+| `retail_member_combat_runner` | 115/0 | `passed=115 failed=0` | `workspace/logs/q13v2-retail_member_combat_runner.txt` |
+| `projectile_table_runtime_runner` | 4/0 | `passed=4 failed=0` | `workspace/logs/q13v2-projectile_table_runtime_runner.txt` |
+| `retail_state_pin_runner` | UNCHANGED | `hash=0e4bcdbf…` + `OK` | `workspace/logs/q13v2-retail_state_pin_runner.txt` |
+| changed-module pytest | 318 passed | `318 passed in 276.76s` | `workspace/logs/q13v2-importer-targeted.txt` |
+
+Full importer suite: I decoded the lane's UTF-16 log `workspace/logs/q13fix-importer-full.txt`
+and checked it rather than burning a second 50-minute run —
+`= 6 failed, 3737 passed, 17 skipped, 2 warnings, 975 subtests passed in 2974.11s =`, 0 errors,
+and the six `FAILED` names are exactly the Q6 set. 3734 → 3737 is accounted for by the three
+tests this lane added. My own independent 318-test run of the two changed compiler modules
+covers the code that actually moved.
+
+Queue: Q15 (focused gate dead since Q1, DECISION) and Q16 (state pin covers no projectile
+combat) are recorded with the right evidence. `git status --porcelain` was empty at the start
+of round 2; it is dirty now only because of this report.
+
+## Still open (recorded, not blocking the close)
+
+Round 1's non-blocking findings were out of scope for the fix brief and remain true. They
+deserve one queue row rather than a re-open:
+
+1. Splash uses the target's position captured at launch while the direct hit homes to the
+   target's current position.
+2. A target that dies mid-flight cancels the projectile entirely, so the rock deals no splash.
+3. No test covers the structure branch of `_apply_radius_damage`, nor the ALLIES / NEUTRALS
+   positive paths of `RadiusDamageAffects`, nor that a non-arrow projectile ever resolves a
+   visual.
+4. A projectile whose attacker died lands its direct hit but silently drops its splash.
+5. Splash passes `attack_sequence = 0`.
+6. `source_map_transform_scale` defaults disagree between `retail_slice_sim.gd:3333` (`0.0`)
+   and `:3390` (`1.0`).
+7. `damage.equivalentSources` dropped for warhead weapons (F1 residual above).
