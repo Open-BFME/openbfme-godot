@@ -1036,9 +1036,29 @@ func _bind_tree_sway() -> bool:
 	tree_sway = TreeSwayScript.new()
 	tree_sway.name = "RetailTreeSway"
 	add_child(tree_sway)
-	tree_sway.bind_prop_container(retail_prop_container)
+	# Sway binds by DRAW MODULE (`naturetrees.ini` `Draw = W3DTreeDraw`), never
+	# by type name. No cooked document carries that fact today — the map's
+	# `object-bindings.json` records typeName/glb/classification only, and no
+	# pack json in `workspace/content-packs` mentions W3DTreeDraw at all — so
+	# the authored table is absent and nothing binds. `bind_prop_container`
+	# names that gap rather than guessing which props are trees. Queue note
+	# Q33-importer tracks emitting the draw-module kind per placed type.
+	tree_sway.bind_prop_container(retail_prop_container, _authored_tree_sway_type_ids())
 	set_meta("tree_sway", tree_sway.runtime_contract())
 	return true
+
+
+func _authored_tree_sway_type_ids() -> Variant:
+	## The SAGE type names whose object declares `Draw = W3DTreeDraw`, as
+	## carried by the cooked prop container. `null` means "no authored table
+	## shipped" — a named gap inside RetailTreeSway, not an empty allow-list
+	## that could be mistaken for "this map has no trees".
+	if retail_prop_container == null or not is_instance_valid(retail_prop_container):
+		return null
+	var declared: Variant = retail_prop_container.get_meta("w3d_tree_draw_type_ids", null)
+	if typeof(declared) == TYPE_ARRAY or typeof(declared) == TYPE_PACKED_STRING_ARRAY:
+		return declared
+	return null
 
 
 func _bind_weather_fx(map_data: RetailMapData) -> bool:
