@@ -691,6 +691,17 @@ static func _validate_v1_lifecycle_contract(
 			typeof(construction_value) == TYPE_DICTIONARY
 			and (construction_value as Dictionary).has("status")
 		)
+	# Separate from construction_omitted: that flag stays composed-only so the
+	# phase-list skip (`composed and construction_omitted`) is unchanged. The
+	# Men lane never required construction facts; only a real Dictionary
+	# without `status` is cross-checked. Never index facts["construction"]
+	# unguarded — a missing key is a SCRIPT ERROR that used to abort this
+	# function into a false-empty return.
+	var construction_facts: Variant = facts.get("construction")
+	var has_construction_facts := (
+		typeof(construction_facts) == TYPE_DICTIONARY
+		and not (construction_facts as Dictionary).has("status")
+	)
 
 	if typeof(lifecycle.get("phases")) != TYPE_ARRAY:
 		return "buildingLifecycle.phases is not a list"
@@ -717,8 +728,10 @@ static func _validate_v1_lifecycle_contract(
 		var phase_error := _validate_v1_phase_row(phase_row, expected_phase, expected_next)
 		if phase_error != "":
 			return phase_error
-	if not construction_omitted:
-		var construction: Dictionary = facts["construction"]
+	if has_construction_facts:
+		var construction: Dictionary = construction_facts as Dictionary
+		if not _valid_construction_facts(construction):
+			return "buildingLifecycle construction facts are incomplete"
 		var construction_phase := phases[0] as Dictionary
 		var construction_animation := construction_phase.get("animation") as Dictionary
 		var expected_phase_mode := (
