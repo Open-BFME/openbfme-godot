@@ -3920,7 +3920,7 @@ func _check_retail_unit_rules(slice: Node) -> void:
 				and int(row.get("member_damage", -1)) == int(combat.get("damage", -1))
 				and int(row.get("member_count", -1)) == member_count
 				and int(row.get("member_maximum_health", -1)) == int(simulation.get("member_health", -1))
-				and float(row.get("acceleration_source", -1.0)) == float(movement.get("acceleration", -1.0)) * adapter.HORDE_LOCOMOTION_RESPONSE_SCALE
+				and float(row.get("acceleration_source", -1.0)) == float(movement.get("acceleration", -1.0))
 				and String(provenance.get("source_contract", "")) == "openbfme.playable-unit-runtime",
 			str(row)
 		)
