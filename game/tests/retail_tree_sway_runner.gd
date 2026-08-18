@@ -31,7 +31,7 @@ func _initialize() -> void:
 func _run() -> void:
 	_test_no_name_matching()
 	_test_set_tree_sway_contract()
-	_test_unauthored_is_still()
+	_test_unauthored_uses_engine_default()
 	_test_authored_sway_applies()
 	_finish()
 
@@ -104,7 +104,7 @@ func _test_set_tree_sway_contract() -> void:
 	sway.free()
 
 
-func _test_unauthored_is_still() -> void:
+func _test_unauthored_uses_engine_default() -> void:
 	var sway: Node = TreeSwayScript.new()
 	root.add_child(sway)
 	var container := Node3D.new()
@@ -120,22 +120,26 @@ func _test_unauthored_is_still() -> void:
 		is_equal_approx(float(contract.get("wind_radians", 0.0)), -0.785),
 		str(contract.get("wind_radians", 0.0))
 	)
+	# Owner ruling 2026-08-18: retail trees sway in-engine (W3DTreeBuffer) even
+	# though no data authors it, so an unauthored map gets the ENGINE-DEFAULT
+	# approximation (moving), named as such — never still, never silent.
 	_check(
-		"unauthored_map_leaves_trees_still",
+		"unauthored_map_uses_engine_default_sway",
 		bound == 1
-			and bool(contract.get("still", false))
-			and is_equal_approx(float(contract.get("sway_degrees", -1.0)), 0.0),
+			and not bool(contract.get("still", true))
+			and float(contract.get("sway_degrees", 0.0)) > 0.0
+			and String(contract.get("source", "")) == "engine-default-w3dtreebuffer-approximation",
 		str(contract)
 	)
 	_check(
-		"still_trees_name_their_gap",
-		Array(contract.get("gaps", [])).has("no-authored-sway-amplitude:naturetrees.ini-authors-no-sway-field"),
+		"engine_default_sway_names_itself_as_approximation",
+		Array(contract.get("gaps", [])).has("sway-amplitude-is-engine-default-approximation:naturetrees.ini-authors-no-sway-field"),
 		str(contract.get("gaps", []))
 	)
 	var before := tree.basis
 	sway.call("_process", 0.5)
 	sway.call("_process", 0.5)
-	_check("still_trees_do_not_move", tree.basis.is_equal_approx(before), str(tree.basis))
+	_check("engine_default_trees_move", not tree.basis.is_equal_approx(before), str(tree.basis))
 	container.free()
 	sway.free()
 

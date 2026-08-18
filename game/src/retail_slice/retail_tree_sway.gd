@@ -32,15 +32,28 @@ extends Node
 ## `gamedata.ini:8583`. Radians, the game's own units.
 const RETAIL_DOWNWIND_ANGLE_RADIANS := -0.785
 const RETAIL_FRAMES_PER_SECOND := 30.0
-const UNAUTHORED_SOURCE := "unauthored-still-until-set-tree-sway"
+const UNAUTHORED_SOURCE := "engine-default-w3dtreebuffer-approximation"
 const AUTHORED_SOURCE := "SET_TREE_SWAY"
+
+## ENGINE DEFAULT (owner ruling 2026-08-18): retail trees DO sway in RotWK
+## even though no INI/map authors it — `naturetrees.ini:164` says the sway is
+## "handled in the W3DTreeBuffer", i.e. the engine, with built-in constants we
+## cannot read from data. Standing still is not retail either. Until the
+## engine values are attested, trees get a gentle wind-directional sway that
+## APPROXIMATES W3DTreeBuffer: small amplitude, ~3.3 s period, per-tree
+## phase. These four numbers are the approximation and are named as such in
+## `source`; `SET_TREE_SWAY` from a map script overrides them in full.
+const ENGINE_DEFAULT_SWAY_DEGREES := 2.5
+const ENGINE_DEFAULT_LEAN_DEGREES := 0.6
+const ENGINE_DEFAULT_FRAMES_PER_SWAY := 100
+const ENGINE_DEFAULT_RANDOMNESS := 0.5
 
 var bound_count := 0
 var wind_degrees := rad_to_deg(RETAIL_DOWNWIND_ANGLE_RADIANS)
-var sway_degrees := 0.0
-var lean_degrees := 0.0
-var frames_per_sway := 0
-var randomness := 0.0
+var sway_degrees := ENGINE_DEFAULT_SWAY_DEGREES
+var lean_degrees := ENGINE_DEFAULT_LEAN_DEGREES
+var frames_per_sway := ENGINE_DEFAULT_FRAMES_PER_SWAY
+var randomness := ENGINE_DEFAULT_RANDOMNESS
 var source := UNAUTHORED_SOURCE
 var last_set_tree_sway: Array = []
 ## Named, not silent. Every reason a tree is standing still.
@@ -62,8 +75,10 @@ func bind_prop_container(container: Node, sway_type_ids: Variant = null) -> int:
 	_records.clear()
 	bound_count = 0
 	gaps.clear()
-	if sway_degrees <= 0.0:
-		gaps.append("no-authored-sway-amplitude:naturetrees.ini-authors-no-sway-field")
+	if source == UNAUTHORED_SOURCE:
+		# Named, not hidden: the amplitude/period are the engine-default
+		# approximation, not data. `SET_TREE_SWAY` replaces them and clears this.
+		gaps.append("sway-amplitude-is-engine-default-approximation:naturetrees.ini-authors-no-sway-field")
 	if typeof(sway_type_ids) != TYPE_ARRAY and typeof(sway_type_ids) != TYPE_PACKED_STRING_ARRAY:
 		gaps.append("draw-module-table-absent:pack-ships-no-w3dtreedraw-kinds")
 		set_process(false)
