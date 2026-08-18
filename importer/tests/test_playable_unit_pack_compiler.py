@@ -1366,10 +1366,183 @@ def test_missing_texture_on_conditional_model_is_explicitly_unsupported() -> Non
     assert visual["unsupportedVisualReferences"][0]["runtimeSupport"] == (
         "excluded-missing-conditional-model-texture"
     )
-    assert visual["unsupportedVisualReferences"][1]["identifier"] == conditional_id
-    assert visual["unsupportedVisualReferences"][1]["runtimeSupport"] == (
-        "excluded-hero-form"
+    # Q34: MOUNTED is no longer an excluded hero form, so the ONLY reason this
+    # model stays out is its unresolved texture - and that single gap row names
+    # the exact W3D that could not convert.
+    assert visual["unsupportedVisualReferences"][0]["sourceW3dVirtualPath"] == (
+        conditional_path
     )
+    assert not any(
+        row.get("runtimeSupport") == "excluded-hero-form"
+        for row in visual["unsupportedVisualReferences"]
+    )
+
+
+def _mounted_hero_closure(descriptor: dict[str, object]) -> dict[str, object]:
+    """Retail's authored mount form for a foot hero.
+
+    Anchor: `data/ini/object/goodfaction/units/men/eomer.ini:64-69` authors
+    ``ModelConditionState = MOUNTED`` / ``Model = RUEomrHrs_SKN`` (rider and
+    horse are ONE skin that replaces the foot skin), plus ~30 ``AnimationState``
+    blocks qualified by MOUNTED (:73-294, e.g. ``AnimationState = MOVING
+    MOUNTED`` at :231).  ``Command_ToggleMounted``
+    (`data/ini/commandbutton.ini:2493`) is the toggle that raises the flag.
+    """
+
+    closure = _closure(descriptor)
+    member = descriptor["composition"]["primaryMemberObjectId"]
+    mounted_model = "art/w3d/ru/rueomrhrs_skn.w3d"
+    mounted_move = "art/w3d/ru/ruhhs_theo_rdrn.w3d"
+    closure["exactLeaves"].append(
+        _leaf(
+            member,
+            "RUEomrHrs_SKN",
+            "model",
+            mounted_model,
+            ["MOUNTED"],
+            "ModelConditionState MOUNTED",
+        )
+    )
+    closure["exactLeaves"].append(
+        _leaf(
+            member,
+            "RUHHs_Theo_SKL.RUHHs_Theo_RDRN",
+            "animation",
+            mounted_move,
+            ["MOVING", "MOUNTED"],
+            "AnimationState MOVING MOUNTED",
+        )
+    )
+    closure["scannedW3d"].append(
+        {
+            "virtualPath": mounted_model,
+            "byteLength": 1,
+            "sha256": hashlib.sha256(mounted_model.encode()).hexdigest(),
+            "headerIds": {
+                "virtualPath": mounted_model,
+                "modelIds": ["RUEomrHrs_SKN"],
+                "hierarchyIds": [],
+                "animationIds": [],
+            },
+            "modelReferences": [],
+            "warnings": [],
+        }
+    )
+    closure["scannedW3d"].append(
+        {
+            "virtualPath": mounted_move,
+            "byteLength": 1,
+            "sha256": hashlib.sha256(mounted_move.encode()).hexdigest(),
+            "headerIds": {
+                "virtualPath": mounted_move,
+                "modelIds": [],
+                "hierarchyIds": [],
+                "animationIds": ["RUHHS_THEO_SKL.RUHHS_THEO_RDRN"],
+            },
+            "modelReferences": [],
+            "warnings": [],
+        }
+    )
+    mounted_skeleton = "art/w3d/ru/ruhhs_theo_skl.w3d"
+    closure["scannedW3d"].append(
+        {
+            "virtualPath": mounted_skeleton,
+            "byteLength": 1,
+            "sha256": hashlib.sha256(mounted_skeleton.encode()).hexdigest(),
+            "headerIds": {
+                "virtualPath": mounted_skeleton,
+                "modelIds": [],
+                "hierarchyIds": ["RUHHS_THEO_SKL"],
+                "animationIds": [],
+            },
+            "modelReferences": [],
+            "warnings": [],
+        }
+    )
+    for path in (mounted_model, mounted_move):
+        closure["w3dDependencyClosure"]["embeddedTextures"].append(
+            {
+                "identifier": "Fixture.tga",
+                "sourceW3dVirtualPath": path,
+                "status": "resolved",
+                "physicalVirtualPaths": ["art/compiledtextures/fi/fixture.dds"],
+                "evidence": ["fixture"],
+                "provenance": {"virtualPath": path},
+            }
+        )
+    _rehash_closure(closure)
+    return closure
+
+
+def test_hero_mounted_model_condition_state_becomes_a_converted_component() -> None:
+    # Q34: the mount toggle kept Eomer on foot because every hero MOUNTED model
+    # row was dropped as an "excluded hero form".  MOUNTED is gameplay state
+    # driven by Command_ToggleMounted, exactly like Galadriel's USER_1 ring
+    # skin - it must convert.
+    descriptor = _descriptor("HeroUnit")
+    closure = _mounted_hero_closure(descriptor)
+
+    recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+
+    visual = recipe["runtimeRegistration"]["visual"]
+    assert not any(
+        row.get("identifier") == "RUEomrHrs_SKN"
+        for row in visual["unsupportedVisualReferences"]
+    )
+    mounted_model = "art/w3d/ru/rueomrhrs_skn.w3d"
+    mounted_move = "art/w3d/ru/ruhhs_theo_rdrn.w3d"
+    components = visual["components"]
+    assert len(components) == 2
+    foot = next(row for row in components if row["default"] is True)
+    mounted = next(row for row in components if row["sourceW3d"] == mounted_model)
+    assert foot["sourceW3d"] != mounted_model
+    assert foot["output"] == "assets/models/units/herounit/00.glb"
+    assert mounted["conditions"] == ["MOUNTED"]
+    assert mounted["default"] is False
+    assert mounted["output"] == "assets/models/units/herounit/01.glb"
+    # Provenance rows survive on the mounted component.
+    assert mounted["authoredOccurrences"][0]["provenance"]["scopePath"][-1] == (
+        "ModelConditionState MOUNTED"
+    )
+    # The MOUNTED AnimationStates bind to the MOUNTED model, not the foot skin.
+    resource = next(
+        row
+        for row in recipe["resources"]
+        if row["kind"] == "model" and row["output"] == mounted["output"]
+    )
+    assert mounted_move in resource["patterns"]
+    assert "ruhhs_theo_rdrn.w3d" in resource["options"]["animations"]
+    binding = next(
+        row
+        for row in visual["authoredAnimationStates"]
+        if row["sourceW3d"] == mounted_move
+    )
+    assert binding["modelSourceW3d"] == mounted_model
+    validate_playable_unit_pack_recipe(recipe)
+
+
+@pytest.mark.parametrize(
+    "target,expected",
+    [
+        # Pins captured from this fixture corpus at commit bc3c040, BEFORE the
+        # MOUNTED-form change.  A unit whose Draw authors no MOUNTED
+        # ModelConditionState must compile byte-identically.
+        ("HeroUnit", "c45d22a6d795800eedff059f3f95d3c5712d6ca1ba31d5eb9668f02e93f1d22e"),
+        ("MonsterUnit", "49ba26170d76dd3654c9f174eaa0025eb2206bcfda3960ec1b53de3a814d0466"),
+        ("SiegeUnit", "5bc5fa65685f1b074f6dd2385b97fef4c61be6f2033eb546e07a6449729ebf10"),
+    ],
+)
+def test_unit_without_mounted_authoring_compiles_byte_identically(
+    target: str, expected: str
+) -> None:
+    descriptor = _descriptor(target)
+    recipe = compile_playable_unit_pack_recipe(descriptor, _closure(descriptor))
+    digest = hashlib.sha256(
+        json.dumps(
+            recipe, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+    ).hexdigest()
+    assert digest == expected
 
 
 def test_galadriel_ring_hero_user_1_dark_skin_is_converted_not_excluded() -> None:
