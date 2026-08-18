@@ -29,7 +29,7 @@
 			"m3_pack_expansion",
 			"pipeline"
 		],
-		"consumerFileCount": 77,
+		"consumerFileCount": 78,
 		"consumerFiles": [
 			"armor_compiler",
 			"big",
@@ -50,6 +50,7 @@
 			"living_world_strings",
 			"livingmap_bundle",
 			"livingworld",
+			"locomotor_compiler",
 			"m3_pack_expansion",
 			"map_census",
 			"map_profile",

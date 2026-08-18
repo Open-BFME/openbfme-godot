@@ -15,6 +15,10 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .sage_cst import SageAssignment, SageBlock, SageObject, parse_sage_document
+from .locomotor_compiler import (
+    compile_locomotor_templates,
+    resolve_locomotor_template,
+)
 
 
 SCHEMA = "openbfme.retail-unit-rules"
@@ -532,36 +536,68 @@ def _block_assignment(block: _NamedBlock, key: str, *, depth: int | None = None,
     return matches[0] if matches else None
 
 
+# Stable document mapping per locomotor.ini payload, so the canonical
+# compiler's memo hits instead of re-parsing once per object.
+_LOCOMOTOR_DOCUMENTS: dict[str, dict[str, bytes]] = {}
+
+
 def _template_locomotor(name: str, source: _Source, defines: Mapping[str, _Define]) -> dict[str, Any]:
-    block = _one_named_block(source, "Locomotor", name)
-    acceleration = _block_assignment(block, "Acceleration", depth=1)
-    braking = _block_assignment(block, "Braking", depth=1)
-    turn_rate = _block_assignment(block, "TurnRate", depth=1, required=False)
-    turn_time = _block_assignment(block, "TurnTime", depth=1, required=turn_rate is None)
-    assert acceleration is not None and braking is not None
-    if turn_rate is not None:
-        resolved_turn = _number(turn_rate.value, source, "Locomotor", name, turn_rate.key, turn_rate.line, defines)
+    """Locomotor response fields, parsed by the ONE canonical reader.
+
+    `locomotor_compiler` owns every `Locomotor` block in the corpus; this
+    function only re-expresses the authored assignment it found in this
+    module's provenance shape (raw / value / source / resolvedDefines), which
+    hashed pack documents depend on.
+    """
+
+    documents = _LOCOMOTOR_DOCUMENTS.setdefault(
+        source.sha256, {LOCOMOTOR_PATH: source.payload}
+    )
+    template = resolve_locomotor_template(
+        compile_locomotor_templates(documents), name
+    )
+    if template is None:
+        raise ValueError(f"expected one Locomotor {name}, found 0")
+    fields = template["fields"]
+
+    def authored(key: str) -> dict[str, Any]:
+        field = fields.get(key)
+        if field is None:
+            raise ValueError(f"Locomotor {name} expected one {key}, found 0")
+        return _number(
+            str(field["raw"]),
+            source,
+            "Locomotor",
+            name,
+            str(field["sourceField"]),
+            int(field["line"]),
+            defines,
+        )
+
+    if "turnRate" in fields:
+        resolved_turn = authored("turnRate")
     else:
-        assert turn_time is not None
-        authored = _number(turn_time.value, source, "Locomotor", name, turn_time.key, turn_time.line, defines)
-        milliseconds = Decimal(str(authored["value"]))
+        turn_time = authored("turnTime")
+        milliseconds = Decimal(str(turn_time["value"]))
         if milliseconds <= 0:
             raise ValueError(f"Locomotor {name} TurnTime must be positive")
         resolved_turn = {
-            "raw": turn_time.value,
+            "raw": turn_time["raw"],
             "value": _json_number(Decimal(360000) / milliseconds),
             "authoredField": "TurnTime",
-            "authoredValueMilliseconds": authored["value"],
+            "authoredValueMilliseconds": turn_time["value"],
             "semantic": "360 degrees divided by TurnTime seconds",
-            "source": authored["source"],
-            "resolvedDefines": authored["resolvedDefines"],
+            "source": turn_time["source"],
+            "resolvedDefines": turn_time["resolvedDefines"],
         }
     return {
         "name": name,
-        "acceleration": _number(acceleration.value, source, "Locomotor", name, acceleration.key, acceleration.line, defines),
+        "acceleration": authored("acceleration"),
         "turnRateDegreesPerSecond": resolved_turn,
-        "braking": _number(braking.value, source, "Locomotor", name, braking.key, braking.line, defines),
-        "source": _source_record(source, "Locomotor", name, "Locomotor", block.line),
+        "braking": authored("braking"),
+        "source": _source_record(
+            source, "Locomotor", name, "Locomotor", int(template["line"])
+        ),
     }
 
 
