@@ -23,6 +23,14 @@ const ROSTER_OBJECT_IDS: Array[String] = [
 	KNIGHT_OBJECT_ID,
 ]
 const REQUIRED_VOICE_KINDS: Array[String] = ["select", "move", "attack", "death"]
+## Voice kind -> the `SoundState` key retail names for it inside a
+## `ModelConditionSoundSelectorClientBehavior` block (eomer.ini:726-730).
+## Only the keys retail actually authors there are mapped; nothing is invented.
+const SOUND_STATE_VOICE_KEYS := {
+	"select": "VoiceSelect",
+	"move": "VoiceMove",
+	"attack_charge": "VoiceAttackCharge",
+}
 const ROSTER_VOICE_EVENT_IDS: Dictionary = {
 	SOLDIER_OBJECT_ID: {
 		"select": ["GondorSoldierVoiceSelectMS", "gondorFighter.select"],
@@ -201,6 +209,25 @@ var playable_unit_animation_sounds: Dictionary = {}
 var last_animation_sound_clock_receipt: Dictionary = {}
 var _animation_sound_sequence := 0
 var _consumed_clip_frames: Dictionary = {}
+## object_id -> {STATE_TOKEN -> {SoundKey -> eventId}} from the authored
+## `ModelConditionSoundSelectorClientBehavior` rows
+## (`data/ini/object/goodfaction/units/men/eomer.ini:726-730`:
+## `SoundState = MOUNTED / VoiceMove = EomerVoiceMoveMounted`). This is the
+## AUTHORED alt-form table; the `_voice_candidate_form` id-name heuristic below
+## remains only for units that ship no selector module.
+var playable_unit_sound_states: Dictionary = {}
+## object_id -> the UPPERCASED stem of the object's DEFAULT model
+## (`eomer.ini:25 DefaultModelConditionState / Model = RUEomer_SKN` → RUEOMER).
+## Retail keys every `AnimationSound` row by `Skeleton.Clip`, so this stem is
+## what separates Eomer's own foot rows (`RUEomer_SKL.RUEomer_RUNA`) from the
+## rows authored on the mount's skeleton (`RUHHs_Theo_SKL.*`).
+var playable_unit_base_skeletons: Dictionary = {}
+## object_id -> active model-condition sound-state tokens, e.g. ["MOUNTED"].
+var playable_unit_sound_state_active: Dictionary = {}
+## Named footstep gaps. A unit with no authored footstep row plays NOTHING and
+## is listed here; a generic step sample is never substituted.
+var footstep_gaps: Dictionary = {}
+var last_footstep_receipt: Dictionary = {}
 ## object id -> the unit's OWN authored `SoundImpact` AudioEvent id.
 ##
 ## NOT the per-hit sound. Retail's `SoundImpact` is the CRUSH / KNOCKBACK thud:
@@ -318,6 +345,10 @@ func configure(selected_pack_root: String, enable_playback: bool = true, active_
 	playable_unit_weapon_sfx.clear()
 	playable_unit_bodyfall.clear()
 	playable_unit_animation_sounds.clear()
+	playable_unit_sound_states.clear()
+	playable_unit_base_skeletons.clear()
+	playable_unit_sound_state_active.clear()
+	footstep_gaps.clear()
 	playable_unit_impact.clear()
 	generic_weapon_swing_fallbacks.clear()
 	damage_fx_gaps.clear()
@@ -1946,6 +1977,17 @@ func route_roster_voice(object_id: String, kind: String, sequence: int, form: St
 		return _rejection("unknown_roster_object", "", object_id, kind, sequence)
 	if not _all_voice_kinds().has(kind):
 		return _rejection("unknown_voice_kind", "", object_id, kind, sequence)
+	# AUTHORED SOUND STATE FIRST. `eomer.ini:726-730` names the mounted event
+	# outright (`SoundState = MOUNTED / VoiceMove = EomerVoiceMoveMounted`); the
+	# `_voice_candidate_form` id-spelling heuristic is only for units that ship
+	# no `ModelConditionSoundSelectorClientBehavior`.
+	var state_key := String(SOUND_STATE_VOICE_KEYS.get(kind, ""))
+	if state_key != "":
+		var state_event := sound_state_event(object_id, state_key)
+		if state_event != "":
+			var state_route: Dictionary = audio_event_routes.get(state_event.to_lower(), {})
+			if not state_route.is_empty():
+				return _route_definition(state_route, sequence, object_id, kind)
 	if form != "":
 		var form_route: Dictionary = (roster_voice_form_routes.get(object_id, {}) as Dictionary).get("%s/%s" % [form, kind], {})
 		if not form_route.is_empty():
@@ -2034,7 +2076,25 @@ func _load_playable_unit_audio_routes() -> void:
 					continue
 				leaves.append({"sample_id": path.get_file().get_basename(), "path": path, "weight": 1, "validated_path": true})
 			if not leaves.is_empty():
-				audio_event_routes[event_id.to_lower()] = {"event_id": event_id, "source": "playable-unit-runtime", "leaves": leaves}
+				# THE AUTHORED AudioEvent PARAMETERS TRAVEL WITH THE ROUTE.
+				#
+				# A playable-unit binding resolves straight to cooked sample
+				# paths, so this table used to carry no `definition` at all and
+				# `_sfx_semantics` handed every one of them neutral values:
+				# full volume, no `Limit`, no `PitchShift`. That is the owner's
+				# "weird footsteps for heroes like Eomer": retail authors
+				# `soundeffects.ini:19127 AudioEvent FootstepDirtA` with
+				# `Volume = 30`, `Limit = 3`, `PitchShift = -10 10`, and we were
+				# playing those 36 dirt leaves at 0 dB with unlimited
+				# concurrency. The pack already ships the block verbatim in
+				# `data/audio_events.json`; attach it so the authored mix
+				# applies. An event the pack does not define stays neutral —
+				# absent parameters are never invented.
+				var route_row: Dictionary = {"event_id": event_id, "source": "playable-unit-runtime", "leaves": leaves}
+				var authored_definition: Variant = content_db.call("get_retail_audio_event", event_id)
+				if typeof(authored_definition) == TYPE_DICTIONARY and not (authored_definition as Dictionary).is_empty():
+					route_row["definition"] = (authored_definition as Dictionary).duplicate(true)
+				audio_event_routes[event_id.to_lower()] = route_row
 			elif String(resolutions.get(event_id_value, "")) == "authored-silent":
 				audio_event_routes[event_id.to_lower()] = {"event_id": event_id, "source": "authored-silent", "leaves": [], "authored_silent": true}
 		var weapon_sfx := _weapon_sfx_for_document(document, category, bindings)
@@ -2048,8 +2108,12 @@ func _load_playable_unit_audio_routes() -> void:
 			if unit_id != object_id:
 				playable_unit_bodyfall[unit_id] = bodyfall_id
 		bind_animation_sound_contracts(object_id, PlayableUnitAdapter.module_contracts(document))
+		bind_sound_state_contracts(object_id, PlayableUnitAdapter.module_contracts(document))
+		bind_base_skeleton(object_id, document)
 		if unit_id != object_id:
 			bind_animation_sound_contracts(unit_id, PlayableUnitAdapter.module_contracts(document))
+			bind_sound_state_contracts(unit_id, PlayableUnitAdapter.module_contracts(document))
+			bind_base_skeleton(unit_id, document)
 		var impact_id := _impact_id_for_document(document, bindings)
 		if impact_id != "":
 			playable_unit_impact[object_id] = impact_id
@@ -2088,11 +2152,244 @@ func bind_animation_sound_contracts(object_id: String, contracts: Array) -> int:
 				"animation": animation,
 				"frames": (sound.get("frames", []) as Array).duplicate(),
 			})
+	# NAME THE FOOTSTEP GAP AT BIND TIME, never at play time with a substitute.
+	# Retail authors footsteps per object as frame-keyed `AnimationSound` rows
+	# (`eomer.ini:746-747`), and most objects author NONE — `menporter.json`,
+	# `gondorfighterhorde.json` and every other horde in the shipped men pack
+	# carry zero footstep rows, so retail plays nothing for their steps and so
+	# must we. This row exists so "silent" is visibly *authored* silence.
+	var footstep_rows := 0
+	for sound_value in sounds:
+		if _is_footstep_event(String((sound_value as Dictionary).get("eventId", ""))):
+			footstep_rows += 1
+	if footstep_rows == 0:
+		footstep_gaps["no-authored-footstep-rows:%s" % object_id] = true
+	else:
+		footstep_gaps.erase("no-authored-footstep-rows:%s" % object_id)
 	if sounds.is_empty():
 		playable_unit_animation_sounds.erase(object_id)
 		return 0
 	playable_unit_animation_sounds[object_id] = sounds
 	return sounds.size()
+
+
+func bind_sound_state_contracts(object_id: String, contracts: Array) -> int:
+	## Attach the authored `ModelConditionSoundSelectorClientBehavior` table.
+	## `eomer.ini:726-730` authors `SoundState = MOUNTED` with
+	## `VoiceMove = EomerVoiceMoveMounted`, `VoiceSelect = EomerVoiceSelectMountedMS`
+	## and `VoiceAttackCharge = EomerVoiceAttackChargeMounted`. That table — not
+	## an event-id spelling heuristic — is what decides a mounted hero's voice.
+	if object_id == "":
+		return 0
+	var states: Dictionary = {}
+	for contract_value in contracts:
+		if typeof(contract_value) != TYPE_DICTIONARY:
+			continue
+		var contract := contract_value as Dictionary
+		if String(contract.get("module", "")) != "ModelConditionSoundSelectorClientBehavior":
+			continue
+		if String(contract.get("extraction", "")) != "typed":
+			continue
+		var status := String(contract.get("runtimeStatus", contract.get("runtime_status", "")))
+		if status != "executable":
+			continue
+		var fields: Dictionary = contract.get("fields", {}) as Dictionary
+		for row_value in fields.get("SoundState", []) as Array:
+			if typeof(row_value) != TYPE_DICTIONARY:
+				continue
+			var row := row_value as Dictionary
+			var sounds: Dictionary = row.get("sounds", {}) as Dictionary
+			if sounds.is_empty():
+				continue
+			var resolved: Dictionary = {}
+			for sound_key in sounds.keys():
+				var entry: Variant = sounds[sound_key]
+				var event_id := _sound_state_event_id(entry)
+				if event_id != "":
+					resolved[_scalar_text(sound_key)] = event_id
+			if resolved.is_empty():
+				continue
+			for condition_value in row.get("conditions", []) as Array:
+				var token := String(condition_value).strip_edges().to_upper()
+				if token == "":
+					continue
+				var merged: Dictionary = states.get(token, {}) as Dictionary
+				merged.merge(resolved, false)
+				states[token] = merged
+	if states.is_empty():
+		playable_unit_sound_states.erase(object_id)
+		return 0
+	playable_unit_sound_states[object_id] = states
+	return states.size()
+
+
+func bind_base_skeleton(object_id: String, document: Dictionary) -> String:
+	## The object's DEFAULT model, as authored. `eomer.ini:25` hangs
+	## `RUEomer_SKN` off `DefaultModelConditionState`; the converter records it
+	## as the default visual component. Its stem (`RUEOMER`) is the authored
+	## separator between the object's own animation rows and rows authored on a
+	## different skeleton (the mount's `RUHHs_Theo_SKL`).
+	if object_id == "":
+		return ""
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	var visual: Dictionary = registration.get("visual", {}) as Dictionary
+	var identifier := ""
+	for component_value in visual.get("components", []) as Array:
+		if typeof(component_value) != TYPE_DICTIONARY:
+			continue
+		var component := component_value as Dictionary
+		if not bool(component.get("default", false)):
+			continue
+		for occurrence_value in component.get("authoredOccurrences", []) as Array:
+			if typeof(occurrence_value) != TYPE_DICTIONARY:
+				continue
+			var occurrence := occurrence_value as Dictionary
+			if String(occurrence.get("usage", "")) != "model":
+				continue
+			if not (occurrence.get("conditions", []) as Array).is_empty():
+				continue
+			identifier = String(occurrence.get("identifier", ""))
+			break
+		if identifier != "":
+			break
+	var stem := _skeleton_stem(identifier)
+	if stem == "":
+		playable_unit_base_skeletons.erase(object_id)
+		return ""
+	playable_unit_base_skeletons[object_id] = stem
+	return stem
+
+
+func set_unit_sound_state(object_id: String, tokens: Array) -> void:
+	## Model-condition sound state for an object (["MOUNTED"] or []). The sim
+	## owns the condition; this lane only consumes it.
+	if object_id == "":
+		return
+	var normalized: Array[String] = []
+	for token_value in tokens:
+		var token := String(token_value).strip_edges().to_upper()
+		if token != "" and not normalized.has(token):
+			normalized.append(token)
+	if normalized.is_empty():
+		playable_unit_sound_state_active.erase(object_id)
+		return
+	playable_unit_sound_state_active[object_id] = normalized
+
+
+func active_sound_state_tokens(object_id: String) -> Array:
+	var tokens: Variant = playable_unit_sound_state_active.get(object_id, [])
+	return (tokens as Array) if typeof(tokens) == TYPE_ARRAY else []
+
+
+func sound_state_event(object_id: String, sound_key: String) -> String:
+	## The authored event id for `sound_key` under the object's ACTIVE sound
+	## state, or "" when no state is active or the state authors no such key.
+	var states: Dictionary = playable_unit_sound_states.get(object_id, {}) as Dictionary
+	if states.is_empty():
+		return ""
+	for token_value in active_sound_state_tokens(object_id):
+		var state: Dictionary = states.get(String(token_value), {}) as Dictionary
+		var event_id := String(state.get(sound_key, ""))
+		if event_id != "":
+			return event_id
+	return ""
+
+
+func _scalar_text(value: Variant) -> String:
+	## `String(x)` is NOT total in GDScript — it throws on several Variant
+	## types, and one throw inside `configure()` unwinds the whole audio bind
+	## (observed: a SoundState row whose value was not a plain scalar aborted
+	## `_load_playable_unit_audio_routes` mid-roster). Scalars convert; anything
+	## else is "absent", which is the strict side.
+	match typeof(value):
+		TYPE_STRING, TYPE_STRING_NAME:
+			return String(value).strip_edges()
+		TYPE_INT, TYPE_FLOAT, TYPE_BOOL:
+			return str(value).strip_edges()
+	return ""
+
+
+func _sound_state_event_id(entry: Variant) -> String:
+	## A converted SoundState entry is `{"value": "EomerVoiceMoveMounted", ...}`.
+	## A bare string is accepted too; a list takes its first scalar. Anything
+	## else contributes no event id rather than a guessed one.
+	match typeof(entry):
+		TYPE_DICTIONARY:
+			var row := entry as Dictionary
+			var text := _scalar_text(row.get("value", null))
+			if text != "":
+				return text
+			return _scalar_text(row.get("authored", null))
+		TYPE_ARRAY:
+			for item in entry as Array:
+				var first := _sound_state_event_id(item)
+				if first != "":
+					return first
+			return ""
+	return _scalar_text(entry)
+
+
+func _is_footstep_event(event_id: String) -> bool:
+	## Retail spells the class into the event id: `FootstepDirtA`,
+	## `HorseMoveFootsteps`, `BatteringRamGroupFootstep` (soundeffects.ini).
+	return event_id.to_lower().contains("footstep")
+
+
+func _skeleton_stem(identifier: String) -> String:
+	## `RUEomer_SKL.RUEomer_RUNA` → RUEOMER; `RUEomer_SKN` → RUEOMER.
+	var head := identifier.strip_edges()
+	if head == "":
+		return ""
+	if head.contains("."):
+		head = head.get_slice(".", 0)
+	var upper := head.to_upper()
+	if upper.ends_with("_SKL") or upper.ends_with("_SKN"):
+		upper = upper.substr(0, upper.length() - 4)
+	return upper
+
+
+func route_footstep(object_id: String, sequence: int, clip: String = "", frame: int = -1) -> Dictionary:
+	## THE UNIT'S OWN authored footstep row, or NOTHING.
+	##
+	## Retail hangs footsteps on frame-keyed `AnimationSoundClientBehavior` rows
+	## (`eomer.ini:744-747`: `FootstepDirtA` on `RUEomer_SKL.RUEomer_RUNA`
+	## frames 4 15, on `RUEomer_RUNB` frames 5 15 26 36). There is no class rule
+	## behind them: an object that authors no footstep row makes no footstep
+	## sound in retail either, and this function must never reach for a generic
+	## step sample the way `_route_bodyfall` reaches for `BodyFallSoldier`.
+	##
+	## MOUNTED (`eomer.ini:65 ModelConditionState = MOUNTED`, whose animation
+	## states at :153-242 are all `RUHHs_Theo_SKL.*`) rides the mount's
+	## skeleton, so a mounted hero can only sound the rows authored on that
+	## skeleton — never his own foot rows.
+	if not playable_unit_animation_sounds.has(object_id):
+		footstep_gaps["no-authored-footstep-rows:%s" % object_id] = true
+		return _rejection("no_authored_footstep", "", object_id, "sfx", sequence)
+	var typed := select_animation_sound(object_id, clip, frame, "footstep")
+	if typed.is_empty():
+		if frame >= 0:
+			return _rejection("animation-sound-frame-pending", clip, object_id, "sfx", sequence)
+		return _rejection("animation-sound-clip-unmatched", clip, object_id, "sfx", sequence)
+	var gate := footstep_state_gate(object_id, String(typed.get("animation", "")))
+	if gate != "":
+		footstep_gaps[gate] = true
+		return _rejection("mounted_footstep_suppressed", String(typed.get("eventId", "")), object_id, "sfx", sequence)
+	return route_audio_event(String(typed.get("eventId", "")), sequence)
+
+
+func footstep_state_gate(object_id: String, animation: String) -> String:
+	## "" when the row may sound. Otherwise the named gap explaining why the
+	## authored row is being withheld under the active model-condition state.
+	if not active_sound_state_tokens(object_id).has("MOUNTED"):
+		return ""
+	var base_stem := String(playable_unit_base_skeletons.get(object_id, ""))
+	if base_stem == "":
+		# No authored default model recorded: refuse to guess which rows belong
+		# to the mount, and say so rather than sounding a foot step on a horse.
+		return "mounted-base-skeleton-unknown:%s" % object_id
+	if _skeleton_stem(animation) != base_stem:
+		return ""
+	return "mounted-footstep-clip-missing:%s:%s" % [object_id, animation]
 
 
 func select_animation_sound(object_id: String, clip: String, frame: int = -1, event_contains: String = "") -> Dictionary:
@@ -2187,10 +2484,14 @@ func consume_battalion_animation_sound_clocks() -> Array:
 	if tree == null:
 		return []
 	var fired: Array = []
+	var suppressed: Array = []
 	for node in tree.get_nodes_in_group("retail_battalion"):
 		if node == null or not node.has_method("member_clip_frame"):
 			continue
 		var object_id := String(node.get("object_id"))
+		# The model-condition sound state the presentation is actually in. The
+		# battalion owns the mount flag; this lane reads it and never writes it.
+		_sync_sound_state_from_battalion(node, object_id)
 		var member_count := int(node.get("member_count"))
 		for member_index in range(member_count):
 			var clock: Dictionary = node.call("member_clip_frame", member_index)
@@ -2217,15 +2518,40 @@ func consume_battalion_animation_sound_clocks() -> Array:
 			)
 			for row_value in crossed:
 				var row := row_value as Dictionary
+				var row_event := String(row.get("eventId", ""))
+				if _is_footstep_event(row_event):
+					# Footsteps take the gated path: the MOUNTED state must not
+					# sound a foot row (eomer.ini:65 / :744-747).
+					var gap := footstep_state_gate(object_id, String(row.get("animation", "")))
+					if gap != "":
+						footstep_gaps[gap] = true
+						suppressed.append(row)
+						continue
 				_animation_sound_sequence += 1
-				_play_sfx(route_audio_event(String(row.get("eventId", "")), _animation_sound_sequence))
+				_play_sfx(route_audio_event(row_event, _animation_sound_sequence))
 				fired.append(row)
 	last_animation_sound_clock_receipt = {
 		"source": "typed-animation-sound-clock",
 		"applied": fired.size(),
 		"events": fired.duplicate(true),
+		"suppressed": suppressed.duplicate(true),
 	}
 	return fired
+
+
+func _sync_sound_state_from_battalion(node: Node, object_id: String) -> void:
+	## Read-only probe of the presentation's mount flag. `retail_battalion.gd`
+	## sets `_mount_presentation_applied` from `sync_mount_presentation()`; this
+	## lane does not own that file and must not write it. A battalion that does
+	## not expose the flag simply has no active sound state.
+	if object_id == "" or node == null:
+		return
+	if not playable_unit_sound_states.has(object_id) and not playable_unit_animation_sounds.has(object_id):
+		return
+	var flag: Variant = node.get("_mount_presentation_applied")
+	if typeof(flag) != TYPE_BOOL:
+		return
+	set_unit_sound_state(object_id, ["MOUNTED"] if bool(flag) else [])
 
 
 func _process(_delta: float) -> void:
@@ -3004,6 +3330,10 @@ func stop_all() -> void:
 	playable_unit_weapon_sfx.clear()
 	playable_unit_bodyfall.clear()
 	playable_unit_animation_sounds.clear()
+	playable_unit_sound_states.clear()
+	playable_unit_base_skeletons.clear()
+	playable_unit_sound_state_active.clear()
+	footstep_gaps.clear()
 	_structure_damage_stage.clear()
 	_stream_cache.clear()
 	_clear_ambient_players()
