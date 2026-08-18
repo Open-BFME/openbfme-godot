@@ -186,8 +186,20 @@ immediately before `0e9ee3d feat(sim): add authoritative ordinary weapon project
 `global_script_class_cache`, so `retail_slice_sim.gd` fails to parse
 (`Could not find type "SageScriptExecutor" / "SageScriptEnv" / "RetailSliceScriptWorld"`) and the
 slice never instantiates. Building that cache needs a full `--import` pass I did not spend. Worktree
-removed. **These four failures are unexplained and no baseline for this gate exists in
-`docs/state/` or `orchestration/queue.md` — someone should either pin a baseline or bisect it.**
+removed.
+
+**Partial attribution, found late.** `orchestration/reports/2026-08-15-orphan-runners-report.md:119`
+already lists `retail_ai_ladder_runner` among six runners in bucket **(c) Stale Expectations (No
+Longer Applicable)**. That audit is dated **2026-08-15**; the projectile commits (`0e9ee3d`,
+`d03e486`, `f000569`) all landed **2026-08-17**. So this gate was already failing *before* Q13, which
+is real evidence the four failures are **pre-existing, not a projectile regression**.
+
+It is not proof, and I am not treating it as one: that audit explicitly says its buckets are
+"evidence-signature triage", it captured no exit codes, and it names no individual checks — so it
+cannot be judged failure-by-name against, which is the only way aggregate counts stop hiding
+regressions. **There is still no named baseline for this gate in `docs/state/` or
+`orchestration/queue.md`; one should be pinned (13/4 with the four names above is a candidate) or
+the gate bisected.**
 
 ---
 
