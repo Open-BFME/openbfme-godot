@@ -310,11 +310,186 @@ func _run() -> void:
 
 	_check_retail_tooltips(hud, fixture_content)
 	_check_side_command_bar(hud)
+	_check_authored_stage_layout(hud)
+	_check_authored_hero_bar(hud)
 
 	hud.free()
 	_cleanup_fixture()
 	await process_frame
 	_finish()
+
+
+## Q37: every bottom-bar coordinate must be the AUTHORED Palantir.apt stage
+## translation put through the one stage->viewport transform, not a number
+## measured off a screenshot.
+func _check_authored_stage_layout(hud) -> void:
+	var stage: Script = load("res://src/retail_slice/retail_hud_stage.gd")
+	var apt: Script = load("res://src/retail_slice/retail_hud_apt_runtime.gd")
+	_check(
+		"stage_is_the_authored_1024x768_apt_stage",
+		stage.STAGE_SIZE == Vector2(1024.0, 768.0)
+			and stage.STAGE_SIZE == apt.PALANTIR_STAGE_SIZE
+	)
+	# The dock is the bottom band of the stage, spanning the FULL width.
+	var dock: Control = hud.get_node("PalantirDock")
+	var expected_dock: Rect2 = stage.dock_rect(stage.DESIGN_VIEWPORT)
+	_check(
+		"dock_spans_the_authored_full_width_stage_band",
+		is_equal_approx(dock.size.x, expected_dock.size.x)
+			and is_equal_approx(dock.size.y, expected_dock.size.y),
+		"dock=%s expected=%s" % [str(dock.size), str(expected_dock.size)]
+	)
+	# Dish centre: `EmptyGlobe` stage [280.2, 660.9].
+	_check(
+		"dish_centre_is_the_authored_empty_globe_placement",
+		(hud.RETAIL_DISH_CENTER as Vector2).is_equal_approx(
+			stage.to_dock(apt.PALANTIR_STAGE_PLACEMENTS["EmptyGlobe"])
+		),
+		str(hud.RETAIL_DISH_CENTER)
+	)
+	_check(
+		"radar_centre_is_the_authored_radar_background_placement",
+		(hud.RETAIL_RADAR_CENTER as Vector2).is_equal_approx(
+			stage.to_dock(apt.PALANTIR_STAGE_PLACEMENTS["RadarBackground"])
+		),
+		str(hud.RETAIL_RADAR_CENTER)
+	)
+	# The six command sockets: `CommandButtons` stage [289.55, 659.85] plus the
+	# authored per-slot local offsets from sprite character 114.
+	var slots_match: bool = (
+		int(hud.RETAIL_COMMAND_SLOT_SOURCE.size())
+		== int(apt.PALANTIR_COMMAND_SLOT_LOCAL.size())
+	)
+	var slot_detail := ""
+	for index in apt.PALANTIR_COMMAND_SLOT_LOCAL.size():
+		var expected: Vector2 = stage.command_slot_dock(
+			index, hud.RETAIL_COMMAND_SLOT_SIZE
+		) - Vector2(360.0, 0.0)
+		var actual: Vector2 = hud.RETAIL_COMMAND_SLOT_SOURCE[index]
+		if not actual.is_equal_approx(expected):
+			slots_match = false
+			slot_detail += "slot%d actual=%s authored=%s; " % [index, str(actual), str(expected)]
+	_check("command_slot_arc_equals_the_authored_apt_table", slots_match, slot_detail)
+	# Money and command points are TWO independently anchored fields, not one
+	# glued row. Authored order is money LEFT of command points (Palantir.apt
+	# ResourceBar locals 0.8 and 108.65) and both of the owner's retail RotWK
+	# captures agree.
+	var money: Label = hud.resource_label
+	var command_points: Label = hud.command_points_label
+	_check(
+		"money_and_command_points_are_independently_anchored",
+		money.get_parent() == dock and command_points.get_parent() == dock
+			and money.get_parent() == command_points.get_parent()
+			and not (money.get_parent() is BoxContainer)
+	)
+	_check(
+		"money_sits_at_its_authored_stage_anchor",
+		money.position.is_equal_approx(stage.resource_text_rect_dock("Resources").position),
+		str(money.position)
+	)
+	_check(
+		"command_points_sit_at_their_authored_stage_anchor",
+		command_points.position.is_equal_approx(
+			stage.resource_text_rect_dock("CommandPoints").position
+		),
+		str(command_points.position)
+	)
+	_check(
+		"authored_order_is_money_left_of_command_points",
+		money.position.x < command_points.position.x,
+		"money=%s cp=%s" % [str(money.position.x), str(command_points.position.x)]
+	)
+	var band := Rect2(Vector2.ZERO, expected_dock.size)
+	_check(
+		"both_resource_fields_stay_inside_the_bar",
+		band.encloses(Rect2(money.position, money.size))
+			and band.encloses(Rect2(command_points.position, command_points.size)),
+		"bar=%s money=%s cp=%s" % [
+			str(band), str(Rect2(money.position, money.size)),
+			str(Rect2(command_points.position, command_points.size)),
+		]
+	)
+
+
+## Q38: the hero roster bar rides the authored `InGameHeroSelect` stage anchor,
+## draws health as an ARC (no ProgressBar anywhere under a hero button), badges
+## the level bottom-left, rings the selection, and carries the select-all
+## button.
+func _check_authored_hero_bar(hud) -> void:
+	var stage: Script = load("res://src/retail_slice/retail_hud_stage.gd")
+	var apt: Script = load("res://src/retail_slice/retail_hud_apt_runtime.gd")
+	hud.sync_hero_bar([
+		{"id": 11, "unit_type": "hero.a", "name": "Hero A", "level": 3,
+			"health": 50, "maximum_health": 100, "selected": true},
+		{"id": 12, "unit_type": "hero.b", "name": "Hero B", "level": 1,
+			"health": 100, "maximum_health": 100, "selected": false},
+	])
+	var bar: Control = hud.hero_bar
+	_check(
+		"hero_bar_anchors_at_the_authored_hero_select_stage_point",
+		bar.position.is_equal_approx(stage.hero_cell_viewport(0))
+			and (apt.PALANTIR_STAGE_PLACEMENTS["HeroSelectUI"] as Vector2)
+				== Vector2(375.0, 700.0),
+		str(bar.position)
+	)
+	var first: Button = hud._hero_bar_buttons[11]
+	var second: Button = hud._hero_bar_buttons[12]
+	_check(
+		"hero_cells_use_the_authored_70_unit_pitch",
+		second.position.is_equal_approx(
+			stage.hero_cell_viewport(1) - bar.position
+		) and first.position.is_equal_approx(Vector2.ZERO),
+		"first=%s second=%s" % [str(first.position), str(second.position)]
+	)
+	var progress_bars := 0
+	for cell_value in hud._hero_bar_buttons.values():
+		for child in (cell_value as Button).get_children():
+			if child is ProgressBar:
+				progress_bars += 1
+	_check("hero_health_is_not_a_progress_bar", progress_bars == 0, str(progress_bars))
+	var arc := first.get_node_or_null("HealthArc")
+	_check(
+		"hero_health_is_drawn_as_an_arc",
+		arc != null and arc is RetailHudArcGauge and arc.arc_half_angle > 0.0
+			and is_equal_approx(arc.arc_value, 0.5),
+		str(arc)
+	)
+	var badge: Label = first.get_node_or_null("LevelBadge")
+	var portrait_centre: Vector2 = stage.scale_size(apt.HERO_CELL_PORTRAIT_CENTER_LOCAL)
+	_check(
+		"level_badge_is_bottom_left_of_the_portrait",
+		badge != null and badge.text == "3"
+			and badge.get_rect().get_center().x < portrait_centre.x
+			and badge.get_rect().get_center().y > portrait_centre.y,
+		"badge=%s centre=%s" % [str(badge.get_rect()), str(portrait_centre)]
+	)
+	_check(
+		"selection_is_a_circle_highlight",
+		(first.get_node("SelectedHighlight") as Control).visible
+			and not (second.get_node("SelectedHighlight") as Control).visible
+	)
+	_check(
+		"select_all_heroes_button_is_present_at_its_authored_anchor",
+		hud._hero_select_all_button != null
+			and hud._hero_select_all_button.visible
+			and String(hud._hero_select_all_button.get_meta("command_button", ""))
+				== "NonCommand_SelectAllHeroes"
+			and hud._hero_select_all_button.position.is_equal_approx(
+				stage.hero_select_all_viewport() - bar.position
+			),
+		str(hud._hero_select_all_button.position) if hud._hero_select_all_button != null else "<null>"
+	)
+	_check(
+		"faction_icon_sits_left_of_the_select_all_button",
+		hud._hero_faction_icon != null
+			and hud._hero_faction_icon.position.x < hud._hero_select_all_button.position.x
+	)
+	# The palantir big-portrait level gauge is the same arc, not a rectangle.
+	_check(
+		"palantir_level_bar_is_an_arc",
+		hud._dish_level_bar is RetailHudArcGauge
+	)
+	hud.sync_hero_bar([])
 
 
 func _check_retail_tooltips(hud, content) -> void:

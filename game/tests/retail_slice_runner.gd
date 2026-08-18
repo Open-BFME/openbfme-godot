@@ -279,10 +279,12 @@ const KNOWN_FAILURE_NAMES := {
 	# retail_lockstep_network_runner - are green on this tree.
 	"battle_signature_matches_pinned_constant": true,
 }
-# Capture-measured dock geometry (bfme2-ref-120s.png); mirrors
-# retail_hud.gd RETAIL_RADAR_CENTER / RETAIL_DISH_CENTER.
-const EXPECTED_RADAR_CENTER := Vector2(225.0, 198.0)
-const EXPECTED_DISH_CENTER := Vector2(587.0, 219.0)
+# Q37: AUTHORED dock geometry, no longer capture-measured. These are the
+# `Palantir.apt` root placements `RadarBackground` [129.85, 640.15] and
+# `EmptyGlobe` [280.2, 660.9] put through the one stage->viewport transform
+# (RetailHudStage) at the 1920x1080 design viewport, and they mirror
+# retail_hud.gd RETAIL_RADAR_CENTER / RETAIL_DISH_CENTER exactly - the runner
+# re-derives them below so the mirror cannot drift silently.
 const ARCHER_PROJECTILE_CONTROLLER_PATH := "res://src/retail_slice/retail_archer_projectile_controller.gd"
 ## Pinned deterministic battle signatures per faction (see
 ## battle_signature_matches_pinned_constant). Repository policy: a drifted pin
@@ -743,7 +745,20 @@ func _run() -> void:
 			and command_panel.global_position.x + command_panel.size.x <= palantir.global_position.x + palantir.size.x + 1.0
 	)
 	# Radar and dish centers are the capture-measured dock coordinates
-	# (bfme2-ref-120s.png): radar (225, 198), palantir dish (587, 219).
+	# Authored: radar (243.4688, 180.2109), palantir dish (525.375, 209.3906).
+	var stage: Script = load("res://src/retail_slice/retail_hud_stage.gd")
+	var apt: Script = load("res://src/retail_slice/retail_hud_apt_runtime.gd")
+	var EXPECTED_RADAR_CENTER: Vector2 = stage.to_dock(
+		apt.PALANTIR_STAGE_PLACEMENTS["RadarBackground"]
+	)
+	var EXPECTED_DISH_CENTER: Vector2 = stage.to_dock(
+		apt.PALANTIR_STAGE_PLACEMENTS["EmptyGlobe"]
+	)
+	_check(
+		"dock_geometry_mirrors_the_authored_apt_placements",
+		EXPECTED_RADAR_CENTER.is_equal_approx(slice.hud.RETAIL_RADAR_CENTER)
+			and EXPECTED_DISH_CENTER.is_equal_approx(slice.hud.RETAIL_DISH_CENTER)
+	)
 	_check(
 		"minimap_is_centered_in_retail_left_circle",
 		palantir != null
@@ -3963,8 +3978,13 @@ func _retail_shadow_decals_present(slice) -> bool:
 
 
 func _sockets_ring_dish_center(command_grid: Control, dish_center_global: Vector2) -> bool:
-	# The six empty command sockets ride the palantir dish rim; their
-	# capture-measured centers sit 95..135 dock px from the dish center.
+	# The six empty command sockets ride the palantir dish rim. Q37: the arc is
+	# AUTHORED (Palantir.apt sprite 114 `glass0..glass5`) and it is a spiral,
+	# not a circle - the authored centres sit 88.0 .. 140.8 dock px from the
+	# dish centre, tightest at the two bottom sockets. The old 95..135 window
+	# was fitted to the capture-measured constants this replaced; the real
+	# oracle for each socket is `command_slot_arc_equals_the_authored_apt_table`
+	# in retail_four_unit_hud_runner, and this stays a loose sanity band.
 	var socket_count := 0
 	for child in command_grid.get_children():
 		var socket := child as TextureRect
@@ -3972,7 +3992,7 @@ func _sockets_ring_dish_center(command_grid: Control, dish_center_global: Vector
 			continue
 		socket_count += 1
 		var distance := (socket.global_position + socket.size * 0.5).distance_to(dish_center_global)
-		if distance < 95.0 or distance > 135.0:
+		if distance < 85.0 or distance > 145.0:
 			return false
 	return socket_count == 6
 

@@ -267,8 +267,95 @@ func _run() -> void:
 			authored_match = false
 	_check("radial_six_entries_use_the_authored_retail_sockets", authored_match)
 
+	_check_world_radial_and_palantir_are_both_live(hud)
+
 	hud.free()
 	_finish()
+
+
+## Q39: a selected structure gets its command set as a WORLD-SPACE ring around
+## the building AND keeps the same commands in the palantir. The owner's retail
+## RotWK capture shows a selected barracks with four icons ringing it and the
+## same four in the palantir dish at once; ours used to render the ring for
+## `CASTLE_UNPACK` sources only.
+func _check_world_radial_and_palantir_are_both_live(hud) -> void:
+	# A barracks command set: four authored slots (the size the owner's capture
+	# shows).
+	var entries: Array = []
+	for index in 4:
+		entries.append({
+			"command_kind": "train",
+			"id": "bfme2.object.fixture-%d" % index,
+			"icon": null,
+			"text": "F%d" % index,
+			"enabled": true,
+			"label": "Fixture %d" % index,
+			"tooltip": "",
+			"slot": index + 1,
+		})
+	var anchor := Vector2(640.0, 400.0)
+	hud.sync_radial_commands(anchor, entries)
+	var world: Array = hud.world_radial_buttons()
+	_check(
+		"world_radial_has_one_button_per_command_set_row",
+		world.size() == entries.size(),
+		"%d vs %d" % [world.size(), entries.size()]
+	)
+	_check(
+		"world_radial_rings_the_selected_structure",
+		hud._world_radial_layer != null and hud._world_radial_layer.visible
+			and _rings_anchor(world, anchor),
+		str(world.size())
+	)
+	# The palantir must stay populated at the same time.
+	var palantir_live := 0
+	for button_value in hud._radial_buttons:
+		if (button_value as Button).visible:
+			palantir_live += 1
+	_check(
+		"palantir_sockets_stay_populated_while_the_world_ring_is_up",
+		palantir_live == entries.size(),
+		str(palantir_live)
+	)
+	# One command path: pressing a world button presses its palantir twin.
+	var fired: Array[String] = []
+	hud.train_requested.connect(func(unit_id: String) -> void: fired.append(unit_id))
+	(world[0] as Button).pressed.emit()
+	_check(
+		"world_ring_dispatches_the_same_command_as_the_palantir",
+		fired.size() == 1 and fired[0] == String((entries[0] as Dictionary)["id"]),
+		str(fired)
+	)
+	hud.hide_radial_commands()
+	_check(
+		"hiding_the_radial_clears_the_world_ring",
+		not hud._world_radial_layer.visible and hud.world_radial_buttons().is_empty()
+	)
+
+
+func _rings_anchor(buttons: Array, anchor: Vector2) -> bool:
+	## Every button centre must sit on one circle around the anchor, and no two
+	## may overlap.
+	if buttons.is_empty():
+		return false
+	var radius := -1.0
+	var centres: Array[Vector2] = []
+	for button_value in buttons:
+		var button := button_value as Button
+		var centre := button.position + button.size * 0.5
+		var distance := centre.distance_to(anchor)
+		if radius < 0.0:
+			radius = distance
+		elif not is_equal_approx(distance, radius):
+			return false
+		centres.append(centre)
+	if radius <= 0.0:
+		return false
+	for index in centres.size():
+		for other in range(index + 1, centres.size()):
+			if centres[index].distance_to(centres[other]) < (buttons[0] as Button).size.x:
+				return false
+	return true
 
 
 func _check_socket_art_corners_are_transparent(hud_script) -> void:

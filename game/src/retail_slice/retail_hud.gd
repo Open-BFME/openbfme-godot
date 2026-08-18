@@ -58,6 +58,10 @@ const AptRuntimeScript = preload("res://src/retail_slice/retail_hud_apt_runtime.
 const TooltipScript = preload("res://src/retail_slice/retail_tooltip.gd")
 const SideCommandBarScript = preload("res://src/retail_slice/retail_side_command_bar.gd")
 const PowersOrbScript = preload("res://src/retail_slice/retail_powers_orb.gd")
+## Q37/Q38/Q39: the ONE 1024x768 APT stage -> viewport transform. Every HUD
+## placement constant below is this helper applied to an authored
+## `Palantir.apt` / `InGameHeroSelect.apt` stage translation.
+const StageScript = preload("res://src/retail_slice/retail_hud_stage.gd")
 const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 var last_selection_command_ids: PackedStringArray = PackedStringArray()
 const RETAIL_TOOLTIP_HOVER_DELAY := 0.4
@@ -69,9 +73,15 @@ const RETAIL_COMMAND_BAR_SOURCE_SIZE := Vector2i(1024, 256)
 const RETAIL_PALANTIR_FRAME_ATLAS := "assets/ui/palantir/atlases/apt-palantirexport-17-fb63d3d26008.png"
 const RETAIL_PALANTIR_ATLAS := "assets/ui/palantir/atlases/apt-palantir-1-d9888d52cd89.png"
 const RETAIL_PALANTIR_FRAME_SOURCE_SIZE := Vector2i(384, 256)
-const RETAIL_PALANTIR_FRAME_DISPLAY_SIZE := Vector2(540, 360)
+# Q37: `PalantirFrame` is authored at stage [0, 512] with an identity matrix,
+# so the 384x256 frame sheet covers stage [0,512]..[384,768]. Through the stage
+# transform at the design viewport that is 720x360 - not the invented 540x360.
+const RETAIL_PALANTIR_FRAME_DISPLAY_SIZE := Vector2(720, 360)
 const RETAIL_PALANTIR_AUTHORED_SIZE := Vector2(384, 256)
-const RETAIL_PALANTIR_DISPLAY_SIZE := Vector2(880, 360)
+# Q37: the dock is the full-width bottom band of the stage (1024 x 256 stage
+# units), not a left-anchored 880x360 island. The resource bar, the hero roster
+# movie and the help box all live outside the old 880 px edge.
+const RETAIL_PALANTIR_DISPLAY_SIZE := Vector2(1920, 360)
 # Regions are the exact APT atlas rectangles selected by Palantir DAT image IDs.
 #
 # THE RADAR'S PAPER IS `apt-palantir-1`'s Rect2(4, 4, 214, 214), and it is the
@@ -105,13 +115,33 @@ const RETAIL_ORB_REGIONS := {
 	"powers": Rect2(487, 188, 36, 36),
 	"score": Rect2(627, 217, 38, 38),
 }
-# Bottom-left cluster geometry measured against the retail 1.06 reference
-# capture (bfme2-ref-120s/135s.png, 1440p, scaled to the 1080p dock). The
-# authored frame atlas renders as two separately scaled pieces in retail 16:9.
-const RETAIL_RADAR_CENTER := Vector2(225, 198)
+# Q37: THE HUD IS A 1024x768 APT STAGE, NOT A HAND-MEASURED DOCK.
+#
+# Everything below is `RetailHudStage.to_dock(<authored Palantir.apt stage
+# translation>)` evaluated at the design viewport (1920x1080, project.godot
+# display/window/size), so a runner can recompute every one of them from the
+# retail movie. The previous values were measured off a 1440p capture and put
+# the command dish at dock x 587 - 62 px right of where Palantir.apt authors it,
+# which is the owner's "command palantir too far right".
+#
+#   RadarBackground  stage [129.85, 640.15] -> dock (243.4688, 180.2109)
+#   EmptyGlobe       stage [280.20, 660.90] -> dock (525.3750, 209.3906)
+const RETAIL_RADAR_CENTER := Vector2(243.4688, 180.2109)
+# MEASURED, NOT AUTHORED: the globe sprites are imported characters, so the
+# movie carries their PLACEMENT but not their art extent. `Radar` is placed at
+# stage [14, 537] and `RadarBackground` (its centre) at [129.85, 640.15]; the
+# vertical distance 103.15 reads as the stage-space globe radius but the
+# horizontal distance 115.85 does not agree, so the shipping radar keeps the
+# capture-measured 181 px rather than inventing one of the two.
 const RETAIL_RADAR_RADIUS := 181.0
-const RETAIL_DISH_CENTER := Vector2(587, 219)
-const RETAIL_DISH_RADIUS := 118.0
+const RETAIL_DISH_CENTER := Vector2(525.375, 209.3906)
+# DERIVED: the radar globe and the command dish are the SAME character placed
+# twice - scale 1.3114 and (0.6401, 0.6907) respectively - so the dish is
+# (0.6401/1.3114, 0.6907/1.3114) of the radar. Applied to the stage radius
+# 103.15 and stretched into the dock that is (94.402, 76.399); the shipping
+# radius is the x half-extent so the round-portrait mask keeps a single radius.
+const RETAIL_DISH_HALF_EXTENTS := Vector2(94.402, 76.399)
+const RETAIL_DISH_RADIUS := 94.402
 # Purchased-power dock column, measured from the retail in-game capture
 # (game.dat_AMUCzAwKh9.jpg, 2560x1440): the first purchased power hangs off
 # the palantir's upper-left rim, socket center (-225,-260) from the minimap
@@ -121,33 +151,42 @@ const RETAIL_DISH_RADIUS := 118.0
 const RETAIL_POWER_DOCK_FIRST_CENTER := Vector2(56, 3)
 const RETAIL_POWER_DOCK_STRIDE := 82.0
 const RETAIL_POWER_DOCK_SIZE := Vector2(76, 76)
-# Layering matches retail: dish backing disc, dish ring (masked annulus of the
-# authored ring in the frame atlas, circle center (284.5, 145.5)), then the
-# radar assembly on top. The dish transform differs from the radar piece's
-# uniform 1.5 exactly as the retail 16:9 composition renders it; the annulus
-# keeps the ring band plus interior sheen. Final pixel-exact transform is a P1
-# item (parse the dish sprite matrix from the APT timeline instances).
+# Q37: ONE authored piece, not three hand-fitted ones.
+#
+# `PalantirFrame` is placed at stage [0, 512] with an IDENTITY matrix, and the
+# frame atlas is 384x256 - exactly the stage band the placement covers. So the
+# whole 384x256 sheet maps to the stage rect [0,512]..[384,768], which through
+# the stage transform is dock (0, 0, 720, 360) at the design viewport. The old
+# three-piece composition (a synthetic backing disc, a separately scaled dish
+# annulus, and the left 250 columns stretched to 375x384) existed only to make
+# the mis-measured dish centre line up; with the authored centre it is dead.
 const RETAIL_FRAME_PIECES := [
-	{"kind": "disc", "center": Vector2(587, 219), "radius": 119.0, "color": Color(0.035, 0.04, 0.03, 1.0)},
-	{"kind": "dish_ring", "region": Rect2(193, 50, 190, 192), "dest": Rect2(420, 45, 346, 349),
-		"annulus_center": Vector2(91.5, 95.5), "annulus_inner": 68.0, "annulus_outer": 96.0},
-	{"region": Rect2(0, 0, 250, 256), "dest": Rect2(19, 6, 375, 384)},
+	{"region": Rect2(0, 0, 384, 256), "dest": Rect2(0, 0, 720, 360)},
 ]
 const RETAIL_ORB_RECTS := {
 	"options": Rect2(129, 34, 64, 64),
 	"powers": Rect2(202, 18, 79, 79),
 	"score": Rect2(290, 35, 64, 64),
 }
-# Command sockets ring the palantir dish; coordinates are relative to the
-# command panel, whose origin sits at dock (360, 0). The lowest socket is
-# raised from the capture-measured y=311 so its 64px button stays inside the
-# 360px dock (and therefore on-screen) instead of clipping below the bottom
-# edge.
+# Q37: the six command sockets are AUTHORED, not measured.
+#
+# `Palantir.apt` sprite character 114 (`CommandButtons`, placed at stage
+# [289.55, 659.85]) carries `glass0..glass5` and the icon clips `0..5` at the
+# same six local offsets - see `RetailHudAptRuntime.PALANTIR_COMMAND_SLOT_LOCAL`.
+# Each entry here is
+#   RetailHudStage.command_slot_dock(i, RETAIL_COMMAND_SLOT_SIZE)
+#     - Vector2(360, 0)          # the command panel's dock origin
+# at the 1920x1080 design viewport, i.e. the authored socket CENTRE minus half
+# a button. `retail_four_unit_hud_runner` recomputes all six from the movie.
 const RETAIL_COMMAND_SLOT_SOURCE := [
-	Vector2(150, 64), Vector2(240, 97), Vector2(309, 159),
-	Vector2(315, 231), Vector2(268, 291), Vector2(148, 296),
+	Vector2(115.2812, 37.8203), Vector2(205.2812, 61.7266), Vector2(254.0312, 119.3828),
+	Vector2(250.2812, 189.6953), Vector2(190.2812, 244.5391), Vector2(102.1562, 260.0078),
 ]
 const RETAIL_COMMAND_SLOT_SIZE := Vector2(64, 64)
+# Q39: MEASURED, not authored. InGameRadialMenuStage.apt authors the radial
+# BUTTON but not the ring radius; this is the owner's retail RotWK capture
+# (four barracks icons on a ~97 px radius at 2560x1440 = ~39 stage units).
+const WORLD_RADIAL_STAGE_RADIUS := 39.0
 # THE QUEUE CHIPS SIT BESIDE THE DISH, NOT UNDER THE SOCKETS.
 #
 # They used to run left-to-right at panel-local (60 + 40*i, 318). The sixth
@@ -510,17 +549,25 @@ var _construction_labels: Array[Label] = []
 ## "Level: N" caption + thin progress bar at the bottom of the palantir dish,
 ## shown for the selected structure or hero (REF-25/41).
 var _dish_level_label: Label
-var _dish_level_bar: ProgressBar
+var _dish_level_bar: RetailHudArcGauge
 var _dish_level_caption := ""
 ## Recruited-hero strip bottom-center: small portraits with level badges and
 ## health bars (REF-24/41).
-var hero_bar: HBoxContainer
+var hero_bar: Control
 var _hero_bar_buttons: Dictionary = {}
+## Q38: `NonCommand_SelectAllHeroes` (commandbutton.ini:3494) and the faction
+## icon that rides to its left.
+var _hero_select_all_button: Button
+var _hero_faction_icon: TextureRect
 ## Floating radial command buttons above the selected producer (REF-25/33/35):
 ## the same train/research/roster commands the palantir sockets carry, fanned
 ## in an arc over the building like retail.
 var _radial_layer: Control
 var _radial_buttons: Array[Button] = []
+## Q39: the in-world ring around the selected structure (the palantir sockets
+## stay populated at the same time).
+var _world_radial_layer: Control
+var _world_radial_buttons: Array[Button] = []
 var _radial_fingerprint := "<unset>"
 var _radial_entries: Array = []
 var _radial_socket_surface_active := false
@@ -3045,7 +3092,12 @@ func _build_palantir() -> void:
 	# opaque inner disc even though input and mapping still worked.
 	synthetic_palantir_frame = PalantirFrameScript.new()
 	synthetic_palantir_frame.name = "OrnamentalFrame"
-	synthetic_palantir_frame.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	# The dock now spans the whole stage width (Q37), but the palantir art does
+	# NOT: `PalantirFrame` is authored at stage [0, 512] over a 384x256 sheet.
+	# Anchoring the ornament to the whole dock stretched it across the screen.
+	synthetic_palantir_frame.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	synthetic_palantir_frame.position = Vector2.ZERO
+	synthetic_palantir_frame.size = RETAIL_PALANTIR_FRAME_DISPLAY_SIZE
 	dock.add_child(synthetic_palantir_frame)
 	minimap = MinimapScript.new()
 	minimap.name = "PalantirRadar"
@@ -3057,37 +3109,58 @@ func _build_palantir() -> void:
 	minimap.mouse_filter = Control.MOUSE_FILTER_STOP
 	dock.add_child(minimap)
 	_build_orb_buttons(dock)
+	# Q37: the resource bar is an AUTHORED band, and money and command points are
+	# two INDEPENDENTLY anchored text fields inside it - not one HBox with the
+	# command points glued a fixed distance to the right of the money.
+	#
+	# `Palantir.apt` sprite 136 (`ResourceBar`) is placed at stage [42.45, 719.4]
+	# and carries `Resources` (money, text character 130, placeholder "999999")
+	# at local [0.8, 0] and `CommandPoints` (text character 134, placeholder
+	# "999/999") at local [108.65, 0]. MONEY IS AUTHORED LEFT OF COMMAND POINTS,
+	# and both of the owner's retail RotWK captures agree ("1100 ... 0/200" and
+	# "905 ... 456/850"), so that is the order shipped here.
 	resource_strip = PanelContainer.new()
 	resource_strip.name = "ResourceStrip"
-	# The frame art's resource recess: dock x 68..367, y 306..342.
-	resource_strip.position = Vector2(68, 306)
-	resource_strip.size = Vector2(299, 36)
+	var money_rect := StageScript.resource_text_rect_dock("Resources")
+	var command_points_rect := StageScript.resource_text_rect_dock("CommandPoints")
+	resource_strip.position = Vector2(
+		StageScript.resource_child_dock("ResourceIcon").x, money_rect.position.y
+	)
+	resource_strip.size = Vector2(
+		command_points_rect.end.x - resource_strip.position.x, money_rect.size.y
+	)
+	resource_strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	resource_strip.add_theme_stylebox_override("panel", _panel)
 	dock.add_child(resource_strip)
-	var row := HBoxContainer.new()
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", 34)
-	resource_strip.add_child(row)
 	var resource_icon := Label.new()
+	resource_icon.name = "ResourceIcon"
 	resource_icon.text = "◆"
+	resource_icon.position = StageScript.resource_child_dock("ResourceIcon")
+	resource_icon.size = Vector2(24, money_rect.size.y)
+	resource_icon.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	resource_icon.add_theme_color_override("font_color", Color("d6aa55"))
 	resource_icon.add_theme_font_size_override("font_size", 20)
-	row.add_child(resource_icon)
+	resource_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	dock.add_child(resource_icon)
 	resource_label = Label.new()
 	resource_label.name = "Resources"
 	resource_label.text = "0"
+	resource_label.position = money_rect.position
+	resource_label.size = money_rect.size
+	resource_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	resource_label.add_theme_color_override("font_color", Color("f1d06e"))
 	resource_label.add_theme_font_size_override("font_size", 18)
-	row.add_child(resource_label)
-	var cp_icon := Label.new()
-	cp_icon.text = "⚔"
-	cp_icon.add_theme_font_size_override("font_size", 18)
-	row.add_child(cp_icon)
+	resource_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	dock.add_child(resource_label)
 	command_points_label = Label.new()
 	command_points_label.name = "CommandPoints"
 	command_points_label.text = "0 / 200"
+	command_points_label.position = command_points_rect.position
+	command_points_label.size = command_points_rect.size
+	command_points_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	command_points_label.add_theme_color_override("font_color", Color("d5e5ed"))
-	row.add_child(command_points_label)
+	command_points_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	dock.add_child(command_points_label)
 
 
 func _build_command_panel() -> void:
@@ -3709,48 +3782,32 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 	selection_portrait.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
 	selection_portrait.custom_minimum_size = Vector2.ZERO
 	var dish_panel_center := RETAIL_DISH_CENTER - Vector2(360, 0)
-	selection_portrait.position = dish_panel_center - Vector2(RETAIL_DISH_RADIUS, RETAIL_DISH_RADIUS)
-	selection_portrait.size = Vector2(RETAIL_DISH_RADIUS, RETAIL_DISH_RADIUS) * 2.0
+	# The dish is an OVAL on a 16:9 screen: the authored globe is a circle in
+	# stage space and the stage is exact-fit stretched (RetailHudStage).
+	selection_portrait.position = dish_panel_center - RETAIL_DISH_HALF_EXTENTS
+	selection_portrait.size = RETAIL_DISH_HALF_EXTENTS * 2.0
 	selection_portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	selection_portrait.stretch_mode = TextureRect.STRETCH_SCALE
 	_circle_masked(selection_portrait)
 	# Retail-style production queue chips under the palantir dish.
 	_ensure_production_queue_chips()
 	resource_strip.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
-	var resource_row := resource_label.get_parent()
-	resource_row.remove_child(resource_label)
-	resource_row.remove_child(command_points_label)
-	# Retail resource strip: gold pile glyph + amount on the left, command
-	# points on the right, both gold Albertus over the frame art recess.
-	var resource_glyph := resource_strip.get_node_or_null("ResourceGlyph") as Label
-	if resource_glyph == null:
-		resource_glyph = Label.new()
-		resource_glyph.name = "ResourceGlyph"
-		resource_glyph.text = "◆"
-		resource_glyph.add_theme_color_override("font_color", Color("d6aa55"))
-		resource_glyph.add_theme_font_size_override("font_size", 15)
-		resource_glyph.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		resource_glyph.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		if _retail_ui_font_cached != null:
-			resource_glyph.add_theme_font_override("font", _retail_ui_font_cached)
-		resource_strip.add_child(resource_glyph)
-	resource_glyph.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
-	resource_glyph.position = Vector2(22, 0)
-	resource_glyph.size = Vector2(22, 36)
-	resource_strip.add_child(resource_label)
-	resource_strip.add_child(command_points_label)
+	# Q37: money and command points keep their AUTHORED, independent anchors
+	# (`_build_palantir` placed them from `RetailHudStage.resource_text_rect_dock`).
+	# This pass only restates the retail typography; it must not re-glue them.
 	resource_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
-	resource_label.position = Vector2(44, 0)
-	resource_label.size = Vector2(120, 36)
+	resource_label.position = StageScript.resource_text_rect_dock("Resources").position
+	resource_label.size = StageScript.resource_text_rect_dock("Resources").size
 	resource_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	resource_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	resource_label.add_theme_font_size_override("font_size", 20)
 	command_points_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
-	command_points_label.position = Vector2(150, 0)
-	command_points_label.size = Vector2(136, 36)
+	command_points_label.position = StageScript.resource_text_rect_dock("CommandPoints").position
+	command_points_label.size = StageScript.resource_text_rect_dock("CommandPoints").size
 	command_points_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	# Text character 134 is authored with alignment code 2 (right).
 	command_points_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	command_points_label.add_theme_font_size_override("font_size", 20)
-	resource_row.visible = false
 	for child in command_panel.find_children("*", "Label", true, false):
 		(child as Label).visible = false
 	selection_portrait.visible = false
@@ -4026,22 +4083,16 @@ func _build_dish_level_caption() -> void:
 	_dish_level_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_dish_level_label.visible = false
 	command_grid.add_child(_dish_level_label)
-	_dish_level_bar = ProgressBar.new()
+	# Q38: the palantir big-portrait level bar is a CURVED gauge hugging the
+	# dish, the same defect as the hero roster's green rectangle. Retail's
+	# `CommandUI` carries `RankUI` (character 85) at local [0, 34.10] with a
+	# `Progress` child; the hero cell's equivalent (`RankProgress`, geometry
+	# 90.ru) is an authored triangle fan at a constant radius, i.e. an arc.
+	_dish_level_bar = RetailHudArcGauge.new()
 	_dish_level_bar.name = "DishLevelBar"
-	_dish_level_bar.min_value = 0.0
-	_dish_level_bar.max_value = 1.0
-	_dish_level_bar.step = 0.001
-	_dish_level_bar.value = 0.0
-	_dish_level_bar.show_percentage = false
 	_dish_level_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var bar_back := StyleBoxFlat.new()
-	bar_back.bg_color = Color(0.05, 0.04, 0.03, 0.9)
-	bar_back.border_color = Color("8a7648")
-	bar_back.set_border_width_all(1)
-	_dish_level_bar.add_theme_stylebox_override("background", bar_back)
-	var bar_fill := StyleBoxFlat.new()
-	bar_fill.bg_color = Color("c9a83c")
-	_dish_level_bar.add_theme_stylebox_override("fill", bar_fill)
+	_dish_level_bar.arc_track_color = Color(0.05, 0.04, 0.03, 0.9)
+	_dish_level_bar.arc_fill_color = Color("c9a83c")
 	_dish_level_bar.visible = false
 	command_grid.add_child(_dish_level_bar)
 	_layout_dish_level_caption()
@@ -4050,13 +4101,22 @@ func _build_dish_level_caption() -> void:
 func _layout_dish_level_caption() -> void:
 	if _dish_level_label == null or command_panel == null:
 		return
-	# Dish center in command-panel coordinates: dock (587, 219) minus the panel
-	# origin (360, 0). The caption rides the dish's lower interior like retail.
+	# Dish centre in command-panel coordinates: the authored `EmptyGlobe` stage
+	# placement through RetailHudStage, minus the panel origin (360, 0). The
+	# caption rides the dish's lower interior like retail ("Level: 2" in the
+	# owner's RotWK capture), with the level arc hugging the dish rim under it.
 	var dish_panel_center := RETAIL_DISH_CENTER - Vector2(360, 0)
-	_dish_level_label.position = dish_panel_center + Vector2(-60, 42)
+	_dish_level_label.position = dish_panel_center + Vector2(-60, 30)
 	_dish_level_label.size = Vector2(120, 20)
-	_dish_level_bar.position = dish_panel_center + Vector2(-46, 63)
-	_dish_level_bar.size = Vector2(92, 7)
+	_dish_level_bar.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	_dish_level_bar.position = Vector2.ZERO
+	_dish_level_bar.size = command_panel.size
+	_dish_level_bar.configure(
+		dish_panel_center,
+		RETAIL_DISH_HALF_EXTENTS - Vector2(6.0, 6.0),
+		5.0,
+		StageScript.hero_health_arc_half_angle()
+	)
 
 
 ## caption: e.g. "Level: 1"; progress 0..1 (retail level-XP bar; 0 when the
@@ -4072,7 +4132,7 @@ func set_dish_level(caption: String, progress: float) -> void:
 	_dish_level_bar.visible = show
 	if show:
 		_dish_level_label.text = caption
-		_dish_level_bar.value = clampf(progress, 0.0, 1.0)
+		_dish_level_bar.set_value(progress)
 
 
 func dish_level_caption() -> String:
@@ -4080,18 +4140,66 @@ func dish_level_caption() -> String:
 
 
 func _build_hero_bar() -> void:
-	hero_bar = HBoxContainer.new()
+	# Q38: THE HERO ROSTER IS AN AUTHORED MOVIE, NOT A CENTRED HBOX.
+	#
+	# `Palantir.apt` loads `InGameHeroSelect.swf` into `HeroSelectUI` at stage
+	# [375, 700] (`RetailHudAptRuntime.EXTERNAL_MOVIE_SLOT_SPECS`, the same row
+	# that carries the `_show`/`_fadein` labels). Inside that movie the nine
+	# `Hero1..Hero9` cells sit at local x 23.95 + 70*i, y 0, with a second row
+	# at y -70, and `SelectAllHeroesBttn` at [-5, 42] scale 0.678. The bar is a
+	# plain Control anchored at the authored stage point; the cells place
+	# themselves, so nothing re-centres when a hero dies.
+	hero_bar = Control.new()
 	hero_bar.name = "RetailHeroBar"
-	hero_bar.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	hero_bar.offset_left = -220
-	hero_bar.offset_top = -86
-	hero_bar.offset_right = 220
-	hero_bar.offset_bottom = -6
-	hero_bar.alignment = BoxContainer.ALIGNMENT_CENTER
-	hero_bar.add_theme_constant_override("separation", 10)
+	hero_bar.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	hero_bar.position = StageScript.hero_cell_viewport(0)
+	hero_bar.size = Vector2(
+		StageScript.hero_cell_viewport(AptRuntimeScript.HERO_SELECT_ROW_LENGTH - 1).x
+		- StageScript.hero_cell_viewport(0).x + StageScript.hero_cell_size().x,
+		StageScript.hero_cell_size().y
+	)
 	hero_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hero_bar.z_index = 5
 	add_child(hero_bar)
+	# `NonCommand_SelectAllHeroes` (commandbutton.ini:3494). The authored button
+	# lives at HeroSelectUI-local [-5, 42], i.e. left of and below the first
+	# portrait; the faction icon sits to ITS left.
+	_hero_select_all_button = Button.new()
+	_hero_select_all_button.name = "SelectAllHeroes"
+	var select_all_size := StageScript.scale_size(
+		Vector2.ONE * AptRuntimeScript.HERO_CELL_PORTRAIT_RADIUS
+		* AptRuntimeScript.HERO_SELECT_ALL_BUTTON_SCALE
+	)
+	_hero_select_all_button.position = (
+		StageScript.hero_select_all_viewport() - hero_bar.position
+	)
+	_hero_select_all_button.size = select_all_size
+	_hero_select_all_button.custom_minimum_size = select_all_size
+	_hero_select_all_button.text = ""
+	_hero_select_all_button.tooltip_text = ""
+	_hero_select_all_button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	_hero_select_all_button.set_meta("tooltip_group", "hero_bar_select_all")
+	_hero_select_all_button.set_meta("command_button", "NonCommand_SelectAllHeroes")
+	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+		_hero_select_all_button.add_theme_stylebox_override(state, StyleBoxEmpty.new())
+	_hero_select_all_button.pressed.connect(_emit_select_all_heroes)
+	_hero_select_all_button.visible = false
+	hero_bar.add_child(_hero_select_all_button)
+	_hero_faction_icon = TextureRect.new()
+	_hero_faction_icon.name = "HeroBarFactionIcon"
+	_hero_faction_icon.position = _hero_select_all_button.position - Vector2(select_all_size.x + 4.0, 0.0)
+	_hero_faction_icon.size = select_all_size
+	_hero_faction_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_hero_faction_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_hero_faction_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hero_faction_icon.visible = false
+	hero_bar.add_child(_hero_faction_icon)
+
+
+func _emit_select_all_heroes() -> void:
+	## `NonCommand_SelectAllHeroes`: recall every living hero on the roster.
+	for hero_id_value in _hero_bar_buttons.keys():
+		hero_recall_requested.emit(int(hero_id_value))
 
 
 ## heroes: [{"id": int, "unit_type": String, "name": String, "level": int,
@@ -4107,51 +4215,89 @@ func sync_hero_bar(heroes: Array) -> void:
 		alive[hero_id] = true
 		var button: Button = _hero_bar_buttons.get(hero_id)
 		if button == null:
+			# Q38: one authored `InGameHeroSelect` hero cell. Character 101's
+			# frame 0 gives every offset used here, LOCAL to the cell:
+			#   SelectedHighlight -> HeroSelect  [28, 28]  (portrait centre)
+			#   AttackedFlash                    [28, 28]  (same centre)
+			#   rank text (character 87)         [7, 50]   (bottom-LEFT badge)
+			#   HealthBar (character 85)         [25.35, 49.85]
+			# and sprites 3/6/9 put the highlight art at [-29.5, -29.5], which
+			# is the portrait radius.
+			var cell_size := StageScript.hero_cell_size()
+			var portrait_center := StageScript.scale_size(
+				AptRuntimeScript.HERO_CELL_PORTRAIT_CENTER_LOCAL
+			)
+			var portrait_radius := StageScript.scale_size(
+				Vector2.ONE * AptRuntimeScript.HERO_CELL_PORTRAIT_RADIUS
+			)
 			button = Button.new()
 			button.name = "HeroBar%d" % hero_id
-			button.custom_minimum_size = Vector2(58, 72)
-			button.size = Vector2(58, 72)
+			button.custom_minimum_size = cell_size
+			button.size = cell_size
 			for state in ["normal", "hover", "pressed", "disabled", "focus"]:
 				button.add_theme_stylebox_override(state, StyleBoxEmpty.new())
 			button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+			# Retail selection is a CIRCLE highlight ringing the portrait
+			# (`SelectedHighlight`), not a rectangular tint. It sits under the
+			# portrait so the ring reads as a rim.
+			var highlight := RetailHudArcGauge.new()
+			highlight.name = "SelectedHighlight"
+			highlight.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			highlight.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			highlight.configure(portrait_center, portrait_radius + Vector2(2.0, 2.0), 3.0, PI)
+			highlight.arc_track_color = Color(0, 0, 0, 0)
+			highlight.arc_fill_color = Color("f2d98a")
+			highlight.visible = false
+			button.add_child(highlight)
 			var portrait := TextureRect.new()
 			portrait.name = "Portrait"
-			portrait.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-			portrait.offset_bottom = -14
+			portrait.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+			portrait.position = portrait_center - portrait_radius
+			portrait.size = portrait_radius * 2.0
 			portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 			portrait.stretch_mode = TextureRect.STRETCH_SCALE
 			portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			_circle_masked(portrait)
 			button.add_child(portrait)
+			# CURVED health ring, not a green rectangle. See
+			# RetailHudArcGauge / RetailHudStage.hero_health_arc_half_angle().
+			var health := RetailHudArcGauge.new()
+			health.name = "HealthArc"
+			health.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			health.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			health.configure(
+				portrait_center,
+				portrait_radius + StageScript.scale_size(
+					Vector2.ONE * AptRuntimeScript.HERO_CELL_HEALTH_FILL_QUAD.y * 0.5
+				),
+				StageScript.scale_size(
+					Vector2.ONE * AptRuntimeScript.HERO_CELL_HEALTH_FILL_QUAD.y
+				).y * 0.5,
+				StageScript.hero_health_arc_half_angle()
+			)
+			button.add_child(health)
 			var badge := Label.new()
 			badge.name = "LevelBadge"
-			badge.position = Vector2(-2, 34)
-			badge.size = Vector2(20, 20)
+			badge.position = StageScript.scale_size(
+				AptRuntimeScript.HERO_CELL_LEVEL_BADGE_LOCAL
+			) - StageScript.scale_size(Vector2(9.0, 9.0))
+			badge.size = StageScript.scale_size(Vector2(18.0, 18.0))
 			badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-			badge.add_theme_font_size_override("font_size", 13)
+			badge.add_theme_font_size_override(
+				"font_size",
+				int(round(
+					StageScript.scale_size(
+						Vector2.ONE * AptRuntimeScript.HERO_CELL_LEVEL_BADGE_FONT_HEIGHT
+					).y
+				))
+			)
 			badge.add_theme_color_override("font_color", Color("f5e9c8"))
 			badge.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
 			badge.add_theme_constant_override("shadow_offset_x", 1)
 			badge.add_theme_constant_override("shadow_offset_y", 1)
 			badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			button.add_child(badge)
-			var health := ProgressBar.new()
-			health.name = "HealthBar"
-			health.position = Vector2(0, 58)
-			health.size = Vector2(58, 7)
-			health.min_value = 0.0
-			health.max_value = 1.0
-			health.step = 0.001
-			health.show_percentage = false
-			health.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			var back := StyleBoxFlat.new()
-			back.bg_color = Color(0.04, 0.05, 0.03, 0.9)
-			health.add_theme_stylebox_override("background", back)
-			var fill := StyleBoxFlat.new()
-			fill.bg_color = Color("3fae3f")
-			health.add_theme_stylebox_override("fill", fill)
-			button.add_child(health)
 			button.pressed.connect(func() -> void: hero_recall_requested.emit(hero_id))
 			# Retail: a single click on a hero portrait selects that hero, a
 			# DOUBLE click jumps the camera to him. Button.pressed cannot tell
@@ -4166,10 +4312,13 @@ func sync_hero_bar(heroes: Array) -> void:
 		var portrait_rect := button.get_node("Portrait") as TextureRect
 		portrait_rect.texture = _retail_portrait_textures.get(String(hero.get("unit_type", ""))) as Texture2D
 		(button.get_node("LevelBadge") as Label).text = "%d" % int(hero.get("level", 1))
-		var health_bar := button.get_node("HealthBar") as ProgressBar
-		health_bar.value = clampf(float(hero.get("health", 0)) / float(maxi(1, int(hero.get("maximum_health", 1)))), 0.0, 1.0)
-		# Retail highlights the currently-selected hero's portrait ring gold.
-		button.self_modulate = Color(1.35, 1.22, 0.75) if bool(hero.get("selected", false)) else Color.WHITE
+		var health_arc := button.get_node("HealthArc") as RetailHudArcGauge
+		health_arc.set_value(
+			float(hero.get("health", 0)) / float(maxi(1, int(hero.get("maximum_health", 1))))
+		)
+		# Retail rings the selected hero's portrait with a CIRCLE highlight
+		# (`SelectedHighlight` in the authored cell), not a rectangular tint.
+		(button.get_node("SelectedHighlight") as Control).visible = bool(hero.get("selected", false))
 		# REF-41 hero hover: retail tooltip panel, not a native tooltip.
 		button.tooltip_text = ""
 		button.set_meta("tooltip_group", "hero_bar")
@@ -4181,6 +4330,21 @@ func sync_hero_bar(heroes: Array) -> void:
 		if not alive.has(int(existing_id)):
 			(_hero_bar_buttons[existing_id] as Button).queue_free()
 			_hero_bar_buttons.erase(existing_id)
+	# Cells occupy their AUTHORED roster slots (70-unit pitch from
+	# `InGameHeroSelect` frame 9) in the caller's roster order, so a hero that
+	# dies does not re-centre the whole bar.
+	for index in heroes.size():
+		var placed_id := int((heroes[index] as Dictionary).get("id", 0))
+		var placed: Button = _hero_bar_buttons.get(placed_id)
+		if placed == null:
+			continue
+		placed.position = StageScript.hero_cell_viewport(index) - hero_bar.position
+	if _hero_select_all_button != null:
+		_hero_select_all_button.visible = not heroes.is_empty()
+	if _hero_faction_icon != null:
+		_hero_faction_icon.visible = (
+			not heroes.is_empty() and _hero_faction_icon.texture != null
+		)
 	hero_bar.visible = not heroes.is_empty()
 
 
@@ -4202,13 +4366,130 @@ func _build_radial_layer() -> void:
 	_radial_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_radial_layer.z_index = 7
 	add_child(_radial_layer)
+	# Q39: the IN-WORLD ring. The owner's retail RotWK capture shows a selected
+	# barracks with four command icons ringing the building in world space AND
+	# the same four commands in the palantir at the same time. This layer is the
+	# world ring; the palantir sockets keep their buttons either way.
+	_world_radial_layer = Control.new()
+	_world_radial_layer.name = "RetailWorldRadialCommands"
+	_world_radial_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_world_radial_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_world_radial_layer.z_index = 6
+	_world_radial_layer.visible = false
+	add_child(_world_radial_layer)
+
+
+## Q39 world ring geometry.
+##
+## `InGameRadialMenuStage.apt` authors the BUTTON (sprite character 11:
+## `bttnFrame` at [-24, -24] scale 0.48, state overlays at [-27, -27]) but NOT
+## the ring radius - the engine computes that per command-set size, and there is
+## no placement row for it anywhere in the movie. So the button size below is
+## authored and the radius is MEASURED off the owner's retail RotWK capture
+## (four icons ~100 px across on a ~97 px radius at 2560x1440 = ~39 stage
+## units), then grown whenever the command set is large enough that 39 would
+## overlap.
+func _world_radial_button_size() -> float:
+	var stage_scale := StageScript.scale_for(_hud_viewport_size())
+	return AptRuntimeScript.RADIAL_BUTTON_STAGE_SIZE * minf(stage_scale.x, stage_scale.y)
+
+
+func _world_radial_radius(count: int) -> float:
+	var stage_scale := StageScript.scale_for(_hud_viewport_size())
+	var measured := WORLD_RADIAL_STAGE_RADIUS * minf(stage_scale.x, stage_scale.y)
+	if count < 2:
+		return measured
+	# Never let two authored icons overlap: the chord between neighbours must
+	# clear one button plus 2 px.
+	var required := (_world_radial_button_size() + 2.0) / (2.0 * sin(PI / float(count)))
+	return maxf(measured, required)
+
+
+func _hud_viewport_size() -> Vector2:
+	var rect := get_viewport_rect()
+	if rect.size.x <= 1.0 or rect.size.y <= 1.0:
+		return StageScript.DESIGN_VIEWPORT
+	return rect.size
+
+
+## Ring point `index` of `count`, centred on `anchor`. Retail starts the ring at
+## the top and runs clockwise (owner capture: the four barracks commands sit at
+## up / right / down / left).
+func world_radial_button_position(index: int, count: int, anchor: Vector2) -> Vector2:
+	var size := _world_radial_button_size()
+	if count <= 0:
+		return anchor - Vector2(size, size) * 0.5
+	var angle := -PI * 0.5 + TAU * float(index) / float(count)
+	var radius := _world_radial_radius(count)
+	return anchor + Vector2(cos(angle), sin(angle)) * radius - Vector2(size, size) * 0.5
+
+
+## Q39: mirror the palantir command buttons into a world-space ring around the
+## selected structure. Each world button presses its palantir twin, so both
+## surfaces dispatch through exactly one command path.
+func _sync_world_radial(anchor: Vector2, entries: Array) -> void:
+	if _world_radial_layer == null:
+		return
+	var count := mini(entries.size(), _radial_buttons.size())
+	var show_ring := count > 0 and anchor.x > -1.0e5 and anchor.y > -1.0e5
+	while _world_radial_buttons.size() > count:
+		var extra: Button = _world_radial_buttons.pop_back()
+		extra.queue_free()
+	while _world_radial_buttons.size() < count:
+		var made := Button.new()
+		made.name = "WorldRadial%d" % _world_radial_buttons.size()
+		made.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		made.expand_icon = true
+		made.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		made.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		_world_radial_layer.add_child(made)
+		_world_radial_buttons.append(made)
+	var size := _world_radial_button_size()
+	for index in count:
+		var twin := _radial_buttons[index]
+		var button := _world_radial_buttons[index]
+		button.custom_minimum_size = Vector2(size, size)
+		button.size = Vector2(size, size)
+		button.icon = twin.icon
+		button.text = twin.text
+		button.disabled = twin.disabled
+		button.modulate = twin.modulate
+		button.tooltip_text = twin.tooltip_text
+		button.add_theme_constant_override("icon_max_width", int(size * 0.75))
+		for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+			var box := twin.get_theme_stylebox(state)
+			if box != null:
+				button.add_theme_stylebox_override(state, box)
+		if button.get_meta("radial_twin", "") != twin.name:
+			button.set_meta("radial_twin", twin.name)
+			for connection in button.pressed.get_connections():
+				button.pressed.disconnect(connection["callable"])
+			button.pressed.connect(_press_radial_twin.bind(twin))
+		button.position = world_radial_button_position(index, count, anchor)
+		button.visible = show_ring
+	_world_radial_layer.visible = show_ring
+
+
+func _press_radial_twin(twin: Button) -> void:
+	if is_instance_valid(twin):
+		twin.emit_signal("pressed")
+
+
+## The world ring's live buttons (the gate reads the surface, not the pixels).
+func world_radial_buttons() -> Array:
+	var live: Array = []
+	for button in _world_radial_buttons:
+		if button.visible:
+			live.append(button)
+	return live
 
 
 ## entries: [{"command_kind": "train"|"hero"|"upgrade", "id": String,
 ## "icon": Texture2D, "enabled": bool, "label": String, "tooltip": String}].
-## anchor: retained for the selection synchronization contract; the wheel itself
-## is fixed in the palantir dish beside the radar.
-func sync_radial_commands(_anchor: Vector2, entries: Array) -> void:
+## anchor: the selected structure's unprojected SCREEN position. Q39: it drives
+## the in-world ring; the palantir dish sockets are populated from the same
+## entries at the same time.
+func sync_radial_commands(anchor: Vector2, entries: Array) -> void:
 	if _radial_layer == null:
 		return
 	_radial_entries = entries
@@ -4326,11 +4607,19 @@ func sync_radial_commands(_anchor: Vector2, entries: Array) -> void:
 			if stale_countdown != null:
 				stale_countdown.visible = false
 	_radial_layer.visible = count > 0
+	# Q39: the same command set ALSO rings the selected structure in the world.
+	# Both surfaces are live at once, exactly as the owner's retail RotWK
+	# capture shows, and the world buttons press their palantir twins.
+	_sync_world_radial(anchor, entries)
 
 
 func hide_radial_commands() -> void:
 	if _radial_layer != null:
 		_radial_layer.visible = false
+	if _world_radial_layer != null:
+		_world_radial_layer.visible = false
+		for button in _world_radial_buttons:
+			button.visible = false
 	_set_radial_socket_surface_active(false)
 
 
