@@ -1281,12 +1281,18 @@ def _base_weapon_damage(
         components.append(component)
     if not components:
         return None
+    first = components[0]
     result: dict[str, object] = {
         "value": sum(component["value"] for component in components),
+        "expression": first.get("expression"),
+        "sourceIni": first.get("sourceIni"),
+        "line": first.get("line"),
+        "constantSourceIni": first.get("constantSourceIni"),
         "semantic": (
             "base authored DamageNugget damage total "
             "(level-1 unupgraded, unfiltered components)"
         ),
+        "valueSemantic": "sum-of-nugget-damage-at-zero-distance",
         "components": components,
     }
     if excluded:
@@ -1327,7 +1333,53 @@ def _typed_damage_components(damage: object) -> list[dict[str, object]] | None:
     return rows or None
 
 
-def _apply_nugget_damage_types(combat: dict[str, object]) -> None:
+def _authored_flat_damage_type(
+    definition: Mapping[str, Sequence[Mapping[str, object]]] | None,
+    documents: Mapping[str, bytes] | None,
+    weapon_id: str,
+    *,
+    cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None = None,
+    cache_lock: threading.Lock | None = None,
+) -> str | None:
+    """Weapon-block DamageType, excluding DamageNugget-nested rows.
+
+    ``_named_definition_values`` is a flat line scan, so nugget ``DamageType``
+    rows appear on the definition.  Those are not a flat authoring.
+    """
+
+    if definition is None or not weapon_id:
+        return None
+    nugget_lines: set[int] = set()
+    if documents is not None:
+        nuggets = _weapon_damage_nuggets(
+            documents, weapon_id, cache=cache, cache_lock=cache_lock
+        )
+        for nugget in nuggets or ():
+            fields = nugget.get("fields")
+            if not isinstance(fields, Mapping):
+                continue
+            for rows in fields.values():
+                for row in rows:
+                    if isinstance(row, Mapping) and row.get("line") is not None:
+                        nugget_lines.add(int(row["line"]))
+    unique: dict[str, str] = {}
+    for row in definition.get("damagetype", ()):
+        expression = str(row.get("expression", ""))
+        if not expression:
+            continue
+        if int(row.get("line", 0)) in nugget_lines:
+            continue
+        unique[expression.casefold()] = expression
+    if len(unique) == 1:
+        return next(iter(unique.values()))
+    return None
+
+
+def _apply_nugget_damage_types(
+    combat: dict[str, object],
+    *,
+    flat_damage_type: str | None = None,
+) -> None:
     """Type a weapon whose DamageType rides its DamageNuggets, not a flat row.
 
     Retail multi-nugget weapons (ArwenSword: HERO ARWEN_DAMAGE plus SLASH 20)
@@ -1336,10 +1388,12 @@ def _apply_nugget_damage_types(combat: dict[str, object]) -> None:
     column -- for Arwen into RivendellLancerArmor that is 200 damage where
     retail intends 180*HERO + 20*SLASH.
 
-    One authored type across every component wins outright.  A genuine mix is
-    published as ``damageComponents`` so the runtime can weight each component
-    against its own armor column; no single ``damageType`` is claimed for it,
-    because none is authored.  Nothing is invented either way.
+    ``flat_damage_type`` is the true Weapon-block DamageType, never a
+    nugget-nested row that ``_named_definition_values`` flattened.  A missing
+    type is filled from unanimous nuggets.  A disagreeing flat type is kept.
+    The semantic string names the actual source.  A genuine mix is published
+    as ``damageComponents`` so the runtime can weight each component against
+    its own armor column.
     """
 
     rows = _typed_damage_components(combat.get("damage"))
@@ -1349,15 +1403,41 @@ def _apply_nugget_damage_types(combat: dict[str, object]) -> None:
     if not authored:
         return
     radius_bearing = any(float(row.get("radius", 0.0)) > 0.0 for row in rows)
-    if len(authored) == 1 and all(row["damageType"] for row in rows):
-        combat["damageType"] = next(iter(authored))
-        combat["damageTypeSemantic"] = (
-            "the weapon authors no flat DamageType; every base DamageNugget "
-            "authors the same type"
-        )
+    flat_type = flat_damage_type
+    has_flat = isinstance(flat_type, str) and bool(flat_type)
+    unanimous = len(authored) == 1 and all(row["damageType"] for row in rows)
+    nugget_type = next(iter(authored)) if unanimous else ""
+
+    if unanimous:
+        if not has_flat:
+            combat["damageType"] = nugget_type
+            combat["damageTypeSemantic"] = (
+                "the weapon authors no flat DamageType; every base DamageNugget "
+                "authors the same type"
+            )
+        elif flat_type == nugget_type:
+            combat["damageTypeSemantic"] = (
+                "the weapon authors a flat DamageType that matches every base "
+                "DamageNugget"
+            )
+        else:
+            combat["damageTypeSemantic"] = (
+                "the weapon authors a flat DamageType; nugget-derived type "
+                "was not used to re-assign it"
+            )
         if not radius_bearing:
             return
+        combat["damageComponents"] = rows
+        return
+
     combat["damageComponents"] = rows
+    if has_flat:
+        combat["damageTypeSemantic"] = (
+            "the weapon authors a flat DamageType; its base DamageNuggets "
+            "author different types and each component resolves against its own "
+            "armor column (an untyped component falls to DEFAULT)"
+        )
+        return
     combat["damageComponentsSemantic"] = (
         "the weapon authors no flat DamageType and its base DamageNuggets "
         "author different types; each component resolves against its own "
@@ -1842,18 +1922,26 @@ def _simulation_contract(
         )
         if projectile_id:
             combat["projectileObjectId"] = projectile_id
-        damage_types = damage_owner.get("damagetype", ())
         unique_damage_types = {
             str(row.get("expression", "")).casefold(): str(row.get("expression", ""))
-            for row in damage_types
+            for row in damage_owner.get("damagetype", ())
             if str(row.get("expression", ""))
         }
-        if len(unique_damage_types) == 1:
+        flat_type = _authored_flat_damage_type(
+            damage_owner,
+            documents,
+            str(combat.get("warheadId") or weapon_id),
+            cache=named_definition_cache,
+            cache_lock=cache_lock,
+        )
+        if flat_type is not None:
+            combat["damageType"] = flat_type
+        elif len(unique_damage_types) == 1:
             combat["damageType"] = next(iter(unique_damage_types.values()))
         # Nugget metadata is still required when every nugget shares the same
         # type (retail trebuchet: two SIEGE radii). This helper preserves the
         # flat type while publishing radius-bearing component rows.
-        _apply_nugget_damage_types(combat)
+        _apply_nugget_damage_types(combat, flat_damage_type=flat_type)
         for output_name, source_name in (
             ("clipSize", "ClipSize"),
             ("clipReloadTimeMs", "ClipReloadTime"),
@@ -6407,14 +6495,23 @@ def _weapon_mode_profile(
                 f"{source_name} is not authored; the SAGE engine default is 0 ms"
             ),
         }
-    damage_types = {
+    unique_damage_types = {
         str(row.get("expression", "")).casefold(): str(row.get("expression", ""))
         for row in definition.get("damagetype", ())
         if str(row.get("expression", ""))
     }
-    if len(damage_types) == 1:
-        profile["damageType"] = next(iter(damage_types.values()))
-    _apply_nugget_damage_types(profile)
+    flat_type = _authored_flat_damage_type(
+        definition,
+        documents,
+        weapon_id,
+        cache=named_definition_cache,
+        cache_lock=cache_lock,
+    )
+    if flat_type is not None:
+        profile["damageType"] = flat_type
+    elif len(unique_damage_types) == 1:
+        profile["damageType"] = next(iter(unique_damage_types.values()))
+    _apply_nugget_damage_types(profile, flat_damage_type=flat_type)
     profile["sourceIni"] = WEAPON_PATH
     return profile
 

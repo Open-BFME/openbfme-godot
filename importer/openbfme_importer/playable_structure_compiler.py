@@ -60,6 +60,7 @@ from .playable_unit_compiler import (
     _scalar_fields,
     _resolved_definition_field,
     _apply_nugget_damage_types,
+    _authored_flat_damage_type,
     _select_experience_chain,
     _tokens,
     _walk_blocks,
@@ -287,14 +288,23 @@ def _structure_combat_contract(
     )
     if projectile_id:
         combat["projectileObjectId"] = projectile_id
-    damage_types = {
+    unique_damage_types = {
         str(row.get("expression", "")).casefold(): str(row.get("expression", ""))
         for row in damage_owner.get("damagetype", ())
         if str(row.get("expression", ""))
     }
-    if len(damage_types) == 1:
-        combat["damageType"] = next(iter(damage_types.values()))
-    _apply_nugget_damage_types(combat)
+    flat_type = _authored_flat_damage_type(
+        damage_owner,
+        documents,
+        str(warhead_id or weapon_id),
+        cache=prepared.named_definition_cache,
+        cache_lock=prepared.cache_lock,
+    )
+    if flat_type is not None:
+        combat["damageType"] = flat_type
+    elif len(unique_damage_types) == 1:
+        combat["damageType"] = next(iter(unique_damage_types.values()))
+    _apply_nugget_damage_types(combat, flat_damage_type=flat_type)
 
     required = {
         "attackRange",

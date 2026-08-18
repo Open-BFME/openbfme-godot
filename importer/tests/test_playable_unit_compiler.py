@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 import hashlib
 import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
 
 import pytest
 
@@ -7074,10 +7080,147 @@ def test_bfme2_gondor_trebuchet_compiles_retail_radius_components() -> None:
     assert combat["projectileSpeed"]["value"] == 321
     assert combat["projectileObjectId"] == "GondorTrebuchetRockProjectile"
     assert combat["radiusDamageAffects"] == "ENEMIES NEUTRALS ALLIES"
+    damage = combat["damage"]
+    assert damage["value"] == 780
+    assert damage["valueSemantic"] == "sum-of-nugget-damage-at-zero-distance"
+    assert damage["expression"]
+    assert damage["sourceIni"]
+    assert isinstance(damage["line"], int) and damage["line"] > 0
+    assert [
+        (row["radius"], row["damageTaperOff"])
+        for row in damage["components"]
+    ] == [(20.0, 0), (100.0, 50)]
     assert [
         (row["radius"], row["damageTaperOff"])
         for row in combat["damageComponents"]
     ] == [(20.0, 0), (100.0, 50)]
+    assert combat["damageType"] == "SIEGE"
+    assert "no flat DamageType" in str(combat.get("damageTypeSemantic", ""))
+
+
+def _historical_gondor_fighter_combat(commit: str = "d47d1f6") -> dict:
+    repo_root = Path(__file__).resolve().parents[2]
+    live_pkg = repo_root / "importer" / "openbfme_importer"
+    tmp_root = Path(tempfile.mkdtemp(prefix="q13fix-hist-"))
+    hist_pkg = tmp_root / "openbfme_importer"
+    shutil.copytree(
+        live_pkg,
+        hist_pkg,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+    )
+    source = subprocess.check_output(
+        ["git", "show", f"{commit}:importer/openbfme_importer/playable_unit_compiler.py"],
+        cwd=repo_root,
+    )
+    (hist_pkg / "playable_unit_compiler.py").write_bytes(source)
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(tmp_root)
+    catalog_path = _RETAIL_CATALOGS["bfme2-retail"]
+    script = (
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "from openbfme_importer.catalog import InstallCatalog\n"
+        "from openbfme_importer.module_census import read_catalog_documents\n"
+        "from openbfme_importer.playable_unit_compiler import "
+        "compile_playable_unit_descriptor, prepare_playable_unit_compiler\n"
+        "documents = dict(read_catalog_documents("
+        "InstallCatalog.load(Path(sys.argv[1]))))\n"
+        "combat = compile_playable_unit_descriptor("
+        "'GondorFighter', documents, "
+        "prepared=prepare_playable_unit_compiler(documents)"
+        ")['gameplay']['simulation']['resolved']['combat']\n"
+        "json.dump(combat, sys.stdout, sort_keys=True, default=str)\n"
+    )
+    output = subprocess.check_output(
+        [sys.executable, "-c", script, str(catalog_path)],
+        cwd=str(repo_root),
+        env=env,
+    )
+    return json.loads(output)
+
+
+def test_gondor_fighter_combat_is_byte_identical_to_d47d1f6() -> None:
+    catalog_path = _RETAIL_CATALOGS["bfme2-retail"]
+    if not catalog_path.is_file():
+        pytest.skip("BFME2 retail catalog is not available")
+    documents = dict(read_catalog_documents(InstallCatalog.load(catalog_path)))
+    current = compile_playable_unit_descriptor(
+        "GondorFighter",
+        documents,
+        prepared=prepare_playable_unit_compiler(documents),
+    )["gameplay"]["simulation"]["resolved"]["combat"]
+    previous = _historical_gondor_fighter_combat()
+    assert json.dumps(current, sort_keys=True, default=str) == json.dumps(
+        previous, sort_keys=True, default=str
+    )
+
+
+def test_flat_damage_type_semantic_names_the_flat_source() -> None:
+    command_row, button_row = _combat_command("FlatSlashFighter", 8, "FlatSlashFighter")
+    documents = _combat_documents(
+        _combat_object(
+            "FlatSlashFighter",
+            "INFANTRY",
+            "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY FlatSlashSword\n  End\n",
+        ),
+        "Weapon FlatSlashSword\n"
+        "  MeleeWeapon = Yes\n"
+        "  AttackRange = 20.0\n"
+        "  DelayBetweenShots = 1000\n"
+        "  PreAttackDelay = 500\n"
+        "  FiringDuration = 800\n"
+        "  DamageType = SLASH\n"
+        "  DamageNugget\n"
+        "    Damage = 40\n"
+        "    DamageType = SLASH\n"
+        "  End\n"
+        "  DamageNugget\n"
+        "    Damage = 20\n"
+        "    DamageType = SLASH\n"
+        "  End\n"
+        "End\n",
+        command_row,
+        button_row,
+    )
+    combat = compile_playable_unit_descriptor("FlatSlashFighter", documents)[
+        "gameplay"
+    ]["simulation"]["resolved"]["combat"]
+    assert combat["damageType"] == "SLASH"
+    assert "flat DamageType" in str(combat.get("damageTypeSemantic", ""))
+    assert "no flat DamageType" not in str(combat.get("damageTypeSemantic", ""))
+
+
+def test_nugget_only_damage_type_semantic_names_the_nugget_source() -> None:
+    command_row, button_row = _combat_command("NuggetHero", 8, "NuggetHero")
+    documents = _combat_documents(
+        _combat_object(
+            "NuggetHero",
+            "HERO INFANTRY",
+            "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY NuggetOnlySword\n  End\n",
+        ),
+        "Weapon NuggetOnlySword\n"
+        "  MeleeWeapon = Yes\n"
+        "  AttackRange = 20.0\n"
+        "  DelayBetweenShots = 1000\n"
+        "  PreAttackDelay = 500\n"
+        "  FiringDuration = 800\n"
+        "  DamageNugget\n"
+        "    Damage = 40\n"
+        "    DamageType = HERO\n"
+        "  End\n"
+        "  DamageNugget\n"
+        "    Damage = 20\n"
+        "    DamageType = HERO\n"
+        "  End\n"
+        "End\n",
+        command_row,
+        button_row,
+    )
+    combat = compile_playable_unit_descriptor("NuggetHero", documents)[
+        "gameplay"
+    ]["simulation"]["resolved"]["combat"]
+    assert combat["damageType"] == "HERO"
+    assert "no flat DamageType" in str(combat.get("damageTypeSemantic", ""))
 
 
 def test_sub_object_upgrade_compiles_fire_plane_show_token() -> None:
