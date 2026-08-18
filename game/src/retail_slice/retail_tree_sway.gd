@@ -1,113 +1,100 @@
 class_name RetailTreeSway
 extends Node
-## Applies SET_TREE_SWAY (and a named idle breeze) to bound vegetation GLBs.
+## Wind sway for W3DTreeDraw props. AUTHORED VALUES ONLY.
 ##
-## W3DTreeDraw's push-aside contract is opaque-deferred. Wind sway is the map
-## script action SET_TREE_SWAY(ANGLE wind, ANGLE sway, ANGLE lean, INT frames,
-## REAL randomness). Until a map emits that action, trees use a clearly named
-## idle breeze so they are not frozen props.
+## What retail actually authors, checked against the RotWK 2.01 tree
+## (`workspace/retail-work/editions/rotwk/cache/effective-assets/data/ini`):
+##
+##   * `gamedata.ini:8583  DownwindAngle = -0.785   ; Northeast! AKA "Away and
+##     to the right"` — the wind DIRECTION, in radians. This is the only
+##     authored sway datum in the whole game.
+##   * `naturetrees.ini` — 220 `Draw = W3DTreeDraw` blocks. The complete field
+##     set is ModelName/TextureName/DoTopple/ToppleFX/BounceFX/
+##     KillWhenFinishedToppling/SinkDistance/SinkTime/TaintedTree/FadeDistance/
+##     FadeTarget/StaticModelLODMode/MorphTime/MorphFX/MorphTree. There is no
+##     sway field, and the file says so itself at `naturetrees.ini:164`:
+##     `; Note no SwayBehavior, as this is handled in the W3DTreeBuffer.`
+##   * `cinematicobjects.ini:21112  ClientUpdate = SwayClientUpdate` — body is
+##     literally `;nothing`. No amplitude, lean, period or randomness anywhere.
+##   * The map format has no sway WorldInfo key (the importer's WorldInfo
+##     whitelist in `sage_environment.py:59-70` is camera/weather/name only),
+##     and `SET_TREE_SWAY` appears in 0 of the 128 shipped RotWK `.map` files.
+##
+## So: amplitude, lean, period and randomness are UNAUTHORED. This module used
+## to invent them (4 degrees, 45 frames, 0.35 randomness, applied to anything
+## whose type name contained "tree"/"grass"/…) and the owner's playtest note
+## was "trees don't naturally sway like RotWK, weird looking". Unauthored is now
+## STILL, with a named gap — never a made-up breeze.
+##
+## `SET_TREE_SWAY(wind, sway, lean, frames, randomness)` from a map script still
+## applies in full; that is the one authored path into these numbers.
 
-const SOURCE := "script SET_TREE_SWAY + idle-breeze-until-set-tree-sway"
-const IDLE_WIND_DEGREES := 0.0
-const IDLE_SWAY_DEGREES := 4.0
-const IDLE_LEAN_DEGREES := 1.0
-const IDLE_FRAMES_PER_SWAY := 45
-const IDLE_RANDOMNESS := 0.35
+## `gamedata.ini:8583`. Radians, the game's own units.
+const RETAIL_DOWNWIND_ANGLE_RADIANS := -0.785
 const RETAIL_FRAMES_PER_SECOND := 30.0
-
-const _VEGETATION_TOKENS: Array[String] = [
-	"tree", "pine", "oak", "elm", "birch", "willow", "fir", "spruce",
-	"mallorn", "aspen", "cedar", "cypress", "palm", "shrub", "bush",
-	"fern", "grass", "reed", "hedge", "grove",
-]
+const UNAUTHORED_SOURCE := "unauthored-still-until-set-tree-sway"
+const AUTHORED_SOURCE := "SET_TREE_SWAY"
 
 var bound_count := 0
-var wind_degrees := IDLE_WIND_DEGREES
-var sway_degrees := IDLE_SWAY_DEGREES
-var lean_degrees := IDLE_LEAN_DEGREES
-var frames_per_sway := IDLE_FRAMES_PER_SWAY
-var randomness := IDLE_RANDOMNESS
-var source := "idle-breeze-until-set-tree-sway"
+var wind_degrees := rad_to_deg(RETAIL_DOWNWIND_ANGLE_RADIANS)
+var sway_degrees := 0.0
+var lean_degrees := 0.0
+var frames_per_sway := 0
+var randomness := 0.0
+var source := UNAUTHORED_SOURCE
 var last_set_tree_sway: Array = []
+## Named, not silent. Every reason a tree is standing still.
+var gaps: Array[String] = []
 
 var _records: Array[Dictionary] = []
 var _time := 0.0
 
 
-static func is_sway_source_type(source_type: String) -> bool:
-	var trimmed := source_type.strip_edges()
-	if trimmed == "":
-		return false
-	# SAGE type ids are CamelCase concatenations (PTGrass15, TreeOak01). Split
-	# those tokens so StreetLamp does not match "tree" inside "street".
-	for part in _camel_tokens(trimmed):
-		if _VEGETATION_TOKENS.has(part):
-			return true
-	return false
-
-
-static func _camel_tokens(source_type: String) -> PackedStringArray:
-	var tokens := PackedStringArray()
-	var current := ""
-	for index in source_type.length():
-		var ch := source_type[index]
-		var code := ch.unicode_at(0)
-		var is_upper := code >= 65 and code <= 90
-		var is_lower := code >= 97 and code <= 122
-		var is_digit := code >= 48 and code <= 57
-		if current == "":
-			if is_upper or is_lower or is_digit:
-				current = ch
-			continue
-		var prev := current[current.length() - 1]
-		var prev_code := prev.unicode_at(0)
-		var prev_upper := prev_code >= 65 and prev_code <= 90
-		var prev_lower := prev_code >= 97 and prev_code <= 122
-		var prev_digit := prev_code >= 48 and prev_code <= 57
-		var boundary := false
-		if is_digit != prev_digit and (is_digit or prev_digit):
-			boundary = true
-		elif is_upper and prev_lower:
-			boundary = true
-		elif is_upper and prev_upper and index + 1 < source_type.length():
-			var next_code := source_type[index + 1].unicode_at(0)
-			if next_code >= 97 and next_code <= 122:
-				boundary = true
-		elif not (is_upper or is_lower or is_digit):
-			boundary = true
-		if boundary:
-			if current != "":
-				tokens.append(current.to_lower())
-			current = ch if (is_upper or is_lower or is_digit) else ""
-		else:
-			current += ch
-	if current != "":
-		tokens.append(current.to_lower())
-	return tokens
-
-
-func bind_prop_container(container: Node) -> int:
+func bind_prop_container(container: Node, sway_type_ids: Variant = null) -> int:
+	## Bind the placements the pack says are W3DTreeDraw objects.
+	##
+	## `sway_type_ids` is the authored set of SAGE type names whose object
+	## declares `Draw = W3DTreeDraw` (naturetrees.ini). It is NOT derived from
+	## the type name: "StreetLamp" contains "tree" and PTGrass is a W3DTreeDraw
+	## while a farm is not — only the draw module decides. Passing `null` means
+	## the caller has no authored draw-module table, which is a gap, not a
+	## licence to guess: nothing binds.
 	_records.clear()
 	bound_count = 0
+	gaps.clear()
+	if sway_degrees <= 0.0:
+		gaps.append("no-authored-sway-amplitude:naturetrees.ini-authors-no-sway-field")
+	if typeof(sway_type_ids) != TYPE_ARRAY and typeof(sway_type_ids) != TYPE_PACKED_STRING_ARRAY:
+		gaps.append("draw-module-table-absent:pack-ships-no-w3dtreedraw-kinds")
+		set_process(false)
+		return 0
+	var authored: Dictionary = {}
+	for id_value in sway_type_ids as Array:
+		var id_text := String(id_value).strip_edges()
+		if id_text != "":
+			authored[id_text.to_lower()] = true
+	if authored.is_empty():
+		gaps.append("draw-module-table-empty:no-w3dtreedraw-placements")
+		set_process(false)
+		return 0
 	if container == null:
 		return 0
 	for child in container.get_children():
 		if not (child is Node3D):
 			continue
 		var source_type := String(child.get_meta("source_type", ""))
-		if not is_sway_source_type(source_type):
+		if not authored.has(source_type.to_lower()):
 			continue
 		var node := child as Node3D
-		var record := {
+		_records.append({
 			"node": node,
 			"base_basis": node.basis,
 			"phase": _hash_phase(source_type, int(child.get_meta("source_index", bound_count))),
-		}
-		_records.append(record)
+		})
 		node.set_meta("tree_sway", true)
 		node.set_meta("tree_sway_source", source)
 		bound_count += 1
-	set_process(bound_count > 0)
+	set_process(bound_count > 0 and _is_moving())
 	_apply_pose(0.0)
 	return bound_count
 
@@ -129,28 +116,37 @@ func apply_set_tree_sway(values: Array) -> String:
 	lean_degrees = lean
 	frames_per_sway = frames
 	randomness = random_amount
-	source = "SET_TREE_SWAY"
+	source = AUTHORED_SOURCE
 	last_set_tree_sway = values.duplicate()
+	gaps.erase("no-authored-sway-amplitude:naturetrees.ini-authors-no-sway-field")
 	for record in _records:
 		var node: Node3D = record.get("node")
 		if node != null and is_instance_valid(node):
 			node.set_meta("tree_sway_source", source)
+	set_process(bound_count > 0 and _is_moving())
 	return ""
 
 
 func runtime_contract() -> Dictionary:
 	return {
 		"schema": "openbfme.tree-sway",
-		"schema_version": 0,
+		"schema_version": 1,
 		"source": source,
 		"bound_count": bound_count,
 		"wind_degrees": wind_degrees,
+		"wind_radians": deg_to_rad(wind_degrees),
+		"wind_source": "gamedata.ini:8583 DownwindAngle" if source == UNAUTHORED_SOURCE else AUTHORED_SOURCE,
 		"sway_degrees": sway_degrees,
 		"lean_degrees": lean_degrees,
 		"frames_per_sway": frames_per_sway,
 		"randomness": randomness,
-		"idle_until_script": source == "idle-breeze-until-set-tree-sway",
+		"still": not _is_moving(),
+		"gaps": gaps.duplicate(),
 	}
+
+
+func _is_moving() -> bool:
+	return sway_degrees > 0.0 and frames_per_sway > 0
 
 
 func _process(delta: float) -> void:
@@ -159,7 +155,7 @@ func _process(delta: float) -> void:
 
 
 func _apply_pose(time_seconds: float) -> void:
-	if _records.is_empty():
+	if _records.is_empty() or not _is_moving():
 		return
 	var period := float(frames_per_sway) / RETAIL_FRAMES_PER_SECOND
 	if period <= 0.0:
