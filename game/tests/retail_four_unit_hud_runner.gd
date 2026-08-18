@@ -657,6 +657,17 @@ func _check_complete_binding(prefix: String, hud, content, pack_root: String) ->
 		var spec: Dictionary = spec_value
 		var action_id := String(spec["action_id"])
 		var button: Button = hud.unit_action_buttons.get(action_id)
+		if bool(spec.get("authored_fallback", false)):
+			# Q41: the formation button's icon is PER-SELECTION (the selected
+			# horde's authored two-image ButtonImage, commandbutton.ini:196/:651)
+			# and the button only shows for hordes whose command set carries
+			# HORDE_TOGGLE_FORMATION. With this fixture's selection it must be
+			# hidden rather than wear a global icon.
+			_check(
+				"%s_%s_is_per_selection_authored" % [prefix, action_id],
+				button != null and (not button.visible or button.icon != null)
+			)
+			continue
 		var expected_path := String(content.resolve_retail_ui_image_path(String(spec["image_id"])))
 		var action_frame := button.get_theme_stylebox("normal") if button != null else null
 		var action_retail_frame := action_frame is StyleBoxTexture and (action_frame as StyleBoxTexture).texture is AtlasTexture
