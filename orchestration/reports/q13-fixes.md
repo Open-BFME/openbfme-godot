@@ -88,14 +88,14 @@ The warhead authors `DamageType = SIEGE` only inside DamageNugget blocks, so `da
 | Check | Result |
 |---|---|
 | `python tools\check_pack_addresses.py` | `PACK_ADDRESS_CHECK PASS packs=200 roots=2` |
-| `tools\gate-hygiene.ps1` | `HYGIENE_GATE PASS root-files=25 tracked=2593` (pre-commit; re-run after) |
-| `git status --porcelain` | clean after the three prefixed commits, explicit paths |
+| `tools\gate-hygiene.ps1` | `HYGIENE_GATE PASS root-files=25 tracked=2594` |
+| `git status --porcelain` | empty after the chore commit |
 
 Commits (prefixed as required):
 
 - `d6e3acb` `fix(importer): restore combat.damage provenance and truthful type semantic`
 - `f000569` `fix(sim): keep damage_components across weapon-mode ticks`
-- `chore(queue):` Q13 awaiting re-verify; Q15 DECISION; Q16 READY; this report
+- `abcaf99` `chore(queue): land Q13 fixes and add Q15 Q16 follow-ups`
 
 ### 5. This report
 
