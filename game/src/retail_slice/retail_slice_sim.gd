@@ -27455,8 +27455,8 @@ func _apply_weapon_mode(row: Dictionary, mode: String) -> bool:
 	]:
 		if not selected.has(optional_projectile_field):
 			row.erase(optional_projectile_field)
-	if not selected.has("damage_components"):
-		row["damage_components"] = []
+	# damage_components stay on the row unless the selected mode compiles
+	# its own mix. Blanking here wiped the unit-rule mix on every attack tick.
 	for field in [
 		"attack_range", "attack_range_source", "minimum_attack_range",
 		"minimum_attack_range_source", "delay_between_shots_ms",

@@ -71,7 +71,10 @@ func _run() -> void:
 
 func _empty_sim():
 	var sim = Sim.new()
-	sim.setup({}, {"spawn_initial_battalions": false})
+	sim.setup({}, {
+		"spawn_initial_battalions": false,
+		"faction_manifest": {"structure_kinds": ["fortress"]},
+	})
 	sim.ai_enabled = false
 	sim.base_loop_enabled = false
 	sim.entities.clear()

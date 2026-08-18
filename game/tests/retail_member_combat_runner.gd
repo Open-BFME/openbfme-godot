@@ -123,6 +123,7 @@ func _run() -> void:
 	_run_corpse_lifecycle_contract()
 	_run_ai_visual_acquisition_contract()
 	_run_projectile_and_radius_contract()
+	_run_damage_components_survive_attack_and_mode_toggle()
 
 	var replay = _make_sim()
 	_check("replay_attack_order_is_accepted", replay.issue_attack([1], 101) == 1)
@@ -622,6 +623,51 @@ func _run_archer_dual_weapon_contract() -> void:
 			and int(closing.entity(2).get("attack_period_ticks", 0)) == 34,
 		str(closing.entity(2))
 	)
+
+
+func _run_damage_components_survive_attack_and_mode_toggle() -> void:
+	var sim = _make_sim()
+	var components := [
+		{"value": 100.0, "damage_type": "hero", "radius": 0.0, "damage_taper_off": 0.0},
+		{"value": 20.0, "damage_type": "slash", "radius": 0.0, "damage_taper_off": 0.0},
+	]
+	(sim.entities[2] as Dictionary)["damage_components"] = components.duplicate(true)
+	(sim.entities[2] as Dictionary)["position"] = Vector2.ZERO
+	(sim.entities[2] as Dictionary)["destination"] = Vector2.ZERO
+	(sim.entities[101] as Dictionary)["position"] = Vector2(10.0, 0.0)
+	(sim.entities[101] as Dictionary)["destination"] = Vector2(10.0, 0.0)
+	_check(
+		"damage_components_seeded_on_battalion",
+		_damage_component_types(sim.entity(2)) == ["hero", "slash"]
+	)
+	_check("damage_component_attack_order_is_accepted", sim.issue_attack([2], 101) == 1)
+	for _index in 12:
+		sim.advance(1)
+	_check(
+		"damage_components_survive_attack_ticks",
+		String(sim.entity(2).get("active_weapon_mode", "")) == "default"
+			and _damage_component_types(sim.entity(2)) == ["hero", "slash"],
+		str(sim.entity(2).get("damage_components", []))
+	)
+	(sim.entities[101] as Dictionary)["position"] = Vector2(2.0, 0.0)
+	(sim.entities[101] as Dictionary)["destination"] = Vector2(2.0, 0.0)
+	for _index in 8:
+		sim.advance(1)
+	_check(
+		"damage_components_survive_weapon_mode_toggle",
+		String(sim.entity(2).get("active_weapon_mode", "")) == "close"
+			and _damage_component_types(sim.entity(2)) == ["hero", "slash"],
+		str(sim.entity(2).get("active_weapon_mode", "")) + " " + str(sim.entity(2).get("damage_components", []))
+	)
+
+
+func _damage_component_types(row: Dictionary) -> Array:
+	var types: Array = []
+	for component_value in row.get("damage_components", []) as Array:
+		if typeof(component_value) != TYPE_DICTIONARY:
+			continue
+		types.append(String((component_value as Dictionary).get("damage_type", "")))
+	return types
 
 
 func _run_stance_contract() -> void:
