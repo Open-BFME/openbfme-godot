@@ -7232,6 +7232,13 @@ func _spellbook_summon_rule(target_leaf: Dictionary, modifier_leaves: Dictionary
 	if member_health <= 0:
 		return {"ok": false, "reason": "summoned member '%s' health is not converted" % member_id}
 	var locomotor: Dictionary = member.get("locomotor", {}) as Dictionary
+	for authored_field in ["acceleration", "braking", "turnRateDegreesPerSecond"]:
+		if not locomotor.has(authored_field):
+			push_error(
+				"unauthored locomotor field %s for spellbook member %s"
+				% [authored_field, str(member.get("id", "<unknown>"))]
+			)
+			return {}
 	var speed := float(locomotor.get("speed", 0.0))
 	# Wyrm is intentionally stationary (WyrmLocomotor Speed = 0) but still has
 	# a fully authored locomotor and ranged fire-breath runtime.
@@ -7307,7 +7314,6 @@ func _spellbook_summon_rule(target_leaf: Dictionary, modifier_leaves: Dictionary
 	var vision := float(member.get("visionRange", 0.0))
 	if vision <= 0.0:
 		vision = attack_range
-	var response_scale := PlayableUnitAdapter.HORDE_LOCOMOTION_RESPONSE_SCALE
 	var rule := {
 		"horde_id": String(target_leaf.get("id", "")),
 		"member_count": member_count,
@@ -7316,11 +7322,11 @@ func _spellbook_summon_rule(target_leaf: Dictionary, modifier_leaves: Dictionary
 		"category": category,
 		"speed": speed * scale,
 		"speed_source": speed,
-		"acceleration": float(locomotor.get("acceleration", speed)) * scale * response_scale,
-		"acceleration_source": float(locomotor.get("acceleration", speed)) * response_scale,
-		"turn_rate_degrees_per_second": float(locomotor.get("turnRateDegreesPerSecond", 360.0)),
-		"braking": float(locomotor.get("braking", speed)) * scale * response_scale,
-		"braking_source": float(locomotor.get("braking", speed)) * response_scale,
+		"acceleration": float(locomotor["acceleration"]) * scale,
+		"acceleration_source": float(locomotor["acceleration"]),
+		"turn_rate_degrees_per_second": float(locomotor["turnRateDegreesPerSecond"]),
+		"braking": float(locomotor["braking"]) * scale,
+		"braking_source": float(locomotor["braking"]),
 		"attack_range": attack_range * scale,
 		"attack_range_source": attack_range,
 		"minimum_attack_range": _spellbook_weapon_field(weapon, "MinimumAttackRange") * scale,
@@ -28452,11 +28458,9 @@ func _eviction_fallback_direction(row: Dictionary) -> Vector2:
 ## NormalMeleeHordeLocomotor authors TurnTime = 2000 (locomotor.ini:709), and
 ## OpenSAGE's shared SAGE core converts that as 360 / (TurnTime / 1000)
 ## (LocomotorTemplate.cs:94) -> 180 deg/s.
-const RETAIL_FALLBACK_TURN_RATE_DEGREES := 180.0
 ## MaxTurnWithoutReform. Infantry/ranged horde locomotors author 45
 ## (locomotor.ini:717, :765, :805); every cavalry-class horde locomotor authors
 ## 100 (:849, :871, :893) so horse hordes wheel through far wider turns.
-const RETAIL_MAX_TURN_WITHOUT_REFORM_DEGREES := 45.0
 const RETAIL_CAVALRY_MAX_TURN_WITHOUT_REFORM_DEGREES := 100.0
 
 
@@ -28486,14 +28490,16 @@ func _retail_reform_threshold_degrees(row: Dictionary) -> float:
 		return authored
 	if String(row.get("category", "")) == "cavalry":
 		return RETAIL_CAVALRY_MAX_TURN_WITHOUT_REFORM_DEGREES
-	return RETAIL_MAX_TURN_WITHOUT_REFORM_DEGREES
+	# Absence is authored as no reform gate. Phase B owns any new turn model.
+	return -1.0
 
 
 func _retail_turn_rate_degrees(row: Dictionary) -> float:
 	var authored := float(row.get("turn_rate_degrees_per_second", 0.0))
 	if authored > 0.0:
 		return authored
-	return RETAIL_FALLBACK_TURN_RATE_DEGREES
+	push_error("unauthored locomotor turn rate")
+	return 0.0
 
 
 func _step_retail_heading(row: Dictionary, movement_direction: Vector2, braking: float) -> bool:
@@ -28549,10 +28555,12 @@ func _step_route(row: Dictionary) -> void:
 	# were not authored, so missing fields never pin units at zero velocity.
 	var acceleration := float(row.get("acceleration", 0.0))
 	if acceleration <= 0.0:
-		acceleration = max_speed * 10.0
+		push_error("unauthored locomotor acceleration")
+		return Vector2.ZERO
 	var braking := float(row.get("braking", 0.0))
 	if braking <= 0.0:
-		braking = max_speed * 10.0
+		push_error("unauthored locomotor braking")
+		return Vector2.ZERO
 	var current_speed := float(row.get("current_speed", 0.0))
 	# Accelerate toward max; near the final waypoint begin braking for snappier
 	# stops. Braking only ever applies on the last leg, so summing the whole

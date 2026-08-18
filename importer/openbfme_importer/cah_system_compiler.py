@@ -71,6 +71,7 @@ import re
 from typing import Any, Iterable, Mapping, Sequence
 
 from .sage_ini import _lines, parse_flat_named_blocks
+from .locomotor_compiler import compile_locomotor_templates
 
 SCHEMA = "openbfme.cah-system-descriptor"
 SCHEMA_VERSION = 0
@@ -1279,15 +1280,17 @@ def _locomotor_sets(documents: Mapping[str, bytes]) -> list[dict[str, Any]]:
 
 
 def _locomotor_templates(documents: Mapping[str, bytes]) -> dict[str, dict[str, str]]:
-    raw = _lookup(documents, LOCOMOTOR_PATH)
-    if raw is None:
-        raise CahSystemCompilerError(f"{LOCOMOTOR_PATH}: document is missing")
     templates: dict[str, dict[str, str]] = {}
-    for block in parse_flat_named_blocks(raw, "Locomotor"):
-        templates.setdefault(
-            block.name.casefold(),
-            {key.casefold(): value for key, value in block.assignments},
-        )
+    try:
+        table = compile_locomotor_templates(documents)
+    except ValueError as exc:
+        raise CahSystemCompilerError(str(exc)) from exc
+    for name, row in table["templates"].items():
+        fields = row["fields"]
+        templates[str(name).casefold()] = {
+            str(field["sourceField"]).casefold(): str(field["raw"])
+            for field in fields.values()
+        }
     if not templates:
         raise CahSystemCompilerError(f"{LOCOMOTOR_PATH}: no Locomotor template was read")
     return templates

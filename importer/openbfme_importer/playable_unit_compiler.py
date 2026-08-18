@@ -47,6 +47,7 @@ from .sage_cst import (
     parse_sage_document,
 )
 from .sage_ini import IniBlock, parse_flat_named_blocks
+from .locomotor_compiler import compile_locomotor_templates
 from .sage_audio import (
     faction_voice_equivalence_provenance,
     normalize_faction_voice_event,
@@ -1730,45 +1731,51 @@ def _simulation_contract(
     else:
         speed["definitionId"] = locomotor_id
         resolved["speed"] = speed
-    locomotor = (
-        _named_definition_values(
-            documents,
-            "Locomotor",
-            locomotor_id,
-            cache=named_definition_cache,
-            cache_lock=cache_lock,
-        )
-        if locomotor_id
-        else None
-    )
     movement: dict[str, object] = {}
-    if locomotor is not None:
-        for output_name, source_name in (
-            ("acceleration", "Acceleration"),
-            ("braking", "Braking"),
-        ):
-            field = _resolved_definition_field(locomotor, source_name, constants)
-            if field is not None:
-                movement[output_name] = field
-        turn_rate = _resolved_definition_field(locomotor, "TurnRate", constants)
-        if turn_rate is None:
-            turn_time = _resolved_definition_field(locomotor, "TurnTime", constants)
-            if turn_time is not None and float(turn_time["value"]) > 0.0:
+    if locomotor_id:
+        table = compile_locomotor_templates(documents, constants)
+        templates = table["templates"]
+        assert isinstance(templates, Mapping)
+        locomotor_template = next(
+            (
+                row
+                for name, row in templates.items()
+                if str(name).casefold() == locomotor_id.casefold()
+            ),
+            None,
+        )
+        if isinstance(locomotor_template, Mapping):
+            fields = locomotor_template.get("fields", {})
+            assert isinstance(fields, Mapping)
+            for source_name, output_name in (
+                ("acceleration", "acceleration"),
+                ("braking", "braking"),
+                ("turnTimeDamaged", "turnTimeDamagedMs"),
+                ("fastTurnRadius", "fastTurnRadius"),
+                ("slowTurnRadius", "slowTurnRadius"),
+                ("minTurnSpeed", "minTurnSpeed"),
+                ("turnPivotOffset", "turnPivotOffset"),
+                ("maxTurnWithoutReform", "maxTurnWithoutReformDegrees"),
+                ("canMoveBackwards", "canMoveBackwards"),
+                ("backingUpSpeed", "backingUpSpeed"),
+                ("closeEnoughDist", "closeEnoughDist"),
+                ("surfaces", "surfaces"),
+                ("zAxisBehavior", "zAxisBehavior"),
+                ("appearance", "appearance"),
+                ("formationPriority", "formationPriority"),
+                ("waitForFormation", "waitForFormation"),
+            ):
+                field = fields.get(source_name)
+                if isinstance(field, Mapping):
+                    movement[output_name] = dict(field)
+            turn_time = fields.get("turnTime")
+            if isinstance(turn_time, Mapping) and float(turn_time["value"]) > 0.0:
                 turn_rate = dict(turn_time)
                 turn_rate["value"] = 360000.0 / float(turn_time["value"])
-                turn_rate["semantic"] = "360 degrees divided by TurnTime seconds"
-        if turn_rate is not None:
-            movement["turnRateDegreesPerSecond"] = turn_rate
-        max_turn = _resolved_definition_field(
-            locomotor, "MaxTurnWithoutReform", constants
-        )
-        if max_turn is not None:
-            movement["maxTurnWithoutReformDegrees"] = max_turn
-        wait_for_formation = _resolved_yes_no_definition_field(
-            locomotor, "WaitForFormation"
-        )
-        if wait_for_formation is not None:
-            movement["waitForFormation"] = wait_for_formation
+                turn_rate["semantic"] = "360 degrees divided by TurnTime milliseconds"
+                movement["turnTimeMs"] = dict(turn_time)
+                movement["turnRateDegreesPerSecond"] = turn_rate
+            movement["unsupported"] = list(locomotor_template.get("unsupported", []))
     for field in ("acceleration", "braking", "turnRateDegreesPerSecond"):
         if field not in movement:
             missing.append(field)
