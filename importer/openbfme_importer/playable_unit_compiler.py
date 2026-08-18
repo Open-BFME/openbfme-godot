@@ -4442,24 +4442,36 @@ def _unit_selection_commands(
         fields: dict[str, object] = {}
         kinds: list[str] = []
         if button is not None:
-            for field in ("ButtonImage", "TextLabel", "DescriptLabel"):
+            # `Options` and `UnitSpecificSound` are the other half of a toggle
+            # button and were being dropped. A HORDE_TOGGLE_FORMATION button
+            # authors `Options = TOGGLE_IMAGE_ON_FORMATION OK_FOR_MULTI_SELECT`
+            # (commandbutton.ini:196, :664) — without it the runtime cannot
+            # know the two ButtonImage ids are an on/off pair — and a paired
+            # `UnitSpecificSound` (e.g. TowerGuardVoiceWallFormation
+            # TowerGuardVoiceLineFormation at :674).
+            for field in ("ButtonImage", "TextLabel", "DescriptLabel", "Options", "UnitSpecificSound"):
                 values = [str(value) for value in button.values(field) if str(value).strip()]
                 if not values:
                     continue
                 if field in {"TextLabel", "DescriptLabel"}:
                     values = command_string_ids(*values)
+                elif field in {"Options", "UnitSpecificSound"}:
+                    values = [token for value in values for token in str(value).split()]
                 if values:
                     fields[field] = values
             kinds = [str(value) for value in button.values("Command") if str(value).strip()]
-        rows.append(
-            {
-                "slot": slot,
-                "commandId": command_id,
-                "commandSetId": command_set.name,
-                "commandKinds": kinds,
-                "fields": fields,
-            }
-        )
+        row: dict[str, object] = {
+            "slot": slot,
+            "commandId": command_id,
+            "commandSetId": command_set.name,
+            "commandKinds": kinds,
+            "fields": fields,
+        }
+        if button is not None:
+            # Provenance: the row's fields came from a CommandButton block in
+            # the effective commandbutton.ini view (IniBlock carries no line).
+            row["sourceIni"] = COMMAND_BUTTON_PATH
+        rows.append(row)
     return rows
 
 
@@ -4805,6 +4817,12 @@ _SUPPORTED_MODIFIER_KINDS = frozenset(
         "RESIST_FEAR",
         "CRUSH",
         "EXPERIENCE",
+        # attributemodifier.ini:49 documents CRUSHED_DECELERATE as
+        # "Multiplicitive. The percentage that things crushing you slow"; the
+        # FORMATION ModifierLists at :756-806 author it at 1000% and it is the
+        # ONLY live Modifier row in them (SPEED/ARMOR/DAMAGE_ADD/
+        # CRUSHABLE_LEVEL are commented out in retail).
+        "CRUSHED_DECELERATE",
     }
 )
 EMOTIONS_PATH = "data/ini/emotions.ini"
