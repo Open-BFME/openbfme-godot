@@ -5400,9 +5400,9 @@ func _spawn_construction_ghost() -> void:
 		ghost_model.name = "GhostModel"
 		ghost_model.scale = Vector3.ONE * maxf(0.0001, source_map_data.local_transform_scale)
 		construction_ghost.add_child(ghost_model)
-		# Retail placement ghost (owner change): the mesh's ACTUAL colors at ~50%
-		# opacity, not a flat green tint. Valid/invalid now rides ONLY on the
-		# footprint ring color below (green valid / red invalid).
+		# Retail placement ghost: the mesh's ACTUAL colors at ~50% opacity.
+		# Retail draws NO placement outline; validity is the ghost itself
+		# (normal when the site is valid, red-tinted when it is not).
 		_apply_ghost_translucency(ghost_model)
 	else:
 		# Fail-closed fallback: the flat footprint quad (model not converted).
@@ -5415,29 +5415,24 @@ func _spawn_construction_ghost() -> void:
 		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		material.albedo_texture = preload("res://src/retail_slice/retail_shadow_decal.gd")._shared_texture()
-		material.albedo_color = Color(0.20, 0.85, 0.30, 0.4)
+		material.albedo_color = Color(0.85, 0.85, 0.85, 0.4)
 		material.no_depth_test = false
 		quad_instance.material_override = material
 		quad_instance.set_meta("tint_material", material)
 		construction_ghost.add_child(quad_instance)
-	# Placement footprint circle (item 6): the radius the sim enforces.
-	var footprint := MeshInstance3D.new()
-	footprint.name = "FootprintCircle"
-	footprint.mesh = _make_ground_ring(maxf(0.2, simulation._structure_placement_radius(kind)), 64, 0.06)
-	footprint.material_override = _ghost_ring_material(Color(0.35, 0.9, 0.4, 0.85))
-	footprint.position.y = 0.12
-	construction_ghost.add_child(footprint)
-	# Effectiveness ring (farm-style, REF-29/30): only when the structure
-	# document ships a TerrainResourceBehavior radius; hidden otherwise
-	# (fail closed — never invented).
+	# No placement footprint outline: retail authors none (owner playtest
+	# 2026-08-18 — the green rings were invented). The only ground decal is the
+	# TerrainResourceBehavior claim disc below (farm.ini ModuleTag_NewMoney /
+	# TerrainResourceClientBehavior): a filled translucent white disc, drawn
+	# only when the structure document ships that radius (fail closed).
 	var effectiveness_radius := _structure_effectiveness_radius_local(object_id)
 	if effectiveness_radius > 0.0:
-		var ring := MeshInstance3D.new()
-		ring.name = "EffectivenessRing"
-		ring.mesh = _make_ground_ring(effectiveness_radius, 96, 0.08)
-		ring.material_override = _ghost_ring_material(Color(0.55, 0.95, 0.45, 0.6))
-		ring.position.y = 0.1
-		construction_ghost.add_child(ring)
+		var disc := MeshInstance3D.new()
+		disc.name = "EffectivenessRing"
+		disc.mesh = _make_ground_disc(effectiveness_radius, 96)
+		disc.material_override = _ghost_ring_material(Color(1.0, 1.0, 1.0, 0.28))
+		disc.position.y = 0.1
+		construction_ghost.add_child(disc)
 
 
 ## Dims every mesh surface to ~50% opacity while KEEPING each material's own
@@ -5470,6 +5465,32 @@ func _apply_ghost_translucency(node: Node) -> void:
 		_apply_ghost_translucency(child)
 
 
+## Invalid site: red-tint every ghost surface (albedo multiplied toward red,
+## alpha kept at the ghost's 50%). Valid: restore the mesh's own colors.
+var _ghost_original_albedo: Dictionary = {}
+func _tint_ghost_materials(node: Node, valid: bool) -> void:
+	if node is MeshInstance3D:
+		var mesh_instance := node as MeshInstance3D
+		var surface_count := mesh_instance.mesh.get_surface_count() if mesh_instance.mesh != null else 0
+		for surface_index in surface_count:
+			var material := mesh_instance.get_surface_override_material(surface_index)
+			if not (material is BaseMaterial3D):
+				continue
+			var base := material as BaseMaterial3D
+			var key := base.get_instance_id()
+			if not _ghost_original_albedo.has(key):
+				_ghost_original_albedo[key] = base.albedo_color
+			var original: Color = _ghost_original_albedo[key]
+			if valid:
+				base.albedo_color = original
+			else:
+				base.albedo_color = Color(
+					minf(1.0, original.r * 0.55 + 0.45), original.g * 0.35, original.b * 0.3, original.a
+				)
+	for child in node.get_children():
+		_tint_ghost_materials(child, valid)
+
+
 func _ghost_ring_material(color: Color) -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -5477,6 +5498,25 @@ func _ghost_ring_material(color: Color) -> StandardMaterial3D:
 	material.albedo_color = color
 	material.no_depth_test = false
 	return material
+
+
+func _make_ground_disc(radius: float, segments: int) -> ArrayMesh:
+	## Filled translucent disc (retail TerrainResourceClientBehavior claim area).
+	var vertices := PackedVector3Array()
+	for index in segments:
+		var a0 := float(index) / float(segments) * TAU
+		var a1 := float(index + 1) / float(segments) * TAU
+		vertices.append_array([
+			Vector3.ZERO,
+			Vector3(cos(a1), 0.0, sin(a1)) * radius,
+			Vector3(cos(a0), 0.0, sin(a0)) * radius,
+		])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
 
 
 func _make_ground_ring(radius: float, segments: int, width: float) -> ArrayMesh:
@@ -5507,6 +5547,18 @@ func _structure_effectiveness_radius_local(object_id: String) -> float:
 	var behavior := gameplay.get("resourceBehavior", {}) as Dictionary
 	var radius := float((behavior.get("radius", {}) as Dictionary).get("value", 0.0))
 	if radius <= 0.0:
+		# The bundle object may be a legacy registry entry (objects.json) that
+		# authors no gameplay block, shadowing the compiled playable-structure
+		# document that does (Q32). Fall through to that document by runtime id.
+		for source_value in ContentDB.get_playable_structure_runtimes().keys():
+			if PlayableUnitAdapter._runtime_id(String(source_value)) != object_id:
+				continue
+			var document := ContentDB.get_playable_structure_runtime(String(source_value))
+			var doc_gameplay := ((document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)
+			var doc_behavior := doc_gameplay.get("resourceBehavior", {}) as Dictionary
+			radius = float((doc_behavior.get("radius", {}) as Dictionary).get("value", 0.0))
+			break
+	if radius <= 0.0:
 		return 0.0
 	return radius * source_map_data.local_transform_scale
 
@@ -5535,20 +5587,16 @@ func _update_construction_ghost() -> void:
 		simulation.selected_ids.duplicate(), construction_kind_armed, Vector2(ground.x, ground.z), local_team
 	)
 	var valid := bool(probe.get("ok", false))
-	# Validity rides the footprint ring color; the 3D ghost keeps the mesh's
-	# actual colors (owner change). The quad fallback (unconverted model) still
-	# tints because it has no colors of its own.
-	var valid_color := Color(0.25, 0.9, 0.35, 0.45) if valid else Color(0.92, 0.2, 0.16, 0.45)
-	var ring_color := Color(0.35, 0.9, 0.4, 0.85) if valid else Color(0.92, 0.25, 0.2, 0.85)
+	# Retail: the ghost itself shows validity — its own colors at ~50% when the
+	# site is valid, red-tinted when it is not. No outline ring.
+	var quad_color := Color(0.85, 0.85, 0.85, 0.4) if valid else Color(0.92, 0.2, 0.16, 0.45)
 	for child in construction_ghost.get_children():
 		if String(child.name) == "GhostModel" and child.has_meta("tint_material"):
 			var tint := child.get_meta("tint_material", null) as StandardMaterial3D
 			if tint != null:
-				tint.albedo_color = valid_color
-		elif String(child.name) == "FootprintCircle":
-			var ring_material := (child as MeshInstance3D).material_override as StandardMaterial3D
-			if ring_material != null:
-				ring_material.albedo_color = ring_color
+				tint.albedo_color = quad_color
+		elif String(child.name) == "GhostModel":
+			_tint_ghost_materials(child, valid)
 
 
 func _update_power_cast_ghost() -> void:

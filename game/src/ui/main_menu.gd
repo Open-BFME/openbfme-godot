@@ -2063,6 +2063,10 @@ func _refresh_skirmish_verdict_presentation() -> void:
 	for row in range(solo_flyout.row_army_opts.size()):
 		_refresh_row_army_states(row)
 	_refresh_map_row_states()
+	# The hero picker used to stay "-" until the player changed a faction:
+	# rows were built with only the placeholder and _refresh_hero_rows() was
+	# wired to army/controller/toggle changes but never to the initial sweep.
+	_refresh_hero_rows()
 	_skirmish_sweep_running = false
 	_refresh_skirmish_launch_state()
 
