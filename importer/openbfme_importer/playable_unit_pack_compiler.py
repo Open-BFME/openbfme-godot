@@ -84,9 +84,15 @@ _ABILITY_DEFAULT_PHASE = "cast"
 _ABILITY_PHASE_ORDER = ("unpack", "prepare", "cast", "pack")
 _SPECIAL_POWER_CONDITION = re.compile(r"^SPECIAL_POWER_(\d+)$")
 _PACKING_TYPE_CONDITION = re.compile(r"^PACKING_TYPE_(\d+)$")
+# Authored hero skins that the runtime has no state to raise. MOUNTED is NOT
+# one of them: `data/ini/commandbutton.ini:2493` Command_ToggleMounted is a
+# shipped, player-pressable toggle and `eomer.ini:64-69` authors
+# `ModelConditionState = MOUNTED` / `Model = RUEomrHrs_SKN` (rider+horse as one
+# skin replacing the foot skin) plus ~30 MOUNTED AnimationStates (:73-294).
+# Excluding it dropped every mounted hero model from every pack, so the toggle
+# left Eomer/Theoden/Gandalf/Faramir standing on foot (queue Q34).
 _EXCLUDED_HERO_FORM_CONDITIONS = {
     "hero",
-    "mounted",
     "user_1",
     "user_2",
     "user_3",

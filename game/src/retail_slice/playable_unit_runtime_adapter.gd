@@ -145,11 +145,71 @@ static func resolve_playable_document_by_ids(db: Object, raw_ids: PackedStringAr
 	return {}
 
 
+static func _component_condition_tokens(component: Dictionary) -> PackedStringArray:
+	var tokens := PackedStringArray()
+	for token_value in component.get("conditions", []) as Array:
+		tokens.append(String(token_value).to_upper())
+	return tokens
+
+
+static func _component_authored_identifier(component: Dictionary) -> String:
+	## The retail skin name (`RUEomrHrs_SKN`). Compiled components carry it only
+	## on their authored occurrence rows; the component itself has no
+	## `identifier` key, so never fall back to a case-mangled file stem.
+	for occurrence_value in component.get("authoredOccurrences", []) as Array:
+		if typeof(occurrence_value) != TYPE_DICTIONARY:
+			continue
+		var identifier := String((occurrence_value as Dictionary).get("identifier", ""))
+		if identifier != "":
+			return identifier
+	return ""
+
+
+static func authored_mounted_component(document: Dictionary) -> Dictionary:
+	## The compiled MOUNTED-form model component, or {} when the pack has none.
+	##
+	## Converted models land in `registration.visual.components` (one row per
+	## retail ModelConditionState model, `output` = the cooked GLB), NOT in
+	## `authoredVisualLeaves` - that list carries shadows and other non-model
+	## leaves. Reading only the leaves is why a pack that DID cook a mounted
+	## skin still reported `mounted-model-missing` (queue Q34).
+	var visual := _document_visual(document)
+	var owner_id := String(document.get("objectId", ""))
+	var best: Dictionary = {}
+	var best_rank := -1
+	for component_value in visual.get("components", []) as Array:
+		if typeof(component_value) != TYPE_DICTIONARY:
+			continue
+		var component := component_value as Dictionary
+		if bool(component.get("default", false)):
+			continue
+		var tokens := _component_condition_tokens(component)
+		if tokens.find("MOUNTED") < 0:
+			continue
+		# Prefer this object's own mount form over a sibling template's
+		# (RohanEowyn vs RohanEowynDisguised), then the least-qualified form.
+		var rank := 0
+		if owner_id != "" and String(component.get("ownerObjectId", "")).to_lower() == owner_id.to_lower():
+			rank += 100
+		rank += 10 - mini(tokens.size(), 10)
+		if rank > best_rank:
+			best_rank = rank
+			best = component
+	return best
+
+
 static func authored_mounted_mesh(document: Dictionary) -> Dictionary:
 	## Retail ModelConditionState = MOUNTED model. Missing converted GLB is a
 	## named gap, never a stand-in horse.
 	var visual := _document_visual(document)
 	var mounted_token := ""
+	var component := authored_mounted_component(document)
+	if not component.is_empty():
+		var component_id := _component_authored_identifier(component)
+		var component_output := String(component.get("output", ""))
+		if component_output.to_lower().ends_with(".glb"):
+			return {"id": component_id, "path": component_output, "gap": ""}
+		mounted_token = component_id
 	for leaf_value in visual.get("authoredVisualLeaves", []) as Array:
 		if typeof(leaf_value) != TYPE_DICTIONARY:
 			continue
