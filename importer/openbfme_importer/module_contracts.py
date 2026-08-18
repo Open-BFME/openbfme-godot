@@ -705,9 +705,11 @@ def compile_sub_objects_upgrades(
         if deferred:
             fields["deferredFields"] = deferred
         if "TriggeredBy" not in fields:
-            raise ModuleContractError(
-                f"{target_id} SubObjectsUpgrade requires TriggeredBy"
-            )
+            # Retail authors inert shells whose only trigger is commented
+            # out (noldorwarrior.ini ForgedBlades_Upgrade). Admit them as
+            # never-firing rows instead of treating the comment as a gap.
+            fields["untriggered"] = True
+            fields["reason"] = "no-active-triggeredby-authored"
         rows.append(
             _row(
                 "SubObjectsUpgrade",
