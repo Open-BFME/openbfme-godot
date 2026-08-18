@@ -3347,6 +3347,9 @@ func _configure_playable_unit_runtime_contracts() -> void:
 			if command_set_id != "" and not authored_command_sets.has(command_set_id): authored_command_sets.append(command_set_id)
 		if authored_command_sets.size() == 1:
 			unit_rule["default_command_set_id"] = authored_command_sets[0]
+		var authored_formation_toggle := _authored_formation_toggle(document_value as Dictionary)
+		if not authored_formation_toggle.is_empty():
+			unit_rule["formation_toggle"] = authored_formation_toggle
 		var producers: Array = simulation.get("producers", [])
 		if producers.is_empty():
 			configuration_error = "Playable-unit runtime '%s' has no producer" % object_id
@@ -13836,6 +13839,31 @@ func issue_set_stance(ids: Array[int], stance: String, team: int = PLAYER_TEAM) 
 		_stamp_order_sequence(accepted_ids)
 		_emit_event("order.stance", accepted_ids[0], 0, {"stance": stance})
 	return accepted_ids.size()
+
+
+func _authored_formation_toggle(document: Dictionary) -> Dictionary:
+	## The unit's own HORDE_TOGGLE_FORMATION button, read off the compiled
+	## selection surface so the sim gate and the palantir gate answer from the
+	## SAME authored data (commandbutton.ini / commandset.ini).
+	##
+	## `modifier` stays empty for now: the FORMATION ModifierList
+	## (attributemodifier.ini:756-806) reaches the runtime through the
+	## AlternateFormation ChildObject's HordeContain `AttributeModifiers`, which
+	## the importer does not yet compile onto the unit descriptor. Until it
+	## does, the toggle is admitted and applies NO modifier -- a named gap, not
+	## an invented effect.
+	for selection_value in PlayableUnitAdapter.selection_commands(document):
+		var selection := selection_value as Dictionary
+		for kind_value in selection.get("commandKinds", []) as Array:
+			if String(kind_value).strip_edges().to_upper() != "HORDE_TOGGLE_FORMATION":
+				continue
+			return {
+				"command_id": String(selection.get("commandId", "")),
+				"command_set_id": String(selection.get("commandSetId", "")),
+				"source_ini": String(selection.get("sourceIni", "")),
+				"modifier": {},
+			}
+	return {}
 
 
 func horde_formation_toggle(row: Dictionary) -> Dictionary:

@@ -53,6 +53,7 @@ func _initialize() -> void:
 
 func _run() -> void:
 	_test_sim_gate_and_modifier()
+	_test_gate_reads_the_compiled_selection_surface()
 	_test_crush_deceleration()
 	_test_hud_button_is_authored_only()
 	print("RETAIL_FORMATION_TOGGLE_RESULT passed=%d failed=%d" % [passed, failed])
@@ -137,6 +138,38 @@ func _test_sim_gate_and_modifier() -> void:
 		"horde_without_the_authored_button_cannot_be_set_either",
 		int(sim.issue_set_formation(archer_ids, "Block")) == 0
 			and String(archer.get("formation_mode", "")) == "Line"
+	)
+
+
+func _test_gate_reads_the_compiled_selection_surface() -> void:
+	## The sim gate and the palantir gate must answer from the SAME compiled
+	## rows, or a real pack would show a button the sim then refuses.
+	var sim = _make_sim()
+	var with_button := {
+		"presentation": {"ui": {"selectionCommands": [{
+			"slot": 2,
+			"commandId": "Command_TowerGuardPorcupineFormation",
+			"commandSetId": "GondorTowerShieldGuardHordeCommandSet",
+			"commandKinds": ["HORDE_TOGGLE_FORMATION"],
+			"sourceIni": "data/ini/commandbutton.ini",
+			"fields": {},
+		}]}}
+	}
+	var without_button := {
+		"presentation": {"ui": {"selectionCommands": [{
+			"slot": 1, "commandId": "Command_Stop", "commandKinds": ["STOP"], "fields": {},
+		}]}}
+	}
+	var toggle := sim._authored_formation_toggle(with_button)
+	_check(
+		"compiled_selection_surface_yields_the_toggle",
+		String(toggle.get("command_id", "")) == "Command_TowerGuardPorcupineFormation"
+			and String(toggle.get("source_ini", "")) == "data/ini/commandbutton.ini",
+		str(toggle)
+	)
+	_check(
+		"compiled_surface_without_the_button_yields_nothing",
+		sim._authored_formation_toggle(without_button).is_empty()
 	)
 
 
