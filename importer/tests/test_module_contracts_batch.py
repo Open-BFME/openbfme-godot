@@ -6435,3 +6435,48 @@ def test_typed_class_c_contracts_accept_every_effective_retail_site() -> None:
             "siegeCrewRows": 3, "siegeSpeedRows": 1,
         },
     }
+
+
+_UNCAPPED_PRODUCER = """
+Object FixtureObject
+  Behavior = ProductionUpdate ModuleTag_Production
+    GiveNoXP = Yes
+  End
+End
+"""
+
+# The ThrallMaster / BattleWagon shape, verbatim comment included.
+_CAPPED_PRODUCER = """
+Object FixtureObject
+  Behavior = ProductionUpdate ModuleTag_Production
+    GiveNoXP = Yes
+    MaxQueueEntries = 1 ; only allow one queued upgrade at a time
+  End
+End
+"""
+
+
+def test_production_update_max_queue_entries_is_authored_only() -> None:
+    """Q40. Absent MaxQueueEntries must not be emitted at all.
+
+    RETAIL ORACLE (rotwk 2.01 effective view, counted 2026-08-18):
+    ``MaxQueueEntries`` is authored on exactly TWO of 423 ``ProductionUpdate``
+    blocks --
+    ``data/ini/object/evilfaction/units/angmar/angmarthrallmaster.ini:587``
+    and
+    ``data/ini/object/goodfaction/units/dwarven/dwarvenbattlewagon.ini:492``,
+    both ``MaxQueueEntries = 1 ; only allow one queued upgrade at a time``.
+    Every other producer authors nothing, and absent means uncapped -- so the
+    compiled contract must leave the key out rather than carry a default the
+    runtime would read back as a real cap.
+    """
+
+    fields = compile_production_updates(
+        _lineage(_UNCAPPED_PRODUCER), "FixtureObject"
+    )[0]["fields"]
+    assert "MaxQueueEntries" not in fields
+
+    capped_fields = compile_production_updates(
+        _lineage(_CAPPED_PRODUCER), "FixtureObject"
+    )[0]["fields"]
+    assert capped_fields["MaxQueueEntries"]["value"] == 1

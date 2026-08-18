@@ -369,3 +369,83 @@ def test_unit_selection_commands_are_own_commandset_not_construct() -> None:
     assert construct_ids
     assert "Command_Stop" not in construct_ids
     assert all("Build" in command_id or "Construct" in command_id for command_id in construct_ids)
+
+
+# Shaped on the retail original, data/ini/commandbutton.ini:664
+# ``CommandButton Command_TowerGuardPorcupineFormation``:
+# ``Command = HORDE_TOGGLE_FORMATION``,
+# ``Options = TOGGLE_IMAGE_ON_FORMATION OK_FOR_MULTI_SELECT``,
+# ``ButtonImage = UCCommon_PorcupineFormation UCCommon_PorcupineFormationOff``,
+# paired TextLabel / DescriptLabel ids, and
+# ``UnitSpecificSound = TowerGuardVoiceWallFormation TowerGuardVoiceLineFormation``.
+_FORMATION_BUTTON = """CommandButton Command_TogglePorcupineFormation
+  Command = HORDE_TOGGLE_FORMATION
+  Options = TOGGLE_IMAGE_ON_FORMATION OK_FOR_MULTI_SELECT
+  ButtonImage = UCCommon_PorcupineFormation UCCommon_PorcupineFormationOff
+  TextLabel = CONTROLBAR:TogglePorcupineFormation CONTROLBAR:ToggleLineFormation
+  DescriptLabel = CONTROLBAR:ToolTipToggleTowerGuardLineToPorcupineFormation CONTROLBAR:ToolTipToggleTowerGuardPorcupineToLineFormation
+  UnitSpecificSound = TowerGuardVoiceWallFormation TowerGuardVoiceLineFormation
+End
+"""
+
+
+def _formation_documents() -> dict[str, bytes]:
+    """The remainder fixture plus one authored HORDE_TOGGLE_FORMATION button."""
+
+    documents = dict(_remainder_documents())
+    command_sets = documents["data/ini/commandset.ini"].decode("utf-8")
+    command_sets = command_sets.replace(
+        "  2 = Command_ToggleStance\nEnd\n",
+        "  2 = Command_ToggleStance\n  3 = Command_TogglePorcupineFormation\nEnd\n",
+    )
+    documents["data/ini/commandset.ini"] = command_sets.encode("utf-8")
+    documents["data/ini/commandbutton.ini"] = (
+        documents["data/ini/commandbutton.ini"] + _FORMATION_BUTTON.encode("utf-8")
+    )
+    return documents
+
+
+def test_formation_toggle_button_compiles_options_images_and_sounds() -> None:
+    """Q41. The two-image on/off pair, its Options and its sounds must survive.
+
+    Without ``Options`` the runtime cannot tell that the two ``ButtonImage``
+    ids are an on/off pair rather than a stance-style cycle, and without
+    ``UnitSpecificSound`` the toggle is mute. Both fields were dropped.
+    """
+
+    result = compile_playable_unit_descriptor(
+        "RemainderInfantryHorde", _formation_documents()
+    )
+    selection = result["presentation"]["ui"]["selectionCommands"]
+    formation = [
+        row for row in selection if "HORDE_TOGGLE_FORMATION" in row["commandKinds"]
+    ]
+    assert len(formation) == 1
+    fields = formation[0]["fields"]
+    # ButtonImage keeps its authored line verbatim (the stance button authors
+    # three ids the same way); the on/off pair is the two whitespace tokens.
+    assert fields["ButtonImage"] == [
+        "UCCommon_PorcupineFormation UCCommon_PorcupineFormationOff"
+    ]
+    assert fields["Options"] == ["TOGGLE_IMAGE_ON_FORMATION", "OK_FOR_MULTI_SELECT"]
+    assert fields["UnitSpecificSound"] == [
+        "TowerGuardVoiceWallFormation",
+        "TowerGuardVoiceLineFormation",
+    ]
+    assert fields["TextLabel"] == [
+        "CONTROLBAR:TogglePorcupineFormation",
+        "CONTROLBAR:ToggleLineFormation",
+    ]
+    assert formation[0]["sourceIni"] == "data/ini/commandbutton.ini"
+
+
+def test_units_without_a_formation_button_compile_none() -> None:
+    """A horde whose command set carries no formation button gets no row."""
+
+    result = compile_playable_unit_descriptor(
+        "RemainderInfantryHorde", _remainder_documents()
+    )
+    selection = result["presentation"]["ui"]["selectionCommands"]
+    assert not [
+        row for row in selection if "HORDE_TOGGLE_FORMATION" in row["commandKinds"]
+    ]

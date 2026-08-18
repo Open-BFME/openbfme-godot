@@ -121,6 +121,62 @@ func _run() -> void:
 	)
 	_check("completion_event_records_exit_route", _has_completed_exit_event(sim.events, barracks, 10))
 
+	# --- Q40: authored queue caps only -------------------------------------
+	# RETAIL ORACLE (rotwk 2.01 effective view, counted 2026-08-18):
+	# `MaxQueueEntries` appears on exactly TWO of 423 ProductionUpdate blocks,
+	# object/evilfaction/units/angmar/angmarthrallmaster.ini:587 and
+	# object/goodfaction/units/dwarven/dwarvenbattlewagon.ini:492, both
+	# `MaxQueueEntries = 1 ; only allow one queued upgrade at a time`.
+	# Absent = uncapped. We used to invent a cap of 5 and then invert the test
+	# so that an honest "no cap" contract read as "queue full".
+	var uncapped = _queue_fixture_sim({})
+	var accepted := 0
+	for _index in range(8):
+		if bool(uncapped.queue_unit(SimScript.PLAYER_TEAM, 50, SimScript.SOLDIER_HORDE_ID).get("ok", false)):
+			accepted += 1
+	_check(
+		"unauthored_queue_is_uncapped_not_five",
+		accepted == 8 and uncapped.production_queue_state(50).size() == 8,
+		"accepted=%d size=%d" % [accepted, uncapped.production_queue_state(50).size()]
+	)
+	# An empty ProductionUpdate contract (module present, no MaxQueueEntries)
+	# must still be uncapped — the old code read 0 as "full" and refused the
+	# first job outright.
+	var empty_contract = _queue_fixture_sim({"maximum_queue_entries": 0})
+	_check(
+		"empty_production_contract_still_accepts_jobs",
+		bool(empty_contract.queue_unit(SimScript.PLAYER_TEAM, 50, SimScript.SOLDIER_HORDE_ID).get("ok", false))
+			and bool(empty_contract.queue_unit(SimScript.PLAYER_TEAM, 50, SimScript.SOLDIER_HORDE_ID).get("ok", false))
+	)
+	# ThrallMaster / BattleWagon shape: authored 1 is honoured.
+	var capped = _queue_fixture_sim({"maximum_queue_entries": 1})
+	var capped_first: Dictionary = capped.queue_unit(SimScript.PLAYER_TEAM, 50, SimScript.SOLDIER_HORDE_ID)
+	var capped_second: Dictionary = capped.queue_unit(SimScript.PLAYER_TEAM, 50, SimScript.SOLDIER_HORDE_ID)
+	_check(
+		"authored_max_queue_entries_one_refuses_second",
+		bool(capped_first.get("ok", false))
+			and not bool(capped_second.get("ok", true))
+			and String(capped_second.get("reason", "")) == "queue-full",
+		str(capped_second)
+	)
+	# Builders own their own queues (porter.ini:226 DozerAIUpdate is a separate
+	# object): a construction order must not consume a structure's queue.
+	var builder_sim = _queue_fixture_sim({"maximum_queue_entries": 1})
+	builder_sim.entities[70] = {
+		"id": 70, "team": SimScript.PLAYER_TEAM, "health": 100,
+		"position": Vector2(6.0, 6.0), "is_builder": true,
+		"unit_type": "bfme2.object.gondor-porter", "state": "idle",
+		"formation_positions": [Vector3.ZERO], "member_count": 1,
+	}
+	var builder_ids: Array[int] = [70]
+	builder_sim.issue_construct(builder_ids, "farm", Vector2(14.0, 14.0))
+	_check(
+		"builder_construction_does_not_consume_a_structure_queue",
+		builder_sim.production_queue_state(50).is_empty()
+			and bool(builder_sim.queue_unit(SimScript.PLAYER_TEAM, 50, SimScript.SOLDIER_HORDE_ID).get("ok", false)),
+		str(builder_sim.production_queue_state(50))
+	)
+
 	# Load the HUD only after autoload initialization. AssetFactory references the
 	# ContentDB autoload and cannot safely form that dependency from the main
 	# script's compile-time preload graph.
@@ -192,6 +248,24 @@ func _run() -> void:
 			and hero_countdown != null and hero_countdown.visible
 			and hero_countdown.text == "12s",
 		"dial=%s countdown=%s" % [str(hero_dial), hero_countdown.text if hero_countdown != null else "null"]
+	)
+	# Nothing in the data caps a queue: retail authors MaxQueueEntries on two
+	# objects only, and the palantir art itself declares nine slots
+	# (window/controlbar.wnd ControlBar.wnd:ButtonQueue01..ButtonQueue09). The
+	# chip surface used to build exactly five and silently drop the rest.
+	var deep_queue: Array[Dictionary] = []
+	for index in range(12):
+		deep_queue.append({
+			"index": index,
+			"unit_type": SimScript.SOLDIER_HORDE_ID,
+			"progress": 0.0,
+			"active": index == 0,
+		})
+	hud.set_production_state([SimScript.SOLDIER_HORDE_ID], true, deep_queue.size(), deep_queue)
+	_check(
+		"queue_chips_render_every_entry_that_exists",
+		hud.production_queue_buttons.size() >= 12,
+		"chips=%d for %d entries" % [hud.production_queue_buttons.size(), deep_queue.size()]
 	)
 	hud.set_production_state([SimScript.SOLDIER_HORDE_ID], true, 0, [])
 	_check(
@@ -305,6 +379,38 @@ func _run() -> void:
 
 	print("RETAIL_PRODUCTION_QUEUE_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
+
+
+func _queue_fixture_sim(production_update: Dictionary):
+	## Bare producer with an explicit ProductionUpdate contract so the queue cap
+	## is the only variable. `{}` means the module authored no MaxQueueEntries.
+	var sim = SimScript.new()
+	sim.setup({}, {"unit_rules": _unit_rules(15, 40), "FIXTURE_COST": 0, "FIXTURE_BUILD": 10, "FIXTURE_CP": 0})
+	sim.ai_enabled = false
+	sim.base_loop_enabled = true
+	sim.entities.clear()
+	sim.structures.clear()
+	sim.team_resources[SimScript.PLAYER_TEAM] = 100000
+	sim._unit_production_rules[SimScript.SOLDIER_HORDE_ID] = {
+		"object_id": SimScript.SOLDIER_OBJECT_ID,
+		"category": "infantry",
+		"default_cost": 0,
+		"default_build_ticks": 10,
+		"default_command_points": 0,
+		"cost_rule": "FIXTURE_COST",
+		"build_ticks_rule": "FIXTURE_BUILD",
+		"command_points_rule": "FIXTURE_CP",
+		"producer_routes": [{"producer_kind": "barracks"}],
+	}
+	sim.structures[50] = {
+		"id": 50, "team": SimScript.PLAYER_TEAM, "health": 100,
+		"construction_progress": 1.0, "structure_kind": "barracks",
+		"position": Vector2.ZERO,
+		"production": [SimScript.SOLDIER_HORDE_ID],
+		"queue": [], "upgrade_queue": [], "completed_upgrades": [],
+		"production_update": production_update.duplicate(true),
+	}
+	return sim
 
 
 func _unit_rules(member_count: int, member_damage: int) -> Dictionary:
