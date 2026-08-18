@@ -1,8 +1,8 @@
 ﻿{
     "schema":  "openbfme.build-info",
     "schemaVersion":  1,
-    "version":  "0.2.2",
-    "build":  "205",
-    "commit":  "50a57dc",
-    "generatedUtc":  "2026-08-12T14:10:12Z"
+    "version":  "0.2.4",
+    "build":  "363",
+    "commit":  "328f2fe",
+    "generatedUtc":  "2026-08-18T10:24:06Z"
 }
