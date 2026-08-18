@@ -1,7 +1,7 @@
 # Q26 — admit retail's untriggered SubObjectsUpgrade
 
 Date: 2026-08-18 · Owner: grok-q26 · Brief: orchestration/briefs/q26-subobjectsupgrade-untriggered-grok.md
-Baseline HEAD: `bc206d044b0e383b888ffa45a620958e7d7f814e` · Final HEAD: (queue/report commit on top of `2e16cde`)
+Baseline HEAD: `bc206d044b0e383b888ffa45a620958e7d7f814e` · Final HEAD: `00ed7591b911476f3644e98f4964f6d5d1dacce0`
 Selected pack(s) used for every Godot measurement: none — this lane did not run Godot and did not change selection.
 
 ## Result (one paragraph)
@@ -12,7 +12,7 @@ Implemented; awaiting verify. `compile_sub_objects_upgrades` now admits a SubObj
 
 - `b72b024077b01f8208debdc3bd08161cfe72e305` — `fix(importer): admit retail untriggered SubObjectsUpgrade`
 - `2e16cde11073f53b8c9696b2f25eee96defbc3af` — `test(importer): cover untriggered SubObjectsUpgrade and NoldorWarrior`
-- (this commit) — `chore(queue): close Q26, file Q27 over-strictness cluster`
+- `00ed7591b911476f3644e98f4964f6d5d1dacce0` — `chore(queue): close Q26, file Q27 over-strictness cluster`
 
 ## Design choices
 
