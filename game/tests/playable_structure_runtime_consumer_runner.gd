@@ -72,6 +72,60 @@ func _run() -> void:
 	)
 	_check(static_error == "", "static construction passes the RetailStructure v1 contract: %s" % static_error)
 
+	# Exact objects.json shape that blocked v0.2.4 skirmish start: construction
+	# facts ABSENT (the shipped key is missing, not JSON-null), phase-0 still
+	# manual-progress. The presenter must accept that (no invented construction
+	# fact, no SCRIPT ERROR on facts["construction"]) while a real construction
+	# Dictionary that disagrees with phase-0 still fails — both polarities.
+	var absent_lifecycle := _legacy_objects_json_lifecycle("absent")
+	var absent_error: String = structure_script.validate_lifecycle_contract(
+		absent_lifecycle, "fortress", "", 3000, "bfme2.object.men-fortress"
+	)
+	_check(
+		absent_error == "",
+		"objects.json construction-absent + phase-0 manual-progress validates: %s" % absent_error
+	)
+	var null_lifecycle := _legacy_objects_json_lifecycle("null")
+	var null_error: String = structure_script.validate_lifecycle_contract(
+		null_lifecycle, "fortress", "", 3000, "bfme2.object.men-fortress"
+	)
+	_check(
+		null_error == "",
+		"objects.json construction-explicit-null + phase-0 manual-progress validates: %s" % null_error
+	)
+	var disagree_none_lifecycle := _legacy_objects_json_lifecycle("disagree_none")
+	var disagree_none_error: String = structure_script.validate_lifecycle_contract(
+		disagree_none_lifecycle, "fortress", "", 3000, "bfme2.object.men-fortress"
+	)
+	_check(
+		disagree_none_error == "buildingLifecycle construction facts and phase animation disagree",
+		"NONE facts vs manual-progress phase still fails: %s" % disagree_none_error
+	)
+	var disagree_manual_lifecycle := _legacy_objects_json_lifecycle("disagree_manual")
+	var disagree_manual_error: String = structure_script.validate_lifecycle_contract(
+		disagree_manual_lifecycle, "fortress", "", 3000, "bfme2.object.men-fortress"
+	)
+	_check(
+		disagree_manual_error == "buildingLifecycle construction facts and phase animation disagree",
+		"MANUAL facts vs phase-0 none still fails: %s" % disagree_manual_error
+	)
+	var shipped_lifecycle := _load_shipped_men_fortress_lifecycle()
+	_check(not shipped_lifecycle.is_empty(), "shipped objects.json men-fortress document loads")
+	if not shipped_lifecycle.is_empty():
+		var shipped_facts: Dictionary = shipped_lifecycle.get("simulationFacts", {}) as Dictionary
+		print(
+			"MEN_FORTRESS_FACTS has_construction=%s keys=%s"
+			% [str(shipped_facts.has("construction")), str(shipped_facts.keys())]
+		)
+		var shipped_error: String = structure_script.validate_lifecycle_contract(
+			shipped_lifecycle, "fortress", "", 0, "bfme2.object.men-fortress"
+		)
+		print("MEN_FORTRESS_CONTRACT result=%s" % (shipped_error if shipped_error != "" else "<empty>"))
+		_check(
+			shipped_error == "",
+			"shipped objects.json men-fortress contract: %s" % shipped_error
+		)
+
 	# Reduced chains: no authored damage thresholds and a never-constructed
 	# composite must load and pass the presenter contract too.
 	var reduced := _fixture_document("ReducedPen", "reducedpen", "fixturemonsterpen", 3000, false, false)
@@ -1029,6 +1083,101 @@ func _fixture_unit_document(object_id: String, producer_object_id: String, damag
 			"unsupportedCapabilities": [],
 		},
 	}
+
+
+func _legacy_objects_json_lifecycle(construction_mode: String) -> Dictionary:
+	## Synthetic copy of the shipped objects.json men-fortress shape: a
+	## non-composed Men lifecycle whose simulationFacts.construction is absent
+	## while phases[0] is still construction / manual-progress.
+	## construction_mode:
+	##   absent          — shipped shape (key missing, not JSON-null)
+	##   null            — present-but-null (different GDScript path)
+	##   disagree_none   — NONE facts vs manual-progress phase
+	##   disagree_manual — MANUAL facts vs phase-0 mode:none (34e6cfa polarity)
+	var document := _fixture_document("MenFortress", "menfortress")
+	var lifecycle: Dictionary = _lifecycle_of(document).duplicate(true)
+	lifecycle["objectId"] = "bfme2.object.men-fortress"
+	lifecycle.erase("evidenceProfile")
+	var facts: Dictionary = lifecycle.get("simulationFacts", {}) as Dictionary
+	facts.erase("construction")
+	facts["collapse"] = {
+		"module": "StructureCollapseUpdate",
+		"destroyObjectWhenDone": true,
+		"sourceObject": "MenFortress",
+		"exactTotalTimingStatus": "blocked-on-bfme2-runtime-oracle",
+		"minCollapseDelayMilliseconds": 0,
+		"maxCollapseDelayMilliseconds": 0,
+		"minBurstDelayMilliseconds": 0,
+		"maxBurstDelayMilliseconds": 0,
+		"bigBurstFrequency": 0,
+		"collapseHeight": 0,
+		"collapseDamping": 0.0,
+		"maxShudder": 0.0,
+		"fxLists": {"collapse": "FX_MenFortressCollapse"},
+	}
+	var effects: Dictionary = lifecycle.get("effects", {}) as Dictionary
+	effects["enteringStateFx"] = {
+		"collapsing": "FX_Collapsing",
+		"damaged": "FX_Damaged",
+		"really-damaged": "FX_ReallyDamaged",
+	}
+	effects["collapseUpdateFx"] = {"initial": "FX_CollapseInitial"}
+	var phases: Array = lifecycle.get("phases", []) as Array
+	match construction_mode:
+		"null":
+			facts["construction"] = null
+		"disagree_none":
+			facts["construction"] = {
+				"buildTimeSeconds": 30.0,
+				"animationMode": "NONE",
+				"animation": null,
+			}
+		"disagree_manual":
+			facts["construction"] = {
+				"buildTimeSeconds": 30.0,
+				"animationMode": "MANUAL",
+				"animation": "gbfortress_abl",
+			}
+			if not phases.is_empty() and typeof(phases[0]) == TYPE_DICTIONARY:
+				var phase0_animation: Dictionary = (phases[0] as Dictionary).get("animation", {}) as Dictionary
+				phase0_animation["mode"] = "none"
+				phase0_animation["clip"] = null
+		_:
+			pass
+	return lifecycle
+
+
+func _load_shipped_men_fortress_lifecycle() -> Dictionary:
+	## External oracle: the live selection's shipped objects.json, not a fixture.
+	var content_root := OS.get_environment("OPENBFME_CONTENT").strip_edges()
+	if content_root == "":
+		push_error("PLAYABLE_STRUCTURE_RUNTIME_CONSUMER_FAIL OPENBFME_CONTENT unset")
+		return {}
+	var objects_path := content_root.path_join(
+		"bfme2-men-vslice/7de517bf146582f10741750b50d63f9955c42d1fe2aa13200757fc6fb29f217a/data/objects.json"
+	)
+	if not FileAccess.file_exists(objects_path):
+		push_error("PLAYABLE_STRUCTURE_RUNTIME_CONSUMER_FAIL missing %s" % objects_path)
+		return {}
+	var file := FileAccess.open(objects_path, FileAccess.READ)
+	if file == null:
+		push_error("PLAYABLE_STRUCTURE_RUNTIME_CONSUMER_FAIL unreadable %s" % objects_path)
+		return {}
+	var parsed: Variant = JSON.parse_string(file.get_as_text())
+	if typeof(parsed) != TYPE_DICTIONARY:
+		return {}
+	var objects: Variant = (parsed as Dictionary).get("objects")
+	if typeof(objects) != TYPE_ARRAY:
+		return {}
+	for row_value in objects as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			continue
+		var row: Dictionary = row_value
+		if String(row.get("id", "")) != "bfme2.object.men-fortress":
+			continue
+		var presentation: Dictionary = row.get("presentation", {}) as Dictionary
+		return presentation.get("buildingLifecycle", {}) as Dictionary
+	return {}
 
 
 func _lifecycle_of(document: Dictionary) -> Dictionary:

@@ -59,3 +59,10 @@ never stood up.
    retail_member_combat_runner 115/0, lockstep determinism 5/0; state pin
    unchanged; hygiene PASS; pack addresses PASS; git status clean.
 4. Report orchestration/reports/play-smoke-harness.md.
+
+## HOTFIX v0.2.4.1 note (2026-08-18)
+
+`game/tests/slice_start_roster_presentation_runner.gd` is the menu-path
+skirmish / Fords roster presentation gate (the hole v0.2.4 walked through).
+Wire it into `-Quick` when that list exists; it does not yet. Added to the
+repo-root `tools/gate-m2-focused.ps1` instead.

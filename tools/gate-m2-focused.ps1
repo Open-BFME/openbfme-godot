@@ -65,6 +65,13 @@ $focusedRunners = [ordered]@{
     'road_visual_runtime' = @('retail_road_visual_runner.gd', '(?m)^RETAIL_ROAD_VISUAL_RESULT passed=27 failed=0\s*$')
     'structure_damage_runtime' = @('retail_structure_damage_effects_runner.gd', '(?m)^RETAIL_STRUCTURE_DAMAGE_EFFECTS_RESULT passed=105 failed=0\s*$')
     'structure_lifecycle_runtime' = @('retail_structure_lifecycle_runner.gd', '(?m)^RETAIL_STRUCTURE_LIFECYCLE_RESULT passed=136 failed=0\s*$')
+    # 2026-08-18 v0.2.4.1 r2: RotWK skirmish (rotwk.map.adorn-river) + BFME2
+    # Fords roster presentation. Debug Godot fails OPEN on the unguarded
+    # construction key (stderr only); $forbiddenDiagnostics already greps
+    # SCRIPT ERROR / Invalid access on the merged 2>&1 log. Re-pinned 12 -> 22:
+    # distinct maps, ready_ok first, live a0fde4ac digest, real men-fortress
+    # contract print. Pre-fix stderr baseline: 11 in q14fin-retail_slice_runner.err.
+    'slice_start_roster_presentation' = @('slice_start_roster_presentation_runner.gd', '(?m)^SLICE_START_ROSTER_RESULT passed=22 failed=0\s*$')
 }
 
 try {
