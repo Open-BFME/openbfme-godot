@@ -64,6 +64,10 @@ const PowersOrbScript = preload("res://src/retail_slice/retail_powers_orb.gd")
 const StageScript = preload("res://src/retail_slice/retail_hud_stage.gd")
 const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 var last_selection_command_ids: PackedStringArray = PackedStringArray()
+## The selection's authored HORDE_TOGGLE_FORMATION CommandButton row, or {}
+## when its command set carries none. Drives both the formation button's
+## visibility and its two-image TOGGLE_IMAGE_ON_FORMATION swap.
+var _selection_formation_command: Dictionary = {}
 const RETAIL_TOOLTIP_HOVER_DELAY := 0.4
 const RETAIL_TRAIN_ICON_ID := "BGBarracks_Soldiers"
 const RETAIL_TRAIN_LABEL_ID := "CONTROLBAR:ConstructGondorFighterHorde"
@@ -200,6 +204,17 @@ const WORLD_RADIAL_STAGE_RADIUS := 39.0
 const RETAIL_QUEUE_CHIP_ORIGIN := Vector2(432, 56)
 const RETAIL_QUEUE_CHIP_SIZE := Vector2(36, 36)
 const RETAIL_QUEUE_CHIP_PITCH := 40.0
+## Chips built up front. Retail's palantir queue art is NINE slots
+## (window/controlbar.wnd declares ControlBar.wnd:ButtonQueue01 ..
+## ButtonQueue09 inside ControlBar.wnd:ProductionQueueWindow), but our chip
+## column at RETAIL_QUEUE_CHIP_ORIGIN/PITCH only fits five inside the command
+## panel — nine overflow it (retail_radial_layout_runner
+## `queue_chips_stay_inside_the_command_panel`). Widening the column to the
+## authored nine is the HUD layout lane's geometry change, not this one's.
+## What IS fixed here: the count was a hard cap that silently dropped entries
+## 6+ of an uncapped queue (Q40 — retail authors MaxQueueEntries on only two
+## objects), so the column now grows to whatever the producer actually holds.
+const RETAIL_QUEUE_CHIP_PREBUILT_SLOTS := 5
 const RETAIL_POWER_IMAGE_IDS := [
 	"SBGood_RallyingCall", "SBGood_Heal", "SBGood_MenLoneTower", "SBGood_ElvenWood",
 	"SBGood_ArrowVolley", "SBGood_TomBombadil", "SBGood_SummonHobbits", "SBGood_SummonDunedain",
@@ -344,12 +359,22 @@ const RETAIL_UNIT_ACTION_SPECS := [
 		"tooltip_id": "CONTROLBAR:ToolTipToggleStanceHoldGround",
 		"preferred_slot": 0,
 	},
+	# The formation button has NO generic spec: it is authored per command set.
+	# Its art, strings and sounds come from the selection's own
+	# HORDE_TOGGLE_FORMATION CommandButton (see `formation_toggle_command`), so
+	# the socket is created with empty ids and filled in from the pack.
 	{
 		"action_id": "formation",
 		"button_name": "Formation",
-		"image_id": "UCCommon_PorcupineFormation",
-		"label_id": "CONTROLBAR:ToggleBlockFormation",
-		"tooltip_id": "CONTROLBAR:ToolTipToggleGFighterLineToBlockFormation",
+		"image_id": "",
+		"label_id": "",
+		"tooltip_id": "",
+		# Per-selection art, recorded so the bind validator does not read the
+		# empty ids as a missing icon: retail authors the formation toggle on
+		# the unit's own CommandSet (commandbutton.ini:196 / :664), each with
+		# its OWN two-image ButtonImage pair, so there is no global icon to
+		# validate here. `set_active_formation` binds the selection's pair.
+		"authored_fallback": true,
 	},
 	{"action_id": "construct_farm", "button_name": "BuildFarm", "image_id": "BCFarm", "label_id": "CONTROLBAR:ConstructMenFarm", "tooltip_id": "CONTROLBAR:ToolTipConstructMenFarm"},
 	{"action_id": "construct_barracks", "button_name": "BuildBarracks", "image_id": "BGBarracks", "label_id": "CONTROLBAR:ConstructMenBarracks", "tooltip_id": "CONTROLBAR:ToolTipConstructMenBarracks"},
@@ -379,20 +404,17 @@ const STANCE_UI := {
 		"fallback_label": "Aggressive",
 	},
 }
-const FORMATION_UI := {
-	"Line": {
-		"image_id": "UCCommon_PorcupineFormation",
-		"label_id": "CONTROLBAR:ToggleBlockFormation",
-		"tooltip_id": "CONTROLBAR:ToolTipToggleGFighterLineToBlockFormation",
-		"fallback_label": "Line formation",
-	},
-	"Block": {
-		"image_id": "UCCommon_PorcupineFormation",
-		"label_id": "CONTROLBAR:ToggleBlockFormation",
-		"tooltip_id": "CONTROLBAR:ToolTipToggleGFighterLineToBlockFormation",
-		"fallback_label": "Block formation",
-	},
-}
+## Retail's formation toggle is authored per command set, never global.
+## commandbutton.ini:196 Command_ToggleFormationGondorFighter and :664
+## Command_TowerGuardPorcupineFormation both carry
+## `Options = TOGGLE_IMAGE_ON_FORMATION OK_FOR_MULTI_SELECT` and a TWO-image
+## `ButtonImage` (`UCSoldier_ShieldWall UCSoldier_ShieldWallOff`,
+## `UCCommon_PorcupineFormation UCCommon_PorcupineFormationOff`), plus paired
+## TextLabel/DescriptLabel ids and a paired UnitSpecificSound. Only 13 command
+## sets reference such a button at all. There is no invented "Line formation"
+## table any more: index 0 is the ON art/strings, index 1 the OFF art/strings.
+const FORMATION_COMMAND_KIND := "HORDE_TOGGLE_FORMATION"
+const FORMATION_TOGGLE_IMAGE_OPTION := "TOGGLE_IMAGE_ON_FORMATION"
 const RETAIL_MEMBER_TO_HORDE := {
 	"bfme2.object.gondor-fighter": "bfme2.object.gondor-fighter-horde",
 	"bfme2.object.gondor-tower-guard": "bfme2.object.gondor-tower-guard",
@@ -1422,11 +1444,12 @@ func set_unit_selection_state(selected_ids: Array[int], entities: Dictionary, cu
 			break
 	_update_hero_ability_buttons(selected_ids, entities, current_tick)
 	last_selection_command_ids = PackedStringArray()
+	_selection_formation_command = {}
 	if has_units:
 		var first_for_commands: Dictionary = entities.get(selected_ids[0], {}) as Dictionary
-		last_selection_command_ids = selected_unit_command_ids(
-			_playable_document_for_unit_row(first_for_commands)
-		)
+		var selection_document := _playable_document_for_unit_row(first_for_commands)
+		last_selection_command_ids = selected_unit_command_ids(selection_document)
+		_selection_formation_command = formation_toggle_command(selection_document)
 		for train_button_value in train_buttons.values():
 			(train_button_value as Button).visible = false
 	for button_value in unit_action_buttons.values():
@@ -1439,6 +1462,11 @@ func set_unit_selection_state(selected_ids: Array[int], entities: Dictionary, cu
 			# Retail: the porter's builds live ONLY on the right-edge side
 			# command bar (REF-29/32); the palantir sockets keep his orders.
 			button.visible = false
+		elif action_id == "formation":
+			# Authored per command set, never global: only the 13 command sets
+			# that reference a HORDE_TOGGLE_FORMATION CommandButton show it.
+			# A Gondor archer horde has none and must show nothing.
+			button.visible = has_units and not _selection_formation_command.is_empty()
 		elif last_selection_command_ids.size() > 0:
 			button.visible = has_units and _action_in_unit_command_set(action_id, last_selection_command_ids)
 		elif action_id == "stop" or action_id == "stance":
@@ -1495,8 +1523,10 @@ func _action_in_unit_command_set(action_id: String, command_ids: PackedStringArr
 			return true
 		if action_id == "stance" and folded.contains("stance"):
 			return true
-		if action_id == "formation" and folded.contains("formation"):
-			return true
+		# "formation" is deliberately absent: it is matched by the button's
+		# authored Command = HORDE_TOGGLE_FORMATION, not by a substring of the
+		# command id. The old fold also matched Command_ToggleFormation* rows
+		# on units that never carry the button.
 	return false
 
 
@@ -1890,10 +1920,13 @@ func _sync_queue_button_dial(queue_button: Button, row: Dictionary) -> void:
 ## palantir dish; clicking a queued item cancels it (retail behavior). Extracted
 ## from the parity chrome bind so the chip surface can be exercised without a
 ## full pack bind (runner coverage for the training dial/countdown).
-func _ensure_production_queue_chips() -> void:
-	if command_grid == null or not production_queue_buttons.is_empty():
+func _ensure_production_queue_chips(minimum_slots: int = RETAIL_QUEUE_CHIP_PREBUILT_SLOTS) -> void:
+	if command_grid == null:
 		return
-	for index in 5:
+	var wanted := maxi(RETAIL_QUEUE_CHIP_PREBUILT_SLOTS, minimum_slots)
+	if production_queue_buttons.size() >= wanted:
+		return
+	for index in range(production_queue_buttons.size(), wanted):
 		var queue_button := Button.new()
 		queue_button.name = "QueueSlot%d" % index
 		queue_button.position = RETAIL_QUEUE_CHIP_ORIGIN + Vector2(0.0, float(index) * RETAIL_QUEUE_CHIP_PITCH)
@@ -1910,6 +1943,12 @@ func _ensure_production_queue_chips() -> void:
 
 
 func _update_production_queue(queue_state: Array, producer_selected: bool) -> void:
+	# Render however many entries the producer actually holds. The nine
+	# authored ButtonQueue slots are the floor, not a cap: nothing in the data
+	# limits a queue to nine, so a longer one grows chips down the same
+	# authored pitch instead of being silently truncated.
+	if producer_selected and queue_state.size() > production_queue_buttons.size():
+		_ensure_production_queue_chips(queue_state.size())
 	for index in production_queue_buttons.size():
 		var queue_button := production_queue_buttons[index]
 		if not producer_selected or index >= queue_state.size():
@@ -1987,25 +2026,81 @@ func set_active_stance(stance: String) -> void:
 	button.tooltip_text = "%s\nCurrent: %s (click to cycle)" % [source_label, key]
 
 
+func formation_toggle_command(document: Dictionary) -> Dictionary:
+	## The selection's authored HORDE_TOGGLE_FORMATION row, or {} when its
+	## command set carries none (commandbutton.ini / commandset.ini).
+	for row_value in PlayableUnitAdapter.selection_commands(document):
+		var row: Dictionary = row_value as Dictionary
+		for kind_value in row.get("commandKinds", []) as Array:
+			if String(kind_value).strip_edges().to_upper() == FORMATION_COMMAND_KIND:
+				return row
+	return {}
+
+
 func set_active_formation(formation: String) -> void:
+	## `TOGGLE_IMAGE_ON_FORMATION` swaps the button between the two authored
+	## ButtonImage ids: index 0 while the horde IS in its formation, index 1
+	## (the `...Off` art) while it is not.
 	var button := unit_action_buttons.get("formation") as Button
 	if button == null:
 		return
-	var key := formation if FORMATION_UI.has(formation) else "Line"
-	if String(button.get_meta("active_formation", "")) == key:
+	var command := _selection_formation_command
+	if command.is_empty():
 		return
-	button.set_meta("active_formation", key)
-	var ui: Dictionary = FORMATION_UI[key] as Dictionary
-	var fallback := String(ui.get("fallback_label", key))
+	var in_formation := formation != "Line"
+	if bool(button.get_meta("formation_active", false)) == in_formation \
+			and String(button.get_meta("formation_command_id", "")) == String(command.get("commandId", "")):
+		return
+	button.set_meta("formation_active", in_formation)
+	button.set_meta("formation_command_id", String(command.get("commandId", "")))
+	var fields: Dictionary = command.get("fields", {}) as Dictionary
+	# ButtonImage keeps its authored line verbatim, so the on/off pair is the
+	# two whitespace tokens of `UCCommon_PorcupineFormation
+	# UCCommon_PorcupineFormationOff` (commandbutton.ini:667).
+	var images := _authored_tokens(fields.get("ButtonImage", []) as Array)
+	var labels := _authored_tokens(fields.get("TextLabel", []) as Array)
+	var tooltips := _authored_tokens(fields.get("DescriptLabel", []) as Array)
+	var slot := 0 if in_formation else 1
+	if not _formation_toggles_image(command):
+		# No TOGGLE_IMAGE_ON_FORMATION option authored: retail keeps one image.
+		slot = 0
+	var image_id := _authored_slot(images, slot)
+	var label_id := _authored_slot(labels, slot)
+	# Recorded so the swap is observable without a bound pack (runner coverage).
+	button.set_meta("formation_image_id", image_id)
+	button.set_meta("formation_label_id", label_id)
 	_rebind_order_action_button(
 		button,
-		String(ui.get("image_id", "")),
-		String(ui.get("label_id", "")),
-		String(ui.get("tooltip_id", "")),
-		fallback
+		image_id,
+		label_id,
+		_authored_slot(tooltips, slot),
+		String(command.get("commandId", ""))
 	)
-	var source_label := String(button.get_meta("retail_label", fallback))
-	button.tooltip_text = "%s\nCurrent: %s (click to cycle)" % [source_label, key]
+
+
+func _authored_slot(tokens: PackedStringArray, slot: int) -> String:
+	if tokens.size() > slot:
+		return String(tokens[slot])
+	return String(tokens[0]) if not tokens.is_empty() else ""
+
+
+func _authored_tokens(values: Array) -> PackedStringArray:
+	var tokens: PackedStringArray = PackedStringArray()
+	for value in values:
+		# Retail separates paired ids with spaces OR tabs.
+		for token in String(value).replace("\t", " ").split(" ", false):
+			var trimmed := String(token).strip_edges()
+			if trimmed != "":
+				tokens.append(trimmed)
+	return tokens
+
+
+func _formation_toggles_image(command: Dictionary) -> bool:
+	for option_value in (command.get("fields", {}) as Dictionary).get("Options", []) as Array:
+		for token in String(option_value).split(" ", false):
+			if String(token).strip_edges().to_upper() == FORMATION_TOGGLE_IMAGE_OPTION:
+				return true
+	return false
 
 
 func _rebind_order_action_button(
@@ -2435,9 +2530,11 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 		var first_unit := String(_retail_command_specs[0]["unit_id"])
 		_retail_train_label = String(_retail_train_labels.get(first_unit, ""))
 		retail_train_icon_aspect_ratio = float(train_button.get_meta("retail_icon_aspect_ratio", 0.0))
-	# Seed stance/formation icons to their default retail art after pack bind.
+	# Seed the stance icon to its default retail art after pack bind. The
+	# formation button has no default art to seed: it binds from the
+	# selection's own authored CommandButton and stays hidden until a horde
+	# whose command set carries one is selected.
 	set_active_stance("Battle")
-	set_active_formation("Line")
 	return "" if retail_presentation_bound else "Private retail HUD failed to apply its validated presentation atomically."
 
 

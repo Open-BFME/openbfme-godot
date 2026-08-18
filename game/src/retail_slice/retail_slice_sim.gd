@@ -3347,6 +3347,9 @@ func _configure_playable_unit_runtime_contracts() -> void:
 			if command_set_id != "" and not authored_command_sets.has(command_set_id): authored_command_sets.append(command_set_id)
 		if authored_command_sets.size() == 1:
 			unit_rule["default_command_set_id"] = authored_command_sets[0]
+		var authored_formation_toggle := _authored_formation_toggle(document_value as Dictionary)
+		if not authored_formation_toggle.is_empty():
+			unit_rule["formation_toggle"] = authored_formation_toggle
 		var producers: Array = simulation.get("producers", [])
 		if producers.is_empty():
 			configuration_error = "Playable-unit runtime '%s' has no producer" % object_id
@@ -4712,6 +4715,11 @@ func _add_battalion(
 	]:
 		if unit_rule.has(crush_float_key):
 			entities[id][crush_float_key] = float(unit_rule[crush_float_key])
+	if typeof(unit_rule.get("formation_toggle")) == TYPE_DICTIONARY and not (unit_rule.get("formation_toggle") as Dictionary).is_empty():
+		# Absent unless the unit's own CommandSet authored a
+		# HORDE_TOGGLE_FORMATION button (commandbutton.ini). A unit with no
+		# such button gets no key, and cannot be put into a formation.
+		entities[id]["formation_toggle"] = (unit_rule.get("formation_toggle") as Dictionary).duplicate(true)
 	if unit_rule.has("flanking_bonus"):
 		entities[id]["flanking_bonus"] = float(unit_rule["flanking_bonus"])
 	if unit_rule.has("wait_for_formation"):
@@ -13349,6 +13357,27 @@ func expansion_kind_for_object_id(object_id: String) -> String:
 	return ""
 
 
+func producer_queue_limit(producer_row: Dictionary) -> int:
+	## Authored `ProductionUpdate MaxQueueEntries`, or 0 for UNCAPPED.
+	##
+	## RETAIL ORACLE (rotwk 2.01 effective view, counted 2026-08-18): retail
+	## authors MaxQueueEntries on exactly TWO of 423 ProductionUpdate blocks --
+	## object/evilfaction/units/angmar/angmarthrallmaster.ini:587 and
+	## object/goodfaction/units/dwarven/dwarvenbattlewagon.ini:492, both
+	## `MaxQueueEntries = 1 ; only allow one queued upgrade at a time`. Every
+	## other producer authors nothing, and absent means the engine imposes no
+	## limit. Our old code invented a default of 5 (retail_vertical_slice.gd
+	## `maximum_queue`) AND inverted the test: `maximum_queue <= 0` was read as
+	## "queue full", so a producer whose contract honestly carried no cap was
+	## refused outright. Both are gone: 0/absent is uncapped.
+	##
+	## Both authored caps read "only allow one queued upgrade at a time", i.e.
+	## retail counts upgrades in the same ProductionUpdate queue. We still hold
+	## structure upgrades in a separate `upgrade_queue` (one at a time by its
+	## own rule); merging the two lists is a named open gap, not done here.
+	return maxi(0, int((producer_row.get("production_update", {}) as Dictionary).get("maximum_queue_entries", 0)))
+
+
 func queue_unit(team: int, producer: int, unit_type: String = SOLDIER_HORDE_ID) -> Dictionary:
 	if not base_loop_enabled or winner != -1:
 		return {"ok": false, "reason": "match-unavailable"}
@@ -13386,8 +13415,8 @@ func queue_unit(team: int, producer: int, unit_type: String = SOLDIER_HORDE_ID) 
 	if not exit_contract.is_empty() and not bool(exit_contract.get("executable",false)):
 		return {"ok":false,"reason":"invalid-production-exit-contract"}
 	var queue: Array = building.get("queue", [])
-	var maximum_queue := int((building.get("production_update", {}) as Dictionary).get("maximum_queue_entries", _rules.get("maximum_queue", 5)))
-	if maximum_queue <= 0 or queue.size() >= maximum_queue:
+	var maximum_queue := producer_queue_limit(building)
+	if maximum_queue > 0 and queue.size() >= maximum_queue:
 		return {"ok": false, "reason": "queue-full"}
 	var cost := maxi(0, _production_rule_value(unit_type, "cost_rule", "default_cost"))
 	# Zero command points is honored when the document says zero (retail
@@ -13812,6 +13841,58 @@ func issue_set_stance(ids: Array[int], stance: String, team: int = PLAYER_TEAM) 
 	return accepted_ids.size()
 
 
+func _authored_formation_toggle(document: Dictionary) -> Dictionary:
+	## The unit's own HORDE_TOGGLE_FORMATION button, read off the compiled
+	## selection surface so the sim gate and the palantir gate answer from the
+	## SAME authored data (commandbutton.ini / commandset.ini).
+	##
+	## `modifier` stays empty for now: the FORMATION ModifierList
+	## (attributemodifier.ini:756-806) reaches the runtime through the
+	## AlternateFormation ChildObject's HordeContain `AttributeModifiers`, which
+	## the importer does not yet compile onto the unit descriptor. Until it
+	## does, the toggle is admitted and applies NO modifier -- a named gap, not
+	## an invented effect.
+	for selection_value in PlayableUnitAdapter.selection_commands(document):
+		var selection := selection_value as Dictionary
+		for kind_value in selection.get("commandKinds", []) as Array:
+			if String(kind_value).strip_edges().to_upper() != "HORDE_TOGGLE_FORMATION":
+				continue
+			return {
+				"command_id": String(selection.get("commandId", "")),
+				"command_set_id": String(selection.get("commandSetId", "")),
+				"source_ini": String(selection.get("sourceIni", "")),
+				"modifier": {},
+			}
+	return {}
+
+
+func horde_formation_toggle(row: Dictionary) -> Dictionary:
+	## The unit's authored HORDE_TOGGLE_FORMATION button, or {} when its command
+	## set carries none.
+	##
+	## RETAIL ORACLE: a formation toggle is authored per command set, not given
+	## to every unit. data/ini/commandbutton.ini declares 18 live
+	## HORDE_TOGGLE_FORMATION buttons (Command_TowerGuardPorcupineFormation
+	## :664, Command_ToggleFormationGondorFighter :196, Rohan :676, Isengard
+	## pikeman :690, Mithlond :702, Dwarven :714, Wild :726, Mordor Easterling
+	## :738, Angmar :9678, ...), each with
+	## `Options = TOGGLE_IMAGE_ON_FORMATION OK_FOR_MULTI_SELECT` and a TWO-image
+	## ButtonImage; only 13 command sets reference one. A Gondor archer horde
+	## has no such button and cannot be put into a formation at all.
+	return row.get("formation_toggle", {}) as Dictionary
+
+
+func _formation_order_admitted(row: Dictionary) -> bool:
+	if not horde_formation_toggle(row).is_empty():
+		return true
+	# LEGACY FIXTURE CARVE-OUT, deliberate and narrow: synthetic runner rows
+	# that predate the compiled command surface carry no module contracts and
+	# no authored toggle, and the determinism pins script a formation order on
+	# exactly such a row. Descriptor-backed rows -- everything a real pack
+	# produces -- are held to the authored data.
+	return not row.has("module_contracts") and not row.has("command_surface")
+
+
 func issue_toggle_formation(ids: Array[int], team: int = PLAYER_TEAM) -> int:
 	var accepted_ids: Array[int] = []
 	for id in ids:
@@ -13819,6 +13900,8 @@ func issue_toggle_formation(ids: Array[int], team: int = PLAYER_TEAM) -> int:
 			continue
 		var row: Dictionary = entities[id]
 		if bool(row.get("is_builder", false)):
+			continue
+		if not _formation_order_admitted(row):
 			continue
 		var index := FORMATION_ORDER.find(String(row.get("formation_mode", "Line")))
 		var next_mode := FORMATION_ORDER[posmod(index + 1, FORMATION_ORDER.size())]
@@ -13846,6 +13929,8 @@ func issue_set_formation(ids: Array[int], formation: String, team: int = PLAYER_
 		var row: Dictionary = entities[id]
 		if bool(row.get("is_builder", false)):
 			continue
+		if not _formation_order_admitted(row):
+			continue
 		row["formation_mode"] = formation
 		_apply_formation_mode(row)
 		accepted_ids.append(id)
@@ -13855,7 +13940,55 @@ func issue_set_formation(ids: Array[int], formation: String, team: int = PLAYER_
 	return accepted_ids.size()
 
 
+const FORMATION_MODIFIER_KEY := "formation"
+
+
+func _apply_formation_attribute_modifier(row: Dictionary) -> void:
+	## RETAIL ORACLE: the toggle swaps the horde to its authored
+	## `AlternateFormation` ChildObject, whose HordeContain carries
+	## `AttributeModifiers = <ModifierList>` and `IsPorcupineFormation = Yes`
+	## (object/evilfaction/hordes/isengard/isengardhordes.ini:531-548, and the
+	## file's own note: "for alternate formations, all info outside of the
+	## Contain Behavior module is ignored. Any modifications need to be done via
+	## the Attribute Modifiers in the contain module").
+	##
+	## That ModifierList is attributemodifier.ini:756-764
+	## `ModifierList GondorTowerShieldGuardHordePorcupine / Category = FORMATION
+	## / Modifier = CRUSHED_DECELERATE 1000% / Duration = 0` -- and the same
+	## shape at :766-806 for Isengard, Mithlond, Dwarven, Wild and Mordor.
+	## The SPEED / ARMOR / DAMAGE_ADD / CRUSHABLE_LEVEL rows in those blocks are
+	## COMMENTED OUT in retail and are deliberately NOT applied here.
+	##
+	## Duration = 0 is "forever" (the file says so at :764), so the entry never
+	## expires; it is erased when the horde leaves the formation.
+	var toggle := horde_formation_toggle(row)
+	var table: Dictionary = row.get("timed_modifiers", {}) as Dictionary
+	var was_active: bool = table.has(FORMATION_MODIFIER_KEY)
+	var modifier := toggle.get("modifier", {}) as Dictionary
+	var effects: Array = modifier.get("modifiers", []) as Array
+	var active: bool = (
+		String(row.get("formation_mode", "Line")) != "Line" and not effects.is_empty()
+	)
+	if not active and not was_active:
+		# Nothing authored and nothing to drop: leave the row byte-identical.
+		# Rows carry an empty `timed_modifiers` dict by construction, so an
+		# unconditional erase-if-empty here would change every hashed row.
+		return
+	table.erase(FORMATION_MODIFIER_KEY)
+	if active:
+		table[FORMATION_MODIFIER_KEY] = {
+			"modifiers": effects.duplicate(true),
+			"expires_tick": -1,
+			"persistent": true,
+			"category": String(modifier.get("category", "FORMATION")),
+			"modifier_id": String(modifier.get("id", "")),
+			"source_id": int(row.get("id", 0)),
+		}
+	row["timed_modifiers"] = table
+
+
 func _apply_formation_mode(row: Dictionary) -> void:
+	_apply_formation_attribute_modifier(row)
 	var base: Array = row.get("formation_positions_base", row.get("formation_positions", [])) as Array
 	if base.is_empty():
 		return
@@ -17334,7 +17467,10 @@ func _attach_production_update_contract(row: Dictionary, contract: Dictionary) -
 	for modifier in modifiers:
 		if bool(modifier.get("hero_revive",false)):
 			receipts.append("unsupported_production_semantic:ProductionModifier.HeroRevive")
-	row["production_update"]={"maximum_queue_entries":int(_module_contract_value(fields,"MaxQueueEntries",_rules.get("maximum_queue",5))),"give_no_xp":bool(_module_contract_value(fields,"GiveNoXP",false)),"veteran_units":bool(_module_contract_value(fields,"VeteranUnitsFromVeteranFactory",false)),"unit_invulnerable_ticks":_ship_contract_delay_ticks(float(_module_contract_value(fields,"UnitInvulnerableTime",0.0))),"modifiers":modifiers,"unsupported_semantics":receipts}
+	# MaxQueueEntries is authored on 2 of 423 retail ProductionUpdate blocks
+	# (angmarthrallmaster.ini:587, dwarvenbattlewagon.ini:492, both `= 1`).
+	# Absent must land as 0 = UNCAPPED, never as an invented default.
+	row["production_update"]={"maximum_queue_entries":int(_module_contract_value(fields,"MaxQueueEntries",0)),"give_no_xp":bool(_module_contract_value(fields,"GiveNoXP",false)),"veteran_units":bool(_module_contract_value(fields,"VeteranUnitsFromVeteranFactory",false)),"unit_invulnerable_ticks":_ship_contract_delay_ticks(float(_module_contract_value(fields,"UnitInvulnerableTime",0.0))),"modifiers":modifiers,"unsupported_semantics":receipts}
 
 
 func _attach_getting_built_contract(row: Dictionary, contract: Dictionary) -> void:
@@ -28688,6 +28824,7 @@ func _try_cavalry_trample(row: Dictionary) -> void:
 		_emit_event("combat.crush", int(row.get("id", 0)), best_id, payload)
 	# Alias kept so existing slice/knockback listeners still see a pulse.
 	_emit_event("combat.trample", int(row.get("id", 0)), best_id, payload)
+	_apply_crush_deceleration(row, victim)
 	# CrushRevengeWeapon: victim reflects authored nugget damage at the
 	# crusher. Weapon id without authored damage is fail-closed (no invent).
 	if victim.has("crush_revenge_damage"):
@@ -28702,6 +28839,37 @@ func _try_cavalry_trample(row: Dictionary) -> void:
 	if has_authored and row.has("crush_knockback"):
 		knockback_strength = maxf(0.0, float(row.get("crush_knockback", TRAMPLE_KNOCKBACK_STRENGTH)))
 	_apply_knockback(origin, TRAMPLE_COLLISION_RADIUS, knockback_strength, team, 0, "trample", int(row.get("id", 0)))
+
+
+func _apply_crush_deceleration(crusher: Dictionary, victim: Dictionary) -> void:
+	## The crusher pays for the crush in speed, and a braced formation makes it
+	## pay much more.
+	##
+	## RETAIL ORACLE, two halves:
+	##  * the crusher's locomotor authors `CrushDecelerationPercent`, and retail
+	##    annotates the number itself:
+	##    object/cinematic/cinematicobjects.ini:2264
+	##    `CrushDecelerationPercent = 20 ; Lose 80 percent of max velocity when
+	##    crushing.` -- so the authored percent is the fraction of speed KEPT
+	##    and (100 - percent) is the loss.
+	##  * the victim's FORMATION ModifierList authors `CRUSHED_DECELERATE`, and
+	##    attributemodifier.ini:49 documents it as "Multiplicitive. The
+	##    percentage that things crushing you slow" -- it scales that loss. A
+	##    porcupine horde authors `CRUSHED_DECELERATE 1000%`
+	##    (attributemodifier.ini:762), i.e. ten times the loss, which stops the
+	##    charge dead.
+	##
+	## No authored CrushDecelerationPercent means no deceleration term at all:
+	## absent stays absent, never a default. Until this landed, the compiled
+	## `crush_deceleration_percent` was stored on the row and read by nothing.
+	if not crusher.has("crush_deceleration_percent"):
+		return
+	var kept := clampf(float(crusher.get("crush_deceleration_percent", 100.0)) / 100.0, 0.0, 1.0)
+	var scale := maxf(0.0, _timed_modifier_product(victim, "CRUSHED_DECELERATE"))
+	var loss := clampf((1.0 - kept) * scale, 0.0, 1.0)
+	if loss <= 0.0:
+		return
+	crusher["current_speed"] = maxf(0.0, float(crusher.get("current_speed", 0.0)) * (1.0 - loss))
 
 
 func _resume_order_after_knockdown(row: Dictionary) -> bool:
