@@ -867,9 +867,6 @@ static func builder_production_rule(document: Dictionary) -> Dictionary:
 	}
 
 
-## Multiplies proven locomotor acceleration/braking for snappier horde response.
-## Not a retail claim — scales source-authored numbers only (see REPORT).
-const HORDE_LOCOMOTION_RESPONSE_SCALE := 1.5
 
 
 static func normalized_unit_rule(simulation: Dictionary, source_scale: float) -> Dictionary:
@@ -913,8 +910,11 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 	# Dum's map.ini sets nine props to exactly that) and must survive as 0 rather
 	# than being read as "not authored".
 	var shroud_clearing := float(simulation.get("shroud_clearing_range_source", -1.0))
-	var acceleration := float(movement.get("acceleration", -1.0)) * HORDE_LOCOMOTION_RESPONSE_SCALE
-	var braking := float(movement.get("braking", -1.0)) * HORDE_LOCOMOTION_RESPONSE_SCALE
+	# Authored Acceleration/Braking, unscaled. The old 1.5x horde-response
+	# multiplier was not a retail number and is gone; HumanLocomotor authors
+	# 510/510 (locomotor.ini:142) and HorseLocomotor 1500/2000 (:1026).
+	var acceleration := float(movement.get("acceleration", -1.0))
+	var braking := float(movement.get("braking", -1.0))
 	var turn_rate := float(movement.get("turnRateDegreesPerSecond", -1.0))
 	var max_turn_without_reform := float(movement.get("maxTurnWithoutReformDegrees", 0.0))
 	var attack_range := float(combat.get("attackRange", 0.0 if noncombatant else -1.0))
