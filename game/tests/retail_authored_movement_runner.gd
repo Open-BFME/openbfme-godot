@@ -132,7 +132,7 @@ func _check_every_unit_rule_is_authored(simulation) -> void:
 func _check_every_row_is_authored(simulation) -> void:
 	## Deliverable: no shipped unit reaches the mover without the three fields
 	## the mover consumes. A gap here is what used to be papered over with
-	## `acceleration = max_speed * 10`.
+	## a ten-times-max-speed ramp invented at the mover.
 	var unauthored: PackedStringArray = []
 	var counted := 0
 	for id_value in simulation.entities.keys():

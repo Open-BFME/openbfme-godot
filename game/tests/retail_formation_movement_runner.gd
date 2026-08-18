@@ -235,8 +235,8 @@ func _test_unauthored_reform_threshold_never_reforms() -> void:
 	## For the other 116 there is no reform gate in the data, so there must not
 	## be one in the sim either: the horde wheels through any angle, turning at
 	## its authored rate while it keeps advancing. The deleted
-	## RETAIL_MAX_TURN_WITHOUT_REFORM_DEGREES (45) and
-	## RETAIL_CAVALRY_MAX_TURN_WITHOUT_REFORM_DEGREES (100) invented that gate,
+	## sim constants (45 for everything, 100 keyed off category == cavalry)
+	## invented that gate,
 	## and the 100 hit 30 shipped cavalry rows whose templates author nothing
 	## (HumanLocomotor, HorseLocomotor, WargLocomotor, WargSentryLocomotor,
 	## NormalHorseHordeMemberLocomotor, HeroHumanScalingLocomotorNoBackwards).
