@@ -1608,7 +1608,10 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 		"soldier_command_points": maxi(1, int(horde_definition.get("commandPoints", 60))),
 		"farm_income": 25,
 		"farm_payout_ticks": 50,
-		"maximum_queue": 5,
+		# No "maximum_queue" rule: retail authors ProductionUpdate
+		# MaxQueueEntries on exactly two objects (angmarthrallmaster.ini:587,
+		# dwarvenbattlewagon.ini:492, both `= 1`); every other producer is
+		# uncapped. The value 5 that used to sit here was invented.
 		"ai_queue_interval_ticks": 60,
 		"ai_attack_delay_ticks": 300,
 	}
