@@ -19,6 +19,7 @@ Authoritative map for this repo. If it is not linked here or from the root
 | [DIRECTION.md](../DIRECTION.md) | RotWK 2.01 target, systems-first model, ladder |
 | [MILESTONE_CURRENT.md](MILESTONE_CURRENT.md) | Active systems-iteration objective |
 | [orchestration/queue.md](../orchestration/queue.md) | Live work queue |
+| [orchestration/README.md](../orchestration/README.md) | Lane lifecycle, brief/report templates, implementor routing |
 | [docs/state/](state/) | Live ledgers (parity, playtest, recook, cook reports) |
 | [contracts/rotwk-201-product-scope.json](../contracts/rotwk-201-product-scope.json) | Machine-readable product policy |
 
