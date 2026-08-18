@@ -29,7 +29,7 @@
 
 Set-StrictMode -Version Latest
 
-$script:DistVersionPattern = '^(?<v>[0-9]+\.[0-9]+\.[0-9]+)(?<pre>-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?$'
+$script:DistVersionPattern = '^(?<v>[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?)(?<pre>-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?$'
 $script:DistPatchNotesDirectory = 'docs/patch-notes'
 $script:DistVersionStampName = 'VERSION.json'
 $script:DistPatchNotesName = 'PATCH-NOTES.md'
@@ -76,7 +76,7 @@ function Read-DistVersionFile {
     }
     $raw = ([IO.File]::ReadAllText($path)).Trim()
     if ($raw -cnotmatch $script:DistVersionPattern) {
-        throw (New-DistRefusal -Problem "VERSION does not hold a version: '$raw'" -Remedy 'Use major.minor.patch with an optional prerelease suffix, e.g. 0.2.1 or 0.2.1-beta.2')
+        throw (New-DistRefusal -Problem "VERSION does not hold a version: '$raw'" -Remedy 'Use major.minor.patch, an optional hotfix fourth segment, or a prerelease suffix, e.g. 0.2.1, 0.2.4.1, or 0.2.1-beta.2')
     }
     return $raw
 }

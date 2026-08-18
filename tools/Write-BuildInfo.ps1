@@ -43,7 +43,7 @@ if (-not (Test-Path -LiteralPath $versionFile -PathType Leaf)) {
     throw "VERSION is missing at $versionFile; there is no product version to write."
 }
 $version = ([IO.File]::ReadAllText($versionFile)).Trim()
-if ($version -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$') {
+if ($version -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$') {
     throw "VERSION does not hold a version: '$version'"
 }
 
