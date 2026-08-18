@@ -289,6 +289,18 @@ var projectile_object_id := ""
 ## mounted-container-payload recipe (named gap, not a silent mesh swap).
 var _mount_presentation_applied := false
 var mount_visual_gap := ""
+## Q34 / retail eomer.ini:64-69: `ModelConditionState = MOUNTED` sets
+## `Model = RUEomrHrs_SKN`, ONE skin containing both rider and horse that
+## REPLACES the foot skin. Retail authors no crossfade for it, so the toggle is
+## an instantaneous visibility swap between two already-instanced models --
+## never a tween, never a fade of the foot model.
+var mounted_member_visuals: Dictionary = {}
+## Foot-form children captured per member before the mount form was attached,
+## so the swap only ever touches the two model subtrees.
+var _foot_form_children: Dictionary = {}
+## "mounted", "foot", or "foot:<named reason>". Never silently "foot".
+var mount_presentation_state := "foot"
+var mount_visual_model_path := ""
 
 
 func configure(
@@ -339,33 +351,102 @@ func configure(
 
 
 func sync_mount_presentation(mounted: bool) -> void:
-	## Tiny hook: when the sim marks the hero mounted, prefer the pack's
-	## mounted-container-payload visual. If that recipe is absent, keep the
-	## foot model and record the gap.
+	## Retail's mount toggle (Command_ToggleMounted, commandbutton.ini:2493)
+	## replaces the whole skin in one frame -- eomer.ini:64-69 authors the
+	## mounted form as `Model = RUEomrHrs_SKN` inside `ModelConditionState =
+	## MOUNTED` with no crossfade anywhere in the block. So: pre-instance the
+	## converted mounted GLB once, then flip `visible` on the two subtrees.
+	## When the pack ships no converted mounted model, the foot model stays and
+	## the gap is NAMED.
 	if _mount_presentation_applied == mounted:
 		return
 	_mount_presentation_applied = mounted
 	if not mounted:
 		mount_visual_gap = ""
+		mount_presentation_state = "foot"
+		apply_mount_visibility(false)
 		return
 	var playable: Dictionary = PlayableUnitAdapter.resolve_playable_document(
 		ContentDB,
 		{"object_id": object_id, "unit_type": object_id}
 	)
 	var mesh: Dictionary = PlayableUnitAdapter.authored_mounted_mesh(playable)
+	var pack_root := String(playable.get("_pack_root", ""))
 	if playable.is_empty():
 		var definition: Dictionary = ContentDB.get_bundle_object(object_id)
 		if not definition.is_empty():
+			pack_root = String(definition.get("_pack_root", ""))
 			mesh = PlayableUnitAdapter.authored_mounted_mesh(definition)
 			if mesh.is_empty():
 				mesh = PlayableUnitAdapter.authored_mounted_mesh({"registration": definition})
 	var gap := String(mesh.get("gap", "mounted-model-missing"))
 	if String(mesh.get("path", "")).to_lower().ends_with(".glb"):
 		mount_visual_gap = ""
+		mount_visual_model_path = String(mesh.get("path", ""))
+		var attached := ensure_mounted_member_visuals(mount_visual_model_path, pack_root)
+		if attached > 0:
+			apply_mount_visibility(true)
+		else:
+			# The document names a converted GLB the presenter could not
+			# instance. Say so; do not pretend the swap happened.
+			mount_presentation_state = "foot:mounted-model-not-instanced:%s" % mount_visual_model_path
 		return
 	if String(mesh.get("id", "")) != "" and gap == "":
 		gap = "mounted-model-missing:%s" % String(mesh.get("id"))
 	mount_visual_gap = gap if gap != "" else "mounted-model-missing"
+	mount_presentation_state = "foot:%s" % mount_visual_gap
+
+
+func ensure_mounted_member_visuals(resolved_relative_path: String, pack_root: String) -> int:
+	## One-time instancing of the converted MOUNTED skin under every member.
+	## Parenting under the member's own visual root means the mount form
+	## inherits formation slot, heading and scale for free.
+	if not mounted_member_visuals.is_empty():
+		return mounted_member_visuals.size()
+	if resolved_relative_path == "":
+		return 0
+	var resolved := ContentDB.resolve_asset(resolved_relative_path, pack_root)
+	if resolved == "":
+		return 0
+	var asset_factory = load("res://src/view/asset_factory.gd")
+	for member_index in member_visuals.keys():
+		var foot := member_visuals.get(member_index) as Node3D
+		if foot == null or not is_instance_valid(foot):
+			continue
+		var mount_visual: Node3D = asset_factory.make_explicit_model_visual(
+			resolved, team, object_id
+		)
+		if mount_visual == null:
+			continue
+		if _source_unit_scale > 0.0:
+			mount_visual.scale = Vector3.ONE * _source_unit_scale
+			var grounded: AABB = asset_factory.model_aabb(mount_visual)
+			if is_finite(grounded.position.y) and absf(grounded.position.y) > 0.0001:
+				mount_visual.position.y -= grounded.position.y
+		mount_visual.name = "MountedForm"
+		mount_visual.visible = false
+		var foot_children: Array[Node3D] = []
+		for child in foot.get_children():
+			if child is Node3D:
+				foot_children.append(child as Node3D)
+		foot.add_child(mount_visual)
+		_foot_form_children[member_index] = foot_children
+		mounted_member_visuals[member_index] = mount_visual
+	return mounted_member_visuals.size()
+
+
+func apply_mount_visibility(mounted: bool) -> void:
+	## The swap itself: two pre-instanced subtrees, one frame, no tween.
+	if mounted_member_visuals.is_empty():
+		return
+	for member_index in mounted_member_visuals.keys():
+		var mount_visual := mounted_member_visuals.get(member_index) as Node3D
+		if mount_visual != null and is_instance_valid(mount_visual):
+			mount_visual.visible = mounted
+		for foot_child in (_foot_form_children.get(member_index, []) as Array):
+			if foot_child is Node3D and is_instance_valid(foot_child):
+				(foot_child as Node3D).visible = not mounted
+	mount_presentation_state = "mounted" if mounted else "foot"
 
 
 func sync_banner_carrier(spawned: bool, banner_object_id: String, offset_source: Vector2) -> void:
