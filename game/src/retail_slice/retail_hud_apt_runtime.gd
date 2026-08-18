@@ -91,6 +91,128 @@ const EXTERNAL_MOVIE_SLOT_SPECS := [
 		"argument": "clip.toString()", "godotInterface": "RetailPlanningModeSlot",
 	},
 ]
+## AUTHORED STAGE PLACEMENT TABLES (Q37/Q38/Q39).
+##
+## Every number below is a retail PlaceObject record read straight out of the
+## effective-assets movies, not a measurement. Reproduce them with:
+##
+##   python tools/dump_apt_placements.py \
+##     workspace/retail-work/editions/rotwk/cache/effective-assets \
+##     Palantir --sprites
+##
+## Palantir.apt sha256 c629e2b6cdc4daa9d00c40a852c80e303de2415c42dcacfcf92004f44dcaf4c2
+## InGameHeroSelect.apt sha256 4691e37049e47dd01f292b01251d941631243056bb51b1ccf835864b73099f7e
+##
+## The root movie header declares the stage: width 1024, height 768. Every
+## translation here is in that stage's coordinates.
+const PALANTIR_STAGE_SIZE := Vector2(1024.0, 768.0)
+## Palantir.apt root timeline, frame 0, named PlaceObject rows (depth order).
+## `PalantirFrame` at [0, 512] is why the HUD dock band starts at stage y 512:
+## the control-bar art is authored flush to the bottom 256 rows of the stage,
+## which is the same band controlbarscheme.ini:156-165 gives as X:0 Y:520
+## 1024x248.
+const PALANTIR_STAGE_PLACEMENTS := {
+	"PalantirBack": Vector2(193.0, 639.3),
+	"CommandBackground": Vector2(285.7, 659.4),
+	"RegionBackground": Vector2(129.8, 640.1),
+	"GlobeSwirlRender": Vector2(280.2, 660.9),
+	"BigGlobeSwirlRender": Vector2(129.8, 640.1),
+	"EmptyGlobe": Vector2(280.2, 660.9),
+	"CommandUI": Vector2(287.6, 660.0),
+	"RadarBackground": Vector2(129.85, 640.15),
+	"Radar": Vector2(14.0, 537.0),
+	"RadarPings": Vector2(14.0, 537.0),
+	"PalantirFrame": Vector2(0.0, 512.0),
+	"CommandButtons": Vector2(289.55, 659.85),
+	"AutoAbilityOverlays": Vector2(287.6, 660.0),
+	"ResourceBar": Vector2(42.45, 719.4),
+	"PalantirSpectralHighlight": Vector2(192.0, 640.05),
+	"PalantirButtons": Vector2(79.0, 538.0),
+	"MovieButton": Vector2(129.8, 640.1),
+	"messengerButton": Vector2(27.0, 686.0),
+	"CommandPointsFlash": Vector2(203.5, 770.3),
+	"HeroSelectUI": Vector2(375.0, 700.0),
+	"helpBox": Vector2(585.0, 607.0),
+	"altHelpBoxLocation": Vector2(285.0, 500.0),
+	"planningModeUI": Vector2(512.0, 30.0),
+}
+## The two Palantir globes are the SAME character (57 / 55) placed twice: the
+## big radar globe at scale 1.3114 and the small command dish at 0.6401 x /
+## 0.6907 y. The scale ratio 2.05 is what makes the radar oval twice the dish
+## in the owner's retail RotWK captures.
+const PALANTIR_RADAR_GLOBE_SCALE := Vector2(1.3114, 1.3114)
+const PALANTIR_DISH_GLOBE_SCALE := Vector2(0.6401, 0.6907)
+## Palantir.apt sprite character 114 (`CommandButtons`), frame 0: the six
+## authored command-socket centres, LOCAL to the CommandButtons placement at
+## stage [289.55, 659.85]. These are the `glass0..glass5` / icon `0..5` rows;
+## the icons and the glass agree to a pixel, so either is the socket centre.
+## Source order is the authored 0..5 command-set slot order.
+const PALANTIR_COMMAND_SLOT_LOCAL := [
+	Vector2(-19.0, -98.2), Vector2(29.0, -81.2), Vector2(55.0, -40.2),
+	Vector2(53.0, 9.8), Vector2(21.0, 48.8), Vector2(-26.0, 59.8),
+]
+## Palantir.apt sprite character 136 (`ResourceBar`), frame 0: children LOCAL to
+## the ResourceBar placement at stage [42.45, 719.4]. `Resources` carries the
+## money text (character 130, placeholder "999999"); `CommandPoints` carries the
+## "999/999" text (character 134). Money is authored LEFT of command points, and
+## the owner's own retail RotWK captures show exactly that ("1100 ... 0/200",
+## "905 ... 456/850").
+const PALANTIR_RESOURCE_BAR_LOCAL := {
+	"ResourceIcon": Vector2(-4.0, 2.0),
+	"Resources": Vector2(0.8, 0.0),
+	"ResourceMultiplier": Vector2(67.15, -0.15),
+	"CommandPoints": Vector2(108.65, 0.0),
+	"PlayerFactionIcon": Vector2(158.0, 3.0),
+}
+## Text fields inside those two sprites: local offset of the text character plus
+## its authored bounds (x0, y0, x1, y1) and font height.
+const PALANTIR_RESOURCE_TEXT := {
+	"Resources": {
+		"local": Vector2(13.45, 2.8),
+		"bounds": Rect2(-2.0, -2.0, 52.2, 23.15),
+		"fontHeight": 21.15,
+	},
+	"CommandPoints": {
+		"local": Vector2(-9.5, 2.8),
+		"bounds": Rect2(-2.0, -2.0, 60.95, 23.15),
+		"fontHeight": 21.15,
+	},
+}
+## InGameHeroSelect.apt root timeline frame 9 (`_fadein`), LOCAL to the
+## HeroSelectUI placement at stage [375, 700]: nine portraits on one row at a
+## 70-unit pitch starting at x 23.95, then a second row at y -70, and the
+## `SelectAllHeroesBttn` (commandbutton.ini:3494 NonCommand_SelectAllHeroes) at
+## [-5, 42] scale 0.678 — to the LEFT of and below the first portrait.
+const HERO_SELECT_FIRST_LOCAL := Vector2(23.95, 0.0)
+const HERO_SELECT_PITCH := 70.0
+const HERO_SELECT_ROW_OFFSET := -70.0
+const HERO_SELECT_ROW_LENGTH := 9
+const HERO_SELECT_ALL_BUTTON_LOCAL := Vector2(-5.0, 42.0)
+const HERO_SELECT_ALL_BUTTON_SCALE := 0.678
+## InGameHeroSelect.apt sprite character 101 (one hero cell), frame 0, LOCAL to
+## the cell placement. `SelectedHighlight` -> `HeroSelect` and `AttackedFlash`
+## both centre on [28, 28], so that is the portrait centre; the highlight art
+## (sprites 3/6/9 children at [-29.5, -29.5] / [-30.5, -30.5]) gives the
+## portrait radius. The rank text (character 87, variable `rankString`,
+## placeholder "10", font height 12) is the bottom-LEFT level badge.
+const HERO_CELL_PORTRAIT_CENTER_LOCAL := Vector2(28.0, 28.0)
+const HERO_CELL_PORTRAIT_RADIUS := 29.5
+const HERO_CELL_LEVEL_BADGE_LOCAL := Vector2(7.0, 50.0)
+const HERO_CELL_LEVEL_BADGE_FONT_HEIGHT := 12.0
+const HERO_CELL_HEALTH_BAR_LOCAL := Vector2(25.35, 49.85)
+## InGameHeroSelect_geometry/73.ru — the health-bar backdrop quad, corners
+## (-38.5, -17) .. (38.5, 17): 77 x 34 units.
+const HERO_CELL_HEALTH_BAR_QUAD := Vector2(77.0, 34.0)
+## InGameHeroSelect_geometry/74.ru — the health FILL quad, corners
+## (-28.75, -9.75) .. (28.75, 9.75): 57.5 x 19.5 units.
+const HERO_CELL_HEALTH_FILL_QUAD := Vector2(57.5, 19.5)
+## InGameRadialMenuStage.apt sprite character 11: the in-world radial button.
+## `bttnFrame` is character 1 placed at [-24, -24] scale 0.48 (a 48-unit frame
+## centred on the ring point); the state overlays sit at [-27, -27] (54 units).
+## The stage authors the BUTTON only — the ring RADIUS is engine-computed and is
+## not in the movie, so it is measured from the owner's retail RotWK capture.
+const RADIAL_BUTTON_STAGE_SIZE := 48.0
+const RADIAL_BUTTON_OVERLAY_STAGE_SIZE := 54.0
 const EXTERNAL_MOVIE_GATE_IDS := [
 	"apt-load-completion-order",
 	"hero-select-initial-visibility",
