@@ -3,7 +3,7 @@ extends SceneTree
 
 const AdapterScript = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 
-const EXPECTED_CHECKS := 7
+const EXPECTED_CHECKS := 11
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
 var _watchdog := RunnerWatchdogScript.new()
 var passed := 0
@@ -22,6 +22,8 @@ func _run() -> void:
 	_test_live_theoden_names_horse_gap()
 	_test_hud_live_fighter_commandset()
 	_test_battalion_mount_names_theoden_skn()
+	_test_compiled_mounted_component_is_bound()
+	_test_mount_toggle_swaps_visibility_instantly()
 	_finish()
 
 
@@ -129,9 +131,13 @@ func _test_live_theoden_names_horse_gap() -> void:
 		return
 	var mesh: Dictionary = AdapterScript.authored_mounted_mesh(doc as Dictionary)
 	var gap := String(mesh.get("gap", ""))
+	# Q34: the mounted skin must be ACCOUNTED FOR either way -- bound to a
+	# converted GLB once the pack is recooked with MOUNTED components, or named
+	# in the gap while it is not. A silent container-payload answer is the bug.
 	_check(
-		"live_theoden_names_horse_gap",
-		gap != "" and not gap.contains("container-payload"),
+		"live_theoden_mounted_skin_is_bound_or_named",
+		(gap != "" or String(mesh.get("path", "")).ends_with(".glb"))
+			and not gap.contains("container-payload"),
 		str(mesh)
 	)
 
@@ -179,12 +185,134 @@ func _test_battalion_mount_names_theoden_skn() -> void:
 	battalion.set("object_id", "bfme2.object.rohan-theoden")
 	battalion.call("sync_mount_presentation", true)
 	var gap := String(battalion.get("mount_visual_gap"))
+	var state := String(battalion.get("mount_presentation_state"))
+	# Before the recook the pack has no mounted component and the gap names
+	# RUHHs_Theo_SKN; after it, the component binds and the presenter reports
+	# either "mounted" or a NAMED instancing failure (this orphan battalion has
+	# no members, so it cannot instance).
 	_check(
 		"battalion_mount_names_theoden_skn",
-		gap.contains("RUHHs_Theo_SKN") and not gap.contains("container-payload"),
-		gap
+		(gap.contains("RUHHs_Theo_SKN") or state.contains("RUHHs_Theo") or state.contains(".glb"))
+			and not gap.contains("container-payload"),
+		"gap=%s state=%s" % [gap, state]
 	)
 	battalion.free()
+
+
+func _compiled_mounted_document() -> Dictionary:
+	## The shape the importer actually ships: converted ModelConditionState
+	## models land in `registration.visual.components` (one row per authored
+	## state, `output` = the cooked GLB). Retail anchor: eomer.ini:64-69
+	## `ModelConditionState = MOUNTED` / `Model = RUEomrHrs_SKN`.
+	return {
+		"objectId": "RohanEomer",
+		"registration": {
+			"visual": {
+				"authoredVisualLeaves": [
+					{
+						"conditions": [],
+						"identifier": "ShadowI",
+						"kind": "shadow",
+						"output": "assets/visual/units/rohaneomer/shadow.png",
+					},
+				],
+				"components": [
+					{
+						"authoredOccurrences": [
+							{"conditions": [], "identifier": "RUEomer_SKN"},
+						],
+						"conditions": [],
+						"default": true,
+						"output": "assets/models/units/rohaneomer/00.glb",
+						"ownerObjectId": "RohanEomer",
+						"sourceW3d": "art/w3d/ru/rueomer_skn.w3d",
+					},
+					{
+						"authoredOccurrences": [
+							{"conditions": ["MOUNTED"], "identifier": "RUEomrHrs_SKN"},
+						],
+						"conditions": ["MOUNTED"],
+						"default": false,
+						"output": "assets/models/units/rohaneomer/01.glb",
+						"ownerObjectId": "RohanEomer",
+						"sourceW3d": "art/w3d/ru/rueomrhrs_skn.w3d",
+					},
+				],
+			},
+		},
+	}
+
+
+func _test_compiled_mounted_component_is_bound() -> void:
+	# Q34: a pack that DID cook the mounted skin still reported
+	# `mounted-model-missing` because the adapter only read
+	# `authoredVisualLeaves`, which never carries models.
+	var mesh: Dictionary = AdapterScript.authored_mounted_mesh(_compiled_mounted_document())
+	_check(
+		"compiled_mounted_component_is_bound",
+		String(mesh.get("gap", "")) == ""
+			and String(mesh.get("path", "")) == "assets/models/units/rohaneomer/01.glb"
+			and String(mesh.get("id", "")) == "RUEomrHrs_SKN",
+		str(mesh)
+	)
+	var foot_only := _compiled_mounted_document()
+	var components: Array = ((foot_only["registration"] as Dictionary)["visual"] as Dictionary)["components"]
+	components.remove_at(1)
+	var absent: Dictionary = AdapterScript.authored_mounted_mesh(foot_only)
+	_check(
+		"unmounted_unit_still_names_the_gap",
+		String(absent.get("gap", "")).begins_with("mounted-model-missing"),
+		str(absent)
+	)
+
+
+func _test_mount_toggle_swaps_visibility_instantly() -> void:
+	# Retail authors no crossfade on the MOUNTED state, so the swap must be
+	# visible in the SAME frame the toggle is applied.
+	var battalion_script: GDScript = load("res://src/retail_slice/retail_battalion.gd") as GDScript
+	if battalion_script == null:
+		_check("mount_toggle_swaps_visibility_instantly", false, "RetailBattalion script failed to load")
+		_check("mount_toggle_restores_foot_form_instantly", false, "RetailBattalion script failed to load")
+		return
+	var battalion: Node = battalion_script.new()
+	root.add_child(battalion)
+	var foot_root := Node3D.new()
+	var foot_mesh := Node3D.new()
+	foot_mesh.name = "FootForm"
+	foot_root.add_child(foot_mesh)
+	battalion.add_child(foot_root)
+	var mount_form := Node3D.new()
+	mount_form.name = "MountedForm"
+	mount_form.visible = false
+	foot_root.add_child(mount_form)
+	var member_visuals: Dictionary = battalion.get("member_visuals")
+	member_visuals[0] = foot_root
+	var mounted_visuals: Dictionary = battalion.get("mounted_member_visuals")
+	mounted_visuals[0] = mount_form
+	var foot_children: Dictionary = battalion.get("_foot_form_children")
+	var captured: Array[Node3D] = []
+	captured.append(foot_mesh)
+	foot_children[0] = captured
+
+	battalion.call("apply_mount_visibility", true)
+	_check(
+		"mount_toggle_swaps_visibility_instantly",
+		mount_form.visible and not foot_mesh.visible
+			and String(battalion.get("mount_presentation_state")) == "mounted",
+		"mounted=%s foot=%s state=%s" % [
+			mount_form.visible, foot_mesh.visible, battalion.get("mount_presentation_state")
+		]
+	)
+	battalion.call("apply_mount_visibility", false)
+	_check(
+		"mount_toggle_restores_foot_form_instantly",
+		foot_mesh.visible and not mount_form.visible
+			and String(battalion.get("mount_presentation_state")) == "foot",
+		"mounted=%s foot=%s state=%s" % [
+			mount_form.visible, foot_mesh.visible, battalion.get("mount_presentation_state")
+		]
+	)
+	battalion.queue_free()
 
 
 func _finish() -> void:
