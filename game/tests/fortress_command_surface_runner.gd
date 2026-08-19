@@ -833,6 +833,24 @@ func _check_fortress_radial_pages(slice, sim, hud, fortress: int) -> void:
 		not main_kinds.has("hero"),
 		"the main page still lists hero recruit buttons: %s" % str(main_kinds.keys())
 	)
+	# Owner playtest bug B: "the fortress should not have the side-building
+	# options - those are for the side building plots."
+	# RETAIL ANCHOR: commandset.ini:4055 MenFortressCommandSet lists NO
+	# Command_Construct*Expansion button on any of its three ranges; the
+	# expansion buttons live only on commandset.ini:4094
+	# MenFortressExpansionPadCornerCommandSet and :4101
+	# MenFortressExpansionPadSideCommandSet, which belong to the PAD objects
+	# (fortress.ini:63 / :146 CommandSet = ...ExpansionPad*CommandSet).
+	# Every faction's fortress set is authored the same way.
+	_check(
+		"%s_radial_main_page_carries_no_expansion_options" % _faction,
+		not main_kinds.has("expansion"),
+		"the fortress main page lists plot build options: %s" % str(
+			main_entries.filter(func(e: Dictionary) -> bool:
+				return String(e.get("command_kind", "")) == "expansion").map(
+				func(e: Dictionary) -> String: return String(e.get("id", "")))
+		)
+	)
 	_check(
 		"%s_radial_main_page_hides_the_improvement_slots" % _faction,
 		not main_kinds.has("upgrade"),
@@ -958,6 +976,37 @@ func _check_fortress_radial_pages(slice, sim, hud, fortress: int) -> void:
 	for object_id in slice.producible_unit_runtimes.keys():
 		if String(object_id).begins_with("CreateAHero__"):
 			created_ids.append(String(object_id))
+	# Owner playtest bug A: "some heroes and their custom hero are missing" from
+	# the fortress hero menu.
+	# RETAIL ANCHOR: the hero page is commandset.ini:4055 MenFortressCommandSet
+	# slots 15-24 - Command_CreateAHeroReviveSlot plus GenericReviveSlot1..7 -
+	# and what fills the generic slots is playertemplate.ini:102
+	# `BuildableHeroesMP = CreateAHero RohanEowyn RohanEomer GondorBoromir
+	# RohanTheoden GondorFaramir GondorAragornMP GondorGandalf`. So the page
+	# must carry EVERY authored revivable, the create-a-hero included - not a
+	# truncated arc. FACTION_EXPECTATIONS["<faction>"]["heroes"] is that roster
+	# minus CreateAHero, which the created ids below add back.
+	var expected_page_ids: Dictionary = {}
+	var authored_revivables: Array = (
+		(FACTION_EXPECTATIONS.get(_faction, {}) as Dictionary).get("heroes", []) as Array
+	)
+	for spec_value in (hud._hero_command_specs if hud != null else []):
+		var spec: Dictionary = spec_value
+		var spec_source := String(spec.get("source_object_id", ""))
+		if authored_revivables.has(spec_source):
+			expected_page_ids[String(spec.get("unit_id", ""))] = spec_source
+	for created_value in created_ids:
+		expected_page_ids[String(PlayableUnitAdapter._runtime_id(String(created_value)))] = String(created_value)
+	var missing_from_page: Array = []
+	for expected_id in expected_page_ids.keys():
+		if not hero_ids.has(String(expected_id)):
+			missing_from_page.append("%s(%s)" % [String(expected_id), String(expected_page_ids[expected_id])])
+	missing_from_page.sort()
+	_check(
+		"%s_radial_hero_page_carries_every_authored_revivable" % _faction,
+		missing_from_page.is_empty(),
+		"missing %s; page shows %s" % [str(missing_from_page), str(hero_ids.keys())]
+	)
 	_check(
 		"%s_created_hero_is_on_the_roster" % _faction,
 		not created_ids.is_empty(),

@@ -1315,6 +1315,57 @@ def _primary_draw_module(
     return tuple(result)
 
 
+def _construction_complete_no_render(
+    evidence_states: Sequence[Mapping[str, object]],
+    draw_modules: frozenset[str],
+) -> Mapping[str, object] | None:
+    """The authored ``CONSTRUCTION_COMPLETE`` state that draws nothing, if any.
+
+    RETAIL ANCHOR - fortress.ini:30 ``Object MenFortressExpansionPadCorner``
+    (and the identical block in the other eight fortress files, all of them
+    build plots)::
+
+        Draw = W3DScriptedModelDraw ModuleTag_DrawMain
+            DefaultModelConditionState
+                Model = WBFoundationP          ;// the WorldBuilder pin
+            End
+            ;//Remove the buildplot when it's been constructed on
+            ModelConditionState = CONSTRUCTION_COMPLETE
+                Model = None
+            End
+        End
+
+    ``MODELCONDITION_CONSTRUCTION_COMPLETE`` is latched by SAGE once a structure
+    is finished and never cleared, and a plot unpacked by ``CastleBehavior`` is
+    finished the moment it exists (``BuildCompletion = PLACED_BY_PLAYER``). So
+    the live retail plot presents its ``W3DFloorDraw`` bib and NOTHING else -
+    ``WBFoundationP`` is a flat quad authored 1.587 source units above origin
+    and is an editor pin, not gameplay art. Compiling the default state as the
+    intact visual floated that plate over the terrain on every fortress plot
+    (owner playtest report: "the building plots are ... above the ground").
+    """
+
+    for state in evidence_states:
+        if str(state.get("family", "")).casefold() != "modelconditionstate":
+            continue
+        if draw_modules and _draw_module_key(state.get("drawModule", "")) not in draw_modules:
+            continue
+        conditions = {str(token).upper() for token in state.get("conditions", [])}
+        if conditions != {"CONSTRUCTION_COMPLETE"}:
+            continue
+        assignments = state.get("assignments", [])
+        if not isinstance(assignments, list):
+            continue
+        for assignment in assignments:
+            if not isinstance(assignment, Mapping):
+                continue
+            if str(assignment.get("key", "")).casefold() != "model":
+                continue
+            if str(assignment.get("rawValue", "")).strip().casefold() == "none":
+                return state
+    return None
+
+
 def _select_phase_states(
     states: Sequence[Mapping[str, object]],
     module_order: Sequence[str],
@@ -2366,6 +2417,19 @@ def compose_structure_runtime_document(
                 "structure lacks exact construction conditions"
             )
 
+    # INI evidence spells the module `W3DScriptedModelDraw ModuleTag_Draw`
+    # while the closure recipe spells the same module `W3DModelDraw
+    # ModuleTag_Draw`; the authored tag is what identifies it (_draw_module_key).
+    intact_draw_modules = frozenset(
+        _draw_module_key(module)
+        for module in intact_state.get("drawModules", [])
+        if _draw_module_key(module)
+    )
+    completed_no_render = _construction_complete_no_render(
+        [state for state in evidence_states if isinstance(state, Mapping)],
+        intact_draw_modules,
+    )
+
     phase_rows: list[dict[str, object]] = []
     for index, phase in enumerate(presented_phases):
         next_phase = (
@@ -2390,6 +2454,27 @@ def compose_structure_runtime_document(
                     visual=visual,
                     animation={"clip": None, "mode": "none"},
                     next_phase=None,
+                )
+            )
+            continue
+        if phase == "intact" and completed_no_render is not None:
+            # See _construction_complete_no_render: the finished structure is
+            # authored to draw nothing. Its floor bib still renders.
+            notes.append(
+                {
+                    "kind": "phase-visual",
+                    "phase": "intact",
+                    "reason": "construction-complete-authored-no-render",
+                    "drawModule": str(completed_no_render.get("drawModule", "")),
+                }
+            )
+            phase_rows.append(
+                _phase_row(
+                    phase=phase,
+                    condition_sets=_CANONICAL_PHASE_LABELS["intact"],
+                    visual=dict(no_render),
+                    animation={"clip": None, "mode": "none"},
+                    next_phase=next_phase,
                 )
             )
             continue

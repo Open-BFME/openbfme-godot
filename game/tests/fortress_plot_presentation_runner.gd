@@ -185,6 +185,8 @@ func _test_plot_presentation() -> void:
 	# BUG #9: health bars floating over empty plots.
 	_check("empty_plot_has_no_health_bar", barred.is_empty(), str(barred))
 
+	_test_plots_sit_on_the_ground_without_a_ring(fortress_id, pads)
+
 	# Control rows: the gate must not swallow damageable structures' bars.
 	var fortress_node = _slice.structure_nodes.get(fortress_id)
 	_check(
@@ -196,6 +198,126 @@ func _test_plot_presentation() -> void:
 		_test_damage_or_selection_health_bar_visibility(fortress_node, simulation.structure(fortress_id))
 		_test_health_bar_geometry_is_footprint_bounded_and_billboarded()
 	await _test_occupied_plot_shows_a_bar(fortress_id)
+
+
+## OWNER PLAYTEST BUG B: "the building plots are selectable above the ground and
+## have a green ring, remove it."
+##
+## RETAIL ANCHOR (fortress.ini:30 Object MenFortressExpansionPadCorner, and the
+## identical block in the other eight fortress files):
+##
+##     Draw = W3DFloorDraw DrawFloorBase
+##         ModelName = GBFoundationB          ;// the flat plate, ON the terrain
+##     End
+##     Draw = W3DScriptedModelDraw ModuleTag_DrawMain
+##         DefaultModelConditionState
+##             Model = WBFoundationP          ;// the WorldBuilder pin
+##         End
+##         ;//Remove the buildplot when it's been constructed on
+##         ModelConditionState = CONSTRUCTION_COMPLETE
+##             Model = None
+##         End
+##     End
+##
+## A pad that CastleBehavior unpacks is complete the moment it exists
+## (`BuildCompletion = PLACED_BY_PLAYER`), so retail's live plot draws the floor
+## bib and NOTHING else. `WBFoundationP` is a flat quad authored 1.587 source
+## units ABOVE origin - that plate hovering over the terrain is exactly what the
+## owner reported. Retail also draws no engine selection ring on a plot.
+## Retail's answer is that a completed plot renders NO body at all, so the only
+## flush-with-terrain reading that can be right is "nothing above the ground".
+## The tolerance is z-fighting slack, not room for a hovering plate: the shipped
+## men pack floats WBFoundationP 0.042 world units up, 15% of the plot's own
+## 0.277-unit radius, which is exactly the gap the owner reported.
+const PLOT_GROUND_TOLERANCE := 0.01
+
+
+func _test_plots_sit_on_the_ground_without_a_ring(fortress_id: int, pads: Array) -> void:
+	var restore_pad: Dictionary = _slice._selected_expansion_pad
+	var restore_structure := int(_slice.selected_structure_id)
+	var floating: Array[String] = []
+	var ringed: Array[String] = []
+	for index in pads.size():
+		var pad: Dictionary = pads[index]
+		if int(pad.get("expansion_structure_id", 0)) != 0:
+			continue
+		var center := Vector2(pad.get("position", Vector2.ZERO))
+		var ground := 0.0
+		if _slice.source_map_data != null and _slice.source_map_data.ready:
+			ground = _slice.source_map_data.local_ground_height(center)
+		var piece_id := int(pad.get("castle_piece_structure_id", 0))
+		var piece_node = _slice.structure_nodes.get(piece_id)
+		if piece_node != null:
+			# The plot's BODY, measured on its own: the W3DFloorDraw bib always
+			# starts at the terrain, so the min over the whole node would hide a
+			# body plate hovering above it.
+			var body := piece_node._active_body as Node3D
+			var lowest := _lowest_rendered_y(body) if body != null else INF
+			print("FORTRESS_PLOT pad%d body=%s body_bottom_y=%s terrain_y=%.4f" % [
+				index,
+				"no-render" if body == null else String(body.name),
+				"n/a" if lowest == INF else ("%.4f" % lowest),
+				ground,
+			])
+			if lowest < INF and lowest > ground + PLOT_GROUND_TOLERANCE:
+				floating.append(
+					"pad%d:body_y=%.3f terrain_y=%.3f — the mounted pack compiles the plot's DefaultModelConditionState (WBFoundationP) as its intact body instead of retail's CONSTRUCTION_COMPLETE Model=None; RECOOK REQUIRED"
+					% [index, lowest, ground]
+				)
+		# No ring on the plot: not the structure selection ring, not the
+		# presentation's own pad highlight. Clicking a plot is what raised the
+		# ring the owner reported, so the plot is SELECTED for this row - a
+		# check run on an unselected plot could never see it.
+		_slice._selected_expansion_pad = {
+			"fortress_id": fortress_id,
+			"pad_index": index,
+			"pad_kind": String(pad.get("pad_kind", "")),
+			"position": center,
+		}
+		_slice.selected_structure_id = fortress_id
+		_slice._sync_presentation()
+		if piece_node != null:
+			piece_node.set_selected(_slice.selected_structure_id == piece_id)
+		for node in _nodes_at(center):
+			for ring_name in ["SelectionRing", "PadRing"]:
+				var ring := (node as Node).get_node_or_null(NodePath(ring_name)) as Node3D
+				if ring != null and ring.is_visible_in_tree():
+					ringed.append("pad%d:%s/%s" % [index, String((node as Node).name), ring_name])
+	_slice._selected_expansion_pad = restore_pad
+	_slice.selected_structure_id = restore_structure
+	_slice._sync_presentation()
+	_check("free_plots_sit_flush_with_the_terrain", floating.is_empty(), str(floating))
+	_check("free_plots_draw_no_ring", ringed.is_empty(), str(ringed))
+
+
+func _lowest_rendered_y(node: Node) -> float:
+	## World-space bottom of the real (non-chrome) geometry this node renders.
+	var lowest := INF
+	var mesh := node as MeshInstance3D
+	if (
+		mesh != null and mesh.mesh != null and mesh.is_visible_in_tree()
+		and not SYNTHETIC_MESH_NAMES.has(String(mesh.name))
+	):
+		var aabb := mesh.global_transform * mesh.get_aabb()
+		lowest = minf(lowest, aabb.position.y)
+	for child in node.get_children():
+		lowest = minf(lowest, _lowest_rendered_y(child))
+	return lowest
+
+
+func _nodes_at(center: Vector2) -> Array[Node]:
+	var out: Array[Node] = []
+	var candidates: Array[Node] = []
+	for node_value in _slice.structure_nodes.values():
+		candidates.append(node_value as Node)
+	_collect_named(_slice, "ExpansionPadMarker", candidates)
+	for candidate in candidates:
+		var node3d := candidate as Node3D
+		if node3d == null or not node3d.is_inside_tree():
+			continue
+		if Vector2(node3d.global_position.x, node3d.global_position.z).distance_to(center) <= PAD_MATCH_RADIUS:
+			out.append(candidate)
+	return out
 
 
 ## An expansion raised on a plot is a damageable structure and DOES carry a
