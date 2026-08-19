@@ -30,6 +30,8 @@ from .map_profile import (
     AI_LIBRARY_PLAYER_PLACEHOLDER,
     GOLLUM_SPAWN_LIBRARY_PATH,
     GOLLUM_SPAWN_LIBRARY_PLAYER,
+    MULTIPLAYER_HUMAN_LIBRARY_PATH,
+    MULTIPLAYER_START_TEAMS_LIBRARY_PATH,
 )
 from .profile import (
     ResolvedProfile,
@@ -43,7 +45,7 @@ from .profile import (
     W3D_RETAIL_ABSENT_TEXTURES_OPTION,
     W3D_TEXTURE_SUFFIXES,
     W3D_TEXTURE_OVERRIDES_OPTION,
-    canonical_multiplayer_map_runtime_slug,
+    canonical_ai_library_map_runtime_slug,
     normalize_excluded_optional_meshes,
     normalize_retail_absent_textures,
     normalize_texture_atlas_crops,
@@ -100,10 +102,10 @@ IMPORTER_REQUIREMENTS_NAMES = (
 # The current base profile resolves 335 per-resource asset/data rows, plus the
 # 56 documents the living-world strategic rule resolves from the BFME2 1.06
 # catalog (the riskcampaign #include closure and its entry points), plus the
-# exact map + two retail AI-library rows owned by the map-script composite.
+# exact map + four retail AI-library rows owned by the map-script composite.
 # Provenance is per resource, not a unique-physical-source census: intentional
 # W3D source variants therefore remain separate auditable rows.
-MEN_FORDS_SOURCE_ENTRY_COUNT = 335 + 56 + 3
+MEN_FORDS_SOURCE_ENTRY_COUNT = 335 + 56 + 5
 MAX_RENDERED_OUTPUT_PATH = 512
 W3D_ADAPTER_REPORT_CONTRACT = "openbfme.w3d-adapter-report"
 W3D_PRESENTATION_METADATA_CONTRACT = "openbfme.w3d-presentation-capabilities"
@@ -5665,10 +5667,10 @@ class ImportPipeline:
         options: dict[str, Any],
         pack_root: Path,
     ) -> list[Path]:
-        """Cook one exact map plus the two qualified retail AI libraries.
+        """Cook one exact map plus its qualified retail AI libraries.
 
         This remains a separate bundle converter rather than extending
-        ``sage-map``: each of its three source documents owns an independent
+        ``sage-map``: each source document owns an independent
         provenance row, while the composed artifact is declared only once.
         """
 
@@ -5694,15 +5696,21 @@ class ImportPipeline:
             )
         map_virtual_path = options.get("mapVirtualPath")
         library_virtual_paths = options.get("libraryVirtualPaths")
-        base_libraries = [
+        legacy_libraries = [
             "libraries/ai_initialize/ai_initialize.map",
             "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map",
         ]
-        runtime_slug = canonical_multiplayer_map_runtime_slug(map_virtual_path)
+        base_libraries = [
+            MULTIPLAYER_START_TEAMS_LIBRARY_PATH,
+            "libraries/ai_initialize/ai_initialize.map",
+            "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map",
+            MULTIPLAYER_HUMAN_LIBRARY_PATH,
+        ]
+        runtime_slug = canonical_ai_library_map_runtime_slug(map_virtual_path)
         if runtime_slug is None:
             raise ValueError(
                 "sage-script-composite mapVirtualPath must name one canonical "
-                "multiplayer map source"
+                "multiplayer or admitted castle-skirmish map source"
             )
         expected_output = f"maps/{runtime_slug}/scripts.json"
         if output != expected_output:
@@ -5720,13 +5728,16 @@ class ImportPipeline:
         # casing or profile authoring.
         map_virtual_path = str(map_virtual_path).casefold()
         allowed_libraries = (
+            legacy_libraries,
+            [*legacy_libraries, GOLLUM_SPAWN_LIBRARY_PATH],
             base_libraries,
             [*base_libraries, GOLLUM_SPAWN_LIBRARY_PATH],
         )
         if library_virtual_paths not in allowed_libraries:
             raise ValueError(
                 "sage-script-composite libraryVirtualPaths must be the ordered "
-                "ai_initialize and ai_mp_inherit_management closure, optionally "
+                "ai_initialize legacy closure or ordered multiplayer_start_teams, ai_initialize, "
+                "ai_mp_inherit_management and multiplayer_human closure, optionally "
                 "followed by the authored lib_gollumspawn dependency"
             )
         expected_libraries = list(library_virtual_paths)

@@ -50,8 +50,10 @@ def _catalog(root: Path, *, omit_preview: bool = False) -> InstallCatalog:
     entries: dict[str, bytes] = {
         "data/ini/terrain.ini": b"Terrain TestGrass\n Texture = testgrass.tga\nEnd\n",
         "art/terrain/testgrass.tga": b"synthetic-tga",
+        "libraries/multiplayer_start_teams/multiplayer_start_teams.map": source,
         "libraries/ai_initialize/ai_initialize.map": source,
         "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map": source,
+        "libraries/multiplayer_human/multiplayer_human.map": source,
     }
     for index, target in enumerate(FIVE_MAP_TARGETS):
         path = PurePosixPath(target.virtual_path)
@@ -108,8 +110,10 @@ class FiveMapProfileTests(unittest.TestCase):
             all(
                 row["patterns"][1:]
                 == [
+                    "libraries/multiplayer_start_teams/multiplayer_start_teams.map",
                     "libraries/ai_initialize/ai_initialize.map",
                     "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map",
+                    "libraries/multiplayer_human/multiplayer_human.map",
                 ]
                 for row in script_resources
             )
@@ -176,8 +180,10 @@ def _skirmish_catalog(root: Path, *, drop_preview_for: str = "") -> InstallCatal
     entries: dict[str, bytes] = {
         "data/ini/terrain.ini": b"Terrain TestGrass\n Texture = testgrass.tga\nEnd\n",
         "art/terrain/testgrass.tga": b"synthetic-tga",
+        "libraries/multiplayer_start_teams/multiplayer_start_teams.map": source,
         "libraries/ai_initialize/ai_initialize.map": source,
         "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map": source,
+        "libraries/multiplayer_human/multiplayer_human.map": source,
     }
     records = [
         # Advertised but never shipped: the registry outlives its payload.
@@ -210,8 +216,10 @@ def _authored_names_catalog(root: Path) -> InstallCatalog:
     entries: dict[str, bytes] = {
         "data/ini/terrain.ini": b"Terrain TestGrass\n Texture = testgrass.tga\nEnd\n",
         "art/terrain/testgrass.tga": b"synthetic-tga",
+        "libraries/multiplayer_start_teams/multiplayer_start_teams.map": source,
         "libraries/ai_initialize/ai_initialize.map": source,
         "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map": source,
+        "libraries/multiplayer_human/multiplayer_human.map": source,
         "data/lotr.str": b'Map:MAPMPFallBack4p\n "Stonewain Valley"\nEND\n',
     }
     records = []

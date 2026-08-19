@@ -45,9 +45,15 @@ from .terrain_materials import (
 
 
 TERRAIN_INI_PATH = "data/ini/terrain.ini"
+MULTIPLAYER_START_TEAMS_LIBRARY_PATH = (
+    "libraries/multiplayer_start_teams/multiplayer_start_teams.map"
+)
 AI_INITIALIZE_LIBRARY_PATH = "libraries/ai_initialize/ai_initialize.map"
 AI_MP_INHERIT_LIBRARY_PATH = (
     "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map"
+)
+MULTIPLAYER_HUMAN_LIBRARY_PATH = (
+    "libraries/multiplayer_human/multiplayer_human.map"
 )
 GOLLUM_SPAWN_LIBRARY_PATH = "libraries/lib_gollumspawn/lib_gollumspawn.map"
 #: The player Lib_GollumSpawn actually declares in the retail bytes. Pinning it
@@ -58,10 +64,13 @@ GOLLUM_SPAWN_LIBRARY_PATH = "libraries/lib_gollumspawn/lib_gollumspawn.map"
 GOLLUM_SPAWN_LIBRARY_PLAYER = "PlyrCreeps"
 #: Per-player AI template libraries author this placeholder.
 AI_LIBRARY_PLAYER_PLACEHOLDER = "Player"
-from .profile import (
-    assert_input_resource_references_resolve,
-    is_canonical_multiplayer_map_virtual_path,
-)
+from .profile import assert_input_resource_references_resolve
+
+
+def _map_has_player_starts(parsed: ParsedSageMap) -> bool:
+    """Return True if the map has authored Player_N_Start waypoints."""
+
+    return len(parsed.player_starts) > 0
 
 
 def _gollum_spawn_library_referenced(setup: Mapping[str, Any]) -> bool:
@@ -830,13 +839,15 @@ def build_map_profile(
                 },
             }
         ]
-        if (
-            target.category == SKIRMISH_CATEGORY
-            and is_canonical_multiplayer_map_virtual_path(map_entry.name)
-        ):
+        # Retail attaches the multiplayer AI libraries to lobby maps; the
+        # source path is not the contract. Castle skirmish maps live below
+        # ``map wor`` while still authoring the same Player_N_Start waypoints.
+        if target.category == SKIRMISH_CATEGORY and _map_has_player_starts(parsed):
             script_libraries = [
+                MULTIPLAYER_START_TEAMS_LIBRARY_PATH,
                 AI_INITIALIZE_LIBRARY_PATH,
                 AI_MP_INHERIT_LIBRARY_PATH,
+                MULTIPLAYER_HUMAN_LIBRARY_PATH,
             ]
             if _gollum_spawn_library_referenced(parsed.setup):
                 script_libraries.append(GOLLUM_SPAWN_LIBRARY_PATH)
