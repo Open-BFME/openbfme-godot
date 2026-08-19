@@ -638,6 +638,104 @@ def clean_name(value: str) -> str:
     return re.sub(r"[^a-z0-9_]+", "_", value.casefold()).strip("_")
 
 
+def _w3d_fixed_string(raw: bytes) -> str:
+    return raw.split(b"\0", 1)[0].decode("ascii", "replace")
+
+
+def _walk_w3d_chunks(source: bytes, start: int, end: int):
+    position = start
+    while position + 8 <= end:
+        chunk_id, raw_size = struct.unpack_from("<II", source, position)
+        declared = raw_size & W3D_CHUNK_SIZE_MASK
+        has_subchunks = bool(raw_size & W3D_SUBCHUNK_FLAG)
+        payload_offset = position + 8
+        available = min(declared, end - payload_offset)
+        yield chunk_id, payload_offset, available, has_subchunks
+        if has_subchunks:
+            yield from _walk_w3d_chunks(source, payload_offset, payload_offset + available)
+        position = payload_offset + available
+
+
+def w3d_hidden_mesh_names(source: bytes) -> frozenset[str]:
+    """Return mesh names whose W3D attributes include HIDDEN (0x00001000)."""
+
+    names: set[str] = set()
+    for chunk_id, payload_offset, available, _has_sub in _walk_w3d_chunks(
+        source, 0, len(source)
+    ):
+        if chunk_id != W3D_MESH_HEADER_CHUNK or available < 36:
+            continue
+        _version, attributes, raw_name, _container = struct.unpack_from(
+            "<II16s16s", source, payload_offset
+        )
+        if attributes & W3D_MESH_FLAG_HIDDEN:
+            name = _w3d_fixed_string(raw_name)
+            if name:
+                names.add(name)
+    return frozenset(names)
+
+
+def w3d_hierarchy_pivots(source: bytes) -> list[dict[str, Any]]:
+    """Return hierarchy pivot records (name, parent, local Z-up translation)."""
+
+    pivots: list[dict[str, Any]] = []
+    for chunk_id, payload_offset, available, _has_sub in _walk_w3d_chunks(
+        source, 0, len(source)
+    ):
+        if chunk_id != W3D_HIERARCHY_PIVOTS_CHUNK:
+            continue
+        record_size = 60
+        count, _remainder = divmod(available, record_size)
+        for index in range(count):
+            offset = payload_offset + index * record_size
+            raw_name, parent_index, tx, ty, tz = struct.unpack_from(
+                "<16sifff", source, offset
+            )
+            name = _w3d_fixed_string(raw_name)
+            pivots.append(
+                {
+                    "name": name,
+                    "index": index,
+                    "parentIndex": parent_index,
+                    "translation": (float(tx), float(ty), float(tz)),
+                }
+            )
+    return pivots
+
+
+def apply_w3d_hidden_extras(mesh_objects: list[Any], hidden_names: Iterable[str]) -> int:
+    """Stamp extras.hidden=true onto objects/meshes whose W3D name is HIDDEN."""
+
+    folded = {str(name).casefold() for name in hidden_names if str(name)}
+    if not folded:
+        return 0
+    marked = 0
+    for item in mesh_objects:
+        labels = [
+            str(getattr(item, "name", "")),
+            str(getattr(getattr(item, "data", None), "name", "")),
+        ]
+        tokens: set[str] = set()
+        for label in labels:
+            if not label:
+                continue
+            tokens.add(label.casefold())
+            if "." in label:
+                tokens.add(label.rsplit(".", 1)[-1].casefold())
+        if not tokens.intersection(folded):
+            continue
+        try:
+            item["hidden"] = True
+            data = getattr(item, "data", None)
+            if data is not None:
+                data["hidden"] = True
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise RuntimeError("could not stamp W3D hidden extras") from exc
+        marked += 1
+    return marked
+
+
+
 def normalize_optional_mesh_exclusions(value: Any) -> list[str]:
     if (
         not isinstance(value, list)
@@ -849,6 +947,11 @@ _ACTIVE_SHADER_TEXTURE_SENTINEL_DROPS: list[dict[str, Any]] = []
 # The pinned importer deliberately omits the source root pivot, so a hierarchy
 # whose only pivot is this one imports as an armature with zero bones.
 OMITTED_ROOT_PIVOT_NAME = "ROOTTRANSFORM"
+W3D_MESH_HEADER_CHUNK = 0x0000001F
+W3D_HIERARCHY_PIVOTS_CHUNK = 0x00000102
+W3D_MESH_FLAG_HIDDEN = 0x00001000
+W3D_SUBCHUNK_FLAG = 0x80000000
+W3D_CHUNK_SIZE_MASK = 0x7FFFFFFF
 _ACTIVE_ROOT_RIGID_INERT_VERTEX_GROUPS: list[dict[str, Any]] = []
 MAX_OPTIONAL_MESH_EXCLUSIONS = 64
 CLEAN_MESH_IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9_]{0,126}[a-z0-9])?$")
@@ -4774,6 +4877,11 @@ def _convert_w3d_job_impl(
             bpy.data.objects,
         )
         rig = None
+        model_mesh_objects = [item for item in bpy.data.objects if item.type == "MESH"]
+    apply_w3d_hidden_extras(
+        model_mesh_objects,
+        w3d_hidden_mesh_names(model.read_bytes()),
+    )
     phase_checkpoint.set("attachment-validation")
     phase_checkpoint.set("attachment-canonicalization")
     if rig is not None:

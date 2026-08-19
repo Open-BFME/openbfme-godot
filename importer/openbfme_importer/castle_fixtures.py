@@ -65,6 +65,8 @@ from .module_contracts import ModuleContractError, compile_all_module_contracts
 from .playable_structure_compiler import (
     PlayableStructureCompilerError,
     _health_contract,
+    compile_walk_surfaces,
+    validate_walk_surfaces,
 )
 from .playable_unit_compiler import (
     PlayableUnitCompilerError,
@@ -210,6 +212,9 @@ def compile_map_object_descriptor(
             {str(entry.source_virtual_path) for entry in ancestry}
         ),
     }
+    walk_surfaces = compile_walk_surfaces(ancestry, documents)
+    if walk_surfaces is not None:
+        descriptor["walkSurfaces"] = walk_surfaces
     canonical = json.dumps(
         descriptor, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     )
@@ -540,6 +545,9 @@ def _fixture(
         )
     if _module_present(ancestry, "KeepObjectDie"):
         fixture["deathRule"] = "keep-object"
+    walk_surfaces = descriptor.get("walkSurfaces")
+    if isinstance(walk_surfaces, Mapping):
+        fixture["walkSurfaces"] = dict(walk_surfaces)
     return fixture
 
 
@@ -805,6 +813,14 @@ def validate_map_fixtures(document: object) -> None:
             raise CastleFixturesError(
                 "castle fixture role disagrees with its module block"
             )
+        if "walkSurfaces" in row:
+            try:
+                validate_walk_surfaces(
+                    row.get("walkSurfaces"),
+                    label=f"castle fixture {type_name}",
+                )
+            except PlayableStructureCompilerError as exc:
+                raise CastleFixturesError(str(exc)) from exc
     omitted = document.get("omitted", [])
     if not isinstance(omitted, Sequence) or isinstance(omitted, (str, bytes)):
         raise CastleFixturesError("map fixtures document has an invalid omitted list")

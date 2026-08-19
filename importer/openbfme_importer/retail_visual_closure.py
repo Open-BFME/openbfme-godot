@@ -1385,6 +1385,12 @@ def build_retail_visual_closure(
             "embeddedAnimationChannelCount": _embedded_animation_channel_count(item),
             "skinnedMeshCount": _skinned_mesh_count(item),
             "meshCount": len(item.mesh_headers),
+            # W3D_MESH_FLAG_HIDDEN (0x1000): retail walk-surface / docking
+            # proxies (P1/P2/R1 decks and ramps). Drives the no-bake decision
+            # for HLOD structures whose named pivots must survive.
+            "hiddenMeshCount": sum(
+                1 for header in item.mesh_headers if int(header.attributes) & 0x00001000
+            ),
             "modelReferences": [
                 reference.neutral() for reference in item.model_references
             ],

@@ -3296,6 +3296,210 @@ def _structure_scenario_admission(
     }
 
 
+# Draw-module walk-surface roles. Retail authors these as named HIDDEN W3D
+# sub-meshes on W3DScriptedModelDraw (WallBoundsMesh / RampMesh1 / RampMesh2 /
+# RaisedWallMesh). Missing fields stay absent; names that do not exist in the
+# intact W3D are receipts, never errors (RaisedWallMesh=P3 on HD gatehouses and
+# RampMesh2=R2 on MenWallRamp are the standing retail dangles).
+_WALK_SURFACE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("WallBoundsMesh", "wallBoundsMesh"),
+    ("RampMesh1", "rampMesh1"),
+    ("RampMesh2", "rampMesh2"),
+    ("RaisedWallMesh", "raisedWallMesh"),
+)
+_WALK_SURFACE_ROLES = frozenset(role for _, role in _WALK_SURFACE_FIELDS)
+
+
+def _document_payload(
+    documents: Mapping[str, bytes], virtual_path: str
+) -> bytes | None:
+    folded = virtual_path.replace("\\", "/").casefold()
+    for key, payload in documents.items():
+        if key.replace("\\", "/").casefold() == folded:
+            return payload
+    return None
+
+
+def _w3d_virtual_path_for_model(model: str) -> str | None:
+    stem = model.strip()
+    if not stem or stem.casefold() in {"none", "null"}:
+        return None
+    if "/" in stem or "\\" in stem or "." in stem:
+        return None
+    prefix = stem[:2].casefold()
+    if len(prefix) != 2:
+        return None
+    return f"art/w3d/{prefix}/{stem.casefold()}.w3d"
+
+
+def _w3d_mesh_names(payload: bytes, virtual_path: str) -> frozenset[str]:
+    from .w3d_metadata import scan_w3d_metadata
+
+    metadata = scan_w3d_metadata(payload, virtual_path)
+    return frozenset(
+        header.mesh_name for header in metadata.mesh_headers if header.mesh_name
+    )
+
+
+def compile_walk_surfaces(
+    ancestry: Sequence[SageObject],
+    documents: Mapping[str, bytes] | None = None,
+) -> dict[str, object] | None:
+    """Compile Draw-module walk-surface names, plus W3D-absence receipts.
+
+    Returns ``None`` when no ``W3DScriptedModelDraw`` authors any of the four
+    role fields.  A scanned W3D is consulted only when its bytes are in
+    ``documents``; names that miss every scanned mesh header become
+    ``unresolved`` receipts.  A missing W3D is not an error and does not
+    invent a receipt.
+    """
+
+    authored: dict[str, dict[str, object]] = {}
+    models: list[str] = []
+    for block in _effective_top_blocks(ancestry):
+        if (block.header_key or "").casefold() != "draw":
+            continue
+        if block.kind.casefold() != "w3dscriptedmodeldraw":
+            continue
+        for nested in block.blocks:
+            if nested.kind.casefold() != "defaultmodelconditionstate":
+                continue
+            for assignment in nested.assignments:
+                if assignment.key.casefold() != "model":
+                    continue
+                token = assignment.value.split()[0] if assignment.value.split() else ""
+                if token:
+                    models.append(token)
+        by_key = {assignment.key.casefold(): assignment for assignment in block.assignments}
+        for authored_name, role in _WALK_SURFACE_FIELDS:
+            assignment = by_key.get(authored_name.casefold())
+            if assignment is None:
+                continue
+            tokens = assignment.value.split()
+            if len(tokens) != 1:
+                raise PlayableStructureCompilerError(
+                    f"{authored_name} requires one mesh name at "
+                    f"{assignment.source_virtual_path}:{assignment.line}"
+                )
+            authored[role] = {
+                "meshName": tokens[0],
+                "sourceIni": assignment.source_virtual_path,
+                "line": assignment.line,
+            }
+    if not authored:
+        return None
+    names: dict[str, object] = {
+        role: str(row["meshName"])
+        for _, role in _WALK_SURFACE_FIELDS
+        if (row := authored.get(role)) is not None
+    }
+    scanned_names: set[str] = set()
+    scanned_any = False
+    if documents is not None:
+        seen_paths: set[str] = set()
+        for model in models:
+            virtual = _w3d_virtual_path_for_model(model)
+            if virtual is None or virtual.casefold() in seen_paths:
+                continue
+            payload = _document_payload(documents, virtual)
+            if payload is None:
+                continue
+            seen_paths.add(virtual.casefold())
+            scanned_any = True
+            scanned_names.update(
+                name.casefold() for name in _w3d_mesh_names(payload, virtual)
+            )
+    if scanned_any:
+        unresolved: list[dict[str, object]] = []
+        for _, role in _WALK_SURFACE_FIELDS:
+            row = authored.get(role)
+            if row is None:
+                continue
+            mesh_name = str(row["meshName"])
+            if mesh_name.casefold() in scanned_names:
+                continue
+            unresolved.append(
+                {
+                    "role": role,
+                    "meshName": mesh_name,
+                    "sourceIni": row["sourceIni"],
+                    "line": row["line"],
+                }
+            )
+        if unresolved:
+            names["unresolved"] = unresolved
+    return names
+
+
+def validate_walk_surfaces(value: object, *, label: str) -> None:
+    """Refuse a malformed walkSurfaces block. Absence is valid."""
+
+    if value is None:
+        return
+    if not isinstance(value, Mapping):
+        raise PlayableStructureCompilerError(f"{label} walkSurfaces must be an object")
+    allowed = set(_WALK_SURFACE_ROLES) | {"unresolved"}
+    extra = set(value) - allowed
+    if extra:
+        raise PlayableStructureCompilerError(
+            f"{label} walkSurfaces has unknown fields"
+        )
+    named = 0
+    for role in _WALK_SURFACE_ROLES:
+        if role not in value:
+            continue
+        mesh_name = value[role]
+        if not isinstance(mesh_name, str) or not mesh_name.strip():
+            raise PlayableStructureCompilerError(
+                f"{label} walkSurfaces has an invalid {role}"
+            )
+        named += 1
+    if named == 0:
+        raise PlayableStructureCompilerError(
+            f"{label} walkSurfaces authors no mesh role"
+        )
+    if "unresolved" not in value:
+        return
+    unresolved = value["unresolved"]
+    if not isinstance(unresolved, list) or not unresolved:
+        raise PlayableStructureCompilerError(
+            f"{label} walkSurfaces has an invalid unresolved receipt"
+        )
+    seen_roles: set[str] = set()
+    for row in unresolved:
+        if not isinstance(row, Mapping):
+            raise PlayableStructureCompilerError(
+                f"{label} walkSurfaces has an invalid unresolved receipt"
+            )
+        role = row.get("role")
+        mesh_name = row.get("meshName")
+        if (
+            role not in _WALK_SURFACE_ROLES
+            or role in seen_roles
+            or role not in value
+            or not isinstance(mesh_name, str)
+            or mesh_name != value[role]
+        ):
+            raise PlayableStructureCompilerError(
+                f"{label} walkSurfaces has an invalid unresolved receipt"
+            )
+        seen_roles.add(str(role))
+        source_ini = row.get("sourceIni")
+        line = row.get("line")
+        if source_ini is not None and (
+            not isinstance(source_ini, str) or not source_ini.strip()
+        ):
+            raise PlayableStructureCompilerError(
+                f"{label} walkSurfaces has an invalid unresolved receipt"
+            )
+        if line is not None and (
+            not isinstance(line, int) or isinstance(line, bool) or line <= 0
+        ):
+            raise PlayableStructureCompilerError(
+                f"{label} walkSurfaces has an invalid unresolved receipt"
+            )
+
+
 def compile_playable_structure_descriptor(
     target_id: str,
     documents: Mapping[str, bytes],
@@ -3324,6 +3528,7 @@ def compile_playable_structure_descriptor(
             f"effective Object is missing: {target_id}"
         )
     lineage = _ancestry(prepared.objects, target)
+    walk_surfaces = compile_walk_surfaces(lineage, documents)
     # SAGE selection/collision volume. Retail hit-tests a click against this
     # footprint; without it a runtime has nothing but a guessed radius.
     geometry_contract = _geometry_contract(lineage, prepared.numeric_defines)
@@ -3599,6 +3804,7 @@ def compile_playable_structure_descriptor(
         "objectId": target.name,
         "category": "structure",
         "kindOf": list(kinds),
+        **({"walkSurfaces": walk_surfaces} if walk_surfaces is not None else {}),
         "production": {
             "evidence": production_evidence,
             "routes": production,
@@ -4416,6 +4622,8 @@ def validate_playable_structure_descriptor(value: Mapping[str, object]) -> None:
             raise PlayableStructureCompilerError(
                 "structure descriptor inherited upgrade source evidence is missing"
             )
+    if "walkSurfaces" in value:
+        validate_walk_surfaces(value.get("walkSurfaces"), label="structure descriptor")
 
 
 __all__ = [
@@ -4424,5 +4632,7 @@ __all__ = [
     "SCHEMA_VERSION",
     "STRUCTURE_KIND_TOKENS",
     "compile_playable_structure_descriptor",
+    "compile_walk_surfaces",
     "validate_playable_structure_descriptor",
+    "validate_walk_surfaces",
 ]

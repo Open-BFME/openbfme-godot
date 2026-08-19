@@ -670,6 +670,8 @@ func _load_fixtures(value: Variant) -> bool:
 			_:
 				if record.has("gate") or record.has("garrison"):
 					return _fail("castle fixture role disagrees with its module block")
+		if record.has("walkSurfaces") and not _valid_fixture_walk_surfaces(record.get("walkSurfaces", null)):
+			return false
 		map_fixtures.append(record)
 	for entry in _array(document.get("omitted", [])):
 		if typeof(entry) != TYPE_DICTIONARY:
@@ -753,6 +755,49 @@ func _valid_fixture_garrison_block(value: Variant) -> bool:
 	for key in ["entryPosition", "entryOffset", "exitOffset"]:
 		if block.has(key) and not _valid_fixture_vector(block.get(key)):
 			return _fail("garrison fixture has an invalid %s" % key)
+	return true
+
+
+func _valid_fixture_walk_surfaces(value: Variant) -> bool:
+	## Lane L6: names-only Draw-module walk-surface roles. Absent is valid;
+	## present must be an object of the four role keys plus optional unresolved
+	## receipts. The nav-layer lane consumes this later — no behaviour here.
+	if typeof(value) != TYPE_DICTIONARY:
+		return _fail("castle fixture has an invalid walkSurfaces")
+	var block := value as Dictionary
+	var roles := {
+		"wallBoundsMesh": true,
+		"rampMesh1": true,
+		"rampMesh2": true,
+		"raisedWallMesh": true,
+	}
+	var named := 0
+	for key in block.keys():
+		var field := String(key)
+		if field == "unresolved":
+			continue
+		if not roles.has(field):
+			return _fail("castle fixture has an invalid walkSurfaces")
+		if typeof(block[key]) != TYPE_STRING or String(block[key]).strip_edges() == "":
+			return _fail("castle fixture has an invalid walkSurfaces")
+		named += 1
+	if named == 0:
+		return _fail("castle fixture has an invalid walkSurfaces")
+	if not block.has("unresolved"):
+		return true
+	var unresolved: Variant = block.get("unresolved")
+	if typeof(unresolved) != TYPE_ARRAY or (unresolved as Array).is_empty():
+		return _fail("castle fixture has an invalid walkSurfaces")
+	var seen := {}
+	for entry in unresolved as Array:
+		if typeof(entry) != TYPE_DICTIONARY:
+			return _fail("castle fixture has an invalid walkSurfaces")
+		var row := entry as Dictionary
+		var role := String(row.get("role", ""))
+		var mesh_name := String(row.get("meshName", ""))
+		if not roles.has(role) or seen.has(role) or not block.has(role) or mesh_name != String(block[role]):
+			return _fail("castle fixture has an invalid walkSurfaces")
+		seen[role] = true
 	return true
 
 

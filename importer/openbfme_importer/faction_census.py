@@ -83,6 +83,10 @@ _OBJECT_EDGE_FIELDS = {
     "posternbacktemplatename": "wall-postern-template",
     "towertemplatename": "wall-tower-template",
     "trebuchettemplatename": "wall-trebuchet-template",
+    # HubCapTemplateName is how retail authors wall ramps (MenWallRamp,
+    # DwarvenWallRamp): OPTION_TWO of WallHubBehavior, never a SegmentTemplate.
+    "hubcaptemplatename": "wall-hub-cap-template",
+    "defaultsegmenttemplatename": "wall-default-segment-template",
 }
 
 
