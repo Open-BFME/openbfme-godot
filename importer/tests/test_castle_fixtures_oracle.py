@@ -31,6 +31,8 @@ import pytest
 
 from openbfme_importer.catalog import InstallCatalog
 from openbfme_importer.castle_fixtures import (
+    _compile_lineage,
+    _gate_block,
     build_map_fixtures,
     compile_map_object_descriptor,
     validate_map_fixtures,
@@ -238,6 +240,35 @@ def test_erebor_emits_one_gate_fixture_with_authored_contract(fixtures_by_map) -
     assert gate["gate"]["resetMilliseconds"] == 5000
     assert gate["gate"]["percentOpenForPathing"] == 50
     assert gate["deathRule"] == "keep-object"
+
+
+@oracle_present
+def test_erebor_and_helms_gate_blocks_pin_authored_runtime_fields(raw, defines) -> None:
+    _, erebor_lineage = _compile_lineage("EreborGateDoors", raw)
+    erebor = _gate_block(erebor_lineage, defines, "EreborGateDoors")
+    assert erebor["commandSet"] == "CastleGateCommandSet"
+    assert erebor["openByDefault"] is True
+    assert erebor["resetMilliseconds"] == 5000
+    assert erebor["percentOpenForPathing"] == 50
+    assert set(erebor["geometries"]) == {"Closed", "OpenLeft", "OpenRight"}
+    # ereborbuildings.ini:6406 authors no AI/portal modules.
+    assert "aiGateUpdate" not in erebor
+    assert "fakePathfindPortal" not in erebor
+
+    _, helms_lineage = _compile_lineage("RBHelmsDeepGateDoorBig", raw)
+    block = _gate_block(helms_lineage, defines, "RBHelmsDeepGateDoorBig")
+    # Pure effective-assets helmsdeepbuildings.ini:6227,6274,6286-6293. The older
+    # retail-extract mirror says 300x150; the effective RotWK oracle is 450x225.
+    assert block["commandSet"] == "CastleGateCommandSet_NoSell"
+    assert block["openByDefault"] is True
+    assert block["resetMilliseconds"] == 12200
+    assert block["percentOpenForPathing"] == 50
+    assert set(block["geometries"]) == {"Closed", "OpenLeft", "OpenRight"}
+    assert block["aiGateUpdate"] == {"triggerWidthX": 450.0, "triggerWidthY": 225.0}
+    assert block["fakePathfindPortal"] == {
+        "allowEnemies": False,
+        "allowNonSkirmishAIUnits": False,
+    }
 
 
 @oracle_present

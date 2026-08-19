@@ -32,6 +32,13 @@ _DOCUMENTS = {
         b"-CAVALRY -SUMMONED -WildSpiderling -WildSpiderlingHorde "
         b"-COMBO_HORDE -IsengardSharku -AngmarThrallMaster\n"
     ),
+    "data/ini/commandset.ini": (
+        b"CommandSet CastleGateCommandSet\n"
+        b"  1 = Command_ToggleGate\n"
+        b"  2 = Command_StartSelfRepair\n"
+        b"  6 = Command_Sell\n"
+        b"End\n"
+    ),
     "data/ini/armor.ini": (
         b"Armor TestWallArmor\n"
         b"  Armor = DEFAULT 10%\n"
@@ -48,6 +55,9 @@ _DOCUMENTS = {
     "data/ini/object/test/castle.ini": (
         b"Object TestMapGate\n"
         b"  KindOf = STRUCTURE IMMOBILE SELECTABLE BLOCKING_GATE WALL_GATE\n"
+        # CastleGateCommandSet carries Command_ToggleGate in retail
+        # commandset.ini:6845-6852.
+        b"  CommandSet = CastleGateCommandSet\n"
         b"  Body = ActiveBody ModuleTag_02\n"
         b"    MaxHealth = 20000.0\n"
         b"  End\n"
@@ -71,6 +81,16 @@ _DOCUMENTS = {
         b"    SoundFinishedClosingGate = GateCloseEnd\n"
         b"    TimeBeforePlayingOpenSound = 9500\n"
         b"    TimeBeforePlayingClosedSound = 9500\n"
+        b"  End\n"
+        # Retail Helm's Deep gates author both optional policies
+        # (helmsdeepbuildings.ini:6286-6293).
+        b"  Behavior = FakePathfindPortalBehaviour ModuleTag_FAKEPATHFIND\n"
+        b"    AllowEnemies = No\n"
+        b"    AllowNonSkirmishAIUnits = No\n"
+        b"  End\n"
+        b"  Behavior = AIGateUpdate ModuleTag_AIGateUpdate\n"
+        b"    TriggerWidthX = 300.0\n"
+        b"    TriggerWidthY = 150.0\n"
         b"  End\n"
         b"  Geometry = BOX\n"
         b"  GeometryMajorRadius = 130.0\n"
@@ -376,6 +396,20 @@ def test_gate_fixture_carries_module_block_and_named_geometries() -> None:
     assert block["openByDefault"] is True
     assert block["resetMilliseconds"] == 5000
     assert block["percentOpenForPathing"] == 50
+    assert block["commandSet"] == "CastleGateCommandSet"
+    assert block["commandSetRows"] == [
+        {"slot": 1, "commandId": "Command_ToggleGate"},
+        {"slot": 2, "commandId": "Command_StartSelfRepair"},
+        {"slot": 6, "commandId": "Command_Sell"},
+    ]
+    assert block["aiGateUpdate"] == {
+        "triggerWidthX": 300.0,
+        "triggerWidthY": 150.0,
+    }
+    assert block["fakePathfindPortal"] == {
+        "allowEnemies": False,
+        "allowNonSkirmishAIUnits": False,
+    }
     geometries = block["geometries"]
     assert set(geometries) == {"Closed", "OpenLeft", "OpenRight"}
     closed = geometries["Closed"]
@@ -484,6 +518,44 @@ def test_validate_accepts_builder_output() -> None:
         (
             lambda doc: doc["fixtures"][0]["gate"].update(geometries={}),
             "geometries",
+        ),
+        (
+            lambda doc: doc["fixtures"][0]["gate"].update(commandSet=""),
+            "gate command set",
+        ),
+        (
+            lambda doc: doc["fixtures"][0]["gate"].update(commandSetRows={}),
+            "command set rows",
+        ),
+        (
+            lambda doc: doc["fixtures"][0]["gate"].update(commandSetRows=[]),
+            "command set rows",
+        ),
+        (
+            lambda doc: doc["fixtures"][0]["gate"]["commandSetRows"][0].pop("slot"),
+            "command set rows",
+        ),
+        (
+            lambda doc: doc["fixtures"][0]["gate"]["commandSetRows"][0].pop("commandId"),
+            "command set rows",
+        ),
+        (
+            lambda doc: doc["fixtures"][0]["gate"]["aiGateUpdate"].pop(
+                "triggerWidthY"
+            ),
+            "AI gate update",
+        ),
+        (
+            lambda doc: doc["fixtures"][0]["gate"]["aiGateUpdate"].update(
+                triggerWidthX=-300.0
+            ),
+            "AI gate update",
+        ),
+        (
+            lambda doc: doc["fixtures"][0]["gate"]["fakePathfindPortal"].pop(
+                "allowNonSkirmishAIUnits"
+            ),
+            "fake pathfind portal",
         ),
         (
             lambda doc: doc["fixtures"][1]["garrison"].update(containMax=0),

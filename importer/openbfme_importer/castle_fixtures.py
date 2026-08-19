@@ -366,8 +366,38 @@ def _geometry_number_value(row: object, label: str) -> float:
     return float(row["value"])  # type: ignore[index]
 
 
+def _command_set_rows(
+    documents: Mapping[str, bytes], command_set_id: str
+) -> list[dict[str, Any]]:
+    """Return only the authored slot rows from one retail CommandSet block."""
+
+    payload = documents.get("data/ini/commandset.ini")
+    if payload is None:
+        raise CastleFixturesError("retail commandset.ini is missing")
+    text = payload.decode("utf-8", errors="replace")
+    declaration = re.search(
+        rf"(?im)^\s*CommandSet\s+{re.escape(command_set_id)}\s*(?:;.*)?$", text
+    )
+    if declaration is None:
+        raise CastleFixturesError(f"retail CommandSet {command_set_id} is missing")
+    end = re.search(r"(?im)^\s*End\s*(?:;.*)?$", text[declaration.end() :])
+    if end is None:
+        raise CastleFixturesError(f"retail CommandSet {command_set_id} is unterminated")
+    rows: list[dict[str, Any]] = []
+    for raw_line in text[declaration.end() : declaration.end() + end.start()].splitlines():
+        match = re.match(r"\s*(\d+)\s*=\s*([^\s;]+)", raw_line)
+        if match is not None:
+            rows.append({"slot": int(match.group(1)), "commandId": match.group(2)})
+    if not rows:
+        raise CastleFixturesError(f"retail CommandSet {command_set_id} is empty")
+    return rows
+
+
 def _gate_block(
-    ancestry: Sequence[Any], defines: Mapping[str, int | float], target_id: str
+    ancestry: Sequence[Any],
+    defines: Mapping[str, int | float],
+    target_id: str,
+    documents: Mapping[str, bytes] | None = None,
 ) -> dict[str, Any]:
     label = f"{target_id} GateOpenAndCloseBehavior"
     fields = _module_assignments(ancestry, "GateOpenAndCloseBehavior")
@@ -413,6 +443,31 @@ def _gate_block(
             f"{target_id} is a gate without named geometry states"
         )
     block["geometries"] = geometries
+    command_sets = [
+        row.value.strip().split()[0]
+        for row in _effective_values(ancestry, "CommandSet")
+        if row.value.strip()
+    ]
+    if command_sets:
+        block["commandSet"] = command_sets[0]
+        if documents is not None:
+            block["commandSetRows"] = _command_set_rows(documents, command_sets[0])
+    ai_fields = _module_assignments(ancestry, "AIGateUpdate")
+    if ai_fields:
+        ai_label = f"{target_id} AIGateUpdate"
+        block["aiGateUpdate"] = {
+            "triggerWidthX": _number(ai_fields, "TriggerWidthX", ai_label, defines),
+            "triggerWidthY": _number(ai_fields, "TriggerWidthY", ai_label, defines),
+        }
+    portal_fields = _module_assignments(ancestry, "FakePathfindPortalBehaviour")
+    if portal_fields:
+        portal_label = f"{target_id} FakePathfindPortalBehaviour"
+        block["fakePathfindPortal"] = {
+            "allowEnemies": _yes_no(portal_fields, "AllowEnemies", portal_label),
+            "allowNonSkirmishAIUnits": _yes_no(
+                portal_fields, "AllowNonSkirmishAIUnits", portal_label
+            ),
+        }
     return block
 
 
@@ -509,6 +564,7 @@ def _fixture(
     placement: Mapping[str, Any],
     ancestry: Sequence[Any],
     defines: Mapping[str, int | float],
+    documents: Mapping[str, bytes],
     text_defines: Mapping[str, list[str]],
 ) -> dict[str, Any]:
     type_name = str(placement["typeName"])
@@ -538,7 +594,7 @@ def _fixture(
         if property_key in properties:
             fixture[fixture_key] = properties[property_key]
     if role == "gate":
-        fixture["gate"] = _gate_block(ancestry, defines, info.name)
+        fixture["gate"] = _gate_block(ancestry, defines, info.name, documents)
     elif role == "garrison":
         fixture["garrison"] = _garrison_block(
             ancestry, defines, info.name, text_defines
@@ -626,7 +682,7 @@ def build_map_fixtures(
             continue
         _, ancestry = _compile_lineage(type_name, raw)
         fixtures.append(
-            _fixture(info, descriptor, row, ancestry, defines, text_defines)
+            _fixture(info, descriptor, row, ancestry, defines, documents, text_defines)
         )
     fixtures.sort(key=lambda fixture: int(fixture["index"]))
     return {
@@ -685,6 +741,43 @@ def _validate_gate_block(block: object, label: str) -> None:
     if not _is_number(percent) or float(percent) < 0:  # type: ignore[arg-type]
         raise CastleFixturesError(f"{label} has an invalid gate module block")
     _validate_geometries(block.get("geometries"), label)
+    if "commandSet" in block and (
+        not isinstance(block.get("commandSet"), str) or not block["commandSet"].strip()
+    ):
+        raise CastleFixturesError(f"{label} has an invalid gate command set")
+    command_rows = block.get("commandSetRows")
+    if command_rows is not None and (
+        not isinstance(command_rows, list)
+        or not command_rows
+        or any(
+            not isinstance(row, Mapping)
+            or not isinstance(row.get("slot"), int)
+            or isinstance(row.get("slot"), bool)
+            or int(row["slot"]) <= 0
+            or not isinstance(row.get("commandId"), str)
+            or not row["commandId"].strip()
+            for row in command_rows
+        )
+    ):
+        raise CastleFixturesError(f"{label} has invalid gate command set rows")
+    ai_gate = block.get("aiGateUpdate")
+    if ai_gate is not None and (
+        not isinstance(ai_gate, Mapping)
+        or not all(
+            _is_number(ai_gate.get(key)) and float(ai_gate[key]) > 0.0
+            for key in ("triggerWidthX", "triggerWidthY")
+        )
+    ):
+        raise CastleFixturesError(f"{label} has an invalid AI gate update block")
+    portal = block.get("fakePathfindPortal")
+    if portal is not None and (
+        not isinstance(portal, Mapping)
+        or not all(
+            isinstance(portal.get(key), bool)
+            for key in ("allowEnemies", "allowNonSkirmishAIUnits")
+        )
+    ):
+        raise CastleFixturesError(f"{label} has an invalid fake pathfind portal block")
 
 
 def _validate_garrison_block(block: object, label: str) -> None:

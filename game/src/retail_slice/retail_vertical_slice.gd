@@ -5053,6 +5053,9 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 	# whole of SellableCommandSet (commandset.ini:5771 / farm.ini:34). SAGE
 	# exposes it for the building's whole life, including under construction.
 	if structure_owned_alive:
+		var gate_toggle := _gate_toggle_radial_entry(structure)
+		if not gate_toggle.is_empty():
+			entries.append(gate_toggle)
 		var sell: Dictionary = simulation.structure_sell_command(selected_structure_id)
 		if not sell.is_empty():
 			var sell_cmd: Dictionary = hud.retail_sell_command()
@@ -5072,6 +5075,37 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 			})
 	var anchor := camera.unproject_position(world_position)
 	hud.sync_radial_commands(anchor, _paged_radial_entries(structure, entries))
+
+
+func _gate_toggle_radial_entry(structure: Dictionary) -> Dictionary:
+	var slot := 0
+	for row_value in structure.get("gate_command_rows", []) as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			continue
+		var row := row_value as Dictionary
+		if String(row.get("commandId", "")) == "Command_ToggleGate":
+			slot = int(row.get("slot", 0))
+			break
+	if slot <= 0 or hud == null:
+		return {}
+	var authored: Dictionary = hud.retail_gate_toggle_command()
+	if authored.is_empty():
+		return {}
+	var gate_policy: Dictionary = structure.get("gate_behavior", {})
+	return {
+		"command_kind": "toggle_gate",
+		"id": "Command_ToggleGate",
+		"icon": authored.get("texture") as Texture2D,
+		"text": String(authored.get("label", "")) if authored.get("texture") == null else "",
+		"enabled": not gate_policy.is_empty(),
+		"label_id": String(authored.get("label_id", "")),
+		"tooltip_id": String(authored.get("tooltip_id", "")),
+		"image_id": String(authored.get("image_id", "")),
+		"label": String(authored.get("label", "")),
+		"tooltip": String(authored.get("tooltip", "")),
+		"cost": -1,
+		"slot": slot,
+	}
 
 
 ## Retail's fortress command set is PAGED and ours must be too.
@@ -5289,6 +5323,15 @@ func _sell_selected_structure() -> void:
 			"Cannot demolish: %s." % String(result.get("reason", "rejected")).replace("-", " "),
 			true
 		)
+	_sync_presentation()
+
+
+func _toggle_selected_gate() -> void:
+	if simulation == null or selected_structure_id == 0:
+		return
+	var result: Dictionary = _apply_local_command("toggle_gate", {"structure_id": selected_structure_id})
+	if not bool(result.get("ok", false)):
+		hud.set_feedback("Cannot toggle gate: %s." % String(result.get("reason", "rejected")).replace("-", " "), true)
 	_sync_presentation()
 
 
@@ -8035,6 +8078,7 @@ func _build_hud() -> void:
 	hud.hero_focus_requested.connect(_on_hero_focus_requested)
 	hud.expansion_requested.connect(_on_expansion_requested)
 	hud.structure_sell_requested.connect(_sell_selected_structure)
+	hud.gate_toggle_requested.connect(_toggle_selected_gate)
 	hud.music_volume_changed.connect(func(value: float) -> void:
 		if audio_system != null: audio_system.set_music_volume(value, true)
 	)

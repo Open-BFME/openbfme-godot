@@ -9,7 +9,7 @@ extends SceneTree
 ## geometries / Player_1 owner; EBGarrisonableTower ContainMax 3).
 
 const Watchdog := preload("res://tests/runner_watchdog.gd")
-const EXPECTED_CHECKS := 33
+const EXPECTED_CHECKS := 37
 
 const V2_CONTRACT := {
 	"version": 2,
@@ -43,6 +43,14 @@ const GATE_FIXTURE := {
 		"openByDefault": true,
 		"resetMilliseconds": 5000,
 		"percentOpenForPathing": 50,
+		"commandSet": "CastleGateCommandSet",
+		"commandSetRows": [
+			{"slot": 1, "commandId": "Command_ToggleGate"},
+			{"slot": 2, "commandId": "Command_StartSelfRepair"},
+			{"slot": 6, "commandId": "Command_Sell"},
+		],
+		"aiGateUpdate": {"triggerWidthX": 300.0, "triggerWidthY": 150.0},
+		"fakePathfindPortal": {"allowEnemies": false, "allowNonSkirmishAIUnits": false},
 		"geometries": {
 			"Closed": {"shape": "BOX", "majorRadius": 130.0, "minorRadius": 7.5, "height": 140, "offset": [0.0, 0.0, 0.0]},
 			"OpenLeft": {"shape": "BOX", "majorRadius": 7.5, "minorRadius": 60.0, "height": 140, "offset": [-115.0, 68.0, 0.0]},
@@ -160,6 +168,9 @@ func _run() -> void:
 	_check("valid_gate_block_surfaces",
 		bool(gate_block.get("openByDefault", false))
 		and int(gate_block.get("resetMilliseconds", 0)) == 5000
+		and String(gate_block.get("commandSet", "")) == "CastleGateCommandSet"
+		and float((gate_block.get("aiGateUpdate", {}) as Dictionary).get("triggerWidthX", 0.0)) == 300.0
+		and not bool((gate_block.get("fakePathfindPortal", {}) as Dictionary).get("allowEnemies", true))
 		and geometries.has("Closed") and geometries.has("OpenLeft") and geometries.has("OpenRight"),
 		str(gate_block))
 	_check("valid_garrison_block_surfaces",
@@ -275,6 +286,38 @@ func _run() -> void:
 		not _load(gate_bad_block, gate_bad_doc)
 		and String(gate_bad_block.error) == "gate fixture has an invalid gate module block",
 		String(gate_bad_block.error))
+
+	var gate_bad_command_set = map_data_script.new()
+	var gate_bad_command_set_doc := VALID_DOCUMENT.duplicate(true)
+	gate_bad_command_set_doc["fixtures"][0]["gate"]["commandSet"] = ""
+	_check("gate_bad_command_set_fails_closed",
+		not _load(gate_bad_command_set, gate_bad_command_set_doc)
+		and String(gate_bad_command_set.error) == "gate fixture has an invalid gate command set",
+		String(gate_bad_command_set.error))
+
+	var gate_missing_ai_width = map_data_script.new()
+	var gate_missing_ai_width_doc := VALID_DOCUMENT.duplicate(true)
+	gate_missing_ai_width_doc["fixtures"][0]["gate"]["aiGateUpdate"].erase("triggerWidthY")
+	_check("gate_missing_ai_width_fails_closed",
+		not _load(gate_missing_ai_width, gate_missing_ai_width_doc)
+		and String(gate_missing_ai_width.error) == "gate fixture has an invalid AI gate update block",
+		String(gate_missing_ai_width.error))
+
+	var gate_negative_ai_width = map_data_script.new()
+	var gate_negative_ai_width_doc := VALID_DOCUMENT.duplicate(true)
+	gate_negative_ai_width_doc["fixtures"][0]["gate"]["aiGateUpdate"]["triggerWidthX"] = -300.0
+	_check("gate_negative_ai_width_fails_closed",
+		not _load(gate_negative_ai_width, gate_negative_ai_width_doc)
+		and String(gate_negative_ai_width.error) == "gate fixture has an invalid AI gate update block",
+		String(gate_negative_ai_width.error))
+
+	var gate_bad_portal = map_data_script.new()
+	var gate_bad_portal_doc := VALID_DOCUMENT.duplicate(true)
+	gate_bad_portal_doc["fixtures"][0]["gate"]["fakePathfindPortal"].erase("allowNonSkirmishAIUnits")
+	_check("gate_bad_portal_fails_closed",
+		not _load(gate_bad_portal, gate_bad_portal_doc)
+		and String(gate_bad_portal.error) == "gate fixture has an invalid fake pathfind portal block",
+		String(gate_bad_portal.error))
 
 	var bad_contain = map_data_script.new()
 	var bad_contain_doc := VALID_DOCUMENT.duplicate(true)
