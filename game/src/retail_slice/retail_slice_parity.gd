@@ -11,17 +11,6 @@ extends RefCounted
 
 const FOG_CELL_SIZE := 50.0
 const PATH_CELL_SIZE := 25.0
-const DEFAULT_TRANSPORT_CAPACITY := {
-	"fortress": 8,
-	"castle": 6,
-	"wall": 0,
-	"farm": 0,
-	"barracks": 2,
-	"archery_range": 2,
-	"stable": 2,
-	"default": 4,
-}
-
 ## AI_MOOD-like ints used by TEAM_SET_ATTITUDE (ParamTypes AI_MOOD).
 const MOOD_PASSIVE := 0
 const MOOD_GUARD := 1
@@ -375,16 +364,7 @@ func placement_for_marker(marker_type: String, near_or_far: String, near_base: V
 # --- Transport capacity ----------------------------------------------------
 
 func transport_capacity_for_structure(row: Dictionary) -> int:
-	if row.has("transport_capacity"):
-		return maxi(0, int(row["transport_capacity"]))
-	var kind := String(row.get("kind", row.get("building_type", ""))).to_lower()
-	for key in DEFAULT_TRANSPORT_CAPACITY.keys():
-		if key != "default" and kind.contains(String(key)):
-			return int(DEFAULT_TRANSPORT_CAPACITY[key])
-	# Explicit transport/garrison kinds
-	if kind.contains("transport") or kind.contains("garrison") or kind.contains("tower"):
-		return 6
-	return int(DEFAULT_TRANSPORT_CAPACITY["default"])
+	return maxi(0, int(row.get("transport_capacity", 0)))
 
 
 func can_load_entity(sim: Object, structure_id: int, entity_id: int) -> Dictionary:

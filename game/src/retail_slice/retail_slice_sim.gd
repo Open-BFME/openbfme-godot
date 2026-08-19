@@ -641,7 +641,9 @@ func _spatial_rebuild() -> void:
 	_spatial_team_box.clear()
 	_spatial_hostile_teams.clear()
 	for key in entities.keys():
-		_spatial_sync(entities[key] as Dictionary)
+		var row := entities[key] as Dictionary
+		if not bool(row.get("presentation_hidden", false)):
+			_spatial_sync(row)
 
 
 func _spatial_sync(row: Dictionary) -> void:
@@ -1879,6 +1881,8 @@ func _apply_map_configuration(configuration: Dictionary) -> void:
 			}
 			if fixture.has("initial_health"):
 				fixture_row["initial_health"] = float(fixture.get("initial_health"))
+			if fixture.has("garrison"):
+				fixture_row["garrison"] = (fixture.get("garrison", {}) as Dictionary).duplicate(true)
 			_castle_fixture_placements.append(fixture_row)
 
 
@@ -14207,7 +14211,7 @@ func _step_battalion_separation() -> void:
 		var a: Dictionary = entities[ids[index]]
 		# Only settled battalions get nudged apart: pushing marching columns
 		# around mid-route disrupts ford crossings and formation moves.
-		if int(a.get("health", 0)) <= 0 or String(a.get("state", "")) != "idle" or bool(a.get("flying", false)):
+		if int(a.get("health", 0)) <= 0 or String(a.get("state", "")) != "idle" or bool(a.get("flying", false)) or bool(a.get("presentation_hidden", false)):
 			continue
 		# Only battalions overlapping `a` can be pushed by it, so the old
 		# all-pairs inner sweep is a neighbourhood query over ids above `a`.
@@ -14245,7 +14249,7 @@ func _step_battalion_separation() -> void:
 			if not entities.has(other_id):
 				continue
 			var b: Dictionary = entities[other_id]
-			if int(b.get("health", 0)) <= 0 or String(b.get("state", "")) != "idle" or bool(b.get("flying", false)):
+			if int(b.get("health", 0)) <= 0 or String(b.get("state", "")) != "idle" or bool(b.get("flying", false)) or bool(b.get("presentation_hidden", false)):
 				continue
 			var a_position := Vector2(a["position"])
 			var b_position := Vector2(b["position"])
@@ -21604,6 +21608,7 @@ func _attach_container_family_contract(row: Dictionary, contract: Dictionary) ->
 		unsupported.append("fade_filter_requires_presentation_binding")
 	var entry_offset := _container_contract_offset(fields, "EntryOffset")
 	var exit_offset := _container_contract_offset(fields, "ExitOffset")
+	var kill_on_death := bool(_module_contract_value(fields, "KillPassengersOnDeath", false))
 	row["transport_capacity"] = int(capacity)
 	row["horde_transport"] = {
 		"module": module,
@@ -21616,8 +21621,8 @@ func _attach_container_family_contract(row: Dictionary, contract: Dictionary) ->
 		"allow_enemies": bool(_module_contract_value(fields, "AllowEnemiesInside", false)),
 		"allow_neutral": bool(_module_contract_value(fields, "AllowNeutralInside", false)),
 		"exit_delay_ticks": _ship_contract_delay_ticks(float(_module_contract_value(fields, "ExitDelay", 0.0))),
-		"kill_passengers_on_death": bool(_module_contract_value(fields, "KillPassengersOnDeath", false)),
-		"eject_passengers_on_death": bool(_module_contract_value(fields, "EjectPassengersOnDeath", false)),
+		"kill_passengers_on_death": kill_on_death,
+		"eject_passengers_on_death": bool(_module_contract_value(fields, "EjectPassengersOnDeath", false)) or (module in ["GarrisonContain", "HordeGarrisonContain"] and not kill_on_death),
 		"force_orientation": bool(_module_contract_value(fields, "ForceOrientationContainer", false)),
 		"passenger_bones": Array(fields.get("PassengerBonePrefix", [])).duplicate(true),
 		"entry_offset_source": entry_offset,
@@ -21843,12 +21848,23 @@ func load_transport_entity(carrier_id: int, entity_id: int, manual_pickup: bool 
 	if not bool(result.get("ok", false)):
 		return result
 	passenger["transport_prior_status"] = (passenger.get("object_status", {}) as Dictionary).duplicate(true)
+	passenger["transport_prior_vision_range"] = float(passenger.get("vision_range", 0.0))
 	var statuses := passenger.get("object_status", {}) as Dictionary
 	for status in policy.get("contained_statuses", []) as Array:
 		statuses[String(status)] = true
 	passenger["object_status"] = statuses
 	passenger["transport_bone"] = _transport_bone_for(passenger, policy.get("passenger_bones", []) as Array)
-	passenger["position"] = Vector2(carrier.get("position", Vector2.ZERO)) + _retail_source_to_sim_offset(Vector2(policy.get("entry_offset_source", Vector2.ZERO)))
+	var garrison_module := String(policy.get("module", "")) in ["GarrisonContain", "HordeGarrisonContain"]
+	passenger["position"] = Vector2(carrier.get("position", Vector2.ZERO)) if garrison_module else Vector2(carrier.get("position", Vector2.ZERO)) + _retail_source_to_sim_offset(Vector2(policy.get("entry_offset_source", Vector2.ZERO)))
+	passenger["presentation_hidden"] = true
+	passenger["contained_can_attack"] = garrison_module and (policy.get("contained_statuses", []) as Array).has("CAN_ATTACK")
+	if garrison_module:
+		var tower_vision_source := float(policy.get("tower_vision_range_source", 0.0))
+		if tower_vision_source > 0.0:
+			passenger["vision_range"] = tower_vision_source * source_transform_scale()
+	if int(carrier.get("team", -1)) == CASTLE_CIVILIAN_TEAM and bool(policy.get("allow_neutral", false)):
+		carrier["team"] = int(passenger.get("team", -1))
+		_emit_event("garrison.neutral_captured", entity_id, carrier_id, {"team": int(carrier.get("team", -1))})
 	if bool(policy.get("force_orientation", false)):
 		passenger["facing"] = carrier.get("facing", Vector2.ZERO)
 	if bool(policy.get("fade_on_enter", false)) and _transport_filter_accepts(passenger, policy.get("fade_filter", []) as Array):
@@ -21863,6 +21879,22 @@ func load_transport_entity(carrier_id: int, entity_id: int, manual_pickup: bool 
 	})
 	_update_container_weapon_state(carrier_id)
 	return {"ok": true, "reason": "", "bone": String(passenger.get("transport_bone", ""))}
+
+
+func issue_garrison(team: int, entity_id: int, structure_id: int) -> Dictionary:
+	if not entities.has(entity_id) or int((entities[entity_id] as Dictionary).get("team", -1)) != team:
+		return {"ok": false, "reason": "not-owned"}
+	return load_transport_entity(structure_id, entity_id)
+
+
+func issue_exit_garrison(team: int, entity_id: int) -> Dictionary:
+	if not entities.has(entity_id) or int((entities[entity_id] as Dictionary).get("team", -1)) != team:
+		return {"ok": false, "reason": "not-owned"}
+	if not entity_container.has(entity_id):
+		return {"ok": false, "reason": "not-contained"}
+	var carrier_id := int(entity_container[entity_id])
+	_finish_transport_exit(carrier_id, entity_id)
+	return {"ok": true, "reason": ""}
 
 
 func _transport_entry_voice_candidates(passenger_object_id: String, carrier_object_id: String) -> Array[String]:
@@ -21940,17 +21972,26 @@ func _update_siege_crew_state(carrier_id: int) -> void:
 static func _transport_filter_accepts(row: Dictionary, filter: Array) -> bool:
 	if filter.is_empty():
 		return false
-	var traits: Dictionary = {String(row.get("category", "")).to_upper(): true}
+	var traits: Dictionary = {_transport_filter_key(String(row.get("category", ""))): true}
+	for identity_key in ["object_id", "unit_type", "name"]:
+		var identity := _transport_filter_key(String(row.get(identity_key, "")))
+		if identity != "":
+			traits[identity] = true
 	for kind_value in row.get("kind_of", []) as Array:
-		traits[String(kind_value).to_upper()] = true
+		traits[_transport_filter_key(String(kind_value))] = true
 	var accepted := filter.has("ANY") or filter.has("ALL")
 	for token_value in filter:
 		var token := String(token_value).to_upper()
-		if token.begins_with("-") and traits.has(token.substr(1)):
+		if token.begins_with("-") and traits.has(_transport_filter_key(token.substr(1))):
 			return false
-		if token.begins_with("+") and traits.has(token.substr(1)):
+		if token.begins_with("+") and traits.has(_transport_filter_key(token.substr(1))):
 			accepted = true
 	return accepted
+
+
+static func _transport_filter_key(value: String) -> String:
+	var leaf := value.get_slice(".", value.get_slice_count(".") - 1)
+	return leaf.to_pascal_case().to_upper()
 
 
 static func _transport_bone_for(passenger: Dictionary, bones: Array) -> String:
@@ -22044,6 +22085,10 @@ func _finish_transport_exit(carrier_id: int, entity_id: int, destination_id: int
 	passenger["object_status"] = (passenger.get("transport_prior_status", {}) as Dictionary).duplicate(true)
 	passenger.erase("transport_prior_status")
 	passenger.erase("transport_bone")
+	passenger.erase("presentation_hidden")
+	passenger.erase("contained_can_attack")
+	passenger["vision_range"] = float(passenger.get("transport_prior_vision_range", passenger.get("vision_range", 0.0)))
+	passenger.erase("transport_prior_vision_range")
 	var destination := structures.get(destination_id, carrier) as Dictionary
 	var destination_policy := destination.get("horde_transport", policy) as Dictionary
 	passenger["position"] = Vector2(destination.get("position", passenger.get("position", Vector2.ZERO))) + _retail_source_to_sim_offset(Vector2(destination_policy.get("exit_offset_source", Vector2.ZERO)))
@@ -26390,7 +26435,10 @@ func _step_entity(id: int) -> void:
 		_clear_pending_route(row, true)
 		row["attack_move"] = false
 		row["current_speed"] = 0.0
-		if not bool(horde_ai.get("can_attack_while_contained", false)):
+		var carrier_id := int(entity_container.get(id, 0))
+		if structures.has(carrier_id):
+			row["position"] = Vector2((structures[carrier_id] as Dictionary).get("position", row.get("position", Vector2.ZERO)))
+		if not bool(row.get("contained_can_attack", false)) and not bool(horde_ai.get("can_attack_while_contained", false)):
 			row["state"] = "contained"
 			return
 	if tick_index < int(row.get("stun_until_tick", -1)):
@@ -28527,7 +28575,7 @@ func _step_structure_eviction() -> void:
 		return
 	for id in entity_ids():
 		var row: Dictionary = entities[id]
-		if int(row.get("health", 0)) <= 0 or bool(row.get("flying", false)):
+		if int(row.get("health", 0)) <= 0 or bool(row.get("flying", false)) or entity_container.has(id):
 			continue
 		if bool(row.get("is_banner_carrier", false)):
 			# A BANNER CARRIER HAS NO POSITION OF ITS OWN. It is glued to its
@@ -29084,6 +29132,8 @@ func _apply_damage(attacker_id: int, target_id: int, amount: int, target_kind: S
 		return
 	if not entities.has(target_id):
 		return
+	if entity_container.has(target_id):
+		return
 	var target: Dictionary = entities[target_id]
 	if not target.has("inactive_body"):
 		_attach_module_contracts(target)
@@ -29265,6 +29315,8 @@ func _apply_member_damage(
 		_apply_structure_damage(attacker_id, target_id, amount, damage_type_override, damage_components_override)
 		return
 	if not entities.has(target_id):
+		return
+	if entity_container.has(target_id):
 		return
 	var target: Dictionary = entities[target_id]
 	if not target.has("inactive_body"):
@@ -30377,7 +30429,7 @@ func _apply_structure_damage(
 func _target_alive(target_id: int, target_kind: String) -> bool:
 	if target_kind == "structure":
 		return structures.has(target_id) and int((structures[target_id] as Dictionary).get("health", 0)) > 0
-	return entities.has(target_id) and int((entities[target_id] as Dictionary).get("health", 0)) > 0
+	return entities.has(target_id) and not entity_container.has(target_id) and int((entities[target_id] as Dictionary).get("health", 0)) > 0
 
 
 func _target_position(target_id: int, target_kind: String) -> Vector2:
@@ -30681,12 +30733,69 @@ func _seed_castle_fixtures() -> void:
 			# playable-structure document that no pack ships.
 			"presentation": "bound-map-prop",
 		}
+		var garrison := placement.get("garrison", {}) as Dictionary
+		if not garrison.is_empty():
+			_attach_castle_fixture_garrison(structures[structure_id] as Dictionary, garrison)
 		_emit_event("castle.fixture_seeded", 0, structure_id, {
 			"type_name": String(placement.get("type_name", "")),
 			"role": String(placement.get("role", "")),
 			"team": int(structures[structure_id].get("team", -1)),
 			"source_index": int(placement.get("source_index", -1)),
 		})
+
+
+func _attach_castle_fixture_garrison(row: Dictionary, garrison: Dictionary) -> void:
+	var capacity := int(garrison.get("containMax", 0))
+	if capacity <= 0:
+		return
+	var statuses: Array = (garrison.get("objectStatusOfContained", []) as Array).duplicate()
+	var filter: Array = (garrison.get("passengerFilter", []) as Array).duplicate()
+	# Compatibility for the selected v0.2.6 maps pack: its fixture schema
+	# predates L4 and carries capacity/ownership/death but not these two fields.
+	# Exact tower identity keeps this authored stopgap narrow and loud; the next
+	# maps recook emits the same values from INI and retires this branch.
+	if statuses.is_empty() or filter.is_empty():
+		var tower_type := String(row.get("castle_fixture_type", ""))
+		if tower_type in ["EBGarrisonableTower", "GHGarrisonableTower"]:
+			statuses = ["UNSELECTABLE", "CAN_ATTACK", "ENCLOSED"]
+			filter = ["ANY", "+INFANTRY", "+BANNER", "-CAVALRY", "-SUMMONED", "-WildSpiderling", "-WildSpiderlingHorde", "-COMBO_HORDE", "-IsengardSharku", "-AngmarThrallMaster"]
+			row["garrison_contract_gap"] = "selected-map-pack-predates-L4-fields"
+			push_warning("Castle garrison %s uses the explicit pre-L4 fixture compatibility contract; maps recook owed" % tower_type)
+	var exit_values: Array = garrison.get("exitOffset", []) as Array
+	var exit_offset := Vector2.ZERO
+	if exit_values.size() == 3:
+		exit_offset = Vector2(float(exit_values[0]), float(exit_values[1]))
+	elif String(row.get("castle_fixture_type", "")) == "EBGarrisonableTower":
+		# ereborbuildings.ini:5279 HordeGarrisonContain ExitOffset X:50 (pre-L4 pack)
+		exit_offset = Vector2(50.0, 0.0)
+		row["garrison_contract_gap"] = "selected-map-pack-predates-L4-fields"
+		push_warning("Castle garrison EBGarrisonableTower exitOffset/visionRange from the explicit pre-L4 compatibility contract; maps recook owed")
+	elif String(row.get("castle_fixture_type", "")) == "GHGarrisonableTower":
+		# greyhavenbuildings.ini:2171 ExitOffset X:0 Y:-45 (pre-L4 pack)
+		exit_offset = Vector2(0.0, -45.0)
+		row["garrison_contract_gap"] = "selected-map-pack-predates-L4-fields"
+		push_warning("Castle garrison GHGarrisonableTower exitOffset/visionRange from the explicit pre-L4 compatibility contract; maps recook owed")
+	elif not garrison.has("exitOffset"):
+		push_warning("Castle garrison %s has no authored exitOffset in the fixture row and no compatibility contract; occupants exit at the tower centre" % String(row.get("castle_fixture_type", "")))
+	var kill_on_death := bool(garrison.get("killPassengersOnDeath", false))
+	row["transport_capacity"] = capacity
+	row["horde_transport"] = {
+		"module": "HordeGarrisonContain",
+		"contained_statuses": statuses,
+		"passenger_filter": filter,
+		"damage_ratio": float(garrison.get("damagePercentToUnits", 0.0)),
+		"allow_own": bool(garrison.get("allowOwnPlayerInsideOverride", false)),
+		"allow_allies": bool(garrison.get("allowAlliesInside", false)),
+		"allow_enemies": bool(garrison.get("allowEnemiesInside", false)),
+		"allow_neutral": bool(garrison.get("allowNeutralInside", false)),
+		"exit_delay_ticks": 0,
+		"kill_passengers_on_death": kill_on_death,
+		"eject_passengers_on_death": not kill_on_death,
+		"exit_offset_source": exit_offset,
+		"tower_vision_range_source": float(garrison.get("visionRange", 600.0 if String(row.get("castle_fixture_type", "")) == "EBGarrisonableTower" else 160.0 if String(row.get("castle_fixture_type", "")) == "GHGarrisonableTower" else 0.0)),
+		"unsupported_semantics": [],
+		"source": "map-fixtures.garrison",
+	}
 
 func _update_ai_controllers() -> void:
 	## Runs the single data-driven controller once per AI team, in ascending team
@@ -31357,7 +31466,7 @@ func _is_commandable(id: int) -> bool:
 func _is_commandable_for_team(id: int, team: int) -> bool:
 	# Knocked-down battalions are incapacitated: orders bounce off until the
 	# battalion stands back up (retail sprawled infantry take no commands).
-	return entities.has(id) and not bool((entities[id] as Dictionary).get("is_banner_carrier", false)) and int((entities[id] as Dictionary)["team"]) == team and int((entities[id] as Dictionary)["health"]) > 0 and int((entities[id] as Dictionary).get("knockdown_ticks", 0)) <= 0 and winner == -1
+	return entities.has(id) and not entity_container.has(id) and not bool((entities[id] as Dictionary).get("is_banner_carrier", false)) and int((entities[id] as Dictionary)["team"]) == team and int((entities[id] as Dictionary)["health"]) > 0 and int((entities[id] as Dictionary).get("knockdown_ticks", 0)) <= 0 and winner == -1
 
 
 func _is_melee_attacker(row: Dictionary) -> bool:
@@ -31370,7 +31479,7 @@ func _is_melee_attacker(row: Dictionary) -> bool:
 func _can_engage_battalion(attacker: Dictionary, target: Dictionary) -> bool:
 	## Flyers soar out of melee reach: only ranged weapons can acquire or hit
 	## an airborne battalion.
-	return not (bool(target.get("flying", false)) and _is_melee_attacker(attacker))
+	return not bool(target.get("presentation_hidden", false)) and not (bool(target.get("flying", false)) and _is_melee_attacker(attacker))
 
 
 func _is_living_player(id: int) -> bool:
@@ -31665,6 +31774,18 @@ func state_snapshot() -> Dictionary:
 		snapshot_row["building_permissions"] = building_permission_rows
 	if not command_point_override_rows.is_empty():
 		snapshot_row["command_point_overrides"] = command_point_override_rows
+	# Garrison/transport containment (L4): empty-is-absent, sorted ids, so a
+	# non-castle match hashes byte-identically and a garrisoned horde is part
+	# of the lockstep signature directly (not only via its snapped position).
+	if not containment.is_empty():
+		var containment_rows: Array = []
+		var carrier_ids: Array = containment.keys()
+		carrier_ids.sort()
+		for carrier_id in carrier_ids:
+			var occupant_ids: Array = (containment[carrier_id] as Array).duplicate()
+			occupant_ids.sort()
+			containment_rows.append([int(carrier_id), occupant_ids])
+		snapshot_row["containment"] = containment_rows
 	return snapshot_row
 
 
@@ -31708,6 +31829,10 @@ func apply_command(cmd: Dictionary) -> void:
 			last_command_result = issue_toggle_formation(_command_ids(args.get("ids", [])), team)
 		"issue_set_formation":
 			last_command_result = issue_set_formation(_command_ids(args.get("ids", [])), String(args.get("formation", "Line")), team)
+		"issue_garrison":
+			last_command_result = issue_garrison(team, int(args.get("entity_id", 0)), int(args.get("structure_id", 0)))
+		"issue_exit_garrison":
+			last_command_result = issue_exit_garrison(team, int(args.get("entity_id", 0)))
 		"issue_construct":
 			last_command_result = issue_construct(_command_ids(args.get("ids", [])), String(args.get("structure_kind", "")), Vector2(args.get("position", Vector2.ZERO)), bool(args.get("dry_run", false)), team)
 		"issue_expansion_construct":

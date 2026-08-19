@@ -735,6 +735,24 @@ func _valid_fixture_garrison_block(value: Variant) -> bool:
 	var block := value as Dictionary
 	if not _exact_integer(block.get("containMax", null)) or int(block.get("containMax")) <= 0:
 		return _fail("garrison fixture has an invalid containMax")
+	for key in ["objectStatusOfContained", "passengerFilter"]:
+		if not block.has(key):
+			continue
+		var tokens := _array(block.get(key))
+		if tokens.is_empty():
+			return _fail("garrison fixture has an invalid %s" % key)
+		for token in tokens:
+			if typeof(token) != TYPE_STRING or String(token) == "":
+				return _fail("garrison fixture has an invalid %s" % key)
+	if block.has("damagePercentToUnits") and (
+		not _valid_fixture_number(block.get("damagePercentToUnits"))
+		or float(block.get("damagePercentToUnits")) < 0.0
+		or float(block.get("damagePercentToUnits")) > 1.0
+	):
+		return _fail("garrison fixture has an invalid damagePercentToUnits")
+	for key in ["entryPosition", "entryOffset", "exitOffset"]:
+		if block.has(key) and not _valid_fixture_vector(block.get(key)):
+			return _fail("garrison fixture has an invalid %s" % key)
 	return true
 
 
@@ -807,6 +825,8 @@ func _derive_castle_fixture_placements() -> void:
 		}
 		if record.has("initialHealth"):
 			row["initial_health"] = float(record.get("initialHealth"))
+		if record.has("garrison"):
+			row["garrison"] = (record.get("garrison", {}) as Dictionary).duplicate(true)
 		castle_fixture_placements.append(row)
 
 
