@@ -809,7 +809,7 @@ func _derive_castle_fixture_placements() -> void:
 		var row := {
 			"type_name": String(record.get("typeName", "")),
 			"role": String(record.get("role", "")),
-			"kind_of": _array(record.get("kindOf", [])),
+			"kind_of": _array(record.get("kindOf", [])).duplicate(),
 			"source_index": int(record.get("index", -1)),
 			"position": Vector2(local.x, local.z),
 			"elevation": local.y,

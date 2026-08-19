@@ -6196,28 +6196,39 @@ func _structure_attack_rule(combat: Dictionary) -> Dictionary:
 		if typeof(combat.get(field)) != TYPE_DICTIONARY:
 			return {}
 	var attack_range := float((combat["attackRange"] as Dictionary).get("value", -1.0))
-	var delay_ms := float((combat["delayBetweenShotsMs"] as Dictionary).get("value", -1.0))
+	var delay_row := combat["delayBetweenShotsMs"] as Dictionary
+	var delay_ms := float(delay_row.get("value", -1.0))
+	var delay_minimum_ms := int(delay_row.get("minimumValue", -1))
+	var delay_maximum_ms := int(delay_row.get("maximumValue", -1))
+	var interval := String(delay_row.get("distribution", "")) == "uniform-inclusive-integer"
 	var pre_attack_ms := float((combat["preAttackDelayMs"] as Dictionary).get("value", -1.0))
 	var damage := float((combat["damage"] as Dictionary).get("value", 0.0))
-	if attack_range <= 0.0 or delay_ms < 0.0 or pre_attack_ms < 0.0 or damage <= 0.0:
+	if attack_range <= 0.0 or pre_attack_ms < 0.0 or damage <= 0.0:
+		return {}
+	if (not interval and delay_ms < 0.0) or (interval and (delay_minimum_ms < 0 or delay_maximum_ms < delay_minimum_ms)):
 		return {}
 	var projectile_speed := 0.0
 	if typeof(combat.get("projectileSpeed")) == TYPE_DICTIONARY:
 		projectile_speed = float((combat["projectileSpeed"] as Dictionary).get("value", 0.0))
-	return {
+	var attack := {
 		"range": attack_range * source_map_data.local_transform_scale,
 		"minimum_range": (
 			float((combat.get("minimumAttackRange", {}) as Dictionary).get("value", 0.0))
 			* source_map_data.local_transform_scale
 		),
 		"damage": damage,
-		"period_ticks": maxi(1, roundi(delay_ms / (SimScript.TICK_SECONDS * 1000.0))),
+		"period_ticks": maxi(1, roundi((float(delay_minimum_ms) if interval else delay_ms) / (SimScript.TICK_SECONDS * 1000.0))),
 		"pre_attack_ticks": maxi(0, roundi(pre_attack_ms / (SimScript.TICK_SECONDS * 1000.0))),
 		"projectile_speed": projectile_speed * source_map_data.local_transform_scale,
 		"projectile_object_id": String(combat.get("projectileObjectId", "")),
 		"weapon_id": String(combat.get("weaponId", "")),
 		"spawned_object_id": PlayableUnitAdapter._runtime_id(String(combat.get("spawnedObjectId", ""))) if String(combat.get("spawnedObjectId", "")) != "" else "",
 	}
+	if interval:
+		attack["delay_between_shots_distribution"] = "uniform-inclusive-integer"
+		attack["delay_between_shots_minimum_ms"] = delay_minimum_ms
+		attack["delay_between_shots_maximum_ms"] = delay_maximum_ms
+	return attack
 
 
 func _structure_is_artillery_expansion(gameplay: Dictionary) -> bool:
