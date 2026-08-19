@@ -10,6 +10,8 @@ const COMMAND_TYPES: Array[String] = [
 	"issue_set_stance",
 	"issue_toggle_formation",
 	"issue_set_formation",
+	"issue_garrison",
+	"issue_exit_garrison",
 	"issue_construct",
 	"issue_expansion_construct",
 	"queue_unit",

@@ -63,6 +63,7 @@ from .playable_unit_compiler import (
     _authored_flat_damage_type,
     _select_experience_chain,
     _tokens,
+    _weapon_damage_nuggets,
     _walk_blocks,
     prepare_playable_unit_compiler,
 )
@@ -177,6 +178,169 @@ def _weapon_has_authored_slave_attack_nugget(
     return False
 
 
+_DELAY_INTERVAL = re.compile(
+    r"^Min:\s*(?P<minimum>\S+)\s+Max:\s*(?P<maximum>\S+)$",
+    re.IGNORECASE,
+)
+
+
+def _structure_delay_between_shots(
+    weapon: Mapping[str, object],
+    constants: Mapping[str, int | float],
+) -> dict[str, object] | None:
+    """Resolve scalar or retail Min:/Max: DelayBetweenShots authoring.
+
+    SAGE draws an inclusive integer millisecond delay uniformly from this
+    interval for each attack cycle.  Keep both endpoints in the descriptor;
+    collapsing the row to either endpoint would change authored cadence.
+    """
+
+    scalar = _resolved_definition_field(weapon, "DelayBetweenShots", constants)
+    if scalar is not None:
+        return scalar
+    rows = weapon.get("delaybetweenshots", ())
+    if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)) or len(rows) != 1:
+        return None
+    row = rows[0]
+    if not isinstance(row, Mapping):
+        return None
+    expression = str(row.get("expression", ""))
+    match = _DELAY_INTERVAL.fullmatch(expression)
+    if match is None:
+        return None
+
+    resolved: dict[str, dict[str, object]] = {}
+    for name in ("minimum", "maximum"):
+        endpoint = _resolved_definition_field(
+            {name: [{**row, "expression": match.group(name)}]}, name, constants
+        )
+        if endpoint is None:
+            return None
+        resolved[name] = endpoint
+    minimum = resolved["minimum"]["value"]
+    maximum = resolved["maximum"]["value"]
+    if (
+        not isinstance(minimum, (int, float))
+        or isinstance(minimum, bool)
+        or not isinstance(maximum, (int, float))
+        or isinstance(maximum, bool)
+        or minimum < 0
+        or maximum < minimum
+        or int(minimum) != minimum
+        or int(maximum) != maximum
+    ):
+        return None
+    return {
+        "minimumValue": int(minimum),
+        "maximumValue": int(maximum),
+        "distribution": "uniform-inclusive-integer",
+        "expression": expression,
+        "sourceIni": str(row.get("sourceIni", "")),
+        "line": int(row.get("line", 0)),
+        "minimumConstantSourceIni": resolved["minimum"].get("constantSourceIni"),
+        "maximumConstantSourceIni": resolved["maximum"].get("constantSourceIni"),
+    }
+
+
+def _single_nugget_token(
+    fields: Mapping[str, object], key: str
+) -> str | None:
+    rows = fields.get(key.casefold(), ())
+    if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)) or len(rows) != 1:
+        return None
+    row = rows[0]
+    if not isinstance(row, Mapping):
+        return None
+    tokens = _tokens(str(row.get("expression", "")))
+    return tokens[0] if len(tokens) == 1 else None
+
+
+def _nugget_upgrade_ids(fields: Mapping[str, object], keys: Sequence[str]) -> list[str]:
+    values: dict[str, str] = {}
+    for key in keys:
+        rows = fields.get(key.casefold(), ())
+        if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+            continue
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            for token in _tokens(str(row.get("expression", ""))):
+                values[token.casefold()] = token
+    return [values[key] for key in sorted(values)]
+
+
+def _structure_projectile_nuggets(
+    documents: Mapping[str, bytes],
+    weapon_id: str,
+    prepared: PlayableUnitCompilerInputs,
+) -> list[dict[str, object]] | None:
+    """Compile every authored ProjectileNugget and its upgrade gates.
+
+    Direct tower bows switch projectile/warhead in place.  Their un-gated
+    nugget is the level-zero payload; RequiredUpgrade rows are retained as
+    alternates rather than contaminating base damage.
+    """
+
+    nuggets = _weapon_damage_nuggets(
+        documents,
+        weapon_id,
+        nugget_kind="projectilenugget",
+        cache=prepared.named_definition_cache,
+        cache_lock=prepared.cache_lock,
+    )
+    if not nuggets:
+        return None
+    compiled: list[dict[str, object]] = []
+    for nugget in nuggets:
+        fields = nugget.get("fields")
+        if not isinstance(fields, Mapping):
+            return None
+        projectile_id = _single_nugget_token(fields, "ProjectileTemplateName")
+        warhead_id = _single_nugget_token(fields, "WarheadTemplateName")
+        if projectile_id is None or warhead_id is None:
+            return None
+        required = _nugget_upgrade_ids(
+            fields, ("RequiredUpgrade", "RequiredUpgradeName", "RequiredUpgradeNames")
+        )
+        forbidden = _nugget_upgrade_ids(
+            fields, ("ForbiddenUpgrade", "ForbiddenUpgradeName", "ForbiddenUpgradeNames")
+        )
+        warhead = _named_definition_values(
+            documents,
+            "Weapon",
+            warhead_id,
+            cache=prepared.named_definition_cache,
+            cache_lock=prepared.cache_lock,
+        )
+        if warhead is None:
+            return None
+        damage = _base_weapon_damage(
+            documents,
+            warhead_id,
+            prepared.numeric_defines,
+            cache=prepared.named_definition_cache,
+            cache_lock=prepared.cache_lock,
+        )
+        if damage is None:
+            damage = _resolved_definition_field(
+                warhead, "Damage", prepared.numeric_defines
+            )
+        if damage is None:
+            return None
+        row: dict[str, object] = {
+            "line": int(nugget.get("line", 0)),
+            "projectileObjectId": projectile_id,
+            "warheadId": warhead_id,
+            "damage": damage,
+        }
+        if required:
+            row["requiredUpgradeIds"] = required
+        if forbidden:
+            row["forbiddenUpgradeIds"] = forbidden
+        compiled.append(row)
+    return compiled
+
+
 def _structure_combat_contract(
     lineage: Sequence[SageObject],
     documents: Mapping[str, bytes],
@@ -211,7 +375,6 @@ def _structure_combat_contract(
         ("attackRange", "AttackRange"),
         ("minimumAttackRange", "MinimumAttackRange"),
         ("projectileSpeed", "WeaponSpeed"),
-        ("delayBetweenShotsMs", "DelayBetweenShots"),
         ("preAttackDelayMs", "PreAttackDelay"),
         ("firingDurationMs", "FiringDuration"),
         ("damage", "Damage"),
@@ -222,13 +385,33 @@ def _structure_combat_contract(
         if field is not None:
             combat[output_name] = field
 
-    warhead_id = _default_nested_target(
-        documents,
-        "Weapon",
-        weapon_id,
-        "WarheadTemplateName",
-        flat_kind_cache=prepared.flat_kind_cache,
-        cache_lock=prepared.cache_lock,
+    delay = _structure_delay_between_shots(weapon, prepared.numeric_defines)
+    if delay is not None:
+        combat["delayBetweenShotsMs"] = delay
+
+    projectile_nuggets = _structure_projectile_nuggets(
+        documents, weapon_id, prepared
+    )
+    base_projectile_nugget: dict[str, object] | None = None
+    if projectile_nuggets:
+        combat["projectileNuggets"] = projectile_nuggets
+        base_rows = [
+            row for row in projectile_nuggets if not row.get("requiredUpgradeIds")
+        ]
+        if len(base_rows) == 1:
+            base_projectile_nugget = base_rows[0]
+
+    warhead_id = (
+        str(base_projectile_nugget.get("warheadId", ""))
+        if base_projectile_nugget is not None
+        else _default_nested_target(
+            documents,
+            "Weapon",
+            weapon_id,
+            "WarheadTemplateName",
+            flat_kind_cache=prepared.flat_kind_cache,
+            cache_lock=prepared.cache_lock,
+        )
     )
     damage_owner = weapon
     if warhead_id:
@@ -278,13 +461,17 @@ def _structure_combat_contract(
         if damage is not None:
             combat["damage"] = damage
 
-    projectile_id = _default_nested_target(
-        documents,
-        "Weapon",
-        weapon_id,
-        "ProjectileTemplateName",
-        flat_kind_cache=prepared.flat_kind_cache,
-        cache_lock=prepared.cache_lock,
+    projectile_id = (
+        str(base_projectile_nugget.get("projectileObjectId", ""))
+        if base_projectile_nugget is not None
+        else _default_nested_target(
+            documents,
+            "Weapon",
+            weapon_id,
+            "ProjectileTemplateName",
+            flat_kind_cache=prepared.flat_kind_cache,
+            cache_lock=prepared.cache_lock,
+        )
     )
     if projectile_id:
         combat["projectileObjectId"] = projectile_id
@@ -3714,13 +3901,30 @@ def validate_playable_structure_descriptor(value: Mapping[str, object]) -> None:
                 )
     combat = gameplay.get("combat")
     if combat is not None:
-        if not isinstance(combat, Mapping) or not all(
+        delay_valid = False
+        if isinstance(combat, Mapping):
+            delay = combat.get("delayBetweenShotsMs")
+            delay_valid = isinstance(delay, Mapping) and (
+                (
+                    isinstance(delay.get("value"), (int, float))
+                    and not isinstance(delay.get("value"), bool)
+                )
+                or (
+                    isinstance(delay.get("minimumValue"), int)
+                    and not isinstance(delay.get("minimumValue"), bool)
+                    and isinstance(delay.get("maximumValue"), int)
+                    and not isinstance(delay.get("maximumValue"), bool)
+                    and int(delay["minimumValue"]) >= 0
+                    and int(delay["maximumValue"]) >= int(delay["minimumValue"])
+                    and delay.get("distribution") == "uniform-inclusive-integer"
+                )
+            )
+        if not isinstance(combat, Mapping) or not delay_valid or not all(
             isinstance(combat.get(field), Mapping)
             and isinstance(combat[field].get("value"), (int, float))
             and not isinstance(combat[field].get("value"), bool)
             for field in (
                 "attackRange",
-                "delayBetweenShotsMs",
                 "preAttackDelayMs",
                 "firingDurationMs",
                 "damage",
@@ -3743,6 +3947,33 @@ def validate_playable_structure_descriptor(value: Mapping[str, object]) -> None:
             ):
                 raise PlayableStructureCompilerError(
                     "structure descriptor combat identity is invalid"
+                )
+        projectile_nuggets = combat.get("projectileNuggets", [])
+        if not isinstance(projectile_nuggets, list):
+            raise PlayableStructureCompilerError(
+                "structure descriptor projectile nuggets are invalid"
+            )
+        for nugget in projectile_nuggets:
+            if (
+                not isinstance(nugget, Mapping)
+                or not isinstance(nugget.get("line"), int)
+                or isinstance(nugget.get("line"), bool)
+                or int(nugget["line"]) <= 0
+                or not isinstance(nugget.get("projectileObjectId"), str)
+                or not nugget["projectileObjectId"]
+                or not isinstance(nugget.get("warheadId"), str)
+                or not nugget["warheadId"]
+                or not isinstance(nugget.get("damage"), Mapping)
+                or not isinstance(nugget["damage"].get("value"), (int, float))
+                or isinstance(nugget["damage"].get("value"), bool)
+                or any(
+                    not isinstance(value, str) or not value
+                    for gate in ("requiredUpgradeIds", "forbiddenUpgradeIds")
+                    for value in nugget.get(gate, [])
+                )
+            ):
+                raise PlayableStructureCompilerError(
+                    "structure descriptor projectile nugget row is invalid"
                 )
     health = gameplay.get("health")
     if health is None and "BASE_FOUNDATION" not in {

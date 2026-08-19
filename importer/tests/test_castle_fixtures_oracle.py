@@ -69,6 +69,7 @@ oracle_present = pytest.mark.skipif(
 )
 
 EREBOR = "maps/map wor erebor/map wor erebor.map"
+GREY_HAVENS = "maps/map wor grey havens/map wor grey havens.map"
 AMON_SUL = "maps/map mp amon sul fortress/map mp amon sul fortress.map"
 
 #: (operable gates, static gates, real garrisons) per castle map.  Static
@@ -278,6 +279,17 @@ def test_erebor_emits_six_garrison_fixtures_with_contain_max_3(fixtures_by_map) 
     for row in garrisons:
         assert row["typeName"] == "EBGarrisonableTower"
         assert row["garrison"]["containMax"] == 3
+        assert row["garrison"]["objectStatusOfContained"] == [
+            "UNSELECTABLE", "CAN_ATTACK", "ENCLOSED"
+        ]
+        assert row["garrison"]["damagePercentToUnits"] == 0.0
+        assert row["garrison"]["allowNeutralInside"] is True
+        assert row["garrison"]["killPassengersOnDeath"] is False
+        assert row["garrison"]["passengerFilter"] == [
+            "ANY", "+INFANTRY", "+BANNER", "-CAVALRY", "-SUMMONED",
+            "-WildSpiderling", "-WildSpiderlingHorde", "-COMBO_HORDE",
+            "-IsengardSharku", "-AngmarThrallMaster",
+        ]
         assert row["originalOwner"] == "PlyrCivilian/teamPlyrCivilian"
         assert row["maxHealth"] == 1500
         assert row["armor"] == "StructureArmor"
@@ -291,6 +303,22 @@ def test_erebor_emits_six_garrison_fixtures_with_contain_max_3(fixtures_by_map) 
         assert row["role"] == "structure"
         assert "garrison" not in row
         assert "gate" not in row
+
+
+@oracle_present
+def test_grey_havens_garrison_tower_pins_retail_contract(fixtures_by_map) -> None:
+    document = fixtures_by_map[GREY_HAVENS]
+    towers = [
+        row for row in document["fixtures"]
+        if row["typeName"] == "GHGarrisonableTower"
+    ]
+    assert towers
+    for tower in towers:
+        block = tower["garrison"]
+        assert block["containMax"] == 1
+        assert block["allowNeutralInside"] is True
+        assert block["killPassengersOnDeath"] is False
+        assert block["damagePercentToUnits"] == 0.0
 
 
 # --- every castle map --------------------------------------------------------

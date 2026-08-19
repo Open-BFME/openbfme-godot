@@ -300,6 +300,61 @@ def _number(
     return value
 
 
+def _text_defines(documents: Mapping[str, bytes]) -> dict[str, list[str]]:
+    """Token defines needed by fixture filters, resolved from the cook corpus."""
+
+    result: dict[str, list[str]] = {}
+    for virtual_path in sorted(documents, key=str.casefold):
+        text = documents[virtual_path].decode("latin-1", errors="replace")
+        for line in text.splitlines():
+            match = re.match(r"^\s*#define\s+(\S+)\s+(.+?)\s*$", line)
+            if match is None:
+                continue
+            value = re.split(r"\s*(?:;|//)", match.group(2), maxsplit=1)[0]
+            tokens = value.split()
+            if tokens:
+                result[match.group(1).casefold()] = tokens
+    return result
+
+
+def _expanded_tokens(
+    fields: Mapping[str, str], key: str, label: str,
+    text_defines: Mapping[str, list[str]],
+) -> list[str]:
+    tokens = _required_text(fields, key, label).split()
+    expanded: list[str] = []
+    for token in tokens:
+        expanded.extend(text_defines.get(token.casefold(), [token]))
+    return expanded
+
+
+def _source_vector(fields: Mapping[str, str], key: str, label: str) -> list[float]:
+    text = _required_text(fields, key, label)
+    values: dict[str, float] = {}
+    for axis, token in re.findall(r"\b([XYZ]):\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))", text, re.I):
+        values[axis.upper()] = float(token)
+    if set(values) != {"X", "Y", "Z"}:
+        raise CastleFixturesError(f"{label} {key} is not an XYZ vector: {text!r}")
+    return [values["X"], values["Y"], values["Z"]]
+
+
+def _effective_number(
+    ancestry: Sequence[Any], key: str, label: str,
+    defines: Mapping[str, int | float],
+) -> float | None:
+    values = _effective_values(ancestry, key)
+    if not values:
+        return None
+    token = values[-1].value.strip()
+    resolved = defines.get(token.casefold())
+    if resolved is not None:
+        return float(resolved)
+    try:
+        return float(token.rstrip("%"))
+    except ValueError as exc:
+        raise CastleFixturesError(f"{label} {key} is not numeric: {token!r}") from exc
+
+
 def _geometry_number_value(row: object, label: str) -> float:
     if not isinstance(row, Mapping) or "value" not in row:
         raise CastleFixturesError(f"{label} has an unresolvable geometry scalar")
@@ -412,7 +467,8 @@ def _gate_block(
 
 
 def _garrison_block(
-    ancestry: Sequence[Any], defines: Mapping[str, int | float], target_id: str
+    ancestry: Sequence[Any], defines: Mapping[str, int | float], target_id: str,
+    text_defines: Mapping[str, list[str]],
 ) -> dict[str, Any]:
     fields: dict[str, str] = {}
     kind = "HordeGarrisonContain"
@@ -426,6 +482,26 @@ def _garrison_block(
     if isinstance(contain_max, float) and not contain_max.is_integer():
         raise CastleFixturesError(f"{label} ContainMax is not an integer")
     block: dict[str, Any] = {"containMax": int(contain_max)}
+    block["objectStatusOfContained"] = _expanded_tokens(
+        fields, "ObjectStatusOfContained", label, text_defines
+    )
+    block["passengerFilter"] = _expanded_tokens(
+        fields, "PassengerFilter", label, text_defines
+    )
+    damage_percent = _number(fields, "DamagePercentToUnits", label, defines)
+    block["damagePercentToUnits"] = float(damage_percent) / 100.0
+    for key in ("EntryPosition", "EntryOffset", "ExitOffset"):
+        if key.casefold() in fields:
+            block[key[0].lower() + key[1:]] = _source_vector(fields, key, label)
+    if "entersound" in fields:
+        block["enterSound"] = _required_text(fields, "EnterSound", label)
+    if "passengerboneprefix" in fields:
+        block["passengerBonePrefix"] = _required_text(
+            fields, "PassengerBonePrefix", label
+        )
+    vision = _effective_number(ancestry, "VisionRange", target_id, defines)
+    if vision is not None:
+        block["visionRange"] = vision
     for key in (
         "AllowEnemiesInside",
         "AllowAlliesInside",
@@ -484,6 +560,7 @@ def _fixture(
     ancestry: Sequence[Any],
     defines: Mapping[str, int | float],
     documents: Mapping[str, bytes],
+    text_defines: Mapping[str, list[str]],
 ) -> dict[str, Any]:
     type_name = str(placement["typeName"])
     role = _role(info)
@@ -514,7 +591,9 @@ def _fixture(
     if role == "gate":
         fixture["gate"] = _gate_block(ancestry, defines, info.name, documents)
     elif role == "garrison":
-        fixture["garrison"] = _garrison_block(ancestry, defines, info.name)
+        fixture["garrison"] = _garrison_block(
+            ancestry, defines, info.name, text_defines
+        )
     if _module_present(ancestry, "KeepObjectDie"):
         fixture["deathRule"] = "keep-object"
     return fixture
@@ -566,6 +645,7 @@ def build_map_fixtures(
         tuple(derivation.required) + (_FAMILY_CAPABILITY,)
     )
     descriptors: dict[str, dict[str, Any]] = {}
+    text_defines = _text_defines(documents)
     fixtures: list[dict[str, Any]] = []
     omitted: dict[str, str] = {}
     for row in rows:
@@ -593,7 +673,9 @@ def build_map_fixtures(
             omitted.setdefault(folded, type_name)
             continue
         _, ancestry = _compile_lineage(type_name, raw)
-        fixtures.append(_fixture(info, descriptor, row, ancestry, defines, documents))
+        fixtures.append(
+            _fixture(info, descriptor, row, ancestry, defines, documents, text_defines)
+        )
     fixtures.sort(key=lambda fixture: int(fixture["index"]))
     return {
         "schema": MAP_FIXTURES_SCHEMA,
@@ -700,6 +782,27 @@ def _validate_garrison_block(block: object, label: str) -> None:
         or contain_max <= 0
     ):
         raise CastleFixturesError(f"{label} has an invalid containMax")
+    for key in ("objectStatusOfContained", "passengerFilter"):
+        tokens = block.get(key)
+        if tokens is not None and (
+            not isinstance(tokens, Sequence)
+            or isinstance(tokens, (str, bytes))
+            or not tokens
+            or not all(isinstance(token, str) and token for token in tokens)
+        ):
+            raise CastleFixturesError(f"{label} has an invalid {key}")
+    damage = block.get("damagePercentToUnits")
+    if damage is not None and (not _is_number(damage) or not 0.0 <= float(damage) <= 1.0):
+        raise CastleFixturesError(f"{label} has an invalid damagePercentToUnits")
+    for key in ("entryPosition", "entryOffset", "exitOffset"):
+        vector = block.get(key)
+        if vector is not None and (
+            not isinstance(vector, Sequence)
+            or isinstance(vector, (str, bytes))
+            or len(vector) != 3
+            or not all(_is_number(value) for value in vector)
+        ):
+            raise CastleFixturesError(f"{label} has an invalid {key}")
 
 
 def validate_map_fixtures(document: object) -> None:
