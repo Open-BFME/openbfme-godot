@@ -137,6 +137,12 @@ var unresolved_prop_placement_count := 0
 var unresolved_prop_type_ids: Array[String] = []
 var retail_prop_container: Node3D
 var retail_structure_container: Node3D
+## Lane L9 presentation registry. It is derived entirely from sim fixture rows
+## and bound map props; none of it is authoritative state.
+var _castle_fixture_states: Dictionary = {}
+var _castle_fixture_nodes: Dictionary = {}
+var _castle_fixture_selected_id := 0
+var _castle_fixture_hovered_id := 0
 var animated_prop_controller: RetailAnimatedPropController
 var particle_controller: Node3D
 var terrain_mesh_instance: MeshInstance3D
@@ -1654,6 +1660,296 @@ func bound_structure_node_by_source_index(source_index: int) -> Node:
 	return null
 
 
+func bound_prop_node_by_source_index(source_index: int) -> Node3D:
+	if retail_prop_container == null:
+		return null
+	for child in retail_prop_container.get_children():
+		if child.has_meta("source_index") and int(child.get_meta("source_index")) == source_index:
+			return child as Node3D
+	return null
+
+
+func bind_castle_fixture_presentations(simulation: RefCounted) -> int:
+	## Bind once after the sim seeds fixtures, before the shroud enumerates props.
+	## Visibility changes after this point are event/selection transitions only.
+	_castle_fixture_states.clear()
+	_castle_fixture_nodes.clear()
+	_castle_fixture_selected_id = 0
+	_castle_fixture_hovered_id = 0
+	if simulation == null:
+		return 0
+	for id_value in simulation.structure_ids():
+		var fixture_id := int(id_value)
+		var row: Dictionary = simulation.structure(fixture_id)
+		if String(row.get("structure_kind", "")) != "castle_fixture":
+			continue
+		var kind_of := _upper_tokens(row.get("castle_fixture_kind_of", []))
+		var selectable := _fixture_row_selectable(row, kind_of)
+		var dont_hide := kind_of.has("DONT_HIDE_IF_FOGGED") or kind_of.has("NEVER_CULL_FOR_MP")
+		var state := {
+			"selectable": selectable,
+			"health_bar": selectable,
+			"tooltip": String(row.get("castle_fixture_type", "")) if selectable else "",
+			"dont_hide_if_fogged": dont_hide,
+			"never_cull_for_mp": kind_of.has("NEVER_CULL_FOR_MP"),
+			"health": int(row.get("health", 0)),
+			"maximum_health": int(row.get("maximum_health", 1)),
+			"destroyed": int(row.get("health", 0)) <= 0,
+			"death_presentation": "intact",
+		}
+		_castle_fixture_states[fixture_id] = state
+		var placement := bound_prop_node_by_source_index(int(row.get("source_index", -1)))
+		if placement == null:
+			continue
+		_castle_fixture_nodes[fixture_id] = placement
+		placement.set_meta("castle_fixture_id", fixture_id)
+		placement.set_meta("castle_fixture_selectable", selectable)
+		placement.set_meta("dont_hide_if_fogged", dont_hide)
+		placement.set_meta("never_cull_for_mp", kind_of.has("NEVER_CULL_FOR_MP"))
+		if placement.get_child_count() > 0:
+			placement.get_child(0).set_meta("castle_fixture_visual", true)
+		if kind_of.has("NEVER_CULL_FOR_MP"):
+			_disable_fixture_range_culling(placement)
+		if selectable:
+			_build_fixture_overlays(placement, fixture_id, int(row.get("team", -1)), String(state["tooltip"]))
+	return _castle_fixture_states.size()
+
+
+func castle_fixture_presentation_state(fixture_id: int) -> Dictionary:
+	return (_castle_fixture_states.get(fixture_id, {}) as Dictionary).duplicate(true)
+
+
+func present_castle_fixture_selection(fixture_id: int) -> void:
+	if fixture_id == _castle_fixture_selected_id:
+		return
+	var previous := _castle_fixture_selected_id
+	_castle_fixture_selected_id = fixture_id if bool((_castle_fixture_states.get(fixture_id, {}) as Dictionary).get("selectable", false)) else 0
+	_refresh_fixture_overlay_visibility(previous)
+	_refresh_fixture_overlay_visibility(_castle_fixture_selected_id)
+
+
+func present_castle_fixture_hover(fixture_id: int) -> void:
+	var accepted := fixture_id if bool((_castle_fixture_states.get(fixture_id, {}) as Dictionary).get("selectable", false)) else 0
+	if accepted == _castle_fixture_hovered_id:
+		return
+	var previous := _castle_fixture_hovered_id
+	_castle_fixture_hovered_id = accepted
+	_set_fixture_tooltip_visible(previous, false)
+	_set_fixture_tooltip_visible(_castle_fixture_hovered_id, true)
+
+
+func present_castle_fixture_event(event: Dictionary, row: Dictionary) -> void:
+	var fixture_id := int(event.get("target_id", 0))
+	if not _castle_fixture_states.has(fixture_id) or String(row.get("structure_kind", "")) != "castle_fixture":
+		return
+	var state := _castle_fixture_states[fixture_id] as Dictionary
+	state["health"] = int(row.get("health", state.get("health", 0)))
+	state["maximum_health"] = int(row.get("maximum_health", state.get("maximum_health", 1)))
+	_castle_fixture_states[fixture_id] = state
+	_sync_fixture_health_bar(fixture_id)
+	if String(event.get("kind", "")) == "structure.destroyed":
+		_present_fixture_death(fixture_id, row)
+
+
+func _fixture_row_selectable(row: Dictionary, kind_of: Array[String]) -> bool:
+	if not bool(row.get("castle_fixture_enabled", true)):
+		return false
+	for blocker in ["UNATTACKABLE", "INERT", "NOT_AUTOACQUIRABLE"]:
+		if kind_of.has(blocker):
+			return false
+	if not kind_of.has("SELECTABLE"):
+		return false
+	# The selected maps contain a contradictory editor/runtime pair: all 125
+	# Carn Dum walls author objectTargetable=false while their retail Object
+	# explicitly carries SELECTABLE. Preserve that explicit wall selection
+	# surface; for gates and ordinary fixtures the authored placement refusal
+	# wins (EreborGateDoors is the acceptance case).
+	return bool(row.get("castle_fixture_targetable", true)) \
+		or String(row.get("castle_fixture_role", "")) == "wall"
+
+
+func _upper_tokens(value: Variant) -> Array[String]:
+	var out: Array[String] = []
+	if typeof(value) != TYPE_ARRAY:
+		return out
+	for token in value as Array:
+		var upper := String(token).to_upper()
+		if upper != "" and not out.has(upper):
+			out.append(upper)
+	return out
+
+
+func _build_fixture_overlays(placement: Node3D, fixture_id: int, team: int, tooltip: String) -> void:
+	var top := _fixture_visual_top(placement) + 0.25
+	var back := Sprite3D.new()
+	back.name = "CastleFixtureHealthBack"
+	_configure_fixture_sprite(back, _fixture_solid_texture(Color("131a1e"), 68, 8), 8)
+	back.position = Vector3(0.0, top, 0.0)
+	back.visible = false
+	placement.add_child(back)
+	var fill := Sprite3D.new()
+	fill.name = "CastleFixtureHealthFill"
+	_configure_fixture_sprite(fill, _fixture_solid_texture(Color("5bd765") if team == 0 else Color("df5a4f"), 64, 6), 9)
+	fill.position = Vector3(0.0, top, -0.01)
+	fill.visible = false
+	placement.add_child(fill)
+	var label := Label3D.new()
+	label.name = "CastleFixtureTooltip"
+	label.text = tooltip
+	label.position = Vector3(0.0, top + 0.3, 0.0)
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.no_depth_test = true
+	label.font_size = 18
+	label.outline_size = 4
+	label.visible = false
+	placement.add_child(label)
+	_sync_fixture_health_bar(fixture_id)
+
+
+func _configure_fixture_sprite(sprite: Sprite3D, texture: Texture2D, priority: int) -> void:
+	sprite.texture = texture
+	sprite.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	sprite.fixed_size = true
+	sprite.pixel_size = 0.00085
+	sprite.no_depth_test = true
+	sprite.shaded = false
+	sprite.render_priority = priority
+
+
+func _fixture_solid_texture(color: Color, width: int, height: int) -> ImageTexture:
+	var image := Image.create(width, height, false, Image.FORMAT_RGBA8)
+	image.fill(color)
+	return ImageTexture.create_from_image(image)
+
+
+func _fixture_visual_top(placement: Node3D) -> float:
+	var top := 1.0
+	var inverse := placement.global_transform.affine_inverse()
+	for descendant in placement.find_children("*", "MeshInstance3D", true, false):
+		var mesh_instance := descendant as MeshInstance3D
+		if mesh_instance == null or mesh_instance.mesh == null:
+			continue
+		var box := mesh_instance.get_aabb()
+		var relative := inverse * mesh_instance.global_transform
+		for x in [box.position.x, box.end.x]:
+			for y in [box.position.y, box.end.y]:
+				for z in [box.position.z, box.end.z]:
+					top = maxf(top, (relative * Vector3(x, y, z)).y)
+	return top
+
+
+func _sync_fixture_health_bar(fixture_id: int) -> void:
+	var placement := _castle_fixture_nodes.get(fixture_id) as Node3D
+	if placement == null:
+		return
+	var state := _castle_fixture_states.get(fixture_id, {}) as Dictionary
+	var maximum := maxi(1, int(state.get("maximum_health", 1)))
+	var health := maxi(0, int(state.get("health", 0)))
+	var ratio := clampf(float(health) / float(maximum), 0.0, 1.0)
+	var fill := placement.get_node_or_null("CastleFixtureHealthFill") as Sprite3D
+	if fill != null:
+		fill.scale.x = maxf(0.001, ratio)
+		fill.offset.x = (ratio - 1.0) * 32.0
+	_refresh_fixture_overlay_visibility(fixture_id)
+
+
+func _refresh_fixture_overlay_visibility(fixture_id: int) -> void:
+	var placement := _castle_fixture_nodes.get(fixture_id) as Node3D
+	if placement == null:
+		return
+	var state := _castle_fixture_states.get(fixture_id, {}) as Dictionary
+	var health := int(state.get("health", 0))
+	var maximum := maxi(1, int(state.get("maximum_health", 1)))
+	var show := bool(state.get("selectable", false)) and health > 0 \
+		and (fixture_id == _castle_fixture_selected_id or health < maximum)
+	for path in ["CastleFixtureHealthBack", "CastleFixtureHealthFill"]:
+		var marker := placement.get_node_or_null(path) as Node3D
+		if marker != null and marker.visible != show:
+			marker.visible = show
+
+
+func _set_fixture_tooltip_visible(fixture_id: int, visible_now: bool) -> void:
+	var placement := _castle_fixture_nodes.get(fixture_id) as Node3D
+	if placement == null:
+		return
+	var label := placement.get_node_or_null("CastleFixtureTooltip") as Label3D
+	if label != null and label.visible != visible_now:
+		label.visible = visible_now
+
+
+func _disable_fixture_range_culling(node: Node) -> void:
+	if node is GeometryInstance3D:
+		(node as GeometryInstance3D).visibility_range_end = 0.0
+	for child in node.get_children():
+		_disable_fixture_range_culling(child)
+
+
+func _present_fixture_death(fixture_id: int, row: Dictionary) -> void:
+	var state := _castle_fixture_states.get(fixture_id, {}) as Dictionary
+	if bool(state.get("destroyed", false)):
+		return
+	state["destroyed"] = true
+	state["health"] = 0
+	var placement := _castle_fixture_nodes.get(fixture_id) as Node3D
+	if placement == null:
+		state["death_presentation"] = "unbound-no-node"
+		_castle_fixture_states[fixture_id] = state
+		return
+	for overlay in ["CastleFixtureHealthBack", "CastleFixtureHealthFill", "CastleFixtureTooltip"]:
+		var overlay_node := placement.get_node_or_null(overlay) as Node3D
+		if overlay_node != null:
+			overlay_node.visible = false
+	var rubble_path := _fixture_rubble_path(placement)
+	if rubble_path != "":
+		var rubble := AssetFactoryScript._try_load_model(rubble_path)
+		if rubble != null and _mesh_instance_count(rubble) > 0:
+			var old_visual: Node = null
+			for child in placement.get_children():
+				if bool(child.get_meta("castle_fixture_visual", false)):
+					old_visual = child
+					break
+			if old_visual != null:
+				placement.remove_child(old_visual)
+				old_visual.queue_free()
+			rubble.set_meta("castle_fixture_visual", true)
+			placement.add_child(rubble)
+			placement.set_meta("castle_fixture_death_glb", rubble_path)
+			state["death_presentation"] = "rubble"
+			_castle_fixture_states[fixture_id] = state
+			return
+	# The cooked binding has no distinct RUBBLE GLB for this retail Object.
+	# Hiding is the required fail-closed presentation; leaving the intact mesh
+	# standing is the owner-visible bug this lane removes.
+	placement.visible = false
+	state["death_presentation"] = "hidden-no-cooked-rubble"
+	_castle_fixture_states[fixture_id] = state
+
+
+func _fixture_rubble_path(placement: Node3D) -> String:
+	var intact_path := String(placement.get_meta("glb_path", ""))
+	if intact_path == "" or not FileAccess.file_exists(intact_path):
+		return ""
+	var directory := intact_path.get_base_dir()
+	var files := Array(DirAccess.get_files_at(directory))
+	files.sort()
+	for file_value in files:
+		var file_name := String(file_value)
+		var lower := file_name.to_lower()
+		if not lower.ends_with(".glb"):
+			continue
+		if lower.begins_with("rubble-") or (
+			lower.contains("-rubble-")
+			and not lower.begins_with("intact-")
+			and not lower.begins_with("damaged-")
+			and not lower.begins_with("really-damaged-")
+			and not lower.begins_with("construction-")
+		):
+			var candidate := directory.path_join(file_name)
+			if FileAccess.file_exists(candidate):
+				return candidate
+	return ""
+
+
 func _record_unresolved_prop_diagnostics(map_data: RetailMapData) -> bool:
 	var vegetation: Array[Dictionary] = []
 	var rocks: Array[Dictionary] = []
@@ -1968,4 +2264,8 @@ func _clear_generated() -> void:
 	unresolved_prop_type_ids.clear()
 	retail_prop_container = null
 	retail_structure_container = null
+	_castle_fixture_states.clear()
+	_castle_fixture_nodes.clear()
+	_castle_fixture_selected_id = 0
+	_castle_fixture_hovered_id = 0
 	water_mesh_instance = null
