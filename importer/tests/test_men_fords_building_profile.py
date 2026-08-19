@@ -408,7 +408,10 @@ class MenFordsBuildingProfileTests(unittest.TestCase):
         # 83 asset/data rules, the living-world strategic document, and the
         # exact map plus two-library script composite.
         self.assertEqual(len(profile.resources), 85)
-        self.assertEqual(MEN_FORDS_SOURCE_ENTRY_COUNT, 394)
+        # 394 -> 396 (castle L7, 2026-08-19): the skirmish script composite now
+        # injects four AI libraries (multiplayer_start_teams, ai_initialize,
+        # ai_mp_inherit_management, multiplayer_human) instead of two.
+        self.assertEqual(MEN_FORDS_SOURCE_ENTRY_COUNT, 396)
 
         payload = load_payload()
         objects = {
