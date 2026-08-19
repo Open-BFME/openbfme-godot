@@ -26,7 +26,12 @@ from importer.tests.test_sage_map import _synthetic_map
 
 
 _DOCUMENTS = {
-    "data/ini/gamedata.ini": b"#define TEST_GARRISON_HEALTH 1500\n",
+    "data/ini/gamedata.ini": (
+        b"#define TEST_GARRISON_HEALTH 1500\n"
+        b"#define GENERIC_FACTION_GARRISONABLE ANY +INFANTRY +BANNER "
+        b"-CAVALRY -SUMMONED -WildSpiderling -WildSpiderlingHorde "
+        b"-COMBO_HORDE -IsengardSharku -AngmarThrallMaster\n"
+    ),
     "data/ini/armor.ini": (
         b"Armor TestWallArmor\n"
         b"  Armor = DEFAULT 10%\n"
@@ -397,6 +402,17 @@ def test_garrison_fixture_carries_contain_block() -> None:
         assert block["allowOwnPlayerInsideOverride"] is True
         assert block["numberOfExitPaths"] == 1
         assert block["killPassengersOnDeath"] is False
+        assert block["objectStatusOfContained"] == [
+            "UNSELECTABLE", "CAN_ATTACK", "ENCLOSED"
+        ]
+        assert block["passengerFilter"] == [
+            "ANY", "+INFANTRY", "+BANNER", "-CAVALRY", "-SUMMONED",
+            "-WildSpiderling", "-WildSpiderlingHorde", "-COMBO_HORDE",
+            "-IsengardSharku", "-AngmarThrallMaster",
+        ]
+        assert block["damagePercentToUnits"] == 0.0
+        assert block["entryOffset"] == [50.0, 0.0, 0.0]
+        assert block["exitOffset"] == [50.0, 0.0, 0.0]
 
 
 def test_fixtures_carry_type_contracts_and_placement_properties() -> None:

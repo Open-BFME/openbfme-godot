@@ -13,7 +13,7 @@ extends SceneTree
 ##                       of these and silently fail others
 ##   4. honest refusal - a world read that cannot be answered leaves the counter
 ##                       ALONE and reports WORLD_REFUSED; it never writes 0
-##   5. blocked packs  - WP02/WP03/WP04 are registered as blocked, produce a
+##   5. blocked packs  - WP02/WP04 are registered as blocked, produce a
 ##                       distinct gap reason, and are not counted as coverage
 ##
 ## Invocation:
@@ -48,7 +48,7 @@ const TICKS_PER_SECOND := 10
 ## the exact count a HEALTHY run makes; if the run makes any other number,
 ## something aborted (or an assertion was added without updating this) and
 ## the result is not to be trusted.
-const EXPECTED_CHECKS := 49
+const EXPECTED_CHECKS := 51
 
 var passed := 0
 var failed := 0
@@ -209,6 +209,29 @@ func _test_registration_is_deterministic() -> void:
 
 	# Every WP01 member must actually be registered.
 	var dispatch: SageScriptDispatch = harness["dispatch"]
+	var wp03_names := [
+		"NAMED_GARRISON_NEAREST_BUILDING",
+		"NAMED_GARRISON_SPECIFIC_BUILDING",
+		"NAMED_GARRISON_SPECIFIC_BUILDING_INSTANTLY",
+		"NAMED_USE_COMMANDBUTTON_ON_NEAREST_GARRISONED_BUILDING",
+		"PLAYER_GARRISON_ALL_BUILDINGS",
+		"TEAM_ALL_USE_COMMANDBUTTON_ON_NEAREST_GARRISONED_BUILDING",
+		"TEAM_GARRISON_NEAREST_BUILDING",
+		"TEAM_GARRISON_SPECIFIC_BUILDING",
+		"TEAM_GARRISON_SPECIFIC_BUILDING_INSTANTLY",
+		"TEAM_GARRISON_TEAM_INSTANTLY",
+		"TEAM_LOAD_TRANSPORTS",
+	]
+	var wp03_missing: Array = wp03_names.filter(
+		func(name): return not dispatch.implemented_actions().has(name) or dispatch.blocked_names().has(name)
+	)
+	_check("all_wp03_garrison_actions_are_served", wp03_missing.is_empty(), str(wp03_missing))
+	var wp03_condition_missing: Array = [
+		"SKIRMISH_PLAYER_HAS_COMPARISON_GARRISONED", "UNIT_HAS_PASSENGER"
+	].filter(
+		func(name): return not dispatch.implemented_conditions().has(name) or dispatch.blocked_names().has(name)
+	)
+	_check("both_wp03_garrison_conditions_are_served", wp03_condition_missing.is_empty(), str(wp03_condition_missing))
 	var expected_actions := [
 		"CALL_SUBROUTINE",
 		"DISABLE_COUNTDOWN_TIMER_DISPLAY",
@@ -678,8 +701,8 @@ func _test_blocked_packages() -> void:
 		str(dispatch.gaps.to_lines())
 	)
 
-	# A blocked condition is FALSE, like any condition that could not be
-	# evaluated - an unevaluable gate must never fire.
+	# The generic stub still honestly refuses the now-served containment query;
+	# an unevaluable condition must never fire.
 	_check(
 		"a_blocked_condition_is_false",
 		not _cond(harness, "UNIT_HAS_PASSENGER", [_text_arg("Gimli")])
