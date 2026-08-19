@@ -3520,6 +3520,9 @@ func _record_sim_heartbeat() -> void:
 func _process(delta: float) -> void:
 	_sync_hud_to_viewport()
 	_update_camera(delta)
+	# Retail W3D texture mappers (fortress flag/torch flip-books, waterfall
+	# scroll) advance on the wall clock; presentation only, never the sim.
+	W3DTextureMappers.advance(float(Time.get_ticks_msec()) / 1000.0)
 	if not ready_ok:
 		return
 	_record_sim_heartbeat()
