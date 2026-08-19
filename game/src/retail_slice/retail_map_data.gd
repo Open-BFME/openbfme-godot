@@ -726,6 +726,20 @@ func _valid_fixture_gate_block(value: Variant) -> bool:
 				return _fail("gate fixture has invalid named geometries")
 		if not _valid_fixture_vector(geometry.get("offset", null)):
 			return _fail("gate fixture has invalid named geometries")
+	if block.has("aiGateUpdate"):
+		var ai_gate: Variant = block.get("aiGateUpdate")
+		if typeof(ai_gate) != TYPE_DICTIONARY:
+			return _fail("gate fixture has an invalid AI gate update block")
+		for field in ["triggerWidthX", "triggerWidthY"]:
+			if not _valid_fixture_number((ai_gate as Dictionary).get(field, null)) or float((ai_gate as Dictionary).get(field)) <= 0.0:
+				return _fail("gate fixture has an invalid AI gate update block")
+	if block.has("fakePathfindPortal"):
+		var portal: Variant = block.get("fakePathfindPortal")
+		if typeof(portal) != TYPE_DICTIONARY:
+			return _fail("gate fixture has an invalid fake pathfind portal block")
+		for field in ["allowEnemies", "allowNonSkirmishAIUnits"]:
+			if typeof((portal as Dictionary).get(field, null)) != TYPE_BOOL:
+				return _fail("gate fixture has an invalid fake pathfind portal block")
 	return true
 
 

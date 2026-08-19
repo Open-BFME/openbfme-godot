@@ -1876,6 +1876,8 @@ func _apply_map_configuration(configuration: Dictionary) -> void:
 			}
 			if fixture.has("initial_health"):
 				fixture_row["initial_health"] = float(fixture.get("initial_health"))
+			if fixture.has("gate"):
+				fixture_row["gate"] = (fixture.get("gate") as Dictionary).duplicate(true)
 			_castle_fixture_placements.append(fixture_row)
 
 
@@ -30652,6 +30654,31 @@ func _seed_castle_fixtures() -> void:
 			# playable-structure document that no pack ships.
 			"presentation": "bound-map-prop",
 		}
+		var fixture_row: Dictionary = structures[structure_id]
+		var gate_block_value: Variant = placement.get("gate", null)
+		if String(placement.get("role", "")) == "gate" and typeof(gate_block_value) == TYPE_DICTIONARY:
+			var gate_block := gate_block_value as Dictionary
+			var opened := bool(gate_block.get("openByDefault", false))
+			fixture_row["gate_behavior"] = {
+				"open": opened,
+				"pathing_open": opened,
+				"open_fraction": 1.0 if opened else 0.0,
+				"reset_ticks": _ship_contract_delay_ticks(float(gate_block.get("resetMilliseconds", 0.0))),
+				"pathing_threshold": float(gate_block.get("percentOpenForPathing", 100.0)) / 100.0,
+				"repel_colliding": false,
+				"close_tick": -1,
+				"unsupported_semantics": [],
+			}
+			fixture_row["gate_geometries"] = (gate_block.get("geometries", {}) as Dictionary).duplicate(true)
+			var ai_gate_value: Variant = gate_block.get("aiGateUpdate", null)
+			if typeof(ai_gate_value) == TYPE_DICTIONARY:
+				var ai_gate := ai_gate_value as Dictionary
+				fixture_row["ai_gate_update"] = {"trigger_width_source": Vector2(float(ai_gate.get("triggerWidthX", 0.0)), float(ai_gate.get("triggerWidthY", 0.0)))}
+			var portal_value: Variant = gate_block.get("fakePathfindPortal", null)
+			if typeof(portal_value) == TYPE_DICTIONARY:
+				var portal := portal_value as Dictionary
+				fixture_row["fake_pathfind_portal"] = {"allow_enemies": bool(portal.get("allowEnemies", false)), "allow_non_skirmish_ai": bool(portal.get("allowNonSkirmishAIUnits", false))}
+			structures[structure_id] = fixture_row
 		_emit_event("castle.fixture_seeded", 0, structure_id, {
 			"type_name": String(placement.get("type_name", "")),
 			"role": String(placement.get("role", "")),

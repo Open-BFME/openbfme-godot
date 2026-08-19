@@ -352,6 +352,22 @@ def _gate_block(
             f"{target_id} is a gate without named geometry states"
         )
     block["geometries"] = geometries
+    ai_fields = _module_assignments(ancestry, "AIGateUpdate")
+    if ai_fields:
+        ai_label = f"{target_id} AIGateUpdate"
+        block["aiGateUpdate"] = {
+            "triggerWidthX": _number(ai_fields, "TriggerWidthX", ai_label, defines),
+            "triggerWidthY": _number(ai_fields, "TriggerWidthY", ai_label, defines),
+        }
+    portal_fields = _module_assignments(ancestry, "FakePathfindPortalBehaviour")
+    if portal_fields:
+        portal_label = f"{target_id} FakePathfindPortalBehaviour"
+        block["fakePathfindPortal"] = {
+            "allowEnemies": _yes_no(portal_fields, "AllowEnemies", portal_label),
+            "allowNonSkirmishAIUnits": _yes_no(
+                portal_fields, "AllowNonSkirmishAIUnits", portal_label
+            ),
+        }
     return block
 
 
@@ -594,6 +610,24 @@ def _validate_gate_block(block: object, label: str) -> None:
     if not _is_number(percent) or float(percent) < 0:  # type: ignore[arg-type]
         raise CastleFixturesError(f"{label} has an invalid gate module block")
     _validate_geometries(block.get("geometries"), label)
+    ai_gate = block.get("aiGateUpdate")
+    if ai_gate is not None and (
+        not isinstance(ai_gate, Mapping)
+        or not all(
+            _is_number(ai_gate.get(key)) and float(ai_gate[key]) > 0.0
+            for key in ("triggerWidthX", "triggerWidthY")
+        )
+    ):
+        raise CastleFixturesError(f"{label} has an invalid AI gate update block")
+    portal = block.get("fakePathfindPortal")
+    if portal is not None and (
+        not isinstance(portal, Mapping)
+        or not all(
+            isinstance(portal.get(key), bool)
+            for key in ("allowEnemies", "allowNonSkirmishAIUnits")
+        )
+    ):
+        raise CastleFixturesError(f"{label} has an invalid fake pathfind portal block")
 
 
 def _validate_garrison_block(block: object, label: str) -> None:
