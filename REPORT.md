@@ -164,4 +164,12 @@ Zero `SCRIPT ERROR` in every run (grep counts in the runner table logs).
 
 ## Commits
 
-TBD — `git log --oneline main..HEAD` at finish.
+`git log --oneline main..HEAD`:
+
+- `6389386` fix(hud): retail UI parity — complete radar disc, no selection arc, authored
+  fortress wheel, world-ring tooltips
+
+Files: `game/src/retail_slice/{retail_hud,retail_minimap,retail_structure,retail_vertical_slice}.gd`,
+`game/tests/{retail_four_unit_hud_runner,retail_radial_layout_runner,structure_radial_command_set_runner,ui_parity_capture_runner}.gd`,
+`tools/gate-m2-focused.ps1`, `REPORT.md`. Never pushed; `selection.json` and packs untouched.
+`ui-frames/` and `logs/` are worktree-local review material, deliberately not committed.
