@@ -1041,6 +1041,31 @@ def test_external_hierarchy_model_stages_provider_and_bakes() -> None:
     validate_structure_visual_recipe(recipe)
 
 
+def test_multi_pivot_unskinned_structure_keeps_hierarchical_pivots() -> None:
+    """Wall decks (P1/P2/P3) are rigid HLOD sub-meshes. Baking the carrier
+    dropped those rest pivots; props-hierarchical keeps them by not baking.
+    """
+
+    wall = "art/w3d/rb/rbhddwst1.w3d"
+    closure = _closure()
+    closure["exactLeaves"].append(_leaf("RBHDDWST1", "model", wall, ["intact"]))
+    closure["scannedW3d"].append(
+        _scan(
+            wall,
+            hierarchy_ids=["RBHDDWST1"],
+            mesh_count=4,
+            skinned_mesh_count=0,
+        )
+    )
+    _rehash(closure)
+
+    recipe = compile_structure_visual_recipe(_TARGET, closure)
+    models = _models_by_source(recipe)
+    assert models[wall]["converter"] == "w3d-hierarchical"
+    assert models[wall]["options"].get("provenRootRigidBake") is not True
+    validate_structure_visual_recipe(recipe)
+
+
 def test_external_hierarchy_model_requires_a_unique_provider() -> None:
     closure = _closure()
     closure["exactLeaves"].append(

@@ -770,7 +770,13 @@ def compile_structure_visual_recipe(
         elif (own_hierarchies or external_hierarchies) and (
             model_skinned_meshes[model_path] == 0
         ):
-            options["provenRootRigidBake"] = True
+            # Single-mesh (or unknown-count) rigid carriers still bake: bibs
+            # fail skin validation on the empty ROOTTRANSFORM-omitted armature.
+            # Multi-mesh HLOD walls must keep the hierarchy — baking dropped
+            # named deck/ramp pivots (P1/P2/P3) that props-hierarchical keeps.
+            mesh_count = model_mesh_counts[model_path]
+            if mesh_count is None or mesh_count <= 1:
+                options["provenRootRigidBake"] = True
         absent = retail_absent_textures.get(model_path.casefold())
         if absent:
             options["retailAbsentTextures"] = sorted(absent, key=str.casefold)
