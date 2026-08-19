@@ -728,6 +728,16 @@ func _valid_fixture_gate_block(value: Variant) -> bool:
 			return _fail("gate fixture has invalid named geometries")
 	if block.has("commandSet") and (typeof(block.get("commandSet")) != TYPE_STRING or String(block.get("commandSet")).strip_edges() == ""):
 		return _fail("gate fixture has an invalid gate command set")
+	if block.has("commandSetRows"):
+		var command_rows: Variant = block.get("commandSetRows")
+		if typeof(command_rows) != TYPE_ARRAY or (command_rows as Array).is_empty():
+			return _fail("gate fixture has invalid gate command set rows")
+		for row_value in command_rows as Array:
+			if typeof(row_value) != TYPE_DICTIONARY:
+				return _fail("gate fixture has invalid gate command set rows")
+			var row := row_value as Dictionary
+			if not _exact_integer(row.get("slot", null)) or int(row.get("slot")) <= 0 or typeof(row.get("commandId", null)) != TYPE_STRING or String(row.get("commandId")).strip_edges() == "":
+				return _fail("gate fixture has invalid gate command set rows")
 	if block.has("aiGateUpdate"):
 		var ai_gate: Variant = block.get("aiGateUpdate")
 		if typeof(ai_gate) != TYPE_DICTIONARY:

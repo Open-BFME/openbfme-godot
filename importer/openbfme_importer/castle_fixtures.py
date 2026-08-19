@@ -306,8 +306,38 @@ def _geometry_number_value(row: object, label: str) -> float:
     return float(row["value"])  # type: ignore[index]
 
 
+def _command_set_rows(
+    documents: Mapping[str, bytes], command_set_id: str
+) -> list[dict[str, Any]]:
+    """Return only the authored slot rows from one retail CommandSet block."""
+
+    payload = documents.get("data/ini/commandset.ini")
+    if payload is None:
+        raise CastleFixturesError("retail commandset.ini is missing")
+    text = payload.decode("utf-8", errors="replace")
+    declaration = re.search(
+        rf"(?im)^\s*CommandSet\s+{re.escape(command_set_id)}\s*(?:;.*)?$", text
+    )
+    if declaration is None:
+        raise CastleFixturesError(f"retail CommandSet {command_set_id} is missing")
+    end = re.search(r"(?im)^\s*End\s*(?:;.*)?$", text[declaration.end() :])
+    if end is None:
+        raise CastleFixturesError(f"retail CommandSet {command_set_id} is unterminated")
+    rows: list[dict[str, Any]] = []
+    for raw_line in text[declaration.end() : declaration.end() + end.start()].splitlines():
+        match = re.match(r"\s*(\d+)\s*=\s*([^\s;]+)", raw_line)
+        if match is not None:
+            rows.append({"slot": int(match.group(1)), "commandId": match.group(2)})
+    if not rows:
+        raise CastleFixturesError(f"retail CommandSet {command_set_id} is empty")
+    return rows
+
+
 def _gate_block(
-    ancestry: Sequence[Any], defines: Mapping[str, int | float], target_id: str
+    ancestry: Sequence[Any],
+    defines: Mapping[str, int | float],
+    target_id: str,
+    documents: Mapping[str, bytes] | None = None,
 ) -> dict[str, Any]:
     label = f"{target_id} GateOpenAndCloseBehavior"
     fields = _module_assignments(ancestry, "GateOpenAndCloseBehavior")
@@ -360,6 +390,8 @@ def _gate_block(
     ]
     if command_sets:
         block["commandSet"] = command_sets[0]
+        if documents is not None:
+            block["commandSetRows"] = _command_set_rows(documents, command_sets[0])
     ai_fields = _module_assignments(ancestry, "AIGateUpdate")
     if ai_fields:
         ai_label = f"{target_id} AIGateUpdate"
@@ -451,6 +483,7 @@ def _fixture(
     placement: Mapping[str, Any],
     ancestry: Sequence[Any],
     defines: Mapping[str, int | float],
+    documents: Mapping[str, bytes],
 ) -> dict[str, Any]:
     type_name = str(placement["typeName"])
     role = _role(info)
@@ -479,7 +512,7 @@ def _fixture(
         if property_key in properties:
             fixture[fixture_key] = properties[property_key]
     if role == "gate":
-        fixture["gate"] = _gate_block(ancestry, defines, info.name)
+        fixture["gate"] = _gate_block(ancestry, defines, info.name, documents)
     elif role == "garrison":
         fixture["garrison"] = _garrison_block(ancestry, defines, info.name)
     if _module_present(ancestry, "KeepObjectDie"):
@@ -560,7 +593,7 @@ def build_map_fixtures(
             omitted.setdefault(folded, type_name)
             continue
         _, ancestry = _compile_lineage(type_name, raw)
-        fixtures.append(_fixture(info, descriptor, row, ancestry, defines))
+        fixtures.append(_fixture(info, descriptor, row, ancestry, defines, documents))
     fixtures.sort(key=lambda fixture: int(fixture["index"]))
     return {
         "schema": MAP_FIXTURES_SCHEMA,
@@ -622,6 +655,21 @@ def _validate_gate_block(block: object, label: str) -> None:
         not isinstance(block.get("commandSet"), str) or not block["commandSet"].strip()
     ):
         raise CastleFixturesError(f"{label} has an invalid gate command set")
+    command_rows = block.get("commandSetRows")
+    if command_rows is not None and (
+        not isinstance(command_rows, list)
+        or not command_rows
+        or any(
+            not isinstance(row, Mapping)
+            or not isinstance(row.get("slot"), int)
+            or isinstance(row.get("slot"), bool)
+            or int(row["slot"]) <= 0
+            or not isinstance(row.get("commandId"), str)
+            or not row["commandId"].strip()
+            for row in command_rows
+        )
+    ):
+        raise CastleFixturesError(f"{label} has invalid gate command set rows")
     ai_gate = block.get("aiGateUpdate")
     if ai_gate is not None and (
         not isinstance(ai_gate, Mapping)

@@ -4998,21 +4998,9 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 	# whole of SellableCommandSet (commandset.ini:5771 / farm.ini:34). SAGE
 	# exposes it for the building's whole life, including under construction.
 	if structure_owned_alive:
-		# Retail commandset.ini:4308/4314 puts Command_ToggleGate in slot 1 of
-		# both castle gate sets; commandbutton.ini:9015 authors it as Radial=Yes.
-		if String(structure.get("gate_command_set", "")) in ["CastleGateCommandSet", "CastleGateCommandSet_NoSell"]:
-			var gate_policy: Dictionary = structure.get("gate_behavior", {})
-			entries.append({
-				"command_kind": "toggle_gate",
-				"id": "Command_ToggleGate",
-				"icon": null,
-				"text": "Close Gate" if bool(gate_policy.get("open", false)) else "Open Gate",
-				"enabled": not gate_policy.is_empty(),
-				"label": "Toggle Gate",
-				"tooltip": "Open or close this gate",
-				"cost": -1,
-				"slot": 1,
-			})
+		var gate_toggle := _gate_toggle_radial_entry(structure)
+		if not gate_toggle.is_empty():
+			entries.append(gate_toggle)
 		var sell: Dictionary = simulation.structure_sell_command(selected_structure_id)
 		if not sell.is_empty():
 			var sell_cmd: Dictionary = hud.retail_sell_command()
@@ -5032,6 +5020,37 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 			})
 	var anchor := camera.unproject_position(world_position)
 	hud.sync_radial_commands(anchor, _paged_radial_entries(structure, entries))
+
+
+func _gate_toggle_radial_entry(structure: Dictionary) -> Dictionary:
+	var slot := 0
+	for row_value in structure.get("gate_command_rows", []) as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			continue
+		var row := row_value as Dictionary
+		if String(row.get("commandId", "")) == "Command_ToggleGate":
+			slot = int(row.get("slot", 0))
+			break
+	if slot <= 0 or hud == null:
+		return {}
+	var authored: Dictionary = hud.retail_gate_toggle_command()
+	if authored.is_empty():
+		return {}
+	var gate_policy: Dictionary = structure.get("gate_behavior", {})
+	return {
+		"command_kind": "toggle_gate",
+		"id": "Command_ToggleGate",
+		"icon": authored.get("texture") as Texture2D,
+		"text": String(authored.get("label", "")) if authored.get("texture") == null else "",
+		"enabled": not gate_policy.is_empty(),
+		"label_id": String(authored.get("label_id", "")),
+		"tooltip_id": String(authored.get("tooltip_id", "")),
+		"image_id": String(authored.get("image_id", "")),
+		"label": String(authored.get("label", "")),
+		"tooltip": String(authored.get("tooltip", "")),
+		"cost": -1,
+		"slot": slot,
+	}
 
 
 ## Retail's fortress command set is PAGED and ours must be too.

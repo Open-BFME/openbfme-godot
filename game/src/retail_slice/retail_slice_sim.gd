@@ -17849,8 +17849,11 @@ func request_gate_open(structure_id:int,requester_id:int=0)->Dictionary:
 func gate_portal_allows(structure_id:int,requester_id:int)->bool:
 	if not structures.has(structure_id) or not entities.has(requester_id):return false
 	var gate:=structures[structure_id] as Dictionary;var portal:=gate.get("fake_pathfind_portal",{}) as Dictionary;var requester:=entities[requester_id] as Dictionary
+	# Retail's FakePathfindPortalBehaviour is an optional extra policy.  With no
+	# authored block an open gate is ordinary open geometry for every team; the
+	# closed geometry blocks every team in _castle_gate_blocking_discs.
+	if portal.is_empty():return true
 	if int(requester.get("team",-1))!=int(gate.get("team",-1)) and not bool(portal.get("allow_enemies",false)):return false
-	if not bool(requester.get("human_controlled",true)) and not bool(requester.get("skirmish_ai",false)) and not bool(portal.get("allow_non_skirmish_ai",false)):return false
 	return true
 
 
@@ -17860,7 +17863,7 @@ func _step_gate_updates()->void:
 		if policy.is_empty():continue
 		var ai:=gate.get("ai_gate_update",{}) as Dictionary
 		if not ai.is_empty():
-			var half:=Vector2(ai.get("trigger_width_source",Vector2.ZERO))*float(_rules.get("source_unit_scale",0.1))*0.5;var origin:=Vector2(gate.get("position",Vector2.ZERO))
+			var half:=Vector2(ai.get("trigger_width_source",Vector2.ZERO))*float(_rules.get("source_map_transform_scale",0.1))*0.5;var origin:=Vector2(gate.get("position",Vector2.ZERO))
 			for id in entity_ids():
 				var unit:=entities[id] as Dictionary;var delta:=Vector2(unit.get("position",Vector2.ZERO))-origin
 				if int(unit.get("team",-1))==int(gate.get("team",-1)) and absf(delta.x)<=half.x and absf(delta.y)<=half.y:request_gate_open(structure_id,id);break
@@ -28260,11 +28263,9 @@ func _castle_gate_blocking_discs(structure_row: Dictionary, mover: Dictionary) -
 	if policy.is_empty() or geometries.is_empty():
 		return []
 	var use_open_geometry := bool(policy.get("pathing_open", false))
-	if use_open_geometry:
+	if use_open_geometry and structure_row.has("fake_pathfind_portal"):
 		var portal: Dictionary = structure_row.get("fake_pathfind_portal", {})
 		if int(mover.get("team", -1)) != int(structure_row.get("team", -2)) and not bool(portal.get("allow_enemies", false)):
-			use_open_geometry = false
-		elif not bool(mover.get("human_controlled", true)) and not bool(mover.get("skirmish_ai", false)) and not bool(portal.get("allow_non_skirmish_ai", false)):
 			use_open_geometry = false
 	var geometry_names: Array[String] = []
 	if use_open_geometry:
@@ -30752,6 +30753,8 @@ func _seed_castle_fixtures() -> void:
 			fixture_row["gate_geometries"] = (gate_block.get("geometries", {}) as Dictionary).duplicate(true)
 			if gate_block.has("commandSet"):
 				fixture_row["gate_command_set"] = String(gate_block.get("commandSet", ""))
+			if gate_block.has("commandSetRows"):
+				fixture_row["gate_command_rows"] = (gate_block.get("commandSetRows", []) as Array).duplicate(true)
 			var ai_gate_value: Variant = gate_block.get("aiGateUpdate", null)
 			if typeof(ai_gate_value) == TYPE_DICTIONARY:
 				var ai_gate := ai_gate_value as Dictionary
@@ -31647,6 +31650,16 @@ func state_snapshot() -> Dictionary:
 			"upgrade_queue": upgrade_queue_rows,
 		})
 		var snapshot_structure := structure_rows[-1] as Dictionary
+		var gate_behavior := structure_row.get("gate_behavior", {}) as Dictionary
+		if not gate_behavior.is_empty():
+			# Resting gate state is gameplay state, not merely the transition event.
+			# Keep the explicit field list deterministic and leave non-gates absent.
+			snapshot_structure["gate_behavior"] = {
+				"open": bool(gate_behavior.get("open", false)),
+				"pathing_open": bool(gate_behavior.get("pathing_open", false)),
+				"open_fraction": snappedf(float(gate_behavior.get("open_fraction", 0.0)), 0.001),
+				"close_tick": int(gate_behavior.get("close_tick", -1)),
+			}
 		if typeof(structure_row.get("attack")) == TYPE_DICTIONARY:
 			snapshot_structure["attack"] = (structure_row["attack"] as Dictionary).duplicate(true)
 		if String(structure_row.get("spawned_weapon_object_id", "")) != "":

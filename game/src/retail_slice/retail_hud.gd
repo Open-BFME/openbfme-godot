@@ -4974,6 +4974,40 @@ func radial_command_count() -> int:
 	return _radial_buttons.size() if _radial_layer != null and _radial_layer.visible else 0
 
 
+func retail_gate_toggle_command() -> Dictionary:
+	# commandbutton.ini:9015-9023 authors this complete presentation row. The
+	# mounted retail string table supplies both texts; there is no invented
+	# open/close caption or substitute icon on this path.
+	const IMAGE_ID := "BRWall_PosternGateOpenClose"
+	const LABEL_ID := "CONTROLBAR:ToggleGateOpenClose"
+	const TOOLTIP_ID := "CONTROLBAR:ToolTipToggleGate"
+	if _bound_content_db == null or _bound_pack_root == "":
+		return {}
+	var label := String(_bound_content_db.get_retail_string(LABEL_ID, ""))
+	var tooltip := String(_bound_content_db.get_retail_string(TOOLTIP_ID, ""))
+	if label == "" or tooltip == "":
+		return {}
+	var result := {
+		"texture": null,
+		"image_id": IMAGE_ID,
+		"label_id": LABEL_ID,
+		"tooltip_id": TOOLTIP_ID,
+		"label": label,
+		"tooltip": tooltip,
+	}
+	var image_validation := _validate_retail_image(
+		_bound_content_db, _bound_pack_root, IMAGE_ID, Vector2i.ZERO
+	)
+	if String(image_validation.get("error", "")) == "":
+		result["texture"] = image_validation.get("texture")
+	else:
+		retail_bind_diagnostics.append(
+			"gate-toggle-art-missing-recorded: Command_ToggleGate renders as localized text — %s"
+			% String(image_validation.get("error", ""))
+		)
+	return result
+
+
 func _build_diagnostics() -> void:
 	diagnostics_panel = PanelContainer.new()
 	diagnostics_panel.name = "DiagnosticsPanel"
