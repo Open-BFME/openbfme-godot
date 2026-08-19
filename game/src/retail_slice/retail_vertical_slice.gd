@@ -4233,7 +4233,8 @@ func castle_fixture_selectable(row: Dictionary) -> bool:
 	var kind_of: Array[String] = []
 	for token in row.get("castle_fixture_kind_of", []) as Array:
 		kind_of.append(String(token).to_upper())
-	for blocker in ["UNATTACKABLE", "INERT", "NOT_AUTOACQUIRABLE"]:
+	# NOT_AUTOACQUIRABLE governs auto-acquire targeting, not selection.
+	for blocker in ["UNATTACKABLE", "INERT"]:
 		if kind_of.has(blocker):
 			return false
 	if not kind_of.has("SELECTABLE"):

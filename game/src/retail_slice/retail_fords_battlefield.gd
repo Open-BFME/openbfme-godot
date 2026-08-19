@@ -1762,7 +1762,9 @@ func present_castle_fixture_event(event: Dictionary, row: Dictionary) -> void:
 func _fixture_row_selectable(row: Dictionary, kind_of: Array[String]) -> bool:
 	if not bool(row.get("castle_fixture_enabled", true)):
 		return false
-	for blocker in ["UNATTACKABLE", "INERT", "NOT_AUTOACQUIRABLE"]:
+	# NOT_AUTOACQUIRABLE governs auto-acquire TARGETING in SAGE, not player
+	# selection (review 2026-08-19): only UNATTACKABLE/INERT refuse selection.
+	for blocker in ["UNATTACKABLE", "INERT"]:
 		if kind_of.has(blocker):
 			return false
 	if not kind_of.has("SELECTABLE"):
@@ -1801,20 +1803,38 @@ func _upper_tokens(value: Variant) -> Array[String]:
 	return out
 
 
+func _fixture_overlay_host(placement: Node3D) -> Node3D:
+	## Overlays live INSIDE CastleFixtureVisualGate so the shroud overlay (which
+	## toggles that gate) hides the health bar and tooltip together with the
+	## model; a damaged fixture in unexplored ground must not float a bar.
+	var gate := _ensure_fixture_visual_gate(placement)
+	return gate if gate != null else placement
+
+
+func _fixture_overlay(placement: Node3D, overlay_name: String) -> Node3D:
+	var host := placement.get_node_or_null("CastleFixtureVisualGate") as Node3D
+	if host != null:
+		var inside := host.get_node_or_null(overlay_name) as Node3D
+		if inside != null:
+			return inside
+	return placement.get_node_or_null(overlay_name) as Node3D
+
+
 func _build_fixture_overlays(placement: Node3D, fixture_id: int, team: int, tooltip: String) -> void:
 	var top := _fixture_visual_top(placement) + 0.25
+	var host := _fixture_overlay_host(placement)
 	var back := Sprite3D.new()
 	back.name = "CastleFixtureHealthBack"
 	_configure_fixture_sprite(back, _fixture_solid_texture(Color("131a1e"), 68, 8), 8)
 	back.position = Vector3(0.0, top, 0.0)
 	back.visible = false
-	placement.add_child(back)
+	host.add_child(back)
 	var fill := Sprite3D.new()
 	fill.name = "CastleFixtureHealthFill"
 	_configure_fixture_sprite(fill, _fixture_solid_texture(Color("5bd765") if team == 0 else Color("df5a4f"), 64, 6), 9)
 	fill.position = Vector3(0.0, top, -0.01)
 	fill.visible = false
-	placement.add_child(fill)
+	host.add_child(fill)
 	var label := Label3D.new()
 	label.name = "CastleFixtureTooltip"
 	label.text = tooltip
@@ -1824,7 +1844,7 @@ func _build_fixture_overlays(placement: Node3D, fixture_id: int, team: int, tool
 	label.font_size = 18
 	label.outline_size = 4
 	label.visible = false
-	placement.add_child(label)
+	host.add_child(label)
 	_sync_fixture_health_bar(fixture_id)
 
 
@@ -1868,7 +1888,7 @@ func _sync_fixture_health_bar(fixture_id: int) -> void:
 	var maximum := maxi(1, int(state.get("maximum_health", 1)))
 	var health := maxi(0, int(state.get("health", 0)))
 	var ratio := clampf(float(health) / float(maximum), 0.0, 1.0)
-	var fill := placement.get_node_or_null("CastleFixtureHealthFill") as Sprite3D
+	var fill := _fixture_overlay(placement, "CastleFixtureHealthFill") as Sprite3D
 	if fill != null:
 		fill.scale.x = maxf(0.001, ratio)
 		fill.offset.x = (ratio - 1.0) * 32.0
@@ -1885,7 +1905,7 @@ func _refresh_fixture_overlay_visibility(fixture_id: int) -> void:
 	var show := bool(state.get("selectable", false)) and health > 0 \
 		and (fixture_id == _castle_fixture_selected_id or health < maximum)
 	for path in ["CastleFixtureHealthBack", "CastleFixtureHealthFill"]:
-		var marker := placement.get_node_or_null(path) as Node3D
+		var marker := _fixture_overlay(placement, path)
 		if marker != null and marker.visible != show:
 			marker.visible = show
 
@@ -1894,7 +1914,7 @@ func _set_fixture_tooltip_visible(fixture_id: int, visible_now: bool) -> void:
 	var placement := _castle_fixture_nodes.get(fixture_id) as Node3D
 	if placement == null:
 		return
-	var label := placement.get_node_or_null("CastleFixtureTooltip") as Label3D
+	var label := _fixture_overlay(placement, "CastleFixtureTooltip") as Label3D
 	if label != null and label.visible != visible_now:
 		label.visible = visible_now
 
@@ -1918,7 +1938,7 @@ func _present_fixture_death(fixture_id: int, row: Dictionary) -> void:
 		_castle_fixture_states[fixture_id] = state
 		return
 	for overlay in ["CastleFixtureHealthBack", "CastleFixtureHealthFill", "CastleFixtureTooltip"]:
-		var overlay_node := placement.get_node_or_null(overlay) as Node3D
+		var overlay_node := _fixture_overlay(placement, overlay)
 		if overlay_node != null:
 			overlay_node.visible = false
 	var visual_gate := _ensure_fixture_visual_gate(placement)

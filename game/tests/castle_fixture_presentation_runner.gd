@@ -155,6 +155,38 @@ func _check_erebor(slice, fixture_ids: Array[int]) -> void:
 	if gate_id != 0 and slice.has_method("castle_fixture_selectable"):
 		gate_selectable = bool(slice.castle_fixture_selectable(slice.simulation.structure(gate_id)))
 	_check("erebor_selectable_kindof_gate_is_selectable", gate_id != 0 and gate_selectable)
+	# NOT_AUTOACQUIRABLE is an auto-targeting flag, never a selection gate
+	# (review 2026-08-19): Inn / Outpost / SignalFire author SELECTABLE +
+	# NOT_AUTOACQUIRABLE and must select like any SELECTABLE structure.
+	var auto_acquire_types := {}
+	for fixture_id in fixture_ids:
+		var row: Dictionary = slice.simulation.structure(fixture_id)
+		var tokens: Array = row.get("castle_fixture_kind_of", row.get("kind_of", [])) as Array
+		var upper: Array[String] = []
+		for token in tokens:
+			upper.append(String(token).to_upper())
+		if upper.has("SELECTABLE") and upper.has("NOT_AUTOACQUIRABLE") and not upper.has("INERT") and not upper.has("UNATTACKABLE"):
+			auto_acquire_types[String(row.get("castle_fixture_type", ""))] = bool(slice.castle_fixture_selectable(row))
+	var all_selectable := not auto_acquire_types.is_empty()
+	for type_name in auto_acquire_types:
+		if not bool(auto_acquire_types[type_name]):
+			all_selectable = false
+	_check("erebor_not_autoacquirable_selectable_types_are_selectable", all_selectable, str(auto_acquire_types))
+	# Health bar / tooltip overlays must sit INSIDE the shroud-gated visual
+	# node so fog hides them with the model.
+	var overlay_inside_gate := false
+	var overlay_checked := false
+	for fixture_id in fixture_ids:
+		var placement: Node3D = slice.battlefield._castle_fixture_nodes.get(fixture_id)
+		if placement == null:
+			continue
+		var gate_node := placement.get_node_or_null("CastleFixtureVisualGate")
+		if gate_node == null:
+			continue
+		overlay_checked = true
+		overlay_inside_gate = gate_node.get_node_or_null("CastleFixtureHealthFill") != null 			and placement.get_node_or_null("CastleFixtureHealthFill") == null
+		break
+	_check("erebor_fixture_overlays_live_inside_shroud_gate", overlay_checked and overlay_inside_gate)
 	var gate_candidates: Array = slice._structure_pick_candidates([gate_id]) if gate_id != 0 else []
 	_check("erebor_selectable_kindof_gate_has_pick_candidate",
 		gate_candidates.size() == 1 and int((gate_candidates[0] as Dictionary).get("id", 0)) == gate_id,
