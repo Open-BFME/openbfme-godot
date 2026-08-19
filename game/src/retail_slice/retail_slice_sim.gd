@@ -1865,6 +1865,7 @@ func _apply_map_configuration(configuration: Dictionary) -> void:
 			var fixture_row := {
 				"type_name": String(fixture.get("type_name", "")),
 				"role": String(fixture.get("role", "")),
+				"kind_of": (fixture.get("kind_of", []) as Array).duplicate(),
 				"source_index": int(fixture.get("source_index", -1)),
 				"position": Vector2(fixture.get("position")),
 				"elevation": float(fixture.get("elevation", 0.0)),
@@ -10193,7 +10194,7 @@ func _step_structure_weapons() -> void:
 		# DelayBetweenShots is measured from this authored attack cycle, not
 		# from projectile impact; adding flight time here made artillery fire
 		# progressively slower at longer range.
-		attack["cooldown"] = tick_index + int(attack.get("period_ticks", 1))
+		attack["cooldown"] = tick_index + _structure_weapon_period_ticks(attack)
 		_emit_event("combat.structure_projectile_launched", structure_id, best_id, {
 			"projectile_token": token,
 			"projectile_object_id": String(attack.get("projectile_object_id", "")),
@@ -10207,6 +10208,19 @@ func _step_structure_weapons() -> void:
 			_resolve_structure_weapon_impact(
 				structure_id, attack, attack["pending_projectile"] as Dictionary
 			)
+
+
+func _structure_weapon_period_ticks(attack: Dictionary) -> int:
+	## SAGE DelayBetweenShots Min:/Max: chooses a new inclusive integer
+	## millisecond delay for every attack cycle. Draw before quantizing to the
+	## fixed tick so the authored millisecond distribution remains authoritative.
+	if String(attack.get("delay_between_shots_distribution", "")) == "uniform-inclusive-integer":
+		var minimum_ms := int(attack.get("delay_between_shots_minimum_ms", -1))
+		var maximum_ms := int(attack.get("delay_between_shots_maximum_ms", -1))
+		if minimum_ms >= 0 and maximum_ms >= minimum_ms:
+			var delay_ms := logic_random_int(minimum_ms, maximum_ms)
+			return maxi(1, roundi(float(delay_ms) / (TICK_SECONDS * 1000.0)))
+	return maxi(1, int(attack.get("period_ticks", 1)))
 
 
 func _resolve_structure_weapon_impact(
@@ -15028,12 +15042,15 @@ func _stamp_refund_die_creation_cost(row: Dictionary, cost: int) -> void:
 
 
 func _configure_playable_structure_module_contracts() -> void:
-	## Pull structure moduleContracts from ContentDB when the autoload is live.
-	## Absent ContentDB (headless fixtures) leaves the table empty.
-	var db = _content_db_ref()
-	if db == null:
-		return
-	var runtimes_value: Variant = db.get("playable_structure_runtimes")
+	## Prefer the sealed registry already projected into simulation rules. This
+	## keeps fixture/replacement behavior available to headless runners while
+	## retaining ContentDB as the live-scene source.
+	var runtimes_value: Variant = _rules.get("playable_structure_runtimes", {})
+	if typeof(runtimes_value) != TYPE_DICTIONARY or (runtimes_value as Dictionary).is_empty():
+		var db = _content_db_ref()
+		if db == null:
+			return
+		runtimes_value = db.get("playable_structure_runtimes")
 	if typeof(runtimes_value) != TYPE_DICTIONARY:
 		return
 	var runtimes: Dictionary = runtimes_value
@@ -20281,22 +20298,76 @@ func _replace_self_structure_spec(team: int, object_id: String) -> Dictionary:
 	# selected playable-structure registry but are intentionally not base-loop
 	# build kinds. Resolve their exact object document instead of pretending an
 	# absent faction-manifest alias means an absent retail template.
+	var document := _playable_structure_runtime_document(object_id)
+	if not document.is_empty():
+		var registration := document.get("registration", {}) as Dictionary
+		var gameplay := registration.get("gameplay", {}) as Dictionary
+		var health := gameplay.get("health", {}) as Dictionary
+		var primary := health.get("primary", {}) as Dictionary
+		var maximum_field := primary.get("maxHealth", {}) as Dictionary
+		var maximum: Variant = maximum_field.get("value")
+		if typeof(maximum) not in [TYPE_INT, TYPE_FLOAT]:
+			var lifecycle := (registration.get("presentation", {}) as Dictionary).get("buildingLifecycle", {}) as Dictionary
+			maximum = (lifecycle.get("simulationFacts", {}) as Dictionary).get("maximumHealth")
+		if typeof(maximum) in [TYPE_INT, TYPE_FLOAT] and float(maximum) > 0.0:
+			var spec := {"structure_kind": String(document.get("slug", object_id)), "maximum_health": int(maximum)}
+			var attack := _structure_attack_from_combat(gameplay.get("combat", {}) as Dictionary)
+			if not attack.is_empty():
+				spec["attack"] = attack
+			return spec
+	return {}
+
+
+func _playable_structure_runtime_document(object_id: String) -> Dictionary:
+	var runtimes_value: Variant = _rules.get("playable_structure_runtimes", {})
+	if typeof(runtimes_value) == TYPE_DICTIONARY:
+		var runtimes := runtimes_value as Dictionary
+		if typeof(runtimes.get(object_id)) == TYPE_DICTIONARY:
+			return (runtimes[object_id] as Dictionary).duplicate(true)
+		for key_value in runtimes.keys():
+			var candidate: Variant = runtimes[key_value]
+			if typeof(candidate) == TYPE_DICTIONARY and String((candidate as Dictionary).get("objectId", "")).nocasecmp_to(object_id) == 0:
+				return (candidate as Dictionary).duplicate(true)
 	var db = _content_db_ref()
 	if db != null and db.has_method("get_playable_structure_runtime"):
-		var document: Dictionary = db.get_playable_structure_runtime(object_id)
-		if not document.is_empty():
-			var registration := document.get("registration", {}) as Dictionary
-			var gameplay := registration.get("gameplay", {}) as Dictionary
-			var health := gameplay.get("health", {}) as Dictionary
-			var primary := health.get("primary", {}) as Dictionary
-			var maximum_field := primary.get("maxHealth", {}) as Dictionary
-			var maximum: Variant = maximum_field.get("value")
-			if typeof(maximum) not in [TYPE_INT, TYPE_FLOAT]:
-				var lifecycle := (registration.get("presentation", {}) as Dictionary).get("buildingLifecycle", {}) as Dictionary
-				maximum = (lifecycle.get("simulationFacts", {}) as Dictionary).get("maximumHealth")
-			if typeof(maximum) in [TYPE_INT, TYPE_FLOAT] and float(maximum) > 0.0:
-				return {"structure_kind": String(document.get("slug", object_id)), "maximum_health": int(maximum)}
+		return db.get_playable_structure_runtime(object_id)
 	return {}
+
+
+func _structure_attack_from_combat(combat: Dictionary) -> Dictionary:
+	if combat.is_empty():
+		return {}
+	for field in ["attackRange", "delayBetweenShotsMs", "preAttackDelayMs", "damage"]:
+		if typeof(combat.get(field)) != TYPE_DICTIONARY:
+			return {}
+	var range_value := float((combat["attackRange"] as Dictionary).get("value", -1.0))
+	var pre_attack_ms := float((combat["preAttackDelayMs"] as Dictionary).get("value", -1.0))
+	var damage := float((combat["damage"] as Dictionary).get("value", 0.0))
+	var delay := combat["delayBetweenShotsMs"] as Dictionary
+	var delay_ms := float(delay.get("value", -1.0))
+	var minimum_ms := int(delay.get("minimumValue", -1))
+	var maximum_ms := int(delay.get("maximumValue", -1))
+	var interval := String(delay.get("distribution", "")) == "uniform-inclusive-integer"
+	if range_value <= 0.0 or pre_attack_ms < 0.0 or damage <= 0.0:
+		return {}
+	if (not interval and delay_ms < 0.0) or (interval and (minimum_ms < 0 or maximum_ms < minimum_ms)):
+		return {}
+	var source_scale := float(_rules.get("source_map_transform_scale", 1.0))
+	var attack := {
+		"range": range_value * source_scale,
+		"minimum_range": float((combat.get("minimumAttackRange", {}) as Dictionary).get("value", 0.0)) * source_scale,
+		"damage": damage,
+		"period_ticks": maxi(1, roundi((float(minimum_ms) if interval else delay_ms) / (TICK_SECONDS * 1000.0))),
+		"pre_attack_ticks": maxi(0, roundi(pre_attack_ms / (TICK_SECONDS * 1000.0))),
+		"projectile_speed": float((combat.get("projectileSpeed", {}) as Dictionary).get("value", 0.0)) * source_scale,
+		"projectile_object_id": String(combat.get("projectileObjectId", "")),
+		"weapon_id": String(combat.get("weaponId", "")),
+	}
+	if interval:
+		attack["delay_between_shots_distribution"] = "uniform-inclusive-integer"
+		attack["delay_between_shots_minimum_ms"] = minimum_ms
+		attack["delay_between_shots_maximum_ms"] = maximum_ms
+	return attack
 
 
 func _replacement_structure_row(structure_id: int, previous: Dictionary, object_id: String, spec: Dictionary, preserve_state: bool) -> Dictionary:
@@ -30618,7 +30689,7 @@ func _seed_castle_fixtures() -> void:
 				maximum_health
 			)
 		_note_structure_table_mutation()
-		structures[structure_id] = {
+		var row := {
 			"id": structure_id,
 			"team": _castle_fixture_team(String(placement.get("owner", ""))),
 			"kind": "structure",
@@ -30626,6 +30697,7 @@ func _seed_castle_fixtures() -> void:
 			"name": String(placement.get("type_name", "")),
 			"castle_fixture_type": String(placement.get("type_name", "")),
 			"castle_fixture_role": String(placement.get("role", "")),
+			"kind_of": (placement.get("kind_of", []) as Array).duplicate(),
 			"castle_fixture_owner": String(placement.get("owner", "")),
 			"castle_fixture_armor": String(placement.get("armor", "")),
 			"source_index": int(placement.get("source_index", -1)),
@@ -30647,11 +30719,31 @@ func _seed_castle_fixtures() -> void:
 			"damage_remainders": {},
 			"income_per_payout": 0,
 			# The battlefield already draws the map's bound prop for this
-			# placement (retail_map_data routes map-fixture bindings to
-			# renderable presentation); the slice must not demand a
-			# playable-structure document that no pack ships.
+			# placement; the exact playable-structure document is optional for
+			# presentation but mandatory for wall-defense behavior.
 			"presentation": "bound-map-prop",
 		}
+		var type_name := String(placement.get("type_name", ""))
+		var document := _playable_structure_runtime_document(type_name)
+		if not document.is_empty():
+			row["source_object_id"] = type_name
+			row["object_id"] = type_name
+			var gameplay := ((document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)
+			var attack := _structure_attack_from_combat(gameplay.get("combat", {}) as Dictionary)
+			if not attack.is_empty():
+				row["attack"] = attack
+				row["wall_defense_status"] = "compiled"
+			_attach_structure_module_contracts(row)
+		elif String(placement.get("role", "")) == "wall-mounted":
+			row["wall_defense_status"] = "stale-pack-missing-structure-document"
+			print("[RetailSliceSim] CASTLE_WALL_DEFENSE_STALE type=%s source_index=%d reason=missing-playable-structure-document" % [type_name, int(placement.get("source_index", -1))])
+		structures[structure_id] = row
+		if String(row.get("wall_defense_status", "")) == "stale-pack-missing-structure-document":
+			_emit_event("castle.fixture_wall_defense_stale", 0, structure_id, {
+				"type_name": type_name,
+				"source_index": int(placement.get("source_index", -1)),
+				"reason": "missing-playable-structure-document",
+			})
 		_emit_event("castle.fixture_seeded", 0, structure_id, {
 			"type_name": String(placement.get("type_name", "")),
 			"role": String(placement.get("role", "")),
