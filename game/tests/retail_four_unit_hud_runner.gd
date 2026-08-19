@@ -206,6 +206,53 @@ func _run() -> void:
 				and not selected_hud.retail_control_bar_frame.has_retail_shell()
 				and not selected_hud.retail_apt_runtime.visible
 		)
+	# UI PARITY lane (2026-08-19, owner playtest 2026-08-18). These three pins
+	# need no pack art — they must run in BOTH the bound and the blocker branch:
+	#
+	# "Missing gaps in the radar": retail's [hud] captures show a COMPLETE
+	# parchment disc behind the frame at match start (reference/in game ui.jpg,
+	# REF-52) — the opaque-black shroud darkening over the map is gone; the
+	# shroud now gates blips only.
+	_check(
+		"radar_draws_no_shroud_darkening",
+		not selected_hud.minimap.has_method("_draw_shroud"),
+		"the radar must be a complete disc behind the frame (REF-52)"
+	)
+	# The world ring uses the AUTHORED radial button (InGameRadialMenuStage.apt
+	# bttnFrame, 48 stage units) on the measured retail ring (39 stage units,
+	# REF-25) — never oversized portraits floating around the fortress. Expected
+	# values come through the HUD's own viewport and the apt runtime script, the
+	# same inputs production uses.
+	var apt_runtime_script := load("res://src/retail_slice/retail_hud_apt_runtime.gd")
+	var world_stage_scale: Vector2 = HudScript.StageScript.scale_for(selected_hud._hud_viewport_size())
+	var world_expected_size: float = apt_runtime_script.RADIAL_BUTTON_STAGE_SIZE * minf(world_stage_scale.x, world_stage_scale.y)
+	_check(
+		"world_radial_button_size_is_authored",
+		is_equal_approx(selected_hud._world_radial_button_size(), world_expected_size),
+		"%.2f vs authored %.2f" % [selected_hud._world_radial_button_size(), world_expected_size]
+	)
+	# Every command button shows retail's hover tooltip (REF-25) — the
+	# world-ring buttons mirror their palantir twin's tooltip metadata and
+	# register the hover path.
+	var parity_entries: Array = []
+	for index in 4:
+		parity_entries.append({
+			"command_kind": "train", "id": "bfme2.object.parity-%d" % index,
+			"icon": null, "text": "P%d" % index, "enabled": true,
+			"label": "Parity %d" % index, "tooltip": "", "slot": index + 1,
+		})
+	selected_hud.sync_radial_commands(Vector2(640, 400), parity_entries)
+	var parity_tooltip_gaps: Array[String] = []
+	for world_button in selected_hud.world_radial_buttons():
+		if String((world_button as Button).get_meta("tooltip_group", "")) == "" \
+				or not (world_button as Button).has_meta("tooltip_registered"):
+			parity_tooltip_gaps.append(String((world_button as Button).name))
+	_check(
+		"world_ring_buttons_carry_retail_tooltips",
+		parity_tooltip_gaps.is_empty(),
+		str(parity_tooltip_gaps)
+	)
+	selected_hud.hide_radial_commands()
 	selected_hud.free()
 
 	_fixture_root = "user://retail-four-unit-hud-%d" % Time.get_ticks_usec()

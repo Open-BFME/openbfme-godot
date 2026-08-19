@@ -34,7 +34,10 @@ $focusedRunners = [ordered]@{
     # RE-PINNED 2026-08-18: measured 118 after the Q37/Q38/Q39 APT-derived HUD
     # layout + Q41 per-selection formation icon (the 134 was rotten; the runner
     # emitted 99 before those lanes). Named-check pins are the Q23 fix.
-    'four_unit_hud' = @('retail_four_unit_hud_runner.gd', '(?m)^RETAIL_FOUR_UNIT_HUD_RESULT passed=118 failed=0\s*$')
+    # RE-PINNED 2026-08-19 (UI PARITY lane): 118 -> 121 — radar draws no shroud
+    # darkening (complete disc, REF-52), world-ring button size is the authored
+    # 48 stage units, world-ring buttons carry retail tooltips (REF-25).
+    'four_unit_hud' = @('retail_four_unit_hud_runner.gd', '(?m)^RETAIL_FOUR_UNIT_HUD_RESULT passed=121 failed=0\s*$')
     'full_terrain_runtime' = @('retail_full_terrain_runner.gd', '(?m)^RETAIL_FULL_TERRAIN_RESULT passed=29 failed=0\s*$')
     # Owner playtest report B ("the mounted horse unit swap for heroes doesn't
     # work"): the alt-form voice key across a mount toggle, and the retail

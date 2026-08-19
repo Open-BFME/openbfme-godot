@@ -4955,24 +4955,15 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 		# Research rides the doc-driven rows only (structure_upgrade_commands
 		# carries compiled research with its own pack strings/icons); the
 		# hardcoded forge spec surface is retired — no stale provisional ids.
-		if String(structure.get("structure_kind", "")) == "fortress":
-			# The fortress's authored expansion pad commands (REF-33): one radial
-			# button per expansion with a free plot, click builds on the plot.
-			for kind_value in simulation.expansion_commands_for(selected_structure_id):
-				var kind := String(kind_value)
-				var command := hud.retail_expansion_command(kind)
-				if command.is_empty():
-					continue
-				var cost := int(simulation._expansion_build_rules.get(kind, {}).get("cost", 0))
-				entries.append({
-					"command_kind": "expansion",
-					"id": kind,
-					"icon": command.get("texture"),
-					"text": String(command.get("label", "")) if command.get("texture") == null else "",
-					"enabled": simulation.resources_for_team(local_team) >= cost,
-					"label": String(command.get("label", "")),
-					"tooltip": String(command.get("tooltip", "")),
-				})
+		#
+		# NO expansion buttons on the fortress itself: the authored
+		# MenFortressCommandSet (commandset.ini:4055-4082) is porter /
+		# SelectRevivables / boiling oil / ivory tower / SelectUpgrades /
+		# Command_Sell only. The side-building/expansion commands belong to the
+		# EXPANSION PLOT objects (MenFortressExpansionPad{Corner,Side}CommandSet,
+		# commandset.ini:4091-4101), which the player clicks — they surface
+		# through the pad branch at the top of this function (REF-33's expansion
+		# radial floats over the clicked PLOT, not the keep).
 	# Command_Sell is slot 6 of every compiled Men production set and the
 	# whole of SellableCommandSet (commandset.ini:5771 / farm.ini:34). SAGE
 	# exposes it for the building's whole life, including under construction.

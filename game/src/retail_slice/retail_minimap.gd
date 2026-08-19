@@ -419,12 +419,15 @@ func _draw() -> void:
 	# schematic would only double-print them.
 	if source_geometry_loaded and not uses_map_ink_art:
 		_draw_source_geometry(arena, disc)
-	# The shroud is drawn between the land and the blips, so the radar can never
-	# leak what the battlefield hides: a fogged region is dimmed here by exactly
-	# the retail alpha the terrain shader modulates by, and the blip loops below
-	# skip anything the local player cannot currently see.
-	if shroud_overlay != null and bool(shroud_overlay.enabled):
-		_draw_shroud(arena, disc)
+	# THE RADAR MAP IS FULLY DRAWN, SHROUD OR NOT. Retail's [hud] captures are
+	# unambiguous: at match start (reference/in game ui.jpg, REF-52) the whole
+	# parchment disc shows the full map ink with zero black fog, and the
+	# key/evenstar/flag row sits on the metal frame arc ABOVE an unbroken disc.
+	# Darkening unexplored cells to opaque black here was the owner's "missing
+	# gaps in the radar" (owner playtest 2026-08-18). The shroud still gates
+	# what the radar REVEALS: unit blips in fog are skipped below, and
+	# structures need explored ground, exactly like retail. Only the terrain
+	# darkening is gone — retail never blacks out the parchment.
 	if simulation != null:
 		for id in simulation.entity_ids():
 			var entity: Dictionary = simulation.entity(id)
@@ -455,34 +458,6 @@ func _draw() -> void:
 			draw_rect(Rect2(point - Vector2(3.0, 3.0), Vector2(6.0, 6.0)), Color(0.16, 0.11, 0.05, 0.85), true)
 			draw_rect(Rect2(point - Vector2(2.0, 2.0), Vector2(4.0, 4.0)), color, true)
 	_draw_camera_footprint(arena, disc)
-
-
-func _draw_shroud(arena: Rect2, disc: PackedVector2Array) -> void:
-	## ONE textured polygon over the bezel disc, not one quad per shroud cell.
-	## The grid is 183x183 cells on a slice map; a per-cell loop with a polygon
-	## clip each would be 33,000 clipped draws EVERY redraw, and the radar
-	## redraws every frame. The overlay hands over a premultiplied darkening
-	## image instead (black, with alpha = 255 - retail visibility) so the whole
-	## layer is a single `draw_colored_polygon` with the disc's own UVs.
-	##
-	## The UVs come back through `_canvas_to_world`, the exact inverse of the
-	## mapping the blips use, so the shroud cannot drift away from the units it
-	## is supposed to be hiding - including on a `source-grid` radar where the
-	## forward mapping negates Y.
-	if shroud_overlay == null or disc.size() < 3:
-		return
-	var texture: Texture2D = shroud_overlay.minimap_texture()
-	if texture == null:
-		return
-	var grid: Rect2 = shroud_overlay.bounds()
-	if grid.size.x <= 0.0 or grid.size.y <= 0.0:
-		return
-	var uvs := PackedVector2Array()
-	uvs.resize(disc.size())
-	for index in range(disc.size()):
-		var world := _canvas_to_world(disc[index], arena)
-		uvs[index] = (world - grid.position) / grid.size
-	draw_colored_polygon(disc, Color(1.0, 1.0, 1.0, 1.0), uvs, texture)
 
 
 func _draw_source_geometry(arena: Rect2, disc: PackedVector2Array) -> void:

@@ -4562,6 +4562,21 @@ func _sync_world_radial(anchor: Vector2, entries: Array) -> void:
 			for connection in button.pressed.get_connections():
 				button.pressed.disconnect(connection["callable"])
 			button.pressed.connect(_press_radial_twin.bind(twin))
+		# REF-25 tooltip parity on the WORLD ring too: retail shows the same
+		# hover tooltip box (name / Cost / Command Points / Shortcut /
+		# description) for every command button, whether it sits in the
+		# palantir or on the building. Mirror the twin's tooltip metadata and
+		# register the hover; the content resolver reads the same metas.
+		for meta_name in [
+			"tooltip_group", "tooltip_unit_id", "tooltip_fallback_label",
+			"tooltip_fallback_desc", "tooltip_cost", "tooltip_refund",
+			"tooltip_command_points", "retail_label",
+		]:
+			if twin.has_meta(meta_name):
+				button.set_meta(meta_name, twin.get_meta(meta_name))
+			elif button.has_meta(meta_name):
+				button.remove_meta(meta_name)
+		_register_button_tooltip(button)
 		button.position = world_radial_button_position(index, count, anchor)
 		button.visible = show_ring
 	_world_radial_layer.visible = show_ring

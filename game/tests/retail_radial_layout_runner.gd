@@ -268,9 +268,62 @@ func _run() -> void:
 	_check("radial_six_entries_use_the_authored_retail_sockets", authored_match)
 
 	_check_world_radial_and_palantir_are_both_live(hud)
+	_check_world_radial_geometry_against_the_retail_references(hud)
+	_check_radar_is_a_complete_disc(hud)
 
 	hud.free()
 	_finish()
+
+
+## UI PARITY lane (2026-08-19): the world ring's BUTTON is authored by
+## `InGameRadialMenuStage.apt` (bttnFrame, 48 stage units) and its RADIUS is
+## the owner's retail RotWK measurement (~39 stage units, REF-25's four
+## barracks icons hugging the building) — never an oversized ring of portraits
+## floating around the fortress (owner playtest 2026-08-18).
+func _check_world_radial_geometry_against_the_retail_references(hud) -> void:
+	var stage_script := load("res://src/retail_slice/retail_hud_stage.gd")
+	var apt_script := load("res://src/retail_slice/retail_hud_apt_runtime.gd")
+	if not _check("world_radial_geometry_scripts_load", stage_script != null and apt_script != null):
+		return
+	var stage_scale: Vector2 = stage_script.scale_for(Vector2(root.size))
+	var min_scale := minf(stage_scale.x, stage_scale.y)
+	var expected_size: float = apt_script.RADIAL_BUTTON_STAGE_SIZE * min_scale
+	_check(
+		"world_radial_button_size_is_the_authored_48_stage_units",
+		is_equal_approx(hud._world_radial_button_size(), expected_size),
+		"%.2f vs authored %.2f (48 stage units)" % [hud._world_radial_button_size(), expected_size]
+	)
+	var expected_radius: float = hud.WORLD_RADIAL_STAGE_RADIUS * min_scale
+	_check(
+		"world_radial_radius_is_the_retail_capture_measurement",
+		is_equal_approx(hud._world_radial_radius(4), expected_radius),
+		"%.2f vs measured %.2f (39 stage units, REF-25)" % [hud._world_radial_radius(4), expected_radius]
+	)
+
+
+## UI PARITY lane (2026-08-19): the radar is a COMPLETE disc behind the frame
+## in every retail [hud] capture (reference/in game ui.jpg at match start shows
+## the full parchment + map ink with zero black fog). Darkening unexplored
+## cells to opaque black was the owner's "missing gaps in the radar"; the
+## shroud now only gates which BLIPS the radar reveals, never the terrain.
+func _check_radar_is_a_complete_disc(hud) -> void:
+	_check(
+		"radar_minimap_exists",
+		hud.minimap != null,
+		""
+	)
+	if hud.minimap == null:
+		return
+	_check(
+		"radar_draws_no_shroud_darkening_over_the_map",
+		not hud.minimap.has_method("_draw_shroud"),
+		"the opaque-black shroud layer over the parchment was removed; blip gating stays"
+	)
+	_check(
+		"radar_disc_geometry_closes_the_full_circle",
+		hud.minimap._radar_disc().size() == hud.minimap.RADAR_DISC_SEGMENTS,
+		str(hud.minimap._radar_disc().size())
+	)
 
 
 ## Q39: a selected structure gets its command set as a WORLD-SPACE ring around
@@ -325,6 +378,23 @@ func _check_world_radial_and_palantir_are_both_live(hud) -> void:
 		"world_ring_dispatches_the_same_command_as_the_palantir",
 		fired.size() == 1 and fired[0] == String((entries[0] as Dictionary)["id"]),
 		str(fired)
+	)
+	# UI PARITY lane (2026-08-19): retail shows the hover tooltip box (name /
+	# Cost / Command Points / Shortcut / description, REF-25) for EVERY command
+	# button — the world-ring buttons too, not just the palantir sockets. The
+	# world buttons mirror their twin's tooltip metadata and register the hover.
+	var tooltip_gaps: Array[String] = []
+	for index in world.size():
+		var world_button := world[index] as Button
+		var twin := hud._radial_buttons[index] as Button
+		if String(world_button.get_meta("tooltip_group", "")) != String(twin.get_meta("tooltip_group", "")) \
+				or String(world_button.get_meta("tooltip_group", "")) == "" \
+				or not world_button.has_meta("tooltip_registered"):
+			tooltip_gaps.append(String(world_button.name))
+	_check(
+		"world_ring_buttons_mirror_the_retail_tooltip_metadata",
+		tooltip_gaps.is_empty(),
+		str(tooltip_gaps)
 	)
 	hud.hide_radial_commands()
 	_check(
