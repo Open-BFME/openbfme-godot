@@ -1991,7 +1991,6 @@ func _compute_map_availability(map_id: String, probe, map_data_script,
 			pack_root, resolved, _skirmish_worker_is_cancelled
 		))
 		var validation_error := String(map_data.error)
-		var castle_blockers: Array[String] = map_data.castle_gameplay_blockers.duplicate()
 		# RefCounted validators created in a pooled task must drop their final
 		# reference on that same task; waiting for VM local cleanup leaked them.
 		map_data = null
@@ -1999,8 +1998,9 @@ func _compute_map_availability(map_id: String, probe, map_data_script,
 			return "validation-cancelled"
 		if not loaded:
 			return "cooked map data failed validation: %s" % validation_error
-		if not castle_blockers.is_empty():
-			return "castle gameplay unsupported: " + ", ".join(castle_blockers)
+		# Owner 2026-08-19: castle maps are playable with named partial siege
+		# features. map_data.castle_gameplay_blockers no longer refuses the map;
+		# the gap list is surfaced by _castle_partial_note() from the catalog.
 		return ""
 	if map_id == SliceIds.MAP_ID:
 		if host_root == "":
@@ -2097,7 +2097,24 @@ func _refresh_map_row_states() -> void:
 		var available := note == ""
 		button.disabled = not available
 		button.text = _retail_map_display_name(map_id) + ("" if available else _unavailable_map_suffix(note))
-		button.tooltip_text = "" if available else "Unavailable: %s" % note
+		button.tooltip_text = _castle_partial_note(map_id) if available else "Unavailable: %s" % note
+
+
+func _castle_partial_note(map_id: String) -> String:
+	## Castle maps play (owner 2026-08-19) but their cooked castleSiege contract
+	## still names the capabilities not yet implemented; surface them as an
+	## informational tooltip. "" for every non-castle map.
+	var document := (_content_db.get("bundle_maps") as Dictionary).get(map_id, {}) as Dictionary
+	var contract := document.get("castleSiege", {}) as Dictionary
+	if contract == null or contract.is_empty():
+		return ""
+	var gaps: Array = contract.get("blockers", contract.get("required", [])) as Array
+	if gaps.is_empty():
+		return ""
+	var names: Array[String] = []
+	for gap in gaps:
+		names.append(String(gap))
+	return "Playable — siege features still partial: " + ", ".join(names)
 
 
 func _unavailable_map_suffix(note: String) -> String:

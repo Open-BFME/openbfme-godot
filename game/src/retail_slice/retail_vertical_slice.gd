@@ -1675,6 +1675,11 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 		rules["enable_scenario_map_placements"] = true
 	if OS.get_environment("OPENBFME_CAPTURABLE_NEUTRALS") != "0":
 		rules["enable_capturable_neutrals"] = true
+	# Lane L2b castle fixtures (walls, gates, towers as sim structures) seed on
+	# every map whose cooked document carries them. Non-castle maps have no
+	# placements, so their rules stay byte-identical (state pin unchanged).
+	if OS.get_environment("OPENBFME_CASTLE_FIXTURES") != "0" and not source_map_data.castle_fixture_placements.is_empty():
+		rules["enable_castle_fixtures"] = true
 	# THE FOG TOGGLE. Retail skirmish and MP always run with shroud on, so this
 	# is ON by default here - but ONLY here, in the scene that launches a real
 	# match. Every runner that builds a `RetailSliceSim` directly (the 3000-tick

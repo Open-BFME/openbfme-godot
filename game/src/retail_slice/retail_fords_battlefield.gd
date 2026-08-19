@@ -45,6 +45,12 @@ const MAIN_CAMERA_EXCLUDED_PROP_TYPES := {
 
 var source_driven := false
 var error := ""
+## Castle capability gaps named by the cooked map's castleSiege contract. Empty
+## on non-castle maps; informational on castle maps (they play with the gaps).
+var castle_gameplay_gaps: Array[String] = []
+## Bound retail props whose GLB loaded with zero meshes ("type:source_index"):
+## retail bone-only emitter props (WtrflSteam) that have nothing to draw.
+var bone_only_bound_props: Array[String] = []
 var terrain_exact_grid_ready := false
 var terrain_vertex_count := 0
 var terrain_triangle_count := 0
@@ -132,10 +138,15 @@ func configure(map_data: RetailMapData) -> bool:
 	_clear_generated()
 	if map_data == null or not map_data.ready:
 		return _fail_configuration("retail map data is unavailable")
-	if not map_data.castle_gameplay_blockers.is_empty():
-		return _fail_configuration(
-			"castle gameplay unsupported: " + ", ".join(map_data.castle_gameplay_blockers)
-		)
+	# Castle maps ADMIT (owner 2026-08-19: "cant play the castle based maps").
+	# The named capability gaps stay visible - surfaced as `castle_gameplay_gaps`
+	# for the lobby tooltip and the run log - but no longer refuse the match:
+	# the L2b fixtures seed walls/gates/towers as real structures and every
+	# remaining capability (operable gates, garrisons, wall defenses, siege AI)
+	# lands as an incremental lane on a map that can actually be played.
+	castle_gameplay_gaps = map_data.castle_gameplay_blockers.duplicate()
+	if not castle_gameplay_gaps.is_empty():
+		print("RETAIL_BATTLEFIELD castle_gameplay_gaps=%s" % ", ".join(castle_gameplay_gaps))
 	if not _build_bound_retail_props(map_data):
 		return false
 	if profile_init:
@@ -1125,6 +1136,7 @@ func _build_bound_retail_props(map_data: RetailMapData) -> bool:
 	container.set_meta("shroud_gates_child", true)
 	var seen_source_indices: Dictionary = {}
 	var staged_mesh_count := 0
+	bone_only_bound_props.clear()
 	# Warm the shared mesh cache with one threaded parse per unique bound GLB;
 	# the placement loop below then loads via ordinary cache hits. Only paths
 	# that already pass this function's containment/existence checks are queued.
@@ -1164,12 +1176,20 @@ func _build_bound_retail_props(map_data: RetailMapData) -> bool:
 			container.free()
 			return _fail_configuration("bound retail placement is unsafe or incomplete")
 		var visual := AssetFactoryScript._try_load_model(glb_path)
-		var mesh_count := _mesh_instance_count(visual)
-		if visual == null or mesh_count <= 0:
-			if visual != null:
-				visual.free()
+		if visual == null:
 			container.free()
-			return _fail_configuration("bound retail GLB could not instantiate a mesh")
+			return _fail_configuration("bound retail GLB could not be loaded: %s (%s)" % [source_type, glb_path.get_file()])
+		var mesh_count := _mesh_instance_count(visual)
+		if mesh_count <= 0:
+			# A GLB that loads but carries no mesh is a retail bone-only prop
+			# (natureprop.ini `WtrflSteam`: Model = P_WtrflSteam with two
+			# ParticleSysBone emitters and no geometry). Nothing to draw; the
+			# emitter lane owns it. Skip by name instead of failing the map -
+			# Erebor carries one and used to be unbuildable because of it.
+			visual.free()
+			seen_source_indices[source_index] = true
+			bone_only_bound_props.append("%s:%d" % [source_type, source_index])
+			continue
 		var placement_root := Node3D.new()
 		placement_root.name = "RetailProp_%04d_%s" % [source_index, source_type]
 		# The placement scale is authored in SAGE model units; the GLB retains
@@ -1196,12 +1216,14 @@ func _build_bound_retail_props(map_data: RetailMapData) -> bool:
 	# Maps whose bindings resolve nothing (the five-maps pack today) stage an
 	# empty container; the mesh-count gate only applies when the map data
 	# declares bound placements.
-	if container.get_child_count() != map_data.bound_prop_placement_count or (map_data.bound_prop_placement_count > 0 and staged_mesh_count <= 0):
+	if container.get_child_count() + bone_only_bound_props.size() != map_data.bound_prop_placement_count or (map_data.bound_prop_placement_count > 0 and staged_mesh_count <= 0):
 		container.free()
 		return _fail_configuration("bound retail GLB placement staging was incomplete")
 	add_child(container)
 	retail_prop_container = container
-	bound_retail_prop_count = container.get_child_count()
+	# Bone-only props are bound placements that stage no node; count them so
+	# the source-driven tally still equals the map's declared bound placements.
+	bound_retail_prop_count = container.get_child_count() + bone_only_bound_props.size()
 	bound_retail_mesh_instance_count = staged_mesh_count
 	return true
 

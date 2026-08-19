@@ -144,9 +144,11 @@ func _run() -> void:
 		String(malformed_data.error))
 	var battlefield = battlefield_script.new()
 	root.add_child(battlefield)
-	_check("castle_gameplay_fails_closed_by_name", not bool(battlefield.configure(contracted_data))
-		and String(battlefield.error) == "castle gameplay unsupported: " + ", ".join(BLOCKERS),
-		String(battlefield.error))
+	# Owner 2026-08-19: castle maps admit; the gaps stay NAMED on the battlefield.
+	var configured := bool(battlefield.configure(contracted_data))
+	_check("castle_gameplay_admits_with_named_gaps", configured
+		and battlefield.castle_gameplay_gaps == BLOCKERS,
+		"configured=%s error=%s gaps=%s" % [str(configured), String(battlefield.error), str(battlefield.castle_gameplay_gaps)])
 	root.remove_child(battlefield)
 	battlefield.free()
 	# Drop the last script/local references before the rendering servers drain.
