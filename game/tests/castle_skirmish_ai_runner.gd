@@ -1,13 +1,22 @@
 extends SceneTree
 ## L7 product-path proof: boot two shipped castle maps through the real retail
-## slice, then drive the deterministic sim for a bounded 1,000 ticks. Erebor is
-## the zero-SkirmishSpawnPoint case; Helm's Deep is the authored-spawn control.
+## slice, then drive the deterministic sim for a bounded 4,000 ticks. Erebor
+## and Carn Dum are the zero-SkirmishSpawnPoint cases; Helm's Deep is the
+## authored-spawn control. The bound covers retail construction/production
+## timers rather than weakening them for the test.
 
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
+const SimScript := preload("res://src/retail_slice/retail_slice_sim.gd")
 const BOOT_DEADLINE_MS := 300000
-const TICK_LIMIT := 1000
+const TICK_LIMIT := 4000
 const AI_TEAM := 1
 const MAP_CASES := [
+	{
+		"id": "rotwk.map.wor-ang-carn-dum",
+		"name": "Carn Dum",
+		"expected_skirmish_spawn_points": 0,
+		"retail_base_layout": "map-specific",
+	},
 	{
 		"id": "rotwk.map.wor-erebor",
 		"name": "Erebor",
@@ -32,6 +41,7 @@ func _init() -> void:
 	_runner_watchdog.start(self, "CASTLE_SKIRMISH_AI_RUNNER", 900000)
 	await process_frame
 	OS.set_environment("OPENBFME_SLICE_FACTION", "men")
+	_test_rotated_ai_base_offset_projection()
 	var case_filter := OS.get_environment("OPENBFME_CASTLE_AI_MAP").strip_edges()
 	var selected_cases := []
 	for case_value in MAP_CASES:
@@ -44,9 +54,9 @@ func _init() -> void:
 		selected_cases.size() > 0 and _checks >= selected_cases.size() * 8,
 		"checks=%d maps=%d" % [_checks, selected_cases.size()]
 	)
-	print("CASTLE_SKIRMISH_AI NOTE runtime-tested base-building maps: Erebor, Helm's Deep")
-	print("CASTLE_SKIRMISH_AI NOTE retail map-specific AIBase authoring (not runtime-tested here): Minas Tirith, Dol Guldur, Grey Havens, Carn Dum, Fornost")
-	print("CASTLE_SKIRMISH_AI NOTE retail generic <ANY> fallback (not runtime-tested here): Isengard, Black Gate, Minas Morgul")
+	print("CASTLE_SKIRMISH_AI CLASSIFICATION Carn Dum=base-building(runtime-tested), Erebor=base-building(runtime-tested), Helm's Deep=base-building(runtime-tested)")
+	print("CASTLE_SKIRMISH_AI CLASSIFICATION Minas Tirith=base-building(importer-only, runtime-untested), Dol Guldur=base-building(importer-only, runtime-untested), Grey Havens=base-building(importer-only, runtime-untested), Fornost=base-building(importer-only, runtime-untested)")
+	print("CASTLE_SKIRMISH_AI CLASSIFICATION Isengard=base-building(generic-fallback, runtime-untested), Black Gate=base-building(generic-fallback, runtime-untested), Minas Morgul=base-building(generic-fallback, runtime-untested); defend-only=none proven")
 	_finish()
 
 
@@ -78,6 +88,14 @@ func _run_map(case_row: Dictionary) -> void:
 	var simulation = slice.simulation
 	_check("%s_ai_team_configured" % map_name, simulation.team_is_ai(AI_TEAM), "descriptor=%s" % str(simulation.team_descriptor(AI_TEAM)))
 	_check("%s_authored_player_starts" % map_name, slice.source_map_data.local_player_starts.size() >= 2, "starts=%s" % str(slice.source_map_data.local_player_starts.keys()))
+	if map_id == "rotwk.map.wor-erebor":
+		var build_plot := Vector2(slice.source_map_data.local_named_waypoints.get("Player_1_BuildPlot_1", Vector2.ZERO))
+		var player_start_3d := Vector3(slice.source_map_data.local_player_starts.get("Player_1_Start", Vector3.ZERO))
+		var player_start := Vector2(player_start_3d.x, player_start_3d.z)
+		_check("Erebor_build_plot_1_local_position", build_plot.distance_to(Vector2(36.27, -6.31)) < 0.02, "actual=%s" % str(build_plot))
+		_check("Erebor_player_1_start_local_position", player_start.distance_to(Vector2(38.0, 0.0)) < 0.001, "actual=%s" % str(player_start))
+		_check("Erebor_named_waypoint_not_origin", build_plot.length() > 1.0, "actual=%s" % str(build_plot))
+	_print_gate_diagnostics(map_name, simulation)
 
 	var spawn_points := 0
 	for placement_value in slice.source_map_data.scenario_object_placements:
@@ -91,10 +109,13 @@ func _run_map(case_row: Dictionary) -> void:
 
 	var initial_tick := int(simulation.tick_index)
 	var initial_orders := {}
+	var initial_builder_positions := {}
 	for entity_id in simulation.entity_ids():
 		var entity: Dictionary = simulation.entity(entity_id)
 		if int(entity.get("team", -1)) == AI_TEAM:
 			initial_orders[int(entity_id)] = int(entity.get("order_sequence", 0))
+			if bool(entity.get("is_builder", false)):
+				initial_builder_positions[int(entity_id)] = Vector2(entity.get("position", Vector2.ZERO))
 	var attack_order_entities := {}
 	for _tick in range(TICK_LIMIT):
 		if int(simulation.winner) != -1:
@@ -112,13 +133,39 @@ func _run_map(case_row: Dictionary) -> void:
 				or not (entity.get("route", []) as Array).is_empty()
 			):
 				attack_order_entities[int(entity_id)] = order_sequence
+		if not attack_order_entities.is_empty():
+			var completed_dynamic_structure := false
+			for structure_id in simulation.structure_ids(AI_TEAM):
+				if (
+					int(structure_id) >= 3000
+					and int(structure_id) < simulation.CASTLE_FIXTURE_FIRST_ID
+					and float(simulation.structure(structure_id).get("construction_progress", 0.0)) >= 1.0
+				):
+					completed_dynamic_structure = true
+					break
+			if completed_dynamic_structure:
+				break
 
 	var structures_built := 0
 	var built_targets := {}
+	var started_sites := []
 	for event_value in simulation.events:
 		var event: Dictionary = event_value
 		if String(event.get("kind", "")) == "construction.completed" and int(event.get("team", -1)) == AI_TEAM:
 			built_targets[int(event.get("target_id", 0))] = true
+		if String(event.get("kind", "")) == "construction.started" and int(event.get("team", -1)) == AI_TEAM:
+			var site_id := int(event.get("target_id", 0))
+			var builder_id := int(event.get("entity_id", 0))
+			if simulation.structures.has(site_id):
+				var site: Dictionary = simulation.structure(site_id)
+				var site_position := Vector2(site.get("position", Vector2.ZERO))
+				started_sites.append({
+					"id": site_id,
+					"position": site_position,
+					"builder_id": builder_id,
+					"travel_distance": Vector2(initial_builder_positions.get(builder_id, site_position)).distance_to(site_position),
+					"builder_free": bool(site.get("builder_free", false)),
+				})
 	structures_built = built_targets.size()
 	var attack_orders_issued := attack_order_entities.size()
 	var dynamic_ai_structures := 0
@@ -137,13 +184,20 @@ func _run_map(case_row: Dictionary) -> void:
 		attack_orders_issued >= 1,
 		_diagnostic(simulation, structures_built, attack_orders_issued, dynamic_ai_structures)
 	)
+	var porter_travelled := false
+	for started_value in started_sites:
+		var started := started_value as Dictionary
+		if built_targets.has(int(started["id"])) and float(started["travel_distance"]) > 1.0 and not bool(started["builder_free"]):
+			porter_travelled = true
+			break
+	_check("%s_porter_travelled_to_real_site" % map_name, porter_travelled, "started_sites=%s" % str(started_sites))
 	_check(
 		"%s_zero_spawn_fallback" % map_name,
 		spawn_points > 0 or (structures_built >= 1 and attack_orders_issued >= 1),
 		"zero SkirmishSpawnPoint map failed Player_N_Start-derived home fallback; %s" % _diagnostic(simulation, structures_built, attack_orders_issued, dynamic_ai_structures)
 	)
 	print(
-		"CASTLE_SKIRMISH_AI MAP map=%s retail_base_layout=%s skirmish_spawn_points=%d ticks=%d structures_built=%d dynamic_ai_structures=%d attack_orders_issued=%d status=%s" % [
+		"CASTLE_SKIRMISH_AI MAP map=%s retail_base_layout=%s skirmish_spawn_points=%d ticks=%d structures_built=%d dynamic_ai_structures=%d attack_orders_issued=%d sites=%s porter_travelled=%s status=%s" % [
 			map_name,
 			String(case_row["retail_base_layout"]),
 			spawn_points,
@@ -151,11 +205,40 @@ func _run_map(case_row: Dictionary) -> void:
 			structures_built,
 			dynamic_ai_structures,
 			attack_orders_issued,
+			str(started_sites),
+			str(porter_travelled),
 			"base-building" if structures_built >= 1 and attack_orders_issued >= 1 else "defend-only-or-stalled",
 		]
 	)
 	_remove_slice(slice)
 	await process_frame
+
+
+func _test_rotated_ai_base_offset_projection() -> void:
+	var sim = SimScript.new()
+	var diagonal := Vector2(1.0, 1.0).normalized()
+	sim._source_map_axis_x = diagonal
+	sim._source_map_axis_z = Vector2(-diagonal.y, diagonal.x)
+	sim._rules = {"source_map_transform_scale": 0.5}
+	var anchor := Vector2(5.0, 6.0)
+	var actual: Vector2 = anchor + sim._castle_ai_project_source_offset(Vector2(10.0, 0.0))
+	var expected := Vector2(8.535534, 2.464466)
+	_check("rotated_ai_base_offset_uses_map_frame", actual.distance_to(expected) < 0.0001, "expected=%s actual=%s" % [str(expected), str(actual)])
+
+
+func _print_gate_diagnostics(map_name: String, simulation) -> void:
+	for structure_id in simulation.structure_ids():
+		var row: Dictionary = simulation.structure(structure_id)
+		if String(row.get("castle_fixture_role", "")) != "gate":
+			continue
+		print("CASTLE_SKIRMISH_AI GATE map=%s id=%d team=%d ai_gate=%s open=%s portal=%s" % [
+			map_name,
+			int(structure_id),
+			int(row.get("team", -1)),
+			str(not (row.get("ai_gate_update", {}) as Dictionary).is_empty()),
+			str(bool((row.get("gate_behavior", {}) as Dictionary).get("pathing_open", false))),
+			str(not (row.get("fake_pathfind_portal", {}) as Dictionary).is_empty()),
+		])
 
 
 func _diagnostic(simulation, structures_built: int, attack_orders_issued: int, dynamic_ai_structures: int) -> String:

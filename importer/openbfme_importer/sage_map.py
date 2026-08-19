@@ -3258,6 +3258,7 @@ def convert_sage_map(
     expected: dict[str, Any] | None = None,
     object_bindings: Any = None,
     fixtures: dict[str, Any] | None = None,
+    ai_bases: dict[str, Any] | None = None,
     *,
     profile: str = "multiplayer",
 ) -> list[Path]:
@@ -3301,6 +3302,18 @@ def convert_sage_map(
             validate_map_fixtures(fixtures)
         except CastleFixturesError as exc:
             raise SageMapError(f"sage-map fixtures document is invalid: {exc}") from exc
+    if ai_bases is not None:
+        from .castle_ai_bases import AI_BASES_SCHEMA
+
+        if (
+            not isinstance(ai_bases, dict)
+            or ai_bases.get("schema") != AI_BASES_SCHEMA
+            or ai_bases.get("schemaVersion") != 0
+            or not isinstance(ai_bases.get("layouts"), list)
+            or ai_bases.get("layoutCount") != len(ai_bases["layouts"])
+            or ai_bases.get("fallback") not in {"authored-map-specific", "generic-any"}
+        ):
+            raise SageMapError("sage-map aiBases document is invalid")
     if resolved_profile.map_kind != "multiplayer":
         missing_names = [
             field for field in ("id", "displayName") if field not in metadata
@@ -3570,6 +3583,11 @@ def convert_sage_map(
         fixtures_path = output / "fixtures.json"
         write_json_atomic(fixtures_path, fixtures)
 
+    ai_bases_path = None
+    if ai_bases is not None:
+        ai_bases_path = output / "ai_bases.json"
+        write_json_atomic(ai_bases_path, ai_bases)
+
     player_start_bindings = [
         {
             "playerIndex": int(item["playerIndex"]),
@@ -3748,6 +3766,13 @@ def convert_sage_map(
         map_data["conversionStatus"]["fixtures"] = (
             "map-object-fixtures-imported-sim-routing-pending"
         )
+    if ai_bases is not None:
+        map_data["aiBases"] = "ai_bases.json"
+        map_data["conversionStatus"]["aiBases"] = (
+            "map-specific-retail-layouts-compiled"
+            if ai_bases.get("layouts")
+            else "generic-any-fallback"
+        )
     map_path = output / "map.json"
     write_json_atomic(map_path, map_data)
 
@@ -3762,6 +3787,7 @@ def convert_sage_map(
         roads_path,
         object_bindings_path,
         *([fixtures_path] if fixtures_path is not None else []),
+        *([ai_bases_path] if ai_bases_path is not None else []),
         waypoints_path,
         setup_path,
         chunks_path,

@@ -5607,7 +5607,7 @@ class ImportPipeline:
         from .sage_map import convert_sage_map
 
         unsupported = sorted(
-            set(options) - {"metadata", "expected", "objectBindings", "fixtures", "profile"}
+            set(options) - {"metadata", "expected", "objectBindings", "fixtures", "aiBases", "profile"}
         )
         if unsupported:
             raise ValueError(
@@ -5625,6 +5625,9 @@ class ImportPipeline:
         fixtures = options.get("fixtures")
         if "fixtures" in options and not isinstance(fixtures, dict):
             raise ValueError("sage-map options.fixtures must be an object")
+        ai_bases = options.get("aiBases")
+        if "aiBases" in options and not isinstance(ai_bases, dict):
+            raise ValueError("sage-map options.aiBases must be an object")
         # Only lobby maps carry lobby start rules. Campaign, cinematic, tutorial
         # and shell maps ship with zero Player_N_Start waypoints by design, so
         # the resource declares the SAGE map profile its category needs.
@@ -5638,6 +5641,7 @@ class ImportPipeline:
             expected,
             object_bindings,
             fixtures,
+            ai_bases,
             profile=map_kind,
         )
         map_path = output_directory / "map.json"
