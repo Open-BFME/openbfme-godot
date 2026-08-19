@@ -28254,6 +28254,50 @@ func _castle_footprint_pass_through(position: Vector2, attack_target_id: int, at
 const STRUCTURE_EVICTION_STEP := BATTALION_SEPARATION_PUSH
 
 
+func _castle_gate_blocking_discs(structure_row: Dictionary, mover: Dictionary) -> Array[Dictionary]:
+	var policy: Dictionary = structure_row.get("gate_behavior", {})
+	var geometries: Dictionary = structure_row.get("gate_geometries", {})
+	if policy.is_empty() or geometries.is_empty():
+		return []
+	var use_open_geometry := bool(policy.get("pathing_open", false))
+	if use_open_geometry:
+		var portal: Dictionary = structure_row.get("fake_pathfind_portal", {})
+		if int(mover.get("team", -1)) != int(structure_row.get("team", -2)) and not bool(portal.get("allow_enemies", false)):
+			use_open_geometry = false
+		elif not bool(mover.get("human_controlled", true)) and not bool(mover.get("skirmish_ai", false)) and not bool(portal.get("allow_non_skirmish_ai", false)):
+			use_open_geometry = false
+	var geometry_names: Array[String] = ["OpenLeft", "OpenRight"] if use_open_geometry else ["Closed"]
+	var scale := float(_rules.get("source_map_transform_scale", _rules.get("source_unit_scale", 0.1)))
+	var facing := float(structure_row.get("facing_radians", 0.0))
+	var origin := Vector2(structure_row.get("position", Vector2.ZERO))
+	var discs: Array[Dictionary] = []
+	for geometry_name in geometry_names:
+		var geometry: Dictionary = geometries.get(geometry_name, {})
+		if geometry.is_empty() or String(geometry.get("shape", "")).to_upper() != "BOX":
+			continue
+		var major := float(geometry.get("majorRadius", 0.0)) * scale
+		var minor := float(geometry.get("minorRadius", 0.0)) * scale
+		if major <= 0.0 or minor <= 0.0:
+			continue
+		var long_radius := maxf(major, minor)
+		var disc_radius := minf(major, minor)
+		var local_axis := Vector2.RIGHT if major >= minor else Vector2.DOWN
+		var axis := local_axis.rotated(facing)
+		var offset_value: Array = geometry.get("offset", [])
+		var local_offset := Vector2.ZERO
+		if offset_value.size() == 3:
+			local_offset = Vector2(float(offset_value[0]), float(offset_value[1])) * scale
+		var center := origin + local_offset.rotated(facing)
+		# A long authored BOX is represented by a deterministic chain of discs,
+		# never by the old single tiny structure disc. Adjacent discs overlap.
+		var disc_count := maxi(2, int(ceili(long_radius / maxf(disc_radius, 0.001))))
+		var span := maxf(0.0, long_radius - disc_radius)
+		for disc_index in range(disc_count):
+			var along := 0.0 if disc_count == 1 else lerpf(-span, span, float(disc_index) / float(disc_count - 1))
+			discs.append({"center": center + axis * along, "radius": disc_radius})
+	return discs
+
+
 func _deflect_around_structures(
 	position: Vector2,
 	row: Dictionary,
@@ -28338,6 +28382,29 @@ func _deflect_around_structures(
 		# Construction sites do not block movement: builders must reach their
 		# own site, and scaffolding is passable until the structure completes.
 		if float(structure_row.get("construction_progress", 1.0)) < 1.0:
+			continue
+		var gate_discs := _castle_gate_blocking_discs(structure_row, row)
+		if not gate_discs.is_empty():
+			for disc in gate_discs:
+				var gate_center := Vector2(disc.get("center", Vector2.ZERO))
+				var gate_radius := float(disc.get("radius", 0.0))
+				var gate_offset := position - gate_center
+				var gate_distance := gate_offset.length()
+				if gate_distance >= gate_radius:
+					continue
+				var gate_direction := gate_offset / gate_distance if gate_distance > 0.001 else _eviction_fallback_direction(row)
+				var gate_applied := minf(gate_radius - gate_distance, push_budget)
+				push_budget -= gate_applied
+				var gate_seated_radius := gate_distance + gate_applied
+				position = gate_center + gate_direction * gate_seated_radius
+				if travel_step.length_squared() > 0.000001:
+					var gate_slide_dest := Vector2(row.get("destination", position))
+					var gate_route: Array = row.get("route", [])
+					if not gate_route.is_empty():
+						gate_slide_dest = Vector2(gate_route[0])
+					position = _tangential_slide_point(gate_center, gate_seated_radius, gate_direction, travel_step, gate_slide_dest)
+				if push_budget <= 0.0:
+					break
 			continue
 		var radius := float(STRUCTURE_BLOCK_RADIUS.get(String(structure_row.get("structure_kind", "")), 2.8))
 		if passable.has(structure_id):
