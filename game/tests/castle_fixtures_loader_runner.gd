@@ -9,7 +9,7 @@ extends SceneTree
 ## geometries / Player_1 owner; EBGarrisonableTower ContainMax 3).
 
 const Watchdog := preload("res://tests/runner_watchdog.gd")
-const EXPECTED_CHECKS := 28
+const EXPECTED_CHECKS := 33
 
 const V2_CONTRACT := {
 	"version": 2,
@@ -79,6 +79,26 @@ const FLAG_FIXTURE := {
 	"maxHealth": 3000.0,
 	# The recorded SAGE passthrough: no authored ArmorSet, never an invented one.
 	"armor": null,
+}
+
+const WALK_FIXTURE := {
+	"typeName": "MenWallRamp",
+	"role": "wall",
+	"index": 40,
+	"position": [200.0, 300.0, -200.0],
+	"angle": 0.0,
+	"originalOwner": "Player_1/teamPlayer_1",
+	"kindOf": ["STRUCTURE", "IMMOBILE", "WALK_ON_TOP_OF_WALL", "SCALEABLE_WALL"],
+	"maxHealth": 1500.0,
+	"armor": "DefaultWallArmor",
+	"walkSurfaces": {
+		"wallBoundsMesh": "P1",
+		"rampMesh1": "R1",
+		"rampMesh2": "R2",
+		"unresolved": [
+			{"role": "rampMesh2", "meshName": "R2"},
+		],
+	},
 }
 
 const VALID_DOCUMENT := {
@@ -313,6 +333,45 @@ func _run() -> void:
 		not _load(float_index, float_index_doc)
 		and String(float_index.error) == "invalid castle fixture placement",
 		String(float_index.error))
+
+	# Lane L6: walkSurfaces is names-only evidence for the later nav layer.
+	# A v-next fixtures document with the block loads; a malformed one is
+	# refused by name and never silently dropped.
+	var vnext = map_data_script.new()
+	var vnext_doc := VALID_DOCUMENT.duplicate(true)
+	vnext_doc["fixtures"] = [GATE_FIXTURE.duplicate(true), GARRISON_FIXTURE.duplicate(true), FLAG_FIXTURE.duplicate(true), WALK_FIXTURE.duplicate(true)]
+	vnext_doc["count"] = 4
+	_check("walk_surfaces_document_loads", _load(vnext, vnext_doc), String(vnext.error))
+	var loaded_walk: Dictionary = {}
+	if vnext.map_fixtures.size() == 4:
+		loaded_walk = vnext.map_fixtures[3].get("walkSurfaces", {}) as Dictionary
+	_check("walk_surfaces_block_surfaces",
+		String(loaded_walk.get("wallBoundsMesh", "")) == "P1"
+		and String(loaded_walk.get("rampMesh1", "")) == "R1"
+		and String(loaded_walk.get("rampMesh2", "")) == "R2",
+		str(loaded_walk))
+	var unresolved: Array = loaded_walk.get("unresolved", [])
+	_check("walk_surfaces_unresolved_receipt_surfaces",
+		unresolved.size() == 1
+		and String((unresolved[0] as Dictionary).get("role", "")) == "rampMesh2"
+		and String((unresolved[0] as Dictionary).get("meshName", "")) == "R2",
+		str(unresolved))
+
+	var bad_walk = map_data_script.new()
+	var bad_walk_doc := vnext_doc.duplicate(true)
+	bad_walk_doc["fixtures"][3]["walkSurfaces"]["wallBoundsMesh"] = ""
+	_check("malformed_walk_surfaces_refused_by_name",
+		not _load(bad_walk, bad_walk_doc)
+		and String(bad_walk.error) == "castle fixture has an invalid walkSurfaces",
+		String(bad_walk.error))
+
+	var unknown_walk = map_data_script.new()
+	var unknown_walk_doc := vnext_doc.duplicate(true)
+	unknown_walk_doc["fixtures"][3]["walkSurfaces"]["moonbeamMesh"] = "P9"
+	_check("unknown_walk_surfaces_field_refused_by_name",
+		not _load(unknown_walk, unknown_walk_doc)
+		and String(unknown_walk.error) == "castle fixture has an invalid walkSurfaces",
+		String(unknown_walk.error))
 
 	_finish()
 
