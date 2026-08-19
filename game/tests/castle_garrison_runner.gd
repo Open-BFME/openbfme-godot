@@ -2,7 +2,7 @@ extends SceneTree
 
 const Sim = preload("res://src/retail_slice/retail_slice_sim.gd")
 const Watchdog = preload("res://tests/runner_watchdog.gd")
-const EXPECTED := 31
+const EXPECTED := 36
 var passed := 0
 var failed := 0
 var watchdog := Watchdog.new()
@@ -76,9 +76,20 @@ func _run() -> void:
 		_submit(peer, "issue_garrison", 1, tower_id, 1)
 		peer.advance(1)
 	_check("same_commands_same_signature", a.state_signature() == b.state_signature())
-	_check("containment_hashes_when_nonempty", not a.containment.is_empty() and a._authoritative_state().has("containment"))
-	a._finish_transport_exit(tower_id, 1)
-	_check("empty_containment_is_absent", not a._authoritative_state().has("containment") and not a._authoritative_state().has("entity_container"))
+	_check("containment_in_state_snapshot_when_nonempty", not a.containment.is_empty() and a.state_snapshot().has("containment"))
+	_check("containment_in_serialize_surface_when_nonempty", a._authoritative_state().has("containment"))
+	# Negative control: garrison on ONE peer only => signatures differ.
+	var c := _fixture_sim(erebor_rows["garrison"] as Dictionary)
+	var d := _fixture_sim(erebor_rows["garrison"] as Dictionary)
+	_submit(c, "issue_garrison", 1, tower_id, 1)
+	c.advance(1)
+	d.advance(1)
+	_check("one_sided_garrison_changes_signature", c.state_signature() != d.state_signature())
+	# The EXIT command through the lockstep queue empties the tower.
+	_check("command_issue_exit_garrison_submitted", a.submit_command({"tick": a.tick_index + 1, "team": 0, "seq": 9, "type": "issue_exit_garrison", "args": {"entity_id": 1}}))
+	a.advance(1)
+	_check("exit_command_empties_tower", a.containment.is_empty() and not a.entity_container.has(1))
+	_check("empty_containment_is_absent", not a._authoritative_state().has("containment") and not a._authoritative_state().has("entity_container") and not a.state_snapshot().has("containment"))
 	a._ensure_parity()
 	_check("fabricated_capacity_deleted", int(a.parity.transport_capacity_for_structure({"kind": "tower"})) == 0)
 	_finish()

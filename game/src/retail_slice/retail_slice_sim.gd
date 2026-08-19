@@ -30737,9 +30737,17 @@ func _attach_castle_fixture_garrison(row: Dictionary, garrison: Dictionary) -> v
 	if exit_values.size() == 3:
 		exit_offset = Vector2(float(exit_values[0]), float(exit_values[1]))
 	elif String(row.get("castle_fixture_type", "")) == "EBGarrisonableTower":
+		# ereborbuildings.ini:5279 HordeGarrisonContain ExitOffset X:50 (pre-L4 pack)
 		exit_offset = Vector2(50.0, 0.0)
+		row["garrison_contract_gap"] = "selected-map-pack-predates-L4-fields"
+		push_warning("Castle garrison EBGarrisonableTower exitOffset/visionRange from the explicit pre-L4 compatibility contract; maps recook owed")
 	elif String(row.get("castle_fixture_type", "")) == "GHGarrisonableTower":
+		# greyhavenbuildings.ini:2171 ExitOffset X:0 Y:-45 (pre-L4 pack)
 		exit_offset = Vector2(0.0, -45.0)
+		row["garrison_contract_gap"] = "selected-map-pack-predates-L4-fields"
+		push_warning("Castle garrison GHGarrisonableTower exitOffset/visionRange from the explicit pre-L4 compatibility contract; maps recook owed")
+	elif not garrison.has("exitOffset"):
+		push_warning("Castle garrison %s has no authored exitOffset in the fixture row and no compatibility contract; occupants exit at the tower centre" % String(row.get("castle_fixture_type", "")))
 	var kill_on_death := bool(garrison.get("killPassengersOnDeath", false))
 	row["transport_capacity"] = capacity
 	row["horde_transport"] = {
@@ -31737,6 +31745,18 @@ func state_snapshot() -> Dictionary:
 		snapshot_row["building_permissions"] = building_permission_rows
 	if not command_point_override_rows.is_empty():
 		snapshot_row["command_point_overrides"] = command_point_override_rows
+	# Garrison/transport containment (L4): empty-is-absent, sorted ids, so a
+	# non-castle match hashes byte-identically and a garrisoned horde is part
+	# of the lockstep signature directly (not only via its snapped position).
+	if not containment.is_empty():
+		var containment_rows: Array = []
+		var carrier_ids: Array = containment.keys()
+		carrier_ids.sort()
+		for carrier_id in carrier_ids:
+			var occupant_ids: Array = (containment[carrier_id] as Array).duplicate()
+			occupant_ids.sort()
+			containment_rows.append([int(carrier_id), occupant_ids])
+		snapshot_row["containment"] = containment_rows
 	return snapshot_row
 
 
