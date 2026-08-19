@@ -20234,6 +20234,15 @@ func _apply_due_replace_self_policy(structure_id: int, row: Dictionary, trigger_
 		var upgrades := row.get("completed_upgrades", []) as Array
 		for conflict_value in policy.get("conflicts_with", []) as Array:
 			if upgrades.has(String(conflict_value)):
+				# ReplaceSelfUpgrade ConflictsWith (campsandcastles.ini:4420-4447):
+				# the five wall routes are mutually exclusive. Named event so a
+				# refused route is observable, never silent.
+				_emit_event("structure.replace_self_refused", 0, structure_id, {
+					"trigger": trigger_upgrade_id,
+					"reason": "conflicting-upgrade",
+					"conflict": String(conflict_value),
+				})
+				policy["consumed"] = true
 				return {"ok": false, "reason": "conflicting-upgrade", "conflict": String(conflict_value)}
 		var replacement_id := String(policy.get("replace_with", ""))
 		var primary_spec := _replace_self_structure_spec(int(row.get("team", -1)), replacement_id)
@@ -30733,16 +30742,22 @@ func _seed_castle_fixtures() -> void:
 			if not attack.is_empty():
 				row["attack"] = attack
 				row["wall_defense_status"] = "compiled"
+			elif String(placement.get("role", "")) == "wall-mounted":
+				# Document present but no compiled combat: the exact shape a
+				# half-recooked pack takes. Loud, never inert-and-silent.
+				row["wall_defense_status"] = "stale-pack-document-without-combat"
+				print("[RetailSliceSim] CASTLE_WALL_DEFENSE_STALE type=%s source_index=%d reason=document-without-compiled-combat" % [type_name, int(placement.get("source_index", -1))])
 			_attach_structure_module_contracts(row)
 		elif String(placement.get("role", "")) == "wall-mounted":
 			row["wall_defense_status"] = "stale-pack-missing-structure-document"
 			print("[RetailSliceSim] CASTLE_WALL_DEFENSE_STALE type=%s source_index=%d reason=missing-playable-structure-document" % [type_name, int(placement.get("source_index", -1))])
 		structures[structure_id] = row
-		if String(row.get("wall_defense_status", "")) == "stale-pack-missing-structure-document":
+		var stale_status := String(row.get("wall_defense_status", ""))
+		if stale_status.begins_with("stale-pack-"):
 			_emit_event("castle.fixture_wall_defense_stale", 0, structure_id, {
 				"type_name": type_name,
 				"source_index": int(placement.get("source_index", -1)),
-				"reason": "missing-playable-structure-document",
+				"reason": "missing-playable-structure-document" if stale_status == "stale-pack-missing-structure-document" else "document-without-compiled-combat",
 			})
 		_emit_event("castle.fixture_seeded", 0, structure_id, {
 			"type_name": String(placement.get("type_name", "")),

@@ -53,13 +53,57 @@ func _run() -> void:
 	_check("isolated_wall_hub_fixture_found", bool(first.get("hub_found", false)))
 	_check("tower_upgrade_submitted", bool(first.get("submitted", false)), String(first.get("submit_result", "")))
 	_check("tower_upgrade_completed", bool(first.get("upgraded", false)))
-	_check("conflicts_with_blocks_second_upgrade", bool(first.get("conflict_blocked", false)))
+	_check("replaced_tower_no_longer_offers_conflicting_route", bool(first.get("conflict_blocked", false)))
+	_check("conflicts_with_policy_refuses_and_keeps_hub", bool(first.get("conflict_policy_blocked", false)))
 	_check("defense_acquires_and_fires", bool(first.get("fired", false)))
 	_check("defense_damages_enemy", bool(first.get("damaged", false)))
 	_check("defense_is_destructible", bool(first.get("destructible", false)))
 	var second := _exercise_fixture_defense()
 	_check("identical_commands_are_deterministic", String(first.get("signature", "")) == String(second.get("signature", "")), "%s != %s" % [first.get("signature", ""), second.get("signature", "")])
 	_finish()
+
+
+func _fixture_defense_sim() -> RetailSliceSim:
+	## A sealed wall-hub sim in the future-recook shape (authored Gondor rows).
+	var sim: RetailSliceSim = Sim.new()
+	var fixture_placements := [{
+			"type_name": "GondorCastleWallHub", "role": "wall-mounted",
+			"kind_of": ["STRUCTURE", "WALL_HUB", "CAN_ATTACK"],
+			"source_index": 39, "position": Vector2.ZERO, "elevation": 0.0,
+			"yaw": 0.0, "owner": "Player_1", "maximum_health": 3000.0,
+			"armor": "CastleWallArmor", "indestructible": false,
+		}]
+	var rules := {
+		"enable_base_loop": true,
+		"enable_castle_fixtures": true,
+		"source_map_transform_scale": 0.1,
+		"unit_rules": _unit_rules(),
+		"faction_manifest": {"structure_armor": _structure_armor()},
+		"playable_structure_runtimes": _runtime_documents(),
+	}
+	sim.setup({}, rules)
+	sim.register_structure_module_contracts("GondorCastleWallHub", [_replace_contract()])
+	sim._castle_fixture_placements = fixture_placements
+	sim._seed_castle_fixtures()
+	sim.ai_enabled = false
+	sim.team_resources[Sim.PLAYER_TEAM] = 10000
+	var hub_id := _fixture_hub_id(sim)
+	if hub_id > 0:
+		(sim.structures[hub_id] as Dictionary)["team"] = Sim.PLAYER_TEAM
+		var contracts := {
+			TOWER_UPGRADE: _upgrade_contract(TOWER_UPGRADE),
+			TREBUCHET_UPGRADE: _upgrade_contract(TREBUCHET_UPGRADE),
+		}
+		sim._structure_upgrade_contracts = contracts
+		sim._team_structure_upgrade_contracts[Sim.PLAYER_TEAM] = contracts
+	return sim
+
+
+func _fixture_hub_id(sim: RetailSliceSim) -> int:
+	for structure_id in sim.structure_ids():
+		if String(sim.structure(structure_id).get("source_object_id", "")) == "GondorCastleWallHub":
+			return int(structure_id)
+	return 0
 
 
 func _exercise_fixture_defense() -> Dictionary:
@@ -120,7 +164,31 @@ func _exercise_fixture_defense() -> Dictionary:
 	var second_command := {"tick": sim.tick_index + 1, "team": Sim.PLAYER_TEAM, "seq": 2, "type": "queue_structure_upgrade", "args": {"structure_id": hub_id, "upgrade_id": TREBUCHET_UPGRADE}}
 	var second_submitted := sim.submit_command(second_command)
 	sim.tick()
-	var conflict_blocked := second_submitted and typeof(sim.last_command_result) == TYPE_DICTIONARY and not bool((sim.last_command_result as Dictionary).get("ok", true))
+	# After the hub became GondorCastleWallTower the trebuchet route is no
+	# longer offered (retail swaps the CommandSet): refusal reason is the
+	# command-level "unsupported-upgrade", NOT the ConflictsWith policy.
+	var second_reason := String((sim.last_command_result as Dictionary).get("reason", "")) if typeof(sim.last_command_result) == TYPE_DICTIONARY else ""
+	var conflict_blocked := second_submitted and second_reason == "unsupported-upgrade"
+	# ConflictsWith itself (campsandcastles.ini:4420-4447): a hub that already
+	# carries the trebuchet route refuses the tower route with
+	# "conflicting-upgrade" and is NOT replaced.
+	var conflict_sim := _fixture_defense_sim()
+	var conflict_hub_id := _fixture_hub_id(conflict_sim)
+	var conflict_policy_blocked := false
+	if conflict_hub_id > 0:
+		var hub_row: Dictionary = conflict_sim.structure(conflict_hub_id)
+		var granted: Array = hub_row.get("completed_upgrades", []) as Array
+		granted.append(TREBUCHET_UPGRADE)
+		hub_row["completed_upgrades"] = granted
+		var tower_command := {"tick": conflict_sim.tick_index + 1, "team": Sim.PLAYER_TEAM, "seq": 1, "type": "queue_structure_upgrade", "args": {"structure_id": conflict_hub_id, "upgrade_id": TOWER_UPGRADE}}
+		conflict_sim.submit_command(tower_command)
+		for unused in 4:
+			conflict_sim.tick()
+		var refused := conflict_sim.events.any(func(event: Dictionary) -> bool: return String(event.get("kind", "")) == "structure.replace_self_refused" and int(event.get("target_id", 0)) == conflict_hub_id and String(event.get("reason", "")) == "conflicting-upgrade")
+		var still_hub := String(conflict_sim.structure(conflict_hub_id).get("source_object_id", "")) != "GondorCastleWallTower"
+		conflict_policy_blocked = refused and still_hub
+		if not conflict_policy_blocked:
+			print("CASTLE_WALL_DEFENSE DIAG refused=%s still_hub=%s completed=%s last=%s events=%s" % [str(refused), str(still_hub), str(conflict_sim.structure(conflict_hub_id).get("completed_upgrades")), str(conflict_sim.last_command_result), str(conflict_sim.events.filter(func(e: Dictionary) -> bool: return String(e.get("kind", "")).begins_with("structure.")).map(func(e: Dictionary) -> String: return String(e.get("kind", ""))))])
 	var enemy_id := 9001
 	sim.entities[enemy_id] = _enemy(enemy_id, Vector2(10.0, 0.0))
 	var enemy_before := int((sim.entities[enemy_id] as Dictionary).get("health", 0))
@@ -133,7 +201,7 @@ func _exercise_fixture_defense() -> Dictionary:
 	sim._apply_structure_damage(enemy_id, hub_id, health_before + 1, "unresistable")
 	sim.entities.erase(enemy_id)
 	return {
-		"hub_found": true, "submitted": submitted, "submit_result": str(submit_result), "upgraded": upgraded,
+		"hub_found": true, "submitted": submitted, "submit_result": str(submit_result), "upgraded": upgraded, "conflict_policy_blocked": conflict_policy_blocked,
 		"conflict_blocked": conflict_blocked, "fired": fired,
 		"damaged": enemy_after < enemy_before,
 		"destructible": int(sim.structure(hub_id).get("health", -1)) == 0,
