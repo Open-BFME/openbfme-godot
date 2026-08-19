@@ -1307,6 +1307,89 @@ def test_runtime_document_composes_presenter_grade_lifecycle() -> None:
     ]
 
 
+def test_construction_complete_none_model_makes_the_intact_phase_no_render() -> None:
+    """A finished build plot draws its floor bib and nothing else.
+
+    RETAIL ANCHOR - fortress.ini:30 ``Object MenFortressExpansionPadCorner``
+    (identically in all nine retail fortress files, all of them build plots)::
+
+        Draw = W3DScriptedModelDraw ModuleTag_DrawMain
+            DefaultModelConditionState
+                Model = WBFoundationP
+            End
+            ;//Remove the buildplot when it's been constructed on
+            ModelConditionState = CONSTRUCTION_COMPLETE
+                Model = None
+            End
+        End
+
+    ``CONSTRUCTION_COMPLETE`` latches once and never clears, and a plot the
+    fortress ``CastleBehavior`` unpacks is complete the moment it exists, so
+    retail's live plot never renders ``WBFoundationP`` - a flat quad authored
+    1.587 source units above origin. Compiling the default state as the intact
+    visual floated that plate over the terrain on every fortress plot (owner
+    playtest report).
+    """
+
+    from importer.tests.test_playable_structure_compiler import (
+        _structure_documents,
+    )
+    from openbfme_importer.playable_structure_compiler import (
+        compile_playable_structure_descriptor,
+    )
+
+    documents = _structure_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    source = documents[objects_path].decode("utf-8")
+    marker = """    ModelConditionState = ACTIVELY_BEING_CONSTRUCTED PARTIALLY_CONSTRUCTED"""
+    assert source.count(marker) == 1
+    source = source.replace(
+        marker,
+        """    ModelConditionState = CONSTRUCTION_COMPLETE
+      Model = None
+    End
+"""
+        + marker,
+        1,
+    )
+    documents[objects_path] = source.encode("utf-8")
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    closure = _closure()
+    for row in closure["exactLeaves"]:
+        row["targetObject"] = "TestKeep"
+    _rehash(closure)
+    recipe = compile_structure_visual_recipe("TestKeep", closure)
+    evidence = compile_structure_lifecycle_evidence("TestKeep", documents)
+
+    document = compose_structure_runtime_document(descriptor, recipe, evidence)
+    lifecycle = document["registration"]["presentation"]["buildingLifecycle"]
+    phases = {row["phase"]: row for row in lifecycle["phases"]}
+
+    assert phases["intact"]["visual"] == {
+        "mode": "no-render",
+        "sourceIdentifier": "None",
+    }
+    assert phases["intact"]["animation"] == {"clip": None, "mode": "none"}
+    # The floor bib is a separate W3DFloorDraw and still renders - that plate,
+    # flush with the terrain, IS the retail build plot.
+    assert lifecycle["bib"]["visual"]["mode"] == "glb"
+    assert any(
+        note.get("reason") == "construction-complete-authored-no-render"
+        for note in lifecycle["compositionExclusions"]
+    )
+
+
+def test_construction_complete_with_a_model_keeps_its_intact_visual() -> None:
+    """Control row: only ``Model = None`` suppresses the intact visual."""
+
+    descriptor, recipe, evidence = _keep_fixture()
+    document = compose_structure_runtime_document(descriptor, recipe, evidence)
+    lifecycle = document["registration"]["presentation"]["buildingLifecycle"]
+    phases = {row["phase"]: row for row in lifecycle["phases"]}
+    assert phases["intact"]["visual"]["mode"] == "glb"
+
+
 def test_runtime_document_without_floor_draw_has_null_bib() -> None:
     from importer.tests.test_playable_structure_compiler import (
         _structure_documents,

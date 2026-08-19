@@ -4506,7 +4506,6 @@ func _sync_presentation() -> void:
 		presentation_profile["audio_us"] = presentation_profile.get("audio_us", 0) + (Time.get_ticks_usec() - _profile_mark)
 		_profile_mark = Time.get_ticks_usec()
 	_sync_selected_attack_target_indicator()
-	_sync_expansion_pad_markers()
 	_refresh_hud()
 	var compacted_events := simulation.compact_consumed_events()
 	if compacted_events > 0:
@@ -4955,24 +4954,21 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 		# Research rides the doc-driven rows only (structure_upgrade_commands
 		# carries compiled research with its own pack strings/icons); the
 		# hardcoded forge spec surface is retired — no stale provisional ids.
-		if String(structure.get("structure_kind", "")) == "fortress":
-			# The fortress's authored expansion pad commands (REF-33): one radial
-			# button per expansion with a free plot, click builds on the plot.
-			for kind_value in simulation.expansion_commands_for(selected_structure_id):
-				var kind := String(kind_value)
-				var command := hud.retail_expansion_command(kind)
-				if command.is_empty():
-					continue
-				var cost := int(simulation._expansion_build_rules.get(kind, {}).get("cost", 0))
-				entries.append({
-					"command_kind": "expansion",
-					"id": kind,
-					"icon": command.get("texture"),
-					"text": String(command.get("label", "")) if command.get("texture") == null else "",
-					"enabled": simulation.resources_for_team(local_team) >= cost,
-					"label": String(command.get("label", "")),
-					"tooltip": String(command.get("tooltip", "")),
-				})
+		# THE EXPANSION OPTIONS DO NOT BELONG TO THE FORTRESS. They used to be
+		# appended here for a selected fortress, which put the whole plot build
+		# menu on the citadel's own wheel (owner: "the fortress should not have
+		# the side-building options — those are for the side building plots").
+		#
+		# RETAIL ANCHOR: commandset.ini:4055 `MenFortressCommandSet` carries a
+		# porter, the two page selectors, boiling oil, the ivory tower vision
+		# power and Command_Sell — and no Command_Construct*Expansion on any of
+		# its three visible ranges. Those buttons are authored only on
+		# commandset.ini:4094 `MenFortressExpansionPadCornerCommandSet` and
+		# :4101 `MenFortressExpansionPadSideCommandSet`, which fortress.ini:63 /
+		# :146 hang on the PAD objects. Every faction's fortress is the same
+		# shape. The pad's own menu is the `pad_selected` branch at the top of
+		# this function, which offers exactly the expansions that plot's
+		# authored pad kind accepts.
 	# Command_Sell is slot 6 of every compiled Men production set and the
 	# whole of SellableCommandSet (commandset.ini:5771 / farm.ini:34). SAGE
 	# exposes it for the building's whole life, including under construction.
@@ -5731,63 +5727,22 @@ func _toggle_selected_formation() -> void:
 	_sync_presentation()
 
 
-var _expansion_pad_markers: Dictionary = {}
-
-
-## Fortress build-plot HIGHLIGHT. The plot plate itself is retail content and is
-## already on screen: CastleBehavior unpacks one `*FortressExpansionPad*` object
-## per authored slot, and each of those is a real structure node rendering its
-## own body plus its W3DFloorDraw bib. This layer used to re-instance that same
-## bib model at the same position, so every plot drew TWICE (user bug #4) — one
-## retail plate and one engine-spawned copy stacked on it. It now carries no
-## model at all: just the ring that marks which plot the player clicked, so the
-## radial's anchor is visible without a second plate.
-func _sync_expansion_pad_markers() -> void:
-	if simulation == null:
-		return
-	for fortress_id_value in simulation.expansion_pads.keys():
-		var fortress_id := int(fortress_id_value)
-		var pads := simulation.expansion_pad_states(fortress_id)
-		var markers: Array = _expansion_pad_markers.get(fortress_id, [])
-		while markers.size() < pads.size():
-			var marker := _make_pad_marker()
-			add_child(marker)
-			_assign_geometry_light_layer(marker, OBJECT_LIGHT_LAYER)
-			markers.append(marker)
-		var fortress: Dictionary = simulation.structure(fortress_id)
-		var fortress_alive := not fortress.is_empty() and int(fortress.get("health", 0)) > 0 and float(fortress.get("construction_progress", 1.0)) >= 1.0
-		for index in markers.size():
-			var marker: Node3D = markers[index]
-			if index >= pads.size():
-				marker.visible = false
-				continue
-			var pad: Dictionary = pads[index]
-			var position := Vector2(pad.get("position", Vector2.ZERO))
-			marker.position = Vector3(position.x, _presentation_height(position) + 0.02, position.y)
-			# Only the clicked plot is highlighted; a free plot shows retail's own
-			# plate and nothing else.
-			marker.visible = (
-				fortress_alive
-				and int(pad.get("expansion_structure_id", 0)) == 0
-				and int(_selected_expansion_pad.get("fortress_id", 0)) == fortress_id
-				and int(_selected_expansion_pad.get("pad_index", -1)) == index
-			)
-		_expansion_pad_markers[fortress_id] = markers
-
-
-func _make_pad_marker() -> Node3D:
-	var marker := Node3D.new()
-	marker.name = "ExpansionPadMarker"
-	# Selection chrome in the retail plot idiom (a light ground circle), never a
-	# second copy of the plot's own converted geometry.
-	var ring := MeshInstance3D.new()
-	ring.name = "PadRing"
-	ring.mesh = _make_ground_ring(0.62, 48, 0.055)
-	ring.material_override = _ghost_ring_material(Color(0.82, 0.74, 0.5, 0.7))
-	ring.position.y = 0.06
-	marker.add_child(ring)
-	marker.visible = false
-	return marker
+## Fortress build-plot HIGHLIGHT: DELETED, deliberately.
+##
+## OWNER PLAYTEST BUG B: "the building plots ... have a green ring, remove it."
+##
+## This layer spawned an `ExpansionPadMarker` per plot carrying a `PadRing`
+## ground circle whenever the player clicked a plot. Nothing in retail draws it:
+## fortress.ini:30 `MenFortressExpansionPadCorner` (and the identical block in
+## the other eight fortress files) authors a `W3DFloorDraw` bib plus a main draw
+## that goes to `Model = None` on CONSTRUCTION_COMPLETE, and no ring of any
+## kind. The plot's own retail plate is already on screen from its castle-piece
+## structure node, and the radial that opens over the clicked plot is the
+## feedback retail gives. Keeping only the flat authored plate is the whole fix.
+##
+## The earlier form of this layer also re-instanced the plot's bib model, which
+## drew every plot twice (user bug #4) — `fortress_plot_presentation_runner.gd`
+## still gates both that and the ring.
 
 
 func _sync_selected_attack_target_indicator() -> void:
