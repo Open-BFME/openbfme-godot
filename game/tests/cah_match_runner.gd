@@ -60,7 +60,7 @@ const UNSHIPPABLE_FACTION := "isengard"
 
 ## LIVENESS. A GDScript runtime error aborts its function without propagating,
 ## so a broken run would print zero failures. Raise deliberately; never lower.
-const EXPECTED_CHECKS := 72
+const EXPECTED_CHECKS := 75
 
 var passed := 0
 var failed := 0
@@ -425,6 +425,80 @@ func _test_baseline_contract(system: Dictionary, profile: Dictionary) -> void:
 				float((simulation["movement"] as Dictionary)["acceleration"]), 99.0
 			),
 		"the document carries the contract numbers in source units"
+	)
+	_test_class_armor_reaches_the_document(fixture, profile)
+
+
+func _test_class_armor_reaches_the_document(fixture: Dictionary, profile: Dictionary) -> void:
+	## Q46. Retail applies the CLASS armor at spawn (createaheroarmorupgrades.inc
+	## ArmorUpgrade TriggeredBy = Upgrade_CreateAHero_Class* -> ArmorSetFlag ->
+	## armor.ini CAHArmor<Class>; default HeroArmor). The importer now compiles
+	## that table onto `classes[i].armor` / `registration.defaultArmor`; the
+	## document must carry it as `simulation.resolved.armor` so the sim binds a
+	## real armor rule instead of recording the passthrough. Both halves pinned:
+	## with the table, a non-passthrough rule; without it, no invented block.
+	var contract := fixture.duplicate(true)
+	var registration: Dictionary = contract["registration"] as Dictionary
+	var class_row: Dictionary = {}
+	for row_value in (registration.get("classes", []) as Array):
+		if int((row_value as Dictionary).get("classIndex", -1)) == CLASS_INDEX:
+			class_row = row_value as Dictionary
+			break
+	# armor.ini:235 CAHArmorHeroOfTheWest, verbatim (percent rows).
+	class_row["armor"] = {
+		"setId": "CAHArmorHeroOfTheWest",
+		"table": {
+			"setId": "CAHArmorHeroOfTheWest",
+			"default": {"damageType": "DEFAULT", "percent": 50.0},
+			"scalars": {
+				"slash": {"damageType": "SLASH", "percent": 50.0},
+				"pierce": {"damageType": "PIERCE", "percent": 50.0},
+				"specialist": {"damageType": "SPECIALIST", "percent": 50.0},
+				"crush": {"damageType": "CRUSH", "percent": 1.0},
+				"cavalry": {"damageType": "CAVALRY", "percent": 100.0},
+				"siege": {"damageType": "SIEGE", "percent": 100.0},
+				"flame": {"damageType": "FLAME", "percent": 50.0},
+				"magic": {"damageType": "MAGIC", "percent": 200.0},
+				"hero": {"damageType": "HERO", "percent": 80.0},
+				"hero_ranged": {"damageType": "HERO_RANGED", "percent": 80.0},
+				"poison": {"damageType": "POISON", "percent": 150.0},
+				"structural": {"damageType": "STRUCTURAL", "percent": 80.0},
+			},
+			"damageScalar": {"percent": 100.0},
+		},
+		"upgrades": [],
+	}
+	var with_armor := CahHeroes.roster_document(contract, profile, "MenFortress", 9)
+	var resolved: Dictionary = (
+		((with_armor["registration"] as Dictionary)["simulation"] as Dictionary).get("resolved", {}) as Dictionary
+	)
+	var armor: Dictionary = resolved.get("armor", {}) as Dictionary
+	_check(
+		String(armor.get("setId", "")) == "CAHArmorHeroOfTheWest",
+		"the class armor table rides the document as simulation.resolved.armor"
+	)
+	var sim = SimScript.new()
+	var rule: Dictionary = sim._compiled_armor_rule(with_armor)
+	_check(
+		not rule.is_empty() and not bool(rule.get("passthrough", true))
+			and String(rule.get("set_id", "")) == "CAHArmorHeroOfTheWest"
+			and is_equal_approx(float((rule.get("scalars", {}) as Dictionary).get("crush", 0.0)), 0.01)
+			and is_equal_approx(float((rule.get("scalars", {}) as Dictionary).get("magic", 0.0)), 2.0),
+		"the sim binds the class armor as a real rule (crush 1%, magic 200%), not the passthrough"
+	)
+	sim = null
+	# A pack that predates class armor: no invented block, the recorded gap stays.
+	var bare := fixture.duplicate(true)
+	for row_value in ((bare["registration"] as Dictionary).get("classes", []) as Array):
+		(row_value as Dictionary).erase("armor")
+	(bare["registration"] as Dictionary).erase("defaultArmor")
+	var without_armor := CahHeroes.roster_document(bare, profile, "MenFortress", 9)
+	var bare_resolved: Dictionary = (
+		((without_armor["registration"] as Dictionary)["simulation"] as Dictionary).get("resolved", {}) as Dictionary
+	)
+	_check(
+		not bare_resolved.has("armor"),
+		"a pack without compiled class armor emits no armor block (the sim keeps its recorded passthrough)"
 	)
 
 

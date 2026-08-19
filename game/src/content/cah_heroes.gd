@@ -174,6 +174,28 @@ static func sub_class_row(system: Dictionary, class_index: int, sub_index: int) 
 	return {}
 
 
+static func class_armor(system: Dictionary, class_index: int) -> Dictionary:
+	## The compiled armor.ini table for the class (`classes[i].armor`), else the
+	## system-wide default (`registration.defaultArmor`), else {} on a pack that
+	## predates class armor compilation. Same shape as
+	## registration.simulation.resolved.armor on every playable-unit document.
+	var armor_value: Variant = class_row(system, class_index).get("armor")
+	if typeof(armor_value) == TYPE_DICTIONARY and String((armor_value as Dictionary).get("setId", "")) != "":
+		return (armor_value as Dictionary).duplicate(true)
+	var registration: Dictionary = system.get("registration", {}) as Dictionary
+	var default_value: Variant = registration.get("defaultArmor")
+	if typeof(default_value) == TYPE_DICTIONARY and String((default_value as Dictionary).get("setId", "")) != "":
+		return (default_value as Dictionary).duplicate(true)
+	return {}
+
+
+static func _class_armor_resolved(system: Dictionary, class_index: int) -> Dictionary:
+	var armor := class_armor(system, class_index)
+	if armor.is_empty():
+		return {}
+	return {"armor": armor}
+
+
 static func class_row(system: Dictionary, class_index: int) -> Dictionary:
 	var registration: Dictionary = system.get("registration", {}) as Dictionary
 	for class_value in (registration.get("classes", []) as Array):
@@ -1346,6 +1368,14 @@ static func roster_document(
 				# the sim as body properties of this one unit.
 				"innateArmorScalar": float(stats["armorScalar"]),
 				"autoHealMultiplier": float(stats["autoHealMultiplier"]),
+				# THE ARMOR THE CLASS WEARS (Q46). Retail applies the class
+				# upgrade at spawn (createaheroarmorupgrades.inc: ArmorUpgrade
+				# TriggeredBy = Upgrade_CreateAHero_Class*, ArmorSetFlag =
+				# CREATE_A_HERO_NN -> CAHArmor<Class> in armor.ini), falling
+				# back to HeroArmor. The importer compiles both onto the class
+				# table; a pack that predates that keeps the recorded SAGE
+				# passthrough the sim already names.
+				"resolved": _class_armor_resolved(system, int(profile.get("classIndex", -1))),
 			},
 			# THE POWERS AND THE LEVEL CHAIN, in the shapes the runtime adapter
 			# already projects for every retail hero. A created hero reaches the

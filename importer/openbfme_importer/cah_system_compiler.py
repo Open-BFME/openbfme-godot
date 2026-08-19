@@ -72,6 +72,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from .sage_ini import _lines, parse_flat_named_blocks
 from .locomotor_compiler import compile_locomotor_templates
+from .armor_compiler import ArmorCompilerError, compile_armor_table
 
 SCHEMA = "openbfme.cah-system-descriptor"
 SCHEMA_VERSION = 0
@@ -124,6 +125,16 @@ LOCOMOTOR_PATH = "data/ini/locomotor.ini"
 ANIMS_PATH = "data/ini/object/createahero/createaheroanims.inc"
 AUDIO_PATH = "data/ini/object/createahero/createaheroaudio.inc"
 AWARD_SYSTEM_PATH = "data/ini/awardsystem.ini"
+#: Retail authors the created hero's armor per CLASS: a default ArmorSet
+#: (Conditions = None, Armor = HeroArmor) plus one ArmorSet per
+#: CREATE_A_HERO_NN flag, each set by an ArmorUpgrade behaviour whose
+#: TriggeredBy is that class's UpgradeName (createaheroarmorupgrades.inc).
+#: The Armor definitions themselves live in armor.ini (CAHArmorHeroOfTheWest,
+#: CAHArmorWizard, ...).  Both are OPTIONAL inputs here: a tree without them
+#: compiles with `armorCoverage.limitation` named and no class armor, and the
+#: runtime records the SAGE passthrough exactly as it did before.
+ARMOR_UPGRADES_PATH = "data/ini/object/createahero/createaheroarmorupgrades.inc"
+ARMOR_INI_PATH = "data/ini/armor.ini"
 
 #: Documents that must be present.  The ``#include``s reached from
 #: ``createaherosystem.ini`` are resolved from the same mapping and are also
@@ -2488,10 +2499,75 @@ def _attach_ability_effects(
                     row[key] = compiled[key]
 
 
+def _class_armor_sets(
+    documents: Mapping[str, bytes],
+) -> tuple[dict[str, str], str | None, str | None]:
+    """(class UpgradeName -> Armor set id, default Armor set id, limitation).
+
+    Reads createaheroarmorupgrades.inc: `ArmorSet { Conditions = None; Armor = X }`
+    is the default; `ArmorSet { Conditions = FLAG; Armor = Y }` pairs with
+    `Behavior = ArmorUpgrade { TriggeredBy = <class upgrade>; ArmorSetFlag = FLAG }`.
+    """
+
+    if _lookup(documents, ARMOR_UPGRADES_PATH) is None:
+        return {}, None, f"{ARMOR_UPGRADES_PATH} is absent from the source tree"
+    root = _parse_blocks(_document_lines(documents, ARMOR_UPGRADES_PATH), ARMOR_UPGRADES_PATH)
+    default_set: str | None = None
+    by_flag: dict[str, str] = {}
+    for block in root.children("ArmorSet"):
+        conditions = (block.value("Conditions") or "").strip()
+        armor = (block.value("Armor") or "").strip()
+        if not armor:
+            continue
+        if conditions.casefold() in ("", "none"):
+            default_set = armor
+        else:
+            by_flag[conditions.upper()] = armor
+    by_class: dict[str, str] = {}
+    for block in root.children("Behavior"):
+        module = (block.value("__module__") or "").split()
+        if not module or module[0].casefold() != "armorupgrade":
+            continue
+        triggered = (block.value("TriggeredBy") or "").strip()
+        flag = (block.value("ArmorSetFlag") or "").strip().upper()
+        if triggered and flag in by_flag:
+            by_class[triggered.casefold()] = by_flag[flag]
+    if default_set is None and not by_class:
+        return {}, None, f"{ARMOR_UPGRADES_PATH} authors no ArmorSet"
+    return by_class, default_set, None
+
+
+def _compiled_class_armor(
+    documents: Mapping[str, bytes],
+    set_id: str | None,
+    *,
+    game: str,
+    cache: dict,
+) -> dict[str, Any] | None:
+    """One class's armor in the exact shape playable-unit documents carry
+    under registration.simulation.resolved.armor (setId + table), or None."""
+
+    if not set_id:
+        return None
+    if _lookup(documents, ARMOR_INI_PATH) is None:
+        return None
+    return {
+        "setId": set_id,
+        "sourceIni": ARMOR_UPGRADES_PATH,
+        "table": compile_armor_table(
+            documents, set_id, named_definition_cache=cache, game=game
+        ),
+        "upgrades": [],
+        "conditionalSets": [],
+        "excludedUpgradeSets": [],
+    }
+
+
 def compile_cah_system_descriptor(
     documents: Mapping[str, bytes],
     *,
     ability_effects: Mapping[str, Mapping[str, Any]] | None = None,
+    game: str = "rotwk",
 ) -> dict[str, Any]:
     """Compile the Create-a-Hero class system, or raise saying what was missing.
 
@@ -2607,6 +2683,43 @@ def compile_cah_system_descriptor(
         )
     if not classes:
         raise CahSystemCompilerError(f"{SYSTEM_PATH}: no CreateAHeroClass is declared")
+
+    # THE ARMOR THE CLASS WEARS.  Retail applies the class upgrade at spawn,
+    # so a created hero's ArmorSet is its class set, falling back to the
+    # default (HeroArmor) for a class that authors none.  Compiled from
+    # armor.ini into the same table shape every playable-unit document
+    # carries; a missing source is a NAMED limitation, never an invented set.
+    class_sets, default_set, armor_limitation = _class_armor_sets(documents)
+    armor_cache: dict = {}
+    armor_unresolved: list[str] = []
+    default_armor: dict[str, Any] | None = None
+    try:
+        default_armor = _compiled_class_armor(
+            documents, default_set, game=game, cache=armor_cache
+        )
+    except ArmorCompilerError as exc:
+        armor_unresolved.append(f"default:{default_set}: {exc}")
+    for class_row in classes:
+        set_id = class_sets.get(str(class_row["upgradeName"]).casefold(), default_set)
+        armor: dict[str, Any] | None = None
+        try:
+            armor = _compiled_class_armor(
+                documents, set_id, game=game, cache=armor_cache
+            )
+        except ArmorCompilerError as exc:
+            armor_unresolved.append(f"{class_row['upgradeName']}:{set_id}: {exc}")
+        if armor is not None:
+            class_row["armor"] = armor
+    armor_coverage: dict[str, Any] = {
+        "defaultSetId": default_set,
+        "compiledClasses": sum(1 for row in classes if "armor" in row),
+        "totalClasses": len(classes),
+        "unresolved": armor_unresolved,
+    }
+    if armor_limitation:
+        armor_coverage["limitation"] = armor_limitation
+    elif _lookup(documents, ARMOR_INI_PATH) is None:
+        armor_coverage["limitation"] = f"{ARMOR_INI_PATH} is absent from the source tree"
 
     known_awards = {str(row["awardId"]).casefold() for row in award_definitions}
     known_stats = {str(row["statId"]).casefold() for row in tracking_stat_definitions}
@@ -2782,6 +2895,8 @@ def compile_cah_system_descriptor(
             documents, defines, base_stats["maxHealth"]
         ),
         "combatCoverage": combat_coverage,
+        "armorCoverage": armor_coverage,
+        "defaultArmor": default_armor if default_armor is not None else {},
         "garmentCoverage": garment_coverage,
         "creationIdlePlan": idle_plan,
         "voiceCoverage": {
@@ -2908,6 +3023,8 @@ def build_cah_system_runtime(descriptor: Mapping[str, Any]) -> dict[str, Any]:
             "system": descriptor["system"],
             "objectBaseline": descriptor.get("objectBaseline", {}),
             "combatCoverage": descriptor.get("combatCoverage", {}),
+            "armorCoverage": descriptor.get("armorCoverage", {}),
+            "defaultArmor": descriptor.get("defaultArmor", {}),
             "creationIdlePlan": descriptor.get("creationIdlePlan", {}),
             "voiceCoverage": descriptor.get("voiceCoverage", {}),
             "awardDefinitions": descriptor.get("awardDefinitions", []),

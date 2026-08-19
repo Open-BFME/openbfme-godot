@@ -1668,3 +1668,78 @@ class CahCreationIdleTests(unittest.TestCase):
             "creationScreen"
         ]
         self.assertEqual(creation["creationIdles"]["specialChancePercent"], 20.0)
+
+
+class CahClassArmorTests(unittest.TestCase):
+    """Q46: the class ArmorSet retail applies at spawn reaches the class table."""
+
+    ARMOR_UPGRADES = (
+        b"ArmorSet\n"
+        b"\tConditions = None\n"
+        b"\tArmor = HeroArmor\n"
+        b"\tDamageFX = NormalDamageFX\n"
+        b"End\n"
+        b"ArmorSet\n"
+        b"\tConditions = CREATE_A_HERO_01\n"
+        b"\tArmor = CAHArmorHeroOfTheWest\n"
+        b"\tDamageFX = NormalDamageFX\n"
+        b"End\n"
+        b"Behavior = ArmorUpgrade ModuleTag_CreateAHeroMenOfTheWestArmor\n"
+        b"\tTriggeredBy = Upgrade_CreateAHero_ClassHeroOfTheWest\n"
+        b"\tArmorSetFlag = CREATE_A_HERO_01\n"
+        b"End\n"
+    )
+    # armor.ini:141 HeroArmor and :235 CAHArmorHeroOfTheWest, abridged rows.
+    ARMOR_INI = (
+        b"Armor HeroArmor\n"
+        b"  Armor = DEFAULT 25%\n"
+        b"  Armor = CRUSH 50%\n"
+        b"End\n"
+        b"Armor CAHArmorHeroOfTheWest\n"
+        b"  Armor = DEFAULT 50%\n"
+        b"  Armor = CRUSH 1%\n"
+        b"  Armor = MAGIC 200%\n"
+        b"End\n"
+    )
+
+    def _with_armor(self) -> dict[str, bytes]:
+        documents = _documents()
+        documents["data/ini/object/createahero/createaheroarmorupgrades.inc"] = self.ARMOR_UPGRADES
+        documents["data/ini/armor.ini"] = self.ARMOR_INI
+        return documents
+
+    def test_class_armor_is_the_flagged_set_not_the_default(self) -> None:
+        descriptor = compile_cah_system_descriptor(self._with_armor(), game="rotwk")
+        armor = descriptor["classes"][0]["armor"]
+        self.assertEqual(armor["setId"], "CAHArmorHeroOfTheWest")
+        self.assertEqual(armor["table"]["default"]["percent"], 50.0)
+        self.assertEqual(armor["table"]["scalars"]["crush"]["percent"], 1.0)
+        self.assertEqual(armor["table"]["scalars"]["magic"]["percent"], 200.0)
+        self.assertEqual(descriptor["defaultArmor"]["setId"], "HeroArmor")
+        self.assertEqual(descriptor["armorCoverage"]["compiledClasses"], 1)
+        self.assertEqual(descriptor["armorCoverage"]["unresolved"], [])
+        runtime = build_cah_system_runtime(descriptor)
+        self.assertEqual(runtime["registration"]["classes"][0]["armor"], armor)
+        self.assertEqual(runtime["registration"]["defaultArmor"]["setId"], "HeroArmor")
+
+    def test_a_class_without_a_flagged_set_wears_the_default(self) -> None:
+        documents = self._with_armor()
+        documents["data/ini/object/createahero/createaheroarmorupgrades.inc"] = (
+            b"ArmorSet\n\tConditions = None\n\tArmor = HeroArmor\nEnd\n"
+        )
+        descriptor = compile_cah_system_descriptor(documents, game="rotwk")
+        self.assertEqual(descriptor["classes"][0]["armor"]["setId"], "HeroArmor")
+
+    def test_missing_armor_sources_are_a_named_limitation_not_an_invented_set(self) -> None:
+        descriptor = compile_cah_system_descriptor(_documents(), game="rotwk")
+        self.assertNotIn("armor", descriptor["classes"][0])
+        self.assertEqual(descriptor["defaultArmor"], {})
+        self.assertIn("createaheroarmorupgrades.inc", descriptor["armorCoverage"]["limitation"])
+
+    def test_an_unknown_armor_set_is_reported_not_guessed(self) -> None:
+        documents = self._with_armor()
+        documents["data/ini/armor.ini"] = b"Armor HeroArmor\n  Armor = DEFAULT 25%\nEnd\n"
+        descriptor = compile_cah_system_descriptor(documents, game="rotwk")
+        self.assertNotIn("armor", descriptor["classes"][0])
+        self.assertEqual(len(descriptor["armorCoverage"]["unresolved"]), 1)
+        self.assertIn("CAHArmorHeroOfTheWest", descriptor["armorCoverage"]["unresolved"][0])

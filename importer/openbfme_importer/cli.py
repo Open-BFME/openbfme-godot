@@ -1680,6 +1680,8 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
 
         if args.command == "compile-cah-system":
             from .cah_system_compiler import (
+                ARMOR_INI_PATH as CAH_ARMOR_INI_PATH,
+                ARMOR_UPGRADES_PATH,
                 REQUIRED_DOCUMENTS,
                 build_cah_system_runtime,
                 compile_cah_system_descriptor,
@@ -1699,9 +1701,15 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                 candidate = assets_root / relative
                 if candidate.is_file():
                     documents[relative] = candidate.read_bytes()
+            # OPTIONAL: the per-class ArmorSet include and armor.ini (class
+            # armor tables); absent -> armorCoverage.limitation, not a failure.
+            for relative in (ARMOR_UPGRADES_PATH, CAH_ARMOR_INI_PATH):
+                candidate = assets_root / relative
+                if candidate.is_file() and relative not in documents:
+                    documents[relative] = candidate.read_bytes()
             # PASS ONE: the class table, the powers menu, the meshes and the
             # level chain -- everything that is authored ABOUT a power.
-            descriptor = compile_cah_system_descriptor(documents)
+            descriptor = compile_cah_system_descriptor(documents, game=args.game)
             # PASS TWO: what each power DOES. Its behaviour lives in the
             # CreateAHero Object's SpecialPower modules, which reach across the
             # whole INI tree (weapons, ObjectCreationLists, attribute modifier
@@ -1731,7 +1739,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                     tree_documents, button_names
                 )
                 descriptor = compile_cah_system_descriptor(
-                    documents, ability_effects=ability_effects
+                    documents, ability_effects=ability_effects, game=args.game
                 )
             except Exception as error:  # noqa: BLE001 - reported, never swallowed
                 effect_note = f"{type(error).__name__}: {error}"
