@@ -54,7 +54,11 @@ var _sections_completed: Array[String] = []
 var _last_construct_detail := ""
 ## Liveness pin: an aborted coroutine must exit non-zero, so the expected check
 ## count is asserted at finish. Keep in sync with the _check call sites below.
-const EXPECTED_CHECKS := 32
+## 2026-08-19 UI PARITY lane: +7 — fortress main page is exactly the authored
+## MenFortressCommandSet (no expansion entries), no selection-arc node on the
+## selected structure, no ring on unclicked plots, world-ring tooltips, and
+## the authored-complete revivables page incl. the Create-a-Hero slot.
+const EXPECTED_CHECKS := 39
 
 
 func _initialize() -> void:
@@ -129,6 +133,100 @@ func _run() -> void:
 		fortress_ids.has("upgrades") and fortress_ids.has("heroes"),
 		str(fortress_ids)
 	)
+	# UI PARITY lane (2026-08-19, owner playtest 2026-08-18): the authored
+	# MenFortressCommandSet (commandset.ini:4055-4082) carries NO expansion
+	# commands — the side-building/expansion options belong to the
+	# MenFortressExpansionPad{Corner,Side}CommandSet objects (commandset.ini
+	# :4091-4101) the player clicks. The fortress wheel must be exactly
+	# porter + Command_Sell + the two page selectors.
+	var fortress_kinds: Array[String] = []
+	for entry_value in _slice.hud.radial_entries():
+		fortress_kinds.append(String((entry_value as Dictionary).get("command_kind", "")))
+	_check(
+		"fortress_radial_has_no_expansion_entries",
+		not fortress_kinds.has("expansion"),
+		"kinds=%s ids=%s" % [str(fortress_kinds), str(fortress_ids)]
+	)
+	fortress_kinds.sort()
+	_check(
+		"fortress_main_page_is_exactly_the_authored_set",
+		fortress_kinds == ["page", "page", "sell", "train"],
+		"commandset.ini:4055 slots 1/2/5/6 -> %s" % str(fortress_kinds)
+	)
+	# Retail draws NO arc/ring on a selected structure (selection = the health
+	# bar above it; REF-25/33/35 vs ours-fortress-radial-heroes-green-arc).
+	var fortress_node: Node = _slice.structure_nodes.get(fortress)
+	_check(
+		"selected_structure_has_no_selection_arc_node",
+		fortress_node != null and fortress_node.get_node_or_null("SelectionRing") == null,
+		"node=%s" % str(fortress_node)
+	)
+	# The expansion PLOTS are flat pads flush with the ground (REF-33): no ring
+	# on any plot while none is clicked.
+	var rings_visible: Array[String] = []
+	for fortress_id_value in _slice._expansion_pad_markers.keys():
+		for marker in (_slice._expansion_pad_markers[fortress_id_value] as Array):
+			if (marker as Node3D).visible:
+				rings_visible.append(str((marker as Node3D).name))
+	_check(
+		"expansion_plots_show_no_ring_when_unclicked",
+		rings_visible.is_empty(),
+		str(rings_visible)
+	)
+	# Every command button shows retail's hover tooltip (REF-25): the WORLD
+	# ring buttons mirror their palantir twin's tooltip metadata and register
+	# the hover path.
+	var world_tooltip_gaps: Array[String] = []
+	for world_button in _slice.hud.world_radial_buttons():
+		if String((world_button as Button).get_meta("tooltip_group", "")) == "" \
+				or not (world_button as Button).has_meta("tooltip_registered"):
+			world_tooltip_gaps.append(String((world_button as Button).name))
+	_check(
+		"world_radial_buttons_carry_retail_tooltips",
+		world_tooltip_gaps.is_empty(),
+		str(world_tooltip_gaps)
+	)
+	# Heroes page == the authored revivables (commandset.ini:4069-4076 slots
+	# 15-24: ring hero, Create-a-Hero, seven generic revive slots): every hero
+	# the fortress roster offers must reach the page — the owner's "not all
+	# heroes + my custom hero are available". The Men roster is the seven
+	# faction heroes plus whatever created heroes the local store fields (the
+	# headless scratch store is empty BY DESIGN — cah_heroes.gd
+	# PROFILE_DIR_HEADLESS_SUFFIX — so the CAH half of this proof lives where
+	# a profile is seeded: fortress_command_surface_runner section 6, and the
+	# windowed ui_parity_capture_runner, which shows both local CAH profiles).
+	_slice.hud.set_radial_page(_slice.hud.RADIAL_PAGE_HEROES)
+	_slice._sync_presentation()
+	for i in 4:
+		await process_frame
+	var hero_page_ids: Array[String] = []
+	for entry_value in _slice.hud.radial_entries():
+		var hero_entry: Dictionary = entry_value
+		if String(hero_entry.get("command_kind", "")) == "hero":
+			hero_page_ids.append(String(hero_entry.get("id", "")))
+	var offered_heroes: Array[String] = []
+	for unit_id_value in Array((sim.structure(fortress) as Dictionary).get("production", [])):
+		var unit_id := String(unit_id_value)
+		if unit_id != "bfme2.object.men-porter":
+			offered_heroes.append(unit_id)
+	hero_page_ids.sort()
+	offered_heroes.sort()
+	_check(
+		"fortress_heroes_page_is_authored_complete",
+		hero_page_ids == offered_heroes and offered_heroes.size() >= 7,
+		"page=%s production=%s" % [str(hero_page_ids), str(offered_heroes)]
+	)
+	var cah_offered := offered_heroes.filter(func(id: String) -> bool: return id.contains("create-ahero"))
+	var cah_on_page := hero_page_ids.filter(func(id: String) -> bool: return id.contains("create-ahero"))
+	_check(
+		"fortress_heroes_page_includes_every_offered_create_a_hero",
+		cah_on_page == cah_offered,
+		"commandset.ini:4067 slot 16 Command_CreateAHeroReviveSlot; offered=%s on-page=%s (empty in the headless scratch store by design)" % [str(cah_offered), str(cah_on_page)]
+	)
+	_slice.hud.set_radial_page(_slice.hud.RADIAL_PAGE_MAIN)
+	_slice._sync_presentation()
+	for i in 4:
+		await process_frame
 	_check(
 		"fortress_dish_caption_is_level_1",
 		_slice.hud.dish_level_caption() == "Level: 1",

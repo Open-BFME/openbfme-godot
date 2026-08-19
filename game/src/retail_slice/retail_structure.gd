@@ -146,7 +146,11 @@ var _fixture_visuals: Dictionary = {}
 var _loaded_visuals: Dictionary = {}
 var _fixture_mode := false
 var _target_height := DEFAULT_TARGET_HEIGHT
-var _selection_ring: MeshInstance3D
+# NO selection ring/arc node: retail marks a selected structure with the
+# health bar above it and its own selection decal only — never a green torus
+# around the footprint (owner playtest 2026-08-18
+# ours-fortress-radial-heroes-green-arc-radar-gaps.png vs REF-25/33/35, where
+# the selected barracks/fortress carries no arc).
 var _health_back: Sprite3D
 var _health_fill: Sprite3D
 var _build_back: Sprite3D
@@ -311,8 +315,8 @@ func sync_state(entity: Dictionary) -> void:
 		# Rubble is an authored retained phase. Construction progress is animation
 		# time, never a non-uniform Y scale and never a visibility shortcut.
 		_visual_root.visible = contract_error == ""
-	if _selection_ring != null:
-		_selection_ring.visible = selected and health > 0 and contract_error == ""
+	# Selection shows through the health bar alone (retail draws no ring/arc on
+	# a selected structure — see the note at the _health_back declaration).
 	var show_health_bar := (
 		contract_error == ""
 		and health > 0
@@ -372,8 +376,6 @@ func _sync_men_damage_phase(health: int, construction_progress: float) -> void:
 
 func set_selected(value: bool) -> void:
 	selected = value
-	if _selection_ring != null:
-		_selection_ring.visible = selected and health_ratio > 0.0 and contract_error == "" and active_visual_mode != "no-render"
 	_sync_aura_visibility()
 
 
@@ -1353,7 +1355,6 @@ func _apply_visual_bounds_selection_radius(bounds: AABB, uniform_scale: float) -
 			selection_radius_source = "intact-body-bounds"
 		pick_radius = combined
 	_sync_health_bar_geometry()
-	_sync_selection_ring_geometry()
 
 
 func structure_pick_candidates(entity_id: int) -> Array:
@@ -2190,8 +2191,6 @@ func _activate_v1_phase(phase: String) -> void:
 	active_bib_path = bib_path
 	active_door_path = door_path
 	active_visual_mode = visual_mode
-	if _selection_ring != null:
-		_selection_ring.visible = selected and health_ratio > 0.0 and visual_mode != "no-render"
 	var show_health_bar := health_ratio > 0.0 and visual_mode != "no-render" and draws_health_bar() and (selected or health_ratio < 1.0)
 	if _health_fill != null:
 		_health_fill.visible = show_health_bar
@@ -2841,19 +2840,6 @@ func _update_lifecycle_metadata() -> void:
 
 
 func _build_markers() -> void:
-	_selection_ring = MeshInstance3D.new()
-	_selection_ring.name = "SelectionRing"
-	var ring := TorusMesh.new()
-	ring.inner_radius = pick_radius
-	ring.outer_radius = pick_radius + 0.22
-	ring.rings = 36
-	ring.ring_segments = 8
-	_selection_ring.mesh = ring
-	_selection_ring.position = Vector3(visual_pick_center.x, 0.08, visual_pick_center.y)
-	_selection_ring.material_override = _emissive(Color("67e48b"))
-	_selection_ring.visible = false
-	add_child(_selection_ring)
-
 	_health_back = Sprite3D.new()
 	_health_back.name = "HealthBack"
 	_configure_fixed_pixel_sprite(_health_back, _solid_texture(Color("131a1e"), HEALTH_BAR_SCREEN_WIDTH_PX + 4, HEALTH_BAR_SCREEN_HEIGHT_PX + 2), 8)
@@ -2894,20 +2880,6 @@ func _solid_texture(color: Color, width: int, height: int) -> ImageTexture:
 	var image := Image.create(width, height, false, Image.FORMAT_RGBA8)
 	image.fill(color)
 	return ImageTexture.create_from_image(image)
-
-
-func _sync_selection_ring_geometry() -> void:
-	if _selection_ring == null:
-		return
-	var ring := _selection_ring.mesh as TorusMesh
-	if ring == null:
-		ring = TorusMesh.new()
-		ring.rings = 36
-		ring.ring_segments = 8
-		_selection_ring.mesh = ring
-	ring.inner_radius = pick_radius
-	ring.outer_radius = pick_radius + 0.22
-	_selection_ring.position = Vector3(visual_pick_center.x, 0.08, visual_pick_center.y)
 
 
 func _sync_health_bar_geometry() -> void:

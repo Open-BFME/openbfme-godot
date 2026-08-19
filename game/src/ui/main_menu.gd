@@ -3400,6 +3400,13 @@ func apply_skirmish_selection() -> bool:
 		_game_state.set("retail_team_setup", _build_team_descriptors(map_id))
 	else:
 		_game_state.set("retail_team_setup", [])
+	# Retail fields exactly ONE created hero per player: the one picked in the
+	# Hero column (playertemplate BuildableHeroesMP names a single CreateAHero
+	# revive slot). The legacy two-team path above carries no descriptors, so
+	# hand the human row's pick over separately; the slice fields only that
+	# profile instead of every saved hero on this machine.
+	var picked_docs := _row_hero_documents(human_row)
+	_game_state.set("retail_picked_created_hero_documents", picked_docs)
 	return true
 
 

@@ -67,6 +67,11 @@ var retail_map_id: String = ""
 ## retail_player_faction / retail_enemy_faction pair, so that path stays
 ## byte-identical. OPENBFME_SLICE_FACTION still overrides everything.
 var retail_team_setup: Array = []
+## The human row's picked Create-a-Hero document(s) from the skirmish setup —
+## retail fields exactly one created hero per player (the picked one). Null when
+## the launch did not go through the setup; the slice then falls back to the
+## saved-hero store (headless runners / direct boots).
+var retail_picked_created_hero_documents = null
 ## Multiplayer lobby identity, written by the NETWORK lobby panel at launch.
 ## Display-only strings (scoreboard/HUD labels): player names ride the lobby
 ## protocol and never enter the deterministic sim state.

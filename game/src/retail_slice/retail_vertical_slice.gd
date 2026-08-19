@@ -2044,14 +2044,31 @@ func _add_created_heroes(
 	var seat_rows := _created_hero_seat_rows(game_state_override)
 	var created: Dictionary = {}
 	if seat_rows.is_empty():
-		# SINGLE PLAYER: this machine's own saved heroes, owned by the team the
-		# HUMAN row sits on - which is not always team 0.
-		created = CahHeroesScript.roster_documents(
-			system_document,
-			fieldable_unit_runtimes,
-			faction,
-			_local_player_team(game_state_override)
-		)
+		# SINGLE PLAYER: retail fields exactly the ONE created hero picked in
+		# the setup's Hero column (a single CreateAHero revive slot per player).
+		# The menu hands that pick over as `retail_picked_created_hero_documents`;
+		# when it is present (even empty = "-" picked) it is authoritative. Only
+		# a launch that never went through the setup (headless runners, direct
+		# boots) falls back to this machine's saved heroes.
+		var picked: Variant = null
+		var state = game_state_override if game_state_override != null else _tree_autoload("GameState")
+		if state != null:
+			picked = state.get("retail_picked_created_hero_documents")
+		if typeof(picked) == TYPE_ARRAY:
+			created = CahHeroesScript.seat_roster_documents(
+				system_document,
+				fieldable_unit_runtimes,
+				[{"seat": 0, "team": _local_player_team(game_state_override), "faction": faction, "heroes": (picked as Array).duplicate()}],
+				faction,
+				false
+			)
+		else:
+			created = CahHeroesScript.roster_documents(
+				system_document,
+				fieldable_unit_runtimes,
+				faction,
+				_local_player_team(game_state_override)
+			)
 	else:
 		# MULTIPLAYER: the heroes the lobby AGREED, every seat's, admitted by
 		# the same rules on every peer. The local `user://` store is not
