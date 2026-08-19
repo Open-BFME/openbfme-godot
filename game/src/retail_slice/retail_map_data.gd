@@ -726,6 +726,8 @@ func _valid_fixture_gate_block(value: Variant) -> bool:
 				return _fail("gate fixture has invalid named geometries")
 		if not _valid_fixture_vector(geometry.get("offset", null)):
 			return _fail("gate fixture has invalid named geometries")
+	if block.has("commandSet") and (typeof(block.get("commandSet")) != TYPE_STRING or String(block.get("commandSet")).strip_edges() == ""):
+		return _fail("gate fixture has an invalid gate command set")
 	if block.has("aiGateUpdate"):
 		var ai_gate: Variant = block.get("aiGateUpdate")
 		if typeof(ai_gate) != TYPE_DICTIONARY:

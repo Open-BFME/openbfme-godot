@@ -4998,6 +4998,21 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 	# whole of SellableCommandSet (commandset.ini:5771 / farm.ini:34). SAGE
 	# exposes it for the building's whole life, including under construction.
 	if structure_owned_alive:
+		# Retail commandset.ini:4308/4314 puts Command_ToggleGate in slot 1 of
+		# both castle gate sets; commandbutton.ini:9015 authors it as Radial=Yes.
+		if String(structure.get("gate_command_set", "")) in ["CastleGateCommandSet", "CastleGateCommandSet_NoSell"]:
+			var gate_policy: Dictionary = structure.get("gate_behavior", {})
+			entries.append({
+				"command_kind": "toggle_gate",
+				"id": "Command_ToggleGate",
+				"icon": null,
+				"text": "Close Gate" if bool(gate_policy.get("open", false)) else "Open Gate",
+				"enabled": not gate_policy.is_empty(),
+				"label": "Toggle Gate",
+				"tooltip": "Open or close this gate",
+				"cost": -1,
+				"slot": 1,
+			})
 		var sell: Dictionary = simulation.structure_sell_command(selected_structure_id)
 		if not sell.is_empty():
 			var sell_cmd: Dictionary = hud.retail_sell_command()
@@ -5234,6 +5249,15 @@ func _sell_selected_structure() -> void:
 			"Cannot demolish: %s." % String(result.get("reason", "rejected")).replace("-", " "),
 			true
 		)
+	_sync_presentation()
+
+
+func _toggle_selected_gate() -> void:
+	if simulation == null or selected_structure_id == 0:
+		return
+	var result: Dictionary = _apply_local_command("toggle_gate", {"structure_id": selected_structure_id})
+	if not bool(result.get("ok", false)):
+		hud.set_feedback("Cannot toggle gate: %s." % String(result.get("reason", "rejected")).replace("-", " "), true)
 	_sync_presentation()
 
 
@@ -7966,6 +7990,7 @@ func _build_hud() -> void:
 	hud.hero_focus_requested.connect(_on_hero_focus_requested)
 	hud.expansion_requested.connect(_on_expansion_requested)
 	hud.structure_sell_requested.connect(_sell_selected_structure)
+	hud.gate_toggle_requested.connect(_toggle_selected_gate)
 	hud.music_volume_changed.connect(func(value: float) -> void:
 		if audio_system != null: audio_system.set_music_volume(value, true)
 	)

@@ -30737,6 +30737,8 @@ func _seed_castle_fixtures() -> void:
 				"unsupported_semantics": [],
 			}
 			fixture_row["gate_geometries"] = (gate_block.get("geometries", {}) as Dictionary).duplicate(true)
+			if gate_block.has("commandSet"):
+				fixture_row["gate_command_set"] = String(gate_block.get("commandSet", ""))
 			var ai_gate_value: Variant = gate_block.get("aiGateUpdate", null)
 			if typeof(ai_gate_value) == TYPE_DICTIONARY:
 				var ai_gate := ai_gate_value as Dictionary
@@ -31740,6 +31742,34 @@ func state_signature() -> String:
 	return "%08X" % value
 
 
+func toggle_gate(team: int, structure_id: int) -> Dictionary:
+	if not structures.has(structure_id):
+		return {"ok": false, "reason": "gate-missing"}
+	var gate: Dictionary = structures[structure_id]
+	if int(gate.get("team", -1)) != team:
+		return {"ok": false, "reason": "not-owner"}
+	if int(gate.get("health", 0)) <= 0:
+		return {"ok": false, "reason": "gate-destroyed"}
+	var policy: Dictionary = gate.get("gate_behavior", {})
+	if policy.is_empty():
+		return {"ok": false, "reason": "typed-gate-contract-missing"}
+	if bool(policy.get("open", false)):
+		policy["open"] = false
+		policy["pathing_open"] = false
+		policy["open_fraction"] = 0.0
+		policy["close_tick"] = -1
+		gate["gate_behavior"] = policy
+		_emit_event("gate.closed", structure_id, 0, {"manual": true})
+		return {"ok": true, "reason": "", "open": false}
+	var opened := request_gate_open(structure_id)
+	if not bool(opened.get("ok", false)):
+		return opened
+	policy = gate.get("gate_behavior", {})
+	policy["close_tick"] = -1
+	gate["gate_behavior"] = policy
+	return {"ok": true, "reason": "", "open": true}
+
+
 func submit_command(cmd: Dictionary) -> bool:
 	if not CommandScript.validate(cmd) or int(cmd["tick"]) <= tick_index:
 		return false
@@ -31803,6 +31833,8 @@ func apply_command(cmd: Dictionary) -> void:
 			last_command_result = cast_ability(int(args.get("hero_id", 0)), String(args.get("ability_id", "")), Vector2(args.get("target_point", Vector2.ZERO)), team)
 		"set_structure_rally":
 			last_command_result = set_structure_rally(team, int(args.get("structure_id", 0)), Vector2(args.get("position", Vector2.ZERO)))
+		"toggle_gate":
+			last_command_result = toggle_gate(team, int(args.get("structure_id", 0)))
 		"sell_structure":
 			last_command_result = sell_structure(team, int(args.get("structure_id", 0)))
 		"pause":

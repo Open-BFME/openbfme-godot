@@ -46,6 +46,7 @@ signal expansion_requested(expansion_kind: String)
 ## Compiled Command_Sell (commandbutton.ini:3554, InPalantir Yes). Emitted when
 ## the player clicks the radial demolish socket for the selected structure.
 signal structure_sell_requested
+signal gate_toggle_requested
 signal battalion_upgrade_requested(upgrade_id: String)
 signal music_volume_changed(value: float)
 signal voice_volume_changed(value: float)
@@ -4657,7 +4658,7 @@ func sync_radial_commands(anchor: Vector2, entries: Array) -> void:
 			var tooltip_group := "train"
 			if command_kind == "expansion":
 				tooltip_group = "expansion"
-			elif command_kind == "upgrade" or command_kind == "page" or command_kind == "back" or command_kind == "sell":
+			elif command_kind == "upgrade" or command_kind == "page" or command_kind == "back" or command_kind == "sell" or command_kind == "toggle_gate":
 				# Priced/announced by the caller: a fortress improvement's cost
 				# comes off the compiled contract, and a page selector has none.
 				tooltip_group = "radial_command"
@@ -4678,6 +4679,8 @@ func sync_radial_commands(anchor: Vector2, entries: Array) -> void:
 				button.pressed.connect(set_radial_page.bind(RADIAL_PAGE_MAIN))
 			elif command_kind == "sell":
 				button.pressed.connect(func() -> void: structure_sell_requested.emit())
+			elif command_kind == "toggle_gate":
+				button.pressed.connect(func() -> void: gate_toggle_requested.emit())
 			else:
 				button.pressed.connect(_emit_train_requested.bind(command_id))
 			_register_button_tooltip(button)

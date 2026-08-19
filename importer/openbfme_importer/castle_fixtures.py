@@ -70,6 +70,7 @@ from .playable_unit_compiler import (
     PlayableUnitCompilerError,
     _ancestry,
     _effective_top_blocks,
+    _effective_values,
     _geometry_contract,
     _kind_of,
     _numeric_define_provenance,
@@ -352,6 +353,13 @@ def _gate_block(
             f"{target_id} is a gate without named geometry states"
         )
     block["geometries"] = geometries
+    command_sets = [
+        row.value.strip().split()[0]
+        for row in _effective_values(ancestry, "CommandSet")
+        if row.value.strip()
+    ]
+    if command_sets:
+        block["commandSet"] = command_sets[0]
     ai_fields = _module_assignments(ancestry, "AIGateUpdate")
     if ai_fields:
         ai_label = f"{target_id} AIGateUpdate"
@@ -610,6 +618,10 @@ def _validate_gate_block(block: object, label: str) -> None:
     if not _is_number(percent) or float(percent) < 0:  # type: ignore[arg-type]
         raise CastleFixturesError(f"{label} has an invalid gate module block")
     _validate_geometries(block.get("geometries"), label)
+    if "commandSet" in block and (
+        not isinstance(block.get("commandSet"), str) or not block["commandSet"].strip()
+    ):
+        raise CastleFixturesError(f"{label} has an invalid gate command set")
     ai_gate = block.get("aiGateUpdate")
     if ai_gate is not None and (
         not isinstance(ai_gate, Mapping)
