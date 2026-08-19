@@ -8,7 +8,7 @@ const Watchdog := preload("res://tests/runner_watchdog.gd")
 const PACK_ID := "rotwk-playable-maps-private"
 const CATALOG_MAX_BYTES := 1024 * 1024
 const DOCUMENT_MAX_BYTES := 8 * 1024 * 1024
-const EXPECTED_CHECKS := 46
+const EXPECTED_CHECKS := 47
 const AMON_SUL := "Amon Sul Fortress"
 const BLOCKERS: Array[String] = [
 	"walkable-walls",
@@ -149,6 +149,15 @@ func _run() -> void:
 	_check("castle_gameplay_admits_with_named_gaps", configured
 		and battlefield.castle_gameplay_gaps == BLOCKERS,
 		"configured=%s error=%s gaps=%s" % [str(configured), String(battlefield.error), str(battlefield.castle_gameplay_gaps)])
+	# Erebor's bone-only retail props are exactly the allowlisted emitter
+	# types (WtrflSteam, WtrflHaze, WhtDrftCloud); nothing else was absorbed.
+	var bone_only: Array = battlefield.bone_only_bound_props
+	var types_seen := {}
+	for entry in bone_only:
+		types_seen[String(entry).get_slice(":", 0)] = true
+	var expected_types := {"WtrflSteam": true, "WtrflHaze": true, "WhtDrftCloud": true}
+	_check("erebor_bone_only_props_are_exactly_the_allowlisted_emitters",
+		not bone_only.is_empty() and types_seen == expected_types, str(bone_only))
 	root.remove_child(battlefield)
 	battlefield.free()
 	# Drop the last script/local references before the rendering servers drain.

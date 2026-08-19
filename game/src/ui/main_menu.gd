@@ -1398,7 +1398,9 @@ const SKIRMISH_CACHE_SCHEMA_VERSION := 0
 ## `_compute_map_availability`, the map choice set, the faction list, or any
 ## verdict wording, and every stored entry becomes a lie about content that did
 ## not change. Incrementing this constant invalidates every persisted entry.
-const SKIRMISH_AVAILABILITY_ALGORITHM_VERSION := 1
+## v2 (2026-08-19): castle maps admit; the v1 "castle gameplay unsupported"
+## verdicts persisted on player machines must be discarded, not replayed.
+const SKIRMISH_AVAILABILITY_ALGORITHM_VERSION := 2
 ## The verdict `_compute_faction_availability` returns when the faction manifest
 ## script could not be loaded at all. This is an ENVIRONMENTAL failure (a lazy
 ## script compile that did not land), not evidence that a faction is genuinely
@@ -2104,16 +2106,25 @@ func _castle_partial_note(map_id: String) -> String:
 	## Castle maps play (owner 2026-08-19) but their cooked castleSiege contract
 	## still names the capabilities not yet implemented; surface them as an
 	## informational tooltip. "" for every non-castle map.
-	var document := (_content_db.get("bundle_maps") as Dictionary).get(map_id, {}) as Dictionary
-	var contract := document.get("castleSiege", {}) as Dictionary
-	if contract == null or contract.is_empty():
+	var maps_value: Variant = _content_db.get("bundle_maps")
+	if typeof(maps_value) != TYPE_DICTIONARY:
 		return ""
-	var gaps: Array = contract.get("blockers", contract.get("required", [])) as Array
-	if gaps.is_empty():
+	var document_value: Variant = (maps_value as Dictionary).get(map_id, {})
+	if typeof(document_value) != TYPE_DICTIONARY:
+		return ""
+	var contract_value: Variant = (document_value as Dictionary).get("castleSiege", {})
+	if typeof(contract_value) != TYPE_DICTIONARY or (contract_value as Dictionary).is_empty():
+		return ""
+	var contract := contract_value as Dictionary
+	var gaps_value: Variant = contract.get("blockers", contract.get("required", []))
+	if typeof(gaps_value) != TYPE_ARRAY or (gaps_value as Array).is_empty():
 		return ""
 	var names: Array[String] = []
-	for gap in gaps:
-		names.append(String(gap))
+	for gap in (gaps_value as Array):
+		if typeof(gap) == TYPE_STRING:
+			names.append(String(gap))
+	if names.is_empty():
+		return ""
 	return "Playable — siege features still partial: " + ", ".join(names)
 
 

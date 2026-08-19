@@ -49,8 +49,24 @@ var error := ""
 ## on non-castle maps; informational on castle maps (they play with the gaps).
 var castle_gameplay_gaps: Array[String] = []
 ## Bound retail props whose GLB loaded with zero meshes ("type:source_index"):
-## retail bone-only emitter props (WtrflSteam) that have nothing to draw.
+## retail bone-only emitter props that have nothing to draw.
 var bone_only_bound_props: Array[String] = []
+## Retail Object types whose model is a bone-only rig by AUTHORING (no
+## geometry, only ParticleSysBone emitters). A zero-mesh GLB is correct for
+## these and only these; any other zero-mesh bound GLB fails the map closed.
+## Every entry verified against the pure 2.01 tree: the Object's Model is a
+## P_* bone rig carrying only ParticleSysBone rows. (Census 2026-08-19 over
+## the cooked playable-maps pack: these eight are the complete zero-mesh set.)
+const BONE_ONLY_RETAIL_PROP_TYPES := {
+	"WtrflSteam": "natureprop.ini:2972 P_WtrflSteam ParticleSysBone MISTLF/MISTRT Steam01",
+	"WtrflHaze": "natureprop.ini:3009 P_WtrflHaze ParticleSysBone x2",
+	"LakeRipple": "natureprop.ini:4924 P_WtrflHaze ParticleSysBone x1",
+	"WhtDrftCloud": "natureprop.ini:3115 P_WhtDrftCloud ParticleSysBone x1",
+	"WtrRiplsSmall": "civilianprop.ini P_WtrRiplsSmall ParticleSysBone waterRippleBone WaterRipplesSmall",
+	"MordorSmoke": "evilfactionprops.ini P_MordorSmoke ParticleSysBone VOLCANOSMOKEBON MordorSmoke",
+	"LavaFallEmitter": "evilfactionprops.ini P_LavaFall01 ParticleSysBone LAVAFALL01BONE LavaFall01",
+	"VolcanoSmoke": "evilfactionprops.ini P_VolcanoSmoke ParticleSysBone VOLCANOSMOKEBON VolcanoSmoke",
+}
 var terrain_exact_grid_ready := false
 var terrain_vertex_count := 0
 var terrain_triangle_count := 0
@@ -1181,12 +1197,15 @@ func _build_bound_retail_props(map_data: RetailMapData) -> bool:
 			return _fail_configuration("bound retail GLB could not be loaded: %s (%s)" % [source_type, glb_path.get_file()])
 		var mesh_count := _mesh_instance_count(visual)
 		if mesh_count <= 0:
-			# A GLB that loads but carries no mesh is a retail bone-only prop
-			# (natureprop.ini `WtrflSteam`: Model = P_WtrflSteam with two
-			# ParticleSysBone emitters and no geometry). Nothing to draw; the
-			# emitter lane owns it. Skip by name instead of failing the map -
-			# Erebor carries one and used to be unbuildable because of it.
 			visual.free()
+			if not BONE_ONLY_RETAIL_PROP_TYPES.has(source_type):
+				# Any OTHER zero-mesh GLB is a cook regression, not a bone-only
+				# prop: fail closed and say which one.
+				container.free()
+				return _fail_configuration("bound retail GLB could not instantiate a mesh: %s (%s)" % [source_type, glb_path.get_file()])
+			# A retail bone-only prop (see BONE_ONLY_RETAIL_PROP_TYPES): nothing
+			# to draw, the emitter lane owns it. Erebor carries one and used to
+			# be unbuildable because of it.
 			seen_source_indices[source_index] = true
 			bone_only_bound_props.append("%s:%d" % [source_type, source_index])
 			continue
