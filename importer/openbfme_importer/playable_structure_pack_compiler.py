@@ -462,6 +462,7 @@ def compile_structure_visual_recipe(
     model_external_hierarchies: dict[str, frozenset[str]] = {}
     model_skinned_meshes: dict[str, int] = {}
     model_mesh_counts: dict[str, int] = {}
+    model_hidden_mesh_counts: dict[str, int] = {}
     for model_path in (*model_phases, *bib_conditions):
         row = scanned.get(model_path.casefold())
         if row is None:
@@ -488,6 +489,16 @@ def compile_structure_visual_recipe(
                 f"scanned W3D mesh count is invalid: {model_path}"
             )
         model_mesh_counts[model_path] = mesh_count
+        hidden_count = row.get("hiddenMeshCount", 0)
+        if (
+            isinstance(hidden_count, bool)
+            or not isinstance(hidden_count, int)
+            or hidden_count < 0
+        ):
+            raise PlayableStructurePackCompilerError(
+                f"scanned W3D hidden mesh count is invalid: {model_path}"
+            )
+        model_hidden_mesh_counts[model_path] = hidden_count
         own_ids = frozenset(
             value.casefold() for value in _header_ids(row, "hierarchyIds")
         )
@@ -772,10 +783,14 @@ def compile_structure_visual_recipe(
         ):
             # Single-mesh (or unknown-count) rigid carriers still bake: bibs
             # fail skin validation on the empty ROOTTRANSFORM-omitted armature.
-            # Multi-mesh HLOD walls must keep the hierarchy — baking dropped
-            # named deck/ramp pivots (P1/P2/P3) that props-hierarchical keeps.
+            # Multi-mesh HLOD models that carry W3D HIDDEN proxy meshes (the
+            # retail walk-surface / docking decks and ramps: P1/P2/R1) must
+            # keep the hierarchy — baking dropped those named pivots that
+            # props-hierarchical keeps. Every other multi-mesh model keeps the
+            # bake it always had (no blast radius beyond the wall family).
             mesh_count = model_mesh_counts[model_path]
-            if mesh_count is None or mesh_count <= 1:
+            hidden_meshes = model_hidden_mesh_counts.get(model_path, 0)
+            if mesh_count is None or mesh_count <= 1 or hidden_meshes <= 0:
                 options["provenRootRigidBake"] = True
         absent = retail_absent_textures.get(model_path.casefold())
         if absent:

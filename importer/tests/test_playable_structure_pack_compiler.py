@@ -94,6 +94,7 @@ def _scan(
     embedded_animation_channel_count: int | None = None,
     skinned_mesh_count: int | None = None,
     mesh_count: int | None = None,
+    hidden_mesh_count: int | None = None,
 ) -> dict[str, object]:
     row: dict[str, object] = {
         "virtualPath": path,
@@ -116,6 +117,8 @@ def _scan(
         row["skinnedMeshCount"] = skinned_mesh_count
     if mesh_count is not None:
         row["meshCount"] = mesh_count
+    if hidden_mesh_count is not None:
+        row["hiddenMeshCount"] = hidden_mesh_count
     return row
 
 
@@ -1055,6 +1058,8 @@ def test_multi_pivot_unskinned_structure_keeps_hierarchical_pivots() -> None:
             hierarchy_ids=["RBHDDWST1"],
             mesh_count=4,
             skinned_mesh_count=0,
+            # P1/P2/P3 carry W3D_MESH_FLAG_HIDDEN (0x1000) in rbhddwst1.w3d.
+            hidden_mesh_count=3,
         )
     )
     _rehash(closure)
@@ -1063,6 +1068,32 @@ def test_multi_pivot_unskinned_structure_keeps_hierarchical_pivots() -> None:
     models = _models_by_source(recipe)
     assert models[wall]["converter"] == "w3d-hierarchical"
     assert models[wall]["options"].get("provenRootRigidBake") is not True
+    validate_structure_visual_recipe(recipe)
+
+
+def test_multi_mesh_structure_without_hidden_proxies_still_bakes() -> None:
+    """The no-bake exception is only for models carrying W3D HIDDEN proxy
+    meshes (walk decks / ramps). Every other multi-mesh rigid structure keeps
+    the root-rigid bake it always had - no blast radius beyond the wall
+    family on the next recook."""
+
+    house = "art/w3d/db/db_houses_01.w3d"
+    closure = _closure()
+    closure["exactLeaves"].append(_leaf("DB_HOUSES_01", "model", house, ["intact"]))
+    closure["scannedW3d"].append(
+        _scan(
+            house,
+            hierarchy_ids=["DB_HOUSES_01"],
+            mesh_count=5,
+            skinned_mesh_count=0,
+            hidden_mesh_count=0,
+        )
+    )
+    _rehash(closure)
+
+    recipe = compile_structure_visual_recipe(_TARGET, closure)
+    models = _models_by_source(recipe)
+    assert models[house]["options"]["provenRootRigidBake"] is True
     validate_structure_visual_recipe(recipe)
 
 
