@@ -25993,6 +25993,29 @@ func _initialize_structure_auto_deposit(structure: Dictionary) -> void:
 			structure_auto_deposit_updates_for_team(descriptor_team)
 				.get(kind, []) as Array
 		)
+		# Fortress composite pieces: retail authors the keep's income on the
+		# piece object (fortress.ini:983 MenFortressCitadel AutoDepositUpdate
+		# GENERIC_KEEP_MONEY_AMOUNT 25 / GENERIC_KEEP_MONEY_TIME 6000 ms), and
+		# the manifest files those rows under deferred_structure_auto_deposit_
+		# updates[object_id] because the piece is engine-spawned, not built.
+		# The piece IS a live castle_piece row now, so its authored rows bind
+		# here. Owner 2026-08-19: fortresses never earned passive income.
+		if rules.is_empty():
+			var deferred: Dictionary = team_manifest_for(descriptor_team).get(
+				"deferred_structure_auto_deposit_updates", {}
+			) as Dictionary
+			# The manifest keys composite pieces by the retail source object
+			# name (MenFortressCitadel); the row carries both spellings.
+			for key in [String(structure.get("source_object_id", "")), String(structure.get("object_id", ""))]:
+				if key == "" or not deferred.has(key):
+					continue
+				var executable: Array = []
+				for row_value in deferred.get(key, []) as Array:
+					if String((row_value as Dictionary).get("runtimeStatus", "")) == "executable":
+						executable.append(row_value)
+				if not executable.is_empty():
+					rules = executable
+					break
 	if rules.is_empty():
 		structure.erase("auto_deposit_rules")
 		structure.erase("auto_deposit_state")
