@@ -1,0 +1,219 @@
+extends SceneTree
+## L7 product-path proof: boot two shipped castle maps through the real retail
+## slice, then drive the deterministic sim for a bounded 1,000 ticks. Erebor is
+## the zero-SkirmishSpawnPoint case; Helm's Deep is the authored-spawn control.
+
+const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
+const BOOT_DEADLINE_MS := 300000
+const TICK_LIMIT := 1000
+const AI_TEAM := 1
+const MAP_CASES := [
+	{
+		"id": "rotwk.map.wor-erebor",
+		"name": "Erebor",
+		"expected_skirmish_spawn_points": 0,
+		"retail_base_layout": "map-specific",
+	},
+	{
+		"id": "rotwk.map.wor-helms-deep",
+		"name": "Helm's Deep",
+		"expected_skirmish_spawn_points": 4,
+		"retail_base_layout": "map-specific",
+	},
+]
+
+var _runner_watchdog := RunnerWatchdogScript.new()
+var _passed := 0
+var _failed := 0
+var _checks := 0
+
+
+func _init() -> void:
+	_runner_watchdog.start(self, "CASTLE_SKIRMISH_AI_RUNNER", 900000)
+	await process_frame
+	OS.set_environment("OPENBFME_SLICE_FACTION", "men")
+	var case_filter := OS.get_environment("OPENBFME_CASTLE_AI_MAP").strip_edges()
+	var selected_cases := []
+	for case_value in MAP_CASES:
+		if case_filter == "" or String((case_value as Dictionary)["id"]) == case_filter:
+			selected_cases.append(case_value)
+	for case_value in selected_cases:
+		await _run_map(case_value as Dictionary)
+	_check(
+		"runner_check_count_liveness",
+		selected_cases.size() > 0 and _checks >= selected_cases.size() * 8,
+		"checks=%d maps=%d" % [_checks, selected_cases.size()]
+	)
+	print("CASTLE_SKIRMISH_AI NOTE runtime-tested base-building maps: Erebor, Helm's Deep")
+	print("CASTLE_SKIRMISH_AI NOTE retail map-specific AIBase authoring (not runtime-tested here): Minas Tirith, Dol Guldur, Grey Havens, Carn Dum, Fornost")
+	print("CASTLE_SKIRMISH_AI NOTE retail generic <ANY> fallback (not runtime-tested here): Isengard, Black Gate, Minas Morgul")
+	_finish()
+
+
+func _run_map(case_row: Dictionary) -> void:
+	var map_id := String(case_row["id"])
+	var map_name := String(case_row["name"])
+	OS.set_environment("OPENBFME_SLICE_MAP", map_id)
+	var scene: PackedScene = load("res://scenes/retail_vertical_slice.tscn")
+	if not _check("%s_scene_loads" % map_name, scene != null, "scene missing"):
+		return
+	var slice = scene.instantiate()
+	root.add_child(slice)
+	var deadline := Time.get_ticks_msec() + BOOT_DEADLINE_MS
+	while Time.get_ticks_msec() < deadline:
+		await process_frame
+		if bool(slice.ready_ok) or String(slice.failure_reason) != "":
+			break
+	if not _check(
+		"%s_slice_ready" % map_name,
+		bool(slice.ready_ok),
+		"map=%s failure=%s" % [map_id, String(slice.failure_reason)]
+	):
+		_remove_slice(slice)
+		return
+
+	# Stop the scene's wall-clock loop; this runner owns the exact deterministic
+	# tick budget below, matching other retail-slice test runners.
+	slice.simulation_paused = true
+	var simulation = slice.simulation
+	_check("%s_ai_team_configured" % map_name, simulation.team_is_ai(AI_TEAM), "descriptor=%s" % str(simulation.team_descriptor(AI_TEAM)))
+	_check("%s_authored_player_starts" % map_name, slice.source_map_data.local_player_starts.size() >= 2, "starts=%s" % str(slice.source_map_data.local_player_starts.keys()))
+
+	var spawn_points := 0
+	for placement_value in slice.source_map_data.scenario_object_placements:
+		if String((placement_value as Dictionary).get("type_name", "")).to_lower() == "skirmishspawnpoint":
+			spawn_points += 1
+	_check(
+		"%s_skirmish_spawn_point_oracle" % map_name,
+		spawn_points == int(case_row["expected_skirmish_spawn_points"]),
+		"expected=%d actual=%d" % [int(case_row["expected_skirmish_spawn_points"]), spawn_points]
+	)
+
+	var initial_tick := int(simulation.tick_index)
+	var initial_orders := {}
+	for entity_id in simulation.entity_ids():
+		var entity: Dictionary = simulation.entity(entity_id)
+		if int(entity.get("team", -1)) == AI_TEAM:
+			initial_orders[int(entity_id)] = int(entity.get("order_sequence", 0))
+	var attack_order_entities := {}
+	for _tick in range(TICK_LIMIT):
+		if int(simulation.winner) != -1:
+			break
+		simulation.tick()
+		for entity_id in simulation.living_ids(AI_TEAM):
+			var entity: Dictionary = simulation.entity(entity_id)
+			if bool(entity.get("is_builder", false)):
+				continue
+			var order_sequence := int(entity.get("order_sequence", 0))
+			var baseline := int(initial_orders.get(int(entity_id), 0))
+			if order_sequence > baseline and (
+				int(entity.get("target_id", 0)) != 0
+				or bool(entity.get("ai_in_wave", false))
+				or not (entity.get("route", []) as Array).is_empty()
+			):
+				attack_order_entities[int(entity_id)] = order_sequence
+
+	var structures_built := 0
+	var built_targets := {}
+	for event_value in simulation.events:
+		var event: Dictionary = event_value
+		if String(event.get("kind", "")) == "construction.completed" and int(event.get("team", -1)) == AI_TEAM:
+			built_targets[int(event.get("target_id", 0))] = true
+	structures_built = built_targets.size()
+	var attack_orders_issued := attack_order_entities.size()
+	var dynamic_ai_structures := 0
+	for structure_id in simulation.structure_ids(AI_TEAM):
+		if int(structure_id) >= 3000 and int(structure_id) < simulation.CASTLE_FIXTURE_FIRST_ID:
+			dynamic_ai_structures += 1
+
+	_check("%s_tick_budget_live" % map_name, int(simulation.tick_index) > initial_tick, "tick=%d->%d winner=%d" % [initial_tick, int(simulation.tick_index), int(simulation.winner)])
+	_check(
+		"%s_ai_built_structure" % map_name,
+		structures_built >= 1 and dynamic_ai_structures >= 1,
+		_diagnostic(simulation, structures_built, attack_orders_issued, dynamic_ai_structures)
+	)
+	_check(
+		"%s_ai_issued_attack_order" % map_name,
+		attack_orders_issued >= 1,
+		_diagnostic(simulation, structures_built, attack_orders_issued, dynamic_ai_structures)
+	)
+	_check(
+		"%s_zero_spawn_fallback" % map_name,
+		spawn_points > 0 or (structures_built >= 1 and attack_orders_issued >= 1),
+		"zero SkirmishSpawnPoint map failed Player_N_Start-derived home fallback; %s" % _diagnostic(simulation, structures_built, attack_orders_issued, dynamic_ai_structures)
+	)
+	print(
+		"CASTLE_SKIRMISH_AI MAP map=%s retail_base_layout=%s skirmish_spawn_points=%d ticks=%d structures_built=%d dynamic_ai_structures=%d attack_orders_issued=%d status=%s" % [
+			map_name,
+			String(case_row["retail_base_layout"]),
+			spawn_points,
+			int(simulation.tick_index) - initial_tick,
+			structures_built,
+			dynamic_ai_structures,
+			attack_orders_issued,
+			"base-building" if structures_built >= 1 and attack_orders_issued >= 1 else "defend-only-or-stalled",
+		]
+	)
+	_remove_slice(slice)
+	await process_frame
+
+
+func _diagnostic(simulation, structures_built: int, attack_orders_issued: int, dynamic_ai_structures: int) -> String:
+	var unit_count: int = simulation.living_ids(AI_TEAM).size()
+	var queues := []
+	var income_per_payout := 0
+	var units := []
+	for entity_id in simulation.living_ids(AI_TEAM):
+		var entity: Dictionary = simulation.entity(entity_id)
+		units.append({
+			"id": entity_id,
+			"builder": entity.get("is_builder", false),
+			"state": entity.get("state", ""),
+			"position": entity.get("position", Vector2.ZERO),
+			"destination": entity.get("destination", Vector2.ZERO),
+			"construction_id": entity.get("construction_id", 0),
+			"route_points": (entity.get("route", []) as Array).size(),
+		})
+	for structure_id in simulation.structure_ids(AI_TEAM):
+		var row: Dictionary = simulation.structure(structure_id)
+		if float(row.get("construction_progress", 0.0)) >= 1.0:
+			income_per_payout += int(row.get("income_per_payout", 0))
+		if not (row.get("queue", []) as Array).is_empty():
+			queues.append({"id": structure_id, "kind": row.get("structure_kind", ""), "queue": row.get("queue", [])})
+	return "tick=%d units=%d income=%d resources=%d structures_built=%d dynamic_structures=%d attack_orders=%d queues=%s unit_rows=%s ai_state=%s last_route_rejection=%s" % [
+		int(simulation.tick_index),
+		unit_count,
+		income_per_payout,
+		int(simulation.resources_for_team(AI_TEAM)),
+		structures_built,
+		dynamic_ai_structures,
+		attack_orders_issued,
+		str(queues),
+		str(units),
+		str(simulation._team_ai_state.get(AI_TEAM, {})),
+		String(simulation.last_route_rejection),
+	]
+
+
+func _remove_slice(slice) -> void:
+	if is_instance_valid(slice):
+		if slice.get_parent() == root:
+			root.remove_child(slice)
+		slice.free()
+
+
+func _check(name: String, ok: bool, detail: String = "") -> bool:
+	_checks += 1
+	if ok:
+		_passed += 1
+		print("CASTLE_SKIRMISH_AI PASS %s" % name)
+	else:
+		_failed += 1
+		print("CASTLE_SKIRMISH_AI FAIL %s%s" % [name, (" (%s)" % detail) if detail != "" else ""])
+	return ok
+
+
+func _finish() -> void:
+	_runner_watchdog.stop()
+	print("CASTLE_SKIRMISH_AI_RESULT passed=%d failed=%d checks=%d" % [_passed, _failed, _checks])
+	quit(0 if _failed == 0 else 1)

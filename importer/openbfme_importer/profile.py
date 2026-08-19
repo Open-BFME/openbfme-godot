@@ -159,6 +159,40 @@ def is_canonical_multiplayer_map_virtual_path(value: object) -> bool:
     """Return whether *value* has the exact shared runtime-slug grammar."""
 
     return canonical_multiplayer_map_runtime_slug(value) is not None
+
+
+def canonical_ai_library_map_runtime_slug(value: object) -> str | None:
+    """Derive the runtime slug for a map admitted to AI-library composition.
+
+    Ordinary multiplayer maps retain the established ``map mp`` contract.
+    Retail castle skirmish maps use ``map wor`` directories, with either the
+    repeated directory name or the bare map name as the file stem. Admission
+    itself remains the map-profile category plus authored-player-start test.
+    """
+
+    multiplayer_slug = canonical_multiplayer_map_runtime_slug(value)
+    if multiplayer_slug is not None:
+        return multiplayer_slug
+    if not isinstance(value, str) or "\\" in value:
+        return None
+    match = re.fullmatch(
+        r"maps/(map wor ([^/]+))/([^/]+)\.map",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    directory_name, map_name, file_stem = match.groups()
+    if file_stem.casefold() not in {directory_name.casefold(), map_name.casefold()}:
+        return None
+    slug = "wor-" + map_name.casefold().replace(" ", "-")
+    if not (
+        not slug.endswith("-")
+        and "--" not in slug
+        and re.fullmatch(r"[a-z0-9-]+", slug)
+    ):
+        return None
+    return slug
 W3D_EXCLUDED_OPTIONAL_MESHES_OPTION = "excludedOptionalMeshes"
 W3D_PROVEN_ROOT_RIGID_BAKE_OPTION = "provenRootRigidBake"
 W3D_PROVEN_PIVOT_ONLY_MODEL_OPTION = "provenPivotOnlyModel"
@@ -523,12 +557,23 @@ def _validate_w3d_source_variants(resources: list["ResourceRule"]) -> None:
 def _validate_script_composite_resources(resources: list["ResourceRule"]) -> None:
     """Validate exact source closure and output ownership before extraction."""
 
-    base_libraries = [
+    legacy_libraries = [
         "libraries/ai_initialize/ai_initialize.map",
         "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map",
     ]
+    base_libraries = [
+        "libraries/multiplayer_start_teams/multiplayer_start_teams.map",
+        "libraries/ai_initialize/ai_initialize.map",
+        "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map",
+        "libraries/multiplayer_human/multiplayer_human.map",
+    ]
     gollum_library = "libraries/lib_gollumspawn/lib_gollumspawn.map"
-    allowed_library_closures = (base_libraries, [*base_libraries, gollum_library])
+    allowed_library_closures = (
+        legacy_libraries,
+        [*legacy_libraries, gollum_library],
+        base_libraries,
+        [*base_libraries, gollum_library],
+    )
     for resource in resources:
         output_key = (
             "/".join(safe_relative_parts(resource.output)).casefold()
@@ -556,7 +601,7 @@ def _validate_script_composite_resources(resources: list["ResourceRule"]) -> Non
                 "sage-script-composite contract"
             )
         map_virtual_path = resource.options.get("mapVirtualPath")
-        runtime_slug = canonical_multiplayer_map_runtime_slug(map_virtual_path)
+        runtime_slug = canonical_ai_library_map_runtime_slug(map_virtual_path)
         libraries = resource.options.get("libraryVirtualPaths")
         requested_paths = (
             [map_virtual_path, *libraries]
