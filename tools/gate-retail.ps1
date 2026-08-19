@@ -51,21 +51,21 @@ $publishRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot "workspace\content-pa
 # SILENTLY is not. When the selection legitimately moves, re-measure and update
 # these constants in the same change that moves it, and say so - the same
 # conscious-update pattern the state pins use.
-# RE-MEASURED 2026-08-19 v0.2.6 (7 faction recook + playable-maps republish 6f6be4db with castle fixtures)
-$expectedSelectionSha256 = "f8c3b2550f756871fb3d82b305794570a69760643b4c6154f8ceaa9b7096f4fe"
-$expectedSelectionActivePack = "rotwk-men-vslice/9dd4a5ed3f57a5f5bd76aca602e6389bbce03176ee460ea5dc2e37c9a722acbd"
-# RE-MEASURED 2026-08-19 v0.2.6 (7 faction recook + playable-maps republish 6f6be4db with castle fixtures)
+# RE-MEASURED 2026-08-19 v0.2.7 (castle lanes recook + playable-maps republish abc27325: gates/garrison/walkSurfaces/ai_bases/scripts)
+$expectedSelectionSha256 = "bbdaa97e908476ced4e88aa61cd87257e5c4aa6b9ea440dec40f70aeb82ef292"
+$expectedSelectionActivePack = "rotwk-men-vslice/51d4885433869fa6290498eeac597b8cc8ac79e540d073dbf03c9c0d0184df3c"
+# RE-MEASURED 2026-08-19 v0.2.7 (castle lanes recook + playable-maps republish abc27325: gates/garrison/walkSurfaces/ai_bases/scripts)
 $expectedSelectionSupplementalPacks = @(
     "bfme2-men-vslice/7de517bf146582f10741750b50d63f9955c42d1fe2aa13200757fc6fb29f217a",
     "bfme2-skirmish-maps-private/f9c14cfa4c25e68509373390741fc82e5892f050a2305a19fa3efaca0f39a5b0",
-    "rotwk-elves-vslice/223dcc5c44c371383cbf99eaf92f75952b7262a8cab012acf53090d043f71538",
-    "rotwk-dwarves-vslice/b176d67d6f54feb8fbdd4ea1a490ef47e9f4e755429683ec3632bc104e897f1d",
-    "rotwk-isengard-vslice/223ab28b9095aacd64ae0c392b492690e178cfc826cc08acc5ebbb865a4234b1",
-    "rotwk-mordor-vslice/85887ce14a2699c9ceb53acc2a132f370ff57aae1b4cf3013cb2624b3dc7dd56",
-    "rotwk-wild-vslice/59bafb9d2d5c7d6c1ed1791a568bfb277bc170f2bca4a0b3661a6a756a673614",
-    "rotwk-angmar-vslice/f978128b5a5cb135ce3e7dfc5c4191abfcc6a2e01f3daa861f767c92a36b46ee",
+    "rotwk-elves-vslice/05e4b2a6b43f2145b4ddb8f2c42780feee8c60f3ebdd52bf3f8435e0c14387ec",
+    "rotwk-dwarves-vslice/088d90191cb8cf393bedd5b7d6194c6fa9dc6457cd7c4fcf5f9efa261ee141c7",
+    "rotwk-isengard-vslice/ad66347a868ca78caf390a360de586dfcec3e9855fcbca19e926ca61d88d7842",
+    "rotwk-mordor-vslice/975c3d6a618ad161e0b00884500aa03b6be8364309baa136064970e1e4ac4f29",
+    "rotwk-wild-vslice/765e92a728ff0b525a8aebfd85cfe65ee39093629135c8445886ef2efd2969d0",
+    "rotwk-angmar-vslice/a3635f32f05ffe617407224d89b25decd27d2058be9946b9aecce04b0e4a04ee",
     "rotwk-music-vslice/f10d95389a1ab51a7a20b3f549fc6b90291db51f7e68693e4d157f1a67eada8d",
-    "rotwk-playable-maps-private/6f6be4dbbabceb7c78a8c3e6e56a5d955421320c592b7d5178b44fd532acc4d9",
+    "rotwk-playable-maps-private/abc27325672bd5712d7785e23d5ff858133c86056f173032deb8c1de9141d4d1",
     "rotwk-cursors-vslice/11236cb6a57396ccf3bfad7d4406f89dc7e0e95b3d9db34c0063c6c1c1d760d2",
     "rotwk-men-eva-overlay/c59262c328a3041b3da684cdab826619ee7a3dcee85b68b137e68a869bc8741d",
     "rotwk-elves-eva-overlay/51d90549e45b6c04e98a95c10bc03a709e8767c121d6d454a5d71bf338a78ab6",
