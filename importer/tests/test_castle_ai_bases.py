@@ -26,7 +26,7 @@ oracle_present = pytest.mark.skipif(
     reason="pure RotWK skirmish AI/BSE oracle is not present",
 )
 
-SIX_FULLY_BOUND_CASTLE_MAPS = (
+SIX_EIGHT_LAYOUT_CASTLE_MAPS = (
     "map wor minas tirith.map",
     "map wor helms deep.map",
     "map wor erebor.map",
@@ -34,6 +34,7 @@ SIX_FULLY_BOUND_CASTLE_MAPS = (
     "map wor grey havens.map",
     "map wor ang carn dum.map",
 )
+FORNOST_CASTLE_MAP = "map wor ang fornost.map"
 THREE_GENERIC_FALLBACK_CASTLE_MAPS = (
     "map wor isengard.map",
     "map wor black gate.map",
@@ -42,17 +43,37 @@ THREE_GENERIC_FALLBACK_CASTLE_MAPS = (
 
 
 @oracle_present
-def test_six_castle_maps_compile_all_eight_retail_ai_base_bindings() -> None:
+def test_map_specific_castle_maps_preserve_their_retail_ai_base_bindings() -> None:
     source = SKIRMISH_AI_DATA.read_bytes()
-    for map_name in SIX_FULLY_BOUND_CASTLE_MAPS:
+    for map_name in SIX_EIGHT_LAYOUT_CASTLE_MAPS:
         document = compile_castle_ai_bases(source, EFFECTIVE_ASSETS, map_name)
         assert document["schema"] == "openbfme.castle-ai-bases"
+        assert document["coordinateTransform"] == (
+            "localOffset=project((sage.x,-sage.y),sourceMapAxes)*sourceMapTransformScale"
+        )
         assert document["gameMapToUseOn"].casefold() == map_name.casefold()
         assert document["layoutCount"] == 8
         assert {row["side"] for row in document["layouts"]} == {
             "Men", "Elves", "Dwarves", "Isengard", "Mordor", "Wild", "Angmar", "Arnor"
         }
         assert sum(len(row["sites"]) for row in document["layouts"]) > 0
+
+    fornost = compile_castle_ai_bases(source, EFFECTIVE_ASSETS, FORNOST_CASTLE_MAP)
+    assert fornost["layoutCount"] == 7
+    assert {row["side"] for row in fornost["layouts"]} == {
+        "Men", "Elves", "Dwarves", "Isengard", "Mordor", "Wild", "Angmar"
+    }
+    assert "Arnor" not in {row["side"] for row in fornost["layouts"]}
+
+
+@oracle_present
+def test_carn_dum_preserves_authored_empty_dwarves_site_list() -> None:
+    document = compile_castle_ai_bases(
+        SKIRMISH_AI_DATA.read_bytes(), EFFECTIVE_ASSETS, "map wor ang carn dum.map"
+    )
+    dwarves = next(row for row in document["layouts"] if row["side"] == "Dwarves")
+    assert dwarves["siteCount"] == 0
+    assert dwarves["sites"] == []
 
 
 @oracle_present

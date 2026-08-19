@@ -250,7 +250,7 @@ def compile_castle_ai_bases(
         "gameMapToUseOn": (
             str(selected[0]["gameMapToUseOn"]) if selected else requested
         ),
-        "coordinateTransform": "localOffset=(sage.x,-sage.y)*sourceMapTransformScale",
+        "coordinateTransform": "localOffset=project((sage.x,-sage.y),sourceMapAxes)*sourceMapTransformScale",
         "layoutCount": len(layouts),
         "layouts": layouts,
         "fallback": "authored-map-specific" if layouts else "generic-any",

@@ -1381,6 +1381,8 @@ var _map_script_waypoints: Dictionary = {}
 var _ai_build_waypoints: Dictionary = {}
 var _castle_ai_base_layouts: Array[Dictionary] = []
 var _castle_ai_base_fallback := "generic-any"
+var _source_map_axis_x := Vector2.RIGHT
+var _source_map_axis_z := Vector2.DOWN
 var _rules: Dictionary = {}
 var configuration_error := ""
 var _unit_production_rules: Dictionary = {}
@@ -1783,6 +1785,10 @@ func _apply_map_configuration(configuration: Dictionary) -> void:
 	source_player_starts = (configured_starts as Dictionary).duplicate(true)
 	route_provider = configured_provider as RefCounted
 	playable_outline = (configured_outline as PackedVector2Array).duplicate()
+	var configured_axis_x: Variant = configuration.get("source_map_axis_x", Vector2.RIGHT)
+	var configured_axis_z: Variant = configuration.get("source_map_axis_z", Vector2.DOWN)
+	_source_map_axis_x = Vector2(configured_axis_x).normalized() if typeof(configured_axis_x) == TYPE_VECTOR2 and not Vector2(configured_axis_x).is_zero_approx() else Vector2.RIGHT
+	_source_map_axis_z = Vector2(configured_axis_z).normalized() if typeof(configured_axis_z) == TYPE_VECTOR2 and not Vector2(configured_axis_z).is_zero_approx() else Vector2.DOWN
 	var configured_home_layout: Variant = configuration.get("home_layout", {})
 	_home_layout = (configured_home_layout as Dictionary).duplicate(true) if typeof(configured_home_layout) == TYPE_DICTIONARY else {}
 	_castle_ai_base_layouts = []
@@ -1935,6 +1941,8 @@ func _apply_fallback_configuration() -> void:
 	_ai_build_waypoints.clear()
 	_castle_ai_base_layouts.clear()
 	_castle_ai_base_fallback = "generic-any"
+	_source_map_axis_x = Vector2.RIGHT
+	_source_map_axis_z = Vector2.DOWN
 	_extra_team_centers = {}
 	_configured_team_start_indices = {}
 	source_map_configured = false
@@ -27047,6 +27055,43 @@ func _structure_placement_radius(structure_kind: String) -> float:
 	return float(STRUCTURE_PLACEMENT_RADII.get(structure_kind, 2.4))
 
 
+func _authored_structure_placement_radius(team: int, structure_kind: String) -> float:
+	var sources: Variant = structure_source_object_ids_for_team(team).get(structure_kind, [])
+	var source_object_id := ""
+	if typeof(sources) == TYPE_ARRAY and not (sources as Array).is_empty():
+		source_object_id = String((sources as Array)[0])
+	elif typeof(sources) in [TYPE_STRING, TYPE_STRING_NAME]:
+		source_object_id = String(sources)
+	if source_object_id != "":
+		var authored_radius := _structure_footprint_radius({
+			"source_object_id": source_object_id,
+			"structure_kind": structure_kind,
+		})
+		if authored_radius > 0.0:
+			return authored_radius
+	return _structure_placement_radius(structure_kind)
+
+
+func _authored_site_foundation_fixture_contains(fixture: Dictionary, site: Vector2) -> bool:
+	# An authored site may coincide with its own foundation/build-plot marker,
+	# but never gets a blanket exemption from the surrounding keep. Both the
+	# fixture identity and its actual compiled footprint must prove occupancy.
+	var role := String(fixture.get("castle_fixture_role", "")).to_lower()
+	var fixture_type := String(fixture.get("castle_fixture_type", "")).to_lower()
+	var is_foundation := (
+		role.contains("foundation")
+		or role.contains("build-plot")
+		or role.contains("build_plot")
+		or fixture_type.contains("foundation")
+		or fixture_type.contains("buildplot")
+		or fixture_type.contains("build_plot")
+	)
+	if not is_foundation:
+		return false
+	var footprint := _structure_footprint_radius(fixture)
+	return footprint > 0.0 and Vector2(fixture.get("position", Vector2.ZERO)).distance_to(site) <= footprint
+
+
 func _issue_construct_for_team(
 	team: int,
 	ids: Array[int],
@@ -27092,24 +27137,51 @@ func _issue_construct_for_team(
 	else:
 		if playable_outline.size() >= 3 and not Geometry2D.is_point_in_polygon(position, playable_outline):
 			return {"ok": false, "reason": "outside-playable-area"}
-		var new_radius := _structure_placement_radius(structure_kind)
+		var new_radius := (
+			_authored_structure_placement_radius(team, structure_kind)
+			if authored_castle_site
+			else _structure_placement_radius(structure_kind)
+		)
 		# The spatial query is exact: no existing footprint farther away than the
 		# two maximum authored radii plus the authored clearance can overlap this
 		# site. This matters on castle maps, whose hundreds of wall fixtures made
 		# every fallback candidate repeat a full structure-table scan.
 		var gather_radius := new_radius + MAX_STRUCTURE_PLACEMENT_RADIUS + PLACEMENT_CLEARANCE_MARGIN
+		var exempted_foundation_id := 0
 		for existing_id in _structure_ids_within_gather_radius(position, gather_radius):
 			var existing_row: Dictionary = structures[existing_id] as Dictionary
-			# AIBase and Player_N_BuildPlot sites are explicit retail placement
-			# authoring. Their footprints may intersect the coarse collision discs
-			# used for imported castle fixture art, but they must still reject every
-			# live/dynamic structure. Generic fallback sites receive no exemption.
-			if authored_castle_site and existing_id >= CASTLE_FIXTURE_FIRST_ID:
+			# Exempt at most the one foundation marker whose own footprint contains
+			# the authored point. Walls, gates, towers, other foundations, and every
+			# live/dynamic structure retain normal clearance.
+			if (
+				authored_castle_site
+				and exempted_foundation_id == 0
+				and existing_id >= CASTLE_FIXTURE_FIRST_ID
+				and _authored_site_foundation_fixture_contains(existing_row, position)
+			):
+				exempted_foundation_id = existing_id
 				continue
 			var existing_position := Vector2(existing_row.get("position", Vector2.ZERO))
-			var clearance := new_radius + _structure_placement_radius(String(existing_row.get("structure_kind", ""))) + PLACEMENT_CLEARANCE_MARGIN
+			var existing_radius := _structure_placement_radius(String(existing_row.get("structure_kind", "")))
+			var clearance_margin := PLACEMENT_CLEARANCE_MARGIN
+			if existing_id >= CASTLE_FIXTURE_FIRST_ID:
+				var fixture_radius := _structure_footprint_radius(existing_row)
+				if fixture_radius > 0.0:
+					existing_radius = fixture_radius
+				# Imported fixtures have exact authored footprints and no builder
+				# working apron. The margin remains for live/dynamic structures.
+				clearance_margin = 0.0
+			var clearance := new_radius + existing_radius + clearance_margin
 			if existing_position.distance_to(position) < clearance:
-				return {"ok": false, "reason": "site-obstructed"}
+				return {
+					"ok": false,
+					"reason": "site-obstructed",
+					"obstruction_id": existing_id,
+					"obstruction_type": String(existing_row.get("castle_fixture_type", existing_row.get("structure_kind", ""))),
+					"obstruction_role": String(existing_row.get("castle_fixture_role", "")),
+					"obstruction_distance": existing_position.distance_to(position),
+					"required_clearance": clearance,
+				}
 	var builder_id := 0
 	for value in ids:
 		var id := int(value)
@@ -28627,6 +28699,13 @@ func _deflect_around_structures(
 					break
 			continue
 		var radius := float(STRUCTURE_BLOCK_RADIUS.get(String(structure_row.get("structure_kind", "")), 2.8))
+		if String(row.get("order_kind", "")) == "construct" and structure_id >= CASTLE_FIXTURE_FIRST_ID:
+			# Castle props sit densely around their authored build plots. A porter
+			# travelling to one uses each fixture's compiled footprint, not the
+			# generic 2.8-unit dynamic-building walkway disc that seals the keep.
+			var fixture_radius := _structure_footprint_radius(structure_row)
+			if fixture_radius > 0.0:
+				radius = fixture_radius
 		if passable.has(structure_id):
 			# THE TARGET'S OWN FOOTPRINT STILL STOPS THE ATTACKER AT ITS WALL.
 			#
@@ -31540,13 +31619,20 @@ func _structure_kind_for_source_object(team: int, object_id: String) -> String:
 	return ""
 
 
+func _castle_ai_project_source_offset(offset_source: Vector2) -> Vector2:
+	# BSE offsets are SAGE XY. Convert Y to Godot Z, then project through the
+	# same rotated source frame RetailMapData established from the player starts.
+	var source_horizontal := Vector2(offset_source.x, -offset_source.y)
+	var scale := float(_rules.get("source_map_transform_scale", 0.1))
+	return Vector2(source_horizontal.dot(_source_map_axis_x), source_horizontal.dot(_source_map_axis_z)) * scale
+
+
 func _castle_ai_authored_candidates(team: int, structure_kind: String) -> Array[Dictionary]:
 	var candidates: Array[Dictionary] = []
 	var home := _castle_ai_home(team)
 	var anchor := Vector2(home["position"])
 	var layout := _castle_ai_layout(team)
 	if not layout.is_empty():
-		var scale := float(_rules.get("source_map_transform_scale", 0.1))
 		for site_value in layout.get("sites", []) as Array:
 			var site := site_value as Dictionary
 			if _structure_kind_for_source_object(team, String(site.get("objectId", ""))) != structure_kind:
@@ -31555,7 +31641,7 @@ func _castle_ai_authored_candidates(team: int, structure_kind: String) -> Array[
 			if offset.size() != 3:
 				continue
 			candidates.append({
-				"position": anchor + Vector2(float(offset[0]), -float(offset[1])) * scale,
+				"position": anchor + _castle_ai_project_source_offset(Vector2(float(offset[0]), float(offset[1]))),
 				"source": "authored-ai-base:%s:site-%d" % [String(layout.get("side", "")), int(site.get("index", -1))],
 			})
 	var start_name := _ai_start_waypoint_name(team)
@@ -31583,7 +31669,7 @@ func _try_castle_ai_site(
 	var dry_run := _issue_construct_for_team(team, builder_ids, structure_kind, candidate, true, authored_site)
 	if not bool(dry_run.get("ok", false)):
 		ai_state["last_site_rejection"] = "%s:%s" % [source, String(dry_run.get("reason", "rejected"))]
-		print("[RetailSliceSim] CASTLE_AI_REJECT team=%d structure=%s site_source=%s reason=%s" % [team, structure_kind, source, String(dry_run.get("reason", "rejected"))])
+		print("[RetailSliceSim] CASTLE_AI_REJECT team=%d structure=%s site_source=%s reason=%s detail=%s" % [team, structure_kind, source, String(dry_run.get("reason", "rejected")), str(dry_run)])
 		return false
 	var builder := entities[builder_ids[0]] as Dictionary
 	if not parity.can_path_between(Vector2(builder.get("position", Vector2.ZERO)), candidate):
@@ -31597,20 +31683,6 @@ func _try_castle_ai_site(
 	if not bool(result.get("ok", false)):
 		ai_state["last_site_rejection"] = "%s:%s" % [source, String(result.get("reason", "rejected"))]
 		return false
-	if authored_site:
-		# An AIBase/build-plot row is a pre-authored construction site, equivalent
-		# to the sim's retail plot foundations: it rises on its authored timer and
-		# does not require a porter to reach the centre through coarse fixture art.
-		var structure_id := int(result.get("structure_id", 0))
-		if structures.has(structure_id):
-			var site := structures[structure_id] as Dictionary
-			site["builder_free"] = true
-			site["builder_id"] = 0
-		var authored_builder := entities[builder_ids[0]] as Dictionary
-		authored_builder["construction_id"] = 0
-		authored_builder["order_kind"] = ""
-		_clear_pending_route(authored_builder, true)
-		authored_builder["state"] = "idle"
 	ai_state["home_position"] = Vector2(_castle_ai_home(team)["position"])
 	ai_state["home_source"] = String(_castle_ai_home(team)["source"])
 	ai_state["site_source"] = source
@@ -31645,6 +31717,8 @@ func _try_castle_ai_construction(
 		var candidate := candidate_value as Dictionary
 		if _try_castle_ai_site(team, ai_state, builder_ids, structure_kind, Vector2(candidate["position"]), String(candidate["source"])):
 			return true
+	if not authored_candidates.is_empty() and ai_state.has("last_site_rejection"):
+		ai_state["authored_site_fallback_reason"] = String(ai_state["last_site_rejection"])
 	# Maps without a usable authored AIBase/build-plot row use the complete
 	# cooked navigation extent. Its dimensions are retail-authored map data, so
 	# the fallback has no guessed distance cap and cannot stop inside a castle's

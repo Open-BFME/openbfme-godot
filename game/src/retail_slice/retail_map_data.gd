@@ -1415,9 +1415,8 @@ func _load_waypoints(document: Dictionary) -> bool:
 		if row.is_empty() or position == Vector3.INF:
 			return _fail("invalid cooked waypoint placement")
 		var waypoint_name := String(row.get("name", ""))
-		if waypoint_name != "":
-			var local := source_to_local(position)
-			local_named_waypoints[waypoint_name] = Vector2(local.x, local.z)
+		if waypoint_name == "":
+			continue
 	for required_name in ["Player_1_Start", "Player_2_Start"]:
 		var row := _dictionary(starts.get(required_name, {}))
 		var position := _vector3(row.get("godotPosition", []))
@@ -1453,6 +1452,16 @@ func _load_waypoints(document: Dictionary) -> bool:
 	local_axis_z = Vector2(-local_axis_x.y, local_axis_x.x)
 	local_transform_scale = LOCAL_START_SEPARATION / separation
 	reference_elevation = (player_one.y + player_two.y) * 0.5
+	# Named waypoints share the player-start transform. Converting them before
+	# this point multiplies every coordinate by the initial zero scale and
+	# silently collapses script, ring, and castle build-plot waypoints to origin.
+	for row_value in waypoints:
+		var row := _dictionary(row_value)
+		var waypoint_name := String(row.get("name", ""))
+		if waypoint_name == "":
+			continue
+		var local := source_to_local(_vector3(row.get("godotPosition", [])))
+		local_named_waypoints[waypoint_name] = Vector2(local.x, local.z)
 	local_player_starts["Player_1_Start"] = source_to_local(player_one)
 	local_player_starts["Player_2_Start"] = source_to_local(player_two)
 	# Transform every additional authored start into local space too, so N-team
@@ -3084,6 +3093,8 @@ func simulation_configuration() -> Dictionary:
 			home_layout[team_key] = _home_layout_for(seat, centroid)
 	return {
 		"source_map_configured": ready,
+		"source_map_axis_x": local_axis_x,
+		"source_map_axis_z": local_axis_z,
 		"route_provider": self,
 		"playable_outline": map_outline.duplicate(),
 		"spawn_positions": spawn_positions,
