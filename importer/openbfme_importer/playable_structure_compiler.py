@@ -3376,16 +3376,23 @@ def compile_walk_surfaces(
             if assignment is None:
                 continue
             tokens = assignment.value.split()
-            if len(tokens) != 1:
+            if not tokens:
                 raise PlayableStructureCompilerError(
                     f"{authored_name} requires one mesh name at "
                     f"{assignment.source_virtual_path}:{assignment.line}"
                 )
-            authored[role] = {
+            # SAGE reads the first token; retail authors trailing prose with
+            # no comment marker (helmsdeepbuildings.ini:3372 `RampMesh1 = P2
+            # this is not in any way suitable for a ramp at this time.`).
+            # Keep the engine's reading and record the rest as a receipt.
+            row: dict[str, object] = {
                 "meshName": tokens[0],
                 "sourceIni": assignment.source_virtual_path,
                 "line": assignment.line,
             }
+            if len(tokens) > 1:
+                row["trailingText"] = " ".join(tokens[1:])
+            authored[role] = row
     if not authored:
         return None
     names: dict[str, object] = {

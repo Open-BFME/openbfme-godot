@@ -194,6 +194,23 @@ def test_synthetic_draw_fields_compile_names_only() -> None:
     assert row["walkSurfaces"]["rampMesh2"] == "R2"
 
 
+def test_trailing_prose_after_mesh_name_reads_first_token() -> None:
+    """helmsdeepbuildings.ini:3372 authors `RampMesh1 = P2 this is not in any
+    way suitable for a ramp at this time.` with no comment marker. SAGE reads
+    the first token; the cook must not fail on retail's own prose (the v0.2.7
+    maps republish died on exactly this line)."""
+
+    documents = dict(_SYNTHETIC)
+    documents["data/ini/object/test/walls.ini"] = (
+        documents["data/ini/object/test/walls.ini"].replace(
+            b"    RampMesh1 = R1\n",
+            b"    RampMesh1 = R1 this is not in any way suitable for a ramp at this time.\n",
+        )
+    )
+    descriptor = compile_map_object_descriptor("TestRampWall", documents)
+    assert descriptor["walkSurfaces"]["rampMesh1"] == "R1"
+
+
 # --- retail oracle ----------------------------------------------------------
 
 
