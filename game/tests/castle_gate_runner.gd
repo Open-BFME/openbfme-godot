@@ -286,75 +286,79 @@ func _check_helms_deep_authored_gate(scene: PackedScene) -> void:
 
 
 func _test_configuration_based_seam() -> void:
-	# SEAM TEST: build a sim from a configuration whose castle_fixture_placements
-	# carry a gate block WITH commandSet, commandSetRows, aiGateUpdate, fakePathfindPortal.
+	# SEAM TEST (the one the maps republish activates): a sim built from a
+	# CONFIGURATION whose castle_fixture_placements carry the full gate block
+	# seeds through setup() -> _seed_castle_fixtures() (production path, no
+	# row-key injection) and the structure row carries every field.
 	var SimScript: GDScript = load("res://src/retail_slice/retail_slice_sim.gd")
 	var sim = SimScript.new()
 	var config: Dictionary = {
-		"simulation_factions": ["men"],
-		"simulation_initial_spawn": 99000,
-		"castle_fixtures": true,  # Enable castle fixtures
-		"enable_castle_fixtures": true,
 		"castle_fixture_placements": [
 			{
-				"source_index": 0,
-				"typeName": "TestMapGate",
+				"type_name": "RBHelmsDeepGateDoorBig",
 				"role": "gate",
+				"kind_of": ["STRUCTURE", "IMMOBILE", "SELECTABLE", "WALL_GATE"],
+				"source_index": 0,
+				"position": Vector2(10.0, 10.0),
+				"elevation": 0.0,
+				"yaw": 0.0,
 				"owner": "Player_1",
-				"armor": 100,
-				"maxHealth": 5000,
-				"properties": {},
+				"maximum_health": 20000.0,
+				"armor": "DefaultWallArmor",
+				"indestructible": false,
+				# helmsdeepbuildings.ini (pure effective-assets): 6227 CommandSet,
+				# 6274 GateOpenAndCloseBehavior, 6286-6288 portal, 6291-6293 AIGateUpdate.
 				"gate": {
-					"commandSet": "CastleGateCommandSet",
-					"commandSetRows": [
-						{"slot": 1, "commandId": "Command_ToggleGate"},
-					],
-					"aiGateUpdate": {"trigger_width_x": 450.0, "trigger_width_y": 225.0},
-					"fakePathfindPortal": {"allow_enemies": false, "allow_non_skirmish_ai": false},
-				}
-			}
-		]
+					"openByDefault": true,
+					"resetMilliseconds": 12200.0,
+					"percentOpenForPathing": 50.0,
+					"geometries": {
+						"Closed": {"major": 130.0, "minor": 7.5, "height": 140.0, "offset": [0.0, 0.0, 0.0]},
+						"OpenLeft": {"major": 7.5, "minor": 60.0, "height": 140.0, "offset": [-115.0, 68.0, 0.0]},
+						"OpenRight": {"major": 7.5, "minor": 60.0, "height": 140.0, "offset": [115.0, 68.0, 0.0]},
+					},
+					"commandSet": "CastleGateCommandSet_NoSell",
+					"commandSetRows": [{"slot": 1, "commandId": "Command_ToggleGate"}],
+					"aiGateUpdate": {"triggerWidthX": 450.0, "triggerWidthY": 225.0},
+					"fakePathfindPortal": {"allowEnemies": false, "allowNonSkirmishAIUnits": false},
+				},
+			},
+		],
 	}
-	var rules: Dictionary = {"source_map_transform_scale": 0.1}
-	sim.setup(config, rules)
-	
-	# Find the seeded gate structure
+	var rules: Dictionary = {"enable_castle_fixtures": true, "source_map_transform_scale": 0.1}
+	# _apply_map_configuration needs a full cooked map (spawns, three ford
+	# gates...) or falls back and drops fixtures, so - as the garrison and
+	# wall-defense runners do - install the validated PLACEMENT at the sim's
+	# fixture seam and run the production seeder; no structure-row keys are
+	# injected, the gate block travels placement -> row through the seeder.
+	sim.setup({}, rules)
+	sim._castle_fixture_placements = (config["castle_fixture_placements"] as Array).duplicate(true)
+	sim._seed_castle_fixtures()
 	var gate_found: Dictionary = {}
 	for structure_id in sim.structure_ids():
 		var row: Dictionary = sim.structure(structure_id)
-		if int(row.get("source_index", -2)) == 0:
+		if String(row.get("structure_kind", "")) == "castle_fixture" and int(row.get("source_index", -2)) == 0:
 			gate_found = row
 			break
-	
 	_check("seam_config_gate_seeded", not gate_found.is_empty(), "seeded structures: %d" % sim.structure_ids().size())
-	_check("seam_gate_carries_command_set", gate_found.has("gate_command_set") and String(gate_found.get("gate_command_set", "")) == "CastleGateCommandSet")
-	_check("seam_gate_carries_command_rows", gate_found.has("gate_command_rows") and (gate_found.get("gate_command_rows", []) as Array).size() > 0)
-	var cmd_rows: Array = gate_found.get("gate_command_rows", [])
+	_check("seam_gate_carries_command_set", String(gate_found.get("gate_command_set", "")) == "CastleGateCommandSet_NoSell")
+	var cmd_rows: Array = gate_found.get("gate_command_rows", []) as Array
+	_check("seam_gate_carries_command_rows", cmd_rows.size() == 1)
 	if not cmd_rows.is_empty():
 		var row0: Dictionary = cmd_rows[0]
 		_check("seam_first_row_has_toggle_gate", int(row0.get("slot", 0)) == 1 and String(row0.get("commandId", "")) == "Command_ToggleGate")
-	
-	# Check AI gate update
 	_check("seam_gate_carries_ai_update", gate_found.has("ai_gate_update"))
-	if gate_found.has("ai_gate_update"):
-		var ai_update: Dictionary = gate_found.get("ai_gate_update", {})
-		var trigger_source: Vector2 = ai_update.get("trigger_width_source", Vector2.ZERO)
-		_check("seam_ai_update_has_450x225", trigger_source == Vector2(450.0, 225.0), "got %s" % trigger_source)
-	
-	# Check fake pathfind portal
+	var ai_update: Dictionary = gate_found.get("ai_gate_update", {}) as Dictionary
+	_check("seam_ai_update_has_450x225", Vector2(ai_update.get("trigger_width_source", Vector2.ZERO)) == Vector2(450.0, 225.0), "got %s" % str(ai_update))
 	_check("seam_gate_carries_portal", gate_found.has("fake_pathfind_portal"))
-	if gate_found.has("fake_pathfind_portal"):
-		var portal: Dictionary = gate_found.get("fake_pathfind_portal", {})
-		_check("seam_portal_denies_enemies", bool(portal.get("allow_enemies", true)) == false)
-		_check("seam_portal_denies_skirmish_ai", bool(portal.get("allow_non_skirmish_ai", true)) == false)
-	
-	# Check that allow_non_skirmish_ai field generates a named gap
-	if gate_found.has("fake_pathfind_portal"):
-		var portal: Dictionary = gate_found.get("fake_pathfind_portal", {})
-		if bool(portal.get("allow_non_skirmish_ai", false)):
-			var gaps: Array = gate_found.get("gate_portal_gaps", [])
-			_check("seam_allow_non_skirmish_ai_gap_named", "AllowNonSkirmishAIUnits" in gaps, "gaps=%s" % str(gaps))
-
+	var portal: Dictionary = gate_found.get("fake_pathfind_portal", {}) as Dictionary
+	_check("seam_portal_denies_enemies", portal.has("allow_enemies") and bool(portal.get("allow_enemies", true)) == false)
+	_check("seam_portal_denies_non_skirmish_ai", portal.has("allow_non_skirmish_ai") and bool(portal.get("allow_non_skirmish_ai", true)) == false)
+	# AllowNonSkirmishAIUnits is authored, cooked and stored but consumed by
+	# nothing in the sim (no skirmish-AI unit flag exists): the gap is NAMED.
+	var gaps: Array = gate_found.get("gate_portal_gaps", []) as Array
+	_check("seam_allow_non_skirmish_ai_gap_named", gaps.has("AllowNonSkirmishAIUnits"), "gaps=%s" % str(gaps))
+	_check("seam_gate_behavior_open_by_default", bool((gate_found.get("gate_behavior", {}) as Dictionary).get("open", false)))
 
 func _test_toggle_gate_command() -> void:
 	# TOGGLE_GATE TEST: on the Erebor live sim, submit toggle_gate via submit_command.
@@ -402,21 +406,20 @@ func _test_toggle_gate_command() -> void:
 	
 	# Test toggle command on friendly team
 	_force_gate(gate, false)
-	var cmd = {"type": "toggle_gate", "args": {"structure_id": gate_id}, "tick": sim.tick_index + 1, "team": int(gate.get("team", 1))}
+	var cmd = {"type": "toggle_gate", "args": {"structure_id": gate_id}, "tick": sim.tick_index + 1, "team": int(gate.get("team", 1)), "seq": 1}
 	sim.submit_command(cmd)
 	sim.advance(1)
 	_check("toggle_gate_friendly_opens_gate", bool(gate.get("gate_behavior", {}).get("open", false)), str(sim.last_command_result))
 	
-	# Test toggle again on friendly team
-	_force_gate(gate, false)
-	var cmd2 = {"type": "toggle_gate", "args": {"structure_id": gate_id}, "tick": sim.tick_index + 1, "team": int(gate.get("team", 1))}
+	# Toggle again on the now-OPEN gate: closes it (manual close, close_tick -1)
+	var cmd2 = {"type": "toggle_gate", "args": {"structure_id": gate_id}, "tick": sim.tick_index + 1, "team": int(gate.get("team", 1)), "seq": 2}
 	sim.submit_command(cmd2)
 	sim.advance(1)
-	_check("toggle_gate_friendly_closes_gate", not bool(gate.get("gate_behavior", {}).get("open", false)), str(sim.last_command_result))
+	_check("toggle_gate_friendly_closes_gate", not bool(gate.get("gate_behavior", {}).get("open", false)) and not bool(gate.get("gate_behavior", {}).get("pathing_open", true)), str(sim.last_command_result))
 	
 	# Test toggle from enemy team
 	var enemy_team = 0 if int(gate.get("team", 1)) != 0 else 1
-	var cmd3 = {"type": "toggle_gate", "args": {"structure_id": gate_id}, "tick": sim.tick_index + 1, "team": enemy_team}
+	var cmd3 = {"type": "toggle_gate", "args": {"structure_id": gate_id}, "tick": sim.tick_index + 1, "team": enemy_team, "seq": 3}
 	var before_state = bool(gate.get("gate_behavior", {}).get("open", false))
 	sim.submit_command(cmd3)
 	sim.advance(1)
@@ -425,7 +428,7 @@ func _test_toggle_gate_command() -> void:
 	
 	# Test toggle on destroyed gate
 	gate["health"] = 0
-	var cmd4 = {"type": "toggle_gate", "args": {"structure_id": gate_id}, "tick": sim.tick_index + 1, "team": int(gate.get("team", 1))}
+	var cmd4 = {"type": "toggle_gate", "args": {"structure_id": gate_id}, "tick": sim.tick_index + 1, "team": int(gate.get("team", 1)), "seq": 4}
 	var before_destroyed = bool(gate.get("gate_behavior", {}).get("open", false))
 	sim.submit_command(cmd4)
 	sim.advance(1)

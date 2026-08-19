@@ -30953,14 +30953,12 @@ func _seed_castle_fixtures() -> void:
 			if typeof(portal_value) == TYPE_DICTIONARY:
 				var portal := portal_value as Dictionary
 				fixture_row["fake_pathfind_portal"] = {"allow_enemies": bool(portal.get("allowEnemies", false)), "allow_non_skirmish_ai": bool(portal.get("allowNonSkirmishAIUnits", false))}
-				# Emit a named gap for allow_non_skirmish_ai since there is no
-				# skirmish-ai-controlled unit flag in the sim to gate on.
-				var allow_non_skirmish_ai := bool((portal as Dictionary).get("allowNonSkirmishAIUnits", false))
-				if allow_non_skirmish_ai:
-					if not fixture_row.has("gate_portal_gaps"):
-						fixture_row["gate_portal_gaps"] = []
-					fixture_row["gate_portal_gaps"].append("AllowNonSkirmishAIUnits")
-					print("[RetailSliceSim] GATE_PORTAL_GAP type=%s field=AllowNonSkirmishAIUnits reason=no-skirmish-ai-unit-flag-in-sim" % String(placement.get("type_name", "")))
+				# AllowNonSkirmishAIUnits is authored, cooked and stored but the
+				# sim has no skirmish-AI-controlled unit flag to gate on, so the
+				# rule is consumed by nothing either way: NAMED GAP, never silent.
+				if portal.has("allowNonSkirmishAIUnits"):
+					fixture_row["gate_portal_gaps"] = ["AllowNonSkirmishAIUnits"]
+					print("[RetailSliceSim] GATE_PORTAL_GAP type=%s field=AllowNonSkirmishAIUnits authored=%s reason=no-skirmish-ai-unit-flag-in-sim" % [String(placement.get("type_name", "")), str(portal.get("allowNonSkirmishAIUnits"))])
 			structures[structure_id] = fixture_row
 		_emit_event("castle.fixture_seeded", 0, structure_id, {
 			"type_name": String(placement.get("type_name", "")),
