@@ -3886,9 +3886,31 @@ class SliceOrders:
 			if not w.sim.entities.has(eid):
 				continue
 			var row: Dictionary = w.sim.entities[eid]
-			if target_point == Vector2.ZERO:
-				target_point = row.get("position", Vector2.ZERO)
-			var cast: Dictionary = w.sim.cast_ability(eid, button, target_point, int(row.get("team", -1)))
+			var resolved_target := target_point
+			if kind == SageScriptWorld.TargetKind.NEAREST_GARRISONED:
+				var origin := Vector2(row.get("position", Vector2.ZERO))
+				var best_sid := -1
+				var best_distance := INF
+				for sid_value in w.sim.structure_ids():
+					var sid := int(sid_value)
+					if w.sim.passenger_count(sid) <= 0:
+						continue
+					var distance := origin.distance_squared_to(
+						Vector2((w.sim.structures[sid] as Dictionary).get("position", Vector2.ZERO))
+					)
+					if distance < best_distance or (is_equal_approx(distance, best_distance) and sid < best_sid):
+						best_sid = sid
+						best_distance = distance
+				if best_sid < 0:
+					return _refuse_command(
+						"orders.use_command_button", "no garrisoned building exists"
+					)
+				resolved_target = Vector2(
+					(w.sim.structures[best_sid] as Dictionary).get("position", Vector2.ZERO)
+				)
+			elif resolved_target == Vector2.ZERO:
+				resolved_target = row.get("position", Vector2.ZERO)
+			var cast: Dictionary = w.sim.cast_ability(eid, button, resolved_target, int(row.get("team", -1)))
 			if bool(cast.get("ok", false)):
 				fired += 1
 				continue
@@ -7384,18 +7406,41 @@ class SliceTransport:
 		var resolved := w._living_ids_for_order_scope(scope, name)
 		if resolved.has("reason"):
 			return _refuse_command("transport.garrison", String(resolved["reason"]))
-		var view := w.named_object_view(String(target.get("name", "")))
-		if view.is_empty() or int(view.get("structure_id", 0)) <= 0:
-			return _refuse_command("transport.garrison", "garrison target is not a structure")
-		var sid := int(view["structure_id"])
-		for eid in resolved["ids"] as Array:
-			w.sim.contain_entity(sid, int(eid))
+		var candidates: Array[int] = []
+		var target_kind := int(target.get("kind", -1))
+		if target_kind == SageScriptWorld.TargetKind.OBJECT:
+			var view := w.named_object_view(String(target.get("name", "")))
+			if view.is_empty() or int(view.get("structure_id", 0)) <= 0:
+				return _refuse_command("transport.garrison", "garrison target is not a structure")
+			candidates.append(int(view["structure_id"]))
+		else:
+			for sid in w.sim.structure_ids():
+				if (w.sim.structures[int(sid)] as Dictionary).has("horde_transport"):
+					candidates.append(int(sid))
+		var loaded := 0
+		for eid_value in resolved["ids"] as Array:
+			var eid := int(eid_value)
+			if not w.sim.entities.has(eid) or w.sim.entity_container.has(eid):
+				continue
+			var origin := Vector2((w.sim.entities[eid] as Dictionary).get("position", Vector2.ZERO))
+			candidates.sort_custom(func(a: int, b: int) -> bool:
+				var da := origin.distance_squared_to(Vector2((w.sim.structures[a] as Dictionary).get("position", Vector2.ZERO)))
+				var db := origin.distance_squared_to(Vector2((w.sim.structures[b] as Dictionary).get("position", Vector2.ZERO)))
+				return da < db or (is_equal_approx(da, db) and a < b)
+			)
+			for sid in candidates:
+				var result := w.sim.load_transport_entity(sid, eid)
+				if bool(result.get("ok", false)):
+					loaded += 1
+					break
+		if loaded <= 0:
+			return _refuse_command("transport.garrison", "no authored garrison admitted the requested units")
 		return true
 
 	func load_transports(team: String) -> bool:
 		## Load living team entities into nearest structures that declare
-		## transport_capacity (or parity kind table) via can_load_entity +
-		## contain_entity. Structures with capacity 0 are skipped.
+		## authored typed transport/garrison contracts. Structures with no
+		## compiled capacity are skipped; there is no kind-name fallback.
 		var w := _world()
 		if w == null or w.sim == null:
 			return _refuse_command("transport.load_transports", "no simulation attached")
@@ -7419,9 +7464,8 @@ class SliceTransport:
 			var epos: Vector2 = (w.sim.entities[eid] as Dictionary).get("position", Vector2.ZERO)
 			var best_sid := -1
 			var best_d := INF
-			for sid in w.sim.living_structure_ids(team_id):
-				var can: Dictionary = w.sim.parity.can_load_entity(w.sim, int(sid), eid)
-				if not bool(can.get("ok", false)):
+			for sid in w.sim.structure_ids():
+				if not (w.sim.structures[int(sid)] as Dictionary).has("horde_transport"):
 					continue
 				var spos: Vector2 = (w.sim.structures[int(sid)] as Dictionary).get(
 					"position", Vector2.ZERO
@@ -7432,7 +7476,7 @@ class SliceTransport:
 					best_sid = int(sid)
 			if best_sid < 0:
 				continue
-			var result: Dictionary = w.sim.contain_entity(best_sid, eid)
+			var result: Dictionary = w.sim.load_transport_entity(best_sid, eid)
 			if bool(result.get("ok", false)):
 				loaded += 1
 		if loaded <= 0:

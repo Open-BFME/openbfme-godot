@@ -670,6 +670,8 @@ func _load_fixtures(value: Variant) -> bool:
 			_:
 				if record.has("gate") or record.has("garrison"):
 					return _fail("castle fixture role disagrees with its module block")
+		if record.has("walkSurfaces") and not _valid_fixture_walk_surfaces(record.get("walkSurfaces", null)):
+			return false
 		map_fixtures.append(record)
 	for entry in _array(document.get("omitted", [])):
 		if typeof(entry) != TYPE_DICTIONARY:
@@ -726,6 +728,32 @@ func _valid_fixture_gate_block(value: Variant) -> bool:
 				return _fail("gate fixture has invalid named geometries")
 		if not _valid_fixture_vector(geometry.get("offset", null)):
 			return _fail("gate fixture has invalid named geometries")
+	if block.has("commandSet") and (typeof(block.get("commandSet")) != TYPE_STRING or String(block.get("commandSet")).strip_edges() == ""):
+		return _fail("gate fixture has an invalid gate command set")
+	if block.has("commandSetRows"):
+		var command_rows: Variant = block.get("commandSetRows")
+		if typeof(command_rows) != TYPE_ARRAY or (command_rows as Array).is_empty():
+			return _fail("gate fixture has invalid gate command set rows")
+		for row_value in command_rows as Array:
+			if typeof(row_value) != TYPE_DICTIONARY:
+				return _fail("gate fixture has invalid gate command set rows")
+			var row := row_value as Dictionary
+			if not _exact_integer(row.get("slot", null)) or int(row.get("slot")) <= 0 or typeof(row.get("commandId", null)) != TYPE_STRING or String(row.get("commandId")).strip_edges() == "":
+				return _fail("gate fixture has invalid gate command set rows")
+	if block.has("aiGateUpdate"):
+		var ai_gate: Variant = block.get("aiGateUpdate")
+		if typeof(ai_gate) != TYPE_DICTIONARY:
+			return _fail("gate fixture has an invalid AI gate update block")
+		for field in ["triggerWidthX", "triggerWidthY"]:
+			if not _valid_fixture_number((ai_gate as Dictionary).get(field, null)) or float((ai_gate as Dictionary).get(field)) <= 0.0:
+				return _fail("gate fixture has an invalid AI gate update block")
+	if block.has("fakePathfindPortal"):
+		var portal: Variant = block.get("fakePathfindPortal")
+		if typeof(portal) != TYPE_DICTIONARY:
+			return _fail("gate fixture has an invalid fake pathfind portal block")
+		for field in ["allowEnemies", "allowNonSkirmishAIUnits"]:
+			if typeof((portal as Dictionary).get(field, null)) != TYPE_BOOL:
+				return _fail("gate fixture has an invalid fake pathfind portal block")
 	return true
 
 
@@ -735,6 +763,67 @@ func _valid_fixture_garrison_block(value: Variant) -> bool:
 	var block := value as Dictionary
 	if not _exact_integer(block.get("containMax", null)) or int(block.get("containMax")) <= 0:
 		return _fail("garrison fixture has an invalid containMax")
+	for key in ["objectStatusOfContained", "passengerFilter"]:
+		if not block.has(key):
+			continue
+		var tokens := _array(block.get(key))
+		if tokens.is_empty():
+			return _fail("garrison fixture has an invalid %s" % key)
+		for token in tokens:
+			if typeof(token) != TYPE_STRING or String(token) == "":
+				return _fail("garrison fixture has an invalid %s" % key)
+	if block.has("damagePercentToUnits") and (
+		not _valid_fixture_number(block.get("damagePercentToUnits"))
+		or float(block.get("damagePercentToUnits")) < 0.0
+		or float(block.get("damagePercentToUnits")) > 1.0
+	):
+		return _fail("garrison fixture has an invalid damagePercentToUnits")
+	for key in ["entryPosition", "entryOffset", "exitOffset"]:
+		if block.has(key) and not _valid_fixture_vector(block.get(key)):
+			return _fail("garrison fixture has an invalid %s" % key)
+	return true
+
+
+func _valid_fixture_walk_surfaces(value: Variant) -> bool:
+	## Lane L6: names-only Draw-module walk-surface roles. Absent is valid;
+	## present must be an object of the four role keys plus optional unresolved
+	## receipts. The nav-layer lane consumes this later — no behaviour here.
+	if typeof(value) != TYPE_DICTIONARY:
+		return _fail("castle fixture has an invalid walkSurfaces")
+	var block := value as Dictionary
+	var roles := {
+		"wallBoundsMesh": true,
+		"rampMesh1": true,
+		"rampMesh2": true,
+		"raisedWallMesh": true,
+	}
+	var named := 0
+	for key in block.keys():
+		var field := String(key)
+		if field == "unresolved":
+			continue
+		if not roles.has(field):
+			return _fail("castle fixture has an invalid walkSurfaces")
+		if typeof(block[key]) != TYPE_STRING or String(block[key]).strip_edges() == "":
+			return _fail("castle fixture has an invalid walkSurfaces")
+		named += 1
+	if named == 0:
+		return _fail("castle fixture has an invalid walkSurfaces")
+	if not block.has("unresolved"):
+		return true
+	var unresolved: Variant = block.get("unresolved")
+	if typeof(unresolved) != TYPE_ARRAY or (unresolved as Array).is_empty():
+		return _fail("castle fixture has an invalid walkSurfaces")
+	var seen := {}
+	for entry in unresolved as Array:
+		if typeof(entry) != TYPE_DICTIONARY:
+			return _fail("castle fixture has an invalid walkSurfaces")
+		var row := entry as Dictionary
+		var role := String(row.get("role", ""))
+		var mesh_name := String(row.get("meshName", ""))
+		if not roles.has(role) or seen.has(role) or not block.has(role) or mesh_name != String(block[role]):
+			return _fail("castle fixture has an invalid walkSurfaces")
+		seen[role] = true
 	return true
 
 
@@ -791,6 +880,7 @@ func _derive_castle_fixture_placements() -> void:
 		var row := {
 			"type_name": String(record.get("typeName", "")),
 			"role": String(record.get("role", "")),
+			"kind_of": _array(record.get("kindOf", [])).duplicate(),
 			"source_index": int(record.get("index", -1)),
 			"position": Vector2(local.x, local.z),
 			"elevation": local.y,
@@ -801,9 +891,15 @@ func _derive_castle_fixture_placements() -> void:
 			# ArmorSet); the sim row carries "" for it.
 			"armor": "" if record.get("armor") == null else String(record.get("armor")),
 			"indestructible": bool(record.get("indestructible", false)),
+			"enabled": bool(record.get("enabled", true)),
+			"targetable": bool(record.get("targetable", true)),
 		}
 		if record.has("initialHealth"):
 			row["initial_health"] = float(record.get("initialHealth"))
+		if record.has("gate"):
+			row["gate"] = (record.get("gate") as Dictionary).duplicate(true)
+		if record.has("garrison"):
+			row["garrison"] = (record.get("garrison", {}) as Dictionary).duplicate(true)
 		castle_fixture_placements.append(row)
 
 

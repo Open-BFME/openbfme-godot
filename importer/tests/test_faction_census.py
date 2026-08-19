@@ -139,6 +139,7 @@ def _objects(
     duplicate_porter: bool = False,
     missing_soldier_voice: bool = False,
     respawn_portrait: bool = False,
+    wall_hub_ramp: bool = False,
 ) -> bytes:
     duplicate = b"Object MenPorter\nEnd\n" if duplicate_porter else b""
     source = b"""
@@ -212,6 +213,26 @@ End
         source = source.replace(
             b"VoiceSelect = SoldierVoice",
             b"VoiceSelect = MissingSoldierVoice",
+        )
+    if wall_hub_ramp:
+        source = source.replace(
+            b"Object MenFortress\n  CommandSet = MenFortressCommandSet\nEnd",
+            b"Object MenFortress\n"
+            b"  CommandSet = MenFortressCommandSet\n"
+            b"  Behavior = WallHubBehavior ModuleTag_Build_A_Ramp\n"
+            b"    Options = OPTION_TWO\n"
+            b"    MaxBuildoutDistance = 700\n"
+            b"    SegmentTemplateName = GondorCastleWallSegment\n"
+            b"    HubCapTemplateName = MenWallRamp\n"
+            b"    DefaultSegmentTemplateName = GondorCastleWallSegment\n"
+            b"  End\n"
+            b"End\n"
+            b"Object MenWallRamp\n"
+            b"  KindOf = STRUCTURE IMMOBILE\n"
+            b"End\n"
+            b"Object GondorCastleWallSegment\n"
+            b"  KindOf = STRUCTURE IMMOBILE\n"
+            b"End",
         )
     return source + duplicate
 
@@ -428,6 +449,7 @@ def _catalog(
     missing_barracks_command_set: bool = False,
     spell_fx: bool = False,
     respawn_portrait: bool = False,
+    wall_hub_ramp: bool = False,
 ) -> InstallCatalog:
     if additive_voice:
         object_source = _additive_voice_objects()
@@ -438,6 +460,7 @@ def _catalog(
             duplicate_porter=duplicate_porter,
             missing_soldier_voice=missing_soldier_voice,
             respawn_portrait=respawn_portrait,
+            wall_hub_ramp=wall_hub_ramp,
         )
     command_set_source = _command_sets()
     if missing_barracks_command_set:

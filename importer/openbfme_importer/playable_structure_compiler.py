@@ -63,6 +63,7 @@ from .playable_unit_compiler import (
     _authored_flat_damage_type,
     _select_experience_chain,
     _tokens,
+    _weapon_damage_nuggets,
     _walk_blocks,
     prepare_playable_unit_compiler,
 )
@@ -177,6 +178,169 @@ def _weapon_has_authored_slave_attack_nugget(
     return False
 
 
+_DELAY_INTERVAL = re.compile(
+    r"^Min:\s*(?P<minimum>\S+)\s+Max:\s*(?P<maximum>\S+)$",
+    re.IGNORECASE,
+)
+
+
+def _structure_delay_between_shots(
+    weapon: Mapping[str, object],
+    constants: Mapping[str, int | float],
+) -> dict[str, object] | None:
+    """Resolve scalar or retail Min:/Max: DelayBetweenShots authoring.
+
+    SAGE draws an inclusive integer millisecond delay uniformly from this
+    interval for each attack cycle.  Keep both endpoints in the descriptor;
+    collapsing the row to either endpoint would change authored cadence.
+    """
+
+    scalar = _resolved_definition_field(weapon, "DelayBetweenShots", constants)
+    if scalar is not None:
+        return scalar
+    rows = weapon.get("delaybetweenshots", ())
+    if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)) or len(rows) != 1:
+        return None
+    row = rows[0]
+    if not isinstance(row, Mapping):
+        return None
+    expression = str(row.get("expression", ""))
+    match = _DELAY_INTERVAL.fullmatch(expression)
+    if match is None:
+        return None
+
+    resolved: dict[str, dict[str, object]] = {}
+    for name in ("minimum", "maximum"):
+        endpoint = _resolved_definition_field(
+            {name: [{**row, "expression": match.group(name)}]}, name, constants
+        )
+        if endpoint is None:
+            return None
+        resolved[name] = endpoint
+    minimum = resolved["minimum"]["value"]
+    maximum = resolved["maximum"]["value"]
+    if (
+        not isinstance(minimum, (int, float))
+        or isinstance(minimum, bool)
+        or not isinstance(maximum, (int, float))
+        or isinstance(maximum, bool)
+        or minimum < 0
+        or maximum < minimum
+        or int(minimum) != minimum
+        or int(maximum) != maximum
+    ):
+        return None
+    return {
+        "minimumValue": int(minimum),
+        "maximumValue": int(maximum),
+        "distribution": "uniform-inclusive-integer",
+        "expression": expression,
+        "sourceIni": str(row.get("sourceIni", "")),
+        "line": int(row.get("line", 0)),
+        "minimumConstantSourceIni": resolved["minimum"].get("constantSourceIni"),
+        "maximumConstantSourceIni": resolved["maximum"].get("constantSourceIni"),
+    }
+
+
+def _single_nugget_token(
+    fields: Mapping[str, object], key: str
+) -> str | None:
+    rows = fields.get(key.casefold(), ())
+    if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)) or len(rows) != 1:
+        return None
+    row = rows[0]
+    if not isinstance(row, Mapping):
+        return None
+    tokens = _tokens(str(row.get("expression", "")))
+    return tokens[0] if len(tokens) == 1 else None
+
+
+def _nugget_upgrade_ids(fields: Mapping[str, object], keys: Sequence[str]) -> list[str]:
+    values: dict[str, str] = {}
+    for key in keys:
+        rows = fields.get(key.casefold(), ())
+        if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+            continue
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            for token in _tokens(str(row.get("expression", ""))):
+                values[token.casefold()] = token
+    return [values[key] for key in sorted(values)]
+
+
+def _structure_projectile_nuggets(
+    documents: Mapping[str, bytes],
+    weapon_id: str,
+    prepared: PlayableUnitCompilerInputs,
+) -> list[dict[str, object]] | None:
+    """Compile every authored ProjectileNugget and its upgrade gates.
+
+    Direct tower bows switch projectile/warhead in place.  Their un-gated
+    nugget is the level-zero payload; RequiredUpgrade rows are retained as
+    alternates rather than contaminating base damage.
+    """
+
+    nuggets = _weapon_damage_nuggets(
+        documents,
+        weapon_id,
+        nugget_kind="projectilenugget",
+        cache=prepared.named_definition_cache,
+        cache_lock=prepared.cache_lock,
+    )
+    if not nuggets:
+        return None
+    compiled: list[dict[str, object]] = []
+    for nugget in nuggets:
+        fields = nugget.get("fields")
+        if not isinstance(fields, Mapping):
+            return None
+        projectile_id = _single_nugget_token(fields, "ProjectileTemplateName")
+        warhead_id = _single_nugget_token(fields, "WarheadTemplateName")
+        if projectile_id is None or warhead_id is None:
+            return None
+        required = _nugget_upgrade_ids(
+            fields, ("RequiredUpgrade", "RequiredUpgradeName", "RequiredUpgradeNames")
+        )
+        forbidden = _nugget_upgrade_ids(
+            fields, ("ForbiddenUpgrade", "ForbiddenUpgradeName", "ForbiddenUpgradeNames")
+        )
+        warhead = _named_definition_values(
+            documents,
+            "Weapon",
+            warhead_id,
+            cache=prepared.named_definition_cache,
+            cache_lock=prepared.cache_lock,
+        )
+        if warhead is None:
+            return None
+        damage = _base_weapon_damage(
+            documents,
+            warhead_id,
+            prepared.numeric_defines,
+            cache=prepared.named_definition_cache,
+            cache_lock=prepared.cache_lock,
+        )
+        if damage is None:
+            damage = _resolved_definition_field(
+                warhead, "Damage", prepared.numeric_defines
+            )
+        if damage is None:
+            return None
+        row: dict[str, object] = {
+            "line": int(nugget.get("line", 0)),
+            "projectileObjectId": projectile_id,
+            "warheadId": warhead_id,
+            "damage": damage,
+        }
+        if required:
+            row["requiredUpgradeIds"] = required
+        if forbidden:
+            row["forbiddenUpgradeIds"] = forbidden
+        compiled.append(row)
+    return compiled
+
+
 def _structure_combat_contract(
     lineage: Sequence[SageObject],
     documents: Mapping[str, bytes],
@@ -211,7 +375,6 @@ def _structure_combat_contract(
         ("attackRange", "AttackRange"),
         ("minimumAttackRange", "MinimumAttackRange"),
         ("projectileSpeed", "WeaponSpeed"),
-        ("delayBetweenShotsMs", "DelayBetweenShots"),
         ("preAttackDelayMs", "PreAttackDelay"),
         ("firingDurationMs", "FiringDuration"),
         ("damage", "Damage"),
@@ -222,13 +385,33 @@ def _structure_combat_contract(
         if field is not None:
             combat[output_name] = field
 
-    warhead_id = _default_nested_target(
-        documents,
-        "Weapon",
-        weapon_id,
-        "WarheadTemplateName",
-        flat_kind_cache=prepared.flat_kind_cache,
-        cache_lock=prepared.cache_lock,
+    delay = _structure_delay_between_shots(weapon, prepared.numeric_defines)
+    if delay is not None:
+        combat["delayBetweenShotsMs"] = delay
+
+    projectile_nuggets = _structure_projectile_nuggets(
+        documents, weapon_id, prepared
+    )
+    base_projectile_nugget: dict[str, object] | None = None
+    if projectile_nuggets:
+        combat["projectileNuggets"] = projectile_nuggets
+        base_rows = [
+            row for row in projectile_nuggets if not row.get("requiredUpgradeIds")
+        ]
+        if len(base_rows) == 1:
+            base_projectile_nugget = base_rows[0]
+
+    warhead_id = (
+        str(base_projectile_nugget.get("warheadId", ""))
+        if base_projectile_nugget is not None
+        else _default_nested_target(
+            documents,
+            "Weapon",
+            weapon_id,
+            "WarheadTemplateName",
+            flat_kind_cache=prepared.flat_kind_cache,
+            cache_lock=prepared.cache_lock,
+        )
     )
     damage_owner = weapon
     if warhead_id:
@@ -278,13 +461,17 @@ def _structure_combat_contract(
         if damage is not None:
             combat["damage"] = damage
 
-    projectile_id = _default_nested_target(
-        documents,
-        "Weapon",
-        weapon_id,
-        "ProjectileTemplateName",
-        flat_kind_cache=prepared.flat_kind_cache,
-        cache_lock=prepared.cache_lock,
+    projectile_id = (
+        str(base_projectile_nugget.get("projectileObjectId", ""))
+        if base_projectile_nugget is not None
+        else _default_nested_target(
+            documents,
+            "Weapon",
+            weapon_id,
+            "ProjectileTemplateName",
+            flat_kind_cache=prepared.flat_kind_cache,
+            cache_lock=prepared.cache_lock,
+        )
     )
     if projectile_id:
         combat["projectileObjectId"] = projectile_id
@@ -3109,6 +3296,210 @@ def _structure_scenario_admission(
     }
 
 
+# Draw-module walk-surface roles. Retail authors these as named HIDDEN W3D
+# sub-meshes on W3DScriptedModelDraw (WallBoundsMesh / RampMesh1 / RampMesh2 /
+# RaisedWallMesh). Missing fields stay absent; names that do not exist in the
+# intact W3D are receipts, never errors (RaisedWallMesh=P3 on HD gatehouses and
+# RampMesh2=R2 on MenWallRamp are the standing retail dangles).
+_WALK_SURFACE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("WallBoundsMesh", "wallBoundsMesh"),
+    ("RampMesh1", "rampMesh1"),
+    ("RampMesh2", "rampMesh2"),
+    ("RaisedWallMesh", "raisedWallMesh"),
+)
+_WALK_SURFACE_ROLES = frozenset(role for _, role in _WALK_SURFACE_FIELDS)
+
+
+def _document_payload(
+    documents: Mapping[str, bytes], virtual_path: str
+) -> bytes | None:
+    folded = virtual_path.replace("\\", "/").casefold()
+    for key, payload in documents.items():
+        if key.replace("\\", "/").casefold() == folded:
+            return payload
+    return None
+
+
+def _w3d_virtual_path_for_model(model: str) -> str | None:
+    stem = model.strip()
+    if not stem or stem.casefold() in {"none", "null"}:
+        return None
+    if "/" in stem or "\\" in stem or "." in stem:
+        return None
+    prefix = stem[:2].casefold()
+    if len(prefix) != 2:
+        return None
+    return f"art/w3d/{prefix}/{stem.casefold()}.w3d"
+
+
+def _w3d_mesh_names(payload: bytes, virtual_path: str) -> frozenset[str]:
+    from .w3d_metadata import scan_w3d_metadata
+
+    metadata = scan_w3d_metadata(payload, virtual_path)
+    return frozenset(
+        header.mesh_name for header in metadata.mesh_headers if header.mesh_name
+    )
+
+
+def compile_walk_surfaces(
+    ancestry: Sequence[SageObject],
+    documents: Mapping[str, bytes] | None = None,
+) -> dict[str, object] | None:
+    """Compile Draw-module walk-surface names, plus W3D-absence receipts.
+
+    Returns ``None`` when no ``W3DScriptedModelDraw`` authors any of the four
+    role fields.  A scanned W3D is consulted only when its bytes are in
+    ``documents``; names that miss every scanned mesh header become
+    ``unresolved`` receipts.  A missing W3D is not an error and does not
+    invent a receipt.
+    """
+
+    authored: dict[str, dict[str, object]] = {}
+    models: list[str] = []
+    for block in _effective_top_blocks(ancestry):
+        if (block.header_key or "").casefold() != "draw":
+            continue
+        if block.kind.casefold() != "w3dscriptedmodeldraw":
+            continue
+        for nested in block.blocks:
+            if nested.kind.casefold() != "defaultmodelconditionstate":
+                continue
+            for assignment in nested.assignments:
+                if assignment.key.casefold() != "model":
+                    continue
+                token = assignment.value.split()[0] if assignment.value.split() else ""
+                if token:
+                    models.append(token)
+        by_key = {assignment.key.casefold(): assignment for assignment in block.assignments}
+        for authored_name, role in _WALK_SURFACE_FIELDS:
+            assignment = by_key.get(authored_name.casefold())
+            if assignment is None:
+                continue
+            tokens = assignment.value.split()
+            if len(tokens) != 1:
+                raise PlayableStructureCompilerError(
+                    f"{authored_name} requires one mesh name at "
+                    f"{assignment.source_virtual_path}:{assignment.line}"
+                )
+            authored[role] = {
+                "meshName": tokens[0],
+                "sourceIni": assignment.source_virtual_path,
+                "line": assignment.line,
+            }
+    if not authored:
+        return None
+    names: dict[str, object] = {
+        role: str(row["meshName"])
+        for _, role in _WALK_SURFACE_FIELDS
+        if (row := authored.get(role)) is not None
+    }
+    scanned_names: set[str] = set()
+    scanned_any = False
+    if documents is not None:
+        seen_paths: set[str] = set()
+        for model in models:
+            virtual = _w3d_virtual_path_for_model(model)
+            if virtual is None or virtual.casefold() in seen_paths:
+                continue
+            payload = _document_payload(documents, virtual)
+            if payload is None:
+                continue
+            seen_paths.add(virtual.casefold())
+            scanned_any = True
+            scanned_names.update(
+                name.casefold() for name in _w3d_mesh_names(payload, virtual)
+            )
+    if scanned_any:
+        unresolved: list[dict[str, object]] = []
+        for _, role in _WALK_SURFACE_FIELDS:
+            row = authored.get(role)
+            if row is None:
+                continue
+            mesh_name = str(row["meshName"])
+            if mesh_name.casefold() in scanned_names:
+                continue
+            unresolved.append(
+                {
+                    "role": role,
+                    "meshName": mesh_name,
+                    "sourceIni": row["sourceIni"],
+                    "line": row["line"],
+                }
+            )
+        if unresolved:
+            names["unresolved"] = unresolved
+    return names
+
+
+def validate_walk_surfaces(value: object, *, label: str) -> None:
+    """Refuse a malformed walkSurfaces block. Absence is valid."""
+
+    if value is None:
+        return
+    if not isinstance(value, Mapping):
+        raise PlayableStructureCompilerError(f"{label} walkSurfaces must be an object")
+    allowed = set(_WALK_SURFACE_ROLES) | {"unresolved"}
+    extra = set(value) - allowed
+    if extra:
+        raise PlayableStructureCompilerError(
+            f"{label} walkSurfaces has unknown fields"
+        )
+    named = 0
+    for role in _WALK_SURFACE_ROLES:
+        if role not in value:
+            continue
+        mesh_name = value[role]
+        if not isinstance(mesh_name, str) or not mesh_name.strip():
+            raise PlayableStructureCompilerError(
+                f"{label} walkSurfaces has an invalid {role}"
+            )
+        named += 1
+    if named == 0:
+        raise PlayableStructureCompilerError(
+            f"{label} walkSurfaces authors no mesh role"
+        )
+    if "unresolved" not in value:
+        return
+    unresolved = value["unresolved"]
+    if not isinstance(unresolved, list) or not unresolved:
+        raise PlayableStructureCompilerError(
+            f"{label} walkSurfaces has an invalid unresolved receipt"
+        )
+    seen_roles: set[str] = set()
+    for row in unresolved:
+        if not isinstance(row, Mapping):
+            raise PlayableStructureCompilerError(
+                f"{label} walkSurfaces has an invalid unresolved receipt"
+            )
+        role = row.get("role")
+        mesh_name = row.get("meshName")
+        if (
+            role not in _WALK_SURFACE_ROLES
+            or role in seen_roles
+            or role not in value
+            or not isinstance(mesh_name, str)
+            or mesh_name != value[role]
+        ):
+            raise PlayableStructureCompilerError(
+                f"{label} walkSurfaces has an invalid unresolved receipt"
+            )
+        seen_roles.add(str(role))
+        source_ini = row.get("sourceIni")
+        line = row.get("line")
+        if source_ini is not None and (
+            not isinstance(source_ini, str) or not source_ini.strip()
+        ):
+            raise PlayableStructureCompilerError(
+                f"{label} walkSurfaces has an invalid unresolved receipt"
+            )
+        if line is not None and (
+            not isinstance(line, int) or isinstance(line, bool) or line <= 0
+        ):
+            raise PlayableStructureCompilerError(
+                f"{label} walkSurfaces has an invalid unresolved receipt"
+            )
+
+
 def compile_playable_structure_descriptor(
     target_id: str,
     documents: Mapping[str, bytes],
@@ -3137,6 +3528,7 @@ def compile_playable_structure_descriptor(
             f"effective Object is missing: {target_id}"
         )
     lineage = _ancestry(prepared.objects, target)
+    walk_surfaces = compile_walk_surfaces(lineage, documents)
     # SAGE selection/collision volume. Retail hit-tests a click against this
     # footprint; without it a runtime has nothing but a guessed radius.
     geometry_contract = _geometry_contract(lineage, prepared.numeric_defines)
@@ -3412,6 +3804,7 @@ def compile_playable_structure_descriptor(
         "objectId": target.name,
         "category": "structure",
         "kindOf": list(kinds),
+        **({"walkSurfaces": walk_surfaces} if walk_surfaces is not None else {}),
         "production": {
             "evidence": production_evidence,
             "routes": production,
@@ -3714,13 +4107,30 @@ def validate_playable_structure_descriptor(value: Mapping[str, object]) -> None:
                 )
     combat = gameplay.get("combat")
     if combat is not None:
-        if not isinstance(combat, Mapping) or not all(
+        delay_valid = False
+        if isinstance(combat, Mapping):
+            delay = combat.get("delayBetweenShotsMs")
+            delay_valid = isinstance(delay, Mapping) and (
+                (
+                    isinstance(delay.get("value"), (int, float))
+                    and not isinstance(delay.get("value"), bool)
+                )
+                or (
+                    isinstance(delay.get("minimumValue"), int)
+                    and not isinstance(delay.get("minimumValue"), bool)
+                    and isinstance(delay.get("maximumValue"), int)
+                    and not isinstance(delay.get("maximumValue"), bool)
+                    and int(delay["minimumValue"]) >= 0
+                    and int(delay["maximumValue"]) >= int(delay["minimumValue"])
+                    and delay.get("distribution") == "uniform-inclusive-integer"
+                )
+            )
+        if not isinstance(combat, Mapping) or not delay_valid or not all(
             isinstance(combat.get(field), Mapping)
             and isinstance(combat[field].get("value"), (int, float))
             and not isinstance(combat[field].get("value"), bool)
             for field in (
                 "attackRange",
-                "delayBetweenShotsMs",
                 "preAttackDelayMs",
                 "firingDurationMs",
                 "damage",
@@ -3743,6 +4153,33 @@ def validate_playable_structure_descriptor(value: Mapping[str, object]) -> None:
             ):
                 raise PlayableStructureCompilerError(
                     "structure descriptor combat identity is invalid"
+                )
+        projectile_nuggets = combat.get("projectileNuggets", [])
+        if not isinstance(projectile_nuggets, list):
+            raise PlayableStructureCompilerError(
+                "structure descriptor projectile nuggets are invalid"
+            )
+        for nugget in projectile_nuggets:
+            if (
+                not isinstance(nugget, Mapping)
+                or not isinstance(nugget.get("line"), int)
+                or isinstance(nugget.get("line"), bool)
+                or int(nugget["line"]) <= 0
+                or not isinstance(nugget.get("projectileObjectId"), str)
+                or not nugget["projectileObjectId"]
+                or not isinstance(nugget.get("warheadId"), str)
+                or not nugget["warheadId"]
+                or not isinstance(nugget.get("damage"), Mapping)
+                or not isinstance(nugget["damage"].get("value"), (int, float))
+                or isinstance(nugget["damage"].get("value"), bool)
+                or any(
+                    not isinstance(value, str) or not value
+                    for gate in ("requiredUpgradeIds", "forbiddenUpgradeIds")
+                    for value in nugget.get(gate, [])
+                )
+            ):
+                raise PlayableStructureCompilerError(
+                    "structure descriptor projectile nugget row is invalid"
                 )
     health = gameplay.get("health")
     if health is None and "BASE_FOUNDATION" not in {
@@ -4185,6 +4622,8 @@ def validate_playable_structure_descriptor(value: Mapping[str, object]) -> None:
             raise PlayableStructureCompilerError(
                 "structure descriptor inherited upgrade source evidence is missing"
             )
+    if "walkSurfaces" in value:
+        validate_walk_surfaces(value.get("walkSurfaces"), label="structure descriptor")
 
 
 __all__ = [
@@ -4193,5 +4632,7 @@ __all__ = [
     "SCHEMA_VERSION",
     "STRUCTURE_KIND_TOKENS",
     "compile_playable_structure_descriptor",
+    "compile_walk_surfaces",
     "validate_playable_structure_descriptor",
+    "validate_walk_surfaces",
 ]

@@ -65,11 +65,14 @@ from .module_contracts import ModuleContractError, compile_all_module_contracts
 from .playable_structure_compiler import (
     PlayableStructureCompilerError,
     _health_contract,
+    compile_walk_surfaces,
+    validate_walk_surfaces,
 )
 from .playable_unit_compiler import (
     PlayableUnitCompilerError,
     _ancestry,
     _effective_top_blocks,
+    _effective_values,
     _geometry_contract,
     _kind_of,
     _numeric_define_provenance,
@@ -209,6 +212,9 @@ def compile_map_object_descriptor(
             {str(entry.source_virtual_path) for entry in ancestry}
         ),
     }
+    walk_surfaces = compile_walk_surfaces(ancestry, documents)
+    if walk_surfaces is not None:
+        descriptor["walkSurfaces"] = walk_surfaces
     canonical = json.dumps(
         descriptor, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     )
@@ -299,14 +305,99 @@ def _number(
     return value
 
 
+def _text_defines(documents: Mapping[str, bytes]) -> dict[str, list[str]]:
+    """Token defines needed by fixture filters, resolved from the cook corpus."""
+
+    result: dict[str, list[str]] = {}
+    for virtual_path in sorted(documents, key=str.casefold):
+        text = documents[virtual_path].decode("latin-1", errors="replace")
+        for line in text.splitlines():
+            match = re.match(r"^\s*#define\s+(\S+)\s+(.+?)\s*$", line)
+            if match is None:
+                continue
+            value = re.split(r"\s*(?:;|//)", match.group(2), maxsplit=1)[0]
+            tokens = value.split()
+            if tokens:
+                result[match.group(1).casefold()] = tokens
+    return result
+
+
+def _expanded_tokens(
+    fields: Mapping[str, str], key: str, label: str,
+    text_defines: Mapping[str, list[str]],
+) -> list[str]:
+    tokens = _required_text(fields, key, label).split()
+    expanded: list[str] = []
+    for token in tokens:
+        expanded.extend(text_defines.get(token.casefold(), [token]))
+    return expanded
+
+
+def _source_vector(fields: Mapping[str, str], key: str, label: str) -> list[float]:
+    text = _required_text(fields, key, label)
+    values: dict[str, float] = {}
+    for axis, token in re.findall(r"\b([XYZ]):\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))", text, re.I):
+        values[axis.upper()] = float(token)
+    if set(values) != {"X", "Y", "Z"}:
+        raise CastleFixturesError(f"{label} {key} is not an XYZ vector: {text!r}")
+    return [values["X"], values["Y"], values["Z"]]
+
+
+def _effective_number(
+    ancestry: Sequence[Any], key: str, label: str,
+    defines: Mapping[str, int | float],
+) -> float | None:
+    values = _effective_values(ancestry, key)
+    if not values:
+        return None
+    token = values[-1].value.strip()
+    resolved = defines.get(token.casefold())
+    if resolved is not None:
+        return float(resolved)
+    try:
+        return float(token.rstrip("%"))
+    except ValueError as exc:
+        raise CastleFixturesError(f"{label} {key} is not numeric: {token!r}") from exc
+
+
 def _geometry_number_value(row: object, label: str) -> float:
     if not isinstance(row, Mapping) or "value" not in row:
         raise CastleFixturesError(f"{label} has an unresolvable geometry scalar")
     return float(row["value"])  # type: ignore[index]
 
 
+def _command_set_rows(
+    documents: Mapping[str, bytes], command_set_id: str
+) -> list[dict[str, Any]]:
+    """Return only the authored slot rows from one retail CommandSet block."""
+
+    payload = documents.get("data/ini/commandset.ini")
+    if payload is None:
+        raise CastleFixturesError("retail commandset.ini is missing")
+    text = payload.decode("utf-8", errors="replace")
+    declaration = re.search(
+        rf"(?im)^\s*CommandSet\s+{re.escape(command_set_id)}\s*(?:;.*)?$", text
+    )
+    if declaration is None:
+        raise CastleFixturesError(f"retail CommandSet {command_set_id} is missing")
+    end = re.search(r"(?im)^\s*End\s*(?:;.*)?$", text[declaration.end() :])
+    if end is None:
+        raise CastleFixturesError(f"retail CommandSet {command_set_id} is unterminated")
+    rows: list[dict[str, Any]] = []
+    for raw_line in text[declaration.end() : declaration.end() + end.start()].splitlines():
+        match = re.match(r"\s*(\d+)\s*=\s*([^\s;]+)", raw_line)
+        if match is not None:
+            rows.append({"slot": int(match.group(1)), "commandId": match.group(2)})
+    if not rows:
+        raise CastleFixturesError(f"retail CommandSet {command_set_id} is empty")
+    return rows
+
+
 def _gate_block(
-    ancestry: Sequence[Any], defines: Mapping[str, int | float], target_id: str
+    ancestry: Sequence[Any],
+    defines: Mapping[str, int | float],
+    target_id: str,
+    documents: Mapping[str, bytes] | None = None,
 ) -> dict[str, Any]:
     label = f"{target_id} GateOpenAndCloseBehavior"
     fields = _module_assignments(ancestry, "GateOpenAndCloseBehavior")
@@ -352,11 +443,37 @@ def _gate_block(
             f"{target_id} is a gate without named geometry states"
         )
     block["geometries"] = geometries
+    command_sets = [
+        row.value.strip().split()[0]
+        for row in _effective_values(ancestry, "CommandSet")
+        if row.value.strip()
+    ]
+    if command_sets:
+        block["commandSet"] = command_sets[0]
+        if documents is not None:
+            block["commandSetRows"] = _command_set_rows(documents, command_sets[0])
+    ai_fields = _module_assignments(ancestry, "AIGateUpdate")
+    if ai_fields:
+        ai_label = f"{target_id} AIGateUpdate"
+        block["aiGateUpdate"] = {
+            "triggerWidthX": _number(ai_fields, "TriggerWidthX", ai_label, defines),
+            "triggerWidthY": _number(ai_fields, "TriggerWidthY", ai_label, defines),
+        }
+    portal_fields = _module_assignments(ancestry, "FakePathfindPortalBehaviour")
+    if portal_fields:
+        portal_label = f"{target_id} FakePathfindPortalBehaviour"
+        block["fakePathfindPortal"] = {
+            "allowEnemies": _yes_no(portal_fields, "AllowEnemies", portal_label),
+            "allowNonSkirmishAIUnits": _yes_no(
+                portal_fields, "AllowNonSkirmishAIUnits", portal_label
+            ),
+        }
     return block
 
 
 def _garrison_block(
-    ancestry: Sequence[Any], defines: Mapping[str, int | float], target_id: str
+    ancestry: Sequence[Any], defines: Mapping[str, int | float], target_id: str,
+    text_defines: Mapping[str, list[str]],
 ) -> dict[str, Any]:
     fields: dict[str, str] = {}
     kind = "HordeGarrisonContain"
@@ -370,6 +487,26 @@ def _garrison_block(
     if isinstance(contain_max, float) and not contain_max.is_integer():
         raise CastleFixturesError(f"{label} ContainMax is not an integer")
     block: dict[str, Any] = {"containMax": int(contain_max)}
+    block["objectStatusOfContained"] = _expanded_tokens(
+        fields, "ObjectStatusOfContained", label, text_defines
+    )
+    block["passengerFilter"] = _expanded_tokens(
+        fields, "PassengerFilter", label, text_defines
+    )
+    damage_percent = _number(fields, "DamagePercentToUnits", label, defines)
+    block["damagePercentToUnits"] = float(damage_percent) / 100.0
+    for key in ("EntryPosition", "EntryOffset", "ExitOffset"):
+        if key.casefold() in fields:
+            block[key[0].lower() + key[1:]] = _source_vector(fields, key, label)
+    if "entersound" in fields:
+        block["enterSound"] = _required_text(fields, "EnterSound", label)
+    if "passengerboneprefix" in fields:
+        block["passengerBonePrefix"] = _required_text(
+            fields, "PassengerBonePrefix", label
+        )
+    vision = _effective_number(ancestry, "VisionRange", target_id, defines)
+    if vision is not None:
+        block["visionRange"] = vision
     for key in (
         "AllowEnemiesInside",
         "AllowAlliesInside",
@@ -427,6 +564,8 @@ def _fixture(
     placement: Mapping[str, Any],
     ancestry: Sequence[Any],
     defines: Mapping[str, int | float],
+    documents: Mapping[str, bytes],
+    text_defines: Mapping[str, list[str]],
 ) -> dict[str, Any]:
     type_name = str(placement["typeName"])
     role = _role(info)
@@ -455,11 +594,16 @@ def _fixture(
         if property_key in properties:
             fixture[fixture_key] = properties[property_key]
     if role == "gate":
-        fixture["gate"] = _gate_block(ancestry, defines, info.name)
+        fixture["gate"] = _gate_block(ancestry, defines, info.name, documents)
     elif role == "garrison":
-        fixture["garrison"] = _garrison_block(ancestry, defines, info.name)
+        fixture["garrison"] = _garrison_block(
+            ancestry, defines, info.name, text_defines
+        )
     if _module_present(ancestry, "KeepObjectDie"):
         fixture["deathRule"] = "keep-object"
+    walk_surfaces = descriptor.get("walkSurfaces")
+    if isinstance(walk_surfaces, Mapping):
+        fixture["walkSurfaces"] = dict(walk_surfaces)
     return fixture
 
 
@@ -509,6 +653,7 @@ def build_map_fixtures(
         tuple(derivation.required) + (_FAMILY_CAPABILITY,)
     )
     descriptors: dict[str, dict[str, Any]] = {}
+    text_defines = _text_defines(documents)
     fixtures: list[dict[str, Any]] = []
     omitted: dict[str, str] = {}
     for row in rows:
@@ -536,7 +681,9 @@ def build_map_fixtures(
             omitted.setdefault(folded, type_name)
             continue
         _, ancestry = _compile_lineage(type_name, raw)
-        fixtures.append(_fixture(info, descriptor, row, ancestry, defines))
+        fixtures.append(
+            _fixture(info, descriptor, row, ancestry, defines, documents, text_defines)
+        )
     fixtures.sort(key=lambda fixture: int(fixture["index"]))
     return {
         "schema": MAP_FIXTURES_SCHEMA,
@@ -594,6 +741,43 @@ def _validate_gate_block(block: object, label: str) -> None:
     if not _is_number(percent) or float(percent) < 0:  # type: ignore[arg-type]
         raise CastleFixturesError(f"{label} has an invalid gate module block")
     _validate_geometries(block.get("geometries"), label)
+    if "commandSet" in block and (
+        not isinstance(block.get("commandSet"), str) or not block["commandSet"].strip()
+    ):
+        raise CastleFixturesError(f"{label} has an invalid gate command set")
+    command_rows = block.get("commandSetRows")
+    if command_rows is not None and (
+        not isinstance(command_rows, list)
+        or not command_rows
+        or any(
+            not isinstance(row, Mapping)
+            or not isinstance(row.get("slot"), int)
+            or isinstance(row.get("slot"), bool)
+            or int(row["slot"]) <= 0
+            or not isinstance(row.get("commandId"), str)
+            or not row["commandId"].strip()
+            for row in command_rows
+        )
+    ):
+        raise CastleFixturesError(f"{label} has invalid gate command set rows")
+    ai_gate = block.get("aiGateUpdate")
+    if ai_gate is not None and (
+        not isinstance(ai_gate, Mapping)
+        or not all(
+            _is_number(ai_gate.get(key)) and float(ai_gate[key]) > 0.0
+            for key in ("triggerWidthX", "triggerWidthY")
+        )
+    ):
+        raise CastleFixturesError(f"{label} has an invalid AI gate update block")
+    portal = block.get("fakePathfindPortal")
+    if portal is not None and (
+        not isinstance(portal, Mapping)
+        or not all(
+            isinstance(portal.get(key), bool)
+            for key in ("allowEnemies", "allowNonSkirmishAIUnits")
+        )
+    ):
+        raise CastleFixturesError(f"{label} has an invalid fake pathfind portal block")
 
 
 def _validate_garrison_block(block: object, label: str) -> None:
@@ -606,6 +790,27 @@ def _validate_garrison_block(block: object, label: str) -> None:
         or contain_max <= 0
     ):
         raise CastleFixturesError(f"{label} has an invalid containMax")
+    for key in ("objectStatusOfContained", "passengerFilter"):
+        tokens = block.get(key)
+        if tokens is not None and (
+            not isinstance(tokens, Sequence)
+            or isinstance(tokens, (str, bytes))
+            or not tokens
+            or not all(isinstance(token, str) and token for token in tokens)
+        ):
+            raise CastleFixturesError(f"{label} has an invalid {key}")
+    damage = block.get("damagePercentToUnits")
+    if damage is not None and (not _is_number(damage) or not 0.0 <= float(damage) <= 1.0):
+        raise CastleFixturesError(f"{label} has an invalid damagePercentToUnits")
+    for key in ("entryPosition", "entryOffset", "exitOffset"):
+        vector = block.get(key)
+        if vector is not None and (
+            not isinstance(vector, Sequence)
+            or isinstance(vector, (str, bytes))
+            or len(vector) != 3
+            or not all(_is_number(value) for value in vector)
+        ):
+            raise CastleFixturesError(f"{label} has an invalid {key}")
 
 
 def validate_map_fixtures(document: object) -> None:
@@ -701,6 +906,14 @@ def validate_map_fixtures(document: object) -> None:
             raise CastleFixturesError(
                 "castle fixture role disagrees with its module block"
             )
+        if "walkSurfaces" in row:
+            try:
+                validate_walk_surfaces(
+                    row.get("walkSurfaces"),
+                    label=f"castle fixture {type_name}",
+                )
+            except PlayableStructureCompilerError as exc:
+                raise CastleFixturesError(str(exc)) from exc
     omitted = document.get("omitted", [])
     if not isinstance(omitted, Sequence) or isinstance(omitted, (str, bytes)):
         raise CastleFixturesError("map fixtures document has an invalid omitted list")

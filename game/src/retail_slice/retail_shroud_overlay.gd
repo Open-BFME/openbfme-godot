@@ -276,6 +276,10 @@ func bind_scenery(containers: Array) -> int:
 			_scenery.append({
 				"node": target,
 				"position": Vector2(world.x, world.z),
+				# Retail castle walls carrying DONT_HIDE_IF_FOGGED or
+				# NEVER_CULL_FOR_MP remain part of the skyline even over
+				# unexplored ground. The fixture binder stamps this from KindOf.
+				"dont_hide_if_fogged": bool(placement.get_meta("dont_hide_if_fogged", false)),
 			})
 	return _scenery.size()
 
@@ -292,12 +296,20 @@ func apply_to_scenery() -> int:
 	var hidden := 0
 	if not enabled or _fog == null:
 		for entry_value in _scenery:
-			(entry_value as Dictionary)["node"].visible = true
+			var entry := entry_value as Dictionary
+			var node_value: Variant = entry.get("node")
+			if typeof(node_value) != TYPE_OBJECT or not is_instance_valid(node_value) or not node_value is Node3D:
+				continue
+			(node_value as Node3D).visible = true
 		return 0
 	for entry_value in _scenery:
 		var entry: Dictionary = entry_value
-		var visible_now := state_at(Vector2(entry["position"])) != FogScript.SHROUDED
-		(entry["node"] as Node3D).visible = visible_now
+		var node_value: Variant = entry.get("node")
+		if typeof(node_value) != TYPE_OBJECT or not is_instance_valid(node_value) or not node_value is Node3D:
+			continue
+		var visible_now := bool(entry.get("dont_hide_if_fogged", false)) \
+			or state_at(Vector2(entry["position"])) != FogScript.SHROUDED
+		(node_value as Node3D).visible = visible_now
 		if not visible_now:
 			hidden += 1
 	return hidden

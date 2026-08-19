@@ -641,7 +641,9 @@ func _spatial_rebuild() -> void:
 	_spatial_team_box.clear()
 	_spatial_hostile_teams.clear()
 	for key in entities.keys():
-		_spatial_sync(entities[key] as Dictionary)
+		var row := entities[key] as Dictionary
+		if not bool(row.get("presentation_hidden", false)):
+			_spatial_sync(row)
 
 
 func _spatial_sync(row: Dictionary) -> void:
@@ -1865,6 +1867,7 @@ func _apply_map_configuration(configuration: Dictionary) -> void:
 			var fixture_row := {
 				"type_name": String(fixture.get("type_name", "")),
 				"role": String(fixture.get("role", "")),
+				"kind_of": (fixture.get("kind_of", []) as Array).duplicate(),
 				"source_index": int(fixture.get("source_index", -1)),
 				"position": Vector2(fixture.get("position")),
 				"elevation": float(fixture.get("elevation", 0.0)),
@@ -1873,9 +1876,15 @@ func _apply_map_configuration(configuration: Dictionary) -> void:
 				"maximum_health": float(fixture.get("maximum_health", 1.0)),
 				"armor": String(fixture.get("armor", "")),
 				"indestructible": bool(fixture.get("indestructible", false)),
+				"enabled": bool(fixture.get("enabled", true)),
+				"targetable": bool(fixture.get("targetable", true)),
 			}
 			if fixture.has("initial_health"):
 				fixture_row["initial_health"] = float(fixture.get("initial_health"))
+			if fixture.has("garrison"):
+				fixture_row["garrison"] = (fixture.get("garrison", {}) as Dictionary).duplicate(true)
+			if fixture.has("gate"):
+				fixture_row["gate"] = (fixture.get("gate") as Dictionary).duplicate(true)
 			_castle_fixture_placements.append(fixture_row)
 
 
@@ -10193,7 +10202,7 @@ func _step_structure_weapons() -> void:
 		# DelayBetweenShots is measured from this authored attack cycle, not
 		# from projectile impact; adding flight time here made artillery fire
 		# progressively slower at longer range.
-		attack["cooldown"] = tick_index + int(attack.get("period_ticks", 1))
+		attack["cooldown"] = tick_index + _structure_weapon_period_ticks(attack)
 		_emit_event("combat.structure_projectile_launched", structure_id, best_id, {
 			"projectile_token": token,
 			"projectile_object_id": String(attack.get("projectile_object_id", "")),
@@ -10207,6 +10216,19 @@ func _step_structure_weapons() -> void:
 			_resolve_structure_weapon_impact(
 				structure_id, attack, attack["pending_projectile"] as Dictionary
 			)
+
+
+func _structure_weapon_period_ticks(attack: Dictionary) -> int:
+	## SAGE DelayBetweenShots Min:/Max: chooses a new inclusive integer
+	## millisecond delay for every attack cycle. Draw before quantizing to the
+	## fixed tick so the authored millisecond distribution remains authoritative.
+	if String(attack.get("delay_between_shots_distribution", "")) == "uniform-inclusive-integer":
+		var minimum_ms := int(attack.get("delay_between_shots_minimum_ms", -1))
+		var maximum_ms := int(attack.get("delay_between_shots_maximum_ms", -1))
+		if minimum_ms >= 0 and maximum_ms >= minimum_ms:
+			var delay_ms := logic_random_int(minimum_ms, maximum_ms)
+			return maxi(1, roundi(float(delay_ms) / (TICK_SECONDS * 1000.0)))
+	return maxi(1, int(attack.get("period_ticks", 1)))
 
 
 func _resolve_structure_weapon_impact(
@@ -14204,7 +14226,7 @@ func _step_battalion_separation() -> void:
 		var a: Dictionary = entities[ids[index]]
 		# Only settled battalions get nudged apart: pushing marching columns
 		# around mid-route disrupts ford crossings and formation moves.
-		if int(a.get("health", 0)) <= 0 or String(a.get("state", "")) != "idle" or bool(a.get("flying", false)):
+		if int(a.get("health", 0)) <= 0 or String(a.get("state", "")) != "idle" or bool(a.get("flying", false)) or bool(a.get("presentation_hidden", false)):
 			continue
 		# Only battalions overlapping `a` can be pushed by it, so the old
 		# all-pairs inner sweep is a neighbourhood query over ids above `a`.
@@ -14242,7 +14264,7 @@ func _step_battalion_separation() -> void:
 			if not entities.has(other_id):
 				continue
 			var b: Dictionary = entities[other_id]
-			if int(b.get("health", 0)) <= 0 or String(b.get("state", "")) != "idle" or bool(b.get("flying", false)):
+			if int(b.get("health", 0)) <= 0 or String(b.get("state", "")) != "idle" or bool(b.get("flying", false)) or bool(b.get("presentation_hidden", false)):
 				continue
 			var a_position := Vector2(a["position"])
 			var b_position := Vector2(b["position"])
@@ -15028,12 +15050,15 @@ func _stamp_refund_die_creation_cost(row: Dictionary, cost: int) -> void:
 
 
 func _configure_playable_structure_module_contracts() -> void:
-	## Pull structure moduleContracts from ContentDB when the autoload is live.
-	## Absent ContentDB (headless fixtures) leaves the table empty.
-	var db = _content_db_ref()
-	if db == null:
-		return
-	var runtimes_value: Variant = db.get("playable_structure_runtimes")
+	## Prefer the sealed registry already projected into simulation rules. This
+	## keeps fixture/replacement behavior available to headless runners while
+	## retaining ContentDB as the live-scene source.
+	var runtimes_value: Variant = _rules.get("playable_structure_runtimes", {})
+	if typeof(runtimes_value) != TYPE_DICTIONARY or (runtimes_value as Dictionary).is_empty():
+		var db = _content_db_ref()
+		if db == null:
+			return
+		runtimes_value = db.get("playable_structure_runtimes")
 	if typeof(runtimes_value) != TYPE_DICTIONARY:
 		return
 	var runtimes: Dictionary = runtimes_value
@@ -17847,8 +17872,11 @@ func request_gate_open(structure_id:int,requester_id:int=0)->Dictionary:
 func gate_portal_allows(structure_id:int,requester_id:int)->bool:
 	if not structures.has(structure_id) or not entities.has(requester_id):return false
 	var gate:=structures[structure_id] as Dictionary;var portal:=gate.get("fake_pathfind_portal",{}) as Dictionary;var requester:=entities[requester_id] as Dictionary
+	# Retail's FakePathfindPortalBehaviour is an optional extra policy.  With no
+	# authored block an open gate is ordinary open geometry for every team; the
+	# closed geometry blocks every team in _castle_gate_blocking_discs.
+	if portal.is_empty():return true
 	if int(requester.get("team",-1))!=int(gate.get("team",-1)) and not bool(portal.get("allow_enemies",false)):return false
-	if not bool(requester.get("human_controlled",true)) and not bool(requester.get("skirmish_ai",false)) and not bool(portal.get("allow_non_skirmish_ai",false)):return false
 	return true
 
 
@@ -17858,7 +17886,7 @@ func _step_gate_updates()->void:
 		if policy.is_empty():continue
 		var ai:=gate.get("ai_gate_update",{}) as Dictionary
 		if not ai.is_empty():
-			var half:=Vector2(ai.get("trigger_width_source",Vector2.ZERO))*float(_rules.get("source_unit_scale",0.1))*0.5;var origin:=Vector2(gate.get("position",Vector2.ZERO))
+			var half:=Vector2(ai.get("trigger_width_source",Vector2.ZERO))*float(_rules.get("source_map_transform_scale",0.1))*0.5;var origin:=Vector2(gate.get("position",Vector2.ZERO))
 			for id in entity_ids():
 				var unit:=entities[id] as Dictionary;var delta:=Vector2(unit.get("position",Vector2.ZERO))-origin
 				if int(unit.get("team",-1))==int(gate.get("team",-1)) and absf(delta.x)<=half.x and absf(delta.y)<=half.y:request_gate_open(structure_id,id);break
@@ -20217,6 +20245,15 @@ func _apply_due_replace_self_policy(structure_id: int, row: Dictionary, trigger_
 		var upgrades := row.get("completed_upgrades", []) as Array
 		for conflict_value in policy.get("conflicts_with", []) as Array:
 			if upgrades.has(String(conflict_value)):
+				# ReplaceSelfUpgrade ConflictsWith (campsandcastles.ini:4420-4447):
+				# the five wall routes are mutually exclusive. Named event so a
+				# refused route is observable, never silent.
+				_emit_event("structure.replace_self_refused", 0, structure_id, {
+					"trigger": trigger_upgrade_id,
+					"reason": "conflicting-upgrade",
+					"conflict": String(conflict_value),
+				})
+				policy["consumed"] = true
 				return {"ok": false, "reason": "conflicting-upgrade", "conflict": String(conflict_value)}
 		var replacement_id := String(policy.get("replace_with", ""))
 		var primary_spec := _replace_self_structure_spec(int(row.get("team", -1)), replacement_id)
@@ -20281,22 +20318,76 @@ func _replace_self_structure_spec(team: int, object_id: String) -> Dictionary:
 	# selected playable-structure registry but are intentionally not base-loop
 	# build kinds. Resolve their exact object document instead of pretending an
 	# absent faction-manifest alias means an absent retail template.
+	var document := _playable_structure_runtime_document(object_id)
+	if not document.is_empty():
+		var registration := document.get("registration", {}) as Dictionary
+		var gameplay := registration.get("gameplay", {}) as Dictionary
+		var health := gameplay.get("health", {}) as Dictionary
+		var primary := health.get("primary", {}) as Dictionary
+		var maximum_field := primary.get("maxHealth", {}) as Dictionary
+		var maximum: Variant = maximum_field.get("value")
+		if typeof(maximum) not in [TYPE_INT, TYPE_FLOAT]:
+			var lifecycle := (registration.get("presentation", {}) as Dictionary).get("buildingLifecycle", {}) as Dictionary
+			maximum = (lifecycle.get("simulationFacts", {}) as Dictionary).get("maximumHealth")
+		if typeof(maximum) in [TYPE_INT, TYPE_FLOAT] and float(maximum) > 0.0:
+			var spec := {"structure_kind": String(document.get("slug", object_id)), "maximum_health": int(maximum)}
+			var attack := _structure_attack_from_combat(gameplay.get("combat", {}) as Dictionary)
+			if not attack.is_empty():
+				spec["attack"] = attack
+			return spec
+	return {}
+
+
+func _playable_structure_runtime_document(object_id: String) -> Dictionary:
+	var runtimes_value: Variant = _rules.get("playable_structure_runtimes", {})
+	if typeof(runtimes_value) == TYPE_DICTIONARY:
+		var runtimes := runtimes_value as Dictionary
+		if typeof(runtimes.get(object_id)) == TYPE_DICTIONARY:
+			return (runtimes[object_id] as Dictionary).duplicate(true)
+		for key_value in runtimes.keys():
+			var candidate: Variant = runtimes[key_value]
+			if typeof(candidate) == TYPE_DICTIONARY and String((candidate as Dictionary).get("objectId", "")).nocasecmp_to(object_id) == 0:
+				return (candidate as Dictionary).duplicate(true)
 	var db = _content_db_ref()
 	if db != null and db.has_method("get_playable_structure_runtime"):
-		var document: Dictionary = db.get_playable_structure_runtime(object_id)
-		if not document.is_empty():
-			var registration := document.get("registration", {}) as Dictionary
-			var gameplay := registration.get("gameplay", {}) as Dictionary
-			var health := gameplay.get("health", {}) as Dictionary
-			var primary := health.get("primary", {}) as Dictionary
-			var maximum_field := primary.get("maxHealth", {}) as Dictionary
-			var maximum: Variant = maximum_field.get("value")
-			if typeof(maximum) not in [TYPE_INT, TYPE_FLOAT]:
-				var lifecycle := (registration.get("presentation", {}) as Dictionary).get("buildingLifecycle", {}) as Dictionary
-				maximum = (lifecycle.get("simulationFacts", {}) as Dictionary).get("maximumHealth")
-			if typeof(maximum) in [TYPE_INT, TYPE_FLOAT] and float(maximum) > 0.0:
-				return {"structure_kind": String(document.get("slug", object_id)), "maximum_health": int(maximum)}
+		return db.get_playable_structure_runtime(object_id)
 	return {}
+
+
+func _structure_attack_from_combat(combat: Dictionary) -> Dictionary:
+	if combat.is_empty():
+		return {}
+	for field in ["attackRange", "delayBetweenShotsMs", "preAttackDelayMs", "damage"]:
+		if typeof(combat.get(field)) != TYPE_DICTIONARY:
+			return {}
+	var range_value := float((combat["attackRange"] as Dictionary).get("value", -1.0))
+	var pre_attack_ms := float((combat["preAttackDelayMs"] as Dictionary).get("value", -1.0))
+	var damage := float((combat["damage"] as Dictionary).get("value", 0.0))
+	var delay := combat["delayBetweenShotsMs"] as Dictionary
+	var delay_ms := float(delay.get("value", -1.0))
+	var minimum_ms := int(delay.get("minimumValue", -1))
+	var maximum_ms := int(delay.get("maximumValue", -1))
+	var interval := String(delay.get("distribution", "")) == "uniform-inclusive-integer"
+	if range_value <= 0.0 or pre_attack_ms < 0.0 or damage <= 0.0:
+		return {}
+	if (not interval and delay_ms < 0.0) or (interval and (minimum_ms < 0 or maximum_ms < minimum_ms)):
+		return {}
+	var source_scale := float(_rules.get("source_map_transform_scale", 1.0))
+	var attack := {
+		"range": range_value * source_scale,
+		"minimum_range": float((combat.get("minimumAttackRange", {}) as Dictionary).get("value", 0.0)) * source_scale,
+		"damage": damage,
+		"period_ticks": maxi(1, roundi((float(minimum_ms) if interval else delay_ms) / (TICK_SECONDS * 1000.0))),
+		"pre_attack_ticks": maxi(0, roundi(pre_attack_ms / (TICK_SECONDS * 1000.0))),
+		"projectile_speed": float((combat.get("projectileSpeed", {}) as Dictionary).get("value", 0.0)) * source_scale,
+		"projectile_object_id": String(combat.get("projectileObjectId", "")),
+		"weapon_id": String(combat.get("weaponId", "")),
+	}
+	if interval:
+		attack["delay_between_shots_distribution"] = "uniform-inclusive-integer"
+		attack["delay_between_shots_minimum_ms"] = minimum_ms
+		attack["delay_between_shots_maximum_ms"] = maximum_ms
+	return attack
 
 
 func _replacement_structure_row(structure_id: int, previous: Dictionary, object_id: String, spec: Dictionary, preserve_state: bool) -> Dictionary:
@@ -21601,6 +21692,7 @@ func _attach_container_family_contract(row: Dictionary, contract: Dictionary) ->
 		unsupported.append("fade_filter_requires_presentation_binding")
 	var entry_offset := _container_contract_offset(fields, "EntryOffset")
 	var exit_offset := _container_contract_offset(fields, "ExitOffset")
+	var kill_on_death := bool(_module_contract_value(fields, "KillPassengersOnDeath", false))
 	row["transport_capacity"] = int(capacity)
 	row["horde_transport"] = {
 		"module": module,
@@ -21613,8 +21705,8 @@ func _attach_container_family_contract(row: Dictionary, contract: Dictionary) ->
 		"allow_enemies": bool(_module_contract_value(fields, "AllowEnemiesInside", false)),
 		"allow_neutral": bool(_module_contract_value(fields, "AllowNeutralInside", false)),
 		"exit_delay_ticks": _ship_contract_delay_ticks(float(_module_contract_value(fields, "ExitDelay", 0.0))),
-		"kill_passengers_on_death": bool(_module_contract_value(fields, "KillPassengersOnDeath", false)),
-		"eject_passengers_on_death": bool(_module_contract_value(fields, "EjectPassengersOnDeath", false)),
+		"kill_passengers_on_death": kill_on_death,
+		"eject_passengers_on_death": bool(_module_contract_value(fields, "EjectPassengersOnDeath", false)) or (module in ["GarrisonContain", "HordeGarrisonContain"] and not kill_on_death),
 		"force_orientation": bool(_module_contract_value(fields, "ForceOrientationContainer", false)),
 		"passenger_bones": Array(fields.get("PassengerBonePrefix", [])).duplicate(true),
 		"entry_offset_source": entry_offset,
@@ -21840,12 +21932,23 @@ func load_transport_entity(carrier_id: int, entity_id: int, manual_pickup: bool 
 	if not bool(result.get("ok", false)):
 		return result
 	passenger["transport_prior_status"] = (passenger.get("object_status", {}) as Dictionary).duplicate(true)
+	passenger["transport_prior_vision_range"] = float(passenger.get("vision_range", 0.0))
 	var statuses := passenger.get("object_status", {}) as Dictionary
 	for status in policy.get("contained_statuses", []) as Array:
 		statuses[String(status)] = true
 	passenger["object_status"] = statuses
 	passenger["transport_bone"] = _transport_bone_for(passenger, policy.get("passenger_bones", []) as Array)
-	passenger["position"] = Vector2(carrier.get("position", Vector2.ZERO)) + _retail_source_to_sim_offset(Vector2(policy.get("entry_offset_source", Vector2.ZERO)))
+	var garrison_module := String(policy.get("module", "")) in ["GarrisonContain", "HordeGarrisonContain"]
+	passenger["position"] = Vector2(carrier.get("position", Vector2.ZERO)) if garrison_module else Vector2(carrier.get("position", Vector2.ZERO)) + _retail_source_to_sim_offset(Vector2(policy.get("entry_offset_source", Vector2.ZERO)))
+	passenger["presentation_hidden"] = true
+	passenger["contained_can_attack"] = garrison_module and (policy.get("contained_statuses", []) as Array).has("CAN_ATTACK")
+	if garrison_module:
+		var tower_vision_source := float(policy.get("tower_vision_range_source", 0.0))
+		if tower_vision_source > 0.0:
+			passenger["vision_range"] = tower_vision_source * source_transform_scale()
+	if int(carrier.get("team", -1)) == CASTLE_CIVILIAN_TEAM and bool(policy.get("allow_neutral", false)):
+		carrier["team"] = int(passenger.get("team", -1))
+		_emit_event("garrison.neutral_captured", entity_id, carrier_id, {"team": int(carrier.get("team", -1))})
 	if bool(policy.get("force_orientation", false)):
 		passenger["facing"] = carrier.get("facing", Vector2.ZERO)
 	if bool(policy.get("fade_on_enter", false)) and _transport_filter_accepts(passenger, policy.get("fade_filter", []) as Array):
@@ -21860,6 +21963,22 @@ func load_transport_entity(carrier_id: int, entity_id: int, manual_pickup: bool 
 	})
 	_update_container_weapon_state(carrier_id)
 	return {"ok": true, "reason": "", "bone": String(passenger.get("transport_bone", ""))}
+
+
+func issue_garrison(team: int, entity_id: int, structure_id: int) -> Dictionary:
+	if not entities.has(entity_id) or int((entities[entity_id] as Dictionary).get("team", -1)) != team:
+		return {"ok": false, "reason": "not-owned"}
+	return load_transport_entity(structure_id, entity_id)
+
+
+func issue_exit_garrison(team: int, entity_id: int) -> Dictionary:
+	if not entities.has(entity_id) or int((entities[entity_id] as Dictionary).get("team", -1)) != team:
+		return {"ok": false, "reason": "not-owned"}
+	if not entity_container.has(entity_id):
+		return {"ok": false, "reason": "not-contained"}
+	var carrier_id := int(entity_container[entity_id])
+	_finish_transport_exit(carrier_id, entity_id)
+	return {"ok": true, "reason": ""}
 
 
 func _transport_entry_voice_candidates(passenger_object_id: String, carrier_object_id: String) -> Array[String]:
@@ -21937,17 +22056,26 @@ func _update_siege_crew_state(carrier_id: int) -> void:
 static func _transport_filter_accepts(row: Dictionary, filter: Array) -> bool:
 	if filter.is_empty():
 		return false
-	var traits: Dictionary = {String(row.get("category", "")).to_upper(): true}
+	var traits: Dictionary = {_transport_filter_key(String(row.get("category", ""))): true}
+	for identity_key in ["object_id", "unit_type", "name"]:
+		var identity := _transport_filter_key(String(row.get(identity_key, "")))
+		if identity != "":
+			traits[identity] = true
 	for kind_value in row.get("kind_of", []) as Array:
-		traits[String(kind_value).to_upper()] = true
+		traits[_transport_filter_key(String(kind_value))] = true
 	var accepted := filter.has("ANY") or filter.has("ALL")
 	for token_value in filter:
 		var token := String(token_value).to_upper()
-		if token.begins_with("-") and traits.has(token.substr(1)):
+		if token.begins_with("-") and traits.has(_transport_filter_key(token.substr(1))):
 			return false
-		if token.begins_with("+") and traits.has(token.substr(1)):
+		if token.begins_with("+") and traits.has(_transport_filter_key(token.substr(1))):
 			accepted = true
 	return accepted
+
+
+static func _transport_filter_key(value: String) -> String:
+	var leaf := value.get_slice(".", value.get_slice_count(".") - 1)
+	return leaf.to_pascal_case().to_upper()
 
 
 static func _transport_bone_for(passenger: Dictionary, bones: Array) -> String:
@@ -22041,6 +22169,10 @@ func _finish_transport_exit(carrier_id: int, entity_id: int, destination_id: int
 	passenger["object_status"] = (passenger.get("transport_prior_status", {}) as Dictionary).duplicate(true)
 	passenger.erase("transport_prior_status")
 	passenger.erase("transport_bone")
+	passenger.erase("presentation_hidden")
+	passenger.erase("contained_can_attack")
+	passenger["vision_range"] = float(passenger.get("transport_prior_vision_range", passenger.get("vision_range", 0.0)))
+	passenger.erase("transport_prior_vision_range")
 	var destination := structures.get(destination_id, carrier) as Dictionary
 	var destination_policy := destination.get("horde_transport", policy) as Dictionary
 	passenger["position"] = Vector2(destination.get("position", passenger.get("position", Vector2.ZERO))) + _retail_source_to_sim_offset(Vector2(destination_policy.get("exit_offset_source", Vector2.ZERO)))
@@ -25993,6 +26125,29 @@ func _initialize_structure_auto_deposit(structure: Dictionary) -> void:
 			structure_auto_deposit_updates_for_team(descriptor_team)
 				.get(kind, []) as Array
 		)
+		# Fortress composite pieces: retail authors the keep's income on the
+		# piece object (fortress.ini:983 MenFortressCitadel AutoDepositUpdate
+		# GENERIC_KEEP_MONEY_AMOUNT 25 / GENERIC_KEEP_MONEY_TIME 6000 ms), and
+		# the manifest files those rows under deferred_structure_auto_deposit_
+		# updates[object_id] because the piece is engine-spawned, not built.
+		# The piece IS a live castle_piece row now, so its authored rows bind
+		# here. Owner 2026-08-19: fortresses never earned passive income.
+		if rules.is_empty():
+			var deferred: Dictionary = team_manifest_for(descriptor_team).get(
+				"deferred_structure_auto_deposit_updates", {}
+			) as Dictionary
+			# The manifest keys composite pieces by the retail source object
+			# name (MenFortressCitadel); the row carries both spellings.
+			for key in [String(structure.get("source_object_id", "")), String(structure.get("object_id", ""))]:
+				if key == "" or not deferred.has(key):
+					continue
+				var executable: Array = []
+				for row_value in deferred.get(key, []) as Array:
+					if String((row_value as Dictionary).get("runtimeStatus", "")) == "executable":
+						executable.append(row_value)
+				if not executable.is_empty():
+					rules = executable
+					break
 	if rules.is_empty():
 		structure.erase("auto_deposit_rules")
 		structure.erase("auto_deposit_state")
@@ -26364,7 +26519,10 @@ func _step_entity(id: int) -> void:
 		_clear_pending_route(row, true)
 		row["attack_move"] = false
 		row["current_speed"] = 0.0
-		if not bool(horde_ai.get("can_attack_while_contained", false)):
+		var carrier_id := int(entity_container.get(id, 0))
+		if structures.has(carrier_id):
+			row["position"] = Vector2((structures[carrier_id] as Dictionary).get("position", row.get("position", Vector2.ZERO)))
+		if not bool(row.get("contained_can_attack", false)) and not bool(horde_ai.get("can_attack_while_contained", false)):
 			row["state"] = "contained"
 			return
 	if tick_index < int(row.get("stun_until_tick", -1)):
@@ -28252,6 +28410,55 @@ func _castle_footprint_pass_through(position: Vector2, attack_target_id: int, at
 const STRUCTURE_EVICTION_STEP := BATTALION_SEPARATION_PUSH
 
 
+func _castle_gate_blocking_discs(structure_row: Dictionary, mover: Dictionary) -> Array[Dictionary]:
+	var policy: Dictionary = structure_row.get("gate_behavior", {})
+	var geometries: Dictionary = structure_row.get("gate_geometries", {})
+	if policy.is_empty() or geometries.is_empty():
+		return []
+	var use_open_geometry := bool(policy.get("pathing_open", false))
+	if use_open_geometry and structure_row.has("fake_pathfind_portal"):
+		var portal: Dictionary = structure_row.get("fake_pathfind_portal", {})
+		if int(mover.get("team", -1)) != int(structure_row.get("team", -2)) and not bool(portal.get("allow_enemies", false)):
+			use_open_geometry = false
+	var geometry_names: Array[String] = []
+	if use_open_geometry:
+		geometry_names.assign(["OpenLeft", "OpenRight"])
+	else:
+		geometry_names.append("Closed")
+	var scale := float(_rules.get("source_map_transform_scale", 0.1))
+	var facing := float(structure_row.get("facing_radians", 0.0))
+	var origin := Vector2(structure_row.get("position", Vector2.ZERO))
+	var discs: Array[Dictionary] = []
+	for geometry_name in geometry_names:
+		var geometry: Dictionary = geometries.get(geometry_name, {})
+		if geometry.is_empty() or String(geometry.get("shape", "")).to_upper() != "BOX":
+			continue
+		var major := float(geometry.get("majorRadius", 0.0)) * scale
+		var minor := float(geometry.get("minorRadius", 0.0)) * scale
+		if major <= 0.0 or minor <= 0.0:
+			continue
+		var long_radius := maxf(major, minor)
+		var authored_short_radius := minf(major, minor)
+		# Minkowski-expand the authored box by the battalion's collision body;
+		# otherwise a centre-point test lets the formation clip through the leaf.
+		var disc_radius := authored_short_radius + BATTALION_SEPARATION_PUSH
+		var local_axis := Vector2.RIGHT if major >= minor else Vector2.DOWN
+		var axis := local_axis.rotated(facing)
+		var offset_value: Array = geometry.get("offset", [])
+		var local_offset := Vector2.ZERO
+		if offset_value.size() == 3:
+			local_offset = Vector2(float(offset_value[0]), float(offset_value[1])) * scale
+		var center := origin + local_offset.rotated(facing)
+		# A long authored BOX is represented by a deterministic chain of discs,
+		# never by the old single tiny structure disc. Adjacent discs overlap.
+		var span := maxf(0.0, long_radius - authored_short_radius)
+		var disc_count := maxi(2, int(ceili(span / maxf(disc_radius, 0.001))) + 1)
+		for disc_index in range(disc_count):
+			var along := 0.0 if disc_count == 1 else lerpf(-span, span, float(disc_index) / float(disc_count - 1))
+			discs.append({"center": center + axis * along, "radius": disc_radius})
+	return discs
+
+
 func _deflect_around_structures(
 	position: Vector2,
 	row: Dictionary,
@@ -28336,6 +28543,35 @@ func _deflect_around_structures(
 		# Construction sites do not block movement: builders must reach their
 		# own site, and scaffolding is passable until the structure completes.
 		if float(structure_row.get("construction_progress", 1.0)) < 1.0:
+			continue
+		var gate_discs := _castle_gate_blocking_discs(structure_row, row)
+		if not gate_discs.is_empty():
+			for disc in gate_discs:
+				var gate_center := Vector2(disc.get("center", Vector2.ZERO))
+				var gate_radius := float(disc.get("radius", 0.0))
+				var gate_offset := position - gate_center
+				var gate_distance := gate_offset.length()
+				# Sweep the just-applied travel segment as well as testing its end;
+				# fast battalions must not tunnel through a thin Closed door slab.
+				if gate_distance >= gate_radius and travel_step.length_squared() > 0.000001:
+					var gate_start := position - travel_step
+					var gate_t := clampf((gate_center - gate_start).dot(travel_step) / travel_step.length_squared(), 0.0, 1.0)
+					var gate_closest := gate_start + travel_step * gate_t
+					var closest_offset := gate_closest - gate_center
+					if closest_offset.length() < gate_radius:
+						position = gate_closest
+						gate_offset = closest_offset
+						gate_distance = closest_offset.length()
+				if gate_distance >= gate_radius:
+					continue
+				var incoming_offset := position - travel_step - gate_center
+				var gate_direction := incoming_offset.normalized() if incoming_offset.length_squared() > 0.000001 else (gate_offset / gate_distance if gate_distance > 0.001 else _eviction_fallback_direction(row))
+				var gate_applied := minf(gate_radius - gate_distance, push_budget)
+				push_budget -= gate_applied
+				var gate_seated_radius := gate_distance + gate_applied
+				position = gate_center + gate_direction * gate_seated_radius
+				if push_budget <= 0.0:
+					break
 			continue
 		var radius := float(STRUCTURE_BLOCK_RADIUS.get(String(structure_row.get("structure_kind", "")), 2.8))
 		if passable.has(structure_id):
@@ -28501,7 +28737,7 @@ func _step_structure_eviction() -> void:
 		return
 	for id in entity_ids():
 		var row: Dictionary = entities[id]
-		if int(row.get("health", 0)) <= 0 or bool(row.get("flying", false)):
+		if int(row.get("health", 0)) <= 0 or bool(row.get("flying", false)) or entity_container.has(id):
 			continue
 		if bool(row.get("is_banner_carrier", false)):
 			# A BANNER CARRIER HAS NO POSITION OF ITS OWN. It is glued to its
@@ -29058,6 +29294,8 @@ func _apply_damage(attacker_id: int, target_id: int, amount: int, target_kind: S
 		return
 	if not entities.has(target_id):
 		return
+	if entity_container.has(target_id):
+		return
 	var target: Dictionary = entities[target_id]
 	if not target.has("inactive_body"):
 		_attach_module_contracts(target)
@@ -29239,6 +29477,8 @@ func _apply_member_damage(
 		_apply_structure_damage(attacker_id, target_id, amount, damage_type_override, damage_components_override)
 		return
 	if not entities.has(target_id):
+		return
+	if entity_container.has(target_id):
 		return
 	var target: Dictionary = entities[target_id]
 	if not target.has("inactive_body"):
@@ -30351,7 +30591,7 @@ func _apply_structure_damage(
 func _target_alive(target_id: int, target_kind: String) -> bool:
 	if target_kind == "structure":
 		return structures.has(target_id) and int((structures[target_id] as Dictionary).get("health", 0)) > 0
-	return entities.has(target_id) and int((entities[target_id] as Dictionary).get("health", 0)) > 0
+	return entities.has(target_id) and not entity_container.has(target_id) and int((entities[target_id] as Dictionary).get("health", 0)) > 0
 
 
 func _target_position(target_id: int, target_kind: String) -> Vector2:
@@ -30618,7 +30858,7 @@ func _seed_castle_fixtures() -> void:
 				maximum_health
 			)
 		_note_structure_table_mutation()
-		structures[structure_id] = {
+		var row := {
 			"id": structure_id,
 			"team": _castle_fixture_team(String(placement.get("owner", ""))),
 			"kind": "structure",
@@ -30626,8 +30866,12 @@ func _seed_castle_fixtures() -> void:
 			"name": String(placement.get("type_name", "")),
 			"castle_fixture_type": String(placement.get("type_name", "")),
 			"castle_fixture_role": String(placement.get("role", "")),
+			"kind_of": (placement.get("kind_of", []) as Array).duplicate(),
 			"castle_fixture_owner": String(placement.get("owner", "")),
 			"castle_fixture_armor": String(placement.get("armor", "")),
+			"castle_fixture_kind_of": Array(placement.get("kind_of", [])).duplicate(),
+			"castle_fixture_enabled": bool(placement.get("enabled", true)),
+			"castle_fixture_targetable": bool(placement.get("targetable", true)),
 			"source_index": int(placement.get("source_index", -1)),
 			"position": position,
 			"elevation": float(placement.get("elevation", 0.0)),
@@ -30647,17 +30891,135 @@ func _seed_castle_fixtures() -> void:
 			"damage_remainders": {},
 			"income_per_payout": 0,
 			# The battlefield already draws the map's bound prop for this
-			# placement (retail_map_data routes map-fixture bindings to
-			# renderable presentation); the slice must not demand a
-			# playable-structure document that no pack ships.
+			# placement; the exact playable-structure document is optional for
+			# presentation but mandatory for wall-defense behavior.
 			"presentation": "bound-map-prop",
 		}
+		var type_name := String(placement.get("type_name", ""))
+		var document := _playable_structure_runtime_document(type_name)
+		if not document.is_empty():
+			row["source_object_id"] = type_name
+			row["object_id"] = type_name
+			var gameplay := ((document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)
+			var attack := _structure_attack_from_combat(gameplay.get("combat", {}) as Dictionary)
+			if not attack.is_empty():
+				row["attack"] = attack
+				row["wall_defense_status"] = "compiled"
+			elif String(placement.get("role", "")) == "wall-mounted":
+				# Document present but no compiled combat: the exact shape a
+				# half-recooked pack takes. Loud, never inert-and-silent.
+				row["wall_defense_status"] = "stale-pack-document-without-combat"
+				print("[RetailSliceSim] CASTLE_WALL_DEFENSE_STALE type=%s source_index=%d reason=document-without-compiled-combat" % [type_name, int(placement.get("source_index", -1))])
+			_attach_structure_module_contracts(row)
+		elif String(placement.get("role", "")) == "wall-mounted":
+			row["wall_defense_status"] = "stale-pack-missing-structure-document"
+			print("[RetailSliceSim] CASTLE_WALL_DEFENSE_STALE type=%s source_index=%d reason=missing-playable-structure-document" % [type_name, int(placement.get("source_index", -1))])
+		structures[structure_id] = row
+		var garrison := placement.get("garrison", {}) as Dictionary
+		if not garrison.is_empty():
+			_attach_castle_fixture_garrison(structures[structure_id] as Dictionary, garrison)
+		var stale_status := String(row.get("wall_defense_status", ""))
+		if stale_status.begins_with("stale-pack-"):
+			_emit_event("castle.fixture_wall_defense_stale", 0, structure_id, {
+				"type_name": type_name,
+				"source_index": int(placement.get("source_index", -1)),
+				"reason": "missing-playable-structure-document" if stale_status == "stale-pack-missing-structure-document" else "document-without-compiled-combat",
+			})
+		var fixture_row: Dictionary = structures[structure_id]
+		var gate_block_value: Variant = placement.get("gate", null)
+		if String(placement.get("role", "")) == "gate" and typeof(gate_block_value) == TYPE_DICTIONARY:
+			var gate_block := gate_block_value as Dictionary
+			var opened := bool(gate_block.get("openByDefault", false))
+			fixture_row["gate_behavior"] = {
+				"open": opened,
+				"pathing_open": opened,
+				"open_fraction": 1.0 if opened else 0.0,
+				"reset_ticks": _ship_contract_delay_ticks(float(gate_block.get("resetMilliseconds", 0.0))),
+				"pathing_threshold": float(gate_block.get("percentOpenForPathing", 100.0)) / 100.0,
+				"repel_colliding": false,
+				"close_tick": -1,
+				"unsupported_semantics": [],
+			}
+			fixture_row["gate_geometries"] = (gate_block.get("geometries", {}) as Dictionary).duplicate(true)
+			if gate_block.has("commandSet"):
+				fixture_row["gate_command_set"] = String(gate_block.get("commandSet", ""))
+			if gate_block.has("commandSetRows"):
+				fixture_row["gate_command_rows"] = (gate_block.get("commandSetRows", []) as Array).duplicate(true)
+			var ai_gate_value: Variant = gate_block.get("aiGateUpdate", null)
+			if typeof(ai_gate_value) == TYPE_DICTIONARY:
+				var ai_gate := ai_gate_value as Dictionary
+				fixture_row["ai_gate_update"] = {"trigger_width_source": Vector2(float(ai_gate.get("triggerWidthX", 0.0)), float(ai_gate.get("triggerWidthY", 0.0)))}
+			var portal_value: Variant = gate_block.get("fakePathfindPortal", null)
+			if typeof(portal_value) == TYPE_DICTIONARY:
+				var portal := portal_value as Dictionary
+				fixture_row["fake_pathfind_portal"] = {"allow_enemies": bool(portal.get("allowEnemies", false)), "allow_non_skirmish_ai": bool(portal.get("allowNonSkirmishAIUnits", false))}
+				# AllowNonSkirmishAIUnits is authored, cooked and stored but the
+				# sim has no skirmish-AI-controlled unit flag to gate on, so the
+				# rule is consumed by nothing either way: NAMED GAP, never silent.
+				if portal.has("allowNonSkirmishAIUnits"):
+					fixture_row["gate_portal_gaps"] = ["AllowNonSkirmishAIUnits"]
+					print("[RetailSliceSim] GATE_PORTAL_GAP type=%s field=AllowNonSkirmishAIUnits authored=%s reason=no-skirmish-ai-unit-flag-in-sim" % [String(placement.get("type_name", "")), str(portal.get("allowNonSkirmishAIUnits"))])
+			structures[structure_id] = fixture_row
 		_emit_event("castle.fixture_seeded", 0, structure_id, {
 			"type_name": String(placement.get("type_name", "")),
 			"role": String(placement.get("role", "")),
 			"team": int(structures[structure_id].get("team", -1)),
 			"source_index": int(placement.get("source_index", -1)),
 		})
+
+
+func _attach_castle_fixture_garrison(row: Dictionary, garrison: Dictionary) -> void:
+	var capacity := int(garrison.get("containMax", 0))
+	if capacity <= 0:
+		return
+	var statuses: Array = (garrison.get("objectStatusOfContained", []) as Array).duplicate()
+	var filter: Array = (garrison.get("passengerFilter", []) as Array).duplicate()
+	# Compatibility for the selected v0.2.6 maps pack: its fixture schema
+	# predates L4 and carries capacity/ownership/death but not these two fields.
+	# Exact tower identity keeps this authored stopgap narrow and loud; the next
+	# maps recook emits the same values from INI and retires this branch.
+	if statuses.is_empty() or filter.is_empty():
+		var tower_type := String(row.get("castle_fixture_type", ""))
+		if tower_type in ["EBGarrisonableTower", "GHGarrisonableTower"]:
+			statuses = ["UNSELECTABLE", "CAN_ATTACK", "ENCLOSED"]
+			filter = ["ANY", "+INFANTRY", "+BANNER", "-CAVALRY", "-SUMMONED", "-WildSpiderling", "-WildSpiderlingHorde", "-COMBO_HORDE", "-IsengardSharku", "-AngmarThrallMaster"]
+			row["garrison_contract_gap"] = "selected-map-pack-predates-L4-fields"
+			push_warning("Castle garrison %s uses the explicit pre-L4 fixture compatibility contract; maps recook owed" % tower_type)
+	var exit_values: Array = garrison.get("exitOffset", []) as Array
+	var exit_offset := Vector2.ZERO
+	if exit_values.size() == 3:
+		exit_offset = Vector2(float(exit_values[0]), float(exit_values[1]))
+	elif String(row.get("castle_fixture_type", "")) == "EBGarrisonableTower":
+		# ereborbuildings.ini:5279 HordeGarrisonContain ExitOffset X:50 (pre-L4 pack)
+		exit_offset = Vector2(50.0, 0.0)
+		row["garrison_contract_gap"] = "selected-map-pack-predates-L4-fields"
+		push_warning("Castle garrison EBGarrisonableTower exitOffset/visionRange from the explicit pre-L4 compatibility contract; maps recook owed")
+	elif String(row.get("castle_fixture_type", "")) == "GHGarrisonableTower":
+		# greyhavenbuildings.ini:2171 ExitOffset X:0 Y:-45 (pre-L4 pack)
+		exit_offset = Vector2(0.0, -45.0)
+		row["garrison_contract_gap"] = "selected-map-pack-predates-L4-fields"
+		push_warning("Castle garrison GHGarrisonableTower exitOffset/visionRange from the explicit pre-L4 compatibility contract; maps recook owed")
+	elif not garrison.has("exitOffset"):
+		push_warning("Castle garrison %s has no authored exitOffset in the fixture row and no compatibility contract; occupants exit at the tower centre" % String(row.get("castle_fixture_type", "")))
+	var kill_on_death := bool(garrison.get("killPassengersOnDeath", false))
+	row["transport_capacity"] = capacity
+	row["horde_transport"] = {
+		"module": "HordeGarrisonContain",
+		"contained_statuses": statuses,
+		"passenger_filter": filter,
+		"damage_ratio": float(garrison.get("damagePercentToUnits", 0.0)),
+		"allow_own": bool(garrison.get("allowOwnPlayerInsideOverride", false)),
+		"allow_allies": bool(garrison.get("allowAlliesInside", false)),
+		"allow_enemies": bool(garrison.get("allowEnemiesInside", false)),
+		"allow_neutral": bool(garrison.get("allowNeutralInside", false)),
+		"exit_delay_ticks": 0,
+		"kill_passengers_on_death": kill_on_death,
+		"eject_passengers_on_death": not kill_on_death,
+		"exit_offset_source": exit_offset,
+		"tower_vision_range_source": float(garrison.get("visionRange", 600.0 if String(row.get("castle_fixture_type", "")) == "EBGarrisonableTower" else 160.0 if String(row.get("castle_fixture_type", "")) == "GHGarrisonableTower" else 0.0)),
+		"unsupported_semantics": [],
+		"source": "map-fixtures.garrison",
+	}
 
 func _update_ai_controllers() -> void:
 	## Runs the single data-driven controller once per AI team, in ascending team
@@ -31328,7 +31690,7 @@ func _is_commandable(id: int) -> bool:
 func _is_commandable_for_team(id: int, team: int) -> bool:
 	# Knocked-down battalions are incapacitated: orders bounce off until the
 	# battalion stands back up (retail sprawled infantry take no commands).
-	return entities.has(id) and not bool((entities[id] as Dictionary).get("is_banner_carrier", false)) and int((entities[id] as Dictionary)["team"]) == team and int((entities[id] as Dictionary)["health"]) > 0 and int((entities[id] as Dictionary).get("knockdown_ticks", 0)) <= 0 and winner == -1
+	return entities.has(id) and not entity_container.has(id) and not bool((entities[id] as Dictionary).get("is_banner_carrier", false)) and int((entities[id] as Dictionary)["team"]) == team and int((entities[id] as Dictionary)["health"]) > 0 and int((entities[id] as Dictionary).get("knockdown_ticks", 0)) <= 0 and winner == -1
 
 
 func _is_melee_attacker(row: Dictionary) -> bool:
@@ -31341,7 +31703,7 @@ func _is_melee_attacker(row: Dictionary) -> bool:
 func _can_engage_battalion(attacker: Dictionary, target: Dictionary) -> bool:
 	## Flyers soar out of melee reach: only ranged weapons can acquire or hit
 	## an airborne battalion.
-	return not (bool(target.get("flying", false)) and _is_melee_attacker(attacker))
+	return not bool(target.get("presentation_hidden", false)) and not (bool(target.get("flying", false)) and _is_melee_attacker(attacker))
 
 
 func _is_living_player(id: int) -> bool:
@@ -31538,6 +31900,16 @@ func state_snapshot() -> Dictionary:
 			"upgrade_queue": upgrade_queue_rows,
 		})
 		var snapshot_structure := structure_rows[-1] as Dictionary
+		var gate_behavior := structure_row.get("gate_behavior", {}) as Dictionary
+		if not gate_behavior.is_empty():
+			# Resting gate state is gameplay state, not merely the transition event.
+			# Keep the explicit field list deterministic and leave non-gates absent.
+			snapshot_structure["gate_behavior"] = {
+				"open": bool(gate_behavior.get("open", false)),
+				"pathing_open": bool(gate_behavior.get("pathing_open", false)),
+				"open_fraction": snappedf(float(gate_behavior.get("open_fraction", 0.0)), 0.001),
+				"close_tick": int(gate_behavior.get("close_tick", -1)),
+			}
 		if typeof(structure_row.get("attack")) == TYPE_DICTIONARY:
 			snapshot_structure["attack"] = (structure_row["attack"] as Dictionary).duplicate(true)
 		if String(structure_row.get("spawned_weapon_object_id", "")) != "":
@@ -31636,6 +32008,18 @@ func state_snapshot() -> Dictionary:
 		snapshot_row["building_permissions"] = building_permission_rows
 	if not command_point_override_rows.is_empty():
 		snapshot_row["command_point_overrides"] = command_point_override_rows
+	# Garrison/transport containment (L4): empty-is-absent, sorted ids, so a
+	# non-castle match hashes byte-identically and a garrisoned horde is part
+	# of the lockstep signature directly (not only via its snapped position).
+	if not containment.is_empty():
+		var containment_rows: Array = []
+		var carrier_ids: Array = containment.keys()
+		carrier_ids.sort()
+		for carrier_id in carrier_ids:
+			var occupant_ids: Array = (containment[carrier_id] as Array).duplicate()
+			occupant_ids.sort()
+			containment_rows.append([int(carrier_id), occupant_ids])
+		snapshot_row["containment"] = containment_rows
 	return snapshot_row
 
 
@@ -31644,6 +32028,34 @@ func state_signature() -> String:
 	for byte in JSON.stringify(state_snapshot()).to_utf8_buffer():
 		value = ((value ^ int(byte)) * 16777619) & 0xFFFFFFFF
 	return "%08X" % value
+
+
+func toggle_gate(team: int, structure_id: int) -> Dictionary:
+	if not structures.has(structure_id):
+		return {"ok": false, "reason": "gate-missing"}
+	var gate: Dictionary = structures[structure_id]
+	if int(gate.get("team", -1)) != team:
+		return {"ok": false, "reason": "not-owner"}
+	if int(gate.get("health", 0)) <= 0:
+		return {"ok": false, "reason": "gate-destroyed"}
+	var policy: Dictionary = gate.get("gate_behavior", {})
+	if policy.is_empty():
+		return {"ok": false, "reason": "typed-gate-contract-missing"}
+	if bool(policy.get("open", false)):
+		policy["open"] = false
+		policy["pathing_open"] = false
+		policy["open_fraction"] = 0.0
+		policy["close_tick"] = -1
+		gate["gate_behavior"] = policy
+		_emit_event("gate.closed", structure_id, 0, {"manual": true})
+		return {"ok": true, "reason": "", "open": false}
+	var opened := request_gate_open(structure_id)
+	if not bool(opened.get("ok", false)):
+		return opened
+	policy = gate.get("gate_behavior", {})
+	policy["close_tick"] = -1
+	gate["gate_behavior"] = policy
+	return {"ok": true, "reason": "", "open": true}
 
 
 func submit_command(cmd: Dictionary) -> bool:
@@ -31679,6 +32091,10 @@ func apply_command(cmd: Dictionary) -> void:
 			last_command_result = issue_toggle_formation(_command_ids(args.get("ids", [])), team)
 		"issue_set_formation":
 			last_command_result = issue_set_formation(_command_ids(args.get("ids", [])), String(args.get("formation", "Line")), team)
+		"issue_garrison":
+			last_command_result = issue_garrison(team, int(args.get("entity_id", 0)), int(args.get("structure_id", 0)))
+		"issue_exit_garrison":
+			last_command_result = issue_exit_garrison(team, int(args.get("entity_id", 0)))
 		"issue_construct":
 			last_command_result = issue_construct(_command_ids(args.get("ids", [])), String(args.get("structure_kind", "")), Vector2(args.get("position", Vector2.ZERO)), bool(args.get("dry_run", false)), team)
 		"issue_expansion_construct":
@@ -31709,6 +32125,8 @@ func apply_command(cmd: Dictionary) -> void:
 			last_command_result = cast_ability(int(args.get("hero_id", 0)), String(args.get("ability_id", "")), Vector2(args.get("target_point", Vector2.ZERO)), team)
 		"set_structure_rally":
 			last_command_result = set_structure_rally(team, int(args.get("structure_id", 0)), Vector2(args.get("position", Vector2.ZERO)))
+		"toggle_gate":
+			last_command_result = toggle_gate(team, int(args.get("structure_id", 0)))
 		"sell_structure":
 			last_command_result = sell_structure(team, int(args.get("structure_id", 0)))
 		"pause":
