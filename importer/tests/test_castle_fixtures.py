@@ -56,7 +56,7 @@ _DOCUMENTS = {
         b"Object TestMapGate\n"
         b"  KindOf = STRUCTURE IMMOBILE SELECTABLE BLOCKING_GATE WALL_GATE\n"
         # CastleGateCommandSet carries Command_ToggleGate in retail
-        # commandset.ini:4308-4312.
+        # commandset.ini:6845-6852.
         b"  CommandSet = CastleGateCommandSet\n"
         b"  Body = ActiveBody ModuleTag_02\n"
         b"    MaxHealth = 20000.0\n"
@@ -83,7 +83,7 @@ _DOCUMENTS = {
         b"    TimeBeforePlayingClosedSound = 9500\n"
         b"  End\n"
         # Retail Helm's Deep gates author both optional policies
-        # (helmsdeepbuildings.ini:6270-6278 in retail-extract).
+        # (helmsdeepbuildings.ini:6286-6293).
         b"  Behavior = FakePathfindPortalBehaviour ModuleTag_FAKEPATHFIND\n"
         b"    AllowEnemies = No\n"
         b"    AllowNonSkirmishAIUnits = No\n"
@@ -522,6 +522,22 @@ def test_validate_accepts_builder_output() -> None:
         (
             lambda doc: doc["fixtures"][0]["gate"].update(commandSet=""),
             "gate command set",
+        ),
+        (
+            lambda doc: doc["fixtures"][0]["gate"].update(commandSetRows={}),
+            "command set rows",
+        ),
+        (
+            lambda doc: doc["fixtures"][0]["gate"].update(commandSetRows=[]),
+            "command set rows",
+        ),
+        (
+            lambda doc: doc["fixtures"][0]["gate"]["commandSetRows"][0].pop("slot"),
+            "command set rows",
+        ),
+        (
+            lambda doc: doc["fixtures"][0]["gate"]["commandSetRows"][0].pop("commandId"),
+            "command set rows",
         ),
         (
             lambda doc: doc["fixtures"][0]["gate"]["aiGateUpdate"].pop(

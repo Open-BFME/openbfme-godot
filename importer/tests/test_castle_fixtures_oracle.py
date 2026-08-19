@@ -251,13 +251,13 @@ def test_erebor_and_helms_gate_blocks_pin_authored_runtime_fields(raw, defines) 
     assert erebor["resetMilliseconds"] == 5000
     assert erebor["percentOpenForPathing"] == 50
     assert set(erebor["geometries"]) == {"Closed", "OpenLeft", "OpenRight"}
-    # ereborbuildings.ini:6398-6440 authors no AI/portal modules.
+    # ereborbuildings.ini:6406 authors no AI/portal modules.
     assert "aiGateUpdate" not in erebor
     assert "fakePathfindPortal" not in erebor
 
     _, helms_lineage = _compile_lineage("RBHelmsDeepGateDoorBig", raw)
     block = _gate_block(helms_lineage, defines, "RBHelmsDeepGateDoorBig")
-    # Pure effective-assets helmsdeepbuildings.ini:6387,6466-6528. The older
+    # Pure effective-assets helmsdeepbuildings.ini:6227,6274,6286-6293. The older
     # retail-extract mirror says 300x150; the effective RotWK oracle is 450x225.
     assert block["commandSet"] == "CastleGateCommandSet_NoSell"
     assert block["openByDefault"] is True

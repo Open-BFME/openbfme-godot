@@ -4975,7 +4975,7 @@ func radial_command_count() -> int:
 
 
 func retail_gate_toggle_command() -> Dictionary:
-	# commandbutton.ini:9015-9023 authors this complete presentation row. The
+	# commandbutton.ini:11064-11072 authors this complete presentation row. The
 	# mounted retail string table supplies both texts; there is no invented
 	# open/close caption or substitute icon on this path.
 	const IMAGE_ID := "BRWall_PosternGateOpenClose"
