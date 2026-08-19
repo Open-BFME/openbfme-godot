@@ -1873,6 +1873,9 @@ func _apply_map_configuration(configuration: Dictionary) -> void:
 				"maximum_health": float(fixture.get("maximum_health", 1.0)),
 				"armor": String(fixture.get("armor", "")),
 				"indestructible": bool(fixture.get("indestructible", false)),
+				"kind_of": Array(fixture.get("kind_of", [])).duplicate(),
+				"enabled": bool(fixture.get("enabled", true)),
+				"targetable": bool(fixture.get("targetable", true)),
 			}
 			if fixture.has("initial_health"):
 				fixture_row["initial_health"] = float(fixture.get("initial_health"))
@@ -30651,6 +30654,9 @@ func _seed_castle_fixtures() -> void:
 			"castle_fixture_role": String(placement.get("role", "")),
 			"castle_fixture_owner": String(placement.get("owner", "")),
 			"castle_fixture_armor": String(placement.get("armor", "")),
+			"castle_fixture_kind_of": Array(placement.get("kind_of", [])).duplicate(),
+			"castle_fixture_enabled": bool(placement.get("enabled", true)),
+			"castle_fixture_targetable": bool(placement.get("targetable", true)),
 			"source_index": int(placement.get("source_index", -1)),
 			"position": position,
 			"elevation": float(placement.get("elevation", 0.0)),

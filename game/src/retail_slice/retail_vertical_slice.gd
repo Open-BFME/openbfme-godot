@@ -673,6 +673,8 @@ func _initialize_content_and_match() -> void:
 	# The shroud is bound BEFORE the radar so the first frame the HUD draws
 	# already knows what the local player can see. A fog-off match binds an
 	# overlay whose `enabled` is false, which is the byte-identical legacy radar.
+	if battlefield != null:
+		battlefield.bind_castle_fixture_presentations(simulation)
 	simulation.refresh_fog_of_war()
 	shroud_overlay.configure(simulation.fog_of_war(), local_team)
 	shroud_overlay.update(true)
@@ -694,6 +696,8 @@ func _initialize_content_and_match() -> void:
 		])
 		shroud_overlay.apply_to_scenery()
 	hud.configure_minimap(simulation, source_map_data, camera, _source_art_texture, shroud_overlay)
+	if battlefield != null and hud.minimap != null and hud.minimap.has_method("set_castle_fixture_bound_ids"):
+		hud.minimap.set_castle_fixture_bound_ids(battlefield.bound_castle_fixture_ids())
 	var command_costs: Dictionary = {}
 	for unit_type in simulation.production_rule_ids():
 		command_costs[unit_type] = simulation._production_rule_value(String(unit_type), "cost_rule", "default_cost")
@@ -3971,7 +3975,10 @@ func _handle_left_click(point: Vector2, additive: bool) -> void:
 			simulation.select_only(player_id)
 		hud.set_feedback("Selected %s" % String(simulation.entity(player_id).get("name", "battalion")))
 	else:
-		var structure_id := _selection_target_structure(_closest_structure(point, local_team))
+		var closest_structure := _closest_structure(point, local_team)
+		if closest_structure == 0:
+			closest_structure = _closest_selectable_castle_fixture(point)
+		var structure_id := _selection_target_structure(closest_structure)
 		simulation.clear_selection()
 		selected_structure_id = structure_id
 		if structure_id != 0:
@@ -4103,6 +4110,8 @@ func _structure_pick_candidates(ids: Array) -> Array:
 		var row: Dictionary = simulation.structure(id)
 		if row.is_empty():
 			continue
+		if String(row.get("structure_kind", "")) == "castle_fixture" and not castle_fixture_selectable(row):
+			continue
 		var node: Variant = structure_nodes.get(id, null)
 		if node != null and is_instance_valid(node) and node.has_method("structure_pick_candidates"):
 			var live: Array = node.structure_pick_candidates(id)
@@ -4213,8 +4222,50 @@ func _selection_target_structure(structure_id: int) -> int:
 	return owner_id
 
 
+func castle_fixture_selectable(row: Dictionary) -> bool:
+	## Retail's selection gate is objectEnabled plus effective KindOf. The
+	## WorldBuilder objectTargetable placement flag remains evidence in the row,
+	## but never participates in selection.
+	if String(row.get("structure_kind", "")) != "castle_fixture":
+		return true
+	if not bool(row.get("castle_fixture_enabled", true)):
+		return false
+	var kind_of: Array[String] = []
+	for token in row.get("castle_fixture_kind_of", []) as Array:
+		kind_of.append(String(token).to_upper())
+	# NOT_AUTOACQUIRABLE governs auto-acquire targeting, not selection.
+	for blocker in ["UNATTACKABLE", "INERT"]:
+		if kind_of.has(blocker):
+			return false
+	if not kind_of.has("SELECTABLE"):
+		return false
+	return true
+
+
 func _closest_structure(point: Vector2, team: int) -> int:
 	return SelectionPick.closest_hit(point, _structure_pick_candidates(simulation.living_structure_ids(team)))
+
+
+func _closest_selectable_castle_fixture(point: Vector2) -> int:
+	if _castle_fixture_pick_cache_dirty:
+		_rebuild_castle_fixture_pick_candidates()
+	var visible_candidates: Array = []
+	for candidate_value in _castle_fixture_pick_candidates:
+		var candidate := candidate_value as Dictionary
+		if shroud_overlay == null or shroud_overlay.structure_visible(Vector2(candidate.get("position", Vector2.ZERO))):
+			visible_candidates.append(candidate)
+	return SelectionPick.closest_hit(point, visible_candidates)
+
+
+func _rebuild_castle_fixture_pick_candidates() -> void:
+	var ids: Array = []
+	for id_value in simulation.structure_ids():
+		var id := int(id_value)
+		var row: Dictionary = simulation.structure(id)
+		if int(row.get("health", 0)) > 0 and String(row.get("structure_kind", "")) == "castle_fixture" and castle_fixture_selectable(row):
+			ids.append(id)
+	_castle_fixture_pick_candidates = _structure_pick_candidates(ids)
+	_castle_fixture_pick_cache_dirty = false
 
 
 func _closest_capturable_structure(point: Vector2) -> int:
@@ -4525,12 +4576,15 @@ func _sync_presentation() -> void:
 	if audio_system != null:
 		audio_system.sync_events(simulation.events)
 	_consume_structure_projectile_events()
+	_consume_castle_fixture_presentation_events()
 	_consume_power_fx_events()
 	_sync_sage_atmosphere()
 	if _profile_sync:
 		presentation_profile["audio_us"] = presentation_profile.get("audio_us", 0) + (Time.get_ticks_usec() - _profile_mark)
 		_profile_mark = Time.get_ticks_usec()
 	_sync_selected_attack_target_indicator()
+	if battlefield != null:
+		battlefield.present_castle_fixture_selection(selected_structure_id)
 	_refresh_hud()
 	var compacted_events := simulation.compact_consumed_events()
 	if compacted_events > 0:
@@ -4538,6 +4592,7 @@ func _sync_presentation() -> void:
 		_feed_event_index = simulation.events.size()
 		_power_fx_event_index = simulation.events.size()
 		_structure_projectile_event_index = simulation.events.size()
+		_castle_fixture_event_index = simulation.events.size()
 		_atmosphere_event_index = simulation.events.size()
 		if audio_system != null:
 			audio_system.acknowledge_event_history_compaction(simulation.events.size())
@@ -7386,6 +7441,9 @@ func reset_match() -> void:
 	_score_cache = {"units_trained": 0, "units_lost": 0, "resources_gathered": 0}
 	_score_event_index = 0
 	_structure_projectile_event_index = 0
+	_castle_fixture_event_index = 0
+	_castle_fixture_pick_candidates.clear()
+	_castle_fixture_pick_cache_dirty = true
 	for node_value in structure_projectile_nodes.values():
 		var projectile_node := node_value as Node
 		if projectile_node != null and is_instance_valid(projectile_node):
@@ -8064,10 +8122,17 @@ func _update_hover_cursor() -> void:
 		or power_cast_armed != ""
 	)
 	var enemy_under_cursor := false
+	var world: Variant = _screen_to_world(get_viewport().get_mouse_position())
+	var hover_point := Vector2.INF
+	if world != null:
+		hover_point = Vector2((world as Vector3).x, (world as Vector3).z)
+	if battlefield != null:
+		battlefield.present_castle_fixture_hover(
+			_closest_selectable_castle_fixture(hover_point) if hover_point != Vector2.INF else 0
+		)
 	if has_selection and not command_armed:
-		var world: Variant = _screen_to_world(get_viewport().get_mouse_position())
 		if world != null:
-			var point := Vector2((world as Vector3).x, (world as Vector3).z)
+			var point := hover_point
 			# Hostility is from the LOCAL seat, with the same pick margin the
 			# right-click order uses. The old reading asked for team 1 outright,
 			# so a guest seat (or any match where the local team IS 1) drew the
@@ -8173,6 +8238,9 @@ func _grant_test_resources() -> void:
 
 var _power_fx_event_index := 0
 var _structure_projectile_event_index := 0
+var _castle_fixture_event_index := 0
+var _castle_fixture_pick_candidates: Array = []
+var _castle_fixture_pick_cache_dirty := true
 var _atmosphere_event_index := 0
 var structure_projectile_nodes: Dictionary = {}
 
@@ -8217,6 +8285,22 @@ func _sync_change_weather() -> void:
 		var weather_error: String = battlefield.weather_fx.set_weather_data(weather_name)
 		if weather_error != "":
 			push_warning(weather_error)
+
+
+func _consume_castle_fixture_presentation_events() -> void:
+	if battlefield == null or simulation == null:
+		return
+	var events: Array = simulation.events
+	while _castle_fixture_event_index < events.size():
+		var event := events[_castle_fixture_event_index] as Dictionary
+		_castle_fixture_event_index += 1
+		if String(event.get("kind", "")) not in ["combat.hit_structure", "structure.destroyed"]:
+			continue
+		var target_id := int(event.get("target_id", 0))
+		var row: Dictionary = simulation.structure(target_id)
+		if String(row.get("structure_kind", "")) == "castle_fixture":
+			_castle_fixture_pick_cache_dirty = true
+			battlefield.present_castle_fixture_event(event, row)
 
 
 func _consume_structure_projectile_events() -> void:

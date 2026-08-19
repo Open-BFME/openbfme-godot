@@ -141,6 +141,11 @@ var scrubbing := false
 ## values, which the drag itself is busy moving. See the press branch.
 var _scrub_bounds := Rect2()
 var _scrub_arena := Rect2()
+## Precomputed from authored fixture placement centres/yaws. Wall spans use
+## half the nearest same-type placement spacing, so a 125-piece curtain reads
+## as a curtain rather than 125 identical structure dots.
+var _castle_fixture_markers: Dictionary = {}
+var _bound_castle_fixture_ids: Dictionary = {}
 
 signal center_requested(world_position: Vector2)
 signal order_requested(world_position: Vector2)
@@ -227,7 +232,80 @@ func configure(
 	# the last map's coastlines over the new one.
 	map_ink_art = ink_art
 	uses_map_ink_art = ink_art != null
+	_build_castle_fixture_markers()
 	queue_redraw()
+
+
+func _build_castle_fixture_markers() -> void:
+	_castle_fixture_markers.clear()
+	if simulation == null:
+		return
+	var wall_rows: Array[Dictionary] = []
+	for id_value in simulation.structure_ids():
+		var id := int(id_value)
+		var row: Dictionary = simulation.structure(id)
+		if String(row.get("structure_kind", "")) != "castle_fixture":
+			continue
+		if not _bound_castle_fixture_ids.has(id):
+			continue
+		var kind_of: Array[String] = []
+		for token in row.get("castle_fixture_kind_of", []) as Array:
+			kind_of.append(String(token).to_upper())
+		if kind_of.has("INERT") or kind_of.has("UNATTACKABLE"):
+			continue
+		var role := String(row.get("castle_fixture_role", ""))
+		var marker := {
+			"id": id,
+			"role": role,
+			"type_name": String(row.get("castle_fixture_type", "")),
+			"position": Vector2(row.get("position", Vector2.ZERO)),
+			"yaw": float(row.get("facing_radians", 0.0)),
+			"team": int(row.get("team", -1)),
+			"half_length": 0.0,
+		}
+		_castle_fixture_markers[id] = marker
+		if role == "wall":
+			wall_rows.append(marker)
+	for marker in wall_rows:
+		var nearest := INF
+		for other in wall_rows:
+			if int(other["id"]) == int(marker["id"]) or String(other["type_name"]) != String(marker["type_name"]):
+				continue
+			nearest = minf(nearest, Vector2(marker["position"]).distance_to(Vector2(other["position"])))
+		if is_finite(nearest) and nearest > 0.0:
+			marker["half_length"] = nearest * 0.5
+			_castle_fixture_markers[int(marker["id"])] = marker
+
+
+func set_castle_fixture_bound_ids(ids: Array) -> void:
+	_bound_castle_fixture_ids.clear()
+	for id_value in ids:
+		_bound_castle_fixture_ids[int(id_value)] = true
+	_build_castle_fixture_markers()
+	queue_redraw()
+
+
+func castle_fixture_marker_count() -> int:
+	## Contract count, independent of this local player's current shroud. A
+	## marker can exist but be temporarily gated from `_draw`; dead rows do not.
+	var count := 0
+	for id_value in _castle_fixture_markers:
+		var row: Dictionary = simulation.structure(int(id_value)) if simulation != null else {}
+		if int(row.get("health", 0)) > 0:
+			count += 1
+	return count
+
+
+func _castle_fixture_marker_visible(id: int) -> bool:
+	if simulation == null:
+		return false
+	var row: Dictionary = simulation.structure(id)
+	if row.is_empty() or int(row.get("health", 0)) <= 0:
+		return false
+	var position := Vector2(row.get("position", Vector2.ZERO))
+	var kind_of: Array = row.get("castle_fixture_kind_of", [])
+	var persists := kind_of.has("DONT_HIDE_IF_FOGGED") or kind_of.has("NEVER_CULL_FOR_MP")
+	return persists or shroud_overlay == null or shroud_overlay.structure_visible(position)
 
 
 func _process(delta: float) -> void:
@@ -443,8 +521,11 @@ func _draw() -> void:
 			var color := Color("56b5ff") if int(entity["team"]) == 0 else Color("ff6259")
 			draw_circle(point, 3.4, Color(0.16, 0.11, 0.05, 0.85))
 			draw_circle(point, 2.3, color)
+		_draw_castle_fixture_markers(arena, center, radius)
 		for id in simulation.structure_ids():
 			var structure: Dictionary = simulation.structure(id)
+			if String(structure.get("structure_kind", "")) == "castle_fixture":
+				continue
 			if int(structure.get("health", 0)) <= 0:
 				continue
 			# Structures survive into fog (see the named GhostObject deviation
@@ -458,6 +539,32 @@ func _draw() -> void:
 			draw_rect(Rect2(point - Vector2(3.0, 3.0), Vector2(6.0, 6.0)), Color(0.16, 0.11, 0.05, 0.85), true)
 			draw_rect(Rect2(point - Vector2(2.0, 2.0), Vector2(4.0, 4.0)), color, true)
 	_draw_camera_footprint(arena, disc)
+
+
+func _draw_castle_fixture_markers(arena: Rect2, center: Vector2, radius: float) -> void:
+	for id_value in _castle_fixture_markers:
+		var id := int(id_value)
+		if not _castle_fixture_marker_visible(id):
+			continue
+		var marker := _castle_fixture_markers[id] as Dictionary
+		var position := Vector2(marker["position"])
+		var point := _world_to_canvas(position, arena)
+		if point.distance_to(center) > radius:
+			continue
+		var color := Color("56b5ff") if int(marker["team"]) == 0 else Color("ff6259")
+		if int(marker["team"]) < 0:
+			color = Color("d8bd7c")
+		var half_length := float(marker.get("half_length", 0.0))
+		if String(marker["role"]) == "wall" and half_length > 0.0:
+			var yaw := float(marker["yaw"])
+			var direction := Vector2(cos(yaw), -sin(yaw))
+			var first := _world_to_canvas(position - direction * half_length, arena)
+			var second := _world_to_canvas(position + direction * half_length, arena)
+			draw_line(first, second, Color(0.16, 0.11, 0.05, 0.85), 4.0, true)
+			draw_line(first, second, color, 2.0, true)
+		else:
+			draw_rect(Rect2(point - Vector2(2.5, 2.5), Vector2(5.0, 5.0)), Color(0.16, 0.11, 0.05, 0.85), true)
+			draw_rect(Rect2(point - Vector2(1.5, 1.5), Vector2(3.0, 3.0)), color, true)
 
 
 func _draw_source_geometry(arena: Rect2, disc: PackedVector2Array) -> void:

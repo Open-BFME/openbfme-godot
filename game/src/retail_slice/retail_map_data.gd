@@ -791,6 +791,7 @@ func _derive_castle_fixture_placements() -> void:
 		var row := {
 			"type_name": String(record.get("typeName", "")),
 			"role": String(record.get("role", "")),
+			"kind_of": _array(record.get("kindOf", [])),
 			"source_index": int(record.get("index", -1)),
 			"position": Vector2(local.x, local.z),
 			"elevation": local.y,
@@ -801,6 +802,8 @@ func _derive_castle_fixture_placements() -> void:
 			# ArmorSet); the sim row carries "" for it.
 			"armor": "" if record.get("armor") == null else String(record.get("armor")),
 			"indestructible": bool(record.get("indestructible", false)),
+			"enabled": bool(record.get("enabled", true)),
+			"targetable": bool(record.get("targetable", true)),
 		}
 		if record.has("initialHealth"):
 			row["initial_health"] = float(record.get("initialHealth"))
