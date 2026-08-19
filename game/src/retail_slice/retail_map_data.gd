@@ -804,6 +804,8 @@ func _derive_castle_fixture_placements() -> void:
 		}
 		if record.has("initialHealth"):
 			row["initial_health"] = float(record.get("initialHealth"))
+		if record.has("gate"):
+			row["gate"] = (record.get("gate") as Dictionary).duplicate(true)
 		castle_fixture_placements.append(row)
 
 
