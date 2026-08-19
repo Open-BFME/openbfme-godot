@@ -28266,7 +28266,11 @@ func _castle_gate_blocking_discs(structure_row: Dictionary, mover: Dictionary) -
 			use_open_geometry = false
 		elif not bool(mover.get("human_controlled", true)) and not bool(mover.get("skirmish_ai", false)) and not bool(portal.get("allow_non_skirmish_ai", false)):
 			use_open_geometry = false
-	var geometry_names: Array[String] = ["OpenLeft", "OpenRight"] if use_open_geometry else ["Closed"]
+	var geometry_names: Array[String] = []
+	if use_open_geometry:
+		geometry_names.assign(["OpenLeft", "OpenRight"])
+	else:
+		geometry_names.append("Closed")
 	var scale := float(_rules.get("source_map_transform_scale", _rules.get("source_unit_scale", 0.1)))
 	var facing := float(structure_row.get("facing_radians", 0.0))
 	var origin := Vector2(structure_row.get("position", Vector2.ZERO))
@@ -28280,7 +28284,10 @@ func _castle_gate_blocking_discs(structure_row: Dictionary, mover: Dictionary) -
 		if major <= 0.0 or minor <= 0.0:
 			continue
 		var long_radius := maxf(major, minor)
-		var disc_radius := minf(major, minor)
+		var authored_short_radius := minf(major, minor)
+		# Minkowski-expand the authored box by the battalion's collision body;
+		# otherwise a centre-point test lets the formation clip through the leaf.
+		var disc_radius := authored_short_radius + BATTALION_SEPARATION_PUSH
 		var local_axis := Vector2.RIGHT if major >= minor else Vector2.DOWN
 		var axis := local_axis.rotated(facing)
 		var offset_value: Array = geometry.get("offset", [])
@@ -28290,8 +28297,8 @@ func _castle_gate_blocking_discs(structure_row: Dictionary, mover: Dictionary) -
 		var center := origin + local_offset.rotated(facing)
 		# A long authored BOX is represented by a deterministic chain of discs,
 		# never by the old single tiny structure disc. Adjacent discs overlap.
-		var disc_count := maxi(2, int(ceili(long_radius / maxf(disc_radius, 0.001))))
-		var span := maxf(0.0, long_radius - disc_radius)
+		var span := maxf(0.0, long_radius - authored_short_radius)
+		var disc_count := maxi(2, int(ceili(span / maxf(disc_radius, 0.001))) + 1)
 		for disc_index in range(disc_count):
 			var along := 0.0 if disc_count == 1 else lerpf(-span, span, float(disc_index) / float(disc_count - 1))
 			discs.append({"center": center + axis * along, "radius": disc_radius})
@@ -28390,19 +28397,25 @@ func _deflect_around_structures(
 				var gate_radius := float(disc.get("radius", 0.0))
 				var gate_offset := position - gate_center
 				var gate_distance := gate_offset.length()
+				# Sweep the just-applied travel segment as well as testing its end;
+				# fast battalions must not tunnel through a thin Closed door slab.
+				if gate_distance >= gate_radius and travel_step.length_squared() > 0.000001:
+					var gate_start := position - travel_step
+					var gate_t := clampf((gate_center - gate_start).dot(travel_step) / travel_step.length_squared(), 0.0, 1.0)
+					var gate_closest := gate_start + travel_step * gate_t
+					var closest_offset := gate_closest - gate_center
+					if closest_offset.length() < gate_radius:
+						position = gate_closest
+						gate_offset = closest_offset
+						gate_distance = closest_offset.length()
 				if gate_distance >= gate_radius:
 					continue
-				var gate_direction := gate_offset / gate_distance if gate_distance > 0.001 else _eviction_fallback_direction(row)
+				var incoming_offset := position - travel_step - gate_center
+				var gate_direction := incoming_offset.normalized() if incoming_offset.length_squared() > 0.000001 else (gate_offset / gate_distance if gate_distance > 0.001 else _eviction_fallback_direction(row))
 				var gate_applied := minf(gate_radius - gate_distance, push_budget)
 				push_budget -= gate_applied
 				var gate_seated_radius := gate_distance + gate_applied
 				position = gate_center + gate_direction * gate_seated_radius
-				if travel_step.length_squared() > 0.000001:
-					var gate_slide_dest := Vector2(row.get("destination", position))
-					var gate_route: Array = row.get("route", [])
-					if not gate_route.is_empty():
-						gate_slide_dest = Vector2(gate_route[0])
-					position = _tangential_slide_point(gate_center, gate_seated_radius, gate_direction, travel_step, gate_slide_dest)
 				if push_budget <= 0.0:
 					break
 			continue
