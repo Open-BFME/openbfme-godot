@@ -295,6 +295,11 @@ var mount_visual_gap := ""
 ## an instantaneous visibility swap between two already-instanced models --
 ## never a tween, never a fade of the foot model.
 var mounted_member_visuals: Dictionary = {}
+## AnimationPlayers that belong to the MOUNTED skin, per member. The mounted
+## GLB carries its OWN clip set (RUHHs_Theo_* for Eomer, eomer.ini:231/294) that
+## the foot player does not have, so it needs its own player list; the foot list
+## in `member_animation_players` stays untouched for the unmounted form.
+var mounted_member_animation_players: Dictionary = {}
 ## Foot-form children captured per member before the mount form was attached,
 ## so the swap only ever touches the two model subtrees.
 var _foot_form_children: Dictionary = {}
@@ -429,16 +434,62 @@ func ensure_mounted_member_visuals(resolved_relative_path: String, pack_root: St
 		for child in foot.get_children():
 			if child is Node3D:
 				foot_children.append(child as Node3D)
+		# The slice stamps its lighting domain onto a battalion's geometry ONCE,
+		# at spawn (retail_vertical_slice.gd:2957, INFANTRY|OBJECT light layers),
+		# and every DirectionalLight3D it builds culls by that mask
+		# (`_build_source_lights`, light_cull_mask). This subtree is instanced
+		# later, so without inheriting the member's mask it renders on layer 1,
+		# which no light includes -- the owner's "the horse is black".
+		_inherit_geometry_light_layers(foot, mount_visual)
 		foot.add_child(mount_visual)
+		var mounted_players: Array[AnimationPlayer] = []
+		_collect_animation_players_into(mount_visual, mounted_players)
+		mounted_member_animation_players[member_index] = mounted_players
 		_foot_form_children[member_index] = foot_children
 		mounted_member_visuals[member_index] = mount_visual
 	return mounted_member_visuals.size()
+
+
+func _inherit_geometry_light_layers(source_root: Node, target_root: Node) -> int:
+	## Copy the already-assigned light-cull layer mask from the member's own
+	## geometry onto a subtree instanced after the slice stamped the battalion.
+	## Reading the live mask keeps lighting-domain authority in the slice; this
+	## never invents a mask of its own.
+	var source_layers := -1
+	var probe: Array[Node] = [source_root]
+	while not probe.is_empty():
+		var node: Node = probe.pop_back()
+		if node is GeometryInstance3D:
+			source_layers = int((node as GeometryInstance3D).layers)
+			break
+		for child in node.get_children():
+			probe.append(child)
+	if source_layers < 0:
+		return 0
+	var assigned := 0
+	var pending: Array[Node] = [target_root]
+	while not pending.is_empty():
+		var node: Node = pending.pop_back()
+		if node is GeometryInstance3D:
+			(node as GeometryInstance3D).layers = source_layers
+			assigned += 1
+		for child in node.get_children():
+			pending.append(child)
+	return assigned
+
+
+func _collect_animation_players_into(node: Node, out: Array[AnimationPlayer]) -> void:
+	if node is AnimationPlayer:
+		out.append(node as AnimationPlayer)
+	for child in node.get_children():
+		_collect_animation_players_into(child, out)
 
 
 func apply_mount_visibility(mounted: bool) -> void:
 	## The swap itself: two pre-instanced subtrees, one frame, no tween.
 	if mounted_member_visuals.is_empty():
 		return
+	var form_changed := mount_presentation_state != ("mounted" if mounted else "foot")
 	for member_index in mounted_member_visuals.keys():
 		var mount_visual := mounted_member_visuals.get(member_index) as Node3D
 		if mount_visual != null and is_instance_valid(mount_visual):
@@ -447,6 +498,23 @@ func apply_mount_visibility(mounted: bool) -> void:
 			if foot_child is Node3D and is_instance_valid(foot_child):
 				(foot_child as Node3D).visible = not mounted
 	mount_presentation_state = "mounted" if mounted else "foot"
+	if form_changed:
+		# The form that just became visible has never been told what to play.
+		# Re-issue the member's current action state so the newly shown rig
+		# picks its own MOUNTED/foot clip instead of standing in bind pose.
+		_replay_active_member_states()
+
+
+func _replay_active_member_states() -> void:
+	for member_index in range(member_count):
+		if float(member_health_ratios.get(member_index, 1.0)) <= 0.0:
+			continue
+		_play_member_state(
+			member_index,
+			String(member_action_states.get(member_index, "idle")),
+			int(member_attack_tokens.get(member_index, 0)),
+			true
+		)
 
 
 func sync_banner_carrier(spawned: bool, banner_object_id: String, offset_source: Vector2) -> void:
@@ -1811,7 +1879,7 @@ func _play_member_state(member_index: int, state: String, action_token: int, res
 	member_current_clips[member_index] = requested
 	var apply_phase := not restart or bool(authored.get("randomStart", false))
 	var blend := _authored_blend_seconds(play_state, requested, authored)
-	for player_value in member_animation_players.get(member_index, []):
+	for player_value in _active_member_animation_players(member_index):
 		_play_member_clip(player_value as AnimationPlayer, requested, play_state, member_index, blend, apply_phase, action_token, authored)
 	if play_state.begins_with("attack") and action_token >= 0:
 		_last_action_token = maxi(_last_action_token, action_token)
@@ -1830,6 +1898,14 @@ func _drawable_conditions_for_state(state: String, member_index: int = -1) -> Ar
 		conditions.append("ATTACKING")
 	elif state == "death":
 		conditions.append("DYING")
+	if mount_presentation_state == "mounted":
+		# Retail MOUNTED is a model-condition flag, not a separate drawable:
+		# eomer.ini:65 `ModelConditionState = MOUNTED` swaps the skin and
+		# eomer.ini:231/294 qualify the ridden clips with the same token
+		# (`AnimationState = MOVING MOUNTED` -> RUHHs_Theo_SKL.RUHHs_Theo_RUNA).
+		# Without it the selector kept picking the foot rows, whose clips the
+		# mounted GLB does not carry -- the owner's bind-pose horse.
+		conditions.append("MOUNTED")
 	for flag_value in model_condition_flags:
 		var flag := String(flag_value).to_upper()
 		if flag != "" and not conditions.has(flag):
@@ -2295,7 +2371,7 @@ func set_action_state(state: String, force: bool = false, action_token: int = -1
 		member_current_clips[member_index] = requested
 		member_action_states[member_index] = normalized
 		_sync_member_authored_state_labels(member_index, requested)
-		for player_value in member_animation_players.get(member_index, []):
+		for player_value in _active_member_animation_players(member_index):
 			_play_member_clip(player_value as AnimationPlayer, requested, normalized, member_index, 0.12, true)
 	_play_banner_clip(normalized)
 	_refresh_label()
@@ -2400,8 +2476,20 @@ func member_clip_frame(member_index: int) -> Dictionary:
 	return stored.duplicate(true)
 
 
+func _active_member_animation_players(member_index: int) -> Array:
+	## The players of the form that is actually on screen. Retail's MOUNTED
+	## state replaces the skin (eomer.ini:65), so while mounted the ridden GLB's
+	## own AnimationPlayer is the one that must be driven -- the foot player is
+	## attached to a hidden subtree and its clips do not exist on the horse rig.
+	if mount_presentation_state == "mounted":
+		var mounted_players: Array = mounted_member_animation_players.get(member_index, []) as Array
+		if not mounted_players.is_empty():
+			return mounted_players
+	return member_animation_players.get(member_index, []) as Array
+
+
 func _member_animation_player(member_index: int) -> AnimationPlayer:
-	var players: Array = member_animation_players.get(member_index, []) as Array
+	var players: Array = _active_member_animation_players(member_index)
 	if players.is_empty():
 		return null
 	return players[0] as AnimationPlayer
@@ -2967,7 +3055,7 @@ func _process(_delta: float) -> void:
 			if not String(member_action_states.get(member_index, "idle")).begins_with("attack"):
 				continue
 			var any_playing := false
-			for player_value in member_animation_players.get(member_index, []):
+			for player_value in _active_member_animation_players(member_index):
 				if (player_value as AnimationPlayer).is_playing():
 					any_playing = true
 					break
@@ -2983,7 +3071,7 @@ func _process(_delta: float) -> void:
 			# to idle the moment the one-shot ended was the owner's "clicking
 			# Gondor soldiers does not play the at-attention animation".
 			var attention_playing := false
-			for player_value in member_animation_players.get(member_index, []):
+			for player_value in _active_member_animation_players(member_index):
 				if (player_value as AnimationPlayer).is_playing():
 					attention_playing = true
 					break
@@ -2994,7 +3082,7 @@ func _process(_delta: float) -> void:
 					_play_member_state(member_index, "idle", -1, false)
 			continue
 		var requested := String(member_current_clips.get(member_index, ""))
-		for player_value in member_animation_players.get(member_index, []):
+		for player_value in _active_member_animation_players(member_index):
 			var player := player_value as AnimationPlayer
 			if not player.is_playing():
 				_play_member_clip(player, requested, current_state, member_index, 0.08, false)
@@ -3005,7 +3093,7 @@ func _settle_finished_corpses() -> void:
 		return
 	for member_index in _corpse_settle_pending.keys():
 		var still_playing := false
-		for player_value in member_animation_players.get(member_index, []):
+		for player_value in _active_member_animation_players(member_index):
 			var player := player_value as AnimationPlayer
 			if player != null and player.is_playing():
 				still_playing = true

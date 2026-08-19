@@ -248,6 +248,12 @@ func _apply_tier(record: BattalionRecord, battalion: Node3D, tier: int) -> void:
 				(child as Decal).visible = show_decals
 			elif child is Node3D:
 				(child as Node3D).visible = show_skinned or is_corpse
+	# A mounted hero keeps TWO model subtrees under each member and shows
+	# exactly one (retail_battalion.gd `apply_mount_visibility`; retail swaps the
+	# skin outright at eomer.ini:65 `ModelConditionState = MOUNTED`). The blanket
+	# rewrite above just made both visible, so hand the choice back to the owner.
+	if show_skinned and "mount_presentation_state" in battalion and battalion.has_method("apply_mount_visibility"):
+		battalion.apply_mount_visibility(String(battalion.mount_presentation_state) == "mounted")
 	_apply_overlay_detail(battalion, tier)
 
 
