@@ -10,18 +10,35 @@ const CATALOG_MAX_BYTES := 1024 * 1024
 const DOCUMENT_MAX_BYTES := 8 * 1024 * 1024
 const EXPECTED_CHECKS := 47
 const AMON_SUL := "Amon Sul Fortress"
+## v2 contract (maps pack 6f6be4db, 2026-08-19): each castle map carries its
+## DERIVED requirement set (castle_capabilities.py over the map's own objects);
+## blockers = required - implemented, never authored. Erebor's set is pinned
+## as BLOCKERS; every map's set is pinned in REQUIRED_BY_MAP.
 const BLOCKERS: Array[String] = [
 	"walkable-walls",
 	"defendable-gates",
 	"wall-garrisons",
-	"wall-mounted-defenses",
 	"skirmish-ai-libraries",
 ]
 const CONTRACT := {
+	# JSON numbers load as float; the cooked document carries 2.0.
+	"version": 2.0,
 	"family": "retail-castle-siege-skirmish",
 	"gameplayStatus": "blocked-named-gaps",
-	"blockers": BLOCKERS,
 	"admissionPolicy": "document-loadable-lobby-visible-gameplay-fails-closed",
+	"required": BLOCKERS,
+}
+const REQUIRED_BY_MAP := {
+	"Carn Dum": ["defendable-gates", "wall-mounted-defenses", "skirmish-ai-libraries"],
+	"Fornost": ["defendable-gates", "wall-garrisons", "skirmish-ai-libraries"],
+	"Black Gate": ["walkable-walls", "skirmish-ai-libraries"],
+	"Dol Guldur": ["walkable-walls", "scaleable-walls", "defendable-gates", "wall-mounted-defenses", "skirmish-ai-libraries"],
+	"Erebor": ["walkable-walls", "defendable-gates", "wall-garrisons", "skirmish-ai-libraries"],
+	"Grey Havens": ["wall-garrisons", "skirmish-ai-libraries"],
+	"Helm's Deep": ["walkable-walls", "defendable-gates", "skirmish-ai-libraries"],
+	"Isengard": ["walkable-walls", "defendable-gates", "skirmish-ai-libraries"],
+	"Minas Morgul": ["walkable-walls", "defendable-gates", "skirmish-ai-libraries"],
+	"Minas Tirith": ["walkable-walls", "defendable-gates", "wall-mounted-defenses", "skirmish-ai-libraries"],
 }
 const CASTLE_STARTS := {
 	"Carn Dum": 2,
@@ -88,8 +105,10 @@ func _run() -> void:
 
 	for display_name in CASTLE_STARTS:
 		var candidate := definitions.get(display_name, {}) as Dictionary
+		var expected_contract := CONTRACT.duplicate(true)
+		expected_contract["required"] = REQUIRED_BY_MAP[display_name]
 		_check("%s_cooked_contract_exact" % String(display_name).to_snake_case(),
-			(candidate.get("castleSiege", {}) as Dictionary) == CONTRACT,
+			(candidate.get("castleSiege", {}) as Dictionary) == expected_contract,
 			str(candidate.get("castleSiege", null)))
 		var candidate_data = map_data_script.new()
 		_check("%s_map_data_loads" % String(display_name).to_snake_case(),
@@ -135,12 +154,13 @@ func _run() -> void:
 		str(contracted_data.castle_gameplay_blockers))
 	var malformed := definition.duplicate(true)
 	var malformed_contract := CONTRACT.duplicate(true)
-	malformed_contract["blockers"] = ["walkable-walls"]
+	# Out of canonical order + duplicate: the v2 inventory validator refuses.
+	malformed_contract["required"] = ["defendable-gates", "walkable-walls", "walkable-walls"]
 	malformed["castleSiege"] = malformed_contract
 	var malformed_data = map_data_script.new()
 	_check("incomplete_castle_gap_inventory_fails_closed",
 		not bool(malformed_data.load_from_pack(pack_root, malformed))
-		and String(malformed_data.error) == "invalid castleSiege blocker inventory",
+		and String(malformed_data.error) == "invalid castleSiege capability inventory",
 		String(malformed_data.error))
 	var battlefield = battlefield_script.new()
 	root.add_child(battlefield)

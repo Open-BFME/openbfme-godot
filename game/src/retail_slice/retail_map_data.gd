@@ -286,6 +286,11 @@ var ford_gates: Array[Dictionary] = []
 var generic_prop_placements: Array[Dictionary] = []
 var bound_prop_placements: Array[Dictionary] = []
 var bound_structure_placements: Array[Dictionary] = []
+## Lane L2b: bound map-fixture structure TYPES presented as renderable props
+## (the sim seeds them from fixtures.json). Synthesized id prefix mirrors
+## castle_fixtures.MAP_FIXTURE_OBJECT_ID_PREFIX.
+const MAP_FIXTURE_OBJECT_ID_PREFIX := "bfme2.object.map-fixture."
+var map_fixture_bound_types := 0
 ## Every non-road authored Object placement, preserved for the descriptor-backed
 ## scenario registries. Runtime admission remains fail-closed: carrying a row
 ## here does not make it spawnable unless exactly one selected registry admits
@@ -1545,6 +1550,8 @@ func _route_normalized_object_placements(normalized_objects: Array[Dictionary]) 
 				bound_structure_placements.append(placement)
 				observed_bound_structures += 1
 			else:
+				if binding.has("map_fixture_object_id"):
+					placement["map_fixture_object_id"] = String(binding.get("map_fixture_object_id", ""))
 				bound_prop_placements.append(placement)
 				observed_bound_props += 1
 			continue
@@ -1918,6 +1925,7 @@ func _load_road_materials(document: Dictionary) -> bool:
 
 func _load_object_bindings(document: Dictionary, source_type_counts: Dictionary) -> bool:
 	bound_prop_type_ids.clear()
+	map_fixture_bound_types = 0
 	bound_structure_type_ids.clear()
 	logical_prop_type_ids.clear()
 	unresolved_prop_type_ids.clear()
@@ -2001,6 +2009,20 @@ func _load_object_bindings(document: Dictionary, source_type_counts: Dictionary)
 						normalized["source_virtual_model"] = source_virtual_model
 					bound_prop_type_ids.append(type_name)
 					bound_prop_placement_count += placement_count
+				elif classification == "lifecycle-structure" and object_id.begins_with(MAP_FIXTURE_OBJECT_ID_PREFIX):
+					# Lane L2b map-fixture structure (castle wall/gate/tower). The
+					# SIM owns it through maps/<slug>/fixtures.json (authored health,
+					# armor, owner); no faction pack ships a playable-structure
+					# document for it, so presentation is the bound intact GLB as a
+					# renderable prop. The synthetic id rides along as evidence.
+					if not _safe_source_virtual_model(source_virtual_model) or not _safe_content_object_id(object_id):
+						return _fail("map-fixture structure binding is unsafe or incomplete")
+					normalized["classification"] = "renderable"
+					normalized["source_virtual_model"] = source_virtual_model
+					normalized["map_fixture_object_id"] = object_id
+					bound_prop_type_ids.append(type_name)
+					bound_prop_placement_count += placement_count
+					map_fixture_bound_types += 1
 				elif classification == "lifecycle-structure":
 					if not _safe_source_virtual_model(source_virtual_model) or not _safe_content_object_id(object_id):
 						return _fail("lifecycle structure binding is unsafe or incomplete")
@@ -3207,6 +3229,7 @@ func _reset() -> void:
 	bound_structure_placements.clear()
 	capturable_placements.clear()
 	bound_prop_type_ids.clear()
+	map_fixture_bound_types = 0
 	bound_structure_type_ids.clear()
 	logical_prop_type_ids.clear()
 	unresolved_prop_type_ids.clear()

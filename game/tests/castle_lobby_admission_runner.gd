@@ -122,7 +122,7 @@ func _run() -> void:
 				var b := (entry_value as Dictionary)["button"] as Button
 				if not b.disabled:
 					enabled += 1
-				if b.tooltip_text.begins_with("Playable") and b.tooltip_text.contains("defendable-gates"):
+				if b.tooltip_text.begins_with("Playable") and b.tooltip_text.contains("siege features still partial"):
 					tooltips += 1
 	_check("all_castle_maps_offered", offered == CASTLE_MAPS.size(), "offered=%d" % offered)
 	_check("all_castle_maps_validate_playable", playable == CASTLE_MAPS.size(), "playable=%d/%d" % [playable, CASTLE_MAPS.size()])

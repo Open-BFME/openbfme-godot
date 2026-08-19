@@ -37,6 +37,11 @@ func _init() -> void:
 		if bool(slice.ready_ok) or String(slice.failure_reason) != "":
 			break
 	if not _check("castle_slice_ready", bool(slice.ready_ok), "map=%s failure=%s" % [map_id, String(slice.failure_reason)]):
+		if slice.simulation != null:
+			for sid in slice.simulation.structure_ids():
+				var srow: Dictionary = slice.simulation.structure(sid)
+				if int(sid) >= 3000 and int(sid) < 3020:
+					print("CASTLE_LIVE_BOOT DIAG structure %d kind=%s name=%s object_id=%s presentation=%s" % [int(sid), String(srow.get("structure_kind", "")), String(srow.get("name", "")), String(srow.get("object_id", "")), String(srow.get("presentation", ""))])
 		_finish()
 		return
 	var map_data = slice.source_map_data
@@ -52,10 +57,20 @@ func _init() -> void:
 	if fixtures_shipped:
 		var seeded := 0
 		for structure_id in simulation.structure_ids():
-			if int(structure_id) >= int(simulation.CASTLE_FIXTURE_FIRST_ID):
+			var srow: Dictionary = simulation.structure(structure_id)
+			if String(srow.get("structure_kind", "")) == "castle_fixture":
 				seeded += 1
-		_check("castle_pieces_seeded_as_structures", seeded > 0 and seeded == (map_data.castle_fixture_placements as Array).size(),
-			"seeded=%d placements=%d" % [seeded, (map_data.castle_fixture_placements as Array).size()])
+		# Placements the scenario-placement lane already seeded (creep lairs,
+		# scenario structures) are skipped by the fixture seeder so nothing
+		# spawns twice; every other placement must be a castle_fixture row.
+		var overlap := 0
+		var seeded_elsewhere: Dictionary = simulation._scenario_map_seeded_source_indices
+		for placement_value in (map_data.castle_fixture_placements as Array):
+			if seeded_elsewhere.has(int((placement_value as Dictionary).get("source_index", -1))):
+				overlap += 1
+		var placements := (map_data.castle_fixture_placements as Array).size()
+		_check("castle_pieces_seeded_as_structures", seeded > 0 and seeded + overlap == placements,
+			"seeded=%d overlap=%d placements=%d" % [seeded, overlap, placements])
 	else:
 		print("CASTLE_LIVE_BOOT NOTE mounted maps pack ships no fixtures.json for %s - castle pieces are visual props only until the maps republish" % map_id)
 	# Ticks advance and the player's start army exists.

@@ -1188,6 +1188,32 @@ static func maximum_health_for_lifecycle(lifecycle: Dictionary) -> int:
 	return int(v0_value) if _is_exact_integer(v0_value) else 0
 
 
+static func _intact_phase_is_no_render(lifecycle: Dictionary) -> bool:
+	if int(lifecycle.get("schemaVersion", -1)) != LIFECYCLE_SCHEMA_VERSION_V1:
+		return false
+	var visual: Dictionary = _v1_phase_row(lifecycle, "intact").get("visual", {}) as Dictionary
+	return String(visual.get("mode", "")) == "no-render"
+
+
+static func _first_rendered_body_path(lifecycle: Dictionary) -> String:
+	## The first v1 phase (in authored order) whose visual is a GLB, else the
+	## bib GLB, else "". Bounds reference for a no-render intact phase.
+	var phases_value: Variant = lifecycle.get("phases")
+	if typeof(phases_value) == TYPE_ARRAY:
+		for value in phases_value as Array:
+			if typeof(value) != TYPE_DICTIONARY:
+				continue
+			var visual: Dictionary = (value as Dictionary).get("visual", {}) as Dictionary
+			if String(visual.get("mode", "")) == "glb" and String(visual.get("glb", "")) != "":
+				return String(visual.get("glb", "")).replace("\\", "/")
+	var bib_value: Variant = lifecycle.get("bib", {})
+	if typeof(bib_value) == TYPE_DICTIONARY:
+		var bib_visual: Dictionary = (bib_value as Dictionary).get("visual", {}) as Dictionary
+		if String(bib_visual.get("glb", "")) != "":
+			return String(bib_visual.get("glb", "")).replace("\\", "/")
+	return ""
+
+
 static func _intact_visual_path(lifecycle: Dictionary) -> String:
 	if int(lifecycle.get("schemaVersion", -1)) == LIFECYCLE_SCHEMA_VERSION_V1:
 		var row := _v1_phase_row(lifecycle, "intact")
@@ -1824,20 +1850,40 @@ func _configure_contract(presentation: Dictionary, lifecycle: Dictionary) -> voi
 				return
 			_collect_route_blockers()
 	var intact_path := _intact_visual_path(_lifecycle)
-	var intact_visual := _load_visual(intact_path, "body")
-	if intact_visual == null:
-		_set_contract_error("intact lifecycle GLB could not be instantiated")
-		return
 	var asset_factory = load("res://src/view/asset_factory.gd")
-	var intact_aabb: AABB = asset_factory.model_aabb(intact_visual)
-	if intact_aabb.size.y <= 0.000001:
-		_set_contract_error("intact lifecycle GLB has no measurable body AABB")
-		return
+	var intact_aabb := AABB()
+	var intact_visual: Node3D = null
+	if intact_path == "" and _intact_phase_is_no_render(_lifecycle):
+		# Retail authors the CONSTRUCTION_COMPLETE state of the free expansion
+		# plots as `Model = None` (fortress.ini expansion pads): the intact
+		# phase draws nothing and only the W3DFloorDraw bib shows (Q48). Bounds
+		# for scale/selection come from the first phase that does carry a GLB
+		# (rubble/collapsing: WBFoundationP) or the bib; never invented.
+		var bounds_path := _first_rendered_body_path(_lifecycle)
+		if bounds_path != "":
+			intact_visual = _load_visual(bounds_path, "body")
+			if intact_visual == null:
+				_set_contract_error("no-render intact phase bounds GLB could not be instantiated")
+				return
+			intact_aabb = asset_factory.model_aabb(intact_visual)
+		if intact_aabb.size.y <= 0.000001 and _source_unit_scale <= 0.0:
+			_set_contract_error("no-render intact phase has no measurable bounds and no source unit scale")
+			return
+	else:
+		intact_visual = _load_visual(intact_path, "body")
+		if intact_visual == null:
+			_set_contract_error("intact lifecycle GLB could not be instantiated")
+			return
+		intact_aabb = asset_factory.model_aabb(intact_visual)
+		if intact_aabb.size.y <= 0.000001:
+			_set_contract_error("intact lifecycle GLB has no measurable body AABB")
+			return
 	shared_uniform_scale = _source_unit_scale if _source_unit_scale > 0.0 else _target_height / intact_aabb.size.y
 	shared_vertical_offset = -intact_aabb.position.y * shared_uniform_scale
 	_model_host.scale = Vector3.ONE * shared_uniform_scale
 	_model_host.position.y = shared_vertical_offset
-	intact_visual.visible = false
+	if intact_visual != null:
+		intact_visual.visible = false
 	_apply_visual_bounds_selection_radius(intact_aabb, shared_uniform_scale)
 	retail_visual_loaded = true
 	presentation_mode = "private-imported-lifecycle" if not _fixture_mode else "legal-safe-lifecycle-fixture"

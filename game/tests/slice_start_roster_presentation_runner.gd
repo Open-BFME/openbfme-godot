@@ -20,7 +20,7 @@ extends SceneTree
 ##   (a) rotwk.map.adorn-river + Men host (a catalog RotWK skirmish map)
 ##   (b) bfme2.map.fords-of-isen-ii + Men (the Fords scenario)
 ## Live selection must be mounted: ModLoader.active_pack_root contains
-## rotwk-men-vslice digest f177d1bd.
+## rotwk-men-vslice digest 9dd4a5ed.
 ##
 ## Run:
 ##   OPENBFME_CONTENT=<repo>\workspace\content-packs <godot> --headless \
@@ -29,7 +29,7 @@ extends SceneTree
 const BOOT_DEADLINE_MS := 300000
 const FORDS_MAP := "bfme2.map.fords-of-isen-ii"
 const ROTWK_SKIRMISH_MAP := "rotwk.map.adorn-river"
-const ROTWK_MEN_DIGEST := "f177d1bd6c43def75b2bcfccde368e3e179d3de67c182351c83e9968b942e514"
+const ROTWK_MEN_DIGEST := "9dd4a5ed3f57a5f5bd76aca602e6389bbce03176ee460ea5dc2e37c9a722acbd"
 const MEN_FORTRESS_OBJECT_ID := "bfme2.object.men-fortress"
 const SHIPPED_MEN_VSLICE := "bfme2-men-vslice/7de517bf146582f10741750b50d63f9955c42d1fe2aa13200757fc6fb29f217a"
 ## Mirrors RetailSliceSim.CREEP_TEAM. Not a preload: the slice script chain

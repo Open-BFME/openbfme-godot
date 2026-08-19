@@ -30646,6 +30646,11 @@ func _seed_castle_fixtures() -> void:
 			"queue": [],
 			"damage_remainders": {},
 			"income_per_payout": 0,
+			# The battlefield already draws the map's bound prop for this
+			# placement (retail_map_data routes map-fixture bindings to
+			# renderable presentation); the slice must not demand a
+			# playable-structure document that no pack ships.
+			"presentation": "bound-map-prop",
 		}
 		_emit_event("castle.fixture_seeded", 0, structure_id, {
 			"type_name": String(placement.get("type_name", "")),

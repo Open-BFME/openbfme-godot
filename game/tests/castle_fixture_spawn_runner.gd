@@ -175,7 +175,10 @@ func _run() -> void:
 	var gate_fixture := _fixture_row_for(erebor, "EreborGateDoors", "gate")
 	var gate_index := int(gate_fixture.get("index", -1))
 	var gate_placement := {}
-	for placement in erebor.bound_structure_placements:
+	# Map-fixture structures present as bound PROPS (the sim owns them via
+	# fixtures.json; no pack ships a playable-structure document), carrying
+	# the synthetic map-fixture id as evidence.
+	for placement in erebor.bound_prop_placements:
 		if int((placement as Dictionary).get("source_index", -1)) == gate_index:
 			gate_placement = placement
 			break
@@ -186,11 +189,11 @@ func _run() -> void:
 		"properties=%s" % str(gate_properties)
 	)
 	_check(
-		"erebor_gate_is_lifecycle_structure",
-		erebor.bound_structure_type_ids.has("EreborGateDoors")
-			and String(gate_placement.get("classification", "")) == "lifecycle-structure"
-			and String(gate_placement.get("object_id", "")) == "bfme2.object.map-fixture.ereborgatedoors",
-		"classification=%s object_id=%s" % [String(gate_placement.get("classification", "")), String(gate_placement.get("object_id", ""))]
+		"erebor_gate_is_a_map_fixture_prop",
+		erebor.bound_prop_type_ids.has("EreborGateDoors")
+			and String(gate_placement.get("classification", "")) == "renderable"
+			and String(gate_placement.get("map_fixture_object_id", "")) == "bfme2.object.map-fixture.ereborgatedoors",
+		"classification=%s map_fixture_object_id=%s" % [String(gate_placement.get("classification", "")), String(gate_placement.get("map_fixture_object_id", ""))]
 	)
 	var lair_rows := 0
 	for lair in erebor.scenario_object_placements:
@@ -246,12 +249,12 @@ func _run() -> void:
 		"got %s" % str(carndum.castle_fixture_deferred)
 	)
 	var carndum_wall_placements := 0
-	for placement in carndum.bound_structure_placements:
-		if String((placement as Dictionary).get("source_type", "")) == "AngmarWallCarnDum":
+	for placement in carndum.bound_prop_placements:
+		if String((placement as Dictionary).get("source_type", "")) == "AngmarWallCarnDum" and String((placement as Dictionary).get("map_fixture_object_id", "")) != "":
 			carndum_wall_placements += 1
 	_check(
-		"carndum_125_walls_are_lifecycle_structures",
-		carndum.bound_structure_type_ids.has("AngmarWallCarnDum") and carndum_wall_placements == 125,
+		"carndum_125_walls_are_map_fixture_props",
+		carndum.bound_prop_type_ids.has("AngmarWallCarnDum") and carndum_wall_placements == 125,
 		"placements=%d" % carndum_wall_placements
 	)
 
