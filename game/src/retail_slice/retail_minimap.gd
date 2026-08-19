@@ -145,6 +145,7 @@ var _scrub_arena := Rect2()
 ## half the nearest same-type placement spacing, so a 125-piece curtain reads
 ## as a curtain rather than 125 identical structure dots.
 var _castle_fixture_markers: Dictionary = {}
+var _bound_castle_fixture_ids: Dictionary = {}
 
 signal center_requested(world_position: Vector2)
 signal order_requested(world_position: Vector2)
@@ -245,9 +246,14 @@ func _build_castle_fixture_markers() -> void:
 		var row: Dictionary = simulation.structure(id)
 		if String(row.get("structure_kind", "")) != "castle_fixture":
 			continue
-		var role := String(row.get("castle_fixture_role", ""))
-		if role not in ["wall", "gate", "tower", "garrison"]:
+		if not _bound_castle_fixture_ids.has(id):
 			continue
+		var kind_of: Array[String] = []
+		for token in row.get("castle_fixture_kind_of", []) as Array:
+			kind_of.append(String(token).to_upper())
+		if kind_of.has("INERT") or kind_of.has("UNATTACKABLE"):
+			continue
+		var role := String(row.get("castle_fixture_role", ""))
 		var marker := {
 			"id": id,
 			"role": role,
@@ -269,6 +275,14 @@ func _build_castle_fixture_markers() -> void:
 		if is_finite(nearest) and nearest > 0.0:
 			marker["half_length"] = nearest * 0.5
 			_castle_fixture_markers[int(marker["id"])] = marker
+
+
+func set_castle_fixture_bound_ids(ids: Array) -> void:
+	_bound_castle_fixture_ids.clear()
+	for id_value in ids:
+		_bound_castle_fixture_ids[int(id_value)] = true
+	_build_castle_fixture_markers()
+	queue_redraw()
 
 
 func castle_fixture_marker_count() -> int:

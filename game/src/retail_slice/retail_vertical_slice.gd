@@ -696,6 +696,8 @@ func _initialize_content_and_match() -> void:
 		])
 		shroud_overlay.apply_to_scenery()
 	hud.configure_minimap(simulation, source_map_data, camera, _source_art_texture, shroud_overlay)
+	if battlefield != null and hud.minimap != null and hud.minimap.has_method("set_castle_fixture_bound_ids"):
+		hud.minimap.set_castle_fixture_bound_ids(battlefield.bound_castle_fixture_ids())
 	var command_costs: Dictionary = {}
 	for unit_type in simulation.production_rule_ids():
 		command_costs[unit_type] = simulation._production_rule_value(String(unit_type), "cost_rule", "default_cost")
@@ -4221,11 +4223,9 @@ func _selection_target_structure(structure_id: int) -> int:
 
 
 func castle_fixture_selectable(row: Dictionary) -> bool:
-	## Shared by click picking and the fixture HUD presenter. The selected data
-	## contains a real authoring conflict: all Carn Dum wall placements say
-	## objectTargetable=false while the Object KindOf says SELECTABLE. L9's
-	## acceptance requires those walls selectable and Erebor's false-targetable
-	## gate blocked, so only the wall role lets SELECTABLE win that tie.
+	## Retail's selection gate is objectEnabled plus effective KindOf. The
+	## WorldBuilder objectTargetable placement flag remains evidence in the row,
+	## but never participates in selection.
 	if String(row.get("structure_kind", "")) != "castle_fixture":
 		return true
 	if not bool(row.get("castle_fixture_enabled", true)):
@@ -4238,8 +4238,7 @@ func castle_fixture_selectable(row: Dictionary) -> bool:
 			return false
 	if not kind_of.has("SELECTABLE"):
 		return false
-	return bool(row.get("castle_fixture_targetable", true)) \
-		or String(row.get("castle_fixture_role", "")) == "wall"
+	return true
 
 
 func _closest_structure(point: Vector2, team: int) -> int:
@@ -4247,16 +4246,25 @@ func _closest_structure(point: Vector2, team: int) -> int:
 
 
 func _closest_selectable_castle_fixture(point: Vector2) -> int:
+	if _castle_fixture_pick_cache_dirty:
+		_rebuild_castle_fixture_pick_candidates()
+	var visible_candidates: Array = []
+	for candidate_value in _castle_fixture_pick_candidates:
+		var candidate := candidate_value as Dictionary
+		if shroud_overlay == null or shroud_overlay.structure_visible(Vector2(candidate.get("position", Vector2.ZERO))):
+			visible_candidates.append(candidate)
+	return SelectionPick.closest_hit(point, visible_candidates)
+
+
+func _rebuild_castle_fixture_pick_candidates() -> void:
 	var ids: Array = []
 	for id_value in simulation.structure_ids():
 		var id := int(id_value)
 		var row: Dictionary = simulation.structure(id)
 		if int(row.get("health", 0)) > 0 and String(row.get("structure_kind", "")) == "castle_fixture" and castle_fixture_selectable(row):
 			ids.append(id)
-	ids = shroud_overlay.visible_structure_ids(
-		ids, func(id: int) -> Vector2: return Vector2(simulation.structure(id).get("position", Vector2.ZERO))
-	)
-	return SelectionPick.closest_hit(point, _structure_pick_candidates(ids))
+	_castle_fixture_pick_candidates = _structure_pick_candidates(ids)
+	_castle_fixture_pick_cache_dirty = false
 
 
 func _closest_capturable_structure(point: Vector2) -> int:
@@ -7433,6 +7441,8 @@ func reset_match() -> void:
 	_score_event_index = 0
 	_structure_projectile_event_index = 0
 	_castle_fixture_event_index = 0
+	_castle_fixture_pick_candidates.clear()
+	_castle_fixture_pick_cache_dirty = true
 	for node_value in structure_projectile_nodes.values():
 		var projectile_node := node_value as Node
 		if projectile_node != null and is_instance_valid(projectile_node):
@@ -8228,6 +8238,8 @@ func _grant_test_resources() -> void:
 var _power_fx_event_index := 0
 var _structure_projectile_event_index := 0
 var _castle_fixture_event_index := 0
+var _castle_fixture_pick_candidates: Array = []
+var _castle_fixture_pick_cache_dirty := true
 var _atmosphere_event_index := 0
 var structure_projectile_nodes: Dictionary = {}
 
@@ -8286,6 +8298,7 @@ func _consume_castle_fixture_presentation_events() -> void:
 		var target_id := int(event.get("target_id", 0))
 		var row: Dictionary = simulation.structure(target_id)
 		if String(row.get("structure_kind", "")) == "castle_fixture":
+			_castle_fixture_pick_cache_dirty = true
 			battlefield.present_castle_fixture_event(event, row)
 
 

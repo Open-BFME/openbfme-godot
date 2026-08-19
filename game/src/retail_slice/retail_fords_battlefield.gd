@@ -1688,6 +1688,9 @@ func bind_castle_fixture_presentations(simulation: RefCounted) -> int:
 		var dont_hide := kind_of.has("DONT_HIDE_IF_FOGGED") or kind_of.has("NEVER_CULL_FOR_MP")
 		var state := {
 			"selectable": selectable,
+			# WorldBuilder objectTargetable is evidence only. Retail selection is
+			# governed by enabled + KindOf, not this placement-editor flag.
+			"targetable_evidence": bool(row.get("castle_fixture_targetable", true)),
 			"health_bar": selectable,
 			"tooltip": String(row.get("castle_fixture_type", "")) if selectable else "",
 			"dont_hide_if_fogged": dont_hide,
@@ -1706,13 +1709,18 @@ func bind_castle_fixture_presentations(simulation: RefCounted) -> int:
 		placement.set_meta("castle_fixture_selectable", selectable)
 		placement.set_meta("dont_hide_if_fogged", dont_hide)
 		placement.set_meta("never_cull_for_mp", kind_of.has("NEVER_CULL_FOR_MP"))
-		if placement.get_child_count() > 0:
-			placement.get_child(0).set_meta("castle_fixture_visual", true)
+		_ensure_fixture_visual_gate(placement)
 		if kind_of.has("NEVER_CULL_FOR_MP"):
 			_disable_fixture_range_culling(placement)
 		if selectable:
 			_build_fixture_overlays(placement, fixture_id, int(row.get("team", -1)), String(state["tooltip"]))
 	return _castle_fixture_states.size()
+
+
+func bound_castle_fixture_ids() -> Array:
+	var ids: Array = _castle_fixture_nodes.keys()
+	ids.sort()
+	return ids
 
 
 func castle_fixture_presentation_state(fixture_id: int) -> Dictionary:
@@ -1759,13 +1767,27 @@ func _fixture_row_selectable(row: Dictionary, kind_of: Array[String]) -> bool:
 			return false
 	if not kind_of.has("SELECTABLE"):
 		return false
-	# The selected maps contain a contradictory editor/runtime pair: all 125
-	# Carn Dum walls author objectTargetable=false while their retail Object
-	# explicitly carries SELECTABLE. Preserve that explicit wall selection
-	# surface; for gates and ordinary fixtures the authored placement refusal
-	# wins (EreborGateDoors is the acceptance case).
-	return bool(row.get("castle_fixture_targetable", true)) \
-		or String(row.get("castle_fixture_role", "")) == "wall"
+	return true
+
+
+func _ensure_fixture_visual_gate(placement: Node3D) -> Node3D:
+	var existing := placement.get_node_or_null("CastleFixtureVisualGate") as Node3D
+	if existing != null:
+		return existing
+	if placement.get_child_count() <= 0:
+		return null
+	var intact := placement.get_child(0) as Node3D
+	if intact == null:
+		return null
+	var gate := Node3D.new()
+	gate.name = "CastleFixtureVisualGate"
+	gate.set_meta("castle_fixture_visual_gate", true)
+	placement.remove_child(intact)
+	intact.set_meta("castle_fixture_visual", true)
+	gate.add_child(intact)
+	placement.add_child(gate)
+	placement.move_child(gate, 0)
+	return gate
 
 
 func _upper_tokens(value: Variant) -> Array[String]:
@@ -1899,20 +1921,26 @@ func _present_fixture_death(fixture_id: int, row: Dictionary) -> void:
 		var overlay_node := placement.get_node_or_null(overlay) as Node3D
 		if overlay_node != null:
 			overlay_node.visible = false
-	var rubble_path := _fixture_rubble_path(placement)
+	var visual_gate := _ensure_fixture_visual_gate(placement)
+	if visual_gate == null:
+		state["death_presentation"] = "hidden-no-visual-gate"
+		_castle_fixture_states[fixture_id] = state
+		return
+	for child in visual_gate.get_children():
+		if bool(child.get_meta("castle_fixture_visual", false)):
+			(child as Node3D).visible = false
+	var rubble_binding := _fixture_rubble_binding(row, placement)
+	var rubble_path := String(rubble_binding.get("path", ""))
+	state["rubble_model"] = String(rubble_binding.get("model", ""))
+	state["rubble_path"] = rubble_path
+	state["rubble_binding_source"] = String(rubble_binding.get("source", ""))
+	state["rubble_binding_reason"] = String(rubble_binding.get("reason", ""))
 	if rubble_path != "":
 		var rubble := AssetFactoryScript._try_load_model(rubble_path)
 		if rubble != null and _mesh_instance_count(rubble) > 0:
-			var old_visual: Node = null
-			for child in placement.get_children():
-				if bool(child.get_meta("castle_fixture_visual", false)):
-					old_visual = child
-					break
-			if old_visual != null:
-				placement.remove_child(old_visual)
-				old_visual.queue_free()
 			rubble.set_meta("castle_fixture_visual", true)
-			placement.add_child(rubble)
+			rubble.set_meta("castle_fixture_rubble_visual", true)
+			visual_gate.add_child(rubble)
 			placement.set_meta("castle_fixture_death_glb", rubble_path)
 			state["death_presentation"] = "rubble"
 			_castle_fixture_states[fixture_id] = state
@@ -1920,34 +1948,54 @@ func _present_fixture_death(fixture_id: int, row: Dictionary) -> void:
 	# The cooked binding has no distinct RUBBLE GLB for this retail Object.
 	# Hiding is the required fail-closed presentation; leaving the intact mesh
 	# standing is the owner-visible bug this lane removes.
-	placement.visible = false
+	# Keep the shroud-bound gate alive. Its intact child stays locally hidden,
+	# so a later shroud reapply can toggle the gate without resurrecting it.
 	state["death_presentation"] = "hidden-no-cooked-rubble"
 	_castle_fixture_states[fixture_id] = state
 
 
-func _fixture_rubble_path(placement: Node3D) -> String:
+func _fixture_rubble_binding(row: Dictionary, placement: Node3D) -> Dictionary:
 	var intact_path := String(placement.get_meta("glb_path", ""))
 	if intact_path == "" or not FileAccess.file_exists(intact_path):
-		return ""
+		return {"reason": "missing-intact-binding"}
 	var directory := intact_path.get_base_dir()
-	var files := Array(DirAccess.get_files_at(directory))
-	files.sort()
-	for file_value in files:
+	var candidates: Array[String] = []
+	for file_value in DirAccess.get_files_at(directory):
 		var file_name := String(file_value)
 		var lower := file_name.to_lower()
-		if not lower.ends_with(".glb"):
-			continue
-		if lower.begins_with("rubble-") or (
-			lower.contains("-rubble-")
-			and not lower.begins_with("intact-")
-			and not lower.begins_with("damaged-")
-			and not lower.begins_with("really-damaged-")
-			and not lower.begins_with("construction-")
-		):
-			var candidate := directory.path_join(file_name)
-			if FileAccess.file_exists(candidate):
-				return candidate
-	return ""
+		if lower.begins_with("rubble-") and lower.ends_with(".glb"):
+			candidates.append(file_name)
+	candidates.sort()
+	var authored_model := String(row.get("castle_fixture_rubble_model", row.get("rubble_model", ""))).strip_edges()
+	if authored_model != "":
+		var expected_file := "rubble-%s.glb" % _fixture_model_slug(authored_model)
+		for candidate in candidates:
+			if candidate.to_lower() == expected_file:
+				return {
+					"model": authored_model,
+					"path": directory.path_join(candidate),
+					"source": "fixtures-rubble-model",
+					"reason": "exact-model-match",
+				}
+		return {"model": authored_model, "reason": "authored-model-has-no-exact-cooked-glb"}
+	# The current fixture schema predates rubble_model. A single cooked RUBBLE
+	# phase is still an unambiguous playable-structure binding. Multiple phase
+	# files carry no retail Model order, so fail closed instead of picking first.
+	if candidates.size() != 1:
+		return {"reason": "missing-rubble-model" if candidates.is_empty() else "ambiguous-cooked-rubble-bindings"}
+	var only := candidates[0]
+	var encoded_model := only.get_basename().trim_prefix("rubble-").replace("-", "_")
+	return {
+		"model": encoded_model,
+		"path": directory.path_join(only),
+		"source": "unique-cooked-playable-structure-binding",
+		"reason": "exact-unique-rubble-phase",
+	}
+
+
+func _fixture_model_slug(model_name: String) -> String:
+	return model_name.replace("\\", "/").get_file().get_basename().to_lower() \
+		.replace("_", "-").replace(" ", "-")
 
 
 func _record_unresolved_prop_diagnostics(map_data: RetailMapData) -> bool:

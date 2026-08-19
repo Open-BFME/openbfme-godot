@@ -76,9 +76,22 @@ func _exercise_map(map_id: String) -> void:
 		if String(slice.simulation.structure(id).get("structure_kind", "")) == "castle_fixture":
 			fixture_ids.append(id)
 	_check("%s_has_seeded_fixtures" % map_id, not fixture_ids.is_empty(), "count=%d" % fixture_ids.size())
+	var census_bound := 0
+	var census_selectable_and_bound := 0
+	for id in fixture_ids:
+		var census_row: Dictionary = slice.simulation.structure(id)
+		if _fixture_prop(slice, int(census_row.get("source_index", -1))) == null:
+			continue
+		census_bound += 1
+		if slice.castle_fixture_selectable(census_row):
+			census_selectable_and_bound += 1
+	var census_marker_count := int(slice.hud.minimap.castle_fixture_marker_count()) if slice.hud != null and slice.hud.minimap != null else -1
+	print("CASTLE_FIXTURE_PRESENTATION_CENSUS map=%s seeded=%d bound=%d selectable_and_bound=%d minimap=%d" % [
+		map_id, fixture_ids.size(), census_bound, census_selectable_and_bound, census_marker_count,
+	])
 
 	if map_id.ends_with("wor-erebor"):
-		_check_erebor(slice, fixture_ids)
+		await _check_erebor(slice, fixture_ids)
 	if map_id.ends_with("wor-ang-carn-dum"):
 		_check_carn_dum(slice, fixture_ids)
 
@@ -88,7 +101,10 @@ func _exercise_map(map_id: String) -> void:
 	var expected_markers := 0
 	for id in fixture_ids:
 		var row: Dictionary = slice.simulation.structure(id)
-		if int(row.get("health", 0)) > 0 and String(row.get("castle_fixture_role", "")) in ["wall", "gate", "tower", "garrison"]:
+		if int(row.get("health", 0)) <= 0 or _fixture_prop(slice, int(row.get("source_index", -1))) == null:
+			continue
+		var kind_of := _upper_tokens(row.get("castle_fixture_kind_of", []))
+		if not kind_of.has("INERT") and not kind_of.has("UNATTACKABLE"):
 			expected_markers += 1
 	_check(
 		"%s_minimap_fixture_markers_match_drawn_rows" % map_id,
@@ -138,27 +154,54 @@ func _check_erebor(slice, fixture_ids: Array[int]) -> void:
 	var gate_selectable := false
 	if gate_id != 0 and slice.has_method("castle_fixture_selectable"):
 		gate_selectable = bool(slice.castle_fixture_selectable(slice.simulation.structure(gate_id)))
-	_check("erebor_objectTargetable_false_gate_is_not_selectable", gate_id != 0 and not gate_selectable)
-	_check(
-		"erebor_objectTargetable_false_gate_has_no_pick_candidate",
-		gate_id != 0 and slice._structure_pick_candidates([gate_id]).is_empty()
-	)
+	_check("erebor_selectable_kindof_gate_is_selectable", gate_id != 0 and gate_selectable)
+	var gate_candidates: Array = slice._structure_pick_candidates([gate_id]) if gate_id != 0 else []
+	_check("erebor_selectable_kindof_gate_has_pick_candidate",
+		gate_candidates.size() == 1 and int((gate_candidates[0] as Dictionary).get("id", 0)) == gate_id,
+		str(gate_candidates))
+	if gate_id != 0:
+		var gate_position := Vector2(slice.simulation.structure(gate_id).get("position", Vector2.ZERO))
+		slice._closest_selectable_castle_fixture(gate_position)
+		var cached_count: int = slice._castle_fixture_pick_candidates.size()
+		slice._closest_selectable_castle_fixture(gate_position)
+		_check("erebor_hover_pick_candidates_are_cached",
+			not slice._castle_fixture_pick_cache_dirty and cached_count > 0
+			and slice._castle_fixture_pick_candidates.size() == cached_count)
 
-	# EreborWall02 is destructible, bound to a real prop node, and retail authors
-	# a RUBBLE state. The selected pack has no distinct rubble GLB for it, so the
-	# required event consumer must hide the prop rather than leave it standing.
 	var wall_id := _fixture_id(slice, fixture_ids, "EreborWall02")
-	var wall: Dictionary = slice.simulation.structure(wall_id)
-	var wall_node := _fixture_prop(slice, int(wall.get("source_index", -1)))
-	_check("erebor_destructible_wall_prop_found", wall_id != 0 and wall_node != null and not bool(wall.get("indestructible", true)))
-	if wall_id != 0 and wall_node != null:
-		var old_visual := wall_node.get_child(0) if wall_node.get_child_count() > 0 else null
-		slice.simulation._apply_damage(-1, wall_id, int(wall.get("maximum_health", 1)) + 1, "structure")
+	_check("erebor_non_selectable_kindof_wall_is_not_selectable",
+		wall_id != 0 and not slice.castle_fixture_selectable(slice.simulation.structure(wall_id)))
+
+	# EBGarrisonableTower's retail RUBBLE model is EB_tower3_D3 and the cooked
+	# lifecycle binding is rubble-eb-tower3-d3.glb. Reveal one placement first so
+	# the test proves a visible intact prop becomes visible rubble, then reapply
+	# shroud after a deferred-free frame to reproduce the rejected implementation's
+	# freed-object crash.
+	var tower_id := _fixture_id(slice, fixture_ids, "EBGarrisonableTower")
+	var tower: Dictionary = slice.simulation.structure(tower_id)
+	var tower_node := _fixture_prop(slice, int(tower.get("source_index", -1)))
+	_check("erebor_rubble_tower_prop_found", tower_id != 0 and tower_node != null and not bool(tower.get("indestructible", true)))
+	if tower_id != 0 and tower_node != null:
+		var fog = slice.simulation.fog_of_war()
+		fog.reveal(slice.local_team, Vector2(tower.get("position", Vector2.ZERO)), 40.0, true, "l9-rubble-test")
+		slice.shroud_overlay.update(true)
+		var hidden_before := int(slice.shroud_overlay.apply_to_scenery())
+		var intact_visual := tower_node.get_child(0) as Node3D if tower_node.get_child_count() > 0 else null
+		_check("erebor_rubble_tower_visible_before_kill", intact_visual != null and intact_visual.is_visible_in_tree())
+		slice.simulation._apply_damage(-1, tower_id, int(tower.get("maximum_health", 1)) + 1, "structure")
 		slice._sync_presentation()
-		var swapped := wall_node.get_child_count() > 0 and wall_node.get_child(0) != old_visual
-		var hidden := not bool(wall_node.visible)
-		_check("erebor_wall_death_event_hides_or_swaps_prop", hidden or swapped,
-			"visible=%s swapped=%s health=%s" % [str(wall_node.visible), str(swapped), str(slice.simulation.structure(wall_id).get("health"))])
+		_check("erebor_structure_event_invalidates_hover_pick_cache", slice._castle_fixture_pick_cache_dirty)
+		await process_frame
+		var hidden_after := int(slice.shroud_overlay.apply_to_scenery())
+		_check("erebor_shroud_hidden_count_survives_rubble_swap", hidden_after == hidden_before,
+			"before=%d after=%d" % [hidden_before, hidden_after])
+		var state: Dictionary = slice.battlefield.castle_fixture_presentation_state(tower_id)
+		_check("erebor_rubble_uses_retail_model_binding",
+			String(state.get("rubble_model", "")).to_lower() == "eb_tower3_d3"
+			and String(state.get("rubble_path", "")).get_file().to_lower() == "rubble-eb-tower3-d3.glb",
+			str(state))
+		var rubble := _fixture_rubble_visual(tower_node)
+		_check("erebor_rubble_visual_is_visible_after_kill", rubble != null and rubble.is_visible_in_tree(), str(state))
 
 
 func _check_carn_dum(slice, fixture_ids: Array[int]) -> void:
@@ -204,4 +247,18 @@ func _first_fixture_prop(slice, ids: Array[int]) -> Node3D:
 		var node := _fixture_prop(slice, int(slice.simulation.structure(id).get("source_index", -1)))
 		if node != null:
 			return node
+	return null
+
+
+func _upper_tokens(value: Variant) -> Array[String]:
+	var out: Array[String] = []
+	for token in value as Array:
+		out.append(String(token).to_upper())
+	return out
+
+
+func _fixture_rubble_visual(node: Node) -> Node3D:
+	for descendant in node.find_children("*", "Node3D", true, false):
+		if bool(descendant.get_meta("castle_fixture_rubble_visual", false)):
+			return descendant as Node3D
 	return null
