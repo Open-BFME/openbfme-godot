@@ -215,7 +215,8 @@ def _map_art_entries(
 
 
 def build_registry_skirmish_catalog(
-    catalog: InstallCatalog, *, game: str, fixtures_builder: Any = None
+    catalog: InstallCatalog, *, game: str, fixtures_builder: Any = None,
+    ai_bases_builder: Any = None,
 ) -> dict[str, Any]:
     """Build maps.json + profile shell from official multiplayer registry rows.
 
@@ -298,6 +299,8 @@ def build_registry_skirmish_catalog(
                 # A build failure here fails the catalog build closed — a
                 # castle map without its fixtures document is a named gap.
                 resource_options["fixtures"] = fixtures_builder(virtual, parsed)
+            if ai_bases_builder is not None:
+                resource_options["aiBases"] = ai_bases_builder(virtual, parsed)
         resources.append(
             {
                 "id": f"map-{slug}-binary",
@@ -941,6 +944,7 @@ def main(argv: list[str] | None = None) -> int:
         # full-profile binder uses (default resolution included).  Without a
         # tree the catalog builds exactly as before, fixtures absent.
         fixtures_builder = None
+        ai_bases_builder = None
         fixtures_root = (
             args.effective_assets.expanduser().resolve()
             if args.effective_assets
@@ -952,12 +956,19 @@ def main(argv: list[str] | None = None) -> int:
             from openbfme_importer.castle_fixtures import (
                 make_effective_assets_fixtures_builder,
             )
+            from openbfme_importer.castle_ai_bases import (
+                make_effective_assets_ai_bases_builder,
+            )
 
             fixtures_builder = make_effective_assets_fixtures_builder(
                 fixtures_root, game=args.game
             )
+            ai_bases_builder = make_effective_assets_ai_bases_builder(fixtures_root)
         profile = build_registry_skirmish_catalog(
-            catalog, game=args.game, fixtures_builder=fixtures_builder
+            catalog,
+            game=args.game,
+            fixtures_builder=fixtures_builder,
+            ai_bases_builder=ai_bases_builder,
         )
         profile_path = profiles_dir / f"{args.game}-skirmish-maps.generated.json"
         write_json_atomic(profile_path, profile)

@@ -700,6 +700,7 @@ def build_map_profile(
         tuple[list[dict[str, Any]], dict[str, Any] | None, dict[str, Any] | None],
     ] = _no_object_bindings,
     fixtures_builder: Callable[[MapTarget, ParsedSageMap], dict[str, Any]] | None = None,
+    ai_bases_builder: Callable[[str, ParsedSageMap], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return a deterministic profile generated only from exact retail facts.
 
@@ -981,6 +982,10 @@ def build_map_profile(
                     binding_evidence["castleFixtureStructures"] = (
                         fixture_rebind_evidence
                     )
+        if castle_evidence is not None and ai_bases_builder is not None:
+            map_resources[0]["options"]["aiBases"] = ai_bases_builder(
+                target.virtual_path, parsed
+            )
         for resource in binding_resources:
             resource_id = str(resource["id"])
             if resource_id not in shared_binding_resources:
@@ -1188,6 +1193,7 @@ def build_category_map_profile(
         tuple[list[dict[str, Any]], dict[str, Any] | None, dict[str, Any] | None],
     ] = _no_object_bindings,
     fixtures_builder: Callable[[MapTarget, ParsedSageMap], dict[str, Any]] | None = None,
+    ai_bases_builder: Callable[[str, ParsedSageMap], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return the profile for one named retail map set this install ships."""
 
@@ -1236,6 +1242,7 @@ def build_category_map_profile(
         strict=strict,
         binder=binder,
         fixtures_builder=fixtures_builder,
+        ai_bases_builder=ai_bases_builder,
     )
 
 

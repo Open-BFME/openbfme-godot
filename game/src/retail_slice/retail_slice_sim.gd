@@ -782,11 +782,15 @@ func _structure_spatial_index() -> Dictionary:
 
 
 func _structure_ids_near(position: Vector2) -> Array[int]:
+	return _structure_ids_within_gather_radius(position, STRUCTURE_DEFLECT_GATHER_RADIUS)
+
+
+func _structure_ids_within_gather_radius(position: Vector2, gather_radius: float) -> Array[int]:
 	var index := _structure_spatial_index()
-	var low_cx := _spatial_axis_cell(position.x - STRUCTURE_DEFLECT_GATHER_RADIUS)
-	var high_cx := _spatial_axis_cell(position.x + STRUCTURE_DEFLECT_GATHER_RADIUS)
-	var low_cy := _spatial_axis_cell(position.y - STRUCTURE_DEFLECT_GATHER_RADIUS)
-	var high_cy := _spatial_axis_cell(position.y + STRUCTURE_DEFLECT_GATHER_RADIUS)
+	var low_cx := _spatial_axis_cell(position.x - gather_radius)
+	var high_cx := _spatial_axis_cell(position.x + gather_radius)
+	var low_cy := _spatial_axis_cell(position.y - gather_radius)
+	var high_cy := _spatial_axis_cell(position.y + gather_radius)
 	var result: Array[int] = []
 	for cx in range(low_cx, high_cx + 1):
 		for cy in range(low_cy, high_cy + 1):
@@ -1371,8 +1375,12 @@ var _spawn_positions: Dictionary = {}
 ## deriving their anchors from spawn ids 1/2 and 101/102, so this is empty and
 ## inert for every 2-team match.
 var _extra_team_centers: Dictionary = {}
+var _configured_team_start_indices: Dictionary = {}
 var _home_layout: Dictionary = {}
 var _map_script_waypoints: Dictionary = {}
+var _ai_build_waypoints: Dictionary = {}
+var _castle_ai_base_layouts: Array[Dictionary] = []
+var _castle_ai_base_fallback := "generic-any"
 var _rules: Dictionary = {}
 var configuration_error := ""
 var _unit_production_rules: Dictionary = {}
@@ -1777,17 +1785,31 @@ func _apply_map_configuration(configuration: Dictionary) -> void:
 	playable_outline = (configured_outline as PackedVector2Array).duplicate()
 	var configured_home_layout: Variant = configuration.get("home_layout", {})
 	_home_layout = (configured_home_layout as Dictionary).duplicate(true) if typeof(configured_home_layout) == TYPE_DICTIONARY else {}
+	_castle_ai_base_layouts = []
+	var configured_ai_layouts: Variant = configuration.get("castle_ai_base_layouts", [])
+	if typeof(configured_ai_layouts) == TYPE_ARRAY:
+		for layout_value in configured_ai_layouts as Array:
+			if typeof(layout_value) == TYPE_DICTIONARY:
+				_castle_ai_base_layouts.append((layout_value as Dictionary).duplicate(true))
+	_castle_ai_base_fallback = String(configuration.get("castle_ai_base_fallback", "generic-any"))
 	# Optional per-team spawn anchors for rostered teams beyond 0/1 (N-team maps
 	# expose all authored Player_N_Start centers here). Absent on 2-team configs.
 	var configured_team_centers: Variant = configuration.get("team_start_centers", {})
 	_extra_team_centers = {}
 	_map_script_waypoints.clear()
+	_ai_build_waypoints.clear()
 	var configured_waypoints: Variant = configuration.get("script_waypoints", {})
 	if typeof(configured_waypoints) == TYPE_DICTIONARY:
 		for waypoint_name in (configured_waypoints as Dictionary).keys():
 			var waypoint_position: Variant = (configured_waypoints as Dictionary)[waypoint_name]
 			if typeof(waypoint_position) == TYPE_VECTOR2:
 				_map_script_waypoints[String(waypoint_name)] = waypoint_position
+	var configured_ai_build_waypoints: Variant = configuration.get("ai_build_waypoints", {})
+	if typeof(configured_ai_build_waypoints) == TYPE_DICTIONARY:
+		for waypoint_name in (configured_ai_build_waypoints as Dictionary).keys():
+			var waypoint_position: Variant = (configured_ai_build_waypoints as Dictionary)[waypoint_name]
+			if typeof(waypoint_position) == TYPE_VECTOR2:
+				_ai_build_waypoints[String(waypoint_name)] = waypoint_position
 	if typeof(configured_team_centers) == TYPE_DICTIONARY:
 		for team_key in (configured_team_centers as Dictionary).keys():
 			var center_value: Variant = (configured_team_centers as Dictionary)[team_key]
@@ -1798,6 +1820,11 @@ func _apply_map_configuration(configuration: Dictionary) -> void:
 	# START_POSITION_IS surface. Explicit roster descriptors (menu/WotR setup)
 	# are authoritative and are never overwritten by the legacy map defaults.
 	var configured_team_starts: Variant = configuration.get("team_start_indices", {})
+	_configured_team_start_indices = (
+		(configured_team_starts as Dictionary).duplicate(true)
+		if typeof(configured_team_starts) == TYPE_DICTIONARY
+		else {}
+	)
 	var validated_team_starts := {}
 	var team_starts_valid := typeof(configured_team_starts) == TYPE_DICTIONARY
 	# An injected menu/WotR roster owns its assignments, including explicit
@@ -1905,7 +1932,11 @@ func _apply_fallback_configuration() -> void:
 	playable_outline = PackedVector2Array()
 	_home_layout.clear()
 	_map_script_waypoints.clear()
+	_ai_build_waypoints.clear()
+	_castle_ai_base_layouts.clear()
+	_castle_ai_base_fallback = "generic-any"
 	_extra_team_centers = {}
+	_configured_team_start_indices = {}
 	source_map_configured = false
 	_scenario_map_placements = []
 	_castle_fixture_placements = []
@@ -27009,13 +27040,21 @@ const STRUCTURE_PLACEMENT_RADII := {
 	"farm": 2.2,
 }
 const PLACEMENT_CLEARANCE_MARGIN := 0.4
+const MAX_STRUCTURE_PLACEMENT_RADIUS := 4.0
 
 
 func _structure_placement_radius(structure_kind: String) -> float:
 	return float(STRUCTURE_PLACEMENT_RADII.get(structure_kind, 2.4))
 
 
-func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: String, position: Vector2, dry_run: bool = false) -> Dictionary:
+func _issue_construct_for_team(
+	team: int,
+	ids: Array[int],
+	structure_kind: String,
+	position: Vector2,
+	dry_run: bool = false,
+	authored_castle_site: bool = false
+) -> Dictionary:
 	if not base_loop_enabled or winner != -1:
 		return {"ok": false, "reason": "match-unavailable"}
 	if team != PLAYER_TEAM and team != ENEMY_TEAM:
@@ -27054,8 +27093,19 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 		if playable_outline.size() >= 3 and not Geometry2D.is_point_in_polygon(position, playable_outline):
 			return {"ok": false, "reason": "outside-playable-area"}
 		var new_radius := _structure_placement_radius(structure_kind)
-		for existing_id in structure_ids():
+		# The spatial query is exact: no existing footprint farther away than the
+		# two maximum authored radii plus the authored clearance can overlap this
+		# site. This matters on castle maps, whose hundreds of wall fixtures made
+		# every fallback candidate repeat a full structure-table scan.
+		var gather_radius := new_radius + MAX_STRUCTURE_PLACEMENT_RADIUS + PLACEMENT_CLEARANCE_MARGIN
+		for existing_id in _structure_ids_within_gather_radius(position, gather_radius):
 			var existing_row: Dictionary = structures[existing_id] as Dictionary
+			# AIBase and Player_N_BuildPlot sites are explicit retail placement
+			# authoring. Their footprints may intersect the coarse collision discs
+			# used for imported castle fixture art, but they must still reject every
+			# live/dynamic structure. Generic fallback sites receive no exemption.
+			if authored_castle_site and existing_id >= CASTLE_FIXTURE_FIRST_ID:
+				continue
 			var existing_position := Vector2(existing_row.get("position", Vector2.ZERO))
 			var clearance := new_radius + _structure_placement_radius(String(existing_row.get("structure_kind", ""))) + PLACEMENT_CLEARANCE_MARGIN
 			if existing_position.distance_to(position) < clearance:
@@ -27256,6 +27306,9 @@ func _step_construction() -> void:
 			site["construction_elapsed_ticks"] = elapsed
 			site["construction_progress"] = minf(1.0, float(elapsed) / float(build_ticks))
 			if elapsed >= build_ticks:
+				var foundation_team := int(site.get("team", -1))
+				if _team_ai_state.has(foundation_team):
+					(_team_ai_state[foundation_team] as Dictionary)["construction_resolved"] = true
 				_apply_structure_create_grants(site, false, true)
 				_emit_event("construction.completed", 0, structure_id, {"team": int(site.get("team", -1)), "structure_kind": String(site.get("structure_kind", ""))})
 			continue
@@ -31077,7 +31130,7 @@ func force_ai_construction_complete(team: int = ENEMY_TEAM) -> void:
 func _run_ai_for_team(team: int, profile: Dictionary, ai_state: Dictionary) -> void:
 	if base_loop_enabled and not bool(ai_state.get("construction_attempted", false)):
 		ai_state["construction_attempted"] = true
-		if not _start_ai_farm(team):
+		if not _start_ai_farm(team, ai_state):
 			ai_state["construction_resolved"] = true
 		else:
 			ai_state["build_order_index"] = 1
@@ -31329,6 +31382,10 @@ func _step_ai_base_building(team: int, ai_state: Dictionary) -> void:
 	var radii: Array = [10.0, 14.0, 18.0, 22.0]
 	if int(_difficulty_profile(team).get("extra_producer_cycles", 0)) > 0:
 		radii = [10.0, 14.0, 18.0, 22.0, 26.0, 30.0, 34.0, 38.0]
+	if castle_fixtures_enabled:
+		if _try_castle_ai_construction(team, ai_state, living_builders, kind):
+			ai_state["build_order_index"] = index + 1
+		return
 	for radius_value in radii:
 		var radius := float(radius_value)
 		for direction_index in range(8):
@@ -31406,13 +31463,15 @@ func _ai_train_builder(team: int) -> void:
 			return
 
 
-func _start_ai_farm(team: int) -> bool:
+func _start_ai_farm(team: int, ai_state: Dictionary = {}) -> bool:
 	var builder_ids: Array[int] = []
 	for id in living_ids(team):
 		if bool((entities[id] as Dictionary).get("is_builder", false)):
 			builder_ids.append(id)
 	if builder_ids.is_empty():
 		return false
+	if castle_fixtures_enabled:
+		return _try_castle_ai_construction(team, ai_state, builder_ids, "farm")
 	var builder_position := Vector2((entities[builder_ids[0]] as Dictionary).get("position", Vector2.ZERO))
 	# A bounded clockwise search is deterministic and uses the same admission,
 	# obstruction, route, cost, and construction path as a player MenPorter.
@@ -31421,6 +31480,196 @@ func _start_ai_farm(team: int) -> bool:
 		var result := _issue_construct_for_team(team, builder_ids, "farm", candidate)
 		if bool(result.get("ok", false)):
 			return true
+	return false
+
+
+func _ai_start_waypoint_name(team: int) -> String:
+	if castle_fixtures_enabled and _extra_team_centers.has(team):
+		var center := Vector2(_extra_team_centers[team])
+		var closest_name := ""
+		var closest_distance := INF
+		for name_value in source_player_starts.keys():
+			var name := String(name_value)
+			var distance := center.distance_squared_to(Vector2(source_player_starts[name_value]))
+			if distance < closest_distance:
+				closest_distance = distance
+				closest_name = name
+		if closest_name != "":
+			return closest_name
+	var descriptor := _team_descriptors.get(team, {}) as Dictionary
+	var start_index := int(descriptor.get("start_index", -1))
+	if start_index < 0:
+		start_index = int(_configured_team_start_indices.get(team, -1))
+	if start_index < 0:
+		return ""
+	return "Player_%d_Start" % (start_index + 1)
+
+
+func _castle_ai_home(team: int) -> Dictionary:
+	if _extra_team_centers.has(team):
+		return {"position": Vector2(_extra_team_centers[team]), "source": "castle-start:team-center"}
+	var start_name := _ai_start_waypoint_name(team)
+	if start_name != "" and source_player_starts.has(start_name):
+		return {"position": Vector2(source_player_starts[start_name]), "source": "castle-start:%s" % start_name}
+	return {"position": _team_center(team), "source": "generic-team-center"}
+
+
+func _castle_ai_layout(team: int) -> Dictionary:
+	var side_result := team_retail_side(team)
+	var side := String(side_result.get("side", ""))
+	if side == "":
+		return {}
+	for layout_value in _castle_ai_base_layouts:
+		var layout := layout_value as Dictionary
+		if String(layout.get("side", "")).to_lower() == side.to_lower():
+			return layout
+	return {}
+
+
+func _structure_kind_for_source_object(team: int, object_id: String) -> String:
+	var wanted := object_id.to_lower()
+	for kind_value in structure_source_object_ids_for_team(team).keys():
+		var kind := String(kind_value)
+		var sources: Variant = structure_source_object_ids_for_team(team)[kind_value]
+		if typeof(sources) == TYPE_ARRAY:
+			for source_value in sources as Array:
+				if String(source_value).to_lower() == wanted:
+					return kind
+		elif String(sources).to_lower() == wanted:
+			return kind
+	return ""
+
+
+func _castle_ai_authored_candidates(team: int, structure_kind: String) -> Array[Dictionary]:
+	var candidates: Array[Dictionary] = []
+	var home := _castle_ai_home(team)
+	var anchor := Vector2(home["position"])
+	var layout := _castle_ai_layout(team)
+	if not layout.is_empty():
+		var scale := float(_rules.get("source_map_transform_scale", 0.1))
+		for site_value in layout.get("sites", []) as Array:
+			var site := site_value as Dictionary
+			if _structure_kind_for_source_object(team, String(site.get("objectId", ""))) != structure_kind:
+				continue
+			var offset := site.get("offsetSource", []) as Array
+			if offset.size() != 3:
+				continue
+			candidates.append({
+				"position": anchor + Vector2(float(offset[0]), -float(offset[1])) * scale,
+				"source": "authored-ai-base:%s:site-%d" % [String(layout.get("side", "")), int(site.get("index", -1))],
+			})
+	var start_name := _ai_start_waypoint_name(team)
+	if start_name != "":
+		var prefix := start_name.trim_suffix("Start") + "BuildPlot_"
+		for plot_index in range(1, 9):
+			var waypoint_name := "%s%d" % [prefix, plot_index]
+			if _ai_build_waypoints.has(waypoint_name):
+				candidates.append({
+					"position": Vector2(_ai_build_waypoints[waypoint_name]),
+					"source": "authored-build-plot:%s" % waypoint_name,
+				})
+	return candidates
+
+
+func _try_castle_ai_site(
+	team: int,
+	ai_state: Dictionary,
+	builder_ids: Array[int],
+	structure_kind: String,
+	candidate: Vector2,
+	source: String
+) -> bool:
+	var authored_site := source.begins_with("authored-")
+	var dry_run := _issue_construct_for_team(team, builder_ids, structure_kind, candidate, true, authored_site)
+	if not bool(dry_run.get("ok", false)):
+		ai_state["last_site_rejection"] = "%s:%s" % [source, String(dry_run.get("reason", "rejected"))]
+		print("[RetailSliceSim] CASTLE_AI_REJECT team=%d structure=%s site_source=%s reason=%s" % [team, structure_kind, source, String(dry_run.get("reason", "rejected"))])
+		return false
+	var builder := entities[builder_ids[0]] as Dictionary
+	if not parity.can_path_between(Vector2(builder.get("position", Vector2.ZERO)), candidate):
+		ai_state["last_site_rejection"] = "%s:parity-path-impassable" % source
+		return false
+	var route := _query_route_for_row(builder, Vector2(builder.get("position", Vector2.ZERO)), candidate)
+	if not bool(route.get("valid", false)) or (route.get("points", []) as Array).is_empty():
+		ai_state["last_site_rejection"] = "%s:%s" % [source, String(route.get("reason", "route-rejected"))]
+		return false
+	var result := _issue_construct_for_team(team, builder_ids, structure_kind, candidate, false, authored_site)
+	if not bool(result.get("ok", false)):
+		ai_state["last_site_rejection"] = "%s:%s" % [source, String(result.get("reason", "rejected"))]
+		return false
+	if authored_site:
+		# An AIBase/build-plot row is a pre-authored construction site, equivalent
+		# to the sim's retail plot foundations: it rises on its authored timer and
+		# does not require a porter to reach the centre through coarse fixture art.
+		var structure_id := int(result.get("structure_id", 0))
+		if structures.has(structure_id):
+			var site := structures[structure_id] as Dictionary
+			site["builder_free"] = true
+			site["builder_id"] = 0
+		var authored_builder := entities[builder_ids[0]] as Dictionary
+		authored_builder["construction_id"] = 0
+		authored_builder["order_kind"] = ""
+		_clear_pending_route(authored_builder, true)
+		authored_builder["state"] = "idle"
+	ai_state["home_position"] = Vector2(_castle_ai_home(team)["position"])
+	ai_state["home_source"] = String(_castle_ai_home(team)["source"])
+	ai_state["site_source"] = source
+	ai_state.erase("last_site_rejection")
+	print("[RetailSliceSim] CASTLE_AI_SITE team=%d home_source=%s home=%s structure=%s site_source=%s site=%s" % [team, ai_state["home_source"], str(ai_state["home_position"]), structure_kind, source, str(candidate)])
+	return true
+
+
+func _try_castle_ai_construction(
+	team: int,
+	ai_state: Dictionary,
+	builder_ids: Array[int],
+	structure_kind: String
+) -> bool:
+	var authored_candidates := _castle_ai_authored_candidates(team, structure_kind)
+	var builder_position := Vector2((entities[builder_ids[0]] as Dictionary).get("position", Vector2.ZERO))
+	# Retail supplies the sites, while the live porter chooses the shortest
+	# deterministic trip. This prevents file/index order from sending a castle
+	# porter across the entire keep before it can establish production.
+	authored_candidates.sort_custom(func(left: Dictionary, right: Dictionary) -> bool:
+		var left_distance := builder_position.distance_squared_to(Vector2(left["position"]))
+		var right_distance := builder_position.distance_squared_to(Vector2(right["position"]))
+		if not is_equal_approx(left_distance, right_distance):
+			return left_distance < right_distance
+		return String(left["source"]) < String(right["source"])
+	)
+	ai_state["start_waypoint"] = _ai_start_waypoint_name(team)
+	ai_state["authored_site_candidates"] = authored_candidates.size()
+	ai_state["available_build_waypoints"] = _ai_build_waypoints.size()
+	print("[RetailSliceSim] CASTLE_AI_CANDIDATES team=%d structure=%s start=%s authored=%d build_waypoints=%d" % [team, structure_kind, String(ai_state["start_waypoint"]), authored_candidates.size(), _ai_build_waypoints.size()])
+	for candidate_value in authored_candidates:
+		var candidate := candidate_value as Dictionary
+		if _try_castle_ai_site(team, ai_state, builder_ids, structure_kind, Vector2(candidate["position"]), String(candidate["source"])):
+			return true
+	# Maps without a usable authored AIBase/build-plot row use the complete
+	# cooked navigation extent. Its dimensions are retail-authored map data, so
+	# the fallback has no guessed distance cap and cannot stop inside a castle's
+	# wall ring. Every candidate still passes the normal placement and route
+	# gates, which prevents building on or behind obstructing fixtures.
+	if route_provider == null or not route_provider.has_method("local_to_grid_cell") or not route_provider.has_method("grid_to_local_horizontal") or not route_provider.has_method("is_navigation_walkable"):
+		return false
+	var home_cell: Vector2i = route_provider.call("local_to_grid_cell", builder_position)
+	var navigation_min := Vector2i(route_provider.get("navigation_grid_min"))
+	var navigation_max := Vector2i(route_provider.get("navigation_grid_max"))
+	var maximum_radius := maxi(
+		maxi(absi(home_cell.x - navigation_min.x), absi(home_cell.x - navigation_max.x)),
+		maxi(absi(home_cell.y - navigation_min.y), absi(home_cell.y - navigation_max.y))
+	)
+	for radius in range(0, maximum_radius + 1):
+		for dy in range(-radius, radius + 1):
+			for dx in range(-radius, radius + 1):
+				if abs(dx) != radius and abs(dy) != radius:
+					continue
+				var cell := home_cell + Vector2i(dx, dy)
+				if not bool(route_provider.call("is_navigation_walkable", cell)):
+					continue
+				var position := Vector2(route_provider.call("grid_to_local_horizontal", cell))
+				if _try_castle_ai_site(team, ai_state, builder_ids, structure_kind, position, "generic-navigation-cell:%d,%d" % [cell.x, cell.y]):
+					return true
 	return false
 
 

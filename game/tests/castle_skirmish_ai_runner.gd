@@ -1,13 +1,21 @@
 extends SceneTree
 ## L7 product-path proof: boot two shipped castle maps through the real retail
-## slice, then drive the deterministic sim for a bounded 1,000 ticks. Erebor is
-## the zero-SkirmishSpawnPoint case; Helm's Deep is the authored-spawn control.
+## slice, then drive the deterministic sim for a bounded 4,000 ticks. Erebor
+## and Carn Dum are the zero-SkirmishSpawnPoint cases; Helm's Deep is the
+## authored-spawn control. The bound covers retail construction/production
+## timers rather than weakening them for the test.
 
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
 const BOOT_DEADLINE_MS := 300000
-const TICK_LIMIT := 1000
+const TICK_LIMIT := 4000
 const AI_TEAM := 1
 const MAP_CASES := [
+	{
+		"id": "rotwk.map.wor-ang-carn-dum",
+		"name": "Carn Dum",
+		"expected_skirmish_spawn_points": 0,
+		"retail_base_layout": "map-specific",
+	},
 	{
 		"id": "rotwk.map.wor-erebor",
 		"name": "Erebor",
@@ -44,8 +52,8 @@ func _init() -> void:
 		selected_cases.size() > 0 and _checks >= selected_cases.size() * 8,
 		"checks=%d maps=%d" % [_checks, selected_cases.size()]
 	)
-	print("CASTLE_SKIRMISH_AI NOTE runtime-tested base-building maps: Erebor, Helm's Deep")
-	print("CASTLE_SKIRMISH_AI NOTE retail map-specific AIBase authoring (not runtime-tested here): Minas Tirith, Dol Guldur, Grey Havens, Carn Dum, Fornost")
+	print("CASTLE_SKIRMISH_AI NOTE runtime-tested base-building maps: Erebor, Carn Dum, Helm's Deep")
+	print("CASTLE_SKIRMISH_AI NOTE retail map-specific AIBase authoring (not runtime-tested here): Minas Tirith, Dol Guldur, Grey Havens, Fornost")
 	print("CASTLE_SKIRMISH_AI NOTE retail generic <ANY> fallback (not runtime-tested here): Isengard, Black Gate, Minas Morgul")
 	_finish()
 
@@ -78,6 +86,7 @@ func _run_map(case_row: Dictionary) -> void:
 	var simulation = slice.simulation
 	_check("%s_ai_team_configured" % map_name, simulation.team_is_ai(AI_TEAM), "descriptor=%s" % str(simulation.team_descriptor(AI_TEAM)))
 	_check("%s_authored_player_starts" % map_name, slice.source_map_data.local_player_starts.size() >= 2, "starts=%s" % str(slice.source_map_data.local_player_starts.keys()))
+	_print_gate_diagnostics(map_name, simulation)
 
 	var spawn_points := 0
 	for placement_value in slice.source_map_data.scenario_object_placements:
@@ -112,6 +121,18 @@ func _run_map(case_row: Dictionary) -> void:
 				or not (entity.get("route", []) as Array).is_empty()
 			):
 				attack_order_entities[int(entity_id)] = order_sequence
+		if not attack_order_entities.is_empty():
+			var completed_dynamic_structure := false
+			for structure_id in simulation.structure_ids(AI_TEAM):
+				if (
+					int(structure_id) >= 3000
+					and int(structure_id) < simulation.CASTLE_FIXTURE_FIRST_ID
+					and float(simulation.structure(structure_id).get("construction_progress", 0.0)) >= 1.0
+				):
+					completed_dynamic_structure = true
+					break
+			if completed_dynamic_structure:
+				break
 
 	var structures_built := 0
 	var built_targets := {}
@@ -156,6 +177,21 @@ func _run_map(case_row: Dictionary) -> void:
 	)
 	_remove_slice(slice)
 	await process_frame
+
+
+func _print_gate_diagnostics(map_name: String, simulation) -> void:
+	for structure_id in simulation.structure_ids():
+		var row: Dictionary = simulation.structure(structure_id)
+		if String(row.get("castle_fixture_role", "")) != "gate":
+			continue
+		print("CASTLE_SKIRMISH_AI GATE map=%s id=%d team=%d ai_gate=%s open=%s portal=%s" % [
+			map_name,
+			int(structure_id),
+			int(row.get("team", -1)),
+			str(not (row.get("ai_gate_update", {}) as Dictionary).is_empty()),
+			str(bool((row.get("gate_behavior", {}) as Dictionary).get("pathing_open", false))),
+			str(not (row.get("fake_pathfind_portal", {}) as Dictionary).is_empty()),
+		])
 
 
 func _diagnostic(simulation, structures_built: int, attack_orders_issued: int, dynamic_ai_structures: int) -> String:

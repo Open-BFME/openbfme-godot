@@ -59,6 +59,9 @@ const CASTLE_SIEGE_IMPLEMENTED: Array[String] = []
 ## object-bindings.json. Validated strictly; a malformed document is a named
 ## load failure, never a silent degrade to decoration.
 const MAP_FIXTURES_SCHEMA := "openbfme.sage-map-fixtures"
+const CASTLE_AI_BASES_SCHEMA := "openbfme.castle-ai-bases"
+const MAX_CASTLE_AI_LAYOUTS := 16
+const MAX_CASTLE_AI_SITES_PER_LAYOUT := 128
 const MAP_FIXTURE_ROLES: Array[String] = [
 	"gate",
 	"garrison",
@@ -198,6 +201,10 @@ var fixtures_omitted: Array = []
 ## only consumes them when its "enable_castle_fixtures" rule is on.
 var castle_fixture_placements: Array[Dictionary] = []
 var castle_fixture_deferred: Dictionary = {}
+## Optional retail AIBase layouts for this exact map. Pre-L7 packs carry no
+## pointer and use the explicit generic authored-waypoint/navigation fallback.
+var castle_ai_base_layouts: Array[Dictionary] = []
+var castle_ai_base_fallback := "generic-any"
 ## source object index -> typeName, for cross-checking fixture rows against
 ## the cooked objects they claim to describe (never trust a document pair).
 var _object_type_by_index: Array[String] = []
@@ -424,6 +431,12 @@ func load_from_pack(
 		fixtures_rel = ""
 	var fixtures_declared := fixtures_rel != ""
 	var fixtures := _read_document(fixtures_rel, "fixtures") if fixtures_declared else {}
+	var ai_bases_raw: Variant = map_definition.get("aiBases", "")
+	var ai_bases_rel := "" if ai_bases_raw == null else String(ai_bases_raw).strip_edges()
+	if ai_bases_rel == "<null>" or ai_bases_rel.to_lower() == "null":
+		ai_bases_rel = ""
+	var ai_bases_declared := ai_bases_rel != ""
+	var ai_bases := _read_document(ai_bases_rel, "castle AI bases") if ai_bases_declared else {}
 	if _validation_cancelled():
 		return false
 	if profile_init:
@@ -434,6 +447,8 @@ func load_from_pack(
 	if fixtures_declared and fixtures.is_empty():
 		# A declared fixtures pointer that resolves to nothing readable is a
 		# hard failure (the diagnostic was named by _read_document).
+		return false
+	if ai_bases_declared and ai_bases.is_empty():
 		return false
 	if roads_declared and roads.is_empty():
 		return _fail("roads document missing or unreadable")
@@ -483,6 +498,8 @@ func load_from_pack(
 	if fixtures_declared and not _load_fixtures(fixtures):
 		return false
 	if fixtures_declared and not _cross_check_fixtures_against_objects():
+		return false
+	if ai_bases_declared and not _load_castle_ai_bases(ai_bases):
 		return false
 	_derive_castle_fixture_placements()
 	if _validation_cancelled():
@@ -680,6 +697,66 @@ func _load_fixtures(value: Variant) -> bool:
 		if String(omission.get("typeName", "")) == "" or String(omission.get("reason", "")) != "no-authored-body-maxhealth":
 			return _fail("map fixtures document has an invalid omitted entry")
 		fixtures_omitted.append(omission)
+	return true
+
+
+func _load_castle_ai_bases(value: Variant) -> bool:
+	castle_ai_base_layouts.clear()
+	castle_ai_base_fallback = "generic-any"
+	if typeof(value) != TYPE_DICTIONARY:
+		return _fail("castle AI bases must be an object")
+	var document := value as Dictionary
+	if String(document.get("schema", "")) != CASTLE_AI_BASES_SCHEMA or int(document.get("schemaVersion", -1)) != 0:
+		return _fail("unexpected cooked castle AI bases schema")
+	var fallback := String(document.get("fallback", ""))
+	if fallback not in ["authored-map-specific", "generic-any"]:
+		return _fail("invalid castle AI bases fallback")
+	var layouts_value: Variant = document.get("layouts", null)
+	if typeof(layouts_value) != TYPE_ARRAY:
+		return _fail("castle AI bases layouts must be an array")
+	var layouts := layouts_value as Array
+	if layouts.size() > MAX_CASTLE_AI_LAYOUTS or int(document.get("layoutCount", -1)) != layouts.size():
+		return _fail("castle AI bases layout count is invalid")
+	var seen_sides := {}
+	for layout_value in layouts:
+		if typeof(layout_value) != TYPE_DICTIONARY:
+			return _fail("castle AI base layout is not an object")
+		var layout := layout_value as Dictionary
+		var side := String(layout.get("side", ""))
+		var side_key := side.to_lower()
+		var sites_value: Variant = layout.get("sites", null)
+		if side == "" or seen_sides.has(side_key) or typeof(sites_value) != TYPE_ARRAY:
+			return _fail("castle AI base layout identity is invalid")
+		var sites := sites_value as Array
+		if sites.size() > MAX_CASTLE_AI_SITES_PER_LAYOUT or int(layout.get("siteCount", -1)) != sites.size():
+			return _fail("castle AI base site count is invalid")
+		var checked_sites: Array[Dictionary] = []
+		for site_index in range(sites.size()):
+			if typeof(sites[site_index]) != TYPE_DICTIONARY:
+				return _fail("castle AI base site is not an object")
+			var site := sites[site_index] as Dictionary
+			var offset_value: Variant = site.get("offsetSource", null)
+			if (
+				int(site.get("index", -1)) != site_index
+				or String(site.get("objectId", "")) == ""
+				or typeof(offset_value) != TYPE_ARRAY
+				or (offset_value as Array).size() != 3
+			):
+				return _fail("castle AI base site identity is invalid")
+			for component in offset_value as Array:
+				if typeof(component) not in [TYPE_INT, TYPE_FLOAT] or not _finite_number(float(component)):
+					return _fail("castle AI base site offset is invalid")
+			if typeof(site.get("angleRadians")) not in [TYPE_INT, TYPE_FLOAT] or not _finite_number(float(site.get("angleRadians"))):
+				return _fail("castle AI base site angle is invalid")
+			checked_sites.append(site.duplicate(true))
+		seen_sides[side_key] = true
+		castle_ai_base_layouts.append({
+			"side": side,
+			"binding": (layout.get("binding", {}) as Dictionary).duplicate(true),
+			"source": (layout.get("source", {}) as Dictionary).duplicate(true),
+			"sites": checked_sites,
+		})
+	castle_ai_base_fallback = fallback
 	return true
 
 
@@ -2971,7 +3048,10 @@ func simulation_configuration() -> Dictionary:
 		0: _home_layout_for(player_two_horizontal, player_one_horizontal),
 		1: _home_layout_for(player_one_horizontal, player_two_horizontal),
 	}
-	var team_start_centers := {}
+	var team_start_centers := {
+		0: player_two_horizontal,
+		1: player_one_horizontal,
+	}
 	# Script START_POSITION_IS is authored with 1-based Player_N_Start values,
 	# while Player::getMpStartIndex() stores the corresponding zero-based
 	# multiplayer start index. Keep that internal value beside each roster team.
@@ -2979,6 +3059,11 @@ func simulation_configuration() -> Dictionary:
 		0: 1, # default human team owns authored Player_2_Start
 		1: 0, # default enemy team owns authored Player_1_Start
 	}
+	var ai_build_waypoints := {}
+	for waypoint_name_value in local_named_waypoints.keys():
+		var waypoint_name := String(waypoint_name_value)
+		if waypoint_name.contains("_BuildPlot_"):
+			ai_build_waypoints[waypoint_name] = local_named_waypoints[waypoint_name_value]
 	var extra_seat := 3
 	while local_player_starts.has("Player_%d_Start" % extra_seat):
 		var seat_local: Vector3 = local_player_starts["Player_%d_Start" % extra_seat]
@@ -3010,6 +3095,7 @@ func simulation_configuration() -> Dictionary:
 		"team_start_centers": team_start_centers,
 		"team_start_indices": team_start_indices,
 		"script_waypoints": local_named_waypoints.duplicate(true),
+		"ai_build_waypoints": ai_build_waypoints,
 		"ford_gates": _simulation_ford_gates(),
 		"scenario_object_placements": scenario_object_placements.duplicate(true),
 		"capturable_placements": capturable_placements.duplicate(true),
@@ -3018,6 +3104,8 @@ func simulation_configuration() -> Dictionary:
 		# names every admitted-but-unseeded placement by reason.
 		"castle_fixture_placements": castle_fixture_placements.duplicate(true),
 		"castle_fixture_deferred": castle_fixture_deferred.duplicate(true),
+		"castle_ai_base_layouts": castle_ai_base_layouts.duplicate(true),
+		"castle_ai_base_fallback": castle_ai_base_fallback,
 	}
 
 
@@ -3290,6 +3378,8 @@ func _reset() -> void:
 	fixtures_omitted.clear()
 	castle_fixture_placements.clear()
 	castle_fixture_deferred.clear()
+	castle_ai_base_layouts.clear()
+	castle_ai_base_fallback = "generic-any"
 	_object_type_by_index.clear()
 	_map_runtime_profile = DEFAULT_MAP_RUNTIME_PROFILE
 	height_samples = PackedByteArray()

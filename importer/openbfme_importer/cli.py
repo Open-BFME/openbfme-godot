@@ -3500,7 +3500,9 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                 assets_root = getattr(args, "effective_assets", None)
                 binder = None
                 fixtures_builder = None
+                ai_bases_builder = None
                 if assets_root is not None:
+                    from .castle_ai_bases import make_effective_assets_ai_bases_builder
                     from .castle_fixtures import (
                         make_effective_assets_fixtures_builder,
                     )
@@ -3512,6 +3514,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                     fixtures_builder = make_effective_assets_fixtures_builder(
                         assets_root, game=args.game
                     )
+                    ai_bases_builder = make_effective_assets_ai_bases_builder(assets_root)
                 profile = build_category_map_profile(
                     catalog,
                     game=args.game,
@@ -3522,6 +3525,11 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                     **(
                         {"fixtures_builder": fixtures_builder}
                         if fixtures_builder is not None
+                        else {}
+                    ),
+                    **(
+                        {"ai_bases_builder": ai_bases_builder}
+                        if ai_bases_builder is not None
                         else {}
                     ),
                 )
