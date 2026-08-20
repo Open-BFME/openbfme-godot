@@ -2748,6 +2748,215 @@ def _formation_contract(
     return {"memberCount": member_count, "positions": positions, "ranks": rank_rows}
 
 
+def _modifier_list_source_rows(source: bytes) -> dict[str, dict[str, object]]:
+    """Line-bearing rows for flat ModifierList blocks.
+
+    ``IniBlock`` deliberately has no source locations. Formation descriptors
+    need row-level retail receipts, so retain the exact active declaration and
+    Modifier assignment lines while using the normal flat parser for values.
+    """
+
+    result: dict[str, dict[str, object]] = {}
+    active_name = ""
+    active_line = 0
+    rows: list[dict[str, object]] = []
+    for line_number, raw in enumerate(source.decode("cp1252").splitlines(), start=1):
+        # Retail ModifierList values in this file contain no quoted comment
+        # markers. Match sage_ini's active-comment treatment without admitting
+        # commented-out blocks or rows.
+        clean = raw.split(";", 1)[0].split("//", 1)[0].strip()
+        if not active_name:
+            match = re.fullmatch(r"ModifierList\s+(\S+)", clean, re.IGNORECASE)
+            if match:
+                active_name = match.group(1)
+                active_line = line_number
+                rows = []
+            continue
+        if clean.casefold() == "end":
+            result[active_name.casefold()] = {
+                "id": active_name,
+                "line": active_line,
+                "modifierRows": rows,
+            }
+            active_name = ""
+            active_line = 0
+            rows = []
+            continue
+        if "=" not in clean:
+            continue
+        key, value = (part.strip() for part in clean.split("=", 1))
+        if key.casefold() == "modifier":
+            rows.append({"value": value, "line": line_number})
+    if active_name:
+        raise PlayableUnitCompilerError(f"unterminated ModifierList: {active_name}")
+    return result
+
+
+_FORMATION_ADDITIVE_MODIFIER_KINDS = frozenset(
+    {"ARMOR", "DAMAGE_ADD", "HEALTH", "RANGE", "VISION", "CRUSHABLE_LEVEL"}
+)
+
+
+def _formation_modifier_leaf(
+    block: IniBlock,
+    source_row: Mapping[str, object],
+    constants: Mapping[str, int | float],
+) -> dict[str, object]:
+    """Compile every authored FORMATION row, including receipt-only kinds."""
+
+    rows: list[dict[str, object]] = []
+    unsupported: list[str] = []
+    located_rows = source_row.get("modifierRows", [])
+    if not isinstance(located_rows, list):
+        raise PlayableUnitCompilerError(
+            f"ModifierList {block.name} has invalid source locations"
+        )
+    for source_modifier in located_rows:
+        authored = str(source_modifier.get("value", ""))
+        parts = authored.split()
+        if len(parts) < 2:
+            raise PlayableUnitCompilerError(
+                f"ModifierList {block.name} has a malformed Modifier row: {authored!r}"
+            )
+        kind = parts[0].upper()
+        magnitude = _modifier_value(parts[1], constants)
+        if magnitude is None:
+            raise PlayableUnitCompilerError(
+                f"ModifierList {block.name} has an unresolvable Modifier value: {authored!r}"
+            )
+        supported = kind in _SUPPORTED_MODIFIER_KINDS
+        if not supported:
+            unsupported.append(kind)
+        rows.append(
+            {
+                "kind": kind,
+                "value": magnitude,
+                "authoredValue": parts[1],
+                "application": (
+                    "additive"
+                    if kind in _FORMATION_ADDITIVE_MODIFIER_KINDS
+                    else "multiplicative"
+                ),
+                "runtimeSupport": "supported" if supported else "receipt-only",
+                "sourceIni": ATTRIBUTE_MODIFIER_PATH,
+                "line": int(source_modifier["line"]),
+            }
+        )
+    duration: int | float | None = None
+    duration_values = block.values("Duration")
+    if duration_values:
+        duration = _resolved_expression(duration_values[-1], constants)
+        if duration is None:
+            raise PlayableUnitCompilerError(
+                f"ModifierList {block.name} has an unresolvable Duration"
+            )
+    leaf: dict[str, object] = {
+        "id": block.name,
+        "category": "FORMATION",
+        "modifiers": rows,
+        "sourceIni": ATTRIBUTE_MODIFIER_PATH,
+        "line": int(source_row["line"]),
+    }
+    if duration is not None:
+        leaf["durationMs"] = duration
+    if unsupported:
+        leaf["unsupportedModifiers"] = sorted(set(unsupported), key=str.casefold)
+    return leaf
+
+
+def _formation_toggle_contract(
+    target_lineage: Sequence[SageObject],
+    objects: Mapping[str, SageObject],
+    documents: Mapping[str, bytes],
+    constants: Mapping[str, int | float],
+    command_sets: Mapping[str, IniBlock],
+    command_buttons: Mapping[str, IniBlock],
+) -> dict[str, object] | None:
+    """Bind one horde's authored toggle to its alternate ModifierLists."""
+
+    selection = _unit_selection_commands(target_lineage, command_sets, command_buttons)
+    toggle_rows = [
+        row
+        for row in selection
+        if any(
+            str(kind).strip().casefold() == "horde_toggle_formation"
+            for kind in row.get("commandKinds", [])
+        )
+    ]
+    if not toggle_rows:
+        return None
+
+    own_modifiers: list[str] = []
+    alternate_rows: list[SageAssignment] = []
+    for contain in _effective_top_blocks(target_lineage):
+        if contain.kind.casefold() not in {"hordecontain", "horsehordecontain"}:
+            continue
+        for assignment in contain.assignments:
+            folded = assignment.key.casefold()
+            if folded == "attributemodifiers":
+                own_modifiers.extend(_tokens(assignment.value))
+            elif folded == "alternateformation":
+                alternate_rows.append(assignment)
+
+    modifier_ids = own_modifiers
+    alternate_id = target_lineage[-1].name
+    object_source_ini = target_lineage[-1].source_virtual_path
+    object_line = target_lineage[-1].line
+    receipts: list[str] = []
+    if not modifier_ids:
+        if len(alternate_rows) != 1:
+            receipts.append(
+                "alternate_formation_count:%d" % len(alternate_rows)
+            )
+        else:
+            alternate = alternate_rows[0]
+            alternate_tokens = _tokens(alternate.value)
+            alternate_id = alternate_tokens[0] if len(alternate_tokens) == 1 else ""
+            alternate_object = objects.get(alternate_id.casefold()) if alternate_id else None
+            if alternate_object is None:
+                receipts.append("missing_alternate_object:%s" % (alternate_id or alternate.value))
+            else:
+                alternate_lineage = _ancestry(objects, alternate_object)
+                object_source_ini = alternate_object.source_virtual_path
+                object_line = alternate_object.line
+                for contain in _effective_top_blocks(alternate_lineage):
+                    if contain.kind.casefold() not in {"hordecontain", "horsehordecontain"}:
+                        continue
+                    for value in contain.values("AttributeModifiers"):
+                        modifier_ids.extend(_tokens(value))
+                if not modifier_ids:
+                    receipts.append("alternate_has_no_attribute_modifiers:%s" % alternate_id)
+
+    source = _required_document(documents, ATTRIBUTE_MODIFIER_PATH)
+    blocks = _named_blocks(source, "ModifierList")
+    source_rows = _modifier_list_source_rows(source)
+    modifier_lists: list[dict[str, object]] = []
+    for modifier_id in modifier_ids:
+        block = blocks.get(modifier_id.casefold())
+        if block is None:
+            receipts.append("missing_modifier_list:%s" % modifier_id)
+            continue
+        category = _first(block.values("Category"))
+        if category is None or category.casefold() != "formation":
+            receipts.append("non_formation_modifier_list:%s" % block.name)
+            continue
+        located = source_rows.get(block.name.casefold())
+        if located is None:
+            raise PlayableUnitCompilerError(
+                f"ModifierList {block.name} has no source location"
+            )
+        modifier_lists.append(_formation_modifier_leaf(block, located, constants))
+
+    return {
+        "commandIds": [str(row["commandId"]) for row in toggle_rows],
+        "alternateObjectId": alternate_id,
+        "modifierLists": modifier_lists,
+        "receipts": sorted(set(receipts), key=str.casefold),
+        "sourceIni": object_source_ini,
+        "line": int(object_line),
+    }
+
+
 def _sub_object_upgrades_contract(
     lineages: Sequence[Sequence[SageObject]],
 ) -> list[dict[str, object]]:
@@ -10918,6 +11127,29 @@ def compile_playable_unit_descriptor(
         slow_death_fades=slow_death_fades,
         scenario_admission=scenario_admission,
     )
+    formation_toggle = _formation_toggle_contract(
+        target_lineage,
+        objects,
+        documents,
+        prepared.numeric_defines,
+        command_sets,
+        command_buttons,
+    )
+    if formation_toggle is not None:
+        resolved_simulation = simulation.get("resolved")
+        formation_value = (
+            resolved_simulation.get("formation")
+            if isinstance(resolved_simulation, Mapping)
+            else None
+        )
+        if isinstance(formation_value, dict):
+            formation_value["toggle"] = formation_toggle
+        else:
+            # Preserve the independently resolved toggle graph even when this
+            # horde's pre-existing rank/position formation contract is red.
+            # The descriptor remains unresolved for that named reason; the
+            # retail ModifierList is not silently lost with it.
+            simulation["formationToggle"] = formation_toggle
     combined_kinds = tuple(sorted(set(target_kinds) | set(member_kinds)))
     capabilities, unsupported_capabilities, traits = _capability_contract(
         category,
@@ -10966,6 +11198,8 @@ def compile_playable_unit_descriptor(
         *(item.source_virtual_path for item in member_lineage),
     }
     used_paths.update(_provenance_paths(simulation))
+    if formation_toggle is not None:
+        used_paths.update(_provenance_paths(formation_toggle))
     used_paths.update(_provenance_paths(abilities))
     used_paths.update(_provenance_paths(experience))
     if upgrade_commands or level_upgrades:
@@ -10995,6 +11229,11 @@ def compile_playable_unit_descriptor(
         semantic_scopes[path.casefold()].append(
             {"kind": "ResolvedPlayableUnitSimulation", "contract": simulation}
         )
+    if formation_toggle is not None:
+        for path in _provenance_paths(formation_toggle):
+            semantic_scopes[path.casefold()].append(
+                {"kind": "ResolvedFormationToggle", "contract": formation_toggle}
+            )
     for path in _provenance_paths(abilities):
         semantic_scopes[path.casefold()].append(
             {"kind": "ResolvedHeroAbilities", "abilities": abilities}

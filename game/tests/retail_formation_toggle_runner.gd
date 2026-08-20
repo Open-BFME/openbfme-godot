@@ -45,6 +45,23 @@ const PORCUPINE_TOGGLE := {
 	},
 }
 
+const BLOCK_TOGGLE := {
+	"command_id": "Command_ToggleFormationGondorFighter",
+	"modifier": {
+		"id": "FixtureFormation",
+		"modifier_ids": ["FixtureFormation"],
+		"category": "FORMATION",
+		"modifiers": [
+			{"kind": "ARMOR", "value": 0.25, "application": "additive"},
+			{"kind": "DAMAGE_MULT", "value": 0.8, "application": "multiplicative"},
+			{"kind": "SPEED", "value": 0.6, "application": "multiplicative"},
+		],
+		"unsupported_receipts": [
+			"formation_modifier_unsupported:FixtureFormation:MINIMUM_CRUSH_VELOCITY"
+		],
+	},
+}
+
 
 func _initialize() -> void:
 	_runner_watchdog.start(self, "RETAIL_FORMATION_TOGGLE_RUNNER")
@@ -53,6 +70,7 @@ func _initialize() -> void:
 
 func _run() -> void:
 	_test_sim_gate_and_modifier()
+	_test_formation_stat_modifiers_and_receipts()
 	_test_gate_reads_the_compiled_selection_surface()
 	_test_crush_deceleration()
 	_test_hud_button_is_authored_only()
@@ -141,6 +159,39 @@ func _test_sim_gate_and_modifier() -> void:
 	)
 
 
+func _test_formation_stat_modifiers_and_receipts() -> void:
+	var sim = _make_sim()
+	var block := _horde(sim, 1, false)
+	block["formation_toggle"] = BLOCK_TOGGLE.duplicate(true)
+	var ids: Array[int] = [1]
+	sim.issue_toggle_formation(ids)
+	var entry := ((block.get("timed_modifiers", {}) as Dictionary).get(
+		"formation", {}
+	) as Dictionary)
+	_check(
+		"formation_applies_authored_armor_damage_and_speed",
+		is_equal_approx(float(sim._ability_incoming_multiplier(block)), 0.75)
+			and is_equal_approx(float(sim._ability_outgoing_multiplier(block)), 0.8)
+			and is_equal_approx(float(sim._ability_speed_multiplier(block)), 0.6),
+		str(entry)
+	)
+	_check(
+		"unsupported_formation_kind_has_named_receipt",
+		entry.get("unsupported_modifier_receipts", []) == [
+			"formation_modifier_unsupported:FixtureFormation:MINIMUM_CRUSH_VELOCITY"
+		],
+		str(entry.get("unsupported_modifier_receipts", []))
+	)
+	sim.issue_toggle_formation(ids)
+	_check(
+		"leaving_formation_restores_original_stats",
+		is_equal_approx(float(sim._ability_incoming_multiplier(block)), 1.0)
+			and is_equal_approx(float(sim._ability_outgoing_multiplier(block)), 1.0)
+			and is_equal_approx(float(sim._ability_speed_multiplier(block)), 1.0)
+			and not (block.get("timed_modifiers", {}) as Dictionary).has("formation")
+	)
+
+
 func _test_gate_reads_the_compiled_selection_surface() -> void:
 	## The sim gate and the palantir gate must answer from the SAME compiled
 	## rows, or a real pack would show a button the sim then refuses.
@@ -153,7 +204,18 @@ func _test_gate_reads_the_compiled_selection_surface() -> void:
 			"commandKinds": ["HORDE_TOGGLE_FORMATION"],
 			"sourceIni": "data/ini/commandbutton.ini",
 			"fields": {},
-		}]}}
+		}]}},
+		"registration": {"simulation": {"status": "ready", "resolved": {
+			"formation": {"toggle": {
+				"modifierLists": [{
+					"id": "RohanHorseWegde",
+					"modifiers": [
+						{"kind": "ARMOR", "value": 0.25, "runtimeSupport": "supported"},
+						{"kind": "MINIMUM_CRUSH_VELOCITY", "value": 0.5, "runtimeSupport": "receipt-only"},
+					],
+				}],
+			}}
+		}}},
 	}
 	var without_button := {
 		"presentation": {"ui": {"selectionCommands": [{
@@ -164,8 +226,17 @@ func _test_gate_reads_the_compiled_selection_surface() -> void:
 	_check(
 		"compiled_selection_surface_yields_the_toggle",
 		String(toggle.get("command_id", "")) == "Command_TowerGuardPorcupineFormation"
-			and String(toggle.get("source_ini", "")) == "data/ini/commandbutton.ini",
+			and String(toggle.get("source_ini", "")) == "data/ini/commandbutton.ini"
+			and String((toggle.get("modifier", {}) as Dictionary).get("id", "")) == "RohanHorseWegde",
 		str(toggle)
+	)
+	_check(
+		"compiled_modifier_rows_and_receipt_reach_runtime",
+		((toggle.get("modifier", {}) as Dictionary).get("modifiers", []) as Array).size() == 1
+			and (toggle.get("modifier", {}) as Dictionary).get("unsupported_receipts", []) == [
+				"formation_modifier_unsupported:RohanHorseWegde:MINIMUM_CRUSH_VELOCITY"
+			],
+		str(toggle.get("modifier", {}))
 	)
 	_check(
 		"compiled_surface_without_the_button_yields_nothing",
