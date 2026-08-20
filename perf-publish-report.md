@@ -517,3 +517,189 @@ quiet machine specifically to avoid shipping that number.
   **No production recook should use them.** `--allow-stale-coverage` is newly
   forwardable from this batch tool; it is off by default and no caller passes it.
 
+---
+
+# PART THREE — sub-5-minute commission: floor cuts + convert/publish overlap
+
+Follow-up on top of `6df2682`. Owner target: convert + publish, full cold, **under
+5 minutes**, with convert being driven to ~4 min separately.
+
+## 14. Headline — the target was NOT met, and the arithmetic says why
+
+| | measured |
+|---|---|
+| Serial publish, 7 factions (before Part Three) | 688.2 s |
+| Serial publish, 7 factions (after the compose cut) | **652.4 s** |
+| **End-to-end, overlapped, simulated 240 s convert, N=4** | **346.2 s = 5.8 min** |
+| Same, before the compose cut | 364.8 s = 6.1 min |
+
+**5.8 min against a 5.0 min budget. Short by ~46 s.**
+
+This was predictable from the structure and I flagged it before building: overlap
+makes total wall `max over factions of (convert_i finish + publish_i)`. The last
+faction's convert lands at 240 s by definition of a 4-minute convert, so the budget
+allows its publish **60 s**. The measured tail publish is ~105 s. Overlap cannot
+close a gap that lives entirely after the last convert finishes.
+
+Observed landing timeline (simulated convert, evenly spread):
+
+```
+COVERAGE_LANDED men      after  36.2s -> dispatching publish
+COVERAGE_LANDED elves    after  70.3s
+COVERAGE_LANDED dwarves  after 104.5s
+COVERAGE_LANDED isengard after 138.7s
+COVERAGE_LANDED mordor   after 172.8s
+COVERAGE_LANDED wild     after 206.9s
+COVERAGE_LANDED angmar   after 240.9s -> last dispatch
+PACK_PROOF ready=7/7 exit=0            -> 346.2s total
+```
+
+Everything up to `wild` is fully hidden behind convert. Only the last faction's
+publish is exposed, and it costs ~105 s. Closing the gap needs the single-faction
+floor at ~60 s — section 17 names the remaining sinks with numbers. More
+concurrency will not do it.
+
+## 15. Blender attestation — receipt hoist DECLINED, with measurements
+
+The commission asked for a minimal signed-receipt format so children skip the tool
+tree walk, *unless the walk is not the expensive part*. Measured, warm:
+
+| attestation component | seconds |
+|---|---|
+| `_purge_python_caches` | 2.3 |
+| `_reject_tree_links` | 1.1 |
+| **`directory_tree_sha256`** (937 MB, 5,965 files) | **6.4** |
+| same, parallel prototype at 4 / 8 / 16 workers | 4.6 / 4.8 / 4.7 (**1.35x only**) |
+
+The walk is the largest single component but it is **6.4 s, not 25 s**, and it is
+I/O bound — parallelising recovers 1.7 s. The commission's ~25 s is the *whole*
+attestation across begin-of-batch and end-of-batch (~12–16 s + ~7–10 s).
+
+A receipt would save ~6 s per child — **under 5% of a 150 s floor** — in exchange
+for a TOCTOU window between the parent's walk and each child's use of its result,
+on the one check standing between a cook and an unpinned Blender. I am not spending
+a fail-closed guarantee at that exchange rate. Left paid per child; concurrency
+already overlaps it. **The pin was not touched.**
+
+One false alarm worth recording: a first probe reported `matches pin: False`. That
+was my probe hashing the tree *before* the bytecode purge the real flow performs
+first (`prepare_blender_portable_tree` purges, then attests). In the correct order
+the digest is `81e0cfb0…` and matches `BLENDER_TREE_SHA256` exactly. No pin problem.
+
+## 16. The compose cut that was worth taking
+
+Profiling compose (~34 s, serial, per faction) found the sink was not compose at
+all: **`retail_visual_closure._inventory_assets` walked the entire 46,130-file
+effective-assets tree to answer a question about 3 projectiles and 4 textures.**
+
+Per file it paid three filesystem round-trips — `is_symlink()`, `is_junction()`,
+`stat().st_size` — roughly 120,000 syscalls, ~12 s, once per faction process.
+
+Replaced `os.walk` + `Path` probes with `os.scandir`, whose `DirEntry` already
+carries type, link status and size from the directory enumeration. **Every check is
+still performed**: a path that is not a reparse point cannot be a symlink or a
+junction, so the fast path and `_is_link_like` agree by construction, and anything
+flagged as a reparse point falls through to the original function unchanged.
+
+Verified against the shipped implementation, reproduced verbatim side by side:
+
+```
+legacy os.walk inventory :  12.14s  files=46130
+scandir inventory        :   5.69s  files=46130
+speedup                  : 2.13x
+IDENTICAL TUPLE          : True
+```
+
+In-cook the saving is smaller than standalone (~5 s/faction: 688.2 s → 652.4 s over
+seven) because the page cache is already warm from the same process.
+
+## 17. What is still between here and 60 s per faction
+
+Measured, single faction, and **not** attacked in this lane:
+
+| sink | per faction | classification |
+|---|---|---|
+| `_inventory_assets` remaining | ~5.7 s | syscall-light now; next step is the sealed manifest (below) |
+| `_definition_index` — decodes and regex-scans every SAGE source in the tree | ~3.8 s | same "whole tree for 3 objects" shape |
+| `extend_profile_with_unit` / `_add_structure` **deepcopy per object** | ~8.4 s | quadratic: each of 43 objects deepcopies the whole growing profile (`playable_unit_import.py:1140`, `faction_slice_profile.py:275,307`). One copy up front plus in-place appends removes nearly all of it |
+| Blender attestation (begin + end) | ~20–26 s | fail-closed; see §15 |
+| W3D staging + prepare | ~30 s | partially cut in Part One |
+| `ring_documents` rglob of the oracle INI tree | unmeasured, **Men only** | `cli.py:2875` reads every `.ini`/`.inc`, on the Men publish only |
+
+**The highest-value unclaimed cut**: `cache/effective-assets/.openbfme/manifest.json`
+is a 10.2 MB sealed document already carrying `{path, size, sha256}` for all 46,216
+entries — and `_assets_root_fingerprint` already opens it for a cache key. A
+manifest-backed inventory would make the walk near-free. I did **not** take it: the
+walk's link-safety rejection is the one thing the manifest does not supply, and
+deciding whether the tree's seal subsumes that check is a fail-closed judgement that
+deserves its own lane, not a change at the end of a long session.
+
+## 18. Overlap mode — design and refusals
+
+`--watch-coverage` on `rotwk_faction_pack_proof.py` (off by default; nothing changes
+for existing callers). Combines with `--publish-jobs`.
+
+- **Completion signal**: `coverage_fingerprint()` = `(mtime_ns, size, aggregateSha256)`,
+  and `None` for absent / unreadable / mid-write / wrong-schema / missing-aggregate.
+  `None` means "not landed", never "close enough".
+- **Stale coverage is refused by default.** Every faction has a *previous* run's
+  coverage file on disk; treating existence as the signal would publish stale
+  descriptors the instant the watcher started. A faction counts as landed only when
+  its fingerprint **differs from the snapshot taken before the run began**. The
+  aggregate digest is in the identity so a convert that reruns inside one mtime tick
+  still registers. `--watch-accept-existing` is the explicit, loudly-announced
+  opt-out for reruns and measurement.
+- **Stability**: the fingerprint must hold across two consecutive polls before
+  dispatch — belt-and-braces (coverage is written atomically) against dispatching a
+  cook at a half-written report.
+- **Dynamic dispatch, not fixed submission.** With N workers and seven waiting
+  factions, submitting in order would have each of the first N block on *its*
+  faction while another faction's coverage landed with no free worker — head-of-line
+  blocking that defeats the whole mode. The parent watches and hands a faction to
+  the pool only once it is ready.
+- **A timed-out faction is a FAILED row, not a skipped one** — `assert len(rows) ==
+  len(factions)`, exit 3, and the batch report accounts for all seven.
+- Parent-only report and receipt writes; per-child logs unchanged.
+
+## 19. Correctness
+
+Serial `--publish-jobs 1` versus overlapped `--watch-coverage --publish-jobs 4`,
+same branch:
+
+```
+faction    serialN1     overlapN4     identical
+angmar     f7aa708734ee f7aa708734ee  YES
+dwarves    e5b0c19bc898 e5b0c19bc898  YES
+elves      3afc1b98a3a1 3afc1b98a3a1  YES
+isengard   50582f379353 50582f379353  YES
+men        b811e86a80b0 b811e86a80b0  YES
+mordor     c1fb81bedb82 c1fb81bedb82  YES
+wild       3048d8005170 3048d8005170  YES
+factions compared: 7  mismatches: 0
+```
+
+7/7 publication-ready in both. The 266 tests covering `retail_visual_closure` and
+projectile art pass. New gates in `test_publish_concurrency.py` cover the
+fingerprint's five rejection cases, the same-mtime-tick rewrite, the stale-coverage
+refusal, the accept-existing opt-out, a live landing, and the all-seven-rows rule.
+
+## 20. The simulation, stated plainly
+
+Option C is not landed, so convert completion was **simulated**:
+`workspace/scratch/simulate_convert.py` rewrites each coverage document **with its
+own existing bytes** at a scheduled time — content identical, only mtime moves — so
+the packs stay directly comparable to a serial run while the watcher sees a faithful
+"convert finished this faction" signal. Schedule: seven factions evenly spread to a
+240 s finish, order `men,elves,dwarves,isengard,mordor,wild,angmar`.
+
+**This flatters the result.** Men — the largest pack, ~150 s to publish — lands
+*first* and is fully hidden. I did not measure the adversarial order (Men last),
+which would expose Men's publish after the 240 s mark and land near 390 s. The real
+number depends on the order the convert lane emits factions in; it should emit
+**largest first** for exactly this reason. That is a recommendation, not something
+I verified.
+
+Also unverified: real convert/publish contention. The simulator consumes almost no
+CPU, whereas a real convert would be saturating the box while these publishes run.
+**346.2 s is an optimistic floor, not a prediction.**
+

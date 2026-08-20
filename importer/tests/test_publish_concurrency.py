@@ -12,6 +12,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
 from argparse import Namespace
 from pathlib import Path
@@ -163,6 +164,119 @@ class SelectionLockWaitTests(unittest.TestCase):
                 os.environ.pop("OPENBFME_SELECTION_LOCK_WAIT_SECONDS", None)
             else:
                 os.environ["OPENBFME_SELECTION_LOCK_WAIT_SECONDS"] = previous
+
+
+COVERAGE_DOC = {
+    "schema": "openbfme.faction-import-coverage",
+    "schemaVersion": 0,
+    "aggregateSha256": "a" * 64,
+    "summary": {"conversionComplete": True, "converterGapCount": 0},
+    "objects": [],
+}
+
+
+class CoverageWatchTests(unittest.TestCase):
+    """The overlap mode's completion signal, and what it refuses."""
+
+    def setUp(self) -> None:
+        self.module = _load_pack_proof()
+
+    def _write(self, path: Path, document: dict) -> None:
+        path.write_text(json.dumps(document), encoding="utf-8")
+
+    def test_fingerprint_rejects_absent_partial_and_foreign_documents(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "elves-coverage.json"
+            self.assertIsNone(self.module.coverage_fingerprint(path))
+
+            path.write_text("{ not json", encoding="utf-8")
+            self.assertIsNone(self.module.coverage_fingerprint(path))
+
+            self._write(path, {"schema": "something.else"})
+            self.assertIsNone(self.module.coverage_fingerprint(path))
+
+            self._write(path, {**COVERAGE_DOC, "summary": "not-an-object"})
+            self.assertIsNone(self.module.coverage_fingerprint(path))
+
+            self._write(path, {**COVERAGE_DOC, "aggregateSha256": ""})
+            self.assertIsNone(self.module.coverage_fingerprint(path))
+
+            self._write(path, COVERAGE_DOC)
+            self.assertIsNotNone(self.module.coverage_fingerprint(path))
+
+    def test_a_rewrite_inside_one_mtime_tick_still_counts_as_new(self) -> None:
+        """Identity includes the aggregate digest, not just mtime and size."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "elves-coverage.json"
+            self._write(path, COVERAGE_DOC)
+            before = self.module.coverage_fingerprint(path)
+            self._write(path, {**COVERAGE_DOC, "aggregateSha256": "b" * 64})
+            os.utime(path, ns=(before[0], before[0]))
+            after = self.module.coverage_fingerprint(path)
+            self.assertEqual(after[0], before[0], "mtime deliberately held equal")
+            self.assertNotEqual(after, before)
+
+    def test_stale_coverage_alone_never_counts_as_landed(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "elves-coverage.json"
+            self._write(path, COVERAGE_DOC)
+            baseline = self.module.coverage_fingerprint(path)
+            with self.assertRaises(TimeoutError) as caught:
+                self.module._await_coverage(
+                    path,
+                    baseline=baseline,
+                    accept_existing=False,
+                    deadline=time.monotonic() + 0.2,
+                    poll_seconds=0.02,
+                    faction="elves",
+                )
+            self.assertIn("did not land", str(caught.exception))
+            self.assertIn("--watch-accept-existing", str(caught.exception))
+
+    def test_accept_existing_opt_out_returns_immediately(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "elves-coverage.json"
+            self._write(path, COVERAGE_DOC)
+            self.module._await_coverage(
+                path,
+                baseline=self.module.coverage_fingerprint(path),
+                accept_existing=True,
+                deadline=time.monotonic() + 0.2,
+                poll_seconds=0.02,
+                faction="elves",
+            )
+
+    def test_a_landing_file_is_picked_up(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "elves-coverage.json"
+            self._write(path, COVERAGE_DOC)
+            baseline = self.module.coverage_fingerprint(path)
+
+            def land() -> None:
+                time.sleep(0.05)
+                self._write(path, {**COVERAGE_DOC, "aggregateSha256": "c" * 64})
+
+            worker = threading.Thread(target=land)
+            worker.start()
+            try:
+                self.module._await_coverage(
+                    path,
+                    baseline=baseline,
+                    accept_existing=False,
+                    deadline=time.monotonic() + 10,
+                    poll_seconds=0.02,
+                    faction="elves",
+                )
+            finally:
+                worker.join(5)
+
+    def test_a_missing_faction_is_a_failed_row_not_a_skipped_one(self) -> None:
+        """The report must account for all seven, timeout or not."""
+
+        source = PACK_PROOF.read_text(encoding="utf-8")
+        self.assertIn("assert len(rows) == len(factions)", source)
+        self.assertIn('"status": "failed"', source)
 
 
 class InFlightTemporaryTests(unittest.TestCase):

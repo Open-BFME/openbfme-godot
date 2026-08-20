@@ -135,6 +135,77 @@ def _artifact_proof(coverage_root: Path, faction: str, coverage: dict[str, Any])
     }
 
 
+def coverage_fingerprint(path: Path) -> tuple[int, int, str] | None:
+    """Identify a coverage document, or ``None`` if it is not usable yet.
+
+    Returns ``(mtime_ns, size, aggregateSha256)``. ``None`` means the file is
+    absent, unreadable, mid-write, or not a coverage document - all of which
+    mean "not landed", never "close enough". The aggregate digest is part of
+    the identity because a convert that reruns inside one filesystem mtime
+    tick still changes it.
+    """
+
+    try:
+        stat = path.stat()
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    if raw.get("schema") != "openbfme.faction-import-coverage":
+        return None
+    if not isinstance(raw.get("summary"), dict):
+        return None
+    aggregate = raw.get("aggregateSha256")
+    if not isinstance(aggregate, str) or not aggregate:
+        return None
+    return (int(stat.st_mtime_ns), int(stat.st_size), aggregate)
+
+
+def _await_coverage(
+    path: Path,
+    *,
+    baseline: tuple[int, int, str] | None,
+    accept_existing: bool,
+    deadline: float,
+    poll_seconds: float,
+    faction: str,
+) -> None:
+    """Block until *path* holds a coverage document THIS run should publish.
+
+    The bar is deliberately "different from what was there when we started",
+    not "exists": a previous run's coverage file is sitting on disk for every
+    faction, and treating it as a completion signal would publish stale
+    descriptors the instant the watcher started. ``--watch-accept-existing``
+    is the explicit opt-out, for reruns and for measuring.
+
+    The identity must also be STABLE across two consecutive polls before the
+    file counts as landed. Coverage is written atomically today, so this is
+    belt-and-braces rather than the primary guard - but a half-written report
+    that happened to parse would otherwise dispatch a cook against it.
+    """
+
+    if accept_existing:
+        current = coverage_fingerprint(path)
+        if current is not None:
+            return
+    settled: tuple[int, int, str] | None = None
+    while True:
+        current = coverage_fingerprint(path)
+        landed = current is not None and (baseline is None or current != baseline)
+        if landed and settled == current:
+            return
+        settled = current if landed else None
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"coverage for {faction} did not land at {path} before the "
+                f"watch timeout. Nothing was published for it. If the convert "
+                f"lane already finished and this file is from that run, pass "
+                f"--watch-accept-existing."
+            )
+        time.sleep(poll_seconds)
+
+
 def _pack_incomplete_args(*, allow_incomplete_pack: bool) -> list[str]:
     """Translate only the explicit pack-build waiver to the downstream CLI."""
 
@@ -265,6 +336,43 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--watch-coverage",
+        action="store_true",
+        help=(
+            "OVERLAP MODE: start each faction's publish the moment ITS convert "
+            "coverage lands, instead of waiting for all seven. Total wall "
+            "becomes max over factions of (convert_i finish + publish_i) "
+            "rather than (all converts) + (all publishes). Combine with "
+            "--publish-jobs. A faction whose coverage never lands inside "
+            "--watch-timeout-seconds is a FAILED row, never a skipped one."
+        ),
+    )
+    parser.add_argument(
+        "--watch-timeout-seconds",
+        type=float,
+        default=1800.0,
+        metavar="SECONDS",
+        help="how long --watch-coverage waits for a faction's coverage (default 1800)",
+    )
+    parser.add_argument(
+        "--watch-poll-seconds",
+        type=float,
+        default=2.0,
+        metavar="SECONDS",
+        help="coverage poll interval for --watch-coverage (default 2)",
+    )
+    parser.add_argument(
+        "--watch-accept-existing",
+        action="store_true",
+        help=(
+            "treat coverage that is ALREADY on disk when the watch starts as "
+            "landed. Off by default on purpose: every faction has a previous "
+            "run's coverage file sitting there, and accepting it would publish "
+            "the moment the watcher starts. Use for reruns and measurement, "
+            "not to paper over a convert that never ran."
+        ),
+    )
+    parser.add_argument(
         "--publish-lock-wait-seconds",
         type=float,
         default=300.0,
@@ -362,6 +470,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.faction:
         factions = list(dict.fromkeys(args.faction))
+    elif args.watch_coverage:
+        # In watch mode the coverage files are the thing being waited FOR, so
+        # "which files exist right now" is precisely the wrong way to choose
+        # the roster. Watch every faction this tool knows unless told otherwise.
+        factions = list(KNOWN_FACTIONS)
     else:
         factions = [
             name
@@ -380,6 +493,20 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     concurrent_children = args.publish_jobs > 1 and len(factions) > 1
     child_log_dir = ROOT / "workspace" / "logs" / f"pack-proof-{run_id[:12]}"
+    # Snapshot every coverage document BEFORE anything can land, so "landed"
+    # means "changed since this run started" rather than "a file exists".
+    coverage_baseline: dict[str, tuple[int, int, str] | None] = {
+        faction: coverage_fingerprint(coverage_root / f"{faction}-coverage.json")
+        for faction in factions
+    }
+    watch_deadline = time.monotonic() + max(0.0, args.watch_timeout_seconds)
+    if args.watch_coverage and args.watch_accept_existing:
+        print(
+            "WATCH_ACCEPT_EXISTING: coverage already on disk counts as landed; "
+            "this run is NOT proving the convert that produced it is current "
+            "(the coverage-binding gate still is)",
+            flush=True,
+        )
     # Split the machine across the children rather than letting each one size
     # itself against every core.
     usable_cores = max(1, (os.cpu_count() or 4) - 2)
@@ -440,6 +567,17 @@ def main(argv: list[str] | None = None) -> int:
 
     def proof_one(faction: str) -> dict[str, Any]:
         coverage_path = coverage_root / f"{faction}-coverage.json"
+        if args.watch_coverage:
+            # Already waited for by the dispatcher below; this call returns at
+            # once and exists so a serial watch run behaves identically.
+            _await_coverage(
+                coverage_path,
+                baseline=coverage_baseline.get(faction),
+                accept_existing=args.watch_accept_existing,
+                deadline=watch_deadline,
+                poll_seconds=args.watch_poll_seconds,
+                faction=faction,
+            )
         row: dict[str, Any] = {"faction": faction, "coverage": str(coverage_path)}
         try:
             if not coverage_path.is_file():
@@ -684,7 +822,83 @@ def main(argv: list[str] | None = None) -> int:
     #     the budget is spent);
     #   * every receipt and THIS BATCH REPORT are written by the parent only,
     #     from returned rows. No child writes a shared document.
-    if args.publish_jobs > 1 and len(factions) > 1:
+    if args.watch_coverage:
+        workers = max(1, min(args.publish_jobs, len(factions)))
+        print(
+            f"PACK_PROOF_WATCH jobs={workers} factions={len(factions)} "
+            f"timeout={args.watch_timeout_seconds:g}s "
+            f"acceptExisting={bool(args.watch_accept_existing)} "
+            f"logs={child_log_dir}",
+            flush=True,
+        )
+        # DYNAMIC DISPATCH, because a fixed submission order would deadlock the
+        # whole point of this mode: with N workers and seven waiting factions,
+        # the first N submissions would each sit blocked on THEIR coverage
+        # while some other faction's coverage landed first and no worker was
+        # free to take it. So the parent watches, and hands a faction to the
+        # pool only once that faction is actually ready.
+        pending = list(factions)
+        futures: dict[str, Any] = {}
+        started_at = time.monotonic()
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            while pending:
+                ready = [
+                    faction
+                    for faction in pending
+                    if args.watch_accept_existing
+                    or (
+                        (current := coverage_fingerprint(
+                            coverage_root / f"{faction}-coverage.json"
+                        ))
+                        is not None
+                        and current != coverage_baseline.get(faction)
+                    )
+                ]
+                for faction in ready:
+                    pending.remove(faction)
+                    waited = time.monotonic() - started_at
+                    print(
+                        f"COVERAGE_LANDED {faction} after {waited:.1f}s "
+                        f"-> dispatching publish",
+                        flush=True,
+                    )
+                    futures[faction] = pool.submit(proof_one, faction)
+                if not pending:
+                    break
+                if time.monotonic() >= watch_deadline:
+                    # Everything still pending is a failure row, not a silent
+                    # omission: the report must account for all seven.
+                    for faction in pending:
+                        print(
+                            f"FAIL {faction}: coverage did not land before the "
+                            "watch timeout",
+                            file=sys.stderr,
+                        )
+                    break
+                time.sleep(args.watch_poll_seconds)
+            timed_out = list(pending)
+            collected = {faction: futures[faction].result() for faction in futures}
+        rows = []
+        for faction in factions:
+            if faction in collected:
+                rows.append(collected[faction])
+            else:
+                rows.append(
+                    {
+                        "faction": faction,
+                        "coverage": str(coverage_root / f"{faction}-coverage.json"),
+                        "status": "failed",
+                        "publicationReady": False,
+                        "error": (
+                            "TimeoutError: coverage did not land before the "
+                            f"{args.watch_timeout_seconds:g}s watch timeout"
+                        ),
+                    }
+                )
+        assert len(rows) == len(factions)
+        if timed_out:
+            print(f"WATCH_TIMEOUT factions={','.join(timed_out)}", file=sys.stderr)
+    elif args.publish_jobs > 1 and len(factions) > 1:
         workers = min(args.publish_jobs, len(factions))
         print(
             f"PACK_PROOF_CONCURRENCY jobs={workers} factions={len(factions)} "
@@ -710,6 +924,8 @@ def main(argv: list[str] | None = None) -> int:
         "artifactsOnly": bool(args.artifacts_only),
         "publishJobs": int(args.publish_jobs),
         "concurrentChildren": bool(concurrent_children),
+        "watchCoverage": bool(args.watch_coverage),
+        "watchAcceptExisting": bool(args.watch_accept_existing),
         "childLogDir": str(child_log_dir) if concurrent_children else None,
         "runId": run_id,
         "factions": rows,
