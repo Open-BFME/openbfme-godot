@@ -171,12 +171,12 @@ func _test_turn_rate_limits_heading_change() -> void:
 		"wheel_advances_while_turning",
 		"a wheel must not stop the horde; position stayed at origin"
 	)
-	# Translation follows the first bounded heading, so the bearing from the new
-	# position to the fixed waypoint shifts slightly. The second tick must land
-	# exactly on that newly desired bearing rather than overshooting it.
-	var second_desired := rad_to_deg(
-		Vector2(row["position"]).direction_to(Vector2((row["route"] as Array)[0])).angle()
-	)
+	# Compute the second bearing independently from authored inputs: first tick
+	# advances one unit at 18 degrees toward the fixed 200-unit/30-degree target.
+	# Never derive an oracle from the sim's post-move position.
+	var authored_waypoint := Vector2.RIGHT.rotated(deg_to_rad(30.0)) * 200.0
+	var authored_first_position := Vector2.RIGHT.rotated(deg_to_rad(18.0))
+	var second_desired := rad_to_deg(authored_first_position.direction_to(authored_waypoint).angle())
 	sim._step_route(row)
 	_check_close(_facing_degrees(row), second_desired, "wheel_lands_on_heading_without_overshoot")
 
@@ -307,24 +307,27 @@ func _test_group_move_caps_at_slowest_authored_speed() -> void:
 	_check_close(float(fast.get("group_speed_cap", 0.0)), 10.0, "group_cap_is_the_slowest_speed")
 	_check_close(float(slow.get("group_speed_cap", 0.0)), 10.0, "group_cap_applies_to_every_member")
 
-	var fast_travel := 0.0
-	var slow_travel := 0.0
 	for _tick_index in range(5):
-		var fast_before := Vector2(fast["position"])
-		var slow_before := Vector2(slow["position"])
 		sim._step_route(fast)
 		sim._step_route(slow)
-		fast_travel += fast_before.distance_to(Vector2(fast["position"]))
-		slow_travel += slow_before.distance_to(Vector2(slow["position"]))
-	_check_close(
-		fast_travel,
-		slow_travel,
-		"group_members_advance_together"
-	)
 	_check(
 		float(fast["current_speed"]) <= 10.0 + EPSILON,
 		"group_cap_holds_the_fast_member_back",
 		"current_speed %.6f exceeded the 10.0 group cap" % [float(fast["current_speed"])]
+	)
+	for _tick_index in range(400):
+		if (fast["route"] as Array).is_empty() and (slow["route"] as Array).is_empty():
+			break
+		if not (fast["route"] as Array).is_empty():
+			sim._step_route(fast)
+		if not (slow["route"] as Array).is_empty():
+			sim._step_route(slow)
+	_check(
+		(fast["route"] as Array).is_empty()
+			and (slow["route"] as Array).is_empty()
+			and Vector2(fast["position"]).distance_to(Vector2(slow["position"])) <= 0.01,
+		"group_members_finish_within_formation_tolerance",
+		"fast=%s slow=%s" % [fast["position"], slow["position"]]
 	)
 
 

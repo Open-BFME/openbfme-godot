@@ -976,6 +976,8 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 	var acceleration := float(movement.get("acceleration", -1.0))
 	var braking := float(movement.get("braking", -1.0))
 	var turn_rate := float(movement.get("turnRateDegreesPerSecond", -1.0))
+	var slow_turn_radius := float(movement.get("slowTurnRadius", -1.0))
+	var min_turn_speed := float(movement.get("minTurnSpeed", -1.0))
 	var max_turn_without_reform := float(movement.get("maxTurnWithoutReformDegrees", 0.0))
 	var attack_range := float(combat.get("attackRange", 0.0 if noncombatant else -1.0))
 	var minimum_range := float(combat.get("minimumAttackRange", 0.0))
@@ -986,6 +988,10 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 	for numeric in [speed, vision, acceleration, braking, turn_rate, attack_range, delay_ms, pre_attack_ms, firing_ms]:
 		if not is_finite(float(numeric)) or float(numeric) < 0.0:
 			return {}
+	if movement.has("slowTurnRadius") and (not is_finite(slow_turn_radius) or slow_turn_radius < 0.0):
+		return {}
+	if movement.has("minTurnSpeed") and (not is_finite(min_turn_speed) or min_turn_speed < 0.0):
+		return {}
 	if damage <= 0 and not noncombatant:
 		return {}
 	var period_ms := delay_ms
@@ -1098,6 +1104,10 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 		output["shroud_clearing_range_source"] = shroud_clearing
 	if max_turn_without_reform > 0.0:
 		output["max_turn_without_reform_degrees"] = max_turn_without_reform
+	if movement.has("slowTurnRadius"):
+		output["slow_turn_radius"] = slow_turn_radius * source_scale
+	if movement.has("minTurnSpeed"):
+		output["min_turn_speed"] = clampf(min_turn_speed, 0.0, 1.0)
 	if turn_rate > 0.0 and movement.has("turnRateDegreesPerSecond"):
 		# Provenance, not a gameplay flag: pin fixtures invent 180 deg/s with
 		# no source and must keep snapping. Live locomotor TurnTime sets this.

@@ -4789,6 +4789,10 @@ func _add_battalion(
 		entities[id]["max_turn_without_reform_degrees"] = float(
 			unit_rule["max_turn_without_reform_degrees"]
 		)
+	if unit_rule.has("slow_turn_radius"):
+		entities[id]["slow_turn_radius"] = maxf(0.0, float(unit_rule["slow_turn_radius"]))
+	if unit_rule.has("min_turn_speed"):
+		entities[id]["min_turn_speed"] = clampf(float(unit_rule["min_turn_speed"]), 0.0, 1.0)
 	if String(unit_rule.get("turn_rate_source", "")) != "":
 		entities[id]["turn_rate_source"] = String(unit_rule["turn_rate_source"])
 	for crush_int_key in ["crusher_level", "crushable_level", "crush_damage", "crush_revenge_damage"]:
@@ -29154,9 +29158,15 @@ func _step_route(row: Dictionary) -> void:
 	row["current_speed"] = current_speed
 	var step_distance := current_speed * TICK_SECONDS
 	var movement_direction := position.direction_to(waypoint)
+	var pre_move_gap := position.distance_to(waypoint)
 	var heading_bounded_ground_move := false
+	var turning_on_authored_heading := false
 	if movement_direction.length_squared() > 0.000001:
 		if _should_honor_turn_rate(row):
+			var facing_before_turn := Vector2(row.get("facing", movement_direction)).normalized()
+			turning_on_authored_heading = absf(
+				wrapf(movement_direction.angle() - facing_before_turn.angle(), -PI, PI)
+			) > 0.0001
 			var reforming := _step_retail_heading(row, movement_direction, braking)
 			if reforming and _should_reform(row):
 				# Reforming: the horde pivots about its own centre and does not
@@ -29167,11 +29177,35 @@ func _step_route(row: Dictionary) -> void:
 			heading_bounded_ground_move = not bool(row.get("flying", false))
 		else:
 			row["facing"] = movement_direction
-	var pre_move_gap := position.distance_to(waypoint)
+	if turning_on_authored_heading and row.has("min_turn_speed"):
+		# Locomotor MinTurnSpeed is an authored fraction of top speed. Braking
+		# toward a close waypoint may not drop a turning unit below that forward
+		# floor; doing so alternated full-speed and zero-speed ticks and produced
+		# an infinite orbit around lateral final waypoints.
+		var minimum_turn_speed := max_speed * clampf(float(row["min_turn_speed"]), 0.0, 1.0)
+		current_speed = maxf(current_speed, minimum_turn_speed)
+		var turn_radians_per_second := deg_to_rad(_retail_turn_rate_degrees(row))
+		var current_turn_radius := current_speed / maxf(turn_radians_per_second, 0.0001)
+		if pre_move_gap <= current_turn_radius + 0.0001:
+			# The waypoint lies inside the current arc: drop to the authored
+			# minimum turning speed so SlowTurnRadius owns the close maneuver.
+			current_speed = minimum_turn_speed
+		row["current_speed"] = current_speed
+	step_distance = current_speed * TICK_SECONDS
 	var travel_step := Vector2.ZERO
 	var travel_direction := movement_direction
 	if heading_bounded_ground_move:
 		travel_direction = Vector2(row.get("facing", movement_direction)).normalized()
+		if turning_on_authored_heading and row.has("slow_turn_radius") and row.has("min_turn_speed"):
+			var minimum_turn_speed := max_speed * clampf(float(row["min_turn_speed"]), 0.0, 1.0)
+			if current_speed <= minimum_turn_speed + 0.0001:
+				# SlowTurnRadius is authored in source distance units and arrives on
+				# the row scaled to simulation space. Zero is meaningful: horse
+				# locomotors explicitly pivot in place from a standing/slow start.
+				# A positive value bounds the low-speed arc by r * delta-heading.
+				var slow_turn_radius := maxf(0.0, float(row["slow_turn_radius"]))
+				var authored_turn_step := deg_to_rad(_retail_turn_rate_degrees(row)) * TICK_SECONDS
+				step_distance = minf(step_distance, slow_turn_radius * authored_turn_step)
 	# A heading-bounded unit may initially face away from a nearby waypoint. It
 	# must complete the authored turn instead of teleporting sideways onto the
 	# point merely because its scalar step is longer than the remaining gap.
@@ -29210,7 +29244,6 @@ func _step_route(row: Dictionary) -> void:
 	# progress. Only a sustained stall pops the waypoint — a single flat tick
 	# is normal while sliding tangentially around a footprint.
 	if not route.is_empty() and Vector2(route[0]) == waypoint and step_distance > 0.001 \
-			and facing_toward_waypoint \
 			and position.distance_to(waypoint) >= pre_move_gap - 0.001:
 		var stall_ticks := int(row.get("route_stall_ticks", 0)) + 1
 		row["route_stall_ticks"] = stall_ticks
@@ -31844,13 +31877,19 @@ func _assign_route(row: Dictionary, destination: Vector2) -> bool:
 	# Ships use the water grid; the land ledger would reject every river.
 	if not _is_naval_row(row):
 		_ensure_parity()
-		# A heading-bounded arc can finish an attack just inside the navigation
-		# raster's blocked edge around a target footprint. RetailMapData.query_route
-		# already owns deterministic recovery from such an origin: it snaps the
-		# start cell to its nearest walkable cell before routing. Do not let the
-		# coarser straight-line parity ledger veto that provider-backed recovery.
-		var origin_is_provider_walkable := _position_walkable(Vector2(row["position"]))
-		if origin_is_provider_walkable and not parity.can_path_between(Vector2(row["position"]), destination):
+		# A heading-bounded arc can finish just inside the navigation raster's
+		# blocked edge. Only a provider that explicitly resolves that origin may
+		# recover it, and the recovered point still goes through the parity ledger.
+		var parity_origin := Vector2(row["position"])
+		if not _position_walkable(parity_origin):
+			if route_provider == null or not route_provider.has_method("resolve_walkable_position"):
+				last_route_rejection = "route-origin-not-walkable"
+				return false
+			parity_origin = Vector2(route_provider.call("resolve_walkable_position", parity_origin))
+			if not _position_walkable(parity_origin):
+				last_route_rejection = "route-origin-recovery-failed"
+				return false
+		if not parity.can_path_between(parity_origin, destination):
 			last_route_rejection = "parity-path-impassable"
 			return false
 	var result := _query_route_for_row(row, Vector2(row["position"]), destination)

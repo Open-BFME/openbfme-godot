@@ -2,15 +2,21 @@ extends SceneTree
 ## Retail heading-bounded ground movement. This is a sealed kinematic fixture:
 ## no path grid, structures, combat, RNG, or presentation can affect it.
 ##
-## Retail-authored sources (workspace/retail-extract/data/ini):
-##   object/goodfaction/units/men/eomer.ini:880-884
+## Retail-authored sources
+## (workspace/retail-work/editions/rotwk/cache/effective-assets/data/ini):
+##   object/goodfaction/units/men/eomer.ini:861-871
 ##     mounted RohanEomer binds HeroHorseLocomotor at
 ##     NORMAL_CAVALRY_FAST_HORDE_SPEED.
-##   gamedata.ini:5943
+##   gamedata.ini:7817
 ##     NORMAL_CAVALRY_FAST_HORDE_SPEED = 90.
-##   locomotor.ini:995-1009
+##   locomotor.ini:943-970
 ##     HeroHorseLocomotor TurnTime = 1500 (240 deg/s), Acceleration = 1500,
-##     Braking = 2000, MinTurnSpeed = 10%.
+##     SlowTurnRadius = 0, Braking = 2000, MinTurnSpeed = 10%.
+##   object/evilfaction/units/evilmen/mumakil.ini:1739-1743
+##     MordorMumakil binds MumakilLocomotor at speed 50.
+##   locomotor.ini:1347-1367
+##     MumakilLocomotor TurnTime = 9000 (40 deg/s), Acceleration = 750,
+##     SlowTurnRadius = 2, Braking = 1000, MinTurnSpeed = 12%.
 ##   object/goodfaction/units/men/gondorfighter.ini:853-856
 ##     GondorFighter binds HumanLocomotor at NORMAL_GOOD_FAST_MEMBER_SPEED.
 ##   gamedata.ini:5938
@@ -25,7 +31,7 @@ extends SceneTree
 const SimScript := preload("res://src/retail_slice/retail_slice_sim.gd")
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
 
-const EXPECTED_CHECKS := 13
+const EXPECTED_CHECKS := 17
 const EPSILON := 0.0001
 
 var passed := 0
@@ -36,6 +42,28 @@ var _watchdog := RunnerWatchdogScript.new()
 class HalfPlaneNavigation extends RefCounted:
 	func is_local_inside_navigation(position: Vector2) -> bool:
 		return position.y >= 0.0
+
+
+class RecoveringNavigation extends RefCounted:
+	func is_local_inside_navigation(position: Vector2) -> bool:
+		return position.x >= 1.0
+
+	func resolve_walkable_position(_position: Vector2) -> Vector2:
+		return Vector2(1.0, 0.0)
+
+	func query_route(_from: Vector2, to: Vector2) -> Dictionary:
+		return {"valid": true, "reason": "", "points": [to], "cells": [], "ford_name": ""}
+
+
+class RecordingParity extends RefCounted:
+	var allow := true
+	var calls := 0
+	var last_from := Vector2.ZERO
+
+	func can_path_between(from: Vector2, _to: Vector2) -> bool:
+		calls += 1
+		last_from = from
+		return allow
 
 
 func _initialize() -> void:
@@ -138,7 +166,67 @@ func _run() -> void:
 		"navigation_edge_uses_authored_braking_while_turning"
 	)
 
+	var eomer_arrival := _exercise_lateral_arrival(_mounted_eomer_rule(), "RohanEomerMounted")
+	_check(
+		"mounted_eomer_lateral_waypoint_arrives_and_idles",
+		bool(eomer_arrival["arrived"]) and String(eomer_arrival["state"]) == "idle",
+		str(eomer_arrival)
+	)
+	var mumakil_arrival := _exercise_lateral_arrival(_mumakil_rule(), "MordorMumakil")
+	_check(
+		"mumakil_lateral_waypoint_arrives_and_idles",
+		bool(mumakil_arrival["arrived"]) and String(mumakil_arrival["state"]) == "idle",
+		str(mumakil_arrival)
+	)
+
+	_exercise_blocked_origin_route_contract()
+
 	_finish()
+
+
+func _exercise_lateral_arrival(rule: Dictionary, unit_type: String) -> Dictionary:
+	var sim = _make_sim(rule, unit_type)
+	var row: Dictionary = sim.entities[1]
+	row["facing"] = Vector2.RIGHT
+	row["current_speed"] = 0.0
+	row["route"] = [Vector2(0.0, 2.0)]
+	row["state"] = "run"
+	var done_tick := -1
+	for tick_index in range(1, 101):
+		sim._step_route(row)
+		if (row["route"] as Array).is_empty():
+			done_tick = tick_index
+			break
+	return {
+		"arrived": done_tick > 0,
+		"done_tick": done_tick,
+		"route_size": (row["route"] as Array).size(),
+		"state": String(row["state"]),
+		"position": Vector2(row["position"]),
+	}
+
+
+func _exercise_blocked_origin_route_contract() -> void:
+	var sim = _make_sim(_mounted_eomer_rule(), "BlockedOriginRoute")
+	var row: Dictionary = sim.entities[1]
+	var provider := RecoveringNavigation.new()
+	var parity := RecordingParity.new()
+	sim.route_provider = provider
+	sim.parity = parity
+	var accepted := bool(sim._assign_route(row, Vector2(10.0, 0.0)))
+	_check(
+		"blocked_origin_routes_from_provider_recovery_through_parity",
+		accepted and parity.calls == 1 and parity.last_from.is_equal_approx(Vector2(1.0, 0.0)),
+		"accepted=%s calls=%d from=%s" % [accepted, parity.calls, parity.last_from]
+	)
+	parity.allow = false
+	parity.calls = 0
+	var refused := not bool(sim._assign_route(row, Vector2(10.0, 0.0)))
+	_check(
+		"blocked_origin_route_is_refused_when_recovered_path_fails_parity",
+		refused and parity.calls == 1 and String(sim.last_route_rejection) == "parity-path-impassable",
+		"refused=%s calls=%d reason=%s" % [refused, parity.calls, sim.last_route_rejection]
+	)
 
 
 func _exercise_reverse(rule: Dictionary, unit_type: String) -> Dictionary:
@@ -227,6 +315,26 @@ func _mounted_eomer_rule() -> Dictionary:
 		"braking_source": 2000.0,
 		"turn_rate_degrees_per_second": 240.0,
 		"turn_rate_source": "locomotor:HeroHorseLocomotor",
+		"slow_turn_radius": 0.0,
+		"min_turn_speed": 0.10,
+	}, true)
+	return rule
+
+
+func _mumakil_rule() -> Dictionary:
+	var rule := _base_rule()
+	rule.merge({
+		"category": "cavalry",
+		"speed": 5.0,
+		"speed_source": 50.0,
+		"acceleration": 75.0,
+		"acceleration_source": 750.0,
+		"braking": 100.0,
+		"braking_source": 1000.0,
+		"turn_rate_degrees_per_second": 40.0,
+		"turn_rate_source": "locomotor:MumakilLocomotor",
+		"slow_turn_radius": 0.2,
+		"min_turn_speed": 0.12,
 	}, true)
 	return rule
 

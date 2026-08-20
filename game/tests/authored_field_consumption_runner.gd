@@ -9,7 +9,7 @@ extends SceneTree
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const AdapterScript = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 
-const EXPECTED_CHECKS := 12
+const EXPECTED_CHECKS := 14
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
 var _watchdog := RunnerWatchdogScript.new()
 var passed := 0
@@ -25,7 +25,7 @@ func _run() -> void:
 	_test_flanked_penalty_from_live_soldier_armor()
 	_test_crush_authored_beats_half_factor()
 	_test_pre_attack_authored_beats_coast_proxy()
-	_test_facing_snap_only_without_turn_source()
+	_test_facing_snap_only_without_turn_rate()
 	_finish()
 
 
@@ -237,7 +237,7 @@ func _test_pre_attack_authored_beats_coast_proxy() -> void:
 	)
 
 
-func _test_facing_snap_only_without_turn_source() -> void:
+func _test_facing_snap_only_without_turn_rate() -> void:
 	var sim = _bare_sim()
 	var snap_rule := _unit_rule({"turn_rate_degrees_per_second": 0.0})
 	var honor_rule := _unit_rule({
@@ -254,7 +254,7 @@ func _test_facing_snap_only_without_turn_source() -> void:
 	sim._step_route(snap)
 	var snap_facing := Vector2(snap.get("facing", Vector2.ZERO))
 	_check(
-		"no_turn_source_still_snaps_facing",
+		"no_turn_rate_still_snaps_facing",
 		snap_facing.dot(Vector2(0.0, 1.0)) > 0.99,
 		"facing=%s" % str(snap_facing)
 	)
@@ -265,7 +265,7 @@ func _test_facing_snap_only_without_turn_source() -> void:
 	sim._step_route(honor)
 	var honor_facing := Vector2(honor.get("facing", Vector2.ZERO)).normalized()
 	_check(
-		"turn_source_does_not_snap_facing",
+		"positive_authored_turn_rate_does_not_snap_facing",
 		honor_facing.dot(Vector2.RIGHT) > 0.5 and honor_facing.dot(Vector2(0.0, 1.0)) < 0.99,
 		"facing=%s" % str(honor_facing)
 	)
@@ -282,6 +282,8 @@ func _test_facing_snap_only_without_turn_source() -> void:
 				"acceleration": 20.0,
 				"braking": 20.0,
 				"turnRateDegreesPerSecond": 240.0,
+				"slowTurnRadius": 0.0,
+				"minTurnSpeed": 0.1,
 			},
 			"combat": {
 				"attackRange": 11.5,
@@ -299,6 +301,16 @@ func _test_facing_snap_only_without_turn_source() -> void:
 		String(adapted.get("turn_rate_source", "")) == "locomotor"
 			and is_equal_approx(float(adapted.get("turn_rate_degrees_per_second", 0.0)), 240.0),
 		str(adapted.get("turn_rate_source"))
+	)
+	_check(
+		"adapter_preserves_authored_zero_slow_turn_radius",
+		adapted.has("slow_turn_radius") and is_zero_approx(float(adapted["slow_turn_radius"])),
+		str(adapted.get("slow_turn_radius", "missing"))
+	)
+	_check(
+		"adapter_preserves_authored_min_turn_speed_fraction",
+		is_equal_approx(float(adapted.get("min_turn_speed", -1.0)), 0.1),
+		str(adapted.get("min_turn_speed", "missing"))
 	)
 func _finish() -> void:
 	if passed + failed != EXPECTED_CHECKS:
