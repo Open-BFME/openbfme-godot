@@ -282,41 +282,43 @@ func _check_helms_deep_authored_gate(scene: PackedScene) -> void:
 	enemy["health"] = int(enemy.get("maximum_health", 1))
 	_force_gate(gate, true)
 	_check("helms_deep_open_portal_deflects_enemy_order", not _ordered_crosses(sim, enemy, start, destination, across, int(enemy.get("team", 0)), 20))
-	# AllowNonSkirmishAIUnits=No (helmsdeepbuildings.ini:6288) restricts the
-	# PATHING PORTAL, never the gate's auto-open: the owner's gate always
-	# swings for the owner's troops (gate_portal_allows = ownership only),
-	# while the open-passage pathing exemption is reserved for skirmish-AI
-	# units. Same seat, is_ai flipped between the two probes.
+	# Retail model (review round 3): the fake pathfind PORTAL is a shortcut
+	# THROUGH a CLOSED gate; an OPEN gate is never impassable for its owner.
+	# AllowNonSkirmishAIUnits=No reserves the closed-gate shortcut for
+	# skirmish-AI-controlled friendlies. Probed on a HUMAN PLAYER SEAT (team 0
+	# seated, is_ai=false), the shipped Helm's Deep gate row, same seat with
+	# is_ai flipped for the AI branch.
 	const AI_UNIT_ID := 99003
-	var gate_team := int(gate.get("team", 1))
-	sim._add_battalion(AI_UNIT_ID, gate_team, gate_at, "Portal friend")
-	var portal_mover: Dictionary = sim.entities[AI_UNIT_ID]
-	if not sim._team_descriptors.has(gate_team):
-		sim._team_descriptors[gate_team] = {}
-	# Owner's gate auto-opens for the owner regardless of AI-ness.
-	sim._team_descriptors[gate_team]["is_ai"] = false
+	var gate_row: Dictionary = sim.structures[gate_id]
+	gate_row["team"] = 0
+	sim._team_descriptors[0] = {"is_ai": false, "start_index": 1}
 	sim.ai_enabled = true
-	_check("helms_deep_gate_auto_open_serves_human_owner", sim.gate_portal_allows(gate_id, AI_UNIT_ID), "gate_team=%d" % gate_team)
-	# Human-controlled friendly: portal pathing exemption withheld -> the open
-	# gate still presents its Closed span to this mover.
-	# The open gate presents OpenLeft/OpenRight leaf discs (offset from the
-	# gateway) to allowed movers, but the full Closed span (covering the gate
-	# centre) to movers the portal refuses.
-	var human_discs: Array = sim._castle_gate_blocking_discs(sim.structures[gate_id], portal_mover)
-	sim._team_descriptors[gate_team]["is_ai"] = true
-	var ai_discs: Array = sim._castle_gate_blocking_discs(sim.structures[gate_id], portal_mover)
-	var gate_open := bool((sim.structures[gate_id] as Dictionary).get("gate_behavior", {}).get("pathing_open", false))
-	var centre := Vector2(sim.structures[gate_id].get("position", Vector2.ZERO))
-	var human_nearest := INF
-	for disc in human_discs:
-		human_nearest = minf(human_nearest, Vector2(disc.get("center", Vector2.INF)).distance_to(centre) - float(disc.get("radius", 0.0)))
-	var ai_nearest := INF
-	for disc in ai_discs:
-		ai_nearest = minf(ai_nearest, Vector2(disc.get("center", Vector2.INF)).distance_to(centre) - float(disc.get("radius", 0.0)))
-	# Closed spans the gateway (discs hug the centre line); OpenLeft/OpenRight
-	# leaf discs sit at the authored ±115 offsets, well clear of the centre.
-	_check("helms_deep_open_portal_denies_human_friendly_pathing", gate_open and human_discs.size() > ai_discs.size() and human_nearest < ai_nearest, "open=%s human=%d/%.2f ai=%d/%.2f" % [str(gate_open), human_discs.size(), human_nearest, ai_discs.size(), ai_nearest])
-	_check("helms_deep_open_portal_allows_ai_friendly_pathing", gate_open and ai_nearest > 0.0, "open=%s ai=%d/%.2f" % [str(gate_open), ai_discs.size(), ai_nearest])
+	sim._add_battalion(AI_UNIT_ID, 0, gate_at, "Portal friend")
+	var portal_mover: Dictionary = sim.entities[AI_UNIT_ID]
+	# Auto-open serves the owner regardless of AI-ness.
+	_check("helms_deep_gate_auto_open_serves_human_owner", sim.gate_portal_allows(gate_id, AI_UNIT_ID))
+	var centre := Vector2(gate_row.get("position", Vector2.ZERO))
+	var nearest := func(discs: Array) -> float:
+		var best := INF
+		for disc in discs:
+			best = minf(best, Vector2(disc.get("center", Vector2.INF)).distance_to(centre) - float(disc.get("radius", 0.0)))
+		return best
+	# OPEN gate: passable for the human owner (leaf discs clear of the centre).
+	_force_gate(gate_row, true)
+	var open_human: Array = sim._castle_gate_blocking_discs(gate_row, portal_mover)
+	_check("helms_deep_open_gate_passable_for_human_owner", nearest.call(open_human) > 0.0, "open_human=%d/%.2f" % [open_human.size(), nearest.call(open_human)])
+	# CLOSED gate: the human owner's troops wait for the doors (Closed span)...
+	_force_gate(gate_row, false)
+	var closed_human: Array = sim._castle_gate_blocking_discs(gate_row, portal_mover)
+	# ...while a skirmish-AI-controlled friendly paths through via the portal.
+	sim._team_descriptors[0]["is_ai"] = true
+	var closed_ai: Array = sim._castle_gate_blocking_discs(gate_row, portal_mover)
+	# Closed-span discs hug the gateway centre line (nearest gap ~0.01 at this
+	# map's scale); the portal shortcut yields the open leaf discs, well clear.
+	_check("helms_deep_closed_gate_blocks_human_owner", nearest.call(closed_human) < nearest.call(closed_ai) and nearest.call(closed_human) < 0.1, "closed_human=%d/%.2f" % [closed_human.size(), nearest.call(closed_human)])
+	_check("helms_deep_closed_gate_portal_passes_skirmish_ai_friendly", nearest.call(closed_ai) > 0.5, "closed_ai=%d/%.2f" % [closed_ai.size(), nearest.call(closed_ai)])
+	sim._team_descriptors[0]["is_ai"] = false
+	_force_gate(gate_row, true)
 	root.remove_child(slice)
 	slice.free()
 	await process_frame

@@ -17908,16 +17908,6 @@ func request_gate_open(structure_id:int,requester_id:int=0)->Dictionary:
 	policy["open"]=true;policy["open_fraction"]=1.0;policy["pathing_open"]=true;policy["close_tick"]=tick_index+int(policy.get("reset_ticks",0));gate["gate_behavior"]=policy;_emit_event("gate.opened",requester_id,structure_id,{"close_tick":policy["close_tick"]});return {"ok":true,"reason":"","close_tick":policy["close_tick"]}
 
 
-func _entity_is_skirmish_ai_controlled(id: int) -> bool:
-	## True when the unit belongs to a live skirmish-AI-driven team, the same
-	## pairing PickupStuffUpdate's skirmish_ai_only rule uses: with the AI
-	## disabled no team is "skirmish AI controlled".
-	if not entities.has(id):
-		return false
-	var entity_team := int((entities[id] as Dictionary).get("team", -1))
-	return ai_enabled and team_is_ai(entity_team)
-
-
 func gate_portal_allows(structure_id:int,requester_id:int)->bool:
 	## The gate's AUTO-OPEN policy (AIGateUpdate rectangle / manual toggle):
 	## pure geometry + ownership. FakePathfindPortalBehaviour's rules restrict
@@ -28549,21 +28539,25 @@ func _castle_gate_blocking_discs(structure_row: Dictionary, mover: Dictionary) -
 	if policy.is_empty() or geometries.is_empty():
 		return []
 	var use_open_geometry := bool(policy.get("pathing_open", false))
-	if use_open_geometry and structure_row.has("fake_pathfind_portal"):
+	var same_team := int(mover.get("team", -1)) == int(structure_row.get("team", -2))
+	if structure_row.has("fake_pathfind_portal"):
 		var portal: Dictionary = structure_row.get("fake_pathfind_portal", {})
-		if int(mover.get("team", -1)) != int(structure_row.get("team", -2)):
+		if use_open_geometry and not same_team and not bool(portal.get("allow_enemies", false)):
 			# FakePathfindPortalBehaviour AllowEnemies=No: hostiles never get
-			# the open passage; they must destroy the gate.
-			if not bool(portal.get("allow_enemies", false)):
-				use_open_geometry = false
-		elif not bool(portal.get("allow_non_skirmish_ai", false)):
-			# AllowNonSkirmishAIUnits=No (helmsdeepbuildings.ini:6288): the
-			# portal shortcut is reserved for skirmish-AI-controlled friendly
-			# units; human-controlled friendlies path around like retail. The
-			# gate still auto-opens for them (AIGateUpdate is a separate
-			# module) — only the pathing exemption is withheld.
-			if not (ai_enabled and team_is_ai(int(mover.get("team", -1)))):
-				use_open_geometry = false
+			# the passage even while open; they must destroy the gate (L3 pin).
+			use_open_geometry = false
+		elif not use_open_geometry:
+			# Retail's fake pathfind PORTAL is a shortcut THROUGH a closed
+			# gate: qualified movers path as if it were open and AIGateUpdate
+			# swings it before they arrive. AllowNonSkirmishAIUnits=No
+			# (helmsdeepbuildings.ini:6288) reserves that shortcut for
+			# skirmish-AI-controlled friendlies; a human owner's troops wait
+			# for the doors like retail. An OPEN gate is never impassable for
+			# its owner - the rule only widens closed-gate passage.
+			if same_team and (bool(portal.get("allow_non_skirmish_ai", false)) or (ai_enabled and team_is_ai(int(mover.get("team", -1))))):
+				use_open_geometry = true
+			elif not same_team and bool(portal.get("allow_enemies", false)):
+				use_open_geometry = true
 	var geometry_names: Array[String] = []
 	if use_open_geometry:
 		geometry_names.assign(["OpenLeft", "OpenRight"])
