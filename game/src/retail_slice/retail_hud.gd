@@ -76,10 +76,17 @@ const RETAIL_TRAIN_TOOLTIP_ID := "CONTROLBAR:ToolTipBuildGondorFighterHorde"
 const RETAIL_COMMAND_BAR_IMAGE_ID := "SGCommandBar"
 const RETAIL_COMMAND_BAR_SOURCE_SIZE := Vector2i(1024, 256)
 ## `NonCommand_SelectAllHeroes` has no ButtonImage (commandbutton.ini:3494-3497).
-## Retail does author this exact good-hero group glyph for the Men fortress's
-## hero selector (Command_SelectRevivablesMenFortress:13169-13177), and the
-## selected Men interface-art index ships it. Do not substitute invented art.
+## Retail authors the hero-group glyph per SIDE: UCCommon_GoodHeroes on the
+## good fortress hero selectors (Command_SelectRevivablesMenFortress:13172)
+## and UCCommon_EvilHeroes on the evil ones (:4097, :8068, :13546, :13788+).
+## Both ship in the interface-art indexes. Do not substitute invented art.
 const RETAIL_HERO_SELECT_ALL_IMAGE_ID := "UCCommon_GoodHeroes"
+const RETAIL_HERO_SELECT_ALL_EVIL_IMAGE_ID := "UCCommon_EvilHeroes"
+const RETAIL_EVIL_FACTIONS := ["mordor", "isengard", "wild", "angmar"]
+
+
+func _hero_select_all_image_id() -> String:
+	return RETAIL_HERO_SELECT_ALL_EVIL_IMAGE_ID if RETAIL_EVIL_FACTIONS.has(_faction_surface.to_lower()) else RETAIL_HERO_SELECT_ALL_IMAGE_ID
 const RETAIL_PALANTIR_FRAME_ATLAS := "assets/ui/palantir/atlases/apt-palantirexport-17-fb63d3d26008.png"
 const RETAIL_PALANTIR_ATLAS := "assets/ui/palantir/atlases/apt-palantir-1-d9888d52cd89.png"
 const RETAIL_PALANTIR_FRAME_SOURCE_SIZE := Vector2i(384, 256)
@@ -2453,7 +2460,7 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 	var hero_select_all_validation := _validate_retail_image(
 		content_db,
 		expected_pack_root,
-		RETAIL_HERO_SELECT_ALL_IMAGE_ID,
+		_hero_select_all_image_id(),
 		Vector2i.ZERO
 	)
 	var hero_select_all_error := String(hero_select_all_validation.get("error", ""))
@@ -2511,7 +2518,7 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 	_hero_select_all_button.icon = hero_select_all_validation["texture"] as Texture2D
 	_hero_select_all_button.expand_icon = true
 	_hero_select_all_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_hero_select_all_button.set_meta("retail_image_id", RETAIL_HERO_SELECT_ALL_IMAGE_ID)
+	_hero_select_all_button.set_meta("retail_image_id", _hero_select_all_image_id())
 	_hero_select_all_button.set_meta("retail_image_path", String(hero_select_all_validation["path"]))
 	if use_apt:
 		var frame_texture := retail_apt_runtime.exact_atlas_texture(RETAIL_PALANTIR_FRAME_ATLAS)
