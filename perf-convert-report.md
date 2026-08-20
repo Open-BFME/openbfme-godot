@@ -1563,6 +1563,16 @@ Section 12 (Option C) specifically:
   outright (the layered branch rewrites the graph after census, so the shipped
   digest would not be the digest workers key on). That refusal is coded and
   reasoned, not exercised — the layered tree is quarantined.
+- **Shared-state side effect, disclosed:** the §12 measurement runs wrote all
+  seven `editions/rotwk/reports/faction-import/<faction>-coverage.json` in the
+  shared state root. As of 2026-08-20 16:29 they carry
+  `compilerIdentityToken 904a2d1c…`, which is this worktree **with the
+  marker-C perf-probe comment still appended** — an importer state that no
+  longer exists in any tree, because the probe was reverted. The documents
+  themselves are internally consistent (7/7 `gaps=0 complete=True`), but any
+  publish that binds against them will be **correctly refused** by the
+  compiler-identity chain. Whoever needs valid coverage must re-run convert
+  from their own tree. `--allow-stale-coverage` is not the remedy.
 - **Disk:** each pooled run leaves `<state>/reports/produce-shards/<runId>/`
   holding seven shipped graphs (~1.1 MB each) and `7 x N` shard payloads, ~15-20
   MB per run. Nothing prunes it. I deliberately did **not** add a deleter — this
