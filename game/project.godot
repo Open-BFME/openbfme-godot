@@ -12,7 +12,7 @@ config_version=5
 
 config/name="Open BFME"
 config/description="Desktop BFME2-inspired skirmish RTS (moddable)"
-config/version="0.2.7"
+config/version="0.2.8"
 config/build_id="dev"
 run/main_scene="res://scenes/startup_boot.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
