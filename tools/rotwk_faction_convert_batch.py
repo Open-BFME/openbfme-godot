@@ -544,6 +544,7 @@ def _produce_convert(
     """
 
     from openbfme_importer.faction_census_cache import graph_digest
+    from openbfme_importer.faction_object_cache import compiler_identity_token
     from openbfme_importer.faction_import import (
         ShardAssemblyError,
         assemble_faction_convert_shards,
@@ -726,6 +727,8 @@ def _produce_convert(
                     faction=specs[faction][0],
                     graph_sha256=ship[faction][1],
                     shard_count=procs,
+                    catalog_identity_sha256=str(catalog.identity_sha256()),
+                    compiler_identity_token=compiler_identity_token(),
                 )
             except (ShardAssemblyError, OSError, ValueError, KeyError) as exc:
                 stats["refused"].append(f"{faction}: {type(exc).__name__}: {exc}")

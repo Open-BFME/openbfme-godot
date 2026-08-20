@@ -285,6 +285,43 @@ def test_assembly_refuses_shards_that_disagree_on_the_compiler(tmp_path: Path) -
         )
 
 
+def test_assembly_refuses_a_pool_that_ran_other_importer_bytes(tmp_path: Path) -> None:
+    """Unanimity is not enough: the pool must agree with the PARENT.
+
+    A source edit while a run is in flight gives every worker the same, new
+    compiler identity — unanimous, and not the one the parent is assembling for.
+    """
+
+    payloads, _artifacts = _run(tmp_path, shards=2)
+    token = str(payloads[0]["compilerIdentityToken"])
+    faction = str(payloads[0]["faction"])
+    # Unanimous and correct: accepted.
+    assemble_faction_convert_shards(
+        payloads,
+        faction=faction,
+        graph_sha256=_graph_sha256(),
+        shard_count=2,
+        compiler_identity_token=token,
+        catalog_identity_sha256=str(payloads[0]["catalogIdentitySha256"]),
+    )
+    with pytest.raises(ShardAssemblyError, match="ran compiler identity"):
+        assemble_faction_convert_shards(
+            payloads,
+            faction=faction,
+            graph_sha256=_graph_sha256(),
+            shard_count=2,
+            compiler_identity_token="edited-mid-run",
+        )
+    with pytest.raises(ShardAssemblyError, match="used catalog identity"):
+        assemble_faction_convert_shards(
+            payloads,
+            faction=faction,
+            graph_sha256=_graph_sha256(),
+            shard_count=2,
+            catalog_identity_sha256="9" * 64,
+        )
+
+
 def test_assembly_refuses_a_duplicate_shard_index(tmp_path: Path) -> None:
     payloads, _artifacts = _run(tmp_path, shards=2)
     damaged = [dict(payloads[0]), dict(payloads[0])]

@@ -2195,6 +2195,8 @@ def assemble_faction_convert_shards(
     faction: str,
     graph_sha256: str,
     shard_count: int,
+    catalog_identity_sha256: str | None = None,
+    compiler_identity_token: str | None = None,
 ) -> dict[str, object]:
     """Merge worker-produced rows into one coverage document, deterministically.
 
@@ -2207,6 +2209,10 @@ def assemble_faction_convert_shards(
       complete ordered object id list;
     * that digest also equals ``graph_sha256``, which the parent derived itself
       from the graph it shipped, so unanimous-but-wrong workers are refused;
+    * where the caller supplies them, the catalog identity and the compiler
+      identity token equal the *parent's own* — unanimity alone would happily
+      admit a whole pool running different importer bytes than the parent, which
+      is precisely what a mid-run source edit produces;
     * the merged rows cover the ordered id list exactly once, no id owned by
       two shards and none missing.
 
@@ -2308,6 +2314,26 @@ def assemble_faction_convert_shards(
         raise ShardAssemblyError(
             f"{faction}: shard graph digest {scaffold['graphSha256']} != "
             f"shipped {graph_sha256}"
+        )
+    if (
+        catalog_identity_sha256 is not None
+        and str(scaffold["catalogIdentitySha256"]) != catalog_identity_sha256
+    ):
+        raise ShardAssemblyError(
+            f"{faction}: shards used catalog identity "
+            f"{scaffold['catalogIdentitySha256']} != the parent's "
+            f"{catalog_identity_sha256}"
+        )
+    if (
+        compiler_identity_token is not None
+        and str(scaffold["compilerIdentityToken"]) != compiler_identity_token
+    ):
+        # A pool that unanimously ran different importer bytes than the parent
+        # is exactly what editing a source file mid-run produces.
+        raise ShardAssemblyError(
+            f"{faction}: shards ran compiler identity "
+            f"{scaffold['compilerIdentityToken']} != the parent's "
+            f"{compiler_identity_token}"
         )
     ordered_ids = scaffold["orderedObjectIds"]
     if not isinstance(ordered_ids, list) or not all(

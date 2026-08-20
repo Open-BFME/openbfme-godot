@@ -1299,8 +1299,9 @@ them:
    disagreement between shards on faction, player template, catalog identity,
    graph digest, unresolved-leaf count, compiler identity token or the complete
    ordered object id list; a graph digest that is not the one the parent
-   shipped; an object produced by two shards; and a merged set that does not
-   cover the ordered id list exactly once. Then it stable-sorts by object id and
+   shipped; **a catalog identity or compiler identity token that is not the
+   parent's own**; an object produced by two shards; and a merged set that does
+   not cover the ordered id list exactly once. Then it stable-sorts by object id and
    calls **the same** `finalize_faction_import_plan` and
    `assemble_faction_coverage` the serial path calls — the assembly is shared
    code, not a second implementation that has to be argued equivalent.
@@ -1463,7 +1464,7 @@ tests that never see the real identity strings.
 
 ### 12.7 Tests
 
-`importer/tests/test_faction_convert_optionc.py`, 24 tests, all new, all
+`importer/tests/test_faction_convert_optionc.py`, 25 tests, all new, all
 CI-runnable against the synthetic hero-roster fixture (no retail required):
 
 - **The identity test the brief asked for** —
@@ -1475,9 +1476,19 @@ CI-runnable against the synthetic hero-roster fixture (no retail required):
   completion order → identical bytes) and
   `test_assembly_is_independent_of_the_worker_count` (1/2/3/5 shards → one
   aggregate).
-- Eight refusal tests: foreign graph digest, incomplete shard set, dropped
-  object, object produced by two shards, disagreeing compiler identity,
-  duplicate shard index, foreign faction, schema drift.
+- Nine refusal tests: foreign graph digest, incomplete shard set, dropped
+  object, object produced by two shards, shards disagreeing with each other on
+  compiler identity, **a unanimous pool that disagrees with the parent on
+  compiler identity or catalog identity**, duplicate shard index, foreign
+  faction, schema drift.
+
+  That second compiler-identity test exists because of a hole this lane's own
+  self-review found after the first commit: unanimity across shards would
+  happily admit an entire pool running different importer bytes than the
+  parent — which is exactly what editing a source file mid-run produces, the
+  trap this report opens with in its confounds section. The parent now supplies
+  its own catalog identity and compiler identity token and the assembler
+  refuses anything else.
 - `test_a_shard_payload_is_not_a_coverage_document`,
   `test_produce_mode_requires_a_selector_and_shard_coordinates`,
   `test_assembly_accepts_the_discovered_short_name`.
@@ -1544,6 +1555,11 @@ Section 12 (Option C) specifically:
   outright (the layered branch rewrites the graph after census, so the shipped
   digest would not be the digest workers key on). That refusal is coded and
   reasoned, not exercised — the layered tree is quarantined.
+- **Disk:** each pooled run leaves `<state>/reports/produce-shards/<runId>/`
+  holding seven shipped graphs (~1.1 MB each) and `7 x N` shard payloads, ~15-20
+  MB per run. Nothing prunes it. I deliberately did **not** add a deleter — this
+  tree is a shared state root with other agents' runs in flight and the evidence
+  is what a verifier reads — so it belongs in the existing disk-prune recipe.
 - The publish stage was still not run from this lane, so the composed
   convert+publish end-to-end number belongs to the publish lane's measurement,
   not to this report.
