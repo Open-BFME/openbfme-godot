@@ -47,7 +47,15 @@ Authoritative root:
 
 The 0.1 runtime scale yields Eomer `9/150/0/200/0.10` and Mumakil
 `5/75/0.2/100/0.12` for speed/acceleration/slow radius/braking/minimum fraction.
-The fixture identities came from the selected packs, read without modification:
+CORRECTION (round-2 verifier F-C): the mounted-Eomer fixture uses the AUTHORED
+SET_MOUNTED HeroHorseLocomotor values (90 / 240 deg/s / SlowTurnRadius 0 /
+MinTurnSpeed 10%), which are retail truth per the citations above but are NOT
+what the shipped rotwk-men-vslice/51d4885… rohaneomer.json compiles (it carries
+HeroHumanLocomotor: 50 / 720 / slowTurnRadius 1 / minTurnSpeed 0 — the mounted
+movement block is not compiled; see Q34/Q42-importer). The Mumakil fixture DOES
+match its shipped doc exactly, so arrival is proven on a pack-backed unit, and
+the shipped-Eomer values were separately verified to arrive.
+The Mumakil/pack identities came from the selected packs, read without modification:
 `rotwk-men-vslice/51d4885433869fa6290498eeac597b8cc8ac79e540d073dbf03c9c0d0184df3c`
 and
 `rotwk-mordor-vslice/975c3d6a618ad161e0b00884500aa03b6be8364309baa136064970e1e4ac4f29`.
@@ -123,6 +131,20 @@ first parenthesis, trims it, sorts unique labels, and compares it to
 `BASE_UNIQUE=87`, `CURRENT_UNIQUE=87`, `CURRENT_ONLY=0`, `BASE_ONLY=0`.
 
 ## Not done / remaining red
+
+- NAMED GAP (round-2 verifier F-A): cavalry hordes with authored
+  `MinTurnSpeed = 100%` and `slowTurnRadius = 0` (10 shipped horde docs:
+  rohirrim, both gondor knights, both rivendell hordes, both warg hordes,
+  black riders, haradrim riders, dire wolves) freeze translation for the
+  duration of ANY turn at ANY speed — the slow-manoeuvre test
+  `current_speed <= min_turn_speed * max_speed` is always true at 100%.
+  Bounded (<=0.5 s per correction), arrival unaffected. Retail's answer is
+  `FastTurnRadius = 48` ("Once the horse gets moving…"), ALREADY COMPILED as
+  `movement.fastTurnRadius` and not yet consumed. Follow-up lane owed.
+- NAMED GAP (round-2 verifier F-B): during a zero-translation pivot the
+  min-turn-speed floor is written into `row["current_speed"]`, so
+  `_should_attempt_crush` can fire while the unit is standing still
+  (trample-while-pivoting). Pair with the F-A fix.
 
 - No content pack, `selection.json`, durable mirror, dist build, publish, or push
   was performed.
