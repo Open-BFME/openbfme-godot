@@ -30847,6 +30847,21 @@ func _castle_fixture_team(owner: String) -> int:
 				var descriptor: Dictionary = _team_descriptors[team_value]
 				if int(descriptor.get("start_index", -1)) == seat:
 					return int(team_value)
+			# Roster rows without a start_index (any lobby launch where no one
+			# picked a start position): the team still spawns at the map's
+			# configured seat (_ai_start_waypoint_name falls back to
+			# _configured_team_start_indices), so the castle's authored
+			# Player_N owner must resolve through the same table instead of
+			# dropping to the civilian team (review 2026-08-19: the player's
+			# own open gate blocked him on every injected-roster launch).
+			var seat_teams: Array = _configured_team_start_indices.keys()
+			seat_teams.sort()
+			for team_value in seat_teams:
+				var descriptor: Dictionary = _team_descriptors.get(int(team_value), {}) as Dictionary
+				if descriptor.has("start_index"):
+					continue
+				if int(_configured_team_start_indices[team_value]) == seat:
+					return int(team_value)
 	return CASTLE_CIVILIAN_TEAM
 
 

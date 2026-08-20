@@ -319,6 +319,29 @@ func _check_helms_deep_authored_gate(scene: PackedScene) -> void:
 	_check("helms_deep_closed_gate_portal_passes_skirmish_ai_friendly", nearest.call(closed_ai) > 0.5, "closed_ai=%d/%.2f" % [closed_ai.size(), nearest.call(closed_ai)])
 	sim._team_descriptors[0]["is_ai"] = false
 	_force_gate(gate_row, true)
+	# Injected-roster launch shape (review 2026-08-19 finding 2): lobby rows
+	# carry NO start_index when nobody picked a start position, yet the cooked
+	# map authors team_start_indices and the teams spawn at those seats
+	# (_ai_start_waypoint_name). The castle's authored Player_N owner must
+	# resolve through the same table instead of landing on the civilian team —
+	# where the player's own open gate blocked his troops via the enemy branch.
+	var seat_table: Dictionary = sim._configured_team_start_indices as Dictionary
+	_check("helms_deep_map_authors_seat_table", not seat_table.is_empty(), str(seat_table))
+	var saved_descriptors := {}
+	for team_key in sim._team_descriptors.keys():
+		var original: Dictionary = sim._team_descriptors[team_key]
+		saved_descriptors[team_key] = original.duplicate(true)
+		var stripped := original.duplicate(true)
+		stripped.erase("start_index")
+		sim._team_descriptors[team_key] = stripped
+	var player1_team := int(sim._castle_fixture_team("Player_1"))
+	_check(
+		"rosterless_start_rows_keep_player1_fixtures_owned",
+		player1_team != sim.CASTLE_CIVILIAN_TEAM and int(seat_table.get(player1_team, -1)) == 0,
+		"player1_team=%d seat_table=%s" % [player1_team, str(seat_table)]
+	)
+	for team_key in saved_descriptors:
+		sim._team_descriptors[team_key] = saved_descriptors[team_key]
 	root.remove_child(slice)
 	slice.free()
 	await process_frame
