@@ -527,6 +527,28 @@ func _check_authored_hero_bar(hud) -> void:
 		str(hud._hero_select_all_button.position) if hud._hero_select_all_button != null else "<null>"
 	)
 	_check(
+		"select_all_heroes_uses_named_authored_image",
+		hud._hero_select_all_button != null
+			and hud._hero_select_all_button.icon != null
+			and String(hud._hero_select_all_button.get_meta("retail_image_id", ""))
+				== "UCCommon_GoodHeroes",
+		String(hud._hero_select_all_button.get_meta("retail_image_id", "<missing>"))
+			if hud._hero_select_all_button != null else "<null>"
+	)
+	# Retail authors the glyph per SIDE: evil factions bind UCCommon_EvilHeroes
+	# (commandbutton.ini :4097/:8068/:13546/:13788+), good ones UCCommon_GoodHeroes.
+	var surface_before := String(hud._faction_surface)
+	hud._faction_surface = "mordor"
+	var evil_id := String(hud._hero_select_all_image_id())
+	hud._faction_surface = "men"
+	var good_id := String(hud._hero_select_all_image_id())
+	hud._faction_surface = surface_before
+	_check(
+		"select_all_heroes_glyph_follows_faction_side",
+		evil_id == "UCCommon_EvilHeroes" and good_id == "UCCommon_GoodHeroes",
+		"evil=%s good=%s" % [evil_id, good_id]
+	)
+	_check(
 		"faction_icon_sits_left_of_the_select_all_button",
 		hud._hero_faction_icon != null
 			and hud._hero_faction_icon.position.x < hud._hero_select_all_button.position.x
@@ -752,6 +774,9 @@ func _check_complete_binding(prefix: String, hud, content, pack_root: String) ->
 
 func _write_complete_fixture_images() -> Dictionary:
 	var rows: Dictionary = {}
+	rows["UCCommon_GoodHeroes"] = _write_fixture_png(
+		"UCCommon_GoodHeroes", Vector2i(64, 64), Color("d8d1b5")
+	)
 	for spec_value in HudScript.RETAIL_COMMAND_SPECS:
 		var image_id := String((spec_value as Dictionary)["image_id"])
 		rows[image_id] = _write_fixture_png(image_id, Vector2i(64, 64), Color("476a87"))

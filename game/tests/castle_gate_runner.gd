@@ -101,7 +101,10 @@ func _run() -> void:
 	friend["health"] = 0
 	enemy["health"] = int(enemy.get("maximum_health", 1))
 	_force_gate(gate, true)
-	_check("erebor_gate_without_portal_allows_enemy_request", sim.gate_portal_allows(gate_id, ENEMY_ID))
+	# Requesting the gate OPEN is ownership-only (AIGateUpdate serves the
+	# owner); a portal-less OPEN gate still lets the enemy CROSS — that
+	# geometry claim is pinned by erebor_open_gate_allows_enemy_order below.
+	_check("erebor_gate_open_request_is_ownership_only", not sim.gate_portal_allows(gate_id, ENEMY_ID))
 	_check("erebor_open_gate_allows_enemy_order", _ordered_crosses(sim, enemy, start, destination, across, int(enemy.get("team", 0)), 20))
 	_force_gate(gate, false)
 	_check("erebor_closed_gate_blocks_enemy_order", not _ordered_crosses(sim, enemy, start, destination, across, int(enemy.get("team", 0)), 20))
@@ -279,6 +282,66 @@ func _check_helms_deep_authored_gate(scene: PackedScene) -> void:
 	enemy["health"] = int(enemy.get("maximum_health", 1))
 	_force_gate(gate, true)
 	_check("helms_deep_open_portal_deflects_enemy_order", not _ordered_crosses(sim, enemy, start, destination, across, int(enemy.get("team", 0)), 20))
+	# Retail model (review round 3): the fake pathfind PORTAL is a shortcut
+	# THROUGH a CLOSED gate; an OPEN gate is never impassable for its owner.
+	# AllowNonSkirmishAIUnits=No reserves the closed-gate shortcut for
+	# skirmish-AI-controlled friendlies. Probed on a HUMAN PLAYER SEAT (team 0
+	# seated, is_ai=false), the shipped Helm's Deep gate row, same seat with
+	# is_ai flipped for the AI branch.
+	const AI_UNIT_ID := 99003
+	var gate_row: Dictionary = sim.structures[gate_id]
+	gate_row["team"] = 0
+	sim._team_descriptors[0] = {"is_ai": false, "start_index": 1}
+	sim.ai_enabled = true
+	sim._add_battalion(AI_UNIT_ID, 0, gate_at, "Portal friend")
+	var portal_mover: Dictionary = sim.entities[AI_UNIT_ID]
+	# Auto-open serves the owner regardless of AI-ness.
+	_check("helms_deep_gate_auto_open_serves_human_owner", sim.gate_portal_allows(gate_id, AI_UNIT_ID))
+	var centre := Vector2(gate_row.get("position", Vector2.ZERO))
+	var nearest := func(discs: Array) -> float:
+		var best := INF
+		for disc in discs:
+			best = minf(best, Vector2(disc.get("center", Vector2.INF)).distance_to(centre) - float(disc.get("radius", 0.0)))
+		return best
+	# OPEN gate: passable for the human owner (leaf discs clear of the centre).
+	_force_gate(gate_row, true)
+	var open_human: Array = sim._castle_gate_blocking_discs(gate_row, portal_mover)
+	_check("helms_deep_open_gate_passable_for_human_owner", nearest.call(open_human) > 0.0, "open_human=%d/%.2f" % [open_human.size(), nearest.call(open_human)])
+	# CLOSED gate: the human owner's troops wait for the doors (Closed span)...
+	_force_gate(gate_row, false)
+	var closed_human: Array = sim._castle_gate_blocking_discs(gate_row, portal_mover)
+	# ...while a skirmish-AI-controlled friendly paths through via the portal.
+	sim._team_descriptors[0]["is_ai"] = true
+	var closed_ai: Array = sim._castle_gate_blocking_discs(gate_row, portal_mover)
+	# Closed-span discs hug the gateway centre line (nearest gap ~0.01 at this
+	# map's scale); the portal shortcut yields the open leaf discs, well clear.
+	_check("helms_deep_closed_gate_blocks_human_owner", nearest.call(closed_human) < nearest.call(closed_ai) and nearest.call(closed_human) < 0.1, "closed_human=%d/%.2f" % [closed_human.size(), nearest.call(closed_human)])
+	_check("helms_deep_closed_gate_portal_passes_skirmish_ai_friendly", nearest.call(closed_ai) > 0.5, "closed_ai=%d/%.2f" % [closed_ai.size(), nearest.call(closed_ai)])
+	sim._team_descriptors[0]["is_ai"] = false
+	_force_gate(gate_row, true)
+	# Injected-roster launch shape (review 2026-08-19 finding 2): lobby rows
+	# carry NO start_index when nobody picked a start position, yet the cooked
+	# map authors team_start_indices and the teams spawn at those seats
+	# (_ai_start_waypoint_name). The castle's authored Player_N owner must
+	# resolve through the same table instead of landing on the civilian team —
+	# where the player's own open gate blocked his troops via the enemy branch.
+	var seat_table: Dictionary = sim._configured_team_start_indices as Dictionary
+	_check("helms_deep_map_authors_seat_table", not seat_table.is_empty(), str(seat_table))
+	var saved_descriptors := {}
+	for team_key in sim._team_descriptors.keys():
+		var original: Dictionary = sim._team_descriptors[team_key]
+		saved_descriptors[team_key] = original.duplicate(true)
+		var stripped := original.duplicate(true)
+		stripped.erase("start_index")
+		sim._team_descriptors[team_key] = stripped
+	var player1_team := int(sim._castle_fixture_team("Player_1"))
+	_check(
+		"rosterless_start_rows_keep_player1_fixtures_owned",
+		player1_team != sim.CASTLE_CIVILIAN_TEAM and int(seat_table.get(player1_team, -1)) == 0,
+		"player1_team=%d seat_table=%s" % [player1_team, str(seat_table)]
+	)
+	for team_key in saved_descriptors:
+		sim._team_descriptors[team_key] = saved_descriptors[team_key]
 	root.remove_child(slice)
 	slice.free()
 	await process_frame
@@ -354,10 +417,10 @@ func _test_configuration_based_seam() -> void:
 	var portal: Dictionary = gate_found.get("fake_pathfind_portal", {}) as Dictionary
 	_check("seam_portal_denies_enemies", portal.has("allow_enemies") and bool(portal.get("allow_enemies", true)) == false)
 	_check("seam_portal_denies_non_skirmish_ai", portal.has("allow_non_skirmish_ai") and bool(portal.get("allow_non_skirmish_ai", true)) == false)
-	# AllowNonSkirmishAIUnits is authored, cooked and stored but consumed by
-	# nothing in the sim (no skirmish-AI unit flag exists): the gap is NAMED.
+	# AllowNonSkirmishAIUnits is authored, cooked and stored and is now
+	# consumed and enforced by the sim.
 	var gaps: Array = gate_found.get("gate_portal_gaps", []) as Array
-	_check("seam_allow_non_skirmish_ai_gap_named", gaps.has("AllowNonSkirmishAIUnits"), "gaps=%s" % str(gaps))
+	_check("seam_allow_non_skirmish_ai_enforced", not gaps.has("AllowNonSkirmishAIUnits"), "gaps=%s" % str(gaps))
 	_check("seam_gate_behavior_open_by_default", bool((gate_found.get("gate_behavior", {}) as Dictionary).get("open", false)))
 
 func _test_toggle_gate_command() -> void:
@@ -434,7 +497,7 @@ func _test_toggle_gate_command() -> void:
 	sim.advance(1)
 	var after_destroyed = bool(gate.get("gate_behavior", {}).get("open", false))
 	_check("toggle_gate_destroyed_fails", before_destroyed == after_destroyed, "before=%s after=%s result=%s" % [before_destroyed, after_destroyed, sim.last_command_result])
-	
+
 	root.remove_child(slice)
 	slice.free()
 
