@@ -187,9 +187,15 @@ const PIN_TICKS := 3000
 ## bounded facing instead. Acceleration and braking remain the existing authored
 ## values; rows with no positive authored rate keep snap/direct movement.
 ##
-## Measured twice before changing this constant, identical in:
-##   workspace/logs/loco-b-retail-state-pin-old-expected-r2.txt
-##   workspace/logs/loco-b-retail-state-pin-old-expected-r3.txt
+## The original LOCO-B measurement was pre-merge and is not accepted as the
+## final pin. After merging main c0a4f2c (castle gate discs, fixture ownership,
+## formation-modifier plumbing), the merged tree was measured twice from
+## scratch. Both runs independently produced the same b025d162... digest:
+##   workspace/logs/loco-b-rework-state-pin-measure-1.txt
+##   workspace/logs/loco-b-rework-state-pin-measure-2.txt
+## Main's additions are therefore measured pin-neutral for this non-castle
+## scenario; the old 0e4bcdbf... -> b025d162... movement remains attributable
+## solely to LOCO-B's heading-bounded ground translation described above.
 ## ---------------------------------------------------------------------------
 const EXPECTED_HASH := "b025d16237ff644d66211a9cc26872f18b61520b9a377f11e9e99c6eceb43f58"
 const SUBMIT_THROUGH_TICK := 1500

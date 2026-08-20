@@ -17,10 +17,10 @@ extends SceneTree
 ##   locomotor.ini:1347-1367
 ##     MumakilLocomotor TurnTime = 9000 (40 deg/s), Acceleration = 750,
 ##     SlowTurnRadius = 2, Braking = 1000, MinTurnSpeed = 12%.
-##   object/goodfaction/units/men/gondorfighter.ini:853-856
-##     GondorFighter binds HumanLocomotor at NORMAL_GOOD_FAST_MEMBER_SPEED.
-##   gamedata.ini:5938
-##     NORMAL_GOOD_FAST_MEMBER_SPEED = 55.
+##   object/goodfaction/units/men/gondorfighter.ini:851-855
+##     GondorFighter binds HumanLocomotor at NORMAL_FOOT_MED_MEMBER_SPEED.
+##   gamedata.ini:7903
+##     NORMAL_FOOT_MED_MEMBER_SPEED = 55.
 ##   locomotor.ini:142-152
 ##     HumanLocomotor TurnTime = 500 (720 deg/s), Acceleration/Braking = 510,
 ##     MinTurnSpeed = 0%.
