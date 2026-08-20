@@ -271,6 +271,70 @@ class CoverageWatchTests(unittest.TestCase):
             finally:
                 worker.join(5)
 
+    def test_a_faction_landing_at_the_deadline_still_times_out(self) -> None:
+        """The precondition for the lost-batch bug.
+
+        `_await_coverage` needs the fingerprint to hold across two consecutive
+        polls, so a faction that lands within one poll interval of the deadline
+        raises even though its coverage is now present and valid. That raise is
+        legitimate - what mattered was where it landed.
+        """
+
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "elves-coverage.json"
+            self._write(path, COVERAGE_DOC)
+            baseline = self.module.coverage_fingerprint(path)
+            # It lands right now, but the budget is already spent.
+            self._write(path, {**COVERAGE_DOC, "aggregateSha256": "d" * 64})
+            with self.assertRaises(TimeoutError):
+                self.module._await_coverage(
+                    path,
+                    baseline=baseline,
+                    accept_existing=False,
+                    deadline=time.monotonic(),
+                    poll_seconds=0.01,
+                    faction="elves",
+                )
+
+    def test_await_coverage_is_called_inside_proof_one_try(self) -> None:
+        """A late faction must cost its own row, not the whole batch report."""
+
+        source = PACK_PROOF.read_text(encoding="utf-8")
+        body = source.split("def proof_one(", 1)[1]
+        try_at = body.index("try:")
+        await_at = body.index("_await_coverage(")
+        self.assertLess(
+            try_at,
+            await_at,
+            "_await_coverage must be inside proof_one's try: raising from "
+            "outside it escapes future.result() and destroys the batch report",
+        )
+
+    def test_a_raising_worker_becomes_a_failed_row(self) -> None:
+        """collect_row never lets one worker's exception cost the batch."""
+
+        class _Boom:
+            def result(self):
+                raise TimeoutError("coverage did not land")
+
+        class _Fine:
+            def result(self):
+                return {"faction": "elves", "status": "publication-ready"}
+
+        row = self.module.collect_row(
+            "angmar", _Boom(), Path("angmar-coverage.json")
+        )
+        self.assertEqual(row["faction"], "angmar")
+        self.assertEqual(row["status"], "failed")
+        self.assertFalse(row["publicationReady"])
+        self.assertIn("TimeoutError", row["error"])
+
+        # And a healthy worker is passed through untouched.
+        self.assertEqual(
+            self.module.collect_row("elves", _Fine(), Path("elves-coverage.json")),
+            {"faction": "elves", "status": "publication-ready"},
+        )
+
     def test_a_missing_faction_is_a_failed_row_not_a_skipped_one(self) -> None:
         """The report must account for all seven, timeout or not."""
 

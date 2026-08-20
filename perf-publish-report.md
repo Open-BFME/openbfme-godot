@@ -446,6 +446,12 @@ factions compared: 7  mismatches: 0
 
 **35 bundle digests, zero mismatches**, 7/7 publication-ready in every run.
 
+> **Which run set:** these 35 are Part Two's concurrency stability matrix — 5 runs
+> (1 serial + 4 concurrent) x 7 factions, at commit `6df2682`. Part Four's §25 count
+> of 28 is a different, later set: 4 runs (1 serial + 3 overlap landing orders) x 7
+> factions, at `02e104b3`. The two are not comparable and neither supersedes the
+> other; they pin different properties.
+
 Every bundle from the surviving N=7 run re-verified **by the unmodified HEAD
 importer** (`PYTHONPATH=%TEMP%\obf-verify\importer`, a detached worktree of
 `eb8f55b`):
@@ -693,11 +699,14 @@ the packs stay directly comparable to a serial run while the watcher sees a fait
 240 s finish, order `men,elves,dwarves,isengard,mordor,wild,angmar`.
 
 **This flatters the result.** Men — the largest pack, ~150 s to publish — lands
-*first* and is fully hidden. I did not measure the adversarial order (Men last),
-which would expose Men's publish after the 240 s mark and land near 390 s. The real
-number depends on the order the convert lane emits factions in; it should emit
-**largest first** for exactly this reason. That is a recommendation, not something
-I verified.
+*first* and is fully hidden. The adversarial order (Men last) would expose Men's
+publish after the 240 s mark.
+
+> **Superseded by Part Four.** At the time of writing this section that was an
+> unverified prediction. It was measured in §21: men-last costs **385.7 s** against
+> **311.0 s** largest-first — a 74.7 s penalty, close to the ~390 s predicted here.
+> The recommendation that the convert lane emit largest-faction-first is therefore
+> now an empirical result, not a guess.
 
 Also unverified: real convert/publish contention. The simulator consumes almost no
 CPU, whereas a real convert would be saturating the box while these publishes run.
@@ -832,6 +841,11 @@ factions compared: 7  mismatches: 0
 **28 digests, zero mismatches**, 7/7 publication-ready in every run — including the
 worst-case order, where the fold and the watcher are under the most pressure.
 
+> **Which run set:** these 28 are Part Four's landing-order matrix — 4 runs
+> (1 serial + men-first + largest-first + men-last) x 7 factions, at `02e104b3`.
+> Part Two's §11 count of 35 is the earlier concurrency stability matrix (5 runs x 7)
+> at `6df2682`. Different sets, different properties; neither supersedes the other.
+
 ## 26. Isolation and hygiene for this round
 
 - **Coverage root isolated.** The simulator *rewrites* coverage documents, so both
@@ -867,4 +881,64 @@ The three levers that remain, none of them mine to pull unilaterally:
    total, one-for-one.
 3. **The residual per-faction floor** — the deepcopy fold was the last cheap win;
    further cuts mean the fail-closed attestation or the W3D lane.
+
+---
+
+# PART FIVE — pre-merge fixes from verification
+
+Three fixes on top of `02e104b3`. No other changes; no re-measurement (none of
+these alters a cooked byte, and the digest sets in §11 and §25 stand).
+
+## 28. A late faction could destroy the whole batch report (behavioural)
+
+`_await_coverage` was called in `proof_one` **before `row` existed and outside the
+`try`**. Because `_await_coverage` requires the fingerprint to hold across two
+consecutive polls, a faction landing within one poll interval of the deadline still
+raises `TimeoutError` — and from there it escaped `future.result()` and killed
+`main()`, discarding the batch report **including the rows of every faction that had
+already succeeded**. That directly contradicted this lane's own rule that a
+timed-out faction is a failed row, never a silent omission.
+
+Fixed twice, because the trigger and the blast radius are separate problems:
+
+1. The call moved **inside** `proof_one`'s `try`, after `row` is built, so a late
+   faction becomes a failed row like any other failure.
+2. New `collect_row()` wraps every `future.result()` — in both the watch dispatcher
+   and the plain concurrent path — so *any* escaping worker exception costs that
+   faction's row and nothing else. The batch report is the artifact of record.
+
+Three gates: the deadline-boundary raise (the precondition), a structural assertion
+that `_await_coverage` sits after `try:` inside `proof_one` (fails on the old
+ordering), and a `collect_row` test proving a raising worker becomes a failed row
+while a healthy one passes through untouched.
+
+## 29. A comment that argued from a false premise
+
+The `_definition_index` prefilter comment claimed `strip_sage_comments` "only ever
+REMOVES characters". **That is false** — `sage_cst.py:449` (`value += quote`)
+appends one in the malformed-unterminated-quote case.
+
+The conclusion survives on a stronger invariant, now stated in the comment: every
+removal path returns `raw[:index].rstrip()` or `raw.rstrip()`, so the result is
+always a contiguous **prefix** of the raw line, and the only character that can be
+appended is `"` or `'`. `"object"` contains no quote character, so a match can never
+straddle the appended one — it must lie wholly inside the prefix, hence inside the
+raw line. The letters are ASCII, which casefolds one-for-one, so this holds
+case-insensitively.
+
+Re-verified independently at this function's own scope (post `maps/` and
+`_contains_object_header` filters): **497 files, 546,504 lines, 5,176 header
+matches, 0 prefilter misses, append branch fired 0 times.** A wider-scope check
+reported different file and line totals (683 / 921,786 / 5,148) but the same two
+load-bearing results — 0 misses, 0 appends. The counts differ by corpus scoping;
+the soundness result does not.
+
+## 30. Report reconciliation
+
+- §20's "I did not measure the adversarial order (Men last)" was stale once §21
+  measured it. It now carries a superseded-by note pointing at the 385.7 s vs
+  311.0 s result, and records that its own ~390 s prediction proved close.
+- The **35** and **28** digest counts describe different run sets and each now says
+  so: 35 = Part Two's stability matrix (5 runs x 7 factions, `6df2682`); 28 =
+  Part Four's landing-order matrix (4 runs x 7 factions, `02e104b3`).
 

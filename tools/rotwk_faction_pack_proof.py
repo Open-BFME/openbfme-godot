@@ -206,6 +206,29 @@ def _await_coverage(
         time.sleep(poll_seconds)
 
 
+def collect_row(faction: str, future: Any, coverage_path: Path) -> dict[str, Any]:
+    """Turn one worker's outcome into a report row, never into a lost batch.
+
+    ``proof_one`` is meant to return a failed row rather than raise, but it is
+    a long function calling a lot of other code, and one escaping exception
+    used to take ``main()`` with it - discarding the rows of every faction that
+    had already succeeded. The batch report is the artifact of record; a worker
+    that dies must cost its own row, not everyone else's.
+    """
+
+    try:
+        return future.result()
+    except BaseException as exc:  # noqa: BLE001 - a lost report is worse
+        print(f"FAIL {faction}: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return {
+            "faction": faction,
+            "coverage": str(coverage_path),
+            "status": "failed",
+            "publicationReady": False,
+            "error": f"{type(exc).__name__}: {exc}"[:1200],
+        }
+
+
 def _pack_incomplete_args(*, allow_incomplete_pack: bool) -> list[str]:
     """Translate only the explicit pack-build waiver to the downstream CLI."""
 
@@ -567,19 +590,29 @@ def main(argv: list[str] | None = None) -> int:
 
     def proof_one(faction: str) -> dict[str, Any]:
         coverage_path = coverage_root / f"{faction}-coverage.json"
-        if args.watch_coverage:
-            # Already waited for by the dispatcher below; this call returns at
-            # once and exists so a serial watch run behaves identically.
-            _await_coverage(
-                coverage_path,
-                baseline=coverage_baseline.get(faction),
-                accept_existing=args.watch_accept_existing,
-                deadline=watch_deadline,
-                poll_seconds=args.watch_poll_seconds,
-                faction=faction,
-            )
         row: dict[str, Any] = {"faction": faction, "coverage": str(coverage_path)}
         try:
+            if args.watch_coverage:
+                # INSIDE the try, and after `row` exists, deliberately.
+                #
+                # The dispatcher has normally already seen this faction land,
+                # so this usually returns at once - but not always:
+                # `_await_coverage` requires the fingerprint to hold across two
+                # consecutive polls, so a faction that lands within one poll
+                # interval of the deadline can still time out HERE. Raised from
+                # outside the try, that TimeoutError escaped `future.result()`
+                # and killed `main()` outright, destroying the whole batch
+                # report - including the rows of every faction that had already
+                # succeeded. A late faction is a failed ROW, exactly like the
+                # dispatcher's own timeout path.
+                _await_coverage(
+                    coverage_path,
+                    baseline=coverage_baseline.get(faction),
+                    accept_existing=args.watch_accept_existing,
+                    deadline=watch_deadline,
+                    poll_seconds=args.watch_poll_seconds,
+                    faction=faction,
+                )
             if not coverage_path.is_file():
                 raise FileNotFoundError(f"missing coverage: {coverage_path}")
             coverage = _load_coverage(coverage_path)
@@ -877,7 +910,14 @@ def main(argv: list[str] | None = None) -> int:
                     break
                 time.sleep(args.watch_poll_seconds)
             timed_out = list(pending)
-            collected = {faction: futures[faction].result() for faction in futures}
+            collected = {
+                faction: collect_row(
+                    faction,
+                    futures[faction],
+                    coverage_root / f"{faction}-coverage.json",
+                )
+                for faction in futures
+            }
         rows = []
         for faction in factions:
             if faction in collected:
@@ -909,7 +949,12 @@ def main(argv: list[str] | None = None) -> int:
             # Submitted in order, collected in order, so the report row order
             # does not depend on which faction happened to finish first.
             futures = [pool.submit(proof_one, faction) for faction in factions]
-            rows = [future.result() for future in futures]
+            rows = [
+                collect_row(
+                    faction, future, coverage_root / f"{faction}-coverage.json"
+                )
+                for faction, future in zip(factions, futures)
+            ]
     else:
         rows = [proof_one(faction) for faction in factions]
     exit_code = 3 if any(row.get("status") == "failed" for row in rows) else 0

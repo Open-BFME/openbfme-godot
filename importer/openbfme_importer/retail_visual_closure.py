@@ -363,13 +363,32 @@ def _definition_index(
         # know whether that file belongs to the requested target closure.
         text = source.decode("cp1252")
         for line_number, raw_line in enumerate(text.splitlines(), start=1):
-            # Superset prefilter, not a semantic change: `strip_sage_comments`
-            # only ever REMOVES characters, so a line whose raw form does not
-            # contain "object" cannot contain it after stripping either, and
-            # `_OBJECT_HEADER` cannot match without it. Skipping those lines
-            # avoids a comment-strip and a regex on the overwhelming majority
-            # of a 920-file INI corpus - measured 5.62 s -> 3.38 s, byte
-            # identical index.
+            # Superset prefilter, not a semantic change.
+            #
+            # Careful with the reason, because the obvious one is WRONG:
+            # `strip_sage_comments` does not only remove characters. In the
+            # malformed-unterminated-quote case it APPENDS one
+            # (`sage_cst.py:449`, `value += quote`).
+            #
+            # The invariant that actually holds is stronger than needed:
+            # every removal path returns `raw[:index].rstrip()` or
+            # `raw.rstrip()`, so the result is always a contiguous PREFIX of
+            # the raw line, and the single character that can be appended is
+            # `"` or `'`. "object" contains no quote character, so a match in
+            # the stripped line can never straddle the appended one - it must
+            # lie wholly inside that prefix, and therefore inside the raw
+            # line. (The letters are ASCII, which casefolds one-for-one, so
+            # the same holds case-insensitively.) A raw line without "object"
+            # therefore cannot produce a `_OBJECT_HEADER` match.
+            #
+            # Verified differentially over the real corpus, at this function's
+            # own scope (post `maps/` and `_contains_object_header` filters):
+            # 497 files, 546,504 lines, 5,176 header matches, and 0 lines
+            # skipped that would have matched. The append branch fired 0 times.
+            # An independent check at a wider scope reported different file and
+            # line totals but the same two load-bearing results - 0 misses,
+            # 0 appends. Measured 5.62 s -> 3.38 s for a byte-identical
+            # 4,683-key index.
             if "object" not in raw_line.casefold():
                 continue
             match = _OBJECT_HEADER.fullmatch(
