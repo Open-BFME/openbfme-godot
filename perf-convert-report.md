@@ -1581,3 +1581,232 @@ Section 12 (Option C) specifically:
 - The publish stage was still not run from this lane, so the composed
   convert+publish end-to-end number belongs to the publish lane's measurement,
   not to this report.
+
+## 14. Diagnosis of the 420 s pool floor (analysis only — nothing implemented)
+
+Evidence already on disk, no new runs. Two independent sources:
+
+- **Per-object convert times** from the `--convert-jobs 1` run's shard payloads
+  (`reports/produce-shards/a26f9f8382a24324a26867e658d9a479/`, N=24, marker B).
+  One thread per worker, so `convertElapsedMs` is true serial time per object,
+  not inflated by intra-process threading.
+- **Per-job stage boundaries** from the worker progress logs
+  (`reports/produce-workers/produce-worker*.log`), N=20 marker C: 140 jobs,
+  378 objects.
+
+### 14.1 (a) straggler tail or (b) uniform saturation? — **(b), decisively**
+
+| | |
+|---|---|
+| pool wall, N=24 | 423.2 s |
+| pool core-second budget (24 x 423.2) | 10 152 core-s |
+| slowest **single object** | MenSpellBook, **115.1 s** |
+| slowest **single shard job** | Dwarves shard 0, **122.9 s** |
+
+The slowest unit of work is 122.9 s against a 423.2 s wall. **No object and no
+job sets the finish time** — the pool could lose its worst job entirely and
+finish ~1 s earlier. Utilisation is the story, not the tail:
+
+```
+N=20 (marker C), pool budget 9 426 core-s
+  per-job setup     980 core-s  10.4%
+  PLAN stage      3 382 core-s  35.9%   (8.95 s/object)
+  CONVERT loop    3 934 core-s  41.7%  (10.41 s/object)
+  idle / unaccounted            1 130 core-s  12.0%
+```
+
+Cross-check: the independent N=24 `j=1` shard payloads give **4 125.5 core-s**
+of convert for 378 objects (10.9 s/object) against 3 934 core-s (10.41
+s/object) from the N=20 logs — within 5 %, two different runs, two different
+extraction paths. The 12 % idle is worker start-up (~6 s x 20) plus the queue
+draining unevenly at the end.
+
+Per-object histogram (N=24, `j=1`, 378 objects, 4 125.5 core-s of convert):
+
+| bucket | n | core-s | share |
+|---|---|---|---|
+| 0-1 s | 14 | 0.4 | 0.0 % |
+| 1-2 s | 1 | 1.9 | 0.0 % |
+| 2-5 s | 55 | 223.1 | 5.4 % |
+| **5-10 s** | **193** | **1 290.9** | **31.3 %** |
+| **10-20 s** | **80** | **1 093.3** | **26.5 %** |
+| 20-40 s | 16 | 504.5 | 12.2 % |
+| 40-80 s | 18 | 896.5 | 21.7 % |
+| >= 80 s | 1 | 115.1 | 2.8 % |
+
+The mass is in the middle: **273 objects costing 5-20 s carry 58 % of the
+work.** The top 20 objects together are ~1 048 core-s, 25 % of convert — real,
+but nothing you could fix twenty objects and be done with.
+
+By family (convert only):
+
+| family | n | core-s | share | mean |
+|---|---|---|---|---|
+| playable-unit | 172 | 2 320.7 | 56.3 % | 13.49 s |
+| structure | 169 | 1 241.9 | 30.1 % | 7.35 s |
+| **spellbook** | **7** | **428.9** | **10.4 %** | **61.26 s** |
+| banner-carrier | 23 | 134.1 | 3.2 % | 5.83 s |
+| create-a-hero | 7 | 0.0 | 0.0 % | 0.00 s |
+
+Top 20 slowest objects:
+
+```
+ 115.07s Men      spellbook      MenSpellBook
+  71.85s Dwarves  spellbook      DwarvesSpellBook
+  62.07s Isengard spellbook      IsengardSpellBook
+  61.61s Mordor   spellbook      MordorSpellBook
+  53.80s Men      playable-unit  ElvenGaladriel_RingHero
+  53.27s Men      playable-unit  GondorArcher
+  52.18s Men      playable-unit  GondorArcherHorde
+  50.94s Dwarves  playable-unit  DwarvenGuardianHorde
+  49.75s Men      playable-unit  GondorAragornMP
+  47.40s Men      playable-unit  RohanEowyn
+  47.08s Men      playable-unit  GondorFighter
+  46.44s Men      playable-unit  GondorTrebuchet
+  46.16s Men      playable-unit  GondorFighterHorde
+  45.93s Elves    spellbook      ElvesSpellBook
+  44.37s Dwarves  playable-unit  DwarvenGimli
+  42.23s Dwarves  playable-unit  DwarvenGloin
+  41.00s Men      structure      GondorBattleTower
+  40.27s Men      structure      MenFortressCitadel
+  40.14s Wild     spellbook      WildSpellBook
+  39.18s Men      structure      GondorMarketPlace
+```
+
+**Every faction's spellbook is in the top 20.** Six of seven are; the seventh
+(Angmar) is just outside.
+
+### 14.2 The straggler effect that IS real — and it is not the wall
+
+Stragglers do not set the batch wall, but they **do** set per-faction emission
+order, which is what §12.3 is for. The men/dwarves inversion has an exact cause:
+
+```
+115.2s  Men  shard  8  objects=1     <- MenSpellBook, alone in its shard
+122.9s  Dwarves shard 0  objects=2
+```
+
+Men's convert work is 1 283.6 core-s over 24 shards — 53 s per shard if
+balanced — but its slowest shard was 115.2 s, a **2.2x imbalance**, because
+sharding is a hash of the object id and the single most expensive object in
+every faction lands wherever the hash puts it. That is why men finished 10.5 s
+after dwarves despite being dispatched first.
+
+### 14.3 Where the seconds go: the same descriptor is compiled three times
+
+This is the finding, and it is structural rather than a hot loop. Grepping the
+descriptor compile call sites in `faction_import.py`:
+
+```
+ 684  compile_playable_structure_descriptor(   <- PLAN
+ 721  compile_spellbook_descriptor(            <- PLAN
+ 761  compile_playable_unit_descriptor(        <- PLAN
+1277  compile_playable_structure_descriptor(   <- CONVERT
+1431  compile_spellbook_descriptor(            <- CONVERT draft
+1480  compile_spellbook_descriptor(            <- CONVERT final
+1544  compile_playable_unit_descriptor(        <- CONVERT draft
+1581  compile_playable_unit_descriptor(        <- CONVERT final
+```
+
+For a **unit** — 56 % of the work — the descriptor is compiled **three times**
+per object per run:
+
+1. `_plan_one` (761), to get `descriptorSha256` and `sourceDocumentPaths`;
+2. the convert **draft** (1544), to discover which media and strings the object
+   needs;
+3. the convert **final** (1581), the same compile again with the resolved
+   images/audio/strings injected.
+
+**Calls 1 and 2 are the identical call.** Same `object_id`, same `documents`,
+same `faction_graph`, same `prepared`, same `game`, same
+`engine_spawned_banner_carrier` — no argument differs. Only call 3 differs, and
+only by the three `resolved_*` injections. Spellbooks have the same shape (721 /
+1431 / 1480), which is why every faction's spellbook is a top-20 object: its
+descriptor is the whole faction spell store and it is built three times.
+Structures compile twice (684 / 1277).
+
+This is §1's "Sink B — the plan stage is a second, serial, uncached full
+compile" restated at object level. `a5fc47c`'s durable plan-row cache made it
+free on a *warm* run; it does nothing on the cold run that this bar is about,
+because both the plan row and the object entry miss together.
+
+That the plan stage measures **8.95 s/object** — essentially nothing but that
+compile plus cache bookkeeping — is the size of the duplicate.
+
+### 14.4 Proposed cut, with predicted numbers (NOT implemented)
+
+**Cut 1 — collapse the plan compile and the convert draft (in-process memo).**
+The redundant pair is compiled in the same process for the same object in both
+the pooled worker (it plans and converts its own shard) and the serial parent.
+A memo keyed on `(object_id, id(documents), id(prepared), game, banner_flag)`,
+single-flighted like §1's other shared caches and cleared with the existing
+prepared-compiler memo, returns the plan's descriptor to the convert draft.
+The compilers already fail closed when `prepared.documents is not documents`,
+so identity — not equality — is the right key and the existing guard backs it.
+*Saving: the whole plan stage, ~3 382 core-s of 9 426 (36 %).* Scaled to N=24:
+~3 640 of 10 152 core-s. **Pool 423 s -> ~271 s.**
+
+**Cut 2 — hoist the per-job corpus digests to per-process.** `setup` is 980
+core-s (10.4 %), ~7 s on every job after the first. `document_hashes`,
+`full_corpus_closure` and `durable_non_ini_assets_fingerprint` are recomputed
+inside `build_faction_conversion` on every call, and they are functions of the
+*corpus*, not the faction — identical across all seven factions in one worker.
+Memoize on `id(documents)` / the effective root. *Saving: ~700-800 core-s.*
+**Pool ~271 s -> ~242 s.**
+
+**Cut 3 — the parent's 162 s of serial overhead.** ~63 s process start-up
+(catalog load + effective-assets verification), ~42 s short-circuit probe,
+~19 s census fan-out, ~38 s ledger-summary and batch-report writes. The probe is
+seven independent lookups done in a loop and is trivially parallel; the
+effective-assets verification result is a pure function of a sealed tree and
+could be cached against its own manifest digest; the ledger summary is written
+after every faction row rather than streamed. *Saving: ~75 s if all three land.*
+
+| stage | today | after cuts 1+2 | after 1+2+3 |
+|---|---|---|---|
+| pool | 423 s | 242 s | 242 s |
+| parent serial | 162 s | 162 s | ~87 s |
+| **seven-faction compiler-edit cold** | **522 s** | **~404 s / 6.7 min** | **~330 s / 5.5 min** |
+
+**Answer to the question this diagnosis was commissioned to settle: the
+5-minute bar is reachable, but not by any one change.** Cut 1 alone lands ~6.9
+min. All three land ~5.5 min — close enough that the remaining half-minute would
+have to come from a fourth item (most likely the ~2 300 core-s of
+`playable-unit` convert that is not descriptor compile: recipes, visual closure,
+runtime documents), and I would not promise 5 min without measuring cut 1 first.
+Every number above is a projection from measured stage shares and is labelled as
+such; the only way to know is to build cut 1 and re-run the same seven-faction
+compiler-edit batch.
+
+**Cut 0 — cheap, orthogonal, and it fixes §12.3's inversion.** Shard by
+*predicted cost* rather than by id hash: put each faction's spellbook in its own
+shard and distribute the rest largest-first (prior-run `convertElapsedMs` is
+already in the durable object cache and in every coverage document, so the
+predictor is free). Men's slowest shard was 115.2 s against a 53 s balanced
+ideal; balancing would pull men's completion from 308 s toward ~260 s and make
+largest-first dispatch actually produce largest-first *completion*. This does
+not move the batch wall — §14.1 — it moves when the publish lane can start.
+
+### 14.5 One hypothesis I could NOT confirm, and the cheap test for it
+
+`GondorArcher` 53.3 s and `GondorArcherHorde` 52.2 s; `GondorFighter` 47.1 s and
+`GondorFighterHorde` 46.2 s; `DwarvenGuardianHorde` 50.9 s. Horde objects cost
+about the same as their member unit, which is consistent with the horde's
+compile re-doing the member's compile from scratch — shared work that an
+intra-process memo on the member id would collapse. **I did not verify this**
+and I am not going to assert it from a coincidence of timings. The cheap test:
+instrument `compile_playable_unit_descriptor` with a per-process call counter
+keyed by `object_id` and run one faction; if `GondorArcher` is compiled more
+than three times (plan, draft, final), the horde is re-entering it and cut 1's
+memo will pick that up for free. That measurement is two minutes of a window,
+not a lane.
+
+### 14.6 An evidence-hygiene defect in my own tooling
+
+`reports/produce-workers/produce-worker<i>.log` is **not run-scoped**, so the
+N=20 run overwrote workers 0-19 of the N=24 run and only workers 20-23 survived.
+My first pass at the stage split silently mixed the two runs (173 jobs / 450
+objects — impossible for either run alone) before I noticed. The numbers above
+are the clean N=20-only subset (140 jobs / 378 objects), cross-checked against
+the N=24 shard payloads, which *are* run-scoped. The log path should carry the
+run id. Not fixed here — §14 is analysis only.
