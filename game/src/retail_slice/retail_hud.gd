@@ -75,6 +75,11 @@ const RETAIL_TRAIN_LABEL_ID := "CONTROLBAR:ConstructGondorFighterHorde"
 const RETAIL_TRAIN_TOOLTIP_ID := "CONTROLBAR:ToolTipBuildGondorFighterHorde"
 const RETAIL_COMMAND_BAR_IMAGE_ID := "SGCommandBar"
 const RETAIL_COMMAND_BAR_SOURCE_SIZE := Vector2i(1024, 256)
+## `NonCommand_SelectAllHeroes` has no ButtonImage (commandbutton.ini:3494-3497).
+## Retail does author this exact good-hero group glyph for the Men fortress's
+## hero selector (Command_SelectRevivablesMenFortress:13169-13177), and the
+## selected Men interface-art index ships it. Do not substitute invented art.
+const RETAIL_HERO_SELECT_ALL_IMAGE_ID := "UCCommon_GoodHeroes"
 const RETAIL_PALANTIR_FRAME_ATLAS := "assets/ui/palantir/atlases/apt-palantirexport-17-fb63d3d26008.png"
 const RETAIL_PALANTIR_ATLAS := "assets/ui/palantir/atlases/apt-palantir-1-d9888d52cd89.png"
 const RETAIL_PALANTIR_FRAME_SOURCE_SIZE := Vector2i(384, 256)
@@ -2445,6 +2450,15 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 		else:
 			portrait_validated[String(spec["unit_id"])] = validation
 	var control_bar_validation: Dictionary = {}
+	var hero_select_all_validation := _validate_retail_image(
+		content_db,
+		expected_pack_root,
+		RETAIL_HERO_SELECT_ALL_IMAGE_ID,
+		Vector2i.ZERO
+	)
+	var hero_select_all_error := String(hero_select_all_validation.get("error", ""))
+	if hero_select_all_error != "":
+		validation_errors.append(hero_select_all_error)
 	if not use_apt:
 		control_bar_validation = _validate_retail_image(
 			content_db,
@@ -2494,6 +2508,11 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 		}
 	selection_portrait.set_meta("retail_portrait_bindings", portrait_bindings)
 	retail_portraits_bound = true
+	_hero_select_all_button.icon = hero_select_all_validation["texture"] as Texture2D
+	_hero_select_all_button.expand_icon = true
+	_hero_select_all_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_hero_select_all_button.set_meta("retail_image_id", RETAIL_HERO_SELECT_ALL_IMAGE_ID)
+	_hero_select_all_button.set_meta("retail_image_path", String(hero_select_all_validation["path"]))
 	if use_apt:
 		var frame_texture := retail_apt_runtime.exact_atlas_texture(RETAIL_PALANTIR_FRAME_ATLAS)
 		_retail_palantir_atlas = retail_apt_runtime.exact_atlas_texture(RETAIL_PALANTIR_ATLAS)
@@ -2861,6 +2880,11 @@ func _clear_retail_command_bindings(hide_commands: bool) -> void:
 	_retail_train_label = ""
 	_retail_train_labels.clear()
 	_retail_portrait_textures.clear()
+	if _hero_select_all_button != null:
+		_hero_select_all_button.icon = null
+		for metadata_key in ["retail_image_id", "retail_image_path"]:
+			if _hero_select_all_button.has_meta(metadata_key):
+				_hero_select_all_button.remove_meta(metadata_key)
 	if selection_portrait != null:
 		selection_portrait.texture = null
 		selection_portrait.visible = false
