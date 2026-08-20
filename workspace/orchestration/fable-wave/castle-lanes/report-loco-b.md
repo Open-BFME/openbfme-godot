@@ -1,9 +1,13 @@
 # LOCO-B rework — authored close-turn arrival
 
-Date: 2026-08-19  
-Rejected implementation: `14e5684`  
-Rework implementation: `657c43c`  
-Required main merged: `c0a4f2c` (merge commit `0811a7d`)  
+Date: 2026-08-19
+
+Rejected implementation: `14e5684`
+
+Rework implementation: `657c43c`
+
+Required main merged: `c0a4f2c` (merge commit `0811a7d`)
+
 Content root: `C:\Users\Jonathan\Desktop\open-bfme\workspace\content-packs`
 
 ## Result
