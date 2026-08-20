@@ -443,6 +443,7 @@ def build_faction_import_plan(
     catalog_identity_sha256: str,
     game: str = "bfme2",
     plan_jobs: int | None = None,
+    object_selector: Callable[[str], bool] | None = None,
     row_cache: FactionPlanRowCache | None = None,
     row_cache_assets_fp: str = "",
     row_cache_graph_identity: str = "",
@@ -812,6 +813,13 @@ def build_faction_import_plan(
     # a caller or OPENBFME_FACTION_PLAN_JOBS asks otherwise. The real batch win
     # is elsewhere — one shared parsed corpus across all seven factions.
     ordered_ids = sorted(object_ids, key=lambda value: (value.casefold(), value))
+    if object_selector is not None:
+        # Cache-warming shard: compute and cache rows for a subset only. The
+        # returned plan is deliberately partial and is never used as a plan —
+        # the parent recomputes the whole plan and finds these rows cached.
+        ordered_ids = [
+            object_id for object_id in ordered_ids if object_selector(object_id)
+        ]
     workers = resolve_plan_worker_count(plan_jobs)
 
     # Durable plan-row cache. Planning is a full second descriptor compile per
@@ -1677,6 +1685,7 @@ def build_faction_conversion(
     catalog: InstallCatalog | None = None,
     state_root: Path | None = None,
     convert_jobs: int | None = None,
+    object_selector: Callable[[str], bool] | None = None,
     game: str = "bfme2",
 ) -> dict[str, object]:
     """Convert every supported plan row and account for the rest, fail-closed.
@@ -1723,6 +1732,7 @@ def build_faction_conversion(
         documents,
         catalog_identity_sha256=catalog_identity_sha256,
         game=game,
+        object_selector=object_selector,
         row_cache=plan_row_cache,
         row_cache_assets_fp=assets_fp,
         row_cache_graph_identity=graph_identity_sha256,
@@ -1769,6 +1779,15 @@ def build_faction_conversion(
     source_null_sets = _source_null_command_set_ids(faction_graph)
 
     plan_objects = list(plan["objects"])
+    if object_selector is not None:
+        # Cache-warming shard. The coverage document this produces is partial
+        # by construction and must never be published; the parent recomputes
+        # the whole faction and finds these objects cached.
+        plan_objects = [
+            row
+            for row in plan_objects
+            if isinstance(row, Mapping) and object_selector(str(row.get("id", "")))
+        ]
     numeric_defines_sha256 = (
         hashlib.sha256(
             json.dumps(
@@ -2062,6 +2081,7 @@ def convert_faction_import(
     artifact_writer: Callable[[str, str, Mapping[str, object]], None] | None = None,
     state_root: Path | None = None,
     convert_jobs: int | None = None,
+    object_selector: Callable[[str], bool] | None = None,
     game: str = "bfme2",
 ) -> dict[str, object]:
     """Convert one faction's supported objects and account for every other row."""
@@ -2272,6 +2292,7 @@ def convert_faction_import(
         catalog=catalog,
         state_root=state_root,
         convert_jobs=convert_jobs,
+        object_selector=object_selector,
         game=game,
     )
 

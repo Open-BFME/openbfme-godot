@@ -424,5 +424,14 @@ class FactionObjectCache:
             "row": dict(row),
             "artifacts": stored,
         }
-        with _LOCK:
-            write_json_atomic(entry / "artifacts.json", payload)
+        try:
+            with _LOCK:
+                write_json_atomic(entry / "artifacts.json", payload)
+        except OSError:
+            # A cache we cannot write is a cache we do without. On Windows
+            # ``os.replace`` raises PermissionError (WinError 5) when a
+            # concurrent reader holds the destination open; with parallel
+            # convert workers sharing one cache root that is routine. Failing
+            # to store an entry only costs a recompute next run, so it must
+            # never surface as a converter gap.
+            return

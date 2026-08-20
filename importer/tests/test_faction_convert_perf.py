@@ -7,6 +7,7 @@ optimized path must return exactly what the unoptimized path returned.
 from __future__ import annotations
 
 import json
+import sys
 import threading
 from pathlib import Path
 
@@ -769,6 +770,102 @@ def test_media_conversion_key_is_independent_of_doc_compilers() -> None:
         "asset_id",
         "patterns",
     }
+
+
+def _load_batch_module():
+    """Import tools/rotwk_faction_convert_batch.py without running it."""
+
+    import importlib.util
+
+    root = Path(__file__).resolve().parents[2]
+    path = root / "tools" / "rotwk_faction_convert_batch.py"
+    spec = importlib.util.spec_from_file_location("_convert_batch_probe", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["_convert_batch_probe"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_object_shards_partition_every_id_exactly_once() -> None:
+    """Shards must cover the object set once each — no gaps, no duplicates."""
+
+    batch = _load_batch_module()
+    ids = [f"GondorObject{index}" for index in range(500)] + [
+        "MenSpellBook",
+        "CreateAHero",
+    ]
+    for count in (1, 2, 3, 8, 20):
+        selectors = [batch.shard_selector(index, count) for index in range(count)]
+        owners = [
+            [index for index, sel in enumerate(selectors) if sel(object_id)]
+            for object_id in ids
+        ]
+        assert all(len(owner) == 1 for owner in owners), count
+    # Every shard of a 20-way split gets work from 500 ids (balance sanity).
+    selectors = [batch.shard_selector(index, 20) for index in range(20)]
+    sizes = [sum(1 for object_id in ids if sel(object_id)) for sel in selectors]
+    assert min(sizes) > 0, sizes
+
+
+def test_object_shard_assignment_is_stable_and_case_insensitive() -> None:
+    batch = _load_batch_module()
+    selector = batch.shard_selector(3, 8)
+    assert selector("GondorArcher") is selector("gondorarcher")
+    assert selector("GondorArcher") == batch.shard_selector(3, 8)("GondorArcher")
+
+
+def test_object_selector_restricts_the_plan_without_changing_rows() -> None:
+    """A sharded plan is a strict subset of the whole plan, row for row."""
+
+    documents, graph = _fixture()
+    whole = build_faction_import_plan(
+        graph, documents, catalog_identity_sha256="2" * 64
+    )
+    whole_rows = {str(row["id"]): row for row in whole["objects"]}
+
+    batch = _load_batch_module()
+    seen: dict[str, dict] = {}
+    for index in range(3):
+        shard = build_faction_import_plan(
+            graph,
+            documents,
+            catalog_identity_sha256="2" * 64,
+            object_selector=batch.shard_selector(index, 3),
+        )
+        for row in shard["objects"]:
+            object_id = str(row["id"])
+            assert object_id not in seen, f"{object_id} planned by two shards"
+            seen[object_id] = row
+
+    assert set(seen) == set(whole_rows)
+    for object_id, row in seen.items():
+        assert row == whole_rows[object_id], object_id
+
+
+def test_plan_row_order_is_by_object_id_not_completion_order() -> None:
+    """Parent-side ordering must be deterministic regardless of scheduling."""
+
+    documents, graph = _fixture()
+    plan = build_faction_import_plan(
+        graph, documents, catalog_identity_sha256="2" * 64, plan_jobs=8
+    )
+    ids = [str(row["id"]) for row in plan["objects"]]
+    assert ids == sorted(ids, key=lambda value: (value.casefold(), value))
+
+
+def test_object_cache_put_survives_a_refused_atomic_write(monkeypatch, tmp_path) -> None:
+    """WinError 5 from a concurrent reader must degrade to a miss, not raise."""
+
+    from openbfme_importer import faction_object_cache as foc
+
+    cache = foc.FactionObjectCache(tmp_path / "objects")
+
+    def _refuse(path, value):
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr(foc, "write_json_atomic", _refuse)
+    cache.put("a" * 64, row={"id": "X", "status": "converted"}, artifacts={})
+    assert cache.get("a" * 64) is None
 
 
 def test_worker_count_resolution_is_explicit(monkeypatch) -> None:

@@ -668,7 +668,148 @@ Suite: 443 passed / 12 skipped / 1 failed across
 failure being the same pre-existing environmental
 `test_horde_dispatch_graphs_cover_exact_effective_retail_corpora`.
 
-## 8. Not verified
+## 8. Object-level process pool (fourth lane, on 164f5d0)
+
+Logs: `pool-serial-men.log`, `pool-parallel2-men.log`, and per-shard logs under
+`<state>/reports/warm-shards/`. The publish agent was finished; the machine was
+otherwise idle for these runs, which is why the serial cold men baseline here
+(501 s) is faster than the loaded-machine figures in §6 (688 s).
+
+### 8.1 Prerequisite
+
+`FactionObjectCache.put` now swallows `OSError`, matching
+`FactionPlanRowCache.put`. On Windows `os.replace` raises
+`PermissionError (WinError 5)` when a concurrent reader holds the destination —
+routine once workers share a cache root. Failing to store an entry costs a
+recompute next run; it must never surface as a converter gap.
+`test_object_cache_put_survives_a_refused_atomic_write` pins it.
+
+### 8.2 Design: workers warm caches, the parent alone writes
+
+`--object-procs N` runs a warm-up phase before the ordinary serial pass. Each
+worker process is the same script in `--warm-shard i/N` mode: it converts only
+its shard and writes **only** the durable plan-row and object caches — no
+coverage, no ledger, no artifacts. The parent then runs its normal serial pass
+and finds the work done.
+
+This is deliberately not a "workers return rows" design. Because the parent
+recomputes and assembles exactly as it always did, byte-identity with a serial
+run is **structural** rather than something I have to defend row by row, row
+ordering stays sorted by object id, and a crashed or slow worker costs time
+only — the parent recomputes whatever the shard missed and logs
+`WARM_SHARD_FAILED`.
+
+Sharding is a stable digest of the folded object id modulo N, so a worker never
+needs the faction's object list up front and the split is reproducible.
+Workers are pooled across *all* requested factions — one process per shard
+index handling that shard of every faction — so the ~35 s catalog and corpus
+load is paid once per process, not once per faction per process. Item 4 of the
+brief warned about exactly this and the first implementation got it wrong
+(one process per faction-shard); the shard logs are what exposed it.
+
+### 8.3 Measured, men, both runs fully cold in isolated cache roots
+
+| | wall | detail |
+|---|---|---|
+| serial (`--object-procs` unset) | **501.2 s** | plan 182 s, 0 cache hits |
+| pooled, `--object-procs 12` | **254.2 s** | warm pool 215.6 s + parent pass 38.6 s, 61/61 plan rows and 59 objects then cached |
+
+**1.97x on a single faction.** Byte-identity, serial vs pooled:
+
+```
+ARTIFACT_FILES a=183 b=183   ONLY_A 0   ONLY_B 0   DIFFERING 0
+COVERAGE_AGGREGATE_EQUAL True
+PLAN_AGGREGATE_EQUAL True
+COVERAGE_ROWS a=61 b=61 differing=0 []
+IDENTICAL True
+```
+
+The per-shard logs give the cost structure directly:
+
+```
+shard  5/12: objects=1 wall=78.5 s      <- essentially all fixed cost
+shard  0/12: objects=8 wall=206.9 s
+shard  7/12: objects=8 wall=211.4 s     <- sets the pool wall (215.6 s)
+```
+
+**Fixed startup is ~75 s per worker** (catalog + INI corpus + prepared index +
+census), and 61 objects over 12 shards is lumpy (1 to 8 objects). One faction is
+simply too small to parallelise 12 ways: half the pool wall is startup.
+
+### 8.4 Seven factions: derived, not measured
+
+I could not measure the seven-faction case. The lane brief restricts me to
+`men`, and a serial seven-faction cold baseline is ~58 minutes of wall clock
+(7 x 501 s) which I did not have left. So the following is arithmetic from
+measured parts, and is labelled as such:
+
+- per-worker fixed cost, paid once now that a process spans all factions:
+  ~35 s corpus + 7 x ~17 s census = **~154 s**
+- convertible work: 7 x ~456 s = **~3192 core-seconds**
+- parent serial pass over warm caches: 7 x ~39 s = **~273 s**
+
+| N | pool wall | + parent | total |
+|---|---|---|---|
+| 12 | 154 + 266 = 420 s | 273 s | **~11.6 min** |
+| 16 | 154 + 200 = 354 s | 273 s | **~10.5 min** |
+| 20 | 154 + 160 = 314 s | 273 s | **~9.8 min** |
+
+Against ~58 min serial that is roughly **5-6x**, and **it does not reach the
+owner's 5-minute bar.** Recommended `N` is **16** on this 24-core host: past
+that the per-worker fixed cost stops being amortised by the shrinking work
+slice, and 420-odd objects shard evenly enough at 16.
+
+### 8.5 What now blocks 5 minutes, with numbers
+
+Two serial floors remain, and neither is the object work any more:
+
+1. **The parent's serial pass, ~273 s.** It re-runs census (~17 s) and
+   plan-row cache verification (~20 s) per faction even though every row is a
+   hit. Removing it means the workers returning rows and the parent assembling
+   them — the design I deliberately avoided for the identity guarantee. Doing it
+   safely needs the graph shipped to workers as bytes (JSON round-tripping the
+   faction graph would change tuples to lists and move the identities that key
+   both caches).
+2. **Per-worker census, ~154 s of the pool wall.** Every worker re-runs census
+   for all seven factions. Caching the census per (catalog identity, faction)
+   on disk the way plan rows are cached would cut this to near zero and is a
+   smaller, safer change than (1).
+
+Fix (2) alone: pool wall drops to ~35 + 200 = 235 s at N=16, total ~8.5 min.
+Fix (1) and (2): ~4 min, under the bar. **(2) is the next thing to do, and (1)
+is the one that actually crosses the line.**
+
+### 8.6 Not measured, and why
+
+- **The owner's exact scenario** (comment edit to `playable_unit_compiler.py`
+  and `playable_structure_pack_compiler.py`, all seven factions, serial vs
+  pooled) — needs ~58 min serial plus ~12 min pooled plus a repopulate. Not run.
+  The men numbers above are a superset of that shape: both runs here were fully
+  cold, which recomputes *more* than a unit+structure edit would.
+- **The warm no-edit seven-faction regression check.** For one faction the pool
+  is skipped entirely when `--object-procs` is unset (default), so today's
+  behaviour is bit-for-bit unchanged without the flag; with the flag on a warm
+  tree the workers would find every row cached and cost only their startup.
+  I did not measure that, so I am not claiming a number for it.
+- Cross-faction asset sharing (does faction 2 hit entries faction 1 wrote) was
+  not measured — single-faction constraint.
+
+### 8.7 Tests
+
+Six added: `test_object_shards_partition_every_id_exactly_once` (1/2/3/8/20-way
+splits, every id owned by exactly one shard),
+`test_object_shard_assignment_is_stable_and_case_insensitive`,
+`test_object_selector_restricts_the_plan_without_changing_rows` (three shards
+reassemble into exactly the whole plan, row for row),
+`test_plan_row_order_is_by_object_id_not_completion_order`,
+`test_object_cache_put_survives_a_refused_atomic_write`, plus the batch-module
+loader. Failing-first: all six fail on `164f5d0` — `shard_selector`,
+`object_selector` and the hardened `put` do not exist there.
+
+Suite: 96 passed across `test_faction_convert_perf`, `test_faction_import`,
+`test_faction_object_cache`, `test_incremental_rebuild`.
+
+## 9. Not verified
 
 - Only `men` was run, per the lane brief (another agent held `elves`). The
   seven-faction numbers are projections from measured per-faction and

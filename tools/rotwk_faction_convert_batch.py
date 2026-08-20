@@ -19,6 +19,7 @@ the layered indexed install for RotWK).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -42,6 +43,7 @@ from openbfme_importer.effective_assets_identity import (  # noqa: E402
     verify_effective_assets,
 )
 from openbfme_importer.effective_assets_catalog import EffectiveAssetsCatalog  # noqa: E402
+from openbfme_importer.faction_census import resolve_playable_faction  # noqa: E402
 from openbfme_importer.faction_import import convert_faction_import  # noqa: E402
 from openbfme_importer.game import workspace_root  # noqa: E402
 from openbfme_importer.paths import (  # noqa: E402
@@ -141,6 +143,119 @@ def _discover_factions(catalog: InstallCatalog) -> list[str]:
     return out
 
 
+def shard_selector(index: int, count: int):
+    """Deterministic round-robin over object ids, independent of the id list.
+
+    A stable digest of the folded id decides the shard, so a worker never needs
+    the faction's object list up front and two runs with the same ``count``
+    always give the same split.
+    """
+
+    def _selected(object_id: str) -> bool:
+        digest = hashlib.sha256(object_id.casefold().encode("utf-8")).digest()
+        return int.from_bytes(digest[:8], "big") % count == index
+
+    return _selected
+
+
+def _warm_shards(
+    *,
+    python: str,
+    script: Path,
+    install: Path,
+    game: str,
+    state_root: Path,
+    assets: Path,
+    factions: list[str],
+    procs: int,
+) -> dict[str, object]:
+    """Fill the durable caches using ``procs`` worker processes.
+
+    The workers are pooled over every requested faction's objects at once, so
+    the tail is one slow object rather than one slow faction. They write only
+    caches — never coverage, ledger or artifacts — so nothing they produce is
+    trusted as content. The parent then runs its ordinary serial pass and finds
+    the work already done, which is what keeps the output byte-identical to a
+    serial run by construction.
+    """
+
+    import subprocess
+
+    started = time.perf_counter()
+    # One process per shard, each handling that shard of EVERY faction. Spawning
+    # per (faction, shard) instead would re-pay the ~35 s catalog+corpus load
+    # once per faction per shard; this pays it once per process.
+    work: list[tuple[str, int]] = [("*", index) for index in range(procs)]
+    print(
+        f"WARM_POOL procs={procs} factions={len(factions)} shards={len(work)}",
+        flush=True,
+    )
+    running: list[tuple[subprocess.Popen, str, int]] = []
+    failures: list[str] = []
+    pending = list(work)
+    logs_root = state_root / "reports" / "warm-shards"
+    logs_root.mkdir(parents=True, exist_ok=True)
+
+    def _drain(block: bool) -> None:
+        for entry in list(running):
+            process, faction, index = entry
+            code = process.poll()
+            if code is None:
+                continue
+            running.remove(entry)
+            if code != 0:
+                # A warm shard is an optimisation. Record it loudly and keep
+                # going: the parent recomputes anything the shard missed.
+                failures.append(f"{faction}#{index} exit {code}")
+                print(
+                    f"WARM_SHARD_FAILED {faction}#{index} exit={code} "
+                    f"(parent will recompute)",
+                    flush=True,
+                )
+        if block and running:
+            process, faction, index = running[0]
+            process.wait()
+
+    while pending or running:
+        while pending and len(running) < procs:
+            faction, index = pending.pop(0)
+            log_path = logs_root / f"{game}-shard{index}.log"
+            command = [
+                python,
+                str(script),
+                "--install",
+                str(install),
+                "--game",
+                game,
+                "--state-root",
+                str(state_root),
+                "--assets-root",
+                str(assets),
+            ]
+            for name in factions:
+                command.extend(["--faction", name])
+            command.extend(["--warm-shard", f"{index}/{procs}"])
+            handle = log_path.open("w", encoding="utf-8", errors="replace")
+            running.append(
+                (
+                    subprocess.Popen(
+                        command, stdout=handle, stderr=subprocess.STDOUT
+                    ),
+                    faction,
+                    index,
+                )
+            )
+        _drain(block=bool(running) and not pending)
+        if running and pending:
+            time.sleep(0.2)
+        elif running:
+            _drain(block=True)
+
+    wall_ms = int((time.perf_counter() - started) * 1000)
+    print(f"WARM_POOL_DONE wall_ms={wall_ms} failures={len(failures)}", flush=True)
+    return {"wallMs": wall_ms, "shards": len(work), "failures": failures}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--install", required=True, type=Path)
@@ -163,6 +278,28 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "parallel object convert workers (default: min(16, cpu_count) or "
             "OPENBFME_FACTION_CONVERT_JOBS)"
+        ),
+    )
+    parser.add_argument(
+        "--object-procs",
+        type=int,
+        default=0,
+        help=(
+            "warm the durable plan/object caches with N worker PROCESSES, "
+            "sharded over every requested faction's objects, before the "
+            "ordinary serial pass. The convert loop is GIL-bound (measured at "
+            "0.98 of 24 cores under 16 threads), so processes are the only way "
+            "to use the machine. 0 (default) keeps today's behaviour."
+        ),
+    )
+    parser.add_argument(
+        "--warm-shard",
+        type=str,
+        default=None,
+        help=(
+            "internal: '<index>/<count>' — convert only this shard of the "
+            "faction's objects, writing caches only. No coverage, ledger or "
+            "artifact output. Used by --object-procs."
         ),
     )
     parser.add_argument("--plan-only", action="store_true")
@@ -261,6 +398,56 @@ def main(argv: list[str] | None = None) -> int:
         catalog = EffectiveAssetsCatalog(assets, base_catalog=catalog)
     factions = args.faction or _discover_factions(catalog)
 
+    if args.warm_shard:
+        # Worker mode: convert one shard of one faction into the durable
+        # caches and exit. No coverage, no ledger, no artifacts — the parent
+        # owns every write that anything downstream reads.
+        index_text, _, count_text = args.warm_shard.partition("/")
+        shard_index, shard_count = int(index_text), int(count_text)
+        if not 0 <= shard_index < shard_count:
+            print(f"FAIL: bad --warm-shard {args.warm_shard}", file=sys.stderr)
+            return 2
+        selector = shard_selector(shard_index, shard_count)
+        for faction in factions:
+            started = time.perf_counter()
+            resolved = resolve_playable_faction(catalog, faction)
+            result = convert_faction_import(
+                catalog,
+                assets,
+                resolved.short_name,
+                artifact_writer=None,
+                state_root=state_root,
+                convert_jobs=args.convert_jobs,
+                object_selector=selector,
+                game=args.game,
+            )
+            summary = result.get("summary") or {}
+            print(
+                f"WARM_SHARD {resolved.short_name} {shard_index}/{shard_count} "
+                f"objects={summary.get('objectCount')} "
+                f"converted={summary.get('convertedCount')} "
+                f"cache_hits={summary.get('cacheHits')} "
+                f"wall_ms={int((time.perf_counter() - started) * 1000)}",
+                flush=True,
+            )
+        return 0
+
+    warm_pool: dict[str, object] | None = None
+    if args.object_procs and args.object_procs > 1 and not args.plan_only:
+        warm_pool = _warm_shards(
+            python=sys.executable,
+            script=Path(__file__).resolve(),
+            install=operator_install,
+            game=args.game,
+            state_root=state_root,
+            assets=assets,
+            factions=[
+                resolve_playable_faction(catalog, faction).short_name
+                for faction in factions
+            ],
+            procs=int(args.object_procs),
+        )
+
     run_id = uuid.uuid4().hex
     reports = state_root / "reports"
     reports.mkdir(parents=True, exist_ok=True)
@@ -292,7 +479,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.plan_only:
         from openbfme_importer.faction_import import plan_faction_import
-        from openbfme_importer.faction_census import resolve_playable_faction
 
         for faction in factions:
             try:
@@ -352,7 +538,6 @@ def main(argv: list[str] | None = None) -> int:
                     {"faction": faction, "mode": "plan-only", "error": str(exc)[:500]}
                 )
     else:
-        from openbfme_importer.faction_census import resolve_playable_faction
 
         coverage_root = faction_import_report_root(state_root, args.game)
         coverage_root.mkdir(parents=True, exist_ok=True)
@@ -538,6 +723,8 @@ def main(argv: list[str] | None = None) -> int:
         "ledgerJsonl": str(ledger_path),
         "batchWallMs": batch_wall_ms,
         "convertJobs": args.convert_jobs,
+        "objectProcs": int(args.object_procs or 0),
+        "warmPool": warm_pool,
         "coverageRoot": (
             str(faction_import_report_root(state_root, args.game))
             if not args.plan_only
