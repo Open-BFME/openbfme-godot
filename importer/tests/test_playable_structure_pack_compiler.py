@@ -1837,13 +1837,24 @@ def test_self_referential_construction_clip_without_channels_compiles_to_static(
     lifecycle = document["registration"]["presentation"]["buildingLifecycle"]
     phases = {row["phase"]: row for row in lifecycle["phases"]}
     assert phases["construction"]["animation"] == {
-        "clip": "keep_cons",
-        "mode": "static-no-channels",
+        "clip": None,
+        "mode": "none",
     }
+    # The authored clip is preserved as a receipt, not a new mode enum.
+    exclusions = lifecycle["compositionExclusions"]
+    assert any(
+        row.get("kind") == "phase-animation"
+        and row.get("phase") == "construction"
+        and row.get("reason")
+        == "self-referential-manual-clip-without-channels:keep_cons"
+        for row in exclusions
+    ), exclusions
+    # Static build-up: the runtime's NONE contract, exactly as authored
+    # static constructions compile (the clip lives in the exclusion receipt).
     assert lifecycle["simulationFacts"]["construction"] == {
         "buildTimeSeconds": 45.0,
-        "animationMode": "MANUAL",
-        "animation": "keep_cons",
+        "animationMode": "NONE",
+        "animation": None,
     }
 
 

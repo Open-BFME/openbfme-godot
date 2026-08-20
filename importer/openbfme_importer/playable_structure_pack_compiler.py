@@ -1610,12 +1610,12 @@ def _check_self_referential_no_channel_clip(
     embedded_clip_ids: frozenset[str],
 ) -> tuple[bool, str]:
     """Detect a self-referential MANUAL construction clip with no keyed animation.
-    
+
     Returns (True, clip_name) if this is a self-referential MANUAL clip whose
     model has no embedded animation channels (retail shows static model for build).
     Returns (False, "") otherwise, and raises PlayableStructurePackCompilerError
     for the displaced-animation case.
-    
+
     Retail authors a structure's construction animation two ways. The split
     shape names a separate asset (``GBBarracks_ASKL.GBBarracks_ABLD``, motion
     in gbbarracks_abld.w3d). The embedded shape names the construction model
@@ -1830,9 +1830,25 @@ def _phase_animation(
                 embedded_clip_ids=embedded_clip_ids,
             )
             if is_no_channel:
-                # Self-referential MANUAL clip with no keyed animation channels:
-                # SAGE shows the static model for the build duration.
-                return {"clip": clip_name, "mode": "static-no-channels"}
+                # Self-referential MANUAL clip with no keyed animation channels
+                # (angmarcastlewalls.ini:1254-1257 AngmarWallPosternGateSmall,
+                # kbpostgaten_a.w3d has zero animation chunks): SAGE shows the
+                # static model for the build duration. The runtime's static
+                # construction mode is "none" (content_db.gd
+                # PLAYABLE_STRUCTURE_ANIMATION_MODES); the authored clip name
+                # is preserved as a composition-exclusion receipt, never as a
+                # new mode enum the game would refuse at pack load.
+                notes.append(
+                    {
+                        "kind": "phase-animation",
+                        "phase": phase,
+                        "reason": (
+                            "self-referential-manual-clip-without-channels:%s"
+                            % clip_name
+                        ),
+                    }
+                )
+                return {"clip": None, "mode": "none"}
         if len(manual) != 1:
             # `found 0` used to be the symptom of a real converter defect:
             # embedded-shape build-up clips (``GBWell_A.GBWell_A``, motion in
