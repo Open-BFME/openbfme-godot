@@ -2,10 +2,12 @@
 
 ## For the verifier: what each commit claims
 
-Six commits, `4c00673..HEAD`, all in this worktree, none pushed. Every number
-below came from faction `men` against the shared state root; seven-faction
-figures are **derived from measured parts and labelled as such**, never
-measured, because the lane brief restricted runs to `men`.
+Eight commits, `4c00673..HEAD`, all in this worktree, none pushed. Sections 1-11
+came from faction `men` against the shared state root, and their seven-faction
+figures are **derived from measured parts and labelled as such**. Section 12 is
+the first one whose seven-faction numbers were **measured** — five real
+seven-faction batches — and where the derivations turned out to be optimistic,
+it says so.
 
 | Commit | Claim | Where |
 |---|---|---|
@@ -14,7 +16,9 @@ measured, because the lane brief restricted runs to `men`.
 | `164f5d0` | Dependency-identity precision: new `accounted` lane, `banner-member`/`builder` into the unit lane, plan key off the whole-package salt. Unrelated-module edit 209.8→44.5 s. Corrects two false premises in the brief — the media caches never keyed on doc compilers, and unit/structure/spellbook precision already worked. | §7 |
 | `26727f0` | Object-level process pool (`--object-procs`), workers warm caches only, parent alone writes. Men cold 501→254 s. Hardened `FactionObjectCache.put` against `WinError 5`. | §8 |
 | `1b6dde9` | Durable census cache, census lane at 20/186 modules. Parent pass 38.6→28.5 s. | §9 |
-| `HEAD` | Aggregate short-circuit. **Second and subsequent unchanged runs: 28.5→13.2 s per faction.** | §10 |
+| `5cc06f4` | Aggregate short-circuit. **Second and subsequent unchanged runs: 28.5→13.2 s per faction.** | §10 |
+| `29a3dc9` | Three verifier-demonstrated holes closed (vacuous artifact guard, unguarded `get()` in a shard, strandable `_CachePending`) plus a blind JSON-stability test. | §11 |
+| `HEAD` | **Option C.** Workers produce the coverage rows, the parent verifies and assembles; digest-verified graph shipping; persistent queue-fed pool; largest-first scheduling with per-faction coverage emission. **Seven factions MEASURED, not derived: compiler-edit cold 522 s, repeat 69 s. The 5-minute bar is not met — §12.5 names the floor.** | §12 |
 
 Byte-identity was proved at every step and is restated in each section. The
 standing caveat: seven-faction numbers are arithmetic, and true full cold (media
@@ -1244,7 +1248,269 @@ The remedy is a full convert after merge, not a flag. On the current code that
 is the ~7.9 min pooled cold run of §10.4 — and the owner has since directed that
 it must be under 5 minutes measured, which is §12.
 
-## 12. Not verified
+## 12. Option C — workers produce the rows, the parent assembles (eighth lane, on 29a3dc9)
+
+Logs (all under `C:\Users\Jonathan\Desktop\open-bfme\workspace\logs\perf-convert\`,
+`optionc-` prefix): `optionc-smoke-men.log`, `optionc-identity-men-pooled.log`,
+`optionc-cold7-n16.log`, `optionc-repeat7-n16.log`,
+`optionc-compileredit7-n16.log`, `optionc-compileredit7-n24-j1.log`,
+`optionc-compileredit7-n20.log`.
+
+**This is the first section in the report whose seven-faction numbers are
+measured rather than derived.** Every previous section's seven-faction figure
+was arithmetic from a `men`-only lane. The headline below is a real batch.
+
+### 12.1 What changed
+
+`--produce-procs N` replaces the parent's serial recompute pass entirely. The
+parent still owns every published byte, but it no longer *computes* any of
+them:
+
+1. **A persistent worker pool fed by a queue.** `ProducePool` starts N worker
+   processes once and keeps them alive for the whole batch; jobs are handed out
+   dynamically over a `queue.Queue`, one JSON job per line on the worker's
+   stdin, one `RESULT <json>` line back on stdout, diagnostics to a per-worker
+   log file. §8 paid the ~35 s corpus load once per process and got that right
+   only on the second attempt; a queue additionally stops a worker that draws a
+   heavy shard from stranding the rest. `test_produce_pool_drains_the_queue_
+   across_live_workers` pins the dynamic behaviour with a deliberately slow
+   stub worker.
+2. **Census fan-out, then the parent is the graph authority.** Round one is one
+   census job per faction spread over the pool (not N workers each computing
+   all seven — the ~154 s of §8.5). The parent then loads each graph from the
+   durable census cache, serialises it with *exactly* the canonicalisation the
+   cache keys are cut from, and writes it to a ship file.
+3. **The graph ships digest-verified.** Each produce job carries the ship path
+   and the declared `graphSha256`. The worker checks the received bytes twice:
+   `sha256(bytes) == declared`, and `graph_digest(json.loads(bytes)) ==
+   declared`. Either failing is a refused job — counted in `graphRefusals`,
+   logged as `PRODUCE_JOB_FAILED ... graph-digest-mismatch`, and the faction
+   falls to the serial path. The digest keys both the plan-row and the object
+   cache, so silent drift here would be silently wrong cache entries, which is
+   the §9 trap restated as a runtime check.
+4. **Workers return rows.** `build_faction_conversion(..., produce_shard=True)`
+   returns a *shard payload* — a different schema
+   (`openbfme.faction-convert-shard`) with no `summary` and no
+   `aggregateSha256`, so nothing downstream can mistake a partial shard for a
+   publishable document — carrying this shard's `(plan row, coverage row)`
+   pairs plus the faction scaffold every shard must agree on.
+5. **The parent assembles, and proves it.** `assemble_faction_convert_shards`
+   refuses: a shard set that is not exactly N shards with indices 0..N-1; any
+   disagreement between shards on faction, player template, catalog identity,
+   graph digest, unresolved-leaf count, compiler identity token or the complete
+   ordered object id list; a graph digest that is not the one the parent
+   shipped; an object produced by two shards; and a merged set that does not
+   cover the ordered id list exactly once. Then it stable-sorts by object id and
+   calls **the same** `finalize_faction_import_plan` and
+   `assemble_faction_coverage` the serial path calls — the assembly is shared
+   code, not a second implementation that has to be argued equivalent.
+
+### 12.2 Three design decisions worth stating plainly
+
+**Artifacts are written by the workers, not shipped to the parent.** Per-object
+artifact documents are ~26 MB per faction; routing them through the pipe would
+cost real time for no identity benefit. Each object id is owned by exactly one
+shard and each object writes into its own `objects/<id>/` directory through
+`write_json_atomic`, so the artifact tree is disjoint by construction and
+order-independent. The parent still owns the coverage document, the ledger, the
+batch report and both aggregates. The tests compare the artifact bytes serial vs
+pooled precisely because this is the one thing the parent did not produce.
+
+**The serial parent-recompute pass is still the default and still the oracle.**
+`--produce-procs` is opt-in; with it unset the code path is bit-for-bit what
+`29a3dc9` did. Every refusal above falls through to that path rather than
+publishing something half-built, and `PRODUCE_REFUSED` names the reason.
+
+**The parent recomputes the short-circuit key material itself.** It does not
+take the workers' word for the graph digest, the assets fingerprint or the lane
+identities; it derives them and *verifies* the shards against them. That costs
+the parent ~1 s per faction and is what makes the digest check meaningful.
+
+### 12.3 Largest-first scheduling and per-faction emission
+
+Requested by the publish lane, whose end-to-end number is gated by which
+faction's coverage lands **last**.
+
+- Produce jobs are dispatched **largest faction first**, by census object count,
+  ties broken by name (`produce_faction_order`, pinned by
+  `test_produce_order_is_largest_faction_first`). Measured order:
+  `men:61 dwarves:57 isengard:55 mordor:55 elves:52 angmar:50 wild:48`.
+- Each faction's coverage document is written **the moment that faction's last
+  shard lands**, not at batch end. `ProducePool.run_round` takes an `on_reply`
+  callback fired as each reply arrives; when a faction's completed-shard count
+  reaches N the parent assembles and emits it immediately, logging
+  `FACTION_COVERAGE_READY <faction> ready_ms=… aggregate=… mtime_ns=… size=…`
+  — the exact triple the publish watcher keys on. The batch loop then skips
+  rewriting an already-emitted file, so a done faction is never re-seen with a
+  bumped `mtime_ns`. `test_round_reports_each_reply_as_it_lands_not_at_the_end`
+  pins the in-flight callback.
+- Short-circuited factions are emitted during the probe, before the pool starts.
+
+Measured emission profile, seven factions, compiler-edit cold:
+
+| N | men ready | last faction ready | batch end | overlap available to men's publish |
+|---|---|---|---|---|
+| 24 (`--convert-jobs 1`) | 308.6 s | wild 480.4 s | 522.3 s | 214 s |
+| 20 | 257.4 s | wild 527.3 s | 572.3 s | 315 s |
+
+The smallest faction (`wild`, 48 objects) is the tail in both runs, which is the
+property asked for. **One honest caveat:** at N=24, `dwarves` landed 10.5 s
+*before* `men` (298.1 s vs 308.6 s). Dispatch is largest-first, but completion
+is not guaranteed largest-first — men's 61 objects over 24 shards leave 2-3
+objects per shard, so men's finish time is set by its single slowest object
+while a worker that finished its men shard early had already started dwarves.
+Closing that 3 % would mean splitting the first faction more finely than the
+pool width, which adds per-job fixed cost; I did not do it. men still lands
+214-315 s before the batch ends, which is more than its ~150 s publish needs.
+
+### 12.4 Measured: seven factions, actual wall time
+
+Shared state root, pinned interpreter, RotWK, all seven factions, no
+`--faction` filter. The exact compiler edit for the "compiler-edit cold" rows
+was a single trailing comment line appended to **both**
+`importer/openbfme_importer/playable_unit_compiler.py` and
+`importer/openbfme_importer/playable_structure_pack_compiler.py`:
+
+```
+# perf probe: optionc compiler-edit cold, marker <A|B|C> (2026-08-20)
+```
+
+A distinct marker per run, so no run could reuse a previous run's identity.
+`BATCH_WALL_MS` is the batch timer; it excludes catalog load and
+effective-assets verification, which are identical for serial and pooled (~63 s,
+derived from the process wall of the fully-cold run).
+
+| Run | N | `--convert-jobs` | probe | census | pool (incl. in-flight assembly) | parent tail | **BATCH_WALL_MS** |
+|---|---|---|---|---|---|---|---|
+| fully cold (every lane identity moved by this branch) | 16 | default (16) | 46.1 s | 68.7 s | 436.8 s + 11.8 s | 42.5 s | **606.0 s / 10.1 min** |
+| compiler-edit cold, marker A | 16 | default (16) | 39.6 s | 19.5 s | 418.5 s + 9.6 s | 38.4 s | **525.6 s / 8.8 min** |
+| compiler-edit cold, marker B | 24 | 1 | 42.7 s | 18.8 s | 423.2 s | 37.6 s | **522.3 s / 8.7 min** |
+| compiler-edit cold, marker C | 20 | default (16) | 40.9 s | 19.1 s | 471.3 s | 40.9 s | **572.3 s / 9.5 min** |
+| **repeat run, nothing changed** | 16 | default | 29.3 s | — | pool never started | 39.7 s | **69.0 s / 1.15 min** |
+
+The two fully-cold/marker-A rows carry a separate assembly figure because
+assembly still ran after the pool there; markers B and C use the in-flight
+per-faction emission of §12.3, so their assembly is inside `pool`. The "parent
+tail" column is 7 faction rows at 2.8-3.5 s each (~21 s) plus the ledger summary
+and batch report writes (~18 s).
+
+**The headline: 522 s (8.7 min) for a seven-faction compiler-edit cold convert.
+That is over the owner's five-minute bar.**
+
+What Option C did deliver:
+
+- **The parent pass is gone.** Per-faction parent cost after the pool is ~3 s
+  (`FACTION_TIMING` rows: 2.8-3.5 s each) against 28.9 s in §10.3 — **202 s →
+  ~21 s across seven factions**, which is exactly what §10.5 predicted the
+  design would remove.
+- **The repeat run got faster, not slower: 92 s derived in §10.4 → 69 s
+  measured.** No pool is started at all when every faction short-circuits.
+- All seven factions assembled on every run: `assembled=7 refused=0
+  graph_refusals=0`, `gaps=0 complete=True` for all seven.
+
+### 12.5 The remaining floor, named precisely
+
+The pool wall is now ~95 % of the cold batch and it is **not** a parallelism
+problem any more — it is raw convert CPU on a 24-logical-core box:
+
+| N | threads/worker | pool wall |
+|---|---|---|
+| 16 | 16 | 418.5 s |
+| 24 | 1 | 423.2 s |
+| 20 | 16 | 471.3 s |
+
+Sixteen processes and twenty-four processes land within 1 % of each other, and
+the twenty-process run was slower than both — that run overlapped the publish
+agent's measurement storm, which is the honest explanation for it being the
+outlier rather than any property of N=20. **Widening the pool has stopped
+buying anything.** The floor is therefore:
+
+1. **~420 s of convert+plan CPU** for a unit+structure edit across ~380 objects.
+   A unit-compiler edit plus a structure-pack-compiler edit invalidates
+   essentially every object in every faction, so "compiler-edit cold" is within
+   16 % of "fully cold" (522 s vs 606 s). Spreading this wider is not possible
+   on this host; the only way past it is to **recompile fewer objects** — lane
+   precision at the object/family level, so that a `playable_unit_compiler` edit
+   does not invalidate structure rows and vice versa. That is a different lane
+   from this one and it is where the next 3 minutes live.
+2. **~40 s parent probe** (seven short-circuit probes, each resolving the
+   faction and peeking the census cache). New in this lane; it is what buys the
+   69 s repeat run, so it pays for itself many times over, but it is now a
+   visible serial cost and could be parallelised.
+3. **~19 s census fan-out** and **~63 s process startup** (catalog +
+   effective-assets verification), neither of which this lane touched.
+
+Adding those up: even with an instantaneous parent, this machine cannot do a
+seven-faction unit+structure-edit convert in under ~7 minutes today. **I am not
+going to present 8.7 minutes as meeting a 5-minute bar.**
+
+### 12.6 A defect this lane produced, and how it was caught
+
+The first live seven-faction attempt refused **every** faction:
+
+```
+PRODUCE_REFUSED men: ShardAssemblyError: men: shards produced faction 'Men'
+(falling back to the serial parent pass)
+```
+
+The census graph names the faction as retail spells it (`Men`); the batch holds
+the discovered short name (`men`). Every unit test used one spelling, so all of
+them passed. The fail-closed design did its job — the run produced correct
+output via the serial fallback and merely lost the speedup — but the gap was
+real. `test_assembly_accepts_the_discovered_short_name` now pins both spellings.
+This is the §9.6 lesson repeating: a cache/assembly seam is not proven by unit
+tests that never see the real identity strings.
+
+### 12.7 Tests
+
+`importer/tests/test_faction_convert_optionc.py`, 24 tests, all new, all
+CI-runnable against the synthetic hero-roster fixture (no retail required):
+
+- **The identity test the brief asked for** —
+  `test_pooled_option_c_is_byte_identical_to_the_serial_parent`, parameterised
+  over 1/2/3/5 shards: every artifact byte-for-byte, the coverage document
+  field-for-field (only per-run timings normalised), `planAggregateSha256`,
+  `aggregateSha256`, `coverage_digest_payload`, and row order.
+- `test_assembly_does_not_depend_on_the_order_shards_arrive` (reversed
+  completion order → identical bytes) and
+  `test_assembly_is_independent_of_the_worker_count` (1/2/3/5 shards → one
+  aggregate).
+- Eight refusal tests: foreign graph digest, incomplete shard set, dropped
+  object, object produced by two shards, disagreeing compiler identity,
+  duplicate shard index, foreign faction, schema drift.
+- `test_a_shard_payload_is_not_a_coverage_document`,
+  `test_produce_mode_requires_a_selector_and_shard_coordinates`,
+  `test_assembly_accepts_the_discovered_short_name`.
+- Graph shipping: `test_shipped_graph_bytes_reproduce_the_canonical_digest`,
+  `test_a_worker_refuses_a_graph_whose_digest_moved`,
+  `test_a_worker_refuses_a_graph_that_lost_a_type_in_transit`.
+- Pool: `test_produce_pool_drains_the_queue_across_live_workers`,
+  `test_produce_pool_reports_a_worker_that_dies`,
+  `test_round_reports_each_reply_as_it_lands_not_at_the_end`,
+  `test_produce_order_is_largest_faction_first`.
+
+**Failing-first:** the whole file fails to collect on `29a3dc9` —
+`ImportError: cannot import name 'CONVERT_SHARD_SCHEMA'` — because none of the
+seams exist there. That is the honest form for a file that is entirely new
+surface; it is not a case where an old behaviour could be demonstrated failing.
+
+Suite: **407 passed, 8 skipped, 0 failed** across `test_faction_convert_perf`,
+`test_faction_convert_optionc`, `test_faction_import`,
+`test_faction_object_cache`, `test_incremental_rebuild`, `test_spellbook_import`,
+`test_playable_unit_compiler`. Note on the known environmental failure:
+`test_horde_dispatch_graphs_cover_exact_effective_retail_corpora` **passed** in
+that whole-suite invocation but **fails standalone** on both this branch and
+`29a3dc9` with `FileNotFoundError: ...worktree.../workspace/retail-work/catalog/
+bfme2.json`. It depends on ambient environment another test in the suite
+happens to set. Pre-existing, unchanged by this lane, verified on the baseline.
+
+### 12.8 Retail byte-identity: serial oracle vs pooled Option C
+
+*Pending a measurement window; see §13.*
+
+## 13. Not verified
+
+Sections 1-11 (superseded for the seven-faction figures by §12):
 
 - Only `men` was run, per the lane brief (another agent held `elves`). The
   seven-faction numbers are projections from measured per-faction and
@@ -1254,3 +1520,30 @@ it must be under 5 minutes measured, which is §12.
 - The plan cache has only ever been exercised on RotWK/`men`. The BFME2 lane
   and the `--plan-only` path go through `plan_faction_import`, which passes no
   cache and is therefore unchanged, but that is reasoning, not a measurement.
+
+Section 12 (Option C) specifically:
+
+- **Retail byte-identity serial-oracle vs pooled has not been run yet** on this
+  branch (§12.8). The identity proof that exists today is the CI test over the
+  synthetic fixture at 1/2/3/5 shards, which covers assembly, ordering and
+  artifact bytes but not the retail corpus. A retail `men` + one other faction
+  diff is owed and needs a machine window; the publish lane's measurement storm
+  had priority.
+- N=12 was **not** measured. N=16, N=20 and N=24 were; 16 and 24 landed within
+  1 % of each other, so 12 was expected to be strictly worse and the window was
+  spent on the closer question (does more parallelism help — it does not).
+- Single-faction `men` under Option C was not measured on the final code for
+  continuity with §6-§11. The two `men`-only runs that exist
+  (`optionc-smoke-men.log`, `optionc-identity-men-pooled.log`) predate the
+  short-name fix and the scheduling change and should not be read as timings.
+- Every seven-faction run in §12 shared the machine with a concurrently running
+  verifier and, for the N=20 run, the publish agent's measurement storm. Only
+  the N=20 outlier is attributed to that, and it is attributed explicitly rather
+  than averaged away.
+- The `--produce-procs` path refuses the `layered-effective-assets` tree
+  outright (the layered branch rewrites the graph after census, so the shipped
+  digest would not be the digest workers key on). That refusal is coded and
+  reasoned, not exercised — the layered tree is quarantined.
+- The publish stage was still not run from this lane, so the composed
+  convert+publish end-to-end number belongs to the publish lane's measurement,
+  not to this report.
