@@ -1065,6 +1065,154 @@ def test_census_graph_is_json_stable() -> None:
     assert graph_digest(round_tripped) == graph_digest(graph)
 
 
+_COVERAGE_COMPONENTS = {
+    "faction": "men",
+    "game": "rotwk",
+    "catalogIdentitySha256": "a" * 64,
+    "effectiveAssetsFp": "manifest-agg:" + "b" * 64,
+    "graphSha256": "c" * 64,
+    "policyFp": "d" * 64,
+    "laneIdentities": {
+        "unit": "1" * 64,
+        "structure": "2" * 64,
+        "spellbook": "3" * 64,
+        "accounted": "4" * 64,
+        "census": "5" * 64,
+    },
+}
+
+
+def _coverage_fixture(tmp_path):
+    from openbfme_importer.faction_coverage_cache import (
+        FactionCoverageCache,
+        coverage_cache_key,
+    )
+
+    cache = FactionCoverageCache(tmp_path / "faction-coverage")
+    artifact_root = tmp_path / "objects"
+    (artifact_root / "gondorarcher").mkdir(parents=True)
+    (artifact_root / "gondorarcher" / "descriptor.json").write_text(
+        '{"descriptorSha256": "e"}', encoding="utf-8"
+    )
+    coverage = {
+        "objects": [{"id": "GondorArcher", "status": "converted"}],
+        "planAggregateSha256": "f" * 64,
+        "aggregateSha256": "0" * 64,
+    }
+    key = coverage_cache_key(_COVERAGE_COMPONENTS)
+    cache.put(
+        key,
+        components=_COVERAGE_COMPONENTS,
+        coverage=coverage,
+        artifact_root=artifact_root,
+    )
+    return cache, key, coverage, artifact_root
+
+
+def test_coverage_short_circuit_reuses_only_on_a_full_input_match(tmp_path) -> None:
+    cache, key, coverage, artifact_root = _coverage_fixture(tmp_path)
+    hit = cache.get(
+        key, components=_COVERAGE_COMPONENTS, artifact_root=artifact_root
+    )
+    assert hit == coverage
+    assert cache.hits == 1
+
+
+def test_poisoning_any_component_falls_through_to_the_full_walk(tmp_path) -> None:
+    """Each input component, moved on its own, must refuse the short-circuit."""
+
+    from openbfme_importer.faction_coverage_cache import coverage_cache_key
+
+    cache, _key, _coverage, artifact_root = _coverage_fixture(tmp_path)
+    for name in _COVERAGE_COMPONENTS:
+        moved = dict(_COVERAGE_COMPONENTS)
+        moved[name] = (
+            {"unit": "9" * 64} if name == "laneIdentities" else "9" * 64
+        )
+        cache.refusals.clear()
+        assert (
+            cache.get(
+                coverage_cache_key(moved),
+                components=moved,
+                artifact_root=artifact_root,
+            )
+            is None
+        ), name
+        assert cache.refusals, name
+
+
+def test_short_circuit_names_the_component_that_moved(tmp_path) -> None:
+    """A short-circuit that stops firing must say why, not just be slow."""
+
+    from openbfme_importer.faction_coverage_cache import coverage_cache_key
+
+    cache, key, _coverage, artifact_root = _coverage_fixture(tmp_path)
+    moved = dict(_COVERAGE_COMPONENTS)
+    moved["graphSha256"] = "9" * 64
+    cache.refusals.clear()
+    # Same stored entry, different declared components: the component check
+    # fires before the key check can hide the reason.
+    assert cache.get(key, components=moved, artifact_root=artifact_root) is None
+    assert any("graphSha256" in reason for reason in cache.refusals), cache.refusals
+
+
+def test_short_circuit_refuses_a_tampered_coverage_document(tmp_path) -> None:
+    cache, key, _coverage, artifact_root = _coverage_fixture(tmp_path)
+    entry = next((tmp_path / "faction-coverage").rglob("coverage.json"))
+    payload = json.loads(entry.read_text(encoding="utf-8"))
+    payload["coverage"]["objects"][0]["status"] = "converter-gap"
+    entry.write_text(json.dumps(payload), encoding="utf-8")
+    cache.refusals.clear()
+    assert cache.get(key, components=_COVERAGE_COMPONENTS, artifact_root=artifact_root) is None
+    assert any("digest" in reason for reason in cache.refusals), cache.refusals
+
+
+def test_short_circuit_refuses_a_deleted_or_edited_artifact(tmp_path) -> None:
+    """Skipping the loops must never leave a missing artifact unrestored."""
+
+    cache, key, _coverage, artifact_root = _coverage_fixture(tmp_path)
+    target = artifact_root / "gondorarcher" / "descriptor.json"
+
+    target.write_text('{"descriptorSha256": "TAMPERED"}', encoding="utf-8")
+    cache.refusals.clear()
+    assert cache.get(key, components=_COVERAGE_COMPONENTS, artifact_root=artifact_root) is None
+    assert any("artifact" in reason for reason in cache.refusals), cache.refusals
+
+    target.unlink()
+    cache.refusals.clear()
+    assert cache.get(key, components=_COVERAGE_COMPONENTS, artifact_root=artifact_root) is None
+    assert any("artifact" in reason for reason in cache.refusals), cache.refusals
+
+
+def test_short_circuit_version_drift_and_corruption_miss_cleanly(tmp_path) -> None:
+    from openbfme_importer.faction_coverage_cache import COVERAGE_CACHE_VERSION
+
+    cache, key, _coverage, artifact_root = _coverage_fixture(tmp_path)
+    entry = next((tmp_path / "faction-coverage").rglob("coverage.json"))
+
+    payload = json.loads(entry.read_text(encoding="utf-8"))
+    payload["version"] = COVERAGE_CACHE_VERSION + 1
+    entry.write_text(json.dumps(payload), encoding="utf-8")
+    cache.refusals.clear()
+    assert cache.get(key, components=_COVERAGE_COMPONENTS, artifact_root=artifact_root) is None
+    assert any("version" in reason for reason in cache.refusals)
+
+    entry.write_text("{ not json", encoding="utf-8")
+    cache.refusals.clear()
+    assert cache.get(key, components=_COVERAGE_COMPONENTS, artifact_root=artifact_root) is None
+    assert cache.refusals
+
+
+def test_short_circuit_is_disabled_by_environment(monkeypatch) -> None:
+    from openbfme_importer.faction_coverage_cache import coverage_cache_disabled
+
+    monkeypatch.delenv("OPENBFME_NO_COVERAGE_SHORTCIRCUIT", raising=False)
+    monkeypatch.delenv("OPENBFME_NO_OBJECT_CACHE", raising=False)
+    assert coverage_cache_disabled() is False
+    monkeypatch.setenv("OPENBFME_NO_COVERAGE_SHORTCIRCUIT", "1")
+    assert coverage_cache_disabled() is True
+
+
 def test_worker_count_resolution_is_explicit(monkeypatch) -> None:
     monkeypatch.delenv("OPENBFME_FACTION_CONVERT_JOBS", raising=False)
     assert resolve_convert_worker_count(4) == 4

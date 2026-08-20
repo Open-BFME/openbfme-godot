@@ -27,10 +27,17 @@ from .faction_object_cache import (
     object_cache_key,
     policy_roots_fingerprint,
 )
+from .faction_coverage_cache import (
+    FactionCoverageCache,
+    coverage_cache_disabled,
+    coverage_cache_key,
+    default_coverage_cache_root,
+)
 from .faction_census_cache import (
     FactionCensusCache,
     census_cache_disabled,
     default_census_cache_root,
+    graph_digest,
     load_or_build_census,
 )
 from .faction_plan_cache import (
@@ -40,6 +47,7 @@ from .faction_plan_cache import (
     plan_row_cache_key,
 )
 from .incremental_rebuild import (
+    _COMPILER_DEPENDENCY_MANIFESTS,
     compiler_dependency_identity,
     document_closure_identity,
     plan_stage_identity,
@@ -2089,6 +2097,7 @@ def convert_faction_import(
     state_root: Path | None = None,
     convert_jobs: int | None = None,
     object_selector: Callable[[str], bool] | None = None,
+    artifact_root: Path | None = None,
     game: str = "bfme2",
 ) -> dict[str, object]:
     """Convert one faction's supported objects and account for every other row."""
@@ -2340,7 +2349,71 @@ def convert_faction_import(
                     )
                 ]
             graph["spellbookDefinitionAuthority"] = "layered-effective-assets"
-    return build_faction_conversion(
+    # ---- aggregate short-circuit -------------------------------------------
+    # Every input to the plan and convert stages, and nothing that is an output
+    # of them. ``documents`` is a pure function of (effective tree, catalog),
+    # so the assets fingerprint and catalog identity already cover the corpus —
+    # no second corpus hash is needed here.
+    coverage_cache: FactionCoverageCache | None = None
+    if state_root is not None and not coverage_cache_disabled():
+        try:
+            coverage_cache = FactionCoverageCache(
+                default_coverage_cache_root(Path(state_root))
+            )
+        except OSError:
+            coverage_cache = None
+    coverage_components: dict[str, object] = {}
+    coverage_key = ""
+    if coverage_cache is not None:
+        try:
+            coverage_components = {
+                "faction": spec[0].casefold(),
+                "game": game_id,
+                "catalogIdentitySha256": str(catalog.identity_sha256()),
+                "effectiveAssetsFp": durable_effective_assets_fingerprint(
+                    effective_root
+                ),
+                "graphSha256": graph_digest(graph),
+                "policyFp": _census_key_material()["policy_fp"],
+                "laneIdentities": {
+                    lane: str(compiler_dependency_identity(lane)["sha256"])
+                    for lane in sorted(_COMPILER_DEPENDENCY_MANIFESTS)
+                },
+            }
+            coverage_key = coverage_cache_key(coverage_components)
+        except (TypeError, ValueError, OSError):
+            # An input identity we cannot serialise is an input identity we
+            # cannot key on. Fall through to the full walk.
+            coverage_cache = None
+            coverage_components = {}
+            coverage_key = ""
+    if coverage_cache is not None:
+        cached_coverage = coverage_cache.get(
+            coverage_key,
+            components=coverage_components,
+            artifact_root=artifact_root,
+        )
+        if cached_coverage is not None:
+            progress_emit(
+                "faction-convert",
+                f"coverage short-circuit: {spec[0]} reused "
+                "(every plan and object input identity matched)",
+                extra={"coverageShortCircuit": True},
+            )
+            return dict(cached_coverage)
+        progress_emit(
+            "faction-convert",
+            f"coverage short-circuit miss for {spec[0]}: "
+            + (coverage_cache.refusals[-1] if coverage_cache.refusals else "unknown"),
+            extra={
+                "coverageShortCircuit": False,
+                "coverageShortCircuitReason": (
+                    coverage_cache.refusals[-1] if coverage_cache.refusals else ""
+                ),
+            },
+        )
+
+    coverage = build_faction_conversion(
         graph,
         documents,
         effective_root,
@@ -2352,6 +2425,15 @@ def convert_faction_import(
         object_selector=object_selector,
         game=game,
     )
+    if coverage_cache is not None and object_selector is None:
+        # Never store a sharded (partial) coverage document.
+        coverage_cache.put(
+            coverage_key,
+            components=coverage_components,
+            coverage=coverage,
+            artifact_root=artifact_root,
+        )
+    return coverage
 
 
 __all__ = [

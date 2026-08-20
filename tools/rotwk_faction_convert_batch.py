@@ -555,6 +555,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"FACTION_BEGIN {key}", flush=True)
                 artifact_writer = None
                 coverage_path: Path | None = None
+                artifact_root: Path | None = None
                 if write_artifacts:
                     artifact_root = coverage_root / key / "objects"
 
@@ -578,6 +579,7 @@ def main(argv: list[str] | None = None) -> int:
                     artifact_writer=artifact_writer,
                     state_root=state_root,
                     convert_jobs=args.convert_jobs,
+                    artifact_root=artifact_root,
                     game=args.game,
                 )
                 faction = key

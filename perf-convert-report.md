@@ -1,5 +1,26 @@
 # Faction convert wall-clock optimization (men lane)
 
+## For the verifier: what each commit claims
+
+Six commits, `4c00673..HEAD`, all in this worktree, none pushed. Every number
+below came from faction `men` against the shared state root; seven-faction
+figures are **derived from measured parts and labelled as such**, never
+measured, because the lane brief restricted runs to `men`.
+
+| Commit | Claim | Where |
+|---|---|---|
+| `4c00673` | Profiled one convert. Fixed a compiler-identity thundering herd (an *excluded* row cost 36 593 ms; now 52 ms), memoized the corpus parse and document view, single-flighted the shared lazy caches, hoisted the full-corpus closure. Men cold 844→683 s, in-batch warm 339→103 s. Plan parallelism measured a loss and left serial. | §1-§5 |
+| `a5fc47c` | Durable plan-row cache. Warm men faction 103.3→28.8 s. | §6 |
+| `164f5d0` | Dependency-identity precision: new `accounted` lane, `banner-member`/`builder` into the unit lane, plan key off the whole-package salt. Unrelated-module edit 209.8→44.5 s. Corrects two false premises in the brief — the media caches never keyed on doc compilers, and unit/structure/spellbook precision already worked. | §7 |
+| `26727f0` | Object-level process pool (`--object-procs`), workers warm caches only, parent alone writes. Men cold 501→254 s. Hardened `FactionObjectCache.put` against `WinError 5`. | §8 |
+| `1b6dde9` | Durable census cache, census lane at 20/186 modules. Parent pass 38.6→28.5 s. | §9 |
+| `HEAD` | Aggregate short-circuit. **Second and subsequent unchanged runs: 28.5→13.2 s per faction.** | §10 |
+
+Byte-identity was proved at every step and is restated in each section. The
+standing caveat: seven-faction numbers are arithmetic, and true full cold (media
+caches deleted, Blender reconversion) was never measured — see §10.4.
+
+
 Every number below came from the shared state root
 `C:\Users\Jonathan\Desktop\open-bfme\workspace\retail-work` on 2026-08-20, faction
 `men` only, pinned interpreter
@@ -965,7 +986,144 @@ Suite: 151 passed across `test_faction_convert_perf`, `test_faction_import`,
 one failure being the pre-existing environmental
 `test_horde_dispatch_graphs_cover_exact_effective_retail_corpora`.
 
-## 10. Not verified
+## 10. Aggregate short-circuit — Option A, implemented (sixth lane, on 1b6dde9)
+
+Logs: `sc-serial-cold-men.log`, `sc-pooled-cold-men.log`, `sc-secondrun-men.log`.
+
+### 10.1 What keys it — and a correction to the brief
+
+The brief listed the plan aggregate and the coverage aggregate among the key
+components. **They cannot be**: both are *outputs* of exactly the work the
+short-circuit skips, so using them as key material would require doing that work
+first. They are instead stored and re-verified for integrity — the loaded
+document must reproduce its own recorded `coverageSha256`, its own
+`planAggregateSha256` and its own `aggregateSha256`.
+
+The key is every *input* to the plan and convert stages:
+
+| Component | Source |
+|---|---|
+| faction, game | resolved spec |
+| `catalogIdentitySha256` | `catalog.identity_sha256()` |
+| `effectiveAssetsFp` | `durable_effective_assets_fingerprint` (whole-tree manifest aggregate) |
+| `graphSha256` | canonical digest of the census graph |
+| `policyFp` | template roots, source-null images and command sets, music roots, template, side |
+| `laneIdentities` | all five lanes' `compiler_dependency_identity` |
+
+The full-corpus document closure is deliberately absent: `documents` is a pure
+function of (effective tree, catalog), so the assets fingerprint and catalog
+identity already cover it, and adding a second corpus hash would have cost the
+cold path ~3 s per faction for nothing.
+
+Two things beyond the key are verified on load, because skipping the loops must
+not paper over damage:
+
+- **the stored coverage document against its own digest** — a tampered document
+  is refused;
+- **a digest manifest of every per-object artifact file** — a deleted or edited
+  artifact refuses the entry, so the full walk runs and rewrites it.
+
+Every refusal appends a one-line reason naming what moved
+(`input moved: graphSha256`, `artifact tree does not match`,
+`cache format version drift`, …) and the parent logs the latest one. A
+short-circuit that quietly stops firing is visible, not merely slow.
+
+### 10.2 The trust trade, and why it is bounded
+
+The parent stops re-deriving per-row identities and trusts a per-faction
+aggregate. That is acceptable **only because every failure path is the full
+per-row walk** — the ordinary code path, and the one that produced the stored
+document. There is no third behaviour: hit, or walk.
+
+`test_poisoning_any_component_falls_through_to_the_full_walk` moves each of the
+six components on its own and asserts a refusal for each;
+`test_short_circuit_refuses_a_tampered_coverage_document`,
+`test_short_circuit_refuses_a_deleted_or_edited_artifact` (both edited and
+deleted) and `test_short_circuit_version_drift_and_corruption_miss_cleanly`
+cover the rest. `OPENBFME_NO_COVERAGE_SHORTCIRCUIT` disables it outright.
+
+### 10.3 Measured, men
+
+| Run | wall | note |
+|---|---|---|
+| serial, cold | **469.5 s** | `short-circuit miss: no entry for this input identity` |
+| pooled `--object-procs 12`, cold | **240.4 s** | pool 211.5 s + parent 28.9 s |
+| **second run, unchanged inputs** | **13.2 s** | `coverage short-circuit: men reused` |
+
+The short-circuit does **not** help a first cold run — by definition it misses,
+and the shard workers cannot write it because their coverage is partial. It
+halves the *repeat* cost: parent per faction 28.9 s → 13.2 s.
+
+Byte-identity, serial full walk vs short-circuited:
+
+```
+ARTIFACT_FILES a=183 b=183   ONLY_A 0   ONLY_B 0   DIFFERING 0
+COVERAGE_AGGREGATE_EQUAL True   PLAN_AGGREGATE_EQUAL True
+COVERAGE_ROWS a=61 b=61 differing=0 []
+IDENTICAL True
+```
+
+### 10.4 Seven factions: derived
+
+First cold run after a compiler edit (short-circuit misses; pool 35 s corpus +
+~40 s census + 3192 core-s of work; parent 7 x 28.9 = 202 s):
+
+| N | pool | + parent | total |
+|---|---|---|---|
+| 12 | 341 s | 202 s | **~9.1 min** |
+| 16 | 275 s | 202 s | **~7.9 min** |
+| 20 | 235 s | 202 s | **~7.3 min** |
+
+**The 5-minute bar is still not met on a first cold run.** I am not going to
+present the repeat number as if it were the cold number.
+
+**Second and every subsequent unchanged run: 7 x 13.2 s = ~92 s, about 1.5
+minutes.** That is the figure the owner lives with day to day — re-running the
+convert after an unrelated edit, a publish retry, a gate, an aborted cook. It is
+comfortably inside the bar. The expensive case is narrowly: the first run after
+an edit that touches the unit or structure lane.
+
+Full picture for a seven-faction convert, from the branch start:
+
+| Scenario | HEAD (4c00673 parent) | now |
+|---|---|---|
+| repeat run, nothing changed | ~39.5 min | **~1.5 min** |
+| edit touching no convert lane | ~39.5 min | ~1.5 min |
+| first run after unit+structure edit, pooled N=16 | ~98 min | ~7.9 min |
+
+### 10.5 Option C, not implemented — the ~4 min endgame
+
+Workers return coverage rows and the parent only sorts and writes. It removes
+the parent pass outright and is the fastest option (~4 min cold, seven
+factions). **Trust cost, for a future owner decision:** the parent stops being
+the producer of record and becomes only the thing that orders results, so the
+structural byte-identity argument this whole branch rests on becomes a
+test-enforced one instead. It also needs the faction graph shipped to workers as
+bytes rather than re-parsed JSON — the graph digest keys both the plan and object
+caches, so a round trip that changed one type would move every key — and a
+ledger merged across processes. Not started, deliberately.
+
+### 10.6 Tests
+
+Seven added: full-match reuse, per-component poisoning (all six), the named
+refusal reason, tampered coverage, deleted **and** edited artifact, version
+drift, corrupt JSON, env kill switch.
+
+One defect this lane produced and its guard: the short-circuit initially built
+its key material unconditionally, including when no cache exists, so
+`test_conversion_admits_rotwk_data_driven_catalog` — which passes a `Mock`
+catalog whose `identity_sha256()` is not serialisable — failed. Key material is
+now built only when a cache exists, and an unserialisable identity falls through
+to the full walk rather than raising.
+
+Suite: 375 passed / 8 skipped / 1 failed across `test_faction_convert_perf`,
+`test_faction_import`, `test_faction_object_cache`, `test_incremental_rebuild`,
+`test_spellbook_import`, `test_playable_unit_compiler` — the one failure being
+the pre-existing environmental
+`test_horde_dispatch_graphs_cover_exact_effective_retail_corpora`, which fails
+identically on HEAD.
+
+## 11. Not verified
 
 - Only `men` was run, per the lane brief (another agent held `elves`). The
   seven-faction numbers are projections from measured per-faction and
