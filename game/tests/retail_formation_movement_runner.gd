@@ -171,22 +171,25 @@ func _test_turn_rate_limits_heading_change() -> void:
 		"wheel_advances_while_turning",
 		"a wheel must not stop the horde; position stayed at origin"
 	)
-	# Second tick completes the turn: 12 degrees remain, less than the 18-degree
-	# per-tick allowance, so it lands exactly on the heading rather than
-	# overshooting it.
+	# Compute the second bearing independently from authored inputs: first tick
+	# advances one unit at 18 degrees toward the fixed 200-unit/30-degree target.
+	# Never derive an oracle from the sim's post-move position.
+	var authored_waypoint := Vector2.RIGHT.rotated(deg_to_rad(30.0)) * 200.0
+	var authored_first_position := Vector2.RIGHT.rotated(deg_to_rad(18.0))
+	var second_desired := rad_to_deg(authored_first_position.direction_to(authored_waypoint).angle())
 	sim._step_route(row)
-	_check_close(_facing_degrees(row), 30.0, "wheel_lands_on_heading_without_overshoot")
+	_check_close(_facing_degrees(row), second_desired, "wheel_lands_on_heading_without_overshoot")
 
 
-func _test_legacy_default_snaps_heading_in_one_tick() -> void:
-	## Gate proof. Without the rule the sim keeps its previous behaviour exactly:
-	## facing is assigned from the movement direction in a single tick.
+func _test_authored_turn_rate_is_unconditional() -> void:
+	## LOCO-B makes a positive authored rate unconditional. The formation flag
+	## still owns group cohesion; it no longer gates basic heading physics.
 	var sim = _make_sim(false)
 	var row := _prepare(sim, 1, Vector2.ZERO, Vector2.RIGHT, 10.0, "")
 	sim.issue_move([1], _destination_at(row, 30.0))
 	sim._step_route(row)
 
-	_check_close(_facing_degrees(row), 30.0, "legacy_default_snaps_facing_in_one_tick")
+	_check_close(_facing_degrees(row), 18.0, "authored_turn_rate_is_not_flag_gated")
 	_check(
 		not row.has("group_speed_cap"),
 		"legacy_default_adds_no_row_keys",
@@ -304,20 +307,27 @@ func _test_group_move_caps_at_slowest_authored_speed() -> void:
 	_check_close(float(fast.get("group_speed_cap", 0.0)), 10.0, "group_cap_is_the_slowest_speed")
 	_check_close(float(slow.get("group_speed_cap", 0.0)), 10.0, "group_cap_applies_to_every_member")
 
-	var fast_start := Vector2(fast["position"])
-	var slow_start := Vector2(slow["position"])
 	for _tick_index in range(5):
 		sim._step_route(fast)
 		sim._step_route(slow)
-	_check_close(
-		Vector2(fast["position"]).distance_to(fast_start),
-		Vector2(slow["position"]).distance_to(slow_start),
-		"group_members_advance_together"
-	)
 	_check(
 		float(fast["current_speed"]) <= 10.0 + EPSILON,
 		"group_cap_holds_the_fast_member_back",
 		"current_speed %.6f exceeded the 10.0 group cap" % [float(fast["current_speed"])]
+	)
+	for _tick_index in range(400):
+		if (fast["route"] as Array).is_empty() and (slow["route"] as Array).is_empty():
+			break
+		if not (fast["route"] as Array).is_empty():
+			sim._step_route(fast)
+		if not (slow["route"] as Array).is_empty():
+			sim._step_route(slow)
+	_check(
+		(fast["route"] as Array).is_empty()
+			and (slow["route"] as Array).is_empty()
+			and Vector2(fast["position"]).distance_to(Vector2(slow["position"])) <= 0.01,
+		"group_members_finish_within_formation_tolerance",
+		"fast=%s slow=%s" % [fast["position"], slow["position"]]
 	)
 
 
@@ -445,7 +455,7 @@ func _trace_replay() -> Array:
 
 func _run() -> void:
 	_test_turn_rate_limits_heading_change()
-	_test_legacy_default_snaps_heading_in_one_tick()
+	_test_authored_turn_rate_is_unconditional()
 	_test_reform_beyond_threshold_pivots_in_place()
 	_test_cavalry_reform_threshold_is_wider()
 	_test_unauthored_reform_threshold_never_reforms()

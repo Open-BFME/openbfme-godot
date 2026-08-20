@@ -1475,9 +1475,9 @@ var _state_hash_static_digest := PackedByteArray()
 ## Descriptor-backed map placements are opt-in for direct/headless sims; the
 ## live selected-pack scene enables them whenever its edition registry exists.
 var scenario_map_placements_enabled := false
-## Retail horde movement semantics (opt-in gameplay rule
-## "retail_formation_movement"; default off keeps every legacy runner and the
-## owner-signed 3000-tick behaviour pin byte-identical).
+## Retail horde formation semantics. Every positive authored turn rate is
+## honoured unconditionally; the opt-in gameplay rule remains only for the
+## broader group-cohesion/reform fixture lane described below.
 ##
 ## When enabled the sim honours three things the retail data authors and this
 ## sim previously ignored outright:
@@ -1485,8 +1485,7 @@ var scenario_map_placements_enabled := false
 ##   1. Turn rate. locomotor.ini authors TurnTime per horde locomotor
 ##      (NormalMeleeHordeLocomotor TurnTime=2000 -> 180 deg/s;
 ##      NormalCavalryHordeLocomotor TurnTime=1000 -> 360 deg/s). The importer
-##      already lands it on the row as turn_rate_degrees_per_second; without
-##      this flag the sim throws it away and snaps facing in one tick.
+##      lands it on the row as turn_rate_degrees_per_second with provenance.
 ##   2. Wheel vs reform. locomotor.ini:717
 ##      "MaxTurnWithoutReform = 45 ; Try to turn beyond this angle, and we will
 ##      reform instead of wheel". Inside the threshold the horde wheels (turns
@@ -1500,6 +1499,11 @@ var scenario_map_placements_enabled := false
 ##
 ## See workspace/scratch/opus17-formation-extraction.md for the full citation set.
 var retail_formation_movement := false
+## Diagnostic-only, never serialized: one fallback line per unit type whose
+## document did not author TurnTime/TurnRate. Such rows retain the pre-change
+## snap/direct movement path instead of receiving a made-up rate.
+var _turn_rate_fallback_unit_types: Dictionary = {}
+var _target_route_resolution_unit_types: Dictionary = {}
 var _scenario_map_placements: Array = []
 var _scenario_map_seeded_source_indices: Dictionary = {}
 var _next_scenario_unit_id := SCENARIO_UNIT_FIRST_ID
@@ -1651,6 +1655,8 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	_seed_team_ai_state()
 	_last_base_under_attack_tick = -100000
 	_pending_commands.clear()
+	_turn_rate_fallback_unit_types.clear()
+	_target_route_resolution_unit_types.clear()
 	last_command_result = null
 	_state_hash_static_digest.clear()
 	last_route_rejection = ""
@@ -4783,6 +4789,10 @@ func _add_battalion(
 		entities[id]["max_turn_without_reform_degrees"] = float(
 			unit_rule["max_turn_without_reform_degrees"]
 		)
+	if unit_rule.has("slow_turn_radius"):
+		entities[id]["slow_turn_radius"] = maxf(0.0, float(unit_rule["slow_turn_radius"]))
+	if unit_rule.has("min_turn_speed"):
+		entities[id]["min_turn_speed"] = clampf(float(unit_rule["min_turn_speed"]), 0.0, 1.0)
 	if String(unit_rule.get("turn_rate_source", "")) != "":
 		entities[id]["turn_rate_source"] = String(unit_rule["turn_rate_source"])
 	for crush_int_key in ["crusher_level", "crushable_level", "crush_damage", "crush_revenge_damage"]:
@@ -13854,7 +13864,7 @@ func issue_attack(ids: Array[int], target_id: int, team: int = PLAYER_TEAM) -> i
 			continue
 		if target_kind == "battalion" and not _can_engage_battalion(row, target):
 			continue
-		if not _assign_route(row, Vector2(target["position"])):
+		if not _assign_target_route(row, Vector2(target["position"])):
 			continue
 		row["target_id"] = target_id
 		row["target_kind"] = target_kind
@@ -26853,7 +26863,7 @@ func _step_entity(id: int) -> void:
 			if entity_container.has(id):
 				row["state"] = "contained"
 				return
-			if not _assign_route(row, target_position):
+			if not _assign_target_route(row, target_position):
 				row["target_id"] = 0
 				_clear_pending_route(row, true)
 				row["state"] = "idle"
@@ -29042,21 +29052,28 @@ func _eviction_fallback_direction(row: Dictionary) -> Vector2:
 
 
 func _should_honor_turn_rate(row: Dictionary) -> bool:
-	## Authored TurnTime reaches the row as turn_rate_degrees_per_second, and
-	## `turn_rate_source` is the adapter's provenance stamp saying the number
-	## came from a compiled locomotor (playable_unit_runtime_adapter.gd:1044).
-	## Synthetic pin fixtures invent 180 with no source and must keep snapping.
-	##
-	## Removing the invented MaxTurnWithoutReform fallback below does NOT stop
-	## the 30 shipped cavalry rows that author no MaxTurnWithoutReform from
-	## turning: every adapter-normalized row with an authored rate carries
-	## `turn_rate_source`, so the second clause already covers them. The reform
-	## GATE is what disappears, not turn-rate honouring.
-	if retail_formation_movement:
-		return true
-	if String(row.get("turn_rate_source", "")) != "":
-		return true
-	return float(row.get("max_turn_without_reform_degrees", 0.0)) > 0.0
+	## Authored TurnTime reaches the row as a positive
+	## turn_rate_degrees_per_second. Old/synthetic fixtures also carry the
+	## positive field explicitly, so they exercise the same arithmetic. A zero or
+	## absent value is the only missing-data sentinel and retains snap/direct
+	## movement; no provenance label or category can fabricate a rate.
+	if float(row.get("turn_rate_degrees_per_second", 0.0)) <= 0.0:
+		_report_turn_rate_fallback(row)
+		return false
+	return true
+
+
+func _report_turn_rate_fallback(row: Dictionary) -> void:
+	var unit_type := String(row.get(
+		"unit_type", row.get("source_object_id", row.get("horde_id", "<unknown>"))
+	))
+	if _turn_rate_fallback_unit_types.has(unit_type):
+		return
+	_turn_rate_fallback_unit_types[unit_type] = true
+	print(
+		"RETAIL_TURN_MODEL missing_authored_turn_rate unit_type=%s fallback=pre_change_snap_direct"
+		% unit_type
+	)
 
 
 func _should_reform(row: Dictionary) -> bool:
@@ -29178,8 +29195,15 @@ func _step_route(row: Dictionary) -> void:
 	row["current_speed"] = current_speed
 	var step_distance := current_speed * TICK_SECONDS
 	var movement_direction := position.direction_to(waypoint)
+	var pre_move_gap := position.distance_to(waypoint)
+	var heading_bounded_ground_move := false
+	var turning_on_authored_heading := false
 	if movement_direction.length_squared() > 0.000001:
 		if _should_honor_turn_rate(row):
+			var facing_before_turn := Vector2(row.get("facing", movement_direction)).normalized()
+			turning_on_authored_heading = absf(
+				wrapf(movement_direction.angle() - facing_before_turn.angle(), -PI, PI)
+			) > 0.0001
 			var reforming := _step_retail_heading(row, movement_direction, braking)
 			if reforming and _should_reform(row):
 				# Reforming: the horde pivots about its own centre and does not
@@ -29187,17 +29211,65 @@ func _step_route(row: Dictionary) -> void:
 				# row (or the old formation flag). Otherwise wheel: turn and
 				# still walk — no invented 45° stop.
 				return
+			heading_bounded_ground_move = not bool(row.get("flying", false))
 		else:
 			row["facing"] = movement_direction
-	var pre_move_gap := position.distance_to(waypoint)
+	if turning_on_authored_heading and row.has("min_turn_speed"):
+		# Locomotor MinTurnSpeed is an authored fraction of top speed. Braking
+		# toward a close waypoint may not drop a turning unit below that forward
+		# floor; doing so alternated full-speed and zero-speed ticks and produced
+		# an infinite orbit around lateral final waypoints.
+		var minimum_turn_speed := max_speed * clampf(float(row["min_turn_speed"]), 0.0, 1.0)
+		current_speed = maxf(current_speed, minimum_turn_speed)
+		var turn_radians_per_second := deg_to_rad(_retail_turn_rate_degrees(row))
+		var current_turn_radius := current_speed / maxf(turn_radians_per_second, 0.0001)
+		if pre_move_gap <= current_turn_radius + 0.0001:
+			# The waypoint lies inside the current arc: drop to the authored
+			# minimum turning speed so SlowTurnRadius owns the close maneuver.
+			current_speed = minimum_turn_speed
+		row["current_speed"] = current_speed
+	step_distance = current_speed * TICK_SECONDS
 	var travel_step := Vector2.ZERO
-	if pre_move_gap <= maxf(step_distance, 0.001):
+	var travel_direction := movement_direction
+	if heading_bounded_ground_move:
+		travel_direction = Vector2(row.get("facing", movement_direction)).normalized()
+		if turning_on_authored_heading and row.has("slow_turn_radius") and row.has("min_turn_speed"):
+			var minimum_turn_speed := max_speed * clampf(float(row["min_turn_speed"]), 0.0, 1.0)
+			if current_speed <= minimum_turn_speed + 0.0001:
+				# SlowTurnRadius is authored in source distance units and arrives on
+				# the row scaled to simulation space. Zero is meaningful: horse
+				# locomotors explicitly pivot in place from a standing/slow start.
+				# A positive value bounds the low-speed arc by r * delta-heading.
+				var slow_turn_radius := maxf(0.0, float(row["slow_turn_radius"]))
+				var authored_turn_step := deg_to_rad(_retail_turn_rate_degrees(row)) * TICK_SECONDS
+				step_distance = minf(step_distance, slow_turn_radius * authored_turn_step)
+	# A heading-bounded unit may initially face away from a nearby waypoint. It
+	# must complete the authored turn instead of teleporting sideways onto the
+	# point merely because its scalar step is longer than the remaining gap.
+	var facing_toward_waypoint := travel_direction.dot(movement_direction) > 0.0
+	if pre_move_gap <= maxf(step_distance, 0.001) and facing_toward_waypoint:
 		travel_step = waypoint - position
 		position = waypoint
 		route.pop_front()
 	else:
-		travel_step = position.direction_to(waypoint) * step_distance
-		position += travel_step
+		travel_step = travel_direction * step_distance
+		var candidate_position := position + travel_step
+		if (
+			heading_bounded_ground_move
+			and not travel_direction.is_equal_approx(movement_direction)
+			and not _position_walkable(candidate_position)
+		):
+			# Turning may point briefly outside the routed navigation corridor.
+			# Hold the last walkable point and shed speed through the locomotor's
+			# authored Braking value; never slide sideways or invent a turn-speed
+			# scalar. The next tick continues rotating toward the waypoint. Once the
+			# heading equals the routed bearing, the route provider owns the segment:
+			# this matters for accepted final legs to obstructed structure centres.
+			travel_step = Vector2.ZERO
+			current_speed = maxf(0.0, current_speed - braking * TICK_SECONDS)
+			row["current_speed"] = current_speed
+		else:
+			position = candidate_position
 	if not bool(row.get("flying", false)):
 		# Flyers pass straight over building footprints. The step that produced
 		# this position is threaded in so a footprint the unit is walking THROUGH
@@ -29363,7 +29435,7 @@ func _resume_order_after_knockdown(row: Dictionary) -> bool:
 		else:
 			target = entities.get(target_id, {}) as Dictionary
 		if not target.is_empty() and int(target.get("health", 0)) > 0:
-			if _assign_route(row, Vector2(target["position"])):
+			if _assign_target_route(row, Vector2(target["position"])):
 				row["state"] = "run"
 				return true
 		row["target_id"] = 0
@@ -31370,7 +31442,7 @@ func _run_ai_for_team(team: int, profile: Dictionary, ai_state: Dictionary) -> v
 			# Once no defending battalion remains, the objective fortress is the
 			# strategic target. Assign it before routing so the target's own
 			# footprint is exempt and melee units can close to weapon range.
-			if _assign_route(row, target_position):
+			if _assign_target_route(row, target_position):
 				row["target_id"] = target_id
 				row["target_kind"] = target_kind
 				row["attack_windup"] = 0
@@ -31386,14 +31458,14 @@ func _run_ai_for_team(team: int, profile: Dictionary, ai_state: Dictionary) -> v
 			# hostile battalions remain, target_position is the objective fortress.
 			var strategic_destination := target_position
 			if (row["route"] as Array).is_empty() or Vector2(row.get("destination", row["position"])).distance_to(strategic_destination) > 1.0:
-				if _assign_route(row, strategic_destination):
+				if _assign_target_route(row, strategic_destination):
 					row["target_id"] = 0
 					row["target_kind"] = "battalion"
 					row["attack_windup"] = 0
 					row["state"] = "run"
 					_stamp_order_sequence([id])
 			continue
-		if _assign_route(row, target_position):
+		if _assign_target_route(row, target_position):
 			row["target_id"] = target_id
 			row["target_kind"] = target_kind
 			row["attack_windup"] = 0
@@ -31851,7 +31923,19 @@ func _assign_route(row: Dictionary, destination: Vector2) -> bool:
 	# Ships use the water grid; the land ledger would reject every river.
 	if not _is_naval_row(row):
 		_ensure_parity()
-		if not parity.can_path_between(Vector2(row["position"]), destination):
+		# A heading-bounded arc can finish just inside the navigation raster's
+		# blocked edge. Only a provider that explicitly resolves that origin may
+		# recover it, and the recovered point still goes through the parity ledger.
+		var parity_origin := Vector2(row["position"])
+		if not _position_walkable(parity_origin):
+			if route_provider == null or not route_provider.has_method("resolve_walkable_position"):
+				last_route_rejection = "route-origin-not-walkable"
+				return false
+			parity_origin = Vector2(route_provider.call("resolve_walkable_position", parity_origin))
+			if not _position_walkable(parity_origin):
+				last_route_rejection = "route-origin-recovery-failed"
+				return false
+		if not parity.can_path_between(parity_origin, destination):
 			last_route_rejection = "parity-path-impassable"
 			return false
 	var result := _query_route_for_row(row, Vector2(row["position"]), destination)
@@ -31872,6 +31956,34 @@ func _assign_route(row: Dictionary, destination: Vector2) -> bool:
 	row["route_cells"] = cells
 	row["route_ford"] = String(result.get("ford_name", ""))
 	return not points.is_empty()
+
+
+func _assign_target_route(row: Dictionary, target_position: Vector2) -> bool:
+	## Combat follows the target's live position for range and damage, but a
+	## battalion can legitimately stand on a raster cell that ground navigation
+	## marks blocked (footprint eviction, knockback, or a heading-bounded arc at a
+	## cell edge). RetailMapData exposes its deterministic nearest-walkable
+	## resolver for exactly this map-owned question. Movement routes to that
+	## resolved approach point; the target id/position remains unchanged.
+	if _assign_route(row, target_position):
+		return true
+	if (
+		last_route_rejection != "blocked-destination"
+		or route_provider == null
+		or not route_provider.has_method("resolve_walkable_position")
+	):
+		return false
+	var approach := Vector2(route_provider.call("resolve_walkable_position", target_position))
+	if approach.is_equal_approx(target_position):
+		return false
+	var unit_type := String(row.get("unit_type", row.get("source_object_id", "<unknown>")))
+	if not _target_route_resolution_unit_types.has(unit_type):
+		_target_route_resolution_unit_types[unit_type] = true
+		print(
+			"RETAIL_TURN_MODEL target_route_walkable_resolution unit_type=%s"
+			% unit_type
+		)
+	return _assign_route(row, approach)
 
 
 func _query_route(from: Vector2, to: Vector2) -> Dictionary:
