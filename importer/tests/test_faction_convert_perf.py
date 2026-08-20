@@ -440,6 +440,337 @@ def test_plan_cache_is_disabled_by_environment(monkeypatch, tmp_path) -> None:
     assert fi._resolve_plan_row_cache(None, tmp_path) is None
 
 
+# --------------------------------------------------------------------------
+# Dependency-identity precision: a compiler edit must invalidate the lanes that
+# actually run that code and nothing else. Over-invalidation only costs time;
+# under-invalidation ships a stale artifact, so every "stays a hit" assertion
+# below is paired with a "does invalidate" assertion in the other direction.
+# --------------------------------------------------------------------------
+
+_PRECISION_MODULES = {
+    "armor_compiler.py": b"A = 1\n",
+    "faction_import.py": b"A = 1\n",
+    "faction_object_cache.py": b"A = 1\n",
+    "faction_census.py": b"A = 1\n",
+    "incremental_rebuild.py": b"A = 1\n",
+    "faction_policy.py": b"A = 1\n",
+    "pack_recipe_catalog_identity.py": b"A = 1\n",
+    "sage_cst.py": b"A = 1\n",
+    "sage_ini.py": b"A = 1\n",
+    "sage_string.py": b"A = 1\n",
+    "visual_leaf.py": b"A = 1\n",
+    "playable_unit_compiler.py": b"A = 1\n",
+    "playable_unit_import.py": b"A = 1\n",
+    "playable_unit_pack_compiler.py": b"A = 1\n",
+    "playable_structure_compiler.py": b"A = 1\n",
+    "playable_structure_lifecycle_evidence.py": b"A = 1\n",
+    "playable_structure_pack_compiler.py": b"A = 1\n",
+    "castle_behavior.py": b"A = 1\n",
+    "retail_building_lifecycle.py": b"A = 1\n",
+    "spellbook_compiler.py": b"A = 1\n",
+    "spellbook_import.py": b"A = 1\n",
+    "spellbook_pack_compiler.py": b"A = 1\n",
+    "spellbook_visual_ingress.py": b"A = 1\n",
+    "retail_ability_fx_ingress.py": b"A = 1\n",
+    "retail_visual_closure.py": b"A = 1\n",
+    "typed_visual_graph.py": b"A = 1\n",
+    "w3d_glb_validation.py": b"A = 1\n",
+    "w3d_index.py": b"A = 1\n",
+    "w3d_texture_closure.py": b"A = 1\n",
+    # A module no convert lane imports (living-world/HUD/cursor class).
+    "living_world_ui.py": b"A = 1\n",
+    "blender/w3d_to_glb.py": b"A = 1\n",
+}
+
+
+def _identity(family: str, modules) -> str:
+    return compiler_dependency_identity(family, module_sources=modules)["sha256"]
+
+
+def _touch(name: str):
+    """Comment-only edit: different bytes, identical behaviour."""
+
+    edited = dict(_PRECISION_MODULES)
+    edited[name] = edited[name] + b"# touched\n"
+    return edited
+
+
+def test_doc_compiler_edit_does_not_invalidate_unrelated_lanes() -> None:
+    """Touch playable_unit_compiler.py: unit/structure move, spellbook does not."""
+
+    edited = _touch("playable_unit_compiler.py")
+    # Direction 1 — the lanes that really run it must invalidate.
+    assert _identity("playable-unit", edited) != _identity(
+        "playable-unit", _PRECISION_MODULES
+    )
+    assert _identity("structure", edited) != _identity(
+        "structure", _PRECISION_MODULES
+    )
+    # Direction 2 — a lane that does not run it must stay a cache hit.
+    assert _identity("spellbook", edited) == _identity(
+        "spellbook", _PRECISION_MODULES
+    )
+
+
+def test_structure_pack_edit_leaves_unit_and_spellbook_rows_hits() -> None:
+    edited = _touch("playable_structure_pack_compiler.py")
+    assert _identity("structure", edited) != _identity(
+        "structure", _PRECISION_MODULES
+    )
+    assert _identity("playable-unit", edited) == _identity(
+        "playable-unit", _PRECISION_MODULES
+    )
+    assert _identity("spellbook", edited) == _identity(
+        "spellbook", _PRECISION_MODULES
+    )
+
+
+def test_unrelated_module_edit_invalidates_no_convert_lane() -> None:
+    """The everyday case: editing code no lane imports must evict nothing."""
+
+    edited = _touch("living_world_ui.py")
+    for family in ("playable-unit", "structure", "spellbook", "create-a-hero"):
+        assert _identity(family, edited) == _identity(
+            family, _PRECISION_MODULES
+        ), family
+
+
+def test_accounted_families_have_a_precise_lane_not_the_whole_package() -> None:
+    """Excluded/gap rows must not be evicted by every module in the package."""
+
+    for family in (
+        "create-a-hero",
+        "projectile",
+        "object-inheritance",
+        "retail-object-parser",
+        "missing-object",
+        "unclassified",
+    ):
+        identity = compiler_dependency_identity(
+            family, module_sources=_PRECISION_MODULES
+        )
+        assert identity["mode"] == "explicit-family-manifest", family
+        # A payload lane it never runs must not move it...
+        assert _identity(family, _touch("spellbook_pack_compiler.py")) == _identity(
+            family, _PRECISION_MODULES
+        ), family
+        # ...but the table that decides the exclusion must.
+        assert _identity(family, _touch("faction_import.py")) != _identity(
+            family, _PRECISION_MODULES
+        ), family
+
+
+def test_banner_member_and_builder_use_the_unit_lane() -> None:
+    """Both compile unit descriptors; neither may take the broad fallback."""
+
+    for family in ("banner-member", "builder"):
+        identity = compiler_dependency_identity(
+            family, module_sources=_PRECISION_MODULES
+        )
+        assert identity["mode"] == "explicit-family-manifest", family
+        assert _identity(family, _touch("playable_unit_compiler.py")) != _identity(
+            family, _PRECISION_MODULES
+        ), family
+        assert _identity(family, _touch("spellbook_compiler.py")) == _identity(
+            family, _PRECISION_MODULES
+        ), family
+
+
+def test_unknown_family_still_fails_closed_to_the_whole_package() -> None:
+    """An unclassifiable family keeps the broad identity. This is the guard."""
+
+    identity = compiler_dependency_identity(
+        "unknown", module_sources=_PRECISION_MODULES
+    )
+    assert identity["mode"] == "full-compiler-fallback"
+    assert _identity("unknown", _touch("living_world_ui.py")) != _identity(
+        "unknown", _PRECISION_MODULES
+    )
+
+
+def test_blender_adapter_edit_invalidates_every_lane() -> None:
+    """The adapter produces the GLB bytes every lane embeds."""
+
+    edited = _touch("blender/w3d_to_glb.py")
+    for family in ("playable-unit", "structure", "spellbook"):
+        assert _identity(family, edited) != _identity(
+            family, _PRECISION_MODULES
+        ), family
+
+
+def test_plan_stage_identity_is_lane_union_not_whole_package(monkeypatch) -> None:
+    """Plan rows must survive an edit to code no plan lane imports."""
+
+    from openbfme_importer import incremental_rebuild as ir
+
+    calls: list[str] = []
+    table = {
+        "unit": "1" * 64,
+        "structure": "2" * 64,
+        "spellbook": "3" * 64,
+        "accounted": "4" * 64,
+    }
+
+    def _fake(family, *, module_sources=None):
+        calls.append(family)
+        return {"sha256": table[family]}
+
+    monkeypatch.setattr(ir, "compiler_dependency_identity", _fake)
+    before = ir.plan_stage_identity()
+    assert sorted(calls) == ["accounted", "spellbook", "structure", "unit"]
+    # Unchanged lanes -> unchanged plan identity.
+    assert ir.plan_stage_identity() == before
+    # A moved lane -> moved plan identity.
+    table["structure"] = "9" * 64
+    assert ir.plan_stage_identity() != before
+
+
+def test_live_lanes_all_resolve_precisely_against_the_real_package() -> None:
+    """Against the real package, no convert lane may take the broad fallback.
+
+    This is the gate that catches a precise-looking manifest that silently
+    degrades in production — exactly what happened when ``plan_stage_identity``
+    asked for the lane named "accounted" and got a 185-module whole-package
+    digest back.
+    """
+
+    from openbfme_importer.incremental_rebuild import (
+        _COMPILER_DEPENDENCY_MANIFESTS,
+        plan_stage_identity,
+    )
+
+    total = len(incremental_rebuild._live_module_sources())
+    for lane in _COMPILER_DEPENDENCY_MANIFESTS:
+        identity = compiler_dependency_identity(lane)
+        assert identity["mode"] == "explicit-family-manifest", lane
+        assert len(identity["modules"]) < total, lane
+    for family in (
+        "playable-unit",
+        "structure",
+        "spellbook",
+        "create-a-hero",
+        "banner-member",
+        "builder",
+    ):
+        identity = compiler_dependency_identity(family)
+        assert identity["mode"] == "explicit-family-manifest", family
+        assert len(identity["modules"]) < total, family
+    # And the plan identity must be a pure function of those lanes.
+    assert len(plan_stage_identity()) == 64
+
+
+def test_plan_identity_ignores_a_module_outside_every_lane(monkeypatch) -> None:
+    """A synthetic edit to a non-lane module must not move the plan identity."""
+
+    from openbfme_importer import incremental_rebuild as ir
+
+    sources = dict(ir._live_module_sources())
+    assert "living_world_ui.py" in sources
+
+    def _with(mods):
+        lanes = sorted(ir._COMPILER_DEPENDENCY_MANIFESTS)
+        return {
+            lane: ir.compiler_dependency_identity(lane, module_sources=mods)["sha256"]
+            for lane in lanes
+        }
+
+    before = _with(sources)
+    edited = dict(sources)
+    edited["living_world_ui.py"] = edited["living_world_ui.py"] + b"\n# touched\n"
+    assert _with(edited) == before
+
+
+def test_atomic_write_never_exposes_a_torn_file_to_concurrent_readers(
+    tmp_path,
+) -> None:
+    """Same-key concurrent writers: last-write-wins is fine, torn files are not.
+
+    This is the precondition for sharing one conversion cache across parallel
+    convert workers. ``write_json_atomic`` writes a unique temp file, fsyncs it
+    and then ``os.replace``s it into position, so a reader either sees the old
+    complete file or a new complete file — never a partial one.
+    """
+
+    from openbfme_importer.util import read_json, write_json_atomic
+
+    target = tmp_path / "shared" / "entry.json"
+    write_json_atomic(target, {"writer": "seed", "rows": ["seed"]})
+    stop = threading.Event()
+    torn: list[str] = []
+    seen: list[str] = []
+
+    def _writer(name: str) -> None:
+        for _ in range(40):
+            write_json_atomic(target, {"writer": name, "rows": [name] * 200})
+
+    def _reader() -> None:
+        while not stop.is_set():
+            try:
+                value = read_json(target)
+            except (ValueError, OSError) as exc:
+                # A torn or missing file is the failure this test exists for.
+                torn.append(f"{type(exc).__name__}: {exc}")
+                return
+            if not isinstance(value, dict) or "writer" not in value:
+                torn.append(f"malformed: {value!r}")
+                return
+            if set(value["rows"]) != {value["writer"]}:
+                torn.append(f"mixed payload: {value!r}")
+                return
+            seen.append(str(value["writer"]))
+
+    readers = [threading.Thread(target=_reader) for _ in range(4)]
+    for thread in readers:
+        thread.start()
+    writers = [
+        threading.Thread(target=_writer, args=(f"w{index}",)) for index in range(4)
+    ]
+    for thread in writers:
+        thread.start()
+    for thread in writers:
+        thread.join()
+    stop.set()
+    for thread in readers:
+        thread.join()
+
+    assert torn == [], torn[:3]
+    assert seen, "readers observed nothing"
+    # Whatever landed last is one writer's complete payload.
+    final = read_json(target)
+    assert set(final["rows"]) == {final["writer"]}
+
+
+def test_media_conversion_key_is_independent_of_doc_compilers() -> None:
+    """W3D/GLB conversion identity must not depend on document compilers.
+
+    The media cache keys on the Blender adapter bytes plus tool attestation,
+    never on the importer's document-compiler sources, so a doc-compiler edit
+    must never force a model reconversion.
+    """
+
+    from openbfme_importer.incremental_rebuild import w3d_adapter_cache_identity
+
+    adapter_before = "a" * 64
+    adapter_after = "b" * 64
+    # No scoped-reconversion patterns: the identity is exactly the adapter's.
+    assert w3d_adapter_cache_identity(adapter_before, "GondorFighter", ()) == (
+        adapter_before
+    )
+    assert w3d_adapter_cache_identity(adapter_after, "GondorFighter", ()) == (
+        adapter_after
+    )
+    # It is a pure function of the adapter identity and the asset id; no
+    # document-compiler identity is an input at all.
+    import inspect
+
+    signature = inspect.signature(w3d_adapter_cache_identity)
+    assert set(signature.parameters) == {
+        "adapter_sha256",
+        "asset_id",
+        "patterns",
+    }
+
+
 def test_worker_count_resolution_is_explicit(monkeypatch) -> None:
     monkeypatch.delenv("OPENBFME_FACTION_CONVERT_JOBS", raising=False)
     assert resolve_convert_worker_count(4) == 4

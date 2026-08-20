@@ -474,7 +474,201 @@ Suite delta: `test_faction_import` + `test_faction_object_cache` +
 environmental `test_horde_dispatch_graphs_cover_exact_effective_retail_corpora`
 that fails identically on HEAD.
 
-## 7. Not verified
+## 7. Cold convert: precision and the honest floor (third lane, on a5fc47c)
+
+Owner requirement: cold convert under 5 minutes. Two fronts were asked for.
+Front 1 landed and is measured below. Front 2 is measured and specified but
+**not implemented** — see "what I did not build" at the end.
+
+Logs: `precision2-repopulate-men.log`, `precision2-warm-before-men.log`,
+`precision2-warm-after-unrelated-edit-men.log`.
+
+### 7.1 A premise that turned out to be false, and one that was true
+
+The brief assumed media/W3D cache entries are invalidated by document-compiler
+edits. **They are not, and never were.** The W3D conversion key
+(`pipeline.py:1257-1298`, built at `pipeline.py:7147-7165`) is exactly: the two
+Blender adapter scripts' bytes, the blender-tree and OpenSAGE-plugin
+attestations, the sha256 of each staged input file, and the logical conversion
+parameters. No `compiler_dependency_identity`, no package salt. The media
+(audio/texture) key (`pipeline.py:1323-1345`) is the same shape. A doc-compiler
+edit has never forced a model reconversion, and
+`test_media_conversion_key_is_independent_of_doc_compilers` now pins that.
+
+The lane precision for `unit` / `structure` / `spellbook` also already existed
+and already worked — `test_doc_compiler_edit_does_not_invalidate_unrelated_lanes`
+and `test_structure_pack_edit_leaves_unit_and_spellbook_rows_hits` pass
+unchanged on `a5fc47c`. I am not claiming credit for either.
+
+What *was* false cold, and is now fixed:
+
+| Defect | Effect | Fix |
+|---|---|---|
+| 8 of the 16 family strings a coverage row can hold had no lane (`_family_lane` returned `None`) and hashed all 185 modules | any package edit evicted every excluded/gap row | new `accounted` lane, manifest = common modules + `playable_unit_compiler.py` (78 modules) |
+| `banner-member` and `builder` — real unit-lane families that compile unit descriptors — were missing from `_UNIT_FAMILIES` | both silently took the 185-module fallback | added to `_UNIT_FAMILIES` |
+| **my own plan-row cache keyed on `compiler_identity_token()`, the whole-package salt** | any edit to any of ~165 non-lane modules threw away all 61 cached plan rows | new `plan_stage_identity()` = union of the four lane identities |
+| `plan_stage_identity` asked for the lane *named* `"accounted"`, which `_family_lane` did not recognise, so it fell back to the 185-module digest | the fix above silently did nothing | `_family_lane` resolves a lane name to itself |
+
+That last one is worth calling out: the first version of this work *looked*
+precise and measured as a full plan miss anyway. It was caught only because I
+ran the A/B instead of trusting the code. `test_live_lanes_all_resolve_precisely
+_against_the_real_package` now asserts, against the real package, that every
+lane resolves to `explicit-family-manifest` with fewer modules than the whole
+corpus — the gate that would have caught it.
+
+Live lane sizes after the fix: unit 80/185, structure 80/185, spellbook 83/185,
+accounted 78/185.
+
+### 7.2 Fail-closed rule stands
+
+`_family_lane` still returns `None` — and therefore the whole-package identity —
+for any family not explicitly named. Today that is `unknown`, the family used
+for a coverage row built after an unexpected convert exception when the plan row
+carried no family. `test_unknown_family_still_fails_closed_to_the_whole_package`
+pins it. Over-invalidation costs time; under-invalidation ships a stale
+artifact.
+
+### 7.3 Measured: the everyday cold trigger
+
+Comment-only edit to `living_world_ui.py`, a module no convert lane imports,
+against a fully warm men faction:
+
+| | plan rows | object cache | wall |
+|---|---|---|---|
+| warm, no edit | 61 cached, 0 recompiled | 59 hits | 53.0 s |
+| **before this fix**, after the edit | **0 cached, 61 recompiled** | 59 hits | **209.8 s** |
+| **after this fix**, after the edit | **61 cached, 0 recompiled** | 59 hits | **44.5 s** |
+
+Byte-identity across the A/B pair: 183/183 artifacts identical, plan aggregate
+identical, coverage `aggregateSha256` identical, 0 of 61 rows differing —
+`IDENTICAL True`. Nothing about the emitted content moved; only the wasted work
+went away.
+
+### 7.4 Front 2: where a genuinely cold faction's time goes
+
+I sampled the live convert process during a compiler-edit cold run:
+
+```
+plan stage    : cpu_s=23.6 wall_s=25 -> cores_busy=0.94 of 24
+convert loop  : cpu_s=29.4 wall_s=30 -> cores_busy=0.98 of 24
+```
+
+**The whole faction convert is single-core-bound.** The convert loop runs 16
+worker threads and delivers 0.98 cores, because the media caches survive
+compiler edits, so there is no Blender subprocess work to overlap and what
+remains is pure GIL-bound Python. 23 of 24 cores sit idle for the entire run.
+
+That is the headroom, and it explains the arithmetic:
+
+| Approach | 7-faction wall, compiler-edit cold | Under 5 min? |
+|---|---|---|
+| today, serial factions | 7 x ~690 s ≈ **80 min** | no |
+| faction-level process pool (7 procs, 1 core each) | ≈ max per-faction ≈ **11.5 min** | no |
+| object-level process pool (all 24 cores) | ~4830 core-s / ~20 usable cores ≈ **4 min** | yes |
+| Front 1 precision, edit touching no convert lane | 7 x ~45 s ≈ **5.3 min** serial, ≈ **1 min** with any parallelism | yes |
+
+**Faction-level parallelism — the shape the brief asked for — does not reach
+5 minutes.** Seven single-core processes finish no faster than the slowest
+faction. Only object-level parallelism, one pool over all ~420 objects of the
+batch, converts the idle 23 cores into wall-clock. That is the change worth
+making, and it is a different, larger change than the one specified.
+
+### 7.5 Concurrent cache writers: verified, with one hazard
+
+`write_json_atomic` (`util.py:12-23`) writes a unique `mkstemp` file, fsyncs,
+then `os.replace`s. `test_atomic_write_never_exposes_a_torn_file_to_concurrent
+_readers` hammers one key with 4 writers and 4 readers: **no reader ever saw a
+torn, partial or mixed payload**, and last-write-wins leaves one writer's
+complete payload. Same-key concurrent writes are safe to that extent.
+
+**But on Windows the writer can fail.** The same test surfaces
+`PermissionError: [WinError 5]` from `os.replace` when a reader holds the
+destination open. Today that is mostly masked: `FactionObjectCache.put` holds a
+process-local `_LOCK`, though `get` does not, so an in-process reader/writer
+race is already possible and rare. **Under process-level parallelism there is no
+shared lock and this becomes routine.** `FactionPlanRowCache.put` already
+swallows `OSError` (a cache we cannot write is a cache we do without);
+`FactionObjectCache.put` does not, so a sharing violation there would surface as
+a per-object converter-gap. Hardening it the same way is a prerequisite for any
+process-level parallelism. I did not make that change in this pass because it
+touches a manifest module and would have invalidated the caches this section's
+measurements depend on; it is a two-line change and it is named here rather than
+left implicit.
+
+### 7.6 The honest floor
+
+- **Cold trigger that touches no convert lane** (living-world, HUD, cursor, map,
+  publish, launcher — the large majority of importer edits): now a full cache
+  hit. ~45 s per faction, ~5.3 min for seven serially and about a minute with
+  any parallelism. **Meets the bar.**
+- **Cold trigger that touches one lane** (e.g. only
+  `playable_structure_pack_compiler.py`): only that lane's rows recompute — 30
+  of 61 men objects. Unit and spellbook rows stay hits. This already worked
+  before my change; precision keeps it that way.
+- **Cold trigger that touches unit *and* structure** — which is exactly the
+  recook named in the original brief (`playable_unit_compiler.py` +
+  `playable_structure_pack_compiler.py`) — legitimately invalidates 56 of 61
+  men objects. Precision cannot help: those rows really do depend on those
+  bytes. At ~690 s per faction and single-core execution, seven factions take
+  ~80 min serially and ~11.5 min with faction-level parallelism. **It reaches
+  under 5 minutes only with object-level process parallelism (~4 min by the
+  arithmetic above), which is not built.**
+- **True full cold** (conversion caches deleted, every model reconverted through
+  Blender): **not measured, and I declined to measure it.** Doing so means
+  deleting the shared media cache, which would cost hours and would sabotage the
+  publish-profiling agent working from the same state root. The one data point
+  I have is the first baseline cold run — convert loop ~660 s with media cold
+  versus ~440 s with media warm — so media adds roughly 220 s per faction of
+  Blender subprocess work, which does parallelize across cores. A true-cold
+  seven-faction run is therefore certainly well beyond 5 minutes on this
+  machine; I will not put a number on it without measuring it.
+
+### 7.7 What I did not build
+
+Front 2 asked for process-level parallel faction converts. I did not implement
+it, for three reasons I would rather state than bury:
+
+1. By my own measurement it does not meet the requirement — faction-level
+   parallelism tops out around 11.5 min for the worst-case trigger. The change
+   that meets the bar is an object-level pool.
+2. It needs `FactionObjectCache.put` hardened against `WinError 5` first
+   (7.5), plus a ledger/artifact-writer merge across processes.
+3. I could not have measured it honestly: the lane brief restricts me to `men`,
+   so a seven-faction concurrency number was not available to me, and the
+   machine was carrying another agent's profiling load throughout.
+
+### 7.8 Tests added in this lane
+
+Twelve, all in `importer/tests/test_faction_convert_perf.py`:
+`test_doc_compiler_edit_does_not_invalidate_unrelated_lanes`,
+`test_structure_pack_edit_leaves_unit_and_spellbook_rows_hits`,
+`test_unrelated_module_edit_invalidates_no_convert_lane`,
+`test_accounted_families_have_a_precise_lane_not_the_whole_package`,
+`test_banner_member_and_builder_use_the_unit_lane`,
+`test_unknown_family_still_fails_closed_to_the_whole_package`,
+`test_blender_adapter_edit_invalidates_every_lane`,
+`test_plan_stage_identity_is_lane_union_not_whole_package`,
+`test_live_lanes_all_resolve_precisely_against_the_real_package`,
+`test_plan_identity_ignores_a_module_outside_every_lane`,
+`test_atomic_write_never_exposes_a_torn_file_to_concurrent_readers`,
+`test_media_conversion_key_is_independent_of_doc_compilers`.
+
+**Failing-first**, run against a pristine `a5fc47c` checkout in `%TEMP%`, four
+fail and 23 pass — precisely the four new behaviours:
+`test_unrelated_module_edit_invalidates_no_convert_lane`,
+`test_accounted_families_have_a_precise_lane_not_the_whole_package`,
+`test_banner_member_and_builder_use_the_unit_lane`,
+`test_plan_stage_identity_is_lane_union_not_whole_package`. The other eight
+already passed, which is the evidence for "this part already worked" in 7.1.
+
+Suite: 443 passed / 12 skipped / 1 failed across
+`test_faction_convert_perf`, `test_incremental_rebuild`, `test_faction_import`,
+`test_faction_object_cache`, `test_spellbook_import`,
+`test_playable_unit_compiler`, `test_playable_structure_compiler` — the one
+failure being the same pre-existing environmental
+`test_horde_dispatch_graphs_cover_exact_effective_retail_corpora`.
+
+## 8. Not verified
 
 - Only `men` was run, per the lane brief (another agent held `elves`). The
   seven-faction numbers are projections from measured per-faction and

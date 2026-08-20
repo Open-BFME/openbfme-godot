@@ -76,6 +76,16 @@ _COMPILER_DEPENDENCY_MANIFESTS: dict[str, frozenset[str]] = {
         "w3d_index.py",
         "w3d_texture_closure.py",
     },
+    # Rows that are *accounted for* rather than compiled: every excluded and
+    # every gap family. No descriptor, recipe, runtime or visual closure is
+    # produced for them, so their coverage row is decided by exactly two
+    # things — the exclusion/gap tables and branch logic in faction_import.py,
+    # and the KindOf classification that chose the family, which comes from
+    # playable_unit_compiler.py. Nothing in the structure, spellbook, pack or
+    # visual lanes can move these rows, so nothing from those lanes is in the
+    # manifest. Before this lane existed they took the whole-package fallback
+    # and were invalidated by an edit to any of the ~181 package modules.
+    "accounted": _COMMON_COMPILER_MODULES | {"playable_unit_compiler.py"},
 }
 
 # Every module retained from the former all-family compiler salt is either in a
@@ -126,6 +136,29 @@ _FAMILY_COMPILER_EXCLUSIONS: dict[str, frozenset[str]] = {
             "retail_building_lifecycle.py",
         }
     ),
+    "accounted": frozenset(
+        {
+            # No compiler runs for an accounted row, so every payload-producing
+            # lane is excluded by construction.
+            "castle_behavior.py",
+            "playable_structure_compiler.py",
+            "playable_structure_lifecycle_evidence.py",
+            "playable_structure_pack_compiler.py",
+            "playable_unit_import.py",
+            "playable_unit_pack_compiler.py",
+            "retail_ability_fx_ingress.py",
+            "retail_building_lifecycle.py",
+            "retail_visual_closure.py",
+            "spellbook_compiler.py",
+            "spellbook_import.py",
+            "spellbook_pack_compiler.py",
+            "spellbook_visual_ingress.py",
+            "typed_visual_graph.py",
+            "w3d_glb_validation.py",
+            "w3d_index.py",
+            "w3d_texture_closure.py",
+        }
+    ),
 }
 
 _UNIT_FAMILIES = frozenset(
@@ -135,9 +168,26 @@ _UNIT_FAMILIES = frozenset(
         "hero",
         "horde",
         "banner-carrier",
+        # Both compile a unit descriptor through the unit lane. They were
+        # missing here, so every ``banner-member`` and ``builder`` row silently
+        # took the whole-package fallback and was invalidated by an edit to any
+        # module in the package.
+        "banner-member",
+        "builder",
         "unit-extension",
         "hero-extension",
         "horde-extension",
+    }
+)
+# Families whose coverage row is accounted for, never compiled.
+_ACCOUNTED_FAMILIES = frozenset(
+    {
+        "create-a-hero",
+        "projectile",
+        "object-inheritance",
+        "retail-object-parser",
+        "missing-object",
+        "unclassified",
     }
 )
 _IDENTITY_LEAF_MODULES = frozenset(
@@ -164,11 +214,27 @@ def _canonical_bytes(value: object) -> bytes:
 
 
 def _family_lane(family: str) -> str | None:
+    """Map a coverage family to its compiler lane, or ``None`` to fail closed.
+
+    ``None`` means "this family's dependency closure is not known", and the
+    caller then hashes the whole package. That is deliberate: over-invalidation
+    only costs time, under-invalidation ships a stale artifact. Any family not
+    named here — including ``unknown``, the row built when conversion raised
+    unexpectedly and the plan row carried no family — keeps that broad
+    identity.
+    """
+
     folded = family.casefold().strip()
+    # A lane name resolves to itself. ``plan_stage_identity`` asks for lanes by
+    # name, and without this "accounted" fell through to the whole-package
+    # fallback — which silently put a 185-module digest back into the plan-row
+    # cache key and made every unrelated edit a full plan miss.
+    if folded in _COMPILER_DEPENDENCY_MANIFESTS:
+        return folded
     if folded in _UNIT_FAMILIES:
         return "unit"
-    if folded in {"structure", "spellbook"}:
-        return folded
+    if folded in _ACCOUNTED_FAMILIES:
+        return "accounted"
     return None
 
 
@@ -203,6 +269,31 @@ def compiler_dependency_identity(
             )
     sources = {str(name): bytes(payload) for name, payload in module_sources.items()}
     return _compute_compiler_dependency_identity(family, sources, memoize=False)
+
+
+def plan_stage_identity() -> str:
+    """Compiler identity for the *plan* stage, across every lane it can emit.
+
+    Planning classifies an object and then compiles a unit, structure or
+    spellbook descriptor, so its identity is the union of those lanes plus the
+    accounted lane — not the whole package. Keying plan rows on the
+    whole-package salt (which is what shipped first) meant an edit to any of
+    the ~165 modules outside these lanes — living-world, HUD, cursor, map,
+    publish code — threw away every cached plan row for no reason.
+
+    Fails closed the same way the per-family identity does: if any lane cannot
+    resolve its closure confidently, that lane's identity is already the
+    whole-package digest, so the union is too.
+    """
+
+    lanes = sorted(_COMPILER_DEPENDENCY_MANIFESTS)
+    payload = {
+        "stage": "faction-plan",
+        "lanes": {
+            lane: compiler_dependency_identity(lane)["sha256"] for lane in lanes
+        },
+    }
+    return hashlib.sha256(_canonical_bytes(payload)).hexdigest()
 
 
 def _live_module_sources() -> dict[str, bytes]:

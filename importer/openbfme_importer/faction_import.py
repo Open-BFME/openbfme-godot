@@ -35,6 +35,7 @@ from .faction_plan_cache import (
 from .incremental_rebuild import (
     compiler_dependency_identity,
     document_closure_identity,
+    plan_stage_identity,
 )
 from .faction_policy import (
     implicit_object_roots,
@@ -586,7 +587,9 @@ def build_faction_import_plan(
             *(f"horde-banner:{value}" for value in sorted(horde_banner_targets)),
         ),
     )
-    plan_compiler_token = compiler_identity_token() if row_cache is not None else ""
+    # Lane-union identity, not the whole-package salt: an edit to a module no
+    # plan lane imports must not evict every cached plan row.
+    plan_compiler_token = plan_stage_identity() if row_cache is not None else ""
 
     def _plan_one(object_id: str) -> list[dict[str, object]]:
         objects: list[dict[str, object]] = []
