@@ -1827,16 +1827,35 @@ def test_runtime_document_binds_embedded_self_referential_construction_clip() ->
     }
 
 
-def test_self_referential_construction_clip_without_channels_fails_closed() -> None:
-    # A self-referential name whose model keys nothing is the genuinely
-    # vacuous case: there is no motion anywhere, so it stays a hard failure.
+def test_self_referential_construction_clip_without_channels_compiles_to_static() -> None:
+    # A self-referential name whose model keys nothing is authored as static:
+    # SAGE shows the model for the build duration with no animation.
+    # The converter now creates a static-no-channels phase instead of failing.
     descriptor, recipe, evidence = _self_referential_construction_fixture()
 
-    with pytest.raises(
-        PlayableStructurePackCompilerError,
-        match="embeds no keyed animation channels",
-    ):
-        compose_structure_runtime_document(descriptor, recipe, evidence)
+    document = compose_structure_runtime_document(descriptor, recipe, evidence)
+    lifecycle = document["registration"]["presentation"]["buildingLifecycle"]
+    phases = {row["phase"]: row for row in lifecycle["phases"]}
+    assert phases["construction"]["animation"] == {
+        "clip": None,
+        "mode": "none",
+    }
+    # The authored clip is preserved as a receipt, not a new mode enum.
+    exclusions = lifecycle["compositionExclusions"]
+    assert any(
+        row.get("kind") == "phase-animation"
+        and row.get("phase") == "construction"
+        and row.get("reason")
+        == "self-referential-manual-clip-without-channels:keep_cons"
+        for row in exclusions
+    ), exclusions
+    # Static build-up: the runtime's NONE contract, exactly as authored
+    # static constructions compile (the clip lives in the exclusion receipt).
+    assert lifecycle["simulationFacts"]["construction"] == {
+        "buildTimeSeconds": 45.0,
+        "animationMode": "NONE",
+        "animation": None,
+    }
 
 
 def test_self_referential_construction_clip_fails_closed_when_displaced() -> None:
