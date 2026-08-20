@@ -101,7 +101,10 @@ func _run() -> void:
 	friend["health"] = 0
 	enemy["health"] = int(enemy.get("maximum_health", 1))
 	_force_gate(gate, true)
-	_check("erebor_gate_without_portal_allows_enemy_request", sim.gate_portal_allows(gate_id, ENEMY_ID))
+	# Requesting the gate OPEN is ownership-only (AIGateUpdate serves the
+	# owner); a portal-less OPEN gate still lets the enemy CROSS — that
+	# geometry claim is pinned by erebor_open_gate_allows_enemy_order below.
+	_check("erebor_gate_open_request_is_ownership_only", not sim.gate_portal_allows(gate_id, ENEMY_ID))
 	_check("erebor_open_gate_allows_enemy_order", _ordered_crosses(sim, enemy, start, destination, across, int(enemy.get("team", 0)), 20))
 	_force_gate(gate, false)
 	_check("erebor_closed_gate_blocks_enemy_order", not _ordered_crosses(sim, enemy, start, destination, across, int(enemy.get("team", 0)), 20))
@@ -279,17 +282,41 @@ func _check_helms_deep_authored_gate(scene: PackedScene) -> void:
 	enemy["health"] = int(enemy.get("maximum_health", 1))
 	_force_gate(gate, true)
 	_check("helms_deep_open_portal_deflects_enemy_order", not _ordered_crosses(sim, enemy, start, destination, across, int(enemy.get("team", 0)), 20))
-	# Test allow_non_skirmish_ai enforcement: AI team is allowed, human team is denied
+	# AllowNonSkirmishAIUnits=No (helmsdeepbuildings.ini:6288) restricts the
+	# PATHING PORTAL, never the gate's auto-open: the owner's gate always
+	# swings for the owner's troops (gate_portal_allows = ownership only),
+	# while the open-passage pathing exemption is reserved for skirmish-AI
+	# units. Same seat, is_ai flipped between the two probes.
 	const AI_UNIT_ID := 99003
-	const HUMAN_UNIT_ID := 99004
 	var gate_team := int(gate.get("team", 1))
-	# AI-controlled friendly unit should be allowed
-	sim._add_battalion(AI_UNIT_ID, gate_team, gate_at, "AI friend")
-	_check("helms_deep_portal_allows_ai_friendly", sim.gate_portal_allows(gate_id, AI_UNIT_ID), "gate_team=%d" % gate_team)
-	# Human-controlled friendly unit should be denied
+	sim._add_battalion(AI_UNIT_ID, gate_team, gate_at, "Portal friend")
+	var portal_mover: Dictionary = sim.entities[AI_UNIT_ID]
+	if not sim._team_descriptors.has(gate_team):
+		sim._team_descriptors[gate_team] = {}
+	# Owner's gate auto-opens for the owner regardless of AI-ness.
 	sim._team_descriptors[gate_team]["is_ai"] = false
-	sim._add_battalion(HUMAN_UNIT_ID, gate_team, gate_at, "Human friend")
-	_check("helms_deep_portal_denies_human_friendly", not sim.gate_portal_allows(gate_id, HUMAN_UNIT_ID), "gate_team=%d is_ai=false" % gate_team)
+	sim.ai_enabled = true
+	_check("helms_deep_gate_auto_open_serves_human_owner", sim.gate_portal_allows(gate_id, AI_UNIT_ID), "gate_team=%d" % gate_team)
+	# Human-controlled friendly: portal pathing exemption withheld -> the open
+	# gate still presents its Closed span to this mover.
+	# The open gate presents OpenLeft/OpenRight leaf discs (offset from the
+	# gateway) to allowed movers, but the full Closed span (covering the gate
+	# centre) to movers the portal refuses.
+	var human_discs: Array = sim._castle_gate_blocking_discs(sim.structures[gate_id], portal_mover)
+	sim._team_descriptors[gate_team]["is_ai"] = true
+	var ai_discs: Array = sim._castle_gate_blocking_discs(sim.structures[gate_id], portal_mover)
+	var gate_open := bool((sim.structures[gate_id] as Dictionary).get("gate_behavior", {}).get("pathing_open", false))
+	var centre := Vector2(sim.structures[gate_id].get("position", Vector2.ZERO))
+	var human_nearest := INF
+	for disc in human_discs:
+		human_nearest = minf(human_nearest, Vector2(disc.get("center", Vector2.INF)).distance_to(centre) - float(disc.get("radius", 0.0)))
+	var ai_nearest := INF
+	for disc in ai_discs:
+		ai_nearest = minf(ai_nearest, Vector2(disc.get("center", Vector2.INF)).distance_to(centre) - float(disc.get("radius", 0.0)))
+	# Closed spans the gateway (discs hug the centre line); OpenLeft/OpenRight
+	# leaf discs sit at the authored ±115 offsets, well clear of the centre.
+	_check("helms_deep_open_portal_denies_human_friendly_pathing", gate_open and human_discs.size() > ai_discs.size() and human_nearest < ai_nearest, "open=%s human=%d/%.2f ai=%d/%.2f" % [str(gate_open), human_discs.size(), human_nearest, ai_discs.size(), ai_nearest])
+	_check("helms_deep_open_portal_allows_ai_friendly_pathing", gate_open and ai_nearest > 0.0, "open=%s ai=%d/%.2f" % [str(gate_open), ai_discs.size(), ai_nearest])
 	root.remove_child(slice)
 	slice.free()
 	await process_frame
