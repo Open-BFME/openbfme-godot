@@ -1477,7 +1477,9 @@ def test_real_census_graph_is_type_level_json_stable() -> None:
 
     import os
 
-    state = Path(r"C:\Users\Jonathan\Desktop\open-bfme\workspace\retail-work")
+    from openbfme_importer.paths import default_state_root
+
+    state = default_state_root()
     if not (state / "catalog" / "rotwk.json").is_file():
         pytest.skip("retail state root unavailable")
 
