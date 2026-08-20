@@ -11,9 +11,11 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
+import threading
 from typing import Any, Iterable, Mapping
 
 from .catalog import InstallCatalog
+from .faction_object_cache import durable_effective_assets_fingerprint
 from .faction_census import census_playable_faction
 from .faction_policy import (
     implicit_object_roots,
@@ -113,6 +115,19 @@ def _catalog_winner_documents(catalog: InstallCatalog) -> dict[str, bytes]:
     return documents
 
 
+_SOURCE_DOCUMENTS_MEMO: dict[tuple[str, str, str], dict[str, bytes]] = {}
+_SOURCE_DOCUMENTS_LOCK = threading.Lock()
+# One production view plus one alternate (the layered catalog-free view).
+_SOURCE_DOCUMENTS_LIMIT = 2
+
+
+def clear_spellbook_source_documents_memo() -> None:
+    """Drop the process-local document-view memo (test seam)."""
+
+    with _SOURCE_DOCUMENTS_LOCK:
+        _SOURCE_DOCUMENTS_MEMO.clear()
+
+
 def spellbook_source_documents(
     effective_root: Path,
     catalog: InstallCatalog | None = None,
@@ -124,8 +139,43 @@ def spellbook_source_documents(
     ModifierLists, science digests, weapons, and structures match the faction
     census and install precedence. Disk effective-assets can lag or mix
     editions; census authority is the install catalog.
+
+    Memoized per (tree, catalog identity, sealed tree fingerprint): a
+    seven-faction batch reads the identical view for every faction, and the
+    *same mapping object* is what lets the compilers' ``prepared.documents is
+    documents`` guard stay strict while the parsed corpus is shared. A
+    re-extracted tree or a different catalog gets a different key. Callers
+    must treat the returned mapping as read-only; none in this package mutate
+    it.
     """
 
+    root = Path(effective_root).expanduser()
+    if not (root / ".openbfme" / "manifest.json").is_file():
+        # Without a sealed manifest there is no cheap identity for the tree,
+        # and the whole-tree inventory fallback would cost more than the parse
+        # it saves. Fail safe: do not memoize.
+        return _spellbook_source_documents_uncached(effective_root, catalog)
+    root_key = str(root.resolve())
+    catalog_key = catalog.identity_sha256() if catalog is not None else ""
+    tree_key = durable_effective_assets_fingerprint(effective_root)
+    memo_key = (root_key, catalog_key, tree_key)
+    with _SOURCE_DOCUMENTS_LOCK:
+        hit = _SOURCE_DOCUMENTS_MEMO.get(memo_key)
+    if hit is not None:
+        return hit
+    documents = _spellbook_source_documents_uncached(effective_root, catalog)
+    with _SOURCE_DOCUMENTS_LOCK:
+        if memo_key not in _SOURCE_DOCUMENTS_MEMO:
+            if len(_SOURCE_DOCUMENTS_MEMO) >= _SOURCE_DOCUMENTS_LIMIT:
+                _SOURCE_DOCUMENTS_MEMO.pop(next(iter(_SOURCE_DOCUMENTS_MEMO)))
+            _SOURCE_DOCUMENTS_MEMO[memo_key] = documents
+        return _SOURCE_DOCUMENTS_MEMO[memo_key]
+
+
+def _spellbook_source_documents_uncached(
+    effective_root: Path,
+    catalog: InstallCatalog | None = None,
+) -> dict[str, bytes]:
     if catalog is not None:
         documents = _catalog_winner_documents(catalog)
         # Optional disk-only extras (mod fragments, any required path catalog

@@ -390,12 +390,52 @@ def _sha256(value: object, field: str) -> str:
     return value
 
 
+def resolve_convert_worker_count(jobs: int | None) -> int:
+    """Worker count for the plan and convert loops.
+
+    Convert is CPU-bound (visual closure + compilers). Cap at 16 so a
+    32-thread host does not thrash the object-cache disk and GIL-heavy JSON
+    paths; override with ``OPENBFME_FACTION_CONVERT_JOBS``.
+    """
+
+    try:
+        workers = int(
+            jobs
+            if jobs is not None
+            else os.environ.get("OPENBFME_FACTION_CONVERT_JOBS", "0")
+        )
+    except ValueError:
+        workers = 0
+    if workers <= 0:
+        cpu = os.cpu_count() or 4
+        workers = max(1, min(16, cpu))
+    return workers
+
+
+def resolve_plan_worker_count(jobs: int | None) -> int:
+    """Worker count for the plan loop. Serial by default — see the call site.
+
+    Explicit ``jobs`` wins; otherwise ``OPENBFME_FACTION_PLAN_JOBS``; otherwise
+    1. This is deliberately *not* the convert loop's default: planning is
+    GIL-bound and measured slower with 16 threads than with one.
+    """
+
+    if jobs is not None:
+        return max(1, int(jobs))
+    try:
+        workers = int(os.environ.get("OPENBFME_FACTION_PLAN_JOBS", "1"))
+    except ValueError:
+        workers = 1
+    return max(1, workers)
+
+
 def build_faction_import_plan(
     faction_graph: Mapping[str, object],
     documents: Mapping[str, bytes],
     *,
     catalog_identity_sha256: str,
     game: str = "bfme2",
+    plan_jobs: int | None = None,
 ) -> dict[str, object]:
     """Account for every command-reachable Object without claiming unsupported work."""
 
@@ -521,8 +561,9 @@ def build_faction_import_plan(
         and edge["targetId"]
     }
     horde_banner_targets.update(layered_banner_targets)
-    objects: list[dict[str, object]] = []
-    for object_id in sorted(object_ids, key=lambda value: (value.casefold(), value)):
+
+    def _plan_one(object_id: str) -> list[dict[str, object]]:
+        objects: list[dict[str, object]] = []
         if prepared is None:
             objects.append(
                 {
@@ -533,7 +574,7 @@ def build_faction_import_plan(
                     "reason": f"compiler initialization failed: {preparation_error}",
                 }
             )
-            continue
+            return objects
         kinds: tuple[str, ...] = ()
         source_path = ""
         parse_error: str | None = None
@@ -580,7 +621,7 @@ def build_faction_import_plan(
                         ),
                     }
                 )
-            continue
+            return objects
         family = _family(kinds)
         if family == "structure":
             try:
@@ -618,7 +659,7 @@ def build_faction_import_plan(
                         ),
                     }
                 )
-            continue
+            return objects
         if family == "spellbook":
             try:
                 spellbook_descriptor = compile_spellbook_descriptor(
@@ -659,7 +700,7 @@ def build_faction_import_plan(
                         ),
                     }
                 )
-            continue
+            return objects
         try:
             descriptor = compile_playable_unit_descriptor(
                 object_id,
@@ -730,6 +771,29 @@ def build_faction_import_plan(
                     "sourceDocumentPaths": _descriptor_source_paths(descriptor),
                 }
             )
+        return objects
+
+    # Planning compiles one descriptor per object — 167 s for the 61 Men
+    # objects, the single largest stage of a faction convert. It can be run
+    # across threads (results are collected in submission order, so the plan
+    # document is unchanged, and these are the same compilers the convert loop
+    # already runs concurrently against this shared ``prepared``), but MEASURED
+    # ON THIS HOST IT IS A LOSS: the stage is pure-Python and GIL-bound, and 16
+    # workers took ~240 s against ~167-215 s serial. So it stays serial unless
+    # a caller or OPENBFME_FACTION_PLAN_JOBS asks otherwise. The real batch win
+    # is elsewhere — one shared parsed corpus across all seven factions.
+    ordered_ids = sorted(object_ids, key=lambda value: (value.casefold(), value))
+    workers = resolve_plan_worker_count(plan_jobs)
+    objects: list[dict[str, object]] = []
+    if workers <= 1 or len(ordered_ids) <= 1:
+        planned = [_plan_one(object_id) for object_id in ordered_ids]
+    else:
+        with ThreadPoolExecutor(
+            max_workers=min(workers, len(ordered_ids))
+        ) as pool:
+            planned = list(pool.map(_plan_one, ordered_ids))
+    for chunk in planned:
+        objects.extend(chunk)
 
     ready_count = sum(row["status"] == "descriptor-ready" for row in objects)
     excluded_count = sum(row["status"] == "excluded" for row in objects)
@@ -957,6 +1021,7 @@ def _convert_one_plan_object(
     graph_identity_sha256: str = "",
     numeric_defines_sha256: str = "",
     document_hashes: Mapping[str, str] | None = None,
+    full_corpus_closure: Mapping[str, object] | None = None,
     game: str = "bfme2",
 ) -> tuple[dict[str, object], dict[str, Mapping[str, object]]]:
     """Convert one plan row; returns (coverage_row, artifacts)."""
@@ -971,11 +1036,18 @@ def _convert_one_plan_object(
     artifacts: dict[str, Mapping[str, object]] = {}
 
     source_paths = plan_row.get("sourceDocumentPaths")
-    closure_identity = document_closure_identity(
-        documents,
-        source_paths if isinstance(source_paths, list) else None,
-        document_hashes=document_hashes,
-    )
+    declared_sources = source_paths if isinstance(source_paths, list) else None
+    if not declared_sources and full_corpus_closure is not None:
+        # A row without a declared source closure hashes the whole corpus, and
+        # that answer is identical for every such row in the batch. Reuse the
+        # one computed up front instead of rebuilding it per object.
+        closure_identity: Mapping[str, object] = full_corpus_closure
+    else:
+        closure_identity = document_closure_identity(
+            documents,
+            declared_sources,
+            document_hashes=document_hashes,
+        )
     compiler_identity = compiler_dependency_identity(family)
     documents_fp = str(closure_identity["sha256"])
     compiler_token = str(compiler_identity["sha256"])
@@ -1532,6 +1604,10 @@ def build_faction_conversion(
     # Keep every manifest row outside data/ini broad. Rows inside data/ini also
     # have compiler-authored closures, while the catalog identity remains the
     # safety backstop until those hand-curated closures are complete.
+    # Rows with no declared source closure all hash the same full corpus.
+    full_corpus_closure = document_closure_identity(
+        documents, None, document_hashes=document_hashes
+    )
     assets_fp = durable_non_ini_assets_fingerprint(effective_root)
     graph_identity_sha256 = hashlib.sha256(
         json.dumps(
@@ -1593,20 +1669,7 @@ def build_faction_conversion(
                     default_cache_root(resolved_import_root)
                 )
 
-    try:
-        workers = int(
-            convert_jobs
-            if convert_jobs is not None
-            else os.environ.get("OPENBFME_FACTION_CONVERT_JOBS", "0")
-        )
-    except ValueError:
-        workers = 0
-    if workers <= 0:
-        # Convert is CPU-bound (visual closure + compilers). Cap at 16 so a
-        # 32-thread host does not thrash the object-cache disk and GIL-heavy
-        # JSON paths; override with OPENBFME_FACTION_CONVERT_JOBS.
-        cpu = os.cpu_count() or 4
-        workers = max(1, min(16, cpu))
+    workers = resolve_convert_worker_count(convert_jobs)
 
     progress_emit(
         "faction-convert",
@@ -1647,6 +1710,7 @@ def build_faction_conversion(
                 graph_identity_sha256=graph_identity_sha256,
                 numeric_defines_sha256=numeric_defines_sha256,
                 document_hashes=document_hashes,
+                full_corpus_closure=full_corpus_closure,
                 game=game,
             )
         except Exception as exc:  # noqa: BLE001 — fail-closed per object, not batch

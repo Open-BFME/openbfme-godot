@@ -179,6 +179,13 @@ def _effective_ini_documents(catalog: InstallCatalog) -> list[_SourceDocument]:
 
 
 def _effective_entries(catalog: InstallCatalog) -> dict[str, CatalogEntry]:
+    # Catalogs are immutable after build/load (see ``identity_sha256``), and a
+    # seven-faction convert batch asks for this precedence sort dozens of
+    # times over ~50k entries. Memoize on the catalog instance exactly as the
+    # identity digest does.
+    cached = getattr(catalog, "_effective_entries_memo", None)
+    if isinstance(cached, dict):
+        return cached
     winners: dict[str, CatalogEntry] = {}
     for entry in sorted(
         catalog.entries,
@@ -189,6 +196,11 @@ def _effective_entries(catalog: InstallCatalog) -> dict[str, CatalogEntry]:
         ),
     ):
         winners.setdefault(entry.key, entry)
+    try:
+        object.__setattr__(catalog, "_effective_entries_memo", winners)
+    except (AttributeError, TypeError):
+        # A slotted or otherwise closed catalog simply does not memoize.
+        pass
     return winners
 
 

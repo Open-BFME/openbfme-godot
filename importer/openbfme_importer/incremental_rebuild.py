@@ -145,6 +145,12 @@ _IDENTITY_LEAF_MODULES = frozenset(
 )
 _LIVE_COMPILER_IDENTITY_MEMO: dict[str, dict[str, Any]] = {}
 _LIVE_COMPILER_IDENTITY_LOCK = threading.Lock()
+# Guards the identity *computation* so concurrent convert workers do not each
+# re-read and re-hash the package source corpus for the same family.
+_LIVE_COMPILER_IDENTITY_COMPUTE_LOCK = threading.RLock()
+# Process-local snapshot of the live package sources (cleared together with the
+# identity memos by ``clear_compiler_identity_token_memo``).
+_LIVE_SOURCE_MEMO: dict[str, bytes] | None = None
 
 
 def _canonical_bytes(value: object) -> bytes:
@@ -181,27 +187,73 @@ def compiler_dependency_identity(
         if cached is not None:
             return cached
     if live_sources:
-        package = Path(__file__).resolve().parent
-        sources: dict[str, bytes] = {}
-        for path in sorted(package.glob("*.py"), key=lambda item: item.name.casefold()):
-            try:
-                sources[path.name] = path.read_bytes()
-            except OSError:
-                # A read race is uncertainty: preserve the filename and make
-                # the identity differ rather than silently omitting it.
-                sources[path.name] = b"<unreadable>"
-        blender_dir = package.parent / "blender"
-        for path in sorted(
-            blender_dir.glob("*.py"), key=lambda item: item.name.casefold()
-        ):
-            name = f"blender/{path.name}"
-            try:
-                sources[name] = path.read_bytes()
-            except OSError:
-                sources[name] = b"<unreadable>"
-    else:
-        sources = {str(name): bytes(payload) for name, payload in module_sources.items()}
+        # Single-flight: the faction convert loop asks for this identity from
+        # every worker thread at once. Without the compute lock each of the 16
+        # workers independently re-read ~13 MB of package sources and re-ran
+        # the AST closure walk, which measured 36 s of wall time for one
+        # *excluded* object. Re-check the memo after acquiring so only the
+        # first arrival pays.
+        with _LIVE_COMPILER_IDENTITY_COMPUTE_LOCK:
+            with _LIVE_COMPILER_IDENTITY_LOCK:
+                cached = _LIVE_COMPILER_IDENTITY_MEMO.get(memo_key)
+            if cached is not None:
+                return cached
+            return _compute_compiler_dependency_identity(
+                family, _live_module_sources(), memoize=True
+            )
+    sources = {str(name): bytes(payload) for name, payload in module_sources.items()}
+    return _compute_compiler_dependency_identity(family, sources, memoize=False)
 
+
+def _live_module_sources() -> dict[str, bytes]:
+    """Read the package source corpus once per process.
+
+    The bytes are the identity oracle, so they are read from disk exactly as
+    before; only the repeated re-reading is removed. ``clear_compiler_identity
+    _token_memo`` drops this snapshot together with the identity memos so
+    source-mutation tests still observe fresh bytes.
+    """
+
+    global _LIVE_SOURCE_MEMO
+
+    with _LIVE_COMPILER_IDENTITY_LOCK:
+        snapshot = _LIVE_SOURCE_MEMO
+    if snapshot is not None:
+        return snapshot
+    package = Path(__file__).resolve().parent
+    sources: dict[str, bytes] = {}
+    for path in sorted(package.glob("*.py"), key=lambda item: item.name.casefold()):
+        try:
+            sources[path.name] = path.read_bytes()
+        except OSError:
+            # A read race is uncertainty: preserve the filename and make
+            # the identity differ rather than silently omitting it.
+            sources[path.name] = b"<unreadable>"
+    blender_dir = package.parent / "blender"
+    for path in sorted(
+        blender_dir.glob("*.py"), key=lambda item: item.name.casefold()
+    ):
+        name = f"blender/{path.name}"
+        try:
+            sources[name] = path.read_bytes()
+        except OSError:
+            sources[name] = b"<unreadable>"
+    with _LIVE_COMPILER_IDENTITY_LOCK:
+        if _LIVE_SOURCE_MEMO is None:
+            _LIVE_SOURCE_MEMO = sources
+        return _LIVE_SOURCE_MEMO
+
+
+def _compute_compiler_dependency_identity(
+    family: str,
+    sources: Mapping[str, bytes],
+    *,
+    memoize: bool,
+) -> dict[str, Any]:
+    """Identity computation (unchanged); split out so callers can single-flight."""
+
+    live_sources = memoize
+    memo_key = family.casefold().strip()
     lane = _family_lane(family)
     declared = _COMPILER_DEPENDENCY_MANIFESTS.get(lane or "")
     missing = sorted((declared or frozenset()) - set(sources))

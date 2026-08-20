@@ -163,6 +163,9 @@ def clear_compiler_identity_token_memo() -> None:
 
     with incremental_rebuild._LIVE_COMPILER_IDENTITY_LOCK:
         incremental_rebuild._LIVE_COMPILER_IDENTITY_MEMO.clear()
+        # The live package-source snapshot is the third memo layer; leaving it
+        # behind would keep serving pre-mutation bytes to a fresh identity.
+        incremental_rebuild._LIVE_SOURCE_MEMO = None
 
 
 def compiler_identity_token(family: str | None = None) -> str:
