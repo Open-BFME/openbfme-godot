@@ -1398,6 +1398,14 @@ and batch report writes (~18 s).
 **The headline: 522 s (8.7 min) for a seven-faction compiler-edit cold convert.
 That is over the owner's five-minute bar.**
 
+*Provenance of these timings, stated because this report has been bitten by it
+before:* every row above was measured on the work path as committed in
+`69e353b`. The follow-up commit `0531b9e` adds two equality checks on the
+assembler's hit path (catalog identity, compiler identity token) and does no
+work, but it does change `faction_import.py` bytes and therefore moves every
+lane identity — so a run on `0531b9e` starts from a cold cache again, and these
+numbers were not re-taken on it.
+
 What Option C did deliver:
 
 - **The parent pass is gone.** Per-faction parent cost after the pool is ~3 s
