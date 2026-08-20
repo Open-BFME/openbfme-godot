@@ -1603,14 +1603,19 @@ def _phase_evidence_clips(
     return clips, idle_family
 
 
-def _assert_self_referential_construction_clip(
+def _check_self_referential_no_channel_clip(
     unbundled: Sequence[Mapping[str, str]],
     *,
     phase_model_source: str,
     embedded_clip_ids: frozenset[str],
-) -> None:
-    """Fail closed, precisely, on an unresolved self-referential build-up.
-
+) -> tuple[bool, str]:
+    """Detect a self-referential MANUAL construction clip with no keyed animation.
+    
+    Returns (True, clip_name) if this is a self-referential MANUAL clip whose
+    model has no embedded animation channels (retail shows static model for build).
+    Returns (False, "") otherwise, and raises PlayableStructurePackCompilerError
+    for the displaced-animation case.
+    
     Retail authors a structure's construction animation two ways. The split
     shape names a separate asset (``GBBarracks_ASKL.GBBarracks_ABLD``, motion
     in gbbarracks_abld.w3d). The embedded shape names the construction model
@@ -1618,14 +1623,12 @@ def _assert_self_referential_construction_clip(
     model's own W3D as compressed animation channels; the conversion declares
     the model as its own animation source and bundles the captured clip.
 
-    Reaching this function means an embedded-shape name did not resolve, so
-    the clip is genuinely unusable rather than merely unbound. Say which of
-    the two ways it failed instead of reporting a bare clip count.
+    Reaching this function means an embedded-shape name did not resolve.
     """
 
     stem = PurePosixPath(phase_model_source).stem.casefold()
     if not stem:
-        return
+        return False, ""
     manual_unbundled = sorted(
         {
             str(row["clip"])
@@ -1634,7 +1637,7 @@ def _assert_self_referential_construction_clip(
         }
     )
     if manual_unbundled != [stem]:
-        return
+        return False, ""
     if stem in embedded_clip_ids:
         # The model keys motion, but externally attached clips displaced it in
         # the conversion, so which clip drives the build is ambiguous.
@@ -1643,10 +1646,9 @@ def _assert_self_referential_construction_clip(
             "whose keyed embedded animation was displaced by externally bound "
             "clips: " + stem
         )
-    raise PlayableStructurePackCompilerError(
-        "structure construction phase names a self-referential MANUAL clip "
-        "whose model embeds no keyed animation channels: " + stem
-    )
+    # Model has no keyed animation channels; return True and the clip name
+    # so the caller can create a static-no-channels phase.
+    return True, stem
 
 
 def _draw_module_key(value: object) -> str:
@@ -1822,11 +1824,15 @@ def _phase_animation(
                 )
                 manual = preferred
         if not manual:
-            _assert_self_referential_construction_clip(
+            is_no_channel, clip_name = _check_self_referential_no_channel_clip(
                 unbundled,
                 phase_model_source=phase_model_source,
                 embedded_clip_ids=embedded_clip_ids,
             )
+            if is_no_channel:
+                # Self-referential MANUAL clip with no keyed animation channels:
+                # SAGE shows the static model for the build duration.
+                return {"clip": clip_name, "mode": "static-no-channels"}
         if len(manual) != 1:
             # `found 0` used to be the symptom of a real converter defect:
             # embedded-shape build-up clips (``GBWell_A.GBWell_A``, motion in
