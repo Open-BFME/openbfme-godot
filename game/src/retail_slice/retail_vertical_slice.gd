@@ -7556,7 +7556,15 @@ func _presentation_height_for_entity(entity: Dictionary, position: Vector2) -> f
 	## engines (trebuchet.ini CatapultLocomotor, wheels on the ground) sit on
 	## the sampled terrain: the owner screenshot was wheels floating above it.
 	var ground := 0.0
-	if source_map_data != null and source_map_data.ready:
+	if (
+		String(entity.get("pathing_layer", "ground")) in ["ramp", "deck"]
+		and entity.has("pathing_elevation")
+	):
+		# Q51: the authoritative route carries the exact rasterized GLB surface
+		# elevation once a battalion reaches each ramp/deck waypoint. Presentation
+		# must not snap it back to the terrain underneath the wall.
+		ground = float(entity.get("pathing_elevation", 0.0))
+	elif source_map_data != null and source_map_data.ready:
 		ground = source_map_data.local_ground_height(position)
 	if String(entity.get("category", "")) == "siege":
 		return ground

@@ -325,6 +325,20 @@ var navigation_build_count := 0
 var route_query_count := 0
 var _navigation_grid: AStarGrid2D
 var _water_navigation_grid: AStarGrid2D
+## Q51: wall tops are a distinct navigation domain. The ground grid above is
+## never mutated by this layer; a deck/ramp cell only exists here when it came
+## from authored walk-surface geometry (or the explicit synthetic runner seam).
+var walk_surface_navigation_ready := false
+var walk_surface_cell_count := 0
+var walk_surface_ramp_cell_count := 0
+var walk_surface_source_count := 0
+var walk_surface_gap_receipts: Array[String] = []
+var _walk_surface_navigation_grid: AStarGrid2D
+var _walk_surface_roles_by_cell: Dictionary = {}
+var _walk_surface_ids_by_cell: Dictionary = {}
+var _walk_surface_height_by_cell: Dictionary = {}
+var _walk_surface_portal_cells: Array[Vector2i] = []
+var _walk_surface_mesh_cache: Dictionary = {}
 var _water_cells := PackedByteArray()
 var _ford_corridor_cells: Dictionary = {}
 
@@ -947,6 +961,10 @@ func _cross_check_fixtures_against_objects() -> bool:
 func _derive_castle_fixture_placements() -> void:
 	castle_fixture_placements.clear()
 	castle_fixture_deferred.clear()
+	var bound_by_source_index: Dictionary = {}
+	for placement_value in bound_prop_placements:
+		var bound_placement := placement_value as Dictionary
+		bound_by_source_index[int(bound_placement.get("source_index", -1))] = bound_placement
 	for record_value in map_fixtures:
 		var record: Dictionary = record_value
 		var disposition := _castle_fixture_seed_disposition(record)
@@ -977,6 +995,12 @@ func _derive_castle_fixture_placements() -> void:
 			row["gate"] = (record.get("gate") as Dictionary).duplicate(true)
 		if record.has("garrison"):
 			row["garrison"] = (record.get("garrison", {}) as Dictionary).duplicate(true)
+		if record.has("walkSurfaces"):
+			row["walk_surfaces"] = (record.get("walkSurfaces", {}) as Dictionary).duplicate(true)
+			var bound_placement: Dictionary = bound_by_source_index.get(int(record.get("index", -1)), {}) as Dictionary
+			if not bound_placement.is_empty():
+				row["walk_surface_glb_path"] = String(bound_placement.get("glb_path", ""))
+				row["walk_surface_scale"] = Vector3(bound_placement.get("scale", Vector3.ONE))
 		castle_fixture_placements.append(row)
 
 
@@ -2465,6 +2489,7 @@ func _build_navigation() -> bool:
 	for known_cell_value in _map_runtime_profile.get("known_impassable_cells", []) as Array:
 		if is_navigation_walkable(Vector2i(known_cell_value)):
 			return _fail("known source-impassable ford cell became walkable")
+	_build_walk_surface_navigation_from_fixtures()
 	return true
 
 
@@ -2548,6 +2573,625 @@ func query_route(from_local: Vector2, to_local: Vector2) -> Dictionary:
 		"cells": id_path,
 		"ford_name": _ford_name_for_cells(id_path),
 	}
+
+
+func _build_walk_surface_navigation_from_fixtures() -> void:
+	walk_surface_source_count = 0
+	walk_surface_gap_receipts.clear()
+	_walk_surface_mesh_cache.clear()
+	var surface_rows: Array[Dictionary] = []
+	var role_fields := [
+		{"field": "wallBoundsMesh", "role": "deck"},
+		{"field": "raisedWallMesh", "role": "deck"},
+		{"field": "rampMesh1", "role": "ramp"},
+		{"field": "rampMesh2", "role": "ramp"},
+	]
+	for placement_value in castle_fixture_placements:
+		var placement := placement_value as Dictionary
+		if not placement.has("walk_surfaces"):
+			continue
+		var source_index := int(placement.get("source_index", -1))
+		var type_name := String(placement.get("type_name", ""))
+		var glb_path := String(placement.get("walk_surface_glb_path", ""))
+		if glb_path == "" or not FileAccess.file_exists(glb_path) or not _path_is_within_mounted_pack(glb_path):
+			walk_surface_gap_receipts.append("%d:%s:missing-bound-glb" % [source_index, type_name])
+			continue
+		var mesh_triangles := _walk_surface_mesh_triangles(glb_path)
+		if mesh_triangles.is_empty():
+			walk_surface_gap_receipts.append("%d:%s:unreadable-bound-glb" % [source_index, type_name])
+			continue
+		var position := Vector2(placement.get("position", Vector2.ZERO))
+		var elevation := float(placement.get("elevation", 0.0))
+		var yaw := float(placement.get("yaw", 0.0))
+		var authored_scale := Vector3(placement.get("walk_surface_scale", Vector3.ONE))
+		var placement_transform := Transform3D(
+			Basis(Vector3.UP, yaw).scaled(authored_scale * local_transform_scale),
+			Vector3(position.x, elevation, position.y)
+		)
+		var walk_surfaces := placement.get("walk_surfaces", {}) as Dictionary
+		for role_row in role_fields:
+			var field := String(role_row["field"])
+			if not walk_surfaces.has(field):
+				continue
+			walk_surface_source_count += 1
+			var mesh_name := String(walk_surfaces.get(field, ""))
+			var triangles: Array = mesh_triangles.get(mesh_name.to_lower(), []) as Array
+			if triangles.is_empty():
+				walk_surface_gap_receipts.append("%d:%s:%s:%s-missing" % [source_index, type_name, field, mesh_name])
+				continue
+			var raster := _rasterize_walk_surface_triangles(triangles, placement_transform)
+			var cells: Array[Vector2i] = []
+			cells.assign(raster.get("cells", []))
+			if cells.is_empty():
+				walk_surface_gap_receipts.append("%d:%s:%s:%s-zero-cells" % [source_index, type_name, field, mesh_name])
+				continue
+			var surface_row := {
+				"id": "%08d:%s:%s" % [source_index, field, mesh_name],
+				"role": String(role_row["role"]),
+				"cells": cells,
+				"heights": (raster.get("heights", {}) as Dictionary).duplicate(),
+			}
+			if String(role_row["role"]) == "ramp":
+				var portal_cells := _walk_surface_low_endpoint_cells(triangles, placement_transform, cells)
+				if portal_cells.is_empty():
+					walk_surface_gap_receipts.append("%d:%s:%s:%s-no-ground-endpoint" % [source_index, type_name, field, mesh_name])
+				surface_row["portal_cells"] = portal_cells
+			surface_rows.append(surface_row)
+	if surface_rows.is_empty():
+		_clear_walk_surface_navigation()
+	else:
+		_install_walk_surface_cells(surface_rows)
+	if walk_surface_source_count > 0:
+		print(
+			"RETAIL_MAP_DATA_WALK_SURFACES authored=%d cells=%d ramp_cells=%d portals=%d gaps=%d"
+			% [walk_surface_source_count, walk_surface_cell_count, walk_surface_ramp_cell_count, _walk_surface_portal_cells.size(), walk_surface_gap_receipts.size()]
+		)
+		if not walk_surface_gap_receipts.is_empty():
+			print("RETAIL_MAP_DATA_WALK_SURFACE_GAPS %s" % JSON.stringify(walk_surface_gap_receipts))
+
+
+func _walk_surface_mesh_triangles(glb_path: String) -> Dictionary:
+	if _walk_surface_mesh_cache.has(glb_path):
+		return _walk_surface_mesh_cache[glb_path] as Dictionary
+	var by_name: Dictionary = {}
+	var document := GLTFDocument.new()
+	var state := GLTFState.new()
+	if document.append_from_file(glb_path, state) != OK:
+		_walk_surface_mesh_cache[glb_path] = by_name
+		return by_name
+	var scene := document.generate_scene(state) as Node3D
+	if scene == null:
+		_walk_surface_mesh_cache[glb_path] = by_name
+		return by_name
+	var nodes: Array[Node] = [scene]
+	var node_index := 0
+	while node_index < nodes.size():
+		var node := nodes[node_index]
+		for child in node.get_children():
+			nodes.append(child)
+		node_index += 1
+	for node in nodes:
+		if not node is MeshInstance3D:
+			continue
+		var mesh_instance := node as MeshInstance3D
+		var mesh := mesh_instance.mesh
+		if mesh == null:
+			continue
+		var key := String(mesh_instance.name).to_lower()
+		var mesh_transform := _walk_surface_node_transform(mesh_instance, scene)
+		var triangles: Array = (by_name.get(key, []) as Array).duplicate()
+		for surface_index in range(mesh.get_surface_count()):
+			var arrays := mesh.surface_get_arrays(surface_index)
+			var vertices_value: Variant = arrays[Mesh.ARRAY_VERTEX]
+			if not vertices_value is PackedVector3Array:
+				continue
+			var vertices := vertices_value as PackedVector3Array
+			var indices_value: Variant = arrays[Mesh.ARRAY_INDEX]
+			var index_count: int = indices_value.size() if indices_value != null else 0
+			if index_count >= 3:
+				for triangle_index in range(0, index_count - 2, 3):
+					var a := int(indices_value[triangle_index])
+					var b := int(indices_value[triangle_index + 1])
+					var c := int(indices_value[triangle_index + 2])
+					if a < vertices.size() and b < vertices.size() and c < vertices.size():
+						triangles.append(PackedVector3Array([
+							mesh_transform * vertices[a],
+							mesh_transform * vertices[b],
+							mesh_transform * vertices[c],
+						]))
+			elif vertices.size() >= 3:
+				for triangle_index in range(0, vertices.size() - 2, 3):
+					triangles.append(PackedVector3Array([
+						mesh_transform * vertices[triangle_index],
+						mesh_transform * vertices[triangle_index + 1],
+						mesh_transform * vertices[triangle_index + 2],
+					]))
+		by_name[key] = triangles
+	scene.free()
+	_walk_surface_mesh_cache[glb_path] = by_name
+	return by_name
+
+
+func _walk_surface_node_transform(node: Node3D, scene_root: Node3D) -> Transform3D:
+	## Generated GLTF scenes are intentionally not added to the SceneTree while
+	## map data is loading, so Node3D.global_transform is unavailable. Compose
+	## the retained HLOD/pivot hierarchy explicitly instead.
+	var result := node.transform
+	var parent := node.get_parent()
+	while parent is Node3D:
+		result = (parent as Node3D).transform * result
+		if parent == scene_root:
+			break
+		parent = parent.get_parent()
+	return result
+
+
+func _rasterize_walk_surface_triangles(triangles: Array, placement_transform: Transform3D) -> Dictionary:
+	var heights: Dictionary = {}
+	for triangle_value in triangles:
+		if not triangle_value is PackedVector3Array or (triangle_value as PackedVector3Array).size() != 3:
+			continue
+		var triangle := triangle_value as PackedVector3Array
+		var world_triangle := PackedVector3Array([
+			placement_transform * triangle[0],
+			placement_transform * triangle[1],
+			placement_transform * triangle[2],
+		])
+		var grid_polygon := PackedVector2Array()
+		var minimum := Vector2(INF, INF)
+		var maximum := Vector2(-INF, -INF)
+		for point in world_triangle:
+			var grid_point := local_to_grid_float(Vector2(point.x, point.z))
+			grid_polygon.append(grid_point)
+			minimum = Vector2(minf(minimum.x, grid_point.x), minf(minimum.y, grid_point.y))
+			maximum = Vector2(maxf(maximum.x, grid_point.x), maxf(maximum.y, grid_point.y))
+		var minimum_cell := Vector2i(
+			clampi(floori(minimum.x), navigation_grid_min.x, navigation_grid_max.x),
+			clampi(floori(minimum.y), navigation_grid_min.y, navigation_grid_max.y)
+		)
+		var maximum_cell := Vector2i(
+			clampi(ceili(maximum.x), navigation_grid_min.x, navigation_grid_max.x),
+			clampi(ceili(maximum.y), navigation_grid_min.y, navigation_grid_max.y)
+		)
+		for grid_y in range(minimum_cell.y, maximum_cell.y + 1):
+			for grid_x in range(minimum_cell.x, maximum_cell.x + 1):
+				var cell := Vector2i(grid_x, grid_y)
+				if not Geometry2D.is_point_in_polygon(Vector2(cell), grid_polygon):
+					continue
+				var local := grid_to_local_horizontal(cell)
+				var height := _walk_triangle_height(world_triangle, local)
+				if not heights.has(cell) or height > float(heights[cell]):
+					heights[cell] = height
+	var cells: Array[Vector2i] = []
+	for cell_value in heights.keys():
+		cells.append(Vector2i(cell_value))
+	cells.sort_custom(func(a, b): return a.y < b.y or (a.y == b.y and a.x < b.x))
+	return {"cells": cells, "heights": heights}
+
+
+func _walk_triangle_height(triangle: PackedVector3Array, local: Vector2) -> float:
+	var a := Vector2(triangle[0].x, triangle[0].z)
+	var b := Vector2(triangle[1].x, triangle[1].z)
+	var c := Vector2(triangle[2].x, triangle[2].z)
+	var denominator := (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y)
+	if is_zero_approx(denominator):
+		return (triangle[0].y + triangle[1].y + triangle[2].y) / 3.0
+	var wa := ((b.y - c.y) * (local.x - c.x) + (c.x - b.x) * (local.y - c.y)) / denominator
+	var wb := ((c.y - a.y) * (local.x - c.x) + (a.x - c.x) * (local.y - c.y)) / denominator
+	var wc := 1.0 - wa - wb
+	return wa * triangle[0].y + wb * triangle[1].y + wc * triangle[2].y
+
+
+func _walk_surface_low_endpoint_cells(triangles: Array, placement_transform: Transform3D, surface_cells: Array[Vector2i]) -> Array[Vector2i]:
+	var low_height := INF
+	var low_points: Array[Vector2] = []
+	for triangle_value in triangles:
+		if not triangle_value is PackedVector3Array:
+			continue
+		for vertex in triangle_value as PackedVector3Array:
+			var world := placement_transform * vertex
+			if world.y < low_height and not is_equal_approx(world.y, low_height):
+				low_height = world.y
+				low_points = [Vector2(world.x, world.z)]
+			elif is_equal_approx(world.y, low_height):
+				low_points.append(Vector2(world.x, world.z))
+	var candidates: Array[Vector2i] = []
+	var best_distance := INF
+	for cell in surface_cells:
+		if not is_navigation_walkable(cell):
+			continue
+		var local := grid_to_local_horizontal(cell)
+		var distance := INF
+		for low_point in low_points:
+			distance = minf(distance, local.distance_squared_to(low_point))
+		if distance < best_distance and not is_equal_approx(distance, best_distance):
+			best_distance = distance
+			candidates = [cell]
+		elif is_equal_approx(distance, best_distance):
+			candidates.append(cell)
+	candidates.sort_custom(func(a, b): return a.y < b.y or (a.y == b.y and a.x < b.x))
+	return candidates
+
+
+func _clear_walk_surface_navigation() -> void:
+	walk_surface_navigation_ready = false
+	walk_surface_cell_count = 0
+	walk_surface_ramp_cell_count = 0
+	_walk_surface_navigation_grid = null
+	_walk_surface_roles_by_cell.clear()
+	_walk_surface_ids_by_cell.clear()
+	_walk_surface_height_by_cell.clear()
+	_walk_surface_portal_cells.clear()
+
+
+func install_walk_surface_cells_for_test(surface_rows: Array) -> bool:
+	## Explicit runner seam: production calls the same builder after rasterizing
+	## exact GLB triangles. Tests supply cells so no private retail GLB is needed.
+	return _install_walk_surface_cells(surface_rows)
+
+
+func _install_walk_surface_cells(surface_rows: Array) -> bool:
+	_clear_walk_surface_navigation()
+	if _navigation_grid == null or not navigation_ready or surface_rows.is_empty():
+		return false
+	var ordered_rows: Array = surface_rows.duplicate(true)
+	ordered_rows.sort_custom(
+		func(a, b): return String((a as Dictionary).get("id", "")) < String((b as Dictionary).get("id", ""))
+	)
+	var declared_portals: Dictionary = {}
+	for row_value in ordered_rows:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			return false
+		var row := row_value as Dictionary
+		var surface_id := String(row.get("id", "")).strip_edges()
+		var role := String(row.get("role", "")).strip_edges().to_lower()
+		var cells_value: Variant = row.get("cells", [])
+		var heights_value: Variant = row.get("heights", {})
+		if surface_id == "" or role not in ["deck", "ramp"] or typeof(cells_value) != TYPE_ARRAY or (cells_value as Array).is_empty():
+			return false
+		if typeof(heights_value) != TYPE_DICTIONARY:
+			return false
+		for cell_value in cells_value as Array:
+			if typeof(cell_value) != TYPE_VECTOR2I:
+				return false
+			var cell := Vector2i(cell_value)
+			if not is_grid_inside_navigation(cell):
+				return false
+			var roles: Array = (_walk_surface_roles_by_cell.get(cell, []) as Array).duplicate()
+			if not roles.has(role):
+				roles.append(role)
+				roles.sort()
+			_walk_surface_roles_by_cell[cell] = roles
+			var ids: Array = (_walk_surface_ids_by_cell.get(cell, []) as Array).duplicate()
+			if not ids.has(surface_id):
+				ids.append(surface_id)
+				ids.sort()
+			_walk_surface_ids_by_cell[cell] = ids
+			if (heights_value as Dictionary).has(cell):
+				var height := float((heights_value as Dictionary)[cell])
+				if not _walk_surface_height_by_cell.has(cell) or height > float(_walk_surface_height_by_cell[cell]):
+					_walk_surface_height_by_cell[cell] = height
+		if role == "ramp":
+			var portal_values: Variant = row.get("portal_cells", [])
+			if typeof(portal_values) != TYPE_ARRAY:
+				return false
+			for portal_value in portal_values as Array:
+				if typeof(portal_value) != TYPE_VECTOR2I or not (cells_value as Array).has(Vector2i(portal_value)):
+					return false
+				declared_portals[Vector2i(portal_value)] = true
+	if _walk_surface_roles_by_cell.is_empty():
+		return false
+	_walk_surface_navigation_grid = AStarGrid2D.new()
+	_walk_surface_navigation_grid.region = Rect2i(navigation_grid_min, navigation_grid_max - navigation_grid_min + Vector2i.ONE)
+	_walk_surface_navigation_grid.cell_size = Vector2.ONE
+	_walk_surface_navigation_grid.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_NEVER
+	_walk_surface_navigation_grid.default_compute_heuristic = AStarGrid2D.HEURISTIC_MANHATTAN
+	_walk_surface_navigation_grid.default_estimate_heuristic = AStarGrid2D.HEURISTIC_MANHATTAN
+	_walk_surface_navigation_grid.update()
+	for grid_y in range(navigation_grid_min.y, navigation_grid_max.y + 1):
+		for grid_x in range(navigation_grid_min.x, navigation_grid_max.x + 1):
+			var cell := Vector2i(grid_x, grid_y)
+			_walk_surface_navigation_grid.set_point_solid(cell, not _walk_surface_roles_by_cell.has(cell))
+	var ordered_cells: Array[Vector2i] = []
+	for cell_value in _walk_surface_roles_by_cell.keys():
+		ordered_cells.append(Vector2i(cell_value))
+	ordered_cells.sort_custom(func(a, b): return a.y < b.y or (a.y == b.y and a.x < b.x))
+	for cell in ordered_cells:
+		var roles: Array = _walk_surface_roles_by_cell[cell]
+		if roles.has("ramp"):
+			walk_surface_ramp_cell_count += 1
+			# Retail ramp meshes are the ONLY layer portals. Production rows name
+			# only the authored low endpoint; decks and ramp sides never become an
+			# implicit ground connection merely because their XY cell is walkable.
+			if declared_portals.has(cell) and is_navigation_walkable(cell):
+				_walk_surface_portal_cells.append(cell)
+	walk_surface_cell_count = ordered_cells.size()
+	walk_surface_navigation_ready = walk_surface_cell_count > 0
+	return walk_surface_navigation_ready
+
+
+func is_walk_surface_at(local_position: Vector2) -> bool:
+	return walk_surface_navigation_ready and _walk_surface_roles_by_cell.has(local_to_grid_cell(local_position))
+
+
+func walk_surface_role_at(local_position: Vector2) -> String:
+	return _walk_surface_role(local_to_grid_cell(local_position))
+
+
+func walk_surface_height_at(local_position: Vector2) -> float:
+	var cell := local_to_grid_cell(local_position)
+	return float(_walk_surface_height_by_cell.get(cell, local_ground_height(local_position)))
+
+
+func _walk_surface_role(cell: Vector2i) -> String:
+	var roles: Array = _walk_surface_roles_by_cell.get(cell, []) as Array
+	# The shared deck/ramp seam remains a ramp until the next deck-only sample;
+	# this makes the layer transition observable and prevents face ascent.
+	if roles.has("ramp"):
+		return "ramp"
+	if roles.has("deck"):
+		return "deck"
+	return ""
+
+
+func query_layered_route(from_local: Vector2, to_local: Vector2, from_layer: String = "ground") -> Dictionary:
+	if not walk_surface_navigation_ready:
+		return query_route(from_local, to_local)
+	var normalized_from_layer := from_layer if from_layer in ["deck", "ramp"] else "ground"
+	var destination_cell := local_to_grid_cell(to_local)
+	var destination_role := _walk_surface_role(destination_cell)
+	if normalized_from_layer == "ground" and destination_role == "":
+		return query_route(from_local, to_local)
+	if normalized_from_layer != "ground" and destination_role == "":
+		return _query_wall_to_ground(from_local, to_local)
+	if normalized_from_layer == "ground":
+		return _query_ground_to_wall(from_local, to_local, destination_cell)
+	return _query_wall_to_wall(from_local, to_local, destination_cell)
+
+
+func _query_ground_to_wall(from_local: Vector2, to_local: Vector2, destination_cell: Vector2i) -> Dictionary:
+	var best: Dictionary = {}
+	var best_score := 2147483647
+	for portal_cell in _walk_surface_portal_cells:
+		var wall_cells: Array[Vector2i] = _walk_surface_navigation_grid.get_id_path(portal_cell, destination_cell, false)
+		if wall_cells.is_empty():
+			continue
+		var portal_local := grid_to_local_horizontal(portal_cell)
+		var ground := query_route(from_local, portal_local)
+		if not bool(ground.get("valid", false)):
+			continue
+		var ground_cells: Array = ground.get("cells", []) as Array
+		var score := ground_cells.size() + wall_cells.size()
+		if score >= best_score:
+			continue
+		best_score = score
+		best = _compose_ground_to_wall_route(ground, wall_cells, to_local)
+	if best.is_empty():
+		return {"valid": false, "reason": "wall-face-ascent-refused", "points": [], "cells": [], "uses_walk_surface": true}
+	return best
+
+
+func _query_wall_to_ground(from_local: Vector2, to_local: Vector2) -> Dictionary:
+	var start_cell := local_to_grid_cell(from_local)
+	var best: Dictionary = {}
+	var best_score := 2147483647
+	for portal_cell in _walk_surface_portal_cells:
+		var wall_cells: Array[Vector2i] = _walk_surface_navigation_grid.get_id_path(start_cell, portal_cell, false)
+		if wall_cells.is_empty():
+			continue
+		var portal_local := grid_to_local_horizontal(portal_cell)
+		var ground := query_route(portal_local, to_local)
+		if not bool(ground.get("valid", false)):
+			continue
+		var ground_cells: Array = ground.get("cells", []) as Array
+		var score := wall_cells.size() + ground_cells.size()
+		if score >= best_score:
+			continue
+		best_score = score
+		best = _compose_wall_to_ground_route(wall_cells, ground, to_local)
+	if best.is_empty():
+		return {"valid": false, "reason": "wall-descent-unavailable", "points": [], "cells": [], "uses_walk_surface": true}
+	return best
+
+
+func _query_wall_to_wall(from_local: Vector2, to_local: Vector2, destination_cell: Vector2i) -> Dictionary:
+	var start_cell := local_to_grid_cell(from_local)
+	var wall_cells: Array[Vector2i] = _walk_surface_navigation_grid.get_id_path(start_cell, destination_cell, false)
+	if wall_cells.is_empty() or wall_cells.size() > MAX_ROUTE_CELLS:
+		return {"valid": false, "reason": "disconnected-wall-deck", "points": [], "cells": [], "uses_walk_surface": true}
+	var route := _wall_route_segment(wall_cells, to_local, false)
+	return {
+		"valid": true,
+		"reason": "",
+		"points": route["points"],
+		"point_layers": route["layers"],
+		"point_elevations": route["elevations"],
+		"surface_roles": route["roles"],
+		"cells": wall_cells,
+		"ford_name": "",
+		"uses_walk_surface": true,
+		"destination_layer": "deck" if _walk_surface_role(destination_cell) == "deck" else "ramp",
+	}
+
+
+func query_layered_bridge_route(from_local: Vector2, to_local: Vector2) -> Dictionary:
+	## A failed ground->ground query may use a connected ramp/deck/ramp chain.
+	## Valid ground routes never reach this method, preserving their exact bytes.
+	if not walk_surface_navigation_ready or _walk_surface_portal_cells.size() < 2:
+		return {"valid": false, "reason": "no-wall-bridge-route", "points": [], "cells": [], "start_portals": 0, "end_portals": 0, "connected_pairs": 0, "deck_pairs": 0}
+	var starts: Array[Dictionary] = []
+	var ends: Array[Dictionary] = []
+	for portal_cell in _walk_surface_portal_cells:
+		var portal_local := grid_to_local_horizontal(portal_cell)
+		var ground_in := query_route(from_local, portal_local)
+		if bool(ground_in.get("valid", false)):
+			starts.append({"cell": portal_cell, "route": ground_in})
+		var ground_out := query_route(portal_local, to_local)
+		if bool(ground_out.get("valid", false)):
+			ends.append({"cell": portal_cell, "route": ground_out})
+	var best: Dictionary = {}
+	var best_score := 2147483647
+	var connected_pairs := 0
+	var deck_pairs := 0
+	for start_row in starts:
+		var start_cell := Vector2i(start_row["cell"])
+		for end_row in ends:
+			var end_cell := Vector2i(end_row["cell"])
+			if start_cell == end_cell:
+				continue
+			var wall_cells: Array[Vector2i] = _walk_surface_navigation_grid.get_id_path(start_cell, end_cell, false)
+			if wall_cells.is_empty() or wall_cells.size() > MAX_ROUTE_CELLS:
+				continue
+			connected_pairs += 1
+			var wall := _wall_route_segment(wall_cells, grid_to_local_horizontal(end_cell), true)
+			if not (wall.get("roles", []) as Array).has("deck"):
+				continue
+			deck_pairs += 1
+			var in_cells: Array = (start_row.get("route", {}) as Dictionary).get("cells", []) as Array
+			var out_cells: Array = (end_row.get("route", {}) as Dictionary).get("cells", []) as Array
+			var score := in_cells.size() + wall_cells.size() + out_cells.size()
+			if score >= best_score:
+				continue
+			best_score = score
+			best = _compose_ground_wall_ground_route(
+				start_row.get("route", {}) as Dictionary,
+				wall_cells,
+				wall,
+				end_row.get("route", {}) as Dictionary,
+				to_local
+			)
+	if best.is_empty():
+		return {"valid": false, "reason": "no-wall-bridge-route", "points": [], "cells": [], "start_portals": starts.size(), "end_portals": ends.size(), "connected_pairs": connected_pairs, "deck_pairs": deck_pairs}
+	best["start_portals"] = starts.size()
+	best["end_portals"] = ends.size()
+	best["connected_pairs"] = connected_pairs
+	best["deck_pairs"] = deck_pairs
+	return best
+
+
+func _compose_ground_wall_ground_route(ground_in: Dictionary, wall_cells: Array[Vector2i], wall: Dictionary, ground_out: Dictionary, exact_destination: Vector2) -> Dictionary:
+	var points: Array = (ground_in.get("points", []) as Array).duplicate()
+	var layers: Array[String] = []
+	var elevations: Array[float] = []
+	for _point in points:
+		layers.append("ground")
+		elevations.append(0.0)
+	if not layers.is_empty():
+		layers[layers.size() - 1] = "ramp"
+	points.append_array(wall.get("points", []) as Array)
+	layers.append_array(wall.get("layers", []) as Array)
+	elevations.append_array(wall.get("elevations", []) as Array)
+	var out_points: Array = (ground_out.get("points", []) as Array).duplicate()
+	points.append_array(out_points)
+	for _point in out_points:
+		layers.append("ground")
+		elevations.append(0.0)
+	if points.is_empty() or not Vector2(points[points.size() - 1]).is_equal_approx(exact_destination):
+		points.append(exact_destination)
+		layers.append("ground")
+		elevations.append(0.0)
+	var cells: Array = (ground_in.get("cells", []) as Array).duplicate()
+	cells.append_array(wall_cells)
+	cells.append_array(ground_out.get("cells", []) as Array)
+	return {
+		"valid": true,
+		"reason": "",
+		"points": points,
+		"point_layers": layers,
+		"point_elevations": elevations,
+		"surface_roles": (wall.get("roles", []) as Array).duplicate(),
+		"cells": cells,
+		"ford_name": "",
+		"uses_walk_surface": true,
+		"destination_layer": "ground",
+	}
+
+
+func _compose_ground_to_wall_route(ground: Dictionary, wall_cells: Array[Vector2i], exact_destination: Vector2) -> Dictionary:
+	var points: Array = (ground.get("points", []) as Array).duplicate()
+	var layers: Array[String] = []
+	var elevations: Array[float] = []
+	for _point in points:
+		layers.append("ground")
+		elevations.append(0.0)
+	if not layers.is_empty():
+		layers[layers.size() - 1] = "ramp"
+	var wall := _wall_route_segment(wall_cells, exact_destination, true)
+	points.append_array(wall["points"] as Array)
+	layers.append_array(wall["layers"] as Array)
+	elevations.append_array(wall["elevations"] as Array)
+	var cells: Array = (ground.get("cells", []) as Array).duplicate()
+	cells.append_array(wall_cells)
+	return {
+		"valid": true,
+		"reason": "",
+		"points": points,
+		"point_layers": layers,
+		"point_elevations": elevations,
+		"surface_roles": wall["roles"],
+		"cells": cells,
+		"ford_name": String(ground.get("ford_name", "")),
+		"uses_walk_surface": true,
+		"destination_layer": "deck" if _walk_surface_role(wall_cells[wall_cells.size() - 1]) == "deck" else "ramp",
+	}
+
+
+func _compose_wall_to_ground_route(wall_cells: Array[Vector2i], ground: Dictionary, exact_destination: Vector2) -> Dictionary:
+	var wall := _wall_route_segment(wall_cells, grid_to_local_horizontal(wall_cells[wall_cells.size() - 1]), false)
+	var points: Array = (wall["points"] as Array).duplicate()
+	var layers: Array[String] = []
+	layers.assign(wall["layers"] as Array)
+	var elevations: Array[float] = []
+	elevations.assign(wall["elevations"] as Array)
+	var ground_points: Array = (ground.get("points", []) as Array).duplicate()
+	points.append_array(ground_points)
+	for _point in ground_points:
+		layers.append("ground")
+		elevations.append(0.0)
+	if points.is_empty() or not Vector2(points[points.size() - 1]).is_equal_approx(exact_destination):
+		points.append(exact_destination)
+		layers.append("ground")
+		elevations.append(0.0)
+	var cells: Array = []
+	cells.append_array(wall_cells)
+	cells.append_array(ground.get("cells", []) as Array)
+	return {
+		"valid": true,
+		"reason": "",
+		"points": points,
+		"point_layers": layers,
+		"point_elevations": elevations,
+		"surface_roles": wall["roles"],
+		"cells": cells,
+		"ford_name": String(ground.get("ford_name", "")),
+		"uses_walk_surface": true,
+		"destination_layer": "ground",
+	}
+
+
+func _wall_route_segment(cells: Array[Vector2i], exact_destination: Vector2, skip_first: bool) -> Dictionary:
+	var points: Array[Vector2] = []
+	var layers: Array[String] = []
+	var elevations: Array[float] = []
+	var roles: Array[String] = []
+	var start_index := 1 if skip_first else 0
+	for index in range(start_index, cells.size()):
+		var role := _walk_surface_role(cells[index])
+		if role != "" and (roles.is_empty() or roles[roles.size() - 1] != role):
+			roles.append(role)
+		var point := grid_to_local_horizontal(cells[index])
+		if points.is_empty() or not points[points.size() - 1].is_equal_approx(point):
+			points.append(point)
+			layers.append(role)
+			elevations.append(float(_walk_surface_height_by_cell.get(cells[index], 0.0)))
+	var destination_role := _walk_surface_role(cells[cells.size() - 1])
+	if points.is_empty() or not points[points.size() - 1].is_equal_approx(exact_destination):
+		points.append(exact_destination)
+		layers.append(destination_role)
+		elevations.append(float(_walk_surface_height_by_cell.get(cells[cells.size() - 1], 0.0)))
+	if destination_role != "" and (roles.is_empty() or roles[roles.size() - 1] != destination_role):
+		roles.append(destination_role)
+	return {"points": points, "layers": layers, "elevations": elevations, "roles": roles}
 
 
 func query_water_route(from_local: Vector2, to_local: Vector2) -> Dictionary:
@@ -3468,6 +4112,10 @@ func _reset() -> void:
 	route_query_count = 0
 	_navigation_grid = null
 	_water_navigation_grid = null
+	_clear_walk_surface_navigation()
+	walk_surface_source_count = 0
+	walk_surface_gap_receipts.clear()
+	_walk_surface_mesh_cache.clear()
 	_water_cells = PackedByteArray()
 	_ford_corridor_cells.clear()
 
