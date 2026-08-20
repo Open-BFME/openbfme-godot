@@ -605,12 +605,8 @@ def test_plan_stage_identity_is_lane_union_not_whole_package(monkeypatch) -> Non
     from openbfme_importer import incremental_rebuild as ir
 
     calls: list[str] = []
-    table = {
-        "unit": "1" * 64,
-        "structure": "2" * 64,
-        "spellbook": "3" * 64,
-        "accounted": "4" * 64,
-    }
+    lanes = sorted(ir._COMPILER_DEPENDENCY_MANIFESTS)
+    table = {lane: f"{index}".rjust(64, "0") for index, lane in enumerate(lanes)}
 
     def _fake(family, *, module_sources=None):
         calls.append(family)
@@ -618,7 +614,7 @@ def test_plan_stage_identity_is_lane_union_not_whole_package(monkeypatch) -> Non
 
     monkeypatch.setattr(ir, "compiler_dependency_identity", _fake)
     before = ir.plan_stage_identity()
-    assert sorted(calls) == ["accounted", "spellbook", "structure", "unit"]
+    assert sorted(calls) == lanes
     # Unchanged lanes -> unchanged plan identity.
     assert ir.plan_stage_identity() == before
     # A moved lane -> moved plan identity.
@@ -866,6 +862,207 @@ def test_object_cache_put_survives_a_refused_atomic_write(monkeypatch, tmp_path)
     monkeypatch.setattr(foc, "write_json_atomic", _refuse)
     cache.put("a" * 64, row={"id": "X", "status": "converted"}, artifacts={})
     assert cache.get("a" * 64) is None
+
+
+def _census_cache(tmp_path):
+    from openbfme_importer.faction_census_cache import FactionCensusCache
+
+    return FactionCensusCache(tmp_path / "faction-census")
+
+
+_CENSUS_KEY = {
+    "faction": "men",
+    "game": "rotwk",
+    "catalog_identity_sha256": "a" * 64,
+    "effective_root_fp": "manifest-agg:" + "b" * 64,
+    "policy_fp": "c" * 64,
+    "census_identity": "d" * 64,
+}
+
+
+def test_census_cache_round_trips_and_recomputes_on_any_key_change(tmp_path) -> None:
+    from openbfme_importer.faction_census_cache import (
+        census_cache_key,
+        load_or_build_census,
+    )
+
+    cache = _census_cache(tmp_path)
+    graph = {"definitions": {"objects": [{"id": "A"}]}, "summary": {"unresolvedCount": 0}}
+    builds: list[int] = []
+
+    def _build():
+        builds.append(1)
+        return graph
+
+    first = load_or_build_census(cache, lambda: dict(_CENSUS_KEY), _build)
+    second = load_or_build_census(cache, lambda: dict(_CENSUS_KEY), _build)
+    assert first == second == graph
+    assert len(builds) == 1, "warm census must not rebuild"
+    assert cache.hits == 1
+
+    for field in _CENSUS_KEY:
+        moved = dict(_CENSUS_KEY)
+        moved[field] = "9" * 64 if len(str(moved[field])) == 64 else "moved"
+        assert census_cache_key(**moved) != census_cache_key(**_CENSUS_KEY), field
+        load_or_build_census(cache, lambda m=moved: dict(m), _build)
+    assert len(builds) == 1 + len(_CENSUS_KEY)
+
+
+def test_poisoned_census_entry_is_refused_and_recomputed(tmp_path) -> None:
+    """Flip one byte of the cached graph: the digest gate must refuse it."""
+
+    from openbfme_importer.faction_census_cache import (
+        census_cache_key,
+        load_or_build_census,
+    )
+
+    cache = _census_cache(tmp_path)
+    graph = {"definitions": {"objects": [{"id": "GondorArcher"}]}, "n": 1}
+    load_or_build_census(cache, lambda: dict(_CENSUS_KEY), lambda: graph)
+
+    entry = next((tmp_path / "faction-census").rglob("census.json"))
+    payload = json.loads(entry.read_text(encoding="utf-8"))
+    payload["graph"]["definitions"]["objects"][0]["id"] = "GondorArcherX"
+    entry.write_text(json.dumps(payload), encoding="utf-8")
+
+    cache.hits = cache.misses = cache.refusals = 0
+    rebuilt = load_or_build_census(cache, lambda: dict(_CENSUS_KEY), lambda: graph)
+    assert cache.refusals == 1
+    assert rebuilt == graph, "a refused entry must recompute the true graph"
+
+
+def test_corrupt_census_entry_never_fails_the_convert(tmp_path) -> None:
+    from openbfme_importer.faction_census_cache import load_or_build_census
+
+    cache = _census_cache(tmp_path)
+    graph = {"ok": True}
+    load_or_build_census(cache, lambda: dict(_CENSUS_KEY), lambda: graph)
+    for entry in (tmp_path / "faction-census").rglob("census.json"):
+        entry.write_text("{ not json", encoding="utf-8")
+    cache.hits = cache.misses = cache.refusals = 0
+    assert load_or_build_census(cache, lambda: dict(_CENSUS_KEY), lambda: graph) == graph
+    assert cache.hits == 0
+
+
+def test_census_version_drift_misses_cleanly(tmp_path) -> None:
+    from openbfme_importer.faction_census_cache import (
+        CENSUS_CACHE_VERSION,
+        load_or_build_census,
+    )
+
+    cache = _census_cache(tmp_path)
+    graph = {"ok": True}
+    load_or_build_census(cache, lambda: dict(_CENSUS_KEY), lambda: graph)
+    for entry in (tmp_path / "faction-census").rglob("census.json"):
+        payload = json.loads(entry.read_text(encoding="utf-8"))
+        payload["version"] = CENSUS_CACHE_VERSION + 1
+        entry.write_text(json.dumps(payload), encoding="utf-8")
+    cache.hits = cache.misses = cache.refusals = 0
+    assert load_or_build_census(cache, lambda: dict(_CENSUS_KEY), lambda: graph) == graph
+    assert cache.hits == 0
+
+
+def test_census_cache_is_disabled_by_environment(monkeypatch) -> None:
+    from openbfme_importer.faction_census_cache import census_cache_disabled
+
+    monkeypatch.delenv("OPENBFME_NO_CENSUS_CACHE", raising=False)
+    monkeypatch.delenv("OPENBFME_NO_OBJECT_CACHE", raising=False)
+    assert census_cache_disabled() is False
+    monkeypatch.setenv("OPENBFME_NO_CENSUS_CACHE", "1")
+    assert census_cache_disabled() is True
+    monkeypatch.delenv("OPENBFME_NO_CENSUS_CACHE")
+    monkeypatch.setenv("OPENBFME_NO_OBJECT_CACHE", "yes")
+    assert census_cache_disabled() is True
+
+
+def test_census_lane_is_precise_and_excludes_every_payload_compiler() -> None:
+    """Census compiles nothing; no payload lane may invalidate it."""
+
+    identity = compiler_dependency_identity("census")
+    assert identity["mode"] == "explicit-family-manifest"
+    names = {row["path"] for row in identity["modules"]}
+    for payload in (
+        "playable_unit_compiler.py",
+        "playable_structure_compiler.py",
+        "playable_structure_pack_compiler.py",
+        "spellbook_compiler.py",
+        "retail_visual_closure.py",
+        "w3d_index.py",
+    ):
+        assert payload not in names, payload
+    assert "faction_census.py" in names
+
+
+def test_convert_faction_import_census_key_material_resolves(monkeypatch, tmp_path) -> None:
+    """Exercise the real census-cache call site, not just the cache module.
+
+    The first version of this wiring referenced a name that
+    ``faction_import`` does not import; every unit test passed because they
+    drove ``faction_census_cache`` directly, and only a full convert run
+    caught the NameError. This drives the call site.
+    """
+
+    from openbfme_importer import faction_import as fi
+
+    captured: dict[str, object] = {}
+    real = fi.load_or_build_census
+
+    def _capture(cache, key_material, build):
+        # Force the key material to be evaluated exactly as production does.
+        captured["key"] = key_material()
+        return real(cache, key_material, build)
+
+    monkeypatch.setattr(fi, "load_or_build_census", _capture)
+    monkeypatch.setattr(
+        fi, "census_playable_faction", lambda *a, **k: {"definitions": {"objects": []}}
+    )
+    monkeypatch.setattr(fi, "_faction_spec", lambda catalog, faction: ("men", "FactionMen", "Men"))
+
+    class _Catalog:
+        source_policy = None
+
+        def identity_sha256(self):
+            return "e" * 64
+
+    try:
+        fi.convert_faction_import(
+            _Catalog(), tmp_path, "men", state_root=tmp_path, game="rotwk"
+        )
+    except Exception:
+        # The conversion itself cannot succeed against an empty tree; all this
+        # test asserts is that building the census key material does not raise.
+        pass
+
+    key = captured.get("key")
+    assert isinstance(key, dict), "census key material was never built"
+    assert set(key) == {
+        "faction",
+        "game",
+        "catalog_identity_sha256",
+        "effective_root_fp",
+        "policy_fp",
+        "census_identity",
+    }
+    assert len(key["census_identity"]) == 64
+
+
+def test_census_graph_is_json_stable() -> None:
+    """The graph digest keys the plan and object caches; JSON must round trip.
+
+    If this ever fails, storing the census as JSON would silently move every
+    downstream cache key, so the cache must not store JSON any more.
+    """
+
+    from openbfme_importer.faction_census_cache import graph_digest
+
+    graph = {
+        "definitions": {"objects": [{"id": "A", "edges": []}]},
+        "summary": {"unresolvedCount": 0},
+        "roots": [{"id": "R", "edgeKind": "engine-implicit-object"}],
+    }
+    round_tripped = json.loads(json.dumps(graph))
+    assert round_tripped == graph
+    assert graph_digest(round_tripped) == graph_digest(graph)
 
 
 def test_worker_count_resolution_is_explicit(monkeypatch) -> None:

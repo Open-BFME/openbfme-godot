@@ -809,7 +809,163 @@ loader. Failing-first: all six fail on `164f5d0` — `shard_selector`,
 Suite: 96 passed across `test_faction_convert_perf`, `test_faction_import`,
 `test_faction_object_cache`, `test_incremental_rebuild`.
 
-## 9. Not verified
+## 9. Durable census cache (fifth lane, on 26727f0)
+
+Logs: `census-serial-men.log`, `census-pooled12-men.log`.
+
+### 9.1 Storage format: plain JSON, and the measurement that decided it
+
+The brief asked whether the census graph needs canonicalization or a
+digest-verified pickle. **Neither: it is already JSON-stable, measured.** On the
+real Men census (1,132,897 bytes):
+
+```
+json_round_trip_equal: True
+identity_stable:       True          # re-serialises to identical bytes
+non-json-stable nodes: 0             # recursive scan: no tuples, sets, non-str keys
+```
+
+So the cache stores plain JSON. This mattered more than it looks: the graph's
+canonical digest is `graph_identity_sha256`, which keys **both** the plan-row
+and object caches. Had the graph contained a tuple, a round trip would have
+turned it into a list and silently moved every downstream key. The stored
+envelope therefore carries `graphSha256`, and `get()` re-derives it from the
+loaded object and refuses any mismatch — so if the graph ever stops being
+JSON-stable, the result is a clean miss, not a corrupted key.
+`test_census_graph_is_json_stable` pins the property.
+
+### 9.2 Identity chain and the census lane
+
+Key: faction, game, catalog identity, effective-assets fingerprint, a policy
+fingerprint over the template's implicit roots / source-null images / source-null
+command sets / music roots / template / side, and
+`compiler_dependency_identity("census")`.
+
+Census got its own lane: **20 of 186 modules**, versus the 78-83 of the payload
+lanes. It discovers what retail authors and compiles nothing, so every payload
+compiler is in its exclusion set — `test_census_lane_is_precise_and_excludes
+_every_payload_compiler` asserts `playable_unit_compiler.py`,
+`playable_structure_compiler.py`, `playable_structure_pack_compiler.py`,
+`spellbook_compiler.py`, `retail_visual_closure.py` and `w3d_index.py` are all
+absent from it. A structure-compiler edit no longer re-censuses anything.
+
+Fail-closed rule unchanged: a lane that cannot resolve its closure falls back to
+the whole-package digest.
+
+### 9.3 Measured, men, both fully cold in isolated cache roots
+
+| | wall | parent pass | pool |
+|---|---|---|---|
+| serial | **498.0 s** | — | — |
+| `--object-procs 12` | **240.8 s** | **28.5 s** | 212.3 s |
+
+**2.07x.** The census cache's visible effect is in the parent pass:
+**38.6 s -> 28.5 s** (`census men: cached`). It barely moves the pool wall for a
+single faction, because all 12 workers start simultaneously, all miss, and all
+compute census concurrently — a cold cache cannot dedupe a simultaneous burst.
+
+Byte-identity, serial vs pooled, both with the census cache:
+
+```
+ARTIFACT_FILES a=183 b=183   ONLY_A 0   ONLY_B 0   DIFFERING 0
+COVERAGE_AGGREGATE_EQUAL True   PLAN_AGGREGATE_EQUAL True
+COVERAGE_ROWS a=61 b=61 differing=0 []
+IDENTICAL True
+```
+
+Against the pre-census-cache serial run from 26727f0: all 183 artifacts
+identical and 0 rows differing beyond `incremental.compilerIdentity` and its
+derived `cacheKey`, which must move because the importer's bytes changed.
+
+### 9.4 Seven factions: updated derivation — still NOT under 5 minutes
+
+Derived, not measured (men-only lane constraint; a serial seven-faction cold
+baseline is ~58 min I did not have budget for):
+
+- parent serial pass: 7 x 28.5 s = **~200 s** (was ~273 s)
+- per-worker fixed: ~35 s corpus + census. Each worker walks all seven factions
+  sequentially, so after the first faction it increasingly hits entries other
+  workers wrote; the honest range is ~11 s (all hits) to ~77 s (all miss). Call
+  it **~40 s**, and note the uncertainty rather than pick the flattering end.
+- convertible work: **~3192 core-seconds**
+
+| N | pool wall | + parent | total |
+|---|---|---|---|
+| 12 | 35 + 40 + 266 = 341 s | 200 s | **~9.0 min** |
+| 16 | 35 + 40 + 200 = 275 s | 200 s | **~7.9 min** |
+| 20 | 35 + 40 + 160 = 235 s | 200 s | **~7.3 min** |
+
+Against ~58 min serial that is **~7-8x**, improved from ~9.8-11.6 min at
+26727f0. **The 5-minute bar is not met**, so per item 4 I did not stop, and §9.5
+is the design section item 3 asked for.
+
+### 9.5 Design (NOT implemented): getting the parent pass near-O(hits)
+
+The parent pass is now the single largest remaining cost, ~200 s of the ~440 s
+total at N=16. It re-runs, per faction, on rows that are all cache hits: census
+(now cached, ~1 s), document load, `prepare_playable_unit_compiler`, the
+plan-row cache verification loop (~20 s), and the convert loop (~2 s). Three
+options, with the trust trade of each stated plainly.
+
+**Option A — aggregate short-circuit (recommended).** Store, per faction, one
+envelope holding the finished coverage document plus the aggregate digests it
+was built from: `planAggregateSha256`, the coverage `aggregateSha256`, the
+graph digest, the full-corpus document closure digest, the assets fingerprint,
+the catalog identity and the four lane identities. The parent computes only
+those aggregates — all of which it already computes today, cheaply, before the
+per-object loops — and if every one matches it emits the stored coverage
+document and skips both loops entirely. On mismatch it walks rows exactly as
+now.
+*Trust trade:* the parent stops re-deriving per-row identities and trusts a
+per-faction aggregate instead. That is weaker than today, but not by much: the
+aggregate digest is a function of every row, so any row change moves it. The
+real exposure is a stored coverage document that was never actually produced by
+those inputs — which the digest-of-content check catches — and second-preimage
+strength, which sha256 gives. Cost: ~2 s per faction instead of ~28 s.
+*Estimated total at N=16: ~5.0 min.* Borderline; combined with a modestly higher
+N it clears the bar.
+
+**Option B — parent loads census from the new cache and keeps recomputing
+everything else.** Already done in this commit; it is what took 38.6 s to
+28.5 s. No further trust trade, and no further headroom — the remaining 28.5 s
+is corpus load plus the plan-verification loop.
+
+**Option C — workers return rows, parent assembles.** The parent stops
+recomputing entirely; workers ship coverage rows and artifacts back and the
+parent sorts by object id and writes. *Trust trade: this is the big one.* It
+gives up the structural byte-identity guarantee that §8 was built around — the
+parent would no longer be the thing that produced the content, only the thing
+that ordered it. It also requires shipping the faction graph to workers as
+**bytes**, not as re-parsed JSON, because the graph digest keys both caches;
+and it needs the ledger merged across processes. Fastest (~4 min) and the only
+option that removes the parent pass outright, but it converts a structural
+guarantee into a test-enforced one.
+
+My recommendation is **A**, then raise N. It keeps the parent the producer of
+record, needs no IPC of content, and the digests it checks are ones the parent
+already computes.
+
+### 9.6 Tests
+
+Eight added: census round-trip and per-key-field invalidation (every one of the
+six key fields moves the key and forces a rebuild), poisoned-graph refusal,
+corrupt-JSON fail-open, version drift, env kill switch, lane precision, and
+JSON-stability.
+
+Plus `test_convert_faction_import_census_key_material_resolves`, which exists
+because of a defect this lane produced: the first wiring referenced
+`durable_effective_assets_fingerprint`, which `faction_import` does not import.
+Every unit test passed — they drove `faction_census_cache` directly — and only a
+full convert run caught the `NameError`, after ~8 s and an exit 3. That test now
+drives the real call site so the gap cannot recur silently.
+
+Suite: 151 passed across `test_faction_convert_perf`, `test_faction_import`,
+`test_faction_object_cache`, `test_incremental_rebuild`, `test_spellbook_import`;
+367 passed / 8 skipped / 1 failed with `test_playable_unit_compiler` added, the
+one failure being the pre-existing environmental
+`test_horde_dispatch_graphs_cover_exact_effective_retail_corpora`.
+
+## 10. Not verified
 
 - Only `men` was run, per the lane brief (another agent held `elves`). The
   seven-faction numbers are projections from measured per-faction and

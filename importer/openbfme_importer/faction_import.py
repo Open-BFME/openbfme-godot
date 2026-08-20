@@ -22,9 +22,16 @@ from .faction_object_cache import (
     FactionObjectCache,
     compiler_identity_token,
     default_cache_root,
+    durable_effective_assets_fingerprint,
     durable_non_ini_assets_fingerprint,
     object_cache_key,
     policy_roots_fingerprint,
+)
+from .faction_census_cache import (
+    FactionCensusCache,
+    census_cache_disabled,
+    default_census_cache_root,
+    load_or_build_census,
 )
 from .faction_plan_cache import (
     FactionPlanRowCache,
@@ -2109,18 +2116,68 @@ def convert_faction_import(
         )
     progress_emit("census", f"census playable faction: {faction}")
     spec = _faction_spec(catalog, faction)
-    graph = census_playable_faction(
-        catalog,
-        player_template=spec[1],
-        game=game,
-        expected_side=spec[2],
-        implicit_object_roots=implicit_object_roots(spec[1], game=game),
-        source_null_mapped_image_textures=source_null_mapped_image_textures(
-            spec[1], game=game
-        ),
-        source_null_command_sets=source_null_command_sets(spec[1], game=game),
-        music_roots=music_roots(spec[1], game=game),
-    )
+
+    def _build_census() -> dict[str, object]:
+        return census_playable_faction(
+            catalog,
+            player_template=spec[1],
+            game=game,
+            expected_side=spec[2],
+            implicit_object_roots=implicit_object_roots(spec[1], game=game),
+            source_null_mapped_image_textures=source_null_mapped_image_textures(
+                spec[1], game=game
+            ),
+            source_null_command_sets=source_null_command_sets(spec[1], game=game),
+            music_roots=music_roots(spec[1], game=game),
+        )
+
+    def _census_key_material() -> dict[str, str]:
+        # Every input census reads: the installed catalog, the sealed asset
+        # tree, the faction policy rows for this template, and the bytes of the
+        # code that does the discovery.
+        roots = list(implicit_object_roots(spec[1], game=game))
+        return {
+            "faction": spec[0],
+            "game": game,
+            "catalog_identity_sha256": catalog.identity_sha256(),
+            "effective_root_fp": durable_effective_assets_fingerprint(effective_root),
+            "policy_fp": policy_roots_fingerprint(
+                spawned=[value for value, _ in roots],
+                spawned_roles={value: reason for value, reason in roots},
+                wall_templates=[
+                    f"{a}={b}"
+                    for a, b in source_null_mapped_image_textures(spec[1], game=game)
+                ],
+                source_null_sets=(
+                    [f"cs:{a}={b}" for a, b in source_null_command_sets(spec[1], game=game)]
+                    + [f"music:{a}={b}" for a, b in music_roots(spec[1], game=game)]
+                    + [f"template:{spec[1]}", f"side:{spec[2]}"]
+                ),
+            ),
+            "census_identity": str(compiler_dependency_identity("census")["sha256"]),
+        }
+
+    census_cache: FactionCensusCache | None = None
+    if state_root is not None and not census_cache_disabled():
+        try:
+            census_cache = FactionCensusCache(
+                default_census_cache_root(Path(state_root))
+            )
+        except OSError:
+            census_cache = None
+    graph = load_or_build_census(census_cache, _census_key_material, _build_census)
+    if census_cache is not None:
+        progress_emit(
+            "census",
+            f"census {spec[0]}: "
+            + ("cached" if census_cache.hits else "computed")
+            + (" (refused stale entry)" if census_cache.refusals else ""),
+            extra={
+                "censusCacheHits": census_cache.hits,
+                "censusCacheMisses": census_cache.misses,
+                "censusCacheRefusals": census_cache.refusals,
+            },
+        )
     progress_emit("faction-convert", f"convert faction objects: {faction}")
     # The owner-selected RotWK oracle is the layered effective tree itself.
     # Passing the synthetic install catalog here used to replace those bytes

@@ -86,6 +86,24 @@ _COMPILER_DEPENDENCY_MANIFESTS: dict[str, frozenset[str]] = {
     # manifest. Before this lane existed they took the whole-package fallback
     # and were invalidated by an edit to any of the ~181 package modules.
     "accounted": _COMMON_COMPILER_MODULES | {"playable_unit_compiler.py"},
+    # Faction census: reachability discovery over the installed catalog. It
+    # runs before any descriptor compiler and calls none of them, so no payload
+    # lane belongs here. ``faction_import.py`` is included only because it is
+    # the module that consumes and re-emits the census graph; the AST walk
+    # expands the rest of the closure from ``faction_census.py``.
+    "census": frozenset(
+        {
+            "faction_census.py",
+            "faction_policy.py",
+            "faction_import.py",
+            "faction_object_cache.py",
+            "incremental_rebuild.py",
+            "sage_cst.py",
+            "sage_ini.py",
+            "sage_string.py",
+            "visual_leaf.py",
+        }
+    ),
 }
 
 # Every module retained from the former all-family compiler salt is either in a
@@ -134,6 +152,31 @@ _FAMILY_COMPILER_EXCLUSIONS: dict[str, frozenset[str]] = {
             "playable_structure_lifecycle_evidence.py",
             "playable_structure_pack_compiler.py",
             "retail_building_lifecycle.py",
+        }
+    ),
+    "census": frozenset(
+        {
+            # Census discovers what retail authors; it compiles nothing.
+            "armor_compiler.py",
+            "castle_behavior.py",
+            "pack_recipe_catalog_identity.py",
+            "playable_structure_compiler.py",
+            "playable_structure_lifecycle_evidence.py",
+            "playable_structure_pack_compiler.py",
+            "playable_unit_compiler.py",
+            "playable_unit_import.py",
+            "playable_unit_pack_compiler.py",
+            "retail_ability_fx_ingress.py",
+            "retail_building_lifecycle.py",
+            "retail_visual_closure.py",
+            "spellbook_compiler.py",
+            "spellbook_import.py",
+            "spellbook_pack_compiler.py",
+            "spellbook_visual_ingress.py",
+            "typed_visual_graph.py",
+            "w3d_glb_validation.py",
+            "w3d_index.py",
+            "w3d_texture_closure.py",
         }
     ),
     "accounted": frozenset(
