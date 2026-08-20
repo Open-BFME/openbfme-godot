@@ -11,6 +11,8 @@ import sys
 import threading
 from pathlib import Path
 
+import pytest
+
 from openbfme_importer import incremental_rebuild
 from openbfme_importer.faction_import import (
     _convert_one_plan_object,
@@ -1211,6 +1213,316 @@ def test_short_circuit_is_disabled_by_environment(monkeypatch) -> None:
     assert coverage_cache_disabled() is False
     monkeypatch.setenv("OPENBFME_NO_COVERAGE_SHORTCIRCUIT", "1")
     assert coverage_cache_disabled() is True
+
+
+# --------------------------------------------------------------------------
+# Verifier findings (fresh-context adversarial review of 5cc06f4).
+# --------------------------------------------------------------------------
+
+
+def test_no_artifact_run_entry_never_satisfies_an_artifact_run(tmp_path) -> None:
+    """Verifier finding 1, reproduced.
+
+    ``artifact_manifest`` returns {} for a missing directory and ``put`` stored
+    {} when ``artifact_root`` was None, so an entry written by a
+    ``--no-write-artifacts`` run matched an artifact-writing run ({} == {}).
+    The short-circuit fired with no refusal and returned green coverage
+    claiming 61 converted objects with nothing on disk.
+    """
+
+    from openbfme_importer.faction_coverage_cache import (
+        FactionCoverageCache,
+        coverage_cache_key,
+    )
+
+    cache = FactionCoverageCache(tmp_path / "faction-coverage")
+    coverage = {
+        "objects": [{"id": "GondorArcher", "status": "converted"}],
+        "planAggregateSha256": "f" * 64,
+        "aggregateSha256": "0" * 64,
+    }
+    # A --no-write-artifacts run: artifact_root is None.
+    ledger_only = {**_COVERAGE_COMPONENTS, "artifactsExpected": False}
+    cache.put(
+        coverage_cache_key(ledger_only),
+        components=ledger_only,
+        coverage=coverage,
+        artifact_root=None,
+    )
+
+    # A later artifact-writing run over a tree that was never created.
+    artifact_root = tmp_path / "objects"
+    assert not artifact_root.exists()
+    writing = {**_COVERAGE_COMPONENTS, "artifactsExpected": True}
+
+    # The key alone must already separate them...
+    assert coverage_cache_key(writing) != coverage_cache_key(ledger_only)
+
+    # ...and even asked against the stored entry directly, it must refuse.
+    cache.refusals.clear()
+    assert (
+        cache.get(
+            coverage_cache_key(ledger_only),
+            components=ledger_only,
+            artifact_root=artifact_root,
+        )
+        is None
+    )
+    assert cache.refusals, "an artifact-writing run accepted a ledger-only entry"
+
+
+def test_artifact_expecting_entry_refuses_a_ledger_only_run(tmp_path) -> None:
+    """And the reverse direction, so the guard is not one-sided."""
+
+    from openbfme_importer.faction_coverage_cache import (
+        FactionCoverageCache,
+        coverage_cache_key,
+    )
+
+    cache = FactionCoverageCache(tmp_path / "faction-coverage")
+    artifact_root = tmp_path / "objects"
+    (artifact_root / "gondorarcher").mkdir(parents=True)
+    (artifact_root / "gondorarcher" / "descriptor.json").write_text("{}", encoding="utf-8")
+    coverage = {"objects": [], "planAggregateSha256": "f" * 64, "aggregateSha256": "0" * 64}
+    writing = {**_COVERAGE_COMPONENTS, "artifactsExpected": True}
+    key = coverage_cache_key(writing)
+    cache.put(key, components=writing, coverage=coverage, artifact_root=artifact_root)
+
+    cache.refusals.clear()
+    assert cache.get(key, components=writing, artifact_root=None) is None
+    assert cache.refusals
+
+
+def test_shard_worker_never_consumes_a_whole_faction_entry(monkeypatch, tmp_path) -> None:
+    """Verifier finding 2, reproduced.
+
+    ``get`` was not guarded by ``object_selector`` — only ``put`` was — so a
+    ``--warm-shard`` worker with a warm entry returned the FULL faction
+    coverage and did no work, while still printing objects=61 converted=61.
+    """
+
+    from openbfme_importer import faction_import as fi
+
+    built: list[str] = []
+
+    def _spy(*args, **kwargs):
+        built.append("built")
+        return {"objects": [], "summary": {}}
+
+    monkeypatch.setattr(fi, "build_faction_conversion", _spy)
+    monkeypatch.setattr(fi, "census_playable_faction", lambda *a, **k: {"definitions": {"objects": []}})
+    monkeypatch.setattr(fi, "_faction_spec", lambda catalog, faction: ("men", "FactionMen", "Men"))
+    monkeypatch.setattr(fi, "spellbook_source_documents", lambda *a, **k: {"data/ini/x.ini": b""})
+
+    constructed: list[object] = []
+    real_cache = fi.FactionCoverageCache
+
+    def _tracking(root):
+        instance = real_cache(root)
+        constructed.append(instance)
+        return instance
+
+    monkeypatch.setattr(fi, "FactionCoverageCache", _tracking)
+
+    class _Catalog:
+        source_policy = None
+
+        def identity_sha256(self):
+            return "e" * 64
+
+    fi.convert_faction_import(
+        _Catalog(),
+        tmp_path,
+        "men",
+        state_root=tmp_path,
+        game="rotwk",
+        object_selector=lambda object_id: True,
+    )
+    assert built == ["built"], "sharded run must always do its own work"
+    assert constructed == [], "a sharded run must not even open the coverage cache"
+
+
+def test_named_definition_failure_releases_waiters() -> None:
+    """Verifier finding 3, at the real call site.
+
+    ``_named_definition_values`` claimed a pending slot with no failure path,
+    so a raising computation left every concurrent waiter in
+    ``condition.wait()`` forever. The previous test exercised the primitives,
+    not this call site.
+    """
+
+    from openbfme_importer import playable_unit_compiler as puc
+
+    cache: dict = {}
+    lock = threading.Condition()
+    documents = {"data/ini/weapon.ini": b"Weapon W\nEnd\n"}
+    boom = RuntimeError("compute failed")
+
+    def _raise(*args, **kwargs):
+        raise boom
+
+    original = puc._named_definition_values_uncached
+    puc._named_definition_values_uncached = _raise
+    try:
+        released = threading.Event()
+        waiter_result: list[object] = []
+
+        def _waiter() -> None:
+            # Runs while the first caller holds the pending slot.
+            try:
+                waiter_result.append(
+                    puc._named_definition_values(
+                        documents, "Weapon", "W", cache=cache, cache_lock=lock
+                    )
+                )
+            except RuntimeError:
+                waiter_result.append("raised")
+            released.set()
+
+        # First caller claims the slot and fails.
+        try:
+            puc._named_definition_values(
+                documents, "Weapon", "W", cache=cache, cache_lock=lock
+            )
+        except RuntimeError:
+            pass
+        # The slot must be free, not left pending.
+        assert "weapon" not in {str(k[0]) for k in cache}, cache
+
+        thread = threading.Thread(target=_waiter)
+        thread.start()
+        assert released.wait(timeout=10), "waiter was stranded on a pending slot"
+        thread.join(timeout=5)
+        assert waiter_result == ["raised"]
+    finally:
+        puc._named_definition_values_uncached = original
+
+
+def test_weapon_nugget_failure_releases_waiters() -> None:
+    from openbfme_importer import playable_unit_compiler as puc
+
+    cache: dict = {}
+    lock = threading.Condition()
+    documents = {"data/ini/weapon.ini": b"Weapon W\nEnd\n"}
+
+    def _raise(*args, **kwargs):
+        raise RuntimeError("compute failed")
+
+    original = puc._weapon_damage_nuggets_uncached
+    puc._weapon_damage_nuggets_uncached = _raise
+    try:
+        try:
+            puc._weapon_damage_nuggets(documents, "W", cache=cache, cache_lock=lock)
+        except RuntimeError:
+            pass
+        assert cache == {}, f"pending slot stranded: {cache}"
+
+        done = threading.Event()
+
+        def _waiter() -> None:
+            try:
+                puc._weapon_damage_nuggets(
+                    documents, "W", cache=cache, cache_lock=lock
+                )
+            except RuntimeError:
+                pass
+            done.set()
+
+        thread = threading.Thread(target=_waiter)
+        thread.start()
+        assert done.wait(timeout=10), "waiter was stranded on a pending slot"
+        thread.join(timeout=5)
+    finally:
+        puc._weapon_damage_nuggets_uncached = original
+
+
+def _type_sensitive_canonical(value, path=""):
+    """Canonicalization that distinguishes a tuple from a list.
+
+    ``json.dumps`` serialises both as an array, which is exactly why the
+    previous JSON round-trip assertion could not detect tuple->list drift.
+    """
+
+    if isinstance(value, tuple):
+        return ["<tuple>"] + [_type_sensitive_canonical(v) for v in value]
+    if isinstance(value, set):
+        return ["<set>"] + sorted(str(v) for v in value)
+    if isinstance(value, list):
+        return [_type_sensitive_canonical(v) for v in value]
+    if isinstance(value, dict):
+        return {
+            f"{type(k).__name__}:{k}": _type_sensitive_canonical(v)
+            for k, v in value.items()
+        }
+    return value
+
+
+def test_type_sensitive_canonicalization_detects_tuple_drift() -> None:
+    """The upgraded check must fail on drift the old one could not see."""
+
+    with_tuple = {"a": (1, 2)}
+    with_list = {"a": [1, 2]}
+    assert json.dumps(with_tuple) == json.dumps(with_list)  # the old blind spot
+    assert _type_sensitive_canonical(with_tuple) != _type_sensitive_canonical(with_list)
+
+
+def test_real_census_graph_is_type_level_json_stable() -> None:
+    """Verifier finding 4: drive JSON-stability on REAL census output.
+
+    The census graph's canonical digest keys both the plan-row and object
+    caches, so a tuple surviving into it would be flattened to a list by the
+    cache round trip and silently move every downstream key. Skips when the
+    retail state root is unavailable.
+    """
+
+    import os
+
+    state = Path(r"C:\Users\Jonathan\Desktop\open-bfme\workspace\retail-work")
+    if not (state / "catalog" / "rotwk.json").is_file():
+        pytest.skip("retail state root unavailable")
+
+    repo = Path(__file__).resolve().parents[2]
+    sys.path.insert(0, str(repo / "tools"))
+    os.environ.setdefault("OPENBFME_IMPORT_ROOT", str(state))
+    from rotwk_faction_convert_batch import _effective_assets, _load_catalog
+    from rotwk_layered_install import layered_rotwk_install
+    from openbfme_importer.effective_assets_catalog import EffectiveAssetsCatalog
+    from openbfme_importer import faction_import as fi
+    from openbfme_importer.faction_census import census_playable_faction
+    from openbfme_importer.faction_census_cache import graph_digest
+    from openbfme_importer.faction_policy import (
+        implicit_object_roots,
+        music_roots,
+        source_null_command_sets,
+        source_null_mapped_image_textures,
+    )
+
+    install = layered_rotwk_install(state)
+    if install is None:
+        pytest.skip("layered install unavailable")
+    catalog = EffectiveAssetsCatalog(
+        _effective_assets(state, "rotwk"),
+        base_catalog=_load_catalog(state, "rotwk", install),
+    )
+    spec = fi._faction_spec(catalog, "men")
+    graph = census_playable_faction(
+        catalog,
+        player_template=spec[1],
+        game="rotwk",
+        expected_side=spec[2],
+        implicit_object_roots=implicit_object_roots(spec[1], game="rotwk"),
+        source_null_mapped_image_textures=source_null_mapped_image_textures(
+            spec[1], game="rotwk"
+        ),
+        source_null_command_sets=source_null_command_sets(spec[1], game="rotwk"),
+        music_roots=music_roots(spec[1], game="rotwk"),
+    )
+
+    # Type-level: the pre-serialization object must survive a round trip with
+    # its container types intact, not merely its JSON rendering.
+    round_tripped = json.loads(json.dumps(graph))
+    assert _type_sensitive_canonical(round_tripped) == _type_sensitive_canonical(graph)
+    assert graph_digest(round_tripped) == graph_digest(graph)
 
 
 def test_worker_count_resolution_is_explicit(monkeypatch) -> None:

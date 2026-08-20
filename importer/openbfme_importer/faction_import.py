@@ -2355,7 +2355,15 @@ def convert_faction_import(
     # so the assets fingerprint and catalog identity already cover the corpus —
     # no second corpus hash is needed here.
     coverage_cache: FactionCoverageCache | None = None
-    if state_root is not None and not coverage_cache_disabled():
+    # A shard worker converts a subset, so it must neither consume nor produce
+    # a whole-faction coverage entry. Without this guard a warm entry made a
+    # --warm-shard worker return the full faction and do no work at all, while
+    # still reporting objects=61 converted=61.
+    if (
+        object_selector is None
+        and state_root is not None
+        and not coverage_cache_disabled()
+    ):
         try:
             coverage_cache = FactionCoverageCache(
                 default_coverage_cache_root(Path(state_root))
@@ -2375,6 +2383,9 @@ def convert_faction_import(
                 ),
                 "graphSha256": graph_digest(graph),
                 "policyFp": _census_key_material()["policy_fp"],
+                # An entry stored by a run that wrote no artifacts must never
+                # satisfy a run that requires them.
+                "artifactsExpected": artifact_root is not None,
                 "laneIdentities": {
                     lane: str(compiler_dependency_identity(lane)["sha256"])
                     for lane in sorted(_COMPILER_DEPENDENCY_MANIFESTS)
@@ -2425,8 +2436,9 @@ def convert_faction_import(
         object_selector=object_selector,
         game=game,
     )
-    if coverage_cache is not None and object_selector is None:
-        # Never store a sharded (partial) coverage document.
+    if coverage_cache is not None:
+        # ``coverage_cache`` is already None for a sharded run, so a partial
+        # coverage document can never be stored.
         coverage_cache.put(
             coverage_key,
             components=coverage_components,

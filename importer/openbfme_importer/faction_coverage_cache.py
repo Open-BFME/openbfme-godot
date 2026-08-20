@@ -159,9 +159,27 @@ class FactionCoverageCache:
                 self.refusals.append("stored coverage aggregate disagrees")
                 return None
             stored_artifacts = value.get("artifacts")
+            if not isinstance(stored_artifacts, dict):
+                self.refusals.append("artifact manifest missing")
+                return None
+            # An entry written by a run that produced no artifacts must never
+            # satisfy a run that requires them. Without this, a
+            # --no-write-artifacts run stores ``artifacts: {}`` and a later
+            # artifact-writing run matches it ({} == {} because
+            # ``artifact_manifest`` also returns {} for a missing directory),
+            # short-circuits, and reports 61 converted objects with nothing on
+            # disk. ``artifactsExpected`` is also a key component, so the two
+            # runs cannot even collide on the same entry; this is the second
+            # line of defence.
+            if bool(value.get("artifactsExpected")) != (artifact_root is not None):
+                self.refusals.append("artifact expectation differs from the entry")
+                return None
             if artifact_root is not None:
-                if not isinstance(stored_artifacts, dict):
-                    self.refusals.append("artifact manifest missing")
+                if not artifact_root.is_dir():
+                    self.refusals.append("artifact tree is missing entirely")
+                    return None
+                if not stored_artifacts:
+                    self.refusals.append("entry carries no artifacts but this run needs them")
                     return None
                 if artifact_manifest(artifact_root) != stored_artifacts:
                     # Skipping the loops must never leave a deleted or edited
@@ -190,6 +208,7 @@ class FactionCoverageCache:
             "components": dict(components),
             "planAggregateSha256": document.get("planAggregateSha256"),
             "aggregateSha256": document.get("aggregateSha256"),
+            "artifactsExpected": artifact_root is not None,
             "coverageSha256": hashlib.sha256(
                 _canonical_bytes(document)
             ).hexdigest(),

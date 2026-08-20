@@ -1128,6 +1128,24 @@ def _named_definition_values(
         claimed, cached_value = _claim_cache_key(cache, cache_key, lock)
         if not claimed:
             return cached_value  # type: ignore[return-value]
+    try:
+        result = _named_definition_values_uncached(documents, kind, identifier)
+    except BaseException:
+        # A claimed slot whose computation raises must be released, or every
+        # concurrent waiter blocks in condition.wait() forever.
+        if cache is not None and lock is not None:
+            _publish_cache_key(cache, cache_key, lock, None, failed=True)
+        raise
+    if cache is not None and lock is not None:
+        return _publish_cache_key(cache, cache_key, lock, result)  # type: ignore[return-value]
+    return result
+
+
+def _named_definition_values_uncached(
+    documents: Mapping[str, bytes],
+    kind: str,
+    identifier: str,
+) -> dict[str, list[dict[str, object]]] | None:
     header = re.compile(
         rf"^{re.escape(kind)}\s+{re.escape(identifier)}\s*$", re.IGNORECASE
     )
@@ -1169,13 +1187,9 @@ def _named_definition_values(
                     }
                 )
     if not matches:
-        result = None
-    else:
-        semantic = {_digest(value): value for value in matches}
-        result = next(iter(semantic.values())) if len(semantic) == 1 else None
-    if cache is not None and lock is not None:
-        return _publish_cache_key(cache, cache_key, lock, result)  # type: ignore[return-value]
-    return result
+        return None
+    semantic = {_digest(value): value for value in matches}
+    return next(iter(semantic.values())) if len(semantic) == 1 else None
 
 
 def _default_nested_target(
@@ -1221,6 +1235,25 @@ def _weapon_damage_nuggets(
         claimed, cached_value = _claim_cache_key(cache, cache_key, lock)
         if not claimed:
             return cached_value  # type: ignore[return-value]
+    try:
+        result = _weapon_damage_nuggets_uncached(
+            documents, identifier, nugget_kind=nugget_kind
+        )
+    except BaseException:
+        if cache is not None and lock is not None:
+            _publish_cache_key(cache, cache_key, lock, None, failed=True)
+        raise
+    if cache is not None and lock is not None:
+        return _publish_cache_key(cache, cache_key, lock, result)  # type: ignore[return-value]
+    return result
+
+
+def _weapon_damage_nuggets_uncached(
+    documents: Mapping[str, bytes],
+    identifier: str,
+    *,
+    nugget_kind: str = "damagenugget",
+) -> list[Mapping[str, object]] | None:
     header = re.compile(rf"^Weapon\s+{re.escape(identifier)}\s*$", re.IGNORECASE)
     matches: list[list[dict[str, object]]] = []
     for path, payload in sorted(documents.items(), key=lambda item: item[0].casefold()):
@@ -1272,13 +1305,9 @@ def _weapon_damage_nuggets(
                         }
                     )
     if not matches:
-        result = None
-    else:
-        semantic = {_digest(value): value for value in matches}
-        result = next(iter(semantic.values())) if len(semantic) == 1 else None
-    if cache is not None and lock is not None:
-        return _publish_cache_key(cache, cache_key, lock, result)  # type: ignore[return-value]
-    return result
+        return None
+    semantic = {_digest(value): value for value in matches}
+    return next(iter(semantic.values())) if len(semantic) == 1 else None
 
 
 def _base_weapon_damage(

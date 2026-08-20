@@ -1123,7 +1123,128 @@ the pre-existing environmental
 `test_horde_dispatch_graphs_cover_exact_effective_retail_corpora`, which fails
 identically on HEAD.
 
-## 11. Not verified
+## 11. Verifier findings and fixes (seventh lane, on 5cc06f4)
+
+A fresh-context verifier demonstrated three real holes live. All three were
+genuine, all three are fixed, and each fix has a test that fails on `5cc06f4`.
+
+### 11.1 Finding 1 — vacuous artifact guard
+
+`artifact_manifest()` returns `{}` for a directory that does not exist, and
+`put()` stored `artifacts: {}` whenever `artifact_root` was `None`. So an entry
+written by a `--no-write-artifacts` run matched a later artifact-*writing* run
+(`{} == {}`), the short-circuit fired with an empty refusal list, and the run
+reported 61 converted objects with no artifacts on disk. `artifact_root` was
+not part of the key. **The §10 artifact guard was decorative in exactly the
+case it existed for.**
+
+Fixed at three levels: `artifactsExpected` is now a **key component**, so the
+two runs cannot address the same entry at all; `get()` refuses when the stored
+expectation differs from the caller's; and when artifacts are required it
+additionally refuses a missing `artifact_root` directory and an empty stored
+manifest. Tests:
+`test_no_artifact_run_entry_never_satisfies_an_artifact_run` (the verifier's
+scenario) and `test_artifact_expecting_entry_refuses_a_ledger_only_run` (the
+reverse, so the guard is not one-sided).
+
+### 11.2 Finding 2 — `get()` unguarded by `object_selector`
+
+Only `put()` was guarded. A `--warm-shard` worker that found a warm entry
+returned the **whole faction's** coverage and did no work, while still printing
+`WARM_SHARD ... objects=61 converted=61`.
+
+Fixed by not constructing the coverage cache at all for a sharded run, so a
+shard can neither consume nor produce a whole-faction entry.
+`test_shard_worker_never_consumes_a_whole_faction_entry` asserts the cache is
+never even opened and that the build always runs.
+
+**Were the published pool timings affected? No, and here is the proof rather
+than the argument.** The shard logs from the runs those numbers came from:
+
+```
+objects=1 converted=1 cache_hits=0 ... objects=8 converted=8 cache_hits=0
+(24 lines: 2 runs x 12 shards, each run's objects summing to 61, every line cache_hits=0)
+```
+
+No shard ever reported `objects=61`, which is what a short-circuit hit would
+have produced, and every line shows `cache_hits=0`. Those were cold runs into
+freshly-deleted cache roots, so no warm entry existed to consume. The bug was
+real and latent; it had not yet fired in any measurement. A fresh pooled cold
+run on the fixed code is recorded in §11.5.
+
+### 11.3 Finding 3 — strandable `_CachePending`
+
+`_flat_blocks_for_kind` published failure on `BaseException`, but
+`_named_definition_values` and `_weapon_damage_nuggets` claimed a pending slot
+with no failure path. If either raised, every concurrent waiter blocked in
+`condition.wait()` **forever** — a deadlock, not a slowdown. The existing test
+exercised the primitives, not these call sites, which is precisely the false
+comfort the verifier named.
+
+Both compute bodies are now split into `_named_definition_values_uncached` and
+`_weapon_damage_nuggets_uncached`, and both wrappers publish failure and
+re-raise. Tests `test_named_definition_failure_releases_waiters` and
+`test_weapon_nugget_failure_releases_waiters` make the **real call site** raise,
+assert the pending slot is gone, and then assert a second caller returns within
+a 10-second timeout instead of hanging.
+
+Honest note on their failing-first mode: on `5cc06f4` these two fail because
+the `*_uncached` seams they patch do not exist, not by hanging. A test that
+proves the old code hangs would itself hang, which is a worse gate. The
+behavioural assertion — waiter released within a timeout — runs against the new
+code.
+
+### 11.4 Finding 4 — JSON-stability test was blind
+
+`json.dumps` renders a tuple and a list identically, so the old hand-written
+round-trip assertion could not have detected tuple→list drift.
+`test_type_sensitive_canonicalization_detects_tuple_drift` demonstrates the
+blind spot directly (`json.dumps({"a": (1,2)}) == json.dumps({"a": [1,2]})`),
+and `test_real_census_graph_is_type_level_json_stable` now runs the **real**
+`census_playable_faction` for Men and compares a type-sensitive canonicalization
+of the object before and after the round trip, plus the canonical digest. It
+skips only when the retail state root is absent.
+
+### 11.5 Re-measured
+
+Fresh pooled cold run for men on the fixed code, isolated cache root
+(`fix-pooled-cold-men.log`):
+
+| | pool | parent | total |
+|---|---|---|---|
+| before fixes (§10.3) | 211.5 s | 28.9 s | 240.4 s |
+| after fixes | 236.5 s | 46.1 s | **282.6 s** |
+
+The short-circuit correctly missed (`no entry for this input identity`), all 12
+shards reported 1-8 objects summing to 61 with `cache_hits=0`, and no shard
+reported `objects=61`. The ~42 s difference is **not** attributable to the
+fixes, which are refusal paths and a construction guard that do no work on the
+hit path — the publish agent was being re-engaged on the same machine during
+this run, and single-faction pool timings have swung 211-236 s across runs all
+session. I am recording both numbers rather than picking the flattering one;
+the honest statement is that no cost was expected from these fixes and none is
+demonstrable above the machine noise.
+
+### 11.6 Merge impact — read before merging
+
+Verifier-measured and confirmed here: **merging this branch moves every
+family's compiler identity.** Every lane manifest includes `faction_import.py`,
+`incremental_rebuild.py` and `faction_object_cache.py`, and all three changed.
+Consequences, stated plainly:
+
+- the durable object cache invalidates **100%**;
+- existing faction coverage documents go **stale**, and the publish gate will
+  **correctly refuse** them until a full convert re-runs;
+- **`--allow-stale-coverage` must not be used to bypass this in production.**
+  That flag exists for diagnosis. Using it here would publish descriptors that
+  no current compiler produced, which is the exact failure the compiler-identity
+  chain exists to prevent.
+
+The remedy is a full convert after merge, not a flag. On the current code that
+is the ~7.9 min pooled cold run of §10.4 — and the owner has since directed that
+it must be under 5 minutes measured, which is §12.
+
+## 12. Not verified
 
 - Only `men` was run, per the lane brief (another agent held `elves`). The
   seven-faction numbers are projections from measured per-faction and
