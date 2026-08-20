@@ -2198,3 +2198,162 @@ A process note worth recording: my first attempt at this suite reported **exit
 code 0 with a zero-byte log**, because the backgrounded shell returned before
 pytest ran. Exit 0 plus an empty artifact is not a pass. Re-run against the
 artifact, not the exit code.
+
+## 16. The sharing problem — spec for the next round (analysis only, no code)
+
+Branch frozen at `5d74c28a`. Nothing here is implemented; this is the design
+brief for a fresh branch after merge. Every number is derived from measurements
+already in §15 and is labelled with which one.
+
+### 16.1 What "first touch" actually is
+
+`prepare_playable_unit_compiler` is already memoized on the **content** identity
+of the corpus (`_documents_identity`) — but only *within a process*. Twenty-four
+worker processes therefore each rebuild the same state from the same 792
+documents / 29.1 MB, and nothing crosses between them.
+
+Four distinct pieces, all pure functions of the corpus:
+
+| # | What | Where | Measured |
+|---|---|---|---|
+| 1 | `PlayableUnitCompilerInputs` — parsed objects, command sets, command buttons, player templates, numeric/token defines + provenance, parse errors | `_prepare_playable_unit_compiler_uncached` | **11.2 s** per process (§15 probe, direct) |
+| 2 | `flat_kind_cache: dict[str, tuple[IniBlock, ...]]` — **every miss re-parses every document in the corpus for one INI kind** | `_flat_blocks_for_kind` | the bulk of the ~50 s below |
+| 3 | `named_definition_cache: dict[(kind, identifier), ...]` | `_named_definition_values` | tail |
+| 4 | weapon nugget cache, same dict, key `("weapon-nugget:<kind>", identifier)` | `_weapon_damage_nuggets` | tail |
+
+(2)-(4) share one dict and one `threading.Condition` on the prepared inputs, and
+are explicitly documented there as "not part of identity" — which is exactly why
+they are shareable.
+
+**Envelope, from §15's probes:**
+
+- fresh process, three retail men objects: **85.0 s**; the same three with every
+  shared cache warm: **23.1 s** → **~61.9 s of first touch**, of which 11.2 s is
+  (1) and therefore **~50.7 s is (2)-(4)**;
+- corroborating single-object probe: `GondorArcher` **24.6 s** as the first
+  compile in a process, `GondorArcherHorde` **3.9 s** immediately after.
+
+**Stated uncertainty, and it cuts in the favourable direction.** 61.9 s came from
+converting three men units. A real worker handles ~15 objects across all seven
+factions and will touch more INI kinds, so 61.9 s is a **lower bound** on
+per-process first touch. I am not going to use the flattering end: §16.3 uses
+the lower bound, and §16.6 names the two-minute measurement that would settle it.
+
+### 16.2 How much of the pool it is
+
+From §15.6/§15.7 at N=24: pool wall 373.2 s, budget 24 x 373.2 = **8 957
+core-s**; accounted setup 71 + plan 4 199 + convert 3 869 = 8 139; idle 818
+(9.1 %).
+
+At the lower bound, per-process first touch is 24 x 61.9 = **~1 486 core-s,
+16.6 % of the pool budget**. The residual — ~7 487 core-s over 378 objects,
+**~19.8 s/object** — is genuine per-object compile work that no sharing scheme
+touches.
+
+### 16.3 Predicted N=24 cold number if workers start warm
+
+```
+pool          373.2 s x (8957 - 1486)/8957  = 311 s
+probe                                          9.5 s   (measured §15.6)
+census                                         0.2 s   (measured)
+parent tail                                    0.04 s  (measured)
+process startup                               ~6 s     (measured)
+                                              ------
+seven-faction compiler-edit cold             ~327 s = 5.45 min
+```
+
+**~5.5 minutes. Still over the 5-minute bar, by ~27 s** — and that is with the
+sharing problem solved perfectly and using the lower-bound first-touch figure.
+Recovering half the 9.1 % tail idle (finer sharding on the last faction) buys
+another ~17 s, landing ~310 s / 5.2 min. **The bar is not reachable by fixing
+sharing alone.** What would have to give after that is the ~19.8 s/object of
+real compile work, which is a different lane from anything attempted in this
+report.
+
+Worth stating for the owner: the case that is already comfortably inside the bar
+is the everyday one — **repeat run 9.9 s** (§15.6). The 6.8 min case is narrowly
+"the first run after editing the unit or structure compiler".
+
+### 16.4 Option per piece, with the trust each adds
+
+Ranked by value; (i) ship from parent, (ii) durable identity-keyed disk cache,
+(iii) rebuild cheaply from a compact precomputed index.
+
+**(2) `flat_kind_cache` — do this first. Option (ii), shape already proven.**
+Each entry is "every block of kind K in the corpus", a pure function of (corpus
+identity, K). That is the *same shape* as the plan-row cache that already exists
+and is already trusted, keyed on `full_corpus_closure["sha256"]` (which the
+convert already computes, and §15's cut 2 memoizes) plus the parsing lane's
+`compiler_dependency_identity`. The kind set a run needs is small and stable, so
+the parent can additionally pre-warm it once and ship the list, which removes the
+concurrent-miss stampede §9.3 observed for census.
+*Trust added:* one more durable artifact on the §9/§10 chain — key on the full
+identity, store a content digest in the envelope, re-derive it on load, refuse on
+any mismatch, and treat every refusal as a full re-parse. Same discipline, no new
+kind of trust.
+
+**(1) `PlayableUnitCompilerInputs` — option (iii), not (i).**
+Shipping the live object is the wrong move: it carries a `threading.Condition`,
+holds the 29.1 MB `documents` mapping, and — decisively — the compilers **fail
+closed on `prepared.documents is not documents`**, an identity check, so an
+unpickled copy in a worker would not satisfy it and the guard must not be
+weakened to make it. The right shape is a compact, digest-sealed **derived
+index** on disk (the parsed tables only, not the corpus), loaded by each worker
+and re-bound to that worker's own `documents` object so the identity guard still
+holds against real bytes.
+*Trust added:* this is the largest new surface in the proposal, because these
+tables feed the compilers **directly** rather than merely keying a cache. It
+should land second, behind (2), and only with §16.5 rule 3 satisfied.
+
+**(3)+(4) `named_definition_cache` / weapon nuggets — option (iii), and possibly
+nothing at all.** These are keyed on `(kind, identifier)` — thousands of tiny
+entries, which is the wrong shape for a per-entry disk cache on Windows. They are
+lookups *into* the same parsed blocks (2) provides, so once (2) is shared they
+should collapse on their own. **Measure after (2) before building anything for
+them.**
+
+### 16.5 Fail-closed rules the next round must not bend
+
+The §9/§10 discipline transfers, with one genuinely new hazard:
+
+1. **Key on the full identity chain**, never on `id()` across processes and never
+   on mtime alone: corpus closure digest + catalog identity + effective-assets
+   fingerprint + the parsing lane's `compiler_dependency_identity`.
+2. **Verify on load**: the envelope carries its own content digest and re-derives
+   it, exactly as `faction_census_cache` does with `graphSha256`. Any doubt is a
+   clean miss and a full re-parse — never a corrupted index.
+3. **The §9.1 type-stability trap is worse here than it was for the census
+   graph.** The graph was *measured* JSON-stable — no tuples, no sets, no
+   non-string keys. `IniBlock` and `SageObject` are dataclasses that **do** carry
+   tuples, and `flat_kind_cache` values are `tuple[IniBlock, ...]`. A JSON round
+   trip would silently turn every one into a list. For the census graph that
+   would only have moved a cache key (a miss); here it would change what the
+   compilers *read*, so it would change **output**. Therefore: the storage format
+   must be type-preserving, the digest must be computed over a type-sensitive
+   encoding, and `test_type_sensitive_canonicalization_detects_tuple_drift`
+   (§11.4) must be extended to the real stored objects **before** the format is
+   trusted for anything.
+4. **Do not weaken the `prepared.documents is not documents` guard.** It is a
+   real fail-closed check that has already caught real drift. Any shipped or
+   persisted prepared form re-establishes it against the worker's own corpus
+   object; it does not get relaxed to an equality check to make sharing easier.
+5. **A kill switch per cache**, matching `OPENBFME_NO_OBJECT_CACHE` /
+   `OPENBFME_NO_CENSUS_CACHE` / `OPENBFME_NO_COVERAGE_SHORTCIRCUIT`, so the A/B
+   that proves byte-identity can be run without editing code — and so it can be
+   turned off in production if it ever misbehaves.
+6. **Byte-identity gate before any timing is quoted**: serial oracle vs pooled,
+   retail, at least two factions, artifacts byte-for-byte — the §15.9 procedure,
+   with the short-circuit disabled on both sides.
+
+### 16.6 First measurement of the next round, before any code
+
+Instrument `_prepare_playable_unit_compiler_uncached` and `_flat_blocks_for_kind`
+with a per-process cumulative timer and a per-kind counter, run **one** pooled
+seven-faction batch, and read the run-scoped worker logs (§15.5 made them
+run-scoped for exactly this). That gives, directly rather than by inference:
+per-process first-touch seconds, which kinds dominate, and how many distinct
+kinds a worker actually touches. It replaces the lower-bound 61.9 s with a
+measured figure and tells you whether §16.3's ~327 s is pessimistic. **Two
+minutes of machine time, and it decides whether the rest of the work is worth
+doing** — which is the same census-before-loop rule this report has had to
+relearn twice.
