@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 import threading
 import time
-from typing import Callable, Mapping
+from typing import Callable, Mapping, Sequence
 
 from .catalog import InstallCatalog
 from .castle_behavior import (
@@ -25,6 +25,12 @@ from .faction_object_cache import (
     durable_non_ini_assets_fingerprint,
     object_cache_key,
     policy_roots_fingerprint,
+)
+from .faction_plan_cache import (
+    FactionPlanRowCache,
+    default_plan_cache_root,
+    plan_cache_disabled,
+    plan_row_cache_key,
 )
 from .incremental_rebuild import (
     compiler_dependency_identity,
@@ -436,6 +442,11 @@ def build_faction_import_plan(
     catalog_identity_sha256: str,
     game: str = "bfme2",
     plan_jobs: int | None = None,
+    row_cache: FactionPlanRowCache | None = None,
+    row_cache_assets_fp: str = "",
+    row_cache_graph_identity: str = "",
+    document_hashes: Mapping[str, str] | None = None,
+    full_corpus_closure: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Account for every command-reachable Object without claiming unsupported work."""
 
@@ -561,6 +572,21 @@ def build_faction_import_plan(
         and edge["targetId"]
     }
     horde_banner_targets.update(layered_banner_targets)
+
+    # Key material for the durable plan-row cache. Every non-document input the
+    # per-object body reads is folded in here: the structure policy roots and
+    # the banner-carrier set (both graph- and compiler-derived), plus the
+    # process-wide compiler identity token so any converter source edit misses.
+    plan_policy_fp = policy_roots_fingerprint(
+        spawned=engine_spawned_roots,
+        spawned_roles=engine_spawned_roles,
+        wall_templates=wall_template_roots,
+        source_null_sets=(
+            *source_null_sets,
+            *(f"horde-banner:{value}" for value in sorted(horde_banner_targets)),
+        ),
+    )
+    plan_compiler_token = compiler_identity_token() if row_cache is not None else ""
 
     def _plan_one(object_id: str) -> list[dict[str, object]]:
         objects: list[dict[str, object]] = []
@@ -784,14 +810,77 @@ def build_faction_import_plan(
     # is elsewhere — one shared parsed corpus across all seven factions.
     ordered_ids = sorted(object_ids, key=lambda value: (value.casefold(), value))
     workers = resolve_plan_worker_count(plan_jobs)
+
+    # Durable plan-row cache. Planning is a full second descriptor compile per
+    # object, so a warm faction used to pay it in full; a cached row is only
+    # admitted when every input byte-identity still matches (see
+    # faction_plan_cache). Any doubt recomputes — a cache fault costs time,
+    # never correctness.
+    def _closure_identity(source_paths: list[str] | None) -> Mapping[str, object]:
+        if not source_paths and full_corpus_closure is not None:
+            return full_corpus_closure
+        return document_closure_identity(
+            documents, source_paths, document_hashes=document_hashes
+        )
+
+    def _row_source_paths(rows: Sequence[Mapping[str, object]]) -> list[str] | None:
+        for row in rows:
+            declared = row.get("sourceDocumentPaths")
+            if isinstance(declared, list):
+                return [str(item) for item in declared]
+        return None
+
+    def _plan_one_cached(object_id: str) -> list[dict[str, object]]:
+        if row_cache is None:
+            return _plan_one(object_id)
+        key = plan_row_cache_key(
+            object_id=object_id,
+            documents_fp=str(_closure_identity(None)["sha256"]),
+            catalog_identity_sha256=catalog_identity,
+            effective_root_fp=row_cache_assets_fp,
+            graph_identity_sha256=row_cache_graph_identity or graph_identity,
+            policy_fp=plan_policy_fp,
+            compiler_token=plan_compiler_token,
+            game=game,
+        )
+        hit = row_cache.get(
+            key,
+            verify_compiler_identity=lambda family: str(
+                compiler_dependency_identity(family)["sha256"]
+            ),
+            verify_document_closure=lambda paths: str(
+                _closure_identity(paths)["sha256"]
+            ),
+        )
+        if hit is not None:
+            return hit
+        rows_out = _plan_one(object_id)
+        try:
+            family = str(rows_out[0]["family"]) if rows_out else ""
+            declared = _row_source_paths(rows_out)
+            row_cache.put(
+                key,
+                rows=rows_out,
+                family=family,
+                compiler_identity=str(
+                    compiler_dependency_identity(family)["sha256"]
+                ),
+                document_closure_sha256=str(_closure_identity(declared)["sha256"]),
+                source_paths=declared,
+            )
+        except (KeyError, IndexError, TypeError, ValueError):
+            # Never let a caching problem change what planning returned.
+            pass
+        return rows_out
+
     objects: list[dict[str, object]] = []
     if workers <= 1 or len(ordered_ids) <= 1:
-        planned = [_plan_one(object_id) for object_id in ordered_ids]
+        planned = [_plan_one_cached(object_id) for object_id in ordered_ids]
     else:
         with ThreadPoolExecutor(
             max_workers=min(workers, len(ordered_ids))
         ) as pool:
-            planned = list(pool.map(_plan_one, ordered_ids))
+            planned = list(pool.map(_plan_one_cached, ordered_ids))
     for chunk in planned:
         objects.extend(chunk)
 
@@ -1544,6 +1633,37 @@ def _convert_one_plan_object(
     return row, artifacts
 
 
+def _resolve_plan_row_cache(
+    state_root: Path | None, effective_root: Path
+) -> FactionPlanRowCache | None:
+    """Durable plan-row cache root, or ``None`` when no durable root is known.
+
+    Mirrors the object cache's rule exactly: never fall back to the working
+    directory, and never let the ambient ``OPENBFME_IMPORT_ROOT`` of the pytest
+    gate point a synthetic conversion at durable retail entries.
+    """
+
+    if plan_cache_disabled():
+        return None
+    shared = os.environ.get("OPENBFME_SHARED_CACHE", "").strip()
+    import_root = os.environ.get("OPENBFME_IMPORT_ROOT", "").strip()
+    try:
+        if state_root is not None:
+            return FactionPlanRowCache(default_plan_cache_root(Path(state_root)))
+        if shared:
+            return FactionPlanRowCache(default_plan_cache_root(Path(shared)))
+        if import_root:
+            resolved_import_root = Path(import_root).expanduser().resolve()
+            resolved_effective_root = Path(effective_root).expanduser().resolve()
+            if resolved_effective_root.is_relative_to(resolved_import_root):
+                return FactionPlanRowCache(
+                    default_plan_cache_root(resolved_import_root)
+                )
+    except OSError:
+        return None
+    return None
+
+
 def build_faction_conversion(
     faction_graph: Mapping[str, object],
     documents: Mapping[str, bytes],
@@ -1568,13 +1688,61 @@ def build_faction_conversion(
 
     from .progress import emit as progress_emit
 
+    # Identity material the plan-row cache keys on. Computed before the plan so
+    # the plan stage can consult its durable cache; the convert loop below
+    # reuses the very same values, so this is a move, not a new cost.
+    document_hashes = {
+        path: hashlib.sha256(payload).hexdigest() for path, payload in documents.items()
+    }
+    # Rows with no declared source closure all hash the same full corpus.
+    full_corpus_closure = document_closure_identity(
+        documents, None, document_hashes=document_hashes
+    )
+    # Keep every manifest row outside data/ini broad. Rows inside data/ini also
+    # have compiler-authored closures, while the catalog identity remains the
+    # safety backstop until those hand-curated closures are complete.
+    assets_fp = durable_non_ini_assets_fingerprint(effective_root)
+    graph_identity_sha256 = hashlib.sha256(
+        json.dumps(
+            faction_graph,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+    plan_row_cache = _resolve_plan_row_cache(state_root, effective_root)
+
     progress_emit("faction-plan", "building faction import plan")
     plan = build_faction_import_plan(
         faction_graph,
         documents,
         catalog_identity_sha256=catalog_identity_sha256,
         game=game,
+        row_cache=plan_row_cache,
+        row_cache_assets_fp=assets_fp,
+        row_cache_graph_identity=graph_identity_sha256,
+        document_hashes=document_hashes,
+        full_corpus_closure=full_corpus_closure,
     )
+    if plan_row_cache is not None:
+        # A refused entry is recompiled exactly like an absent one, so report
+        # the recompiled total rather than letting "refused" read as "skipped".
+        recompiled = plan_row_cache.misses + plan_row_cache.refusals
+        progress_emit(
+            "faction-plan",
+            f"plan rows: {plan_row_cache.hits} cached, "
+            f"{recompiled} recompiled "
+            f"({plan_row_cache.misses} absent, "
+            f"{plan_row_cache.refusals} refused on identity)",
+            extra={
+                "planRowCacheHits": plan_row_cache.hits,
+                "planRowCacheMisses": plan_row_cache.misses,
+                "planRowCacheRefusals": plan_row_cache.refusals,
+                "planRowCacheRecompiled": recompiled,
+            },
+        )
     # Fail-closed on compiler-init failure (mirrors build_faction_import_plan):
     # a corpus the shared compiler cannot index — e.g. RotWK's repeated
     # ChildObject declarations that trip the strict global object index — must
@@ -1598,26 +1766,6 @@ def build_faction_conversion(
     source_null_sets = _source_null_command_set_ids(faction_graph)
 
     plan_objects = list(plan["objects"])
-    document_hashes = {
-        path: hashlib.sha256(payload).hexdigest() for path, payload in documents.items()
-    }
-    # Keep every manifest row outside data/ini broad. Rows inside data/ini also
-    # have compiler-authored closures, while the catalog identity remains the
-    # safety backstop until those hand-curated closures are complete.
-    # Rows with no declared source closure all hash the same full corpus.
-    full_corpus_closure = document_closure_identity(
-        documents, None, document_hashes=document_hashes
-    )
-    assets_fp = durable_non_ini_assets_fingerprint(effective_root)
-    graph_identity_sha256 = hashlib.sha256(
-        json.dumps(
-            faction_graph,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-            allow_nan=False,
-        ).encode("utf-8")
-    ).hexdigest()
     numeric_defines_sha256 = (
         hashlib.sha256(
             json.dumps(

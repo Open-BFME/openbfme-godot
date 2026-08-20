@@ -18,6 +18,11 @@ from openbfme_importer.faction_import import (
     resolve_plan_worker_count,
 )
 from openbfme_importer.faction_object_cache import clear_compiler_identity_token_memo
+from openbfme_importer.faction_plan_cache import (
+    PLAN_CACHE_VERSION,
+    FactionPlanRowCache,
+    rows_digest,
+)
 from openbfme_importer.incremental_rebuild import (
     compiler_dependency_identity,
     document_closure_identity,
@@ -284,6 +289,155 @@ def test_shared_kind_cache_failure_does_not_strand_waiters() -> None:
     assert claimed is True
     assert puc._publish_cache_key(cache, "k", lock, "value") == "value"
     assert puc._claim_cache_key(cache, "k", lock) == (False, "value")
+
+
+def _plan_cache_probe(tmp_path, monkeypatch):
+    """Return (documents, graph, cache, call_counter) wired for plan caching."""
+
+    from openbfme_importer import faction_import as fi
+
+    documents, graph = _fixture()
+    cache = FactionPlanRowCache(tmp_path / "faction-plan-rows")
+    calls: list[str] = []
+    real = fi.compile_playable_unit_descriptor
+
+    def _counted(object_id, *args, **kwargs):
+        calls.append(object_id)
+        return real(object_id, *args, **kwargs)
+
+    monkeypatch.setattr(fi, "compile_playable_unit_descriptor", _counted)
+    return documents, graph, cache, calls
+
+
+def _build_with_cache(documents, graph, cache):
+    return build_faction_import_plan(
+        graph,
+        documents,
+        catalog_identity_sha256="2" * 64,
+        row_cache=cache,
+        row_cache_assets_fp="non-ini-manifest:" + "a" * 64,
+    )
+
+
+def test_plan_rows_are_recomputed_without_a_cache_and_loaded_with_one(
+    tmp_path, monkeypatch
+) -> None:
+    """Failing-first shape: no cache => compile; warm cache => load."""
+
+    documents, graph, cache, calls = _plan_cache_probe(tmp_path, monkeypatch)
+
+    # No cache at all: every descriptor is compiled.
+    uncached = build_faction_import_plan(
+        graph, documents, catalog_identity_sha256="2" * 64
+    )
+    assert calls, "expected the uncached plan to compile descriptors"
+
+    # Cold cache: compiles, and populates.
+    calls.clear()
+    cold = _build_with_cache(documents, graph, cache)
+    assert calls, "expected the cold plan-cache run to compile descriptors"
+    assert cache.hits == 0
+    assert cache.misses > 0
+
+    # Warm cache: no descriptor compiled at all, identical plan.
+    calls.clear()
+    warm = _build_with_cache(documents, graph, cache)
+    assert calls == [], f"warm plan recompiled {calls}"
+    assert cache.hits > 0
+    assert warm == cold
+    assert warm["aggregateSha256"] == cold["aggregateSha256"] == uncached["aggregateSha256"]
+
+
+def test_poisoned_plan_cache_row_is_refused_and_recomputed(
+    tmp_path, monkeypatch
+) -> None:
+    """Flip one byte of a cached row: the entry is refused, not served."""
+
+    documents, graph, cache, calls = _plan_cache_probe(tmp_path, monkeypatch)
+    clean = _build_with_cache(documents, graph, cache)
+
+    entries = sorted((tmp_path / "faction-plan-rows").rglob("plan-rows.json"))
+    assert entries, "expected the cold run to write cache entries"
+    poisoned = None
+    for entry in entries:
+        payload = json.loads(entry.read_text(encoding="utf-8"))
+        rows = payload.get("rows") or []
+        if rows and isinstance(rows[0].get("descriptorSha256"), str):
+            digest = rows[0]["descriptorSha256"]
+            rows[0]["descriptorSha256"] = ("0" if digest[0] != "0" else "1") + digest[1:]
+            entry.write_text(json.dumps(payload), encoding="utf-8")
+            poisoned = entry
+            break
+    assert poisoned is not None, "expected a row carrying a descriptor digest"
+
+    calls.clear()
+    cache.hits = cache.misses = cache.refusals = 0
+    after = _build_with_cache(documents, graph, cache)
+    assert cache.refusals >= 1, "poisoned entry was not refused"
+    assert after == clean, "a refused entry must recompute the true row"
+    assert after["aggregateSha256"] == clean["aggregateSha256"]
+
+
+def test_plan_cache_refuses_a_foreign_compiler_identity(tmp_path, monkeypatch) -> None:
+    """A row compiled by different converter bytes may not be reused."""
+
+    documents, graph, cache, _calls = _plan_cache_probe(tmp_path, monkeypatch)
+    _build_with_cache(documents, graph, cache)
+
+    entries = sorted((tmp_path / "faction-plan-rows").rglob("plan-rows.json"))
+    payload = json.loads(entries[0].read_text(encoding="utf-8"))
+    payload["compilerIdentity"] = "f" * 64
+    payload["rowsSha256"] = rows_digest(payload["rows"])  # keep self-digest honest
+    entries[0].write_text(json.dumps(payload), encoding="utf-8")
+
+    cache.hits = cache.misses = cache.refusals = 0
+    _build_with_cache(documents, graph, cache)
+    assert cache.refusals >= 1
+
+
+def test_plan_cache_version_drift_misses_cleanly(tmp_path, monkeypatch) -> None:
+    """A stale format is a miss, never a half-load."""
+
+    documents, graph, cache, _calls = _plan_cache_probe(tmp_path, monkeypatch)
+    clean = _build_with_cache(documents, graph, cache)
+
+    for entry in (tmp_path / "faction-plan-rows").rglob("plan-rows.json"):
+        payload = json.loads(entry.read_text(encoding="utf-8"))
+        payload["version"] = PLAN_CACHE_VERSION + 1
+        entry.write_text(json.dumps(payload), encoding="utf-8")
+
+    cache.hits = cache.misses = cache.refusals = 0
+    after = _build_with_cache(documents, graph, cache)
+    assert cache.hits == 0
+    assert after == clean
+
+
+def test_corrupt_plan_cache_entry_never_fails_the_plan(tmp_path, monkeypatch) -> None:
+    """Fail open: unreadable JSON costs time, not the convert."""
+
+    documents, graph, cache, _calls = _plan_cache_probe(tmp_path, monkeypatch)
+    clean = _build_with_cache(documents, graph, cache)
+
+    for entry in (tmp_path / "faction-plan-rows").rglob("plan-rows.json"):
+        entry.write_text("{ this is not json", encoding="utf-8")
+
+    cache.hits = cache.misses = cache.refusals = 0
+    after = _build_with_cache(documents, graph, cache)
+    assert cache.hits == 0
+    assert after == clean
+
+
+def test_plan_cache_is_disabled_by_environment(monkeypatch, tmp_path) -> None:
+    from openbfme_importer import faction_import as fi
+
+    monkeypatch.setenv("OPENBFME_NO_PLAN_CACHE", "1")
+    assert fi._resolve_plan_row_cache(tmp_path, tmp_path) is None
+    monkeypatch.setenv("OPENBFME_NO_PLAN_CACHE", "0")
+    monkeypatch.setenv("OPENBFME_NO_OBJECT_CACHE", "1")
+    assert fi._resolve_plan_row_cache(tmp_path, tmp_path) is None
+    monkeypatch.delenv("OPENBFME_NO_OBJECT_CACHE")
+    assert fi._resolve_plan_row_cache(tmp_path, tmp_path) is not None
+    assert fi._resolve_plan_row_cache(None, tmp_path) is None
 
 
 def test_worker_count_resolution_is_explicit(monkeypatch) -> None:

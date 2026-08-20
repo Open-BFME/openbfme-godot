@@ -312,10 +312,175 @@ The single failure is
 bfme2.json` relative to the checkout root, which does not exist in a worktree
 or in the `%TEMP%` HEAD copy. It fails identically on HEAD.
 
-## 6. Not verified
+## 6. Durable plan-row cache (second lane, on top of 4c00673)
+
+Section 3 named the plan stage as the entire remaining prize — 682 s of the
+865 s optimized warm seven-faction projection — and said a durable plan-row
+cache would reach the single-digit-minute target. It was authorized and built.
+
+Logs: `plancache-cold-men.log`, `plancache-warm-men.log`,
+`plancache-poisoned-men.log`.
+
+### Design
+
+New module `importer/openbfme_importer/faction_plan_cache.py`, storing one
+entry per planned object under `<state>/cache/faction-plan-rows/<aa>/<key>/
+plan-rows.json` (a sibling of the existing `faction-objects` conversion cache,
+never inside it; `OPENBFME_SHARED_CACHE` is honoured the same way).
+`PLAN_CACHE_VERSION = 1`, written with `write_json_atomic`.
+
+A cached row is admitted only when the whole fail-closed identity chain still
+matches. The **key** binds:
+
+| Component | Source |
+|---|---|
+| full-corpus document closure identity | `document_closure_identity(documents, None)` |
+| catalog identity | `catalog_identity_sha256` |
+| effective-assets identity | `durable_non_ini_assets_fingerprint` |
+| faction graph identity | sha256 of the canonical graph |
+| structure policy roots + banner-carrier set | `policy_roots_fingerprint` |
+| compiler identity token | `compiler_identity_token()` |
+| game, object id | — |
+
+The key uses the *full-corpus* document identity rather than a per-object
+projection, because the plan stage decides an object's family before any source
+closure is known — that is the only honest pre-compute key, and it is strictly
+stricter than a per-object one. The **entry** then carries, and `get()`
+re-verifies against freshly computed values:
+
+- `compilerIdentity` — the per-family `compiler_dependency_identity(family)`
+  (the fixed, single-flight version from section 2);
+- `documentClosureSha256` — the per-object `document_closure_identity` over the
+  exact `sourceDocumentPaths` the row declared;
+- `rowsSha256` — a digest of the stored rows themselves, so a tampered or
+  truncated payload is refused rather than served.
+
+Every failure path — absent file, wrong schema, version drift, key mismatch,
+bad digest, foreign compiler identity, changed source closure, unreadable JSON,
+`OSError` — returns `None` and recomputes. **A cache fault can only cost time.**
+Kill switch: `OPENBFME_NO_PLAN_CACHE` (and the existing
+`OPENBFME_NO_OBJECT_CACHE` disables both). Resolution mirrors the object
+cache's rule exactly: never fall back to the working directory, and never let
+the pytest gate's ambient `OPENBFME_IMPORT_ROOT` point a synthetic conversion
+at durable retail entries.
+
+`build_faction_conversion` now computes the document hashes, the full-corpus
+closure, the assets fingerprint and the graph identity *before* the plan and
+passes them down. That is a move, not a new cost — the convert loop already
+computed all four.
+
+The whole cache is **256 KB for 61 objects**.
+
+### Measured
+
+All four runs below are the same frozen bytes, same state root, faction `men`.
+
+| Run | Plan stage | Faction wall | Convert loop | Plan rows |
+|---|---|---|---|---|
+| cold plan cache, cold object cache | **203 s** | 687.7 s | 438 s | 0 cached, 61 recompiled |
+| warm, fresh process (faction-1 position) | **23 s** | **62.9 s** | 2.2 s | 61 cached, 0 recompiled |
+| warm, in-batch (faction-2 position) | ~5 s | **28.8 s** | 2.4 s | 61 cached, 0 recompiled |
+| poisoned entry, warm | — | 40.9 s | — | 60 cached, 1 recompiled (0 absent, 1 refused on identity) |
+
+Warm faction cost across the three lanes of this work:
+
+| | warm men faction |
+|---|---|
+| HEAD | 338.7 s |
+| after commit 4c00673 (in-batch) | 103.3 s |
+| **with plan cache (in-batch)** | **28.8 s** |
+
+An earlier pass of the identical design measured 50.9 s / 22.5 s for the same
+two positions; the spread between that and 62.9 s / 28.8 s is the concurrent
+publish-profiling load, which was heavier during the final pass. Both passes
+are in the logs; the table reports the slower, final-bytes numbers.
+
+### Seven-faction projection
+
+| Scenario | HEAD | 4c00673 | with plan cache |
+|---|---|---|---|
+| Warm | ~39.5 min | ~14.4 min | **62.9 + 6 x 28.8 = 236 s ≈ 3.9 min** |
+
+**The single-digit-minute target is met** — roughly 3.9 minutes at the load
+present during measurement, 3.1 minutes on the lighter-load pass, against
+~39.5 minutes on HEAD. That is a ~10x end-to-end improvement on a warm
+seven-faction convert.
+
+The cold (post-compiler-edit) case is unchanged at ~65 min: when converter
+bytes move, every cache legitimately invalidates and the work is real.
+
+### Byte-identity
+
+Cold-plan-cache output vs warm-plan-cache output, same code, same state root:
+
+```
+ARTIFACT_FILES a=183 b=183
+ONLY_A 0 []   ONLY_B 0 []   DIFFERING 0 []
+COVERAGE_AGGREGATE_EQUAL True
+PLAN_AGGREGATE_EQUAL True
+COVERAGE_ROWS a=61 b=61 differing=0 []
+IDENTICAL True
+```
+
+**Full identity, including the coverage `aggregateSha256` and every
+`incremental.compilerIdentity`** — as expected, because compiler bytes did not
+change between these two runs. `converted=59 gaps=0 complete=True` in both.
+
+The poisoned run is identical too: refusing the tampered entry and recomputing
+produced exactly the same 183 artifacts and the same coverage aggregate as the
+cold run.
+
+### Live poisoned-cache proof
+
+One byte of a real cached row was corrupted in place
+(`MenFortressCenterGeneric`, `descriptorSha256` truncated to `""` in
+`cache/faction-plan-rows/00/00363d7c.../plan-rows.json`). The next production
+run reported:
+
+```
+plan rows: 60 cached, 1 recompiled (0 absent, 1 refused on identity)
+```
+
+— refused on the `rowsSha256` gate, recomputed, and produced byte-identical
+output. Note this log line is the *corrected* wording: the first version said
+"0 compiled" for a run that had in fact recompiled one object, because the
+counter it printed only tracked absent files. That was a reporting defect of
+exactly the kind rule 5 exists to catch, so it was fixed and **every number in
+this section was re-measured on the corrected bytes**.
+
+### Tests
+
+Six added to `importer/tests/test_faction_convert_perf.py` (18 total in file):
+
+- `test_plan_rows_are_recomputed_without_a_cache_and_loaded_with_one` —
+  failing-first shape: no cache compiles descriptors; warm cache compiles
+  **none** and returns an identical plan (asserted on `aggregateSha256` against
+  both the cold and the wholly uncached plan).
+- `test_poisoned_plan_cache_row_is_refused_and_recomputed` — flips one byte of a
+  cached `descriptorSha256`; the entry is refused and the true row recomputed.
+- `test_plan_cache_refuses_a_foreign_compiler_identity` — a row whose stored
+  compiler identity is not the current one is refused even with an honest
+  self-digest.
+- `test_plan_cache_version_drift_misses_cleanly`.
+- `test_corrupt_plan_cache_entry_never_fails_the_plan` — unreadable JSON is a
+  miss, not a failure.
+- `test_plan_cache_is_disabled_by_environment`.
+
+Suite delta: `test_faction_import` + `test_faction_object_cache` +
+`test_incremental_rebuild` + `test_spellbook_import` +
+`test_faction_convert_perf` = **126 passed**. Wider run including
+`test_playable_unit_compiler` and `test_playable_structure_compiler`:
+431 passed / 12 skipped / 1 failed, the one failure being the same pre-existing
+environmental `test_horde_dispatch_graphs_cover_exact_effective_retail_corpora`
+that fails identically on HEAD.
+
+## 7. Not verified
 
 - Only `men` was run, per the lane brief (another agent held `elves`). The
-  seven-faction numbers above are projections from the measured per-faction
-  and in-batch-position costs, not a measured seven-faction batch.
+  seven-faction numbers are projections from measured per-faction and
+  in-batch-position costs, not a measured seven-faction batch.
 - The publish stage and the full `rotwk_full_content` pipeline were not run.
 - No cook, pack, or selection change was made or verified.
+- The plan cache has only ever been exercised on RotWK/`men`. The BFME2 lane
+  and the `--plan-only` path go through `plan_faction_import`, which passes no
+  cache and is therefore unchanged, but that is reasoning, not a measurement.
