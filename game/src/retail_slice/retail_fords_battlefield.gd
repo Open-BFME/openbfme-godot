@@ -1088,6 +1088,10 @@ func _authored_tree_sway_type_ids() -> Variant:
 	## that could be mistaken for "this map has no trees".
 	if retail_prop_container == null or not is_instance_valid(retail_prop_container):
 		return null
+	# Godot treats a null default as "no default supplied" and logs an ERROR
+	# for the missing key; the absent table is an expected named gap (Q33).
+	if not retail_prop_container.has_meta("w3d_tree_draw_type_ids"):
+		return null
 	var declared: Variant = retail_prop_container.get_meta("w3d_tree_draw_type_ids", null)
 	if typeof(declared) == TYPE_ARRAY or typeof(declared) == TYPE_PACKED_STRING_ARRAY:
 		return declared
