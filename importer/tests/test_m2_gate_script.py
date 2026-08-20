@@ -22,6 +22,7 @@ ORACLE_REVIEW = ROOT / "tools" / "review-m2-oracle-capture.ps1"
 ORACLE_FREEZE = ROOT / "tools" / "new-m2-oracle-approval.ps1"
 ORACLE_FINALIZE = ROOT / "tools" / "finalize-m2-oracle-approval.ps1"
 FOCUSED_GATE = ROOT / "tools" / "gate-m2-focused.ps1"
+ORACLE_SELECTION_TEST = ROOT / "tools" / "test-m2-oracle-selection.ps1"
 RELIABILITY_COMMON = ROOT / "tools" / "m2-reliability-evidence-common.ps1"
 
 
@@ -136,6 +137,18 @@ def test_m2_gate_runs_the_focused_graphics_ui_audio_and_play_contracts() -> None
         assert runner in focused
     assert "--audio-driver" in focused
     assert "WASAPI" in focused
+
+
+def test_m2_oracle_selection_guard_tracks_rotwk_men() -> None:
+    common = ORACLE_COMMON.read_text(encoding="utf-8")
+    assert "^rotwk-men-vslice/[0-9a-f]{64}$" in common
+    assert 'pack.id -eq "rotwk-men-vslice"' in common
+    assert "m3Recipe.baseProfile" in common
+    assert "provenance\\audit.json" in common
+    assert ORACLE_SELECTION_TEST.is_file()
+    guard = ORACLE_SELECTION_TEST.read_text(encoding="utf-8")
+    assert "Get-M2OracleContext" in guard
+    assert "M2_ORACLE_SELECTION_TEST PASS" in guard
 
 
 def test_m2_reliability_is_real_time_rendered_and_identity_bound() -> None:
@@ -279,8 +292,10 @@ def test_m2_oracle_tools_fail_closed_and_revoke_stale_review() -> None:
     finalize = ORACLE_FINALIZE.read_text(encoding="utf-8")
     assert "Get-ProofWorkingTreeIdentity" in common
     assert "openbfme.m2-men-fords-oracle-captures" in common
-    assert '"Selected immutable bundle provenance targets another profile or remains incomplete."' in common
-    assert "[string]$provenance.profile_sha256 -eq $profileSha256" in common
+    assert '"Selected immutable bundle provenance is not a complete RotWK faction-slice import."' in common
+    assert '"Selected immutable bundle provenance audit is missing, stale, light, or invalid."' in common
+    assert '[string]$provenance.source_game -eq "rotwk-retail-user-owned"' in common
+    assert "[string]$audit.profile_sha256 -eq [string]$provenance.profile_sha256" in common
     assert "@($provenance.incomplete).Count -eq 0" in common
     assert 'approved = $false' in workspace
     assert 'schemaVersion = 1' in workspace
