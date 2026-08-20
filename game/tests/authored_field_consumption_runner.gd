@@ -239,7 +239,7 @@ func _test_pre_attack_authored_beats_coast_proxy() -> void:
 
 func _test_facing_snap_only_without_turn_source() -> void:
 	var sim = _bare_sim()
-	var snap_rule := _unit_rule({"turn_rate_degrees_per_second": 180.0})
+	var snap_rule := _unit_rule({"turn_rate_degrees_per_second": 0.0})
 	var honor_rule := _unit_rule({
 		"turn_rate_degrees_per_second": 90.0,
 		"turn_rate_source": "locomotor",

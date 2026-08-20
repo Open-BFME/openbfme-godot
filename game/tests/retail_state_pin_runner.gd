@@ -174,7 +174,24 @@ const PIN_TICKS := 3000
 ## final snapshot and reproduced the superseded hash byte-for-byte. No entity,
 ## structure, position, economy, command, RNG, or gameplay value differed.
 ## ---------------------------------------------------------------------------
-const EXPECTED_HASH := "0e4bcdbf7e9a8579ccf559f0ac3d83284413e7196ad1249d2eafd3eafd1dcadc"
+## ---------------------------------------------------------------------------
+## RE-MINT 2026-08-19 - LOCO-B RETAIL HEADING-BOUNDED MOVEMENT.
+## OWNER-AUTHORIZED IN THE LOCO-B BRIEF; THIS IS A CONSCIOUS MINT.
+##
+## Superseded value: 0e4bcdbf7e9a8579ccf559f0ac3d83284413e7196ad1249d2eafd3eafd1dcadc
+## New value:        b025d16237ff644d66211a9cc26872f18b61520b9a377f11e9e99c6eceb43f58
+##
+## WHY: `_step_route` used to rotate `facing` by the authored TurnRate but then
+## translated along the raw waypoint vector, so hashed positions still snapped
+## to the requested direction. LOCO-B translates ground movement along the
+## bounded facing instead. Acceleration and braking remain the existing authored
+## values; rows with no positive authored rate keep snap/direct movement.
+##
+## Measured twice before changing this constant, identical in:
+##   workspace/logs/loco-b-retail-state-pin-old-expected-r2.txt
+##   workspace/logs/loco-b-retail-state-pin-old-expected-r3.txt
+## ---------------------------------------------------------------------------
+const EXPECTED_HASH := "b025d16237ff644d66211a9cc26872f18b61520b9a377f11e9e99c6eceb43f58"
 const SUBMIT_THROUGH_TICK := 1500
 
 

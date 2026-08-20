@@ -171,22 +171,25 @@ func _test_turn_rate_limits_heading_change() -> void:
 		"wheel_advances_while_turning",
 		"a wheel must not stop the horde; position stayed at origin"
 	)
-	# Second tick completes the turn: 12 degrees remain, less than the 18-degree
-	# per-tick allowance, so it lands exactly on the heading rather than
-	# overshooting it.
+	# Translation follows the first bounded heading, so the bearing from the new
+	# position to the fixed waypoint shifts slightly. The second tick must land
+	# exactly on that newly desired bearing rather than overshooting it.
+	var second_desired := rad_to_deg(
+		Vector2(row["position"]).direction_to(Vector2((row["route"] as Array)[0])).angle()
+	)
 	sim._step_route(row)
-	_check_close(_facing_degrees(row), 30.0, "wheel_lands_on_heading_without_overshoot")
+	_check_close(_facing_degrees(row), second_desired, "wheel_lands_on_heading_without_overshoot")
 
 
-func _test_legacy_default_snaps_heading_in_one_tick() -> void:
-	## Gate proof. Without the rule the sim keeps its previous behaviour exactly:
-	## facing is assigned from the movement direction in a single tick.
+func _test_authored_turn_rate_is_unconditional() -> void:
+	## LOCO-B makes a positive authored rate unconditional. The formation flag
+	## still owns group cohesion; it no longer gates basic heading physics.
 	var sim = _make_sim(false)
 	var row := _prepare(sim, 1, Vector2.ZERO, Vector2.RIGHT, 10.0, "")
 	sim.issue_move([1], _destination_at(row, 30.0))
 	sim._step_route(row)
 
-	_check_close(_facing_degrees(row), 30.0, "legacy_default_snaps_facing_in_one_tick")
+	_check_close(_facing_degrees(row), 18.0, "authored_turn_rate_is_not_flag_gated")
 	_check(
 		not row.has("group_speed_cap"),
 		"legacy_default_adds_no_row_keys",
@@ -304,14 +307,18 @@ func _test_group_move_caps_at_slowest_authored_speed() -> void:
 	_check_close(float(fast.get("group_speed_cap", 0.0)), 10.0, "group_cap_is_the_slowest_speed")
 	_check_close(float(slow.get("group_speed_cap", 0.0)), 10.0, "group_cap_applies_to_every_member")
 
-	var fast_start := Vector2(fast["position"])
-	var slow_start := Vector2(slow["position"])
+	var fast_travel := 0.0
+	var slow_travel := 0.0
 	for _tick_index in range(5):
+		var fast_before := Vector2(fast["position"])
+		var slow_before := Vector2(slow["position"])
 		sim._step_route(fast)
 		sim._step_route(slow)
+		fast_travel += fast_before.distance_to(Vector2(fast["position"]))
+		slow_travel += slow_before.distance_to(Vector2(slow["position"]))
 	_check_close(
-		Vector2(fast["position"]).distance_to(fast_start),
-		Vector2(slow["position"]).distance_to(slow_start),
+		fast_travel,
+		slow_travel,
 		"group_members_advance_together"
 	)
 	_check(
@@ -445,7 +452,7 @@ func _trace_replay() -> Array:
 
 func _run() -> void:
 	_test_turn_rate_limits_heading_change()
-	_test_legacy_default_snaps_heading_in_one_tick()
+	_test_authored_turn_rate_is_unconditional()
 	_test_reform_beyond_threshold_pivots_in_place()
 	_test_cavalry_reform_threshold_is_wider()
 	_test_unauthored_reform_threshold_never_reforms()
