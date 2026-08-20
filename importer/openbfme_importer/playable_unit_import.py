@@ -1132,12 +1132,43 @@ def build_scenario_unit_visual_closure_batch(
     }
 
 
-def extend_profile_with_unit(
-    base: Mapping[str, object], recipe: Mapping[str, object]
-) -> tuple[dict[str, object], dict[str, object]]:
-    """Return one strict additive profile and its delta identity."""
+def _owned_mapping(value: Mapping[str, object]) -> dict[str, object]:
+    """The mapping itself when it is already a dict, else a shallow dict of it.
 
-    target = deepcopy(dict(base))
+    Used only by the in-place extend path: returning the caller's own object
+    is the point, because the nested ``resources`` / ``runtime_data`` / ``pack``
+    containers are what get appended to.
+    """
+
+    return value if isinstance(value, dict) else dict(value)
+
+
+def extend_profile_with_unit(
+    base: Mapping[str, object],
+    recipe: Mapping[str, object],
+    *,
+    copy: bool = True,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Return one strict additive profile and its delta identity.
+
+    *copy* defaults to True, which is the historical contract: the caller's
+    profile is never touched, and a failure leaves it exactly as it was.
+
+    ``copy=False`` extends the given profile IN PLACE and is only for a caller
+    that already owns a private copy of the accumulator. It exists because
+    composing a faction is a fold - each object extends the profile the last
+    one returned - so a deep copy per object re-copies the whole growing
+    document N times. At 43-59 objects that measured ~8.4 s per faction of
+    pure copying. The one caller that uses it (`compose_faction_profile`)
+    deep-copies the base itself before the fold begins.
+
+    The in-place mode gives up exception safety, deliberately: a mid-way
+    failure can leave a partially extended profile behind. Every failure here
+    aborts the whole compose, so that partial value is unreachable - but a new
+    caller must not assume otherwise.
+    """
+
+    target = deepcopy(dict(base)) if copy else _owned_mapping(base)
     resources = target.get("resources")
     runtime_data = target.get("runtime_data")
     pack = target.get("pack")

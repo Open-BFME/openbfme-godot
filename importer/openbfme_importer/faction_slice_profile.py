@@ -10,7 +10,11 @@ from .faction_import import coverage_digest_payload
 from .interface_art import PACK_INDEX_SCHEMA as INTERFACE_ART_SCHEMA
 from .livingworld import LIVING_WORLD_PACK_PATH
 from .playable_structure_pack_compiler import validate_structure_visual_recipe
-from .playable_unit_import import FACTIONS as _FACTION_ROWS, extend_profile_with_unit
+from .playable_unit_import import (
+    FACTIONS as _FACTION_ROWS,
+    _owned_mapping,
+    extend_profile_with_unit,
+)
 from .projectile_art_compiler import (
     PROJECTILE_ART_PACK_KEY,
     PROJECTILE_ART_RUNTIME_PATH,
@@ -265,14 +269,16 @@ def _slug(value: str) -> str:
     if not result: raise ValueError("Object id has no safe slug")
     return result
 
-def _add_structure(profile: Mapping[str, object], recipe: Mapping[str, object], runtime: Mapping[str, object]) -> tuple[dict[str, object], dict[str, object]]:
+def _add_structure(profile: Mapping[str, object], recipe: Mapping[str, object], runtime: Mapping[str, object], *, copy: bool = True) -> tuple[dict[str, object], dict[str, object]]:
+    # copy=False extends in place; see extend_profile_with_unit for why the
+    # fold cannot afford a deep copy per object, and what it costs.
     validate_structure_visual_recipe(recipe)
     if runtime.get("schema") != "openbfme.playable-structure-runtime" or runtime.get("schemaVersion") != 0: raise ValueError("playable-structure runtime schema is invalid")
     object_id = str(recipe.get("objectId", ""))
     if object_id.casefold() != str(runtime.get("objectId", "")).casefold(): raise ValueError("structure recipe/runtime Object identities differ")
     if recipe.get("recipeSha256") != runtime.get("recipeSha256"): raise ValueError("structure recipe/runtime digests differ")
     if runtime.get("runtimeSha256") != _unsigned_digest(runtime, "runtimeSha256"): raise ValueError("structure runtime digest is invalid")
-    target = deepcopy(dict(profile)); resources = target.get("resources"); data = target.get("runtime_data"); pack = target.get("pack")
+    target = deepcopy(dict(profile)) if copy else _owned_mapping(profile); resources = target.get("resources"); data = target.get("runtime_data"); pack = target.get("pack")
     if not isinstance(resources, list) or not isinstance(data, dict) or not isinstance(pack, dict): raise ValueError("base profile is not extensible")
     files = pack.get("files")
     if not isinstance(files, dict): raise ValueError("base profile pack has no file registry")
@@ -297,14 +303,15 @@ def _add_structure(profile: Mapping[str, object], recipe: Mapping[str, object], 
     data[runtime_path] = deepcopy(dict(runtime)); files[file_key] = runtime_path
     return target, {"objectId": object_id, "runtimePath": runtime_path, "packFileKey": file_key, "resourceIds": sorted(added, key=str.casefold)}
 
-def _add_spellbook(profile: Mapping[str, object], recipe: Mapping[str, object], runtime: Mapping[str, object]) -> tuple[dict[str, object], dict[str, object]]:
+def _add_spellbook(profile: Mapping[str, object], recipe: Mapping[str, object], runtime: Mapping[str, object], *, copy: bool = True) -> tuple[dict[str, object], dict[str, object]]:
+    # copy=False extends in place; see extend_profile_with_unit.
     validate_spellbook_pack_recipe(recipe)
     if runtime.get("schema") != "openbfme.spellbook-runtime" or runtime.get("schemaVersion") != 0: raise ValueError("spellbook runtime schema is invalid")
     object_id = str(recipe.get("spellBookObjectId", ""))
     if object_id.casefold() != str(runtime.get("spellBookObjectId", "")).casefold(): raise ValueError("spellbook recipe/runtime Object identities differ")
     if recipe.get("recipeSha256") != runtime.get("recipeSha256"): raise ValueError("spellbook recipe/runtime digests differ")
     if runtime.get("runtimeSha256") != _unsigned_digest(runtime, "runtimeSha256"): raise ValueError("spellbook runtime digest is invalid")
-    target = deepcopy(dict(profile)); resources = target.get("resources"); data = target.get("runtime_data"); pack = target.get("pack")
+    target = deepcopy(dict(profile)) if copy else _owned_mapping(profile); resources = target.get("resources"); data = target.get("runtime_data"); pack = target.get("pack")
     if not isinstance(resources, list) or not isinstance(data, dict) or not isinstance(pack, dict): raise ValueError("base profile is not extensible")
     files = pack.get("files")
     if not isinstance(files, dict): raise ValueError("base profile pack has no file registry")
@@ -453,15 +460,19 @@ def compose_faction_profile(
                 alias_of = recipe_object_id
                 deltas.append({"faction": faction, "family": family, "objectId": object_id, "aliasOf": alias_of})
                 continue
-            if family in {"playable-unit", "banner-carrier"}: target, delta = extend_profile_with_unit(target, recipe)
+            # copy=False throughout this fold: `target` was deep-copied from
+            # `base` before the loop, so the accumulator is private to this
+            # function and re-copying the whole growing document once per
+            # object was ~8.4 s per faction of pure copying.
+            if family in {"playable-unit", "banner-carrier"}: target, delta = extend_profile_with_unit(target, recipe, copy=False)
             elif family == "structure":
                 runtime = _load(root / "runtime.json", "structure runtime")
                 if runtime.get("runtimeSha256") != row.get("runtimeSha256"): raise ValueError(f"coverage/runtime identity mismatch: {faction}/{object_id}")
-                target, delta = _add_structure(target, recipe, runtime)
+                target, delta = _add_structure(target, recipe, runtime, copy=False)
             elif family == "spellbook":
                 runtime = _load(root / "runtime.json", "spellbook runtime")
                 if runtime.get("runtimeSha256") != row.get("runtimeSha256"): raise ValueError(f"coverage/runtime identity mismatch: {faction}/{object_id}")
-                target, delta = _add_spellbook(target, recipe, runtime)
+                target, delta = _add_spellbook(target, recipe, runtime, copy=False)
             else: raise ValueError(f"converted row has unsupported family: {faction}/{object_id}")
             deltas.append({"faction": faction, "family": family, "objectId": object_id, **delta})
         receipts.append({"faction": faction, "coverageAggregateSha256": aggregate, "convertedCount": len(converted), "converterGapCount": int(summary.get("converterGapCount", 0)), "conversionComplete": bool(summary.get("conversionComplete", False))})

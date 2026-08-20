@@ -86,6 +86,11 @@ _SHADER_TEXTURE_PROPERTY = re.compile(
 )
 
 
+#: Windows sets this on symlinks, junctions and every other reparse point.
+#: Used only to decide whether the authoritative link check is worth a syscall.
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+
+
 def _sort_text(value: str) -> tuple[str, str]:
     return value.casefold(), value
 
@@ -103,6 +108,36 @@ def _canonical_sha256(value: object) -> str:
 def _is_link_like(path: Path) -> bool:
     is_junction = getattr(path, "is_junction", None)
     return path.is_symlink() or bool(is_junction and is_junction())
+
+
+def _entry_is_link_like(entry: os.DirEntry) -> bool:
+    """``_is_link_like`` for a scandir entry, without the extra syscalls.
+
+    ``_is_link_like`` costs two filesystem round-trips per path
+    (``is_symlink`` + ``is_junction``). Over the effective-assets tree - 40,130
+    files - that plus a ``stat`` for the size was ~120,000 syscalls and 15 s of
+    every faction publish, to answer a question about three projectiles.
+
+    A ``DirEntry`` already carries the data the directory enumeration returned,
+    so the common answer costs nothing. This is NOT a weaker check: a path that
+    is not a reparse point cannot be a symlink or a junction, so the fast path
+    and ``_is_link_like`` agree by construction, and anything that IS flagged
+    as a reparse point falls through to the original function unchanged.
+    """
+
+    try:
+        info = entry.stat(follow_symlinks=False)
+    except OSError:
+        # Undecidable cheaply - ask the authoritative check.
+        return _is_link_like(Path(entry.path))
+    attributes = getattr(info, "st_file_attributes", None)
+    if attributes is None:
+        # POSIX: no reparse points, so a symlink is the whole question and
+        # DirEntry answers it from cached data.
+        return entry.is_symlink()
+    if not attributes & _FILE_ATTRIBUTE_REPARSE_POINT:
+        return False
+    return _is_link_like(Path(entry.path))
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,23 +232,39 @@ def _inventory_assets(root: Path) -> tuple[_AssetFile, ...]:
 
     result: list[_AssetFile] = []
     folded_paths: dict[str, str] = {}
-    for raw_directory, directory_names, file_names in os.walk(
-        resolved, topdown=True, followlinks=False
-    ):
-        directory = Path(raw_directory)
-        directory_names.sort(key=_sort_text)
-        file_names.sort(key=_sort_text)
-        for name in directory_names:
-            child = directory / name
-            if _is_link_like(child):
-                raise ValueError(f"effective-assets tree contains a link: {child}")
-            relative = child.relative_to(resolved).as_posix()
-            safe_relative_parts(relative)
-        for name in file_names:
-            physical = directory / name
-            if _is_link_like(physical):
-                raise ValueError(f"effective-assets tree contains a link: {physical}")
-            relative = physical.relative_to(resolved).as_posix()
+    # scandir, not os.walk + Path.stat: the enumeration already returns each
+    # entry's type, link status and size, so the previous three syscalls per
+    # file become zero. Same traversal order, same checks, same errors - only
+    # the number of round-trips to the filesystem changes. (Identical reasoning
+    # to `_pack_files` in pipeline.py, which measured 4x on a 16k-file pack;
+    # this tree is 40k files and was costing ~15 s per faction publish.)
+    pending: list[Path] = [resolved]
+    while pending:
+        directory = pending.pop()
+        try:
+            with os.scandir(directory) as scan:
+                entries = sorted(scan, key=lambda item: _sort_text(item.name))
+        except OSError as exc:
+            raise ValueError(f"cannot read effective assets: {directory}") from exc
+        directories: list[Path] = []
+        for entry in entries:
+            path = Path(entry.path)
+            try:
+                is_directory = entry.is_dir(follow_symlinks=False)
+            except OSError as exc:
+                raise ValueError(f"cannot stat effective asset: {path}") from exc
+            if is_directory:
+                if _entry_is_link_like(entry):
+                    raise ValueError(
+                        f"effective-assets tree contains a link: {path}"
+                    )
+                relative = path.relative_to(resolved).as_posix()
+                safe_relative_parts(relative)
+                directories.append(path)
+                continue
+            if _entry_is_link_like(entry):
+                raise ValueError(f"effective-assets tree contains a link: {path}")
+            relative = path.relative_to(resolved).as_posix()
             canonical = "/".join(safe_relative_parts(relative))
             key = canonical.casefold()
             previous = folded_paths.get(key)
@@ -224,16 +275,19 @@ def _inventory_assets(root: Path) -> tuple[_AssetFile, ...]:
                 )
             folded_paths[key] = canonical
             try:
-                size = physical.stat().st_size
+                size = entry.stat(follow_symlinks=False).st_size
             except OSError as exc:
                 raise ValueError(f"cannot stat effective asset: {canonical}") from exc
             if size < 0:
                 raise ValueError(f"effective asset has invalid size: {canonical}")
-            result.append(_AssetFile(canonical, physical, size))
+            result.append(_AssetFile(canonical, path, size))
             if len(result) > MAX_ASSET_FILES:
                 raise ValueError(
                     f"effective asset count exceeds {MAX_ASSET_FILES} limit"
                 )
+        # Reversed, because `pending` is a stack: this keeps sibling
+        # directories visited in sorted order, as os.walk(topdown=True) did.
+        pending.extend(reversed(directories))
     result.sort(key=lambda item: _sort_text(item.virtual_path))
     return tuple(result)
 
@@ -309,6 +363,34 @@ def _definition_index(
         # know whether that file belongs to the requested target closure.
         text = source.decode("cp1252")
         for line_number, raw_line in enumerate(text.splitlines(), start=1):
+            # Superset prefilter, not a semantic change.
+            #
+            # Careful with the reason, because the obvious one is WRONG:
+            # `strip_sage_comments` does not only remove characters. In the
+            # malformed-unterminated-quote case it APPENDS one
+            # (`sage_cst.py:449`, `value += quote`).
+            #
+            # The invariant that actually holds is stronger than needed:
+            # every removal path returns `raw[:index].rstrip()` or
+            # `raw.rstrip()`, so the result is always a contiguous PREFIX of
+            # the raw line, and the single character that can be appended is
+            # `"` or `'`. "object" contains no quote character, so a match in
+            # the stripped line can never straddle the appended one - it must
+            # lie wholly inside that prefix, and therefore inside the raw
+            # line. (The letters are ASCII, which casefolds one-for-one, so
+            # the same holds case-insensitively.) A raw line without "object"
+            # therefore cannot produce a `_OBJECT_HEADER` match.
+            #
+            # Verified differentially over the real corpus, at this function's
+            # own scope (post `maps/` and `_contains_object_header` filters):
+            # 497 files, 546,504 lines, 5,176 header matches, and 0 lines
+            # skipped that would have matched. The append branch fired 0 times.
+            # An independent check at a wider scope reported different file and
+            # line totals but the same two load-bearing results - 0 misses,
+            # 0 appends. Measured 5.62 s -> 3.38 s for a byte-identical
+            # 4,683-key index.
+            if "object" not in raw_line.casefold():
+                continue
             match = _OBJECT_HEADER.fullmatch(
                 strip_sage_comments(raw_line).strip()
             )

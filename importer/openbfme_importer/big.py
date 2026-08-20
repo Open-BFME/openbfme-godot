@@ -14,6 +14,7 @@ from pathlib import Path, PurePosixPath
 import re
 import struct
 from typing import BinaryIO, Iterable, Iterator
+import uuid
 
 from .paths import safe_relative_parts
 
@@ -272,7 +273,16 @@ class BigArchive:
                     results.append(ExtractedEntry(entry, target, cached_digest))
                     continue
 
-                temp = target.with_name(target.name + ".openbfme-part")
+                # PROCESS-UNIQUE partial name. The extraction cache is shared
+                # by every cook on this machine, and a fixed ".openbfme-part"
+                # name meant two processes extracting the same entry opened and
+                # wrote THE SAME file, interleaved their bytes, and then each
+                # os.replace'd the result into place. The rename is atomic; the
+                # partial file was not. Only the final name is shared, and a
+                # loser of that race simply overwrites with identical bytes.
+                temp = target.with_name(
+                    f"{target.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.openbfme-part"
+                )
                 hasher = hashlib.sha256()
                 remaining = entry.size
                 source.seek(entry.offset)

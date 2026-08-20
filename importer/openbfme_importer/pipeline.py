@@ -1384,20 +1384,36 @@ def _w3d_staging_sources(
     return sorted(unique.values(), key=lambda item: str(item).casefold())
 
 
-def _stage_w3d_sources(sources: list[Path], input_root: Path) -> dict[str, Path]:
-    """Flatten a proven W3D input closure and reject ambiguous basenames."""
+def _stage_w3d_sources(
+    sources: list[Path],
+    input_root: Path,
+    digests_out: dict[str, str] | None = None,
+) -> dict[str, Path]:
+    """Flatten a proven W3D input closure and reject ambiguous basenames.
+
+    *digests_out*, when given, receives ``key -> sha256`` of every staged file
+    AS STAGED. The copy already reads every byte, so hashing in the same pass
+    is free; the caller can then skip a second full read of the job root when
+    nothing rewrote it. The collision check gets the same treatment: it used to
+    read both files end to end on every duplicate basename, and a W3D closure
+    repeats shared animation clips constantly.
+    """
 
     input_root.mkdir(parents=True)
     copied: dict[str, Path] = {}
+    digests: dict[str, str] = {}
     for source in sorted(sources, key=lambda item: str(item).casefold()):
         key = source.name.casefold()
         if key in copied:
-            if sha256_file(copied[key]) != sha256_file(source):
+            if sha256_file(source) != digests[key]:
                 raise RuntimeError(f"flat W3D staging collision: {source.name}")
             continue
         target = input_root / source.name.casefold()
-        shutil.copyfile(source, target)
+        _size, digest = _copy_file_with_digest(source, target)
         copied[key] = target
+        digests[key] = digest
+    if digests_out is not None:
+        digests_out.update(digests)
     return copied
 
 
@@ -2331,14 +2347,30 @@ def _hash_files(paths: list[Path], *, workers: int | None = None) -> dict[Path, 
     return dict(zip(paths, digests))
 
 
-def bundle_digest(pack_root: Path | str) -> str:
+def _bundle_digest_with_files(pack_root: Path | str) -> tuple[str, dict[Path, str]]:
+    """Bundle digest plus the per-file digests it was folded from.
+
+    Verifying a published bundle needs BOTH its address and its audit, and
+    both used to walk and re-hash the whole tree independently. One pass now
+    serves both; the returned mapping is the evidence from THIS read, so
+    handing it to :func:`audit_pack` removes a duplicate read without removing
+    a check.
+    """
+
     root = Path(pack_root).expanduser().resolve()
     paths = [path for path in _pack_files(root) if path.is_file()]
     digests = _hash_files(paths)
-    return _fold_bundle_digest(
-        (path.relative_to(root).as_posix(), path.stat().st_size, digests[path])
-        for path in paths
+    return (
+        _fold_bundle_digest(
+            (path.relative_to(root).as_posix(), path.stat().st_size, digests[path])
+            for path in paths
+        ),
+        digests,
     )
+
+
+def bundle_digest(pack_root: Path | str) -> str:
+    return _bundle_digest_with_files(pack_root)[0]
 
 
 def _replace_directory_with_retry(
@@ -2383,6 +2415,27 @@ def _replace_directory_with_retry(
         "inside the conversion cache - exclude the OpenBFME state directory "
         "from real-time virus scanning and search indexing, then re-run.",
     ) from last
+
+
+def _copy_file_with_digest(source: Path, destination: Path) -> tuple[int, str]:
+    """Copy one file, returning ``(bytes_written, sha256_of_bytes_written)``.
+
+    One read serves both the copy and the verification. A conversion-cache hit
+    used to read the same payload three times - hash the cache entry, copy it,
+    hash the copy - which is why 2,511 warm media hits cost 86 s of a 188 s
+    faction publish. Hashing what is actually written is the STRONGER of the
+    two old checks: it proves the destination bytes, not merely that the source
+    was intact before the copy started.
+    """
+
+    digest = hashlib.sha256()
+    written = 0
+    with source.open("rb") as reader, destination.open("wb") as writer:
+        while chunk := reader.read(COPY_CHUNK):
+            digest.update(chunk)
+            writer.write(chunk)
+            written += len(chunk)
+    return written, digest.hexdigest()
 
 
 def _copy_tree_with_digest(source: Path, destination: Path) -> str:
@@ -2719,20 +2772,53 @@ def selection_transaction_lock(content_root: Path | str):
 
     root = Path(content_root)
     lock_path = root / SELECTION_TRANSACTION_LOCK
-    try:
-        handle = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
-    except FileExistsError as error:
-        holder = ""
+    # BOUNDED, OPT-IN QUEUEING - not a break-in and not an unbounded wait.
+    #
+    # A batch that publishes several faction packs at once has every child
+    # reaching for this same lock for the few seconds each spends copying its
+    # bundle in. They are not conflicting writers - each lands in its own
+    # immutable digest directory - they merely arrive at the same door. With a
+    # zero-second budget, six of seven honest publishes die on contention after
+    # having already paid a full cook.
+    #
+    # The budget defaults to 0, which is EXACTLY the historical behaviour, and
+    # the refusal at the end of the budget is the same refusal with the same
+    # message. Nothing deletes, steals or ignores a held lock, so a lock left
+    # behind by a killed process still fails the run - just this many seconds
+    # later. Callers who want the old instant answer simply leave it unset.
+    budget = 0.0
+    raw_budget = os.environ.get("OPENBFME_SELECTION_LOCK_WAIT_SECONDS", "").strip()
+    if raw_budget:
         try:
-            holder = lock_path.read_text(encoding="utf-8", errors="replace").strip()
-        except OSError:
-            holder = "<unreadable>"
-        raise SelectionTransactionError(
-            f"another selection transaction or cook holds the lock at {lock_path} "
-            f"(holder: {holder or '<empty>'}). Refusing rather than waiting or "
-            "breaking in. If you are certain no cook or transaction is running, "
-            "delete that lock file by hand."
-        ) from error
+            budget = max(0.0, float(raw_budget))
+        except ValueError:
+            budget = 0.0
+    deadline = time.monotonic() + budget
+    delay = 0.1
+    while True:
+        try:
+            handle = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+            break
+        except FileExistsError as error:
+            if time.monotonic() >= deadline:
+                holder = ""
+                try:
+                    holder = lock_path.read_text(
+                        encoding="utf-8", errors="replace"
+                    ).strip()
+                except OSError:
+                    holder = "<unreadable>"
+                waited = (
+                    f" Waited {budget:g}s for it to clear." if budget else ""
+                )
+                raise SelectionTransactionError(
+                    f"another selection transaction or cook holds the lock at "
+                    f"{lock_path} (holder: {holder or '<empty>'}). Refusing rather "
+                    f"than waiting or breaking in.{waited} If you are certain no "
+                    "cook or transaction is running, delete that lock file by hand."
+                ) from error
+            time.sleep(min(delay, max(0.0, deadline - time.monotonic())))
+            delay = min(delay * 1.5, 1.0)
     try:
         os.write(
             handle,
@@ -3183,6 +3269,18 @@ def _apply_selection_transaction_locked(
     }
 
 
+#: Suffixes the cook itself writes while a file is still in flight. None of
+#: them may ever survive into a finished pack: they are partial or duplicate
+#: bytes, and a pack that carries one addresses to a digest that no clean run
+#: of the same inputs reproduces.
+PACK_IN_FLIGHT_SUFFIXES = (
+    ".cache-copying",
+    ".media-cache-copying",
+    ".openbfme-part",
+    ".tmp",
+)
+
+
 def _canonical_pack_inventory(
     pack_root: Path, known_digests: Mapping[str, str] | None = None
 ) -> list[dict[str, Any]]:
@@ -3194,6 +3292,25 @@ def _canonical_pack_inventory(
             raise RuntimeError(f"pack inventory refuses symbolic links: {path}")
         if not path.is_file():
             continue
+        # FAIL CLOSED ON A LEFTOVER PARTIAL.
+        #
+        # A conversion-cache copy stages into the pack under one of these
+        # suffixes and renames it into place. Every failure path is supposed to
+        # remove it, and on 2026-08-20 one did not: a seven-way concurrent pack
+        # proof shipped a Men bundle with one extra file and a different
+        # address, while every converted output was byte-identical. The digest
+        # is content-addressed, so nothing downstream could tell the difference
+        # - it just silently was not the pack the same inputs produce.
+        #
+        # Refusing here makes that a build failure at the moment it happens
+        # rather than an address that quietly drifts.
+        if path.name.casefold().endswith(PACK_IN_FLIGHT_SUFFIXES):
+            raise RuntimeError(
+                "pack inventory refuses an in-flight temporary file left in the "
+                f"pack: {path.relative_to(root).as_posix()}. A conversion-cache "
+                "copy or atomic write failed part way and did not clean up; the "
+                "cook must not address a bundle that contains it."
+            )
         relative = path.relative_to(root).as_posix()
         safe_relative_parts(relative)
         if relative in excluded:
@@ -3394,6 +3511,10 @@ class ImportPipeline:
         if any(not pattern.strip() for pattern in self.reconvert_only):
             raise ValueError("reconvert-only patterns must not be empty")
         self.single_build = bool(single_build)
+        # Set by build(): the pack root it finished, that pack's bundle digest
+        # and the full audit it passed. Consumed by the CLI so a cook is not
+        # audited and hashed twice more over the same unchanged bytes.
+        self._last_build_verification: dict[str, Any] | None = None
         self._conversion_cache_stats = {
             "hits": 0,
             "misses": 0,
@@ -3446,6 +3567,31 @@ class ImportPipeline:
             reconvert_only=list(self.reconvert_only),
             single_build=self.single_build,
         )
+
+    def build_verification_for(self, pack_root: Path | str) -> dict[str, Any] | None:
+        """Return this run's own full audit + bundle digest for *pack_root*.
+
+        ``None`` unless :meth:`build` finished that exact root in this process,
+        which is the only case where the answer is evidence rather than a
+        cached claim: the audit was a full (non-light) re-hash of the pack's
+        every file, the digest was folded from those verified hashes, and the
+        pack has not been rewritten since. Callers that get ``None`` must do
+        the work themselves. Set ``OPENBFME_FULL_REVERIFY=1`` to refuse the
+        hand-over and force the second full pass everywhere.
+        """
+
+        if os.environ.get("OPENBFME_FULL_REVERIFY", "").strip().casefold() in {
+            "1",
+            "true",
+            "yes",
+        }:
+            return None
+        recorded = self._last_build_verification
+        if not recorded:
+            return None
+        if recorded["pack_root"] != str(Path(pack_root).expanduser().resolve()):
+            return None
+        return recorded
 
     @property
     def source_override_root(self) -> Path | None:
@@ -3511,13 +3657,21 @@ class ImportPipeline:
         entry = self.media_cache_root / key[:2] / key
         metadata_path = entry / "metadata.json"
         cached_output = entry / "output.bin"
+        # The in-flight copy lives INSIDE the pack staging tree, so any path
+        # that leaves it behind ships it: the pack inventory picks the stray
+        # up, the audit happily verifies it, and the bundle silently addresses
+        # to a different digest than the same cook without the cache miss.
+        # Observed for real on 2026-08-20 - a seven-way concurrent proof
+        # produced a men pack with 4795 files instead of 4794 and a different
+        # address, with byte-identical CONVERTED OUTPUTS. Cleanup therefore
+        # belongs in `finally`, not on the paths someone remembered.
+        in_flight: Path | None = None
         try:
             metadata = read_json(metadata_path)
             if (
                 metadata.get("format") != 1
                 or metadata.get("key") != key
                 or metadata.get("output_size") != cached_output.stat().st_size
-                or metadata.get("output_sha256") != sha256_file(cached_output)
             ):
                 if entry.is_dir():
                     shutil.rmtree(entry)
@@ -3526,21 +3680,40 @@ class ImportPipeline:
                 return False
             target.parent.mkdir(parents=True, exist_ok=True)
             temporary = target.with_name(target.name + ".media-cache-copying")
+            in_flight = temporary
             temporary.unlink(missing_ok=True)
-            shutil.copyfile(cached_output, temporary)
+            # ONE read verifies the cache entry AND the copy: the digest is
+            # taken from the bytes written to *temporary*, so it can only match
+            # when the cache entry was intact and the copy reproduced it.
+            written, copied_sha256 = _copy_file_with_digest(cached_output, temporary)
             if (
-                temporary.stat().st_size != metadata["output_size"]
-                or sha256_file(temporary) != metadata["output_sha256"]
+                written != metadata["output_size"]
+                or copied_sha256 != metadata["output_sha256"]
             ):
                 temporary.unlink(missing_ok=True)
+                # Only the rare failure pays a second read, to keep the two
+                # diagnoses distinct: a rotten cache entry is self-healing
+                # (discard, miss, convert cold), a bad copy is a hard error.
+                if sha256_file(cached_output) != metadata["output_sha256"]:
+                    if entry.is_dir():
+                        shutil.rmtree(entry)
+                    with self._conversion_cache_lock:
+                        self._conversion_cache_stats["misses"] += 1
+                    return False
                 raise RuntimeError("media conversion cache copy failed byte verification")
             os.replace(temporary, target)
+            in_flight = None
         except (FileNotFoundError, KeyError, OSError, TypeError, ValueError):
             if entry.is_dir():
                 shutil.rmtree(entry, ignore_errors=True)
             with self._conversion_cache_lock:
                 self._conversion_cache_stats["misses"] += 1
             return False
+        finally:
+            # An OSError anywhere in the copy above used to leave the partial
+            # file sitting in the pack. Nothing else removes it.
+            if in_flight is not None:
+                in_flight.unlink(missing_ok=True)
         with self._conversion_cache_lock:
             self._conversion_cache_stats["hits"] += 1
         return True
@@ -4655,10 +4828,35 @@ class ImportPipeline:
                 audit=audit.get("errors") or audit.get("issues"),
             )
             raise RuntimeError("built pack failed its internal hash audit")
+        # The audit immediately above re-hashed every inventory file against
+        # `provenance["bundle_files"]` and passed, so those digests describe
+        # THESE bytes, verified in THIS run. Folding the pack address out of
+        # them - plus the two provenance documents the inventory deliberately
+        # excludes, hashed right here - is byte-identical to walking and
+        # re-reading the whole tree a third time, which is what the CLI used to
+        # do immediately after this returns. Nothing writes into `staging`
+        # between `audit.json` and the rename below, and a rename does not
+        # touch bytes, so the recorded digest names the finished pack.
+        provenance_rows = [
+            {
+                "path": relative,
+                "size": (staging / relative).stat().st_size,
+                "sha256": sha256_file(staging / relative),
+            }
+            for relative in ("provenance/audit.json", "provenance/manifest.json")
+        ]
+        built_bundle_digest = _fold_bundle_digest(
+            (row["path"], row["size"], row["sha256"])
+            for row in sorted(
+                [*(provenance.get("bundle_files") or []), *provenance_rows],
+                key=lambda item: str(item["path"]),
+            )
+        )
         run.end_phase(
             cook_phase,
             audit_valid=True,
             bundle_files=len(provenance.get("bundle_files") or []),
+            bundle_sha256=built_bundle_digest,
         )
 
         if pack_root.exists():
@@ -4674,11 +4872,17 @@ class ImportPipeline:
             shutil.rmtree(previous)
         else:
             os.replace(staging, pack_root)
+        self._last_build_verification = {
+            "pack_root": str(pack_root.resolve()),
+            "bundle_sha256": built_bundle_digest,
+            "audit": audit,
+        }
         run.event(
             "build.end",
             pack_id=resolved.profile.pack_id,
             pack_root=str(pack_root),
             incomplete_entries=len(incomplete),
+            bundle_sha256=built_bundle_digest,
         )
         return pack_root
 
@@ -4948,14 +5152,21 @@ class ImportPipeline:
         # light, unless the caller just did exactly that and handed us the
         # resulting digest.
         if verified_digest is None:
-            source_audit = audit_pack(source, light=False)
+            # One read of the source serves the audit AND the address: the
+            # digest map below is what the bundle digest was folded from.
+            source_digest, source_file_digests = _bundle_digest_with_files(source)
+            source_audit = audit_pack(
+                source, light=False, known_digests=source_file_digests
+            )
             if not source_audit["valid"]:
                 raise RuntimeError(
                     "source pack failed canonical audit before publication: "
                     + "; ".join(source_audit["errors"][:5])
                 )
+        else:
+            source_digest = verified_digest
         root = ensure_external_to_repo(Path(content_root), repo_root_from_module())
-        digest = verified_digest or bundle_digest(source)
+        digest = source_digest
         relative = Path(pack_id) / digest
         destination = (root / relative).resolve()
         try:
@@ -4983,9 +5194,14 @@ class ImportPipeline:
             # Reusing an address that already exists is only safe because the
             # bytes are re-hashed here. Record the reuse: an unverified reuse is
             # how a pack whose name is a lie stays loaded (AGENTS.md rule 1).
+            observed_digest, observed_file_digests = _bundle_digest_with_files(
+                destination
+            )
             if (
-                bundle_digest(destination) != digest
-                or not audit_pack(destination, light=False)["valid"]
+                observed_digest != digest
+                or not audit_pack(
+                    destination, light=False, known_digests=observed_file_digests
+                )["valid"]
             ):
                 run.refusal(
                     "publish",
@@ -6878,6 +7094,10 @@ class ImportPipeline:
         entry = self.converted_cache_root / key
         metadata_path = entry / "metadata.json"
         cached_output = entry / "output.glb"
+        # See _copy_media_cache_hit: this temporary lives inside the pack, so
+        # leaving one behind changes the pack's address without changing a
+        # single converted output.
+        in_flight: Path | None = None
         try:
             metadata = read_json(metadata_path)
             if (
@@ -6887,26 +7107,36 @@ class ImportPipeline:
                 or len(metadata.get("combined_log", ""))
                 > _W3D_MULTI_JOB_MAX_OUTPUT_LOG_CHARS
                 or metadata.get("output_size") != cached_output.stat().st_size
-                or metadata.get("output_sha256") != sha256_file(cached_output)
             ):
                 discard_invalid_entry(entry)
                 miss()
                 return None
             target.parent.mkdir(parents=True, exist_ok=True)
             temporary = target.with_name(target.name + ".cache-copying")
+            in_flight = temporary
             temporary.unlink(missing_ok=True)
-            shutil.copyfile(cached_output, temporary)
+            # Same single-read verification as the media cache: the digest
+            # describes the bytes actually written to *temporary*.
+            written, copied_sha256 = _copy_file_with_digest(cached_output, temporary)
             if (
-                temporary.stat().st_size != metadata["output_size"]
-                or sha256_file(temporary) != metadata["output_sha256"]
+                written != metadata["output_size"]
+                or copied_sha256 != metadata["output_sha256"]
             ):
                 temporary.unlink(missing_ok=True)
+                if sha256_file(cached_output) != metadata["output_sha256"]:
+                    discard_invalid_entry(entry)
+                    miss()
+                    return None
                 raise RuntimeError("converted W3D cache copy failed byte verification")
             os.replace(temporary, target)
+            in_flight = None
         except (FileNotFoundError, KeyError, OSError, TypeError, ValueError):
             discard_invalid_entry(entry)
             miss()
             return None
+        finally:
+            if in_flight is not None:
+                in_flight.unlink(missing_ok=True)
         with self._conversion_cache_lock:
             self._conversion_cache_stats["hits"] += 1
         return str(metadata["combined_log"])
@@ -7037,7 +7267,8 @@ class ImportPipeline:
         if job_root.exists():
             shutil.rmtree(job_root)
         input_root = job_root / "input"
-        copied = _stage_w3d_sources(staging_sources, input_root)
+        staged_digests: dict[str, str] = {}
+        copied = _stage_w3d_sources(staging_sources, input_root, staged_digests)
         model = copied.get(model_name)
         if not model:
             raise FileNotFoundError(
@@ -7121,8 +7352,25 @@ class ImportPipeline:
             "--retail-absent-textures",
             *retail_absent_textures,
         ]
+        # The three preparation steps above are the only writers into the job
+        # root after staging, and each one returns None WITHOUT writing when it
+        # has nothing to do. So when all three declined, the staged bytes are
+        # still exactly the bytes the copy hashed, and re-reading the whole job
+        # root to learn that again is pure duplicate IO - which is most of what
+        # a warm W3D cache-hit job was spending its time on. Any preparation at
+        # all, and the job root is re-hashed from disk exactly as before: the
+        # cache key must describe the bytes Blender will actually be handed.
+        job_root_unmodified = (
+            no_motion_proof is None
+            and secondary_skin_proof is None
+            and texture_override_proof is None
+        )
         source_hashes = {
-            name: sha256_file(path)
+            name: (
+                staged_digests[name]
+                if job_root_unmodified and name in staged_digests
+                else sha256_file(path)
+            )
             for name, path in sorted(
                 copied.items(), key=lambda item: (item[0].casefold(), item[0])
             )
@@ -7740,11 +7988,25 @@ def _audit_retail_provenance(
     return summary
 
 
-def audit_pack(pack_root: Path | str, *, light: bool | None = None) -> dict[str, Any]:
+def audit_pack(
+    pack_root: Path | str,
+    *,
+    light: bool | None = None,
+    known_digests: Mapping[Path, str] | None = None,
+) -> dict[str, Any]:
     """Audit pack outputs against provenance.
 
     *light* (or OPENBFME_DEV / OPENBFME_DEV_AUDIT=light): verify path + size only,
     skip per-file SHA-256 rehash of the full pack (dev iteration speed).
+
+    *known_digests* maps absolute file paths to SHA-256 values the CALLER read
+    off this same tree, in this same process, moments ago - the publish path
+    hashes the destination once to fold a bundle digest and hands the result
+    here so the audit does not read every byte a second time. This is a
+    de-duplication of one read, not a relaxation: any path absent from the
+    mapping is still hashed here, and the values are still compared against the
+    provenance inventory exactly as before. It is NOT a place to pass digests
+    that came from a manifest, a cache, or a previous run.
     """
 
     root = Path(pack_root).expanduser().resolve()
@@ -7841,7 +8103,16 @@ def audit_pack(pack_root: Path | str, *, light: bool | None = None) -> dict[str,
     # collected into the same list and re-sorted below, so the reported set is
     # identical to the previous file-at-a-time ordering.
     if to_hash:
-        digests = _hash_files([target for target, _, _ in to_hash])
+        supplied = dict(known_digests or {})
+        pending = [target for target, _, _ in to_hash if target not in supplied]
+        digests = _hash_files(pending)
+        digests.update(
+            {
+                target: supplied[target]
+                for target, _, _ in to_hash
+                if target in supplied
+            }
+        )
         for target, relative, want in to_hash:
             if digests[target] != want:
                 errors.append(f"hash mismatch: {relative}")
