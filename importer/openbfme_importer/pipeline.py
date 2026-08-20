@@ -2772,20 +2772,53 @@ def selection_transaction_lock(content_root: Path | str):
 
     root = Path(content_root)
     lock_path = root / SELECTION_TRANSACTION_LOCK
-    try:
-        handle = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
-    except FileExistsError as error:
-        holder = ""
+    # BOUNDED, OPT-IN QUEUEING - not a break-in and not an unbounded wait.
+    #
+    # A batch that publishes several faction packs at once has every child
+    # reaching for this same lock for the few seconds each spends copying its
+    # bundle in. They are not conflicting writers - each lands in its own
+    # immutable digest directory - they merely arrive at the same door. With a
+    # zero-second budget, six of seven honest publishes die on contention after
+    # having already paid a full cook.
+    #
+    # The budget defaults to 0, which is EXACTLY the historical behaviour, and
+    # the refusal at the end of the budget is the same refusal with the same
+    # message. Nothing deletes, steals or ignores a held lock, so a lock left
+    # behind by a killed process still fails the run - just this many seconds
+    # later. Callers who want the old instant answer simply leave it unset.
+    budget = 0.0
+    raw_budget = os.environ.get("OPENBFME_SELECTION_LOCK_WAIT_SECONDS", "").strip()
+    if raw_budget:
         try:
-            holder = lock_path.read_text(encoding="utf-8", errors="replace").strip()
-        except OSError:
-            holder = "<unreadable>"
-        raise SelectionTransactionError(
-            f"another selection transaction or cook holds the lock at {lock_path} "
-            f"(holder: {holder or '<empty>'}). Refusing rather than waiting or "
-            "breaking in. If you are certain no cook or transaction is running, "
-            "delete that lock file by hand."
-        ) from error
+            budget = max(0.0, float(raw_budget))
+        except ValueError:
+            budget = 0.0
+    deadline = time.monotonic() + budget
+    delay = 0.1
+    while True:
+        try:
+            handle = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+            break
+        except FileExistsError as error:
+            if time.monotonic() >= deadline:
+                holder = ""
+                try:
+                    holder = lock_path.read_text(
+                        encoding="utf-8", errors="replace"
+                    ).strip()
+                except OSError:
+                    holder = "<unreadable>"
+                waited = (
+                    f" Waited {budget:g}s for it to clear." if budget else ""
+                )
+                raise SelectionTransactionError(
+                    f"another selection transaction or cook holds the lock at "
+                    f"{lock_path} (holder: {holder or '<empty>'}). Refusing rather "
+                    f"than waiting or breaking in.{waited} If you are certain no "
+                    "cook or transaction is running, delete that lock file by hand."
+                ) from error
+            time.sleep(min(delay, max(0.0, deadline - time.monotonic())))
+            delay = min(delay * 1.5, 1.0)
     try:
         os.write(
             handle,
@@ -3236,6 +3269,18 @@ def _apply_selection_transaction_locked(
     }
 
 
+#: Suffixes the cook itself writes while a file is still in flight. None of
+#: them may ever survive into a finished pack: they are partial or duplicate
+#: bytes, and a pack that carries one addresses to a digest that no clean run
+#: of the same inputs reproduces.
+PACK_IN_FLIGHT_SUFFIXES = (
+    ".cache-copying",
+    ".media-cache-copying",
+    ".openbfme-part",
+    ".tmp",
+)
+
+
 def _canonical_pack_inventory(
     pack_root: Path, known_digests: Mapping[str, str] | None = None
 ) -> list[dict[str, Any]]:
@@ -3247,6 +3292,25 @@ def _canonical_pack_inventory(
             raise RuntimeError(f"pack inventory refuses symbolic links: {path}")
         if not path.is_file():
             continue
+        # FAIL CLOSED ON A LEFTOVER PARTIAL.
+        #
+        # A conversion-cache copy stages into the pack under one of these
+        # suffixes and renames it into place. Every failure path is supposed to
+        # remove it, and on 2026-08-20 one did not: a seven-way concurrent pack
+        # proof shipped a Men bundle with one extra file and a different
+        # address, while every converted output was byte-identical. The digest
+        # is content-addressed, so nothing downstream could tell the difference
+        # - it just silently was not the pack the same inputs produce.
+        #
+        # Refusing here makes that a build failure at the moment it happens
+        # rather than an address that quietly drifts.
+        if path.name.casefold().endswith(PACK_IN_FLIGHT_SUFFIXES):
+            raise RuntimeError(
+                "pack inventory refuses an in-flight temporary file left in the "
+                f"pack: {path.relative_to(root).as_posix()}. A conversion-cache "
+                "copy or atomic write failed part way and did not clean up; the "
+                "cook must not address a bundle that contains it."
+            )
         relative = path.relative_to(root).as_posix()
         safe_relative_parts(relative)
         if relative in excluded:
@@ -3593,6 +3657,15 @@ class ImportPipeline:
         entry = self.media_cache_root / key[:2] / key
         metadata_path = entry / "metadata.json"
         cached_output = entry / "output.bin"
+        # The in-flight copy lives INSIDE the pack staging tree, so any path
+        # that leaves it behind ships it: the pack inventory picks the stray
+        # up, the audit happily verifies it, and the bundle silently addresses
+        # to a different digest than the same cook without the cache miss.
+        # Observed for real on 2026-08-20 - a seven-way concurrent proof
+        # produced a men pack with 4795 files instead of 4794 and a different
+        # address, with byte-identical CONVERTED OUTPUTS. Cleanup therefore
+        # belongs in `finally`, not on the paths someone remembered.
+        in_flight: Path | None = None
         try:
             metadata = read_json(metadata_path)
             if (
@@ -3607,6 +3680,7 @@ class ImportPipeline:
                 return False
             target.parent.mkdir(parents=True, exist_ok=True)
             temporary = target.with_name(target.name + ".media-cache-copying")
+            in_flight = temporary
             temporary.unlink(missing_ok=True)
             # ONE read verifies the cache entry AND the copy: the digest is
             # taken from the bytes written to *temporary*, so it can only match
@@ -3628,12 +3702,18 @@ class ImportPipeline:
                     return False
                 raise RuntimeError("media conversion cache copy failed byte verification")
             os.replace(temporary, target)
+            in_flight = None
         except (FileNotFoundError, KeyError, OSError, TypeError, ValueError):
             if entry.is_dir():
                 shutil.rmtree(entry, ignore_errors=True)
             with self._conversion_cache_lock:
                 self._conversion_cache_stats["misses"] += 1
             return False
+        finally:
+            # An OSError anywhere in the copy above used to leave the partial
+            # file sitting in the pack. Nothing else removes it.
+            if in_flight is not None:
+                in_flight.unlink(missing_ok=True)
         with self._conversion_cache_lock:
             self._conversion_cache_stats["hits"] += 1
         return True
@@ -7014,6 +7094,10 @@ class ImportPipeline:
         entry = self.converted_cache_root / key
         metadata_path = entry / "metadata.json"
         cached_output = entry / "output.glb"
+        # See _copy_media_cache_hit: this temporary lives inside the pack, so
+        # leaving one behind changes the pack's address without changing a
+        # single converted output.
+        in_flight: Path | None = None
         try:
             metadata = read_json(metadata_path)
             if (
@@ -7029,6 +7113,7 @@ class ImportPipeline:
                 return None
             target.parent.mkdir(parents=True, exist_ok=True)
             temporary = target.with_name(target.name + ".cache-copying")
+            in_flight = temporary
             temporary.unlink(missing_ok=True)
             # Same single-read verification as the media cache: the digest
             # describes the bytes actually written to *temporary*.
@@ -7044,10 +7129,14 @@ class ImportPipeline:
                     return None
                 raise RuntimeError("converted W3D cache copy failed byte verification")
             os.replace(temporary, target)
+            in_flight = None
         except (FileNotFoundError, KeyError, OSError, TypeError, ValueError):
             discard_invalid_entry(entry)
             miss()
             return None
+        finally:
+            if in_flight is not None:
+                in_flight.unlink(missing_ok=True)
         with self._conversion_cache_lock:
             self._conversion_cache_stats["hits"] += 1
         return str(metadata["combined_log"])

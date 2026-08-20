@@ -507,6 +507,35 @@ def _load_or_build_catalog(args: argparse.Namespace) -> InstallCatalog:
             policy_matches=catalog.source_policy == source_policy,
             stale_reasons=list(stale),
         )
+    if os.environ.get("OPENBFME_CATALOG_NO_REBUILD", "").strip().casefold() in {
+        "1",
+        "true",
+        "yes",
+    }:
+        # Concurrent-batch guard, and STRICTLY a refusal: a parent that runs
+        # several publishes at once resolves and verifies the catalog exactly
+        # once, up front, then forbids its children to rebuild it. Without this
+        # a stale or wrong-install catalog turns into N processes racing to
+        # rewrite the same document - and a half-written catalog is how a wrong
+        # --install becomes confidently wrong content. This flag can only ever
+        # turn a silent rebuild into an error; it never lets one through.
+        raise CatalogProvenanceError(
+            {
+                "error": "catalog-rebuild-refused",
+                "game": args.game,
+                "catalog": str(path),
+                "install_root": str(install),
+                "reason": "OPENBFME_CATALOG_NO_REBUILD is set",
+                "message": (
+                    f"refusing to rebuild the {args.game} catalog at {path} while "
+                    "OPENBFME_CATALOG_NO_REBUILD is set. A concurrent batch "
+                    "resolves the catalog once in the parent; a child needing a "
+                    "rebuild means the parent's catalog does not describe this "
+                    "install. Re-run the batch serially, or with --reindex, and "
+                    "fix the install argument."
+                ),
+            }
+        )
     catalog = _guard(
         InstallCatalog.build(install, source_policy=source_policy), "rebuilt"
     )

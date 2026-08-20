@@ -19,7 +19,9 @@ import json
 import os
 import subprocess
 import sys
+import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -201,6 +203,21 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--allow-stale-coverage",
+        action="store_true",
+        help=(
+            "forward --allow-stale-coverage to publish-faction-to-slice: cook "
+            "coverage whose recorded COMPILER IDENTITY is not the compiler now "
+            "on disk. This is the gate that caught 20 unbuildable units across "
+            "six faction packs, so the only legitimate use is a lane that has "
+            "deliberately changed importer code and is measuring or rebuilding, "
+            "never a production recook - re-run import-faction --convert "
+            "instead. Named here for the same reason as the flags below: a "
+            "waiver that is unreachable from the batch tool gets replaced by "
+            "the WRONG waiver, which is worse."
+        ),
+    )
+    parser.add_argument(
         "--allow-fewer-playable-units",
         action="store_true",
         help=(
@@ -233,6 +250,32 @@ def main(argv: list[str] | None = None) -> int:
         "--select",
         action="store_true",
         help="rewrite selection.json (integration-owner only; requires --publish)",
+    )
+    parser.add_argument(
+        "--publish-jobs",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "how many factions to pack-proof at once (default 1 = the "
+            "historical one-at-a-time behaviour, byte-for-byte unchanged). "
+            "Each faction cooks its own pack id into its own immutable digest "
+            "directory, so concurrent children share no output path. Measured "
+            "on a 24-core box: see perf-publish-report.md for N=1/4/7."
+        ),
+    )
+    parser.add_argument(
+        "--publish-lock-wait-seconds",
+        type=float,
+        default=300.0,
+        metavar="SECONDS",
+        help=(
+            "how long a concurrent child may QUEUE for the content root's "
+            "publish lock before it refuses exactly as it does today. Only "
+            "used when --publish-jobs > 1; a serial run never waits. This is "
+            "not a break-in: a lock held by a dead process still fails the "
+            "run, just this many seconds later."
+        ),
     )
     parser.add_argument("--python", type=Path, default=None)
     parser.add_argument("--output", type=Path, default=None)
@@ -332,8 +375,70 @@ def main(argv: list[str] | None = None) -> int:
     run_id = uuid.uuid4().hex
     rows: list[dict[str, Any]] = []
     exit_code = 0
+    if args.publish_jobs < 1:
+        print("FAIL: --publish-jobs must be at least 1", file=sys.stderr)
+        return 2
+    concurrent_children = args.publish_jobs > 1 and len(factions) > 1
+    child_log_dir = ROOT / "workspace" / "logs" / f"pack-proof-{run_id[:12]}"
+    # Split the machine across the children rather than letting each one size
+    # itself against every core.
+    usable_cores = max(1, (os.cpu_count() or 4) - 2)
+    parallel_width = max(1, min(args.publish_jobs, len(factions)))
+    child_conversion_jobs = max(2, usable_cores // parallel_width)
+    child_hash_workers = max(1, min(8, usable_cores // parallel_width))
 
-    for faction in factions:
+    # ONE catalog resolve, in the parent, before any child starts.
+    #
+    # `index` is the command whose whole job is to load or rebuild the install
+    # catalog, so this is the real code path the children would otherwise each
+    # take - not a reimplementation of it. Doing it here means the catalog is
+    # written at most once, by one process; children then run with
+    # OPENBFME_CATALOG_NO_REBUILD=1 and turn any disagreement into a hard
+    # error. A wrong --install therefore fails here, loudly, once, instead of
+    # becoming N processes racing to rewrite the same document - which is
+    # exactly the failure a mistyped layered-install path produced by hand.
+    if concurrent_children and not args.artifacts_only:
+        index_cmd = [
+            str(python),
+            str(cli),
+            "--json",
+            "index",
+            "--install",
+            str(cook_install),
+            "--game",
+            args.game,
+        ]
+        index_env = os.environ.copy()
+        index_env["OPENBFME_IMPORT_ROOT"] = str(state_root)
+        index_env["PYTHONPATH"] = str(ROOT / "importer")
+        print("RUN", " ".join(index_cmd), flush=True)
+        index_proc = subprocess.run(
+            index_cmd,
+            cwd=str(ROOT),
+            env=index_env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if index_proc.returncode != 0:
+            tail = (index_proc.stderr or index_proc.stdout or "")[-2000:]
+            print(
+                "FAIL: could not resolve the install catalog before a "
+                f"concurrent batch: exit={index_proc.returncode}: {tail}",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            index_result = _parse_cli_json(index_proc.stdout)
+        except ValueError:
+            index_result = {}
+        print(
+            f"CATALOG_RESOLVED archives={index_result.get('archives')} "
+            f"entries={index_result.get('entries')} (children may not rebuild)",
+            flush=True,
+        )
+
+    def proof_one(faction: str) -> dict[str, Any]:
         coverage_path = coverage_root / f"{faction}-coverage.json"
         row: dict[str, Any] = {"faction": faction, "coverage": str(coverage_path)}
         try:
@@ -428,6 +533,15 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 if args.allow_incomplete_coverage:
                     cmd.append("--allow-incomplete-coverage")
+                if args.allow_stale_coverage:
+                    cmd.append("--allow-stale-coverage")
+                if concurrent_children:
+                    # Divide the box instead of oversubscribing it. Each child
+                    # otherwise sizes its own converter pool from the FULL core
+                    # count, so seven children ask for seven full machines;
+                    # this host has run out of Windows process handles under
+                    # exactly that kind of parallel load before.
+                    cmd.extend(["--conversion-jobs", str(child_conversion_jobs)])
                 if args.allow_fewer_playable_units:
                     cmd.append("--allow-fewer-playable-units")
                 if args.single_build:
@@ -440,6 +554,22 @@ def main(argv: list[str] | None = None) -> int:
                 env = os.environ.copy()
                 env["OPENBFME_IMPORT_ROOT"] = str(state_root)
                 env["PYTHONPATH"] = str(ROOT / "importer")
+                if concurrent_children:
+                    # The parent already resolved and verified the catalog.
+                    # A child that still wants to rebuild it is telling us the
+                    # parent's catalog does not describe this install, and that
+                    # is a stop, not something to race N ways.
+                    env["OPENBFME_CATALOG_NO_REBUILD"] = "1"
+                    # Publishes are short and land in distinct digest
+                    # directories; they only ever contend for the content
+                    # root's lock. Queue for it, bounded - past the budget the
+                    # refusal is the same refusal.
+                    env["OPENBFME_SELECTION_LOCK_WAIT_SECONDS"] = str(
+                        args.publish_lock_wait_seconds
+                    )
+                    # Same division for the pack hashing pool.
+                    env["OPENBFME_HASH_WORKERS"] = str(child_hash_workers)
+                started = time.monotonic()
                 proc = subprocess.run(
                     cmd,
                     cwd=str(ROOT),
@@ -448,10 +578,30 @@ def main(argv: list[str] | None = None) -> int:
                     capture_output=True,
                     check=False,
                 )
+                row["seconds"] = round(time.monotonic() - started, 1)
+                # One log file per child, named for the faction, so concurrent
+                # children never interleave into one stream and a failure can
+                # be read in full rather than from a 2000-character tail.
+                log_path = child_log_dir / f"{faction}.log"
+                try:
+                    child_log_dir.mkdir(parents=True, exist_ok=True)
+                    log_path.write_text(
+                        f"$ {' '.join(cmd)}\n\n--- stdout ---\n{proc.stdout or ''}"
+                        f"\n--- stderr ---\n{proc.stderr or ''}\n",
+                        encoding="utf-8",
+                    )
+                    row["log"] = str(log_path)
+                except OSError as log_error:
+                    print(
+                        f"WARN {faction}: could not write child log {log_path}: "
+                        f"{log_error}",
+                        file=sys.stderr,
+                    )
                 if proc.returncode != 0:
                     tail = (proc.stderr or proc.stdout or "")[-2000:]
                     raise RuntimeError(
-                        f"publish-faction-to-slice exit={proc.returncode}: {tail}"
+                        f"publish-faction-to-slice exit={proc.returncode} "
+                        f"(full log: {log_path}): {tail}"
                     )
                 cli_result = _parse_cli_json(proc.stdout)
                 valid = bool(cli_result.get("valid"))
@@ -513,13 +663,42 @@ def main(argv: list[str] | None = None) -> int:
                     flush=True,
                 )
         except Exception as exc:
-            exit_code = 3
             row["status"] = "failed"
             row["publicationReady"] = False
             row["error"] = f"{type(exc).__name__}: {exc}"[:1200]
             print(f"FAIL {faction}: {exc}", file=sys.stderr)
+        return row
 
-        rows.append(row)
+    # DISPATCH. `--publish-jobs 1` is the historical path, unchanged: one
+    # faction at a time, in the order given. Above 1 the per-faction publishes
+    # run as concurrent CHILD PROCESSES - safe because each faction cooks its
+    # own pack id and lands in its own immutable digest directory, so no two
+    # children ever write the same output path.
+    #
+    # Everything shared is handled explicitly, not hoped about:
+    #   * the catalog is resolved and verified ONCE, above, by the parent, and
+    #     children run with OPENBFME_CATALOG_NO_REBUILD=1 so a child that
+    #     disagrees is a hard error instead of an Nth racing rewrite;
+    #   * children queue for the content root's publish lock within a bounded
+    #     budget instead of dying on contention (the refusal is unchanged once
+    #     the budget is spent);
+    #   * every receipt and THIS BATCH REPORT are written by the parent only,
+    #     from returned rows. No child writes a shared document.
+    if args.publish_jobs > 1 and len(factions) > 1:
+        workers = min(args.publish_jobs, len(factions))
+        print(
+            f"PACK_PROOF_CONCURRENCY jobs={workers} factions={len(factions)} "
+            f"logs={child_log_dir}",
+            flush=True,
+        )
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            # Submitted in order, collected in order, so the report row order
+            # does not depend on which faction happened to finish first.
+            futures = [pool.submit(proof_one, faction) for faction in factions]
+            rows = [future.result() for future in futures]
+    else:
+        rows = [proof_one(faction) for faction in factions]
+    exit_code = 3 if any(row.get("status") == "failed" for row in rows) else 0
 
     report = {
         "schema": "openbfme.rotwk-faction-pack-proof",
@@ -529,6 +708,9 @@ def main(argv: list[str] | None = None) -> int:
         "operatorInstallRoot": str(operator_install),
         "coverageRoot": str(coverage_root),
         "artifactsOnly": bool(args.artifacts_only),
+        "publishJobs": int(args.publish_jobs),
+        "concurrentChildren": bool(concurrent_children),
+        "childLogDir": str(child_log_dir) if concurrent_children else None,
         "runId": run_id,
         "factions": rows,
         "publicationReadyCount": sum(1 for r in rows if r.get("publicationReady")),

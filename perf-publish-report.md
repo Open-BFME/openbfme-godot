@@ -325,3 +325,195 @@ than this lane:
   did not time it.
 - Untested by me: a real seven-faction `rotwk_full_content.py` run. The 12.6 min figure
   is 7 x the measured elves median, not an observation.
+---
+
+# PART TWO — concurrent seven-faction pack proof (`--publish-jobs`)
+
+Follow-up lane on top of `e35be41`. Same worktree, same shared state root.
+
+## 8. Headline
+
+| Width | 7-faction pack proof, warm caches, quiet machine | vs serial |
+|---|---|---|
+| `--publish-jobs 1` (today's default) | **688.2 s** (11.5 min) | — |
+| `--publish-jobs 4` | **266.9 s** (4.4 min) | 2.58x |
+| `--publish-jobs 7` | **241.3 s** (4.0 min) | **2.85x** |
+
+**Recommended default-recommended N: 4.** N=7 is 25 s faster on a *quiet* box, but
+that gap is inside run-to-run noise (section 10), and N=4 does it with four
+concurrent multi-GB cooks instead of seven. This machine has exhausted Windows
+process handles under parallel load before, and the box is shared with other agents.
+N=4 buys ~90% of the win for ~57% of the concurrent footprint.
+
+`--publish-jobs` defaults to **1**, so no existing caller changes behaviour.
+`tools/rotwk_full_content.py` was not modified.
+
+**The 3 min target was not reached.** 4.0 min at N=7 is the honest floor here,
+because the serial arm is only 11.5 min to begin with (Part One already took it
+there from ~27 min) and the per-faction cook does not parallelise below ~150 s.
+
+## 9. The bug this found — a silent digest divergence
+
+The first N=1/N=4/N=7 comparison **failed**: `men` produced
+`706d3efd…` at N=7 where N=1 and N=4 both produced `f9411e1b…`. Intermittent —
+roughly one N=7 run in four.
+
+The child log for the bad run named the cause immediately:
+
+| | bad run | good run |
+|---|---|---|
+| `conversion_cache` | hits 3120, **misses 1**, populated 1 | hits 3121, **misses 0** |
+| `checked_files` | **4795** | **4794** |
+| `checked_outputs` | 4735 | 4735 |
+| `provenance_entry_count` | 6124 | 6124 |
+| `profile_sha256` / `importer_recipe_sha256` | identical | identical |
+
+Every converted output was byte-identical. The pack had **one extra
+non-output file**, exactly when there was one conversion-cache miss.
+
+**Root cause.** `_copy_media_cache_hit` / `_copy_w3d_cache_hit` stage their copy
+*inside the pack staging tree* as `<target>.media-cache-copying` /
+`<target>.cache-copying`, then rename it into place. If the copy raises `OSError`
+part way — a transient sharing violation, which concurrency makes far more likely —
+the `except (FileNotFoundError, KeyError, OSError, TypeError, ValueError)` handler
+discards the cache entry, counts a miss and returns, **without unlinking the
+partial**. The cold conversion then writes the real output beside it, and
+`_canonical_pack_inventory` swept the stray into the bundle. The audit passed
+(inventory and bytes agreed), so the only symptom was a bundle that addressed to a
+digest no clean run of the same inputs reproduces.
+
+**This hazard is pre-existing, not introduced by Part One** — the original code
+created the same temporary with `shutil.copyfile` inside the same `try` with the
+same `except`. Concurrency is what made it fire.
+
+**Two fixes, because the leak and the silence are separate failures:**
+
+1. `finally`-based cleanup in both cache-hit paths. The in-flight path is tracked
+   and unlinked on every exit that is not a successful `os.replace`.
+2. **`_canonical_pack_inventory` now refuses** any file ending in a known in-flight
+   suffix (`PACK_IN_FLIGHT_SUFFIXES` — `.cache-copying`, `.media-cache-copying`,
+   `.openbfme-part`, `.tmp`). A leftover partial is now a build failure at the
+   moment it happens instead of an address that quietly drifts. Fix 1 without fix 2
+   would have left the next such leak just as silent.
+
+## 10. Shared-state safety — each claim verified, not assumed
+
+| Claim | Verdict |
+|---|---|
+| Pack outputs cannot collide | **True.** Each faction cooks its own `pack_id`, its own `<pack_id>.building` staging, and lands in its own immutable `<sha256>` directory |
+| W3D job roots cannot collide | **True, and checked.** `jobs_root/<profile_id>/w3d/<asset>`; composed profile ids are content-hashed and distinct per faction (`faction-slice-a6a3be29…` vs `…cc91562d…`) |
+| Catalog is a read-only input | **False as written — guarded.** `_load_or_build_catalog` *writes* whenever the cached catalog is stale or names another install, which is exactly the wrong-`--install` incident from Part One. The parent now resolves it ONCE up front via the `index` command (the real code path, not a reimplementation) and children run with `OPENBFME_CATALOG_NO_REBUILD=1`, which turns any child rebuild into a hard `catalog-rebuild-refused` error. That flag can only convert a silent rebuild into a refusal |
+| Effective-assets tree is read-only | **True** on the publish path; it is read through `EffectiveAssetsCatalog` and the override lookup in `extract_sources` |
+| Conversion-cache **writes** are atomic | **True** — `mkdtemp` + `_replace_directory_with_retry`, with an explicit peer-race branch that compares bytes and refuses non-identical output. Warm runs write nothing (`misses 0`) |
+| Extraction cache writes are atomic | **False as written — fixed.** `BigArchive.extract` staged every entry through a *fixed* `<name>.openbfme-part`. Two processes extracting the same entry opened and wrote the same file, interleaved, and each renamed the result. Now process-unique (`pid` + `uuid4`); only the final name is shared, and a loser overwrites with identical bytes |
+| Content-root publish lock | **Refusal, not a wait** — six of seven honest children would have died on contention *after paying a full cook*. Now a **bounded, opt-in** queue: `OPENBFME_SELECTION_LOCK_WAIT_SECONDS` (default **0** = today's instant refusal). Past the budget it raises the same error with the same message. It never deletes, steals or ignores a held lock, so a lock left by a killed process still fails the run |
+| Batch report written only by the parent | **True.** Children are given a fixed argv that never carries `--output`; every receipt and the batch report are written by the parent from returned rows |
+| Per-child logs are distinct | **True.** `workspace/logs/pack-proof-<runid>/<faction>.log`, full stdout+stderr, referenced from each report row |
+| Diagnostics run dirs race | **Safe.** Run dirs embed `os.getpid()`; `prune_runs` swallows per-item `OSError` and the whole pass is wrapped |
+
+### Item 3 — hoisting the per-process attestations: **declined, deliberately**
+
+The Blender attestation compares against the pinned constant
+`bootstrap.BLENDER_TREE_SHA256`. There is **no existing format for supplying an
+attestation externally**, so per the brief I left it paid per child rather than
+inventing a bypass. Concurrency hides it: ~25 s per child, overlapped.
+`compose` and W3D staging are likewise unchanged. I did not edit the hash pin.
+
+### Resource division
+
+Each child otherwise sizes its converter pool from the *full* core count, so seven
+children ask for seven whole machines. Concurrent runs now pass
+`--conversion-jobs max(2, (cores-2)/N)` and `OPENBFME_HASH_WORKERS` likewise.
+
+## 11. Correctness proof
+
+Serial reference plus **four** concurrent runs (three at N=7, one at N=4), each into
+a freshly emptied worktree-local content root — because the divergence was
+intermittent and one clean run proves nothing:
+
+```
+faction    serialN1     parN7a       parN4        parN7b       parN7c        identical
+angmar     6eb0c0fc4744 6eb0c0fc4744 6eb0c0fc4744 6eb0c0fc4744 6eb0c0fc4744  YES
+dwarves    1cfc18dc2e7a 1cfc18dc2e7a 1cfc18dc2e7a 1cfc18dc2e7a 1cfc18dc2e7a  YES
+elves      ccee1a7d980b ccee1a7d980b ccee1a7d980b ccee1a7d980b ccee1a7d980b  YES
+isengard   6640cedff438 6640cedff438 6640cedff438 6640cedff438 6640cedff438  YES
+men        2c69befc3d26 2c69befc3d26 2c69befc3d26 2c69befc3d26 2c69befc3d26  YES
+mordor     2c882ce94a6f 2c882ce94a6f 2c882ce94a6f 2c882ce94a6f 2c882ce94a6f  YES
+wild       875c3a1593a4 875c3a1593a4 875c3a1593a4 875c3a1593a4 875c3a1593a4  YES
+
+factions compared: 7  mismatches: 0
+```
+
+**35 bundle digests, zero mismatches**, 7/7 publication-ready in every run.
+
+Every bundle from the surviving N=7 run re-verified **by the unmodified HEAD
+importer** (`PYTHONPATH=%TEMP%\obf-verify\importer`, a detached worktree of
+`eb8f55b`):
+
+```
+OK   rotwk-angmar-vslice    addressHonest=True auditValid=True files=2582
+OK   rotwk-dwarves-vslice   addressHonest=True auditValid=True files=2468
+OK   rotwk-elves-vslice     addressHonest=True auditValid=True files=3126
+OK   rotwk-isengard-vslice  addressHonest=True auditValid=True files=3203
+OK   rotwk-men-vslice       addressHonest=True auditValid=True files=4794
+OK   rotwk-mordor-vslice    addressHonest=True auditValid=True files=3281
+OK   rotwk-wild-vslice      addressHonest=True auditValid=True files=2799
+bundles checked: 7  bad: 0
+```
+
+`men` is back to **4794** files, the clean count.
+
+`selection.json` in the shared content root is untouched — still `8/19/2026 4:38:07 PM`.
+Every publish in this lane landed in a worktree-local content root.
+
+### Gates
+
+`importer/tests/test_publish_concurrency.py` — 11 tests, ~1.3 s:
+serial default and zero-jobs rejection; the batch report/receipts are parent-only;
+a forbidden child catalog rebuild raises `catalog-rebuild-refused` **and writes
+nothing**; the lock still refuses instantly by default; a *bounded* budget still
+refuses a lock that never clears and leaves the holder's file untouched; a waiter
+acquires once the holder releases; the extraction partial name is process-unique;
+**the inventory refuses each in-flight suffix**; and a media cache copy that fails
+mid-way leaves nothing behind.
+
+## 12. Wall times, all rounds — and the load confound
+
+The other agent's `men` convert ran on this box during part of this work. It
+matters a great deal, so all three rounds are given rather than the flattering one:
+
+| Round | N=1 | N=4 | N=7 | N=1/N=7 |
+|---|---|---|---|---|
+| A (contended) | 1401.5 s | 260.8 s | 266.1 s | 5.27x |
+| **B (quiet — the number to quote)** | **688.2 s** | **266.9 s** | **241.3 s** | **2.85x** |
+| C (stability, contended again) | 1247.3 s | 356.0 s | 378.0 / 310.6 / 327.3 s | ~3.8x |
+
+Round A's serial arm was **roughly double** round B's for identical work, and its
+per-faction child times gave it away: serial children should be the *fastest*
+individually (nothing competing), and they were not — `isengard` took 292 s serial
+in round A versus 95 s serial in round B. **Round A's 5.4x is an artefact of a
+contended serial baseline and should not be quoted.** I re-ran the whole matrix on a
+quiet machine specifically to avoid shipping that number.
+
+## 13. Still open / not verified
+
+- **The 3 min target was not met** (4.0 min at N=7, quiet). Getting below that needs
+  the per-faction cook itself to get faster, not more of them at once.
+- `N=4` vs `N=7` is inside noise; the recommendation leans on footprint, not on the
+  25 s.
+- **Memory/IO under N=7 was not instrumented** — I measured wall time and correctness,
+  not peak RSS or disk queue depth. The footprint argument for N=4 is reasoning from
+  seven concurrent multi-GB cooks and this box's handle-exhaustion history, not from
+  a measurement.
+- `rotwk_multimap_skirmish.py --build --publish` still runs after pack proof and was
+  **not** made concurrent or measured.
+- The intermittent divergence was reproduced **once**, diagnosed from its child log,
+  and fixed. I did not manage to reproduce it a second time before fixing, so the
+  causal chain (OSError -> leaked partial -> extra inventory file) is inferred from
+  the evidence rather than caught in the act. The regression tests pin both halves
+  directly.
+- All measurement runs required `--allow-stale-coverage --allow-incomplete-coverage
+  --allow-incomplete`, because the on-disk coverage predates the current compiler.
+  **No production recook should use them.** `--allow-stale-coverage` is newly
+  forwardable from this batch tool; it is off by default and no caller passes it.
+
