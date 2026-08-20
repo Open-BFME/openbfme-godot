@@ -13954,12 +13954,26 @@ func _authored_formation_toggle(document: Dictionary) -> Dictionary:
 	## selection surface so the sim gate and the palantir gate answer from the
 	## SAME authored data (commandbutton.ini / commandset.ini).
 	##
-	## `modifier` stays empty for now: the FORMATION ModifierList
-	## (attributemodifier.ini:756-806) reaches the runtime through the
-	## AlternateFormation ChildObject's HordeContain `AttributeModifiers`, which
-	## the importer does not yet compile onto the unit descriptor. Until it
-	## does, the toggle is admitted and applies NO modifier -- a named gap, not
-	## an invented effect.
+	var compiled_toggle := PlayableUnitAdapter.formation_toggle_contract(document)
+	var modifier_lists: Array = compiled_toggle.get("modifierLists", []) as Array
+	var effects: Array = []
+	var modifier_ids: Array[String] = []
+	var unsupported_receipts: Array[String] = []
+	for list_value in modifier_lists:
+		var modifier_list := list_value as Dictionary
+		var modifier_id := String(modifier_list.get("id", ""))
+		if modifier_id != "":
+			modifier_ids.append(modifier_id)
+		for modifier_value in modifier_list.get("modifiers", []) as Array:
+			var modifier := modifier_value as Dictionary
+			if String(modifier.get("runtimeSupport", "receipt-only")) == "supported":
+				effects.append(modifier.duplicate(true))
+			else:
+				unsupported_receipts.append(
+					"formation_modifier_unsupported:%s:%s" % [
+						modifier_id, String(modifier.get("kind", "UNKNOWN"))
+					]
+				)
 	for selection_value in PlayableUnitAdapter.selection_commands(document):
 		var selection := selection_value as Dictionary
 		for kind_value in selection.get("commandKinds", []) as Array:
@@ -13969,7 +13983,13 @@ func _authored_formation_toggle(document: Dictionary) -> Dictionary:
 				"command_id": String(selection.get("commandId", "")),
 				"command_set_id": String(selection.get("commandSetId", "")),
 				"source_ini": String(selection.get("sourceIni", "")),
-				"modifier": {},
+				"modifier": {
+					"id": modifier_ids[0] if modifier_ids.size() == 1 else "+".join(modifier_ids),
+					"modifier_ids": modifier_ids,
+					"category": "FORMATION",
+					"modifiers": effects,
+					"unsupported_receipts": unsupported_receipts,
+				},
 			}
 	return {}
 
@@ -14090,6 +14110,10 @@ func _apply_formation_attribute_modifier(row: Dictionary) -> void:
 			"persistent": true,
 			"category": String(modifier.get("category", "FORMATION")),
 			"modifier_id": String(modifier.get("id", "")),
+			"modifier_ids": Array(modifier.get("modifier_ids", [])).duplicate(),
+			"unsupported_modifier_receipts": Array(
+				modifier.get("unsupported_receipts", [])
+			).duplicate(),
 			"source_id": int(row.get("id", 0)),
 		}
 	row["timed_modifiers"] = table

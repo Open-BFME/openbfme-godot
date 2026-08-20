@@ -50,6 +50,31 @@ static func selection_command_ids(document: Dictionary) -> PackedStringArray:
 	return ids
 
 
+static func formation_toggle_contract(document: Dictionary) -> Dictionary:
+	## The importer keeps the toggle graph inside resolved.formation when the
+	## horde's rank positions are valid, and beside it when that independent
+	## pre-existing contract is unresolved. Accept both descriptor and packed
+	## registration layouts; malformed leaves fail closed to {}.
+	var candidates: Array = []
+	var registration := document.get("registration", {}) as Dictionary
+	if typeof(registration.get("simulation")) == TYPE_DICTIONARY:
+		candidates.append(registration.get("simulation"))
+	var gameplay := document.get("gameplay", {}) as Dictionary
+	if typeof(gameplay.get("simulation")) == TYPE_DICTIONARY:
+		candidates.append(gameplay.get("simulation"))
+	for candidate_value in candidates:
+		var candidate := candidate_value as Dictionary
+		var direct: Variant = candidate.get("formationToggle")
+		if typeof(direct) == TYPE_DICTIONARY:
+			return (direct as Dictionary).duplicate(true)
+		var resolved := candidate.get("resolved", {}) as Dictionary
+		var formation := resolved.get("formation", {}) as Dictionary
+		var nested: Variant = formation.get("toggle")
+		if typeof(nested) == TYPE_DICTIONARY:
+			return (nested as Dictionary).duplicate(true)
+	return {}
+
+
 static func playable_lookup_aliases(raw_id: String) -> PackedStringArray:
 	## Entity rows carry `bfme2.object.gondor-fighter-horde`. Playable-unit
 	## documents register as `GondorFighterHorde` / `gondorfighter`. Try every
