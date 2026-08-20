@@ -7,7 +7,7 @@ extends SceneTree
 ## exact selected Men pack and derives every combat-facing fixture constant from
 ## its compiled playable-unit documents:
 ##
-##   rotwk-men-vslice/51d4885433869fa6290498eeac597b8cc8ac79e540d073dbf03c9c0d0184df3c/
+##   rotwk-men-vslice/8f40f2af6bf8ea40cb6eb2e44ee262ad92da2364bbebd297fc122a4604dc5fa4/
 ##     data/playable-units/gondorarcherhorde.json
 ##       objectId GondorArcherHorde; primary member GondorArcher; attack range
 ##       300; pre-attack 1000 ms; projectile GondorArcherArrow at 321 units/s;
@@ -41,13 +41,17 @@ const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const Adapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const WatchdogScript = preload("res://tests/runner_watchdog.gd")
 
-const SELECTED_MEN_PACK := "rotwk-men-vslice/51d4885433869fa6290498eeac597b8cc8ac79e540d073dbf03c9c0d0184df3c"
+const SELECTED_MEN_PACK := "rotwk-men-vslice/8f40f2af6bf8ea40cb6eb2e44ee262ad92da2364bbebd297fc122a4604dc5fa4"
 const ARCHER_SOURCE_ID := "GondorArcherHorde"
 const TREBUCHET_SOURCE_ID := "GondorTrebuchet"
 const TARGET_SOURCE_ID := "GondorFighterHorde"
 const ARCHER_DESCRIPTOR_SHA256 := "2f879111412cd7f0502158591e70f63578ae629c08fdf7bef3cd227d9bbb4003"
 const TREBUCHET_DESCRIPTOR_SHA256 := "557026cbaf69dbc9fa7c275a4c164d9a0a9d971625b730c65db4aa295994a7bc"
-const TARGET_DESCRIPTOR_SHA256 := "a9ffc68f41ea23ae55cbf8021afd9d5a55091ed195064472d8a64c568cb83836"
+# RE-MINT 2026-08-20 (v0.2.8 recook, men pack 51d48854 -> 8f40f2af): the
+# fighter-horde descriptor moved a9ffc68f -> f7511bca because the formation
+# lane's compiled FORMATION-modifier fields landed in it (merge c0a4f2c,
+# recook this release). Archer/trebuchet descriptors are byte-identical.
+const TARGET_DESCRIPTOR_SHA256 := "f7511bca5897e0956e2555b89084144f5c0879e5485953f5dec1eb969d250805"
 
 const SOURCE_SCALE := 1.0
 const ARCHER_RANGE_SOURCE := 300.0
