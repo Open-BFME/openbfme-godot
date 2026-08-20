@@ -535,6 +535,19 @@ func _check_authored_hero_bar(hud) -> void:
 		String(hud._hero_select_all_button.get_meta("retail_image_id", "<missing>"))
 			if hud._hero_select_all_button != null else "<null>"
 	)
+	# Retail authors the glyph per SIDE: evil factions bind UCCommon_EvilHeroes
+	# (commandbutton.ini :4097/:8068/:13546/:13788+), good ones UCCommon_GoodHeroes.
+	var surface_before := String(hud._faction_surface)
+	hud._faction_surface = "mordor"
+	var evil_id := String(hud._hero_select_all_image_id())
+	hud._faction_surface = "men"
+	var good_id := String(hud._hero_select_all_image_id())
+	hud._faction_surface = surface_before
+	_check(
+		"select_all_heroes_glyph_follows_faction_side",
+		evil_id == "UCCommon_EvilHeroes" and good_id == "UCCommon_GoodHeroes",
+		"evil=%s good=%s" % [evil_id, good_id]
+	)
 	_check(
 		"faction_icon_sits_left_of_the_select_all_button",
 		hud._hero_faction_icon != null
