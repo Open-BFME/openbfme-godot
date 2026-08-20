@@ -17908,6 +17908,14 @@ func request_gate_open(structure_id:int,requester_id:int=0)->Dictionary:
 	policy["open"]=true;policy["open_fraction"]=1.0;policy["pathing_open"]=true;policy["close_tick"]=tick_index+int(policy.get("reset_ticks",0));gate["gate_behavior"]=policy;_emit_event("gate.opened",requester_id,structure_id,{"close_tick":policy["close_tick"]});return {"ok":true,"reason":"","close_tick":policy["close_tick"]}
 
 
+func _entity_is_skirmish_ai_controlled(id: int) -> bool:
+	if not entities.has(id):
+		return false
+	var entity := entities[id] as Dictionary
+	var entity_team := int(entity.get("team", -1))
+	return team_is_ai(entity_team)
+
+
 func gate_portal_allows(structure_id:int,requester_id:int)->bool:
 	if not structures.has(structure_id) or not entities.has(requester_id):return false
 	var gate:=structures[structure_id] as Dictionary;var portal:=gate.get("fake_pathfind_portal",{}) as Dictionary;var requester:=entities[requester_id] as Dictionary
@@ -17915,9 +17923,14 @@ func gate_portal_allows(structure_id:int,requester_id:int)->bool:
 	# authored block an open gate is ordinary open geometry for every team; the
 	# closed geometry blocks every team in _castle_gate_blocking_discs.
 	if portal.is_empty():return true
-	if int(requester.get("team",-1))!=int(gate.get("team",-1)) and not bool(portal.get("allow_enemies",false)):return false
+	if int(requester.get("team",-1))!=int(gate.get("team",-1)):
+		# Different team: check allow_enemies
+		if not bool(portal.get("allow_enemies",false)):return false
+	else:
+		# Same team: check allow_non_skirmish_ai
+		if not bool(portal.get("allow_non_skirmish_ai",false)):
+			if not _entity_is_skirmish_ai_controlled(requester_id):return false
 	return true
-
 
 func _step_gate_updates()->void:
 	for structure_id in structure_ids():
@@ -31085,12 +31098,6 @@ func _seed_castle_fixtures() -> void:
 			if typeof(portal_value) == TYPE_DICTIONARY:
 				var portal := portal_value as Dictionary
 				fixture_row["fake_pathfind_portal"] = {"allow_enemies": bool(portal.get("allowEnemies", false)), "allow_non_skirmish_ai": bool(portal.get("allowNonSkirmishAIUnits", false))}
-				# AllowNonSkirmishAIUnits is authored, cooked and stored but the
-				# sim has no skirmish-AI-controlled unit flag to gate on, so the
-				# rule is consumed by nothing either way: NAMED GAP, never silent.
-				if portal.has("allowNonSkirmishAIUnits"):
-					fixture_row["gate_portal_gaps"] = ["AllowNonSkirmishAIUnits"]
-					print("[RetailSliceSim] GATE_PORTAL_GAP type=%s field=AllowNonSkirmishAIUnits authored=%s reason=no-skirmish-ai-unit-flag-in-sim" % [String(placement.get("type_name", "")), str(portal.get("allowNonSkirmishAIUnits"))])
 			structures[structure_id] = fixture_row
 		_emit_event("castle.fixture_seeded", 0, structure_id, {
 			"type_name": String(placement.get("type_name", "")),

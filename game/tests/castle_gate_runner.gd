@@ -279,6 +279,17 @@ func _check_helms_deep_authored_gate(scene: PackedScene) -> void:
 	enemy["health"] = int(enemy.get("maximum_health", 1))
 	_force_gate(gate, true)
 	_check("helms_deep_open_portal_deflects_enemy_order", not _ordered_crosses(sim, enemy, start, destination, across, int(enemy.get("team", 0)), 20))
+	# Test allow_non_skirmish_ai enforcement: AI team is allowed, human team is denied
+	const AI_UNIT_ID := 99003
+	const HUMAN_UNIT_ID := 99004
+	var gate_team := int(gate.get("team", 1))
+	# AI-controlled friendly unit should be allowed
+	sim._add_battalion(AI_UNIT_ID, gate_team, gate_at, "AI friend")
+	_check("helms_deep_portal_allows_ai_friendly", sim.gate_portal_allows(gate_id, AI_UNIT_ID), "gate_team=%d" % gate_team)
+	# Human-controlled friendly unit should be denied
+	sim._team_descriptors[gate_team]["is_ai"] = false
+	sim._add_battalion(HUMAN_UNIT_ID, gate_team, gate_at, "Human friend")
+	_check("helms_deep_portal_denies_human_friendly", not sim.gate_portal_allows(gate_id, HUMAN_UNIT_ID), "gate_team=%d is_ai=false" % gate_team)
 	root.remove_child(slice)
 	slice.free()
 	await process_frame
@@ -354,10 +365,10 @@ func _test_configuration_based_seam() -> void:
 	var portal: Dictionary = gate_found.get("fake_pathfind_portal", {}) as Dictionary
 	_check("seam_portal_denies_enemies", portal.has("allow_enemies") and bool(portal.get("allow_enemies", true)) == false)
 	_check("seam_portal_denies_non_skirmish_ai", portal.has("allow_non_skirmish_ai") and bool(portal.get("allow_non_skirmish_ai", true)) == false)
-	# AllowNonSkirmishAIUnits is authored, cooked and stored but consumed by
-	# nothing in the sim (no skirmish-AI unit flag exists): the gap is NAMED.
+	# AllowNonSkirmishAIUnits is authored, cooked and stored and is now
+	# consumed and enforced by the sim.
 	var gaps: Array = gate_found.get("gate_portal_gaps", []) as Array
-	_check("seam_allow_non_skirmish_ai_gap_named", gaps.has("AllowNonSkirmishAIUnits"), "gaps=%s" % str(gaps))
+	_check("seam_allow_non_skirmish_ai_enforced", not gaps.has("AllowNonSkirmishAIUnits"), "gaps=%s" % str(gaps))
 	_check("seam_gate_behavior_open_by_default", bool((gate_found.get("gate_behavior", {}) as Dictionary).get("open", false)))
 
 func _test_toggle_gate_command() -> void:
@@ -434,7 +445,7 @@ func _test_toggle_gate_command() -> void:
 	sim.advance(1)
 	var after_destroyed = bool(gate.get("gate_behavior", {}).get("open", false))
 	_check("toggle_gate_destroyed_fails", before_destroyed == after_destroyed, "before=%s after=%s result=%s" % [before_destroyed, after_destroyed, sim.last_command_result])
-	
+
 	root.remove_child(slice)
 	slice.free()
 
