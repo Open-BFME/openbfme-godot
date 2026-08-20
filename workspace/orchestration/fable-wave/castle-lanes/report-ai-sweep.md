@@ -94,3 +94,20 @@ For the retail-slice comparison, extract only lines beginning `RETAIL_SLICE FAIL
 - No pack was built, published, selected, modified, unsealed, or re-addressed.
 - The state pin was not re-minted and no hash pin was edited.
 - No fresh-context adversarial verifier has accepted this lane yet.
+
+
+## Verifier conditions applied (2026-08-19)
+
+- The lane's originally attached sweep log predated the final runner edits (no
+  ROUTE_TARGETS line, stale CLASSIFICATION lines). Canonical evidence is the
+  fresh-context verifier's re-run: `workspace/logs/verify-as-sweep10.txt`
+  (104/1, sole red = Minas Tirith attack) plus `verify-as-mtroute*.txt`.
+- The Minas Tirith red is WIDER than an AI gap: the verifier's flood-fill
+  proves the Player_1 seat sits in a 7,500-cell pocket disconnected from the
+  main 89k-cell component holding every opponent, and the map's one gate
+  fixture is navigation-inert (cell impassable, no portal). A HUMAN seated at
+  Player_1 on this lobby-selectable map has no ground route to any enemy
+  either. This is the Q51 navigation-layer prerequisite (or an importer
+  passability over-block at the gate — not yet attributed), not an AI defect.
+- Known weaker assertion: the "attack order" check counts one routed combat
+  order (a strategic advance qualifies); it does not assert combat damage.
