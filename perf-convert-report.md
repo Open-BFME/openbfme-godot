@@ -18,7 +18,9 @@ it says so.
 | `1b6dde9` | Durable census cache, census lane at 20/186 modules. Parent pass 38.6→28.5 s. | §9 |
 | `5cc06f4` | Aggregate short-circuit. **Second and subsequent unchanged runs: 28.5→13.2 s per faction.** | §10 |
 | `29a3dc9` | Three verifier-demonstrated holes closed (vacuous artifact guard, unguarded `get()` in a shard, strandable `_CachePending`) plus a blind JSON-stability test. | §11 |
-| `HEAD` | **Option C.** Workers produce the coverage rows, the parent verifies and assembles; digest-verified graph shipping; persistent queue-fed pool; largest-first scheduling with per-faction coverage emission. **Seven factions MEASURED, not derived: compiler-edit cold 522 s, repeat 69 s. The 5-minute bar is not met — §12.5 names the floor.** | §12 |
+| `69e353b` | **Option C.** Workers produce the coverage rows, the parent verifies and assembles; digest-verified graph shipping; persistent queue-fed pool; largest-first scheduling with per-faction coverage emission. **Seven factions MEASURED, not derived: compiler-edit cold 522 s, repeat 69 s.** | §12 |
+| `cced800` | Diagnosed the 420 s floor: uniform saturation, not a straggler tail; the same descriptor is compiled three times per unit. Analysis only. | §14 |
+| `HEAD` | **The §14 cuts.** Descriptor memo, faction-discovery memo (4.3 s -> 0 per call), ledger streaming, parallel probe, cost-balanced sharding. **Measured: compiler-edit cold 522 -> 404 s, repeat 69 -> 9.9 s, parent serial 162 -> 16 s. Byte-identical to the serial oracle on retail men and dwarves. The 5-minute bar is still NOT met at 6.8 min** — §15.7 shows why §14's prediction was wrong and where the residual actually lives. | §15 |
 
 Byte-identity was proved at every step and is restated in each section. The
 standing caveat: seven-faction numbers are arithmetic, and true full cold (media
@@ -1580,14 +1582,19 @@ Section 12 (Option C) specifically:
   is what a verifier reads — so it belongs in the existing disk-prune recipe.
 Section 15 (the §14 cuts) specifically:
 
-- **No seven-faction batch, and no single-faction batch, has been run on the cut
-  code.** §15.6's ~350 s is a projection. The only full-scale direct measurement
-  in §15 is the faction-discovery memo (4.38 s -> 0.0000 s per call, ~720
-  core-seconds of a pooled run); everything else is micro-measured or inferred
-  from §14's stage shares.
-- **§14.5's horde question is still open.** The counter test runs on the
-  hero-roster fixture, which has no horde objects, so it proves the plan/draft
-  collapse (3 compiles -> 2, max 3) and nothing about horde re-entry.
+- §15.6 is now MEASURED on a quiet box, and §14.5's horde hypothesis is
+  REFUTED, not open. What follows is what is still not verified.
+- **The N=12 timing was never taken.** N=12 was used only for the byte-identity
+  runs. N=16 and N=24 were timed; §12.4 already showed 16 and 24 within 1 % of
+  each other, so N=12 was not worth a headline slot.
+- **The populate run is not a clean "fully cold" number.** men and dwarves were
+  already warm from the identity runs, so its 331.9 s is not comparable to
+  §12.4's 606 s fully-cold figure and is labelled "not a headline".
+- **The descriptor memo's retail A/B is noisy.** Two `memo OFF` samples on the
+  same three objects gave 23.1 s and 36.3 s against 20.6 s with the memo. The
+  direction is consistent and the call counts are exact (9 -> 6), but the
+  magnitude of cut 1's saving on retail is not pinned down — only bounded well
+  below what §14 predicted.
 - The descriptor memo helps **only a cold run**. When the durable plan-row cache
   hits, the plan compiles nothing and publishes nothing, so the convert draft
   compiles exactly as before — correct, just not faster. That case is
@@ -2004,25 +2011,149 @@ Worker logs are now written to `reports/produce-workers/<runId>/`, so a later
 run can no longer overwrite an earlier run's evidence.
 `test_worker_logs_are_run_scoped` pins it.
 
-### 15.6 Predicted, and explicitly not measured
+### 15.6 MEASURED: seven factions, quiet box, all cuts
 
-Carried from §14 with cut 2's revision (the discovery memo is worth more than
-the corpus digests were, and cut 3c is declined):
+Machine confirmed idle before each run (`Get-Process python` count 0); no other
+job started mid-run. Compiler edit is the same one-line trailing comment to
+`playable_unit_compiler.py` and `playable_structure_pack_compiler.py`, distinct
+marker per run (D, E). Process wall is bracketed with `date`, so it includes
+interpreter start, catalog load and effective-assets verification —
+`BATCH_WALL_MS` does not.
 
-| stage | measured today | predicted after these cuts |
+| Run | N | jobs | probe | census | pool | parent tail | BATCH | **process wall** |
+|---|---|---|---|---|---|---|---|---|
+| compiler-edit cold, marker D | 24 | 1 | 9.5 s | 0.2 s | 373.2 s | 0.04 s | 404.2 s | **410 s / 6.83 min** |
+| compiler-edit cold, marker E | 16 | default | 12.0 s | 0.1 s | 402.6 s | 0.03 s | 428.7 s | **434 s / 7.23 min** |
+| repeat, nothing changed | 16 | default | 9.9 s | — | skipped | 0.02 s | 9.9 s | **15 s** |
+| populate (men+dwarves already warm — not a headline) | 24 | 1 | 7.9 s | 16.9 s | 290.2 s | 0.03 s | 331.9 s | 337 s |
+
+Against §12.4, same shape, same machine:
+
+| Scenario | §12 (Option C) | §15 (with cuts) | change |
+|---|---|---|---|
+| compiler-edit cold, N=24 `j=1` | 522.3 s | **404.2 s** | **-22.6 %** |
+| compiler-edit cold, N=16 | 525.6 s | **428.7 s** | -18.4 % |
+| repeat run | 69.0 s | **9.9 s** | **-86 %** |
+
+**The parent is now free.** Probe 42.7 s -> 9.5 s, census 18.8 s -> 0.2 s,
+parent tail 37.6 s -> 0.04 s, startup ~63 s -> ~6 s. §14's cut 3 targeted 162 s
+of parent serial time; what remains is **~16 s of 410**. That over-delivered,
+and most of it came from the faction-discovery memo rather than from the three
+things cut 3 named — including the ~63 s of startup I had declined to cache,
+which turned out to be mostly `_discover_factions`, not verification.
+
+**Best measured seven-faction compiler-edit cold: 404 s BATCH / 410 s process
+wall = 6.8 minutes. The owner's 5-minute bar is still NOT met**, by ~110 s.
+
+### 15.7 Where §14's prediction was wrong, with the evidence
+
+§14.4 predicted cut 1 alone would take the pool 423 s -> ~271 s by removing the
+plan stage's 3 382 core-seconds. **It did not.** Measured stage split on the
+marker-D run's (now run-scoped) worker logs, 168 jobs / 378 objects:
+
+| | §14 (before) | §15 (after) |
 |---|---|---|
-| pool | 423 s | ~245 s |
-| parent serial | 162 s | ~105 s |
-| **seven-faction compiler-edit cold** | **522 s** | **~350 s / 5.8 min** |
+| per-job setup | 980 core-s (10.4 %) | **71 core-s (0.9 %)** |
+| PLAN stage | 3 382 core-s, 8.95 s/obj | **4 199 core-s, 11.11 s/obj** |
+| CONVERT loop | 3 934 core-s, 10.41 s/obj | **3 869 core-s, 10.24 s/obj** |
 
-**No seven-faction run has been taken on this code.** The prediction could be
-wrong in either direction: the descriptor memo's saving is bounded by how much
-of the plan stage's 8.95 s/object really is the duplicate compile, and the
-discovery memo's ~720 core-seconds is the one component measured directly at
-full scale. The number that decides it is a measured batch, queued for the
-window.
+Cut 2 did everything §14 hoped and more — setup fell 93 %, and later jobs cost
+**0.03 s** each against 6.94 s. Cut 1 removed the compile it was supposed to
+remove and saved almost nothing.
 
-### 15.7 Tests
+**The memo works; the duplicate was cheap.** Verified directly on retail men
+with the object cache disabled, three objects, counting every call to
+`compile_playable_unit_descriptor` at both the call sites and the compiler
+module's own symbol:
+
+```
+warm-up (discard)    wall= 85.0s  calls=9
+memo OFF             wall= 23.1s  calls=9
+memo ON              wall= 20.6s  calls=6
+memo OFF again       wall= 36.3s  calls=9
+```
+
+Nine calls become six — exactly the designed 3-per-object -> 2. But the wall
+barely moves, and the first line is why: **the same three objects cost 85 s on
+first touch in a process and ~23 s once the corpus-wide lazy caches are warm.**
+A "descriptor compile" is not a fixed cost. The plan stage's seconds are
+overwhelmingly the *first-touch corpus scans*, which have to happen once per
+process no matter what; the draft the memo deletes runs afterwards, against warm
+caches, and is the cheap one. §14 read 8.95 s/object as "one removable duplicate
+compile" when it was really "first-touch amortised over the two or three objects
+in that job".
+
+The single-object probe says the same thing from the other side: in a fresh
+process `GondorArcher` compiles in **24.6 s** and `GondorArcherHorde`
+immediately after in **3.9 s**. That also **refutes §14.5's hypothesis** —
+`GondorArcherHorde` makes exactly **one** call with **max nesting 1**, so a
+horde does not re-enter its member's compile. The near-equal 53.3 s / 52.2 s
+timings in §14.1's top-20 were an artifact of the two objects landing in
+different shard processes and each paying its own first-touch.
+
+**So the remaining floor is a SHARING problem, not a per-object one.** 24 worker
+processes each independently re-derive the same corpus-wide scans. That is the
+next diagnosis round, and it is a different shape from anything tried so far:
+not more parallelism, not fewer compiles, but getting the per-process warm-up
+computed once and shared — which on Windows means either a serialisable prepared
+form on disk or fewer, longer-lived processes each doing more objects.
+
+### 15.8 Cut 0 fixed the emission inversion
+
+§12.3 reported men finishing 10.5 s *after* dwarves despite being dispatched
+first, because hash sharding left `MenSpellBook` alone in a 115.2 s shard.
+Cost-balanced sharding, measured:
+
+```
+N=24: men 184.2  dwarves 216.8  isengard 253.8  mordor 290.5
+      elves 325.0  angmar 367.5  wild 398.2
+N=16: men 188.6  dwarves 227.2  isengard 259.7  mordor 303.5
+      elves 357.7  angmar 377.0  wild 425.0
+```
+
+Both runs complete in **exactly** largest-first order with no inversion, and the
+smallest faction is the tail. men's coverage lands 214-236 s before the batch
+ends. `PRODUCE_BALANCE` logs the predicted spread per faction
+(men `predicted_max=312.8s predicted_mean=306.1s` — max within 2 % of mean,
+against the 2.2x imbalance hash sharding produced).
+
+### 15.9 Retail byte-identity — §12.8 closed
+
+Serial parent-recompute (the oracle) versus pooled Option C with all cuts, on
+retail, with `OPENBFME_NO_COVERAGE_SHORTCIRCUIT=1` on **both** sides so neither
+could reuse a stored document instead of doing the work.
+
+```
+===== men : serial oracle vs pooled Option C (N=12)
+ARTIFACT_FILES a=183 b=183   ONLY_A 0   ONLY_B 0   DIFFERING 0
+COVERAGE_AGGREGATE_EQUAL True   PLAN_AGGREGATE_EQUAL True
+COVERAGE_ROWS a=61 b=61 differing=0 []
+COVERAGE_ROW_ORDER_EQUAL True   COVERAGE_DOCUMENT_EQUAL True
+IDENTICAL True
+
+===== dwarves : serial oracle vs pooled Option C (N=12)
+ARTIFACT_FILES a=183 b=183   ONLY_A 0   ONLY_B 0   DIFFERING 0
+COVERAGE_AGGREGATE_EQUAL True   PLAN_AGGREGATE_EQUAL True
+COVERAGE_ROWS a=57 b=57 differing=0 []
+COVERAGE_ROW_ORDER_EQUAL True   COVERAGE_DOCUMENT_EQUAL True
+IDENTICAL True
+
+===== men : pooled N=12 vs pooled N=16 (worker-count invariance)
+ARTIFACT_FILES a=183 b=183   ONLY_A 0   ONLY_B 0   DIFFERING 0
+COVERAGE_AGGREGATE_EQUAL True   PLAN_AGGREGATE_EQUAL True
+COVERAGE_ROWS a=61 b=61 differing=0 []
+IDENTICAL True
+```
+
+So on retail data: **serial oracle ≡ pooled N=12 ≡ pooled N=16** for men, and
+**serial oracle ≡ pooled N=12** for dwarves — artifacts byte-for-byte, coverage
+document field-for-field, both aggregates. Comparison script:
+`%TEMP%\optionc-oracle\compare_coverage.py`; logs `optionc-cuts-identity-*.log`.
+
+All seven factions on the final tree: `converted` 48/55/50/53/59/53/46,
+`gaps=0 complete=True`, one shared `compilerIdentityToken 3e44a6d677bb`.
+
+### 15.10 Tests
 
 `importer/tests/test_faction_convert_cuts.py`, 20 tests, all new:
 
@@ -2039,4 +2170,31 @@ window.
   assignment with no priors, and cost-table parsing of a real coverage document;
 - cut 3: ledger one-open-and-flush-per-event, fail-open sink, run-scoped logs.
 
-Suite: **428 passed, 8 skipped, 0 failed** across the eight named files.
+Named suite: **428 passed, 8 skipped, 0 failed** across the eight files.
+
+**Whole importer suite** (`importer/tests`, 23 min, sequential):
+**3 681 passed, 3 failed, 243 skipped, 5 errors, 975 subtests passed.** Judged
+by NAME against `29a3dc9`, not by count — the same three files were run on the
+baseline and produce the **identical eight names**:
+
+```
+FAILED test_module_census.py::test_committed_census_statuses_match_current_importer_source
+FAILED test_w3d_chunk_backlog.py::...::test_committed_census_dates_itself_and_is_current
+FAILED test_w3d_chunk_backlog.py::...::test_committed_census_decode_corpus_figures_are_dated_fresh
+ERROR  test_locomotor_compiler.py::test_four_oracle_templates_are_exact
+ERROR  test_locomotor_compiler.py::test_effective_retail_census
+ERROR  test_locomotor_compiler.py::test_every_referenced_locomotor_resolves_to_a_compiled_template
+ERROR  test_locomotor_compiler.py::test_object_normal_binding_keeps_object_speed[GondorFighter-HumanLocomotor]
+ERROR  test_locomotor_compiler.py::test_object_normal_binding_keeps_object_speed[GondorTrebuchet-CatapultLocomotor]
+```
+
+Baseline `29a3dc9` on those three files: `3 failed, 50 passed, 2 skipped,
+5 errors` — same names, same count. **Zero regressions; all eight pre-existing.**
+`test_module_census` was the one I expected I might have broken by adding
+functions to importer modules — it fails identically on the baseline, so it did
+not notice and was already stale.
+
+A process note worth recording: my first attempt at this suite reported **exit
+code 0 with a zero-byte log**, because the backgrounded shell returned before
+pytest ran. Exit 0 plus an empty artifact is not a pass. Re-run against the
+artifact, not the exit code.
