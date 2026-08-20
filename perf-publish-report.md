@@ -703,3 +703,168 @@ Also unverified: real convert/publish contention. The simulator consumes almost 
 CPU, whereas a real convert would be saturating the box while these publishes run.
 **346.2 s is an optimistic floor, not a prediction.**
 
+---
+
+# PART FOUR — final commission: two fold cuts, a refusal, three landing orders
+
+On top of `ae2dc02`. Last commission before freeze.
+
+## 21. Final numbers
+
+Serial publish, seven factions, as the cuts landed:
+
+| build | serial 7-faction publish |
+|---|---|
+| before any Part-Three/Four cuts | 688.2 s |
+| + scandir inventory (Part Three) | 652.4 s |
+| **+ deepcopy fold + definition-index prefilter (Part Four)** | **579.5 s** |
+
+End-to-end, publish overlapped against a simulated 240 s convert, `--publish-jobs 4`,
+**all three landing orders**:
+
+| landing order | end-to-end | vs 5 min budget |
+|---|---|---|
+| men-first (as in Part Three) | **313.4 s** = 5.22 min | over by 13 s |
+| **largest-first** (the order the convert lane is being told to emit) | **311.0 s** = 5.18 min | **over by 11 s** |
+| men-LAST worst case | **385.7 s** = 6.43 min | over by 86 s |
+
+Part Three measured 346.2 s men-first; the two Part-Four cuts took that to 313.4 s.
+
+**The 5-minute target is still not met — but it is now missed by 11 seconds, not 46.**
+
+Largest-first and men-first are within noise of each other for the obvious reason:
+both put Men, the dominant pack, first, so it is fully hidden behind convert either
+way. The ordering that matters is the *negative* result — **men-last costs 74.7 s
+more than largest-first**. That is the empirical case for the convert lane emitting
+largest-faction-first, and it is now measured rather than argued.
+
+The residual gap is exactly the shape named in Part Three: total is
+`convert_finish + publish_of_last_faction`. With convert at 240 s the budget allows
+the tail publish 60 s; largest-first leaves `dwarves` (the smallest, ~80 s) exposed.
+Closing the last 11 s means either the convert lane finishing a few seconds early,
+or the smallest faction's publish dropping under ~60 s.
+
+## 22. Cut 1 — the deep-copy fold (~12 s/faction, 3.1–4.2x on compose)
+
+Composing a faction is a fold: each converted object extends the profile the last
+one returned. All three extenders deep-copied the entire growing document on entry,
+so the profile was re-copied once per object — 43–59 times, quadratic in the
+document's own size.
+
+`compose_faction_profile` already deep-copies the base before the fold begins
+(`faction_slice_profile.py:425`), so the accumulator is private to that function.
+The three extenders now take a keyword-only `copy: bool = True` — **the default is
+today's exact contract**, and every external caller (`playable_unit_import.py:1403`)
+is untouched — and only the fold passes `copy=False`.
+
+Proven by composing all seven factions **both ways in one process**, against the
+shipped semantics restored by monkeypatch:
+
+```
+men       legacy= 18.38s  inplace=  4.42s  speedup=4.16x  identical=YES
+elves     legacy= 14.08s  inplace=  3.45s  speedup=4.08x  identical=YES
+dwarves   legacy= 17.89s  inplace=  4.53s  speedup=3.95x  identical=YES
+isengard  legacy= 15.31s  inplace=  4.77s  speedup=3.21x  identical=YES
+mordor    legacy= 20.14s  inplace=  5.08s  speedup=3.97x  identical=YES
+wild      legacy= 17.08s  inplace=  4.12s  speedup=4.14x  identical=YES
+angmar    legacy= 15.88s  inplace=  5.12s  speedup=3.10x  identical=YES
+factions compared: 7  mismatches: 0
+```
+
+**Honest cost, documented in the docstring**: the in-place mode gives up exception
+safety. A mid-fold failure can leave a partially extended profile behind. Every
+failure there aborts the whole compose, so that value is unreachable today — but a
+future caller must not assume otherwise.
+
+## 23. Cut 2 — the definition-index prefilter (5.62 s → 3.38 s)
+
+`_definition_index` decoded and regex-scanned every line of a 920-file INI corpus.
+`strip_sage_comments` only ever *removes* characters, so a line whose raw form does
+not contain `"object"` cannot contain it after stripping, and `_OBJECT_HEADER`
+cannot match without it. Skipping those lines is a **superset filter, not a
+semantic change**. Byte-identical index (4,683 keys), 1.66x.
+
+## 24. Manifest-backed `_inventory_assets` — REFUSED, with the citation
+
+Both decision criteria fail.
+
+**(a) The batch-start verification does not bind the manifest to the tree bytes.**
+`effective_assets_identity.py:394` gates the byte check behind
+`if verify != "manifest":`. All three cook call sites — `pipeline.py:3454`, `3482`,
+`3619` — pass no `verify=` argument and therefore take the `"manifest"` default. In
+that mode `_verify_tree_bytes` **is never called**: not one file is statted, not one
+byte hashed, and the `os.walk` that looks for unexpected entries never runs. The
+verification reads the manifest document and the tree's recorded edition and catalog
+identity, and trusts them.
+
+**(b) Subsumption therefore fails too.** With no re-walk at batch start, a reparse
+point inserted after sealing would not be caught by the identity check. And the
+"retain it cheaply" escape is already satisfied by what shipped in Part Three: the
+scandir walk takes link status from the directory enumeration at zero syscalls, so
+there is no link-check cost left to remove.
+
+The prize was also smaller than assumed. The residual 5.69 s is Python-level work —
+46,130 `safe_relative_parts` validations and 46,130 frozen dataclasses — which a
+manifest-backed version must still do; it would trade a scandir enumeration for
+parsing a 10.2 MB JSON and building the same objects. Perhaps 2 s, for the only
+thing that currently notices a post-seal reparse point in a default-mode cook.
+
+**Walk kept.** Separately, the gap this exposed — batch-start verification trusting
+the sealed manifest without binding it to tree bytes — is worth a queue row in its
+own right.
+
+## 25. Correctness
+
+Serial `--publish-jobs 1` against all three overlapped orders, same branch:
+
+```
+faction    serialN1     menfirst     largestfirst menlast       identical
+angmar     a72f6259cbc5 a72f6259cbc5 a72f6259cbc5 a72f6259cbc5  YES
+dwarves    0cc07f48785c 0cc07f48785c 0cc07f48785c 0cc07f48785c  YES
+elves      38feeaa9b1c5 38feeaa9b1c5 38feeaa9b1c5 38feeaa9b1c5  YES
+isengard   d8698cb92396 d8698cb92396 d8698cb92396 d8698cb92396  YES
+men        d97f03f0e3ec d97f03f0e3ec d97f03f0e3ec d97f03f0e3ec  YES
+mordor     c28faff68e33 c28faff68e33 c28faff68e33 c28faff68e33  YES
+wild       7d37fd319a2b 7d37fd319a2b 7d37fd319a2b 7d37fd319a2b  YES
+factions compared: 7  mismatches: 0
+```
+
+**28 digests, zero mismatches**, 7/7 publication-ready in every run — including the
+worst-case order, where the fold and the watcher are under the most pressure.
+
+## 26. Isolation and hygiene for this round
+
+- **Coverage root isolated.** The simulator *rewrites* coverage documents, so both
+  drivers now read `--coverage-root <worktree>\workspace\iso\faction-import` (a
+  1,111-file, 156 MB private copy) and write their reports under
+  `<worktree>\workspace\iso\`. The shared coverage tree is no longer touched by a
+  measurement.
+- **Content root** was already worktree-local; audited across all 12 earlier runs
+  and every run in this round.
+- **Conversion caches stay shared deliberately** — they are the product under test,
+  an isolated empty cache would make every run a cold Blender cook, and a warm run
+  writes nothing (`misses 0`).
+- **Orphaned temporaries swept**: three found under the coverage tree, two dating
+  from 8/3 — a standing convert-side leak, not this lane's. All removed; sweep now
+  returns zero.
+- Measurements ran in a granted window with the other heavy lane paused; the foreign
+  burst was confirmed cleared (42 python processes → 2, 23% CPU) **before** the storm
+  started, because an absolute number judged against a budget cannot be rescued by
+  A/B interleaving the way a ratio can.
+
+## 27. Where this leaves the sub-5-minute goal
+
+Not met: **5.18 min** at best, against 5.00. The remaining 11 s is not hiding in the
+publish path's redundant work any more — Parts One through Four removed 688 s → 579 s
+of serial publish and 2.9x of per-faction duplicate reads. What is left is genuine:
+Blender tool attestation (~20–26 s, fail-closed, correctly untouched), W3D staging,
+and the irreducible cook of the one faction that converts last.
+
+The three levers that remain, none of them mine to pull unilaterally:
+
+1. **Convert emits largest-first** — worth 74.7 s versus men-last, now measured.
+2. **Convert finishing under 240 s** — every second off convert is a second off the
+   total, one-for-one.
+3. **The residual per-faction floor** — the deepcopy fold was the last cheap win;
+   further cuts mean the fail-closed attestation or the W3D lane.
+

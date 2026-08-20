@@ -170,6 +170,53 @@ class AuditKnownDigestTests(unittest.TestCase):
             self.assertFalse(result["valid"])
 
 
+class ProfileFoldCopyContractTests(unittest.TestCase):
+    """The in-place fold is opt-in; every external caller keeps a copy.
+
+    Composing a faction is a fold, so a deep copy per object re-copies the
+    whole growing profile N times (measured 3.1-4.2x on compose). Making that
+    optional is only safe while the DEFAULT stays "copy", because outside
+    callers rely on their profile surviving the call untouched.
+    """
+
+    def test_every_extender_defaults_to_copying(self) -> None:
+        import inspect
+
+        from openbfme_importer.faction_slice_profile import (
+            _add_spellbook,
+            _add_structure,
+        )
+        from openbfme_importer.playable_unit_import import extend_profile_with_unit
+
+        for function in (extend_profile_with_unit, _add_structure, _add_spellbook):
+            with self.subTest(function=function.__name__):
+                parameter = inspect.signature(function).parameters["copy"]
+                self.assertEqual(parameter.default, True)
+                self.assertEqual(parameter.kind, inspect.Parameter.KEYWORD_ONLY)
+
+    def test_owned_mapping_returns_the_caller_object_for_a_dict(self) -> None:
+        from openbfme_importer.playable_unit_import import _owned_mapping
+
+        original = {"resources": [], "runtime_data": {}, "pack": {"files": {}}}
+        self.assertIs(_owned_mapping(original), original)
+
+        class _View(dict):
+            pass
+
+        view = _View(original)
+        self.assertIs(_owned_mapping(view), view)
+
+        from types import MappingProxyType
+
+        proxy = MappingProxyType(original)
+        owned = _owned_mapping(proxy)
+        self.assertIsNot(owned, proxy)
+        self.assertEqual(owned, original)
+        # A shallow dict of a proxy still shares the nested containers, which
+        # is what makes the in-place extend reach the caller's structures.
+        self.assertIs(owned["resources"], original["resources"])
+
+
 class CopyWithDigestTests(unittest.TestCase):
     def test_copy_reports_the_bytes_it_wrote(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
