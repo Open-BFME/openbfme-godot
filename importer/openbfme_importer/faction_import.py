@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 import threading
 import time
-from typing import Callable, Mapping
+from typing import Callable, Mapping, Sequence
 
 from .catalog import InstallCatalog
 from .castle_behavior import (
@@ -22,13 +22,35 @@ from .faction_object_cache import (
     FactionObjectCache,
     compiler_identity_token,
     default_cache_root,
+    durable_effective_assets_fingerprint,
     durable_non_ini_assets_fingerprint,
     object_cache_key,
     policy_roots_fingerprint,
 )
+from .faction_coverage_cache import (
+    FactionCoverageCache,
+    coverage_cache_disabled,
+    coverage_cache_key,
+    default_coverage_cache_root,
+)
+from .faction_census_cache import (
+    FactionCensusCache,
+    census_cache_disabled,
+    default_census_cache_root,
+    graph_digest,
+    load_or_build_census,
+)
+from .faction_plan_cache import (
+    FactionPlanRowCache,
+    default_plan_cache_root,
+    plan_cache_disabled,
+    plan_row_cache_key,
+)
 from .incremental_rebuild import (
+    _COMPILER_DEPENDENCY_MANIFESTS,
     compiler_dependency_identity,
     document_closure_identity,
+    plan_stage_identity,
 )
 from .faction_policy import (
     implicit_object_roots,
@@ -105,6 +127,10 @@ SCHEMA = "openbfme.faction-import-plan"
 SCHEMA_VERSION = 0
 COVERAGE_SCHEMA = "openbfme.faction-import-coverage"
 COVERAGE_SCHEMA_VERSION = 0
+# Worker -> parent transport for the pooled "workers produce rows" convert.
+# Never a publishable document: a shard is partial by construction.
+CONVERT_SHARD_SCHEMA = "openbfme.faction-convert-shard"
+CONVERT_SHARD_SCHEMA_VERSION = 1
 
 # Run-only fields excluded from coverage aggregateSha256 (cold/warm/jobs stable).
 _COVERAGE_EPHEMERAL_OBJECT_KEYS = frozenset({"cacheHit", "convertElapsedMs"})
@@ -120,6 +146,152 @@ _COVERAGE_EPHEMERAL_SUMMARY_KEYS = frozenset(
         "slowestObjects",
     }
 )
+
+
+# ---------------------------------------------------------------------------
+# Plan/convert descriptor memo (§14 cut 1)
+#
+# A unit descriptor was compiled THREE times per object per cold run: once by
+# the plan stage, once as the convert "draft" that discovers which media and
+# strings the object needs, and once as the final compile with those resolved
+# values injected. The first two are the *identical call* — same object id,
+# documents, faction graph, prepared inputs, game and banner flag; not one
+# argument differs. Spellbooks have the same shape. Structures compile twice,
+# but their two call sites pass different locals (graph-derived engine roots in
+# the plan, policy-derived in the convert), so their key carries those values
+# and the memo hits only when they genuinely match.
+#
+# Scope and safety:
+#   * the memo is owned by one (documents, prepared, faction_graph) triple and
+#     is dropped wholesale when any of the three changes identity. It holds
+#     strong references to all three, so their ids cannot be recycled under a
+#     live entry — identity is a sound key, which is the same rule the
+#     compilers already enforce (they fail closed when
+#     ``prepared.documents is not documents``);
+#   * an entry is CONSUMED on read. There is exactly one consumer per entry, so
+#     nothing can alias a descriptor that a later caller might mutate, and peak
+#     memory is bounded by planned-but-not-yet-converted objects;
+#   * plan and convert never run concurrently for the same object — the plan
+#     stage completes before the convert loop starts — so a plain lock is
+#     enough and there is no pending-slot to strand (see §11.3).
+# ---------------------------------------------------------------------------
+
+_DESCRIPTOR_MEMO_LOCK = threading.Lock()
+_DESCRIPTOR_MEMO: dict[tuple, object] = {}
+_DESCRIPTOR_MEMO_OWNER: tuple[object, object, object] | None = None
+
+
+def descriptor_memo_disabled() -> bool:
+    return os.environ.get("OPENBFME_NO_DESCRIPTOR_MEMO", "").strip().casefold() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def clear_descriptor_memo() -> None:
+    global _DESCRIPTOR_MEMO_OWNER
+    with _DESCRIPTOR_MEMO_LOCK:
+        _DESCRIPTOR_MEMO.clear()
+        _DESCRIPTOR_MEMO_OWNER = None
+
+
+def _adopt_owner_locked(owner: tuple[object, object, object]) -> None:
+    global _DESCRIPTOR_MEMO_OWNER
+    current = _DESCRIPTOR_MEMO_OWNER
+    if current is not None and all(a is b for a, b in zip(current, owner)):
+        return
+    _DESCRIPTOR_MEMO.clear()
+    _DESCRIPTOR_MEMO_OWNER = owner
+
+
+def _memoized_descriptor(
+    *,
+    owner: tuple[object, object, object],
+    key: tuple,
+    compute: Callable[[], object],
+    publish: bool,
+) -> object:
+    """Compile once, hand the result to the one other caller that wants it.
+
+    ``publish=True`` is the plan stage (produce); ``publish=False`` is the
+    convert draft (consume). A miss simply compiles, which is exactly the old
+    behaviour, so nothing here can change what is produced — only how often.
+    """
+
+    if descriptor_memo_disabled():
+        return compute()
+    if not publish:
+        with _DESCRIPTOR_MEMO_LOCK:
+            _adopt_owner_locked(owner)
+            hit = _DESCRIPTOR_MEMO.pop(key, None)
+        if hit is not None:
+            return hit
+        return compute()
+    value = compute()
+    with _DESCRIPTOR_MEMO_LOCK:
+        _adopt_owner_locked(owner)
+        _DESCRIPTOR_MEMO[key] = value
+    return value
+
+
+_CORPUS_DIGEST_LOCK = threading.Lock()
+_CORPUS_DIGEST_MEMO: tuple[object, dict[str, str], Mapping[str, object]] | None = None
+
+
+def clear_corpus_digest_memo() -> None:
+    global _CORPUS_DIGEST_MEMO
+    with _CORPUS_DIGEST_LOCK:
+        _CORPUS_DIGEST_MEMO = None
+
+
+def _corpus_digests(
+    documents: Mapping[str, bytes],
+) -> tuple[dict[str, str], Mapping[str, object]]:
+    """(per-document hashes, full-corpus closure) for this corpus object.
+
+    Single-entry memo keyed on the corpus object's identity, **holding a strong
+    reference to it** so the id cannot be recycled under the entry. The corpus
+    itself is already memoized upstream by ``spellbook_source_documents``, so in
+    a real run this is the same object across every faction in the process.
+    """
+
+    global _CORPUS_DIGEST_MEMO
+    with _CORPUS_DIGEST_LOCK:
+        entry = _CORPUS_DIGEST_MEMO
+        if entry is not None and entry[0] is documents:
+            return entry[1], entry[2]
+    hashes = {
+        path: hashlib.sha256(payload).hexdigest() for path, payload in documents.items()
+    }
+    # Rows with no declared source closure all hash the same full corpus.
+    closure = document_closure_identity(documents, None, document_hashes=hashes)
+    with _CORPUS_DIGEST_LOCK:
+        _CORPUS_DIGEST_MEMO = (documents, hashes, closure)
+    return hashes, closure
+
+
+def _unit_descriptor_key(object_id: str, game: str, banner: bool) -> tuple:
+    return ("unit", object_id.casefold(), game, bool(banner))
+
+
+def _structure_descriptor_key(
+    object_id: str,
+    game: str,
+    roots: Sequence[str],
+    roles: Mapping[str, str] | None,
+    wall_templates: Sequence[str],
+    source_null_sets: Sequence[str],
+) -> tuple:
+    return (
+        "structure",
+        object_id.casefold(),
+        game,
+        tuple(str(value) for value in roots),
+        tuple(sorted((str(k), str(v)) for k, v in (roles or {}).items())),
+        tuple(str(value) for value in wall_templates),
+        tuple(str(value) for value in source_null_sets),
+    )
 
 
 def _descriptor_source_paths(descriptor: Mapping[str, object]) -> list[str] | None:
@@ -390,14 +562,67 @@ def _sha256(value: object, field: str) -> str:
     return value
 
 
+def resolve_convert_worker_count(jobs: int | None) -> int:
+    """Worker count for the plan and convert loops.
+
+    Convert is CPU-bound (visual closure + compilers). Cap at 16 so a
+    32-thread host does not thrash the object-cache disk and GIL-heavy JSON
+    paths; override with ``OPENBFME_FACTION_CONVERT_JOBS``.
+    """
+
+    try:
+        workers = int(
+            jobs
+            if jobs is not None
+            else os.environ.get("OPENBFME_FACTION_CONVERT_JOBS", "0")
+        )
+    except ValueError:
+        workers = 0
+    if workers <= 0:
+        cpu = os.cpu_count() or 4
+        workers = max(1, min(16, cpu))
+    return workers
+
+
+def resolve_plan_worker_count(jobs: int | None) -> int:
+    """Worker count for the plan loop. Serial by default — see the call site.
+
+    Explicit ``jobs`` wins; otherwise ``OPENBFME_FACTION_PLAN_JOBS``; otherwise
+    1. This is deliberately *not* the convert loop's default: planning is
+    GIL-bound and measured slower with 16 threads than with one.
+    """
+
+    if jobs is not None:
+        return max(1, int(jobs))
+    try:
+        workers = int(os.environ.get("OPENBFME_FACTION_PLAN_JOBS", "1"))
+    except ValueError:
+        workers = 1
+    return max(1, workers)
+
+
 def build_faction_import_plan(
     faction_graph: Mapping[str, object],
     documents: Mapping[str, bytes],
     *,
     catalog_identity_sha256: str,
     game: str = "bfme2",
+    plan_jobs: int | None = None,
+    object_selector: Callable[[str], bool] | None = None,
+    row_cache: FactionPlanRowCache | None = None,
+    row_cache_assets_fp: str = "",
+    row_cache_graph_identity: str = "",
+    document_hashes: Mapping[str, str] | None = None,
+    full_corpus_closure: Mapping[str, object] | None = None,
+    ordered_ids_out: list[str] | None = None,
 ) -> dict[str, object]:
-    """Account for every command-reachable Object without claiming unsupported work."""
+    """Account for every command-reachable Object without claiming unsupported work.
+
+    ``ordered_ids_out``, when given, is filled with the faction's WHOLE ordered
+    object id list before ``object_selector`` narrows it. A shard worker cannot
+    otherwise report what the complete set was, and the parent needs that set to
+    prove the shards it assembles cover the faction exactly once.
+    """
 
     definitions = faction_graph.get("definitions")
     if not isinstance(definitions, Mapping) or not isinstance(
@@ -521,8 +746,26 @@ def build_faction_import_plan(
         and edge["targetId"]
     }
     horde_banner_targets.update(layered_banner_targets)
-    objects: list[dict[str, object]] = []
-    for object_id in sorted(object_ids, key=lambda value: (value.casefold(), value)):
+
+    # Key material for the durable plan-row cache. Every non-document input the
+    # per-object body reads is folded in here: the structure policy roots and
+    # the banner-carrier set (both graph- and compiler-derived), plus the
+    # process-wide compiler identity token so any converter source edit misses.
+    plan_policy_fp = policy_roots_fingerprint(
+        spawned=engine_spawned_roots,
+        spawned_roles=engine_spawned_roles,
+        wall_templates=wall_template_roots,
+        source_null_sets=(
+            *source_null_sets,
+            *(f"horde-banner:{value}" for value in sorted(horde_banner_targets)),
+        ),
+    )
+    # Lane-union identity, not the whole-package salt: an edit to a module no
+    # plan lane imports must not evict every cached plan row.
+    plan_compiler_token = plan_stage_identity() if row_cache is not None else ""
+
+    def _plan_one(object_id: str) -> list[dict[str, object]]:
+        objects: list[dict[str, object]] = []
         if prepared is None:
             objects.append(
                 {
@@ -533,7 +776,7 @@ def build_faction_import_plan(
                     "reason": f"compiler initialization failed: {preparation_error}",
                 }
             )
-            continue
+            return objects
         kinds: tuple[str, ...] = ()
         source_path = ""
         parse_error: str | None = None
@@ -580,19 +823,31 @@ def build_faction_import_plan(
                         ),
                     }
                 )
-            continue
+            return objects
         family = _family(kinds)
         if family == "structure":
             try:
-                structure_descriptor = compile_playable_structure_descriptor(
-                    object_id,
-                    documents,
-                    prepared=prepared,
-                    engine_spawned_roots=engine_spawned_roots,
-                    engine_spawned_roles=engine_spawned_roles,
-                    wall_template_roots=wall_template_roots,
-                    source_null_command_sets=source_null_sets,
-                    game=game,
+                structure_descriptor = _memoized_descriptor(
+                    owner=(documents, prepared, faction_graph),
+                    key=_structure_descriptor_key(
+                        object_id,
+                        game,
+                        engine_spawned_roots,
+                        engine_spawned_roles,
+                        wall_template_roots,
+                        source_null_sets,
+                    ),
+                    publish=True,
+                    compute=lambda: compile_playable_structure_descriptor(
+                        object_id,
+                        documents,
+                        prepared=prepared,
+                        engine_spawned_roots=engine_spawned_roots,
+                        engine_spawned_roles=engine_spawned_roles,
+                        wall_template_roots=wall_template_roots,
+                        source_null_command_sets=source_null_sets,
+                        game=game,
+                    ),
                 )
             except PlayableStructureCompilerError as exc:
                 objects.append(
@@ -618,11 +873,16 @@ def build_faction_import_plan(
                         ),
                     }
                 )
-            continue
+            return objects
         if family == "spellbook":
             try:
-                spellbook_descriptor = compile_spellbook_descriptor(
-                    faction_graph, documents, prepared=prepared
+                spellbook_descriptor = _memoized_descriptor(
+                    owner=(documents, prepared, faction_graph),
+                    key=("spellbook",),
+                    publish=True,
+                    compute=lambda: compile_spellbook_descriptor(
+                        faction_graph, documents, prepared=prepared
+                    ),
                 )
                 spellbook_row = spellbook_descriptor.get("spellBook")
                 spellbook_object_id = (
@@ -659,16 +919,20 @@ def build_faction_import_plan(
                         ),
                     }
                 )
-            continue
+            return objects
         try:
-            descriptor = compile_playable_unit_descriptor(
-                object_id,
-                documents,
-                faction_graph=faction_graph,
-                prepared=prepared,
-                game=game,
-                engine_spawned_banner_carrier=(
-                    object_id.casefold() in horde_banner_targets
+            banner_carrier = object_id.casefold() in horde_banner_targets
+            descriptor = _memoized_descriptor(
+                owner=(documents, prepared, faction_graph),
+                key=_unit_descriptor_key(object_id, game, banner_carrier),
+                publish=True,
+                compute=lambda: compile_playable_unit_descriptor(
+                    object_id,
+                    documents,
+                    faction_graph=faction_graph,
+                    prepared=prepared,
+                    game=game,
+                    engine_spawned_banner_carrier=banner_carrier,
                 ),
             )
         except PlayableUnitCompilerError as exc:
@@ -730,7 +994,133 @@ def build_faction_import_plan(
                     "sourceDocumentPaths": _descriptor_source_paths(descriptor),
                 }
             )
+        return objects
 
+    # Planning compiles one descriptor per object — 167 s for the 61 Men
+    # objects, the single largest stage of a faction convert. It can be run
+    # across threads (results are collected in submission order, so the plan
+    # document is unchanged, and these are the same compilers the convert loop
+    # already runs concurrently against this shared ``prepared``), but MEASURED
+    # ON THIS HOST IT IS A LOSS: the stage is pure-Python and GIL-bound, and 16
+    # workers took ~240 s against ~167-215 s serial. So it stays serial unless
+    # a caller or OPENBFME_FACTION_PLAN_JOBS asks otherwise. The real batch win
+    # is elsewhere — one shared parsed corpus across all seven factions.
+    ordered_ids = sorted(object_ids, key=lambda value: (value.casefold(), value))
+    if ordered_ids_out is not None:
+        ordered_ids_out.clear()
+        ordered_ids_out.extend(ordered_ids)
+    if object_selector is not None:
+        # Cache-warming shard: compute and cache rows for a subset only. The
+        # returned plan is deliberately partial and is never used as a plan —
+        # the parent recomputes the whole plan and finds these rows cached.
+        ordered_ids = [
+            object_id for object_id in ordered_ids if object_selector(object_id)
+        ]
+    workers = resolve_plan_worker_count(plan_jobs)
+
+    # Durable plan-row cache. Planning is a full second descriptor compile per
+    # object, so a warm faction used to pay it in full; a cached row is only
+    # admitted when every input byte-identity still matches (see
+    # faction_plan_cache). Any doubt recomputes — a cache fault costs time,
+    # never correctness.
+    def _closure_identity(source_paths: list[str] | None) -> Mapping[str, object]:
+        if not source_paths and full_corpus_closure is not None:
+            return full_corpus_closure
+        return document_closure_identity(
+            documents, source_paths, document_hashes=document_hashes
+        )
+
+    def _row_source_paths(rows: Sequence[Mapping[str, object]]) -> list[str] | None:
+        for row in rows:
+            declared = row.get("sourceDocumentPaths")
+            if isinstance(declared, list):
+                return [str(item) for item in declared]
+        return None
+
+    def _plan_one_cached(object_id: str) -> list[dict[str, object]]:
+        if row_cache is None:
+            return _plan_one(object_id)
+        key = plan_row_cache_key(
+            object_id=object_id,
+            documents_fp=str(_closure_identity(None)["sha256"]),
+            catalog_identity_sha256=catalog_identity,
+            effective_root_fp=row_cache_assets_fp,
+            graph_identity_sha256=row_cache_graph_identity or graph_identity,
+            policy_fp=plan_policy_fp,
+            compiler_token=plan_compiler_token,
+            game=game,
+        )
+        hit = row_cache.get(
+            key,
+            verify_compiler_identity=lambda family: str(
+                compiler_dependency_identity(family)["sha256"]
+            ),
+            verify_document_closure=lambda paths: str(
+                _closure_identity(paths)["sha256"]
+            ),
+        )
+        if hit is not None:
+            return hit
+        rows_out = _plan_one(object_id)
+        try:
+            family = str(rows_out[0]["family"]) if rows_out else ""
+            declared = _row_source_paths(rows_out)
+            row_cache.put(
+                key,
+                rows=rows_out,
+                family=family,
+                compiler_identity=str(
+                    compiler_dependency_identity(family)["sha256"]
+                ),
+                document_closure_sha256=str(_closure_identity(declared)["sha256"]),
+                source_paths=declared,
+            )
+        except (KeyError, IndexError, TypeError, ValueError):
+            # Never let a caching problem change what planning returned.
+            pass
+        return rows_out
+
+    objects: list[dict[str, object]] = []
+    if workers <= 1 or len(ordered_ids) <= 1:
+        planned = [_plan_one_cached(object_id) for object_id in ordered_ids]
+    else:
+        with ThreadPoolExecutor(
+            max_workers=min(workers, len(ordered_ids))
+        ) as pool:
+            planned = list(pool.map(_plan_one_cached, ordered_ids))
+    for chunk in planned:
+        objects.extend(chunk)
+
+    return finalize_faction_import_plan(
+        player_template=player_template,
+        faction=faction,
+        catalog_identity_sha256=catalog_identity,
+        faction_graph_input_set_sha256=graph_identity,
+        unresolved_leaf_count=unresolved,
+        objects=objects,
+    )
+
+
+def finalize_faction_import_plan(
+    *,
+    player_template: str,
+    faction: str,
+    catalog_identity_sha256: str,
+    faction_graph_input_set_sha256: str,
+    unresolved_leaf_count: int,
+    objects: list[dict[str, object]],
+) -> dict[str, object]:
+    """Wrap planned object rows in the plan document and seal its aggregate.
+
+    Split out of ``build_faction_import_plan`` so that a parent assembling
+    worker-produced rows emits the *same bytes* as a serial parent by running
+    the same code, not by a parallel implementation that has to be argued
+    equivalent.
+    """
+
+    catalog_identity = catalog_identity_sha256
+    graph_identity = faction_graph_input_set_sha256
+    unresolved = unresolved_leaf_count
     ready_count = sum(row["status"] == "descriptor-ready" for row in objects)
     excluded_count = sum(row["status"] == "excluded" for row in objects)
     gaps = len(objects) - ready_count - excluded_count
@@ -957,6 +1347,7 @@ def _convert_one_plan_object(
     graph_identity_sha256: str = "",
     numeric_defines_sha256: str = "",
     document_hashes: Mapping[str, str] | None = None,
+    full_corpus_closure: Mapping[str, object] | None = None,
     game: str = "bfme2",
 ) -> tuple[dict[str, object], dict[str, Mapping[str, object]]]:
     """Convert one plan row; returns (coverage_row, artifacts)."""
@@ -971,11 +1362,18 @@ def _convert_one_plan_object(
     artifacts: dict[str, Mapping[str, object]] = {}
 
     source_paths = plan_row.get("sourceDocumentPaths")
-    closure_identity = document_closure_identity(
-        documents,
-        source_paths if isinstance(source_paths, list) else None,
-        document_hashes=document_hashes,
-    )
+    declared_sources = source_paths if isinstance(source_paths, list) else None
+    if not declared_sources and full_corpus_closure is not None:
+        # A row without a declared source closure hashes the whole corpus, and
+        # that answer is identical for every such row in the batch. Reuse the
+        # one computed up front instead of rebuilding it per object.
+        closure_identity: Mapping[str, object] = full_corpus_closure
+    else:
+        closure_identity = document_closure_identity(
+            documents,
+            declared_sources,
+            document_hashes=document_hashes,
+        )
     compiler_identity = compiler_dependency_identity(family)
     documents_fp = str(closure_identity["sha256"])
     compiler_token = str(compiler_identity["sha256"])
@@ -1043,15 +1441,27 @@ def _convert_one_plan_object(
     if family == "structure":
         descriptor = None
         try:
-            descriptor = compile_playable_structure_descriptor(
-                object_id,
-                documents,
-                prepared=prepared,
-                engine_spawned_roots=spawned,
-                engine_spawned_roles=spawned_roles,
-                wall_template_roots=wall_templates,
-                source_null_command_sets=source_null_sets,
-                game=game,
+            descriptor = _memoized_descriptor(
+                owner=(documents, prepared, faction_graph),
+                key=_structure_descriptor_key(
+                    object_id,
+                    game,
+                    spawned,
+                    spawned_roles,
+                    wall_templates,
+                    source_null_sets,
+                ),
+                publish=False,
+                compute=lambda: compile_playable_structure_descriptor(
+                    object_id,
+                    documents,
+                    prepared=prepared,
+                    engine_spawned_roots=spawned,
+                    engine_spawned_roles=spawned_roles,
+                    wall_template_roots=wall_templates,
+                    source_null_command_sets=source_null_sets,
+                    game=game,
+                ),
             )
             kinds = {
                 str(item)
@@ -1197,8 +1607,13 @@ def _convert_one_plan_object(
                 )
     elif family == "spellbook":
         try:
-            draft = compile_spellbook_descriptor(
-                faction_graph, documents, prepared=prepared
+            draft = _memoized_descriptor(
+                owner=(documents, prepared, faction_graph),
+                key=("spellbook",),
+                publish=False,
+                compute=lambda: compile_spellbook_descriptor(
+                    faction_graph, documents, prepared=prepared
+                ),
             )
             draft_row = draft.get("spellBook")
             draft_object_id = (
@@ -1310,13 +1725,21 @@ def _convert_one_plan_object(
     elif status == "descriptor-ready":
         engine_spawned_banner_carrier = str(row.get("family", "")) == "banner-carrier"
         try:
-            draft = compile_playable_unit_descriptor(
-                object_id,
-                documents,
-                faction_graph=faction_graph,
-                prepared=prepared,
-                game=game,
-                engine_spawned_banner_carrier=engine_spawned_banner_carrier,
+            # The plan stage already compiled exactly this. Consume it.
+            draft = _memoized_descriptor(
+                owner=(documents, prepared, faction_graph),
+                key=_unit_descriptor_key(
+                    object_id, game, engine_spawned_banner_carrier
+                ),
+                publish=False,
+                compute=lambda: compile_playable_unit_descriptor(
+                    object_id,
+                    documents,
+                    faction_graph=faction_graph,
+                    prepared=prepared,
+                    game=game,
+                    engine_spawned_banner_carrier=engine_spawned_banner_carrier,
+                ),
             )
             gameplay = draft.get("gameplay")
             banner = (
@@ -1472,6 +1895,37 @@ def _convert_one_plan_object(
     return row, artifacts
 
 
+def _resolve_plan_row_cache(
+    state_root: Path | None, effective_root: Path
+) -> FactionPlanRowCache | None:
+    """Durable plan-row cache root, or ``None`` when no durable root is known.
+
+    Mirrors the object cache's rule exactly: never fall back to the working
+    directory, and never let the ambient ``OPENBFME_IMPORT_ROOT`` of the pytest
+    gate point a synthetic conversion at durable retail entries.
+    """
+
+    if plan_cache_disabled():
+        return None
+    shared = os.environ.get("OPENBFME_SHARED_CACHE", "").strip()
+    import_root = os.environ.get("OPENBFME_IMPORT_ROOT", "").strip()
+    try:
+        if state_root is not None:
+            return FactionPlanRowCache(default_plan_cache_root(Path(state_root)))
+        if shared:
+            return FactionPlanRowCache(default_plan_cache_root(Path(shared)))
+        if import_root:
+            resolved_import_root = Path(import_root).expanduser().resolve()
+            resolved_effective_root = Path(effective_root).expanduser().resolve()
+            if resolved_effective_root.is_relative_to(resolved_import_root):
+                return FactionPlanRowCache(
+                    default_plan_cache_root(resolved_import_root)
+                )
+    except OSError:
+        return None
+    return None
+
+
 def build_faction_conversion(
     faction_graph: Mapping[str, object],
     documents: Mapping[str, bytes],
@@ -1482,6 +1936,10 @@ def build_faction_conversion(
     catalog: InstallCatalog | None = None,
     state_root: Path | None = None,
     convert_jobs: int | None = None,
+    object_selector: Callable[[str], bool] | None = None,
+    produce_shard: bool = False,
+    shard_index: int | None = None,
+    shard_count: int | None = None,
     game: str = "bfme2",
 ) -> dict[str, object]:
     """Convert every supported plan row and account for the rest, fail-closed.
@@ -1492,43 +1950,31 @@ def build_faction_conversion(
     compiled descriptor, recipe, and runtime document for persistence.
     Visual-closure documents are computed for recipes but are not written or
     cached (re-derivable from effective assets + descriptor).
+
+    With ``produce_shard`` the return value is a *shard payload* — this shard's
+    (plan row, coverage row) pairs plus the faction-wide scaffold every shard
+    must agree on — instead of a coverage document. A shard's coverage would be
+    partial and must never be mistaken for a publishable one, so the two return
+    shapes are deliberately different documents with different schemas.
     """
 
     from .progress import emit as progress_emit
 
-    progress_emit("faction-plan", "building faction import plan")
-    plan = build_faction_import_plan(
-        faction_graph,
-        documents,
-        catalog_identity_sha256=catalog_identity_sha256,
-        game=game,
-    )
-    # Fail-closed on compiler-init failure (mirrors build_faction_import_plan):
-    # a corpus the shared compiler cannot index — e.g. RotWK's repeated
-    # ChildObject declarations that trip the strict global object index — must
-    # gap every object, never abort the whole convert batch.
-    try:
-        prepared = prepare_playable_unit_compiler(documents)
-        preparation_error: str | None = None
-    except PlayableUnitCompilerError as exc:
-        prepared = None
-        preparation_error = str(exc)
-    target = plan["target"]
-    assert isinstance(target, Mapping)
-    template = str(target["playerTemplate"])
-    faction = str(target["faction"])
-    spawned_policy = implicit_object_roots(template, game=game)
-    spawned = tuple(object_id for object_id, _reason in spawned_policy)
-    spawned_roles = {
-        object_id.casefold(): reason for object_id, reason in spawned_policy
-    }
-    wall_templates = _wall_template_roots(faction_graph)
-    source_null_sets = _source_null_command_set_ids(faction_graph)
+    if produce_shard and (
+        object_selector is None or shard_index is None or shard_count is None
+    ):
+        raise ValueError(
+            "produce_shard requires an object_selector, a shard index and a count"
+        )
 
-    plan_objects = list(plan["objects"])
-    document_hashes = {
-        path: hashlib.sha256(payload).hexdigest() for path, payload in documents.items()
-    }
+    # Identity material the plan-row cache keys on. Computed before the plan so
+    # the plan stage can consult its durable cache; the convert loop below
+    # reuses the very same values, so this is a move, not a new cost.
+    #
+    # These are functions of the CORPUS, not of the faction, so a pooled worker
+    # that handles all seven factions recomputed the same two values seven
+    # times. Memoized per corpus object (§14 cut 2).
+    document_hashes, full_corpus_closure = _corpus_digests(documents)
     # Keep every manifest row outside data/ini broad. Rows inside data/ini also
     # have compiler-authored closures, while the catalog identity remains the
     # safety backstop until those hand-curated closures are complete.
@@ -1542,6 +1988,76 @@ def build_faction_conversion(
             allow_nan=False,
         ).encode("utf-8")
     ).hexdigest()
+
+    plan_row_cache = _resolve_plan_row_cache(state_root, effective_root)
+
+    progress_emit("faction-plan", "building faction import plan")
+    ordered_object_ids: list[str] = []
+    plan = build_faction_import_plan(
+        faction_graph,
+        documents,
+        catalog_identity_sha256=catalog_identity_sha256,
+        ordered_ids_out=ordered_object_ids,
+        game=game,
+        object_selector=object_selector,
+        row_cache=plan_row_cache,
+        row_cache_assets_fp=assets_fp,
+        row_cache_graph_identity=graph_identity_sha256,
+        document_hashes=document_hashes,
+        full_corpus_closure=full_corpus_closure,
+    )
+    if plan_row_cache is not None:
+        # A refused entry is recompiled exactly like an absent one, so report
+        # the recompiled total rather than letting "refused" read as "skipped".
+        recompiled = plan_row_cache.misses + plan_row_cache.refusals
+        progress_emit(
+            "faction-plan",
+            f"plan rows: {plan_row_cache.hits} cached, "
+            f"{recompiled} recompiled "
+            f"({plan_row_cache.misses} absent, "
+            f"{plan_row_cache.refusals} refused on identity)",
+            extra={
+                "planRowCacheHits": plan_row_cache.hits,
+                "planRowCacheMisses": plan_row_cache.misses,
+                "planRowCacheRefusals": plan_row_cache.refusals,
+                "planRowCacheRecompiled": recompiled,
+            },
+        )
+    # Fail-closed on compiler-init failure (mirrors build_faction_import_plan):
+    # a corpus the shared compiler cannot index — e.g. RotWK's repeated
+    # ChildObject declarations that trip the strict global object index — must
+    # gap every object, never abort the whole convert batch.
+    try:
+        prepared = prepare_playable_unit_compiler(documents)
+        preparation_error: str | None = None
+    except PlayableUnitCompilerError as exc:
+        prepared = None
+        preparation_error = str(exc)
+    target = plan["target"]
+    assert isinstance(target, Mapping)
+    plan_summary = plan["summary"]
+    assert isinstance(plan_summary, Mapping)
+    plan_summary_unresolved = int(plan_summary["unresolvedLeafCount"])
+    template = str(target["playerTemplate"])
+    faction = str(target["faction"])
+    spawned_policy = implicit_object_roots(template, game=game)
+    spawned = tuple(object_id for object_id, _reason in spawned_policy)
+    spawned_roles = {
+        object_id.casefold(): reason for object_id, reason in spawned_policy
+    }
+    wall_templates = _wall_template_roots(faction_graph)
+    source_null_sets = _source_null_command_set_ids(faction_graph)
+
+    plan_objects = list(plan["objects"])
+    if object_selector is not None:
+        # Cache-warming shard. The coverage document this produces is partial
+        # by construction and must never be published; the parent recomputes
+        # the whole faction and finds these objects cached.
+        plan_objects = [
+            row
+            for row in plan_objects
+            if isinstance(row, Mapping) and object_selector(str(row.get("id", "")))
+        ]
     numeric_defines_sha256 = (
         hashlib.sha256(
             json.dumps(
@@ -1593,20 +2109,7 @@ def build_faction_conversion(
                     default_cache_root(resolved_import_root)
                 )
 
-    try:
-        workers = int(
-            convert_jobs
-            if convert_jobs is not None
-            else os.environ.get("OPENBFME_FACTION_CONVERT_JOBS", "0")
-        )
-    except ValueError:
-        workers = 0
-    if workers <= 0:
-        # Convert is CPU-bound (visual closure + compilers). Cap at 16 so a
-        # 32-thread host does not thrash the object-cache disk and GIL-heavy
-        # JSON paths; override with OPENBFME_FACTION_CONVERT_JOBS.
-        cpu = os.cpu_count() or 4
-        workers = max(1, min(16, cpu))
+    workers = resolve_convert_worker_count(convert_jobs)
 
     progress_emit(
         "faction-convert",
@@ -1647,6 +2150,7 @@ def build_faction_conversion(
                 graph_identity_sha256=graph_identity_sha256,
                 numeric_defines_sha256=numeric_defines_sha256,
                 document_hashes=document_hashes,
+                full_corpus_closure=full_corpus_closure,
                 game=game,
             )
         except Exception as exc:  # noqa: BLE001 — fail-closed per object, not batch
@@ -1720,14 +2224,80 @@ def build_faction_conversion(
 
     convert_loop_ms = int((time.perf_counter() - convert_loop_started) * 1000)
     rows = [row for row in results if isinstance(row, dict)]
+    # Every consumer has run. Release the descriptors this faction's plan stage
+    # handed forward — a cache-hit or excluded object never consumed its entry.
+    clear_descriptor_memo()
 
+    if produce_shard:
+        # Option C: return this shard's finished rows instead of a (partial and
+        # therefore unpublishable) coverage document. The parent assembles.
+        if len(rows) != len(plan_objects):
+            raise RuntimeError(
+                "convert shard produced "
+                f"{len(rows)} rows for {len(plan_objects)} plan rows"
+            )
+        return {
+            "schema": CONVERT_SHARD_SCHEMA,
+            "schemaVersion": CONVERT_SHARD_SCHEMA_VERSION,
+            "shardIndex": int(shard_index or 0),
+            "shardCount": int(shard_count or 0),
+            "faction": faction,
+            "playerTemplate": template,
+            "catalogIdentitySha256": str(plan["inputs"]["catalogIdentitySha256"]),
+            "factionGraphInputSetSha256": str(
+                plan["inputs"]["factionGraphInputSetSha256"]
+            ),
+            "graphSha256": graph_identity_sha256,
+            "unresolvedLeafCount": int(plan_summary_unresolved),
+            "compilerIdentityToken": compiler_token,
+            "orderedObjectIds": list(ordered_object_ids),
+            "rows": [
+                {"plan": dict(plan_row), "coverage": row}
+                for plan_row, row in zip(plan_objects, rows)
+            ],
+            "convertLoopMs": convert_loop_ms,
+            "convertWorkers": workers,
+        }
+
+    return assemble_faction_coverage(
+        plan_target=target,
+        plan_inputs=plan["inputs"],
+        plan_aggregate_sha256=str(plan["aggregateSha256"]),
+        unresolved_leaf_count=plan_summary_unresolved,
+        rows=rows,
+        compiler_token=compiler_token,
+        convert_loop_ms=convert_loop_ms,
+        convert_workers=workers,
+    )
+
+
+def assemble_faction_coverage(
+    *,
+    plan_target: Mapping[str, object],
+    plan_inputs: Mapping[str, object],
+    plan_aggregate_sha256: str,
+    unresolved_leaf_count: int,
+    rows: list[dict[str, object]],
+    compiler_token: str,
+    convert_loop_ms: int,
+    convert_workers: int,
+) -> dict[str, object]:
+    """Seal converted object rows into the faction coverage document.
+
+    Split out of ``build_faction_conversion`` so a parent assembling rows that
+    worker processes produced runs *this* code, not a second implementation of
+    it. Row order is the caller's responsibility and must already be sorted by
+    object id.
+    """
+
+    target = plan_target
+    unresolved = int(unresolved_leaf_count)
+    workers = convert_workers
+    plan = {"inputs": plan_inputs, "aggregateSha256": plan_aggregate_sha256}
     counts = {
         key: sum(row["status"] == key for row in rows)
         for key in ("converted", "excluded", "converter-gap")
     }
-    plan_summary = plan["summary"]
-    assert isinstance(plan_summary, Mapping)
-    unresolved = int(plan_summary["unresolvedLeafCount"])
     cache_hits = sum(1 for row in rows if row.get("cacheHit"))
     object_ms = [
         int(row["convertElapsedMs"])
@@ -1808,6 +2378,197 @@ def build_faction_conversion(
     return coverage
 
 
+class ShardAssemblyError(RuntimeError):
+    """A set of convert shards cannot be assembled into a faction document."""
+
+
+def assemble_faction_convert_shards(
+    shards: Sequence[Mapping[str, object]],
+    *,
+    faction: str,
+    graph_sha256: str,
+    shard_count: int,
+    catalog_identity_sha256: str | None = None,
+    compiler_identity_token: str | None = None,
+) -> dict[str, object]:
+    """Merge worker-produced rows into one coverage document, deterministically.
+
+    Every check here exists because the parent is no longer the process that
+    produced the content. It is the process that *proves* the content is whole:
+
+    * exactly ``shard_count`` shards, indices ``0..N-1``, each once;
+    * every shard agrees on the faction scaffold, including the census graph
+      digest — which keys both the plan-row and object caches — and on the
+      complete ordered object id list;
+    * that digest also equals ``graph_sha256``, which the parent derived itself
+      from the graph it shipped, so unanimous-but-wrong workers are refused;
+    * where the caller supplies them, the catalog identity and the compiler
+      identity token equal the *parent's own* — unanimity alone would happily
+      admit a whole pool running different importer bytes than the parent, which
+      is precisely what a mid-run source edit produces;
+    * the merged rows cover the ordered id list exactly once, no id owned by
+      two shards and none missing.
+
+    Output order is a stable sort by object id, so it does not depend on which
+    shard finished first, on the shard count, or on the order the shard files
+    are handed to this function.
+
+    Any failure raises; the caller falls back to the serial parent-recompute
+    path, which is the oracle.
+    """
+
+    if shard_count <= 0:
+        raise ShardAssemblyError("shard_count must be positive")
+    if len(shards) != shard_count:
+        raise ShardAssemblyError(
+            f"{faction}: expected {shard_count} shards, received {len(shards)}"
+        )
+    indices: set[int] = set()
+    scaffold: dict[str, object] | None = None
+    scaffold_keys = (
+        "faction",
+        "playerTemplate",
+        "catalogIdentitySha256",
+        "factionGraphInputSetSha256",
+        "graphSha256",
+        "unresolvedLeafCount",
+        "compilerIdentityToken",
+        "orderedObjectIds",
+    )
+    owner_of: dict[str, int] = {}
+    pairs: list[tuple[dict[str, object], dict[str, object]]] = []
+    loop_ms = 0
+    workers = 0
+    for shard in shards:
+        if not isinstance(shard, Mapping):
+            raise ShardAssemblyError(f"{faction}: shard payload is not an object")
+        if (
+            shard.get("schema") != CONVERT_SHARD_SCHEMA
+            or shard.get("schemaVersion") != CONVERT_SHARD_SCHEMA_VERSION
+        ):
+            raise ShardAssemblyError(f"{faction}: shard schema drift")
+        index = shard.get("shardIndex")
+        if not isinstance(index, int) or isinstance(index, bool):
+            raise ShardAssemblyError(f"{faction}: shard index is not an integer")
+        if shard.get("shardCount") != shard_count:
+            raise ShardAssemblyError(f"{faction}: shard #{index} disagrees on count")
+        if not 0 <= index < shard_count or index in indices:
+            raise ShardAssemblyError(f"{faction}: duplicate or out-of-range shard {index}")
+        indices.add(index)
+        current = {key: shard.get(key) for key in scaffold_keys}
+        if scaffold is None:
+            scaffold = current
+        elif current != scaffold:
+            moved = [
+                key for key in scaffold_keys if current[key] != scaffold[key]
+            ]
+            raise ShardAssemblyError(
+                f"{faction}: shards disagree on {', '.join(moved)}"
+            )
+        rows = shard.get("rows")
+        if not isinstance(rows, list):
+            raise ShardAssemblyError(f"{faction}: shard #{index} carries no rows")
+        for entry in rows:
+            if not isinstance(entry, Mapping):
+                raise ShardAssemblyError(f"{faction}: shard #{index} row is not an object")
+            plan_row = entry.get("plan")
+            coverage_row = entry.get("coverage")
+            if not isinstance(plan_row, dict) or not isinstance(coverage_row, dict):
+                raise ShardAssemblyError(
+                    f"{faction}: shard #{index} row is not a plan/coverage pair"
+                )
+            object_id = plan_row.get("id")
+            if not isinstance(object_id, str) or not object_id:
+                raise ShardAssemblyError(f"{faction}: shard #{index} row has no id")
+            if coverage_row.get("id") != object_id:
+                raise ShardAssemblyError(
+                    f"{faction}: shard #{index} pairs {object_id} with "
+                    f"{coverage_row.get('id')!r}"
+                )
+            previous = owner_of.get(object_id)
+            if previous is not None:
+                raise ShardAssemblyError(
+                    f"{faction}: {object_id} produced by shards {previous} and {index}"
+                )
+            owner_of[object_id] = index
+            pairs.append((dict(plan_row), dict(coverage_row)))
+        loop_ms = max(loop_ms, int(shard.get("convertLoopMs") or 0))
+        workers += int(shard.get("convertWorkers") or 0)
+    assert scaffold is not None
+    # The census graph names the faction as retail spells it ("Men"); callers
+    # hold the discovered short name ("men"). Same faction, different case.
+    if str(scaffold["faction"]).casefold() != faction.casefold():
+        raise ShardAssemblyError(
+            f"{faction}: shards produced faction {scaffold['faction']!r}"
+        )
+    if str(scaffold["graphSha256"]) != graph_sha256:
+        # Never silent key drift: the digest that keys the plan-row and object
+        # caches must be the one the parent shipped.
+        raise ShardAssemblyError(
+            f"{faction}: shard graph digest {scaffold['graphSha256']} != "
+            f"shipped {graph_sha256}"
+        )
+    if (
+        catalog_identity_sha256 is not None
+        and str(scaffold["catalogIdentitySha256"]) != catalog_identity_sha256
+    ):
+        raise ShardAssemblyError(
+            f"{faction}: shards used catalog identity "
+            f"{scaffold['catalogIdentitySha256']} != the parent's "
+            f"{catalog_identity_sha256}"
+        )
+    if (
+        compiler_identity_token is not None
+        and str(scaffold["compilerIdentityToken"]) != compiler_identity_token
+    ):
+        # A pool that unanimously ran different importer bytes than the parent
+        # is exactly what editing a source file mid-run produces.
+        raise ShardAssemblyError(
+            f"{faction}: shards ran compiler identity "
+            f"{scaffold['compilerIdentityToken']} != the parent's "
+            f"{compiler_identity_token}"
+        )
+    ordered_ids = scaffold["orderedObjectIds"]
+    if not isinstance(ordered_ids, list) or not all(
+        isinstance(value, str) and value for value in ordered_ids
+    ):
+        raise ShardAssemblyError(f"{faction}: shard object id list is invalid")
+    if sorted(owner_of) != sorted(ordered_ids):
+        missing = sorted(set(ordered_ids) - set(owner_of))
+        extra = sorted(set(owner_of) - set(ordered_ids))
+        raise ShardAssemblyError(
+            f"{faction}: shards do not cover the faction "
+            f"(missing={missing[:5]} extra={extra[:5]})"
+        )
+    # Stable sort by object id: identical to the serial parent's plan order,
+    # and independent of completion order and shard count.
+    pairs.sort(key=lambda item: (str(item[0]["id"]).casefold(), str(item[0]["id"])))
+    plan = finalize_faction_import_plan(
+        player_template=str(scaffold["playerTemplate"]),
+        faction=str(scaffold["faction"]),
+        catalog_identity_sha256=str(scaffold["catalogIdentitySha256"]),
+        faction_graph_input_set_sha256=str(scaffold["factionGraphInputSetSha256"]),
+        unresolved_leaf_count=int(scaffold["unresolvedLeafCount"]),
+        objects=[plan_row for plan_row, _ in pairs],
+    )
+    plan_target = plan["target"]
+    assert isinstance(plan_target, Mapping)
+    plan_inputs = plan["inputs"]
+    assert isinstance(plan_inputs, Mapping)
+    return assemble_faction_coverage(
+        plan_target=plan_target,
+        plan_inputs=plan_inputs,
+        plan_aggregate_sha256=str(plan["aggregateSha256"]),
+        unresolved_leaf_count=int(scaffold["unresolvedLeafCount"]),
+        rows=[coverage_row for _, coverage_row in pairs],
+        compiler_token=str(scaffold["compilerIdentityToken"]),
+        # Ephemeral, excluded from every digest: the slowest shard's loop is
+        # the closest thing to a wall time, and the worker total is the fleet.
+        convert_loop_ms=loop_ms,
+        convert_workers=workers,
+    )
+
+
 def load_retail_string_catalog(catalog: InstallCatalog):
     """Parse the ``data/lotr.str`` this catalog resolves, or ``None``.
 
@@ -1839,20 +2600,7 @@ def load_retail_string_catalog(catalog: InstallCatalog):
     )
 
 
-def convert_faction_import(
-    catalog: InstallCatalog,
-    effective_root: Path,
-    faction: str,
-    *,
-    artifact_writer: Callable[[str, str, Mapping[str, object]], None] | None = None,
-    state_root: Path | None = None,
-    convert_jobs: int | None = None,
-    game: str = "bfme2",
-) -> dict[str, object]:
-    """Convert one faction's supported objects and account for every other row."""
-
-    from .progress import emit as progress_emit
-
+def _assert_convert_game_policy(catalog: InstallCatalog, game: str) -> str:
     source_policy = catalog.source_policy
     game_id = game.casefold().strip()
     if game_id == "bfme2":
@@ -1872,20 +2620,222 @@ def convert_faction_import(
         raise ValueError(
             f"import-faction conversion does not support game: {game!r}"
         )
+    return game_id
+
+
+def faction_census_key_material(
+    catalog: InstallCatalog,
+    effective_root: Path,
+    spec: tuple[str, str, str],
+    *,
+    game: str,
+) -> dict[str, str]:
+    """Every input census reads, as durable cache key material.
+
+    The installed catalog, the sealed asset tree, the faction policy rows for
+    this template, and the bytes of the code that does the discovery.
+    """
+
+    roots = list(implicit_object_roots(spec[1], game=game))
+    return {
+        "faction": spec[0],
+        "game": game,
+        "catalog_identity_sha256": catalog.identity_sha256(),
+        "effective_root_fp": durable_effective_assets_fingerprint(effective_root),
+        "policy_fp": policy_roots_fingerprint(
+            spawned=[value for value, _ in roots],
+            spawned_roles={value: reason for value, reason in roots},
+            wall_templates=[
+                f"{a}={b}"
+                for a, b in source_null_mapped_image_textures(spec[1], game=game)
+            ],
+            source_null_sets=(
+                [f"cs:{a}={b}" for a, b in source_null_command_sets(spec[1], game=game)]
+                + [f"music:{a}={b}" for a, b in music_roots(spec[1], game=game)]
+                + [f"template:{spec[1]}", f"side:{spec[2]}"]
+            ),
+        ),
+        "census_identity": str(compiler_dependency_identity("census")["sha256"]),
+    }
+
+
+def faction_census_graph(
+    catalog: InstallCatalog,
+    effective_root: Path,
+    faction: str,
+    *,
+    state_root: Path | None = None,
+    game: str = "bfme2",
+    build_if_missing: bool = True,
+) -> tuple[tuple[str, str, str], dict[str, object] | None]:
+    """Resolve the faction spec and its census graph through the durable cache.
+
+    With ``build_if_missing=False`` a cache miss returns ``None`` instead of
+    paying the ~17 s census. The pooled parent uses that to probe the coverage
+    short-circuit without ever taking census onto its own serial critical path.
+    """
+
+    _assert_convert_game_policy(catalog, game)
+    spec = _faction_spec(catalog, faction)
+    census_cache: FactionCensusCache | None = None
+    if state_root is not None and not census_cache_disabled():
+        try:
+            census_cache = FactionCensusCache(
+                default_census_cache_root(Path(state_root))
+            )
+        except OSError:
+            census_cache = None
+
+    def _build() -> dict[str, object]:
+        return census_playable_faction(
+            catalog,
+            player_template=spec[1],
+            game=game,
+            expected_side=spec[2],
+            implicit_object_roots=implicit_object_roots(spec[1], game=game),
+            source_null_mapped_image_textures=source_null_mapped_image_textures(
+                spec[1], game=game
+            ),
+            source_null_command_sets=source_null_command_sets(spec[1], game=game),
+            music_roots=music_roots(spec[1], game=game),
+        )
+
+    if not build_if_missing:
+        if census_cache is None:
+            return spec, None
+        from .faction_census_cache import census_cache_key
+
+        return spec, census_cache.get(
+            census_cache_key(
+                **faction_census_key_material(
+                    catalog, effective_root, spec, game=game
+                )
+            )
+        )
+    return spec, load_or_build_census(
+        census_cache,
+        lambda: faction_census_key_material(
+            catalog, effective_root, spec, game=game
+        ),
+        _build,
+    )
+
+
+def faction_coverage_components(
+    catalog: InstallCatalog,
+    effective_root: Path,
+    spec: tuple[str, str, str],
+    graph: Mapping[str, object],
+    *,
+    artifact_root: Path | None,
+    game: str,
+) -> dict[str, object]:
+    """Key material for the per-faction aggregate short-circuit.
+
+    Every *input* to the plan and convert stages, and nothing that is an output
+    of them. Shared with the pooled parent so the entry a pooled run stores is
+    addressed exactly as a serial run would address it.
+    """
+
+    return {
+        "faction": spec[0].casefold(),
+        "game": game.casefold().strip(),
+        "catalogIdentitySha256": str(catalog.identity_sha256()),
+        "effectiveAssetsFp": durable_effective_assets_fingerprint(effective_root),
+        "graphSha256": graph_digest(graph),
+        "policyFp": faction_census_key_material(
+            catalog, effective_root, spec, game=game
+        )["policy_fp"],
+        # An entry stored by a run that wrote no artifacts must never satisfy a
+        # run that requires them.
+        "artifactsExpected": artifact_root is not None,
+        "laneIdentities": {
+            lane: str(compiler_dependency_identity(lane)["sha256"])
+            for lane in sorted(_COMPILER_DEPENDENCY_MANIFESTS)
+        },
+    }
+
+
+def convert_faction_import(
+    catalog: InstallCatalog,
+    effective_root: Path,
+    faction: str,
+    *,
+    artifact_writer: Callable[[str, str, Mapping[str, object]], None] | None = None,
+    state_root: Path | None = None,
+    convert_jobs: int | None = None,
+    object_selector: Callable[[str], bool] | None = None,
+    artifact_root: Path | None = None,
+    census_graph: Mapping[str, object] | None = None,
+    produce_shard: bool = False,
+    shard_index: int | None = None,
+    shard_count: int | None = None,
+    game: str = "bfme2",
+) -> dict[str, object]:
+    """Convert one faction's supported objects and account for every other row.
+
+    ``census_graph`` short-circuits census entirely for a caller that already
+    holds a digest-verified graph (the pooled Option C worker). ``produce_shard``
+    returns this shard's rows for the parent to assemble instead of a coverage
+    document.
+    """
+
+    from .progress import emit as progress_emit
+
+    game_id = _assert_convert_game_policy(catalog, game)
+    if produce_shard and (
+        object_selector is None or shard_index is None or shard_count is None
+    ):
+        raise ValueError("produce_shard requires object_selector, index and count")
     progress_emit("census", f"census playable faction: {faction}")
     spec = _faction_spec(catalog, faction)
-    graph = census_playable_faction(
-        catalog,
-        player_template=spec[1],
-        game=game,
-        expected_side=spec[2],
-        implicit_object_roots=implicit_object_roots(spec[1], game=game),
-        source_null_mapped_image_textures=source_null_mapped_image_textures(
-            spec[1], game=game
-        ),
-        source_null_command_sets=source_null_command_sets(spec[1], game=game),
-        music_roots=music_roots(spec[1], game=game),
-    )
+
+    def _build_census() -> dict[str, object]:
+        return census_playable_faction(
+            catalog,
+            player_template=spec[1],
+            game=game,
+            expected_side=spec[2],
+            implicit_object_roots=implicit_object_roots(spec[1], game=game),
+            source_null_mapped_image_textures=source_null_mapped_image_textures(
+                spec[1], game=game
+            ),
+            source_null_command_sets=source_null_command_sets(spec[1], game=game),
+            music_roots=music_roots(spec[1], game=game),
+        )
+
+    def _census_key_material() -> dict[str, str]:
+        return faction_census_key_material(
+            catalog, effective_root, spec, game=game
+        )
+
+    census_cache: FactionCensusCache | None = None
+    if census_graph is not None:
+        # The caller shipped a graph it verified against the parent's digest.
+        # Re-running census here would only re-derive the same object slower.
+        graph = dict(census_graph)
+        progress_emit("census", f"census {spec[0]}: supplied by the caller")
+    else:
+        if state_root is not None and not census_cache_disabled():
+            try:
+                census_cache = FactionCensusCache(
+                    default_census_cache_root(Path(state_root))
+                )
+            except OSError:
+                census_cache = None
+        graph = load_or_build_census(census_cache, _census_key_material, _build_census)
+    if census_cache is not None:
+        progress_emit(
+            "census",
+            f"census {spec[0]}: "
+            + ("cached" if census_cache.hits else "computed")
+            + (" (refused stale entry)" if census_cache.refusals else ""),
+            extra={
+                "censusCacheHits": census_cache.hits,
+                "censusCacheMisses": census_cache.misses,
+                "censusCacheRefusals": census_cache.refusals,
+            },
+        )
     progress_emit("faction-convert", f"convert faction objects: {faction}")
     # The owner-selected RotWK oracle is the layered effective tree itself.
     # Passing the synthetic install catalog here used to replace those bytes
@@ -2048,7 +2998,73 @@ def convert_faction_import(
                     )
                 ]
             graph["spellbookDefinitionAuthority"] = "layered-effective-assets"
-    return build_faction_conversion(
+    # ---- aggregate short-circuit -------------------------------------------
+    # Every input to the plan and convert stages, and nothing that is an output
+    # of them. ``documents`` is a pure function of (effective tree, catalog),
+    # so the assets fingerprint and catalog identity already cover the corpus —
+    # no second corpus hash is needed here.
+    coverage_cache: FactionCoverageCache | None = None
+    # A shard worker converts a subset, so it must neither consume nor produce
+    # a whole-faction coverage entry. Without this guard a warm entry made a
+    # --warm-shard worker return the full faction and do no work at all, while
+    # still reporting objects=61 converted=61.
+    if (
+        object_selector is None
+        and state_root is not None
+        and not coverage_cache_disabled()
+    ):
+        try:
+            coverage_cache = FactionCoverageCache(
+                default_coverage_cache_root(Path(state_root))
+            )
+        except OSError:
+            coverage_cache = None
+    coverage_components: dict[str, object] = {}
+    coverage_key = ""
+    if coverage_cache is not None:
+        try:
+            coverage_components = faction_coverage_components(
+                catalog,
+                effective_root,
+                spec,
+                graph,
+                artifact_root=artifact_root,
+                game=game,
+            )
+            coverage_key = coverage_cache_key(coverage_components)
+        except (TypeError, ValueError, OSError):
+            # An input identity we cannot serialise is an input identity we
+            # cannot key on. Fall through to the full walk.
+            coverage_cache = None
+            coverage_components = {}
+            coverage_key = ""
+    if coverage_cache is not None:
+        cached_coverage = coverage_cache.get(
+            coverage_key,
+            components=coverage_components,
+            artifact_root=artifact_root,
+        )
+        if cached_coverage is not None:
+            progress_emit(
+                "faction-convert",
+                f"coverage short-circuit: {spec[0]} reused "
+                "(every plan and object input identity matched)",
+                extra={"coverageShortCircuit": True},
+            )
+            return dict(cached_coverage)
+        progress_emit(
+            "faction-convert",
+            f"coverage short-circuit miss for {spec[0]}: "
+            + (coverage_cache.refusals[-1] if coverage_cache.refusals else "unknown"),
+            extra={
+                "coverageShortCircuit": False,
+                "coverageShortCircuitReason": (
+                    coverage_cache.refusals[-1] if coverage_cache.refusals else ""
+                ),
+            },
+        )
+
+    coverage = build_faction_conversion(
         graph,
         documents,
         effective_root,
@@ -2057,19 +3073,83 @@ def convert_faction_import(
         catalog=catalog,
         state_root=state_root,
         convert_jobs=convert_jobs,
+        object_selector=object_selector,
+        produce_shard=produce_shard,
+        shard_index=shard_index,
+        shard_count=shard_count,
         game=game,
     )
+    if produce_shard:
+        # A shard payload, not a coverage document.
+        return coverage
+    if coverage_cache is not None:
+        # ``coverage_cache`` is already None for a sharded run, so a partial
+        # coverage document can never be stored.
+        coverage_cache.put(
+            coverage_key,
+            components=coverage_components,
+            coverage=coverage,
+            artifact_root=artifact_root,
+        )
+    return coverage
+
+
+def store_faction_coverage_shortcircuit(
+    catalog: InstallCatalog,
+    effective_root: Path,
+    spec: tuple[str, str, str],
+    graph: Mapping[str, object],
+    coverage: Mapping[str, object],
+    *,
+    state_root: Path | None,
+    artifact_root: Path | None,
+    game: str,
+) -> bool:
+    """Store an assembled coverage document under the short-circuit identity.
+
+    The pooled parent produced this document from worker rows rather than from
+    its own walk, so it is stored under exactly the components a serial run
+    would compute — a later serial run must be able to consume it and a later
+    pooled run must be able to skip the pool entirely.
+    """
+
+    if state_root is None or coverage_cache_disabled():
+        return False
+    try:
+        cache = FactionCoverageCache(default_coverage_cache_root(Path(state_root)))
+        components = faction_coverage_components(
+            catalog, effective_root, spec, graph, artifact_root=artifact_root, game=game
+        )
+        cache.put(
+            coverage_cache_key(components),
+            components=components,
+            coverage=coverage,
+            artifact_root=artifact_root,
+        )
+    except (OSError, TypeError, ValueError):
+        return False
+    return True
 
 
 __all__ = [
+    "CONVERT_SHARD_SCHEMA",
+    "CONVERT_SHARD_SCHEMA_VERSION",
     "COVERAGE_SCHEMA",
     "COVERAGE_SCHEMA_VERSION",
     "SCHEMA",
     "SCHEMA_VERSION",
+    "ShardAssemblyError",
+    "assemble_faction_convert_shards",
+    "assemble_faction_coverage",
     "build_faction_conversion",
     "build_faction_import_plan",
     "convert_faction_import",
     "coverage_digest_payload",
+    "faction_census_graph",
+    "faction_census_key_material",
+    "faction_coverage_components",
+    "finalize_faction_import_plan",
     "load_retail_string_catalog",
     "plan_faction_import",
+    "store_faction_coverage_shortcircuit",
 ]

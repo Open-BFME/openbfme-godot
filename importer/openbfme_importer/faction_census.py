@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import hashlib
 from pathlib import Path
 import re
+import threading
 from typing import Any, Iterable
 
 from .big import sha256_file
@@ -179,6 +180,13 @@ def _effective_ini_documents(catalog: InstallCatalog) -> list[_SourceDocument]:
 
 
 def _effective_entries(catalog: InstallCatalog) -> dict[str, CatalogEntry]:
+    # Catalogs are immutable after build/load (see ``identity_sha256``), and a
+    # seven-faction convert batch asks for this precedence sort dozens of
+    # times over ~50k entries. Memoize on the catalog instance exactly as the
+    # identity digest does.
+    cached = getattr(catalog, "_effective_entries_memo", None)
+    if isinstance(cached, dict):
+        return cached
     winners: dict[str, CatalogEntry] = {}
     for entry in sorted(
         catalog.entries,
@@ -189,6 +197,11 @@ def _effective_entries(catalog: InstallCatalog) -> dict[str, CatalogEntry]:
         ),
     ):
         winners.setdefault(entry.key, entry)
+    try:
+        object.__setattr__(catalog, "_effective_entries_memo", winners)
+    except (AttributeError, TypeError):
+        # A slotted or otherwise closed catalog simply does not memoize.
+        pass
     return winners
 
 
@@ -701,7 +714,44 @@ def _is_playable_template(block: IniBlock) -> bool:
     )
 
 
+_DISCOVERY_MEMO: dict[int, tuple[InstallCatalog, tuple["PlayableFaction", ...]]] = {}
+_DISCOVERY_MEMO_LOCK = threading.Lock()
+
+
+def clear_playable_faction_discovery_memo() -> None:
+    with _DISCOVERY_MEMO_LOCK:
+        _DISCOVERY_MEMO.clear()
+
+
 def discover_playable_factions(
+    catalog: InstallCatalog,
+) -> tuple[PlayableFaction, ...]:
+    """Discover playable factions, memoized per catalog OBJECT for this process.
+
+    Measured at **4.3 s per call** against the real RotWK catalog, and it was
+    called once per convert job plus three times per faction in the batch
+    parent — ~720 core-seconds of a pooled seven-faction run and ~90 s of the
+    parent's serial time, all recomputing the same answer.
+
+    The memo is keyed on the catalog object's identity and **holds a strong
+    reference to it**, so the id cannot be recycled underneath the entry while
+    the entry lives. That makes identity a sound key: a different catalog is a
+    different object, and the same object cannot change its PlayerTemplate
+    document without being rebuilt.
+    """
+
+    key = id(catalog)
+    with _DISCOVERY_MEMO_LOCK:
+        entry = _DISCOVERY_MEMO.get(key)
+        if entry is not None and entry[0] is catalog:
+            return entry[1]
+    discovered = _discover_playable_factions(catalog)
+    with _DISCOVERY_MEMO_LOCK:
+        _DISCOVERY_MEMO[key] = (catalog, discovered)
+    return discovered
+
+
+def _discover_playable_factions(
     catalog: InstallCatalog,
 ) -> tuple[PlayableFaction, ...]:
     """Discover playable factions from the effective PlayerTemplate document.

@@ -120,8 +120,12 @@ class PlayableUnitCompilerInputs:
     named_definition_cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] = field(
         default_factory=dict, hash=False, compare=False, repr=False
     )
-    cache_lock: threading.Lock = field(
-        default_factory=threading.Lock, hash=False, compare=False, repr=False
+    # A Condition (still usable as a plain lock by every existing ``with``
+    # site) so a concurrent miss on the same cache key waits for the first
+    # computation instead of repeating it. Each miss scans or decodes the
+    # whole document corpus, so N workers racing one key cost N full scans.
+    cache_lock: threading.Condition = field(
+        default_factory=threading.Condition, hash=False, compare=False, repr=False
     )
 
 
@@ -1023,6 +1027,59 @@ def _resolved_set_field(
     }
 
 
+class _CachePending:
+    """Marker for a cache slot a thread is currently computing."""
+
+    __slots__ = ("owner",)
+
+    def __init__(self) -> None:
+        self.owner = threading.get_ident()
+
+
+def _claim_cache_key(cache, key, lock) -> tuple[bool, object]:
+    """Return ``(claimed, value)`` for a single-flight cache slot.
+
+    ``claimed`` means this caller must compute the value and publish it with
+    :func:`_publish_cache_key`; otherwise ``value`` is the finished entry.
+    Each miss here scans or cp1252-decodes the entire document corpus, so N
+    convert/plan workers racing one key used to cost N full scans.
+
+    Two escapes keep this from ever being worse than the previous
+    check-then-compute: a plain (non-``Condition``) lock cannot wait, and a
+    thread that re-enters its own pending key recomputes instead of waiting on
+    itself.
+    """
+
+    condition = lock if isinstance(lock, threading.Condition) else None
+    with lock:
+        while True:
+            if key in cache:
+                value = cache[key]
+                if not isinstance(value, _CachePending):
+                    return False, value
+                if condition is None or value.owner == threading.get_ident():
+                    return True, None
+                condition.wait()
+                continue
+            if condition is not None:
+                cache[key] = _CachePending()
+            return True, None
+
+
+def _publish_cache_key(cache, key, lock, value, *, failed: bool = False) -> object:
+    condition = lock if isinstance(lock, threading.Condition) else None
+    with lock:
+        current = cache.get(key, None)
+        if failed:
+            if isinstance(current, _CachePending):
+                cache.pop(key, None)
+        elif key not in cache or isinstance(current, _CachePending):
+            cache[key] = value
+        if condition is not None:
+            condition.notify_all()
+        return value if failed else cache[key]
+
+
 def _flat_blocks_for_kind(
     documents: Mapping[str, bytes],
     kind: str,
@@ -1033,23 +1090,26 @@ def _flat_blocks_for_kind(
     """Parse every document for one flat INI kind once per prepared batch."""
 
     key = kind.casefold()
+    lock = None
     if cache is not None:
         lock = cache_lock or threading.Lock()
-        with lock:
-            if key in cache:
-                return cache[key]
-    blocks: list[IniBlock] = []
-    for payload in documents.values():
-        try:
-            blocks.extend(parse_flat_named_blocks(payload, kind))
-        except (UnicodeDecodeError, ValueError):
-            continue
-    packed = tuple(blocks)
-    if cache is not None:
-        lock = cache_lock or threading.Lock()
-        with lock:
-            cache.setdefault(key, packed)
-            return cache[key]
+        claimed, value = _claim_cache_key(cache, key, lock)
+        if not claimed:
+            return value  # type: ignore[return-value]
+    try:
+        blocks: list[IniBlock] = []
+        for payload in documents.values():
+            try:
+                blocks.extend(parse_flat_named_blocks(payload, kind))
+            except (UnicodeDecodeError, ValueError):
+                continue
+        packed = tuple(blocks)
+    except BaseException:
+        if cache is not None and lock is not None:
+            _publish_cache_key(cache, key, lock, None, failed=True)
+        raise
+    if cache is not None and lock is not None:
+        return _publish_cache_key(cache, key, lock, packed)  # type: ignore[return-value]
     return packed
 
 
@@ -1062,11 +1122,30 @@ def _named_definition_values(
     cache_lock: threading.Lock | None = None,
 ) -> dict[str, list[dict[str, object]]] | None:
     cache_key = (kind.casefold(), identifier.casefold())
+    lock = None
     if cache is not None:
         lock = cache_lock or threading.Lock()
-        with lock:
-            if cache_key in cache:
-                return cache[cache_key]
+        claimed, cached_value = _claim_cache_key(cache, cache_key, lock)
+        if not claimed:
+            return cached_value  # type: ignore[return-value]
+    try:
+        result = _named_definition_values_uncached(documents, kind, identifier)
+    except BaseException:
+        # A claimed slot whose computation raises must be released, or every
+        # concurrent waiter blocks in condition.wait() forever.
+        if cache is not None and lock is not None:
+            _publish_cache_key(cache, cache_key, lock, None, failed=True)
+        raise
+    if cache is not None and lock is not None:
+        return _publish_cache_key(cache, cache_key, lock, result)  # type: ignore[return-value]
+    return result
+
+
+def _named_definition_values_uncached(
+    documents: Mapping[str, bytes],
+    kind: str,
+    identifier: str,
+) -> dict[str, list[dict[str, object]]] | None:
     header = re.compile(
         rf"^{re.escape(kind)}\s+{re.escape(identifier)}\s*$", re.IGNORECASE
     )
@@ -1108,16 +1187,9 @@ def _named_definition_values(
                     }
                 )
     if not matches:
-        result = None
-    else:
-        semantic = {_digest(value): value for value in matches}
-        result = next(iter(semantic.values())) if len(semantic) == 1 else None
-    if cache is not None:
-        lock = cache_lock or threading.Lock()
-        with lock:
-            cache.setdefault(cache_key, result)
-            return cache[cache_key]
-    return result
+        return None
+    semantic = {_digest(value): value for value in matches}
+    return next(iter(semantic.values())) if len(semantic) == 1 else None
 
 
 def _default_nested_target(
@@ -1157,11 +1229,31 @@ def _weapon_damage_nuggets(
     """Authored nugget sub-blocks of one kind on one named Weapon definition."""
 
     cache_key = (f"weapon-nugget:{nugget_kind}", identifier.casefold())
+    lock = None
     if cache is not None:
         lock = cache_lock or threading.Lock()
-        with lock:
-            if cache_key in cache:
-                return cache[cache_key]
+        claimed, cached_value = _claim_cache_key(cache, cache_key, lock)
+        if not claimed:
+            return cached_value  # type: ignore[return-value]
+    try:
+        result = _weapon_damage_nuggets_uncached(
+            documents, identifier, nugget_kind=nugget_kind
+        )
+    except BaseException:
+        if cache is not None and lock is not None:
+            _publish_cache_key(cache, cache_key, lock, None, failed=True)
+        raise
+    if cache is not None and lock is not None:
+        return _publish_cache_key(cache, cache_key, lock, result)  # type: ignore[return-value]
+    return result
+
+
+def _weapon_damage_nuggets_uncached(
+    documents: Mapping[str, bytes],
+    identifier: str,
+    *,
+    nugget_kind: str = "damagenugget",
+) -> list[Mapping[str, object]] | None:
     header = re.compile(rf"^Weapon\s+{re.escape(identifier)}\s*$", re.IGNORECASE)
     matches: list[list[dict[str, object]]] = []
     for path, payload in sorted(documents.items(), key=lambda item: item[0].casefold()):
@@ -1213,16 +1305,9 @@ def _weapon_damage_nuggets(
                         }
                     )
     if not matches:
-        result = None
-    else:
-        semantic = {_digest(value): value for value in matches}
-        result = next(iter(semantic.values())) if len(semantic) == 1 else None
-    if cache is not None:
-        lock = cache_lock or threading.Lock()
-        with lock:
-            cache.setdefault(cache_key, result)
-            return cache[cache_key]
-    return result
+        return None
+    semantic = {_digest(value): value for value in matches}
+    return next(iter(semantic.values())) if len(semantic) == 1 else None
 
 
 def _base_weapon_damage(
@@ -3055,11 +3140,70 @@ def _required_document(documents: Mapping[str, bytes], path: str) -> bytes:
     raise PlayableUnitCompilerError(f"required effective source is missing: {path}")
 
 
+_PREPARED_MEMO: dict[str, PlayableUnitCompilerInputs] = {}
+_PREPARED_MEMO_LOCK = threading.Lock()
+# Two entries is enough for the production batch (one document view) plus one
+# alternate view; the corpus is large, so the memo stays deliberately tiny.
+_PREPARED_MEMO_LIMIT = 2
+
+
+def _documents_identity(documents: Mapping[str, bytes]) -> str:
+    """Content identity of a document view (path bytes + payload digests)."""
+
+    digest = hashlib.sha256()
+    for path, payload in sorted(
+        documents.items(), key=lambda item: (item[0].casefold(), item[0])
+    ):
+        digest.update(path.replace("\\", "/").casefold().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(payload).digest())
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def clear_prepared_playable_unit_compiler_memo() -> None:
+    """Drop the process-local prepared-corpus memo (test seam)."""
+
+    with _PREPARED_MEMO_LOCK:
+        _PREPARED_MEMO.clear()
+
+
 def prepare_playable_unit_compiler(
     documents: Mapping[str, bytes],
 ) -> PlayableUnitCompilerInputs:
-    """Parse the large shared corpus once for deterministic faction batches."""
+    """Parse the large shared corpus once for deterministic faction batches.
 
+    Memoized on the *content* identity of ``documents``: a seven-faction
+    convert batch feeds the identical document view to the plan stage and the
+    convert stage of every faction, and re-parsing that corpus fourteen times
+    (plus rebuilding the lazy per-kind indexes each time) was the single
+    largest fixed cost in the run. Identical bytes give an identical parse, so
+    the returned inputs are shared; they are read-only apart from their own
+    thread-safe lazy caches.
+    """
+
+    identity = _documents_identity(documents)
+    with _PREPARED_MEMO_LOCK:
+        hit = _PREPARED_MEMO.get(identity)
+    # Compilers fail closed when ``prepared.documents is not documents``; that
+    # guard is deliberate and stays. So the memo is only usable when the caller
+    # handed us the very mapping the memoized inputs were parsed from, which is
+    # what the batch does once ``spellbook_source_documents`` is itself shared.
+    if hit is not None and hit.documents is documents:
+        return hit
+    prepared = _prepare_playable_unit_compiler_uncached(documents)
+    with _PREPARED_MEMO_LOCK:
+        existing = _PREPARED_MEMO.get(identity)
+        if existing is None or existing.documents is not documents:
+            if existing is None and len(_PREPARED_MEMO) >= _PREPARED_MEMO_LIMIT:
+                _PREPARED_MEMO.pop(next(iter(_PREPARED_MEMO)))
+            _PREPARED_MEMO[identity] = prepared
+        return _PREPARED_MEMO[identity]
+
+
+def _prepare_playable_unit_compiler_uncached(
+    documents: Mapping[str, bytes],
+) -> PlayableUnitCompilerInputs:
     try:
         player_template_source = _required_document(documents, PLAYER_TEMPLATE_PATH)
     except PlayableUnitCompilerError:
