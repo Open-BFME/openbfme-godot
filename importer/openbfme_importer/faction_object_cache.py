@@ -242,14 +242,67 @@ def compiler_identity_token(family: str | None = None) -> str:
     return token
 
 
+_FINGERPRINT_MEMO: dict[tuple[str, str, int, int], str] = {}
+_FINGERPRINT_MEMO_LOCK = threading.Lock()
+
+
+def _manifest_stamp(root: Path) -> tuple[int, int] | None:
+    """(mtime_ns, size) of the tree's manifest, or ``None`` when there is none.
+
+    Both durable fingerprints below are pure functions of that one file, so its
+    stamp is a sound process-local memo key: any change to the manifest changes
+    the key. It does NOT make the fingerprint byte-ground the tree — the
+    functions never read tree bytes in the first place — so the memo neither
+    adds nor removes trust. See the manifest-mode note in the report.
+    """
+
+    try:
+        stat = (root / ".openbfme" / "manifest.json").stat()
+    except OSError:
+        return None
+    return (stat.st_mtime_ns, stat.st_size)
+
+
+def _memoized_fingerprint(kind: str, root: Path, compute) -> str:
+    stamp = _manifest_stamp(root)
+    if stamp is None:
+        # No manifest: the fallback walks the tree and must not be memoized on
+        # a key that cannot see the tree change.
+        return compute()
+    key = (kind, str(root).casefold(), stamp[0], stamp[1])
+    with _FINGERPRINT_MEMO_LOCK:
+        hit = _FINGERPRINT_MEMO.get(key)
+    if hit is not None:
+        return hit
+    value = compute()
+    with _FINGERPRINT_MEMO_LOCK:
+        _FINGERPRINT_MEMO[key] = value
+    return value
+
+
+def clear_fingerprint_memo() -> None:
+    with _FINGERPRINT_MEMO_LOCK:
+        _FINGERPRINT_MEMO.clear()
+
+
 def durable_effective_assets_fingerprint(effective_root: Path | str) -> str:
-    """Content identity for durable object DDC (not process-local memo).
+    """Content identity for durable object DDC.
 
     Prefers the extract manifest's aggregate_sha256 (full inventory digest).
     Never embeds absolute host paths so shared DDC is path-portable.
+
+    Process-memoized on the manifest's own stamp: a pooled convert worker asked
+    for this once per job, re-reading and re-parsing a multi-megabyte manifest
+    every time.
     """
 
     root = Path(effective_root).expanduser()
+    return _memoized_fingerprint(
+        "effective", root, lambda: _durable_effective_assets_fingerprint(root)
+    )
+
+
+def _durable_effective_assets_fingerprint(root: Path) -> str:
     manifest = root / ".openbfme" / "manifest.json"
     if not manifest.is_file():
         return _tree_inventory_fingerprint(root, "missing-manifest")
@@ -270,6 +323,20 @@ def durable_effective_assets_fingerprint(effective_root: Path | str) -> str:
 
 
 def durable_non_ini_assets_fingerprint(effective_root: Path | str) -> str:
+    """Hash manifest rows outside ``data/ini/**`` (process-memoized).
+
+    See ``durable_effective_assets_fingerprint`` for the memo's key and why it
+    changes no trust boundary. This one is the expensive of the pair: it parses
+    every manifest row on every call.
+    """
+
+    root = Path(effective_root).expanduser()
+    return _memoized_fingerprint(
+        "non-ini", root, lambda: _durable_non_ini_assets_fingerprint(root)
+    )
+
+
+def _durable_non_ini_assets_fingerprint(root: Path) -> str:
     """Hash manifest rows outside ``data/ini/**``.
 
     The converted object envelope also contains visual recipes, so dropping
@@ -279,7 +346,6 @@ def durable_non_ini_assets_fingerprint(effective_root: Path | str) -> str:
     the existing whole-tree fingerprint.
     """
 
-    root = Path(effective_root).expanduser()
     manifest_path = root / ".openbfme" / "manifest.json"
     try:
         manifest = read_json(manifest_path)

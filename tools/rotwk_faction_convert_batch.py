@@ -144,6 +144,27 @@ def _discover_factions(catalog: InstallCatalog) -> list[str]:
     return out
 
 
+def assigned_shard_selector(index: int, count: int, assignment: dict[str, int]):
+    """Cost-balanced assignment where one exists, hash everywhere else.
+
+    Total and disjoint by construction: an id either has an explicit owner or
+    falls to the same stable hash the whole pool agrees on. Objects the parent
+    could not know about up front (the compiler's banner-carrier expansion adds
+    ids after census) therefore stay covered exactly once, which is what the
+    assembler's completeness check demands.
+    """
+
+    hashed = shard_selector(index, count)
+
+    def _selected(object_id: str) -> bool:
+        owner = assignment.get(object_id.casefold())
+        if owner is None:
+            return hashed(object_id)
+        return owner == index
+
+    return _selected
+
+
 def shard_selector(index: int, count: int):
     """Deterministic round-robin over object ids, independent of the id list.
 
@@ -451,6 +472,68 @@ def verify_shipped_graph(payload: bytes, expected_sha256: str):
     return graph
 
 
+def object_cost_table(coverage_path: Path) -> dict[str, int]:
+    """Prior per-object convert milliseconds, from the last coverage document.
+
+    Free: the previous run already wrote `convertElapsedMs` on every row. An
+    absent or unreadable document just yields no predictions and sharding falls
+    back to the hash.
+    """
+
+    try:
+        document = json.loads(coverage_path.read_text(encoding="utf-8"))
+        rows = document["objects"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
+    costs: dict[str, int] = {}
+    if not isinstance(rows, list):
+        return {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        object_id = row.get("id")
+        elapsed = row.get("convertElapsedMs")
+        if isinstance(object_id, str) and isinstance(elapsed, int) and elapsed >= 0:
+            costs[object_id.casefold()] = elapsed
+    return costs
+
+
+def balanced_shard_assignment(
+    object_ids, costs: dict[str, int], count: int
+) -> dict[str, int]:
+    """Longest-processing-time-first bin packing over predicted cost.
+
+    Hash sharding put every faction's single most expensive object — always its
+    spellbook, 40-115 s — wherever the hash fell, so one shard ran 2.2x the
+    balanced ideal and set the faction's completion time (§14.2). Cost-balanced
+    assignment does not change the batch wall, which is saturation-bound; it
+    changes WHEN each faction's coverage lands, which is what the publish lane
+    overlaps against.
+
+    Objects with no prior measurement get the median of those that have one, so
+    a new object is neither assumed free nor assumed catastrophic.
+    """
+
+    if count <= 0:
+        return {}
+    known = sorted(costs[key] for key in costs if key in {i.casefold() for i in object_ids})
+    if not known:
+        # Nothing measured: the caller's hash fallback is as good as anything.
+        return {}
+    median = known[len(known) // 2]
+    ordered = sorted(
+        object_ids,
+        key=lambda value: (-costs.get(value.casefold(), median), value.casefold()),
+    )
+    loads = [0] * count
+    assignment: dict[str, int] = {}
+    for object_id in ordered:
+        index = min(range(count), key=lambda i: (loads[i], i))
+        assignment[object_id.casefold()] = index
+        loads[index] += costs.get(object_id.casefold(), median)
+    return assignment
+
+
 def census_object_count(graph) -> int:
     definitions = graph.get("definitions") if isinstance(graph, dict) else None
     objects = definitions.get("objects") if isinstance(definitions, dict) else None
@@ -598,16 +681,33 @@ def _produce_convert(
 
     # 1. Reuse whatever the aggregate short-circuit already holds. This is the
     #    everyday repeat run and it must not spawn a pool at all.
-    pending: list[str] = []
-    for faction in factions:
-        cached = _shortcircuit_probe(
-            catalog=catalog,
-            assets=assets,
-            state_root=state_root,
-            faction=faction,
-            artifact_root=artifact_root_for(faction),
-            game=game,
+    #
+    #    Seven independent lookups, each dominated by hashing that faction's
+    #    artifact tree, so they run concurrently (§14 cut 3). The catalog's
+    #    faction discovery is already warm by now — the caller resolved every
+    #    short name before calling — so the threads do not stampede it.
+    from concurrent.futures import ThreadPoolExecutor
+
+    probe_started = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(factions)))) as probes:
+        probed = list(
+            probes.map(
+                lambda faction: (
+                    faction,
+                    _shortcircuit_probe(
+                        catalog=catalog,
+                        assets=assets,
+                        state_root=state_root,
+                        faction=faction,
+                        artifact_root=artifact_root_for(faction),
+                        game=game,
+                    ),
+                ),
+                factions,
+            )
         )
+    pending: list[str] = []
+    for faction, cached in probed:
         if cached is not None:
             assembled[faction] = dict(cached)
             stats["shortCircuited"].append(faction)
@@ -616,12 +716,17 @@ def _produce_convert(
                 _emit_coverage(faction, assembled[faction])
         else:
             pending.append(faction)
+    stats["probeMs"] = int((time.perf_counter() - probe_started) * 1000)
+    print(f"PRODUCE_PROBE ms={stats['probeMs']} pending={len(pending)}", flush=True)
     if not pending:
         stats["wallMs"] = int((time.perf_counter() - started) * 1000)
         print(f"PRODUCE_DONE wall_ms={stats['wallMs']} pool=skipped", flush=True)
         return assembled, stats
 
-    logs_root = state_root / "reports" / "produce-workers"
+    # Run-scoped: an unscoped path let a later run overwrite an earlier run's
+    # worker logs, and a stage analysis silently mixed two runs before anyone
+    # noticed the object count was impossible for either (§14.6).
+    logs_root = state_root / "reports" / "produce-workers" / run_id
     finish_faction = None
     pool = ProducePool(
         python=python,
@@ -692,6 +797,35 @@ def _produce_convert(
         ]
         print("PRODUCE_ORDER " + " ".join(stats["order"]), flush=True)
 
+        # Cost-balanced sharding (§14 cut 0). The predictor is the previous
+        # run's own measurements; with none, every id falls to the hash.
+        assignments: dict[str, dict[str, int]] = {}
+        for faction in order:
+            definitions = graphs[faction].get("definitions")
+            rows = definitions.get("objects") if isinstance(definitions, dict) else []
+            ids = [
+                str(row["id"])
+                for row in (rows or [])
+                if isinstance(row, dict) and isinstance(row.get("id"), str)
+            ]
+            costs = object_cost_table(coverage_root / f"{faction}-coverage.json")
+            assignment = balanced_shard_assignment(ids, costs, procs)
+            if assignment:
+                path = work_root / f"shards-{faction}.json"
+                write_json_atomic(path, assignment)
+                assignments[faction] = assignment
+                spread = [0] * procs
+                for object_id, shard in assignment.items():
+                    spread[shard] += costs.get(object_id, 0)
+                print(
+                    f"PRODUCE_BALANCE {faction} predicted_max={max(spread)/1000:.1f}s "
+                    f"predicted_mean={sum(spread)/procs/1000:.1f}s "
+                    f"assigned={len(assignment)}",
+                    flush=True,
+                )
+            else:
+                print(f"PRODUCE_BALANCE {faction} no prior costs; hash sharding", flush=True)
+
         pool_started = time.perf_counter()
         jobs: list[dict[str, object]] = []
         for faction in order:
@@ -707,6 +841,11 @@ def _produce_convert(
                         "graphSha256": digest,
                         "out": str(work_root / f"{faction}-{index}-of-{procs}.json"),
                         "artifacts": bool(write_artifacts),
+                        "assignment": (
+                            str(work_root / f"shards-{faction}.json")
+                            if faction in assignments
+                            else ""
+                        ),
                     }
                 )
         print(
@@ -882,6 +1021,11 @@ def _produce_worker(
                     )
 
                 artifact_writer = _write_artifact
+            assignment: dict[str, int] = {}
+            assignment_path = str(job.get("assignment") or "")
+            if assignment_path:
+                loaded = json.loads(Path(assignment_path).read_text(encoding="utf-8"))
+                assignment = {str(k).casefold(): int(v) for k, v in loaded.items()}
             shard = convert_faction_import(
                 catalog,
                 assets,
@@ -889,7 +1033,7 @@ def _produce_worker(
                 artifact_writer=artifact_writer,
                 state_root=state_root,
                 convert_jobs=convert_jobs,
-                object_selector=shard_selector(index, count),
+                object_selector=assigned_shard_selector(index, count, assignment),
                 artifact_root=artifact_root,
                 census_graph=graph,
                 produce_shard=True,

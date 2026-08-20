@@ -1578,6 +1578,29 @@ Section 12 (Option C) specifically:
   MB per run. Nothing prunes it. I deliberately did **not** add a deleter — this
   tree is a shared state root with other agents' runs in flight and the evidence
   is what a verifier reads — so it belongs in the existing disk-prune recipe.
+Section 15 (the §14 cuts) specifically:
+
+- **No seven-faction batch, and no single-faction batch, has been run on the cut
+  code.** §15.6's ~350 s is a projection. The only full-scale direct measurement
+  in §15 is the faction-discovery memo (4.38 s -> 0.0000 s per call, ~720
+  core-seconds of a pooled run); everything else is micro-measured or inferred
+  from §14's stage shares.
+- **§14.5's horde question is still open.** The counter test runs on the
+  hero-roster fixture, which has no horde objects, so it proves the plan/draft
+  collapse (3 compiles -> 2, max 3) and nothing about horde re-entry.
+- The descriptor memo helps **only a cold run**. When the durable plan-row cache
+  hits, the plan compiles nothing and publishes nothing, so the convert draft
+  compiles exactly as before — correct, just not faster. That case is
+  uninteresting today because a plan-row hit almost always accompanies an object
+  cache hit, but the two lanes can move independently (§7) and then the memo
+  contributes nothing.
+- **Cut 3c (caching effective-assets verification) was declined, not deferred by
+  oversight.** ~63 s of startup stays. It is blocked on manifest-mode
+  verification actually binding tree bytes
+  (`effective_assets_identity.py:394`), which is another lane's finding and
+  another lane's fix.
+- The BFME2 lane still has no coverage for any of this; every measurement and
+  every retail-data test is RotWK.
 - The publish stage was still not run from this lane, so the composed
   convert+publish end-to-end number belongs to the publish lane's measurement,
   not to this report.
@@ -1801,7 +1824,7 @@ than three times (plan, draft, final), the horde is re-entering it and cut 1's
 memo will pick that up for free. That measurement is two minutes of a window,
 not a lane.
 
-### 14.6 An evidence-hygiene defect in my own tooling
+### 14.6 An evidence-hygiene defect in my own tooling (FIXED in §15)
 
 `reports/produce-workers/produce-worker<i>.log` is **not run-scoped**, so the
 N=20 run overwrote workers 0-19 of the N=24 run and only workers 20-23 survived.
@@ -1810,3 +1833,210 @@ objects — impossible for either run alone) before I noticed. The numbers above
 are the clean N=20-only subset (140 jobs / 378 objects), cross-checked against
 the N=24 shard payloads, which *are* run-scoped. The log path should carry the
 run id. Not fixed here — §14 is analysis only.
+
+## 15. The §14 cuts, implemented (ninth lane, on cced800)
+
+Authorized by the coordinator after §14. **Code and unit tests only — no
+seven-faction measurement has been taken on this code yet**, so every wall-time
+number in this section is either a micro-measurement of the specific thing
+changed, or a projection carried forward from §14 and labelled as one.
+
+### 15.1 Cut 1 — the plan/draft descriptor memo
+
+The duplicate §14.3 found is now collapsed. `_memoized_descriptor` is owned by
+one `(documents, prepared, faction_graph)` triple, holds strong references to
+all three so their ids cannot be recycled under a live entry, and drops the
+whole memo when any of the three changes identity. Identity is the right key
+for exactly the reason the coordinator gave: the compilers already fail closed
+when `prepared.documents is not documents`.
+
+Two properties that make it hard to get wrong:
+
+- **An entry is consumed on read.** There is exactly one consumer (the convert
+  draft) per producer (the plan), so no descriptor is aliased by two callers
+  and peak memory is bounded by planned-but-not-yet-converted objects.
+- **A miss just compiles.** Every failure mode degrades to the old behaviour,
+  so the memo cannot change what is produced — only how often.
+
+Plan and convert never run concurrently for the same object (the plan stage
+completes before the convert loop starts), so a plain lock suffices and there is
+no pending slot to strand — §11.3's failure mode is absent by construction, not
+by care.
+
+**Structures needed a different key.** §14.3 said the plan and convert call
+sites pass the same values; reading them properly showed they pass *different
+locals* — the plan's `engine_spawned_roots` come from the census graph's roots,
+the convert's `spawned` from `implicit_object_roots`. Those are frequently equal
+and not guaranteed to be. So the structure key carries the actual policy values
+(roots, roles, wall templates, source-null sets) and the memo hits only when
+they genuinely match; when they do not, both sides compile exactly as before.
+Units and spellbooks are literally the same call and key trivially.
+
+**Byte-identity, proved before it was allowed to be fast**
+(`test_descriptor_memo_output_is_byte_identical_to_recompiling`): the same
+fixture converted with `OPENBFME_NO_DESCRIPTOR_MEMO=1` and without — every
+artifact byte-for-byte, the coverage document field-for-field, and both
+aggregates equal.
+
+**The §14.5 call counter, and what it did and did not answer.** The test wraps
+*both* `faction_import.compile_playable_unit_descriptor` and the compiler
+module's own symbol, so a horde re-entering its member's compile inside the
+compiler would be counted too. On the fixture:
+
+```
+object          before  after
+heroeight            3      2
+heroseven            3      2
+TOTAL                6      4
+max compiles for any single object, memo off: 3
+```
+
+Exactly the predicted collapse: three compiles per unit (plan, draft, final)
+become two, and `max = 3` means nothing re-enters. **But the hero-roster fixture
+contains no horde objects, so this does NOT answer §14.5's actual question.**
+That needs the retail corpus and is queued for the window — and it is cheap
+there: compile one `GondorArcherHorde` with the counter attached, no batch
+required.
+
+### 15.2 Cut 2 — per-job work hoisted to per-process, and a bigger fish
+
+The authorized cut was the corpus digests, keyed on the corpus identity I
+already hold. Done: `_corpus_digests` is a single-entry memo on the corpus
+object with a strong reference, returning `(document_hashes,
+full_corpus_closure)`. Measured on the real corpus (792 documents, 29.1 MB),
+these turned out to be **cheap** — 0.02 s and 0.00 s — so the cut is real but
+small.
+
+Measuring rather than assuming found the actual cost. Timing every component of
+the ~7 s per-job setup against the real RotWK data:
+
+```
+catalog load          0.94s
+effective catalog     0.59s
+resolve #1 (men)      3.63s
+resolve (dwarves)     4.32s      <- every call, every job
+resolve (elves)       4.59s
+resolve (men)         4.37s
+corpus #1             0.84s  (792 docs, 29.1 MB)
+corpus #2 (memoized)  0.00s
+document_hashes       0.02s
+full_corpus_closure   0.00s
+```
+
+**`resolve_playable_faction` costs ~4.3 s and was never memoized.** It re-parses
+the effective PlayerTemplate document and re-resolves every object's inherited
+Side on every call — and it is called once per convert job plus three times per
+faction in the batch parent. That is essentially the entire per-job setup, and
+it is ~720 core-seconds of a pooled seven-faction run plus ~90 s of the parent's
+*serial* time.
+
+`discover_playable_factions` is now memoized per catalog **object**, holding a
+strong reference so the id cannot be recycled underneath the entry.
+Measured on the real catalog: **4.38 s -> 0.0000 s**, byte-identical
+`PlayableFaction` result, all seven factions discovered.
+`test_faction_discovery_memo_holds_the_catalog_so_ids_cannot_recycle` churns 200
+allocations and asserts no stale entry is ever served.
+
+### 15.3 Cut 3 — the parent's serial overhead
+
+- **Probe parallelised.** Seven independent lookups, each dominated by hashing
+  that faction's artifact tree, now run on a thread pool. Faction discovery is
+  warm before the threads start (the caller resolves every short name first), so
+  they cannot stampede it. `PRODUCE_PROBE ms=` reports the cost directly instead
+  of leaving it to be derived by subtraction.
+- **Ledger streaming.** `ConversionLedger.record` did `mkdir` + `open(mode="a")`
+  + write + `close` **per event**. At ~385 events per seven-faction convert
+  that is ~1 150 filesystem calls on a Windows box with a scanner in the path.
+  The handle is now opened lazily and kept, and **flushed after every event** —
+  durability is unchanged, a crash still leaves a complete JSONL up to the last
+  recorded event, and `test_ledger_keeps_one_handle_and_still_flushes_every_event`
+  asserts both (one append-mode open; each event readable *between* records).
+  A broken sink still fails open and still recovers.
+- **Effective-assets verification caching: DECLINED, deliberately.** The
+  coordinator offered two bounded options. I took neither cache and chose
+  option (b): leave it. The publish agent established that manifest-mode
+  verification never binds the manifest to tree bytes
+  (`effective_assets_identity.py:394` gates `_verify_tree_bytes` behind
+  `verify != "manifest"`, and the cook call sites take the manifest default).
+  Caching a verification that verifies nothing byte-level would make a real gap
+  cheaper to hit and harder to see, and building a sampled byte re-derivation
+  here would be inventing a second, weaker verification path next to the one
+  that needs fixing. **~63 s of process startup therefore stays**, and this cut
+  is blocked on fixing manifest-mode verification, which is not this lane.
+
+  Note that the two durable fingerprint memos in `faction_object_cache` are a
+  different thing and are safe: they are keyed on the manifest's own
+  `(mtime_ns, size)` stamp, and those functions only ever read the manifest in
+  the first place, so the memo neither adds nor removes trust. Measured
+  0.234 s -> 0.0002 s;
+  `test_durable_fingerprints_memoize_but_follow_the_manifest` proves a changed
+  manifest still changes both, and
+  `test_fingerprint_memo_is_skipped_without_a_manifest` proves the tree-walk
+  fallback is never memoized.
+
+### 15.4 Cut 0 — cost-predicted sharding
+
+`balanced_shard_assignment` does longest-processing-time-first bin packing over
+the previous run's own `convertElapsedMs`, read free from the last coverage
+document; objects with no prior measurement get the **median** of those that
+have one, so a new object is neither assumed free nor assumed catastrophic. The
+parent writes the assignment beside the shipped graph and each job references
+it.
+
+The safety property that matters: **assignment is a hint, coverage is total.**
+`assigned_shard_selector` sends an id to its assigned shard if it has one and to
+the same stable hash otherwise, so the compiler's banner-carrier expansion —
+which adds ids the parent never saw at census time — stays covered exactly once,
+which is what the assembler's completeness check demands.
+`test_unassigned_ids_still_fall_to_the_hash_exactly_once` pins that directly,
+and `test_balanced_sharding_covers_every_id_exactly_once` checks 1/3/8/24-way
+splits.
+
+Against the measured pathology (60 units at 8 s plus one 115 s spellbook over 24
+shards), balanced assignment puts the spellbook alone and `max(load)` is the
+spellbook itself — the 2.2x imbalance of §14.2 becomes 1.0x by construction.
+**This does not move the batch wall** (§14.1); it moves when each faction's
+coverage lands, which is what the publish lane overlaps against.
+
+### 15.5 §14.6 fixed
+
+Worker logs are now written to `reports/produce-workers/<runId>/`, so a later
+run can no longer overwrite an earlier run's evidence.
+`test_worker_logs_are_run_scoped` pins it.
+
+### 15.6 Predicted, and explicitly not measured
+
+Carried from §14 with cut 2's revision (the discovery memo is worth more than
+the corpus digests were, and cut 3c is declined):
+
+| stage | measured today | predicted after these cuts |
+|---|---|---|
+| pool | 423 s | ~245 s |
+| parent serial | 162 s | ~105 s |
+| **seven-faction compiler-edit cold** | **522 s** | **~350 s / 5.8 min** |
+
+**No seven-faction run has been taken on this code.** The prediction could be
+wrong in either direction: the descriptor memo's saving is bounded by how much
+of the plan stage's 8.95 s/object really is the duplicate compile, and the
+discovery memo's ~720 core-seconds is the one component measured directly at
+full scale. The number that decides it is a measured batch, queued for the
+window.
+
+### 15.7 Tests
+
+`importer/tests/test_faction_convert_cuts.py`, 20 tests, all new:
+
+- identity: `test_descriptor_memo_output_is_byte_identical_to_recompiling`;
+- the §14.5 counter: `test_descriptor_memo_removes_the_duplicate_unit_compile`;
+- memo mechanics: consumption, owner-change invalidation, env kill switch,
+  structure key carrying its policy arguments;
+- cut 2: corpus digests per corpus object (including that a *different* corpus
+  can never be served one another's closure), fingerprint memo following the
+  manifest, no memo without a manifest;
+- discovery memo: computed once per catalog object, and the id-recycling test;
+- cut 0: expensive-object isolation, exactly-once coverage at 1/3/8/24 shards,
+  unassigned ids falling to the hash, median for unmeasured objects, empty
+  assignment with no priors, and cost-table parsing of a real coverage document;
+- cut 3: ledger one-open-and-flush-per-event, fail-open sink, run-scoped logs.
+
+Suite: **428 passed, 8 skipped, 0 failed** across the eight named files.

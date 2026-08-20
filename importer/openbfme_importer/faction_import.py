@@ -148,6 +148,152 @@ _COVERAGE_EPHEMERAL_SUMMARY_KEYS = frozenset(
 )
 
 
+# ---------------------------------------------------------------------------
+# Plan/convert descriptor memo (§14 cut 1)
+#
+# A unit descriptor was compiled THREE times per object per cold run: once by
+# the plan stage, once as the convert "draft" that discovers which media and
+# strings the object needs, and once as the final compile with those resolved
+# values injected. The first two are the *identical call* — same object id,
+# documents, faction graph, prepared inputs, game and banner flag; not one
+# argument differs. Spellbooks have the same shape. Structures compile twice,
+# but their two call sites pass different locals (graph-derived engine roots in
+# the plan, policy-derived in the convert), so their key carries those values
+# and the memo hits only when they genuinely match.
+#
+# Scope and safety:
+#   * the memo is owned by one (documents, prepared, faction_graph) triple and
+#     is dropped wholesale when any of the three changes identity. It holds
+#     strong references to all three, so their ids cannot be recycled under a
+#     live entry — identity is a sound key, which is the same rule the
+#     compilers already enforce (they fail closed when
+#     ``prepared.documents is not documents``);
+#   * an entry is CONSUMED on read. There is exactly one consumer per entry, so
+#     nothing can alias a descriptor that a later caller might mutate, and peak
+#     memory is bounded by planned-but-not-yet-converted objects;
+#   * plan and convert never run concurrently for the same object — the plan
+#     stage completes before the convert loop starts — so a plain lock is
+#     enough and there is no pending-slot to strand (see §11.3).
+# ---------------------------------------------------------------------------
+
+_DESCRIPTOR_MEMO_LOCK = threading.Lock()
+_DESCRIPTOR_MEMO: dict[tuple, object] = {}
+_DESCRIPTOR_MEMO_OWNER: tuple[object, object, object] | None = None
+
+
+def descriptor_memo_disabled() -> bool:
+    return os.environ.get("OPENBFME_NO_DESCRIPTOR_MEMO", "").strip().casefold() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def clear_descriptor_memo() -> None:
+    global _DESCRIPTOR_MEMO_OWNER
+    with _DESCRIPTOR_MEMO_LOCK:
+        _DESCRIPTOR_MEMO.clear()
+        _DESCRIPTOR_MEMO_OWNER = None
+
+
+def _adopt_owner_locked(owner: tuple[object, object, object]) -> None:
+    global _DESCRIPTOR_MEMO_OWNER
+    current = _DESCRIPTOR_MEMO_OWNER
+    if current is not None and all(a is b for a, b in zip(current, owner)):
+        return
+    _DESCRIPTOR_MEMO.clear()
+    _DESCRIPTOR_MEMO_OWNER = owner
+
+
+def _memoized_descriptor(
+    *,
+    owner: tuple[object, object, object],
+    key: tuple,
+    compute: Callable[[], object],
+    publish: bool,
+) -> object:
+    """Compile once, hand the result to the one other caller that wants it.
+
+    ``publish=True`` is the plan stage (produce); ``publish=False`` is the
+    convert draft (consume). A miss simply compiles, which is exactly the old
+    behaviour, so nothing here can change what is produced — only how often.
+    """
+
+    if descriptor_memo_disabled():
+        return compute()
+    if not publish:
+        with _DESCRIPTOR_MEMO_LOCK:
+            _adopt_owner_locked(owner)
+            hit = _DESCRIPTOR_MEMO.pop(key, None)
+        if hit is not None:
+            return hit
+        return compute()
+    value = compute()
+    with _DESCRIPTOR_MEMO_LOCK:
+        _adopt_owner_locked(owner)
+        _DESCRIPTOR_MEMO[key] = value
+    return value
+
+
+_CORPUS_DIGEST_LOCK = threading.Lock()
+_CORPUS_DIGEST_MEMO: tuple[object, dict[str, str], Mapping[str, object]] | None = None
+
+
+def clear_corpus_digest_memo() -> None:
+    global _CORPUS_DIGEST_MEMO
+    with _CORPUS_DIGEST_LOCK:
+        _CORPUS_DIGEST_MEMO = None
+
+
+def _corpus_digests(
+    documents: Mapping[str, bytes],
+) -> tuple[dict[str, str], Mapping[str, object]]:
+    """(per-document hashes, full-corpus closure) for this corpus object.
+
+    Single-entry memo keyed on the corpus object's identity, **holding a strong
+    reference to it** so the id cannot be recycled under the entry. The corpus
+    itself is already memoized upstream by ``spellbook_source_documents``, so in
+    a real run this is the same object across every faction in the process.
+    """
+
+    global _CORPUS_DIGEST_MEMO
+    with _CORPUS_DIGEST_LOCK:
+        entry = _CORPUS_DIGEST_MEMO
+        if entry is not None and entry[0] is documents:
+            return entry[1], entry[2]
+    hashes = {
+        path: hashlib.sha256(payload).hexdigest() for path, payload in documents.items()
+    }
+    # Rows with no declared source closure all hash the same full corpus.
+    closure = document_closure_identity(documents, None, document_hashes=hashes)
+    with _CORPUS_DIGEST_LOCK:
+        _CORPUS_DIGEST_MEMO = (documents, hashes, closure)
+    return hashes, closure
+
+
+def _unit_descriptor_key(object_id: str, game: str, banner: bool) -> tuple:
+    return ("unit", object_id.casefold(), game, bool(banner))
+
+
+def _structure_descriptor_key(
+    object_id: str,
+    game: str,
+    roots: Sequence[str],
+    roles: Mapping[str, str] | None,
+    wall_templates: Sequence[str],
+    source_null_sets: Sequence[str],
+) -> tuple:
+    return (
+        "structure",
+        object_id.casefold(),
+        game,
+        tuple(str(value) for value in roots),
+        tuple(sorted((str(k), str(v)) for k, v in (roles or {}).items())),
+        tuple(str(value) for value in wall_templates),
+        tuple(str(value) for value in source_null_sets),
+    )
+
+
 def _descriptor_source_paths(descriptor: Mapping[str, object]) -> list[str] | None:
     """Extract the compiler's own source closure, or signal broad fallback."""
 
@@ -681,15 +827,27 @@ def build_faction_import_plan(
         family = _family(kinds)
         if family == "structure":
             try:
-                structure_descriptor = compile_playable_structure_descriptor(
-                    object_id,
-                    documents,
-                    prepared=prepared,
-                    engine_spawned_roots=engine_spawned_roots,
-                    engine_spawned_roles=engine_spawned_roles,
-                    wall_template_roots=wall_template_roots,
-                    source_null_command_sets=source_null_sets,
-                    game=game,
+                structure_descriptor = _memoized_descriptor(
+                    owner=(documents, prepared, faction_graph),
+                    key=_structure_descriptor_key(
+                        object_id,
+                        game,
+                        engine_spawned_roots,
+                        engine_spawned_roles,
+                        wall_template_roots,
+                        source_null_sets,
+                    ),
+                    publish=True,
+                    compute=lambda: compile_playable_structure_descriptor(
+                        object_id,
+                        documents,
+                        prepared=prepared,
+                        engine_spawned_roots=engine_spawned_roots,
+                        engine_spawned_roles=engine_spawned_roles,
+                        wall_template_roots=wall_template_roots,
+                        source_null_command_sets=source_null_sets,
+                        game=game,
+                    ),
                 )
             except PlayableStructureCompilerError as exc:
                 objects.append(
@@ -718,8 +876,13 @@ def build_faction_import_plan(
             return objects
         if family == "spellbook":
             try:
-                spellbook_descriptor = compile_spellbook_descriptor(
-                    faction_graph, documents, prepared=prepared
+                spellbook_descriptor = _memoized_descriptor(
+                    owner=(documents, prepared, faction_graph),
+                    key=("spellbook",),
+                    publish=True,
+                    compute=lambda: compile_spellbook_descriptor(
+                        faction_graph, documents, prepared=prepared
+                    ),
                 )
                 spellbook_row = spellbook_descriptor.get("spellBook")
                 spellbook_object_id = (
@@ -758,14 +921,18 @@ def build_faction_import_plan(
                 )
             return objects
         try:
-            descriptor = compile_playable_unit_descriptor(
-                object_id,
-                documents,
-                faction_graph=faction_graph,
-                prepared=prepared,
-                game=game,
-                engine_spawned_banner_carrier=(
-                    object_id.casefold() in horde_banner_targets
+            banner_carrier = object_id.casefold() in horde_banner_targets
+            descriptor = _memoized_descriptor(
+                owner=(documents, prepared, faction_graph),
+                key=_unit_descriptor_key(object_id, game, banner_carrier),
+                publish=True,
+                compute=lambda: compile_playable_unit_descriptor(
+                    object_id,
+                    documents,
+                    faction_graph=faction_graph,
+                    prepared=prepared,
+                    game=game,
+                    engine_spawned_banner_carrier=banner_carrier,
                 ),
             )
         except PlayableUnitCompilerError as exc:
@@ -1274,15 +1441,27 @@ def _convert_one_plan_object(
     if family == "structure":
         descriptor = None
         try:
-            descriptor = compile_playable_structure_descriptor(
-                object_id,
-                documents,
-                prepared=prepared,
-                engine_spawned_roots=spawned,
-                engine_spawned_roles=spawned_roles,
-                wall_template_roots=wall_templates,
-                source_null_command_sets=source_null_sets,
-                game=game,
+            descriptor = _memoized_descriptor(
+                owner=(documents, prepared, faction_graph),
+                key=_structure_descriptor_key(
+                    object_id,
+                    game,
+                    spawned,
+                    spawned_roles,
+                    wall_templates,
+                    source_null_sets,
+                ),
+                publish=False,
+                compute=lambda: compile_playable_structure_descriptor(
+                    object_id,
+                    documents,
+                    prepared=prepared,
+                    engine_spawned_roots=spawned,
+                    engine_spawned_roles=spawned_roles,
+                    wall_template_roots=wall_templates,
+                    source_null_command_sets=source_null_sets,
+                    game=game,
+                ),
             )
             kinds = {
                 str(item)
@@ -1428,8 +1607,13 @@ def _convert_one_plan_object(
                 )
     elif family == "spellbook":
         try:
-            draft = compile_spellbook_descriptor(
-                faction_graph, documents, prepared=prepared
+            draft = _memoized_descriptor(
+                owner=(documents, prepared, faction_graph),
+                key=("spellbook",),
+                publish=False,
+                compute=lambda: compile_spellbook_descriptor(
+                    faction_graph, documents, prepared=prepared
+                ),
             )
             draft_row = draft.get("spellBook")
             draft_object_id = (
@@ -1541,13 +1725,21 @@ def _convert_one_plan_object(
     elif status == "descriptor-ready":
         engine_spawned_banner_carrier = str(row.get("family", "")) == "banner-carrier"
         try:
-            draft = compile_playable_unit_descriptor(
-                object_id,
-                documents,
-                faction_graph=faction_graph,
-                prepared=prepared,
-                game=game,
-                engine_spawned_banner_carrier=engine_spawned_banner_carrier,
+            # The plan stage already compiled exactly this. Consume it.
+            draft = _memoized_descriptor(
+                owner=(documents, prepared, faction_graph),
+                key=_unit_descriptor_key(
+                    object_id, game, engine_spawned_banner_carrier
+                ),
+                publish=False,
+                compute=lambda: compile_playable_unit_descriptor(
+                    object_id,
+                    documents,
+                    faction_graph=faction_graph,
+                    prepared=prepared,
+                    game=game,
+                    engine_spawned_banner_carrier=engine_spawned_banner_carrier,
+                ),
             )
             gameplay = draft.get("gameplay")
             banner = (
@@ -1778,13 +1970,11 @@ def build_faction_conversion(
     # Identity material the plan-row cache keys on. Computed before the plan so
     # the plan stage can consult its durable cache; the convert loop below
     # reuses the very same values, so this is a move, not a new cost.
-    document_hashes = {
-        path: hashlib.sha256(payload).hexdigest() for path, payload in documents.items()
-    }
-    # Rows with no declared source closure all hash the same full corpus.
-    full_corpus_closure = document_closure_identity(
-        documents, None, document_hashes=document_hashes
-    )
+    #
+    # These are functions of the CORPUS, not of the faction, so a pooled worker
+    # that handles all seven factions recomputed the same two values seven
+    # times. Memoized per corpus object (§14 cut 2).
+    document_hashes, full_corpus_closure = _corpus_digests(documents)
     # Keep every manifest row outside data/ini broad. Rows inside data/ini also
     # have compiler-authored closures, while the catalog identity remains the
     # safety backstop until those hand-curated closures are complete.
@@ -2034,6 +2224,9 @@ def build_faction_conversion(
 
     convert_loop_ms = int((time.perf_counter() - convert_loop_started) * 1000)
     rows = [row for row in results if isinstance(row, dict)]
+    # Every consumer has run. Release the descriptors this faction's plan stage
+    # handed forward — a cache-hit or excluded object never consumed its entry.
+    clear_descriptor_memo()
 
     if produce_shard:
         # Option C: return this shard's finished rows instead of a (partial and

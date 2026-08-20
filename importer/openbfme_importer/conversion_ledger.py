@@ -39,7 +39,46 @@ class ConversionLedger:
     _kind_counts: Counter[str] = field(default_factory=Counter, repr=False)
     _failures: list[dict[str, Any]] = field(default_factory=list, repr=False)
     _sink_errors: list[str] = field(default_factory=list, repr=False)
+    _sink_stream: Any = field(default=None, repr=False)
     strict_sink: bool = False
+
+    def _write_event(self, event: dict[str, Any]) -> None:
+        """Append one JSONL event, keeping the sink handle open between calls.
+
+        This used to ``mkdir`` + ``open(mode="a")`` + ``close`` per event. At
+        ~385 events per seven-faction convert that is ~1 150 filesystem calls on
+        a Windows box with a scanner in the path, and it measured as most of the
+        batch's ~38 s parent tail. The handle is opened lazily on the first
+        event and flushed after every one, so durability is unchanged: a crash
+        still leaves a complete JSONL up to the last recorded event.
+
+        Caller holds ``self._lock``.
+        """
+
+        if self.sink_path is None:
+            return
+        try:
+            if self._sink_stream is None:
+                self.sink_path.parent.mkdir(parents=True, exist_ok=True)
+                self._sink_stream = self.sink_path.open("a", encoding="utf-8")
+            self._sink_stream.write(json.dumps(event, sort_keys=True) + "\n")
+            self._sink_stream.flush()
+        except OSError as exc:
+            msg = f"could not append event: {exc}"
+            self._sink_errors.append(msg)
+            print(f"LEDGER ERROR {msg}", file=sys.stderr)
+            self._sink_stream = None
+            if self.strict_sink:
+                raise
+
+    def close_sink(self) -> None:
+        with self._lock:
+            stream, self._sink_stream = self._sink_stream, None
+        if stream is not None:
+            try:
+                stream.close()
+            except OSError:
+                pass
 
     def record(
         self,
@@ -79,17 +118,7 @@ class ConversionLedger:
             self._kind_counts[kind] += 1
             if status in {"failed", "rejected", "cook-error", "cook-rejected"}:
                 self._failures.append(event)
-            if self.sink_path is not None:
-                try:
-                    self.sink_path.parent.mkdir(parents=True, exist_ok=True)
-                    with self.sink_path.open("a", encoding="utf-8") as stream:
-                        stream.write(json.dumps(event, sort_keys=True) + "\n")
-                except OSError as exc:
-                    msg = f"could not append event: {exc}"
-                    self._sink_errors.append(msg)
-                    print(f"LEDGER ERROR {msg}", file=sys.stderr)
-                    if self.strict_sink:
-                        raise
+            self._write_event(event)
         if log_to_stderr:
             line = f"CONVERT [{status}] {kind} {unit_id}"
             if detail:
@@ -188,6 +217,9 @@ class ConversionLedger:
             }
 
     def write_summary(self, path: Path) -> dict[str, Any]:
+        # The run is over: release the JSONL handle before the summary lands so
+        # nothing downstream sees a half-flushed sink.
+        self.close_sink()
         summary = self.summary()
         path.parent.mkdir(parents=True, exist_ok=True)
         write_json_atomic(path, summary)
