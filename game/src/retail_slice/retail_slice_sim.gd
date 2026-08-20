@@ -29211,7 +29211,10 @@ func _step_route(row: Dictionary) -> void:
 				# row (or the old formation flag). Otherwise wheel: turn and
 				# still walk — no invented 45° stop.
 				return
-			heading_bounded_ground_move = not bool(row.get("flying", false))
+			heading_bounded_ground_move = (
+				not bool(row.get("flying", false))
+				and String(row.get("pathing_layer", "ground")) == "ground"
+			)
 		else:
 			row["facing"] = movement_direction
 	if turning_on_authored_heading and row.has("min_turn_speed"):
@@ -29251,6 +29254,7 @@ func _step_route(row: Dictionary) -> void:
 		travel_step = waypoint - position
 		position = waypoint
 		route.pop_front()
+		_consume_route_point_layer(row)
 	else:
 		travel_step = travel_direction * step_distance
 		var candidate_position := position + travel_step
@@ -29270,7 +29274,7 @@ func _step_route(row: Dictionary) -> void:
 			row["current_speed"] = current_speed
 		else:
 			position = candidate_position
-	if not bool(row.get("flying", false)):
+	if not bool(row.get("flying", false)) and String(row.get("pathing_layer", "ground")) == "ground":
 		# Flyers pass straight over building footprints. The step that produced
 		# this position is threaded in so a footprint the unit is walking THROUGH
 		# slides it tangentially around the disc rather than standing it off
@@ -29291,6 +29295,7 @@ func _step_route(row: Dictionary) -> void:
 			# click after three stalled ticks on the ring.
 			if route.size() > 1:
 				route.pop_front()
+				_consume_route_point_layer(row)
 	else:
 		row["route_stall_ticks"] = 0
 	row["position"] = position
@@ -29303,6 +29308,27 @@ func _step_route(row: Dictionary) -> void:
 		_clear_pending_route(row, int(row["target_id"]) == 0)
 		if int(row["target_id"]) == 0:
 			row["state"] = "idle"
+
+
+func _consume_route_point_layer(row: Dictionary) -> void:
+	if not row.has("route_point_layers"):
+		return
+	var layers: Array = row.get("route_point_layers", []) as Array
+	if layers.is_empty():
+		return
+	var layer := String(layers.pop_front())
+	row["route_point_layers"] = layers
+	var elevations: Array = row.get("route_point_elevations", []) as Array
+	var elevation := 0.0
+	if not elevations.is_empty():
+		elevation = float(elevations.pop_front())
+		row["route_point_elevations"] = elevations
+	if layer in ["ground", "ramp", "deck"]:
+		row["pathing_layer"] = layer
+		if layer == "ground":
+			row.erase("pathing_elevation")
+		else:
+			row["pathing_elevation"] = elevation
 
 
 func _should_attempt_crush(row: Dictionary, current_speed: float, max_speed: float) -> bool:
@@ -31919,9 +31945,12 @@ func _assign_route(row: Dictionary, destination: Vector2) -> bool:
 		row["route_cells"] = no_cells
 		row["route_ford"] = ""
 		return true
-	# Parity path ledger: refuse ground routes that cross impassable cells.
+	var uses_walk_surface := _row_route_uses_walk_surface(row, destination)
+	# Parity path ledger: refuse ground routes that cross impassable cells. The
+	# ledger is a ground-domain raster and must not veto an authored deck route;
+	# layered routes are still checked by the map-owned wall grid below.
 	# Ships use the water grid; the land ledger would reject every river.
-	if not _is_naval_row(row):
+	if not _is_naval_row(row) and not uses_walk_surface:
 		_ensure_parity()
 		# A heading-bounded arc can finish just inside the navigation raster's
 		# blocked edge. Only a provider that explicitly resolves that origin may
@@ -31951,10 +31980,24 @@ func _assign_route(row: Dictionary, destination: Vector2) -> bool:
 		return false
 	var cells: Array[Vector2i] = []
 	cells.assign(result.get("cells", []))
+	var layered := bool(result.get("uses_walk_surface", false))
+	var point_layers: Array = result.get("point_layers", []) as Array
+	var point_elevations: Array = result.get("point_elevations", []) as Array
+	if layered and (point_layers.size() != points.size() or point_elevations.size() != points.size()):
+		last_route_rejection = "invalid-layered-route"
+		return false
 	row["destination"] = destination
 	row["route"] = points
 	row["route_cells"] = cells
 	row["route_ford"] = String(result.get("ford_name", ""))
+	if layered:
+		row["route_point_layers"] = point_layers.duplicate()
+		row["route_point_elevations"] = point_elevations.duplicate()
+		row["route_surface_roles"] = (result.get("surface_roles", []) as Array).duplicate()
+	else:
+		row.erase("route_point_layers")
+		row.erase("route_point_elevations")
+		row.erase("route_surface_roles")
 	return not points.is_empty()
 
 
@@ -31990,7 +32033,13 @@ func _query_route(from: Vector2, to: Vector2) -> Dictionary:
 	if route_provider != null and route_provider.has_method("query_route"):
 		var value: Variant = route_provider.call("query_route", from, to)
 		if typeof(value) == TYPE_DICTIONARY:
-			return value as Dictionary
+			var ground := value as Dictionary
+			if bool(ground.get("valid", false)) or not route_provider.has_method("query_layered_bridge_route"):
+				return ground
+			var bridge_value: Variant = route_provider.call("query_layered_bridge_route", from, to)
+			if typeof(bridge_value) == TYPE_DICTIONARY and bool((bridge_value as Dictionary).get("valid", false)):
+				return bridge_value as Dictionary
+			return ground
 	# The non-retail fallback remains bounded and direct. The selected retail
 	# slice cannot reach this branch because configuration requires a provider.
 	return {"valid": true, "reason": "", "points": [to], "cells": [], "ford_name": ""}
@@ -32008,7 +32057,27 @@ func _query_route_for_row(row: Dictionary, from: Vector2, to: Vector2) -> Dictio
 		if typeof(water_value) == TYPE_DICTIONARY:
 			return water_value as Dictionary
 		return {"valid": false, "reason": "water-navigation-unavailable", "points": [], "cells": []}
+	if _row_route_uses_walk_surface(row, to):
+		if route_provider == null or not route_provider.has_method("query_layered_route"):
+			return {"valid": false, "reason": "walk-surface-navigation-unavailable", "points": [], "cells": []}
+		var layered_value: Variant = route_provider.call(
+			"query_layered_route", from, to, String(row.get("pathing_layer", "ground"))
+		)
+		if typeof(layered_value) == TYPE_DICTIONARY:
+			return layered_value as Dictionary
+		return {"valid": false, "reason": "walk-surface-navigation-unavailable", "points": [], "cells": []}
 	return _query_route(from, to)
+
+
+func _row_route_uses_walk_surface(row: Dictionary, destination: Vector2) -> bool:
+	if _is_naval_row(row) or route_provider == null:
+		return false
+	if String(row.get("pathing_layer", "ground")) in ["ramp", "deck"]:
+		return true
+	return (
+		route_provider.has_method("is_walk_surface_at")
+		and bool(route_provider.call("is_walk_surface_at", destination))
+	)
 
 
 func _is_naval_row(row: Dictionary) -> bool:
@@ -32219,6 +32288,10 @@ func _clear_pending_route(row: Dictionary, settle_destination: bool) -> void:
 	row["route"] = []
 	row["route_cells"] = []
 	row["route_ford"] = ""
+	if row.has("route_point_layers"):
+		row["route_point_layers"] = []
+	if row.has("route_point_elevations"):
+		row["route_point_elevations"] = []
 	if settle_destination:
 		row["destination"] = Vector2(row["position"])
 
