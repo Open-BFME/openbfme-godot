@@ -12,6 +12,10 @@ $gate = "M2_FOCUSED_GATE"
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $forbiddenDiagnostics = '(?i)\b(?:ERROR|WARNING|leak(?:ed|s|ing)?|orphan(?:ed|s)?|ObjectDB instances|RID allocations|resources still in use|SCRIPT ERROR)\b'
 $focusedRunners = [ordered]@{
+    # Projectile-combat state pin (Q16): a source-backed archer+trebuchet fight
+    # hashed after 82 ticks. Catches flight/impact regressions the synthetic
+    # main pin is blind to. Runs first: it is the cheapest whole-sim gate here.
+    'projectile_pin' = @('retail_projectile_pin_runner.gd', '(?m)^RETAIL_PROJECTILE_PIN OK\b')
     'animated_prop_runtime' = @('retail_animated_prop_runtime_runner.gd', '(?m)^RETAIL_ANIMATED_PROP_RUNTIME_RESULT passed=18 failed=0\s*$')
     'archer_projectile_presentation_runtime' = @('retail_archer_projectile_presentation_runner.gd', '(?m)^RETAIL_ARCHER_PROJECTILE_PRESENTATION_RESULT passed=34 failed=0\s*$')
     'bound_props_runtime' = @('retail_bound_props_runner.gd', '(?m)^RETAIL_BOUND_PROPS_RESULT passed=30 failed=0\s*$')
