@@ -29,6 +29,48 @@ const MAP_CASES := [
 		"expected_skirmish_spawn_points": 4,
 		"retail_base_layout": "map-specific",
 	},
+	{
+		"id": "rotwk.map.wor-minas-tirith",
+		"name": "Minas Tirith",
+		"expected_skirmish_spawn_points": 4,
+		"retail_base_layout": "map-specific",
+	},
+	{
+		"id": "rotwk.map.wor-dol-guldur",
+		"name": "Dol Guldur",
+		"expected_skirmish_spawn_points": 4,
+		"retail_base_layout": "map-specific",
+	},
+	{
+		"id": "rotwk.map.wor-grey-havens",
+		"name": "Grey Havens",
+		"expected_skirmish_spawn_points": 3,
+		"retail_base_layout": "map-specific",
+	},
+	{
+		"id": "rotwk.map.wor-ang-fornost",
+		"name": "Fornost",
+		"expected_skirmish_spawn_points": 0,
+		"retail_base_layout": "map-specific",
+	},
+	{
+		"id": "rotwk.map.wor-isengard",
+		"name": "Isengard",
+		"expected_skirmish_spawn_points": 2,
+		"retail_base_layout": "generic-fallback",
+	},
+	{
+		"id": "rotwk.map.wor-black-gate",
+		"name": "Black Gate",
+		"expected_skirmish_spawn_points": 3,
+		"retail_base_layout": "generic-fallback",
+	},
+	{
+		"id": "rotwk.map.wor-minas-morgul",
+		"name": "Minas Morgul",
+		"expected_skirmish_spawn_points": 3,
+		"retail_base_layout": "generic-fallback",
+	},
 ]
 
 var _runner_watchdog := RunnerWatchdogScript.new()
@@ -54,9 +96,12 @@ func _init() -> void:
 		selected_cases.size() > 0 and _checks >= selected_cases.size() * 8,
 		"checks=%d maps=%d" % [_checks, selected_cases.size()]
 	)
-	print("CASTLE_SKIRMISH_AI CLASSIFICATION Carn Dum=base-building(runtime-tested), Erebor=base-building(runtime-tested), Helm's Deep=base-building(runtime-tested)")
-	print("CASTLE_SKIRMISH_AI CLASSIFICATION Minas Tirith=base-building(importer-only, runtime-untested), Dol Guldur=base-building(importer-only, runtime-untested), Grey Havens=base-building(importer-only, runtime-untested), Fornost=base-building(importer-only, runtime-untested)")
-	print("CASTLE_SKIRMISH_AI CLASSIFICATION Isengard=base-building(generic-fallback, runtime-untested), Black Gate=base-building(generic-fallback, runtime-untested), Minas Morgul=base-building(generic-fallback, runtime-untested); defend-only=none proven")
+	if _failed == 0:
+		print("CASTLE_SKIRMISH_AI CLASSIFICATION Carn Dum=base-building(runtime-tested), Erebor=base-building(runtime-tested), Helm's Deep=base-building(runtime-tested)")
+		print("CASTLE_SKIRMISH_AI CLASSIFICATION Minas Tirith=base-building(map-specific, runtime-tested), Dol Guldur=base-building(map-specific, runtime-tested), Grey Havens=base-building(map-specific, runtime-tested), Fornost=base-building(map-specific, runtime-tested)")
+		print("CASTLE_SKIRMISH_AI CLASSIFICATION Isengard=base-building(generic-fallback, runtime-tested), Black Gate=base-building(generic-fallback, runtime-tested), Minas Morgul=base-building(generic-fallback, runtime-tested); defend-only=none proven")
+	else:
+		print("CASTLE_SKIRMISH_AI CLASSIFICATION incomplete runner_failures=%d" % _failed)
 	_finish()
 
 
@@ -168,6 +213,8 @@ func _run_map(case_row: Dictionary) -> void:
 				})
 	structures_built = built_targets.size()
 	var attack_orders_issued := attack_order_entities.size()
+	if attack_orders_issued == 0:
+		_print_route_target_diagnostics(map_name, simulation)
 	var dynamic_ai_structures := 0
 	for structure_id in simulation.structure_ids(AI_TEAM):
 		if int(structure_id) >= 3000 and int(structure_id) < simulation.CASTLE_FIXTURE_FIRST_ID:
@@ -239,6 +286,28 @@ func _print_gate_diagnostics(map_name: String, simulation) -> void:
 			str(bool((row.get("gate_behavior", {}) as Dictionary).get("pathing_open", false))),
 			str(not (row.get("fake_pathfind_portal", {}) as Dictionary).is_empty()),
 		])
+
+
+func _print_route_target_diagnostics(map_name: String, simulation) -> void:
+	var source := Vector2.ZERO
+	for entity_id in simulation.living_ids(AI_TEAM):
+		var entity: Dictionary = simulation.entity(entity_id)
+		if not bool(entity.get("is_builder", false)):
+			source = Vector2(entity.get("position", Vector2.ZERO))
+			break
+	var candidates := []
+	for entity_id in simulation._hostile_living_ids(AI_TEAM):
+		var entity: Dictionary = simulation.entity(entity_id)
+		var destination := Vector2(entity.get("position", Vector2.ZERO))
+		var route: Dictionary = simulation._query_route(source, destination)
+		candidates.append({"kind": "battalion", "id": entity_id, "distance": source.distance_to(destination), "valid": route.get("valid", false), "reason": route.get("reason", "")})
+	for structure_id in simulation._hostile_living_structure_ids(AI_TEAM):
+		var structure: Dictionary = simulation.structure(structure_id)
+		var destination := Vector2(structure.get("position", Vector2.ZERO))
+		var route: Dictionary = simulation._query_route(source, destination)
+		if bool(route.get("valid", false)):
+			candidates.append({"kind": "structure", "id": structure_id, "type": structure.get("castle_fixture_type", structure.get("structure_kind", "")), "distance": source.distance_to(destination), "valid": true})
+	print("CASTLE_SKIRMISH_AI ROUTE_TARGETS map=%s source=%s candidates=%s" % [map_name, str(source), str(candidates)])
 
 
 func _diagnostic(simulation, structures_built: int, attack_orders_issued: int, dynamic_ai_structures: int) -> String:
