@@ -234,6 +234,40 @@ def _compile_interface_art_pack(
     return [dict(row) for row in compiled.resources], dict(compiled.document)
 
 
+def _audit_and_address(
+    pipeline: Any, pack_root: Path, *, light_audit: bool
+) -> tuple[dict[str, Any], str]:
+    """Return ``(audit, digest_source)`` for a pack this command just cooked.
+
+    A full cook already ran a canonical `audit_pack` over the finished tree and
+    folded its address from those verified hashes. Re-running both here read
+    every byte of a multi-GB bundle twice more for an answer that cannot
+    differ - measured at 7 s per RotWK faction publish, and this command runs
+    seven times per recook.
+
+    The hand-over is refused unless `build()` finished THIS pack root in THIS
+    process, and never applies to a dev/light run (whose audit deliberately
+    proves less). Whichever way the answer was reached is recorded on the
+    result as `bundle_digest_source`, so a receipt never implies a full
+    re-verification that did not happen. `OPENBFME_FULL_REVERIFY=1` forces the
+    old two-extra-passes behaviour.
+    """
+
+    if light_audit:
+        value = audit_pack(pack_root, light=True)
+        value["bundle_sha256"] = "dev-skipped"
+        value["dev_mode"] = True
+        return value, "dev-skipped"
+    recorded = pipeline.build_verification_for(pack_root)
+    if recorded is not None:
+        value = dict(recorded["audit"])
+        value["bundle_sha256"] = recorded["bundle_sha256"]
+        return value, "build-verified-this-run"
+    value = audit_pack(pack_root, light=False)
+    value["bundle_sha256"] = bundle_digest(pack_root)
+    return value, "recomputed"
+
+
 def _conversion_failure_report(pack_root: Path) -> dict[str, Any]:
     """Summarise per-resource conversion failures recorded in the pack.
 
@@ -2933,18 +2967,16 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
             light_audit = bool(args.dev) or os.environ.get(
                 "OPENBFME_DEV", ""
             ).strip().casefold() in {"1", "true", "yes"}
-            value = audit_pack(pack_root, light=light_audit)
+            value, digest_source = _audit_and_address(
+                pipeline, pack_root, light_audit=light_audit
+            )
             value["pack"] = str(pack_root)
             value["profile"] = str(profile_output)
             value["receipt"] = str(receipt_path)
             value["faction"] = factions[0] if len(factions) == 1 else faction_slug
             value["factions"] = factions
             value["composed_objects"] = len(receipt.get("objects", []))
-            if light_audit:
-                value["bundle_sha256"] = "dev-skipped"
-                value["dev_mode"] = True
-            else:
-                value["bundle_sha256"] = bundle_digest(pack_root)
+            value["bundle_digest_source"] = digest_source
             value["conversion_cache"] = pipeline.conversion_cache_stats
             value.update(_conversion_failure_report(pack_root))
             value["playable_unit_count"] = _pack_playable_unit_count(pack_root)

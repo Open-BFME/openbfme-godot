@@ -212,6 +212,19 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--single-build",
+        action="store_true",
+        help=(
+            "forward --single-build to publish-faction-to-slice: record each "
+            "cook as non-attested because the cold A/B byte comparison was "
+            "skipped. MEASURED 2026-08-20: this buys ZERO seconds today - the "
+            "pack cook has no second build to skip, and the flag only "
+            "downgrades the reproducibility claim written into provenance. It "
+            "is wired so the waiver is reachable and explicit rather than "
+            "invented later; do not pass it to make a recook look faster."
+        ),
+    )
+    parser.add_argument(
         "--publish",
         action="store_true",
         help="copy pack into content-packs (still no selection rewrite unless --select)",
@@ -417,6 +430,8 @@ def main(argv: list[str] | None = None) -> int:
                     cmd.append("--allow-incomplete-coverage")
                 if args.allow_fewer_playable_units:
                     cmd.append("--allow-fewer-playable-units")
+                if args.single_build:
+                    cmd.append("--single-build")
                 if not args.publish:
                     cmd.append("--no-publish")
                 if args.select:
@@ -476,6 +491,8 @@ def main(argv: list[str] | None = None) -> int:
                     "composedObjects": cli_result.get("composed_objects"),
                     "publishedPack": cli_result.get("published_pack"),
                     "selectionTouched": bool(args.select),
+                    "singleBuild": bool(args.single_build),
+                    "bundleDigestSource": cli_result.get("bundle_digest_source"),
                     "runId": run_id,
                 }
                 receipt_path = coverage_root / f"{faction}-publication.json"

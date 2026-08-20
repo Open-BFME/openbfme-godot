@@ -15,9 +15,16 @@ values may be serialized.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from hashlib import sha256
 import re
 from typing import Iterable, TypeAlias
+
+
+#: How many distinct particle documents stay parsed in memory. A cook resolves
+#: every request against a handful of retail documents, so this is generous;
+#: the bound exists so an unusual corpus cannot grow the cache without limit.
+_PARSED_DOCUMENT_CACHE_SIZE = 8
 
 
 MAX_PARTICLE_SOURCE_BYTES = 16 * 1024 * 1024
@@ -544,13 +551,35 @@ def select_particle_definition(
     return matches[0]
 
 
+@lru_cache(maxsize=_PARSED_DOCUMENT_CACHE_SIZE)
+def _parse_particle_definitions_memoized(
+    source: bytes,
+) -> tuple[ParticleDefinition, ...]:
+    """Memoized :func:`parse_particle_definitions`, keyed on the exact bytes.
+
+    A pack cook asks for ONE definition at a time but every request re-parsed
+    the whole document it came from: a single RotWK faction publish calls this
+    87 times against the same few particle documents and spent 93 s of a 188 s
+    run doing it (measured 2026-08-20, elves, warm caches).
+
+    Memoizing is byte-true by construction, not a trust shortcut:
+    :func:`parse_particle_definitions` is a pure function of *source*, the key
+    IS the full source bytes (not a path, size or mtime), and every value it
+    returns is a frozen dataclass, so a cached result is indistinguishable from
+    a fresh parse. Bounded to a handful of documents so a large corpus cannot
+    grow the cache without limit.
+    """
+
+    return parse_particle_definitions(source)
+
+
 def parse_particle_definition(
     source: bytes, name: str, *, kind: str | None = None
 ) -> ParticleDefinition:
     """Parse a document and require one exact named definition."""
 
     return select_particle_definition(
-        parse_particle_definitions(source), name, kind=kind
+        _parse_particle_definitions_memoized(source), name, kind=kind
     )
 
 
