@@ -160,10 +160,10 @@ def test_poisoned_payload_refused_by_name_and_recomputed(tmp_path: Path) -> None
     baseline = _prepare_with_cache(tmp_path, documents)
     cwc.flush_corpus_writeback()
 
-    blob = _entry_dir(tmp_path, documents) / "prepared.pkl"
-    payload = bytearray(blob.read_bytes())
-    payload[len(payload) // 2] ^= 0xFF
-    blob.write_bytes(bytes(payload))
+    blob = _entry_dir(tmp_path, documents) / "prepared.bin"
+    raw = bytearray(blob.read_bytes())
+    raw[-3] ^= 0xFF  # flip a byte deep in the pickle payload
+    blob.write_bytes(bytes(raw))
 
     identity = puc._documents_identity(documents)
     key = cwc.corpus_cache_key(identity)
@@ -184,10 +184,15 @@ def test_poisoned_envelope_wrong_identity_is_refused(tmp_path: Path) -> None:
     _prepare_with_cache(tmp_path, documents)
     cwc.flush_corpus_writeback()
 
-    envelope_path = _entry_dir(tmp_path, documents) / "prepared.json"
-    envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
+    blob = _entry_dir(tmp_path, documents) / "prepared.bin"
+    header, _sep, payload = blob.read_bytes().partition(b"\n")
+    envelope = json.loads(header.decode("utf-8"))
     envelope["documentsIdentity"] = "0" * 64
-    envelope_path.write_text(json.dumps(envelope), encoding="utf-8")
+    blob.write_bytes(
+        json.dumps(envelope, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        + b"\n"
+        + payload
+    )
 
     identity = puc._documents_identity(documents)
     key = cwc.corpus_cache_key(identity)
@@ -344,6 +349,31 @@ def test_writeback_merges_new_flat_kinds_with_existing_entry(tmp_path: Path) -> 
         third.flat_kind_cache["commandset"],
         "merged[commandset]",
     )
+
+
+def test_entry_is_one_file_so_writers_cannot_tear_the_pair(tmp_path: Path) -> None:
+    """v1 regression: envelope and payload were two independently-replaced
+    files, and 24 racing exit-writers left (A's envelope, B's payload) — every
+    later reader refused it and re-scanned the corpus. One file per part is
+    the structural fix; two sequential stores must both stay readable."""
+
+    documents = _documents()
+    _prepare_with_cache(tmp_path, documents)
+    cwc.flush_corpus_writeback()
+
+    entry = _entry_dir(tmp_path, documents)
+    files = sorted(p.name for p in entry.iterdir())
+    assert all(name.endswith(".bin") for name in files), files
+    assert not [name for name in files if ".tmp-" in name], files
+
+    identity = puc._documents_identity(documents)
+    key = cwc.corpus_cache_key(identity)
+    root = tmp_path / "cache" / "corpus-warm"
+    assert cwc._store_part(root, key, "flat-kinds", identity, {"a": ()})
+    assert cwc._store_part(root, key, "flat-kinds", identity, {"a": (), "b": ()})
+    value, reason = cwc._load_part(root, key, "flat-kinds", identity)
+    assert reason == "hit"
+    assert set(value) == {"a", "b"}
 
 
 def test_unconfigured_cache_changes_nothing(tmp_path: Path) -> None:

@@ -57,11 +57,15 @@ import time
 from pathlib import Path
 from typing import Any, Mapping
 
-from .util import write_json_atomic
-
 CACHE_SCHEMA = "openbfme.corpus-warm-cache"
 # Bump on ANY change to the key material or the stored envelope/payload shape.
-CACHE_VERSION = 1
+# v2: envelope and payload live in ONE atomically-replaced file. v1 stored
+# them as two files replaced independently, and two workers merge-writing the
+# same part could interleave into (A's envelope, B's payload) — a state every
+# reader then refused (fail-closed held; measured as 24/24
+# `refused:payload-digest-mismatch` in the first headline run) at the price of
+# re-scanning the corpus. One file, one os.replace, no pair to tear.
+CACHE_VERSION = 2
 _PICKLE_PROTOCOL = 5
 
 # The producer seams whose code determines every stored value.
@@ -404,23 +408,6 @@ def _store_part(
     tmp: Path | None = None
     try:
         payload = pickle.dumps(value, protocol=_PICKLE_PROTOCOL)
-        entry = _entry_dir(root, key)
-        entry.mkdir(parents=True, exist_ok=True)
-        blob = entry / f"{part}.pkl"
-        tmp = blob.with_suffix(".pkl.tmp-%d" % os.getpid())
-        tmp.write_bytes(payload)
-        try:
-            os.replace(tmp, blob)
-        except OSError:
-            # On Windows a concurrent reader/writer holding the destination
-            # makes os.replace raise WinError 5; with 24 workers flushing at
-            # exit that is routine. The loser's entry is simply not stored —
-            # but its temp payload must not be left behind (24.8 MB each).
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
-            return False
         envelope = {
             "schema": CACHE_SCHEMA,
             "version": CACHE_VERSION,
@@ -431,9 +418,29 @@ def _store_part(
             "payloadSha256": hashlib.sha256(payload).hexdigest(),
             "payloadBytes": len(payload),
         }
-        # The envelope is written LAST: it is the commit marker, so a torn
-        # payload write can only ever look like a digest mismatch (refusal).
-        write_json_atomic(entry / f"{part}.json", envelope)
+        header = json.dumps(envelope, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+        entry = _entry_dir(root, key)
+        entry.mkdir(parents=True, exist_ok=True)
+        blob = entry / f"{part}.bin"
+        tmp = blob.with_suffix(".bin.tmp-%d" % os.getpid())
+        # Envelope + payload in ONE file, committed by ONE os.replace, so a
+        # concurrent writer can never produce a mismatched pair — only a
+        # whole older or whole newer entry.
+        tmp.write_bytes(header + b"\n" + payload)
+        try:
+            os.replace(tmp, blob)
+        except OSError:
+            # On Windows a concurrent reader holding the destination makes
+            # os.replace raise WinError 5; with 24 workers flushing at exit
+            # that is routine. The loser's entry is simply not stored — but
+            # its temp payload must not be left behind (24.8 MB each).
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            return False
         return True
     except (OSError, pickle.PicklingError):
         # A cache we cannot write is a cache we do without.
@@ -450,14 +457,19 @@ def _load_part(
 ) -> tuple[object | None, str]:
     """(value, reason). ``reason`` names the refusal; 'hit'/'miss' otherwise."""
 
-    entry = _entry_dir(root, key)
-    envelope_path = entry / f"{part}.json"
-    blob_path = entry / f"{part}.pkl"
-    if not envelope_path.is_file() or not blob_path.is_file():
+    blob_path = _entry_dir(root, key) / f"{part}.bin"
+    if not blob_path.is_file():
         return None, "miss"
     try:
-        envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        raw = blob_path.read_bytes()
+    except OSError:
+        return None, "refused:unreadable-entry"
+    header, separator, payload = raw.partition(b"\n")
+    if not separator:
+        return None, "refused:missing-envelope"
+    try:
+        envelope = json.loads(header.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
         return None, "refused:unreadable-envelope"
     if not isinstance(envelope, dict):
         return None, "refused:envelope-not-an-object"
@@ -472,10 +484,6 @@ def _load_part(
     for field, wanted in expected.items():
         if envelope.get(field) != wanted:
             return None, f"refused:{field}-mismatch"
-    try:
-        payload = blob_path.read_bytes()
-    except OSError:
-        return None, "refused:unreadable-payload"
     if hashlib.sha256(payload).hexdigest() != envelope.get("payloadSha256"):
         return None, "refused:payload-digest-mismatch"
     try:
