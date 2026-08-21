@@ -33,6 +33,42 @@ Live content root: `C:\Users\Jonathan\Desktop\open-bfme\workspace\content-packs`
 - The selected interface-art indexes contain neither `RadarViewBoxEdge` nor `RadarInfoAlert`; direct runtime consumption cannot become live until the relevant pack is recooked. This lane will add tests and the source/runtime seam, but will not select, publish, or mutate a pack.
 - The first render attempt failed because the copied script-class cache was removed during startup; `Godot --headless --path game --import` repaired the worktree cache. A second 1280x720 attempt correctly failed because the renderer returned the project-fixed 1920x1080 viewport. The final default-viewport run is the green evidence cited above; failures remain in `workspace/logs/radar-look/`.
 
-## Scope decision
+## Implemented presentation delta
 
-The implementation stage will change presentation only: authored house-colour blips, removal of invented blip halos, and an importer/runtime seam for the authored camera-edge bitmap. Terrain, APT placement, map orientation, shroud simulation, and all simulation rules remain untouched. RadarPriority filtering and event flashes remain named recook/event gaps unless their authored data can be carried without widening the lane.
+- Radar units, structures, and castle fixtures now resolve through `RetailHouseColor.color_for_team`, including the match-selected `team_color_overrides` seam. The former neon-only literals and all invented brown marker underlays are gone.
+- The interface-art reference census now includes engine-owned `RadarViewBoxEdge` whenever the retail mapped-image corpus defines it. A live pure-oracle plan resolves `radar_view_box_edge.tga` to `art/compiledtextures/ra/radar_view_box_edge.dds`, crop `(1,0) 7x8`, output `radarviewboxedge-1ba43f8b.png`, with no gap.
+- `RetailMinimap` accepts only that exact 7x8 crop, tiles it along the clipped camera polygon, and records `RadarViewBoxEdge` as the source. `RetailHud` resolves it through the mounted interface-art index and records a loud `authored-radar-fallback` diagnostic when it is absent.
+- Terrain, APT placement, map orientation, shroud simulation, and every simulation rule remain untouched. No map cook is needed: selected map art coverage was already complete.
+
+## Incremental commits
+
+1. `de623a96` — diagnosis delta table and Q64 claim, before any test or production change.
+2. `2d1ff7e4` — failing-first blip/importer contracts.
+3. `a3f1f7fe` — authored match-color blips and halo removal.
+4. `d92cb133` — interface-art engine-owned radar reference.
+5. `3f065bce` — failing-first exact camera-edge crop contract.
+6. `a5b8e1a1` — runtime/HUD authored camera-edge binding and named fallback.
+
+Every commit carries `Co-Authored-By: Codex Sol <noreply@openai.com>`. The lane used the pre-existing `worktree-agent-ab31abe8952bfb670` branch ref because this supplied worktree directory has no `.git` registration; an isolated Git index preserved the concurrently advancing parent checkout.
+
+## Failing-first and final evidence
+
+- Red importer: `1 failed`, `RadarViewBoxEdge` reference count `0`; `workspace/logs/radar-look/red-interface-art-radar.txt`.
+- Red radar look: `0/4` before the blip fix, then `4/3` before the camera-edge binding; `red-radar-look.txt`, `red-radar-view-box.txt`.
+- Green focused radar: `7/0`; `green-radar-view-box.txt`.
+- Interface-art focused suites: `33 passed`, two pre-existing Pillow deprecation warnings; `green-interface-art-radar.txt`.
+- Minimap authored parchment/registration: `32/0`, including Amon Sul correlation `0.3159` versus full-grid `0.0296` and vertical-flip `0.0681`; `precommit-minimap-parchment.txt`. The runner still prints its existing missing-directory diagnostics for packs that do not own palantir art.
+- Required HUD: `124/0`; `precommit-retail-four-unit-hud.txt`.
+- Required radial: `48/0`; `gate-retail-radial-layout.txt`.
+- Required boot: first run `44/1` because `shell_visible` arrived at `12421ms` against the `12000ms` wall-clock budget; immediate unchanged warm rerun `44/0`. Logs: `gate-boot-startup.txt`, `gate-boot-startup-r2.txt`. The runner's deliberate `no_such_screen.gd` negative probe still emits expected engine errors.
+- Required castle live boot on `rotwk.map.wor-erebor`: `8/0`; `gate-castle-map-live-boot.txt`. Existing named gaps remain environment fog, trebuchet locomotor data, and castle AI script libraries.
+- Simulation pins are byte-unmoved:
+  - state: `b025d16237ff644d66211a9cc26872f18b61520b9a377f11e9e99c6eceb43f58`
+  - projectile: `709def7cadaf6c91079697a343f437f71d6a2b10d71238248f57b171f8486e7f`
+  - pathing: `2e5ad58054d28dc93f37ef4728549bb538f6d4a1c22be922ec19b59fb2d1b12d`
+
+## Eyes-required result and remaining gaps
+
+The final 1920x1080 Forward+ capture is `workspace/scratch/radar-look-final.png`; its gate log is `workspace/logs/radar-look/final-render-capture.txt`. Visual review confirms that the parchment/map ink, frame/mask, and map-axis registration remain intact, while the clustered blue unit markers no longer carry the heavy debug-like dark outline.
+
+The selected BFME2/RotWK interface-art packs still do not contain `RadarViewBoxEdge`, so the final capture truthfully shows the named thin procedural camera-line fallback. This lane did not recook, select, or publish a pack. Closing that last visible camera-edge delta requires a future immutable interface-art pack cook that includes `radarviewboxedge-1ba43f8b.png`; it is not a maps-pack/Q62 republish. `RadarPriority` admission and `RadarInfoAlert` event animation also remain the named data/event gaps from the diagnosis table.
