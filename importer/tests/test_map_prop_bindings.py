@@ -296,6 +296,77 @@ class LifecycleVisualBindingTests(unittest.TestCase):
         self.assertEqual(row["typeName"], "WargLair")
         self.assertEqual(row["matchMethod"], "exact-type-name")
 
+    def test_walk_surface_owner_disambiguates_auxiliary_default_model(self) -> None:
+        row = _default_lifecycle_visual_binding(
+            "HelmsDeepGatehouseLeft",
+            {
+                "lifecycleStates": [
+                    {
+                        "phases": ["intact"],
+                        "sourceConditionSets": [[]],
+                        "sourceW3d": "art/w3d/rb/rbhdgathsl.w3d",
+                        "output": (
+                            "assets/models/structures/helmsdeepgatehouseleft/"
+                            "intact-rbhdgathsl.glb"
+                        ),
+                    },
+                    {
+                        "phases": ["intact"],
+                        "sourceConditionSets": [[]],
+                        "sourceW3d": "art/w3d/rb/rbhdgathslpst.w3d",
+                        "output": (
+                            "assets/models/structures/helmsdeepgatehouseleft/"
+                            "intact-rbhdgathslpst.glb"
+                        ),
+                    },
+                ],
+                "walkSurfaceSources": {
+                    "P1": {
+                        "sourceW3d": "art/w3d/rb/rbhdgathsl.w3d",
+                        "glb": (
+                            "assets/models/structures/helmsdeepgatehouseleft/"
+                            "intact-rbhdgathsl.glb"
+                        ),
+                    },
+                    "P2": {
+                        "sourceW3d": "art/w3d/rb/rbhdgathsl.w3d",
+                        "glb": (
+                            "assets/models/structures/helmsdeepgatehouseleft/"
+                            "intact-rbhdgathsl.glb"
+                        ),
+                    },
+                },
+            },
+        )
+
+        self.assertEqual(
+            row["sourceVirtualModel"], "art/w3d/rb/rbhdgathsl.w3d"
+        )
+        self.assertEqual(
+            row["glb"],
+            "assets/models/structures/helmsdeepgatehouseleft/"
+            "intact-rbhdgathsl.glb",
+        )
+        self.assertEqual(
+            row["walkSurfaceSources"],
+            {
+                "P1": {
+                    "sourceVirtualModel": "art/w3d/rb/rbhdgathsl.w3d",
+                    "glb": (
+                        "assets/models/structures/helmsdeepgatehouseleft/"
+                        "intact-rbhdgathsl.glb"
+                    ),
+                },
+                "P2": {
+                    "sourceVirtualModel": "art/w3d/rb/rbhdgathsl.w3d",
+                    "glb": (
+                        "assets/models/structures/helmsdeepgatehouseleft/"
+                        "intact-rbhdgathsl.glb"
+                    ),
+                },
+            },
+        )
+
     def test_ambiguous_default_stays_fail_closed(self) -> None:
         state = {
             "phases": ["intact"],
