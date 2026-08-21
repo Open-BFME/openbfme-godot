@@ -2697,6 +2697,12 @@ ordering; the comparison above uses the pristine 61-name control, not the
   under `<state>\reports\produce-workers\<runId>\`, identity legs + diffs
   under `workspace\logs\perf-convert\q58-identity\`.
 
+NOTE (merge, delta-verify): the only cold number measured on the FINAL tree
+(ac9da974) is 316.2s — a named-defs re-warm after the marker strip flipped the
+key; the 297.6/298.6s headline is inherited from 9ae26759, whose compile
+behaviour is unchanged (markers/line endings only). The first post-merge cold
+run is the standing confirmation.
+
 ### 17.11 Verifier round: three fixes on top of `9ae26759`
 
 The fresh-context verifier praised the trust core (seven poison attacks
@@ -2748,7 +2754,7 @@ cache has **no eviction**: each superseded producer identity leaves a
 league-of-its-own ~25.5 MB entry directory for the existing disk-prune
 recipe.
 
-Post-fix sanity on the final tree, all measured: 25 cache tests green (23 +
+Post-fix sanity on the final tree, all measured: 23 cache tests green (incl.
 the two failing-first F-2 pins) and the perf/cuts files at 99 passed; the
 men pooled-warm vs pooled-nocache identity quick-leg re-run `IDENTICAL True`
 (`q58-identity-r2\`); a full seven-faction convert on the fresh key measured
