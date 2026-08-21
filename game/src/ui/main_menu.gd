@@ -35,6 +35,7 @@ const CahHeroesScript = preload("res://src/content/cah_heroes.gd")
 ## lobby announcement must reach the roster in the SAME bytes, so there is one
 ## canonicalizer and both callers use it.
 const SessionScript = preload("res://src/retail_slice/retail_lockstep_session.gd")
+const HouseColorScript = preload("res://src/retail_slice/retail_house_color.gd")
 ## DELIBERATELY STILL EAGER. `_locate_wotr_document()` runs inside `_ready()` -
 ## the SOLO PLAY flyout is built with War of the Ring's real state rather than a
 ## placeholder a later refresh has to correct - and it calls
@@ -122,17 +123,19 @@ const RULES_FACTOR_VALUES: Array[float] = [0.5, 1.0, 2.0, 4.0]
 const RULES_DEFAULT_FACTOR := 1.0
 ## Build Mode default: false = BFME2 freeform placement (byte-identical default).
 const RULES_DEFAULT_BUILD_PLOTS_ONLY := false
-## BFME2 1.06 house-color rows for the setup's Color dropdowns. Defaults are
-## Blue for the player and Red for the AI — the authored slice team colors.
+## RotWK multiplayer.ini:52-151 RGBColor rows for the setup's Color dropdowns.
+## Defaults are authored Blue for the player and Red for the AI.
 const HOUSE_COLORS: Array[Dictionary] = [
-	{"name": "Blue", "color": Color8(45, 77, 172)},
-	{"name": "Red", "color": Color8(166, 32, 28)},
-	{"name": "Green", "color": Color8(46, 125, 50)},
-	{"name": "Yellow", "color": Color8(214, 198, 46)},
-	{"name": "Orange", "color": Color8(217, 124, 30)},
-	{"name": "Purple", "color": Color8(124, 63, 160)},
-	{"name": "Teal", "color": Color8(46, 158, 155)},
-	{"name": "Pink", "color": Color8(214, 107, 168)},
+	{"name": "Blue", "color": HouseColorScript.TEAM_COLORS[0]},
+	{"name": "Red", "color": HouseColorScript.TEAM_COLORS[1]},
+	{"name": "Gold", "color": HouseColorScript.TEAM_COLORS[2]},
+	{"name": "Green", "color": HouseColorScript.TEAM_COLORS[3]},
+	{"name": "Orange", "color": HouseColorScript.TEAM_COLORS[4]},
+	{"name": "Sky Blue", "color": HouseColorScript.TEAM_COLORS[5]},
+	{"name": "Purple", "color": HouseColorScript.TEAM_COLORS[6]},
+	{"name": "Pink", "color": HouseColorScript.TEAM_COLORS[7]},
+	{"name": "Gray", "color": HouseColorScript.TEAM_COLORS[8]},
+	{"name": "White", "color": HouseColorScript.TEAM_COLORS[9]},
 ]
 ## AI difficulty tiers, matching the sim's AI_DIFFICULTY_PROFILES (easy/medium/
 ## hard/brutal/morgoth). Medium is the sim's AI_DEFAULT_DIFFICULTY, so a default

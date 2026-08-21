@@ -223,6 +223,28 @@ def test_collect_image_references_covers_buttons_portraits_and_commandsets(
     assert "GondorBarracks" in owners
 
 
+def test_collect_image_references_includes_the_engine_owned_radar_view_box(
+    oracle: Path,
+) -> None:
+    _write(
+        oracle / "data/ini/mappedimages/handcreated/radar.ini",
+        """
+MappedImage RadarViewBoxEdge
+  Texture = Radar_View_Box_Edge.tga
+  TextureWidth = 8
+  TextureHeight = 8
+  Coords = Left:1 Top:0 Right:8 Bottom:8
+End
+""",
+    )
+    references = collect_image_references(oracle)
+    radar = [row for row in references if row.image_id == "RadarViewBoxEdge"]
+    assert len(radar) == 1
+    assert radar[0].kind == "EngineUI"
+    assert radar[0].owner == "Radar"
+    assert radar[0].field == "ViewBoxEdge"
+
+
 def test_commandset_scope_restricts_the_universe(oracle: Path) -> None:
     scoped = collect_image_references(oracle, object_path_tokens=("structures/men",))
     ids = sorted({reference.image_id for reference in scoped})

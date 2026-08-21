@@ -48,6 +48,7 @@ extends RefCounted
 
 const CommandScript = preload("res://src/retail_slice/retail_command.gd")
 const DiagLogScript = preload("res://src/core/diag_log.gd")
+const HouseColorScript = preload("res://src/retail_slice/retail_house_color.gd")
 
 ## Bumped 1 -> 2 for the N-player handshake (join/welcome replace the old
 ## symmetric hello) and the relay envelopes. A v1 peer is refused, not guessed at.
@@ -97,13 +98,17 @@ const LOBBY_MAP_IDS: Array[String] = [
 ]
 const LOBBY_RESOURCE_VALUES: Array[int] = [500, 1000, 1200, 2000, 5000, 10000, 50000]
 const LOBBY_CP_FACTORS: Array[float] = [0.5, 1.0, 2.0, 4.0]
-## BFME2 1.06 house-color rows, index-aligned with the menu's HOUSE_COLORS.
+## RotWK multiplayer.ini:52-151 RGBColor rows, index-aligned with the menu's
+## HOUSE_COLORS and sourced from RetailHouseColor's single authored table.
 ## The lobby transports a color INDEX; both peers map it through this shared
 ## palette so the launch descriptors are byte-identical.
-const LOBBY_COLOR_NAMES: Array[String] = ["Blue", "Red", "Green", "Yellow", "Orange", "Purple", "Teal", "Pink"]
+const LOBBY_COLOR_NAMES: Array[String] = HouseColorScript.MULTIPLAYER_COLOR_NAMES
 const LOBBY_HOUSE_COLORS: Array[Color] = [
-	Color8(45, 77, 172), Color8(166, 32, 28), Color8(46, 125, 50), Color8(214, 198, 46),
-	Color8(217, 124, 30), Color8(124, 63, 160), Color8(46, 158, 155), Color8(214, 107, 168),
+	HouseColorScript.TEAM_COLORS[0], HouseColorScript.TEAM_COLORS[1],
+	HouseColorScript.TEAM_COLORS[2], HouseColorScript.TEAM_COLORS[3],
+	HouseColorScript.TEAM_COLORS[4], HouseColorScript.TEAM_COLORS[5],
+	HouseColorScript.TEAM_COLORS[6], HouseColorScript.TEAM_COLORS[7],
+	HouseColorScript.TEAM_COLORS[8], HouseColorScript.TEAM_COLORS[9],
 ]
 ## Alliance ids a host may assign. Default is seat + 1, i.e. free-for-all: every
 ## seat in its own alliance, which is what a 1v1 already produced (1 vs 2).

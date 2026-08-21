@@ -64,6 +64,12 @@ extends Control
 ##
 ## The separate imported preview remains art, never a false coordinate texture.
 
+const HouseColorScript := preload("res://src/retail_slice/retail_house_color.gd")
+## Retail reference capture: the view box spans about one fifth of the radar
+## disc. Cap the projected quad's longest map-space axis to that observed scale
+## after bounding far rays at the camera focus plane.
+const CAMERA_FOOTPRINT_MAX_MAP_FRACTION := 0.20
+
 ## The authored radar sheet inside the cooked palantir atlas. Measured, not
 ## guessed: outside this rectangle the atlas is spell/summon sprite work, and
 ## an earlier pass cropped the palantir ORB globe from the same sheet and
@@ -87,6 +93,9 @@ const PAPER_FALLBACK := Color8(163, 142, 95)
 ## 0.707 - so it overfills by a few percent and lets the bezel clip the corners.
 const PAPER_FILL := 1.06
 const INK_OPACITY := 0.82
+## `MappedImage RadarViewBoxEdge`: handcreatedmappedimages.ini authors the crop
+## at Left:1 Top:0 Right:8 Bottom:8 in an 8x8 source texture.
+const RETAIL_VIEW_BOX_EDGE_SIZE := Vector2i(7, 8)
 ## Where the palantir bezel's opening is, as a fraction of the radar control's
 ## side. The retail control-bar ring (`apt-palantirexport-17` region (0,0,250,256)
 ## drawn into dock rect (19,6,375,384), which is how `retail_hud.gd` composes it)
@@ -125,6 +134,12 @@ var uses_retail_parchment := false
 ## a missing pack reads as a named degradation in diagnostics rather than as a
 ## slightly duller radar nobody notices.
 var parchment_source := "flat-fallback"
+## Authored gold camera/view-box edge, supplied by the shared interface-art
+## index. The selected packs predate this crop, so the procedural line remains
+## a named fallback until a later immutable pack cook publishes it.
+var retail_view_box_edge: Texture2D
+var uses_retail_view_box_edge := false
+var view_box_edge_source := "procedural-fallback"
 var source_geometry_loaded := false
 var world_camera: Camera3D
 ## LOCAL-space camera focus, written by the slice every frame.
@@ -149,6 +164,45 @@ var _bound_castle_fixture_ids: Dictionary = {}
 
 signal center_requested(world_position: Vector2)
 signal order_requested(world_position: Vector2)
+
+
+func blip_color_for_team(team: int) -> Color:
+	## Radar markers are presentation, but their color is not independent art:
+	## retail uses the same match-selected house color as the unit/structure.
+	var fallback := Color(HouseColorScript.TEAM_COLORS.get(team, Color.WHITE))
+	return HouseColorScript.color_for_team(team, fallback)
+
+
+func blip_layers_for(kind: String, team: int) -> Array[Dictionary]:
+	## Headless-verifiable draw contract. The renderer consumes these exact
+	## layers, so one returned layer proves there is no invented halo underneath
+	## the authored house-colour marker.
+	if kind == "unit":
+		return [{"shape": "circle", "radius": 2.3, "color": blip_color_for_team(team)}]
+	if kind == "structure":
+		return [{"shape": "square", "half_size": 2.0, "color": blip_color_for_team(team)}]
+	return []
+
+
+func bind_retail_view_box_edge(texture: Texture2D) -> bool:
+	retail_view_box_edge = null
+	uses_retail_view_box_edge = false
+	view_box_edge_source = "procedural-fallback"
+	if texture == null:
+		queue_redraw()
+		return false
+	var image := texture.get_image()
+	if image == null or image.is_empty():
+		queue_redraw()
+		return false
+	if Vector2i(image.get_width(), image.get_height()) != RETAIL_VIEW_BOX_EDGE_SIZE:
+		queue_redraw()
+		return false
+	retail_view_box_edge = texture
+	uses_retail_view_box_edge = true
+	view_box_edge_source = "RadarViewBoxEdge"
+	queue_redraw()
+	return true
 
 
 func bind_retail_parchment(atlas: Texture2D) -> bool:
@@ -518,9 +572,7 @@ func _draw() -> void:
 			var point := _world_to_canvas(Vector2(entity["position"]), arena)
 			if point.distance_to(center) > radius:
 				continue
-			var color := Color("56b5ff") if int(entity["team"]) == 0 else Color("ff6259")
-			draw_circle(point, 3.4, Color(0.16, 0.11, 0.05, 0.85))
-			draw_circle(point, 2.3, color)
+			_draw_blip(point, "unit", int(entity["team"]))
 		_draw_castle_fixture_markers(arena, center, radius)
 		for id in simulation.structure_ids():
 			var structure: Dictionary = simulation.structure(id)
@@ -535,10 +587,18 @@ func _draw() -> void:
 			var point := _world_to_canvas(Vector2(structure["position"]), arena)
 			if point.distance_to(center) > radius:
 				continue
-			var color := Color("56b5ff") if int(structure["team"]) == 0 else Color("ff6259")
-			draw_rect(Rect2(point - Vector2(3.0, 3.0), Vector2(6.0, 6.0)), Color(0.16, 0.11, 0.05, 0.85), true)
-			draw_rect(Rect2(point - Vector2(2.0, 2.0), Vector2(4.0, 4.0)), color, true)
+			_draw_blip(point, "structure", int(structure["team"]))
 	_draw_camera_footprint(arena, disc)
+
+
+func _draw_blip(point: Vector2, kind: String, team: int) -> void:
+	for layer in blip_layers_for(kind, team):
+		var color := Color(layer["color"])
+		if String(layer["shape"]) == "circle":
+			draw_circle(point, float(layer["radius"]), color)
+		elif String(layer["shape"]) == "square":
+			var half_size := float(layer["half_size"])
+			draw_rect(Rect2(point - Vector2.ONE * half_size, Vector2.ONE * half_size * 2.0), color, true)
 
 
 func _draw_castle_fixture_markers(arena: Rect2, center: Vector2, radius: float) -> void:
@@ -551,7 +611,7 @@ func _draw_castle_fixture_markers(arena: Rect2, center: Vector2, radius: float) 
 		var point := _world_to_canvas(position, arena)
 		if point.distance_to(center) > radius:
 			continue
-		var color := Color("56b5ff") if int(marker["team"]) == 0 else Color("ff6259")
+		var color := blip_color_for_team(int(marker["team"]))
 		if int(marker["team"]) < 0:
 			color = Color("d8bd7c")
 		var half_length := float(marker.get("half_length", 0.0))
@@ -560,10 +620,8 @@ func _draw_castle_fixture_markers(arena: Rect2, center: Vector2, radius: float) 
 			var direction := Vector2(cos(yaw), -sin(yaw))
 			var first := _world_to_canvas(position - direction * half_length, arena)
 			var second := _world_to_canvas(position + direction * half_length, arena)
-			draw_line(first, second, Color(0.16, 0.11, 0.05, 0.85), 4.0, true)
 			draw_line(first, second, color, 2.0, true)
 		else:
-			draw_rect(Rect2(point - Vector2(2.5, 2.5), Vector2(5.0, 5.0)), Color(0.16, 0.11, 0.05, 0.85), true)
 			draw_rect(Rect2(point - Vector2(1.5, 1.5), Vector2(3.0, 3.0)), color, true)
 
 
@@ -713,26 +771,10 @@ func _visible_bounds() -> Rect2:
 func _draw_camera_footprint(arena: Rect2, disc: PackedVector2Array) -> void:
 	var center := _world_to_canvas(camera_center, arena)
 	if world_camera != null and is_instance_valid(world_camera):
-		var viewport_rect := world_camera.get_viewport().get_visible_rect()
-		var screen_corners := [
-			viewport_rect.position,
-			Vector2(viewport_rect.end.x, viewport_rect.position.y),
-			viewport_rect.end,
-			Vector2(viewport_rect.position.x, viewport_rect.end.y),
-		]
+		var radar_polygon := camera_footprint_radar_polygon(world_camera)
 		var projected := PackedVector2Array()
-		for screen_corner in screen_corners:
-			var origin := world_camera.project_ray_origin(screen_corner)
-			var direction := world_camera.project_ray_normal(screen_corner)
-			var hit: Variant = Plane(Vector3.UP, 0.35).intersects_ray(origin, direction)
-			if hit != null:
-				# The camera frustum regularly spills past the playable edge;
-				# retail clips the wedge at the map boundary, so the footprint
-				# never escapes the parchment.
-				var world_hit := _world_to_radar(Vector2((hit as Vector3).x, (hit as Vector3).z))
-				world_hit.x = clampf(world_hit.x, map_bounds.position.x, map_bounds.end.x)
-				world_hit.y = clampf(world_hit.y, map_bounds.position.y, map_bounds.end.y)
-				projected.append(_radar_to_canvas(world_hit, arena))
+		for point in radar_polygon:
+			projected.append(_radar_to_canvas(point, arena))
 		if projected.size() == 4:
 			_draw_footprint_outline(projected, disc)
 			if center.distance_to(Rect2(Vector2.ZERO, size).get_center()) <= bezel_radius():
@@ -752,8 +794,92 @@ func _draw_camera_footprint(arena: Rect2, disc: PackedVector2Array) -> void:
 	draw_circle(center, 1.8, Color("f0d47c"))
 
 
+func camera_footprint_radar_polygon(camera_value: Camera3D) -> PackedVector2Array:
+	## Bound the four screen-corner rays at the camera's focus plane before they
+	## can run to a near-horizon ground hit. The old code clamped each final hit
+	## independently to map_bounds, collapsing two far corners into one and
+	## turning the view box into a wedge. These rays remain four rays throughout.
+	if camera_value == null or not is_instance_valid(camera_value):
+		return PackedVector2Array()
+	var ground_plane := Plane(Vector3.UP, 0.35)
+	var camera_origin := camera_value.global_position
+	var focus_world := Vector3(camera_center.x, 0.35, camera_center.y)
+	var focus_distance := camera_origin.distance_to(focus_world)
+	if focus_distance <= 0.001:
+		return PackedVector2Array()
+	var viewport_rect := camera_value.get_viewport().get_visible_rect()
+	var screen_corners := [
+		viewport_rect.position,
+		Vector2(viewport_rect.end.x, viewport_rect.position.y),
+		viewport_rect.end,
+		Vector2(viewport_rect.position.x, viewport_rect.end.y),
+	]
+	var projected := PackedVector2Array()
+	for screen_corner in screen_corners:
+		var origin := camera_value.project_ray_origin(screen_corner)
+		var direction := camera_value.project_ray_normal(screen_corner)
+		var hit: Variant = ground_plane.intersects_ray(origin, direction)
+		if hit != null:
+			var hit_point := hit as Vector3
+			var hit_distance := origin.distance_to(hit_point)
+			if hit_distance > focus_distance:
+				hit_point = origin + direction * focus_distance
+			var world_hit := _world_to_radar(Vector2(hit_point.x, hit_point.z))
+			projected.append(world_hit)
+	return _fit_camera_footprint_inside_map(projected)
+
+
+func _fit_camera_footprint_inside_map(quad: PackedVector2Array) -> PackedVector2Array:
+	## Round-3 (verifier G1): the footprint is the camera's TRUE quad clipped
+	## against the map rectangle - retail's box tracks the real camera and is
+	## clipped at the map edge. The earlier centroid-scale-and-translate fit
+	## made the box non-representative at wide zoom and near edges.
+	if quad.size() != 4 or map_bounds.size.x <= 0.0 or map_bounds.size.y <= 0.0:
+		return PackedVector2Array()
+	var bounds_polygon := PackedVector2Array([
+		map_bounds.position,
+		Vector2(map_bounds.end.x, map_bounds.position.y),
+		map_bounds.end,
+		Vector2(map_bounds.position.x, map_bounds.end.y),
+	])
+	var pieces := Geometry2D.intersect_polygons(quad, bounds_polygon)
+	if pieces.is_empty():
+		return PackedVector2Array()
+	var best := pieces[0]
+	var best_area := _polygon_area(best)
+	for piece in pieces:
+		var area := _polygon_area(piece)
+		if area > best_area:
+			best = piece
+			best_area = area
+	if best_area <= 0.0001:
+		return PackedVector2Array()
+	return best
+
+
+static func _polygon_area(points: PackedVector2Array) -> float:
+	var area := 0.0
+	for index in points.size():
+		var a := points[index]
+		var b := points[(index + 1) % points.size()]
+		area += a.x * b.y - b.x * a.y
+	return absf(area) * 0.5
+
+
+static func _bounds_of_points(points: PackedVector2Array) -> Rect2:
+	var minimum := points[0]
+	var maximum := points[0]
+	for point in points:
+		minimum.x = minf(minimum.x, point.x)
+		minimum.y = minf(minimum.y, point.y)
+		maximum.x = maxf(maximum.x, point.x)
+		maximum.y = maxf(maximum.y, point.y)
+	return Rect2(minimum, maximum - minimum)
+
+
 func _draw_footprint_outline(quad: PackedVector2Array, disc: PackedVector2Array) -> void:
-	## Retail's view wedge is a thin gold outline cut at the bezel.
+	## Retail's view wedge is the authored RadarViewBoxEdge tiled along the
+	## clipped polygon. A named procedural fallback keeps old packs playable.
 	var gold := Color(0.92, 0.84, 0.55, 0.9)
 	var pieces := Geometry2D.intersect_polygons(quad, disc)
 	if pieces.is_empty():
@@ -762,6 +888,27 @@ func _draw_footprint_outline(quad: PackedVector2Array, disc: PackedVector2Array)
 		var polygon: PackedVector2Array = piece
 		if polygon.size() < 2:
 			continue
-		var closed := polygon.duplicate()
-		closed.append(polygon[0])
-		draw_polyline(closed, gold, 1.6, true)
+		if retail_view_box_edge != null:
+			for index in polygon.size():
+				_draw_retail_view_box_segment(
+					polygon[index], polygon[(index + 1) % polygon.size()]
+				)
+		else:
+			var closed := polygon.duplicate()
+			closed.append(polygon[0])
+			draw_polyline(closed, gold, 1.6, true)
+
+
+func _draw_retail_view_box_segment(first: Vector2, second: Vector2) -> void:
+	var delta := second - first
+	var length := delta.length()
+	if length <= 0.01 or retail_view_box_edge == null:
+		return
+	var source_width := float(retail_view_box_edge.get_width())
+	draw_set_transform(first, delta.angle() - PI * 0.5)
+	draw_texture_rect(
+		retail_view_box_edge,
+		Rect2(Vector2(-source_width * 0.5, 0.0), Vector2(source_width, length)),
+		true
+	)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)

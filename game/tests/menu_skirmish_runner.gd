@@ -428,20 +428,20 @@ func _run() -> void:
 	_check("map_list_scrolls", map_scroll != null and map_scroll == (menu.find_child("MapRows", true, false) as Control).get_parent())
 	var player_color_opt := menu.find_child("Color0", true, false) as OptionButton
 	var enemy_color_opt := menu.find_child("Color1", true, false) as OptionButton
-	_check("color_dropdowns_offer_eight_colors", player_color_opt != null and enemy_color_opt != null and player_color_opt.item_count == 8 and enemy_color_opt.item_count == 8)
+	_check("color_dropdowns_offer_the_ten_authored_colors", player_color_opt != null and enemy_color_opt != null and player_color_opt.item_count == 10 and enemy_color_opt.item_count == 10)
 	_check(
 		"color_defaults_match_authored_teams",
 		player_color_opt.selected == 0 and enemy_color_opt.selected == 1
-			and (game_state.get("retail_player_color") as Color).is_equal_approx(Color8(45, 77, 172))
-			and (game_state.get("retail_enemy_color") as Color).is_equal_approx(Color8(166, 32, 28))
+			and (game_state.get("retail_player_color") as Color).is_equal_approx(Color8(70, 91, 156))
+			and (game_state.get("retail_enemy_color") as Color).is_equal_approx(Color8(158, 56, 42))
 	)
-	_select_option_by_metadata_value(player_color_opt, Color8(46, 125, 50))
+	_select_option_by_metadata_value(player_color_opt, Color8(62, 152, 100))
 	_check(
 		"color_choice_reaches_game_state_and_swatch",
-		(game_state.get("retail_player_color") as Color).is_equal_approx(Color8(46, 125, 50))
-			and (menu.find_child("ColorSwatch0", true, false) as ColorRect).color.is_equal_approx(Color8(46, 125, 50))
+		(game_state.get("retail_player_color") as Color).is_equal_approx(Color8(62, 152, 100))
+			and (menu.find_child("ColorSwatch0", true, false) as ColorRect).color.is_equal_approx(Color8(62, 152, 100))
 	)
-	_select_option_by_metadata_value(player_color_opt, Color8(45, 77, 172))
+	_select_option_by_metadata_value(player_color_opt, Color8(70, 91, 156))
 	var start_buttons := menu.find_child("Start1", true, false) as Button
 	_check("start_buttons_from_map_waypoints", start_buttons != null and (menu.find_child("Start2", true, false) as Button) != null)
 	_check("start_default_is_authored", int(game_state.get("retail_player_start_index")) == 0)
@@ -708,6 +708,9 @@ func _select_option_by_metadata_value(option: OptionButton, metadata_value: Vari
 			option.select(index)
 			option.item_selected.emit(index)
 			return
+	# A silent no-op here let a stale color literal hide a dead assertion
+	# (radar round-2 verifier G2). A miss is a test-authoring bug: fail loudly.
+	_check("select_option_metadata_found:%s" % str(metadata_value), false, "no dropdown item carries this metadata")
 
 
 func _check(name: String, condition: bool, detail: String = "") -> void:
