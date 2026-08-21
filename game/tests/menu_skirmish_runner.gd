@@ -432,8 +432,8 @@ func _run() -> void:
 	_check(
 		"color_defaults_match_authored_teams",
 		player_color_opt.selected == 0 and enemy_color_opt.selected == 1
-			and (game_state.get("retail_player_color") as Color).is_equal_approx(Color8(45, 77, 172))
-			and (game_state.get("retail_enemy_color") as Color).is_equal_approx(Color8(166, 32, 28))
+			and (game_state.get("retail_player_color") as Color).is_equal_approx(Color8(70, 91, 156))
+			and (game_state.get("retail_enemy_color") as Color).is_equal_approx(Color8(158, 56, 42))
 	)
 	_select_option_by_metadata_value(player_color_opt, Color8(46, 125, 50))
 	_check(
@@ -441,7 +441,7 @@ func _run() -> void:
 		(game_state.get("retail_player_color") as Color).is_equal_approx(Color8(46, 125, 50))
 			and (menu.find_child("ColorSwatch0", true, false) as ColorRect).color.is_equal_approx(Color8(46, 125, 50))
 	)
-	_select_option_by_metadata_value(player_color_opt, Color8(45, 77, 172))
+	_select_option_by_metadata_value(player_color_opt, Color8(70, 91, 156))
 	var start_buttons := menu.find_child("Start1", true, false) as Button
 	_check("start_buttons_from_map_waypoints", start_buttons != null and (menu.find_child("Start2", true, false) as Button) != null)
 	_check("start_default_is_authored", int(game_state.get("retail_player_start_index")) == 0)

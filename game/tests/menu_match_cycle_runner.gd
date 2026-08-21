@@ -131,8 +131,8 @@ func _check_reset_defaults(game_state: Node, label: String) -> void:
 			and String(game_state.get("retail_enemy_faction")) == "men"
 			and String(game_state.get("retail_map_id")) == ""
 			and int(game_state.get("retail_player_start_index")) == 0
-			and (game_state.get("retail_player_color") as Color).is_equal_approx(Color(0.176, 0.302, 0.675))
-			and (game_state.get("retail_enemy_color") as Color).is_equal_approx(Color(0.651, 0.125, 0.110)),
+			and (game_state.get("retail_player_color") as Color).is_equal_approx(Color8(70, 91, 156))
+			and (game_state.get("retail_enemy_color") as Color).is_equal_approx(Color8(158, 56, 42)),
 		"player=%s enemy=%s map=%s" % [
 			String(game_state.get("retail_player_faction")),
 			String(game_state.get("retail_enemy_faction")),

@@ -10,11 +10,35 @@ extends RefCounted
 ## No class_name: scripts loaded by headless --script runners do not register
 ## global classes; consumers preload this file.
 
-# Retail 1.06 multiplayer palette rows for the two slice teams: player Gondor
-# blue, enemy Gondor red.
+# RotWK multiplayer.ini:52-151 RGBColor rows, in authored slot order. This is
+# the one default-palette source for setup, lobby, model masks, and radar blips.
+const MULTIPLAYER_COLOR_NAMES: Array[String] = [
+	"Blue", "Red", "Gold", "Green", "Orange",
+	"Sky Blue", "Purple", "Pink", "Gray", "White",
+]
+const MULTIPLAYER_COLORS: Array[Color] = [
+	Color8(70, 91, 156),
+	Color8(158, 56, 42),
+	Color8(175, 189, 76),
+	Color8(62, 152, 100),
+	Color8(206, 135, 69),
+	Color8(122, 168, 204),
+	Color8(148, 116, 183),
+	Color8(204, 159, 188),
+	Color8(100, 100, 100),
+	Color8(255, 255, 255),
+]
 const TEAM_COLORS := {
-	0: Color8(45, 77, 172),
-	1: Color8(166, 32, 28),
+	0: MULTIPLAYER_COLORS[0],
+	1: MULTIPLAYER_COLORS[1],
+	2: MULTIPLAYER_COLORS[2],
+	3: MULTIPLAYER_COLORS[3],
+	4: MULTIPLAYER_COLORS[4],
+	5: MULTIPLAYER_COLORS[5],
+	6: MULTIPLAYER_COLORS[6],
+	7: MULTIPLAYER_COLORS[7],
+	8: MULTIPLAYER_COLORS[8],
+	9: MULTIPLAYER_COLORS[9],
 }
 ## Optional per-team color override (menu house-color selection seam). Empty
 ## dictionary keeps the authored TEAM_COLORS untouched; a Color entry replaces

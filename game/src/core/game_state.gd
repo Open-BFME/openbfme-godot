@@ -2,6 +2,7 @@ extends Node
 ## Match-level state. Pure data + sim world reference.
 
 const BootProfile = preload("res://src/core/boot_profile.gd")
+const HouseColorScript = preload("res://src/retail_slice/retail_house_color.gd")
 
 enum Side { PLAYER = 0, ENEMY = 1, WILD = 2 }
 enum Stance { AGGRESSIVE = 0, DEFENSIVE = 1, HOLD = 2 }
@@ -51,8 +52,8 @@ var retail_logic_random_seed: int = 0
 var retail_player_start_index: int = 0
 ## House colors chosen on the setup screen. Defaults are the authored slice
 ## team colors (Gondor blue vs red), so an untouched setup is byte-identical.
-var retail_player_color: Color = Color(0.176, 0.302, 0.675)
-var retail_enemy_color: Color = Color(0.651, 0.125, 0.110)
+var retail_player_color: Color = HouseColorScript.TEAM_COLORS[0]
+var retail_enemy_color: Color = HouseColorScript.TEAM_COLORS[1]
 ## Retail vertical slice map selection (bfme2.map.<slug>). The slice reads it
 ## only when OPENBFME_SLICE_MAP is unset; empty keeps the Fords of Isen II
 ## default. Selectable ids: bfme2.map.fords-of-isen-ii, bfme2.map.rivendell,
@@ -153,8 +154,8 @@ func reset_match() -> void:
 	retail_allow_ring_heroes = false
 	retail_logic_random_seed = 0
 	retail_player_start_index = 0
-	retail_player_color = Color(0.176, 0.302, 0.675)
-	retail_enemy_color = Color(0.651, 0.125, 0.110)
+	retail_player_color = HouseColorScript.TEAM_COLORS[0]
+	retail_enemy_color = HouseColorScript.TEAM_COLORS[1]
 	retail_map_id = ""
 	retail_team_setup = []
 	retail_mp_player_name = "Player"
