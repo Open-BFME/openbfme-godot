@@ -63,6 +63,33 @@ func _run() -> void:
 		"legacy 6px dark halo draw remains"
 	)
 
+	var has_edge_seam := minimap.has_method("bind_retail_view_box_edge")
+	_check(
+		"radar_exposes_the_authored_view_box_edge_seam",
+		has_edge_seam,
+		"RetailMinimap.bind_retail_view_box_edge is absent"
+	)
+	if has_edge_seam:
+		var wrong_size := ImageTexture.create_from_image(
+			Image.create(8, 8, false, Image.FORMAT_RGBA8)
+		)
+		var authored_crop := ImageTexture.create_from_image(
+			Image.create(7, 8, false, Image.FORMAT_RGBA8)
+		)
+		_check(
+			"view_box_edge_rejects_wrong_crop_dimensions",
+			not bool(minimap.call("bind_retail_view_box_edge", wrong_size))
+		)
+		_check(
+			"view_box_edge_accepts_the_authored_7_by_8_crop",
+			bool(minimap.call("bind_retail_view_box_edge", authored_crop))
+				and bool(minimap.get("uses_retail_view_box_edge"))
+				and String(minimap.get("view_box_edge_source")) == "RadarViewBoxEdge"
+		)
+	else:
+		_check("view_box_edge_rejects_wrong_crop_dimensions", false, "binding seam unavailable")
+		_check("view_box_edge_accepts_the_authored_7_by_8_crop", false, "binding seam unavailable")
+
 	HouseColorScript.team_color_overrides.clear()
 	minimap.free()
 	print("RADAR_LOOK_RESULT passed=%d failed=%d" % [passed, failed])
