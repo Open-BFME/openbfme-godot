@@ -31,6 +31,14 @@ extends SceneTree
 ##   object/goodfaction/hordes/men/menhordes.ini:1822-1825
 ##     RohanRohirrimHorde binds NormalCavalryHordeLocomotor at
 ##     NORMAL_MOUNTED_MED_HORDE_SPEED = 100.
+##   locomotor.ini:178-188; wildhordes.ini:1858-1862
+##     WildBabyDrakeHorde binds FiredrakeLocomotor at speed 120; the locomotor
+##     authors TurnTime 1500, SlowTurnRadius 2, FastTurnRadius 30, and
+##     MinTurnSpeed 100%.
+##   locomotor.ini:2944-2956; wildhordes.ini:816-820; gamedata.ini:7911
+##     WildSpiderlingHorde binds TestWallScalingHordeLocomotor at
+##     NORMAL_MOUNTED_FAST_HORDE_SPEED = 110; the locomotor authors TurnTime
+##     2000, SlowTurnRadius 33, FastTurnRadius 33, and MinTurnSpeed 100%.
 ##
 ## The sim's authored source-unit scale is 0.1, so the sealed runtime values are
 ## 9/150/200 and 5.5/51/51 respectively. No movement number below is invented.
@@ -39,7 +47,7 @@ const SimScript := preload("res://src/retail_slice/retail_slice_sim.gd")
 const AdapterScript := preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
 
-const EXPECTED_CHECKS := 32
+const EXPECTED_CHECKS := 35
 const EPSILON := 0.0001
 
 var passed := 0
@@ -255,6 +263,34 @@ func _run() -> void:
 		str(adapter_fast_turn)
 	)
 
+	var spiderling_residue := _exercise_unadmitted_fast_radius_residue(
+		_wild_spiderling_horde_residue_rule(), "WildSpiderlingHorde", 30.0
+	)
+	_check(
+		"wildspiderlinghorde_unadmitted_fast_radius_keeps_pre_q55_clamp_byte_identical",
+		not bool(spiderling_residue["has_fast_turn_radius"])
+			and bool(spiderling_residue["pre_q55_position_byte_identical"]),
+		str(spiderling_residue)
+	)
+	var baby_drake_residue := _exercise_unadmitted_fast_radius_residue(
+		_wild_baby_drake_horde_residue_rule(), "WildBabyDrakeHorde", 30.0
+	)
+	_check(
+		"wildbabydrakehorde_unadmitted_fast_radius_keeps_slow_clamp",
+		not bool(baby_drake_residue["has_fast_turn_radius"])
+			and bool(baby_drake_residue["pre_q55_position_byte_identical"]),
+		str(baby_drake_residue)
+	)
+	var mumakil_residue := _exercise_unadmitted_fast_radius_residue(
+		_mumakil_rule(), "MordorMumakil", 30.0
+	)
+	_check(
+		"mumakil_min_below_100_unadmitted_fast_radius_stays_pre_q55_byte_identical",
+		not bool(mumakil_residue["has_fast_turn_radius"])
+			and bool(mumakil_residue["pre_q55_position_byte_identical"]),
+		str(mumakil_residue)
+	)
+
 	_exercise_blocked_origin_route_contract()
 
 	_finish()
@@ -406,6 +442,42 @@ func _exercise_zero_translation_pivot_crush() -> Dictionary:
 	}
 
 
+func _exercise_unadmitted_fast_radius_residue(
+		rule: Dictionary, unit_type: String, correction_degrees: float) -> Dictionary:
+	var sim = _make_sim(rule, unit_type)
+	var row: Dictionary = sim.entities[1]
+	row["facing"] = Vector2.RIGHT
+	row["current_speed"] = float(row["speed"])
+	row["route"] = [Vector2.RIGHT.rotated(deg_to_rad(correction_degrees)) * 100.0]
+	var pre_q55_step_distance := float(row["speed"]) * SimScript.TICK_SECONDS
+	var minimum_turn_speed := (
+		float(row["speed"]) * clampf(float(row["min_turn_speed"]), 0.0, 1.0)
+	)
+	if float(row["current_speed"]) <= minimum_turn_speed + 0.0001:
+		pre_q55_step_distance = minf(
+			pre_q55_step_distance,
+			float(row["slow_turn_radius"])
+				* deg_to_rad(float(row["turn_rate_degrees_per_second"]))
+				* SimScript.TICK_SECONDS
+		)
+	sim._step_route(row)
+	var expected_position := Vector2(row["facing"]).normalized() * pre_q55_step_distance
+	var actual_position := Vector2(row["position"])
+	return {
+		"unit_type": unit_type,
+		"has_fast_turn_radius": row.has("fast_turn_radius"),
+		"min_turn_speed": row["min_turn_speed"],
+		"slow_turn_radius": row["slow_turn_radius"],
+		"actual_step_distance": actual_position.length(),
+		"pre_q55_step_distance": pre_q55_step_distance,
+		"pre_q55_position_byte_identical": (
+			var_to_bytes(actual_position) == var_to_bytes(expected_position)
+		),
+		"actual_position_bytes": var_to_bytes(actual_position).hex_encode(),
+		"pre_q55_position_bytes": var_to_bytes(expected_position).hex_encode(),
+	}
+
+
 func _exercise_fast_turn_radius_adapter() -> Dictionary:
 	var source := {
 		"unit_type": "bfme2.object.rohanrohirrimhorde",
@@ -537,6 +609,43 @@ func _rohirrim_horde_rule() -> Dictionary:
 		"turn_rate_source": "locomotor:NormalCavalryHordeLocomotor",
 		"slow_turn_radius": 0.0,
 		"fast_turn_radius": 4.8,
+		"min_turn_speed": 1.0,
+	}, true)
+	return rule
+
+
+func _wild_spiderling_horde_residue_rule() -> Dictionary:
+	var rule := _base_rule()
+	rule.merge({
+		"category": "cavalry",
+		"speed": 11.0,
+		"speed_source": 110.0,
+		"acceleration": 50.0,
+		"acceleration_source": 500.0,
+		"braking": 50.0,
+		"braking_source": 500.0,
+		"turn_rate_degrees_per_second": 180.0,
+		"turn_rate_source": "locomotor:TestWallScalingHordeLocomotor",
+		"slow_turn_radius": 3.3,
+		"min_turn_speed": 1.0,
+		"max_turn_without_reform_degrees": 45.0,
+	}, true)
+	return rule
+
+
+func _wild_baby_drake_horde_residue_rule() -> Dictionary:
+	var rule := _base_rule()
+	rule.merge({
+		"category": "cavalry",
+		"speed": 12.0,
+		"speed_source": 120.0,
+		"acceleration": 50.0,
+		"acceleration_source": 500.0,
+		"braking": 50.0,
+		"braking_source": 500.0,
+		"turn_rate_degrees_per_second": 240.0,
+		"turn_rate_source": "locomotor:FiredrakeLocomotor",
+		"slow_turn_radius": 0.2,
 		"min_turn_speed": 1.0,
 	}, true)
 	return rule

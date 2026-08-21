@@ -29202,6 +29202,7 @@ func _step_route(row: Dictionary) -> void:
 	var heading_bounded_ground_move := false
 	var turning_on_authored_heading := false
 	var slow_turn_manoeuvre := false
+	var pre_q55_slow_clamp := false
 	if movement_direction.length_squared() > 0.000001:
 		if _should_honor_turn_rate(row):
 			var facing_before_turn := Vector2(row.get("facing", movement_direction)).normalized()
@@ -29240,6 +29241,7 @@ func _step_route(row: Dictionary) -> void:
 			# The waypoint lies inside the current arc: drop to the authored
 			# minimum turning speed so SlowTurnRadius owns the close maneuver.
 			current_speed = minimum_turn_speed
+		pre_q55_slow_clamp = current_speed <= minimum_turn_speed + 0.0001
 		row["current_speed"] = current_speed
 	step_distance = current_speed * TICK_SECONDS
 	var travel_step := Vector2.ZERO
@@ -29262,6 +29264,14 @@ func _step_route(row: Dictionary) -> void:
 				# Preserve authored zero exactly, just as for SlowTurnRadius.
 				var fast_turn_radius := maxf(0.0, float(row["fast_turn_radius"]))
 				step_distance = minf(step_distance, fast_turn_radius * authored_turn_step)
+			elif pre_q55_slow_clamp and row.has("slow_turn_radius"):
+				# The adapter deliberately leaves FastTurnRadius unadmitted outside the
+				# Q55 cavalry family. Preserve those rows' pre-Q55 kinematics by keeping
+				# their old SlowTurnRadius clamp until their fast arc is admitted.
+				var fallback_slow_turn_radius := maxf(0.0, float(row["slow_turn_radius"]))
+				step_distance = minf(
+					step_distance, fallback_slow_turn_radius * authored_turn_step
+				)
 	# A heading-bounded unit may initially face away from a nearby waypoint. It
 	# must complete the authored turn instead of teleporting sideways onto the
 	# point merely because its scalar step is longer than the remaining gap.
