@@ -2681,12 +2681,13 @@ def _binding_entry(
     *,
     kind: str,
     required_fields: frozenset[str],
+    optional_fields: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise SageMapError(f"sage-map objectBindings.{kind} entries must be objects")
     fields = set(value)
     missing = sorted(required_fields - fields)
-    unsupported = sorted(fields - required_fields)
+    unsupported = sorted(fields - required_fields - optional_fields)
     if missing:
         raise SageMapError(
             f"sage-map objectBindings.{kind} entry is missing field(s): "
@@ -2815,9 +2816,42 @@ def _object_binding_inventory(
             },
         )
 
-    model_fields = frozenset({"typeName", "sourceVirtualModel", "glb", "matchMethod"})
+    def walk_surface_sources(value: object, label: str) -> dict[str, dict[str, str]]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict) or not value:
+            raise SageMapError(f"{label} must be a non-empty object")
+        result: dict[str, dict[str, str]] = {}
+        for mesh_name, raw_source in value.items():
+            if (
+                not isinstance(mesh_name, str)
+                or not mesh_name
+                or not isinstance(raw_source, dict)
+                or set(raw_source) != {"sourceVirtualModel", "glb"}
+            ):
+                raise SageMapError(f"{label} has an invalid source row")
+            result[mesh_name] = {
+                "sourceVirtualModel": _binding_path(
+                    raw_source["sourceVirtualModel"],
+                    f"{label}.{mesh_name}.sourceVirtualModel",
+                    ".w3d",
+                ),
+                "glb": _binding_path(
+                    raw_source["glb"], f"{label}.{mesh_name}.glb", ".glb"
+                ),
+            }
+        return result
+
+    model_fields = frozenset(
+        {"typeName", "sourceVirtualModel", "glb", "matchMethod"}
+    )
     for raw in model_entries:
-        entry = _binding_entry(raw, kind="models", required_fields=model_fields)
+        entry = _binding_entry(
+            raw,
+            kind="models",
+            required_fields=model_fields,
+            optional_fields=frozenset({"walkSurfaceSources"}),
+        )
         type_name = _bounded_binding_text(
             entry["typeName"], "objectBindings.models.typeName"
         )
@@ -2842,6 +2876,16 @@ def _object_binding_inventory(
                     ".w3d",
                 ),
                 "glb": _binding_path(entry["glb"], "objectBindings.models.glb", ".glb"),
+                **(
+                    {
+                        "walkSurfaceSources": walk_surface_sources(
+                            entry.get("walkSurfaceSources"),
+                            "objectBindings.models.walkSurfaceSources",
+                        )
+                    }
+                    if entry.get("walkSurfaceSources") is not None
+                    else {}
+                ),
             },
         )
 
@@ -2853,6 +2897,7 @@ def _object_binding_inventory(
             raw,
             kind="structures",
             required_fields=structure_fields,
+            optional_fields=frozenset({"walkSurfaceSources"}),
         )
         type_name = _bounded_binding_text(
             entry["typeName"], "objectBindings.structures.typeName"
@@ -2888,6 +2933,16 @@ def _object_binding_inventory(
                     entry["glb"], "objectBindings.structures.glb", ".glb"
                 ),
                 "objectId": object_id,
+                **(
+                    {
+                        "walkSurfaceSources": walk_surface_sources(
+                            entry.get("walkSurfaceSources"),
+                            "objectBindings.structures.walkSurfaceSources",
+                        )
+                    }
+                    if entry.get("walkSurfaceSources") is not None
+                    else {}
+                ),
             },
         )
 

@@ -152,6 +152,7 @@ def compile_map_object_descriptor(
     raw: Mapping[str, Any] | None = None,
     defines: Mapping[str, int | float] | None = None,
     define_provenance: Mapping[str, Mapping[str, object]] | None = None,
+    w3d_root: Path | None = None,
     game: str = "bfme2",
 ) -> dict[str, Any]:
     """Compile one map-referenced object type into a descriptor document.
@@ -212,7 +213,7 @@ def compile_map_object_descriptor(
             {str(entry.source_virtual_path) for entry in ancestry}
         ),
     }
-    walk_surfaces = compile_walk_surfaces(ancestry, documents)
+    walk_surfaces = compile_walk_surfaces(ancestry, documents, w3d_root=w3d_root)
     if walk_surfaces is not None:
         descriptor["walkSurfaces"] = walk_surfaces
     canonical = json.dumps(
@@ -615,6 +616,7 @@ def build_map_fixtures(
     index: Mapping[str, ObjectTypeInfo] | None = None,
     defines: Mapping[str, int | float] | None = None,
     define_provenance: Mapping[str, Mapping[str, object]] | None = None,
+    w3d_root: Path | None = None,
     game: str = "bfme2",
 ) -> dict[str, Any]:
     """Build the ``openbfme.sage-map-fixtures`` document for one map.
@@ -671,6 +673,7 @@ def build_map_fixtures(
                 raw=raw,
                 defines=defines,
                 define_provenance=define_provenance,
+                w3d_root=w3d_root,
                 game=game,
             )
         descriptor = descriptors[folded]
@@ -1107,6 +1110,11 @@ def rebind_castle_fixture_structures(
             "glb": glb,
             "matchMethod": match_method,
             "objectId": object_id,
+            **(
+                {"walkSurfaceSources": dict(model["walkSurfaceSources"])}
+                if isinstance(model.get("walkSurfaceSources"), Mapping)
+                else {}
+            ),
         }
 
     def _sorted(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -1167,6 +1175,7 @@ def make_effective_assets_fixtures_builder(
             index=index,
             defines=defines,
             define_provenance=define_provenance,
+            w3d_root=root,
             game=game,
         )
 

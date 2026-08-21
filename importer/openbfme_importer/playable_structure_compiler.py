@@ -18,6 +18,7 @@ from collections.abc import Iterable, Mapping, Sequence
 import hashlib
 import json
 import re
+from pathlib import Path
 
 from .module_contracts import (
     ModuleContractError,
@@ -3344,6 +3345,8 @@ def _w3d_mesh_names(payload: bytes, virtual_path: str) -> frozenset[str]:
 def compile_walk_surfaces(
     ancestry: Sequence[SageObject],
     documents: Mapping[str, bytes] | None = None,
+    *,
+    w3d_root: Path | None = None,
 ) -> dict[str, object] | None:
     """Compile Draw-module walk-surface names, plus W3D-absence receipts.
 
@@ -3355,21 +3358,25 @@ def compile_walk_surfaces(
     """
 
     authored: dict[str, dict[str, object]] = {}
-    models: list[str] = []
+    default_models: list[str] = []
+    alternate_models: list[str] = []
     for block in _effective_top_blocks(ancestry):
         if (block.header_key or "").casefold() != "draw":
             continue
         if block.kind.casefold() != "w3dscriptedmodeldraw":
             continue
         for nested in block.blocks:
-            if nested.kind.casefold() != "defaultmodelconditionstate":
+            state_kind = nested.kind.casefold()
+            if state_kind not in {"defaultmodelconditionstate", "modelconditionstate"}:
                 continue
             for assignment in nested.assignments:
                 if assignment.key.casefold() != "model":
                     continue
                 token = assignment.value.split()[0] if assignment.value.split() else ""
                 if token:
-                    models.append(token)
+                    target = default_models if state_kind == "defaultmodelconditionstate" else alternate_models
+                    if token.casefold() not in {value.casefold() for value in target}:
+                        target.append(token)
         by_key = {assignment.key.casefold(): assignment for assignment in block.assignments}
         for authored_name, role in _WALK_SURFACE_FIELDS:
             assignment = by_key.get(authored_name.casefold())
@@ -3401,29 +3408,66 @@ def compile_walk_surfaces(
         if (row := authored.get(role)) is not None
     }
     scanned_names: set[str] = set()
+    default_names: set[str] = set()
+    source_by_name: dict[str, str] = {}
     scanned_any = False
-    if documents is not None:
-        seen_paths: set[str] = set()
-        for model in models:
-            virtual = _w3d_virtual_path_for_model(model)
-            if virtual is None or virtual.casefold() in seen_paths:
-                continue
-            payload = _document_payload(documents, virtual)
-            if payload is None:
-                continue
-            seen_paths.add(virtual.casefold())
-            scanned_any = True
-            scanned_names.update(
-                name.casefold() for name in _w3d_mesh_names(payload, virtual)
-            )
+    seen_paths: set[str] = set()
+
+    def payload_for(virtual: str) -> bytes | None:
+        payload = _document_payload(documents, virtual) if documents is not None else None
+        if payload is not None or w3d_root is None:
+            return payload
+        path = w3d_root.joinpath(*virtual.split("/"))
+        return path.read_bytes() if path.is_file() else None
+
+    def scan_model(model: str, *, is_default: bool) -> None:
+        nonlocal scanned_any
+        virtual = _w3d_virtual_path_for_model(model)
+        if virtual is None or virtual.casefold() in seen_paths:
+            return
+        payload = payload_for(virtual)
+        if payload is None:
+            return
+        seen_paths.add(virtual.casefold())
+        scanned_any = True
+        from .w3d_metadata import scan_w3d_metadata
+
+        metadata = scan_w3d_metadata(payload, virtual)
+        mesh_names = {
+            header.mesh_name.casefold()
+            for header in metadata.mesh_headers
+            if header.mesh_name
+        }
+        scanned_names.update(mesh_names)
+        if is_default:
+            default_names.update(mesh_names)
+        for mesh_name in mesh_names:
+            source_by_name.setdefault(mesh_name, virtual)
+        # Retail HLOD containers can refer to a sibling render container by
+        # its leaf identifier. GBMinGate2 is the standing case: the intact
+        # W3D references GBMGATE2, whose sibling W3D carries the hidden P1/P2
+        # path proxies. Scan that exact authored child before damage states.
+        for reference in metadata.model_references:
+            leaf = reference.identifier.split(".", 1)[-1].strip()
+            if leaf and leaf.casefold() != model.casefold():
+                scan_model(leaf, is_default=False)
+
+    for model in default_models:
+        scan_model(model, is_default=True)
+    for model in alternate_models:
+        scan_model(model, is_default=False)
     if scanned_any:
         unresolved: list[dict[str, object]] = []
+        mesh_sources: dict[str, str] = {}
         for _, role in _WALK_SURFACE_FIELDS:
             row = authored.get(role)
             if row is None:
                 continue
             mesh_name = str(row["meshName"])
-            if mesh_name.casefold() in scanned_names:
+            folded_name = mesh_name.casefold()
+            if folded_name in scanned_names:
+                if folded_name not in default_names:
+                    mesh_sources[role] = source_by_name[folded_name]
                 continue
             unresolved.append(
                 {
@@ -3435,6 +3479,8 @@ def compile_walk_surfaces(
             )
         if unresolved:
             names["unresolved"] = unresolved
+        if mesh_sources:
+            names["meshSources"] = mesh_sources
     return names
 
 
@@ -3445,7 +3491,7 @@ def validate_walk_surfaces(value: object, *, label: str) -> None:
         return
     if not isinstance(value, Mapping):
         raise PlayableStructureCompilerError(f"{label} walkSurfaces must be an object")
-    allowed = set(_WALK_SURFACE_ROLES) | {"unresolved"}
+    allowed = set(_WALK_SURFACE_ROLES) | {"meshSources", "unresolved"}
     extra = set(value) - allowed
     if extra:
         raise PlayableStructureCompilerError(
@@ -3465,6 +3511,22 @@ def validate_walk_surfaces(value: object, *, label: str) -> None:
         raise PlayableStructureCompilerError(
             f"{label} walkSurfaces authors no mesh role"
         )
+    mesh_sources = value.get("meshSources")
+    if mesh_sources is not None:
+        if not isinstance(mesh_sources, Mapping) or not mesh_sources:
+            raise PlayableStructureCompilerError(
+                f"{label} walkSurfaces has invalid meshSources"
+            )
+        for role, source in mesh_sources.items():
+            if (
+                role not in _WALK_SURFACE_ROLES
+                or role not in value
+                or not isinstance(source, str)
+                or not re.fullmatch(r"art/w3d/[a-z0-9]{2}/[a-z0-9_.-]+\.w3d", source.casefold())
+            ):
+                raise PlayableStructureCompilerError(
+                    f"{label} walkSurfaces has invalid meshSources"
+                )
     if "unresolved" not in value:
         return
     unresolved = value["unresolved"]

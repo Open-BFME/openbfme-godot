@@ -243,7 +243,7 @@ def _merge_stage_resources(
 
 def _default_lifecycle_visual_binding(
     target: str, recipe: Mapping[str, Any]
-) -> dict[str, str]:
+) -> dict[str, Any]:
     defaults = [
         state
         for state in recipe.get("lifecycleStates", [])
@@ -256,12 +256,23 @@ def _default_lifecycle_visual_binding(
             f"expected one default intact model, found {len(defaults)}"
         )
     default = defaults[0]
-    return {
+    binding: dict[str, Any] = {
         "typeName": target,
         "sourceVirtualModel": str(default["sourceW3d"]),
         "glb": str(default["output"]),
         "matchMethod": "exact-type-name",
     }
+    walk_sources = recipe.get("walkSurfaceSources")
+    if isinstance(walk_sources, Mapping) and walk_sources:
+        binding["walkSurfaceSources"] = {
+            str(mesh_name): {
+                "sourceVirtualModel": str(source["sourceW3d"]),
+                "glb": str(source["glb"]),
+            }
+            for mesh_name, source in walk_sources.items()
+            if isinstance(source, Mapping)
+        }
+    return binding
 
 
 def build_map_prop_binding_plan(

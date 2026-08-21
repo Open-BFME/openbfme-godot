@@ -13,7 +13,7 @@ extends SceneTree
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const RunnerWatchdogScript = preload("res://tests/runner_watchdog.gd")
 
-const EXPECTED_CHECKS := 20
+const EXPECTED_CHECKS := 22
 const WIDTH := 24
 const HEIGHT := 16
 const FORD_NAMES: Array[String] = ["ford1", "ford2", "ford3"]
@@ -86,6 +86,7 @@ func _run() -> void:
 	)
 
 	_test_ground_pockets_bridge_only_through_ramps()
+	_test_distinct_ground_anchor_derivation()
 	_test_selected_erebor_vertical_slice()
 
 	_finish()
@@ -171,6 +172,47 @@ func _test_ground_pockets_bridge_only_through_ramps() -> void:
 	)
 
 
+func _test_distinct_ground_anchor_derivation() -> void:
+	var map = _make_map()
+	var wall_endpoint := Vector2i(5, 7)
+	map._navigation_grid.set_point_solid(wall_endpoint, true)
+	var low := _local(map, wall_endpoint)
+	var high := _local(map, Vector2i(7, 7))
+	var triangles: Array = [PackedVector3Array([
+		Vector3(low.x, 0.0, low.y),
+		Vector3(low.x, 0.0, low.y + 1.0),
+		Vector3(high.x, 4.0, high.y),
+	])]
+	var surface_cells: Array[Vector2i] = _line_cells(5, 7, 7)
+	var pairs: Array = []
+	if map.has_method("_walk_surface_low_endpoint_pairs"):
+		pairs = map.call(
+			"_walk_surface_low_endpoint_pairs",
+			triangles,
+			Transform3D.IDENTITY,
+			surface_cells
+		) as Array
+	_check(
+		"distinct_ground_anchor_is_derived_from_authored_low_end",
+		not pairs.is_empty()
+		and Vector2i((pairs[0] as Dictionary).get("wall_cell", Vector2i(-1, -1))) == wall_endpoint
+		and map.is_navigation_walkable(Vector2i((pairs[0] as Dictionary).get("ground_cell", Vector2i(-1, -1)))),
+		str(pairs)
+	)
+	var installed := bool(map.install_walk_surface_cells_for_test([
+		{"id": "offset-ramp", "role": "ramp", "cells": surface_cells, "portal_pairs": pairs},
+		{"id": "offset-deck", "role": "deck", "cells": _rect_cells(Vector2i(7, 6), Vector2i(10, 8))},
+	]))
+	var route: Dictionary = map.query_layered_route(
+		_local(map, Vector2i(2, 7)),
+		_local(map, Vector2i(9, 7)),
+		"ground"
+	)
+	_check(
+		"distinct_ground_anchor_routes_without_synthesized_wall_cells",
+		installed and bool(route.get("valid", false)) and (route.get("surface_roles", []) as Array).has("ramp"),
+		"installed=%s pairs=%s route=%s" % [str(installed), str(pairs), str(route)]
+	)
 func _test_selected_erebor_vertical_slice() -> void:
 	var mod_loader = root.get_node_or_null("ModLoader")
 	var content_root := OS.get_environment("OPENBFME_CONTENT").strip_edges()
