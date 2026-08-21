@@ -1134,18 +1134,10 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 		output["max_turn_without_reform_degrees"] = max_turn_without_reform
 	if movement.has("slowTurnRadius"):
 		output["slow_turn_radius"] = slow_turn_radius * source_scale
-	# Q55's affected retail family authors the complete 0 / 48 / 100% split.
-	# Keep FastTurnRadius absent from unrelated runtime rules until their fast-arc
-	# behavior is admitted: rules are part of state_hash(), and adding inert
-	# locomotor data to projectile-only fixtures would move that protected pin.
-	# Authored zero remains meaningful and is passed for this complete contract.
-	if (
-		movement.has("fastTurnRadius")
-		and movement.has("slowTurnRadius")
-		and movement.has("minTurnSpeed")
-		and is_zero_approx(slow_turn_radius)
-		and min_turn_speed >= 1.0
-	):
+	# Retail's authored FastTurnRadius is executable locomotor data for every
+	# profile, not a cavalry-only shape. Preserve authored zero and absence: zero
+	# means a stationary fast pivot; no key means the pre-change kinematics path.
+	if movement.has("fastTurnRadius"):
 		output["fast_turn_radius"] = fast_turn_radius * source_scale
 	if movement.has("minTurnSpeed"):
 		output["min_turn_speed"] = clampf(min_turn_speed, 0.0, 1.0)
