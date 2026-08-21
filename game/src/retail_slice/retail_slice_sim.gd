@@ -1369,6 +1369,9 @@ var source_player_starts: Dictionary = {}
 var route_provider: RefCounted
 var playable_outline := PackedVector2Array()
 var last_route_rejection := ""
+## Observational Q64 receipt; deterministic backoff state itself lives on each
+## affected entity row and is included in snapshots/save state below.
+var ai_route_backoff_skip_count := 0
 var _spawn_positions: Dictionary = {}
 ## Team -> spawn-anchor Vector2 for rostered teams beyond 0/1 (N-team spawn
 ## geometry). Populated from the map layer's team_start_centers; teams 0/1 keep
@@ -1660,6 +1663,7 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	last_command_result = null
 	_state_hash_static_digest.clear()
 	last_route_rejection = ""
+	ai_route_backoff_skip_count = 0
 	team_power_points = _seed_team_map(1)
 	purchased_powers = _seed_team_map([])
 	_kills_toward_power_point = _seed_team_map(0)
@@ -31539,7 +31543,7 @@ func _run_ai_for_team(team: int, profile: Dictionary, ai_state: Dictionary) -> v
 			# Once no defending battalion remains, the objective fortress is the
 			# strategic target. Assign it before routing so the target's own
 			# footprint is exempt and melee units can close to weapon range.
-			if _assign_target_route(row, target_position):
+			if _ai_assign_target_route_with_backoff(row, target_kind, target_id, target_position, profile):
 				row["target_id"] = target_id
 				row["target_kind"] = target_kind
 				row["attack_windup"] = 0
@@ -31555,20 +31559,76 @@ func _run_ai_for_team(team: int, profile: Dictionary, ai_state: Dictionary) -> v
 			# hostile battalions remain, target_position is the objective fortress.
 			var strategic_destination := target_position
 			if (row["route"] as Array).is_empty() or Vector2(row.get("destination", row["position"])).distance_to(strategic_destination) > 1.0:
-				if _assign_target_route(row, strategic_destination):
+				if _ai_assign_target_route_with_backoff(row, target_kind, target_id, strategic_destination, profile):
 					row["target_id"] = 0
 					row["target_kind"] = "battalion"
 					row["attack_windup"] = 0
 					row["state"] = "run"
 					_stamp_order_sequence([id])
 			continue
-		if _assign_target_route(row, target_position):
+		if _ai_assign_target_route_with_backoff(row, target_kind, target_id, target_position, profile):
 			row["target_id"] = target_id
 			row["target_kind"] = target_kind
 			row["attack_windup"] = 0
 			row["state"] = "run"
 			_stamp_order_sequence([id])
 			_emit_music("battle")
+
+
+func _ai_assign_target_route_with_backoff(
+	row: Dictionary,
+	target_kind: String,
+	target_id: int,
+	target_position: Vector2,
+	profile: Dictionary
+) -> bool:
+	var topology_revision := 0
+	var component_pair := ""
+	if route_provider != null:
+		if route_provider.has_method("navigation_topology_revision_value"):
+			topology_revision = int(route_provider.call("navigation_topology_revision_value"))
+		if route_provider.has_method("navigation_component_pair_key"):
+			component_pair = String(route_provider.call(
+				"navigation_component_pair_key",
+				Vector2(row.get("position", Vector2.ZERO)),
+				target_position
+			))
+	var order_key := "%s:%d:%s" % [target_kind, target_id, component_pair]
+	var backoff: Dictionary = row.get("ai_route_backoff", {}) as Dictionary
+	if (
+		String(backoff.get("order_key", "")) == order_key
+		and int(backoff.get("topology_revision", -1)) == topology_revision
+		and tick_index < int(backoff.get("retry_tick", 0))
+	):
+		ai_route_backoff_skip_count += 1
+		last_route_rejection = "no-bounded-route"
+		return false
+	if _assign_target_route(row, target_position):
+		row.erase("ai_route_backoff")
+		return true
+	if last_route_rejection != "no-bounded-route":
+		row.erase("ai_route_backoff")
+		return false
+	var failure_count := 1
+	if (
+		String(backoff.get("order_key", "")) == order_key
+		and int(backoff.get("topology_revision", -1)) == topology_revision
+	):
+		failure_count = int(backoff.get("failure_count", 0)) + 1
+	var scan_interval := maxi(1, int(profile.get("scan_interval", 15)))
+	var patience := maxi(scan_interval, int(_rules.get("ai_wave_patience_ticks", 1200)))
+	var retry_delay := scan_interval
+	for _failure in range(failure_count):
+		retry_delay = mini(patience, retry_delay * 2)
+		if retry_delay >= patience:
+			break
+	row["ai_route_backoff"] = {
+		"order_key": order_key,
+		"failure_count": failure_count,
+		"retry_tick": tick_index + retry_delay,
+		"topology_revision": topology_revision,
+	}
+	return false
 
 
 func _ai_primary_hostile_fortress(team: int, weakest: bool) -> int:
@@ -32477,6 +32537,8 @@ func state_snapshot() -> Dictionary:
 			"knocked_down": bool(entity_row.get("knocked_down", false)),
 			"knockdown_ticks": int(entity_row.get("knockdown_ticks", 0)),
 		})
+		if entity_row.has("ai_route_backoff"):
+			(rows[-1] as Dictionary)["ai_route_backoff"] = (entity_row.get("ai_route_backoff", {}) as Dictionary).duplicate(true)
 	var structure_rows: Array[Dictionary] = []
 	for id in structure_ids():
 		var structure_row: Dictionary = structures[id]
