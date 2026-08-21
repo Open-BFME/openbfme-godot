@@ -65,6 +65,10 @@ extends Control
 ## The separate imported preview remains art, never a false coordinate texture.
 
 const HouseColorScript := preload("res://src/retail_slice/retail_house_color.gd")
+## Retail reference capture: the view box spans about one fifth of the radar
+## disc. Cap the projected quad's longest map-space axis to that observed scale
+## after bounding far rays at the camera focus plane.
+const CAMERA_FOOTPRINT_MAX_MAP_FRACTION := 0.20
 
 ## The authored radar sheet inside the cooked palantir atlas. Measured, not
 ## guessed: outside this rectangle the atlas is spell/summon sprite work, and
@@ -165,7 +169,7 @@ signal order_requested(world_position: Vector2)
 func blip_color_for_team(team: int) -> Color:
 	## Radar markers are presentation, but their color is not independent art:
 	## retail uses the same match-selected house color as the unit/structure.
-	var fallback := Color8(45, 77, 172) if team == 0 else Color8(166, 32, 28)
+	var fallback := Color(HouseColorScript.TEAM_COLORS.get(team, Color.WHITE))
 	return HouseColorScript.color_for_team(team, fallback)
 
 
@@ -791,10 +795,17 @@ func _draw_camera_footprint(arena: Rect2, disc: PackedVector2Array) -> void:
 
 
 func camera_footprint_radar_polygon(camera_value: Camera3D) -> PackedVector2Array:
-	## Production geometry seam used by the headless radar runner. This first
-	## extraction intentionally preserves the prior per-corner clamping so the
-	## verifier's off-map camera pose fails before the geometry repair.
+	## Bound the four screen-corner rays at the camera's focus plane before they
+	## can run to a near-horizon ground hit. The old code clamped each final hit
+	## independently to map_bounds, collapsing two far corners into one and
+	## turning the view box into a wedge. These rays remain four rays throughout.
 	if camera_value == null or not is_instance_valid(camera_value):
+		return PackedVector2Array()
+	var ground_plane := Plane(Vector3.UP, 0.35)
+	var camera_origin := camera_value.global_position
+	var focus_world := Vector3(camera_center.x, 0.35, camera_center.y)
+	var focus_distance := camera_origin.distance_to(focus_world)
+	if focus_distance <= 0.001:
 		return PackedVector2Array()
 	var viewport_rect := camera_value.get_viewport().get_visible_rect()
 	var screen_corners := [
@@ -807,13 +818,58 @@ func camera_footprint_radar_polygon(camera_value: Camera3D) -> PackedVector2Arra
 	for screen_corner in screen_corners:
 		var origin := camera_value.project_ray_origin(screen_corner)
 		var direction := camera_value.project_ray_normal(screen_corner)
-		var hit: Variant = Plane(Vector3.UP, 0.35).intersects_ray(origin, direction)
+		var hit: Variant = ground_plane.intersects_ray(origin, direction)
 		if hit != null:
-			var world_hit := _world_to_radar(Vector2((hit as Vector3).x, (hit as Vector3).z))
-			world_hit.x = clampf(world_hit.x, map_bounds.position.x, map_bounds.end.x)
-			world_hit.y = clampf(world_hit.y, map_bounds.position.y, map_bounds.end.y)
+			var hit_point := hit as Vector3
+			var hit_distance := origin.distance_to(hit_point)
+			if hit_distance > focus_distance:
+				hit_point = origin + direction * focus_distance
+			var world_hit := _world_to_radar(Vector2(hit_point.x, hit_point.z))
 			projected.append(world_hit)
-	return projected
+	return _fit_camera_footprint_inside_map(projected)
+
+
+func _fit_camera_footprint_inside_map(quad: PackedVector2Array) -> PackedVector2Array:
+	if quad.size() != 4 or map_bounds.size.x <= 0.0 or map_bounds.size.y <= 0.0:
+		return PackedVector2Array()
+	var center := Vector2.ZERO
+	for point in quad:
+		center += point
+	center /= float(quad.size())
+	var raw_bounds := _bounds_of_points(quad)
+	var longest_axis := maxf(raw_bounds.size.x, raw_bounds.size.y)
+	if longest_axis <= 0.001:
+		return PackedVector2Array()
+	var max_axis := minf(map_bounds.size.x, map_bounds.size.y) * CAMERA_FOOTPRINT_MAX_MAP_FRACTION
+	var scale := minf(1.0, max_axis / longest_axis)
+	var fitted := PackedVector2Array()
+	for point in quad:
+		fitted.append(center + (point - center) * scale)
+	var fitted_bounds := _bounds_of_points(fitted)
+	var margin := minf(0.01, minf(map_bounds.size.x, map_bounds.size.y) * 0.0001)
+	var offset := Vector2.ZERO
+	if fitted_bounds.position.x < map_bounds.position.x + margin:
+		offset.x = map_bounds.position.x + margin - fitted_bounds.position.x
+	elif fitted_bounds.end.x > map_bounds.end.x - margin:
+		offset.x = map_bounds.end.x - margin - fitted_bounds.end.x
+	if fitted_bounds.position.y < map_bounds.position.y + margin:
+		offset.y = map_bounds.position.y + margin - fitted_bounds.position.y
+	elif fitted_bounds.end.y > map_bounds.end.y - margin:
+		offset.y = map_bounds.end.y - margin - fitted_bounds.end.y
+	for index in fitted.size():
+		fitted[index] += offset
+	return fitted
+
+
+static func _bounds_of_points(points: PackedVector2Array) -> Rect2:
+	var minimum := points[0]
+	var maximum := points[0]
+	for point in points:
+		minimum.x = minf(minimum.x, point.x)
+		minimum.y = minf(minimum.y, point.y)
+		maximum.x = maxf(maximum.x, point.x)
+		maximum.y = maxf(maximum.y, point.y)
+	return Rect2(minimum, maximum - minimum)
 
 
 func _draw_footprint_outline(quad: PackedVector2Array, disc: PackedVector2Array) -> void:
