@@ -85,6 +85,25 @@ Failure-by-name delta: the only failing-first name,
 wall-runner checks remain green; the three new endpoint checks are green. No
 existing gate lost a check or gained a failure.
 
+## Relaunch verification 2026-08-21 (fresh worktree, commit recovered)
+
+The original lane's worktree (`agent-a0e02748f884b0e94`) was cleaned up before
+its evidence logs were secured, but its commit `26b809bf` survived on the
+branch and was fast-forwarded into `agent-a8cb13fe4667a1e30`. All gates were
+re-run from scratch there; fresh evidence lives in the MAIN repo's
+`workspace/logs/` (durable) under the `q62prep-r2-*` prefix:
+
+| Gate | Re-run result | Evidence (`workspace/logs/`) |
+|---|---|---|
+| Minas census (after) | 6/0; portals 42; endpoints 665 bytes SHA-256 `e8d7303c…0384a97`; init 3,716 ms cold / 2,103 ms warm | `q62prep-r2-after-minas-census.txt`, `-warm.txt` |
+| Minas census (before, base `retail_map_data.gd` @ 44de46d5) | 6/0; identical 42 portals + SHA-256 + gap list; init 12,731 ms | `q62prep-r2-before-minas-census.txt` |
+| Helm's Deep control | before 1,998 ms / after 1,846 ms warm (3,651 ms cold) | `q62prep-r2-{before,after}-helms-census*.txt` |
+| Wall runner | 25/0 | `q62prep-r2-wall-runner.txt` |
+| Minas live boot | 8/0; `map_data delta_ms=3424` | `q62prep-r2-minas-live-boot.txt` |
+| Walk-surfaces pytest | 8 passed | `q62prep-r2-walk-surfaces-pytest.txt` |
+| State pin | `b025d162…` unmoved | `q62prep-r2-state-pin.txt` |
+| Pathing pin | `2e5ad580…` unmoved | `q62prep-r2-pathing-pin.txt` |
+
 ## Not done
 
 - No maps pack was recooked, selected, sealed, copied, or published.
