@@ -554,6 +554,38 @@ def produce_faction_order(graphs) -> list[str]:
     )
 
 
+def _stored_coverage_tokens_stale(coverage_root: Path, factions: list[str]) -> bool:
+    """Is ANY stored coverage from a different compiler identity (or absent)?
+
+    A cheap pre-read of the token every stored coverage already carries. True
+    means at least one faction is guaranteed to miss the aggregate
+    short-circuit — its cache key binds the compiler lane identities — so the
+    pool will definitely be needed. False (every token matches) decides
+    nothing by itself and the caller keeps the ordinary sequential path; the
+    full probe remains the only authority on what is actually reused.
+    """
+
+    from openbfme_importer.faction_object_cache import compiler_identity_token
+
+    try:
+        current = compiler_identity_token()
+    except Exception:  # noqa: BLE001 — a hint must never break the batch
+        return False
+    for faction in factions:
+        try:
+            stored = json.loads(
+                (coverage_root / f"{faction}-coverage.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            token = (stored.get("inputs") or {}).get("compilerIdentityToken", "")
+            if str(token) != current:
+                return True
+        except (OSError, ValueError):
+            return True
+    return False
+
+
 def _shortcircuit_probe(
     *, catalog, assets: Path, state_root: Path, faction: str, artifact_root: Path | None, game: str
 ) -> dict[str, object] | None:
@@ -688,6 +720,32 @@ def _produce_convert(
     #    short name before calling — so the threads do not stampede it.
     from concurrent.futures import ThreadPoolExecutor
 
+    # Q58: when any stored coverage was written by a DIFFERENT compiler
+    # identity, that faction is guaranteed pending (the probe's cache key
+    # binds the lane identities), so the ~6 s pool spawn can start NOW and
+    # hide under the ~9 s probe instead of following it. Reading one token
+    # from each coverage document costs ~0.1 s. When every token matches —
+    # the everyday repeat run — nothing is spawned and the path is unchanged.
+    logs_root = state_root / "reports" / "produce-workers" / run_id
+    eager_pool: list[object] = []
+    eager_thread = None
+    if _stored_coverage_tokens_stale(coverage_root, factions):
+
+        def _spawn_pool() -> None:
+            eager_pool.append(
+                ProducePool(
+                    python=python,
+                    script=script,
+                    base_command=base_command,
+                    procs=procs,
+                    logs_root=logs_root,
+                )
+            )
+
+        eager_thread = threading.Thread(target=_spawn_pool, daemon=True)
+        eager_thread.start()
+        print("PRODUCE_EAGER_POOL stale-compiler-token", flush=True)
+
     probe_started = time.perf_counter()
     with ThreadPoolExecutor(max_workers=min(8, max(1, len(factions)))) as probes:
         probed = list(
@@ -719,6 +777,13 @@ def _produce_convert(
     stats["probeMs"] = int((time.perf_counter() - probe_started) * 1000)
     print(f"PRODUCE_PROBE ms={stats['probeMs']} pending={len(pending)}", flush=True)
     if not pending:
+        if eager_thread is not None:
+            # A stale token with nothing pending should be impossible (the
+            # probe key binds the identities the hint read), but a spawned
+            # pool must never leak workers.
+            eager_thread.join()
+            for spawned in eager_pool:
+                spawned.close()
         stats["wallMs"] = int((time.perf_counter() - started) * 1000)
         print(f"PRODUCE_DONE wall_ms={stats['wallMs']} pool=skipped", flush=True)
         return assembled, stats
@@ -726,15 +791,22 @@ def _produce_convert(
     # Run-scoped: an unscoped path let a later run overwrite an earlier run's
     # worker logs, and a stage analysis silently mixed two runs before anyone
     # noticed the object count was impossible for either (§14.6).
-    logs_root = state_root / "reports" / "produce-workers" / run_id
     finish_faction = None
-    pool = ProducePool(
-        python=python,
-        script=script,
-        base_command=base_command,
-        procs=procs,
-        logs_root=logs_root,
-    )
+    pool_init_started = time.perf_counter()
+    if eager_thread is not None:
+        eager_thread.join()
+    if eager_pool:
+        pool = eager_pool[0]
+    else:
+        pool = ProducePool(
+            python=python,
+            script=script,
+            base_command=base_command,
+            procs=procs,
+            logs_root=logs_root,
+        )
+    stats["poolInitMs"] = int((time.perf_counter() - pool_init_started) * 1000)
+    print(f"PRODUCE_POOL_READY ms={stats['poolInitMs']}", flush=True)
     try:
         # 2. Census fan-out. Seven factions over N workers instead of N workers
         #    each computing all seven.
@@ -769,6 +841,7 @@ def _produce_convert(
         #    digest from what it received and refuses on any mismatch: the
         #    digest keys both the plan-row and object caches, so silent drift
         #    here would be silently wrong cache entries.
+        ship_started = time.perf_counter()
         ship: dict[str, tuple[Path, str]] = {}
         for faction, graph in graphs.items():
             payload = _canonical_graph_bytes(graph)
@@ -826,6 +899,8 @@ def _produce_convert(
             else:
                 print(f"PRODUCE_BALANCE {faction} no prior costs; hash sharding", flush=True)
 
+        stats["shipBalanceMs"] = int((time.perf_counter() - ship_started) * 1000)
+        print(f"PRODUCE_SHIP_BALANCE ms={stats['shipBalanceMs']}", flush=True)
         pool_started = time.perf_counter()
         jobs: list[dict[str, object]] = []
         for faction in order:
@@ -920,7 +995,10 @@ def _produce_convert(
             1 for reply in replies if reply.get("reason") == "graph-digest-mismatch"
         )
     finally:
+        close_started = time.perf_counter()
         pool.close()
+        stats["poolCloseMs"] = int((time.perf_counter() - close_started) * 1000)
+        print(f"PRODUCE_POOL_CLOSE ms={stats['poolCloseMs']}", flush=True)
 
     # 5. Sweep: anything the in-flight path did not finish (a failed job, a
     #    torn shard) is retried once here, and refused out loud if it still

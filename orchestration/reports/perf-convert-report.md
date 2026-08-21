@@ -2357,3 +2357,408 @@ measured figure and tells you whether §16.3's ~327 s is pessimistic. **Two
 minutes of machine time, and it decides whether the rest of the work is worth
 doing** — which is the same census-before-loop rule this report has had to
 relearn twice.
+
+## 17. Q58 — the corpus-sharing cut, implemented and measured (tenth lane)
+
+Implements §16 on a fresh worktree off `f344fc83`. Everything below ran with
+the pinned interpreter and the shared state root
+`C:\Users\Jonathan\Desktop\open-bfme\workspace\retail-work`; evidence logs are
+`workspace\logs\perf-convert\q58-*`.
+
+### 17.1 The §16.6 instrumented run FIRST — and it re-ranks the plan
+
+Per-process cumulative timers (`OPENBFME_PERF_PROBE=1`) over the four warm-up
+seams, one pooled seven-faction compiler-edit-cold batch, N=24 `j=1`, corpus
+cache disabled (`q58-instrumented-cold-n24.log`; per-worker `PERF_CORPUS`
+lines in `reports\produce-workers\804f68a428a14503b16d1c58a04741e8\`). The box
+was NOT quiet (a dist build was finishing), so these numbers steer, they are
+not headlines. Averages over the 24 workers:
+
+| seam | per-process | §16's prediction |
+|---|---|---|
+| `_prepare_playable_unit_compiler_uncached` | **16.4 s** (15.1-17.5) | 11.2 s |
+| `_flat_blocks_for_kind` | **5.4 s, ONE kind (weapon)** | "the bulk of ~50 s" |
+| `_named_definition_values` misses | **~64 s** (26-71 computes, 35.3-87.4 s) | "tail" |
+| `_weapon_damage_nuggets` misses | **~32 s** (14-59 computes, 14.3-50.1 s) | "tail" |
+
+Total measured first touch ≈ **118 core-s per process, ~2 830 core-s of the
+pool budget** — nearly twice §16.2's 61.9 s lower bound, exactly the direction
+§16.1 warned about ("a real worker … will touch more INI kinds").
+
+**§16.4's ranking is refuted on two points, with the §16.6 evidence it asked
+for.** (a) `flat_kind_cache` is NOT the bulk: the production convert path
+touches exactly one flat kind (`weapon`), ~5.4 s. (b) The named-definition and
+weapon-nugget caches do NOT "collapse on their own once (2) is shared" — they
+never read the flat blocks; each miss cp1252-decodes and scans the whole 29 MB
+corpus directly (`_named_definition_values_uncached`,
+`_weapon_damage_nuggets_uncached`, ~1.2 s per identifier). They are 96 of the
+118 seconds. The durable cache therefore covers all four seams; per §16's own
+instruction the instrumented run's numbers steered the build, and this section
+documents the deviation.
+
+### 17.2 What was built
+
+One new module, `importer/openbfme_importer/corpus_warm_cache.py`, holding a
+durable identity-keyed store with three parts per corpus identity:
+
+* **`prepared`** — the nine parsed tables of `PlayableUnitCompilerInputs`
+  (objects, command sets/buttons, player templates, defines + provenance,
+  parse errors). Measured on the real corpus: 24.8 MB pickle, 2.3 s to load
+  against 16.4 s to compute.
+* **`flat-kinds`** — `dict[kind, tuple[IniBlock, ...]]` (the §16 item-1 cache).
+* **`named-defs`** — the shared named-definition dict, which also carries the
+  weapon-nugget entries (`("weapon-nugget:<kind>", id)`) because retail code
+  stores both in one dict on the prepared inputs.
+
+`prepare_playable_unit_compiler` consults it after the process-memo misses;
+loaded tables are re-bound to the worker's OWN `documents` mapping, so the
+`prepared.documents is documents` fail-closed guard holds against real bytes
+(§16.5 rule 4 — the guard is untouched). Each process merge-writes what it
+computed at interpreter exit; write races lose union members, which the next
+run's single miss re-adds — a cache race costs seconds, never correctness.
+
+**The identity chain**, and the property the whole cut hangs on: the key binds
+the corpus content identity (`_documents_identity` — path + payload digests,
+the same identity the process memo already keys on) plus a **function-
+granularity producer identity**: the exact source segments of the four seam
+functions and every module-level name they transitively reference inside
+`playable_unit_compiler.py` (37 segments — `_object_index`, `_token_defines`,
+the define-expression evaluator, …), plus the full bytes of every relative
+module that closure imports (`sage_cst.py`, `sage_ini.py` — the classes the
+payloads deserialize into). Consequence, tested both ways:
+
+* the owner's scenario — a trailing comment on BOTH compiler files — changes
+  no segment, so the corpus cache stays warm while the object/plan caches
+  correctly re-key (both files are in `_COMPILER_SALT_MODULES`);
+* editing any producing function, any referenced constant, or any parse
+  module changes the key; ANY closure-walk uncertainty (dynamic import,
+  unparsable source, missing seed, unresolvable segment) broadens to the
+  full package-source digest — over-invalidation only.
+
+§16 said "keyed on … the parsing lane's `compiler_dependency_identity`". No
+such lane exists, and none could work: every existing lane that contains
+`playable_unit_compiler.py` is invalidated by the owner's own edit, which
+would zero the cut in exactly the measured scenario; a lane WITHOUT that file
+would under-invalidate the prepare/scan code that lives there. The
+function-granularity closure is the narrowest honest key, and its fallback
+mode degrades to lane-style whole-package hashing.
+
+**Type preservation (§16.5 rule 3).** Payloads are pickle protocol 5 sealed by
+their own sha256 in a JSON envelope that repeats key, part, corpus identity
+and producer identity; envelope and payload live in ONE file committed by one
+`os.replace` (the v2 format — §17.4 records why the two-file v1 shipped first
+and how it failed). Nothing is unpickled before the digest verifies, and
+(post-review, §17.11) nothing outside a nine-name allowlist is ever
+constructed by the unpickler. The §11.4 tuple-drift
+concern is extended to the REAL stored objects:
+`_assert_type_identical` walks the round-tripped tables recursively asserting
+`type(x) is type(y)` down through dataclass fields, so a
+`tuple[IniBlock, ...]` that came back as a list — the exact failure JSON would
+have caused — fails by name.
+
+Kill switches: `OPENBFME_NO_CORPUS_CACHE` (master) plus per-part
+`OPENBFME_NO_PREPARED_CACHE` / `OPENBFME_NO_FLATKIND_CACHE` /
+`OPENBFME_NO_NAMEDDEF_CACHE`. The cache is inert unless a faction-convert
+entrypoint configures it with a state root — every other consumer of
+`prepare_playable_unit_compiler` is byte-for-byte unchanged.
+
+**Deviation from §16 item 1, stated:** the parent does not pre-warm and ship
+the kind list. The stampede §9.3 feared only exists on a corpus-identity-cold
+burst, where 24 workers each computing their own warm-up is exactly today's
+behaviour (no regression, and their exit-time merge converges the store in one
+run); in the owner's compiler-edit scenario the entries are already warm from
+any previous run because the producer identity ignores compiler-logic edits.
+Spending parent serial time to pre-warm would move the cost, not remove it.
+§16 item 3's "option (iii) derived index" is implemented as the `prepared`
+part; items (3)+(4) were measured (§17.1) and built, not skipped.
+
+### 17.3 Byte-identity (§16.5 rule 6), before any timing headline
+
+All legs: retail men (61 objects, 183 artifacts), frozen tree `2d7c024d`,
+`OPENBFME_NO_COVERAGE_SHORTCIRCUIT=1` and `OPENBFME_NO_OBJECT_CACHE=1` on
+EVERY side so each object genuinely compiles through the corpus-cache-fed
+tables (nothing can hide behind the row caches). Outputs copied aside per leg
+under `q58-identity\`; comparator `tools/q58_compare_coverage.py` (the §15.9
+script, checked in this time).
+
+```
+men : pooled N=12 corpus-warm  vs  pooled N=12 corpus-DISABLED
+ARTIFACT_FILES a=183 b=183   ONLY_A 0   ONLY_B 0   DIFFERING 0
+COVERAGE_AGGREGATE_EQUAL True   PLAN_AGGREGATE_EQUAL True
+COVERAGE_ROWS a=61 b=61 differing=0 []
+COVERAGE_ROW_ORDER_EQUAL True   COVERAGE_DOCUMENT_EQUAL True
+IDENTICAL True
+```
+
+One self-inflicted rediscovery of the §13 lesson, disclosed: the FIRST leg
+(`pooled-cold`, the one that populated the corpus cache) ran before the
+tmp-cleanup commit and later legs after it, so its coverage rows embed a
+different `incremental.compilerIdentity` (the AST walk pulls the new
+`corpus_warm_cache.py` into the unit lane through the compiler's import) and
+its coverage document is not comparable. Its ARTIFACTS are byte-identical to
+the warm leg (183/183, 0 differing) — artifacts embed no compiler identity —
+and every leg quoted in a comparison above/below shares one frozen tree. No
+package source changed during any later run.
+
+Full leg matrix, all on the frozen tree (walls informational — busy box):
+
+```
+men     pooled N=12 corpus-cold     156.9 s   (populated the store)
+men     pooled N=12 corpus-warm     125.3 s   ==(byte-identical)== pooled corpus-disabled 138.6 s
+men     serial oracle               389.1 s   ==(byte-identical)== pooled corpus-warm
+dwarves pooled N=12 corpus-warm     112.4 s   ==(byte-identical)== serial oracle 331.8 s
+```
+
+```
+men : serial oracle vs pooled N=12 corpus-warm        IDENTICAL True (183 artifacts, 61 rows)
+men : pooled corpus-warm vs pooled corpus-DISABLED    IDENTICAL True
+dwarves : serial oracle vs pooled N=12 corpus-warm    IDENTICAL True (183 artifacts, 57 rows)
+```
+
+So on retail data: **serial oracle ≡ pooled corpus-warm ≡ pooled
+corpus-disabled** for men, and **serial oracle ≡ pooled corpus-warm** for
+dwarves — artifacts byte-for-byte, coverage document field-for-field, both
+aggregates, with the object/plan caches and the aggregate short-circuit
+disabled on every side. Poisoning is covered at the unit level: a flipped
+payload byte is `refused:payload-digest-mismatch`, a reassigned envelope
+identity is `refused:documentsIdentity-mismatch`, a truncated payload is
+refused before unpickling, and every refusal recomputes to equal output
+(`test_corpus_warm_cache.py`).
+
+### 17.4 What the first headline caught (a real bug, then a fix, then v2)
+
+The first quiet headline (marker F, `q58-headline-cold-n24.log`) measured
+**346.7 s process wall** — well short of prediction. Its run-scoped worker
+logs said why: **24/24 workers logged
+`CORPUS_CACHE part=named-defs status=refused:payload-digest-mismatch`.** The
+v1 format stored envelope and payload as two independently `os.replace`d
+files; the populate run's 24 exit-writers interleaved into (A's envelope,
+B's payload). The fail-closed discipline held — every worker refused the
+entry and re-paid the ~96 core-s of corpus scans, so the bug cost time, never
+bytes — but it evaporated most of the cut. v2 (`30c7f4e8`) stores each part
+as ONE file, envelope line + pickle payload, committed by ONE `os.replace`:
+a racing writer can now only produce a whole older or whole newer entry.
+`test_entry_is_one_file_so_writers_cannot_tear_the_pair` pins the shape.
+
+Two smaller parent cuts followed (`8d07e06d`, tools only — outside every
+compiler identity): the ~6 s pool spawn now starts concurrently with the ~9 s
+probe whenever any stored coverage carries a stale `compilerIdentityToken`
+(the compiler-edit case is then guaranteed pending; matching tokens keep the
+repeat path byte-identical to before), and `PRODUCE_SHIP_BALANCE` /
+`PRODUCE_POOL_CLOSE` prints account for the last unlabelled seconds
+(0.2 s / ~5.1 s — the close is the workers' exit merge-writes plus 24-process
+teardown).
+
+### 17.5 MEASURED: the owner's scenario, quiet box
+
+Every run: trailing marker comment appended to BOTH
+`playable_unit_compiler.py` and `playable_structure_pack_compiler.py`
+(distinct marker per run — F/G/H/I/J, committed), seven factions, retail
+layered oracle, `--produce-procs N`, process wall bracketed by the driver
+(`tools/q58_run_batch.py`). Box confirmed quiet before each headline
+(python/blender/godot process count 0; top live process < 1 core-s over 5 s).
+
+| Run | N | corpus cache | pool | BATCH | **process wall** |
+|---|---|---|---|---|---|
+| compiler-edit cold, marker G | 24 | warm (v2) | 272.0 s | 298.4 s | **303.4 s** (pre-overlap parent) |
+| **compiler-edit cold, marker H** | 24 | warm | 271.5 s | 292.6 s | **297.6 s = 4.96 min** |
+| **compiler-edit cold, marker I (confirm)** | 24 | warm | 271.7 s | 293.6 s | **298.6 s = 4.98 min** |
+| compiler-edit cold, marker J | 16 | warm | 279.3 s | 296.1 s | 300.9 s |
+| everything cold incl. corpus cache (populate, v2) | 24 | **cold** | 318.4 s | 352.0 s | 356.6 s |
+| repeat, nothing changed (final tree) | 24 | — | skipped | 9.0 s | **13.7 s** |
+
+**The 5-minute bar is MET at N=24: 297.6 s and 298.6 s on consecutive
+compiler-edit cold runs (vs §15.6's 410 s, −27 %).** Stated plainly: the
+margin is 1.4–2.4 s, within run-to-run noise of this box; N=16 sits at
+300.9 s, so N=24 is the shape to ship. The corpus-cache-cold first-ever run
+is 356.6 s and warms itself in that same run.
+
+Cross-check against §16.3's prediction (~327 s from the 61.9 s lower bound):
+the measured first touch was ~118 s/process, not 61.9 s, so sharing bought
+more than predicted; the §16.3 pessimism ("the bar is not reachable by fixing
+sharing alone") was correct for its lower-bound arithmetic and wrong about
+the actual corpus — exactly why §16.6 demanded the instrumented run first.
+
+### 17.6 The remaining floor, in core-seconds
+
+Marker-H headline decomposition (all printed by the run):
+
+```
+process startup                    5.0 s
+probe (overlapped w/ pool spawn)  15.5 s   (pool ready +0.1 s after it)
+census                             0.1 s
+ship + balance                     0.2 s
+pool                             271.5 s   = 24 x 271.5 = 6 516 core-s / 378 objects
+pool close (exit writes+teardown)  5.1 s
+parent tail                        0.0 s
+                                 -------
+                                 297.6 s
+```
+
+The pool is now **~17.2 core-s of genuine compile per object** (plan compile
++ final compile; §15.1 already removed the third). Worker warm-up is down to
+the 4.8 s prepared-load (24.8 MB unpickle under 24-way memory contention)
+plus a handful of named-definition misses that converge to zero across runs
+(319 entries loaded, ~2 new per worker stored at exit). Everything §16 called
+"the sharing problem" is gone; what remains under the 271.5 s is the
+per-object descriptor compile itself, which is the different lane §16.3 named
+(halving the remaining duplicate — plan row vs final compile — is the next
+candidate, worth ~120 s of pool budget, but it moves compiler correctness
+surfaces and was out of scope here).
+
+### 17.7 The honest table (the deliverable)
+
+| Scenario | §12 | §15.6 | **Q58, measured** | 5-min bar |
+|---|---|---|---|---|
+| repeat, nothing changed | 69 s | 9.9 s BATCH / 15 s wall | **9.0 s BATCH / 13.7 s wall** | in |
+| ordinary edit (module outside every compiler lane) | — | — | **9.2 s BATCH / 14.1 s wall** | in |
+| **worst-case compiler-edit cold (both compilers), N=24** | 522 s | **410 s** | **297.6 s / 298.6 s = 4.96 / 4.98 min** | **UNDER, by 1.4–2.4 s** |
+| same, N=16 | 526 s | 434 s | 300.9 s | over by 0.9 s |
+| everything cold including the corpus cache itself | — | — | 356.6 s (self-warming) | over — first-ever run only |
+
+Caveat stated rather than hidden: the N=24 margin is thinner than this box's
+run-to-run noise band, so an unlucky quiet run can land a few seconds either
+side of 300. Three independent cold runs on the final code shape measured
+297.6 / 298.6 / 301.9* — the starred one is the §17.8 lane-closure surprise
+run, which lacked the eager pool spawn (its ~5 s) precisely because only lane
+identities changed; with the overlap active the two proper owner-scenario
+runs both landed under. The next real seconds live in the per-object compile
+(§17.6), not in sharing or parent overhead.
+
+### 17.8 Two findings from the ordinary-edit measurement
+
+1. First attempt commented `map_census.py`, chosen as "obviously outside the
+   compiler lanes" — and all seven factions went cold (301.9 s). It is NOT
+   outside: the lane manifests' AST import expansion pulls it in
+   transitively. The measured lane closures are 79-84 modules of the
+   package's 185; **104 modules are genuinely outside** (the HUD/shell/
+   cursor/launcher lanes among them), and a comment on one of those
+   (`retail_hud_apt_profile.py`) measured the true ordinary-edit row above.
+   Consequence worth recording: "unrelated edit" intuition is unreliable —
+   the closure is the authority, and an edit to any of the ~80 in-closure
+   modules prices as a full compiler-edit cold run.
+2. That same run exposed the eager-spawn hint's designed blind side: the
+   all-family `compilerIdentityToken` matched (map_census is not in the
+   salt) while the lane identities did not, so the pool spawned late and the
+   run paid the ~5 s the overlap normally hides. The hint is a hint — it can
+   only miss the optimization, never correctness — and the common owner
+   scenario (compiler files are in the salt) always triggers it.
+
+### 17.9 Tests and the suite, judged by name
+
+`importer/tests/test_corpus_warm_cache.py` — 19 tests, all new, covering:
+type-identical round trips of the real stored objects (prepared tables,
+`tuple[IniBlock, ...]`, named-definition values), the documents-identity
+guard after rebinding, poisoned payload / poisoned envelope / torn tail
+refusals by name with identical recompute, version-drift as a clean miss,
+master + per-part kill switches, producer-identity sensitivity in both
+directions (trailing comment keeps; function edit, parse-module edit
+invalidate; dynamic import broadens to full-package fallback and the live
+tree must NOT be in fallback), write-back merge across processes, the
+one-file-per-part shape, and cache-off inertness. These tests fail on any
+tree without the module — the seam is new, so failing-first holds trivially
+for the file; the v2 single-file test was written against the measured v1
+failure.
+
+Whole importer suite on the final tree (`q58-suite-full.log`, 12 min):
+**23 failed, 3 702 passed, 250 skipped, 5 errors, 982 subtests passed.**
+Judged by NAME against the pristine control at `eb8f55b`
+(`workspace\logs\verify-final\control-eb8f55b.log`, 61 names):
+**0 new names — every failure is in the control set.** 33 control names now
+pass (the EVA/voice-oracle sets fixed on main between `eb8f55b` and this
+branch's base `f344fc83`). The Q59 masking caveat stands: the 41-name
+merged-main ordering figure hides 20 environmental failures behind test
+ordering; the comparison above uses the pristine 61-name control, not the
+41.
+
+### 17.10 State, disk, and what is NOT verified
+
+- The shared state root now holds
+  `cache\corpus-warm\<key>\{prepared,flat-kinds,named-defs}.bin` (~25.5 MB
+  per corpus identity; superseded-identity dirs are junk for the existing
+  disk-prune recipe, same as produce-shards).
+- Coverage in the state root matches the committed tree:
+  `q58-final-tree-consistency.log` ran on the exact final tree and every
+  faction short-circuited (`pending=0`) — the probe recomputed the current
+  identities, matched the stored entries, and re-emitted the coverage
+  documents. (Reverting the temporary `map_census.py` comment restored the
+  marker-J identity, whose content-addressed coverage-cache entries were
+  still present — a revert is not the §13 trap precisely because the cache
+  is keyed by content, not by "latest".) Publish binds will verify.
+- The five marker comments (F-J) on both compiler files are committed for the
+  same reason.
+- NOT verified here: BFME2-game runs (all retail measurement is RotWK);
+  behaviour under a *data* (INI) edit beyond the identity-key argument (a
+  corpus-identity change is a clean miss by construction and the populate row
+  measures the recompute); the descriptor-compile lane §17.6 names as the
+  next floor; and any composed convert+publish end-to-end number (publish
+  lane's measurement, unchanged).
+- Evidence: `workspace\logs\perf-convert\q58-*.log`, per-run worker logs
+  under `<state>\reports\produce-workers\<runId>\`, identity legs + diffs
+  under `workspace\logs\perf-convert\q58-identity\`.
+
+### 17.11 Verifier round: three fixes on top of `9ae26759`
+
+The fresh-context verifier praised the trust core (seven poison attacks
+refused before unpickle; identities reproduced byte-for-byte independently)
+and rejected on three findings, all fixed here without re-measuring the
+batch:
+
+1. **F-2, latent under-keying (MAJOR).** The closure walk built its import
+   map from `tree.body` only and ignored absolute
+   `from openbfme_importer... import` forms, so a *function-local* import
+   inside a producer body would not key that module — zero live exposure
+   today (the verifier traced 0 producer functions outside the keyed set),
+   but this file already uses the function-local form twice elsewhere, one
+   refactor from silent stale tables. Fixed by (a) extending the import map
+   to absolute package forms and (b) collecting every import statement found
+   inside the closure's own function bodies. The verifier's simpler
+   suggestion — union every import anywhere in the file — was measured and
+   REJECTED with evidence: its transitive expansion reaches 75 modules
+   including BOTH shipping compiler files, so the owner's trailing-comment
+   edit would invalidate the corpus cache and zero the measured cut. The
+   closure-scoped form is sufficient (all code a producer can execute is in
+   the closure or at module scope) and keeps the live set at
+   `{sage_cst.py, sage_ini.py}`. Failing-first tests pin both import forms
+   (`test_function_local_relative_import_is_keyed`,
+   `test_absolute_package_import_is_keyed` — both fail on the pre-fix walk).
+2. **F-1, restricted unpickler.** `find_class` now admits exactly nine
+   names enumerated from live payloads (the six `sage_cst` dataclasses,
+   `sage_ini.IniBlock`, `builtins.list`, `collections.defaultdict`);
+   anything else is `refused:disallowed-global:<module>.<name>` and a
+   recompute. A digest-VALID crafted `__reduce__` gadget is refused with the
+   gadget never executing
+   (`test_crafted_entry_with_correct_digest_is_refused_before_execution`),
+   and every live payload type still round-trips
+   (`test_allowlist_admits_every_live_payload_type`). Rationale: the shared
+   cache root can be pointed at network storage (NAS playtest plan), so
+   corruption-proof had to become tamper-resistant.
+3. **F-3, machine-absolute paths in the drivers.** `q58_run_batch.py` /
+   `q58_identity_legs.py` now resolve the state root via
+   `default_state_root()` (`OPENBFME_IMPORT_ROOT` overrides) and the install
+   via `OPENBFME_ROTWK_INSTALL`; `gate-hygiene.ps1` is back at its 15-hit
+   baseline (the worktree `.git` root hit is a worktree artifact).
+
+Minor deltas in the same round: the F-J measurement marker comments are
+stripped from both shipping compiler files (stripping re-keys the object/
+plan caches, so the first convert after merge is a corpus-warm cold run —
+the exact measured scenario, ~5 min, then repeat behaviour resumes); §17.2's
+v1-era envelope sentence corrected; and one standing caveat — the corpus
+cache has **no eviction**: each superseded producer identity leaves a
+league-of-its-own ~25.5 MB entry directory for the existing disk-prune
+recipe.
+
+Post-fix sanity on the final tree, all measured: 25 cache tests green (23 +
+the two failing-first F-2 pins) and the perf/cuts files at 99 passed; the
+men pooled-warm vs pooled-nocache identity quick-leg re-run `IDENTICAL True`
+(`q58-identity-r2\`); a full seven-faction convert on the fresh key measured
+316.2 s (`q58-postreview-cold-n24.log` — prepared/flat loaded through the
+restricted unpickler with **zero `disallowed-global` refusals across all 24
+workers**, named-defs only men-warm from the quick leg, so this run re-warmed
+the union; the §17.5 headline numbers were taken with the union fully warm
+and stand); repeat 8.8 s BATCH / 13.7 s process wall
+(`q58-postreview-repeat.log`, `pending=0`), leaving the state root consistent
+with the committed tree. One note for operators: the marker strip normalised
+the two compiler files' line endings, so the first run after checkout
+re-keys the corpus cache once and self-warms — by design, a key flip is only
+ever a clean miss.
