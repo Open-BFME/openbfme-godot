@@ -1002,6 +1002,7 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 	var braking := float(movement.get("braking", -1.0))
 	var turn_rate := float(movement.get("turnRateDegreesPerSecond", -1.0))
 	var slow_turn_radius := float(movement.get("slowTurnRadius", -1.0))
+	var fast_turn_radius := float(movement.get("fastTurnRadius", -1.0))
 	var min_turn_speed := float(movement.get("minTurnSpeed", -1.0))
 	var max_turn_without_reform := float(movement.get("maxTurnWithoutReformDegrees", 0.0))
 	var attack_range := float(combat.get("attackRange", 0.0 if noncombatant else -1.0))
@@ -1014,6 +1015,8 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 		if not is_finite(float(numeric)) or float(numeric) < 0.0:
 			return {}
 	if movement.has("slowTurnRadius") and (not is_finite(slow_turn_radius) or slow_turn_radius < 0.0):
+		return {}
+	if movement.has("fastTurnRadius") and (not is_finite(fast_turn_radius) or fast_turn_radius < 0.0):
 		return {}
 	if movement.has("minTurnSpeed") and (not is_finite(min_turn_speed) or min_turn_speed < 0.0):
 		return {}
@@ -1131,6 +1134,19 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 		output["max_turn_without_reform_degrees"] = max_turn_without_reform
 	if movement.has("slowTurnRadius"):
 		output["slow_turn_radius"] = slow_turn_radius * source_scale
+	# Q55's affected retail family authors the complete 0 / 48 / 100% split.
+	# Keep FastTurnRadius absent from unrelated runtime rules until their fast-arc
+	# behavior is admitted: rules are part of state_hash(), and adding inert
+	# locomotor data to projectile-only fixtures would move that protected pin.
+	# Authored zero remains meaningful and is passed for this complete contract.
+	if (
+		movement.has("fastTurnRadius")
+		and movement.has("slowTurnRadius")
+		and movement.has("minTurnSpeed")
+		and is_zero_approx(slow_turn_radius)
+		and min_turn_speed >= 1.0
+	):
+		output["fast_turn_radius"] = fast_turn_radius * source_scale
 	if movement.has("minTurnSpeed"):
 		output["min_turn_speed"] = clampf(min_turn_speed, 0.0, 1.0)
 	if turn_rate > 0.0 and movement.has("turnRateDegreesPerSecond"):

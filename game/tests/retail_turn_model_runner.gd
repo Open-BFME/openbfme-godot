@@ -24,14 +24,30 @@ extends SceneTree
 ##   locomotor.ini:142-152
 ##     HumanLocomotor TurnTime = 500 (720 deg/s), Acceleration/Braking = 510,
 ##     MinTurnSpeed = 0%.
+##   locomotor.ini:835-854
+##     NormalCavalryHordeLocomotor TurnTime = 1000 (360 deg/s), Acceleration =
+##     800, Braking = 1500, SlowTurnRadius = 0, FastTurnRadius = 48,
+##     MinTurnSpeed = 100%.
+##   object/goodfaction/hordes/men/menhordes.ini:1822-1825
+##     RohanRohirrimHorde binds NormalCavalryHordeLocomotor at
+##     NORMAL_MOUNTED_MED_HORDE_SPEED = 100.
+##   locomotor.ini:178-188; wildhordes.ini:1858-1862
+##     WildBabyDrakeHorde binds FiredrakeLocomotor at speed 120; the locomotor
+##     authors TurnTime 1500, SlowTurnRadius 2, FastTurnRadius 30, and
+##     MinTurnSpeed 100%.
+##   locomotor.ini:2944-2956; wildhordes.ini:816-820; gamedata.ini:7911
+##     WildSpiderlingHorde binds TestWallScalingHordeLocomotor at
+##     NORMAL_MOUNTED_FAST_HORDE_SPEED = 110; the locomotor authors TurnTime
+##     2000, SlowTurnRadius 33, FastTurnRadius 33, and MinTurnSpeed 100%.
 ##
 ## The sim's authored source-unit scale is 0.1, so the sealed runtime values are
 ## 9/150/200 and 5.5/51/51 respectively. No movement number below is invented.
 
 const SimScript := preload("res://src/retail_slice/retail_slice_sim.gd")
+const AdapterScript := preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
 
-const EXPECTED_CHECKS := 17
+const EXPECTED_CHECKS := 35
 const EPSILON := 0.0001
 
 var passed := 0
@@ -179,6 +195,102 @@ func _run() -> void:
 		str(mumakil_arrival)
 	)
 
+	var rohirrim_corrections: Array[Dictionary] = []
+	for correction_degrees in [30.0, 90.0, 179.0]:
+		var correction := _exercise_rohirrim_correction(correction_degrees)
+		rohirrim_corrections.append(correction)
+		_check(
+			"rohirrim_%d_degree_correction_has_no_frozen_ticks" % int(correction_degrees),
+			int(correction["frozen_ticks"]) == 0,
+			str(correction)
+		)
+		_check(
+			"rohirrim_%d_degree_heading_is_rate_bounded" % int(correction_degrees),
+			float(correction["maximum_heading_delta_degrees"])
+				<= 360.0 * SimScript.TICK_SECONDS + EPSILON,
+			str(correction)
+		)
+		_check(
+			"rohirrim_%d_degree_translation_is_fast_arc_bounded" % int(correction_degrees),
+			float(correction["maximum_step_distance"])
+				<= 4.8 * deg_to_rad(360.0) * SimScript.TICK_SECONDS + EPSILON,
+			str(correction)
+		)
+	var all_rohirrim_rows_preserve_fast_turn_radius := true
+	for correction in rohirrim_corrections:
+		all_rohirrim_rows_preserve_fast_turn_radius = (
+			all_rohirrim_rows_preserve_fast_turn_radius
+			and bool(correction["has_fast_turn_radius"])
+			and is_equal_approx(float(correction["fast_turn_radius"]), 4.8)
+		)
+	_check(
+		"rohirrim_runtime_row_preserves_authored_fast_turn_radius",
+		all_rohirrim_rows_preserve_fast_turn_radius,
+		str(rohirrim_corrections)
+	)
+	var rohirrim_arrival := _exercise_lateral_arrival(_rohirrim_horde_rule(), "RohanRohirrimHorde")
+	_check(
+		"rohirrim_lateral_waypoint_still_arrives_and_idles",
+		bool(rohirrim_arrival["arrived"]) and String(rohirrim_arrival["state"]) == "idle",
+		str(rohirrim_arrival)
+	)
+
+	var pivot_crush := _exercise_zero_translation_pivot_crush()
+	_check(
+		"zero_translation_pivot_does_not_crush_adjacent_unit",
+		Vector2(pivot_crush["displacement"]).length_squared() <= EPSILON * EPSILON
+			and int(pivot_crush["damage_dealt"]) == 0
+			and int(pivot_crush["trample_events"]) == 0,
+		str(pivot_crush)
+	)
+
+	var adapter_fast_turn := _exercise_fast_turn_radius_adapter()
+	_check(
+		"adapter_scales_authored_fast_turn_radius",
+		bool(adapter_fast_turn["authored_has_key"])
+			and is_equal_approx(float(adapter_fast_turn["authored_value"]), 4.8),
+		str(adapter_fast_turn)
+	)
+	_check(
+		"adapter_preserves_authored_zero_fast_turn_radius",
+		bool(adapter_fast_turn["zero_has_key"])
+			and is_zero_approx(float(adapter_fast_turn["zero_value"])),
+		str(adapter_fast_turn)
+	)
+	_check(
+		"adapter_keeps_unauthored_fast_turn_radius_absent",
+		not bool(adapter_fast_turn["absent_has_key"]),
+		str(adapter_fast_turn)
+	)
+
+	var spiderling_residue := _exercise_unadmitted_fast_radius_residue(
+		_wild_spiderling_horde_residue_rule(), "WildSpiderlingHorde", 30.0
+	)
+	_check(
+		"wildspiderlinghorde_unadmitted_fast_radius_keeps_pre_q55_clamp_byte_identical",
+		not bool(spiderling_residue["has_fast_turn_radius"])
+			and bool(spiderling_residue["pre_q55_position_byte_identical"]),
+		str(spiderling_residue)
+	)
+	var baby_drake_residue := _exercise_unadmitted_fast_radius_residue(
+		_wild_baby_drake_horde_residue_rule(), "WildBabyDrakeHorde", 30.0
+	)
+	_check(
+		"wildbabydrakehorde_unadmitted_fast_radius_keeps_slow_clamp",
+		not bool(baby_drake_residue["has_fast_turn_radius"])
+			and bool(baby_drake_residue["pre_q55_position_byte_identical"]),
+		str(baby_drake_residue)
+	)
+	var mumakil_residue := _exercise_unadmitted_fast_radius_residue(
+		_mumakil_rule(), "MordorMumakil", 30.0
+	)
+	_check(
+		"mumakil_min_below_100_unadmitted_fast_radius_stays_pre_q55_byte_identical",
+		not bool(mumakil_residue["has_fast_turn_radius"])
+			and bool(mumakil_residue["pre_q55_position_byte_identical"]),
+		str(mumakil_residue)
+	)
+
 	_exercise_blocked_origin_route_contract()
 
 	_finish()
@@ -264,6 +376,150 @@ func _exercise_reverse(rule: Dictionary, unit_type: String) -> Dictionary:
 	}
 
 
+func _exercise_rohirrim_correction(correction_degrees: float) -> Dictionary:
+	var sim = _make_sim(_rohirrim_horde_rule(), "RohanRohirrimHorde")
+	var row: Dictionary = sim.entities[1]
+	row["facing"] = Vector2.RIGHT
+	row["current_speed"] = float(row["speed"])
+	row["route"] = [Vector2.RIGHT.rotated(deg_to_rad(correction_degrees)) * 100.0]
+	var turn_limit_degrees := 360.0 * SimScript.TICK_SECONDS
+	var turn_ticks := maxi(1, ceili(correction_degrees / turn_limit_degrees))
+	var frozen_ticks := 0
+	var maximum_heading_delta_degrees := 0.0
+	var maximum_step_distance := 0.0
+	for _tick_index in turn_ticks:
+		var before_position := Vector2(row["position"])
+		var before_facing := Vector2(row["facing"]).normalized()
+		sim._step_route(row)
+		var displacement := Vector2(row["position"]) - before_position
+		var after_facing := Vector2(row["facing"]).normalized()
+		if displacement.length_squared() <= EPSILON * EPSILON:
+			frozen_ticks += 1
+		maximum_step_distance = maxf(maximum_step_distance, displacement.length())
+		maximum_heading_delta_degrees = maxf(
+			maximum_heading_delta_degrees,
+			rad_to_deg(absf(wrapf(after_facing.angle() - before_facing.angle(), -PI, PI)))
+		)
+	return {
+		"correction_degrees": correction_degrees,
+		"turn_ticks": turn_ticks,
+		"frozen_ticks": frozen_ticks,
+		"maximum_heading_delta_degrees": maximum_heading_delta_degrees,
+		"maximum_step_distance": maximum_step_distance,
+		"has_fast_turn_radius": row.has("fast_turn_radius"),
+		"fast_turn_radius": row.get("fast_turn_radius", -1.0),
+		"position": row["position"],
+	}
+
+
+func _exercise_zero_translation_pivot_crush() -> Dictionary:
+	var sim = _make_sim(_rohirrim_horde_rule(), "RohanRohirrimHorde")
+	var victim_rule := _gondor_fighter_rule()
+	sim._add_battalion(
+		2, SimScript.ENEMY_TEAM, Vector2(1.0, 0.0),
+		"AdjacentGondorFighter", "AdjacentGondorFighter", "AdjacentGondorFighterHorde",
+		-1, victim_rule
+	)
+	var row: Dictionary = sim.entities[1]
+	var victim: Dictionary = sim.entities[2]
+	row["facing"] = Vector2.RIGHT
+	row["current_speed"] = 0.0
+	row["route"] = [Vector2(0.0, 100.0)]
+	row["trample_cooldown"] = 0
+	var before_position := Vector2(row["position"])
+	var health_before := int(victim["health"])
+	var event_start: int = sim.events.size()
+	sim._step_route(row)
+	var trample_events := 0
+	for event_index in range(event_start, sim.events.size()):
+		if String((sim.events[event_index] as Dictionary).get("kind", "")) == "combat.trample":
+			trample_events += 1
+	return {
+		"displacement": Vector2(row["position"]) - before_position,
+		"written_current_speed": row["current_speed"],
+		"damage_dealt": health_before - int(victim["health"]),
+		"trample_events": trample_events,
+	}
+
+
+func _exercise_unadmitted_fast_radius_residue(
+		rule: Dictionary, unit_type: String, correction_degrees: float) -> Dictionary:
+	var sim = _make_sim(rule, unit_type)
+	var row: Dictionary = sim.entities[1]
+	row["facing"] = Vector2.RIGHT
+	row["current_speed"] = float(row["speed"])
+	row["route"] = [Vector2.RIGHT.rotated(deg_to_rad(correction_degrees)) * 100.0]
+	var pre_q55_step_distance := float(row["speed"]) * SimScript.TICK_SECONDS
+	var minimum_turn_speed := (
+		float(row["speed"]) * clampf(float(row["min_turn_speed"]), 0.0, 1.0)
+	)
+	if float(row["current_speed"]) <= minimum_turn_speed + 0.0001:
+		pre_q55_step_distance = minf(
+			pre_q55_step_distance,
+			float(row["slow_turn_radius"])
+				* deg_to_rad(float(row["turn_rate_degrees_per_second"]))
+				* SimScript.TICK_SECONDS
+		)
+	sim._step_route(row)
+	var expected_position := Vector2(row["facing"]).normalized() * pre_q55_step_distance
+	var actual_position := Vector2(row["position"])
+	return {
+		"unit_type": unit_type,
+		"has_fast_turn_radius": row.has("fast_turn_radius"),
+		"min_turn_speed": row["min_turn_speed"],
+		"slow_turn_radius": row["slow_turn_radius"],
+		"actual_step_distance": actual_position.length(),
+		"pre_q55_step_distance": pre_q55_step_distance,
+		"pre_q55_position_byte_identical": (
+			var_to_bytes(actual_position) == var_to_bytes(expected_position)
+		),
+		"actual_position_bytes": var_to_bytes(actual_position).hex_encode(),
+		"pre_q55_position_bytes": var_to_bytes(expected_position).hex_encode(),
+	}
+
+
+func _exercise_fast_turn_radius_adapter() -> Dictionary:
+	var source := {
+		"unit_type": "bfme2.object.rohanrohirrimhorde",
+		"source_object_id": "RohanRohirrimHorde",
+		"category": "cavalry",
+		"member_count": 1,
+		"member_health": 600,
+		"speed_source": 100.0,
+		"vision_range_source": 500.0,
+		"movement": {
+			"acceleration": 800.0,
+			"braking": 1500.0,
+			"turnRateDegreesPerSecond": 360.0,
+			"slowTurnRadius": 0.0,
+			"fastTurnRadius": 48.0,
+			"minTurnSpeed": 1.0,
+		},
+		"combat": {
+			"attackRange": 10.0,
+			"delayBetweenShotsMs": 1000.0,
+			"preAttackDelayMs": 0.0,
+			"firingDurationMs": 0.0,
+			"damage": 1,
+		},
+		"formation": {"positions": [{"x": 0.0, "y": 0.0}]},
+	}
+	var authored: Dictionary = AdapterScript.normalized_unit_rule(source, 0.1)
+	var zero_source: Dictionary = source.duplicate(true)
+	(zero_source["movement"] as Dictionary)["fastTurnRadius"] = 0.0
+	var zero: Dictionary = AdapterScript.normalized_unit_rule(zero_source, 0.1)
+	var absent_source: Dictionary = source.duplicate(true)
+	(absent_source["movement"] as Dictionary).erase("fastTurnRadius")
+	var absent: Dictionary = AdapterScript.normalized_unit_rule(absent_source, 0.1)
+	return {
+		"authored_has_key": authored.has("fast_turn_radius"),
+		"authored_value": authored.get("fast_turn_radius", -1.0),
+		"zero_has_key": zero.has("fast_turn_radius"),
+		"zero_value": zero.get("fast_turn_radius", -1.0),
+		"absent_has_key": absent.has("fast_turn_radius"),
+	}
+
+
 func _exercise_missing_turn_rate_fallback() -> Dictionary:
 	var rule := _base_rule()
 	rule["speed"] = 5.5
@@ -335,6 +591,62 @@ func _mumakil_rule() -> Dictionary:
 		"turn_rate_source": "locomotor:MumakilLocomotor",
 		"slow_turn_radius": 0.2,
 		"min_turn_speed": 0.12,
+	}, true)
+	return rule
+
+
+func _rohirrim_horde_rule() -> Dictionary:
+	var rule := _base_rule()
+	rule.merge({
+		"category": "cavalry",
+		"speed": 10.0,
+		"speed_source": 100.0,
+		"acceleration": 80.0,
+		"acceleration_source": 800.0,
+		"braking": 150.0,
+		"braking_source": 1500.0,
+		"turn_rate_degrees_per_second": 360.0,
+		"turn_rate_source": "locomotor:NormalCavalryHordeLocomotor",
+		"slow_turn_radius": 0.0,
+		"fast_turn_radius": 4.8,
+		"min_turn_speed": 1.0,
+	}, true)
+	return rule
+
+
+func _wild_spiderling_horde_residue_rule() -> Dictionary:
+	var rule := _base_rule()
+	rule.merge({
+		"category": "cavalry",
+		"speed": 11.0,
+		"speed_source": 110.0,
+		"acceleration": 50.0,
+		"acceleration_source": 500.0,
+		"braking": 50.0,
+		"braking_source": 500.0,
+		"turn_rate_degrees_per_second": 180.0,
+		"turn_rate_source": "locomotor:TestWallScalingHordeLocomotor",
+		"slow_turn_radius": 3.3,
+		"min_turn_speed": 1.0,
+		"max_turn_without_reform_degrees": 45.0,
+	}, true)
+	return rule
+
+
+func _wild_baby_drake_horde_residue_rule() -> Dictionary:
+	var rule := _base_rule()
+	rule.merge({
+		"category": "cavalry",
+		"speed": 12.0,
+		"speed_source": 120.0,
+		"acceleration": 50.0,
+		"acceleration_source": 500.0,
+		"braking": 50.0,
+		"braking_source": 500.0,
+		"turn_rate_degrees_per_second": 240.0,
+		"turn_rate_source": "locomotor:FiredrakeLocomotor",
+		"slow_turn_radius": 0.2,
+		"min_turn_speed": 1.0,
 	}, true)
 	return rule
 
