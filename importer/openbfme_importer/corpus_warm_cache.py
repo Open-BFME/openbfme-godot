@@ -401,6 +401,7 @@ def _entry_dir(root: Path, key: str) -> Path:
 def _store_part(
     root: Path, key: str, part: str, documents_identity: str, value: object
 ) -> bool:
+    tmp: Path | None = None
     try:
         payload = pickle.dumps(value, protocol=_PICKLE_PROTOCOL)
         entry = _entry_dir(root, key)
@@ -408,7 +409,18 @@ def _store_part(
         blob = entry / f"{part}.pkl"
         tmp = blob.with_suffix(".pkl.tmp-%d" % os.getpid())
         tmp.write_bytes(payload)
-        os.replace(tmp, blob)
+        try:
+            os.replace(tmp, blob)
+        except OSError:
+            # On Windows a concurrent reader/writer holding the destination
+            # makes os.replace raise WinError 5; with 24 workers flushing at
+            # exit that is routine. The loser's entry is simply not stored —
+            # but its temp payload must not be left behind (24.8 MB each).
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            return False
         envelope = {
             "schema": CACHE_SCHEMA,
             "version": CACHE_VERSION,
@@ -425,6 +437,11 @@ def _store_part(
         return True
     except (OSError, pickle.PicklingError):
         # A cache we cannot write is a cache we do without.
+        if tmp is not None:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
         return False
 
 
