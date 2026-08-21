@@ -8,6 +8,7 @@ visual bindings and resolved audio/image leaves when those stages are ready.
 
 from __future__ import annotations
 
+import atexit
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from copy import deepcopy
@@ -15,8 +16,13 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 import math
+import os
 import re
+import sys
 import threading
+import time as _time
+
+from . import corpus_warm_cache as _corpus_cache
 
 from .module_contracts import (
     ModuleContractError,
@@ -97,6 +103,73 @@ _CATEGORIES = frozenset(
 
 class PlayableUnitCompilerError(ValueError):
     """The requested descriptor cannot be derived without guessing."""
+
+
+# --------------------------------------------------------------------------
+# §16.6 perf probe: per-process cumulative timers over the corpus warm-up
+# seams.  Enabled with OPENBFME_PERF_PROBE=1; the summary lands on stderr at
+# interpreter exit, which for a pooled convert worker is the run-scoped
+# produce-worker log.  Measurement only — never changes what is computed.
+# --------------------------------------------------------------------------
+
+_PERF_PROBE_ENABLED = os.environ.get("OPENBFME_PERF_PROBE", "").strip() not in {"", "0"}
+_PERF_LOCK = threading.Lock()
+_PERF_STATS: dict[str, object] = {
+    "prepare_n": 0,
+    "prepare_s": 0.0,
+    "flat": {},  # kind -> [calls, seconds]
+    "named_n": 0,
+    "named_s": 0.0,
+    "nugget_n": 0,
+    "nugget_s": 0.0,
+    "corpus_load_s": 0.0,
+}
+
+
+def _perf_record(bucket: str, seconds: float, kind: str | None = None) -> None:
+    if not _PERF_PROBE_ENABLED:
+        return
+    with _PERF_LOCK:
+        if kind is not None:
+            row = _PERF_STATS["flat"].setdefault(kind, [0, 0.0])  # type: ignore[union-attr]
+            row[0] += 1
+            row[1] += seconds
+        else:
+            _PERF_STATS[f"{bucket}_n"] += 1  # type: ignore[operator]
+            _PERF_STATS[f"{bucket}_s"] += seconds  # type: ignore[operator]
+
+
+def _perf_dump() -> None:
+    with _PERF_LOCK:
+        flat: dict[str, list] = dict(_PERF_STATS["flat"])  # type: ignore[arg-type]
+        flat_s = sum(row[1] for row in flat.values())
+        flat_n = sum(row[0] for row in flat.values())
+        top = sorted(flat.items(), key=lambda item: -item[1][1])[:12]
+        print(
+            "PERF_CORPUS pid=%d prepare_n=%d prepare_s=%.2f "
+            "flat_kinds=%d flat_calls=%d flat_s=%.2f "
+            "named_n=%d named_s=%.2f nugget_n=%d nugget_s=%.2f "
+            "top=%s"
+            % (
+                os.getpid(),
+                _PERF_STATS["prepare_n"],
+                _PERF_STATS["prepare_s"],
+                len(flat),
+                flat_n,
+                flat_s,
+                _PERF_STATS["named_n"],
+                _PERF_STATS["named_s"],
+                _PERF_STATS["nugget_n"],
+                _PERF_STATS["nugget_s"],
+                ",".join(f"{kind}:{row[1]:.2f}" for kind, row in top),
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
+
+
+if _PERF_PROBE_ENABLED:
+    atexit.register(_perf_dump)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1097,6 +1170,7 @@ def _flat_blocks_for_kind(
         if not claimed:
             return value  # type: ignore[return-value]
     try:
+        _flat_started = _time.perf_counter()
         blocks: list[IniBlock] = []
         for payload in documents.values():
             try:
@@ -1104,6 +1178,7 @@ def _flat_blocks_for_kind(
             except (UnicodeDecodeError, ValueError):
                 continue
         packed = tuple(blocks)
+        _perf_record("flat", _time.perf_counter() - _flat_started, kind=key)
     except BaseException:
         if cache is not None and lock is not None:
             _publish_cache_key(cache, key, lock, None, failed=True)
@@ -1129,7 +1204,9 @@ def _named_definition_values(
         if not claimed:
             return cached_value  # type: ignore[return-value]
     try:
+        _named_started = _time.perf_counter()
         result = _named_definition_values_uncached(documents, kind, identifier)
+        _perf_record("named", _time.perf_counter() - _named_started)
     except BaseException:
         # A claimed slot whose computation raises must be released, or every
         # concurrent waiter blocks in condition.wait() forever.
@@ -1236,9 +1313,11 @@ def _weapon_damage_nuggets(
         if not claimed:
             return cached_value  # type: ignore[return-value]
     try:
+        _nugget_started = _time.perf_counter()
         result = _weapon_damage_nuggets_uncached(
             documents, identifier, nugget_kind=nugget_kind
         )
+        _perf_record("nugget", _time.perf_counter() - _nugget_started)
     except BaseException:
         if cache is not None and lock is not None:
             _publish_cache_key(cache, cache_key, lock, None, failed=True)
@@ -3191,7 +3270,7 @@ def prepare_playable_unit_compiler(
     # what the batch does once ``spellbook_source_documents`` is itself shared.
     if hit is not None and hit.documents is documents:
         return hit
-    prepared = _prepare_playable_unit_compiler_uncached(documents)
+    prepared = _prepared_with_durable_cache(identity, documents)
     with _PREPARED_MEMO_LOCK:
         existing = _PREPARED_MEMO.get(identity)
         if existing is None or existing.documents is not documents:
@@ -3199,6 +3278,47 @@ def prepare_playable_unit_compiler(
                 _PREPARED_MEMO.pop(next(iter(_PREPARED_MEMO)))
             _PREPARED_MEMO[identity] = prepared
         return _PREPARED_MEMO[identity]
+
+
+def _prepared_with_durable_cache(
+    identity: str, documents: Mapping[str, bytes]
+) -> PlayableUnitCompilerInputs:
+    """Load the Q58 corpus warm state, or compute it; either way, share it.
+
+    The durable entries are pure functions of (corpus bytes, producer code)
+    and the load path verified both identities plus the payload digest before
+    unpickling, so re-binding the tables to THIS caller's ``documents`` object
+    preserves the ``prepared.documents is documents`` fail-closed guard against
+    real bytes (§16.5 rule 4): the identity used for the lookup was derived
+    from this very mapping.  Every doubt — disabled cache, unconfigured root,
+    refused envelope, wrong table shape — falls through to the full compute.
+    """
+
+    tables, flat_kinds, named_defs = _corpus_cache.load_corpus_warm_state(identity)
+    prepared: PlayableUnitCompilerInputs | None = None
+    if tables is not None:
+        try:
+            prepared = PlayableUnitCompilerInputs(documents=documents, **tables)
+        except TypeError:
+            # Field drift the shape check did not anticipate: recompute.
+            prepared = None
+    prepared_was_hit = prepared is not None
+    if prepared is None:
+        _prepare_started = _time.perf_counter()
+        prepared = _prepare_playable_unit_compiler_uncached(documents)
+        _perf_record("prepare", _time.perf_counter() - _prepare_started)
+    if flat_kinds:
+        prepared.flat_kind_cache.update(flat_kinds)
+    if named_defs:
+        prepared.named_definition_cache.update(named_defs)
+    _corpus_cache.register_corpus_writeback(
+        identity,
+        prepared,
+        prepared_was_hit=prepared_was_hit,
+        loaded_flat_kinds=set(flat_kinds or ()),
+        loaded_named_keys=set(named_defs or ()),
+    )
+    return prepared
 
 
 def _prepare_playable_unit_compiler_uncached(

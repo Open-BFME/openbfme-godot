@@ -17,6 +17,7 @@ from .castle_behavior import (
     CastleBehaviorCompilerError,
     compile_castle_behavior_contract,
 )
+from .corpus_warm_cache import configure_corpus_warm_cache
 from .faction_census import census_playable_faction, resolve_playable_faction
 from .faction_object_cache import (
     FactionObjectCache,
@@ -1966,6 +1967,10 @@ def build_faction_conversion(
         raise ValueError(
             "produce_shard requires an object_selector, a shard index and a count"
         )
+    # Q58: bind the durable corpus warm cache for callers that enter here
+    # directly (the pooled path configures in convert_faction_import first;
+    # this is idempotent). ``None`` keeps the cache inert.
+    configure_corpus_warm_cache(state_root)
 
     # Identity material the plan-row cache keys on. Computed before the plan so
     # the plan stage can consult its durable cache; the convert loop below
@@ -2787,6 +2792,12 @@ def convert_faction_import(
         object_selector is None or shard_index is None or shard_count is None
     ):
         raise ValueError("produce_shard requires object_selector, index and count")
+    # Q58: bind the durable corpus warm cache to this state root, so every
+    # pooled worker (and the serial pass) shares one prepared-corpus /
+    # flat-kind / named-definition store instead of each process re-deriving
+    # the same pure functions of the same 29 MB corpus. ``None`` keeps the
+    # cache inert and behaviour byte-identical to before.
+    configure_corpus_warm_cache(state_root)
     progress_emit("census", f"census playable faction: {faction}")
     spec = _faction_spec(catalog, faction)
 
