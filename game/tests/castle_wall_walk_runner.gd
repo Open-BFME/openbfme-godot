@@ -13,7 +13,7 @@ extends SceneTree
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const RunnerWatchdogScript = preload("res://tests/runner_watchdog.gd")
 
-const EXPECTED_CHECKS := 28
+const EXPECTED_CHECKS := 30
 const WIDTH := 24
 const HEIGHT := 16
 const FORD_NAMES: Array[String] = ["ford1", "ford2", "ford3"]
@@ -87,6 +87,7 @@ func _run() -> void:
 
 	_test_ground_pockets_bridge_only_through_ramps()
 	_test_failed_bridge_component_pair_cache()
+	_test_source_component_without_portal_is_budgeted()
 	_test_distinct_ground_anchor_derivation()
 	_test_low_endpoint_pair_narrowing()
 	_test_authored_reach_admits_full_mesh_diagonal()
@@ -217,6 +218,36 @@ func _test_failed_bridge_component_pair_cache() -> void:
 		int(map.bridge_route_negative_cache_size()) == 0
 		and int(map.navigation_component_id(Vector2i(2, 7))) == int(map.navigation_component_id(Vector2i(18, 7))),
 		"cache=%d components=%d/%d" % [int(map.bridge_route_negative_cache_size()), int(map.navigation_component_id(Vector2i(2, 7))), int(map.navigation_component_id(Vector2i(18, 7)))]
+	)
+
+
+func _test_source_component_without_portal_is_budgeted() -> void:
+	var map = _make_map()
+	var installed := bool(map.install_walk_surface_cells_for_test(_authored_surface_projection()))
+	for y in range(HEIGHT):
+		map._navigation_grid.set_point_solid(Vector2i(1, y), true)
+	var has_budget_seam: bool = map.has_method("ground_portal_component_count")
+	if not has_budget_seam:
+		_check("portal_ground_components_are_precomputed", false, "portal-component seam missing")
+		_check("source_component_without_portal_skips_scan", false, "portal-component seam missing")
+		return
+	map.rebuild_navigation_components_for_test()
+	_check(
+		"portal_ground_components_are_precomputed",
+		installed and int(map.ground_portal_component_count()) >= 1,
+		"installed=%s components=%d" % [str(installed), int(map.ground_portal_component_count())]
+	)
+	var route_queries_before := int(map.route_query_count)
+	var result: Dictionary = map.query_layered_bridge_route(
+		_local(map, Vector2i(0, 7)),
+		_local(map, Vector2i(18, 7))
+	)
+	_check(
+		"source_component_without_portal_skips_scan",
+		not bool(result.get("valid", false))
+		and bool(result.get("source_component_has_no_portal", false))
+		and int(map.route_query_count) == route_queries_before,
+		"result=%s ground=%d->%d" % [str(result), route_queries_before, int(map.route_query_count)]
 	)
 
 

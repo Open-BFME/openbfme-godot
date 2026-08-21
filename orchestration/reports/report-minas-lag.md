@@ -1,6 +1,6 @@
 # Q64 Minas Tirith gate-nav and failed-route lag
 
-Status: diagnosis and B1 complete; B2/B3/A and final gates pending.
+Status: diagnosis, B1, and B2 complete; B3/A and final gates pending.
 
 ## Failing-first product receipt
 
@@ -50,7 +50,6 @@ to retail terrain bytes or the immutable selected pack.
 
 ## Pending proof
 
-- B2 source-component portal budget.
 - B3 deterministic repeated-order backoff.
 - Open-gate ground portal and Minas AI green proof.
 - Required pins and castle gates.
@@ -73,3 +72,16 @@ On the unchanged 4,000-tick Minas product run, ground queries fell
 19,047 -> 327 and bridge time fell 94,435.970 -> 186.571 ms. Wall time fell
 226,853 -> 127,846 ms. The expected AI red remains because A is not fixed yet.
 Receipt: `workspace/logs/minas-lag/b1-castle-ai.txt` and `b1-timing.txt`.
+
+## B2 - source component portal budget
+
+The component rebuild also precomputes the set of component ids containing a
+ground anchor for an authored wall portal. On a bridge-cache miss, a source
+component absent from that set returns before the 2xN ground-route portal scan.
+The set is rebuilt by the same topology-mutation path as the negative cache.
+
+The fast failing-first delta is `28/2` -> `30/0`. The added fixture isolates a
+third ground pocket with no portal, proves the portal-component set exists, and
+proves the rejection adds zero inner ground queries. Receipts:
+`workspace/logs/minas-lag/b2-red-castle-wall-walk.txt` and
+`b2-green-castle-wall-walk.txt`.
