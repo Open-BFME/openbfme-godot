@@ -29,7 +29,7 @@ extends SceneTree
 const BOOT_DEADLINE_MS := 300000
 const FORDS_MAP := "bfme2.map.fords-of-isen-ii"
 const ROTWK_SKIRMISH_MAP := "rotwk.map.adorn-river"
-const ROTWK_MEN_DIGEST := "8f40f2af6bf8ea40cb6eb2e44ee262ad92da2364bbebd297fc122a4604dc5fa4"
+const ROTWK_MEN_DIGEST := "b361ec5fc2cc72aa98ab5362538636d6be6cadbe82fedbf3000752bad072d4e7"
 const MEN_FORTRESS_OBJECT_ID := "bfme2.object.men-fortress"
 const SHIPPED_MEN_VSLICE := "bfme2-men-vslice/7de517bf146582f10741750b50d63f9955c42d1fe2aa13200757fc6fb29f217a"
 ## Mirrors RetailSliceSim.CREEP_TEAM. Not a preload: the slice script chain
