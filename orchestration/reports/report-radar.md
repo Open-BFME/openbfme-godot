@@ -73,7 +73,25 @@ Every commit carries `Co-Authored-By: Codex Sol <noreply@openai.com>`. Round 2 u
   - projectile: `709def7cadaf6c91079697a343f437f71d6a2b10d71238248f57b171f8486e7f`
   - pathing: `2e5ad58054d28dc93f37ef4728549bb538f6d4a1c22be922ec19b59fb2d1b12d`
 
+### Round-2 raw gate sweep (`7b78f484` + `6b5c3b12`)
+
+| Gate | Raw result | Log |
+|---|---:|---|
+| `radar_look_runner` | `16 passed / 0 failed` | `workspace/logs/radar-look-round2/gate-radar-look.txt` |
+| `retail_four_unit_hud_runner` | `124 passed / 0 failed` | `workspace/logs/radar-look-round2/gate-retail-four-unit-hud.txt` |
+| `retail_radial_layout_runner` | `48 passed / 0 failed` | `workspace/logs/radar-look-round2/gate-retail-radial-layout.txt` |
+| `castle_map_live_boot_runner` (`rotwk.map.wor-erebor`) | `8 passed / 0 failed` | `workspace/logs/radar-look-round2/gate-castle-map-live-boot.txt` |
+| `retail_state_pin_runner` | `b025d16237ff644d66211a9cc26872f18b61520b9a377f11e9e99c6eceb43f58` / match | `workspace/logs/radar-look-round2/gate-retail-state-pin.txt` |
+| `retail_projectile_pin_runner` | `709def7cadaf6c91079697a343f437f71d6a2b10d71238248f57b171f8486e7f` / match | `workspace/logs/radar-look-round2/gate-retail-projectile-pin.txt` |
+| `retail_pathing_pin_runner` | `2e5ad58054d28dc93f37ef4728549bb538f6d4a1c22be922ec19b59fb2d1b12d` / match | `workspace/logs/radar-look-round2/gate-retail-pathing-pin.txt` |
+
+Extra original-brief boot coverage is honestly red on timing only: `boot_startup_runner` completed all 44 functional checks but reported two budget failures on each attempt. Warm attempt: first frame `8280ms > 7000ms`, shell visible `14871ms > 12000ms`; `workspace/logs/radar-look-round2/gate-boot-startup-warm.txt`. Post-import cold attempt: `10652ms` / `20403ms`; `gate-boot-startup-post-import.txt`. No functional check failed.
+
+Palette knock-on probe: `menu_match_cycle_runner` passed the authored selection/reset checks and finished `70/2`; its two failures were the existing object-count growth checks (`+42`, `+84`), log `workspace/logs/radar-look-round2/knockon-menu-match-cycle.txt`. `menu_skirmish_runner` could not reach its later palette assertion on this branch because it aborts at the pre-existing missing `FACTIONS_BLOCKED_FROM_PLAY` property after mounted-map validation failures; raw partial log `knockon-menu-skirmish.txt`. The focused radar runner directly gates the ten lobby/default values and GameState/radar consumers.
+
 ## Eyes-required result and remaining gaps
+
+Round-2 replacement capture: `workspace/scratch/radar-look-round2-7b78f484.png` (`1920x1080`, 3,227,521 bytes); gate log `workspace/logs/radar-look-round2/capture-radar-look-round2.txt`, `RETAIL_RENDER_CAPTURE_OK`. The former wedge is a small four-corner gold box and the default blip is the exact authored blue `(70,91,156)`. The line remains the named procedural fallback because the selected interface-art packs still lack `RadarViewBoxEdge`; the geometry is fixed independently of that pack gap.
 
 The final 1920x1080 Forward+ capture is `workspace/scratch/radar-look-final.png`; its gate log is `workspace/logs/radar-look/final-render-capture.txt`. Visual review confirms that the parchment/map ink, frame/mask, and map-axis registration remain intact, while the clustered blue unit markers no longer carry the heavy debug-like dark outline.
 
