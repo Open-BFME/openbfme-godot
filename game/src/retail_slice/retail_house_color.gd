@@ -28,6 +28,17 @@ static var _materials: Dictionary = {}
 static var _shader: Shader = null
 
 
+## The single authored/match-selected color seam shared by model masks and
+## presentation-only consumers such as the radar. Unknown teams keep the
+## caller's explicit fallback rather than being guessed into one of two sides.
+static func color_for_team(team: int, fallback: Color = Color.WHITE) -> Color:
+	if team_color_overrides.has(team):
+		return Color(team_color_overrides[team])
+	if TEAM_COLORS.has(team):
+		return Color(TEAM_COLORS[team])
+	return fallback
+
+
 ## Returns the number of surfaces recolored. Safe on any converted scene: only
 ## BaseMaterial3D surfaces whose albedo texture name matches a mask binding
 ## change. The mesh is duplicated before material swaps so the shared GLB cache
@@ -37,7 +48,7 @@ static func apply(node: Node3D, team: int, pack_root: String) -> int:
 		return 0
 	if not _configure(pack_root):
 		return 0
-	var team_color := Color(team_color_overrides.get(team, TEAM_COLORS[team]))
+	var team_color := color_for_team(team)
 	return _apply_recursive(node, team_color)
 
 

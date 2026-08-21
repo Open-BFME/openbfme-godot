@@ -64,6 +64,8 @@ extends Control
 ##
 ## The separate imported preview remains art, never a false coordinate texture.
 
+const HouseColorScript := preload("res://src/retail_slice/retail_house_color.gd")
+
 ## The authored radar sheet inside the cooked palantir atlas. Measured, not
 ## guessed: outside this rectangle the atlas is spell/summon sprite work, and
 ## an earlier pass cropped the palantir ORB globe from the same sheet and
@@ -149,6 +151,13 @@ var _bound_castle_fixture_ids: Dictionary = {}
 
 signal center_requested(world_position: Vector2)
 signal order_requested(world_position: Vector2)
+
+
+func blip_color_for_team(team: int) -> Color:
+	## Radar markers are presentation, but their color is not independent art:
+	## retail uses the same match-selected house color as the unit/structure.
+	var fallback := Color8(45, 77, 172) if team == 0 else Color8(166, 32, 28)
+	return HouseColorScript.color_for_team(team, fallback)
 
 
 func bind_retail_parchment(atlas: Texture2D) -> bool:
@@ -518,8 +527,7 @@ func _draw() -> void:
 			var point := _world_to_canvas(Vector2(entity["position"]), arena)
 			if point.distance_to(center) > radius:
 				continue
-			var color := Color("56b5ff") if int(entity["team"]) == 0 else Color("ff6259")
-			draw_circle(point, 3.4, Color(0.16, 0.11, 0.05, 0.85))
+			var color := blip_color_for_team(int(entity["team"]))
 			draw_circle(point, 2.3, color)
 		_draw_castle_fixture_markers(arena, center, radius)
 		for id in simulation.structure_ids():
@@ -535,8 +543,7 @@ func _draw() -> void:
 			var point := _world_to_canvas(Vector2(structure["position"]), arena)
 			if point.distance_to(center) > radius:
 				continue
-			var color := Color("56b5ff") if int(structure["team"]) == 0 else Color("ff6259")
-			draw_rect(Rect2(point - Vector2(3.0, 3.0), Vector2(6.0, 6.0)), Color(0.16, 0.11, 0.05, 0.85), true)
+			var color := blip_color_for_team(int(structure["team"]))
 			draw_rect(Rect2(point - Vector2(2.0, 2.0), Vector2(4.0, 4.0)), color, true)
 	_draw_camera_footprint(arena, disc)
 
@@ -551,7 +558,7 @@ func _draw_castle_fixture_markers(arena: Rect2, center: Vector2, radius: float) 
 		var point := _world_to_canvas(position, arena)
 		if point.distance_to(center) > radius:
 			continue
-		var color := Color("56b5ff") if int(marker["team"]) == 0 else Color("ff6259")
+		var color := blip_color_for_team(int(marker["team"]))
 		if int(marker["team"]) < 0:
 			color = Color("d8bd7c")
 		var half_length := float(marker.get("half_length", 0.0))
@@ -560,10 +567,8 @@ func _draw_castle_fixture_markers(arena: Rect2, center: Vector2, radius: float) 
 			var direction := Vector2(cos(yaw), -sin(yaw))
 			var first := _world_to_canvas(position - direction * half_length, arena)
 			var second := _world_to_canvas(position + direction * half_length, arena)
-			draw_line(first, second, Color(0.16, 0.11, 0.05, 0.85), 4.0, true)
 			draw_line(first, second, color, 2.0, true)
 		else:
-			draw_rect(Rect2(point - Vector2(2.5, 2.5), Vector2(5.0, 5.0)), Color(0.16, 0.11, 0.05, 0.85), true)
 			draw_rect(Rect2(point - Vector2(1.5, 1.5), Vector2(3.0, 3.0)), color, true)
 
 
