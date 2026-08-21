@@ -13,7 +13,7 @@ extends SceneTree
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const RunnerWatchdogScript = preload("res://tests/runner_watchdog.gd")
 
-const EXPECTED_CHECKS := 22
+const EXPECTED_CHECKS := 25
 const WIDTH := 24
 const HEIGHT := 16
 const FORD_NAMES: Array[String] = ["ford1", "ford2", "ford3"]
@@ -87,6 +87,9 @@ func _run() -> void:
 
 	_test_ground_pockets_bridge_only_through_ramps()
 	_test_distinct_ground_anchor_derivation()
+	_test_low_endpoint_pair_narrowing()
+	_test_authored_reach_admits_full_mesh_diagonal()
+	_test_ground_search_is_bounded_to_authored_reach()
 	_test_selected_erebor_vertical_slice()
 
 	_finish()
@@ -213,6 +216,76 @@ func _test_distinct_ground_anchor_derivation() -> void:
 		installed and bool(route.get("valid", false)) and (route.get("surface_roles", []) as Array).has("ramp"),
 		"installed=%s pairs=%s route=%s" % [str(installed), str(pairs), str(route)]
 	)
+
+
+func _test_low_endpoint_pair_narrowing() -> void:
+	var map = _make_map()
+	var left_cell := Vector2i(4, 4)
+	var right_cell := Vector2i(6, 4)
+	map._navigation_grid.set_point_solid(left_cell, true)
+	map._navigation_grid.set_point_solid(right_cell, true)
+	var low := _local(map, Vector2i(5, 4))
+	var high := _local(map, Vector2i(7, 4))
+	var pairs: Array = map.call(
+		"_walk_surface_low_endpoint_pairs",
+		[PackedVector3Array([
+			Vector3(low.x, 0.0, low.y),
+			Vector3(low.x, 0.0, low.y + 1.0),
+			Vector3(high.x, 4.0, high.y),
+		])],
+		Transform3D.IDENTITY,
+		[left_cell, right_cell] as Array[Vector2i]
+	) as Array
+	_check(
+		"low_endpoint_equal_candidates_narrow_to_one_sorted_pair",
+		pairs.size() == 1
+		and Vector2i((pairs[0] as Dictionary).get("wall_cell", Vector2i(-1, -1))) == left_cell
+		and map.is_navigation_walkable(Vector2i((pairs[0] as Dictionary).get("ground_cell", Vector2i(-1, -1)))),
+		str(pairs)
+	)
+
+
+func _test_authored_reach_admits_full_mesh_diagonal() -> void:
+	var map = _make_map()
+	for y in range(HEIGHT):
+		for x in range(WIDTH):
+			map._navigation_grid.set_point_solid(Vector2i(x, y), true)
+	var target_ground := Vector2i(10, 6)
+	map._navigation_grid.set_point_solid(target_ground, false)
+	var low_a := _local(map, Vector2i(4, 2))
+	var low_b := _local(map, Vector2i(4, 10))
+	var high_a := _local(map, Vector2i(6, 2))
+	var pairs: Array = map.call(
+		"_walk_surface_low_endpoint_pairs",
+		[PackedVector3Array([
+			Vector3(low_a.x, 0.0, low_a.y),
+			Vector3(low_b.x, 0.0, low_b.y),
+			Vector3(high_a.x, 4.0, high_a.y),
+		])],
+		Transform3D.IDENTITY,
+		[Vector2i(4, 2), Vector2i(4, 10)] as Array[Vector2i]
+	) as Array
+	_check(
+		"authored_reach_admits_full_mesh_diagonal",
+		pairs.size() == 1
+		and Vector2i((pairs[0] as Dictionary).get("ground_cell", Vector2i(-1, -1))) == target_ground,
+		"target=%s pairs=%s" % [target_ground, str(pairs)]
+	)
+
+
+func _test_ground_search_is_bounded_to_authored_reach() -> void:
+	var map = _make_map()
+	var low_points: Array[Vector2] = [_local(map, Vector2i(5, 5))]
+	var bounds := Rect2i()
+	if map.has_method("_walk_surface_ground_search_bounds"):
+		bounds = map.call("_walk_surface_ground_search_bounds", low_points, 4.0) as Rect2i
+	_check(
+		"ground_endpoint_scan_is_bounded_to_authored_reach",
+		bounds.has_point(Vector2i(5, 5)) and bounds.get_area() < WIDTH * HEIGHT,
+		"bounds=%s full_area=%d" % [bounds, WIDTH * HEIGHT]
+	)
+
+
 func _test_selected_erebor_vertical_slice() -> void:
 	var mod_loader = root.get_node_or_null("ModLoader")
 	var content_root := OS.get_environment("OPENBFME_CONTENT").strip_edges()
