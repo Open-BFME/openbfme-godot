@@ -2867,17 +2867,25 @@ func _walk_surface_low_endpoint_pairs(triangles: Array, placement_transform: Tra
 	wall_candidates.sort_custom(func(a, b): return a.y < b.y or (a.y == b.y and a.x < b.x))
 	if wall_candidates.is_empty():
 		return []
-	# Bound the ground search by the authored ramp's own horizontal reach. This
-	# admits footprint-separated endpoints without inventing a distance constant
-	# or permitting a portal jump farther than the source geometry itself.
+	# Bound the ground search by the authored ramp's full horizontal reach from
+	# its low edge. This deliberately includes the cross-ramp diagonal: Q56f's
+	# local cook proves that conservative envelope is required by retail ramps,
+	# while its five refused endpoints still lie beyond the entire source mesh.
 	var authored_reach_squared := 0.0
 	for low_point in low_points:
 		for authored_point in authored_points:
 			authored_reach_squared = maxf(authored_reach_squared, low_point.distance_squared_to(authored_point))
+	# The exact distance check below is still authoritative. This conservative
+	# grid AABB only avoids re-scanning the full map once per authored ramp.
+	var search_bounds := _walk_surface_ground_search_bounds(low_points, authored_reach_squared)
+	if not search_bounds.has_area():
+		return []
+	var search_min := search_bounds.position
+	var search_max := search_bounds.end - Vector2i.ONE
 	var ground_candidates: Array[Vector2i] = []
 	var best_ground_distance := INF
-	for grid_y in range(navigation_grid_min.y, navigation_grid_max.y + 1):
-		for grid_x in range(navigation_grid_min.x, navigation_grid_max.x + 1):
+	for grid_y in range(search_min.y, search_max.y + 1):
+		for grid_x in range(search_min.x, search_max.x + 1):
 			var cell := Vector2i(grid_x, grid_y)
 			if not is_navigation_walkable(cell):
 				continue
@@ -2896,6 +2904,30 @@ func _walk_surface_low_endpoint_pairs(triangles: Array, placement_transform: Tra
 	if ground_candidates.is_empty():
 		return []
 	return [{"wall_cell": wall_candidates[0], "ground_cell": ground_candidates[0]}]
+
+
+func _walk_surface_ground_search_bounds(low_points: Array[Vector2], authored_reach_squared: float) -> Rect2i:
+	if low_points.is_empty():
+		return Rect2i()
+	var cell_span := horizontal_scale * local_transform_scale
+	if cell_span <= 0.0:
+		return Rect2i()
+	var authored_reach_cells := sqrt(authored_reach_squared) / cell_span
+	var minimum_grid := Vector2(INF, INF)
+	var maximum_grid := Vector2(-INF, -INF)
+	for low_point in low_points:
+		var low_grid := local_to_grid_float(low_point)
+		minimum_grid = Vector2(minf(minimum_grid.x, low_grid.x), minf(minimum_grid.y, low_grid.y))
+		maximum_grid = Vector2(maxf(maximum_grid.x, low_grid.x), maxf(maximum_grid.y, low_grid.y))
+	var search_min := Vector2i(
+		clampi(floori(minimum_grid.x - authored_reach_cells), navigation_grid_min.x, navigation_grid_max.x),
+		clampi(floori(minimum_grid.y - authored_reach_cells), navigation_grid_min.y, navigation_grid_max.y)
+	)
+	var search_max := Vector2i(
+		clampi(ceili(maximum_grid.x + authored_reach_cells), navigation_grid_min.x, navigation_grid_max.x),
+		clampi(ceili(maximum_grid.y + authored_reach_cells), navigation_grid_min.y, navigation_grid_max.y)
+	)
+	return Rect2i(search_min, search_max - search_min + Vector2i.ONE)
 
 
 func _walk_surface_low_endpoint_cells(triangles: Array, placement_transform: Transform3D, surface_cells: Array[Vector2i]) -> Array[Vector2i]:
