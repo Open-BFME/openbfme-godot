@@ -323,6 +323,10 @@ var navigation_water_blocked_count := 0
 var navigation_ford_corridor_count := 0
 var navigation_build_count := 0
 var route_query_count := 0
+## Product-path performance receipts for Q64. These are observational only:
+## they never participate in route selection or lockstep state.
+var bridge_route_query_count := 0
+var bridge_route_query_total_usec := 0
 var _navigation_grid: AStarGrid2D
 var _water_navigation_grid: AStarGrid2D
 ## Q51: wall tops are a distinct navigation domain. The ground grid above is
@@ -3169,8 +3173,10 @@ func _query_wall_to_wall(from_local: Vector2, to_local: Vector2, destination_cel
 func query_layered_bridge_route(from_local: Vector2, to_local: Vector2) -> Dictionary:
 	## A failed ground->ground query may use a connected ramp/deck/ramp chain.
 	## Valid ground routes never reach this method, preserving their exact bytes.
+	var query_started_usec := Time.get_ticks_usec()
+	bridge_route_query_count += 1
 	if not walk_surface_navigation_ready or _walk_surface_portal_cells.size() < 2:
-		return {"valid": false, "reason": "no-wall-bridge-route", "points": [], "cells": [], "start_portals": 0, "end_portals": 0, "connected_pairs": 0, "deck_pairs": 0}
+		return _finish_bridge_route_query({"valid": false, "reason": "no-wall-bridge-route", "points": [], "cells": [], "start_portals": 0, "end_portals": 0, "connected_pairs": 0, "deck_pairs": 0}, query_started_usec)
 	var starts: Array[Dictionary] = []
 	var ends: Array[Dictionary] = []
 	for portal_cell in _walk_surface_portal_cells:
@@ -3214,12 +3220,17 @@ func query_layered_bridge_route(from_local: Vector2, to_local: Vector2) -> Dicti
 				to_local
 			)
 	if best.is_empty():
-		return {"valid": false, "reason": "no-wall-bridge-route", "points": [], "cells": [], "start_portals": starts.size(), "end_portals": ends.size(), "connected_pairs": connected_pairs, "deck_pairs": deck_pairs}
+		return _finish_bridge_route_query({"valid": false, "reason": "no-wall-bridge-route", "points": [], "cells": [], "start_portals": starts.size(), "end_portals": ends.size(), "connected_pairs": connected_pairs, "deck_pairs": deck_pairs}, query_started_usec)
 	best["start_portals"] = starts.size()
 	best["end_portals"] = ends.size()
 	best["connected_pairs"] = connected_pairs
 	best["deck_pairs"] = deck_pairs
-	return best
+	return _finish_bridge_route_query(best, query_started_usec)
+
+
+func _finish_bridge_route_query(result: Dictionary, query_started_usec: int) -> Dictionary:
+	bridge_route_query_total_usec += Time.get_ticks_usec() - query_started_usec
+	return result
 
 
 func _compose_ground_wall_ground_route(ground_in: Dictionary, wall_cells: Array[Vector2i], wall: Dictionary, ground_out: Dictionary, exact_destination: Vector2) -> Dictionary:
@@ -4263,6 +4274,8 @@ func _reset() -> void:
 	navigation_ford_corridor_count = 0
 	navigation_build_count = 0
 	route_query_count = 0
+	bridge_route_query_count = 0
+	bridge_route_query_total_usec = 0
 	_navigation_grid = null
 	_water_navigation_grid = null
 	_clear_walk_surface_navigation()
