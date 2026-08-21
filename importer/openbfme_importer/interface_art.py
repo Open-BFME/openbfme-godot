@@ -126,6 +126,20 @@ class ImageReference:
     source: str
 
 
+# MappedImages consumed directly by the SAGE engine rather than named from an
+# Object or CommandButton field. They still have authored atlas coordinates and
+# belong in the same deterministic crop/index lane when retail defines them.
+ENGINE_UI_IMAGE_REFERENCES: tuple[ImageReference, ...] = (
+    ImageReference(
+        "EngineUI",
+        "Radar",
+        "ViewBoxEdge",
+        "RadarViewBoxEdge",
+        "data/ini/mappedimages/handcreated/handcreatedmappedimages.ini",
+    ),
+)
+
+
 def _read(path: Path) -> bytes:
     data = path.read_bytes()
     if len(data) > _MAX_INI_BYTES:
@@ -412,6 +426,15 @@ def collect_image_references(
     # Dwarves) and a scoped pack that dropped them would leave the screen blank
     # for exactly the factions that can field the hero.
     references.extend(collect_create_a_hero_images(oracle_root, known_image_ids))
+
+    # SAGE draws the camera/view box directly; no Object field names this
+    # MappedImage. Include it whenever the retail corpus defines it so the crop
+    # cannot remain absent merely because the engine-owned reference is implicit.
+    references.extend(
+        reference
+        for reference in ENGINE_UI_IMAGE_REFERENCES
+        if image_key(reference.image_id) in known_image_ids
+    )
 
     references.sort(
         key=lambda reference: (
