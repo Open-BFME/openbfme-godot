@@ -89,6 +89,9 @@ const PAPER_FALLBACK := Color8(163, 142, 95)
 ## 0.707 - so it overfills by a few percent and lets the bezel clip the corners.
 const PAPER_FILL := 1.06
 const INK_OPACITY := 0.82
+## `MappedImage RadarViewBoxEdge`: handcreatedmappedimages.ini authors the crop
+## at Left:1 Top:0 Right:8 Bottom:8 in an 8x8 source texture.
+const RETAIL_VIEW_BOX_EDGE_SIZE := Vector2i(7, 8)
 ## Where the palantir bezel's opening is, as a fraction of the radar control's
 ## side. The retail control-bar ring (`apt-palantirexport-17` region (0,0,250,256)
 ## drawn into dock rect (19,6,375,384), which is how `retail_hud.gd` composes it)
@@ -127,6 +130,12 @@ var uses_retail_parchment := false
 ## a missing pack reads as a named degradation in diagnostics rather than as a
 ## slightly duller radar nobody notices.
 var parchment_source := "flat-fallback"
+## Authored gold camera/view-box edge, supplied by the shared interface-art
+## index. The selected packs predate this crop, so the procedural line remains
+## a named fallback until a later immutable pack cook publishes it.
+var retail_view_box_edge: Texture2D
+var uses_retail_view_box_edge := false
+var view_box_edge_source := "procedural-fallback"
 var source_geometry_loaded := false
 var world_camera: Camera3D
 ## LOCAL-space camera focus, written by the slice every frame.
@@ -158,6 +167,27 @@ func blip_color_for_team(team: int) -> Color:
 	## retail uses the same match-selected house color as the unit/structure.
 	var fallback := Color8(45, 77, 172) if team == 0 else Color8(166, 32, 28)
 	return HouseColorScript.color_for_team(team, fallback)
+
+
+func bind_retail_view_box_edge(texture: Texture2D) -> bool:
+	retail_view_box_edge = null
+	uses_retail_view_box_edge = false
+	view_box_edge_source = "procedural-fallback"
+	if texture == null:
+		queue_redraw()
+		return false
+	var image := texture.get_image()
+	if image == null or image.is_empty():
+		queue_redraw()
+		return false
+	if Vector2i(image.get_width(), image.get_height()) != RETAIL_VIEW_BOX_EDGE_SIZE:
+		queue_redraw()
+		return false
+	retail_view_box_edge = texture
+	uses_retail_view_box_edge = true
+	view_box_edge_source = "RadarViewBoxEdge"
+	queue_redraw()
+	return true
 
 
 func bind_retail_parchment(atlas: Texture2D) -> bool:
@@ -758,7 +788,8 @@ func _draw_camera_footprint(arena: Rect2, disc: PackedVector2Array) -> void:
 
 
 func _draw_footprint_outline(quad: PackedVector2Array, disc: PackedVector2Array) -> void:
-	## Retail's view wedge is a thin gold outline cut at the bezel.
+	## Retail's view wedge is the authored RadarViewBoxEdge tiled along the
+	## clipped polygon. A named procedural fallback keeps old packs playable.
 	var gold := Color(0.92, 0.84, 0.55, 0.9)
 	var pieces := Geometry2D.intersect_polygons(quad, disc)
 	if pieces.is_empty():
@@ -767,6 +798,27 @@ func _draw_footprint_outline(quad: PackedVector2Array, disc: PackedVector2Array)
 		var polygon: PackedVector2Array = piece
 		if polygon.size() < 2:
 			continue
-		var closed := polygon.duplicate()
-		closed.append(polygon[0])
-		draw_polyline(closed, gold, 1.6, true)
+		if retail_view_box_edge != null:
+			for index in polygon.size():
+				_draw_retail_view_box_segment(
+					polygon[index], polygon[(index + 1) % polygon.size()]
+				)
+		else:
+			var closed := polygon.duplicate()
+			closed.append(polygon[0])
+			draw_polyline(closed, gold, 1.6, true)
+
+
+func _draw_retail_view_box_segment(first: Vector2, second: Vector2) -> void:
+	var delta := second - first
+	var length := delta.length()
+	if length <= 0.01 or retail_view_box_edge == null:
+		return
+	var source_width := float(retail_view_box_edge.get_width())
+	draw_set_transform(first, delta.angle() - PI * 0.5)
+	draw_texture_rect(
+		retail_view_box_edge,
+		Rect2(Vector2(-source_width * 0.5, 0.0), Vector2(source_width, length)),
+		true
+	)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)

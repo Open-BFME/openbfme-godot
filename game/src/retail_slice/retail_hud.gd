@@ -75,6 +75,8 @@ const RETAIL_TRAIN_LABEL_ID := "CONTROLBAR:ConstructGondorFighterHorde"
 const RETAIL_TRAIN_TOOLTIP_ID := "CONTROLBAR:ToolTipBuildGondorFighterHorde"
 const RETAIL_COMMAND_BAR_IMAGE_ID := "SGCommandBar"
 const RETAIL_COMMAND_BAR_SOURCE_SIZE := Vector2i(1024, 256)
+const RETAIL_RADAR_VIEW_BOX_EDGE_IMAGE_ID := "RadarViewBoxEdge"
+const RETAIL_RADAR_VIEW_BOX_EDGE_SIZE := Vector2i(7, 8)
 ## `NonCommand_SelectAllHeroes` has no ButtonImage (commandbutton.ini:3494-3497).
 ## Retail authors the hero-group glyph per SIDE: UCCommon_GoodHeroes on the
 ## good fortress hero selectors (Command_SelectRevivablesMenFortress:13172)
@@ -3817,6 +3819,31 @@ void fragment() {
 	rect_control.material = material
 
 
+func _bind_retail_radar_view_box_edge(content_db, expected_pack_root: String) -> bool:
+	var validation := _validate_retail_image(
+		content_db,
+		expected_pack_root,
+		RETAIL_RADAR_VIEW_BOX_EDGE_IMAGE_ID,
+		RETAIL_RADAR_VIEW_BOX_EDGE_SIZE
+	)
+	if String(validation.get("error", "")) != "":
+		minimap.bind_retail_view_box_edge(null)
+		retail_bind_diagnostics.append(
+			"authored-radar-fallback: %s; camera view box uses the procedural gold line until a cooked pack publishes %s" % [
+				String(validation["error"]), RETAIL_RADAR_VIEW_BOX_EDGE_IMAGE_ID
+			]
+		)
+		return false
+	if not minimap.bind_retail_view_box_edge(validation["texture"] as Texture2D):
+		retail_bind_diagnostics.append(
+			"authored-radar-fallback: %s decoded but did not satisfy the minimap's 7x8 crop contract" % RETAIL_RADAR_VIEW_BOX_EDGE_IMAGE_ID
+		)
+		return false
+	minimap.set_meta("retail_view_box_edge_image_id", RETAIL_RADAR_VIEW_BOX_EDGE_IMAGE_ID)
+	minimap.set_meta("retail_view_box_edge_path", String(validation["path"]))
+	return true
+
+
 func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> void:
 	# The retail frame composition draws on retail_control_bar_frame (z 1,
 	# below the dock). Dropping the radar beneath it puts the ring bevel over
@@ -3826,6 +3853,7 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 	# crop; this pass only hands it the atlas the HUD already loaded for the orbs
 	# and sockets. Without it the radar falls back to one flat disc.
 	minimap.bind_retail_parchment(_retail_palantir_atlas)
+	_bind_retail_radar_view_box_edge(content_db, expected_pack_root)
 	var ui_font := _retail_ui_font(expected_pack_root)
 	if ui_font != null and ui_font != _retail_ui_font_cached:
 		_retail_ui_font_cached = ui_font
