@@ -4791,6 +4791,8 @@ func _add_battalion(
 		)
 	if unit_rule.has("slow_turn_radius"):
 		entities[id]["slow_turn_radius"] = maxf(0.0, float(unit_rule["slow_turn_radius"]))
+	if unit_rule.has("fast_turn_radius"):
+		entities[id]["fast_turn_radius"] = maxf(0.0, float(unit_rule["fast_turn_radius"]))
 	if unit_rule.has("min_turn_speed"):
 		entities[id]["min_turn_speed"] = clampf(float(unit_rule["min_turn_speed"]), 0.0, 1.0)
 	if String(unit_rule.get("turn_rate_source", "")) != "":
@@ -29155,6 +29157,7 @@ func _step_route(row: Dictionary) -> void:
 		row["current_speed"] = idle_speed
 		return
 	var position := Vector2(row["position"])
+	var tick_start_position := position
 	var waypoint := Vector2(route[0])
 	var base_speed := float(row["speed"])
 	var group_cap := float(row.get("group_speed_cap", 0.0))
@@ -29198,6 +29201,7 @@ func _step_route(row: Dictionary) -> void:
 	var pre_move_gap := position.distance_to(waypoint)
 	var heading_bounded_ground_move := false
 	var turning_on_authored_heading := false
+	var slow_turn_manoeuvre := false
 	if movement_direction.length_squared() > 0.000001:
 		if _should_honor_turn_rate(row):
 			var facing_before_turn := Vector2(row.get("facing", movement_direction)).normalized()
@@ -29223,6 +29227,12 @@ func _step_route(row: Dictionary) -> void:
 		# floor; doing so alternated full-speed and zero-speed ticks and produced
 		# an infinite orbit around lateral final waypoints.
 		var minimum_turn_speed := max_speed * clampf(float(row["min_turn_speed"]), 0.0, 1.0)
+		# Choose the authored turn mode from the genuinely achieved speed before
+		# applying the anti-orbit floor below. Equality is the moving/fast side of
+		# the split: cavalry horde locomotors author MinTurnSpeed=100%, so <= would
+		# classify full speed as slow forever and their authored zero SlowTurnRadius
+		# would freeze every correction (locomotor.ini:835-854).
+		slow_turn_manoeuvre = current_speed + 0.0001 < minimum_turn_speed
 		current_speed = maxf(current_speed, minimum_turn_speed)
 		var turn_radians_per_second := deg_to_rad(_retail_turn_rate_degrees(row))
 		var current_turn_radius := current_speed / maxf(turn_radians_per_second, 0.0001)
@@ -29236,16 +29246,22 @@ func _step_route(row: Dictionary) -> void:
 	var travel_direction := movement_direction
 	if heading_bounded_ground_move:
 		travel_direction = Vector2(row.get("facing", movement_direction)).normalized()
-		if turning_on_authored_heading and row.has("slow_turn_radius") and row.has("min_turn_speed"):
-			var minimum_turn_speed := max_speed * clampf(float(row["min_turn_speed"]), 0.0, 1.0)
-			if current_speed <= minimum_turn_speed + 0.0001:
+		if turning_on_authored_heading and row.has("min_turn_speed"):
+			var authored_turn_step := deg_to_rad(_retail_turn_rate_degrees(row)) * TICK_SECONDS
+			if slow_turn_manoeuvre and row.has("slow_turn_radius"):
 				# SlowTurnRadius is authored in source distance units and arrives on
 				# the row scaled to simulation space. Zero is meaningful: horse
 				# locomotors explicitly pivot in place from a standing/slow start.
 				# A positive value bounds the low-speed arc by r * delta-heading.
 				var slow_turn_radius := maxf(0.0, float(row["slow_turn_radius"]))
-				var authored_turn_step := deg_to_rad(_retail_turn_rate_degrees(row)) * TICK_SECONDS
 				step_distance = minf(step_distance, slow_turn_radius * authored_turn_step)
+			elif row.has("fast_turn_radius"):
+				# FastTurnRadius owns the arc once the unit is moving at the authored
+				# threshold. NormalCavalryHordeLocomotor authors 48 source units at
+				# locomotor.ini:844; the adapter scales it to 4.8 simulation units.
+				# Preserve authored zero exactly, just as for SlowTurnRadius.
+				var fast_turn_radius := maxf(0.0, float(row["fast_turn_radius"]))
+				step_distance = minf(step_distance, fast_turn_radius * authored_turn_step)
 	# A heading-bounded unit may initially face away from a nearby waypoint. It
 	# must complete the authored turn instead of teleporting sideways onto the
 	# point merely because its scalar step is longer than the remaining gap.
@@ -29302,7 +29318,11 @@ func _step_route(row: Dictionary) -> void:
 	_spatial_sync(row)
 	row["route"] = route
 	# Authored crush, or the legacy cavalry trample when crush fields are absent.
-	if _should_attempt_crush(row, current_speed, max_speed):
+	# Eligibility is the actual displacement this tick. The locomotor speed can
+	# contain the MinTurnSpeed floor during a zero-distance slow pivot and must
+	# not manufacture a standing-still crush pulse.
+	var actual_translation_speed := tick_start_position.distance_to(position) / TICK_SECONDS
+	if _should_attempt_crush(row, actual_translation_speed, max_speed):
 		_try_cavalry_trample(row)
 	if route.is_empty():
 		_clear_pending_route(row, int(row["target_id"]) == 0)
@@ -29331,18 +29351,18 @@ func _consume_route_point_layer(row: Dictionary) -> void:
 			row["pathing_elevation"] = elevation
 
 
-func _should_attempt_crush(row: Dictionary, current_speed: float, max_speed: float) -> bool:
+func _should_attempt_crush(row: Dictionary, translation_speed: float, max_speed: float) -> bool:
 	if max_speed <= 0.0:
 		return false
 	if row.has("crush_damage") and int(row.get("crush_damage", 0)) > 0:
 		var min_percent := float(row.get("min_crush_velocity_percent", 40.0))
-		return current_speed + 0.0001 >= max_speed * (min_percent / 100.0)
+		return translation_speed + 0.0001 >= max_speed * (min_percent / 100.0)
 	# Descriptor-backed units must supply their retail CrusherLevel/CrushWeapon
 	# inputs. The category fallback exists only for old synthetic fixtures whose
 	# rules predate the compiled crush fields.
 	if row.has("module_contracts"):
 		return false
-	return String(row.get("category", "")) == "cavalry" and current_speed > max_speed * 0.4
+	return String(row.get("category", "")) == "cavalry" and translation_speed > max_speed * 0.4
 
 
 func _try_cavalry_trample(row: Dictionary) -> void:
