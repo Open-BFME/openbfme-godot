@@ -251,6 +251,23 @@ def _default_lifecycle_visual_binding(
         and "intact" in state.get("phases", [])
         and [] in state.get("sourceConditionSets", [])
     ]
+    walk_sources = recipe.get("walkSurfaceSources")
+    if len(defaults) > 1 and isinstance(walk_sources, Mapping):
+        # Some authored wall objects have an unconditional auxiliary draw
+        # module (for example a normally hidden postern gate) alongside the
+        # wall body.  The recipe's byte-derived walk-surface table uniquely
+        # identifies the body GLB without guessing from draw-module names.
+        walk_owners = {
+            (str(source.get("sourceW3d", "")), str(source.get("glb", "")))
+            for source in walk_sources.values()
+            if isinstance(source, Mapping)
+        }
+        defaults = [
+            state
+            for state in defaults
+            if (str(state.get("sourceW3d", "")), str(state.get("output", "")))
+            in walk_owners
+        ]
     if len(defaults) != 1:
         raise PlayableStructurePackCompilerError(
             f"expected one default intact model, found {len(defaults)}"
@@ -262,7 +279,6 @@ def _default_lifecycle_visual_binding(
         "glb": str(default["output"]),
         "matchMethod": "exact-type-name",
     }
-    walk_sources = recipe.get("walkSurfaceSources")
     if isinstance(walk_sources, Mapping) and walk_sources:
         binding["walkSurfaceSources"] = {
             str(mesh_name): {
