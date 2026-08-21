@@ -1,6 +1,6 @@
 # Q64 Minas Tirith gate-nav and failed-route lag
 
-Status: diagnosis, B1, and B2 complete; B3/A and final gates pending.
+Status: diagnosis and B1-B3 complete; A and final gates pending.
 
 ## Failing-first product receipt
 
@@ -50,7 +50,6 @@ to retail terrain bytes or the immutable selected pack.
 
 ## Pending proof
 
-- B3 deterministic repeated-order backoff.
 - Open-gate ground portal and Minas AI green proof.
 - Required pins and castle gates.
 
@@ -85,3 +84,19 @@ third ground pocket with no portal, proves the portal-component set exists, and
 proves the rejection adds zero inner ground queries. Receipts:
 `workspace/logs/minas-lag/b2-red-castle-wall-walk.txt` and
 `b2-green-castle-wall-walk.txt`.
+
+## B3 - deterministic repeated-order backoff
+
+The existing AI retry cadence is the difficulty profile `scan_interval`
+(medium: 15 ticks). A failed `no-bounded-route` stores target identity, current
+source/target component pair, failure count, retry tick, and nav revision on the
+entity. Delay doubles from the existing scan interval and caps at the existing
+`ai_wave_patience_ticks`; there is no wall clock. A different target/component
+pair or any nav revision change retries immediately. The record is ordinary
+entity save state and appears in the lockstep snapshot only while present.
+
+The fast failing-first delta is `30/2` -> `32/0`: the repeated order adds no
+bridge query before its retry tick, and a nav mutation immediately admits the
+formerly blocked route. Receipts: `workspace/logs/minas-lag/b3-red-castle-wall-walk.txt`
+and `b3-green-castle-wall-walk.txt`. Lockstep remains `5/0` at
+`workspace/logs/minas-lag/b3-lockstep.txt`.

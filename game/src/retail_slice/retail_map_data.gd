@@ -3263,6 +3263,14 @@ func navigation_component_id(cell: Vector2i) -> int:
 	return int(_navigation_component_ids[cell.y * width + cell.x])
 
 
+func navigation_component_pair_key(from_local: Vector2, to_local: Vector2) -> String:
+	return _navigation_component_pair_key(from_local, to_local)
+
+
+func navigation_topology_revision_value() -> int:
+	return navigation_topology_revision
+
+
 func _navigation_component_pair_key(from_local: Vector2, to_local: Vector2) -> String:
 	var from_component := _navigation_component_for_local(from_local, true)
 	var to_component := _navigation_component_for_local(to_local, false)

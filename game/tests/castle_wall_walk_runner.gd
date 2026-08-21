@@ -13,7 +13,7 @@ extends SceneTree
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const RunnerWatchdogScript = preload("res://tests/runner_watchdog.gd")
 
-const EXPECTED_CHECKS := 30
+const EXPECTED_CHECKS := 32
 const WIDTH := 24
 const HEIGHT := 16
 const FORD_NAMES: Array[String] = ["ford1", "ford2", "ford3"]
@@ -88,6 +88,7 @@ func _run() -> void:
 	_test_ground_pockets_bridge_only_through_ramps()
 	_test_failed_bridge_component_pair_cache()
 	_test_source_component_without_portal_is_budgeted()
+	_test_ai_failed_order_backoff()
 	_test_distinct_ground_anchor_derivation()
 	_test_low_endpoint_pair_narrowing()
 	_test_authored_reach_admits_full_mesh_diagonal()
@@ -248,6 +249,44 @@ func _test_source_component_without_portal_is_budgeted() -> void:
 		and bool(result.get("source_component_has_no_portal", false))
 		and int(map.route_query_count) == route_queries_before,
 		"result=%s ground=%d->%d" % [str(result), route_queries_before, int(map.route_query_count)]
+	)
+
+
+func _test_ai_failed_order_backoff() -> void:
+	var map = _make_map()
+	map.install_walk_surface_cells_for_test(_authored_surface_projection())
+	for y in range(HEIGHT):
+		map._navigation_grid.set_point_solid(Vector2i(9, y), true)
+	for y in range(6, 9):
+		map._walk_surface_navigation_grid.set_point_solid(Vector2i(11, y), true)
+	map.rebuild_navigation_components_for_test()
+	var sim = _make_sim(map, _local(map, Vector2i(2, 7)))
+	var row: Dictionary = sim.entities[1]
+	var destination := _local(map, Vector2i(18, 7))
+	var profile := {"scan_interval": 15}
+	if not sim.has_method("_ai_assign_target_route_with_backoff"):
+		_check("ai_repeated_failed_order_backs_off", false, "AI backoff seam missing")
+		_check("ai_backoff_fails_open_after_nav_mutation", false, "AI backoff seam missing")
+		return
+	sim.tick_index = 15
+	var first := bool(sim._ai_assign_target_route_with_backoff(row, "battalion", 99, destination, profile))
+	var bridge_queries_after_first := int(map.bridge_route_query_count)
+	sim.tick_index = 30
+	var second := bool(sim._ai_assign_target_route_with_backoff(row, "battalion", 99, destination, profile))
+	var backoff: Dictionary = row.get("ai_route_backoff", {}) as Dictionary
+	_check(
+		"ai_repeated_failed_order_backs_off",
+		not first and not second
+		and int(map.bridge_route_query_count) == bridge_queries_after_first
+		and int(backoff.get("retry_tick", 0)) > int(sim.tick_index),
+		"first=%s second=%s bridge=%d->%d backoff=%s" % [str(first), str(second), bridge_queries_after_first, int(map.bridge_route_query_count), str(backoff)]
+	)
+	map.set_navigation_cell_walkable_for_test(Vector2i(9, 5), true)
+	var after_mutation := bool(sim._ai_assign_target_route_with_backoff(row, "battalion", 99, destination, profile))
+	_check(
+		"ai_backoff_fails_open_after_nav_mutation",
+		after_mutation and not row.has("ai_route_backoff"),
+		"accepted=%s revision=%d row=%s" % [str(after_mutation), int(map.navigation_topology_revision), str(row.get("ai_route_backoff", {}))]
 	)
 
 
