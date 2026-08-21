@@ -169,6 +169,17 @@ func blip_color_for_team(team: int) -> Color:
 	return HouseColorScript.color_for_team(team, fallback)
 
 
+func blip_layers_for(kind: String, team: int) -> Array[Dictionary]:
+	## Headless-verifiable draw contract. The renderer consumes these exact
+	## layers, so one returned layer proves there is no invented halo underneath
+	## the authored house-colour marker.
+	if kind == "unit":
+		return [{"shape": "circle", "radius": 2.3, "color": blip_color_for_team(team)}]
+	if kind == "structure":
+		return [{"shape": "square", "half_size": 2.0, "color": blip_color_for_team(team)}]
+	return []
+
+
 func bind_retail_view_box_edge(texture: Texture2D) -> bool:
 	retail_view_box_edge = null
 	uses_retail_view_box_edge = false
@@ -557,8 +568,7 @@ func _draw() -> void:
 			var point := _world_to_canvas(Vector2(entity["position"]), arena)
 			if point.distance_to(center) > radius:
 				continue
-			var color := blip_color_for_team(int(entity["team"]))
-			draw_circle(point, 2.3, color)
+			_draw_blip(point, "unit", int(entity["team"]))
 		_draw_castle_fixture_markers(arena, center, radius)
 		for id in simulation.structure_ids():
 			var structure: Dictionary = simulation.structure(id)
@@ -573,9 +583,18 @@ func _draw() -> void:
 			var point := _world_to_canvas(Vector2(structure["position"]), arena)
 			if point.distance_to(center) > radius:
 				continue
-			var color := blip_color_for_team(int(structure["team"]))
-			draw_rect(Rect2(point - Vector2(2.0, 2.0), Vector2(4.0, 4.0)), color, true)
+			_draw_blip(point, "structure", int(structure["team"]))
 	_draw_camera_footprint(arena, disc)
+
+
+func _draw_blip(point: Vector2, kind: String, team: int) -> void:
+	for layer in blip_layers_for(kind, team):
+		var color := Color(layer["color"])
+		if String(layer["shape"]) == "circle":
+			draw_circle(point, float(layer["radius"]), color)
+		elif String(layer["shape"]) == "square":
+			var half_size := float(layer["half_size"])
+			draw_rect(Rect2(point - Vector2.ONE * half_size, Vector2.ONE * half_size * 2.0), color, true)
 
 
 func _draw_castle_fixture_markers(arena: Rect2, center: Vector2, radius: float) -> void:
@@ -748,26 +767,10 @@ func _visible_bounds() -> Rect2:
 func _draw_camera_footprint(arena: Rect2, disc: PackedVector2Array) -> void:
 	var center := _world_to_canvas(camera_center, arena)
 	if world_camera != null and is_instance_valid(world_camera):
-		var viewport_rect := world_camera.get_viewport().get_visible_rect()
-		var screen_corners := [
-			viewport_rect.position,
-			Vector2(viewport_rect.end.x, viewport_rect.position.y),
-			viewport_rect.end,
-			Vector2(viewport_rect.position.x, viewport_rect.end.y),
-		]
+		var radar_polygon := camera_footprint_radar_polygon(world_camera)
 		var projected := PackedVector2Array()
-		for screen_corner in screen_corners:
-			var origin := world_camera.project_ray_origin(screen_corner)
-			var direction := world_camera.project_ray_normal(screen_corner)
-			var hit: Variant = Plane(Vector3.UP, 0.35).intersects_ray(origin, direction)
-			if hit != null:
-				# The camera frustum regularly spills past the playable edge;
-				# retail clips the wedge at the map boundary, so the footprint
-				# never escapes the parchment.
-				var world_hit := _world_to_radar(Vector2((hit as Vector3).x, (hit as Vector3).z))
-				world_hit.x = clampf(world_hit.x, map_bounds.position.x, map_bounds.end.x)
-				world_hit.y = clampf(world_hit.y, map_bounds.position.y, map_bounds.end.y)
-				projected.append(_radar_to_canvas(world_hit, arena))
+		for point in radar_polygon:
+			projected.append(_radar_to_canvas(point, arena))
 		if projected.size() == 4:
 			_draw_footprint_outline(projected, disc)
 			if center.distance_to(Rect2(Vector2.ZERO, size).get_center()) <= bezel_radius():
@@ -785,6 +788,32 @@ func _draw_camera_footprint(arena: Rect2, disc: PackedVector2Array) -> void:
 	])
 	_draw_footprint_outline(points, disc)
 	draw_circle(center, 1.8, Color("f0d47c"))
+
+
+func camera_footprint_radar_polygon(camera_value: Camera3D) -> PackedVector2Array:
+	## Production geometry seam used by the headless radar runner. This first
+	## extraction intentionally preserves the prior per-corner clamping so the
+	## verifier's off-map camera pose fails before the geometry repair.
+	if camera_value == null or not is_instance_valid(camera_value):
+		return PackedVector2Array()
+	var viewport_rect := camera_value.get_viewport().get_visible_rect()
+	var screen_corners := [
+		viewport_rect.position,
+		Vector2(viewport_rect.end.x, viewport_rect.position.y),
+		viewport_rect.end,
+		Vector2(viewport_rect.position.x, viewport_rect.end.y),
+	]
+	var projected := PackedVector2Array()
+	for screen_corner in screen_corners:
+		var origin := camera_value.project_ray_origin(screen_corner)
+		var direction := camera_value.project_ray_normal(screen_corner)
+		var hit: Variant = Plane(Vector3.UP, 0.35).intersects_ray(origin, direction)
+		if hit != null:
+			var world_hit := _world_to_radar(Vector2((hit as Vector3).x, (hit as Vector3).z))
+			world_hit.x = clampf(world_hit.x, map_bounds.position.x, map_bounds.end.x)
+			world_hit.y = clampf(world_hit.y, map_bounds.position.y, map_bounds.end.y)
+			projected.append(world_hit)
+	return projected
 
 
 func _draw_footprint_outline(quad: PackedVector2Array, disc: PackedVector2Array) -> void:
