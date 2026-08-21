@@ -29110,9 +29110,15 @@ func _retail_turn_rate_degrees(row: Dictionary) -> float:
 	return 0.0
 
 
-func _step_retail_heading(row: Dictionary, movement_direction: Vector2, braking: float) -> bool:
-	## Rotate the horde's facing toward the direction of travel at the authored
-	## TurnTime-derived rate, and answer whether the horde is REFORMING.
+func _step_retail_heading(
+	row: Dictionary,
+	movement_direction: Vector2,
+	braking: float,
+	effective_turn_rate_degrees_per_second: float
+) -> bool:
+	## Rotate the horde's facing toward travel at the authored TurnTime-derived
+	## cap (possibly reduced by the selected authored radius), and answer whether
+	## the horde is REFORMING.
 	##
 	## The authored locomotor field MaxTurnWithoutReform splits turning in two.
 	##
@@ -29131,7 +29137,7 @@ func _step_retail_heading(row: Dictionary, movement_direction: Vector2, braking:
 	if facing_now.length_squared() <= 0.000001:
 		facing_now = movement_direction
 	var delta_angle := wrapf(movement_direction.angle() - facing_now.angle(), -PI, PI)
-	var turn_step := deg_to_rad(_retail_turn_rate_degrees(row)) * TICK_SECONDS
+	var turn_step := deg_to_rad(effective_turn_rate_degrees_per_second) * TICK_SECONDS
 	row["facing"] = facing_now.rotated(clampf(delta_angle, -turn_step, turn_step))
 	var reform_threshold := _retail_reform_threshold_degrees(row)
 	if reform_threshold < 0.0:
@@ -29203,13 +29209,59 @@ func _step_route(row: Dictionary) -> void:
 	var turning_on_authored_heading := false
 	var slow_turn_manoeuvre := false
 	var pre_q55_slow_clamp := false
+	var selected_turn_radius := -1.0
+	var effective_turn_rate_degrees := 0.0
+	var minimum_turn_speed := 0.0
+	var min_turn_speed_fraction := 0.0
 	if movement_direction.length_squared() > 0.000001:
 		if _should_honor_turn_rate(row):
 			var facing_before_turn := Vector2(row.get("facing", movement_direction)).normalized()
 			turning_on_authored_heading = absf(
 				wrapf(movement_direction.angle() - facing_before_turn.angle(), -PI, PI)
 			) > 0.0001
-			var reforming := _step_retail_heading(row, movement_direction, braking)
+			effective_turn_rate_degrees = _retail_turn_rate_degrees(row)
+			if turning_on_authored_heading:
+				if row.has("fast_turn_radius"):
+					var authored_fast_radius := maxf(0.0, float(row["fast_turn_radius"]))
+					if authored_fast_radius > 0.0 and pre_move_gap <= authored_fast_radius + 0.0001:
+						# A waypoint inside the moving circle cannot be reached by
+						# continuing that circle. Brake on the authored ramp until the
+						# MinTurnSpeed split selects SlowTurnRadius, pivot, then advance.
+						current_speed = maxf(0.0, current_speed - braking * TICK_SECONDS)
+						row["current_speed"] = current_speed
+				if row.has("min_turn_speed"):
+					min_turn_speed_fraction = clampf(float(row["min_turn_speed"]), 0.0, 1.0)
+					minimum_turn_speed = max_speed * min_turn_speed_fraction
+					if row.has("fast_turn_radius") and min_turn_speed_fraction >= 1.0 - 0.0001:
+						# NormalCavalryHordeLocomotor says SlowTurnRadius=0 is for
+						# "a standing start" (locomotor.ini:843), while its authored
+						# Acceleration=800 produces 8 sim units/s after the first 0.1s
+						# tick. Only speeds genuinely below that authored first ramp
+						# output are slow; accelerating sub-top-speed ticks are fast.
+						var first_accelerating_speed := minf(
+							max_speed, acceleration * TICK_SECONDS
+						)
+						slow_turn_manoeuvre = (
+							current_speed + 0.0001 < first_accelerating_speed
+						)
+					else:
+						slow_turn_manoeuvre = current_speed <= minimum_turn_speed + 0.0001
+				if row.has("fast_turn_radius"):
+					if slow_turn_manoeuvre and row.has("slow_turn_radius"):
+						selected_turn_radius = maxf(0.0, float(row["slow_turn_radius"]))
+					else:
+						selected_turn_radius = maxf(0.0, float(row["fast_turn_radius"]))
+				if selected_turn_radius > 0.0 and current_speed > 0.0:
+					# v = r*w. A radius wider than the natural authored-rate arc
+					# therefore lowers w to v/r; a tighter radius keeps the authored
+					# rate and the translation bound below shortens the arc instead.
+					effective_turn_rate_degrees = minf(
+						effective_turn_rate_degrees,
+						rad_to_deg(current_speed / selected_turn_radius)
+					)
+			var reforming := _step_retail_heading(
+				row, movement_direction, braking, effective_turn_rate_degrees
+			)
 			if reforming and _should_reform(row):
 				# Reforming: the horde pivots about its own centre and does not
 				# translate this tick. Only when MaxTurnWithoutReform is on the
@@ -29227,20 +29279,17 @@ func _step_route(row: Dictionary) -> void:
 		# toward a close waypoint may not drop a turning unit below that forward
 		# floor; doing so alternated full-speed and zero-speed ticks and produced
 		# an infinite orbit around lateral final waypoints.
-		var minimum_turn_speed := max_speed * clampf(float(row["min_turn_speed"]), 0.0, 1.0)
-		# Choose the authored turn mode from the genuinely achieved speed before
-		# applying the anti-orbit floor below. Equality is the moving/fast side of
-		# the split: cavalry horde locomotors author MinTurnSpeed=100%, so <= would
-		# classify full speed as slow forever and their authored zero SlowTurnRadius
-		# would freeze every correction (locomotor.ini:835-854).
-		slow_turn_manoeuvre = current_speed + 0.0001 < minimum_turn_speed
-		current_speed = maxf(current_speed, minimum_turn_speed)
-		var turn_radians_per_second := deg_to_rad(_retail_turn_rate_degrees(row))
-		var current_turn_radius := current_speed / maxf(turn_radians_per_second, 0.0001)
-		if pre_move_gap <= current_turn_radius + 0.0001:
-			# The waypoint lies inside the current arc: drop to the authored
-			# minimum turning speed so SlowTurnRadius owns the close maneuver.
-			current_speed = minimum_turn_speed
+		var accelerating_full_threshold := (
+			row.has("fast_turn_radius") and min_turn_speed_fraction >= 1.0 - 0.0001
+		)
+		if not accelerating_full_threshold:
+			current_speed = maxf(current_speed, minimum_turn_speed)
+			var turn_radians_per_second := deg_to_rad(_retail_turn_rate_degrees(row))
+			var current_turn_radius := current_speed / maxf(turn_radians_per_second, 0.0001)
+			if pre_move_gap <= current_turn_radius + 0.0001:
+				# The waypoint lies inside the current arc: drop to the authored
+				# minimum turning speed so SlowTurnRadius owns the close maneuver.
+				current_speed = minimum_turn_speed
 		pre_q55_slow_clamp = current_speed <= minimum_turn_speed + 0.0001
 		row["current_speed"] = current_speed
 	step_distance = current_speed * TICK_SECONDS
@@ -29248,29 +29297,21 @@ func _step_route(row: Dictionary) -> void:
 	var travel_direction := movement_direction
 	if heading_bounded_ground_move:
 		travel_direction = Vector2(row.get("facing", movement_direction)).normalized()
-		if turning_on_authored_heading and row.has("min_turn_speed"):
-			var authored_turn_step := deg_to_rad(_retail_turn_rate_degrees(row)) * TICK_SECONDS
-			if slow_turn_manoeuvre and row.has("slow_turn_radius"):
-				# SlowTurnRadius is authored in source distance units and arrives on
-				# the row scaled to simulation space. Zero is meaningful: horse
-				# locomotors explicitly pivot in place from a standing/slow start.
-				# A positive value bounds the low-speed arc by r * delta-heading.
-				var slow_turn_radius := maxf(0.0, float(row["slow_turn_radius"]))
-				step_distance = minf(step_distance, slow_turn_radius * authored_turn_step)
-			elif row.has("fast_turn_radius"):
-				# FastTurnRadius owns the arc once the unit is moving at the authored
-				# threshold. NormalCavalryHordeLocomotor authors 48 source units at
-				# locomotor.ini:844; the adapter scales it to 4.8 simulation units.
-				# Preserve authored zero exactly, just as for SlowTurnRadius.
-				var fast_turn_radius := maxf(0.0, float(row["fast_turn_radius"]))
-				step_distance = minf(step_distance, fast_turn_radius * authored_turn_step)
+		if turning_on_authored_heading:
+			var effective_turn_step := deg_to_rad(effective_turn_rate_degrees) * TICK_SECONDS
+			if selected_turn_radius >= 0.0:
+				# The selected authored radius binds the position arc as s <= r*dtheta.
+				# Together with the v/r heading cap above this traces r whether r is
+				# wider or tighter than the natural speed/authored-rate arc.
+				step_distance = minf(
+					step_distance, selected_turn_radius * effective_turn_step
+				)
 			elif pre_q55_slow_clamp and row.has("slow_turn_radius"):
-				# The adapter deliberately leaves FastTurnRadius unadmitted outside the
-				# Q55 cavalry family. Preserve those rows' pre-Q55 kinematics by keeping
-				# their old SlowTurnRadius clamp until their fast arc is admitted.
+				# A document with no authored FastTurnRadius stays on the exact old
+				# clamp. This absence path is byte-pinned in retail_turn_model_runner.
 				var fallback_slow_turn_radius := maxf(0.0, float(row["slow_turn_radius"]))
 				step_distance = minf(
-					step_distance, fallback_slow_turn_radius * authored_turn_step
+					step_distance, fallback_slow_turn_radius * effective_turn_step
 				)
 	# A heading-bounded unit may initially face away from a nearby waypoint. It
 	# must complete the authored turn instead of teleporting sideways onto the

@@ -76,7 +76,17 @@ const TREBUCHET_TARGET_ID := 102
 const SPLASH_TARGET_A_ID := 103
 const SPLASH_TARGET_B_ID := 104
 
-const EXPECTED_HASH := "709def7cadaf6c91079697a343f437f71d6a2b10d71238248f57b171f8486e7f"
+# RE-MINT 2026-08-21 (Q63 locomotion parity; owner-authorized in
+# brief-loco-parity.md). Superseded 709def7c... -> e6e053d4.... The adapter now
+# admits every authored movement.fastTurnRadius into normalized selected-pack
+# rules instead of Q55's cavalry-only 0/48/100% shape. This pin hashes its full
+# static unit-rule table, so those newly executable authored keys intentionally
+# move the digest even though this combat-only fixture issues no move orders.
+# Both independent pre-mint runs produced e6e053d4... with identical coverage
+# (max_projectiles=16; damage 2030/200/200/200):
+#   workspace/logs/q-loco-parity-projectile-pin-before.txt
+#   workspace/logs/q-loco-parity-projectile-pin-measure-2.txt
+const EXPECTED_HASH := "e6e053d44b8bbe58b22df87c236c8c0a725f559ed74795875255bf3b33e1ca9c"
 
 var _watchdog := WatchdogScript.new()
 
