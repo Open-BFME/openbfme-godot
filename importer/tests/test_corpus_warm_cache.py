@@ -203,6 +203,71 @@ def test_poisoned_envelope_wrong_identity_is_refused(tmp_path: Path) -> None:
     assert reason == "refused:documentsIdentity-mismatch"
 
 
+_BOOM: list[int] = []
+
+
+def _boom() -> None:
+    _BOOM.append(1)
+
+
+class _ReducerPayload:
+    """Pickles to a call of ``_boom`` — the classic __reduce__ gadget."""
+
+    def __reduce__(self):
+        return (_boom, ())
+
+
+def test_crafted_entry_with_correct_digest_is_refused_before_execution(
+    tmp_path: Path,
+) -> None:
+    """F-1: a digest-VALID entry whose payload references any global outside
+    the enumerated allowlist is refused by name; the gadget never runs."""
+
+    documents = _documents()
+    cwc.configure_corpus_warm_cache(tmp_path)
+    identity = puc._documents_identity(documents)
+    key = cwc.corpus_cache_key(identity)
+    root = tmp_path / "cache" / "corpus-warm"
+    # Store through the real writer, so envelope + digest are CORRECT.
+    assert cwc._store_part(root, key, "flat-kinds", identity, _ReducerPayload())
+
+    _BOOM.clear()
+    value, reason = cwc._load_part(root, key, "flat-kinds", identity)
+    assert value is None
+    assert reason.startswith("refused:disallowed-global:"), reason
+    assert "_boom" in reason
+    assert _BOOM == [], "the crafted payload must never execute"
+
+    # And the full path degrades to a clean recompute.
+    puc.clear_prepared_playable_unit_compiler_memo()
+    prepared = puc.prepare_playable_unit_compiler(dict(documents))
+    assert prepared.objects
+
+
+def test_allowlist_admits_every_live_payload_type(tmp_path: Path) -> None:
+    """The restriction must not refuse anything a legitimate payload carries:
+    dataclass trees (SageObject/IniBlock and the script/include leaves),
+    tuples, dicts, and defaultdict(list) nugget field maps."""
+
+    from collections import defaultdict
+
+    documents = _documents()
+    cwc.configure_corpus_warm_cache(tmp_path)
+    identity = puc._documents_identity(documents)
+    key = cwc.corpus_cache_key(identity)
+    root = tmp_path / "cache" / "corpus-warm"
+    prepared = puc.prepare_playable_unit_compiler(documents)
+    sample = {
+        "objects": dict(list(prepared.objects.items())[:3]),
+        "nugget": {"fields": defaultdict(list, {"damage": [{"line": 1}]})},
+    }
+    assert cwc._store_part(root, key, "flat-kinds", identity, sample)
+    value, reason = cwc._load_part(root, key, "flat-kinds", identity)
+    assert reason == "hit"
+    _assert_type_identical(sample["objects"], value["objects"], "objects")
+    assert type(value["nugget"]["fields"]) is defaultdict
+
+
 def test_version_drift_is_a_clean_refusal(tmp_path: Path, monkeypatch) -> None:
     documents = _documents()
     _prepare_with_cache(tmp_path, documents)
@@ -307,6 +372,66 @@ def test_uncertainty_broadens_to_full_package_fallback() -> None:
     edited2 = dict(edited)
     edited2["faction_import.py"] = edited2.get("faction_import.py", "") + "\n# x\n"
     assert cwc._producer_identity_payload(edited2)["sha256"] != payload["sha256"]
+
+
+_SYNTHETIC_PRODUCER = """\
+from .sage_ini import parse_flat_named_blocks
+def _documents_identity(d): return "x"
+def _flat_blocks_for_kind(d, k): return parse_flat_named_blocks(b"", k)
+def _named_definition_values_uncached(d, k, i): return None
+def _weapon_damage_nuggets_uncached(d, i): return None
+def _prepare_playable_unit_compiler_uncached(d):
+    from .armor_compiler import compile_armor_contract
+    return compile_armor_contract(d)
+"""
+
+_SYNTHETIC_PRODUCER_ABSOLUTE = """\
+from .sage_ini import parse_flat_named_blocks
+from openbfme_importer.armor_compiler import compile_armor_contract
+def _documents_identity(d): return "x"
+def _flat_blocks_for_kind(d, k): return parse_flat_named_blocks(b"", k)
+def _named_definition_values_uncached(d, k, i): return None
+def _weapon_damage_nuggets_uncached(d, i): return None
+def _prepare_playable_unit_compiler_uncached(d):
+    return compile_armor_contract(d)
+"""
+
+
+def _synthetic_sources(producer: str) -> dict[str, str]:
+    return {
+        "playable_unit_compiler.py": producer,
+        "sage_ini.py": "def parse_flat_named_blocks(s, k):\n    return ()\n",
+        "armor_compiler.py": "def compile_armor_contract(d):\n    return d\n",
+    }
+
+
+def test_function_local_relative_import_is_keyed() -> None:
+    """F-2: a producer that imports a module INSIDE its body must key on that
+    module's bytes. The v1 walk built its import map from tree.body only, so
+    this edit did not move the key — silent stale values one refactor away
+    (playable_unit_compiler.py already uses the function-local form twice)."""
+
+    base = _synthetic_sources(_SYNTHETIC_PRODUCER)
+    key_a = cwc._producer_identity_payload(base)["sha256"]
+    edited = dict(base)
+    edited["armor_compiler.py"] += "# changed behaviour\n"
+    key_b = cwc._producer_identity_payload(edited)["sha256"]
+    assert key_a != key_b, (
+        "editing a function-locally-imported module must move the producer key"
+    )
+
+
+def test_absolute_package_import_is_keyed() -> None:
+    """F-2 second form: ``from openbfme_importer.x import y`` (level == 0)."""
+
+    base = _synthetic_sources(_SYNTHETIC_PRODUCER_ABSOLUTE)
+    key_a = cwc._producer_identity_payload(base)["sha256"]
+    edited = dict(base)
+    edited["armor_compiler.py"] += "# changed behaviour\n"
+    key_b = cwc._producer_identity_payload(edited)["sha256"]
+    assert key_a != key_b, (
+        "editing an absolutely-imported package module must move the producer key"
+    )
 
 
 def test_live_identity_uses_the_narrow_closure() -> None:

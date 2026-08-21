@@ -12797,13 +12797,3 @@ __all__ = [
     "playable_object_kind_of_provenance",
     "validate_playable_unit_descriptor",
 ]
-
-# q58 compiler-edit cold measurement marker F (2026-08-20)
-
-# q58 compiler-edit cold measurement marker G (2026-08-20)
-
-# q58 compiler-edit cold measurement marker H (2026-08-20)
-
-# q58 compiler-edit cold measurement marker I (2026-08-20)
-
-# q58 compiler-edit cold measurement marker J (2026-08-20)

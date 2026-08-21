@@ -19,8 +19,12 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-STATE = Path(r"C:\Users\Jonathan\Desktop\open-bfme\workspace\retail-work")
-PYTHON = STATE / "tools" / "python-3.12-env" / "Scripts" / "python.exe"
+sys.path.insert(0, str(ROOT / "tools"))
+
+from q58_run_batch import pinned_python, rotwk_install, state_root  # noqa: E402
+
+STATE = state_root()
+PYTHON = Path(pinned_python(STATE))
 COVERAGE_ROOT = STATE / "editions" / "rotwk" / "reports" / "faction-import"
 
 LEG_ENV = {
@@ -45,7 +49,7 @@ def run_leg(workdir: Path, faction: str, leg: str) -> None:
         str(PYTHON),
         str(ROOT / "tools" / "rotwk_faction_convert_batch.py"),
         "--install",
-        r"F:\RotWK",
+        rotwk_install(),
         "--game",
         "rotwk",
         "--state-root",

@@ -2445,8 +2445,11 @@ mode degrades to lane-style whole-package hashing.
 
 **Type preservation (§16.5 rule 3).** Payloads are pickle protocol 5 sealed by
 their own sha256 in a JSON envelope that repeats key, part, corpus identity
-and producer identity; the envelope is written after the payload as the commit
-marker. Nothing is unpickled before the digest verifies. The §11.4 tuple-drift
+and producer identity; envelope and payload live in ONE file committed by one
+`os.replace` (the v2 format — §17.4 records why the two-file v1 shipped first
+and how it failed). Nothing is unpickled before the digest verifies, and
+(post-review, §17.11) nothing outside a nine-name allowlist is ever
+constructed by the unpickler. The §11.4 tuple-drift
 concern is extended to the REAL stored objects:
 `_assert_type_identical` walks the round-tripped tables recursively asserting
 `type(x) is type(y)` down through dataclass fields, so a
@@ -2693,3 +2696,60 @@ ordering; the comparison above uses the pristine 61-name control, not the
 - Evidence: `workspace\logs\perf-convert\q58-*.log`, per-run worker logs
   under `<state>\reports\produce-workers\<runId>\`, identity legs + diffs
   under `workspace\logs\perf-convert\q58-identity\`.
+
+### 17.11 Verifier round: three fixes on top of `9ae26759`
+
+The fresh-context verifier praised the trust core (seven poison attacks
+refused before unpickle; identities reproduced byte-for-byte independently)
+and rejected on three findings, all fixed here without re-measuring the
+batch:
+
+1. **F-2, latent under-keying (MAJOR).** The closure walk built its import
+   map from `tree.body` only and ignored absolute
+   `from openbfme_importer... import` forms, so a *function-local* import
+   inside a producer body would not key that module — zero live exposure
+   today (the verifier traced 0 producer functions outside the keyed set),
+   but this file already uses the function-local form twice elsewhere, one
+   refactor from silent stale tables. Fixed by (a) extending the import map
+   to absolute package forms and (b) collecting every import statement found
+   inside the closure's own function bodies. The verifier's simpler
+   suggestion — union every import anywhere in the file — was measured and
+   REJECTED with evidence: its transitive expansion reaches 75 modules
+   including BOTH shipping compiler files, so the owner's trailing-comment
+   edit would invalidate the corpus cache and zero the measured cut. The
+   closure-scoped form is sufficient (all code a producer can execute is in
+   the closure or at module scope) and keeps the live set at
+   `{sage_cst.py, sage_ini.py}`. Failing-first tests pin both import forms
+   (`test_function_local_relative_import_is_keyed`,
+   `test_absolute_package_import_is_keyed` — both fail on the pre-fix walk).
+2. **F-1, restricted unpickler.** `find_class` now admits exactly nine
+   names enumerated from live payloads (the six `sage_cst` dataclasses,
+   `sage_ini.IniBlock`, `builtins.list`, `collections.defaultdict`);
+   anything else is `refused:disallowed-global:<module>.<name>` and a
+   recompute. A digest-VALID crafted `__reduce__` gadget is refused with the
+   gadget never executing
+   (`test_crafted_entry_with_correct_digest_is_refused_before_execution`),
+   and every live payload type still round-trips
+   (`test_allowlist_admits_every_live_payload_type`). Rationale: the shared
+   cache root can be pointed at network storage (NAS playtest plan), so
+   corruption-proof had to become tamper-resistant.
+3. **F-3, machine-absolute paths in the drivers.** `q58_run_batch.py` /
+   `q58_identity_legs.py` now resolve the state root via
+   `default_state_root()` (`OPENBFME_IMPORT_ROOT` overrides) and the install
+   via `OPENBFME_ROTWK_INSTALL`; `gate-hygiene.ps1` is back at its 15-hit
+   baseline (the worktree `.git` root hit is a worktree artifact).
+
+Minor deltas in the same round: the F-J measurement marker comments are
+stripped from both shipping compiler files (stripping re-keys the object/
+plan caches, so the first convert after merge is a corpus-warm cold run —
+the exact measured scenario, ~5 min, then repeat behaviour resumes); §17.2's
+v1-era envelope sentence corrected; and one standing caveat — the corpus
+cache has **no eviction**: each superseded producer identity leaves a
+league-of-its-own ~25.5 MB entry directory for the existing disk-prune
+recipe.
+
+Post-fix sanity on the final tree: all 23 cache tests green, the men
+pooled-warm vs pooled-nocache identity quick-leg re-run byte-identical, and
+a full corpus-warm cold convert + repeat run measured to confirm the shape
+survived the review round (numbers below the table in §17.7 stand; the
+post-review cold run is a fresh corpus-cache key, so it re-warms itself).

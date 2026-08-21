@@ -48,6 +48,7 @@ from __future__ import annotations
 import ast
 import atexit
 import hashlib
+import io
 import json
 import os
 import pickle
@@ -184,6 +185,18 @@ def _relative_import_targets(node: ast.AST) -> tuple[list[str], bool]:
                     uncertain = True
                 else:
                     targets.append(alias.name.split(".")[0] + ".py")
+    elif isinstance(node, ast.ImportFrom) and node.module:
+        # Absolute package form: ``from openbfme_importer[.x] import y``.
+        if node.module == "openbfme_importer":
+            for alias in node.names:
+                if alias.name == "*":
+                    uncertain = True
+                else:
+                    targets.append(alias.name.split(".")[0] + ".py")
+        elif node.module.startswith("openbfme_importer."):
+            targets.append(
+                node.module.removeprefix("openbfme_importer.").split(".")[0] + ".py"
+            )
     elif isinstance(node, ast.Import):
         for alias in node.names:
             if alias.name.startswith("openbfme_importer."):
@@ -273,17 +286,31 @@ def _producer_identity_payload(sources: Mapping[str, str]) -> dict[str, Any]:
                     top[node.target.id] = node
                 targets, node_uncertain = _relative_import_targets(node)
                 uncertain = uncertain or node_uncertain
-                if isinstance(node, ast.ImportFrom) and node.level:
+                if isinstance(node, ast.ImportFrom) and (
+                    node.level
+                    or (node.module or "").split(".")[0] == "openbfme_importer"
+                ):
                     for alias in node.names:
                         if alias.name == "*":
                             uncertain = True
                         else:
                             bound = alias.asname or alias.name
-                            imported[bound] = (
-                                (node.module.split(".")[0] + ".py")
-                                if node.module
-                                else alias.name.split(".")[0] + ".py"
-                            )
+                            module = node.module or ""
+                            if node.level:
+                                imported[bound] = (
+                                    (module.split(".")[0] + ".py")
+                                    if module
+                                    else alias.name.split(".")[0] + ".py"
+                                )
+                            elif module == "openbfme_importer":
+                                imported[bound] = alias.name.split(".")[0] + ".py"
+                            else:
+                                imported[bound] = (
+                                    module.removeprefix("openbfme_importer.").split(
+                                        "."
+                                    )[0]
+                                    + ".py"
+                                )
                 elif targets:
                     for alias in getattr(node, "names", []):
                         bound = (alias.asname or alias.name).split(".")[0]
@@ -305,6 +332,17 @@ def _producer_identity_payload(sources: Mapping[str, str]) -> dict[str, Any]:
                     continue
                 closure.add(name)
                 for inner in ast.walk(top[name]):
+                    # F-2: an import statement INSIDE a closure body (the
+                    # function-local ``from .x import y`` form this module
+                    # already uses twice elsewhere) is executable producer
+                    # code, so its target is a dependency even though the
+                    # module-scope import map above cannot see it.
+                    local_targets, local_uncertain = _relative_import_targets(
+                        inner
+                    )
+                    if local_uncertain:
+                        uncertain = True
+                    module_deps.update(local_targets)
                     if not isinstance(inner, ast.Name):
                         continue
                     ident = inner.id
@@ -327,7 +365,14 @@ def _producer_identity_payload(sources: Mapping[str, str]) -> dict[str, Any]:
     if not uncertain:
         module_deps.discard(_PRODUCER_MODULE)
         expanded, uncertain = _module_import_closure(module_deps, sources)
-        module_deps = {name for name in expanded if name in sources}
+        # The transitive walk can re-import the producer module (several
+        # compiler modules import it back); it stays excluded from whole-file
+        # hashing — that is the entire point of the function-granularity key,
+        # and re-admitting it would invalidate on the owner's trailing-comment
+        # edit and zero the measured cut.
+        module_deps = {
+            name for name in expanded if name in sources and name != _PRODUCER_MODULE
+        }
 
     if uncertain:
         # Broaden to the whole package: correctness before reuse.
@@ -382,6 +427,46 @@ def producer_identity(
 # ---------------------------------------------------------------------------
 # Envelope store / load.
 # ---------------------------------------------------------------------------
+
+
+# The complete set of globals a legitimate payload can reference, enumerated
+# from live payloads (the parsed-table dataclasses, plus ``defaultdict(list)``
+# inside weapon-nugget field maps). Every other global is a refusal by name —
+# the digest proves the bytes are what a writer sealed, this proves the bytes
+# cannot execute anything even if the writer was hostile (the shared cache
+# root may live on network storage under the NAS playtest plan).
+_UNPICKLE_ALLOWLIST: dict[str, frozenset[str]] = {
+    "openbfme_importer.sage_cst": frozenset(
+        {
+            "SageAssignment",
+            "SageBlock",
+            "SageIncludeRef",
+            "SageObject",
+            "SageScript",
+            "SageScriptLine",
+        }
+    ),
+    "openbfme_importer.sage_ini": frozenset({"IniBlock"}),
+    "builtins": frozenset({"list"}),
+    "collections": frozenset({"defaultdict"}),
+}
+
+
+class _DisallowedGlobal(pickle.UnpicklingError):
+    def __init__(self, module: str, name: str) -> None:
+        super().__init__(f"disallowed global {module}.{name}")
+        self.qualified = f"{module}.{name}"
+
+
+class _RestrictedUnpickler(pickle.Unpickler):
+    def find_class(self, module: str, name: str):  # noqa: D102 — pickle API
+        if name in _UNPICKLE_ALLOWLIST.get(module, frozenset()):
+            return super().find_class(module, name)
+        raise _DisallowedGlobal(module, name)
+
+
+def _restricted_loads(payload: bytes) -> object:
+    return _RestrictedUnpickler(io.BytesIO(payload)).load()
 
 
 def corpus_cache_key(documents_identity: str) -> str:
@@ -487,7 +572,9 @@ def _load_part(
     if hashlib.sha256(payload).hexdigest() != envelope.get("payloadSha256"):
         return None, "refused:payload-digest-mismatch"
     try:
-        value = pickle.loads(payload)
+        value = _restricted_loads(payload)
+    except _DisallowedGlobal as exc:
+        return None, f"refused:disallowed-global:{exc.qualified}"
     except Exception:  # noqa: BLE001 — any unpickle failure is a refusal
         return None, "refused:unpicklable-payload"
     return value, "hit"
