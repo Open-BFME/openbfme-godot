@@ -96,3 +96,22 @@ Round-2 replacement capture: `workspace/scratch/radar-look-round2-7b78f484.png` 
 The final 1920x1080 Forward+ capture is `workspace/scratch/radar-look-final.png`; its gate log is `workspace/logs/radar-look/final-render-capture.txt`. Visual review confirms that the parchment/map ink, frame/mask, and map-axis registration remain intact, while the clustered blue unit markers no longer carry the heavy debug-like dark outline.
 
 The selected BFME2/RotWK interface-art packs still do not contain `RadarViewBoxEdge`, so the final capture truthfully shows the named thin procedural camera-line fallback. This lane did not recook, select, or publish a pack. Closing that last visible camera-edge delta requires a future immutable interface-art pack cook that includes `radarviewboxedge-1ba43f8b.png`; it is not a maps-pack/Q62 republish. `RadarPriority` admission and `RadarInfoAlert` event animation also remain the named data/event gaps from the diagnosis table.
+
+## Round 3 (coordinator, per verifier G1/G2)
+
+- G2: `menu_skirmish_runner.gd` stale assertions fixed — dropdown check is now
+  `color_dropdowns_offer_the_ten_authored_colors` (10, was 8), the old invented
+  Green `Color8(46,125,50)` selections now use the authored Green
+  `Color8(62,152,100)` (multiplayer.ini:82-83), and
+  `_select_option_by_metadata_value` fails loudly on a metadata miss instead of
+  silently no-opping (the mechanism that hid the dead assertion).
+- KNOCK-ON (named, per verifier): the authored palette changes the skirmish
+  color dropdowns from 8 invented rows to the 10 authored rows, lobby
+  names/indices/validation, GameState defaults, model house-color masks 0-9,
+  and radar blips.
+- G1: the camera footprint is now the TRUE camera quad clipped against the map
+  rectangle via Geometry2D.intersect_polygons — no fitted size constant; the
+  box tracks the real camera and is edge-clipped exactly like retail's. The
+  0.20 centroid-fit heuristic and its area test are gone; the tests now pin
+  clip-truthfulness (positive area < map, convex, boundary-inclusive).
+

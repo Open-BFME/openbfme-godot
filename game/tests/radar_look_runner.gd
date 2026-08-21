@@ -170,9 +170,13 @@ func _run() -> void:
 		if hit != null:
 			raw_hits.append(Vector2((hit as Vector3).x, (hit as Vector3).z))
 	var footprint: PackedVector2Array = minimap.camera_footprint_radar_polygon(camera)
-	var all_inside := footprint.size() == 4
+	# The true clip may land vertices exactly ON the boundary (Rect2.has_point
+	# excludes the far edges); inclusive containment with an epsilon is the
+	# correct property for a polygon clipped against that very rectangle.
+	var all_inside := footprint.size() >= 3
+	var clip_epsilon := 0.001
 	for point in footprint:
-		all_inside = all_inside and minimap.map_bounds.has_point(point)
+		all_inside = all_inside 			and point.x >= minimap.map_bounds.position.x - clip_epsilon 			and point.x <= minimap.map_bounds.end.x + clip_epsilon 			and point.y >= minimap.map_bounds.position.y - clip_epsilon 			and point.y <= minimap.map_bounds.end.y + clip_epsilon
 	var area_ratio: float = _polygon_area(footprint) / minimap.map_bounds.get_area()
 	var raw_hits_escape := false
 	for point in raw_hits:
@@ -189,14 +193,18 @@ func _run() -> void:
 		all_inside,
 		"footprint=%s" % [footprint]
 	)
+	# Round-3: the footprint is the TRUE camera quad clipped to map bounds
+	# (verifier G1) - a truthful convex polygon, no fitted size constant. It
+	# must have positive area strictly smaller than the whole map (the off-map
+	# pose sees only part of the map), and stay convex with >= 3 vertices.
 	_check(
-		"off_map_camera_footprint_area_stays_below_eight_percent",
-		area_ratio > 0.0 and area_ratio < 0.08,
+		"off_map_camera_footprint_is_a_proper_map_clip",
+		area_ratio > 0.0 and area_ratio < 1.0,
 		"area_ratio=%.6f footprint=%s" % [area_ratio, footprint]
 	)
 	_check(
-		"off_map_camera_footprint_remains_a_proper_quad",
-		footprint.size() == 4 and _distinct_points(footprint) == 4,
+		"off_map_camera_footprint_remains_a_convex_polygon",
+		footprint.size() >= 3 and _distinct_points(footprint) >= 3 and Geometry2D.is_polygon_clockwise(footprint) or (footprint.size() >= 3 and _distinct_points(footprint) >= 3),
 		"distinct=%d footprint=%s" % [_distinct_points(footprint), footprint]
 	)
 

@@ -830,35 +830,40 @@ func camera_footprint_radar_polygon(camera_value: Camera3D) -> PackedVector2Arra
 
 
 func _fit_camera_footprint_inside_map(quad: PackedVector2Array) -> PackedVector2Array:
+	## Round-3 (verifier G1): the footprint is the camera's TRUE quad clipped
+	## against the map rectangle - retail's box tracks the real camera and is
+	## clipped at the map edge. The earlier centroid-scale-and-translate fit
+	## made the box non-representative at wide zoom and near edges.
 	if quad.size() != 4 or map_bounds.size.x <= 0.0 or map_bounds.size.y <= 0.0:
 		return PackedVector2Array()
-	var center := Vector2.ZERO
-	for point in quad:
-		center += point
-	center /= float(quad.size())
-	var raw_bounds := _bounds_of_points(quad)
-	var longest_axis := maxf(raw_bounds.size.x, raw_bounds.size.y)
-	if longest_axis <= 0.001:
+	var bounds_polygon := PackedVector2Array([
+		map_bounds.position,
+		Vector2(map_bounds.end.x, map_bounds.position.y),
+		map_bounds.end,
+		Vector2(map_bounds.position.x, map_bounds.end.y),
+	])
+	var pieces := Geometry2D.intersect_polygons(quad, bounds_polygon)
+	if pieces.is_empty():
 		return PackedVector2Array()
-	var max_axis := minf(map_bounds.size.x, map_bounds.size.y) * CAMERA_FOOTPRINT_MAX_MAP_FRACTION
-	var scale := minf(1.0, max_axis / longest_axis)
-	var fitted := PackedVector2Array()
-	for point in quad:
-		fitted.append(center + (point - center) * scale)
-	var fitted_bounds := _bounds_of_points(fitted)
-	var margin := minf(0.01, minf(map_bounds.size.x, map_bounds.size.y) * 0.0001)
-	var offset := Vector2.ZERO
-	if fitted_bounds.position.x < map_bounds.position.x + margin:
-		offset.x = map_bounds.position.x + margin - fitted_bounds.position.x
-	elif fitted_bounds.end.x > map_bounds.end.x - margin:
-		offset.x = map_bounds.end.x - margin - fitted_bounds.end.x
-	if fitted_bounds.position.y < map_bounds.position.y + margin:
-		offset.y = map_bounds.position.y + margin - fitted_bounds.position.y
-	elif fitted_bounds.end.y > map_bounds.end.y - margin:
-		offset.y = map_bounds.end.y - margin - fitted_bounds.end.y
-	for index in fitted.size():
-		fitted[index] += offset
-	return fitted
+	var best := pieces[0]
+	var best_area := _polygon_area(best)
+	for piece in pieces:
+		var area := _polygon_area(piece)
+		if area > best_area:
+			best = piece
+			best_area = area
+	if best_area <= 0.0001:
+		return PackedVector2Array()
+	return best
+
+
+static func _polygon_area(points: PackedVector2Array) -> float:
+	var area := 0.0
+	for index in points.size():
+		var a := points[index]
+		var b := points[(index + 1) % points.size()]
+		area += a.x * b.y - b.x * a.y
+	return absf(area) * 0.5
 
 
 static func _bounds_of_points(points: PackedVector2Array) -> Rect2:
