@@ -2748,8 +2748,17 @@ cache has **no eviction**: each superseded producer identity leaves a
 league-of-its-own ~25.5 MB entry directory for the existing disk-prune
 recipe.
 
-Post-fix sanity on the final tree: all 23 cache tests green, the men
-pooled-warm vs pooled-nocache identity quick-leg re-run byte-identical, and
-a full corpus-warm cold convert + repeat run measured to confirm the shape
-survived the review round (numbers below the table in §17.7 stand; the
-post-review cold run is a fresh corpus-cache key, so it re-warms itself).
+Post-fix sanity on the final tree, all measured: 25 cache tests green (23 +
+the two failing-first F-2 pins) and the perf/cuts files at 99 passed; the
+men pooled-warm vs pooled-nocache identity quick-leg re-run `IDENTICAL True`
+(`q58-identity-r2\`); a full seven-faction convert on the fresh key measured
+316.2 s (`q58-postreview-cold-n24.log` — prepared/flat loaded through the
+restricted unpickler with **zero `disallowed-global` refusals across all 24
+workers**, named-defs only men-warm from the quick leg, so this run re-warmed
+the union; the §17.5 headline numbers were taken with the union fully warm
+and stand); repeat 8.8 s BATCH / 13.7 s process wall
+(`q58-postreview-repeat.log`, `pending=0`), leaving the state root consistent
+with the committed tree. One note for operators: the marker strip normalised
+the two compiler files' line endings, so the first run after checkout
+re-keys the corpus cache once and self-warms — by design, a key flip is only
+ever a clean miss.
