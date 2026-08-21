@@ -11,8 +11,9 @@ extends SceneTree
 ##     NORMAL_CAVALRY_FAST_HORDE_SPEED = 90.
 ##   locomotor.ini:943-970
 ##     HeroHorseLocomotor TurnTime = 1500 (240 deg/s), Acceleration = 1500,
-##     SlowTurnRadius = 0, FastTurnRadius = 9, Braking = 2000,
-##     MinTurnSpeed = 10%.
+##     SlowTurnRadius = 0, FastTurnRadius = 48, Braking = 2000,
+##     MinTurnSpeed = 10%. (FastTurnRadius 9 belongs to HeroHumanLocomotor,
+##     locomotor.ini:36 - the locomotor the compiled RohanEomer doc binds.)
 ##   object/evilfaction/units/evilmen/mumakil.ini:1739-1743
 ##     MordorMumakil binds MumakilLocomotor at speed 50.
 ##   locomotor.ini:1347-1367
