@@ -327,7 +327,12 @@ var route_query_count := 0
 ## they never participate in route selection or lockstep state.
 var bridge_route_query_count := 0
 var bridge_route_query_total_usec := 0
+var bridge_route_cache_hit_count := 0
+var navigation_component_count := 0
+var navigation_topology_revision := 0
 var _navigation_grid: AStarGrid2D
+var _navigation_component_ids := PackedInt32Array()
+var _failed_bridge_component_pairs: Dictionary = {}
 var _water_navigation_grid: AStarGrid2D
 ## Q51: wall tops are a distinct navigation domain. The ground grid above is
 ## never mutated by this layer; a deck/ramp cell only exists here when it came
@@ -2534,6 +2539,7 @@ func _build_navigation() -> bool:
 	navigation_ready = navigation_walkable_count > 0 and (not requires_ford_crossings or (navigation_water_blocked_count > 0 and navigation_ford_corridor_count > 0))
 	if not navigation_ready:
 		return _fail("cooked navigation topology could not be built")
+	_navigation_topology_mutated()
 	for known_cell_value in _map_runtime_profile.get("known_impassable_cells", []) as Array:
 		if is_navigation_walkable(Vector2i(known_cell_value)):
 			return _fail("known source-impassable ford cell became walkable")
@@ -3175,8 +3181,12 @@ func query_layered_bridge_route(from_local: Vector2, to_local: Vector2) -> Dicti
 	## Valid ground routes never reach this method, preserving their exact bytes.
 	var query_started_usec := Time.get_ticks_usec()
 	bridge_route_query_count += 1
+	var component_pair_key := _navigation_component_pair_key(from_local, to_local)
+	if component_pair_key != "" and _failed_bridge_component_pairs.has(component_pair_key):
+		bridge_route_cache_hit_count += 1
+		return _finish_bridge_route_query({"valid": false, "reason": "no-wall-bridge-route", "points": [], "cells": [], "start_portals": 0, "end_portals": 0, "connected_pairs": 0, "deck_pairs": 0, "component_pair_cache_hit": true}, query_started_usec)
 	if not walk_surface_navigation_ready or _walk_surface_portal_cells.size() < 2:
-		return _finish_bridge_route_query({"valid": false, "reason": "no-wall-bridge-route", "points": [], "cells": [], "start_portals": 0, "end_portals": 0, "connected_pairs": 0, "deck_pairs": 0}, query_started_usec)
+		return _finish_failed_bridge_route_query({"valid": false, "reason": "no-wall-bridge-route", "points": [], "cells": [], "start_portals": 0, "end_portals": 0, "connected_pairs": 0, "deck_pairs": 0}, query_started_usec, component_pair_key)
 	var starts: Array[Dictionary] = []
 	var ends: Array[Dictionary] = []
 	for portal_cell in _walk_surface_portal_cells:
@@ -3220,7 +3230,7 @@ func query_layered_bridge_route(from_local: Vector2, to_local: Vector2) -> Dicti
 				to_local
 			)
 	if best.is_empty():
-		return _finish_bridge_route_query({"valid": false, "reason": "no-wall-bridge-route", "points": [], "cells": [], "start_portals": starts.size(), "end_portals": ends.size(), "connected_pairs": connected_pairs, "deck_pairs": deck_pairs}, query_started_usec)
+		return _finish_failed_bridge_route_query({"valid": false, "reason": "no-wall-bridge-route", "points": [], "cells": [], "start_portals": starts.size(), "end_portals": ends.size(), "connected_pairs": connected_pairs, "deck_pairs": deck_pairs}, query_started_usec, component_pair_key)
 	best["start_portals"] = starts.size()
 	best["end_portals"] = ends.size()
 	best["connected_pairs"] = connected_pairs
@@ -3231,6 +3241,89 @@ func query_layered_bridge_route(from_local: Vector2, to_local: Vector2) -> Dicti
 func _finish_bridge_route_query(result: Dictionary, query_started_usec: int) -> Dictionary:
 	bridge_route_query_total_usec += Time.get_ticks_usec() - query_started_usec
 	return result
+
+
+func _finish_failed_bridge_route_query(result: Dictionary, query_started_usec: int, component_pair_key: String) -> Dictionary:
+	if component_pair_key != "":
+		_failed_bridge_component_pairs[component_pair_key] = true
+	return _finish_bridge_route_query(result, query_started_usec)
+
+
+func navigation_component_id(cell: Vector2i) -> int:
+	if not is_grid_inside_navigation(cell) or _navigation_component_ids.size() != width * height:
+		return -1
+	return int(_navigation_component_ids[cell.y * width + cell.x])
+
+
+func _navigation_component_pair_key(from_local: Vector2, to_local: Vector2) -> String:
+	var from_cell := local_to_grid_cell(from_local)
+	var to_cell := local_to_grid_cell(to_local)
+	if not is_navigation_walkable(from_cell):
+		from_cell = _nearest_walkable_cell(from_cell, 12)
+	var from_component := navigation_component_id(from_cell)
+	var to_component := navigation_component_id(to_cell)
+	if from_component < 0 or to_component < 0:
+		return ""
+	return "%d:%d" % [mini(from_component, to_component), maxi(from_component, to_component)]
+
+
+func _navigation_topology_mutated() -> void:
+	navigation_topology_revision += 1
+	_rebuild_navigation_components()
+
+
+func _rebuild_navigation_components() -> void:
+	_failed_bridge_component_pairs.clear()
+	navigation_component_count = 0
+	_navigation_component_ids.resize(width * height)
+	_navigation_component_ids.fill(-1)
+	if _navigation_grid == null or not navigation_ready:
+		return
+	var neighbors: Array[Vector2i] = [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]
+	for grid_y in range(navigation_grid_min.y, navigation_grid_max.y + 1):
+		for grid_x in range(navigation_grid_min.x, navigation_grid_max.x + 1):
+			var seed := Vector2i(grid_x, grid_y)
+			var seed_index := seed.y * width + seed.x
+			if _navigation_grid.is_point_solid(seed) or int(_navigation_component_ids[seed_index]) >= 0:
+				continue
+			var component_id := navigation_component_count
+			navigation_component_count += 1
+			_navigation_component_ids[seed_index] = component_id
+			var pending: Array[Vector2i] = [seed]
+			var pending_index := 0
+			while pending_index < pending.size():
+				var cell := pending[pending_index]
+				pending_index += 1
+				for offset in neighbors:
+					var neighbor := cell + offset
+					if not is_grid_inside_navigation(neighbor) or _navigation_grid.is_point_solid(neighbor):
+						continue
+					var neighbor_index := neighbor.y * width + neighbor.x
+					if int(_navigation_component_ids[neighbor_index]) >= 0:
+						continue
+					_navigation_component_ids[neighbor_index] = component_id
+					pending.append(neighbor)
+
+
+func rebuild_navigation_components_for_test() -> void:
+	## Focused-runner seam. Production builds the same table with the grid.
+	_navigation_topology_mutated()
+
+
+func set_navigation_cell_walkable_for_test(cell: Vector2i, walkable: bool) -> void:
+	## Focused mutation proof for the same invalidation path gate updates use.
+	if _navigation_grid == null or not is_grid_inside_navigation(cell):
+		return
+	var was_walkable := not _navigation_grid.is_point_solid(cell)
+	if was_walkable == walkable:
+		return
+	_navigation_grid.set_point_solid(cell, not walkable)
+	navigation_walkable_count += 1 if walkable else -1
+	_navigation_topology_mutated()
+
+
+func bridge_route_negative_cache_size() -> int:
+	return _failed_bridge_component_pairs.size()
 
 
 func _compose_ground_wall_ground_route(ground_in: Dictionary, wall_cells: Array[Vector2i], wall: Dictionary, ground_out: Dictionary, exact_destination: Vector2) -> Dictionary:
@@ -4276,6 +4369,11 @@ func _reset() -> void:
 	route_query_count = 0
 	bridge_route_query_count = 0
 	bridge_route_query_total_usec = 0
+	bridge_route_cache_hit_count = 0
+	navigation_component_count = 0
+	navigation_topology_revision = 0
+	_navigation_component_ids = PackedInt32Array()
+	_failed_bridge_component_pairs.clear()
 	_navigation_grid = null
 	_water_navigation_grid = null
 	_clear_walk_surface_navigation()

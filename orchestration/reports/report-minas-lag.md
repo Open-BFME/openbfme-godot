@@ -1,6 +1,6 @@
 # Q64 Minas Tirith gate-nav and failed-route lag
 
-Status: diagnosis complete; fixes and final gates pending.
+Status: diagnosis and B1 complete; B2/B3/A and final gates pending.
 
 ## Failing-first product receipt
 
@@ -50,8 +50,26 @@ to retail terrain bytes or the immutable selected pack.
 
 ## Pending proof
 
-- B1 component-pair negative cache with mutation invalidation.
 - B2 source-component portal budget.
 - B3 deterministic repeated-order backoff.
 - Open-gate ground portal and Minas AI green proof.
 - Required pins and castle gates.
+
+## B1 - component-pair negative cache
+
+`RetailMapData` now labels every cardinal ground component once when navigation
+is built. A failed layered bridge search records the unordered source/target
+component pair. Repeats fail in constant time. Any ground topology mutation
+increments `navigation_topology_revision`, rebuilds component ids, and clears
+the negative cache.
+
+The focused failing-first row was `25/3` before implementation and `28/0`
+afterward (`workspace/logs/minas-lag/b1-red-castle-wall-walk.txt` and
+`b1-green-castle-wall-walk.txt`). It proves the failed pair is stored, the
+repeat issues no new ground queries, and mutation clears the cache and joins
+the test components.
+
+On the unchanged 4,000-tick Minas product run, ground queries fell
+19,047 -> 327 and bridge time fell 94,435.970 -> 186.571 ms. Wall time fell
+226,853 -> 127,846 ms. The expected AI red remains because A is not fixed yet.
+Receipt: `workspace/logs/minas-lag/b1-castle-ai.txt` and `b1-timing.txt`.

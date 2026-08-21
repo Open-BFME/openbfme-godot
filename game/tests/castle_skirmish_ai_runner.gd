@@ -258,11 +258,12 @@ func _run_map(case_row: Dictionary) -> void:
 		]
 	)
 	print(
-		"CASTLE_SKIRMISH_AI ROUTE_PERF map=%s ticks=%d ground_queries=%d bridge_queries=%d bridge_total_ms=%.3f" % [
+		"CASTLE_SKIRMISH_AI ROUTE_PERF map=%s ticks=%d ground_queries=%d bridge_queries=%d bridge_cache_hits=%d bridge_total_ms=%.3f" % [
 			map_name,
 			int(simulation.tick_index) - initial_tick,
 			int(slice.source_map_data.route_query_count),
 			int(slice.source_map_data.bridge_route_query_count),
+			int(slice.source_map_data.bridge_route_cache_hit_count),
 			float(slice.source_map_data.bridge_route_query_total_usec) / 1000.0,
 		]
 	)
