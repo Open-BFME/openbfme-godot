@@ -50,6 +50,20 @@ _WALK_W3D = (
     "art/w3d/rb/rbhddwsecc.w3d",
     "art/w3d/rb/rbhdgathsl.w3d",
     "art/w3d/rb/rbhdgathsr.w3d",
+    "art/w3d/gb/gbmbridge2.w3d",
+    "art/w3d/gb/gbmbridge8.w3d",
+    "art/w3d/gb/gbmbridge9.w3d",
+    "art/w3d/gb/gbmgate2.w3d",
+    "art/w3d/gb/gbmingate1.w3d",
+    "art/w3d/gb/gbmingate2.w3d",
+    "art/w3d/gb/gbmingate2_d1.w3d",
+    "art/w3d/gb/gbmingate2_d2.w3d",
+    "art/w3d/gb/gbmingate3.w3d",
+    "art/w3d/gb/gbmingate3_d1.w3d",
+    "art/w3d/gb/gbmingate3_d2.w3d",
+    "art/w3d/gb/gbmtop1.w3d",
+    "art/w3d/gb/gbmtop1_d1.w3d",
+    "art/w3d/gb/gbmwallc.w3d",
 )
 
 
@@ -314,3 +328,60 @@ def test_helms_deep_section_c_walk_surfaces_walk_only(
     assert row["walkSurfaces"]["rampMesh1"] == "P1"
     assert "WALK_ON_TOP_OF_WALL" in row["kindOf"]
     assert "SCALEABLE_WALL" not in row["kindOf"]
+
+
+@oracle_present
+def test_minas_proxy_roles_resolve_from_authored_sibling_models(
+    documents, raw, defines
+) -> None:
+    expected = {
+        "MinisTop1": {
+            "wallBoundsMesh": "art/w3d/gb/gbmtop1_d1.w3d",
+            "rampMesh1": "art/w3d/gb/gbmtop1_d1.w3d",
+        },
+        "MinisGate2": {
+            "wallBoundsMesh": "art/w3d/gb/gbmgate2.w3d",
+            "rampMesh1": "art/w3d/gb/gbmgate2.w3d",
+        },
+        "MinisGate3": {
+            "wallBoundsMesh": "art/w3d/gb/gbmingate3_d2.w3d",
+        },
+    }
+    for type_name, sources in expected.items():
+        descriptor = compile_map_object_descriptor(
+            type_name, documents, raw=raw, defines=defines, game="rotwk"
+        )
+        surfaces = descriptor["walkSurfaces"]
+        assert surfaces["meshSources"] == sources
+        unresolved = {
+            (row["role"], row["meshName"])
+            for row in surfaces.get("unresolved", [])
+        }
+        assert all((role, surfaces[role]) not in unresolved for role in sources)
+
+
+@oracle_present
+def test_minas_true_retail_absences_stay_named_receipts(
+    documents, raw, defines
+) -> None:
+    expected = {
+        "MinisBridge2": {("rampMesh2", "P3")},
+        "MinisBridge8": {("rampMesh2", "P3")},
+        "MinisBridge9": {("rampMesh2", "P3")},
+        "MinisGate1": {
+            ("raisedWallMesh", "P1"),
+            ("rampMesh1", "P2"),
+            ("rampMesh2", "P3"),
+        },
+        "MinisGate3": {("rampMesh1", "P1")},
+        "MinisWallC": {("rampMesh1", "P2")},
+    }
+    for type_name, missing in expected.items():
+        descriptor = compile_map_object_descriptor(
+            type_name, documents, raw=raw, defines=defines, game="rotwk"
+        )
+        surfaces = descriptor["walkSurfaces"]
+        assert {
+            (row["role"], row["meshName"])
+            for row in surfaces.get("unresolved", [])
+        } == missing

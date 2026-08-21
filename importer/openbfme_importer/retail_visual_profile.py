@@ -451,6 +451,8 @@ def _validate_visual_closure(
             _nonnegative_int(item.get("meshCount"), f"{path} meshCount")
         if "hiddenMeshCount" in item:
             _nonnegative_int(item.get("hiddenMeshCount"), f"{path} hiddenMeshCount")
+        if "hiddenMeshNames" in item:
+            _validate_id_array(item.get("hiddenMeshNames"), f"{path} hiddenMeshNames")
         _list(item.get("warnings"), f"scanned W3D {path} warnings")
         model_references = _list(
             item.get("modelReferences"), f"scanned W3D {path} modelReferences"

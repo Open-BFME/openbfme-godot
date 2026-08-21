@@ -338,6 +338,11 @@ var _walk_surface_roles_by_cell: Dictionary = {}
 var _walk_surface_ids_by_cell: Dictionary = {}
 var _walk_surface_height_by_cell: Dictionary = {}
 var _walk_surface_portal_cells: Array[Vector2i] = []
+## Authored ramp wall endpoint -> nearest authored-ground endpoint. Most maps
+## use the same grid cell for both. Castle footprints can make the low ramp
+## cell ground-impassable, so retaining both sides avoids fabricating walkable
+## wall cells while still representing the real ramp-to-ground transition.
+var _walk_surface_ground_portal_by_wall: Dictionary = {}
 var _walk_surface_mesh_cache: Dictionary = {}
 var _water_cells := PackedByteArray()
 var _ford_corridor_cells: Dictionary = {}
@@ -893,6 +898,14 @@ func _valid_fixture_walk_surfaces(value: Variant) -> bool:
 		var field := String(key)
 		if field == "unresolved":
 			continue
+		if field == "meshSources":
+			var sources: Variant = block[key]
+			if typeof(sources) != TYPE_DICTIONARY or (sources as Dictionary).is_empty():
+				return _fail("castle fixture has an invalid walkSurfaces")
+			for source_role in (sources as Dictionary).keys():
+				if not roles.has(String(source_role)) or typeof((sources as Dictionary)[source_role]) != TYPE_STRING or not String((sources as Dictionary)[source_role]).to_lower().ends_with(".w3d"):
+					return _fail("castle fixture has an invalid walkSurfaces")
+			continue
 		if not roles.has(field):
 			return _fail("castle fixture has an invalid walkSurfaces")
 		if typeof(block[key]) != TYPE_STRING or String(block[key]).strip_edges() == "":
@@ -1001,6 +1014,7 @@ func _derive_castle_fixture_placements() -> void:
 			if not bound_placement.is_empty():
 				row["walk_surface_glb_path"] = String(bound_placement.get("glb_path", ""))
 				row["walk_surface_scale"] = Vector3(bound_placement.get("scale", Vector3.ONE))
+				row["walk_surface_sources"] = (bound_placement.get("walk_surface_sources", {}) as Dictionary).duplicate(true)
 		castle_fixture_placements.append(row)
 
 
@@ -1750,6 +1764,7 @@ func _route_normalized_object_placements(normalized_objects: Array[Dictionary]) 
 			placement["classification"] = String(binding.get("classification", ""))
 			placement["glb_relative"] = String(binding.get("glb_relative", ""))
 			placement["glb_path"] = String(binding.get("glb_path", ""))
+			placement["walk_surface_sources"] = (binding.get("walk_surface_sources", {}) as Dictionary).duplicate(true)
 			if String(binding.get("classification", "")) == "lifecycle-structure":
 				placement["source_virtual_model"] = String(binding.get("source_virtual_model", ""))
 				placement["object_id"] = String(binding.get("object_id", ""))
@@ -2163,6 +2178,7 @@ func _load_object_bindings(document: Dictionary, source_type_counts: Dictionary)
 		var glb_relative := String(glb_value) if typeof(glb_value) == TYPE_STRING else ""
 		var source_model_value: Variant = record.get("sourceVirtualModel", "")
 		var source_virtual_model := String(source_model_value) if typeof(source_model_value) == TYPE_STRING else ""
+		var walk_surface_sources_value: Variant = record.get("walkSurfaceSources", {})
 		var object_id_value: Variant = record.get("objectId", "")
 		var object_id := String(object_id_value) if typeof(object_id_value) == TYPE_STRING else ""
 		if record.is_empty() or type_name == "" or type_name.length() > 128 or _object_binding_by_type.has(type_name) or not source_type_counts.has(type_name) or placement_count <= 0 or placement_count != int(source_type_counts[type_name]):
@@ -2176,6 +2192,7 @@ func _load_object_bindings(document: Dictionary, source_type_counts: Dictionary)
 			"glb_relative": "",
 			"glb_path": "",
 			"source_virtual_model": "",
+			"walk_surface_sources": {},
 			"object_id": "",
 		}
 		match status:
@@ -2206,6 +2223,33 @@ func _load_object_bindings(document: Dictionary, source_type_counts: Dictionary)
 					continue
 				normalized["glb_relative"] = glb_relative
 				normalized["glb_path"] = glb_path
+				if typeof(walk_surface_sources_value) != TYPE_DICTIONARY:
+					return _fail("bound object walk-surface source table is invalid")
+				var normalized_walk_sources: Dictionary = {}
+				for mesh_name_value in (walk_surface_sources_value as Dictionary).keys():
+					var mesh_name := String(mesh_name_value).strip_edges()
+					var source_row_value: Variant = (walk_surface_sources_value as Dictionary)[mesh_name_value]
+					if mesh_name == "" or mesh_name.length() > 128 or typeof(source_row_value) != TYPE_DICTIONARY:
+						return _fail("bound object walk-surface source row is invalid")
+					var source_row := source_row_value as Dictionary
+					var source_glb_value: Variant = source_row.get("glb", "")
+					var source_glb := String(source_glb_value) if typeof(source_glb_value) == TYPE_STRING else ""
+					var source_w3d_value: Variant = source_row.get("sourceVirtualModel", "")
+					var source_w3d := String(source_w3d_value) if typeof(source_w3d_value) == TYPE_STRING else ""
+					if source_glb == "" or source_glb.get_extension().to_lower() != "glb" or not _safe_source_virtual_model(source_w3d):
+						return _fail("bound object walk-surface source row is unsafe or incomplete")
+					var source_glb_path := _resolve_pack_asset(source_glb)
+					if source_glb_path == "" or not _validate_bound_glb(source_glb_path):
+						return _fail("bound object walk-surface source GLB is missing or invalid")
+					var mesh_key := mesh_name.to_lower()
+					if normalized_walk_sources.has(mesh_key):
+						return _fail("bound object walk-surface source names collide case-insensitively")
+					normalized_walk_sources[mesh_key] = {
+						"source_virtual_model": source_w3d,
+						"glb_relative": source_glb,
+						"glb_path": source_glb_path,
+					}
+				normalized["walk_surface_sources"] = normalized_walk_sources
 				if classification == "renderable":
 					if object_id != "":
 						return _fail("renderable object record claims lifecycle structure fields")
@@ -2609,13 +2653,22 @@ func _build_walk_surface_navigation_from_fixtures() -> void:
 			Vector3(position.x, elevation, position.y)
 		)
 		var walk_surfaces := placement.get("walk_surfaces", {}) as Dictionary
+		var walk_surface_sources := placement.get("walk_surface_sources", {}) as Dictionary
 		for role_row in role_fields:
 			var field := String(role_row["field"])
 			if not walk_surfaces.has(field):
 				continue
 			walk_surface_source_count += 1
 			var mesh_name := String(walk_surfaces.get(field, ""))
-			var triangles: Array = mesh_triangles.get(mesh_name.to_lower(), []) as Array
+			var role_mesh_triangles := mesh_triangles
+			var source_row: Dictionary = walk_surface_sources.get(mesh_name.to_lower(), {}) as Dictionary
+			if not source_row.is_empty():
+				var source_glb_path := String(source_row.get("glb_path", ""))
+				if source_glb_path == "" or not FileAccess.file_exists(source_glb_path) or not _path_is_within_mounted_pack(source_glb_path):
+					walk_surface_gap_receipts.append("%d:%s:%s:%s-missing-source-glb" % [source_index, type_name, field, mesh_name])
+					continue
+				role_mesh_triangles = _walk_surface_mesh_triangles(source_glb_path)
+			var triangles: Array = role_mesh_triangles.get(mesh_name.to_lower(), []) as Array
 			if triangles.is_empty():
 				walk_surface_gap_receipts.append("%d:%s:%s:%s-missing" % [source_index, type_name, field, mesh_name])
 				continue
@@ -2632,10 +2685,10 @@ func _build_walk_surface_navigation_from_fixtures() -> void:
 				"heights": (raster.get("heights", {}) as Dictionary).duplicate(),
 			}
 			if String(role_row["role"]) == "ramp":
-				var portal_cells := _walk_surface_low_endpoint_cells(triangles, placement_transform, cells)
-				if portal_cells.is_empty():
+				var portal_pairs := _walk_surface_low_endpoint_pairs(triangles, placement_transform, cells)
+				if portal_pairs.is_empty():
 					walk_surface_gap_receipts.append("%d:%s:%s:%s-no-ground-endpoint" % [source_index, type_name, field, mesh_name])
-				surface_row["portal_cells"] = portal_cells
+				surface_row["portal_pairs"] = portal_pairs
 			surface_rows.append(surface_row)
 	if surface_rows.is_empty():
 		_clear_walk_surface_navigation()
@@ -2782,35 +2835,78 @@ func _walk_triangle_height(triangle: PackedVector3Array, local: Vector2) -> floa
 	return wa * triangle[0].y + wb * triangle[1].y + wc * triangle[2].y
 
 
-func _walk_surface_low_endpoint_cells(triangles: Array, placement_transform: Transform3D, surface_cells: Array[Vector2i]) -> Array[Vector2i]:
+func _walk_surface_low_endpoint_pairs(triangles: Array, placement_transform: Transform3D, surface_cells: Array[Vector2i]) -> Array[Dictionary]:
 	var low_height := INF
 	var low_points: Array[Vector2] = []
+	var authored_points: Array[Vector2] = []
 	for triangle_value in triangles:
 		if not triangle_value is PackedVector3Array:
 			continue
 		for vertex in triangle_value as PackedVector3Array:
 			var world := placement_transform * vertex
+			authored_points.append(Vector2(world.x, world.z))
 			if world.y < low_height and not is_equal_approx(world.y, low_height):
 				low_height = world.y
 				low_points = [Vector2(world.x, world.z)]
 			elif is_equal_approx(world.y, low_height):
 				low_points.append(Vector2(world.x, world.z))
-	var candidates: Array[Vector2i] = []
-	var best_distance := INF
+	if low_points.is_empty() or authored_points.is_empty() or surface_cells.is_empty():
+		return []
+	var wall_candidates: Array[Vector2i] = []
+	var best_wall_distance := INF
 	for cell in surface_cells:
-		if not is_navigation_walkable(cell):
-			continue
 		var local := grid_to_local_horizontal(cell)
 		var distance := INF
 		for low_point in low_points:
 			distance = minf(distance, local.distance_squared_to(low_point))
-		if distance < best_distance and not is_equal_approx(distance, best_distance):
-			best_distance = distance
-			candidates = [cell]
-		elif is_equal_approx(distance, best_distance):
-			candidates.append(cell)
-	candidates.sort_custom(func(a, b): return a.y < b.y or (a.y == b.y and a.x < b.x))
-	return candidates
+		if distance < best_wall_distance and not is_equal_approx(distance, best_wall_distance):
+			best_wall_distance = distance
+			wall_candidates = [cell]
+		elif is_equal_approx(distance, best_wall_distance):
+			wall_candidates.append(cell)
+	wall_candidates.sort_custom(func(a, b): return a.y < b.y or (a.y == b.y and a.x < b.x))
+	if wall_candidates.is_empty():
+		return []
+	# Bound the ground search by the authored ramp's own horizontal reach. This
+	# admits footprint-separated endpoints without inventing a distance constant
+	# or permitting a portal jump farther than the source geometry itself.
+	var authored_reach_squared := 0.0
+	for low_point in low_points:
+		for authored_point in authored_points:
+			authored_reach_squared = maxf(authored_reach_squared, low_point.distance_squared_to(authored_point))
+	var ground_candidates: Array[Vector2i] = []
+	var best_ground_distance := INF
+	for grid_y in range(navigation_grid_min.y, navigation_grid_max.y + 1):
+		for grid_x in range(navigation_grid_min.x, navigation_grid_max.x + 1):
+			var cell := Vector2i(grid_x, grid_y)
+			if not is_navigation_walkable(cell):
+				continue
+			var local := grid_to_local_horizontal(cell)
+			var distance := INF
+			for low_point in low_points:
+				distance = minf(distance, local.distance_squared_to(low_point))
+			if distance > authored_reach_squared and not is_equal_approx(distance, authored_reach_squared):
+				continue
+			if distance < best_ground_distance and not is_equal_approx(distance, best_ground_distance):
+				best_ground_distance = distance
+				ground_candidates = [cell]
+			elif is_equal_approx(distance, best_ground_distance):
+				ground_candidates.append(cell)
+	ground_candidates.sort_custom(func(a, b): return a.y < b.y or (a.y == b.y and a.x < b.x))
+	if ground_candidates.is_empty():
+		return []
+	return [{"wall_cell": wall_candidates[0], "ground_cell": ground_candidates[0]}]
+
+
+func _walk_surface_low_endpoint_cells(triangles: Array, placement_transform: Transform3D, surface_cells: Array[Vector2i]) -> Array[Vector2i]:
+	## Compatibility seam for older focused runners. Production retains both
+	## sides through _walk_surface_low_endpoint_pairs.
+	var cells: Array[Vector2i] = []
+	for pair in _walk_surface_low_endpoint_pairs(triangles, placement_transform, surface_cells):
+		var wall_cell := Vector2i(pair.get("wall_cell", Vector2i(-1, -1)))
+		if not cells.has(wall_cell):
+			cells.append(wall_cell)
+	return cells
 
 
 func _clear_walk_surface_navigation() -> void:
@@ -2822,6 +2918,7 @@ func _clear_walk_surface_navigation() -> void:
 	_walk_surface_ids_by_cell.clear()
 	_walk_surface_height_by_cell.clear()
 	_walk_surface_portal_cells.clear()
+	_walk_surface_ground_portal_by_wall.clear()
 
 
 func install_walk_surface_cells_for_test(surface_rows: Array) -> bool:
@@ -2878,7 +2975,26 @@ func _install_walk_surface_cells(surface_rows: Array) -> bool:
 			for portal_value in portal_values as Array:
 				if typeof(portal_value) != TYPE_VECTOR2I or not (cells_value as Array).has(Vector2i(portal_value)):
 					return false
-				declared_portals[Vector2i(portal_value)] = true
+				var legacy_cell := Vector2i(portal_value)
+				declared_portals[legacy_cell] = legacy_cell
+			var portal_pairs_value: Variant = row.get("portal_pairs", [])
+			if typeof(portal_pairs_value) != TYPE_ARRAY:
+				return false
+			for pair_value in portal_pairs_value as Array:
+				if typeof(pair_value) != TYPE_DICTIONARY:
+					return false
+				var pair := pair_value as Dictionary
+				var wall_value: Variant = pair.get("wall_cell")
+				var ground_value: Variant = pair.get("ground_cell")
+				if typeof(wall_value) != TYPE_VECTOR2I or typeof(ground_value) != TYPE_VECTOR2I:
+					return false
+				var wall_cell := Vector2i(wall_value)
+				var ground_cell := Vector2i(ground_value)
+				if not (cells_value as Array).has(wall_cell) or not is_grid_inside_navigation(ground_cell) or not is_navigation_walkable(ground_cell):
+					return false
+				if declared_portals.has(wall_cell) and Vector2i(declared_portals[wall_cell]) != ground_cell:
+					return false
+				declared_portals[wall_cell] = ground_cell
 	if _walk_surface_roles_by_cell.is_empty():
 		return false
 	_walk_surface_navigation_grid = AStarGrid2D.new()
@@ -2903,8 +3019,12 @@ func _install_walk_surface_cells(surface_rows: Array) -> bool:
 			# Retail ramp meshes are the ONLY layer portals. Production rows name
 			# only the authored low endpoint; decks and ramp sides never become an
 			# implicit ground connection merely because their XY cell is walkable.
-			if declared_portals.has(cell) and is_navigation_walkable(cell):
+			if declared_portals.has(cell):
+				var ground_cell := Vector2i(declared_portals[cell])
+				if not is_navigation_walkable(ground_cell):
+					continue
 				_walk_surface_portal_cells.append(cell)
+				_walk_surface_ground_portal_by_wall[cell] = ground_cell
 	walk_surface_cell_count = ordered_cells.size()
 	walk_surface_navigation_ready = walk_surface_cell_count > 0
 	return walk_surface_navigation_ready
@@ -2956,8 +3076,8 @@ func _query_ground_to_wall(from_local: Vector2, to_local: Vector2, destination_c
 		var wall_cells: Array[Vector2i] = _walk_surface_navigation_grid.get_id_path(portal_cell, destination_cell, false)
 		if wall_cells.is_empty():
 			continue
-		var portal_local := grid_to_local_horizontal(portal_cell)
-		var ground := query_route(from_local, portal_local)
+		var ground_cell := Vector2i(_walk_surface_ground_portal_by_wall.get(portal_cell, portal_cell))
+		var ground := query_route(from_local, grid_to_local_horizontal(ground_cell))
 		if not bool(ground.get("valid", false)):
 			continue
 		var ground_cells: Array = ground.get("cells", []) as Array
@@ -2979,8 +3099,8 @@ func _query_wall_to_ground(from_local: Vector2, to_local: Vector2) -> Dictionary
 		var wall_cells: Array[Vector2i] = _walk_surface_navigation_grid.get_id_path(start_cell, portal_cell, false)
 		if wall_cells.is_empty():
 			continue
-		var portal_local := grid_to_local_horizontal(portal_cell)
-		var ground := query_route(portal_local, to_local)
+		var ground_cell := Vector2i(_walk_surface_ground_portal_by_wall.get(portal_cell, portal_cell))
+		var ground := query_route(grid_to_local_horizontal(ground_cell), to_local)
 		if not bool(ground.get("valid", false)):
 			continue
 		var ground_cells: Array = ground.get("cells", []) as Array
@@ -3022,11 +3142,12 @@ func query_layered_bridge_route(from_local: Vector2, to_local: Vector2) -> Dicti
 	var starts: Array[Dictionary] = []
 	var ends: Array[Dictionary] = []
 	for portal_cell in _walk_surface_portal_cells:
-		var portal_local := grid_to_local_horizontal(portal_cell)
-		var ground_in := query_route(from_local, portal_local)
+		var ground_cell := Vector2i(_walk_surface_ground_portal_by_wall.get(portal_cell, portal_cell))
+		var ground_local := grid_to_local_horizontal(ground_cell)
+		var ground_in := query_route(from_local, ground_local)
 		if bool(ground_in.get("valid", false)):
 			starts.append({"cell": portal_cell, "route": ground_in})
-		var ground_out := query_route(portal_local, to_local)
+		var ground_out := query_route(ground_local, to_local)
 		if bool(ground_out.get("valid", false)):
 			ends.append({"cell": portal_cell, "route": ground_out})
 	var best: Dictionary = {}

@@ -524,6 +524,7 @@ def compile_structure_visual_recipe(
     if not isinstance(dependency, Mapping):
         raise PlayableStructurePackCompilerError("visual texture closure is invalid")
     row_channel_counts: dict[str, int] = {}
+    hidden_names_by_path: dict[str, tuple[str, ...]] = {}
     for row in scanned.values():
         channel_count = row.get("embeddedAnimationChannelCount", 0)
         if (
@@ -536,6 +537,15 @@ def compile_structure_visual_recipe(
                 + str(row.get("virtualPath", ""))
             )
         row_channel_counts[str(row["virtualPath"]).casefold()] = channel_count
+        hidden_names = row.get("hiddenMeshNames", [])
+        if not isinstance(hidden_names, list) or any(
+            not isinstance(name, str) or not name for name in hidden_names
+        ):
+            raise PlayableStructurePackCompilerError(
+                "scanned W3D hidden mesh names are invalid: "
+                + str(row.get("virtualPath", ""))
+            )
+        hidden_names_by_path[str(row["virtualPath"]).casefold()] = tuple(hidden_names)
     retail_absent_textures: dict[str, set[str]] = {}
     for row in _rows(dependency.get("embeddedTextures"), "embedded textures"):
         if row.get("status") != "missing":
@@ -881,6 +891,134 @@ def compile_structure_visual_recipe(
             }
         )
 
+    # Walk-surface proxies occasionally live outside the intact render W3D:
+    # a damage-state W3D (GBMTop1_D1 / GBMinGate3_D2), or an exact sibling
+    # HLOD child container (GBMinGate2 -> GBMGate2). Keep those retail meshes
+    # in dedicated GLBs and publish a name-to-source table; the visible intact
+    # binding remains unchanged.
+    state_by_source = {
+        str(state["sourceW3d"]).casefold(): state for state in states
+    }
+    source_candidates: list[dict[str, str]] = []
+    ordered_states = sorted(
+        states,
+        key=lambda state: (
+            min(
+                LIFECYCLE_PHASE_ORDER.index(str(phase))
+                for phase in state.get("phases", [])
+            ),
+            str(state.get("sourceW3d", "")).casefold(),
+        ),
+    )
+    scanned_by_stem: dict[str, list[Mapping[str, object]]] = {}
+    for scanned_row in scanned.values():
+        scanned_by_stem.setdefault(
+            PurePosixPath(str(scanned_row["virtualPath"])).stem.casefold(), []
+        ).append(scanned_row)
+
+    def add_source(source_path: str, output: str, resource_id: str) -> None:
+        if not hidden_names_by_path.get(source_path.casefold(), ()):
+            return
+        if any(row["sourceW3d"].casefold() == source_path.casefold() for row in source_candidates):
+            return
+        source_candidates.append(
+            {"sourceW3d": source_path, "glb": output, "resourceId": resource_id}
+        )
+
+    for state in ordered_states:
+        model_path = str(state["sourceW3d"])
+        add_source(model_path, str(state["output"]), str(state["resourceId"]))
+        model_row = scanned[model_path.casefold()]
+        references = model_row.get("modelReferences", [])
+        if not isinstance(references, list):
+            raise PlayableStructurePackCompilerError(
+                f"scanned W3D model references are invalid: {model_path}"
+            )
+        for reference in references:
+            if not isinstance(reference, Mapping):
+                raise PlayableStructurePackCompilerError(
+                    f"scanned W3D model references are invalid: {model_path}"
+                )
+            leaf = str(reference.get("identifier", "")).split(".", 1)[-1].strip()
+            for child_row in sorted(
+                scanned_by_stem.get(leaf.casefold(), []),
+                key=lambda row: str(row["virtualPath"]).casefold(),
+            ):
+                child_path = str(child_row["virtualPath"])
+                if child_path.casefold() in state_by_source:
+                    continue
+                hidden_names = hidden_names_by_path.get(child_path.casefold(), ())
+                if not hidden_names:
+                    continue
+                stem = PurePosixPath(child_path).stem
+                output = (
+                    f"assets/models/structures/{slug}/"
+                    f"walk-surface-{_slug(stem)}.glb"
+                )
+                resource_id = _resource_id(
+                    "structure", slug, f"walk-surface-{_slug(stem)}"
+                )
+                if not any(str(resource["id"]).casefold() == resource_id.casefold() for resource in resources):
+                    own_hierarchies = _header_ids(child_row, "hierarchyIds")
+                    referenced_hierarchies = child_row.get(
+                        "modelHierarchyIdentifiers", []
+                    )
+                    if not isinstance(referenced_hierarchies, list):
+                        raise PlayableStructurePackCompilerError(
+                            f"scanned W3D hierarchy references are invalid: {child_path}"
+                        )
+                    patterns = {child_path}
+                    external = {
+                        str(value).casefold()
+                        for value in referenced_hierarchies
+                        if str(value).casefold()
+                        not in {value.casefold() for value in own_hierarchies}
+                    }
+                    if external:
+                        providers = _hierarchy_providers(external, scanned)
+                        unresolved = sorted(
+                            prefix for prefix, paths in providers.items() if len(paths) != 1
+                        )
+                        if unresolved:
+                            raise PlayableStructurePackCompilerError(
+                                "walk-surface hierarchy provider is not unique: "
+                                + ", ".join(unresolved)
+                            )
+                        patterns.update(paths[0] for paths in providers.values())
+                    options: dict[str, object] = {"model": PurePosixPath(child_path).name}
+                    absent = retail_absent_textures.get(child_path.casefold())
+                    if absent:
+                        options["retailAbsentTextures"] = sorted(absent, key=str.casefold)
+                    resources.append(
+                        {
+                            "id": resource_id,
+                            "kind": "model",
+                            "converter": (
+                                "w3d-hierarchical"
+                                if own_hierarchies or external
+                                else "w3d-static"
+                            ),
+                            "patterns": sorted(patterns, key=lambda value: (value.casefold(), value)),
+                            "output": output,
+                            "options": options,
+                            "required": True,
+                            "limit": len(patterns),
+                            "expected_count": len(patterns),
+                        }
+                    )
+                    selected_w3d.update(patterns)
+                add_source(child_path, output, resource_id)
+
+    walk_surface_sources: dict[str, dict[str, str]] = {}
+    seen_mesh_names: set[str] = set()
+    for source in source_candidates:
+        for mesh_name in hidden_names_by_path[source["sourceW3d"].casefold()]:
+            folded = mesh_name.casefold()
+            if folded in seen_mesh_names:
+                continue
+            seen_mesh_names.add(folded)
+            walk_surface_sources[mesh_name] = dict(source)
+
     for bib_path in sorted(bib_conditions, key=lambda item: (item.casefold(), item)):
         stem = PurePosixPath(bib_path).stem
         output = f"assets/models/structures/{slug}/bib-{_slug(stem)}.glb"
@@ -1020,6 +1158,11 @@ def compile_structure_visual_recipe(
         "lifecycleStates": states,
         "bibStates": bib_states,
         "drawModuleOrder": draw_module_order,
+        **(
+            {"walkSurfaceSources": walk_surface_sources}
+            if walk_surface_sources
+            else {}
+        ),
         **({"drawableScripts": drawable_scripts} if drawable_scripts else {}),
         "phaseCoverage": {
             "covered": covered_phases,
@@ -1091,6 +1234,27 @@ def validate_structure_visual_recipe(value: Mapping[str, object]) -> None:
                 "structure recipe UI image bindings are invalid"
             )
     resource_ids = {identifier.casefold() for identifier in identifiers}
+    if "walkSurfaceSources" in value:
+        sources = value.get("walkSurfaceSources")
+        if not isinstance(sources, Mapping) or not sources:
+            raise PlayableStructurePackCompilerError(
+                "structure recipe walk-surface sources are invalid"
+            )
+        for mesh_name, source in sources.items():
+            if (
+                not isinstance(mesh_name, str)
+                or not mesh_name
+                or not isinstance(source, Mapping)
+                or set(source) != {"sourceW3d", "glb", "resourceId"}
+                or not isinstance(source.get("sourceW3d"), str)
+                or not str(source.get("sourceW3d", "")).endswith(".w3d")
+                or not isinstance(source.get("glb"), str)
+                or not str(source.get("glb", "")).endswith(".glb")
+                or str(source.get("resourceId", "")).casefold() not in resource_ids
+            ):
+                raise PlayableStructurePackCompilerError(
+                    "structure recipe walk-surface sources are invalid"
+                )
     states = _rows(value.get("lifecycleStates"), "structure lifecycle states")
     if not states:
         raise PlayableStructurePackCompilerError(

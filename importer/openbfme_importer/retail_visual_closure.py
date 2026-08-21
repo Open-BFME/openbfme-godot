@@ -745,6 +745,39 @@ def _scan_hierarchy_candidate_paths(
     return tuple(sorted(follow_up, key=_sort_text))
 
 
+def _scan_hidden_model_candidate_paths(
+    scanned: tuple[W3DMetadata, ...],
+    w3d_paths: tuple[str, ...],
+    already_selected: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Select exact-stem sibling HLOD containers that may carry proxies.
+
+    Retail sometimes places an HLOD child's render container in its own W3D.
+    ``GBMINGATE2.GBMGATE2`` is the binding and ``gbmgate2.w3d`` carries the
+    hidden P1/P2 path meshes. The ordinary visual graph resolves the intact
+    parent and therefore never scans that sibling. Select only exact leaf
+    stems here; callers retain only candidates that actually author HIDDEN
+    meshes, so visible-only siblings do not enter the conversion closure.
+    """
+
+    by_stem: dict[str, list[str]] = {}
+    for path in w3d_paths:
+        by_stem.setdefault(PurePosixPath(path).stem.casefold(), []).append(path)
+    selected_keys = {path.casefold() for path in already_selected}
+    candidates: set[str] = set()
+    for item in scanned:
+        for reference in item.model_references:
+            leaf = reference.identifier.split(".", 1)[-1].strip().casefold()
+            for path in by_stem.get(leaf, ()):
+                if path.casefold() not in selected_keys:
+                    candidates.add(path)
+    if len(already_selected) + len(candidates) > MAX_TARGET_W3D_SCANS:
+        raise ValueError(
+            f"targeted W3D scan count exceeds {MAX_TARGET_W3D_SCANS} limit"
+        )
+    return tuple(sorted(candidates, key=_sort_text))
+
+
 def _embedded_texture_dependencies(
     scanned: tuple[W3DMetadata, ...],
     visual_paths: tuple[str, ...],
@@ -1424,19 +1457,41 @@ def build_retail_visual_closure(
     )
     initial_candidate_paths = _scan_candidate_paths(initial_graph, w3d_paths)
     initial_scanned = _scan_w3d_candidates(initial_candidate_paths, w3d_records)
-    hierarchy_candidate_paths = _scan_hierarchy_candidate_paths(
+    hidden_model_candidate_paths = _scan_hidden_model_candidate_paths(
         initial_scanned, w3d_paths, initial_candidate_paths
+    )
+    hidden_model_candidates = _scan_w3d_candidates(
+        hidden_model_candidate_paths, w3d_records
+    )
+    hidden_model_scanned = tuple(
+        item
+        for item in hidden_model_candidates
+        if any(int(header.attributes) & 0x00001000 for header in item.mesh_headers)
+    )
+    hidden_model_paths = tuple(item.virtual_path for item in hidden_model_scanned)
+    hierarchy_candidate_paths = _scan_hierarchy_candidate_paths(
+        (*initial_scanned, *hidden_model_scanned),
+        w3d_paths,
+        (*initial_candidate_paths, *hidden_model_paths),
     )
     hierarchy_scanned = _scan_w3d_candidates(
         hierarchy_candidate_paths, w3d_records
     )
     candidate_paths = tuple(
         sorted(
-            {*initial_candidate_paths, *hierarchy_candidate_paths}, key=_sort_text
+            {
+                *initial_candidate_paths,
+                *hidden_model_paths,
+                *hierarchy_candidate_paths,
+            },
+            key=_sort_text,
         )
     )
     scanned = tuple(
-        sorted((*initial_scanned, *hierarchy_scanned), key=lambda item: _sort_text(item.virtual_path))
+        sorted(
+            (*initial_scanned, *hidden_model_scanned, *hierarchy_scanned),
+            key=lambda item: _sort_text(item.virtual_path),
+        )
     )
     headers: tuple[W3DFileHeaders, ...] = tuple(
         _trimmed_file_headers(item) for item in scanned
@@ -1472,6 +1527,14 @@ def build_retail_visual_closure(
             # for HLOD structures whose named pivots must survive.
             "hiddenMeshCount": sum(
                 1 for header in item.mesh_headers if int(header.attributes) & 0x00001000
+            ),
+            "hiddenMeshNames": sorted(
+                {
+                    header.mesh_name
+                    for header in item.mesh_headers
+                    if header.mesh_name and int(header.attributes) & 0x00001000
+                },
+                key=str.casefold,
             ),
             "modelReferences": [
                 reference.neutral() for reference in item.model_references
