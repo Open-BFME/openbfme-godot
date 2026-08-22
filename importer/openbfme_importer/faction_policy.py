@@ -122,12 +122,52 @@ ROTWK_IMPLICIT_OBJECT_ROOTS: Mapping[str, tuple[tuple[str, str], ...]] = {
 }
 
 
-# RotWK reuses the BFME2 base-faction fortress composites and retail-absent UI
-# texture nulls, plus Angmar's expansion fortress roots.
-_ROTWK_IMPLICIT_OBJECT_ROOTS: Mapping[str, tuple[tuple[str, str], ...]] = {
-    **IMPLICIT_OBJECT_ROOTS,
-    **ROTWK_IMPLICIT_OBJECT_ROOTS,
+# Castle-map wall defenses (owner 2026-08-22). Minas Tirith, Carn Dum and Dol
+# Guldur place wall-mounted defenses and upgrade slots that no faction's
+# command set reaches (they are map-placed civilian objects), so the faction
+# cook never compiled them and the runtime seeded them as inert props
+# (`CASTLE_WALL_DEFENSE_STALE ... missing-playable-structure-document`). Each
+# is declared a root of the castle's own faction; the runtime resolves
+# structure documents across every mounted pack. Retail authors them three
+# ways: bow towers carry a weapon outright; Minas slots (`MinisWallAUpgrade`,
+# GondorCastleUpgrade children) gain theirs through the player's
+# Trebuchet/Postern/Garrison upgrade (`WeaponSet Conditions = PLAYER_UPGRADE`);
+# catapult mounts grant `Upgrade_TrebuchetTurret` on creation and spawn a
+# slaved trebuchet (`ObjectCreationUpgrade`).
+CASTLE_MAP_WALL_DEFENSE_ROOTS: Mapping[str, tuple[tuple[str, str], ...]] = {
+    "factionmen": (
+        ("MinisWallAUpgrade", "castle-map-wall-defense"),
+        ("MinisWallAUpgradeNoGate", "castle-map-wall-defense"),
+    ),
+    "factionangmar": (
+        ("AngmarWallCatapultCarnDum", "castle-map-wall-defense"),
+        ("AngmarWallTowerCarnDum", "castle-map-wall-defense"),
+    ),
+    "factionmordor": (
+        ("DoGoldurWallCatapultSmall", "castle-map-wall-defense"),
+        ("DoGoldurWallTowerSmall", "castle-map-wall-defense"),
+    ),
 }
+
+
+def _with_castle_map_wall_defenses(
+    roots: Mapping[str, tuple[tuple[str, str], ...]],
+) -> dict[str, tuple[tuple[str, str], ...]]:
+    merged = dict(roots)
+    for template, extra in CASTLE_MAP_WALL_DEFENSE_ROOTS.items():
+        merged[template] = (*merged.get(template, ()), *extra)
+    return merged
+
+
+# RotWK reuses the BFME2 base-faction fortress composites and retail-absent UI
+# texture nulls, plus Angmar's expansion fortress roots and the castle-map
+# wall defenses above.
+_ROTWK_IMPLICIT_OBJECT_ROOTS: Mapping[str, tuple[tuple[str, str], ...]] = (
+    _with_castle_map_wall_defenses({
+        **IMPLICIT_OBJECT_ROOTS,
+        **ROTWK_IMPLICIT_OBJECT_ROOTS,
+    })
+)
 _ROTWK_SOURCE_NULL_MAPPED_IMAGE_TEXTURES: Mapping[
     str, tuple[tuple[str, str], ...]
 ] = {

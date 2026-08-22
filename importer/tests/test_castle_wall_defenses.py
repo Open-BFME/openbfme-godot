@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from pathlib import Path
 
 import pytest
@@ -206,3 +208,67 @@ def test_gondor_castle_wall_tower_carries_authored_castle_wall_upgrade_bow(retai
     assert combat["weaponId"] == "CastleWallUpgradeBow"
     assert combat["weaponSlot"] == "PRIMARY"
     assert combat["damage"]["value"] == 75
+
+
+# ---------------------------------------------------------------------------
+# Castle-map wall defenses (owner 2026-08-22): Minas Tirith, Carn Dum and Dol
+# Guldur place wall-mounted defenses that no faction's command set reaches, so
+# the faction cook never compiled them and the runtime seeded them as inert
+# props (`CASTLE_WALL_DEFENSE_STALE ... missing-playable-structure-document`).
+# They are declared as policy roots of the castle's faction and compile with
+# their authored weapon.
+# ---------------------------------------------------------------------------
+CASTLE_MAP_WALL_DEFENSES = {
+    "factionmen": ("MinisWallAUpgrade", "MinisWallAUpgradeNoGate"),
+    "factionangmar": ("AngmarWallCatapultCarnDum", "AngmarWallTowerCarnDum"),
+    "factionmordor": ("DoGoldurWallCatapultSmall", "DoGoldurWallTowerSmall"),
+}
+
+
+def test_castle_map_wall_defenses_are_policy_roots() -> None:
+    from openbfme_importer.faction_policy import implicit_object_roots
+
+    for template, objects in CASTLE_MAP_WALL_DEFENSES.items():
+        roots = dict(implicit_object_roots(template, game="rotwk"))
+        for object_id in objects:
+            assert roots.get(object_id) == "castle-map-wall-defense", (template, object_id, roots)
+
+
+@pytest.mark.parametrize(
+    "object_id, shape",
+    [
+        # Minas slots: weapon arrives with the player's wall upgrade.
+        ("MinisWallAUpgrade", "upgrade-slot"),
+        ("MinisWallAUpgradeNoGate", "upgrade-slot"),
+        # Bow towers carry their weapon outright.
+        ("AngmarWallTowerCarnDum", "bow-tower"),
+        ("DoGoldurWallTowerSmall", "bow-tower"),
+        # Catapult mounts grant Upgrade_TrebuchetTurret and spawn a slaved
+        # trebuchet on creation.
+        ("AngmarWallCatapultCarnDum", "catapult-mount"),
+        ("DoGoldurWallCatapultSmall", "catapult-mount"),
+    ],
+)
+def test_castle_map_wall_defense_compiles_as_retail_authors_it(object_id, shape, retail_compiler_inputs) -> None:
+    documents, prepared = retail_compiler_inputs
+    descriptor = compile_playable_structure_descriptor(
+        object_id,
+        documents,
+        prepared=prepared,
+        engine_spawned_roots=(object_id,),
+        engine_spawned_roles={object_id.casefold(): "castle-map-wall-defense"},
+        game="rotwk",
+    )
+    validate_playable_structure_descriptor(descriptor)
+    assert descriptor["compositeRole"] == "castle-map-wall-defense"
+    gameplay = descriptor["gameplay"]
+    if shape == "bow-tower":
+        assert gameplay["combat"]["damage"]["value"] > 0
+    elif shape == "upgrade-slot":
+        assert "combat" not in gameplay, "a slot has no weapon until upgraded"
+        assert gameplay.get("upgradeEffects"), "slot must carry its PLAYER_UPGRADE weapon effects"
+        assert gameplay.get("trainedCommandSets"), "slot must offer its upgrade commands"
+    else:
+        assert "combat" not in gameplay
+        grants = gameplay.get("createGrants") or []
+        assert any("Upgrade_TrebuchetTurret".casefold() in json.dumps(g).casefold() for g in grants), grants

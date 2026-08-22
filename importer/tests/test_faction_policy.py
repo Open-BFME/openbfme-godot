@@ -44,6 +44,9 @@ def test_rotwk_angmar_curates_fortress_roots_and_shared_retail_nulls() -> None:
         ("AngmarFortressCitadel", "fortress-composite-citadel"),
         ("AngmarFortressExpansionPadCorner", "fortress-composite-corner-pad"),
         ("AngmarFortressExpansionPadSide", "fortress-composite-side-pad"),
+        # Carn Dum's map-placed wall defenses (2026-08-22).
+        ("AngmarWallCatapultCarnDum", "castle-map-wall-defense"),
+        ("AngmarWallTowerCarnDum", "castle-map-wall-defense"),
     )
     assert source_null_mapped_image_textures("FactionAngmar", game="rotwk")
     assert source_null_command_sets("FactionAngmar", game="rotwk") == ()
@@ -51,8 +54,15 @@ def test_rotwk_angmar_curates_fortress_roots_and_shared_retail_nulls() -> None:
 
 
 def test_rotwk_base_faction_reuses_its_fortress_composite_roots() -> None:
+    # ...plus the castle-map wall defenses the RotWK policy appends for the
+    # castle's faction (Dol Guldur is Mordor's).
     assert implicit_object_roots("FactionMordor", game="rotwk") == (
-        IMPLICIT_OBJECT_ROOTS["factionmordor"]
+        *IMPLICIT_OBJECT_ROOTS["factionmordor"],
+        ("DoGoldurWallCatapultSmall", "castle-map-wall-defense"),
+        ("DoGoldurWallTowerSmall", "castle-map-wall-defense"),
+    )
+    assert implicit_object_roots("FactionElves", game="rotwk") == (
+        IMPLICIT_OBJECT_ROOTS["factionelves"]
     )
 
 
