@@ -154,7 +154,7 @@ $expectedSelectionSupplementalPacks = @(
     "rotwk-missing-physical-20260816-batch-037/e6aec3caa4fedb96ff6be90a9fcc21e5e28ce7f7246e37106fe9f3a0c94362ed",
     "rotwk-missing-physical-20260816-batch-038/68d1a6ba8418ddc66bda49eb560936a1fbd85bb8001f0f5c0dbc6071c17a5973",
     "rotwk-missing-physical-20260816-batch-039/c470d003a9448b59738589ee4024f5b795f4e333ed94ac21457c4551b91da886",
-    "rotwk-missing-physical-20260816-batch-040/425b3dc167212b48ef9a8692482d05627092ca8107bb61d1b2b9fa90548f4864",
+    "rotwk-missing-physical-20260816-batch-040/425b3dc167212b48ef9a8692482d05627092ca8107bb61d1b2b9fa90548f4864"
 )
 $stateRoot = if (-not [string]::IsNullOrWhiteSpace($env:OPENBFME_IMPORT_ROOT)) {
     [IO.Path]::GetFullPath($env:OPENBFME_IMPORT_ROOT)
