@@ -29,15 +29,16 @@ taken from the original game files rather than from prior reports:
   `fords-alpha.png`.
 - Across all 102 `*_art.tga` under
   `workspace/retail-work/editions/rotwk/cache/effective-assets/maps/`, the **largest RGB
-  channel span of any file is 43**, and 14 are perfectly flat. There is no terrain
-  photograph anywhere in that data (`peek2.py` output).
+  channel span of any file is 43**, and **13 are perfectly flat (span exactly 0)**. There
+  is no terrain photograph anywhere in that data (`peek9.py`; an earlier draft of this
+  report said 14, which was the span<=8 count, not the flat count).
 - The retail reference dish
   (`workspace/retail-work/oracle/captures/bfme2-fords-men-reference-youtube-z6ZI6wY_LYE-500s.png`,
   cropped to `retail-500s-dish.png`) is tan parchment with sepia ink, a thick gold view
   box and house-colour blips. `retail-500s-radar.png` shows the same at frame scale.
 - The only radar colour rows retail authors are `roads.ini:15,34 RadarColor = R:192 G:192 B:192`
   and `water.ini:74 RadarWaterColor = R:140 G:140 B:255`; there is no per-cell terrain
-  colour table. `mappedimages/handcreated/handcreatedmappedimages.ini:1680-1687` authors
+  colour table. `mappedimages/handcreated/handcreatedmappedimages.ini:1680-1686` authors
   `RadarViewBoxEdge`, and `animation2d.ini:313-334` the radar alerts.
 
 So the Q64 claim that the radar is parchment plus authored ink is **correct**. What was
@@ -66,6 +67,18 @@ quarter:
 The owner's own 1920x1080 screenshot measures the same way: dish centre (227,897),
 radius 142, local high-frequency detail ratio **0.114** against the retail dish's
 **0.137** (`local_contrast.py`).
+
+**The dist screenshot's dish is MILDER than the headless render, and that matters.**
+Same 20-bin method on the owner's PNG gives outer bins **[0.57, 0.52, 0.42, 0.34, 0.31]**
+at centre (227,897)/r=142; the reviewing verifier, sampling with a slightly different
+assumed dish circle, read **[0.65, 0.55, 0.39, 0.30, 0.22]**. Either way the live figure
+sits between retail's 0.68..0.43 and the clean 362px render's 0.33..0.09. The gap is not
+a contradiction: in the live HUD the bottom of the dish is occluded by the resource bar
+and the top by the three orb buttons, and the palantir ring's own lit metal is inside any
+circle you draw, all of which lift the outer-bin means. The headless capture is the
+honest measurement of the *radar's own composition*; the screenshot number is an estimate
+whose value depends on where you put the circle. Both show the same defect, and both are
+fixed by the same change.
 
 Secondary, same symptom: the procedural camera view-box fallback drew a **flat 1.6px
 polyline at any dish size** — 0.010 of the bezel radius at the shipping 362px control.
@@ -103,8 +116,27 @@ geometry/placement change, no importer or pack work.
   a remembered number.
 
 `game/tests/radar_look_runner.gd`
-- New `view_box_fallback_width_scales_with_the_dish` and
-  `view_box_fallback_uses_the_measured_retail_gold`.
+- `view_box_fallback_width_scales_with_the_dish` and
+  `view_box_fallback_uses_the_measured_retail_gold`. **These are constant pins, not
+  render proofs, and the first review round was right to call them tautological**:
+  reverting the `draw_polyline` call alone leaves this runner at 18/0. They are kept
+  because they do guard the two retail-measured constants against being edited back to
+  invented values; the proof that the band is actually DRAWN that thick is the rendered
+  check below.
+
+`game/tests/minimap_parchment_capture_runner.gd`, second round (verifier findings 1 and 2)
+- `<px>_view_box_band_is_drawn_at_retails_thickness` measures the **composed PNG**: it
+  finds gold-band pixels and computes the largest disc that fits wholly inside the
+  stroke. Radius >= 3 means a band >= 6px at the shipping 362px control (retail's 0.047R
+  is 7.6px there). The detection window is deliberately wide enough to also match the old
+  pale `(235,214,140)` line, so the check discriminates on **width alone** and cannot be
+  passed by recolouring.
+- `fully_explored_shroud_bound` + `shroud_does_not_tint_explored_cells` cover the brief's
+  shroud clause, which the first round left unimplemented and undisclosed. A third render
+  stage re-draws the 362px dish with a real `RetailShroudOverlay` over a
+  `retail_fog_of_war` grid that has been `reveal_all(0, true)`-ed, then compares every
+  pixel of the bezel interior against the unshrouded stage-0 image. Zero differing pixels
+  is the contract.
 
 **Failing first, both:**
 
@@ -112,13 +144,16 @@ geometry/placement change, no importer or pack work.
 |---|---|---|
 | `minimap_parchment_capture_runner` (Amon Sul art) | **17 passed / 2 failed** — `362_rim_stays_legible_like_retails_dish`: `r/R=0.78 got=0.33 floor=0.58, 0.82 got=0.22 floor=0.50, 0.88 got=0.15 floor=0.43, 0.93 got=0.11 floor=0.38, 0.97 got=0.09 floor=0.33` (same for 724px). Log `red-capture-amonsul.txt` | **19 passed / 0 failed** — `after-capture-amonsul.txt`, `final-capture-amonsul.txt` |
 | `radar_look_runner` | Refused to load: `Parse Error: Cannot find member "RETAIL_VIEW_BOX_EDGE_RADIUS_RATIO"` / `"VIEW_BOX_FALLBACK_GOLD"` (`red-radar-look.txt`). Honest caveat: this is a parse-level red, not a clean assertion red — the seam did not exist yet. | **18 passed / 0 failed** — `green-radar-look.txt`, `final-radar-look.txt` |
+| `minimap_parchment_capture_runner` — rendered band | **22 passed / 2 failed** with the `draw_polyline` call reverted to `Color(0.92,0.84,0.55,0.9)` at 1.6px: `362/724_view_box_band_is_drawn_at_retails_thickness: inscribed_radius=1 (need >=3, i.e. a band >=6px) gold_pixels=306/705`. Note the old line is still *detected* as gold — only its width fails. Log `v2-red-viewbox.txt` | **24 passed / 0 failed** — `v2-final-capture.txt` |
+| `minimap_parchment_capture_runner` — shroud | **23 passed / 1 failed** with a temporary `draw_colored_polygon(disc, Color(0,0,0,0.25))` injected into `_draw` behind the shroud: `shroud_does_not_tint_explored_cells: differing=80434 worst=0.1961 at (201, 146)`. Log `v2-red-shroud.txt`. The tint was removed again; `git diff` after removal shows `retail_minimap.gd` byte-identical to its committed state. Honest note: unlike the rim check, this one was **green on its first run** — the composition never tinted — so it is a regression guard whose teeth were demonstrated by deliberate mutation, not a failing-first reproduction of a live defect. | **24 passed / 0 failed** — `v2-final-capture.txt` |
 
 ## 5. Named gates, before -> after
 
 | Gate | Brief's stated baseline | Measured this lane | Verdict |
 |---|---|---|---|
-| `radar_look_runner` | 16 / 0 | **18 / 0** (2 new checks added by this lane) | green, grown |
-| `retail_four_unit_hud_runner` | 124 / 0 | **124 / 0** (`gate-hud.txt`) | unchanged |
+| `radar_look_runner` | 16 / 0 | **18 / 0** (2 new constant pins added by this lane) — `v2-radar-look.txt` | green, grown |
+| `minimap_parchment_capture_runner` (Amon Sul art) | 17 / 0 | **24 / 0** (4 new checks + 3 stages) — `v2-final-capture.txt` | green, grown |
+| `retail_four_unit_hud_runner` | 124 / 0 | **124 / 0** (`v2-gate-hud.txt`) | unchanged |
 | `castle_map_live_boot_runner` (`rotwk.map.wor-erebor`) | 8 / 0 | **1 passed / 1 failed** — `castle_slice_ready: Slice map 'rotwk.map.wor-erebor' is unavailable: it is neither in the registered content nor in the bfme2-five-maps-106-private pack catalog` | **RED, and PRE-EXISTING** |
 
 The castle gate red is **not** this lane's. Proof, not assertion: the identical command
@@ -141,6 +176,20 @@ gold band as in retail.
 Also kept: `owner-dish.png` and `owner-hud.png` (the owner's screenshot cropped),
 `retail-500s-dish.png`, `parchment-region.png`, `fords-alpha.png`, `art-sheet.png`
 (alpha of all 10 selected map arts).
+
+## 6b. Second review round (verifier findings, this commit)
+
+The first submission was rejected on test coverage, not on the fix. Three findings, all
+addressed here:
+
+1. **Brief task 4's shroud clause was unimplemented and undisclosed.** Now covered by
+   `shroud_does_not_tint_explored_cells` (section 4), red under deliberate mutation.
+2. **The two `radar_look_runner` checks were tautological.** Conceded and labelled as
+   such; the rendered-band assertion in the capture runner is the real proof, and it goes
+   red when the draw call alone is reverted.
+3. **Report corrections:** the dist-screenshot dish profile is now stated (section 2);
+   `13` perfectly-flat art files, not 14 (14 was the span<=8 count); the
+   `RadarViewBoxEdge` block is `handcreatedmappedimages.ini:1680-1686`, not 1680-1687.
 
 ## 7. Honest residue — what I did NOT fix
 

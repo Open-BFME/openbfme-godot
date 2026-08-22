@@ -62,6 +62,22 @@ const INK_ALPHA_FLOOR := 0.45
 ## one for being sparse. Ratio, not equality, because the sheet is inscribed in
 ## the bezel while this counts only the inner 65% of the disc.
 const INK_COVERAGE_RATIO := 0.30
+## THE RENDERED VIEW-BOX BAND. Detection window for the 0.9-alpha composite of
+## `RetailMinimap.VIEW_BOX_FALLBACK_GOLD` (252,215,91 - measured off the retail
+## capture) over parchment; measured composites run (221,189,94)..(240,212,124).
+## Deliberately WIDE enough to also catch the old pale (235,214,140) line, so the
+## check that follows discriminates on WIDTH alone and cannot pass by recolouring.
+const VIEW_BOX_MIN_R := 0.75
+const VIEW_BOX_MIN_G := 0.60
+const VIEW_BOX_MAX_B := 0.59
+const VIEW_BOX_MIN_RB := 0.27
+## Retail's band is 3.5px against a 74px dish opening (column profile x=152,
+## rows 602-605 of the Fords 500s capture) = 0.047R, so 7.6px at the shipping
+## 362px control. Asserted as the largest disc that fits INSIDE the stroke:
+## radius 3 means the band is at least 6px thick somewhere. The old flat 1.6px
+## line measures radius 1. Corners, where two strokes cross, read wider than the
+## nominal band - this is a floor, not an equality.
+const VIEW_BOX_MIN_INSCRIBED_RADIUS := 3
 ## RETAIL'S OWN RADAR DISC, MEASURED. Mean luminance of the palantir dish in the
 ## RotWK reference capture
 ## `workspace/retail-work/oracle/captures/bfme2-fords-men-reference-youtube-z6ZI6wY_LYE-500s.png`,
@@ -88,7 +104,13 @@ var _art_path := ""
 var _atlas_path := ""
 var _viewport: SubViewport = null
 var _minimap: Control = null
-var _sizes: Array[int] = [RADAR_PIXELS, INSPECT_PIXELS]
+var _sizes: Array[int] = [RADAR_PIXELS, INSPECT_PIXELS, RADAR_PIXELS]
+## Stage 2 re-renders stage 0 with a FULLY EXPLORED shroud bound, so the
+## brief's shroud clause is measured rather than asserted: retail never tints
+## the parchment for visibility, so an explored-everywhere shroud must leave
+## the composed dish byte-identical.
+const SHROUD_STAGE_INDEX := 2
+var _unshrouded: Image = null
 var _index := 0
 var _frames := 0
 var _total_frames := 0
@@ -236,6 +258,13 @@ func _stand_up(pixels: int) -> void:
 	_minimap.bind_retail_parchment(_load_texture(_atlas_path))
 	_minimap.configure(simulation, map_data, _load_ink_art())
 	_minimap.camera_center = map_data.local_at_grid(Vector2(150, 140))
+	_minimap.shroud_overlay = null
+	if _index == SHROUD_STAGE_INDEX:
+		_check(
+			"fully_explored_shroud_bound",
+			_bind_fully_explored_shroud(map_data),
+			"could not stand up an explored-everywhere shroud"
+		)
 	_viewport.add_child(_minimap)
 
 
@@ -300,6 +329,109 @@ func _parchment_disc_mean(radius: float) -> Vector3:
 	if count == 0:
 		return Vector3.ZERO
 	return total / float(count)
+
+
+func _bind_fully_explored_shroud(map_data) -> bool:
+	## A shroud in which every cell is EXPLORED and CLEAR. Retail's radar never
+	## darkens the parchment for visibility (only blips are gated), so this must
+	## change nothing at all in the composed dish.
+	var fog_script = load("res://src/retail_slice/retail_fog_of_war.gd")
+	var overlay_script = load("res://src/retail_slice/retail_shroud_overlay.gd")
+	if fog_script == null or overlay_script == null:
+		return false
+	var fog = fog_script.new()
+	# Amon Sul's cooked grid is 405x355 cells at 10 units; this box contains it
+	# with room to spare, so no cell is left outside the reveal.
+	fog.configure(Vector2(-4000.0, -4000.0), Vector2(4000.0, 4000.0), 1.0)
+	fog.enabled = true
+	fog.border_shroud = false
+	fog.reveal_all(0, true)
+	var overlay = overlay_script.new()
+	overlay.configure(fog, 0)
+	if not bool(overlay.enabled):
+		return false
+	_minimap.shroud_overlay = overlay
+	_minimap.queue_redraw()
+	return true
+
+
+func _view_box_pixel(pixel: Color) -> bool:
+	return (
+		pixel.a > 0.5
+		and pixel.r >= VIEW_BOX_MIN_R
+		and pixel.g >= VIEW_BOX_MIN_G
+		and pixel.b <= VIEW_BOX_MAX_B
+		and pixel.r - pixel.b >= VIEW_BOX_MIN_RB
+	)
+
+
+func _largest_inscribed_view_box_radius(image: Image) -> Array:
+	## Returns [max radius, gold pixel count]. The radius is the largest disc
+	## wholly inside the gold stroke, i.e. half the band's thickest width.
+	var band := {}
+	for y in image.get_height():
+		for x in image.get_width():
+			if _view_box_pixel(image.get_pixel(x, y)):
+				band[Vector2i(x, y)] = true
+	var best := 0
+	for key in band.keys():
+		var centre: Vector2i = key
+		var radius := 0
+		while radius < VIEW_BOX_MIN_INSCRIBED_RADIUS + 3:
+			var next := radius + 1
+			var fits := true
+			for dy in range(-next, next + 1):
+				for dx in range(-next, next + 1):
+					if dx * dx + dy * dy > next * next:
+						continue
+					if not band.has(Vector2i(centre.x + dx, centre.y + dy)):
+						fits = false
+						break
+				if not fits:
+					break
+			if not fits:
+				break
+			radius = next
+		best = maxi(best, radius)
+		if best >= VIEW_BOX_MIN_INSCRIBED_RADIUS + 3:
+			break
+	return [best, band.size()]
+
+
+func _assert_shroud_does_not_tint(image: Image, pixels: int) -> void:
+	## Brief task 4, second clause. Compared against the SAME stage's unshrouded
+	## render, over the whole bezel interior, at full precision.
+	if _unshrouded == null:
+		_check("shroud_does_not_tint_explored_cells", false, "no unshrouded capture to compare against")
+		return
+	if _unshrouded.get_width() != image.get_width():
+		_check("shroud_does_not_tint_explored_cells", false, "size mismatch")
+		return
+	var centre := Vector2(pixels, pixels) * 0.5
+	var radius := float(pixels) * MinimapScript.BEZEL_RADIUS_RATIO
+	var differing := 0
+	var worst := 0.0
+	var worst_at := Vector2i.ZERO
+	for y in pixels:
+		for x in pixels:
+			if Vector2(x + 0.5, y + 0.5).distance_to(centre) > radius - 2.0:
+				continue
+			var before := _unshrouded.get_pixel(x, y)
+			var after := image.get_pixel(x, y)
+			var delta := maxf(
+				maxf(absf(before.r - after.r), absf(before.g - after.g)),
+				maxf(absf(before.b - after.b), absf(before.a - after.a))
+			)
+			if delta > 0.0:
+				differing += 1
+				if delta > worst:
+					worst = delta
+					worst_at = Vector2i(x, y)
+	_check(
+		"shroud_does_not_tint_explored_cells",
+		differing == 0,
+		"differing=%d worst=%.4f at %s" % [differing, worst, worst_at]
+	)
 
 
 func _assert_pixels(image: Image, pixels: int) -> void:
@@ -421,6 +553,21 @@ func _assert_pixels(image: Image, pixels: int) -> void:
 		corner_painted == 0,
 		"outside_pixels=%d" % corner_painted
 	)
+	# THE BAND AS RENDERED, not as a constant. A contract check on the width
+	# constant is tautological - reverting the draw call alone would leave it
+	# green. This measures the stroke in the composed PNG, so the only way to
+	# pass is to actually draw it that thick.
+	var band_measurement := _largest_inscribed_view_box_radius(image)
+	var band_radius: int = band_measurement[0]
+	var band_pixels: int = band_measurement[1]
+	_check(
+		"%d_view_box_band_is_drawn_at_retails_thickness" % pixels,
+		band_pixels > 0 and band_radius >= VIEW_BOX_MIN_INSCRIBED_RADIUS,
+		"inscribed_radius=%d (need >=%d, i.e. a band >=%dpx) gold_pixels=%d" % [
+			band_radius, VIEW_BOX_MIN_INSCRIBED_RADIUS,
+			VIEW_BOX_MIN_INSCRIBED_RADIUS * 2, band_pixels
+		]
+	)
 	# Blips: team colours are far outside the parchment ramp (which has r>g>b and
 	# no blue-dominant pixels at all), so counting blue-dominant pixels finds the
 	# player's units and nothing else.
@@ -476,15 +623,23 @@ func _process(_delta: float) -> bool:
 		# Not fatal on its own: keep spending frames until the budget runs out,
 		# in case the renderer simply has not presented yet.
 		return false
-	var path := "%s/radar-%dpx.png" % [_out_dir, _sizes[_index]]
+	var shroud_stage := _index == SHROUD_STAGE_INDEX
+	var path := "%s/radar-%dpx%s.png" % [
+		_out_dir, _sizes[_index], "-shrouded" if shroud_stage else ""
+	]
 	var save_error := image.save_png(path)
 	_check(
-		"%d_capture_written" % _sizes[_index],
+		"%d_capture_written%s" % [_sizes[_index], "_shrouded" if shroud_stage else ""],
 		save_error == OK,
 		"save_png(%s) -> %d" % [path, save_error]
 	)
 	print("[minimap-capture] %s" % path)
-	_assert_pixels(image, _sizes[_index])
+	if shroud_stage:
+		_assert_shroud_does_not_tint(image, _sizes[_index])
+	else:
+		_assert_pixels(image, _sizes[_index])
+		if _sizes[_index] == RADAR_PIXELS and _unshrouded == null:
+			_unshrouded = image.duplicate()
 	_index += 1
 	_stood_up = false
 	return false
