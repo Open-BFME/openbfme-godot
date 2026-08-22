@@ -235,6 +235,35 @@ func _run() -> void:
 		_check("view_box_edge_rejects_wrong_crop_dimensions", false, "binding seam unavailable")
 		_check("view_box_edge_accepts_the_authored_7_by_8_crop", false, "binding seam unavailable")
 
+	# THE FALLBACK VIEW BOX HAS TO BE VISIBLE. Retail's gold view-box band is
+	# 3.5px wide against a 74px dish opening in
+	# `bfme2-fords-men-reference-youtube-z6ZI6wY_LYE-500s.png` (column profile at
+	# x=152: y602..y605, peak (252,215,91)) - 0.047 of the bezel radius. The
+	# procedural fallback used to draw a flat 1.6px line whatever the dish size,
+	# which at the shipping 362px control is 0.010 of the radius: four to five
+	# times too thin, and part of why the owner could not read the radar.
+	var sized_minimap = MinimapScript.new()
+	sized_minimap.size = Vector2(362, 362)
+	var expected_width: float = (
+		sized_minimap.bezel_radius() * MinimapScript.RETAIL_VIEW_BOX_EDGE_RADIUS_RATIO
+	)
+	_check(
+		"view_box_fallback_width_scales_with_the_dish",
+		sized_minimap.has_method("view_box_line_width")
+			and is_equal_approx(float(sized_minimap.call("view_box_line_width")), expected_width)
+			and expected_width > 6.0,
+		"width=%s expected=%.3f" % [
+			sized_minimap.view_box_line_width() if sized_minimap.has_method("view_box_line_width") else "absent",
+			expected_width,
+		]
+	)
+	_check(
+		"view_box_fallback_uses_the_measured_retail_gold",
+		_close(Color(MinimapScript.VIEW_BOX_FALLBACK_GOLD), Color8(252, 215, 91), 0.004),
+		"gold=%s" % [MinimapScript.VIEW_BOX_FALLBACK_GOLD]
+	)
+	sized_minimap.free()
+
 	var hud_script = load("res://src/retail_slice/retail_hud.gd")
 	var fallback_hud = hud_script.new()
 	var fallback_minimap = MinimapScript.new()

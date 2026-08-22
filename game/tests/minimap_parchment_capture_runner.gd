@@ -62,6 +62,26 @@ const INK_ALPHA_FLOOR := 0.45
 ## one for being sparse. Ratio, not equality, because the sheet is inscribed in
 ## the bezel while this counts only the inner 65% of the disc.
 const INK_COVERAGE_RATIO := 0.30
+## RETAIL'S OWN RADAR DISC, MEASURED. Mean luminance of the palantir dish in the
+## RotWK reference capture
+## `workspace/retail-work/oracle/captures/bfme2-fords-men-reference-youtube-z6ZI6wY_LYE-500s.png`,
+## taken over 20 equal radial bins about the dish centre (131,598) out to the
+## bezel opening radius 74px, then normalised to the profile's own peak. The
+## numbers are the composed retail radar: paper, ink, blips and view box all in.
+## What matters here is the TAIL - retail's dish still reads at 0.43 of peak
+## right at the metal, so the outer third of the map stays legible.
+const RETAIL_RADIAL_LUMINANCE: Array[float] = [
+	0.85, 1.00, 1.00, 0.96, 0.94, 0.93, 0.94, 0.90, 0.92, 0.90,
+	0.93, 0.90, 0.85, 0.82, 0.78, 0.68, 0.60, 0.53, 0.48, 0.43,
+]
+## Bins compared, and how far below retail the render may sit. Only the OUTER
+## quarter is asserted: that is where the owner's "the radar blends into the
+## terrain" lives, and where drawing the authored sheet's own vignette 1:1
+## across the bezel opening drove the dish to 0.10-0.35 of peak (measured at
+## 887d712b). One-sided by design - ink and shroud can only take light away, so
+## a floor is the honest contract.
+const RETAIL_RADIAL_FIRST_ASSERTED_BIN := 15
+const RETAIL_RADIAL_TOLERANCE := 0.10
 
 var _out_dir := ""
 var _art_path := ""
@@ -219,6 +239,40 @@ func _stand_up(pixels: int) -> void:
 	_viewport.add_child(_minimap)
 
 
+func _radial_luminance_profile(image: Image, centre: Vector2, radius: float) -> Array[float]:
+	## The composed dish's mean luminance per radial bin, normalised to its own
+	## peak - the same measurement `RETAIL_RADIAL_LUMINANCE` was taken with, so
+	## the two are directly comparable across resolutions and dish sizes.
+	var bins := RETAIL_RADIAL_LUMINANCE.size()
+	var total: Array[float] = []
+	var count: Array[int] = []
+	for _index in bins:
+		total.append(0.0)
+		count.append(0)
+	for y in image.get_height():
+		for x in image.get_width():
+			var point := Vector2(x + 0.5, y + 0.5)
+			var distance := point.distance_to(centre)
+			if distance > radius:
+				continue
+			var pixel := image.get_pixel(x, y)
+			if pixel.a <= 0.5:
+				continue
+			var bin := mini(bins - 1, int(distance / radius * float(bins)))
+			total[bin] += pixel.get_luminance()
+			count[bin] += 1
+	var means: Array[float] = []
+	var peak := 0.0
+	for index in bins:
+		var mean := total[index] / maxf(float(count[index]), 1.0)
+		means.append(mean)
+		peak = maxf(peak, mean)
+	var normalised: Array[float] = []
+	for mean in means:
+		normalised.append(mean / maxf(peak, 0.0001))
+	return normalised
+
+
 func _parchment_disc_mean(radius: float) -> Vector3:
 	## The mean of RETAIL'S OWN sheet over the same disc the render is measured
 	## across, so the assertion above has a source of truth instead of a
@@ -227,8 +281,13 @@ func _parchment_disc_mean(radius: float) -> Vector3:
 		return Vector3.ZERO
 	var sheet: Image = _minimap.radar_paper.get_image()
 	var half := Vector2(sheet.get_width() - 1, sheet.get_height() - 1) * 0.5
-	# The render samples inside `radius - 2`; the sheet is drawn at `radius`.
-	var sample_radius := half.x * (radius - 2.0) / maxf(radius, 1.0)
+	# The render samples inside `radius - 2`; the sheet is drawn across
+	# `radius * RETAIL_PARCHMENT_DISC_SCALE`, so only its inner
+	# `1 / RETAIL_PARCHMENT_DISC_SCALE` is ever inside the bezel.
+	var sample_radius := (
+		half.x * (radius - 2.0)
+		/ maxf(radius * MinimapScript.RETAIL_PARCHMENT_DISC_SCALE, 1.0)
+	)
 	var total := Vector3.ZERO
 	var count := 0
 	for y in sheet.get_height():
@@ -333,6 +392,29 @@ func _assert_pixels(image: Image, pixels: int) -> void:
 		"ink=%.4f of inner=%d floor=%.4f (art authors %.4f)" % [
 			ink_fraction, inner_count, ink_floor, _art_ink_coverage
 		]
+	)
+	# THE OWNER'S DEFECT, MEASURED. Retail's palantir dish stays legible all the
+	# way to the metal (0.43 of peak in the reference capture); drawing the
+	# authored parchment sheet 1:1 across the bezel opening put the sheet's own
+	# black rim inside the opening and took our outer quarter down to 0.10-0.35,
+	# which is why the map ink and the blips out there vanished and the dish read
+	# as flat tan. Asserted per bin, so a regression names the radius it broke at.
+	var profile := _radial_luminance_profile(image, centre, radius)
+	var radial_failures := PackedStringArray()
+	for index in range(RETAIL_RADIAL_FIRST_ASSERTED_BIN, RETAIL_RADIAL_LUMINANCE.size()):
+		var floor_value: float = RETAIL_RADIAL_LUMINANCE[index] - RETAIL_RADIAL_TOLERANCE
+		if profile[index] < floor_value:
+			radial_failures.append(
+				"r/R=%.2f got=%.2f floor=%.2f" % [
+					(float(index) + 0.5) / float(RETAIL_RADIAL_LUMINANCE.size()),
+					profile[index],
+					floor_value,
+				]
+			)
+	_check(
+		"%d_rim_stays_legible_like_retails_dish" % pixels,
+		radial_failures.is_empty(),
+		"%s | profile=%s" % [", ".join(radial_failures), profile]
 	)
 	_check(
 		"%d_nothing_spills_outside_the_bezel" % pixels,
