@@ -92,12 +92,9 @@ func _run() -> void:
 	_check("queue_chips_exist", chip_rects.size() == 5, str(chip_rects.size()))
 
 	# --- the authored sockets must not sit under the queue chips --------------
-	var socket_rects: Array[Rect2] = []
-	for slot in hud_script.RETAIL_COMMAND_SLOT_SOURCE.size():
-		socket_rects.append(Rect2(
-			panel_rect.position + (hud_script.RETAIL_COMMAND_SLOT_SOURCE[slot] as Vector2),
-			hud_script.RETAIL_COMMAND_SLOT_SIZE as Vector2
-		))
+	var socket_rects := _authored_seat_rects(
+		hud_script, panel_rect.position, hud_script.RETAIL_COMMAND_SLOT_SIZE as Vector2
+	)
 	# BOTH BOUNDS COME OUT OF RETAIL'S OWN ARC, computed here rather than typed in:
 	# its tightest authored pair centre to centre, and its worst authored pair by
 	# overlap AREA. An expanded range may be no tighter and no more overlapping
@@ -238,16 +235,47 @@ func _run() -> void:
 		var scaled_size: Vector2 = Vector2.ONE * float(scaled_size_value)
 		var scaled_failures: Array[String] = []
 		var scaled_counts := [7, 8, 9] if scaled_size_value <= 64.0 else [7, 8]
+		# The bound is retail's own authored seat set AT THIS SIZE, recomputed,
+		# for the same reason the 64px rows above use it: an absolute
+		# no-intersection rule fails `Palantir.apt` itself, whose glass sockets 1/2
+		# and 3/4 overlap as boxes once the button is 64px or larger. Containment
+		# is against the VIEWPORT, not the panel: `subMenu0` is authored at stage
+		# [289.0, 531.3], so a 64px button centred on it overhangs the 360px dock
+		# band's top edge by 4.9px. That overhang is retail geometry.
+		var scaled_seats := _authored_seat_rects(hud_script, panel_rect.position, scaled_size)
+		var scaled_minimum_separation := INF
+		var scaled_maximum_overlap := 0.0
+		for left in scaled_seats.size():
+			for right in range(left + 1, scaled_seats.size()):
+				scaled_minimum_separation = minf(
+					scaled_minimum_separation,
+					scaled_seats[left].get_center().distance_to(scaled_seats[right].get_center())
+				)
+				scaled_maximum_overlap = maxf(
+					scaled_maximum_overlap, _overlap_area(scaled_seats[left], scaled_seats[right])
+				)
+		var viewport_rect := Rect2(Vector2.ZERO, Vector2(root.size))
 		for count in scaled_counts:
 			var scaled_rects: Array[Rect2] = []
 			for index in count:
 				scaled_rects.append(Rect2(hud._radial_button_position(index, count, scaled_size), scaled_size))
 			for index in scaled_rects.size():
-				if not panel_rect.encloses(scaled_rects[index]):
-					scaled_failures.append("size=%d count=%d outside=%s" % [int(scaled_size_value), count, str(scaled_rects[index])])
+				if not viewport_rect.encloses(scaled_rects[index]):
+					scaled_failures.append("size=%d count=%d offscreen=%s" % [int(scaled_size_value), count, str(scaled_rects[index])])
 				for other in range(index + 1, scaled_rects.size()):
-					if scaled_rects[index].intersects(scaled_rects[other]):
-						scaled_failures.append("size=%d count=%d overlap=%d/%d" % [int(scaled_size_value), count, index, other])
+					var area := _overlap_area(scaled_rects[index], scaled_rects[other])
+					var separation := scaled_rects[index].get_center().distance_to(
+						scaled_rects[other].get_center()
+					)
+					if area > scaled_maximum_overlap + 0.01:
+						scaled_failures.append("size=%d count=%d overlap=%d/%d %.1f>%.1f" % [
+							int(scaled_size_value), count, index, other, area, scaled_maximum_overlap
+						])
+					if separation < scaled_minimum_separation - 0.01:
+						scaled_failures.append("size=%d count=%d separation=%d/%d %.1f<%.1f" % [
+							int(scaled_size_value), count, index, other,
+							separation, scaled_minimum_separation
+						])
 		_check("angmar_page_geometry_is_clear_at_%dpx_layout_scale" % int(scaled_size_value), scaled_failures.is_empty(), str(scaled_failures))
 
 	# --- why the separation oracle is a distance and not a rectangle ----------
@@ -514,3 +542,41 @@ func _check(name: String, condition: bool, detail: String = "") -> bool:
 func _finish() -> void:
 	print("RETAIL_RADIAL_LAYOUT_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
+
+
+## RETAIL'S OWN SEAT SET for a command page, in panel coordinates.
+##
+## Six `glass0..glass5` sockets AND the four `subMenu0..subMenu3` seats, both
+## from `Palantir.apt` sprite character 114 frame 9 (sha256 c629e2b6...). The
+## subMenu seats carry their own four `toggleFlash0..3` overlays on the same ring
+## scaled 0.62, which is what proves they are four real seats and not a partial
+## enumeration of the six sockets.
+##
+## Six plus four is exactly the ten seats a paged hero range asks for
+## (`Command_SelectRevivablesMenFortress`, commandbutton.ini:11003-11004,
+## CommandRangeStart 14 / CommandRangeCount 10, over MenFortressCommandSet's
+## `InitialVisible = 6`, commandset.ini:1876-1899).
+##
+## Every bound in this runner is derived from THIS set, never typed in.
+func _authored_seat_rects(hud_script, origin: Vector2, button_size: Vector2) -> Array[Rect2]:
+	var stage: Script = load("res://src/retail_slice/retail_hud_stage.gd")
+	var apt: Script = load("res://src/retail_slice/retail_hud_apt_runtime.gd")
+	# RETAIL_COMMAND_SLOT_SOURCE is the authored dock point minus the command
+	# panel's own dock x origin (retail_hud.gd `_build_command_panel`,
+	# offset_left = 360), so the ring seats are put in the same frame.
+	var panel_dock_x := 360.0
+	# Anchored the way production anchors: at the authored seat's top-left for an
+	# authored-size socket, whatever size the theme then draws.
+	var rects: Array[Rect2] = []
+	for slot in hud_script.RETAIL_COMMAND_SLOT_SOURCE.size():
+		rects.append(Rect2(
+			origin + (hud_script.RETAIL_COMMAND_SLOT_SOURCE[slot] as Vector2), button_size
+		))
+	for ring_index in apt.PALANTIR_SUBMENU_SLOT_LOCAL.size():
+		rects.append(Rect2(
+			origin
+			+ stage.submenu_slot_dock(ring_index, hud_script.RETAIL_COMMAND_SLOT_SIZE)
+			- Vector2(panel_dock_x, 0.0),
+			button_size
+		))
+	return rects

@@ -91,8 +91,12 @@ func _stand_up_hud() -> void:
 		{"id": 2, "unit_type": "hero.b", "name": "Hero B", "level": 1,
 			"health": 100, "maximum_health": 100, "selected": false},
 	])
+	# TEN entries: the fortress hero page `Command_SelectRevivablesMenFortress`
+	# reveals (commandbutton.ini:11003-11004, CommandRangeStart 14 /
+	# CommandRangeCount 10). That is the page in the owner's 1920x1080 v0.2.8
+	# capture, so it is the page this camera has to point at.
 	var entries: Array = []
-	for index in 4:
+	for index in 10:
 		entries.append({
 			"command_kind": "train", "id": "capture.%d" % index, "icon": null,
 			"text": "C%d" % index, "enabled": true, "label": "Command %d" % index,

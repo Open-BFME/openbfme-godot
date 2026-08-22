@@ -91,7 +91,12 @@ func _hero_select_all_image_id() -> String:
 	return RETAIL_HERO_SELECT_ALL_EVIL_IMAGE_ID if RETAIL_EVIL_FACTIONS.has(_faction_surface.to_lower()) else RETAIL_HERO_SELECT_ALL_IMAGE_ID
 const RETAIL_PALANTIR_FRAME_ATLAS := "assets/ui/palantir/atlases/apt-palantirexport-17-fb63d3d26008.png"
 const RETAIL_PALANTIR_ATLAS := "assets/ui/palantir/atlases/apt-palantir-1-d9888d52cd89.png"
-const RETAIL_PALANTIR_FRAME_SOURCE_SIZE := Vector2i(384, 256)
+# MEASURED FROM THE SHIPPED SHEET, and it was wrong until 2026-08-22.
+# `apt-palantirexport-17-fb63d3d26008.png` (the conversion of
+# `apt/palantirexport.big` -> art/Textures/apt_PalantirExport_17.tga) is
+# 512x256, not 384x256. `PalantirFrame` is placed at stage [0, 512] with an
+# identity matrix, so the sheet covers stage [0,512]..[512,768].
+const RETAIL_PALANTIR_FRAME_SOURCE_SIZE := Vector2i(512, 256)
 # Q37: `PalantirFrame` is authored at stage [0, 512] with an identity matrix,
 # so the 384x256 frame sheet covers stage [0,512]..[384,768]. Through the stage
 # transform at the design viewport that is 720x360 - not the invented 540x360.
@@ -179,9 +184,17 @@ const RETAIL_POWER_DOCK_SIZE := Vector2(76, 76)
 # three-piece composition (a synthetic backing disc, a separately scaled dish
 # annulus, and the left 250 columns stretched to 375x384) existed only to make
 # the mis-measured dish centre line up; with the authored centre it is dead.
+#
+# The region was cropped to the left 384 columns of a 512-wide sheet and the
+# declared source size said 384 to match, so the right 128 authored columns were
+# thrown away. They carry only a faint horizontal streak (max alpha 17/255 over
+# rows 137-159), which is why the crop was never visible - but the sheet is the
+# sheet, and 512 x 1.875 = 960, 256 x 1.40625 = 360 is where the stage puts it.
 const RETAIL_FRAME_PIECES := [
-	{"region": Rect2(0, 0, 384, 256), "dest": Rect2(0, 0, 720, 360)},
+	{"region": Rect2(0, 0, 512, 256), "dest": Rect2(0, 0, 960, 360)},
 ]
+## Inhabited columns of the frame sheet, used as the score overlay backdrop.
+const RETAIL_SCORE_SHELL_REGION := Rect2(0, 0, 384, 256)
 const RETAIL_ORB_RECTS := {
 	"options": Rect2(129, 34, 64, 64),
 	"powers": Rect2(202, 18, 79, 79),
@@ -216,7 +229,12 @@ const WORLD_RADIAL_STAGE_RADIUS := 39.0
 # a column in the panel's unused right margin, clear of every socket, of the
 # palantir dish (centre 227,219 radius 118) and of every expanded radial arc
 # position from six to twelve entries. The gate holds that claim.
-const RETAIL_QUEUE_CHIP_ORIGIN := Vector2(432, 56)
+# 2026-08-22: the column moved again, 432 -> 445, for the same reason the
+# comment above gives. A paged range now spills onto the AUTHORED subMenu
+# ring (`Palantir.apt` sprite 114), whose right-most seat `subMenu2` reaches
+# panel-local x 436.3 at a 64px button. Authored seats cannot move; the chips
+# can, so they do. 445 + 36 = 481 still ends well inside the 520px panel.
+const RETAIL_QUEUE_CHIP_ORIGIN := Vector2(445, 56)
 const RETAIL_QUEUE_CHIP_SIZE := Vector2(36, 36)
 const RETAIL_QUEUE_CHIP_PITCH := 40.0
 ## Chips built up front. Retail's palantir queue art is NINE slots
@@ -3895,7 +3913,14 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 			for state in ["normal", "hover", "pressed", "disabled"]:
 				power_button.add_theme_stylebox_override(state, power_socket)
 			power_button.add_theme_constant_override("icon_max_width", 76)
-	var shell := _atlas_region(retail_apt_runtime.exact_atlas_texture(RETAIL_PALANTIR_FRAME_ATLAS), Rect2(Vector2.ZERO, RETAIL_PALANTIR_FRAME_SOURCE_SIZE))
+	# The score overlay borrows the frame sheet as a backdrop and stretches it to
+	# an arbitrary rectangle, so it takes the sheet's INHABITED columns (0..384;
+	# 384..512 is the faint streak) rather than the whole 512-wide sheet the
+	# control bar draws at its authored stage rect.
+	var shell := _atlas_region(
+		retail_apt_runtime.exact_atlas_texture(RETAIL_PALANTIR_FRAME_ATLAS),
+		RETAIL_SCORE_SHELL_REGION
+	)
 	var score_shell := TextureRect.new()
 	score_shell.name = "RetailScoreFrame"
 	score_shell.texture = shell
@@ -4812,42 +4837,26 @@ func _radial_button_position(index: int, count: int, button_size: Vector2, slot:
 		if slot >= 1 and slot <= RETAIL_COMMAND_SLOT_SOURCE.size():
 			socket = slot - 1
 		return command_panel.position + RETAIL_COMMAND_SLOT_SOURCE[socket]
-	# Longer authored ranges continue the same open socket arc. Radius restores
-	# the old count-scaled property and angular extent grows only as far as needed
-	# for 64px buttons, never an invented full-360 ring.
-	var panel_dish_center := RETAIL_DISH_CENTER - Vector2(command_panel.position.x, 0.0)
-	var authored_center := command_panel.position + panel_dish_center
-	var first_center := RETAIL_COMMAND_SLOT_SOURCE[0] + RETAIL_COMMAND_SLOT_SIZE * 0.5
-	var last_center := RETAIL_COMMAND_SLOT_SOURCE[-1] + RETAIL_COMMAND_SLOT_SIZE * 0.5
-	var first_angle := (first_center - panel_dish_center).angle()
-	var last_angle := (last_center - panel_dish_center).angle()
-	while last_angle <= first_angle:
-		last_angle += TAU
-	# Seven entries sit at the oracle arc's measured outer radius (131px).
-	# Larger ranges keep growing instead of regressing to one fixed radius.
-	var radius_x := clampf(131.0 + 8.0 * float(count - 7), 117.0, 168.0)
-	# Expanded faction pages can contain up to twelve commands. A circular arc
-	# taller than the panel was formerly clamped row-by-row at the bottom edge;
-	# that collapsed two Angmar buttons onto each other. Use the same authored
-	# angular arc on the largest ellipse that fits the current panel and button
-	# size. This is count/faction/UI-size independent and needs no post-clamp.
-	var half := button_size * 0.5
-	var radius_y := minf(radius_x, maxf(1.0, command_panel.size.y * 0.5 - half.y - 2.0))
-	var minimum_center := command_panel.position + half + Vector2(radius_x, radius_y)
-	var maximum_center := command_panel.position + command_panel.size - half - Vector2(radius_x, radius_y)
-	var wheel_center := Vector2(
-		clampf(authored_center.x, minimum_center.x, maximum_center.x),
-		clampf(authored_center.y, minimum_center.y, maximum_center.y)
-	)
-	# Rectangles collide on the diagonal even when their centres are one width
-	# apart. The sqrt(2) chord makes at least one screen axis clear by 2px.
-	var min_chord := sqrt(2.0) * (maxf(button_size.x, button_size.y) + 2.0)
-	var min_step := 2.0 * asin(clampf(min_chord / (2.0 * minf(radius_x, radius_y)), 0.0, 1.0))
-	var authored_sweep := last_angle - first_angle
-	var sweep := minf(TAU - min_step, maxf(authored_sweep, min_step * float(count - 1)))
-	var midpoint := (first_angle + last_angle) * 0.5
-	var angle := midpoint - sweep * 0.5 + sweep * float(index) / float(count - 1)
-	return wheel_center + Vector2(cos(angle) * radius_x, sin(angle) * radius_y) - half
+	# A PAGED range longer than six keeps the six authored glass sockets and
+	# spills onto the authored sub-menu ring - `Palantir.apt` sprite character
+	# 114 places `subMenu0..subMenu3` around the same `CommandButtons` origin as
+	# `glass0..glass5`, and six plus four is exactly the ten seats
+	# `Command_SelectRevivablesMenFortress` asks for (commandbutton.ini
+	# :11003-11004 over commandset.ini:1876-1899 `InitialVisible = 6`).
+	#
+	# What this replaces was invented: a 131 + 8*(count-7) px ellipse clamped to
+	# 117..168 with a synthesized angular sweep. At the owner's 1920x1080 it put
+	# a fortress hero page on a ~163px wheel that overlapped the radar globe and
+	# left the command dish empty - the defect in the v0.2.8 capture.
+	if index < RETAIL_COMMAND_SLOT_SOURCE.size():
+		return command_panel.position + RETAIL_COMMAND_SLOT_SOURCE[index]
+	# Anchored exactly as the glass sockets are: RETAIL_COMMAND_SLOT_SOURCE is
+	# the authored centre minus half an authored socket, and production places a
+	# button at that point whatever `button_size` a theme hands it. The ring uses
+	# the same authored socket size so the two seat families stay in one frame.
+	return command_panel.position + StageScript.submenu_slot_dock(
+		index - RETAIL_COMMAND_SLOT_SOURCE.size(), RETAIL_COMMAND_SLOT_SIZE
+	) - Vector2(command_panel.offset_left, 0.0)
 
 
 func _set_radial_socket_surface_active(active: bool, occupied: Dictionary = {}, hide_all_empty: bool = false) -> void:

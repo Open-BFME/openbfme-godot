@@ -151,6 +151,29 @@ const PALANTIR_COMMAND_SLOT_LOCAL := [
 	Vector2(-19.0, -98.2), Vector2(29.0, -81.2), Vector2(55.0, -40.2),
 	Vector2(53.0, 9.8), Vector2(21.0, 48.8), Vector2(-26.0, 59.8),
 ]
+## Palantir.apt sprite character 114 (`CommandButtons`), frame 0: the FOUR
+## authored SUB-MENU seats, `subMenu0..subMenu3` (imported character 106), LOCAL
+## to the same `CommandButtons` stage placement the six glass sockets use.
+##
+## THIS IS THE OVERFLOW RING RETAIL AUTHORS, and it is why a paged command range
+## can be larger than six. `MenFortressCommandSet` (commandset.ini:1876-1899)
+## declares `InitialVisible = 6` and hides its hero slots 14-23 behind
+## `Command_SelectRevivablesMenFortress`, whose `CommandRangeStart 14 /
+## CommandRangeCount 10` (commandbutton.ini:11003-11004) asks for TEN seats.
+## Six glass sockets plus these four subMenu seats is exactly ten.
+##
+## Each row carries a rotation matrix as well as a translation - 0deg, 35.87deg,
+## 70.03deg, 105.49deg - so the seats face outward along a ring. Their polar
+## angles measured from straight up are 0.245deg, 36.85deg, 72.16deg and
+## 109.79deg (mean step 36.51deg) at radii 128.551, 126.720, 124.058 and 123.752
+## (mean 125.770). `RetailHudStage.submenu_slot_center_dock` uses these four
+## VERBATIM and continues the same ring by the authored mean step at the
+## authored mean radius for the wider ranges retail also authors (the largest
+## `CommandRangeCount` in commandbutton.ini is 14, i.e. eight ring seats).
+const PALANTIR_SUBMENU_SLOT_LOCAL := [
+	Vector2(-0.55, -128.55), Vector2(76.0, -101.4),
+	Vector2(118.1, -38.0), Vector2(116.45, 41.9),
+]
 ## Palantir.apt sprite character 136 (`ResourceBar`), frame 0: children LOCAL to
 ## the ResourceBar placement at stage [42.45, 719.4]. `Resources` carries the
 ## money text (character 130, placeholder "999999"); `CommandPoints` carries the

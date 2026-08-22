@@ -359,6 +359,7 @@ func _run() -> void:
 	_check_side_command_bar(hud)
 	_check_authored_stage_layout(hud)
 	_check_authored_hero_bar(hud)
+	_check_paged_command_page_layout(hud)
 
 	hud.free()
 	_cleanup_fixture()
@@ -385,6 +386,43 @@ func _check_authored_stage_layout(hud) -> void:
 		is_equal_approx(dock.size.x, expected_dock.size.x)
 			and is_equal_approx(dock.size.y, expected_dock.size.y),
 		"dock=%s expected=%s" % [str(dock.size), str(expected_dock.size)]
+	)
+	# THE CONTROL-BAR ART, and what it is NOT.
+	#
+	# controlbarscheme.ini:156-165 authors the in-game bar as one ImagePart at
+	# X:0 Y:520, 1024x248, image `SGCommandBar` (`SMCommandBar` for Men, one per
+	# side). That texture SHIPS IN NO ARCHIVE: `SGCommandBar.tga` and its five
+	# siblings are absent from every .big in both layers of the RotWK layered
+	# install (all archives enumerated, zero hits on "commandbar"). BFME2 moved
+	# the in-game HUD to APT, and controlbarscheme.ini is carried-forward BFME1
+	# text. So there is no full-width bar bitmap to render, and a lane that
+	# claims to have rendered one is claiming something retail does not ship.
+	#
+	# What IS authored is `PalantirFrame`, placed at stage [0, 512] with an
+	# identity matrix, whose sheet (`apt_PalantirExport_17`, 512x256) therefore
+	# covers stage [0,512]..[512,768]. Assert exactly that.
+	var frame_piece: Dictionary = hud.RETAIL_FRAME_PIECES[0]
+	var authored_sheet := Rect2(
+		Vector2.ZERO, Vector2(hud.RETAIL_PALANTIR_FRAME_SOURCE_SIZE)
+	)
+	var authored_dest := Rect2(
+		stage.to_dock(apt.PALANTIR_STAGE_PLACEMENTS["PalantirFrame"]),
+		stage.scale_size(Vector2(hud.RETAIL_PALANTIR_FRAME_SOURCE_SIZE))
+	)
+	_check(
+		"control_bar_art_is_the_whole_authored_frame_sheet",
+		(frame_piece["region"] as Rect2).is_equal_approx(authored_sheet),
+		"region=%s sheet=%s" % [str(frame_piece["region"]), str(authored_sheet)]
+	)
+	_check(
+		"control_bar_art_sits_at_its_authored_stage_rect",
+		(frame_piece["dest"] as Rect2).is_equal_approx(authored_dest),
+		"dest=%s authored=%s" % [str(frame_piece["dest"]), str(authored_dest)]
+	)
+	_check(
+		"control_bar_frame_node_is_wide_enough_for_the_authored_art",
+		float(hud.RETAIL_PALANTIR_DISPLAY_SIZE.x) >= authored_dest.size.x,
+		"node=%s art=%s" % [str(hud.RETAIL_PALANTIR_DISPLAY_SIZE.x), str(authored_dest.size.x)]
 	)
 	# Dish centre: `EmptyGlobe` stage [280.2, 660.9].
 	_check(
@@ -881,3 +919,123 @@ func _finish() -> void:
 	_cleanup_fixture()
 	print("RETAIL_FOUR_UNIT_HUD_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
+
+
+## The PAGED command page must fit the palantir graphics.
+##
+## Retail's fortress command sets are one paged set: `MenFortressCommandSet`
+## (commandset.ini:1876-1899) declares `InitialVisible = 6`, hero slots 14-23,
+## and `Command_SelectRevivablesMenFortress` (commandbutton.ini:11003-11004)
+## reveals them with `CommandRangeStart 14 / CommandRangeCount 10`. TEN buttons
+## have to land somewhere authored, and `Palantir.apt` says exactly where: the
+## `CommandButtons` sprite (character 114, frame 9) carries the six `glass0..5`
+## sockets AND FOUR `subMenu0..subMenu3` placements on an outer ring. Six plus
+## four is the ten the hero range asks for.
+##
+## The owner's 1920x1080 v0.2.8 capture shows neither: eleven portraits on an
+## invented ~163px ellipse that swallows the palantir and overlaps the radar
+## globe. These checks read the authored table, not a screenshot.
+func _check_paged_command_page_layout(hud) -> void:
+	var stage: Script = load("res://src/retail_slice/retail_hud_stage.gd")
+	var apt: Script = load("res://src/retail_slice/retail_hud_apt_runtime.gd")
+	_check(
+		"submenu_ring_table_is_the_authored_apt_placements",
+		apt.PALANTIR_SUBMENU_SLOT_LOCAL.size() == 4
+			and (apt.PALANTIR_SUBMENU_SLOT_LOCAL[0] as Vector2).is_equal_approx(
+				Vector2(-0.55, -128.55)
+			)
+			and (apt.PALANTIR_SUBMENU_SLOT_LOCAL[3] as Vector2).is_equal_approx(
+				Vector2(116.45, 41.9)
+			),
+		str(apt.PALANTIR_SUBMENU_SLOT_LOCAL)
+	)
+	# A ten-entry hero page, exactly as MenFortressCommandSet reveals it.
+	var entries: Array = []
+	for index in 10:
+		entries.append({
+			"command_kind": "hero", "id": "hero.%d" % index, "icon": null,
+			"text": "H%d" % index, "enabled": true, "label": "Hero %d" % index,
+			"tooltip": "", "slot": 14 + index,
+		})
+	hud.sync_radial_commands(Vector2(900.0, 400.0), entries)
+	var buttons: Array = hud._radial_buttons
+	_check(
+		"paged_page_builds_one_button_per_authored_slot",
+		buttons.size() == entries.size(),
+		"%d vs %d" % [buttons.size(), entries.size()]
+	)
+	var panel_origin: Vector2 = hud.command_panel.position
+	var glass_ok := true
+	var glass_detail := ""
+	for index in mini(buttons.size(), hud.RETAIL_COMMAND_SLOT_SOURCE.size()):
+		var expected: Vector2 = panel_origin + (hud.RETAIL_COMMAND_SLOT_SOURCE[index] as Vector2)
+		var actual: Vector2 = (buttons[index] as Button).position
+		if not actual.is_equal_approx(expected):
+			glass_ok = false
+			glass_detail += "b%d actual=%s authored=%s; " % [index, str(actual), str(expected)]
+	_check("paged_page_keeps_the_six_authored_glass_sockets", glass_ok, glass_detail)
+	var ring_ok := true
+	var ring_detail := ""
+	for index in range(hud.RETAIL_COMMAND_SLOT_SOURCE.size(), buttons.size()):
+		var ring_index: int = index - hud.RETAIL_COMMAND_SLOT_SOURCE.size()
+		var expected: Vector2 = panel_origin + stage.submenu_slot_dock(
+			ring_index, hud.RETAIL_COMMAND_SLOT_SIZE
+		) - Vector2(360.0, 0.0)
+		var actual: Vector2 = (buttons[index] as Button).position
+		if not actual.is_equal_approx(expected):
+			ring_ok = false
+			ring_detail += "b%d actual=%s authored=%s; " % [index, str(actual), str(expected)]
+	_check("paged_overflow_uses_the_authored_submenu_ring", ring_ok, ring_detail)
+	# The first four ring seats ARE the authored subMenu placements, verbatim.
+	var verbatim_ok := true
+	var verbatim_detail := ""
+	for ring_index in apt.PALANTIR_SUBMENU_SLOT_LOCAL.size():
+		var authored: Vector2 = stage.to_dock(
+			(apt.PALANTIR_STAGE_PLACEMENTS["CommandButtons"] as Vector2)
+			+ (apt.PALANTIR_SUBMENU_SLOT_LOCAL[ring_index] as Vector2)
+		)
+		var derived: Vector2 = stage.submenu_slot_center_dock(ring_index)
+		if not derived.is_equal_approx(authored):
+			verbatim_ok = false
+			verbatim_detail += "ring%d derived=%s authored=%s; " % [
+				ring_index, str(derived), str(authored)
+			]
+	_check(
+		"first_four_ring_seats_are_the_authored_placements_verbatim",
+		verbatim_ok,
+		verbatim_detail
+	)
+	# The owner's symptom, stated as geometry: no command button may sit on the
+	# radar globe (`RadarBackground` centre, RETAIL_RADAR_RADIUS).
+	var radar_centre: Vector2 = (
+		panel_origin - Vector2(360.0, 0.0) + (hud.RETAIL_RADAR_CENTER as Vector2)
+	)
+	var clear_of_radar := true
+	var radar_detail := ""
+	for index in buttons.size():
+		var button := buttons[index] as Button
+		var centre: Vector2 = button.position + button.size * 0.5
+		var distance := centre.distance_to(radar_centre)
+		if distance < float(hud.RETAIL_RADAR_RADIUS):
+			clear_of_radar = false
+			radar_detail += "b%d centre=%s d=%.1f<%.1f; " % [
+				index, str(centre), distance, float(hud.RETAIL_RADAR_RADIUS)
+			]
+	_check("no_paged_command_button_sits_on_the_radar_globe", clear_of_radar, radar_detail)
+	# ... nor inside the palantir command dish, where the portrait, the level
+	# text and the health arc live.
+	var dish_centre: Vector2 = (
+		panel_origin - Vector2(360.0, 0.0) + (hud.RETAIL_DISH_CENTER as Vector2)
+	)
+	var dish_extents: Vector2 = hud.RETAIL_DISH_HALF_EXTENTS
+	var clear_of_dish := true
+	var dish_detail := ""
+	for index in buttons.size():
+		var button := buttons[index] as Button
+		var centre: Vector2 = button.position + button.size * 0.5
+		var offset: Vector2 = (centre - dish_centre) / dish_extents
+		if offset.length() < 1.0:
+			clear_of_dish = false
+			dish_detail += "b%d centre=%s norm=%.2f; " % [index, str(centre), offset.length()]
+	_check("no_paged_command_button_sits_inside_the_dish", clear_of_dish, dish_detail)
+	hud.hide_radial_commands()

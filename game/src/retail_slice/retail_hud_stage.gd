@@ -89,6 +89,92 @@ static func command_slot_dock(
 	return command_slot_center_dock(index, viewport) - button_size * 0.5
 
 
+## Authored SUB-MENU ring seat `index` CENTRE in dock-local pixels.
+##
+## Seats 0..3 are the `subMenu0..subMenu3` placements of `Palantir.apt` sprite
+## character 114, used verbatim. Seat 4 and beyond continue the SAME ring: the
+## authored mean angular step past the last authored seat, at the authored mean
+## radius. Nothing here is measured off a capture - every number is derived from
+## `RetailHudAptRuntime.PALANTIR_SUBMENU_SLOT_LOCAL`.
+##
+## Per-axis dock scaling turns the authored circle into the same wide oval the
+## radar and the dish become, which is what retail 16:9 shows.
+static func submenu_slot_center_dock(
+	index: int, viewport: Vector2 = DESIGN_VIEWPORT
+) -> Vector2:
+	var origin: Vector2 = APT_RUNTIME.PALANTIR_STAGE_PLACEMENTS["CommandButtons"]
+	return to_dock(origin + submenu_slot_local(index), viewport)
+
+
+## Authored SUB-MENU ring seat `index` in `CommandButtons`-local STAGE units.
+static func submenu_slot_local(index: int) -> Vector2:
+	var authored: Array = APT_RUNTIME.PALANTIR_SUBMENU_SLOT_LOCAL
+	if index < 0:
+		index = 0
+	if index < authored.size():
+		return authored[index] as Vector2
+	# Continue the authored ring. Angles are measured from straight up, the
+	# direction `subMenu0` points, and increase clockwise, the direction the
+	# authored four run.
+	var last_angle := _submenu_slot_angle(authored.size() - 1)
+	var angle := last_angle + submenu_ring_step() * float(index - authored.size() + 1)
+	var radius := submenu_ring_radius()
+	return Vector2(sin(angle) * radius, -cos(angle) * radius)
+
+
+## Polar angle (radians, clockwise from straight up) of an AUTHORED seat.
+static func _submenu_slot_angle(index: int) -> float:
+	var local: Vector2 = APT_RUNTIME.PALANTIR_SUBMENU_SLOT_LOCAL[index]
+	return atan2(local.x, -local.y)
+
+
+## Mean angular step of the authored four seats, in radians.
+static func submenu_ring_step() -> float:
+	var authored: Array = APT_RUNTIME.PALANTIR_SUBMENU_SLOT_LOCAL
+	if authored.size() < 2:
+		return 0.0
+	var first := _submenu_slot_angle(0)
+	var last := _submenu_slot_angle(authored.size() - 1)
+	return (last - first) / float(authored.size() - 1)
+
+
+## Mean radius of the authored four seats, in stage units.
+static func submenu_ring_radius() -> float:
+	var authored: Array = APT_RUNTIME.PALANTIR_SUBMENU_SLOT_LOCAL
+	var total := 0.0
+	for value in authored:
+		total += (value as Vector2).length()
+	return total / float(maxi(1, authored.size()))
+
+
+## Authored SUB-MENU ring seat TOP-LEFT for a button of `button_size`, in
+## dock-local pixels.
+static func submenu_slot_dock(
+	index: int, button_size: Vector2, viewport: Vector2 = DESIGN_VIEWPORT
+) -> Vector2:
+	return submenu_slot_center_dock(index, viewport) - button_size * 0.5
+
+
+## The first `count` authored command SEAT centres in dock-local pixels, in the
+## order a paged command range fills them: the six `glass0..glass5` sockets, then
+## the `subMenu0..subMenu3` ring and its authored continuation.
+##
+## This is the seat set `retail_hud.gd _radial_button_position` lays a page out
+## on, and the set every geometry gate derives its bounds from - so a gate cannot
+## hold production to a rule `Palantir.apt` itself breaks.
+static func command_seat_centers_dock(
+	count: int, viewport: Vector2 = DESIGN_VIEWPORT
+) -> Array[Vector2]:
+	var sockets: int = APT_RUNTIME.PALANTIR_COMMAND_SLOT_LOCAL.size()
+	var seats: Array[Vector2] = []
+	for index in maxi(0, count):
+		if index < sockets:
+			seats.append(command_slot_center_dock(index, viewport))
+		else:
+			seats.append(submenu_slot_center_dock(index - sockets, viewport))
+	return seats
+
+
 ## A `ResourceBar` child (`Resources`, `CommandPoints`, ...) in dock-local
 ## pixels.
 static func resource_child_dock(name: String, viewport: Vector2 = DESIGN_VIEWPORT) -> Vector2:
