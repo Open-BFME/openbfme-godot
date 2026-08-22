@@ -230,7 +230,7 @@ func _run() -> void:
 	panel.open(host_session, true, "Aragorn")
 	var ui_ok: bool = panel.heading_label != null and panel.heading_label.text == "GAME LOBBY - HOSTING" \
 		and panel.name_edit.text == "Aragorn" \
-		and panel.army_opt.item_count == 7 and panel.color_opt.item_count == 8 \
+		and panel.army_opt.item_count == 7 and panel.color_opt.item_count == 10 \
 		and panel.map_opt.visible and not panel.map_value_label.visible \
 		and panel.launch_button.visible and panel.hero_opt != null \
 		and panel.remote_name_label.text == "Witch King" \
