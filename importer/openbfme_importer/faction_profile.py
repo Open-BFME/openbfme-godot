@@ -993,6 +993,152 @@ def _eva_event_semantics(source: bytes) -> dict[str, dict[str, Any]]:
     }
 
 
+def _resolve_audio_roots_extension(
+    catalog: InstallCatalog,
+    label: str,
+    audio_slug: str,
+    roots: list[str],
+    existing_samples: dict[str, str],
+    existing_definitions: dict[str, Any],
+) -> tuple[
+    list[dict[str, Any]],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    list[str],
+    list[str],
+    Any,
+]:
+    """Resolve ``roots`` through the voice.ini / soundeffects.ini corpus.
+
+    The one resolver behind every extra-root audio surface (EVA announcers,
+    Create-a-Hero class voices).  Returns (resources, events, multisounds,
+    samples, missing_samples, dropped_definitions) in the manifest row shapes
+    ``_audio_resources_and_manifest`` emits.  Definitions the pack already
+    carries are not re-emitted; a definition left with no playable leaf is
+    DROPPED and named, never shipped as a silent stub.
+    """
+
+    sound_effects_document = _read_document(catalog, SOUND_EFFECTS_PATH)
+    voice_document = _read_document(catalog, VOICE_PATH)
+    definitions = parse_sage_audio_definitions(
+        sound_effects_document.source + b"\n" + voice_document.source
+    )
+    closure = resolve_sage_audio_closure(definitions, sorted(roots, key=str.casefold))
+    virtual_paths = [entry.name for entry in _effective_entries(catalog).values()]
+    sample_paths, missing_samples, ambiguous_samples = resolve_audio_sample_paths_partial(
+        closure.sample_ids, virtual_paths
+    )
+    if ambiguous_samples:
+        # Two catalog leaves answering one stem is an INSTALL problem, not a
+        # retail authoring fact: refusing keeps the coin-flip out of the pack.
+        raise ValueError(
+            "ambiguous %s audio samples: %s" % (label, ", ".join(sorted(ambiguous_samples)))
+        )
+
+    events: dict[str, Any] = {}
+    multisounds: dict[str, Any] = {}
+    for row in closure.events:
+        if row.id.casefold() in {item.casefold() for item in existing_definitions}:
+            continue
+        neutral = row.neutral()
+        neutral.pop("id")
+        events[row.id] = neutral
+    for row in closure.multisounds:
+        if row.id.casefold() in {item.casefold() for item in existing_definitions}:
+            continue
+        neutral = row.neutral()
+        neutral.pop("id")
+        multisounds[row.id] = neutral
+    dropped, pruned = _prune_unplayable_definitions(events, multisounds, missing_samples)
+
+    ordered_new_samples: list[tuple[str, str]] = []
+    known_sample_keys = {item.casefold() for item in existing_samples}
+    for sample_id in closure.sample_ids:
+        if sample_id.casefold() in known_sample_keys:
+            continue
+        if sample_id not in sample_paths:
+            continue
+        virtual_path = sample_paths[sample_id]
+        source_stem = PurePosixPath(virtual_path).stem
+        if source_stem.casefold() != sample_id.casefold() or _SAFE_OUTPUT_STEM.fullmatch(source_stem) is None:
+            raise ValueError(f"{label} audio sample {sample_id!r} has an unsafe or mismatched source stem")
+        _catalog_entry(catalog, virtual_path, f"{label} audio sample")
+        ordered_new_samples.append((sample_id, virtual_path))
+
+    resources: list[dict[str, Any]] = []
+    for batch_index, batch in enumerate(_chunks(ordered_new_samples, MAX_PATTERNS_PER_RESOURCE)):
+        resources.append(
+            {
+                "id": f"{audio_slug}-{label}-audio-leaves-{batch_index:03d}",
+                "kind": "audio",
+                "converter": "audio",
+                "patterns": [item[1] for item in batch],
+                "output": f"assets/audio/{audio_slug}/{{stem}}.wav",
+                "required": True,
+                "limit": len(batch),
+                "expected_count": len(batch),
+                "options": {"force_pcm": True},
+            }
+        )
+    samples = {
+        item[0]: f"assets/audio/{audio_slug}/{PurePosixPath(item[1]).stem.casefold()}.wav"
+        for item in ordered_new_samples
+    }
+    return resources, events, multisounds, samples, sorted(missing_samples, key=str.casefold), dropped, pruned
+
+
+def _cah_voice_audio_extension(
+    catalog: InstallCatalog,
+    audio_slug: str,
+    existing_samples: dict[str, str],
+    existing_definitions: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Cook the Create-a-Hero class voice sets into the faction's registry.
+
+    A created hero is synthesized at runtime from the ``cah.system`` table,
+    which names its voice events BY REFERENCE (``HeroWestMaleVoiceAttack``)
+    into the audio registry - it ships no samples of its own, so every event
+    the 16 subclass SoundUpgrade blocks in ``createaheroaudio.inc`` name must
+    be a root of the faction pack's registry or the hero is mute.  Before this
+    the registry only carried events some CONVERTED unit referenced, and
+    ``retail_slice_audio`` reported every created hero as
+    ``unvoiced_created_hero`` (owner's v0.2.8 run.log).  Same resolver as the
+    EVA announcers; the roots are the union of the unconditional subclass
+    routes the CAH compiler projects.
+    """
+
+    from .cah_system_compiler import AUDIO_PATH as CAH_AUDIO_PATH
+    from .cah_system_compiler import _cah_voice_bindings
+
+    audio_document = _read_document(catalog, CAH_AUDIO_PATH)
+    bindings = _cah_voice_bindings({CAH_AUDIO_PATH: audio_document.source})
+    roots: dict[str, str] = {}
+    for fields in bindings.values():
+        for event_ids in fields.values():
+            for event_id in event_ids:
+                roots.setdefault(event_id.casefold(), event_id)
+    (
+        resources,
+        events,
+        multisounds,
+        samples,
+        missing_samples,
+        dropped,
+        pruned,
+    ) = _resolve_audio_roots_extension(
+        catalog, "cah", audio_slug, sorted(roots.values(), key=str.casefold),
+        existing_samples, existing_definitions,
+    )
+    diagnostics = {
+        "rootCount": len(roots),
+        "missingSamples": missing_samples,
+        "droppedDefinitions": sorted(dropped, key=str.casefold),
+        "prunedDefinitions": pruned,
+    }
+    return resources, events, multisounds, samples, diagnostics
+
+
 def _eva_audio_extension(
     catalog: InstallCatalog,
     side: str,
@@ -1024,8 +1170,6 @@ def _eva_audio_extension(
     """
 
     eva_document = _read_document(catalog, EVA_PATH)
-    sound_effects_document = _read_document(catalog, SOUND_EFFECTS_PATH)
-    voice_document = _read_document(catalog, VOICE_PATH)
     eva_events = _eva_event_side_sounds(eva_document.source)
     side_keys = {side.casefold(), f"player{side.casefold()}"}
     roots: dict[str, str] = {}
@@ -1034,70 +1178,18 @@ def _eva_audio_extension(
         for sound_side, sound in pairs:
             if sound_side.casefold() in side_keys:
                 roots.setdefault(sound.casefold(), sound)
-    definitions = parse_sage_audio_definitions(
-        sound_effects_document.source + b"\n" + voice_document.source
+    (
+        resources,
+        events,
+        multisounds,
+        samples,
+        missing_samples,
+        dropped,
+        pruned,
+    ) = _resolve_audio_roots_extension(
+        catalog, "eva", audio_slug, sorted(roots.values(), key=str.casefold),
+        existing_samples, existing_definitions,
     )
-    closure = resolve_sage_audio_closure(definitions, sorted(roots.values(), key=str.casefold))
-    virtual_paths = [entry.name for entry in _effective_entries(catalog).values()]
-    sample_paths, missing_samples, ambiguous_samples = resolve_audio_sample_paths_partial(
-        closure.sample_ids, virtual_paths
-    )
-    if ambiguous_samples:
-        # Two catalog leaves answering one stem is an INSTALL problem, not a
-        # retail authoring fact: refusing keeps the coin-flip out of the pack.
-        raise ValueError(
-            "ambiguous eva audio samples: %s" % ", ".join(sorted(ambiguous_samples))
-        )
-
-    events: dict[str, Any] = {}
-    multisounds: dict[str, Any] = {}
-    for row in closure.events:
-        if row.id.casefold() in {item.casefold() for item in existing_definitions}:
-            continue
-        neutral = row.neutral()
-        neutral.pop("id")
-        events[row.id] = neutral
-    for row in closure.multisounds:
-        if row.id.casefold() in {item.casefold() for item in existing_definitions}:
-            continue
-        neutral = row.neutral()
-        neutral.pop("id")
-        multisounds[row.id] = neutral
-    dropped, pruned = _prune_unplayable_definitions(events, multisounds, missing_samples)
-
-    ordered_new_samples: list[tuple[str, str]] = []
-    known_sample_keys = {item.casefold() for item in existing_samples}
-    for sample_id in closure.sample_ids:
-        if sample_id.casefold() in known_sample_keys:
-            continue
-        if sample_id not in sample_paths:
-            continue
-        virtual_path = sample_paths[sample_id]
-        source_stem = PurePosixPath(virtual_path).stem
-        if source_stem.casefold() != sample_id.casefold() or _SAFE_OUTPUT_STEM.fullmatch(source_stem) is None:
-            raise ValueError(f"eva audio sample {sample_id!r} has an unsafe or mismatched source stem")
-        _catalog_entry(catalog, virtual_path, "eva audio sample")
-        ordered_new_samples.append((sample_id, virtual_path))
-
-    resources: list[dict[str, Any]] = []
-    for batch_index, batch in enumerate(_chunks(ordered_new_samples, MAX_PATTERNS_PER_RESOURCE)):
-        resources.append(
-            {
-                "id": f"{audio_slug}-eva-audio-leaves-{batch_index:03d}",
-                "kind": "audio",
-                "converter": "audio",
-                "patterns": [item[1] for item in batch],
-                "output": f"assets/audio/{audio_slug}/{{stem}}.wav",
-                "required": True,
-                "limit": len(batch),
-                "expected_count": len(batch),
-                "options": {"force_pcm": True},
-            }
-        )
-    samples = {
-        item[0]: f"assets/audio/{audio_slug}/{PurePosixPath(item[1]).stem.casefold()}.wav"
-        for item in ordered_new_samples
-    }
     dropped_keys = {item.casefold() for item in dropped}
     orphans: list[dict[str, str]] = []
     for _key in sorted(eva_events, key=str.casefold):
@@ -1637,6 +1729,33 @@ def build_faction_audio_extension(
             key=str.casefold,
         )
     )
+    cah_diagnostics: dict[str, Any] = {}
+    if include_census_registry:
+        # Created heroes are fieldable by every faction, so every HOST pack
+        # carries the class voice sets; overlays ride the host's.
+        (
+            cah_resources,
+            cah_events,
+            cah_multisounds,
+            cah_samples,
+            cah_diagnostics,
+        ) = _cah_voice_audio_extension(
+            catalog, audio_slug, samples, {**events, **multisounds}
+        )
+        resources.extend(cah_resources)
+        events.update(cah_events)
+        multisounds.update(cah_multisounds)
+        samples.update(cah_samples)
+        roots.extend(
+            sorted(
+                (
+                    identifier
+                    for identifier in (*cah_events.keys(), *cah_multisounds.keys())
+                    if identifier.casefold() not in {item.casefold() for item in roots}
+                ),
+                key=str.casefold,
+            )
+        )
 
     audio_manifest = {
         "schema": "openbfme.audio-events",
@@ -1675,6 +1794,7 @@ def build_faction_audio_extension(
             "data/eva_events.json": eva_side_map,
         },
         "evaDiagnostics": eva_diagnostics,
+        "cahVoiceDiagnostics": cah_diagnostics,
         "evaSemanticFieldCoverage": eva_side_map["semanticFieldCoverage"],
         "files": {
             "audioEvents": "data/audio_events.json",
