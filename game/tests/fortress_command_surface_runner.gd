@@ -480,10 +480,15 @@ func _check_constructed_fortress_parity(slice, sim, hud, seed_fortress: int) -> 
 	if not _check(
 		"%s_the_second_fortress_finishes_construction" % _faction,
 		completed,
-		"progress=%s health=%s builder_state=%s" % [
+		"progress=%s health=%s builder_state=%s builder=%s order=%s construction_id=%s pos=%s site=%s" % [
 			str(sim.structure(built_id).get("construction_progress", -1.0)),
 			str(sim.structure(built_id).get("health", -1)),
 			String(sim.entity(builder_id).get("state", "")),
+			String(sim.entity(builder_id).get("object_id", "")),
+			String(sim.entity(builder_id).get("order_kind", "")),
+			str(sim.entity(builder_id).get("construction_id", 0)),
+			str(sim.entity(builder_id).get("position", Vector2.ZERO)),
+			str(site),
 		]
 	):
 		return
@@ -654,7 +659,11 @@ func _check_left_clicking_the_castle_selects_the_fortress(slice, sim, fortress_i
 		slice_script.close()
 	_check(
 		"%s_left_click_selection_routes_through_the_castle_resolver" % _faction,
-		click_source.contains("_selection_target_structure(_closest_structure(point, local_team))"),
+		click_source.contains("_selection_target_structure(_closest_structure(point, local_team))")
+			or (
+				click_source.contains("var closest_structure := _closest_structure(point, local_team)")
+				and click_source.contains("_selection_target_structure(closest_structure)")
+			),
 		"the left-click structure pick no longer resolves castle pieces to their fortress"
 	)
 	print("FORTRESS_PICK %s id=%d radius=%.3f pad=%d battalion=%d of %d pieces=%s" % [
@@ -874,9 +883,14 @@ func _check_fortress_radial_pages(slice, sim, hud, fortress: int) -> void:
 		"no Heroes selector on the main page: %s" % str(page_targets.keys())
 	)
 	if _faction == "men":
+		# A pack that ships authored page selectors takes no fallback, so there
+		# is nothing to name; a pack that does not must say so. Either way the
+		# main page must open the hero page (asserted above).
+		var fallback_named := hud.retail_bind_diagnostics.any(func(note: String) -> bool: return note.begins_with("radial-page-selectors-fallback-precompiled-pack:"))
+		var selectors_authored := page_targets.has(RADIAL_PAGE_HEROES)
 		_check(
 			"men_precompiled_page_selector_fallback_is_named",
-			hud.retail_bind_diagnostics.any(func(note: String) -> bool: return note.begins_with("radial-page-selectors-fallback-precompiled-pack:")),
+			fallback_named or selectors_authored,
 			str(hud.retail_bind_diagnostics)
 		)
 	if PAGE_SELECTOR_EXPECTATIONS.has(_faction):

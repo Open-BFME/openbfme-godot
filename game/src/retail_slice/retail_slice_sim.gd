@@ -26688,7 +26688,16 @@ func _step_entity(id: int) -> void:
 				# perimeter cell rather than the structure's obstructed center.
 				# Exhausting that accepted route is arrival; requiring another
 				# invented center-distance strands real-map construction sites.
-				if String(row.get("order_kind", "")) == "construct" and ((row["route"] as Array).is_empty() or Vector2(row["position"]).distance_to(site_position) <= 2.0):
+				# Arrival is the FOOTPRINT EDGE, not a flat 2.0 from the centre: a
+				# route that ends at the centre (no nav-grid obstruction for the
+				# fresh site) leaves the porter pressed against the site's own
+				# collision disc - placement radius plus its body - and a
+				# centre-distance rule strands it there forever with the order
+				# still armed (Angmar porter, second fortress: stuck 5.2 out).
+				# Retail porters build from the foundation's edge.
+				var footprint := _structure_placement_radius(String(site.get("structure_kind", "")))
+				var arrival_reach := maxf(2.0, footprint + 2.0)
+				if String(row.get("order_kind", "")) == "construct" and ((row["route"] as Array).is_empty() or Vector2(row["position"]).distance_to(site_position) <= arrival_reach):
 					_clear_pending_route(row, true)
 					row["state"] = "construct"
 					return

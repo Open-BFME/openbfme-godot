@@ -197,7 +197,32 @@ const PIN_TICKS := 3000
 ## scenario; the old 0e4bcdbf... -> b025d162... movement remains attributable
 ## solely to LOCO-B's heading-bounded ground translation described above.
 ## ---------------------------------------------------------------------------
-const EXPECTED_HASH := "b025d16237ff644d66211a9cc26872f18b61520b9a377f11e9e99c6eceb43f58"
+## ---------------------------------------------------------------------------
+## RE-MINT 2026-08-22 - CONSTRUCT ARRIVAL AT THE FOOTPRINT EDGE.
+## OWNER-DIRECTED BUG HUNT ("things that dont work well"); CONSCIOUS MINT.
+##
+## Superseded value: b025d16237ff644d66211a9cc26872f18b61520b9a377f11e9e99c6eceb43f58
+## New value:        2d13b881c59bf5b3707f630878a4308b8cbe947d525e302028da1f2d9433fdc1
+##
+## WHY: a builder's construct order counted as arrived only with an empty
+## route or within a flat 2.0 of the site CENTRE. A route whose last waypoint
+## is the centre (no nav-grid obstruction for the fresh site) left the porter
+## pressed against the site's own collision disc - placement radius plus its
+## body, 5.2 units for a fortress - and stranded it there with the order still
+## armed (Angmar porter, second fortress: fortress_command_surface_runner
+## angmar 97/2 -> 116/0). Arrival is now `placement radius + 2.0` from the
+## centre: retail porters build from the foundation's edge. Porters in the
+## pinned scenario therefore begin building a few ticks earlier, which moves
+## every downstream construction/economy value in the hash.
+##
+## Measured twice from scratch on the same tree; both runs produced
+## 2d13b881...:
+##   workspace/logs/arrival-statepin-1.txt
+##   workspace/logs/arrival-statepin-2.txt
+## Lockstep 5/0, member combat 115/0, castle AI 104/1 (same named red),
+## pathing and projectile pins unchanged on this tree.
+## ---------------------------------------------------------------------------
+const EXPECTED_HASH := "2d13b881c59bf5b3707f630878a4308b8cbe947d525e302028da1f2d9433fdc1"
 const SUBMIT_THROUGH_TICK := 1500
 
 
