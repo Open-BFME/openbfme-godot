@@ -197,6 +197,17 @@ against a named baseline by this lane, and not claimed as fixed.
     never happened.
 11. **Erebor and Isengard gates are `portal=false`.** Noticed in passing, not investigated, not
     part of this lane's Definition of Done.
+12. **A bug I shipped and then caught (commit `f1b4d609`).** My SECTION B re-pin wrote a
+    trailing comma after the LAST supplemental entry, so
+    `$expectedSelectionSupplementalPacks = @(...)` ended `",
+)"` and the whole
+    `gate-retail.ps1` stopped parsing (`Missing expression after ','.`). The pin-comparison
+    script reported `drift=0` the entire time because it only regex-reads the constants -
+    it was validating a file PowerShell could not load. Found by running the real
+    PowerShell parser over the artifact; `HEAD~1` parsed clean, so it was mine. Fixed, and
+    `castle_map_admission_runner` re-run AFTER the comment edit is still 47/0
+    (`after-admission-postedit.log`). Lesson: a checker that reads a file with a regex is
+    not a checker that the file works.
 
 ## Files touched (tracked)
 
