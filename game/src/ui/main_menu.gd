@@ -761,6 +761,13 @@ func ensure_my_heroes_screen() -> bool:
 	center.add_child(my_heroes_screen)
 	_layout_my_heroes_screen()
 	my_heroes_screen.back_requested.connect(func() -> void: _show_page(PAGE_MAIN))
+	# A save, import or delete in MY HEROES changes what the skirmish rows and
+	# the multiplayer lobby may offer; re-read the store right away.
+	my_heroes_screen.roster_changed.connect(func() -> void:
+		_refresh_hero_rows()
+		_refresh_skirmish_launch_state()
+		if multiplayer_lobby != null and multiplayer_lobby.has_method("_populate_hero_picker"):
+			multiplayer_lobby._populate_hero_picker())
 	my_heroes_screen.configure(_cah_system_runtime())
 	BootProfile.mark("menu:my_heroes_screen_construct")
 	return true
