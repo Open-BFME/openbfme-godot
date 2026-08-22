@@ -1729,10 +1729,14 @@ def build_faction_audio_extension(
             key=str.casefold,
         )
     )
+    # Created heroes are fieldable by every faction and a created hero resolves
+    # its voice through the mounted registries, so EVERY registry surface -
+    # host pack and per-faction EVA overlay alike - carries the class voice
+    # sets. The RotWK selection mounts no host registry for its factions (unit
+    # voices ride the unit documents; only the overlays ship a registry), so
+    # gating this on include_census_registry left every created hero mute.
     cah_diagnostics: dict[str, Any] = {}
-    if include_census_registry:
-        # Created heroes are fieldable by every faction, so every HOST pack
-        # carries the class voice sets; overlays ride the host's.
+    if True:
         (
             cah_resources,
             cah_events,

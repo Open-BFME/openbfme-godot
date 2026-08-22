@@ -85,7 +85,15 @@ def test_cah_voice_samples_are_converter_resources() -> None:
         assert row["expected_count"] == len(row["patterns"])
 
 
-def test_overlay_packs_do_not_duplicate_the_host_cah_voices() -> None:
+def test_overlay_packs_carry_the_cah_voices_too() -> None:
+    # The RotWK selection mounts no host registry for its factions; the EVA
+    # overlays are the registry surface, so they must carry the class voices.
     extension = _live_men_extension(include_census_registry=False)
-    assert extension["cahVoiceDiagnostics"] == {}
-    assert not [row for row in extension["resources"] if "-cah-audio-leaves-" in row["id"]]
+    manifest = extension["runtime_data"]["data/audio_events.json"]
+    defined = {key.casefold() for key in manifest["events"]} | {
+        key.casefold() for key in manifest["multisounds"]
+    }
+    roots = _cah_voice_roots()
+    missing = sorted(r for r in roots if r.casefold() not in defined)
+    assert missing == [], missing
+    assert [row for row in extension["resources"] if "-cah-audio-leaves-" in row["id"]]
