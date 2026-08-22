@@ -2,7 +2,9 @@
 
 Date: 2026-08-22
 Branch: `worktree-agent-afd6f1f515f7d6413` (worktree of `C:\Users\Jonathan\Desktop\open-bfme`)
-Base commit: `887d712b`
+Worktree branch base: `47c2aa8d`. Main head at lane start was `887d712b`; the two
+differ only in `orchestration/` docs (`git diff --stat 47c2aa8d 887d712b` touches
+briefs and queue.md only), so every BEFORE number below is the same code either way.
 Fix commit: `688fd3dc`
 Content the numbers came from: the `workspace/content-packs` selection as of this run —
 active `rotwk-men-vslice/b361ec5f...`, palantir atlas from
