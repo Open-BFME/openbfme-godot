@@ -218,3 +218,22 @@ were never published** (`orchestration/reports/report-q56f.md:150-151`,
 (`orchestration/queue.md:69`, as executed in `orchestration/reports/v026-finish.md:16-18`).
 Expected after that republish: Helm's Deep `authored=57→63, cells=5356→5887, ramp_cells=1685→1755,
 portals=25→26`, and 5 of Minas' 24 unresolved roles plus 31 of its 36 endpoint gaps resolved.
+
+## C. Honest residue — what this lane did NOT do
+
+1. **The workspace maps selection is still broken.** `selection.json` names a 10-map pack with
+   no castle maps. I diagnosed it and named the fix; I did not touch `selection.json` (brief
+   forbids it). Until it is corrected, launching the game from the workspace selection cannot
+   reach Minas Tirith or Helm's Deep at all.
+2. **`CASTLE_SIEGE_IMPLEMENTED` stays empty.** Every castle map still reports
+   `castle_gameplay_gaps=walkable-walls, defendable-gates, …` even where the runtime passes
+   32/0 and 47/0. Flipping a name into that list changes admission for all ten maps and needs
+   per-capability end-to-end proof. Owner decision, not an implementor's.
+3. **Minas' gate portal (Q64b) is untouched** — `portal=false`, `no-bounded-route`, and the
+   `Minas Tirith_ai_issued_attack_order` red is exactly the pre-existing baseline failure.
+4. **No mixed-faction castle AI runner.** The owner's 99k case needs a Dwarves AI seat on a
+   Men map; no shipped runner sets that up, so the gate for it is the sealed unit runner.
+5. **No pack was cooked, published, or selected**, and `VERSION` is untouched.
+6. **The owner's screenshot** (`75d549e2-…png`) shows an ordinary skirmish map with a citadel
+   and the hero radial menu open — no castle walls in frame. I could not derive anything about
+   the wall defect from it and did not pretend otherwise.
