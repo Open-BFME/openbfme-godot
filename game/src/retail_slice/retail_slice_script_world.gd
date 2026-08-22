@@ -323,6 +323,10 @@ func bind_script_team_to_owner(
 	return true
 
 
+## Why the last bind_library_script_team refused (diagnostic, never silent).
+var last_library_team_refusal := ""
+
+
 func bind_library_script_team(
 	team_name: String,
 	registry_name: String,
@@ -351,14 +355,45 @@ func bind_library_script_team(
 			and (not unresolved_members.is_empty() or unmodeled_object_count != 0)
 		)
 	):
+		last_library_team_refusal = "precondition (player bound=%s, reserved=%s)" % [
+			_player_teams.has(player_name), RESERVED_TEAM_TOKENS.has(team_name) or RESERVED_TEAM_TOKENS.has(registry_name)
+		]
 		return false
 	var owner := int(_player_teams[player_name])
 	if _team_names.has(team_name):
-		return (
+		var same := (
 			int(_team_names[team_name]) == owner
 			and String(_team_registry_names.get(team_name, "")) == registry_name
 			and String(_script_team_owners.get(team_name, "")) == player_name
 		)
+		# Retail team names are GLOBAL. A library row that declares a team the
+		# map itself already authors, with no members of its own (retail's
+		# multiplayer_human.map re-declares every Player_N_Inherit team the MP
+		# maps carry, empty), is a reference to that existing team - binding it
+		# a second time under the library's namespace is our invention, and
+		# refusing it took every map's scripts down with it.
+		if not same and not default_team and handles.is_empty() and unmodeled_object_count == 0 and unresolved_members.is_empty():
+			return true
+		if not same:
+			last_library_team_refusal = "local team '%s' already bound for '%s' as '%s'" % [
+				team_name, String(_script_team_owners.get(team_name, "")), String(_team_registry_names.get(team_name, ""))
+			]
+		return same
+	if default_team and sim.script_teams.has(registry_name):
+		# `teamPlayer` is the library spelling of this player's concrete map
+		# default team, which the map world already registered with ITS
+		# membership. The library carries only scaffold counts for it; alias
+		# the name to the live record instead of re-registering it (which
+		# compared scaffold flags against the real ones and refused).
+		var existing := sim.script_teams[registry_name] as Dictionary
+		if int(existing.get("configured_owner", existing.get("owner", -1))) != owner:
+			last_library_team_refusal = "default team '%s' is owned by another player" % registry_name
+			return false
+		_team_names[team_name] = owner
+		_team_registry_names[team_name] = registry_name
+		_script_team_owners[team_name] = player_name
+		_registry_team_owners[registry_name] = player_name
+		return true
 	var registered: Dictionary = sim.register_script_team(
 		registry_name,
 		owner,
@@ -371,6 +406,7 @@ func bind_library_script_team(
 		marker_only
 	)
 	if not bool(registered.get("ok", false)):
+		last_library_team_refusal = String(registered.get("reason", "register_script_team refused"))
 		return false
 	_team_names[team_name] = owner
 	_team_registry_names[team_name] = registry_name

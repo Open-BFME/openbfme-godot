@@ -79,6 +79,11 @@ func _init() -> void:
 		if int(simulation.entity(id).get("team", -1)) == simulation.PLAYER_TEAM:
 			player_units += 1
 	_check("player_start_army_present", player_units > 0, "player entities=%d" % player_units)
+	# Owner 2026-08-22: every map since v0.2.8 booted with "installing NO
+	# scripts" because the cook composes retail's four AI libraries and the
+	# runtime admitted only the legacy two. A booted map must run its scripts.
+	_check("map_scripts_installed", int(simulation._script_executors.size()) > 0,
+		"script executors=%d (a refusal is logged as script.install_refused)" % int(simulation._script_executors.size()))
 	var tick_before := int(simulation.tick_index)
 	for i in 30:
 		await process_frame

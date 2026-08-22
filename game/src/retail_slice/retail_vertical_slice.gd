@@ -6423,13 +6423,19 @@ static func _canonical_multiplayer_map_slug(value: Variant) -> String:
 	if parts.size() != 3 or parts[0] != "maps":
 		return ""
 	var map_name := String(parts[1])
-	if (
-		not map_name.begins_with("map mp ")
-		or map_name.length() <= len("map mp ")
-		or String(parts[2]) != map_name + ".map"
-	):
+	if String(parts[2]) != map_name + ".map":
 		return ""
-	var slug := map_name.trim_prefix("map mp ").replace(" ", "-")
+	# Two retail multiplayer families ship scripts: skirmish `map mp <name>`
+	# (slug = <name>) and War of the Ring battle maps `map wor <name>` (slug =
+	# wor-<name>, the same rule the maps cook applies to the pack directory).
+	# Admitting only `map mp` refused every castle map's scripts outright.
+	var slug := ""
+	if map_name.begins_with("map mp ") and map_name.length() > len("map mp "):
+		slug = map_name.trim_prefix("map mp ").replace(" ", "-")
+	elif map_name.begins_with("map wor ") and map_name.length() > len("map wor "):
+		slug = "wor-" + map_name.trim_prefix("map wor ").replace(" ", "-")
+	else:
+		return ""
 	if slug == "" or slug.begins_with("-") or slug.ends_with("-") or slug.contains("--"):
 		return ""
 	for character in slug:
@@ -6443,11 +6449,21 @@ func _normalized_composite_map_scripts_document(doc: Dictionary) -> Dictionary:
 	if typeof(templates_value) != TYPE_ARRAY:
 		return {"ok": false, "reason": "schema-v2 libraryTemplates is not an array"}
 	var templates := templates_value as Array
-	# The two per-player AI libraries are the mandatory closure; a map that
-	# declares Lib_GollumSpawn in its LibraryMapLists adds exactly one further
-	# template, bound once to the map's own creeps player.
-	if templates.size() != 2 and templates.size() != 3:
-		return {"ok": false, "reason": "schema-v2 requires the two AI library templates and at most one bound library"}
+	# The per-player AI libraries are the mandatory closure: either the legacy
+	# two (ai_initialize + ai_mp_inherit_management) or retail's full
+	# LibraryMapLists four (multiplayer_start_teams, ai_initialize,
+	# ai_mp_inherit_management, multiplayer_human) that the importer composes
+	# since f8575ecc - exactly `profile._validate_script_composite_resources`'s
+	# allowed_library_closures. A map that declares Lib_GollumSpawn adds one
+	# further template, bound once to the map's own creeps player.
+	#
+	# Admitting only the legacy pair here while the cook emitted four refused
+	# EVERY map's scripts from v0.2.8 on ("installing NO scripts" in the owner's
+	# run.log): no Gollum script, no AI libraries, no map triggers.
+	if not [2, 3, 4, 5].has(templates.size()):
+		return {"ok": false, "reason": "schema-v2 requires the two or four AI library templates and at most one bound library"}
+	var ai_library_count := 2 if templates.size() <= 3 else 4
+	var has_bound_library := templates.size() == ai_library_count + 1
 	var composite_source_value: Variant = doc.get("source")
 	if typeof(composite_source_value) != TYPE_DICTIONARY:
 		return {"ok": false, "reason": "schema-v2 source is not an object"}
@@ -6496,11 +6512,20 @@ func _normalized_composite_map_scripts_document(doc: Dictionary) -> Dictionary:
 	var provenance_library_rows := provenance_libraries_value as Array
 	if provenance_library_rows.size() != templates.size():
 		return {"ok": false, "reason": "schema-v2 source libraries do not match the library templates"}
-	var expected_library_paths := [
-		"libraries/ai_initialize/ai_initialize.map",
-		"libraries/ai_mp_inherit_management/ai_mp_inherit_management.map",
-	]
-	if templates.size() == 3:
+	var expected_library_paths: Array[String] = []
+	if ai_library_count == 2:
+		expected_library_paths.append_array([
+			"libraries/ai_initialize/ai_initialize.map",
+			"libraries/ai_mp_inherit_management/ai_mp_inherit_management.map",
+		])
+	else:
+		expected_library_paths.append_array([
+			"libraries/multiplayer_start_teams/multiplayer_start_teams.map",
+			"libraries/ai_initialize/ai_initialize.map",
+			"libraries/ai_mp_inherit_management/ai_mp_inherit_management.map",
+			"libraries/multiplayer_human/multiplayer_human.map",
+		])
+	if has_bound_library:
 		expected_library_paths.append("libraries/lib_gollumspawn/lib_gollumspawn.map")
 	# Retail-byte authenticity belongs to the normal pack audit/receipt trust
 	# boundary. Runtime does not possess the proprietary library bytes and must
@@ -6583,12 +6608,13 @@ func _normalized_composite_map_scripts_document(doc: Dictionary) -> Dictionary:
 			or typeof(template.get("scripts")) != TYPE_ARRAY
 		):
 			return {"ok": false, "reason": "schema-v2 library template contract is invalid"}
-		# The first two templates are the per-player AI closure, in order. A
-		# third may only be the map-player class: retail binds such a library
-		# (Lib_GollumSpawn authors PlyrCreeps) once, by name, to the map's own
-		# player - the same shape the maps that inline it already encode.
+		# The first ai_library_count templates are the per-player AI closure,
+		# in order. The one after may only be the map-player class: retail
+		# binds such a library (Lib_GollumSpawn authors PlyrCreeps) once, by
+		# name, to the map's own player - the same shape the maps that inline
+		# it already encode.
 		var instantiation_targets: Array[String] = []
-		if template_index < 2:
+		if template_index < ai_library_count:
 			if template_class != "aiPlayers" or placeholder != "Player":
 				return {"ok": false, "reason": "schema-v2 library template contract is invalid"}
 			instantiation_targets.append_array(target_players)
@@ -6709,7 +6735,24 @@ func _normalized_composite_map_scripts_document(doc: Dictionary) -> Dictionary:
 					prior.erase("library_identity")
 					var candidate := row.duplicate(true)
 					candidate.erase("library_identity")
-					if prior != candidate:
+					if bool(row.get("default", false)):
+						# Every library .map authors the placeholder's DEFAULT team
+						# (`teamPlayer`) with its own scaffold object count - 16,
+						# 8, 8 and 0 across retail's four MP libraries. That count
+						# is the library's own dummy layout, not a gameplay fact,
+						# and retail instantiates one default team per player.
+						# Merge it; the legacy two-library pair only passed the
+						# strict equality below because both happened to say 8.
+						var merged := (merged_teams[local_name] as Dictionary)
+						merged["object_count"] = maxi(int(merged.get("object_count", 0)), int(row.get("object_count", 0)))
+						var members: Array = (merged.get("named_members", []) as Array).duplicate()
+						for member in row.get("named_members", []) as Array:
+							if not members.has(member):
+								members.append(member)
+						merged["named_members"] = members
+						merged["marker_only"] = bool(merged.get("marker_only", false)) and bool(row.get("marker_only", false))
+						merged_teams[local_name] = merged
+					elif prior != candidate:
 						return {
 							"ok": false,
 							"reason": "schema-v2 library team '%s' conflicts across templates" % local_name,
@@ -6814,11 +6857,17 @@ func _normalized_map_scripts_document(doc: Dictionary) -> Dictionary:
 	# civilian and faction-library players occupy earlier/later rows).
 	for team_value in simulation.team_ids():
 		var team := int(team_value)
-		var descriptor: Dictionary = simulation.team_descriptor(team)
-		if not descriptor.has("start_index"):
+		# The SAME seat resolution the AI uses (`_ai_start_waypoint_name`):
+		# the lobby's start index when one was assigned, the configured seat
+		# otherwise, and on castle maps the seat the castle layout put the team
+		# in. Reading only the raw descriptor left castle maps' scripts - which
+		# retail authors for Player_1, the castle's seat - with no owner, so
+		# "installing NO scripts" on every siege map.
+		var start_name := String(simulation._ai_start_waypoint_name(team))
+		if not start_name.begins_with("Player_") or not start_name.ends_with("_Start"):
 			continue
-		var player_name := "Player_%d" % (int(descriptor["start_index"]) + 1)
-		if player_rows.values().has(player_name):
+		var player_name := start_name.trim_suffix("_Start")
+		if player_rows.values().has(player_name) and not players.has(player_name):
 			players[player_name] = team
 	var sources_by_player: Dictionary = {}
 	for script_value in doc["scripts"] as Array:
@@ -7258,7 +7307,7 @@ func _install_map_scripts_document(
 				0 if membership_complete else object_count,
 				marker_only and not default_team
 			):
-				report.call("map scripts: library team '%s' for '%s' refused; installing NO scripts" % [local_name, player_name])
+				report.call("map scripts: library team '%s' for '%s' refused (%s); installing NO scripts" % [local_name, player_name, String(world.last_library_team_refusal)])
 				ok = false
 				break
 		if not ok:
