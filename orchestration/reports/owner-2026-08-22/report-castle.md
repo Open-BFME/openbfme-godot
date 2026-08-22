@@ -237,3 +237,54 @@ portals=25→26`, and 5 of Minas' 24 unresolved roles plus 31 of its 36 endpoint
 6. **The owner's screenshot** (`75d549e2-…png`) shows an ordinary skirmish map with a citadel
    and the hero radial menu open — no castle walls in frame. I could not derive anything about
    the wall defect from it and did not pretend otherwise.
+
+## D. Gates — before → after, by name
+
+All runs: `<godot> --headless --path <game> --script res://tests/<runner>.gd`, hard
+`timeout` wrapper, `OPENBFME_CONTENT=C:\Users\Jonathan\Desktop\open-bfme\dist\v0.2.8\content-packs`
+(maps `abc27325…`, men `8f40f2af…`). "Before" ran from a throwaway `git worktree` at the base
+commit `47c2aa8d` under `%TEMP%\castle-owner-prefix`; "after" from this branch.
+
+| gate | before | after | named baseline | verdict |
+|---|---|---|---|---|
+| `castle_ai_site_scan_unit_test` (NEW) | **1 / 5**, 14,884 `CASTLE_AI_REJECT` lines, 16 s | **6 / 0**, 0 such lines, 8 s | — | failing-first → green |
+| `castle_map_live_boot_runner` (Erebor) | 8 / 0, 37 s | **8 / 0**, 26 s | 8/0 | unchanged |
+| `castle_map_live_boot_runner` (Minas Tirith) | 8 / 0, 30 s, `map_data delta_ms=2307` | **8 / 0**, 30 s, `map_data delta_ms=2293` | — | unchanged |
+| `castle_gate_runner` | 47 / 0, 54 s | **47 / 0**, 48 s | 47/0 | unchanged |
+| `castle_wall_walk_runner` | 32 / 0, 11 s | **32 / 0**, 10 s | brief says 22/0; the file now has 32 checks (Q56f/Q62prep added them) | unchanged |
+| `castle_skirmish_ai_runner` (10 maps x 4,000 ticks) | 104 / 1, 416 s, **4,696 log lines** | **104 / 1**, 390 s, **725 log lines** | 104/1, sole red `Minas Tirith_ai_issued_attack_order` | unchanged, same single named red |
+| `retail_state_pin_runner` | `b025d162…` OK | **`b025d162…` OK** | `b025d162…` | unchanged |
+| `retail_pathing_pin_runner` | `2e5ad580…` OK | **`2e5ad580…` OK** | `2e5ad580…` | unchanged |
+
+Failure-by-name: the only failing name before was
+`CASTLE_SKIRMISH_AI FAIL Minas Tirith_ai_issued_attack_order … last_route_rejection=no-bounded-route`,
+and it is the only failing name after. No gate lost a check or gained a failure.
+
+The state pin is unchanged even though `team_ai_state` is serialized, because the scan cursor
+key `generic_scan_next_radius` is written only while a fallback scan is genuinely mid-map — the
+pin's match never truncates a scan, so it never gains a key.
+
+### The runner delta the fix actually produces
+
+Black Gate is the one shipped runner map whose AI falls through to the generic cell scan:
+
+| | before | after |
+|---|---:|---:|
+| `CASTLE_AI_REJECT` lines on Black Gate | **3,940** | **0** |
+| `CASTLE_AI_SITE` (sites actually found) | 4 | **4** |
+
+Same four build sites, none of the spam. Those 3,940 were `reason=site-obstructed` — a
+*positional* refusal, so the kind-level short-circuit does not apply to them; they are gone
+purely because the per-cell print was demoted to a summary. The kind-level short-circuit is
+what removes the owner's 99,442.
+
+## E. Files touched
+
+- `game/src/retail_slice/retail_slice_sim.gd` — the fix (+141 / -5 across two commits)
+- `game/tests/castle_ai_site_scan_unit_test.gd` — new sealed failing-first runner
+- `orchestration/reports/owner-2026-08-22/report-castle.md` — this report
+
+Commits on `worktree-agent-af52804e66716034a`: `ebef76f4`, `4b3f57b7`, `5c67a7ef`, `1b9677f3`,
+plus the commit carrying this section. `orchestration/queue.md` was NOT edited — this worktree
+predates the owner's Q66-Q69 claim commit (`887d712b`) and editing it here would only create a
+merge conflict. No pack cooked, published or selected; `selection.json` and `VERSION` untouched.
