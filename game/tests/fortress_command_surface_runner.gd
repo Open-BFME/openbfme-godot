@@ -1031,6 +1031,31 @@ func _check_fortress_radial_pages(slice, sim, hud, fortress: int) -> void:
 			int(entry.get("command_points", -1)) > 0,
 			"the created hero's recruit button states no command point cost"
 		)
+	# Q45, ASSERTED RATHER THAN ASSUMED: the WORLD ring drawn around the fortress
+	# must carry the SAME hero page, whole. It used to be capped by the palantir's
+	# radial-button pool, so the tail of a long page - which is exactly where an
+	# admitted created hero sits, appended after the seven faction heroes - was
+	# silently dropped, and the owner read that as "my custom hero is missing"
+	# (retail_hud.gd:4587). Nothing checked the world half until now.
+	var world_buttons: Array = hud.world_radial_buttons()
+	var world_unit_ids: Dictionary = {}
+	for world_button_value in world_buttons:
+		var world_button: Button = world_button_value
+		if world_button.has_meta("tooltip_unit_id"):
+			world_unit_ids[String(world_button.get_meta("tooltip_unit_id"))] = true
+	_check(
+		"%s_world_radial_shows_the_whole_hero_page" % _faction,
+		world_buttons.size() == hero_entries.size(),
+		"world ring has %d buttons for a %d-entry hero page" % [
+			world_buttons.size(), hero_entries.size()
+		]
+	)
+	for created_on_ring in created_ids:
+		_check(
+			"%s_created_hero_is_on_the_world_radial" % _faction,
+			world_unit_ids.has(String(PlayableUnitAdapter._runtime_id(String(created_on_ring)))),
+			"world ring shows %s" % str(world_unit_ids.keys())
+		)
 	# Leave the wheel where a player would find it.
 	hud.set_radial_page(RADIAL_PAGE_MAIN)
 
