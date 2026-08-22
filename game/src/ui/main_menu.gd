@@ -259,6 +259,11 @@ var current_page := PAGE_MAIN
 ## Where `options_screen.closed` returns to. See `_open_options()`.
 var _options_return_page := PAGE_MAIN
 var _skirmish_availability: Dictionary = {}
+## Rows whose Hero column the PLAYER has touched. An untouched row is offered
+## the hero they made most recently; a row where they chose something - a
+## different hero, or "-" for none - keeps that choice, because re-offering a
+## default over it would be the screen overruling them. See `_populate_row_hero`.
+var _row_hero_choice_made: Dictionary = {}
 var _skirmish_map_notes: Dictionary = {}
 ## Mounted catalog map rows for the current sweep (cached so arm/build agree).
 var _skirmish_map_choice_rows: Array[Dictionary] = []
@@ -2766,6 +2771,45 @@ func _populate_row_hero(row: int) -> void:
 		option.set_item_metadata(index, hero_id)
 		if hero_id == previous:
 			option.select(index)
+	# THE UNTOUCHED ROW BRINGS THE NEWEST HERO. A player who has just made a hero
+	# starts a skirmish and expects to see it; leaving the column on "-" meant the
+	# setup handed the slice an EMPTY pick, and an empty pick is authoritative in
+	# `retail_vertical_slice._add_created_heroes`, so the fortress offered no
+	# created hero at all and nothing said why (owner report 2026-08-22, Q69).
+	# Retail always keeps the slot - every faction's `BuildableHeroesMP` begins
+	# with `CreateAHero` (playertemplate.ini:100/150/198/243/288/334/381) - so an
+	# empty hero page is ours, not retail's. "-" stays offered, stays selectable,
+	# and stays put once the player has chosen it.
+	if previous == "" and not bool(_row_hero_choice_made.get(row, false)):
+		var newest := _most_recently_saved_hero_index(option)
+		if newest > 0:
+			option.select(newest)
+
+
+func _most_recently_saved_hero_index(option: OptionButton) -> int:
+	## The listed hero whose profile file was written last, or 0 ("-") when the
+	## row lists none. Ties - two heroes saved inside one filesystem clock tick -
+	## break on hero id, so the offered default is the same on every visit.
+	var best := 0
+	var best_time := -1
+	var best_id := ""
+	for index in range(1, option.item_count):
+		var hero_id := String(option.get_item_metadata(index))
+		if hero_id == "":
+			continue
+		var saved := int(FileAccess.get_modified_time(CahHeroesScript.profile_path(hero_id)))
+		if saved > best_time or (saved == best_time and hero_id < best_id):
+			best = index
+			best_time = saved
+			best_id = hero_id
+	return best
+
+
+func _on_row_hero_changed(row: int) -> void:
+	## The player themselves worked this row's Hero column. From here on the row
+	## keeps what they chose, including "-", and never re-defaults.
+	_row_hero_choice_made[row] = true
+	_refresh_skirmish_launch_state()
 
 
 func _remembered_row_hero_id(row: int) -> String:
@@ -4234,7 +4278,7 @@ func _connect_actions() -> void:
 	multiplayer_flyout.join_requested.connect(_on_multiplayer_join)
 	multiplayer_flyout.back_requested.connect(func() -> void: _show_page(PAGE_MAIN))
 	solo_flyout.army_changed.connect(_on_army_changed)
-	solo_flyout.hero_changed.connect(func(_row: int) -> void: _refresh_skirmish_launch_state())
+	solo_flyout.hero_changed.connect(_on_row_hero_changed)
 	solo_flyout.custom_heroes_toggle.toggled.connect(func(_on: bool) -> void:
 		_refresh_hero_rows()
 		_refresh_skirmish_launch_state())
