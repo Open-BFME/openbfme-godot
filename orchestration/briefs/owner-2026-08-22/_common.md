@@ -1,0 +1,11 @@
+# Common rules for the 2026-08-22 owner-report lanes
+
+Repo: C:\Users\Jonathan\Desktop\open-bfme (you are in a git worktree copy of it — use YOUR worktree path for all edits; content/workspace material exists only in the main checkout, reference it by absolute path).
+Read C:\Users\Jonathan\Desktop\open-bfme\AGENTS.md first and obey it (no `git add -A`, no reset/stash/amend, explicit-path adds, logs under the main checkout's workspace\logs\<lane>\).
+Godot: C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe (headless runner form: `<godot> --headless --path <worktree>\game --script res://tests/<runner>.gd`, always with a timeout, redirect to a log file, never tail a live log).
+Selected content: set OPENBFME_CONTENT=C:\Users\Jonathan\Desktop\open-bfme\workspace\content-packs (read-only, sealed packs — NEVER write into them).
+Retail oracle (original game files, pure 2.01 layered install): C:\Users\Jonathan\Desktop\open-bfme\workspace\retail-work\editions\rotwk\layered-install\ and the extracted INI/art tree (find it via workspace\manifest.json `retailExtract`). When the owner says "look at the original game files", cite the exact retail file:line you derived behaviour from.
+Owner screenshot of the defect (v0.2.8 dist, 1920x1080): C:\Users\Jonathan\.t3\userdata\attachments\75d549e2-01ff-4084-ae67-b0822f615971-e926fab0-a927-4f77-b599-b6384b026e9c.png — view it with the Read tool.
+Definition of done (hard): (1) a failing-first test that reproduces the owner's symptom, (2) the fix, (3) that test green plus the named neighbouring gates unchanged, (4) a report at orchestration\reports\owner-2026-08-22\report-<lane>.md stating files touched, test names/numbers before→after, which pack digest/commit the numbers came from, and HONEST residue. Commit on your worktree branch with explicit paths. Do not publish packs, do not change selection.json, do not touch VERSION.
+No silent fallbacks, no invented constants: any constant you add must cite a retail source or a measured capture. If you cannot finish a part, say so in the report — do not narrow the scope quietly.
+Your final message must be the report path plus a 10-line summary; the report is what the verifier reads.
