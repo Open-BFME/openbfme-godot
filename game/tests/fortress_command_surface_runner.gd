@@ -886,8 +886,8 @@ func _check_fortress_radial_pages(slice, sim, hud, fortress: int) -> void:
 		# A pack that ships authored page selectors takes no fallback, so there
 		# is nothing to name; a pack that does not must say so. Either way the
 		# main page must open the hero page (asserted above).
-		var fallback_named := hud.retail_bind_diagnostics.any(func(note: String) -> bool: return note.begins_with("radial-page-selectors-fallback-precompiled-pack:"))
-		var selectors_authored := page_targets.has(RADIAL_PAGE_HEROES)
+		var fallback_named: bool = hud.retail_bind_diagnostics.any(func(note: String) -> bool: return note.begins_with("radial-page-selectors-fallback-precompiled-pack:"))
+		var selectors_authored: bool = page_targets.has(RADIAL_PAGE_HEROES)
 		_check(
 			"men_precompiled_page_selector_fallback_is_named",
 			fallback_named or selectors_authored,
