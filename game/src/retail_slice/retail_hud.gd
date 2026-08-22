@@ -91,7 +91,12 @@ func _hero_select_all_image_id() -> String:
 	return RETAIL_HERO_SELECT_ALL_EVIL_IMAGE_ID if RETAIL_EVIL_FACTIONS.has(_faction_surface.to_lower()) else RETAIL_HERO_SELECT_ALL_IMAGE_ID
 const RETAIL_PALANTIR_FRAME_ATLAS := "assets/ui/palantir/atlases/apt-palantirexport-17-fb63d3d26008.png"
 const RETAIL_PALANTIR_ATLAS := "assets/ui/palantir/atlases/apt-palantir-1-d9888d52cd89.png"
-const RETAIL_PALANTIR_FRAME_SOURCE_SIZE := Vector2i(384, 256)
+# MEASURED FROM THE SHIPPED SHEET, and it was wrong until 2026-08-22.
+# `apt-palantirexport-17-fb63d3d26008.png` (the conversion of
+# `apt/palantirexport.big` -> art/Textures/apt_PalantirExport_17.tga) is
+# 512x256, not 384x256. `PalantirFrame` is placed at stage [0, 512] with an
+# identity matrix, so the sheet covers stage [0,512]..[512,768].
+const RETAIL_PALANTIR_FRAME_SOURCE_SIZE := Vector2i(512, 256)
 # Q37: `PalantirFrame` is authored at stage [0, 512] with an identity matrix,
 # so the 384x256 frame sheet covers stage [0,512]..[384,768]. Through the stage
 # transform at the design viewport that is 720x360 - not the invented 540x360.
@@ -179,9 +184,17 @@ const RETAIL_POWER_DOCK_SIZE := Vector2(76, 76)
 # three-piece composition (a synthetic backing disc, a separately scaled dish
 # annulus, and the left 250 columns stretched to 375x384) existed only to make
 # the mis-measured dish centre line up; with the authored centre it is dead.
+#
+# The region was cropped to the left 384 columns of a 512-wide sheet and the
+# declared source size said 384 to match, so the right 128 authored columns were
+# thrown away. They carry only a faint horizontal streak (max alpha 17/255 over
+# rows 137-159), which is why the crop was never visible - but the sheet is the
+# sheet, and 512 x 1.875 = 960, 256 x 1.40625 = 360 is where the stage puts it.
 const RETAIL_FRAME_PIECES := [
-	{"region": Rect2(0, 0, 384, 256), "dest": Rect2(0, 0, 720, 360)},
+	{"region": Rect2(0, 0, 512, 256), "dest": Rect2(0, 0, 960, 360)},
 ]
+## Inhabited columns of the frame sheet, used as the score overlay backdrop.
+const RETAIL_SCORE_SHELL_REGION := Rect2(0, 0, 384, 256)
 const RETAIL_ORB_RECTS := {
 	"options": Rect2(129, 34, 64, 64),
 	"powers": Rect2(202, 18, 79, 79),
@@ -3900,7 +3913,14 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 			for state in ["normal", "hover", "pressed", "disabled"]:
 				power_button.add_theme_stylebox_override(state, power_socket)
 			power_button.add_theme_constant_override("icon_max_width", 76)
-	var shell := _atlas_region(retail_apt_runtime.exact_atlas_texture(RETAIL_PALANTIR_FRAME_ATLAS), Rect2(Vector2.ZERO, RETAIL_PALANTIR_FRAME_SOURCE_SIZE))
+	# The score overlay borrows the frame sheet as a backdrop and stretches it to
+	# an arbitrary rectangle, so it takes the sheet's INHABITED columns (0..384;
+	# 384..512 is the faint streak) rather than the whole 512-wide sheet the
+	# control bar draws at its authored stage rect.
+	var shell := _atlas_region(
+		retail_apt_runtime.exact_atlas_texture(RETAIL_PALANTIR_FRAME_ATLAS),
+		RETAIL_SCORE_SHELL_REGION
+	)
 	var score_shell := TextureRect.new()
 	score_shell.name = "RetailScoreFrame"
 	score_shell.texture = shell

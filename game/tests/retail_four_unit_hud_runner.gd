@@ -387,6 +387,43 @@ func _check_authored_stage_layout(hud) -> void:
 			and is_equal_approx(dock.size.y, expected_dock.size.y),
 		"dock=%s expected=%s" % [str(dock.size), str(expected_dock.size)]
 	)
+	# THE CONTROL-BAR ART, and what it is NOT.
+	#
+	# controlbarscheme.ini:156-165 authors the in-game bar as one ImagePart at
+	# X:0 Y:520, 1024x248, image `SGCommandBar` (`SMCommandBar` for Men, one per
+	# side). That texture SHIPS IN NO ARCHIVE: `SGCommandBar.tga` and its five
+	# siblings are absent from every .big in both layers of the RotWK layered
+	# install (all archives enumerated, zero hits on "commandbar"). BFME2 moved
+	# the in-game HUD to APT, and controlbarscheme.ini is carried-forward BFME1
+	# text. So there is no full-width bar bitmap to render, and a lane that
+	# claims to have rendered one is claiming something retail does not ship.
+	#
+	# What IS authored is `PalantirFrame`, placed at stage [0, 512] with an
+	# identity matrix, whose sheet (`apt_PalantirExport_17`, 512x256) therefore
+	# covers stage [0,512]..[512,768]. Assert exactly that.
+	var frame_piece: Dictionary = hud.RETAIL_FRAME_PIECES[0]
+	var authored_sheet := Rect2(
+		Vector2.ZERO, Vector2(hud.RETAIL_PALANTIR_FRAME_SOURCE_SIZE)
+	)
+	var authored_dest := Rect2(
+		stage.to_dock(apt.PALANTIR_STAGE_PLACEMENTS["PalantirFrame"]),
+		stage.scale_size(Vector2(hud.RETAIL_PALANTIR_FRAME_SOURCE_SIZE))
+	)
+	_check(
+		"control_bar_art_is_the_whole_authored_frame_sheet",
+		(frame_piece["region"] as Rect2).is_equal_approx(authored_sheet),
+		"region=%s sheet=%s" % [str(frame_piece["region"]), str(authored_sheet)]
+	)
+	_check(
+		"control_bar_art_sits_at_its_authored_stage_rect",
+		(frame_piece["dest"] as Rect2).is_equal_approx(authored_dest),
+		"dest=%s authored=%s" % [str(frame_piece["dest"]), str(authored_dest)]
+	)
+	_check(
+		"control_bar_frame_node_is_wide_enough_for_the_authored_art",
+		float(hud.RETAIL_PALANTIR_DISPLAY_SIZE.x) >= authored_dest.size.x,
+		"node=%s art=%s" % [str(hud.RETAIL_PALANTIR_DISPLAY_SIZE.x), str(authored_dest.size.x)]
+	)
 	# Dish centre: `EmptyGlobe` stage [280.2, 660.9].
 	_check(
 		"dish_centre_is_the_authored_empty_globe_placement",
