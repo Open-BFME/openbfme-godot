@@ -15,11 +15,19 @@ const AMON_SUL := "Amon Sul Fortress"
 ## DERIVED requirement set (castle_capabilities.py over the map's own objects);
 ## blockers = required - implemented, never authored. Erebor's set is pinned
 ## as BLOCKERS; every map's set is pinned in REQUIRED_BY_MAP.
-const BLOCKERS: Array[String] = [
+const REQUIRED: Array[String] = [
 	"walkable-walls",
 	"defendable-gates",
 	"wall-garrisons",
 	"skirmish-ai-libraries",
+]
+## blockers = required - implemented. `skirmish-ai-libraries` moved to the
+## runtime's implemented set on 2026-08-22 (map scripts install on every
+## castle map: castle_map_live_boot_runner `map_scripts_installed`).
+const BLOCKERS: Array[String] = [
+	"walkable-walls",
+	"defendable-gates",
+	"wall-garrisons",
 ]
 const CONTRACT := {
 	# JSON numbers load as float; the cooked document carries 2.0.
@@ -27,7 +35,7 @@ const CONTRACT := {
 	"family": "retail-castle-siege-skirmish",
 	"gameplayStatus": "blocked-named-gaps",
 	"admissionPolicy": "document-loadable-lobby-visible-gameplay-fails-closed",
-	"required": BLOCKERS,
+	"required": REQUIRED,
 }
 const REQUIRED_BY_MAP := {
 	"Carn Dum": ["defendable-gates", "wall-mounted-defenses", "skirmish-ai-libraries"],

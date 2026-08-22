@@ -51,10 +51,15 @@ const CASTLE_SIEGE_CAPABILITIES: Array[String] = [
 	"wall-mounted-defenses",
 	"skirmish-ai-libraries",
 ]
-## Capabilities this runtime implements. Empty today: every required
-## capability is still a named gap. Lanes L3+ move names from required into
-## this list; a map ships when its computed blockers reach empty.
-const CASTLE_SIEGE_IMPLEMENTED: Array[String] = []
+## Capabilities this runtime implements. Lanes move names from required into
+## this list with a runner proof; a map ships when its computed blockers reach
+## empty.
+##   skirmish-ai-libraries: the map's composed AI library scripts install and
+##   execute on every castle map (castle_map_live_boot_runner
+##   `map_scripts_installed`, Minas Tirith 9/0 / Helm's Deep 9/0, 2026-08-22);
+##   before that every map refused its scripts (see
+##   retail_vertical_slice._normalized_composite_map_scripts_document).
+const CASTLE_SIEGE_IMPLEMENTED: Array[String] = ["skirmish-ai-libraries"]
 ## Lane L2a: maps/<slug>/fixtures.json — the gameplay counterpart to
 ## object-bindings.json. Validated strictly; a malformed document is a named
 ## load failure, never a silent degrade to decoration.
