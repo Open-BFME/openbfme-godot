@@ -4715,6 +4715,10 @@ func _refresh_hud() -> void:
 			simulation.structure_upgrade_commands(selected_structure_id)
 		)
 		hud.set_unit_selection_state([], simulation.entities, simulation.tick_index)
+		# Retail shows the selected BUILDING's own SelectPortrait in the dish;
+		# set_unit_selection_state([]) just cleared the unit one.
+		if hud.has_method("set_structure_portrait"):
+			hud.set_structure_portrait(_structure_source_object_id(structure))
 		_sync_radial_commands(structure, production, locked_units, can_train)
 		hud.set_battalion_upgrade_state([], [])
 	else:
@@ -4905,6 +4909,25 @@ func _consume_event_feed() -> void:
 ## Floating radial command buttons above the selected producer (REF-25/33/35):
 ## train commands, forge research, and hero roster arc over the building,
 ## re-emitting the exact palantir socket orders.
+func _structure_source_object_id(structure: Dictionary) -> String:
+	## The retail Object name behind a sim structure row: castle pieces and
+	## expansion pads carry it on the row; player-built structures are known by
+	## `structure_kind` and resolve through the team manifest's authored
+	## structure_source_object_ids table (first id is the primary object).
+	var direct := String(structure.get("source_object_id", ""))
+	if direct != "":
+		return direct
+	if simulation == null:
+		return ""
+	var kind := String(structure.get("structure_kind", ""))
+	var sources: Variant = simulation.structure_source_object_ids_for_team(int(structure.get("team", -1))).get(kind)
+	if typeof(sources) == TYPE_ARRAY and not (sources as Array).is_empty():
+		return String((sources as Array)[0])
+	if typeof(sources) == TYPE_STRING:
+		return String(sources)
+	return ""
+
+
 func _sync_radial_commands(structure: Dictionary, production: Array, locked_units: Array, can_train: bool) -> void:
 	if hud == null or camera == null:
 		return

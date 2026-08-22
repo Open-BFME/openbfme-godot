@@ -254,6 +254,21 @@ func _run() -> void:
 	)
 	selected_hud.hide_radial_commands()
 	selected_hud.free()
+	# The live game binds the HUD against the host root PLUS every mounted pack
+	# root (retail_vertical_slice.gd `ui_pack_roots`), which is how the APT
+	# contract and interface-art index are found on a composed selection. Bind
+	# one exactly that way for the checks that need a bound retail shell.
+	var game_hud = HudScript.new()
+	root.add_child(game_hud)
+	game_hud.build()
+	var game_bind_error: String = game_hud.bind_retail_train_commands(
+		content_db, selected_pack_root, true, Array(content_db.pack_roots)
+	)
+	_check("game_style_binding_succeeds", game_bind_error == "", game_bind_error)
+	if game_bind_error == "":
+		_check_structure_portrait(game_hud)
+		_check_control_bar_click_shield(game_hud)
+	game_hud.free()
 
 	_fixture_root = "user://retail-four-unit-hud-%d" % Time.get_ticks_usec()
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(_fixture_root.path_join("assets")))
@@ -1039,3 +1054,57 @@ func _check_paged_command_page_layout(hud) -> void:
 			dish_detail += "b%d centre=%s norm=%.2f; " % [index, str(centre), offset.length()]
 	_check("no_paged_command_button_sits_inside_the_dish", clear_of_dish, dish_detail)
 	hud.hide_radial_commands()
+
+
+func _check_structure_portrait(hud) -> void:
+	# Owner 2026-08-22 HUD audit: a selected fortress showed "Level: 1" in the
+	# dish and no picture. Retail shows the building's authored SelectPortrait
+	# (fortress.ini:1051 `BPGFortress`); the pack carries the image.
+	var image_id := String(hud.structure_portrait_image_id("MenFortress"))
+	_check("structure_portrait_reads_authored_select_portrait", image_id == "BPGFortress", image_id)
+	hud.set_structure_portrait("MenFortress")
+	_check(
+		"structure_portrait_shows_in_the_dish",
+		hud.selection_portrait.visible and hud.selection_portrait.texture != null
+			and String(hud.selection_portrait.get_meta("retail_active_portrait_unit_id", "")) == "MenFortress",
+		"visible=%s texture=%s" % [hud.selection_portrait.visible, hud.selection_portrait.texture != null]
+	)
+	# A unit selection afterwards replaces it (no stale building picture).
+	hud.set_production_state([], false)
+	hud.set_unit_selection_state([] as Array[int], {})
+	_check("structure_portrait_clears_on_deselect", not hud.selection_portrait.visible)
+	# An unknown structure is a named miss, never a substitute picture.
+	hud.set_structure_portrait("NoSuchStructure")
+	_check("structure_portrait_unknown_is_a_named_miss", not hud.selection_portrait.visible)
+
+
+func _check_control_bar_click_shield(hud) -> void:
+	# Owner 2026-08-22 HUD audit: clicks on the gold bezel fell through to the
+	# world (deselect / move order under the bar). Retail's bar swallows them.
+	var frame = hud.retail_control_bar_frame
+	_check(
+		"control_bar_frame_stops_mouse_events",
+		frame != null and frame.mouse_filter == Control.MOUSE_FILTER_STOP and frame.visible,
+		"filter=%s visible=%s" % [frame.mouse_filter if frame != null else -1, frame != null and frame.visible]
+	)
+	if frame == null or not frame.has_retail_shell():
+		_check("control_bar_frame_has_retail_shell", false)
+		return
+	# Opaque art shields; the transparent stage corner does not. Sample a grid
+	# over the authored art rectangle: the two rings and the resource scroll
+	# cover well over a quarter of it.
+	var hits := 0
+	var samples := 0
+	for piece_value in frame.retail_pieces:
+		var piece := piece_value as Dictionary
+		if not piece.has("dest"):
+			continue
+		var dest := piece["dest"] as Rect2
+		for gy in range(1, 20):
+			for gx in range(1, 20):
+				samples += 1
+				if bool(frame.shields_point(dest.position + dest.size * Vector2(gx / 20.0, gy / 20.0))):
+					hits += 1
+	_check("control_bar_opaque_art_shields_world_clicks", samples > 0 and hits * 4 >= samples, "%d/%d" % [hits, samples])
+	var corner := Vector2(frame.size.x - 2.0, 2.0)
+	_check("control_bar_transparent_corner_reaches_the_world", not bool(frame.shields_point(corner)), str(corner))

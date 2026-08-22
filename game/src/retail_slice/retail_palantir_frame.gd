@@ -18,7 +18,10 @@ var retail_source_size := Vector2i.ZERO
 
 
 func _ready() -> void:
-	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Click shield (see `_has_point` below): the bar swallows world clicks
+	# wherever its art is opaque. Was MOUSE_FILTER_IGNORE, which let a click on
+	# the bezel deselect or order units on the terrain behind the HUD.
+	mouse_filter = Control.MOUSE_FILTER_STOP
 	queue_redraw()
 
 
@@ -157,3 +160,90 @@ func _draw() -> void:
 	draw_circle(jewel, 14.0, shadow)
 	draw_circle(jewel, 9.0, Color("2f7caa"))
 	draw_circle(jewel - Vector2(2, 2), 3.0, Color("bceaff"))
+
+
+## CLICK SHIELD. Retail's control bar swallows every mouse event that lands on
+## its art: you cannot select, deselect or order units on the terrain that
+## happens to be drawn behind the palantir frame. This control used to be
+## MOUSE_FILTER_IGNORE, so a click on the gold bezel fell through to
+## `_unhandled_input` and became a world click - a deselect, or a move order to
+## a point under the HUD. The shield is ALPHA-ACCURATE: `_has_point` reports a
+## hit only where the bound retail art is opaque (or inside the solid dish
+## backing disc), so the transparent corners of the rectangle still reach the
+## world exactly as retail's non-rectangular bar does. The synthetic shell
+## shields its whole circle.
+const SHIELD_ALPHA_THRESHOLD := 0.05
+var _shield_images: Dictionary = {}
+
+
+func _shield_image_for(texture: Texture2D) -> Image:
+	if texture == null:
+		return null
+	var key := texture.get_instance_id()
+	if not _shield_images.has(key):
+		var image := texture.get_image()
+		if image == null:
+			return null
+		image = image.duplicate()
+		if image.is_compressed():
+			image.decompress()
+		image.convert(Image.FORMAT_RGBA8)
+		_shield_images[key] = image
+	return _shield_images[key] as Image
+
+
+func _shield_piece_hit(piece: Dictionary, index: int, point: Vector2) -> bool:
+	var kind := String(piece.get("kind", ""))
+	if kind == "disc":
+		return point.distance_to(piece["center"] as Vector2) <= float(piece["radius"])
+	var dest := piece["dest"] as Rect2
+	if not dest.has_point(point):
+		return false
+	var texture: Texture2D = _masked_textures.get(index) if kind == "dish_ring" and _masked_textures.has(index) else piece.get("texture", retail_texture)
+	var image := _shield_image_for(texture)
+	if image == null:
+		return true
+	var local := (point - dest.position) / dest.size
+	var sample := Vector2.ZERO
+	if kind == "dish_ring" and _masked_textures.has(index):
+		sample = local * Vector2(image.get_width(), image.get_height())
+	else:
+		var region := piece["region"] as Rect2
+		sample = region.position + local * region.size
+	var x := clampi(int(sample.x), 0, image.get_width() - 1)
+	var y := clampi(int(sample.y), 0, image.get_height() - 1)
+	return image.get_pixel(x, y).a >= SHIELD_ALPHA_THRESHOLD
+
+
+func shields_point(point: Vector2) -> bool:
+	## Local-space hit test used by `_has_point` and by tests.
+	if render_mode == RenderMode.HIDDEN:
+		return false
+	if render_mode == RenderMode.RETAIL:
+		if retail_texture == null:
+			return false
+		if retail_pieces.is_empty():
+			var image := _shield_image_for(retail_texture)
+			if image == null or size.x <= 0.0 or size.y <= 0.0:
+				return Rect2(Vector2.ZERO, size).has_point(point)
+			var x := clampi(int(point.x / size.x * image.get_width()), 0, image.get_width() - 1)
+			var y := clampi(int(point.y / size.y * image.get_height()), 0, image.get_height() - 1)
+			return Rect2(Vector2.ZERO, size).has_point(point) and image.get_pixel(x, y).a >= SHIELD_ALPHA_THRESHOLD
+		for index in retail_pieces.size():
+			if _shield_piece_hit(retail_pieces[index], index, point):
+				return true
+		return false
+	var center := Vector2(size.x * 0.5, size.y * 0.46)
+	var radius := minf(size.x * 0.47, size.y * 0.48)
+	return point.distance_to(center) <= radius + 10.0
+
+
+func _has_point(point: Vector2) -> bool:
+	return shields_point(point)
+
+
+func _gui_input(event: InputEvent) -> void:
+	# Everything that reaches the shield stops here; nothing under the bar
+	# art is a legal world target in retail.
+	if event is InputEventMouseButton or event is InputEventMouseMotion:
+		accept_event()

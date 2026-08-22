@@ -2907,6 +2907,8 @@ func _clear_retail_command_bindings(hide_commands: bool) -> void:
 	_retail_train_label = ""
 	_retail_train_labels.clear()
 	_retail_portrait_textures.clear()
+	_structure_portrait_textures.clear()
+	_structure_portrait_misses.clear()
 	if _hero_select_all_button != null:
 		_hero_select_all_button.icon = null
 		for metadata_key in ["retail_image_id", "retail_image_path"]:
@@ -3052,6 +3054,62 @@ func _update_retail_selection_portrait(production: Array) -> void:
 			return
 	if selection_portrait.has_meta("retail_active_portrait_unit_id"):
 		selection_portrait.remove_meta("retail_active_portrait_unit_id")
+
+
+## Structure portraits: retail's palantir dish shows the selected building's
+## authored `SelectPortrait` (fortress.ini:1051 `SelectPortrait = BPGFortress`)
+## exactly as it shows a unit's. Before this the dish showed only "Level: N"
+## for a selected structure - `set_production_state` tried the PRODUCED units'
+## portraits (none of the four-unit specs match a hero page) and
+## `set_unit_selection_state([])` then cleared it. The converted structure
+## document carries the expression at
+## `registration.presentation.ui.SelectPortrait.expression` and the pack's
+## interface-art index carries every `BP*` image; both are read through the
+## same fail-closed validator the unit portraits use. Missing art is a named
+## miss (diagnostic), never a substitute picture.
+var _structure_portrait_textures: Dictionary = {}
+var _structure_portrait_misses: Dictionary = {}
+
+
+func structure_portrait_image_id(structure_object_id: String) -> String:
+	if _bound_content_db == null or structure_object_id == "":
+		return ""
+	var document: Dictionary = _bound_content_db.get_playable_structure_runtime(structure_object_id)
+	var ui: Dictionary = (
+		((document.get("registration", {}) as Dictionary).get("presentation", {}) as Dictionary)
+		.get("ui", {}) as Dictionary
+	)
+	var portrait: Variant = ui.get("SelectPortrait", {})
+	if typeof(portrait) == TYPE_DICTIONARY:
+		return String((portrait as Dictionary).get("expression", "")).strip_edges()
+	return String(portrait).strip_edges()
+
+
+func set_structure_portrait(structure_object_id: String) -> void:
+	if selection_portrait == null or not retail_presentation_bound:
+		return
+	if structure_object_id == "":
+		return
+	if not _structure_portrait_textures.has(structure_object_id):
+		if _structure_portrait_misses.has(structure_object_id):
+			return
+		var image_id := structure_portrait_image_id(structure_object_id)
+		var validation: Dictionary = {"error": "structure '%s' authors no SelectPortrait" % structure_object_id}
+		if image_id != "":
+			validation = _validate_retail_image(
+				_bound_content_db, "", image_id, Vector2i.ZERO, "", structure_object_id
+			)
+		if String(validation.get("error", "")) != "":
+			_structure_portrait_misses[structure_object_id] = String(validation["error"])
+			print("[RetailHud] STRUCTURE_PORTRAIT_MISS %s: %s" % [structure_object_id, String(validation["error"])])
+			return
+		_structure_portrait_textures[structure_object_id] = validation["texture"]
+	selection_portrait.texture = _structure_portrait_textures[structure_object_id] as Texture2D
+	selection_portrait.visible = selection_portrait.texture != null
+	if selection_portrait.visible:
+		selection_portrait.set_meta("retail_active_portrait_unit_id", structure_object_id)
+	if _selection_rank_pips != null:
+		_selection_rank_pips.set_pips(0)
 
 
 func _show_retail_portrait(unit_id: String) -> void:
@@ -3221,7 +3279,9 @@ func _build_palantir() -> void:
 	retail_control_bar_frame.offset_top = -RETAIL_PALANTIR_FRAME_DISPLAY_SIZE.y
 	retail_control_bar_frame.offset_right = RETAIL_PALANTIR_DISPLAY_SIZE.x
 	retail_control_bar_frame.offset_bottom = 0
-	retail_control_bar_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Click shield: the bar art swallows world clicks where it is opaque
+	# (RetailPalantirFrame._has_point is alpha-accurate), as retail's does.
+	retail_control_bar_frame.mouse_filter = Control.MOUSE_FILTER_STOP
 	retail_control_bar_frame.z_index = 1
 	retail_control_bar_frame.fail_closed_private_shell()
 	retail_control_bar_frame.visible = false
@@ -3247,6 +3307,7 @@ func _build_palantir() -> void:
 	synthetic_palantir_frame.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	synthetic_palantir_frame.position = Vector2.ZERO
 	synthetic_palantir_frame.size = RETAIL_PALANTIR_FRAME_DISPLAY_SIZE
+	synthetic_palantir_frame.mouse_filter = Control.MOUSE_FILTER_STOP
 	dock.add_child(synthetic_palantir_frame)
 	minimap = MinimapScript.new()
 	minimap.name = "PalantirRadar"
