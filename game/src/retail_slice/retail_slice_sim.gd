@@ -1372,6 +1372,19 @@ var last_route_rejection := ""
 ## Observational Q64 receipt; deterministic backoff state itself lives on each
 ## affected entity row and is included in snapshots/save state below.
 var ai_route_backoff_skip_count := 0
+## Observational castle-AI site-search receipts (never serialized, never read by
+## the sim itself). `castle_ai_site_dry_runs` counts construct dry-runs issued
+## by the site search; `castle_ai_site_reject_prints` counts per-site rejection
+## lines actually printed. The owner's v0.2.8 run.log carried 99,466 of the
+## latter for one map, so both are asserted by castle_ai_site_scan_unit_test.
+var castle_ai_site_dry_runs := 0
+var castle_ai_site_reject_prints := 0
+## team -> {structure kind: reason} print de-duplicator for kind-level construct
+## refusals. Diagnostics only: never serialized, never consulted by the sim.
+var _castle_ai_kind_refusals_logged: Dictionary = {}
+## team -> {structure kind: last printed CASTLE_AI_CELL_SCAN line}. Same purpose,
+## same non-serialized diagnostics-only status.
+var _castle_ai_scan_summaries_logged: Dictionary = {}
 var _spawn_positions: Dictionary = {}
 ## Team -> spawn-anchor Vector2 for rostered teams beyond 0/1 (N-team spawn
 ## geometry). Populated from the map layer's team_start_centers; teams 0/1 keep
@@ -31902,6 +31915,33 @@ func _castle_ai_project_source_offset(offset_source: Vector2) -> Vector2:
 	return Vector2(source_horizontal.dot(_source_map_axis_x), source_horizontal.dot(_source_map_axis_z)) * scale
 
 
+const CASTLE_AI_GENERIC_CELL_SOURCE_PREFIX := "generic-navigation-cell:"
+
+## Construct refusals that `_issue_construct_for_team` returns BEFORE it looks at
+## the requested position: the match/team gate, the faction's own structure
+## build-rule table, and the building-permission identity. None of them can turn
+## from "no" to "yes" by moving the site, so one receipt settles the whole
+## (team, structure kind) pair and the map scan is skipped entirely.
+const CASTLE_AI_KIND_LEVEL_REFUSALS := [
+	"match-unavailable",
+	"invalid-team",
+	"unsupported-structure",
+	"building-permission-identity-unresolved",
+	"building-disallowed",
+]
+
+## Retail's skirmish AI does not search the map for base sites: aidata.ini
+## authors the whole base outright. `SkirmishBuildList Gondor`
+## (workspace/retail-extract/data/ini/default/aidata.ini:145-202) places eight
+## structures, and the farthest from that list's centroid (997.51, 1132.77) is
+## GondorWorkshop at X:821.34 Y:1365.61 — 291.98 source units away. That is the
+## measured retail base footprint radius, and it is what bounds ONE tick of the
+## generic navigation-cell fallback below: a tick may examine at most a square
+## of that radius in cells. The scan resumes from the ring it stopped on, so
+## total reach is unchanged — only the per-tick cost is capped.
+const CASTLE_AI_RETAIL_BASE_EXTENT_SOURCE := 291.9753598042349
+
+
 func _castle_ai_authored_candidates(team: int, structure_kind: String) -> Array[Dictionary]:
 	var candidates: Array[Dictionary] = []
 	var home := _castle_ai_home(team)
@@ -31941,10 +31981,18 @@ func _try_castle_ai_site(
 	source: String
 ) -> bool:
 	var authored_site := source.begins_with("authored-")
+	castle_ai_site_dry_runs += 1
 	var dry_run := _issue_construct_for_team(team, builder_ids, structure_kind, candidate, true, authored_site)
 	if not bool(dry_run.get("ok", false)):
-		ai_state["last_site_rejection"] = "%s:%s" % [source, String(dry_run.get("reason", "rejected"))]
-		print("[RetailSliceSim] CASTLE_AI_REJECT team=%d structure=%s site_source=%s reason=%s detail=%s" % [team, structure_kind, source, String(dry_run.get("reason", "rejected")), str(dry_run)])
+		var reason := String(dry_run.get("reason", "rejected"))
+		ai_state["last_site_rejection"] = "%s:%s" % [source, reason]
+		# One line per authored site is a bounded, useful receipt. The generic
+		# navigation-cell scan is not: it produced 99,466 identical lines in the
+		# owner's v0.2.8 Minas Tirith boot. Those are summarised once per
+		# (team, structure kind) by the caller instead.
+		if not source.begins_with(CASTLE_AI_GENERIC_CELL_SOURCE_PREFIX):
+			castle_ai_site_reject_prints += 1
+			print("[RetailSliceSim] CASTLE_AI_REJECT team=%d structure=%s site_source=%s reason=%s detail=%s" % [team, structure_kind, source, reason, str(dry_run)])
 		return false
 	var builder := entities[builder_ids[0]] as Dictionary
 	if not parity.can_path_between(Vector2(builder.get("position", Vector2.ZERO)), candidate):
@@ -31972,8 +32020,12 @@ func _try_castle_ai_construction(
 	builder_ids: Array[int],
 	structure_kind: String
 ) -> bool:
-	var authored_candidates := _castle_ai_authored_candidates(team, structure_kind)
 	var builder_position := Vector2((entities[builder_ids[0]] as Dictionary).get("position", Vector2.ZERO))
+	var kind_refusal := _castle_ai_kind_level_refusal(team, builder_ids, structure_kind, builder_position)
+	if kind_refusal != "":
+		ai_state["last_site_rejection"] = "kind-level:%s" % kind_refusal
+		return false
+	var authored_candidates := _castle_ai_authored_candidates(team, structure_kind)
 	# Retail supplies the sites, while the live porter chooses the shortest
 	# deterministic trip. This prevents file/index order from sending a castle
 	# porter across the entire keep before it can establish production.
@@ -32008,7 +32060,16 @@ func _try_castle_ai_construction(
 		maxi(absi(home_cell.x - navigation_min.x), absi(home_cell.x - navigation_max.x)),
 		maxi(absi(home_cell.y - navigation_min.y), absi(home_cell.y - navigation_max.y))
 	)
-	for radius in range(0, maximum_radius + 1):
+	var cursors: Dictionary = ai_state.get("generic_scan_next_radius", {}) as Dictionary
+	var first_radius := clampi(int(cursors.get(structure_kind, 0)), 0, maximum_radius)
+	var budget := _castle_ai_generic_scan_cell_budget(home_cell)
+	var scanned := 0
+	var rejected := 0
+	var top_reason := ""
+	var radius := first_radius
+	while radius <= maximum_radius:
+		if scanned >= budget:
+			break
 		for dy in range(-radius, radius + 1):
 			for dx in range(-radius, radius + 1):
 				if abs(dx) != radius and abs(dy) != radius:
@@ -32017,9 +32078,95 @@ func _try_castle_ai_construction(
 				if not bool(route_provider.call("is_navigation_walkable", cell)):
 					continue
 				var position := Vector2(route_provider.call("grid_to_local_horizontal", cell))
-				if _try_castle_ai_site(team, ai_state, builder_ids, structure_kind, position, "generic-navigation-cell:%d,%d" % [cell.x, cell.y]):
+				scanned += 1
+				if _try_castle_ai_site(team, ai_state, builder_ids, structure_kind, position, "%s%d,%d" % [CASTLE_AI_GENERIC_CELL_SOURCE_PREFIX, cell.x, cell.y]):
+					cursors.erase(structure_kind)
+					_castle_ai_store_scan_cursors(ai_state, cursors)
 					return true
+				rejected += 1
+				if top_reason == "":
+					top_reason = String(ai_state.get("last_site_rejection", "")).get_slice(":", 2)
+		radius += 1
+	# One summary line per (team, structure kind) scan slice replaces the
+	# per-cell CASTLE_AI_REJECT spam. `resume_radius` is -1 when the scan
+	# exhausted the map this tick.
+	var exhausted := radius > maximum_radius
+	if exhausted:
+		cursors.erase(structure_kind)
+	else:
+		cursors[structure_kind] = radius
+	_castle_ai_store_scan_cursors(ai_state, cursors)
+	var summary := "[RetailSliceSim] CASTLE_AI_CELL_SCAN team=%d structure=%s radius=%d..%d max_radius=%d budget=%d scanned=%d rejected=%d resume_radius=%d reason=%s" % [
+		team,
+		structure_kind,
+		first_radius,
+		maxi(first_radius, radius - 1),
+		maximum_radius,
+		budget,
+		scanned,
+		rejected,
+		-1 if exhausted else radius,
+		top_reason if top_reason != "" else "none",
+	]
+	# The AI retries every tick. Once the scan has wrapped, each slice repeats
+	# verbatim, so an unchanged summary is printed once and then stays silent -
+	# a 4,000-tick castle run cannot re-fill a log with it.
+	var logged: Dictionary = _castle_ai_scan_summaries_logged.get(team, {}) as Dictionary
+	if String(logged.get(structure_kind, "")) != summary:
+		logged[structure_kind] = summary
+		_castle_ai_scan_summaries_logged[team] = logged
+		castle_ai_site_reject_prints += 1
+		print(summary)
 	return false
+
+
+func _castle_ai_store_scan_cursors(ai_state: Dictionary, cursors: Dictionary) -> void:
+	# Written only while a scan is actually mid-map, so maps whose fallback
+	# finishes inside one tick add no key to the serialized AI state.
+	if cursors.is_empty():
+		ai_state.erase("generic_scan_next_radius")
+	else:
+		ai_state["generic_scan_next_radius"] = cursors
+
+
+func _castle_ai_generic_scan_cell_budget(home_cell: Vector2i) -> int:
+	## Cells examinable in one tick = the square of the measured retail base
+	## footprint radius (CASTLE_AI_RETAIL_BASE_EXTENT_SOURCE) expressed in this
+	## map's navigation cells. Cell span is measured from the provider itself,
+	## so no map scale is guessed here.
+	var origin := Vector2(route_provider.call("grid_to_local_horizontal", home_cell))
+	var neighbour := Vector2(route_provider.call("grid_to_local_horizontal", home_cell + Vector2i(1, 0)))
+	var cell_span := origin.distance_to(neighbour)
+	if cell_span <= 0.0:
+		return 1
+	var extent := CASTLE_AI_RETAIL_BASE_EXTENT_SOURCE * float(_rules.get("source_map_transform_scale", 0.1))
+	var radius_cells := maxi(1, int(ceil(extent / cell_span)))
+	return (2 * radius_cells + 1) * (2 * radius_cells + 1)
+
+
+func _castle_ai_kind_level_refusal(
+	team: int,
+	builder_ids: Array[int],
+	structure_kind: String,
+	probe: Vector2
+) -> String:
+	## Exactly one construct dry-run settles whether the refusal depends on the
+	## site at all. A kind-level reason is printed once per (team, kind) instead
+	## of once per navigation cell.
+	castle_ai_site_dry_runs += 1
+	var receipt := _issue_construct_for_team(team, builder_ids, structure_kind, probe, true, false)
+	if bool(receipt.get("ok", false)):
+		return ""
+	var reason := String(receipt.get("reason", "rejected"))
+	if not CASTLE_AI_KIND_LEVEL_REFUSALS.has(reason):
+		return ""
+	var seen: Dictionary = _castle_ai_kind_refusals_logged.get(team, {}) as Dictionary
+	if String(seen.get(structure_kind, "")) != reason:
+		seen[structure_kind] = reason
+		_castle_ai_kind_refusals_logged[team] = seen
+		castle_ai_site_reject_prints += 1
+		print("[RetailSliceSim] CASTLE_AI_KIND_REJECT team=%d structure=%s reason=%s detail=%s" % [team, structure_kind, reason, str(receipt)])
+	return reason
 
 
 func _ai_construction_is_viable(team: int) -> bool:
