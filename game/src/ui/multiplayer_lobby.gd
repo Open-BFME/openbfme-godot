@@ -611,6 +611,21 @@ func _populate_hero_picker() -> void:
 			hero_opt.set_item_metadata(index, profile.duplicate(true))
 			if String(profile.get("heroId", "")) == previous_id:
 				hero_opt.select(index)
+	# Same default as the skirmish setup (Q69): an untouched picker brings the
+	# newest saved hero; "-" stays offered and sticks once the player chose it.
+	if previous_id == "" and not _hero_choice_made:
+		var newest := 0
+		var newest_time := -1
+		var newest_id := ""
+		for index in range(1, hero_opt.item_count):
+			var hero_id := String((hero_opt.get_item_metadata(index) as Dictionary).get("heroId", ""))
+			var saved := int(FileAccess.get_modified_time(CahHeroesScript.profile_path(hero_id)))
+			if saved > newest_time or (saved == newest_time and hero_id < newest_id):
+				newest = index
+				newest_time = saved
+				newest_id = hero_id
+		if newest > 0:
+			hero_opt.select(newest)
 	_refresh_hero_picker_enabled()
 
 
@@ -633,7 +648,11 @@ func _on_army_selected(_index: int) -> void:
 	_announce_created_heroes()
 
 
+var _hero_choice_made := false
+
+
 func _on_hero_selected(_index: int) -> void:
+	_hero_choice_made = true
 	_on_profile_edited()
 	_announce_created_heroes()
 

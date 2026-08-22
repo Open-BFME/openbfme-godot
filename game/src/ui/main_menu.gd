@@ -2466,6 +2466,7 @@ func _populate_one_row_controls(row: int) -> void:
 	_populate_row_team(row)
 	_populate_row_color(row)
 	_apply_row_controller(row)
+	_populate_row_hero(row)
 
 
 func _append_row_control_sweep_steps(row: int) -> void:
@@ -2510,6 +2511,14 @@ func _append_row_control_sweep_steps(row: int) -> void:
 		})
 	_skirmish_sweep_steps.append({"name": "row_color_select/%d" % row, "run": _sweep_finish_color.bind(color, row)})
 	_skirmish_sweep_steps.append({"name": "row_controller/%d" % row, "run": _apply_row_controller.bind(row)})
+	# The Hero column is a row control like the others. It was missing from
+	# this stepped build (and from `_populate_one_row_controls`), so a fresh
+	# setup showed "-" until something else - a faction change, or the warm
+	# sweep's late publication - happened to call _refresh_hero_rows(). Owner
+	# report 2026-08-22: "custom hero not loading on single player menu until
+	# you change faction". Ordered AFTER the controller step: the column reads
+	# whether the row is the human's.
+	_skirmish_sweep_steps.append({"name": "row_hero/%d" % row, "run": _populate_row_hero.bind(row)})
 
 
 func _sweep_add_army_item(option: OptionButton, faction: Dictionary) -> void:
@@ -2780,7 +2789,10 @@ func _populate_row_hero(row: int) -> void:
 	# with `CreateAHero` (playertemplate.ini:100/150/198/243/288/334/381) - so an
 	# empty hero page is ours, not retail's. "-" stays offered, stays selectable,
 	# and stays put once the player has chosen it.
-	if previous == "" and not bool(_row_hero_choice_made.get(row, false)):
+	# An auto-defaulted pick is not a choice: while the player has never worked
+	# the column, every rebuild offers the CURRENT newest hero (a hero made in
+	# MY HEROES a moment ago wins over the one defaulted earlier).
+	if not bool(_row_hero_choice_made.get(row, false)):
 		var newest := _most_recently_saved_hero_index(option)
 		if newest > 0:
 			option.select(newest)
@@ -4373,6 +4385,10 @@ func _show_page(page: String) -> void:
 			if solo_btn.visible:
 				solo_btn.grab_focus()
 		PAGE_SOLO:
+			# Re-read the saved heroes on every visit: a hero made in MY HEROES
+			# since the rows were built must be offered now, not after the
+			# player happens to change a faction (owner report 2026-08-22).
+			_refresh_hero_rows()
 			_refresh_skirmish_launch_state()
 			_refresh_map_preview()
 			_refresh_map_description()

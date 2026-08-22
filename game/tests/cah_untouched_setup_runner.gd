@@ -46,7 +46,7 @@ const MAX_WAIT_FRAMES := 1200
 const SAVE_GAP_MS := 1100
 ## LIVENESS. A GDScript runtime error aborts its function without propagating, so
 ## a broken run would print zero failures. Raise deliberately; never lower.
-const EXPECTED_CHECKS := 19
+const EXPECTED_CHECKS := 25
 
 var _profiles := ProfileSandboxScript.new()
 var _runner_watchdog := RunnerWatchdogScript.new()
@@ -107,10 +107,12 @@ func _run() -> void:
 		_finish()
 		return
 	# The screen builds its own rows. NOTHING below presses the Hero column - that
-	# omission is the whole test.
-	menu._refresh_hero_rows()
-
+	# omission is the whole test. And nothing below refreshes it for the screen
+	# either: the owner saw the column stay "-" until a faction change, which is
+	# exactly what a runner that calls _refresh_hero_rows() itself cannot see.
 	var picker: OptionButton = menu.solo_flyout.hero_dropdowns[0]
+	_check("screen_populates_hero_column_without_help", picker.item_count == 3,
+		"item_count=%d before any refresh" % picker.item_count)
 	_check("untouched_hero_column_still_offers_none",
 		picker.item_count > 0 and String(picker.get_item_metadata(0)) == "",
 		"item 0 must remain the '-' choice")
@@ -121,6 +123,21 @@ func _run() -> void:
 		"offered '%s', newest is '%s'" % [
 			String(menu._selected_row_hero_id(0)), String(newest.get("heroId", ""))
 		])
+
+	# A hero made in MY HEROES after the rows were built must be offered the
+	# moment the player returns to the Solo page - not after a faction change.
+	OS.delay_msec(SAVE_GAP_MS)
+	var late := CahHeroes.new_profile(system, "Late Hero", CLASS_INDEX, SUB_CLASS_INDEX)
+	_check("late_hero_saves", CahHeroes.save_profile(late) == "")
+	menu._show_page(menu.PAGE_SOLO)
+	_check("returning_to_solo_lists_the_late_hero", picker.item_count == 4,
+		"item_count=%d after a hero was saved and the Solo page re-entered" % picker.item_count)
+	_check("returning_to_solo_offers_the_late_hero_as_newest",
+		String(menu._selected_row_hero_id(0)) == String(late.get("heroId", "")),
+		"offered '%s'" % String(menu._selected_row_hero_id(0)))
+	_check("late_hero_removed", CahHeroes.delete_profile(String(late.get("heroId", ""))))
+	menu._show_page(menu.PAGE_SOLO)
+	_check("deleted_hero_leaves_the_list", picker.item_count == 3, "item_count=%d" % picker.item_count)
 
 	# --- THE OWNER'S PATH: press PLAY without ever opening the Hero column ----
 	_check("untouched_launch_is_recorded", menu.apply_skirmish_selection())
