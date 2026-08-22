@@ -92,10 +92,39 @@ const PAPER_FALLBACK := Color8(163, 142, 95)
 ## capture puts the drawn map at 0.74 of the ring's opening against an inscribed
 ## 0.707 - so it overfills by a few percent and lets the bezel clip the corners.
 const PAPER_FILL := 1.06
+## HOW BIG THE AUTHORED PARCHMENT SHEET IS DRAWN, as a multiple of the bezel
+## opening radius. NOT 1.0 - that was the owner's "the radar blends into the
+## terrain" (2026-08-22). The atlas sheet carries its own vignette AND the
+## frame's drop shadow: normalised on its own 107px radius it falls 1.00 -> 0.45
+## by 0.72R and to 0.09 at its edge. Laid 1:1 across the opening that black rim
+## lands INSIDE the bezel, and the outer quarter of the dish - map ink, blips
+## and all - measured 0.09-0.33 of peak.
+##
+## Retail's dish does not do that. Measured over 20 radial bins on
+## `workspace/retail-work/oracle/captures/bfme2-fords-men-reference-youtube-z6ZI6wY_LYE-500s.png`
+## (dish centre (131,598), opening radius 74px) the composed retail radar holds
+## 0.78 of peak at 0.72R and still reads 0.43 right at the metal. Least-squares
+## fitting the sheet's own profile to that capture over all 20 bins picks
+## s = 1.29 with an RMS residual of 0.035 of peak - i.e. retail draws the sheet
+## about 29% wider than the opening and lets the ring crop the vignette. The fit
+## and both profiles are in `workspace/logs/radar-owner/`.
+const RETAIL_PARCHMENT_DISC_SCALE := 1.29
 const INK_OPACITY := 0.82
 ## `MappedImage RadarViewBoxEdge`: handcreatedmappedimages.ini authors the crop
 ## at Left:1 Top:0 Right:8 Bottom:8 in an 8x8 source texture.
 const RETAIL_VIEW_BOX_EDGE_SIZE := Vector2i(7, 8)
+## HOW THICK THE FALLBACK VIEW BOX IS, as a fraction of the bezel radius.
+## Measured, not chosen: in
+## `workspace/retail-work/oracle/captures/bfme2-fords-men-reference-youtube-z6ZI6wY_LYE-500s.png`
+## the gold band crosses column x=152 at rows 602-605 - 3.5px at half prominence
+## against that capture's 74px dish opening radius, so 0.047R. The old flat
+## 1.6px was 0.010R at the shipping 362px control and read as a hairline.
+const RETAIL_VIEW_BOX_EDGE_RADIUS_RATIO := 0.047
+## The band's peak colour in that same capture (252,215,91 at x=152,y=603). The
+## 0.9 alpha is INHERITED, not measured - retail's band is a soft-edged glow and
+## a flat polyline cannot carry that; it stays until an interface-art pack
+## publishes the authored `RadarViewBoxEdge` crop.
+const VIEW_BOX_FALLBACK_GOLD := Color(Color8(252, 215, 91), 0.9)
 ## Where the palantir bezel's opening is, as a fraction of the radar control's
 ## side. The retail control-bar ring (`apt-palantirexport-17` region (0,0,250,256)
 ## drawn into dock rect (19,6,375,384), which is how `retail_hud.gd` composes it)
@@ -458,9 +487,11 @@ func bezel_radius() -> float:
 
 
 func _paper_square() -> Rect2:
-	## Where retail's parchment bitmap lands: the square that circumscribes the
-	## bezel opening, so the authored disc's own edge falls exactly on the ring.
-	var radius := bezel_radius()
+	## Where retail's parchment bitmap lands. NOT the square that circumscribes
+	## the opening: the sheet is drawn `RETAIL_PARCHMENT_DISC_SCALE` wider than
+	## the bezel radius and the ring crops its authored rim shadow, which is what
+	## the retail capture measures. See the constant.
+	var radius := bezel_radius() * RETAIL_PARCHMENT_DISC_SCALE
 	var center := Rect2(Vector2.ZERO, size).get_center()
 	return Rect2(center - Vector2(radius, radius), Vector2(radius, radius) * 2.0)
 
@@ -877,10 +908,15 @@ static func _bounds_of_points(points: PackedVector2Array) -> Rect2:
 	return Rect2(minimum, maximum - minimum)
 
 
+func view_box_line_width() -> float:
+	## The procedural fallback band's width in canvas pixels. Proportional to the
+	## dish, because retail's is: see RETAIL_VIEW_BOX_EDGE_RADIUS_RATIO.
+	return bezel_radius() * RETAIL_VIEW_BOX_EDGE_RADIUS_RATIO
+
+
 func _draw_footprint_outline(quad: PackedVector2Array, disc: PackedVector2Array) -> void:
 	## Retail's view wedge is the authored RadarViewBoxEdge tiled along the
 	## clipped polygon. A named procedural fallback keeps old packs playable.
-	var gold := Color(0.92, 0.84, 0.55, 0.9)
 	var pieces := Geometry2D.intersect_polygons(quad, disc)
 	if pieces.is_empty():
 		return
@@ -896,7 +932,7 @@ func _draw_footprint_outline(quad: PackedVector2Array, disc: PackedVector2Array)
 		else:
 			var closed := polygon.duplicate()
 			closed.append(polygon[0])
-			draw_polyline(closed, gold, 1.6, true)
+			draw_polyline(closed, VIEW_BOX_FALLBACK_GOLD, view_box_line_width(), true)
 
 
 func _draw_retail_view_box_segment(first: Vector2, second: Vector2) -> void:
