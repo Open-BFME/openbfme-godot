@@ -268,6 +268,7 @@ func _run() -> void:
 	if game_bind_error == "":
 		_check_structure_portrait(game_hud)
 		_check_control_bar_click_shield(game_hud)
+		_check_command_hotkeys(game_hud)
 	game_hud.free()
 
 	_fixture_root = "user://retail-four-unit-hud-%d" % Time.get_ticks_usec()
@@ -1108,3 +1109,55 @@ func _check_control_bar_click_shield(hud) -> void:
 	_check("control_bar_opaque_art_shields_world_clicks", samples > 0 and hits * 4 >= samples, "%d/%d" % [hits, samples])
 	var corner := Vector2(frame.size.x - 2.0, 2.0)
 	_check("control_bar_transparent_corner_reaches_the_world", not bool(frame.shields_point(corner)), str(corner))
+
+
+func _check_command_hotkeys(hud) -> void:
+	# Owner 2026-08-22 HUD audit: tooltips showed "Shortcut: <letter>" from the
+	# authored `&` markers but no key dispatched anything. With the barracks
+	# page up, the soldier button's authored letter must fire train_requested.
+	var page: Array = []
+	for unit_id_value in hud.train_buttons.keys():
+		page.append(String(unit_id_value))
+	hud.set_production_state(page, true)
+	hud.set_unit_selection_state([] as Array[int], {})
+	var soldier_button: Button = null
+	var letter := ""
+	for unit_id_value in page:
+		var candidate_button: Button = hud.train_buttons.get(unit_id_value)
+		if candidate_button == null or not candidate_button.visible or candidate_button.disabled:
+			continue
+		var candidate_letter := String(hud.hotkey_letter_for_button(candidate_button))
+		if candidate_letter.length() == 1:
+			soldier_button = candidate_button
+			letter = candidate_letter
+			break
+	var soldier_id := String(soldier_button.get_meta("tooltip_unit_id", "")) if soldier_button != null else ""
+	_check("soldier_command_authors_a_hotkey_letter", letter.length() == 1 and soldier_id != "", "letter='%s' page=%d" % [letter, page.size()])
+	if letter.length() != 1:
+		return
+	var fired: Array[String] = []
+	var handler := func(unit_id: String) -> void: fired.append(unit_id)
+	hud.train_requested.connect(handler)
+	var dispatched: bool = hud.dispatch_command_hotkey(letter)
+	_check("hotkey_letter_fires_the_visible_command", dispatched and fired == [soldier_id], "dispatched=%s fired=%s" % [dispatched, str(fired)])
+	# A letter no visible command authors does nothing.
+	fired.clear()
+	var unused := ""
+	for candidate in ["X", "J", "Q", "V", "Y"]:
+		var taken := false
+		for button in hud._hotkey_candidates():
+			if String(hud.hotkey_letter_for_button(button)) == candidate:
+				taken = true
+		if not taken:
+			unused = candidate
+			break
+	_check("unauthored_hotkey_letter_is_inert", unused != "" and not bool(hud.dispatch_command_hotkey(unused)) and fired.is_empty(), unused)
+	# Hidden commands never fire from a key.
+	hud.set_production_state([], false)
+	fired.clear()
+	_check("hidden_command_ignores_its_hotkey", not bool(hud.dispatch_command_hotkey(letter)) and fired.is_empty())
+	hud.train_requested.disconnect(handler)
+	# Reserved action keys (camera WASD, F/H/Z) are never taken by a command.
+	var reserved := InputEventKey.new()
+	reserved.physical_keycode = KEY_W
+	_check("camera_letters_stay_reserved", bool(hud.hotkey_is_reserved(reserved)))

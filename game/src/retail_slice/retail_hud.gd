@@ -5833,6 +5833,98 @@ func show_retail_tooltip(button: Button) -> void:
 	retail_tooltip.place_retail_anchor(screen)
 
 
+## COMMAND HOTKEYS. Retail authors every command label with an `&` before its
+## hotkey letter (CONTROLBAR strings, e.g. "&Soldiers"), shows that letter in
+## the tooltip's "Shortcut" line and fires the command when the bare key is
+## pressed. This HUD already extracted and DISPLAYED the letter; nothing
+## dispatched it, so a player reading "Shortcut: S" and pressing S got
+## nothing. Dispatch order follows what retail has on screen: the in-world
+## ring of the selected structure, then the palantir sockets, then the
+## right-edge side command bar. A bare letter only - Ctrl/Alt/Shift+letter
+## belongs to control groups and camera - and never while a text field has
+## focus.
+func _hotkey_candidates() -> Array[Button]:
+	var ordered: Array[Button] = []
+	var roots: Array[Node] = []
+	if _world_radial_layer != null:
+		roots.append(_world_radial_layer)
+	if command_socket_layer != null:
+		roots.append(command_socket_layer)
+	if command_grid != null:
+		roots.append(command_grid)
+	if retail_side_command_bar != null:
+		roots.append(retail_side_command_bar)
+	roots.append(self)
+	var seen: Dictionary = {}
+	for root_node in roots:
+		for node in root_node.find_children("*", "Button", true, false):
+			var button := node as Button
+			if button == null or seen.has(button.get_instance_id()):
+				continue
+			seen[button.get_instance_id()] = true
+			if not button.is_visible_in_tree() or button.disabled:
+				continue
+			if not button.has_meta("tooltip_group"):
+				continue
+			ordered.append(button)
+	return ordered
+
+
+func hotkey_letter_for_button(button: Button) -> String:
+	var content := _resolve_tooltip_content(button)
+	return String(content.get("shortcut", "")).to_upper()
+
+
+func dispatch_command_hotkey(letter: String) -> bool:
+	## Presses the first on-screen retail command whose authored hotkey is
+	## `letter`. Returns whether one fired. Exposed for the runner.
+	var wanted := letter.to_upper()
+	if wanted.length() != 1:
+		return false
+	for button in _hotkey_candidates():
+		if hotkey_letter_for_button(button) == wanted:
+			button.pressed.emit()
+			return true
+	return false
+
+
+func _unhandled_key_input(event: InputEvent) -> void:
+	var key := event as InputEventKey
+	if key == null or not key.pressed or key.echo:
+		return
+	if key.ctrl_pressed or key.alt_pressed or key.meta_pressed or key.shift_pressed:
+		return
+	var focus := get_viewport().gui_get_focus_owner()
+	if focus is LineEdit or focus is TextEdit:
+		return
+	if key.keycode < KEY_A or key.keycode > KEY_Z:
+		return
+	if hotkey_is_reserved(key):
+		return
+	var letter := OS.get_keycode_string(key.keycode)
+	if dispatch_command_hotkey(letter):
+		get_viewport().set_input_as_handled()
+
+
+func hotkey_is_reserved(key: InputEventKey) -> bool:
+	## Letters bound to a project input action (WASD/QE camera, F attack-move,
+	## H stop, Z stance...) keep their action; retail's authored letter for a
+	## command on one of those keys is shown but not dispatched. Named here so
+	## the trade-off is visible, not silent.
+	for action in InputMap.get_actions():
+		if InputMap.action_has_event(action, key):
+			return true
+		for bound in InputMap.action_get_events(action):
+			var bound_key := bound as InputEventKey
+			if bound_key == null:
+				continue
+			var bound_code := bound_key.physical_keycode if bound_key.physical_keycode != KEY_NONE else bound_key.keycode
+			var pressed_code := key.physical_keycode if key.physical_keycode != KEY_NONE else key.keycode
+			if bound_code == pressed_code:
+				return true
+	return false
+
+
 func _resolve_tooltip_content(button: Button) -> Dictionary:
 	var group := String(button.get_meta("tooltip_group", ""))
 	match group:
