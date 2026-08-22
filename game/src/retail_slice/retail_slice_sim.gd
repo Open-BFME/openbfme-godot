@@ -1382,6 +1382,9 @@ var castle_ai_site_reject_prints := 0
 ## team -> {structure kind: reason} print de-duplicator for kind-level construct
 ## refusals. Diagnostics only: never serialized, never consulted by the sim.
 var _castle_ai_kind_refusals_logged: Dictionary = {}
+## team -> {structure kind: last printed CASTLE_AI_CELL_SCAN line}. Same purpose,
+## same non-serialized diagnostics-only status.
+var _castle_ai_scan_summaries_logged: Dictionary = {}
 var _spawn_positions: Dictionary = {}
 ## Team -> spawn-anchor Vector2 for rostered teams beyond 0/1 (N-team spawn
 ## geometry). Populated from the map layer's team_start_centers; teams 0/1 keep
@@ -32093,8 +32096,7 @@ func _try_castle_ai_construction(
 	else:
 		cursors[structure_kind] = radius
 	_castle_ai_store_scan_cursors(ai_state, cursors)
-	castle_ai_site_reject_prints += 1
-	print("[RetailSliceSim] CASTLE_AI_CELL_SCAN team=%d structure=%s radius=%d..%d max_radius=%d budget=%d scanned=%d rejected=%d resume_radius=%d reason=%s" % [
+	var summary := "[RetailSliceSim] CASTLE_AI_CELL_SCAN team=%d structure=%s radius=%d..%d max_radius=%d budget=%d scanned=%d rejected=%d resume_radius=%d reason=%s" % [
 		team,
 		structure_kind,
 		first_radius,
@@ -32105,7 +32107,16 @@ func _try_castle_ai_construction(
 		rejected,
 		-1 if exhausted else radius,
 		top_reason if top_reason != "" else "none",
-	])
+	]
+	# The AI retries every tick. Once the scan has wrapped, each slice repeats
+	# verbatim, so an unchanged summary is printed once and then stays silent -
+	# a 4,000-tick castle run cannot re-fill a log with it.
+	var logged: Dictionary = _castle_ai_scan_summaries_logged.get(team, {}) as Dictionary
+	if String(logged.get(structure_kind, "")) != summary:
+		logged[structure_kind] = summary
+		_castle_ai_scan_summaries_logged[team] = logged
+		castle_ai_site_reject_prints += 1
+		print(summary)
 	return false
 
 
