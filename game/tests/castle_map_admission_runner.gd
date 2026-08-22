@@ -10,7 +10,8 @@ const CATALOG_MAX_BYTES := 1024 * 1024
 const DOCUMENT_MAX_BYTES := 8 * 1024 * 1024
 const EXPECTED_CHECKS := 47
 const AMON_SUL := "Amon Sul Fortress"
-## v2 contract (maps pack 6f6be4db, 2026-08-19): each castle map carries its
+## v2 contract (maps pack 459a4dec, 2026-08-22 republish; was 6f6be4db 2026-08-19):
+## each castle map carries its
 ## DERIVED requirement set (castle_capabilities.py over the map's own objects);
 ## blockers = required - implemented, never authored. Erebor's set is pinned
 ## as BLOCKERS; every map's set is pinned in REQUIRED_BY_MAP.

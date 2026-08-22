@@ -52,28 +52,28 @@ $publishRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot "workspace\content-pa
 # these constants in the same change that moves it, and say so - the same
 # conscious-update pattern the state pins use.
 # RE-MEASURED 2026-08-19 v0.2.7 (castle lanes recook + playable-maps republish abc27325: gates/garrison/walkSurfaces/ai_bases/scripts)
-$expectedSelectionSha256 = "bbdaa97e908476ced4e88aa61cd87257e5c4aa6b9ea440dec40f70aeb82ef292"
-$expectedSelectionActivePack = "rotwk-men-vslice/51d4885433869fa6290498eeac597b8cc8ac79e540d073dbf03c9c0d0184df3c"
+$expectedSelectionSha256 = "50b94562be5a0a500ebcb54b36db473e5e12ccb1077cdf636e5104baae4d6b3e"
+$expectedSelectionActivePack = "rotwk-men-vslice/b361ec5fc2cc72aa98ab5362538636d6be6cadbe82fedbf3000752bad072d4e7"
 # RE-MEASURED 2026-08-19 v0.2.7 (castle lanes recook + playable-maps republish abc27325: gates/garrison/walkSurfaces/ai_bases/scripts)
 $expectedSelectionSupplementalPacks = @(
     "bfme2-men-vslice/7de517bf146582f10741750b50d63f9955c42d1fe2aa13200757fc6fb29f217a",
     "bfme2-skirmish-maps-private/f9c14cfa4c25e68509373390741fc82e5892f050a2305a19fa3efaca0f39a5b0",
-    "rotwk-elves-vslice/05e4b2a6b43f2145b4ddb8f2c42780feee8c60f3ebdd52bf3f8435e0c14387ec",
-    "rotwk-dwarves-vslice/088d90191cb8cf393bedd5b7d6194c6fa9dc6457cd7c4fcf5f9efa261ee141c7",
-    "rotwk-isengard-vslice/ad66347a868ca78caf390a360de586dfcec3e9855fcbca19e926ca61d88d7842",
-    "rotwk-mordor-vslice/975c3d6a618ad161e0b00884500aa03b6be8364309baa136064970e1e4ac4f29",
-    "rotwk-wild-vslice/765e92a728ff0b525a8aebfd85cfe65ee39093629135c8445886ef2efd2969d0",
-    "rotwk-angmar-vslice/a3635f32f05ffe617407224d89b25decd27d2058be9946b9aecce04b0e4a04ee",
+    "rotwk-elves-vslice/8ae6efd5d211730e6c0f1104fe2330e31b025b228409c0a8410f37bf0b669423",
+    "rotwk-dwarves-vslice/7693e95218127805a28bff2d5a1bcb09724621d033c086ab0feb801507b7c08b",
+    "rotwk-isengard-vslice/fda0f75d5a612cd1b90df55a0e9aef510c2d27cf6a7754906402b19f1de54759",
+    "rotwk-mordor-vslice/33a2dfbf3145bf2d4f7620f2d1c808694528ab2f5e787c5a8bdf5edc1f51d30b",
+    "rotwk-wild-vslice/5df3ad08256cdf10c8e819d085e9001662f24a5257b097e7d53e76448cd66ce1",
+    "rotwk-angmar-vslice/b974039fff1eef664f036ecb3e4397bede761573d2b8a370d72e4ee9fd6b9fa2",
     "rotwk-music-vslice/f10d95389a1ab51a7a20b3f549fc6b90291db51f7e68693e4d157f1a67eada8d",
-    "rotwk-playable-maps-private/abc27325672bd5712d7785e23d5ff858133c86056f173032deb8c1de9141d4d1",
+    "rotwk-playable-maps-private/459a4dec76aabf4bfcb1e0a76dacebfd8effcb5a26b378828377d6d85ad48efd",
     "rotwk-cursors-vslice/11236cb6a57396ccf3bfad7d4406f89dc7e0e95b3d9db34c0063c6c1c1d760d2",
-    "rotwk-men-eva-overlay/c59262c328a3041b3da684cdab826619ee7a3dcee85b68b137e68a869bc8741d",
-    "rotwk-elves-eva-overlay/51d90549e45b6c04e98a95c10bc03a709e8767c121d6d454a5d71bf338a78ab6",
-    "rotwk-dwarves-eva-overlay/75f1642049f4a491b45901db02600cc70fe78a95909c8d20c6d0c25e146fd13c",
-    "rotwk-isengard-eva-overlay/5228196e4ebd593c0698a65f78ed16aaabb9821c6e51ea6c8626f73fe7960375",
-    "rotwk-mordor-eva-overlay/d7e608b0e0f1a0d4151d6f33cf4fd42fec794c314792d8637f6b68bada627dab",
-    "rotwk-wild-eva-overlay/98a12fe7b1277b51c23044916e267e7bd86f150da5c14dce61900b0ee1edfc8e",
-    "rotwk-angmar-eva-overlay/96820c3d3abe5379ce36f123fc846810feca3756db625dfeb3ca1202d9ee958c",
+    "rotwk-men-eva-overlay/abff331651bdf3e2c69901ade1a67c553a9aa991007bd7e3ad0744f7aa8f6595",
+    "rotwk-elves-eva-overlay/b5554a467eec56627098715a5218729b04843162d6463650fe8680fc2d8649e5",
+    "rotwk-dwarves-eva-overlay/54048c6656d30f573a45527f5d8828a2648cbb507c5566f978e1d2b357c6d1e1",
+    "rotwk-isengard-eva-overlay/cb9be539fa338724bfdfb71a9fe9ca2715af67324688f06a71626ff0a298d14c",
+    "rotwk-mordor-eva-overlay/27b7b1323d141675282e26bbb4afe651b0af8c6e1564890742098e999884c2f5",
+    "rotwk-wild-eva-overlay/00a87e8803ba291988ce7f02a48a9481323a70256930d9da71aee34c115b0a0d",
+    "rotwk-angmar-eva-overlay/5d50eec6ee4407f6e569e03d0940d6a4d3db17bb0ee10190922bb9dd0b3f85ff",
     "bfme2-neutral-vslice/ccc75c1d6e3272581f6a98ca0d8d56f4040b0ae68d14cda8c1afc6152c8819ce",
     "rotwk-neutral-vslice/6032e4568e34970105370ffe86dd7e88ca4b11c1350b3b1815fbd95bc0edc278",
     "bfme2-missing-physical-20260816-batch-041/f72bc1c5c6f09a68f74651b42a453af4b48ffa2c7bd1bba985a895b041fdd591",
@@ -154,7 +154,7 @@ $expectedSelectionSupplementalPacks = @(
     "rotwk-missing-physical-20260816-batch-037/e6aec3caa4fedb96ff6be90a9fcc21e5e28ce7f7246e37106fe9f3a0c94362ed",
     "rotwk-missing-physical-20260816-batch-038/68d1a6ba8418ddc66bda49eb560936a1fbd85bb8001f0f5c0dbc6071c17a5973",
     "rotwk-missing-physical-20260816-batch-039/c470d003a9448b59738589ee4024f5b795f4e333ed94ac21457c4551b91da886",
-    "rotwk-missing-physical-20260816-batch-040/425b3dc167212b48ef9a8692482d05627092ca8107bb61d1b2b9fa90548f4864"
+    "rotwk-missing-physical-20260816-batch-040/425b3dc167212b48ef9a8692482d05627092ca8107bb61d1b2b9fa90548f4864",
 )
 $stateRoot = if (-not [string]::IsNullOrWhiteSpace($env:OPENBFME_IMPORT_ROOT)) {
     [IO.Path]::GetFullPath($env:OPENBFME_IMPORT_ROOT)
