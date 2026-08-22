@@ -155,6 +155,26 @@ static func submenu_slot_dock(
 	return submenu_slot_center_dock(index, viewport) - button_size * 0.5
 
 
+## The first `count` authored command SEAT centres in dock-local pixels, in the
+## order a paged command range fills them: the six `glass0..glass5` sockets, then
+## the `subMenu0..subMenu3` ring and its authored continuation.
+##
+## This is the seat set `retail_hud.gd _radial_button_position` lays a page out
+## on, and the set every geometry gate derives its bounds from - so a gate cannot
+## hold production to a rule `Palantir.apt` itself breaks.
+static func command_seat_centers_dock(
+	count: int, viewport: Vector2 = DESIGN_VIEWPORT
+) -> Array[Vector2]:
+	var sockets: int = APT_RUNTIME.PALANTIR_COMMAND_SLOT_LOCAL.size()
+	var seats: Array[Vector2] = []
+	for index in maxi(0, count):
+		if index < sockets:
+			seats.append(command_slot_center_dock(index, viewport))
+		else:
+			seats.append(submenu_slot_center_dock(index - sockets, viewport))
+	return seats
+
+
 ## A `ResourceBar` child (`Resources`, `CommandPoints`, ...) in dock-local
 ## pixels.
 static func resource_child_dock(name: String, viewport: Vector2 = DESIGN_VIEWPORT) -> Vector2:

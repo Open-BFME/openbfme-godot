@@ -1120,21 +1120,44 @@ func _check_radial_is_in_the_palantir_wheel(hud, page: String) -> void:
 		var panel_rect := panel.get_global_rect()
 		var visible_socket_buttons: Array[Button] = []
 		_collect_visible_buttons(hud.command_panel, visible_socket_buttons)
+		# THE BOUNDS ARE RETAIL'S OWN AUTHORED SEATS, not absolutes.
+		#
+		# `_radial_button_position` puts a page on the authored `Palantir.apt`
+		# seats - six `glass0..glass5` sockets plus the `subMenu0..subMenu3` ring
+		# (sprite character 114, frame 9). Those seats are closer together than a
+		# 64px button is wide: glass 1/2 and glass 3/4 intersect as boxes, and
+		# `subMenu0` (stage [289.0, 531.3]) overhangs the 360px dock band's top
+		# edge by 4.9px. An absolute no-intersection / panel-containment rule
+		# therefore fails Palantir.apt itself, which is why both are expressed
+		# against the authored seat set at the same button size.
+		var seat_bounds := _authored_seat_bounds(hud, panel_rect)
+		var authored_overlap := float(seat_bounds["overlap"])
+		var authored_bounds := seat_bounds["rect"] as Rect2
 		for index in hud._radial_buttons.size():
 			var button := hud._radial_buttons[index] as Button
-			if not panel_rect.encloses(button.get_global_rect()):
+			if not authored_bounds.encloses(button.get_global_rect()):
 				outside.append("%s:%s" % [button.name, str(button.get_global_rect())])
 			for socket_button in visible_socket_buttons:
-				if button.get_global_rect().intersects(socket_button.get_global_rect()):
-					overlaps.append("%s %s intersects %s %s" % [
+				var socket_hit := button.get_global_rect().intersection(
+					socket_button.get_global_rect()
+				)
+				var socket_area: float = (
+					maxf(0.0, socket_hit.size.x) * maxf(0.0, socket_hit.size.y)
+				)
+				if socket_area > authored_overlap + 0.01:
+					overlaps.append("%s %s intersects %s %s by %.1f px^2 (authored %.1f)" % [
 						button.name, str(button.get_global_rect()),
-						socket_button.name, str(socket_button.get_global_rect())
+						socket_button.name, str(socket_button.get_global_rect()),
+						socket_area, authored_overlap
 					])
 			for other_index in range(index + 1, hud._radial_buttons.size()):
 				var other := hud._radial_buttons[other_index] as Button
-				if button.get_global_rect().intersects(other.get_global_rect()):
-					radial_overlaps.append("%s %s intersects %s %s" % [
-						button.name, str(button.get_global_rect()), other.name, str(other.get_global_rect())
+				var pair := button.get_global_rect().intersection(other.get_global_rect())
+				var pair_area: float = maxf(0.0, pair.size.x) * maxf(0.0, pair.size.y)
+				if pair_area > authored_overlap + 0.01:
+					radial_overlaps.append("%s %s intersects %s %s by %.1f px^2 (authored %.1f)" % [
+						button.name, str(button.get_global_rect()), other.name,
+						str(other.get_global_rect()), pair_area, authored_overlap
 					])
 			var entry: Dictionary = hud._radial_entries[index]
 			if entry.get("icon") == null and String(entry.get("label", "")).strip_edges() == "":
@@ -1142,7 +1165,11 @@ func _check_radial_is_in_the_palantir_wheel(hud, page: String) -> void:
 	_check(
 		"%s_radial_buttons_render_inside_the_palantir_wheel" % _faction,
 		panel != null and not hud._radial_buttons.is_empty() and outside.is_empty(),
-		"page=%s panel=%s outside=%s" % [page, str(panel.get_global_rect() if panel != null else Rect2()), str(outside)]
+		"page=%s seats=%s outside=%s" % [
+			page,
+			str((_authored_seat_bounds(hud, panel.get_global_rect())["rect"] as Rect2) if panel != null else Rect2()),
+			str(outside)
+		]
 	)
 	_check(
 		"%s_radial_buttons_have_icon_or_honest_text" % _faction,
@@ -1486,3 +1513,38 @@ func _finish() -> void:
 		_faction, passed, failed, str(_sections_completed)
 	])
 	quit(0 if failed == 0 else 1)
+
+
+## The authored seat set for a command page, in GLOBAL coordinates: the bounding
+## rectangle every seat's 64px button fits inside, and the worst overlap area a
+## pair of those authored buttons already has.
+##
+## Six `glass0..glass5` sockets plus the `subMenu0..subMenu3` ring, both from
+## `Palantir.apt` sprite character 114 frame 9. Ten seats, which is exactly the
+## `CommandRangeCount 10` a fortress hero range reveals (commandbutton.ini
+## :11003-11004 over commandset.ini:1876-1899 `InitialVisible = 6`).
+func _authored_seat_bounds(hud, panel_rect: Rect2) -> Dictionary:
+	var stage: Script = load("res://src/retail_slice/retail_hud_stage.gd")
+	var apt: Script = load("res://src/retail_slice/retail_hud_apt_runtime.gd")
+	var count: int = (
+		apt.PALANTIR_COMMAND_SLOT_LOCAL.size() + apt.PALANTIR_SUBMENU_SLOT_LOCAL.size()
+	)
+	var button_size: Vector2 = hud.RETAIL_COMMAND_SLOT_SIZE
+	# `RETAIL_COMMAND_SLOT_SOURCE` is the authored dock point minus the command
+	# panel's own dock x origin (retail_hud.gd `_build_command_panel`,
+	# offset_left = 360), and production places the ring in that same frame.
+	var origin: Vector2 = panel_rect.position - Vector2(360.0, 0.0)
+	var rects: Array[Rect2] = []
+	for centre in stage.command_seat_centers_dock(count):
+		rects.append(Rect2(origin + (centre as Vector2) - button_size * 0.5, button_size))
+	var bounds := rects[0]
+	var worst := 0.0
+	for index in rects.size():
+		bounds = bounds.merge(rects[index])
+		for other in range(index + 1, rects.size()):
+			var hit := rects[index].intersection(rects[other])
+			worst = maxf(worst, maxf(0.0, hit.size.x) * maxf(0.0, hit.size.y))
+	# Half a pixel of slack: the envelope and the live button rectangles are the
+	# same authored numbers reached by two float paths, and `Rect2.encloses` is
+	# exact, so the bottom-most seat misses its own bound by 1/128 px.
+	return {"rect": bounds.grow(0.5), "overlap": worst}
