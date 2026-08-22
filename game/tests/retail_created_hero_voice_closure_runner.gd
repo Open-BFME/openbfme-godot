@@ -163,6 +163,33 @@ func _run() -> void:
 			str(bound_audio.readiness_diagnostics()) + " " + str(bound_audio.unvoiced_roster_degradations)
 		)
 		_dispose(bound_audio)
+
+	# 7. THE OWNER'S HERO. Every retail Create-a-Hero subclass names its voice
+	#    set by reference (createaheroaudio.inc: HeroWestMale*, HeroWizard*,
+	#    HeroDwarf*, ...). The mounted registry must DEFINE and ROUTE them, or
+	#    every custom hero is mute - which is what the owner's v0.2.8 run.log
+	#    showed (`unvoiced_created_hero:...:HeroWestMaleVoiceAttack`). The
+	#    importer now cooks the class voice sets into every registry surface.
+	for retail_event in ["HeroWestMaleVoiceSelectMS", "HeroWizardVoiceSelectMS", "HeroDwarfVoiceSelectMS"]:
+		_check(
+			"retail_cah_voice_event_is_defined:%s" % retail_event,
+			not content_db.get_retail_audio_event(retail_event).is_empty()
+				or not content_db.get_retail_audio_multisound(retail_event).is_empty(),
+			"registry does not define it - CAH class voices not cooked into the mounted packs"
+		)
+	var owner_document := _created_hero_document("test.owner-hero", "HeroWestMaleVoiceSelectMS")
+	var owner_id := PlayableUnitAdapter.runtime_member_id(owner_document)
+	var owner_audio = _configure(host_root, {"test.owner-hero": owner_document})
+	_check(
+		"created_hero_with_a_retail_voice_set_is_voiced",
+		owner_audio.roster_voice_routes.get(owner_id, {}).has("select")
+			and owner_audio.unvoiced_roster_degradations.is_empty(),
+		str(owner_audio.readiness_diagnostics()) + " " + str(owner_audio.unvoiced_roster_degradations)
+			+ " route_failures=" + str(owner_audio.route_failures.get("herowestmalevoiceselectms", "<none>"))
+			+ " sub=" + str(owner_audio.route_failures.get("herowestmalevoiceselect", "<none>"))
+			+ " sub2=" + str(owner_audio.route_failures.get("herovoiceselect2", "<none>"))
+	)
+	_dispose(owner_audio)
 	_finish()
 
 

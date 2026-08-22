@@ -52,7 +52,7 @@ $publishRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot "workspace\content-pa
 # these constants in the same change that moves it, and say so - the same
 # conscious-update pattern the state pins use.
 # RE-MEASURED 2026-08-19 v0.2.7 (castle lanes recook + playable-maps republish abc27325: gates/garrison/walkSurfaces/ai_bases/scripts)
-$expectedSelectionSha256 = "50b94562be5a0a500ebcb54b36db473e5e12ccb1077cdf636e5104baae4d6b3e"
+$expectedSelectionSha256 = "4bbb3d6da97dfe7635e04815c892c583b1c64c0785d4ce75ae4e49fae1c8814e"
 $expectedSelectionActivePack = "rotwk-men-vslice/b361ec5fc2cc72aa98ab5362538636d6be6cadbe82fedbf3000752bad072d4e7"
 # RE-MEASURED 2026-08-19 v0.2.7 (castle lanes recook + playable-maps republish abc27325: gates/garrison/walkSurfaces/ai_bases/scripts)
 $expectedSelectionSupplementalPacks = @(
@@ -67,13 +67,13 @@ $expectedSelectionSupplementalPacks = @(
     "rotwk-music-vslice/f10d95389a1ab51a7a20b3f549fc6b90291db51f7e68693e4d157f1a67eada8d",
     "rotwk-playable-maps-private/459a4dec76aabf4bfcb1e0a76dacebfd8effcb5a26b378828377d6d85ad48efd",
     "rotwk-cursors-vslice/11236cb6a57396ccf3bfad7d4406f89dc7e0e95b3d9db34c0063c6c1c1d760d2",
-    "rotwk-men-eva-overlay/abff331651bdf3e2c69901ade1a67c553a9aa991007bd7e3ad0744f7aa8f6595",
-    "rotwk-elves-eva-overlay/b5554a467eec56627098715a5218729b04843162d6463650fe8680fc2d8649e5",
-    "rotwk-dwarves-eva-overlay/54048c6656d30f573a45527f5d8828a2648cbb507c5566f978e1d2b357c6d1e1",
-    "rotwk-isengard-eva-overlay/cb9be539fa338724bfdfb71a9fe9ca2715af67324688f06a71626ff0a298d14c",
-    "rotwk-mordor-eva-overlay/27b7b1323d141675282e26bbb4afe651b0af8c6e1564890742098e999884c2f5",
-    "rotwk-wild-eva-overlay/00a87e8803ba291988ce7f02a48a9481323a70256930d9da71aee34c115b0a0d",
-    "rotwk-angmar-eva-overlay/5d50eec6ee4407f6e569e03d0940d6a4d3db17bb0ee10190922bb9dd0b3f85ff",
+    "rotwk-men-eva-overlay/5d6cda50550ec36297012a98ec0eef6a61bc8e906075cffdc27b077ed646c906",
+    "rotwk-elves-eva-overlay/07a88e9f7b426dfada9420741ee78968c44f29c5de64f173eef54c524b09c9b2",
+    "rotwk-dwarves-eva-overlay/3262e853a941faae3c318eecb8fb9e44fc558a4789e5044bd2e528504dac3a11",
+    "rotwk-isengard-eva-overlay/024613767dd2f53762c99d4cbfc62b237076d4f8f76d3b6779726d0d7779ce69",
+    "rotwk-mordor-eva-overlay/b31bff4b4f63255d182fd9b7e659431030cc336151c2eadd5c9b5e9cfa4e9f8d",
+    "rotwk-wild-eva-overlay/6fb656fca8cf1132c5e476ea5a322043f83701236756d686ffd2f84ee551b5de",
+    "rotwk-angmar-eva-overlay/5468550b65a065182fe458ec21a0e71a0b3b0e6c3ab27e9c462efc7decc27d1b",
     "bfme2-neutral-vslice/ccc75c1d6e3272581f6a98ca0d8d56f4040b0ae68d14cda8c1afc6152c8819ce",
     "rotwk-neutral-vslice/6032e4568e34970105370ffe86dd7e88ca4b11c1350b3b1815fbd95bc0edc278",
     "bfme2-missing-physical-20260816-batch-041/f72bc1c5c6f09a68f74651b42a453af4b48ffa2c7bd1bba985a895b041fdd591",

@@ -671,6 +671,14 @@ func _music_state_for_file(file_name: String) -> String:
 
 
 func _load_declared_audio_routes() -> void:
+	# ORDER MATTERS. `_voice_event_ids_for_object` answers a document-driven
+	# unit (every playable-unit document, every created hero) from
+	# `playable_unit_audio_events`, which `_load_playable_unit_audio_routes`
+	# fills. Collecting the roster's requests BEFORE that index existed meant a
+	# created hero's registry-referenced voice events (HeroWestMaleVoice*) were
+	# never requested, never routed, and the hero was reported mute even when
+	# the mounted registry defined and could deliver them (owner 2026-08-22).
+	_load_playable_unit_audio_routes()
 	var requested: Dictionary = {}
 	for object_id in _active_roster_object_ids():
 		var by_kind: Dictionary = _voice_event_ids_for_object(object_id)
@@ -679,7 +687,6 @@ func _load_declared_audio_routes() -> void:
 				requested[String(event_id).to_lower()] = String(event_id)
 	for event_id in REQUIRED_SFX_EVENT_IDS:
 		requested[event_id.to_lower()] = event_id
-	_load_playable_unit_audio_routes()
 	for event_id in FORDS_AMBIENT_TYPE_EVENT_IDS.values():
 		requested[String(event_id).to_lower()] = String(event_id)
 	for event_id in requested.values():
