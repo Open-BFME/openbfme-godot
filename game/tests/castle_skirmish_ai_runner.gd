@@ -34,6 +34,13 @@ const MAP_CASES := [
 		"name": "Minas Tirith",
 		"expected_skirmish_spawn_points": 4,
 		"retail_base_layout": "map-specific",
+		# Retail seals the city (2026-08-22 settlement, see retail_map_data
+		# gate passages): the only gate object is the CITADEL gate, the Great
+		# Gate is an indestructible MinisWallBuilding04, and the seat-1 start
+		# is a 7,500-cell island on the painted layer. The defending AI has no
+		# ground route to the field by retail authorship; it must report that
+		# by name rather than attack.
+		"sealed_seat_route_rejection": "no-bounded-route",
 	},
 	{
 		"id": "rotwk.map.wor-dol-guldur",
@@ -226,11 +233,19 @@ func _run_map(case_row: Dictionary) -> void:
 		structures_built >= 1 and dynamic_ai_structures >= 1,
 		_diagnostic(simulation, structures_built, attack_orders_issued, dynamic_ai_structures)
 	)
-	_check(
-		"%s_ai_issued_attack_order" % map_name,
-		attack_orders_issued >= 1,
-		_diagnostic(simulation, structures_built, attack_orders_issued, dynamic_ai_structures)
-	)
+	var sealed_rejection := String(case_row.get("sealed_seat_route_rejection", ""))
+	if sealed_rejection != "":
+		_check(
+			"%s_sealed_seat_names_its_route_rejection" % map_name,
+			attack_orders_issued == 0 and String(simulation.last_route_rejection) == sealed_rejection,
+			_diagnostic(simulation, structures_built, attack_orders_issued, dynamic_ai_structures)
+		)
+	else:
+		_check(
+			"%s_ai_issued_attack_order" % map_name,
+			attack_orders_issued >= 1,
+			_diagnostic(simulation, structures_built, attack_orders_issued, dynamic_ai_structures)
+		)
 	var porter_travelled := false
 	for started_value in started_sites:
 		var started := started_value as Dictionary
