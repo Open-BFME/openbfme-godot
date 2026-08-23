@@ -82,6 +82,42 @@ func _init() -> void:
 	# Owner 2026-08-22: every map since v0.2.8 booted with "installing NO
 	# scripts" because the cook composes retail's four AI libraries and the
 	# runtime admitted only the legacy two. A booted map must run its scripts.
+	# Owner 2026-08-22 (Q64b): an open gate is a PASSAGE through the painted
+	# wall band. Every castle map's seat-1 start (the castle) must share a
+	# ground component with seat-2's start (the field) once its gates are
+	# seeded open; before this Minas Tirith's city was a sealed island.
+	var open_gates := 0
+	for sid in simulation.structure_ids():
+		var grow: Dictionary = simulation.structure(sid)
+		if String(grow.get("castle_fixture_role", "")) == "gate" and bool((grow.get("gate_behavior", {}) as Dictionary).get("pathing_open", false)):
+			open_gates += 1
+	var starts: Dictionary = map_data.local_player_starts
+	if open_gates > 0 and starts.has("Player_1_Start") and starts.has("Player_2_Start"):
+		var p1: Vector3 = starts["Player_1_Start"]
+		var p2: Vector3 = starts["Player_2_Start"]
+		var pair := String(map_data.navigation_component_pair_key(Vector2(p1.x, p1.z), Vector2(p2.x, p2.z)))
+		var parts := pair.split(":")
+		var passages := ""
+		var field_gates := 0
+		var refused_gates: Array[String] = []
+		for sid in simulation.structure_ids():
+			var grow: Dictionary = simulation.structure(sid)
+			if String(grow.get("castle_fixture_role", "")) == "gate":
+				var report: Dictionary = map_data.gate_passage_report(sid)
+				passages += " gate%d:%s" % [sid, JSON.stringify({"cells": (report.get("cells", []) as Array).size(), "open": report.get("open"), "axis": str(report.get("axis")), "refused": report.get("refused", ""), "authored": report.get("authored_passable", false)})]
+				if String(report.get("refused", "")) != "":
+					refused_gates.append(String(grow.get("castle_fixture_type", "")))
+				else:
+					field_gates += 1
+		if field_gates > 0:
+			_check("open_gate_connects_castle_seat_to_the_field", parts.size() == 2 and parts[0] == parts[1],
+				"open_gates=%d component_pair=%s%s" % [open_gates, pair, passages])
+		else:
+			# Minas Tirith: its only gate object is the CITADEL gate (terrain
+			# 10911 vs field 1310); the Great Gate is the destructible
+			# MinisWallBuilding04 and the city stays sealed until it is
+			# breached - retail's design, named here rather than carved.
+			_check("sealed_castle_names_its_refused_gate_passages", not refused_gates.is_empty(), "no gate joined two regions and none was refused by name%s" % passages)
 	_check("map_scripts_installed", int(simulation._script_executors.size()) > 0,
 		"script executors=%d (a refusal is logged as script.install_refused)" % int(simulation._script_executors.size()))
 	var tick_before := int(simulation.tick_index)

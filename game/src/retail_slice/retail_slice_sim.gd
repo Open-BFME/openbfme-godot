@@ -17979,6 +17979,33 @@ func request_gate_open(structure_id:int,requester_id:int=0)->Dictionary:
 	if policy.is_empty():return {"ok":false,"reason":"typed-gate-contract-missing"}
 	if requester_id!=0 and not gate_portal_allows(structure_id,requester_id):return {"ok":false,"reason":"portal-denied"}
 	policy["open"]=true;policy["open_fraction"]=1.0;policy["pathing_open"]=true;policy["close_tick"]=tick_index+int(policy.get("reset_ticks",0));gate["gate_behavior"]=policy;_emit_event("gate.opened",requester_id,structure_id,{"close_tick":policy["close_tick"]});return {"ok":true,"reason":"","close_tick":policy["close_tick"]}
+	_sync_gate_passage(structure_id)
+
+
+func _sync_gate_passage(structure_id: int) -> void:
+	## The gate's pathing state mirrored onto the ground grid (see
+	## RetailMapData.set_gate_passage): open gates are passages through the
+	## painted wall band; closed gates seal them again. Called at seeding and on
+	## every pathing_open transition (open, timed close, manual close, death).
+	if route_provider == null or not route_provider.has_method("set_gate_passage"):
+		return
+	if not structures.has(structure_id):
+		return
+	var gate: Dictionary = structures[structure_id]
+	var policy: Dictionary = gate.get("gate_behavior", {})
+	if policy.is_empty():
+		return
+	var geometries: Dictionary = gate.get("gate_geometries", {})
+	var closed: Dictionary = geometries.get("Closed", {})
+	# The authored closed box: MajorRadius along the facing (door thickness),
+	# MinorRadius across it (the passage half-width).
+	var half_width := float(closed.get("minorRadius", 0.0))
+	if half_width <= 0.0:
+		return
+	var open := bool(policy.get("pathing_open", false)) or int(gate.get("health", 0)) <= 0
+	var result: Dictionary = route_provider.call("set_gate_passage", structure_id, Vector2(gate.get("position", Vector2.ZERO)), half_width, open)
+	if bool(result.get("changed", false)):
+		_emit_event("gate.passage", 0, structure_id, {"open": open, "cells": int(result.get("cells", 0)), "depth_fwd": result.get("depth_fwd"), "depth_back": result.get("depth_back")})
 
 
 func gate_portal_allows(structure_id:int,requester_id:int)->bool:
@@ -18002,6 +18029,7 @@ func _step_gate_updates()->void:
 				if int(unit.get("team",-1))==int(gate.get("team",-1)) and absf(delta.x)<=half.x and absf(delta.y)<=half.y:request_gate_open(structure_id,id);break
 		if bool(policy.get("open",false)) and int(policy.get("close_tick",-1))>=0 and tick_index>=int(policy.get("close_tick")):
 			policy["open"]=false;policy["pathing_open"]=false;policy["open_fraction"]=0.0;policy["close_tick"]=-1;gate["gate_behavior"]=policy;_emit_event("gate.closed",structure_id,0)
+			_sync_gate_passage(structure_id)
 
 
 func _typed_effect_graph(contract: Dictionary, kind: String, target_mode: String) -> Dictionary:
@@ -31365,6 +31393,7 @@ func _seed_castle_fixtures() -> void:
 				var portal := portal_value as Dictionary
 				fixture_row["fake_pathfind_portal"] = {"allow_enemies": bool(portal.get("allowEnemies", false)), "allow_non_skirmish_ai": bool(portal.get("allowNonSkirmishAIUnits", false))}
 			structures[structure_id] = fixture_row
+			_sync_gate_passage(structure_id)
 		_emit_event("castle.fixture_seeded", 0, structure_id, {
 			"type_name": String(placement.get("type_name", "")),
 			"role": String(placement.get("role", "")),
@@ -32923,6 +32952,7 @@ func toggle_gate(team: int, structure_id: int) -> Dictionary:
 		policy["close_tick"] = -1
 		gate["gate_behavior"] = policy
 		_emit_event("gate.closed", structure_id, 0, {"manual": true})
+		_sync_gate_passage(structure_id)
 		return {"ok": true, "reason": "", "open": false}
 	var opened := request_gate_open(structure_id)
 	if not bool(opened.get("ok", false)):

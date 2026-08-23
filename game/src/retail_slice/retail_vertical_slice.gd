@@ -6881,6 +6881,12 @@ func _normalized_map_scripts_document(doc: Dictionary) -> Dictionary:
 		if not player_rows.has(player_index):
 			return {"ok": false, "reason": "schema-v1 script references an unknown player index"}
 		var player_name := String(player_rows[player_index])
+		if player_name == "" and player_index == 0 and players.has("PlyrNeutral"):
+			# SidesList row 0 is the map's own unnamed player. Retail runs
+			# scripts authored there (Carn Dum's "Entry Wall 0N Destroyed")
+			# as the neutral world player; refusing the empty name took the
+			# whole map's scripts down with it.
+			player_name = "PlyrNeutral"
 		if not players.has(player_name):
 			return {"ok": false, "reason": "script player '%s' has no exact runtime owner binding" % player_name}
 		if typeof(script_row.get("payload")) != TYPE_DICTIONARY:

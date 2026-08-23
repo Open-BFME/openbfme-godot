@@ -338,6 +338,11 @@ var navigation_component_count := 0
 var navigation_topology_revision := 0
 var _navigation_grid: AStarGrid2D
 var _navigation_component_ids := PackedInt32Array()
+var _navigation_component_sizes: Dictionary = {}
+
+
+func navigation_component_size(component_id: int) -> int:
+	return int(_navigation_component_sizes.get(component_id, 0))
 var _failed_bridge_component_pairs: Dictionary = {}
 var _ground_portal_components: Dictionary = {}
 var _water_navigation_grid: AStarGrid2D
@@ -3299,6 +3304,7 @@ func _navigation_topology_mutated() -> void:
 func _rebuild_navigation_components() -> void:
 	_failed_bridge_component_pairs.clear()
 	_ground_portal_components.clear()
+	_navigation_component_sizes.clear()
 	navigation_component_count = 0
 	_navigation_component_ids.resize(width * height)
 	_navigation_component_ids.fill(-1)
@@ -3319,6 +3325,7 @@ func _rebuild_navigation_components() -> void:
 			while pending_index < pending.size():
 				var cell := pending[pending_index]
 				pending_index += 1
+				_navigation_component_sizes[component_id] = int(_navigation_component_sizes.get(component_id, 0)) + 1
 				for offset in neighbors:
 					var neighbor := cell + offset
 					if not is_grid_inside_navigation(neighbor) or _navigation_grid.is_point_solid(neighbor):
@@ -3354,6 +3361,137 @@ func set_navigation_cell_walkable_for_test(cell: Vector2i, walkable: bool) -> vo
 	_navigation_grid.set_point_solid(cell, not walkable)
 	navigation_walkable_count += 1 if walkable else -1
 	_navigation_topology_mutated()
+
+
+## GATE PASSAGES (owner 2026-08-22, settles Q64b).
+##
+## THE RETAIL MODEL, measured on the shipped bytes: Minas Tirith's map paints
+## its wall band impassable straight through the gate (no extra-passability
+## layer; the authored Player_1_Start sits inside a 7,500-cell island sealed
+## from the 152,000-cell field), and retail still marches units through the
+## gate. ministirithbuildings.ini:2813 `PercentOpenForPathing = 50` is the
+## engine's own statement that a gate's open state changes PATHING, not just
+## collision. So an open gate is a passage through painted impassability.
+##
+## NOTHING HERE IS A GUESS AT DEPTH: the passage is the door's authored width
+## (GeometryMinorRadius, 58.4 for MinisGateDoor) across, and along the axis
+## that crosses the painted band most directly from the door centre it extends
+## EXACTLY until each side reaches ground the map already paints walkable.
+## A side that finds no walkable ground within GATE_PASSAGE_MAX_DEPTH_CELLS
+## is refused - loudly, nothing carved - rather than opened on a heuristic.
+const GATE_PASSAGE_MAX_DEPTH_CELLS := 40
+## A passage end counts only when it reaches a region at least this large:
+## the painted band hides stray walkable pockets that are nobody's road.
+## Minas Tirith's city is 7,500 cells, its field 152,000; a pocket is tens.
+const GATE_PASSAGE_MIN_REGION_CELLS := 200
+var _gate_passages: Dictionary = {}
+var _source_solid_cache: Dictionary = {}
+
+
+func _cell_source_solid(cell: Vector2i) -> bool:
+	## The map's own paint (plus the border), independent of any mutation.
+	if not is_grid_inside_navigation(cell):
+		return true
+	if _source_solid_cache.has(cell):
+		return bool(_source_solid_cache[cell])
+	var solid := is_impassable_at(cell.x, cell.y)
+	_source_solid_cache[cell] = solid
+	return solid
+
+
+func _gate_passage_cells(centre: Vector2i, half_width_cells: int) -> Dictionary:
+	var best: Dictionary = {}
+	var diagnostics: Array[String] = []
+	var axes := [Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1), Vector2i(1, -1)]
+	for axis_value in axes:
+		var axis: Vector2i = axis_value
+		var across: Vector2i = Vector2i(-axis.y, axis.x)
+		var depth: Dictionary = {}
+		var ok := true
+		var end_components: Dictionary = {}
+		for sign in [1, -1]:
+			var reached := false
+			var first_free := ""
+			for t in range(0, GATE_PASSAGE_MAX_DEPTH_CELLS + 1):
+				var probe: Vector2i = centre + axis * int(t * sign)
+				if _cell_source_solid(probe):
+					continue
+				var component := navigation_component_id(probe)
+				if first_free == "":
+					first_free = "t=%d comp=%d size=%d" % [t, component, navigation_component_size(component)]
+				if component < 0 or navigation_component_size(component) < GATE_PASSAGE_MIN_REGION_CELLS:
+					continue
+				depth[sign] = t
+				end_components[sign] = component
+				reached = true
+				break
+			diagnostics.append("axis=%s sign=%d first_free[%s] reached=%s comp=%s" % [str(axis), sign, first_free, reached, str(end_components.get(sign, -1))])
+			if not reached:
+				ok = false
+				break
+		# A gate joins two regions; an axis whose both ends fall in the same
+		# region just skirts the band and is not the passage.
+		if not ok or int(end_components.get(1, -1)) == int(end_components.get(-1, -2)):
+			continue
+		var total := int(depth[1]) + int(depth[-1])
+		if best.is_empty() or total < int(best["total"]):
+			best = {"axis": axis, "across": across, "depth_fwd": int(depth[1]), "depth_back": int(depth[-1]), "total": total}
+	if best.is_empty():
+		return {"ok": false, "reason": "no axis reaches two distinct regions of >= %d cells within %d cells; %s" % [GATE_PASSAGE_MIN_REGION_CELLS, GATE_PASSAGE_MAX_DEPTH_CELLS, "; ".join(diagnostics)]}
+	var cells: Array[Vector2i] = []
+	var axis: Vector2i = best["axis"]
+	var across: Vector2i = best["across"]
+	for t in range(-int(best["depth_back"]), int(best["depth_fwd"]) + 1):
+		for sidx in range(-half_width_cells, half_width_cells + 1):
+			var cell: Vector2i = centre + axis * int(t) + across * int(sidx)
+			if is_grid_inside_navigation(cell) and _cell_source_solid(cell) and not cells.has(cell):
+				cells.append(cell)
+	return {"ok": true, "cells": cells, "axis": axis, "depth_fwd": int(best["depth_fwd"]), "depth_back": int(best["depth_back"])}
+
+
+func set_gate_passage(gate_id: int, local_position: Vector2, half_width_source: float, open: bool) -> Dictionary:
+	## Opens (or closes) the passage a gate guards. Idempotent per state; every
+	## change bumps the topology revision so component/bridge caches refresh.
+	if _navigation_grid == null or not navigation_ready:
+		return {"ok": false, "reason": "navigation not ready"}
+	var centre := local_to_grid_cell(local_position)
+	var half_width_cells := maxi(1, roundi(half_width_source / maxf(horizontal_scale, 1.0)))
+	if not _gate_passages.has(gate_id) and not _cell_source_solid(centre):
+		# The map already paints the passage walkable (Helm's Deep); the door's
+		# collision disc governs blocking and there is nothing to carve.
+		_gate_passages[gate_id] = {"cells": [], "open": open, "authored_passable": true}
+		return {"ok": true, "changed": false, "cells": 0, "authored_passable": true}
+	if not _gate_passages.has(gate_id):
+		var built := _gate_passage_cells(centre, half_width_cells)
+		if not bool(built.get("ok", false)):
+			push_error("RetailMapData gate %d passage refused: %s (centre cell %s)" % [gate_id, String(built.get("reason", "")), str(centre)])
+			_gate_passages[gate_id] = {"cells": [], "open": false, "refused": String(built.get("reason", ""))}
+			return built
+		built["open"] = false
+		_gate_passages[gate_id] = built
+	var passage: Dictionary = _gate_passages[gate_id]
+	if String(passage.get("refused", "")) != "":
+		return {"ok": false, "reason": String(passage["refused"])}
+	if bool(passage["open"]) == open:
+		return {"ok": true, "changed": false, "cells": (passage["cells"] as Array).size()}
+	var changed := 0
+	for cell_value in passage["cells"] as Array:
+		var cell: Vector2i = cell_value
+		var currently_walkable := not _navigation_grid.is_point_solid(cell)
+		if currently_walkable == open:
+			continue
+		_navigation_grid.set_point_solid(cell, not open)
+		navigation_walkable_count += 1 if open else -1
+		changed += 1
+	passage["open"] = open
+	_gate_passages[gate_id] = passage
+	if changed > 0:
+		_navigation_topology_mutated()
+	return {"ok": true, "changed": changed > 0, "cells": (passage["cells"] as Array).size(), "axis": passage.get("axis"), "depth_fwd": passage.get("depth_fwd"), "depth_back": passage.get("depth_back")}
+
+
+func gate_passage_report(gate_id: int) -> Dictionary:
+	return (_gate_passages.get(gate_id, {}) as Dictionary).duplicate()
 
 
 func bridge_route_negative_cache_size() -> int:
