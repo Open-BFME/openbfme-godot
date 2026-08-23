@@ -1,10 +1,10 @@
-extends SceneTree
+﻿extends SceneTree
 
 const Sim := preload("res://src/retail_slice/retail_slice_sim.gd")
 const MAP_ID := "rotwk.map.wor-ang-carn-dum"
 const TOWER_UPGRADE := "Upgrade_MenWallTower"
 const TREBUCHET_UPGRADE := "Upgrade_MenWallTrebuchet"
-const EXPECTED := 13
+const EXPECTED := 16
 var passed := 0
 var failed := 0
 
@@ -43,8 +43,26 @@ func _run() -> void:
 			mounted_rows.append(row)
 	_check("carn_dum_fixture_walls_seeded", not wall_rows.is_empty())
 	_check("carn_dum_wall_defenses_seeded", mounted_rows.size() == 34, "mounted=%d" % mounted_rows.size())
+	# Owner 2026-08-22: the map-placed wall defenses are policy roots of the
+	# castle's faction now, so a selected pack carries their documents. Bow
+	# towers compile with their weapon; catapult mounts are named upgrade
+	# slots (the Trebuchet-Turret purchase flow is a named gap); nothing is
+	# "stale". This used to pin the broken state (34/34 stale).
 	var stale := live.events.filter(func(event: Dictionary) -> bool: return String(event.get("kind", "")) == "castle.fixture_wall_defense_stale")
-	_check("stale_selected_pack_fails_loudly", stale.size() == mounted_rows.size(), "stale=%d mounted=%d" % [stale.size(), mounted_rows.size()])
+	var compiled := 0
+	var named_slots := 0
+	var other: Array[String] = []
+	for row in mounted_rows:
+		var status := String(row.get("wall_defense_status", ""))
+		if status == "compiled" and not (row.get("attack", {}) as Dictionary).is_empty():
+			compiled += 1
+		elif status == "upgrade-slot-purchase-unimplemented":
+			named_slots += 1
+		else:
+			other.append("%s:%s" % [String(row.get("castle_fixture_type", "")), status])
+	_check("no_wall_defense_is_stale", stale.is_empty(), "stale=%d mounted=%d" % [stale.size(), mounted_rows.size()])
+	_check("carn_dum_bow_towers_carry_compiled_combat", compiled > 0, "compiled=%d" % compiled)
+	_check("every_wall_defense_is_compiled_or_a_named_slot", other.is_empty(), str(other.slice(0, 6)))
 	root.remove_child(slice)
 	slice.free()
 	await process_frame

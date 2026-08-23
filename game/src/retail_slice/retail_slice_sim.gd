@@ -5435,6 +5435,26 @@ func structure_upgrade_queue_state(structure_id: int) -> Array[Dictionary]:
 	return result
 
 
+## Wall-upgrade slot types already named this match (one line per type).
+var _named_wall_slot_types: Dictionary = {}
+
+
+static func _document_is_wall_upgrade_slot(document: Dictionary) -> bool:
+	## A map-placed wall piece retail authors weaponless: it offers upgrade
+	## commands (Upgrade_TrebuchetTurret / OpenGarrison / PosternGate) on its
+	## trained command sets, or grants Upgrade_TrebuchetTurret on creation.
+	var gameplay := ((document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)
+	for grant_value in gameplay.get("createGrants", []) as Array:
+		if String(JSON.stringify(grant_value)).to_lower().contains("upgrade_trebuchetturret"):
+			return true
+	for set_value in gameplay.get("trainedCommandSets", []) as Array:
+		for slot_value in (set_value as Dictionary).get("slots", []) as Array:
+			var command_id := String((slot_value as Dictionary).get("commandId", "")).to_lower()
+			if command_id.contains("trebuchetturret") or command_id.contains("opengarrison") or command_id.contains("posterngate"):
+				return true
+	return false
+
+
 func structure_upgrade_commands(structure_id: int) -> Array[Dictionary]:
 	## The building's purchasable upgrade steps on its CURRENT command set,
 	## doc-driven: the chain step whose authored from-command-set matches the
@@ -31285,10 +31305,22 @@ func _seed_castle_fixtures() -> void:
 				row["attack"] = attack
 				row["wall_defense_status"] = "compiled"
 			elif String(placement.get("role", "")) == "wall-mounted":
-				# Document present but no compiled combat: the exact shape a
-				# half-recooked pack takes. Loud, never inert-and-silent.
-				row["wall_defense_status"] = "stale-pack-document-without-combat"
-				print("[RetailSliceSim] CASTLE_WALL_DEFENSE_STALE type=%s source_index=%d reason=document-without-compiled-combat" % [type_name, int(placement.get("source_index", -1))])
+				if _document_is_wall_upgrade_slot(document):
+					# Retail authors these WITHOUT a weapon: the slot gains one
+					# through the player's Trebuchet/Postern/Garrison purchase
+					# (GondorCastleWallCommandSet, WeaponSet PLAYER_UPGRADE) or,
+					# for catapult mounts, a slaved trebuchet spawned on
+					# creation. Neither purchase flow exists in this runtime
+					# yet, so the slot is inert BY NAME - not a stale pack.
+					row["wall_defense_status"] = "upgrade-slot-purchase-unimplemented"
+					if not _named_wall_slot_types.has(type_name):
+						_named_wall_slot_types[type_name] = true
+						print("[RetailSliceSim] CASTLE_WALL_UPGRADE_SLOT type=%s reason=map-placed slot; Trebuchet/Postern/Garrison purchase on fixtures not implemented (named gap)" % type_name)
+				else:
+					# Document present but no compiled combat: the exact shape a
+					# half-recooked pack takes. Loud, never inert-and-silent.
+					row["wall_defense_status"] = "stale-pack-document-without-combat"
+					print("[RetailSliceSim] CASTLE_WALL_DEFENSE_STALE type=%s source_index=%d reason=document-without-compiled-combat" % [type_name, int(placement.get("source_index", -1))])
 			_attach_structure_module_contracts(row)
 		elif String(placement.get("role", "")) == "wall-mounted":
 			row["wall_defense_status"] = "stale-pack-missing-structure-document"

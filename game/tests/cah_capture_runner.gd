@@ -117,6 +117,14 @@ var _size := Vector2i.ZERO
 
 
 func _initialize() -> void:
+	if DisplayServer.get_name() == "headless":
+		# A camera needs a window. Under --headless the SubViewport never
+		# presents and `get_image()` waits for a frame that never comes: this
+		# runner sat for hours twice on 2026-08-22 and had to be killed. Refuse
+		# loudly instead.
+		printerr("CAH_CAPTURE REFUSED: run WINDOWED (drop --headless); this runner photographs the screen and cannot under the headless DisplayServer")
+		quit(2)
+		return
 	_out_dir = _argument("--out", "user://cah-capture")
 	DirAccess.make_dir_recursive_absolute(_out_dir)
 

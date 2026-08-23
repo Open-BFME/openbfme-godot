@@ -52,8 +52,8 @@ $publishRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot "workspace\content-pa
 # these constants in the same change that moves it, and say so - the same
 # conscious-update pattern the state pins use.
 # RE-MEASURED 2026-08-19 v0.2.7 (castle lanes recook + playable-maps republish abc27325: gates/garrison/walkSurfaces/ai_bases/scripts)
-$expectedSelectionSha256 = "4bbb3d6da97dfe7635e04815c892c583b1c64c0785d4ce75ae4e49fae1c8814e"
-$expectedSelectionActivePack = "rotwk-men-vslice/b361ec5fc2cc72aa98ab5362538636d6be6cadbe82fedbf3000752bad072d4e7"
+$expectedSelectionSha256 = "92f231ef5833f084c1e756ff14469f3b77eaedf75ff4b2d5ba815e3e7dd6e10d"
+$expectedSelectionActivePack = "rotwk-men-vslice/13e31f6b964d1d5453e2cd0031f4b9d663a002363e1e61074f6f0b5c1b0b75f4"
 # RE-MEASURED 2026-08-19 v0.2.7 (castle lanes recook + playable-maps republish abc27325: gates/garrison/walkSurfaces/ai_bases/scripts)
 $expectedSelectionSupplementalPacks = @(
     "bfme2-men-vslice/7de517bf146582f10741750b50d63f9955c42d1fe2aa13200757fc6fb29f217a",
@@ -61,9 +61,9 @@ $expectedSelectionSupplementalPacks = @(
     "rotwk-elves-vslice/8ae6efd5d211730e6c0f1104fe2330e31b025b228409c0a8410f37bf0b669423",
     "rotwk-dwarves-vslice/7693e95218127805a28bff2d5a1bcb09724621d033c086ab0feb801507b7c08b",
     "rotwk-isengard-vslice/fda0f75d5a612cd1b90df55a0e9aef510c2d27cf6a7754906402b19f1de54759",
-    "rotwk-mordor-vslice/33a2dfbf3145bf2d4f7620f2d1c808694528ab2f5e787c5a8bdf5edc1f51d30b",
+    "rotwk-mordor-vslice/d4daba79cf91f045799061684ae43faae5c1b1a790143b78fcee58c4b459e954",
     "rotwk-wild-vslice/5df3ad08256cdf10c8e819d085e9001662f24a5257b097e7d53e76448cd66ce1",
-    "rotwk-angmar-vslice/b974039fff1eef664f036ecb3e4397bede761573d2b8a370d72e4ee9fd6b9fa2",
+    "rotwk-angmar-vslice/64a03976781f6b034ed3cb969d4b7a40570167551c73291d346091c5e8587109",
     "rotwk-music-vslice/f10d95389a1ab51a7a20b3f549fc6b90291db51f7e68693e4d157f1a67eada8d",
     "rotwk-playable-maps-private/459a4dec76aabf4bfcb1e0a76dacebfd8effcb5a26b378828377d6d85ad48efd",
     "rotwk-cursors-vslice/11236cb6a57396ccf3bfad7d4406f89dc7e0e95b3d9db34c0063c6c1c1d760d2",

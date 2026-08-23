@@ -7,7 +7,7 @@ extends SceneTree
 ## exact selected Men pack and derives every combat-facing fixture constant from
 ## its compiled playable-unit documents:
 ##
-##   rotwk-men-vslice/b361ec5fc2cc72aa98ab5362538636d6be6cadbe82fedbf3000752bad072d4e7/
+##   rotwk-men-vslice/13e31f6b964d1d5453e2cd0031f4b9d663a002363e1e61074f6f0b5c1b0b75f4/
 ##     data/playable-units/gondorarcherhorde.json
 ##       objectId GondorArcherHorde; primary member GondorArcher; attack range
 ##       300; pre-attack 1000 ms; projectile GondorArcherArrow at 321 units/s;
@@ -41,7 +41,7 @@ const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const Adapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const WatchdogScript = preload("res://tests/runner_watchdog.gd")
 
-const SELECTED_MEN_PACK := "rotwk-men-vslice/b361ec5fc2cc72aa98ab5362538636d6be6cadbe82fedbf3000752bad072d4e7"
+const SELECTED_MEN_PACK := "rotwk-men-vslice/13e31f6b964d1d5453e2cd0031f4b9d663a002363e1e61074f6f0b5c1b0b75f4"
 const ARCHER_SOURCE_ID := "GondorArcherHorde"
 const TREBUCHET_SOURCE_ID := "GondorTrebuchet"
 const TARGET_SOURCE_ID := "GondorFighterHorde"
