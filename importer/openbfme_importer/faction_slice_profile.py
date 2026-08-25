@@ -28,6 +28,12 @@ from .retail_fords_completion_profile import (
     MEN_SELECTION_RUNTIME_PATH,
 )
 from .ring_system_compiler import RingSystemCompilerError, validate_ring_system_runtime
+from .skirmish_ai_compiler import (
+    SKIRMISH_AI_PACK_KEY,
+    SKIRMISH_AI_RUNTIME_PATH,
+    SkirmishAICompilerError,
+    validate_skirmish_ai,
+)
 
 # Authoritative BFME2 faction slugs (men, elves, dwarves, isengard, mordor,
 # wild) come from the playable-unit FACTIONS registry.  RotWK 2.01 adds its own
@@ -399,6 +405,7 @@ def compose_faction_profile(
         [Sequence[str]], Mapping[str, object] | None
     ]
     | None = None,
+    skirmish_ai_runtime: Mapping[str, object] | None = None,
 ) -> tuple[dict[str, object], dict[str, object]]:
     """Add only artifacts bound to converted rows in digested coverage reports.
 
@@ -425,6 +432,10 @@ def compose_faction_profile(
     host-owned lanes above, every faction pack ships its own copy: a pack must
     be able to draw the arrows its own archers fire without a foreign pack
     being mounted.
+
+    ``skirmish_ai_runtime`` is the edition-wide raw authored AI document.  The
+    caller supplies it only to the Men host pack, matching the existing
+    single-owner convention for global strategic documents.
     """
     game_key = str(game).strip().casefold()
     game_prefix = _GAME_PACK_PREFIX.get(game_key)
@@ -554,8 +565,31 @@ def compose_faction_profile(
     if not isinstance(runtime_data, dict) or not isinstance(files, dict):
         raise ValueError("target profile is not extensible for pack documents")
     strings_receipt: dict[str, object] | None = None
+    skirmish_ai_receipt: dict[str, object] | None = None
     cah_receipt: dict[str, object] | None = None
     ring_receipt: dict[str, object] | None = None
+    if skirmish_ai_runtime is not None:
+        if "men" not in ordered:
+            raise ValueError("skirmish AI is owned by a pack containing Men")
+        try:
+            validate_skirmish_ai(skirmish_ai_runtime, game=game_key)
+        except SkirmishAICompilerError as exc:
+            raise ValueError(f"skirmish AI document is invalid: {exc}") from exc
+        existing_ai = runtime_data.get(SKIRMISH_AI_RUNTIME_PATH)
+        if existing_ai is not None and existing_ai != dict(skirmish_ai_runtime):
+            raise ValueError(
+                f"skirmish AI runtime path collision: {SKIRMISH_AI_RUNTIME_PATH}"
+            )
+        ai_owner = files.get(SKIRMISH_AI_PACK_KEY)
+        if ai_owner is not None and str(ai_owner) != SKIRMISH_AI_RUNTIME_PATH:
+            raise ValueError("skirmishAi pack registration has a foreign owner")
+        runtime_data[SKIRMISH_AI_RUNTIME_PATH] = deepcopy(dict(skirmish_ai_runtime))
+        files[SKIRMISH_AI_PACK_KEY] = SKIRMISH_AI_RUNTIME_PATH
+        skirmish_ai_receipt = {
+            "runtimePath": SKIRMISH_AI_RUNTIME_PATH,
+            "packFileKey": SKIRMISH_AI_PACK_KEY,
+            "census": deepcopy(dict(skirmish_ai_runtime["census"])),
+        }
     if ring_runtime is not None:
         if game_key != "rotwk" or ordered != ["men"]:
             raise ValueError("ring.system is owned by the RotWK Men host pack")
@@ -764,6 +798,8 @@ def compose_faction_profile(
     pack.update({"vertical_slice_complete": False, "full_faction_complete": False, "asset_conversion_complete": False, "factionImportCoverage": receipts})
     target["id"] = "faction-slice-" + hashlib.sha256(_bytes(receipts)).hexdigest()[:16]
     receipt: dict[str, object] = {"factions": receipts, "objects": deltas}
+    if skirmish_ai_receipt is not None:
+        receipt["skirmishAi"] = skirmish_ai_receipt
     if strings_receipt is not None:
         receipt["strings"] = strings_receipt
     if cah_receipt is not None:
@@ -789,6 +825,8 @@ __all__ = [
     "PROJECTILE_ART_RUNTIME_PATH",
     "RING_SYSTEM_PACK_KEY",
     "RING_SYSTEM_RUNTIME_PATH",
+    "SKIRMISH_AI_PACK_KEY",
+    "SKIRMISH_AI_RUNTIME_PATH",
     "STRINGS_PACK_KEY",
     "STRINGS_RUNTIME_PATH",
     "compose_faction_profile",

@@ -2866,6 +2866,21 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
             interface_art = None
             ring_runtime = None
             ring_resources = None
+            skirmish_ai_runtime = None
+            if "men" in factions:
+                from .skirmish_ai_compiler import compile_skirmish_ai
+
+                skirmish_ai_runtime = compile_skirmish_ai(
+                    oracle_root, game=args.game
+                )
+                ai_census = skirmish_ai_runtime["census"]
+                progress_emit(
+                    "compose",
+                    "skirmish-ai armies="
+                    f"{ai_census['armyDefinitionCount']} "
+                    f"members={ai_census['armyMemberDefinitionCount']} "
+                    f"bases={ai_census['aiBaseCount']}",
+                )
             if args.game == "rotwk" and factions == ["men"]:
                 from .ring_system_compiler import (
                     build_ring_system_runtime,
@@ -2946,6 +2961,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
                 interface_art=interface_art,
                 ring_runtime=ring_runtime,
                 ring_resources=ring_resources,
+                skirmish_ai_runtime=skirmish_ai_runtime,
             )
             # `pipeline` / `cook_catalog` were already built above so the
             # coverage-binding gate could read the cook's real catalog identity.
