@@ -344,7 +344,16 @@ func _dump_positions(sim, suffix: String = "") -> void:
 
 func _make_sim():
 	var sim = SimScript.new()
-	sim._rules = _harness_rules()
+	# Load REAL registries from ContentDB (7 factions, 137 units, 155 structures)
+	var tree = self
+	var content_db = tree.root.get_node_or_null("ContentDB") if tree != null else null
+	var unit_runtimes: Dictionary = {}
+	var structure_runtimes: Dictionary = {}
+	if content_db != null and content_db.has_method("get_playable_unit_registries"):
+		unit_runtimes = content_db.get_playable_unit_registries()
+	if content_db != null and content_db.has_method("get_playable_structure_registries"):
+		structure_runtimes = content_db.get_playable_structure_registries()
+	sim._rules = _harness_rules(unit_runtimes, structure_runtimes)
 	sim.setup({}, {})
 	if sim.configuration_error != "":
 		printerr("RETAIL_STATE_PIN FAIL configuration error: %s" % sim.configuration_error)
@@ -363,8 +372,8 @@ func _make_sim():
 	return sim
 
 
-func _harness_rules() -> Dictionary:
-	var manifest := FactionManifestScript.from_registries("men", {}, {}, false)
+func _harness_rules(unit_runtimes: Dictionary = {}, structure_runtimes: Dictionary = {}) -> Dictionary:
+	var manifest := FactionManifestScript.from_registries("men", unit_runtimes, structure_runtimes, false)
 	return {
 		"enable_base_loop": true,
 		"starting_resources": 10000,

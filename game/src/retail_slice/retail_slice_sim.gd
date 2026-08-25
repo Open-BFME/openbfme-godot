@@ -33141,6 +33141,12 @@ func _state_hash_static_keys() -> Array[String]:
 
 
 func _authoritative_state() -> Dictionary:
+	# Exclude raw faction_manifest from hash: all load-bearing fields are individually hashed
+	# (unit_production_rules, ai_production_plan, structure_kinds, structure_max_health,
+	# structure_build_rules, unit_damage_types, structure_armor, spawn_roster). Raw dict was
+	# making the pin fragile to non-functional plumbing changes.
+	var rules_without_manifest := _rules.duplicate(true)
+	rules_without_manifest.erase("faction_manifest")
 	var state := {
 		"tick_index": tick_index,
 		"winner": winner,
@@ -33157,7 +33163,7 @@ func _authoritative_state() -> Dictionary:
 		"playable_outline": playable_outline,
 		"spawn_positions": _spawn_positions,
 		"home_layout": _home_layout,
-		"rules": _rules,
+		"rules": rules_without_manifest,
 		"unit_production_rules": _unit_production_rules,
 		"completed_hero_identities": _completed_hero_identities,
 		"production_unit_order": _production_unit_order,
