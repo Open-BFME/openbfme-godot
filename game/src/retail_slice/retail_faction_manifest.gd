@@ -120,6 +120,7 @@ static func default_manifest() -> Dictionary:
 		"unit_production_rules": SimScript.UNIT_PRODUCTION_RULES.duplicate(true),
 		"ai_production_plan": SimScript.AI_PRODUCTION_PLAN.duplicate(),
 		"unit_damage_types": SimScript.UNIT_DAMAGE_TYPES.duplicate(true),
+		"structure_armor": SimScript.DEFAULT_STRUCTURE_ARMOR.duplicate(true),
 		"spawn_roster": SimScript.DEFAULT_SPAWN_ROSTER.duplicate(true),
 		"builder_unit_ids": [],
 		"faction_pack_roots": [],

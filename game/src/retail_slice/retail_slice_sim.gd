@@ -2469,9 +2469,17 @@ func _configure_faction_manifest() -> bool:
 		if manifest.has(key) and typeof(manifest.get(key)) != int(typed_expectations[key]):
 			configuration_error = "Faction manifest field '%s' has the wrong type" % String(key)
 			return false
-	_unit_production_rules = (manifest.get("unit_production_rules", UNIT_PRODUCTION_RULES) as Dictionary).duplicate(true)
-	var plan: Array = Array(manifest.get("ai_production_plan", AI_PRODUCTION_PLAN))
-	var kinds: Array = Array(manifest.get("structure_kinds", STRUCTURE_KINDS))
+	# Manifest keys that are now required (no fallback defaults permitted)
+	var required_keys := ["unit_production_rules", "ai_production_plan", "structure_kinds", 
+		"structure_max_health", "structure_build_rules", "unit_damage_types", 
+		"structure_armor", "spawn_roster"]
+	for req_key in required_keys:
+		if not manifest.has(req_key):
+			configuration_error = "Faction manifest is missing required field '%s' (pack must carry it; invented defaults were removed)" % req_key
+			return false
+	_unit_production_rules = (manifest.get("unit_production_rules") as Dictionary).duplicate(true)
+	var plan: Array = Array(manifest.get("ai_production_plan"))
+	var kinds: Array = Array(manifest.get("structure_kinds"))
 	for table in [plan, kinds]:
 		for value in table as Array:
 			if typeof(value) != TYPE_STRING or String(value).strip_edges() == "":
@@ -2499,18 +2507,18 @@ func _configure_faction_manifest() -> bool:
 		_seed_structure_kinds.append(String(value))
 	if _seed_structure_kinds.is_empty():
 		_seed_structure_kinds.assign(_structure_kinds)
-	_structure_max_health = (manifest.get("structure_max_health", STRUCTURE_MAX_HEALTH) as Dictionary).duplicate(true)
+	_structure_max_health = (manifest.get("structure_max_health") as Dictionary).duplicate(true)
 	_structure_bounty_values = (manifest.get("structure_bounty_values", {}) as Dictionary).duplicate(true)
-	_structure_build_rules = (manifest.get("structure_build_rules", STRUCTURE_BUILD_RULES) as Dictionary).duplicate(true)
-	_unit_damage_types = (manifest.get("unit_damage_types", UNIT_DAMAGE_TYPES) as Dictionary).duplicate(true)
+	_structure_build_rules = (manifest.get("structure_build_rules") as Dictionary).duplicate(true)
+	_unit_damage_types = (manifest.get("unit_damage_types") as Dictionary).duplicate(true)
 	# Repopulated from the loaded documents' compiled combat blocks; no manifest
 	# constant mirrors it, so it must not survive a previous configure.
 	_unit_damage_components = {}
 	# Compiled per-kind structure armor (armor.ini via each structure document).
 	# Legacy manifests without it keep the FortressArmor mirror with per-line
 	# armor.ini provenance; kinds outside the mirror are recorded provisionals.
-	_structure_armor = (manifest.get("structure_armor", DEFAULT_STRUCTURE_ARMOR) as Dictionary).duplicate(true)
-	_spawn_roster = (manifest.get("spawn_roster", DEFAULT_SPAWN_ROSTER) as Array).duplicate(true)
+	_structure_armor = (manifest.get("structure_armor") as Dictionary).duplicate(true)
+	_spawn_roster = (manifest.get("spawn_roster") as Array).duplicate(true)
 	for kind_value in _structure_kinds:
 		var kind := String(kind_value)
 		if int(_structure_max_health.get(kind, 0)) <= 0:
