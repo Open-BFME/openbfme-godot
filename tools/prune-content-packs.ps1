@@ -1,8 +1,17 @@
 [CmdletBinding()]
 param(
     [switch]$DryRun = $true,
-    [switch]$Execute
+    [switch]$Execute,
+    # Bundle dirs whose name is not a 64-hex digest (hand-made/name-addressed,
+    # see mod_loader.gd:939) can never be pin-protected by the digest regex, so
+    # they are never deleted unless this override is passed explicitly.
+    [switch]$AllowNamedBundles
 )
+
+if ($Execute -and $PSBoundParameters.ContainsKey('DryRun') -and $DryRun) {
+    Write-Error "FATAL: -Execute and -DryRun are mutually exclusive."
+    exit 1
+}
 
 $ErrorActionPreference = "Stop"
 $InformationPreference = "Continue"
@@ -89,6 +98,35 @@ function Get-RunnerPinnedDigests {
 
     $unique = @($pinned | Select-Object -Unique)
     Write-Information "Runner pins (game/tests/**/*.gd): $($unique.Count) unique"
+
+    if ($unique.Count -eq 0) { Write-Error "FATAL: Runner pin scan produced zero results (an empty keep-set source is fatal, not permissive)"; exit 1 }
+    return $unique
+}
+
+function Get-PythonToolPinnedDigests {
+    # Q88 collateral lesson: tools/close_goal_prop_bindings.py:1073-1076 pinned
+    # rotwk-skirmish-maps-private/bc6ab089... and content-packs\...\goal-official-72
+    # by PATH LITERAL; the v2 scan (ps1+gd only) missed both and they were deleted.
+    $pinned = @()
+    $pyFiles = Get-ChildItem (Join-Path $repoRoot "tools") -Filter "*.py" -File -Recurse
+    foreach ($py in $pyFiles) {
+        $content = Get-Content $py.FullName -Raw
+        # packid/digest in one string
+        foreach ($m in [regex]::Matches($content, '([a-z0-9\-]+/[a-f0-9]{64})')) { $pinned += $m.Groups[1].Value }
+        # path literal with / or \ separators
+        foreach ($m in [regex]::Matches($content, 'content-packs[/\\]+([a-z0-9][a-z0-9\-]*)[/\\]+([A-Za-z0-9][\w\-.]*)')) {
+            $pinned += "$($m.Groups[1].Value)/$($m.Groups[2].Value)"
+        }
+        # pathlib multi-line form:  / "content-packs" / "packid" / "bundle"
+        foreach ($m in [regex]::Matches($content, '"content-packs"\s*/\s*"([a-z0-9][a-z0-9\-]*)"\s*/\s*"([A-Za-z0-9][\w\-.]*)"')) {
+            $pinned += "$($m.Groups[1].Value)/$($m.Groups[2].Value)"
+        }
+        # bare 64-hex digest with no pack id (pins that digest under ANY pack id;
+        # marked with */ and resolved against on-disk bundles in Build-PruneList)
+        foreach ($m in [regex]::Matches($content, '"([a-f0-9]{64})"')) { $pinned += "*/$($m.Groups[1].Value)" }
+    }
+    $unique = @($pinned | Select-Object -Unique)
+    Write-Information "Python tool pins (tools/**/*.py, digest + path-literal + pathlib + bare-digest): $($unique.Count) unique"
     return $unique
 }
 
@@ -107,7 +145,8 @@ function Get-DistPinnedDigests {
                     $pinned += @($distJson.supplementalPacks)
                     Write-Information "  Loaded dist/$($versionDir.Name)/content-packs/selection.json"
                 } catch {
-                    Write-Warning "  Parse failed: $_"
+                    Write-Error "FATAL: dist selection parse failed ($distSelection): $_ (an unreadable pin source is fatal, not permissive)"
+                    exit 1
                 }
             }
         }
@@ -165,9 +204,11 @@ function Build-PruneList {
     $selectedPackIds = @($selectedPackIds | Select-Object -Unique)
     Write-Information "Rule 1 (selected): $($keepSet.Count) bundles"
 
-    # Rule 2: Previous digest per selected pack id
+    # Rule 2: keep ALL on-disk digests of every SELECTED pack id (deliberate
+    # over-keep for rollback safety; NOT "one previous digest" — pack ids that
+    # are not selected anywhere get no protection from this rule)
     foreach ($packId in $selectedPackIds) {
-        $versions = @($allBundles | Where-Object { $_.PackId -eq $packId } | Sort-Object FullPath)
+        $versions = @($allBundles | Where-Object { $_.PackId -eq $packId })
         foreach ($ver in $versions) {
             $bundleId = "$($ver.PackId)/$($ver.Digest)"
             if (-not $keepSet.ContainsKey($bundleId)) {
@@ -177,17 +218,33 @@ function Build-PruneList {
     }
     Write-Information "Rule 2 (previous): $($keepSet.Count) total in keep-set"
 
-    # Rule 3: Pinned digests (gates, runners, dist)
+    # Rule 3: Pinned digests (gates, runners, dist, python tools)
     $gatePins = Get-GatePinnedDigests
     $runnerPins = Get-RunnerPinnedDigests
     $distPins = Get-DistPinnedDigests
+    $pyPins = Get-PythonToolPinnedDigests
 
-    foreach ($pin in ($gatePins + $runnerPins + $distPins)) {
+    $bareDigestPins = @{}
+    foreach ($pin in ($gatePins + $runnerPins + $distPins + $pyPins)) {
         if ($pin) {
+            if ($pin.StartsWith("*/")) {
+                # bare digest: pins the digest under any pack id
+                $bareDigestPins[$pin.Substring(2)] = $true
+                continue
+            }
             if ($keepSet.ContainsKey($pin)) {
                 $keepSet[$pin] = "$($keepSet[$pin])|pinned"
             } else {
                 $keepSet[$pin] = "pinned"
+            }
+        }
+    }
+    if ($bareDigestPins.Count -gt 0) {
+        foreach ($bundle in $allBundles) {
+            if ($bareDigestPins.ContainsKey($bundle.Digest)) {
+                $bundleId = "$($bundle.PackId)/$($bundle.Digest)"
+                if (-not $keepSet.ContainsKey($bundleId)) { $keepSet[$bundleId] = "pinned-bare-digest" }
+                elseif ($keepSet[$bundleId] -notmatch 'pinned') { $keepSet[$bundleId] = "$($keepSet[$bundleId])|pinned-bare-digest" }
             }
         }
     }
@@ -201,8 +258,18 @@ function Build-PruneList {
             $keepSet[$bundleId] = "$($keepSet[$bundleId])|found"
         } else {
             # GUARD: Path must be under one of the pack roots
-            $safe = ([System.IO.Path]::GetFullPath($bundle.FullPath).StartsWith($workspacePacksRoot)) -or ($bundle.FullPath.StartsWith($durablePacksRoot))
+            $normalized = [System.IO.Path]::GetFullPath($bundle.FullPath)
+            $safe = $normalized.StartsWith([System.IO.Path]::GetFullPath($workspacePacksRoot)) -or $normalized.StartsWith([System.IO.Path]::GetFullPath($durablePacksRoot))
             if (-not $safe) { Write-Error "FATAL: Path not under pack root: $($bundle.FullPath)"; exit 1 }
+
+            # GUARD: name-addressed bundles (non-64-hex dir names) are structurally
+            # unpinnable by the digest regex — refuse unless explicitly overridden
+            if (($bundle.Digest -notmatch '^[a-f0-9]{64}$') -and (-not $AllowNamedBundles)) {
+                Write-Information "SKIP (named bundle, needs -AllowNamedBundles): $bundleId"
+                if (-not $keepSet.ContainsKey($bundleId)) { $keepSet[$bundleId] = "skipped-named-bundle" }
+                $keepSet[$bundleId] = "$($keepSet[$bundleId])|found"
+                continue
+            }
 
             $pruneList += @{
                 BundleId = $bundleId
@@ -291,28 +358,40 @@ if ($Execute) {
     Write-Information "=== EXECUTING DELETIONS ==="
     Write-Information $dryRunTable
 
+    # Distinct execution record (Q88 round-2 verifier: dry-run and execute must
+    # never share a log file; the execute log carries per-item outcomes + counts)
+    $executeLog = Join-Path $logsRoot "execute.txt"
+    $execLines = @("=== EXECUTE RUN $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ===", "")
+
     $deletedCount = 0
     $failedCount = 0
     foreach ($item in $pruneResult.PruneList) {
         try {
             Remove-Item -Path $item.Path -Recurse -Force -ErrorAction Stop
             $deletedCount++
+            $execLines += "DELETED $($item.BundleId) | $($item.SizeBytes) bytes | $($item.RootName)"
         } catch {
             Write-Error "Failed: $($item.Path)"
             $failedCount++
+            $execLines += "FAILED  $($item.BundleId) | $_"
         }
     }
 
     foreach ($item in $pruneResult.TmpOrphans) {
         try {
             Remove-Item -Path $item.Path -Force -ErrorAction Stop
+            $execLines += "DELETED-ORPHAN $($item.Path)"
         } catch {
             Write-Error "Failed: $($item.Path)"
             $failedCount++
+            $execLines += "FAILED-ORPHAN  $($item.Path) | $_"
         }
     }
 
-    Write-Information "Deleted: $deletedCount bundles, $failedCount failed"
+    $execLines += ""
+    $execLines += "RESULT deleted=$deletedCount failed=$failedCount bytesListed=$(($pruneResult.PruneList | Measure-Object -Property SizeBytes -Sum).Sum)"
+    ($execLines -join "`n") | Out-File -FilePath $executeLog -Encoding UTF8
+    Write-Information "Deleted: $deletedCount bundles, $failedCount failed (record: $executeLog)"
     $dryRunTable | Out-File -FilePath $dryRunLog -Encoding UTF8
 } else {
     Write-Information "=== DRY RUN (use -Execute to delete) ==="

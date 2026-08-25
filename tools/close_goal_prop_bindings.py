@@ -1040,6 +1040,10 @@ def _write_summary(path: Path, stats: Mapping[str, Any]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    # NOTE (Q88, 2026-08-25): the default --pack and --preferred-reuse-pack
+    # bundles were deleted by the content-pack prune; this one-shot repair was
+    # already applied before that. To re-run, pass --pack/--preferred-reuse-pack
+    # explicitly against a live bundle.
     parser.add_argument(
         "--pack",
         type=Path,
