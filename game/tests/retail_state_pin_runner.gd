@@ -34,6 +34,7 @@ extends SceneTree
 ## six transcendental sites (sin/cos/rotated/angle) reachable from them.
 
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
+const FactionManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
 
 const PIN_TICKS := 3000
 
@@ -345,6 +346,10 @@ func _make_sim():
 	var sim = SimScript.new()
 	sim._rules = _harness_rules()
 	sim.setup({}, {})
+	if sim.configuration_error != "":
+		printerr("RETAIL_STATE_PIN FAIL configuration error: %s" % sim.configuration_error)
+		quit(1)
+		return sim
 	sim.ai_enabled = true
 	for structure_id in sim.structure_ids():
 		if structure_id != 1003:
@@ -359,10 +364,12 @@ func _make_sim():
 
 
 func _harness_rules() -> Dictionary:
+	var manifest := FactionManifestScript.from_registries("men", {}, {}, false)
 	return {
 		"enable_base_loop": true,
 		"starting_resources": 10000,
 		"ai_attack_delay_ticks": 4000,
+		"faction_manifest": manifest,
 		"unit_rules": {
 			SimScript.SOLDIER_OBJECT_ID: _unit_rule(SimScript.SOLDIER_HORDE_ID, false),
 			SimScript.ARCHER_OBJECT_ID: _unit_rule(SimScript.ARCHER_OBJECT_ID, false),
