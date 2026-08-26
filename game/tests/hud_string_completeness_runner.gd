@@ -20,25 +20,28 @@ extends SceneTree
 ##                    packs, so the runner and the importer can never disagree
 ##                    about which ids retail is missing.
 ##   recoverable    - the id IS in retail data/lotr.str, but no mounted pack
-##                    ships a strings document containing it. The RotWK faction
-##                    slice profile emits no `files.strings` at all
-##                    (importer/openbfme_importer/faction_slice_profile.py has
-##                    no strings lane; the precedent it needs is
-##                    importer/openbfme_importer/faction_profile.py:777). Fixing
-##                    that and republishing the seven faction packs drives this
-##                    count to zero.
+##                    ships a strings document containing it. The importer's
+##                    pack strings lane (faction_slice_profile.py "pack strings
+##                    lane") now emits data/strings.json per faction slice; the
+##                    2026-08 recooks shipped it for all seven RotWK slices +
+##                    bfme2-men, driving this count 764 -> 25. The residue is
+##                    ids referenced only by summon/neutral-unit docs no
+##                    faction slice owns (Balrog/Shelob/drake abilities,
+##                    RepairStructure) — importer coverage, not runtime.
 ##
 ## Env: OPENBFME_CONTENT, OPENBFME_HUD_STRINGS_OUT
 
 const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
 
-## Recorded 2026-08-04 against selection.json with the seven rebuilt RotWK
-## faction packs mounted, using the DERIVED retail-absent set (see below).
+## Re-pinned 2026-08-26 (was 764, recorded 2026-08-04): the importer's pack
+## strings lane shipped in the 2026-08 recooks, so eight mounted packs now
+## carry data/strings.json and 739 formerly-unresolved ids resolve. The 25
+## residue ids are named in the OPENBFME_HUD_STRINGS_OUT report.
 ## This is a RATCHET, not an equality pin:
 ##   count > pin  -> regression: HUD text that used to resolve no longer does.
 ##   count < pin  -> improvement, but the pin must be lowered in the SAME
 ##                   change so the new floor is what future runs are held to.
-const EXPECTED_RECOVERABLE_UNRESOLVED := 764
+const EXPECTED_RECOVERABLE_UNRESOLVED := 25
 
 ## TIER POLICY (must match importer/openbfme_importer/playable_unit_import.py):
 ## an id counts as "retail-absent" when the LAYERED effective string table has
@@ -134,19 +137,30 @@ func _run() -> void:
 	unresolved_recoverable.sort()
 	unresolved_retail_absent.sort()
 
-	# Evidence that names an id no mounted pack actually references is drift: the
-	# compiler exempted something this pack set never draws. That IS a failure.
+	# Evidence that names a CONTROLBAR id no mounted pack actually references is
+	# drift: the compiler exempted something this pack set never draws. That IS
+	# a failure. Scoped to the CONTROLBAR: namespace because that is the ONLY
+	# namespace this runner's reference scan collects; the 2026-08 recooks
+	# widened sourceNullStringIds to CreateAHero:/Object: ids (CAH bling rows,
+	# SelectPortrait fields) that ARE referenced by mounted documents, just not
+	# as "CONTROLBAR:..." literals — counting those as dangling was a runner
+	# model error, not content drift. Non-CONTROLBAR evidence is reported in
+	# the summary, deliberately not gated here.
 	var dangling_evidence: Array[String] = []
+	var non_controlbar_evidence := 0
 	var folded_references: Dictionary = {}
 	for identifier_value in references.keys():
 		folded_references[String(identifier_value).to_lower()] = true
 	for identifier in retail_absent_ids:
+		if not identifier.to_lower().begins_with("controlbar:"):
+			non_controlbar_evidence += 1
+			continue
 		if not folded_references.has(identifier.to_lower()):
 			dangling_evidence.append(identifier)
 	_check(
 		"retail_absent_evidence_ids_are_referenced", dangling_evidence.is_empty(),
-		"these compiler-recorded retail-absent ids are referenced by no mounted "
-		+ "pack; the evidence has drifted from the shipped documents: %s"
+		"these compiler-recorded retail-absent CONTROLBAR ids are referenced by "
+		+ "no mounted pack; the evidence has drifted from the shipped documents: %s"
 		% ", ".join(dangling_evidence)
 	)
 
@@ -197,6 +211,7 @@ func _run() -> void:
 		"unresolved_recoverable": recoverable,
 		"unresolved_retail_absent": unresolved_retail_absent.size(),
 		"retail_absent_evidence_ids": retail_absent_ids.size(),
+		"retail_absent_evidence_non_controlbar": non_controlbar_evidence,
 		"retail_absent_evidence_resolved_by_other_tier":
 			evidence_resolved_by_other_tier.size(),
 		"pinned_recoverable_baseline": EXPECTED_RECOVERABLE_UNRESOLVED,

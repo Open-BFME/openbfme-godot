@@ -593,6 +593,12 @@ var _data_driven_train_surface := false
 ## fallback (specs marked "authored_fallback": true) is logged here during
 ## bind_retail_train_commands. Missing localized strings otherwise fail closed.
 var retail_bind_diagnostics: Array[String] = []
+## Named receipts for authored-string lookups that MISS the mounted string
+## table. Each entry names the call site and the id ("<context> -> '<id>'"),
+## recorded once per id: the render path keeps its documented honest behaviour
+## (recorded fallback text or an absent surface), but the miss is never silent.
+var missing_string_receipts: Array[String] = []
+var _missing_string_receipt_ids: Dictionary = {}
 ## Retail top-right event feed ("Construction Complete: X", "Insufficient
 ## funds."). Lines stack newest-at-bottom, alternating gold/white per entry,
 ## then fade out after EVENT_FEED_SECONDS.
@@ -1776,13 +1782,38 @@ func _honest_upgrade_label(upgrade_id: String) -> String:
 	return words.strip_edges()
 
 
+## Authored-string lookup with a named receipt on every miss. Returns
+## {"found": bool, "text": String}. A miss NEVER invents text: callers keep
+## their documented honest fallback, and the miss is recorded once per id in
+## `missing_string_receipts` so no lookup failure is ever silent.
+func lookup_authored_string(string_id: String, context: String) -> Dictionary:
+	if _bound_content_db == null or string_id.strip_edges() == "":
+		_record_missing_string(string_id if string_id != "" else "<empty-id>", context)
+		return {"found": false, "text": ""}
+	var localized := String(_bound_content_db.get_retail_string(string_id, _MISSING_RETAIL_STRING))
+	if localized == _MISSING_RETAIL_STRING:
+		_record_missing_string(string_id, context)
+		return {"found": false, "text": ""}
+	return {"found": true, "text": localized}
+
+
+func _record_missing_string(string_id: String, context: String) -> void:
+	var key := string_id.to_lower()
+	if _missing_string_receipt_ids.has(key):
+		return
+	_missing_string_receipt_ids[key] = true
+	missing_string_receipts.append("missing-authored-string: %s -> '%s'" % [context, string_id])
+
+
 func _refresh_doc_upgrade_tooltip(button: Button, command: Dictionary) -> void:
 	var base := String(button.get_meta("retail_label", button.tooltip_text))
 	var cost := int(command.get("cost", 0))
 	var tooltip_id := String(command.get("tooltip_id", ""))
 	var source_tooltip := button.tooltip_text
 	if _bound_content_db != null and tooltip_id != "":
-		source_tooltip = String(_bound_content_db.get_retail_string(tooltip_id, source_tooltip))
+		var lookup := lookup_authored_string(tooltip_id, "doc-upgrade-tooltip")
+		if bool(lookup.get("found", false)):
+			source_tooltip = String(lookup.get("text", ""))
 	button.tooltip_text = "%s\n%s\nCost: %d" % [base, source_tooltip, cost] if base != source_tooltip else "%s\nCost: %d" % [source_tooltip, cost]
 
 
@@ -1886,7 +1917,9 @@ func _refresh_battalion_upgrade_tooltip(button: Button, command: Dictionary) -> 
 	var tooltip_id := String(command.get("tooltip_id", ""))
 	var source_tooltip := button.tooltip_text
 	if _bound_content_db != null and tooltip_id != "":
-		source_tooltip = String(_bound_content_db.get_retail_string(tooltip_id, source_tooltip))
+		var lookup := lookup_authored_string(tooltip_id, "battalion-upgrade-tooltip")
+		if bool(lookup.get("found", false)):
+			source_tooltip = String(lookup.get("text", ""))
 	var lines: Array[String] = []
 	lines.append("%s\n%s\nCost: %d" % [base, source_tooltip, cost] if base != source_tooltip else "%s\nCost: %d" % [source_tooltip, cost])
 	if not bool(command.get("research_owned", false)):
@@ -1900,9 +1933,9 @@ func _refresh_battalion_upgrade_tooltip(button: Button, command: Dictionary) -> 
 func _required_tech_label(command: Dictionary) -> String:
 	var lacks_id := String(command.get("lacks_prerequisite_label_id", ""))
 	if _bound_content_db != null and lacks_id != "":
-		var resolved := String(_bound_content_db.get_retail_string(lacks_id, ""))
-		if resolved != "":
-			return resolved
+		var lookup := lookup_authored_string(lacks_id, "required-tech-label")
+		if bool(lookup.get("found", false)) and String(lookup.get("text", "")) != "":
+			return String(lookup.get("text", ""))
 	return _honest_upgrade_label(String(command.get("required_upgrade", "")))
 
 
@@ -5113,8 +5146,14 @@ func retail_gate_toggle_command() -> Dictionary:
 	const TOOLTIP_ID := "CONTROLBAR:ToolTipToggleGate"
 	if _bound_content_db == null or _bound_pack_root == "":
 		return {}
-	var label := String(_bound_content_db.get_retail_string(LABEL_ID, ""))
-	var tooltip := String(_bound_content_db.get_retail_string(TOOLTIP_ID, ""))
+	var label_lookup := lookup_authored_string(LABEL_ID, "gate-toggle-label")
+	var tooltip_lookup := lookup_authored_string(TOOLTIP_ID, "gate-toggle-tooltip")
+	if not bool(label_lookup.get("found", false)) or not bool(tooltip_lookup.get("found", false)):
+		# Recorded above by name; the gate surface stays absent rather than
+		# rendering invented text.
+		return {}
+	var label := String(label_lookup.get("text", ""))
+	var tooltip := String(tooltip_lookup.get("text", ""))
 	if label == "" or tooltip == "":
 		return {}
 	var result := {
