@@ -417,7 +417,26 @@ func _check_authored_stage_layout(hud) -> void:
 	# What IS authored is `PalantirFrame`, placed at stage [0, 512] with an
 	# identity matrix, whose sheet (`apt_PalantirExport_17`, 512x256) therefore
 	# covers stage [0,512]..[512,768]. Assert exactly that.
-	var frame_piece: Dictionary = hud.RETAIL_FRAME_PIECES[0]
+	# The composition may carry solid "disc" backing pieces (the dish-glass
+	# hole cover; retail's own contract authors solid backing quads the same
+	# way), but exactly ONE textured piece - the whole authored sheet - and any
+	# backing must be drawn BEFORE it so authored pixels land on top.
+	var textured_pieces: Array = []
+	var backing_after_sheet := false
+	for piece_index in (hud.RETAIL_FRAME_PIECES as Array).size():
+		var candidate: Dictionary = hud.RETAIL_FRAME_PIECES[piece_index]
+		if candidate.has("region"):
+			textured_pieces.append(candidate)
+		elif not textured_pieces.is_empty():
+			backing_after_sheet = true
+	_check(
+		"control_bar_composition_is_one_sheet_over_solid_backing",
+		textured_pieces.size() == 1 and not backing_after_sheet,
+		"textured=%d backing_after_sheet=%s" % [textured_pieces.size(), str(backing_after_sheet)]
+	)
+	if textured_pieces.size() != 1:
+		return
+	var frame_piece: Dictionary = textured_pieces[0]
 	var authored_sheet := Rect2(
 		Vector2.ZERO, Vector2(hud.RETAIL_PALANTIR_FRAME_SOURCE_SIZE)
 	)
@@ -1109,6 +1128,36 @@ func _check_control_bar_click_shield(hud) -> void:
 	_check("control_bar_opaque_art_shields_world_clicks", samples > 0 and hits * 4 >= samples, "%d/%d" % [hits, samples])
 	var corner := Vector2(frame.size.x - 2.0, 2.0)
 	_check("control_bar_transparent_corner_reaches_the_world", not bool(frame.shields_point(corner)), str(corner))
+	# Owner 2026-08-26 playtest: the WORLD showed through the palantir dish.
+	# The authored frame sheet's dish opening is transparent by design - retail
+	# composites the EmptyGlobe glass there, an imported APT character the
+	# importer does not convert - and the Q37 one-piece refactor (85e7f776)
+	# deleted the backing disc that used to cover it. The dish interior (the
+	# frame sheet's dish opening, sheet circle center (286,148) r=74 mapped
+	# through the 1.875 x 1.40625 dock transform) must be covered by opaque HUD
+	# art everywhere; grass between the command sockets is never retail.
+	var dish_center := Vector2(536.25, 208.125)
+	var dish_half_extents := Vector2(138.75, 104.0625)
+	var interior_holes := 0
+	var interior_samples := 0
+	for gy in range(-9, 10):
+		for gx in range(-9, 10):
+			var offset := Vector2(gx / 10.0, gy / 10.0)
+			if offset.length() > 0.95:
+				continue
+			interior_samples += 1
+			if not bool(frame.shields_point(dish_center + offset * dish_half_extents)):
+				interior_holes += 1
+	_check(
+		"palantir_dish_interior_is_covered_by_opaque_art",
+		interior_samples > 0 and interior_holes == 0,
+		"%d/%d holes" % [interior_holes, interior_samples]
+	)
+	# ...but only INSIDE the authored ring: retail's own silhouette leaves the
+	# world visible below the dish (sheet (300,248) is alpha 0 in the authored
+	# art). The backing must not spill past the frame silhouette.
+	var outside := Vector2(562.5, 348.75)
+	_check("dish_backing_stays_inside_the_authored_silhouette", not bool(frame.shields_point(outside)), str(outside))
 
 
 func _check_command_hotkeys(hud) -> void:

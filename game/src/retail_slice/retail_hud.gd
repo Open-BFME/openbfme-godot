@@ -191,7 +191,32 @@ const RETAIL_POWER_DOCK_SIZE := Vector2(76, 76)
 # thrown away. They carry only a faint horizontal streak (max alpha 17/255 over
 # rows 137-159), which is why the crop was never visible - but the sheet is the
 # sheet, and 512 x 1.875 = 960, 256 x 1.40625 = 360 is where the stage puts it.
+# Owner 2026-08-26 playtest: THE WORLD SHOWED THROUGH THE PALANTIR DISH. The
+# authored frame sheet's dish opening is TRANSPARENT by design - retail
+# composites the EmptyGlobe glass sphere there, and that glass is an imported
+# APT character whose art the importer does not convert (the scene contract's
+# only static draws are the frame sheet itself plus solid backing quads for the
+# radar and side bar - nothing covers the dish opening). The Q37 collapse to
+# one authored piece deleted the backing disc that used to close the hole
+# (85e7f776), so grass rendered between the command sockets.
+#
+# Until the importer converts the EmptyGlobe character this backing ellipse
+# closes the hole the same way retail's own contract authors the radar backing:
+# flat solid geometry under the frame art. Geometry is MEASURED FROM THE
+# AUTHORED SHEET, not invented: the dish opening in apt-palantirexport-17 is
+# the circle centre (286, 148) radius 74 (alpha scan 2026-08-26; interior alpha
+# 0 inside r=72, ring band opaque by r=76), mapped through the same 1.875 x
+# 1.40625 sheet->dock transform as the frame piece below - an ellipse, because
+# the stage stretch is non-uniform. The colour is the dish-glass value the
+# shipped pre-Q37 composition used. Drawn FIRST so every authored pixel of the
+# frame sheet still lands on top of it.
 const RETAIL_FRAME_PIECES := [
+	{
+		"kind": "disc",
+		"center": Vector2(286.0 * 1.875, 148.0 * 1.40625),
+		"half_extents": Vector2(74.0 * 1.875, 74.0 * 1.40625),
+		"color": Color(0.035, 0.04, 0.03, 1.0),
+	},
 	{"region": Rect2(0, 0, 512, 256), "dest": Rect2(0, 0, 960, 360)},
 ]
 ## Inhabited columns of the frame sheet, used as the score overlay backdrop.

@@ -124,8 +124,17 @@ func _draw() -> void:
 			var kind := String(piece.get("kind", ""))
 			if kind == "disc":
 				# APT-style solid vector geometry: the dish void behind the
-				# ring, matching retail's flat dark backing shape.
-				draw_circle(piece["center"] as Vector2, float(piece["radius"]), piece["color"] as Color)
+				# ring, matching retail's flat dark backing shape. A piece with
+				# "half_extents" is an ELLIPSE: the authored opening is a circle
+				# in sheet/stage space and the stage transform is non-uniform
+				# (1.875 x 1.40625), so its dock-space footprint is not round.
+				if piece.has("half_extents"):
+					var half_extents := piece["half_extents"] as Vector2
+					draw_set_transform(piece["center"] as Vector2, 0.0, half_extents)
+					draw_circle(Vector2.ZERO, 1.0, piece["color"] as Color)
+					draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+				else:
+					draw_circle(piece["center"] as Vector2, float(piece["radius"]), piece["color"] as Color)
 			elif kind == "dish_ring" and _masked_textures.has(index):
 				draw_texture_rect(_masked_textures[index] as Texture2D, piece["dest"] as Rect2, false)
 			else:
@@ -195,6 +204,8 @@ func _shield_image_for(texture: Texture2D) -> Image:
 func _shield_piece_hit(piece: Dictionary, index: int, point: Vector2) -> bool:
 	var kind := String(piece.get("kind", ""))
 	if kind == "disc":
+		if piece.has("half_extents"):
+			return ((point - (piece["center"] as Vector2)) / (piece["half_extents"] as Vector2)).length() <= 1.0
 		return point.distance_to(piece["center"] as Vector2) <= float(piece["radius"])
 	var dest := piece["dest"] as Rect2
 	if not dest.has_point(point):
