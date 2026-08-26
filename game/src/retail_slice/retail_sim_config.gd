@@ -13,7 +13,7 @@ func _init(owning_sim) -> void:
 func _configure_faction_manifest() -> bool:
 	## Every faction-scoped table flows through the manifest. The 8 core
 	## tables are REQUIRED (Q80): a rules dictionary without them is refused
-	## by name â€” invented defaults were removed and never fall back silently.
+	## by name — invented defaults were removed and never fall back silently.
 	var manifest_value: Variant = sim._rules.get("faction_manifest", {})
 	if typeof(manifest_value) != TYPE_DICTIONARY:
 		sim.configuration_error = "Faction manifest is not a dictionary"
@@ -233,7 +233,7 @@ func _compiled_armor_rule(document: Dictionary) -> Dictionary:
 func _parse_damage_scalar(entry: Dictionary) -> Dictionary:
 	## Split a compiled DamageScalar row into an evaluable filter. Retail
 	## evidence: `ANY +INFANTRY -HERO` (has INFANTRY, not HERO), `ALL -STRUCTURE`
-	## (lacks STRUCTURE), `NONE +MINE` (has MINE â€” the first token never negates
+	## (lacks STRUCTURE), `NONE +MINE` (has MINE — the first token never negates
 	## the +kinds; see armor_compiler.py and weapon.ini usage).
 	var relation := "ANY"
 	var plus: Array[String] = []
@@ -886,7 +886,7 @@ func _configure_playable_unit_runtime_contracts() -> void:
 		# document-derived id space: every rule registers under BOTH ids the
 		# document itself resolves (runtime_member_id = primaryMemberObjectId,
 		# runtime_unit_id = containerObjectId), so entity object_id lookups,
-		# unit_type-keyed purchase surfaces, and gate checks read one space â€”
+		# unit_type-keyed purchase surfaces, and gate checks read one space —
 		# no hardcoded alias tables.
 		var armor_member_id = sim.PlayableUnitAdapter.runtime_member_id(document_value as Dictionary)
 		var armor_unit_id = sim.PlayableUnitAdapter.runtime_unit_id(document_value as Dictionary)
@@ -907,7 +907,7 @@ func _configure_playable_unit_runtime_contracts() -> void:
 				sim._unit_weapon_upgrades[armor_id] = weapon_upgrade_rules
 		# Authored LevelUpUpgrade effects (Basic Training) and the horde's own
 		# OBJECT_UPGRADE purchase buttons ride the same document; eligibility is
-		# the compiled effect tables above â€” never a class-name guess.
+		# the compiled effect tables above — never a class-name guess.
 		var level_up_rules := _compiled_level_up_rules(document_value as Dictionary)
 		if not level_up_rules.is_empty():
 			for armor_id in armor_id_space:
@@ -942,7 +942,7 @@ func _configure_playable_unit_runtime_contracts() -> void:
 			# Keep the unit fieldable when a purchase row has no compiled effect
 			# yet (thrall composition swaps; forged-blade WeaponSetUpgrade not
 			# emitted into combat.upgrades). Fail-closed used to refuse the
-			# entire playable_unit_runtimes registry â€” one incomplete purchase
+			# entire playable_unit_runtimes registry — one incomplete purchase
 			# killed match configure for the whole faction. Surface only the
 			# rows that already have weapon/armor/level effects; record gaps.
 			var armor_upgrade_ids: Dictionary = (armor_rule.get("upgrades", {}) as Dictionary)
@@ -1064,7 +1064,7 @@ func _configure_playable_unit_runtime_contracts() -> void:
 			sim._unit_damage_types[member_id] = doc_damage_type
 		elif doc_damage_components.is_empty() and not sim.missing_damage_type_units.has(member_id):
 			# A combat unit whose document authors no damageType is recorded at
-			# configure â€” never only when it happens to spawn (retail Arwen
+			# configure — never only when it happens to spawn (retail Arwen
 			# carries powers but no weapon); its structure damage falls to each
 			# kind's DEFAULT armor scalar.
 			sim.missing_damage_type_units.append(member_id)
@@ -1140,7 +1140,7 @@ func _configure_playable_unit_runtime_contracts() -> void:
 		sim._ensure_capture_building_ability(unit_type, document_value as Dictionary)
 		# ExperienceLevel chain (converted doc rows) registers per unit type;
 		# units whose chain retail never authored carry no rule and never gain
-		# XP â€” their kill payout is the recorded default, recorded per victim.
+		# XP — their kill payout is the recorded default, recorded per victim.
 		var experience_rule = sim.PlayableUnitAdapter.experience_rule(document_value as Dictionary)
 		if not experience_rule.is_empty():
 			sim._unit_experience_rules[unit_type] = experience_rule
@@ -1349,7 +1349,7 @@ func _configure_structure_upgrade_chains() -> void:
 
 func _compile_structure_castle_upgrades(source: Dictionary, contracts: Dictionary) -> void:
 	## Retail's fortress improvement surface (the OBJECT_UPGRADE buttons in the
-	## fortress command set's upgrades page â€” commandset.ini
+	## fortress command set's upgrades page — commandset.ini
 	## MordorFortressCommandSet slots 8-13 DoomPyres/LavaMoat/FireArrows/
 	## MagmaCauldrons/MorgulSorcery/GorgorothSpire, and the same shape for every
 	## other faction).
