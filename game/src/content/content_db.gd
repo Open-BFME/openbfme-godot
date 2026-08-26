@@ -20,6 +20,9 @@ const MAX_MAP_PATH_LENGTH := 1024
 # Both raised to 2,048 — still a hard resource-exhaustion guard, with room for
 # a fully composed pack an order of magnitude larger than today's.
 const MAX_PLAYABLE_UNIT_RUNTIME_BYTES := 4 * 1024 * 1024
+## ai/skirmish.json for RotWK is ~415 KB today; 8 MB leaves authored headroom
+## without admitting a runaway document.
+const MAX_SKIRMISH_AI_RUNTIME_BYTES := 8 * 1024 * 1024
 const MAX_PLAYABLE_UNIT_RUNTIMES_PER_PACK := 2_048
 const MAX_PLAYABLE_STRUCTURE_RUNTIME_BYTES := 4 * 1024 * 1024
 const MAX_PLAYABLE_STRUCTURE_RUNTIMES_PER_PACK := 2_048
@@ -85,6 +88,13 @@ var cah_system_runtime: Dictionary = {}
 ## Optional `data/ring/system.json`; empty records the named stale-pack
 ## limitation consumed by RetailSliceSim.
 var ring_system_runtime: Dictionary = {}
+## The raw authored skirmish-AI document (`openbfme.skirmish-ai`): retail's
+## aidata.ini + skirmishaidata.ini compiled fact-for-fact (ArmyDefinitions,
+## CombatChains, DifficultyTuning, BrutalDifficultyCheats, AIBases) with
+## provenance, never interpreted by the importer. EMPTY IS A NORMAL STATE for
+## stale packs; the sim's AI keeps its manifest plan until a pack ships this
+## and says so by name (Q83 phase 2).
+var skirmish_ai_runtime: Dictionary = {}
 ## Effect-object presentation rows registered from every admitted spellbook
 ## runtime document's `presentation.visualBindings`: object id -> the binding
 ## row the importer emitted (status / model / sourceW3d / memberObjectId).
@@ -270,6 +280,7 @@ func reload() -> void:
 	trebuchet_runtime.clear()
 	spellbook_runtime.clear()
 	ring_system_runtime.clear()
+	skirmish_ai_runtime.clear()
 	spellbook_visual_bindings.clear()
 	spellbook_unconverted_visuals.clear()
 	playable_unit_runtimes.clear()
@@ -418,6 +429,7 @@ func _load_bundle_v0(root: String, meta: Dictionary) -> void:
 	_load_spellbook_runtimes(root, declared)
 	_load_cah_system_runtime(root, declared)
 	_load_ring_system_runtime(root, declared)
+	_load_skirmish_ai_runtime(root, declared)
 	if not _load_neutral_pack_receipt(root, declared, meta):
 		push_warning("ContentDB: rejected neutral pack receipt at %s" % root)
 		return
@@ -812,6 +824,49 @@ func _load_ring_system_runtime(root: String, declared: Dictionary) -> void:
 	document["_pack_root"] = root
 	document["_pack_file_key"] = "ring.system"
 	ring_system_runtime = document
+
+
+func _load_skirmish_ai_runtime(root: String, declared: Dictionary) -> void:
+	## The raw authored skirmish-AI document. Absence is a normal stale-pack
+	## state; a PRESENT-but-malformed document refuses loudly by name instead
+	## of half-loading (the sim would otherwise interpret a truncated army
+	## table as authored intent).
+	var relative := String(declared.get("skirmishAi", ""))
+	if relative == "" or not ModLoader.is_safe_relative_path(relative):
+		return
+	var document := _read_declared_document_bounded(
+		root, relative, MAX_SKIRMISH_AI_RUNTIME_BYTES
+	)
+	if document.is_empty():
+		push_warning("ContentDB: skirmishAi document unreadable at %s/%s" % [root, relative])
+		return
+	if String(document.get("schema", "")) != "openbfme.skirmish-ai" \
+			or int(document.get("schemaVersion", -1)) != 0:
+		push_warning("ContentDB: skirmishAi schema refused at %s/%s" % [root, relative])
+		return
+	for required in ["globals", "armies", "combatChains", "difficultyTuning", "aiBases", "census"]:
+		if not document.has(required):
+			push_warning("ContentDB: skirmishAi missing '%s' at %s/%s" % [required, root, relative])
+			return
+	var census_value: Variant = document.get("census", {})
+	if typeof(census_value) != TYPE_DICTIONARY:
+		push_warning("ContentDB: skirmishAi census is not a table at %s/%s" % [root, relative])
+		return
+	var census := census_value as Dictionary
+	var armies := document.get("armies", {}) as Dictionary
+	var chains := document.get("combatChains", []) as Array
+	var bases := document.get("aiBases", []) as Array
+	if int(census.get("armyDefinitionCount", -1)) != armies.size() \
+			or int(census.get("combatChainDefinitionCount", -1)) != chains.size() \
+			or int(census.get("aiBaseCount", -1)) != bases.size():
+		push_warning(
+			"ContentDB: skirmishAi census disagrees with its own tables at %s/%s" % [root, relative]
+		)
+		return
+	document["_source"] = ModLoader.resolve_pack_path(root, relative)
+	document["_pack_root"] = root
+	document["_pack_file_key"] = "skirmishAi"
+	skirmish_ai_runtime = document
 
 
 func _register_spellbook_visual_bindings(root: String, document: Dictionary) -> void:
