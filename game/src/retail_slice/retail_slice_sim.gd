@@ -27369,14 +27369,14 @@ func _launch_member_projectile(
 
 func _apply_member_bonus_nuggets(
 	attacker_id: int,
-	attacker_member_index: int,
-	attacker: Dictionary,
+	member_index: int,
+	row: Dictionary,
 	target_id: int,
 	target_kind: String,
-	forced_member: int,
+	forced_target: int,
 	weapon_effect: Dictionary
 ) -> void:
-	_combat_subsystem()._apply_member_bonus_nuggets(attacker_id, attacker_member_index, attacker, target_id, target_kind, forced_member, weapon_effect)
+	_combat_subsystem()._apply_member_bonus_nuggets(attacker_id, member_index, row, target_id, target_kind, forced_target, weapon_effect)
 
 
 func _clear_member_attack_schedule(row: Dictionary) -> void:
