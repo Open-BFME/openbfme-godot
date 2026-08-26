@@ -34,7 +34,7 @@ Every round updates this ledger. Status: DONE (dual-reviewed + verified) / LIVE 
 - FLIGHT (opus33) Menu/shell music hookup; WotR audio; attack/voice sound census; radar palantir art
 - QUEUED (#20) Summon T-poses + hero ability anims (spear throw)
 - QUEUED (#22) Red attack cursor on hostile right-click
-- GAP ~760 recoverable HUD text labels (strings lane specced, not built)
+- GAP 25 unresolved recoverable HUD string ids (was ~760; 739 recovered by the 2026-08 recooks' pack strings.json — hud_string_completeness_runner ratchet 764->25). Residue = importer strings-lane coverage on summon/neutral docs (Balrog/Shelob/drake ability tooltips, RepairStructure) — importer fix + republish, never game-side invented text
 - GAP Summon fade-out visuals (compiler drops SlowDeathBehavior fade)
 - GAP Retail 3-page fortress hero revival submenu (heroes only in flat radial)
 - QUEUED (#15) WotR presentation bundles into packs (env-independent)
