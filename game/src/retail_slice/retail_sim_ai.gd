@@ -92,6 +92,15 @@ func run_ai_for_team(team: int, profile: Dictionary, ai_state: Dictionary) -> vo
 		# proven plan above is untouched. Full replacement (baseline off)
 		# stays future work once economy/CP semantics reach retail scale.
 		if bool(_sim.skirmish_ai_configured) and bool(_sim._rules.get("use_authored_skirmish_ai", false)):
+			# HeroBuildOrder first, like retail: the next authored hero not yet
+			# fielded gets a queue attempt each window; when the treasury can't
+			# pay, queue_unit refuses and the hero simply waits for gold.
+			var hero_choice: Dictionary = _sim._skirmish_ai_subsystem().authored_hero_choice(team)
+			if bool(hero_choice.get("ok", false)):
+				var hero_rule: Dictionary = _sim.unit_production_rules_for_team(team).get(String(hero_choice["unit_type"]), {})
+				var hero_producer := int(_sim.producer_id(team, String(hero_rule.get("producer_kind", ""))))
+				if hero_producer != 0:
+					_sim.queue_unit(team, hero_producer, String(hero_choice["unit_type"]))
 			var choices: Array = _sim._skirmish_ai_subsystem().authored_ai_queue_choices(team)
 			var first: Dictionary = {} if choices.is_empty() else choices[0] as Dictionary
 			if bool(first.get("ok", false)):

@@ -203,6 +203,34 @@ func authored_ai_queue_choices(team: int, max_picks: int = 6) -> Array:
 	return picks
 
 
+func authored_hero_choice(team: int) -> Dictionary:
+	## Retail's HeroBuildOrder, consumed in authored order: the FIRST hero the
+	## mounted pack can train that is not already fielded, queued, or living
+	## (hero_unavailable owns that dedup). Heroes the pack cannot train are
+	## skipped as named receipts; cost/CP refusal is queue_unit's job — a
+	## too-expensive hero simply waits for a richer window, like retail.
+	var _sim = sim
+	if not bool(_sim.skirmish_ai_configured):
+		return {"ok": false, "reason": "skirmish-ai is not configured"}
+	var side := String(_sim.team_retail_side(team).get("side", ""))
+	if side == "":
+		return {"ok": false, "reason": "team %d has no retail side" % team}
+	var plan := skirmish_ai_plan_for_side(side)
+	if plan.is_empty():
+		return {"ok": false, "reason": "no ArmyDefinition for side '%s'" % side}
+	var untrainable: Array = []
+	for hero_value in plan.get("hero_build_order", []) as Array:
+		var hero_name := String(hero_value)
+		var unit_type := String(_sim.trainable_unit_type_for(team, hero_name))
+		if unit_type == "":
+			untrainable.append(hero_name)
+			continue
+		if _sim.hero_unavailable(team, unit_type):
+			continue
+		return {"ok": true, "unit_type": unit_type, "authored_hero": hero_name, "untrainable": untrainable}
+	return {"ok": false, "reason": "no trainable authored hero remains", "untrainable": untrainable}
+
+
 func current_army_phase(plan: Dictionary) -> int:
 	## Phase 1 (Rush) until PhaseDuration_Rush seconds, phase 2 (MidGame)
 	## until rush+mid, then phase 3 (EndGame). Unmeasured durations keep the

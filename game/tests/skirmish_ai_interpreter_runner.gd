@@ -97,6 +97,23 @@ func _run() -> void:
 	var third: Dictionary = ai_sim._skirmish_ai_subsystem().authored_ai_queue_choice(0)
 	_check(int(third.get("phase", 0)) == 2, "consumption: elapsed time enters phase 2")
 	_check(String(third.get("unit_type", "")) == "FixtureArcher", "consumption: phase-2 composition has only the archer")
+	# --- HeroBuildOrder consumption --------------------------------------
+	ai_sim._unit_production_rules["FixtureHero"] = {"producer_kind": "fortress", "category": "hero"}
+	ai_sim._unit_production_rules["FixtureHeroTwo"] = {"producer_kind": "fortress", "category": "hero"}
+	var hero_first: Dictionary = ai_sim._skirmish_ai_subsystem().authored_hero_choice(0)
+	_check(bool(hero_first.get("ok", false)), "hero order: a trainable authored hero is offered")
+	_check(String(hero_first.get("unit_type", "")) == "FixtureHero", "hero order: the FIRST trainable hero wins")
+	_check((hero_first.get("untrainable", []) as Array) == ["FixtureUnportableHero"], "hero order: unportable heroes are NAMED receipts")
+	ai_sim._completed_hero_identities["0:FixtureHero"] = true
+	var hero_second: Dictionary = ai_sim._skirmish_ai_subsystem().authored_hero_choice(0)
+	_check(String(hero_second.get("unit_type", "")) == "FixtureHeroTwo", "hero order: a fielded hero advances the order")
+	ai_sim._completed_hero_identities["0:FixtureHeroTwo"] = true
+	var hero_done: Dictionary = ai_sim._skirmish_ai_subsystem().authored_hero_choice(0)
+	_check(
+		not bool(hero_done.get("ok", true)) and String(hero_done.get("reason", "")).contains("no trainable authored hero"),
+		"hero order: an exhausted order refuses by name"
+	)
+
 	var sideless_sim = SimScript.new()
 	sideless_sim.configure_skirmish_ai(_consumption_document())
 	var refused: Dictionary = sideless_sim._skirmish_ai_subsystem().authored_ai_queue_choice(0)
@@ -113,6 +130,7 @@ func _consumption_document() -> Dictionary:
 	var document := _fixture_document()
 	var army := (document["armies"] as Dictionary)["FixtureArmy"] as Dictionary
 	(army["fields"] as Dictionary)["PhaseDuration_Rush"] = {"value": "300.0"}
+	army["heroBuildOrder"] = {"value": ["FixtureUnportableHero", "FixtureHero", "FixtureHeroTwo"]}
 	army["armyMembers"] = [
 		{
 			"name": {"value": "FixtureHorde_Member"},
