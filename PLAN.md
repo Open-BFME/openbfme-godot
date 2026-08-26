@@ -9,7 +9,8 @@ files: [importer/**, contracts/**]
   by: prior lanes (tools/gate-retail.ps1, check_pack_addresses.py PASS packs=200)
 - [ ] New-module rule: packs carry raw authored fields, runtime owns all interpretation — behavior changes never need a recook {#importer-facts-only}
   from: roadmap (queue Q82; owner ratified 2026-08-25)
-- [ ] Collapse 6 content sources to 2 — explicit selection or explicit env, everything else refuses loudly; delete the durable-mirror two-phase machinery {#importer-two-sources}
+- [x] Collapse 6 content sources to 2 — explicit selection or explicit env, everything else refuses loudly; durable-mirror machinery deleted {#importer-two-sources}
+  by: claude (ambient mounting retired with named reporting; broken workspace fails closed; durable = installs only; mirror detection deleted from the importer; runner 14/0, tests 52/0; 60a26c9c)
   from: roadmap (queue Q86)
 - [x] Prune packs to one good set — 11 bundles / 29.96 GB freed, all proofs green, standing policy + hardened scanner shipped {#importer-prune}
   by: sol (lane sol-q88) + claude (round-2 fixes)
