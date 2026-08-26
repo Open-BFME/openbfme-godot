@@ -1913,3 +1913,175 @@ func _ranger_command_sets_are_valid(command_sets: Array) -> bool:
 	return matched.size() == expected.size()
 
 
+
+func _apply_scenario_structure_faction_command_set(row: Dictionary, team: int) -> Dictionary:
+	## Resolve the owning team's exact PLAYER upgrade, then let the generic typed
+	## CommandSetUpgrade effect graph choose the authored set. The trained-set
+	## scan remains compatibility-only for selected packs cooked before that graph
+	## was accepted; a recook removes this branch without changing gameplay.
+	var sets := row.get("scenario_trained_command_sets", []) as Array
+	if sets.is_empty():
+		return {"ok": false, "reason": "no-trained-command-sets"}
+	var side_result = sim.team_retail_side(team)
+	if side_result.has("reason"):
+		return {"ok": false, "reason": String(side_result["reason"])}
+	var side := String(side_result.get("side", ""))
+	var upgrade_stem := {"Dwarves": "Dwarf", "Elves": "Elf"}.get(side, side) as String
+	var faction_upgrade := "Upgrade_%sFaction" % upgrade_stem
+	var completed := row.get("completed_upgrades", []) as Array
+	if not completed.has(faction_upgrade):
+		completed.append(faction_upgrade)
+		completed.sort()
+		row["completed_upgrades"] = completed
+	var graph_result := _reconcile_structure_command_set_upgrades(row)
+	if bool(graph_result.get("accepted_graph", false)):
+		if not bool(graph_result.get("ok", false)):
+			return graph_result
+		return {
+			"ok": true,
+			"reason": "",
+			"upgrade_id": faction_upgrade,
+			"command_set_id": String(row.get("command_set_id", "")),
+			"effect_id": String(graph_result.get("effect_id", "")),
+		}
+	# Compatibility for the currently selected pre-recook neutral artifacts.
+	var selected: Dictionary = {}
+	for set_value in sets:
+		if typeof(set_value) != TYPE_DICTIONARY:
+			continue
+		var candidate := set_value as Dictionary
+		if String(candidate.get("kind", "")) == "upgraded" and (candidate.get("triggeredBy", []) as Array).has(faction_upgrade):
+			selected = candidate
+			break
+	if selected.is_empty():
+		return {"ok": false, "reason": "faction-upgrade-not-authored", "upgrade_id": faction_upgrade}
+	var prior := String(row.get("command_set_id", row.get("default_command_set_id", "")))
+	var selected_id := String(selected.get("id", ""))
+	if selected_id == "":
+		return {"ok": false, "reason": "authored-command-set-id-empty"}
+	row["command_set_id"] = selected_id
+	if prior != selected_id:
+		sim._emit_event("upgrade.scenario_command_set", int(row.get("id", 0)), 0, {
+			"team": team,
+			"upgrade_id": faction_upgrade,
+			"from": prior,
+			"to": selected_id,
+		})
+	return {"ok": true, "reason": "", "upgrade_id": faction_upgrade, "command_set_id": selected_id}
+
+
+func _structure_command_set_upgrade_effects(row: Dictionary) -> Array[Dictionary]:
+	var source: Array = []
+	if row.has("scenario_command_set_upgrade_effects"):
+		source = row.get("scenario_command_set_upgrade_effects", []) as Array
+	else:
+		var team := int(row.get("team", -1))
+		var kind := String(row.get("structure_kind", ""))
+		var bundle = sim.structure_upgrade_effects_for_team(team).get(kind, {}) as Dictionary
+		source = bundle.get("effects", []) as Array
+	var by_id: Dictionary = {}
+	var edge_ids: Dictionary = {}
+	for effect_value in source:
+		if typeof(effect_value) != TYPE_DICTIONARY:
+			continue
+		var effect := effect_value as Dictionary
+		if String(effect.get("kind", "")) != "command-set-transition":
+			continue
+		var effect_id := String(effect.get("effectId", ""))
+		if effect_id == "":
+			continue
+		if by_id.has(effect_id):
+			var existing := by_id[effect_id] as Dictionary
+			for field in ["game", "triggerUpgradeIds", "triggerSemantics", "commandSetId", "moduleTag", "moduleOrdinal", "commandSetProvenance"]:
+				if existing.get(field) != effect.get(field):
+					return []
+		else:
+			by_id[effect_id] = effect
+			edge_ids[effect_id] = {}
+		var edge_key := String(effect.get("upgradeId", "")).to_lower()
+		if edge_key == "" or (edge_ids[effect_id] as Dictionary).has(edge_key):
+			return []
+		(edge_ids[effect_id] as Dictionary)[edge_key] = true
+	var result: Array[Dictionary] = []
+	for effect_id_value in by_id.keys():
+		var effect := by_id[effect_id_value] as Dictionary
+		var expected_edges: Dictionary = {}
+		for trigger_value in effect.get("triggerUpgradeIds", []) as Array:
+			expected_edges[String(trigger_value).to_lower()] = true
+		if (edge_ids[effect_id_value] as Dictionary).keys().size() != expected_edges.keys().size():
+			return []
+		for expected_key in expected_edges.keys():
+			if not (edge_ids[effect_id_value] as Dictionary).has(expected_key):
+				return []
+		result.append(effect.duplicate(true))
+	result.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		if int(a.get("moduleOrdinal", 0)) != int(b.get("moduleOrdinal", 0)):
+			return int(a.get("moduleOrdinal", 0)) < int(b.get("moduleOrdinal", 0))
+		if String(a.get("sourceIni", "")) != String(b.get("sourceIni", "")):
+			return String(a.get("sourceIni", "")).naturalnocasecmp_to(String(b.get("sourceIni", ""))) < 0
+		if int(a.get("line", 0)) != int(b.get("line", 0)):
+			return int(a.get("line", 0)) < int(b.get("line", 0))
+		return String(a.get("effectId", "")).naturalnocasecmp_to(String(b.get("effectId", ""))) < 0
+	)
+	return result
+
+
+func _reconcile_structure_command_set_upgrades(row: Dictionary) -> Dictionary:
+	var effects := _structure_command_set_upgrade_effects(row)
+	if effects.is_empty():
+		var declared_graph := false
+		var declared_source: Array = row.get("scenario_command_set_upgrade_effects", []) as Array
+		if not row.has("scenario_command_set_upgrade_effects"):
+			var bundle = sim.structure_upgrade_effects_for_team(int(row.get("team", -1))).get(String(row.get("structure_kind", "")), {}) as Dictionary
+			declared_source = bundle.get("effects", []) as Array
+		for effect_value in declared_source:
+			if typeof(effect_value) == TYPE_DICTIONARY and String((effect_value as Dictionary).get("kind", "")) == "command-set-transition":
+				declared_graph = true
+				break
+		return {"ok": false, "reason": "malformed-command-set-upgrade-graph" if declared_graph else "no-accepted-command-set-upgrade", "accepted_graph": declared_graph}
+	var active_game = String(sim._rules.get("game", "")).to_lower()
+	var team_owned = sim.team_upgrades.get(int(row.get("team", -1)), {}) as Dictionary
+	var object_owned := row.get("completed_upgrades", []) as Array
+	var selected: Dictionary = {}
+	for effect in effects:
+		if String(effect.get("game", "")).to_lower() != active_game:
+			return {"ok": false, "reason": "command-set-upgrade-edition-mismatch", "accepted_graph": true}
+		var matched := 0
+		var triggers := effect.get("triggerUpgradeIds", []) as Array
+		for trigger_value in triggers:
+			var trigger := String(trigger_value)
+			if sim._dictionary_has_casefolded_key(team_owned, trigger) or sim._array_has_casefolded_string(object_owned, trigger):
+				matched += 1
+		var eligible := matched == triggers.size() if String(effect.get("triggerSemantics", "")) == "all" else matched > 0
+		if eligible:
+			selected = effect
+	var command_field := "command_set_id" if row.has("scenario_source_object_id") else "command_set"
+	if not row.has("command_set_upgrade_base"):
+		row["command_set_upgrade_base"] = String(row.get(command_field, row.get("default_command_set_id", "")))
+	var next_set := String(row.get("command_set_upgrade_base", ""))
+	var next_effect := ""
+	if not selected.is_empty():
+		next_set = String(selected.get("commandSetId", ""))
+		next_effect = String(selected.get("effectId", ""))
+	var prior_set := String(row.get(command_field, ""))
+	var prior_effect := String(row.get("command_set_upgrade_active_effect", ""))
+	row[command_field] = next_set
+	row["command_set_upgrade_active_effect"] = next_effect
+	row["command_set_upgrade_receipt"] = {
+		"game": active_game,
+		"effectId": next_effect,
+		"commandSetId": next_set,
+		"triggerUpgradeIds": Array(selected.get("triggerUpgradeIds", [])).duplicate() if not selected.is_empty() else [],
+		"triggerSemantics": String(selected.get("triggerSemantics", "")),
+		"commandSetProvenance": (selected.get("commandSetProvenance", {}) as Dictionary).duplicate(true) if not selected.is_empty() else {},
+		"customAnimationStatus": "deferred" if selected.has("customAnimation") else "absent",
+	}
+	if prior_set != next_set or prior_effect != next_effect:
+		sim._emit_event("upgrade.command_set", int(row.get("id", 0)), 0, {
+			"team": int(row.get("team", -1)), "game": active_game,
+			"effect_id": next_effect, "from": prior_set, "to": next_set,
+			"presentation_custom_anim": "deferred" if selected.has("customAnimation") else "absent",
+		})
+	return {"ok": not selected.is_empty(), "reason": "" if not selected.is_empty() else "triggers-unsatisfied", "accepted_graph": true, "effect_id": next_effect, "command_set_id": next_set}
+
+

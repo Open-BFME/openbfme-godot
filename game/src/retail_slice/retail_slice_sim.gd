@@ -12,6 +12,30 @@ const PersistenceSystemScript = preload("res://src/retail_slice/retail_sim_persi
 const ProductionSystemScript = preload("res://src/retail_slice/retail_sim_production.gd")
 const MovementSystemScript = preload("res://src/retail_slice/retail_sim_movement.gd")
 const AbilitiesSystemScript = preload("res://src/retail_slice/retail_sim_abilities.gd")
+## State/tuning owned by the sim; logic lives in retail_sim_upgrades.gd
+var _named_wall_slot_types: Dictionary = {}
+const POWER_POINT_KILLS := 3
+const SPELLBOOK_SCHEMA := "openbfme.spellbook-runtime"
+var team_power_points = {PLAYER_TEAM: 1, ENEMY_TEAM: 1}
+var purchased_powers = {PLAYER_TEAM: [], ENEMY_TEAM: []}
+var _kills_toward_power_point = {PLAYER_TEAM: 0, ENEMY_TEAM: 0}
+var _spellbook_ready := false
+var _spellbook_error := ""
+var _spellbook_document: Dictionary = {}
+var _spellbook_powers: Dictionary = {}
+var _spellbook_order: Array[String] = []
+var _spellbook_sciences: Dictionary = {}
+var _spellbook_intrinsic: Array = []
+var _science_to_power: Dictionary = {}
+var _spellbook_command_points_upgrade: Dictionary = {}
+var _team_sciences = {PLAYER_TEAM: [], ENEMY_TEAM: []}
+var _power_cooldown_until = {PLAYER_TEAM: {}, ENEMY_TEAM: {}}
+var _consumed_nonpressable_powers: Dictionary = {PLAYER_TEAM: {}, ENEMY_TEAM: {}}
+var _scavenger_bounty_percent: Dictionary = {PLAYER_TEAM: 0.0, ENEMY_TEAM: 0.0}
+var _staged_purchases = {PLAYER_TEAM: [], ENEMY_TEAM: []}
+var _team_spellbooks: Dictionary = {}
+var clock_paused := false
+
 const UpgradesSystemScript = preload("res://src/retail_slice/retail_sim_upgrades.gd")
 const PowersSystemScript = preload("res://src/retail_slice/retail_sim_powers.gd")
 const BasesSystemScript = preload("res://src/retail_slice/retail_sim_bases.gd")
@@ -2426,431 +2450,81 @@ func _register_forge_upgrade_contracts() -> void:
 		_register_forge_upgrade_contracts_for_team(int(team))
 
 
-func _register_forge_upgrade_contracts_for_team(team: int) -> void:
-	if not structure_build_rules_for_team(team).has("forge"):
-		return
-	if compiled_research_kinds_for_team(team).has("forge"):
-		# The compiled research surface (the forge's authored PLAYER technology
-		# sales) replaces the recorded provisional contracts below; research
-		# completion then grants the technology and the per-battalion purchase
-		# path equips it — the retail two-tier flow, not the conflation.
-		return
-	var contracts := structure_upgrade_contracts_for_team(team)
-	for upgrade_id_value in FORGE_UPGRADE_CONTRACTS.keys():
-		var upgrade_id := String(upgrade_id_value)
-		if contracts.has(upgrade_id):
-			continue
-		var source: Dictionary = FORGE_UPGRADE_CONTRACTS[upgrade_id]
-		contracts[upgrade_id] = {
-			"structure_kind": String(source["structure_kind"]),
-			"cost": int(source["cost"]),
-			"duration_ticks": maxi(1, roundi(float(source["duration_seconds"]) / TICK_SECONDS)),
-			"level_cap": int(source["level_cap"]),
-			"levels_to_gain": int(source["levels_to_gain"]),
-			"cancelable": bool(source["cancelable"]),
-			"to_command_set": "",
-			"team_tech": true,
-			# Recorded provisional (stale pack without the compiled research
-			# surface): completion still auto-equips matching hordes.
-			"legacy_provisional": true,
-		}
 
+func _register_forge_upgrade_contracts_for_team(team: int) -> void:
+	_upgrades_subsystem()._register_forge_upgrade_contracts_for_team(team)
 
 func _equipment_ids_for_forge_upgrade(upgrade_id: String) -> Array:
-	## The OBJECT upgrade ids a completed research equips per horde (defaults
-	## to the research id itself; fire arrows map to both authored buttons).
-	return Array(FORGE_UPGRADE_EQUIPMENT.get(upgrade_id, [upgrade_id]))
-
+	return _upgrades_subsystem()._equipment_ids_for_forge_upgrade(upgrade_id)
 
 func _sorted_upgrade_ids(applied: Variant) -> Array[String]:
 	return _upgrades_subsystem()._sorted_upgrade_ids(applied)
 
-
 func _apply_equipment_to_horde(row: Dictionary, equipment: Array) -> void:
-	## Record the compiled armor/weapon upgrade effects a horde carries. Retail
-	## applies equipment per battalion; the slice records it per horde row.
-	var object_id := String(row.get("object_id", ""))
-	var armor_upgrades: Dictionary = (_unit_armor.get(object_id, {}) as Dictionary).get("upgrades", {})
-	var weapon_upgrades: Dictionary = _unit_weapon_upgrades.get(object_id, {})
-	var applied: Dictionary = row.get("applied_upgrades", {})
-	var changed := false
-	for upgrade_id_value in equipment:
-		var upgrade_id := String(upgrade_id_value)
-		if applied.has(upgrade_id):
-			continue
-		if armor_upgrades.has(upgrade_id):
-			applied[upgrade_id] = tick_index
-			# Retail ArmorUpgrade swaps the ArmorSet; the last applied swap wins.
-			row["active_armor_upgrade"] = upgrade_id
-			changed = true
-		elif weapon_upgrades.has(upgrade_id):
-			applied[upgrade_id] = tick_index
-			changed = true
-	if changed:
-		row["applied_upgrades"] = applied
-		_emit_event("battalion.upgrade_applied", 0, int(row.get("id", 0)), {"team": int(row.get("team", -1)), "upgrades": applied.keys()})
-
+	_upgrades_subsystem()._apply_equipment_to_horde(row, equipment)
 
 func _apply_team_upgrade_to_hordes(team: int, upgrade_id: String) -> void:
 	_upgrades_subsystem()._apply_team_upgrade_to_hordes(team, upgrade_id)
 
-
-func _apply_structure_create_grants(
-	building: Dictionary,
-	apply_create_when_complete: bool,
-	apply_build_complete: bool
-) -> void:
-	## GrantUpgradeCreate is idempotent in retail's upgrade sinks. Keep the
-	## converted lifecycle edge explicit: an UNDER_CONSTRUCTION exemption may
-	## grant on creation only for an already-complete object, while the BFME
-	## foundation form grants when construction completes.
-	var team := int(building.get("team", -1))
-	var kind := String(building.get("structure_kind", ""))
-	var grants: Array = structure_create_grants_for_team(team).get(kind, [])
-	for grant_value in grants:
-		var grant := grant_value as Dictionary
-		if (
-			apply_create_when_complete
-			and bool(grant.get("onCreateWhenComplete", false))
-			and float(building.get("construction_progress", 0.0)) >= 1.0
-		):
-			_apply_structure_granted_upgrade(building, grant)
-		if apply_build_complete and bool(grant.get("onBuildComplete", false)):
-			_apply_structure_granted_upgrade(building, grant)
-
+func _apply_structure_create_grants(building: Dictionary, apply_create_when_complete: bool, apply_build_complete: bool) -> void:
+	_upgrades_subsystem()._apply_structure_create_grants(building, apply_create_when_complete, apply_build_complete)
 
 func _apply_structure_granted_upgrade(building: Dictionary, grant: Dictionary) -> void:
 	_upgrades_subsystem()._apply_structure_granted_upgrade(building, grant)
 
-
 func _apply_structure_inherit_upgrades(building: Dictionary) -> void:
 	_upgrades_subsystem()._apply_structure_inherit_upgrades(building)
-
 
 func queue_structure_upgrade(team: int, structure_id: int, upgrade_id: String) -> Dictionary:
 	return _upgrades_subsystem().queue_structure_upgrade(team, structure_id, upgrade_id)
 
-
 func structure_upgrade_queue_state(structure_id: int) -> Array[Dictionary]:
 	return _upgrades_subsystem().structure_upgrade_queue_state(structure_id)
 
-
-var _named_wall_slot_types: Dictionary = {}
-
-
-static func _document_is_wall_upgrade_slot(document: Dictionary) -> bool:
-	## A map-placed wall piece retail authors weaponless: it offers upgrade
-	## commands (Upgrade_TrebuchetTurret / OpenGarrison / PosternGate) on its
-	## trained command sets, or grants Upgrade_TrebuchetTurret on creation.
-	var gameplay := ((document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)
-	for grant_value in gameplay.get("createGrants", []) as Array:
-		if String(JSON.stringify(grant_value)).to_lower().contains("upgrade_trebuchetturret"):
-			return true
-	for set_value in gameplay.get("trainedCommandSets", []) as Array:
-		for slot_value in (set_value as Dictionary).get("slots", []) as Array:
-			var command_id := String((slot_value as Dictionary).get("commandId", "")).to_lower()
-			if command_id.contains("trebuchetturret") or command_id.contains("opengarrison") or command_id.contains("posterngate"):
-				return true
-	return false
-
+func _document_is_wall_upgrade_slot(document: Dictionary) -> bool: # de-static'd: moved to subsystem
+	return _upgrades_subsystem()._document_is_wall_upgrade_slot(document)
 
 func structure_upgrade_commands(structure_id: int) -> Array[Dictionary]:
 	return _upgrades_subsystem().structure_upgrade_commands(structure_id)
 
-
 func _sorted_unit_upgrade_commands(unit_type: String) -> Array:
 	return _upgrades_subsystem()._sorted_unit_upgrade_commands(unit_type)
 
-
 func _battalion_gate_unsatisfied(team: int, command: Dictionary) -> String:
-	## "" when the purchase button's NeededUpgrade technology row is owned.
-	var needed: Array = command.get("needed_upgrade_ids", [])
-	if needed.is_empty():
-		return ""
-	var owned: Dictionary = team_upgrades.get(team, {}) as Dictionary
-	var satisfied := 0
-	var first_missing := ""
-	for needed_value in needed:
-		var needed_id := String(needed_value)
-		if owned.has(needed_id):
-			satisfied += 1
-		elif first_missing == "":
-			first_missing = needed_id
-	if bool(command.get("needed_upgrade_any", false)):
-		return "" if satisfied > 0 else (first_missing if first_missing != "" else String(needed[0]))
-	return "" if satisfied == needed.size() else first_missing
-
+	return _upgrades_subsystem()._battalion_gate_unsatisfied(team, command)
 
 func _team_has_required_object(team: int, requirement: String) -> bool:
-	## Authored BuildingRequired/UpgradeMustBePresent filters ("ANY +Object"):
-	## the team must field a living structure of any named object kind.
-	var tokens := requirement.split(" ", false)
-	var names: Array[String] = []
-	for token in tokens:
-		if token == "ANY" or token == "NONE":
-			continue
-		names.append(String(token).trim_prefix("+"))
-	if names.is_empty():
-		return requirement.strip_edges() == ""
-	var registry: Dictionary = _rules.get("producer_kind_registry", {}) as Dictionary
-	if registry.is_empty():
-		registry = (_rules.get("faction_manifest", {}) as Dictionary).get("producer_kind_registry", {}) as Dictionary
-	for name in names:
-		var kind := ""
-		for object_id_value in registry.keys():
-			if String(object_id_value).to_lower() == name.to_lower():
-				kind = String(registry[object_id_value])
-				break
-		if kind == "":
-			continue
-		for structure_id in structure_ids(team):
-			var building: Dictionary = structures[structure_id]
-			if String(building.get("structure_kind", "")) == kind and int(building.get("health", 0)) > 0:
-				return true
-	return false
-
+	return _upgrades_subsystem()._team_has_required_object(team, requirement)
 
 func _discounted_battalion_upgrade_cost(team: int, command: Dictionary) -> int:
 	return _upgrades_subsystem()._discounted_battalion_upgrade_cost(team, command)
 
-
 func battalion_upgrade_commands(entity_id: int) -> Array[Dictionary]:
-	## The battalion's authored purchase surface with live gate/applied/cost
-	## state; the same command-surface data the building research rows ride.
-	var result: Array[Dictionary] = []
-	if not entities.has(entity_id):
-		return result
-	var row: Dictionary = entities[entity_id]
-	var team := int(row.get("team", -1))
-	var applied: Dictionary = row.get("applied_upgrades", {})
-	var queued: Array = row.get("upgrade_queue", [])
-	for command_value in _sorted_unit_upgrade_commands(String(row.get("unit_type", ""))):
-		var command := command_value as Dictionary
-		var upgrade_id := String(command.get("upgrade_id", ""))
-		var missing := _battalion_gate_unsatisfied(team, command)
-		result.append({
-			"upgrade_id": upgrade_id,
-			"command_id": String(command.get("command_id", "")),
-			"cost": _discounted_battalion_upgrade_cost(team, command),
-			"base_cost": int(command.get("cost", 0)),
-			"duration_ticks": int(command.get("duration_ticks", 1)),
-			"slot": int(command.get("slot", 0)),
-			"label_id": String(command.get("label_id", "")),
-			"tooltip_id": String(command.get("tooltip_id", "")),
-			"image_id": String(command.get("image_id", "")),
-			"lacks_prerequisite_label_id": String(command.get("lacks_prerequisite_label_id", "")),
-			"needed_upgrade_ids": Array(command.get("needed_upgrade_ids", [])).duplicate(),
-			"cancelable": bool(command.get("cancelable", false)),
-			"multi_select": bool(command.get("multi_select", false)),
-			"research_owned": missing == "",
-			"required_upgrade": missing,
-			"applied": applied.has(upgrade_id),
-			"queued": not queued.is_empty(),
-		})
-	return result
-
+	return _upgrades_subsystem().battalion_upgrade_commands(entity_id)
 
 func queue_battalion_upgrade(team: int, entity_id: int, upgrade_id: String) -> Dictionary:
 	return _upgrades_subsystem().queue_battalion_upgrade(team, entity_id, upgrade_id)
 
-
 func battalion_upgrade_queue_state(entity_id: int) -> Array[Dictionary]:
 	return _upgrades_subsystem().battalion_upgrade_queue_state(entity_id)
-
 
 func _step_battalion_upgrades() -> void:
 	_upgrades_subsystem()._step_battalion_upgrades()
 
-
 func _apply_structure_death_refund(building: Dictionary) -> void:
-	## Compatibility entry point retained for focused runners and old callers.
-	## RefundDie is an Object DieMux, not a structure-only behavior.
-	if not bool(building.get("structure_module_contracts_attached", false)):
-		_attach_structure_module_contracts(building)
-	_apply_refund_die_on_death(building)
-
+	_upgrades_subsystem()._apply_structure_death_refund(building)
 
 func _apply_refund_die_on_death(owner: Dictionary) -> void:
-	## Retail game.dat RefundDie::onDie: the death edge is delivered once by the
-	## DieMux, then UNDER_CONSTRUCTION/SOLD, current owner, prerequisites and the
-	## object's cached build cost are evaluated in that order.  A failed check is
-	## not a deferred opportunity: there is no second death callback later.
-	var typed_policies := owner.get("refund_die", []) as Array
-	if not typed_policies.is_empty():
-		if bool(owner.get("refund_die_death_dispatched", false)):
-			return
-		owner["refund_die_death_dispatched"] = true
-		var statuses := owner.get("object_status", {}) as Dictionary
-		var death_blocker := ""
-		if (
-			bool(statuses.get("UNDER_CONSTRUCTION", false))
-			or (
-				owner.has("construction_progress")
-				and float(owner.get("construction_progress", 1.0)) < 1.0
-			)
-		):
-			death_blocker = "UNDER_CONSTRUCTION"
-		elif bool(statuses.get("SOLD", false)):
-			death_blocker = "SOLD"
-		if death_blocker != "":
-			for policy_index in typed_policies.size():
-				var blocked_policy := typed_policies[policy_index] as Dictionary
-				blocked_policy["death_blocker"] = death_blocker
-				typed_policies[policy_index] = blocked_policy
-			owner["refund_die"] = typed_policies
-			return
-		var team := int(owner.get("team", -1))
-		if not team_resources.has(team):
-			return
-		var build_cost_value: Variant = owner.get("cached_build_cost")
-		for policy_index in typed_policies.size():
-			var policy := typed_policies[policy_index] as Dictionary
-			var upgrade_required := String(policy.get("upgrade_required", ""))
-			if upgrade_required != "" and not (team_upgrades.get(team, {}) as Dictionary).has(upgrade_required): continue
-			var building_filter := policy.get("building_required", []) as Array
-			if not building_filter.is_empty() and not _team_has_required_building_filter(team, building_filter): continue
-			if typeof(build_cost_value) not in [TYPE_INT, TYPE_FLOAT] or float(build_cost_value) < 0.0:
-				var unsupported := policy.get("unsupported_semantics", []) as Array
-				if not unsupported.has("structure-build-cost-unresolved"): unsupported.append("structure-build-cost-unresolved")
-				policy["unsupported_semantics"] = unsupported
-				typed_policies[policy_index] = policy
-				continue
-			var amount := ceili(float(build_cost_value) * float(policy.get("fraction", 0.0)))
-			policy["refund_amount"] = amount
-			typed_policies[policy_index] = policy
-			if amount <= 0: continue
-			team_resources[team] = resources_for_team(team) + amount
-			_emit_event("economy.refund", int(owner.get("id", 0)), 0, {"team": team, "amount": amount, "upgrade_id": upgrade_required, "building_required": building_filter, "module": "RefundDie"})
-		owner["refund_die"] = typed_policies
-		return
-	var team := int(owner.get("team", -1))
-	var kind := String(owner.get("structure_kind", ""))
-	# Compatibility only for stale structure documents predating typed
-	# moduleContracts. A typed row never falls through and cannot double-refund.
-	var bundle: Dictionary = structure_upgrade_effects_for_team(team).get(kind, {})
-	var owned: Dictionary = team_upgrades.get(team, {}) as Dictionary
-	for effect_value in Array(bundle.get("effects", [])):
-		var effect := effect_value as Dictionary
-		if String(effect.get("kind", "")) != "refund-on-death":
-			continue
-		var upgrade_id := String(effect.get("upgrade_id", ""))
-		if not owned.has(upgrade_id):
-			continue
-		if not _team_has_required_object(team, String(effect.get("building_required", ""))):
-			continue
-		var build_rule: Dictionary = _structure_build_rules.get(kind, {})
-		var refund := roundi(float(build_rule.get("cost", 0)) * float(effect.get("refund_percent", 0.0)) / 100.0)
-		if refund <= 0:
-			continue
-		team_resources[team] = resources_for_team(team) + refund
-		_emit_event("economy.refund", int(owner.get("id", 0)), 0, {"team": team, "amount": refund, "upgrade_id": upgrade_id})
-
+	_upgrades_subsystem()._apply_refund_die_on_death(owner)
 
 func _team_has_required_building_filter(team: int, filter: Array) -> bool:
-	## BuildingRequired is a SAGE object filter. Preserve every token and test
-	## it against living authored structure identities, not display names.
-	if filter.is_empty(): return true
-	var registry: Dictionary = _rules.get("producer_kind_registry", {}) as Dictionary
-	if registry.is_empty(): registry = (_rules.get("faction_manifest", {}) as Dictionary).get("producer_kind_registry", {}) as Dictionary
-	for structure_id in structure_ids(team):
-		var candidate := structures[structure_id] as Dictionary
-		if int(candidate.get("health", 0)) <= 0: continue
-		var candidate_status := candidate.get("object_status", {}) as Dictionary
-		if (
-			bool(candidate_status.get("EFFECTIVELY_DEAD", false))
-			or bool(candidate_status.get("DESTROYED", false))
-		):
-			continue
-		var traits := {"STRUCTURE": true}
-		for value in [candidate.get("source_object_id", ""), candidate.get("object_id", ""), candidate.get("structure_kind", ""), candidate.get("category", "")]:
-			if String(value) != "": traits[String(value).to_upper()] = true
-		var inert := false
-		for kind_value in candidate.get("kind_of", []) as Array:
-			var kind_token := String(kind_value).to_upper()
-			traits[kind_token] = true
-			if kind_token == "INERT": inert = true
-		if inert: continue
-		for object_id_value in registry.keys():
-			if String(registry[object_id_value]).to_lower() == String(candidate.get("structure_kind", "")).to_lower(): traits[String(object_id_value).to_upper()] = true
-		var positive: Array[String] = []
-		var excluded := false
-		for token_value in filter:
-			var token := String(token_value).to_upper()
-			if token.begins_with("+"): positive.append(token.substr(1))
-			elif token.begins_with("-") and traits.has(token.substr(1)): excluded = true
-		if excluded: continue
-		if not positive.is_empty():
-			for required_trait in positive:
-				if traits.has(required_trait): return true
-		elif filter.has("ANY") or filter.has("ALL"):
-			return true
-	return false
-
+	return _upgrades_subsystem()._team_has_required_building_filter(team, filter)
 
 func _income_with_upgrade_bonus(team: int, building: Dictionary, base_income: int) -> int:
-	return _economy_subsystem().income_with_upgrade_bonus(team, building, base_income)
-
+	return _upgrades_subsystem()._income_with_upgrade_bonus(team, building, base_income)
 
 func _queued_command_points_for_team(team: int) -> int:
-	var total := 0
-	for structure_id in structure_ids(team):
-		for item_value in Array((structures[structure_id] as Dictionary).get("queue", [])):
-			if typeof(item_value) == TYPE_DICTIONARY:
-				total += int((item_value as Dictionary).get("command_points", 0))
-	return total
-
-
-## --- Spellbook powers ---
-## Tree, costs, OR prerequisite groups, authored palantir purchase slots,
-## reload cooldowns, and cast bindings all derive from the selected pack's
-## openbfme.spellbook-runtime document (menspellbook.json). A missing or
-## malformed document fails closed: the tree stays empty and every purchase or
-## cast rejects with "spellbook-unavailable". Powers whose converted effect
-## leaves do not fully support a faithful runtime effect stay locked with the
-## reason recorded on the power row — no invented effects.
-##
-## PROVISIONAL (recorded, not hidden): the retail power-point earn rate is not
-## resolved from source data — the spellbook document carries no economy rule.
-## The kill-based rate lives in rules key "power_point_kills" (default below)
-## so the data lane can replace it without code edits; do not treat it as
-## retail-final.
-const POWER_POINT_KILLS := 3
-const SPELLBOOK_SCHEMA := "openbfme.spellbook-runtime"
-var team_power_points := {PLAYER_TEAM: 1, ENEMY_TEAM: 1}
-var purchased_powers := {PLAYER_TEAM: [], ENEMY_TEAM: []}
-var _kills_toward_power_point := {PLAYER_TEAM: 0, ENEMY_TEAM: 0}
-var _spellbook_ready := false
-var _spellbook_error := ""
-var _spellbook_document: Dictionary = {}
-var _spellbook_powers: Dictionary = {}
-var _spellbook_order: Array[String] = []
-var _spellbook_sciences: Dictionary = {}
-var _spellbook_intrinsic: Array = []
-var _science_to_power: Dictionary = {}
-var _spellbook_command_points_upgrade: Dictionary = {}
-var _team_sciences := {PLAYER_TEAM: [], ENEMY_TEAM: []}
-var _power_cooldown_until := {PLAYER_TEAM: {}, ENEMY_TEAM: {}}
-## NONPRESSABLE passive/one-shot activations and their live Scavenger scale.
-## Both are authoritative match state and therefore snapshot/hash state below.
-var _consumed_nonpressable_powers: Dictionary = {PLAYER_TEAM: {}, ENEMY_TEAM: {}}
-var _scavenger_bounty_percent: Dictionary = {PLAYER_TEAM: 0.0, ENEMY_TEAM: 0.0}
-## Picks made since the last ACCEPT: RESET refunds exactly these ("unspent
-## picks" — casting a staged pick spends it and it can no longer be refunded).
-var _staged_purchases := {PLAYER_TEAM: [], ENEMY_TEAM: []}
-## Per-team spellbook TREE overrides for cross-faction matches (two different
-## factions in one sim). Empty by default: every team then resolves against the
-## single global tree above, so the default same-faction match is byte-identical
-## and the signature does not move. A team present here plays its OWN faction's
-## powers/costs/prereqs/reloads — team ownership overlays (points, purchased,
-## sciences, cooldowns, staged) stay in the per-team maps already declared.
-## team:int -> {ready, powers, order, sciences, science_to_power, intrinsic, document}
-var _team_spellbooks: Dictionary = {}
-## Single-player pause seam for the spellbook orb: while the palantir is open
-## the sim clock halts (ticks, production, AI — everything in tick()). The
-## slice drives this through set_spellbook_orb_open; the escape-menu pause in
-## the slice composes independently (either one halts the clock).
-var clock_paused := false
-
+	return _upgrades_subsystem()._queued_command_points_for_team(team)
 
 func set_spellbook_orb_open(open: bool) -> void:
 	_powers_subsystem().set_spellbook_orb_open(open)
@@ -3322,176 +2996,15 @@ func _cast_spellbook_creep_allegiance(team: int, effect: Dictionary, point: Vect
 	return _powers_subsystem()._cast_spellbook_creep_allegiance(team, effect, point)
 
 
-func _apply_scenario_structure_faction_command_set(row: Dictionary, team: int) -> Dictionary:
-	## Resolve the owning team's exact PLAYER upgrade, then let the generic typed
-	## CommandSetUpgrade effect graph choose the authored set. The trained-set
-	## scan remains compatibility-only for selected packs cooked before that graph
-	## was accepted; a recook removes this branch without changing gameplay.
-	var sets := row.get("scenario_trained_command_sets", []) as Array
-	if sets.is_empty():
-		return {"ok": false, "reason": "no-trained-command-sets"}
-	var side_result := team_retail_side(team)
-	if side_result.has("reason"):
-		return {"ok": false, "reason": String(side_result["reason"])}
-	var side := String(side_result.get("side", ""))
-	var upgrade_stem := {"Dwarves": "Dwarf", "Elves": "Elf"}.get(side, side) as String
-	var faction_upgrade := "Upgrade_%sFaction" % upgrade_stem
-	var completed := row.get("completed_upgrades", []) as Array
-	if not completed.has(faction_upgrade):
-		completed.append(faction_upgrade)
-		completed.sort()
-		row["completed_upgrades"] = completed
-	var graph_result := _reconcile_structure_command_set_upgrades(row)
-	if bool(graph_result.get("accepted_graph", false)):
-		if not bool(graph_result.get("ok", false)):
-			return graph_result
-		return {
-			"ok": true,
-			"reason": "",
-			"upgrade_id": faction_upgrade,
-			"command_set_id": String(row.get("command_set_id", "")),
-			"effect_id": String(graph_result.get("effect_id", "")),
-		}
-	# Compatibility for the currently selected pre-recook neutral artifacts.
-	var selected: Dictionary = {}
-	for set_value in sets:
-		if typeof(set_value) != TYPE_DICTIONARY:
-			continue
-		var candidate := set_value as Dictionary
-		if String(candidate.get("kind", "")) == "upgraded" and (candidate.get("triggeredBy", []) as Array).has(faction_upgrade):
-			selected = candidate
-			break
-	if selected.is_empty():
-		return {"ok": false, "reason": "faction-upgrade-not-authored", "upgrade_id": faction_upgrade}
-	var prior := String(row.get("command_set_id", row.get("default_command_set_id", "")))
-	var selected_id := String(selected.get("id", ""))
-	if selected_id == "":
-		return {"ok": false, "reason": "authored-command-set-id-empty"}
-	row["command_set_id"] = selected_id
-	if prior != selected_id:
-		_emit_event("upgrade.scenario_command_set", int(row.get("id", 0)), 0, {
-			"team": team,
-			"upgrade_id": faction_upgrade,
-			"from": prior,
-			"to": selected_id,
-		})
-	return {"ok": true, "reason": "", "upgrade_id": faction_upgrade, "command_set_id": selected_id}
 
+func _apply_scenario_structure_faction_command_set(row: Dictionary, team: int) -> Dictionary:
+	return _config_subsystem()._apply_scenario_structure_faction_command_set(row, team)
 
 func _structure_command_set_upgrade_effects(row: Dictionary) -> Array[Dictionary]:
-	var source: Array = []
-	if row.has("scenario_command_set_upgrade_effects"):
-		source = row.get("scenario_command_set_upgrade_effects", []) as Array
-	else:
-		var team := int(row.get("team", -1))
-		var kind := String(row.get("structure_kind", ""))
-		var bundle := structure_upgrade_effects_for_team(team).get(kind, {}) as Dictionary
-		source = bundle.get("effects", []) as Array
-	var by_id: Dictionary = {}
-	var edge_ids: Dictionary = {}
-	for effect_value in source:
-		if typeof(effect_value) != TYPE_DICTIONARY:
-			continue
-		var effect := effect_value as Dictionary
-		if String(effect.get("kind", "")) != "command-set-transition":
-			continue
-		var effect_id := String(effect.get("effectId", ""))
-		if effect_id == "":
-			continue
-		if by_id.has(effect_id):
-			var existing := by_id[effect_id] as Dictionary
-			for field in ["game", "triggerUpgradeIds", "triggerSemantics", "commandSetId", "moduleTag", "moduleOrdinal", "commandSetProvenance"]:
-				if existing.get(field) != effect.get(field):
-					return []
-		else:
-			by_id[effect_id] = effect
-			edge_ids[effect_id] = {}
-		var edge_key := String(effect.get("upgradeId", "")).to_lower()
-		if edge_key == "" or (edge_ids[effect_id] as Dictionary).has(edge_key):
-			return []
-		(edge_ids[effect_id] as Dictionary)[edge_key] = true
-	var result: Array[Dictionary] = []
-	for effect_id_value in by_id.keys():
-		var effect := by_id[effect_id_value] as Dictionary
-		var expected_edges: Dictionary = {}
-		for trigger_value in effect.get("triggerUpgradeIds", []) as Array:
-			expected_edges[String(trigger_value).to_lower()] = true
-		if (edge_ids[effect_id_value] as Dictionary).keys().size() != expected_edges.keys().size():
-			return []
-		for expected_key in expected_edges.keys():
-			if not (edge_ids[effect_id_value] as Dictionary).has(expected_key):
-				return []
-		result.append(effect.duplicate(true))
-	result.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		if int(a.get("moduleOrdinal", 0)) != int(b.get("moduleOrdinal", 0)):
-			return int(a.get("moduleOrdinal", 0)) < int(b.get("moduleOrdinal", 0))
-		if String(a.get("sourceIni", "")) != String(b.get("sourceIni", "")):
-			return String(a.get("sourceIni", "")).naturalnocasecmp_to(String(b.get("sourceIni", ""))) < 0
-		if int(a.get("line", 0)) != int(b.get("line", 0)):
-			return int(a.get("line", 0)) < int(b.get("line", 0))
-		return String(a.get("effectId", "")).naturalnocasecmp_to(String(b.get("effectId", ""))) < 0
-	)
-	return result
-
+	return _config_subsystem()._structure_command_set_upgrade_effects(row)
 
 func _reconcile_structure_command_set_upgrades(row: Dictionary) -> Dictionary:
-	var effects := _structure_command_set_upgrade_effects(row)
-	if effects.is_empty():
-		var declared_graph := false
-		var declared_source: Array = row.get("scenario_command_set_upgrade_effects", []) as Array
-		if not row.has("scenario_command_set_upgrade_effects"):
-			var bundle := structure_upgrade_effects_for_team(int(row.get("team", -1))).get(String(row.get("structure_kind", "")), {}) as Dictionary
-			declared_source = bundle.get("effects", []) as Array
-		for effect_value in declared_source:
-			if typeof(effect_value) == TYPE_DICTIONARY and String((effect_value as Dictionary).get("kind", "")) == "command-set-transition":
-				declared_graph = true
-				break
-		return {"ok": false, "reason": "malformed-command-set-upgrade-graph" if declared_graph else "no-accepted-command-set-upgrade", "accepted_graph": declared_graph}
-	var active_game := String(_rules.get("game", "")).to_lower()
-	var team_owned := team_upgrades.get(int(row.get("team", -1)), {}) as Dictionary
-	var object_owned := row.get("completed_upgrades", []) as Array
-	var selected: Dictionary = {}
-	for effect in effects:
-		if String(effect.get("game", "")).to_lower() != active_game:
-			return {"ok": false, "reason": "command-set-upgrade-edition-mismatch", "accepted_graph": true}
-		var matched := 0
-		var triggers := effect.get("triggerUpgradeIds", []) as Array
-		for trigger_value in triggers:
-			var trigger := String(trigger_value)
-			if _dictionary_has_casefolded_key(team_owned, trigger) or _array_has_casefolded_string(object_owned, trigger):
-				matched += 1
-		var eligible := matched == triggers.size() if String(effect.get("triggerSemantics", "")) == "all" else matched > 0
-		if eligible:
-			selected = effect
-	var command_field := "command_set_id" if row.has("scenario_source_object_id") else "command_set"
-	if not row.has("command_set_upgrade_base"):
-		row["command_set_upgrade_base"] = String(row.get(command_field, row.get("default_command_set_id", "")))
-	var next_set := String(row.get("command_set_upgrade_base", ""))
-	var next_effect := ""
-	if not selected.is_empty():
-		next_set = String(selected.get("commandSetId", ""))
-		next_effect = String(selected.get("effectId", ""))
-	var prior_set := String(row.get(command_field, ""))
-	var prior_effect := String(row.get("command_set_upgrade_active_effect", ""))
-	row[command_field] = next_set
-	row["command_set_upgrade_active_effect"] = next_effect
-	row["command_set_upgrade_receipt"] = {
-		"game": active_game,
-		"effectId": next_effect,
-		"commandSetId": next_set,
-		"triggerUpgradeIds": Array(selected.get("triggerUpgradeIds", [])).duplicate() if not selected.is_empty() else [],
-		"triggerSemantics": String(selected.get("triggerSemantics", "")),
-		"commandSetProvenance": (selected.get("commandSetProvenance", {}) as Dictionary).duplicate(true) if not selected.is_empty() else {},
-		"customAnimationStatus": "deferred" if selected.has("customAnimation") else "absent",
-	}
-	if prior_set != next_set or prior_effect != next_effect:
-		_emit_event("upgrade.command_set", int(row.get("id", 0)), 0, {
-			"team": int(row.get("team", -1)), "game": active_game,
-			"effect_id": next_effect, "from": prior_set, "to": next_set,
-			"presentation_custom_anim": "deferred" if selected.has("customAnimation") else "absent",
-		})
-	return {"ok": not selected.is_empty(), "reason": "" if not selected.is_empty() else "triggers-unsatisfied", "accepted_graph": true, "effect_id": next_effect, "command_set_id": next_set}
-
+	return _config_subsystem()._reconcile_structure_command_set_upgrades(row)
 
 func _dictionary_has_casefolded_key(values: Dictionary, expected: String) -> bool:
 	for key_value in values.keys():
@@ -4515,12 +4028,6 @@ func _configure_playable_structure_module_contracts() -> void:
 	_contracts_subsystem()._configure_playable_structure_module_contracts()
 
 
-func _structure_contracts_with_passive_area_resolution(
-	document: Dictionary, contracts: Array
-) -> Array:
-	return _contracts_subsystem()._structure_contracts_with_passive_area_resolution(document, contracts)
-
-
 func register_castle_upgrade_grants(source_object_id: String, contracts: Array) -> void:
 	_contracts_subsystem().register_castle_upgrade_grants(source_object_id, contracts)
 
@@ -4637,10 +4144,6 @@ func _scenario_document_admits(kind: String, document: Dictionary, surface: Stri
 
 func _attach_structure_module_contracts(row: Dictionary) -> void:
 	_contracts_subsystem()._attach_structure_module_contracts(row)
-
-
-func _passive_area_effect_field(fields: Dictionary, key: String) -> String:
-	return _contracts_subsystem()._passive_area_effect_field(fields, key)
 
 
 func _module_contract_value(fields: Dictionary, key: String, fallback: Variant = null) -> Variant:
@@ -5679,941 +5182,130 @@ func _begin_ship_slow_death(carrier_id: int, carrier: Dictionary, death_type: St
 	return _transport_subsystem()._begin_ship_slow_death(carrier_id, carrier, death_type)
 
 
-func spawn_physics_object(
-	source_object_id: String,
-	position: Vector2,
-	height_source: float,
-	horizontal_velocity: Vector2,
-	vertical_velocity_source: float,
-	contract: Dictionary
-) -> int:
-	## Materialize one explicitly thrown/knocked-back body from the typed
-	## importer contract. Opaque legacy rows fail closed; this runtime must not
-	## reinterpret authored strings or silently invent fields.
-	if String(contract.get("module", "")) != "PhysicsBehavior":
-		return -1
-	if String(contract.get("extraction", "")) != "typed":
-		return -1
-	var fields: Dictionary = contract.get("fields", {}) as Dictionary
-	var gravity_value: Variant = _module_contract_value(fields, "GravityMult", 1.0)
-	var first_height_value: Variant = _module_contract_value(fields, "FirstHeight", 0.0)
-	var second_height_value: Variant = _module_contract_value(fields, "SecondHeight", 0.0)
-	var bounce_value: Variant = _module_contract_value(fields, "AllowBouncing", false)
-	var orient_value: Variant = _module_contract_value(fields, "OrientToFlightPath", false)
-	var kill_value: Variant = _module_contract_value(fields, "KillWhenRestingOnGround", false)
-	var low_value: Variant = _module_contract_value(fields, "ShockStunnedTimeLow", 0.0)
-	var high_value: Variant = _module_contract_value(fields, "ShockStunnedTimeHigh", 0.0)
-	var standing_value: Variant = _module_contract_value(fields, "ShockStandingTime", 0.0)
-	for number_value in [gravity_value, first_height_value, second_height_value, low_value, high_value, standing_value]:
-		if typeof(number_value) not in [TYPE_INT, TYPE_FLOAT]:
-			return -1
-	if typeof(bounce_value) != TYPE_BOOL or typeof(orient_value) != TYPE_BOOL or typeof(kill_value) != TYPE_BOOL:
-		return -1
-	if float(gravity_value) < 0.0 or float(first_height_value) < 0.0 or float(second_height_value) < 0.0:
-		return -1
-	if float(low_value) < 0.0 or float(high_value) < 0.0 or float(standing_value) < 0.0:
-		return -1
-	var low_ms := mini(roundi(float(low_value)), roundi(float(high_value)))
-	var high_ms := maxi(roundi(float(low_value)), roundi(float(high_value)))
-	var unsupported: Array[String] = []
-	if bool(bounce_value) and float(first_height_value) <= 0.0 and float(second_height_value) <= 0.0:
-		# The typed descriptor does not carry collision restitution. Retail rows
-		# that only say AllowBouncing therefore remain explicitly unresolved at
-		# the impact boundary instead of acquiring an invented coefficient.
-		unsupported.append("bounce_restitution_without_authored_heights")
-	var id := _next_physics_object_id
-	_next_physics_object_id += 1
-	physics_objects[id] = {
-		"id": id,
-		"source_object_id": source_object_id,
-		"position": position,
-		"height_source": maxf(0.0, height_source),
-		"horizontal_velocity": horizontal_velocity,
-		"vertical_velocity_source": vertical_velocity_source,
-		"gravity_multiplier": float(gravity_value),
-		"allow_bouncing": bool(bounce_value),
-		"orient_to_flight_path": bool(orient_value),
-		"kill_when_resting_on_ground": bool(kill_value),
-		"first_height_source": float(first_height_value),
-		"second_height_source": float(second_height_value),
-		"shock_stunned_low_ms": low_ms,
-		"shock_stunned_high_ms": high_ms,
-		"shock_standing_ms": roundi(float(standing_value)),
-		"bounce_count": 0,
-		"phase": "airborne",
-		"phase_ticks_remaining": 0,
-		"yaw_radians": 0.0,
-		"pitch_radians": 0.0,
-		"unsupported_semantics": unsupported,
-		"contract_tag": String(contract.get("tag", "")),
-		"contract_line": int(contract.get("line", 0)),
-	}
-	return id
+const PhysicsSystemScript = preload("res://src/retail_slice/retail_sim_physics.gd")
+var _physics_system = null
+func _physics_subsystem():
+	if _physics_system == null:
+		_physics_system = PhysicsSystemScript.new(self)
+	return _physics_system
 
+func spawn_physics_object(source_object_id: String, position: Vector2, height_source: float, horizontal_velocity: Vector2, vertical_velocity_source: float, contract: Dictionary) -> int:
+	return _physics_subsystem().spawn_physics_object(source_object_id, position, height_source, horizontal_velocity, vertical_velocity_source, contract)
 
 func _step_physics_objects() -> void:
-	if physics_objects.is_empty():
-		return
-	var ids := physics_objects.keys()
-	ids.sort()
-	var gravity_source := maxf(0.0, float(_rules.get("physics_gravity_source_per_second_squared", 0.0)))
-	for id_value in ids:
-		var id := int(id_value)
-		if not physics_objects.has(id):
-			continue
-		var row := physics_objects[id] as Dictionary
-		match String(row.get("phase", "airborne")):
-			"airborne":
-				_step_airborne_physics_object(id, row, gravity_source)
-			"shock_stunned":
-				_step_physics_recovery_phase(row, "shock_standing")
-			"shock_standing":
-				_step_physics_recovery_phase(row, "recovered")
-
+	_physics_subsystem()._step_physics_objects()
 
 func _step_projectiles() -> void:
-	_projectiles_subsystem().step()
-
+	_physics_subsystem()._step_projectiles()
 
 func _resolve_member_projectile_impact(projectile_id: int, projectile: Dictionary) -> void:
-	_projectiles_subsystem().resolve_member_projectile_impact(projectile_id, projectile)
-
+	_physics_subsystem()._resolve_member_projectile_impact(projectile_id, projectile)
 
 func _radius_relation_allowed(attacker_team: int, victim_team: int, affects: String) -> bool:
-	return _projectiles_subsystem().radius_relation_allowed(attacker_team, victim_team, affects)
-
+	return _physics_subsystem()._radius_relation_allowed(attacker_team, victim_team, affects)
 
 func _tapered_radius_amount(amount: float, distance: float, radius: float, taper_off: float) -> int:
-	return _projectiles_subsystem().tapered_radius_amount(amount, distance, radius, taper_off)
+	return _physics_subsystem()._tapered_radius_amount(amount, distance, radius, taper_off)
 
-
-func _apply_radius_damage(
-	attacker_id: int,
-	origin: Vector2,
-	radius: float,
-	amount: float,
-	damage_type: String,
-	taper_off: float,
-	affects: String,
-	exclude_target_id: int,
-	death_type: String = "NORMAL"
-) -> void:
-	_projectiles_subsystem().apply_radius_damage(attacker_id, origin, radius, amount, damage_type, taper_off, affects, exclude_target_id, death_type)
-
+func _apply_radius_damage(attacker_id: int, origin: Vector2, radius: float, amount: float, damage_type: String, taper_off: float, affects: String, exclude_target_id: int, death_type: String = "NORMAL") -> void:
+	_physics_subsystem()._apply_radius_damage(attacker_id, origin, radius, amount, damage_type, taper_off, affects, exclude_target_id, death_type)
 
 func _step_airborne_physics_object(id: int, row: Dictionary, gravity_source: float) -> void:
-	row["position"] = Vector2(row.get("position", Vector2.ZERO)) + Vector2(row.get("horizontal_velocity", Vector2.ZERO)) * TICK_SECONDS
-	var vertical_velocity := float(row.get("vertical_velocity_source", 0.0))
-	vertical_velocity -= gravity_source * float(row.get("gravity_multiplier", 1.0)) * TICK_SECONDS
-	row["vertical_velocity_source"] = vertical_velocity
-	row["height_source"] = float(row.get("height_source", 0.0)) + vertical_velocity * TICK_SECONDS
-	if bool(row.get("orient_to_flight_path", false)):
-		var horizontal := Vector2(row.get("horizontal_velocity", Vector2.ZERO))
-		if not horizontal.is_zero_approx():
-			row["yaw_radians"] = horizontal.angle()
-		row["pitch_radians"] = atan2(vertical_velocity, horizontal.length())
-	if float(row.get("height_source", 0.0)) > 0.0:
-		return
-	row["height_source"] = 0.0
-	var bounce_count := int(row.get("bounce_count", 0))
-	var rebound_height := 0.0
-	if bool(row.get("allow_bouncing", false)):
-		if bounce_count == 0:
-			rebound_height = float(row.get("first_height_source", 0.0))
-		elif bounce_count == 1:
-			rebound_height = float(row.get("second_height_source", 0.0))
-	if rebound_height > 0.0 and gravity_source * float(row.get("gravity_multiplier", 1.0)) > 0.0:
-		row["bounce_count"] = bounce_count + 1
-		row["vertical_velocity_source"] = sqrt(2.0 * gravity_source * float(row.get("gravity_multiplier", 1.0)) * rebound_height)
-		return
-	row["horizontal_velocity"] = Vector2.ZERO
-	row["vertical_velocity_source"] = 0.0
-	if not (row.get("landing_warhead", {}) as Dictionary).is_empty():
-		_resolve_fling_landing(row)
-	if bool(row.get("kill_when_resting_on_ground", false)):
-		physics_objects.erase(id)
-		return
-	_begin_physics_recovery(row)
-
+	_physics_subsystem()._step_airborne_physics_object(id, row, gravity_source)
 
 func _resolve_fling_landing(projectile: Dictionary) -> void:
-	var warhead := projectile.get("landing_warhead", {}) as Dictionary
-	var point := Vector2(projectile.get("position", Vector2.ZERO))
-	var radius := float(warhead.get("radius_scaled", 0.0))
-	var force_filter: Array = String(warhead.get("forceKillObjectFilter", "")).split(" ", false)
-	var affected: Array[int] = []
-	for target_id in entity_ids():
-		var target := entities[target_id] as Dictionary
-		if int(target.get("health", 0)) <= 0 or Vector2(target.get("position", Vector2.ZERO)).distance_to(point) > radius + 0.000001:
-			continue
-		if not _transport_filter_accepts(target, force_filter):
-			continue
-		_apply_damage(int(projectile.get("fling_attacker_id", 0)), target_id, 2147483647, "battalion", String(warhead.get("deathType", "NORMAL")), String(warhead.get("damageType", "")))
-		affected.append(target_id)
-	_emit_event("ability.fling_landed", int(projectile.get("fling_attacker_id", 0)), 0, {"warhead_id": String(warhead.get("id", "")), "damage_type": String(warhead.get("damageType", "")), "death_type": String(warhead.get("deathType", "")), "affected_ids": affected, "special_filter_without_damage_amount": String(warhead.get("specialObjectFilter", ""))})
-
+	_physics_subsystem()._resolve_fling_landing(projectile)
 
 func _begin_physics_recovery(row: Dictionary) -> void:
-	var low_ms := int(row.get("shock_stunned_low_ms", 0))
-	var high_ms := int(row.get("shock_stunned_high_ms", 0))
-	if high_ms > 0:
-		var stunned_ms := logic_random_int(low_ms, high_ms)
-		row["phase"] = "shock_stunned"
-		row["phase_ticks_remaining"] = maxi(1, ceili(float(stunned_ms) / (TICK_SECONDS * 1000.0)))
-		return
-	var standing_ms := int(row.get("shock_standing_ms", 0))
-	if standing_ms > 0:
-		row["phase"] = "shock_standing"
-		row["phase_ticks_remaining"] = maxi(1, ceili(float(standing_ms) / (TICK_SECONDS * 1000.0)))
-		return
-	row["phase"] = "recovered"
-	row["phase_ticks_remaining"] = 0
-
+	_physics_subsystem()._begin_physics_recovery(row)
 
 func _step_physics_recovery_phase(row: Dictionary, next_phase: String) -> void:
-	var remaining := int(row.get("phase_ticks_remaining", 0)) - 1
-	if remaining > 0:
-		row["phase_ticks_remaining"] = remaining
-		return
-	if next_phase == "shock_standing":
-		var standing_ms := int(row.get("shock_standing_ms", 0))
-		if standing_ms > 0:
-			row["phase"] = "shock_standing"
-			row["phase_ticks_remaining"] = maxi(1, ceili(float(standing_ms) / (TICK_SECONDS * 1000.0)))
-			return
-	row["phase"] = "recovered"
-	row["phase_ticks_remaining"] = 0
+	_physics_subsystem()._step_physics_recovery_phase(row, next_phase)
 
+const FieldEffectsSystemScript = preload("res://src/retail_slice/retail_sim_field_effects.gd")
+var _field_effects_system = null
+func _field_effects_subsystem():
+	if _field_effects_system == null:
+		_field_effects_system = FieldEffectsSystemScript.new(self)
+	return _field_effects_system
 
 func _attach_fire_weapon_when_dead_contract(row: Dictionary, contract: Dictionary) -> void:
-	## Normalize the typed importer row once at materialization. Opaque rows from
-	## older packs fail closed because their timer/offset/status values are not
-	## typed; they remain in module_contracts as evidence.
-	if String(contract.get("extraction", "")) != "typed":
-		return
-	var fields: Dictionary = contract.get("fields", {}) as Dictionary
-	var starts_value: Variant = _module_contract_value(fields, "StartsActive", null)
-	if typeof(starts_value) != TYPE_BOOL or not bool(starts_value):
-		return
-	var weapon_value: Variant = _module_contract_value(fields, "DeathWeapon", "")
-	var weapon_id := String(weapon_value).strip_edges()
-	if weapon_id == "":
-		return
-	var delay_value: Variant = _module_contract_value(fields, "DelayTime", 0.0)
-	if typeof(delay_value) not in [TYPE_INT, TYPE_FLOAT]:
-		return
-	var offset := Vector2.ZERO
-	var offset_z := 0.0
-	var offset_value: Variant = _module_contract_value(fields, "WeaponOffset", {})
-	if typeof(offset_value) == TYPE_DICTIONARY:
-		var coordinates := offset_value as Dictionary
-		if (
-			typeof(coordinates.get("x", 0.0)) not in [TYPE_INT, TYPE_FLOAT]
-			or typeof(coordinates.get("y", 0.0)) not in [TYPE_INT, TYPE_FLOAT]
-		):
-			return
-		offset = Vector2(float(coordinates.get("x", 0.0)), float(coordinates.get("y", 0.0)))
-		if typeof(coordinates.get("z", 0.0)) not in [TYPE_INT, TYPE_FLOAT]:
-			return
-		offset_z = float(coordinates.get("z", 0.0))
-	var rows: Array = row.get("fire_weapon_when_dead", []) as Array
-	rows.append({
-		"death_types": String(fields.get("deathTypes", "ALL")).to_upper(),
-		"included_death_types": Array(fields.get("includedDeathTypes", [])).duplicate(),
-		"excluded_death_types": Array(fields.get("excludedDeathTypes", [])).duplicate(),
-		"required_status": Array(_module_contract_value(fields, "RequiredStatus", [])).duplicate(),
-		"exempt_status": Array(_module_contract_value(fields, "ExemptStatus", [])).duplicate(),
-		"active_during_construction": bool(_module_contract_value(fields, "ActiveDuringConstruction", false)),
-		"delay_ticks": maxi(0, roundi(float(delay_value) / (TICK_SECONDS * 1000.0))),
-		"death_weapon": weapon_id,
-		"weapon_offset_source": offset,
-		"weapon_offset_z_source": offset_z,
-		"tag": String(contract.get("tag", "")),
-		"source_ini": String(contract.get("source_ini", contract.get("sourceIni", ""))),
-		"line": int(contract.get("line", 0)),
-	})
-	row["fire_weapon_when_dead"] = rows
-
+	_field_effects_subsystem()._attach_fire_weapon_when_dead_contract(row, contract)
 
 func register_death_weapon_rule(weapon_id: String, rule: Dictionary) -> bool:
-	## Closed payload consumed when a scheduled DeathWeapon fires. This does not
-	## invent data for a named-but-unconverted weapon: absent ids still produce a
-	## deterministic unresolved event and no damage.
-	var id := weapon_id.strip_edges()
-	if id == "":
-		return false
-	for key in ["damage", "radius_source"]:
-		if typeof(rule.get(key)) not in [TYPE_INT, TYPE_FLOAT] or float(rule.get(key)) < 0.0:
-			return false
-	var normalized := rule.duplicate(true)
-	normalized["damage"] = float(rule.get("damage"))
-	normalized["radius_source"] = float(rule.get("radius_source"))
-	normalized["damage_type"] = String(rule.get("damage_type", ""))
-	normalized["affects"] = String(rule.get("affects", "ENEMIES"))
-	_death_weapon_rules[id] = normalized
-	return true
-
+	return _field_effects_subsystem().register_death_weapon_rule(weapon_id, rule)
 
 func _configure_death_weapon_rules_from_rules() -> void:
-	_death_weapon_rules.clear()
-	var configured: Variant = _rules.get("death_weapon_rules", {})
-	if typeof(configured) != TYPE_DICTIONARY:
-		return
-	var ids := (configured as Dictionary).keys()
-	ids.sort()
-	for id_value in ids:
-		var rule_value: Variant = (configured as Dictionary).get(id_value)
-		if typeof(rule_value) == TYPE_DICTIONARY:
-			register_death_weapon_rule(String(id_value), rule_value as Dictionary)
-
-
-func _passive_area_effect_number(fields: Dictionary, key: String) -> float:
-	return _contracts_subsystem()._passive_area_effect_number(fields, key)
-
-
-func _passive_area_effect_percent(text: String) -> float:
-	return _contracts_subsystem()._passive_area_effect_percent(text)
-
-
-func _passive_area_effect_yes(fields: Dictionary, key: String) -> bool:
-	return _contracts_subsystem()._passive_area_effect_yes(fields, key)
-
+	_field_effects_subsystem()._configure_death_weapon_rules_from_rules()
 
 func _step_passive_area_effect_heals() -> void:
-	## PassiveAreaEffectBehavior's healing branch. Retail wells/fortress healing
-	## author a periodic percent-of-member-max heal, a radius, an object filter,
-	## optional upgrade gate, and NonStackable. Dead members are not revived.
-	## ModifierName leadership rows are deliberately not handled here: they need
-	## their referenced ModifierList resolved into the shared modifier core.
-	var candidates: Dictionary = {}
-	var scale := float(_rules.get("source_map_transform_scale", 0.0))
-	if scale <= 0.0:
-		scale = 1.0
-	for structure_id in structure_ids():
-		var structure: Dictionary = structures[structure_id]
-		if not bool(structure.get("structure_module_contracts_attached", false)):
-			_attach_structure_module_contracts(structure)
-		if (
-			int(structure.get("health", 0)) <= 0
-			or float(structure.get("construction_progress", 1.0)) < 1.0
-		):
-			continue
-		var team := int(structure.get("team", -1))
-		if team < 0:
-			continue
-		var rules: Array = structure.get("passive_area_effect_heals", []) as Array
-		for rule_index in rules.size():
-			var rule: Dictionary = rules[rule_index]
-			var upgrade_required := String(rule.get("upgrade_required", ""))
-			if upgrade_required != "" and not _structure_has_completed_upgrade(
-				structure, upgrade_required
-			):
-				continue
-			var next_ping := int(rule.get("next_ping_tick", tick_index + 1))
-			var ping_ticks := maxi(1, int(rule.get("ping_ticks", 1)))
-			var due := tick_index >= next_ping
-			if due:
-				# Preserve cadence even if a test/operator advances this subsystem after
-				# its deadline; normal gameplay calls it exactly once per sim tick.
-				while next_ping <= tick_index:
-					next_ping += ping_ticks
-				rule["next_ping_tick"] = next_ping
-				rules[rule_index] = rule
-			var radius := float(rule.get("radius_source", 0.0)) * scale
-			var rate := float(rule.get("heal_fraction_per_second", 0.0))
-			if radius <= 0.0 or rate <= 0.0:
-				continue
-			var origin := Vector2(structure.get("position", Vector2.ZERO))
-			var filter_text := String(rule.get("allow_filter", ""))
-			for entity_id in living_ids(team):
-				var target: Dictionary = entities[entity_id]
-				if not _ability_filter_accepts(target, filter_text):
-					continue
-				if Vector2(target.get("position", Vector2.ZERO)).distance_to(origin) > radius:
-					continue
-				if int(target.get("health", 0)) >= int(target.get("maximum_health", 0)):
-					continue
-				var raw_amount := (
-					float(target.get("member_maximum_health", 0))
-					* rate
-					* float(ping_ticks)
-					* TICK_SECONDS
-				)
-				if raw_amount <= 0.0:
-					continue
-				var target_candidates: Array = candidates.get(entity_id, []) as Array
-				target_candidates.append({
-					"raw_amount": raw_amount,
-					"strength": rate,
-					"source_id": structure_id,
-					"due": due,
-					"remainder_key": (
-						"nonstackable"
-						if bool(rule.get("non_stackable", false))
-						else "%d:%s" % [structure_id, String(rule.get("tag", rule_index))]
-					),
-					"non_stackable": bool(rule.get("non_stackable", false)),
-				})
-				candidates[entity_id] = target_candidates
-		if rules.is_empty():
-			structure.erase("passive_area_effect_heals")
-		else:
-			structure["passive_area_effect_heals"] = rules
-	for entity_id_value in candidates.keys():
-		var entity_id := int(entity_id_value)
-		if not entities.has(entity_id):
-			continue
-		var stackable: Array = []
-		var best_nonstackable: Dictionary = {}
-		for candidate_value in candidates[entity_id] as Array:
-			var candidate := candidate_value as Dictionary
-			if bool(candidate.get("non_stackable", false)):
-				if (
-					best_nonstackable.is_empty()
-					or float(candidate.get("strength", 0.0))
-						> float(best_nonstackable.get("strength", 0.0))
-					or (
-						is_equal_approx(
-							float(candidate.get("strength", 0.0)),
-							float(best_nonstackable.get("strength", 0.0))
-						)
-						and int(candidate.get("source_id", 0))
-							< int(best_nonstackable.get("source_id", 0))
-					)
-				):
-					best_nonstackable = candidate
-			elif bool(candidate.get("due", false)):
-				stackable.append(candidate)
-		if not best_nonstackable.is_empty() and bool(best_nonstackable.get("due", false)):
-			stackable.append(best_nonstackable)
-		for candidate_value in stackable:
-			_apply_passive_area_effect_heal(
-				entities[entity_id] as Dictionary, candidate_value as Dictionary
-			)
-
+	_field_effects_subsystem()._step_passive_area_effect_heals()
 
 func _step_passive_area_effect_modifiers() -> void:
-	## Statue/heroic-statue leadership branch. The importer resolves ModifierName
-	## into typed ModifierList effects, duration, category and stacking policy;
-	## refresh those effects through the shared timed-modifier core.
-	var scale := float(_rules.get("source_map_transform_scale", 0.0))
-	if scale <= 0.0:
-		scale = 1.0
-	for structure_id in structure_ids():
-		var structure: Dictionary = structures[structure_id]
-		if not bool(structure.get("structure_module_contracts_attached", false)):
-			_attach_structure_module_contracts(structure)
-		if int(structure.get("health", 0)) <= 0 or float(structure.get("construction_progress", 1.0)) < 1.0:
-			continue
-		var team := int(structure.get("team", -1))
-		if team < 0:
-			continue
-		var rules: Array = structure.get("passive_area_effect_modifiers", []) as Array
-		for rule_index in rules.size():
-			var rule: Dictionary = rules[rule_index]
-			var upgrade_required := String(rule.get("upgrade_required", ""))
-			if upgrade_required != "" and not _structure_has_completed_upgrade(structure, upgrade_required):
-				continue
-			var next_ping := int(rule.get("next_ping_tick", tick_index))
-			if tick_index < next_ping:
-				continue
-			var ping_ticks := maxi(1, int(rule.get("ping_ticks", 1)))
-			while next_ping <= tick_index:
-				next_ping += ping_ticks
-			rule["next_ping_tick"] = next_ping
-			rules[rule_index] = rule
-			var radius := float(rule.get("radius_source", 0.0)) * scale
-			var duration_ticks := maxi(1, int(rule.get("duration_ticks", 1)))
-			var category := String(rule.get("category", ""))
-			var modifier_id := String(rule.get("id", ""))
-			var stacking: Dictionary = rule.get("stacking", {}) as Dictionary
-			var origin := Vector2(structure.get("position", Vector2.ZERO))
-			for entity_id in living_ids(team):
-				var target: Dictionary = entities[entity_id]
-				if not _ability_filter_accepts(target, String(rule.get("allow_filter", ""))):
-					continue
-				if Vector2(target.get("position", Vector2.ZERO)).distance_to(origin) > radius:
-					continue
-				if bool(stacking.get("ignoreIfAnticategoryActive", false)) and category == "LEADERSHIP" and _refresh_leadership_suppression(target) > tick_index:
-					continue
-				var key := "passive:%s:%s" % [category, modifier_id]
-				if bool(stacking.get("replaceInCategoryIfLongest", false)) or bool(rule.get("non_stackable", false)):
-					key = "passive-category:%s" % category
-					var current: Dictionary = (target.get("timed_modifiers", {}) as Dictionary).get(key, {}) as Dictionary
-					if int(current.get("expires_tick", -1)) > tick_index + duration_ticks:
-						continue
-				_set_timed_modifier(target, key, rule.get("effects", []) as Array, tick_index + duration_ticks)
-				_emit_event("module.passive_area_effect_modifier", structure_id, entity_id, {"modifier_id": modifier_id, "category": category})
-		if rules.is_empty():
-			structure.erase("passive_area_effect_modifiers")
-		else:
-			structure["passive_area_effect_modifiers"] = rules
+	_field_effects_subsystem()._step_passive_area_effect_modifiers()
 
-
-static func _structure_has_completed_upgrade(structure: Dictionary, upgrade_id: String) -> bool:
-	if (structure.get("completed_upgrades", []) as Array).has(upgrade_id):
-		return true
-	var applied: Variant = structure.get("applied_upgrades", {})
-	return typeof(applied) == TYPE_DICTIONARY and (applied as Dictionary).has(upgrade_id)
-
+func _structure_has_completed_upgrade(structure: Dictionary, upgrade_id: String) -> bool: # de-static'd: moved to subsystem
+	return _field_effects_subsystem()._structure_has_completed_upgrade(structure, upgrade_id)
 
 func _apply_passive_area_effect_heal(target: Dictionary, candidate: Dictionary) -> void:
-	var remainders: Dictionary = target.get("passive_area_heal_remainders", {}) as Dictionary
-	var key := String(candidate.get("remainder_key", ""))
-	var accumulated := float(remainders.get(key, 0.0)) + float(candidate.get("raw_amount", 0.0))
-	# Percent text such as 2% and a 300 ms cadence has the exact rational
-	# result 0.6, but binary float accumulation can land at 5.999999... on the
-	# tenth ping. A tiny deterministic epsilon preserves the authored rational
-	# boundary without ever promoting a materially sub-integer value.
-	var amount := floori(accumulated + 0.000001)
-	remainders[key] = maxf(0.0, accumulated - float(amount))
-	target["passive_area_heal_remainders"] = remainders
-	if amount <= 0:
-		return
-	var health_values: Array = target.get("member_health", []) as Array
-	var member_maximum := int(target.get("member_maximum_health", 0))
-	var remaining := amount
-	for member_index in health_values.size():
-		if remaining <= 0:
-			break
-		var current := int(health_values[member_index])
-		if current <= 0 or current >= member_maximum:
-			continue
-		var healed := mini(remaining, member_maximum - current)
-		health_values[member_index] = current + healed
-		remaining -= healed
-	target["member_health"] = health_values
-	var aggregate := 0
-	for value in health_values:
-		aggregate += int(value)
-	target["health"] = aggregate
-	_emit_event("module.passive_area_effect_heal", int(candidate.get("source_id", 0)), int(target.get("id", 0)), {
-		"amount": amount - remaining,
-		"team": int(target.get("team", -1)),
-	})
-
+	_field_effects_subsystem()._apply_passive_area_effect_heal(target, candidate)
 
 func _attach_experience_state(row: Dictionary) -> void:
-	_experience_subsystem().attach_experience_state(row)
-
+	_field_effects_subsystem()._attach_experience_state(row)
 
 func _refresh_banner_carrier_state(row: Dictionary) -> void:
-	## Retail BannerCarriersAllowed: once the horde reaches minLevel, keep one
-	## linked banner entity (or re-spawn after authored BannerCarrierUpdate
-	## timers). Presentation reads banner_carrier_spawned / object_id / offset.
-	var rule: Dictionary = _unit_banner_carriers.get(String(row.get("unit_type", "")), {}) as Dictionary
-	if rule.is_empty():
-		rule = _unit_banner_carriers.get(String(row.get("object_id", "")), {}) as Dictionary
-	if rule.is_empty():
-		return
-	row["banner_carrier_object_id"] = String(rule.get("object_id", ""))
-	row["banner_carrier_offset_source"] = rule.get("offset_source", Vector2.ZERO)
-	row["banner_carrier_destroy_horde_on_death"] = bool(rule.get("destroy_horde_on_death", false))
-	if int(row.get("level", 1)) < int(rule.get("min_level", 2)):
-		return
-	# AllowBannerSpawnUpgrade is authored on fortress garrison expansions. It
-	# gates only a horde currently contained by that expansion; uncontained
-	# hordes and containers without the module retain their normal banner path.
-	if entity_container.has(int(row.get("id", 0))):
-		var container_id := int(entity_container[int(row.get("id", 0))])
-		if structures.has(container_id) and not structure_allows_banner_spawn(container_id):
-			return
-	var banner_id := int(row.get("banner_entity_id", 0))
-	if banner_id != 0 and entities.has(banner_id) and int((entities[banner_id] as Dictionary).get("health", 0)) > 0:
-		_sync_banner_entity_transform(row, banner_id, rule)
-		row["banner_carrier_spawned"] = true
-		return
-	var respawn_remaining := int(row.get("banner_respawn_ticks_remaining", -1))
-	if respawn_remaining > 0:
-		return
-	_spawn_banner_carrier_entity(row, rule)
-
+	_field_effects_subsystem()._refresh_banner_carrier_state(row)
 
 func _spawn_banner_carrier_entity(parent: Dictionary, rule: Dictionary) -> void:
-	var team := int(parent.get("team", -1))
-	if team < 0:
-		return
-	if not _next_dynamic_id.has(team):
-		_next_dynamic_id[team] = 900000 + team * 1000
-	var banner_object_id := String(rule.get("object_id", ""))
-	var banner_max_health := int(rule.get("banner_max_health", 0))
-	if banner_object_id == "" or banner_max_health <= 0:
-		parent["banner_carrier_spawned"] = false
-		parent["banner_carrier_error"] = "selected banner template is incomplete"
-		return
-	var entity_id := int(_next_dynamic_id[team])
-	_next_dynamic_id[team] = entity_id + 1
-	var offset_source: Vector2 = rule.get("offset_source", Vector2.ZERO)
-	var at := Vector2(parent.get("position", Vector2.ZERO)) + _retail_source_to_sim_offset(offset_source)
-	var unit_rules_value: Variant = _rules.get("unit_rules", {})
-	var has_rule := (
-		typeof(unit_rules_value) == TYPE_DICTIONARY
-		and not ((unit_rules_value as Dictionary).get(banner_object_id, {}) as Dictionary).is_empty()
-	)
-	if has_rule:
-		_add_battalion(
-			entity_id,
-			team,
-			at,
-			banner_object_id,
-			banner_object_id,
-			banner_object_id,
-			0
-		)
-	else:
-		# Banner runtimes may be non-producible (no UNIT_BUILD rule). Spawn a
-		# minimal 1-member entity so death/respawn still execute fail-closed.
-		entities[entity_id] = {
-			"id": entity_id,
-			"team": team,
-			"name": banner_object_id,
-			"object_id": banner_object_id,
-			"unit_type": banner_object_id,
-			"position": at,
-			"facing": Vector2(parent.get("facing", Vector2.RIGHT)),
-			"destination": at,
-			"route": [],
-			"route_cells": [],
-			"state": "idle",
-			"target_id": 0,
-			"target_kind": "battalion",
-			"health": banner_max_health,
-			"maximum_health": banner_max_health,
-			"member_maximum_health": banner_max_health,
-			"member_health": [banner_max_health],
-			"damage": 0,
-			"member_damage": 0,
-			"speed": 0.0,
-			"speed_source": 0.0,
-			"current_speed": 0.0,
-			"command_points": 0,
-			"level": 1,
-			"order_kind": "",
-			"is_builder": false,
-			"formation_positions": [Vector3.ZERO],
-			"formation_positions_base": [Vector3.ZERO],
-			"timed_modifiers": {},
-			"applied_upgrades": {},
-		}
-	if not entities.has(entity_id):
-		return
-	var banner: Dictionary = entities[entity_id]
-	if not banner.has("module_contracts"):
-		_attach_module_contracts(banner)
-	banner["is_banner_carrier"] = true
-	banner["banner_parent_entity_id"] = int(parent.get("id", 0))
-	banner["command_points"] = 0
-	banner["banner_carrier_object_id"] = banner_object_id
-	# Linked carriers are not free-command battalions.
-	banner["ignores_select_all"] = true
-	_spatial_sync(banner)
-	parent["banner_entity_id"] = entity_id
-	parent["banner_carrier_spawned"] = true
-	parent["banner_respawn_ticks_remaining"] = -1
-	parent.erase("banner_respawn_armed_tick")
-	_emit_event("battalion.banner_spawned", int(parent.get("id", 0)), entity_id, {
-		"team": team,
-		"banner_object_id": banner_object_id,
-		"parent_unit_type": String(parent.get("unit_type", "")),
-	})
-
+	_field_effects_subsystem()._spawn_banner_carrier_entity(parent, rule)
 
 func _sync_banner_entity_transform(parent: Dictionary, banner_id: int, rule: Dictionary) -> void:
-	if not entities.has(banner_id):
-		return
-	var banner: Dictionary = entities[banner_id]
-	var offset_source: Vector2 = rule.get("offset_source", Vector2.ZERO)
-	banner["position"] = Vector2(parent.get("position", Vector2.ZERO)) + _retail_source_to_sim_offset(offset_source)
-	banner["destination"] = banner["position"]
-	banner["facing"] = Vector2(parent.get("facing", banner.get("facing", Vector2.RIGHT)))
-	banner["team"] = int(parent.get("team", banner.get("team", -1)))
-	_spatial_sync(banner)
-
+	_field_effects_subsystem()._sync_banner_entity_transform(parent, banner_id, rule)
 
 func _step_banner_carriers() -> void:
-	## Follow parents, count respawn timers, re-spawn when due.
-	for id in entity_ids():
-		var row: Dictionary = entities[id]
-		if bool(row.get("is_banner_carrier", false)):
-			_step_banner_replenishment(row)
-			var parent_id := int(row.get("banner_parent_entity_id", 0))
-			if int(row.get("health", 0)) <= 0:
-				_on_banner_carrier_defeated(row)
-				entities.erase(id)
-				continue
-			if parent_id == 0 or not entities.has(parent_id) or int((entities[parent_id] as Dictionary).get("health", 0)) <= 0:
-				entities.erase(id)
-				continue
-			if parent_id != 0 and entities.has(parent_id):
-				var parent: Dictionary = entities[parent_id]
-				var rule: Dictionary = _unit_banner_carriers.get(String(parent.get("unit_type", "")), {}) as Dictionary
-				if rule.is_empty():
-					rule = _unit_banner_carriers.get(String(parent.get("object_id", "")), {}) as Dictionary
-				if not rule.is_empty():
-					_sync_banner_entity_transform(parent, id, rule)
-			continue
-		var remaining := int(row.get("banner_respawn_ticks_remaining", -1))
-		if remaining < 0:
-			# Keep living banner glued even when not a banner carrier itself.
-			if int(row.get("banner_entity_id", 0)) != 0:
-				_refresh_banner_carrier_state(row)
-			continue
-		if remaining > 0:
-			if int(row.get("banner_respawn_armed_tick", -1)) == tick_index:
-				continue
-			row["banner_respawn_ticks_remaining"] = remaining - 1
-			if int(row["banner_respawn_ticks_remaining"]) > 0:
-				continue
-		# remaining hit 0 — attempt respawn if level still qualifies.
-		_refresh_banner_carrier_state(row)
-
+	_field_effects_subsystem()._step_banner_carriers()
 
 func _on_banner_carrier_defeated(banner: Dictionary) -> void:
-	## Mirror C# BannerCarrierModule: destroy horde when authored, else arm
-	## authored respawn ticks (never invent a default timer).
-	var parent_id := int(banner.get("banner_parent_entity_id", 0))
-	if parent_id == 0 or not entities.has(parent_id):
-		return
-	var parent: Dictionary = entities[parent_id]
-	if int(parent.get("banner_entity_id", 0)) == int(banner.get("id", 0)):
-		parent["banner_entity_id"] = 0
-	parent["banner_carrier_spawned"] = false
-	if bool(parent.get("banner_carrier_destroy_horde_on_death", false)):
-		# Lethal destroy of the owning horde (retail thrall-style contracts).
-		parent["health"] = 0
-		var member_health: Array = parent.get("member_health", []) as Array
-		var defeated_members: Array[int] = []
-		for member_index in member_health.size():
-			if int(member_health[member_index]) > 0:
-				defeated_members.append(member_index)
-			member_health[member_index] = 0
-		parent["member_health"] = member_health
-		var death_policy := _bookkeep_battalion_death(
-			parent_id, parent, "NORMAL", defeated_members
-		)
-		_emit_event("battalion.defeated", int(banner.get("id", 0)), parent_id, {
-			"object_id": String(parent.get("object_id", "")),
-			"team": int(parent.get("team", -1)),
-			"category": String(parent.get("category", "")),
-			"reason": "banner-carrier-destroy-horde-on-death",
-		})
-		if bool(death_policy.get("destroy_object", false)):
-			entities.erase(parent_id)
-		return
-	var banner_object_id := String(banner.get("object_id", parent.get("banner_carrier_object_id", "")))
-	var rule: Dictionary = _unit_banner_carriers.get(String(parent.get("unit_type", "")), {}) as Dictionary
-	if rule.is_empty():
-		rule = _unit_banner_carriers.get(String(parent.get("object_id", "")), {}) as Dictionary
-	var respawn_ticks := int(rule.get("respawn_ticks", -1))
-	var typed_update:=banner.get("banner_carrier_update",{}) as Dictionary
-	if typed_update.is_empty():
-		_attach_module_contracts(banner);typed_update=banner.get("banner_carrier_update",{}) as Dictionary
-	if bool(typed_update.get("has_respawn_timer",false)):respawn_ticks=maxi(int(typed_update.get("died_respawn_ticks",0)),int(typed_update.get("melee_banner_respawn_ticks",0)))
-	if _banner_respawn_ticks_by_object.has(banner_object_id):
-		respawn_ticks = int(_banner_respawn_ticks_by_object[banner_object_id])
-	# Fall back through retail source name on the rule.
-	if respawn_ticks < 0 and not rule.is_empty():
-		var source_name := String(rule.get("source_banner_object_id", ""))
-		if source_name != "" and _banner_respawn_ticks_by_object.has(source_name):
-			respawn_ticks = int(_banner_respawn_ticks_by_object[source_name])
-		var rule_oid := String(rule.get("object_id", ""))
-		if respawn_ticks < 0 and rule_oid != "" and _banner_respawn_ticks_by_object.has(rule_oid):
-			respawn_ticks = int(_banner_respawn_ticks_by_object[rule_oid])
-	if respawn_ticks >= 0:
-		parent["banner_respawn_ticks_remaining"] = respawn_ticks
-		parent["banner_respawn_armed_tick"] = tick_index
-		_emit_event("battalion.banner_respawn_armed", parent_id, int(banner.get("id", 0)), {
-			"respawn_ticks": respawn_ticks,
-			"banner_object_id": banner_object_id,
-		})
-	else:
-		parent["banner_respawn_ticks_remaining"] = -1
-		parent.erase("banner_respawn_armed_tick")
+	_field_effects_subsystem()._on_banner_carrier_defeated(banner)
 
-
-func _step_banner_replenishment(banner:Dictionary)->void:
-	var update:=banner.get("banner_carrier_update",{}) as Dictionary
-	if update.is_empty():return
-	if tick_index<int(update.get("next_replenish_tick",0)):return
-	update["next_replenish_tick"]=tick_index+maxi(1,int(update.get("idle_spawn_ticks",1)));banner["banner_carrier_update"]=update
-	var parent_id:=int(banner.get("banner_parent_entity_id",0));var required:=String(update.get("upgrade_required",""))
-	if required!="" and (parent_id==0 or not entities.has(parent_id) or not _structure_has_completed_upgrade(entities[parent_id] as Dictionary,required)):return
-	var candidates:Array[int]=[]
-	if bool(update.get("replenish_nearby",false)) and parent_id!=0:candidates.append(parent_id)
-	if bool(update.get("replenish_all",false)):
-		var radius:=float(update.get("scan_range_source",0.0))*float(_rules.get("source_unit_scale",0.1));var origin:=Vector2(banner.get("position",Vector2.ZERO))
-		for id in entity_ids():
-			if id==int(banner.get("id",0)) or candidates.has(id):continue
-			if int((entities[id] as Dictionary).get("team",-1))!=int(banner.get("team",-1)):continue
-			if radius<=0.0 or origin.distance_to(Vector2((entities[id] as Dictionary).get("position",Vector2.ZERO)))<=radius:candidates.append(id)
-	for id in candidates:
-		if not entities.has(id):continue
-		var target:=entities[id] as Dictionary;var members:=target.get("member_health",[]) as Array;var replenished:=-1
-		for index in members.size():
-			if int(members[index])<=0:members[index]=maxi(1,int(target.get("member_maximum_health",1)));replenished=index;break
-		if replenished<0:continue
-		target["member_health"]=members;var total:=0;for health in members:total+=int(health);target["health"]=total
-		_emit_event("battalion.banner_replenished",int(banner.get("id",0)),id,{"member_index":replenished})
-
+func _step_banner_replenishment(banner:Dictionary) -> void:
+	_field_effects_subsystem()._step_banner_replenishment(banner)
 
 func _record_hero_rank_attainment(row: Dictionary) -> void:
-	if String(row.get("category", "")) != "hero":
-		return
-	var team := int(row.get("team", -1))
-	var identity := String(row.get("unit_type", ""))
-	if team < 0 or identity == "":
-		return
-	var team_history: Dictionary = _hero_peak_ranks_by_team.get(team, {})
-	var rule: Dictionary = _unit_experience_rules.get(identity, {})
-	if rule.is_empty():
-		if not team_history.has(identity):
-			team_history[identity] = -1
-	else:
-		var previous := int(team_history.get(identity, -1))
-		team_history[identity] = maxi(previous, int(row.get("level", rule.get("initial_rank", 1))))
-	_hero_peak_ranks_by_team[team] = team_history
-
+	_experience_subsystem()._record_hero_rank_attainment(row)
 
 func hero_rank_attainment(team: int, rank: int) -> Dictionary:
-	## Returns only historical facts the simulation can vouch for. `known`
-	## counts distinct revival-stable hero identities whose authored peak met
-	## the threshold; `unknown` preserves every identity whose rank was never
-	## authored, including after death.
-	var known := 0
-	var unknown := 0
-	var team_history: Dictionary = _hero_peak_ranks_by_team.get(team, {})
-	for peak_value in team_history.values():
-		var peak := int(peak_value)
-		if peak < 0:
-			unknown += 1
-		elif peak >= rank:
-			known += 1
-	return {"known": known, "unknown": unknown}
-
+	return _experience_subsystem().hero_rank_attainment(team, rank)
 
 func debug_force_max_level(entity_ids: Array) -> int:
-	## Playtest aid: walk each entity up its own authored ExperienceLevel chain
-	## by awarding the XP the chain itself demands, so every rank's authored
-	## level effects apply exactly as they would in a real match. It never
-	## fabricates a rank the source does not author.
-	var levelled := 0
-	for id_value in entity_ids:
-		var entity_id := int(id_value)
-		if not entities.has(entity_id):
-			continue
-		var row: Dictionary = entities[entity_id]
-		if int(row.get("health", 0)) <= 0:
-			continue
-		var rule: Dictionary = _unit_experience_rules.get(String(row.get("unit_type", "")), {})
-		if rule.is_empty():
-			continue
-		var before := int(row.get("level", 1))
-		var required := 0
-		for level_value in Array(rule.get("levels", [])):
-			required = maxi(required, int((level_value as Dictionary).get("required_experience", 0)))
-		var deficit := required - int(row.get("experience_xp", 0))
-		if deficit > 0:
-			_award_experience(row, deficit)
-		if int(row.get("level", 1)) != before:
-			levelled += 1
-	return levelled
-
+	return _experience_subsystem().debug_force_max_level(entity_ids)
 
 func debug_restore_health(entity_ids: Array) -> int:
-	## Playtest aid: refill an entity and every living horde member. Dead
-	## members stay dead — resurrecting them would change horde size, which is
-	## a simulation fact rather than a convenience.
-	var healed := 0
-	for id_value in entity_ids:
-		var entity_id := int(id_value)
-		if not entities.has(entity_id):
-			continue
-		var row: Dictionary = entities[entity_id]
-		if int(row.get("health", 0)) <= 0:
-			continue
-		var member_max := int(row.get("member_maximum_health", 0))
-		var members: Array = Array(row.get("member_health", []))
-		if member_max > 0 and not members.is_empty():
-			for index in range(members.size()):
-				if int(members[index]) > 0:
-					members[index] = member_max
-			row["member_health"] = members
-			var total := 0
-			for value in members:
-				total += int(value)
-			row["health"] = total
-		else:
-			row["health"] = int(row.get("maximum_health", row.get("health", 0)))
-		healed += 1
-	return healed
-
+	return _experience_subsystem().debug_restore_health(entity_ids)
 
 func experience_rule_for_unit(unit_type: String) -> Dictionary:
-	return (_unit_experience_rules.get(unit_type, {}) as Dictionary).duplicate(true)
-
+	return _experience_subsystem().experience_rule_for_unit(unit_type)
 
 func _experience_level_row(rule: Dictionary, rank: int) -> Dictionary:
-	return _experience_subsystem().experience_level_row(rule, rank)
-
+	return _experience_subsystem()._experience_level_row(rule, rank)
 
 func experience_state(entity_id: int) -> Dictionary:
 	return _experience_subsystem().experience_state(entity_id)
 
-
 func experience_unauthored_victims() -> Array[String]:
 	return _experience_subsystem().experience_unauthored_victims()
 
-
 func _award_member_kill_experience(attacker_id: int, target: Dictionary) -> void:
-	_experience_subsystem().award_member_kill_experience(attacker_id, target)
-
+	_experience_subsystem()._award_member_kill_experience(attacker_id, target)
 
 func _cah_tally_for(unit_type: String) -> Dictionary:
-	if not _cah_award_contracts.has(unit_type):
-		return {}
-	if not _cah_award_tallies.has(unit_type):
-		_cah_award_tallies[unit_type] = (
-			(_cah_award_contracts[unit_type] as Dictionary).get("trackingStats", {})
-			as Dictionary
-		).duplicate(true)
-	return _cah_award_tallies[unit_type] as Dictionary
-
+	return _experience_subsystem()._cah_tally_for(unit_type)
 
 func _record_cah_member_kill(attacker_id: int, target: Dictionary) -> void:
-	if not entities.has(attacker_id):
-		return
-	var attacker := entities[attacker_id] as Dictionary
-	if int(attacker.get("health", 0)) <= 0:
-		return
-	if not _is_hostile(int(attacker.get("team", -1)), int(target.get("team", -1))):
-		return
-	var tally := _cah_tally_for(String(attacker.get("unit_type", "")))
-	if tally.is_empty() and not _cah_award_contracts.has(String(attacker.get("unit_type", ""))):
-		return
-	tally["ENEMIES_KILLED"] = int(tally.get("ENEMIES_KILLED", 0)) + 1
-	# Retail spells this identifier HEROS_KILLED in awardsystem.ini.
-	if String(target.get("category", "")) == "hero":
-		tally["HEROS_KILLED"] = int(tally.get("HEROS_KILLED", 0)) + 1
-	if _cah_openplay_multiplayer() and String(target.get("unit_type", "")).begins_with("CreateAHero__"):
-		tally["MP_CREATE_A_HEROES_KILLED"] = int(tally.get("MP_CREATE_A_HEROES_KILLED", 0)) + 1
-
+	_experience_subsystem()._record_cah_member_kill(attacker_id, target)
 
 func _record_cah_structure_kill(attacker_id: int, target: Dictionary) -> void:
-	if not entities.has(attacker_id):
-		return
-	var attacker := entities[attacker_id] as Dictionary
-	if not _is_hostile(int(attacker.get("team", -1)), int(target.get("team", -1))):
-		return
-	var unit_type := String(attacker.get("unit_type", ""))
-	var tally := _cah_tally_for(unit_type)
-	if tally.is_empty() and not _cah_award_contracts.has(unit_type):
-		return
-	# The only structure-derived ThingStat retail defines is keeps destroyed;
-	# v1 maps the authoritative fortress death path and names all other building
-	# categories as gaps instead of inventing a BUILDINGS_DESTROYED counter.
-	if _cah_openplay_multiplayer() and String(target.get("structure_kind", "")) == "fortress":
-		tally["MP_KEEPS_DESTROYED"] = int(tally.get("MP_KEEPS_DESTROYED", 0)) + 1
-
+	_experience_subsystem()._record_cah_structure_kill(attacker_id, target)
 
 func _cah_openplay_multiplayer() -> bool:
 	## Awardsystem.ini separates skirmish and open-play multiplayer counters.
@@ -8216,3 +6908,97 @@ func transfer_entities_to_team(entity_ids: Array, new_team: int) -> Dictionary:
 		if not bool(result.get("ok", false)):
 			return result
 	return {"ok": true, "reason": ""}
+
+static func _structure_contracts_with_passive_area_resolution(
+	document: Dictionary, contracts: Array
+) -> Array:
+	## Opaque moduleContracts preserve EffectRadius's authored define token;
+	## playable_structure_compiler also emits the resolved numeric radius in its
+	## dedicated passiveAreaEffect contract. Merge those two receipts before the
+	## runtime indexes the module, without changing the underlying document.
+	var output := contracts.duplicate(true)
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	var gameplay: Dictionary = registration.get("gameplay", {}) as Dictionary
+	var passive_value: Variant = gameplay.get("passiveAreaEffect")
+	if typeof(passive_value) != TYPE_DICTIONARY:
+		return output
+	var passive := passive_value as Dictionary
+	var index := -1
+	for contract_index in output.size():
+		if String((output[contract_index] as Dictionary).get("module", "")) == "PassiveAreaEffectBehavior":
+			index = contract_index
+			break
+	if index < 0:
+		output.append({
+			"module": "PassiveAreaEffectBehavior",
+			"fields": {},
+			"runtime_status": "deferred",
+			"source_ini": String(passive.get("sourceIni", "")),
+			"line": int(passive.get("line", 0)),
+			"tag": "",
+			"executable": false,
+		})
+		index = output.size() - 1
+	var contract := (output[index] as Dictionary).duplicate(true)
+	var fields := (contract.get("fields", {}) as Dictionary).duplicate(true)
+	var radius := float(passive.get("radius", 0.0))
+	if radius > 0.0:
+		fields["EffectRadius"] = {
+			"authored": String(passive.get("radiusAuthored", radius)),
+			"value": radius,
+		}
+	if (
+		not fields.has("HealPercentPerSecond")
+		and String(passive.get("healPercentPerSecondAuthored", "")) != ""
+	):
+		var heal_text := String(passive.get("healPercentPerSecondAuthored", ""))
+		# The dedicated structure contract stores the numeric percent token
+		# without its trailing sign in current packs ("2" for authored "2%").
+		if heal_text.is_valid_float():
+			heal_text += "%"
+		fields["HealPercentPerSecond"] = {
+			"authored": heal_text,
+		}
+	if String(passive.get("upgradeRequired", "")) != "":
+		fields["UpgradeRequired"] = {"authored": String(passive.get("upgradeRequired", ""))}
+	if typeof(passive.get("modifier")) == TYPE_DICTIONARY:
+		fields["ResolvedModifier"] = (passive.get("modifier") as Dictionary).duplicate(true)
+	contract["fields"] = fields
+	output[index] = contract
+	return output
+
+
+static func _passive_area_effect_field(fields: Dictionary, key: String) -> String:
+	var raw: Variant = fields.get(key, fields.get(key.to_lower(), null))
+	if typeof(raw) == TYPE_DICTIONARY:
+		var authored := String((raw as Dictionary).get("authored", ""))
+		if authored != "":
+			return authored.strip_edges()
+		return String((raw as Dictionary).get("value", "")).strip_edges()
+	if typeof(raw) in [TYPE_STRING, TYPE_STRING_NAME, TYPE_INT, TYPE_FLOAT]:
+		return String(raw).strip_edges()
+	return ""
+
+
+static func _passive_area_effect_number(fields: Dictionary, key: String) -> float:
+	var raw: Variant = fields.get(key, fields.get(key.to_lower(), null))
+	if typeof(raw) == TYPE_DICTIONARY:
+		var row := raw as Dictionary
+		if typeof(row.get("value")) in [TYPE_INT, TYPE_FLOAT]:
+			return float(row.get("value"))
+	var text := _passive_area_effect_field(fields, key)
+	return float(text) if text.is_valid_float() else 0.0
+
+
+static func _passive_area_effect_percent(text: String) -> float:
+	var value := text.strip_edges()
+	if not value.ends_with("%"):
+		return 0.0
+	value = value.trim_suffix("%").strip_edges()
+	return float(value) / 100.0 if value.is_valid_float() else 0.0
+
+
+static func _passive_area_effect_yes(fields: Dictionary, key: String) -> bool:
+	return _passive_area_effect_field(fields, key).to_lower() in ["yes", "true", "1"]
+
+

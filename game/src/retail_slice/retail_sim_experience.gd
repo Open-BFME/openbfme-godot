@@ -1,7 +1,7 @@
 extends RefCounted
 ## Experience/veterancy subsystem extracted from retail_slice_sim.gd (Q81
 ## strangler-fig extraction #3). Pure code move: XP state lives on entity
-## rows and _unit_experience_rules stays on the sim; this class is stateless
+## rows and sim._unit_experience_rules stays on the sim; this class is stateless
 ## logic through the sim back-reference, and the sim keeps one-line
 ## delegates under the original names.
 ##
@@ -241,3 +241,155 @@ func apply_ability_experience_grant(hero_row: Dictionary, effect: Dictionary, po
 	if granted == 0:
 		return {"ok": false, "reason": "no-eligible-allies-in-radius"}
 	return {"ok": true, "reason": "", "effect": "experience-grant", "affected": granted}
+
+func _record_hero_rank_attainment(row: Dictionary) -> void:
+	if String(row.get("category", "")) != "hero":
+		return
+	var team := int(row.get("team", -1))
+	var identity := String(row.get("unit_type", ""))
+	if team < 0 or identity == "":
+		return
+	var team_history: Dictionary = sim._hero_peak_ranks_by_team.get(team, {})
+	var rule: Dictionary = sim._unit_experience_rules.get(identity, {})
+	if rule.is_empty():
+		if not team_history.has(identity):
+			team_history[identity] = -1
+	else:
+		var previous := int(team_history.get(identity, -1))
+		team_history[identity] = maxi(previous, int(row.get("level", rule.get("initial_rank", 1))))
+	sim._hero_peak_ranks_by_team[team] = team_history
+
+
+func hero_rank_attainment(team: int, rank: int) -> Dictionary:
+	## Returns only historical facts the simulation can vouch for. `known`
+	## counts distinct revival-stable hero identities whose authored peak met
+	## the threshold; `unknown` preserves every identity whose rank was never
+	## authored, including after death.
+	var known := 0
+	var unknown := 0
+	var team_history: Dictionary = sim._hero_peak_ranks_by_team.get(team, {})
+	for peak_value in team_history.values():
+		var peak := int(peak_value)
+		if peak < 0:
+			unknown += 1
+		elif peak >= rank:
+			known += 1
+	return {"known": known, "unknown": unknown}
+
+
+func debug_force_max_level(entity_ids: Array) -> int:
+	## Playtest aid: walk each entity up its own authored ExperienceLevel chain
+	## by awarding the XP the chain itself demands, so every rank's authored
+	## level effects apply exactly as they would in a real match. It never
+	## fabricates a rank the source does not author.
+	var levelled := 0
+	for id_value in entity_ids:
+		var entity_id := int(id_value)
+		if not sim.entities.has(entity_id):
+			continue
+		var row: Dictionary = sim.entities[entity_id]
+		if int(row.get("health", 0)) <= 0:
+			continue
+		var rule: Dictionary = sim._unit_experience_rules.get(String(row.get("unit_type", "")), {})
+		if rule.is_empty():
+			continue
+		var before := int(row.get("level", 1))
+		var required := 0
+		for level_value in Array(rule.get("levels", [])):
+			required = maxi(required, int((level_value as Dictionary).get("required_experience", 0)))
+		var deficit := required - int(row.get("experience_xp", 0))
+		if deficit > 0:
+			sim._award_experience(row, deficit)
+		if int(row.get("level", 1)) != before:
+			levelled += 1
+	return levelled
+
+
+func debug_restore_health(entity_ids: Array) -> int:
+	## Playtest aid: refill an entity and every living horde member. Dead
+	## members stay dead — resurrecting them would change horde size, which is
+	## a simulation fact rather than a convenience.
+	var healed := 0
+	for id_value in entity_ids:
+		var entity_id := int(id_value)
+		if not sim.entities.has(entity_id):
+			continue
+		var row: Dictionary = sim.entities[entity_id]
+		if int(row.get("health", 0)) <= 0:
+			continue
+		var member_max := int(row.get("member_maximum_health", 0))
+		var members: Array = Array(row.get("member_health", []))
+		if member_max > 0 and not members.is_empty():
+			for index in range(members.size()):
+				if int(members[index]) > 0:
+					members[index] = member_max
+			row["member_health"] = members
+			var total := 0
+			for value in members:
+				total += int(value)
+			row["health"] = total
+		else:
+			row["health"] = int(row.get("maximum_health", row.get("health", 0)))
+		healed += 1
+	return healed
+
+
+func experience_rule_for_unit(unit_type: String) -> Dictionary:
+	return (sim._unit_experience_rules.get(unit_type, {}) as Dictionary).duplicate(true)
+
+
+func _experience_level_row(rule: Dictionary, rank: int) -> Dictionary:
+	return sim._experience_subsystem().experience_level_row(rule, rank)
+
+
+func _award_member_kill_experience(attacker_id: int, target: Dictionary) -> void:
+	sim._experience_subsystem().award_member_kill_experience(attacker_id, target)
+
+
+func _cah_tally_for(unit_type: String) -> Dictionary:
+	if not sim._cah_award_contracts.has(unit_type):
+		return {}
+	if not sim._cah_award_tallies.has(unit_type):
+		sim._cah_award_tallies[unit_type] = (
+			(sim._cah_award_contracts[unit_type] as Dictionary).get("trackingStats", {})
+			as Dictionary
+		).duplicate(true)
+	return sim._cah_award_tallies[unit_type] as Dictionary
+
+
+func _record_cah_member_kill(attacker_id: int, target: Dictionary) -> void:
+	if not sim.entities.has(attacker_id):
+		return
+	var attacker := sim.entities[attacker_id] as Dictionary
+	if int(attacker.get("health", 0)) <= 0:
+		return
+	if not sim._is_hostile(int(attacker.get("team", -1)), int(target.get("team", -1))):
+		return
+	var tally := _cah_tally_for(String(attacker.get("unit_type", "")))
+	if tally.is_empty() and not sim._cah_award_contracts.has(String(attacker.get("unit_type", ""))):
+		return
+	tally["ENEMIES_KILLED"] = int(tally.get("ENEMIES_KILLED", 0)) + 1
+	# Retail spells this identifier HEROS_KILLED in awardsystem.ini.
+	if String(target.get("category", "")) == "hero":
+		tally["HEROS_KILLED"] = int(tally.get("HEROS_KILLED", 0)) + 1
+	if sim._cah_openplay_multiplayer() and String(target.get("unit_type", "")).begins_with("CreateAHero__"):
+		tally["MP_CREATE_A_HEROES_KILLED"] = int(tally.get("MP_CREATE_A_HEROES_KILLED", 0)) + 1
+
+
+func _record_cah_structure_kill(attacker_id: int, target: Dictionary) -> void:
+	if not sim.entities.has(attacker_id):
+		return
+	var attacker := sim.entities[attacker_id] as Dictionary
+	if not sim._is_hostile(int(attacker.get("team", -1)), int(target.get("team", -1))):
+		return
+	var unit_type := String(attacker.get("unit_type", ""))
+	var tally := _cah_tally_for(unit_type)
+	if tally.is_empty() and not sim._cah_award_contracts.has(unit_type):
+		return
+	# The only structure-derived ThingStat retail defines is keeps destroyed;
+	# v1 maps the authoritative fortress death path and names all other building
+	# categories as gaps instead of inventing a BUILDINGS_DESTROYED counter.
+	if sim._cah_openplay_multiplayer() and String(target.get("structure_kind", "")) == "fortress":
+		tally["MP_KEEPS_DESTROYED"] = int(tally.get("MP_KEEPS_DESTROYED", 0)) + 1
+
+

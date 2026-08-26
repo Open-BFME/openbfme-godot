@@ -505,3 +505,360 @@ func _discounted_battalion_upgrade_cost(team: int, command: Dictionary) -> int:
 			if covered:
 				cost = roundi(cost * (100.0 + float(effect.get("percent", 0.0))) / 100.0)
 	return maxi(0, cost)
+
+func _register_forge_upgrade_contracts_for_team(team: int) -> void:
+	if not sim.structure_build_rules_for_team(team).has("forge"):
+		return
+	if sim.compiled_research_kinds_for_team(team).has("forge"):
+		# The compiled research surface (the forge's authored PLAYER technology
+		# sales) replaces the recorded provisional contracts below; research
+		# completion then grants the technology and the per-battalion purchase
+		# path equips it — the retail two-tier flow, not the conflation.
+		return
+	var contracts = sim.structure_upgrade_contracts_for_team(team)
+	for upgrade_id_value in sim.FORGE_UPGRADE_CONTRACTS.keys():
+		var upgrade_id := String(upgrade_id_value)
+		if contracts.has(upgrade_id):
+			continue
+		var source: Dictionary = sim.FORGE_UPGRADE_CONTRACTS[upgrade_id]
+		contracts[upgrade_id] = {
+			"structure_kind": String(source["structure_kind"]),
+			"cost": int(source["cost"]),
+			"duration_ticks": maxi(1, roundi(float(source["duration_seconds"]) / sim.TICK_SECONDS)),
+			"level_cap": int(source["level_cap"]),
+			"levels_to_gain": int(source["levels_to_gain"]),
+			"cancelable": bool(source["cancelable"]),
+			"to_command_set": "",
+			"team_tech": true,
+			# Recorded provisional (stale pack without the compiled research
+			# surface): completion still auto-equips matching hordes.
+			"legacy_provisional": true,
+		}
+
+
+func _equipment_ids_for_forge_upgrade(upgrade_id: String) -> Array:
+	## The OBJECT upgrade ids a completed research equips per horde (defaults
+	## to the research id itself; fire arrows map to both authored buttons).
+	return Array(sim.FORGE_UPGRADE_EQUIPMENT.get(upgrade_id, [upgrade_id]))
+
+
+func _apply_equipment_to_horde(row: Dictionary, equipment: Array) -> void:
+	## Record the compiled armor/weapon upgrade effects a horde carries. Retail
+	## applies equipment per battalion; the slice records it per horde row.
+	var object_id := String(row.get("object_id", ""))
+	var armor_upgrades: Dictionary = (sim._unit_armor.get(object_id, {}) as Dictionary).get("upgrades", {})
+	var weapon_upgrades: Dictionary = sim._unit_weapon_upgrades.get(object_id, {})
+	var applied: Dictionary = row.get("applied_upgrades", {})
+	var changed := false
+	for upgrade_id_value in equipment:
+		var upgrade_id := String(upgrade_id_value)
+		if applied.has(upgrade_id):
+			continue
+		if armor_upgrades.has(upgrade_id):
+			applied[upgrade_id] = sim.tick_index
+			# Retail ArmorUpgrade swaps the ArmorSet; the last applied swap wins.
+			row["active_armor_upgrade"] = upgrade_id
+			changed = true
+		elif weapon_upgrades.has(upgrade_id):
+			applied[upgrade_id] = sim.tick_index
+			changed = true
+	if changed:
+		row["applied_upgrades"] = applied
+		sim._emit_event("battalion.upgrade_applied", 0, int(row.get("id", 0)), {"team": int(row.get("team", -1)), "upgrades": applied.keys()})
+
+
+func _apply_structure_create_grants(
+	building: Dictionary,
+	apply_create_when_complete: bool,
+	apply_build_complete: bool
+) -> void:
+	## GrantUpgradeCreate is idempotent in retail's upgrade sinks. Keep the
+	## converted lifecycle edge explicit: an UNDER_CONSTRUCTION exemption may
+	## grant on creation only for an already-complete object, while the BFME
+	## foundation form grants when construction completes.
+	var team := int(building.get("team", -1))
+	var kind := String(building.get("structure_kind", ""))
+	var grants: Array = sim.structure_create_grants_for_team(team).get(kind, [])
+	for grant_value in grants:
+		var grant := grant_value as Dictionary
+		if (
+			apply_create_when_complete
+			and bool(grant.get("onCreateWhenComplete", false))
+			and float(building.get("construction_progress", 0.0)) >= 1.0
+		):
+			_apply_structure_granted_upgrade(building, grant)
+		if apply_build_complete and bool(grant.get("onBuildComplete", false)):
+			_apply_structure_granted_upgrade(building, grant)
+
+
+
+
+func _document_is_wall_upgrade_slot(document: Dictionary) -> bool:
+	## A map-placed wall piece retail authors weaponless: it offers upgrade
+	## commands (Upgrade_TrebuchetTurret / OpenGarrison / PosternGate) on its
+	## trained command sets, or grants Upgrade_TrebuchetTurret on creation.
+	var gameplay := ((document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)
+	for grant_value in gameplay.get("createGrants", []) as Array:
+		if String(JSON.stringify(grant_value)).to_lower().contains("upgrade_trebuchetturret"):
+			return true
+	for set_value in gameplay.get("trainedCommandSets", []) as Array:
+		for slot_value in (set_value as Dictionary).get("slots", []) as Array:
+			var command_id := String((slot_value as Dictionary).get("commandId", "")).to_lower()
+			if command_id.contains("trebuchetturret") or command_id.contains("opengarrison") or command_id.contains("posterngate"):
+				return true
+	return false
+
+
+func _battalion_gate_unsatisfied(team: int, command: Dictionary) -> String:
+	## "" when the purchase button's NeededUpgrade technology row is owned.
+	var needed: Array = command.get("needed_upgrade_ids", [])
+	if needed.is_empty():
+		return ""
+	var owned: Dictionary = sim.team_upgrades.get(team, {}) as Dictionary
+	var satisfied := 0
+	var first_missing := ""
+	for needed_value in needed:
+		var needed_id := String(needed_value)
+		if owned.has(needed_id):
+			satisfied += 1
+		elif first_missing == "":
+			first_missing = needed_id
+	if bool(command.get("needed_upgrade_any", false)):
+		return "" if satisfied > 0 else (first_missing if first_missing != "" else String(needed[0]))
+	return "" if satisfied == needed.size() else first_missing
+
+
+func _team_has_required_object(team: int, requirement: String) -> bool:
+	## Authored BuildingRequired/UpgradeMustBePresent filters ("ANY +Object"):
+	## the team must field a living structure of any named object kind.
+	var tokens := requirement.split(" ", false)
+	var names: Array[String] = []
+	for token in tokens:
+		if token == "ANY" or token == "NONE":
+			continue
+		names.append(String(token).trim_prefix("+"))
+	if names.is_empty():
+		return requirement.strip_edges() == ""
+	var registry: Dictionary = sim._rules.get("producer_kind_registry", {}) as Dictionary
+	if registry.is_empty():
+		registry = (sim._rules.get("faction_manifest", {}) as Dictionary).get("producer_kind_registry", {}) as Dictionary
+	for name in names:
+		var kind := ""
+		for object_id_value in registry.keys():
+			if String(object_id_value).to_lower() == name.to_lower():
+				kind = String(registry[object_id_value])
+				break
+		if kind == "":
+			continue
+		for structure_id in sim.structure_ids(team):
+			var building: Dictionary = sim.structures[structure_id]
+			if String(building.get("structure_kind", "")) == kind and int(building.get("health", 0)) > 0:
+				return true
+	return false
+
+
+func battalion_upgrade_commands(entity_id: int) -> Array[Dictionary]:
+	## The battalion's authored purchase surface with live gate/applied/cost
+	## state; the same command-surface data the building research rows ride.
+	var result: Array[Dictionary] = []
+	if not sim.entities.has(entity_id):
+		return result
+	var row: Dictionary = sim.entities[entity_id]
+	var team := int(row.get("team", -1))
+	var applied: Dictionary = row.get("applied_upgrades", {})
+	var queued: Array = row.get("upgrade_queue", [])
+	for command_value in _sorted_unit_upgrade_commands(String(row.get("unit_type", ""))):
+		var command := command_value as Dictionary
+		var upgrade_id := String(command.get("upgrade_id", ""))
+		var missing := _battalion_gate_unsatisfied(team, command)
+		result.append({
+			"upgrade_id": upgrade_id,
+			"command_id": String(command.get("command_id", "")),
+			"cost": _discounted_battalion_upgrade_cost(team, command),
+			"base_cost": int(command.get("cost", 0)),
+			"duration_ticks": int(command.get("duration_ticks", 1)),
+			"slot": int(command.get("slot", 0)),
+			"label_id": String(command.get("label_id", "")),
+			"tooltip_id": String(command.get("tooltip_id", "")),
+			"image_id": String(command.get("image_id", "")),
+			"lacks_prerequisite_label_id": String(command.get("lacks_prerequisite_label_id", "")),
+			"needed_upgrade_ids": Array(command.get("needed_upgrade_ids", [])).duplicate(),
+			"cancelable": bool(command.get("cancelable", false)),
+			"multi_select": bool(command.get("multi_select", false)),
+			"research_owned": missing == "",
+			"required_upgrade": missing,
+			"applied": applied.has(upgrade_id),
+			"queued": not queued.is_empty(),
+		})
+	return result
+
+
+func _apply_structure_death_refund(building: Dictionary) -> void:
+	## Compatibility entry point retained for focused runners and old callers.
+	## RefundDie is an Object DieMux, not a structure-only behavior.
+	if not bool(building.get("structure_module_contracts_attached", false)):
+		sim._attach_structure_module_contracts(building)
+	_apply_refund_die_on_death(building)
+
+
+func _apply_refund_die_on_death(owner: Dictionary) -> void:
+	## Retail game.dat RefundDie::onDie: the death edge is delivered once by the
+	## DieMux, then UNDER_CONSTRUCTION/SOLD, current owner, prerequisites and the
+	## object's cached build cost are evaluated in that order.  A failed check is
+	## not a deferred opportunity: there is no second death callback later.
+	var typed_policies := owner.get("refund_die", []) as Array
+	if not typed_policies.is_empty():
+		if bool(owner.get("refund_die_death_dispatched", false)):
+			return
+		owner["refund_die_death_dispatched"] = true
+		var statuses := owner.get("object_status", {}) as Dictionary
+		var death_blocker := ""
+		if (
+			bool(statuses.get("UNDER_CONSTRUCTION", false))
+			or (
+				owner.has("construction_progress")
+				and float(owner.get("construction_progress", 1.0)) < 1.0
+			)
+		):
+			death_blocker = "UNDER_CONSTRUCTION"
+		elif bool(statuses.get("SOLD", false)):
+			death_blocker = "SOLD"
+		if death_blocker != "":
+			for policy_index in typed_policies.size():
+				var blocked_policy := typed_policies[policy_index] as Dictionary
+				blocked_policy["death_blocker"] = death_blocker
+				typed_policies[policy_index] = blocked_policy
+			owner["refund_die"] = typed_policies
+			return
+		var team := int(owner.get("team", -1))
+		if not sim.team_resources.has(team):
+			return
+		var build_cost_value: Variant = owner.get("cached_build_cost")
+		for policy_index in typed_policies.size():
+			var policy := typed_policies[policy_index] as Dictionary
+			var upgrade_required := String(policy.get("upgrade_required", ""))
+			if upgrade_required != "" and not (sim.team_upgrades.get(team, {}) as Dictionary).has(upgrade_required): continue
+			var building_filter := policy.get("building_required", []) as Array
+			if not building_filter.is_empty() and not _team_has_required_building_filter(team, building_filter): continue
+			if typeof(build_cost_value) not in [TYPE_INT, TYPE_FLOAT] or float(build_cost_value) < 0.0:
+				var unsupported := policy.get("unsupported_semantics", []) as Array
+				if not unsupported.has("structure-build-cost-unresolved"): unsupported.append("structure-build-cost-unresolved")
+				policy["unsupported_semantics"] = unsupported
+				typed_policies[policy_index] = policy
+				continue
+			var amount := ceili(float(build_cost_value) * float(policy.get("fraction", 0.0)))
+			policy["refund_amount"] = amount
+			typed_policies[policy_index] = policy
+			if amount <= 0: continue
+			sim.team_resources[team] = sim.resources_for_team(team) + amount
+			sim._emit_event("economy.refund", int(owner.get("id", 0)), 0, {"team": team, "amount": amount, "upgrade_id": upgrade_required, "building_required": building_filter, "module": "RefundDie"})
+		owner["refund_die"] = typed_policies
+		return
+	var team := int(owner.get("team", -1))
+	var kind := String(owner.get("structure_kind", ""))
+	# Compatibility only for stale structure documents predating typed
+	# moduleContracts. A typed row never falls through and cannot double-refund.
+	var bundle: Dictionary = sim.structure_upgrade_effects_for_team(team).get(kind, {})
+	var owned: Dictionary = sim.team_upgrades.get(team, {}) as Dictionary
+	for effect_value in Array(bundle.get("effects", [])):
+		var effect := effect_value as Dictionary
+		if String(effect.get("kind", "")) != "refund-on-death":
+			continue
+		var upgrade_id := String(effect.get("upgrade_id", ""))
+		if not owned.has(upgrade_id):
+			continue
+		if not _team_has_required_object(team, String(effect.get("building_required", ""))):
+			continue
+		var build_rule: Dictionary = sim._structure_build_rules.get(kind, {})
+		var refund := roundi(float(build_rule.get("cost", 0)) * float(effect.get("refund_percent", 0.0)) / 100.0)
+		if refund <= 0:
+			continue
+		sim.team_resources[team] = sim.resources_for_team(team) + refund
+		sim._emit_event("economy.refund", int(owner.get("id", 0)), 0, {"team": team, "amount": refund, "upgrade_id": upgrade_id})
+
+
+func _team_has_required_building_filter(team: int, filter: Array) -> bool:
+	## BuildingRequired is a SAGE object filter. Preserve every token and test
+	## it against living authored structure identities, not display names.
+	if filter.is_empty(): return true
+	var registry: Dictionary = sim._rules.get("producer_kind_registry", {}) as Dictionary
+	if registry.is_empty(): registry = (sim._rules.get("faction_manifest", {}) as Dictionary).get("producer_kind_registry", {}) as Dictionary
+	for structure_id in sim.structure_ids(team):
+		var candidate = sim.structures[structure_id] as Dictionary
+		if int(candidate.get("health", 0)) <= 0: continue
+		var candidate_status := candidate.get("object_status", {}) as Dictionary
+		if (
+			bool(candidate_status.get("EFFECTIVELY_DEAD", false))
+			or bool(candidate_status.get("DESTROYED", false))
+		):
+			continue
+		var traits := {"STRUCTURE": true}
+		for value in [candidate.get("source_object_id", ""), candidate.get("object_id", ""), candidate.get("structure_kind", ""), candidate.get("category", "")]:
+			if String(value) != "": traits[String(value).to_upper()] = true
+		var inert := false
+		for kind_value in candidate.get("kind_of", []) as Array:
+			var kind_token := String(kind_value).to_upper()
+			traits[kind_token] = true
+			if kind_token == "INERT": inert = true
+		if inert: continue
+		for object_id_value in registry.keys():
+			if String(registry[object_id_value]).to_lower() == String(candidate.get("structure_kind", "")).to_lower(): traits[String(object_id_value).to_upper()] = true
+		var positive: Array[String] = []
+		var excluded := false
+		for token_value in filter:
+			var token := String(token_value).to_upper()
+			if token.begins_with("+"): positive.append(token.substr(1))
+			elif token.begins_with("-") and traits.has(token.substr(1)): excluded = true
+		if excluded: continue
+		if not positive.is_empty():
+			for required_trait in positive:
+				if traits.has(required_trait): return true
+		elif filter.has("ANY") or filter.has("ALL"):
+			return true
+	return false
+
+
+func _income_with_upgrade_bonus(team: int, building: Dictionary, base_income: int) -> int:
+	return sim._economy_subsystem().income_with_upgrade_bonus(team, building, base_income)
+
+
+func _queued_command_points_for_team(team: int) -> int:
+	var total := 0
+	for structure_id in sim.structure_ids(team):
+		for item_value in Array((sim.structures[structure_id] as Dictionary).get("queue", [])):
+			if typeof(item_value) == TYPE_DICTIONARY:
+				total += int((item_value as Dictionary).get("command_points", 0))
+	return total
+
+
+## --- Spellbook powers ---
+## Tree, costs, OR prerequisite groups, authored palantir purchase slots,
+## reload cooldowns, and cast bindings all derive from the selected pack's
+## openbfme.spellbook-runtime document (menspellbook.json). A missing or
+## malformed document fails closed: the tree stays empty and every purchase or
+## cast rejects with "spellbook-unavailable". Powers whose converted effect
+## leaves do not fully support a faithful runtime effect stay locked with the
+## reason recorded on the power row — no invented effects.
+##
+## PROVISIONAL (recorded, not hidden): the retail power-point earn rate is not
+## resolved from source data — the spellbook document carries no economy rule.
+## The kill-based rate lives in rules key "power_point_kills" (default below)
+## so the data lane can replace it without code edits; do not treat it as
+## retail-final.
+## NONPRESSABLE passive/one-shot activations and their live Scavenger scale.
+## Both are authoritative match state and therefore snapshot/hash state below.
+## Picks made since the last ACCEPT: RESET refunds exactly these ("unspent
+## picks" — casting a staged pick spends it and it can no longer be refunded).
+## Per-team spellbook TREE overrides for cross-faction matches (two different
+## factions in one sim). Empty by default: every team then resolves against the
+## single global tree above, so the default same-faction match is byte-identical
+## and the signature does not move. A team present here plays its OWN faction's
+## powers/costs/prereqs/reloads — team ownership overlays (points, purchased,
+## sciences, cooldowns, staged) stay in the per-team maps already declared.
+## team:int -> {ready, powers, order, sciences, science_to_power, intrinsic, document}
+## Single-player pause seam for the spellbook orb: while the palantir is open
+## the sim clock halts (ticks, production, AI — everything in tick()). The
+## slice drives this through set_spellbook_orb_open; the escape-menu pause in
+## the slice composes independently (either one halts the clock).
+
+
