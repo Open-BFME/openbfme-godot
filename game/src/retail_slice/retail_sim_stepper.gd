@@ -366,3 +366,196 @@ func set_structure_rally(team: int, structure_id: int, position: Vector2) -> Dic
 	return {"ok": true}
 
 
+
+func _step_battalion_separation() -> void:
+	var ids = sim.entity_ids()
+	for index in range(ids.size()):
+		var a: Dictionary = sim.entities[ids[index]]
+		# Only settled battalions get nudged apart: pushing marching columns
+		# around mid-route disrupts ford crossings and formation moves.
+		if int(a.get("health", 0)) <= 0 or String(a.get("state", "")) != "idle" or bool(a.get("flying", false)) or bool(a.get("presentation_hidden", false)):
+			continue
+		# Only battalions overlapping `a` can be pushed by it, so the old
+		# all-pairs inner sweep is a neighbourhood query over ids above `a`.
+		#
+		# `a` also moves as it separates. The gather covers everything within
+		# sim.BATTALION_SEPARATION_QUERY_SLACK of where `a` started, so while its
+		# drift stays inside that slack the candidate set is a superset of what
+		# the all-pairs loop would have tested. If a pile-up ever pushes `a`
+		# further than that, the sweep falls back to the full id list for the
+		# rest of this battalion rather than silently skipping a partner.
+		# Partners are consumed in ascending id order from either list, so the
+		# fallback resumes by id and every pair is still visited exactly once.
+		var gather_origin := Vector2(a["position"])
+		var neighbours = sim._spatial_gather_sorted(
+			gather_origin, sim.BATTALION_SEPARATION_RADIUS + sim.BATTALION_SEPARATION_QUERY_SLACK
+		)
+		var widened := false
+		var previous_id: int = ids[index]
+		var cursor := 0
+		while true:
+			# Validate the candidate list before it is used to pick the next
+			# partner, so a drifted `a` never selects from a set that no longer
+			# covers its neighbourhood.
+			if not widened \
+					and gather_origin.distance_to(Vector2(a["position"])) > sim.BATTALION_SEPARATION_QUERY_SLACK:
+				widened = true
+				neighbours = ids
+				cursor = 0
+			while cursor < neighbours.size() and neighbours[cursor] <= previous_id:
+				cursor += 1
+			if cursor >= neighbours.size():
+				break
+			var other_id: int = neighbours[cursor]
+			previous_id = other_id
+			if not sim.entities.has(other_id):
+				continue
+			var b: Dictionary = sim.entities[other_id]
+			if int(b.get("health", 0)) <= 0 or String(b.get("state", "")) != "idle" or bool(b.get("flying", false)) or bool(b.get("presentation_hidden", false)):
+				continue
+			var a_position := Vector2(a["position"])
+			var b_position := Vector2(b["position"])
+			var offset := b_position - a_position
+			var distance := offset.length()
+			if distance >= sim.BATTALION_SEPARATION_RADIUS or distance <= 0.001:
+				continue
+			# Pairs actively fighting each other stay engaged.
+			if int(a.get("target_id", 0)) == int(b.get("id", 0)) or int(b.get("target_id", 0)) == int(a.get("id", 0)):
+				continue
+			var push = offset / distance * minf(sim.BATTALION_SEPARATION_PUSH, (sim.BATTALION_SEPARATION_RADIUS - distance) * 0.5)
+			# Only separate onto ground units can actually stand on — pushing a
+			# battalion into water/cliff cells strands it (the ford chokepoints
+			# are exactly where pile-ups happen).
+			var a_target = a_position - push
+			var b_target = b_position + push
+			if _position_walkable(a_target):
+				a["position"] = a_target
+				sim._spatial_sync(a)
+			if _position_walkable(b_target):
+				b["position"] = b_target
+				sim._spatial_sync(b)
+
+
+func _position_walkable(position: Vector2) -> bool:
+	if sim.route_provider == null or not sim.route_provider.has_method("is_local_inside_navigation"):
+		return true
+	if not bool(sim.route_provider.call("is_local_inside_navigation", position)):
+		return false
+	if sim.route_provider.has_method("is_navigation_walkable") and sim.route_provider.has_method("local_to_grid_cell"):
+		return bool(sim.route_provider.call("is_navigation_walkable", sim.route_provider.call("local_to_grid_cell", position)))
+	return true
+
+
+# Provisional AutoHealBehavior shape (exact retail magnitudes are an M3 INI
+# extraction item): heroes regenerate out of combat, dead members stay dead.
+
+
+func _step_hero_regeneration() -> void:
+	if not sim._has_hero_units:
+		return
+	for id in sim.entity_ids():
+		var row: Dictionary = sim.entities[id]
+		if String(row.get("category", "")) != "hero":
+			continue
+		if row.has("auto_heal_behavior"):
+			# An authored AutoHealBehavior contract is the real regeneration
+			# rate; the provisional percentage would stack a second heal on top.
+			continue
+		var health := int(row.get("health", 0))
+		var maximum := int(row.get("maximum_health", 0))
+		if health <= 0 or health >= maximum:
+			continue
+		var ticks_since_damage = sim.tick_index - int(row.get("last_damage_tick", -1000000))
+		if float(ticks_since_damage) * sim.TICK_SECONDS < sim.HERO_REGEN_OUT_OF_COMBAT_SECONDS:
+			continue
+		# AUTO_HEAL scales the object's own regeneration rate, which is what
+		# retail's AutoHeal attribute ladder does: it multiplies an authored
+		# AutoHealBehavior, it does not author one. A unit that declares no
+		# multiplier regenerates at exactly the historical rate.
+		var heal_rate = sim.HERO_REGEN_PERCENT_PER_SECOND * float(row.get("auto_heal_multiplier", 1.0))
+		var amount = maxi(1, roundi(float(maximum) * heal_rate * sim.TICK_SECONDS))
+		var health_values: Array = row.get("member_health", [])
+		var member_maximum := int(row.get("member_maximum_health", 0))
+		var remaining = amount
+		for index in range(health_values.size()):
+			if remaining <= 0:
+				break
+			var current := int(health_values[index])
+			if current <= 0 or current >= member_maximum:
+				continue
+			var healed := mini(remaining, member_maximum - current)
+			health_values[index] = current + healed
+			remaining -= healed
+		row["member_health"] = health_values
+		var aggregate := 0
+		for value in health_values:
+			aggregate += int(value)
+		row["health"] = aggregate
+
+
+# --- AutoHealBehavior (authored self-heal cadence) ---
+# Retail's AutoHealBehavior is a flat HealingAmount applied every HealingDelay
+# milliseconds, restarted StartHealingDelay after the object was last damaged
+# when HealOnlyIfNotInCombat or HealOnlyIfNotUnderAttack is authored. Heroes
+# carry HERO_HEAL_AMOUNT (30) on
+# a 1000ms pulse behind a HERO_HEAL_DELAY (15000ms) restart, which is nothing
+# like the provisional percentage above. Only the importer's closed executable
+# subset arms here: area heals, button bursts, upgrade-triggered activation and
+# containment heals stay authored evidence with no timer.
+
+
+func _attach_auto_heal_contract(row: Dictionary, contract: Dictionary) -> void:
+	sim._contracts_subsystem()._attach_auto_heal_contract(row, contract)
+
+
+func _step_auto_heal_updates() -> void:
+	sim._contracts_subsystem()._step_auto_heal_updates()
+
+
+func _apply_auto_heal_pulse(row: Dictionary, battalion: bool) -> void:
+	sim._contracts_subsystem()._apply_auto_heal_pulse(row, battalion)
+
+
+
+# Object-kind vocabulary for authored HealAffects/AttributeModifierAffects
+# filters, mapped from sim categories.
+# Leadership auras recompute on a fixed cadence (deterministic, ascending
+# entity ids). Each grant expires one interval after its last refresh, so an
+# aura drops within half a second of the hero dying, being knocked down, or
+# the ally leaving the radius.
+
+
+func _scaled_ability_rules(rules: Array[Dictionary], source_scale: float) -> Array[Dictionary]:
+	return sim._contracts_subsystem()._scaled_ability_rules(rules, source_scale)
+
+
+func _attach_hero_ability_state(row: Dictionary) -> void:
+	sim._contracts_subsystem()._attach_hero_ability_state(row)
+
+
+## unit_type -> Array of projected moduleContracts (typed + opaque deferred).
+## structure object_id / structure_kind -> projected moduleContracts.
+## Retail's CastleUpgrade indirection, projected from the fortress documents'
+## own moduleContracts rows.
+##
+## A fortress improvement button (Command_PurchaseUpgradeMordorFortressLavaMoat,
+## Command_PurchaseUpgradeAngmarFortressIceWalls, ...) does NOT buy the upgrade
+## it names. It buys a *Trigger* upgrade (Upgrade_AngmarFortressIceWallsTrigger,
+## upgrade.ini), and a CastleUpgrade behavior on the fortress converts that
+## trigger into the real upgrade and hands it to the castle
+## (angmarfortress.ini:1282-1286 "Behavior = CastleUpgrade
+## ModuleTag_PassOutAngmarStoneworkUpgrade / TriggeredBy =
+## Upgrade_AngmarFortressIceWallsTrigger / Upgrade = Upgrade_AngmarFortressIceWalls
+## / WallUpgradeRadius = ..."). Every downstream module — AttributeModifierUpgrade,
+## SubObjectsUpgrade, WeaponSetUpgrade — is triggered by the REAL upgrade, so
+## without this hop a purchased fortress improvement does nothing at all.
+##
+## trigger upgrade id (folded) -> Array[{upgrade_id, wall_upgrade_radius,
+## source_object_id, tag}].
+## Match-scoped objective history: team -> authored hero unit type -> peak
+## rank reached. A value of -1 records that the hero existed but had no
+## authored ExperienceLevel chain, so historical negative answers refuse
+## instead of silently forgetting uncertainty after death. Hero unit type is
+## the revival-stable identity used by production and the experience rules.
+
+

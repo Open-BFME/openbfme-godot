@@ -639,324 +639,58 @@ var _spatial_hostile_teams: Dictionary = {}
 var _spatial_ring_cache: Array[PackedInt32Array] = []
 
 
-func _spatial_axis_cell(value: float) -> int:
-	return clampi(floori(value / SPATIAL_CELL_SIZE), -SPATIAL_CELL_LIMIT, SPATIAL_CELL_LIMIT)
-
-
-func _spatial_key(cx: int, cy: int) -> int:
-	return cx * SPATIAL_CELL_STRIDE + cy
-
-
-func _spatial_rebuild() -> void:
-	## Full O(n) rebuild. Runs once per tick before anything queries, so the
-	## index cannot drift from `entities` across restore/spawn/despawn seams.
-	_spatial_cells.clear()
-	_spatial_entity_cell.clear()
-	_spatial_entity_team.clear()
-	_spatial_team_box.clear()
-	_spatial_hostile_teams.clear()
-	for key in entities.keys():
-		var row := entities[key] as Dictionary
-		if not bool(row.get("presentation_hidden", false)):
-			_spatial_sync(row)
-
-
-func _spatial_sync(row: Dictionary) -> void:
-	## File `row` under the cell its current position falls in, moving it out of
-	## its previous cell if it changed. Called after every position write.
-	var id := int(row.get("id", 0))
-	if id == 0:
-		return
-	var team := int(row.get("team", -1))
-	var position := Vector2(row.get("position", Vector2.ZERO))
-	var cx := _spatial_axis_cell(position.x)
-	var cy := _spatial_axis_cell(position.y)
-	var key := _spatial_key(cx, cy)
-	var previous: Variant = _spatial_entity_cell.get(id)
-	if previous != null:
-		var previous_team := int(_spatial_entity_team.get(id, team))
-		if int(previous) == key and previous_team == team:
-			return
-		var previous_cells: Dictionary = _spatial_cells.get(previous_team, {}) as Dictionary
-		var old_bucket: Array = previous_cells.get(int(previous), []) as Array
-		old_bucket.erase(id)
-		if old_bucket.is_empty():
-			previous_cells.erase(int(previous))
-	if not _spatial_cells.has(team):
-		_spatial_cells[team] = {}
-		# A team appearing for the first time (first summon, first creep spawn)
-		# invalidates the cached hostile-team lists: a battalion stepped later in
-		# this same tick must be able to acquire it, exactly as the old full scan
-		# over `entities` would have.
-		_spatial_hostile_teams.clear()
-	var cells: Dictionary = _spatial_cells[team]
-	if not cells.has(key):
-		cells[key] = []
-	(cells[key] as Array).append(id)
-	_spatial_entity_cell[id] = key
-	_spatial_entity_team[id] = team
-	var box: Variant = _spatial_team_box.get(team)
-	if box == null:
-		_spatial_team_box[team] = [cx, cx, cy, cy]
-	else:
-		var extents: Array = box as Array
-		extents[0] = mini(int(extents[0]), cx)
-		extents[1] = maxi(int(extents[1]), cx)
-		extents[2] = mini(int(extents[2]), cy)
-		extents[3] = maxi(int(extents[3]), cy)
-
-
-func _spatial_hostile_team_list(team: int) -> Array:
-	## Teams hostile to `team` that currently have indexed battalions. Cached per
-	## rebuild; _is_hostile() is then paid once per team rather than per candidate.
-	var cached: Variant = _spatial_hostile_teams.get(team)
-	if cached != null:
-		return cached as Array
-	var result: Array = []
-	for other_value in _spatial_cells.keys():
-		var other := int(other_value)
-		if _is_hostile(team, other):
-			result.append(other)
-	result.sort()
-	_spatial_hostile_teams[team] = result
-	return result
-
-
-func _spatial_gather(point: Vector2, radius: float) -> Array[int]:
-	## Every indexed id, on any team, whose cell overlaps the axis-aligned box
-	## around the disc. A conservative superset: callers re-apply the exact
-	## distance test. The returned order is unspecified - sort it when order is
-	## observable.
-	var result: Array[int] = []
-	if radius < 0.0:
-		return result
-	for team_value in _spatial_cells.keys():
-		var box: Variant = _spatial_team_box.get(int(team_value))
-		if box == null:
-			continue
-		var extents: Array = box as Array
-		var low_cx := maxi(_spatial_axis_cell(point.x - radius), int(extents[0]))
-		var high_cx := mini(_spatial_axis_cell(point.x + radius), int(extents[1]))
-		var low_cy := maxi(_spatial_axis_cell(point.y - radius), int(extents[2]))
-		var high_cy := mini(_spatial_axis_cell(point.y + radius), int(extents[3]))
-		var cells: Dictionary = _spatial_cells[int(team_value)]
-		for cx in range(low_cx, high_cx + 1):
-			for cy in range(low_cy, high_cy + 1):
-				var bucket: Variant = cells.get(_spatial_key(cx, cy))
-				if bucket == null:
-					continue
-				for id in bucket as Array:
-					result.append(int(id))
-	return result
-
-
-func _spatial_gather_sorted(point: Vector2, radius: float) -> Array[int]:
-	## _spatial_gather() in ascending id order, for callers whose visit order is
-	## observable (damage application, event emission, modifier grants).
-	var result := _spatial_gather(point, radius)
-	result.sort()
-	return result
-
-
-## Broad-phase for _deflect_around_structures (lane L2b item 6). A castle map
-## seeds hundreds of live structures (Carn Dum: 260) and the deflection loop
-## used to walk ALL of them per moving entity per tick. Structures never move,
-## so a spatial bucket index over their centres stays valid until the table is
-## mutated; `_structures_mutation_serial` is bumped at every mutation site and
-## the index rebuilds lazily on the first query after a change.
-##
-## Exactness contract: the gather returns every structure whose blocking disc
-## (radius <= STRUCTURE_DEFLECT_GATHER_RADIUS) can overlap the query point, in
-## ascending id order — the same visit order as the old full scan. Any centre
-## outside the gathered box is further than the maximum radius away, and the
-## deflection loop skips those rows with zero side effects, so the result is
-## byte-identical to the full scan.
+## State/tuning owned by the sim; logic lives in retail_sim_spatial.gd
 const STRUCTURE_DEFLECT_GATHER_RADIUS := 4.6  # max STRUCTURE_BLOCK_RADIUS (fortress); the footprint corridor only shrinks radii
-
 var _structures_mutation_serial := 0
 var _structure_spatial_serial := -1
 var _structure_spatial_cells: Dictionary = {}
-
-
-func _note_structure_table_mutation() -> void:
-	_structures_mutation_serial += 1
-
-
-func _structure_spatial_index() -> Dictionary:
-	if _structure_spatial_serial != _structures_mutation_serial:
-		_structure_spatial_cells.clear()
-		for id_value in structures.keys():
-			var row: Dictionary = structures[id_value]
-			var position := Vector2(row.get("position", Vector2.ZERO))
-			var key := _spatial_key(_spatial_axis_cell(position.x), _spatial_axis_cell(position.y))
-			if not _structure_spatial_cells.has(key):
-				_structure_spatial_cells[key] = []
-			(_structure_spatial_cells[key] as Array).append(int(id_value))
-		_structure_spatial_serial = _structures_mutation_serial
-	return _structure_spatial_cells
-
-
-func _structure_ids_near(position: Vector2) -> Array[int]:
-	return _structure_ids_within_gather_radius(position, STRUCTURE_DEFLECT_GATHER_RADIUS)
-
-
-func _structure_ids_within_gather_radius(position: Vector2, gather_radius: float) -> Array[int]:
-	var index := _structure_spatial_index()
-	var low_cx := _spatial_axis_cell(position.x - gather_radius)
-	var high_cx := _spatial_axis_cell(position.x + gather_radius)
-	var low_cy := _spatial_axis_cell(position.y - gather_radius)
-	var high_cy := _spatial_axis_cell(position.y + gather_radius)
-	var result: Array[int] = []
-	for cx in range(low_cx, high_cx + 1):
-		for cy in range(low_cy, high_cy + 1):
-			var bucket: Variant = index.get(_spatial_key(cx, cy))
-			if bucket == null:
-				continue
-			for id_value in bucket as Array:
-				result.append(int(id_value))
-	result.sort()
-	return result
-
-
-## Effectively unbounded search range for callers that scanned every hostile.
-## The sweep is still cheap: ring_limit below is clamped to the union of the
-## hostile teams' occupied cell boxes, so this bounds the tie-break, not the work.
 const SPATIAL_UNBOUNDED_RANGE := 1.0e9
 
+const SpatialSystemScript = preload("res://src/retail_slice/retail_sim_spatial.gd")
+var _spatial_system = null
+func _spatial_subsystem():
+	if _spatial_system == null:
+		_spatial_system = SpatialSystemScript.new(self)
+	return _spatial_system
 
-func _spatial_nearest_hostile(
-	source: Dictionary, team: int, origin: Vector2, limit: float, filters: int,
-	prefer_lowest_id: bool = false
-) -> int:
-	## Nearest living hostile battalion within `limit` of `origin`, reproducing
-	## the old full scan exactly.
-	##
-	## The old scans walked ascending ids with `if distance <= best`, so the
-	## winner is the minimum distance with the HIGHEST id among exact ties, and
-	## `best` starting at `limit` means a candidate at exactly `limit` is
-	## accepted. The update rule below encodes that as a total order, which makes
-	## the result independent of visit order and therefore safe to compute from
-	## an expanding ring sweep.
-	if limit <= 0.0:
-		return 0
-	var hostile_teams := _spatial_hostile_team_list(team)
-	if hostile_teams.is_empty():
-		return 0
-	# Union of the hostile teams' occupied boxes: nothing outside it can match,
-	# so the sweep is clipped to it and the ring count is capped by it.
-	var box_min_cx := 0
-	var box_max_cx := -1
-	var box_min_cy := 0
-	var box_max_cy := -1
-	for team_value in hostile_teams:
-		var extents: Array = _spatial_team_box.get(int(team_value), []) as Array
-		if extents.is_empty():
-			continue
-		if box_max_cx < box_min_cx:
-			box_min_cx = int(extents[0])
-			box_max_cx = int(extents[1])
-			box_min_cy = int(extents[2])
-			box_max_cy = int(extents[3])
-		else:
-			box_min_cx = mini(box_min_cx, int(extents[0]))
-			box_max_cx = maxi(box_max_cx, int(extents[1]))
-			box_min_cy = mini(box_min_cy, int(extents[2]))
-			box_max_cy = maxi(box_max_cy, int(extents[3]))
-	if box_max_cx < box_min_cx:
-		return 0
+func _spatial_axis_cell(value: float) -> int:
+	return _spatial_subsystem()._spatial_axis_cell(value)
 
-	var best_id := 0
-	var best_distance := limit
-	var origin_cx := _spatial_axis_cell(origin.x)
-	var origin_cy := _spatial_axis_cell(origin.y)
-	# Hoisted filter state: _can_engage_battalion() only consults the candidate's
-	# `flying` flag when the source is a melee attacker, and _stealth_active() is
-	# a tick comparison. Both are resolved once here so the inner loop over
-	# candidates makes no function calls beyond the distance itself.
-	var reject_flyers := (filters & SPATIAL_FILTER_NOT_FLYING) != 0
-	if (filters & SPATIAL_FILTER_ENGAGE) != 0 and _is_melee_attacker(source):
-		reject_flyers = true
-	var check_stealth := (filters & SPATIAL_FILTER_STEALTH) != 0
-	# Rings beyond this are entirely outside `limit` or outside the occupied box.
-	var ring_limit := floori(limit / SPATIAL_CELL_SIZE) + 2
-	ring_limit = mini(ring_limit, maxi(
-		maxi(absi(origin_cx - box_min_cx), absi(origin_cx - box_max_cx)),
-		maxi(absi(origin_cy - box_min_cy), absi(origin_cy - box_max_cy))
-	))
-	for ring in range(0, ring_limit + 1):
-		# Every point of a ring-`ring` cell is at least (ring - 1) * cell away
-		# from `origin`, so once that floor passes the best distance found, no
-		# further ring can contain a candidate that wins the tie-break.
-		if ring > 0 and float(ring - 1) * SPATIAL_CELL_SIZE > best_distance:
-			break
-		var offsets := _spatial_ring_offsets(ring)
-		var offset_index := 0
-		var offset_count := offsets.size()
-		while offset_index < offset_count:
-			var cx: int = origin_cx + offsets[offset_index]
-			var cy: int = origin_cy + offsets[offset_index + 1]
-			offset_index += 2
-			if cx < box_min_cx or cx > box_max_cx:
-				continue
-			if cy < box_min_cy or cy > box_max_cy:
-				continue
-			var cell_key := _spatial_key(cx, cy)
-			for team_value in hostile_teams:
-				var bucket: Variant = (_spatial_cells[int(team_value)] as Dictionary).get(cell_key)
-				if bucket == null:
-					continue
-				for id_value in bucket as Array:
-					var candidate := int(id_value)
-					var candidate_row: Variant = entities.get(candidate)
-					if candidate_row == null:
-						continue
-					var candidate_dict: Dictionary = candidate_row
-					if int(candidate_dict.get("health", 0)) <= 0:
-						continue
-					if reject_flyers and bool(candidate_dict.get("flying", false)):
-						continue
-					var distance := origin.distance_to(Vector2(candidate_dict.get("position", Vector2.ZERO)))
-					if check_stealth and _stealth_active(candidate_dict):
-						var detection_source := float(candidate_dict.get("invisibility_detection_range_source", -1.0))
-						var detection_range := detection_source * float(_rules.get("source_unit_scale", 0.1))
-						if detection_source < 0.0 or distance > detection_range:
-							continue
-					var wins := distance < best_distance
-					if not wins and distance == best_distance:
-						# Exact equality, never is_equal_approx: a tolerance
-						# comparison is not transitive, so it cannot define the
-						# total order a ring sweep needs.
-						wins = (candidate < best_id or best_id == 0) if prefer_lowest_id else (candidate > best_id)
-					if wins:
-						best_distance = distance
-						best_id = candidate
-	return best_id
+func _spatial_key(cx: int, cy: int) -> int:
+	return _spatial_subsystem()._spatial_key(cx, cy)
 
+func _spatial_rebuild() -> void:
+	_spatial_subsystem()._spatial_rebuild()
+
+func _spatial_sync(row: Dictionary) -> void:
+	_spatial_subsystem()._spatial_sync(row)
+
+func _spatial_hostile_team_list(team: int) -> Array:
+	return _spatial_subsystem()._spatial_hostile_team_list(team)
+
+func _spatial_gather(point: Vector2, radius: float) -> Array[int]:
+	return _spatial_subsystem()._spatial_gather(point, radius)
+
+func _spatial_gather_sorted(point: Vector2, radius: float) -> Array[int]:
+	return _spatial_subsystem()._spatial_gather_sorted(point, radius)
+
+func _note_structure_table_mutation() -> void:
+	_spatial_subsystem()._note_structure_table_mutation()
+
+func _structure_spatial_index() -> Dictionary:
+	return _spatial_subsystem()._structure_spatial_index()
+
+func _structure_ids_near(position: Vector2) -> Array[int]:
+	return _spatial_subsystem()._structure_ids_near(position)
+
+func _structure_ids_within_gather_radius(position: Vector2, gather_radius: float) -> Array[int]:
+	return _spatial_subsystem()._structure_ids_within_gather_radius(position, gather_radius)
+
+func _spatial_nearest_hostile(source: Dictionary, team: int, origin: Vector2, limit: float, filters: int, prefer_lowest_id: bool = false) -> int:
+	return _spatial_subsystem()._spatial_nearest_hostile(source, team, origin, limit, filters, prefer_lowest_id)
 
 func _spatial_ring_offsets(ring: int) -> PackedInt32Array:
-	## Cell offsets at Chebyshev distance exactly `ring`, as interleaved dx/dy.
-	## Walked as a perimeter so the sweep stays O(ring) per ring rather than
-	## O(ring^2), and cached because the table never varies.
-	while _spatial_ring_cache.size() <= ring:
-		var index := _spatial_ring_cache.size()
-		var offsets := PackedInt32Array()
-		if index == 0:
-			offsets.append(0)
-			offsets.append(0)
-		else:
-			for dx in range(-index, index + 1):
-				offsets.append(dx)
-				offsets.append(-index)
-				offsets.append(dx)
-				offsets.append(index)
-			for dy in range(-index + 1, index):
-				offsets.append(-index)
-				offsets.append(dy)
-				offsets.append(index)
-				offsets.append(dy)
-		_spatial_ring_cache.append(offsets)
-	return _spatial_ring_cache[ring]
-
+	return _spatial_subsystem()._spatial_ring_offsets(ring)
 
 func _seed_team_map(default_value: Variant) -> Dictionary:
 	## Seed a per-team dict with a fresh copy of default_value per rostered team,
@@ -2426,581 +2160,42 @@ func _team_structure_base(team: int) -> int:
 	return 10000 + team * 1000
 
 
-func _initialize_base_loop() -> void:
-	structures.clear()
-	_note_structure_table_mutation()
-	# Same contract as _restore_authoritative_state: ids are about to be reused
-	# by a new match, so the id-keyed footprint memo must not survive.
-	_structure_footprint_radius_cache.clear()
-	var layout := _home_layout if not _home_layout.is_empty() else _derive_home_layout()
-	for team in _roster_team_ids():
-		var team_layout: Dictionary = layout.get(team, layout.get(str(team), {}))
-		var base_id := _team_structure_base(team)
-		var team_seed_kinds := seed_structure_kinds_for_team(team)
-		if team_seed_kinds.is_empty():
-			team_seed_kinds = structure_kinds_for_team(team)
-		var team_max_health := structure_max_health_for_team(team)
-		var team_build_rules := structure_build_rules_for_team(team)
-		var team_production_order := production_unit_order_for_team(team)
-		var team_production_rules := unit_production_rules_for_team(team)
-		var team_scope := production_scope_for_team(team)
-		for index in range(team_seed_kinds.size()):
-			var kind := String(team_seed_kinds[index])
-			var position := Vector2(team_layout.get(kind, _fallback_structure_position(team, index)))
-			var maximum_health := int(team_max_health[kind])
-			var production: Array[String] = []
-			for unit_type in team_production_order:
-				if not team_scope.is_empty() and not team_scope.has(String(unit_type)):
-					continue
-				if created_hero_owner_team(String(unit_type)) not in [-1, team]:
-					continue
-				var production_rule: Dictionary = team_production_rules[unit_type]
-				var producer_kinds_for_rule: Array = production_rule.get("producer_kinds", [String(production_rule.get("producer_kind", ""))])
-				if producer_kinds_for_rule.has(kind):
-					production.append(unit_type)
-			var structure_id := base_id + index + 1
-			_note_structure_table_mutation()
-			structures[structure_id] = {
-				"id": structure_id,
-				"team": team,
-				"kind": "structure",
-				"structure_kind": kind,
-				"name": kind.replace("_", " ").capitalize(),
-				"position": position,
-				"rally": Vector2(team_layout.get("rally", _fallback_rally_position(team))),
-				"health": maximum_health,
-				"maximum_health": maximum_health,
-				"construction_progress": 1.0,
-				"level": 1,
-				"completed_upgrades": [],
-				"upgrade_queue": [],
-				"production": production,
-				"queue": [],
-				"damage_remainders": {},
-				"income_per_payout": int(_rules.get("farm_income", 25)) if kind == "farm" else 0,
-			}
-			if bool((team_build_rules.get(kind, {}) as Dictionary).get("highlander_body", false)):
-				structures[structure_id]["highlander_body"] = true
-			# Retail object identity for EVERY seeded kind, not just fortresses,
-			# so this path and issue_construct stamp the same table for the same
-			# kind and a building cannot have two identities depending on
-			# whether the map placed it or a porter raised it.
-			#
-			# MEASURED, not assumed: the id is one input to
-			# _structure_footprint_radius, which raised the worry that stamping
-			# it would move structure attack-range and unit eviction. On the
-			# mounted Men and Angmar packs it does not — the runner prints
-			# with/without/seed radii for a fortress and a non-fortress kind and
-			# all three agree to four decimals (FORTRESS_FOOTPRINT,
-			# NON_FORTRESS_FOOTPRINT), because the resolver already falls back to
-			# the same per-kind geometry. The 3000-tick state pin is unchanged.
-			# The symmetry is worth having on its own terms; it is not a fix for
-			# a divergence anyone has demonstrated.
-			var seed_sources: Variant = structure_source_object_ids_for_team(team).get(kind, [])
-			if typeof(seed_sources) == TYPE_ARRAY and not (seed_sources as Array).is_empty():
-				structures[structure_id]["source_object_id"] = String((seed_sources as Array)[0])
-			elif typeof(seed_sources) in [TYPE_STRING, TYPE_STRING_NAME]:
-				structures[structure_id]["source_object_id"] = String(seed_sources)
-			_apply_structure_create_grants(
-				structures[structure_id] as Dictionary, true, true
-			)
-			_apply_structure_inherit_upgrades(structures[structure_id] as Dictionary)
-			_initialize_structure_auto_deposit(structures[structure_id] as Dictionary)
-			_unpack_castle_behavior_for_structure(structure_id)
-	_seed_all_expansion_pads()
-	if build_plots_only:
-		_seed_all_build_plots()
+const SpawnSystemScript = preload("res://src/retail_slice/retail_sim_spawn.gd")
+var _spawn_system = null
+func _spawn_subsystem():
+	if _spawn_system == null:
+		_spawn_system = SpawnSystemScript.new(self)
+	return _spawn_system
 
+func _initialize_base_loop() -> void:
+	_spawn_subsystem()._initialize_base_loop()
 
 func _team_center(team: int) -> Vector2:
-	## Each roster team's spawn anchor. Teams 0/1 keep their exact historical
-	## centers derived from spawn ids 1/2 and 101/102; teams >=2 read their own
-	## anchor injected by the map layer (Player_N_Start), falling back to the map
-	## centroid so a base still seeds when a start was not supplied.
-	if team == PLAYER_TEAM:
-		return (Vector2(_spawn_positions[1]) + Vector2(_spawn_positions[2])) * 0.5
-	if team == ENEMY_TEAM:
-		return (Vector2(_spawn_positions[101]) + Vector2(_spawn_positions[102])) * 0.5
-	if _extra_team_centers.has(team):
-		return Vector2(_extra_team_centers[team])
-	return _two_team_map_center()
-
+	return _spawn_subsystem()._team_center(team)
 
 func _two_team_map_center() -> Vector2:
-	return ((Vector2(_spawn_positions[1]) + Vector2(_spawn_positions[2])) * 0.5 + (Vector2(_spawn_positions[101]) + Vector2(_spawn_positions[102])) * 0.5) * 0.5
-
+	return _spawn_subsystem()._two_team_map_center()
 
 func _map_centroid() -> Vector2:
-	## Average of every rostered team's spawn anchor. For the {0,1} default this is
-	## exactly the midpoint of the two team centers the old code used, so the
-	## derived outward/rally directions are unchanged.
-	var teams := _roster_team_ids()
-	if teams.size() <= 2:
-		return _two_team_map_center()
-	var sum := Vector2.ZERO
-	for team in teams:
-		sum += _team_center(int(team))
-	return sum / float(teams.size())
-
+	return _spawn_subsystem()._map_centroid()
 
 func _derive_home_layout() -> Dictionary:
-	var map_center := _map_centroid()
-	var result: Dictionary = {}
-	for team in _roster_team_ids():
-		var anchor := _team_center(int(team))
-		var outward := anchor.direction_to(map_center) * -1.0
-		if outward.length_squared() < 0.01:
-			outward = Vector2.LEFT if team == PLAYER_TEAM else Vector2.RIGHT
-		var side := Vector2(-outward.y, outward.x)
-		result[team] = {
-			"fortress": anchor + outward * 10.0,
-			"farm": anchor + side * 11.0 + outward * 2.0,
-			"barracks": anchor - side * 11.0 + outward * 1.0,
-			"archery_range": anchor + side * 18.0 - outward * 3.0,
-			"stable": anchor - side * 18.0 - outward * 3.0,
-			"rally": anchor - outward * 8.0,
-		}
-	return result
-
+	return _spawn_subsystem()._derive_home_layout()
 
 func _fallback_structure_position(team: int, index: int) -> Vector2:
-	var anchor := _team_center(team)
-	# Structures tile away from the map centroid. Teams 0/1 keep their historical
-	# left/right sign (player centroid-outward points -x on the two-corner maps,
-	# enemy +x); teams >=2 derive the sign from their own outward direction.
-	var sign_value := -1.0 if team == PLAYER_TEAM else 1.0
-	if team != PLAYER_TEAM and team != ENEMY_TEAM:
-		var outward := anchor.direction_to(_map_centroid()) * -1.0
-		sign_value = signf(outward.x) if not is_zero_approx(outward.x) else 1.0
-	if index < 5:
-		return anchor + Vector2(sign_value * (8.0 + float(index) * 2.5), (float(index) - 2.0) * 7.0)
-	# Factions whose manifests declare more base structures than the historical
-	# Men five tile the overflow in bounded extra rows beside the original
-	# layout, so every seeded structure stays near its team's anchor.
-	var sub := index - 5
-	var row := sub / 5
-	var col := sub % 5
-	return anchor + Vector2(sign_value * (20.5 + float(row) * 5.0 + float(col) * 2.5), (float(col) - 2.0) * 7.0)
-
+	return _spawn_subsystem()._fallback_structure_position(team, index)
 
 func _fallback_rally_position(team: int) -> Vector2:
-	# Fixture sims configured without a map (no player starts) must not crash
-	# the AI muster path; real matches always carry spawn positions.
-	if _spawn_positions.is_empty():
-		return Vector2.ZERO
-	return _team_center(team)
-
+	return _spawn_subsystem()._fallback_rally_position(team)
 
 func _builder_spawn_position(team: int) -> Vector2:
-	var layout := _home_layout if not _home_layout.is_empty() else _derive_home_layout()
-	var team_layout: Dictionary = layout.get(team, layout.get(str(team), {}))
-	return Vector2(team_layout.get("rally", _fallback_rally_position(team)))
-
+	return _spawn_subsystem()._builder_spawn_position(team)
 
 func _spawn_anchor_position(anchor: String, team: int = PLAYER_TEAM) -> Vector2:
-	## Named map anchors keep the faction roster data-driven while spawn
-	## geometry stays derived from the cooked source map's player starts. Teams
-	## beyond 0/1 resolve the generalized anchors around their own spawn center.
-	if team != PLAYER_TEAM and team != ENEMY_TEAM:
-		if anchor.ends_with("builder"):
-			return _builder_spawn_position(team) if base_loop_enabled else _team_center(team) + Vector2(0.0, -4.0)
-		return _team_center(team)
-	match anchor:
-		"player_spawn_primary":
-			return Vector2(_spawn_positions[1])
-		"player_spawn_secondary":
-			return Vector2(_spawn_positions[2])
-		"enemy_spawn_primary":
-			return Vector2(_spawn_positions[101])
-		"enemy_spawn_secondary":
-			return Vector2(_spawn_positions[102])
-		"enemy_reserve":
-			return (Vector2(_spawn_positions[101]) + Vector2(_spawn_positions[102])) * 0.5
-		"player_builder":
-			return Vector2(_spawn_positions[1]) + Vector2(0.0, 4.0)
-		"enemy_builder":
-			return _builder_spawn_position(ENEMY_TEAM) if base_loop_enabled else Vector2(_spawn_positions[101]) + Vector2(0.0, -4.0)
-	return Vector2(_spawn_positions[1])
+	return _spawn_subsystem()._spawn_anchor_position(anchor, team)
 
-
-func _add_battalion(
-	id: int,
-	team: int,
-	at: Vector2,
-	display_name: String,
-	object_id: String = SOLDIER_OBJECT_ID,
-	unit_type: String = SOLDIER_HORDE_ID,
-	command_points: int = -1,
-	unit_rule_override: Dictionary = {},
-	cached_build_cost: int = -1
-) -> void:
-	var unit_rules_value: Variant = _rules.get("unit_rules", {})
-	var unit_rule: Dictionary = (
-		unit_rule_override
-		if not unit_rule_override.is_empty()
-		else (
-			(unit_rules_value as Dictionary).get(object_id, {}) as Dictionary
-			if typeof(unit_rules_value) == TYPE_DICTIONARY
-			else {}
-		)
-	)
-	if unit_rule.is_empty():
-		push_error("RetailSliceSim missing selected-pack unit rule for %s" % object_id)
-		return
-	var member_health := maxi(1, int(unit_rule.get("member_health", _rules.get("member_health", 200))))
-	var member_count := maxi(1, int(unit_rule.get("member_count", 0)))
-	var maximum_health := member_health * member_count
-	var member_health_values: Array[int] = []
-	var member_attack_tokens: Array[int] = []
-	var member_attack_start_ticks: Array[int] = []
-	var member_attack_hit_ticks: Array[int] = []
-	var member_attack_release_tokens: Array[int] = []
-	var member_corpse_expire_ticks: Array[int] = []
-	var member_target_indices: Array[int] = []
-	var member_weapon_modes: Array[String] = []
-	for _member_index in range(member_count):
-		member_health_values.append(member_health)
-		member_attack_tokens.append(0)
-		member_attack_start_ticks.append(-1)
-		member_attack_hit_ticks.append(-1)
-		member_attack_release_tokens.append(0)
-		member_corpse_expire_ticks.append(-1)
-		member_target_indices.append(-1)
-		member_weapon_modes.append(String(unit_rule.get("default_weapon_mode", "default")))
-	# Only the sealed scenario noncombatant contract may preserve zero damage.
-	# Legacy/malformed rules that merely omit or zero damage retain the historic
-	# clamp to one and cannot smuggle a new semantic through a numeric sentinel.
-	var noncombatant := bool(unit_rule.get("noncombatant", false))
-	var member_damage := 0 if noncombatant else maxi(1, int(unit_rule.get("member_damage", 0)))
-	var fallback_weapon := {
-		"name": "legacy-default",
-		"weapon_slot": String(unit_rule.get("default_weapon_slot", "")),
-		"attack_range": float(unit_rule["attack_range"]),
-		"attack_range_source": float(unit_rule["attack_range_source"]),
-		"minimum_attack_range": float(unit_rule["minimum_attack_range"]),
-		"minimum_attack_range_source": float(unit_rule["minimum_attack_range_source"]),
-		"delay_between_shots_ms": float(unit_rule["delay_between_shots_ms"]),
-		"pre_attack_delay_ms": float(unit_rule["pre_attack_delay_ms"]),
-		"firing_duration_ms": float(unit_rule["firing_duration_ms"]),
-		"attack_period_ticks": maxi(1, int(unit_rule["attack_period_ticks"])),
-		"pre_attack_ticks": maxi(0, int(unit_rule["pre_attack_ticks"])),
-		"firing_duration_ticks": maxi(0, int(unit_rule["firing_duration_ticks"])),
-		"member_damage": member_damage,
-	}
-	if unit_rule.has("pre_attack_type"):
-		fallback_weapon["pre_attack_type"] = String(unit_rule["pre_attack_type"])
-	if unit_rule.has("pre_attack_random_amount_ms"):
-		fallback_weapon["pre_attack_random_amount_ms"] = float(unit_rule["pre_attack_random_amount_ms"])
-	for optional_weapon_field in [
-		"projectile_object_id", "projectile_speed", "projectile_speed_source",
-		"radius_damage_affects", "damage_components", "damage_type",
-	]:
-		if unit_rule.has(optional_weapon_field):
-			fallback_weapon[optional_weapon_field] = unit_rule[optional_weapon_field]
-	var weapon_modes: Dictionary = (unit_rule.get("weapon_modes", {}) as Dictionary).duplicate(true)
-	if weapon_modes.is_empty():
-		weapon_modes["default"] = fallback_weapon
-	var battalion_damage := member_damage * member_count
-	var committed_command_points := command_points
-	if committed_command_points < 0:
-		committed_command_points = _production_rule_value(unit_type, "command_points_rule", "default_command_points")
-	if String(unit_rule.get("category", "")) == "hero":
-		_has_hero_units = true
-	entities[id] = {
-		"id": id,
-		"team": team,
-		"name": display_name,
-		"object_id": object_id,
-		"position": at,
-		"facing": Vector2.RIGHT if team == PLAYER_TEAM else Vector2.LEFT,
-		"destination": at,
-		"route": [],
-		"route_cells": [],
-		"route_ford": "",
-		"order_sequence": 0,
-		"state": "idle",
-		"target_id": 0,
-		"target_kind": "battalion",
-		"health": maximum_health,
-		"maximum_health": maximum_health,
-		"member_maximum_health": member_health,
-		"member_health": member_health_values,
-		"damage": battalion_damage,
-		"member_damage": member_damage,
-		"speed": float(unit_rule["speed"]),
-		"speed_source": float(unit_rule["speed_source"]),
-		"current_speed": 0.0,
-		# 0.0 is the UNAUTHORED sentinel, not a default: _step_route and
-		# _retail_turn_rate_degrees both refuse to act on it and name the unit
-		# in a push_error. A rule that omits these keys is a NAMED GAP already
-		# reported at configuration time (today: the M3 trebuchet contract,
-		# whose pack predates the CatapultLocomotor binding), so spawning must
-		# not hard-index them and abort the whole spawn path.
-		"acceleration": float(unit_rule.get("acceleration", 0.0)),
-		"acceleration_source": float(unit_rule.get("acceleration_source", 0.0)),
-		"turn_rate_degrees_per_second": float(unit_rule.get("turn_rate_degrees_per_second", 0.0)),
-		"braking": float(unit_rule.get("braking", 0.0)),
-		"braking_source": float(unit_rule.get("braking_source", 0.0)),
-		"category": String(unit_rule.get("category", "")),
-		"trample_cooldown": 0,
-		# Flyers ignore ground navigation and cannot be hit by melee or bowled
-		# over; knockdown_ticks > 0 means sprawled on the ground (no acting,
-		# no orders) until the counter drains. Plain dict entries so both
-		# serialize through snapshot()/state_hash() automatically.
-		"flying": bool(unit_rule.get("is_flyer", false)),
-		"knockdown_ticks": 0,
-		"knocked_down": false,
-		"attack_range": float(unit_rule["attack_range"]),
-		"attack_range_source": float(unit_rule["attack_range_source"]),
-		"minimum_attack_range": float(unit_rule["minimum_attack_range"]),
-		"minimum_attack_range_source": float(unit_rule["minimum_attack_range_source"]),
-		"vision_range": float(unit_rule["vision_range"]),
-		"vision_range_source": float(unit_rule["vision_range_source"]),
-		"damage_type": _recorded_damage_type(object_id, unit_rule),
-		"damage_components": (unit_rule.get("damage_components", _unit_damage_components.get(object_id, [])) as Array).duplicate(true),
-		"delay_between_shots_ms": float(unit_rule["delay_between_shots_ms"]),
-		"pre_attack_delay_ms": float(unit_rule["pre_attack_delay_ms"]),
-		"firing_duration_ms": float(unit_rule["firing_duration_ms"]),
-		"attack_period_ticks": maxi(1, int(unit_rule["attack_period_ticks"])),
-		"pre_attack_ticks": maxi(0, int(unit_rule["pre_attack_ticks"])),
-		"firing_duration_ticks": maxi(0, int(unit_rule["firing_duration_ticks"])),
-		"attack_cooldown": 0,
-		"attack_windup": 0,
-		"attack_sequence": 0,
-		"continuous_fire_count": 0,
-		"continuous_fire_expiration_tick": -1,
-		"member_attack_tokens": member_attack_tokens,
-		"member_attack_start_ticks": member_attack_start_ticks,
-		"member_attack_hit_ticks": member_attack_hit_ticks,
-		"member_attack_release_tokens": member_attack_release_tokens,
-		"member_corpse_expire_ticks": member_corpse_expire_ticks,
-		"corpse_expire_tick": -1,
-		"member_target_indices": member_target_indices,
-		"member_weapon_modes": member_weapon_modes,
-		"weapon_modes": weapon_modes,
-		"default_weapon_mode": String(unit_rule.get("default_weapon_mode", "default")),
-		"close_weapon_mode": String(unit_rule.get("close_weapon_mode", "")),
-		"close_weapon_switch_distance": float(unit_rule.get("close_weapon_switch_distance", 0.0)),
-		"close_weapon_switch_distance_source": float(unit_rule.get("close_weapon_switch_distance_source", 0.0)),
-		"unsupported_close_weapon": bool(unit_rule.get("unsupported_close_weapon", false)),
-		"clip_size": int(unit_rule.get("clip_size", 0)),
-		"clip_reload_time_ms": float(unit_rule.get("clip_reload_time_ms", 0.0)),
-		"continuous_fire_one": int(unit_rule.get("continuous_fire_one", 0)),
-		"continuous_fire_coast_ticks": int(unit_rule.get("continuous_fire_coast_ticks", 0)),
-		"continuous_fire_rate_multiplier": float(unit_rule.get("continuous_fire_rate_multiplier", 1.0)),
-		"active_weapon_mode": String(unit_rule.get("default_weapon_mode", "default")),
-		# LockWeaponCreate applies at build completion and remains permanent.
-		# The importer currently accepts only the exact retail PRIMARY corpus.
-		"permanent_weapon_locks": Array(
-			unit_rule.get("permanent_weapon_locks", [])
-		).duplicate(),
-		"stance": String((unit_rule.get("stances", {}) as Dictionary).get("default", "Battle")),
-		"stance_contract": (unit_rule.get("stances", {}) as Dictionary).duplicate(true),
-		"formation_mode": "Line",
-		"formation_positions_base": Array(unit_rule["formation_positions"]).duplicate(),
-		"order_kind": "",
-		"is_builder": bool(unit_rule.get("is_builder", false)),
-		"last_damage_tick": -1000000,
-		"construction_id": 0,
-		"member_count": member_count,
-		"horde_id": String(unit_rule["horde_id"]),
-		"formation_positions": Array(unit_rule["formation_positions"]).duplicate(),
-		"retail_rule_provenance": (unit_rule["provenance"] as Dictionary).duplicate(true),
-		"unit_type": unit_type,
-		"command_points": committed_command_points,
-		"production_producer_id": 0,
-		"production_exit_start_tick": -1,
-		"production_exit_duration_ticks": 0,
-		"production_exit_progress": 1.0,
-		"production_exit_origin": at,
-		"production_exit_destination": at,
-		"production_rally": at,
-		# Compiled forge equipment recorded per horde (retail applies it per
-		# battalion); spawned hordes of a tech-owning team arrive equipped.
-		"applied_upgrades": {},
-		"active_armor_upgrade": "",
-		# Shared timed-modifier table: every buff/debuff/aura source (timed
-		# ability buffs, leadership auras, fear) writes a keyed entry
-		# {modifiers, expires_tick}; damage/attack/speed/vision/experience
-		# calculations consult one helper family over this table. Keying by
-		# source name gives retail stacking for free: same-named grants
-		# overwrite (no stack), different names stack. Plain dict entries so
-		# it serializes through snapshot()/state_hash() automatically.
-		"timed_modifiers": {},
-		# TOGGLE_WEAPONSET state: non-empty pins combat to that compiled
-		# weapon-mode profile until toggled back (persistent across snapshots).
-		"weapon_toggle_mode": "",
-		# SpecialAbilityToggleMounted state: true while riding (mounted speed
-		# and, when authored, the "mounted" weapon-mode profile are live).
-		"mounted": false,
-		# Honored only when the compiled unit rule authors it (fear-resistance
-		# extraction is an importer follow-up; absent means not resistant).
-		"fear_resistant": bool(unit_rule.get("fear_resistant", false)),
-	}
-	if cached_build_cost >= 0 and _contracts_have_executable_refund_die(
-		_unit_module_contracts.get(unit_type, []) as Array
-	):
-		# Production supplies the queue item's final charged price after every
-		# authored cost modifier; death must never recompute it from current rules.
-		entities[id]["cached_build_cost"] = cached_build_cost
-	# Optional sealed scenario policy. False is the historical combatant default
-	# and must remain absent, otherwise every ordinary unit gains a meaningless
-	# state byte and moves the frozen cross-platform pin.
-	if noncombatant:
-		entities[id]["noncombatant"] = true
-	if String(unit_rule.get("default_command_set_id", "")) != "":
-		entities[id]["default_command_set_id"] = String(unit_rule.get("default_command_set_id", ""))
-		entities[id]["command_set_id"] = String(unit_rule.get("default_command_set_id", ""))
-	# PreAttackType / random amount ride the compiled rule. Absent on the
-	# synthetic pin harness (which never authors them) so the 3000-tick pin
-	# stays put; `_step_member_attacks` defaults missing type to PER_SHOT.
-	if unit_rule.has("pre_attack_type"):
-		entities[id]["pre_attack_type"] = String(unit_rule["pre_attack_type"])
-	if unit_rule.has("pre_attack_random_amount_ms"):
-		entities[id]["pre_attack_random_amount_ms"] = float(unit_rule["pre_attack_random_amount_ms"])
-	# Absent-unless-authored keeps melee and no-projectile state byte-identical.
-	for optional_projectile_field in [
-		"projectile_object_id", "projectile_speed", "projectile_speed_source",
-		"radius_damage_affects",
-	]:
-		if unit_rule.has(optional_projectile_field):
-			entities[id][optional_projectile_field] = unit_rule[optional_projectile_field]
-	# ShroudClearingRange, the deshroud radius. Absent unless the compiled rule
-	# authors one, exactly like the body scalars below and for the same reason:
-	# a key that appears unconditionally would change every unit's snapshot and
-	# move the 3000-tick pin. Absent means the fog pass falls back to vision and
-	# says so (_shroud_clearing_radius).
-	if unit_rule.has("shroud_clearing_range"):
-		entities[id]["shroud_clearing_range"] = maxf(
-			0.0, float(unit_rule["shroud_clearing_range"])
-		)
-		entities[id]["shroud_clearing_range_source"] = maxf(
-			0.0, float(unit_rule.get("shroud_clearing_range_source", 0.0))
-		)
-	# Exact effective Object BountyValue. No field means no authored bounty and
-	# must remain distinguishable from an authored zero in state/save/hash.
-	if unit_rule.has("bounty_value"):
-		entities[id]["bounty_value"] = maxi(0, int(unit_rule["bounty_value"]))
-	if unit_rule.has("max_turn_without_reform_degrees"):
-		entities[id]["max_turn_without_reform_degrees"] = float(
-			unit_rule["max_turn_without_reform_degrees"]
-		)
-	if unit_rule.has("slow_turn_radius"):
-		entities[id]["slow_turn_radius"] = maxf(0.0, float(unit_rule["slow_turn_radius"]))
-	if unit_rule.has("fast_turn_radius"):
-		entities[id]["fast_turn_radius"] = maxf(0.0, float(unit_rule["fast_turn_radius"]))
-	if unit_rule.has("min_turn_speed"):
-		entities[id]["min_turn_speed"] = clampf(float(unit_rule["min_turn_speed"]), 0.0, 1.0)
-	if String(unit_rule.get("turn_rate_source", "")) != "":
-		entities[id]["turn_rate_source"] = String(unit_rule["turn_rate_source"])
-	for crush_int_key in ["crusher_level", "crushable_level", "crush_damage", "crush_revenge_damage"]:
-		if unit_rule.has(crush_int_key):
-			entities[id][crush_int_key] = int(unit_rule[crush_int_key])
-	if unit_rule.has("crush_weapon_id"):
-		entities[id]["crush_weapon_id"] = String(unit_rule["crush_weapon_id"])
-	if unit_rule.has("crush_revenge_weapon_id"):
-		entities[id]["crush_revenge_weapon_id"] = String(unit_rule["crush_revenge_weapon_id"])
-	for crush_float_key in [
-		"min_crush_velocity_percent",
-		"crush_deceleration_percent",
-		"crush_knockback",
-	]:
-		if unit_rule.has(crush_float_key):
-			entities[id][crush_float_key] = float(unit_rule[crush_float_key])
-	if typeof(unit_rule.get("formation_toggle")) == TYPE_DICTIONARY and not (unit_rule.get("formation_toggle") as Dictionary).is_empty():
-		# Absent unless the unit's own CommandSet authored a
-		# HORDE_TOGGLE_FORMATION button (commandbutton.ini). A unit with no
-		# such button gets no key, and cannot be put into a formation.
-		entities[id]["formation_toggle"] = (unit_rule.get("formation_toggle") as Dictionary).duplicate(true)
-	if unit_rule.has("flanking_bonus"):
-		entities[id]["flanking_bonus"] = float(unit_rule["flanking_bonus"])
-	if unit_rule.has("wait_for_formation"):
-		entities[id]["wait_for_formation"] = bool(unit_rule["wait_for_formation"])
-	if typeof(unit_rule.get("kind_of")) == TYPE_ARRAY and not (unit_rule.get("kind_of") as Array).is_empty():
-		entities[id]["kind_of"] = (unit_rule.get("kind_of") as Array).duplicate()
-	# Body policy is optional authoritative state. Keep the key absent for
-	# ordinary ActiveBody units so their snapshots/hashes do not change.
-	if unit_rule.get("highlander_body") == true:
-		entities[id]["highlander_body"] = true
-	# Innate body scalars (damage taken, regeneration rate). Absent unless the
-	# compiled rule authors them, so no retail unit's snapshot or authoritative
-	# hash gains a byte.
-	if unit_rule.has("innate_armor_scalar"):
-		entities[id]["innate_armor_scalar"] = maxf(0.0, float(unit_rule["innate_armor_scalar"]))
-	if unit_rule.has("auto_heal_multiplier"):
-		entities[id]["auto_heal_multiplier"] = maxf(0.0, float(unit_rule["auto_heal_multiplier"]))
-	# Optional object lifecycle policy. Its absence contributes no entity,
-	# snapshot, or authoritative-hash bytes.
-	if unit_rule.has("destroy_die"):
-		entities[id]["destroy_die"] = Array(
-			unit_rule["destroy_die"]
-		).duplicate(true)
-	if unit_rule.has("slow_death_fades"):
-		entities[id]["slow_death_fades"] = Array(
-			unit_rule["slow_death_fades"]
-		).duplicate(true)
-	if unit_rule.has("keep_object_die"):
-		entities[id]["keep_object_die"] = bool(unit_rule.get("keep_object_die", false))
-		entities[id]["keep_object_die_policy"] = (unit_rule.get("keep_object_die_policy", {}) as Dictionary).duplicate(true)
-	if unit_rule.has("summon_auras"):
-		entities[id]["summon_auras"] = Array(unit_rule["summon_auras"]).duplicate(true)
-	# Optional AIUpdateInterface field slice. Keep the keys absent unless the
-	# compiler authored the complete contract, so legacy/missing-field entity
-	# snapshots and hashes remain byte-identical.
-	if (
-		unit_rule.has("auto_acquire_enabled")
-		and unit_rule.has("auto_acquire_attack_buildings")
-		and unit_rule.has("auto_acquire_while_stealthed")
-	):
-		entities[id]["auto_acquire_enabled"] = bool(unit_rule["auto_acquire_enabled"])
-		entities[id]["auto_acquire_attack_buildings"] = bool(
-			unit_rule["auto_acquire_attack_buildings"]
-		)
-		entities[id]["auto_acquire_while_stealthed"] = bool(
-			unit_rule["auto_acquire_while_stealthed"]
-		)
-	# Optional AIUpdateInterface idle-rescan cadence. The one-shot jitter flag
-	# is armed at spawn/reset; the next-check tick is created only by the first
-	# eligible idle scan. Absent authoring preserves legacy bytes and RNG order.
-	if (
-		int(unit_rule.get("mood_attack_check_rate_ticks", 0)) > 0
-		and unit_rule.has("auto_acquire_enabled")
-		and unit_rule.has("auto_acquire_attack_buildings")
-		and unit_rule.has("auto_acquire_while_stealthed")
-	):
-		entities[id]["mood_attack_check_rate_ticks"] = int(
-			unit_rule["mood_attack_check_rate_ticks"]
-		)
-		entities[id]["mood_randomize_next_check"] = true
-	# File the new battalion immediately: units spawned mid-tick (production
-	# exits, summons) must be acquirable by battalions stepped later in the same
-	# tick, exactly as the old full scans saw them.
-	_spatial_sync(entities[id])
-	for tech_id_value in (team_upgrades.get(team, {}) as Dictionary).keys():
-		_apply_equipment_to_horde(entities[id], _equipment_ids_for_forge_upgrade(String(tech_id_value)))
-	if (
-		String(unit_rule.get("category", "")) == "hero"
-		or not (_unit_ability_rules.get(String(entities[id].get("unit_type", "")), []) as Array).is_empty()
-	):
-		_attach_hero_ability_state(entities[id])
-	var has_registered_experience := not (
-		_unit_experience_rules.get(String(entities[id].get("unit_type", "")), {}) as Dictionary
-	).is_empty()
-	_attach_experience_state(entities[id])
-	_attach_module_contracts(entities[id])
-	# ExperienceLevelCreate is a creation module, independent of whether this
-	# bounded summon leaf carries a complete ExperienceLevel progression table.
-	# Ordinary unit rules omit this key and preserve their existing XP path.
-	if int(unit_rule.get("creation_experience_rank", 0)) > 0:
-		entities[id]["level"] = int(unit_rule["creation_experience_rank"])
-		if not has_registered_experience:
-			_apply_experience_level_effects(
-				entities[id],
-				unit_rule.get("creation_experience_effects", {}) as Dictionary
-			)
-	_record_hero_rank_attainment(entities[id])
-	_refresh_banner_carrier_state(entities[id])
-
+func _add_battalion(id: int, team: int, at: Vector2, display_name: String, object_id: String = SOLDIER_OBJECT_ID, unit_type: String = SOLDIER_HORDE_ID, command_points: int = -1, unit_rule_override: Dictionary = {}, cached_build_cost: int = -1) -> void:
+	_spawn_subsystem()._add_battalion(id, team, at, display_name, object_id, unit_type, command_points, unit_rule_override, cached_build_cost)
 
 func _recorded_damage_type(object_id: String, unit_rule: Dictionary) -> String:
 	## No silent slash default: a combat unit without authored damageType is
@@ -5075,374 +4270,57 @@ func control_group_snapshot() -> Array[Dictionary]:
 	return control_groups_snapshot()
 
 
-func issue_move(ids: Array[int], destination: Vector2, ack_kind: String = "order.move", team: int = PLAYER_TEAM) -> int:
-	var accepted_ids: Array[int] = []
-	last_route_rejection = ""
-	for id in ids:
-		if accepted_ids.has(id) or not _is_commandable_for_team(id, team):
-			continue
-		var row: Dictionary = entities[id]
-		if not _assign_route(row, destination):
-			continue
-		row["target_id"] = 0
-		row["target_kind"] = "battalion"
-		row["attack_windup"] = 0
-		row["attack_move"] = false
-		_clear_member_targets(row)
-		row["state"] = "run"
-		row["order_kind"] = "move"
-		accepted_ids.append(id)
-	if not accepted_ids.is_empty():
-		_apply_group_speed_cap(accepted_ids)
-		_stamp_order_sequence(accepted_ids)
-		last_route_rejection = ""
-		_emit_event(ack_kind, accepted_ids[0], 0, _voice_event_identity(accepted_ids[0]))
-	return accepted_ids.size()
-
-
-func _apply_group_speed_cap(accepted_ids: Array[int]) -> void:
-	## WaitForFormation (locomotor.ini:713, on the melee / charge-melee / ranged
-	## horde locomotors): "When moving into formations, these guys stop & wait for
-	## others." Retail's observable consequence is that a mixed selection advances
-	## at the pace of its slowest member and arrives roughly together, rather than
-	## the cavalry landing a lap ahead of the pikes.
-	##
-	## The cap is the minimum AUTHORED speed across the group, so per-row stance,
-	## formation, and ability multipliers still apply on top of it in _step_route.
-	## A single-battalion order caps at its own speed, i.e. no change.
-	##
-	## Deterministic: min over the accepted set is order-independent, and the
-	## accepted set is already built in caller-supplied id order.
-	## Per-row WaitForFormation, not the global retail_formation_movement flag.
-	## Pin fixtures do not author the field, so they stay absent-unless-set.
-	## A mixed group that includes at least one waiter coheres at the slowest
-	## authored speed; only waiters receive the key.
-	var waiters: Array[int] = []
-	if retail_formation_movement:
-		waiters = accepted_ids.duplicate()
-	else:
-		for id in accepted_ids:
-			if bool((entities[id] as Dictionary).get("wait_for_formation", false)):
-				waiters.append(id)
-	if waiters.is_empty():
-		return
-	var slowest := INF
-	for id in accepted_ids:
-		var row: Dictionary = entities[id]
-		slowest = minf(slowest, maxf(0.0, float(row.get("speed", 0.0))))
-	if slowest == INF:
-		return
-	for id in waiters:
-		(entities[id] as Dictionary)["group_speed_cap"] = slowest
-
-
-func issue_attack(ids: Array[int], target_id: int, team: int = PLAYER_TEAM) -> int:
-	var target_kind := "battalion" if entities.has(target_id) else ("structure" if structures.has(target_id) else "")
-	if target_kind == "":
-		return 0
-	var target: Dictionary = entities[target_id] if target_kind == "battalion" else structures[target_id]
-	if int(target["health"]) <= 0:
-		return 0
-	var accepted_ids: Array[int] = []
-	last_route_rejection = ""
-	for id in ids:
-		if accepted_ids.has(id) or not _is_commandable_for_team(id, team):
-			continue
-		var row: Dictionary = entities[id]
-		if bool(row.get("noncombatant", false)):
-			continue
-		if int(row["team"]) == int(target["team"]):
-			continue
-		if target_kind == "battalion" and not _can_engage_battalion(row, target):
-			continue
-		if not _assign_target_route(row, Vector2(target["position"])):
-			continue
-		row["target_id"] = target_id
-		row["target_kind"] = target_kind
-		row["attack_windup"] = 0
-		row["attack_move"] = false
-		_clear_member_targets(row)
-		row["state"] = "run"
-		row["order_kind"] = "attack"
-		accepted_ids.append(id)
-	if not accepted_ids.is_empty():
-		# A group attack coheres exactly like a group move; refreshing here also
-		# stops a cap left over from an earlier escort order throttling the
-		# charge.
-		_apply_group_speed_cap(accepted_ids)
-		_stamp_order_sequence(accepted_ids)
-		last_route_rejection = ""
-		var ack := _voice_event_identity(accepted_ids[0])
-		ack["target_kind"] = target_kind
-		_emit_event("voice.attack", accepted_ids[0], target_id, ack)
-		_emit_music("battle")
-	return accepted_ids.size()
-
-
-func issue_attack_move(ids: Array[int], destination: Vector2, team: int = PLAYER_TEAM) -> int:
-	# Retail answers an attack-move with an attack-class acknowledgement, not
-	# the plain move line; the sim keeps the order kind distinct so the audio
-	# layer picks the attack ack without guessing.
-	var accepted := issue_move(ids, destination, "voice.attack", team)
-	if accepted <= 0:
-		return 0
-	for id in ids:
-		if not _is_commandable_for_team(id, team):
-			continue
-		var row: Dictionary = entities[id]
-		if Vector2(row.get("destination", row["position"])).is_equal_approx(destination):
-			row["attack_move"] = true
-			row["attack_move_destination"] = destination
-			row["order_kind"] = "attack_move"
-	return accepted
-
-
-func issue_stop(ids: Array[int], team: int = PLAYER_TEAM) -> int:
-	var accepted_ids: Array[int] = []
-	for id in ids:
-		if accepted_ids.has(id) or not _is_commandable_for_team(id, team):
-			continue
-		var row: Dictionary = entities[id]
-		row["target_id"] = 0
-		row["target_kind"] = "battalion"
-		row["attack_windup"] = 0
-		row["attack_move"] = false
-		_clear_member_attack_schedule(row)
-		_clear_member_targets(row)
-		_clear_pending_route(row, true)
-		row["state"] = "idle"
-		row["order_kind"] = ""
-		_rearm_mood_idle_cadence(row)
-		accepted_ids.append(id)
-	if not accepted_ids.is_empty():
-		_stamp_order_sequence(accepted_ids)
-		_emit_event("order.stop", accepted_ids[0], 0)
-	return accepted_ids.size()
-
-
-func issue_toggle_stance(ids: Array[int], team: int = PLAYER_TEAM) -> int:
-	var accepted_ids: Array[int] = []
-	for id in ids:
-		if accepted_ids.has(id) or not _is_commandable_for_team(id, team):
-			continue
-		var row: Dictionary = entities[id]
-		var index := STANCE_ORDER.find(String(row.get("stance", "Battle")))
-		row["stance"] = STANCE_ORDER[posmod(index + 1, STANCE_ORDER.size())]
-		accepted_ids.append(id)
-	if not accepted_ids.is_empty():
-		_stamp_order_sequence(accepted_ids)
-		_emit_event("order.stance", accepted_ids[0], 0, {"stance": String((entities[accepted_ids[0]] as Dictionary)["stance"])})
-	return accepted_ids.size()
-
-
-func issue_set_stance(ids: Array[int], stance: String, team: int = PLAYER_TEAM) -> int:
-	if not STANCE_ORDER.has(stance):
-		return 0
-	var accepted_ids: Array[int] = []
-	for id in ids:
-		if accepted_ids.has(id) or not _is_commandable_for_team(id, team):
-			continue
-		(entities[id] as Dictionary)["stance"] = stance
-		accepted_ids.append(id)
-	if not accepted_ids.is_empty():
-		_stamp_order_sequence(accepted_ids)
-		_emit_event("order.stance", accepted_ids[0], 0, {"stance": stance})
-	return accepted_ids.size()
-
-
-func _authored_formation_toggle(document: Dictionary) -> Dictionary:
-	## The unit's own HORDE_TOGGLE_FORMATION button, read off the compiled
-	## selection surface so the sim gate and the palantir gate answer from the
-	## SAME authored data (commandbutton.ini / commandset.ini).
-	##
-	var compiled_toggle := PlayableUnitAdapter.formation_toggle_contract(document)
-	var modifier_lists: Array = compiled_toggle.get("modifierLists", []) as Array
-	var effects: Array = []
-	var modifier_ids: Array[String] = []
-	var unsupported_receipts: Array[String] = []
-	for list_value in modifier_lists:
-		var modifier_list := list_value as Dictionary
-		var modifier_id := String(modifier_list.get("id", ""))
-		if modifier_id != "":
-			modifier_ids.append(modifier_id)
-		for modifier_value in modifier_list.get("modifiers", []) as Array:
-			var modifier := modifier_value as Dictionary
-			if String(modifier.get("runtimeSupport", "receipt-only")) == "supported":
-				effects.append(modifier.duplicate(true))
-			else:
-				unsupported_receipts.append(
-					"formation_modifier_unsupported:%s:%s" % [
-						modifier_id, String(modifier.get("kind", "UNKNOWN"))
-					]
-				)
-	for selection_value in PlayableUnitAdapter.selection_commands(document):
-		var selection := selection_value as Dictionary
-		for kind_value in selection.get("commandKinds", []) as Array:
-			if String(kind_value).strip_edges().to_upper() != "HORDE_TOGGLE_FORMATION":
-				continue
-			return {
-				"command_id": String(selection.get("commandId", "")),
-				"command_set_id": String(selection.get("commandSetId", "")),
-				"source_ini": String(selection.get("sourceIni", "")),
-				"modifier": {
-					"id": modifier_ids[0] if modifier_ids.size() == 1 else "+".join(modifier_ids),
-					"modifier_ids": modifier_ids,
-					"category": "FORMATION",
-					"modifiers": effects,
-					"unsupported_receipts": unsupported_receipts,
-				},
-			}
-	return {}
-
-
-func horde_formation_toggle(row: Dictionary) -> Dictionary:
-	## The unit's authored HORDE_TOGGLE_FORMATION button, or {} when its command
-	## set carries none.
-	##
-	## RETAIL ORACLE: a formation toggle is authored per command set, not given
-	## to every unit. data/ini/commandbutton.ini declares 18 live
-	## HORDE_TOGGLE_FORMATION buttons (Command_TowerGuardPorcupineFormation
-	## :664, Command_ToggleFormationGondorFighter :196, Rohan :676, Isengard
-	## pikeman :690, Mithlond :702, Dwarven :714, Wild :726, Mordor Easterling
-	## :738, Angmar :9678, ...), each with
-	## `Options = TOGGLE_IMAGE_ON_FORMATION OK_FOR_MULTI_SELECT` and a TWO-image
-	## ButtonImage; only 13 command sets reference one. A Gondor archer horde
-	## has no such button and cannot be put into a formation at all.
-	return row.get("formation_toggle", {}) as Dictionary
-
-
-func _formation_order_admitted(row: Dictionary) -> bool:
-	if not horde_formation_toggle(row).is_empty():
-		return true
-	# LEGACY FIXTURE CARVE-OUT, deliberate and narrow: synthetic runner rows
-	# that predate the compiled command surface carry no module contracts and
-	# no authored toggle, and the determinism pins script a formation order on
-	# exactly such a row. Descriptor-backed rows -- everything a real pack
-	# produces -- are held to the authored data.
-	return not row.has("module_contracts") and not row.has("command_surface")
-
-
-func issue_toggle_formation(ids: Array[int], team: int = PLAYER_TEAM) -> int:
-	var accepted_ids: Array[int] = []
-	for id in ids:
-		if accepted_ids.has(id) or not _is_commandable_for_team(id, team):
-			continue
-		var row: Dictionary = entities[id]
-		if bool(row.get("is_builder", false)):
-			continue
-		if not _formation_order_admitted(row):
-			continue
-		var index := FORMATION_ORDER.find(String(row.get("formation_mode", "Line")))
-		var next_mode := FORMATION_ORDER[posmod(index + 1, FORMATION_ORDER.size())]
-		row["formation_mode"] = next_mode
-		_apply_formation_mode(row)
-		accepted_ids.append(id)
-	if not accepted_ids.is_empty():
-		_stamp_order_sequence(accepted_ids)
-		_emit_event(
-			"order.formation",
-			accepted_ids[0],
-			0,
-			{"formation": String((entities[accepted_ids[0]] as Dictionary)["formation_mode"])}
-		)
-	return accepted_ids.size()
-
-
-func issue_set_formation(ids: Array[int], formation: String, team: int = PLAYER_TEAM) -> int:
-	if not FORMATION_ORDER.has(formation):
-		return 0
-	var accepted_ids: Array[int] = []
-	for id in ids:
-		if accepted_ids.has(id) or not _is_commandable_for_team(id, team):
-			continue
-		var row: Dictionary = entities[id]
-		if bool(row.get("is_builder", false)):
-			continue
-		if not _formation_order_admitted(row):
-			continue
-		row["formation_mode"] = formation
-		_apply_formation_mode(row)
-		accepted_ids.append(id)
-	if not accepted_ids.is_empty():
-		_stamp_order_sequence(accepted_ids)
-		_emit_event("order.formation", accepted_ids[0], 0, {"formation": formation})
-	return accepted_ids.size()
-
-
+## State/tuning owned by the sim; logic lives in retail_sim_orders.gd
 const FORMATION_MODIFIER_KEY := "formation"
 
+const OrdersSystemScript = preload("res://src/retail_slice/retail_sim_orders.gd")
+var _orders_system = null
+func _orders_subsystem():
+	if _orders_system == null:
+		_orders_system = OrdersSystemScript.new(self)
+	return _orders_system
+
+func issue_move(ids: Array[int], destination: Vector2, ack_kind: String = "order.move", team: int = PLAYER_TEAM) -> int:
+	return _orders_subsystem().issue_move(ids, destination, ack_kind, team)
+
+func _apply_group_speed_cap(accepted_ids: Array[int]) -> void:
+	_orders_subsystem()._apply_group_speed_cap(accepted_ids)
+
+func issue_attack(ids: Array[int], target_id: int, team: int = PLAYER_TEAM) -> int:
+	return _orders_subsystem().issue_attack(ids, target_id, team)
+
+func issue_attack_move(ids: Array[int], destination: Vector2, team: int = PLAYER_TEAM) -> int:
+	return _orders_subsystem().issue_attack_move(ids, destination, team)
+
+func issue_stop(ids: Array[int], team: int = PLAYER_TEAM) -> int:
+	return _orders_subsystem().issue_stop(ids, team)
+
+func issue_toggle_stance(ids: Array[int], team: int = PLAYER_TEAM) -> int:
+	return _orders_subsystem().issue_toggle_stance(ids, team)
+
+func issue_set_stance(ids: Array[int], stance: String, team: int = PLAYER_TEAM) -> int:
+	return _orders_subsystem().issue_set_stance(ids, stance, team)
+
+func _authored_formation_toggle(document: Dictionary) -> Dictionary:
+	return _orders_subsystem()._authored_formation_toggle(document)
+
+func horde_formation_toggle(row: Dictionary) -> Dictionary:
+	return _orders_subsystem().horde_formation_toggle(row)
+
+func _formation_order_admitted(row: Dictionary) -> bool:
+	return _orders_subsystem()._formation_order_admitted(row)
+
+func issue_toggle_formation(ids: Array[int], team: int = PLAYER_TEAM) -> int:
+	return _orders_subsystem().issue_toggle_formation(ids, team)
+
+func issue_set_formation(ids: Array[int], formation: String, team: int = PLAYER_TEAM) -> int:
+	return _orders_subsystem().issue_set_formation(ids, formation, team)
 
 func _apply_formation_attribute_modifier(row: Dictionary) -> void:
-	## RETAIL ORACLE: the toggle swaps the horde to its authored
-	## `AlternateFormation` ChildObject, whose HordeContain carries
-	## `AttributeModifiers = <ModifierList>` and `IsPorcupineFormation = Yes`
-	## (object/evilfaction/hordes/isengard/isengardhordes.ini:531-548, and the
-	## file's own note: "for alternate formations, all info outside of the
-	## Contain Behavior module is ignored. Any modifications need to be done via
-	## the Attribute Modifiers in the contain module").
-	##
-	## That ModifierList is attributemodifier.ini:756-764
-	## `ModifierList GondorTowerShieldGuardHordePorcupine / Category = FORMATION
-	## / Modifier = CRUSHED_DECELERATE 1000% / Duration = 0` -- and the same
-	## shape at :766-806 for Isengard, Mithlond, Dwarven, Wild and Mordor.
-	## The SPEED / ARMOR / DAMAGE_ADD / CRUSHABLE_LEVEL rows in those blocks are
-	## COMMENTED OUT in retail and are deliberately NOT applied here.
-	##
-	## Duration = 0 is "forever" (the file says so at :764), so the entry never
-	## expires; it is erased when the horde leaves the formation.
-	var toggle := horde_formation_toggle(row)
-	var table: Dictionary = row.get("timed_modifiers", {}) as Dictionary
-	var was_active: bool = table.has(FORMATION_MODIFIER_KEY)
-	var modifier := toggle.get("modifier", {}) as Dictionary
-	var effects: Array = modifier.get("modifiers", []) as Array
-	var active: bool = (
-		String(row.get("formation_mode", "Line")) != "Line" and not effects.is_empty()
-	)
-	if not active and not was_active:
-		# Nothing authored and nothing to drop: leave the row byte-identical.
-		# Rows carry an empty `timed_modifiers` dict by construction, so an
-		# unconditional erase-if-empty here would change every hashed row.
-		return
-	table.erase(FORMATION_MODIFIER_KEY)
-	if active:
-		table[FORMATION_MODIFIER_KEY] = {
-			"modifiers": effects.duplicate(true),
-			"expires_tick": -1,
-			"persistent": true,
-			"category": String(modifier.get("category", "FORMATION")),
-			"modifier_id": String(modifier.get("id", "")),
-			"modifier_ids": Array(modifier.get("modifier_ids", [])).duplicate(),
-			"unsupported_modifier_receipts": Array(
-				modifier.get("unsupported_receipts", [])
-			).duplicate(),
-			"source_id": int(row.get("id", 0)),
-		}
-	row["timed_modifiers"] = table
-
+	_orders_subsystem()._apply_formation_attribute_modifier(row)
 
 func _apply_formation_mode(row: Dictionary) -> void:
-	_apply_formation_attribute_modifier(row)
-	var base: Array = row.get("formation_positions_base", row.get("formation_positions", [])) as Array
-	if base.is_empty():
-		return
-	var mode := String(row.get("formation_mode", "Line"))
-	var isotropic := float(FORMATION_SPACING.get(mode, 1.0))
-	# x = lateral, z = depth (see FORMATION_SPACING_RETAIL).
-	var lateral_scale := isotropic
-	var depth_scale := isotropic
-	if retail_formation_movement:
-		var authored: Dictionary = FORMATION_SPACING_RETAIL.get(mode, {}) as Dictionary
-		lateral_scale = float(authored.get("lateral", 1.0))
-		depth_scale = float(authored.get("depth", 1.0))
-	var scaled: Array = []
-	for slot_value in base:
-		if typeof(slot_value) != TYPE_VECTOR3:
-			scaled.append(Vector3.ZERO)
-			continue
-		var slot: Vector3 = slot_value
-		scaled.append(Vector3(slot.x * lateral_scale, slot.y, slot.z * depth_scale))
-	row["formation_positions"] = scaled
-
+	_orders_subsystem()._apply_formation_mode(row)
 
 func advance(ticks: int) -> void:
 	for _index in range(maxi(0, ticks)):
@@ -5584,220 +4462,30 @@ const BATTALION_SEPARATION_PUSH := 0.35
 const BATTALION_SEPARATION_QUERY_SLACK := 16.0 * BATTALION_SEPARATION_PUSH
 
 
-func _step_battalion_separation() -> void:
-	var ids := entity_ids()
-	for index in range(ids.size()):
-		var a: Dictionary = entities[ids[index]]
-		# Only settled battalions get nudged apart: pushing marching columns
-		# around mid-route disrupts ford crossings and formation moves.
-		if int(a.get("health", 0)) <= 0 or String(a.get("state", "")) != "idle" or bool(a.get("flying", false)) or bool(a.get("presentation_hidden", false)):
-			continue
-		# Only battalions overlapping `a` can be pushed by it, so the old
-		# all-pairs inner sweep is a neighbourhood query over ids above `a`.
-		#
-		# `a` also moves as it separates. The gather covers everything within
-		# BATTALION_SEPARATION_QUERY_SLACK of where `a` started, so while its
-		# drift stays inside that slack the candidate set is a superset of what
-		# the all-pairs loop would have tested. If a pile-up ever pushes `a`
-		# further than that, the sweep falls back to the full id list for the
-		# rest of this battalion rather than silently skipping a partner.
-		# Partners are consumed in ascending id order from either list, so the
-		# fallback resumes by id and every pair is still visited exactly once.
-		var gather_origin := Vector2(a["position"])
-		var neighbours := _spatial_gather_sorted(
-			gather_origin, BATTALION_SEPARATION_RADIUS + BATTALION_SEPARATION_QUERY_SLACK
-		)
-		var widened := false
-		var previous_id: int = ids[index]
-		var cursor := 0
-		while true:
-			# Validate the candidate list before it is used to pick the next
-			# partner, so a drifted `a` never selects from a set that no longer
-			# covers its neighbourhood.
-			if not widened \
-					and gather_origin.distance_to(Vector2(a["position"])) > BATTALION_SEPARATION_QUERY_SLACK:
-				widened = true
-				neighbours = ids
-				cursor = 0
-			while cursor < neighbours.size() and neighbours[cursor] <= previous_id:
-				cursor += 1
-			if cursor >= neighbours.size():
-				break
-			var other_id: int = neighbours[cursor]
-			previous_id = other_id
-			if not entities.has(other_id):
-				continue
-			var b: Dictionary = entities[other_id]
-			if int(b.get("health", 0)) <= 0 or String(b.get("state", "")) != "idle" or bool(b.get("flying", false)) or bool(b.get("presentation_hidden", false)):
-				continue
-			var a_position := Vector2(a["position"])
-			var b_position := Vector2(b["position"])
-			var offset := b_position - a_position
-			var distance := offset.length()
-			if distance >= BATTALION_SEPARATION_RADIUS or distance <= 0.001:
-				continue
-			# Pairs actively fighting each other stay engaged.
-			if int(a.get("target_id", 0)) == int(b.get("id", 0)) or int(b.get("target_id", 0)) == int(a.get("id", 0)):
-				continue
-			var push := offset / distance * minf(BATTALION_SEPARATION_PUSH, (BATTALION_SEPARATION_RADIUS - distance) * 0.5)
-			# Only separate onto ground units can actually stand on — pushing a
-			# battalion into water/cliff cells strands it (the ford chokepoints
-			# are exactly where pile-ups happen).
-			var a_target := a_position - push
-			var b_target := b_position + push
-			if _position_walkable(a_target):
-				a["position"] = a_target
-				_spatial_sync(a)
-			if _position_walkable(b_target):
-				b["position"] = b_target
-				_spatial_sync(b)
 
+func _step_battalion_separation() -> void:
+	_stepper_subsystem()._step_battalion_separation()
 
 func _position_walkable(position: Vector2) -> bool:
-	if route_provider == null or not route_provider.has_method("is_local_inside_navigation"):
-		return true
-	if not bool(route_provider.call("is_local_inside_navigation", position)):
-		return false
-	if route_provider.has_method("is_navigation_walkable") and route_provider.has_method("local_to_grid_cell"):
-		return bool(route_provider.call("is_navigation_walkable", route_provider.call("local_to_grid_cell", position)))
-	return true
-
-
-# Provisional AutoHealBehavior shape (exact retail magnitudes are an M3 INI
-# extraction item): heroes regenerate out of combat, dead members stay dead.
-const HERO_REGEN_OUT_OF_COMBAT_SECONDS := 5.0
-const HERO_REGEN_PERCENT_PER_SECOND := 0.01
-var _has_hero_units := false
-
+	return _stepper_subsystem()._position_walkable(position)
 
 func _step_hero_regeneration() -> void:
-	if not _has_hero_units:
-		return
-	for id in entity_ids():
-		var row: Dictionary = entities[id]
-		if String(row.get("category", "")) != "hero":
-			continue
-		if row.has("auto_heal_behavior"):
-			# An authored AutoHealBehavior contract is the real regeneration
-			# rate; the provisional percentage would stack a second heal on top.
-			continue
-		var health := int(row.get("health", 0))
-		var maximum := int(row.get("maximum_health", 0))
-		if health <= 0 or health >= maximum:
-			continue
-		var ticks_since_damage := tick_index - int(row.get("last_damage_tick", -1000000))
-		if float(ticks_since_damage) * TICK_SECONDS < HERO_REGEN_OUT_OF_COMBAT_SECONDS:
-			continue
-		# AUTO_HEAL scales the object's own regeneration rate, which is what
-		# retail's AutoHeal attribute ladder does: it multiplies an authored
-		# AutoHealBehavior, it does not author one. A unit that declares no
-		# multiplier regenerates at exactly the historical rate.
-		var heal_rate := HERO_REGEN_PERCENT_PER_SECOND * float(row.get("auto_heal_multiplier", 1.0))
-		var amount := maxi(1, roundi(float(maximum) * heal_rate * TICK_SECONDS))
-		var health_values: Array = row.get("member_health", [])
-		var member_maximum := int(row.get("member_maximum_health", 0))
-		var remaining := amount
-		for index in range(health_values.size()):
-			if remaining <= 0:
-				break
-			var current := int(health_values[index])
-			if current <= 0 or current >= member_maximum:
-				continue
-			var healed := mini(remaining, member_maximum - current)
-			health_values[index] = current + healed
-			remaining -= healed
-		row["member_health"] = health_values
-		var aggregate := 0
-		for value in health_values:
-			aggregate += int(value)
-		row["health"] = aggregate
-
-
-# --- AutoHealBehavior (authored self-heal cadence) ---
-# Retail's AutoHealBehavior is a flat HealingAmount applied every HealingDelay
-# milliseconds, restarted StartHealingDelay after the object was last damaged
-# when HealOnlyIfNotInCombat or HealOnlyIfNotUnderAttack is authored. Heroes
-# carry HERO_HEAL_AMOUNT (30) on
-# a 1000ms pulse behind a HERO_HEAL_DELAY (15000ms) restart, which is nothing
-# like the provisional percentage above. Only the importer's closed executable
-# subset arms here: area heals, button bursts, upgrade-triggered activation and
-# containment heals stay authored evidence with no timer.
-
+	_stepper_subsystem()._step_hero_regeneration()
 
 func _attach_auto_heal_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_auto_heal_contract(row, contract)
-
+	_stepper_subsystem()._attach_auto_heal_contract(row, contract)
 
 func _step_auto_heal_updates() -> void:
-	_contracts_subsystem()._step_auto_heal_updates()
-
+	_stepper_subsystem()._step_auto_heal_updates()
 
 func _apply_auto_heal_pulse(row: Dictionary, battalion: bool) -> void:
-	_contracts_subsystem()._apply_auto_heal_pulse(row, battalion)
-
-
-var _unit_ability_rules: Dictionary = {}
-var _shared_ability_cooldowns: Dictionary = {} # team:special-power -> ready tick
-
-# Object-kind vocabulary for authored HealAffects/AttributeModifierAffects
-# filters, mapped from sim categories.
-const ABILITY_CATEGORY_KINDS := {
-	"infantry": "INFANTRY",
-	"ranged-infantry": "INFANTRY",
-	"cavalry": "CAVALRY",
-	"hero": "HERO",
-	"monster": "MONSTER",
-	"siege": "SIEGEENGINE",
-}
-const ABILITY_SUMMON_OFFSET_STEP := 1.75
-const ABILITY_SUMMON_MAX_COUNT := 8
-const ABILITY_ARMOR_CAP := 0.95
-# Leadership auras recompute on a fixed cadence (deterministic, ascending
-# entity ids). Each grant expires one interval after its last refresh, so an
-# aura drops within half a second of the hero dying, being knocked down, or
-# the ally leaving the radius.
-const ABILITY_AURA_INTERVAL_TICKS := 5
-
+	_stepper_subsystem()._apply_auto_heal_pulse(row, battalion)
 
 func _scaled_ability_rules(rules: Array[Dictionary], source_scale: float) -> Array[Dictionary]:
-	return _contracts_subsystem()._scaled_ability_rules(rules, source_scale)
-
+	return _stepper_subsystem()._scaled_ability_rules(rules, source_scale)
 
 func _attach_hero_ability_state(row: Dictionary) -> void:
-	_contracts_subsystem()._attach_hero_ability_state(row)
-
-
-var _unit_experience_rules: Dictionary = {}
-var _experience_unauthored_victims: Dictionary = {}
-## unit_type -> Array of projected moduleContracts (typed + opaque deferred).
-var _unit_module_contracts: Dictionary = {}
-## structure object_id / structure_kind -> projected moduleContracts.
-var _structure_module_contracts: Dictionary = {}
-## Retail's CastleUpgrade indirection, projected from the fortress documents'
-## own moduleContracts rows.
-##
-## A fortress improvement button (Command_PurchaseUpgradeMordorFortressLavaMoat,
-## Command_PurchaseUpgradeAngmarFortressIceWalls, ...) does NOT buy the upgrade
-## it names. It buys a *Trigger* upgrade (Upgrade_AngmarFortressIceWallsTrigger,
-## upgrade.ini), and a CastleUpgrade behavior on the fortress converts that
-## trigger into the real upgrade and hands it to the castle
-## (angmarfortress.ini:1282-1286 "Behavior = CastleUpgrade
-## ModuleTag_PassOutAngmarStoneworkUpgrade / TriggeredBy =
-## Upgrade_AngmarFortressIceWallsTrigger / Upgrade = Upgrade_AngmarFortressIceWalls
-## / WallUpgradeRadius = ..."). Every downstream module — AttributeModifierUpgrade,
-## SubObjectsUpgrade, WeaponSetUpgrade — is triggered by the REAL upgrade, so
-## without this hop a purchased fortress improvement does nothing at all.
-##
-## trigger upgrade id (folded) -> Array[{upgrade_id, wall_upgrade_radius,
-## source_object_id, tag}].
-var _castle_upgrade_grants: Dictionary = {}
-## Match-scoped objective history: team -> authored hero unit type -> peak
-## rank reached. A value of -1 records that the hero existed but had no
-## authored ExperienceLevel chain, so historical negative answers refuse
-## instead of silently forgetting uncertainty after death. Hero unit type is
-## the revival-stable identity used by production and the experience rules.
-var _hero_peak_ranks_by_team: Dictionary = {}
-
+	_stepper_subsystem()._attach_hero_ability_state(row)
 
 func _attach_module_contracts(row: Dictionary) -> void:
 	_contracts_subsystem()._attach_module_contracts(row)
@@ -8243,6 +6931,31 @@ func _step_structure_upgrades() -> void:
 func _step_production() -> void:
 	_production_subsystem()._step_production()
 
+
+## State/tuning owned by the sim; logic lives in retail_sim_stepper.gd
+const HERO_REGEN_OUT_OF_COMBAT_SECONDS := 5.0
+const HERO_REGEN_PERCENT_PER_SECOND := 0.01
+var _has_hero_units := false
+var _unit_ability_rules: Dictionary = {}
+var _shared_ability_cooldowns: Dictionary = {} # team:special-power -> ready tick
+const ABILITY_CATEGORY_KINDS := {
+	"infantry": "INFANTRY",
+	"ranged-infantry": "INFANTRY",
+	"cavalry": "CAVALRY",
+	"hero": "HERO",
+	"monster": "MONSTER",
+	"siege": "SIEGEENGINE",
+}
+const ABILITY_SUMMON_OFFSET_STEP := 1.75
+const ABILITY_SUMMON_MAX_COUNT := 8
+const ABILITY_ARMOR_CAP := 0.95
+const ABILITY_AURA_INTERVAL_TICKS := 5
+var _unit_experience_rules: Dictionary = {}
+var _experience_unauthored_victims: Dictionary = {}
+var _unit_module_contracts: Dictionary = {}
+var _structure_module_contracts: Dictionary = {}
+var _castle_upgrade_grants: Dictionary = {}
+var _hero_peak_ranks_by_team: Dictionary = {}
 
 const StepperSystemScript = preload("res://src/retail_slice/retail_sim_stepper.gd")
 var _stepper_system = null
