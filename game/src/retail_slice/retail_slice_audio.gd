@@ -96,6 +96,19 @@ const FORDS_AMBIENT_RANGE_DEFINES := {
 	"AMB_MAX_RANGE": 800.0,
 }
 
+## HAND-TUNED DEFAULTS, NOT AUTHORED — for world-typed SFX whose AudioEvent
+## block authors no MinRange/MaxRange (e.g. `ImpactHorse`,
+## soundeffects.ini:16673-16684 authors `Type = world shrouded everyone` and no
+## range rows; `ImpactSword01` at :9394-9412 authors `MinRange = 200` and no
+## MaxRange). Retail resolved the unauthored side from the AudioEventInfo
+## constructor default, which the decomp oracle does not carry. These values
+## mirror retail's most common authored world ranges instead of inventing a
+## curve: voice.ini:59-60 `MinRange = 250 / MaxRange = 700`, the EMOTION_*
+## defines 300/700 (soundeffects.ini:236-251), AMB_* 300/800 (:229-230).
+## Every event that fell back to them is named once in `unranged_world_sfx`.
+const WORLD_SFX_DEFAULT_MIN_RANGE := 250.0
+const WORLD_SFX_DEFAULT_MAX_RANGE := 700.0
+
 ## Effective retail soundeffects.ini:8050-8070. The currently published Men
 ## packs contain these exact WAV leaves (because GondorFarm references them)
 ## but their global audio-events registry omitted the two logical event rows.
@@ -145,13 +158,15 @@ var sfx_player: AudioStreamPlayer
 ## "attack sounds awful" playtest report. Round-robin over N players lets
 ## simultaneous effects overlap the way the retail mixer does.
 ##
-## NAMED LIMITATION: these are non-positional AudioStreamPlayers, not
-## AudioStreamPlayer3D. Retail authors `Type = world ...` on these events
-## (3D positional with MinRange/MaxRange attenuation), but the sim's
-## `combat.member_swing` / `combat.hit` payloads carry NO world position
-## (retail_slice_sim.gd emits attacker/target ids only), so there is nothing
-## honest to place a 3D emitter at from this module. Recorded as
-## `unsupported-type:world:<event>` in `sfx_semantics_gaps`.
+## These stay non-positional AudioStreamPlayers, but `Type = world` semantics
+## are now honored PRESENTATION-SIDE at play time: the combat events still
+## carry only attacker/target ids, so `_consume_event` resolves a sim-plane
+## position through `spatial_position_probe` (the slice answers from its own
+## read-only view of the sim rows) and `_play_sfx` applies the retail shroud
+## cull + inverse-distance listener falloff (`_spatial_sfx_semantics`).
+## A world-typed effect that reaches `_play_sfx` with NO resolvable position
+## still plays flat and is still recorded as `unsupported-type:world:<event>`
+## in `sfx_semantics_gaps`.
 const SFX_POOL_SIZE := 8
 var sfx_players: Array[AudioStreamPlayer] = []
 var _sfx_cursor := 0
@@ -162,6 +177,33 @@ var sfx_limit_drops: Dictionary = {}
 ## Retail AudioEvent parameters this lane still cannot honor, as
 ## `unsupported-<field>:<event_id>` strings. Never invented, only reported.
 var sfx_semantics_gaps: Dictionary = {}
+## PRESENTATION-SIDE spatial context for world-typed SFX. All three probes are
+## wired by the slice (`configure_spatial_audio`); when unset, every effect
+## keeps the pre-existing flat behavior and the world gap stays recorded.
+## (entity_or_structure_id: int, is_structure: bool) -> Vector2 sim-plane
+## position, or null when the row no longer exists.
+var spatial_position_probe := Callable()
+## (position: Vector2) -> bool: is that ground CLEAR for the local player.
+## Retail authority: GameSounds.cpp:262-268 (`SoundManager::canPlayNow`) —
+## an `ST_SHROUDED` sound whose position is not CELLSHROUD_CLEAR for the
+## local player is refused outright, which is why retail plays NOTHING for
+## battles under the fog of war.
+var spatial_visibility_probe := Callable()
+## () -> Vector2: the listener's sim-plane position (the camera focus).
+var spatial_listener_probe := Callable()
+## Source-unit -> sim-plane multiplier (source_map_data.local_transform_scale);
+## authored MinRange/MaxRange are source units.
+var spatial_transform_scale := 1.0
+## event_id -> how many world/shrouded effects were culled under the shroud.
+var shrouded_sfx_drops: Dictionary = {}
+## event_id -> how many world effects were culled beyond MaxRange
+## (MilesAudioManager.cpp:2723-2726: volume hits zero at m_maxDistance).
+var distance_sfx_drops: Dictionary = {}
+## event_id -> true for world effects that authored no usable MinRange/MaxRange
+## and took the hand-tuned WORLD_SFX_DEFAULT_* values. Named once, never silent.
+var unranged_world_sfx: Dictionary = {}
+## The last spatial decision, for deterministic runner assertions.
+var last_spatial_sfx_receipt: Dictionary = {}
 # music_streams keeps the legacy state -> primary AudioStream view (the exact
 # <state>.mp3 leaf) so existing closure gates stay intact.
 var music_streams: Dictionary = {}
@@ -354,6 +396,10 @@ func configure(selected_pack_root: String, enable_playback: bool = true, active_
 	damage_fx_gaps.clear()
 	sfx_limit_drops.clear()
 	sfx_semantics_gaps.clear()
+	shrouded_sfx_drops.clear()
+	distance_sfx_drops.clear()
+	unranged_world_sfx.clear()
+	last_spatial_sfx_receipt.clear()
 	route_failures.clear()
 	missing_required_events.clear()
 	unvoiced_roster_degradations.clear()
@@ -399,6 +445,16 @@ func configure(selected_pack_root: String, enable_playback: bool = true, active_
 	if profile_boot:
 		print("BOOT_PROFILE audio.voice_bind_readiness_ms=%d" % (Time.get_ticks_msec() - boot_mark))
 	return has_complete_audio_closure()
+
+
+func configure_spatial_audio(position_probe: Callable, visibility_probe: Callable, listener_probe: Callable, transform_scale: float) -> void:
+	## Presentation-only wiring: the slice hands this module read-only views of
+	## the sim rows (positions), the local player's shroud state, and the camera
+	## focus. Nothing here writes sim state or touches the event stream.
+	spatial_position_probe = position_probe
+	spatial_visibility_probe = visibility_probe
+	spatial_listener_probe = listener_probe
+	spatial_transform_scale = transform_scale if transform_scale > 0.0 else 1.0
 
 
 func _ensure_players() -> void:
@@ -1453,7 +1509,9 @@ func _consume_event(event: Dictionary) -> void:
 		var defeated_object_id := _object_id_for_event(event, target_id)
 		var death_anim := resolve_death_animation(event)
 		_play_routed(route_roster_voice(defeated_object_id, "death", sequence), voice_player)
-		_play_sfx(_route_bodyfall(defeated_object_id, sequence, String(death_anim.get("clip", "")), int(death_anim.get("frame", -1))))
+		# Position: the fallen battalion first; when its row is already gone by
+		# presentation time, the attacker standing over it is the honest stand-in.
+		_play_sfx(_route_bodyfall(defeated_object_id, sequence, String(death_anim.get("clip", "")), int(death_anim.get("frame", -1))), _spatial_event_position([target_id, entity_id]))
 		_entity_object_ids.erase(target_id)
 		# Pure RotWK 2.01 has no generic UnitLost/BattalionLost EVA block.
 		# The unit's own authored death voice above is therefore the complete,
@@ -1462,7 +1520,7 @@ func _consume_event(event: Dictionary) -> void:
 		# Every fallen member lands its own class bodyfall (horde wipes are not
 		# a single thud); the battalion's die voice still fires once at defeat.
 		var member_death := resolve_death_animation(event)
-		_play_sfx(_route_bodyfall(_object_id_for_event(event, target_id), sequence, String(member_death.get("clip", "")), int(member_death.get("frame", -1))))
+		_play_sfx(_route_bodyfall(_object_id_for_event(event, target_id), sequence, String(member_death.get("clip", "")), int(member_death.get("frame", -1))), _spatial_event_position([target_id, entity_id]))
 	elif kind == "combat.swing":
 		# BATTALION-LEVEL CADENCE MARKER ONLY - deliberately silent.
 		#
@@ -1489,7 +1547,7 @@ func _consume_event(event: Dictionary) -> void:
 		# ONE WEAPON SOUND PER MEMBER PER SWING, matching retail's per-weapon
 		# FireFX. The sim has emitted this event at retail_slice_sim.gd:15754
 		# and NOTHING in game/src consumed it.
-		_play_sfx(_route_weapon_swing(_object_id_for_event(event, entity_id), sequence))
+		_play_sfx(_route_weapon_swing(_object_id_for_event(event, entity_id), sequence), _spatial_event_position([entity_id]))
 	elif kind == "combat.hit":
 		# THE PER-HIT LAYER IS A NAMED, COUNTED GAP - NOT SoundImpact.
 		#
@@ -1528,9 +1586,9 @@ func _consume_event(event: Dictionary) -> void:
 			hit_damage_type = "UNDECLARED"
 		damage_fx_gaps[hit_damage_type] = int(damage_fx_gaps.get(hit_damage_type, 0)) + 1
 	elif kind == "combat.hit_structure":
-		_consume_structure_damage(event, sequence)
+		_consume_structure_damage(event, sequence, _spatial_event_position([entity_id], [target_id]))
 	elif kind == "structure.destroyed":
-		_consume_structure_destroyed(event, sequence)
+		_consume_structure_destroyed(event, sequence, _spatial_event_position([entity_id], [target_id]))
 	elif kind in ["battalion_upgrade.completed", "upgrade.completed"] and int(event.get("team", -1)) == local_team:
 		var upgrade_eva := _upgrade_complete_eva_id(String(event.get("upgrade_id", "")))
 		if upgrade_eva != "":
@@ -1557,6 +1615,30 @@ func _consume_event(event: Dictionary) -> void:
 	elif kind == "eva.hero_created":
 		_play_created_eva(event, sequence, eva_clock)
 	_append_bounded_observability(intent_log, event.duplicate(true))
+
+
+func _spatial_event_position(entity_ids: Array, structure_ids: Array = []) -> Variant:
+	## Resolve a combat event's sim-plane position through the slice's read-only
+	## probe. Structure ids are the true sound source and win over the attacker
+	## fallback; the first id whose row still exists answers. Returns null when
+	## nothing resolves (the effect then plays flat and the world gap records).
+	if not spatial_position_probe.is_valid():
+		return null
+	for id_value in structure_ids:
+		var structure_id := int(id_value)
+		if structure_id <= 0:
+			continue
+		var structure_found: Variant = spatial_position_probe.call(structure_id, true)
+		if typeof(structure_found) == TYPE_VECTOR2:
+			return structure_found
+	for id_value in entity_ids:
+		var entity_id := int(id_value)
+		if entity_id <= 0:
+			continue
+		var entity_found: Variant = spatial_position_probe.call(entity_id, false)
+		if typeof(entity_found) == TYPE_VECTOR2:
+			return entity_found
+	return null
 
 
 func _route_weapon_swing(object_id: String, sequence: int) -> Dictionary:
@@ -1671,13 +1753,13 @@ func _route_bodyfall(object_id: String, sequence: int, clip: String = "", frame:
 	return route_audio_event("ImpactHorse" if _is_cavalry_object(object_id) else "BodyFallSoldier", sequence)
 
 
-func _consume_structure_damage(event: Dictionary, sequence: int) -> void:
+func _consume_structure_damage(event: Dictionary, sequence: int, world_position: Variant = null) -> void:
 	var structure_kind := String(event.get("structure_kind", ""))
 	var damaged_id := _structure_contract_event("damaged", structure_kind)
 	var really_id := _structure_contract_event("really_damaged", structure_kind)
 	if damaged_id == "" and really_id == "":
 		# No converted per-structure evidence: legacy generic stone damage.
-		_play_sfx(route_audio_event("BuildingLightDamageStone", sequence))
+		_play_sfx(route_audio_event("BuildingLightDamageStone", sequence), world_position)
 		return
 	# Retail SoundOnDamaged/SoundOnReallyDamaged fire on ENTERING the damaged
 	# bands (the structure doc's own maxHealthDamaged/ReallyDamaged fractions),
@@ -1698,19 +1780,19 @@ func _consume_structure_damage(event: Dictionary, sequence: int) -> void:
 	_structure_damage_stage[structure_id] = stage
 	match stage:
 		"damaged":
-			_play_structure_stage_sound(damaged_id, "BuildingLightDamageStone", sequence)
+			_play_structure_stage_sound(damaged_id, "BuildingLightDamageStone", sequence, world_position)
 		"really_damaged":
-			_play_structure_stage_sound(really_id, "BuildingHeavyDamageStone", sequence)
+			_play_structure_stage_sound(really_id, "BuildingHeavyDamageStone", sequence, world_position)
 
 
-func _consume_structure_destroyed(event: Dictionary, sequence: int) -> void:
+func _consume_structure_destroyed(event: Dictionary, sequence: int, world_position: Variant = null) -> void:
 	var structure_kind := String(event.get("structure_kind", ""))
 	_structure_damage_stage.erase(int(event.get("target_id", 0)))
-	_play_structure_stage_sound(_structure_contract_event("really_damaged", structure_kind), "BuildingHeavyDamageStone", sequence)
-	_play_structure_stage_sound(_structure_contract_event("collapse", structure_kind), "BuildingSink", sequence)
+	_play_structure_stage_sound(_structure_contract_event("really_damaged", structure_kind), "BuildingHeavyDamageStone", sequence, world_position)
+	_play_structure_stage_sound(_structure_contract_event("collapse", structure_kind), "BuildingSink", sequence, world_position)
 
 
-func _play_structure_stage_sound(doc_id: String, generic_id: String, sequence: int) -> void:
+func _play_structure_stage_sound(doc_id: String, generic_id: String, sequence: int, world_position: Variant = null) -> void:
 	## The structure document's converted event leads; when the mounted packs
 	## cannot route it (the id or its samples are not cooked yet) the legacy
 	## generic plays instead — the same fallback the slice always used — so a
@@ -1719,9 +1801,9 @@ func _play_structure_stage_sound(doc_id: String, generic_id: String, sequence: i
 		_ensure_authored_structure_damage_route(doc_id)
 		var doc_result := route_audio_event(doc_id, sequence)
 		if bool(doc_result.get("ok", false)):
-			_play_sfx(doc_result)
+			_play_sfx(doc_result, world_position)
 			return
-	_play_sfx(route_audio_event(generic_id, sequence))
+	_play_sfx(route_audio_event(generic_id, sequence), world_position)
 
 
 func _ensure_authored_structure_damage_route(event_id: String) -> void:
@@ -2957,6 +3039,10 @@ func _route_definition(route: Dictionary, sequence: int, object_id: String, kind
 		"volume_db": float(semantics["volume_db"]),
 		"pitch_scale": float(semantics["pitch_scale"]),
 		"limit": int(semantics["limit"]),
+		"type_tokens": Array(semantics.get("type_tokens", [])),
+		"min_range": float(semantics.get("min_range", -1.0)),
+		"max_range": float(semantics.get("max_range", -1.0)),
+		"has_definition": bool(semantics.get("has_definition", false)),
 	}
 	last_route_result = result.duplicate()
 	_append_bounded_observability(routing_log, _observable_route_result(result))
@@ -3002,7 +3088,7 @@ func _play_routed(result: Dictionary, player: AudioStreamPlayer) -> void:
 	player.play()
 
 
-func _play_sfx(result: Dictionary) -> void:
+func _play_sfx(result: Dictionary, world_position: Variant = null) -> void:
 	## THE SFX ENTRY POINT. Everything routed to the effects lane goes through
 	## here so it lands on a FREE pool player instead of stamping over whatever
 	## was already sounding, and so the retail AudioEvent parameters the pack
@@ -3016,18 +3102,24 @@ func _play_sfx(result: Dictionary) -> void:
 	##                user slider.
 	##   PitchShift - authored low/high percent range, resolved DETERMINISTICALLY
 	##                from the event sequence (never randf) so replays match.
+	##   Type = world / shrouded - honored when the consuming event resolved a
+	##                sim-plane position (`world_position`): the retail shroud
+	##                cull and inverse-distance listener falloff from
+	##                `_spatial_sfx_semantics` apply. Without a position the
+	##                effect plays flat and the gap is recorded, as before.
 	## NOT honored, and reported rather than invented (`sfx_semantics_gaps`):
 	##   VolumeShift  - retail's units for this field are ambiguous between a
 	##                  dB trim and a percent trim; guessing would be a made-up
 	##                  mix decision.
 	##   Priority     - there is no ducking/eviction model in this lane yet.
-	##   Type = world - needs a 3D emitter and a world position; the combat
-	##                  events carry neither (see `sfx_players`).
 	if not bool(result.get("ok", false)) or not playback_enabled:
 		return
 	if sfx_players.is_empty():
 		return
 	var event_id := String(result.get("event_id", ""))
+	var spatial := _spatial_sfx_semantics(result, world_position)
+	if bool(spatial.get("culled", false)):
+		return
 	var limit := int(result.get("limit", 0))
 	if limit > 0:
 		var sounding := 0
@@ -3042,9 +3134,94 @@ func _play_sfx(result: Dictionary) -> void:
 		return
 	player.set_meta("retail_event_id", event_id)
 	player.stream = result.get("stream") as AudioStream
-	player.volume_db = UserSettingsScript.volume_to_db(voice_sfx_volume, muted) + float(result.get("volume_db", 0.0))
+	player.volume_db = UserSettingsScript.volume_to_db(voice_sfx_volume, muted) + float(result.get("volume_db", 0.0)) + float(spatial.get("attenuation_db", 0.0))
 	player.pitch_scale = float(result.get("pitch_scale", 1.0))
 	player.play()
+
+
+func _spatial_sfx_semantics(result: Dictionary, world_position: Variant) -> Dictionary:
+	## Retail world-sound spatial semantics, PRESENTATION-SIDE ONLY.
+	##
+	## SHROUD CULL — GameSounds.cpp:232-269 (`SoundManager::canPlayNow`): a
+	## sound whose type carries `shrouded` is refused outright when the local
+	## player's shroud at its position is not CELLSHROUD_CLEAR. Combat SFX
+	## author `Type = world shrouded everyone` (soundeffects.ini:16682
+	## ImpactHorse, :9411 ImpactSword01), which is why retail battles under the
+	## fog of war are SILENT — the owner-reported "combat through the fog" bug.
+	##
+	## DISTANCE — MilesAudioManager::getEffectiveVolume (ZH reference the
+	## engine forked from, MilesAudioManager.cpp:2681-2740): full volume inside
+	## MinRange, gain = MinRange / distance beyond it (inverse distance), zero
+	## at distance >= MaxRange (also refused up front, canPlayNow item 1).
+	## Authored ranges are source units; the sim plane is source *
+	## `spatial_transform_scale`. The listener is the camera focus point.
+	var event_id := String(result.get("event_id", ""))
+	var type_tokens: Array = result.get("type_tokens", [])
+	var has_definition := bool(result.get("has_definition", false))
+	var world_typed := type_tokens.has("world")
+	if has_definition and not world_typed:
+		# Authored non-world effect (ui/global): flat by authoring.
+		return {"attenuation_db": 0.0}
+	var have_context: bool = typeof(world_position) == TYPE_VECTOR2 \
+		and spatial_visibility_probe.is_valid() and spatial_listener_probe.is_valid() \
+		and spatial_transform_scale > 0.0
+	if not have_context:
+		# A world-typed effect playing FLAT because no position reached this
+		# call: the pre-existing named gap, kept as the honest record.
+		if world_typed:
+			sfx_semantics_gaps["unsupported-type:world:%s" % event_id] = true
+		return {"attenuation_db": 0.0}
+	if not has_definition:
+		# Runtime asset bindings (the per-unit weapon/bodyfall routes resolved
+		# straight to WAV paths) carry no parameter block in the pack, but
+		# retail authors those events `Type = world shrouded everyone`
+		# (soundeffects.ini:9411 ImpactSword01). Spatialize them, and name the
+		# assumption per event instead of hiding it.
+		sfx_semantics_gaps["assumed-world-shrouded-unparameterized:%s" % event_id] = true
+	var position := world_position as Vector2
+	var shroud_gated: bool = (not has_definition) or type_tokens.has("shrouded")
+	if shroud_gated and not bool(spatial_visibility_probe.call(position)):
+		shrouded_sfx_drops[event_id] = int(shrouded_sfx_drops.get(event_id, 0)) + 1
+		last_spatial_sfx_receipt = {"event_id": event_id, "culled": "shroud", "position": position}
+		return {"culled": true}
+	var listener_value: Variant = spatial_listener_probe.call()
+	if typeof(listener_value) != TYPE_VECTOR2:
+		if world_typed:
+			sfx_semantics_gaps["unsupported-type:world:%s" % event_id] = true
+		return {"attenuation_db": 0.0}
+	var min_range := float(result.get("min_range", -1.0))
+	var max_range := float(result.get("max_range", -1.0))
+	var ranges_authored: bool = min_range > 0.0 and max_range >= min_range
+	if not ranges_authored:
+		# Hand-tuned defaults for the unauthored side(s); the event is named
+		# once in `unranged_world_sfx` (see the WORLD_SFX_DEFAULT_* comment).
+		if min_range <= 0.0:
+			min_range = WORLD_SFX_DEFAULT_MIN_RANGE
+		if max_range < min_range:
+			max_range = maxf(min_range, WORLD_SFX_DEFAULT_MAX_RANGE)
+		unranged_world_sfx[event_id] = true
+	var min_local := min_range * spatial_transform_scale
+	var max_local := max_range * spatial_transform_scale
+	var distance := position.distance_to(listener_value as Vector2)
+	if distance >= max_local:
+		distance_sfx_drops[event_id] = int(distance_sfx_drops.get(event_id, 0)) + 1
+		last_spatial_sfx_receipt = {"event_id": event_id, "culled": "distance", "position": position, "distance": distance, "max_range_local": max_local}
+		return {"culled": true}
+	var gain: float = 1.0 if distance <= min_local else min_local / distance
+	var attenuation_db := linear_to_db(gain)
+	last_spatial_sfx_receipt = {
+		"event_id": event_id,
+		"culled": "",
+		"position": position,
+		"listener": listener_value,
+		"distance": distance,
+		"min_range_local": min_local,
+		"max_range_local": max_local,
+		"gain": gain,
+		"attenuation_db": attenuation_db,
+		"ranges_authored": ranges_authored,
+	}
+	return {"attenuation_db": attenuation_db}
 
 
 func _next_free_sfx_player() -> AudioStreamPlayer:
@@ -3069,10 +3246,10 @@ func _sfx_semantics(route: Dictionary, sequence: int) -> Dictionary:
 	## values and are NOT guessed at.
 	var definition: Variant = route.get("definition", null)
 	if typeof(definition) != TYPE_DICTIONARY:
-		return {"volume_db": 0.0, "pitch_scale": 1.0, "limit": 0}
+		return {"volume_db": 0.0, "pitch_scale": 1.0, "limit": 0, "type_tokens": [], "min_range": -1.0, "max_range": -1.0, "has_definition": false}
 	var parameters := _ambient_parameters(definition as Dictionary)
 	if parameters.is_empty():
-		return {"volume_db": 0.0, "pitch_scale": 1.0, "limit": 0}
+		return {"volume_db": 0.0, "pitch_scale": 1.0, "limit": 0, "type_tokens": [], "min_range": -1.0, "max_range": -1.0, "has_definition": false}
 	var event_id := String(route.get("event_id", ""))
 	var volume_db := 0.0
 	if parameters.has("volume"):
@@ -3098,9 +3275,18 @@ func _sfx_semantics(route: Dictionary, sequence: int) -> Dictionary:
 	for unsupported in ["volumeshift", "priority"]:
 		if parameters.has(unsupported):
 			sfx_semantics_gaps["unsupported-%s:%s" % [unsupported, event_id]] = true
-	if String(parameters.get("type", "")).to_lower().split(" ").has("world"):
-		sfx_semantics_gaps["unsupported-type:world:%s" % event_id] = true
-	return {"volume_db": volume_db, "pitch_scale": pitch_scale, "limit": limit}
+	# `Type = world` is no longer recorded as a gap HERE: `_play_sfx` honors it
+	# when the consuming event resolved a position, and records the gap only for
+	# a world effect that had to play flat (see `_spatial_sfx_semantics`).
+	return {
+		"volume_db": volume_db,
+		"pitch_scale": pitch_scale,
+		"limit": limit,
+		"type_tokens": Array(String(parameters.get("type", "")).to_lower().split(" ", false)),
+		"min_range": _strict_positive_float(String(parameters.get("minrange", ""))),
+		"max_range": _strict_positive_float(String(parameters.get("maxrange", ""))),
+		"has_definition": true,
+	}
 
 
 func _set_music(state: String) -> void:

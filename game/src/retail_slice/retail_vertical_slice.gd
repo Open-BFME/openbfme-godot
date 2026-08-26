@@ -679,6 +679,16 @@ func _initialize_content_and_match() -> void:
 	simulation.refresh_fog_of_war()
 	shroud_overlay.configure(simulation.fog_of_war(), local_team)
 	shroud_overlay.update(true)
+	# World-typed combat SFX get their retail spatial semantics from these
+	# read-only views: sim-row positions, the local player's shroud state, and
+	# the camera focus as the listener. Presentation-only — nothing here writes
+	# sim state (see retail_slice_audio.gd `_spatial_sfx_semantics`).
+	audio_system.configure_spatial_audio(
+		_audio_event_world_position,
+		_audio_position_visible,
+		_audio_listener_position,
+		source_map_data.local_transform_scale if source_map_data != null and source_map_data.ready else 1.0
+	)
 	# Trees, rocks and ruins are separate meshes the terrain shader never
 	# touches, so they need the shroud applied to them by hand or they stand
 	# lit on top of unexplored black. Bound here, once, and answered on the
@@ -8773,6 +8783,33 @@ func _center_camera_on(world_position: Vector2) -> void:
 	camera_focus = world_position
 	_clamp_camera_focus()
 	_apply_camera_transform()
+
+
+func _audio_event_world_position(id: int, is_structure: bool) -> Variant:
+	## Read-only sim-row position for the audio lane's spatial probes. Returns
+	## null (not Vector2.ZERO) when the row is gone so a dead battalion's sound
+	## falls back to the attacker instead of sounding at the map origin.
+	if simulation == null or id <= 0:
+		return null
+	var row: Dictionary = simulation.structure(id) if is_structure else simulation.entity(id)
+	if row.is_empty() or typeof(row.get("position")) != TYPE_VECTOR2:
+		return null
+	return Vector2(row["position"])
+
+
+func _audio_position_visible(position: Vector2) -> bool:
+	## Local-player shroud gate for world sounds: CLEAR ground only, the same
+	## rule that shows/hides the units themselves (`unit_visible` mirrors retail
+	## GameSounds.cpp canPlayNow's CELLSHROUD_CLEAR check). Fog-off matches
+	## report everything visible.
+	if shroud_overlay == null:
+		return true
+	return shroud_overlay.unit_visible(position)
+
+
+func _audio_listener_position() -> Variant:
+	## The listener is the camera's ground focus point on the sim plane.
+	return camera_focus
 
 
 func _apply_camera_transform() -> void:
