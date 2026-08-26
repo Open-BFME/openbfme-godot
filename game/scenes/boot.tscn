@@ -1,4 +1,4 @@
-﻿[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://src/ui/main_menu.gd" id="1"]
 [ext_resource type="Script" path="res://src/ui/openbfme_menu_backdrop.gd" id="2"]
@@ -102,7 +102,7 @@ theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.85)
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 16
-text = "v0.2.12"
+text = "v0.2.13"
 horizontal_alignment = 2
 vertical_alignment = 1
 
@@ -393,3 +393,4 @@ offset_bottom = 45.0
 theme_override_colors/font_color = Color(0.52, 0.65, 0.70, 0.78)
 theme_override_font_sizes/font_size = 13
 text = "Open source engine | private content remains external"
+
