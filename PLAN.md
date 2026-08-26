@@ -32,9 +32,9 @@ needs: importer
   from: agent
 - [ ] Module framework + traffic-ranked burn-down of the 99 missing retail behavior modules {#sim-modules}
   from: roadmap (queue Q82; oracles: ZH GPL source, decomp symbols.csv, INI clean-sheet for the 9 BFME2-only)
-- [~] Port retail's skirmish AI — personalities, build lists, attack priorities; difficulty = behavior, not cheats {#sim-ai}
-  by: codex (lane codex-q83, Phase 1: compile the authored AI data)
-  from: roadmap (queue Q83; owner: #1 UX lever)
+- [x] Port retail's skirmish AI — authored army composition drives production by default {#sim-ai}
+  by: claude (codex compiled the data; claude shipped the pack, loader, interpreter, and consumption: retail ArmyDefinition composition layers over the proven baseline, never weaker, m2 3/3 both ways; 3442dbeb. Q83c holds the rest: difficulty odds, hero build order, full replacement)
+  from: roadmap (queue Q83/Q83b; owner: #1 UX lever)
 - [ ] Grow map-script vocabulary opportunistically (135/609 actions handled) {#sim-scripts}
   from: roadmap (queue Q85)
 - [ ] Retire the hand-authored synthetic pack game/data/base (after fallback tables die) {#sim-retire-synthetic}
