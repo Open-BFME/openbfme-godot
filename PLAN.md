@@ -27,7 +27,8 @@ needs: importer
 - [x] Split the 33k-line sim into named class files, one subsystem at a time, state-pin equality proving each move {#sim-split}
   by: claude (22 drawers: sim 31,351 → ~7,000-line conductor + 31 modules, all pushed to origin/main; every move pin-proven; carve surfaced+fixed 4 latent bugs of its own making and attributed 8 pre-existing reds to Q94-Q98; function census: 0 lost of 1,128, 5 documented duplicates)
   from: roadmap (queue Q81; owner: highest cleanability/moddability impact)
-- [ ] Split the two oversized modules (module_contracts 7.3k, powers 4.0k) into their sub-families {#sim-split-followup}
+- [x] Split the two oversized modules into sub-families + give all 36 modules a real base class {#sim-split-followup}
+  by: claude (powers → 3 files, contracts → 3 files, largest module now 2.5k; retail_sim_subsystem.gd base owns weakref/sim-getter/emit_event; deterministic tick stays the event dispatcher for lockstep; 12/12 battery, pins exact; 1c77d105)
   from: agent
 - [ ] Module framework + traffic-ranked burn-down of the 99 missing retail behavior modules {#sim-modules}
   from: roadmap (queue Q82; oracles: ZH GPL source, decomp symbols.csv, INI clean-sheet for the 9 BFME2-only)
