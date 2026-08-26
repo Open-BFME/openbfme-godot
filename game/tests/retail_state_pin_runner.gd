@@ -223,7 +223,26 @@ const PIN_TICKS := 3000
 ## Lockstep 5/0, member combat 115/0, castle AI 104/1 (same named red),
 ## pathing and projectile pins unchanged on this tree.
 ## ---------------------------------------------------------------------------
-const EXPECTED_HASH := "2d13b881c59bf5b3707f630878a4308b8cbe947d525e302028da1f2d9433fdc1"
+## ---------------------------------------------------------------------------
+## RE-MINT 2026-08-25 - Q80: MANIFEST REQUIRED + CARRIED IN THE HASHED RULES.
+## ORCHESTRATOR-DIRECTED (owner delegated Q80 takeover); CONSCIOUS MINT.
+##
+## Superseded value: 2d13b881c59bf5b3707f630878a4308b8cbe947d525e302028da1f2d9433fdc1
+## New value:        2723894946831a3cf4ffecc7ad316cc0e27696a70597effca37dd3c4e9a5cc8e
+##
+## WHY: ZERO simulated behavior changed - a fresh-context diagnosis proved it
+## three ways (gameplay digest 892ad2fc... identical pre/post, entity
+## positions identical to 9 decimals; workspace/scratch/q80-diag/). Q80 made
+## the 8 core manifest tables REQUIRED (invented fallback defaults removed),
+## so this fixture now supplies the labeled synthetic default_manifest(); the
+## full rules dictionary - manifest included - is hashed on purpose (a Q80
+## round tried excluding it and that let lockstep peers with different
+## manifests agree on setup hashes; reverted). The delta is exactly "the
+## manifest fixture now travels inside the hashed rules blob".
+## Measured twice from scratch on the same tree; both runs produced
+## 2723894946831a3cf4ffecc7ad316cc0e27696a70597effca37dd3c4e9a5cc8e.
+## ---------------------------------------------------------------------------
+const EXPECTED_HASH := "2723894946831a3cf4ffecc7ad316cc0e27696a70597effca37dd3c4e9a5cc8e"
 const SUBMIT_THROUGH_TICK := 1500
 
 
@@ -344,16 +363,12 @@ func _dump_positions(sim, suffix: String = "") -> void:
 
 func _make_sim():
 	var sim = SimScript.new()
-	# Load REAL registries from ContentDB (7 factions, 137 units, 155 structures)
-	var tree = self
-	var content_db = tree.root.get_node_or_null("ContentDB") if tree != null else null
-	var unit_runtimes: Dictionary = {}
-	var structure_runtimes: Dictionary = {}
-	if content_db != null and content_db.has_method("get_playable_unit_registries"):
-		unit_runtimes = content_db.get_playable_unit_registries()
-	if content_db != null and content_db.has_method("get_playable_structure_registries"):
-		structure_runtimes = content_db.get_playable_structure_registries()
-	sim._rules = _harness_rules(unit_runtimes, structure_runtimes)
+	# SYNTHETIC FIXTURE, by design: this pin runs the historical men-slice
+	# scenario on the labeled synthetic constants (default_manifest()). In
+	# headless --script context ContentDB registries are empty, so a claim of
+	# "real pack data" here would be false (Q80 round-3 verifier proved it).
+	# Live pack-built manifests are covered by boot/castle/slice gates instead.
+	sim._rules = _harness_rules()
 	sim.setup({}, {})
 	if sim.configuration_error != "":
 		printerr("RETAIL_STATE_PIN FAIL configuration error: %s" % sim.configuration_error)
@@ -372,8 +387,8 @@ func _make_sim():
 	return sim
 
 
-func _harness_rules(unit_runtimes: Dictionary = {}, structure_runtimes: Dictionary = {}) -> Dictionary:
-	var manifest := FactionManifestScript.from_registries("men", unit_runtimes, structure_runtimes, false)
+func _harness_rules() -> Dictionary:
+	var manifest := FactionManifestScript.default_manifest()
 	return {
 		"enable_base_loop": true,
 		"starting_resources": 10000,

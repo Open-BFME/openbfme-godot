@@ -40,6 +40,15 @@ extends SceneTree
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const Adapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const WatchdogScript = preload("res://tests/runner_watchdog.gd")
+const ManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
+
+
+static func _fixture_manifest() -> Dictionary:
+	var manifest := ManifestScript.default_manifest()
+	manifest["structure_kinds"] = ["fortress"]
+	manifest["seed_structure_kinds"] = ["fortress"]
+	manifest["spawn_roster"] = []
+	return manifest
 
 const SELECTED_MEN_PACK := "rotwk-men-vslice/13e31f6b964d1d5453e2cd0031f4b9d663a002363e1e61074f6f0b5c1b0b75f4"
 const ARCHER_SOURCE_ID := "GondorArcherHorde"
@@ -86,7 +95,15 @@ const SPLASH_TARGET_B_ID := 104
 # (max_projectiles=16; damage 2030/200/200/200):
 #   workspace/logs/q-loco-parity-projectile-pin-before.txt
 #   workspace/logs/q-loco-parity-projectile-pin-measure-2.txt
-const EXPECTED_HASH := "e6e053d44b8bbe58b22df87c236c8c0a725f559ed74795875255bf3b33e1ca9c"
+# RE-MINT 2026-08-25 (Q80 orchestrator takeover; owner delegated). Superseded
+# e6e053d4... -> 626df5fb.... ZERO combat behavior change: both mints show the
+# IDENTICAL coverage line (max_projectiles=16; damage 2030\200\200\200). Q80
+# made the 8 core manifest tables required, so this fixture's partial manifest
+# became the labeled synthetic default_manifest() + fortress-only overrides,
+# and the full rules dictionary (manifest included) is hashed by design after
+# the exclusion revert. The delta is the manifest fixture inside the hashed
+# rules blob, nothing else. Measured twice; both runs 626df5fb....
+const EXPECTED_HASH := "626df5fb0452536c75e654ca5f32a1173c45cc13d8b3510d2bdd10f9e925c78b"
 
 var _watchdog := WatchdogScript.new()
 
@@ -120,14 +137,12 @@ func _run() -> void:
 	sim.setup({}, {
 		"spawn_initial_battalions": false,
 		"logic_random_seed": LOGIC_RANDOM_SEED,
-		# This combat-only pin seeds no structures. Restrict the legacy fallback
-		# manifest to its one compiled armor kind so unused farm/barracks kinds do
-		# not emit the known Q11 provisional-armor errors.
-		"faction_manifest": {
-			"structure_kinds": ["fortress"],
-			"seed_structure_kinds": ["fortress"],
-			"spawn_roster": [],
-		},
+		# This combat-only pin seeds no structures. Q80 made the 8 core manifest
+		# tables required, so the fixture supplies the labeled SYNTHETIC
+		# default_manifest() with its historical overrides on top: fortress-only
+		# armor kinds (avoids the known Q11 provisional-armor errors) and an
+		# empty spawn roster (spawn_initial_battalions is false anyway).
+		"faction_manifest": _fixture_manifest(),
 		"unit_rules": {
 			String(archer_rule["object_id"]): archer_rule,
 			String(trebuchet_rule["object_id"]): trebuchet_rule,

@@ -62,7 +62,7 @@ func _make_sim():
 
 
 func _harness_rules() -> Dictionary:
-	return {
+	return {"faction_manifest": preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest(), 
 		"unit_rules": {
 			SimScript.SOLDIER_OBJECT_ID: _unit_rule(SimScript.SOLDIER_HORDE_ID),
 			SimScript.ARCHER_OBJECT_ID: _unit_rule(SimScript.ARCHER_OBJECT_ID),

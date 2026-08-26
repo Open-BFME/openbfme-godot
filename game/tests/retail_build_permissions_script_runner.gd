@@ -131,7 +131,7 @@ func _check(name: String, condition: bool) -> void:
 
 func _make_sim() -> RetailSliceSim:
 	var sim: RetailSliceSim = SimScript.new()
-	sim._rules = {
+	sim._rules = {"faction_manifest": _q80_harness_manifest(), 
 		"enable_base_loop": true,
 		"spawn_initial_battalions": false,
 		"starting_resources": 10000,
@@ -200,3 +200,11 @@ func _release_worlds() -> void:
 			facet.world = null
 		world._facets.clear()
 	worlds.clear()
+
+
+static func _q80_harness_manifest() -> Dictionary:
+	# Q80: labeled SYNTHETIC default_manifest() with an EMPTY roster - this
+	# harness hand-places rows / lacks rules for the default gondor roster.
+	var manifest: Dictionary = preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest()
+	manifest["spawn_roster"] = []
+	return manifest

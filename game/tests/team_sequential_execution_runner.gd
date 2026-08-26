@@ -179,7 +179,7 @@ func _test_snapshot_round_trip() -> void:
 	var saved := sim.snapshot()
 	var saved_hash := sim.state_hash()
 	var twin: RetailSliceSim = SimScript.new()
-	twin.setup({}, {"spawn_initial_battalions": false, "starting_resources": 0})
+	twin.setup({}, {"faction_manifest": preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest(), "spawn_initial_battalions": false, "starting_resources": 0})
 	twin.ai_enabled = false
 	var twin_world: RetailSliceScriptWorld = WorldScript.new(twin)
 	worlds.append(twin_world)
@@ -229,7 +229,7 @@ func _test_unknown_script_refuses() -> void:
 
 func _fixture(scripts: Array) -> Dictionary:
 	var sim: RetailSliceSim = SimScript.new()
-	sim.setup({}, {"spawn_initial_battalions": false, "starting_resources": 0})
+	sim.setup({}, {"faction_manifest": preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest(), "spawn_initial_battalions": false, "starting_resources": 0})
 	sim.ai_enabled = false
 	var world: RetailSliceScriptWorld = WorldScript.new(sim)
 	worlds.append(world)

@@ -260,7 +260,7 @@ func _test_sim_measured_cadence_matches_authored() -> void:
 		_completed.append("sim-measured-cadence")
 		return
 	var sim = SimScript.new()
-	sim.setup({}, {
+	sim.setup({}, {"faction_manifest": preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest(), 
 		"member_health": 100,
 		"unit_rules": {
 			SimScript.SOLDIER_OBJECT_ID: _harness_rule(SimScript.SOLDIER_HORDE_ID),
@@ -359,7 +359,7 @@ func _test_per_shot_keeps_every_volley_windup() -> void:
 		return
 	_check("per_shot_type_honored", String(rule.get("pre_attack_type", "")) == "PER_SHOT")
 	var sim = SimScript.new()
-	sim.setup({}, {
+	sim.setup({}, {"faction_manifest": preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest(), 
 		"member_health": 100,
 		"unit_rules": {
 			SimScript.SOLDIER_OBJECT_ID: _harness_rule(SimScript.SOLDIER_HORDE_ID),

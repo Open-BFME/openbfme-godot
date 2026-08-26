@@ -165,7 +165,7 @@ func _gameplay_rules(contract: Dictionary) -> Dictionary:
 		SimScript.TOWER_GUARD_OBJECT_ID: _unit_rule(SimScript.TOWER_GUARD_OBJECT_ID, 15, 200, 40, 3.5),
 		SimScript.KNIGHT_OBJECT_ID: _unit_rule(SimScript.KNIGHT_OBJECT_ID, 15, 200, 40, 1.15),
 	}
-	var rules := {
+	var rules := {"faction_manifest": preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest(), 
 		"enable_base_loop": true,
 		"spawn_initial_battalions": false,
 		"starting_resources": 5000,

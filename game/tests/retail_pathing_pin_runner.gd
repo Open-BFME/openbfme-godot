@@ -19,7 +19,20 @@ const PIN_TICKS := 5
 ##   workspace/logs/q51-pathing-pin-remeasure-2.txt
 ## Both independently produced the digest below at tick 5. Unlike the main
 ## state pin, this is a NEW coverage contract, not a re-mint of prior behavior.
-const EXPECTED_HASH := "2e5ad58054d28dc93f37ef4728549bb538f6d4a1c22be922ec19b59fb2d1b12d"
+## ---------------------------------------------------------------------------
+## RE-MINT 2026-08-25 - Q80: MANIFEST REQUIRED + CARRIED IN THE HASHED RULES.
+## ORCHESTRATOR-DIRECTED (owner delegated Q80 takeover); CONSCIOUS MINT.
+## Superseded value: 2e5ad58054d28dc93f37ef4728549bb538f6d4a1c22be922ec19b59fb2d1b12d
+## New value:        a43f07e45ed20257a0d89913b1763e4cd7f0b49a0e88a4405da014c22f9cb39d
+## WHY: the fixture previously passed NO faction manifest; under Q80's
+## required-fields rule its sim misconfigured silently, so a config guard was
+## added and the labeled synthetic default_manifest() is now supplied. The
+## full rules dictionary (manifest included) is hashed by design (exclusion
+## reverted for lockstep safety). Pathing semantics themselves are covered
+## unchanged by wall_walk/gate/castle-boot runners (all green this session).
+## Measured twice; both runs a43f07e4....
+## ---------------------------------------------------------------------------
+const EXPECTED_HASH := "a43f07e45ed20257a0d89913b1763e4cd7f0b49a0e88a4405da014c22f9cb39d"
 
 var _map_data_script: GDScript
 
@@ -159,7 +172,18 @@ func _make_sim(map, start: Vector2):
 		SimScript.TOWER_GUARD_OBJECT_ID: _unit_rule(SimScript.TOWER_GUARD_OBJECT_ID),
 		SimScript.KNIGHT_OBJECT_ID: _unit_rule(SimScript.KNIGHT_OBJECT_ID),
 	}
-	sim.setup(configuration, {"spawn_initial_battalions": true, "unit_rules": unit_rules})
+	# Q80: the 8 core manifest tables are required; this fixture supplies the
+	# labeled SYNTHETIC default_manifest() explicitly and refuses loudly on
+	# any configuration error instead of hashing a half-configured sim.
+	sim.setup(configuration, {
+		"spawn_initial_battalions": true,
+		"unit_rules": unit_rules,
+		"faction_manifest": preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest(),
+	})
+	if String(sim.configuration_error) != "":
+		printerr("RETAIL_PATHING_PIN FAIL configuration error: %s" % sim.configuration_error)
+		quit(1)
+		return sim
 	sim.ai_enabled = false
 	sim.structures.clear()
 	sim.expansion_pads.clear()

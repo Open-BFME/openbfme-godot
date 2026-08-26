@@ -106,8 +106,17 @@ func _fixture_row_for(data: Object, type_name: String, role: String = "") -> Dic
 	return {}
 
 
+static func _fixture_manifest() -> Dictionary:
+	# Q80: labeled SYNTHETIC default_manifest(); roster emptied because this
+	# fixture configures a single unit rule and never spawns battalions (the
+	# coherence validator would otherwise demand rules for all 7 roster units).
+	var manifest: Dictionary = preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest()
+	manifest["spawn_roster"] = []
+	return manifest
+
+
 func _sim_rules(flag: bool) -> Dictionary:
-	var rules := {
+	var rules := {"faction_manifest": _fixture_manifest(),
 		# Base loop on: without roster structures team 1 is eliminated at tick
 		# 0, the match enters victory state, and the attack proof never moves.
 		"enable_base_loop": true,

@@ -160,7 +160,7 @@ func _make_sim(battalions: int):
 
 
 func _harness_rules() -> Dictionary:
-	return {
+	return {"faction_manifest": _q80_harness_manifest(), 
 		"enable_base_loop": true,
 		"starting_resources": 1000000,
 		"ai_attack_delay_ticks": 999999,
@@ -206,3 +206,9 @@ func _unit_rule(horde_id: String, is_builder: bool) -> Dictionary:
 		"provenance": {},
 		"is_builder": is_builder,
 	}
+
+
+static func _q80_harness_manifest() -> Dictionary:
+	# Q80: labeled SYNTHETIC default_manifest() for this harness (its unit
+	# rules cover the default roster).
+	return preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest()

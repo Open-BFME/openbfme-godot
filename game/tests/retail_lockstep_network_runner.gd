@@ -47,6 +47,9 @@ func _make_sim():
 
 func _harness_rules() -> Dictionary:
 	return {
+		# Q80: the 8 core manifest tables are required; this fixture supplies
+		# the labeled SYNTHETIC default_manifest() explicitly.
+		"faction_manifest": preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest(),
 		"enable_base_loop": true,
 		"starting_resources": 10000,
 		"ai_attack_delay_ticks": 4000,
@@ -558,9 +561,20 @@ func _cah_spawned(sim, unit_type: String) -> int:
 	return 0
 
 
+static func _cah_fixture_manifest() -> Dictionary:
+	var manifest: Dictionary = preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest()
+	manifest["spawn_roster"] = []
+	return manifest
+
+
 func _cah_sim(runtimes: Dictionary):
 	var sim = SimScript.new()
 	sim._apply_gameplay_rules({
+		# Q80: the 8 core manifest tables are required; this CAH fixture runs
+		# on the labeled SYNTHETIC default_manifest() with an empty spawn
+		# roster (spawn_initial_battalions is false and unit_rules is empty,
+		# so the default gondor roster would fail entry validation unused).
+		"faction_manifest": _cah_fixture_manifest(),
 		"enable_base_loop": true,
 		"playable_unit_runtimes": runtimes,
 		"producer_kind_by_source_object": {CAH_PRODUCER: CAH_PRODUCER_KIND},

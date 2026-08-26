@@ -31,7 +31,7 @@ func _initialize() -> void:
 
 
 func _rules() -> Dictionary:
-	return {
+	return {"faction_manifest": preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest(), 
 		"enable_castle_fixtures": true,
 		"spawn_initial_battalions": false,
 		"unit_rules": {

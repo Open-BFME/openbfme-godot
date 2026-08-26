@@ -21,7 +21,7 @@ func _initialize() -> void:
 
 func _run() -> void:
 	var sim = SimScript.new()
-	sim.setup({}, {
+	sim.setup({}, {"faction_manifest": preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest(), 
 		"enable_base_loop": true,
 		"starting_resources": 1000,
 		"command_point_cap": 1000,
@@ -385,7 +385,7 @@ func _queue_fixture_sim(production_update: Dictionary):
 	## Bare producer with an explicit ProductionUpdate contract so the queue cap
 	## is the only variable. `{}` means the module authored no MaxQueueEntries.
 	var sim = SimScript.new()
-	sim.setup({}, {"unit_rules": _unit_rules(15, 40), "FIXTURE_COST": 0, "FIXTURE_BUILD": 10, "FIXTURE_CP": 0})
+	sim.setup({}, {"faction_manifest": preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest(), "unit_rules": _unit_rules(15, 40), "FIXTURE_COST": 0, "FIXTURE_BUILD": 10, "FIXTURE_CP": 0})
 	sim.ai_enabled = false
 	sim.base_loop_enabled = true
 	sim.entities.clear()

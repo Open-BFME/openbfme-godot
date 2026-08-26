@@ -1566,7 +1566,7 @@ func _sum_ints(values: Array) -> int:
 
 
 func _rules() -> Dictionary:
-	return {
+	return {"faction_manifest": preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest(), 
 		"source_map_transform_scale": 0.01,
 		"unit_rules": {
 			SimScript.SOLDIER_OBJECT_ID: _unit_rule(SimScript.SOLDIER_HORDE_ID, "infantry", 5, 50),

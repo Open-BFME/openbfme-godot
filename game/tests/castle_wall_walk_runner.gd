@@ -517,7 +517,7 @@ func _make_sim(map, start: Vector2):
 			{"name": "ford3", "edge_a": start, "edge_b": start, "center": start},
 		],
 	}
-	var rules := {
+	var rules := {"faction_manifest": preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest(), 
 		"spawn_initial_battalions": true,
 		"unit_rules": {
 			SimScript.SOLDIER_OBJECT_ID: _unit_rule(SimScript.SOLDIER_HORDE_ID),

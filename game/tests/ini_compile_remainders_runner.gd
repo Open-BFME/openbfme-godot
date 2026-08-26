@@ -39,7 +39,7 @@ func _check(label: String, condition: bool, detail: String = "") -> void:
 func _bare_sim():
 	var sim = SimScript.new()
 	var filler := _unit_rule({})
-	sim._rules = {
+	sim._rules = {"faction_manifest": _q80_harness_manifest(), 
 		"enable_base_loop": true,
 		"starting_resources": 10000,
 		"ai_attack_delay_ticks": 4000,
@@ -437,3 +437,11 @@ func _finish() -> void:
 	print("INI_COMPILE_REMAINDERS_RESULT passed=%d failed=%d" % [passed, failed])
 	_watchdog.stop()
 	quit(0 if failed == 0 else 1)
+
+
+static func _q80_harness_manifest() -> Dictionary:
+	# Q80: labeled SYNTHETIC default_manifest() with an EMPTY roster - this
+	# harness hand-places rows / lacks rules for the default gondor roster.
+	var manifest: Dictionary = preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest()
+	manifest["spawn_roster"] = []
+	return manifest

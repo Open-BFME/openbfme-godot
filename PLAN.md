@@ -21,7 +21,8 @@ files: [game/src/retail_slice/**]
 needs: importer
 - [x] Skirmish sim playable on all factions/maps, lockstep MP, castle sieges {#sim-skirmish}
   by: shipped v0.2.12 (queue Q71-Q76; dist/v0.2.9+)
-- [ ] Delete the hand-typed fallback rule tables — missing pack field fails loudly by name {#sim-single-truth}
+- [~] Delete the hand-typed fallback rule tables — missing pack field fails loudly by name {#sim-single-truth}
+  by: claude (took over after 3 failed sol rounds; setup now refuses-and-seeds-nothing, 4 runtime fallbacks deleted, 43 fixtures given explicit synthetic manifests, 3 pins consciously re-minted with zero-behavior-change proof; 39-runner proof sweep running)
   from: roadmap (queue Q80; owner ratified; verified at retail_slice_sim.gd:2472-2513)
 - [ ] Split the 33k-line sim into named class files, one subsystem at a time, state-pin equality proving each move {#sim-split}
   from: roadmap (queue Q81; owner: highest cleanability/moddability impact)

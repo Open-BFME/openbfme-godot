@@ -72,3 +72,4 @@ game/workspace/
 .ruff_cache/
 importer/.ruff_cache/
 
+.agenttrail/

@@ -147,7 +147,7 @@ func _unit_rule(horde_id: String, is_builder: bool) -> Dictionary:
 
 
 func _harness_rules() -> Dictionary:
-	return {
+	return {"faction_manifest": _q80_harness_manifest(), 
 		"enable_base_loop": true,
 		"starting_resources": 10000,
 		"ai_attack_delay_ticks": 100000,
@@ -730,3 +730,9 @@ func _test_peer_adoption_through_the_wired_path() -> void:
 		and executor_a.env.counter("tally") == ADOPTION_TICK + ADOPTION_RUN_TICKS - TIMER_EXPIRY_TICK + 1
 	)
 	_check("no wiring faults on either peer", sim_a.script_wiring_faults == 0 and sim_b.script_wiring_faults == 0)
+
+
+static func _q80_harness_manifest() -> Dictionary:
+	# Q80: labeled SYNTHETIC default_manifest() for this harness (its unit
+	# rules cover the default roster).
+	return preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest()

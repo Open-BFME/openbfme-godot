@@ -20,7 +20,7 @@ func _initialize() -> void:
 
 func _run() -> void:
 	var sim = SimScript.new()
-	sim.setup({}, {
+	sim.setup({}, {"faction_manifest": preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest(), 
 		"enable_base_loop": true,
 		"starting_resources": 10000,
 		"member_health": 100,

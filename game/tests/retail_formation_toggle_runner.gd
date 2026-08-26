@@ -80,7 +80,7 @@ func _run() -> void:
 
 func _make_sim():
 	var sim = SimScript.new()
-	sim.setup({}, {})
+	sim.setup({}, {"faction_manifest": preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest(), })
 	sim.ai_enabled = false
 	sim.entities.clear()
 	sim.structures.clear()

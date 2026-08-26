@@ -7,8 +7,6 @@ const ProjectileSystemScript = preload("res://src/retail_slice/retail_sim_projec
 const EconomySystemScript = preload("res://src/retail_slice/retail_sim_economy.gd")
 const ExperienceSystemScript = preload("res://src/retail_slice/retail_sim_experience.gd")
 const AiSystemScript = preload("res://src/retail_slice/retail_sim_ai.gd")
-const CombatSystemScript = preload("res://src/retail_slice/retail_sim_combat.gd")
-const PersistenceSystemScript = preload("res://src/retail_slice/retail_sim_persistence.gd")
 const FogOfWarScript = preload("res://src/retail_slice/retail_fog_of_war.gd")
 const CommandScript = preload("res://src/retail_slice/retail_command.gd")
 const SelectionPick = preload("res://src/retail_slice/retail_selection_pick.gd")
@@ -1332,28 +1330,6 @@ var _experience_system = null
 ## Q81 extraction #4: the skirmish-AI controller lives in retail_sim_ai.gd
 ## (extracted AS-IS; Q83 Phase 2 replaces its guts with authored data).
 var _ai_system = null
-
-
-## Q81 extraction #5: the damage-resolution core lives in
-## retail_sim_combat.gd; entity/structure state stays on the sim.
-var _combat_system = null
-
-
-## Q81 extraction #6: hashing/snapshot/restore live in
-## retail_sim_persistence.gd; the memoized static digest stays on the sim.
-var _persistence_system = null
-
-
-func _persistence_subsystem():
-	if _persistence_system == null:
-		_persistence_system = PersistenceSystemScript.new(self)
-	return _persistence_system
-
-
-func _combat_subsystem():
-	if _combat_system == null:
-		_combat_system = CombatSystemScript.new(self)
-	return _combat_system
 
 
 func _ai_subsystem():
@@ -30070,7 +30046,149 @@ func _apply_structure_damage(
 	damage_type_override: String = "",
 	damage_components_override: Variant = null
 ) -> void:
-	_combat_subsystem()._apply_structure_damage(attacker_id, target_id, amount, damage_type_override, damage_components_override)
+	if not structures.has(target_id):
+		return
+	var target: Dictionary = structures[target_id]
+	if not target.has("inactive_body") and not bool(target.get("structure_module_contracts_attached", false)):
+		_attach_structure_module_contracts(target)
+	if int(target.get("health", 0)) <= 0:
+		return
+	if bool(target.get("indestructible", false)):
+		# Map-authored castle fixtures carry SAGE objectIndestructible verbatim
+		# (Erebor authors it on 501 of 609 fixture rows); retail never damages
+		# those structures, so the sim refuses the damage by name.
+		_emit_event("combat.damage_refused", attacker_id, target_id, {
+			"reason": "indestructible",
+			"target": "structure %s" % String(target.get("structure_kind", "")),
+		})
+		return
+	var damage_type := damage_type_override
+	var damage_components := (
+		damage_components_override as Array
+		if typeof(damage_components_override) == TYPE_ARRAY
+		else _damage_components_for(attacker_id, damage_type_override)
+	)
+	if damage_type == "":
+		damage_type = "default"
+		if entities.has(attacker_id):
+			damage_type = String((entities[attacker_id] as Dictionary).get("damage_type", "default"))
+			if damage_type == "" and not damage_components.is_empty():
+				# Typed per component, not untyped: name the mix so the
+				# per-type remainder accumulator keeps it separate.
+				damage_type = "mixed"
+	var weapon_factor := 1.0
+	if entities.has(attacker_id):
+		var attacker_effect := _applied_weapon_effect(
+			entities[attacker_id] as Dictionary
+		)
+		if not attacker_effect.is_empty():
+			weapon_factor = _damage_scalar_factor(
+				attacker_effect.get("scalars", []) as Array,
+				target,
+				"structure",
+			)
+	var body_amount := float(maxi(0, amount)) * weapon_factor
+	if _structure_uses_highlander_body(target):
+		var highlander_amount := _highlander_raw_damage_amount(
+			body_amount,
+			int(target.get("health", 0)),
+			damage_type,
+			damage_components,
+		)
+		if highlander_amount < 0:
+			_emit_event("combat.damage_refused", attacker_id, target_id, {
+				"reason": "highlander-mixed-unresistable",
+				"target": "structure %s" % String(target.get("structure_kind", "")),
+			})
+			return
+		body_amount = highlander_amount
+	# Every structure kind scales by its own compiled armor.ini table; kinds
+	# without one refuse damage (loud failure logged at configure).
+	var kind := String(target.get("structure_kind", ""))
+	var table: Dictionary = _structure_armor.get(kind, {})
+	if table.is_empty():
+		_emit_event("combat.damage_refused", attacker_id, target_id, {
+			"reason": "missing-compiled-structure-armor",
+			"target": "structure %s" % kind,
+		})
+		return
+	var scalars: Dictionary = table.get("scalars", {})
+	var scalar := 1.0
+	if not damage_components.is_empty():
+		scalar = float(table.get("damage_scalar", 1.0)) * _weighted_armor_scalar(scalars, damage_components, damage_type)
+	else:
+		scalar = float(table.get("damage_scalar", 1.0)) * float(scalars.get(damage_type.to_lower(), scalars.get("default", 1.0)))
+	var remainder_by_type: Dictionary = target.get("damage_remainders", {})
+	var accumulated := (
+		float(remainder_by_type.get(damage_type, 0.0))
+		+ body_amount * scalar
+	)
+	var applied := floori(accumulated)
+	remainder_by_type[damage_type] = accumulated - float(applied)
+	target["damage_remainders"] = remainder_by_type
+	if applied <= 0:
+		return
+	if entities.has(attacker_id):
+		# Firing on a structure breaks a FIRING_ANY-forbidden cloak too.
+		var attacker := entities[attacker_id] as Dictionary
+		_break_stealth(attacker, "FIRING_ANY")
+		if attacker.has("special_disguise_channel"):
+			_cancel_special_disguise_row(attacker, "attack", false)
+	target["health"] = maxi(0, int(target["health"]) - applied)
+	if not bool(target.get("flammable_internal_damage", false)) and damage_type.to_upper() in ["FLAME", "FIRE"]:
+		record_flame_damage(target_id, float(applied))
+	if target.has("horde_transport"):
+		var passenger_damage_ratio := float((target["horde_transport"] as Dictionary).get("damage_ratio", 0.0))
+		var passenger_damage := floori(float(applied) * passenger_damage_ratio)
+		if passenger_damage > 0:
+			for passenger_value in (containment.get(target_id, []) as Array).duplicate():
+				_apply_transport_passenger_damage(attacker_id, int(passenger_value), passenger_damage)
+	var structure_kind := String(target.get("structure_kind", ""))
+	_emit_event("combat.hit_structure", attacker_id, target_id, {
+		"raw_amount": maxi(0, amount),
+		"applied_amount": applied,
+		"damage_type": damage_type,
+		"armor_scalar": scalar,
+		"structure_kind": structure_kind,
+		"team": int(target.get("team", -1)),
+		"health": int(target["health"]),
+		"maximum_health": int(target.get("maximum_health", 0)),
+	})
+	if int(target.get("team", -1)) == PLAYER_TEAM and tick_index - _last_base_under_attack_tick >= EVA_BASE_UNDER_ATTACK_DEBOUNCE_TICKS:
+		# EVA "base under attack" announces the first hit on a player structure,
+		# then stays quiet for the retail 30s TimeBetweenEventsMS debounce.
+		_last_base_under_attack_tick = tick_index
+		_emit_event("eva.base_under_attack", 0, target_id, {"team": PLAYER_TEAM, "structure_kind": structure_kind})
+	if int(target["health"]) == 0:
+		_record_cah_structure_kill(attacker_id, target)
+		_award_scavenger_bounty(attacker_id, target, "structure")
+		var queue: Array = target.get("queue", [])
+		# Queued costs stay spent, matching the deterministic no-refund contract.
+		queue.clear()
+		target["queue"] = queue
+		var upgrade_queue: Array = target.get("upgrade_queue", [])
+		upgrade_queue.clear()
+		target["upgrade_queue"] = upgrade_queue
+		# Authored RefundDie rows (Siege Materials) refund their compiled
+		# percent when the owning team keeps the required building.
+		_apply_structure_death_refund(target)
+		# Structure-carried death modules when contracts were attached at spawn
+		# or are discovered lazily on this first death callback.
+		if not bool(target.get("structure_module_contracts_attached", false)):
+			_attach_structure_module_contracts(target)
+		_dispatch_castle_member_destroyed(target_id, target, attacker_id, "destroyed")
+		_resolve_citadel_slaughter_death(target_id, target)
+		_begin_ship_slow_death(target_id, target, "NORMAL")
+		_schedule_fire_weapon_when_dead(target, "NORMAL", "structure")
+		_expose_rebuild_hole(target_id, target, attacker_id)
+		# Structure-carried CreateObjectDie (debris/refund eggs) when contracts
+		# were attached at spawn or via register_structure_module_contracts.
+		if not bool(target.get("create_object_die", false)):
+			_attach_structure_module_contracts(target)
+		_consume_create_object_die(target, "NORMAL")
+		_emit_event("structure.destroyed", attacker_id, target_id, {"structure_kind": structure_kind, "team": int(target.get("team", -1))})
+		if int(target.get("team", -1)) == PLAYER_TEAM:
+			_emit_event("eva.building_lost", 0, target_id, {"team": PLAYER_TEAM, "structure_kind": structure_kind})
 
 
 func _target_alive(target_id: int, target_kind: String) -> bool:
@@ -31349,7 +31467,10 @@ func state_snapshot() -> Dictionary:
 
 
 func state_signature() -> String:
-	return _persistence_subsystem().state_signature()
+	var value: int = 0x811C9DC5
+	for byte in JSON.stringify(state_snapshot()).to_utf8_buffer():
+		value = ((value ^ int(byte)) * 16777619) & 0xFFFFFFFF
+	return "%08X" % value
 
 
 func toggle_gate(team: int, structure_id: int) -> Dictionary:
@@ -31487,27 +31608,516 @@ func _command_order_less(a: Dictionary, b: Dictionary) -> bool:
 
 
 func state_hash() -> String:
-	return _persistence_subsystem().state_hash()
+	var dynamic_state := _authoritative_state()
+	var static_state: Dictionary = {}
+	for key in _state_hash_static_keys():
+		static_state[key] = dynamic_state[key]
+		dynamic_state.erase(key)
+	if _state_hash_static_digest.is_empty():
+		var static_context := HashingContext.new()
+		static_context.start(HashingContext.HASH_SHA256)
+		static_context.update(var_to_bytes(_canonicalize(static_state)))
+		_state_hash_static_digest = static_context.finish()
+	var context := HashingContext.new()
+	context.start(HashingContext.HASH_SHA256)
+	context.update(_state_hash_static_digest)
+	context.update(var_to_bytes(_canonicalize(dynamic_state)))
+	return context.finish().hex_encode()
 
 
 func snapshot() -> PackedByteArray:
-	return _persistence_subsystem().snapshot()
+	# Event ordering is continuation metadata, not gameplay state: include it in
+	# the restorable envelope without moving the owner-signed authoritative hash.
+	var state := _authoritative_state()
+	state["next_event_sequence"] = _next_event_sequence
+	return var_to_bytes(state)
 
 
 func restore(bytes: PackedByteArray) -> bool:
-	return _persistence_subsystem().restore(bytes)
+	if bytes.is_empty():
+		return false
+	var decoded: Variant = bytes_to_var(bytes)
+	if typeof(decoded) != TYPE_DICTIONARY:
+		return false
+	var state := decoded as Dictionary
+	for required_key in ["tick_index", "entities", "structures", "team_resources", "pending_commands", "next_dynamic_id"]:
+		if not state.has(required_key):
+			return false
+	_restore_authoritative_state(state)
+	selected_ids.clear()
+	reset_control_groups()
+	events.clear()
+	# Tick-derived, not authoritative: see `_member_fire_ticks`. A restored member
+	# reports no FIRING_* until its next release rather than a guessed window.
+	_member_fire_ticks.clear()
+	last_command_result = null
+	_state_hash_static_digest.clear()
+	return true
 
 
 func _state_hash_static_keys() -> Array[String]:
-	return _persistence_subsystem().state_hash_static_keys()
+	return [
+		"source_map_configured", "ford_gates", "source_player_starts", "playable_outline",
+		"spawn_positions", "home_layout", "rules", "unit_production_rules",
+		"production_unit_order", "ai_production_plan", "unit_damage_types",
+		"unit_damage_components", "unit_armor",
+		"unit_weapon_upgrades", "structure_armor", "spawn_roster", "structure_kinds",
+		"seed_structure_kinds", "structure_max_health", "structure_build_rules",
+		"unit_prerequisites", "structure_upgrade_contracts", "structure_upgrade_effects",
+		"compiled_research_kinds", "unit_upgrade_commands", "unit_level_upgrades", "unit_banner_carriers",
+		"spellbook_ready", "spellbook_document", "spellbook_powers", "spellbook_order",
+		"spellbook_sciences", "spellbook_intrinsic", "science_to_power",
+		"expansion_build_rules", "unit_ability_rules", "unit_experience_rules",
+	]
 
 
 func _authoritative_state() -> Dictionary:
-	return _persistence_subsystem().authoritative_state()
+	# The FULL rules dictionary is hashed, faction_manifest included. A Q80
+	# round excluded the raw manifest to keep pin fixtures plumbing-stable, but
+	# the sim reads the raw manifest at runtime (producer_kind_registry at
+	# :5619/:5891, per-team manifest fallback at :1185) — excluding it let two
+	# lockstep peers with different manifests agree on setup hashes. Config
+	# in the hash is a lockstep feature, not fragility; pin fixtures carry the
+	# cost as a conscious, ledgered re-mint instead.
+	var state := {
+		"tick_index": tick_index,
+		"winner": winner,
+		"ai_enabled": ai_enabled,
+		"entities": entities,
+		"structures": structures,
+		"team_resources": team_resources,
+		"team_command_points": team_command_points,
+		"command_point_cap": command_point_cap,
+		"base_loop_enabled": base_loop_enabled,
+		"source_map_configured": source_map_configured,
+		"ford_gates": ford_gates,
+		"source_player_starts": source_player_starts,
+		"playable_outline": playable_outline,
+		"spawn_positions": _spawn_positions,
+		"home_layout": _home_layout,
+		"rules": _rules,
+		"unit_production_rules": _unit_production_rules,
+		"completed_hero_identities": _completed_hero_identities,
+		"production_unit_order": _production_unit_order,
+		"ai_production_plan": _ai_production_plan,
+		"unit_damage_types": _unit_damage_types,
+		"unit_damage_components": _unit_damage_components,
+		"unit_armor": _unit_armor,
+		"unit_weapon_upgrades": _unit_weapon_upgrades,
+		"structure_armor": _structure_armor,
+		"spawn_roster": _spawn_roster,
+		"structure_kinds": _structure_kinds,
+		"seed_structure_kinds": _seed_structure_kinds,
+		"structure_max_health": _structure_max_health,
+		"structure_build_rules": _structure_build_rules,
+		"unit_prerequisites": _unit_prerequisites,
+		"structure_upgrade_contracts": _structure_upgrade_contracts,
+		"structure_upgrade_effects": _structure_upgrade_effects,
+		"compiled_research_kinds": _compiled_research_kinds,
+		"unit_upgrade_commands": _unit_upgrade_commands,
+		"unit_level_upgrades": _unit_level_upgrades,
+		"unit_banner_carriers": _unit_banner_carriers,
+		"next_dynamic_id": _next_dynamic_id,
+		"next_dynamic_structure_id": _next_dynamic_structure_id,
+		"next_order_sequence": _next_order_sequence,
+		"team_ai_state": _team_ai_state,
+		"team_upgrades": team_upgrades,
+		"team_power_points": team_power_points,
+		"purchased_powers": purchased_powers,
+		"kills_toward_power_point": _kills_toward_power_point,
+		"spellbook_ready": _spellbook_ready,
+		"spellbook_document": _spellbook_document,
+		"spellbook_powers": _spellbook_powers,
+		"spellbook_order": _spellbook_order,
+		"spellbook_sciences": _spellbook_sciences,
+		"spellbook_intrinsic": _spellbook_intrinsic,
+		"science_to_power": _science_to_power,
+		"team_sciences": _team_sciences,
+		"power_cooldown_until": _power_cooldown_until,
+		"staged_purchases": _staged_purchases,
+		"team_spellbooks": _team_spellbooks,
+		"clock_paused": clock_paused,
+		"pending_power_effects": _pending_power_effects,
+		"active_groves": _active_groves,
+		"summon_despawn_ticks": _summon_despawn_ticks,
+		"expansion_pads": expansion_pads,
+		"expansion_build_rules": _expansion_build_rules,
+		"next_expansion_structure_id": _next_expansion_structure_id,
+		"build_plots_only": build_plots_only,
+		"build_plots": build_plots,
+		"has_hero_units": _has_hero_units,
+		"unit_ability_rules": _unit_ability_rules,
+		"unit_experience_rules": _unit_experience_rules,
+		"pending_commands": _pending_commands,
+	}
+	if scenario_map_placements_enabled:
+		state["scenario_map_placements_enabled"] = true
+		state["scenario_map_placements"] = _scenario_map_placements
+		state["next_scenario_unit_id"] = _next_scenario_unit_id
+		state["next_scenario_structure_id"] = _next_scenario_structure_id
+	# New bounty/passive state is byte-inert for legacy matches. Once authored
+	# content or a cast makes it relevant, it becomes ordinary save/hash state.
+	if not _structure_bounty_values.is_empty():
+		state["structure_bounty_values"] = _structure_bounty_values
+	# Passive scenario props are placement/presentation state. Empty remains
+	# absent so every match without a neutral-prop pack keeps its legacy hash.
+	if not scenario_props.is_empty():
+		state["scenario_props"] = scenario_props
+	if not scenario_bezier_presentation_requests.is_empty():
+		state["scenario_bezier_presentation_requests"] = scenario_bezier_presentation_requests
+		state["next_scenario_prop_id"] = _next_scenario_prop_id
+	var has_consumed_nonpressable := false
+	for consumed_value in _consumed_nonpressable_powers.values():
+		if not (consumed_value as Dictionary).is_empty():
+			has_consumed_nonpressable = true
+			break
+	if has_consumed_nonpressable:
+		state["consumed_nonpressable_powers"] = _consumed_nonpressable_powers
+	var has_scavenger := false
+	for percent_value in _scavenger_bounty_percent.values():
+		if float(percent_value) != 0.0:
+			has_scavenger = true
+			break
+	if has_scavenger:
+		state["scavenger_bounty_percent"] = _scavenger_bounty_percent
+	# EMPTY-IS-ABSENT (the unpackable-bases contract below): the castle-fixture
+	# lane only appears in the hashed state when a match opts in, so the frozen
+	# cross-platform pin and every legacy runner stay byte-identical.
+	if castle_fixtures_enabled:
+		state["castle_fixtures_enabled"] = true
+		state["castle_fixture_placements"] = _castle_fixture_placements
+		state["next_castle_fixture_id"] = _next_castle_fixture_id
+	# EMPTY-IS-ABSENT, deliberately: a match with no configured base flags must
+	# contribute NOTHING for this subsystem, so the frozen cross-platform state
+	# pin keeps proving the addition is inert by default. An unconditional key
+	# here would re-mint the pin for every scenario that never touches bases.
+	if not unpackable_bases.is_empty():
+		state["unpackable_bases"] = unpackable_bases
+	if not _summon_aura_source_ids.is_empty():
+		state["summon_aura_source_ids"] = _summon_aura_source_ids
+	# EMPTY-IS-ABSENT, same contract as above: a match in which nobody casts a
+	# reveal/field ping must contribute nothing, so the frozen cross-platform pin
+	# stays valid for every scenario that never touches this lane.
+	if not _field_pings.is_empty():
+		state["field_pings"] = _field_pings
+	# Same EMPTY-IS-ABSENT contract for the weather lane: a match in which
+	# nobody casts Darkness or Freezing Rain contributes zero bytes.
+	if not _weather_effects.is_empty():
+		state["weather_effects"] = _weather_effects
+	# These selected-pack contracts are absent in legacy/default scenarios. Keep
+	# them out of the byte stream unless configured so unrelated state pins remain
+	# stable, while selected retail matches still hash and snapshot the contracts.
+	if not _banner_respawn_ticks_by_object.is_empty():
+		state["banner_respawn_ticks_by_object"] = _banner_respawn_ticks_by_object
+	if not _castle_behavior_by_source.is_empty():
+		state["castle_behavior_by_source"] = _castle_behavior_by_source
+	if not _cah_award_contracts.is_empty():
+		state["cah_award_contracts"] = _cah_award_contracts
+	if not _cah_award_tallies.is_empty():
+		state["cah_award_tallies"] = _cah_award_tallies
+	if not cah_award_results.is_empty():
+		state["cah_award_results"] = cah_award_results
+	# Same discipline for the map named-object namespace: a match that never
+	# declares one contributes zero bytes (see the store's block comment).
+	if not map_named_object_namespace.is_empty():
+		state["map_named_object_namespace"] = map_named_object_namespace
+	# Same discipline for the script unit references: a match whose scripts
+	# never bind one contributes zero bytes (see the store's block comment).
+	if not script_unit_references.is_empty():
+		state["script_unit_references"] = script_unit_references
+	if not script_entity_references.is_empty():
+		state["script_entity_references"] = script_entity_references
+	if not create_object_die_pending.is_empty():
+		state["create_object_die_pending"] = create_object_die_pending
+	if not physics_objects.is_empty() or _next_physics_object_id != 50000:
+		state["physics_objects"] = physics_objects
+		state["next_physics_object_id"] = _next_physics_object_id
+	if not projectiles.is_empty() or _next_projectile_id != 70000:
+		state["projectiles"] = projectiles
+		state["next_projectile_id"] = _next_projectile_id
+	if not pickup_objects.is_empty() or _next_pickup_object_id != 60000:
+		state["pickup_objects"] = pickup_objects
+		state["next_pickup_object_id"] = _next_pickup_object_id
+	if not _shared_ability_cooldowns.is_empty():
+		state["shared_ability_cooldowns"] = _shared_ability_cooldowns
+	if not respawn_schedules.is_empty():
+		state["respawn_schedules"] = respawn_schedules
+	if parity != null:
+		var parity_state: Dictionary = parity.to_state()
+		if not parity_state.is_empty():
+			state["parity"] = parity_state
+	# And for the script-built OBJECT_TYPE_LIST stores: mutable match state
+	# (retail persists them in save games), zero bytes until a script builds
+	# one (see the store's block comment).
+	if not script_object_type_lists.is_empty():
+		state["script_object_type_lists"] = script_object_type_lists
+	# Named team membership/flags are outcome-bearing. Empty remains absent so
+	# scriptless matches retain their frozen hash.
+	var script_team_view := _script_team_state_view()
+	if not script_team_view.is_empty():
+		state["script_teams"] = script_team_view
+	if not building_permissions_by_team.is_empty():
+		state["building_permissions_by_team"] = building_permissions_by_team
+	if not command_point_overrides_by_team.is_empty():
+		state["command_point_overrides_by_team"] = command_point_overrides_by_team
+	# And for team behavior state (TEAM_STATE + custom-state token sets):
+	# retail save-persists m_state (Team::xfer), the conditions that gate the
+	# AI attack loops read it, and a peer adopting a snapshot must answer
+	# TEAM_STATE_IS exactly as the peer that wrote the state. Zero bytes until
+	# a script writes one (see the store's block comment).
+	if not team_behavior_states.is_empty():
+		state["team_behavior_states"] = team_behavior_states
+	# Sequential-script heads are outcome-bearing AI behavior queues. Empty is
+	# absent so scriptless matches keep frozen hash pins.
+	if not sequential_script_queues.is_empty():
+		state["sequential_script_queues"] = sequential_script_queues
+	if not production_controls_by_team.is_empty():
+		state["production_controls_by_team"] = production_controls_by_team
+	if not tech_buildability.is_empty():
+		state["tech_buildability"] = tech_buildability
+	if not script_team_references.is_empty():
+		state["script_team_references"] = script_team_references
+	if not player_progression.is_empty():
+		state["player_progression"] = player_progression
+	if not player_economy_extras.is_empty():
+		state["player_economy_extras"] = player_economy_extras
+	if not player_diplomacy_overrides.is_empty():
+		state["player_diplomacy_overrides"] = player_diplomacy_overrides
+	if not script_event_counts.is_empty():
+		state["script_event_counts"] = script_event_counts
+	if not containment.is_empty():
+		state["containment"] = containment
+	if not entity_container.is_empty():
+		state["entity_container"] = entity_container
+	if not script_areas.is_empty():
+		state["script_areas"] = script_areas
+	if not script_waypoints.is_empty():
+		state["script_waypoints"] = script_waypoints
+	if not script_waypoint_paths.is_empty():
+		state["script_waypoint_paths"] = script_waypoint_paths
+	if not team_created_edge.is_empty():
+		state["team_created_edge"] = team_created_edge
+	if not match_script_flags.is_empty():
+		state["match_script_flags"] = match_script_flags
+	if not attack_priority_names.is_empty():
+		state["attack_priority_names"] = attack_priority_names
+	if not script_surface_bag.is_empty():
+		state["script_surface_bag"] = script_surface_bag
+	# Audio selector choice is deterministic presentation state. Keep it absent
+	# until the first typed choice so matches without these client modules retain
+	# their frozen hashes, while save/restore resumes the same weighted sequence.
+	if _typed_audio_roll_sequence > 0:
+		state["typed_audio_roll_sequence"] = _typed_audio_roll_sequence
+	# Historical objective state is match state and hash-visible. Empty is
+	# absent so scenarios that never field a hero retain their frozen pins.
+	if not _hero_peak_ranks_by_team.is_empty():
+		state["hero_peak_ranks_by_team"] = _hero_peak_ranks_by_team
+	# And for the logic random stream: the six generator words are the entire
+	# stream state (retail's theGameLogicSeed rides save games and its CRC is
+	# sync-checked - GetGameLogicRandomSeedCRC). Zero bytes until the first
+	# draw, so a scriptless match leaves the frozen pin untouched; an
+	# adopting peer receives the words and continues the identical sequence.
+	if not _logic_random_state.is_empty():
+		state["logic_random_state"] = _logic_random_state
+	# And for the script interpreter's own memory: hashed and serialized
+	# through its canonical view (zero counters/false flags pruned, every
+	# level sorted), so an untouched match contributes zero bytes and state
+	# returned to pristine values returns to the pristine hash exactly.
+	var script_env_view := _script_env_state_view()
+	if not script_env_view.is_empty():
+		state["script_env_state"] = script_env_view
+	return state
 
 
 func _restore_authoritative_state(state: Dictionary) -> void:
-	_persistence_subsystem().restore_authoritative_state(state)
+	tick_index = int(state["tick_index"])
+	winner = int(state["winner"])
+	ai_enabled = bool(state["ai_enabled"])
+	entities = state["entities"]
+	structures = state["structures"]
+	scenario_props = state.get("scenario_props", {})
+	scenario_bezier_presentation_requests = state.get(
+		"scenario_bezier_presentation_requests", []
+	)
+	_next_scenario_prop_id = int(state.get("next_scenario_prop_id", 400000))
+	_note_structure_table_mutation()
+	# The structure table was just replaced wholesale; the id-keyed footprint
+	# memo describes the old one.
+	_structure_footprint_radius_cache.clear()
+	team_resources = state["team_resources"]
+	team_command_points = state["team_command_points"]
+	command_point_cap = int(state["command_point_cap"])
+	base_loop_enabled = bool(state["base_loop_enabled"])
+	source_map_configured = bool(state["source_map_configured"])
+	ford_gates = state["ford_gates"]
+	source_player_starts = state["source_player_starts"]
+	playable_outline = state["playable_outline"]
+	_spawn_positions = state["spawn_positions"]
+	_home_layout = state["home_layout"]
+	_rules = state["rules"]
+	_configure_death_weapon_rules_from_rules()
+	ring_mechanic_enabled = bool(_rules.get("allow_ring_heroes", false))
+	_configure_ring_mechanic_contract()
+	_unit_production_rules = state["unit_production_rules"]
+	_completed_hero_identities = state["completed_hero_identities"]
+	_production_unit_order = state["production_unit_order"]
+	_ai_production_plan = state["ai_production_plan"]
+	_unit_damage_types = state["unit_damage_types"]
+	_unit_damage_components = state["unit_damage_components"]
+	_unit_armor = state["unit_armor"]
+	_unit_weapon_upgrades = state["unit_weapon_upgrades"]
+	_structure_armor = state["structure_armor"]
+	_spawn_roster = state["spawn_roster"]
+	_structure_kinds = state["structure_kinds"]
+	_seed_structure_kinds = state["seed_structure_kinds"]
+	_structure_max_health = state["structure_max_health"]
+	_structure_bounty_values = state.get("structure_bounty_values", {})
+	_structure_build_rules = state["structure_build_rules"]
+	_unit_prerequisites = state["unit_prerequisites"]
+	_structure_upgrade_contracts = state["structure_upgrade_contracts"]
+	_structure_upgrade_effects = state["structure_upgrade_effects"]
+	_compiled_research_kinds = state["compiled_research_kinds"]
+	_unit_upgrade_commands = state["unit_upgrade_commands"]
+	_unit_level_upgrades = state["unit_level_upgrades"]
+	_unit_banner_carriers = state.get("unit_banner_carriers", {})
+	_banner_respawn_ticks_by_object = state.get("banner_respawn_ticks_by_object", {})
+	_castle_behavior_by_source = state.get("castle_behavior_by_source", {})
+	_cah_award_contracts = state.get("cah_award_contracts", {})
+	_cah_award_tallies = state.get("cah_award_tallies", {})
+	cah_award_results = state.get("cah_award_results", {})
+	_next_dynamic_id = state["next_dynamic_id"]
+	_next_dynamic_structure_id = int(state["next_dynamic_structure_id"])
+	_next_event_sequence = int(state.get("next_event_sequence", 1))
+	_next_order_sequence = int(state["next_order_sequence"])
+	_typed_audio_roll_sequence = int(state.get("typed_audio_roll_sequence", 0))
+	_team_ai_state = state.get("team_ai_state", {})
+	team_upgrades = state["team_upgrades"]
+	team_power_points = state["team_power_points"]
+	purchased_powers = state["purchased_powers"]
+	_kills_toward_power_point = state["kills_toward_power_point"]
+	_spellbook_ready = bool(state["spellbook_ready"])
+	_spellbook_document = state["spellbook_document"]
+	_spellbook_command_points_upgrade = (
+		(
+			(_spellbook_document.get("registration", {}) as Dictionary).get(
+				"spellBook", {}
+			) as Dictionary
+		).get("commandPointsUpgrade", {}) as Dictionary
+	).duplicate(true)
+	_spellbook_powers = state["spellbook_powers"]
+	_spellbook_order = state["spellbook_order"]
+	_spellbook_sciences = state["spellbook_sciences"]
+	_spellbook_intrinsic = state["spellbook_intrinsic"]
+	_science_to_power = state["science_to_power"]
+	_team_sciences = state["team_sciences"]
+	_power_cooldown_until = state["power_cooldown_until"]
+	_consumed_nonpressable_powers = state.get("consumed_nonpressable_powers", _seed_team_map({}))
+	_scavenger_bounty_percent = state.get("scavenger_bounty_percent", _seed_team_map(0.0))
+	_staged_purchases = state["staged_purchases"]
+	_team_spellbooks = state.get("team_spellbooks", {})
+	clock_paused = bool(state["clock_paused"])
+	_pending_power_effects = state["pending_power_effects"]
+	_active_groves = state["active_groves"]
+	_summon_despawn_ticks = state["summon_despawn_ticks"]
+	_summon_aura_source_ids = state.get("summon_aura_source_ids", {})
+	var adopted_pings: Array[Dictionary] = []
+	for ping_value in Array(state.get("field_pings", [])):
+		if typeof(ping_value) == TYPE_DICTIONARY:
+			adopted_pings.append(ping_value as Dictionary)
+	_field_pings = adopted_pings
+	var adopted_weather: Array[Dictionary] = []
+	for weather_value in Array(state.get("weather_effects", [])):
+		if typeof(weather_value) == TYPE_DICTIONARY:
+			adopted_weather.append(weather_value as Dictionary)
+	_weather_effects = adopted_weather
+	_migrate_restored_weather_sources()
+	expansion_pads = state["expansion_pads"]
+	_expansion_build_rules = state["expansion_build_rules"]
+	_next_expansion_structure_id = int(state["next_expansion_structure_id"])
+	build_plots_only = bool(state.get("build_plots_only", false))
+	build_plots = state.get("build_plots", {})
+	_has_hero_units = bool(state["has_hero_units"])
+	_unit_ability_rules = state["unit_ability_rules"]
+	_unit_experience_rules = state["unit_experience_rules"]
+	_pending_commands = state["pending_commands"]
+	# Absent when empty by construction (empty-is-absent hash discipline).
+	unpackable_bases = state.get("unpackable_bases", {})
+	map_named_object_namespace = state.get("map_named_object_namespace", {})
+	script_unit_references = state.get("script_unit_references", {})
+	script_entity_references = state.get("script_entity_references", {})
+	create_object_die_pending = state.get("create_object_die_pending", [])
+	physics_objects = state.get("physics_objects", {})
+	_next_physics_object_id = int(state.get("next_physics_object_id", 50000))
+	projectiles = state.get("projectiles", {})
+	_next_projectile_id = int(state.get("next_projectile_id", 70000))
+	pickup_objects = state.get("pickup_objects", {})
+	_next_pickup_object_id = int(state.get("next_pickup_object_id", 60000))
+	_shared_ability_cooldowns = state.get("shared_ability_cooldowns", {})
+	respawn_schedules = state.get("respawn_schedules", {})
+	_ensure_parity()
+	if state.has("parity"):
+		parity.from_state(state.get("parity", {}) as Dictionary)
+	else:
+		parity.clear()
+	script_object_type_lists = state.get("script_object_type_lists", {})
+	var restored_script_teams: Dictionary = state.get("script_teams", {})
+	for script_team_name in script_teams.keys():
+		var configured := script_teams[script_team_name] as Dictionary
+		script_teams[script_team_name] = _script_team_definition(configured)
+	for script_team_name in restored_script_teams.keys():
+		script_teams[script_team_name] = (restored_script_teams[script_team_name] as Dictionary).duplicate(true)
+	building_permissions_by_team = state.get("building_permissions_by_team", {})
+	command_point_overrides_by_team = state.get("command_point_overrides_by_team", {})
+	team_behavior_states = state.get("team_behavior_states", {})
+	sequential_script_queues = state.get("sequential_script_queues", {})
+	production_controls_by_team = state.get("production_controls_by_team", {})
+	tech_buildability = state.get("tech_buildability", {})
+	script_team_references = state.get("script_team_references", {})
+	player_progression = state.get("player_progression", {})
+	player_economy_extras = state.get("player_economy_extras", {})
+	player_diplomacy_overrides = state.get("player_diplomacy_overrides", {})
+	script_event_counts = state.get("script_event_counts", {})
+	containment = state.get("containment", {})
+	entity_container = state.get("entity_container", {})
+	script_areas = state.get("script_areas", {})
+	script_waypoints = state.get("script_waypoints", {})
+	script_waypoint_paths = state.get("script_waypoint_paths", {})
+	team_created_edge = state.get("team_created_edge", {})
+	match_script_flags = state.get("match_script_flags", {})
+	attack_priority_names = state.get("attack_priority_names", {})
+	script_surface_bag = state.get("script_surface_bag", {})
+	_hero_peak_ranks_by_team = state.get("hero_peak_ranks_by_team", {})
+	# Absent when the minter never drew (empty-is-absent): the adopter then
+	# also derives the words from the shared rules seed on ITS first draw.
+	_logic_random_state = state.get("logic_random_state", [])
+	# IN PLACE, never rebind: attached SageScriptEnvs share this dictionary by
+	# reference (see the script_env_state block comment), so a rebind here
+	# would silently detach every live script environment from the boundary.
+	script_env_state.clear()
+	script_env_state.merge(state.get("script_env_state", {}))
+	scenario_map_placements_enabled = bool(state.get("scenario_map_placements_enabled", false))
+	_scenario_map_placements = state.get("scenario_map_placements", [])
+	_next_scenario_unit_id = int(state.get("next_scenario_unit_id", SCENARIO_UNIT_FIRST_ID))
+	_next_scenario_structure_id = int(state.get("next_scenario_structure_id", SCENARIO_STRUCTURE_FIRST_ID))
+	castle_fixtures_enabled = bool(state.get("castle_fixtures_enabled", false))
+	_castle_fixture_placements = state.get("castle_fixture_placements", [])
+	_next_castle_fixture_id = int(state.get("next_castle_fixture_id", CASTLE_FIXTURE_FIRST_ID))
+	# Reconstruct the derived team registry + per-team manifest aliases from the
+	# restored authoritative dicts. Roster order matches setup()'s ascending
+	# seeding; the manifest tables realias the restored global tables. Neither is
+	# part of the snapshot, so this does not affect the restored hash.
+	_reseed_roster_from_state()
+	_seed_team_manifest_tables()
+	# Re-apply the legacy forge fallback into any cross-faction team's derived
+	# (unhashed) contract table. Same-faction teams alias the restored global,
+	# which already carries the provisionals, so this is a no-op there and never
+	# mutates hashed state.
+	_register_forge_upgrade_contracts()
+	# Both clocks (sim tick and every attached env's interpreter tick) were
+	# just set from one snapshot: rebase the recorded executor offsets from
+	# those values - the same numbers every peer restoring this snapshot
+	# holds, so the derived offset stays peer-identical.
+	_rebase_script_executor_offsets()
 
 
 func _reseed_roster_from_state() -> void:
@@ -31522,12 +32132,26 @@ func _reseed_roster_from_state() -> void:
 
 
 func _canonicalize(value: Variant) -> Variant:
-	return _persistence_subsystem().canonicalize(value)
+	if typeof(value) == TYPE_DICTIONARY:
+		var source := value as Dictionary
+		var keys := source.keys()
+		keys.sort_custom(_canonical_key_less)
+		var rows: Array = []
+		for key in keys:
+			rows.append([_canonicalize(key), _canonicalize(source[key])])
+		return rows
+	if typeof(value) == TYPE_ARRAY:
+		var rows: Array = []
+		for item in value as Array:
+			rows.append(_canonicalize(item))
+		return rows
+	return value
 
 
 func _canonical_key_less(a: Variant, b: Variant) -> bool:
-	return _persistence_subsystem().canonical_key_less(a, b)
+	return "%02d:%s" % [typeof(a), var_to_str(a)] < "%02d:%s" % [typeof(b), var_to_str(b)]
 
+# --- script surface residual bag (honest stores; not full retail subsystems) ---
 
 var script_surface_bag: Dictionary = {}  # generic key->value residual stores
 

@@ -19,11 +19,21 @@ func _initialize() -> void:
 	call_deferred("_run")
 
 
+## Q80: the 8 core manifest tables are required; fixtures supply the labeled
+## SYNTHETIC default_manifest() (plus per-test overrides) explicitly.
+static func _fixture_manifest(overrides: Dictionary = {}) -> Dictionary:
+	var manifest: Dictionary = preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest()
+	for key in overrides:
+		manifest[key] = overrides[key]
+	return manifest
+
+
 func _make_sim():
 	var sim = SimScript.new()
 	sim.setup({}, {
 		"member_health": 100,
 		"unit_rules": _unit_rules(5, 50),
+		"faction_manifest": _fixture_manifest(),
 	})
 	sim.ai_enabled = false
 	(sim.entities[1] as Dictionary)["position"] = Vector2.ZERO
@@ -229,6 +239,7 @@ func _run_fortress_armor_contract() -> void:
 		"enable_base_loop": true,
 		"member_health": 100,
 		"unit_rules": _unit_rules(5, 50),
+		"faction_manifest": _fixture_manifest(),
 	})
 	sim.ai_enabled = false
 	var fortress_id: int = sim.fortress_id(SimScript.ENEMY_TEAM)
@@ -263,6 +274,7 @@ func _run_armor_system_contract() -> void:
 		"enable_base_loop": true,
 		"member_health": 100,
 		"unit_rules": _unit_rules(5, 50),
+		"faction_manifest": _fixture_manifest(),
 	})
 	sim.ai_enabled = false
 	# KnightArmor (armor.ini:613-631): PIERCE 40% (line 618), SPECIALIST 200%
@@ -429,9 +441,7 @@ func _run_highlander_body_contract() -> void:
 	sim.setup({}, {
 		"enable_base_loop": true,
 		"unit_rules": rules,
-		"faction_manifest": {
-			"structure_build_rules": build_rules,
-		},
+		"faction_manifest": _fixture_manifest({"structure_build_rules": build_rules}),
 	})
 	sim.ai_enabled = false
 	var normal: Dictionary = sim.entities[1]
@@ -550,7 +560,7 @@ func _run_highlander_body_contract() -> void:
 	restored.setup({}, {
 		"enable_base_loop": true,
 		"unit_rules": rules,
-		"faction_manifest": {"structure_build_rules": build_rules},
+		"faction_manifest": _fixture_manifest({"structure_build_rules": build_rules}),
 	})
 	_check("highlander_snapshot_restores", restored.restore(sim.snapshot()))
 	_check(
@@ -561,7 +571,7 @@ func _run_highlander_body_contract() -> void:
 			and restored.state_hash() == sim.state_hash()
 	)
 	var removal_sim = SimScript.new()
-	removal_sim.setup({}, {"unit_rules": rules})
+	removal_sim.setup({}, {"unit_rules": rules, "faction_manifest": _fixture_manifest()})
 	removal_sim.ai_enabled = false
 	var removable: Dictionary = removal_sim.entities[103]
 	removable["health"] = 0
@@ -1037,7 +1047,7 @@ func _projectile_sim(affects: String, projectile_capable: bool = true):
 		"ProjectileAttacker": attacker_rule,
 		"ProjectileTarget": target_rule,
 	}
-	sim.setup({}, {"unit_rules": rules, "spawn_initial_battalions": false})
+	sim.setup({}, {"unit_rules": rules, "spawn_initial_battalions": false, "faction_manifest": _fixture_manifest()})
 	sim.ai_enabled = false
 	sim.base_loop_enabled = false
 	sim.entities.clear()

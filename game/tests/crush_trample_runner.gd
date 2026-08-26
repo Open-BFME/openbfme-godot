@@ -45,7 +45,7 @@ func _run() -> void:
 
 
 func _harness_rules() -> Dictionary:
-	return {
+	return {"faction_manifest": _q80_harness_manifest(), 
 		"enable_base_loop": true,
 		"starting_resources": 10000,
 		"ai_attack_delay_ticks": 4000,
@@ -125,6 +125,11 @@ func _unit_rule(overrides: Dictionary) -> Dictionary:
 		"attack_range_source": 11.5,
 		"minimum_attack_range": 0.0,
 		"minimum_attack_range_source": 0.0,
+		# Retail authors MaxTurnWithoutReform=45 on the melee/ranged horde
+		# locomotors (locomotor.ini:774 etc.); the sim refuses category
+		# guesses, so the fixture authors it like retail does. Cavalry
+		# overrides to 100 below.
+		"max_turn_without_reform_degrees": 45.0,
 		"vision_range": 12.0,
 		"vision_range_source": 120.0,
 		"delay_between_shots_ms": 600.0,
@@ -475,3 +480,9 @@ func _finish() -> void:
 	print("CRUSH_TRAMPLE_RESULT passed=%d failed=%d" % [passed, failed])
 	_runner_watchdog.stop()
 	quit(0 if failed == 0 else 1)
+
+
+static func _q80_harness_manifest() -> Dictionary:
+	# Q80: labeled SYNTHETIC default_manifest() for this harness (its unit
+	# rules cover the default roster).
+	return preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest()

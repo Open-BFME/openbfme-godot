@@ -140,6 +140,9 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 		return default_manifest()
 	if slug == DEFAULT_FACTION and (unit_runtimes.is_empty() or structure_runtimes.is_empty()):
 		# Legacy tiny Men pack: no converted playable runtimes → hardcoded tables.
+		# NEVER silent (Q80): callers in parity contexts must know they are on
+		# synthetic constants, not pack data.
+		push_warning("faction manifest: men with empty registries falls to default_manifest() — SYNTHETIC constants, not pack data (legacy tiny-pack path)")
 		return default_manifest()
 
 	var prefixes: Array = (FACTION_OBJECT_PREFIXES.get(slug, [slug]) as Array).duplicate()

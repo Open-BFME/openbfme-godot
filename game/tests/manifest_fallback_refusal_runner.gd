@@ -133,6 +133,19 @@ func test_manifest_with_all_fields_refuses_incomplete() -> void:
 	}
 
 	var manifest = ManifestScript.default_manifest()
+	# NON-VACUOUS oracle (Q80 round-3 verifier): override two values with
+	# synthetic markers that differ from every constant, then assert the
+	# MARKER lands in the sim. default_manifest() alone equals the constants,
+	# so sampling it proves nothing about which source won.
+	var soldier_rule := (manifest["unit_production_rules"] as Dictionary).get(SimScript.SOLDIER_HORDE_ID, {}) as Dictionary
+	soldier_rule = soldier_rule.duplicate(true)
+	soldier_rule["default_cost"] = 4321
+	(manifest["unit_production_rules"] as Dictionary)[SimScript.SOLDIER_HORDE_ID] = soldier_rule
+	var fortress_build := (manifest["structure_build_rules"] as Dictionary).get("fortress", {}) as Dictionary
+	fortress_build = fortress_build.duplicate(true)
+	fortress_build["cost"] = 8765
+	(manifest["structure_build_rules"] as Dictionary)["fortress"] = fortress_build
+
 	var sim := SimScript.new()
 	var rules = {
 		"enable_base_loop": false,
@@ -146,10 +159,11 @@ func test_manifest_with_all_fields_refuses_incomplete() -> void:
 		_check("manifest_complete_configures", false, "Configuration failed: %s" % sim.configuration_error)
 		return
 
-	# Verify a sampled value comes from the manifest, not a constant
+	# The synthetic markers must be what the sim carries — proving the
+	# manifest, not any constant, is the source of truth.
 	_check("manifest_unit_production_rules_from_manifest",
-		sim._unit_production_rules.has(SimScript.SOLDIER_HORDE_ID),
-		"Unit production rules should have soldier horde from manifest")
-	_check("manifest_structure_kinds_from_manifest",
-		SimScript.SOLDIER_HORDE_ID in sim._ai_production_plan,
-		"AI production plan should include soldier horde from manifest")
+		int((sim._unit_production_rules.get(SimScript.SOLDIER_HORDE_ID, {}) as Dictionary).get("default_cost", -1)) == 4321,
+		"soldier default_cost should be the manifest marker 4321, got %s" % str((sim._unit_production_rules.get(SimScript.SOLDIER_HORDE_ID, {}) as Dictionary).get("default_cost", -1)))
+	_check("manifest_structure_build_rules_from_manifest",
+		int((sim._structure_build_rules.get("fortress", {}) as Dictionary).get("cost", -1)) == 8765,
+		"fortress cost should be the manifest marker 8765, got %s" % str((sim._structure_build_rules.get("fortress", {}) as Dictionary).get("cost", -1)))

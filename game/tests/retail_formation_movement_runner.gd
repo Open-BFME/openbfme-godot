@@ -67,6 +67,9 @@ func _make_sim(retail_movement: bool):
 
 func _harness_rules(retail_movement: bool) -> Dictionary:
 	var rules := {
+		# Q80: the 8 core manifest tables are required; labeled SYNTHETIC
+		# default_manifest() (this harness has rules for the default roster).
+		"faction_manifest": preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest(),
 		"unit_rules": {
 			SimScript.SOLDIER_OBJECT_ID: _unit_rule(SimScript.SOLDIER_HORDE_ID),
 			SimScript.ARCHER_OBJECT_ID: _unit_rule(SimScript.ARCHER_OBJECT_ID),

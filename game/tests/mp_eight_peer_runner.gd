@@ -493,7 +493,7 @@ func _make_sim():
 
 
 func _harness_rules() -> Dictionary:
-	return {
+	return {"faction_manifest": _q80_harness_manifest(), 
 		"enable_base_loop": true,
 		"starting_resources": 10000,
 		"ai_attack_delay_ticks": 4000,
@@ -552,3 +552,9 @@ func _finish() -> void:
 		session.close()
 	print("MP_EIGHT_PEER_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
+
+
+static func _q80_harness_manifest() -> Dictionary:
+	# Q80: labeled SYNTHETIC default_manifest() for this harness (its unit
+	# rules cover the default roster).
+	return preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest()

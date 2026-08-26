@@ -164,7 +164,7 @@ func _run() -> void:
 	_check("host_faction_contributes_both_option_kinds", host_ids.has("RohanTheoden") and host_ids.has("GondorFaramir"), str(host_ids))
 
 	var sim = SimScript.new()
-	sim._apply_gameplay_rules({
+	sim._apply_gameplay_rules({"faction_manifest": _q80_fixture_manifest(), 
 		"enable_base_loop": true,
 		"playable_unit_runtimes": host_subjects,
 		"producer_kind_by_source_object": {"MenFortress": "men_fortress"},
@@ -296,3 +296,12 @@ func _check(name: String, ok: bool, detail: String = "") -> bool:
 func _finish() -> void:
 	print("HERO_MOUNTED_BUTTON_OPTIONS_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
+
+
+static func _q80_fixture_manifest() -> Dictionary:
+	# Q80: labeled SYNTHETIC default_manifest() with an EMPTY spawn roster -
+	# this fixture hand-places its own rows; the default gondor roster would
+	# fail entry validation (no configured unit rules) or fight the fixture.
+	var manifest: Dictionary = preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest()
+	manifest["spawn_roster"] = []
+	return manifest

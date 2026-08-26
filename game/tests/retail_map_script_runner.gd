@@ -58,7 +58,7 @@ func _make_sim():
 
 
 func _harness_rules() -> Dictionary:
-	return {
+	return {"faction_manifest": _q80_harness_manifest(), 
 		"enable_base_loop": true,
 		"starting_resources": 1000,
 		"ai_attack_delay_ticks": 4000,
@@ -401,3 +401,9 @@ func _check(name: String, condition: bool, detail: String = "") -> void:
 	else:
 		failed += 1
 		printerr("RETAIL_MAP_SCRIPT FAIL %s%s" % [name, " (%s)" % detail if detail != "" else ""])
+
+
+static func _q80_harness_manifest() -> Dictionary:
+	# Q80: labeled SYNTHETIC default_manifest() for this harness (its unit
+	# rules cover the default roster).
+	return preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest()

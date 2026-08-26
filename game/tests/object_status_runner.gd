@@ -62,7 +62,7 @@ func _test_team_set_and_read() -> void:
 
 func _test_require_all_vs_some() -> void:
 	var sim: RetailSliceSim = SimScript.new()
-	sim.setup({}, {"spawn_initial_battalions": false, "starting_resources": 0})
+	sim.setup({}, {"faction_manifest": preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest(), "spawn_initial_battalions": false, "starting_resources": 0})
 	sim.ai_enabled = false
 	sim.entities[9001] = {
 		"id": 9001,
@@ -127,7 +127,7 @@ func _test_empty_status_refuses() -> void:
 
 func _fixture() -> Dictionary:
 	var sim: RetailSliceSim = SimScript.new()
-	sim.setup({}, {"spawn_initial_battalions": false, "starting_resources": 0})
+	sim.setup({}, {"faction_manifest": preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest(), "spawn_initial_battalions": false, "starting_resources": 0})
 	sim.ai_enabled = false
 	sim.entities[9001] = {
 		"id": 9001,

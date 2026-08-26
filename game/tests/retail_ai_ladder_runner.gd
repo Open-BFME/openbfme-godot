@@ -98,6 +98,8 @@ func _run() -> void:
 
 func _match_rules(peace: bool) -> Dictionary:
 	var rules := base_rules.duplicate(true)
+	if not rules.has("faction_manifest"):
+		rules["faction_manifest"] = preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest()
 	rules["enable_base_loop"] = true
 	# Manually seed identical mirrored builders so neither team inherits the
 	# asymmetric default two-corner starting armies.

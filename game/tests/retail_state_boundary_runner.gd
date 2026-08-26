@@ -182,7 +182,7 @@ func _unit_rule(horde_id: String, is_builder: bool) -> Dictionary:
 
 
 func _harness_rules() -> Dictionary:
-	return {
+	return {"faction_manifest": _q80_harness_manifest(), 
 		"enable_base_loop": true,
 		"starting_resources": 10000,
 		"ai_attack_delay_ticks": 100000,
@@ -1254,3 +1254,9 @@ func _test_flag_valued_references_are_hash_inert_and_reset_by_setup() -> void:
 		"clearing the flag table after reset returns to the pristine hash exactly",
 		sim.state_hash() == pristine
 	)
+
+
+static func _q80_harness_manifest() -> Dictionary:
+	# Q80: labeled SYNTHETIC default_manifest() for this harness (its unit
+	# rules cover the default roster).
+	return preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest()

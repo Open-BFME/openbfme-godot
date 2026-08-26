@@ -602,7 +602,7 @@ func _run() -> void:
 		{"team": 1, "faction": "elves", "is_ai": true, "alliance": "west"},
 		{"team": 5, "faction": "mordor", "is_ai": true},
 	])
-	relation_probe.setup({}, {"spawn_initial_battalions": false})
+	relation_probe.setup({}, {"faction_manifest": preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest(), "spawn_initial_battalions": false})
 	_check("eva_ring_perspective_classifies_allies_and_enemies", relation_probe.team_relationship(0, 1) == "allied" and relation_probe.team_relationship(0, 5) == "enemy" and relation_probe.team_relationship(0, 99) == "unavailable")
 	eva_fixture.dispose()
 	eva_fixture.free()

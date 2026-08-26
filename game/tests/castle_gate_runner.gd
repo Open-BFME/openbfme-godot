@@ -388,7 +388,7 @@ func _test_configuration_based_seam() -> void:
 			},
 		],
 	}
-	var rules: Dictionary = {"enable_castle_fixtures": true, "source_map_transform_scale": 0.1}
+	var rules: Dictionary = {"enable_castle_fixtures": true, "source_map_transform_scale": 0.1, "faction_manifest": preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest()}
 	# _apply_map_configuration needs a full cooked map (spawns, three ford
 	# gates...) or falls back and drops fixtures, so - as the garrison and
 	# wall-defense runners do - install the validated PLACEMENT at the sim's
