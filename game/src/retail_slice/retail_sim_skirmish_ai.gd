@@ -203,18 +203,66 @@ func authored_ai_queue_choices(team: int, max_picks: int = 6) -> Array:
 	return picks
 
 
-func authored_special_power_odds(team: int) -> Array:
-	## The authored SpecialPowerActivationProbability pair [a, b] for this
-	## team's difficulty tier, or [] when unconfigured/unauthored. Tier
-	## mapping: easy -> EASY, everything medium and above -> NORMAL (the only
-	## rows retail authors for skirmish; harder tiers use the strongest row).
+func authored_difficulty_odds(team: int, field: String) -> Array:
+	## The authored 'a : b' probability pair for this team's difficulty tier,
+	## or [] when unconfigured/unauthored. Tier mapping: easy -> EASY,
+	## everything medium and above -> NORMAL (the only rows retail authors
+	## for skirmish; harder tiers use the strongest row).
 	var _sim = sim
 	if not bool(_sim.skirmish_ai_configured):
 		return []
 	var label := "EASY" if String(_sim.team_difficulty(team)).to_lower() == "easy" else "NORMAL"
 	var tier := (_sim.skirmish_ai_difficulty as Dictionary).get(label, {}) as Dictionary
-	var pair := tier.get("SpecialPowerActivationProbability", []) as Array
+	var pair := tier.get(field, []) as Array
 	return pair if pair.size() == 2 else []
+
+
+func authored_special_power_odds(team: int) -> Array:
+	## The authored SpecialPowerActivationProbability pair for this team.
+	return authored_difficulty_odds(team, "SpecialPowerActivationProbability")
+
+
+func authored_economy_upgrade_choice(team: int) -> Dictionary:
+	## The economy upgrade retail's AI would buy when its authored
+	## EconomyUpgradeProbability roll succeeds: the FIRST affordable level
+	## chain step on the team's LOWEST-id income structure (income structures
+	## are the rows the economy subsystem pays out on: income_per_payout > 0).
+	## Deterministic by construction — ids ascend, commands are id-sorted.
+	## Research/castle rows are not economy purchases and are skipped; gates
+	## and treasury edge cases stay queue_structure_upgrade's job.
+	var _sim = sim
+	if not bool(_sim.skirmish_ai_configured):
+		return {"ok": false, "reason": "skirmish-ai is not configured"}
+	var structure_ids: Array = _sim.structures.keys()
+	structure_ids.sort()
+	var had_income_structure := false
+	for id_value in structure_ids:
+		var structure_id := int(id_value)
+		var building: Dictionary = _sim.structures[structure_id]
+		if int(building.get("team", -1)) != team:
+			continue
+		if int(building.get("income_per_payout", 0)) <= 0:
+			continue
+		if int(building.get("health", 0)) <= 0 or float(building.get("construction_progress", 0.0)) < 1.0:
+			continue
+		if not (building.get("upgrade_queue", []) as Array).is_empty():
+			continue
+		had_income_structure = true
+		for command_value in _sim.structure_upgrade_commands(structure_id):
+			var command := command_value as Dictionary
+			if int(command.get("to_level", 0)) <= 0:
+				continue
+			if int(command.get("cost", 0)) > _sim.resources_for_team(team):
+				continue
+			return {
+				"ok": true,
+				"structure_id": structure_id,
+				"upgrade_id": String(command.get("upgrade_id", "")),
+				"cost": int(command.get("cost", 0)),
+			}
+	if had_income_structure:
+		return {"ok": false, "reason": "no affordable economy upgrade step"}
+	return {"ok": false, "reason": "team %d has no completed income structures" % team}
 
 
 func authored_hero_choice(team: int) -> Dictionary:

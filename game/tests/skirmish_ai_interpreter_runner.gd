@@ -125,6 +125,47 @@ func _run() -> void:
 		"difficulty odds: an unconfigured sim answers no odds"
 	)
 
+	# --- economy upgrade consumption --------------------------------------
+	_check(
+		ai_sim._skirmish_ai_subsystem().authored_difficulty_odds(0, "EconomyUpgradeProbability") == [10.0, 100.0],
+		"economy upgrade: the authored EconomyUpgradeProbability pair reaches the AI"
+	)
+	var econ_none: Dictionary = ai_sim._skirmish_ai_subsystem().authored_economy_upgrade_choice(0)
+	_check(
+		not bool(econ_none.get("ok", true)) and String(econ_none.get("reason", "")).contains("income"),
+		"economy upgrade: a team without income structures refuses by name"
+	)
+	ai_sim._structure_upgrade_contracts["FixtureFarmL2"] = {
+		"structure_kind": "farm",
+		"from_command_set": "",
+		"to_command_set": "farm_l2",
+		"to_level": 2,
+		"cost": 300,
+		"duration_ticks": 10,
+		"level_cap": 3,
+	}
+	ai_sim.structures[10] = {
+		"id": 10,
+		"team": 0,
+		"structure_kind": "farm",
+		"health": 2000,
+		"construction_progress": 1.0,
+		"income_per_payout": 5,
+		"completed_upgrades": [],
+		"command_set": "",
+		"upgrade_queue": [],
+	}
+	ai_sim.team_resources[0] = 1000
+	var econ_choice: Dictionary = ai_sim._skirmish_ai_subsystem().authored_economy_upgrade_choice(0)
+	_check(bool(econ_choice.get("ok", false)), "economy upgrade: an income structure offers its level step")
+	_check(String(econ_choice.get("upgrade_id", "")) == "FixtureFarmL2", "economy upgrade: the authored chain step is chosen")
+	ai_sim.team_resources[0] = 100
+	var econ_poor: Dictionary = ai_sim._skirmish_ai_subsystem().authored_economy_upgrade_choice(0)
+	_check(
+		not bool(econ_poor.get("ok", true)) and String(econ_poor.get("reason", "")).contains("affordable"),
+		"economy upgrade: an empty treasury refuses by name"
+	)
+
 	var sideless_sim = SimScript.new()
 	sideless_sim.configure_skirmish_ai(_consumption_document())
 	var refused: Dictionary = sideless_sim._skirmish_ai_subsystem().authored_ai_queue_choice(0)

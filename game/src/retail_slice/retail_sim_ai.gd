@@ -123,6 +123,19 @@ func run_ai_for_team(team: int, profile: Dictionary, ai_state: Dictionary) -> vo
 					"skirmish-ai team %d runs the baseline plan only: %s"
 					% [team, String(first.get("reason", ""))]
 				)
+			# EconomyUpgradeProbability (Q83c): each window the authored
+			# 'a : b' pair rolls on the deterministic stream exactly like the
+			# special-power gate (fail when the draw exceeds a); a successful
+			# roll buys ONE income-structure level step with leftover gold —
+			# units queued above keep treasury priority, like retail. The RNG
+			# draw happens every window regardless of economy state so the
+			# stream never depends on treasury contents.
+			var economy_odds: Array = _sim._skirmish_ai_subsystem().authored_difficulty_odds(team, "EconomyUpgradeProbability")
+			if economy_odds.size() == 2 and float(economy_odds[1]) > 0.0:
+				if _sim.logic_random_int(1, int(economy_odds[1])) <= int(economy_odds[0]):
+					var economy_choice: Dictionary = _sim._skirmish_ai_subsystem().authored_economy_upgrade_choice(team)
+					if bool(economy_choice.get("ok", false)):
+						_sim.queue_structure_upgrade(team, int(economy_choice["structure_id"]), String(economy_choice["upgrade_id"]))
 	# Give hostiles one full production window before the first wave. Economy and
 	# production still advance during the preparation time. Higher tiers commit
 	# sooner (shorter attack delay), lower tiers later.
