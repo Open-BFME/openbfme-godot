@@ -16,16 +16,17 @@ files: [importer/**, contracts/**]
   from: roadmap (queue Q88; two verifier rounds — round 1 stopped a wrong 30 GB deletion, round 2 disclosed 2 contained python-pinned losses)
 
 ## Run the game simulation {#sim}
-tech: game/src/retail_slice/retail_slice_sim.gd — single 33,716-line GDScript file (movement, combat, economy, AI, fog, save)
+tech: game/src/retail_slice/retail_slice_sim.gd (conductor, shrinking) + retail_sim_*.gd subsystem modules (14 so far); state stays on the sim, modules hold the logic
 files: [game/src/retail_slice/**]
 needs: importer
 - [x] Skirmish sim playable on all factions/maps, lockstep MP, castle sieges {#sim-skirmish}
   by: shipped v0.2.12 (queue Q71-Q76; dist/v0.2.9+)
-- [~] Delete the hand-typed fallback rule tables — missing pack field fails loudly by name {#sim-single-truth}
-  by: claude (took over after 3 failed sol rounds; setup now refuses-and-seeds-nothing, 4 runtime fallbacks deleted, 43 fixtures given explicit synthetic manifests, 3 pins consciously re-minted with zero-behavior-change proof; 39-runner proof sweep running)
-  from: roadmap (queue Q80; owner ratified; verified at retail_slice_sim.gd:2472-2513)
-- [ ] Split the 33k-line sim into named class files, one subsystem at a time, state-pin equality proving each move {#sim-split}
-  from: roadmap (queue Q81; owner: highest cleanability/moddability impact)
+- [x] Delete the hand-typed fallback rule tables — missing pack field fails loudly by name {#sim-single-truth}
+  by: claude (took over after 3 failed sol rounds; setup refuses-and-seeds-nothing, 4 runtime fallbacks deleted, 45 fixtures given explicit synthetic manifests, 3 pins consciously re-minted with zero-behavior-change proof; shipped 42c20c13)
+  from: roadmap (queue Q80; owner ratified)
+- [~] Split the 33k-line sim into named class files, one subsystem at a time, state-pin equality proving each move {#sim-split}
+  by: claude (14 drawers done: projectiles, economy, experience, ai, combat, persistence, production, movement, abilities, upgrades, powers, bases, module-contracts, transport/garrison; sim 31,351 → ~18,200 lines, every move pin-proven; drawer 14 also surfaced+fixed 3 latent typed-array boundary bugs from drawer 13)
+  from: roadmap (queue Q81; owner: highest cleanability/moddability impact; owner bar: tiny per module)
 - [ ] Module framework + traffic-ranked burn-down of the 99 missing retail behavior modules {#sim-modules}
   from: roadmap (queue Q82; oracles: ZH GPL source, decomp symbols.csv, INI clean-sheet for the 9 BFME2-only)
 - [~] Port retail's skirmish AI — personalities, build lists, attack priorities; difficulty = behavior, not cheats {#sim-ai}

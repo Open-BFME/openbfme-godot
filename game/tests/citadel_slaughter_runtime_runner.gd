@@ -52,9 +52,16 @@ func _contract(ratio: float, paired: bool, destroy_kind: String, capacity: int =
 	if paired: fields["UpgradeForRingEntry"] = {"value": ["Upgrade_RingHero", "Upgrade_FortressRingHero"]}; fields["FXForRingEntry"] = {"value": "FX_OneRingFlare"}
 	return {"module": "CitadelSlaughterHordeContain", "extraction": "typed", "fields": fields}
 
+## Q80: the 8 core manifest tables are required; this fixture supplies the labeled
+## SYNTHETIC default_manifest() explicitly, roster emptied because rows are hand-placed.
+static func _fixture_manifest() -> Dictionary:
+	var manifest: Dictionary = preload("res://src/retail_slice/retail_faction_manifest.gd").default_manifest()
+	manifest["spawn_roster"] = []
+	return manifest
+
 func _sim() -> RetailSliceSim:
 	var unit_rules := {}; for object_id in [Sim.SOLDIER_OBJECT_ID, Sim.SOLDIER_HORDE_ID, Sim.ARCHER_OBJECT_ID, Sim.TOWER_GUARD_OBJECT_ID, Sim.KNIGHT_OBJECT_ID]: unit_rules[object_id] = _rule()
-	var sim: RetailSliceSim = Sim.new(); sim.setup({}, {"unit_rules": unit_rules, "source_map_transform_scale": 1.0}); sim.ai_enabled = false; sim.base_loop_enabled = false; sim.entities.clear(); sim.structures.clear(); sim.structures[50] = {"id": 50, "team": 0, "kind": "structure", "health": 1000, "maximum_health": 1000, "position": Vector2.ZERO, "completed_upgrades": []}; return sim
+	var sim: RetailSliceSim = Sim.new(); sim.setup({}, {"unit_rules": unit_rules, "source_map_transform_scale": 1.0, "faction_manifest": _fixture_manifest()}); sim.ai_enabled = false; sim.base_loop_enabled = false; sim.entities.clear(); sim.structures.clear(); sim.structures[50] = {"id": 50, "team": 0, "kind": "structure", "health": 1000, "maximum_health": 1000, "position": Vector2.ZERO, "completed_upgrades": []}; return sim
 func _spawn(sim: RetailSliceSim, id: int, team: int, kinds: Array, cost: int) -> void: sim.entities[id] = {"id": id, "team": team, "unit_type": "Fixture%d" % id, "health": 100, "maximum_health": 100, "member_health": [100], "position": Vector2.ZERO, "kind_of": kinds, "category": String(kinds[0]), "build_cost": cost, "object_status": {}}
 func _rule() -> Dictionary: return {"horde_id": Sim.SOLDIER_HORDE_ID, "category": "infantry", "speed": 1.0, "speed_source": 10.0, "acceleration": 1.0, "acceleration_source": 10.0, "turn_rate_degrees_per_second": 180.0, "braking": 1.0, "braking_source": 10.0, "attack_range": 1.0, "attack_range_source": 1.0, "minimum_attack_range": 0.0, "minimum_attack_range_source": 0.0, "vision_range": 10.0, "vision_range_source": 10.0, "delay_between_shots_ms": 1000.0, "pre_attack_delay_ms": 0.0, "firing_duration_ms": 0.0, "attack_period_ticks": 10, "pre_attack_ticks": 0, "firing_duration_ticks": 0, "member_damage": 1, "member_health": 100, "member_count": 1, "formation_positions": [Vector3.ZERO], "provenance": {}}
 func _check(label: String, condition: bool) -> void:

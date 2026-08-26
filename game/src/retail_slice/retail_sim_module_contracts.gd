@@ -6203,7 +6203,8 @@ func enter_citadel_slaughter(structure_id: int, entity_id: int) -> Dictionary:
 	sim.exit_entity_container(entity_id)
 	passenger["health"] = 0
 	passenger["member_health"] = []
-	sim._bookkeep_battalion_death(entity_id, passenger, "FADED", [])
+	var slaughter_defeated: Array[int] = []
+	sim._bookkeep_battalion_death(entity_id, passenger, "FADED", slaughter_defeated)
 	sim.entities.erase(entity_id)
 	policy["slaughter_count"] = int(policy.get("slaughter_count", 0)) + 1
 	policy["cashback_total"] = int(policy.get("cashback_total", 0)) + cashback
@@ -6227,7 +6228,8 @@ func _consume_citadel_ring_entry(structure_id: int, entity_id: int, citadel: Dic
 	sim.exit_entity_container(entity_id)
 	if destroy_passenger:
 		passenger["health"] = 0; passenger["member_health"] = []
-		sim._bookkeep_battalion_death(entity_id, passenger, "FADED", [])
+		var ring_defeated: Array[int] = []
+		sim._bookkeep_battalion_death(entity_id, passenger, "FADED", ring_defeated)
 		sim.entities.erase(entity_id)
 	else:
 		passenger["object_status"] = (passenger.get("transport_prior_status", {}) as Dictionary).duplicate(true)
@@ -6540,7 +6542,8 @@ func _expire_lifetime_entity(entity_id: int, row: Dictionary, death_type: String
 	row["member_health"] = health_values
 	row["health"] = 0
 	_schedule_respawn_update(entity_id, row, death_type, 0)
-	sim._apply_playable_unit_death_policy(row, death_type, [])
+	var no_defeated_members: Array[int] = []
+	sim._apply_playable_unit_death_policy(row, death_type, no_defeated_members)
 	sim._consume_create_object_die(row, death_type)
 	sim._schedule_fire_weapon_when_dead(row, death_type, "battalion")
 	sim._emit_event("lifetime.expired", entity_id, 0, {"death_type": death_type})
