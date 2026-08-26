@@ -39,7 +39,7 @@ const ENEMY_TEAM := 1
 # ever acts as this team; it only owns capturable structures until captured.
 const NEUTRAL_TEAM := 2
 ## Dedicated creep owner (retail PlyrCreeps): hostile to every rostered team,
-## never rostered itself — never a victory participant and excluded from
+## never rostered itself â€” never a victory participant and excluded from
 ## spellbook/economy/AI production. Distinct from NEUTRAL_TEAM, which only
 ## owns capturable structures. High sentinel so no N-team roster id collides.
 const CREEP_TEAM := 9999
@@ -128,7 +128,7 @@ const TRAMPLE_COOLDOWN_TICKS := 10
 const TRAMPLE_DAMAGE_FACTOR := 0.5
 ## Knockback/knockdown lane. Trampled or blast-struck battalions are thrown
 ## away from the impact and stay incapacitated (no move/attack/orders) until
-## the counter drains — retail infantry sprawl-then-stand behavior.
+## the counter drains â€” retail infantry sprawl-then-stand behavior.
 ## 2.5 seconds at TICK_SECONDS = 0.1.
 const KNOCKDOWN_DURATION_TICKS := 25
 const TRAMPLE_KNOCKBACK_STRENGTH := 2.0
@@ -138,7 +138,7 @@ const TRAMPLE_KNOCKBACK_STRENGTH := 2.0
 ## ranges are map-scale invariant, unlike the scaled attack_range.
 const MELEE_ATTACK_RANGE_SOURCE_THRESHOLD := 50.0
 ## Retail eva.ini UnderAttack* blocks debounce global under-attack announces
-## with TimeBetweenEventsMS = 30000 (30s → 300 sim ticks at 0.1s/tick).
+## with TimeBetweenEventsMS = 30000 (30s â†’ 300 sim ticks at 0.1s/tick).
 const EVA_BASE_UNDER_ATTACK_DEBOUNCE_TICKS := 300
 const UNIT_DAMAGE_TYPES: Dictionary = {
 	SOLDIER_OBJECT_ID: "slash",
@@ -180,7 +180,7 @@ const DEFAULT_STRUCTURE_ARMOR: Dictionary = {
 }
 # A structure kind with no compiled armor table (legacy defaults other than
 # the fortress, or a stale pack document) has its damage refused loudly. It is
-# recorded once per kind at configure — an explicit interim value, never a
+# recorded once per kind at configure â€” an explicit interim value, never a
 # silent default.
 ## Structure kinds with no compiled armor table (recorded provisionals).
 var structure_armor_provisional_kinds: Array[String] = []
@@ -316,7 +316,7 @@ const AI_DIFFICULTY_PROFILES: Dictionary = {
 const AI_DEFAULT_DIFFICULTY: String = "medium"
 ## Outer controller cadence: the shared GCD of every tier's scan_interval, so a
 ## team executes on exactly the ticks its own scan_interval selects. medium's 15
-## is a multiple of 5, so the default team still runs on 0,15,30,... — identical
+## is a multiple of 5, so the default team still runs on 0,15,30,... â€” identical
 ## to the historical `tick_index % 15 == 0` gate.
 const AI_CONTROLLER_BASE_INTERVAL: int = 5
 # Default faction roster: entries flagged requires_unit_rule spawn only when the
@@ -344,7 +344,7 @@ func initial_battalion_count() -> int:
 
 
 func _active_spawn_roster() -> Array:
-	# Q80: no DEFAULT_SPAWN_ROSTER fallback — the manifest roster is the
+	# Q80: no DEFAULT_SPAWN_ROSTER fallback â€” the manifest roster is the
 	# roster, empty included.
 	return _spawn_roster
 
@@ -478,8 +478,8 @@ func _difficulty_profile(team: int) -> Dictionary:
 func _seed_team_ai_state() -> void:
 	## One AI-state record per rostered AI team, in ascending roster order. Each
 	## record carries the team's difficulty tier and the per-team controller
-	## counters. For the default {0,1} roster this yields exactly {1: medium} — the
-	## single legacy AI — so its command stream (and the pinned signature) is
+	## counters. For the default {0,1} roster this yields exactly {1: medium} â€” the
+	## single legacy AI â€” so its command stream (and the pinned signature) is
 	## unchanged.
 	_team_ai_state = {}
 	for team in _roster_team_ids():
@@ -767,7 +767,7 @@ func _spatial_gather_sorted(point: Vector2, radius: float) -> Array[int]:
 ##
 ## Exactness contract: the gather returns every structure whose blocking disc
 ## (radius <= STRUCTURE_DEFLECT_GATHER_RADIUS) can overlap the query point, in
-## ascending id order — the same visit order as the old full scan. Any centre
+## ascending id order â€” the same visit order as the old full scan. Any centre
 ## outside the gathered box is further than the maximum radius away, and the
 ## deflection loop skips those rows with zero side effects, so the result is
 ## byte-identical to the full scan.
@@ -1026,7 +1026,7 @@ func _seed_team_manifest_tables() -> void:
 		var manifest: Dictionary = provided.get(team, shared_manifest) as Dictionary
 		_team_manifests[team] = manifest
 		# A team whose injected manifest is the same faction that compiled the
-		# global tables (the player faction) aliases those globals exactly — this
+		# global tables (the player faction) aliases those globals exactly â€” this
 		# keeps the default same-faction path byte-identical, including the
 		# ranger/trebuchet overlays that only live on the globals. A team on a
 		# DIFFERENT faction derives its own tables straight from its manifest dict
@@ -1062,7 +1062,7 @@ func _seed_team_manifest_tables() -> void:
 			# The faction manifest intentionally leaves its builder out of
 			# unit_production_rules (the spawn/roster passes own the builder);
 			# a derived team still needs the porter's authored train rule at its
-			# fortress, projected from the team's own playableUnit document —
+			# fortress, projected from the team's own playableUnit document â€”
 			# the per-team mirror of _register_builder_production.
 			for builder_value in (manifest.get("builder_unit_ids", []) as Array):
 				var builder_rule := _derived_team_builder_rule(manifest, String(builder_value))
@@ -1079,7 +1079,7 @@ func _seed_team_manifest_tables() -> void:
 			_team_structure_kinds[team] = kinds
 			# Full production surface for this team's structures: EVERY manifest
 			# rule (the fortress hero roster, every line unit, the porter), in
-			# deterministic order — not just the AI plan's one-per-producer
+			# deterministic order â€” not just the AI plan's one-per-producer
 			# sample, which silently stripped the hero roster and the porter
 			# from a derived team's fortress.
 			var team_order: Array = team_rules.keys()
@@ -1141,7 +1141,7 @@ func _derived_team_builder_rule(manifest: Dictionary, builder_member_id: String)
 	## Projects a faction builder's authored train rule (retail: the fortress
 	## citadel trains porters) from the team's own playableUnit document,
 	## resolving producers through THAT manifest's producer registry. {} when
-	## the document or any authored route cannot be proven — fail-closed, the
+	## the document or any authored route cannot be proven â€” fail-closed, the
 	## team then simply has no porter train rule (and the gates say so).
 	if builder_member_id == "":
 		return {}
@@ -1314,7 +1314,7 @@ var physics_objects: Dictionary = {}
 var _next_physics_object_id := 50000
 ## Q81a extraction #1: member-projectile logic lives in
 ## retail_sim_projectiles.gd; the sim keeps the authoritative STATE
-## (projectiles/_next_projectile_id — tests read and write it directly, and
+## (projectiles/_next_projectile_id â€” tests read and write it directly, and
 ## serialization is untouched) plus one-line delegates under the original
 ## names so call sites and tick order are byte-identical.
 var _projectile_system = null
@@ -1473,7 +1473,7 @@ var cah_award_results: Dictionary = {}
 var team_resources: Dictionary = {PLAYER_TEAM: 0, ENEMY_TEAM: 0}
 var team_command_points: Dictionary = {PLAYER_TEAM: 0, ENEMY_TEAM: 0}
 ## Residual parity subsystems (FoW, path, wall helpers, OCL leaf registry, mood/meta).
-## Never store a back-ref from parity to this sim (RefCounted cycle → leak/AV).
+## Never store a back-ref from parity to this sim (RefCounted cycle â†’ leak/AV).
 var parity = null
 
 
@@ -1692,7 +1692,7 @@ var _capturable_placements: Array = []
 var _next_capturable_structure_id := CAPTURABLE_NEUTRAL_FIRST_ID
 ## Map-authored castle structures (opt-in gameplay rule
 ## "enable_castle_fixtures"; default off keeps every legacy runner and the
-## pinned scenario byte-identical — the fog lane's absent-unless-enabled
+## pinned scenario byte-identical â€” the fog lane's absent-unless-enabled
 ## pattern). Placements arrive with the map configuration (already validated
 ## and translated by RetailMapData) and stay inert until the rule enables
 ## seeding.
@@ -1918,7 +1918,7 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 		_seed_castle_fixtures()
 	if ring_mechanic_enabled:
 		_mark_ring_delivery_structures()
-	# Spellbook effect rules (summon stats) bake the source→sim scale, which
+	# Spellbook effect rules (summon stats) bake the sourceâ†’sim scale, which
 	# only exists once the gameplay rules are applied above: recompute them
 	# now. Ownership/points already reset; configure only touches doc-derived
 	# rows and match-scoped spellbook state.
@@ -2189,8 +2189,8 @@ func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 	build_plots_only = bool(_rules.get("build_plots_only", false))
 	build_plots.clear()
 	# Neutral creep-lair opt-in. Absent (every legacy runner and the untouched
-	# menu) resolves false, so the default match — and the pinned battle
-	# signature — stays byte-identical.
+	# menu) resolves false, so the default match â€” and the pinned battle
+	# signature â€” stays byte-identical.
 	if _rules.has("enable_scenario_map_placements") and not bool(_rules.get("enable_scenario_map_placements", false)):
 		_rules.erase("enable_scenario_map_placements")
 	scenario_map_placements_enabled = bool(_rules.get("enable_scenario_map_placements", false))
@@ -2614,7 +2614,7 @@ func _ring_pickup_eligible(candidate: Dictionary) -> bool:
 func _configure_faction_manifest() -> bool:
 	## Every faction-scoped table flows through the manifest. The 8 core
 	## tables are REQUIRED (Q80): a rules dictionary without them is refused
-	## by name — invented defaults were removed and never fall back silently.
+	## by name â€” invented defaults were removed and never fall back silently.
 	var manifest_value: Variant = _rules.get("faction_manifest", {})
 	if typeof(manifest_value) != TYPE_DICTIONARY:
 		configuration_error = "Faction manifest is not a dictionary"
@@ -2834,7 +2834,7 @@ func _compiled_armor_rule(document: Dictionary) -> Dictionary:
 func _parse_damage_scalar(entry: Dictionary) -> Dictionary:
 	## Split a compiled DamageScalar row into an evaluable filter. Retail
 	## evidence: `ANY +INFANTRY -HERO` (has INFANTRY, not HERO), `ALL -STRUCTURE`
-	## (lacks STRUCTURE), `NONE +MINE` (has MINE — the first token never negates
+	## (lacks STRUCTURE), `NONE +MINE` (has MINE â€” the first token never negates
 	## the +kinds; see armor_compiler.py and weapon.ini usage).
 	var relation := "ANY"
 	var plus: Array[String] = []
@@ -3487,7 +3487,7 @@ func _configure_playable_unit_runtime_contracts() -> void:
 		# document-derived id space: every rule registers under BOTH ids the
 		# document itself resolves (runtime_member_id = primaryMemberObjectId,
 		# runtime_unit_id = containerObjectId), so entity object_id lookups,
-		# unit_type-keyed purchase surfaces, and gate checks read one space —
+		# unit_type-keyed purchase surfaces, and gate checks read one space â€”
 		# no hardcoded alias tables.
 		var armor_member_id := PlayableUnitAdapter.runtime_member_id(document_value as Dictionary)
 		var armor_unit_id := PlayableUnitAdapter.runtime_unit_id(document_value as Dictionary)
@@ -3508,7 +3508,7 @@ func _configure_playable_unit_runtime_contracts() -> void:
 				_unit_weapon_upgrades[armor_id] = weapon_upgrade_rules
 		# Authored LevelUpUpgrade effects (Basic Training) and the horde's own
 		# OBJECT_UPGRADE purchase buttons ride the same document; eligibility is
-		# the compiled effect tables above — never a class-name guess.
+		# the compiled effect tables above â€” never a class-name guess.
 		var level_up_rules := _compiled_level_up_rules(document_value as Dictionary)
 		if not level_up_rules.is_empty():
 			for armor_id in armor_id_space:
@@ -3543,7 +3543,7 @@ func _configure_playable_unit_runtime_contracts() -> void:
 			# Keep the unit fieldable when a purchase row has no compiled effect
 			# yet (thrall composition swaps; forged-blade WeaponSetUpgrade not
 			# emitted into combat.upgrades). Fail-closed used to refuse the
-			# entire playable_unit_runtimes registry — one incomplete purchase
+			# entire playable_unit_runtimes registry â€” one incomplete purchase
 			# killed match configure for the whole faction. Surface only the
 			# rows that already have weapon/armor/level effects; record gaps.
 			var armor_upgrade_ids: Dictionary = (armor_rule.get("upgrades", {}) as Dictionary)
@@ -3665,7 +3665,7 @@ func _configure_playable_unit_runtime_contracts() -> void:
 			_unit_damage_types[member_id] = doc_damage_type
 		elif doc_damage_components.is_empty() and not missing_damage_type_units.has(member_id):
 			# A combat unit whose document authors no damageType is recorded at
-			# configure — never only when it happens to spawn (retail Arwen
+			# configure â€” never only when it happens to spawn (retail Arwen
 			# carries powers but no weapon); its structure damage falls to each
 			# kind's DEFAULT armor scalar.
 			missing_damage_type_units.append(member_id)
@@ -3741,7 +3741,7 @@ func _configure_playable_unit_runtime_contracts() -> void:
 		_ensure_capture_building_ability(unit_type, document_value as Dictionary)
 		# ExperienceLevel chain (converted doc rows) registers per unit type;
 		# units whose chain retail never authored carry no rule and never gain
-		# XP — their kill payout is the recorded default, recorded per victim.
+		# XP â€” their kill payout is the recorded default, recorded per victim.
 		var experience_rule := PlayableUnitAdapter.experience_rule(document_value as Dictionary)
 		if not experience_rule.is_empty():
 			_unit_experience_rules[unit_type] = experience_rule
@@ -3950,7 +3950,7 @@ func _configure_structure_upgrade_chains() -> void:
 
 func _compile_structure_castle_upgrades(source: Dictionary, contracts: Dictionary) -> void:
 	## Retail's fortress improvement surface (the OBJECT_UPGRADE buttons in the
-	## fortress command set's upgrades page — commandset.ini
+	## fortress command set's upgrades page â€” commandset.ini
 	## MordorFortressCommandSet slots 8-13 DoomPyres/LavaMoat/FireArrows/
 	## MagmaCauldrons/MorgulSorcery/GorgorothSpire, and the same shape for every
 	## other faction).
@@ -4587,7 +4587,7 @@ func _initialize_base_loop() -> void:
 			# MEASURED, not assumed: the id is one input to
 			# _structure_footprint_radius, which raised the worry that stamping
 			# it would move structure attack-range and unit eviction. On the
-			# mounted Men and Angmar packs it does not — the runner prints
+			# mounted Men and Angmar packs it does not â€” the runner prints
 			# with/without/seed radii for a fortress and a non-fortress kind and
 			# all three agree to four decimals (FORTRESS_FOOTPRINT,
 			# NON_FORTRESS_FOOTPRINT), because the resolver already falls back to
@@ -5103,7 +5103,7 @@ func _add_battalion(
 func _recorded_damage_type(object_id: String, unit_rule: Dictionary) -> String:
 	## No silent slash default: a combat unit without authored damageType is
 	## recorded, and its structure damage falls to the kind's DEFAULT scalar.
-	# Q80: manifest tables are required, so the mirror is authoritative —
+	# Q80: manifest tables are required, so the mirror is authoritative â€”
 	# no UNIT_DAMAGE_TYPES constant fallback.
 	var damage_type := String(_unit_damage_types.get(object_id, ""))
 	# A weapon whose nuggets author several types has no single damageType by
@@ -5308,7 +5308,7 @@ const FORGE_UPGRADE_CONTRACTS := {
 		"level_cap": 99, "levels_to_gain": 0, "cancelable": false, "team_tech": true,
 	},
 }
-# commandbutton.ini:9549-9563 — ranger hordes purchase Upgrade_GondorFireArrows
+# commandbutton.ini:9549-9563 â€” ranger hordes purchase Upgrade_GondorFireArrows
 # while archer hordes purchase Upgrade_GondorArcherFireArrows; both buttons
 # share the same NeededUpgrade technology, so one research equips both.
 const FORGE_UPGRADE_EQUIPMENT := {
@@ -5324,7 +5324,7 @@ func _register_forge_upgrade_contracts() -> void:
 	## technology skips the fallback. For the default same-faction roster every
 	## team aliases the global dict by reference, so team 0 writes the provisionals
 	## into the (hashed) global exactly once and every later team sees them
-	## present and skips — byte-identical to the old single global registration.
+	## present and skips â€” byte-identical to the old single global registration.
 	for team in _roster_team_ids():
 		_register_forge_upgrade_contracts_for_team(int(team))
 
@@ -5336,7 +5336,7 @@ func _register_forge_upgrade_contracts_for_team(team: int) -> void:
 		# The compiled research surface (the forge's authored PLAYER technology
 		# sales) replaces the recorded provisional contracts below; research
 		# completion then grants the technology and the per-battalion purchase
-		# path equips it — the retail two-tier flow, not the conflation.
+		# path equips it â€” the retail two-tier flow, not the conflation.
 		return
 	var contracts := structure_upgrade_contracts_for_team(team)
 	for upgrade_id_value in FORGE_UPGRADE_CONTRACTS.keys():
@@ -5710,10 +5710,10 @@ func _queued_command_points_for_team(team: int) -> int:
 ## malformed document fails closed: the tree stays empty and every purchase or
 ## cast rejects with "spellbook-unavailable". Powers whose converted effect
 ## leaves do not fully support a faithful runtime effect stay locked with the
-## reason recorded on the power row — no invented effects.
+## reason recorded on the power row â€” no invented effects.
 ##
 ## PROVISIONAL (recorded, not hidden): the retail power-point earn rate is not
-## resolved from source data — the spellbook document carries no economy rule.
+## resolved from source data â€” the spellbook document carries no economy rule.
 ## The kill-based rate lives in rules key "power_point_kills" (default below)
 ## so the data lane can replace it without code edits; do not treat it as
 ## retail-final.
@@ -5738,18 +5738,18 @@ var _power_cooldown_until := {PLAYER_TEAM: {}, ENEMY_TEAM: {}}
 var _consumed_nonpressable_powers: Dictionary = {PLAYER_TEAM: {}, ENEMY_TEAM: {}}
 var _scavenger_bounty_percent: Dictionary = {PLAYER_TEAM: 0.0, ENEMY_TEAM: 0.0}
 ## Picks made since the last ACCEPT: RESET refunds exactly these ("unspent
-## picks" — casting a staged pick spends it and it can no longer be refunded).
+## picks" â€” casting a staged pick spends it and it can no longer be refunded).
 var _staged_purchases := {PLAYER_TEAM: [], ENEMY_TEAM: []}
 ## Per-team spellbook TREE overrides for cross-faction matches (two different
 ## factions in one sim). Empty by default: every team then resolves against the
 ## single global tree above, so the default same-faction match is byte-identical
 ## and the signature does not move. A team present here plays its OWN faction's
-## powers/costs/prereqs/reloads — team ownership overlays (points, purchased,
+## powers/costs/prereqs/reloads â€” team ownership overlays (points, purchased,
 ## sciences, cooldowns, staged) stay in the per-team maps already declared.
 ## team:int -> {ready, powers, order, sciences, science_to_power, intrinsic, document}
 var _team_spellbooks: Dictionary = {}
 ## Single-player pause seam for the spellbook orb: while the palantir is open
-## the sim clock halts (ticks, production, AI — everything in tick()). The
+## the sim clock halts (ticks, production, AI â€” everything in tick()). The
 ## slice drives this through set_spellbook_orb_open; the escape-menu pause in
 ## the slice composes independently (either one halts the clock).
 var clock_paused := false
@@ -5801,12 +5801,12 @@ func _reset_spellbook_match_state() -> void:
 var _pending_power_effects: Array[Dictionary] = []
 var _active_groves: Array[Dictionary] = []
 ## Live "ping" field effects: retail's PalantirVisionPing / FarSeeingPing /
-## FrozenLandPing family — an IMMOBILE, UNATTACKABLE, weaponless object dropped
+## FrozenLandPing family â€” an IMMOBILE, UNATTACKABLE, weaponless object dropped
 ## at the cast point whose whole job is a bounded VisionRange reveal and/or an
 ## AttributeModifierAuraUpdate, removed by its authored LifetimeUpdate.
 ## EMPTY-IS-ABSENT in the serialized state (see _serialize_state).
 var _field_pings: Array[Dictionary] = []
-## entity_id → tick the summoned battalion fades (authored summon lifetime).
+## entity_id â†’ tick the summoned battalion fades (authored summon lifetime).
 var _summon_despawn_ticks: Dictionary = {}
 ## entity_id -> true for live summoned battalions that carry converted auras.
 ## This is intentionally independent from LifetimeUpdate: an aura summon may
@@ -6512,7 +6512,7 @@ var build_plots_only: bool = false
 # snapshots round-trip plot occupancy.
 var build_plots: Dictionary = {}
 # DOCUMENTED CHOICE: converted maps carry no BFME1 build-plot markers (checked
-# map data and docs — none preserve retail's BUILDPLOT bones), so plots-only
+# map data and docs â€” none preserve retail's BUILDPLOT bones), so plots-only
 # mode seeds a deterministic fixed ring of 8 standalone plots at radius 12.0
 # local units around each team's fortress (falling back to the team center).
 # The ring clears the fortress (4.0 placement radius) and its expansion pads.
@@ -6526,7 +6526,7 @@ const BUILD_PLOT_PICK_RADIUS := 5.0
 
 
 ## rules: {kind: {"cost": int, "seconds": float, "health": int, "pad_kinds":
-## Array, "name": String, "object_id": String}} — derived by the slice from
+## Array, "name": String, "object_id": String}} â€” derived by the slice from
 ## the playable-structure expansion documents; empty rules fail closed.
 func configure_expansion_rules(rules: Dictionary) -> void:
 	_bases_subsystem().configure_expansion_rules(rules)
@@ -6620,1177 +6620,23 @@ func unpack_base(team: int, base_name: String, free: bool) -> Dictionary:
 var map_named_object_namespace: Dictionary = {}
 
 
-func configure_map_named_object_namespace(names: Array) -> void:
-	## Declare the installed map's complete named-object table. Sorted before
-	## insertion so byte-equal configuration hashes identically on every peer
-	## regardless of caller iteration order (the unpackable_bases discipline).
-	var sorted := names.duplicate()
-	sorted.sort()
-	var table: Dictionary = {}
-	for name_value in sorted:
-		table[String(name_value)] = true
-	map_named_object_namespace = {"names": table}
-
-
-func map_named_object_namespace_declared() -> bool:
-	return not map_named_object_namespace.is_empty()
-
-
-func map_declares_named_object(name: String) -> bool:
-	## Case-sensitive, like retail's strcmp over the name table.
-	return (map_named_object_namespace.get("names", {}) as Dictionary).has(name)
-
-
-# --- Script unit references (the WP16 shared namespace, SIM-owned) ---------
-#
-# team:int -> {reference_name: structure_id}. Owned by the SIM rather than
-# the script-world adapter, DELIBERATELY: a bound reference changes what a
-# later script action does (build_base_building at "AI_REF" succeeds or
-# refuses on whether AI_REF is bound), which makes it sim-outcome-bearing
-# state - and no such state may live outside the snapshot/hash boundary that
-# save/load and late-join reproduce. A peer that adopts a snapshot must
-# resolve every reference exactly as the peer that minted it, or byte-equal
-# sims diverge on the very next scripted action.
-#
-# Keyed by TEAM because retail executes each AI player's script libraries in
-# that player's own context: one world instance per script player, each with
-# its own reference namespace. The team id is already authoritative state, so
-# the key introduces nothing platform- or load-order-dependent.
-#
-# HASH INERTNESS: participates in the authoritative state ONLY when non-empty
-# (empty-is-absent, the unpackable_bases discipline), so a match whose
-# scripts never bind a reference contributes zero bytes to state_hash() and
-# the frozen cross-platform pin stands untouched.
-
-## See the block comment above. setup() clears it (match state, not config).
-## Values are int (a structure id) or String (a base-flag name) - the two
-## kinds of entry the shared namespace carries; see
-## bind_script_unit_reference_to_base for why the flag kind exists.
+## Script-world state (owned by the sim; logic lives in retail_sim_script_world.gd)
+var logic_random_draws: int = 0
+var script_env_view_faults: int = 0
+var _script_executors: Dictionary = {}
+var _script_executor_expected_ticks: Dictionary = {}
+var script_wiring_faults: int = 0
 var script_unit_references: Dictionary = {}
-## team -> reference name -> entity id. Companion to script_unit_references
-## (structure/base-flag store). Entity nearest-ref binds land here so AI
-## SET_REF_TO_NEREST_* is not bag-only.
 var script_entity_references: Dictionary = {}
-## Pending CreateObjectDie spawns: {team, position, creation_list, source_entity, tick}.
-## Observable sim state when an executable CreateObjectDie fires on death.
 var create_object_die_pending: Array = []
-## Match-scoped script construction permissions:
-## team -> exact retail object type -> false. Absence means retail's default
-## allowed state; an allow write erases the override and returns to pristine.
-## Stored in the authoritative snapshot only while nonempty.
 var building_permissions_by_team: Dictionary = {}
-
-
-func set_building_allowed(team: int, object_type: String, allowed: bool) -> bool:
-	if not _team_roster.has(team) or object_type == "":
-		return false
-	var permissions: Dictionary = building_permissions_by_team.get(team, {})
-	var matching_key := ""
-	for authored_value in permissions.keys():
-		if String(authored_value).to_lower() == object_type.to_lower():
-			matching_key = String(authored_value)
-			break
-	if matching_key != "":
-		permissions.erase(matching_key)
-	if not allowed:
-		permissions[object_type] = false
-	if permissions.is_empty():
-		building_permissions_by_team.erase(team)
-	else:
-		building_permissions_by_team[team] = permissions
-	return true
-
-
-func _building_object_identity_key(value: String) -> String:
-	## Source names are case-insensitive SAGE identifiers; converted runtime
-	## ids are their punctuation-separated slugs. Collapse both to the same
-	## alphanumeric key so MENFORTRESS, MenFortress, and
-	## bfme2.object.men-fortress retain one identity.
-	var folded := value.to_lower()
-	var runtime_separator := folded.find(".object.")
-	if runtime_separator >= 0:
-		folded = folded.substr(runtime_separator + 8)
-	var key := ""
-	for index in folded.length():
-		var code := folded.unicode_at(index)
-		if (code >= 97 and code <= 122) or (code >= 48 and code <= 57):
-			key += String.chr(code)
-	return key
-
-
-func building_permission_for_kind(team: int, structure_kind: String) -> Dictionary:
-	var permissions: Dictionary = building_permissions_by_team.get(team, {})
-	if permissions.is_empty():
-		return {"known": true, "allowed": true}
-	var source_types: Dictionary = {}
-	var runtime_types: Dictionary = {}
-	var identity_keys: Dictionary = {}
-	var registry := _structure_source_registry(team_manifest_for(team))
-	for source_value in registry.keys():
-		if String(registry[source_value]) == structure_kind:
-			source_types[String(source_value).to_lower()] = true
-			identity_keys[_building_object_identity_key(String(source_value))] = true
-	var structure_ids: Dictionary = (
-		team_manifest_for(team).get("structure_object_ids", {}) as Dictionary
-	)
-	if structure_ids.has(structure_kind):
-		var structure_object_id := String(structure_ids[structure_kind])
-		runtime_types[structure_object_id] = true
-		identity_keys[_building_object_identity_key(structure_object_id)] = true
-	var expansion_rule: Dictionary = _expansion_build_rules.get(structure_kind, {})
-	var expansion_object_id := String(expansion_rule.get("object_id", ""))
-	if expansion_object_id != "":
-		runtime_types[expansion_object_id] = true
-		identity_keys[_building_object_identity_key(expansion_object_id)] = true
-	if source_types.is_empty() and runtime_types.is_empty():
-		return {
-			"known": false,
-			"allowed": false,
-			"reason": "no retail object identity is registered for structure kind '%s'" % structure_kind,
-		}
-	var authored_types: Array = permissions.keys()
-	authored_types.sort()
-	for authored_value in authored_types:
-		var authored_type := String(authored_value)
-		if (
-			source_types.has(authored_type.to_lower())
-			or runtime_types.has(authored_type)
-			or runtime_types.has(PlayableUnitAdapter.runtime_object_id(authored_type))
-			or identity_keys.has(_building_object_identity_key(authored_type))
-		):
-			return {
-				"known": true,
-				"allowed": false,
-				"object_type": authored_type,
-			}
-	return {"known": true, "allowed": true}
-
-
-func bind_script_entity_reference(team: int, reference: String, entity_id: int) -> bool:
-	if team < 0 or reference == "" or entity_id <= 0:
-		return false
-	if not entities.has(entity_id):
-		return false
-	if not script_entity_references.has(team):
-		script_entity_references[team] = {}
-	(script_entity_references[team] as Dictionary)[reference] = entity_id
-	return true
-
-
-func script_entity_reference(team: int, reference: String) -> int:
-	return int((script_entity_references.get(team, {}) as Dictionary).get(reference, 0))
-
-
-func bind_script_unit_reference(team: int, reference: String, structure_id: int) -> bool:
-	## Bind (or re-point) `reference` for `team` to a concrete structure id.
-	## References are mutable by design (retail re-points
-	## AI_CURRENT_CONSTRUCTION_SITE constantly). An empty reference binds
-	## nothing (vacuous true). A base-flag name is refused loudly - callers
-	## are expected to have cleared the shadow check BEFORE mutating the sim,
-	## so tripping this backstop means a caller skipped it.
-	if reference == "":
-		return true
-	if unpackable_bases.has(reference):
-		push_error(
-			"bind_script_unit_reference refused: '%s' names a base flag; " % reference
-			+ "flag names are owned by the unpackable-base table (callers must "
-			+ "check the shadow rejection before mutating the sim)"
-		)
-		return false
-	if not script_unit_references.has(team):
-		script_unit_references[team] = {}
-	(script_unit_references[team] as Dictionary)[reference] = structure_id
-	return true
-
-
-func bind_script_unit_reference_to_base(team: int, reference: String, base_name: String) -> bool:
-	## Bind (or re-point) `reference` for `team` to a BASE FLAG by name.
-	##
-	## WHY A SECOND BINDING KIND, ON RETAIL EVIDENCE. SET_UNIT_REFERENCE's
-	## subject slot in the shipped AI libraries is a base-flag name at 32 of
-	## its 40 call sites (BASE_FLAG_1..16; the other 8 are BASE_SPAWN_1..8,
-	## which this simulation does not model) - the AI aims
-	## AI_CURRENT_CONSTRUCTION_SITE / AI_CURRENT_DEF_CONSTRUCTION_SITE at a
-	## flag it has NOT yet unpacked and then builds through the reference. A
-	## packed flag has no structure id (structure_id is 0 until unpack), so a
-	## structure-id-only store could only refuse those 32 sites. Storing the
-	## FLAG NAME is not "storing the source string" in the aliasing sense the
-	## class comment forbids: a flag name is match configuration, immutable
-	## for the match, so it cannot be re-aimed under the reference the way a
-	## rebindable reference name could.
-	##
-	## Same store, same key, same empty-is-absent discipline - the VALUE is a
-	## String here and an int for structure bindings, which is exactly the
-	## "two kinds of entry" the shared object / unit-reference namespace is
-	## documented to carry. Refuses (loudly) a reference that would shadow a
-	## flag, and refuses an unknown base name rather than binding a dangling
-	## handle.
-	if reference == "":
-		return true
-	if unpackable_bases.has(reference):
-		push_error(
-			"bind_script_unit_reference_to_base refused: '%s' names a base flag; " % reference
-			+ "flag names are owned by the unpackable-base table (callers must "
-			+ "check the shadow rejection before mutating the sim)"
-		)
-		return false
-	if not unpackable_bases.has(base_name):
-		push_error(
-			"bind_script_unit_reference_to_base refused: '%s' is not a base flag " % base_name
-			+ "this simulation models; binding it would leave a dangling handle"
-		)
-		return false
-	if not script_unit_references.has(team):
-		script_unit_references[team] = {}
-	(script_unit_references[team] as Dictionary)[reference] = base_name
-	return true
-
-
-func script_unit_reference(team: int, reference: String) -> int:
-	## The structure id bound to `reference` for `team`; 0 when unbound OR
-	## when the binding is a base-flag name (structure ids are never 0, and a
-	## flag-valued binding is not a structure id - callers that need it must
-	## read script_unit_reference_handle).
-	var bound: Variant = (script_unit_references.get(team, {}) as Dictionary).get(reference, 0)
-	return int(bound) if typeof(bound) == TYPE_INT else 0
-
-
-func script_unit_reference_base(team: int, reference: String) -> String:
-	## The base-flag name bound to `reference` for `team`; "" when unbound or
-	## when the binding is a structure id.
-	var bound: Variant = (script_unit_references.get(team, {}) as Dictionary).get(reference, 0)
-	return String(bound) if typeof(bound) == TYPE_STRING else ""
-
-
-# --- Script object-type lists (OBJECT_TYPE_LIST stores, SIM-owned) ----------
-#
-# Named, script-mutable SETS of retail object-type names: the subjects of
-# OBJECTLIST_ADDOBJECTTYPE / OBJECTLIST_REMOVEOBJECTTYPE and the resolution
-# target of every OBJECT_TYPE_LIST-typed script argument. Retail authors BOTH
-# spellings in those slots - a declared list name ("Offensive_Units") and a
-# plain object type ("IsengardUrukPit") - and resolves list-first with a
-# single-type fallback; resolve_object_type_names below mirrors that exactly.
-#
-# STATE, NOT CONFIGURATION - decided on retail evidence, not assumption. The
-# retail engine's ScriptEngine owns ONE global ObjectTypeList table per match,
-# mutated mid-match by script actions and PERSISTED IN SAVE GAMES (OpenSAGE's
-# ScriptingSystem.Persist serializes _objectTypeLists; each list is a
-# HashSet<string> keyed by name). Mutable-by-actions plus save-file membership
-# puts the table inside the snapshot/hash boundary, exactly like
-# script_unit_references. UNLIKE the references it is NOT keyed by team: the
-# retail store is engine-global (one namespace per match, however many script
-# players run), and every peer executes the same lockstep script stream, so
-# the converged table is identical on every peer by construction.
-#
-# CANONICAL FORM: member arrays are kept SORTED and UNIQUE (retail's HashSet
-# has no order; a sorted array is the canonical serialization of a set), and
-# a list whose last member is removed loses its KEY too, so an emptied table
-# returns to the exact pristine hash.
-#
-# HASH INERTNESS: participates in the authoritative state ONLY when non-empty
-# (empty-is-absent, the unpackable_bases discipline), so a match whose
-# scripts never build a list contributes zero bytes to state_hash() and the
-# frozen cross-platform pin stands untouched. setup() clears it (match state).
-
-## list name -> sorted unique Array of retail object-type name Strings.
-## See the block comment above. setup() clears it; hashed only when non-empty.
 var script_object_type_lists: Dictionary = {}
-
-
-func change_object_type_list(list_name: String, object_type: String, add: bool) -> Dictionary:
-	## OBJECTLIST_ADDOBJECTTYPE (`add` true) / OBJECTLIST_REMOVEOBJECTTYPE
-	## (`add` false). Set semantics, matching retail's HashSet store: a
-	## duplicate add and an absent remove are successful no-ops. Empty names
-	## refuse - "" is neither a list nor a type in the retail vocabulary, and
-	## admitting it would mint an unreachable store entry.
-	if list_name == "":
-		return {"ok": false, "reason": "empty-list-name"}
-	if object_type == "":
-		return {"ok": false, "reason": "empty-object-type"}
-	if add:
-		var members: Array = script_object_type_lists.get(list_name, [])
-		if not members.has(object_type):
-			members.append(object_type)
-			members.sort()
-		script_object_type_lists[list_name] = members
-		return {"ok": true, "reason": ""}
-	if script_object_type_lists.has(list_name):
-		var members: Array = script_object_type_lists[list_name]
-		members.erase(object_type)
-		if members.is_empty():
-			# Empty-is-absent inside the container too: no empty list may
-			# linger as a hash-visible key.
-			script_object_type_lists.erase(list_name)
-	return {"ok": true, "reason": ""}
-
-
-func object_type_list_names() -> Array[String]:
-	var names: Array[String] = []
-	for name_value in script_object_type_lists.keys():
-		names.append(String(name_value))
-	names.sort()
-	return names
-
-
-func has_object_type_list(list_name: String) -> bool:
-	return script_object_type_lists.has(list_name)
-
-
-func resolve_object_type_names(object_type_list: String) -> Array:
-	## Retail's OBJECT_TYPE_LIST argument resolution: a declared list answers
-	## its members; any other name IS a single object type (the retail engine
-	## looks the name up in the list table and falls back to reading the
-	## string as one type - the authored corpus uses both spellings). This is
-	## also the correct answer BEFORE list-building scripts have run: retail
-	## in that state has no list either and reads the single type. Read-only.
-	if script_object_type_lists.has(object_type_list):
-		return (script_object_type_lists[object_type_list] as Array).duplicate()
-	return [object_type_list]
-
-
-# --- Script-team registry (named sub-player teams, SIM-owned) ---------------
-#
-# SAGE teams are independent identities even when they share a player owner.
-# Definitions come from decoded map configuration, but membership and flags
-# affect gameplay and therefore live inside snapshots/state_hash. Handles are
-# typed because entity and structure ids occupy overlapping id spaces.
-# Imported objectCount is evidence only: it can never mint a phantom member.
 var script_teams: Dictionary = {}
-
-
-func _script_owner_exists(owner: int) -> bool:
-	return _is_combatant_team(owner) or owner == NEUTRAL_TEAM or owner == CREEP_TEAM
-
-
-func register_script_team(
-	team_name: String,
-	owner: int,
-	default_team: bool = false,
-	handles: Array = [],
-	membership_complete: bool = true,
-	unresolved_members: Array = [],
-	unmodeled_object_count: int = 0,
-	dynamic_default_roster: bool = true,
-	marker_only: bool = false
-) -> Dictionary:
-	if team_name == "":
-		return {"ok": false, "reason": "script-team name is empty"}
-	if not _script_owner_exists(owner):
-		return {"ok": false, "reason": "script-team owner %d is unavailable" % owner}
-	if script_teams.has(team_name):
-		var existing := script_teams[team_name] as Dictionary
-		if (
-			int(existing.get("configured_owner", existing.get("owner", -1))) != owner
-			or bool(existing.get("default", false)) != default_team
-			or bool(existing.get("membership_incomplete", false)) == membership_complete
-			or (existing.get("unresolved_members", []) as Array) != unresolved_members
-			or int(existing.get("unmodeled_object_count", 0)) != unmodeled_object_count
-			or bool(existing.get("explicit_default_membership", false))
-			== dynamic_default_roster
-			or bool(existing.get("marker_only", false)) != marker_only
-		):
-			return {"ok": false, "reason": "script team '%s' was rebound" % team_name}
-		return {"ok": true, "reason": ""}
-	if unmodeled_object_count < 0:
-		return {"ok": false, "reason": "script team '%s' has a negative unmodeled count" % team_name}
-	var canonical_unresolved: Array[String] = []
-	for unresolved_value in unresolved_members:
-		if typeof(unresolved_value) != TYPE_STRING or String(unresolved_value) == "":
-			return {"ok": false, "reason": "script team '%s' has a malformed unresolved member name" % team_name}
-		var unresolved_name := String(unresolved_value)
-		canonical_unresolved.append(unresolved_name)
-	canonical_unresolved.sort()
-	var members: Array = []
-	for handle_value in handles:
-		if typeof(handle_value) != TYPE_DICTIONARY:
-			return {"ok": false, "reason": "script team '%s' has a malformed member handle" % team_name}
-		var handle := handle_value as Dictionary
-		if (
-			typeof(handle.get("kind")) != TYPE_STRING
-			or not ["entity", "structure"].has(handle.get("kind"))
-			or typeof(handle.get("id")) != TYPE_INT
-			or typeof(handle.get("id")) == TYPE_BOOL
-		):
-			return {"ok": false, "reason": "script team '%s' has a malformed typed member handle" % team_name}
-		var kind := String(handle["kind"])
-		var object_id := int(handle["id"])
-		var row: Dictionary
-		if kind == "entity" and entities.has(object_id):
-			row = entities[object_id] as Dictionary
-		elif kind == "structure" and structures.has(object_id):
-			row = structures[object_id] as Dictionary
-		else:
-			return {"ok": false, "reason": "script team '%s' references an unavailable %s %d" % [team_name, kind, object_id]}
-		if int(row.get("team", -1)) != owner:
-			return {"ok": false, "reason": "script team '%s' member owner disagrees" % team_name}
-		var canonical := {"kind": kind, "id": object_id}
-		if not members.has(canonical):
-			members.append(canonical)
-	members.sort_custom(_script_member_less)
-	var record := {
-		"owner": owner,
-		# Match configuration is immutable even when a retail script later
-		# changes the team's controlling player. Keeping the original owner
-		# lets setup() reset the match and lets the snapshot view omit teams
-		# whose controlling owner was never changed.
-		"configured_owner": owner,
-	}
-	if default_team:
-		record["default"] = true
-		if not dynamic_default_roster:
-			record["explicit_default_membership"] = true
-	if not membership_complete:
-		record["membership_incomplete"] = true
-		if not canonical_unresolved.is_empty():
-			record["unresolved_members"] = canonical_unresolved
-		if unmodeled_object_count > 0:
-			record["unmodeled_object_count"] = unmodeled_object_count
-	if not members.is_empty():
-		record["members"] = members
-	if marker_only:
-		if default_team or not members.is_empty():
-			return {
-				"ok": false,
-				"reason": "marker-only team '%s' cannot be default or materialized" % team_name,
-			}
-		record["marker_only"] = true
-	script_teams[team_name] = record
-	mark_team_created(team_name)
-	return {"ok": true, "reason": ""}
-
-
-func _script_member_less(a: Dictionary, b: Dictionary) -> bool:
-	var a_kind := String(a.get("kind", ""))
-	var b_kind := String(b.get("kind", ""))
-	return a_kind < b_kind or (a_kind == b_kind and int(a.get("id", -1)) < int(b.get("id", -1)))
-
-
-func script_team_owner(team_name: String) -> Dictionary:
-	if not script_teams.has(team_name):
-		return {"ok": false, "reason": "script team '%s' is not registered" % team_name}
-	return {"ok": true, "owner": int((script_teams[team_name] as Dictionary).get("owner", -1))}
-
-
-func transfer_script_team_controlling_player(
-	team_name: String, destination_owner: int
-) -> Dictionary:
-	## Retail TEAM_TRANSFER_TO_PLAYER calls Team::setControllingPlayer. It
-	## changes the Team identity's controlling player; it is not Player asset
-	## transfer and it does not merge/capture the Team's Object list.
-	##
-	## The measured BFME2/RotWK AI sites address civilian inheritance teams
-	## containing tactical markers, which this sim deliberately does not
-	## materialize. Restrict this surface to that exact safe shape. A later
-	## combat-team transfer needs entity ownership, CP, upgrade, queue and
-	## spatial invariants and must be a separate packet.
-	if winner != -1:
-		return {"ok": false, "reason": "the match is already resolved"}
-	if not script_teams.has(team_name):
-		return {"ok": false, "reason": "script team '%s' is not registered" % team_name}
-	if not _script_owner_exists(destination_owner):
-		return {
-			"ok": false,
-			"reason": "destination player %d is unavailable" % destination_owner,
-		}
-	if not _is_combatant_team(destination_owner):
-		return {
-			"ok": false,
-			"reason": "destination player %d is not a combatant" % destination_owner,
-		}
-	var record := script_teams[team_name] as Dictionary
-	if bool(record.get("default", false)):
-		return {
-			"ok": false,
-			"reason": "default team '%s' is outside the retail inheritance-team scope" % team_name,
-		}
-	if not bool(record.get("marker_only", false)):
-		return {
-			"ok": false,
-			"reason": "team '%s' lacks source-attested marker-only evidence" % team_name,
-		}
-	if int(record.get("configured_owner", -1)) != NEUTRAL_TEAM:
-		return {
-			"ok": false,
-			"reason": "marker-only team '%s' was not configured under the civilian owner" % team_name,
-		}
-	if not (record.get("members", []) as Array).is_empty():
-		return {
-			"ok": false,
-			"reason": "team '%s' has materialized members and requires entity transfer" % team_name,
-		}
-	record["owner"] = destination_owner
-	script_teams[team_name] = record
-	return {"ok": true, "reason": ""}
-
-
-func script_team_members(team_name: String, living_only: bool = true) -> Dictionary:
-	if not script_teams.has(team_name):
-		return {"ok": false, "reason": "script team '%s' is not registered" % team_name}
-	var record := script_teams[team_name] as Dictionary
-	var owner := int(record.get("owner", -1))
-	var source: Array = []
-	if (
-		bool(record.get("default", false))
-		and not bool(record.get("explicit_default_membership", false))
-	):
-		for id_value in entity_ids():
-			var entity_id := int(id_value)
-			if int((entities[entity_id] as Dictionary).get("team", -1)) == owner:
-				source.append({"kind": "entity", "id": entity_id})
-		for id_value in structure_ids():
-			var structure_id := int(id_value)
-			if int((structures[structure_id] as Dictionary).get("team", -1)) == owner:
-				source.append({"kind": "structure", "id": structure_id})
-	else:
-		source = (record.get("members", []) as Array).duplicate(true)
-	var answer: Array = []
-	for handle_value in source:
-		var handle := handle_value as Dictionary
-		var kind := String(handle.get("kind", ""))
-		var object_id := int(handle.get("id", -1))
-		var row: Dictionary
-		if kind == "entity" and entities.has(object_id):
-			row = entities[object_id] as Dictionary
-		elif kind == "structure" and structures.has(object_id):
-			row = structures[object_id] as Dictionary
-		else:
-			continue
-		if int(row.get("team", -1)) != owner:
-			continue
-		if living_only and int(row.get("health", 0)) <= 0:
-			continue
-		answer.append({"kind": kind, "id": object_id})
-	answer.sort_custom(_script_member_less)
-	return {
-		"ok": true,
-		"members": answer,
-		"complete": not bool(record.get("membership_incomplete", false)),
-		"unresolved_members": (record.get("unresolved_members", []) as Array).duplicate(),
-		"unmodeled_object_count": int(record.get("unmodeled_object_count", 0)),
-	}
-
-
-func _script_team_definition(record: Dictionary) -> Dictionary:
-	var configured_owner := int(record.get("configured_owner", record.get("owner", -1)))
-	var definition := {
-		"owner": configured_owner,
-		"configured_owner": configured_owner,
-	}
-	for key in [
-		"default",
-		"explicit_default_membership",
-		"membership_incomplete",
-		"unresolved_members",
-		"unmodeled_object_count",
-		"marker_only",
-	]:
-		if record.has(key):
-			var value: Variant = record[key]
-			definition[key] = value.duplicate(true) if value is Array or value is Dictionary else value
-	return definition
-
-
-func set_script_team_recruitable(team_name: String, enabled: bool) -> Dictionary:
-	if not script_teams.has(team_name):
-		return {"ok": false, "reason": "script team '%s' is not registered" % team_name}
-	var record := script_teams[team_name] as Dictionary
-	# This is a tri-state override in retail: never-set, explicitly true, and
-	# explicitly false are distinct. Team::tryToRecruit first checks whether
-	# setRecruitable() was called, then lets that value override the default
-	# team / prototype setting. Erasing false would silently turn a scripted
-	# refusal back into the prototype default.
-	record["recruitable"] = enabled
-	script_teams[team_name] = record
-	return {"ok": true, "reason": ""}
-
-
-func _script_team_state_view() -> Dictionary:
-	## Team definitions are match configuration and are rebuilt when worlds are
-	## installed. Only mutable membership/recruitable state crosses the dynamic
-	## snapshot boundary. A changed controlling owner is mutable too. Default-
-	## team aliases with none of these contribute zero
-	## bytes, preserving the pristine-hash contract of merely binding a world.
-	var view: Dictionary = {}
-	var names := script_teams.keys()
-	names.sort()
-	for name_value in names:
-		var name := String(name_value)
-		var record := script_teams[name] as Dictionary
-		if (
-			record.has("members")
-			or record.has("recruitable")
-			or int(record.get("owner", -1))
-			!= int(record.get("configured_owner", record.get("owner", -1)))
-		):
-			view[name] = record
-	return view
-
-
-# --- Team behavior state (TEAM_STATE + custom-state tokens, SIM-owned) ------
-#
-# The retail AI's own blackboard: the per-team state token TEAM_SET_STATE
-# writes and TEAM_STATE_IS/_IS_NOT read, plus the custom-state token set
-# TEAM_SET_CUSTOM_STATE toggles and TEAM_HAS_CUSTOM_STATE tests. The attack
-# loops gate on these constantly (112 AI call sites across the six members).
-#
-# RETAIL SEMANTICS, SOURCED:
-#   * TEAM_STATE is one plain string per team - Team.h:200 in the GPL
-#     Generals/ZH reference declares `AsciiString m_state`, the BFME1
-#     decompilation's Team.cpp matches it field-for-field, and
-#     ScriptActions.cpp doSetTeamState is a bare setState(). No enum, no
-#     validation, no case folding (AsciiString::operator== is strcmp), and no
-#     engine consumer besides the two conditions - STORAGE IS THE ENTIRE
-#     SEMANTIC. The default is the empty string (m_state is absent from the
-#     Team constructor's initializer list), so a team never set IS in state ""
-#     and TEAM_STATE_IS against any non-empty token is a truthful false.
-#   * TEAM_STATE IS SAVE-PERSISTED: Team::xfer writes m_state right after the
-#     member-id list (BFME decomp Team.cpp:2677, identical in ZH). Mutable by
-#     script action plus save-file membership puts it inside the
-#     snapshot/hash boundary, the script_object_type_lists rule.
-#   * CUSTOM STATES: both engine source trees carry only the metadata (action
-#     id 490, parameter types [TEAM, TEAM_STATE, BOOLEAN]; condition id 143);
-#     the BFME implementation is not decompiled. The SET reading below -
-#     enabled inserts the token, disabled removes it, HAS is membership, a
-#     never-set token is false - is the inference the signature forces
-#     (retail authors the same token with both booleans: AI_ADVANCING is
-#     authored 34x enabled AND 34x disabled, independently of AI_ASSAULTING),
-#     recorded as an ASSUMPTION. What would falsify it: the custom-state
-#     handler in the retail BFME1 binary storing something other than a
-#     per-team token set. Custom-state save persistence is likewise
-#     unevidenced; outcome-bearing mutability alone puts it inside the
-#     boundary here regardless.
-#
-# The token vocabulary is CONTENT-DEFINED (AI_ATTACKING, AI_DEFENDING,
-# READY_TO_AMBUSH, ... and 46 distinct custom tokens in the retail AI
-# libraries); nothing here validates tokens against a table, exactly like
-# retail. Comparisons are exact and case-sensitive.
-#
-# CANONICAL FORM: a team's record holds "state" only when non-empty (setting
-# "" returns to the default and drops the key - retail's default IS "") and
-# "custom" only when tokens are enabled (sorted unique Array; disabling the
-# last token drops the key). A team whose record empties loses its team key,
-# so state returned to pristine values returns to the pristine hash exactly.
-#
-# HASH INERTNESS: participates in the authoritative state ONLY when non-empty
-# (empty-is-absent, the unpackable_bases discipline), so a match whose
-# scripts never touch team state contributes zero bytes to state_hash() and
-# the frozen cross-platform pin stands untouched. setup() clears it (match
-# state, exactly like the OBJECT_TYPE_LIST stores).
-
-## script team name -> {"state": String (present iff != ""),
-## "custom": sorted unique Array[String] (present iff non-empty)}.
-## See the block comment above. setup() clears it; hashed only when non-empty.
 var team_behavior_states: Dictionary = {}
-
-
-func set_team_behavior_state(team: String, token: String) -> Dictionary:
-	## TEAM_SET_STATE: overwrite the team's single state string. Any token is
-	## admitted, including ones no condition ever reads (retail validates
-	## nothing). Setting "" IS meaningful - it returns the team to the retail
-	## default - and canonically drops the key rather than storing "".
-	if not script_teams.has(team):
-		return {"ok": false, "reason": "script team '%s' is not registered" % team}
-	if token == "":
-		_prune_team_behavior_key(team, "state")
-		return {"ok": true, "reason": ""}
-	var record: Dictionary = team_behavior_states.get(team, {})
-	record["state"] = token
-	team_behavior_states[team] = record
-	return {"ok": true, "reason": ""}
-
-
-func team_behavior_state(team: String) -> Dictionary:
-	## The team's current state string. {"ok": true, "state": String} - "" for
-	## a rostered team never set, which is retail's default, not a dodge.
-	if not script_teams.has(team):
-		return {"ok": false, "reason": "script team '%s' is not registered" % team}
-	return {
-		"ok": true,
-		"state": String((team_behavior_states.get(team, {}) as Dictionary).get("state", "")),
-	}
-
-
-func set_team_custom_state(team: String, token: String, enabled: bool) -> Dictionary:
-	## TEAM_SET_CUSTOM_STATE: enable inserts `token` into the team's set,
-	## disable removes it. Duplicate enables and absent disables are
-	## successful no-ops (set semantics - the assumption block above). An
-	## empty token refuses: "" names nothing in the retail vocabulary and
-	## would mint an unreachable membership entry.
-	if not script_teams.has(team):
-		return {"ok": false, "reason": "script team '%s' is not registered" % team}
-	if token == "":
-		return {"ok": false, "reason": "empty custom-state token names nothing"}
-	if enabled:
-		var record: Dictionary = team_behavior_states.get(team, {})
-		var tokens: Array = record.get("custom", [])
-		if not tokens.has(token):
-			tokens.append(token)
-			tokens.sort()
-		record["custom"] = tokens
-		team_behavior_states[team] = record
-		return {"ok": true, "reason": ""}
-	if team_behavior_states.has(team):
-		var record: Dictionary = team_behavior_states[team]
-		var tokens: Array = record.get("custom", [])
-		tokens.erase(token)
-		if tokens.is_empty():
-			_prune_team_behavior_key(team, "custom")
-		else:
-			record["custom"] = tokens
-	return {"ok": true, "reason": ""}
-
-
-func team_custom_states(team: String) -> Dictionary:
-	## The team's enabled custom-state tokens, sorted, as a defensive copy.
-	## {"ok": true, "tokens": Array} - empty for a team never toggled.
-	if not script_teams.has(team):
-		return {"ok": false, "reason": "script team '%s' is not registered" % team}
-	return {
-		"ok": true,
-		"tokens": ((team_behavior_states.get(team, {}) as Dictionary).get("custom", []) as Array).duplicate(),
-	}
-
-
-func _prune_team_behavior_key(team: String, key: String) -> void:
-	## Drop `key` from the team's record, and the record itself when it
-	## empties - the canonical form the hash discipline requires (a lingering
-	## empty record would be a hash-visible phantom, the e56a0d4 class).
-	if not team_behavior_states.has(team):
-		return
-	var record: Dictionary = team_behavior_states[team]
-	record.erase(key)
-	if record.is_empty():
-		team_behavior_states.erase(team)
-
-
-# --- Sequential scripts (SIM-owned, ScriptEngine m_sequentialScripts) ------
-#
-# Retail ScriptEngine holds a global vector of SequentialScript heads, one
-# active head per team/object, with further scripts chained via
-# m_nextScriptInSequence. TEAM_EXECUTE_SEQUENTIAL_SCRIPT appends;
-# evaluateAndProgressAllSequentialScripts steps idle heads one action at a
-# time with m_conditionTeam latched for <This Team>.
-#
-# Mapping:
-#   * times_to_loop: -1 forever, 0 run once (no re-append), matching the
-#     boolean facet (looping true/false). Finite counts >1 stay refused at
-#     the handler (retail AI sites pass 0).
-#   * current_instruction starts at -1; progress increments before execute.
-#   * frames_to_wait: -1 none, 0 force progress, >0 countdown each tick.
-#   * idle: set true at queue (doTeamStartSequentialScript groupIdle); order
-#     verbs that take control of members call mark_team_sequential_busy.
-#   * empty-is-absent for hash inertness on scriptless matches.
-#
-# Unit sequential scripts are not stored here (separate object-id key space).
-
-## script team name -> Array of sequential entries (head + chained nexts).
 var sequential_script_queues: Dictionary = {}
-
-const _SEQUENTIAL_SPIN_LIMIT := 32
-
-
-func queue_team_sequential_script(
-	script_team: String, script_name: String, times_to_loop: int
-) -> Dictionary:
-	## ScriptActions::doTeamStartSequentialScript. Requires the named script
-	## to be loaded on at least one registered executor (loud refuse rather
-	## than retail's silent no-op when findScriptByName fails).
-	if not script_teams.has(script_team):
-		return {"ok": false, "reason": "script team '%s' is not registered" % script_team}
-	if winner != -1:
-		return {"ok": false, "reason": "the match is already resolved"}
-	if script_name.strip_edges() == "":
-		return {"ok": false, "reason": "sequential script name is empty"}
-	if _executor_for_script(script_name) == null:
-		return {
-			"ok": false,
-			"reason": "script '%s' is not loaded on any registered executor" % script_name,
-		}
-	var owner := int((script_teams[script_team] as Dictionary).get("owner", -1))
-	if _script_owner_exists(owner):
-		# Retail groupIdle so the sequential head can start immediately.
-		issue_stop(living_ids(owner), owner)
-	var entry := {
-		"script_name": script_name,
-		"times_to_loop": times_to_loop,
-		"current_instruction": -1,
-		"frames_to_wait": -1,
-		"dont_advance": false,
-		"idle": true,
-	}
-	var chain: Array = sequential_script_queues.get(script_team, []) as Array
-	chain.append(entry)
-	sequential_script_queues[script_team] = chain
-	return {"ok": true, "reason": ""}
-
-
-func clear_team_sequential_scripts(script_team: String) -> Dictionary:
-	if not script_teams.has(script_team):
-		return {"ok": false, "reason": "script team '%s' is not registered" % script_team}
-	sequential_script_queues.erase(script_team)
-	return {"ok": true, "reason": ""}
-
-
-func mark_team_sequential_busy(script_team: String) -> void:
-	## Order verbs that assign AI work clear sequential idle so further
-	## instructions wait (retail ai/aigroup isIdle gate).
-	if not sequential_script_queues.has(script_team):
-		return
-	var chain: Array = sequential_script_queues[script_team]
-	if chain.is_empty():
-		return
-	var head := chain[0] as Dictionary
-	head["idle"] = false
-	chain[0] = head
-	sequential_script_queues[script_team] = chain
-
-
-func mark_team_sequential_idle(script_team: String) -> void:
-	if not sequential_script_queues.has(script_team):
-		return
-	var chain: Array = sequential_script_queues[script_team]
-	if chain.is_empty():
-		return
-	var head := chain[0] as Dictionary
-	head["idle"] = true
-	chain[0] = head
-	sequential_script_queues[script_team] = chain
-
-
-# --- Object status bits (script Object_STATUS vocabulary, SIM-owned) --------
-#
-# Retail ObjectStatus bits ride the object; scripts set/clear named bits via
-# UNIT/TEAM_CHANGE_OBJECT_STATUS and read them via UNIT_HAS_OBJECT_STATUS /
-# TEAM_ALL/SOME_HAVE_OBJECT_STATUS. Storage is a per-entity map of exact
-# authored status names -> true. Absent name is false. Empty map is erased
-# (empty-is-absent on the entity row) so scriptless matches keep frozen
-# hashes. The bit vocabulary is content-defined; unknown names are still
-# stored (retail admits authoring any token).
-
-
-func set_entity_object_status(
-	entity_id: int, status: String, enabled: bool
-) -> Dictionary:
-	if winner != -1:
-		return {"ok": false, "reason": "the match is already resolved"}
-	if status.strip_edges() == "":
-		return {"ok": false, "reason": "empty object status names nothing"}
-	if not entities.has(entity_id):
-		return {"ok": false, "reason": "entity %d is not in the simulation" % entity_id}
-	var row := entities[entity_id] as Dictionary
-	if int(row.get("health", 0)) <= 0:
-		return {"ok": false, "reason": "entity %d is not living" % entity_id}
-	var flags: Dictionary = row.get("object_status", {}) as Dictionary
-	if enabled:
-		flags[status] = true
-		row["object_status"] = flags
-	else:
-		flags.erase(status)
-		if flags.is_empty():
-			row.erase("object_status")
-		else:
-			row["object_status"] = flags
-	entities[entity_id] = row
-	return {"ok": true, "reason": ""}
-
-
-func entity_has_object_status(entity_id: int, status: String) -> bool:
-	if not entities.has(entity_id) or status.strip_edges() == "":
-		return false
-	var row := entities[entity_id] as Dictionary
-	if int(row.get("health", 0)) <= 0:
-		return false
-	var flags: Dictionary = row.get("object_status", {}) as Dictionary
-	return bool(flags.get(status, false))
-
-
-func set_entities_object_status(
-	entity_ids: Array, status: String, enabled: bool
-) -> Dictionary:
-	if winner != -1:
-		return {"ok": false, "reason": "the match is already resolved"}
-	if status.strip_edges() == "":
-		return {"ok": false, "reason": "empty object status names nothing"}
-	for id_value in entity_ids:
-		var result := set_entity_object_status(int(id_value), status, enabled)
-		if not bool(result.get("ok", false)):
-			return result
-	return {"ok": true, "reason": ""}
-
-
-# --- Production / AI build-loop control flags (script surface) -------------
-#
-# Retail AI toggles base construction, factories, auto-build, and per-type
-# unit construction. Absence of an override means retail's default (enabled /
-# speed 1.0). Non-default values are match state and hash-visible.
-
 var production_controls_by_team: Dictionary = {}
-## object_type -> buildability enum int (content-defined). Empty = untouched.
 var tech_buildability: Dictionary = {}
-## owner team id -> reference name -> script team name (TEAM_REF store).
 var script_team_references: Dictionary = {}
-
-
-func _production_controls_for(team: int) -> Dictionary:
-	return production_controls_by_team.get(team, {}) as Dictionary
-
-
-func _set_production_control_flag(team: int, key: String, enabled: bool) -> Dictionary:
-	if winner != -1:
-		return {"ok": false, "reason": "the match is already resolved"}
-	if not _script_owner_exists(team):
-		return {"ok": false, "reason": "team %d is unavailable" % team}
-	var row: Dictionary = _production_controls_for(team).duplicate(true)
-	# Default is enabled; store only explicit disables, erase on re-enable.
-	if enabled:
-		row.erase(key)
-	else:
-		row[key] = false
-	if row.is_empty():
-		production_controls_by_team.erase(team)
-	else:
-		production_controls_by_team[team] = row
-	return {"ok": true, "reason": ""}
-
-
-func set_auto_build_enabled(team: int, enabled: bool) -> Dictionary:
-	return _set_production_control_flag(team, "auto_build", enabled)
-
-
-func set_base_construction_enabled(team: int, enabled: bool) -> Dictionary:
-	return _set_production_control_flag(team, "base_construction", enabled)
-
-
-func set_factories_enabled(team: int, enabled: bool) -> Dictionary:
-	return _set_production_control_flag(team, "factories", enabled)
-
-
-func set_base_construction_speed(team: int, factor: float) -> Dictionary:
-	if winner != -1:
-		return {"ok": false, "reason": "the match is already resolved"}
-	if not _script_owner_exists(team):
-		return {"ok": false, "reason": "team %d is unavailable" % team}
-	if factor < 0.0:
-		return {"ok": false, "reason": "construction speed factor cannot be negative"}
-	var row: Dictionary = _production_controls_for(team).duplicate(true)
-	if is_equal_approx(factor, 1.0):
-		row.erase("base_construction_speed")
-	else:
-		row["base_construction_speed"] = factor
-	if row.is_empty():
-		production_controls_by_team.erase(team)
-	else:
-		production_controls_by_team[team] = row
-	return {"ok": true, "reason": ""}
-
-
-func set_unit_construction_enabled(
-	team: int, object_type: String, enabled: bool
-) -> Dictionary:
-	if winner != -1:
-		return {"ok": false, "reason": "the match is already resolved"}
-	if not _script_owner_exists(team):
-		return {"ok": false, "reason": "team %d is unavailable" % team}
-	if object_type.strip_edges() == "":
-		return {"ok": false, "reason": "empty object type names nothing"}
-	var row: Dictionary = _production_controls_for(team).duplicate(true)
-	var unit_map: Dictionary = row.get("unit_construction", {}) as Dictionary
-	var match_key := ""
-	for key_value in unit_map.keys():
-		if String(key_value).to_lower() == object_type.to_lower():
-			match_key = String(key_value)
-			break
-	if match_key != "":
-		unit_map.erase(match_key)
-	if not enabled:
-		unit_map[object_type] = false
-	if unit_map.is_empty():
-		row.erase("unit_construction")
-	else:
-		row["unit_construction"] = unit_map
-	if row.is_empty():
-		production_controls_by_team.erase(team)
-	else:
-		production_controls_by_team[team] = row
-	return {"ok": true, "reason": ""}
-
-
-func production_control_enabled(team: int, key: String) -> bool:
-	## Default true when no override is stored.
-	var row := _production_controls_for(team)
-	if not row.has(key):
-		return true
-	return bool(row.get(key, true))
-
-
-func unit_construction_enabled(team: int, object_type: String) -> bool:
-	var row := _production_controls_for(team)
-	var unit_map: Dictionary = row.get("unit_construction", {}) as Dictionary
-	for key_value in unit_map.keys():
-		if String(key_value).to_lower() == object_type.to_lower():
-			return bool(unit_map[key_value])
-	return true
-
-
-func set_tech_buildability(object_type: String, buildability: int) -> Dictionary:
-	if winner != -1:
-		return {"ok": false, "reason": "the match is already resolved"}
-	if object_type.strip_edges() == "":
-		return {"ok": false, "reason": "empty object type names nothing"}
-	tech_buildability[object_type] = buildability
-	return {"ok": true, "reason": ""}
-
-
-func has_prerequisite_to_build(team: int, object_type: String) -> Dictionary:
-	## True when every authored prerequisite upgrade for the unit type is
-	## completed for the team, or the type has no prerequisite map (fieldable
-	## without tech). Unknown/unmapped types refuse rather than guessing.
-	if not _script_owner_exists(team):
-		return {"ok": false, "reason": "team %d is unavailable" % team}
-	if object_type.strip_edges() == "":
-		return {"ok": false, "reason": "empty object type names nothing"}
-	var unit_type := trainable_unit_type_for(team, object_type)
-	if unit_type == "":
-		# Fall back to casefold match against production-rule keys.
-		for key_value in _unit_production_rules.keys():
-			if String(key_value).to_lower() == object_type.to_lower():
-				unit_type = String(key_value)
-				break
-	if unit_type == "" and not _unit_production_rules.has(object_type):
-		return {
-			"ok": false,
-			"reason": (
-				"object type '%s' is not a production rule this simulation models"
-				% object_type
-			),
-		}
-	if unit_type == "":
-		unit_type = object_type
-	var prereq_value: Variant = _unit_prerequisites.get(unit_type, {})
-	var completed: Dictionary = team_upgrades.get(team, {}) as Dictionary
-	if typeof(prereq_value) == TYPE_STRING:
-		var upgrade_id := String(prereq_value)
-		if upgrade_id == "":
-			return {"ok": true, "value": true}
-		return {"ok": true, "value": completed.has(upgrade_id)}
-	if typeof(prereq_value) != TYPE_DICTIONARY:
-		return {"ok": true, "value": true}
-	var by_producer: Dictionary = prereq_value
-	if by_producer.is_empty():
-		return {"ok": true, "value": true}
-	# Trainable if ANY producer path has all its prerequisites completed.
-	for producer_key in by_producer.keys():
-		var reqs: Array = by_producer[producer_key] as Array
-		var ok_path := true
-		for req_value in reqs:
-			if not completed.has(String(req_value)):
-				ok_path = false
-				break
-		if ok_path:
-			return {"ok": true, "value": true}
-	return {"ok": true, "value": false}
-
-
-func bind_script_team_reference(
-	owner_team: int, reference: String, script_team: String
-) -> Dictionary:
-	if winner != -1:
-		return {"ok": false, "reason": "the match is already resolved"}
-	if reference.strip_edges() == "":
-		return {"ok": false, "reason": "empty team reference names nothing"}
-	if not script_teams.has(script_team):
-		return {
-			"ok": false,
-			"reason": "script team '%s' is not registered" % script_team,
-		}
-	var table: Dictionary = script_team_references.get(owner_team, {}) as Dictionary
-	table[reference] = script_team
-	script_team_references[owner_team] = table
-	return {"ok": true, "reason": ""}
-
-
-func script_team_reference(owner_team: int, reference: String) -> String:
-	var table: Dictionary = script_team_references.get(owner_team, {}) as Dictionary
-	return String(table.get(reference, ""))
-
-
-func set_entity_stopping_distance(entity_id: int, distance: float) -> Dictionary:
-	if winner != -1:
-		return {"ok": false, "reason": "the match is already resolved"}
-	if not entities.has(entity_id):
-		return {"ok": false, "reason": "entity %d is not in the simulation" % entity_id}
-	if distance < 0.0:
-		return {"ok": false, "reason": "stopping distance cannot be negative"}
-	var row := entities[entity_id] as Dictionary
-	if is_equal_approx(distance, 0.0):
-		row.erase("stopping_distance")
-	else:
-		row["stopping_distance"] = distance
-	entities[entity_id] = row
-	return {"ok": true, "reason": ""}
-
-
-func set_entities_idle_until(entity_ids: Array, until_tick: int) -> Dictionary:
-	if winner != -1:
-		return {"ok": false, "reason": "the match is already resolved"}
-	for id_value in entity_ids:
-		var entity_id := int(id_value)
-		if not entities.has(entity_id):
-			continue
-		var row := entities[entity_id] as Dictionary
-		if int(row.get("health", 0)) <= 0:
-			continue
-		row["script_idle_until"] = until_tick
-		row["state"] = "idle"
-		row.erase("target_id")
-		_clear_pending_route(row, true)
-		entities[entity_id] = row
-	return {"ok": true, "reason": ""}
-
-
-func set_entities_spin_until(entity_ids: Array, until_tick: int) -> Dictionary:
-	if winner != -1:
-		return {"ok": false, "reason": "the match is already resolved"}
-	for id_value in entity_ids:
-		var entity_id := int(id_value)
-		if not entities.has(entity_id):
-			continue
-		var row := entities[entity_id] as Dictionary
-		if int(row.get("health", 0)) <= 0:
-			continue
-		row["script_spin_until"] = until_tick
-		row["state"] = "idle"
-		entities[entity_id] = row
-	return {"ok": true, "reason": ""}
-
-
-func issue_hunt(ids: Array[int], team: int = PLAYER_TEAM) -> int:
-	## TEAM/NAMED/PLAYER_HUNT with empty command button: aggressive stance and
-	## clear hold so the existing acquire loop hunts hostiles.
-	var count := 0
-	for id_value in ids:
-		var entity_id := int(id_value)
-		if not entities.has(entity_id):
-			continue
-		var row := entities[entity_id] as Dictionary
-		if int(row.get("team", -1)) != team or int(row.get("health", 0)) <= 0:
-			continue
-		row["stance"] = "Aggressive"
-		row.erase("script_idle_until")
-		entities[entity_id] = row
-		count += 1
-	issue_set_stance(ids, "Aggressive", team)
-	return count
-
-
-
-# --- Bulk script surface stores (flags, progression, containment, events) ---
-#
-# These back high-volume script facet methods with exact authored keys and
-# empty-is-absent defaults. They do not invent pathfinding, area geometry, or
-# presentation. Combat effects of flags (stealth vision, etc.) remain for
-# later subsystems; storage and script readback are truthful.
-
 var player_progression: Dictionary = {}  # team -> {rank, skill_points, ...}
 var player_economy_extras: Dictionary = {}  # team -> counters
 var player_diplomacy_overrides: Dictionary = {}  # team -> other_team -> relation int
@@ -7804,1286 +6650,356 @@ var team_created_edge: Dictionary = {}  # script_team -> bool (one-shot edge)
 var match_script_flags: Dictionary = {}  # global match flags
 var attack_priority_names: Dictionary = {}  # team -> String
 var selection_script_names: Array = []  # diagnostic selection list
+var _logic_random_state: Array = []
+var script_env_state: Dictionary = {}
+var _script_env_view_reported: Dictionary = {}
+var _script_executor_faults: Dictionary = {}
 
+const ScriptWorldSystemScript = preload("res://src/retail_slice/retail_sim_script_world.gd")
+var _script_world_system = null
+func _script_world_subsystem():
+	if _script_world_system == null:
+		_script_world_system = ScriptWorldSystemScript.new(self)
+	return _script_world_system
+
+func configure_map_named_object_namespace(names: Array) -> void:
+	_script_world_subsystem().configure_map_named_object_namespace(names)
+
+func map_named_object_namespace_declared() -> bool:
+	return _script_world_subsystem().map_named_object_namespace_declared()
+
+func map_declares_named_object(name: String) -> bool:
+	return _script_world_subsystem().map_declares_named_object(name)
+
+func set_building_allowed(team: int, object_type: String, allowed: bool) -> bool:
+	return _script_world_subsystem().set_building_allowed(team, object_type, allowed)
+
+func _building_object_identity_key(value: String) -> String:
+	return _script_world_subsystem()._building_object_identity_key(value)
+
+func building_permission_for_kind(team: int, structure_kind: String) -> Dictionary:
+	return _script_world_subsystem().building_permission_for_kind(team, structure_kind)
+
+func bind_script_entity_reference(team: int, reference: String, entity_id: int) -> bool:
+	return _script_world_subsystem().bind_script_entity_reference(team, reference, entity_id)
+
+func script_entity_reference(team: int, reference: String) -> int:
+	return _script_world_subsystem().script_entity_reference(team, reference)
+
+func bind_script_unit_reference(team: int, reference: String, structure_id: int) -> bool:
+	return _script_world_subsystem().bind_script_unit_reference(team, reference, structure_id)
+
+func bind_script_unit_reference_to_base(team: int, reference: String, base_name: String) -> bool:
+	return _script_world_subsystem().bind_script_unit_reference_to_base(team, reference, base_name)
+
+func script_unit_reference(team: int, reference: String) -> int:
+	return _script_world_subsystem().script_unit_reference(team, reference)
+
+func script_unit_reference_base(team: int, reference: String) -> String:
+	return _script_world_subsystem().script_unit_reference_base(team, reference)
+
+func change_object_type_list(list_name: String, object_type: String, add: bool) -> Dictionary:
+	return _script_world_subsystem().change_object_type_list(list_name, object_type, add)
+
+func object_type_list_names() -> Array[String]:
+	return _script_world_subsystem().object_type_list_names()
+
+func has_object_type_list(list_name: String) -> bool:
+	return _script_world_subsystem().has_object_type_list(list_name)
+
+func resolve_object_type_names(object_type_list: String) -> Array:
+	return _script_world_subsystem().resolve_object_type_names(object_type_list)
+
+func _script_owner_exists(owner: int) -> bool:
+	return _script_world_subsystem()._script_owner_exists(owner)
+
+func register_script_team(team_name: String, owner: int, default_team: bool = false, handles: Array = [], membership_complete: bool = true, unresolved_members: Array = [], unmodeled_object_count: int = 0, dynamic_default_roster: bool = true, marker_only: bool = false) -> Dictionary:
+	return _script_world_subsystem().register_script_team(team_name, owner, default_team, handles, membership_complete, unresolved_members, unmodeled_object_count, dynamic_default_roster, marker_only)
+
+func _script_member_less(a: Dictionary, b: Dictionary) -> bool:
+	return _script_world_subsystem()._script_member_less(a, b)
+
+func script_team_owner(team_name: String) -> Dictionary:
+	return _script_world_subsystem().script_team_owner(team_name)
+
+func transfer_script_team_controlling_player(team_name: String, destination_owner: int) -> Dictionary:
+	return _script_world_subsystem().transfer_script_team_controlling_player(team_name, destination_owner)
+
+func script_team_members(team_name: String, living_only: bool = true) -> Dictionary:
+	return _script_world_subsystem().script_team_members(team_name, living_only)
+
+func _script_team_definition(record: Dictionary) -> Dictionary:
+	return _script_world_subsystem()._script_team_definition(record)
+
+func set_script_team_recruitable(team_name: String, enabled: bool) -> Dictionary:
+	return _script_world_subsystem().set_script_team_recruitable(team_name, enabled)
+
+func _script_team_state_view() -> Dictionary:
+	return _script_world_subsystem()._script_team_state_view()
+
+func set_team_behavior_state(team: String, token: String) -> Dictionary:
+	return _script_world_subsystem().set_team_behavior_state(team, token)
+
+func team_behavior_state(team: String) -> Dictionary:
+	return _script_world_subsystem().team_behavior_state(team)
+
+func set_team_custom_state(team: String, token: String, enabled: bool) -> Dictionary:
+	return _script_world_subsystem().set_team_custom_state(team, token, enabled)
+
+func team_custom_states(team: String) -> Dictionary:
+	return _script_world_subsystem().team_custom_states(team)
+
+func _prune_team_behavior_key(team: String, key: String) -> void:
+	_script_world_subsystem()._prune_team_behavior_key(team, key)
+
+func queue_team_sequential_script(script_team: String, script_name: String, times_to_loop: int) -> Dictionary:
+	return _script_world_subsystem().queue_team_sequential_script(script_team, script_name, times_to_loop)
+
+func clear_team_sequential_scripts(script_team: String) -> Dictionary:
+	return _script_world_subsystem().clear_team_sequential_scripts(script_team)
+
+func mark_team_sequential_busy(script_team: String) -> void:
+	_script_world_subsystem().mark_team_sequential_busy(script_team)
+
+func mark_team_sequential_idle(script_team: String) -> void:
+	_script_world_subsystem().mark_team_sequential_idle(script_team)
+
+func set_entity_object_status(entity_id: int, status: String, enabled: bool) -> Dictionary:
+	return _script_world_subsystem().set_entity_object_status(entity_id, status, enabled)
+
+func entity_has_object_status(entity_id: int, status: String) -> bool:
+	return _script_world_subsystem().entity_has_object_status(entity_id, status)
+
+func set_entities_object_status(entity_ids: Array, status: String, enabled: bool) -> Dictionary:
+	return _script_world_subsystem().set_entities_object_status(entity_ids, status, enabled)
+
+func _production_controls_for(team: int) -> Dictionary:
+	return _script_world_subsystem()._production_controls_for(team)
+
+func _set_production_control_flag(team: int, key: String, enabled: bool) -> Dictionary:
+	return _script_world_subsystem()._set_production_control_flag(team, key, enabled)
+
+func set_auto_build_enabled(team: int, enabled: bool) -> Dictionary:
+	return _script_world_subsystem().set_auto_build_enabled(team, enabled)
+
+func set_base_construction_enabled(team: int, enabled: bool) -> Dictionary:
+	return _script_world_subsystem().set_base_construction_enabled(team, enabled)
+
+func set_factories_enabled(team: int, enabled: bool) -> Dictionary:
+	return _script_world_subsystem().set_factories_enabled(team, enabled)
+
+func set_base_construction_speed(team: int, factor: float) -> Dictionary:
+	return _script_world_subsystem().set_base_construction_speed(team, factor)
+
+func set_unit_construction_enabled(team: int, object_type: String, enabled: bool) -> Dictionary:
+	return _script_world_subsystem().set_unit_construction_enabled(team, object_type, enabled)
+
+func production_control_enabled(team: int, key: String) -> bool:
+	return _script_world_subsystem().production_control_enabled(team, key)
+
+func unit_construction_enabled(team: int, object_type: String) -> bool:
+	return _script_world_subsystem().unit_construction_enabled(team, object_type)
+
+func set_tech_buildability(object_type: String, buildability: int) -> Dictionary:
+	return _script_world_subsystem().set_tech_buildability(object_type, buildability)
+
+func has_prerequisite_to_build(team: int, object_type: String) -> Dictionary:
+	return _script_world_subsystem().has_prerequisite_to_build(team, object_type)
+
+func bind_script_team_reference(owner_team: int, reference: String, script_team: String) -> Dictionary:
+	return _script_world_subsystem().bind_script_team_reference(owner_team, reference, script_team)
+
+func script_team_reference(owner_team: int, reference: String) -> String:
+	return _script_world_subsystem().script_team_reference(owner_team, reference)
+
+func set_entity_stopping_distance(entity_id: int, distance: float) -> Dictionary:
+	return _script_world_subsystem().set_entity_stopping_distance(entity_id, distance)
+
+func set_entities_idle_until(entity_ids: Array, until_tick: int) -> Dictionary:
+	return _script_world_subsystem().set_entities_idle_until(entity_ids, until_tick)
+
+func set_entities_spin_until(entity_ids: Array, until_tick: int) -> Dictionary:
+	return _script_world_subsystem().set_entities_spin_until(entity_ids, until_tick)
+
+func issue_hunt(ids: Array[int], team: int = PLAYER_TEAM) -> int:
+	return _script_world_subsystem().issue_hunt(ids, team)
 
 func _player_prog(team: int) -> Dictionary:
-	return player_progression.get(team, {}) as Dictionary
-
+	return _script_world_subsystem()._player_prog(team)
 
 func _set_player_prog_value(team: int, key: String, value: Variant) -> Dictionary:
-	if winner != -1:
-		return {"ok": false, "reason": "the match is already resolved"}
-	if not _script_owner_exists(team):
-		return {"ok": false, "reason": "team %d is unavailable" % team}
-	var row: Dictionary = _player_prog(team).duplicate(true)
-	row[key] = value
-	player_progression[team] = row
-	return {"ok": true, "reason": ""}
-
+	return _script_world_subsystem()._set_player_prog_value(team, key, value)
 
 func set_diplomacy_override(from_team: int, to_team: int, relation: int) -> Dictionary:
-	## Hash-backed relation override (player/team script diplomacy).
-	if winner != -1:
-		return {"ok": false, "reason": "the match is already resolved"}
-	if not _script_owner_exists(from_team):
-		return {"ok": false, "reason": "from team unavailable"}
-	var table: Dictionary = player_diplomacy_overrides.get(from_team, {}) as Dictionary
-	table[to_team] = relation
-	player_diplomacy_overrides[from_team] = table
-	return {"ok": true, "reason": ""}
-
+	return _script_world_subsystem().set_diplomacy_override(from_team, to_team, relation)
 
 func clear_diplomacy_override(from_team: int, to_team: int) -> Dictionary:
-	if not player_diplomacy_overrides.has(from_team):
-		return {"ok": true, "reason": ""}
-	var table: Dictionary = player_diplomacy_overrides[from_team]
-	table.erase(to_team)
-	if table.is_empty():
-		player_diplomacy_overrides.erase(from_team)
-	else:
-		player_diplomacy_overrides[from_team] = table
-	return {"ok": true, "reason": ""}
-
+	return _script_world_subsystem().clear_diplomacy_override(from_team, to_team)
 
 func clear_all_diplomacy_overrides(from_team: int) -> Dictionary:
-	player_diplomacy_overrides.erase(from_team)
-	return {"ok": true, "reason": ""}
+	return _script_world_subsystem().clear_all_diplomacy_overrides(from_team)
 
-
-func set_attack_priority_entry(
-	set_name: String, target_kind: String, target_name: String, priority: int
-) -> void:
-	## Hash-backed attack-priority table (script AI vocabulary).
-	if not match_script_flags.has("attack_priority_sets"):
-		match_script_flags["attack_priority_sets"] = {}
-	var sets: Dictionary = match_script_flags["attack_priority_sets"]
-	var set_row: Dictionary = sets.get(set_name, {}) as Dictionary
-	set_row["%s:%s" % [target_kind, target_name]] = priority
-	sets[set_name] = set_row
-	match_script_flags["attack_priority_sets"] = sets
-
+func set_attack_priority_entry(set_name: String, target_kind: String, target_name: String, priority: int) -> void:
+	_script_world_subsystem().set_attack_priority_entry(set_name, target_kind, target_name, priority)
 
 func set_default_attack_priority_entry(set_name: String, priority: int) -> void:
-	if not match_script_flags.has("attack_priority_defaults"):
-		match_script_flags["attack_priority_defaults"] = {}
-	var defaults: Dictionary = match_script_flags["attack_priority_defaults"]
-	defaults[set_name] = priority
-	match_script_flags["attack_priority_defaults"] = defaults
-
+	_script_world_subsystem().set_default_attack_priority_entry(set_name, priority)
 
 func set_team_ai_priority(team: int, priority: int) -> Dictionary:
-	if winner != -1:
-		return {"ok": false, "reason": "the match is already resolved"}
-	if not _script_owner_exists(team):
-		return {"ok": false, "reason": "team unavailable"}
-	if not match_script_flags.has("team_ai_priority"):
-		match_script_flags["team_ai_priority"] = {}
-	var table: Dictionary = match_script_flags["team_ai_priority"]
-	table[team] = priority
-	match_script_flags["team_ai_priority"] = table
-	return {"ok": true, "reason": ""}
-
+	return _script_world_subsystem().set_team_ai_priority(team, priority)
 
 func adjust_team_ai_priority(team: int, delta: int) -> Dictionary:
-	var table: Dictionary = match_script_flags.get("team_ai_priority", {}) as Dictionary
-	var current := int(table.get(team, 0))
-	return set_team_ai_priority(team, current + delta)
-
+	return _script_world_subsystem().adjust_team_ai_priority(team, delta)
 
 func _add_player_prog_value(team: int, key: String, delta: int) -> Dictionary:
-	var row := _player_prog(team)
-	var current := int(row.get(key, 0))
-	return _set_player_prog_value(team, key, current + delta)
-
+	return _script_world_subsystem()._add_player_prog_value(team, key, delta)
 
 func set_entity_bool_flag(entity_id: int, flag: String, enabled: bool) -> Dictionary:
-	if winner != -1:
-		return {"ok": false, "reason": "the match is already resolved"}
-	if not entities.has(entity_id):
-		return {"ok": false, "reason": "entity %d missing" % entity_id}
-	var row := entities[entity_id] as Dictionary
-	var flags: Dictionary = row.get("script_bool_flags", {}) as Dictionary
-	if enabled:
-		flags[flag] = true
-		row["script_bool_flags"] = flags
-	else:
-		flags.erase(flag)
-		if flags.is_empty():
-			row.erase("script_bool_flags")
-		else:
-			row["script_bool_flags"] = flags
-	entities[entity_id] = row
-	return {"ok": true, "reason": ""}
-
+	return _script_world_subsystem().set_entity_bool_flag(entity_id, flag, enabled)
 
 func entity_bool_flag(entity_id: int, flag: String) -> bool:
-	if not entities.has(entity_id):
-		return false
-	var flags: Dictionary = (entities[entity_id] as Dictionary).get("script_bool_flags", {})
-	return bool(flags.get(flag, false))
-
+	return _script_world_subsystem().entity_bool_flag(entity_id, flag)
 
 func set_entities_bool_flag(entity_ids: Array, flag: String, enabled: bool) -> Dictionary:
-	for id_value in entity_ids:
-		var result := set_entity_bool_flag(int(id_value), flag, enabled)
-		if not bool(result.get("ok", false)):
-			return result
-	return {"ok": true, "reason": ""}
-
+	return _script_world_subsystem().set_entities_bool_flag(entity_ids, flag, enabled)
 
 func set_entity_string_state(entity_id: int, key: String, value: String) -> Dictionary:
-	if winner != -1:
-		return {"ok": false, "reason": "the match is already resolved"}
-	if not entities.has(entity_id):
-		return {"ok": false, "reason": "entity %d missing" % entity_id}
-	var row := entities[entity_id] as Dictionary
-	var store: Dictionary = row.get("script_string_state", {}) as Dictionary
-	if value == "":
-		store.erase(key)
-	else:
-		store[key] = value
-	if store.is_empty():
-		row.erase("script_string_state")
-	else:
-		row["script_string_state"] = store
-	entities[entity_id] = row
-	return {"ok": true, "reason": ""}
-
+	return _script_world_subsystem().set_entity_string_state(entity_id, key, value)
 
 func entity_string_state(entity_id: int, key: String) -> String:
-	if not entities.has(entity_id):
-		return ""
-	var store: Dictionary = (entities[entity_id] as Dictionary).get("script_string_state", {})
-	return String(store.get(key, ""))
-
+	return _script_world_subsystem().entity_string_state(entity_id, key)
 
 func set_entity_timed_flag(entity_id: int, flag: String, until_tick: int) -> Dictionary:
-	if winner != -1:
-		return {"ok": false, "reason": "the match is already resolved"}
-	if not entities.has(entity_id):
-		return {"ok": false, "reason": "entity %d missing" % entity_id}
-	var row := entities[entity_id] as Dictionary
-	var store: Dictionary = row.get("script_timed_flags", {}) as Dictionary
-	if until_tick < 0:
-		store.erase(flag)
-	else:
-		store[flag] = until_tick
-	if store.is_empty():
-		row.erase("script_timed_flags")
-	else:
-		row["script_timed_flags"] = store
-	entities[entity_id] = row
-	return {"ok": true, "reason": ""}
-
+	return _script_world_subsystem().set_entity_timed_flag(entity_id, flag, until_tick)
 
 func entity_timed_flag_active(entity_id: int, flag: String) -> bool:
-	if not entities.has(entity_id):
-		return false
-	var store: Dictionary = (entities[entity_id] as Dictionary).get("script_timed_flags", {})
-	if not store.has(flag):
-		return false
-	return tick_index <= int(store[flag])
-
+	return _script_world_subsystem().entity_timed_flag_active(entity_id, flag)
 
 func script_set_health_percent(entity_id: int, percent: float) -> Dictionary:
-	if winner != -1:
-		return {"ok": false, "reason": "the match is already resolved"}
-	if not entities.has(entity_id):
-		return {"ok": false, "reason": "entity %d missing" % entity_id}
-	var row := entities[entity_id] as Dictionary
-	var maximum := maxi(1, int(row.get("maximum_health", row.get("health", 1))))
-	var clamped := clampf(percent, 0.0, 100.0)
-	var new_health := int(round(maximum * clamped / 100.0))
-	row["health"] = new_health
-	var defeated_members: Array[int] = []
-	if row.has("member_health") and row["member_health"] is Array:
-		var members: Array = row["member_health"]
-		if not members.is_empty():
-			var each := int(new_health / members.size())
-			var rebuilt: Array = []
-			for member_index in members.size():
-				if int(members[member_index]) > 0 and each <= 0:
-					defeated_members.append(member_index)
-				rebuilt.append(each)
-			row["member_health"] = rebuilt
-	entities[entity_id] = row
-	if new_health <= 0:
-		var death_policy := _bookkeep_battalion_death(
-			entity_id, row, "NORMAL", defeated_members
-		)
-		if bool(row.get("is_banner_carrier", false)):
-			_on_banner_carrier_defeated(row)
-		_emit_event("battalion.defeated", 0, entity_id, {"reason": "script-kill"})
-		if bool(death_policy.get("destroy_object", false)) or bool(row.get("is_banner_carrier", false)):
-			entities.erase(entity_id)
-	return {"ok": true, "reason": ""}
-
+	return _script_world_subsystem().script_set_health_percent(entity_id, percent)
 
 func script_kill_entity(entity_id: int) -> Dictionary:
-	return script_set_health_percent(entity_id, 0.0)
-
+	return _script_world_subsystem().script_kill_entity(entity_id)
 
 func script_damage_entity(entity_id: int, amount: float) -> Dictionary:
-	if not entities.has(entity_id):
-		return {"ok": false, "reason": "entity %d missing" % entity_id}
-	var row := entities[entity_id] as Dictionary
-	var maximum := maxi(1, int(row.get("maximum_health", 1)))
-	var health := int(row.get("health", 0))
-	var pct := 100.0 * float(health) / float(maximum)
-	var damage_pct := 100.0 * amount / float(maximum)
-	return script_set_health_percent(entity_id, pct - damage_pct)
-
+	return _script_world_subsystem().script_damage_entity(entity_id, amount)
 
 func contain_entity(structure_id: int, entity_id: int) -> Dictionary:
-	if winner != -1:
-		return {"ok": false, "reason": "the match is already resolved"}
-	if not structures.has(structure_id) and not entities.has(structure_id):
-		return {"ok": false, "reason": "container %d missing" % structure_id}
-	if not entities.has(entity_id):
-		return {"ok": false, "reason": "entity %d missing" % entity_id}
-	if entity_container.has(entity_id):
-		return {"ok": false, "reason": "entity already contained"}
-	var passengers: Array = containment.get(structure_id, []) as Array
-	passengers.append(entity_id)
-	containment[structure_id] = passengers
-	entity_container[entity_id] = structure_id
-	return {"ok": true, "reason": ""}
-
+	return _script_world_subsystem().contain_entity(structure_id, entity_id)
 
 func exit_entity_container(entity_id: int) -> Dictionary:
-	if not entity_container.has(entity_id):
-		return {"ok": true, "reason": ""}  # vacuous
-	var structure_id := int(entity_container[entity_id])
-	var passengers: Array = containment.get(structure_id, []) as Array
-	passengers.erase(entity_id)
-	if passengers.is_empty():
-		containment.erase(structure_id)
-	else:
-		containment[structure_id] = passengers
-	entity_container.erase(entity_id)
-	return {"ok": true, "reason": ""}
-
+	return _script_world_subsystem().exit_entity_container(entity_id)
 
 func passenger_count(structure_id: int) -> int:
-	return (containment.get(structure_id, []) as Array).size()
-
+	return _script_world_subsystem().passenger_count(structure_id)
 
 func register_script_area(name: String, center: Vector2, radius: float) -> void:
-	script_areas[name] = {"center": center, "radius": radius, "impassable": false}
-
+	_script_world_subsystem().register_script_area(name, center, radius)
 
 func register_script_waypoint(name: String, position: Vector2) -> void:
-	script_waypoints[name] = position
-
+	_script_world_subsystem().register_script_waypoint(name, position)
 
 func register_script_waypoint_path(name: String, points: Array) -> void:
-	script_waypoint_paths[name] = points.duplicate()
-
+	_script_world_subsystem().register_script_waypoint_path(name, points)
 
 func area_contains(name: String, position: Vector2) -> Dictionary:
-	if not script_areas.has(name):
-		return {"ok": false, "reason": "area '%s' is not registered" % name}
-	var area: Dictionary = script_areas[name]
-	var center: Vector2 = area.get("center", Vector2.ZERO)
-	var radius := float(area.get("radius", 0.0))
-	return {"ok": true, "value": center.distance_to(position) <= radius}
-
+	return _script_world_subsystem().area_contains(name, position)
 
 func bump_script_event(key: String, amount: int = 1) -> void:
-	script_event_counts[key] = int(script_event_counts.get(key, 0)) + amount
-
+	_script_world_subsystem().bump_script_event(key, amount)
 
 func script_event_count(key: String) -> int:
-	return int(script_event_counts.get(key, 0))
-
+	return _script_world_subsystem().script_event_count(key)
 
 func mark_team_created(script_team: String) -> void:
-	team_created_edge[script_team] = true
-
+	_script_world_subsystem().mark_team_created(script_team)
 
 func team_created_is_set(script_team: String) -> bool:
-	## Retail Team::isCreated is cleared by Team::updateState once per frame,
-	## not by the condition read itself. Probe/hash-safe: reading does not
-	## mutate. Clear edges in _step_script_executors after scripts run.
-	return bool(team_created_edge.get(script_team, false))
-
+	return _script_world_subsystem().team_created_is_set(script_team)
 
 func clear_team_created_edges() -> void:
-	team_created_edge.clear()
-
+	_script_world_subsystem().clear_team_created_edges()
 
 func set_entity_team(entity_id: int, new_team: int) -> Dictionary:
-	if winner != -1:
-		return {"ok": false, "reason": "the match is already resolved"}
-	if not entities.has(entity_id):
-		return {"ok": false, "reason": "entity %d missing" % entity_id}
-	if not _script_owner_exists(new_team):
-		return {"ok": false, "reason": "team %d unavailable" % new_team}
-	var row := entities[entity_id] as Dictionary
-	var old_team := int(row.get("team", -1))
-	if old_team == new_team:
-		return {"ok": true, "reason": ""}
-	if base_loop_enabled and not bool(row.get("command_points_released", false)):
-		var commitment := _entity_command_point_commitment(row)
-		team_command_points[old_team] = maxi(0, command_points_for_team(old_team) - commitment)
-		team_command_points[new_team] = command_points_for_team(new_team) + commitment
-	row["team"] = new_team
-	entities[entity_id] = row
-	return {"ok": true, "reason": ""}
-
+	return _script_world_subsystem().set_entity_team(entity_id, new_team)
 
 func delete_entity(entity_id: int) -> Dictionary:
-	if winner != -1:
-		return {"ok": false, "reason": "the match is already resolved"}
-	if not entities.has(entity_id):
-		return {"ok": false, "reason": "entity %d missing" % entity_id}
-	exit_entity_container(entity_id)
-	var row := entities[entity_id] as Dictionary
-	_summon_despawn_ticks.erase(entity_id)
-	_summon_aura_source_ids.erase(entity_id)
-	selected_ids.erase(entity_id)
-	_release_command_points_once(row)
-	entities.erase(entity_id)
-	prune_control_groups()
-	return {"ok": true, "reason": ""}
-
-
+	return _script_world_subsystem().delete_entity(entity_id)
 
 func _executor_for_script(script_name: String) -> SageScriptExecutor:
-	for team_key in _sorted_dictionary_keys(_script_executors):
-		var executor: SageScriptExecutor = (
-			_script_executors[team_key] as WeakRef
-		).get_ref()
-		if executor != null and executor.has_script(script_name):
-			return executor
-	return null
-
+	return _script_world_subsystem()._executor_for_script(script_name)
 
 func _step_sequential_scripts() -> void:
-	## ScriptEngine::evaluateAndProgressAllSequentialScripts, bounded to team
-	## heads. Runs after ordinary executor.tick() so newly queued scripts from
-	## this frame's AI scripts can start the same logic frame (retail steps
-	## sequential scripts in the same ScriptEngine::update).
-	if sequential_script_queues.is_empty() or winner != -1:
-		return
-	var team_names := sequential_script_queues.keys()
-	team_names.sort()
-	for team_name_value in team_names:
-		var script_team := String(team_name_value)
-		var spin := 0
-		while spin < _SEQUENTIAL_SPIN_LIMIT:
-			spin += 1
-			if not sequential_script_queues.has(script_team):
-				break
-			var chain: Array = sequential_script_queues[script_team]
-			if chain.is_empty():
-				sequential_script_queues.erase(script_team)
-				break
-			var head := (chain[0] as Dictionary).duplicate(true)
-			var frames := int(head.get("frames_to_wait", -1))
-			if frames > 0:
-				head["frames_to_wait"] = frames - 1
-				chain[0] = head
-				sequential_script_queues[script_team] = chain
-				break
-			var can_progress := bool(head.get("idle", false)) or frames == 0
-			if not can_progress:
-				break
-			if bool(head.get("dont_advance", false)):
-				head["dont_advance"] = false
-			else:
-				head["current_instruction"] = int(head.get("current_instruction", -1)) + 1
-			var script_name := String(head.get("script_name", ""))
-			var executor := _executor_for_script(script_name)
-			if executor == null:
-				# Script unloaded or executors dropped; fail closed by clearing.
-				sequential_script_queues.erase(script_team)
-				break
-			var actions_result: Dictionary = executor.true_actions_for_script(script_name)
-			if not bool(actions_result.get("ok", false)):
-				sequential_script_queues.erase(script_team)
-				break
-			var actions: Array = actions_result.get("actions", []) as Array
-			var instruction := int(head.get("current_instruction", 0))
-			if instruction < 0 or instruction >= actions.size():
-				# Finished the action list. Re-append when looping.
-				var times := int(head.get("times_to_loop", 0))
-				chain.remove_at(0)
-				if times != 0:
-					var requeue := {
-						"script_name": script_name,
-						"times_to_loop": times if times < 0 else times - 1,
-						"current_instruction": -1,
-						"frames_to_wait": -1,
-						"dont_advance": false,
-						"idle": true,
-					}
-					chain.append(requeue)
-				if chain.is_empty():
-					sequential_script_queues.erase(script_team)
-				else:
-					sequential_script_queues[script_team] = chain
-				# Allow the next chained script to start this frame.
-				continue
-			var action: Dictionary = actions[instruction]
-			head["frames_to_wait"] = -1
-			chain[0] = head
-			sequential_script_queues[script_team] = chain
-			var world: RetailSliceScriptWorld = executor.world as RetailSliceScriptWorld
-			if world != null:
-				world.latch_script_team_context(script_team, true)
-			executor.execute_action_record(action, script_name)
-			if world != null:
-				world.clear_script_team_context()
-			# Re-read head: the action may have stopped/queued/busy-marked.
-			if not sequential_script_queues.has(script_team):
-				break
-			chain = sequential_script_queues[script_team]
-			if chain.is_empty():
-				sequential_script_queues.erase(script_team)
-				break
-			head = chain[0] as Dictionary
-			if bool(head.get("dont_advance", false)):
-				break
-			if not bool(head.get("idle", false)):
-				break
-			# Still idle: retail allows another instruction this frame.
-
-
-# --- Logic random stream (SIM-owned, retail GameLogic generator) ------------
-#
-# The deterministic random stream retail script actions draw from
-# (SET_RANDOM_COUNTER / SET_RANDOM_TIMER / SET_RANDOM_MSEC_TIMER /
-# SET_RANDOM_COUNTER_IN_SECONDS). This is retail's LOGIC stream, not its
-# client stream: RandomValue.cpp keeps three independent generators
-# (theGameLogicSeed / theGameClientSeed / theGameAudioSeed) precisely so the
-# GameLogic "remains deterministic, regardless of the effects displayed on
-# the GameClient" (RandomValue.cpp:138-142), and the script engine's random
-# actions call GameLogicRandomValue (ScriptEngine.cpp setTimer, lines
-# 6746-6760 in the GPL Zero Hour source) - the logic stream. The client
-# stream stays refused here (SET_COUNTER_TO_CLIENT_RANDOM_VALUE is a
-# DELIBERATE gap): it is desync-prone by design.
-#
-# ONE GLOBAL STREAM, NOT PER-PLAYER - retail's shape. theGameLogicSeed is a
-# single static array; every logic draw by every subsystem and every script
-# player advances the same sequence, and the script engine passes no player
-# context into GameLogicRandomValue. Draw ORDER is therefore part of the
-# contract: draws happen only inside script/handler execution, which the sim
-# steps in ascending team order (register_script_executor's guarantee), so
-# every peer interleaves draws identically.
-#
-# THE GENERATOR IS RETAIL'S, TRANSCRIBED, NOT APPROXIMATED: the Michael
-# Booth (Jan 1998) lagged add-with-carry over six 32-bit words from the GPL
-# Generals/Zero Hour RandomValue.cpp (randomValue/seedRandom), which the
-# BFME1 binary still exports (GetGameLogicRandomValueReal thunk in the
-# decompilation's masm dumps, same signature). Two deliberate fidelity
-# points, verbatim from retail even where a clean-room design would differ:
-#   * the ADC carry is retail's `C = (SUM < A) || (SUM < B)` on the WRAPPED
-#     sum - which misses a true carry in the a=b=0xFFFFFFFF,c=1 edge. Bit
-#     identity with retail beats mathematical tidiness.
-#   * the range map is retail's biased modulo (delta = hi-lo+1 as uint32;
-#     delta==0 answers hi WITHOUT consuming a draw; otherwise one draw,
-#     `draw % delta + lo`, inclusive of BOTH bounds). The modulo bias is
-#     <= delta/2^32 - immaterial for script ranges like [1..3], and matching
-#     retail's mapping exactly matters more than uniformity.
-#
-# CROSS-PLATFORM BIT-IDENTITY: integer arithmetic only, every value masked
-# to 32 bits, all intermediates far below 2^63 - GDScript's int is 64-bit
-# signed on every platform, so no operation here can overflow or vary.
-# Deliberately NOT Godot's RandomNumberGenerator/randi(): their algorithm is
-# an engine implementation detail with no cross-version output guarantee.
-# This section IS the specification - it can be re-implemented identically
-# from this file alone (and was, in Python, to mint the pinned vectors).
-#
-# SEEDING is match configuration: _rules["logic_random_seed"] (absent means
-# 0), read at first draw. Rules are agreed match configuration on every peer
-# and a hashed static key, so a disagreeing seed diverges the state hash
-# immediately. Retail seeds the same way - InitGameLogicRandom(getSeed())
-# from the lobby-shared game seed (LANAPICallbacks.cpp:267,
-# SkirmishGameOptionsMenu.cpp:434); a lobby-varied seed is a follow-up that
-# only needs to set this rules key.
-#
-# STATE AND HASH INERTNESS: the six words ARE the entire stream state (the
-# draw count is not needed to continue the sequence). They live in
-# _logic_random_state, empty until the first draw (lazy seeding), hashed and
-# snapshotted empty-is-absent - a match that never draws contributes ZERO
-# bytes, so the frozen cross-platform pin stands untouched. setup() clears
-# the stream (match state); a peer adopting a mid-match snapshot receives
-# the words and continues the identical sequence.
-
-const _U32 := 0xFFFFFFFF
-
-## The six 32-bit words of the logic stream; [] until the first draw (the
-## empty-is-absent form). See the block comment above. setup() clears it.
-var _logic_random_state: Array = []
-
-## Process-local draw tally, DIAGNOSTIC only (like frame_conversions): an
-## adopting peer reports its own draws, not the minter's. Never hashed.
-var logic_random_draws: int = 0
-
+	_script_world_subsystem()._step_sequential_scripts()
 
 static func _logic_random_seed_words(seed_value: int) -> Array:
-	## Retail seedRandom() with the incremental constant additions telescoped:
-	## after step k the accumulator is exactly SEED + constant_k (mod 2^32).
-	var seed32 := seed_value & _U32
-	return [
-		(seed32 + 0xF22D0E56) & _U32,
-		(seed32 + 0x883126E9) & _U32,
-		(seed32 + 0xC624DD2F) & _U32,
-		(seed32 + 0x0702C49C) & _U32,
-		(seed32 + 0x9E353F7D) & _U32,
-		(seed32 + 0x6FDF3B64) & _U32,
-	]
-
+	return ScriptWorldSystemScript._logic_random_seed_words(seed_value)
 
 static func _logic_random_draw32(words: Array) -> int:
-	## One raw 32-bit draw, mutating `words` in place: retail randomValue() -
-	## five chained ADCs from words[5] down to words[0] (each ADC uses
-	## retail's carry rule on the wrapped sum), then the increment cascade
-	## that bubbles a +1 up from words[5], bumping the RETURN VALUE too when
-	## it reaches words[0].
-	var w0 := int(words[0])
-	var w1 := int(words[1])
-	var w2 := int(words[2])
-	var w3 := int(words[3])
-	var w4 := int(words[4])
-	var w5 := int(words[5])
-	var carry := 0
-	var ax := (w5 + w4 + carry) & _U32
-	carry = 1 if (ax < w5 or ax < w4) else 0
-	w4 = ax
-	var prev := ax
-	ax = (prev + w3 + carry) & _U32
-	carry = 1 if (ax < prev or ax < w3) else 0
-	w3 = ax
-	prev = ax
-	ax = (prev + w2 + carry) & _U32
-	carry = 1 if (ax < prev or ax < w2) else 0
-	w2 = ax
-	prev = ax
-	ax = (prev + w1 + carry) & _U32
-	carry = 1 if (ax < prev or ax < w1) else 0
-	w1 = ax
-	prev = ax
-	ax = (prev + w0 + carry) & _U32
-	w0 = ax
-	w5 = (w5 + 1) & _U32
-	if w5 == 0:
-		w4 = (w4 + 1) & _U32
-		if w4 == 0:
-			w3 = (w3 + 1) & _U32
-			if w3 == 0:
-				w2 = (w2 + 1) & _U32
-				if w2 == 0:
-					w1 = (w1 + 1) & _U32
-					if w1 == 0:
-						w0 = (w0 + 1) & _U32
-						ax = (ax + 1) & _U32
-	words[0] = w0
-	words[1] = w1
-	words[2] = w2
-	words[3] = w3
-	words[4] = w4
-	words[5] = w5
-	return ax
-
+	return ScriptWorldSystemScript._logic_random_draw32(words)
 
 func logic_random_int(low: int, high: int) -> int:
-	## Retail GetGameLogicRandomValue(lo, hi): inclusive of BOTH bounds.
-	## delta = hi - lo + 1 as uint32; delta == 0 (hi == lo - 1 mod 2^32)
-	## answers hi without consuming a draw; low == high consumes a draw and
-	## answers low (delta 1) - retail does both, and stream POSITION is
-	## contract, so neither shortcut may be "optimized". The unsigned draw is
-	## reinterpreted as int32 and the final sum wrapped to int32, matching
-	## retail's x86 Int arithmetic on the (unreachable-by-authored-scripts)
-	## degenerate ranges too.
-	if _logic_random_state.is_empty():
-		_logic_random_state = _logic_random_seed_words(int(_rules.get("logic_random_seed", 0)))
-	var delta := (high - low + 1) & _U32
-	if delta == 0:
-		return high
-	logic_random_draws += 1
-	var drawn := _logic_random_draw32(_logic_random_state) % delta
-	if drawn >= 0x80000000:
-		drawn -= 0x100000000
-	return ((drawn + low + 0x80000000) & _U32) - 0x80000000
-
+	return _script_world_subsystem().logic_random_int(low, high)
 
 func logic_random_real(low: float, high: float) -> float:
-	## Retail GetGameLogicRandomValueReal: unlike the integer helper this always
-	## consumes one logic draw, including a 0..1 roll tested against 100%.
-	if _logic_random_state.is_empty():
-		_logic_random_state = _logic_random_seed_words(int(_rules.get("logic_random_seed", 0)))
-	logic_random_draws += 1
-	var unit := float(_logic_random_draw32(_logic_random_state)) / 4294967295.0
-	return low + (high - low) * unit
-
-
-# --- Script-engine environment state (SageScriptEnv, SIM-owned) -------------
-#
-# The script interpreter's own mutable memory - counters, flags, timers,
-# per-script enable bits and its tick counter. This is the LARGEST instance of
-# the e56a0d4 defect class: FLAG/SET_FLAG/COUNTER/ENABLE_SCRIPT account for
-# 64.7% of all retail-AI call sites, every one a read or write of exactly this
-# state, mutated mid-match by script actions. Two peers whose counters diverge
-# run completely different AI while their sim hashes agree - unless the state
-# lives HERE, inside the snapshot/hash boundary.
-#
-# Keyed by TEAM (the script player's), like script_unit_references: retail
-# runs each AI player's script libraries in that player's own environment
-# (SageScriptEnv's own doc: "Counter and flag namespaces are global across all
-# loaded scripts, which matches the retail per-player script environment").
-#
-# HOW THE ENV REACHES IT: attach_script_env(env, team) hands the env this
-# Dictionary BY REFERENCE (see SageScriptEnv.attach_state_store); the env then
-# reads and writes script_env_state[team] directly. No object reference in
-# either direction, so no RefCounted cycle, and the env keeps working with no
-# sim at all (its standalone backing) - tests and the bare executor construct
-# it that way. BECAUSE the reference is shared, setup() and restore() must
-# mutate this dictionary IN PLACE (clear()/merge()), never rebind the
-# variable, or every attached env would silently keep writing to an orphan.
-#
-# WHAT EACH FIELD IS, decided deliberately:
-#   * counters/flags/timers/script_enabled - STATE (script actions write them,
-#     later conditions read them; the retail save persists the script engine).
-#   * "tick" - the interpreter's tick counter, STATE. It anchors every timer
-#     (a timer is {"remaining" ticks, decremented once per env.advance()}) and
-#     phases interval-gated scripts (tick % interval). It is deliberately NOT
-#     aliased to the sim's own tick_index: the executor<->sim tick cadence is
-#     not production-wired yet, and aliasing would bake in an unenforced
-#     "sim.step() exactly once before executor.tick()" contract whose
-#     violation would silently double- or zero-advance timers. Both clocks are
-#     authoritative state in the same snapshot, so they cannot drift APART
-#     between peers - a mid-match adopter inherits the interpreter tick with
-#     the timers anchored to it and expires them on the same absolute tick as
-#     the peer that armed them.
-#   * env.ticks_per_second / retail_frames_per_second - CONFIGURATION (never
-#     mutated mid-match; every tick count they produce lands in hashed timer
-#     state, so a misconfigured peer diverges visibly on first use).
-#   * env.frame_conversions - DIAGNOSTIC, process-local (nothing in script
-#     logic reads it; hashing observability would let a non-outcome counter
-#     desync a match).
-#
-# CANONICAL FORM AND HASH INERTNESS: the raw store is the env's working
-# memory; _script_env_state_view() below is what gets hashed and serialized.
-# The view prunes zero counters and false flags (indistinguishable from
-# absent by every read: counter() defaults 0, flag() defaults false), keeps
-# every explicit script_enabled bit (absent means "authored default", so
-# false is NOT absent), keeps every timer (an unset timer answers
-# timer_expired false; a set one answers from "remaining"), drops tick 0,
-# empty collections, and empty team entries, and sorts every level - so an
-# untouched match contributes ZERO bytes (the frozen pin stands), and state
-# that returns to pristine values returns to the pristine hash EXACTLY.
-# Enforcing this at the boundary (one choke point) rather than in every
-# mutator also keeps direct dictionary writes - which tests use - canonical.
-# Pruning applies ONLY to fields the view understands: an unrecognised field
-# is carried verbatim and reported loudly, never silently dropped (see
-# _script_env_state_view).
-
-## team id -> {"tick": int, "counters": {}, "flags": {}, "timers": {},
-## "script_enabled": {}}. See the block comment above. setup() clears it;
-## hashed/serialized through _script_env_state_view (empty-is-absent).
-var script_env_state: Dictionary = {}
-
-## The team-entry fields (and timer-row fields) _script_env_state_view()
-## understands. Anything else in the store is a boundary violation: it is
-## reported loudly (once per field) and carried VERBATIM into the hash and
-## snapshot, so state added without teaching the view can never silently
-## escape the boundary (0dce37e review: it used to be invisible to the hash
-## and dropped on peer adoption).
-const SCRIPT_ENV_VIEW_FIELDS: Array[String] = [
-	"tick", "counters", "flags", "timers", "script_enabled",
-]
-const SCRIPT_ENV_TIMER_FIELDS: Array[String] = ["remaining", "running"]
-
-## Diagnostic count of unrecognised script-env fields the view has carried.
-## Process-local observability like script_wiring_faults, never hashed.
-var script_env_view_faults: int = 0
-## "team|path" keys already reported, so a persistent stray field is loud
-## once instead of once per hash. Cleared by setup() with the store.
-var _script_env_view_reported: Dictionary = {}
-
+	return _script_world_subsystem().logic_random_real(low, high)
 
 func attach_script_env(env: SageScriptEnv, team: int) -> bool:
-	## Route `env`'s state through script_env_state[team] (see above). Refuses
-	## loudly for a null env or an unrostered team; SageScriptEnv itself
-	## refuses an env that is already attached or already holds local state.
-	if env == null:
-		push_error("attach_script_env refused: null env")
-		return false
-	if not _script_owner_exists(team):
-		push_error("attach_script_env refused: team %d is not a script-capable owner" % team)
-		return false
-	# This sim is the store's lifetime witness: if it is freed while the env
-	# lives on, the env's store becomes an orphan outside every hash and
-	# snapshot, and the env must refuse loudly instead of writing into it.
-	return env.attach_state_store(script_env_state, team, self)
-
+	return _script_world_subsystem().attach_script_env(env, team)
 
 func _script_env_state_view() -> Dictionary:
-	## Canonical, pruned, sorted copy of script_env_state for state_hash() and
-	## snapshot() - the boundary choke point described in the block comment.
-	##
-	## FAIL LOUD, NEVER PRUNE THE UNKNOWN: pruning applies only to the fields
-	## this view UNDERSTANDS (SCRIPT_ENV_VIEW_FIELDS / the timer-row pair). A
-	## field it does not recognise is carried VERBATIM into the view - so it
-	## reaches the hash, the snapshot and every adopting peer - and reported
-	## loudly once (_report_script_env_view_fault). The 0dce37e review proved
-	## the previous whitelist silently dropped such a field from both the hash
-	## and the snapshot: a collection added to the env without updating this
-	## view would have been invisible to the desync barrier and lost on peer
-	## adoption, the exact silent-fallback class e56a0d4 closed.
-	var view := {}
-	var team_keys := script_env_state.keys()
-	team_keys.sort()
-	for team_key in team_keys:
-		var entry: Dictionary = script_env_state[team_key]
-		var entry_view := {}
-		var tick := int(entry.get("tick", 0))
-		if tick != 0:
-			entry_view["tick"] = tick
-		var counters: Dictionary = entry.get("counters", {})
-		var counters_view := {}
-		for name in _sorted_dictionary_keys(counters):
-			var count := int(counters[name])
-			if count != 0:
-				counters_view[name] = count
-		if not counters_view.is_empty():
-			entry_view["counters"] = counters_view
-		var flags: Dictionary = entry.get("flags", {})
-		var flags_view := {}
-		for name in _sorted_dictionary_keys(flags):
-			if bool(flags[name]):
-				flags_view[name] = true
-		if not flags_view.is_empty():
-			entry_view["flags"] = flags_view
-		var timers: Dictionary = entry.get("timers", {})
-		var timers_view := {}
-		for name in _sorted_dictionary_keys(timers):
-			var timer: Dictionary = timers[name]
-			var timer_view := {
-				"remaining": float(timer.get("remaining", 0.0)),
-				"running": bool(timer.get("running", false)),
-			}
-			for field in _sorted_dictionary_keys(timer):
-				if SCRIPT_ENV_TIMER_FIELDS.has(field):
-					continue
-				_report_script_env_view_fault(
-					team_key, "timers/%s/%s" % [str(name), str(field)]
-				)
-				timer_view[field] = timer[field]
-			timers_view[name] = timer_view
-		if not timers_view.is_empty():
-			entry_view["timers"] = timers_view
-		var enabled: Dictionary = entry.get("script_enabled", {})
-		var enabled_view := {}
-		for name in _sorted_dictionary_keys(enabled):
-			enabled_view[name] = bool(enabled[name])
-		if not enabled_view.is_empty():
-			entry_view["script_enabled"] = enabled_view
-		for field in _sorted_dictionary_keys(entry):
-			if SCRIPT_ENV_VIEW_FIELDS.has(field):
-				continue
-			_report_script_env_view_fault(team_key, str(field))
-			entry_view[field] = entry[field]
-		if not entry_view.is_empty():
-			view[team_key] = entry_view
-	return view
-
+	return _script_world_subsystem()._script_env_state_view()
 
 func _report_script_env_view_fault(team_key: Variant, path: String) -> void:
-	## Loud once per (team, field), like SageScriptEnv._report_stale: the first
-	## sighting is the defect report; one per hash call would bury the log.
-	var report_key := "%s|%s" % [str(team_key), path]
-	if _script_env_view_reported.has(report_key):
-		return
-	_script_env_view_reported[report_key] = true
-	script_env_view_faults += 1
-	push_error(
-		(
-			"script env state: team %s carries unrecognised field '%s'; "
-			+ "_script_env_state_view does not understand it, so it is carried "
-			+ "VERBATIM into the hash and snapshot rather than silently dropped - "
-			+ "teach the view (SCRIPT_ENV_VIEW_FIELDS) about it"
-		) % [str(team_key), path]
-	)
-
+	_script_world_subsystem()._report_script_env_view_fault(team_key, path)
 
 func _sorted_dictionary_keys(source: Dictionary) -> Array:
-	var keys := source.keys()
-	keys.sort()
-	return keys
-
-
-# --- Script executors wired into the match loop (the production seam) -------
-#
-# THE SEAM. Registered SageScriptExecutors are stepped by tick() itself -
-# _step_script_executors() below - NOT by the vertical slice's frame loop or
-# the lockstep session. The sim is the only object every driving path (single
-# player _process, lockstep advance_if_ready, control-server save/load, every
-# test runner) already funnels through, so putting the step inside tick()
-# makes the cadence contract STRUCTURAL: no caller can double-step or skip
-# the script engine without also double-stepping or skipping the simulation.
-#
-# THE TICK-ORDERING CONTRACT, exact and enforced:
-#
-#   Each registered executor ticks EXACTLY ONCE per gameplay-advancing sim
-#   tick, in ascending team order, after that tick's commands are applied
-#   and before any gameplay subsystem (economy, production, AI controllers,
-#   entity stepping) runs. Ticks in which gameplay is frozen (clock paused,
-#   match decided) step NO scripts.
-#
-# "After commands, before gameplay" means a script evaluating on tick N sees
-# the world exactly as tick N-1 left it plus tick N's player commands, and
-# every mutation it makes is visible to all of tick N's gameplay - the same
-# slot the SAGE script engine occupies at the top of the logic frame.
-# 87cf636 deliberately refused to alias the env clock to the sim clock
-# because this contract was unenforced then; it is enforced now, two ways:
-#
-#   * STRUCTURALLY: the only production call site of executor.tick() is
-#     inside sim.tick(), behind the same pause/winner gates as gameplay.
-#   * MECHANICALLY: the sim tracks, per executor, the interpreter-tick value
-#     it last left that executor's env at (seeded from the env's hashed
-#     clock at registration, so an adopting peer derives the minter's
-#     value). Every step checks the env clock against that expectation
-#     BEFORE ticking (catches an out-of-band executor.tick() by any other
-#     caller) and re-checks AFTER (catches an executor whose tick advanced
-#     the clock by anything but 1). NOTE the expectation is a tracked value,
-#     not a constant offset from tick_index: decided-match and lockstep-
-#     paused ticks advance the sim clock while deliberately stepping no
-#     scripts, so the two clocks legitimately drift APART across frozen
-#     ticks - what must never happen is the ENV clock moving except under
-#     this function. A violation quarantines the executor loudly -
-#     push_error naming team, expected and actual, script_wiring_faults
-#     incremented, no further steps - rather than silently re-syncing,
-#     because by then the hashed env tick has already diverged from every
-#     correct peer and hiding it would be a silent desync. Both clocks ride
-#     the snapshot, so the hash barrier catches whatever the quarantine
-#     reports.
-#
-# WIRING, NOT STATE. The registration table is process-local plumbing like
-# frame_conversions: script BODIES are match configuration (identical bytes
-# on every peer, from the content pack), and everything the scripts DO lands
-# in script_env_state / the sim's own hashed rows. Registrations are held by
-# WEAKREF - the match owner (vertical slice, test runner) keeps the executor
-# alive - so sim -> executor -> world -> sim never forms a RefCounted cycle.
-# A registration whose executor was freed is reported loudly and dropped,
-# never skipped silently.
-#
-# INERT BY DEFAULT. With no registered executor _step_script_executors()
-# returns before touching anything, no env is attached, and no script state
-# key exists - a scriptless match is bit-identical to one built before this
-# seam existed, which the frozen b177804c pin proves on every run.
-
-## team id -> WeakRef of the SageScriptExecutor running that team's scripts.
-var _script_executors: Dictionary = {}
-## team id -> the env interpreter tick _step_script_executors last left that
-## executor at. Seeded from the env's hashed clock at registration and rebased
-## by setup()/restore() from the same hashed values every peer holds, so the
-## expectation is derived, deterministic, and identical on every peer.
-var _script_executor_expected_ticks: Dictionary = {}
-## team id -> true once quarantined by a cadence fault. Cleared by setup().
-var _script_executor_faults: Dictionary = {}
-## Diagnostic count of wiring faults (freed executor, stale env, cadence
-## violation). Process-local observability, never hashed.
-var script_wiring_faults: int = 0
-
+	return _script_world_subsystem()._sorted_dictionary_keys(source)
 
 func register_script_executor(executor: SageScriptExecutor, team: int) -> bool:
-	## Wire `executor` to run team `team`'s scripts inside tick(). Refuses
-	## loudly rather than guessing: null executors, unrostered teams, a team
-	## that already has a live executor, and - the choke point that makes env
-	## lifetime detection airtight - an executor whose env is not attached to
-	## THIS sim's store UNDER THIS TEAM (attach_script_env(env, team) first).
-	## Both halves of that check are load-bearing: an env attached to another
-	## sim would run scripts against state this sim never hashes, and an env
-	## attached to this sim under a DIFFERENT team would run in team `team`'s
-	## step slot while writing the other team's state key - the 0dce37e review
-	## registered a team-0 env under team 1 (and a swapped PAIR) and both were
-	## accepted, silently inverting the ascending-team-order guarantee with
-	## zero faults.
-	if executor == null:
-		push_error("register_script_executor refused: null executor")
-		return false
-	if not _script_owner_exists(team):
-		push_error("register_script_executor refused: team %d is not a script-capable owner" % team)
-		return false
-	if _script_executors.has(team) and (_script_executors[team] as WeakRef).get_ref() != null:
-		push_error("register_script_executor refused: team %d already has a registered executor" % team)
-		return false
-	if executor.env == null or not executor.env.attached_to(self):
-		push_error(
-			"register_script_executor refused: the executor's env is not attached "
-			+ "to this sim's state store (call attach_script_env(executor.env, %d) first)" % team
-		)
-		return false
-	var env_key: Variant = executor.env.attachment_key()
-	if typeof(env_key) != TYPE_INT or int(env_key) != team:
-		push_error(
-			(
-				"register_script_executor refused: the executor's env is attached "
-				+ "under state-store key %s, not registration team %d - stepping it "
-				+ "in team %d's slot would run its scripts against another team's "
-				+ "hashed state (attach_script_env(executor.env, %d) first)"
-			) % [str(env_key), team, team, team]
-		)
-		return false
-	_script_executors[team] = weakref(executor)
-	_script_executor_expected_ticks[team] = executor.env.tick_index
-	_script_executor_faults.erase(team)
-	return true
-
+	return _script_world_subsystem().register_script_executor(executor, team)
 
 func unregister_script_executor(team: int) -> bool:
-	if not _script_executors.has(team):
-		return false
-	_script_executors.erase(team)
-	_script_executor_expected_ticks.erase(team)
-	_script_executor_faults.erase(team)
-	return true
-
+	return _script_world_subsystem().unregister_script_executor(team)
 
 func registered_script_executor_teams() -> Array:
-	return _sorted_dictionary_keys(_script_executors)
-
+	return _script_world_subsystem().registered_script_executor_teams()
 
 func _step_script_executors() -> void:
-	## The contract's enforcement point - see the block comment above.
-	if _script_executors.is_empty():
-		return
-	for team_key in _sorted_dictionary_keys(_script_executors):
-		var executor_ref: WeakRef = _script_executors[team_key]
-		var executor: SageScriptExecutor = executor_ref.get_ref()
-		if executor == null:
-			script_wiring_faults += 1
-			push_error(
-				"script wiring: the executor registered for team %s was freed while "
-				% str(team_key)
-				+ "registered; dropping the registration - its scripts stop HERE, loudly"
-			)
-			_script_executors.erase(team_key)
-			_script_executor_expected_ticks.erase(team_key)
-			_script_executor_faults.erase(team_key)
-			continue
-		if _script_executor_faults.get(team_key, false):
-			continue  # quarantined; the fault was reported once when it happened
-		if executor.env.attachment_stale():
-			_quarantine_script_executor(team_key, "its env's backing store owner was freed")
-			continue
-		var expected := int(_script_executor_expected_ticks[team_key])
-		var before := executor.env.tick_index
-		if before != expected:
-			_quarantine_script_executor(
-				team_key,
-				"cadence violation before the step: env tick %d, expected %d - something ticked this executor outside sim.tick()"
-				% [before, expected]
-			)
-			continue
-		executor.tick()
-		if executor.env.tick_index != before + 1:
-			_quarantine_script_executor(
-				team_key,
-				"cadence violation during the step: one executor tick moved the env clock %d -> %d (must be exactly +1)"
-				% [before, executor.env.tick_index]
-			)
-			continue
-		_script_executor_expected_ticks[team_key] = before + 1
-	# Sequential heads progress after ordinary script evaluation so the same
-	# logic frame can both queue (TEAM_EXECUTE_SEQUENTIAL_*) and advance.
-	_step_sequential_scripts()
-	# Retail clears Team::m_created after the script pass (updateState).
-	clear_team_created_edges()
-
+	_script_world_subsystem()._step_script_executors()
 
 func _quarantine_script_executor(team_key: Variant, reason: String) -> void:
-	script_wiring_faults += 1
-	_script_executor_faults[team_key] = true
-	push_error(
-		"script wiring: quarantining team %s's executor - %s. Its scripts no "
-		% [str(team_key), reason]
-		+ "longer run; the hashed interpreter clock already carries the divergence."
-	)
-
+	_script_world_subsystem()._quarantine_script_executor(team_key, reason)
 
 func _rebase_script_executor_offsets() -> void:
-	## The expected env clock is DERIVED wiring: the interpreter tick is
-	## hashed state, so whenever it moves out-of-band-but-legitimately
-	## (setup() zeroes it, restore() sets it from a snapshot) the expectation
-	## is recomputed from the same value every peer holds.
-	for team_key in _script_executors.keys():
-		var executor: SageScriptExecutor = (_script_executors[team_key] as WeakRef).get_ref()
-		if executor != null and not executor.env.attachment_stale():
-			_script_executor_expected_ticks[team_key] = executor.env.tick_index
-
-
-# --- Retail object-type identity (derived reads over existing hashed rows) --
-#
-# Counting and nearest-object queries by RETAIL object-type name. No new sim
-# state: every identity consulted here already lives inside the hash/snapshot
-# boundary - entity rows carry their compiled rule's provenance
-# (retail_rule_provenance.source_object_id, the document's retail objectId)
-# and their runtime ids (unit_type, a deterministic slug of the retail
-# container name); structure rows carry structure_kind, resolved through the
-# team manifest's producer_kind_registry (retail source object id -> kind,
-# part of the hashed rules/config) plus the expansion build rules; creep camps
-# carry their retail type_name verbatim. Matching is therefore EXACT string
-# identity over recorded facts, never a heuristic: retail names fold case
-# (SAGE INI object lookups are case-insensitive), runtime ids compare exactly.
-#
-# KNOWN LIMIT, recorded rather than papered over: rows whose identity was
-# never recorded cannot be matched. That is (a) the legacy tiny-pack's
-# hand-written synthetic ids where the id was not derived from the retail
-# name by the standard slug (the tower guard: "gondor-tower-guard" vs retail
-# GondorTowerShieldGuardHorde), and (b) creep GUARD battalions, whose ids are
-# synthetic creep-family keys. Pack-driven content - the shipping path -
-# records provenance on every unit rule, so its censuses are exact.
-
+	_script_world_subsystem()._rebase_script_executor_offsets()
 
 func count_objects_of_types(team: int, type_names: Array, include_dead: bool) -> int:
-	## Census of `team`'s objects (battalion rows AND structure rows) whose
-	## retail type matches any name in `type_names`. STRICTLY READ-ONLY: this
-	## backs the retail AI's highest-traffic condition
-	## (PLAYER_HAS_OBJECT_COMPARISON) and conditions are evaluated an
-	## unpredictable number of times.
-	##
-	## `include_dead` counts rows regardless of health - rows that still
-	## EXIST. Structure rows persist after razing; battalion rows persist
-	## until corpse expiry (CORPSE_LIFETIME_TICKS), after which retail has
-	## deleted the object too. Living-only is the default reading.
-	##
-	## The count is exact over the enumerable object census: every countable
-	## row's identity is recorded (see the block comment), so a name matching
-	## zero rows is a true zero about THIS match, not a guess - a type the
-	## simulation cannot field has no instances here by construction.
-	var probe := _object_type_probe(type_names)
-	var total := 0
-	for id in entity_ids():
-		var row: Dictionary = entities[id]
-		if int(row.get("team", -1)) != team:
-			continue
-		if not include_dead and int(row.get("health", 0)) <= 0:
-			continue
-		if _entity_matches_types(row, probe):
-			total += 1
-	for structure_id in structure_ids(team):
-		var row: Dictionary = structures[structure_id]
-		if not include_dead and int(row.get("health", 0)) <= 0:
-			continue
-		if _structure_matches_types(row, probe):
-			total += 1
-	return total
-
+	return _script_world_subsystem().count_objects_of_types(team, type_names, include_dead)
 
 func living_object_levels_of_types(team: int, type_names: Array) -> Array[int]:
-	## Current rank of every LIVING battalion or structure owned by `team`
-	## whose recorded retail identity matches `type_names`. This is a derived,
-	## read-only view over the same authoritative rows and exact matcher used
-	## by count_objects_of_types; it adds no veterancy cache or history.
-	var probe := _object_type_probe(type_names)
-	var levels: Array[int] = []
-	for id in entity_ids():
-		var row: Dictionary = entities[id]
-		if (
-			int(row.get("team", -1)) == team
-			and int(row.get("health", 0)) > 0
-			and _entity_matches_types(row, probe)
-		):
-			levels.append(int(row.get("level", 1)))
-	for structure_id in structure_ids(team):
-		var row: Dictionary = structures[structure_id]
-		if int(row.get("health", 0)) > 0 and _structure_matches_types(row, probe):
-			levels.append(int(row.get("level", 1)))
-	return levels
-
+	return _script_world_subsystem().living_object_levels_of_types(team, type_names)
 
 func nearest_object_of_types(origin: Vector2, type_names: Array, owner_teams: Array) -> Dictionary:
-	## Nearest LIVING object (battalion or structure) whose retail type
-	## matches any of `type_names`, owned by any team in `owner_teams` (empty
-	## = any owner, creep and neutral rows included). Read-only.
-	##
-	## DETERMINISM: candidates are visited in sorted id order and the winner
-	## is the minimum under an exact TOTAL order - strictly-less squared
-	## distance, ties to battalions before structures (the two id spaces may
-	## overlap numerically), then to the LOWEST id. Never is_equal_approx: a
-	## tolerance comparison is not transitive and cannot define a total order.
-	## Answers {"found": false} or {"found": true, "kind": "battalion"|
-	## "structure", "id": int, "position": Vector2}.
-	var probe := _object_type_probe(type_names)
-	var owner_filter := {}
-	for team_value in owner_teams:
-		owner_filter[int(team_value)] = true
-	var found := false
-	var best_id := 0
-	var best_rank := 0
-	var best_distance := 0.0
-	var best_position := Vector2.ZERO
-	for id in entity_ids():
-		var row: Dictionary = entities[id]
-		if int(row.get("health", 0)) <= 0:
-			continue
-		if not owner_filter.is_empty() and not owner_filter.has(int(row.get("team", -1))):
-			continue
-		if not _entity_matches_types(row, probe):
-			continue
-		var distance := origin.distance_squared_to(Vector2(row.get("position", Vector2.ZERO)))
-		var wins := not found or distance < best_distance
-		if not wins and distance == best_distance:
-			wins = 0 < best_rank or (best_rank == 0 and id < best_id)
-		if wins:
-			found = true
-			best_id = id
-			best_rank = 0
-			best_distance = distance
-			best_position = Vector2(row.get("position", Vector2.ZERO))
-	for structure_id in structure_ids():
-		var row: Dictionary = structures[structure_id]
-		if int(row.get("health", 0)) <= 0:
-			continue
-		if not owner_filter.is_empty() and not owner_filter.has(int(row.get("team", -1))):
-			continue
-		if not _structure_matches_types(row, probe):
-			continue
-		var distance := origin.distance_squared_to(Vector2(row.get("position", Vector2.ZERO)))
-		var wins := not found or distance < best_distance
-		if not wins and distance == best_distance:
-			wins = 1 < best_rank or (best_rank == 1 and structure_id < best_id)
-		if wins:
-			found = true
-			best_id = structure_id
-			best_rank = 1
-			best_distance = distance
-			best_position = Vector2(row.get("position", Vector2.ZERO))
-	if not found:
-		return {"found": false}
-	return {
-		"found": true,
-		"kind": "battalion" if best_rank == 0 else "structure",
-		"id": best_id,
-		"position": best_position,
-	}
-
+	return _script_world_subsystem().nearest_object_of_types(origin, type_names, owner_teams)
 
 func fieldable_object_type(name: String) -> bool:
-	## Whether THIS simulation could ever field an object of the retail type
-	## `name` - derived from match configuration only (unit rules, per-team
-	## manifests, expansion rules, creep families), so it is identical on
-	## every peer and never moves with match state. Callers use it to
-	## distinguish "zero of a type this match can express" (a truthful no-op)
-	## from "a type outside this simulation's model entirely" (a refusal that
-	## keeps the modeling gap visible - the retail AI's tactical-marker moves
-	## land there). Order-independent: a pure any() over configuration sets.
-	if name == "":
-		return false
-	var folded := name.to_lower()
-	var runtime_id := PlayableUnitAdapter.runtime_object_id(name)
-	var unit_rules: Dictionary = _rules.get("unit_rules", {}) as Dictionary
-	for object_id_value in unit_rules.keys():
-		var rule: Dictionary = unit_rules[object_id_value] as Dictionary
-		var source := String((rule.get("provenance", {}) as Dictionary).get("source_object_id", ""))
-		if source != "" and source.to_lower() == folded:
-			return true
-		if String(object_id_value) == runtime_id or String(rule.get("horde_id", "")) == runtime_id:
-			return true
-	for team_value in _roster_team_ids():
-		var team := int(team_value)
-		var manifest := team_manifest_for(team)
-		var registry: Dictionary = _structure_source_registry(manifest)
-		for source_value in registry.keys():
-			if String(source_value).to_lower() == folded:
-				return true
-		for object_id_value in (manifest.get("structure_object_ids", {}) as Dictionary).values():
-			if String(object_id_value) == runtime_id:
-				return true
-		if unit_production_rules_for_team(team).has(runtime_id):
-			return true
-	for kind_value in _expansion_build_rules.keys():
-		var expansion_object_id := String((_expansion_build_rules[kind_value] as Dictionary).get("object_id", ""))
-		if expansion_object_id == runtime_id or expansion_object_id.to_lower() == folded:
-			return true
-	for registry_key in ["scenario_unit_runtimes", "scenario_structure_runtimes"]:
-		for object_id_value in (_rules.get(registry_key, {}) as Dictionary).keys():
-			if String(object_id_value).to_lower() == folded:
-				return true
-	return false
-
+	return _script_world_subsystem().fieldable_object_type(name)
 
 func _object_type_probe(type_names: Array) -> Dictionary:
-	## Per-query matching keys: case-folded retail names, their derived
-	## runtime ids, and a lazily filled per-team structure-kind cache.
-	var folded := {}
-	var runtime_ids := {}
-	for name_value in type_names:
-		var name := String(name_value)
-		if name == "":
-			continue
-		folded[name.to_lower()] = true
-		runtime_ids[PlayableUnitAdapter.runtime_object_id(name)] = true
-	return {"folded": folded, "runtime_ids": runtime_ids, "kinds_by_team": {}}
-
+	return _script_world_subsystem()._object_type_probe(type_names)
 
 func _entity_matches_types(row: Dictionary, probe: Dictionary) -> bool:
-	## A battalion row matches on its recorded provenance (the retail source
-	## object id, authoritative) or on its runtime container id (unit_type is
-	## the deterministic slug of the retail container name for every
-	## pack-driven rule). The MEMBER id (row.object_id) deliberately does not
-	## match: a row is ONE retail horde object, and counting the member name
-	## as the horde would answer 1 where retail counts 15 members - the exact
-	## granularity lie the class comment forbids.
-	var provenance: Dictionary = row.get("retail_rule_provenance", {}) as Dictionary
-	var source := String(provenance.get("source_object_id", ""))
-	if source != "" and (probe["folded"] as Dictionary).has(source.to_lower()):
-		return true
-	return (probe["runtime_ids"] as Dictionary).has(String(row.get("unit_type", "")))
-
+	return _script_world_subsystem()._entity_matches_types(row, probe)
 
 func _structure_matches_types(row: Dictionary, probe: Dictionary) -> bool:
-	## A structure row matches through its team's kind registry (retail source
-	## object id -> structure kind), the manifest/expansion runtime ids, or its
-	## descriptor-backed scenario source identity.
-	var scenario_type := String(row.get("scenario_source_object_id", row.get("source_object_id", "")))
-	if scenario_type != "" and (probe["folded"] as Dictionary).has(scenario_type.to_lower()):
-		return true
-	var team := int(row.get("team", -1))
-	var kinds_by_team: Dictionary = probe["kinds_by_team"]
-	if not kinds_by_team.has(team):
-		kinds_by_team[team] = _structure_kinds_matching_probe(team, probe)
-	return (kinds_by_team[team] as Dictionary).has(String(row.get("structure_kind", "")))
-
+	return _script_world_subsystem()._structure_matches_types(row, probe)
 
 func _structure_kinds_matching_probe(team: int, probe: Dictionary) -> Dictionary:
-	## The set of structure kinds (for `team`'s manifest) that the probe's
-	## names denote. Built as a SET, so source-dictionary iteration order
-	## cannot affect any answer.
-	var kinds := {}
-	var folded: Dictionary = probe["folded"]
-	var runtime_ids: Dictionary = probe["runtime_ids"]
-	var manifest := team_manifest_for(team)
-	var registry := _structure_source_registry(manifest)
-	for source_value in registry.keys():
-		if folded.has(String(source_value).to_lower()):
-			kinds[String(registry[source_value])] = true
-	for kind_value in (manifest.get("structure_object_ids", {}) as Dictionary).keys():
-		if runtime_ids.has(String((manifest.get("structure_object_ids", {}) as Dictionary)[kind_value])):
-			kinds[String(kind_value)] = true
-	for kind_value in _expansion_build_rules.keys():
-		# Expansion rules record either the runtime id (the vertical slice's
-		# doc-driven path) or a plain source-style name (synthetic fixtures);
-		# both compare exactly against their own key form.
-		var expansion_object_id := String((_expansion_build_rules[kind_value] as Dictionary).get("object_id", ""))
-		if runtime_ids.has(expansion_object_id) or folded.has(expansion_object_id.to_lower()):
-			kinds[String(kind_value)] = true
-	return kinds
-
+	return _script_world_subsystem()._structure_kinds_matching_probe(team, probe)
 
 func _structure_source_registry(manifest: Dictionary) -> Dictionary:
-	## retail structure source object id -> structure kind, from the team's
-	## manifest; the vertical slice's global registry is the fallback for the
-	## legacy manifest-free rules shape.
-	var registry: Variant = manifest.get("producer_kind_registry")
-	if typeof(registry) == TYPE_DICTIONARY and not (registry as Dictionary).is_empty():
-		return registry as Dictionary
-	return _rules.get("producer_kind_by_source_object", {}) as Dictionary
-
+	return _script_world_subsystem()._structure_source_registry(manifest)
 
 func trainable_unit_type_for(team: int, object_type: String) -> String:
 	## Resolve a retail object-type name (or an already-runtime unit id) to
@@ -9194,7 +7110,7 @@ func toggle_selection(id: int) -> bool:
 
 func _voice_event_identity(id: int) -> Dictionary:
 	# Voice-relevant events always carry the entity's own object id so the audio
-	# layer never guesses an entity→object mapping (roster composition is data).
+	# layer never guesses an entityâ†’object mapping (roster composition is data).
 	if not entities.has(id):
 		return {}
 	var row: Dictionary = entities[id]
@@ -9822,7 +7738,7 @@ func _step_battalion_separation() -> void:
 			if int(a.get("target_id", 0)) == int(b.get("id", 0)) or int(b.get("target_id", 0)) == int(a.get("id", 0)):
 				continue
 			var push := offset / distance * minf(BATTALION_SEPARATION_PUSH, (BATTALION_SEPARATION_RADIUS - distance) * 0.5)
-			# Only separate onto ground units can actually stand on — pushing a
+			# Only separate onto ground units can actually stand on â€” pushing a
 			# battalion into water/cliff cells strands it (the ford chokepoints
 			# are exactly where pile-ups happen).
 			var a_target := a_position - push
@@ -9966,8 +7882,8 @@ var _structure_module_contracts: Dictionary = {}
 ## (angmarfortress.ini:1282-1286 "Behavior = CastleUpgrade
 ## ModuleTag_PassOutAngmarStoneworkUpgrade / TriggeredBy =
 ## Upgrade_AngmarFortressIceWallsTrigger / Upgrade = Upgrade_AngmarFortressIceWalls
-## / WallUpgradeRadius = ..."). Every downstream module — AttributeModifierUpgrade,
-## SubObjectsUpgrade, WeaponSetUpgrade — is triggered by the REAL upgrade, so
+## / WallUpgradeRadius = ..."). Every downstream module â€” AttributeModifierUpgrade,
+## SubObjectsUpgrade, WeaponSetUpgrade â€” is triggered by the REAL upgrade, so
 ## without this hop a purchased fortress improvement does nothing at all.
 ##
 ## trigger upgrade id (folded) -> Array[{upgrade_id, wall_upgrade_radius,
@@ -11858,7 +9774,7 @@ func _step_banner_carriers() -> void:
 			row["banner_respawn_ticks_remaining"] = remaining - 1
 			if int(row["banner_respawn_ticks_remaining"]) > 0:
 				continue
-		# remaining hit 0 — attempt respawn if level still qualifies.
+		# remaining hit 0 â€” attempt respawn if level still qualifies.
 		_refresh_banner_carrier_state(row)
 
 
@@ -12015,7 +9931,7 @@ func debug_force_max_level(entity_ids: Array) -> int:
 
 func debug_restore_health(entity_ids: Array) -> int:
 	## Playtest aid: refill an entity and every living horde member. Dead
-	## members stay dead — resurrecting them would change horde size, which is
+	## members stay dead â€” resurrecting them would change horde size, which is
 	## a simulation fact rather than a convenience.
 	var healed := 0
 	for id_value in entity_ids:
@@ -12223,7 +10139,7 @@ func cast_ability(hero_id: int, ability_id: String, target_point: Vector2, team:
 	## Cast one converted hero ability, validating ownership, evidence,
 	## cooldown, and the authored level gate before applying the bound effect.
 	## `team` >= 0 is the issuing seat (the lockstep command path always passes
-	## it): a peer can only cast ITS OWN hero's abilities — fail-closed.
+	## it): a peer can only cast ITS OWN hero's abilities â€” fail-closed.
 	if not entities.has(hero_id):
 		return {"ok": false, "reason": "unknown-hero"}
 	var row: Dictionary = entities[hero_id]
@@ -12501,8 +10417,8 @@ func _validate_special_power_activation(row: Dictionary, contract: Dictionary, t
 	elif targeting == "point" and not flags.has("WATER_OK"):
 		# WATER_OK is PATHABLE_ONLY's complement and retail never authors the
 		# two together: it is the permission to land a point power on a water
-		# cell. RotWK authors it on 24 SpecialPowers — Drogoth's Incinerate and
-		# the spellbook powers dropped across rivers — so a point power that
+		# cell. RotWK authors it on 24 SpecialPowers â€” Drogoth's Incinerate and
+		# the spellbook powers dropped across rivers â€” so a point power that
 		# does NOT carry it refuses the same cell. The refusal only fires on a
 		# cell a map authority calls water; with no authority attached there is
 		# no water to refuse, and nothing is substituted for the answer.
@@ -13446,7 +11362,7 @@ func _apply_ability_terror(hero_row: Dictionary, ability_id: String, effect: Dic
 func _apply_fear_scatter(center: Vector2, row: Dictionary, strength: float) -> void:
 	## Fear displacement: throw the victim radially away from the terror
 	## source onto the nearest walkable spot (same deterministic fraction
-	## ladder as knockback) and drop its orders — but never the knockdown
+	## ladder as knockback) and drop its orders â€” but never the knockdown
 	## sprawl, so the battalion can flee/act again immediately.
 	var position := Vector2(row.get("position", Vector2.ZERO))
 	var distance := position.distance_to(center)
@@ -13621,7 +11537,7 @@ func _timed_modifier_active(row: Dictionary, kind: String) -> bool:
 
 
 func _ability_outgoing_multiplier(row: Dictionary) -> float:
-	## COVERAGE, DECIDED AND RECORDED 2026-08-04 (round 18) — do not "fix" this
+	## COVERAGE, DECIDED AND RECORDED 2026-08-04 (round 18) â€” do not "fix" this
 	## silently in either direction.
 	##
 	## This multiplier is consulted at exactly ONE site: the per-member melee/
@@ -13637,7 +11553,7 @@ func _ability_outgoing_multiplier(row: Dictionary) -> float:
 	##
 	## What retail means: attributemodifier.ini authors DAMAGE_MULT with the
 	## comment "Multiplicitive. Damage multiplied by this, will compound in
-	## multiple bonuses", i.e. the object's damage OUTPUT — all of it. So the
+	## multiple bonuses", i.e. the object's damage OUTPUT â€” all of it. So the
 	## correct model is the wide one, and this narrow model is a known gap.
 	## OpenSAGE is NOT an oracle here: its AttributeModifier.Apply
 	## (Logic/ModifierList.cs:39-52) implements only Production and Health and
@@ -13679,7 +11595,7 @@ func _recompute_leadership_auras() -> void:
 	## compiled leadership-aura rows to allied battalions inside the authored
 	## range (plus itself when AffectsSelf), keyed by the compiled BonusName.
 	## Same-named leaderships never stack (one key), different heroes' auras
-	## with different names do — the retail AttributeModifier stacking rule.
+	## with different names do â€” the retail AttributeModifier stacking rule.
 	## Sweep order is ascending entity id; grants expire one interval after
 	## the last refresh, so death/knockdown/leaving-radius drops them.
 	for id in entity_ids():
@@ -14103,7 +12019,7 @@ func _step_entity(id: int) -> void:
 		#
 		# MEASURED consequence of the simplification, in the live slice: a melee
 		# horde ordered onto the enemy fortress ended in state `attack` at d=0.24
-		# and then d=0.00 — standing ON the fortress centre — because a 0.305
+		# and then d=0.00 â€” standing ON the fortress centre â€” because a 0.305
 		# AttackRange against a 1.96-radius footprint is only satisfiable at the
 		# centre. Melee is supposed to stand at the wall and swing. Bracketed
 		# from both sides by _test_structure_surface_range in
@@ -14372,7 +12288,7 @@ func issue_construct(ids: Array[int], structure_kind: String, position: Vector2,
 
 # Approximate footprint radii in local units (world scale ~0.0265/source unit).
 # Placement is legal when the two footprints plus a small working margin do
-# not overlap — the previous flat 7.0-unit exclusion wasted most of the base.
+# not overlap â€” the previous flat 7.0-unit exclusion wasted most of the base.
 const STRUCTURE_PLACEMENT_RADII := {
 	"fortress": 4.0,
 	"stable": 2.6,
@@ -14627,7 +12543,7 @@ func _issue_construct_for_team(
 
 # --- Dev playtest cheats -----------------------------------------------------
 # Direct state mutation for the dev HUD (OPENBFME_DEV_HUD). Never routed
-# through the lockstep command codec — the presentation layer blocks these in
+# through the lockstep command codec â€” the presentation layer blocks these in
 # multiplayer, where a one-sided mutation would desync the peers.
 
 
@@ -14635,7 +12551,7 @@ func debug_finish_team_work(team: int) -> Dictionary:
 	## Fast-forwards every in-progress job the team owns: construction sites,
 	## production queues, structure/battalion upgrade queues, spellbook power
 	## cooldowns, and hero ability cooldowns. Jobs are only rescheduled to
-	## complete now — the REAL step paths still run, so every authored side
+	## complete now â€” the REAL step paths still run, so every authored side
 	## effect (pad seeding, events, upgrade effects) fires normally.
 	var constructions := 0
 	var jobs := 0
@@ -14814,8 +12730,8 @@ func _nearest_auto_target(row: Dictionary) -> Dictionary:
 		#   A HoldGround melee horde standing at a fortress wall clamps `limit`
 		#   to its own AttackRange (~0.305 sim units, see the HoldGround branch
 		#   above). The Men fortress footprint is 1.9604. Centre-to-centre, that
-		#   horde is ~2.0 units from the fortress centre — SIX TIMES its
-		#   acquisition limit — so it never acquired a building it was already
+		#   horde is ~2.0 units from the fortress centre â€” SIX TIMES its
+		#   acquisition limit â€” so it never acquired a building it was already
 		#   in weapon range of and could hit the instant it was ordered to.
 		#
 		#   The same subtraction also decides ties. `distance <= best_distance`
@@ -15067,7 +12983,7 @@ func _clear_member_attack_schedule(row: Dictionary) -> void:
 	_member_fire_ticks.erase(int(row.get("id", 0)))
 	# Leaving the firing engagement drops the PER_POSITION last-target so the
 	# next acquire (including the same unit after an idle) charges windup.
-	# Only touch the keys if they already exist — adding them on the pin
+	# Only touch the keys if they already exist â€” adding them on the pin
 	# harness (which never fires) would move the state hash.
 	if row.has("pre_attack_last_target_id"):
 		row["pre_attack_last_target_id"] = 0
@@ -15176,7 +13092,7 @@ func _apply_weapon_mode(row: Dictionary, mode: String) -> bool:
 ## conditions (PREATTACK_A, FIRING_B, ...). The retail corpus authors exactly
 ## three slots (playable_unit_compiler._WEAPON_SLOT_NAMES: PRIMARY, SECONDARY,
 ## TERTIARY), so the `_D` family has no source in this game's data and is never
-## produced here — see `weapon_condition_deferred_reasons`.
+## produced here â€” see `weapon_condition_deferred_reasons`.
 const WEAPON_SLOT_CONDITION_LETTERS := {
 	"primary": "A",
 	"secondary": "B",
@@ -15199,8 +13115,8 @@ const LIVE_WEAPON_SET_CONDITION_MODES := {
 
 ## Tick each member last RELEASED its weapon: entity id -> member index -> tick.
 ##
-## Everything else the weapon cycle needs is already authoritative —
-## `member_attack_start_ticks` / `member_attack_hit_ticks` bracket the windup —
+## Everything else the weapon cycle needs is already authoritative â€”
+## `member_attack_start_ticks` / `member_attack_hit_ticks` bracket the windup â€”
 ## but the release tick is destroyed the moment it is used: `_step_member_attacks`
 ## sets `member_attack_hit_ticks[i] = -1` on the firing tick, so afterwards
 ## "firing" and "idle" look identical on the row.
@@ -15224,7 +13140,7 @@ func member_weapon_condition_tokens(entity_id: int) -> Array:
 	## PREATTACK_A -> ATKF1 and FIRING_OR_RELOADING_A -> ATKF2 on the archer
 	## (gondorarcher.ini:236-288).
 	##
-	## Derived on demand from the authoritative combat schedule — nothing here is
+	## Derived on demand from the authoritative combat schedule â€” nothing here is
 	## stored on the entity row. A member with no resolvable weapon slot, or a
 	## battalion that is not attacking, yields the weapon-set conditions only;
 	## `weapon_condition_deferred_reasons` says why.
@@ -15441,7 +13357,7 @@ var _footprint_fallback_reported: Dictionary = {}
 
 
 func _structure_footprint_radius(structure_row: Dictionary) -> float:
-	## The structure's BOUNDING-CIRCLE radius in sim units — SAGE's
+	## The structure's BOUNDING-CIRCLE radius in sim units â€” SAGE's
 	## `FROM_BOUNDINGSPHERE_2D` radius, not the movement block radius.
 	##
 	## THE TWO RADII ARE DIFFERENT NUMBERS AND BOTH ARE CORRECT.
@@ -15451,7 +13367,7 @@ func _structure_footprint_radius(structure_row: Dictionary) -> float:
 	## `Geometry = BOX / GeometryMajorRadius = 64` plus four AdditionalGeometry
 	## plot pieces of radius 10 at GeometryOffset 64/-64
 	## (object/goodfaction/structures/men/fortress.ini:1254-1265), which the
-	## importer projects into a union `footprint.radius` of 74 source units —
+	## importer projects into a union `footprint.radius` of 74 source units â€”
 	## 1.9604 sim at the Fords of Isen II transform 0.02649232738129. Using the
 	## movement radius here would hand every weapon in the game 2.6 extra units of
 	## reach against a fortress.
@@ -15464,9 +13380,9 @@ func _structure_footprint_radius(structure_row: Dictionary) -> float:
 	## the map carries no source transform, so a fixture that never set one is
 	## never handed a 74-SIM-unit disc.
 	##
-	## MEMOISED PER STRUCTURE ID. This is on the per-tick attack path — the range
+	## MEMOISED PER STRUCTURE ID. This is on the per-tick attack path â€” the range
 	## gate calls it for every attacker against every structure target, every
-	## tick — and the resolution underneath it built a formatted string key on
+	## tick â€” and the resolution underneath it built a formatted string key on
 	## every call. The inputs (the row's authored value, its source object id,
 	## its kind, and the map transform) are all fixed for a structure's lifetime,
 	## so the result is cached against the integer structure id, which allocates
@@ -15512,13 +13428,13 @@ func _structure_footprint_radius(structure_row: Dictionary) -> float:
 ## 5.0 IS A FLOOR WITH A DERIVATION, not a smaller guess. The fallback must
 ## never exceed a structure's true footprint, or it hands out reach the geometry
 ## does not support; the greatest value that satisfies that for every structure
-## the packs ship is the SMALLEST authored radius, and that is 5.0 — the
+## the packs ship is the SMALLEST authored radius, and that is 5.0 â€” the
 ## fortress expansion pads (Dwarven/Isengard/Men/Mordor/Wild
 ## FortressExpansionPad{Corner,Side}, same census). Erring small degrades toward
 ## the pre-round-20 centre-to-centre behaviour, which is the safe direction.
 ##
 ## HOW OFTEN IT FIRES, measured rather than assumed: 6 of the 182 structure
-## documents in the current workspace selection carry no geometry — MenWallGate,
+## documents in the current workspace selection carry no geometry â€” MenWallGate,
 ## DwarvenCastleWallGate, Isengard/Mordor/Wild LumberMill. The stale
 ## bfme2-men-vslice supplemental has 22 more, all superseded by rotwk-men-vslice.
 const COMBAT_FALLBACK_STRUCTURE_SOURCE_RADIUS := 5.0
@@ -15529,7 +13445,7 @@ func _resolved_footprint_source_radius(source_object_id: String, structure_kind:
 	## is an exact Dictionary hit (see get_playable_structure_runtime), so a
 	## lowered memo key answered for a DIFFERENT string than the one the lookup
 	## would have used: two ids differing only in case shared one memo entry
-	## while resolving differently — one hitting the document, one missing it and
+	## while resolving differently â€” one hitting the document, one missing it and
 	## taking the fallback. Keying on the same string the lookup uses makes the
 	## memo incapable of disagreeing with the thing it memoises.
 	var key := "%s|%s" % [source_object_id, structure_kind]
@@ -15585,7 +13501,7 @@ func _target_footprint_radius(target_id: int, target_kind: String) -> float:
 	##   gate is horde-centre to horde-centre. SAGE's bounding-sphere test is
 	##   between two individual SOLDIER objects. Subtracting 2 x 8 source units
 	##   from a horde-centre distance applies a soldier-scale correction to a
-	##   horde-scale measurement — it would move every engagement 0.42 sim units
+	##   horde-scale measurement â€” it would move every engagement 0.42 sim units
 	##   earlier without matching anything retail does. `_step_member_attacks`
 	##   (this file) never range-tests a member at all; members exist in the
 	##   combat path only through `_member_world_position`, and only to assign
@@ -15605,7 +13521,7 @@ func _target_footprint_radius(target_id: int, target_kind: String) -> float:
 ## Hysteresis width added to a castle member's own block radius when deciding
 ## whether the walking line crosses it. The corridor is recomputed every tick
 ## from the unit's current position, so a zero-width test would let a member
-## flip to BLOCKING while the unit is still inside its disc — it would close on
+## flip to BLOCKING while the unit is still inside its disc â€” it would close on
 ## top of the unit rather than behind it.
 ##
 ## OWN CONSTANT, WITH ITS OWN DERIVATION. Round 18 wrote this as an alias of
@@ -15620,16 +13536,16 @@ func _target_footprint_radius(target_id: int, target_kind: String) -> float:
 ## from outside puts the furthest corner pad 2.398 off the walking line, and
 ## attacking an east corner pad from the east puts the two west pads 3.392 off
 ## it (recomputed to full precision this round: 3.391 and the corner spacing
-## 4.796 — see _test_castle_corridor_is_bounded). The margin must therefore
+## 4.796 â€” see _test_castle_corridor_is_bounded). The margin must therefore
 ## satisfy
 ##     2.398 - 2.8 < margin < 3.391 - 2.8   i.e.   (negative) < margin < 0.591
-## — the lower bound is already met by any non-negative value because 2.398 is
+## â€” the lower bound is already met by any non-negative value because 2.398 is
 ## inside the bare radius, so the binding constraint is the upper one. It must
 ## also exceed one tick of travel or the hysteresis buys nothing.
 ##
 ## ONE TICK OF TRAVEL, RECONCILED (round 21). This file carried two different
-## answers to that question — "~0.03" here and "0.55" at the transit budget in
-## _deflect_around_structures — and neither was right. 0.55 was the castle
+## answers to that question â€” "~0.03" here and "0.55" at the transit budget in
+## _deflect_around_structures â€” and neither was right. 0.55 was the castle
 ## fixture's mis-scaled step; 0.03 is a factor of ten under the real figure, and
 ## reads like a per-tick value derived from an already-per-tick speed. The
 ## measured answer, from every playable-unit document in the workspace selection
@@ -15669,21 +13585,21 @@ func _castle_footprint_pass_through(position: Vector2, attack_target_id: int, at
 	## sits on the fortress origin (offset_source 0,0) and the six expansion
 	## pads within 64 source units of it. At the Fords of Isen II transform
 	## (0.02649232738129) that is a citadel exactly on the fortress centre and
-	## pads 1.64-2.40 sim units out — measured live, every enemy castle piece in
+	## pads 1.64-2.40 sim units out â€” measured live, every enemy castle piece in
 	## workspace/scratch/opus24-probe1.out.log. Each piece carries the default
 	## 2.8 STRUCTURE_BLOCK_RADIUS, so exempting only the ordered target left the
 	## fortress ringed by a ~5.2-unit wall of its own sub-structures. Retail melee
 	## ranges are ~11.5 source units = 0.305 sim, and the MOVEMENT ring is 5.2, so
-	## no melee horde could ever reach a fortress or a pad — that gap is far wider
+	## no melee horde could ever reach a fortress or a pad â€” that gap is far wider
 	## than the 1.9604 footprint the range gate now subtracts (round 20), so the
 	## corridor is still required: they parked on the ring at distance 4.4-5.1 in state
 	## `run` and only ranged units ever landed a blow
-	## (workspace/scratch/opus09-live1.out.log:35,52 — 17,521 ticks to kill a
+	## (workspace/scratch/opus09-live1.out.log:35,52 â€” 17,521 ticks to kill a
 	## fortress, all of it archer damage).
 	##
 	## THE RULE: a member is passable only if the segment [unit -> target centre]
 	## comes within `member block radius + CASTLE_CORRIDOR_MARGIN` of that
-	## member's centre — i.e. the walking line actually crosses its footprint.
+	## member's centre â€” i.e. the walking line actually crosses its footprint.
 	## The target itself is always passable (that is the order). Everything
 	## outside the group deflects normally, and a battalion with no STRUCTURE
 	## attack target (every plain move order, friendly castles included) gets an
@@ -15837,8 +13753,8 @@ func _deflect_around_structures(
 	structure_id_list: Array[int] = []
 ) -> Vector2:
 	# Battalions slide around building footprints instead of clipping through
-	# them. The battalion's own attack target — and, when that target is part of
-	# a castle, the members of that castle the walking line actually crosses —
+	# them. The battalion's own attack target â€” and, when that target is part of
+	# a castle, the members of that castle the walking line actually crosses â€”
 	# is exempt so melee can close in. See _castle_footprint_pass_through.
 	#
 	# `travel_step` is the displacement this tick ALREADY applied to `position`
@@ -15848,7 +13764,7 @@ func _deflect_around_structures(
 	# `structure_id_list` used to let a caller hoist structure_ids() out of a
 	# multi-entity pass. The spatial-hash gather is a complete, cheaper
 	# substitute for that full list (a centre outside the gathered box cannot
-	# overlap any blocking disc), so a provided list is ignored — honouring
+	# overlap any blocking disc), so a provided list is ignored â€” honouring
 	# it would let the eviction hoist bypass the broad-phase.
 	var attack_target_id := int(row.get("target_id", 0))
 	var attack_target_kind := String(row.get("target_kind", "battalion"))
@@ -15865,15 +13781,15 @@ func _deflect_around_structures(
 	var ids: Array[int] = _structure_ids_near(position)
 	# TOTAL push bound. Round 18 clamped each structure's push to
 	# STRUCTURE_EVICTION_STEP separately, so N overlapping discs could compound
-	# into an N * step jump in one tick — and overlapping discs are the NORMAL
+	# into an N * step jump in one tick â€” and overlapping discs are the NORMAL
 	# case inside a castle, where the citadel sits exactly on the fortress centre
 	# and six pads sit 1.64-2.40 out with 2.8 radii. A unit on the fortress
 	# origin is inside four of them at once. The budget below is spent across all
 	# of them, so eviction is one step per tick however many footprints claim it.
 	#
 	# The budget bounds the OUTWARD (radial) component only. A tangential slide
-	# is not displacement the sim is inventing — it is the unit's own travel
-	# step redirected along the disc — and charging it to the eviction budget
+	# is not displacement the sim is inventing â€” it is the unit's own travel
+	# step redirected along the disc â€” and charging it to the eviction budget
 	# left a unit that walked in at full speed unable to recover its clearance in
 	# the same tick.
 	#
@@ -15891,8 +13807,8 @@ func _deflect_around_structures(
 	# there, fixed in the same round). The AUTHORED ceiling, censused across every
 	# playable-unit document in every pack in the workspace selection (159 rows
 	# with a resolved speed): the fastest unit in the game authors 115 source
-	# units/second — Rivendell Lancers, Haradrim Riders, Warg riders, Knights of
-	# Dol Amroth — which at 0.02649232738129 and TICK_SECONDS 0.1 is 0.3047 sim
+	# units/second â€” Rivendell Lancers, Haradrim Riders, Warg riders, Knights of
+	# Dol Amroth â€” which at 0.02649232738129 and TICK_SECONDS 0.1 is 0.3047 sim
 	# units per tick. The median is 55 source = 0.1457. NOT ONE authored base
 	# speed exceeds STRUCTURE_EVICTION_STEP (0.35).
 	#
@@ -15959,7 +13875,7 @@ func _deflect_around_structures(
 			# walkway ring (a fortress is 4.6 against an authored footprint of
 			# 1.9604) and a castle's pieces are authored INSIDE it, so leaving it
 			# up walled melee out of every fortress it was ordered onto. But
-			# opening it completely let the attacker walk to the target's CENTRE —
+			# opening it completely let the attacker walk to the target's CENTRE â€”
 			# measured d=0.24 then d=0.00 in the live slice
 			# (workspace/scratch/opus24-probe2.out.log).
 			#
@@ -15974,7 +13890,7 @@ func _deflect_around_structures(
 			# re-blocked. A pad or citadel the walking line happens to cross is
 			# not what the unit is trying to hit, and re-blocking those would put
 			# the fortress's own 1.96 disc between an attacker and a pad standing
-			# 1.64 from the fortress centre — unreachable from outside.
+			# 1.64 from the fortress centre â€” unreachable from outside.
 			if structure_id != attack_target_id or attack_target_kind != "structure":
 				continue
 			radius = minf(radius, _structure_footprint_radius(structure_row))
@@ -15987,8 +13903,8 @@ func _deflect_around_structures(
 			continue
 		var direction := offset / distance if distance > 0.001 else _eviction_fallback_direction(row)
 		# Bounded: keep walking out, one step per tick, instead of teleporting to
-		# the ring. Ordinary deflection never reaches the clamp — a unit moving at
-		# slice speeds penetrates far less than one step per tick — so it only
+		# the ring. Ordinary deflection never reaches the clamp â€” a unit moving at
+		# slice speeds penetrates far less than one step per tick â€” so it only
 		# bites on the eviction case it exists for.
 		var applied := minf(radius - distance, push_budget)
 		push_budget -= applied
@@ -16020,7 +13936,7 @@ func _tangential_slide_point(
 	## step, so every tick moves the unit forward by one step and shoves it back
 	## onto the same ring point. Measured on the seeded fixture: an attacker at
 	## (80, 200) ordered onto a fortress at (100, 200) with a barracks at
-	## (90, 200) parks at (87.2, 200.0) — exactly barracks + (-2.8, 0) — with its
+	## (90, 200) parks at (87.2, 200.0) â€” exactly barracks + (-2.8, 0) â€” with its
 	## route still length 1 after 600 ticks. _step_route's 3-tick stall escape
 	## never fires because the attack state re-assigns the route every tick,
 	## which resets route_stall_ticks before it can reach the threshold.
@@ -16033,8 +13949,8 @@ func _tangential_slide_point(
 	## DETERMINISTIC SIDE CHOICE. Which way round is decided by the sign of the
 	## 2-D cross product of the OBSTACLE OFFSET (centre -> unit) with the travel
 	## direction. Off-axis that sign is the side the unit is already drifting
-	## toward, so the slide never fights the approach. ON-AXIS — the deadlock
-	## case — the cross product is zero and a fixed fallback side takes over.
+	## toward, so the slide never fights the approach. ON-AXIS â€” the deadlock
+	## case â€” the cross product is zero and a fixed fallback side takes over.
 	##
 	## WHY A FIXED FALLBACK IS THE RIGHT ANSWER, stated correctly. An earlier
 	## version of this comment justified it as "any position-derived tie-break
@@ -16043,7 +13959,7 @@ func _tangential_slide_point(
 	## position-derived choice would replicate fine. The real reason is
 	## NUMERICAL: near the axis the cross product is a difference of two nearly
 	## equal products, so its SIGN is the least trustworthy bit in the whole
-	## computation — it is exactly the quantity that a fused multiply-add
+	## computation â€” it is exactly the quantity that a fused multiply-add
 	## contracts differently on different CPUs, and that ordinary rounding flips
 	## from tick to tick on a single CPU. A fixed side is stable under both.
 	##
@@ -16051,7 +13967,7 @@ func _tangential_slide_point(
 	## exact 0.0 left a band around the axis where |cross| is nonzero but its
 	## sign is FMA-dependent: two peers on different microarchitectures compute
 	## the same inputs, contract `x1*y2 - y1*x2` differently, and pick opposite
-	## sides — the unit walks round the disc clockwise on one peer and
+	## sides â€” the unit walks round the disc clockwise on one peer and
 	## counter-clockwise on the other, and the sim desyncs. The lockstep runners
 	## cannot catch this: both peers in those tests are the SAME binary on the
 	## SAME machine, so they always contract identically and always agree. The
@@ -16100,7 +14016,7 @@ func _step_structure_eviction() -> void:
 	## STRUCTURE_EVICTION_STEP per tick.
 	##
 	## It consults the SAME pass-through set as movement, so a battalion whose
-	## order still opens a corridor is not fought against while it is attacking —
+	## order still opens a corridor is not fought against while it is attacking â€”
 	## only once the order ends does the set empty and the walk-out begin.
 	##
 	## Deterministic: ascending entity id, fixed step, no wall clock, no RNG.
@@ -16120,7 +14036,7 @@ func _step_structure_eviction() -> void:
 		if bool(row.get("is_banner_carrier", false)):
 			# A BANNER CARRIER HAS NO POSITION OF ITS OWN. It is glued to its
 			# parent horde by _sync_banner_entity_transform, which runs in
-			# _step_banner_carriers — the pass IMMEDIATELY BEFORE this one, in
+			# _step_banner_carriers â€” the pass IMMEDIATELY BEFORE this one, in
 			# the same tick (see the tick order at _step_banner_carriers /
 			# _step_structure_eviction). Evicting it therefore fights a value
 			# that is not the eviction pass's to own: the nudge is overwritten
@@ -16129,7 +14045,7 @@ func _step_structure_eviction() -> void:
 			# for presentation.
 			#
 			# It is not hypothetical. A horde parked against its own castle wall
-			# — the ordinary defensive posture — puts its banner inside a
+			# â€” the ordinary defensive posture â€” puts its banner inside a
 			# structure footprint, so this pass nudged it EVERY TICK for as long
 			# as the horde stood there, and every one of those nudges was
 			# discarded by the following tick's glue.
@@ -16143,14 +14059,14 @@ func _step_structure_eviction() -> void:
 			# THE DOORWAY IS INSIDE THE FOOTPRINT, BY CONTRACT. QueueProductionExit
 			# creates a horde at production_origin + PRODUCTION_DOOR_INSET_RADIUS
 			# (0.9) along the exit direction and walks it out to
-			# PRODUCTION_EXIT_RADIUS (4.25) — see _step_production. A producer's
+			# PRODUCTION_EXIT_RADIUS (4.25) â€” see _step_production. A producer's
 			# block radius is 2.6-3.0, so the authored create point is 1.7-2.1
 			# units INSIDE its own disc and _step_production_exit owns the unit's
 			# position for the whole animation (it lerps origin -> destination
 			# every tick and leaves route empty with state "run"). Round 18's pass
 			# therefore fought the doorway on every single unit the game produced.
 			#
-			# MEASURED, and measured PRECISELY — the effect is real but bounded,
+			# MEASURED, and measured PRECISELY â€” the effect is real but bounded,
 			# and overstating it would be as wrong as missing it. In the
 			# retail_state_pin fixture the produced horde's AUTHORITATIVE
 			# end-of-tick position is exactly STRUCTURE_EVICTION_STEP (0.35) off
@@ -16162,7 +14078,7 @@ func _step_structure_eviction() -> void:
 			#   t=217  penetration 0.5030 vs 0.1530   (0.3500 apart)
 			#   t=220  identical, and identical at every later sample
 			# It does NOT accumulate, because the next tick's lerp overwrites the
-			# nudge — which is exactly why neither pinned hash moves. What it does
+			# nudge â€” which is exactly why neither pinned hash moves. What it does
 			# corrupt is the end-of-tick state everything else reads inside that
 			# window: the spatial index, presentation, and any query against the
 			# authoritative position while a unit is emerging.
@@ -16174,16 +14090,16 @@ func _step_structure_eviction() -> void:
 			# A unit that is attacking something it can actually hit must not be
 			# shoved out of its own weapon range. The castle corridor only exempts
 			# STRUCTURE targets in the target's own castle group, so a melee horde
-			# fighting an enemy BATTALION that happens to stand on a footprint —
+			# fighting an enemy BATTALION that happens to stand on a footprint â€”
 			# defenders backed against their own barracks, a fight spilling onto a
-			# wall — was evicted out of contact and had to walk back in, every tick.
+			# wall â€” was evicted out of contact and had to walk back in, every tick.
 			continue
 		var position := Vector2(row.get("position", Vector2.ZERO))
 		# An IDLE battalion is not executing its order, whatever `target_id` still
 		# says, so it gets no corridor. Measured need: the live slice parks a unit
 		# with attack_range 0.0 in state `idle` at d=0.00 on the enemy fortress
 		# CENTRE while still holding it as a target
-		# (workspace/scratch/opus25-probe1.out.log:`3:idle:t2001:d0.00`) — the
+		# (workspace/scratch/opus25-probe1.out.log:`3:idle:t2001:d0.00`) â€” the
 		# weapon-mode gate returns "unsupported-close", drops the route and idles,
 		# but never clears the target, so a permanent corridor kept a unit clipped
 		# inside the wall for the whole match. Gating on state, not on target,
@@ -16203,7 +14119,7 @@ func _step_structure_eviction() -> void:
 
 func _is_engaged_in_range(row: Dictionary) -> bool:
 	## True when this battalion is in the attack state against a LIVING target it
-	## is currently within weapon range of — of ANY kind, battalion or structure.
+	## is currently within weapon range of â€” of ANY kind, battalion or structure.
 	## It must use EXACTLY the test _step_attacks uses to enter the state, or a
 	## unit that is legitimately engaged gets evicted out of its own weapon range
 	## every tick: surface-to-surface against a structure (the target's authored
@@ -16585,7 +14501,7 @@ func _active_armor_table(target: Dictionary) -> Dictionary:
 
 func _flanked_penalty_multiplier(target: Dictionary) -> float:
 	## armor.ini FlankedPenalty is extra incoming damage when hit from behind
-	## the facing hemisphere. SoldierArmor authors 50% → 1.5x. No field → 1.0.
+	## the facing hemisphere. SoldierArmor authors 50% â†’ 1.5x. No field â†’ 1.0.
 	var table := _active_armor_table(target)
 	var penalty := float(table.get("flanked_penalty", 0.0))
 	if not is_finite(penalty) or penalty <= 0.0:
@@ -16595,7 +14511,7 @@ func _flanked_penalty_multiplier(target: Dictionary) -> float:
 
 func _flanking_outgoing_multiplier(attacker: Dictionary, target: Dictionary) -> float:
 	## weapon.ini FlankingBonus is extra outgoing damage when the hit is
-	## behind the target facing. GondorSword 50% → 1.5x. Absent → 1.0.
+	## behind the target facing. GondorSword 50% â†’ 1.5x. Absent â†’ 1.0.
 	var bonus := float(attacker.get("flanking_bonus", 0.0))
 	if bonus <= 0.0 or not is_finite(bonus):
 		return 1.0
@@ -16755,7 +14671,7 @@ func _apply_playable_unit_death_policy(
 	)
 	# KeepObjectDie module contract: destroyOnDeath=false keeps a readable
 	# corpse when the death type matches the attached policy (excluded types
-	# do not keep — TOPPLED under ALL -TOPPLED still erases if DestroyDie says so).
+	# do not keep â€” TOPPLED under ALL -TOPPLED still erases if DestroyDie says so).
 	if _keep_object_die_matches(row, death_type):
 		destroy_object = false
 	if int(row.get("health", 0)) <= 0:
@@ -17560,11 +15476,11 @@ func _seed_scenario_map_placements() -> void:
 
 func _castle_fixture_team(owner: String) -> int:
 	## Map a fixture's authored originalOwner ("Player_N/teamPlayer_N",
-	## "PlyrCivilian/teamPlyrCivilian", …) onto a sim team. A player owner maps
+	## "PlyrCivilian/teamPlyrCivilian", â€¦) onto a sim team. A player owner maps
 	## to the roster team seated at that start index (team_start_indices:
 	## team -> zero-based start index); PlyrCreeps maps to the creep team;
-	## everything else — civilian/neutral owners, retail's malformed "/team",
-	## and players with no roster seat on this match — maps to the
+	## everything else â€” civilian/neutral owners, retail's malformed "/team",
+	## and players with no roster seat on this match â€” maps to the
 	## non-combatant civilian team, never silently to team 0.
 	if owner.begins_with("PlyrCreeps"):
 		return CREEP_TEAM
@@ -17714,7 +15630,7 @@ func _seed_castle_fixtures() -> void:
 	## Lane L2b: map-authored castle structures become live sim structures,
 	## following the creep-lair seeding precedent (deterministic source_index
 	## order, authored health/owner, recorded provisional armor). Only the
-	## sim-seeded subset arrives here — creep lairs, INERT scenery and
+	## sim-seeded subset arrives here â€” creep lairs, INERT scenery and
 	## capturable flags were deferred upstream with named reasons.
 	if _castle_fixture_placements.is_empty():
 		return
@@ -18022,11 +15938,11 @@ const CASTLE_AI_KIND_LEVEL_REFUSALS := [
 ## authors the whole base outright. `SkirmishBuildList Gondor`
 ## (workspace/retail-extract/data/ini/default/aidata.ini:145-202) places eight
 ## structures, and the farthest from that list's centroid (997.51, 1132.77) is
-## GondorWorkshop at X:821.34 Y:1365.61 — 291.98 source units away. That is the
+## GondorWorkshop at X:821.34 Y:1365.61 â€” 291.98 source units away. That is the
 ## measured retail base footprint radius, and it is what bounds ONE tick of the
 ## generic navigation-cell fallback below: a tick may examine at most a square
 ## of that radius in cells. The scan resumes from the ring it stopped on, so
-## total reach is unchanged — only the per-tick cost is capped.
+## total reach is unchanged â€” only the per-tick cost is capped.
 const CASTLE_AI_RETAIL_BASE_EXTENT_SOURCE := 291.9753598042349
 
 
@@ -18112,7 +16028,7 @@ func _team_defeated(team: int) -> bool:
 	## living battalions (non-base). Exactly the old per-team fortress/liveness
 	## test: a team that never held a fortress (harness sims with none seeded) is
 	## NOT counted as defeated in base-loop mode, so those sims never spuriously
-	## resolve — the pinned battle, whose fortresses persist at 0 health when
+	## resolve â€” the pinned battle, whose fortresses persist at 0 health when
 	## razed, still resolves the instant one falls.
 	if base_loop_enabled:
 		var fortress := fortress_id(team)
@@ -18241,7 +16157,7 @@ func _resolve_victory() -> void:
 
 
 ## PRESENTATION-ONLY: the LOCAL machine's seat for selection/control-group
-## gating. Never part of the authoritative state or the lockstep hash — each
+## gating. Never part of the authoritative state or the lockstep hash â€” each
 ## peer's selection is local. Defaults to PLAYER_TEAM (solo and the host seat);
 ## the slice sets the lockstep guest's real seat (team 1) so the guest selects
 ## and controls its OWN army instead of a hardcoded team 0.
@@ -18515,8 +16431,8 @@ func state_snapshot() -> Dictionary:
 				int(team_history[identity_value]),
 			])
 	# Roster-ordered per-team arrays (N-team foundation). For the default {0,1}
-	# roster these serialize byte-identically to the prior 2-element literals —
-	# same order, same values — so the pinned battle signature does not move.
+	# roster these serialize byte-identically to the prior 2-element literals â€”
+	# same order, same values â€” so the pinned battle signature does not move.
 	var resources_row: Array = []
 	var command_points_row: Array = []
 	var command_point_override_rows: Array = []
