@@ -216,7 +216,7 @@ def _finish(image_id: str, fields: dict[str, str]) -> MappedImageRecord:
 
 
 def _parse_mapped_images(
-    source: bytes, *, reject_duplicate_ids: bool
+    source: bytes, *, reject_duplicate_ids: bool, sort_records: bool = True
 ) -> tuple[MappedImageRecord, ...]:
     records: list[MappedImageRecord] = []
     seen: set[str] = set()
@@ -273,7 +273,8 @@ def _parse_mapped_images(
 
     if current_id is not None:
         raise ValueError(f"unterminated MappedImage block: {current_id}")
-    records.sort(key=lambda record: (record.id.casefold(), record.id))
+    if sort_records:
+        records.sort(key=lambda record: (record.id.casefold(), record.id))
     return tuple(records)
 
 
@@ -324,7 +325,11 @@ def resolve_mapped_images_partial(
         # A retail document may contain an unrelated duplicate definition.  It
         # is not part of this exact closure, but duplicates of a requested ID
         # remain visible below and therefore fail as ambiguous.
-        for record in _parse_mapped_images(source, reject_duplicate_ids=False):
+        # sort_records=False keeps document parse order so the retail
+        # last-definition-wins rule below is exact.
+        for record in _parse_mapped_images(
+            source, reject_duplicate_ids=False, sort_records=False
+        ):
             key = record.id.casefold()
             if key in requested_keys:
                 candidates.setdefault(key, []).append(record)
@@ -336,10 +341,17 @@ def resolve_mapped_images_partial(
         matches = candidates.get(key, [])
         if not matches:
             missing.append(requested_id)
-        elif len(matches) != 1:
-            ambiguous.append(requested_id)
         else:
-            resolved.append(matches[0])
+            # Duplicate definitions are NOT ambiguous in retail: the engine's
+            # INI::parseMappedImageDefinition looks the name up and, when it
+            # already exists, re-runs initFromINI on the SAME image object —
+            # the last-parsed definition wins (decomp oracle:
+            # Code/GameEngine/Source/Common/INI/INIMappedImage.cpp; retail
+            # authors this on e.g. BPCastleWall, twice in
+            # buildingradialbuttons.ini with different textures). `matches`
+            # is in parse order (stable sort on equal keys + source order),
+            # so the retail winner is the final element.
+            resolved.append(matches[-1])
     resolved.sort(key=lambda record: (record.id.casefold(), record.id))
     missing.sort(key=lambda item: (item.casefold(), item))
     ambiguous.sort(key=lambda item: (item.casefold(), item))

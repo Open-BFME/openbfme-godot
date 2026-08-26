@@ -1060,7 +1060,10 @@ def _animation_state_row_has_closed_runtime(fields: Mapping[str, object]) -> boo
 
 
 def _compile_animation_entry(
-    block: SageBlock, target_id: str
+    block: SageBlock,
+    target_id: str,
+    *,
+    numeric_defines: Mapping[str, int | float] | None = None,
 ) -> tuple[dict[str, object] | None, list[dict[str, object]]]:
     amap = _assignment_map(block)
     deferred: list[dict[str, object]] = []
@@ -1109,18 +1112,34 @@ def _compile_animation_entry(
                 f"{target_id} AnimationState AnimationSpeedFactorRange "
                 f"must be two numbers: {speed.value!r}"
             )
-        try:
-            entry["speedFactorRange"] = [float(tokens[0]), float(tokens[1])]
-        except ValueError as exc:
-            raise ModuleContractError(
-                f"{target_id} AnimationState AnimationSpeedFactorRange "
-                f"must be two numbers: {speed.value!r}"
-            ) from exc
+        resolved: list[float] = []
+        for token in tokens:
+            try:
+                resolved.append(float(token))
+                continue
+            except ValueError:
+                pass
+            # Retail authors GameData #DEFINE tokens here (e.g.
+            # GONDOR_WALLTREBUCHET_BUILD_SPEED on GondorCastleUpgrade).
+            define_value = (
+                None if numeric_defines is None
+                else numeric_defines.get(str(token).casefold())
+            )
+            if define_value is None:
+                raise ModuleContractError(
+                    f"{target_id} AnimationState AnimationSpeedFactorRange "
+                    f"must be two numbers: {speed.value!r}"
+                )
+            resolved.append(float(define_value))
+        entry["speedFactorRange"] = resolved
     return entry, deferred
 
 
 def compile_animation_states(
-    lineage: Sequence[SageObject], target_id: str
+    lineage: Sequence[SageObject],
+    target_id: str,
+    *,
+    numeric_defines: Mapping[str, int | float] | None = None,
 ) -> list[dict[str, object]]:
     """Typed AnimationState / IdleAnimationState / TransitionState rows.
 
@@ -1147,7 +1166,9 @@ def compile_animation_states(
             flags = _token_list_field(amap.get("flags"))
             if flags is not None:
                 fields["Flags"] = flags
-            direct, extra = _compile_animation_entry(block, target_id)
+            direct, extra = _compile_animation_entry(
+                block, target_id, numeric_defines=numeric_defines
+            )
             deferred.extend(extra)
             if direct is not None:
                 fields["animations"].append(direct)
@@ -1163,7 +1184,9 @@ def compile_animation_states(
                         }
                     )
                     continue
-                entry, child_deferred = _compile_animation_entry(child, target_id)
+                entry, child_deferred = _compile_animation_entry(
+                    child, target_id, numeric_defines=numeric_defines
+                )
                 deferred.extend(child_deferred)
                 if entry is not None:
                     if child.header_tokens:
@@ -9845,7 +9868,9 @@ def compile_all_module_contracts(
     rows.extend(compile_sub_objects_upgrades(lineage, target_id))
     rows.extend(compile_transition_damage_fx(lineage, target_id))
     rows.extend(compile_model_condition_upgrades(lineage, target_id))
-    rows.extend(compile_animation_states(lineage, target_id))
+    rows.extend(compile_animation_states(
+        lineage, target_id, numeric_defines=numeric_defines
+    ))
     rows.extend(compile_particle_sys_bones(lineage, target_id))
     rows.extend(compile_entering_state_fx(lineage, target_id))
     rows.extend(compile_fx_events(lineage, target_id))

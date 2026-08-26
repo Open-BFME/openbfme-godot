@@ -179,10 +179,24 @@ class MappedImageTests(unittest.TestCase):
             parse_mapped_images(
                 _block().replace(b"  TextureWidth", b"  Texture = other.tga\n  TextureWidth")
             )
-        with self.assertRaisesRegex(ValueError, "ambiguous MappedImage definition"):
-            resolve_mapped_images([_block("One"), _block("ONE")], ["one"])
-        with self.assertRaisesRegex(ValueError, "ambiguous MappedImage definition"):
-            resolve_mapped_images([_block("One") + _block("ONE")], ["one"])
+        # Duplicate definitions resolve to the LAST parsed one — retail's
+        # INI::parseMappedImageDefinition re-initializes the SAME image object
+        # on a name hit (decomp oracle INIMappedImage.cpp), so later wins,
+        # across documents and inside one document alike.
+        self.assertEqual(
+            resolve_mapped_images(
+                [_block("One", texture="a.tga"), _block("ONE", texture="b.tga")],
+                ["one"],
+            )[0].texture,
+            "b.tga",
+        )
+        self.assertEqual(
+            resolve_mapped_images(
+                [_block("One", texture="a.tga") + _block("ONE", texture="b.tga")],
+                ["one"],
+            )[0].texture,
+            "b.tga",
+        )
         self.assertEqual(
             resolve_mapped_images(
                 [_block("One") + _block("Unused") + _block("UNUSED")], ["one"]
@@ -197,9 +211,12 @@ class MappedImageTests(unittest.TestCase):
             [_block("One") + _block("Duplicate"), _block("DUPLICATE")],
             ["Missing", "duplicate", "one"],
         )
-        self.assertEqual([record.id for record in resolution.records], ["One"])
+        self.assertEqual(
+            sorted(record.id for record in resolution.records), ["DUPLICATE", "One"]
+        )
         self.assertEqual(resolution.missing_ids, ("Missing",))
-        self.assertEqual(resolution.ambiguous_ids, ("duplicate",))
+        # last-parsed wins (retail semantics); nothing is ambiguous any more
+        self.assertEqual(resolution.ambiguous_ids, ())
 
     def test_rejects_unsafe_texture_paths_and_missing_fields(self) -> None:
         for texture in (

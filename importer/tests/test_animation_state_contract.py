@@ -61,6 +61,42 @@ End
     assert moving["fields"]["deferredFields"][0]["name"] == "ParticleSysBone"
 
 
+_DEFINE_SPEED_TEXT = """
+Object FixtureObject
+  Draw = W3DScriptedModelDraw ModuleTag_Draw
+    AnimationState = ACTIVELY_CONSTRUCTING
+      Animation = Build
+        AnimationName = SKL.BUILD
+        AnimationMode = LOOP
+        AnimationSpeedFactorRange = GONDOR_WALLTREBUCHET_BUILD_SPEED GONDOR_WALLTREBUCHET_BUILD_SPEED
+      End
+    End
+  End
+End
+"""
+
+
+def test_animation_speed_factor_range_resolves_gamedata_defines() -> None:
+    # Retail authors #DEFINE tokens here (GondorCastleUpgrade); the compiler
+    # resolves them through the same numeric_defines table other module
+    # compilers use.
+    rows = compile_animation_states(
+        _lineage(_DEFINE_SPEED_TEXT),
+        "FixtureObject",
+        numeric_defines={"gondor_walltrebuchet_build_speed": 0.6},
+    )
+    assert rows[0]["fields"]["animations"][0]["speedFactorRange"] == [0.6, 0.6]
+
+
+def test_animation_speed_factor_range_unresolved_define_refuses() -> None:
+    import pytest
+
+    from openbfme_importer.module_contracts import ModuleContractError
+
+    with pytest.raises(ModuleContractError, match="AnimationSpeedFactorRange"):
+        compile_animation_states(_lineage(_DEFINE_SPEED_TEXT), "FixtureObject")
+
+
 def test_animation_state_without_clip_stays_deferred() -> None:
     rows = compile_animation_states(
         _lineage(
