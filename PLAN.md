@@ -46,8 +46,9 @@ files: [game/src/ui/**, game/src/retail_slice/retail_hud*.gd]
 needs: sim
 - [x] Retail-derived HUD/radar/radial + skirmish setup + Create-a-Hero loop {#shell-hud}
   by: prior lanes (queue Q66/Q67/Q72/Q73, HUD runner 147/0)
-- [ ] Save/load browser — sim already serializes; wire the shell surface {#shell-saveload}
-  from: roadmap (queue Q84; main_menu.gd:191 hard-disabled today)
+- [x] Save/load browser — pause-menu save + shell LOAD GAME with byte-identical restore {#shell-saveload}
+  by: claude (user://saves JSON with verbatim launch keys + full snapshot; named refusals for MP/cross-pack; round-trip runner 8/0 proves identical restore + deterministic advance; 6bebea1e)
+  from: roadmap (queue Q84; retail-parity browser chrome rides the Q90 lane)
 - [ ] UI parity: render EA's authored APT layouts everywhere, hand-measured constants are bugs; screenshot-vs-reference/ gates per screen; recover ~760 HUD text labels {#shell-ui-parity}
   from: roadmap (queue Q90; oracle = owner's retail capture library in reference/)
 
