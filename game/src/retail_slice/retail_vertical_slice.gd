@@ -610,6 +610,7 @@ func _initialize_content_and_match() -> void:
 	# the legacy default, which leaves the sim on its byte-identical 2-team roster.
 	_configure_simulation_team_roster(simulation)
 	_configure_simulation_spellbook()
+	_configure_simulation_skirmish_ai()
 	simulation.setup(_match_configuration(), gameplay_rules)
 	if _mp_mode == "host" or _mp_mode == "join":
 		local_team = 0 if _mp_mode == "host" else 1
@@ -6035,6 +6036,25 @@ func _configure_simulation_spellbook(sim = null) -> void:
 	sim.configure_spellbook_runtime(_faction_spellbook_document())
 
 
+func _configure_simulation_skirmish_ai(sim = null) -> void:
+	## Retail's authored skirmish-AI facts (openbfme.skirmish-ai) travel from the
+	## selected pack into the sim's interpreter. A pack without the document is a
+	## NAMED stale-pack limitation: the AI keeps the manifest production plan and
+	## the match plays exactly as before (Q83 phase 2).
+	if sim == null:
+		sim = simulation
+	if sim == null:
+		return
+	var document: Dictionary = ContentDB.skirmish_ai_runtime
+	if document.is_empty():
+		push_warning(
+			"skirmish-ai: the selected pack carries no openbfme.skirmish-ai document; "
+			+ "the AI keeps its manifest production plan (stale-pack limitation, Q83)"
+		)
+		return
+	sim.configure_skirmish_ai(document)
+
+
 ## Fortress expansion pad rules, built from the playable-structure expansion
 ## documents in the selected/faction packs. Every number is doc-sourced; kinds
 ## without a complete document drop out fail-closed.
@@ -7549,10 +7569,12 @@ func build_replay_simulation(sim) -> Dictionary:
 	# Boot pass (mirrors _initialize_content_and_match).
 	_configure_simulation_team_roster(sim)
 	_configure_simulation_spellbook(sim)
+	_configure_simulation_skirmish_ai(sim)
 	sim.setup(_match_configuration(), gameplay_rules)
 	_configure_simulation_expansions(sim)
 	# reset_match pass — the live sim has been through one too.
 	_configure_simulation_spellbook(sim)
+	_configure_simulation_skirmish_ai(sim)
 	sim.setup(_match_configuration(), gameplay_rules)
 	_configure_simulation_expansions(sim)
 	return {"ok": unmirrored.is_empty(), "unmirrored": unmirrored}
@@ -7562,6 +7584,7 @@ func reset_match() -> void:
 	if simulation == null:
 		return
 	_configure_simulation_spellbook()
+	_configure_simulation_skirmish_ai()
 	simulation.setup(_match_configuration(), gameplay_rules)
 	# setup() clears castle/expansion configuration; re-apply pack contracts.
 	_configure_simulation_expansions()

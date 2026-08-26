@@ -73,19 +73,33 @@ func run_ai_for_team(team: int, profile: Dictionary, ai_state: Dictionary) -> vo
 		step_ai_base_building(team, ai_state)
 	var queue_interval := maxi(15, int(sim._rules.get("ai_queue_interval_ticks", 60)) * int(profile.get("queue_interval_permille", 1000)) / 1000)
 	if sim.base_loop_enabled and sim.tick_index % queue_interval == 0:
-		var plan: Array = sim.ai_production_plan_for_team(team)
-		if plan.is_empty():
-			# Q80: no AI_PRODUCTION_PLAN constant fallback — an empty
-			# manifest plan means this AI queues nothing, honestly.
-			plan = sim._ai_production_plan
-		var team_rules: Dictionary = sim.unit_production_rules_for_team(team)
-		for unit_type in plan:
-			var production_rule: Dictionary = team_rules.get(unit_type, {})
-			if production_rule.is_empty():
-				continue
-			var producer := int(sim.producer_id(team, String(production_rule.get("producer_kind", ""))))
-			if producer != 0:
-				sim.queue_unit(team, producer, unit_type)
+		if bool(sim.skirmish_ai_configured):
+			# Q83 phase 2: retail's authored ArmyDefinition drives production —
+			# one composition-driven choice per queue window (the member
+			# furthest below its authored phase percentage). The manifest plan
+			# below stays the stale-pack path only.
+			var choice: Dictionary = sim._skirmish_ai_subsystem().authored_ai_queue_choice(team)
+			if bool(choice.get("ok", false)):
+				var choice_rules: Dictionary = sim.unit_production_rules_for_team(team)
+				var choice_rule: Dictionary = choice_rules.get(String(choice["unit_type"]), {})
+				if not choice_rule.is_empty():
+					var choice_producer := int(sim.producer_id(team, String(choice_rule.get("producer_kind", ""))))
+					if choice_producer != 0:
+						sim.queue_unit(team, choice_producer, String(choice["unit_type"]))
+		else:
+			var plan: Array = sim.ai_production_plan_for_team(team)
+			if plan.is_empty():
+				# Q80: no AI_PRODUCTION_PLAN constant fallback — an empty
+				# manifest plan means this AI queues nothing, honestly.
+				plan = sim._ai_production_plan
+			var team_rules: Dictionary = sim.unit_production_rules_for_team(team)
+			for unit_type in plan:
+				var production_rule: Dictionary = team_rules.get(unit_type, {})
+				if production_rule.is_empty():
+					continue
+				var producer := int(sim.producer_id(team, String(production_rule.get("producer_kind", ""))))
+				if producer != 0:
+					sim.queue_unit(team, producer, unit_type)
 	# Give hostiles one full production window before the first wave. Economy and
 	# production still advance during the preparation time. Higher tiers commit
 	# sooner (shorter attack delay), lower tiers later.

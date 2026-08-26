@@ -69,6 +69,99 @@ func skirmish_ai_plan_for_side(side: String) -> Dictionary:
 	return sim.skirmish_ai_plans_by_side.get(side.to_lower(), {}) as Dictionary
 
 
+## ---- production consumption (retail ArmyDefinition phases) -----------------
+
+func authored_ai_queue_choice(team: int) -> Dictionary:
+	## Composition-driven production: count the team's living combat units per
+	## authored member Unit and answer the member whose current share of the
+	## army is furthest below its authored PercentageOfArmyPhaseN for the
+	## current phase. Deterministic (document order breaks ties); refuses by
+	## name, never guesses.
+	if not bool(sim.skirmish_ai_configured):
+		return {"ok": false, "reason": "skirmish-ai is not configured"}
+	var side_row: Dictionary = sim.team_retail_side(team)
+	var side := String(side_row.get("side", ""))
+	if side == "":
+		return {"ok": false, "reason": String(side_row.get("reason", "team %d has no retail side" % team))}
+	var plan := skirmish_ai_plan_for_side(side)
+	if plan.is_empty():
+		return {"ok": false, "reason": "no ArmyDefinition for side '%s'" % side}
+	var phase := current_army_phase(plan)
+	var team_rules: Dictionary = sim.unit_production_rules_for_team(team)
+	var total_percentage := 0.0
+	var candidates: Array = []
+	var untrainable: Array = []
+	for member_value in plan.get("members", []) as Array:
+		var member := member_value as Dictionary
+		var percentage := float((member.get("phase_percentages", []) as Array)[phase - 1])
+		if percentage <= 0.0:
+			continue
+		var unit_type := String(sim.trainable_unit_type_for(team, String(member.get("unit", ""))))
+		if unit_type == "" or not team_rules.has(unit_type):
+			# The authored member is not trainable in the mounted pack. A named
+			# limitation, not silence: the caller can surface the roster gap.
+			untrainable.append(String(member.get("unit", "")))
+			continue
+		candidates.append({"unit_type": unit_type, "authored_unit": String(member.get("unit", "")), "percentage": percentage})
+		total_percentage += percentage
+	if candidates.is_empty():
+		return {
+			"ok": false,
+			"reason": "side '%s' phase %d has no trainable authored members" % [side, phase],
+			"untrainable": untrainable,
+		}
+	var counts: Dictionary = {}
+	var living_total := 0
+	for id in sim.living_ids(team):
+		var row: Dictionary = sim.entities[id]
+		if bool(row.get("is_builder", false)):
+			continue
+		var unit_type := String(row.get("unit_type", ""))
+		counts[unit_type] = int(counts.get(unit_type, 0)) + 1
+		living_total += 1
+	var best: Dictionary = {}
+	var best_deficit := -1.0e12
+	for candidate_value in candidates:
+		var candidate := candidate_value as Dictionary
+		var desired := float(candidate["percentage"]) / total_percentage
+		var current := 0.0
+		if living_total > 0:
+			current = float(int(counts.get(String(candidate["unit_type"]), 0))) / float(living_total)
+		var deficit := desired - current
+		if deficit > best_deficit + 0.000001:
+			best_deficit = deficit
+			best = candidate
+	return {
+		"ok": true,
+		"unit_type": String(best["unit_type"]),
+		"authored_unit": String(best["authored_unit"]),
+		"phase": phase,
+		"untrainable": untrainable,
+	}
+
+
+func current_army_phase(plan: Dictionary) -> int:
+	## Phase 1 (Rush) until PhaseDuration_Rush seconds, phase 2 (MidGame)
+	## until rush+mid, then phase 3 (EndGame). Unmeasured durations keep the
+	## army in phase 1 honestly rather than inventing a schedule.
+	var durations := plan.get("phase_durations", {}) as Dictionary
+	var rush := float(durations.get("rush", -1.0))
+	var mid := float(durations.get("mid_game", -1.0))
+	if rush <= 0.0:
+		return 1
+	var elapsed_seconds := float(sim.tick_index) * float(sim.TICK_SECONDS)
+	if elapsed_seconds < rush:
+		return 1
+	if mid <= 0.0:
+		# Only the rush boundary is authored: past it the army is in the NEXT
+		# authored phase and stays there — inventing an end-game boundary
+		# retail never wrote would be a silent schedule.
+		return 2
+	if elapsed_seconds < rush + mid:
+		return 2
+	return 3
+
+
 ## ---- army compilation -----------------------------------------------------
 
 func _compiled_army_plan(army_name: String, army: Dictionary) -> Dictionary:

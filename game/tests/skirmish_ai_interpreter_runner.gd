@@ -72,8 +72,72 @@ func _run() -> void:
 	else:
 		_check(false, "selected pack surfaces a skirmish-AI document for the live half of this runner")
 
+	# --- production consumption: authored composition drives the choice --
+	var ai_sim = SimScript.new()
+	ai_sim.configure_skirmish_ai(_consumption_document())
+	ai_sim._team_descriptors[0] = {"faction": "fixture-men"}
+	ai_sim._rules["retail_faction_sides"] = {"fixture-men": "Men"}
+	ai_sim._unit_production_rules = {
+		"FixtureHorde": {"producer_kind": "barracks"},
+		"FixtureArcher": {"producer_kind": "archery_range"},
+	}
+	var first: Dictionary = ai_sim._skirmish_ai_subsystem().authored_ai_queue_choice(0)
+	_check(bool(first.get("ok", false)), "consumption: an empty army asks for a unit")
+	_check(String(first.get("unit_type", "")) == "FixtureArcher", "consumption: the 60%% member is most deficient first")
+	_check(int(first.get("phase", 0)) == 1, "consumption: tick 0 is phase 1 (Rush)")
+	_check((first.get("untrainable", []) as Array) == ["FixtureUnportable"], "consumption: the unportable member is a NAMED receipt, not silence")
+	# Field two archers and no horde: the horde becomes the deficit.
+	ai_sim.entities[1] = {"id": 1, "team": 0, "unit_type": "FixtureArcher", "health": 10}
+	ai_sim.entities[2] = {"id": 2, "team": 0, "unit_type": "FixtureArcher", "health": 10}
+	var second: Dictionary = ai_sim._skirmish_ai_subsystem().authored_ai_queue_choice(0)
+	_check(String(second.get("unit_type", "")) == "FixtureHorde", "consumption: composition deficit flips the choice")
+	# Phase progression: past the authored rush duration the army is phase 2,
+	# where the horde has no percentage and the archer is the only candidate.
+	ai_sim.tick_index = int(300.0 / float(ai_sim.TICK_SECONDS)) + 1
+	var third: Dictionary = ai_sim._skirmish_ai_subsystem().authored_ai_queue_choice(0)
+	_check(int(third.get("phase", 0)) == 2, "consumption: elapsed time enters phase 2")
+	_check(String(third.get("unit_type", "")) == "FixtureArcher", "consumption: phase-2 composition has only the archer")
+	var sideless_sim = SimScript.new()
+	sideless_sim.configure_skirmish_ai(_consumption_document())
+	var refused: Dictionary = sideless_sim._skirmish_ai_subsystem().authored_ai_queue_choice(0)
+	_check(
+		not bool(refused.get("ok", true)) and String(refused.get("reason", "")).contains("faction"),
+		"consumption: a team without a retail side refuses by name"
+	)
+
 	print("SKIRMISH_AI_INTERPRETER_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
+
+
+func _consumption_document() -> Dictionary:
+	var document := _fixture_document()
+	var army := (document["armies"] as Dictionary)["FixtureArmy"] as Dictionary
+	(army["fields"] as Dictionary)["PhaseDuration_Rush"] = {"value": "300.0"}
+	army["armyMembers"] = [
+		{
+			"name": {"value": "FixtureHorde_Member"},
+			"fields": {
+				"Unit": {"value": "FixtureHorde"},
+				"PercentageOfArmyPhase1": {"value": "40.0"},
+			},
+		},
+		{
+			"name": {"value": "FixtureArcher_Member"},
+			"fields": {
+				"Unit": {"value": "FixtureArcher"},
+				"PercentageOfArmyPhase1": {"value": "60.0"},
+				"PercentageOfArmyPhase2": {"value": "100.0"},
+			},
+		},
+		{
+			"name": {"value": "FixtureUnportable_Member"},
+			"fields": {
+				"Unit": {"value": "FixtureUnportable"},
+				"PercentageOfArmyPhase1": {"value": "10.0"},
+			},
+		},
+	]
+	return document
 
 
 func _fixture_document() -> Dictionary:
