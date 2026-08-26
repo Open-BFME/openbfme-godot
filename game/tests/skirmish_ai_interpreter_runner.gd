@@ -1,0 +1,129 @@
+extends SceneTree
+## Q83 phase 2: the sim's skirmish-AI interpreter compiles the raw authored
+## document into typed per-side plans, and refuses loudly by name on every
+## malformed shape. Runs against synthetic fixtures AND the selected pack's
+## real document.
+
+const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
+
+var passed := 0
+var failed := 0
+
+
+func _initialize() -> void:
+	call_deferred("_run")
+
+
+func _run() -> void:
+	var sim = SimScript.new()
+
+	# --- refusals configure nothing -------------------------------------
+	_check(not bool(sim.configure_skirmish_ai({}).get("ok", true)), "empty document refuses")
+	_check(not bool(sim.skirmish_ai_configured), "refusal leaves the sim unconfigured")
+	_check(
+		String(sim.configure_skirmish_ai({"schema": "wrong", "schemaVersion": 0}).get("reason", ""))
+			.contains("schema"),
+		"wrong schema refuses by name"
+	)
+	var no_side := _fixture_document()
+	((no_side["armies"] as Dictionary)["FixtureArmy"] as Dictionary).erase("side")
+	_check(
+		String(sim.configure_skirmish_ai(no_side).get("reason", "")).contains("Side"),
+		"army without an authored Side refuses by name"
+	)
+	var bad_phase := _fixture_document()
+	var bad_member: Dictionary = (((bad_phase["armies"] as Dictionary)["FixtureArmy"] as Dictionary)["armyMembers"] as Array)[0]
+	((bad_member["fields"] as Dictionary)["PercentageOfArmyPhase1"] as Dictionary)["value"] = "not-a-number"
+	_check(
+		String(sim.configure_skirmish_ai(bad_phase).get("reason", "")).contains("unmeasured"),
+		"unmeasured phase percentage refuses by name"
+	)
+
+	# --- synthetic fixture compiles typed -------------------------------
+	var accepted: Dictionary = sim.configure_skirmish_ai(_fixture_document())
+	_check(bool(accepted.get("ok", false)), "well-formed fixture configures")
+	_check(bool(sim.skirmish_ai_configured), "configuration flag is set")
+	var plan: Dictionary = sim.skirmish_ai_plan_for_side("MEN")
+	_check(not plan.is_empty(), "side lookup folds case")
+	var member := (plan.get("members", []) as Array)[0] as Dictionary
+	_check(String(member.get("unit", "")) == "FixtureHorde", "member unit id survives")
+	_check(member.get("phase_percentages", []) as Array == [40.0, 40.0, 0.0], "phase percentages parse; an absent phase records 0.0")
+	_check(plan.get("hero_build_order", []) as Array == ["FixtureHero"], "hero build order tokens survive")
+	var normal := (sim.skirmish_ai_difficulty as Dictionary).get("NORMAL", {}) as Dictionary
+	_check(normal.get("EconomyUpgradeProbability", []) as Array == [10.0, 100.0], "difficulty ratio '10 : 100' parses to a pair")
+	_check(
+		(plan.get("must_use_command_point_percentage", []) as Array)[0] == 90.0,
+		"'90%' parses keeping authored magnitude"
+	)
+
+	# --- the real selected-pack document --------------------------------
+	var content_db = root.get_node_or_null("ContentDB")
+	if content_db != null and not (content_db.skirmish_ai_runtime as Dictionary).is_empty():
+		var live = SimScript.new()
+		var live_result: Dictionary = live.configure_skirmish_ai(content_db.skirmish_ai_runtime)
+		_check(bool(live_result.get("ok", false)), "the selected pack's real document configures")
+		_check(int(live_result.get("sides", 0)) >= 6, "real document yields >= 6 sides")
+		var men: Dictionary = live.skirmish_ai_plan_for_side("Men")
+		_check(not men.is_empty(), "real document has a Men plan")
+		_check(not (men.get("members", []) as Array).is_empty(), "Men plan has authored members")
+		var live_difficulty := live.skirmish_ai_difficulty as Dictionary
+		_check(live_difficulty.has("NORMAL") and live_difficulty.has("EASY"), "real difficulty rows compile (EASY, NORMAL)")
+		_check(not (live.skirmish_ai_brutal_cheats as Dictionary).is_empty(), "brutal cheats compile from the only authored cheat block")
+	else:
+		_check(false, "selected pack surfaces a skirmish-AI document for the live half of this runner")
+
+	print("SKIRMISH_AI_INTERPRETER_RESULT passed=%d failed=%d" % [passed, failed])
+	quit(0 if failed == 0 else 1)
+
+
+func _fixture_document() -> Dictionary:
+	return {
+		"schema": "openbfme.skirmish-ai",
+		"schemaVersion": 0,
+		"globals": {},
+		"census": {"armyDefinitionCount": 1},
+		"combatChains": [],
+		"aiBases": [],
+		"difficultyTuning": {
+			"NormalTuning": {
+				"fields": {
+					"Difficulty": {"value": "NORMAL"},
+					"EconomyUpgradeProbability": {"value": "10 : 100"},
+				},
+			},
+		},
+		"brutalDifficultyCheats": {
+			"fields": {"BuildCostReduction": {"value": "15%"}},
+		},
+		"armies": {
+			"FixtureArmy": {
+				"side": {"value": "Men"},
+				"heroBuildOrder": {"value": ["FixtureHero"]},
+				"offensiveBuildings": {"value": []},
+				"fields": {
+					"Side": {"value": "Men"},
+					"MustUseCommandPointPercentage_Phase1": {"value": "90%"},
+					"PhaseDuration_Rush": {"value": "270.0"},
+				},
+				"armyMembers": [
+					{
+						"name": {"value": "FixtureHorde_Member"},
+						"fields": {
+							"Unit": {"value": "FixtureHorde"},
+							"PercentageOfArmyPhase1": {"value": "40.0"},
+							"PercentageOfArmyPhase2": {"value": "40.0"},
+						},
+					},
+				],
+			},
+		},
+	}
+
+
+func _check(condition: bool, label: String) -> void:
+	if condition:
+		passed += 1
+		print("SKIRMISH_AI_INTERPRETER PASS %s" % label)
+	else:
+		failed += 1
+		push_error("SKIRMISH_AI_INTERPRETER FAIL %s" % label)

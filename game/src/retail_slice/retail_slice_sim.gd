@@ -1980,6 +1980,26 @@ func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 	_seed_team_manifest_tables()
 
 
+## Skirmish-AI state (owned by the sim; logic lives in retail_sim_skirmish_ai.gd).
+## Configured from the pack's raw openbfme.skirmish-ai document; false means the
+## AI keeps its manifest production plan (stale-pack limitation, named in Q83).
+var skirmish_ai_configured := false
+var skirmish_ai_plans_by_side: Dictionary = {}
+var skirmish_ai_difficulty: Dictionary = {}
+var skirmish_ai_brutal_cheats: Dictionary = {}
+const SkirmishAiSystemScript = preload("res://src/retail_slice/retail_sim_skirmish_ai.gd")
+var _skirmish_ai_system = null
+func _skirmish_ai_subsystem():
+	if _skirmish_ai_system == null:
+		_skirmish_ai_system = SkirmishAiSystemScript.new(self)
+	return _skirmish_ai_system
+
+func configure_skirmish_ai(document: Dictionary) -> Dictionary:
+	return _skirmish_ai_subsystem().configure_skirmish_ai(document)
+
+func skirmish_ai_plan_for_side(side: String) -> Dictionary:
+	return _skirmish_ai_subsystem().skirmish_ai_plan_for_side(side)
+
 const RingSystemScript = preload("res://src/retail_slice/retail_sim_ring.gd")
 var _ring_system = null
 func _ring_subsystem():
