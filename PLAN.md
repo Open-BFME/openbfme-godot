@@ -50,8 +50,10 @@ needs: sim
 - [x] Save/load browser — pause-menu save + shell LOAD GAME with byte-identical restore {#shell-saveload}
   by: claude (user://saves JSON with verbatim launch keys + full snapshot; named refusals for MP/cross-pack; round-trip runner 8/0 proves identical restore + deterministic advance; 6bebea1e)
   from: roadmap (queue Q84; retail-parity browser chrome rides the Q90 lane)
-- [ ] UI parity: render EA's authored APT layouts everywhere, hand-measured constants are bugs; screenshot-vs-reference/ gates per screen; recover ~760 HUD text labels {#shell-ui-parity}
+- [~] UI parity: render EA's authored APT layouts everywhere, hand-measured constants are bugs; screenshot-vs-reference/ gates per screen; recover ~760 HUD text labels {#shell-ui-parity}
+  by: claude
   from: roadmap (queue Q90; oracle = owner's retail capture library in reference/)
+  tech: round 1 shipped 1d232d27 — labels claim was stale (739/764 already recovered by recooks; 25 residuals are importer coverage gaps); per-screen structural gate live (67 pass / 7 honest reds); constants audit ranks ~890 literals into a 5-lane burn-down (workspace/review/q90-hand-measured-constants.md)
 
 ## Cook, gate, and ship builds {#pipeline-tools}
 tech: tools/ (40 scripts), gate-retail.ps1, publish-durable-pack.ps1, dist/v0.2.12
