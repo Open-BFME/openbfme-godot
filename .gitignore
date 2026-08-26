@@ -73,3 +73,6 @@ game/workspace/
 importer/.ruff_cache/
 
 .agenttrail/
+
+# scratch artifact from the carve pipeline; must never ride into a commit
+game/src/retail_slice/*.pending
