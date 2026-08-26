@@ -52,10 +52,11 @@ func experience_level_row(rule: Dictionary, rank: int) -> Dictionary:
 
 
 func experience_state(entity_id: int) -> Dictionary:
-	if not sim.entities.has(entity_id):
+	var _sim = sim
+	if not _sim.entities.has(entity_id):
 		return {}
-	var row: Dictionary = sim.entities[entity_id]
-	var rule: Dictionary = sim._unit_experience_rules.get(String(row.get("unit_type", "")), {})
+	var row: Dictionary = _sim.entities[entity_id]
+	var rule: Dictionary = _sim._unit_experience_rules.get(String(row.get("unit_type", "")), {})
 	if rule.is_empty():
 		return {}
 	var level := int(row.get("level", 1))
@@ -85,15 +86,16 @@ func experience_unauthored_victims() -> Array[String]:
 func award_member_kill_experience(attacker_id: int, target: Dictionary) -> void:
 	# Award stats count at the lethal hook before XP's authored-evidence early
 	# returns. A victim with no ExperienceLevel still counts as a retail kill.
-	sim._record_cah_member_kill(attacker_id, target)
-	if not sim.entities.has(attacker_id):
+	var _sim = sim
+	_sim._record_cah_member_kill(attacker_id, target)
+	if not _sim.entities.has(attacker_id):
 		return
-	var attacker: Dictionary = sim.entities[attacker_id]
+	var attacker: Dictionary = _sim.entities[attacker_id]
 	if int(attacker.get("health", 0)) <= 0:
 		return
-	var victim_rule: Dictionary = sim._unit_experience_rules.get(String(target.get("unit_type", "")), {})
+	var victim_rule: Dictionary = _sim._unit_experience_rules.get(String(target.get("unit_type", "")), {})
 	if victim_rule.is_empty():
-		sim._experience_unauthored_victims[String(target.get("unit_type", ""))] = true
+		_sim._experience_unauthored_victims[String(target.get("unit_type", ""))] = true
 		return
 	var victim_level := clampi(
 		int(target.get("level", 1)),
@@ -102,7 +104,7 @@ func award_member_kill_experience(attacker_id: int, target: Dictionary) -> void:
 	)
 	var victim_level_row := experience_level_row(victim_rule, victim_level)
 	if victim_level_row.get("experience_award_known") == false:
-		sim._experience_unauthored_victims[String(target.get("unit_type", ""))] = true
+		_sim._experience_unauthored_victims[String(target.get("unit_type", ""))] = true
 		return
 	var award := int(victim_level_row.get("experience_award", 0))
 	if award <= 0:
@@ -111,12 +113,13 @@ func award_member_kill_experience(attacker_id: int, target: Dictionary) -> void:
 
 
 func award_experience(row: Dictionary, amount: int) -> void:
-	var rule: Dictionary = sim._unit_experience_rules.get(String(row.get("unit_type", "")), {})
+	var _sim = sim
+	var rule: Dictionary = _sim._unit_experience_rules.get(String(row.get("unit_type", "")), {})
 	if rule.is_empty() or amount <= 0 or int(row.get("health", 0)) <= 0:
 		return
 	# Leadership EXPERIENCE modifiers (and any timed EXPERIENCE buff) scale
 	# the recipient's XP intake — retail's 200% leadership experience rule.
-	var experience_factor: float = sim._timed_modifier_product(row, "EXPERIENCE")
+	var experience_factor: float = _sim._timed_modifier_product(row, "EXPERIENCE")
 	if experience_factor != 1.0:
 		amount = maxi(1, roundi(float(amount) * experience_factor))
 	var max_level := int(rule.get("max_level", 1))
@@ -140,9 +143,9 @@ func award_experience(row: Dictionary, amount: int) -> void:
 		apply_experience_level_effects(row, next_row)
 	if level != int(row.get("level", 1)):
 		row["level"] = level
-		sim._refresh_banner_carrier_state(row)
-		sim._record_hero_rank_attainment(row)
-		sim._emit_event("battalion.level_up", int(row.get("id", 0)), 0, {
+		_sim._refresh_banner_carrier_state(row)
+		_sim._record_hero_rank_attainment(row)
+		_sim._emit_event("battalion.level_up", int(row.get("id", 0)), 0, {
 			"team": int(row.get("team", -1)),
 			"unit_type": String(row.get("unit_type", "")),
 			"level": level,
@@ -192,9 +195,10 @@ func award_own_guys_die_experience(row: Dictionary, defeated_count: int) -> void
 	## ExperienceAwardOwnGuysDie belongs to the victim horde's current level:
 	## each of its own member deaths feeds its surviving tracker. A completely
 	## defeated horde has no living tracker to receive the award.
+	var _sim = sim
 	if defeated_count <= 0 or int(row.get("health", 0)) <= 0:
 		return
-	var rule := sim._unit_experience_rules.get(String(row.get("unit_type", "")), {}) as Dictionary
+	var rule := _sim._unit_experience_rules.get(String(row.get("unit_type", "")), {}) as Dictionary
 	if rule.is_empty():
 		return
 	var level_row := experience_level_row(rule, int(row.get("level", 1)))
@@ -205,7 +209,7 @@ func award_own_guys_die_experience(row: Dictionary, defeated_count: int) -> void
 		return
 	var amount := per_member * defeated_count
 	award_experience(row, amount)
-	sim._emit_event("experience.own_guys_die", int(row.get("id", 0)), 0, {"members": defeated_count, "amount": amount})
+	_sim._emit_event("experience.own_guys_die", int(row.get("id", 0)), 0, {"members": defeated_count, "amount": amount})
 
 
 func apply_ability_experience_grant(hero_row: Dictionary, effect: Dictionary, point: Vector2) -> Dictionary:
@@ -215,6 +219,7 @@ func apply_ability_experience_grant(hero_row: Dictionary, effect: Dictionary, po
 	## through the normal experience pipeline (EXPERIENCE modifiers included).
 	## Only recipients with a converted ExperienceLevel chain count — a unit
 	## retail never authored a chain for is never granted an invented award.
+	var _sim = sim
 	var team := int(hero_row.get("team", -1))
 	var amount := int(effect.get("experience", 0))
 	var radius := float(effect.get("radius_scaled", 0.0))
@@ -222,13 +227,13 @@ func apply_ability_experience_grant(hero_row: Dictionary, effect: Dictionary, po
 		return {"ok": false, "reason": "experience-grant-fields-missing"}
 	var filter_text := String(effect.get("affects", ""))
 	var granted := 0
-	for id in sim.living_ids(team):
-		var ally: Dictionary = sim.entities[id]
+	for id in _sim.living_ids(team):
+		var ally: Dictionary = _sim.entities[id]
 		if Vector2(ally.get("position", Vector2.ZERO)).distance_to(point) > radius:
 			continue
-		if not sim._ability_filter_accepts(ally, filter_text):
+		if not _sim._ability_filter_accepts(ally, filter_text):
 			continue
-		if (sim._unit_experience_rules.get(String(ally.get("unit_type", "")), {}) as Dictionary).is_empty():
+		if (_sim._unit_experience_rules.get(String(ally.get("unit_type", "")), {}) as Dictionary).is_empty():
 			continue
 		award_experience(ally, amount)
 		granted += 1
@@ -237,21 +242,22 @@ func apply_ability_experience_grant(hero_row: Dictionary, effect: Dictionary, po
 	return {"ok": true, "reason": "", "effect": "experience-grant", "affected": granted}
 
 func _record_hero_rank_attainment(row: Dictionary) -> void:
+	var _sim = sim
 	if String(row.get("category", "")) != "hero":
 		return
 	var team := int(row.get("team", -1))
 	var identity := String(row.get("unit_type", ""))
 	if team < 0 or identity == "":
 		return
-	var team_history: Dictionary = sim._hero_peak_ranks_by_team.get(team, {})
-	var rule: Dictionary = sim._unit_experience_rules.get(identity, {})
+	var team_history: Dictionary = _sim._hero_peak_ranks_by_team.get(team, {})
+	var rule: Dictionary = _sim._unit_experience_rules.get(identity, {})
 	if rule.is_empty():
 		if not team_history.has(identity):
 			team_history[identity] = -1
 	else:
 		var previous := int(team_history.get(identity, -1))
 		team_history[identity] = maxi(previous, int(row.get("level", rule.get("initial_rank", 1))))
-	sim._hero_peak_ranks_by_team[team] = team_history
+	_sim._hero_peak_ranks_by_team[team] = team_history
 
 
 func hero_rank_attainment(team: int, rank: int) -> Dictionary:
@@ -276,15 +282,16 @@ func debug_force_max_level(entity_ids: Array) -> int:
 	## by awarding the XP the chain itself demands, so every rank's authored
 	## level effects apply exactly as they would in a real match. It never
 	## fabricates a rank the source does not author.
+	var _sim = sim
 	var levelled := 0
 	for id_value in entity_ids:
 		var entity_id := int(id_value)
-		if not sim.entities.has(entity_id):
+		if not _sim.entities.has(entity_id):
 			continue
-		var row: Dictionary = sim.entities[entity_id]
+		var row: Dictionary = _sim.entities[entity_id]
 		if int(row.get("health", 0)) <= 0:
 			continue
-		var rule: Dictionary = sim._unit_experience_rules.get(String(row.get("unit_type", "")), {})
+		var rule: Dictionary = _sim._unit_experience_rules.get(String(row.get("unit_type", "")), {})
 		if rule.is_empty():
 			continue
 		var before := int(row.get("level", 1))
@@ -293,7 +300,7 @@ func debug_force_max_level(entity_ids: Array) -> int:
 			required = maxi(required, int((level_value as Dictionary).get("required_experience", 0)))
 		var deficit := required - int(row.get("experience_xp", 0))
 		if deficit > 0:
-			sim._award_experience(row, deficit)
+			_sim._award_experience(row, deficit)
 		if int(row.get("level", 1)) != before:
 			levelled += 1
 	return levelled
@@ -303,12 +310,13 @@ func debug_restore_health(entity_ids: Array) -> int:
 	## Playtest aid: refill an entity and every living horde member. Dead
 	## members stay dead — resurrecting them would change horde size, which is
 	## a simulation fact rather than a convenience.
+	var _sim = sim
 	var healed := 0
 	for id_value in entity_ids:
 		var entity_id := int(id_value)
-		if not sim.entities.has(entity_id):
+		if not _sim.entities.has(entity_id):
 			continue
-		var row: Dictionary = sim.entities[entity_id]
+		var row: Dictionary = _sim.entities[entity_id]
 		if int(row.get("health", 0)) <= 0:
 			continue
 		var member_max := int(row.get("member_maximum_health", 0))
@@ -341,49 +349,52 @@ func _award_member_kill_experience(attacker_id: int, target: Dictionary) -> void
 
 
 func _cah_tally_for(unit_type: String) -> Dictionary:
-	if not sim._cah_award_contracts.has(unit_type):
+	var _sim = sim
+	if not _sim._cah_award_contracts.has(unit_type):
 		return {}
-	if not sim._cah_award_tallies.has(unit_type):
-		sim._cah_award_tallies[unit_type] = (
-			(sim._cah_award_contracts[unit_type] as Dictionary).get("trackingStats", {})
+	if not _sim._cah_award_tallies.has(unit_type):
+		_sim._cah_award_tallies[unit_type] = (
+			(_sim._cah_award_contracts[unit_type] as Dictionary).get("trackingStats", {})
 			as Dictionary
 		).duplicate(true)
-	return sim._cah_award_tallies[unit_type] as Dictionary
+	return _sim._cah_award_tallies[unit_type] as Dictionary
 
 
 func _record_cah_member_kill(attacker_id: int, target: Dictionary) -> void:
-	if not sim.entities.has(attacker_id):
+	var _sim = sim
+	if not _sim.entities.has(attacker_id):
 		return
-	var attacker := sim.entities[attacker_id] as Dictionary
+	var attacker := _sim.entities[attacker_id] as Dictionary
 	if int(attacker.get("health", 0)) <= 0:
 		return
-	if not sim._is_hostile(int(attacker.get("team", -1)), int(target.get("team", -1))):
+	if not _sim._is_hostile(int(attacker.get("team", -1)), int(target.get("team", -1))):
 		return
 	var tally := _cah_tally_for(String(attacker.get("unit_type", "")))
-	if tally.is_empty() and not sim._cah_award_contracts.has(String(attacker.get("unit_type", ""))):
+	if tally.is_empty() and not _sim._cah_award_contracts.has(String(attacker.get("unit_type", ""))):
 		return
 	tally["ENEMIES_KILLED"] = int(tally.get("ENEMIES_KILLED", 0)) + 1
 	# Retail spells this identifier HEROS_KILLED in awardsystem.ini.
 	if String(target.get("category", "")) == "hero":
 		tally["HEROS_KILLED"] = int(tally.get("HEROS_KILLED", 0)) + 1
-	if sim._cah_openplay_multiplayer() and String(target.get("unit_type", "")).begins_with("CreateAHero__"):
+	if _sim._cah_openplay_multiplayer() and String(target.get("unit_type", "")).begins_with("CreateAHero__"):
 		tally["MP_CREATE_A_HEROES_KILLED"] = int(tally.get("MP_CREATE_A_HEROES_KILLED", 0)) + 1
 
 
 func _record_cah_structure_kill(attacker_id: int, target: Dictionary) -> void:
-	if not sim.entities.has(attacker_id):
+	var _sim = sim
+	if not _sim.entities.has(attacker_id):
 		return
-	var attacker := sim.entities[attacker_id] as Dictionary
-	if not sim._is_hostile(int(attacker.get("team", -1)), int(target.get("team", -1))):
+	var attacker := _sim.entities[attacker_id] as Dictionary
+	if not _sim._is_hostile(int(attacker.get("team", -1)), int(target.get("team", -1))):
 		return
 	var unit_type := String(attacker.get("unit_type", ""))
 	var tally := _cah_tally_for(unit_type)
-	if tally.is_empty() and not sim._cah_award_contracts.has(unit_type):
+	if tally.is_empty() and not _sim._cah_award_contracts.has(unit_type):
 		return
 	# The only structure-derived ThingStat retail defines is keeps destroyed;
 	# v1 maps the authoritative fortress death path and names all other building
 	# categories as gaps instead of inventing a BUILDINGS_DESTROYED counter.
-	if sim._cah_openplay_multiplayer() and String(target.get("structure_kind", "")) == "fortress":
+	if _sim._cah_openplay_multiplayer() and String(target.get("structure_kind", "")) == "fortress":
 		tally["MP_KEEPS_DESTROYED"] = int(tally.get("MP_KEEPS_DESTROYED", 0)) + 1
 
 

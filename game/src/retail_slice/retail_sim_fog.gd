@@ -9,28 +9,29 @@ func fog_of_war():
 	## with fog off gets one whose `enabled` is false and which no tick ever
 	## stamps, so a presentation query is a cheap "everything is visible" rather
 	## than a null check at every call site.
-	if sim._fog_of_war == null:
-		sim._fog_of_war = sim.FogOfWarScript.new()
-		sim._fog_of_war.enabled = sim.fog_of_war_enabled
-		var scale = float(sim._rules.get("source_map_transform_scale", 0.0))
+	var _sim = sim
+	if _sim._fog_of_war == null:
+		_sim._fog_of_war = _sim.FogOfWarScript.new()
+		_sim._fog_of_war.enabled = _sim.fog_of_war_enabled
+		var scale = float(_sim._rules.get("source_map_transform_scale", 0.0))
 		if scale <= 0.0:
 			# No map transform in the rules (bare harness sims). One sim unit per
 			# source unit is the only honest fallback; the cell then spans
 			# PartitionCellSize directly.
 			scale = 1.0
-		if sim.playable_outline.size() >= 3:
-			var bounds_min = sim.playable_outline[0]
-			var bounds_max = sim.playable_outline[0]
-			for point in sim.playable_outline:
+		if _sim.playable_outline.size() >= 3:
+			var bounds_min = _sim.playable_outline[0]
+			var bounds_max = _sim.playable_outline[0]
+			for point in _sim.playable_outline:
 				bounds_min = Vector2(minf(bounds_min.x, point.x), minf(bounds_min.y, point.y))
 				bounds_max = Vector2(maxf(bounds_max.x, point.x), maxf(bounds_max.y, point.y))
 			# One shroud cell of margin so a unit nudged onto the border by
 			# eviction still has a cell of its own.
-			var margin = Vector2.ONE * sim.FogOfWarScript.cell_size_for_scale(scale)
-			sim._fog_of_war.configure(bounds_min - margin, bounds_max + margin, scale)
+			var margin = Vector2.ONE * _sim.FogOfWarScript.cell_size_for_scale(scale)
+			_sim._fog_of_war.configure(bounds_min - margin, bounds_max + margin, scale)
 		else:
-			sim._fog_of_war.configure_default(scale)
-	return sim._fog_of_war
+			_sim._fog_of_war.configure_default(scale)
+	return _sim._fog_of_war
 
 
 func _shroud_clearing_radius(row: Dictionary) -> float:
@@ -74,14 +75,15 @@ func _step_shroud_grid() -> void:
 	##
 	## Iteration order follows sim.entity_ids()/sim.structure_ids(), the same sorted
 	## order every other step uses, so two peers stamp in the same order.
-	if not sim.fog_of_war_enabled:
+	var _sim = sim
+	if not _sim.fog_of_war_enabled:
 		return
 	var fog = fog_of_war()
 	fog.begin_look_pass()
-	for eid in sim.entity_ids():
-		if not sim.entities.has(eid):
+	for eid in _sim.entity_ids():
+		if not _sim.entities.has(eid):
 			continue
-		var row: Dictionary = sim.entities[eid]
+		var row: Dictionary = _sim.entities[eid]
 		if int(row.get("health", 0)) <= 0:
 			continue
 		var team := int(row.get("team", -1))
@@ -94,10 +96,10 @@ func _step_shroud_grid() -> void:
 		# incremental: a battalion that has not left its shroud cell since last
 		# tick costs one dictionary lookup here and touches no cell at all.
 		fog.add_look(team, row.get("position", Vector2.ZERO), radius, eid)
-	for sid in sim.structure_ids():
-		if not sim.structures.has(sid):
+	for sid in _sim.structure_ids():
+		if not _sim.structures.has(sid):
 			continue
-		var srow: Dictionary = sim.structures[sid]
+		var srow: Dictionary = _sim.structures[sid]
 		if int(srow.get("health", 0)) <= 0:
 			continue
 		var steam := int(srow.get("team", -1))
@@ -141,11 +143,12 @@ func _structure_shroud_clearing_radius(srow: Dictionary) -> float:
 
 func _step_fog_from_vision() -> void:
 	## FoW consumer: living sim.entities reveal fog for their team using vision_range.
-	sim._ensure_parity()
-	for eid in sim.entity_ids():
-		if not sim.entities.has(eid):
+	var _sim = sim
+	_sim._ensure_parity()
+	for eid in _sim.entity_ids():
+		if not _sim.entities.has(eid):
 			continue
-		var row: Dictionary = sim.entities[eid]
+		var row: Dictionary = _sim.entities[eid]
 		if int(row.get("health", 0)) <= 0:
 			continue
 		var team := int(row.get("team", -1))
@@ -154,6 +157,6 @@ func _step_fog_from_vision() -> void:
 		var vision := float(row.get("vision_range", 0.0))
 		if vision <= 0.0:
 			continue
-		sim.parity.fog_reveal(team, row.get("position", Vector2.ZERO), vision, false)
+		_sim.parity.fog_reveal(team, row.get("position", Vector2.ZERO), vision, false)
 
 

@@ -24,13 +24,14 @@ func step_economy() -> void:
 	# module's own source-authored cadence. This is not the legacy farm timer:
 	# descriptor-backed structures carry their next-payment frame in hashed
 	# structure state, just as the SAGE module xfers m_depositOnFrame.
+	var _sim = sim
 	step_auto_deposit_updates()
 
-	var legacy_interval := maxi(1, int(sim._rules.get("farm_payout_ticks", 50)))
-	var legacy_payout_due: bool = (sim.tick_index % legacy_interval == 0)
+	var legacy_interval := maxi(1, int(_sim._rules.get("farm_payout_ticks", 50)))
+	var legacy_payout_due: bool = (_sim.tick_index % legacy_interval == 0)
 
-	for id in sim.structure_ids():
-		var row: Dictionary = sim.structures[id]
+	for id in _sim.structure_ids():
+		var row: Dictionary = _sim.structures[id]
 		var income := int(row.get("income_per_payout", 0))
 		if income <= 0 or int(row.get("health", 0)) <= 0 or float(row.get("construction_progress", 0.0)) < 1.0:
 			continue
@@ -40,9 +41,9 @@ func step_economy() -> void:
 		if row.has("income_interval_ticks") and row.has("next_income_tick"):
 			# Descriptor-authored per-structure cadence (retail IncomeInterval)
 			var next_payout: int = int(row.get("next_income_tick", -1))
-			if sim.tick_index >= next_payout:
+			if _sim.tick_index >= next_payout:
 				var interval_ticks: int = int(row.get("income_interval_ticks", 1))
-				row["next_income_tick"] = sim.tick_index + interval_ticks
+				row["next_income_tick"] = _sim.tick_index + interval_ticks
 				payout_due = true
 		else:
 			# Legacy global farm_payout_ticks cadence
@@ -54,17 +55,18 @@ func step_economy() -> void:
 		var team := int(row.get("team", -1))
 		income = income_with_upgrade_bonus(team, row, income)
 		income = ai_resource_handicap(team, income)
-		sim.team_resources[team] = sim.resources_for_team(team) + income
-		sim._emit_event("economy.payout", id, 0, {"team": team, "amount": income})
+		_sim.team_resources[team] = _sim.resources_for_team(team) + income
+		_sim._emit_event("economy.payout", id, 0, {"team": team, "amount": income})
 
 
 func initialize_structure_auto_deposit(structure: Dictionary) -> void:
+	var _sim = sim
 	var team := int(structure.get("team", -1))
 	var kind := String(structure.get("structure_kind", ""))
 	var descriptor_team := team
 	if structure.has("auto_deposit_descriptor_team"):
 		descriptor_team = int(structure.get("auto_deposit_descriptor_team", -1))
-	elif team == sim.NEUTRAL_TEAM:
+	elif team == _sim.NEUTRAL_TEAM:
 		# A map-authored neutral object has no controlling-player manifest from
 		# which module data can be reconstructed. Bind only when every roster
 		# manifest that defines this kind agrees on the exact authored rules;
@@ -72,9 +74,9 @@ func initialize_structure_auto_deposit(structure: Dictionary) -> void:
 		# immutable auto_deposit_descriptor_team contract before creation.
 		var resolved_rules: Array = []
 		var resolved_team := -1
-		for candidate_team in sim._roster_team_ids():
+		for candidate_team in _sim._roster_team_ids():
 			var candidate: Array = (
-				sim.structure_auto_deposit_updates_for_team(candidate_team)
+				_sim.structure_auto_deposit_updates_for_team(candidate_team)
 				.get(kind, []) as Array
 			)
 			if candidate.is_empty():
@@ -83,7 +85,7 @@ func initialize_structure_auto_deposit(structure: Dictionary) -> void:
 				resolved_team = candidate_team
 				resolved_rules = candidate
 			elif candidate != resolved_rules:
-				sim.configuration_error = (
+				_sim.configuration_error = (
 					"neutral structure %d AutoDepositUpdate descriptor is ambiguous"
 					% int(structure.get("id", 0))
 				)
@@ -91,8 +93,8 @@ func initialize_structure_auto_deposit(structure: Dictionary) -> void:
 				structure.erase("auto_deposit_state")
 				return
 		descriptor_team = resolved_team
-	if descriptor_team >= 0 and not sim._roster_team_ids().has(descriptor_team):
-		sim.configuration_error = (
+	if descriptor_team >= 0 and not _sim._roster_team_ids().has(descriptor_team):
+		_sim.configuration_error = (
 			"structure %d AutoDepositUpdate descriptor team %d is not rostered"
 			% [int(structure.get("id", 0)), descriptor_team]
 		)
@@ -102,7 +104,7 @@ func initialize_structure_auto_deposit(structure: Dictionary) -> void:
 	var rules: Array = []
 	if descriptor_team >= 0:
 		rules = (
-			sim.structure_auto_deposit_updates_for_team(descriptor_team)
+			_sim.structure_auto_deposit_updates_for_team(descriptor_team)
 				.get(kind, []) as Array
 		)
 		# Fortress composite pieces: retail authors the keep's income on the
@@ -113,7 +115,7 @@ func initialize_structure_auto_deposit(structure: Dictionary) -> void:
 		# The piece IS a live castle_piece row now, so its authored rows bind
 		# here. Owner 2026-08-19: fortresses never earned passive income.
 		if rules.is_empty():
-			var deferred: Dictionary = sim.team_manifest_for(descriptor_team).get(
+			var deferred: Dictionary = _sim.team_manifest_for(descriptor_team).get(
 				"deferred_structure_auto_deposit_updates", {}
 			) as Dictionary
 			# The manifest keys composite pieces by the retail source object
@@ -145,7 +147,7 @@ func initialize_structure_auto_deposit(structure: Dictionary) -> void:
 		var interval := maxi(1, int(timing.get("simulationTicks", 0)))
 		states.append(
 			{
-				"next_tick": sim.tick_index + interval,
+				"next_tick": _sim.tick_index + interval,
 				"initialized": false,
 				"capture_bonus_armed": false,
 			}
@@ -154,12 +156,13 @@ func initialize_structure_auto_deposit(structure: Dictionary) -> void:
 
 
 func auto_deposit_upgrade_boost(team: int, rule: Dictionary) -> int:
-	var completed: Dictionary = sim.team_upgrades.get(team, {}) as Dictionary
+	var _sim = sim
+	var completed: Dictionary = _sim.team_upgrades.get(team, {}) as Dictionary
 	# The retail module returns the first authored matching pair, not a sum.
 	for boost_value in rule.get("upgradedBoosts", []) as Array:
 		var boost := boost_value as Dictionary
 		if String(boost.get("upgradeType", "")) != "PLAYER":
-			sim.configuration_error = (
+			_sim.configuration_error = (
 				"AutoDepositUpdate boost '%s' is not a PLAYER upgrade"
 				% String(boost.get("upgradeId", ""))
 			)
@@ -170,8 +173,9 @@ func auto_deposit_upgrade_boost(team: int, rule: Dictionary) -> int:
 
 
 func step_auto_deposit_updates() -> void:
-	for structure_id in sim.structure_ids():
-		var structure: Dictionary = sim.structures[structure_id]
+	var _sim = sim
+	for structure_id in _sim.structure_ids():
+		var structure: Dictionary = _sim.structures[structure_id]
 		var team := int(structure.get("team", -1))
 		var rules: Array = structure.get("auto_deposit_rules", []) as Array
 		var states_value: Variant = structure.get("auto_deposit_state")
@@ -179,7 +183,7 @@ func step_auto_deposit_updates() -> void:
 			continue
 		var states := states_value as Array
 		if states.size() != rules.size():
-			sim.configuration_error = (
+			_sim.configuration_error = (
 				"structure %d AutoDepositUpdate state/rule count drifted"
 				% structure_id
 			)
@@ -187,7 +191,7 @@ func step_auto_deposit_updates() -> void:
 		for index in rules.size():
 			var rule := rules[index] as Dictionary
 			var state := states[index] as Dictionary
-			if sim.tick_index < int(state.get("next_tick", sim.tick_index + 1)):
+			if _sim.tick_index < int(state.get("next_tick", _sim.tick_index + 1)):
 				continue
 			var interval := maxi(
 				1,
@@ -196,7 +200,7 @@ func step_auto_deposit_updates() -> void:
 					.get("simulationTicks", 0)
 				)
 			)
-			state["next_tick"] = sim.tick_index + interval
+			state["next_tick"] = _sim.tick_index + interval
 			if not bool(state.get("initialized", false)):
 				state["initialized"] = true
 				state["capture_bonus_armed"] = true
@@ -204,7 +208,7 @@ func step_auto_deposit_updates() -> void:
 				(rule.get("depositAmount", {}) as Dictionary).get("value", 0)
 			)
 			if (
-				not sim.team_resources.has(team)
+				not _sim.team_resources.has(team)
 				or amount <= 0
 				or int(structure.get("health", 0)) <= 0
 				or float(structure.get("construction_progress", 0.0)) < 1.0
@@ -215,8 +219,8 @@ func step_auto_deposit_updates() -> void:
 			):
 				continue
 			amount += auto_deposit_upgrade_boost(team, rule)
-			sim.team_resources[team] = sim.resources_for_team(team) + amount
-			sim._emit_event(
+			_sim.team_resources[team] = _sim.resources_for_team(team) + amount
+			_sim._emit_event(
 				"economy.auto_deposit",
 				structure_id,
 				0,
@@ -227,13 +231,14 @@ func step_auto_deposit_updates() -> void:
 func award_auto_deposit_capture(
 	structure: Dictionary, new_team: int
 ) -> int:
+	var _sim = sim
 	var rules: Array = structure.get("auto_deposit_rules", []) as Array
 	var states_value: Variant = structure.get("auto_deposit_state")
 	if rules.is_empty() or typeof(states_value) != TYPE_ARRAY:
 		return 0
 	var states := states_value as Array
 	if states.size() != rules.size():
-		sim.configuration_error = "captured AutoDepositUpdate state/rule count drifted"
+		_sim.configuration_error = "captured AutoDepositUpdate state/rule count drifted"
 		return 0
 	var awarded := 0
 	for index in rules.size():
@@ -248,20 +253,20 @@ func award_auto_deposit_capture(
 		)
 		# SAGE awardInitialCaptureBonus always restarts the regular cadence,
 		# even when the one-shot is not armed or its amount is zero.
-		state["next_tick"] = sim.tick_index + interval
+		state["next_tick"] = _sim.tick_index + interval
 		var amount := int(
 			(rule.get("initialCaptureBonus", {}) as Dictionary).get("value", 0)
 		)
 		if (
 			not bool(state.get("capture_bonus_armed", false))
 			or amount <= 0
-			or not sim.team_resources.has(new_team)
+			or not _sim.team_resources.has(new_team)
 		):
 			continue
 		state["capture_bonus_armed"] = false
-		sim.team_resources[new_team] = sim.resources_for_team(new_team) + amount
+		_sim.team_resources[new_team] = _sim.resources_for_team(new_team) + amount
 		awarded += amount
-		sim._emit_event(
+		_sim._emit_event(
 			"economy.auto_deposit_capture_bonus",
 			int(structure.get("id", 0)),
 			0,
@@ -275,9 +280,10 @@ func ai_resource_handicap(team: int, income: int) -> int:
 	## 1000 permille (the legacy/default "medium") return the income untouched, so
 	## the default match's resource curve — and the pinned signature — never move.
 	## Higher tiers gain a deterministic integer bonus, lower tiers a penalty.
-	if not sim._team_ai_state.has(team):
+	var _sim = sim
+	if not _sim._team_ai_state.has(team):
 		return income
-	var permille := int(sim._difficulty_profile(team).get("resource_permille", 1000))
+	var permille := int(_sim._difficulty_profile(team).get("resource_permille", 1000))
 	if permille == 1000:
 		return income
 	return int(income * permille / 1000)
@@ -287,8 +293,9 @@ func income_with_upgrade_bonus(team: int, building: Dictionary, base_income: int
 	## Authored TerrainResourceBehavior upgrade bonuses (Grand Harvest): the
 	## resource structure's own document declares the percent while the team
 	## owns the technology and maintains the required building.
-	var bundle: Dictionary = sim.structure_upgrade_effects_for_team(team).get(String(building.get("structure_kind", "")), {})
-	var owned: Dictionary = sim.team_upgrades.get(team, {}) as Dictionary
+	var _sim = sim
+	var bundle: Dictionary = _sim.structure_upgrade_effects_for_team(team).get(String(building.get("structure_kind", "")), {})
+	var owned: Dictionary = _sim.team_upgrades.get(team, {}) as Dictionary
 	var income := base_income
 	for effect_value in Array(bundle.get("effects", [])):
 		var effect := effect_value as Dictionary
@@ -296,7 +303,7 @@ func income_with_upgrade_bonus(team: int, building: Dictionary, base_income: int
 			continue
 		if not owned.has(String(effect.get("upgrade_id", ""))):
 			continue
-		if not sim._team_has_required_object(team, String(effect.get("upgrade_must_be_present", ""))):
+		if not _sim._team_has_required_object(team, String(effect.get("upgrade_must_be_present", ""))):
 			continue
 		income = roundi(income * float(effect.get("bonus_percent", 100.0)) / 100.0)
 	return income
@@ -305,20 +312,21 @@ func income_with_upgrade_bonus(team: int, building: Dictionary, base_income: int
 func award_scavenger_bounty(attacker_id: int, victim: Dictionary, victim_kind: String) -> int:
 	# This hook is called only at a lethal transition. It still proves ownership
 	# and hostility locally so script/self/friendly deaths can never mint money.
-	if not sim.entities.has(attacker_id):
+	var _sim = sim
+	if not _sim.entities.has(attacker_id):
 		return 0
-	var attacker := sim.entities[attacker_id] as Dictionary
+	var attacker := _sim.entities[attacker_id] as Dictionary
 	if int(attacker.get("health", 0)) <= 0:
 		return 0
 	var killer_team := int(attacker.get("team", -1))
-	if not sim._is_combatant_team(killer_team) or not sim._is_hostile(killer_team, int(victim.get("team", -1))):
+	if not _sim._is_combatant_team(killer_team) or not _sim._is_hostile(killer_team, int(victim.get("team", -1))):
 		return 0
-	var percent := float(sim._scavenger_bounty_percent.get(killer_team, 0.0))
+	var percent := float(_sim._scavenger_bounty_percent.get(killer_team, 0.0))
 	if percent <= 0.0:
 		return 0
 	var authored_value := -1
 	if victim_kind == "structure":
-		authored_value = int(sim.structure_bounty_values_for_team(int(victim.get("team", -1))).get(String(victim.get("structure_kind", "")), -1))
+		authored_value = int(_sim.structure_bounty_values_for_team(int(victim.get("team", -1))).get(String(victim.get("structure_kind", "")), -1))
 	elif victim.has("bounty_value"):
 		authored_value = int(victim.get("bounty_value", -1))
 	if authored_value < 0:
@@ -326,8 +334,8 @@ func award_scavenger_bounty(attacker_id: int, victim: Dictionary, victim_kind: S
 	var award := maxi(0, floori(float(authored_value) * percent))
 	if award <= 0:
 		return 0
-	sim.team_resources[killer_team] = sim.resources_for_team(killer_team) + award
-	sim._emit_event("economy.scavenger_bounty", attacker_id, int(victim.get("id", 0)), {
+	_sim.team_resources[killer_team] = _sim.resources_for_team(killer_team) + award
+	_sim._emit_event("economy.scavenger_bounty", attacker_id, int(victim.get("id", 0)), {
 		"team": killer_team,
 		"victim_kind": victim_kind,
 		"bounty_value": authored_value,

@@ -8,9 +8,10 @@ func structure_sell_command(structure_id: int) -> Dictionary:
 	## Compiled Command_Sell row for this structure, or {} if the mounted docs
 	## do not author a sell slot. Command_Sell is slot 6 of every Men production
 	## set and the whole of SellableCommandSet (commandset.ini:5771).
-	if not sim.structures.has(structure_id):
+	var _sim = sim
+	if not _sim.structures.has(structure_id):
 		return {}
-	var building: Dictionary = sim.structures[structure_id]
+	var building: Dictionary = _sim.structures[structure_id]
 	if int(building.get("health", 0)) <= 0:
 		return {}
 	# farm.ini:34 authors CommandSet = SellableCommandSet on the object with
@@ -21,9 +22,9 @@ func structure_sell_command(structure_id: int) -> Dictionary:
 		return {}
 	var kind := String(building.get("structure_kind", ""))
 	var team := int(building.get("team", -1))
-	var cost = int((sim.structure_build_rules_for_team(team).get(kind, {}) as Dictionary).get("cost", 0))
+	var cost = int((_sim.structure_build_rules_for_team(team).get(kind, {}) as Dictionary).get("cost", 0))
 	if cost <= 0:
-		cost = int((sim._expansion_build_rules.get(kind, {}) as Dictionary).get("cost", 0))
+		cost = int((_sim._expansion_build_rules.get(kind, {}) as Dictionary).get("cost", 0))
 	# gamedata.ini:8973 SellPercentage = 50%.
 	var refund := int(cost / 2)
 	return {
@@ -37,11 +38,12 @@ func sell_structure(team: int, structure_id: int) -> Dictionary:
 	## Retail SELL (commandbutton.ini:3554): raze the building and refund
 	## SellPercentage of its authored build cost. Presentation follows the
 	## ordinary health=0 / structure.destroyed path.
-	if not sim.base_loop_enabled or sim.winner != -1:
+	var _sim = sim
+	if not _sim.base_loop_enabled or _sim.winner != -1:
 		return {"ok": false, "reason": "match-unavailable"}
-	if not sim.structures.has(structure_id):
+	if not _sim.structures.has(structure_id):
 		return {"ok": false, "reason": "unknown-structure"}
-	var building: Dictionary = sim.structures[structure_id]
+	var building: Dictionary = _sim.structures[structure_id]
 	if int(building.get("team", -1)) != team:
 		return {"ok": false, "reason": "wrong-owner"}
 	if int(building.get("health", 0)) <= 0:
@@ -50,15 +52,15 @@ func sell_structure(team: int, structure_id: int) -> Dictionary:
 	if sell.is_empty():
 		return {"ok": false, "reason": "no-sell-command"}
 	var refund := int(sell.get("refund", 0))
-	sim.team_resources[team] = sim.resources_for_team(team) + refund
+	_sim.team_resources[team] = _sim.resources_for_team(team) + refund
 	building["health"] = 0
 	building["queue"] = []
 	building["upgrade_queue"] = []
 	# Detach the porter so a later construct does not treat this husk as a
 	# cancellable site (that path refunds the full build cost).
 	var builder_id := int(building.get("builder_id", 0))
-	if builder_id != 0 and sim.entities.has(builder_id):
-		var builder: Dictionary = sim.entities[builder_id]
+	if builder_id != 0 and _sim.entities.has(builder_id):
+		var builder: Dictionary = _sim.entities[builder_id]
 		if int(builder.get("construction_id", 0)) == structure_id:
 			builder["construction_id"] = 0
 			if String(builder.get("order_kind", "")) == "construct":
@@ -68,12 +70,12 @@ func sell_structure(team: int, structure_id: int) -> Dictionary:
 	building["builder_id"] = 0
 	_clear_expansion_pad_occupant(structure_id)
 	var structure_kind := String(building.get("structure_kind", ""))
-	sim._emit_event("structure.sold", 0, structure_id, {
+	_sim._emit_event("structure.sold", 0, structure_id, {
 		"team": team,
 		"refund": refund,
 		"structure_kind": structure_kind,
 	})
-	sim._emit_event("structure.destroyed", 0, structure_id, {
+	_sim._emit_event("structure.destroyed", 0, structure_id, {
 		"reason": "sold",
 		"structure_kind": structure_kind,
 		"team": team,
@@ -84,9 +86,10 @@ func sell_structure(team: int, structure_id: int) -> Dictionary:
 func structure_command_slot(structure_id: int, command_id: String) -> int:
 	## Authored palantir slot for a command on this building's current compiled
 	## command set, or 0 when the docs do not place it.
-	if command_id == "" or not sim.structures.has(structure_id):
+	var _sim = sim
+	if command_id == "" or not _sim.structures.has(structure_id):
 		return 0
-	for slot_value in _compiled_command_slots_for(sim.structures[structure_id]):
+	for slot_value in _compiled_command_slots_for(_sim.structures[structure_id]):
 		if typeof(slot_value) != TYPE_DICTIONARY:
 			continue
 		var slot: Dictionary = slot_value
@@ -109,6 +112,7 @@ func _compiled_command_slots_for(building: Dictionary) -> Array:
 	# Scenario sim.structures carry the exact selected-pack command-set projection on
 	# the instance. It stays outside the faction structure registry, but ownership
 	# transitions still expose the authored defected-lair command surface.
+	var _sim = sim
 	var scenario_sets := building.get("scenario_trained_command_sets", []) as Array
 	if not scenario_sets.is_empty():
 		var active_id := String(building.get("command_set_id", building.get("default_command_set_id", "")))
@@ -124,7 +128,7 @@ func _compiled_command_slots_for(building: Dictionary) -> Array:
 	if stamped != "":
 		candidates.append(stamped)
 	var kind := String(building.get("structure_kind", ""))
-	var aliases: Variant = sim.structure_source_object_ids_for_team(int(building.get("team", -1))).get(kind, [])
+	var aliases: Variant = _sim.structure_source_object_ids_for_team(int(building.get("team", -1))).get(kind, [])
 	if typeof(aliases) == TYPE_ARRAY:
 		for alias_value in aliases as Array:
 			var alias_id := String(alias_value)
@@ -134,7 +138,7 @@ func _compiled_command_slots_for(building: Dictionary) -> Array:
 		var alias_id := String(aliases)
 		if alias_id != "" and not candidates.has(alias_id):
 			candidates.append(alias_id)
-	var db = sim._content_db_ref()
+	var db = _sim._content_db_ref()
 	if db == null or not db.has_method("get_playable_structure_runtime"):
 		return []
 	for object_id in candidates:
@@ -164,8 +168,9 @@ func _direct_or_first_command_set_slots(sets: Array) -> Array:
 
 
 func _clear_expansion_pad_occupant(structure_id: int) -> void:
-	for fortress_id_value in sim.expansion_pads.keys():
-		var pads: Array = sim.expansion_pads[fortress_id_value] as Array
+	var _sim = sim
+	for fortress_id_value in _sim.expansion_pads.keys():
+		var pads: Array = _sim.expansion_pads[fortress_id_value] as Array
 		for pad_value in pads:
 			if typeof(pad_value) != TYPE_DICTIONARY:
 				continue
@@ -198,14 +203,15 @@ func _structure_placement_radius(structure_kind: String) -> float:
 
 
 func _authored_structure_placement_radius(team: int, structure_kind: String) -> float:
-	var sources: Variant = sim.structure_source_object_ids_for_team(team).get(structure_kind, [])
+	var _sim = sim
+	var sources: Variant = _sim.structure_source_object_ids_for_team(team).get(structure_kind, [])
 	var source_object_id := ""
 	if typeof(sources) == TYPE_ARRAY and not (sources as Array).is_empty():
 		source_object_id = String((sources as Array)[0])
 	elif typeof(sources) in [TYPE_STRING, TYPE_STRING_NAME]:
 		source_object_id = String(sources)
 	if source_object_id != "":
-		var authored_radius = sim._structure_footprint_radius({
+		var authored_radius = _sim._structure_footprint_radius({
 			"source_object_id": source_object_id,
 			"structure_kind": structure_kind,
 		})
@@ -242,18 +248,19 @@ func _issue_construct_for_team(
 	dry_run: bool = false,
 	authored_castle_site: bool = false
 ) -> Dictionary:
-	if not sim.base_loop_enabled or sim.winner != -1:
+	var _sim = sim
+	if not _sim.base_loop_enabled or _sim.winner != -1:
 		return {"ok": false, "reason": "match-unavailable"}
-	if team != sim.PLAYER_TEAM and team != sim.ENEMY_TEAM:
+	if team != _sim.PLAYER_TEAM and team != _sim.ENEMY_TEAM:
 		return {"ok": false, "reason": "invalid-team"}
 	# The constructing team's OWN faction tables (identical to the globals in
 	# the default single-manifest match; a cross-faction guest builds its own
 	# faction's sim.structures at its own costs).
-	var team_structure_build_rules = sim.structure_build_rules_for_team(team)
-	var team_structure_max_health = sim.structure_max_health_for_team(team)
+	var team_structure_build_rules = _sim.structure_build_rules_for_team(team)
+	var team_structure_max_health = _sim.structure_max_health_for_team(team)
 	if not team_structure_build_rules.has(structure_kind):
 		return {"ok": false, "reason": "unsupported-structure"}
-	var permission = sim.building_permission_for_kind(team, structure_kind)
+	var permission = _sim.building_permission_for_kind(team, structure_kind)
 	if not bool(permission.get("known", false)):
 		return {
 			"ok": false,
@@ -271,13 +278,13 @@ func _issue_construct_for_team(
 	# plot's center and skips the freeform geometry checks (plot positions are
 	# predetermined and valid). Occupancy is claimed after the site is created.
 	var build_plot_index := -1
-	if sim.build_plots_only:
-		build_plot_index = sim._free_build_plot_index_near(team, position)
+	if _sim.build_plots_only:
+		build_plot_index = _sim._free_build_plot_index_near(team, position)
 		if build_plot_index < 0:
 			return {"ok": false, "reason": "build-plots-only: pick an empty plot"}
-		position = Vector2((sim.build_plots[team] as Array)[build_plot_index].get("position", position))
+		position = Vector2((_sim.build_plots[team] as Array)[build_plot_index].get("position", position))
 	else:
-		if sim.playable_outline.size() >= 3 and not Geometry2D.is_point_in_polygon(position, sim.playable_outline):
+		if _sim.playable_outline.size() >= 3 and not Geometry2D.is_point_in_polygon(position, _sim.playable_outline):
 			return {"ok": false, "reason": "outside-playable-area"}
 		var new_radius := (
 			_authored_structure_placement_radius(team, structure_kind)
@@ -290,15 +297,15 @@ func _issue_construct_for_team(
 		# every fallback candidate repeat a full structure-table scan.
 		var gather_radius := new_radius + MAX_STRUCTURE_PLACEMENT_RADIUS + PLACEMENT_CLEARANCE_MARGIN
 		var exempted_foundation_id := 0
-		for existing_id in sim._structure_ids_within_gather_radius(position, gather_radius):
-			var existing_row: Dictionary = sim.structures[existing_id] as Dictionary
+		for existing_id in _sim._structure_ids_within_gather_radius(position, gather_radius):
+			var existing_row: Dictionary = _sim.structures[existing_id] as Dictionary
 			# Exempt at most the one foundation marker whose own footprint contains
 			# the authored point. Walls, gates, towers, other foundations, and every
 			# live/dynamic structure retain normal clearance.
 			if (
 				authored_castle_site
 				and exempted_foundation_id == 0
-				and existing_id >= sim.CASTLE_FIXTURE_FIRST_ID
+				and existing_id >= _sim.CASTLE_FIXTURE_FIRST_ID
 				and _authored_site_foundation_fixture_contains(existing_row, position)
 			):
 				exempted_foundation_id = existing_id
@@ -306,8 +313,8 @@ func _issue_construct_for_team(
 			var existing_position := Vector2(existing_row.get("position", Vector2.ZERO))
 			var existing_radius := _structure_placement_radius(String(existing_row.get("structure_kind", "")))
 			var clearance_margin := PLACEMENT_CLEARANCE_MARGIN
-			if existing_id >= sim.CASTLE_FIXTURE_FIRST_ID:
-				var fixture_radius = sim._structure_footprint_radius(existing_row)
+			if existing_id >= _sim.CASTLE_FIXTURE_FIRST_ID:
+				var fixture_radius = _sim._structure_footprint_radius(existing_row)
 				if fixture_radius > 0.0:
 					existing_radius = fixture_radius
 				# Imported fixtures have exact authored footprints and no builder
@@ -327,9 +334,9 @@ func _issue_construct_for_team(
 	var builder_id := 0
 	for value in ids:
 		var id := int(value)
-		if not sim.entities.has(id):
+		if not _sim.entities.has(id):
 			continue
-		var row: Dictionary = sim.entities[id]
+		var row: Dictionary = _sim.entities[id]
 		if int(row.get("team", -1)) != team or int(row.get("health", 0)) <= 0 or not bool(row.get("is_builder", false)):
 			continue
 		builder_id = id
@@ -338,17 +345,17 @@ func _issue_construct_for_team(
 		return {"ok": false, "reason": "builder-required"}
 	var build_rule: Dictionary = team_structure_build_rules[structure_kind]
 	var cost := int(build_rule["cost"])
-	if sim.resources_for_team(team) < cost:
+	if _sim.resources_for_team(team) < cost:
 		return {"ok": false, "reason": "insufficient-resources", "cost": cost}
 	if dry_run:
 		return {"ok": true, "reason": "", "dry_run": true, "cost": cost}
-	var structure_id = sim._next_dynamic_structure_id
-	sim._next_dynamic_structure_id += 1
+	var structure_id = _sim._next_dynamic_structure_id
+	_sim._next_dynamic_structure_id += 1
 	var maximum_health := int(team_structure_max_health[structure_kind])
 	var production: Array[String] = []
-	var construct_production_order = sim.production_unit_order_for_team(team)
-	var construct_production_rules = sim.unit_production_rules_for_team(team)
-	var construct_scope = sim.production_scope_for_team(team)
+	var construct_production_order = _sim.production_unit_order_for_team(team)
+	var construct_production_rules = _sim.unit_production_rules_for_team(team)
+	var construct_scope = _sim.production_scope_for_team(team)
 	for unit_type in construct_production_order:
 		if not construct_scope.is_empty() and not construct_scope.has(String(unit_type)):
 			continue
@@ -356,9 +363,9 @@ func _issue_construct_for_team(
 		var producer_kinds_for_rule: Array = production_rule.get("producer_kinds", [String(production_rule.get("producer_kind", ""))])
 		if producer_kinds_for_rule.has(structure_kind):
 			production.append(unit_type)
-	var build_ticks = maxi(1, roundi(float(build_rule["seconds"]) / sim.TICK_SECONDS))
-	sim._note_structure_table_mutation()
-	sim.structures[structure_id] = {
+	var build_ticks = maxi(1, roundi(float(build_rule["seconds"]) / _sim.TICK_SECONDS))
+	_sim._note_structure_table_mutation()
+	_sim.structures[structure_id] = {
 		"id": structure_id,
 		"team": team,
 		"kind": "structure",
@@ -378,7 +385,7 @@ func _issue_construct_for_team(
 		"production": production,
 		"queue": [],
 		"damage_remainders": {},
-		"income_per_payout": int(sim._rules.get("farm_income", 25)) if structure_kind == "farm" else 0,
+		"income_per_payout": int(_sim._rules.get("farm_income", 25)) if structure_kind == "farm" else 0,
 	}
 	# A building the player RAISES is the same retail object as the one the map
 	# seeds (_seed_structures) or a flag unpacks (unpack_base): both of those
@@ -392,44 +399,44 @@ func _issue_construct_for_team(
 	# feeds sim._structure_footprint_radius and object-id script queries -- but the
 	# footprint half is measured to be a no-op on the mounted packs; see the
 	# note in _seed_structures.
-	var constructed_sources: Variant = sim.structure_source_object_ids_for_team(team).get(structure_kind, [])
+	var constructed_sources: Variant = _sim.structure_source_object_ids_for_team(team).get(structure_kind, [])
 	if typeof(constructed_sources) == TYPE_ARRAY and not (constructed_sources as Array).is_empty():
-		sim.structures[structure_id]["source_object_id"] = String((constructed_sources as Array)[0])
+		_sim.structures[structure_id]["source_object_id"] = String((constructed_sources as Array)[0])
 	elif typeof(constructed_sources) in [TYPE_STRING, TYPE_STRING_NAME]:
-		sim.structures[structure_id]["source_object_id"] = String(constructed_sources)
-	sim._stamp_refund_die_creation_cost(sim.structures[structure_id] as Dictionary, cost)
-	sim._mark_ring_delivery_structure(sim.structures[structure_id] as Dictionary)
+		_sim.structures[structure_id]["source_object_id"] = String(constructed_sources)
+	_sim._stamp_refund_die_creation_cost(_sim.structures[structure_id] as Dictionary, cost)
+	_sim._mark_ring_delivery_structure(_sim.structures[structure_id] as Dictionary)
 	if bool(build_rule.get("highlander_body", false)):
-		sim.structures[structure_id]["highlander_body"] = true
-	sim.team_resources[team] = sim.resources_for_team(team) - cost
-	var builder: Dictionary = sim.entities[builder_id]
+		_sim.structures[structure_id]["highlander_body"] = true
+	_sim.team_resources[team] = _sim.resources_for_team(team) - cost
+	var builder: Dictionary = _sim.entities[builder_id]
 	var previous_site_id := int(builder.get("construction_id", 0))
-	if previous_site_id != 0 and sim.structures.has(previous_site_id):
+	if previous_site_id != 0 and _sim.structures.has(previous_site_id):
 		# Redirecting a busy builder cancels its unfinished site with a full
 		# refund; otherwise the site would linger as unfinishable scaffolding.
-		var previous_site: Dictionary = sim.structures[previous_site_id]
+		var previous_site: Dictionary = _sim.structures[previous_site_id]
 		if float(previous_site.get("construction_progress", 1.0)) < 1.0:
 			var previous_team := int(previous_site.get("team", team))
-			sim.team_resources[previous_team] = sim.resources_for_team(previous_team) + int(sim.structure_build_rules_for_team(previous_team).get(String(previous_site.get("structure_kind", "")), {}).get("cost", 0))
-			sim.structures.erase(previous_site_id)
-			sim._note_structure_table_mutation()
-			sim._emit_event("construction.cancelled", builder_id, previous_site_id, {"team": previous_team})
+			_sim.team_resources[previous_team] = _sim.resources_for_team(previous_team) + int(_sim.structure_build_rules_for_team(previous_team).get(String(previous_site.get("structure_kind", "")), {}).get("cost", 0))
+			_sim.structures.erase(previous_site_id)
+			_sim._note_structure_table_mutation()
+			_sim._emit_event("construction.cancelled", builder_id, previous_site_id, {"team": previous_team})
 	builder["construction_id"] = structure_id
 	builder["order_kind"] = "construct"
 	builder["target_id"] = 0
-	sim._clear_member_targets(builder)
-	if not sim._assign_route(builder, position):
-		sim.structures.erase(structure_id)
-		sim._note_structure_table_mutation()
-		sim.team_resources[team] = sim.resources_for_team(team) + cost
+	_sim._clear_member_targets(builder)
+	if not _sim._assign_route(builder, position):
+		_sim.structures.erase(structure_id)
+		_sim._note_structure_table_mutation()
+		_sim.team_resources[team] = _sim.resources_for_team(team) + cost
 		builder["construction_id"] = 0
-		return {"ok": false, "reason": sim.last_route_rejection if sim.last_route_rejection != "" else "route-rejected"}
-	sim._apply_structure_inherit_upgrades(sim.structures[structure_id] as Dictionary)
-	sim._initialize_structure_auto_deposit(sim.structures[structure_id] as Dictionary)
-	sim._unpack_castle_behavior_for_structure(structure_id)
-	if sim.build_plots_only and build_plot_index >= 0:
-		(sim.build_plots[team] as Array)[build_plot_index]["occupant_structure_id"] = structure_id
-	sim._emit_event("construction.started", builder_id, structure_id, {"team": team, "structure_kind": structure_kind, "cost": cost, "build_ticks": build_ticks, "object_id": String(builder.get("object_id", ""))})
+		return {"ok": false, "reason": _sim.last_route_rejection if _sim.last_route_rejection != "" else "route-rejected"}
+	_sim._apply_structure_inherit_upgrades(_sim.structures[structure_id] as Dictionary)
+	_sim._initialize_structure_auto_deposit(_sim.structures[structure_id] as Dictionary)
+	_sim._unpack_castle_behavior_for_structure(structure_id)
+	if _sim.build_plots_only and build_plot_index >= 0:
+		(_sim.build_plots[team] as Array)[build_plot_index]["occupant_structure_id"] = structure_id
+	_sim._emit_event("construction.started", builder_id, structure_id, {"team": team, "structure_kind": structure_kind, "cost": cost, "build_ticks": build_ticks, "object_id": String(builder.get("object_id", ""))})
 	return {"ok": true, "builder_id": builder_id, "structure_id": structure_id, "cost": cost, "build_ticks": build_ticks}
 
 
@@ -445,28 +452,29 @@ func debug_finish_team_work(team: int) -> Dictionary:
 	## cooldowns, and hero ability cooldowns. Jobs are only rescheduled to
 	## complete now — the REAL step paths still run, so every authored side
 	## effect (pad seeding, events, upgrade effects) fires normally.
+	var _sim = sim
 	var constructions := 0
 	var jobs := 0
-	for structure_id in sim.structure_ids():
-		var building: Dictionary = sim.structures[structure_id]
+	for structure_id in _sim.structure_ids():
+		var building: Dictionary = _sim.structures[structure_id]
 		if int(building.get("team", -1)) != team:
 			continue
 		if float(building.get("construction_progress", 1.0)) < 1.0:
 			building["construction_elapsed_ticks"] = maxi(0, int(building.get("construction_build_ticks", 1)) - 1)
 			constructions += 1
 		for item_value in building.get("queue", []) as Array:
-			(item_value as Dictionary)["complete_tick"] = sim.tick_index
+			(item_value as Dictionary)["complete_tick"] = _sim.tick_index
 			jobs += 1
 		for item_value in building.get("upgrade_queue", []) as Array:
-			(item_value as Dictionary)["complete_tick"] = sim.tick_index
+			(item_value as Dictionary)["complete_tick"] = _sim.tick_index
 			jobs += 1
-	sim._power_cooldown_until[team] = {}
-	for id in sim.entity_ids():
-		var row: Dictionary = sim.entities[id]
+	_sim._power_cooldown_until[team] = {}
+	for id in _sim.entity_ids():
+		var row: Dictionary = _sim.entities[id]
 		if int(row.get("team", -1)) != team:
 			continue
 		for item_value in row.get("upgrade_queue", []) as Array:
-			(item_value as Dictionary)["complete_tick"] = sim.tick_index
+			(item_value as Dictionary)["complete_tick"] = _sim.tick_index
 			jobs += 1
 		var states: Dictionary = row.get("ability_states", {}) as Dictionary
 		for ability_id in states:
@@ -478,17 +486,18 @@ func debug_level_up_battalions(ids: Array) -> Dictionary:
 	## +1 authored rank per selected battalion/hero: awards exactly the XP
 	## delta to the next authored threshold through the real experience
 	## pipeline, so every authored level effect applies at true magnitudes.
+	var _sim = sim
 	var leveled := 0
 	var capped := 0
 	var unauthored := 0
 	for id_value in ids:
 		var id := int(id_value)
-		if not sim.entities.has(id):
+		if not _sim.entities.has(id):
 			continue
-		var row: Dictionary = sim.entities[id]
+		var row: Dictionary = _sim.entities[id]
 		if int(row.get("health", 0)) <= 0:
 			continue
-		var rule: Dictionary = sim._unit_experience_rules.get(String(row.get("unit_type", "")), {})
+		var rule: Dictionary = _sim._unit_experience_rules.get(String(row.get("unit_type", "")), {})
 		if rule.is_empty():
 			unauthored += 1
 			continue
@@ -503,14 +512,15 @@ func debug_level_up_battalions(ids: Array) -> Dictionary:
 			capped += 1
 			continue
 		var needed := int(next_row.get("required_experience", 0)) - int(row.get("experience_xp", 0))
-		sim._award_experience(row, maxi(1, needed))
+		_sim._award_experience(row, maxi(1, needed))
 		leveled += 1
 	return {"leveled": leveled, "capped": capped, "unauthored": unauthored}
 
 
 func _step_construction() -> void:
-	for structure_id in sim.structure_ids():
-		var site: Dictionary = sim.structures[structure_id]
+	var _sim = sim
+	for structure_id in _sim.structure_ids():
+		var site: Dictionary = _sim.structures[structure_id]
 		if float(site.get("construction_progress", 1.0)) >= 1.0:
 			continue
 		if bool(site.get("builder_free", false)):
@@ -521,25 +531,25 @@ func _step_construction() -> void:
 			site["construction_progress"] = minf(1.0, float(elapsed) / float(build_ticks))
 			if elapsed >= build_ticks:
 				var foundation_team := int(site.get("team", -1))
-				if sim._team_ai_state.has(foundation_team):
-					(sim._team_ai_state[foundation_team] as Dictionary)["construction_resolved"] = true
-				sim._apply_structure_create_grants(site, false, true)
-				sim._emit_event("construction.completed", 0, structure_id, {"team": int(site.get("team", -1)), "structure_kind": String(site.get("structure_kind", ""))})
+				if _sim._team_ai_state.has(foundation_team):
+					(_sim._team_ai_state[foundation_team] as Dictionary)["construction_resolved"] = true
+				_sim._apply_structure_create_grants(site, false, true)
+				_sim._emit_event("construction.completed", 0, structure_id, {"team": int(site.get("team", -1)), "structure_kind": String(site.get("structure_kind", ""))})
 			continue
 		var builder_id := int(site.get("builder_id", 0))
-		if builder_id != 0 and (not sim.entities.has(builder_id) or int((sim.entities[builder_id] as Dictionary).get("health", 0)) <= 0):
+		if builder_id != 0 and (not _sim.entities.has(builder_id) or int((_sim.entities[builder_id] as Dictionary).get("health", 0)) <= 0):
 			# A dead builder can never finish its site. The husk is destroyed
 			# instead of stalling forever; the builder's assignment clears too.
-			if sim.entities.has(builder_id):
-				(sim.entities[builder_id] as Dictionary)["construction_id"] = 0
+			if _sim.entities.has(builder_id):
+				(_sim.entities[builder_id] as Dictionary)["construction_id"] = 0
 			site["builder_id"] = 0
 			if int(site.get("health", 0)) > 0:
 				site["health"] = 0
-				sim._emit_event("structure.destroyed", 0, structure_id, {"reason": "construction-builder-unavailable"})
+				_sim._emit_event("structure.destroyed", 0, structure_id, {"reason": "construction-builder-unavailable"})
 			continue
-		if not sim.entities.has(builder_id):
+		if not _sim.entities.has(builder_id):
 			continue
-		var builder: Dictionary = sim.entities[builder_id]
+		var builder: Dictionary = _sim.entities[builder_id]
 		if int(builder.get("health", 0)) <= 0 or String(builder.get("state", "")) != "construct":
 			continue
 		# The builder only advances the site it is currently assigned to. An
@@ -556,9 +566,9 @@ func _step_construction() -> void:
 			builder["order_kind"] = ""
 			builder["state"] = "idle"
 			var site_team := int(site.get("team", -1))
-			if sim._team_ai_state.has(site_team):
-				(sim._team_ai_state[site_team] as Dictionary)["construction_resolved"] = true
+			if _sim._team_ai_state.has(site_team):
+				(_sim._team_ai_state[site_team] as Dictionary)["construction_resolved"] = true
 			if String(site.get("structure_kind", "")) == "fortress":
-				sim._seed_expansion_pads_for(structure_id)
-			sim._apply_structure_create_grants(site, false, true)
-			sim._emit_event("construction.completed", builder_id, structure_id, {"team": int(site.get("team", -1)), "structure_kind": String(site.get("structure_kind", ""))})
+				_sim._seed_expansion_pads_for(structure_id)
+			_sim._apply_structure_create_grants(site, false, true)
+			_sim._emit_event("construction.completed", builder_id, structure_id, {"team": int(site.get("team", -1)), "structure_kind": String(site.get("structure_kind", ""))})

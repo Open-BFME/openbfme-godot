@@ -15,20 +15,21 @@ func spawn_physics_object(
 	## Materialize one explicitly thrown/knocked-back body from the typed
 	## importer contract. Opaque legacy rows fail closed; this runtime must not
 	## reinterpret authored strings or silently invent fields.
+	var _sim = sim
 	if String(contract.get("module", "")) != "PhysicsBehavior":
 		return -1
 	if String(contract.get("extraction", "")) != "typed":
 		return -1
 	var fields: Dictionary = contract.get("fields", {}) as Dictionary
-	var gravity_value: Variant = sim._module_contract_value(fields, "GravityMult", 1.0)
-	var first_height_value: Variant = sim._module_contract_value(fields, "FirstHeight", 0.0)
-	var second_height_value: Variant = sim._module_contract_value(fields, "SecondHeight", 0.0)
-	var bounce_value: Variant = sim._module_contract_value(fields, "AllowBouncing", false)
-	var orient_value: Variant = sim._module_contract_value(fields, "OrientToFlightPath", false)
-	var kill_value: Variant = sim._module_contract_value(fields, "KillWhenRestingOnGround", false)
-	var low_value: Variant = sim._module_contract_value(fields, "ShockStunnedTimeLow", 0.0)
-	var high_value: Variant = sim._module_contract_value(fields, "ShockStunnedTimeHigh", 0.0)
-	var standing_value: Variant = sim._module_contract_value(fields, "ShockStandingTime", 0.0)
+	var gravity_value: Variant = _sim._module_contract_value(fields, "GravityMult", 1.0)
+	var first_height_value: Variant = _sim._module_contract_value(fields, "FirstHeight", 0.0)
+	var second_height_value: Variant = _sim._module_contract_value(fields, "SecondHeight", 0.0)
+	var bounce_value: Variant = _sim._module_contract_value(fields, "AllowBouncing", false)
+	var orient_value: Variant = _sim._module_contract_value(fields, "OrientToFlightPath", false)
+	var kill_value: Variant = _sim._module_contract_value(fields, "KillWhenRestingOnGround", false)
+	var low_value: Variant = _sim._module_contract_value(fields, "ShockStunnedTimeLow", 0.0)
+	var high_value: Variant = _sim._module_contract_value(fields, "ShockStunnedTimeHigh", 0.0)
+	var standing_value: Variant = _sim._module_contract_value(fields, "ShockStandingTime", 0.0)
 	for number_value in [gravity_value, first_height_value, second_height_value, low_value, high_value, standing_value]:
 		if typeof(number_value) not in [TYPE_INT, TYPE_FLOAT]:
 			return -1
@@ -46,9 +47,9 @@ func spawn_physics_object(
 		# that only say AllowBouncing therefore remain explicitly unresolved at
 		# the impact boundary instead of acquiring an invented coefficient.
 		unsupported.append("bounce_restitution_without_authored_heights")
-	var id = sim._next_physics_object_id
-	sim._next_physics_object_id += 1
-	sim.physics_objects[id] = {
+	var id = _sim._next_physics_object_id
+	_sim._next_physics_object_id += 1
+	_sim.physics_objects[id] = {
 		"id": id,
 		"source_object_id": source_object_id,
 		"position": position,
@@ -77,16 +78,17 @@ func spawn_physics_object(
 
 
 func _step_physics_objects() -> void:
-	if sim.physics_objects.is_empty():
+	var _sim = sim
+	if _sim.physics_objects.is_empty():
 		return
-	var ids = sim.physics_objects.keys()
+	var ids = _sim.physics_objects.keys()
 	ids.sort()
-	var gravity_source = maxf(0.0, float(sim._rules.get("physics_gravity_source_per_second_squared", 0.0)))
+	var gravity_source = maxf(0.0, float(_sim._rules.get("physics_gravity_source_per_second_squared", 0.0)))
 	for id_value in ids:
 		var id := int(id_value)
-		if not sim.physics_objects.has(id):
+		if not _sim.physics_objects.has(id):
 			continue
-		var row = sim.physics_objects[id] as Dictionary
+		var row = _sim.physics_objects[id] as Dictionary
 		match String(row.get("phase", "airborne")):
 			"airborne":
 				_step_airborne_physics_object(id, row, gravity_source)
@@ -127,11 +129,12 @@ func _apply_radius_damage(
 
 
 func _step_airborne_physics_object(id: int, row: Dictionary, gravity_source: float) -> void:
-	row["position"] = Vector2(row.get("position", Vector2.ZERO)) + Vector2(row.get("horizontal_velocity", Vector2.ZERO)) * sim.TICK_SECONDS
+	var _sim = sim
+	row["position"] = Vector2(row.get("position", Vector2.ZERO)) + Vector2(row.get("horizontal_velocity", Vector2.ZERO)) * _sim.TICK_SECONDS
 	var vertical_velocity := float(row.get("vertical_velocity_source", 0.0))
-	vertical_velocity -= gravity_source * float(row.get("gravity_multiplier", 1.0)) * sim.TICK_SECONDS
+	vertical_velocity -= gravity_source * float(row.get("gravity_multiplier", 1.0)) * _sim.TICK_SECONDS
 	row["vertical_velocity_source"] = vertical_velocity
-	row["height_source"] = float(row.get("height_source", 0.0)) + vertical_velocity * sim.TICK_SECONDS
+	row["height_source"] = float(row.get("height_source", 0.0)) + vertical_velocity * _sim.TICK_SECONDS
 	if bool(row.get("orient_to_flight_path", false)):
 		var horizontal := Vector2(row.get("horizontal_velocity", Vector2.ZERO))
 		if not horizontal.is_zero_approx():
@@ -156,40 +159,42 @@ func _step_airborne_physics_object(id: int, row: Dictionary, gravity_source: flo
 	if not (row.get("landing_warhead", {}) as Dictionary).is_empty():
 		_resolve_fling_landing(row)
 	if bool(row.get("kill_when_resting_on_ground", false)):
-		sim.physics_objects.erase(id)
+		_sim.physics_objects.erase(id)
 		return
 	_begin_physics_recovery(row)
 
 
 func _resolve_fling_landing(projectile: Dictionary) -> void:
+	var _sim = sim
 	var warhead := projectile.get("landing_warhead", {}) as Dictionary
 	var point := Vector2(projectile.get("position", Vector2.ZERO))
 	var radius := float(warhead.get("radius_scaled", 0.0))
 	var force_filter: Array = String(warhead.get("forceKillObjectFilter", "")).split(" ", false)
 	var affected: Array[int] = []
-	for target_id in sim.entity_ids():
-		var target = sim.entities[target_id] as Dictionary
+	for target_id in _sim.entity_ids():
+		var target = _sim.entities[target_id] as Dictionary
 		if int(target.get("health", 0)) <= 0 or Vector2(target.get("position", Vector2.ZERO)).distance_to(point) > radius + 0.000001:
 			continue
-		if not sim._transport_filter_accepts(target, force_filter):
+		if not _sim._transport_filter_accepts(target, force_filter):
 			continue
-		sim._apply_damage(int(projectile.get("fling_attacker_id", 0)), target_id, 2147483647, "battalion", String(warhead.get("deathType", "NORMAL")), String(warhead.get("damageType", "")))
+		_sim._apply_damage(int(projectile.get("fling_attacker_id", 0)), target_id, 2147483647, "battalion", String(warhead.get("deathType", "NORMAL")), String(warhead.get("damageType", "")))
 		affected.append(target_id)
-	sim._emit_event("ability.fling_landed", int(projectile.get("fling_attacker_id", 0)), 0, {"warhead_id": String(warhead.get("id", "")), "damage_type": String(warhead.get("damageType", "")), "death_type": String(warhead.get("deathType", "")), "affected_ids": affected, "special_filter_without_damage_amount": String(warhead.get("specialObjectFilter", ""))})
+	_sim._emit_event("ability.fling_landed", int(projectile.get("fling_attacker_id", 0)), 0, {"warhead_id": String(warhead.get("id", "")), "damage_type": String(warhead.get("damageType", "")), "death_type": String(warhead.get("deathType", "")), "affected_ids": affected, "special_filter_without_damage_amount": String(warhead.get("specialObjectFilter", ""))})
 
 
 func _begin_physics_recovery(row: Dictionary) -> void:
+	var _sim = sim
 	var low_ms := int(row.get("shock_stunned_low_ms", 0))
 	var high_ms := int(row.get("shock_stunned_high_ms", 0))
 	if high_ms > 0:
-		var stunned_ms = sim.logic_random_int(low_ms, high_ms)
+		var stunned_ms = _sim.logic_random_int(low_ms, high_ms)
 		row["phase"] = "shock_stunned"
-		row["phase_ticks_remaining"] = maxi(1, ceili(float(stunned_ms) / (sim.TICK_SECONDS * 1000.0)))
+		row["phase_ticks_remaining"] = maxi(1, ceili(float(stunned_ms) / (_sim.TICK_SECONDS * 1000.0)))
 		return
 	var standing_ms := int(row.get("shock_standing_ms", 0))
 	if standing_ms > 0:
 		row["phase"] = "shock_standing"
-		row["phase_ticks_remaining"] = maxi(1, ceili(float(standing_ms) / (sim.TICK_SECONDS * 1000.0)))
+		row["phase_ticks_remaining"] = maxi(1, ceili(float(standing_ms) / (_sim.TICK_SECONDS * 1000.0)))
 		return
 	row["phase"] = "recovered"
 	row["phase_ticks_remaining"] = 0

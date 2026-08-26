@@ -12,17 +12,18 @@ func set_spellbook_orb_open(open: bool) -> void:
 
 
 func configure_spellbook_runtime(document: Dictionary) -> bool:
-	sim._spellbook_ready = false
-	sim._spellbook_error = ""
-	sim._spellbook_document = document.duplicate(true)
-	sim._spellbook_powers.clear()
-	sim._spellbook_order.clear()
-	sim._spellbook_sciences.clear()
-	sim._spellbook_intrinsic.clear()
-	sim._science_to_power.clear()
-	sim._spellbook_command_points_upgrade.clear()
-	if typeof(document) != TYPE_DICTIONARY or String(document.get("schema", "")) != sim.SPELLBOOK_SCHEMA:
-		sim._spellbook_error = "spellbook document is missing or not an %s" % sim.SPELLBOOK_SCHEMA
+	var _sim = sim
+	_sim._spellbook_ready = false
+	_sim._spellbook_error = ""
+	_sim._spellbook_document = document.duplicate(true)
+	_sim._spellbook_powers.clear()
+	_sim._spellbook_order.clear()
+	_sim._spellbook_sciences.clear()
+	_sim._spellbook_intrinsic.clear()
+	_sim._science_to_power.clear()
+	_sim._spellbook_command_points_upgrade.clear()
+	if typeof(document) != TYPE_DICTIONARY or String(document.get("schema", "")) != _sim.SPELLBOOK_SCHEMA:
+		_sim._spellbook_error = "spellbook document is missing or not an %s" % _sim.SPELLBOOK_SCHEMA
 		return false
 	var registration: Dictionary = document.get("registration", {}) as Dictionary
 	var power_tree: Dictionary = registration.get("powerTree", {}) as Dictionary
@@ -30,7 +31,7 @@ func configure_spellbook_runtime(document: Dictionary) -> bool:
 	var command_points_upgrade_value: Variant = spell_book_object.get("commandPointsUpgrade")
 	if command_points_upgrade_value != null:
 		if typeof(command_points_upgrade_value) != TYPE_DICTIONARY:
-			sim._spellbook_error = "spellbook CommandPointsUpgrade is malformed"
+			_sim._spellbook_error = "spellbook CommandPointsUpgrade is malformed"
 			return false
 		var command_points_upgrade := command_points_upgrade_value as Dictionary
 		# Retail authors one CommandPointsUpgrade on the shared spellbook system
@@ -43,11 +44,11 @@ func configure_spellbook_runtime(document: Dictionary) -> bool:
 			"module", "sourceIni", "line",
 		]
 		if command_points_upgrade.size() != command_points_upgrade_keys.size():
-			sim._spellbook_error = "spellbook CommandPointsUpgrade is unsupported"
+			_sim._spellbook_error = "spellbook CommandPointsUpgrade is unsupported"
 			return false
 		for key in command_points_upgrade_keys:
 			if not command_points_upgrade.has(key):
-				sim._spellbook_error = "spellbook CommandPointsUpgrade is unsupported"
+				_sim._spellbook_error = "spellbook CommandPointsUpgrade is unsupported"
 				return false
 		var command_points_value: Variant = command_points_upgrade.get("commandPoints")
 		var line_value: Variant = command_points_upgrade.get("line")
@@ -69,20 +70,20 @@ func configure_spellbook_runtime(document: Dictionary) -> bool:
 			or String(command_points_upgrade.get("sourceIni", "")).strip_edges() == ""
 			or not line_ok
 		):
-			sim._spellbook_error = "spellbook CommandPointsUpgrade is unsupported"
+			_sim._spellbook_error = "spellbook CommandPointsUpgrade is unsupported"
 			return false
-		sim._spellbook_command_points_upgrade = command_points_upgrade.duplicate(true)
+		_sim._spellbook_command_points_upgrade = command_points_upgrade.duplicate(true)
 	for intrinsic_value in Array(spell_book_object.get("intrinsicSciences", [])):
 		if typeof(intrinsic_value) != TYPE_STRING or String(intrinsic_value).strip_edges() == "":
-			sim._spellbook_error = "spellbook intrinsic sciences are malformed"
+			_sim._spellbook_error = "spellbook intrinsic sciences are malformed"
 			return false
-		sim._spellbook_intrinsic.append(String(intrinsic_value))
+		_sim._spellbook_intrinsic.append(String(intrinsic_value))
 	# Sciences with an authored purchase block make up the palantir tree. Their
 	# prerequisiteGroups are preserved OR groups: a science is purchasable when
 	# ANY group is fully owned; an empty group list means no prerequisites.
 	for science_value in Array(power_tree.get("sciences", [])):
 		if typeof(science_value) != TYPE_DICTIONARY:
-			sim._spellbook_error = "spellbook science entry is malformed"
+			_sim._spellbook_error = "spellbook science entry is malformed"
 			return false
 		var science := science_value as Dictionary
 		var science_id := String(science.get("id", ""))
@@ -92,7 +93,7 @@ func configure_spellbook_runtime(document: Dictionary) -> bool:
 		var cost := int((science.get("pointCostMP", {}) as Dictionary).get("value", -1))
 		var slot := int(purchase.get("slot", -1))
 		if cost <= 0 or slot <= 0:
-			sim._spellbook_error = "spellbook science '%s' has no resolved MP cost or purchase slot" % science_id
+			_sim._spellbook_error = "spellbook science '%s' has no resolved MP cost or purchase slot" % science_id
 			return false
 		var groups: Array = []
 		var groups_well_formed := true
@@ -110,9 +111,9 @@ func configure_spellbook_runtime(document: Dictionary) -> bool:
 				break
 			groups.append(group)
 		if not groups_well_formed:
-			sim._spellbook_error = "spellbook science '%s' prerequisite groups are malformed" % science_id
+			_sim._spellbook_error = "spellbook science '%s' prerequisite groups are malformed" % science_id
 			return false
-		sim._spellbook_sciences[science_id] = {"cost": cost, "slot": slot, "groups": groups}
+		_sim._spellbook_sciences[science_id] = {"cost": cost, "slot": slot, "groups": groups}
 	var leaves: Dictionary = registration.get("leaves", {}) as Dictionary
 	var modifier_leaves: Dictionary = {}
 	for modifier_value in Array(leaves.get("attributeModifiers", [])):
@@ -127,19 +128,19 @@ func configure_spellbook_runtime(document: Dictionary) -> bool:
 		if typeof(ocl_value) == TYPE_DICTIONARY:
 			ocl_leaves[String((ocl_value as Dictionary).get("id", ""))] = ocl_value
 	# Production path: register converted OCL leaves for CreateObjectDie hatch.
-	sim.ingest_ocl_leaves_from_document({"leaves": leaves})
+	_sim.ingest_ocl_leaves_from_document({"leaves": leaves})
 	var weapon_leaves: Dictionary = {}
 	for weapon_value in Array(leaves.get("weapons", [])):
 		if typeof(weapon_value) == TYPE_DICTIONARY:
 			weapon_leaves[String((weapon_value as Dictionary).get("id", ""))] = weapon_value
 	for power_value in Array(power_tree.get("powers", [])):
 		if typeof(power_value) != TYPE_DICTIONARY:
-			sim._spellbook_error = "spellbook power entry is malformed"
+			_sim._spellbook_error = "spellbook power entry is malformed"
 			return false
 		var power := power_value as Dictionary
 		var power_id := String(power.get("id", ""))
 		if power_id == "":
-			sim._spellbook_error = "spellbook power is missing its id"
+			_sim._spellbook_error = "spellbook power is missing its id"
 			return false
 		var cast: Dictionary = power.get("cast", {}) as Dictionary
 		var effect_definition: Dictionary = power.get("effect", {}) as Dictionary
@@ -150,10 +151,10 @@ func configure_spellbook_runtime(document: Dictionary) -> bool:
 		var science_id := ""
 		for required_value in Array(power.get("requiredSciences", [])):
 			var candidate := String(required_value)
-			if sim._spellbook_sciences.has(candidate):
+			if _sim._spellbook_sciences.has(candidate):
 				science_id = candidate
 				break
-		var science_row: Dictionary = sim._spellbook_sciences.get(science_id, {}) as Dictionary
+		var science_row: Dictionary = _sim._spellbook_sciences.get(science_id, {}) as Dictionary
 		var reload_row: Dictionary = power.get("reloadTimeMs", {}) as Dictionary
 		var reload_ms := float(reload_row.get("value", 0.0))
 		# Retail authors `ReloadTime = 0` DELIBERATELY on the one-shot passive
@@ -187,7 +188,7 @@ func configure_spellbook_runtime(document: Dictionary) -> bool:
 			"needs_target_pos": Array(cast.get("options", [])).has("NEED_TARGET_POS"),
 			"radius_cursor_source": float((power.get("radiusCursorRadius", {}) as Dictionary).get("value", 0.0)),
 			"reload_ms": reload_ms,
-			"reload_ticks": 0 if reload_authored_zero else maxi(1, roundi(reload_ms / 1000.0 / sim.TICK_SECONDS)),
+			"reload_ticks": 0 if reload_authored_zero else maxi(1, roundi(reload_ms / 1000.0 / _sim.TICK_SECONDS)),
 			"sound_id": String(power.get("initiateSoundId", "")),
 			"fx_lists": Array(references.get("fxLists", [])),
 			"ocls": Array(references.get("objectCreationLists", [])),
@@ -205,53 +206,53 @@ func configure_spellbook_runtime(document: Dictionary) -> bool:
 			row["castable"] = false
 			row["locked_reason"] = "reloadTimeMs did not resolve to a positive value"
 		else:
-			var support = sim._spellbook_effect_support(row, fields, references, modifier_leaves, object_leaves, ocl_leaves, weapon_leaves)
+			var support = _sim._spellbook_effect_support(row, fields, references, modifier_leaves, object_leaves, ocl_leaves, weapon_leaves)
 			row["castable"] = bool(support.get("ok", false))
 			row["locked_reason"] = String(support.get("reason", ""))
 			row["effect"] = support.get("effect", {})
-		sim._spellbook_powers[power_id] = row
-	if sim._spellbook_powers.is_empty():
-		sim._spellbook_error = "spellbook document carries no powers"
+		_sim._spellbook_powers[power_id] = row
+	if _sim._spellbook_powers.is_empty():
+		_sim._spellbook_error = "spellbook document carries no powers"
 		return false
 	# Science → tree power index so the palantir can draw prerequisite forks
 	# without re-deriving tree logic in the presentation layer.
-	sim._science_to_power.clear()
-	for tree_power_id in sim._spellbook_powers.keys():
-		var tree_science := String((sim._spellbook_powers[tree_power_id] as Dictionary).get("science_id", ""))
+	_sim._science_to_power.clear()
+	for tree_power_id in _sim._spellbook_powers.keys():
+		var tree_science := String((_sim._spellbook_powers[tree_power_id] as Dictionary).get("science_id", ""))
 		if tree_science != "":
-			sim._science_to_power[tree_science] = String(tree_power_id)
+			_sim._science_to_power[tree_science] = String(tree_power_id)
 	var ordered: Array[String] = []
-	for power_id_value in sim._spellbook_powers.keys():
+	for power_id_value in _sim._spellbook_powers.keys():
 		ordered.append(String(power_id_value))
 	ordered.sort_custom(func(a: String, b: String) -> bool:
-		var row_a: Dictionary = sim._spellbook_powers[a]
-		var row_b: Dictionary = sim._spellbook_powers[b]
+		var row_a: Dictionary = _sim._spellbook_powers[a]
+		var row_b: Dictionary = _sim._spellbook_powers[b]
 		if int(row_a.get("purchase_slot", 0)) != int(row_b.get("purchase_slot", 0)):
 			return int(row_a.get("purchase_slot", 0)) < int(row_b.get("purchase_slot", 0))
 		return a.naturalnocasecmp_to(b) < 0
 	)
 	var seen_slots: Dictionary = {}
 	for power_id_value in ordered:
-		var slot := int((sim._spellbook_powers[power_id_value] as Dictionary).get("purchase_slot", 0))
+		var slot := int((_sim._spellbook_powers[power_id_value] as Dictionary).get("purchase_slot", 0))
 		if slot <= 0 or seen_slots.has(slot):
-			sim._spellbook_error = "spellbook purchase slots are missing or duplicated"
+			_sim._spellbook_error = "spellbook purchase slots are missing or duplicated"
 			return false
 		seen_slots[slot] = true
-	sim._spellbook_order = ordered
+	_sim._spellbook_order = ordered
 	# The compiled Rank ladder rides with the spellbook document. A pack cooked
 	# before that contract existed carries no rankScienceGrants at all: the
 	# ladder then stays unconfigured and every rank call refuses with that
 	# reason instead of inventing a spell-point grant.
 	if power_tree.has("rankScienceGrants"):
 		if not configure_player_rank_science_grants(power_tree.get("rankScienceGrants", []) as Array):
-			sim._spellbook_error = "spellbook rank ladder is malformed: %s" % sim._player_rank_ladder_error
+			_sim._spellbook_error = "spellbook rank ladder is malformed: %s" % _sim._player_rank_ladder_error
 			return false
 	else:
-		sim._player_rank_ladder.clear()
-		sim._player_rank_ladder_error = "the compiled spellbook document carries no rankScienceGrants"
+		_sim._player_rank_ladder.clear()
+		_sim._player_rank_ladder_error = "the compiled spellbook document carries no rankScienceGrants"
 	_reset_spellbook_match_state()
-	sim._spellbook_ready = true
-	sim._state_hash_static_digest.clear()
+	_sim._spellbook_ready = true
+	_sim._state_hash_static_digest.clear()
 	return true
 
 
@@ -268,40 +269,41 @@ func configure_spellbook_runtime(document: Dictionary) -> bool:
 func configure_team_spellbook_runtime(team: int, document: Dictionary) -> bool:
 	# Deep copies: configure_spellbook_runtime() clears the global tree dicts in
 	# place, so a reference-only capture would be wiped mid-parse.
+	var _sim = sim
 	var saved := _spellbook_global_bundle_copy()
-	var saved_error = sim._spellbook_error
-	var saved_document = sim._spellbook_document
-	var saved_sciences = sim._team_sciences.duplicate(true)
-	var saved_cooldowns = sim._power_cooldown_until.duplicate(true)
-	var saved_staged = sim._staged_purchases.duplicate(true)
-	var saved_nonpressable = sim._consumed_nonpressable_powers.duplicate(true)
-	var saved_scavenger = sim._scavenger_bounty_percent.duplicate(true)
+	var saved_error = _sim._spellbook_error
+	var saved_document = _sim._spellbook_document
+	var saved_sciences = _sim._team_sciences.duplicate(true)
+	var saved_cooldowns = _sim._power_cooldown_until.duplicate(true)
+	var saved_staged = _sim._staged_purchases.duplicate(true)
+	var saved_nonpressable = _sim._consumed_nonpressable_powers.duplicate(true)
+	var saved_scavenger = _sim._scavenger_bounty_percent.duplicate(true)
 	var ok := configure_spellbook_runtime(document)
 	var parsed := _spellbook_global_bundle_copy() if ok else {}
-	var parse_error = sim._spellbook_error
+	var parse_error = _sim._spellbook_error
 	# Restore the globals + match state exactly as they were before this call.
 	_apply_spellbook_bundle(saved)
-	sim._spellbook_document = saved_document
-	sim._spellbook_error = saved_error
-	sim._team_sciences = saved_sciences
-	sim._power_cooldown_until = saved_cooldowns
-	sim._staged_purchases = saved_staged
-	sim._consumed_nonpressable_powers = saved_nonpressable
-	sim._scavenger_bounty_percent = saved_scavenger
+	_sim._spellbook_document = saved_document
+	_sim._spellbook_error = saved_error
+	_sim._team_sciences = saved_sciences
+	_sim._power_cooldown_until = saved_cooldowns
+	_sim._staged_purchases = saved_staged
+	_sim._consumed_nonpressable_powers = saved_nonpressable
+	_sim._scavenger_bounty_percent = saved_scavenger
 	if not ok:
-		sim._team_spellbooks.erase(team)
-		sim._team_spellbook_errors[team] = parse_error
+		_sim._team_spellbooks.erase(team)
+		_sim._team_spellbook_errors[team] = parse_error
 		return false
 	parsed["document"] = document.duplicate(true)
-	sim._team_spellbooks[team] = parsed
-	sim._team_spellbook_errors[team] = ""
+	_sim._team_spellbooks[team] = parsed
+	_sim._team_spellbook_errors[team] = ""
 	# Seed this team's ownership overlays from ITS OWN intrinsic sciences.
-	sim._team_sciences[team] = (parsed.get("intrinsic", []) as Array).duplicate(true)
-	sim._power_cooldown_until[team] = {}
-	sim._staged_purchases[team] = []
-	sim._consumed_nonpressable_powers[team] = {}
-	sim._scavenger_bounty_percent[team] = 0.0
-	sim.purchased_powers[team] = []
+	_sim._team_sciences[team] = (parsed.get("intrinsic", []) as Array).duplicate(true)
+	_sim._power_cooldown_until[team] = {}
+	_sim._staged_purchases[team] = []
+	_sim._consumed_nonpressable_powers[team] = {}
+	_sim._scavenger_bounty_percent[team] = 0.0
+	_sim.purchased_powers[team] = []
 	return true
 
 
@@ -316,70 +318,75 @@ func team_has_spellbook_override(team: int) -> bool:
 func _spellbook_global_bundle() -> Dictionary:
 	## A shallow view of the current global tree fields. Used to lift a freshly
 	## parsed tree into the per-team store and to save/restore around that parse.
+	var _sim = sim
 	return {
-		"ready": sim._spellbook_ready,
-		"powers": sim._spellbook_powers,
-		"order": sim._spellbook_order,
-		"sciences": sim._spellbook_sciences,
-		"science_to_power": sim._science_to_power,
-		"intrinsic": sim._spellbook_intrinsic,
-		"command_points_upgrade": sim._spellbook_command_points_upgrade,
+		"ready": _sim._spellbook_ready,
+		"powers": _sim._spellbook_powers,
+		"order": _sim._spellbook_order,
+		"sciences": _sim._spellbook_sciences,
+		"science_to_power": _sim._science_to_power,
+		"intrinsic": _sim._spellbook_intrinsic,
+		"command_points_upgrade": _sim._spellbook_command_points_upgrade,
 	}
 
 
 func _spellbook_global_bundle_copy() -> Dictionary:
 	## A DEEP copy of the global tree, detached from the live global dicts so a
 	## subsequent in-place clear/refill of those dicts cannot mutate it.
+	var _sim = sim
 	var order_copy: Array[String] = []
-	for power_id in sim._spellbook_order:
+	for power_id in _sim._spellbook_order:
 		order_copy.append(String(power_id))
 	return {
-		"ready": sim._spellbook_ready,
-		"powers": sim._spellbook_powers.duplicate(true),
+		"ready": _sim._spellbook_ready,
+		"powers": _sim._spellbook_powers.duplicate(true),
 		"order": order_copy,
-		"sciences": sim._spellbook_sciences.duplicate(true),
-		"science_to_power": sim._science_to_power.duplicate(true),
-		"intrinsic": (sim._spellbook_intrinsic as Array).duplicate(true),
-		"command_points_upgrade": sim._spellbook_command_points_upgrade.duplicate(true),
+		"sciences": _sim._spellbook_sciences.duplicate(true),
+		"science_to_power": _sim._science_to_power.duplicate(true),
+		"intrinsic": (_sim._spellbook_intrinsic as Array).duplicate(true),
+		"command_points_upgrade": _sim._spellbook_command_points_upgrade.duplicate(true),
 	}
 
 
 func _apply_spellbook_bundle(bundle: Dictionary) -> void:
-	sim._spellbook_ready = bool(bundle.get("ready", false))
-	sim._spellbook_powers = bundle.get("powers", {}) as Dictionary
-	sim._spellbook_order = bundle.get("order", []) as Array[String]
-	sim._spellbook_sciences = bundle.get("sciences", {}) as Dictionary
-	sim._science_to_power = bundle.get("science_to_power", {}) as Dictionary
-	sim._spellbook_intrinsic = bundle.get("intrinsic", []) as Array
-	sim._spellbook_command_points_upgrade = bundle.get("command_points_upgrade", {}) as Dictionary
+	var _sim = sim
+	_sim._spellbook_ready = bool(bundle.get("ready", false))
+	_sim._spellbook_powers = bundle.get("powers", {}) as Dictionary
+	_sim._spellbook_order = bundle.get("order", []) as Array[String]
+	_sim._spellbook_sciences = bundle.get("sciences", {}) as Dictionary
+	_sim._science_to_power = bundle.get("science_to_power", {}) as Dictionary
+	_sim._spellbook_intrinsic = bundle.get("intrinsic", []) as Array
+	_sim._spellbook_command_points_upgrade = bundle.get("command_points_upgrade", {}) as Dictionary
 
 
 func _team_tree(team: int) -> Dictionary:
 	## The tree a team resolves powers against: its own override when present,
 	## otherwise a view of the global (default same-faction) tree. Read-only —
 	## team ownership overlays live in the per-team maps, not in the tree.
-	if sim._team_spellbooks.has(team):
-		return sim._team_spellbooks[team]
+	var _sim = sim
+	if _sim._team_spellbooks.has(team):
+		return _sim._team_spellbooks[team]
 	return _spellbook_global_bundle()
 
 
 func _reset_spellbook_match_state() -> void:
-	sim._team_sciences = sim._seed_team_map(sim._spellbook_intrinsic)
+	var _sim = sim
+	_sim._team_sciences = _sim._seed_team_map(_sim._spellbook_intrinsic)
 	# A team with its own faction tree starts from ITS intrinsic sciences, not
 	# the global player-faction ones.
-	for team_value in sim._team_spellbooks.keys():
-		var override_tree: Dictionary = sim._team_spellbooks[team_value]
-		sim._team_sciences[team_value] = (override_tree.get("intrinsic", []) as Array).duplicate(true)
-	sim._power_cooldown_until = sim._seed_team_map({})
-	sim._consumed_nonpressable_powers = sim._seed_team_map({})
-	sim._scavenger_bounty_percent = sim._seed_team_map(0.0)
-	sim._staged_purchases = sim._seed_team_map([])
-	sim._pending_power_effects.clear()
-	sim._active_groves.clear()
-	sim._field_pings.clear()
-	sim._weather_effects.clear()
-	sim._summon_despawn_ticks.clear()
-	sim._summon_aura_source_ids.clear()
+	for team_value in _sim._team_spellbooks.keys():
+		var override_tree: Dictionary = _sim._team_spellbooks[team_value]
+		_sim._team_sciences[team_value] = (override_tree.get("intrinsic", []) as Array).duplicate(true)
+	_sim._power_cooldown_until = _sim._seed_team_map({})
+	_sim._consumed_nonpressable_powers = _sim._seed_team_map({})
+	_sim._scavenger_bounty_percent = _sim._seed_team_map(0.0)
+	_sim._staged_purchases = _sim._seed_team_map([])
+	_sim._pending_power_effects.clear()
+	_sim._active_groves.clear()
+	_sim._field_pings.clear()
+	_sim._weather_effects.clear()
+	_sim._summon_despawn_ticks.clear()
+	_sim._summon_aura_source_ids.clear()
 
 
 ## Timed spellbook effect state (volley strikes, summon hatches, groves).
@@ -458,6 +465,7 @@ func can_purchase_power(team: int, power_id: String) -> Dictionary:
 
 
 func purchase_power(team: int, power_id: String, cost: int = -1) -> Dictionary:
+	var _sim = sim
 	var verdict := can_purchase_power(team, power_id)
 	if not bool(verdict.get("ok", false)):
 		return verdict
@@ -471,14 +479,14 @@ func purchase_power(team: int, power_id: String, cost: int = -1) -> Dictionary:
 	var passive := _nonpressable_purchase_activation(team, power_id, row)
 	if not bool(passive.get("ok", false)):
 		return passive
-	sim.team_power_points[team] = power_points(team) - doc_cost
-	(sim.purchased_powers[team] as Array).append(power_id)
-	(sim._team_sciences[team] as Array).append(String(row.get("science_id", "")))
-	(sim._staged_purchases[team] as Array).append({"power_id": power_id, "science_id": String(row.get("science_id", "")), "cost": doc_cost})
+	_sim.team_power_points[team] = power_points(team) - doc_cost
+	(_sim.purchased_powers[team] as Array).append(power_id)
+	(_sim._team_sciences[team] as Array).append(String(row.get("science_id", "")))
+	(_sim._staged_purchases[team] as Array).append({"power_id": power_id, "science_id": String(row.get("science_id", "")), "cost": doc_cost})
 	if bool(passive.get("activate", false)):
-		sim._scavenger_bounty_percent[team] = float(passive.get("bounty_percent", 0.0))
-		(sim._consumed_nonpressable_powers[team] as Dictionary)[power_id] = true
-	sim._emit_event("power.purchased", 0, 0, {
+		_sim._scavenger_bounty_percent[team] = float(passive.get("bounty_percent", 0.0))
+		(_sim._consumed_nonpressable_powers[team] as Dictionary)[power_id] = true
+	_sim._emit_event("power.purchased", 0, 0, {
 		"team": team,
 		"power_id": power_id,
 		"science_id": String(row.get("science_id", "")),
@@ -504,28 +512,29 @@ func _nonpressable_purchase_activation(team: int, power_id: String, row: Diction
 
 func reset_spellbook_purchases(team: int) -> Dictionary:
 	## Retail RESET: refund this session's unspent picks so the player re-picks.
+	var _sim = sim
 	if not bool(_team_tree(team).get("ready", false)):
 		return {"ok": false, "reason": "spellbook-unavailable"}
 	var refunded := 0
 	var restored: Array = []
-	for entry_value in Array(sim._staged_purchases.get(team, [])):
+	for entry_value in Array(_sim._staged_purchases.get(team, [])):
 		if typeof(entry_value) != TYPE_DICTIONARY:
 			continue
 		var entry := entry_value as Dictionary
 		var power_id := String(entry.get("power_id", ""))
 		refunded += int(entry.get("cost", 0))
-		(sim.purchased_powers[team] as Array).erase(power_id)
-		(sim._team_sciences[team] as Array).erase(String(entry.get("science_id", "")))
+		(_sim.purchased_powers[team] as Array).erase(power_id)
+		(_sim._team_sciences[team] as Array).erase(String(entry.get("science_id", "")))
 		var row: Dictionary = (_team_tree(team).get("powers", {}) as Dictionary).get(power_id, {}) as Dictionary
-		if bool(row.get("nonpressable", false)) and (sim._consumed_nonpressable_powers.get(team, {}) as Dictionary).has(power_id):
-			(sim._consumed_nonpressable_powers[team] as Dictionary).erase(power_id)
+		if bool(row.get("nonpressable", false)) and (_sim._consumed_nonpressable_powers.get(team, {}) as Dictionary).has(power_id):
+			(_sim._consumed_nonpressable_powers[team] as Dictionary).erase(power_id)
 			if String((row.get("effect", {}) as Dictionary).get("kind", "")) == "scavenger_bounty":
-				sim._scavenger_bounty_percent[team] = 0.0
+				_sim._scavenger_bounty_percent[team] = 0.0
 		restored.append(power_id)
-	sim._staged_purchases[team] = []
+	_sim._staged_purchases[team] = []
 	if refunded > 0:
-		sim.team_power_points[team] = power_points(team) + refunded
-	sim._emit_event("power.reset", 0, 0, {"team": team, "refunded": refunded, "powers": restored})
+		_sim.team_power_points[team] = power_points(team) + refunded
+	_sim._emit_event("power.reset", 0, 0, {"team": team, "refunded": refunded, "powers": restored})
 	return {"ok": true, "reason": "", "refunded": refunded, "powers": restored}
 
 
@@ -538,12 +547,13 @@ func accept_spellbook_purchases(team: int) -> Dictionary:
 
 
 func power_cooldown_state(team: int, power_id: String) -> Dictionary:
+	var _sim = sim
 	var row: Dictionary = (_team_tree(team).get("powers", {}) as Dictionary).get(power_id, {}) as Dictionary
 	if row.is_empty():
 		return {}
-	var total = sim.spell_recharge_ticks_for_team(team, int(row.get("reload_ticks", 1)))
-	var ready_tick := int((sim._power_cooldown_until.get(team, {}) as Dictionary).get(power_id, -1))
-	var remaining = maxi(0, ready_tick - sim.tick_index)
+	var total = _sim.spell_recharge_ticks_for_team(team, int(row.get("reload_ticks", 1)))
+	var ready_tick := int((_sim._power_cooldown_until.get(team, {}) as Dictionary).get(power_id, -1))
+	var remaining = maxi(0, ready_tick - _sim.tick_index)
 	return {
 		"total_ticks": total,
 		"remaining_ticks": remaining,
@@ -630,14 +640,15 @@ func spellbook_ui_state(team: int) -> Dictionary:
 func award_power_kill(team: int) -> void:
 	# Creeps are excluded from the spellbook economy: a creep kill never banks
 	# power points for the creep owner. Rostered killers of creeps still earn.
-	if not sim._is_combatant_team(team):
+	var _sim = sim
+	if not _sim._is_combatant_team(team):
 		return
-	var kills_per_point := maxi(1, int(sim._rules.get("power_point_kills", sim.POWER_POINT_KILLS)))
-	sim._kills_toward_power_point[team] = int(sim._kills_toward_power_point.get(team, 0)) + 1
-	if int(sim._kills_toward_power_point[team]) >= kills_per_point:
-		sim._kills_toward_power_point[team] = 0
-		sim.team_power_points[team] = power_points(team) + 1
-		sim._emit_event("power.point_earned", 0, 0, {"team": team, "points": power_points(team)})
+	var kills_per_point := maxi(1, int(_sim._rules.get("power_point_kills", _sim.POWER_POINT_KILLS)))
+	_sim._kills_toward_power_point[team] = int(_sim._kills_toward_power_point.get(team, 0)) + 1
+	if int(_sim._kills_toward_power_point[team]) >= kills_per_point:
+		_sim._kills_toward_power_point[team] = 0
+		_sim.team_power_points[team] = power_points(team) + 1
+		_sim._emit_event("power.point_earned", 0, 0, {"team": team, "points": power_points(team)})
 
 
 ## Rank.ini player ladder: SkillPointsNeededDefault is the threshold that
@@ -659,8 +670,9 @@ func configure_player_rank_science_grants(rows: Array) -> bool:
 	## Bind the compiled Rank ladder. Fails closed on a malformed row, a
 	## non-ascending rank, a non-ascending threshold, or a missing grant: a
 	## ladder that cannot say which rank a crossing belongs to must not run.
+	var _sim = sim
 	var ladder: Array[Dictionary] = []
-	sim._player_rank_ladder_error = ""
+	_sim._player_rank_ladder_error = ""
 	var previous_rank := 0
 	var previous_threshold := -1
 	for row_value in rows:
@@ -675,17 +687,17 @@ func configure_player_rank_science_grants(rows: Array) -> bool:
 		var granted := _rank_ladder_integer(row, "sciencePurchasePointsGranted")
 		if granted < 0:
 			return _reject_player_rank_ladder(
-				"Rank %d has no resolved %s" % [rank, sim.RANK_SCIENCE_PURCHASE_POINTS_GRANTED_FIELD]
+				"Rank %d has no resolved %s" % [rank, _sim.RANK_SCIENCE_PURCHASE_POINTS_GRANTED_FIELD]
 			)
 		var threshold := _rank_ladder_integer(row, "skillPointsNeededDefault")
 		if threshold < 0:
 			return _reject_player_rank_ladder(
-				"Rank %d has no resolved %s" % [rank, sim.RANK_SKILL_POINTS_NEEDED_FIELD]
+				"Rank %d has no resolved %s" % [rank, _sim.RANK_SKILL_POINTS_NEEDED_FIELD]
 			)
 		if threshold <= previous_threshold:
 			return _reject_player_rank_ladder(
 				"Rank %d %s does not ascend: %d follows %d"
-				% [rank, sim.RANK_SKILL_POINTS_NEEDED_FIELD, threshold, previous_threshold]
+				% [rank, _sim.RANK_SKILL_POINTS_NEEDED_FIELD, threshold, previous_threshold]
 			)
 		previous_rank = rank
 		previous_threshold = threshold
@@ -698,21 +710,22 @@ func configure_player_rank_science_grants(rows: Array) -> bool:
 		})
 	if ladder.is_empty():
 		return _reject_player_rank_ladder("rank ladder carries no ranks")
-	if ladder == sim._player_rank_ladder:
+	if ladder == _sim._player_rank_ladder:
 		# Rank.ini is a system file, so a cross-faction team document carries
 		# the same ladder. Re-binding an identical ladder must not wipe the
 		# per-team rank ledgers that are already standing.
 		return true
-	sim._player_rank_ladder = ladder
-	sim._team_player_rank.clear()
-	sim._team_player_skill_points.clear()
-	sim._team_player_rank_granted.clear()
+	_sim._player_rank_ladder = ladder
+	_sim._team_player_rank.clear()
+	_sim._team_player_skill_points.clear()
+	_sim._team_player_rank_granted.clear()
 	return true
 
 
 func _reject_player_rank_ladder(reason: String) -> bool:
-	sim._player_rank_ladder.clear()
-	sim._player_rank_ladder_error = reason
+	var _sim = sim
+	_sim._player_rank_ladder.clear()
+	_sim._player_rank_ladder_error = reason
 	return false
 
 
@@ -747,12 +760,13 @@ func advance_player_rank(team: int, rank: int) -> Dictionary:
 	## Promote a player to `rank`, paying every authored
 	## SciencePurchasePointsGranted the promotion crosses. Idempotent: a rank
 	## already reached grants nothing and says so with granted = 0.
-	if sim._player_rank_ladder.is_empty():
-		return {"ok": false, "reason": "rank-ladder-unavailable", "detail": sim._player_rank_ladder_error}
-	if not sim._is_combatant_team(team):
+	var _sim = sim
+	if _sim._player_rank_ladder.is_empty():
+		return {"ok": false, "reason": "rank-ladder-unavailable", "detail": _sim._player_rank_ladder_error}
+	if not _sim._is_combatant_team(team):
 		return {"ok": false, "reason": "not-a-combatant-team"}
 	var known := false
-	for entry in sim._player_rank_ladder:
+	for entry in _sim._player_rank_ladder:
 		if int(entry.get("rank", 0)) == rank:
 			known = true
 			break
@@ -760,19 +774,19 @@ func advance_player_rank(team: int, rank: int) -> Dictionary:
 		return {"ok": false, "reason": "unknown-rank", "rank": rank}
 	var granted_total := 0
 	var crossed: Array[int] = []
-	var ledger: Dictionary = sim._team_player_rank_granted.get(team, {}) as Dictionary
-	for entry in sim._player_rank_ladder:
+	var ledger: Dictionary = _sim._team_player_rank_granted.get(team, {}) as Dictionary
+	for entry in _sim._player_rank_ladder:
 		var entry_rank := int(entry.get("rank", 0))
 		if entry_rank > rank or ledger.has(entry_rank):
 			continue
 		ledger[entry_rank] = int(entry.get("granted", 0))
 		granted_total += int(entry.get("granted", 0))
 		crossed.append(entry_rank)
-	sim._team_player_rank_granted[team] = ledger
-	sim._team_player_rank[team] = maxi(player_rank(team), rank)
+	_sim._team_player_rank_granted[team] = ledger
+	_sim._team_player_rank[team] = maxi(player_rank(team), rank)
 	if granted_total > 0:
-		sim.team_power_points[team] = power_points(team) + granted_total
-		sim._emit_event("power.rank_granted", 0, 0, {
+		_sim.team_power_points[team] = power_points(team) + granted_total
+		_sim._emit_event("power.rank_granted", 0, 0, {
 			"team": team,
 			"rank": player_rank(team),
 			"granted": granted_total,
@@ -792,15 +806,16 @@ func award_player_skill_points(team: int, amount: int) -> Dictionary:
 	## Bank skill points and promote across every threshold they reach. This is
 	## the authored trigger for the spell-point grant; the amount per kill is
 	## the caller's contract, not this function's invention.
-	if sim._player_rank_ladder.is_empty():
-		return {"ok": false, "reason": "rank-ladder-unavailable", "detail": sim._player_rank_ladder_error}
-	if not sim._is_combatant_team(team):
+	var _sim = sim
+	if _sim._player_rank_ladder.is_empty():
+		return {"ok": false, "reason": "rank-ladder-unavailable", "detail": _sim._player_rank_ladder_error}
+	if not _sim._is_combatant_team(team):
 		return {"ok": false, "reason": "not-a-combatant-team"}
 	if amount < 0:
 		return {"ok": false, "reason": "negative-skill-points"}
-	sim._team_player_skill_points[team] = player_skill_points(team) + amount
+	_sim._team_player_skill_points[team] = player_skill_points(team) + amount
 	var reached := player_rank(team)
-	for entry in sim._player_rank_ladder:
+	for entry in _sim._player_rank_ladder:
 		if int(entry.get("skill_points_needed", 0)) <= player_skill_points(team):
 			reached = maxi(reached, int(entry.get("rank", 0)))
 	var verdict := advance_player_rank(team, reached) if reached > 0 else {"ok": true, "reason": "", "rank": 0, "granted": 0}
@@ -817,9 +832,10 @@ func award_player_skill_points(team: int, amount: int) -> Dictionary:
 func _spellbook_science_document_rows(team: int) -> Array:
 	## The Science rows of the document this team plays: its cross-faction
 	## override when it has one, otherwise the global document.
-	var document = sim._spellbook_document
-	if sim._team_spellbooks.has(team):
-		document = (sim._team_spellbooks[team] as Dictionary).get("document", {}) as Dictionary
+	var _sim = sim
+	var document = _sim._spellbook_document
+	if _sim._team_spellbooks.has(team):
+		document = (_sim._team_spellbooks[team] as Dictionary).get("document", {}) as Dictionary
 	var registration: Dictionary = document.get("registration", {}) as Dictionary
 	var power_tree: Dictionary = registration.get("powerTree", {}) as Dictionary
 	return power_tree.get("sciences", []) as Array
@@ -863,12 +879,13 @@ func science_purchase_cost(science_id: String, multiplayer: bool) -> int:
 func science_purchase_cost_receipt(science_id: String, multiplayer: bool) -> Dictionary:
 	## The authored source receipt behind science_purchase_cost, when the pack
 	## carries field contracts. Empty for packs cooked before they existed.
-	var row := _spellbook_science_document_row(sim.PLAYER_TEAM, science_id)
+	var _sim = sim
+	var row := _spellbook_science_document_row(_sim.PLAYER_TEAM, science_id)
 	if row.is_empty():
 		return {}
 	return _science_field_receipt(
 		row,
-		sim.SCIENCE_PURCHASE_POINT_COST_MP_FIELD if multiplayer else sim.SCIENCE_PURCHASE_POINT_COST_FIELD,
+		_sim.SCIENCE_PURCHASE_POINT_COST_MP_FIELD if multiplayer else _sim.SCIENCE_PURCHASE_POINT_COST_FIELD,
 	)
 
 
@@ -886,7 +903,8 @@ func grant_science(team: int, science_id: String) -> Dictionary:
 	## Grant one science without spending purchase points, the way a rank
 	## reward or a map script does. Gated exactly by the authored contract:
 	## IsGrantable = Yes, PrerequisiteSciences satisfied, not already owned.
-	if not sim._is_combatant_team(team):
+	var _sim = sim
+	if not _sim._is_combatant_team(team):
 		return {"ok": false, "reason": "not-a-combatant-team"}
 	var row := _spellbook_science_document_row(team, science_id)
 	if row.is_empty():
@@ -895,7 +913,7 @@ func grant_science(team: int, science_id: String) -> Dictionary:
 		return {
 			"ok": false,
 			"reason": "science-not-grantable",
-			"receipt": _science_field_receipt(row, sim.SCIENCE_IS_GRANTABLE_FIELD),
+			"receipt": _science_field_receipt(row, _sim.SCIENCE_IS_GRANTABLE_FIELD),
 		}
 	if _science_owned(team, science_id):
 		return {"ok": false, "reason": "already-owned"}
@@ -903,15 +921,15 @@ func grant_science(team: int, science_id: String) -> Dictionary:
 		return {
 			"ok": false,
 			"reason": "prerequisites-unmet",
-			"receipt": _science_field_receipt(row, sim.SCIENCE_PREREQUISITE_SCIENCES_FIELD),
+			"receipt": _science_field_receipt(row, _sim.SCIENCE_PREREQUISITE_SCIENCES_FIELD),
 		}
-	(sim._team_sciences[team] as Array).append(science_id)
-	sim._emit_event("science.granted", 0, 0, {"team": team, "science_id": science_id})
+	(_sim._team_sciences[team] as Array).append(science_id)
+	_sim._emit_event("science.granted", 0, 0, {"team": team, "science_id": science_id})
 	return {
 		"ok": true,
 		"reason": "",
 		"science_id": science_id,
-		"receipt": _science_field_receipt(row, sim.SCIENCE_IS_GRANTABLE_FIELD),
+		"receipt": _science_field_receipt(row, _sim.SCIENCE_IS_GRANTABLE_FIELD),
 	}
 
 

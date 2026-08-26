@@ -62,9 +62,10 @@ func map_declares_named_object(name: String) -> bool:
 
 
 func set_building_allowed(team: int, object_type: String, allowed: bool) -> bool:
-	if not sim._team_roster.has(team) or object_type == "":
+	var _sim = sim
+	if not _sim._team_roster.has(team) or object_type == "":
 		return false
-	var permissions: Dictionary = sim.building_permissions_by_team.get(team, {})
+	var permissions: Dictionary = _sim.building_permissions_by_team.get(team, {})
 	var matching_key := ""
 	for authored_value in permissions.keys():
 		if String(authored_value).to_lower() == object_type.to_lower():
@@ -75,9 +76,9 @@ func set_building_allowed(team: int, object_type: String, allowed: bool) -> bool
 	if not allowed:
 		permissions[object_type] = false
 	if permissions.is_empty():
-		sim.building_permissions_by_team.erase(team)
+		_sim.building_permissions_by_team.erase(team)
 	else:
-		sim.building_permissions_by_team[team] = permissions
+		_sim.building_permissions_by_team[team] = permissions
 	return true
 
 
@@ -99,25 +100,26 @@ func _building_object_identity_key(value: String) -> String:
 
 
 func building_permission_for_kind(team: int, structure_kind: String) -> Dictionary:
-	var permissions: Dictionary = sim.building_permissions_by_team.get(team, {})
+	var _sim = sim
+	var permissions: Dictionary = _sim.building_permissions_by_team.get(team, {})
 	if permissions.is_empty():
 		return {"known": true, "allowed": true}
 	var source_types: Dictionary = {}
 	var runtime_types: Dictionary = {}
 	var identity_keys: Dictionary = {}
-	var registry = _structure_source_registry(sim.team_manifest_for(team))
+	var registry = _structure_source_registry(_sim.team_manifest_for(team))
 	for source_value in registry.keys():
 		if String(registry[source_value]) == structure_kind:
 			source_types[String(source_value).to_lower()] = true
 			identity_keys[_building_object_identity_key(String(source_value))] = true
 	var manifest_structure_ids: Dictionary = (
-		sim.team_manifest_for(team).get("structure_object_ids", {}) as Dictionary
+		_sim.team_manifest_for(team).get("structure_object_ids", {}) as Dictionary
 	)
 	if manifest_structure_ids.has(structure_kind):
 		var structure_object_id := String(manifest_structure_ids[structure_kind])
 		runtime_types[structure_object_id] = true
 		identity_keys[_building_object_identity_key(structure_object_id)] = true
-	var expansion_rule: Dictionary = sim._expansion_build_rules.get(structure_kind, {})
+	var expansion_rule: Dictionary = _sim._expansion_build_rules.get(structure_kind, {})
 	var expansion_object_id := String(expansion_rule.get("object_id", ""))
 	if expansion_object_id != "":
 		runtime_types[expansion_object_id] = true
@@ -135,7 +137,7 @@ func building_permission_for_kind(team: int, structure_kind: String) -> Dictiona
 		if (
 			source_types.has(authored_type.to_lower())
 			or runtime_types.has(authored_type)
-			or runtime_types.has(sim.PlayableUnitAdapter.runtime_object_id(authored_type))
+			or runtime_types.has(_sim.PlayableUnitAdapter.runtime_object_id(authored_type))
 			or identity_keys.has(_building_object_identity_key(authored_type))
 		):
 			return {
@@ -147,13 +149,14 @@ func building_permission_for_kind(team: int, structure_kind: String) -> Dictiona
 
 
 func bind_script_entity_reference(team: int, reference: String, entity_id: int) -> bool:
+	var _sim = sim
 	if team < 0 or reference == "" or entity_id <= 0:
 		return false
-	if not sim.entities.has(entity_id):
+	if not _sim.entities.has(entity_id):
 		return false
-	if not sim.script_entity_references.has(team):
-		sim.script_entity_references[team] = {}
-	(sim.script_entity_references[team] as Dictionary)[reference] = entity_id
+	if not _sim.script_entity_references.has(team):
+		_sim.script_entity_references[team] = {}
+	(_sim.script_entity_references[team] as Dictionary)[reference] = entity_id
 	return true
 
 
@@ -168,18 +171,19 @@ func bind_script_unit_reference(team: int, reference: String, structure_id: int)
 	## nothing (vacuous true). A base-flag name is refused loudly - callers
 	## are expected to have cleared the shadow check BEFORE mutating the sim,
 	## so tripping this backstop means a caller skipped it.
+	var _sim = sim
 	if reference == "":
 		return true
-	if sim.unpackable_bases.has(reference):
+	if _sim.unpackable_bases.has(reference):
 		push_error(
 			"bind_script_unit_reference refused: '%s' names a base flag; " % reference
 			+ "flag names are owned by the unpackable-base table (callers must "
 			+ "check the shadow rejection before mutating the sim)"
 		)
 		return false
-	if not sim.script_unit_references.has(team):
-		sim.script_unit_references[team] = {}
-	(sim.script_unit_references[team] as Dictionary)[reference] = structure_id
+	if not _sim.script_unit_references.has(team):
+		_sim.script_unit_references[team] = {}
+	(_sim.script_unit_references[team] as Dictionary)[reference] = structure_id
 	return true
 
 
@@ -205,24 +209,25 @@ func bind_script_unit_reference_to_base(team: int, reference: String, base_name:
 	## documented to carry. Refuses (loudly) a reference that would shadow a
 	## flag, and refuses an unknown base name rather than binding a dangling
 	## handle.
+	var _sim = sim
 	if reference == "":
 		return true
-	if sim.unpackable_bases.has(reference):
+	if _sim.unpackable_bases.has(reference):
 		push_error(
 			"bind_script_unit_reference_to_base refused: '%s' names a base flag; " % reference
 			+ "flag names are owned by the unpackable-base table (callers must "
 			+ "check the shadow rejection before mutating the sim)"
 		)
 		return false
-	if not sim.unpackable_bases.has(base_name):
+	if not _sim.unpackable_bases.has(base_name):
 		push_error(
 			"bind_script_unit_reference_to_base refused: '%s' is not a base flag " % base_name
 			+ "this simulation models; binding it would leave a dangling handle"
 		)
 		return false
-	if not sim.script_unit_references.has(team):
-		sim.script_unit_references[team] = {}
-	(sim.script_unit_references[team] as Dictionary)[reference] = base_name
+	if not _sim.script_unit_references.has(team):
+		_sim.script_unit_references[team] = {}
+	(_sim.script_unit_references[team] as Dictionary)[reference] = base_name
 	return true
 
 
@@ -282,24 +287,25 @@ func change_object_type_list(list_name: String, object_type: String, add: bool) 
 	## duplicate add and an absent remove are successful no-ops. Empty names
 	## refuse - "" is neither a list nor a type in the retail vocabulary, and
 	## admitting it would mint an unreachable store entry.
+	var _sim = sim
 	if list_name == "":
 		return {"ok": false, "reason": "empty-list-name"}
 	if object_type == "":
 		return {"ok": false, "reason": "empty-object-type"}
 	if add:
-		var members: Array = sim.script_object_type_lists.get(list_name, [])
+		var members: Array = _sim.script_object_type_lists.get(list_name, [])
 		if not members.has(object_type):
 			members.append(object_type)
 			members.sort()
-		sim.script_object_type_lists[list_name] = members
+		_sim.script_object_type_lists[list_name] = members
 		return {"ok": true, "reason": ""}
-	if sim.script_object_type_lists.has(list_name):
-		var members: Array = sim.script_object_type_lists[list_name]
+	if _sim.script_object_type_lists.has(list_name):
+		var members: Array = _sim.script_object_type_lists[list_name]
 		members.erase(object_type)
 		if members.is_empty():
 			# Empty-is-absent inside the container too: no empty list may
 			# linger as a hash-visible key.
-			sim.script_object_type_lists.erase(list_name)
+			_sim.script_object_type_lists.erase(list_name)
 	return {"ok": true, "reason": ""}
 
 
@@ -322,8 +328,9 @@ func resolve_object_type_names(object_type_list: String) -> Array:
 	## string as one type - the authored corpus uses both spellings). This is
 	## also the correct answer BEFORE list-building scripts have run: retail
 	## in that state has no list either and reads the single type. Read-only.
-	if sim.script_object_type_lists.has(object_type_list):
-		return (sim.script_object_type_lists[object_type_list] as Array).duplicate()
+	var _sim = sim
+	if _sim.script_object_type_lists.has(object_type_list):
+		return (_sim.script_object_type_lists[object_type_list] as Array).duplicate()
 	return [object_type_list]
 
 
@@ -337,7 +344,8 @@ func resolve_object_type_names(object_type_list: String) -> Array:
 
 
 func _script_owner_exists(owner: int) -> bool:
-	return sim._is_combatant_team(owner) or owner == sim.NEUTRAL_TEAM or owner == sim.CREEP_TEAM
+	var _sim = sim
+	return _sim._is_combatant_team(owner) or owner == _sim.NEUTRAL_TEAM or owner == _sim.CREEP_TEAM
 
 
 func register_script_team(
@@ -351,12 +359,13 @@ func register_script_team(
 	dynamic_default_roster: bool = true,
 	marker_only: bool = false
 ) -> Dictionary:
+	var _sim = sim
 	if team_name == "":
 		return {"ok": false, "reason": "script-team name is empty"}
 	if not _script_owner_exists(owner):
 		return {"ok": false, "reason": "script-team owner %d is unavailable" % owner}
-	if sim.script_teams.has(team_name):
-		var existing := sim.script_teams[team_name] as Dictionary
+	if _sim.script_teams.has(team_name):
+		var existing := _sim.script_teams[team_name] as Dictionary
 		if (
 			int(existing.get("configured_owner", existing.get("owner", -1))) != owner
 			or bool(existing.get("default", false)) != default_team
@@ -393,10 +402,10 @@ func register_script_team(
 		var kind := String(handle["kind"])
 		var object_id := int(handle["id"])
 		var row: Dictionary
-		if kind == "entity" and sim.entities.has(object_id):
-			row = sim.entities[object_id] as Dictionary
-		elif kind == "structure" and sim.structures.has(object_id):
-			row = sim.structures[object_id] as Dictionary
+		if kind == "entity" and _sim.entities.has(object_id):
+			row = _sim.entities[object_id] as Dictionary
+		elif kind == "structure" and _sim.structures.has(object_id):
+			row = _sim.structures[object_id] as Dictionary
 		else:
 			return {"ok": false, "reason": "script team '%s' references an unavailable %s %d" % [team_name, kind, object_id]}
 		if int(row.get("team", -1)) != owner:
@@ -432,7 +441,7 @@ func register_script_team(
 				"reason": "marker-only team '%s' cannot be default or materialized" % team_name,
 			}
 		record["marker_only"] = true
-	sim.script_teams[team_name] = record
+	_sim.script_teams[team_name] = record
 	mark_team_created(team_name)
 	return {"ok": true, "reason": ""}
 
@@ -444,9 +453,10 @@ func _script_member_less(a: Dictionary, b: Dictionary) -> bool:
 
 
 func script_team_owner(team_name: String) -> Dictionary:
-	if not sim.script_teams.has(team_name):
+	var _sim = sim
+	if not _sim.script_teams.has(team_name):
 		return {"ok": false, "reason": "script team '%s' is not registered" % team_name}
-	return {"ok": true, "owner": int((sim.script_teams[team_name] as Dictionary).get("owner", -1))}
+	return {"ok": true, "owner": int((_sim.script_teams[team_name] as Dictionary).get("owner", -1))}
 
 
 func transfer_script_team_controlling_player(
@@ -461,21 +471,22 @@ func transfer_script_team_controlling_player(
 	## materialize. Restrict this surface to that exact safe shape. A later
 	## combat-team transfer needs entity ownership, CP, upgrade, queue and
 	## spatial invariants and must be a separate packet.
-	if sim.winner != -1:
+	var _sim = sim
+	if _sim.winner != -1:
 		return {"ok": false, "reason": "the match is already resolved"}
-	if not sim.script_teams.has(team_name):
+	if not _sim.script_teams.has(team_name):
 		return {"ok": false, "reason": "script team '%s' is not registered" % team_name}
 	if not _script_owner_exists(destination_owner):
 		return {
 			"ok": false,
 			"reason": "destination player %d is unavailable" % destination_owner,
 		}
-	if not sim._is_combatant_team(destination_owner):
+	if not _sim._is_combatant_team(destination_owner):
 		return {
 			"ok": false,
 			"reason": "destination player %d is not a combatant" % destination_owner,
 		}
-	var record := sim.script_teams[team_name] as Dictionary
+	var record := _sim.script_teams[team_name] as Dictionary
 	if bool(record.get("default", false)):
 		return {
 			"ok": false,
@@ -486,7 +497,7 @@ func transfer_script_team_controlling_player(
 			"ok": false,
 			"reason": "team '%s' lacks source-attested marker-only evidence" % team_name,
 		}
-	if int(record.get("configured_owner", -1)) != sim.NEUTRAL_TEAM:
+	if int(record.get("configured_owner", -1)) != _sim.NEUTRAL_TEAM:
 		return {
 			"ok": false,
 			"reason": "marker-only team '%s' was not configured under the civilian owner" % team_name,
@@ -497,27 +508,28 @@ func transfer_script_team_controlling_player(
 			"reason": "team '%s' has materialized members and requires entity transfer" % team_name,
 		}
 	record["owner"] = destination_owner
-	sim.script_teams[team_name] = record
+	_sim.script_teams[team_name] = record
 	return {"ok": true, "reason": ""}
 
 
 func script_team_members(team_name: String, living_only: bool = true) -> Dictionary:
-	if not sim.script_teams.has(team_name):
+	var _sim = sim
+	if not _sim.script_teams.has(team_name):
 		return {"ok": false, "reason": "script team '%s' is not registered" % team_name}
-	var record := sim.script_teams[team_name] as Dictionary
+	var record := _sim.script_teams[team_name] as Dictionary
 	var owner := int(record.get("owner", -1))
 	var source: Array = []
 	if (
 		bool(record.get("default", false))
 		and not bool(record.get("explicit_default_membership", false))
 	):
-		for id_value in sim.entity_ids():
+		for id_value in _sim.entity_ids():
 			var entity_id := int(id_value)
-			if int((sim.entities[entity_id] as Dictionary).get("team", -1)) == owner:
+			if int((_sim.entities[entity_id] as Dictionary).get("team", -1)) == owner:
 				source.append({"kind": "entity", "id": entity_id})
-		for id_value in sim.structure_ids():
+		for id_value in _sim.structure_ids():
 			var structure_id := int(id_value)
-			if int((sim.structures[structure_id] as Dictionary).get("team", -1)) == owner:
+			if int((_sim.structures[structure_id] as Dictionary).get("team", -1)) == owner:
 				source.append({"kind": "structure", "id": structure_id})
 	else:
 		source = (record.get("members", []) as Array).duplicate(true)
@@ -527,10 +539,10 @@ func script_team_members(team_name: String, living_only: bool = true) -> Diction
 		var kind := String(handle.get("kind", ""))
 		var object_id := int(handle.get("id", -1))
 		var row: Dictionary
-		if kind == "entity" and sim.entities.has(object_id):
-			row = sim.entities[object_id] as Dictionary
-		elif kind == "structure" and sim.structures.has(object_id):
-			row = sim.structures[object_id] as Dictionary
+		if kind == "entity" and _sim.entities.has(object_id):
+			row = _sim.entities[object_id] as Dictionary
+		elif kind == "structure" and _sim.structures.has(object_id):
+			row = _sim.structures[object_id] as Dictionary
 		else:
 			continue
 		if int(row.get("team", -1)) != owner:
@@ -569,16 +581,17 @@ func _script_team_definition(record: Dictionary) -> Dictionary:
 
 
 func set_script_team_recruitable(team_name: String, enabled: bool) -> Dictionary:
-	if not sim.script_teams.has(team_name):
+	var _sim = sim
+	if not _sim.script_teams.has(team_name):
 		return {"ok": false, "reason": "script team '%s' is not registered" % team_name}
-	var record := sim.script_teams[team_name] as Dictionary
+	var record := _sim.script_teams[team_name] as Dictionary
 	# This is a tri-state override in retail: never-set, explicitly true, and
 	# explicitly false are distinct. Team::tryToRecruit first checks whether
 	# setRecruitable() was called, then lets that value override the default
 	# team / prototype setting. Erasing false would silently turn a scripted
 	# refusal back into the prototype default.
 	record["recruitable"] = enabled
-	sim.script_teams[team_name] = record
+	_sim.script_teams[team_name] = record
 	return {"ok": true, "reason": ""}
 
 
@@ -588,12 +601,13 @@ func _script_team_state_view() -> Dictionary:
 	## snapshot boundary. A changed controlling owner is mutable too. Default-
 	## team aliases with none of these contribute zero
 	## bytes, preserving the pristine-hash contract of merely binding a world.
+	var _sim = sim
 	var view: Dictionary = {}
-	var names = sim.script_teams.keys()
+	var names = _sim.script_teams.keys()
 	names.sort()
 	for name_value in names:
 		var name := String(name_value)
-		var record := sim.script_teams[name] as Dictionary
+		var record := _sim.script_teams[name] as Dictionary
 		if (
 			record.has("members")
 			or record.has("recruitable")
@@ -665,25 +679,27 @@ func set_team_behavior_state(team: String, token: String) -> Dictionary:
 	## admitted, including ones no condition ever reads (retail validates
 	## nothing). Setting "" IS meaningful - it returns the team to the retail
 	## default - and canonically drops the key rather than storing "".
-	if not sim.script_teams.has(team):
+	var _sim = sim
+	if not _sim.script_teams.has(team):
 		return {"ok": false, "reason": "script team '%s' is not registered" % team}
 	if token == "":
 		_prune_team_behavior_key(team, "state")
 		return {"ok": true, "reason": ""}
-	var record: Dictionary = sim.team_behavior_states.get(team, {})
+	var record: Dictionary = _sim.team_behavior_states.get(team, {})
 	record["state"] = token
-	sim.team_behavior_states[team] = record
+	_sim.team_behavior_states[team] = record
 	return {"ok": true, "reason": ""}
 
 
 func team_behavior_state(team: String) -> Dictionary:
 	## The team's current state string. {"ok": true, "state": String} - "" for
 	## a rostered team never set, which is retail's default, not a dodge.
-	if not sim.script_teams.has(team):
+	var _sim = sim
+	if not _sim.script_teams.has(team):
 		return {"ok": false, "reason": "script team '%s' is not registered" % team}
 	return {
 		"ok": true,
-		"state": String((sim.team_behavior_states.get(team, {}) as Dictionary).get("state", "")),
+		"state": String((_sim.team_behavior_states.get(team, {}) as Dictionary).get("state", "")),
 	}
 
 
@@ -693,21 +709,22 @@ func set_team_custom_state(team: String, token: String, enabled: bool) -> Dictio
 	## successful no-ops (set semantics - the assumption block above). An
 	## empty token refuses: "" names nothing in the retail vocabulary and
 	## would mint an unreachable membership entry.
-	if not sim.script_teams.has(team):
+	var _sim = sim
+	if not _sim.script_teams.has(team):
 		return {"ok": false, "reason": "script team '%s' is not registered" % team}
 	if token == "":
 		return {"ok": false, "reason": "empty custom-state token names nothing"}
 	if enabled:
-		var record: Dictionary = sim.team_behavior_states.get(team, {})
+		var record: Dictionary = _sim.team_behavior_states.get(team, {})
 		var tokens: Array = record.get("custom", [])
 		if not tokens.has(token):
 			tokens.append(token)
 			tokens.sort()
 		record["custom"] = tokens
-		sim.team_behavior_states[team] = record
+		_sim.team_behavior_states[team] = record
 		return {"ok": true, "reason": ""}
-	if sim.team_behavior_states.has(team):
-		var record: Dictionary = sim.team_behavior_states[team]
+	if _sim.team_behavior_states.has(team):
+		var record: Dictionary = _sim.team_behavior_states[team]
 		var tokens: Array = record.get("custom", [])
 		tokens.erase(token)
 		if tokens.is_empty():
@@ -720,11 +737,12 @@ func set_team_custom_state(team: String, token: String, enabled: bool) -> Dictio
 func team_custom_states(team: String) -> Dictionary:
 	## The team's enabled custom-state tokens, sorted, as a defensive copy.
 	## {"ok": true, "tokens": Array} - empty for a team never toggled.
-	if not sim.script_teams.has(team):
+	var _sim = sim
+	if not _sim.script_teams.has(team):
 		return {"ok": false, "reason": "script team '%s' is not registered" % team}
 	return {
 		"ok": true,
-		"tokens": ((sim.team_behavior_states.get(team, {}) as Dictionary).get("custom", []) as Array).duplicate(),
+		"tokens": ((_sim.team_behavior_states.get(team, {}) as Dictionary).get("custom", []) as Array).duplicate(),
 	}
 
 
@@ -732,12 +750,13 @@ func _prune_team_behavior_key(team: String, key: String) -> void:
 	## Drop `key` from the team's record, and the record itself when it
 	## empties - the canonical form the hash discipline requires (a lingering
 	## empty record would be a hash-visible phantom, the e56a0d4 class).
-	if not sim.team_behavior_states.has(team):
+	var _sim = sim
+	if not _sim.team_behavior_states.has(team):
 		return
-	var record: Dictionary = sim.team_behavior_states[team]
+	var record: Dictionary = _sim.team_behavior_states[team]
 	record.erase(key)
 	if record.is_empty():
-		sim.team_behavior_states.erase(team)
+		_sim.team_behavior_states.erase(team)
 
 
 # --- Sequential scripts (SIM-owned, ScriptEngine m_sequentialScripts) ------
@@ -771,9 +790,10 @@ func queue_team_sequential_script(
 	## ScriptActions::doTeamStartSequentialScript. Requires the named script
 	## to be loaded on at least one registered executor (loud refuse rather
 	## than retail's silent no-op when findScriptByName fails).
-	if not sim.script_teams.has(script_team):
+	var _sim = sim
+	if not _sim.script_teams.has(script_team):
 		return {"ok": false, "reason": "script team '%s' is not registered" % script_team}
-	if sim.winner != -1:
+	if _sim.winner != -1:
 		return {"ok": false, "reason": "the match is already resolved"}
 	if script_name.strip_edges() == "":
 		return {"ok": false, "reason": "sequential script name is empty"}
@@ -782,10 +802,10 @@ func queue_team_sequential_script(
 			"ok": false,
 			"reason": "script '%s' is not loaded on any registered executor" % script_name,
 		}
-	var owner := int((sim.script_teams[script_team] as Dictionary).get("owner", -1))
+	var owner := int((_sim.script_teams[script_team] as Dictionary).get("owner", -1))
 	if _script_owner_exists(owner):
 		# Retail groupIdle so the sequential head can start immediately.
-		sim.issue_stop(sim.living_ids(owner), owner)
+		_sim.issue_stop(_sim.living_ids(owner), owner)
 	var entry := {
 		"script_name": script_name,
 		"times_to_loop": times_to_loop,
@@ -794,43 +814,46 @@ func queue_team_sequential_script(
 		"dont_advance": false,
 		"idle": true,
 	}
-	var chain: Array = sim.sequential_script_queues.get(script_team, []) as Array
+	var chain: Array = _sim.sequential_script_queues.get(script_team, []) as Array
 	chain.append(entry)
-	sim.sequential_script_queues[script_team] = chain
+	_sim.sequential_script_queues[script_team] = chain
 	return {"ok": true, "reason": ""}
 
 
 func clear_team_sequential_scripts(script_team: String) -> Dictionary:
-	if not sim.script_teams.has(script_team):
+	var _sim = sim
+	if not _sim.script_teams.has(script_team):
 		return {"ok": false, "reason": "script team '%s' is not registered" % script_team}
-	sim.sequential_script_queues.erase(script_team)
+	_sim.sequential_script_queues.erase(script_team)
 	return {"ok": true, "reason": ""}
 
 
 func mark_team_sequential_busy(script_team: String) -> void:
 	## Order verbs that assign AI work clear sequential idle so further
 	## instructions wait (retail ai/aigroup isIdle gate).
-	if not sim.sequential_script_queues.has(script_team):
+	var _sim = sim
+	if not _sim.sequential_script_queues.has(script_team):
 		return
-	var chain: Array = sim.sequential_script_queues[script_team]
+	var chain: Array = _sim.sequential_script_queues[script_team]
 	if chain.is_empty():
 		return
 	var head := chain[0] as Dictionary
 	head["idle"] = false
 	chain[0] = head
-	sim.sequential_script_queues[script_team] = chain
+	_sim.sequential_script_queues[script_team] = chain
 
 
 func mark_team_sequential_idle(script_team: String) -> void:
-	if not sim.sequential_script_queues.has(script_team):
+	var _sim = sim
+	if not _sim.sequential_script_queues.has(script_team):
 		return
-	var chain: Array = sim.sequential_script_queues[script_team]
+	var chain: Array = _sim.sequential_script_queues[script_team]
 	if chain.is_empty():
 		return
 	var head := chain[0] as Dictionary
 	head["idle"] = true
 	chain[0] = head
-	sim.sequential_script_queues[script_team] = chain
+	_sim.sequential_script_queues[script_team] = chain
 
 
 # --- Object status bits (script Object_STATUS vocabulary, SIM-owned) --------
@@ -847,13 +870,14 @@ func mark_team_sequential_idle(script_team: String) -> void:
 func set_entity_object_status(
 	entity_id: int, status: String, enabled: bool
 ) -> Dictionary:
-	if sim.winner != -1:
+	var _sim = sim
+	if _sim.winner != -1:
 		return {"ok": false, "reason": "the match is already resolved"}
 	if status.strip_edges() == "":
 		return {"ok": false, "reason": "empty object status names nothing"}
-	if not sim.entities.has(entity_id):
+	if not _sim.entities.has(entity_id):
 		return {"ok": false, "reason": "entity %d is not in the simulation" % entity_id}
-	var row = sim.entities[entity_id] as Dictionary
+	var row = _sim.entities[entity_id] as Dictionary
 	if int(row.get("health", 0)) <= 0:
 		return {"ok": false, "reason": "entity %d is not living" % entity_id}
 	var flags: Dictionary = row.get("object_status", {}) as Dictionary
@@ -866,14 +890,15 @@ func set_entity_object_status(
 			row.erase("object_status")
 		else:
 			row["object_status"] = flags
-	sim.entities[entity_id] = row
+	_sim.entities[entity_id] = row
 	return {"ok": true, "reason": ""}
 
 
 func entity_has_object_status(entity_id: int, status: String) -> bool:
-	if not sim.entities.has(entity_id) or status.strip_edges() == "":
+	var _sim = sim
+	if not _sim.entities.has(entity_id) or status.strip_edges() == "":
 		return false
-	var row = sim.entities[entity_id] as Dictionary
+	var row = _sim.entities[entity_id] as Dictionary
 	if int(row.get("health", 0)) <= 0:
 		return false
 	var flags: Dictionary = row.get("object_status", {}) as Dictionary
@@ -909,7 +934,8 @@ func _production_controls_for(team: int) -> Dictionary:
 
 
 func _set_production_control_flag(team: int, key: String, enabled: bool) -> Dictionary:
-	if sim.winner != -1:
+	var _sim = sim
+	if _sim.winner != -1:
 		return {"ok": false, "reason": "the match is already resolved"}
 	if not _script_owner_exists(team):
 		return {"ok": false, "reason": "team %d is unavailable" % team}
@@ -920,9 +946,9 @@ func _set_production_control_flag(team: int, key: String, enabled: bool) -> Dict
 	else:
 		row[key] = false
 	if row.is_empty():
-		sim.production_controls_by_team.erase(team)
+		_sim.production_controls_by_team.erase(team)
 	else:
-		sim.production_controls_by_team[team] = row
+		_sim.production_controls_by_team[team] = row
 	return {"ok": true, "reason": ""}
 
 
@@ -939,7 +965,8 @@ func set_factories_enabled(team: int, enabled: bool) -> Dictionary:
 
 
 func set_base_construction_speed(team: int, factor: float) -> Dictionary:
-	if sim.winner != -1:
+	var _sim = sim
+	if _sim.winner != -1:
 		return {"ok": false, "reason": "the match is already resolved"}
 	if not _script_owner_exists(team):
 		return {"ok": false, "reason": "team %d is unavailable" % team}
@@ -951,16 +978,17 @@ func set_base_construction_speed(team: int, factor: float) -> Dictionary:
 	else:
 		row["base_construction_speed"] = factor
 	if row.is_empty():
-		sim.production_controls_by_team.erase(team)
+		_sim.production_controls_by_team.erase(team)
 	else:
-		sim.production_controls_by_team[team] = row
+		_sim.production_controls_by_team[team] = row
 	return {"ok": true, "reason": ""}
 
 
 func set_unit_construction_enabled(
 	team: int, object_type: String, enabled: bool
 ) -> Dictionary:
-	if sim.winner != -1:
+	var _sim = sim
+	if _sim.winner != -1:
 		return {"ok": false, "reason": "the match is already resolved"}
 	if not _script_owner_exists(team):
 		return {"ok": false, "reason": "team %d is unavailable" % team}
@@ -982,9 +1010,9 @@ func set_unit_construction_enabled(
 	else:
 		row["unit_construction"] = unit_map
 	if row.is_empty():
-		sim.production_controls_by_team.erase(team)
+		_sim.production_controls_by_team.erase(team)
 	else:
-		sim.production_controls_by_team[team] = row
+		_sim.production_controls_by_team[team] = row
 	return {"ok": true, "reason": ""}
 
 
@@ -1006,11 +1034,12 @@ func unit_construction_enabled(team: int, object_type: String) -> bool:
 
 
 func set_tech_buildability(object_type: String, buildability: int) -> Dictionary:
-	if sim.winner != -1:
+	var _sim = sim
+	if _sim.winner != -1:
 		return {"ok": false, "reason": "the match is already resolved"}
 	if object_type.strip_edges() == "":
 		return {"ok": false, "reason": "empty object type names nothing"}
-	sim.tech_buildability[object_type] = buildability
+	_sim.tech_buildability[object_type] = buildability
 	return {"ok": true, "reason": ""}
 
 
@@ -1018,18 +1047,19 @@ func has_prerequisite_to_build(team: int, object_type: String) -> Dictionary:
 	## True when every authored prerequisite upgrade for the unit type is
 	## completed for the team, or the type has no prerequisite map (fieldable
 	## without tech). Unknown/unmapped types refuse rather than guessing.
+	var _sim = sim
 	if not _script_owner_exists(team):
 		return {"ok": false, "reason": "team %d is unavailable" % team}
 	if object_type.strip_edges() == "":
 		return {"ok": false, "reason": "empty object type names nothing"}
-	var unit_type = sim.trainable_unit_type_for(team, object_type)
+	var unit_type = _sim.trainable_unit_type_for(team, object_type)
 	if unit_type == "":
 		# Fall back to casefold match against production-rule keys.
-		for key_value in sim._unit_production_rules.keys():
+		for key_value in _sim._unit_production_rules.keys():
 			if String(key_value).to_lower() == object_type.to_lower():
 				unit_type = String(key_value)
 				break
-	if unit_type == "" and not sim._unit_production_rules.has(object_type):
+	if unit_type == "" and not _sim._unit_production_rules.has(object_type):
 		return {
 			"ok": false,
 			"reason": (
@@ -1039,8 +1069,8 @@ func has_prerequisite_to_build(team: int, object_type: String) -> Dictionary:
 		}
 	if unit_type == "":
 		unit_type = object_type
-	var prereq_value: Variant = sim._unit_prerequisites.get(unit_type, {})
-	var completed: Dictionary = sim.team_upgrades.get(team, {}) as Dictionary
+	var prereq_value: Variant = _sim._unit_prerequisites.get(unit_type, {})
+	var completed: Dictionary = _sim.team_upgrades.get(team, {}) as Dictionary
 	if typeof(prereq_value) == TYPE_STRING:
 		var upgrade_id := String(prereq_value)
 		if upgrade_id == "":
@@ -1067,18 +1097,19 @@ func has_prerequisite_to_build(team: int, object_type: String) -> Dictionary:
 func bind_script_team_reference(
 	owner_team: int, reference: String, script_team: String
 ) -> Dictionary:
-	if sim.winner != -1:
+	var _sim = sim
+	if _sim.winner != -1:
 		return {"ok": false, "reason": "the match is already resolved"}
 	if reference.strip_edges() == "":
 		return {"ok": false, "reason": "empty team reference names nothing"}
-	if not sim.script_teams.has(script_team):
+	if not _sim.script_teams.has(script_team):
 		return {
 			"ok": false,
 			"reason": "script team '%s' is not registered" % script_team,
 		}
-	var table: Dictionary = sim.script_team_references.get(owner_team, {}) as Dictionary
+	var table: Dictionary = _sim.script_team_references.get(owner_team, {}) as Dictionary
 	table[reference] = script_team
-	sim.script_team_references[owner_team] = table
+	_sim.script_team_references[owner_team] = table
 	return {"ok": true, "reason": ""}
 
 
@@ -1088,71 +1119,75 @@ func script_team_reference(owner_team: int, reference: String) -> String:
 
 
 func set_entity_stopping_distance(entity_id: int, distance: float) -> Dictionary:
-	if sim.winner != -1:
+	var _sim = sim
+	if _sim.winner != -1:
 		return {"ok": false, "reason": "the match is already resolved"}
-	if not sim.entities.has(entity_id):
+	if not _sim.entities.has(entity_id):
 		return {"ok": false, "reason": "entity %d is not in the simulation" % entity_id}
 	if distance < 0.0:
 		return {"ok": false, "reason": "stopping distance cannot be negative"}
-	var row = sim.entities[entity_id] as Dictionary
+	var row = _sim.entities[entity_id] as Dictionary
 	if is_equal_approx(distance, 0.0):
 		row.erase("stopping_distance")
 	else:
 		row["stopping_distance"] = distance
-	sim.entities[entity_id] = row
+	_sim.entities[entity_id] = row
 	return {"ok": true, "reason": ""}
 
 
 func set_entities_idle_until(target_entity_ids: Array, until_tick: int) -> Dictionary:
-	if sim.winner != -1:
+	var _sim = sim
+	if _sim.winner != -1:
 		return {"ok": false, "reason": "the match is already resolved"}
 	for id_value in target_entity_ids:
 		var entity_id := int(id_value)
-		if not sim.entities.has(entity_id):
+		if not _sim.entities.has(entity_id):
 			continue
-		var row = sim.entities[entity_id] as Dictionary
+		var row = _sim.entities[entity_id] as Dictionary
 		if int(row.get("health", 0)) <= 0:
 			continue
 		row["script_idle_until"] = until_tick
 		row["state"] = "idle"
 		row.erase("target_id")
-		sim._clear_pending_route(row, true)
-		sim.entities[entity_id] = row
+		_sim._clear_pending_route(row, true)
+		_sim.entities[entity_id] = row
 	return {"ok": true, "reason": ""}
 
 
 func set_entities_spin_until(target_entity_ids: Array, until_tick: int) -> Dictionary:
-	if sim.winner != -1:
+	var _sim = sim
+	if _sim.winner != -1:
 		return {"ok": false, "reason": "the match is already resolved"}
 	for id_value in target_entity_ids:
 		var entity_id := int(id_value)
-		if not sim.entities.has(entity_id):
+		if not _sim.entities.has(entity_id):
 			continue
-		var row = sim.entities[entity_id] as Dictionary
+		var row = _sim.entities[entity_id] as Dictionary
 		if int(row.get("health", 0)) <= 0:
 			continue
 		row["script_spin_until"] = until_tick
 		row["state"] = "idle"
-		sim.entities[entity_id] = row
+		_sim.entities[entity_id] = row
 	return {"ok": true, "reason": ""}
 
 
 func issue_hunt(ids: Array[int], team: int = sim.PLAYER_TEAM) -> int:
 	## TEAM/NAMED/PLAYER_HUNT with empty command button: aggressive stance and
 	## clear hold so the existing acquire loop hunts hostiles.
+	var _sim = sim
 	var count := 0
 	for id_value in ids:
 		var entity_id := int(id_value)
-		if not sim.entities.has(entity_id):
+		if not _sim.entities.has(entity_id):
 			continue
-		var row = sim.entities[entity_id] as Dictionary
+		var row = _sim.entities[entity_id] as Dictionary
 		if int(row.get("team", -1)) != team or int(row.get("health", 0)) <= 0:
 			continue
 		row["stance"] = "Aggressive"
 		row.erase("script_idle_until")
-		sim.entities[entity_id] = row
+		_sim.entities[entity_id] = row
 		count += 1
-	sim.issue_set_stance(ids, "Aggressive", team)
+	_sim.issue_set_stance(ids, "Aggressive", team)
 	return count
 
 
@@ -1171,37 +1206,40 @@ func _player_prog(team: int) -> Dictionary:
 
 
 func _set_player_prog_value(team: int, key: String, value: Variant) -> Dictionary:
-	if sim.winner != -1:
+	var _sim = sim
+	if _sim.winner != -1:
 		return {"ok": false, "reason": "the match is already resolved"}
 	if not _script_owner_exists(team):
 		return {"ok": false, "reason": "team %d is unavailable" % team}
 	var row: Dictionary = _player_prog(team).duplicate(true)
 	row[key] = value
-	sim.player_progression[team] = row
+	_sim.player_progression[team] = row
 	return {"ok": true, "reason": ""}
 
 
 func set_diplomacy_override(from_team: int, to_team: int, relation: int) -> Dictionary:
 	## Hash-backed relation override (player/team script diplomacy).
-	if sim.winner != -1:
+	var _sim = sim
+	if _sim.winner != -1:
 		return {"ok": false, "reason": "the match is already resolved"}
 	if not _script_owner_exists(from_team):
 		return {"ok": false, "reason": "from team unavailable"}
-	var table: Dictionary = sim.player_diplomacy_overrides.get(from_team, {}) as Dictionary
+	var table: Dictionary = _sim.player_diplomacy_overrides.get(from_team, {}) as Dictionary
 	table[to_team] = relation
-	sim.player_diplomacy_overrides[from_team] = table
+	_sim.player_diplomacy_overrides[from_team] = table
 	return {"ok": true, "reason": ""}
 
 
 func clear_diplomacy_override(from_team: int, to_team: int) -> Dictionary:
-	if not sim.player_diplomacy_overrides.has(from_team):
+	var _sim = sim
+	if not _sim.player_diplomacy_overrides.has(from_team):
 		return {"ok": true, "reason": ""}
-	var table: Dictionary = sim.player_diplomacy_overrides[from_team]
+	var table: Dictionary = _sim.player_diplomacy_overrides[from_team]
 	table.erase(to_team)
 	if table.is_empty():
-		sim.player_diplomacy_overrides.erase(from_team)
+		_sim.player_diplomacy_overrides.erase(from_team)
 	else:
-		sim.player_diplomacy_overrides[from_team] = table
+		_sim.player_diplomacy_overrides[from_team] = table
 	return {"ok": true, "reason": ""}
 
 
@@ -1214,33 +1252,36 @@ func set_attack_priority_entry(
 	set_name: String, target_kind: String, target_name: String, priority: int
 ) -> void:
 	## Hash-backed attack-priority table (script AI vocabulary).
-	if not sim.match_script_flags.has("attack_priority_sets"):
-		sim.match_script_flags["attack_priority_sets"] = {}
-	var sets: Dictionary = sim.match_script_flags["attack_priority_sets"]
+	var _sim = sim
+	if not _sim.match_script_flags.has("attack_priority_sets"):
+		_sim.match_script_flags["attack_priority_sets"] = {}
+	var sets: Dictionary = _sim.match_script_flags["attack_priority_sets"]
 	var set_row: Dictionary = sets.get(set_name, {}) as Dictionary
 	set_row["%s:%s" % [target_kind, target_name]] = priority
 	sets[set_name] = set_row
-	sim.match_script_flags["attack_priority_sets"] = sets
+	_sim.match_script_flags["attack_priority_sets"] = sets
 
 
 func set_default_attack_priority_entry(set_name: String, priority: int) -> void:
-	if not sim.match_script_flags.has("attack_priority_defaults"):
-		sim.match_script_flags["attack_priority_defaults"] = {}
-	var defaults: Dictionary = sim.match_script_flags["attack_priority_defaults"]
+	var _sim = sim
+	if not _sim.match_script_flags.has("attack_priority_defaults"):
+		_sim.match_script_flags["attack_priority_defaults"] = {}
+	var defaults: Dictionary = _sim.match_script_flags["attack_priority_defaults"]
 	defaults[set_name] = priority
-	sim.match_script_flags["attack_priority_defaults"] = defaults
+	_sim.match_script_flags["attack_priority_defaults"] = defaults
 
 
 func set_team_ai_priority(team: int, priority: int) -> Dictionary:
-	if sim.winner != -1:
+	var _sim = sim
+	if _sim.winner != -1:
 		return {"ok": false, "reason": "the match is already resolved"}
 	if not _script_owner_exists(team):
 		return {"ok": false, "reason": "team unavailable"}
-	if not sim.match_script_flags.has("team_ai_priority"):
-		sim.match_script_flags["team_ai_priority"] = {}
-	var table: Dictionary = sim.match_script_flags["team_ai_priority"]
+	if not _sim.match_script_flags.has("team_ai_priority"):
+		_sim.match_script_flags["team_ai_priority"] = {}
+	var table: Dictionary = _sim.match_script_flags["team_ai_priority"]
 	table[team] = priority
-	sim.match_script_flags["team_ai_priority"] = table
+	_sim.match_script_flags["team_ai_priority"] = table
 	return {"ok": true, "reason": ""}
 
 
@@ -1257,11 +1298,12 @@ func _add_player_prog_value(team: int, key: String, delta: int) -> Dictionary:
 
 
 func set_entity_bool_flag(entity_id: int, flag: String, enabled: bool) -> Dictionary:
-	if sim.winner != -1:
+	var _sim = sim
+	if _sim.winner != -1:
 		return {"ok": false, "reason": "the match is already resolved"}
-	if not sim.entities.has(entity_id):
+	if not _sim.entities.has(entity_id):
 		return {"ok": false, "reason": "entity %d missing" % entity_id}
-	var row = sim.entities[entity_id] as Dictionary
+	var row = _sim.entities[entity_id] as Dictionary
 	var flags: Dictionary = row.get("script_bool_flags", {}) as Dictionary
 	if enabled:
 		flags[flag] = true
@@ -1272,14 +1314,15 @@ func set_entity_bool_flag(entity_id: int, flag: String, enabled: bool) -> Dictio
 			row.erase("script_bool_flags")
 		else:
 			row["script_bool_flags"] = flags
-	sim.entities[entity_id] = row
+	_sim.entities[entity_id] = row
 	return {"ok": true, "reason": ""}
 
 
 func entity_bool_flag(entity_id: int, flag: String) -> bool:
-	if not sim.entities.has(entity_id):
+	var _sim = sim
+	if not _sim.entities.has(entity_id):
 		return false
-	var flags: Dictionary = (sim.entities[entity_id] as Dictionary).get("script_bool_flags", {})
+	var flags: Dictionary = (_sim.entities[entity_id] as Dictionary).get("script_bool_flags", {})
 	return bool(flags.get(flag, false))
 
 
@@ -1292,11 +1335,12 @@ func set_entities_bool_flag(target_entity_ids: Array, flag: String, enabled: boo
 
 
 func set_entity_string_state(entity_id: int, key: String, value: String) -> Dictionary:
-	if sim.winner != -1:
+	var _sim = sim
+	if _sim.winner != -1:
 		return {"ok": false, "reason": "the match is already resolved"}
-	if not sim.entities.has(entity_id):
+	if not _sim.entities.has(entity_id):
 		return {"ok": false, "reason": "entity %d missing" % entity_id}
-	var row = sim.entities[entity_id] as Dictionary
+	var row = _sim.entities[entity_id] as Dictionary
 	var store: Dictionary = row.get("script_string_state", {}) as Dictionary
 	if value == "":
 		store.erase(key)
@@ -1306,23 +1350,25 @@ func set_entity_string_state(entity_id: int, key: String, value: String) -> Dict
 		row.erase("script_string_state")
 	else:
 		row["script_string_state"] = store
-	sim.entities[entity_id] = row
+	_sim.entities[entity_id] = row
 	return {"ok": true, "reason": ""}
 
 
 func entity_string_state(entity_id: int, key: String) -> String:
-	if not sim.entities.has(entity_id):
+	var _sim = sim
+	if not _sim.entities.has(entity_id):
 		return ""
-	var store: Dictionary = (sim.entities[entity_id] as Dictionary).get("script_string_state", {})
+	var store: Dictionary = (_sim.entities[entity_id] as Dictionary).get("script_string_state", {})
 	return String(store.get(key, ""))
 
 
 func set_entity_timed_flag(entity_id: int, flag: String, until_tick: int) -> Dictionary:
-	if sim.winner != -1:
+	var _sim = sim
+	if _sim.winner != -1:
 		return {"ok": false, "reason": "the match is already resolved"}
-	if not sim.entities.has(entity_id):
+	if not _sim.entities.has(entity_id):
 		return {"ok": false, "reason": "entity %d missing" % entity_id}
-	var row = sim.entities[entity_id] as Dictionary
+	var row = _sim.entities[entity_id] as Dictionary
 	var store: Dictionary = row.get("script_timed_flags", {}) as Dictionary
 	if until_tick < 0:
 		store.erase(flag)
@@ -1332,25 +1378,27 @@ func set_entity_timed_flag(entity_id: int, flag: String, until_tick: int) -> Dic
 		row.erase("script_timed_flags")
 	else:
 		row["script_timed_flags"] = store
-	sim.entities[entity_id] = row
+	_sim.entities[entity_id] = row
 	return {"ok": true, "reason": ""}
 
 
 func entity_timed_flag_active(entity_id: int, flag: String) -> bool:
-	if not sim.entities.has(entity_id):
+	var _sim = sim
+	if not _sim.entities.has(entity_id):
 		return false
-	var store: Dictionary = (sim.entities[entity_id] as Dictionary).get("script_timed_flags", {})
+	var store: Dictionary = (_sim.entities[entity_id] as Dictionary).get("script_timed_flags", {})
 	if not store.has(flag):
 		return false
-	return sim.tick_index <= int(store[flag])
+	return _sim.tick_index <= int(store[flag])
 
 
 func script_set_health_percent(entity_id: int, percent: float) -> Dictionary:
-	if sim.winner != -1:
+	var _sim = sim
+	if _sim.winner != -1:
 		return {"ok": false, "reason": "the match is already resolved"}
-	if not sim.entities.has(entity_id):
+	if not _sim.entities.has(entity_id):
 		return {"ok": false, "reason": "entity %d missing" % entity_id}
-	var row = sim.entities[entity_id] as Dictionary
+	var row = _sim.entities[entity_id] as Dictionary
 	var maximum := maxi(1, int(row.get("maximum_health", row.get("health", 1))))
 	var clamped := clampf(percent, 0.0, 100.0)
 	var new_health := int(round(maximum * clamped / 100.0))
@@ -1366,16 +1414,16 @@ func script_set_health_percent(entity_id: int, percent: float) -> Dictionary:
 					defeated_members.append(member_index)
 				rebuilt.append(each)
 			row["member_health"] = rebuilt
-	sim.entities[entity_id] = row
+	_sim.entities[entity_id] = row
 	if new_health <= 0:
-		var death_policy = sim._bookkeep_battalion_death(
+		var death_policy = _sim._bookkeep_battalion_death(
 			entity_id, row, "NORMAL", defeated_members
 		)
 		if bool(row.get("is_banner_carrier", false)):
-			sim._on_banner_carrier_defeated(row)
-		sim._emit_event("battalion.defeated", 0, entity_id, {"reason": "script-kill"})
+			_sim._on_banner_carrier_defeated(row)
+		_sim._emit_event("battalion.defeated", 0, entity_id, {"reason": "script-kill"})
 		if bool(death_policy.get("destroy_object", false)) or bool(row.get("is_banner_carrier", false)):
-			sim.entities.erase(entity_id)
+			_sim.entities.erase(entity_id)
 	return {"ok": true, "reason": ""}
 
 
@@ -1384,9 +1432,10 @@ func script_kill_entity(entity_id: int) -> Dictionary:
 
 
 func script_damage_entity(entity_id: int, amount: float) -> Dictionary:
-	if not sim.entities.has(entity_id):
+	var _sim = sim
+	if not _sim.entities.has(entity_id):
 		return {"ok": false, "reason": "entity %d missing" % entity_id}
-	var row = sim.entities[entity_id] as Dictionary
+	var row = _sim.entities[entity_id] as Dictionary
 	var maximum := maxi(1, int(row.get("maximum_health", 1)))
 	var health := int(row.get("health", 0))
 	var pct := 100.0 * float(health) / float(maximum)
@@ -1395,32 +1444,34 @@ func script_damage_entity(entity_id: int, amount: float) -> Dictionary:
 
 
 func contain_entity(structure_id: int, entity_id: int) -> Dictionary:
-	if sim.winner != -1:
+	var _sim = sim
+	if _sim.winner != -1:
 		return {"ok": false, "reason": "the match is already resolved"}
-	if not sim.structures.has(structure_id) and not sim.entities.has(structure_id):
+	if not _sim.structures.has(structure_id) and not _sim.entities.has(structure_id):
 		return {"ok": false, "reason": "container %d missing" % structure_id}
-	if not sim.entities.has(entity_id):
+	if not _sim.entities.has(entity_id):
 		return {"ok": false, "reason": "entity %d missing" % entity_id}
-	if sim.entity_container.has(entity_id):
+	if _sim.entity_container.has(entity_id):
 		return {"ok": false, "reason": "entity already contained"}
-	var passengers: Array = sim.containment.get(structure_id, []) as Array
+	var passengers: Array = _sim.containment.get(structure_id, []) as Array
 	passengers.append(entity_id)
-	sim.containment[structure_id] = passengers
-	sim.entity_container[entity_id] = structure_id
+	_sim.containment[structure_id] = passengers
+	_sim.entity_container[entity_id] = structure_id
 	return {"ok": true, "reason": ""}
 
 
 func exit_entity_container(entity_id: int) -> Dictionary:
-	if not sim.entity_container.has(entity_id):
+	var _sim = sim
+	if not _sim.entity_container.has(entity_id):
 		return {"ok": true, "reason": ""}  # vacuous
-	var structure_id := int(sim.entity_container[entity_id])
-	var passengers: Array = sim.containment.get(structure_id, []) as Array
+	var structure_id := int(_sim.entity_container[entity_id])
+	var passengers: Array = _sim.containment.get(structure_id, []) as Array
 	passengers.erase(entity_id)
 	if passengers.is_empty():
-		sim.containment.erase(structure_id)
+		_sim.containment.erase(structure_id)
 	else:
-		sim.containment[structure_id] = passengers
-	sim.entity_container.erase(entity_id)
+		_sim.containment[structure_id] = passengers
+	_sim.entity_container.erase(entity_id)
 	return {"ok": true, "reason": ""}
 
 
@@ -1441,16 +1492,18 @@ func register_script_waypoint_path(name: String, points: Array) -> void:
 
 
 func area_contains(name: String, position: Vector2) -> Dictionary:
-	if not sim.script_areas.has(name):
+	var _sim = sim
+	if not _sim.script_areas.has(name):
 		return {"ok": false, "reason": "area '%s' is not registered" % name}
-	var area: Dictionary = sim.script_areas[name]
+	var area: Dictionary = _sim.script_areas[name]
 	var center: Vector2 = area.get("center", Vector2.ZERO)
 	var radius := float(area.get("radius", 0.0))
 	return {"ok": true, "value": center.distance_to(position) <= radius}
 
 
 func bump_script_event(key: String, amount: int = 1) -> void:
-	sim.script_event_counts[key] = int(sim.script_event_counts.get(key, 0)) + amount
+	var _sim = sim
+	_sim.script_event_counts[key] = int(_sim.script_event_counts.get(key, 0)) + amount
 
 
 func script_event_count(key: String) -> int:
@@ -1473,46 +1526,49 @@ func clear_team_created_edges() -> void:
 
 
 func set_entity_team(entity_id: int, new_team: int) -> Dictionary:
-	if sim.winner != -1:
+	var _sim = sim
+	if _sim.winner != -1:
 		return {"ok": false, "reason": "the match is already resolved"}
-	if not sim.entities.has(entity_id):
+	if not _sim.entities.has(entity_id):
 		return {"ok": false, "reason": "entity %d missing" % entity_id}
 	if not _script_owner_exists(new_team):
 		return {"ok": false, "reason": "team %d unavailable" % new_team}
-	var row = sim.entities[entity_id] as Dictionary
+	var row = _sim.entities[entity_id] as Dictionary
 	var old_team := int(row.get("team", -1))
 	if old_team == new_team:
 		return {"ok": true, "reason": ""}
-	if sim.base_loop_enabled and not bool(row.get("command_points_released", false)):
-		var commitment = sim._entity_command_point_commitment(row)
-		sim.team_command_points[old_team] = maxi(0, sim.command_points_for_team(old_team) - commitment)
-		sim.team_command_points[new_team] = sim.command_points_for_team(new_team) + commitment
+	if _sim.base_loop_enabled and not bool(row.get("command_points_released", false)):
+		var commitment = _sim._entity_command_point_commitment(row)
+		_sim.team_command_points[old_team] = maxi(0, _sim.command_points_for_team(old_team) - commitment)
+		_sim.team_command_points[new_team] = _sim.command_points_for_team(new_team) + commitment
 	row["team"] = new_team
-	sim.entities[entity_id] = row
+	_sim.entities[entity_id] = row
 	return {"ok": true, "reason": ""}
 
 
 func delete_entity(entity_id: int) -> Dictionary:
-	if sim.winner != -1:
+	var _sim = sim
+	if _sim.winner != -1:
 		return {"ok": false, "reason": "the match is already resolved"}
-	if not sim.entities.has(entity_id):
+	if not _sim.entities.has(entity_id):
 		return {"ok": false, "reason": "entity %d missing" % entity_id}
 	exit_entity_container(entity_id)
-	var row = sim.entities[entity_id] as Dictionary
-	sim._summon_despawn_ticks.erase(entity_id)
-	sim._summon_aura_source_ids.erase(entity_id)
-	sim.selected_ids.erase(entity_id)
-	sim._release_command_points_once(row)
-	sim.entities.erase(entity_id)
-	sim.prune_control_groups()
+	var row = _sim.entities[entity_id] as Dictionary
+	_sim._summon_despawn_ticks.erase(entity_id)
+	_sim._summon_aura_source_ids.erase(entity_id)
+	_sim.selected_ids.erase(entity_id)
+	_sim._release_command_points_once(row)
+	_sim.entities.erase(entity_id)
+	_sim.prune_control_groups()
 	return {"ok": true, "reason": ""}
 
 
 
 func _executor_for_script(script_name: String) -> SageScriptExecutor:
-	for team_key in _sorted_dictionary_keys(sim._script_executors):
+	var _sim = sim
+	for team_key in _sorted_dictionary_keys(_sim._script_executors):
 		var executor: SageScriptExecutor = (
-			sim._script_executors[team_key] as WeakRef
+			_sim._script_executors[team_key] as WeakRef
 		).get_ref()
 		if executor != null and executor.has_script(script_name):
 			return executor
@@ -1524,27 +1580,28 @@ func _step_sequential_scripts() -> void:
 	## heads. Runs after ordinary executor.tick() so newly queued scripts from
 	## this frame's AI scripts can start the same logic frame (retail steps
 	## sequential scripts in the same ScriptEngine::update).
-	if sim.sequential_script_queues.is_empty() or sim.winner != -1:
+	var _sim = sim
+	if _sim.sequential_script_queues.is_empty() or _sim.winner != -1:
 		return
-	var team_names = sim.sequential_script_queues.keys()
+	var team_names = _sim.sequential_script_queues.keys()
 	team_names.sort()
 	for team_name_value in team_names:
 		var script_team := String(team_name_value)
 		var spin := 0
 		while spin < _SEQUENTIAL_SPIN_LIMIT:
 			spin += 1
-			if not sim.sequential_script_queues.has(script_team):
+			if not _sim.sequential_script_queues.has(script_team):
 				break
-			var chain: Array = sim.sequential_script_queues[script_team]
+			var chain: Array = _sim.sequential_script_queues[script_team]
 			if chain.is_empty():
-				sim.sequential_script_queues.erase(script_team)
+				_sim.sequential_script_queues.erase(script_team)
 				break
 			var head := (chain[0] as Dictionary).duplicate(true)
 			var frames := int(head.get("frames_to_wait", -1))
 			if frames > 0:
 				head["frames_to_wait"] = frames - 1
 				chain[0] = head
-				sim.sequential_script_queues[script_team] = chain
+				_sim.sequential_script_queues[script_team] = chain
 				break
 			var can_progress := bool(head.get("idle", false)) or frames == 0
 			if not can_progress:
@@ -1557,11 +1614,11 @@ func _step_sequential_scripts() -> void:
 			var executor := _executor_for_script(script_name)
 			if executor == null:
 				# Script unloaded or executors dropped; fail closed by clearing.
-				sim.sequential_script_queues.erase(script_team)
+				_sim.sequential_script_queues.erase(script_team)
 				break
 			var actions_result: Dictionary = executor.true_actions_for_script(script_name)
 			if not bool(actions_result.get("ok", false)):
-				sim.sequential_script_queues.erase(script_team)
+				_sim.sequential_script_queues.erase(script_team)
 				break
 			var actions: Array = actions_result.get("actions", []) as Array
 			var instruction := int(head.get("current_instruction", 0))
@@ -1580,15 +1637,15 @@ func _step_sequential_scripts() -> void:
 					}
 					chain.append(requeue)
 				if chain.is_empty():
-					sim.sequential_script_queues.erase(script_team)
+					_sim.sequential_script_queues.erase(script_team)
 				else:
-					sim.sequential_script_queues[script_team] = chain
+					_sim.sequential_script_queues[script_team] = chain
 				# Allow the next chained script to start this frame.
 				continue
 			var action: Dictionary = actions[instruction]
 			head["frames_to_wait"] = -1
 			chain[0] = head
-			sim.sequential_script_queues[script_team] = chain
+			_sim.sequential_script_queues[script_team] = chain
 			var world: RetailSliceScriptWorld = executor.world as RetailSliceScriptWorld
 			if world != null:
 				world.latch_script_team_context(script_team, true)
@@ -1596,11 +1653,11 @@ func _step_sequential_scripts() -> void:
 			if world != null:
 				world.clear_script_team_context()
 			# Re-read head: the action may have stopped/queued/busy-marked.
-			if not sim.sequential_script_queues.has(script_team):
+			if not _sim.sequential_script_queues.has(script_team):
 				break
-			chain = sim.sequential_script_queues[script_team]
+			chain = _sim.sequential_script_queues[script_team]
 			if chain.is_empty():
-				sim.sequential_script_queues.erase(script_team)
+				_sim.sequential_script_queues.erase(script_team)
 				break
 			head = chain[0] as Dictionary
 			if bool(head.get("dont_advance", false)):
@@ -1755,13 +1812,14 @@ func logic_random_int(low: int, high: int) -> int:
 	## reinterpreted as int32 and the final sum wrapped to int32, matching
 	## retail's x86 Int arithmetic on the (unreachable-by-authored-scripts)
 	## degenerate ranges too.
-	if sim._logic_random_state.is_empty():
-		sim._logic_random_state = _logic_random_seed_words(int(sim._rules.get("logic_random_seed", 0)))
+	var _sim = sim
+	if _sim._logic_random_state.is_empty():
+		_sim._logic_random_state = _logic_random_seed_words(int(_sim._rules.get("logic_random_seed", 0)))
 	var delta := (high - low + 1) & _U32
 	if delta == 0:
 		return high
-	sim.logic_random_draws += 1
-	var drawn := _logic_random_draw32(sim._logic_random_state) % delta
+	_sim.logic_random_draws += 1
+	var drawn := _logic_random_draw32(_sim._logic_random_state) % delta
 	if drawn >= 0x80000000:
 		drawn -= 0x100000000
 	return ((drawn + low + 0x80000000) & _U32) - 0x80000000
@@ -1770,10 +1828,11 @@ func logic_random_int(low: int, high: int) -> int:
 func logic_random_real(low: float, high: float) -> float:
 	## Retail GetGameLogicRandomValueReal: unlike the integer helper this always
 	## consumes one logic draw, including a 0..1 roll tested against 100%.
-	if sim._logic_random_state.is_empty():
-		sim._logic_random_state = _logic_random_seed_words(int(sim._rules.get("logic_random_seed", 0)))
-	sim.logic_random_draws += 1
-	var unit := float(_logic_random_draw32(sim._logic_random_state)) / 4294967295.0
+	var _sim = sim
+	if _sim._logic_random_state.is_empty():
+		_sim._logic_random_state = _logic_random_seed_words(int(_sim._rules.get("logic_random_seed", 0)))
+	_sim.logic_random_draws += 1
+	var unit := float(_logic_random_draw32(_sim._logic_random_state)) / 4294967295.0
 	return low + (high - low) * unit
 
 
@@ -1863,6 +1922,7 @@ func attach_script_env(env: SageScriptEnv, team: int) -> bool:
 	## Route `env`'s state through sim.script_env_state[team] (see above). Refuses
 	## loudly for a null env or an unrostered team; SageScriptEnv itself
 	## refuses an env that is already attached or already holds local state.
+	var _sim = sim
 	if env == null:
 		push_error("attach_script_env refused: null env")
 		return false
@@ -1872,7 +1932,7 @@ func attach_script_env(env: SageScriptEnv, team: int) -> bool:
 	# This sim is the store's lifetime witness: if it is freed while the env
 	# lives on, the env's store becomes an orphan outside every hash and
 	# snapshot, and the env must refuse loudly instead of writing into it.
-	return env.attach_state_store(sim.script_env_state, team, sim)
+	return env.attach_state_store(_sim.script_env_state, team, _sim)
 
 
 func _script_env_state_view() -> Dictionary:
@@ -1888,11 +1948,12 @@ func _script_env_state_view() -> Dictionary:
 	## and the snapshot: a collection added to the env without updating this
 	## view would have been invisible to the desync barrier and lost on peer
 	## adoption, the exact silent-fallback class e56a0d4 closed.
+	var _sim = sim
 	var view := {}
-	var team_keys = sim.script_env_state.keys()
+	var team_keys = _sim.script_env_state.keys()
 	team_keys.sort()
 	for team_key in team_keys:
-		var entry: Dictionary = sim.script_env_state[team_key]
+		var entry: Dictionary = _sim.script_env_state[team_key]
 		var entry_view := {}
 		var tick := int(entry.get("tick", 0))
 		if tick != 0:
@@ -1949,11 +2010,12 @@ func _script_env_state_view() -> Dictionary:
 func _report_script_env_view_fault(team_key: Variant, path: String) -> void:
 	## Loud once per (team, field), like SageScriptEnv._report_stale: the first
 	## sighting is the defect report; one per hash call would bury the log.
+	var _sim = sim
 	var report_key := "%s|%s" % [str(team_key), path]
-	if sim._script_env_view_reported.has(report_key):
+	if _sim._script_env_view_reported.has(report_key):
 		return
-	sim._script_env_view_reported[report_key] = true
-	sim.script_env_view_faults += 1
+	_sim._script_env_view_reported[report_key] = true
+	_sim.script_env_view_faults += 1
 	push_error(
 		(
 			"script env state: team %s carries unrecognised field '%s'; "
@@ -2053,16 +2115,17 @@ func register_script_executor(executor: SageScriptExecutor, team: int) -> bool:
 	## registered a team-0 env under team 1 (and a swapped PAIR) and both were
 	## accepted, silently inverting the ascending-team-order guarantee with
 	## zero faults.
+	var _sim = sim
 	if executor == null:
 		push_error("register_script_executor refused: null executor")
 		return false
 	if not _script_owner_exists(team):
 		push_error("register_script_executor refused: team %d is not a script-capable owner" % team)
 		return false
-	if sim._script_executors.has(team) and (sim._script_executors[team] as WeakRef).get_ref() != null:
+	if _sim._script_executors.has(team) and (_sim._script_executors[team] as WeakRef).get_ref() != null:
 		push_error("register_script_executor refused: team %d already has a registered executor" % team)
 		return false
-	if executor.env == null or not executor.env.attached_to(sim):
+	if executor.env == null or not executor.env.attached_to(_sim):
 		push_error(
 			"register_script_executor refused: the executor's env is not attached "
 			+ "to this sim's state store (call attach_script_env(executor.env, %d) first)" % team
@@ -2079,18 +2142,19 @@ func register_script_executor(executor: SageScriptExecutor, team: int) -> bool:
 			) % [str(env_key), team, team, team]
 		)
 		return false
-	sim._script_executors[team] = weakref(executor)
-	sim._script_executor_expected_ticks[team] = executor.env.tick_index
-	sim._script_executor_faults.erase(team)
+	_sim._script_executors[team] = weakref(executor)
+	_sim._script_executor_expected_ticks[team] = executor.env.tick_index
+	_sim._script_executor_faults.erase(team)
 	return true
 
 
 func unregister_script_executor(team: int) -> bool:
-	if not sim._script_executors.has(team):
+	var _sim = sim
+	if not _sim._script_executors.has(team):
 		return false
-	sim._script_executors.erase(team)
-	sim._script_executor_expected_ticks.erase(team)
-	sim._script_executor_faults.erase(team)
+	_sim._script_executors.erase(team)
+	_sim._script_executor_expected_ticks.erase(team)
+	_sim._script_executor_faults.erase(team)
 	return true
 
 
@@ -2100,28 +2164,29 @@ func registered_script_executor_teams() -> Array:
 
 func _step_script_executors() -> void:
 	## The contract's enforcement point - see the block comment above.
-	if sim._script_executors.is_empty():
+	var _sim = sim
+	if _sim._script_executors.is_empty():
 		return
-	for team_key in _sorted_dictionary_keys(sim._script_executors):
-		var executor_ref: WeakRef = sim._script_executors[team_key]
+	for team_key in _sorted_dictionary_keys(_sim._script_executors):
+		var executor_ref: WeakRef = _sim._script_executors[team_key]
 		var executor: SageScriptExecutor = executor_ref.get_ref()
 		if executor == null:
-			sim.script_wiring_faults += 1
+			_sim.script_wiring_faults += 1
 			push_error(
 				"script wiring: the executor registered for team %s was freed while "
 				% str(team_key)
 				+ "registered; dropping the registration - its scripts stop HERE, loudly"
 			)
-			sim._script_executors.erase(team_key)
-			sim._script_executor_expected_ticks.erase(team_key)
-			sim._script_executor_faults.erase(team_key)
+			_sim._script_executors.erase(team_key)
+			_sim._script_executor_expected_ticks.erase(team_key)
+			_sim._script_executor_faults.erase(team_key)
 			continue
-		if sim._script_executor_faults.get(team_key, false):
+		if _sim._script_executor_faults.get(team_key, false):
 			continue  # quarantined; the fault was reported once when it happened
 		if executor.env.attachment_stale():
 			_quarantine_script_executor(team_key, "its env's backing store owner was freed")
 			continue
-		var expected := int(sim._script_executor_expected_ticks[team_key])
+		var expected := int(_sim._script_executor_expected_ticks[team_key])
 		var before := executor.env.tick_index
 		if before != expected:
 			_quarantine_script_executor(
@@ -2138,7 +2203,7 @@ func _step_script_executors() -> void:
 				% [before, executor.env.tick_index]
 			)
 			continue
-		sim._script_executor_expected_ticks[team_key] = before + 1
+		_sim._script_executor_expected_ticks[team_key] = before + 1
 	# Sequential heads progress after ordinary script evaluation so the same
 	# logic frame can both queue (TEAM_EXECUTE_SEQUENTIAL_*) and advance.
 	_step_sequential_scripts()
@@ -2147,8 +2212,9 @@ func _step_script_executors() -> void:
 
 
 func _quarantine_script_executor(team_key: Variant, reason: String) -> void:
-	sim.script_wiring_faults += 1
-	sim._script_executor_faults[team_key] = true
+	var _sim = sim
+	_sim.script_wiring_faults += 1
+	_sim._script_executor_faults[team_key] = true
 	push_error(
 		"script wiring: quarantining team %s's executor - %s. Its scripts no "
 		% [str(team_key), reason]
@@ -2161,10 +2227,11 @@ func _rebase_script_executor_offsets() -> void:
 	## hashed state, so whenever it moves out-of-band-but-legitimately
 	## (setup() zeroes it, restore() sets it from a snapshot) the expectation
 	## is recomputed from the same value every peer holds.
-	for team_key in sim._script_executors.keys():
-		var executor: SageScriptExecutor = (sim._script_executors[team_key] as WeakRef).get_ref()
+	var _sim = sim
+	for team_key in _sim._script_executors.keys():
+		var executor: SageScriptExecutor = (_sim._script_executors[team_key] as WeakRef).get_ref()
 		if executor != null and not executor.env.attachment_stale():
-			sim._script_executor_expected_ticks[team_key] = executor.env.tick_index
+			_sim._script_executor_expected_ticks[team_key] = executor.env.tick_index
 
 
 # --- Retail object-type identity (derived reads over existing hashed rows) --
@@ -2206,18 +2273,19 @@ func count_objects_of_types(team: int, type_names: Array, include_dead: bool) ->
 	## row's identity is recorded (see the block comment), so a name matching
 	## zero rows is a true zero about THIS match, not a guess - a type the
 	## simulation cannot field has no instances here by construction.
+	var _sim = sim
 	var probe := _object_type_probe(type_names)
 	var total := 0
-	for id in sim.entity_ids():
-		var row: Dictionary = sim.entities[id]
+	for id in _sim.entity_ids():
+		var row: Dictionary = _sim.entities[id]
 		if int(row.get("team", -1)) != team:
 			continue
 		if not include_dead and int(row.get("health", 0)) <= 0:
 			continue
 		if _entity_matches_types(row, probe):
 			total += 1
-	for structure_id in sim.structure_ids(team):
-		var row: Dictionary = sim.structures[structure_id]
+	for structure_id in _sim.structure_ids(team):
+		var row: Dictionary = _sim.structures[structure_id]
 		if not include_dead and int(row.get("health", 0)) <= 0:
 			continue
 		if _structure_matches_types(row, probe):
@@ -2230,18 +2298,19 @@ func living_object_levels_of_types(team: int, type_names: Array) -> Array[int]:
 	## whose recorded retail identity matches `type_names`. This is a derived,
 	## read-only view over the same authoritative rows and exact matcher used
 	## by count_objects_of_types; it adds no veterancy cache or history.
+	var _sim = sim
 	var probe := _object_type_probe(type_names)
 	var levels: Array[int] = []
-	for id in sim.entity_ids():
-		var row: Dictionary = sim.entities[id]
+	for id in _sim.entity_ids():
+		var row: Dictionary = _sim.entities[id]
 		if (
 			int(row.get("team", -1)) == team
 			and int(row.get("health", 0)) > 0
 			and _entity_matches_types(row, probe)
 		):
 			levels.append(int(row.get("level", 1)))
-	for structure_id in sim.structure_ids(team):
-		var row: Dictionary = sim.structures[structure_id]
+	for structure_id in _sim.structure_ids(team):
+		var row: Dictionary = _sim.structures[structure_id]
 		if int(row.get("health", 0)) > 0 and _structure_matches_types(row, probe):
 			levels.append(int(row.get("level", 1)))
 	return levels
@@ -2259,6 +2328,7 @@ func nearest_object_of_types(origin: Vector2, type_names: Array, owner_teams: Ar
 	## tolerance comparison is not transitive and cannot define a total order.
 	## Answers {"found": false} or {"found": true, "kind": "battalion"|
 	## "structure", "id": int, "position": Vector2}.
+	var _sim = sim
 	var probe := _object_type_probe(type_names)
 	var owner_filter := {}
 	for team_value in owner_teams:
@@ -2268,8 +2338,8 @@ func nearest_object_of_types(origin: Vector2, type_names: Array, owner_teams: Ar
 	var best_rank := 0
 	var best_distance := 0.0
 	var best_position := Vector2.ZERO
-	for id in sim.entity_ids():
-		var row: Dictionary = sim.entities[id]
+	for id in _sim.entity_ids():
+		var row: Dictionary = _sim.entities[id]
 		if int(row.get("health", 0)) <= 0:
 			continue
 		if not owner_filter.is_empty() and not owner_filter.has(int(row.get("team", -1))):
@@ -2286,8 +2356,8 @@ func nearest_object_of_types(origin: Vector2, type_names: Array, owner_teams: Ar
 			best_rank = 0
 			best_distance = distance
 			best_position = Vector2(row.get("position", Vector2.ZERO))
-	for structure_id in sim.structure_ids():
-		var row: Dictionary = sim.structures[structure_id]
+	for structure_id in _sim.structure_ids():
+		var row: Dictionary = _sim.structures[structure_id]
 		if int(row.get("health", 0)) <= 0:
 			continue
 		if not owner_filter.is_empty() and not owner_filter.has(int(row.get("team", -1))):
@@ -2323,11 +2393,12 @@ func fieldable_object_type(name: String) -> bool:
 	## from "a type outside this simulation's model entirely" (a refusal that
 	## keeps the modeling gap visible - the retail AI's tactical-marker moves
 	## land there). Order-independent: a pure any() over configuration sets.
+	var _sim = sim
 	if name == "":
 		return false
 	var folded := name.to_lower()
-	var runtime_id = sim.PlayableUnitAdapter.runtime_object_id(name)
-	var unit_rules: Dictionary = sim._rules.get("unit_rules", {}) as Dictionary
+	var runtime_id = _sim.PlayableUnitAdapter.runtime_object_id(name)
+	var unit_rules: Dictionary = _sim._rules.get("unit_rules", {}) as Dictionary
 	for object_id_value in unit_rules.keys():
 		var rule: Dictionary = unit_rules[object_id_value] as Dictionary
 		var source := String((rule.get("provenance", {}) as Dictionary).get("source_object_id", ""))
@@ -2335,9 +2406,9 @@ func fieldable_object_type(name: String) -> bool:
 			return true
 		if String(object_id_value) == runtime_id or String(rule.get("horde_id", "")) == runtime_id:
 			return true
-	for team_value in sim._roster_team_ids():
+	for team_value in _sim._roster_team_ids():
 		var team := int(team_value)
-		var manifest = sim.team_manifest_for(team)
+		var manifest = _sim.team_manifest_for(team)
 		var registry: Dictionary = _structure_source_registry(manifest)
 		for source_value in registry.keys():
 			if String(source_value).to_lower() == folded:
@@ -2345,14 +2416,14 @@ func fieldable_object_type(name: String) -> bool:
 		for object_id_value in (manifest.get("structure_object_ids", {}) as Dictionary).values():
 			if String(object_id_value) == runtime_id:
 				return true
-		if sim.unit_production_rules_for_team(team).has(runtime_id):
+		if _sim.unit_production_rules_for_team(team).has(runtime_id):
 			return true
-	for kind_value in sim._expansion_build_rules.keys():
-		var expansion_object_id = String((sim._expansion_build_rules[kind_value] as Dictionary).get("object_id", ""))
+	for kind_value in _sim._expansion_build_rules.keys():
+		var expansion_object_id = String((_sim._expansion_build_rules[kind_value] as Dictionary).get("object_id", ""))
 		if expansion_object_id == runtime_id or expansion_object_id.to_lower() == folded:
 			return true
 	for registry_key in ["scenario_unit_runtimes", "scenario_structure_runtimes"]:
-		for object_id_value in (sim._rules.get(registry_key, {}) as Dictionary).keys():
+		for object_id_value in (_sim._rules.get(registry_key, {}) as Dictionary).keys():
 			if String(object_id_value).to_lower() == folded:
 				return true
 	return false
@@ -2405,10 +2476,11 @@ func _structure_kinds_matching_probe(team: int, probe: Dictionary) -> Dictionary
 	## The set of structure kinds (for `team`'s manifest) that the probe's
 	## names denote. Built as a SET, so source-dictionary iteration order
 	## cannot affect any answer.
+	var _sim = sim
 	var kinds := {}
 	var folded: Dictionary = probe["folded"]
 	var runtime_ids: Dictionary = probe["runtime_ids"]
-	var manifest = sim.team_manifest_for(team)
+	var manifest = _sim.team_manifest_for(team)
 	var registry := _structure_source_registry(manifest)
 	for source_value in registry.keys():
 		if folded.has(String(source_value).to_lower()):
@@ -2416,11 +2488,11 @@ func _structure_kinds_matching_probe(team: int, probe: Dictionary) -> Dictionary
 	for kind_value in (manifest.get("structure_object_ids", {}) as Dictionary).keys():
 		if runtime_ids.has(String((manifest.get("structure_object_ids", {}) as Dictionary)[kind_value])):
 			kinds[String(kind_value)] = true
-	for kind_value in sim._expansion_build_rules.keys():
+	for kind_value in _sim._expansion_build_rules.keys():
 		# Expansion rules record either the runtime id (the vertical slice's
 		# doc-driven path) or a plain source-style name (synthetic fixtures);
 		# both compare exactly against their own key form.
-		var expansion_object_id = String((sim._expansion_build_rules[kind_value] as Dictionary).get("object_id", ""))
+		var expansion_object_id = String((_sim._expansion_build_rules[kind_value] as Dictionary).get("object_id", ""))
 		if runtime_ids.has(expansion_object_id) or folded.has(expansion_object_id.to_lower()):
 			kinds[String(kind_value)] = true
 	return kinds

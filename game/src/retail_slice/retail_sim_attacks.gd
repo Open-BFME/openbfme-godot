@@ -5,24 +5,26 @@ extends "res://src/retail_slice/retail_sim_subsystem.gd"
 
 
 func _nearest_attack_move_target(row: Dictionary) -> int:
+	var _sim = sim
 	var origin := Vector2(row.get("position", Vector2.ZERO))
-	var limit = maxf(float(row.get("attack_range", 1.0)), float(row.get("vision_range", 17.5)) * sim._ability_vision_multiplier(row))
-	return sim._spatial_nearest_hostile(
-		row, int(row.get("team", sim.PLAYER_TEAM)), origin, limit,
-		sim.SPATIAL_FILTER_ENGAGE | sim.SPATIAL_FILTER_STEALTH
+	var limit = maxf(float(row.get("attack_range", 1.0)), float(row.get("vision_range", 17.5)) * _sim._ability_vision_multiplier(row))
+	return _sim._spatial_nearest_hostile(
+		row, int(row.get("team", _sim.PLAYER_TEAM)), origin, limit,
+		_sim.SPATIAL_FILTER_ENGAGE | _sim.SPATIAL_FILTER_STEALTH
 	)
 
 
 func _nearest_auto_target(row: Dictionary) -> Dictionary:
+	var _sim = sim
 	if not bool(row.get("auto_acquire_enabled", true)):
 		return {}
-	if sim._stealth_active(row) and not bool(row.get("auto_acquire_while_stealthed", true)):
+	if _sim._stealth_active(row) and not bool(row.get("auto_acquire_while_stealthed", true)):
 		return {}
-	var self_team = int(row.get("team", sim.PLAYER_TEAM))
+	var self_team = int(row.get("team", _sim.PLAYER_TEAM))
 	var origin := Vector2(row.get("position", Vector2.ZERO))
 	var stance := String(row.get("stance", "Battle"))
 	var stance_state := _stance_state(row, stance)
-	var limit = float(row.get("vision_range", 0.0)) * float(stance_state.get("visionMultiplier", 1.0)) * sim._ability_vision_multiplier(row)
+	var limit = float(row.get("vision_range", 0.0)) * float(stance_state.get("visionMultiplier", 1.0)) * _sim._ability_vision_multiplier(row)
 	if stance == "HoldGround":
 		var modes: Dictionary = row.get("weapon_modes", {}) as Dictionary
 		var default_mode: Dictionary = modes.get(String(row.get("default_weapon_mode", "default")), {}) as Dictionary
@@ -34,12 +36,12 @@ func _nearest_auto_target(row: Dictionary) -> Dictionary:
 	var best_distance = limit
 	# InvisibilityUpdate: a cloaked battalion is never auto-acquired, so the
 	# stealth filter travels with the neighbourhood query.
-	var nearest_battalion = sim._spatial_nearest_hostile(
-		row, self_team, origin, limit, sim.SPATIAL_FILTER_ENGAGE | sim.SPATIAL_FILTER_STEALTH
+	var nearest_battalion = _sim._spatial_nearest_hostile(
+		row, self_team, origin, limit, _sim.SPATIAL_FILTER_ENGAGE | _sim.SPATIAL_FILTER_STEALTH
 	)
 	if nearest_battalion != 0:
 		best_distance = origin.distance_to(
-			Vector2((sim.entities[nearest_battalion] as Dictionary).get("position", Vector2.ZERO))
+			Vector2((_sim.entities[nearest_battalion] as Dictionary).get("position", Vector2.ZERO))
 		)
 		best_id = nearest_battalion
 		best_kind = "battalion"
@@ -49,8 +51,8 @@ func _nearest_auto_target(row: Dictionary) -> Dictionary:
 	# where an equidistant structure examined later wins the tie.
 	if not bool(row.get("auto_acquire_attack_buildings", true)):
 		return {"id": best_id, "kind": best_kind} if best_id != 0 else {}
-	for candidate in sim._hostile_living_structure_ids(self_team):
-		if bool((sim.structures[candidate] as Dictionary).get("not_auto_acquirable", false)):
+	for candidate in _sim._hostile_living_structure_ids(self_team):
+		if bool((_sim.structures[candidate] as Dictionary).get("not_auto_acquirable", false)):
 			# holes.ini NOT_AUTOACQUIRABLE: an exposed rebuild hole is only ever
 			# destroyed by an explicit attack order, never by idle acquisition.
 			continue
@@ -79,8 +81,8 @@ func _nearest_auto_target(row: Dictionary) -> Dictionary:
 		# unit position is the horde centre, not a soldier bounding sphere.
 		var distance := maxf(
 			0.0,
-			origin.distance_to(Vector2((sim.structures[candidate] as Dictionary).get("position", Vector2.ZERO)))
-			- sim._target_footprint_radius(candidate, "structure")
+			origin.distance_to(Vector2((_sim.structures[candidate] as Dictionary).get("position", Vector2.ZERO)))
+			- _sim._target_footprint_radius(candidate, "structure")
 		)
 		if distance <= best_distance:
 			best_distance = distance
@@ -96,11 +98,8 @@ func _rearm_mood_idle_cadence(row: Dictionary) -> void:
 	row["mood_randomize_next_check"] = true
 
 
-func _step_production_exit(row: Dictionary) -> bool:
-	return sim._production_subsystem()._step_production_exit(row)
-
-
 func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, target_kind: String) -> void:
+	var _sim = sim
 	var member_health_values: Array = row.get("member_health", [])
 	var start_ticks: Array = row.get("member_attack_start_ticks", [])
 	var hit_ticks: Array = row.get("member_attack_hit_ticks", [])
@@ -111,14 +110,14 @@ func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, tar
 	if member_health_values.is_empty() or start_ticks.size() != member_health_values.size() or hit_ticks.size() != member_health_values.size() or tokens.size() != member_health_values.size() or target_indices.size() != member_health_values.size() or weapon_modes.size() != member_health_values.size() or release_tokens.size() != member_health_values.size():
 		return
 	if target_kind == "battalion":
-		_ensure_member_target_assignments(row, sim.entities[target_id] as Dictionary)
+		_ensure_member_target_assignments(row, _sim.entities[target_id] as Dictionary)
 		target_indices = row.get("member_target_indices", [])
 	if int(row.get("attack_cooldown", 0)) == 0:
 		var pre_attack_ticks := maxi(0, int(row.get("pre_attack_ticks", 0)))
-		var maximum_stagger = maxi(0, sim.MEMBER_ATTACK_STAGGER_WINDOW_TICKS - 1)
+		var maximum_stagger = maxi(0, _sim.MEMBER_ATTACK_STAGGER_WINDOW_TICKS - 1)
 		var coast_ticks := maxi(0, int(row.get("continuous_fire_coast_ticks", 0)))
 		var expiration_tick := int(row.get("continuous_fire_expiration_tick", -1))
-		if expiration_tick < 0 or sim.tick_index >= expiration_tick:
+		if expiration_tick < 0 or _sim.tick_index >= expiration_tick:
 			row["continuous_fire_count"] = 0
 		var continuous_threshold := maxi(0, int(row.get("continuous_fire_one", 0)))
 		var rate_multiplier := maxf(1.0, float(row.get("continuous_fire_rate_multiplier", 1.0)))
@@ -162,12 +161,12 @@ func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, tar
 				start_ticks[member_index] = -1
 				hit_ticks[member_index] = -1
 				continue
-			var stagger = posmod(attacker_id + member_index * 3 + attack_sequence, sim.MEMBER_ATTACK_STAGGER_WINDOW_TICKS)
+			var stagger = posmod(attacker_id + member_index * 3 + attack_sequence, _sim.MEMBER_ATTACK_STAGGER_WINDOW_TICKS)
 			weapon_modes[member_index] = String(row.get("active_weapon_mode", "default"))
-			start_ticks[member_index] = sim.tick_index + stagger
+			start_ticks[member_index] = _sim.tick_index + stagger
 			# Every member owns its attack boundary. This avoids the old whole-
 			# horde structure impact while preserving deterministic replay.
-			hit_ticks[member_index] = sim.tick_index + stagger + windup_ticks
+			hit_ticks[member_index] = _sim.tick_index + stagger + windup_ticks
 		var reload_or_delay_ms := base_reload_or_delay_ms
 		if continuous_threshold > 0 and int(row["continuous_fire_count"]) > continuous_threshold:
 			reload_or_delay_ms = floorf(reload_or_delay_ms / rate_multiplier)
@@ -176,15 +175,15 @@ func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, tar
 			+ float(row.get("firing_duration_ms", 0.0))
 			+ reload_or_delay_ms
 		)
-		var cadence_ticks = maxi(1, roundi(cadence_ms / (sim.TICK_SECONDS * 1000.0)))
-		var coast_anchor_ticks = maxi(1, roundi(coast_anchor_ms / (sim.TICK_SECONDS * 1000.0)))
-		row["continuous_fire_expiration_tick"] = sim.tick_index + coast_anchor_ticks + coast_ticks
+		var cadence_ticks = maxi(1, roundi(cadence_ms / (_sim.TICK_SECONDS * 1000.0)))
+		var coast_anchor_ticks = maxi(1, roundi(coast_anchor_ms / (_sim.TICK_SECONDS * 1000.0)))
+		row["continuous_fire_expiration_tick"] = _sim.tick_index + coast_anchor_ticks + coast_ticks
 		row["attack_cooldown"] = maxi(
 			cadence_ticks,
 			windup_ticks + maximum_stagger + 1
 		)
 		row["attack_windup"] = windup_ticks + maximum_stagger
-		sim._emit_event("combat.swing", attacker_id, target_id, {
+		_sim._emit_event("combat.swing", attacker_id, target_id, {
 			"attack_sequence": attack_sequence,
 			"living_members": _living_member_count(row),
 			"object_id": String(row.get("object_id", "")),
@@ -193,44 +192,44 @@ func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, tar
 	for member_index in range(member_health_values.size()):
 		if int(member_health_values[member_index]) <= 0:
 			continue
-		if int(start_ticks[member_index]) == sim.tick_index:
+		if int(start_ticks[member_index]) == _sim.tick_index:
 			tokens[member_index] = int(tokens[member_index]) + 1
 			start_ticks[member_index] = -1
-			sim._emit_event("combat.member_swing", attacker_id, target_id, {
+			_sim._emit_event("combat.member_swing", attacker_id, target_id, {
 				"member_index": member_index,
 				"target_member_index": int(target_indices[member_index]),
 				"weapon_mode": String(weapon_modes[member_index]),
 				"member_attack_token": int(tokens[member_index]),
 				"attack_sequence": int(row.get("attack_sequence", 0)),
 			})
-		if int(hit_ticks[member_index]) == sim.tick_index:
+		if int(hit_ticks[member_index]) == _sim.tick_index:
 			hit_ticks[member_index] = -1
 			# The weapon-release instant for EVERY mode (a melee swing releases
 			# too); the projectile-only bookkeeping below is a separate question.
 			_mark_member_release(attacker_id, member_index)
 			if String(weapon_modes[member_index]) != "close":
 				release_tokens[member_index] = int(release_tokens[member_index]) + 1
-				sim._emit_event("combat.member_fire", attacker_id, target_id, {
+				_sim._emit_event("combat.member_fire", attacker_id, target_id, {
 					"member_index": member_index,
 					"target_member_index": int(target_indices[member_index]),
 					"weapon_mode": String(weapon_modes[member_index]),
 					"member_release_token": int(release_tokens[member_index]),
 				})
-			if sim._target_alive(target_id, target_kind):
+			if _sim._target_alive(target_id, target_kind):
 				var forced_target := int(target_indices[member_index]) if target_kind == "battalion" else -1
 				# A recorded WeaponSetUpgrade replaces the horde's base weapon
 				# damage with the compiled upgraded damage (no invented
 				# multipliers); its target-filtered DamageScalars apply per hit
 				# inside sim._apply_member_damage.
-				var weapon_effect = sim._applied_weapon_effect(row)
+				var weapon_effect = _sim._applied_weapon_effect(row)
 				var outgoing_damage := float(row.get("member_damage", 1))
 				if float(weapon_effect.get("damage", 0.0)) > 0.0:
 					outgoing_damage = float(weapon_effect.get("damage"))
-				var swing_damage = maxi(1, roundi(outgoing_damage * float(_stance_state(row).get("damageMultiplier", 1.0)) * sim._ability_outgoing_multiplier(row)))
-				if target_kind == "battalion" and sim.entities.has(target_id):
+				var swing_damage = maxi(1, roundi(outgoing_damage * float(_stance_state(row).get("damageMultiplier", 1.0)) * _sim._ability_outgoing_multiplier(row)))
+				if target_kind == "battalion" and _sim.entities.has(target_id):
 					swing_damage = maxi(
 						1,
-						roundi(float(swing_damage) * sim._flanking_outgoing_multiplier(row, sim.entities[target_id]))
+						roundi(float(swing_damage) * _sim._flanking_outgoing_multiplier(row, _sim.entities[target_id]))
 					)
 				if _member_weapon_has_projectile(row):
 					_launch_member_projectile(
@@ -245,7 +244,7 @@ func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, tar
 						int(release_tokens[member_index])
 					)
 				else:
-					sim._apply_member_damage(
+					_sim._apply_member_damage(
 						attacker_id,
 						member_index,
 						target_id,
@@ -477,10 +476,11 @@ func member_weapon_condition_tokens(entity_id: int) -> Array:
 	## stored on the entity row. A member with no resolvable weapon slot, or a
 	## battalion that is not attacking, yields the weapon-set conditions only;
 	## `weapon_condition_deferred_reasons` says why.
+	var _sim = sim
 	var out: Array = []
-	if not sim.entities.has(entity_id):
+	if not _sim.entities.has(entity_id):
 		return out
-	var row = sim.entities[entity_id] as Dictionary
+	var row = _sim.entities[entity_id] as Dictionary
 	var member_health_values: Array = row.get("member_health", [])
 	var start_ticks: Array = row.get("member_attack_start_ticks", [])
 	var hit_ticks: Array = row.get("member_attack_hit_ticks", [])
@@ -488,7 +488,7 @@ func member_weapon_condition_tokens(entity_id: int) -> Array:
 	var modes := row.get("weapon_modes", {}) as Dictionary
 	var attacking := String(row.get("state", "")) == "attack"
 	var set_tokens := _live_weapon_set_condition_tokens(row)
-	var marks := sim._member_fire_ticks.get(entity_id, {}) as Dictionary
+	var marks := _sim._member_fire_ticks.get(entity_id, {}) as Dictionary
 	for member_index in range(member_health_values.size()):
 		var tokens: Array = []
 		if int(member_health_values[member_index]) <= 0:
@@ -513,10 +513,10 @@ func member_weapon_condition_tokens(entity_id: int) -> Array:
 		var hit := int(hit_ticks[member_index]) if member_index < hit_ticks.size() else -1
 		var firing_ticks := maxi(0, int(mode.get("firing_duration_ticks", row.get("firing_duration_ticks", 0))))
 		var fire_tick := int(marks.get(member_index, -1))
-		var since_release = sim.tick_index - fire_tick if fire_tick >= 0 else -1
+		var since_release = _sim.tick_index - fire_tick if fire_tick >= 0 else -1
 		# The swing has begun (its start tick was consumed) and the release tick
 		# is still ahead: PreAttackDelay is running for this member.
-		var preattack = start < 0 and hit > sim.tick_index
+		var preattack = start < 0 and hit > _sim.tick_index
 		var firing = since_release >= 0 and since_release < firing_ticks
 		# The third segment of the sim's cadence (windup + FiringDuration +
 		# DelayBetweenShots-or-ClipReloadTime): released, done firing, waiting for
@@ -539,10 +539,11 @@ func weapon_condition_deferred_reasons(entity_id: int) -> Array:
 	## companion to `member_weapon_condition_tokens`: a consumer that sees no
 	## PREATTACK_A must be able to tell "not winding up" from "this unit's data
 	## cannot name a slot".
+	var _sim = sim
 	var out: Array = []
-	if not sim.entities.has(entity_id):
+	if not _sim.entities.has(entity_id):
 		return ["entity-missing"]
-	var row = sim.entities[entity_id] as Dictionary
+	var row = _sim.entities[entity_id] as Dictionary
 	var active := String(row.get("active_weapon_mode", ""))
 	var mode := (row.get("weapon_modes", {}) as Dictionary).get(active, {}) as Dictionary
 	if not WEAPON_SLOT_CONDITION_LETTERS.has(String(mode.get("weapon_slot", ""))):
@@ -586,16 +587,17 @@ func _live_weapon_set_condition_tokens(row: Dictionary) -> Array:
 
 
 func _mark_member_release(attacker_id: int, member_index: int) -> void:
-	var marks := sim._member_fire_ticks.get(attacker_id, {}) as Dictionary
-	marks[member_index] = sim.tick_index
-	sim._member_fire_ticks[attacker_id] = marks
-	if sim._member_fire_ticks.size() > sim.entities.size():
+	var _sim = sim
+	var marks := _sim._member_fire_ticks.get(attacker_id, {}) as Dictionary
+	marks[member_index] = _sim.tick_index
+	_sim._member_fire_ticks[attacker_id] = marks
+	if _sim._member_fire_ticks.size() > _sim.entities.size():
 		# Entities are removed from a dozen places with no shared hook, so the
 		# observation table is pruned here instead. Self-limiting: after one pass
 		# it cannot exceed the live entity count again until another id dies.
-		for key in sim._member_fire_ticks.keys():
-			if not sim.entities.has(int(key)):
-				sim._member_fire_ticks.erase(key)
+		for key in _sim._member_fire_ticks.keys():
+			if not _sim.entities.has(int(key)):
+				_sim._member_fire_ticks.erase(key)
 
 
 func _ensure_member_target_assignments(attacker: Dictionary, target: Dictionary) -> void:

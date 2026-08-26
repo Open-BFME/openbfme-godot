@@ -5,27 +5,28 @@ extends "res://src/retail_slice/retail_sim_subsystem.gd"
 
 
 func issue_move(ids: Array[int], destination: Vector2, ack_kind: String = "order.move", team: int = sim.PLAYER_TEAM) -> int:
+	var _sim = sim
 	var accepted_ids: Array[int] = []
-	sim.last_route_rejection = ""
+	_sim.last_route_rejection = ""
 	for id in ids:
-		if accepted_ids.has(id) or not sim._is_commandable_for_team(id, team):
+		if accepted_ids.has(id) or not _sim._is_commandable_for_team(id, team):
 			continue
-		var row: Dictionary = sim.entities[id]
-		if not sim._assign_route(row, destination):
+		var row: Dictionary = _sim.entities[id]
+		if not _sim._assign_route(row, destination):
 			continue
 		row["target_id"] = 0
 		row["target_kind"] = "battalion"
 		row["attack_windup"] = 0
 		row["attack_move"] = false
-		sim._clear_member_targets(row)
+		_sim._clear_member_targets(row)
 		row["state"] = "run"
 		row["order_kind"] = "move"
 		accepted_ids.append(id)
 	if not accepted_ids.is_empty():
 		_apply_group_speed_cap(accepted_ids)
-		sim._stamp_order_sequence(accepted_ids)
-		sim.last_route_rejection = ""
-		sim._emit_event(ack_kind, accepted_ids[0], 0, sim._voice_event_identity(accepted_ids[0]))
+		_sim._stamp_order_sequence(accepted_ids)
+		_sim.last_route_rejection = ""
+		_sim._emit_event(ack_kind, accepted_ids[0], 0, _sim._voice_event_identity(accepted_ids[0]))
 	return accepted_ids.size()
 
 
@@ -46,51 +47,53 @@ func _apply_group_speed_cap(accepted_ids: Array[int]) -> void:
 	## Pin fixtures do not author the field, so they stay absent-unless-set.
 	## A mixed group that includes at least one waiter coheres at the slowest
 	## authored speed; only waiters receive the key.
+	var _sim = sim
 	var waiters: Array[int] = []
-	if sim.retail_formation_movement:
+	if _sim.retail_formation_movement:
 		waiters = accepted_ids.duplicate()
 	else:
 		for id in accepted_ids:
-			if bool((sim.entities[id] as Dictionary).get("wait_for_formation", false)):
+			if bool((_sim.entities[id] as Dictionary).get("wait_for_formation", false)):
 				waiters.append(id)
 	if waiters.is_empty():
 		return
 	var slowest := INF
 	for id in accepted_ids:
-		var row: Dictionary = sim.entities[id]
+		var row: Dictionary = _sim.entities[id]
 		slowest = minf(slowest, maxf(0.0, float(row.get("speed", 0.0))))
 	if slowest == INF:
 		return
 	for id in waiters:
-		(sim.entities[id] as Dictionary)["group_speed_cap"] = slowest
+		(_sim.entities[id] as Dictionary)["group_speed_cap"] = slowest
 
 
 func issue_attack(ids: Array[int], target_id: int, team: int = sim.PLAYER_TEAM) -> int:
-	var target_kind = "battalion" if sim.entities.has(target_id) else ("structure" if sim.structures.has(target_id) else "")
+	var _sim = sim
+	var target_kind = "battalion" if _sim.entities.has(target_id) else ("structure" if _sim.structures.has(target_id) else "")
 	if target_kind == "":
 		return 0
-	var target: Dictionary = sim.entities[target_id] if target_kind == "battalion" else sim.structures[target_id]
+	var target: Dictionary = _sim.entities[target_id] if target_kind == "battalion" else _sim.structures[target_id]
 	if int(target["health"]) <= 0:
 		return 0
 	var accepted_ids: Array[int] = []
-	sim.last_route_rejection = ""
+	_sim.last_route_rejection = ""
 	for id in ids:
-		if accepted_ids.has(id) or not sim._is_commandable_for_team(id, team):
+		if accepted_ids.has(id) or not _sim._is_commandable_for_team(id, team):
 			continue
-		var row: Dictionary = sim.entities[id]
+		var row: Dictionary = _sim.entities[id]
 		if bool(row.get("noncombatant", false)):
 			continue
 		if int(row["team"]) == int(target["team"]):
 			continue
-		if target_kind == "battalion" and not sim._can_engage_battalion(row, target):
+		if target_kind == "battalion" and not _sim._can_engage_battalion(row, target):
 			continue
-		if not sim._assign_target_route(row, Vector2(target["position"])):
+		if not _sim._assign_target_route(row, Vector2(target["position"])):
 			continue
 		row["target_id"] = target_id
 		row["target_kind"] = target_kind
 		row["attack_windup"] = 0
 		row["attack_move"] = false
-		sim._clear_member_targets(row)
+		_sim._clear_member_targets(row)
 		row["state"] = "run"
 		row["order_kind"] = "attack"
 		accepted_ids.append(id)
@@ -99,12 +102,12 @@ func issue_attack(ids: Array[int], target_id: int, team: int = sim.PLAYER_TEAM) 
 		# stops a cap left over from an earlier escort order throttling the
 		# charge.
 		_apply_group_speed_cap(accepted_ids)
-		sim._stamp_order_sequence(accepted_ids)
-		sim.last_route_rejection = ""
-		var ack = sim._voice_event_identity(accepted_ids[0])
+		_sim._stamp_order_sequence(accepted_ids)
+		_sim.last_route_rejection = ""
+		var ack = _sim._voice_event_identity(accepted_ids[0])
 		ack["target_kind"] = target_kind
-		sim._emit_event("voice.attack", accepted_ids[0], target_id, ack)
-		sim._emit_music("battle")
+		_sim._emit_event("voice.attack", accepted_ids[0], target_id, ack)
+		_sim._emit_music("battle")
 	return accepted_ids.size()
 
 
@@ -112,13 +115,14 @@ func issue_attack_move(ids: Array[int], destination: Vector2, team: int = sim.PL
 	# Retail answers an attack-move with an attack-class acknowledgement, not
 	# the plain move line; the sim keeps the order kind distinct so the audio
 	# layer picks the attack ack without guessing.
+	var _sim = sim
 	var accepted := issue_move(ids, destination, "voice.attack", team)
 	if accepted <= 0:
 		return 0
 	for id in ids:
-		if not sim._is_commandable_for_team(id, team):
+		if not _sim._is_commandable_for_team(id, team):
 			continue
-		var row: Dictionary = sim.entities[id]
+		var row: Dictionary = _sim.entities[id]
 		if Vector2(row.get("destination", row["position"])).is_equal_approx(destination):
 			row["attack_move"] = true
 			row["attack_move_destination"] = destination
@@ -127,55 +131,58 @@ func issue_attack_move(ids: Array[int], destination: Vector2, team: int = sim.PL
 
 
 func issue_stop(ids: Array[int], team: int = sim.PLAYER_TEAM) -> int:
+	var _sim = sim
 	var accepted_ids: Array[int] = []
 	for id in ids:
-		if accepted_ids.has(id) or not sim._is_commandable_for_team(id, team):
+		if accepted_ids.has(id) or not _sim._is_commandable_for_team(id, team):
 			continue
-		var row: Dictionary = sim.entities[id]
+		var row: Dictionary = _sim.entities[id]
 		row["target_id"] = 0
 		row["target_kind"] = "battalion"
 		row["attack_windup"] = 0
 		row["attack_move"] = false
-		sim._clear_member_attack_schedule(row)
-		sim._clear_member_targets(row)
-		sim._clear_pending_route(row, true)
+		_sim._clear_member_attack_schedule(row)
+		_sim._clear_member_targets(row)
+		_sim._clear_pending_route(row, true)
 		row["state"] = "idle"
 		row["order_kind"] = ""
-		sim._rearm_mood_idle_cadence(row)
+		_sim._rearm_mood_idle_cadence(row)
 		accepted_ids.append(id)
 	if not accepted_ids.is_empty():
-		sim._stamp_order_sequence(accepted_ids)
-		sim._emit_event("order.stop", accepted_ids[0], 0)
+		_sim._stamp_order_sequence(accepted_ids)
+		_sim._emit_event("order.stop", accepted_ids[0], 0)
 	return accepted_ids.size()
 
 
 func issue_toggle_stance(ids: Array[int], team: int = sim.PLAYER_TEAM) -> int:
+	var _sim = sim
 	var accepted_ids: Array[int] = []
 	for id in ids:
-		if accepted_ids.has(id) or not sim._is_commandable_for_team(id, team):
+		if accepted_ids.has(id) or not _sim._is_commandable_for_team(id, team):
 			continue
-		var row: Dictionary = sim.entities[id]
-		var index = sim.STANCE_ORDER.find(String(row.get("stance", "Battle")))
-		row["stance"] = sim.STANCE_ORDER[posmod(index + 1, sim.STANCE_ORDER.size())]
+		var row: Dictionary = _sim.entities[id]
+		var index = _sim.STANCE_ORDER.find(String(row.get("stance", "Battle")))
+		row["stance"] = _sim.STANCE_ORDER[posmod(index + 1, _sim.STANCE_ORDER.size())]
 		accepted_ids.append(id)
 	if not accepted_ids.is_empty():
-		sim._stamp_order_sequence(accepted_ids)
-		sim._emit_event("order.stance", accepted_ids[0], 0, {"stance": String((sim.entities[accepted_ids[0]] as Dictionary)["stance"])})
+		_sim._stamp_order_sequence(accepted_ids)
+		_sim._emit_event("order.stance", accepted_ids[0], 0, {"stance": String((_sim.entities[accepted_ids[0]] as Dictionary)["stance"])})
 	return accepted_ids.size()
 
 
 func issue_set_stance(ids: Array[int], stance: String, team: int = sim.PLAYER_TEAM) -> int:
-	if not sim.STANCE_ORDER.has(stance):
+	var _sim = sim
+	if not _sim.STANCE_ORDER.has(stance):
 		return 0
 	var accepted_ids: Array[int] = []
 	for id in ids:
-		if accepted_ids.has(id) or not sim._is_commandable_for_team(id, team):
+		if accepted_ids.has(id) or not _sim._is_commandable_for_team(id, team):
 			continue
-		(sim.entities[id] as Dictionary)["stance"] = stance
+		(_sim.entities[id] as Dictionary)["stance"] = stance
 		accepted_ids.append(id)
 	if not accepted_ids.is_empty():
-		sim._stamp_order_sequence(accepted_ids)
-		sim._emit_event("order.stance", accepted_ids[0], 0, {"stance": stance})
+		_sim._stamp_order_sequence(accepted_ids)
+		_sim._emit_event("order.stance", accepted_ids[0], 0, {"stance": stance})
 	return accepted_ids.size()
 
 
@@ -184,7 +191,8 @@ func _authored_formation_toggle(document: Dictionary) -> Dictionary:
 	## selection surface so the sim gate and the palantir gate answer from the
 	## SAME authored data (commandbutton.ini / commandset.ini).
 	##
-	var compiled_toggle = sim.PlayableUnitAdapter.formation_toggle_contract(document)
+	var _sim = sim
+	var compiled_toggle = _sim.PlayableUnitAdapter.formation_toggle_contract(document)
 	var modifier_lists: Array = compiled_toggle.get("modifierLists", []) as Array
 	var effects: Array = []
 	var modifier_ids: Array[String] = []
@@ -204,7 +212,7 @@ func _authored_formation_toggle(document: Dictionary) -> Dictionary:
 						modifier_id, String(modifier.get("kind", "UNKNOWN"))
 					]
 				)
-	for selection_value in sim.PlayableUnitAdapter.selection_commands(document):
+	for selection_value in _sim.PlayableUnitAdapter.selection_commands(document):
 		var selection := selection_value as Dictionary
 		for kind_value in selection.get("commandKinds", []) as Array:
 			if String(kind_value).strip_edges().to_upper() != "HORDE_TOGGLE_FORMATION":
@@ -252,39 +260,41 @@ func _formation_order_admitted(row: Dictionary) -> bool:
 
 
 func issue_toggle_formation(ids: Array[int], team: int = sim.PLAYER_TEAM) -> int:
+	var _sim = sim
 	var accepted_ids: Array[int] = []
 	for id in ids:
-		if accepted_ids.has(id) or not sim._is_commandable_for_team(id, team):
+		if accepted_ids.has(id) or not _sim._is_commandable_for_team(id, team):
 			continue
-		var row: Dictionary = sim.entities[id]
+		var row: Dictionary = _sim.entities[id]
 		if bool(row.get("is_builder", false)):
 			continue
 		if not _formation_order_admitted(row):
 			continue
-		var index = sim.FORMATION_ORDER.find(String(row.get("formation_mode", "Line")))
-		var next_mode = sim.FORMATION_ORDER[posmod(index + 1, sim.FORMATION_ORDER.size())]
+		var index = _sim.FORMATION_ORDER.find(String(row.get("formation_mode", "Line")))
+		var next_mode = _sim.FORMATION_ORDER[posmod(index + 1, _sim.FORMATION_ORDER.size())]
 		row["formation_mode"] = next_mode
 		_apply_formation_mode(row)
 		accepted_ids.append(id)
 	if not accepted_ids.is_empty():
-		sim._stamp_order_sequence(accepted_ids)
-		sim._emit_event(
+		_sim._stamp_order_sequence(accepted_ids)
+		_sim._emit_event(
 			"order.formation",
 			accepted_ids[0],
 			0,
-			{"formation": String((sim.entities[accepted_ids[0]] as Dictionary)["formation_mode"])}
+			{"formation": String((_sim.entities[accepted_ids[0]] as Dictionary)["formation_mode"])}
 		)
 	return accepted_ids.size()
 
 
 func issue_set_formation(ids: Array[int], formation: String, team: int = sim.PLAYER_TEAM) -> int:
-	if not sim.FORMATION_ORDER.has(formation):
+	var _sim = sim
+	if not _sim.FORMATION_ORDER.has(formation):
 		return 0
 	var accepted_ids: Array[int] = []
 	for id in ids:
-		if accepted_ids.has(id) or not sim._is_commandable_for_team(id, team):
+		if accepted_ids.has(id) or not _sim._is_commandable_for_team(id, team):
 			continue
-		var row: Dictionary = sim.entities[id]
+		var row: Dictionary = _sim.entities[id]
 		if bool(row.get("is_builder", false)):
 			continue
 		if not _formation_order_admitted(row):
@@ -293,8 +303,8 @@ func issue_set_formation(ids: Array[int], formation: String, team: int = sim.PLA
 		_apply_formation_mode(row)
 		accepted_ids.append(id)
 	if not accepted_ids.is_empty():
-		sim._stamp_order_sequence(accepted_ids)
-		sim._emit_event("order.formation", accepted_ids[0], 0, {"formation": formation})
+		_sim._stamp_order_sequence(accepted_ids)
+		_sim._emit_event("order.formation", accepted_ids[0], 0, {"formation": formation})
 	return accepted_ids.size()
 
 
@@ -318,9 +328,10 @@ func _apply_formation_attribute_modifier(row: Dictionary) -> void:
 	##
 	## Duration = 0 is "forever" (the file says so at :764), so the entry never
 	## expires; it is erased when the horde leaves the formation.
+	var _sim = sim
 	var toggle := horde_formation_toggle(row)
 	var table: Dictionary = row.get("timed_modifiers", {}) as Dictionary
-	var was_active: bool = table.has(sim.FORMATION_MODIFIER_KEY)
+	var was_active: bool = table.has(_sim.FORMATION_MODIFIER_KEY)
 	var modifier := toggle.get("modifier", {}) as Dictionary
 	var effects: Array = modifier.get("modifiers", []) as Array
 	var active: bool = (
@@ -331,9 +342,9 @@ func _apply_formation_attribute_modifier(row: Dictionary) -> void:
 		# Rows carry an empty `timed_modifiers` dict by construction, so an
 		# unconditional erase-if-empty here would change every hashed row.
 		return
-	table.erase(sim.FORMATION_MODIFIER_KEY)
+	table.erase(_sim.FORMATION_MODIFIER_KEY)
 	if active:
-		table[sim.FORMATION_MODIFIER_KEY] = {
+		table[_sim.FORMATION_MODIFIER_KEY] = {
 			"modifiers": effects.duplicate(true),
 			"expires_tick": -1,
 			"persistent": true,
@@ -349,17 +360,18 @@ func _apply_formation_attribute_modifier(row: Dictionary) -> void:
 
 
 func _apply_formation_mode(row: Dictionary) -> void:
+	var _sim = sim
 	_apply_formation_attribute_modifier(row)
 	var base: Array = row.get("formation_positions_base", row.get("formation_positions", [])) as Array
 	if base.is_empty():
 		return
 	var mode := String(row.get("formation_mode", "Line"))
-	var isotropic = float(sim.FORMATION_SPACING.get(mode, 1.0))
+	var isotropic = float(_sim.FORMATION_SPACING.get(mode, 1.0))
 	# x = lateral, z = depth (see sim.FORMATION_SPACING_RETAIL).
 	var lateral_scale = isotropic
 	var depth_scale = isotropic
-	if sim.retail_formation_movement:
-		var authored: Dictionary = sim.FORMATION_SPACING_RETAIL.get(mode, {}) as Dictionary
+	if _sim.retail_formation_movement:
+		var authored: Dictionary = _sim.FORMATION_SPACING_RETAIL.get(mode, {}) as Dictionary
 		lateral_scale = float(authored.get("lateral", 1.0))
 		depth_scale = float(authored.get("depth", 1.0))
 	var scaled: Array = []

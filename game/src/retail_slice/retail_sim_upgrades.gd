@@ -9,21 +9,22 @@ extends "res://src/retail_slice/retail_sim_subsystem.gd"
 
 
 func queue_structure_upgrade(team: int, structure_id: int, upgrade_id: String) -> Dictionary:
-	if not sim.base_loop_enabled or sim.winner != -1:
+	var _sim = sim
+	if not _sim.base_loop_enabled or _sim.winner != -1:
 		return {"ok": false, "reason": "match-unavailable"}
-	if not sim.structures.has(structure_id):
+	if not _sim.structures.has(structure_id):
 		return {"ok": false, "reason": "unknown-structure"}
-	var building: Dictionary = sim.structures[structure_id]
+	var building: Dictionary = _sim.structures[structure_id]
 	if int(building.get("team", -1)) != team:
 		return {"ok": false, "reason": "wrong-owner"}
 	if int(building.get("health", 0)) <= 0 or float(building.get("construction_progress", 0.0)) < 1.0:
 		return {"ok": false, "reason": "structure-unavailable"}
-	var contract: Dictionary = sim.structure_upgrade_contracts_for_team(team).get(upgrade_id, {})
+	var contract: Dictionary = _sim.structure_upgrade_contracts_for_team(team).get(upgrade_id, {})
 	if contract.is_empty() or String(contract.get("structure_kind", "")) != String(building.get("structure_kind", "")):
 		return {"ok": false, "reason": "unsupported-upgrade"}
 	if Array(building.get("completed_upgrades", [])).has(upgrade_id):
 		return {"ok": false, "reason": "already-completed"}
-	if bool(contract.get("team_tech", false)) and (sim.team_upgrades.get(team, {}) as Dictionary).has(upgrade_id):
+	if bool(contract.get("team_tech", false)) and (_sim.team_upgrades.get(team, {}) as Dictionary).has(upgrade_id):
 		# Team techs are owned once, no matter which forge researched them.
 		return {"ok": false, "reason": "already-completed"}
 	var queue: Array = building.get("upgrade_queue", [])
@@ -36,40 +37,41 @@ func queue_structure_upgrade(team: int, structure_id: int, upgrade_id: String) -
 		# The authored chain sells each step on the command set the prior step
 		# unlocks; L3 can never be purchased before L2.
 		return {"ok": false, "reason": "missing-prior-upgrade", "required_upgrade": required_prior}
-	var missing_gate = sim._research_gate_unsatisfied(team, building, contract)
+	var missing_gate = _sim._research_gate_unsatisfied(team, building, contract)
 	if missing_gate != "":
 		# The button's authored NeededUpgrade row (a team technology or a
 		# structure level) gates the research; retail shows it greyed.
 		return {"ok": false, "reason": "missing-upgrade", "required_upgrade": missing_gate}
 	var cost := maxi(0, int(contract.get("cost", 0)))
-	if sim.resources_for_team(team) < cost:
+	if _sim.resources_for_team(team) < cost:
 		return {"ok": false, "reason": "insufficient-resources", "cost": cost}
 	var duration_ticks := maxi(1, int(contract.get("duration_ticks", 1)))
 	var item := {
 		"upgrade_id": upgrade_id,
 		"cost": cost,
-		"queued_tick": sim.tick_index,
+		"queued_tick": _sim.tick_index,
 		"duration_ticks": duration_ticks,
-		"complete_tick": sim.tick_index + duration_ticks,
+		"complete_tick": _sim.tick_index + duration_ticks,
 		"cancelable": bool(contract.get("cancelable", false)),
 	}
 	queue.append(item)
 	building["upgrade_queue"] = queue
-	sim.team_resources[team] = sim.resources_for_team(team) - cost
-	sim._emit_event("upgrade.queued", structure_id, 0, {"team": team, "upgrade_id": upgrade_id, "complete_tick": int(item["complete_tick"])})
+	_sim.team_resources[team] = _sim.resources_for_team(team) - cost
+	_sim._emit_event("upgrade.queued", structure_id, 0, {"team": team, "upgrade_id": upgrade_id, "complete_tick": int(item["complete_tick"])})
 	return {"ok": true, "reason": "", "structure_id": structure_id, "item": item.duplicate(true)}
 
 
 func structure_upgrade_queue_state(structure_id: int) -> Array[Dictionary]:
+	var _sim = sim
 	var result: Array[Dictionary] = []
-	if not sim.structures.has(structure_id):
+	if not _sim.structures.has(structure_id):
 		return result
-	for item_value in Array((sim.structures[structure_id] as Dictionary).get("upgrade_queue", [])):
+	for item_value in Array((_sim.structures[structure_id] as Dictionary).get("upgrade_queue", [])):
 		if typeof(item_value) != TYPE_DICTIONARY:
 			continue
 		var item := item_value as Dictionary
 		var duration_ticks := maxi(1, int(item.get("duration_ticks", 1)))
-		var elapsed_ticks := clampi(sim.tick_index - int(item.get("queued_tick", sim.tick_index)), 0, duration_ticks)
+		var elapsed_ticks := clampi(_sim.tick_index - int(item.get("queued_tick", _sim.tick_index)), 0, duration_ticks)
 		var row := item.duplicate(true)
 		row["elapsed_ticks"] = elapsed_ticks
 		row["progress"] = float(elapsed_ticks) / float(duration_ticks)
@@ -85,14 +87,15 @@ func structure_upgrade_commands(structure_id: int) -> Array[Dictionary]:
 	## doc-driven: the chain step whose authored from-command-set matches the
 	## building's live set (its base set before any purchase). One entry per
 	## pending step; completed/capped chains surface nothing.
+	var _sim = sim
 	var result: Array[Dictionary] = []
-	if not sim.structures.has(structure_id):
+	if not _sim.structures.has(structure_id):
 		return result
-	var building: Dictionary = sim.structures[structure_id]
+	var building: Dictionary = _sim.structures[structure_id]
 	var kind := String(building.get("structure_kind", ""))
 	var current_set := String(building.get("command_set", ""))
 	var completed: Array = building.get("completed_upgrades", [])
-	var contracts = sim.structure_upgrade_contracts_for_team(int(building.get("team", -1)))
+	var contracts = _sim.structure_upgrade_contracts_for_team(int(building.get("team", -1)))
 	var upgrade_ids: Array[String] = []
 	for upgrade_id_value in contracts.keys():
 		upgrade_ids.append(String(upgrade_id_value))
@@ -106,7 +109,7 @@ func structure_upgrade_commands(structure_id: int) -> Array[Dictionary]:
 				# Legacy team techs ride their own surface; compiled research
 				# rows surface here exactly like chain steps.
 				continue
-			if (sim.team_upgrades.get(int(building.get("team", -1)), {}) as Dictionary).has(upgrade_id):
+			if (_sim.team_upgrades.get(int(building.get("team", -1)), {}) as Dictionary).has(upgrade_id):
 				continue
 			# Research rides every per-level command set of the building, so no
 			# from-set match applies; the authored NeededUpgrade gate is data.
@@ -124,7 +127,7 @@ func structure_upgrade_commands(structure_id: int) -> Array[Dictionary]:
 				"research": true,
 				"lacks_prerequisite_label_id": String(contract.get("lacks_prerequisite_label_id", "")),
 				"needed_upgrade_ids": Array(contract.get("needed_upgrade_ids", [])).duplicate(),
-				"gate_satisfied": sim._research_gate_unsatisfied(int(building.get("team", -1)), building, contract) == "",
+				"gate_satisfied": _sim._research_gate_unsatisfied(int(building.get("team", -1)), building, contract) == "",
 			}
 			result.append(row)
 			continue
@@ -149,7 +152,7 @@ func structure_upgrade_commands(structure_id: int) -> Array[Dictionary]:
 				"grants_upgrade_id": String(contract.get("grants_upgrade_id", "")),
 				"lacks_prerequisite_label_id": String(contract.get("lacks_prerequisite_label_id", "")),
 				"needed_upgrade_ids": Array(contract.get("needed_upgrade_ids", [])).duplicate(),
-				"gate_satisfied": sim._research_gate_unsatisfied(int(building.get("team", -1)), building, contract) == "",
+				"gate_satisfied": _sim._research_gate_unsatisfied(int(building.get("team", -1)), building, contract) == "",
 			})
 			continue
 		var from_set := String(contract.get("from_command_set", ""))
@@ -191,11 +194,12 @@ func structure_upgrade_commands(structure_id: int) -> Array[Dictionary]:
 
 
 func queue_battalion_upgrade(team: int, entity_id: int, upgrade_id: String) -> Dictionary:
-	if not sim.base_loop_enabled or sim.winner != -1:
+	var _sim = sim
+	if not _sim.base_loop_enabled or _sim.winner != -1:
 		return {"ok": false, "reason": "match-unavailable"}
-	if not sim.entities.has(entity_id):
+	if not _sim.entities.has(entity_id):
 		return {"ok": false, "reason": "unknown-entity"}
-	var row: Dictionary = sim.entities[entity_id]
+	var row: Dictionary = _sim.entities[entity_id]
 	if int(row.get("team", -1)) != team:
 		return {"ok": false, "reason": "wrong-owner"}
 	if int(row.get("health", 0)) <= 0:
@@ -214,38 +218,39 @@ func queue_battalion_upgrade(team: int, entity_id: int, upgrade_id: String) -> D
 	var queue: Array = row.get("upgrade_queue", [])
 	if not queue.is_empty():
 		return {"ok": false, "reason": "upgrade-in-progress"}
-	var missing = sim._battalion_gate_unsatisfied(team, command)
+	var missing = _sim._battalion_gate_unsatisfied(team, command)
 	if missing != "":
 		return {"ok": false, "reason": "missing-upgrade", "required_upgrade": missing}
 	var cost := _discounted_battalion_upgrade_cost(team, command)
-	if sim.resources_for_team(team) < cost:
+	if _sim.resources_for_team(team) < cost:
 		return {"ok": false, "reason": "insufficient-resources", "cost": cost}
 	var duration_ticks := maxi(1, int(command.get("duration_ticks", 1)))
 	var item := {
 		"upgrade_id": upgrade_id,
 		"cost": cost,
-		"queued_tick": sim.tick_index,
+		"queued_tick": _sim.tick_index,
 		"duration_ticks": duration_ticks,
-		"complete_tick": sim.tick_index + duration_ticks,
+		"complete_tick": _sim.tick_index + duration_ticks,
 		"cancelable": bool(command.get("cancelable", false)),
 	}
 	queue.append(item)
 	row["upgrade_queue"] = queue
-	sim.team_resources[team] = sim.resources_for_team(team) - cost
-	sim._emit_event("battalion_upgrade.queued", 0, entity_id, {"team": team, "upgrade_id": upgrade_id, "complete_tick": int(item["complete_tick"])})
+	_sim.team_resources[team] = _sim.resources_for_team(team) - cost
+	_sim._emit_event("battalion_upgrade.queued", 0, entity_id, {"team": team, "upgrade_id": upgrade_id, "complete_tick": int(item["complete_tick"])})
 	return {"ok": true, "reason": "", "entity_id": entity_id, "item": item.duplicate(true)}
 
 
 func battalion_upgrade_queue_state(entity_id: int) -> Array[Dictionary]:
+	var _sim = sim
 	var result: Array[Dictionary] = []
-	if not sim.entities.has(entity_id):
+	if not _sim.entities.has(entity_id):
 		return result
-	for item_value in Array((sim.entities[entity_id] as Dictionary).get("upgrade_queue", [])):
+	for item_value in Array((_sim.entities[entity_id] as Dictionary).get("upgrade_queue", [])):
 		if typeof(item_value) != TYPE_DICTIONARY:
 			continue
 		var item := item_value as Dictionary
 		var duration_ticks := maxi(1, int(item.get("duration_ticks", 1)))
-		var elapsed_ticks := clampi(sim.tick_index - int(item.get("queued_tick", sim.tick_index)), 0, duration_ticks)
+		var elapsed_ticks := clampi(_sim.tick_index - int(item.get("queued_tick", _sim.tick_index)), 0, duration_ticks)
 		var row := item.duplicate(true)
 		row["elapsed_ticks"] = elapsed_ticks
 		row["progress"] = float(elapsed_ticks) / float(duration_ticks)
@@ -254,20 +259,21 @@ func battalion_upgrade_queue_state(entity_id: int) -> Array[Dictionary]:
 
 
 func _step_structure_upgrades() -> void:
-	for structure_id in sim.structure_ids():
-		var building: Dictionary = sim.structures[structure_id]
+	var _sim = sim
+	for structure_id in _sim.structure_ids():
+		var building: Dictionary = _sim.structures[structure_id]
 		if int(building.get("health", 0)) <= 0:
 			continue
 		var queue: Array = building.get("upgrade_queue", [])
 		if queue.is_empty():
 			continue
 		var item: Dictionary = queue[0]
-		if sim.tick_index < int(item.get("complete_tick", sim.tick_index + 1)):
+		if _sim.tick_index < int(item.get("complete_tick", _sim.tick_index + 1)):
 			continue
 		var upgrade_id := String(item.get("upgrade_id", ""))
-		var contract: Dictionary = sim.structure_upgrade_contracts_for_team(int(building.get("team", -1))).get(upgrade_id, {})
+		var contract: Dictionary = _sim.structure_upgrade_contracts_for_team(int(building.get("team", -1))).get(upgrade_id, {})
 		if contract.is_empty():
-			sim.configuration_error = "queued structure upgrade lost its contract"
+			_sim.configuration_error = "queued structure upgrade lost its contract"
 			continue
 		queue.pop_front()
 		building["upgrade_queue"] = queue
@@ -279,13 +285,13 @@ func _step_structure_upgrades() -> void:
 		# *Trigger* upgrade, and the fortress's own CastleUpgrade module hands
 		# the real upgrade to the castle. Without this the purchase completes
 		# and nothing downstream ever fires.
-		sim._apply_castle_upgrade_grants(building, upgrade_id)
+		_sim._apply_castle_upgrade_grants(building, upgrade_id)
 		if bool(contract.get("team_tech", false)):
 			var team := int(building.get("team", -1))
-			var owned: Dictionary = sim.team_upgrades.get(team, {}) as Dictionary
+			var owned: Dictionary = _sim.team_upgrades.get(team, {}) as Dictionary
 			owned[upgrade_id] = true
-			sim.team_upgrades[team] = owned
-			sim._refresh_team_command_set_upgrades(team)
+			_sim.team_upgrades[team] = owned
+			_sim._refresh_team_command_set_upgrades(team)
 			if bool(contract.get("legacy_provisional", false)):
 				# Recorded provisional only (stale pack): the conflated research
 				# auto-equips matching hordes. Compiled research grants the
@@ -313,7 +319,7 @@ func _step_structure_upgrades() -> void:
 				float(building.get("production_multiplier", 1.0)) * production_factor,
 				0.0001
 			)
-		sim._emit_event("upgrade.completed", structure_id, 0, {
+		_sim._emit_event("upgrade.completed", structure_id, 0, {
 			"team": int(building.get("team", -1)),
 			"upgrade_id": upgrade_id,
 			"level": int(building["level"]),
@@ -324,21 +330,22 @@ func _step_structure_upgrades() -> void:
 
 
 func _step_battalion_upgrades() -> void:
-	for entity_id in sim.entity_ids():
-		var row: Dictionary = sim.entities[entity_id]
+	var _sim = sim
+	for entity_id in _sim.entity_ids():
+		var row: Dictionary = _sim.entities[entity_id]
 		if int(row.get("health", 0)) <= 0:
 			continue
 		var queue: Array = row.get("upgrade_queue", [])
 		if queue.is_empty():
 			continue
 		var item: Dictionary = queue[0]
-		if sim.tick_index < int(item.get("complete_tick", sim.tick_index + 1)):
+		if _sim.tick_index < int(item.get("complete_tick", _sim.tick_index + 1)):
 			continue
 		queue.pop_front()
 		row["upgrade_queue"] = queue
 		var upgrade_id := String(item.get("upgrade_id", ""))
 		var member_id := String(row.get("object_id", ""))
-		var level_rule: Dictionary = (sim._unit_level_upgrades.get(member_id, {}) as Dictionary).get(upgrade_id, {})
+		var level_rule: Dictionary = (_sim._unit_level_upgrades.get(member_id, {}) as Dictionary).get(upgrade_id, {})
 		if not level_rule.is_empty():
 			# Basic Training: the authored LevelUpUpgrade grants its level; the
 			# banner-carrier member visual is the recorded unsupported remainder.
@@ -347,42 +354,44 @@ func _step_battalion_upgrades() -> void:
 				int(row.get("level", 1)) + int(level_rule.get("levels_to_gain", 1))
 			)
 			row["level"] = next_level
-			sim._refresh_banner_carrier_state(row)
+			_sim._refresh_banner_carrier_state(row)
 			var applied: Dictionary = row.get("applied_upgrades", {})
-			applied[upgrade_id] = sim.tick_index
+			applied[upgrade_id] = _sim.tick_index
 			row["applied_upgrades"] = applied
-			sim._emit_event("battalion.upgrade_applied", 0, entity_id, {
+			_sim._emit_event("battalion.upgrade_applied", 0, entity_id, {
 				"team": int(row.get("team", -1)),
 				"upgrades": [upgrade_id],
 				"unsupported_effects": ["banner-carrier-member-spawn"],
 			})
 		else:
-			sim._apply_equipment_to_horde(row, [upgrade_id])
-		sim._emit_event("battalion_upgrade.completed", 0, entity_id, {
+			_sim._apply_equipment_to_horde(row, [upgrade_id])
+		_sim._emit_event("battalion_upgrade.completed", 0, entity_id, {
 			"team": int(row.get("team", -1)),
 			"upgrade_id": upgrade_id,
 		})
 
 
 func _apply_team_upgrade_to_hordes(team: int, upgrade_id: String) -> void:
-	var equipment = sim._equipment_ids_for_forge_upgrade(upgrade_id)
-	for id in sim.entity_ids():
-		var row: Dictionary = sim.entities[id]
+	var _sim = sim
+	var equipment = _sim._equipment_ids_for_forge_upgrade(upgrade_id)
+	for id in _sim.entity_ids():
+		var row: Dictionary = _sim.entities[id]
 		if int(row.get("team", -1)) != team:
 			continue
-		sim._apply_equipment_to_horde(row, equipment)
+		_sim._apply_equipment_to_horde(row, equipment)
 
 
 func _apply_structure_granted_upgrade(building: Dictionary, grant: Dictionary) -> void:
+	var _sim = sim
 	var upgrade_id := String(grant.get("upgradeId", ""))
 	var team := int(building.get("team", -1))
 	if upgrade_id == "" or team < 0:
 		return
 	if String(grant.get("upgradeType", "")) == "PLAYER":
-		var owned: Dictionary = sim.team_upgrades.get(team, {}) as Dictionary
+		var owned: Dictionary = _sim.team_upgrades.get(team, {}) as Dictionary
 		owned[upgrade_id] = true
-		sim.team_upgrades[team] = owned
-		sim._refresh_team_command_set_upgrades(team)
+		_sim.team_upgrades[team] = owned
+		_sim._refresh_team_command_set_upgrades(team)
 		return
 	var completed: Array = building.get("completed_upgrades", [])
 	if not completed.has(upgrade_id):
@@ -396,15 +405,16 @@ func _apply_structure_inherit_upgrades(building: Dictionary) -> void:
 	## Search stable structure ids and require the exact authored source Object
 	## identity. ObjectFilter = ANY +Type does not author owner, health, or
 	## completion restrictions, so this path must not invent them.
+	var _sim = sim
 	var team := int(building.get("team", -1))
 	var kind := String(building.get("structure_kind", ""))
-	var rules: Array = sim.structure_inherit_upgrades_for_team(team).get(kind, [])
+	var rules: Array = _sim.structure_inherit_upgrades_for_team(team).get(kind, [])
 	if team < 0 or rules.is_empty():
 		return
 	var carrier_id := int(building.get("id", 0))
 	var carrier_position := Vector2(building.get("position", Vector2.ZERO))
 	var scale := maxf(
-		0.000001, float(sim._rules.get("source_map_transform_scale", 1.0))
+		0.000001, float(_sim._rules.get("source_map_transform_scale", 1.0))
 	)
 	var completed: Array = building.get("completed_upgrades", [])
 	for rule_value in rules:
@@ -418,10 +428,10 @@ func _apply_structure_inherit_upgrades(building: Dictionary) -> void:
 		if upgrade_id == "" or source_id == "" or radius_source <= 0.0:
 			continue
 		var limit_squared := pow(radius_source * scale, 2.0)
-		for donor_id in sim.structure_ids():
+		for donor_id in _sim.structure_ids():
 			if donor_id == carrier_id:
 				continue
-			var donor: Dictionary = sim.structures[donor_id]
+			var donor: Dictionary = _sim.structures[donor_id]
 			if not Array(donor.get("completed_upgrades", [])).has(upgrade_id):
 				continue
 			var donor_kind := String(donor.get("structure_kind", ""))
@@ -433,7 +443,7 @@ func _apply_structure_inherit_upgrades(building: Dictionary) -> void:
 			# DwarvenFortress must not satisfy +MenFortressCitadel merely
 			# because both rows use the generic fortress runtime kind.
 			var donor_team := int(donor.get("team", -1))
-			var donor_source_ids = sim.structure_source_object_ids_for_team(donor_team)
+			var donor_source_ids = _sim.structure_source_object_ids_for_team(donor_team)
 			var aliases: Array = donor_source_ids.get(donor_kind, [])
 			var exact_source_match := false
 			for alias_value in aliases:
@@ -477,14 +487,15 @@ func _sorted_unit_upgrade_commands(unit_type: String) -> Array:
 func _discounted_battalion_upgrade_cost(team: int, command: Dictionary) -> int:
 	## The authored CostModifierUpgrade discount (Iron Ore) applies while the
 	## team owns the technology and fields the structure declaring it.
+	var _sim = sim
 	var cost := int(command.get("cost", 0))
 	var upgrade_id := String(command.get("upgrade_id", ""))
-	var owned: Dictionary = sim.team_upgrades.get(team, {}) as Dictionary
-	for structure_id in sim.structure_ids(team):
-		var building: Dictionary = sim.structures[structure_id]
+	var owned: Dictionary = _sim.team_upgrades.get(team, {}) as Dictionary
+	for structure_id in _sim.structure_ids(team):
+		var building: Dictionary = _sim.structures[structure_id]
 		if int(building.get("health", 0)) <= 0:
 			continue
-		var bundle: Dictionary = sim.structure_upgrade_effects_for_team(team).get(String(building.get("structure_kind", "")), {})
+		var bundle: Dictionary = _sim.structure_upgrade_effects_for_team(team).get(String(building.get("structure_kind", "")), {})
 		for effect_value in Array(bundle.get("effects", [])):
 			var effect := effect_value as Dictionary
 			if String(effect.get("kind", "")) != "upgrade-discount" or not bool(effect.get("upgrade_discount", false)):
@@ -501,24 +512,25 @@ func _discounted_battalion_upgrade_cost(team: int, command: Dictionary) -> int:
 	return maxi(0, cost)
 
 func _register_forge_upgrade_contracts_for_team(team: int) -> void:
-	if not sim.structure_build_rules_for_team(team).has("forge"):
+	var _sim = sim
+	if not _sim.structure_build_rules_for_team(team).has("forge"):
 		return
-	if sim.compiled_research_kinds_for_team(team).has("forge"):
+	if _sim.compiled_research_kinds_for_team(team).has("forge"):
 		# The compiled research surface (the forge's authored PLAYER technology
 		# sales) replaces the recorded provisional contracts below; research
 		# completion then grants the technology and the per-battalion purchase
 		# path equips it — the retail two-tier flow, not the conflation.
 		return
-	var contracts = sim.structure_upgrade_contracts_for_team(team)
-	for upgrade_id_value in sim.FORGE_UPGRADE_CONTRACTS.keys():
+	var contracts = _sim.structure_upgrade_contracts_for_team(team)
+	for upgrade_id_value in _sim.FORGE_UPGRADE_CONTRACTS.keys():
 		var upgrade_id := String(upgrade_id_value)
 		if contracts.has(upgrade_id):
 			continue
-		var source: Dictionary = sim.FORGE_UPGRADE_CONTRACTS[upgrade_id]
+		var source: Dictionary = _sim.FORGE_UPGRADE_CONTRACTS[upgrade_id]
 		contracts[upgrade_id] = {
 			"structure_kind": String(source["structure_kind"]),
 			"cost": int(source["cost"]),
-			"duration_ticks": maxi(1, roundi(float(source["duration_seconds"]) / sim.TICK_SECONDS)),
+			"duration_ticks": maxi(1, roundi(float(source["duration_seconds"]) / _sim.TICK_SECONDS)),
 			"level_cap": int(source["level_cap"]),
 			"levels_to_gain": int(source["levels_to_gain"]),
 			"cancelable": bool(source["cancelable"]),
@@ -539,9 +551,10 @@ func _equipment_ids_for_forge_upgrade(upgrade_id: String) -> Array:
 func _apply_equipment_to_horde(row: Dictionary, equipment: Array) -> void:
 	## Record the compiled armor/weapon upgrade effects a horde carries. Retail
 	## applies equipment per battalion; the slice records it per horde row.
+	var _sim = sim
 	var object_id := String(row.get("object_id", ""))
-	var armor_upgrades: Dictionary = (sim._unit_armor.get(object_id, {}) as Dictionary).get("upgrades", {})
-	var weapon_upgrades: Dictionary = sim._unit_weapon_upgrades.get(object_id, {})
+	var armor_upgrades: Dictionary = (_sim._unit_armor.get(object_id, {}) as Dictionary).get("upgrades", {})
+	var weapon_upgrades: Dictionary = _sim._unit_weapon_upgrades.get(object_id, {})
 	var applied: Dictionary = row.get("applied_upgrades", {})
 	var changed := false
 	for upgrade_id_value in equipment:
@@ -549,16 +562,16 @@ func _apply_equipment_to_horde(row: Dictionary, equipment: Array) -> void:
 		if applied.has(upgrade_id):
 			continue
 		if armor_upgrades.has(upgrade_id):
-			applied[upgrade_id] = sim.tick_index
+			applied[upgrade_id] = _sim.tick_index
 			# Retail ArmorUpgrade swaps the ArmorSet; the last applied swap wins.
 			row["active_armor_upgrade"] = upgrade_id
 			changed = true
 		elif weapon_upgrades.has(upgrade_id):
-			applied[upgrade_id] = sim.tick_index
+			applied[upgrade_id] = _sim.tick_index
 			changed = true
 	if changed:
 		row["applied_upgrades"] = applied
-		sim._emit_event("battalion.upgrade_applied", 0, int(row.get("id", 0)), {"team": int(row.get("team", -1)), "upgrades": applied.keys()})
+		_sim._emit_event("battalion.upgrade_applied", 0, int(row.get("id", 0)), {"team": int(row.get("team", -1)), "upgrades": applied.keys()})
 
 
 func _apply_structure_create_grants(
@@ -625,6 +638,7 @@ func _battalion_gate_unsatisfied(team: int, command: Dictionary) -> String:
 func _team_has_required_object(team: int, requirement: String) -> bool:
 	## Authored BuildingRequired/UpgradeMustBePresent filters ("ANY +Object"):
 	## the team must field a living structure of any named object kind.
+	var _sim = sim
 	var tokens := requirement.split(" ", false)
 	var names: Array[String] = []
 	for token in tokens:
@@ -633,9 +647,9 @@ func _team_has_required_object(team: int, requirement: String) -> bool:
 		names.append(String(token).trim_prefix("+"))
 	if names.is_empty():
 		return requirement.strip_edges() == ""
-	var registry: Dictionary = sim._rules.get("producer_kind_registry", {}) as Dictionary
+	var registry: Dictionary = _sim._rules.get("producer_kind_registry", {}) as Dictionary
 	if registry.is_empty():
-		registry = (sim._rules.get("faction_manifest", {}) as Dictionary).get("producer_kind_registry", {}) as Dictionary
+		registry = (_sim._rules.get("faction_manifest", {}) as Dictionary).get("producer_kind_registry", {}) as Dictionary
 	for name in names:
 		var kind := ""
 		for object_id_value in registry.keys():
@@ -644,8 +658,8 @@ func _team_has_required_object(team: int, requirement: String) -> bool:
 				break
 		if kind == "":
 			continue
-		for structure_id in sim.structure_ids(team):
-			var building: Dictionary = sim.structures[structure_id]
+		for structure_id in _sim.structure_ids(team):
+			var building: Dictionary = _sim.structures[structure_id]
 			if String(building.get("structure_kind", "")) == kind and int(building.get("health", 0)) > 0:
 				return true
 	return false
@@ -654,10 +668,11 @@ func _team_has_required_object(team: int, requirement: String) -> bool:
 func battalion_upgrade_commands(entity_id: int) -> Array[Dictionary]:
 	## The battalion's authored purchase surface with live gate/applied/cost
 	## state; the same command-surface data the building research rows ride.
+	var _sim = sim
 	var result: Array[Dictionary] = []
-	if not sim.entities.has(entity_id):
+	if not _sim.entities.has(entity_id):
 		return result
-	var row: Dictionary = sim.entities[entity_id]
+	var row: Dictionary = _sim.entities[entity_id]
 	var team := int(row.get("team", -1))
 	var applied: Dictionary = row.get("applied_upgrades", {})
 	var queued: Array = row.get("upgrade_queue", [])
@@ -700,6 +715,7 @@ func _apply_refund_die_on_death(owner: Dictionary) -> void:
 	## DieMux, then UNDER_CONSTRUCTION/SOLD, current owner, prerequisites and the
 	## object's cached build cost are evaluated in that order.  A failed check is
 	## not a deferred opportunity: there is no second death callback later.
+	var _sim = sim
 	var typed_policies := owner.get("refund_die", []) as Array
 	if not typed_policies.is_empty():
 		if bool(owner.get("refund_die_death_dispatched", false)):
@@ -725,13 +741,13 @@ func _apply_refund_die_on_death(owner: Dictionary) -> void:
 			owner["refund_die"] = typed_policies
 			return
 		var team := int(owner.get("team", -1))
-		if not sim.team_resources.has(team):
+		if not _sim.team_resources.has(team):
 			return
 		var build_cost_value: Variant = owner.get("cached_build_cost")
 		for policy_index in typed_policies.size():
 			var policy := typed_policies[policy_index] as Dictionary
 			var upgrade_required := String(policy.get("upgrade_required", ""))
-			if upgrade_required != "" and not (sim.team_upgrades.get(team, {}) as Dictionary).has(upgrade_required): continue
+			if upgrade_required != "" and not (_sim.team_upgrades.get(team, {}) as Dictionary).has(upgrade_required): continue
 			var building_filter := policy.get("building_required", []) as Array
 			if not building_filter.is_empty() and not _team_has_required_building_filter(team, building_filter): continue
 			if typeof(build_cost_value) not in [TYPE_INT, TYPE_FLOAT] or float(build_cost_value) < 0.0:
@@ -744,16 +760,16 @@ func _apply_refund_die_on_death(owner: Dictionary) -> void:
 			policy["refund_amount"] = amount
 			typed_policies[policy_index] = policy
 			if amount <= 0: continue
-			sim.team_resources[team] = sim.resources_for_team(team) + amount
-			sim._emit_event("economy.refund", int(owner.get("id", 0)), 0, {"team": team, "amount": amount, "upgrade_id": upgrade_required, "building_required": building_filter, "module": "RefundDie"})
+			_sim.team_resources[team] = _sim.resources_for_team(team) + amount
+			_sim._emit_event("economy.refund", int(owner.get("id", 0)), 0, {"team": team, "amount": amount, "upgrade_id": upgrade_required, "building_required": building_filter, "module": "RefundDie"})
 		owner["refund_die"] = typed_policies
 		return
 	var team := int(owner.get("team", -1))
 	var kind := String(owner.get("structure_kind", ""))
 	# Compatibility only for stale structure documents predating typed
 	# moduleContracts. A typed row never falls through and cannot double-refund.
-	var bundle: Dictionary = sim.structure_upgrade_effects_for_team(team).get(kind, {})
-	var owned: Dictionary = sim.team_upgrades.get(team, {}) as Dictionary
+	var bundle: Dictionary = _sim.structure_upgrade_effects_for_team(team).get(kind, {})
+	var owned: Dictionary = _sim.team_upgrades.get(team, {}) as Dictionary
 	for effect_value in Array(bundle.get("effects", [])):
 		var effect := effect_value as Dictionary
 		if String(effect.get("kind", "")) != "refund-on-death":
@@ -763,22 +779,23 @@ func _apply_refund_die_on_death(owner: Dictionary) -> void:
 			continue
 		if not _team_has_required_object(team, String(effect.get("building_required", ""))):
 			continue
-		var build_rule: Dictionary = sim._structure_build_rules.get(kind, {})
+		var build_rule: Dictionary = _sim._structure_build_rules.get(kind, {})
 		var refund := roundi(float(build_rule.get("cost", 0)) * float(effect.get("refund_percent", 0.0)) / 100.0)
 		if refund <= 0:
 			continue
-		sim.team_resources[team] = sim.resources_for_team(team) + refund
-		sim._emit_event("economy.refund", int(owner.get("id", 0)), 0, {"team": team, "amount": refund, "upgrade_id": upgrade_id})
+		_sim.team_resources[team] = _sim.resources_for_team(team) + refund
+		_sim._emit_event("economy.refund", int(owner.get("id", 0)), 0, {"team": team, "amount": refund, "upgrade_id": upgrade_id})
 
 
 func _team_has_required_building_filter(team: int, filter: Array) -> bool:
 	## BuildingRequired is a SAGE object filter. Preserve every token and test
 	## it against living authored structure identities, not display names.
+	var _sim = sim
 	if filter.is_empty(): return true
-	var registry: Dictionary = sim._rules.get("producer_kind_registry", {}) as Dictionary
-	if registry.is_empty(): registry = (sim._rules.get("faction_manifest", {}) as Dictionary).get("producer_kind_registry", {}) as Dictionary
-	for structure_id in sim.structure_ids(team):
-		var candidate = sim.structures[structure_id] as Dictionary
+	var registry: Dictionary = _sim._rules.get("producer_kind_registry", {}) as Dictionary
+	if registry.is_empty(): registry = (_sim._rules.get("faction_manifest", {}) as Dictionary).get("producer_kind_registry", {}) as Dictionary
+	for structure_id in _sim.structure_ids(team):
+		var candidate = _sim.structures[structure_id] as Dictionary
 		if int(candidate.get("health", 0)) <= 0: continue
 		var candidate_status := candidate.get("object_status", {}) as Dictionary
 		if (
@@ -817,9 +834,10 @@ func _income_with_upgrade_bonus(team: int, building: Dictionary, base_income: in
 
 
 func _queued_command_points_for_team(team: int) -> int:
+	var _sim = sim
 	var total := 0
-	for structure_id in sim.structure_ids(team):
-		for item_value in Array((sim.structures[structure_id] as Dictionary).get("queue", [])):
+	for structure_id in _sim.structure_ids(team):
+		for item_value in Array((_sim.structures[structure_id] as Dictionary).get("queue", [])):
 			if typeof(item_value) == TYPE_DICTIONARY:
 				total += int((item_value as Dictionary).get("command_points", 0))
 	return total

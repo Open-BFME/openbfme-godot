@@ -8,6 +8,7 @@ extends "res://src/retail_slice/retail_sim_subsystem.gd"
 
 
 func _attach_auto_heal_contract(row: Dictionary, contract: Dictionary) -> void:
+	var _sim = sim
 	if String(contract.get("extraction", "")) != "typed" or row.has("auto_heal_behavior"):
 		return
 	var executable := bool(contract.get("executable", false))
@@ -22,7 +23,7 @@ func _attach_auto_heal_contract(row: Dictionary, contract: Dictionary) -> void:
 	var delay_milliseconds := float(_module_contract_value(fields, "HealingDelay", 0.0))
 	if amount <= 0 or delay_milliseconds <= 0.0:
 		return
-	var tick_milliseconds = sim.TICK_SECONDS * 1000.0
+	var tick_milliseconds = _sim.TICK_SECONDS * 1000.0
 	var exact_ticks = delay_milliseconds / tick_milliseconds
 	# A cadence the tick rate cannot express would be rounded, i.e. healed at a
 	# rate nobody authored. Refuse and say so instead.
@@ -45,7 +46,7 @@ func _attach_auto_heal_contract(row: Dictionary, contract: Dictionary) -> void:
 		"heal_only_if_not_under_attack": bool(
 			_module_contract_value(fields, "HealOnlyIfNotUnderAttack", false)
 		),
-		"armed_tick": sim.tick_index,
+		"armed_tick": _sim.tick_index,
 		"next_heal_tick": -1,
 		"tag": String(contract.get("tag", "")),
 		"source_ini": String(contract.get("sourceIni", contract.get("source_ini", ""))),
@@ -54,18 +55,19 @@ func _attach_auto_heal_contract(row: Dictionary, contract: Dictionary) -> void:
 
 
 func _step_auto_heal_updates() -> void:
-	for id in sim.entity_ids():
-		if not sim.entities.has(id):
+	var _sim = sim
+	for id in _sim.entity_ids():
+		if not _sim.entities.has(id):
 			continue
-		var row := sim.entities[id] as Dictionary
+		var row := _sim.entities[id] as Dictionary
 		if not row.has("auto_heal_behavior") and not row.has("module_contracts"):
 			_attach_module_contracts(row)
 		if row.has("auto_heal_behavior"):
 			_apply_auto_heal_pulse(row, true)
-	for id in sim.structure_ids():
-		if not sim.structures.has(id):
+	for id in _sim.structure_ids():
+		if not _sim.structures.has(id):
 			continue
-		var row := sim.structures[id] as Dictionary
+		var row := _sim.structures[id] as Dictionary
 		if (
 			not row.has("auto_heal_behavior")
 			and not bool(row.get("structure_module_contracts_attached", false))
@@ -76,6 +78,7 @@ func _step_auto_heal_updates() -> void:
 
 
 func _apply_auto_heal_pulse(row: Dictionary, battalion: bool) -> void:
+	var _sim = sim
 	var policy := row.get("auto_heal_behavior", {}) as Dictionary
 	if policy.is_empty():
 		return
@@ -102,8 +105,8 @@ func _apply_auto_heal_pulse(row: Dictionary, battalion: bool) -> void:
 		anchor = int(row.get("last_damage_tick", -1000000)) + start_delay
 	var next_heal := int(policy.get("next_heal_tick", -1))
 	if next_heal < 0 or next_heal < anchor:
-		next_heal = maxi(anchor, sim.tick_index)
-	if sim.tick_index < next_heal:
+		next_heal = maxi(anchor, _sim.tick_index)
+	if _sim.tick_index < next_heal:
 		policy["next_heal_tick"] = next_heal
 		return
 	policy["next_heal_tick"] = next_heal + maxi(1, int(policy.get("healing_delay_ticks", 1)))
@@ -147,6 +150,7 @@ func _apply_auto_heal_pulse(row: Dictionary, battalion: bool) -> void:
 func _scaled_ability_rules(rules: Array[Dictionary], source_scale: float) -> Array[Dictionary]:
 	## Bind converted ability rows to this map's source scale. Retail ranges
 	## arrive in source units and scale exactly like combat attack ranges.
+	var _sim = sim
 	var output: Array[Dictionary] = []
 	for rule in rules:
 		var scaled := (rule as Dictionary).duplicate(true)
@@ -183,7 +187,7 @@ func _scaled_ability_rules(rules: Array[Dictionary], source_scale: float) -> Arr
 			"heal":
 				effect["radius_scaled"] = float(effect.get("radius", 0.0)) * scale
 			"attribute-modifier":
-				effect["duration_ticks"] = maxi(1, roundi(float(effect.get("durationMs", 0.0)) / (sim.TICK_SECONDS * 1000.0)))
+				effect["duration_ticks"] = maxi(1, roundi(float(effect.get("durationMs", 0.0)) / (_sim.TICK_SECONDS * 1000.0)))
 				effect["range_scaled"] = float(effect.get("range", 0.0)) * scale
 			"leadership-aura":
 				# AttributeModifierAuraUpdate: Range binds to map scale like every
@@ -193,7 +197,7 @@ func _scaled_ability_rules(rules: Array[Dictionary], source_scale: float) -> Arr
 				# FearNugget/TerrorSpecialPower: radius and the optional scatter
 				# displacement are source units; FearDuration is milliseconds.
 				effect["radius_scaled"] = float(effect.get("radius", 0.0)) * scale
-				effect["duration_ticks"] = maxi(1, roundi(float(effect.get("durationMs", 0.0)) / (sim.TICK_SECONDS * 1000.0)))
+				effect["duration_ticks"] = maxi(1, roundi(float(effect.get("durationMs", 0.0)) / (_sim.TICK_SECONDS * 1000.0)))
 				effect["scatter_strength_scaled"] = float(effect.get("scatterStrength", 0.0)) * scale
 			"mount-toggle":
 				# Mounted LocomotorSet speed is source units, like every speed.
@@ -203,7 +207,7 @@ func _scaled_ability_rules(rules: Array[Dictionary], source_scale: float) -> Arr
 				# channel is the authored unpack + preparation + pack envelope.
 				effect["range"] = float(effect.get("startAbilityRange", 0.0)) * scale
 				var channel_ms := float(effect.get("unpackMs", 0.0)) + float(effect.get("preparationMs", 0.0)) + float(effect.get("packMs", 0.0))
-				effect["channel_ticks"] = maxi(1, roundi(channel_ms / (sim.TICK_SECONDS * 1000.0)))
+				effect["channel_ticks"] = maxi(1, roundi(channel_ms / (_sim.TICK_SECONDS * 1000.0)))
 			"experience-grant":
 				# LevelGrantSpecialPower: StartAbilityRange gates the cast like
 				# an attack range; RadiusEffect is the grant circle; the
@@ -216,7 +220,7 @@ func _scaled_ability_rules(rules: Array[Dictionary], source_scale: float) -> Arr
 				# and per-shot weapon damage are scale-free.
 				effect["range"] = float(effect.get("startAbilityRange", 0.0)) * scale
 				effect["target_radius_scaled"] = float(effect.get("targetRadius", 0.0)) * scale
-				effect["shot_interval_ticks"] = maxi(1, roundi(float(effect.get("persistentPrepMs", 0.0)) / (sim.TICK_SECONDS * 1000.0)))
+				effect["shot_interval_ticks"] = maxi(1, roundi(float(effect.get("persistentPrepMs", 0.0)) / (_sim.TICK_SECONDS * 1000.0)))
 			"stealth-toggle":
 				# ToggleHiddenSpecialAbilityUpdate / InvisibilitySpecialPower:
 				# EffectDuration is milliseconds; an authored BroadcastRadius
@@ -225,14 +229,14 @@ func _scaled_ability_rules(rules: Array[Dictionary], source_scale: float) -> Arr
 				# while a leaf retail authors no duration for arrives flagged
 				# `untimed` and cloaks until recast instead.
 				var stealth_ms := float(effect.get("effectDurationMs", 0.0))
-				effect["duration_ticks"] = maxi(1, roundi(stealth_ms / (sim.TICK_SECONDS * 1000.0))) if stealth_ms > 0.0 else 0
+				effect["duration_ticks"] = maxi(1, roundi(stealth_ms / (_sim.TICK_SECONDS * 1000.0))) if stealth_ms > 0.0 else 0
 				effect["broadcast_radius_scaled"] = float(effect.get("broadcastRadius", 0.0)) * scale
 			"teleport":
 				# TeleportSpecialAbilityUpdate: an authored MaxDistance gates the
 				# cast like a range; omission is unlimited. BusyForDuration holds
 				# the hero after arrival. DestinationWeaponName fires at arrival.
 				effect["range"] = float(effect.get("maxDistance", 0.0)) * scale
-				effect["busy_ticks"] = maxi(0, roundi(float(effect.get("busyForDurationMs", 0.0)) / (sim.TICK_SECONDS * 1000.0)))
+				effect["busy_ticks"] = maxi(0, roundi(float(effect.get("busyForDurationMs", 0.0)) / (_sim.TICK_SECONDS * 1000.0)))
 				if effect.has("destinationWeapon"):
 					var destination_weapon := (effect.get("destinationWeapon", {}) as Dictionary).duplicate(true)
 					destination_weapon["knockback_radius"] = float(destination_weapon.get("knockbackRadius", 0.0)) * scale
@@ -250,7 +254,7 @@ func _scaled_ability_rules(rules: Array[Dictionary], source_scale: float) -> Arr
 				# ModifierList authors only the suppression duration.
 				effect["radius_scaled"] = float(effect.get("attributeModifierRange", 0.0)) * scale
 				var strip_ms := float(effect.get("antiCategoryDurationMs", 0.0))
-				effect["duration_ticks"] = maxi(1, roundi(strip_ms / (sim.TICK_SECONDS * 1000.0))) if strip_ms > 0.0 else 0
+				effect["duration_ticks"] = maxi(1, roundi(strip_ms / (_sim.TICK_SECONDS * 1000.0))) if strip_ms > 0.0 else 0
 			"activate-module-graph":
 				effect["range"] = float(effect.get("startAbilityRange", 0.0)) * scale
 				effect["effect_range_scaled"] = float(effect.get("effectRange", 0.0)) * scale
@@ -258,7 +262,7 @@ func _scaled_ability_rules(rules: Array[Dictionary], source_scale: float) -> Arr
 				var timing_ticks: Dictionary = {}
 				for timing_key in ["StartDelay", "PreparationTime", "PersistentPrepTime", "UnpackTime", "PackTime", "SpecialPowerDuration"]:
 					if timing.has(timing_key):
-						timing_ticks[timing_key] = maxi(0, roundi(float(timing[timing_key]) / (sim.TICK_SECONDS * 1000.0)))
+						timing_ticks[timing_key] = maxi(0, roundi(float(timing[timing_key]) / (_sim.TICK_SECONDS * 1000.0)))
 				effect["timing_ticks"] = timing_ticks
 				var scaled_routes: Array = []
 				for route_value in effect.get("routes", []) as Array:
@@ -281,22 +285,22 @@ func _scaled_ability_rules(rules: Array[Dictionary], source_scale: float) -> Arr
 				var timing_ticks: Dictionary = {}
 				for timing_key in ["UnpackTime", "PreparationTime", "FreezeAfterTriggerDuration", "TriggerModelConditionDuration"]:
 					if timing.has(timing_key):
-						timing_ticks[timing_key] = maxi(0, roundi(float(timing[timing_key]) / (sim.TICK_SECONDS * 1000.0)))
+						timing_ticks[timing_key] = maxi(0, roundi(float(timing[timing_key]) / (_sim.TICK_SECONDS * 1000.0)))
 				effect["timing_ticks"] = timing_ticks
 				if not bool(effect.get("permanentlyConvert", false)):
 					var temporary_ms := float(effect.get("temporaryDefectDurationMs", 0.0))
-					effect["temporary_defect_duration_ticks"] = maxi(1, roundi(temporary_ms / (sim.TICK_SECONDS * 1000.0))) if temporary_ms > 0.0 else 0
+					effect["temporary_defect_duration_ticks"] = maxi(1, roundi(temporary_ms / (_sim.TICK_SECONDS * 1000.0))) if temporary_ms > 0.0 else 0
 			"grab-passenger":
 				var acquire := (effect.get("acquire", {}) as Dictionary).duplicate(true)
 				effect["range"] = float(acquire.get("startAbilityRange", 0.0)) * scale
 				var acquire_timing := acquire.get("timingMs", {}) as Dictionary
 				var acquire_ticks: Dictionary = {}
 				for timing_key in ["UnpackTime", "PreparationTime", "PersistentPrepTime", "PackTime"]:
-					acquire_ticks[timing_key] = maxi(0, roundi(float(acquire_timing.get(timing_key, 0.0)) / (sim.TICK_SECONDS * 1000.0)))
+					acquire_ticks[timing_key] = maxi(0, roundi(float(acquire_timing.get(timing_key, 0.0)) / (_sim.TICK_SECONDS * 1000.0)))
 				acquire["timing_ticks"] = acquire_ticks
 				var animation := (acquire.get("animation", {}) as Dictionary).duplicate(true)
-				animation["duration_ticks"] = maxi(0, roundi(float(animation.get("durationMs", 0.0)) / (sim.TICK_SECONDS * 1000.0)))
-				animation["trigger_ticks"] = maxi(0, roundi(float(animation.get("triggerTimeMs", 0.0)) / (sim.TICK_SECONDS * 1000.0)))
+				animation["duration_ticks"] = maxi(0, roundi(float(animation.get("durationMs", 0.0)) / (_sim.TICK_SECONDS * 1000.0)))
+				animation["trigger_ticks"] = maxi(0, roundi(float(animation.get("triggerTimeMs", 0.0)) / (_sim.TICK_SECONDS * 1000.0)))
 				acquire["animation"] = animation
 				effect["acquire"] = acquire
 				var scaled_release: Array = []
@@ -308,8 +312,8 @@ func _scaled_ability_rules(rules: Array[Dictionary], source_scale: float) -> Arr
 			"fling-passenger":
 				var fling_timing := effect.get("timingMs", {}) as Dictionary
 				effect["timing_ticks"] = {
-					"UnpackTime": maxi(0, roundi(float(fling_timing.get("UnpackTime", 0.0)) / (sim.TICK_SECONDS * 1000.0))),
-					"PackTime": maxi(0, roundi(float(fling_timing.get("PackTime", 0.0)) / (sim.TICK_SECONDS * 1000.0))),
+					"UnpackTime": maxi(0, roundi(float(fling_timing.get("UnpackTime", 0.0)) / (_sim.TICK_SECONDS * 1000.0))),
+					"PackTime": maxi(0, roundi(float(fling_timing.get("PackTime", 0.0)) / (_sim.TICK_SECONDS * 1000.0))),
 				}
 				var fling_velocity := effect.get("velocity", {}) as Dictionary
 				if not fling_velocity.is_empty():
@@ -358,10 +362,11 @@ func _attach_module_contracts(row: Dictionary) -> void:
 	# updates. Attachment is materialization, not an accumulating effect: replaying
 	# it duplicated repeated contract arrays and made live state diverge from a
 	# restored snapshot after one tick.
+	var _sim = sim
 	if row.has("module_contracts"):
 		return
 	var unit_type := String(row.get("unit_type", ""))
-	var contracts: Array = sim._unit_module_contracts.get(unit_type, []) as Array
+	var contracts: Array = _sim._unit_module_contracts.get(unit_type, []) as Array
 	if contracts.is_empty():
 		return
 	row["module_contracts"] = contracts.duplicate(true)
@@ -444,153 +449,153 @@ func _attach_module_contracts(row: Dictionary) -> void:
 			})
 			row["module_upgrade_contracts"] = upgrade_rows
 		if folded == "fireweaponwhendeadbehavior":
-			sim._attach_fire_weapon_when_dead_contract(row, contract)
+			_sim._attach_fire_weapon_when_dead_contract(row, contract)
 		elif folded == "hordetransportcontain":
-			sim._attach_horde_transport_contract(row, contract)
+			_sim._attach_horde_transport_contract(row, contract)
 		elif folded in ["transportcontain", "tunnelcontain", "garrisoncontain", "hordegarrisoncontain"]:
-			sim._attach_container_family_contract(row, contract)
+			_sim._attach_container_family_contract(row, contract)
 		elif folded == "productionqueuehordecontain":
-			sim._attach_container_family_contract(row, contract)
+			_sim._attach_container_family_contract(row, contract)
 		elif folded == "siegeenginecontain":
-			sim._attach_siege_engine_contain_contract(row, contract)
+			_sim._attach_siege_engine_contain_contract(row, contract)
 		elif folded == "largegroupbonusupdate":
-			sim._attach_large_group_bonus_contract(row, contract)
+			_sim._attach_large_group_bonus_contract(row, contract)
 		elif folded == "hitreactionbehavior":
-			sim._attach_hit_reaction_contract(row, contract)
+			_sim._attach_hit_reaction_contract(row, contract)
 		elif folded == "animalaiupdate":
-			sim._attach_animal_ai_contract(row, contract)
+			_sim._attach_animal_ai_contract(row, contract)
 		elif folded == "threatfinderupdate":
-			sim._attach_threat_finder_contract(row, contract)
+			_sim._attach_threat_finder_contract(row, contract)
 		elif folded == "radiatefearupdate":
-			sim._attach_radiate_fear_contract(row, contract)
+			_sim._attach_radiate_fear_contract(row, contract)
 		elif folded == "poisonedbehavior":
-			sim._attach_poisoned_contract(row, contract)
+			_sim._attach_poisoned_contract(row, contract)
 		elif folded == "damagefieldupdate":
-			sim._attach_damage_field_contract(row, contract)
+			_sim._attach_damage_field_contract(row, contract)
 		elif folded == "spawnunitbehavior":
-			sim._attach_spawn_unit_contract(row, contract)
+			_sim._attach_spawn_unit_contract(row, contract)
 		elif folded == "modelconditionsoundselectorclientbehavior":
-			sim._attach_model_condition_sound_selector(row, contract)
+			_sim._attach_model_condition_sound_selector(row, contract)
 		elif folded == "randomsoundselectorclientbehavior":
-			sim._attach_random_sound_selector(row, contract)
+			_sim._attach_random_sound_selector(row, contract)
 		elif folded == "upgradesoundselectorclientbehavior":
-			sim._attach_upgrade_sound_selector(row, contract)
+			_sim._attach_upgrade_sound_selector(row, contract)
 		elif folded == "largegroupaudioupdate":
-			sim._attach_large_group_audio_contract(row, contract)
+			_sim._attach_large_group_audio_contract(row, contract)
 		elif folded == "firespreadupdate":
-			sim._attach_fire_spread_contract(row, contract)
+			_sim._attach_fire_spread_contract(row, contract)
 		elif folded == "shipslowdeathbehavior":
-			sim._attach_ship_slow_death_contract(row, contract)
+			_sim._attach_ship_slow_death_contract(row, contract)
 		elif folded == "slowdeathbehavior":
-			sim._attach_slow_death_core_contract(row, contract)
+			_sim._attach_slow_death_core_contract(row, contract)
 		elif folded == "attributemodifierauraupdate":
-			sim._attach_attribute_modifier_aura_contract(row, contract)
+			_sim._attach_attribute_modifier_aura_contract(row, contract)
 		elif folded == "autohealbehavior":
 			_attach_auto_heal_contract(row, contract)
 		elif folded == "lifetimeupdate":
-			sim._attach_lifetime_update_contract(row, contract)
+			_sim._attach_lifetime_update_contract(row, contract)
 		elif folded == "stancesbehavior":
-			sim._attach_stances_contract(row, contract)
+			_sim._attach_stances_contract(row, contract)
 		elif folded == "aiupdateinterface":
 			_attach_ai_update_contract(row, contract)
 		elif folded == "hordeaiupdate":
 			_attach_horde_ai_update_contract(row, contract)
 		elif folded == "pickupstuffupdate":
-			sim._attach_pickup_stuff_update_contract(row, contract)
+			_sim._attach_pickup_stuff_update_contract(row, contract)
 		elif folded == "autoabilitybehavior":
-			sim._attach_auto_ability_contract(row, contract)
+			_sim._attach_auto_ability_contract(row, contract)
 		elif folded == "aispecialpowerupdate":
-			sim._attach_ai_special_power_contract(row, contract)
+			_sim._attach_ai_special_power_contract(row, contract)
 		elif folded == "weaponmodespecialpowerupdate":
-			sim._attach_weapon_mode_special_power_contract(row, contract)
+			_sim._attach_weapon_mode_special_power_contract(row, contract)
 		elif folded == "respawnupdate":
-			sim._attach_respawn_update_contract(row, contract)
+			_sim._attach_respawn_update_contract(row, contract)
 		elif folded == "fireweaponupdate":
-			sim._attach_fire_weapon_update_contract(row, contract)
+			_sim._attach_fire_weapon_update_contract(row, contract)
 		elif folded == "deletionupdate":
-			sim._attach_deletion_update_contract(row, contract)
+			_sim._attach_deletion_update_contract(row, contract)
 		elif folded == "productionupdate":
-			sim._attach_production_update_contract(row, contract)
+			_sim._attach_production_update_contract(row, contract)
 		elif folded == "gettingbuiltbehavior":
-			sim._attach_getting_built_contract(row, contract)
+			_sim._attach_getting_built_contract(row, contract)
 		elif folded == "buildingbehavior":
-			sim._attach_building_behavior_contract(row, contract)
+			_sim._attach_building_behavior_contract(row, contract)
 		elif folded == "queueproductionexitupdate":
-			sim._attach_queue_production_exit_contract(row, contract)
+			_sim._attach_queue_production_exit_contract(row, contract)
 		elif folded == "rebuildholeexposeddie" or folded == "rebuildholeexposedie":
-			sim._attach_rebuild_hole_expose_contract(row, contract)
+			_sim._attach_rebuild_hole_expose_contract(row, contract)
 		elif folded == "rebuildholebehavior":
-			sim._attach_rebuild_hole_behavior_contract(row, contract)
+			_sim._attach_rebuild_hole_behavior_contract(row, contract)
 		elif folded == "bannercarrierupdate":
-			sim._attach_banner_carrier_update_contract(row, contract)
+			_sim._attach_banner_carrier_update_contract(row, contract)
 		elif folded == "respawnbody":
-			sim._attach_respawn_body_contract(row, contract)
+			_sim._attach_respawn_body_contract(row, contract)
 		elif folded == "giveupgradeupdate":
-			sim._attach_give_upgrade_contract(row, contract)
+			_sim._attach_give_upgrade_contract(row, contract)
 		elif folded == "gateopenandclosebehavior":
-			sim._attach_gate_open_close_contract(row, contract)
+			_sim._attach_gate_open_close_contract(row, contract)
 		elif folded == "aigateupdate":
-			sim._attach_ai_gate_contract(row, contract)
+			_sim._attach_ai_gate_contract(row, contract)
 		elif folded == "fakepathfindportalbehaviour":
-			sim._attach_fake_pathfind_portal_contract(row, contract)
+			_sim._attach_fake_pathfind_portal_contract(row, contract)
 		elif folded == "stealthdetectorupdate":
-			sim._attach_stealth_detector_contract(row, contract)
+			_sim._attach_stealth_detector_contract(row, contract)
 		elif folded == "invisibilityupdate":
-			sim._attach_invisibility_update_contract(row, contract)
+			_sim._attach_invisibility_update_contract(row, contract)
 		elif folded == "slavedupdate":
-			sim._attach_slaved_update_contract(row, contract)
+			_sim._attach_slaved_update_contract(row, contract)
 		elif folded == "castleupgrade":
-			sim._attach_castle_upgrade_contract(row, contract)
+			_sim._attach_castle_upgrade_contract(row, contract)
 		elif folded == "spawnbehavior":
-			sim._attach_spawn_behavior_contract(row, contract)
+			_sim._attach_spawn_behavior_contract(row, contract)
 		elif folded == "stealthupdate":
-			sim._attach_stealth_update_contract(row, contract)
+			_sim._attach_stealth_update_contract(row, contract)
 		elif folded == "objectcreationupgrade":
-			sim._attach_object_creation_upgrade_contract(row, contract)
+			_sim._attach_object_creation_upgrade_contract(row, contract)
 		elif folded == "attributemodifierupgrade":
-			sim._attach_attribute_modifier_upgrade_contract(row, contract)
+			_sim._attach_attribute_modifier_upgrade_contract(row, contract)
 		elif folded == "geometryupgrade":
-			sim._attach_geometry_upgrade_contract(row, contract)
+			_sim._attach_geometry_upgrade_contract(row, contract)
 		elif folded == "emotiontrackerupdate":
-			sim._attach_emotion_tracker_contract(row, contract)
+			_sim._attach_emotion_tracker_contract(row, contract)
 		elif folded == "castlememberbehavior":
-			sim._attach_castle_member_contract(row, contract)
+			_sim._attach_castle_member_contract(row, contract)
 		elif folded == "inactivebody":
-			sim._attach_inactive_body_contract(row, contract)
+			_sim._attach_inactive_body_contract(row, contract)
 		elif folded == "squishcollide":
-			sim._attach_squish_collide_contract(row, contract)
+			_sim._attach_squish_collide_contract(row, contract)
 		elif folded == "hordemembercollide":
-			sim._attach_horde_member_collide_contract(row, contract)
+			_sim._attach_horde_member_collide_contract(row, contract)
 		elif folded == "notifytargetsofimminentprobablecrushingupdate":
-			sim._attach_notify_crushing_contract(row, contract)
+			_sim._attach_notify_crushing_contract(row, contract)
 		elif folded == "flammableupdate":
-			sim._attach_flammable_update_contract(row, contract)
+			_sim._attach_flammable_update_contract(row, contract)
 		elif folded == "dynamicportalbehaviour":
-			sim._attach_dynamic_portal_contract(row, contract)
+			_sim._attach_dynamic_portal_contract(row, contract)
 		elif folded == "foundationaiupdate":
-			sim._attach_foundation_ai_contract(row, contract)
+			_sim._attach_foundation_ai_contract(row, contract)
 		elif folded == "monitorconditionupdate":
-			sim._attach_monitor_condition_contract(row, contract)
+			_sim._attach_monitor_condition_contract(row, contract)
 		elif folded == "refunddie":
-			sim._attach_refund_die_contract(row, contract)
+			_sim._attach_refund_die_contract(row, contract)
 		elif folded == "dualweaponbehavior":
-			sim._attach_dual_weapon_contract(row, contract)
+			_sim._attach_dual_weapon_contract(row, contract)
 		elif folded == "attachupdate":
-			sim._attach_attach_update_contract(row, contract)
+			_sim._attach_attach_update_contract(row, contract)
 		elif folded == "replaceselfupgrade":
-			sim._attach_replace_self_contract(row, contract)
+			_sim._attach_replace_self_contract(row, contract)
 		elif folded == "citadelslaughterhordecontain":
-			sim._attach_citadel_slaughter_contract(row, contract)
+			_sim._attach_citadel_slaughter_contract(row, contract)
 		elif folded == "oclupdate":
-			sim._attach_ocl_update_contract(row, contract)
+			_sim._attach_ocl_update_contract(row, contract)
 		elif folded == "hordecontain":
 			_attach_horde_contain_contract(row, contract)
 		elif folded == "stopspecialpower":
-			sim._attach_stop_special_power_contract(row, contract)
+			_sim._attach_stop_special_power_contract(row, contract)
 		elif folded == "unleashspecialpower":
-			sim._attach_unleash_special_power_contract(row, contract)
+			_sim._attach_unleash_special_power_contract(row, contract)
 		elif folded == "specialenemysenseupdate":
-			sim._attach_special_enemy_sense_contract(row, contract)
+			_sim._attach_special_enemy_sense_contract(row, contract)
 
 
 func module_contracts_for_unit_type(unit_type: String) -> Array:
@@ -650,7 +655,8 @@ func _configure_playable_structure_module_contracts() -> void:
 	## Prefer the sealed registry already projected into simulation rules. This
 	## keeps fixture/replacement behavior available to headless runners while
 	## retaining ContentDB as the live-scene source.
-	var runtimes_value: Variant = sim._rules.get("playable_structure_runtimes", {})
+	var _sim = sim
+	var runtimes_value: Variant = _sim._rules.get("playable_structure_runtimes", {})
 	if typeof(runtimes_value) != TYPE_DICTIONARY or (runtimes_value as Dictionary).is_empty():
 		var db = _content_db_ref()
 		if db == null:
@@ -665,7 +671,7 @@ func _configure_playable_structure_module_contracts() -> void:
 			continue
 		var document: Dictionary = document_value
 		var contracts := _structure_contracts_with_passive_area_resolution(
-			document, sim.PlayableUnitAdapter.module_contracts(document)
+			document, _sim.PlayableUnitAdapter.module_contracts(document)
 		)
 		if contracts.is_empty():
 			continue
@@ -740,6 +746,7 @@ func register_castle_upgrade_grants(source_object_id: String, contracts: Array) 
 	## Index every CastleUpgrade row (retail's trigger -> real upgrade hop) from
 	## one structure's projected moduleContracts. Rows missing either half are
 	## skipped: a half-recorded contract must never invent an upgrade id.
+	var _sim = sim
 	for contract_value in contracts:
 		if typeof(contract_value) != TYPE_DICTIONARY:
 			continue
@@ -752,7 +759,7 @@ func register_castle_upgrade_grants(source_object_id: String, contracts: Array) 
 		if trigger == "" or granted == "":
 			continue
 		var radius_text := _castle_upgrade_field(fields, "WallUpgradeRadius")
-		var rows: Array = sim._castle_upgrade_grants.get(trigger.to_lower(), []) as Array
+		var rows: Array = _sim._castle_upgrade_grants.get(trigger.to_lower(), []) as Array
 		var already_recorded := false
 		for existing_value in rows:
 			if String((existing_value as Dictionary).get("upgrade_id", "")) == granted:
@@ -766,7 +773,7 @@ func register_castle_upgrade_grants(source_object_id: String, contracts: Array) 
 			"source_object_id": source_object_id,
 			"tag": String(contract.get("tag", "")),
 		})
-		sim._castle_upgrade_grants[trigger.to_lower()] = rows
+		_sim._castle_upgrade_grants[trigger.to_lower()] = rows
 
 
 # De-staticed on extraction (instance sim access).
@@ -796,7 +803,8 @@ func _apply_castle_upgrade_grants(building: Dictionary, trigger_upgrade_id: Stri
 	## so does every castle piece it owns (retail scopes wall improvements by
 	## WallUpgradeRadius; the castle pieces ARE the fortress's own walls, so the
 	## owning-fortress set is that radius exactly and needs no distance guess).
-	if bool(sim.apply_castle_upgrade_trigger(int(building.get("id",0)),trigger_upgrade_id).get("ok",false)):
+	var _sim = sim
+	if bool(_sim.apply_castle_upgrade_trigger(int(building.get("id",0)),trigger_upgrade_id).get("ok",false)):
 		return
 	var grants := castle_upgrade_grants_for(trigger_upgrade_id)
 	if grants.is_empty():
@@ -810,15 +818,15 @@ func _apply_castle_upgrade_grants(building: Dictionary, trigger_upgrade_id: Stri
 		if granted == "":
 			continue
 		for recipient_id in recipients:
-			if not sim.structures.has(recipient_id):
+			if not _sim.structures.has(recipient_id):
 				continue
-			var recipient: Dictionary = sim.structures[recipient_id]
+			var recipient: Dictionary = _sim.structures[recipient_id]
 			var owned: Array = recipient.get("completed_upgrades", [])
 			if owned.has(granted):
 				continue
 			owned.append(granted)
 			recipient["completed_upgrades"] = owned
-		sim._emit_event("upgrade.castle_granted", structure_id, 0, {
+		_sim._emit_event("upgrade.castle_granted", structure_id, 0, {
 			"team": int(building.get("team", -1)),
 			"trigger_upgrade_id": trigger_upgrade_id,
 			"upgrade_id": granted,
@@ -839,34 +847,35 @@ func _snapshot_scenario_runtime_tables() -> void:
 	## the validated ContentDB registries only when the caller did not inject an
 	## explicit fixture. Empty registries add no rule keys, preserving legacy
 	## hashes until a selected neutral pack actually supplies documents.
+	var _sim = sim
 	var explicit_tables := false
 	for key in ["scenario_unit_runtimes", "scenario_structure_runtimes", "scenario_prop_runtimes", "scenario_pickup_runtimes"]:
-		if sim._rules.has(key):
+		if _sim._rules.has(key):
 			explicit_tables = true
 			break
 	# Merely installing/selecting a neutral pack is not match state. Direct sims
 	# (including the owner pin) only inherit global registries when an active
 	# scenario-map lane requests them; injected test/script tables remain valid.
-	if not explicit_tables and not bool(sim._rules.get("enable_scenario_map_placements", false)):
+	if not explicit_tables and not bool(_sim._rules.get("enable_scenario_map_placements", false)):
 		return
-	var game := String(sim._rules.get("game", "")).to_lower()
+	var game := String(_sim._rules.get("game", "")).to_lower()
 	if game not in ["bfme2", "rotwk"]:
-		sim._rules["_scenario_registry_error"] = "scenario runtime selection requires game=bfme2 or game=rotwk"
+		_sim._rules["_scenario_registry_error"] = "scenario runtime selection requires game=bfme2 or game=rotwk"
 		return
 	var db = _content_db_ref()
 	if db == null and not explicit_tables:
-		sim._rules["_scenario_registry_error"] = "scenario runtime selection has no ContentDB"
+		_sim._rules["_scenario_registry_error"] = "scenario runtime selection has no ContentDB"
 		return
 	for key in ["scenario_unit_runtimes", "scenario_structure_runtimes", "scenario_prop_runtimes", "scenario_pickup_runtimes"]:
-		if sim._rules.has(key):
+		if _sim._rules.has(key):
 			continue
 		var getter := "get_%s" % key
 		if not db.has_method(getter):
-			sim._rules["_scenario_registry_error"] = "ContentDB missing edition-scoped %s" % getter
+			_sim._rules["_scenario_registry_error"] = "ContentDB missing edition-scoped %s" % getter
 			return
 		var value: Variant = db.call(getter, game)
 		if typeof(value) == TYPE_DICTIONARY and not (value as Dictionary).is_empty():
-			sim._rules[key] = (value as Dictionary).duplicate(true)
+			_sim._rules[key] = (value as Dictionary).duplicate(true)
 
 
 func scenario_spawn_contract(object_id: String, surface: String) -> Dictionary:
@@ -874,6 +883,7 @@ func scenario_spawn_contract(object_id: String, surface: String) -> Dictionary:
 	## payloads. The three registries stay disjoint from faction production and
 	## HUD tables; an identity admitted by more than one kind is ambiguous and is
 	## therefore refused instead of selected by registry order.
+	var _sim = sim
 	var matches: Array[Dictionary] = []
 	for kind in ["unit", "structure", "prop", "pickup"]:
 		var document := _scenario_document_for_kind(kind, object_id, surface)
@@ -893,10 +903,10 @@ func scenario_spawn_contract(object_id: String, surface: String) -> Dictionary:
 		presentation = (registration.get("visual") as Dictionary).duplicate(true)
 	result["presentation"] = presentation
 	if String(result["kind"]) == "unit":
-		var source_rule = sim.PlayableUnitAdapter.simulation_rule(document, false)
+		var source_rule = _sim.PlayableUnitAdapter.simulation_rule(document, false)
 		if not source_rule.is_empty():
-			result["unit_rule"] = sim.PlayableUnitAdapter.normalized_unit_rule(
-				source_rule, float(sim._rules.get("source_map_transform_scale", 0.0))
+			result["unit_rule"] = _sim.PlayableUnitAdapter.normalized_unit_rule(
+				source_rule, float(_sim._rules.get("source_map_transform_scale", 0.0))
 			)
 	return result
 
@@ -914,38 +924,39 @@ func spawn_scenario_unit(
 	## Scenario units consume their descriptor-derived rule directly. The rule is
 	## never inserted into unit_rules or production tables, so spawning one cannot
 	## expose a construct button, roster row, or HUD command.
+	var _sim = sim
 	var contract := scenario_spawn_contract(object_id, surface)
 	if String(contract.get("kind", "")) != "unit":
 		return -1
 	var rule := contract.get("unit_rule", {}) as Dictionary
 	var document := contract.get("document", {}) as Dictionary
-	if rule.is_empty() or (requested_id <= 0 and not sim._next_dynamic_id.has(team)):
+	if rule.is_empty() or (requested_id <= 0 and not _sim._next_dynamic_id.has(team)):
 		return -1
-	var entity_id := requested_id if requested_id > 0 else int(sim._next_dynamic_id[team])
-	if sim.entities.has(entity_id) or sim.structures.has(entity_id):
+	var entity_id := requested_id if requested_id > 0 else int(_sim._next_dynamic_id[team])
+	if _sim.entities.has(entity_id) or _sim.structures.has(entity_id):
 		return -1
 	if requested_id <= 0:
-		sim._next_dynamic_id[team] = entity_id + 1
-	sim._add_battalion(
+		_sim._next_dynamic_id[team] = entity_id + 1
+	_sim._add_battalion(
 		entity_id, team, at, String(rule.get("display_name", object_id)),
 		String(rule.get("object_id", object_id)), String(rule.get("horde_id", object_id)),
 		0, rule
 	)
-	if not sim.entities.has(entity_id):
+	if not _sim.entities.has(entity_id):
 		return -1
-	var row := sim.entities[entity_id] as Dictionary
+	var row := _sim.entities[entity_id] as Dictionary
 	# Scenario-only units never enter the faction unit registry, but their exact
 	# module contracts still have to reach the instance. Registering after the
 	# body is constructed avoids exposing the object as production while letting
 	# SlavedUpdate bind the authored lair master on the same spawn tick.
-	var scenario_contracts = sim.PlayableUnitAdapter.module_contracts(document)
+	var scenario_contracts = _sim.PlayableUnitAdapter.module_contracts(document)
 	if not scenario_contracts.is_empty():
 		var unit_type := String(row.get("unit_type", object_id))
-		var registered := sim._unit_module_contracts.get(unit_type, []) as Array
+		var registered := _sim._unit_module_contracts.get(unit_type, []) as Array
 		if registered.is_empty():
-			sim._unit_module_contracts[unit_type] = scenario_contracts.duplicate(true)
+			_sim._unit_module_contracts[unit_type] = scenario_contracts.duplicate(true)
 		elif registered != scenario_contracts:
-			sim.entities.erase(entity_id)
+			_sim.entities.erase(entity_id)
 			return -1
 		_attach_module_contracts(row)
 	row["scenario_source_object_id"] = String(document.get("objectId", object_id))
@@ -961,6 +972,7 @@ func spawn_scenario_structure(
 	## faction kind, producer, command, or HUD row. `team` is placement-authored
 	## ownership (-1 for unowned); this function never derives an owner from the
 	## scenario role or from a player faction.
+	var _sim = sim
 	var contract := scenario_spawn_contract(object_id, surface)
 	if String(contract.get("kind", "")) != "structure":
 		return -1
@@ -968,11 +980,11 @@ func spawn_scenario_structure(
 	var rule := _scenario_structure_instantiation_rule(document)
 	if rule.is_empty():
 		return -1
-	var structure_id = requested_id if requested_id > 0 else sim._next_dynamic_structure_id
-	if sim.structures.has(structure_id) or sim.entities.has(structure_id):
+	var structure_id = requested_id if requested_id > 0 else _sim._next_dynamic_structure_id
+	if _sim.structures.has(structure_id) or _sim.entities.has(structure_id):
 		return -1
 	if requested_id <= 0:
-		sim._next_dynamic_structure_id += 1
+		_sim._next_dynamic_structure_id += 1
 	var maximum_health := int(rule.get("maximum_health", 0))
 	var row := {
 		"id": structure_id,
@@ -983,7 +995,7 @@ func spawn_scenario_structure(
 		"source_object_id": String(document.get("objectId", object_id)),
 		"object_id": String(document.get("objectId", object_id)),
 		"scenario_source_object_id": String(document.get("objectId", object_id)),
-		"scenario_game": String(document.get("game", sim._rules.get("game", ""))).to_lower(),
+		"scenario_game": String(document.get("game", _sim._rules.get("game", ""))).to_lower(),
 		"position": at,
 		"rally": at,
 		"health": maximum_health,
@@ -1022,7 +1034,7 @@ func spawn_scenario_structure(
 			var effect := effect_value as Dictionary
 			if String(effect.get("kind", "")) != "command-set-transition":
 				continue
-			var normalized = sim._normalized_command_set_upgrade_effect(effect)
+			var normalized = _sim._normalized_command_set_upgrade_effect(effect)
 			if normalized.is_empty() or String(normalized.get("game", "")) != String(row["scenario_game"]):
 				return -1
 			accepted.append(normalized)
@@ -1041,11 +1053,11 @@ func spawn_scenario_structure(
 		# it enables the existing exact module consumers without adding the
 		# structure to any faction manifest.
 		register_structure_module_contracts(String(row["source_object_id"]), module_contracts)
-	sim._note_structure_table_mutation()
-	sim.structures[structure_id] = row
-	_attach_structure_module_contracts(sim.structures[structure_id] as Dictionary)
-	if team >= 0 and team != sim.CREEP_TEAM:
-		sim._apply_scenario_structure_faction_command_set(sim.structures[structure_id] as Dictionary, team)
+	_sim._note_structure_table_mutation()
+	_sim.structures[structure_id] = row
+	_attach_structure_module_contracts(_sim.structures[structure_id] as Dictionary)
+	if team >= 0 and team != _sim.CREEP_TEAM:
+		_sim._apply_scenario_structure_faction_command_set(_sim.structures[structure_id] as Dictionary, team)
 	return structure_id
 
 
@@ -1053,15 +1065,16 @@ func spawn_scenario_prop(object_id: String, at: Vector2, surface: String) -> int
 	## Passive props are deterministic world presentation records only. The
 	## ContentDB contract admits IMMOBILE + INERT/OPTIMIZED_PROP objects and
 	## rejects every combat/structure KindOf token, so no owner or body is made.
+	var _sim = sim
 	var contract := scenario_spawn_contract(object_id, surface)
 	if String(contract.get("kind", "")) != "prop":
 		return -1
 	var document := contract.get("document", {}) as Dictionary
 	if not _scenario_prop_is_passive(document):
 		return -1
-	var prop_id = sim._next_scenario_prop_id
-	sim._next_scenario_prop_id += 1
-	sim.scenario_props[prop_id] = {
+	var prop_id = _sim._next_scenario_prop_id
+	_sim._next_scenario_prop_id += 1
+	_sim.scenario_props[prop_id] = {
 		"id": prop_id,
 		"kind": "scenario-prop",
 		"source_object_id": String(document.get("objectId", object_id)),
@@ -1083,14 +1096,15 @@ func launch_scenario_bezier_projectile(
 	## Explicit activation boundary for authored projectile-capable props. The
 	## caller owns flight duration; this lane owns only the sealed cubic envelope.
 	## Arrival effects remain deferred and execute nothing here.
+	var _sim = sim
 	var registry_kind := ""
 	var row: Dictionary = {}
-	if sim.scenario_props.has(prop_id):
+	if _sim.scenario_props.has(prop_id):
 		registry_kind = "prop"
-		row = sim.scenario_props[prop_id] as Dictionary
-	elif sim.entities.has(prop_id) and String((sim.entities[prop_id] as Dictionary).get("scenario_source_object_id", "")) != "":
+		row = _sim.scenario_props[prop_id] as Dictionary
+	elif _sim.entities.has(prop_id) and String((_sim.entities[prop_id] as Dictionary).get("scenario_source_object_id", "")) != "":
 		registry_kind = "unit"
-		row = sim.entities[prop_id] as Dictionary
+		row = _sim.entities[prop_id] as Dictionary
 	else:
 		return {"ok": false, "reason": "scenario-projectile-entity-missing"}
 	if duration_ticks <= 0 or not is_finite(target.x) or not is_finite(target.y):
@@ -1105,7 +1119,7 @@ func launch_scenario_bezier_projectile(
 	if String(contract.get("kind", "")) != registry_kind:
 		return {"ok": false, "reason": "bezier-contract-unavailable"}
 	var document := contract.get("document", {}) as Dictionary
-	var receipt = sim.PlayableUnitAdapter.bezier_trajectory_contract(document)
+	var receipt = _sim.PlayableUnitAdapter.bezier_trajectory_contract(document)
 	if receipt.is_empty():
 		return {"ok": false, "reason": "bezier-contract-unavailable"}
 	var trajectory := receipt.get("trajectory", {}) as Dictionary
@@ -1184,13 +1198,14 @@ func sample_bezier_projectile_trajectory(
 
 
 func _step_scenario_bezier_projectiles() -> void:
-	if sim.scenario_props.is_empty() and sim.entities.is_empty():
+	var _sim = sim
+	if _sim.scenario_props.is_empty() and _sim.entities.is_empty():
 		return
 	var carriers: Array[Dictionary] = []
-	for prop_id in sim.scenario_props.keys():
+	for prop_id in _sim.scenario_props.keys():
 		carriers.append({"id": int(prop_id), "kind": "prop"})
-	for entity_id in sim.entities.keys():
-		if typeof((sim.entities[entity_id] as Dictionary).get("bezier_projectile")) == TYPE_DICTIONARY:
+	for entity_id in _sim.entities.keys():
+		if typeof((_sim.entities[entity_id] as Dictionary).get("bezier_projectile")) == TYPE_DICTIONARY:
 			carriers.append({"id": int(entity_id), "kind": "unit"})
 	carriers.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return int(a["id"]) < int(b["id"])
@@ -1198,9 +1213,9 @@ func _step_scenario_bezier_projectiles() -> void:
 	for carrier in carriers:
 		var id_value := int(carrier["id"])
 		var row := (
-			sim.scenario_props[id_value] as Dictionary
+			_sim.scenario_props[id_value] as Dictionary
 			if String(carrier["kind"]) == "prop"
-			else sim.entities[id_value] as Dictionary
+			else _sim.entities[id_value] as Dictionary
 		)
 		var active_value: Variant = row.get("bezier_projectile")
 		if typeof(active_value) != TYPE_DICTIONARY:
@@ -1228,7 +1243,7 @@ func _step_scenario_bezier_projectiles() -> void:
 		row["position"] = Vector2(sampled.x, sampled.z)
 		row["projectile_height_source"] = sampled.y
 		if elapsed == duration:
-			active["arrival_tick"] = sim.tick_index
+			active["arrival_tick"] = _sim.tick_index
 			var arrival := active.get("arrival", {}) as Dictionary
 			if String(arrival.get("runtimeStatus", "")) != "executable":
 				active["status"] = "arrival-deferred"
@@ -1242,10 +1257,10 @@ func _step_scenario_bezier_projectiles() -> void:
 					"kind": "bezier-impact-fx",
 					"fxListId": String(arrival.get("groundBounceFxId", "")),
 					"position": Vector2(row.get("position", Vector2.ZERO)),
-					"tick": sim.tick_index,
+					"tick": _sim.tick_index,
 					"ordinal": requests.size(),
 				})
-				sim.scenario_bezier_presentation_requests.append(
+				_sim.scenario_bezier_presentation_requests.append(
 					(requests[requests.size() - 1] as Dictionary).duplicate(true)
 				)
 				var start := Vector2(row.get("position", Vector2.ZERO))
@@ -1272,19 +1287,19 @@ func _step_scenario_bezier_projectiles() -> void:
 				"kind": "bezier-impact-fx",
 				"fxListId": String(arrival.get("groundHitFxId", "")),
 				"position": Vector2(row.get("position", Vector2.ZERO)),
-				"tick": sim.tick_index,
+				"tick": _sim.tick_index,
 				"ordinal": requests.size(),
 			})
-			sim.scenario_bezier_presentation_requests.append(
+			_sim.scenario_bezier_presentation_requests.append(
 				(requests[requests.size() - 1] as Dictionary).duplicate(true)
 			)
 			active["status"] = "landed"
 			active["terminal_policy"] = String(arrival.get("terminalPolicy", ""))
 			if String(active["terminal_policy"]) == "remove-on-final-impact":
 				if String(carrier["kind"]) == "prop":
-					sim.scenario_props.erase(id_value)
+					_sim.scenario_props.erase(id_value)
 				else:
-					sim.delete_entity(id_value)
+					_sim.delete_entity(id_value)
 
 
 func spawn_scenario_object(
@@ -1312,6 +1327,7 @@ func spawn_scenario_object(
 
 # De-staticed on extraction (instance sim access).
 func _scenario_structure_instantiation_rule(document: Dictionary) -> Dictionary:
+	var _sim = sim
 	var registration_value: Variant = document.get("registration")
 	if typeof(registration_value) != TYPE_DICTIONARY:
 		return {}
@@ -1348,19 +1364,19 @@ func _scenario_structure_instantiation_rule(document: Dictionary) -> Dictionary:
 	var result = {
 		"maximum_health": int(maximum_value),
 		"role": String(admission.get("role", "")),
-		"structure_kind": sim._scenario_structure_kind(document),
+		"structure_kind": _sim._scenario_structure_kind(document),
 		"admission": admission.duplicate(true),
 		"lifecycle": lifecycle.duplicate(true),
 		"gameplay": gameplay.duplicate(true),
 		"module_contracts": _structure_contracts_with_passive_area_resolution(
-			document, sim.PlayableUnitAdapter.module_contracts(document)
+			document, _sim.PlayableUnitAdapter.module_contracts(document)
 		),
 	}
 	if String(result.get("structure_kind", "")) == "":
 		return {}
 	var geometry_value: Variant = gameplay.get("geometry", {})
 	if typeof(geometry_value) == TYPE_DICTIONARY:
-		var footprint_radius = sim.SelectionPick.source_footprint_radius(geometry_value as Dictionary)
+		var footprint_radius = _sim.SelectionPick.source_footprint_radius(geometry_value as Dictionary)
 		if is_finite(footprint_radius) and footprint_radius > 0.0:
 			result["footprint_radius_source"] = footprint_radius
 	var scalar_fields := gameplay.get("scalarFields", {}) as Dictionary
@@ -1397,6 +1413,7 @@ func _scenario_prop_is_passive(document: Dictionary) -> bool:
 
 
 func spawn_scenario_pickup(object_id: String, at: Vector2, surface: String) -> int:
+	var _sim = sim
 	var contract := scenario_spawn_contract(object_id, surface)
 	if String(contract.get("kind", "")) != "pickup":
 		return -1
@@ -1411,9 +1428,9 @@ func spawn_scenario_pickup(object_id: String, at: Vector2, surface: String) -> i
 	var pickup_contract := pickup_value as Dictionary
 	if String(pickup_contract.get("module", "")) != "SalvageCrateCollide" or String(pickup_contract.get("extraction", "")) != "typed":
 		return -1
-	var pickup_id = sim._next_pickup_object_id
-	sim._next_pickup_object_id += 1
-	sim.pickup_objects[pickup_id] = {
+	var pickup_id = _sim._next_pickup_object_id
+	_sim._next_pickup_object_id += 1
+	_sim.pickup_objects[pickup_id] = {
 		"id": pickup_id,
 		"kind": "active-pickup",
 		"object_id": String(document.get("objectId", object_id)),
@@ -1445,14 +1462,15 @@ func collect_salvage_crate(pickup_id: int, picker_id: int) -> Dictionary:
 	## BFME2 1.06 game.dat (SHA-256 F008B5...56A7640), SalvageCrateCollide
 	## 0x8BD314/0x8BD442. A refused pickup remains in the world and executes no
 	## FX. A successful reward executes first, then FX, then consumes the crate.
-	if not sim.pickup_objects.has(pickup_id):
+	var _sim = sim
+	if not _sim.pickup_objects.has(pickup_id):
 		return {"ok": false, "reason": "pickup-missing"}
-	if not sim.entities.has(picker_id):
+	if not _sim.entities.has(picker_id):
 		return {"ok": false, "reason": "picker-missing"}
-	var pickup := sim.pickup_objects[pickup_id] as Dictionary
+	var pickup := _sim.pickup_objects[pickup_id] as Dictionary
 	if String(pickup.get("kind", "")) != "active-pickup":
 		return {"ok": false, "reason": "not-active-pickup"}
-	var picker := sim.entities[picker_id] as Dictionary
+	var picker := _sim.entities[picker_id] as Dictionary
 	if int(picker.get("health", 0)) <= 0:
 		return {"ok": false, "reason": "picker-defeated"}
 	var contract := pickup.get("pickup_contract", {}) as Dictionary
@@ -1474,7 +1492,7 @@ func collect_salvage_crate(pickup_id: int, picker_id: int) -> Dictionary:
 	# have no references in the complete BFME2 1.06 class implementation.
 	var level_field := fields.get("LevelUpChance", {}) as Dictionary
 	var level_chance := float(level_field.get("ratio", float(level_field.get("percent", 0.0)) / 100.0))
-	var roll = sim.logic_random_real(0.0, 1.0)
+	var roll = _sim.logic_random_real(0.0, 1.0)
 	var reward := ""
 	var amount := 0
 	if roll < level_chance:
@@ -1491,45 +1509,47 @@ func collect_salvage_crate(pickup_id: int, picker_id: int) -> Dictionary:
 		else:
 			var minimum := int(_module_contract_value(fields, "MinResource", 0))
 			var maximum := int(_module_contract_value(fields, "MaxResource", minimum))
-			amount = minimum if minimum == maximum else sim.logic_random_int(minimum, maximum)
+			amount = minimum if minimum == maximum else _sim.logic_random_int(minimum, maximum)
 			if amount > 0:
 				var team := int(picker.get("team", -1))
-				sim.team_resources[team] = sim.resources_for_team(team) + amount
+				_sim.team_resources[team] = _sim.resources_for_team(team) + amount
 			reward = "resource"
 	var execute_fx := String(_module_contract_value(fields, "ExecuteFX", ""))
-	sim._emit_event("pickup.salvage_collected", picker_id, pickup_id, {
+	_sim._emit_event("pickup.salvage_collected", picker_id, pickup_id, {
 		"reward": reward,
 		"amount": amount,
 		"roll": roll,
 		"execute_fx": execute_fx,
 	})
-	sim.pickup_objects.erase(pickup_id)
+	_sim.pickup_objects.erase(pickup_id)
 	return {"ok": true, "reason": "", "reward": reward, "amount": amount, "roll": roll, "execute_fx": execute_fx}
 
 
 func _step_active_pickup_collisions() -> void:
+	var _sim = sim
 	var pickup_ids: Array[int] = []
-	for value in sim.pickup_objects.keys(): pickup_ids.append(int(value))
+	for value in _sim.pickup_objects.keys(): pickup_ids.append(int(value))
 	pickup_ids.sort()
 	for pickup_id in pickup_ids:
-		if not sim.pickup_objects.has(pickup_id): continue
-		var pickup := sim.pickup_objects[pickup_id] as Dictionary
+		if not _sim.pickup_objects.has(pickup_id): continue
+		var pickup := _sim.pickup_objects[pickup_id] as Dictionary
 		if String(pickup.get("kind", "")) != "active-pickup" or not bool(pickup.get("available", true)): continue
 		var geometry := pickup.get("geometry", {}) as Dictionary;var footprint := geometry.get("footprint", {}) as Dictionary
 		if typeof(footprint.get("radius")) not in [TYPE_INT, TYPE_FLOAT]: continue
-		var crate_radius := float(footprint.get("radius", 0.0)) * float(sim._rules.get("source_unit_scale", 0.1))
+		var crate_radius := float(footprint.get("radius", 0.0)) * float(_sim._rules.get("source_unit_scale", 0.1))
 		if crate_radius <= 0.0: continue
 		var origin := Vector2(pickup.get("position", Vector2.ZERO))
-		for picker_id in sim.entity_ids():
-			var picker := sim.entities[picker_id] as Dictionary
+		for picker_id in _sim.entity_ids():
+			var picker := _sim.entities[picker_id] as Dictionary
 			if int(picker.get("health", 0)) <= 0: continue
-			var collision_radius = crate_radius + sim._target_footprint_radius(picker_id, "battalion")
+			var collision_radius = crate_radius + _sim._target_footprint_radius(picker_id, "battalion")
 			if origin.distance_to(Vector2(picker.get("position", Vector2.ZERO))) <= collision_radius:
 				if bool(collect_salvage_crate(pickup_id, picker_id).get("ok", false)): break
 
 
 func _grant_one_authored_rank(row: Dictionary) -> void:
-	var rule := sim._unit_experience_rules.get(String(row.get("unit_type", "")), {}) as Dictionary
+	var _sim = sim
+	var rule := _sim._unit_experience_rules.get(String(row.get("unit_type", "")), {}) as Dictionary
 	if rule.is_empty() or int(row.get("health", 0)) <= 0:
 		return
 	var level := int(row.get("level", 1))
@@ -1539,7 +1559,7 @@ func _grant_one_authored_rank(row: Dictionary) -> void:
 			continue
 		var needed := maxi(0, int(next.get("required_experience", 0)) - int(row.get("experience_xp", 0)))
 		if needed > 0:
-			sim._award_experience(row, needed)
+			_sim._award_experience(row, needed)
 		return
 
 
@@ -1641,6 +1661,7 @@ func _attach_structure_module_contracts(row: Dictionary) -> void:
 	## A no-contract lookup stays byte-inert: recording a derived "attempted"
 	## memo on the structure moved the frozen state pin and also prevented a
 	## later registry load from attaching the contract it had just supplied.
+	var _sim = sim
 	if bool(row.get("structure_module_contracts_attached", false)):
 		return
 	var keys: Array = [
@@ -1653,8 +1674,8 @@ func _attach_structure_module_contracts(row: Dictionary) -> void:
 	var contracts: Array = []
 	for key_value in keys:
 		var key := String(key_value)
-		if key != "" and sim._structure_module_contracts.has(key):
-			contracts = (sim._structure_module_contracts[key] as Array).duplicate(true)
+		if key != "" and _sim._structure_module_contracts.has(key):
+			contracts = (_sim._structure_module_contracts[key] as Array).duplicate(true)
 			break
 	if contracts.is_empty():
 		return
@@ -1707,133 +1728,133 @@ func _attach_structure_module_contracts(row: Dictionary) -> void:
 					"excluded_death_types": fields.get("excludedDeathTypes", []),
 				}
 		if folded == "hordetransportcontain":
-			sim._attach_horde_transport_contract(row, contract)
+			_sim._attach_horde_transport_contract(row, contract)
 		elif folded in ["transportcontain", "tunnelcontain", "garrisoncontain", "hordegarrisoncontain"]:
-			sim._attach_container_family_contract(row, contract)
+			_sim._attach_container_family_contract(row, contract)
 		elif folded == "productionqueuehordecontain":
-			sim._attach_container_family_contract(row, contract)
+			_sim._attach_container_family_contract(row, contract)
 		elif folded == "siegeenginecontain":
-			sim._attach_siege_engine_contain_contract(row, contract)
+			_sim._attach_siege_engine_contain_contract(row, contract)
 		elif folded == "largegroupbonusupdate":
-			sim._attach_large_group_bonus_contract(row, contract)
+			_sim._attach_large_group_bonus_contract(row, contract)
 		elif folded == "hitreactionbehavior":
-			sim._attach_hit_reaction_contract(row, contract)
+			_sim._attach_hit_reaction_contract(row, contract)
 		elif folded == "animalaiupdate":
-			sim._attach_animal_ai_contract(row, contract)
+			_sim._attach_animal_ai_contract(row, contract)
 		elif folded == "threatfinderupdate":
-			sim._attach_threat_finder_contract(row, contract)
+			_sim._attach_threat_finder_contract(row, contract)
 		elif folded == "radiatefearupdate":
-			sim._attach_radiate_fear_contract(row, contract)
+			_sim._attach_radiate_fear_contract(row, contract)
 		elif folded == "poisonedbehavior":
-			sim._attach_poisoned_contract(row, contract)
+			_sim._attach_poisoned_contract(row, contract)
 		elif folded == "damagefieldupdate":
-			sim._attach_damage_field_contract(row, contract)
+			_sim._attach_damage_field_contract(row, contract)
 		elif folded == "spawnunitbehavior":
-			sim._attach_spawn_unit_contract(row, contract)
+			_sim._attach_spawn_unit_contract(row, contract)
 		elif folded == "modelconditionsoundselectorclientbehavior":
-			sim._attach_model_condition_sound_selector(row, contract)
+			_sim._attach_model_condition_sound_selector(row, contract)
 		elif folded == "randomsoundselectorclientbehavior":
-			sim._attach_random_sound_selector(row, contract)
+			_sim._attach_random_sound_selector(row, contract)
 		elif folded == "upgradesoundselectorclientbehavior":
-			sim._attach_upgrade_sound_selector(row, contract)
+			_sim._attach_upgrade_sound_selector(row, contract)
 		elif folded == "largegroupaudioupdate":
-			sim._attach_large_group_audio_contract(row, contract)
+			_sim._attach_large_group_audio_contract(row, contract)
 		elif folded == "firespreadupdate":
-			sim._attach_fire_spread_contract(row, contract)
+			_sim._attach_fire_spread_contract(row, contract)
 		elif folded == "shipslowdeathbehavior":
-			sim._attach_ship_slow_death_contract(row, contract)
+			_sim._attach_ship_slow_death_contract(row, contract)
 		elif folded == "attributemodifierauraupdate":
-			sim._attach_attribute_modifier_aura_contract(row, contract)
+			_sim._attach_attribute_modifier_aura_contract(row, contract)
 		elif folded == "autohealbehavior":
 			_attach_auto_heal_contract(row, contract)
 		elif folded == "lifetimeupdate":
-			sim._attach_lifetime_update_contract(row, contract)
+			_sim._attach_lifetime_update_contract(row, contract)
 		elif folded == "stancesbehavior":
-			sim._attach_stances_contract(row, contract)
+			_sim._attach_stances_contract(row, contract)
 		elif folded == "aiupdateinterface":
 			_attach_ai_update_contract(row, contract)
 		elif folded == "hordeaiupdate":
 			_attach_horde_ai_update_contract(row, contract)
 		elif folded == "pickupstuffupdate":
-			sim._attach_pickup_stuff_update_contract(row, contract)
+			_sim._attach_pickup_stuff_update_contract(row, contract)
 		elif folded == "autoabilitybehavior":
-			sim._attach_auto_ability_contract(row, contract)
+			_sim._attach_auto_ability_contract(row, contract)
 		elif folded == "aispecialpowerupdate":
-			sim._attach_ai_special_power_contract(row, contract)
+			_sim._attach_ai_special_power_contract(row, contract)
 		elif folded == "weaponmodespecialpowerupdate":
-			sim._attach_weapon_mode_special_power_contract(row, contract)
+			_sim._attach_weapon_mode_special_power_contract(row, contract)
 		elif folded == "respawnupdate":
-			sim._attach_respawn_update_contract(row, contract)
+			_sim._attach_respawn_update_contract(row, contract)
 		elif folded == "fireweaponupdate":
-			sim._attach_fire_weapon_update_contract(row, contract)
+			_sim._attach_fire_weapon_update_contract(row, contract)
 		elif folded == "deletionupdate":
-			sim._attach_deletion_update_contract(row, contract)
+			_sim._attach_deletion_update_contract(row, contract)
 		elif folded == "productionupdate":
-			sim._attach_production_update_contract(row, contract)
+			_sim._attach_production_update_contract(row, contract)
 		elif folded == "gettingbuiltbehavior":
-			sim._attach_getting_built_contract(row, contract)
+			_sim._attach_getting_built_contract(row, contract)
 		elif folded == "buildingbehavior":
-			sim._attach_building_behavior_contract(row, contract)
+			_sim._attach_building_behavior_contract(row, contract)
 		elif folded == "queueproductionexitupdate":
-			sim._attach_queue_production_exit_contract(row, contract)
+			_sim._attach_queue_production_exit_contract(row, contract)
 		elif folded == "rebuildholeexposeddie" or folded == "rebuildholeexposedie":
-			sim._attach_rebuild_hole_expose_contract(row, contract)
+			_sim._attach_rebuild_hole_expose_contract(row, contract)
 		elif folded == "rebuildholebehavior":
-			sim._attach_rebuild_hole_behavior_contract(row, contract)
+			_sim._attach_rebuild_hole_behavior_contract(row, contract)
 		elif folded == "bannercarrierupdate":
-			sim._attach_banner_carrier_update_contract(row, contract)
+			_sim._attach_banner_carrier_update_contract(row, contract)
 		elif folded == "respawnbody":
-			sim._attach_respawn_body_contract(row, contract)
+			_sim._attach_respawn_body_contract(row, contract)
 		elif folded == "giveupgradeupdate":
-			sim._attach_give_upgrade_contract(row, contract)
+			_sim._attach_give_upgrade_contract(row, contract)
 		elif folded == "gateopenandclosebehavior":
-			sim._attach_gate_open_close_contract(row, contract)
+			_sim._attach_gate_open_close_contract(row, contract)
 		elif folded == "aigateupdate":
-			sim._attach_ai_gate_contract(row, contract)
+			_sim._attach_ai_gate_contract(row, contract)
 		elif folded == "fakepathfindportalbehaviour":
-			sim._attach_fake_pathfind_portal_contract(row, contract)
+			_sim._attach_fake_pathfind_portal_contract(row, contract)
 		elif folded == "stealthdetectorupdate":
-			sim._attach_stealth_detector_contract(row, contract)
+			_sim._attach_stealth_detector_contract(row, contract)
 		elif folded == "invisibilityupdate":
-			sim._attach_invisibility_update_contract(row, contract)
+			_sim._attach_invisibility_update_contract(row, contract)
 		elif folded == "slavedupdate":
-			sim._attach_slaved_update_contract(row, contract)
+			_sim._attach_slaved_update_contract(row, contract)
 		elif folded == "castleupgrade":
-			sim._attach_castle_upgrade_contract(row, contract)
+			_sim._attach_castle_upgrade_contract(row, contract)
 		elif folded == "spawnbehavior":
-			sim._attach_spawn_behavior_contract(row, contract)
+			_sim._attach_spawn_behavior_contract(row, contract)
 		elif folded == "stealthupdate":
-			sim._attach_stealth_update_contract(row, contract)
+			_sim._attach_stealth_update_contract(row, contract)
 		elif folded == "objectcreationupgrade":
-			sim._attach_object_creation_upgrade_contract(row, contract)
+			_sim._attach_object_creation_upgrade_contract(row, contract)
 		elif folded == "attributemodifierupgrade":
-			sim._attach_attribute_modifier_upgrade_contract(row, contract)
+			_sim._attach_attribute_modifier_upgrade_contract(row, contract)
 		elif folded == "geometryupgrade":
-			sim._attach_geometry_upgrade_contract(row, contract)
+			_sim._attach_geometry_upgrade_contract(row, contract)
 		elif folded == "emotiontrackerupdate":
-			sim._attach_emotion_tracker_contract(row, contract)
+			_sim._attach_emotion_tracker_contract(row, contract)
 		elif folded == "castlememberbehavior":
-			sim._attach_castle_member_contract(row, contract)
+			_sim._attach_castle_member_contract(row, contract)
 		elif folded == "inactivebody":
-			sim._attach_inactive_body_contract(row, contract)
+			_sim._attach_inactive_body_contract(row, contract)
 		elif folded == "squishcollide":
-			sim._attach_squish_collide_contract(row, contract)
+			_sim._attach_squish_collide_contract(row, contract)
 		elif folded == "hordemembercollide":
-			sim._attach_horde_member_collide_contract(row, contract)
+			_sim._attach_horde_member_collide_contract(row, contract)
 		elif folded == "notifytargetsofimminentprobablecrushingupdate":
-			sim._attach_notify_crushing_contract(row, contract)
+			_sim._attach_notify_crushing_contract(row, contract)
 		elif folded == "flammableupdate":
-			sim._attach_flammable_update_contract(row, contract)
+			_sim._attach_flammable_update_contract(row, contract)
 		elif folded == "dynamicportalbehaviour":
-			sim._attach_dynamic_portal_contract(row, contract)
+			_sim._attach_dynamic_portal_contract(row, contract)
 		elif folded == "foundationaiupdate":
-			sim._attach_foundation_ai_contract(row, contract)
+			_sim._attach_foundation_ai_contract(row, contract)
 		elif folded == "monitorconditionupdate":
-			sim._attach_monitor_condition_contract(row, contract)
+			_sim._attach_monitor_condition_contract(row, contract)
 		elif folded == "refunddie":
-			sim._attach_refund_die_contract(row, contract)
+			_sim._attach_refund_die_contract(row, contract)
 		elif folded == "wallhubbehavior":
-			sim._attach_wall_hub_contract(row, contract)
+			_sim._attach_wall_hub_contract(row, contract)
 		elif folded == "buildableherolistupgrade":
 			_attach_buildable_hero_list_upgrade_contract(row, contract)
 		elif folded == "allowbannerspawnupgrade":
@@ -1841,46 +1862,46 @@ func _attach_structure_module_contracts(row: Dictionary) -> void:
 		elif folded == "spellrechargemodifierupgrade":
 			_attach_spell_recharge_modifier_upgrade_contract(row, contract)
 		elif folded == "replaceselfupgrade":
-			sim._attach_replace_self_contract(row, contract)
+			_sim._attach_replace_self_contract(row, contract)
 		elif folded == "citadelslaughterhordecontain":
-			sim._attach_citadel_slaughter_contract(row, contract)
+			_sim._attach_citadel_slaughter_contract(row, contract)
 		elif folded == "oclupdate":
-			sim._attach_ocl_update_contract(row, contract)
+			_sim._attach_ocl_update_contract(row, contract)
 		elif folded == "hordecontain":
 			_attach_horde_contain_contract(row, contract)
 		elif folded == "stopspecialpower":
-			sim._attach_stop_special_power_contract(row, contract)
+			_sim._attach_stop_special_power_contract(row, contract)
 		elif folded == "unleashspecialpower":
-			sim._attach_unleash_special_power_contract(row, contract)
+			_sim._attach_unleash_special_power_contract(row, contract)
 		elif folded == "specialenemysenseupdate":
-			sim._attach_special_enemy_sense_contract(row, contract)
+			_sim._attach_special_enemy_sense_contract(row, contract)
 		if folded == "fireweaponwhendeadbehavior":
-			sim._attach_fire_weapon_when_dead_contract(row, contract)
+			_sim._attach_fire_weapon_when_dead_contract(row, contract)
 		# PassiveAreaEffectBehavior heal variant. The converter currently labels
 		# the generic module contract deferred because its ModifierName leadership
 		# variant still needs the ModifierList consumer. Healing is independent and
 		# fully authored by these fields, so consume only that closed subset here.
 		if folded == "passiveareaeffectbehavior":
-			var heal_percent = sim._passive_area_effect_percent(
+			var heal_percent = _sim._passive_area_effect_percent(
 				_passive_area_effect_field(fields, "HealPercentPerSecond")
 			)
-			var radius = sim._passive_area_effect_number(fields, "EffectRadius")
-			var ping_ms = sim._passive_area_effect_number(fields, "PingDelay")
+			var radius = _sim._passive_area_effect_number(fields, "EffectRadius")
+			var ping_ms = _sim._passive_area_effect_number(fields, "PingDelay")
 			if heal_percent > 0.0 and radius > 0.0 and ping_ms > 0.0:
 				var rows: Array = row.get("passive_area_effect_heals", []) as Array
 				rows.append({
 					"radius_source": radius,
-					"ping_ticks": maxi(1, roundi(ping_ms / (sim.TICK_SECONDS * 1000.0))),
+					"ping_ticks": maxi(1, roundi(ping_ms / (_sim.TICK_SECONDS * 1000.0))),
 					"heal_fraction_per_second": heal_percent,
 					"allow_filter": _passive_area_effect_field(fields, "AllowFilter"),
 					"upgrade_required": _passive_area_effect_field(fields, "UpgradeRequired"),
-					"non_stackable": sim._passive_area_effect_yes(fields, "NonStackable"),
+					"non_stackable": _sim._passive_area_effect_yes(fields, "NonStackable"),
 					"tag": String(contract.get("tag", "")),
 					"source_ini": String(contract.get("source_ini", contract.get("sourceIni", ""))),
 					# Lazy attachment occurs inside the current tick after sim.tick_index
 					# advances. The structure existed for this tick interval already,
 					# so cadence is measured from the preceding boundary.
-					"next_ping_tick": sim.tick_index - 1 + maxi(1, roundi(ping_ms / (sim.TICK_SECONDS * 1000.0))),
+					"next_ping_tick": _sim.tick_index - 1 + maxi(1, roundi(ping_ms / (_sim.TICK_SECONDS * 1000.0))),
 				})
 				row["passive_area_effect_heals"] = rows
 			var modifier_value: Variant = fields.get("ResolvedModifier")
@@ -1895,14 +1916,14 @@ func _attach_structure_module_contracts(row: Dictionary) -> void:
 						"id": String(modifier.get("id", "")),
 						"category": String(modifier.get("category", "")),
 						"effects": effects.duplicate(true),
-						"duration_ticks": maxi(1, roundi(duration_ms / (sim.TICK_SECONDS * 1000.0))),
-						"ping_ticks": maxi(1, roundi(modifier_ping_ms / (sim.TICK_SECONDS * 1000.0))),
+						"duration_ticks": maxi(1, roundi(duration_ms / (_sim.TICK_SECONDS * 1000.0))),
+						"ping_ticks": maxi(1, roundi(modifier_ping_ms / (_sim.TICK_SECONDS * 1000.0))),
 						"radius_source": radius,
 						"allow_filter": _passive_area_effect_field(fields, "AllowFilter"),
 						"upgrade_required": _passive_area_effect_field(fields, "UpgradeRequired"),
-						"non_stackable": sim._passive_area_effect_yes(fields, "NonStackable"),
+						"non_stackable": _sim._passive_area_effect_yes(fields, "NonStackable"),
 						"stacking": (modifier.get("stacking", {}) as Dictionary).duplicate(true),
-						"next_ping_tick": sim.tick_index,
+						"next_ping_tick": _sim.tick_index,
 					})
 					row["passive_area_effect_modifiers"] = modifier_rows
 
@@ -1997,9 +2018,10 @@ func _attach_allow_banner_spawn_upgrade_contract(row: Dictionary, contract: Dict
 
 
 func structure_allows_banner_spawn(structure_id: int) -> bool:
-	if not sim.structures.has(structure_id):
+	var _sim = sim
+	if not _sim.structures.has(structure_id):
 		return false
-	var structure := sim.structures[structure_id] as Dictionary
+	var structure := _sim.structures[structure_id] as Dictionary
 	if not structure.has("allow_banner_spawn_upgrade") and not bool(structure.get("structure_module_contracts_attached", false)):
 		_attach_structure_module_contracts(structure)
 	var policy := structure.get("allow_banner_spawn_upgrade", {}) as Dictionary
@@ -2008,7 +2030,7 @@ func structure_allows_banner_spawn(structure_id: int) -> bool:
 		# ordinary horde-level BannerCarriersAllowed path.
 		return true
 	for upgrade_value in policy.get("triggered_by", []) as Array:
-		if sim._structure_has_completed_upgrade(structure, String(upgrade_value)):
+		if _sim._structure_has_completed_upgrade(structure, String(upgrade_value)):
 			return true
 	return false
 
@@ -2049,9 +2071,10 @@ func spell_recharge_ticks_for_team(team: int, base_ticks: int) -> int:
 	## Retail Percentage rows are ordered by the number of controlled Signal
 	## Fires: first owned instance selects row one, the second row two, and so on;
 	## counts beyond the authored table keep the final row.
+	var _sim = sim
 	var active_policies: Array[Dictionary] = []
-	for structure_id in sim.structure_ids(team):
-		var structure := sim.structures[structure_id] as Dictionary
+	for structure_id in _sim.structure_ids(team):
+		var structure := _sim.structures[structure_id] as Dictionary
 		if int(structure.get("health", 0)) <= 0:
 			continue
 		if not structure.has("spell_recharge_modifier_upgrade") and not bool(structure.get("structure_module_contracts_attached", false)):
@@ -2174,9 +2197,10 @@ func _resolve_horde_payload_count(payload: Dictionary, defines: Dictionary) -> D
 
 
 func admit_horde_member(horde_id: int, object_id: String, kind_of: Array, rank: int = 0, health: int = 1) -> Dictionary:
-	if not sim.entities.has(horde_id):
+	var _sim = sim
+	if not _sim.entities.has(horde_id):
 		return {"ok": false, "reason": "horde-missing"}
-	var row := sim.entities[horde_id] as Dictionary
+	var row := _sim.entities[horde_id] as Dictionary
 	if not row.has("horde_contain"):
 		_attach_module_contracts(row)
 	if not row.has("horde_contain"):
@@ -2189,7 +2213,7 @@ func admit_horde_member(horde_id: int, object_id: String, kind_of: Array, rank: 
 	if members.size() >= slots:
 		return {"ok": false, "reason": "capacity-full"}
 	var probe := {"category": String(kind_of[0] if not kind_of.is_empty() else ""), "kind_of": kind_of}
-	if not sim._transport_filter_accepts(probe, policy.get("passenger_filter", []) as Array):
+	if not _sim._transport_filter_accepts(probe, policy.get("passenger_filter", []) as Array):
 		return {"ok": false, "reason": "passenger-filter-refused"}
 	var member := {"object_id": object_id, "kind_of": kind_of.duplicate(), "rank": rank, "health": maxi(1, health), "status": "contained", "object_status": {}}
 	for status_value in policy.get("contained_statuses", []) as Array:
@@ -2200,9 +2224,10 @@ func admit_horde_member(horde_id: int, object_id: String, kind_of: Array, rank: 
 
 
 func eject_horde_member(horde_id: int, member_index: int) -> Dictionary:
-	if not sim.entities.has(horde_id):
+	var _sim = sim
+	if not _sim.entities.has(horde_id):
 		return {"ok": false, "reason": "horde-missing"}
-	var row := sim.entities[horde_id] as Dictionary
+	var row := _sim.entities[horde_id] as Dictionary
 	var members := row.get("horde_contained_members", []) as Array
 	if member_index < 0 or member_index >= members.size():
 		return {"ok": false, "reason": "member-index-invalid"}
@@ -2215,9 +2240,10 @@ func eject_horde_member(horde_id: int, member_index: int) -> Dictionary:
 
 
 func apply_horde_contained_damage(horde_id: int, member_index: int, amount: int, death_type: String = "NORMAL") -> Dictionary:
-	if not sim.entities.has(horde_id):
+	var _sim = sim
+	if not _sim.entities.has(horde_id):
 		return {"ok": false, "reason": "horde-missing"}
-	var row := sim.entities[horde_id] as Dictionary
+	var row := _sim.entities[horde_id] as Dictionary
 	var members := row.get("horde_contained_members", []) as Array
 	if member_index < 0 or member_index >= members.size():
 		return {"ok": false, "reason": "member-index-invalid"}
@@ -2232,20 +2258,21 @@ func apply_horde_contained_damage(horde_id: int, member_index: int, amount: int,
 		var accepted := policy.get("banner_death_types", []) as Array
 		kills_horde = accepted.is_empty() or accepted.has(death_type.to_upper())
 	if kills_horde:
-		sim._expire_lifetime_entity(horde_id, row, death_type)
+		_sim._expire_lifetime_entity(horde_id, row, death_type)
 	members.remove_at(member_index)
 	row["horde_contained_members"] = members
 	return {"ok": true, "reason": "", "killed": true, "horde_killed": kills_horde}
 
 
 func horde_amoeba_melee_reach(horde_id: int, target_position: Vector2, target_is_building: bool = false) -> Dictionary:
-	if not sim.entities.has(horde_id):
+	var _sim = sim
+	if not _sim.entities.has(horde_id):
 		return {"ok": false, "reason": "horde-missing"}
-	var row := sim.entities[horde_id] as Dictionary
+	var row := _sim.entities[horde_id] as Dictionary
 	var policy := row.get("horde_contain", {}) as Dictionary
 	if String(policy.get("melee_behavior", "")).to_lower() != "amoeba":
 		return {"ok": false, "reason": "amoeba-not-authored"}
-	var scale := float(sim._rules.get("source_map_transform_scale", 1.0))
+	var scale := float(_sim._rules.get("source_map_transform_scale", 1.0))
 	var outer := float(policy.get("outer_range_buildings" if target_is_building else "outer_range", 0.0)) * (scale if scale > 0.0 else 1.0)
 	var distance := Vector2(row.get("position", Vector2.ZERO)).distance_to(target_position)
 	return {"ok": true, "reason": "", "in_range": distance >= float(policy.get("inner_range", 0.0)) * scale and distance <= outer, "distance": distance, "outer_range": outer}
@@ -2327,9 +2354,10 @@ func _attach_horde_ai_update_contract(row: Dictionary, contract: Dictionary) -> 
 
 
 func trigger_horde_cower(entity_id: int) -> Dictionary:
-	if not sim.entities.has(entity_id):
+	var _sim = sim
+	if not _sim.entities.has(entity_id):
 		return {"ok": false, "reason": "entity-missing"}
-	var row := sim.entities[entity_id] as Dictionary
+	var row := _sim.entities[entity_id] as Dictionary
 	if not row.has("horde_ai_update"):
 		_attach_module_contracts(row)
 	if not row.has("horde_ai_update"):
@@ -2337,12 +2365,12 @@ func trigger_horde_cower(entity_id: int) -> Dictionary:
 	var policy := row["horde_ai_update"] as Dictionary
 	var low := maxi(0, int(policy.get("minimum_cower_ticks", 0)))
 	var high := maxi(low, int(policy.get("maximum_cower_ticks", low)))
-	var duration = low if low == high else sim.logic_random_int(low, high)
-	row["cower_until_tick"] = sim.tick_index + duration
+	var duration = low if low == high else _sim.logic_random_int(low, high)
+	row["cower_until_tick"] = _sim.tick_index + duration
 	row["state"] = "cower"
 	row["current_speed"] = 0.0
-	sim._clear_pending_route(row, true)
-	sim._emit_event("horde_ai.cower", entity_id, 0, {"duration_ticks": duration})
+	_sim._clear_pending_route(row, true)
+	_sim._emit_event("horde_ai.cower", entity_id, 0, {"duration_ticks": duration})
 	return {"ok": true, "reason": "", "duration_ticks": duration}
 
 

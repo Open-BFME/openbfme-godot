@@ -4034,19 +4034,19 @@ func _step_hero_regeneration() -> void:
 	_stepper_subsystem()._step_hero_regeneration()
 
 func _attach_auto_heal_contract(row: Dictionary, contract: Dictionary) -> void:
-	_stepper_subsystem()._attach_auto_heal_contract(row, contract)
+	_contracts_subsystem()._attach_auto_heal_contract(row, contract)
 
 func _step_auto_heal_updates() -> void:
-	_stepper_subsystem()._step_auto_heal_updates()
+	_contracts_subsystem()._step_auto_heal_updates()
 
 func _apply_auto_heal_pulse(row: Dictionary, battalion: bool) -> void:
-	_stepper_subsystem()._apply_auto_heal_pulse(row, battalion)
+	_contracts_subsystem()._apply_auto_heal_pulse(row, battalion)
 
 func _scaled_ability_rules(rules: Array[Dictionary], source_scale: float) -> Array[Dictionary]:
-	return _stepper_subsystem()._scaled_ability_rules(rules, source_scale)
+	return _contracts_subsystem()._scaled_ability_rules(rules, source_scale)
 
 func _attach_hero_ability_state(row: Dictionary) -> void:
-	_stepper_subsystem()._attach_hero_ability_state(row)
+	_contracts_subsystem()._attach_hero_ability_state(row)
 
 func _attach_module_contracts(row: Dictionary) -> void:
 	_contracts_subsystem()._attach_module_contracts(row)
@@ -5396,7 +5396,7 @@ func cast_ability(hero_id: int, ability_id: String, target_point: Vector2, team:
 	return _ability_runtime_subsystem().cast_ability(hero_id, ability_id, target_point, team)
 
 func _apply_ability_activate_module_graph(row: Dictionary, ability_id: String, effect: Dictionary, target_point: Vector2, targeting: String) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_activate_module_graph(row, ability_id, effect, target_point, targeting)
+	return _abilities_subsystem()._apply_ability_activate_module_graph(row, ability_id, effect, target_point, targeting)
 
 func _activate_module_target_identity(row: Dictionary, target_point: Vector2, targeting: String) -> Dictionary:
 	return _ability_runtime_subsystem()._activate_module_target_identity(row, target_point, targeting)
@@ -5432,22 +5432,22 @@ func _ability_enemies_near(team: int, point: Vector2, radius: float) -> Array[in
 	return _ability_runtime_subsystem()._ability_enemies_near(team, point, radius)
 
 func _apply_ability_weapon_blast(hero_row: Dictionary, effect: Dictionary, point: Vector2) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_weapon_blast(hero_row, effect, point)
+	return _abilities_subsystem()._apply_ability_weapon_blast(hero_row, effect, point)
 
 func _apply_ability_heal(hero_row: Dictionary, effect: Dictionary, epicenter: Vector2) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_heal(hero_row, effect, epicenter)
+	return _abilities_subsystem()._apply_ability_heal(hero_row, effect, epicenter)
 
 func _apply_ability_modifier(hero_row: Dictionary, ability_id: String, effect: Dictionary) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_modifier(hero_row, ability_id, effect)
+	return _abilities_subsystem()._apply_ability_modifier(hero_row, ability_id, effect)
 
 func _apply_ability_weapon_toggle(hero_row: Dictionary, effect: Dictionary) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_weapon_toggle(hero_row, effect)
+	return _abilities_subsystem()._apply_ability_weapon_toggle(hero_row, effect)
 
 func _siege_deploy_target(source: Dictionary, effect: Dictionary, point: Vector2, contract: Dictionary) -> int:
 	return _ability_runtime_subsystem()._siege_deploy_target(source, effect, point, contract)
 
 func _apply_ability_siege_deploy(row: Dictionary, effect: Dictionary, point: Vector2, contract: Dictionary) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_siege_deploy(row, effect, point, contract)
+	return _abilities_subsystem()._apply_ability_siege_deploy(row, effect, point, contract)
 
 func _toggle_deploy_set_model_condition(row: Dictionary, condition: String) -> void:
 	_ability_runtime_subsystem()._toggle_deploy_set_model_condition(row, condition)
@@ -5456,7 +5456,7 @@ func _toggle_deploy_set_modifier(row: Dictionary, modifiers: Array, active: bool
 	_ability_runtime_subsystem()._toggle_deploy_set_modifier(row, modifiers, active)
 
 func _apply_ability_toggle_deploy(row: Dictionary, effect: Dictionary) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_toggle_deploy(row, effect)
+	return _abilities_subsystem()._apply_ability_toggle_deploy(row, effect)
 
 func _step_toggle_deploy(row: Dictionary) -> void:
 	_ability_runtime_subsystem()._step_toggle_deploy(row)
@@ -5465,7 +5465,7 @@ func _step_siege_deploy(row: Dictionary) -> void:
 	_ability_runtime_subsystem()._step_siege_deploy(row)
 
 func _apply_ability_weapon_mode_special_power(row: Dictionary, effect: Dictionary) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_weapon_mode_special_power(row, effect)
+	return _abilities_subsystem()._apply_ability_weapon_mode_special_power(row, effect)
 
 func _attach_weapon_mode_special_power_contract(row: Dictionary, contract: Dictionary) -> void:
 	_ability_runtime_subsystem()._attach_weapon_mode_special_power_contract(row, contract)
@@ -5486,13 +5486,13 @@ func _end_weapon_mode_special_power(row: Dictionary, policy: Dictionary) -> void
 	_ability_runtime_subsystem()._end_weapon_mode_special_power(row, policy)
 
 func _apply_ability_dominate_enemy(row: Dictionary, ability_id: String, effect: Dictionary, target_point: Vector2, targeting: String) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_dominate_enemy(row, ability_id, effect, target_point, targeting)
+	return _abilities_subsystem()._apply_ability_dominate_enemy(row, ability_id, effect, target_point, targeting)
 
 func _apply_ability_grab_passenger(row: Dictionary, ability_id: String, effect: Dictionary, target_point: Vector2) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_grab_passenger(row, ability_id, effect, target_point)
+	return _abilities_subsystem()._apply_ability_grab_passenger(row, ability_id, effect, target_point)
 
 func _apply_ability_repair_structure(row: Dictionary, ability_id: String, effect: Dictionary, target_point: Vector2) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_repair_structure(row, ability_id, effect, target_point)
+	return _abilities_subsystem()._apply_ability_repair_structure(row, ability_id, effect, target_point)
 
 func _step_repair_structure(row: Dictionary) -> void:
 	_ability_runtime_subsystem()._step_repair_structure(row)
@@ -5507,7 +5507,7 @@ func _eject_grabbed_passengers(carrier_id: int, carrier: Dictionary) -> void:
 	_ability_runtime_subsystem()._eject_grabbed_passengers(carrier_id, carrier)
 
 func _apply_ability_fling_passenger(row: Dictionary, ability_id: String, effect: Dictionary) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_fling_passenger(row, ability_id, effect)
+	return _abilities_subsystem()._apply_ability_fling_passenger(row, ability_id, effect)
 
 func release_grabbed_passenger(carrier_id: int, release_index: int = 0) -> Dictionary:
 	return _ability_runtime_subsystem().release_grabbed_passenger(carrier_id, release_index)
@@ -5534,10 +5534,10 @@ func _step_temporary_defect(row: Dictionary) -> void:
 	_ability_runtime_subsystem()._step_temporary_defect(row)
 
 func _apply_ability_mount_toggle(hero_row: Dictionary, effect: Dictionary) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_mount_toggle(hero_row, effect)
+	return _abilities_subsystem()._apply_ability_mount_toggle(hero_row, effect)
 
 func _apply_ability_special_disguise(row: Dictionary, effect: Dictionary) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_special_disguise(row, effect)
+	return _abilities_subsystem()._apply_ability_special_disguise(row, effect)
 
 func special_disguise_opacity(row: Dictionary) -> float:
 	return _ability_runtime_subsystem().special_disguise_opacity(row)
@@ -5558,22 +5558,22 @@ func _rescale_member_health_preserving_fraction(row: Dictionary, new_member_maxi
 	_ability_runtime_subsystem()._rescale_member_health_preserving_fraction(row, new_member_maximum)
 
 func _apply_ability_capture_building(hero_row: Dictionary, effect: Dictionary, target_point: Vector2) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_capture_building(hero_row, effect, target_point)
+	return _abilities_subsystem()._apply_ability_capture_building(hero_row, effect, target_point)
 
 func _step_capture_channel(row: Dictionary) -> bool:
 	return _ability_runtime_subsystem()._step_capture_channel(row)
 
 func _apply_ability_terror(hero_row: Dictionary, ability_id: String, effect: Dictionary) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_terror(hero_row, ability_id, effect)
+	return _abilities_subsystem()._apply_ability_terror(hero_row, ability_id, effect)
 
 func _apply_fear_scatter(center: Vector2, row: Dictionary, strength: float) -> void:
 	_ability_runtime_subsystem()._apply_fear_scatter(center, row, strength)
 
 func _apply_ability_summon(hero_row: Dictionary, effect: Dictionary, point: Vector2) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_summon(hero_row, effect, point)
+	return _abilities_subsystem()._apply_ability_summon(hero_row, effect, point)
 
 func _apply_ability_summon_chain(team: int, effect: Dictionary, point: Vector2) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_summon_chain(team, effect, point)
+	return _abilities_subsystem()._apply_ability_summon_chain(team, effect, point)
 
 func _summon_unit_type_for(source_object_id: String) -> String:
 	return _ability_runtime_subsystem()._summon_unit_type_for(source_object_id)
@@ -5582,13 +5582,13 @@ func _apply_ability_experience_grant(hero_row: Dictionary, effect: Dictionary, p
 	return _ability_runtime_subsystem()._apply_ability_experience_grant(hero_row, effect, point)
 
 func _apply_ability_arrow_storm(hero_row: Dictionary, effect: Dictionary, point: Vector2) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_arrow_storm(hero_row, effect, point)
+	return _abilities_subsystem()._apply_ability_arrow_storm(hero_row, effect, point)
 
 func _step_volley_channel(row: Dictionary) -> bool:
 	return _ability_runtime_subsystem()._step_volley_channel(row)
 
 func _apply_ability_stealth_toggle(hero_row: Dictionary, effect: Dictionary) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_stealth_toggle(hero_row, effect)
+	return _abilities_subsystem()._apply_ability_stealth_toggle(hero_row, effect)
 
 func _stealth_active(row: Dictionary) -> bool:
 	return _ability_runtime_subsystem()._stealth_active(row)
@@ -5603,13 +5603,13 @@ func _break_stealth(row: Dictionary, condition: String) -> void:
 	_ability_runtime_subsystem()._break_stealth(row, condition)
 
 func _apply_ability_teleport(hero_row: Dictionary, effect: Dictionary, point: Vector2) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_teleport(hero_row, effect, point)
+	return _abilities_subsystem()._apply_ability_teleport(hero_row, effect, point)
 
 func _apply_ability_curse(hero_row: Dictionary, effect: Dictionary, point: Vector2) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_curse(hero_row, effect, point)
+	return _abilities_subsystem()._apply_ability_curse(hero_row, effect, point)
 
 func _apply_ability_leadership_strip(hero_row: Dictionary, effect: Dictionary) -> Dictionary:
-	return _ability_runtime_subsystem()._apply_ability_leadership_strip(hero_row, effect)
+	return _abilities_subsystem()._apply_ability_leadership_strip(hero_row, effect)
 
 func _set_timed_modifier(row: Dictionary, key: String, modifiers: Array, expires_tick: int) -> void:
 	_ability_runtime_subsystem()._set_timed_modifier(row, key, modifiers, expires_tick)
@@ -5800,7 +5800,7 @@ func _rearm_mood_idle_cadence(row: Dictionary) -> void:
 	_attacks_subsystem()._rearm_mood_idle_cadence(row)
 
 func _step_production_exit(row: Dictionary) -> bool:
-	return _attacks_subsystem()._step_production_exit(row)
+	return _production_subsystem()._step_production_exit(row)
 
 func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, target_kind: String) -> void:
 	_attacks_subsystem()._step_member_attacks(attacker_id, row, target_id, target_kind)
@@ -5910,16 +5910,16 @@ func _should_reform(row: Dictionary) -> bool:
 	return _collision_subsystem()._should_reform(row)
 
 func _retail_reform_threshold_degrees(row: Dictionary) -> float:
-	return _collision_subsystem()._retail_reform_threshold_degrees(row)
+	return _movement_subsystem()._retail_reform_threshold_degrees(row)
 
 func _retail_turn_rate_degrees(row: Dictionary) -> float:
-	return _collision_subsystem()._retail_turn_rate_degrees(row)
+	return _movement_subsystem()._retail_turn_rate_degrees(row)
 
 func _step_retail_heading(row: Dictionary, movement_direction: Vector2, braking: float, effective_turn_rate_degrees_per_second: float) -> bool:
 	return _collision_subsystem()._step_retail_heading(row, movement_direction, braking, effective_turn_rate_degrees_per_second)
 
 func _step_route(row: Dictionary) -> void:
-	_collision_subsystem()._step_route(row)
+	_movement_subsystem()._step_route(row)
 
 func _consume_route_point_layer(row: Dictionary) -> void:
 	_collision_subsystem()._consume_route_point_layer(row)
@@ -5940,7 +5940,7 @@ func _apply_knockback(center: Vector2, radius: float, strength: float, source_te
 	return _collision_subsystem()._apply_knockback(center, radius, strength, source_team, damage, damage_reason, source_id, taper_off, z_mult)
 
 func _apply_damage(attacker_id: int, target_id: int, amount: int, target_kind: String = "battalion", death_type: String = "NORMAL", damage_type_override: String = "") -> void:
-	_damage_subsystem()._apply_damage(attacker_id, target_id, amount, target_kind, death_type, damage_type_override)
+	_combat_subsystem()._apply_damage(attacker_id, target_id, amount, target_kind, death_type, damage_type_override)
 
 func _incoming_damage_factor(attacker_id: int, target: Dictionary, target_kind: String, damage_type: String, components: Array = []) -> float:
 	return _damage_subsystem()._incoming_damage_factor(attacker_id, target, target_kind, damage_type, components)
@@ -5973,10 +5973,10 @@ func _bookkeep_battalion_death(entity_id: int, row: Dictionary, death_type: Stri
 	return _damage_subsystem()._bookkeep_battalion_death(entity_id, row, death_type, defeated_members, attacker_id)
 
 func _release_command_points_once(row: Dictionary) -> void:
-	_damage_subsystem()._release_command_points_once(row)
+	_production_subsystem()._release_command_points_once(row)
 
 func _entity_command_point_commitment(row: Dictionary) -> int:
-	return _damage_subsystem()._entity_command_point_commitment(row)
+	return _production_subsystem()._entity_command_point_commitment(row)
 
 func _apply_playable_unit_death_policy(row: Dictionary, death_type: String, defeated_members: Array[int]) -> Dictionary:
 	return _damage_subsystem()._apply_playable_unit_death_policy(row, death_type, defeated_members)

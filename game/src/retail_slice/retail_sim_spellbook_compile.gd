@@ -916,6 +916,7 @@ func _spellbook_summon_literal_preview(spawns: Array, object_leaves: Dictionary,
 	## summon remains unsupported for an orthogonal reason (for example, the
 	## Watcher's unresolved weapon runtime). This is inspection data only: the
 	## original failed verdict remains authoritative and cannot be cast.
+	var _sim = sim
 	var hatch_spawn: Dictionary = {}
 	for spawn_value in spawns:
 		var candidate := spawn_value as Dictionary
@@ -950,7 +951,7 @@ func _spellbook_summon_literal_preview(spawns: Array, object_leaves: Dictionary,
 			choices.append({
 				"object_id": object_name,
 				"rule": {},
-				"lifetime_ticks": maxi(0, roundi(lifetime_ms / 1000.0 / sim.TICK_SECONDS)),
+				"lifetime_ticks": maxi(0, roundi(lifetime_ms / 1000.0 / _sim.TICK_SECONDS)),
 				"lifetime_death_type": String(lifetime.get("deathType", "")).to_upper(),
 			})
 		if not choices.is_empty():
@@ -963,7 +964,7 @@ func _spellbook_summon_literal_preview(spawns: Array, object_leaves: Dictionary,
 		return {"ok": false}
 	return {"ok": true, "effect": {
 		"kind": "summon",
-		"hatch_delay_ticks": maxi(0, roundi(float(hatch.get("destructionDelayMs", 0.0)) / 1000.0 / sim.TICK_SECONDS)),
+		"hatch_delay_ticks": maxi(0, roundi(float(hatch.get("destructionDelayMs", 0.0)) / 1000.0 / _sim.TICK_SECONDS)),
 		"target_groups": target_groups,
 	}}
 
@@ -971,6 +972,7 @@ func _spellbook_summon_literal_preview(spawns: Array, object_leaves: Dictionary,
 func _spellbook_summon_rule(target_leaf: Dictionary, modifier_leaves: Dictionary, object_leaves: Dictionary, weapon_leaves: Dictionary) -> Dictionary:
 	## Project one summon target into the sim's unit-rule shape; every value
 	## traces to the converted object/weapon/locomotor leaves.
+	var _sim = sim
 	var horde: Dictionary = target_leaf.get("horde", {}) as Dictionary
 	var member_id := String(target_leaf.get("id", "")) if horde.is_empty() else String(horde.get("memberObject", ""))
 	var member_count := 1 if horde.is_empty() else int(horde.get("memberCount", 1))
@@ -1040,7 +1042,7 @@ func _spellbook_summon_rule(target_leaf: Dictionary, modifier_leaves: Dictionary
 		lifetime_death_type = String(member_lifetime.get("deathType", ""))
 	if lifetime_ms <= 0.0:
 		return {"ok": false, "reason": "summon target '%s' is missing converted LifetimeUpdate" % String(target_leaf.get("id", ""))}
-	var scale = sim._spellbook_world_scale()
+	var scale = _sim._spellbook_world_scale()
 	var source_positions: Array[Vector2] = []
 	for rank_value in Array(horde.get("ranks", [])):
 		for position_value in Array((rank_value as Dictionary).get("positions", [])):
@@ -1096,9 +1098,9 @@ func _spellbook_summon_rule(target_leaf: Dictionary, modifier_leaves: Dictionary
 		"delay_between_shots_ms": delay_ms,
 		"pre_attack_delay_ms": pre_attack_ms,
 		"firing_duration_ms": firing_ms,
-		"attack_period_ticks": maxi(1, roundi(period_ms / (sim.TICK_SECONDS * 1000.0))),
-		"pre_attack_ticks": maxi(0, roundi(pre_attack_ms / (sim.TICK_SECONDS * 1000.0))),
-		"firing_duration_ticks": maxi(0, roundi(firing_ms / (sim.TICK_SECONDS * 1000.0))),
+		"attack_period_ticks": maxi(1, roundi(period_ms / (_sim.TICK_SECONDS * 1000.0))),
+		"pre_attack_ticks": maxi(0, roundi(pre_attack_ms / (_sim.TICK_SECONDS * 1000.0))),
+		"firing_duration_ticks": maxi(0, roundi(firing_ms / (_sim.TICK_SECONDS * 1000.0))),
 		"clip_size": int(_spellbook_weapon_field(weapon, "ClipSize")),
 		"clip_reload_time_ms": clip_reload_ms,
 		"formation_positions": positions,
@@ -1201,7 +1203,7 @@ func _spellbook_summon_rule(target_leaf: Dictionary, modifier_leaves: Dictionary
 		if not normalized_grant.is_empty():
 			normalized_grant["line"] = int(normalized_grant.get("line", 0))
 			experience_contract["experienceLevelCreate"] = normalized_grant
-		var creation_experience_rule = sim.PlayableUnitAdapter.experience_rule_from_contract(
+		var creation_experience_rule = _sim.PlayableUnitAdapter.experience_rule_from_contract(
 			experience_contract
 		)
 		if (
@@ -1226,7 +1228,7 @@ func _spellbook_summon_rule(target_leaf: Dictionary, modifier_leaves: Dictionary
 	return {
 		"ok": true,
 		"rule": rule,
-		"lifetime_ticks": maxi(1, roundi(lifetime_ms / 1000.0 / sim.TICK_SECONDS)),
+		"lifetime_ticks": maxi(1, roundi(lifetime_ms / 1000.0 / _sim.TICK_SECONDS)),
 		"lifetime_death_type": lifetime_death_type.to_upper(),
 	}
 
@@ -1260,6 +1262,7 @@ func _spellbook_one_summon_aura_rule(member: Dictionary, aura: Dictionary, modif
 	## unconverted payload and stays fail-closed; on a reveal ping it is the
 	## authored truth (the aura genuinely changes no stat), so the ping lane opts
 	## in and the row is kept as a zero-modifier marker.
+	var _sim = sim
 	var modifier_id := String(aura.get("modifier", ""))
 	var modifier: Dictionary = modifier_leaves.get(modifier_id, {}) as Dictionary
 	if modifier.is_empty():
@@ -1318,8 +1321,8 @@ func _spellbook_one_summon_aura_rule(member: Dictionary, aura: Dictionary, modif
 		"id": modifier_id,
 		"category": category,
 		"modifiers": modifiers,
-		"duration_ticks": maxi(1, roundi(duration_ms / (sim.TICK_SECONDS * 1000.0))),
-		"refresh_ticks": maxi(1, roundi(refresh_ms / (sim.TICK_SECONDS * 1000.0))),
+		"duration_ticks": maxi(1, roundi(duration_ms / (_sim.TICK_SECONDS * 1000.0))),
+		"refresh_ticks": maxi(1, roundi(refresh_ms / (_sim.TICK_SECONDS * 1000.0))),
 		"range_source": range_source,
 		"filter": filter,
 		"target_enemy": String(aura.get("targetEnemy", "")).to_lower() == "yes" if aura.has("targetEnemy") else null,
@@ -1403,6 +1406,7 @@ func _spellbook_grove_support(field_values: Dictionary, field_resolved: Dictiona
 	## Terrain-taint family (Elven Wood, Taint, Isengard Taint): the converted
 	## grove/taint-land leaf carries the whole effect — modifier leaf, refresh,
 	## range, filter, the authored terrain cell type, and the object lifetime.
+	var _sim = sim
 	var grove_id := String(field_values.get(object_field, ""))
 	var grove: Dictionary = object_leaves.get(grove_id, {}) as Dictionary
 	if grove.is_empty():
@@ -1500,9 +1504,9 @@ func _spellbook_grove_support(field_values: Dictionary, field_resolved: Dictiona
 		# can COUNT them instead of losing them — same key and same shape as the
 		# SpecialPowerModule lane's.
 		"unsupported_modifier_rows": unsupported_rows,
-		"buff_duration_ticks": maxi(1, roundi(buff_duration_ms / 1000.0 / sim.TICK_SECONDS)),
+		"buff_duration_ticks": maxi(1, roundi(buff_duration_ms / 1000.0 / _sim.TICK_SECONDS)),
 		"range_source": aura_range,
-		"lifetime_ticks": maxi(1, roundi(lifetime_ms / 1000.0 / sim.TICK_SECONDS)),
+		"lifetime_ticks": maxi(1, roundi(lifetime_ms / 1000.0 / _sim.TICK_SECONDS)),
 		"filter": filter,
 		"modifier": modifier_id,
 		"terrain_object_id": grove_id,
@@ -1598,6 +1602,7 @@ func _spellbook_field_ping_support(spawns: Array, modifier_leaves: Dictionary) -
 
 
 func _spellbook_ping_invisibility_rules(leaf: Dictionary) -> Dictionary:
+	var _sim = sim
 	var rows := leaf.get("invisibilityUpdates", []) as Array
 	var rules: Array[Dictionary] = []
 	for row_value in rows:
@@ -1619,7 +1624,7 @@ func _spellbook_ping_invisibility_rules(leaf: Dictionary) -> Dictionary:
 		var enabled := false
 		if typeof(starts_value) == TYPE_BOOL: enabled = starts_value
 		elif String(starts_value).to_upper() == "YES": enabled = true
-		rules.append({"enabled":enabled, "update_ticks":maxi(1,sim._ship_contract_delay_ticks(update_ms)), "next_update_tick":sim.tick_index, "broadcast":true, "broadcast_range_source":float(row.get("broadcastRange")), "broadcast_filter":Array(filter_text.split(" ", false)), "invisibility_type":type, "forbidden_conditions":[], "forbidden_weapon_conditions":[], "hint_detectable_conditions":[], "options":[], "detection_range_source":float(row.get("detectionRange")), "become_fx_id":"", "exit_fx_id":"", "granted_ids":[], "tag":"field-ping", "source_ini":String(row.get("sourceIni", "")), "line":int(row.get("line", 0)), "unsupported_semantics":[]})
+		rules.append({"enabled":enabled, "update_ticks":maxi(1,_sim._ship_contract_delay_ticks(update_ms)), "next_update_tick":_sim.tick_index, "broadcast":true, "broadcast_range_source":float(row.get("broadcastRange")), "broadcast_filter":Array(filter_text.split(" ", false)), "invisibility_type":type, "forbidden_conditions":[], "forbidden_weapon_conditions":[], "hint_detectable_conditions":[], "options":[], "detection_range_source":float(row.get("detectionRange")), "become_fx_id":"", "exit_fx_id":"", "granted_ids":[], "tag":"field-ping", "source_ini":String(row.get("sourceIni", "")), "line":int(row.get("line", 0)), "unsupported_semantics":[]})
 	return {"ok": true, "rules": rules}
 
 

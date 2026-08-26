@@ -12,13 +12,14 @@ func _ensure_capture_building_ability(unit_type: String, document: Dictionary) -
 	## Hordes author Command_CaptureBuilding on the CommandSet but do not
 	## compile CaptureBuilding.inc as an ability row (AISpecialPowerUpdate is
 	## unsupported). Bind the shared include so infantry can capture flags.
-	var existing: Array = sim._unit_ability_rules.get(unit_type, []) as Array
+	var _sim = sim
+	var existing: Array = _sim._unit_ability_rules.get(unit_type, []) as Array
 	for rule_value in existing:
 		var effect: Dictionary = (rule_value as Dictionary).get("effect", {})
 		if String(effect.get("kind", "")) == "capture-building":
 			return
 	var has_command := false
-	for command_value in sim.PlayableUnitAdapter.selection_commands(document):
+	for command_value in _sim.PlayableUnitAdapter.selection_commands(document):
 		if String((command_value as Dictionary).get("commandId", "")) == "Command_CaptureBuilding":
 			has_command = true
 			break
@@ -37,10 +38,10 @@ func _ensure_capture_building_ability(unit_type: String, document: Dictionary) -
 		"limitations": ["capture uses CaptureBuilding.inc StartAbilityRange/PreparationTime"],
 		"effect": {
 			"kind": "capture-building",
-			"startAbilityRange": sim.CAPTURE_BUILDING_RANGE_SOURCE,
-			"unpackMs": sim.CAPTURE_BUILDING_UNPACK_MS,
-			"preparationMs": sim.CAPTURE_BUILDING_PREPARATION_MS,
-			"packMs": sim.CAPTURE_BUILDING_PACK_MS,
+			"startAbilityRange": _sim.CAPTURE_BUILDING_RANGE_SOURCE,
+			"unpackMs": _sim.CAPTURE_BUILDING_UNPACK_MS,
+			"preparationMs": _sim.CAPTURE_BUILDING_PREPARATION_MS,
+			"packMs": _sim.CAPTURE_BUILDING_PACK_MS,
 			"doCaptureFx": true,
 			"sourceIni": "data/ini/object/includes/CaptureBuilding.inc",
 		},
@@ -50,18 +51,19 @@ func _ensure_capture_building_ability(unit_type: String, document: Dictionary) -
 		"fallback_label": "Capture Building",
 		"fallback_tooltip": "Take control of targeted structure",
 	}]
-	var scaled = sim._scaled_ability_rules(
-		capture_rows, float(sim._rules.get("source_map_transform_scale", 0.0))
+	var scaled = _sim._scaled_ability_rules(
+		capture_rows, float(_sim._rules.get("source_map_transform_scale", 0.0))
 	)
 	var combined: Array = existing.duplicate()
 	combined.append_array(scaled)
-	sim._unit_ability_rules[unit_type] = combined
+	_sim._unit_ability_rules[unit_type] = combined
 
 
 func ability_states_for(hero_id: int) -> Dictionary:
-	if not sim.entities.has(hero_id):
+	var _sim = sim
+	if not _sim.entities.has(hero_id):
 		return {}
-	return ((sim.entities[hero_id] as Dictionary).get("ability_states", {}) as Dictionary).duplicate(true)
+	return ((_sim.entities[hero_id] as Dictionary).get("ability_states", {}) as Dictionary).duplicate(true)
 
 
 func _ability_object_kind_tokens(row: Dictionary) -> Array[String]:
@@ -104,15 +106,16 @@ func cast_ability(hero_id: int, ability_id: String, target_point: Vector2, team:
 	## cooldown, and the authored level gate before applying the bound effect.
 	## `team` >= 0 is the issuing seat (the lockstep command path always passes
 	## it): a peer can only cast ITS OWN hero's abilities — fail-closed.
-	if not sim.entities.has(hero_id):
+	var _sim = sim
+	if not _sim.entities.has(hero_id):
 		return {"ok": false, "reason": "unknown-hero"}
-	var row: Dictionary = sim.entities[hero_id]
+	var row: Dictionary = _sim.entities[hero_id]
 	if team >= 0 and int(row.get("team", -1)) != team:
 		return {"ok": false, "reason": "wrong-owner"}
 	if int(row.get("health", 0)) <= 0:
 		return {"ok": false, "reason": "unit-defeated"}
 	var rule: Dictionary = {}
-	for rule_value in sim._unit_ability_rules.get(String(row.get("unit_type", "")), []) as Array:
+	for rule_value in _sim._unit_ability_rules.get(String(row.get("unit_type", "")), []) as Array:
 		if String((rule_value as Dictionary).get("ability_id", "")) == ability_id:
 			rule = rule_value as Dictionary
 			break
@@ -133,8 +136,8 @@ func cast_ability(hero_id: int, ability_id: String, target_point: Vector2, team:
 	var power_contract := rule.get("special_power_contract", {}) as Dictionary
 	var shared_key := "%d:%s" % [int(row.get("team", -1)), String(rule.get("special_power_id", ability_id))]
 	if bool(power_contract.get("sharedSyncedTimer", false)):
-		ready_tick = maxi(ready_tick, int(sim._shared_ability_cooldowns.get(shared_key, 0)))
-	if sim.tick_index < ready_tick:
+		ready_tick = maxi(ready_tick, int(_sim._shared_ability_cooldowns.get(shared_key, 0)))
+	if _sim.tick_index < ready_tick:
 		return {"ok": false, "reason": "cooldown-active", "ready_tick": ready_tick}
 	var effect: Dictionary = rule.get("effect", {}) as Dictionary
 	var targeting := String(rule.get("targeting", "self"))
@@ -155,56 +158,56 @@ func cast_ability(hero_id: int, ability_id: String, target_point: Vector2, team:
 		"weapon-blast":
 			if targeting == "enemy-object" and _ability_enemies_near(int(row.get("team", -1)), target_point, maxf(float(effect.get("damage_radius", 0.0)), 1.5)).is_empty():
 				return {"ok": false, "reason": "no-target"}
-			result = _apply_ability_weapon_blast(row, effect, target_point)
+			result = sim._apply_ability_weapon_blast(row, effect, target_point)
 		"heal":
 			var epicenter := target_point if targeting == "point" else hero_position
-			result = _apply_ability_heal(row, effect, epicenter)
+			result = sim._apply_ability_heal(row, effect, epicenter)
 		"attribute-modifier":
-			result = _apply_ability_modifier(row, ability_id, effect)
+			result = sim._apply_ability_modifier(row, ability_id, effect)
 		"summon":
-			result = _apply_ability_summon(row, effect, target_point if targeting == "point" else hero_position)
+			result = sim._apply_ability_summon(row, effect, target_point if targeting == "point" else hero_position)
 		"weapon-toggle":
-			result = _apply_ability_weapon_toggle(row, effect)
+			result = sim._apply_ability_weapon_toggle(row, effect)
 		"terror":
-			result = _apply_ability_terror(row, ability_id, effect)
+			result = sim._apply_ability_terror(row, ability_id, effect)
 		"mount-toggle":
-			result = _apply_ability_mount_toggle(row, effect)
+			result = sim._apply_ability_mount_toggle(row, effect)
 		"capture-building":
-			result = _apply_ability_capture_building(row, effect, target_point)
+			result = sim._apply_ability_capture_building(row, effect, target_point)
 		"experience-grant":
 			result = _apply_ability_experience_grant(row, effect, target_point if targeting == "point" else hero_position)
 		"arrow-storm":
-			result = _apply_ability_arrow_storm(row, effect, target_point if targeting == "point" else hero_position)
+			result = sim._apply_ability_arrow_storm(row, effect, target_point if targeting == "point" else hero_position)
 		"stealth-toggle":
-			result = _apply_ability_stealth_toggle(row, effect)
+			result = sim._apply_ability_stealth_toggle(row, effect)
 		"teleport":
-			result = _apply_ability_teleport(row, effect, target_point)
+			result = sim._apply_ability_teleport(row, effect, target_point)
 		"curse":
-			result = _apply_ability_curse(row, effect, target_point)
+			result = sim._apply_ability_curse(row, effect, target_point)
 		"leadership-strip":
-			result = _apply_ability_leadership_strip(row, effect)
+			result = sim._apply_ability_leadership_strip(row, effect)
 		"activate-module-graph":
-			result = _apply_ability_activate_module_graph(row, ability_id, effect, target_point, targeting)
+			result = sim._apply_ability_activate_module_graph(row, ability_id, effect, target_point, targeting)
 		"weapon-mode-special-power":
-			result = _apply_ability_weapon_mode_special_power(row, effect)
+			result = sim._apply_ability_weapon_mode_special_power(row, effect)
 		"dominate-enemy":
-			result = _apply_ability_dominate_enemy(row, ability_id, effect, target_point, targeting)
+			result = sim._apply_ability_dominate_enemy(row, ability_id, effect, target_point, targeting)
 		"grab-passenger":
-			result = _apply_ability_grab_passenger(row, ability_id, effect, target_point)
+			result = sim._apply_ability_grab_passenger(row, ability_id, effect, target_point)
 		"fling-passenger":
-			result = _apply_ability_fling_passenger(row, ability_id, effect)
+			result = sim._apply_ability_fling_passenger(row, ability_id, effect)
 		"repair-structure":
-			result = _apply_ability_repair_structure(row, ability_id, effect, target_point)
+			result = sim._apply_ability_repair_structure(row, ability_id, effect, target_point)
 		"stop-special-power":
-			result = sim.activate_stop_special_power(hero_id, String(effect.get("specialPowerTemplateId", "")), int(row.get("team", -1)))
+			result = _sim.activate_stop_special_power(hero_id, String(effect.get("specialPowerTemplateId", "")), int(row.get("team", -1)))
 		"siege-deploy":
-			result = _apply_ability_siege_deploy(row, effect, target_point, power_contract)
+			result = sim._apply_ability_siege_deploy(row, effect, target_point, power_contract)
 		"toggle-deploy":
-			result = _apply_ability_toggle_deploy(row, effect)
+			result = sim._apply_ability_toggle_deploy(row, effect)
 		"special-disguise":
-			result = _apply_ability_special_disguise(row, effect)
+			result = sim._apply_ability_special_disguise(row, effect)
 		"unleash-special-power":
-			result = sim.activate_unleash_special_power(hero_id, String(effect.get("specialPowerTemplateId", "")), int(row.get("team", -1)))
+			result = _sim.activate_unleash_special_power(hero_id, String(effect.get("specialPowerTemplateId", "")), int(row.get("team", -1)))
 		_:
 			return {"ok": false, "reason": "no-effect"}
 	if not bool(result.get("ok", false)):
@@ -213,13 +216,13 @@ func cast_ability(hero_id: int, ability_id: String, target_point: Vector2, team:
 		# Retail InvisibilityNugget ForbiddenConditions: casting another
 		# ability while cloaked drops a USING_ABILITY-forbidden stealth.
 		_break_stealth(row, "USING_ABILITY")
-	state["cooldown_ready_tick"] = sim.tick_index + int(rule.get("cooldown_ticks", 0))
+	state["cooldown_ready_tick"] = _sim.tick_index + int(rule.get("cooldown_ticks", 0))
 	if bool(power_contract.get("sharedSyncedTimer", false)):
-		sim._shared_ability_cooldowns[shared_key] = state["cooldown_ready_tick"]
+		_sim._shared_ability_cooldowns[shared_key] = state["cooldown_ready_tick"]
 	states[ability_id] = state
 	row["ability_states"] = states
 	_apply_special_power_unit_cost(row, power_contract)
-	sim._emit_event("ability.cast", hero_id, 0, {
+	_sim._emit_event("ability.cast", hero_id, 0, {
 		"team": int(row.get("team", -1)),
 		"ability_id": ability_id,
 		"special_power_id": String(rule.get("special_power_id", "")),
@@ -239,21 +242,18 @@ func cast_ability(hero_id: int, ability_id: String, target_point: Vector2, team:
 	return result
 
 
-func _apply_ability_activate_module_graph(row: Dictionary, ability_id: String, effect: Dictionary, target_point: Vector2, targeting: String) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_activate_module_graph(row, ability_id, effect, target_point, targeting)
-
-
 func _activate_module_target_identity(row: Dictionary, target_point: Vector2, targeting: String) -> Dictionary:
+	var _sim = sim
 	if targeting == "self":
 		return {"id": int(row.get("id", 0)), "kind": "battalion"}
 	var best: Dictionary = {}
 	var best_distance := 2.0
-	for entity_id in sim.entity_ids():
-		var distance = Vector2((sim.entities[entity_id] as Dictionary).get("position", target_point)).distance_to(target_point)
+	for entity_id in _sim.entity_ids():
+		var distance = Vector2((_sim.entities[entity_id] as Dictionary).get("position", target_point)).distance_to(target_point)
 		if distance <= best_distance:
 			best_distance = distance; best = {"id": entity_id, "kind": "battalion"}
-	for structure_id in sim.structure_ids():
-		var distance = Vector2((sim.structures[structure_id] as Dictionary).get("position", target_point)).distance_to(target_point)
+	for structure_id in _sim.structure_ids():
+		var distance = Vector2((_sim.structures[structure_id] as Dictionary).get("position", target_point)).distance_to(target_point)
 		if distance <= best_distance:
 			best_distance = distance; best = {"id": structure_id, "kind": "structure"}
 	if not best.is_empty():
@@ -263,24 +263,25 @@ func _activate_module_target_identity(row: Dictionary, target_point: Vector2, ta
 	# this prevents a stale combat target hijacking a newly clicked power target.
 	var target_id := int(row.get("target_id", 0))
 	var target_kind := String(row.get("target_kind", "battalion"))
-	if target_kind == "battalion" and sim.entities.has(target_id):
+	if target_kind == "battalion" and _sim.entities.has(target_id):
 		return {"id": target_id, "kind": target_kind}
-	if target_kind == "structure" and sim.structures.has(target_id):
+	if target_kind == "structure" and _sim.structures.has(target_id):
 		return {"id": target_id, "kind": target_kind}
 	return best
 
 
 func _step_activate_module_graph(row: Dictionary) -> void:
+	var _sim = sim
 	var channel := row.get("activate_module_channel", {}) as Dictionary
 	if channel.is_empty():
 		return
-	var unavoidable_interrupt = int(row.get("health", 0)) <= 0 or bool(row.get("knocked_down", false)) or sim.tick_index < int(row.get("stun_until_tick", -1)) or sim.tick_index < int(row.get("cower_until_tick", -1))
+	var unavoidable_interrupt = int(row.get("health", 0)) <= 0 or bool(row.get("knocked_down", false)) or _sim.tick_index < int(row.get("stun_until_tick", -1)) or _sim.tick_index < int(row.get("cower_until_tick", -1))
 	var voluntary_interrupt := not bool(channel.get("must_finish", false)) and int(row.get("order_sequence", 0)) != int(channel.get("order_sequence_at_start", 0))
 	if unavoidable_interrupt or voluntary_interrupt:
 		row.erase("activate_module_channel")
-		sim._emit_event("ability.graph_interrupted", int(row.get("id", 0)), int(channel.get("current_target_id", 0)), {"ability_id": channel.get("ability_id"), "unavoidable": unavoidable_interrupt, "must_finish": channel.get("must_finish")})
+		_sim._emit_event("ability.graph_interrupted", int(row.get("id", 0)), int(channel.get("current_target_id", 0)), {"ability_id": channel.get("ability_id"), "unavoidable": unavoidable_interrupt, "must_finish": channel.get("must_finish")})
 		return
-	if not bool(channel.get("dispatched", false)) and sim.tick_index >= int(channel.get("activation_tick", 0)):
+	if not bool(channel.get("dispatched", false)) and _sim.tick_index >= int(channel.get("activation_tick", 0)):
 		var results: Array = []
 		for route_value in channel.get("routes", []) as Array:
 			var route := route_value as Dictionary
@@ -292,27 +293,28 @@ func _step_activate_module_graph(row: Dictionary) -> void:
 				result = _dispatch_activate_module_leaf(row, String(channel.get("ability_id", "")), leaf, Vector2(target.get("point", row.get("position", Vector2.ZERO))))
 			var receipt := {"module_tag": String(route.get("moduleTag", "")), "target_mode": String(route.get("targetMode", "")), "ok": bool(result.get("ok", false)), "reason": String(result.get("reason", ""))}
 			results.append(receipt)
-			sim._emit_event("ability.graph_route", int(row.get("id", 0)), int(target.get("id", 0)), receipt)
+			_sim._emit_event("ability.graph_route", int(row.get("id", 0)), int(target.get("id", 0)), receipt)
 		channel["route_results"] = results
 		channel["dispatched"] = true
 		row["activate_module_channel"] = channel
-	if sim.tick_index >= int(channel.get("finish_tick", 0)):
+	if _sim.tick_index >= int(channel.get("finish_tick", 0)):
 		row.erase("activate_module_channel")
 		row["state"] = "idle"
-		sim._emit_event("ability.graph_finished", int(row.get("id", 0)), int(channel.get("current_target_id", 0)), {"ability_id": channel.get("ability_id"), "route_results": channel.get("route_results", [])})
+		_sim._emit_event("ability.graph_finished", int(row.get("id", 0)), int(channel.get("current_target_id", 0)), {"ability_id": channel.get("ability_id"), "route_results": channel.get("route_results", [])})
 
 
 func _activate_module_route_target(row: Dictionary, channel: Dictionary, mode: String) -> Dictionary:
+	var _sim = sim
 	if mode == "SELF":
 		return {"ok": true, "id": int(row.get("id", 0)), "kind": "battalion", "point": Vector2(row.get("position", Vector2.ZERO))}
 	if mode == "LOCATION":
 		return {"ok": true, "id": 0, "kind": "point", "point": Vector2(channel.get("location", row.get("position", Vector2.ZERO)))}
 	if mode == "CURRENT_TARGET":
 		var target_id := int(channel.get("current_target_id", 0)); var kind := String(channel.get("current_target_kind", ""))
-		if kind == "battalion" and sim.entities.has(target_id) and int((sim.entities[target_id] as Dictionary).get("health", 0)) > 0:
-			return {"ok": true, "id": target_id, "kind": kind, "point": Vector2((sim.entities[target_id] as Dictionary).get("position", Vector2.ZERO))}
-		if kind == "structure" and sim.structures.has(target_id) and int((sim.structures[target_id] as Dictionary).get("health", 0)) > 0:
-			return {"ok": true, "id": target_id, "kind": kind, "point": Vector2((sim.structures[target_id] as Dictionary).get("position", Vector2.ZERO))}
+		if kind == "battalion" and _sim.entities.has(target_id) and int((_sim.entities[target_id] as Dictionary).get("health", 0)) > 0:
+			return {"ok": true, "id": target_id, "kind": kind, "point": Vector2((_sim.entities[target_id] as Dictionary).get("position", Vector2.ZERO))}
+		if kind == "structure" and _sim.structures.has(target_id) and int((_sim.structures[target_id] as Dictionary).get("health", 0)) > 0:
+			return {"ok": true, "id": target_id, "kind": kind, "point": Vector2((_sim.structures[target_id] as Dictionary).get("position", Vector2.ZERO))}
 	return {"ok": false, "id": 0, "kind": mode, "point": Vector2.ZERO}
 
 
@@ -331,19 +333,19 @@ func _activate_module_effect_range(effect: Dictionary, effect_range: float) -> D
 
 func _dispatch_activate_module_leaf(row: Dictionary, ability_id: String, effect: Dictionary, point: Vector2) -> Dictionary:
 	match String(effect.get("kind", "")):
-		"weapon-blast": return _apply_ability_weapon_blast(row, effect, point)
-		"heal": return _apply_ability_heal(row, effect, point)
-		"attribute-modifier": return _apply_ability_modifier(row, "%s:%s" % [ability_id, String(effect.get("moduleTag", "route"))], effect)
-		"summon": return _apply_ability_summon(row, effect, point)
-		"weapon-toggle": return _apply_ability_weapon_toggle(row, effect)
-		"terror": return _apply_ability_terror(row, ability_id, effect)
-		"mount-toggle": return _apply_ability_mount_toggle(row, effect)
+		"weapon-blast": return sim._apply_ability_weapon_blast(row, effect, point)
+		"heal": return sim._apply_ability_heal(row, effect, point)
+		"attribute-modifier": return sim._apply_ability_modifier(row, "%s:%s" % [ability_id, String(effect.get("moduleTag", "route"))], effect)
+		"summon": return sim._apply_ability_summon(row, effect, point)
+		"weapon-toggle": return sim._apply_ability_weapon_toggle(row, effect)
+		"terror": return sim._apply_ability_terror(row, ability_id, effect)
+		"mount-toggle": return sim._apply_ability_mount_toggle(row, effect)
 		"experience-grant": return _apply_ability_experience_grant(row, effect, point)
-		"arrow-storm": return _apply_ability_arrow_storm(row, effect, point)
-		"stealth-toggle": return _apply_ability_stealth_toggle(row, effect)
-		"teleport": return _apply_ability_teleport(row, effect, point)
-		"curse": return _apply_ability_curse(row, effect, point)
-		"leadership-strip": return _apply_ability_leadership_strip(row, effect)
+		"arrow-storm": return sim._apply_ability_arrow_storm(row, effect, point)
+		"stealth-toggle": return sim._apply_ability_stealth_toggle(row, effect)
+		"teleport": return sim._apply_ability_teleport(row, effect, point)
+		"curse": return sim._apply_ability_curse(row, effect, point)
+		"leadership-strip": return sim._apply_ability_leadership_strip(row, effect)
 		"trigger-fx":
 			sim._emit_event("ability.graph_fx", int(row.get("id", 0)), 0, {"fx_id": String(effect.get("fxId", "")), "point": point})
 			return {"ok": true, "reason": "", "affected": 0, "presentation_only": true}
@@ -351,6 +353,7 @@ func _dispatch_activate_module_leaf(row: Dictionary, ability_id: String, effect:
 
 
 func _validate_special_power_activation(row: Dictionary, contract: Dictionary, targeting: String, target_point: Vector2) -> Dictionary:
+	var _sim = sim
 	for condition_value in contract.get("preventActivationConditions", []) as Array:
 		var condition := String(condition_value).to_upper()
 		if condition == "MOVING" and (not (row.get("route", []) as Array).is_empty() or float(row.get("current_speed", 0.0)) > 0.0):
@@ -370,12 +373,12 @@ func _validate_special_power_activation(row: Dictionary, contract: Dictionary, t
 		# authority is attached: silently treating an unknown cell as walkable
 		# would consume the power on a target retail refuses.
 		if (
-			sim.route_provider == null
-			or not sim.route_provider.has_method("is_local_inside_navigation")
-			or not sim.route_provider.has_method("local_to_grid_cell")
-			or not sim.route_provider.has_method("is_navigation_walkable")
-			or not bool(sim.route_provider.call("is_local_inside_navigation", target_point))
-			or not bool(sim.route_provider.call("is_navigation_walkable", sim.route_provider.call("local_to_grid_cell", target_point)))
+			_sim.route_provider == null
+			or not _sim.route_provider.has_method("is_local_inside_navigation")
+			or not _sim.route_provider.has_method("local_to_grid_cell")
+			or not _sim.route_provider.has_method("is_navigation_walkable")
+			or not bool(_sim.route_provider.call("is_local_inside_navigation", target_point))
+			or not bool(_sim.route_provider.call("is_navigation_walkable", _sim.route_provider.call("local_to_grid_cell", target_point)))
 		):
 			return {"ok": false, "reason": "target-unpathable"}
 	elif targeting == "point" and not flags.has("WATER_OK"):
@@ -387,40 +390,40 @@ func _validate_special_power_activation(row: Dictionary, contract: Dictionary, t
 		# cell a map authority calls water; with no authority attached there is
 		# no water to refuse, and nothing is substituted for the answer.
 		if (
-			sim.route_provider != null
-			and sim.route_provider.has_method("is_local_inside_navigation")
-			and sim.route_provider.has_method("local_to_grid_cell")
-			and sim.route_provider.has_method("is_water_cell")
-			and bool(sim.route_provider.call("is_local_inside_navigation", target_point))
-			and bool(sim.route_provider.call("is_water_cell", sim.route_provider.call("local_to_grid_cell", target_point)))
+			_sim.route_provider != null
+			and _sim.route_provider.has_method("is_local_inside_navigation")
+			and _sim.route_provider.has_method("local_to_grid_cell")
+			and _sim.route_provider.has_method("is_water_cell")
+			and bool(_sim.route_provider.call("is_local_inside_navigation", target_point))
+			and bool(_sim.route_provider.call("is_water_cell", _sim.route_provider.call("local_to_grid_cell", target_point)))
 		):
 			return {"ok": false, "reason": "target-over-water"}
 	var forbidden_range := float(contract.get("forbiddenObjectRangeScaled", 0.0))
 	if forbidden_range > 0.0:
-		for candidate_id in sim.entity_ids():
+		for candidate_id in _sim.entity_ids():
 			if candidate_id == int(row.get("id", 0)):
 				continue
-			var candidate = sim.entities[candidate_id] as Dictionary
+			var candidate = _sim.entities[candidate_id] as Dictionary
 			if origin.distance_to(Vector2(candidate.get("position", origin))) <= forbidden_range and _ability_token_filter_accepts(candidate, contract.get("forbiddenObjectFilter", []) as Array):
 				return {"ok": false, "reason": "forbidden-object-nearby", "object_id": candidate_id}
-		for structure_id in sim.structure_ids():
-			var candidate = sim.structures[structure_id] as Dictionary
+		for structure_id in _sim.structure_ids():
+			var candidate = _sim.structures[structure_id] as Dictionary
 			if int(candidate.get("health", 0)) <= 0:
 				continue
 			if origin.distance_to(Vector2(candidate.get("position", origin))) <= forbidden_range and _ability_token_filter_accepts(candidate, contract.get("forbiddenObjectFilter", []) as Array):
 				return {"ok": false, "reason": "forbidden-object-nearby", "object_id": structure_id, "object_kind": "structure"}
 	if targeting in ["enemy-object", "object"] and not (contract.get("objectFilter", []) as Array).is_empty():
 		var matched := false
-		for candidate_id in sim.entity_ids():
-			var candidate = sim.entities[candidate_id] as Dictionary
+		for candidate_id in _sim.entity_ids():
+			var candidate = _sim.entities[candidate_id] as Dictionary
 			if targeting == "enemy-object" and int(candidate.get("team", -1)) == int(row.get("team", -1)):
 				continue
 			if Vector2(candidate.get("position", Vector2.ZERO)).distance_to(target_point) <= 1.5 and _ability_token_filter_accepts(candidate, contract.get("objectFilter", []) as Array):
 				matched = true
 				break
 		if not matched:
-			for structure_id in sim.structure_ids():
-				var candidate = sim.structures[structure_id] as Dictionary
+			for structure_id in _sim.structure_ids():
+				var candidate = _sim.structures[structure_id] as Dictionary
 				if int(candidate.get("health", 0)) <= 0:
 					continue
 				if targeting == "enemy-object" and int(candidate.get("team", -1)) == int(row.get("team", -1)):
@@ -484,13 +487,14 @@ func _ability_fx_radius(effect: Dictionary) -> float:
 
 
 func _ability_enemies_near(team: int, point: Vector2, radius: float) -> Array[int]:
+	var _sim = sim
 	var result: Array[int] = []
 	# Ability blasts cover a bounded disc, so this is a neighbourhood query.
 	# Sorted, because callers apply damage in the returned order.
-	for id in sim._spatial_gather_sorted(point, radius):
-		if not sim.entities.has(id):
+	for id in _sim._spatial_gather_sorted(point, radius):
+		if not _sim.entities.has(id):
 			continue
-		var row: Dictionary = sim.entities[id]
+		var row: Dictionary = _sim.entities[id]
 		if int(row.get("team", -1)) == team or int(row.get("health", 0)) <= 0:
 			continue
 		if Vector2(row.get("position", Vector2.ZERO)).distance_to(point) <= radius:
@@ -498,29 +502,14 @@ func _ability_enemies_near(team: int, point: Vector2, radius: float) -> Array[in
 	return result
 
 
-func _apply_ability_weapon_blast(hero_row: Dictionary, effect: Dictionary, point: Vector2) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_weapon_blast(hero_row, effect, point)
-
-
-func _apply_ability_heal(hero_row: Dictionary, effect: Dictionary, epicenter: Vector2) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_heal(hero_row, effect, epicenter)
-
-
-func _apply_ability_modifier(hero_row: Dictionary, ability_id: String, effect: Dictionary) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_modifier(hero_row, ability_id, effect)
-
-
-func _apply_ability_weapon_toggle(hero_row: Dictionary, effect: Dictionary) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_weapon_toggle(hero_row, effect)
-
-
 func _siege_deploy_target(source: Dictionary, effect: Dictionary, point: Vector2, contract: Dictionary) -> int:
+	var _sim = sim
 	if String(effect.get("targetMode", "")) != "TARGET_STRUCTURE":
 		return 0
 	var chosen_id := 0
 	var chosen_distance := 1.5
-	for structure_id in sim.structure_ids():
-		var candidate = sim.structures[structure_id] as Dictionary
+	for structure_id in _sim.structure_ids():
+		var candidate = _sim.structures[structure_id] as Dictionary
 		if int(candidate.get("health", 0)) <= 0:
 			continue
 		var distance := Vector2(candidate.get("position", Vector2.ZERO)).distance_to(point)
@@ -532,10 +521,6 @@ func _siege_deploy_target(source: Dictionary, effect: Dictionary, point: Vector2
 			chosen_id = structure_id
 			chosen_distance = distance
 	return chosen_id
-
-
-func _apply_ability_siege_deploy(row: Dictionary, effect: Dictionary, point: Vector2, contract: Dictionary) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_siege_deploy(row, effect, point, contract)
 
 
 func _toggle_deploy_set_model_condition(row: Dictionary, condition: String) -> void:
@@ -568,13 +553,10 @@ func _toggle_deploy_set_modifier(row: Dictionary, modifiers: Array, active: bool
 		row["timed_modifiers"] = table
 
 
-func _apply_ability_toggle_deploy(row: Dictionary, effect: Dictionary) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_toggle_deploy(row, effect)
-
-
 func _step_toggle_deploy(row: Dictionary) -> void:
+	var _sim = sim
 	var channel := row.get("toggle_deploy_channel", {}) as Dictionary
-	if channel.is_empty() or sim.tick_index < int(channel.get("phase_end_tick", 0)):
+	if channel.is_empty() or _sim.tick_index < int(channel.get("phase_end_tick", 0)):
 		return
 	var phase := String(channel.get("phase", ""))
 	var statuses := row.get("object_status", {}) as Dictionary
@@ -586,7 +568,7 @@ func _step_toggle_deploy(row: Dictionary) -> void:
 		row["toggle_deployed"] = true
 		row.erase("toggle_deploy_channel")
 		row["state"] = "idle"
-		sim._emit_event("ability.toggle_deployed", int(row.get("id", 0)), 0, {
+		_sim._emit_event("ability.toggle_deployed", int(row.get("id", 0)), 0, {
 			"modifier_id": channel.get("modifier_id", ""),
 			"presentation_receipt": "model-condition:DEPLOYED",
 		})
@@ -601,18 +583,19 @@ func _step_toggle_deploy(row: Dictionary) -> void:
 		row.erase("toggle_deployed")
 		row.erase("toggle_deploy_channel")
 		row["state"] = "idle"
-		sim._emit_event("ability.toggle_undeployed", int(row.get("id", 0)), 0, {
+		_sim._emit_event("ability.toggle_undeployed", int(row.get("id", 0)), 0, {
 			"modifier_id": channel.get("modifier_id", ""),
 			"presentation_receipt": "model-condition:CLEAR_DEPLOYED",
 		})
 
 
 func _step_siege_deploy(row: Dictionary) -> void:
+	var _sim = sim
 	var channel := row.get("siege_deploy_channel", {}) as Dictionary
 	if channel.is_empty():
 		return
 	var phase := String(channel.get("phase", ""))
-	if phase == "lowering" and sim.tick_index >= int(channel.get("phase_end_tick", 0)):
+	if phase == "lowering" and _sim.tick_index >= int(channel.get("phase_end_tick", 0)):
 		var statuses := row.get("object_status", {}) as Dictionary
 		statuses["DEPLOYED"] = true
 		row["object_status"] = statuses
@@ -622,15 +605,15 @@ func _step_siege_deploy(row: Dictionary) -> void:
 		row["siege_deploy_channel"] = channel
 		var evacuated: Array[int] = []
 		if bool(channel.get("evacuate_passengers", false)):
-			var passenger_ids = (sim.containment.get(int(row.get("id", 0)), []) as Array).duplicate()
+			var passenger_ids = (_sim.containment.get(int(row.get("id", 0)), []) as Array).duplicate()
 			passenger_ids.sort()
 			for passenger_value in passenger_ids:
 				var passenger_id := int(passenger_value)
-				sim._finish_transport_exit(int(row.get("id", 0)), passenger_id)
+				_sim._finish_transport_exit(int(row.get("id", 0)), passenger_id)
 				evacuated.append(passenger_id)
-		sim._emit_event("ability.siege_deployed", int(row.get("id", 0)), int(channel.get("target_id", 0)), {"evacuated_ids": evacuated, "model_receipts": channel.get("model_receipts", [])})
+		_sim._emit_event("ability.siege_deployed", int(row.get("id", 0)), int(channel.get("target_id", 0)), {"evacuated_ids": evacuated, "model_receipts": channel.get("model_receipts", [])})
 		return
-	if phase == "retracting" and sim.tick_index >= int(channel.get("phase_end_tick", 0)):
+	if phase == "retracting" and _sim.tick_index >= int(channel.get("phase_end_tick", 0)):
 		var statuses := row.get("object_status", {}) as Dictionary
 		statuses.erase("DEPLOYED")
 		if statuses.is_empty():
@@ -640,18 +623,15 @@ func _step_siege_deploy(row: Dictionary) -> void:
 		row.erase("siege_deployed")
 		row.erase("siege_deploy_channel")
 		row["state"] = "idle"
-		sim._emit_event("ability.siege_retracted", int(row.get("id", 0)), int(channel.get("target_id", 0)), {"model_receipts": channel.get("model_receipts", [])})
-
-
-func _apply_ability_weapon_mode_special_power(row: Dictionary, effect: Dictionary) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_weapon_mode_special_power(row, effect)
+		_sim._emit_event("ability.siege_retracted", int(row.get("id", 0)), int(channel.get("target_id", 0)), {"model_receipts": channel.get("model_receipts", [])})
 
 
 func _attach_weapon_mode_special_power_contract(row: Dictionary, contract: Dictionary) -> void:
+	var _sim = sim
 	if String(contract.get("extraction", "")) != "typed":
 		return
 	var fields := contract.get("fields", {}) as Dictionary
-	var template = String(sim._module_contract_value(fields, "SpecialPowerTemplate", "")).strip_edges()
+	var template = String(_sim._module_contract_value(fields, "SpecialPowerTemplate", "")).strip_edges()
 	if template == "":
 		return
 	var policies: Array = row.get("weapon_mode_special_powers", []) as Array
@@ -666,25 +646,25 @@ func _attach_weapon_mode_special_power_contract(row: Dictionary, contract: Dicti
 		duration_ms = float(duration_field.get("milliseconds", -1.0))
 	else:
 		var define := String(duration_field.get("define", ""))
-		var defines = sim._rules.get("weapon_mode_duration_defines", {}) as Dictionary
+		var defines = _sim._rules.get("weapon_mode_duration_defines", {}) as Dictionary
 		if define != "" and typeof(defines.get(define)) in [TYPE_INT, TYPE_FLOAT] and float(defines[define]) >= 0.0:
 			duration_ms = float(defines[define])
 		else:
 			unsupported.append("unresolved_duration_define:%s" % define)
-	var modifier_name = String(sim._module_contract_value(fields, "AttributeModifier", ""))
-	var modifier = ((sim._rules.get("attribute_modifier_rules", {}) as Dictionary).get(modifier_name, {}) as Dictionary).duplicate(true)
+	var modifier_name = String(_sim._module_contract_value(fields, "AttributeModifier", ""))
+	var modifier = ((_sim._rules.get("attribute_modifier_rules", {}) as Dictionary).get(modifier_name, {}) as Dictionary).duplicate(true)
 	if modifier_name != "" and (modifier.is_empty() or (modifier.get("effects", []) as Array).is_empty()):
 		unsupported.append("unresolved_modifier_list:%s" % modifier_name)
-	var flags = sim._typed_contract_tokens(fields, "WeaponSetFlags")
-	var lock_slot = String(sim._module_contract_value(fields, "LockWeaponSlot", "")).to_lower()
+	var flags = _sim._typed_contract_tokens(fields, "WeaponSetFlags")
+	var lock_slot = String(_sim._module_contract_value(fields, "LockWeaponSlot", "")).to_lower()
 	var mode := _resolve_weapon_mode_special_power_profile(row, flags, lock_slot)
 	if (not flags.is_empty() or lock_slot != "") and mode == "":
 		unsupported.append("weapon_mode_profile_unavailable:%s" % (lock_slot if lock_slot != "" else " ".join(flags)))
 	policies.append({
 		"key": key, "special_power_template": template,
-		"duration_ticks": sim._ship_contract_delay_ticks(duration_ms) if duration_ms >= 0.0 else 0,
-		"starts_paused": bool(sim._module_contract_value(fields, "StartsPaused", false)),
-		"paused": bool(sim._module_contract_value(fields, "StartsPaused", false)),
+		"duration_ticks": _sim._ship_contract_delay_ticks(duration_ms) if duration_ms >= 0.0 else 0,
+		"starts_paused": bool(_sim._module_contract_value(fields, "StartsPaused", false)),
+		"paused": bool(_sim._module_contract_value(fields, "StartsPaused", false)),
 		"modifier_name": modifier_name, "modifier": modifier,
 		"weapon_set_flags": flags, "lock_weapon_slot": lock_slot, "mode": mode,
 		"active": false, "expires_tick": -1, "prior_mode": "", "prior_toggle_mode": "", "prior_weapon_set_flags": [],
@@ -709,11 +689,12 @@ func _resolve_weapon_mode_special_power_profile(row: Dictionary, flags: Array, l
 
 
 func set_weapon_mode_special_power_paused(entity_id: int, special_power_template: String, paused: bool) -> Dictionary:
-	if not sim.entities.has(entity_id):
+	var _sim = sim
+	if not _sim.entities.has(entity_id):
 		return {"ok": false, "reason": "entity-missing"}
-	var row = sim.entities[entity_id] as Dictionary
+	var row = _sim.entities[entity_id] as Dictionary
 	if not row.has("weapon_mode_special_powers"):
-		sim._attach_module_contracts(row)
+		_sim._attach_module_contracts(row)
 	var policies := row.get("weapon_mode_special_powers", []) as Array
 	for index in policies.size():
 		var policy := policies[index] as Dictionary
@@ -725,15 +706,16 @@ func set_weapon_mode_special_power_paused(entity_id: int, special_power_template
 
 
 func activate_weapon_mode_special_power(entity_id: int, special_power_template: String, team: int = -1) -> Dictionary:
-	if not sim.entities.has(entity_id):
+	var _sim = sim
+	if not _sim.entities.has(entity_id):
 		return {"ok": false, "reason": "entity-missing"}
-	var row = sim.entities[entity_id] as Dictionary
+	var row = _sim.entities[entity_id] as Dictionary
 	if team >= 0 and int(row.get("team", -1)) != team:
 		return {"ok": false, "reason": "wrong-owner"}
 	if int(row.get("health", 0)) <= 0:
 		return {"ok": false, "reason": "unit-defeated"}
 	if not row.has("weapon_mode_special_powers"):
-		sim._attach_module_contracts(row)
+		_sim._attach_module_contracts(row)
 	var policies := row.get("weapon_mode_special_powers", []) as Array
 	for index in policies.size():
 		var policy := policies[index] as Dictionary
@@ -749,21 +731,21 @@ func activate_weapon_mode_special_power(entity_id: int, special_power_template: 
 		policy["prior_toggle_mode"] = String(row.get("weapon_toggle_mode", ""))
 		policy["prior_weapon_set_flags"] = (row.get("weapon_set_flags", []) as Array).duplicate()
 		var mode := String(policy.get("mode", ""))
-		if mode != "" and not sim._apply_weapon_mode(row, mode):
+		if mode != "" and not _sim._apply_weapon_mode(row, mode):
 			return {"ok": false, "reason": "weapon-mode-unavailable:%s" % mode}
 		if mode != "":
 			row["weapon_toggle_mode"] = mode
 		if not (policy.get("weapon_set_flags", []) as Array).is_empty():
 			row["weapon_set_flags"] = (policy.get("weapon_set_flags", []) as Array).duplicate()
 		var modifier := policy.get("modifier", {}) as Dictionary
-		var expiry = sim.tick_index + int(policy.get("duration_ticks", 0))
+		var expiry = _sim.tick_index + int(policy.get("duration_ticks", 0))
 		if not modifier.is_empty():
 			var modifier_key := "weapon-mode-special:%s" % special_power_template
 			_set_timed_modifier(row, modifier_key, modifier.get("effects", []) as Array, expiry)
 			(row.get("timed_modifiers", {}) as Dictionary)[modifier_key]["category"] = String(modifier.get("category", ""))
 		policy["active"] = true; policy["expires_tick"] = expiry; policy["activation_count"] = int(policy.get("activation_count", 0)) + 1
 		policies[index] = policy; row["weapon_mode_special_powers"] = policies
-		sim._emit_event("ability.weapon_mode_started", entity_id, 0, {"special_power_template":special_power_template,"mode":mode,"expires_tick":expiry,"weapon_set_flags":policy.get("weapon_set_flags"),"lock_weapon_slot":policy.get("lock_weapon_slot")})
+		_sim._emit_event("ability.weapon_mode_started", entity_id, 0, {"special_power_template":special_power_template,"mode":mode,"expires_tick":expiry,"weapon_set_flags":policy.get("weapon_set_flags"),"lock_weapon_slot":policy.get("lock_weapon_slot")})
 		return {"ok": true, "reason": "", "mode": mode, "expires_tick": expiry}
 	return {"ok": false, "reason": "weapon-mode-special-power-missing"}
 
@@ -782,9 +764,10 @@ func _step_weapon_mode_special_powers(row: Dictionary) -> void:
 
 
 func _end_weapon_mode_special_power(row: Dictionary, policy: Dictionary) -> void:
+	var _sim = sim
 	var prior := String(policy.get("prior_mode", row.get("default_weapon_mode", "default")))
 	if prior != "":
-		sim._apply_weapon_mode(row, prior)
+		_sim._apply_weapon_mode(row, prior)
 	row["weapon_toggle_mode"] = String(policy.get("prior_toggle_mode", ""))
 	row["weapon_set_flags"] = (policy.get("prior_weapon_set_flags", []) as Array).duplicate()
 	var table := row.get("timed_modifiers", {}) as Dictionary
@@ -792,58 +775,48 @@ func _end_weapon_mode_special_power(row: Dictionary, policy: Dictionary) -> void
 	if table.is_empty(): row.erase("timed_modifiers")
 	else: row["timed_modifiers"] = table
 	policy["active"] = false; policy["expires_tick"] = -1
-	sim._emit_event("ability.weapon_mode_finished", int(row.get("id", 0)), 0, {"special_power_template":policy.get("special_power_template"),"restored_mode":prior})
-
-
-func _apply_ability_dominate_enemy(row: Dictionary, ability_id: String, effect: Dictionary, target_point: Vector2, targeting: String) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_dominate_enemy(row, ability_id, effect, target_point, targeting)
-
-
-func _apply_ability_grab_passenger(row: Dictionary, ability_id: String, effect: Dictionary, target_point: Vector2) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_grab_passenger(row, ability_id, effect, target_point)
-
-
-func _apply_ability_repair_structure(row: Dictionary, ability_id: String, effect: Dictionary, target_point: Vector2) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_repair_structure(row, ability_id, effect, target_point)
+	_sim._emit_event("ability.weapon_mode_finished", int(row.get("id", 0)), 0, {"special_power_template":policy.get("special_power_template"),"restored_mode":prior})
 
 
 func _step_repair_structure(row: Dictionary) -> void:
+	var _sim = sim
 	var channel := row.get("repair_structure_channel", {}) as Dictionary
 	if channel.is_empty():
 		return
 	var target_id := int(channel.get("target_id", 0))
-	if int(row.get("health", 0)) <= 0 or int(row.get("order_sequence", 0)) != int(channel.get("order_sequence_at_start", 0)) or not sim.structures.has(target_id):
+	if int(row.get("health", 0)) <= 0 or int(row.get("order_sequence", 0)) != int(channel.get("order_sequence_at_start", 0)) or not _sim.structures.has(target_id):
 		row.erase("repair_structure_channel")
-		sim._emit_event("ability.repair_interrupted", int(row.get("id", 0)), target_id)
+		_sim._emit_event("ability.repair_interrupted", int(row.get("id", 0)), target_id)
 		return
-	var structure = sim.structures[target_id] as Dictionary
+	var structure = _sim.structures[target_id] as Dictionary
 	if int(structure.get("team", -1)) != int(row.get("team", -2)) or int(structure.get("health", 0)) <= 0:
 		row.erase("repair_structure_channel"); return
 	var maximum := maxi(1, int(structure.get("maximum_health", structure.get("health", 1))))
 	if int(structure.get("health", 0)) >= maximum:
 		row.erase("repair_structure_channel"); row["state"] = "idle"
-		sim._emit_event("ability.repair_finished", int(row.get("id", 0)), target_id, {"health": maximum})
+		_sim._emit_event("ability.repair_finished", int(row.get("id", 0)), target_id, {"health": maximum})
 		return
-	var amount = float(channel.get("fractional_health", 0.0)) + maximum * float(channel.get("max_health_fraction_per_second", 0.0)) * sim.TICK_SECONDS
+	var amount = float(channel.get("fractional_health", 0.0)) + maximum * float(channel.get("max_health_fraction_per_second", 0.0)) * _sim.TICK_SECONDS
 	var whole := floori(amount)
 	channel["fractional_health"] = amount - whole
 	if whole > 0:
 		structure["health"] = mini(maximum, int(structure.get("health", 0)) + whole)
 	row["repair_structure_channel"] = channel
-	sim._emit_event("ability.repair_tick", int(row.get("id", 0)), target_id, {"applied": whole, "health": int(structure.get("health", 0)), "fractional_health": channel.get("fractional_health")})
+	_sim._emit_event("ability.repair_tick", int(row.get("id", 0)), target_id, {"applied": whole, "health": int(structure.get("health", 0)), "fractional_health": channel.get("fractional_health")})
 
 
 func _grab_passenger_target(source: Dictionary, effect: Dictionary, point: Vector2) -> int:
+	var _sim = sim
 	var best_id := 0
 	var best_distance := 1.5
 	var admission := effect.get("targetAdmission", {}) as Dictionary
 	var contain := effect.get("containment", {}) as Dictionary
 	var tree_ids := admission.get("treeObjectIds", []) as Array
 	var manual_filter: Array = String(admission.get("passengerFilter", "")).split(" ", false)
-	for target_id in sim.entity_ids():
-		if target_id == int(source.get("id", 0)) or sim.entity_container.has(target_id):
+	for target_id in _sim.entity_ids():
+		if target_id == int(source.get("id", 0)) or _sim.entity_container.has(target_id):
 			continue
-		var target = sim.entities[target_id] as Dictionary
+		var target = _sim.entities[target_id] as Dictionary
 		if int(target.get("health", 0)) <= 0:
 			continue
 		var distance := Vector2(target.get("position", Vector2.ZERO)).distance_to(point)
@@ -853,9 +826,9 @@ func _grab_passenger_target(source: Dictionary, effect: Dictionary, point: Vecto
 		var exact_tree := bool(effect.get("allowTree", false)) and tree_ids.has(source_object_id)
 		if bool(effect.get("allowTree", false)) and not exact_tree:
 			continue
-		if not sim._transport_filter_accepts(target, manual_filter):
+		if not _sim._transport_filter_accepts(target, manual_filter):
 			continue
-		var relation = sim.team_relationship(int(source.get("team", -1)), int(target.get("team", -2)))
+		var relation = _sim.team_relationship(int(source.get("team", -1)), int(target.get("team", -2)))
 		var allowed = (
 			(relation == "local" and bool(contain.get("allowAlliesInside", false)))
 			or (relation == "allied" and bool(contain.get("allowAlliesInside", false)))
@@ -869,26 +842,27 @@ func _grab_passenger_target(source: Dictionary, effect: Dictionary, point: Vecto
 
 
 func _step_grab_passenger(row: Dictionary) -> void:
+	var _sim = sim
 	var channel := row.get("grab_passenger_channel", {}) as Dictionary
 	if channel.is_empty():
 		return
 	if int(row.get("health", 0)) <= 0:
 		row.erase("grab_passenger_channel")
 		_eject_grabbed_passengers(int(row.get("id", 0)), row)
-		sim._emit_event("ability.grab_interrupted", int(row.get("id", 0)), int(channel.get("target_id", 0)), {"reason": "carrier-dead"})
+		_sim._emit_event("ability.grab_interrupted", int(row.get("id", 0)), int(channel.get("target_id", 0)), {"reason": "carrier-dead"})
 		return
 	if not bool(channel.get("triggered", false)) and int(row.get("order_sequence", 0)) != int(channel.get("order_sequence_at_start", 0)):
 		row.erase("grab_passenger_channel")
-		sim._emit_event("ability.grab_interrupted", int(row.get("id", 0)), int(channel.get("target_id", 0)), {"reason": "order-interrupt"})
+		_sim._emit_event("ability.grab_interrupted", int(row.get("id", 0)), int(channel.get("target_id", 0)), {"reason": "order-interrupt"})
 		return
-	if not bool(channel.get("triggered", false)) and sim.tick_index >= int(channel.get("trigger_tick", 0)):
+	if not bool(channel.get("triggered", false)) and _sim.tick_index >= int(channel.get("trigger_tick", 0)):
 		var target_id := int(channel.get("target_id", 0))
-		if not sim.entities.has(target_id) or sim.entity_container.has(target_id):
+		if not _sim.entities.has(target_id) or _sim.entity_container.has(target_id):
 			row.erase("grab_passenger_channel")
-			sim._emit_event("ability.grab_interrupted", int(row.get("id", 0)), target_id, {"reason": "target-unavailable"})
+			_sim._emit_event("ability.grab_interrupted", int(row.get("id", 0)), target_id, {"reason": "target-unavailable"})
 			return
-		var target = sim.entities[target_id] as Dictionary
-		var contained = sim.contain_entity(int(row.get("id", 0)), target_id)
+		var target = _sim.entities[target_id] as Dictionary
+		var contained = _sim.contain_entity(int(row.get("id", 0)), target_id)
 		if not bool(contained.get("ok", false)):
 			row.erase("grab_passenger_channel")
 			return
@@ -908,43 +882,42 @@ func _step_grab_passenger(row: Dictionary) -> void:
 			row["health"] = mini(maximum, int(row.get("health", 0)) + roundi(maximum * heal_percent / 100.0))
 		var award_xp := int(acquire.get("awardXp", 0))
 		if award_xp > 0:
-			sim._award_experience(row, award_xp)
+			_sim._award_experience(row, award_xp)
 		channel["triggered"] = true; row["grab_passenger_channel"] = channel
-		sim._emit_event("ability.passenger_grabbed", int(row.get("id", 0)), target_id, {"heal_gain_percent": heal_percent, "award_xp": award_xp, "statuses": contain.get("objectStatusOfContained", []), "weapon_sets": contain.get("weaponSetTypes", []), "weapon_states": contain.get("weaponStateTypes", [])})
-	if sim.tick_index >= int(channel.get("finish_tick", 0)):
+		_sim._emit_event("ability.passenger_grabbed", int(row.get("id", 0)), target_id, {"heal_gain_percent": heal_percent, "award_xp": award_xp, "statuses": contain.get("objectStatusOfContained", []), "weapon_sets": contain.get("weaponSetTypes", []), "weapon_states": contain.get("weaponStateTypes", [])})
+	if _sim.tick_index >= int(channel.get("finish_tick", 0)):
 		row.erase("grab_passenger_channel"); row["state"] = "idle"
-		sim._emit_event("ability.grab_finished", int(row.get("id", 0)), int(channel.get("target_id", 0)))
+		_sim._emit_event("ability.grab_finished", int(row.get("id", 0)), int(channel.get("target_id", 0)))
 
 
 func _eject_grabbed_passengers(carrier_id: int, carrier: Dictionary) -> void:
-	for target_value in (sim.containment.get(carrier_id, []) as Array).duplicate():
+	var _sim = sim
+	for target_value in (_sim.containment.get(carrier_id, []) as Array).duplicate():
 		var target_id := int(target_value)
-		sim.exit_entity_container(target_id)
-		if sim.entities.has(target_id):
-			var target = sim.entities[target_id] as Dictionary
+		_sim.exit_entity_container(target_id)
+		if _sim.entities.has(target_id):
+			var target = _sim.entities[target_id] as Dictionary
 			target["object_status"] = (target.get("grab_prior_status", {}) as Dictionary).duplicate(true)
 			target.erase("grab_prior_status"); target["state"] = "idle"; target["position"] = carrier.get("position", Vector2.ZERO)
 
 
-func _apply_ability_fling_passenger(row: Dictionary, ability_id: String, effect: Dictionary) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_fling_passenger(row, ability_id, effect)
-
-
 func release_grabbed_passenger(carrier_id: int, release_index: int = 0) -> Dictionary:
-	if not sim.entities.has(carrier_id):
+	var _sim = sim
+	if not _sim.entities.has(carrier_id):
 		return {"ok": false, "reason": "carrier-missing"}
-	var carrier = sim.entities[carrier_id] as Dictionary
+	var carrier = _sim.entities[carrier_id] as Dictionary
 	var policies: Array = []
-	for rule_value in sim._unit_ability_rules.get(String(carrier.get("unit_type", "")), []) as Array:
+	for rule_value in _sim._unit_ability_rules.get(String(carrier.get("unit_type", "")), []) as Array:
 		var effect := (rule_value as Dictionary).get("effect", {}) as Dictionary
 		if String(effect.get("kind", "")) == "grab-passenger":
 			policies = effect.get("releaseAbilities", []) as Array; break
 	if release_index < 0 or release_index >= policies.size():
 		return {"ok": false, "reason": "release-ability-missing"}
-	return _apply_ability_fling_passenger(carrier, "nested-release:%d" % release_index, policies[release_index] as Dictionary)
+	return sim._apply_ability_fling_passenger(carrier, "nested-release:%d" % release_index, policies[release_index] as Dictionary)
 
 
 func _step_fling_passenger(row: Dictionary) -> void:
+	var _sim = sim
 	var channel := row.get("fling_passenger_channel", {}) as Dictionary
 	if channel.is_empty():
 		return
@@ -952,25 +925,26 @@ func _step_fling_passenger(row: Dictionary) -> void:
 	if int(row.get("health", 0)) <= 0:
 		row.erase("fling_passenger_channel"); _eject_grabbed_passengers(int(row.get("id", 0)), row); return
 	if not bool(effect.get("mustFinishAbility", false)) and not bool(channel.get("triggered", false)) and int(row.get("order_sequence", 0)) != int(channel.get("order_sequence_at_start", 0)):
-		row.erase("fling_passenger_channel"); sim._emit_event("ability.fling_interrupted", int(row.get("id", 0)), int(channel.get("passenger_id", 0))); return
-	if not bool(channel.get("triggered", false)) and sim.tick_index >= int(channel.get("trigger_tick", 0)):
+		row.erase("fling_passenger_channel"); _sim._emit_event("ability.fling_interrupted", int(row.get("id", 0)), int(channel.get("passenger_id", 0))); return
+	if not bool(channel.get("triggered", false)) and _sim.tick_index >= int(channel.get("trigger_tick", 0)):
 		var passenger_id := int(channel.get("passenger_id", 0))
-		if not sim.entities.has(passenger_id) or int(sim.entity_container.get(passenger_id, -1)) != int(row.get("id", 0)):
+		if not _sim.entities.has(passenger_id) or int(_sim.entity_container.get(passenger_id, -1)) != int(row.get("id", 0)):
 			row.erase("fling_passenger_channel"); return
-		var passenger = sim.entities[passenger_id] as Dictionary
-		sim.exit_entity_container(passenger_id)
+		var passenger = _sim.entities[passenger_id] as Dictionary
+		_sim.exit_entity_container(passenger_id)
 		var physics_id := _spawn_fling_physics_object(row, passenger, effect)
-		sim.entities.erase(passenger_id)
+		_sim.entities.erase(passenger_id)
 		channel["triggered"] = true; channel["physics_object_id"] = physics_id; row["fling_passenger_channel"] = channel
-		sim._emit_event("ability.passenger_flung", int(row.get("id", 0)), passenger_id, {"physics_object_id": physics_id, "velocity": effect.get("velocity", {}), "custom_animation": effect.get("customAnimation", {})})
-	if sim.tick_index >= int(channel.get("finish_tick", 0)):
+		_sim._emit_event("ability.passenger_flung", int(row.get("id", 0)), passenger_id, {"physics_object_id": physics_id, "velocity": effect.get("velocity", {}), "custom_animation": effect.get("customAnimation", {})})
+	if _sim.tick_index >= int(channel.get("finish_tick", 0)):
 		row.erase("fling_passenger_channel"); row["state"] = "idle"
-		sim._emit_event("ability.fling_finished", int(row.get("id", 0)), int(channel.get("passenger_id", 0)))
+		_sim._emit_event("ability.fling_finished", int(row.get("id", 0)), int(channel.get("passenger_id", 0)))
 
 
 func _spawn_fling_physics_object(carrier: Dictionary, passenger: Dictionary, effect: Dictionary) -> int:
-	var id = sim._next_physics_object_id; sim._next_physics_object_id += 1
-	sim.physics_objects[id] = {
+	var _sim = sim
+	var id = _sim._next_physics_object_id; _sim._next_physics_object_id += 1
+	_sim.physics_objects[id] = {
 		"id": id, "source_object_id": String(passenger.get("source_object_id", passenger.get("object_id", ""))),
 		"position": Vector2(carrier.get("position", Vector2.ZERO)), "height_source": 0.001,
 		"horizontal_velocity": Vector2(effect.get("horizontal_velocity_scaled", Vector2.ZERO)),
@@ -986,21 +960,22 @@ func _spawn_fling_physics_object(carrier: Dictionary, passenger: Dictionary, eff
 
 
 func _step_dominate_enemy(row: Dictionary) -> void:
+	var _sim = sim
 	var channel := row.get("dominate_enemy_channel", {}) as Dictionary
 	if channel.is_empty():
 		return
 	var interrupted = (
 		int(row.get("health", 0)) <= 0
 		or bool(row.get("knocked_down", false))
-		or sim.tick_index < int(row.get("stun_until_tick", -1))
-		or sim.tick_index < int(row.get("cower_until_tick", -1))
+		or _sim.tick_index < int(row.get("stun_until_tick", -1))
+		or _sim.tick_index < int(row.get("cower_until_tick", -1))
 		or (not bool(channel.get("triggered", false)) and int(row.get("order_sequence", 0)) != int(channel.get("order_sequence_at_start", 0)))
 	)
 	if interrupted:
 		row.erase("dominate_enemy_channel")
-		sim._emit_event("ability.dominate_interrupted", int(row.get("id", 0)), 0, {"ability_id": channel.get("ability_id"), "triggered": channel.get("triggered")})
+		_sim._emit_event("ability.dominate_interrupted", int(row.get("id", 0)), 0, {"ability_id": channel.get("ability_id"), "triggered": channel.get("triggered")})
 		return
-	if not bool(channel.get("triggered", false)) and sim.tick_index >= int(channel.get("activation_tick", 0)):
+	if not bool(channel.get("triggered", false)) and _sim.tick_index >= int(channel.get("activation_tick", 0)):
 		var effect := {
 			"affectsFilter": channel.get("affects_filter", ""),
 			"dominate_radius_scaled": channel.get("dominate_radius_scaled", 0.0),
@@ -1008,34 +983,35 @@ func _step_dominate_enemy(row: Dictionary) -> void:
 		var affected := _dominate_enemy_candidates(row, effect, Vector2(channel.get("target_point", Vector2.ZERO)), String(channel.get("targeting", "point")))
 		for target_id in affected:
 			_dominate_enemy_convert(
-				row, sim.entities[int(target_id)] as Dictionary,
+				row, _sim.entities[int(target_id)] as Dictionary,
 				bool(channel.get("permanently_convert", false)),
 				int(channel.get("temporary_defect_duration_ticks", 0))
 			)
 		channel["affected_ids"] = affected
 		channel["triggered"] = true
 		row["dominate_enemy_channel"] = channel
-		sim._emit_event("ability.dominate_triggered", int(row.get("id", 0)), int(affected[0]) if not affected.is_empty() else 0, {
+		_sim._emit_event("ability.dominate_triggered", int(row.get("id", 0)), int(affected[0]) if not affected.is_empty() else 0, {
 			"ability_id": channel.get("ability_id"), "affected_ids": affected,
 			"presentation": channel.get("presentation"),
 		})
-	if sim.tick_index >= int(channel.get("finish_tick", 0)):
+	if _sim.tick_index >= int(channel.get("finish_tick", 0)):
 		row.erase("dominate_enemy_channel")
 		row["state"] = "idle"
-		sim._emit_event("ability.dominate_finished", int(row.get("id", 0)), 0, {"ability_id": channel.get("ability_id"), "affected_ids": channel.get("affected_ids", [])})
+		_sim._emit_event("ability.dominate_finished", int(row.get("id", 0)), 0, {"ability_id": channel.get("ability_id"), "affected_ids": channel.get("affected_ids", [])})
 
 
 func _dominate_enemy_candidates(source: Dictionary, effect: Dictionary, point: Vector2, targeting: String) -> Array[int]:
+	var _sim = sim
 	var radius := float(effect.get("dominate_radius_scaled", 0.0))
 	if radius <= 0.0:
 		radius = 1.5
 	if targeting == "enemy-object":
 		var chosen_id := 0
 		var chosen_distance := 1.5
-		for target_id in sim.entity_ids():
+		for target_id in _sim.entity_ids():
 			if target_id == int(source.get("id", 0)):
 				continue
-			var target = sim.entities[target_id] as Dictionary
+			var target = _sim.entities[target_id] as Dictionary
 			var distance := Vector2(target.get("position", Vector2.ZERO)).distance_to(point)
 			if int(target.get("health", 0)) > 0 and (chosen_id == 0 and distance <= chosen_distance or chosen_id != 0 and distance < chosen_distance) and _dominate_enemy_filter_accepts(source, target, String(effect.get("affectsFilter", ""))):
 				chosen_distance = distance
@@ -1045,10 +1021,10 @@ func _dominate_enemy_candidates(source: Dictionary, effect: Dictionary, point: V
 			single.append(chosen_id)
 		return single
 	var result: Array[int] = []
-	for target_id in sim.entity_ids():
+	for target_id in _sim.entity_ids():
 		if target_id == int(source.get("id", 0)):
 			continue
-		var target = sim.entities[target_id] as Dictionary
+		var target = _sim.entities[target_id] as Dictionary
 		if int(target.get("health", 0)) <= 0 or Vector2(target.get("position", Vector2.ZERO)).distance_to(point) > radius:
 			continue
 		if not _dominate_enemy_filter_accepts(source, target, String(effect.get("affectsFilter", ""))):
@@ -1058,6 +1034,7 @@ func _dominate_enemy_candidates(source: Dictionary, effect: Dictionary, point: V
 
 
 func _dominate_enemy_filter_accepts(source: Dictionary, target: Dictionary, filter_text: String) -> bool:
+	var _sim = sim
 	var tokens: Array = filter_text.split(" ", false)
 	if tokens.is_empty():
 		return false
@@ -1069,11 +1046,11 @@ func _dominate_enemy_filter_accepts(source: Dictionary, target: Dictionary, filt
 	for token_value in tokens:
 		var token := String(token_value).to_upper()
 		if token == "ENEMIES":
-			has_relation = true; relation_allowed = relation_allowed or sim._is_hostile(source_team, target_team)
+			has_relation = true; relation_allowed = relation_allowed or _sim._is_hostile(source_team, target_team)
 		elif token == "NEUTRAL":
-			has_relation = true; relation_allowed = relation_allowed or target_team == sim.NEUTRAL_TEAM or target_team < 0
+			has_relation = true; relation_allowed = relation_allowed or target_team == _sim.NEUTRAL_TEAM or target_team < 0
 		elif token == "ALLIES":
-			has_relation = true; relation_allowed = relation_allowed or (target_team == source_team or (not sim._is_hostile(source_team, target_team) and target_team != sim.NEUTRAL_TEAM and target_team >= 0))
+			has_relation = true; relation_allowed = relation_allowed or (target_team == source_team or (not _sim._is_hostile(source_team, target_team) and target_team != _sim.NEUTRAL_TEAM and target_team >= 0))
 		else:
 			trait_tokens.append(token)
 	if has_relation and not relation_allowed:
@@ -1081,9 +1058,9 @@ func _dominate_enemy_filter_accepts(source: Dictionary, target: Dictionary, filt
 	var traits: Dictionary = {}
 	for trait_value in _ability_object_kind_tokens(target):
 		traits[String(trait_value).to_upper()] = true
-	var source_rule = ((sim._rules.get("unit_rules", {}) as Dictionary).get(String(target.get("object_id", "")), {}) as Dictionary)
+	var source_rule = ((_sim._rules.get("unit_rules", {}) as Dictionary).get(String(target.get("object_id", "")), {}) as Dictionary)
 	if source_rule.is_empty():
-		source_rule = ((sim._rules.get("unit_rules", {}) as Dictionary).get(String(target.get("unit_type", "")), {}) as Dictionary)
+		source_rule = ((_sim._rules.get("unit_rules", {}) as Dictionary).get(String(target.get("unit_type", "")), {}) as Dictionary)
 	for identity in [source_rule.get("source_object_id", ""), target.get("source_object_id", ""), target.get("object_id", ""), target.get("unit_type", "")]:
 		if String(identity) != "":
 			traits[String(identity).to_upper()] = true
@@ -1098,6 +1075,7 @@ func _dominate_enemy_filter_accepts(source: Dictionary, target: Dictionary, filt
 
 
 func _dominate_enemy_convert(source: Dictionary, target: Dictionary, permanent: bool = true, temporary_duration_ticks: int = 0) -> void:
+	var _sim = sim
 	var prior_team := int(target.get("team", -1))
 	var new_team := int(source.get("team", -1))
 	if prior_team == new_team:
@@ -1117,8 +1095,8 @@ func _dominate_enemy_convert(source: Dictionary, target: Dictionary, permanent: 
 			"original_team": original_team,
 			"defecting_team": new_team,
 			"source_id": int(source.get("id", 0)),
-			"started_tick": sim.tick_index,
-			"expires_tick": sim.tick_index + temporary_duration_ticks,
+			"started_tick": _sim.tick_index,
+			"expires_tick": _sim.tick_index + temporary_duration_ticks,
 			"duration_ticks": temporary_duration_ticks,
 		}
 	target["team"] = new_team
@@ -1128,20 +1106,21 @@ func _dominate_enemy_convert(source: Dictionary, target: Dictionary, permanent: 
 	target["route"] = []
 	target["route_cells"] = []
 	target["state"] = "idle"
-	sim._clear_member_attack_schedule(target)
-	sim._clear_member_targets(target)
-	sim._emit_event("ability.unit_dominated", int(source.get("id", 0)), int(target.get("id", 0)), {"prior_team": prior_team, "team": new_team, "permanent": permanent, "restore_tick": sim.tick_index + temporary_duration_ticks if not permanent else -1})
+	_sim._clear_member_attack_schedule(target)
+	_sim._clear_member_targets(target)
+	_sim._emit_event("ability.unit_dominated", int(source.get("id", 0)), int(target.get("id", 0)), {"prior_team": prior_team, "team": new_team, "permanent": permanent, "restore_tick": _sim.tick_index + temporary_duration_ticks if not permanent else -1})
 
 
 func _step_temporary_defect(row: Dictionary) -> void:
+	var _sim = sim
 	var defect := row.get("temporary_defect", {}) as Dictionary
 	if defect.is_empty():
 		return
 	if int(row.get("health", 0)) <= 0:
 		row.erase("temporary_defect")
-		sim._emit_event("ability.temporary_defect_ended", int(defect.get("source_id", 0)), int(row.get("id", 0)), {"reason": "target-dead", "restored": false})
+		_sim._emit_event("ability.temporary_defect_ended", int(defect.get("source_id", 0)), int(row.get("id", 0)), {"reason": "target-dead", "restored": false})
 		return
-	if sim.tick_index < int(defect.get("expires_tick", 0)):
+	if _sim.tick_index < int(defect.get("expires_tick", 0)):
 		return
 	var restored := int(row.get("team", -1)) == int(defect.get("defecting_team", -1))
 	if restored:
@@ -1151,22 +1130,15 @@ func _step_temporary_defect(row: Dictionary) -> void:
 		row["route"] = []
 		row["route_cells"] = []
 		row["state"] = "idle"
-		sim._clear_member_attack_schedule(row)
-		sim._clear_member_targets(row)
+		_sim._clear_member_attack_schedule(row)
+		_sim._clear_member_targets(row)
 	row.erase("temporary_defect")
 	row.erase("dominated_from_team")
-	sim._emit_event("ability.temporary_defect_ended", int(defect.get("source_id", 0)), int(row.get("id", 0)), {"reason": "expired", "restored": restored, "team": int(row.get("team", -1))})
-
-
-func _apply_ability_mount_toggle(hero_row: Dictionary, effect: Dictionary) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_mount_toggle(hero_row, effect)
-
-
-func _apply_ability_special_disguise(row: Dictionary, effect: Dictionary) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_special_disguise(row, effect)
+	_sim._emit_event("ability.temporary_defect_ended", int(defect.get("source_id", 0)), int(row.get("id", 0)), {"reason": "expired", "restored": restored, "team": int(row.get("team", -1))})
 
 
 func special_disguise_opacity(row: Dictionary) -> float:
+	var _sim = sim
 	var channel := row.get("special_disguise_channel", {}) as Dictionary
 	if channel.is_empty():
 		return 1.0
@@ -1176,13 +1148,14 @@ func special_disguise_opacity(row: Dictionary) -> float:
 		return target
 	if phase not in ["unpacking", "packing"]:
 		return 1.0
-	var start_tick = int(channel.get("phase_start_tick", sim.tick_index))
+	var start_tick = int(channel.get("phase_start_tick", _sim.tick_index))
 	var end_tick := int(channel.get("phase_end_tick", start_tick))
-	var progress = clampf(float(sim.tick_index - start_tick) / float(maxi(1, end_tick - start_tick)), 0.0, 1.0)
+	var progress = clampf(float(_sim.tick_index - start_tick) / float(maxi(1, end_tick - start_tick)), 0.0, 1.0)
 	return lerpf(1.0, target, progress) if phase == "unpacking" else lerpf(target, 1.0, progress)
 
 
 func _step_special_disguise(row: Dictionary) -> void:
+	var _sim = sim
 	var channel := row.get("special_disguise_channel", {}) as Dictionary
 	if channel.is_empty():
 		return
@@ -1192,25 +1165,25 @@ func _step_special_disguise(row: Dictionary) -> void:
 		row["special_disguise_deferred_boundary"] = "death-reset-ordering"
 		return
 	var phase := String(channel.get("phase", ""))
-	if phase == "persistent-hold" or sim.tick_index < int(channel.get("phase_end_tick", 0)):
+	if phase == "persistent-hold" or _sim.tick_index < int(channel.get("phase_end_tick", 0)):
 		return
 	match phase:
 		"unpacking":
 			channel["phase"] = "preparation"
-			channel["phase_start_tick"] = sim.tick_index
-			channel["phase_end_tick"] = sim.tick_index + int(channel.get("preparation_ticks", 1))
+			channel["phase_start_tick"] = _sim.tick_index
+			channel["phase_end_tick"] = _sim.tick_index + int(channel.get("preparation_ticks", 1))
 			row["special_disguise_channel"] = channel
 		"preparation":
-			sim._set_row_object_status(row, "DISGUISED", true)
+			_sim._set_row_object_status(row, "DISGUISED", true)
 			channel["phase"] = "persistent-hold"
-			channel["phase_start_tick"] = sim.tick_index
+			channel["phase_start_tick"] = _sim.tick_index
 			# PersistentPrepTime is an authored hold cadence, not permission to
 			# retrigger the disguise body every 250ms. The shipped override fires
 			# once and remains held until cancel.
-			channel["phase_end_tick"] = sim.tick_index + int(channel.get("persistent_prep_ticks", 1))
+			channel["phase_end_tick"] = _sim.tick_index + int(channel.get("persistent_prep_ticks", 1))
 			row["special_disguise_channel"] = channel
 			_emit_special_disguise_presentation(row, "owner-disguised-presentation", String(channel.get("owner_disguise_template_id", "")), true)
-			sim._emit_event("ability.special_disguise_triggered", int(row.get("id", 0)), 0, {
+			_sim._emit_event("ability.special_disguise_triggered", int(row.get("id", 0)), 0, {
 				"template_id": String(channel.get("owner_disguise_template_id", "")),
 				"authoritative_object_id": String(row.get("unit_type", "")),
 				"viewer_perspective": "deferred-owner-only",
@@ -1218,29 +1191,31 @@ func _step_special_disguise(row: Dictionary) -> void:
 		"packing":
 			row.erase("special_disguise_channel")
 			row.erase("special_disguise_deferred_boundary")
-			sim._emit_event("ability.special_disguise_packed", int(row.get("id", 0)), 0, {"opacity": 1.0})
+			_sim._emit_event("ability.special_disguise_packed", int(row.get("id", 0)), 0, {"opacity": 1.0})
 
 
 func cancel_special_disguise(entity_id: int, reason: String = "explicit", suppress_exit_fx: bool = false) -> Dictionary:
-	if not sim.entities.has(entity_id):
+	var _sim = sim
+	if not _sim.entities.has(entity_id):
 		return {"ok": false, "reason": "unknown-entity"}
-	return _cancel_special_disguise_row(sim.entities[entity_id] as Dictionary, reason, suppress_exit_fx)
+	return _cancel_special_disguise_row(_sim.entities[entity_id] as Dictionary, reason, suppress_exit_fx)
 
 
 func _cancel_special_disguise_row(row: Dictionary, reason: String, suppress_exit_fx: bool) -> Dictionary:
+	var _sim = sim
 	var channel := row.get("special_disguise_channel", {}) as Dictionary
 	if channel.is_empty():
 		return {"ok": false, "reason": "special-disguise-inactive"}
 	if String(channel.get("phase", "")) == "packing":
 		return {"ok": false, "reason": "special-disguise-already-packing"}
-	sim._set_row_object_status(row, "DISGUISED", false)
+	_sim._set_row_object_status(row, "DISGUISED", false)
 	channel["phase"] = "packing"
-	channel["phase_start_tick"] = sim.tick_index
-	channel["phase_end_tick"] = sim.tick_index + int(channel.get("pack_ticks", 1))
+	channel["phase_start_tick"] = _sim.tick_index
+	channel["phase_end_tick"] = _sim.tick_index + int(channel.get("pack_ticks", 1))
 	row["special_disguise_channel"] = channel
 	_emit_special_disguise_presentation(row, "owner-mounted-presentation", String(channel.get("owner_object_id", "")), false)
 	var exit_fx := "" if suppress_exit_fx else String(channel.get("disguise_fx_id", ""))
-	sim._emit_event("ability.special_disguise_cancelled", int(row.get("id", 0)), 0, {
+	_sim._emit_event("ability.special_disguise_cancelled", int(row.get("id", 0)), 0, {
 		"reason": reason, "suppress_exit_fx": suppress_exit_fx,
 		"exit_fx_id": exit_fx, "phase_end_tick": int(channel.get("phase_end_tick", 0)),
 	})
@@ -1278,37 +1253,34 @@ func _rescale_member_health_preserving_fraction(row: Dictionary, new_member_maxi
 	row["health"] = aggregate
 
 
-func _apply_ability_capture_building(hero_row: Dictionary, effect: Dictionary, target_point: Vector2) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_capture_building(hero_row, effect, target_point)
-
-
 func _step_capture_channel(row: Dictionary) -> bool:
 	## Advance one entity's capture channel. Returns true while the channel
 	## holds the hero in place (the entity step then goes no further).
+	var _sim = sim
 	var channel: Dictionary = row.get("capture_channel", {}) as Dictionary
 	if channel.is_empty():
 		return false
 	var structure_id := int(channel.get("structure_id", 0))
-	var structure: Dictionary = sim.structures.get(structure_id, {})
+	var structure: Dictionary = _sim.structures.get(structure_id, {})
 	var team := int(row.get("team", -1))
 	var interrupted = (
 		structure.is_empty()
 		or int(structure.get("health", 0)) <= 0
-		or int(structure.get("team", -1)) != sim.NEUTRAL_TEAM
+		or int(structure.get("team", -1)) != _sim.NEUTRAL_TEAM
 		or not (row["route"] as Array).is_empty()
 		or int(row.get("target_id", 0)) != 0
 	)
 	if interrupted:
 		row.erase("capture_channel")
-		sim._emit_event("structure.capture_cancelled", int(row.get("id", 0)), structure_id, {"team": team})
+		_sim._emit_event("structure.capture_cancelled", int(row.get("id", 0)), structure_id, {"team": team})
 		return false
-	if sim.tick_index >= int(channel.get("complete_tick", sim.tick_index + 1)):
+	if _sim.tick_index >= int(channel.get("complete_tick", _sim.tick_index + 1)):
 		structure["team"] = team
-		sim._award_auto_deposit_capture(structure, team)
-		sim._transfer_linked_capture(structure, team)
+		_sim._award_auto_deposit_capture(structure, team)
+		_sim._transfer_linked_capture(structure, team)
 		row.erase("capture_channel")
 		row["state"] = "idle"
-		sim._emit_event("structure.captured", int(row.get("id", 0)), structure_id, {
+		_sim._emit_event("structure.captured", int(row.get("id", 0)), structure_id, {
 			"team": team,
 			"structure_id": structure_id,
 			"structure_kind": String(structure.get("structure_kind", "")),
@@ -1319,53 +1291,43 @@ func _step_capture_channel(row: Dictionary) -> bool:
 	return true
 
 
-func _apply_ability_terror(hero_row: Dictionary, ability_id: String, effect: Dictionary) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_terror(hero_row, ability_id, effect)
-
-
 func _apply_fear_scatter(center: Vector2, row: Dictionary, strength: float) -> void:
 	## Fear displacement: throw the victim radially away from the terror
 	## source onto the nearest walkable spot (same deterministic fraction
 	## ladder as knockback) and drop its orders — but never the knockdown
 	## sprawl, so the battalion can flee/act again immediately.
+	var _sim = sim
 	var position := Vector2(row.get("position", Vector2.ZERO))
 	var distance := position.distance_to(center)
 	var direction := (position - center) / distance if distance > 0.001 else Vector2.RIGHT
 	var landed := position
 	for fraction in [1.0, 0.5, 0.25]:
 		var candidate := position + direction * strength * float(fraction)
-		if sim._position_walkable(candidate):
+		if _sim._position_walkable(candidate):
 			landed = candidate
 			break
 	row["position"] = landed
-	sim._spatial_sync(row)
+	_sim._spatial_sync(row)
 	row["current_speed"] = 0.0
 	row["attack_windup"] = 0
 	row["target_id"] = 0
 	row["target_kind"] = "battalion"
 	row["attack_move"] = false
-	sim._clear_member_attack_schedule(row)
-	sim._clear_member_targets(row)
-	sim._clear_pending_route(row, true)
+	_sim._clear_member_attack_schedule(row)
+	_sim._clear_member_targets(row)
+	_sim._clear_pending_route(row, true)
 	row["state"] = "idle"
-	sim._emit_event("combat.fear_scatter", int(row.get("id", 0)), 0, {
+	_sim._emit_event("combat.fear_scatter", int(row.get("id", 0)), 0, {
 		"center": [snappedf(center.x, 0.001), snappedf(center.y, 0.001)],
 		"landed": [snappedf(landed.x, 0.001), snappedf(landed.y, 0.001)],
 	})
 
 
-func _apply_ability_summon(hero_row: Dictionary, effect: Dictionary, point: Vector2) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_summon(hero_row, effect, point)
-
-
-func _apply_ability_summon_chain(team: int, effect: Dictionary, point: Vector2) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_summon_chain(team, effect, point)
-
-
 func _summon_unit_type_for(source_object_id: String) -> String:
-	var member_id = sim.PlayableUnitAdapter.runtime_object_id(source_object_id)
-	for unit_type_value in sim._unit_production_rules.keys():
-		if String((sim._unit_production_rules[unit_type_value] as Dictionary).get("object_id", "")) == member_id:
+	var _sim = sim
+	var member_id = _sim.PlayableUnitAdapter.runtime_object_id(source_object_id)
+	for unit_type_value in _sim._unit_production_rules.keys():
+		if String((_sim._unit_production_rules[unit_type_value] as Dictionary).get("object_id", "")) == member_id:
 			return String(unit_type_value)
 	return ""
 
@@ -1374,29 +1336,26 @@ func _apply_ability_experience_grant(hero_row: Dictionary, effect: Dictionary, p
 	return sim._experience_subsystem().apply_ability_experience_grant(hero_row, effect, point)
 
 
-func _apply_ability_arrow_storm(hero_row: Dictionary, effect: Dictionary, point: Vector2) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_arrow_storm(hero_row, effect, point)
-
-
 func _step_volley_channel(row: Dictionary) -> bool:
 	## Advance one entity's arrow-storm volley. Returns true while the channel
 	## holds the hero in place (the entity step then goes no further). Any
 	## later order (route or target) cancels the volley outright.
+	var _sim = sim
 	var channel: Dictionary = row.get("volley_channel", {}) as Dictionary
 	if channel.is_empty():
 		return false
 	if not (row["route"] as Array).is_empty() or int(row.get("target_id", 0)) != 0:
 		row.erase("volley_channel")
-		sim._emit_event("ability.volley_cancelled", int(row.get("id", 0)), 0, {"team": int(row.get("team", -1))})
+		_sim._emit_event("ability.volley_cancelled", int(row.get("id", 0)), 0, {"team": int(row.get("team", -1))})
 		return false
-	if sim.tick_index >= int(channel.get("next_shot_tick", 0)):
+	if _sim.tick_index >= int(channel.get("next_shot_tick", 0)):
 		var team := int(row.get("team", -1))
 		var point := Vector2(channel.get("point", Vector2.ZERO))
 		var enemy_ids := _ability_enemies_near(team, point, float(channel.get("radius", 0.0)))
 		if enemy_ids.is_empty() and not bool(channel.get("can_shoot_empty_ground", false)):
 			row.erase("volley_channel")
 			row["state"] = "idle"
-			sim._emit_event("ability.volley_complete", int(row.get("id", 0)), 0, {"team": team, "shots": int(channel.get("shots_fired", 0))})
+			_sim._emit_event("ability.volley_complete", int(row.get("id", 0)), 0, {"team": team, "shots": int(channel.get("shots_fired", 0))})
 			return false
 		var shots := mini(int(channel.get("shots_per_burst", 1)), int(channel.get("shots_left", 0)))
 		var damage := int(channel.get("damage", 0))
@@ -1405,15 +1364,15 @@ func _step_volley_channel(row: Dictionary) -> bool:
 			if enemy_ids.is_empty():
 				continue
 			var target_id := int(enemy_ids[(fired + shot_index) % enemy_ids.size()])
-			if sim.entities.has(target_id) and int((sim.entities[target_id] as Dictionary).get("health", 0)) > 0:
-				sim._apply_damage(int(row.get("id", 0)), target_id, damage, "battalion")
+			if _sim.entities.has(target_id) and int((_sim.entities[target_id] as Dictionary).get("health", 0)) > 0:
+				_sim._apply_damage(int(row.get("id", 0)), target_id, damage, "battalion")
 		channel["shots_fired"] = fired + shots
 		channel["shots_left"] = int(channel.get("shots_left", 0)) - shots
-		channel["next_shot_tick"] = sim.tick_index + int(channel.get("interval_ticks", 1))
+		channel["next_shot_tick"] = _sim.tick_index + int(channel.get("interval_ticks", 1))
 		if int(channel.get("shots_left", 0)) <= 0:
 			row.erase("volley_channel")
 			row["state"] = "idle"
-			sim._emit_event("ability.volley_complete", int(row.get("id", 0)), 0, {"team": team, "shots": fired + shots})
+			_sim._emit_event("ability.volley_complete", int(row.get("id", 0)), 0, {"team": team, "shots": fired + shots})
 			return false
 		row["volley_channel"] = channel
 	row["state"] = "volley"
@@ -1421,12 +1380,9 @@ func _step_volley_channel(row: Dictionary) -> bool:
 	return true
 
 
-func _apply_ability_stealth_toggle(hero_row: Dictionary, effect: Dictionary) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_stealth_toggle(hero_row, effect)
-
-
 func _stealth_active(row: Dictionary) -> bool:
-	return sim.tick_index < int(row.get("stealth_until_tick", -1)) and sim.tick_index >= int(row.get("detected_until_tick", -1))
+	var _sim = sim
+	return _sim.tick_index < int(row.get("stealth_until_tick", -1)) and _sim.tick_index >= int(row.get("detected_until_tick", -1))
 
 
 func _grant_stealth(row: Dictionary, until_tick: int, forbidden: Array) -> void:
@@ -1461,18 +1417,6 @@ func _break_stealth(row: Dictionary, condition: String) -> void:
 		sim._revoke_invisibility_policy_sources(object_id, row, policy)
 		row["invisibility_update"] = policy
 	_clear_stealth(row)
-
-
-func _apply_ability_teleport(hero_row: Dictionary, effect: Dictionary, point: Vector2) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_teleport(hero_row, effect, point)
-
-
-func _apply_ability_curse(hero_row: Dictionary, effect: Dictionary, point: Vector2) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_curse(hero_row, effect, point)
-
-
-func _apply_ability_leadership_strip(hero_row: Dictionary, effect: Dictionary) -> Dictionary:
-	return sim._abilities_subsystem()._apply_ability_leadership_strip(hero_row, effect)
 
 
 func _set_timed_modifier(row: Dictionary, key: String, modifiers: Array, expires_tick: int) -> void:
@@ -1562,13 +1506,14 @@ func _recompute_leadership_auras() -> void:
 	## with different names do — the retail AttributeModifier stacking rule.
 	## Sweep order is ascending entity id; grants expire one interval after
 	## the last refresh, so death/knockdown/leaving-radius drops them.
-	for id in sim.entity_ids():
-		var hero: Dictionary = sim.entities[id]
+	var _sim = sim
+	for id in _sim.entity_ids():
+		var hero: Dictionary = _sim.entities[id]
 		if String(hero.get("category", "")) != "hero":
 			continue
 		if int(hero.get("health", 0)) <= 0 or int(hero.get("knockdown_ticks", 0)) > 0:
 			continue
-		var rules: Array = sim._unit_ability_rules.get(String(hero.get("unit_type", "")), []) as Array
+		var rules: Array = _sim._unit_ability_rules.get(String(hero.get("unit_type", "")), []) as Array
 		if rules.is_empty():
 			continue
 		var team := int(hero.get("team", -1))
@@ -1592,14 +1537,14 @@ func _recompute_leadership_auras() -> void:
 				# Fail closed on placeholder rows that carry no aura data.
 				continue
 			var filter_text := String(effect.get("affects", ""))
-			var expiry = sim.tick_index + sim.ABILITY_AURA_INTERVAL_TICKS
+			var expiry = _sim.tick_index + _sim.ABILITY_AURA_INTERVAL_TICKS
 			# An aura reaches a bounded radius, so only that neighbourhood of the
 			# owning team can receive a grant. The hero itself always lands in
 			# the gathered set (distance zero), preserving the AffectsSelf seam.
-			for ally_id in sim._spatial_gather_sorted(origin, range_limit):
-				if not sim.entities.has(ally_id):
+			for ally_id in _sim._spatial_gather_sorted(origin, range_limit):
+				if not _sim.entities.has(ally_id):
 					continue
-				var ally: Dictionary = sim.entities[ally_id]
+				var ally: Dictionary = _sim.entities[ally_id]
 				if int(ally.get("team", -1)) != team or int(ally.get("health", 0)) <= 0:
 					continue
 				if ally_id == id:
@@ -1609,7 +1554,7 @@ func _recompute_leadership_auras() -> void:
 					continue
 				if not _ability_filter_accepts(ally, filter_text):
 					continue
-				if sim.tick_index < sim._refresh_leadership_suppression(ally):
+				if _sim.tick_index < _sim._refresh_leadership_suppression(ally):
 					# An anti-category strip (Horn of Gondor) suppresses new
 					# leadership grants for its authored duration.
 					continue
@@ -1621,10 +1566,11 @@ func _step_hero_abilities() -> void:
 	## whose authored duration elapsed (exact tick), and apply HEALTH-modifier
 	## regeneration. Cooldowns are absolute ready ticks, so nothing counts
 	## down here.
-	if sim.tick_index % sim.ABILITY_AURA_INTERVAL_TICKS == 0:
+	var _sim = sim
+	if _sim.tick_index % _sim.ABILITY_AURA_INTERVAL_TICKS == 0:
 		_recompute_leadership_auras()
-	for id in sim.entity_ids():
-		var row: Dictionary = sim.entities[id]
+	for id in _sim.entity_ids():
+		var row: Dictionary = _sim.entities[id]
 		_step_temporary_defect(row)
 		_step_activate_module_graph(row)
 		_step_weapon_mode_special_powers(row)
@@ -1637,10 +1583,10 @@ func _step_hero_abilities() -> void:
 		_step_special_disguise(row)
 		# Expiry sweeps for the per-row ability fields (exact tick, then the
 		# field leaves the row so default rows never carry it).
-		if row.has("stealth_until_tick") and sim.tick_index >= int(row["stealth_until_tick"]):
+		if row.has("stealth_until_tick") and _sim.tick_index >= int(row["stealth_until_tick"]):
 			_clear_stealth(row)
-		sim._refresh_leadership_suppression(row)
-		if row.has("ability_hold_until_tick") and sim.tick_index >= int(row["ability_hold_until_tick"]):
+		_sim._refresh_leadership_suppression(row)
+		if row.has("ability_hold_until_tick") and _sim.tick_index >= int(row["ability_hold_until_tick"]):
 			row.erase("ability_hold_until_tick")
 		var table: Dictionary = row.get("timed_modifiers", {}) as Dictionary
 		if table.is_empty():
@@ -1649,7 +1595,7 @@ func _step_hero_abilities() -> void:
 		for key_value in table.keys():
 			if bool((table[key_value] as Dictionary).get("persistent", false)):
 				continue
-			if sim.tick_index >= int((table[key_value] as Dictionary).get("expires_tick", -1)):
+			if _sim.tick_index >= int((table[key_value] as Dictionary).get("expires_tick", -1)):
 				expired.append(String(key_value))
 		if not expired.is_empty():
 			expired.sort()
@@ -1664,7 +1610,7 @@ func _step_hero_abilities() -> void:
 		var health_factor := _timed_modifier_product(row, "HEALTH")
 		if health_factor > 1.0:
 			var member_maximum := int(row.get("member_maximum_health", 0))
-			var amount = maxi(1, roundi(float(member_maximum) * (health_factor - 1.0) * sim.TICK_SECONDS))
+			var amount = maxi(1, roundi(float(member_maximum) * (health_factor - 1.0) * _sim.TICK_SECONDS))
 			var health_values: Array = row.get("member_health", [])
 			var remaining = amount
 			var restored := false

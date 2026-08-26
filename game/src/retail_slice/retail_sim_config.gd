@@ -8,13 +8,14 @@ func _configure_faction_manifest() -> bool:
 	## Every faction-scoped table flows through the manifest. The 8 core
 	## tables are REQUIRED (Q80): a rules dictionary without them is refused
 	## by name — invented defaults were removed and never fall back silently.
-	var manifest_value: Variant = sim._rules.get("faction_manifest", {})
+	var _sim = sim
+	var manifest_value: Variant = _sim._rules.get("faction_manifest", {})
 	if typeof(manifest_value) != TYPE_DICTIONARY:
-		sim.configuration_error = "Faction manifest is not a dictionary"
+		_sim.configuration_error = "Faction manifest is not a dictionary"
 		return false
 	var manifest := manifest_value as Dictionary
 	if manifest.has("_error"):
-		sim.configuration_error = "Faction manifest is invalid: %s" % String(manifest.get("_error", ""))
+		_sim.configuration_error = "Faction manifest is invalid: %s" % String(manifest.get("_error", ""))
 		return false
 	var typed_expectations := {
 		"unit_production_rules": TYPE_DICTIONARY,
@@ -29,7 +30,7 @@ func _configure_faction_manifest() -> bool:
 	}
 	for key in typed_expectations:
 		if manifest.has(key) and typeof(manifest.get(key)) != int(typed_expectations[key]):
-			sim.configuration_error = "Faction manifest field '%s' has the wrong type" % String(key)
+			_sim.configuration_error = "Faction manifest field '%s' has the wrong type" % String(key)
 			return false
 	# Manifest keys that are now required (no fallback defaults permitted)
 	var required_keys := ["unit_production_rules", "ai_production_plan", "structure_kinds", 
@@ -37,23 +38,23 @@ func _configure_faction_manifest() -> bool:
 		"structure_armor", "spawn_roster"]
 	for req_key in required_keys:
 		if not manifest.has(req_key):
-			sim.configuration_error = "Faction manifest is missing required field '%s' (pack must carry it; invented defaults were removed)" % req_key
+			_sim.configuration_error = "Faction manifest is missing required field '%s' (pack must carry it; invented defaults were removed)" % req_key
 			return false
-	sim._unit_production_rules = (manifest.get("unit_production_rules") as Dictionary).duplicate(true)
+	_sim._unit_production_rules = (manifest.get("unit_production_rules") as Dictionary).duplicate(true)
 	var plan: Array = Array(manifest.get("ai_production_plan"))
 	var kinds: Array = Array(manifest.get("structure_kinds"))
 	for table in [plan, kinds]:
 		for value in table as Array:
 			if typeof(value) != TYPE_STRING or String(value).strip_edges() == "":
-				sim.configuration_error = "Faction manifest plan or structure kinds contain a non-string entry"
+				_sim.configuration_error = "Faction manifest plan or structure kinds contain a non-string entry"
 				return false
-	sim._production_unit_order.assign(plan)
-	sim._ai_production_plan.assign(plan)
-	sim._structure_kinds.assign(kinds)
+	_sim._production_unit_order.assign(plan)
+	_sim._ai_production_plan.assign(plan)
+	_sim._structure_kinds.assign(kinds)
 	var seed_kinds: Array = Array(manifest.get("seed_structure_kinds", kinds))
 	for value in seed_kinds:
 		if typeof(value) != TYPE_STRING or String(value).strip_edges() == "":
-			sim.configuration_error = "Faction manifest seed_structure_kinds contain a non-string entry"
+			_sim.configuration_error = "Faction manifest seed_structure_kinds contain a non-string entry"
 			return false
 		var seed_kind := String(value)
 		var found_seed := false
@@ -62,33 +63,33 @@ func _configure_faction_manifest() -> bool:
 				found_seed = true
 				break
 		if not found_seed:
-			sim.configuration_error = "Faction manifest seed kind '%s' is not in structure_kinds" % seed_kind
+			_sim.configuration_error = "Faction manifest seed kind '%s' is not in structure_kinds" % seed_kind
 			return false
-	sim._seed_structure_kinds.clear()
+	_sim._seed_structure_kinds.clear()
 	for value in seed_kinds:
-		sim._seed_structure_kinds.append(String(value))
-	if sim._seed_structure_kinds.is_empty():
-		sim._seed_structure_kinds.assign(sim._structure_kinds)
-	sim._structure_max_health = (manifest.get("structure_max_health") as Dictionary).duplicate(true)
-	sim._structure_bounty_values = (manifest.get("structure_bounty_values", {}) as Dictionary).duplicate(true)
-	sim._structure_build_rules = (manifest.get("structure_build_rules") as Dictionary).duplicate(true)
-	sim._unit_damage_types = (manifest.get("unit_damage_types") as Dictionary).duplicate(true)
+		_sim._seed_structure_kinds.append(String(value))
+	if _sim._seed_structure_kinds.is_empty():
+		_sim._seed_structure_kinds.assign(_sim._structure_kinds)
+	_sim._structure_max_health = (manifest.get("structure_max_health") as Dictionary).duplicate(true)
+	_sim._structure_bounty_values = (manifest.get("structure_bounty_values", {}) as Dictionary).duplicate(true)
+	_sim._structure_build_rules = (manifest.get("structure_build_rules") as Dictionary).duplicate(true)
+	_sim._unit_damage_types = (manifest.get("unit_damage_types") as Dictionary).duplicate(true)
 	# Repopulated from the loaded documents' compiled combat blocks; no manifest
 	# constant mirrors it, so it must not survive a previous configure.
-	sim._unit_damage_components = {}
+	_sim._unit_damage_components = {}
 	# Compiled per-kind structure armor (armor.ini via each structure document).
 	# Legacy manifests without it keep the FortressArmor mirror with per-line
 	# armor.ini provenance; kinds outside the mirror are recorded provisionals.
-	sim._structure_armor = (manifest.get("structure_armor") as Dictionary).duplicate(true)
-	sim._spawn_roster = (manifest.get("spawn_roster") as Array).duplicate(true)
-	for kind_value in sim._structure_kinds:
+	_sim._structure_armor = (manifest.get("structure_armor") as Dictionary).duplicate(true)
+	_sim._spawn_roster = (manifest.get("spawn_roster") as Array).duplicate(true)
+	for kind_value in _sim._structure_kinds:
 		var kind := String(kind_value)
-		if int(sim._structure_max_health.get(kind, 0)) <= 0:
-			sim.configuration_error = "Faction manifest structure kind '%s' has no positive maximum health" % kind
+		if int(_sim._structure_max_health.get(kind, 0)) <= 0:
+			_sim.configuration_error = "Faction manifest structure kind '%s' has no positive maximum health" % kind
 			return false
-		var build_rule: Dictionary = sim._structure_build_rules.get(kind, {}) as Dictionary
+		var build_rule: Dictionary = _sim._structure_build_rules.get(kind, {}) as Dictionary
 		if int(build_rule.get("cost", -1)) < 0 or float(build_rule.get("seconds", 0.0)) <= 0.0:
-			sim.configuration_error = "Faction manifest structure kind '%s' has no valid build rule" % kind
+			_sim.configuration_error = "Faction manifest structure kind '%s' has no valid build rule" % kind
 			return false
 	return true
 
@@ -96,12 +97,13 @@ func _configure_faction_manifest() -> bool:
 func _record_structure_armor_provisionals() -> void:
 	## Every structure kind must have a compiled armor table. Kinds without one
 	## are recorded and logged (loud failure on damage application).
-	sim.structure_armor_provisional_kinds.clear()
-	for kind_value in sim._structure_kinds:
+	var _sim = sim
+	_sim.structure_armor_provisional_kinds.clear()
+	for kind_value in _sim._structure_kinds:
 		var kind := String(kind_value)
-		if sim._structure_armor.has(kind):
+		if _sim._structure_armor.has(kind):
 			continue
-		sim.structure_armor_provisional_kinds.append(kind)
+		_sim.structure_armor_provisional_kinds.append(kind)
 		push_error("[RetailSliceSim] structure armor: kind '%s' has no compiled armor contract; structure damage will be refused for that kind" % kind)
 
 
@@ -152,9 +154,10 @@ func _scenario_structure_armor_projection(document: Dictionary) -> Dictionary:
 
 
 func _configure_scenario_structure_armor_projection() -> bool:
-	var registry_value: Variant = sim._rules.get("scenario_structure_runtimes", {})
+	var _sim = sim
+	var registry_value: Variant = _sim._rules.get("scenario_structure_runtimes", {})
 	if typeof(registry_value) != TYPE_DICTIONARY:
-		sim.configuration_error = "Scenario structure runtime registry is not a dictionary"
+		_sim.configuration_error = "Scenario structure runtime registry is not a dictionary"
 		return false
 	var registry := registry_value as Dictionary
 	var object_ids: Array = registry.keys()
@@ -171,22 +174,22 @@ func _configure_scenario_structure_armor_projection() -> bool:
 			continue
 		var projection := _scenario_structure_armor_projection(document)
 		if projection.has("error"):
-			sim.configuration_error = "Scenario structure '%s' armor is invalid: %s" % [String(document.get("objectId", object_id_value)), String(projection.get("error", ""))]
+			_sim.configuration_error = "Scenario structure '%s' armor is invalid: %s" % [String(document.get("objectId", object_id_value)), String(projection.get("error", ""))]
 			return false
 		var contract: Dictionary = (projection.get("table", {}) as Dictionary).duplicate(true) if bool(projection.get("present", false)) else {}
 		if contracts_by_kind.has(kind):
 			if (contracts_by_kind.get(kind, {}) as Dictionary) != contract:
-				sim.configuration_error = "Scenario structure kind collision '%s': %s and %s carry unequal armor contracts" % [kind, String(sources_by_kind.get(kind, "")), String(document.get("objectId", object_id_value))]
+				_sim.configuration_error = "Scenario structure kind collision '%s': %s and %s carry unequal armor contracts" % [kind, String(sources_by_kind.get(kind, "")), String(document.get("objectId", object_id_value))]
 				return false
 			continue
 		contracts_by_kind[kind] = contract
 		sources_by_kind[kind] = String(document.get("objectId", object_id_value))
 		if contract.is_empty():
 			continue
-		if sim._structure_armor.has(kind) and (sim._structure_armor.get(kind, {}) as Dictionary) != contract:
-			sim.configuration_error = "Scenario structure kind collision '%s': faction and %s carry unequal armor contracts" % [kind, String(document.get("objectId", object_id_value))]
+		if _sim._structure_armor.has(kind) and (_sim._structure_armor.get(kind, {}) as Dictionary) != contract:
+			_sim.configuration_error = "Scenario structure kind collision '%s': faction and %s carry unequal armor contracts" % [kind, String(document.get("objectId", object_id_value))]
 			return false
-		sim._structure_armor[kind] = contract.duplicate(true)
+		_sim._structure_armor[kind] = contract.duplicate(true)
 	return true
 
 
@@ -346,6 +349,7 @@ func _compiled_level_up_rules(document: Dictionary) -> Dictionary:
 func _compiled_banner_carrier(document: Dictionary) -> Dictionary:
 	## Normalize the compiler's BannerCarriersAllowed contract. A malformed
 	## contract refuses registration; it never creates a placeholder flag.
+	var _sim = sim
 	var gameplay := ((document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)
 	var source: Variant = gameplay.get("bannerCarrier")
 	if typeof(source) != TYPE_DICTIONARY:
@@ -370,7 +374,7 @@ func _compiled_banner_carrier(document: Dictionary) -> Dictionary:
 		if String(value) == "":
 			return {}
 	var banner_document: Dictionary = {}
-	var db = sim._content_db_ref()
+	var db = _sim._content_db_ref()
 	if db != null and db.has_method("get_playable_unit_runtime"):
 		banner_document = db.get_playable_unit_runtime(String(allowed[0]))
 	if banner_document.is_empty():
@@ -397,7 +401,7 @@ func _compiled_banner_carrier(document: Dictionary) -> Dictionary:
 			return {}
 		offset = Vector2(float(position["x"]), float(position["y"]))
 	return {
-		"object_id": sim.PlayableUnitAdapter.runtime_object_id(String(allowed[0])),
+		"object_id": _sim.PlayableUnitAdapter.runtime_object_id(String(allowed[0])),
 		"source_banner_object_id": String(allowed[0]),
 		"min_level": int(min_level_value),
 		"offset_source": offset,
@@ -432,6 +436,7 @@ func _compiled_banner_respawn_ticks(document: Dictionary) -> int:
 
 func _compiled_castle_behavior(document: Dictionary) -> Dictionary:
 	## Fail-closed copy of pack gameplay.castleBehavior (BSE pieces).
+	var _sim = sim
 	var gameplay := ((document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)
 	var source: Variant = gameplay.get("castleBehavior")
 	if typeof(source) != TYPE_DICTIONARY:
@@ -466,7 +471,7 @@ func _compiled_castle_behavior(document: Dictionary) -> Dictionary:
 		if typeof(row.get("angleRadians")) not in [TYPE_INT, TYPE_FLOAT] or not is_finite(angle):
 			return {}
 		var target_document: Dictionary = {}
-		var db = sim._content_db_ref()
+		var db = _sim._content_db_ref()
 		if db != null and db.has_method("get_playable_structure_runtime"):
 			target_document = db.get_playable_structure_runtime(object_id)
 		if target_document.is_empty():
@@ -480,7 +485,7 @@ func _compiled_castle_behavior(document: Dictionary) -> Dictionary:
 		normalized.append({
 			"index": index,
 			"source_object_id": object_id,
-			"object_id": sim.PlayableUnitAdapter._runtime_id(object_id),
+			"object_id": _sim.PlayableUnitAdapter._runtime_id(object_id),
 			"offset_source": Vector2(float(offset_arr[0]), float(offset_arr[1])),
 			"elevation_source": float(offset_arr[2]),
 			"angle_radians": angle,
@@ -497,26 +502,28 @@ func _compiled_castle_behavior(document: Dictionary) -> Dictionary:
 
 func configure_castle_behaviors(by_source_object_id: Dictionary) -> void:
 	## Vertical-slice wiring: source structure object id -> castleBehavior contract.
-	sim._castle_behavior_by_source = by_source_object_id.duplicate(true)
+	var _sim = sim
+	_sim._castle_behavior_by_source = by_source_object_id.duplicate(true)
 	# setup() has already seeded legacy expansion slots on first boot. Replace
 	# them with the selected pack's BSE contract before the first gameplay tick.
-	for structure_id in sim.structure_ids():
-		var row: Dictionary = sim.structures[structure_id]
-		if sim._castle_behavior_for_structure(row).is_empty():
+	for structure_id in _sim.structure_ids():
+		var row: Dictionary = _sim.structures[structure_id]
+		if _sim._castle_behavior_for_structure(row).is_empty():
 			continue
 		if String(row.get("structure_kind", "")) == "fortress":
-			sim.expansion_pads.erase(structure_id)
-		sim._unpack_castle_behavior_for_structure(structure_id)
+			_sim.expansion_pads.erase(structure_id)
+		_sim._unpack_castle_behavior_for_structure(structure_id)
 		if String(row.get("structure_kind", "")) == "fortress":
-			sim._seed_expansion_pads_for(structure_id)
+			_sim._seed_expansion_pads_for(structure_id)
 
 
 func _retail_source_to_sim_offset(offset_source: Vector2) -> Vector2:
 	## Banner formation offsets and BSE piece XY are retail source units.
 	## Prefer the map transform scale; fall back to 0.1 (common SAGE->local).
-	var scale = float(sim._rules.get("source_map_transform_scale", 0.0))
+	var _sim = sim
+	var scale = float(_sim._rules.get("source_map_transform_scale", 0.0))
 	if scale <= 0.0:
-		scale = float(sim._rules.get("source_unit_scale", 0.1))
+		scale = float(_sim._rules.get("source_unit_scale", 0.1))
 	if scale <= 0.0:
 		scale = 0.1
 	return offset_source * scale
@@ -640,9 +647,10 @@ func _damage_components_for(attacker_id: int, damage_type_override: String) -> A
 	## The attacker's authored multi-type damage mix. An explicit override
 	## (an ability or projectile that names its own type) replaces the mix
 	## outright rather than blending into it.
-	if damage_type_override != "" or not sim.entities.has(attacker_id):
+	var _sim = sim
+	if damage_type_override != "" or not _sim.entities.has(attacker_id):
 		return []
-	return (sim.entities[attacker_id] as Dictionary).get("damage_components", []) as Array
+	return (_sim.entities[attacker_id] as Dictionary).get("damage_components", []) as Array
 
 
 func _weighted_armor_scalar(scalars: Dictionary, components: Array, damage_type: String) -> float:
@@ -707,46 +715,48 @@ func _applied_weapon_effect(row: Dictionary) -> Dictionary:
 func _configure_manifest_builders() -> void:
 	## A data-driven faction names its builder via the structure documents'
 	## authored construct routes; the flag rides the normalized unit rule.
-	if sim.configuration_error != "":
+	var _sim = sim
+	if _sim.configuration_error != "":
 		return
-	var manifest: Dictionary = sim._rules.get("faction_manifest", {}) as Dictionary
-	var configured_unit_rules: Dictionary = sim._rules.get("unit_rules", {}) as Dictionary
+	var manifest: Dictionary = _sim._rules.get("faction_manifest", {}) as Dictionary
+	var configured_unit_rules: Dictionary = _sim._rules.get("unit_rules", {}) as Dictionary
 	for builder_value in manifest.get("builder_unit_ids", []) as Array:
 		var builder_id := String(builder_value)
 		if not configured_unit_rules.has(builder_id):
-			sim.configuration_error = "Faction manifest builder unit '%s' has no configured unit rule" % builder_id
+			_sim.configuration_error = "Faction manifest builder unit '%s' has no configured unit rule" % builder_id
 			return
 		var builder_rule: Dictionary = configured_unit_rules[builder_id] as Dictionary
 		builder_rule["is_builder"] = true
 		configured_unit_rules[builder_id] = builder_rule
-	sim._rules["unit_rules"] = configured_unit_rules
+	_sim._rules["unit_rules"] = configured_unit_rules
 
 
 func _validate_faction_manifest_coherence() -> void:
 	## Only an explicitly supplied manifest is validated end-to-end; legacy
 	## rule dictionaries keep their historical permissiveness.
-	if sim.configuration_error != "" or not sim._rules.has("faction_manifest"):
+	var _sim = sim
+	if _sim.configuration_error != "" or not _sim._rules.has("faction_manifest"):
 		return
-	var manifest: Dictionary = sim._rules.get("faction_manifest", {}) as Dictionary
+	var manifest: Dictionary = _sim._rules.get("faction_manifest", {}) as Dictionary
 	if manifest.is_empty():
 		return
-	for unit_type_value in sim._ai_production_plan:
+	for unit_type_value in _sim._ai_production_plan:
 		var unit_type := String(unit_type_value)
-		if not sim._unit_production_rules.has(unit_type):
-			sim.configuration_error = "Faction manifest AI plan entry '%s' has no production rule" % unit_type
+		if not _sim._unit_production_rules.has(unit_type):
+			_sim.configuration_error = "Faction manifest AI plan entry '%s' has no production rule" % unit_type
 			return
-	var configured_unit_rules: Dictionary = sim._rules.get("unit_rules", {}) as Dictionary
-	for entry_value in sim._spawn_roster:
+	var configured_unit_rules: Dictionary = _sim._rules.get("unit_rules", {}) as Dictionary
+	for entry_value in _sim._spawn_roster:
 		if typeof(entry_value) != TYPE_DICTIONARY:
-			sim.configuration_error = "Faction manifest spawn roster contains a non-object entry"
+			_sim.configuration_error = "Faction manifest spawn roster contains a non-object entry"
 			return
 		var entry := entry_value as Dictionary
 		var object_id := String(entry.get("object_id", ""))
 		if object_id == "" or int(entry.get("id", 0)) <= 0:
-			sim.configuration_error = "Faction manifest spawn roster entry is missing its identity"
+			_sim.configuration_error = "Faction manifest spawn roster entry is missing its identity"
 			return
 		if not bool(entry.get("requires_unit_rule", false)) and not configured_unit_rules.has(object_id):
-			sim.configuration_error = "Faction manifest spawn roster entry '%s' has no configured unit rule" % object_id
+			_sim.configuration_error = "Faction manifest spawn roster entry '%s' has no configured unit rule" % object_id
 			return
 
 
@@ -828,25 +838,26 @@ func _compiled_ring_gollum_rule(registration: Dictionary) -> Dictionary:
 
 
 func _configure_playable_unit_runtime_contracts() -> void:
-	var value: Variant = sim._rules.get("playable_unit_runtimes", {})
+	var _sim = sim
+	var value: Variant = _sim._rules.get("playable_unit_runtimes", {})
 	if typeof(value) != TYPE_DICTIONARY:
-		sim.configuration_error = "Playable-unit runtime registry is not a dictionary"
+		_sim.configuration_error = "Playable-unit runtime registry is not a dictionary"
 		return
-	var configured_unit_rules: Dictionary = sim._rules.get("unit_rules", {}) as Dictionary
-	if sim.ring_mechanic_enabled:
-		var ring_registration_value: Variant = sim._ring_contract.get("_compiledRegistration", {})
+	var configured_unit_rules: Dictionary = _sim._rules.get("unit_rules", {}) as Dictionary
+	if _sim.ring_mechanic_enabled:
+		var ring_registration_value: Variant = _sim._ring_contract.get("_compiledRegistration", {})
 		if typeof(ring_registration_value) == TYPE_DICTIONARY and not (ring_registration_value as Dictionary).is_empty():
 			var compiled_gollum_rule := _compiled_ring_gollum_rule(ring_registration_value as Dictionary)
 			if compiled_gollum_rule.is_empty():
-				sim.configuration_error = "Compiled ring-system Gollum has no usable simulation rule"
+				_sim.configuration_error = "Compiled ring-system Gollum has no usable simulation rule"
 				return
 			configured_unit_rules[String(compiled_gollum_rule.get("source_object_id", ""))] = compiled_gollum_rule
-	var producer_kinds: Dictionary = sim._rules.get("producer_kind_by_source_object", {}) as Dictionary
-	sim._unit_armor.clear()
-	sim._unit_weapon_upgrades.clear()
-	sim._created_hero_owner_teams.clear()
-	sim.missing_armor_units.clear()
-	sim.missing_damage_type_units.clear()
+	var producer_kinds: Dictionary = _sim._rules.get("producer_kind_by_source_object", {}) as Dictionary
+	_sim._unit_armor.clear()
+	_sim._unit_weapon_upgrades.clear()
+	_sim._created_hero_owner_teams.clear()
+	_sim.missing_armor_units.clear()
+	_sim.missing_damage_type_units.clear()
 	var object_ids: Array[String] = []
 	for object_id_value in (value as Dictionary).keys():
 		object_ids.append(String(object_id_value))
@@ -854,25 +865,25 @@ func _configure_playable_unit_runtime_contracts() -> void:
 	for object_id in object_ids:
 		var document_value: Variant = (value as Dictionary).get(object_id)
 		if typeof(document_value) != TYPE_DICTIONARY:
-			sim.configuration_error = "Playable-unit runtime '%s' is invalid" % object_id
+			_sim.configuration_error = "Playable-unit runtime '%s' is invalid" % object_id
 			return
 		var ring_gollum_block: Variant = ((document_value as Dictionary).get("ringMechanic", {}) as Dictionary).get("gollum", {})
-		if sim.ring_mechanic_enabled and typeof(ring_gollum_block) == TYPE_DICTIONARY \
+		if _sim.ring_mechanic_enabled and typeof(ring_gollum_block) == TYPE_DICTIONARY \
 				and not (ring_gollum_block as Dictionary).is_empty():
-			sim._ring_contract.merge((ring_gollum_block as Dictionary), false)
-			var gollum_simulation = sim.PlayableUnitAdapter.simulation_rule(document_value as Dictionary, false)
-			var gollum_rule = sim.PlayableUnitAdapter.normalized_unit_rule(
-				gollum_simulation, float(sim._rules.get("source_map_transform_scale", 0.0))
+			_sim._ring_contract.merge((ring_gollum_block as Dictionary), false)
+			var gollum_simulation = _sim.PlayableUnitAdapter.simulation_rule(document_value as Dictionary, false)
+			var gollum_rule = _sim.PlayableUnitAdapter.normalized_unit_rule(
+				gollum_simulation, float(_sim._rules.get("source_map_transform_scale", 0.0))
 			)
 			if gollum_rule.is_empty():
-				sim.configuration_error = "Ring Gollum runtime '%s' has no normalized unit rule" % object_id
+				_sim.configuration_error = "Ring Gollum runtime '%s' has no normalized unit rule" % object_id
 				return
 			var source_gollum_id := String((document_value as Dictionary).get("objectId", ""))
-			var member_gollum_id = sim.PlayableUnitAdapter.runtime_member_id(document_value as Dictionary)
+			var member_gollum_id = _sim.PlayableUnitAdapter.runtime_member_id(document_value as Dictionary)
 			configured_unit_rules[source_gollum_id] = gollum_rule
 			configured_unit_rules[member_gollum_id] = gollum_rule
-			if not sim._ring_contract.has("gollumObjectId"):
-				sim._ring_contract["gollumObjectId"] = source_gollum_id
+			if not _sim._ring_contract.has("gollumObjectId"):
+				_sim._ring_contract["gollumObjectId"] = source_gollum_id
 			continue
 		# Compiled armor.ini contract + forge upgrade effects ride every fresh
 		# document; a stale pack without the block is a recorded exclusion with
@@ -882,56 +893,56 @@ func _configure_playable_unit_runtime_contracts() -> void:
 		# runtime_unit_id = containerObjectId), so entity object_id lookups,
 		# unit_type-keyed purchase surfaces, and gate checks read one space —
 		# no hardcoded alias tables.
-		var armor_member_id = sim.PlayableUnitAdapter.runtime_member_id(document_value as Dictionary)
-		var armor_unit_id = sim.PlayableUnitAdapter.runtime_unit_id(document_value as Dictionary)
+		var armor_member_id = _sim.PlayableUnitAdapter.runtime_member_id(document_value as Dictionary)
+		var armor_unit_id = _sim.PlayableUnitAdapter.runtime_unit_id(document_value as Dictionary)
 		var armor_id_space: Array[String] = [armor_member_id]
 		if armor_unit_id != "" and armor_unit_id != armor_member_id:
 			armor_id_space.append(armor_unit_id)
 		var armor_rule := _compiled_armor_rule(document_value as Dictionary)
 		if armor_rule.is_empty():
-			if not sim.missing_armor_units.has(armor_member_id):
-				sim.missing_armor_units.append(armor_member_id)
+			if not _sim.missing_armor_units.has(armor_member_id):
+				_sim.missing_armor_units.append(armor_member_id)
 				print("[RetailSliceSim] unit '%s' has no compiled armor block (stale pack); incoming damage uses the recorded SAGE passthrough 1.0" % armor_member_id)
 		elif not bool(armor_rule.get("passthrough", false)):
 			for armor_id in armor_id_space:
-				sim._unit_armor[armor_id] = armor_rule
+				_sim._unit_armor[armor_id] = armor_rule
 		var weapon_upgrade_rules := _compiled_weapon_upgrade_rules(document_value as Dictionary)
 		if not weapon_upgrade_rules.is_empty():
 			for armor_id in armor_id_space:
-				sim._unit_weapon_upgrades[armor_id] = weapon_upgrade_rules
+				_sim._unit_weapon_upgrades[armor_id] = weapon_upgrade_rules
 		# Authored LevelUpUpgrade effects (Basic Training) and the horde's own
 		# OBJECT_UPGRADE purchase buttons ride the same document; eligibility is
 		# the compiled effect tables above — never a class-name guess.
 		var level_up_rules := _compiled_level_up_rules(document_value as Dictionary)
 		if not level_up_rules.is_empty():
 			for armor_id in armor_id_space:
-				sim._unit_level_upgrades[armor_id] = level_up_rules
+				_sim._unit_level_upgrades[armor_id] = level_up_rules
 		var banner_rule := _compiled_banner_carrier(document_value as Dictionary)
 		var document_gameplay := (((document_value as Dictionary).get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)
 		if typeof(document_gameplay.get("bannerCarrier")) == TYPE_DICTIONARY and banner_rule.is_empty():
-			sim.configuration_error = "Playable-unit runtime '%s' has an unresolved banner carrier target" % object_id
+			_sim.configuration_error = "Playable-unit runtime '%s' has an unresolved banner carrier target" % object_id
 			return
 		if not banner_rule.is_empty():
 			for armor_id in armor_id_space:
-				sim._unit_banner_carriers[armor_id] = banner_rule
+				_sim._unit_banner_carriers[armor_id] = banner_rule
 		# Banner unit documents carry BannerCarrierUpdate respawn timers.
 		var respawn_ticks := _compiled_banner_respawn_ticks(document_value as Dictionary)
 		if respawn_ticks >= 0:
-			var banner_runtime_id = sim.PlayableUnitAdapter.runtime_unit_id(document_value as Dictionary)
-			var banner_member_id = sim.PlayableUnitAdapter.runtime_member_id(document_value as Dictionary)
+			var banner_runtime_id = _sim.PlayableUnitAdapter.runtime_unit_id(document_value as Dictionary)
+			var banner_member_id = _sim.PlayableUnitAdapter.runtime_member_id(document_value as Dictionary)
 			if banner_runtime_id != "":
-				sim._banner_respawn_ticks_by_object[banner_runtime_id] = respawn_ticks
+				_sim._banner_respawn_ticks_by_object[banner_runtime_id] = respawn_ticks
 			if banner_member_id != "" and banner_member_id != banner_runtime_id:
-				sim._banner_respawn_ticks_by_object[banner_member_id] = respawn_ticks
+				_sim._banner_respawn_ticks_by_object[banner_member_id] = respawn_ticks
 			# Also index the retail source name and adapter slug used by horde contracts.
 			var source_name := String((document_value as Dictionary).get("objectId", ""))
 			if source_name != "":
-				sim._banner_respawn_ticks_by_object[sim.PlayableUnitAdapter.runtime_object_id(source_name)] = respawn_ticks
-				sim._banner_respawn_ticks_by_object[source_name] = respawn_ticks
+				_sim._banner_respawn_ticks_by_object[_sim.PlayableUnitAdapter.runtime_object_id(source_name)] = respawn_ticks
+				_sim._banner_respawn_ticks_by_object[source_name] = respawn_ticks
 		var purchase_rows := _compiled_unit_upgrade_commands(document_value as Dictionary)
 		if purchase_rows.is_empty():
-			if not sim.units_without_upgrade_commands.has(armor_member_id):
-				sim.units_without_upgrade_commands.append(armor_member_id)
+			if not _sim.units_without_upgrade_commands.has(armor_member_id):
+				_sim.units_without_upgrade_commands.append(armor_member_id)
 		else:
 			# Keep the unit fieldable when a purchase row has no compiled effect
 			# yet (thrall composition swaps; forged-blade WeaponSetUpgrade not
@@ -940,8 +951,8 @@ func _configure_playable_unit_runtime_contracts() -> void:
 			# killed match configure for the whole faction. Surface only the
 			# rows that already have weapon/armor/level effects; record gaps.
 			var armor_upgrade_ids: Dictionary = (armor_rule.get("upgrades", {}) as Dictionary)
-			var weapon_upgrade_ids: Dictionary = sim._unit_weapon_upgrades.get(armor_member_id, {}) as Dictionary
-			var level_upgrade_ids: Dictionary = sim._unit_level_upgrades.get(armor_member_id, {}) as Dictionary
+			var weapon_upgrade_ids: Dictionary = _sim._unit_weapon_upgrades.get(armor_member_id, {}) as Dictionary
+			var level_upgrade_ids: Dictionary = _sim._unit_level_upgrades.get(armor_member_id, {}) as Dictionary
 			var accepted_purchase_rows: Array = []
 			for row_value in purchase_rows:
 				var purchase := row_value as Dictionary
@@ -959,34 +970,34 @@ func _configure_playable_unit_runtime_contracts() -> void:
 						"[RetailSliceSim] unit '%s' purchase '%s' has no compiled weapon/armor/level effect; deferred from purchase surface"
 						% [object_id, purchase_id]
 					)
-			var purchase_unit_type = String(sim.PlayableUnitAdapter.simulation_rule(document_value as Dictionary).get("unit_type", ""))
+			var purchase_unit_type = String(_sim.PlayableUnitAdapter.simulation_rule(document_value as Dictionary).get("unit_type", ""))
 			if purchase_unit_type != "" and not accepted_purchase_rows.is_empty():
-				sim._unit_upgrade_commands[purchase_unit_type] = accepted_purchase_rows
+				_sim._unit_upgrade_commands[purchase_unit_type] = accepted_purchase_rows
 			elif purchase_unit_type != "" and accepted_purchase_rows.is_empty() and not purchase_rows.is_empty():
-				if not sim.units_without_upgrade_commands.has(armor_member_id):
-					sim.units_without_upgrade_commands.append(armor_member_id)
-		var simulation = sim.PlayableUnitAdapter.simulation_rule(document_value as Dictionary)
+				if not _sim.units_without_upgrade_commands.has(armor_member_id):
+					_sim.units_without_upgrade_commands.append(armor_member_id)
+		var simulation = _sim.PlayableUnitAdapter.simulation_rule(document_value as Dictionary)
 		if simulation.is_empty():
 			# The faction builder legitimately lacks combat evidence and costs
 			# zero command points; it registers through the narrower builder
 			# production projection instead of failing the whole roster.
 			if _register_builder_production(document_value as Dictionary, configured_unit_rules, producer_kinds):
 				continue
-			sim.configuration_error = "Playable-unit runtime '%s' has unresolved simulation evidence" % object_id
+			_sim.configuration_error = "Playable-unit runtime '%s' has unresolved simulation evidence" % object_id
 			return
 		var unit_type := String(simulation["unit_type"])
 		var member_id := String(simulation["object_id"])
 		if (
-			sim._unit_production_rules.has(unit_type)
-			and String((sim._unit_production_rules[unit_type] as Dictionary).get("object_id", "")) != member_id
+			_sim._unit_production_rules.has(unit_type)
+			and String((_sim._unit_production_rules[unit_type] as Dictionary).get("object_id", "")) != member_id
 		):
-			sim.configuration_error = "Playable-unit runtime '%s' collides with production '%s'" % [object_id, unit_type]
+			_sim.configuration_error = "Playable-unit runtime '%s' collides with production '%s'" % [object_id, unit_type]
 			return
-		var unit_rule = sim.PlayableUnitAdapter.normalized_unit_rule(simulation, float(sim._rules.get("source_map_transform_scale", 0.0)))
+		var unit_rule = _sim.PlayableUnitAdapter.normalized_unit_rule(simulation, float(_sim._rules.get("source_map_transform_scale", 0.0)))
 		if unit_rule.is_empty():
 			unit_rule = (configured_unit_rules.get(member_id, {}) as Dictionary).duplicate(true)
 		if unit_rule.is_empty():
-			sim.configuration_error = "Playable-unit runtime '%s' has no normalized unit rule" % object_id
+			_sim.configuration_error = "Playable-unit runtime '%s' has no normalized unit rule" % object_id
 			return
 		# The compiled selection surface carries the unit's authored base
 		# CommandSet on every command row. Record it only when the document agrees
@@ -994,17 +1005,17 @@ func _configure_playable_unit_runtime_contracts() -> void:
 		# convenient first row. MonitorConditionUpdate uses this exact value to
 		# restore the base palette after its condition clears.
 		var authored_command_sets: Array[String] = []
-		for selection_value in sim.PlayableUnitAdapter.selection_commands(document_value as Dictionary):
+		for selection_value in _sim.PlayableUnitAdapter.selection_commands(document_value as Dictionary):
 			var command_set_id := String((selection_value as Dictionary).get("commandSetId", "")).strip_edges()
 			if command_set_id != "" and not authored_command_sets.has(command_set_id): authored_command_sets.append(command_set_id)
 		if authored_command_sets.size() == 1:
 			unit_rule["default_command_set_id"] = authored_command_sets[0]
-		var authored_formation_toggle = sim._authored_formation_toggle(document_value as Dictionary)
+		var authored_formation_toggle = _sim._authored_formation_toggle(document_value as Dictionary)
 		if not authored_formation_toggle.is_empty():
 			unit_rule["formation_toggle"] = authored_formation_toggle
 		var producers: Array = simulation.get("producers", [])
 		if producers.is_empty():
-			sim.configuration_error = "Playable-unit runtime '%s' has no producer" % object_id
+			_sim.configuration_error = "Playable-unit runtime '%s' has no producer" % object_id
 			return
 		var resolved_producers: Array[Dictionary] = []
 		var resolved_producer_kinds: Array[String] = []
@@ -1013,7 +1024,7 @@ func _configure_playable_unit_runtime_contracts() -> void:
 			var source_producer := String(producer.get("producer_source_object_id", ""))
 			var producer_kind := String(producer_kinds.get(source_producer, ""))
 			if producer_kind == "":
-				sim.configuration_error = "Playable-unit runtime '%s' producer '%s' is not loaded by this faction slice" % [object_id, source_producer]
+				_sim.configuration_error = "Playable-unit runtime '%s' producer '%s' is not loaded by this faction slice" % [object_id, source_producer]
 				return
 			var route := producer.duplicate(true)
 			route["producer_kind"] = producer_kind
@@ -1022,12 +1033,12 @@ func _configure_playable_unit_runtime_contracts() -> void:
 				resolved_producer_kinds.append(producer_kind)
 		var primary_producer := resolved_producers[0]
 		unit_rule["category"] = String(simulation.get("category", unit_rule.get("category", "")))
-		var horde_override: Dictionary = (sim._rules.get("horde_speed_overrides", {}) as Dictionary).get(member_id, {}) as Dictionary
+		var horde_override: Dictionary = (_sim._rules.get("horde_speed_overrides", {}) as Dictionary).get(member_id, {}) as Dictionary
 		if not horde_override.is_empty() and int(unit_rule.get("member_count", 0)) > 1:
 			# Retail hordes move at their horde LocomotorSet speed (the pack's
 			# retail unit rules); the document speed is the unit-object
 			# locomotor. Both stay recorded; the horde value drives movement.
-			var scale = float(sim._rules.get("source_map_transform_scale", 0.0))
+			var scale = float(_sim._rules.get("source_map_transform_scale", 0.0))
 			unit_rule["speed"] = float(horde_override.get("speed", 0.0)) * scale
 			unit_rule["speed_source"] = float(horde_override.get("speed", 0.0))
 			var override_provenance: Dictionary = (unit_rule.get("provenance", {}) as Dictionary).duplicate(true)
@@ -1042,7 +1053,7 @@ func _configure_playable_unit_runtime_contracts() -> void:
 		var doc_combat: Dictionary = simulation.get("combat", {}) as Dictionary
 		var doc_damage_type := String(doc_combat.get("damageType", "")).to_lower()
 		var doc_damage_components := _compiled_damage_components(
-			doc_combat, float(sim._rules.get("source_map_transform_scale", 1.0))
+			doc_combat, float(_sim._rules.get("source_map_transform_scale", 1.0))
 		)
 		if not doc_damage_components.is_empty():
 			# A multi-nugget weapon whose nuggets author different types
@@ -1050,20 +1061,20 @@ func _configure_playable_unit_runtime_contracts() -> void:
 			# authored damageType. Each component keeps its own type and is
 			# weighted against its own armor column instead of collapsing the
 			# whole hit onto DEFAULT.
-			sim._unit_damage_components[member_id] = doc_damage_components
+			_sim._unit_damage_components[member_id] = doc_damage_components
 		if doc_damage_type != "":
 			# Source-authored BFME2 damage type (SLASH/PIERCE/CAVALRY/...);
 			# fortress armor consumes it through the same scalar table the
 			# historical Men constants use, unknown types keep the default.
-			sim._unit_damage_types[member_id] = doc_damage_type
-		elif doc_damage_components.is_empty() and not sim.missing_damage_type_units.has(member_id):
+			_sim._unit_damage_types[member_id] = doc_damage_type
+		elif doc_damage_components.is_empty() and not _sim.missing_damage_type_units.has(member_id):
 			# A combat unit whose document authors no damageType is recorded at
 			# configure — never only when it happens to spawn (retail Arwen
 			# carries powers but no weapon); its structure damage falls to each
 			# kind's DEFAULT armor scalar.
-			sim.missing_damage_type_units.append(member_id)
+			_sim.missing_damage_type_units.append(member_id)
 			print("[RetailSliceSim] unit '%s' has no authored damageType; its structure damage uses each kind's DEFAULT armor scalar" % member_id)
-		sim._unit_production_rules[unit_type] = {
+		_sim._unit_production_rules[unit_type] = {
 			"category": String(simulation.get("category", "")),
 			"producer_kind": String(primary_producer["producer_kind"]),
 			"producer_kinds": resolved_producer_kinds,
@@ -1084,18 +1095,18 @@ func _configure_playable_unit_runtime_contracts() -> void:
 				is_ring_hero_rule = true
 				break
 		if is_ring_hero_rule:
-			(sim._unit_production_rules[unit_type] as Dictionary)["is_ring_hero"] = true
-		if not sim._production_unit_order.has(unit_type):
-			sim._production_unit_order.append(unit_type)
+			(_sim._unit_production_rules[unit_type] as Dictionary)["is_ring_hero"] = true
+		if not _sim._production_unit_order.has(unit_type):
+			_sim._production_unit_order.append(unit_type)
 		var created_hero: Dictionary = (
 			(document_value as Dictionary).get("registration", {}) as Dictionary
 		).get("createAHero", {}) as Dictionary
 		if created_hero.has("ownerTeam"):
-			sim._created_hero_owner_teams[unit_type] = int(created_hero["ownerTeam"])
+			_sim._created_hero_owner_teams[unit_type] = int(created_hero["ownerTeam"])
 		if not created_hero.is_empty() and created_hero.has("awardDefinitions"):
 			var award_contract := created_hero.duplicate(true)
 			award_contract["ownerTeam"] = int(created_hero.get("ownerTeam", -1))
-			sim._cah_award_contracts[unit_type] = award_contract
+			_sim._cah_award_contracts[unit_type] = award_contract
 		var prerequisites_by_producer: Dictionary = {}
 		var any_groups_by_producer: Dictionary = {}
 		for route in resolved_producers:
@@ -1122,33 +1133,34 @@ func _configure_playable_unit_runtime_contracts() -> void:
 			if candidate_size < existing_size:
 				prerequisites_by_producer[producer_kind] = candidate
 				any_groups_by_producer[producer_kind] = candidate_any
-		sim._unit_prerequisites[unit_type] = prerequisites_by_producer
-		sim._unit_prerequisite_any_groups[unit_type] = any_groups_by_producer
+		_sim._unit_prerequisites[unit_type] = prerequisites_by_producer
+		_sim._unit_prerequisite_any_groups[unit_type] = any_groups_by_producer
 		# Hero SPECIAL_POWER abilities (converted doc rows) register per unit
 		# type; heroes without an abilities array simply carry none.
-		var ability_rows = sim.PlayableUnitAdapter.ability_rules(document_value as Dictionary)
+		var ability_rows = _sim.PlayableUnitAdapter.ability_rules(document_value as Dictionary)
 		if not ability_rows.is_empty():
-			sim._unit_ability_rules[unit_type] = sim._scaled_ability_rules(
-				ability_rows, float(sim._rules.get("source_map_transform_scale", 0.0))
+			_sim._unit_ability_rules[unit_type] = _sim._scaled_ability_rules(
+				ability_rows, float(_sim._rules.get("source_map_transform_scale", 0.0))
 			)
-		sim._ensure_capture_building_ability(unit_type, document_value as Dictionary)
+		_sim._ensure_capture_building_ability(unit_type, document_value as Dictionary)
 		# ExperienceLevel chain (converted doc rows) registers per unit type;
 		# units whose chain retail never authored carry no rule and never gain
 		# XP — their kill payout is the recorded default, recorded per victim.
-		var experience_rule = sim.PlayableUnitAdapter.experience_rule(document_value as Dictionary)
+		var experience_rule = _sim.PlayableUnitAdapter.experience_rule(document_value as Dictionary)
 		if not experience_rule.is_empty():
-			sim._unit_experience_rules[unit_type] = experience_rule
+			_sim._unit_experience_rules[unit_type] = experience_rule
 		# Converter moduleContracts (typed + opaque deferred): index for runtime
 		# consumers. Deferred rows are still attached as authored evidence; only
 		# executable rows drive behavior until their subsystems land.
-		var contracts = sim.PlayableUnitAdapter.module_contracts(document_value as Dictionary)
+		var contracts = _sim.PlayableUnitAdapter.module_contracts(document_value as Dictionary)
 		if not contracts.is_empty():
-			sim._unit_module_contracts[unit_type] = contracts
-	sim._rules["unit_rules"] = configured_unit_rules
+			_sim._unit_module_contracts[unit_type] = contracts
+	_sim._rules["unit_rules"] = configured_unit_rules
 
 
 func _register_builder_production(document: Dictionary, configured_unit_rules: Dictionary, producer_kinds: Dictionary) -> bool:
-	var partial = sim.PlayableUnitAdapter.builder_production_rule(document)
+	var _sim = sim
+	var partial = _sim.PlayableUnitAdapter.builder_production_rule(document)
 	if partial.is_empty():
 		return false
 	var member_id := String(partial["object_id"])
@@ -1169,7 +1181,7 @@ func _register_builder_production(document: Dictionary, configured_unit_rules: D
 			resolved_producer_kinds.append(producer_kind)
 	var unit_type := String(partial["unit_type"])
 	var primary_producer := resolved_producers[0]
-	sim._unit_production_rules[unit_type] = {
+	_sim._unit_production_rules[unit_type] = {
 		"category": String(partial.get("category", "")),
 		"producer_kind": String(primary_producer["producer_kind"]),
 		"producer_kinds": resolved_producer_kinds,
@@ -1184,8 +1196,8 @@ func _register_builder_production(document: Dictionary, configured_unit_rules: D
 		"command_slot": int(primary_producer.get("slot", 0)),
 		"surface": String(primary_producer.get("surface", "")),
 	}
-	if not sim._production_unit_order.has(unit_type):
-		sim._production_unit_order.append(unit_type)
+	if not _sim._production_unit_order.has(unit_type):
+		_sim._production_unit_order.append(unit_type)
 	var prerequisites_by_producer: Dictionary = {}
 	var any_groups_by_producer: Dictionary = {}
 	for route_value in resolved_producers:
@@ -1194,15 +1206,16 @@ func _register_builder_production(document: Dictionary, configured_unit_rules: D
 		if not prerequisites_by_producer.has(producer_kind):
 			prerequisites_by_producer[producer_kind] = (route.get("prerequisites", []) as Array).duplicate()
 			any_groups_by_producer[producer_kind] = (route.get("prerequisites_any_of", []) as Array).duplicate()
-	sim._unit_prerequisites[unit_type] = prerequisites_by_producer
-	sim._unit_prerequisite_any_groups[unit_type] = any_groups_by_producer
+	_sim._unit_prerequisites[unit_type] = prerequisites_by_producer
+	_sim._unit_prerequisite_any_groups[unit_type] = any_groups_by_producer
 	return true
 
 
 func _configure_ranger_runtime_contract() -> void:
-	var value: Variant = sim._rules.get("ranger_runtime", {})
+	var _sim = sim
+	var value: Variant = _sim._rules.get("ranger_runtime", {})
 	if typeof(value) != TYPE_DICTIONARY:
-		sim.configuration_error = "Ranger runtime contract is not a dictionary"
+		_sim.configuration_error = "Ranger runtime contract is not a dictionary"
 		return
 	var contract := value as Dictionary
 	if contract.is_empty():
@@ -1212,13 +1225,13 @@ func _configure_ranger_runtime_contract() -> void:
 		or int(contract.get("schemaVersion", -1)) != 0
 		or String(contract.get("capabilityStatus", "")) != "rules-and-prerequisite-ready"
 	):
-		sim.configuration_error = "Ranger runtime contract identity is invalid"
+		_sim.configuration_error = "Ranger runtime contract identity is invalid"
 		return
 	var production_value: Variant = contract.get("production")
 	var prerequisite_value: Variant = contract.get("prerequisite")
-	var unit_rule_value: Variant = sim._rules.get("ranger_unit_rule")
+	var unit_rule_value: Variant = _sim._rules.get("ranger_unit_rule")
 	if typeof(production_value) != TYPE_DICTIONARY or typeof(prerequisite_value) != TYPE_DICTIONARY or typeof(unit_rule_value) != TYPE_DICTIONARY:
-		sim.configuration_error = "Ranger runtime contract is missing production, prerequisite, or normalized unit rule"
+		_sim.configuration_error = "Ranger runtime contract is missing production, prerequisite, or normalized unit rule"
 		return
 	var production := production_value as Dictionary
 	var prerequisite := prerequisite_value as Dictionary
@@ -1227,10 +1240,10 @@ func _configure_ranger_runtime_contract() -> void:
 	var train_options_value: Variant = prerequisite.get("trainCommandOptions")
 	var upgrade_options_value: Variant = prerequisite.get("options")
 	if typeof(command_sets_value) != TYPE_ARRAY or typeof(train_options_value) != TYPE_ARRAY or typeof(upgrade_options_value) != TYPE_ARRAY:
-		sim.configuration_error = "Ranger runtime contract options are invalid"
+		_sim.configuration_error = "Ranger runtime contract options are invalid"
 		return
 	if not _ranger_command_sets_are_valid(command_sets_value as Array):
-		sim.configuration_error = "Ranger runtime command-set transition is invalid"
+		_sim.configuration_error = "Ranger runtime command-set transition is invalid"
 		return
 	var required_unit_rule_fields: Array[String] = [
 		"horde_id", "member_count", "member_health", "member_damage",
@@ -1246,13 +1259,13 @@ func _configure_ranger_runtime_contract() -> void:
 	]
 	for field in required_unit_rule_fields:
 		if not unit_rule.has(field):
-			sim.configuration_error = "Ranger normalized unit rule is missing %s" % field
+			_sim.configuration_error = "Ranger normalized unit rule is missing %s" % field
 			return
 	var upgrade_id := String(prerequisite.get("upgradeId", ""))
 	var upgrade_cost := int(prerequisite.get("cost", -1))
-	var upgrade_ticks = roundi(float(prerequisite.get("buildTimeSeconds", -1.0)) / sim.TICK_SECONDS)
+	var upgrade_ticks = roundi(float(prerequisite.get("buildTimeSeconds", -1.0)) / _sim.TICK_SECONDS)
 	var ranger_cost := int(production.get("buildCost", -1))
-	var ranger_ticks = roundi(float(production.get("buildTime", -1.0)) / sim.TICK_SECONDS)
+	var ranger_ticks = roundi(float(production.get("buildTime", -1.0)) / _sim.TICK_SECONDS)
 	var ranger_command_points := int(production.get("commandPoints", -1))
 	if (
 		String(production.get("id", "")) != "GondorRangerHorde"
@@ -1270,31 +1283,31 @@ func _configure_ranger_runtime_contract() -> void:
 		or ranger_cost < 0
 		or ranger_ticks <= 0
 		or ranger_command_points <= 0
-		or String(unit_rule.get("horde_id", "")) != sim.RANGER_HORDE_ID
+		or String(unit_rule.get("horde_id", "")) != _sim.RANGER_HORDE_ID
 		or int(unit_rule.get("member_count", 0)) != 10
 	):
-		sim.configuration_error = "Ranger runtime contract values are invalid"
+		_sim.configuration_error = "Ranger runtime contract values are invalid"
 		return
-	var configured_unit_rules: Dictionary = sim._rules.get("unit_rules", {}) as Dictionary
-	configured_unit_rules[sim.RANGER_OBJECT_ID] = unit_rule.duplicate(true)
-	sim._rules["unit_rules"] = configured_unit_rules
-	sim._unit_production_rules[sim.RANGER_HORDE_ID] = {
+	var configured_unit_rules: Dictionary = _sim._rules.get("unit_rules", {}) as Dictionary
+	configured_unit_rules[_sim.RANGER_OBJECT_ID] = unit_rule.duplicate(true)
+	_sim._rules["unit_rules"] = configured_unit_rules
+	_sim._unit_production_rules[_sim.RANGER_HORDE_ID] = {
 		"producer_kind": "archery_range",
-		"object_id": sim.RANGER_OBJECT_ID,
+		"object_id": _sim.RANGER_OBJECT_ID,
 		"display_name": "Ithilien Rangers",
 		"default_cost": ranger_cost,
 		"default_build_ticks": ranger_ticks,
 		"default_command_points": ranger_command_points,
 	}
-	sim._production_unit_order.append(sim.RANGER_HORDE_ID)
+	_sim._production_unit_order.append(_sim.RANGER_HORDE_ID)
 	# Load-bearing only in the tiny/overlay pack: when a playableUnit ranger
 	# document is fieldable, the doc-driven prerequisite map overwrites this
 	# entry below; without a doc it is the only prerequisite source.
-	sim._unit_prerequisites[sim.RANGER_HORDE_ID] = upgrade_id
+	_sim._unit_prerequisites[_sim.RANGER_HORDE_ID] = upgrade_id
 	# The overlay's own upgrade contract rides the same generic registration
 	# the doc-driven structure chains use below; a doc-driven chain for the
 	# same upgrade id overwrites it with the full authored chain.
-	_register_structure_upgrade_contract(sim._structure_upgrade_contracts, upgrade_id, {
+	_register_structure_upgrade_contract(_sim._structure_upgrade_contracts, upgrade_id, {
 		"structure_kind": "archery_range",
 		"cost": upgrade_cost,
 		"duration_ticks": upgrade_ticks,
@@ -1315,12 +1328,13 @@ func _global_upgrade_source() -> Dictionary:
 	## The three raw upgrade tables the global (player-faction) path reads,
 	## resolved exactly as before: an explicit top-level rules key wins, else the
 	## compiled faction manifest supplies it.
-	var manifest: Dictionary = sim._rules.get("faction_manifest", {}) as Dictionary
+	var _sim = sim
+	var manifest: Dictionary = _sim._rules.get("faction_manifest", {}) as Dictionary
 	return {
-		"structure_upgrade_chains": sim._rules.get("structure_upgrade_chains", manifest.get("structure_upgrade_chains", {})),
-		"structure_research": sim._rules.get("structure_research", manifest.get("structure_research", {})),
-		"structure_upgrade_effects": sim._rules.get("structure_upgrade_effects", manifest.get("structure_upgrade_effects", {})),
-		"structure_castle_upgrades": sim._rules.get("structure_castle_upgrades", manifest.get("structure_castle_upgrades", {})),
+		"structure_upgrade_chains": _sim._rules.get("structure_upgrade_chains", manifest.get("structure_upgrade_chains", {})),
+		"structure_research": _sim._rules.get("structure_research", manifest.get("structure_research", {})),
+		"structure_upgrade_effects": _sim._rules.get("structure_upgrade_effects", manifest.get("structure_upgrade_effects", {})),
+		"structure_castle_upgrades": _sim._rules.get("structure_castle_upgrades", manifest.get("structure_castle_upgrades", {})),
 	}
 
 
@@ -1337,8 +1351,9 @@ func _manifest_upgrade_source(manifest: Dictionary) -> Dictionary:
 
 
 func _configure_structure_upgrade_chains() -> void:
-	_compile_structure_upgrade_chains(_global_upgrade_source(), sim._structure_upgrade_contracts)
-	_compile_structure_castle_upgrades(_global_upgrade_source(), sim._structure_upgrade_contracts)
+	var _sim = sim
+	_compile_structure_upgrade_chains(_global_upgrade_source(), _sim._structure_upgrade_contracts)
+	_compile_structure_castle_upgrades(_global_upgrade_source(), _sim._structure_upgrade_contracts)
 
 
 func _compile_structure_castle_upgrades(source: Dictionary, contracts: Dictionary) -> void:
@@ -1357,11 +1372,12 @@ func _compile_structure_castle_upgrades(source: Dictionary, contracts: Dictionar
 	## Source rows are {kind: {"upgrades": [{upgradeId, grantsUpgradeId, cost,
 	## buildTimeSeconds, slot, commandId, labelId, tooltipId, buttonImageId,
 	## neededUpgradeIds?, requiresUpgradeId?}]}}. Malformed rows fail closed.
-	if sim.configuration_error != "":
+	var _sim = sim
+	if _sim.configuration_error != "":
 		return
 	var value: Variant = source.get("structure_castle_upgrades", {})
 	if typeof(value) != TYPE_DICTIONARY:
-		sim.configuration_error = "Structure castle upgrades are not a dictionary"
+		_sim.configuration_error = "Structure castle upgrades are not a dictionary"
 		return
 	var kinds: Array[String] = []
 	for kind_value in (value as Dictionary).keys():
@@ -1370,15 +1386,15 @@ func _compile_structure_castle_upgrades(source: Dictionary, contracts: Dictionar
 	for kind in kinds:
 		var surface_value: Variant = (value as Dictionary).get(kind)
 		if typeof(surface_value) != TYPE_DICTIONARY:
-			sim.configuration_error = "Structure castle upgrade surface for '%s' is not a dictionary" % kind
+			_sim.configuration_error = "Structure castle upgrade surface for '%s' is not a dictionary" % kind
 			return
 		var rows: Array = (surface_value as Dictionary).get("upgrades", []) as Array
 		if rows.is_empty():
-			sim.configuration_error = "Structure castle upgrade surface for '%s' is malformed" % kind
+			_sim.configuration_error = "Structure castle upgrade surface for '%s' is malformed" % kind
 			return
 		for row_value in rows:
 			if typeof(row_value) != TYPE_DICTIONARY:
-				sim.configuration_error = "Structure castle upgrade surface for '%s' has a malformed row" % kind
+				_sim.configuration_error = "Structure castle upgrade surface for '%s' has a malformed row" % kind
 				return
 			var row := row_value as Dictionary
 			var upgrade_id := String(row.get("upgradeId", ""))
@@ -1392,7 +1408,7 @@ func _compile_structure_castle_upgrades(source: Dictionary, contracts: Dictionar
 			# that applies to the fortress itself with no CastleUpgrade pass-out
 			# module behind it (commandset.ini:4107 slots 8/9/11/13).
 			if upgrade_id == "" or cost < 0 or build_seconds < 0.0:
-				sim.configuration_error = "Structure castle upgrade '%s' on '%s' is malformed" % [upgrade_id, kind]
+				_sim.configuration_error = "Structure castle upgrade '%s' on '%s' is malformed" % [upgrade_id, kind]
 				return
 			var needed: Array[String] = []
 			for needed_value in Array(row.get("neededUpgradeIds", [])):
@@ -1400,7 +1416,7 @@ func _compile_structure_castle_upgrades(source: Dictionary, contracts: Dictionar
 			var contract := {
 				"structure_kind": kind,
 				"cost": cost,
-				"duration_ticks": maxi(1, roundi(build_seconds / sim.TICK_SECONDS)),
+				"duration_ticks": maxi(1, roundi(build_seconds / _sim.TICK_SECONDS)),
 				"level_cap": 99,
 				"levels_to_gain": 0,
 				"to_level": 0,
@@ -1431,11 +1447,12 @@ func _compile_structure_upgrade_chains(source: Dictionary, contracts: Dictionary
 	## (cost/time/level cap/command-set swap/per-level effects) registers into
 	## `contracts` keyed by its authored upgrade id. Malformed chains fail closed
 	## into sim.configuration_error instead of registering a partial contract.
-	if sim.configuration_error != "":
+	var _sim = sim
+	if _sim.configuration_error != "":
 		return
 	var value: Variant = source.get("structure_upgrade_chains", {})
 	if typeof(value) != TYPE_DICTIONARY:
-		sim.configuration_error = "Structure upgrade chains are not a dictionary"
+		_sim.configuration_error = "Structure upgrade chains are not a dictionary"
 		return
 	var kinds: Array[String] = []
 	for kind_value in (value as Dictionary).keys():
@@ -1444,18 +1461,18 @@ func _compile_structure_upgrade_chains(source: Dictionary, contracts: Dictionary
 	for kind in kinds:
 		var chain_value: Variant = (value as Dictionary).get(kind)
 		if typeof(chain_value) != TYPE_DICTIONARY:
-			sim.configuration_error = "Structure upgrade chain for '%s' is not a dictionary" % kind
+			_sim.configuration_error = "Structure upgrade chain for '%s' is not a dictionary" % kind
 			return
 		var chain := chain_value as Dictionary
 		var level_cap := int(chain.get("levelCap", 0))
 		var steps_value: Variant = chain.get("steps")
 		if level_cap < 2 or typeof(steps_value) != TYPE_ARRAY or (steps_value as Array).is_empty():
-			sim.configuration_error = "Structure upgrade chain for '%s' is malformed" % kind
+			_sim.configuration_error = "Structure upgrade chain for '%s' is malformed" % kind
 			return
 		var previous_to_level := 1
 		for step_value in steps_value as Array:
 			if typeof(step_value) != TYPE_DICTIONARY:
-				sim.configuration_error = "Structure upgrade chain for '%s' has a malformed step" % kind
+				_sim.configuration_error = "Structure upgrade chain for '%s' has a malformed step" % kind
 				return
 			var step := step_value as Dictionary
 			var upgrade_id := String(step.get("upgradeId", ""))
@@ -1475,19 +1492,19 @@ func _compile_structure_upgrade_chains(source: Dictionary, contracts: Dictionary
 				or int(step.get("levelsToGain", 0)) < 1
 				or int(step.get("levelCap", 0)) != level_cap
 			):
-				sim.configuration_error = "Structure upgrade chain for '%s' step '%s' is malformed" % [kind, upgrade_id]
+				_sim.configuration_error = "Structure upgrade chain for '%s' step '%s' is malformed" % [kind, upgrade_id]
 				return
 			var health_add := 0
 			var production_multiplier := 1.0
 			var unsupported: Array[String] = []
 			for leaf_value in Array(step.get("effects", [])):
 				if typeof(leaf_value) != TYPE_DICTIONARY:
-					sim.configuration_error = "Structure upgrade chain for '%s' has a malformed effect" % kind
+					_sim.configuration_error = "Structure upgrade chain for '%s' has a malformed effect" % kind
 					return
 				var leaf := leaf_value as Dictionary
 				for modifier_value in Array(leaf.get("modifiers", [])):
 					if typeof(modifier_value) != TYPE_DICTIONARY:
-						sim.configuration_error = "Structure upgrade chain for '%s' has a malformed modifier" % kind
+						_sim.configuration_error = "Structure upgrade chain for '%s' has a malformed modifier" % kind
 						return
 					var modifier := modifier_value as Dictionary
 					match String(modifier.get("kind", "")):
@@ -1496,14 +1513,14 @@ func _compile_structure_upgrade_chains(source: Dictionary, contracts: Dictionary
 						"PRODUCTION":
 							production_multiplier *= float(modifier.get("value", 1.0))
 						_:
-							sim.configuration_error = "Structure upgrade chain for '%s' has an unsupported modifier" % kind
+							_sim.configuration_error = "Structure upgrade chain for '%s' has an unsupported modifier" % kind
 							return
 				for unsupported_value in Array(leaf.get("unsupportedModifiers", [])):
 					unsupported.append(String(unsupported_value))
 			var contract := {
 				"structure_kind": kind,
 				"cost": cost,
-				"duration_ticks": maxi(1, roundi(build_seconds / sim.TICK_SECONDS)),
+				"duration_ticks": maxi(1, roundi(build_seconds / _sim.TICK_SECONDS)),
 				"levels_to_gain": int(step.get("levelsToGain", 1)),
 				"level_cap": level_cap,
 				"to_level": to_level,
@@ -1555,11 +1572,12 @@ func _register_structure_upgrade_contract(contracts: Dictionary, upgrade_id: Str
 
 
 func _configure_structure_research_contracts() -> void:
+	var _sim = sim
 	_compile_structure_research_contracts(
 		_global_upgrade_source(),
-		sim._structure_upgrade_contracts,
-		sim._structure_upgrade_effects,
-		sim._compiled_research_kinds,
+		_sim._structure_upgrade_contracts,
+		_sim._structure_upgrade_effects,
+		_sim._compiled_research_kinds,
 	)
 
 
@@ -1570,15 +1588,16 @@ func _compile_structure_research_contracts(source: Dictionary, contracts: Dictio
 	## authored upgrade id, with the per-kind effect bundles in `upgrade_effects`
 	## and the compiled kinds recorded in `research_kinds`. Malformed surfaces
 	## fail closed into sim.configuration_error.
-	if sim.configuration_error != "":
+	var _sim = sim
+	if _sim.configuration_error != "":
 		return
 	var research_value: Variant = source.get("structure_research", {})
 	if typeof(research_value) != TYPE_DICTIONARY:
-		sim.configuration_error = "Structure research surfaces are not a dictionary"
+		_sim.configuration_error = "Structure research surfaces are not a dictionary"
 		return
 	var effects_value: Variant = source.get("structure_upgrade_effects", {})
 	if typeof(effects_value) != TYPE_DICTIONARY:
-		sim.configuration_error = "Structure upgrade effects are not a dictionary"
+		_sim.configuration_error = "Structure upgrade effects are not a dictionary"
 		return
 	var kinds: Array[String] = []
 	for kind_value in (effects_value as Dictionary).keys():
@@ -1594,7 +1613,7 @@ func _compile_structure_research_contracts(source: Dictionary, contracts: Dictio
 			if String(effect.get("kind", "")) == "command-set-transition":
 				var normalized_command_set := _normalized_command_set_upgrade_effect(effect)
 				if normalized_command_set.is_empty():
-					sim.configuration_error = "Structure '%s' has a malformed CommandSetUpgrade effect" % kind
+					_sim.configuration_error = "Structure '%s' has a malformed CommandSetUpgrade effect" % kind
 					return
 				normalized_effects.append(normalized_command_set)
 				continue
@@ -1622,12 +1641,12 @@ func _compile_structure_research_contracts(source: Dictionary, contracts: Dictio
 		var surface: Dictionary = (research_value as Dictionary).get(kind, {}) as Dictionary
 		var rows: Array = surface.get("upgrades", []) as Array
 		if rows.is_empty():
-			sim.configuration_error = "Structure research surface for '%s' is malformed" % kind
+			_sim.configuration_error = "Structure research surface for '%s' is malformed" % kind
 			return
 		research_kinds[kind] = true
 		for row_value in rows:
 			if typeof(row_value) != TYPE_DICTIONARY:
-				sim.configuration_error = "Structure research surface for '%s' has a malformed row" % kind
+				_sim.configuration_error = "Structure research surface for '%s' has a malformed row" % kind
 				return
 			var row := row_value as Dictionary
 			var upgrade_id := String(row.get("upgradeId", ""))
@@ -1637,7 +1656,7 @@ func _compile_structure_research_contracts(source: Dictionary, contracts: Dictio
 			var contract := {
 				"structure_kind": kind,
 				"cost": maxi(0, int(row.get("cost", 0))),
-				"duration_ticks": maxi(1, roundi(float(row.get("buildTimeSeconds", 0.0)) / sim.TICK_SECONDS)),
+				"duration_ticks": maxi(1, roundi(float(row.get("buildTimeSeconds", 0.0)) / _sim.TICK_SECONDS)),
 				"level_cap": 99,
 				"levels_to_gain": 0,
 				"cancelable": bool(row.get("cancelable", false)),
@@ -1735,9 +1754,10 @@ func _research_gate_unsatisfied(team: int, building: Dictionary, contract: Dicti
 
 
 func _configure_trebuchet_runtime_contract() -> void:
-	var value: Variant = sim._rules.get("trebuchet_runtime", {})
+	var _sim = sim
+	var value: Variant = _sim._rules.get("trebuchet_runtime", {})
 	if typeof(value) != TYPE_DICTIONARY:
-		sim.configuration_error = "Trebuchet runtime contract is not a dictionary"
+		_sim.configuration_error = "Trebuchet runtime contract is not a dictionary"
 		return
 	var contract := value as Dictionary
 	if contract.is_empty():
@@ -1747,7 +1767,7 @@ func _configure_trebuchet_runtime_contract() -> void:
 		or int(contract.get("schemaVersion", -1)) != 0
 		or String(contract.get("capabilityStatus", "")) != "bounded-direct-structure-ready"
 	):
-		sim.configuration_error = "Trebuchet runtime contract identity is invalid"
+		_sim.configuration_error = "Trebuchet runtime contract identity is invalid"
 		return
 	var production: Dictionary = contract.get("production", {}) as Dictionary
 	var unit: Dictionary = contract.get("unit", {}) as Dictionary
@@ -1755,7 +1775,7 @@ func _configure_trebuchet_runtime_contract() -> void:
 	var combat: Dictionary = contract.get("combat", {}) as Dictionary
 	var workshop: Dictionary = contract.get("workshop", {}) as Dictionary
 	var workshop_stats: Dictionary = workshop.get("stats", {}) as Dictionary
-	var scale = float(sim._rules.get("source_map_transform_scale", 0.0))
+	var scale = float(_sim._rules.get("source_map_transform_scale", 0.0))
 	if (
 		scale <= 0.0
 		or String(production.get("id", "")) != "GondorTrebuchet"
@@ -1766,7 +1786,7 @@ func _configure_trebuchet_runtime_contract() -> void:
 		or String(combat.get("scope", "")) != "direct-structure-first-slice"
 		or String(combat.get("damageType", "")).to_lower() != "siege"
 	):
-		sim.configuration_error = "Trebuchet runtime contract values are invalid"
+		_sim.configuration_error = "Trebuchet runtime contract values are invalid"
 		return
 	var speed_source := float(movement.get("speed", 0.0))
 	var attack_range_source := float(combat.get("attackRange", 0.0))
@@ -1778,10 +1798,10 @@ func _configure_trebuchet_runtime_contract() -> void:
 	var health := int(unit.get("maximumHealth", 0))
 	var damage := int(combat.get("damage", 0))
 	var build_cost := int(production.get("buildCost", -1))
-	var build_ticks = roundi(float(production.get("buildTime", -1.0)) / sim.TICK_SECONDS)
+	var build_ticks = roundi(float(production.get("buildTime", -1.0)) / _sim.TICK_SECONDS)
 	var command_points := int(production.get("commandPoints", -1))
 	var workshop_cost := int(workshop_stats.get("buildCost", -1))
-	var workshop_ticks = roundi(float(workshop_stats.get("buildTime", -1.0)) / sim.TICK_SECONDS)
+	var workshop_ticks = roundi(float(workshop_stats.get("buildTime", -1.0)) / _sim.TICK_SECONDS)
 	var workshop_health := int(workshop_stats.get("maxHealth", 0))
 	if (
 		speed_source <= 0.0
@@ -1801,11 +1821,11 @@ func _configure_trebuchet_runtime_contract() -> void:
 		or pre_attack_ms <= 0.0
 		or firing_ms <= 0.0
 	):
-		sim.configuration_error = "Trebuchet runtime numeric contract is invalid"
+		_sim.configuration_error = "Trebuchet runtime numeric contract is invalid"
 		return
-	var configured_unit_rules: Dictionary = sim._rules.get("unit_rules", {}) as Dictionary
+	var configured_unit_rules: Dictionary = _sim._rules.get("unit_rules", {}) as Dictionary
 	var trebuchet_rule := {
-		"horde_id": sim.TREBUCHET_OBJECT_ID,
+		"horde_id": _sim.TREBUCHET_OBJECT_ID,
 		"member_count": 1,
 		"member_health": health,
 		"member_damage": damage,
@@ -1820,9 +1840,9 @@ func _configure_trebuchet_runtime_contract() -> void:
 		"delay_between_shots_ms": delay_ms,
 		"pre_attack_delay_ms": pre_attack_ms,
 		"firing_duration_ms": firing_ms,
-		"attack_period_ticks": maxi(1, roundi(delay_ms / (sim.TICK_SECONDS * 1000.0))),
-		"pre_attack_ticks": maxi(0, roundi(pre_attack_ms / (sim.TICK_SECONDS * 1000.0))),
-		"firing_duration_ticks": maxi(0, roundi(firing_ms / (sim.TICK_SECONDS * 1000.0))),
+		"attack_period_ticks": maxi(1, roundi(delay_ms / (_sim.TICK_SECONDS * 1000.0))),
+		"pre_attack_ticks": maxi(0, roundi(pre_attack_ms / (_sim.TICK_SECONDS * 1000.0))),
+		"firing_duration_ticks": maxi(0, roundi(firing_ms / (_sim.TICK_SECONDS * 1000.0))),
 		"clip_size": int(combat.get("clipSize", 0)),
 		"clip_reload_time_ms": 0.0,
 		"continuous_fire_one": 0,
@@ -1856,23 +1876,23 @@ func _configure_trebuchet_runtime_contract() -> void:
 		# data gap, and gate-m2-focused treats any engine WARNING as a defect.
 		printerr(
 			"NAMED GAP: %s carries no authored %s; the M3 trebuchet contract predates the CatapultLocomotor binding and the unit will not move until the pack is recooked"
-			% [sim.TREBUCHET_OBJECT_ID, ", ".join(PackedStringArray(trebuchet_movement_gaps))]
+			% [_sim.TREBUCHET_OBJECT_ID, ", ".join(PackedStringArray(trebuchet_movement_gaps))]
 		)
 		trebuchet_rule["unauthored_locomotor_fields"] = trebuchet_movement_gaps
-	configured_unit_rules[sim.TREBUCHET_OBJECT_ID] = trebuchet_rule
-	sim._rules["unit_rules"] = configured_unit_rules
-	sim._unit_production_rules[sim.TREBUCHET_OBJECT_ID] = {
+	configured_unit_rules[_sim.TREBUCHET_OBJECT_ID] = trebuchet_rule
+	_sim._rules["unit_rules"] = configured_unit_rules
+	_sim._unit_production_rules[_sim.TREBUCHET_OBJECT_ID] = {
 		"producer_kind": "workshop",
-		"object_id": sim.TREBUCHET_OBJECT_ID,
+		"object_id": _sim.TREBUCHET_OBJECT_ID,
 		"display_name": "Gondor Trebuchet",
 		"default_cost": build_cost,
 		"default_build_ticks": build_ticks,
 		"default_command_points": command_points,
 	}
-	if not sim._production_unit_order.has(sim.TREBUCHET_OBJECT_ID):
-		sim._production_unit_order.append(sim.TREBUCHET_OBJECT_ID)
-	sim._structure_max_health["workshop"] = workshop_health
-	sim._structure_build_rules["workshop"] = {"cost": workshop_cost, "seconds": float(workshop_stats.get("buildTime", 0.0))}
+	if not _sim._production_unit_order.has(_sim.TREBUCHET_OBJECT_ID):
+		_sim._production_unit_order.append(_sim.TREBUCHET_OBJECT_ID)
+	_sim._structure_max_health["workshop"] = workshop_health
+	_sim._structure_build_rules["workshop"] = {"cost": workshop_cost, "seconds": float(workshop_stats.get("buildTime", 0.0))}
 
 
 func _ranger_command_sets_are_valid(command_sets: Array) -> bool:
@@ -1913,10 +1933,11 @@ func _apply_scenario_structure_faction_command_set(row: Dictionary, team: int) -
 	## CommandSetUpgrade effect graph choose the authored set. The trained-set
 	## scan remains compatibility-only for selected packs cooked before that graph
 	## was accepted; a recook removes this branch without changing gameplay.
+	var _sim = sim
 	var sets := row.get("scenario_trained_command_sets", []) as Array
 	if sets.is_empty():
 		return {"ok": false, "reason": "no-trained-command-sets"}
-	var side_result = sim.team_retail_side(team)
+	var side_result = _sim.team_retail_side(team)
 	if side_result.has("reason"):
 		return {"ok": false, "reason": String(side_result["reason"])}
 	var side := String(side_result.get("side", ""))
@@ -1955,7 +1976,7 @@ func _apply_scenario_structure_faction_command_set(row: Dictionary, team: int) -
 		return {"ok": false, "reason": "authored-command-set-id-empty"}
 	row["command_set_id"] = selected_id
 	if prior != selected_id:
-		sim._emit_event("upgrade.scenario_command_set", int(row.get("id", 0)), 0, {
+		_sim._emit_event("upgrade.scenario_command_set", int(row.get("id", 0)), 0, {
 			"team": team,
 			"upgrade_id": faction_upgrade,
 			"from": prior,
@@ -2021,20 +2042,21 @@ func _structure_command_set_upgrade_effects(row: Dictionary) -> Array[Dictionary
 
 
 func _reconcile_structure_command_set_upgrades(row: Dictionary) -> Dictionary:
+	var _sim = sim
 	var effects := _structure_command_set_upgrade_effects(row)
 	if effects.is_empty():
 		var declared_graph := false
 		var declared_source: Array = row.get("scenario_command_set_upgrade_effects", []) as Array
 		if not row.has("scenario_command_set_upgrade_effects"):
-			var bundle = sim.structure_upgrade_effects_for_team(int(row.get("team", -1))).get(String(row.get("structure_kind", "")), {}) as Dictionary
+			var bundle = _sim.structure_upgrade_effects_for_team(int(row.get("team", -1))).get(String(row.get("structure_kind", "")), {}) as Dictionary
 			declared_source = bundle.get("effects", []) as Array
 		for effect_value in declared_source:
 			if typeof(effect_value) == TYPE_DICTIONARY and String((effect_value as Dictionary).get("kind", "")) == "command-set-transition":
 				declared_graph = true
 				break
 		return {"ok": false, "reason": "malformed-command-set-upgrade-graph" if declared_graph else "no-accepted-command-set-upgrade", "accepted_graph": declared_graph}
-	var active_game = String(sim._rules.get("game", "")).to_lower()
-	var team_owned = sim.team_upgrades.get(int(row.get("team", -1)), {}) as Dictionary
+	var active_game = String(_sim._rules.get("game", "")).to_lower()
+	var team_owned = _sim.team_upgrades.get(int(row.get("team", -1)), {}) as Dictionary
 	var object_owned := row.get("completed_upgrades", []) as Array
 	var selected: Dictionary = {}
 	for effect in effects:
@@ -2044,7 +2066,7 @@ func _reconcile_structure_command_set_upgrades(row: Dictionary) -> Dictionary:
 		var triggers := effect.get("triggerUpgradeIds", []) as Array
 		for trigger_value in triggers:
 			var trigger := String(trigger_value)
-			if sim._dictionary_has_casefolded_key(team_owned, trigger) or sim._array_has_casefolded_string(object_owned, trigger):
+			if _sim._dictionary_has_casefolded_key(team_owned, trigger) or _sim._array_has_casefolded_string(object_owned, trigger):
 				matched += 1
 		var eligible := matched == triggers.size() if String(effect.get("triggerSemantics", "")) == "all" else matched > 0
 		if eligible:
@@ -2071,7 +2093,7 @@ func _reconcile_structure_command_set_upgrades(row: Dictionary) -> Dictionary:
 		"customAnimationStatus": "deferred" if selected.has("customAnimation") else "absent",
 	}
 	if prior_set != next_set or prior_effect != next_effect:
-		sim._emit_event("upgrade.command_set", int(row.get("id", 0)), 0, {
+		_sim._emit_event("upgrade.command_set", int(row.get("id", 0)), 0, {
 			"team": int(row.get("team", -1)), "game": active_game,
 			"effect_id": next_effect, "from": prior_set, "to": next_set,
 			"presentation_custom_anim": "deferred" if selected.has("customAnimation") else "absent",

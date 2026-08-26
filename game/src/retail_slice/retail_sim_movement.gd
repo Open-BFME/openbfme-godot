@@ -55,11 +55,12 @@ func _step_retail_heading(
 	## by construction.
 	##
 	## Deterministic: fixed sim.TICK_SECONDS step, no wall clock, no RNG draw.
+	var _sim = sim
 	var facing_now := Vector2(row.get("facing", movement_direction))
 	if facing_now.length_squared() <= 0.000001:
 		facing_now = movement_direction
 	var delta_angle := wrapf(movement_direction.angle() - facing_now.angle(), -PI, PI)
-	var turn_step = deg_to_rad(effective_turn_rate_degrees_per_second) * sim.TICK_SECONDS
+	var turn_step = deg_to_rad(effective_turn_rate_degrees_per_second) * _sim.TICK_SECONDS
 	row["facing"] = facing_now.rotated(clampf(delta_angle, -turn_step, turn_step))
 	var reform_threshold := _retail_reform_threshold_degrees(row)
 	if reform_threshold < 0.0:
@@ -72,16 +73,17 @@ func _step_retail_heading(
 		return false
 	# Reform: bleed speed off the authored braking ramp rather than snapping to a
 	# standing start, and hold position while the pivot completes.
-	row["current_speed"] = maxf(0.0, float(row.get("current_speed", 0.0)) - braking * sim.TICK_SECONDS)
+	row["current_speed"] = maxf(0.0, float(row.get("current_speed", 0.0)) - braking * _sim.TICK_SECONDS)
 	row["route_stall_ticks"] = 0
 	return true
 
 
 func _step_route(row: Dictionary) -> void:
+	var _sim = sim
 	var route: Array = row["route"]
 	if route.is_empty():
 		# Brake toward stop when no route remains.
-		var idle_speed := maxf(0.0, float(row.get("current_speed", 0.0)) - float(row.get("braking", float(row.get("speed", 0.0)))) * sim.TICK_SECONDS)
+		var idle_speed := maxf(0.0, float(row.get("current_speed", 0.0)) - float(row.get("braking", float(row.get("speed", 0.0)))) * _sim.TICK_SECONDS)
 		row["current_speed"] = idle_speed
 		return
 	var position := Vector2(row["position"])
@@ -89,12 +91,12 @@ func _step_route(row: Dictionary) -> void:
 	var waypoint := Vector2(route[0])
 	var base_speed := float(row["speed"])
 	var group_cap := float(row.get("group_speed_cap", 0.0))
-	if group_cap > 0.0 and (sim.retail_formation_movement or bool(row.get("wait_for_formation", false))):
+	if group_cap > 0.0 and (_sim.retail_formation_movement or bool(row.get("wait_for_formation", false))):
 		# WaitForFormation (locomotor.ini:713) - a group order advances at the
 		# slowest authored speed in the group so the selection arrives together
 		# instead of stringing out by unit class.
 		base_speed = minf(base_speed, group_cap)
-	var max_speed = base_speed * float(sim._stance_state(row).get("speedMultiplier", 1.0)) * float(sim._formation_effects(row).get("speed_multiplier", 1.0)) * sim._ability_speed_multiplier(row) * float(row.get("siege_speed_multiplier", 1.0))
+	var max_speed = base_speed * float(_sim._stance_state(row).get("speedMultiplier", 1.0)) * float(_sim._formation_effects(row).get("speed_multiplier", 1.0)) * _sim._ability_speed_multiplier(row) * float(row.get("siege_speed_multiplier", 1.0))
 	# Acceleration and Braking are authored on the Locomotor template every
 	# object's LocomotorSet binds (HumanLocomotor locomotor.ini:142 authors
 	# 510/510; HorseLocomotor :1026 authors 1500/2000). All 494 movement blocks
@@ -120,11 +122,11 @@ func _step_route(row: Dictionary) -> void:
 	# remaining route was wasted per-tick work.
 	var stop_distance := (current_speed * current_speed) / maxf(0.001, 2.0 * braking)
 	if route.size() <= 1 and position.distance_to(waypoint) <= stop_distance:
-		current_speed = maxf(0.0, current_speed - braking * sim.TICK_SECONDS)
+		current_speed = maxf(0.0, current_speed - braking * _sim.TICK_SECONDS)
 	else:
-		current_speed = minf(max_speed, current_speed + acceleration * sim.TICK_SECONDS)
+		current_speed = minf(max_speed, current_speed + acceleration * _sim.TICK_SECONDS)
 	row["current_speed"] = current_speed
-	var step_distance = current_speed * sim.TICK_SECONDS
+	var step_distance = current_speed * _sim.TICK_SECONDS
 	var movement_direction := position.direction_to(waypoint)
 	var pre_move_gap := position.distance_to(waypoint)
 	var heading_bounded_ground_move := false
@@ -136,7 +138,7 @@ func _step_route(row: Dictionary) -> void:
 	var minimum_turn_speed := 0.0
 	var min_turn_speed_fraction := 0.0
 	if movement_direction.length_squared() > 0.000001:
-		if sim._should_honor_turn_rate(row):
+		if _sim._should_honor_turn_rate(row):
 			var facing_before_turn := Vector2(row.get("facing", movement_direction)).normalized()
 			turning_on_authored_heading = absf(
 				wrapf(movement_direction.angle() - facing_before_turn.angle(), -PI, PI)
@@ -149,7 +151,7 @@ func _step_route(row: Dictionary) -> void:
 						# A waypoint inside the moving circle cannot be reached by
 						# continuing that circle. Brake on the authored ramp until the
 						# MinTurnSpeed split selects SlowTurnRadius, pivot, then advance.
-						current_speed = maxf(0.0, current_speed - braking * sim.TICK_SECONDS)
+						current_speed = maxf(0.0, current_speed - braking * _sim.TICK_SECONDS)
 						row["current_speed"] = current_speed
 				if row.has("min_turn_speed"):
 					min_turn_speed_fraction = clampf(float(row["min_turn_speed"]), 0.0, 1.0)
@@ -161,7 +163,7 @@ func _step_route(row: Dictionary) -> void:
 						# tick. Only speeds genuinely below that authored first ramp
 						# output are slow; accelerating sub-top-speed ticks are fast.
 						var first_accelerating_speed := minf(
-							max_speed, acceleration * sim.TICK_SECONDS
+							max_speed, acceleration * _sim.TICK_SECONDS
 						)
 						slow_turn_manoeuvre = (
 							current_speed + 0.0001 < first_accelerating_speed
@@ -184,7 +186,7 @@ func _step_route(row: Dictionary) -> void:
 			var reforming := _step_retail_heading(
 				row, movement_direction, braking, effective_turn_rate_degrees
 			)
-			if reforming and sim._should_reform(row):
+			if reforming and _sim._should_reform(row):
 				# Reforming: the horde pivots about its own centre and does not
 				# translate this tick. Only when MaxTurnWithoutReform is on the
 				# row (or the old formation flag). Otherwise wheel: turn and
@@ -214,13 +216,13 @@ func _step_route(row: Dictionary) -> void:
 				current_speed = minimum_turn_speed
 		pre_q55_slow_clamp = current_speed <= minimum_turn_speed + 0.0001
 		row["current_speed"] = current_speed
-	step_distance = current_speed * sim.TICK_SECONDS
+	step_distance = current_speed * _sim.TICK_SECONDS
 	var travel_step := Vector2.ZERO
 	var travel_direction := movement_direction
 	if heading_bounded_ground_move:
 		travel_direction = Vector2(row.get("facing", movement_direction)).normalized()
 		if turning_on_authored_heading:
-			var effective_turn_step = deg_to_rad(effective_turn_rate_degrees) * sim.TICK_SECONDS
+			var effective_turn_step = deg_to_rad(effective_turn_rate_degrees) * _sim.TICK_SECONDS
 			if selected_turn_radius >= 0.0:
 				# The selected authored radius binds the position arc as s <= r*dtheta.
 				# Together with the v/r heading cap above this traces r whether r is
@@ -243,14 +245,14 @@ func _step_route(row: Dictionary) -> void:
 		travel_step = waypoint - position
 		position = waypoint
 		route.pop_front()
-		sim._consume_route_point_layer(row)
+		_sim._consume_route_point_layer(row)
 	else:
 		travel_step = travel_direction * step_distance
 		var candidate_position := position + travel_step
 		if (
 			heading_bounded_ground_move
 			and not travel_direction.is_equal_approx(movement_direction)
-			and not sim._position_walkable(candidate_position)
+			and not _sim._position_walkable(candidate_position)
 		):
 			# Turning may point briefly outside the routed navigation corridor.
 			# Hold the last walkable point and shed speed through the locomotor's
@@ -259,7 +261,7 @@ func _step_route(row: Dictionary) -> void:
 			# heading equals the routed bearing, the route provider owns the segment:
 			# this matters for accepted final legs to obstructed structure centres.
 			travel_step = Vector2.ZERO
-			current_speed = maxf(0.0, current_speed - braking * sim.TICK_SECONDS)
+			current_speed = maxf(0.0, current_speed - braking * _sim.TICK_SECONDS)
 			row["current_speed"] = current_speed
 		else:
 			position = candidate_position
@@ -268,7 +270,7 @@ func _step_route(row: Dictionary) -> void:
 		# this position is threaded in so a footprint the unit is walking THROUGH
 		# slides it tangentially around the disc rather than standing it off
 		# radially — see _tangential_slide_point for the deadlock that fixes.
-		position = sim._deflect_around_structures(position, row, travel_step)
+		position = _sim._deflect_around_structures(position, row, travel_step)
 	# Grid routes ignore structure footprints, so a waypoint can sit inside a
 	# blocked disc; deflection then pins the unit on the ring making zero
 	# progress. Only a sustained stall pops the waypoint — a single flat tick
@@ -284,19 +286,19 @@ func _step_route(row: Dictionary) -> void:
 			# click after three stalled ticks on the ring.
 			if route.size() > 1:
 				route.pop_front()
-				sim._consume_route_point_layer(row)
+				_sim._consume_route_point_layer(row)
 	else:
 		row["route_stall_ticks"] = 0
 	row["position"] = position
-	sim._spatial_sync(row)
+	_sim._spatial_sync(row)
 	row["route"] = route
 	# Authored crush, or the legacy cavalry trample when crush fields are absent.
 	# Eligibility is the actual displacement this tick. The locomotor speed can
 	# contain the MinTurnSpeed floor during a zero-distance slow pivot and must
 	# not manufacture a standing-still crush pulse.
-	var actual_translation_speed = tick_start_position.distance_to(position) / sim.TICK_SECONDS
-	if sim._should_attempt_crush(row, actual_translation_speed, max_speed):
-		sim._try_cavalry_trample(row)
+	var actual_translation_speed = tick_start_position.distance_to(position) / _sim.TICK_SECONDS
+	if _sim._should_attempt_crush(row, actual_translation_speed, max_speed):
+		_sim._try_cavalry_trample(row)
 	if route.is_empty():
 		_clear_pending_route(row, int(row["target_id"]) == 0)
 		if int(row["target_id"]) == 0:
@@ -313,8 +315,9 @@ func _build_route(from: Vector2, to: Vector2) -> Array[Vector2]:
 
 
 func _assign_route(row: Dictionary, destination: Vector2) -> bool:
+	var _sim = sim
 	if row.has("toggle_deploy_channel") or bool(row.get("toggle_deployed", false)):
-		sim.last_route_rejection = "toggle-deploy-immobile"
+		_sim.last_route_rejection = "toggle-deploy-immobile"
 		return false
 	if bool(row.get("flying", false)):
 		# Flyers ignore ground navigation entirely: straight-line route over
@@ -333,32 +336,32 @@ func _assign_route(row: Dictionary, destination: Vector2) -> bool:
 	# layered routes are still checked by the map-owned wall grid below.
 	# Ships use the water grid; the land ledger would reject every river.
 	if not _is_naval_row(row) and not uses_walk_surface:
-		sim._ensure_parity()
+		_sim._ensure_parity()
 		# A heading-bounded arc can finish just inside the navigation raster's
 		# blocked edge. Only a provider that explicitly resolves that origin may
 		# recover it, and the recovered point still goes through the sim.parity ledger.
 		var parity_origin := Vector2(row["position"])
-		if not sim._position_walkable(parity_origin):
-			if sim.route_provider == null or not sim.route_provider.has_method("resolve_walkable_position"):
-				sim.last_route_rejection = "route-origin-not-walkable"
+		if not _sim._position_walkable(parity_origin):
+			if _sim.route_provider == null or not _sim.route_provider.has_method("resolve_walkable_position"):
+				_sim.last_route_rejection = "route-origin-not-walkable"
 				return false
-			parity_origin = Vector2(sim.route_provider.call("resolve_walkable_position", parity_origin))
-			if not sim._position_walkable(parity_origin):
-				sim.last_route_rejection = "route-origin-recovery-failed"
+			parity_origin = Vector2(_sim.route_provider.call("resolve_walkable_position", parity_origin))
+			if not _sim._position_walkable(parity_origin):
+				_sim.last_route_rejection = "route-origin-recovery-failed"
 				return false
-		if not sim.parity.can_path_between(parity_origin, destination):
-			sim.last_route_rejection = "parity-path-impassable"
+		if not _sim.parity.can_path_between(parity_origin, destination):
+			_sim.last_route_rejection = "parity-path-impassable"
 			return false
 	var result := _query_route_for_row(row, Vector2(row["position"]), destination)
 	if not bool(result.get("valid", false)):
-		sim.last_route_rejection = String(result.get("reason", "route-rejected"))
+		_sim.last_route_rejection = String(result.get("reason", "route-rejected"))
 		return false
 	var points: Array[Vector2] = []
 	points.assign(result.get("points", []))
 	if points.is_empty():
-		sim.last_route_rejection = String(result.get("reason", ""))
-		if sim.last_route_rejection.is_empty():
-			sim.last_route_rejection = "empty-route"
+		_sim.last_route_rejection = String(result.get("reason", ""))
+		if _sim.last_route_rejection.is_empty():
+			_sim.last_route_rejection = "empty-route"
 		return false
 	var cells: Array[Vector2i] = []
 	cells.assign(result.get("cells", []))
@@ -366,7 +369,7 @@ func _assign_route(row: Dictionary, destination: Vector2) -> bool:
 	var point_layers: Array = result.get("point_layers", []) as Array
 	var point_elevations: Array = result.get("point_elevations", []) as Array
 	if layered and (point_layers.size() != points.size() or point_elevations.size() != points.size()):
-		sim.last_route_rejection = "invalid-layered-route"
+		_sim.last_route_rejection = "invalid-layered-route"
 		return false
 	row["destination"] = destination
 	row["route"] = points
@@ -390,20 +393,21 @@ func _assign_target_route(row: Dictionary, target_position: Vector2) -> bool:
 	## cell edge). RetailMapData exposes its deterministic nearest-walkable
 	## resolver for exactly this map-owned question. Movement routes to that
 	## resolved approach point; the target id/position remains unchanged.
+	var _sim = sim
 	if _assign_route(row, target_position):
 		return true
 	if (
-		sim.last_route_rejection != "blocked-destination"
-		or sim.route_provider == null
-		or not sim.route_provider.has_method("resolve_walkable_position")
+		_sim.last_route_rejection != "blocked-destination"
+		or _sim.route_provider == null
+		or not _sim.route_provider.has_method("resolve_walkable_position")
 	):
 		return false
-	var approach := Vector2(sim.route_provider.call("resolve_walkable_position", target_position))
+	var approach := Vector2(_sim.route_provider.call("resolve_walkable_position", target_position))
 	if approach.is_equal_approx(target_position):
 		return false
 	var unit_type := String(row.get("unit_type", row.get("source_object_id", "<unknown>")))
-	if not sim._target_route_resolution_unit_types.has(unit_type):
-		sim._target_route_resolution_unit_types[unit_type] = true
+	if not _sim._target_route_resolution_unit_types.has(unit_type):
+		_sim._target_route_resolution_unit_types[unit_type] = true
 		print(
 			"RETAIL_TURN_MODEL target_route_walkable_resolution unit_type=%s"
 			% unit_type
@@ -412,13 +416,14 @@ func _assign_target_route(row: Dictionary, target_position: Vector2) -> bool:
 
 
 func _query_route(from: Vector2, to: Vector2) -> Dictionary:
-	if sim.route_provider != null and sim.route_provider.has_method("query_route"):
-		var value: Variant = sim.route_provider.call("query_route", from, to)
+	var _sim = sim
+	if _sim.route_provider != null and _sim.route_provider.has_method("query_route"):
+		var value: Variant = _sim.route_provider.call("query_route", from, to)
 		if typeof(value) == TYPE_DICTIONARY:
 			var ground := value as Dictionary
-			if bool(ground.get("valid", false)) or not sim.route_provider.has_method("query_layered_bridge_route"):
+			if bool(ground.get("valid", false)) or not _sim.route_provider.has_method("query_layered_bridge_route"):
 				return ground
-			var bridge_value: Variant = sim.route_provider.call("query_layered_bridge_route", from, to)
+			var bridge_value: Variant = _sim.route_provider.call("query_layered_bridge_route", from, to)
 			if typeof(bridge_value) == TYPE_DICTIONARY and bool((bridge_value as Dictionary).get("valid", false)):
 				return bridge_value as Dictionary
 			return ground
@@ -428,21 +433,22 @@ func _query_route(from: Vector2, to: Vector2) -> Dictionary:
 
 
 func _query_route_for_row(row: Dictionary, from: Vector2, to: Vector2) -> Dictionary:
+	var _sim = sim
 	if _is_naval_row(row):
 		# Water is the only domain a hull has. A provider that cannot answer for
 		# water leaves the ship with no route at all — the land grid is not a
 		# substitute, and neither is _query_route's direct fallback, which would
 		# hand back a confident straight line across dry ground.
-		if sim.route_provider == null or not sim.route_provider.has_method("query_water_route"):
+		if _sim.route_provider == null or not _sim.route_provider.has_method("query_water_route"):
 			return {"valid": false, "reason": "water-navigation-unavailable", "points": [], "cells": []}
-		var water_value: Variant = sim.route_provider.call("query_water_route", from, to)
+		var water_value: Variant = _sim.route_provider.call("query_water_route", from, to)
 		if typeof(water_value) == TYPE_DICTIONARY:
 			return water_value as Dictionary
 		return {"valid": false, "reason": "water-navigation-unavailable", "points": [], "cells": []}
 	if _row_route_uses_walk_surface(row, to):
-		if sim.route_provider == null or not sim.route_provider.has_method("query_layered_route"):
+		if _sim.route_provider == null or not _sim.route_provider.has_method("query_layered_route"):
 			return {"valid": false, "reason": "walk-surface-navigation-unavailable", "points": [], "cells": []}
-		var layered_value: Variant = sim.route_provider.call(
+		var layered_value: Variant = _sim.route_provider.call(
 			"query_layered_route", from, to, String(row.get("pathing_layer", "ground"))
 		)
 		if typeof(layered_value) == TYPE_DICTIONARY:
@@ -452,13 +458,14 @@ func _query_route_for_row(row: Dictionary, from: Vector2, to: Vector2) -> Dictio
 
 
 func _row_route_uses_walk_surface(row: Dictionary, destination: Vector2) -> bool:
-	if _is_naval_row(row) or sim.route_provider == null:
+	var _sim = sim
+	if _is_naval_row(row) or _sim.route_provider == null:
 		return false
 	if String(row.get("pathing_layer", "ground")) in ["ramp", "deck"]:
 		return true
 	return (
-		sim.route_provider.has_method("is_walk_surface_at")
-		and bool(sim.route_provider.call("is_walk_surface_at", destination))
+		_sim.route_provider.has_method("is_walk_surface_at")
+		and bool(_sim.route_provider.call("is_walk_surface_at", destination))
 	)
 
 

@@ -36,12 +36,13 @@ func _structure_footprint_radius(structure_row: Dictionary) -> float:
 	## so the result is cached against the integer structure id, which allocates
 	## nothing. Cleared by setup() and by _restore_authoritative_state(), the two
 	## places the structure table is replaced wholesale.
+	var _sim = sim
 	if structure_row.is_empty():
 		return 0.0
 	var structure_id := int(structure_row.get("id", 0))
-	if structure_id != 0 and sim._structure_footprint_radius_cache.has(structure_id):
-		return float(sim._structure_footprint_radius_cache[structure_id])
-	var scale = float(sim._rules.get("source_map_transform_scale", 0.0))
+	if structure_id != 0 and _sim._structure_footprint_radius_cache.has(structure_id):
+		return float(_sim._structure_footprint_radius_cache[structure_id])
+	var scale = float(_sim._rules.get("source_map_transform_scale", 0.0))
 	if not is_finite(scale) or scale <= 0.0:
 		return 0.0
 	var source_radius := float(structure_row.get("footprint_radius_source", 0.0))
@@ -54,7 +55,7 @@ func _structure_footprint_radius(structure_row: Dictionary) -> float:
 		return 0.0
 	var radius = source_radius * scale
 	if structure_id != 0:
-		sim._structure_footprint_radius_cache[structure_id] = radius
+		_sim._structure_footprint_radius_cache[structure_id] = radius
 	return radius
 
 
@@ -95,12 +96,13 @@ func _resolved_footprint_source_radius(source_object_id: String, structure_kind:
 	## while resolving differently — one hitting the document, one missing it and
 	## taking the fallback. Keying on the same string the lookup uses makes the
 	## memo incapable of disagreeing with the thing it memoises.
+	var _sim = sim
 	var key := "%s|%s" % [source_object_id, structure_kind]
-	if sim._structure_footprint_source_cache.has(key):
-		return float(sim._structure_footprint_source_cache[key])
+	if _sim._structure_footprint_source_cache.has(key):
+		return float(_sim._structure_footprint_source_cache[key])
 	var resolved := 0.0
 	if source_object_id != "":
-		var db = sim._content_db_ref()
+		var db = _sim._content_db_ref()
 		if db != null and db.has_method("get_playable_structure_runtime"):
 			var document: Variant = db.get_playable_structure_runtime(source_object_id)
 			if typeof(document) == TYPE_DICTIONARY:
@@ -110,13 +112,13 @@ func _resolved_footprint_source_radius(source_object_id: String, structure_kind:
 				)
 				var geometry: Variant = gameplay.get("geometry", {})
 				if typeof(geometry) == TYPE_DICTIONARY:
-					resolved = sim.SelectionPick.source_footprint_radius(geometry as Dictionary)
+					resolved = _sim.SelectionPick.source_footprint_radius(geometry as Dictionary)
 	if not is_finite(resolved) or resolved <= 0.0:
 		# NAMED, ONCE PER OBJECT ID. The fallback used to fire in total silence,
 		# so a pack shipped without geometry looked exactly like a pack with it.
 		# Once per id (not per call) keeps a per-tick path from flooding the log.
-		if source_object_id != "" and not sim._footprint_fallback_reported.has(source_object_id):
-			sim._footprint_fallback_reported[source_object_id] = true
+		if source_object_id != "" and not _sim._footprint_fallback_reported.has(source_object_id):
+			_sim._footprint_fallback_reported[source_object_id] = true
 			push_warning(
 				"structure footprint: '%s' (kind=%s) carries no compiled geometry; using the %s source-unit fallback"
 				% [
@@ -126,11 +128,11 @@ func _resolved_footprint_source_radius(source_object_id: String, structure_kind:
 				]
 			)
 		resolved = (
-			sim.SelectionPick.DEFAULT_FORTRESS_SOURCE_RADIUS
+			_sim.SelectionPick.DEFAULT_FORTRESS_SOURCE_RADIUS
 			if structure_kind == "fortress"
-			else sim.COMBAT_FALLBACK_STRUCTURE_SOURCE_RADIUS
+			else _sim.COMBAT_FALLBACK_STRUCTURE_SOURCE_RADIUS
 		)
-	sim._structure_footprint_source_cache[key] = resolved
+	_sim._structure_footprint_source_cache[key] = resolved
 	return resolved
 
 
@@ -279,11 +281,12 @@ func _castle_footprint_pass_through(position: Vector2, attack_target_id: int, at
 	## space but are separate tables, so a battalion target whose id happens to
 	## match a structure id would have opened that structure. The caller passes
 	## the row's `target_kind` and anything but "structure" returns empty.
+	var _sim = sim
 	var passable: Dictionary = {}
-	if attack_target_kind != "structure" or attack_target_id == 0 or not sim.structures.has(attack_target_id):
+	if attack_target_kind != "structure" or attack_target_id == 0 or not _sim.structures.has(attack_target_id):
 		return passable
 	passable[attack_target_id] = true
-	var target_row: Dictionary = sim.structures[attack_target_id]
+	var target_row: Dictionary = _sim.structures[attack_target_id]
 	var target_center := Vector2(target_row.get("position", Vector2.ZERO))
 	# Three ways into the same group: the castle owner itself, one of its
 	# CastleBehavior pieces, or an expansion raised on one of its pads.
@@ -295,20 +298,20 @@ func _castle_footprint_pass_through(position: Vector2, attack_target_id: int, at
 		or String(target_row.get("structure_kind", "")) == "fortress"
 	):
 		castle_id = attack_target_id
-	if castle_id == 0 or not sim.structures.has(castle_id):
+	if castle_id == 0 or not _sim.structures.has(castle_id):
 		return passable
 	var members: Array[int] = [castle_id]
-	for piece_value in (sim.structures[castle_id] as Dictionary).get("castle_piece_structure_ids", []) as Array:
+	for piece_value in (_sim.structures[castle_id] as Dictionary).get("castle_piece_structure_ids", []) as Array:
 		members.append(int(piece_value))
-	for pad_value in sim.expansion_pads.get(castle_id, []) as Array:
+	for pad_value in _sim.expansion_pads.get(castle_id, []) as Array:
 		var expansion_structure_id := int((pad_value as Dictionary).get("expansion_structure_id", 0))
 		if expansion_structure_id != 0:
 			members.append(expansion_structure_id)
 	for member_id in members:
-		if passable.has(member_id) or not sim.structures.has(member_id):
+		if passable.has(member_id) or not _sim.structures.has(member_id):
 			continue
-		var member_row: Dictionary = sim.structures[member_id]
-		var member_radius = float(sim.STRUCTURE_BLOCK_RADIUS.get(
+		var member_row: Dictionary = _sim.structures[member_id]
+		var member_radius = float(_sim.STRUCTURE_BLOCK_RADIUS.get(
 			String(member_row.get("structure_kind", "")), 2.8
 		))
 		var member_center := Vector2(member_row.get("position", Vector2.ZERO))
@@ -329,6 +332,7 @@ func _castle_footprint_pass_through(position: Vector2, attack_target_id: int, at
 
 
 func _castle_gate_blocking_discs(structure_row: Dictionary, mover: Dictionary) -> Array[Dictionary]:
+	var _sim = sim
 	var policy: Dictionary = structure_row.get("gate_behavior", {})
 	var geometries: Dictionary = structure_row.get("gate_geometries", {})
 	if policy.is_empty() or geometries.is_empty():
@@ -349,7 +353,7 @@ func _castle_gate_blocking_discs(structure_row: Dictionary, mover: Dictionary) -
 			# skirmish-AI-controlled friendlies; a human owner's troops wait
 			# for the doors like retail. An OPEN gate is never impassable for
 			# its owner - the rule only widens closed-gate passage.
-			if same_team and (bool(portal.get("allow_non_skirmish_ai", false)) or (sim.ai_enabled and sim.team_is_ai(int(mover.get("team", -1))))):
+			if same_team and (bool(portal.get("allow_non_skirmish_ai", false)) or (_sim.ai_enabled and _sim.team_is_ai(int(mover.get("team", -1))))):
 				use_open_geometry = true
 			elif not same_team and bool(portal.get("allow_enemies", false)):
 				use_open_geometry = true
@@ -358,7 +362,7 @@ func _castle_gate_blocking_discs(structure_row: Dictionary, mover: Dictionary) -
 		geometry_names.assign(["OpenLeft", "OpenRight"])
 	else:
 		geometry_names.append("Closed")
-	var scale = float(sim._rules.get("source_map_transform_scale", 0.1))
+	var scale = float(_sim._rules.get("source_map_transform_scale", 0.1))
 	var facing := float(structure_row.get("facing_radians", 0.0))
 	var origin := Vector2(structure_row.get("position", Vector2.ZERO))
 	var discs: Array[Dictionary] = []
@@ -374,7 +378,7 @@ func _castle_gate_blocking_discs(structure_row: Dictionary, mover: Dictionary) -
 		var authored_short_radius := minf(major, minor)
 		# Minkowski-expand the authored box by the battalion's collision body;
 		# otherwise a centre-point test lets the formation clip through the leaf.
-		var disc_radius = authored_short_radius + sim.BATTALION_SEPARATION_PUSH
+		var disc_radius = authored_short_radius + _sim.BATTALION_SEPARATION_PUSH
 		var local_axis := Vector2.RIGHT if major >= minor else Vector2.DOWN
 		var axis := local_axis.rotated(facing)
 		var offset_value: Array = geometry.get("offset", [])
@@ -412,6 +416,7 @@ func _deflect_around_structures(
 	# substitute for that full list (a centre outside the gathered box cannot
 	# overlap any blocking disc), so a provided list is ignored — honouring
 	# it would let the eviction hoist bypass the broad-phase.
+	var _sim = sim
 	var attack_target_id := int(row.get("target_id", 0))
 	var attack_target_kind := String(row.get("target_kind", "battalion"))
 	var passable := _castle_footprint_pass_through(
@@ -424,7 +429,7 @@ func _deflect_around_structures(
 	# scan used. A centre outside the gathered box is further than the maximum
 	# block radius away, and the loop below skips such rows with no side
 	# effects, so this is byte-identical to scanning sim.structure_ids().
-	var ids: Array[int] = sim._structure_ids_near(position)
+	var ids: Array[int] = _sim._structure_ids_near(position)
 	# TOTAL push bound. Round 18 clamped each structure's push to
 	# sim.STRUCTURE_EVICTION_STEP separately, so N overlapping discs could compound
 	# into an N * step jump in one tick — and overlapping discs are the NORMAL
@@ -466,11 +471,11 @@ func _deflect_around_structures(
 	# therefore inert for every unit at base speed and binding exactly where a
 	# boosted one would otherwise be left clipped inside a wall it walked into.
 	# Deleting it would trade a measured no-op for an unmeasured regression.
-	var push_budget = maxf(sim.STRUCTURE_EVICTION_STEP, travel_step.length())
+	var push_budget = maxf(_sim.STRUCTURE_EVICTION_STEP, travel_step.length())
 	for structure_id in ids:
-		if not sim.structures.has(structure_id):
+		if not _sim.structures.has(structure_id):
 			continue
-		var structure_row: Dictionary = sim.structures[structure_id]
+		var structure_row: Dictionary = _sim.structures[structure_id]
 		if int(structure_row.get("health", 0)) <= 0:
 			continue
 		# Construction sites do not block movement: builders must reach their
@@ -506,8 +511,8 @@ func _deflect_around_structures(
 				if push_budget <= 0.0:
 					break
 			continue
-		var radius = float(sim.STRUCTURE_BLOCK_RADIUS.get(String(structure_row.get("structure_kind", "")), 2.8))
-		if String(row.get("order_kind", "")) == "construct" and structure_id >= sim.CASTLE_FIXTURE_FIRST_ID:
+		var radius = float(_sim.STRUCTURE_BLOCK_RADIUS.get(String(structure_row.get("structure_kind", "")), 2.8))
+		if String(row.get("order_kind", "")) == "construct" and structure_id >= _sim.CASTLE_FIXTURE_FIRST_ID:
 			# Castle props sit densely around their authored build plots. A porter
 			# travelling to one uses each fixture's compiled footprint, not the
 			# generic 2.8-unit dynamic-building walkway disc that seals the keep.
@@ -672,12 +677,13 @@ func _step_structure_eviction() -> void:
 	## sort inside the entity loop. Structures are neither added nor removed by
 	## this pass (it only moves sim.entities), so the id list is stable for its whole
 	## duration and _deflect_around_structures re-checks sim.structures.has() anyway.
-	var ids: Array[int] = sim.structure_ids()
+	var _sim = sim
+	var ids: Array[int] = _sim.structure_ids()
 	if ids.is_empty():
 		return
-	for id in sim.entity_ids():
-		var row: Dictionary = sim.entities[id]
-		if int(row.get("health", 0)) <= 0 or bool(row.get("flying", false)) or sim.entity_container.has(id):
+	for id in _sim.entity_ids():
+		var row: Dictionary = _sim.entities[id]
+		if int(row.get("health", 0)) <= 0 or bool(row.get("flying", false)) or _sim.entity_container.has(id):
 			continue
 		if bool(row.get("is_banner_carrier", false)):
 			# A BANNER CARRIER HAS NO POSITION OF ITS OWN. It is glued to its
@@ -760,7 +766,7 @@ func _step_structure_eviction() -> void:
 		if evicted == position:
 			continue
 		row["position"] = evicted
-		sim._spatial_sync(row)
+		_sim._spatial_sync(row)
 
 
 func _is_engaged_in_range(row: Dictionary) -> bool:
@@ -771,6 +777,7 @@ func _is_engaged_in_range(row: Dictionary) -> bool:
 	## every tick: surface-to-surface against a structure (the target's authored
 	## bounding circle subtracted), centre-to-centre against a battalion. See the
 	## citation block at that range test.
+	var _sim = sim
 	if String(row.get("state", "")) != "attack":
 		return false
 	var target_id := int(row.get("target_id", 0))
@@ -778,7 +785,7 @@ func _is_engaged_in_range(row: Dictionary) -> bool:
 		return false
 	var target_kind := String(row.get("target_kind", "battalion"))
 	var target_row: Dictionary = (
-		sim.structures.get(target_id, {}) if target_kind == "structure" else sim.entities.get(target_id, {})
+		_sim.structures.get(target_id, {}) if target_kind == "structure" else _sim.entities.get(target_id, {})
 	)
 	if target_row.is_empty() or int(target_row.get("health", 0)) <= 0:
 		return false
@@ -825,12 +832,13 @@ func _should_honor_turn_rate(row: Dictionary) -> bool:
 
 
 func _report_turn_rate_fallback(row: Dictionary) -> void:
+	var _sim = sim
 	var unit_type := String(row.get(
 		"unit_type", row.get("source_object_id", row.get("horde_id", "<unknown>"))
 	))
-	if sim._turn_rate_fallback_unit_types.has(unit_type):
+	if _sim._turn_rate_fallback_unit_types.has(unit_type):
 		return
-	sim._turn_rate_fallback_unit_types[unit_type] = true
+	_sim._turn_rate_fallback_unit_types[unit_type] = true
 	print(
 		"RETAIL_TURN_MODEL missing_authored_turn_rate unit_type=%s fallback=pre_change_snap_direct"
 		% unit_type
@@ -845,14 +853,6 @@ func _should_reform(row: Dictionary) -> bool:
 	return float(row.get("max_turn_without_reform_degrees", 0.0)) > 0.0
 
 
-func _retail_reform_threshold_degrees(row: Dictionary) -> float:
-	return sim._movement_subsystem()._retail_reform_threshold_degrees(row)
-
-
-func _retail_turn_rate_degrees(row: Dictionary) -> float:
-	return sim._movement_subsystem()._retail_turn_rate_degrees(row)
-
-
 func _step_retail_heading(
 	row: Dictionary,
 	movement_direction: Vector2,
@@ -860,10 +860,6 @@ func _step_retail_heading(
 	effective_turn_rate_degrees_per_second: float
 ) -> bool:
 	return sim._movement_subsystem()._step_retail_heading(row, movement_direction, braking, effective_turn_rate_degrees_per_second)
-
-
-func _step_route(row: Dictionary) -> void:
-	sim._movement_subsystem()._step_route(row)
 
 
 func _consume_route_point_layer(row: Dictionary) -> void:
@@ -905,6 +901,7 @@ func _try_cavalry_trample(row: Dictionary) -> void:
 	## Authored crush when crush_damage/crusher_level are present. Otherwise
 	## the legacy cavalry 0.5 pulse so the pin and slice trample checks stay
 	## put on packs that predate the fields.
+	var _sim = sim
 	var cooldown := int(row.get("trample_cooldown", 0))
 	if cooldown > 0:
 		row["trample_cooldown"] = cooldown - 1
@@ -918,16 +915,16 @@ func _try_cavalry_trample(row: Dictionary) -> void:
 			return
 	elif row.has("module_contracts") or String(row.get("category", "")) != "cavalry":
 		return
-	var team = int(row.get("team", sim.PLAYER_TEAM))
+	var team = int(row.get("team", _sim.PLAYER_TEAM))
 	var origin := Vector2(row.get("position", Vector2.ZERO))
-	var best_id = sim._spatial_nearest_hostile(
-		row, team, origin, sim.TRAMPLE_COLLISION_RADIUS, sim.SPATIAL_FILTER_NOT_FLYING
+	var best_id = _sim._spatial_nearest_hostile(
+		row, team, origin, _sim.TRAMPLE_COLLISION_RADIUS, _sim.SPATIAL_FILTER_NOT_FLYING
 	)
 	if best_id == 0:
 		return
-	var victim: Dictionary = sim.entities[best_id] as Dictionary
-	if not sim._squish_collision_admitted(victim):
-		sim._emit_event("combat.crush_refused", int(row.get("id", 0)), best_id, {"reason": "victim-missing-squish-collide"})
+	var victim: Dictionary = _sim.entities[best_id] as Dictionary
+	if not _sim._squish_collision_admitted(victim):
+		_sim._emit_event("combat.crush_refused", int(row.get("id", 0)), best_id, {"reason": "victim-missing-squish-collide"})
 		return
 	if has_authored:
 		var crusher_level := int(row.get("crusher_level", 0))
@@ -938,38 +935,38 @@ func _try_cavalry_trample(row: Dictionary) -> void:
 	if has_authored:
 		damage = maxi(
 			1,
-			int(round(float(authored_damage) * sim._timed_modifier_product(row, "CRUSH")))
+			int(round(float(authored_damage) * _sim._timed_modifier_product(row, "CRUSH")))
 		)
 	else:
-		damage = maxi(1, int(round(float(row.get("member_damage", 1)) * float(row.get("member_count", 1)) * sim.TRAMPLE_DAMAGE_FACTOR * sim._timed_modifier_product(row, "CRUSH"))))
+		damage = maxi(1, int(round(float(row.get("member_damage", 1)) * float(row.get("member_count", 1)) * _sim.TRAMPLE_DAMAGE_FACTOR * _sim._timed_modifier_product(row, "CRUSH"))))
 	# A braced shield wall blunts the charge (retail pike/shield counterplay).
-	damage = maxi(1, roundi(float(damage) * float(sim._formation_effects(victim).get("trample_damage_multiplier", 1.0))))
-	sim._apply_damage(int(row.get("id", 0)), best_id, damage, "battalion")
-	row["trample_cooldown"] = sim.TRAMPLE_COOLDOWN_TICKS
+	damage = maxi(1, roundi(float(damage) * float(_sim._formation_effects(victim).get("trample_damage_multiplier", 1.0))))
+	_sim._apply_damage(int(row.get("id", 0)), best_id, damage, "battalion")
+	row["trample_cooldown"] = _sim.TRAMPLE_COOLDOWN_TICKS
 	var payload := {
 		"amount": damage,
 		"category": String(row.get("category", "cavalry")),
 	}
 	if has_authored:
 		payload["weapon"] = String(row.get("crush_weapon_id", ""))
-		sim._emit_event("combat.crush", int(row.get("id", 0)), best_id, payload)
+		_sim._emit_event("combat.crush", int(row.get("id", 0)), best_id, payload)
 	# Alias kept so existing slice/knockback listeners still see a pulse.
-	sim._emit_event("combat.trample", int(row.get("id", 0)), best_id, payload)
+	_sim._emit_event("combat.trample", int(row.get("id", 0)), best_id, payload)
 	_apply_crush_deceleration(row, victim)
 	# CrushRevengeWeapon: victim reflects authored nugget damage at the
 	# crusher. Weapon id without authored damage is fail-closed (no invent).
 	if victim.has("crush_revenge_damage"):
 		var revenge := int(victim.get("crush_revenge_damage", 0))
 		if revenge > 0 and int(row.get("health", 0)) > 0:
-			sim._apply_damage(best_id, int(row.get("id", 0)), revenge, "battalion")
-			sim._emit_event("combat.crush_revenge", best_id, int(row.get("id", 0)), {
+			_sim._apply_damage(best_id, int(row.get("id", 0)), revenge, "battalion")
+			_sim._emit_event("combat.crush_revenge", best_id, int(row.get("id", 0)), {
 				"amount": revenge,
 				"weapon": String(victim.get("crush_revenge_weapon_id", "")),
 			})
-	var knockback_strength = sim.TRAMPLE_KNOCKBACK_STRENGTH
+	var knockback_strength = _sim.TRAMPLE_KNOCKBACK_STRENGTH
 	if has_authored and row.has("crush_knockback"):
-		knockback_strength = maxf(0.0, float(row.get("crush_knockback", sim.TRAMPLE_KNOCKBACK_STRENGTH)))
-	_apply_knockback(origin, sim.TRAMPLE_COLLISION_RADIUS, knockback_strength, team, 0, "trample", int(row.get("id", 0)))
+		knockback_strength = maxf(0.0, float(row.get("crush_knockback", _sim.TRAMPLE_KNOCKBACK_STRENGTH)))
+	_apply_knockback(origin, _sim.TRAMPLE_COLLISION_RADIUS, knockback_strength, team, 0, "trample", int(row.get("id", 0)))
 
 
 func _apply_crush_deceleration(crusher: Dictionary, victim: Dictionary) -> void:
@@ -1009,24 +1006,25 @@ func _resume_order_after_knockdown(row: Dictionary) -> bool:
 	## pending move destination. Returns false when there is nothing left to
 	## resume (order complete, target dead, or the route is now unreachable),
 	## in which case the caller settles it into idle.
+	var _sim = sim
 	var target_id := int(row.get("target_id", 0))
 	if target_id != 0:
 		var target: Dictionary = {}
 		if String(row.get("target_kind", "battalion")) == "structure":
-			target = sim.structures.get(target_id, {}) as Dictionary
+			target = _sim.structures.get(target_id, {}) as Dictionary
 		else:
-			target = sim.entities.get(target_id, {}) as Dictionary
+			target = _sim.entities.get(target_id, {}) as Dictionary
 		if not target.is_empty() and int(target.get("health", 0)) > 0:
-			if sim._assign_target_route(row, Vector2(target["position"])):
+			if _sim._assign_target_route(row, Vector2(target["position"])):
 				row["state"] = "run"
 				return true
 		row["target_id"] = 0
 		row["target_kind"] = "battalion"
 	var destination := Vector2(row.get("destination", row["position"]))
-	if destination.distance_to(Vector2(row["position"])) > 0.001 and sim._assign_route(row, destination):
+	if destination.distance_to(Vector2(row["position"])) > 0.001 and _sim._assign_route(row, destination):
 		row["state"] = "run"
 		return true
-	sim._clear_pending_route(row, true)
+	_sim._clear_pending_route(row, true)
 	return false
 
 
@@ -1035,14 +1033,15 @@ func _apply_knockback(center: Vector2, radius: float, strength: float, source_te
 	## order, throw each away from the center (clamped to walkable ground),
 	## knock them down for sim.KNOCKDOWN_DURATION_TICKS, and apply the optional
 	## damage through the existing damage path. Allies and flyers are immune.
+	var _sim = sim
 	var affected := 0
 	# Only battalions inside the blast disc can be thrown, so the old full sweep
 	# is a neighbourhood query. Sorted to keep the documented ascending-id order,
 	# which damage application and event emission both observe.
-	for id in sim._spatial_gather_sorted(center, radius):
-		if not sim.entities.has(id):
+	for id in _sim._spatial_gather_sorted(center, radius):
+		if not _sim.entities.has(id):
 			continue
-		var row: Dictionary = sim.entities[id]
+		var row: Dictionary = _sim.entities[id]
 		if int(row.get("team", -1)) == source_team or int(row.get("health", 0)) <= 0:
 			continue
 		if bool(row.get("flying", false)):
@@ -1062,7 +1061,7 @@ func _apply_knockback(center: Vector2, radius: float, strength: float, source_te
 			# the victims never stand, never retaliate, and are ground to dust
 			# for free. Damage still lands on a prone target.
 			if damage > 0:
-				sim._apply_damage(source_id, id, damage, "battalion")
+				_sim._apply_damage(source_id, id, damage, "battalion")
 			continue
 		var direction := (position - center) / distance if distance > 0.001 else Vector2.RIGHT
 		# The generic deterministic MetaImpact representation applies the proven
@@ -1076,12 +1075,12 @@ func _apply_knockback(center: Vector2, radius: float, strength: float, source_te
 		var landed := position
 		for fraction in [1.0, 0.5, 0.25]:
 			var candidate := position + direction * applied_strength * float(fraction)
-			if sim._position_walkable(candidate):
+			if _sim._position_walkable(candidate):
 				landed = candidate
 				break
 		row["position"] = landed
-		sim._spatial_sync(row)
-		row["knockdown_ticks"] = sim.KNOCKDOWN_DURATION_TICKS
+		_sim._spatial_sync(row)
+		row["knockdown_ticks"] = _sim.KNOCKDOWN_DURATION_TICKS
 		row["knocked_down"] = true
 		row["current_speed"] = 0.0
 		row["attack_windup"] = 0
@@ -1090,23 +1089,23 @@ func _apply_knockback(center: Vector2, radius: float, strength: float, source_te
 		# dropped (the victim was displaced) and re-pathed on stand-up. Wiping
 		# target_id/destination here made every knockdown a permanent
 		# disarm, because nothing ever re-issues the player's order.
-		sim._clear_member_attack_schedule(row)
-		sim._clear_member_targets(row)
-		sim._clear_pending_route(row, false)
+		_sim._clear_member_attack_schedule(row)
+		_sim._clear_member_targets(row)
+		_sim._clear_pending_route(row, false)
 		row["state"] = "knocked_down"
 		if damage > 0:
-			sim._apply_damage(source_id, id, damage, "battalion")
+			_sim._apply_damage(source_id, id, damage, "battalion")
 		var knockback_event := {
 			"reason": damage_reason,
 			"center": [snappedf(center.x, 0.001), snappedf(center.y, 0.001)],
 			"landed": [snappedf(landed.x, 0.001), snappedf(landed.y, 0.001)],
-			"knockdown_ticks": sim.KNOCKDOWN_DURATION_TICKS,
+			"knockdown_ticks": _sim.KNOCKDOWN_DURATION_TICKS,
 		}
 		if taper_off > 0.0:
 			knockback_event["shockwave_taper_off"] = taper_off
 			knockback_event["shockwave_z_mult"] = z_mult
 			knockback_event["generic_metaimpact_projection"] = true
-		sim._emit_event("combat.knockback", source_id, id, knockback_event)
+		_sim._emit_event("combat.knockback", source_id, id, knockback_event)
 		affected += 1
 	return affected
 

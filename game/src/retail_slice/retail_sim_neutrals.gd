@@ -8,9 +8,10 @@ func _seed_scenario_map_placements() -> void:
 	## Resolve every authored map type against the selected registries. Unknown
 	## decoration remains visual-only; exact-one-domain admission is enforced by
 	## sim.scenario_spawn_contract(). Source-index order fixes identity allocation.
-	if sim._scenario_map_placements.is_empty() or not sim._scenario_runtime_tables_present():
+	var _sim = sim
+	if _sim._scenario_map_placements.is_empty() or not _sim._scenario_runtime_tables_present():
 		return
-	var placements = sim._scenario_map_placements.duplicate(true)
+	var placements = _sim._scenario_map_placements.duplicate(true)
 	placements.sort_custom(
 		func(a, b):
 			var ai := int((a as Dictionary).get("source_index", -1))
@@ -25,8 +26,8 @@ func _seed_scenario_map_placements() -> void:
 	# admission must not steal them merely because CaptureFlag/Outpost now also
 	# have descriptor-backed scenario documents.
 	var capturable_source_indices: Dictionary = {}
-	if sim.capturable_neutrals_enabled:
-		for capturable_value in sim._capturable_placements:
+	if _sim.capturable_neutrals_enabled:
+		for capturable_value in _sim._capturable_placements:
 			if typeof(capturable_value) != TYPE_DICTIONARY:
 				continue
 			var capturable := capturable_value as Dictionary
@@ -41,7 +42,7 @@ func _seed_scenario_map_placements() -> void:
 			continue
 		seen_source_indices[source_index] = true
 		var object_id := String(placement.get("type_name", ""))
-		var contract = sim.scenario_spawn_contract(object_id, "map-placement")
+		var contract = _sim.scenario_spawn_contract(object_id, "map-placement")
 		var kind := String(contract.get("kind", ""))
 		if kind == "":
 			continue
@@ -56,38 +57,38 @@ func _seed_scenario_map_placements() -> void:
 		var spawned_id := -1
 		match kind:
 			"unit":
-				spawned_id = sim.spawn_scenario_unit(object_id, team, at, "map-placement", sim._next_scenario_unit_id)
+				spawned_id = _sim.spawn_scenario_unit(object_id, team, at, "map-placement", _sim._next_scenario_unit_id)
 				if spawned_id > 0:
-					sim._next_scenario_unit_id += 1
+					_sim._next_scenario_unit_id += 1
 			"structure":
-				spawned_id = sim.spawn_scenario_structure(object_id, team, at, "map-placement", sim._next_scenario_structure_id)
+				spawned_id = _sim.spawn_scenario_structure(object_id, team, at, "map-placement", _sim._next_scenario_structure_id)
 				if spawned_id > 0:
-					sim._next_scenario_structure_id += 1
+					_sim._next_scenario_structure_id += 1
 			"prop":
-				spawned_id = sim.spawn_scenario_prop(object_id, at, "map-placement")
+				spawned_id = _sim.spawn_scenario_prop(object_id, at, "map-placement")
 		if spawned_id <= 0:
-			sim._emit_event("scenario.map_placement_refused", 0, 0, {
+			_sim._emit_event("scenario.map_placement_refused", 0, 0, {
 				"object_id": object_id, "kind": kind, "source_index": source_index,
 			})
 			continue
 		var row: Dictionary = {}
 		match kind:
-			"unit": row = sim.entities[spawned_id] as Dictionary
-			"structure": row = sim.structures[spawned_id] as Dictionary
-			"prop": row = sim.scenario_props[spawned_id] as Dictionary
+			"unit": row = _sim.entities[spawned_id] as Dictionary
+			"structure": row = _sim.structures[spawned_id] as Dictionary
+			"prop": row = _sim.scenario_props[spawned_id] as Dictionary
 		row["yaw"] = float(placement.get("yaw", 0.0))
 		row["scenario_source_index"] = source_index
 		row["scenario_source_position"] = Vector3(placement.get("source_position", Vector3.ZERO))
 		row["scenario_source_properties"] = properties.duplicate(true)
-		sim._scenario_map_seeded_source_indices[source_index] = true
-		sim._emit_event("scenario.map_placement_seeded", spawned_id if kind == "unit" else 0, spawned_id if kind == "structure" else 0, {
+		_sim._scenario_map_seeded_source_indices[source_index] = true
+		_sim._emit_event("scenario.map_placement_seeded", spawned_id if kind == "unit" else 0, spawned_id if kind == "structure" else 0, {
 			"object_id": String((contract.get("document", {}) as Dictionary).get("objectId", object_id)),
 			"kind": kind, "source_index": source_index, "team": team,
 			"yaw": float(placement.get("yaw", 0.0)),
 		})
 	# SpawnBehavior children consume this normal allocator; continue immediately
 	# after map-assigned CREEP unit IDs without collision.
-	sim._next_dynamic_id[sim.CREEP_TEAM] = sim._next_scenario_unit_id
+	_sim._next_dynamic_id[_sim.CREEP_TEAM] = _sim._next_scenario_unit_id
 
 func _castle_fixture_team(owner: String) -> int:
 	## Map a fixture's authored originalOwner ("Player_N/teamPlayer_N",
@@ -97,14 +98,15 @@ func _castle_fixture_team(owner: String) -> int:
 	## everything else — civilian/neutral owners, retail's malformed "/team",
 	## and players with no roster seat on this match — maps to the
 	## non-combatant civilian team, never silently to team 0.
+	var _sim = sim
 	if owner.begins_with("PlyrCreeps"):
-		return sim.CREEP_TEAM
+		return _sim.CREEP_TEAM
 	if owner.begins_with("Player_"):
 		var digits := owner.trim_prefix("Player_").split("/", true, 1)[0]
 		if digits.is_valid_int():
 			var seat := int(digits) - 1
-			for team_value in sim._team_descriptors.keys():
-				var descriptor: Dictionary = sim._team_descriptors[team_value]
+			for team_value in _sim._team_descriptors.keys():
+				var descriptor: Dictionary = _sim._team_descriptors[team_value]
 				if int(descriptor.get("start_index", -1)) == seat:
 					return int(team_value)
 			# Roster rows without a start_index (any lobby launch where no one
@@ -114,51 +116,52 @@ func _castle_fixture_team(owner: String) -> int:
 			# Player_N owner must resolve through the same table instead of
 			# dropping to the civilian team (review 2026-08-19: the player's
 			# own open gate blocked him on every injected-roster launch).
-			var seat_teams: Array = sim._configured_team_start_indices.keys()
+			var seat_teams: Array = _sim._configured_team_start_indices.keys()
 			seat_teams.sort()
 			for team_value in seat_teams:
-				var descriptor: Dictionary = sim._team_descriptors.get(int(team_value), {}) as Dictionary
+				var descriptor: Dictionary = _sim._team_descriptors.get(int(team_value), {}) as Dictionary
 				if descriptor.has("start_index"):
 					continue
-				if int(sim._configured_team_start_indices[team_value]) == seat:
+				if int(_sim._configured_team_start_indices[team_value]) == seat:
 					return int(team_value)
-	return sim.CASTLE_CIVILIAN_TEAM
+	return _sim.CASTLE_CIVILIAN_TEAM
 
 
 func _seed_capturable_neutrals() -> void:
 	## Map-authored Inn / Outpost / SignalFire / CaptureFlag become live
 	## NEUTRAL sim.structures. The flag is CAPTURABLE; LINKED_TO_FLAG buildings
 	## follow the nearest flag. Visuals stay on the bound map props.
-	if sim._capturable_placements.is_empty():
+	var _sim = sim
+	if _sim._capturable_placements.is_empty():
 		return
 	## Inn has no selected neutral descriptor yet. Keep that one gap explicit;
 	## descriptor-backed CaptureFlag / Outpost / SignalFire must never fall back.
-	if not sim._structure_armor.has("inn"):
-		sim._structure_armor["inn"] = {"set_id": "NeutralInn-provisional", "damage_scalar": 1.0, "scalars": {"default": 1.0}}
-	var placements = sim._capturable_placements.duplicate(true)
+	if not _sim._structure_armor.has("inn"):
+		_sim._structure_armor["inn"] = {"set_id": "NeutralInn-provisional", "damage_scalar": 1.0, "scalars": {"default": 1.0}}
+	var placements = _sim._capturable_placements.duplicate(true)
 	placements.sort_custom(
 		func(a, b): return int((a as Dictionary).get("source_index", 0)) < int((b as Dictionary).get("source_index", 0))
 	)
 	var seeded: Array[int] = []
 	for placement_value in placements:
 		var placement: Dictionary = placement_value
-		if sim._scenario_map_seeded_source_indices.has(int(placement.get("source_index", -1))):
+		if _sim._scenario_map_seeded_source_indices.has(int(placement.get("source_index", -1))):
 			continue
 		var kind := StructureArmorContract.scenario_runtime_kind(String(placement.get("type_name", placement.get("structure_kind", ""))))
 		var authored_kind := StructureArmorContract.scenario_runtime_kind(String(placement.get("structure_kind", "")))
 		if kind == "" or authored_kind != kind:
-			sim.configuration_error = "Capturable placement '%s' has inconsistent runtime kind '%s'" % [String(placement.get("type_name", "")), String(placement.get("structure_kind", ""))]
+			_sim.configuration_error = "Capturable placement '%s' has inconsistent runtime kind '%s'" % [String(placement.get("type_name", "")), String(placement.get("structure_kind", ""))]
 			return
-		if not sim._structure_armor.has(kind):
-			sim.configuration_error = "Capturable placement '%s' has no compiled armor contract" % String(placement.get("type_name", ""))
+		if not _sim._structure_armor.has(kind):
+			_sim.configuration_error = "Capturable placement '%s' has no compiled armor contract" % String(placement.get("type_name", ""))
 			return
-		var structure_id = sim._next_capturable_structure_id
-		sim._next_capturable_structure_id += 1
+		var structure_id = _sim._next_capturable_structure_id
+		_sim._next_capturable_structure_id += 1
 		var max_health := maxi(1, int(placement.get("maximum_health", 1)))
-		sim._note_structure_table_mutation()
+		_sim._note_structure_table_mutation()
 		var row := {
 			"id": structure_id,
-			"team": sim.NEUTRAL_TEAM,
+			"team": _sim.NEUTRAL_TEAM,
 			"structure_kind": kind,
 			"name": String(placement.get("type_name", kind)),
 			"type_name": String(placement.get("type_name", "")),
@@ -181,13 +184,13 @@ func _seed_capturable_neutrals() -> void:
 			"linked_structure_id": 0,
 		}
 		if kind == "outpost":
-			row["auto_deposit_amount"] = sim.OUTPOST_DEPOSIT_AMOUNT
-			row["auto_deposit_interval_ms"] = sim.OUTPOST_DEPOSIT_MS
-			row["auto_deposit_capture_bonus"] = sim.OUTPOST_CAPTURE_BONUS
-			sim._initialize_structure_auto_deposit(row)
-		sim.structures[structure_id] = row
+			row["auto_deposit_amount"] = _sim.OUTPOST_DEPOSIT_AMOUNT
+			row["auto_deposit_interval_ms"] = _sim.OUTPOST_DEPOSIT_MS
+			row["auto_deposit_capture_bonus"] = _sim.OUTPOST_CAPTURE_BONUS
+			_sim._initialize_structure_auto_deposit(row)
+		_sim.structures[structure_id] = row
 		seeded.append(structure_id)
-		sim._emit_event("structure.neutral_seeded", 0, structure_id, {
+		_sim._emit_event("structure.neutral_seeded", 0, structure_id, {
 			"type_name": String(placement.get("type_name", "")),
 			"kind": kind,
 			"source_index": int(placement.get("source_index", -1)),
@@ -198,10 +201,11 @@ func _seed_capturable_neutrals() -> void:
 func _link_capture_flags(seeded_ids: Array[int]) -> void:
 	## Pair each CAPTURABLE flag with the nearest LINKED_TO_FLAG building.
 	## The map does not encode the link; retail places the pair together.
+	var _sim = sim
 	var flags: Array[int] = []
 	var buildings: Array[int] = []
 	for structure_id in seeded_ids:
-		var row: Dictionary = sim.structures.get(structure_id, {})
+		var row: Dictionary = _sim.structures.get(structure_id, {})
 		if row.is_empty():
 			continue
 		if bool(row.get("capturable", false)):
@@ -209,12 +213,12 @@ func _link_capture_flags(seeded_ids: Array[int]) -> void:
 		elif bool(row.get("linked_to_flag", false)):
 			buildings.append(structure_id)
 	for flag_id in flags:
-		var flag: Dictionary = sim.structures[flag_id]
+		var flag: Dictionary = _sim.structures[flag_id]
 		var origin := Vector2(flag.get("position", Vector2.ZERO))
 		var best_id := 0
 		var best_distance := INF
 		for building_id in buildings:
-			var building: Dictionary = sim.structures[building_id]
+			var building: Dictionary = _sim.structures[building_id]
 			if int(building.get("linked_structure_id", 0)) != 0:
 				continue
 			var distance := origin.distance_to(Vector2(building.get("position", Vector2.ZERO)))
@@ -224,17 +228,18 @@ func _link_capture_flags(seeded_ids: Array[int]) -> void:
 		if best_id == 0:
 			continue
 		flag["linked_structure_id"] = best_id
-		(sim.structures[best_id] as Dictionary)["linked_structure_id"] = flag_id
+		(_sim.structures[best_id] as Dictionary)["linked_structure_id"] = flag_id
 
 
 func _transfer_linked_capture(flag_row: Dictionary, team: int) -> void:
+	var _sim = sim
 	var linked_id := int(flag_row.get("linked_structure_id", 0))
-	if linked_id == 0 or not sim.structures.has(linked_id):
+	if linked_id == 0 or not _sim.structures.has(linked_id):
 		return
-	var linked: Dictionary = sim.structures[linked_id]
+	var linked: Dictionary = _sim.structures[linked_id]
 	linked["team"] = team
-	sim._award_auto_deposit_capture(linked, team)
-	sim._emit_event("structure.linked_captured", 0, linked_id, {
+	_sim._award_auto_deposit_capture(linked, team)
+	_sim._emit_event("structure.linked_captured", 0, linked_id, {
 		"team": team,
 		"flag_id": int(flag_row.get("id", 0)),
 		"structure_kind": String(linked.get("structure_kind", "")),
@@ -247,25 +252,26 @@ func _seed_castle_fixtures() -> void:
 	## order, authored health/owner, recorded provisional armor). Only the
 	## sim-seeded subset arrives here — creep lairs, INERT scenery and
 	## capturable flags were deferred upstream with named reasons.
-	if sim._castle_fixture_placements.is_empty():
+	var _sim = sim
+	if _sim._castle_fixture_placements.is_empty():
 		return
-	if not sim._structure_armor.has("castle_fixture"):
+	if not _sim._structure_armor.has("castle_fixture"):
 		# No castle map-fixture armor table is compiled into the packs yet, so
 		# register a recorded neutral 1.0 provisional (the creep-lair
 		# precedent) instead of falling to the unrelated 0.25 default. The
 		# authored set name rides each row ("castle_fixture_armor") for the
 		# lane that compiles those tables.
-		sim._structure_armor["castle_fixture"] = {"set_id": "MapFixture-provisional", "damage_scalar": 1.0, "scalars": {"default": 1.0}}
-	var placements = sim._castle_fixture_placements.duplicate(true)
+		_sim._structure_armor["castle_fixture"] = {"set_id": "MapFixture-provisional", "damage_scalar": 1.0, "scalars": {"default": 1.0}}
+	var placements = _sim._castle_fixture_placements.duplicate(true)
 	placements.sort_custom(
 		func(a, b): return int((a as Dictionary).get("source_index", 0)) < int((b as Dictionary).get("source_index", 0))
 	)
 	for placement_value in placements:
 		var placement: Dictionary = placement_value
-		if sim._scenario_map_seeded_source_indices.has(int(placement.get("source_index", -1))):
+		if _sim._scenario_map_seeded_source_indices.has(int(placement.get("source_index", -1))):
 			continue
-		var structure_id = sim._next_castle_fixture_id
-		sim._next_castle_fixture_id += 1
+		var structure_id = _sim._next_castle_fixture_id
+		_sim._next_castle_fixture_id += 1
 		var position := Vector2(placement.get("position", Vector2.ZERO))
 		var maximum_health := maxi(1, roundi(float(placement.get("maximum_health", 1.0))))
 		var health := maximum_health
@@ -277,7 +283,7 @@ func _seed_castle_fixtures() -> void:
 				1,
 				maximum_health
 			)
-		sim._note_structure_table_mutation()
+		_sim._note_structure_table_mutation()
 		var row := {
 			"id": structure_id,
 			"team": _castle_fixture_team(String(placement.get("owner", ""))),
@@ -316,17 +322,17 @@ func _seed_castle_fixtures() -> void:
 			"presentation": "bound-map-prop",
 		}
 		var type_name := String(placement.get("type_name", ""))
-		var document = sim._playable_structure_runtime_document(type_name)
+		var document = _sim._playable_structure_runtime_document(type_name)
 		if not document.is_empty():
 			row["source_object_id"] = type_name
 			row["object_id"] = type_name
 			var gameplay := ((document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)
-			var attack = sim._structure_attack_from_combat(gameplay.get("combat", {}) as Dictionary)
+			var attack = _sim._structure_attack_from_combat(gameplay.get("combat", {}) as Dictionary)
 			if not attack.is_empty():
 				row["attack"] = attack
 				row["wall_defense_status"] = "compiled"
 			elif String(placement.get("role", "")) == "wall-mounted":
-				if sim._document_is_wall_upgrade_slot(document):
+				if _sim._document_is_wall_upgrade_slot(document):
 					# Retail authors these WITHOUT a weapon: the slot gains one
 					# through the player's Trebuchet/Postern/Garrison purchase
 					# (GondorCastleWallCommandSet, WeaponSet PLAYER_UPGRADE) or,
@@ -334,30 +340,30 @@ func _seed_castle_fixtures() -> void:
 					# creation. Neither purchase flow exists in this runtime
 					# yet, so the slot is inert BY NAME - not a stale pack.
 					row["wall_defense_status"] = "upgrade-slot-purchase-unimplemented"
-					if not sim._named_wall_slot_types.has(type_name):
-						sim._named_wall_slot_types[type_name] = true
+					if not _sim._named_wall_slot_types.has(type_name):
+						_sim._named_wall_slot_types[type_name] = true
 						print("[RetailSliceSim] CASTLE_WALL_UPGRADE_SLOT type=%s reason=map-placed slot; Trebuchet/Postern/Garrison purchase on fixtures not implemented (named gap)" % type_name)
 				else:
 					# Document present but no compiled combat: the exact shape a
 					# half-recooked pack takes. Loud, never inert-and-silent.
 					row["wall_defense_status"] = "stale-pack-document-without-combat"
 					print("[RetailSliceSim] CASTLE_WALL_DEFENSE_STALE type=%s source_index=%d reason=document-without-compiled-combat" % [type_name, int(placement.get("source_index", -1))])
-			sim._attach_structure_module_contracts(row)
+			_sim._attach_structure_module_contracts(row)
 		elif String(placement.get("role", "")) == "wall-mounted":
 			row["wall_defense_status"] = "stale-pack-missing-structure-document"
 			print("[RetailSliceSim] CASTLE_WALL_DEFENSE_STALE type=%s source_index=%d reason=missing-playable-structure-document" % [type_name, int(placement.get("source_index", -1))])
-		sim.structures[structure_id] = row
+		_sim.structures[structure_id] = row
 		var garrison := placement.get("garrison", {}) as Dictionary
 		if not garrison.is_empty():
-			_attach_castle_fixture_garrison(sim.structures[structure_id] as Dictionary, garrison)
+			_attach_castle_fixture_garrison(_sim.structures[structure_id] as Dictionary, garrison)
 		var stale_status := String(row.get("wall_defense_status", ""))
 		if stale_status.begins_with("stale-pack-"):
-			sim._emit_event("castle.fixture_wall_defense_stale", 0, structure_id, {
+			_sim._emit_event("castle.fixture_wall_defense_stale", 0, structure_id, {
 				"type_name": type_name,
 				"source_index": int(placement.get("source_index", -1)),
 				"reason": "missing-playable-structure-document" if stale_status == "stale-pack-missing-structure-document" else "document-without-compiled-combat",
 			})
-		var fixture_row: Dictionary = sim.structures[structure_id]
+		var fixture_row: Dictionary = _sim.structures[structure_id]
 		var gate_block_value: Variant = placement.get("gate", null)
 		if String(placement.get("role", "")) == "gate" and typeof(gate_block_value) == TYPE_DICTIONARY:
 			var gate_block := gate_block_value as Dictionary
@@ -366,7 +372,7 @@ func _seed_castle_fixtures() -> void:
 				"open": opened,
 				"pathing_open": opened,
 				"open_fraction": 1.0 if opened else 0.0,
-				"reset_ticks": sim._ship_contract_delay_ticks(float(gate_block.get("resetMilliseconds", 0.0))),
+				"reset_ticks": _sim._ship_contract_delay_ticks(float(gate_block.get("resetMilliseconds", 0.0))),
 				"pathing_threshold": float(gate_block.get("percentOpenForPathing", 100.0)) / 100.0,
 				"repel_colliding": false,
 				"close_tick": -1,
@@ -385,12 +391,12 @@ func _seed_castle_fixtures() -> void:
 			if typeof(portal_value) == TYPE_DICTIONARY:
 				var portal := portal_value as Dictionary
 				fixture_row["fake_pathfind_portal"] = {"allow_enemies": bool(portal.get("allowEnemies", false)), "allow_non_skirmish_ai": bool(portal.get("allowNonSkirmishAIUnits", false))}
-			sim.structures[structure_id] = fixture_row
-			sim._sync_gate_passage(structure_id)
-		sim._emit_event("castle.fixture_seeded", 0, structure_id, {
+			_sim.structures[structure_id] = fixture_row
+			_sim._sync_gate_passage(structure_id)
+		_sim._emit_event("castle.fixture_seeded", 0, structure_id, {
 			"type_name": String(placement.get("type_name", "")),
 			"role": String(placement.get("role", "")),
-			"team": int(sim.structures[structure_id].get("team", -1)),
+			"team": int(_sim.structures[structure_id].get("team", -1)),
 			"source_index": int(placement.get("source_index", -1)),
 		})
 

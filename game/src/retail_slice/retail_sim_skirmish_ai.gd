@@ -12,6 +12,7 @@ extends "res://src/retail_slice/retail_sim_subsystem.gd"
 
 
 func configure_skirmish_ai(document: Dictionary) -> Dictionary:
+	var _sim = sim
 	if document.is_empty():
 		return _refuse("skirmish-ai document is empty")
 	if String(document.get("schema", "")) != "openbfme.skirmish-ai":
@@ -50,17 +51,18 @@ func configure_skirmish_ai(document: Dictionary) -> Dictionary:
 	if typeof(brutal_value) == TYPE_DICTIONARY:
 		brutal = _compiled_field_values(brutal_value as Dictionary)
 
-	sim.skirmish_ai_plans_by_side = plans_by_side
-	sim.skirmish_ai_difficulty = difficulty
-	sim.skirmish_ai_brutal_cheats = brutal
-	sim.skirmish_ai_configured = true
+	_sim.skirmish_ai_plans_by_side = plans_by_side
+	_sim.skirmish_ai_difficulty = difficulty
+	_sim.skirmish_ai_brutal_cheats = brutal
+	_sim.skirmish_ai_configured = true
 	return {"ok": true, "reason": "", "sides": plans_by_side.size()}
 
 
 func skirmish_ai_plan_for_side(side: String) -> Dictionary:
-	if not bool(sim.skirmish_ai_configured):
+	var _sim = sim
+	if not bool(_sim.skirmish_ai_configured):
 		return {}
-	return sim.skirmish_ai_plans_by_side.get(side.to_lower(), {}) as Dictionary
+	return _sim.skirmish_ai_plans_by_side.get(side.to_lower(), {}) as Dictionary
 
 
 ## ---- production consumption (retail ArmyDefinition phases) -----------------
@@ -71,9 +73,10 @@ func authored_ai_queue_choice(team: int) -> Dictionary:
 	## army is furthest below its authored PercentageOfArmyPhaseN for the
 	## current phase. Deterministic (document order breaks ties); refuses by
 	## name, never guesses.
-	if not bool(sim.skirmish_ai_configured):
+	var _sim = sim
+	if not bool(_sim.skirmish_ai_configured):
 		return {"ok": false, "reason": "skirmish-ai is not configured"}
-	var side_row: Dictionary = sim.team_retail_side(team)
+	var side_row: Dictionary = _sim.team_retail_side(team)
 	var side := String(side_row.get("side", ""))
 	if side == "":
 		return {"ok": false, "reason": String(side_row.get("reason", "team %d has no retail side" % team))}
@@ -81,7 +84,7 @@ func authored_ai_queue_choice(team: int) -> Dictionary:
 	if plan.is_empty():
 		return {"ok": false, "reason": "no ArmyDefinition for side '%s'" % side}
 	var phase := current_army_phase(plan)
-	var team_rules: Dictionary = sim.unit_production_rules_for_team(team)
+	var team_rules: Dictionary = _sim.unit_production_rules_for_team(team)
 	var total_percentage := 0.0
 	var candidates: Array = []
 	var untrainable: Array = []
@@ -90,7 +93,7 @@ func authored_ai_queue_choice(team: int) -> Dictionary:
 		var percentage := float((member.get("phase_percentages", []) as Array)[phase - 1])
 		if percentage <= 0.0:
 			continue
-		var unit_type := String(sim.trainable_unit_type_for(team, String(member.get("unit", ""))))
+		var unit_type := String(_sim.trainable_unit_type_for(team, String(member.get("unit", ""))))
 		if unit_type == "" or not team_rules.has(unit_type):
 			# The authored member is not trainable in the mounted pack. A named
 			# limitation, not silence: the caller can surface the roster gap.
@@ -106,8 +109,8 @@ func authored_ai_queue_choice(team: int) -> Dictionary:
 		}
 	var counts: Dictionary = {}
 	var living_total := 0
-	for id in sim.living_ids(team):
-		var row: Dictionary = sim.entities[id]
+	for id in _sim.living_ids(team):
+		var row: Dictionary = _sim.entities[id]
 		if bool(row.get("is_builder", false)):
 			continue
 		var unit_type := String(row.get("unit_type", ""))
@@ -138,12 +141,13 @@ func current_army_phase(plan: Dictionary) -> int:
 	## Phase 1 (Rush) until PhaseDuration_Rush seconds, phase 2 (MidGame)
 	## until rush+mid, then phase 3 (EndGame). Unmeasured durations keep the
 	## army in phase 1 honestly rather than inventing a schedule.
+	var _sim = sim
 	var durations := plan.get("phase_durations", {}) as Dictionary
 	var rush := float(durations.get("rush", -1.0))
 	var mid := float(durations.get("mid_game", -1.0))
 	if rush <= 0.0:
 		return 1
-	var elapsed_seconds := float(sim.tick_index) * float(sim.TICK_SECONDS)
+	var elapsed_seconds := float(_sim.tick_index) * float(_sim.TICK_SECONDS)
 	if elapsed_seconds < rush:
 		return 1
 	if mid <= 0.0:
@@ -309,9 +313,10 @@ func _authored_ratio(text: String) -> Array:
 
 
 func _refuse(reason: String) -> Dictionary:
+	var _sim = sim
 	push_error("configure_skirmish_ai refused: %s" % reason)
-	sim.skirmish_ai_configured = false
-	sim.skirmish_ai_plans_by_side = {}
-	sim.skirmish_ai_difficulty = {}
-	sim.skirmish_ai_brutal_cheats = {}
+	_sim.skirmish_ai_configured = false
+	_sim.skirmish_ai_plans_by_side = {}
+	_sim.skirmish_ai_difficulty = {}
+	_sim.skirmish_ai_brutal_cheats = {}
 	return {"ok": false, "reason": reason}

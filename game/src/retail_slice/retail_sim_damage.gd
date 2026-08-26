@@ -48,18 +48,19 @@ func _destroy_die_matches(
 
 
 func _cleanup_expired_corpses() -> void:
+	var _sim = sim
 	var expired: Array[int] = []
-	for id in sim.entity_ids():
-		var row: Dictionary = sim.entities[id]
+	for id in _sim.entity_ids():
+		var row: Dictionary = _sim.entities[id]
 		var expire_tick := int(row.get("corpse_expire_tick", -1))
-		if int(row.get("health", 0)) <= 0 and expire_tick >= 0 and sim.tick_index >= expire_tick:
+		if int(row.get("health", 0)) <= 0 and expire_tick >= 0 and _sim.tick_index >= expire_tick:
 			expired.append(id)
 	for id in expired:
-		sim.entities.erase(id)
-		sim.selected_ids.erase(id)
-		sim._emit_event("battalion.corpse_expired", id, 0)
+		_sim.entities.erase(id)
+		_sim.selected_ids.erase(id)
+		_sim._emit_event("battalion.corpse_expired", id, 0)
 	if not expired.is_empty():
-		sim.prune_control_groups()
+		_sim.prune_control_groups()
 
 
 func _choose_target_member(
@@ -90,31 +91,30 @@ func _apply_structure_damage(
 
 
 func _target_alive(target_id: int, target_kind: String) -> bool:
+	var _sim = sim
 	if target_kind == "structure":
-		return sim.structures.has(target_id) and int((sim.structures[target_id] as Dictionary).get("health", 0)) > 0
-	return sim.entities.has(target_id) and not sim.entity_container.has(target_id) and int((sim.entities[target_id] as Dictionary).get("health", 0)) > 0
+		return _sim.structures.has(target_id) and int((_sim.structures[target_id] as Dictionary).get("health", 0)) > 0
+	return _sim.entities.has(target_id) and not _sim.entity_container.has(target_id) and int((_sim.entities[target_id] as Dictionary).get("health", 0)) > 0
 
 
 func _target_position(target_id: int, target_kind: String) -> Vector2:
-	var row: Dictionary = sim.structures.get(target_id, {}) if target_kind == "structure" else sim.entities.get(target_id, {})
+	var _sim = sim
+	var row: Dictionary = _sim.structures.get(target_id, {}) if target_kind == "structure" else _sim.entities.get(target_id, {})
 	return Vector2(row.get("position", Vector2.ZERO))
 
 
-
-
-func _apply_damage(attacker_id: int, target_id: int, amount: int, target_kind: String = "battalion", death_type: String = "NORMAL", damage_type_override: String = "") -> void:
-	sim._combat_subsystem()._apply_damage(attacker_id, target_id, amount, target_kind, death_type, damage_type_override)
 
 
 func _incoming_damage_factor(attacker_id: int, target: Dictionary, target_kind: String, damage_type: String, components: Array = []) -> float:
 	## The full compiled multiplier an incoming hit applies before rounding:
 	## weapon DamageScalar target filters, the armor.ini set (with recorded
 	## applied armor upgrades), stance, formation, and ability/aura factors.
+	var _sim = sim
 	var weapon_factor := 1.0
-	if sim.entities.has(attacker_id):
-		var attacker_effect = sim._applied_weapon_effect(sim.entities[attacker_id] as Dictionary)
+	if _sim.entities.has(attacker_id):
+		var attacker_effect = _sim._applied_weapon_effect(_sim.entities[attacker_id] as Dictionary)
 		if not attacker_effect.is_empty():
-			weapon_factor = sim._damage_scalar_factor(attacker_effect.get("scalars", []) as Array, target, target_kind)
+			weapon_factor = _sim._damage_scalar_factor(attacker_effect.get("scalars", []) as Array, target, target_kind)
 	var factor := weapon_factor * _member_body_damage_factor(
 		target, damage_type, components
 	)
@@ -158,13 +158,14 @@ func _flanking_outgoing_multiplier(attacker: Dictionary, target: Dictionary) -> 
 
 
 func _is_flanking_hit(attacker_id: int, target: Dictionary) -> bool:
-	if not sim.entities.has(attacker_id):
+	var _sim = sim
+	if not _sim.entities.has(attacker_id):
 		return false
 	var facing := Vector2(target.get("facing", Vector2.ZERO))
 	if facing.length_squared() <= 0.000001:
 		return false
 	var origin := Vector2(target.get("position", Vector2.ZERO))
-	var attacker_at = Vector2((sim.entities[attacker_id] as Dictionary).get("position", Vector2.ZERO))
+	var attacker_at = Vector2((_sim.entities[attacker_id] as Dictionary).get("position", Vector2.ZERO))
 	var from_target = attacker_at - origin
 	if from_target.length_squared() <= 0.000001:
 		return false
@@ -176,17 +177,18 @@ func _member_body_damage_factor(
 ) -> float:
 	## ActiveBody-side factors only. Outgoing weapon/ability scalars have
 	## already formed DamageInfo.in.m_amount before Body::attemptDamage.
+	var _sim = sim
 	return (
-		sim._member_armor_scalar(target, damage_type, components)
+		_sim._member_armor_scalar(target, damage_type, components)
 		# INNATE_ARMOR: a damage-TAKEN scalar the object carries for its whole
 		# life, as against the timed ability/aura grants above it. Retail's
 		# Create-a-Hero armour ladder is authored exactly this way, so a HIGHER
 		# step means MORE damage taken and the number arrives already inverted.
 		# Absent on every retail unit, which keeps this factor exactly 1.0 there.
 		* float(target.get("innate_armor_scalar", 1.0))
-		* float(sim._stance_state(target).get("incomingDamageMultiplier", 1.0))
-		* float(sim._formation_effects(target).get("incoming_damage_multiplier", 1.0))
-		* sim._ability_incoming_multiplier(target)
+		* float(_sim._stance_state(target).get("incomingDamageMultiplier", 1.0))
+		* float(_sim._formation_effects(target).get("incoming_damage_multiplier", 1.0))
+		* _sim._ability_incoming_multiplier(target)
 	)
 
 
@@ -247,41 +249,34 @@ func _bookkeep_battalion_death(
 	## Shared authoritative bookkeeping for every battalion lethal path. Callers
 	## retain path-specific kill credit/events, but lifetime, corpse policy,
 	## selection, routing, and command-point release cannot drift apart.
-	sim._schedule_respawn_update(entity_id, row, death_type, attacker_id)
-	sim._on_ring_entity_death(entity_id, row)
-	sim._summon_despawn_ticks.erase(entity_id)
-	sim._summon_aura_source_ids.erase(entity_id)
+	var _sim = sim
+	_sim._schedule_respawn_update(entity_id, row, death_type, attacker_id)
+	_sim._on_ring_entity_death(entity_id, row)
+	_sim._summon_despawn_ticks.erase(entity_id)
+	_sim._summon_aura_source_ids.erase(entity_id)
 	# A produced hero's death releases its identity on every lethal path, not
 	# only ordinary member combat. Spawn-roster heroes were never registered.
 	var defeated_identity := "%d:%s" % [
 		int(row.get("team", -1)), String(row.get("unit_type", ""))
 	]
-	if sim._completed_hero_identities.has(defeated_identity):
-		sim._completed_hero_identities.erase(defeated_identity)
-		sim._emit_event(
+	if _sim._completed_hero_identities.has(defeated_identity):
+		_sim._completed_hero_identities.erase(defeated_identity)
+		_sim._emit_event(
 			"hero.identity_released", entity_id, 0,
 			{"unit_type": String(row.get("unit_type", ""))}
 		)
-	if sim.entities.has(attacker_id) and not bool(row.get("is_banner_carrier", false)):
-		sim.award_power_kill(int((sim.entities[attacker_id] as Dictionary).get("team", -1)))
+	if _sim.entities.has(attacker_id) and not bool(row.get("is_banner_carrier", false)):
+		_sim.award_power_kill(int((_sim.entities[attacker_id] as Dictionary).get("team", -1)))
 	var death_policy := _apply_playable_unit_death_policy(
 		row, death_type, defeated_members
 	)
 	row["state"] = "death"
 	row["target_id"] = 0
-	sim._clear_pending_route(row, true)
-	sim.selected_ids.erase(entity_id)
-	_release_command_points_once(row)
-	sim.prune_control_groups()
+	_sim._clear_pending_route(row, true)
+	_sim.selected_ids.erase(entity_id)
+	sim._release_command_points_once(row)
+	_sim.prune_control_groups()
 	return death_policy
-
-
-func _release_command_points_once(row: Dictionary) -> void:
-	sim._production_subsystem()._release_command_points_once(row)
-
-
-func _entity_command_point_commitment(row: Dictionary) -> int:
-	return sim._production_subsystem()._entity_command_point_commitment(row)
 
 
 func _apply_playable_unit_death_policy(
@@ -292,10 +287,11 @@ func _apply_playable_unit_death_policy(
 	## battalion object. primaryMember remains descriptor evidence only because
 	## this simulation has no independently materialized member-corpse object.
 	## Callers retain their path-specific kill credit and event bookkeeping.
+	var _sim = sim
 	var member_ticks: Array = row.get("member_corpse_expire_ticks", [])
 	for member_index in defeated_members:
 		if member_index >= 0 and member_index < member_ticks.size():
-			member_ticks[member_index] = sim.tick_index + sim.CORPSE_LIFETIME_TICKS
+			member_ticks[member_index] = _sim.tick_index + _sim.CORPSE_LIFETIME_TICKS
 	if not defeated_members.is_empty():
 		row["member_corpse_expire_ticks"] = member_ticks
 		_award_own_guys_die_experience(row, defeated_members.size())
@@ -315,7 +311,7 @@ func _apply_playable_unit_death_policy(
 		# RefundDie is a generic Object DieMux behavior (MordorTributeCart is the
 		# retail non-structure carrier), so battalion/object deaths share the same
 		# once-only dispatch as sim.structures.
-		sim._apply_refund_die_on_death(row)
+		_sim._apply_refund_die_on_death(row)
 		_schedule_fire_weapon_when_dead(row, death_type, "entity")
 		var slow_death_started := _begin_slow_death_core(row, death_type)
 		# A matched DestroyDie used to erase the object on the SAME tick, which
@@ -333,7 +329,7 @@ func _apply_playable_unit_death_policy(
 		else:
 			var fade_ticks := _slow_death_fade_ticks(row, death_type) if destroy_object else 0
 			row["corpse_expire_tick"] = (
-				sim.tick_index + fade_ticks if destroy_object else sim.tick_index + sim.CORPSE_LIFETIME_TICKS
+				_sim.tick_index + fade_ticks if destroy_object else _sim.tick_index + _sim.CORPSE_LIFETIME_TICKS
 			)
 		_consume_create_object_die(row, death_type)
 	return {
@@ -366,10 +362,11 @@ func _slow_death_delay_ticks(milliseconds: float) -> int:
 
 
 func _begin_slow_death_core(row: Dictionary, death_type: String) -> bool:
+	var _sim = sim
 	if row.has("slow_death_state"):
 		return true
 	if not row.has("slow_death_core_contracts"):
-		sim._attach_module_contracts(row)
+		_sim._attach_module_contracts(row)
 	var applicable: Array[Dictionary] = []
 	var total_weight := 0
 	for policy_value in row.get("slow_death_core_contracts", []) as Array:
@@ -386,7 +383,7 @@ func _begin_slow_death_core(row: Dictionary, death_type: String) -> bool:
 	if applicable.is_empty() or total_weight <= 0:
 		return false
 	# Retail always draws 1..total, including a single applicable row.
-	var roll = sim.logic_random_int(1, total_weight)
+	var roll = _sim.logic_random_int(1, total_weight)
 	var selected: Dictionary = applicable[-1]
 	for policy_value in applicable:
 		var policy := policy_value as Dictionary
@@ -397,11 +394,11 @@ func _begin_slow_death_core(row: Dictionary, death_type: String) -> bool:
 	# Retail also executes both zero-variance draws before its midpoint draw.
 	var sink_delay_ms := float(selected.get("sink_delay_ms", 0.0))
 	var destruction_delay_ms := float(selected.get("destruction_delay_ms", 0.0))
-	sim.logic_random_int(0, 0)
-	sim.logic_random_int(0, 0)
+	_sim.logic_random_int(0, 0)
+	_sim.logic_random_int(0, 0)
 	var sink_ticks := _slow_death_delay_ticks(sink_delay_ms)
 	var destruction_ticks := _slow_death_delay_ticks(destruction_delay_ms)
-	var midpoint_offset = int(sim.logic_random_real(
+	var midpoint_offset = int(_sim.logic_random_real(
 		0.35 * float(destruction_ticks),
 		0.65 * float(destruction_ticks)
 	))
@@ -410,10 +407,10 @@ func _begin_slow_death_core(row: Dictionary, death_type: String) -> bool:
 		"selected_tag": String(selected.get("tag", "")),
 		"selected_source_ini": String(selected.get("source_ini", "")),
 		"selected_line": int(selected.get("line", 0)),
-		"initial_tick": sim.tick_index,
-		"sink_start_tick": sim.tick_index + sink_ticks,
-		"midpoint_tick": sim.tick_index + midpoint_offset,
-		"destruction_tick": sim.tick_index + destruction_ticks,
+		"initial_tick": _sim.tick_index,
+		"sink_start_tick": _sim.tick_index + sink_ticks,
+		"midpoint_tick": _sim.tick_index + midpoint_offset,
+		"destruction_tick": _sim.tick_index + destruction_ticks,
 		"sink_rate_source_per_second": float(
 			selected.get("sink_rate_source_per_second", 0.0)
 		),
@@ -424,12 +421,13 @@ func _begin_slow_death_core(row: Dictionary, death_type: String) -> bool:
 		).duplicate(true),
 	}
 	row["slow_death_state"] = state
-	row["corpse_expire_tick"] = sim.tick_index + destruction_ticks
+	row["corpse_expire_tick"] = _sim.tick_index + destruction_ticks
 	_record_slow_death_phase(row, "INITIAL")
 	return true
 
 
 func _record_slow_death_phase(row: Dictionary, phase: String) -> void:
+	var _sim = sim
 	var state := row.get("slow_death_state", {}) as Dictionary
 	if state.is_empty():
 		return
@@ -452,7 +450,7 @@ func _record_slow_death_phase(row: Dictionary, phase: String) -> void:
 			for reference_value in receipt.get("references", []) as Array:
 				fx_candidates.append(String(reference_value))
 	if not fx_candidates.is_empty():
-		var choice_index = sim.logic_random_int(0, fx_candidates.size() - 1)
+		var choice_index = _sim.logic_random_int(0, fx_candidates.size() - 1)
 		var choices := state.get("presentation_choices", []) as Array
 		choices.append({
 			"kind": "FX",
@@ -462,7 +460,7 @@ func _record_slow_death_phase(row: Dictionary, phase: String) -> void:
 		})
 		state["presentation_choices"] = choices
 	row["slow_death_state"] = state
-	sim._emit_event("slow_death.phase_receipt", int(row.get("id", 0)), 0, {
+	_sim._emit_event("slow_death.phase_receipt", int(row.get("id", 0)), 0, {
 		"phase": phase,
 		"presentation_status": "deferred",
 		"selected_tag": String(state.get("selected_tag", "")),
@@ -470,22 +468,23 @@ func _record_slow_death_phase(row: Dictionary, phase: String) -> void:
 
 
 func _step_slow_death_core() -> void:
-	for entity_id in sim.entity_ids():
-		if not sim.entities.has(entity_id):
+	var _sim = sim
+	for entity_id in _sim.entity_ids():
+		if not _sim.entities.has(entity_id):
 			continue
-		var row = sim.entities[entity_id] as Dictionary
+		var row = _sim.entities[entity_id] as Dictionary
 		var state := row.get("slow_death_state", {}) as Dictionary
 		if state.is_empty() or int(row.get("health", 0)) > 0:
 			continue
 		var rate := float(state.get("sink_rate_source_per_second", 0.0))
-		if rate > 0.0 and sim.tick_index >= int(state.get("sink_start_tick", 0)):
+		if rate > 0.0 and _sim.tick_index >= int(state.get("sink_start_tick", 0)):
 			state["sink_depth_source"] = (
-				float(state.get("sink_depth_source", 0.0)) + rate * sim.TICK_SECONDS
+				float(state.get("sink_depth_source", 0.0)) + rate * _sim.TICK_SECONDS
 			)
 			row["slow_death_state"] = state
-		if sim.tick_index >= int(state.get("midpoint_tick", 0)):
+		if _sim.tick_index >= int(state.get("midpoint_tick", 0)):
 			_record_slow_death_phase(row, "MIDPOINT")
-		if sim.tick_index >= int(state.get("destruction_tick", 0)):
+		if _sim.tick_index >= int(state.get("destruction_tick", 0)):
 			_record_slow_death_phase(row, "FINAL")
 
 
@@ -524,6 +523,7 @@ func _slow_death_fade_ticks(row: Dictionary, death_type: String) -> int:
 
 
 func _schedule_fire_weapon_when_dead(row: Dictionary, death_type: String, source_kind: String) -> void:
+	var _sim = sim
 	var policies: Array = row.get("fire_weapon_when_dead", []) as Array
 	if policies.is_empty():
 		return
@@ -548,14 +548,14 @@ func _schedule_fire_weapon_when_dead(row: Dictionary, death_type: String, source
 		var facing := Vector2(row.get("facing", Vector2.RIGHT))
 		if facing.length_squared() <= 0.000001:
 			facing = Vector2.RIGHT
-		var local_offset = sim._retail_source_to_sim_offset(
+		var local_offset = _sim._retail_source_to_sim_offset(
 			Vector2(policy.get("weapon_offset_source", Vector2.ZERO))
 		)
 		var point = Vector2(row.get("position", Vector2.ZERO)) + local_offset.rotated(facing.angle())
 		var weapon_id := String(policy.get("death_weapon", ""))
-		sim._pending_power_effects.append({
+		_sim._pending_power_effects.append({
 			"kind": "death_weapon",
-			"fire_tick": sim.tick_index + maxi(0, int(policy.get("delay_ticks", 0))),
+			"fire_tick": _sim.tick_index + maxi(0, int(policy.get("delay_ticks", 0))),
 			"team": int(row.get("team", -1)),
 			"source_id": int(row.get("id", 0)),
 			"source_kind": source_kind,
@@ -563,12 +563,12 @@ func _schedule_fire_weapon_when_dead(row: Dictionary, death_type: String, source
 			"weapon_id": weapon_id,
 			"point": point,
 			"height_source": float(policy.get("weapon_offset_z_source", 0.0)),
-			"weapon_rule": (sim._death_weapon_rules.get(weapon_id, {}) as Dictionary).duplicate(true),
+			"weapon_rule": (_sim._death_weapon_rules.get(weapon_id, {}) as Dictionary).duplicate(true),
 		})
 		scheduled[once_key] = true
-		sim._emit_event("module.death_weapon_scheduled", int(row.get("id", 0)), 0, {
+		_sim._emit_event("module.death_weapon_scheduled", int(row.get("id", 0)), 0, {
 			"weapon_id": weapon_id,
-			"fire_tick": sim.tick_index + maxi(0, int(policy.get("delay_ticks", 0))),
+			"fire_tick": _sim.tick_index + maxi(0, int(policy.get("delay_ticks", 0))),
 			"point": [snappedf(point.x, 0.001), snappedf(point.y, 0.001)],
 			"height_source": float(policy.get("weapon_offset_z_source", 0.0)),
 			"death_type": death_type.to_upper(),
@@ -635,6 +635,7 @@ func _create_object_die_matches(row: Dictionary, death_type: String) -> bool:
 func _consume_create_object_die(row: Dictionary, death_type: String) -> void:
 	## Queue CreationList spawn intent, then hatch through registered OCL leaves
 	## when present (same machinery as spellbook summon chains).
+	var _sim = sim
 	if not _create_object_die_matches(row, death_type):
 		return
 	var policy: Dictionary = row.get("create_object_die_policy", {}) as Dictionary
@@ -645,10 +646,10 @@ func _consume_create_object_die(row: Dictionary, death_type: String) -> void:
 		"source_entity": int(row.get("id", 0)),
 		"source_unit_type": String(row.get("unit_type", "")),
 		"death_type": death_type,
-		"tick": sim.tick_index,
+		"tick": _sim.tick_index,
 	}
-	sim.create_object_die_pending.append(entry)
-	sim._emit_event(
+	_sim.create_object_die_pending.append(entry)
+	_sim._emit_event(
 		"module.create_object_die",
 		int(row.get("id", 0)),
 		0,
@@ -659,20 +660,21 @@ func _consume_create_object_die(row: Dictionary, death_type: String) -> void:
 	)
 	var hatch := hatch_create_object_die_entry(entry)
 	entry["hatch"] = hatch
-	sim.create_object_die_pending[sim.create_object_die_pending.size() - 1] = entry
+	_sim.create_object_die_pending[_sim.create_object_die_pending.size() - 1] = entry
 
 
 func hatch_create_object_die_entry(entry: Dictionary) -> Dictionary:
 	## Resolve OCL_id -> createObjects -> sim.script_spawn_entity for each converted
 	## object type. Unconverted leaves stay pending with reason (fail-closed).
+	var _sim = sim
 	var ocl_id := String(entry.get("creation_list", ""))
 	var team := int(entry.get("team", -1))
 	var at: Vector2 = entry.get("position", Vector2.ZERO)
 	if ocl_id == "" or team < 0:
 		return {"ok": false, "reason": "invalid-entry"}
 	var ocl: Dictionary = {}
-	if sim.parity != null:
-		ocl = (sim.parity.ocl_leaves as Dictionary).get(ocl_id, {}) as Dictionary
+	if _sim.parity != null:
+		ocl = (_sim.parity.ocl_leaves as Dictionary).get(ocl_id, {}) as Dictionary
 	if ocl.is_empty():
 		# Try spellbook leaf tables already loaded on this sim.
 		ocl = _ocl_leaf_lookup(ocl_id)
@@ -695,17 +697,17 @@ func hatch_create_object_die_entry(entry: Dictionary) -> Dictionary:
 			for _i in range(count):
 				ordinal += 1
 				var offset := Vector2(8.0 * float(ordinal), 0.0)
-				var result: Dictionary = sim.spawn_scenario_object(
+				var result: Dictionary = _sim.spawn_scenario_object(
 					object_name, team, at + offset, "object-creation-list"
 				)
 				if not bool(result.get("ok", false)):
-					result = sim.script_spawn_entity(
+					result = _sim.script_spawn_entity(
 						object_name, team, at + offset, "object-creation-list"
 					)
 				if bool(result.get("ok", false)):
 					var spawned_id := int(result.get("id", result.get("entity_id", 0)))
 					spawned.append(spawned_id)
-					sim._emit_event(
+					_sim._emit_event(
 						"module.create_object_die.hatch",
 						spawned_id,
 						int(entry.get("source_entity", 0)),
@@ -717,7 +719,7 @@ func hatch_create_object_die_entry(entry: Dictionary) -> Dictionary:
 					)
 				else:
 					# Fail-closed for this object; continue other creates.
-					sim._emit_event(
+					_sim._emit_event(
 						"module.create_object_die.hatch_failed",
 						int(entry.get("source_entity", 0)),
 						0,
@@ -733,19 +735,22 @@ func hatch_create_object_die_entry(entry: Dictionary) -> Dictionary:
 
 
 func _ocl_leaf_lookup(ocl_id: String) -> Dictionary:
-	if sim.parity != null and (sim.parity.ocl_leaves as Dictionary).has(ocl_id):
-		return (sim.parity.ocl_leaves as Dictionary)[ocl_id]
+	var _sim = sim
+	if _sim.parity != null and (_sim.parity.ocl_leaves as Dictionary).has(ocl_id):
+		return (_sim.parity.ocl_leaves as Dictionary)[ocl_id]
 	return {}
 
 
 func register_ocl_leaf(ocl_id: String, leaf: Dictionary) -> void:
-	sim._ensure_parity()
-	sim.parity.register_ocl_leaf(ocl_id, leaf)
+	var _sim = sim
+	_sim._ensure_parity()
+	_sim.parity.register_ocl_leaf(ocl_id, leaf)
 
 
 func register_object_leaf(object_id: String, leaf: Dictionary) -> void:
-	sim._ensure_parity()
-	sim.parity.register_object_leaf(object_id, leaf)
+	var _sim = sim
+	_sim._ensure_parity()
+	_sim.parity.register_object_leaf(object_id, leaf)
 
 
 func ingest_ocl_leaves_from_document(document: Dictionary) -> int:

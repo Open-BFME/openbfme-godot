@@ -5,7 +5,8 @@ extends "res://src/retail_slice/retail_sim_subsystem.gd"
 
 
 func _spatial_axis_cell(value: float) -> int:
-	return clampi(floori(value / sim.SPATIAL_CELL_SIZE), -sim.SPATIAL_CELL_LIMIT, sim.SPATIAL_CELL_LIMIT)
+	var _sim = sim
+	return clampi(floori(value / _sim.SPATIAL_CELL_SIZE), -_sim.SPATIAL_CELL_LIMIT, _sim.SPATIAL_CELL_LIMIT)
 
 
 func _spatial_key(cx: int, cy: int) -> int:
@@ -15,13 +16,14 @@ func _spatial_key(cx: int, cy: int) -> int:
 func _spatial_rebuild() -> void:
 	## Full O(n) rebuild. Runs once per tick before anything queries, so the
 	## index cannot drift from `sim.entities` across restore/spawn/despawn seams.
-	sim._spatial_cells.clear()
-	sim._spatial_entity_cell.clear()
-	sim._spatial_entity_team.clear()
-	sim._spatial_team_box.clear()
-	sim._spatial_hostile_teams.clear()
-	for key in sim.entities.keys():
-		var row = sim.entities[key] as Dictionary
+	var _sim = sim
+	_sim._spatial_cells.clear()
+	_sim._spatial_entity_cell.clear()
+	_sim._spatial_entity_team.clear()
+	_sim._spatial_team_box.clear()
+	_sim._spatial_hostile_teams.clear()
+	for key in _sim.entities.keys():
+		var row = _sim.entities[key] as Dictionary
 		if not bool(row.get("presentation_hidden", false)):
 			_spatial_sync(row)
 
@@ -29,6 +31,7 @@ func _spatial_rebuild() -> void:
 func _spatial_sync(row: Dictionary) -> void:
 	## File `row` under the cell its current position falls in, moving it out of
 	## its previous cell if it changed. Called after every position write.
+	var _sim = sim
 	var id := int(row.get("id", 0))
 	if id == 0:
 		return
@@ -37,32 +40,32 @@ func _spatial_sync(row: Dictionary) -> void:
 	var cx := _spatial_axis_cell(position.x)
 	var cy := _spatial_axis_cell(position.y)
 	var key := _spatial_key(cx, cy)
-	var previous: Variant = sim._spatial_entity_cell.get(id)
+	var previous: Variant = _sim._spatial_entity_cell.get(id)
 	if previous != null:
-		var previous_team = int(sim._spatial_entity_team.get(id, team))
+		var previous_team = int(_sim._spatial_entity_team.get(id, team))
 		if int(previous) == key and previous_team == team:
 			return
-		var previous_cells: Dictionary = sim._spatial_cells.get(previous_team, {}) as Dictionary
+		var previous_cells: Dictionary = _sim._spatial_cells.get(previous_team, {}) as Dictionary
 		var old_bucket: Array = previous_cells.get(int(previous), []) as Array
 		old_bucket.erase(id)
 		if old_bucket.is_empty():
 			previous_cells.erase(int(previous))
-	if not sim._spatial_cells.has(team):
-		sim._spatial_cells[team] = {}
+	if not _sim._spatial_cells.has(team):
+		_sim._spatial_cells[team] = {}
 		# A team appearing for the first time (first summon, first creep spawn)
 		# invalidates the cached hostile-team lists: a battalion stepped later in
 		# this same tick must be able to acquire it, exactly as the old full scan
 		# over `sim.entities` would have.
-		sim._spatial_hostile_teams.clear()
-	var cells: Dictionary = sim._spatial_cells[team]
+		_sim._spatial_hostile_teams.clear()
+	var cells: Dictionary = _sim._spatial_cells[team]
 	if not cells.has(key):
 		cells[key] = []
 	(cells[key] as Array).append(id)
-	sim._spatial_entity_cell[id] = key
-	sim._spatial_entity_team[id] = team
-	var box: Variant = sim._spatial_team_box.get(team)
+	_sim._spatial_entity_cell[id] = key
+	_sim._spatial_entity_team[id] = team
+	var box: Variant = _sim._spatial_team_box.get(team)
 	if box == null:
-		sim._spatial_team_box[team] = [cx, cx, cy, cy]
+		_sim._spatial_team_box[team] = [cx, cx, cy, cy]
 	else:
 		var extents: Array = box as Array
 		extents[0] = mini(int(extents[0]), cx)
@@ -74,16 +77,17 @@ func _spatial_sync(row: Dictionary) -> void:
 func _spatial_hostile_team_list(team: int) -> Array:
 	## Teams hostile to `team` that currently have indexed battalions. Cached per
 	## rebuild; sim._is_hostile() is then paid once per team rather than per candidate.
-	var cached: Variant = sim._spatial_hostile_teams.get(team)
+	var _sim = sim
+	var cached: Variant = _sim._spatial_hostile_teams.get(team)
 	if cached != null:
 		return cached as Array
 	var result: Array = []
-	for other_value in sim._spatial_cells.keys():
+	for other_value in _sim._spatial_cells.keys():
 		var other := int(other_value)
-		if sim._is_hostile(team, other):
+		if _sim._is_hostile(team, other):
 			result.append(other)
 	result.sort()
-	sim._spatial_hostile_teams[team] = result
+	_sim._spatial_hostile_teams[team] = result
 	return result
 
 
@@ -92,11 +96,12 @@ func _spatial_gather(point: Vector2, radius: float) -> Array[int]:
 	## around the disc. A conservative superset: callers re-apply the exact
 	## distance test. The returned order is unspecified - sort it when order is
 	## observable.
+	var _sim = sim
 	var result: Array[int] = []
 	if radius < 0.0:
 		return result
-	for team_value in sim._spatial_cells.keys():
-		var box: Variant = sim._spatial_team_box.get(int(team_value))
+	for team_value in _sim._spatial_cells.keys():
+		var box: Variant = _sim._spatial_team_box.get(int(team_value))
 		if box == null:
 			continue
 		var extents: Array = box as Array
@@ -104,7 +109,7 @@ func _spatial_gather(point: Vector2, radius: float) -> Array[int]:
 		var high_cx := mini(_spatial_axis_cell(point.x + radius), int(extents[1]))
 		var low_cy := maxi(_spatial_axis_cell(point.y - radius), int(extents[2]))
 		var high_cy := mini(_spatial_axis_cell(point.y + radius), int(extents[3]))
-		var cells: Dictionary = sim._spatial_cells[int(team_value)]
+		var cells: Dictionary = _sim._spatial_cells[int(team_value)]
 		for cx in range(low_cx, high_cx + 1):
 			for cy in range(low_cy, high_cy + 1):
 				var bucket: Variant = cells.get(_spatial_key(cx, cy))
@@ -144,17 +149,18 @@ func _note_structure_table_mutation() -> void:
 
 
 func _structure_spatial_index() -> Dictionary:
-	if sim._structure_spatial_serial != sim._structures_mutation_serial:
-		sim._structure_spatial_cells.clear()
-		for id_value in sim.structures.keys():
-			var row: Dictionary = sim.structures[id_value]
+	var _sim = sim
+	if _sim._structure_spatial_serial != _sim._structures_mutation_serial:
+		_sim._structure_spatial_cells.clear()
+		for id_value in _sim.structures.keys():
+			var row: Dictionary = _sim.structures[id_value]
 			var position := Vector2(row.get("position", Vector2.ZERO))
 			var key := _spatial_key(_spatial_axis_cell(position.x), _spatial_axis_cell(position.y))
-			if not sim._structure_spatial_cells.has(key):
-				sim._structure_spatial_cells[key] = []
-			(sim._structure_spatial_cells[key] as Array).append(int(id_value))
-		sim._structure_spatial_serial = sim._structures_mutation_serial
-	return sim._structure_spatial_cells
+			if not _sim._structure_spatial_cells.has(key):
+				_sim._structure_spatial_cells[key] = []
+			(_sim._structure_spatial_cells[key] as Array).append(int(id_value))
+		_sim._structure_spatial_serial = _sim._structures_mutation_serial
+	return _sim._structure_spatial_cells
 
 
 func _structure_ids_near(position: Vector2) -> Array[int]:
@@ -197,6 +203,7 @@ func _spatial_nearest_hostile(
 	## accepted. The update rule below encodes that as a total order, which makes
 	## the result independent of visit order and therefore safe to compute from
 	## an expanding ring sweep.
+	var _sim = sim
 	if limit <= 0.0:
 		return 0
 	var hostile_teams := _spatial_hostile_team_list(team)
@@ -209,7 +216,7 @@ func _spatial_nearest_hostile(
 	var box_min_cy := 0
 	var box_max_cy := -1
 	for team_value in hostile_teams:
-		var extents: Array = sim._spatial_team_box.get(int(team_value), []) as Array
+		var extents: Array = _sim._spatial_team_box.get(int(team_value), []) as Array
 		if extents.is_empty():
 			continue
 		if box_max_cx < box_min_cx:
@@ -233,12 +240,12 @@ func _spatial_nearest_hostile(
 	# `flying` flag when the source is a melee attacker, and sim._stealth_active() is
 	# a tick comparison. Both are resolved once here so the inner loop over
 	# candidates makes no function calls beyond the distance itself.
-	var reject_flyers = (filters & sim.SPATIAL_FILTER_NOT_FLYING) != 0
-	if (filters & sim.SPATIAL_FILTER_ENGAGE) != 0 and sim._is_melee_attacker(source):
+	var reject_flyers = (filters & _sim.SPATIAL_FILTER_NOT_FLYING) != 0
+	if (filters & _sim.SPATIAL_FILTER_ENGAGE) != 0 and _sim._is_melee_attacker(source):
 		reject_flyers = true
-	var check_stealth = (filters & sim.SPATIAL_FILTER_STEALTH) != 0
+	var check_stealth = (filters & _sim.SPATIAL_FILTER_STEALTH) != 0
 	# Rings beyond this are entirely outside `limit` or outside the occupied box.
-	var ring_limit = floori(limit / sim.SPATIAL_CELL_SIZE) + 2
+	var ring_limit = floori(limit / _sim.SPATIAL_CELL_SIZE) + 2
 	ring_limit = mini(ring_limit, maxi(
 		maxi(absi(origin_cx - box_min_cx), absi(origin_cx - box_max_cx)),
 		maxi(absi(origin_cy - box_min_cy), absi(origin_cy - box_max_cy))
@@ -247,7 +254,7 @@ func _spatial_nearest_hostile(
 		# Every point of a ring-`ring` cell is at least (ring - 1) * cell away
 		# from `origin`, so once that floor passes the best distance found, no
 		# further ring can contain a candidate that wins the tie-break.
-		if ring > 0 and float(ring - 1) * sim.SPATIAL_CELL_SIZE > best_distance:
+		if ring > 0 and float(ring - 1) * _sim.SPATIAL_CELL_SIZE > best_distance:
 			break
 		var offsets := _spatial_ring_offsets(ring)
 		var offset_index := 0
@@ -262,12 +269,12 @@ func _spatial_nearest_hostile(
 				continue
 			var cell_key := _spatial_key(cx, cy)
 			for team_value in hostile_teams:
-				var bucket: Variant = (sim._spatial_cells[int(team_value)] as Dictionary).get(cell_key)
+				var bucket: Variant = (_sim._spatial_cells[int(team_value)] as Dictionary).get(cell_key)
 				if bucket == null:
 					continue
 				for id_value in bucket as Array:
 					var candidate := int(id_value)
-					var candidate_row: Variant = sim.entities.get(candidate)
+					var candidate_row: Variant = _sim.entities.get(candidate)
 					if candidate_row == null:
 						continue
 					var candidate_dict: Dictionary = candidate_row
@@ -276,9 +283,9 @@ func _spatial_nearest_hostile(
 					if reject_flyers and bool(candidate_dict.get("flying", false)):
 						continue
 					var distance := origin.distance_to(Vector2(candidate_dict.get("position", Vector2.ZERO)))
-					if check_stealth and sim._stealth_active(candidate_dict):
+					if check_stealth and _sim._stealth_active(candidate_dict):
 						var detection_source := float(candidate_dict.get("invisibility_detection_range_source", -1.0))
-						var detection_range = detection_source * float(sim._rules.get("source_unit_scale", 0.1))
+						var detection_range = detection_source * float(_sim._rules.get("source_unit_scale", 0.1))
 						if detection_source < 0.0 or distance > detection_range:
 							continue
 					var wins := distance < best_distance
@@ -297,8 +304,9 @@ func _spatial_ring_offsets(ring: int) -> PackedInt32Array:
 	## Cell offsets at Chebyshev distance exactly `ring`, as interleaved dx/dy.
 	## Walked as a perimeter so the sweep stays O(ring) per ring rather than
 	## O(ring^2), and cached because the table never varies.
-	while sim._spatial_ring_cache.size() <= ring:
-		var index = sim._spatial_ring_cache.size()
+	var _sim = sim
+	while _sim._spatial_ring_cache.size() <= ring:
+		var index = _sim._spatial_ring_cache.size()
 		var offsets := PackedInt32Array()
 		if index == 0:
 			offsets.append(0)
@@ -314,7 +322,7 @@ func _spatial_ring_offsets(ring: int) -> PackedInt32Array:
 				offsets.append(dy)
 				offsets.append(index)
 				offsets.append(dy)
-		sim._spatial_ring_cache.append(offsets)
-	return sim._spatial_ring_cache[ring]
+		_sim._spatial_ring_cache.append(offsets)
+	return _sim._spatial_ring_cache[ring]
 
 

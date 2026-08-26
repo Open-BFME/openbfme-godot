@@ -5,23 +5,24 @@ extends "res://src/retail_slice/retail_sim_subsystem.gd"
 
 
 func _initialize_base_loop() -> void:
-	sim.structures.clear()
-	sim._note_structure_table_mutation()
+	var _sim = sim
+	_sim.structures.clear()
+	_sim._note_structure_table_mutation()
 	# Same contract as _restore_authoritative_state: ids are about to be reused
 	# by a new match, so the id-keyed footprint memo must not survive.
-	sim._structure_footprint_radius_cache.clear()
-	var layout = sim._home_layout if not sim._home_layout.is_empty() else _derive_home_layout()
-	for team in sim._roster_team_ids():
+	_sim._structure_footprint_radius_cache.clear()
+	var layout = _sim._home_layout if not _sim._home_layout.is_empty() else _derive_home_layout()
+	for team in _sim._roster_team_ids():
 		var team_layout: Dictionary = layout.get(team, layout.get(str(team), {}))
-		var base_id = sim._team_structure_base(team)
-		var team_seed_kinds = sim.seed_structure_kinds_for_team(team)
+		var base_id = _sim._team_structure_base(team)
+		var team_seed_kinds = _sim.seed_structure_kinds_for_team(team)
 		if team_seed_kinds.is_empty():
-			team_seed_kinds = sim.structure_kinds_for_team(team)
-		var team_max_health = sim.structure_max_health_for_team(team)
-		var team_build_rules = sim.structure_build_rules_for_team(team)
-		var team_production_order = sim.production_unit_order_for_team(team)
-		var team_production_rules = sim.unit_production_rules_for_team(team)
-		var team_scope = sim.production_scope_for_team(team)
+			team_seed_kinds = _sim.structure_kinds_for_team(team)
+		var team_max_health = _sim.structure_max_health_for_team(team)
+		var team_build_rules = _sim.structure_build_rules_for_team(team)
+		var team_production_order = _sim.production_unit_order_for_team(team)
+		var team_production_rules = _sim.unit_production_rules_for_team(team)
+		var team_scope = _sim.production_scope_for_team(team)
 		for index in range(team_seed_kinds.size()):
 			var kind := String(team_seed_kinds[index])
 			var position := Vector2(team_layout.get(kind, _fallback_structure_position(team, index)))
@@ -30,15 +31,15 @@ func _initialize_base_loop() -> void:
 			for unit_type in team_production_order:
 				if not team_scope.is_empty() and not team_scope.has(String(unit_type)):
 					continue
-				if sim.created_hero_owner_team(String(unit_type)) not in [-1, team]:
+				if _sim.created_hero_owner_team(String(unit_type)) not in [-1, team]:
 					continue
 				var production_rule: Dictionary = team_production_rules[unit_type]
 				var producer_kinds_for_rule: Array = production_rule.get("producer_kinds", [String(production_rule.get("producer_kind", ""))])
 				if producer_kinds_for_rule.has(kind):
 					production.append(unit_type)
 			var structure_id = base_id + index + 1
-			sim._note_structure_table_mutation()
-			sim.structures[structure_id] = {
+			_sim._note_structure_table_mutation()
+			_sim.structures[structure_id] = {
 				"id": structure_id,
 				"team": team,
 				"kind": "structure",
@@ -55,10 +56,10 @@ func _initialize_base_loop() -> void:
 				"production": production,
 				"queue": [],
 				"damage_remainders": {},
-				"income_per_payout": int(sim._rules.get("farm_income", 25)) if kind == "farm" else 0,
+				"income_per_payout": int(_sim._rules.get("farm_income", 25)) if kind == "farm" else 0,
 			}
 			if bool((team_build_rules.get(kind, {}) as Dictionary).get("highlander_body", false)):
-				sim.structures[structure_id]["highlander_body"] = true
+				_sim.structures[structure_id]["highlander_body"] = true
 			# Retail object identity for EVERY seeded kind, not just fortresses,
 			# so this path and issue_construct stamp the same table for the same
 			# kind and a building cannot have two identities depending on
@@ -74,20 +75,20 @@ func _initialize_base_loop() -> void:
 			# the same per-kind geometry. The 3000-tick state pin is unchanged.
 			# The symmetry is worth having on its own terms; it is not a fix for
 			# a divergence anyone has demonstrated.
-			var seed_sources: Variant = sim.structure_source_object_ids_for_team(team).get(kind, [])
+			var seed_sources: Variant = _sim.structure_source_object_ids_for_team(team).get(kind, [])
 			if typeof(seed_sources) == TYPE_ARRAY and not (seed_sources as Array).is_empty():
-				sim.structures[structure_id]["source_object_id"] = String((seed_sources as Array)[0])
+				_sim.structures[structure_id]["source_object_id"] = String((seed_sources as Array)[0])
 			elif typeof(seed_sources) in [TYPE_STRING, TYPE_STRING_NAME]:
-				sim.structures[structure_id]["source_object_id"] = String(seed_sources)
-			sim._apply_structure_create_grants(
-				sim.structures[structure_id] as Dictionary, true, true
+				_sim.structures[structure_id]["source_object_id"] = String(seed_sources)
+			_sim._apply_structure_create_grants(
+				_sim.structures[structure_id] as Dictionary, true, true
 			)
-			sim._apply_structure_inherit_upgrades(sim.structures[structure_id] as Dictionary)
-			sim._initialize_structure_auto_deposit(sim.structures[structure_id] as Dictionary)
-			sim._unpack_castle_behavior_for_structure(structure_id)
-	sim._seed_all_expansion_pads()
-	if sim.build_plots_only:
-		sim._seed_all_build_plots()
+			_sim._apply_structure_inherit_upgrades(_sim.structures[structure_id] as Dictionary)
+			_sim._initialize_structure_auto_deposit(_sim.structures[structure_id] as Dictionary)
+			_sim._unpack_castle_behavior_for_structure(structure_id)
+	_sim._seed_all_expansion_pads()
+	if _sim.build_plots_only:
+		_sim._seed_all_build_plots()
 
 
 func _team_center(team: int) -> Vector2:
@@ -95,17 +96,19 @@ func _team_center(team: int) -> Vector2:
 	## centers derived from spawn ids 1/2 and 101/102; teams >=2 read their own
 	## anchor injected by the map layer (Player_N_Start), falling back to the map
 	## centroid so a base still seeds when a start was not supplied.
-	if team == sim.PLAYER_TEAM:
-		return (Vector2(sim._spawn_positions[1]) + Vector2(sim._spawn_positions[2])) * 0.5
-	if team == sim.ENEMY_TEAM:
-		return (Vector2(sim._spawn_positions[101]) + Vector2(sim._spawn_positions[102])) * 0.5
-	if sim._extra_team_centers.has(team):
-		return Vector2(sim._extra_team_centers[team])
+	var _sim = sim
+	if team == _sim.PLAYER_TEAM:
+		return (Vector2(_sim._spawn_positions[1]) + Vector2(_sim._spawn_positions[2])) * 0.5
+	if team == _sim.ENEMY_TEAM:
+		return (Vector2(_sim._spawn_positions[101]) + Vector2(_sim._spawn_positions[102])) * 0.5
+	if _sim._extra_team_centers.has(team):
+		return Vector2(_sim._extra_team_centers[team])
 	return _two_team_map_center()
 
 
 func _two_team_map_center() -> Vector2:
-	return ((Vector2(sim._spawn_positions[1]) + Vector2(sim._spawn_positions[2])) * 0.5 + (Vector2(sim._spawn_positions[101]) + Vector2(sim._spawn_positions[102])) * 0.5) * 0.5
+	var _sim = sim
+	return ((Vector2(_sim._spawn_positions[1]) + Vector2(_sim._spawn_positions[2])) * 0.5 + (Vector2(_sim._spawn_positions[101]) + Vector2(_sim._spawn_positions[102])) * 0.5) * 0.5
 
 
 func _map_centroid() -> Vector2:
@@ -122,13 +125,14 @@ func _map_centroid() -> Vector2:
 
 
 func _derive_home_layout() -> Dictionary:
+	var _sim = sim
 	var map_center := _map_centroid()
 	var result: Dictionary = {}
-	for team in sim._roster_team_ids():
+	for team in _sim._roster_team_ids():
 		var anchor := _team_center(int(team))
 		var outward := anchor.direction_to(map_center) * -1.0
 		if outward.length_squared() < 0.01:
-			outward = Vector2.LEFT if team == sim.PLAYER_TEAM else Vector2.RIGHT
+			outward = Vector2.LEFT if team == _sim.PLAYER_TEAM else Vector2.RIGHT
 		var side := Vector2(-outward.y, outward.x)
 		result[team] = {
 			"fortress": anchor + outward * 10.0,
@@ -142,12 +146,13 @@ func _derive_home_layout() -> Dictionary:
 
 
 func _fallback_structure_position(team: int, index: int) -> Vector2:
+	var _sim = sim
 	var anchor := _team_center(team)
 	# Structures tile away from the map centroid. Teams 0/1 keep their historical
 	# left/right sign (player centroid-outward points -x on the two-corner maps,
 	# enemy +x); teams >=2 derive the sign from their own outward direction.
-	var sign_value = -1.0 if team == sim.PLAYER_TEAM else 1.0
-	if team != sim.PLAYER_TEAM and team != sim.ENEMY_TEAM:
+	var sign_value = -1.0 if team == _sim.PLAYER_TEAM else 1.0
+	if team != _sim.PLAYER_TEAM and team != _sim.ENEMY_TEAM:
 		var outward := anchor.direction_to(_map_centroid()) * -1.0
 		sign_value = signf(outward.x) if not is_zero_approx(outward.x) else 1.0
 	if index < 5:
@@ -170,7 +175,8 @@ func _fallback_rally_position(team: int) -> Vector2:
 
 
 func _builder_spawn_position(team: int) -> Vector2:
-	var layout = sim._home_layout if not sim._home_layout.is_empty() else _derive_home_layout()
+	var _sim = sim
+	var layout = _sim._home_layout if not _sim._home_layout.is_empty() else _derive_home_layout()
 	var team_layout: Dictionary = layout.get(team, layout.get(str(team), {}))
 	return Vector2(team_layout.get("rally", _fallback_rally_position(team)))
 
@@ -179,26 +185,27 @@ func _spawn_anchor_position(anchor: String, team: int = sim.PLAYER_TEAM) -> Vect
 	## Named map anchors keep the faction roster data-driven while spawn
 	## geometry stays derived from the cooked source map's player starts. Teams
 	## beyond 0/1 resolve the generalized anchors around their own spawn center.
-	if team != sim.PLAYER_TEAM and team != sim.ENEMY_TEAM:
+	var _sim = sim
+	if team != _sim.PLAYER_TEAM and team != _sim.ENEMY_TEAM:
 		if anchor.ends_with("builder"):
-			return _builder_spawn_position(team) if sim.base_loop_enabled else _team_center(team) + Vector2(0.0, -4.0)
+			return _builder_spawn_position(team) if _sim.base_loop_enabled else _team_center(team) + Vector2(0.0, -4.0)
 		return _team_center(team)
 	match anchor:
 		"player_spawn_primary":
-			return Vector2(sim._spawn_positions[1])
+			return Vector2(_sim._spawn_positions[1])
 		"player_spawn_secondary":
-			return Vector2(sim._spawn_positions[2])
+			return Vector2(_sim._spawn_positions[2])
 		"enemy_spawn_primary":
-			return Vector2(sim._spawn_positions[101])
+			return Vector2(_sim._spawn_positions[101])
 		"enemy_spawn_secondary":
-			return Vector2(sim._spawn_positions[102])
+			return Vector2(_sim._spawn_positions[102])
 		"enemy_reserve":
-			return (Vector2(sim._spawn_positions[101]) + Vector2(sim._spawn_positions[102])) * 0.5
+			return (Vector2(_sim._spawn_positions[101]) + Vector2(_sim._spawn_positions[102])) * 0.5
 		"player_builder":
-			return Vector2(sim._spawn_positions[1]) + Vector2(0.0, 4.0)
+			return Vector2(_sim._spawn_positions[1]) + Vector2(0.0, 4.0)
 		"enemy_builder":
-			return _builder_spawn_position(sim.ENEMY_TEAM) if sim.base_loop_enabled else Vector2(sim._spawn_positions[101]) + Vector2(0.0, -4.0)
-	return Vector2(sim._spawn_positions[1])
+			return _builder_spawn_position(_sim.ENEMY_TEAM) if _sim.base_loop_enabled else Vector2(_sim._spawn_positions[101]) + Vector2(0.0, -4.0)
+	return Vector2(_sim._spawn_positions[1])
 
 
 func _add_battalion(
@@ -212,7 +219,8 @@ func _add_battalion(
 	unit_rule_override: Dictionary = {},
 	cached_build_cost: int = -1
 ) -> void:
-	var unit_rules_value: Variant = sim._rules.get("unit_rules", {})
+	var _sim = sim
+	var unit_rules_value: Variant = _sim._rules.get("unit_rules", {})
 	var unit_rule: Dictionary = (
 		unit_rule_override
 		if not unit_rule_override.is_empty()
@@ -225,7 +233,7 @@ func _add_battalion(
 	if unit_rule.is_empty():
 		push_error("RetailSliceSim missing selected-pack unit rule for %s" % object_id)
 		return
-	var member_health = maxi(1, int(unit_rule.get("member_health", sim._rules.get("member_health", 200))))
+	var member_health = maxi(1, int(unit_rule.get("member_health", _sim._rules.get("member_health", 200))))
 	var member_count := maxi(1, int(unit_rule.get("member_count", 0)))
 	var maximum_health = member_health * member_count
 	var member_health_values: Array[int] = []
@@ -281,16 +289,16 @@ func _add_battalion(
 	var battalion_damage := member_damage * member_count
 	var committed_command_points := command_points
 	if committed_command_points < 0:
-		committed_command_points = sim._production_rule_value(unit_type, "command_points_rule", "default_command_points")
+		committed_command_points = _sim._production_rule_value(unit_type, "command_points_rule", "default_command_points")
 	if String(unit_rule.get("category", "")) == "hero":
-		sim._has_hero_units = true
-	sim.entities[id] = {
+		_sim._has_hero_units = true
+	_sim.entities[id] = {
 		"id": id,
 		"team": team,
 		"name": display_name,
 		"object_id": object_id,
 		"position": at,
-		"facing": Vector2.RIGHT if team == sim.PLAYER_TEAM else Vector2.LEFT,
+		"facing": Vector2.RIGHT if team == _sim.PLAYER_TEAM else Vector2.LEFT,
 		"destination": at,
 		"route": [],
 		"route_cells": [],
@@ -334,8 +342,8 @@ func _add_battalion(
 		"minimum_attack_range_source": float(unit_rule["minimum_attack_range_source"]),
 		"vision_range": float(unit_rule["vision_range"]),
 		"vision_range_source": float(unit_rule["vision_range_source"]),
-		"damage_type": sim._recorded_damage_type(object_id, unit_rule),
-		"damage_components": (unit_rule.get("damage_components", sim._unit_damage_components.get(object_id, [])) as Array).duplicate(true),
+		"damage_type": _sim._recorded_damage_type(object_id, unit_rule),
+		"damage_components": (unit_rule.get("damage_components", _sim._unit_damage_components.get(object_id, [])) as Array).duplicate(true),
 		"delay_between_shots_ms": float(unit_rule["delay_between_shots_ms"]),
 		"pre_attack_delay_ms": float(unit_rule["pre_attack_delay_ms"]),
 		"firing_duration_ms": float(unit_rule["firing_duration_ms"]),
@@ -415,113 +423,113 @@ func _add_battalion(
 		# extraction is an importer follow-up; absent means not resistant).
 		"fear_resistant": bool(unit_rule.get("fear_resistant", false)),
 	}
-	if cached_build_cost >= 0 and sim._contracts_have_executable_refund_die(
-		sim._unit_module_contracts.get(unit_type, []) as Array
+	if cached_build_cost >= 0 and _sim._contracts_have_executable_refund_die(
+		_sim._unit_module_contracts.get(unit_type, []) as Array
 	):
 		# Production supplies the queue item's final charged price after every
 		# authored cost modifier; death must never recompute it from current rules.
-		sim.entities[id]["cached_build_cost"] = cached_build_cost
+		_sim.entities[id]["cached_build_cost"] = cached_build_cost
 	# Optional sealed scenario policy. False is the historical combatant default
 	# and must remain absent, otherwise every ordinary unit gains a meaningless
 	# state byte and moves the frozen cross-platform pin.
 	if noncombatant:
-		sim.entities[id]["noncombatant"] = true
+		_sim.entities[id]["noncombatant"] = true
 	if String(unit_rule.get("default_command_set_id", "")) != "":
-		sim.entities[id]["default_command_set_id"] = String(unit_rule.get("default_command_set_id", ""))
-		sim.entities[id]["command_set_id"] = String(unit_rule.get("default_command_set_id", ""))
+		_sim.entities[id]["default_command_set_id"] = String(unit_rule.get("default_command_set_id", ""))
+		_sim.entities[id]["command_set_id"] = String(unit_rule.get("default_command_set_id", ""))
 	# PreAttackType / random amount ride the compiled rule. Absent on the
 	# synthetic pin harness (which never authors them) so the 3000-tick pin
 	# stays put; `_step_member_attacks` defaults missing type to PER_SHOT.
 	if unit_rule.has("pre_attack_type"):
-		sim.entities[id]["pre_attack_type"] = String(unit_rule["pre_attack_type"])
+		_sim.entities[id]["pre_attack_type"] = String(unit_rule["pre_attack_type"])
 	if unit_rule.has("pre_attack_random_amount_ms"):
-		sim.entities[id]["pre_attack_random_amount_ms"] = float(unit_rule["pre_attack_random_amount_ms"])
+		_sim.entities[id]["pre_attack_random_amount_ms"] = float(unit_rule["pre_attack_random_amount_ms"])
 	# Absent-unless-authored keeps melee and no-projectile state byte-identical.
 	for optional_projectile_field in [
 		"projectile_object_id", "projectile_speed", "projectile_speed_source",
 		"radius_damage_affects",
 	]:
 		if unit_rule.has(optional_projectile_field):
-			sim.entities[id][optional_projectile_field] = unit_rule[optional_projectile_field]
+			_sim.entities[id][optional_projectile_field] = unit_rule[optional_projectile_field]
 	# ShroudClearingRange, the deshroud radius. Absent unless the compiled rule
 	# authors one, exactly like the body scalars below and for the same reason:
 	# a key that appears unconditionally would change every unit's snapshot and
 	# move the 3000-tick pin. Absent means the fog pass falls back to vision and
 	# says so (_shroud_clearing_radius).
 	if unit_rule.has("shroud_clearing_range"):
-		sim.entities[id]["shroud_clearing_range"] = maxf(
+		_sim.entities[id]["shroud_clearing_range"] = maxf(
 			0.0, float(unit_rule["shroud_clearing_range"])
 		)
-		sim.entities[id]["shroud_clearing_range_source"] = maxf(
+		_sim.entities[id]["shroud_clearing_range_source"] = maxf(
 			0.0, float(unit_rule.get("shroud_clearing_range_source", 0.0))
 		)
 	# Exact effective Object BountyValue. No field means no authored bounty and
 	# must remain distinguishable from an authored zero in state/save/hash.
 	if unit_rule.has("bounty_value"):
-		sim.entities[id]["bounty_value"] = maxi(0, int(unit_rule["bounty_value"]))
+		_sim.entities[id]["bounty_value"] = maxi(0, int(unit_rule["bounty_value"]))
 	if unit_rule.has("max_turn_without_reform_degrees"):
-		sim.entities[id]["max_turn_without_reform_degrees"] = float(
+		_sim.entities[id]["max_turn_without_reform_degrees"] = float(
 			unit_rule["max_turn_without_reform_degrees"]
 		)
 	if unit_rule.has("slow_turn_radius"):
-		sim.entities[id]["slow_turn_radius"] = maxf(0.0, float(unit_rule["slow_turn_radius"]))
+		_sim.entities[id]["slow_turn_radius"] = maxf(0.0, float(unit_rule["slow_turn_radius"]))
 	if unit_rule.has("fast_turn_radius"):
-		sim.entities[id]["fast_turn_radius"] = maxf(0.0, float(unit_rule["fast_turn_radius"]))
+		_sim.entities[id]["fast_turn_radius"] = maxf(0.0, float(unit_rule["fast_turn_radius"]))
 	if unit_rule.has("min_turn_speed"):
-		sim.entities[id]["min_turn_speed"] = clampf(float(unit_rule["min_turn_speed"]), 0.0, 1.0)
+		_sim.entities[id]["min_turn_speed"] = clampf(float(unit_rule["min_turn_speed"]), 0.0, 1.0)
 	if String(unit_rule.get("turn_rate_source", "")) != "":
-		sim.entities[id]["turn_rate_source"] = String(unit_rule["turn_rate_source"])
+		_sim.entities[id]["turn_rate_source"] = String(unit_rule["turn_rate_source"])
 	for crush_int_key in ["crusher_level", "crushable_level", "crush_damage", "crush_revenge_damage"]:
 		if unit_rule.has(crush_int_key):
-			sim.entities[id][crush_int_key] = int(unit_rule[crush_int_key])
+			_sim.entities[id][crush_int_key] = int(unit_rule[crush_int_key])
 	if unit_rule.has("crush_weapon_id"):
-		sim.entities[id]["crush_weapon_id"] = String(unit_rule["crush_weapon_id"])
+		_sim.entities[id]["crush_weapon_id"] = String(unit_rule["crush_weapon_id"])
 	if unit_rule.has("crush_revenge_weapon_id"):
-		sim.entities[id]["crush_revenge_weapon_id"] = String(unit_rule["crush_revenge_weapon_id"])
+		_sim.entities[id]["crush_revenge_weapon_id"] = String(unit_rule["crush_revenge_weapon_id"])
 	for crush_float_key in [
 		"min_crush_velocity_percent",
 		"crush_deceleration_percent",
 		"crush_knockback",
 	]:
 		if unit_rule.has(crush_float_key):
-			sim.entities[id][crush_float_key] = float(unit_rule[crush_float_key])
+			_sim.entities[id][crush_float_key] = float(unit_rule[crush_float_key])
 	if typeof(unit_rule.get("formation_toggle")) == TYPE_DICTIONARY and not (unit_rule.get("formation_toggle") as Dictionary).is_empty():
 		# Absent unless the unit's own CommandSet authored a
 		# HORDE_TOGGLE_FORMATION button (commandbutton.ini). A unit with no
 		# such button gets no key, and cannot be put into a formation.
-		sim.entities[id]["formation_toggle"] = (unit_rule.get("formation_toggle") as Dictionary).duplicate(true)
+		_sim.entities[id]["formation_toggle"] = (unit_rule.get("formation_toggle") as Dictionary).duplicate(true)
 	if unit_rule.has("flanking_bonus"):
-		sim.entities[id]["flanking_bonus"] = float(unit_rule["flanking_bonus"])
+		_sim.entities[id]["flanking_bonus"] = float(unit_rule["flanking_bonus"])
 	if unit_rule.has("wait_for_formation"):
-		sim.entities[id]["wait_for_formation"] = bool(unit_rule["wait_for_formation"])
+		_sim.entities[id]["wait_for_formation"] = bool(unit_rule["wait_for_formation"])
 	if typeof(unit_rule.get("kind_of")) == TYPE_ARRAY and not (unit_rule.get("kind_of") as Array).is_empty():
-		sim.entities[id]["kind_of"] = (unit_rule.get("kind_of") as Array).duplicate()
+		_sim.entities[id]["kind_of"] = (unit_rule.get("kind_of") as Array).duplicate()
 	# Body policy is optional authoritative state. Keep the key absent for
 	# ordinary ActiveBody units so their snapshots/hashes do not change.
 	if unit_rule.get("highlander_body") == true:
-		sim.entities[id]["highlander_body"] = true
+		_sim.entities[id]["highlander_body"] = true
 	# Innate body scalars (damage taken, regeneration rate). Absent unless the
 	# compiled rule authors them, so no retail unit's snapshot or authoritative
 	# hash gains a byte.
 	if unit_rule.has("innate_armor_scalar"):
-		sim.entities[id]["innate_armor_scalar"] = maxf(0.0, float(unit_rule["innate_armor_scalar"]))
+		_sim.entities[id]["innate_armor_scalar"] = maxf(0.0, float(unit_rule["innate_armor_scalar"]))
 	if unit_rule.has("auto_heal_multiplier"):
-		sim.entities[id]["auto_heal_multiplier"] = maxf(0.0, float(unit_rule["auto_heal_multiplier"]))
+		_sim.entities[id]["auto_heal_multiplier"] = maxf(0.0, float(unit_rule["auto_heal_multiplier"]))
 	# Optional object lifecycle policy. Its absence contributes no entity,
 	# snapshot, or authoritative-hash bytes.
 	if unit_rule.has("destroy_die"):
-		sim.entities[id]["destroy_die"] = Array(
+		_sim.entities[id]["destroy_die"] = Array(
 			unit_rule["destroy_die"]
 		).duplicate(true)
 	if unit_rule.has("slow_death_fades"):
-		sim.entities[id]["slow_death_fades"] = Array(
+		_sim.entities[id]["slow_death_fades"] = Array(
 			unit_rule["slow_death_fades"]
 		).duplicate(true)
 	if unit_rule.has("keep_object_die"):
-		sim.entities[id]["keep_object_die"] = bool(unit_rule.get("keep_object_die", false))
-		sim.entities[id]["keep_object_die_policy"] = (unit_rule.get("keep_object_die_policy", {}) as Dictionary).duplicate(true)
+		_sim.entities[id]["keep_object_die"] = bool(unit_rule.get("keep_object_die", false))
+		_sim.entities[id]["keep_object_die_policy"] = (unit_rule.get("keep_object_die_policy", {}) as Dictionary).duplicate(true)
 	if unit_rule.has("summon_auras"):
-		sim.entities[id]["summon_auras"] = Array(unit_rule["summon_auras"]).duplicate(true)
+		_sim.entities[id]["summon_auras"] = Array(unit_rule["summon_auras"]).duplicate(true)
 	# Optional AIUpdateInterface field slice. Keep the keys absent unless the
 	# compiler authored the complete contract, so legacy/missing-field entity
 	# snapshots and hashes remain byte-identical.
@@ -530,11 +538,11 @@ func _add_battalion(
 		and unit_rule.has("auto_acquire_attack_buildings")
 		and unit_rule.has("auto_acquire_while_stealthed")
 	):
-		sim.entities[id]["auto_acquire_enabled"] = bool(unit_rule["auto_acquire_enabled"])
-		sim.entities[id]["auto_acquire_attack_buildings"] = bool(
+		_sim.entities[id]["auto_acquire_enabled"] = bool(unit_rule["auto_acquire_enabled"])
+		_sim.entities[id]["auto_acquire_attack_buildings"] = bool(
 			unit_rule["auto_acquire_attack_buildings"]
 		)
-		sim.entities[id]["auto_acquire_while_stealthed"] = bool(
+		_sim.entities[id]["auto_acquire_while_stealthed"] = bool(
 			unit_rule["auto_acquire_while_stealthed"]
 		)
 	# Optional AIUpdateInterface idle-rescan cadence. The one-shot jitter flag
@@ -546,37 +554,37 @@ func _add_battalion(
 		and unit_rule.has("auto_acquire_attack_buildings")
 		and unit_rule.has("auto_acquire_while_stealthed")
 	):
-		sim.entities[id]["mood_attack_check_rate_ticks"] = int(
+		_sim.entities[id]["mood_attack_check_rate_ticks"] = int(
 			unit_rule["mood_attack_check_rate_ticks"]
 		)
-		sim.entities[id]["mood_randomize_next_check"] = true
+		_sim.entities[id]["mood_randomize_next_check"] = true
 	# File the new battalion immediately: units spawned mid-tick (production
 	# exits, summons) must be acquirable by battalions stepped later in the same
 	# tick, exactly as the old full scans saw them.
-	sim._spatial_sync(sim.entities[id])
-	for tech_id_value in (sim.team_upgrades.get(team, {}) as Dictionary).keys():
-		sim._apply_equipment_to_horde(sim.entities[id], sim._equipment_ids_for_forge_upgrade(String(tech_id_value)))
+	_sim._spatial_sync(_sim.entities[id])
+	for tech_id_value in (_sim.team_upgrades.get(team, {}) as Dictionary).keys():
+		_sim._apply_equipment_to_horde(_sim.entities[id], _sim._equipment_ids_for_forge_upgrade(String(tech_id_value)))
 	if (
 		String(unit_rule.get("category", "")) == "hero"
-		or not (sim._unit_ability_rules.get(String(sim.entities[id].get("unit_type", "")), []) as Array).is_empty()
+		or not (_sim._unit_ability_rules.get(String(_sim.entities[id].get("unit_type", "")), []) as Array).is_empty()
 	):
-		sim._attach_hero_ability_state(sim.entities[id])
+		_sim._attach_hero_ability_state(_sim.entities[id])
 	var has_registered_experience := not (
-		sim._unit_experience_rules.get(String(sim.entities[id].get("unit_type", "")), {}) as Dictionary
+		_sim._unit_experience_rules.get(String(_sim.entities[id].get("unit_type", "")), {}) as Dictionary
 	).is_empty()
-	sim._attach_experience_state(sim.entities[id])
-	sim._attach_module_contracts(sim.entities[id])
+	_sim._attach_experience_state(_sim.entities[id])
+	_sim._attach_module_contracts(_sim.entities[id])
 	# ExperienceLevelCreate is a creation module, independent of whether this
 	# bounded summon leaf carries a complete ExperienceLevel progression table.
 	# Ordinary unit rules omit this key and preserve their existing XP path.
 	if int(unit_rule.get("creation_experience_rank", 0)) > 0:
-		sim.entities[id]["level"] = int(unit_rule["creation_experience_rank"])
+		_sim.entities[id]["level"] = int(unit_rule["creation_experience_rank"])
 		if not has_registered_experience:
-			sim._apply_experience_level_effects(
-				sim.entities[id],
+			_sim._apply_experience_level_effects(
+				_sim.entities[id],
 				unit_rule.get("creation_experience_effects", {}) as Dictionary
 			)
-	sim._record_hero_rank_attainment(sim.entities[id])
-	sim._refresh_banner_carrier_state(sim.entities[id])
+	_sim._record_hero_rank_attainment(_sim.entities[id])
+	_sim._refresh_banner_carrier_state(_sim.entities[id])
 
 
