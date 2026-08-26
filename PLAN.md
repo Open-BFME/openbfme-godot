@@ -24,9 +24,11 @@ needs: importer
 - [x] Delete the hand-typed fallback rule tables — missing pack field fails loudly by name {#sim-single-truth}
   by: claude (took over after 3 failed sol rounds; setup refuses-and-seeds-nothing, 4 runtime fallbacks deleted, 45 fixtures given explicit synthetic manifests, 3 pins consciously re-minted with zero-behavior-change proof; shipped 42c20c13)
   from: roadmap (queue Q80; owner ratified)
-- [~] Split the 33k-line sim into named class files, one subsystem at a time, state-pin equality proving each move {#sim-split}
-  by: claude (14 drawers done: projectiles, economy, experience, ai, combat, persistence, production, movement, abilities, upgrades, powers, bases, module-contracts, transport/garrison; sim 31,351 → ~18,200 lines, every move pin-proven; drawer 14 also surfaced+fixed 3 latent typed-array boundary bugs from drawer 13)
-  from: roadmap (queue Q81; owner: highest cleanability/moddability impact; owner bar: tiny per module)
+- [x] Split the 33k-line sim into named class files, one subsystem at a time, state-pin equality proving each move {#sim-split}
+  by: claude (22 drawers: sim 31,351 → ~7,000-line conductor + 31 modules, all pushed to origin/main; every move pin-proven; carve surfaced+fixed 4 latent bugs of its own making and attributed 8 pre-existing reds to Q94-Q98; function census: 0 lost of 1,128, 5 documented duplicates)
+  from: roadmap (queue Q81; owner: highest cleanability/moddability impact)
+- [ ] Split the two oversized modules (module_contracts 7.3k, powers 4.0k) into their sub-families {#sim-split-followup}
+  from: agent
 - [ ] Module framework + traffic-ranked burn-down of the 99 missing retail behavior modules {#sim-modules}
   from: roadmap (queue Q82; oracles: ZH GPL source, decomp symbols.csv, INI clean-sheet for the 9 BFME2-only)
 - [~] Port retail's skirmish AI — personalities, build lists, attack priorities; difficulty = behavior, not cheats {#sim-ai}
