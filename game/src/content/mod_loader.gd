@@ -148,15 +148,28 @@ func list_pack_roots() -> Array[String]:
 	active_pack_root = ""
 	clear_path_caches()
 	var roots: Array[String] = []
-	# AMBIENT ROOTS, HELD SEPARATELY. These are the repository base pack, the
-	# shipped example mods and the user mod folder: content nobody selected. The
-	# strict parity profile refuses all of them (see the merge below); every
-	# other run keeps them, in their original position ahead of the selection.
+	# AMBIENT MOUNTING IS RETIRED (Q86, owner-ratified 2026-08-25): content
+	# loads from exactly TWO sources — an explicit selection.json (workspace in
+	# a repo checkout, the durable cache on an install) or an explicit
+	# OPENBFME_CONTENT override. Packs sitting in res://mods or user://mods are
+	# NOT mounted any more; anything found there is reported by name so nobody
+	# wonders where their mod went — select it explicitly instead.
 	var ambient: Array[String] = []
 	_collect_packs(BASE_PATH, ambient)
 	_collect_packs(RES_MODS, ambient)
 	_ensure_dir(USER_MODS)
 	_collect_packs(USER_MODS, ambient)
+	for retired_root in ambient:
+		suppressed_ambient_roots.append(retired_root)
+		_diagnose(
+			"ambient pack at %s is NOT mounted (ambient sources are retired); "
+			% retired_root
+			+ "name it in selection.json supplements or point OPENBFME_CONTENT at it"
+		)
+	if not ambient.is_empty():
+		print("[ModLoader] %d ambient pack(s) present but not mounted (Q86: explicit sources only): %s" % [
+			ambient.size(), ", ".join(ambient)])
+	ambient = []
 
 	# Developer/CI override. This remains ephemeral; normal installs use the
 	var external := OS.get_environment("OPENBFME_CONTENT")
@@ -225,12 +238,15 @@ func list_pack_roots() -> Array[String]:
 	# truth, so editor playtests must never silently fall back to a stale
 	# durable cache copy of the same ruleset. Any workspace that exists but
 	# cannot be loaded is diagnosed loudly before the durable fallback runs.
+	var workspace_present := false
 	if external == "" and active_selected == "":
 		var workspace := workspace_content_root()
 		if workspace != "":
+			workspace_present = true
 			var workspace_selection := workspace.path_join("selection.json")
+			var workspace_failure := ""
 			if not FileAccess.file_exists(workspace_selection):
-				_diagnose("Workspace content at %s has no selection.json; falling back to the durable user pack cache, which may be STALE." % workspace)
+				workspace_failure = "Workspace content at %s has no selection.json" % workspace
 			else:
 				var workspace_selected := selected_user_pack_root(workspace, workspace_selection)
 				if workspace_selected != "":
@@ -240,9 +256,19 @@ func list_pack_roots() -> Array[String]:
 					roots.append(workspace_selected)
 					roots.append_array(selected_pack_supplements(workspace, workspace_selection))
 				else:
-					_diagnose("Workspace content selection %s is unusable; falling back to the durable user pack cache, which may be STALE." % workspace_selection)
+					workspace_failure = "Workspace content selection %s is unusable" % workspace_selection
+			if workspace_failure != "":
+				# Q86: a PRESENT workspace is the launch contract for a repo
+				# checkout. A broken one FAILS CLOSED — substituting the durable
+				# cache here is how a months-stale pack once produced
+				# confidently wrong results that passed review.
+				_diagnose(workspace_failure + "; refusing to mount anything (the durable cache is for installs without a workspace — fix the workspace selection instead).")
+				print("[ModLoader] %s; no content packs will be mounted." % workspace_failure)
+				active_content_source = "workspace-invalid"
+				active_pack_root = ""
+				return []
 
-	if external_selected == "" and active_selected == "":
+	if external_selected == "" and active_selected == "" and not workspace_present:
 		var selected := selected_user_pack_root()
 		if selected != "":
 			active_selected = selected
@@ -313,17 +339,6 @@ func list_pack_roots() -> Array[String]:
 			)
 		for failure in supplement_failures:
 			_strict_error(failure)
-		for ambient_root in ambient:
-			suppressed_ambient_roots.append(ambient_root)
-		if not ambient.is_empty():
-			print("[ModLoader] strict parity profile: refusing %d ambient pack root(s): %s" % [
-				ambient.size(), ", ".join(ambient)
-			])
-	else:
-		var merged: Array[String] = []
-		merged.append_array(ambient)
-		merged.append_array(roots)
-		roots = merged
 
 	var unique: Array[String] = []
 	var seen: Dictionary = {}

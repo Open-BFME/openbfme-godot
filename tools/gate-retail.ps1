@@ -52,7 +52,7 @@ $publishRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot "workspace\content-pa
 # these constants in the same change that moves it, and say so - the same
 # conscious-update pattern the state pins use.
 # RE-MEASURED 2026-08-19 v0.2.7 (castle lanes recook + playable-maps republish abc27325: gates/garrison/walkSurfaces/ai_bases/scripts)
-$expectedSelectionSha256 = "92f231ef5833f084c1e756ff14469f3b77eaedf75ff4b2d5ba815e3e7dd6e10d"
+$expectedSelectionSha256 = "85b798173c22370da359f961c1612c91254e6f34c5981256c56fa8ef5d4542bb"
 $expectedSelectionActivePack = "rotwk-men-vslice/13e31f6b964d1d5453e2cd0031f4b9d663a002363e1e61074f6f0b5c1b0b75f4"
 # RE-MEASURED 2026-08-19 v0.2.7 (castle lanes recook + playable-maps republish abc27325: gates/garrison/walkSurfaces/ai_bases/scripts)
 $expectedSelectionSupplementalPacks = @(

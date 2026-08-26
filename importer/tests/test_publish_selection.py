@@ -188,9 +188,11 @@ class LegacyPublishSelectionWriterTests(unittest.TestCase):
         self.assertTrue(after["strictParityProfile"])
         self.assertEqual(after["someFutureKey"], {"kept": [1, 2, 3]})
 
-    def test_publish_with_select_refuses_when_a_durable_mirror_exists(self) -> None:
-        from openbfme_importer.pipeline import SelectionTransactionError
-
+    def test_publish_with_select_activates_despite_a_durable_selection(self) -> None:
+        # Q86: the durable install cache is an independent document. A
+        # workspace activation proceeds regardless of what any durable
+        # selection says - the game loader fails closed on a broken workspace
+        # instead of substituting durable bytes, so nothing can desync.
         publication = self.pipeline.publish_to_godot(
             self.source, self.content, select=True
         )
@@ -201,81 +203,11 @@ class LegacyPublishSelectionWriterTests(unittest.TestCase):
                 "activePack": publication["pack_relative"],
             }
         )
-        before = (self.content / "selection.json").read_bytes()
-        with self.assertRaises(SelectionTransactionError) as caught:
-            self.pipeline.publish_to_godot(self.source, self.content, select=True)
-        message = str(caught.exception)
-        self.assertIn("durable", message.lower())
-        self.assertIn(str(self.durable), message)
-        self.assertIn("apply-selection-transaction", message)
-        # A refusal changes nothing.
-        self.assertEqual((self.content / "selection.json").read_bytes(), before)
+        second = self.pipeline.publish_to_godot(self.source, self.content, select=True)
+        self.assertEqual(second["pack_relative"], publication["pack_relative"])
+        after = self._selection()
+        self.assertEqual(after["activePack"], publication["pack_relative"])
 
-    def test_a_supplement_under_this_root_also_proves_the_mirror(self) -> None:
-        # The durable ACTIVE pack can be a bundle this root has never held while
-        # the mirror's supplements are exactly the bundles published here. That
-        # is still a mirror, and a workspace-only activation still desyncs it.
-        from openbfme_importer.pipeline import SelectionTransactionError
-
-        publication = self.pipeline.publish_to_godot(
-            self.source, self.content, select=True
-        )
-        self._write_durable_selection(
-            {
-                "schema": "openbfme.pack-selection",
-                "schemaVersion": 0,
-                "activePack": f"some-other-pack/{HEX_A}",
-                "supplementalPacks": [publication["pack_relative"]],
-            }
-        )
-        before = (self.content / "selection.json").read_bytes()
-        with self.assertRaises(SelectionTransactionError) as caught:
-            self.pipeline.publish_to_godot(self.source, self.content, select=True)
-        self.assertIn(str(self.durable), str(caught.exception))
-        self.assertEqual((self.content / "selection.json").read_bytes(), before)
-
-    def test_publish_select_refuses_while_the_durable_root_lock_is_held(self) -> None:
-        # Detection and commit must happen under BOTH locks. If the durable root
-        # is already owned by someone else, publish cannot safely decide
-        # anything about the mirror, so it refuses instead of racing.
-        from openbfme_importer.pipeline import (
-            SelectionTransactionError,
-            selection_transaction_lock,
-        )
-
-        self.durable.mkdir(parents=True, exist_ok=True)
-        with selection_transaction_lock(self.durable):
-            with self.assertRaises(SelectionTransactionError) as caught:
-                self.pipeline.publish_to_godot(self.source, self.content, select=True)
-        message = str(caught.exception)
-        self.assertIn("lock", message.lower())
-        self.assertIn(str(self.durable), message)
-        self.assertFalse((self.content / "selection.json").exists())
-
-    def test_mirror_detection_runs_while_both_locks_are_held(self) -> None:
-        from openbfme_importer import pipeline as pipeline_module
-        from openbfme_importer.pipeline import SELECTION_TRANSACTION_LOCK
-
-        self.durable.mkdir(parents=True, exist_ok=True)
-        observed: dict[str, bool] = {}
-        real = pipeline_module.durable_selection_mirror_of
-
-        def spy(content_root):
-            observed["content"] = (
-                self.content / SELECTION_TRANSACTION_LOCK
-            ).is_file()
-            observed["durable"] = (
-                self.durable / SELECTION_TRANSACTION_LOCK
-            ).is_file()
-            return real(content_root)
-
-        with unittest.mock.patch.object(
-            pipeline_module, "durable_selection_mirror_of", spy
-        ):
-            self.pipeline.publish_to_godot(self.source, self.content, select=True)
-        self.assertEqual(observed, {"content": True, "durable": True})
-        for root in (self.content, self.durable):
-            self.assertFalse((root / SELECTION_TRANSACTION_LOCK).exists())
 
     def test_publish_without_select_does_not_lock_the_durable_root(self) -> None:
         from openbfme_importer.pipeline import selection_transaction_lock

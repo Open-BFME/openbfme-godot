@@ -2840,85 +2840,12 @@ def selection_transaction_lock(content_root: Path | str):
             lock_path.unlink(missing_ok=True)
 
 
-def durable_mirror_candidate_roots() -> list[Path]:
-    """Durable user-cache roots that might mirror a content root.
-
-    Returned BEFORE anything is read, because the caller has to lock these roots
-    before it may trust any answer about them. Only existing directories are
-    returned: a durable cache that does not exist cannot be locked, and cannot
-    yet be a mirror of anything.
-
-    ``OPENBFME_DURABLE_CONTENT`` overrides the location. The default is the
-    Godot user-data convention for this project, derived from the environment -
-    never a maintainer-specific path (RULE P10).
-    """
-
-    configured = os.environ.get("OPENBFME_DURABLE_CONTENT", "").strip()
-    if configured:
-        candidates = [Path(configured).expanduser()]
-    else:
-        appdata = os.environ.get("APPDATA", "").strip()
-        if not appdata:
-            return []
-        candidates = [
-            Path(appdata) / "Godot" / "app_userdata" / "Open BFME" / "content-packs"
-        ]
-    return [candidate for candidate in candidates if candidate.is_dir()]
-
-
-def durable_selection_mirror_of(content_root: Path | str) -> Path | None:
-    """The durable user-cache selection that mirrors THIS content root, if any.
-
-    An env-less launch resolves content from the durable Godot user cache, so a
-    selection written to the workspace alone leaves that launch on the previous
-    pack with nothing failing - a recorded failure mode in this project.
-
-    "Mirrors this root" is decided by evidence, not by a path guess: EVERY
-    normalized entry of the durable selection - activePack and every
-    supplementalPack - is mirror evidence, and one entry whose bundle exists
-    under this content root is enough. Judging on activePack alone let a durable
-    cache whose active bundle happened to live elsewhere (a different faction
-    lineage, a pack published from another root) escape the refusal while its
-    supplements were exactly the bundles published here.
-
-    Fail-closed throughout: an unreadable, non-object or unsafe-entry durable
-    selection counts as a mirror, because "I cannot tell" is not "no" (RULE P7).
-
-    CALLERS MUST HOLD the candidate roots' locks (see
-    :func:`durable_mirror_candidate_roots`) before trusting this answer.
-    """
-
-    root = Path(content_root)
-    for candidate in durable_mirror_candidate_roots():
-        selection_path = candidate / "selection.json"
-        if not selection_path.is_file():
-            continue
-        try:
-            document = read_json(selection_path)
-        except (OSError, ValueError, TypeError):
-            return selection_path
-        if not isinstance(document, dict):
-            return selection_path
-        entries: list[str] = []
-        active = document.get("activePack")
-        if active is not None:
-            entries.append(str(active))
-        supplements = document.get("supplementalPacks")
-        if isinstance(supplements, list):
-            entries.extend(str(entry) for entry in supplements)
-        elif supplements is not None:
-            return selection_path
-        for raw in entries:
-            entry = raw.strip().replace("\\", "/")
-            if not entry:
-                continue
-            try:
-                parts = safe_relative_parts(entry)
-            except ValueError:
-                return selection_path
-            if (root.joinpath(*parts) / "pack.json").is_file():
-                return selection_path
-    return None
+# Q86 (owner-ratified 2026-08-25): the durable-mirror DETECTION machinery is
+# gone. The game loader now fails closed when a workspace selection is broken
+# instead of falling back to the durable cache, so a "durable mirror of a
+# workspace" has no consumer to desynchronise. The durable cache is written
+# ONLY through an explicit --durable-root on apply-selection-transaction (the
+# launcher install path); publish never infers or touches it.
 
 
 def _write_recovery_preimage(path: Path, prior: bytes, index: int) -> Path:
@@ -5054,17 +4981,11 @@ class ImportPipeline:
             Path(content_root), repo_root_from_module()
         )
         locked_root.mkdir(parents=True, exist_ok=True)
-        # ACTIVATION LOCKS BOTH SIDES. Probing the durable mirror under the
-        # content-root lock alone proves nothing: another transaction can create
-        # or repoint that mirror between the probe and the workspace commit, and
-        # the activation lands on a tree whose durable half has already moved.
-        # Every candidate durable root is therefore locked too, in canonical
-        # order with the content root so two such writers cannot deadlock, for
-        # the whole detect -> decide -> write lifetime. A non-activating publish
-        # has no business with the durable cache and locks only its own root.
+        # Q86: publish locks ONLY its own content root. The durable cache is no
+        # longer a mirror publish must keep in sync — the game loader fails
+        # closed on a broken workspace instead of falling back to durable, so
+        # workspace activation and the install cache are independent documents.
         lock_roots: list[Path] = [locked_root]
-        if select:
-            lock_roots.extend(durable_mirror_candidate_roots())
         with selection_transaction_locks(lock_roots):
             return self._publish_to_godot_locked(
                 pack_root,
@@ -5254,29 +5175,15 @@ class ImportPipeline:
             # Live playtests read selection.json while republished bundles
             # land; leaving it untouched keeps a running slice loadable.
             return result
-        # LEGACY ACTIVATION, NOW ROUTED THROUGH THE ONE SELECTION WRITER.
+        # ACTIVATION THROUGH THE ONE SELECTION WRITER. The complete document
+        # goes through the same staged, verified, rollback-backed transaction
+        # every other selection change uses.
         #
-        # This used to compose a fresh three-key document and write it straight
-        # to the workspace: no durable mirror, and every key it did not know
-        # about (operatorNote, strictParityProfile, anything a later profile
-        # adds) silently deleted. It also ignored the durable user cache
-        # entirely, so an env-less launch kept serving the old activePack while
-        # the workspace claimed the new one.
-        #
-        # The refusals below are unchanged. What changed is the write: the
-        # complete document goes through the same staged, verified, rollback-
-        # backed transaction every other selection change uses, and a workspace
-        # that has a durable mirror is refused rather than desynchronised.
-        mirror = durable_selection_mirror_of(root)
-        if mirror is not None:
-            raise SelectionTransactionError(
-                f"refusing to activate {relative.as_posix()} in {root} alone: the "
-                f"durable user-cache selection at {mirror} mirrors this content "
-                "root, and a workspace-only activation would leave an env-less "
-                "launch on the previous pack. Publish without --select, then run "
-                "apply-selection-transaction with --durable-root so both "
-                "selections move together (RULE P2)."
-            )
+        # Q86: no durable-mirror probe any more. The game loader fails closed
+        # on a broken workspace instead of substituting the durable cache, so
+        # a workspace activation cannot strand an env-less launch on stale
+        # bytes; the install cache moves only through an explicit
+        # apply-selection-transaction --durable-root.
         supplements: list[str] = []
         # Preserve supplemental packs (map overlays, ranger contracts, etc.) so
         # a faction republish does not silently drop the rest of the slice stack.

@@ -1,7 +1,8 @@
 extends SceneTree
-## Workspace-first content resolution test. Proves an env-less launch prefers
-## the repo workspace selection over the durable user cache, and that a broken
-## workspace falls back to the durable cache with a loud recorded diagnostic.
+## Two-source content resolution test (Q86). Proves an env-less launch prefers
+## the repo workspace selection over the durable user cache, that a broken
+## workspace FAILS CLOSED (never a stale durable substitution), and that the
+## durable cache serves only installs with no workspace at all.
 
 var passed: int = 0
 var failed: int = 0
@@ -76,22 +77,33 @@ func _run() -> void:
 	_check("stale_durable_pack_suppressed", not roots.has(durable_pack), str(roots))
 	_check("active_source_is_workspace", String(mod_loader.get("active_content_source")) == "workspace")
 
-	# (b) A corrupt workspace selection falls back to the durable cache and the
-	# fallback is diagnosed loudly — never a silent stale load.
+	# (b) Q86: a corrupt workspace selection FAILS CLOSED — no roots, no
+	# durable substitution, loud named refusal. The old fallback is how a
+	# months-stale durable pack once passed review.
 	_write_text(workspace_root.path_join("selection.json"), "{ not json !!!")
 	roots = mod_loader.list_pack_roots()
 	var diagnostics := _joined_diagnostics(mod_loader)
-	_check("broken_workspace_falls_back_to_durable", roots.has(durable_pack), str(roots))
-	_check("broken_workspace_fallback_diagnosed",
-		diagnostics.contains("falling back to the durable user pack cache"), diagnostics)
-	_check("active_source_is_durable_after_fallback", String(mod_loader.get("active_content_source")) == "durable")
+	_check("broken_workspace_fails_closed", roots.is_empty(), str(roots))
+	_check("broken_workspace_refusal_diagnosed",
+		diagnostics.contains("refusing to mount anything"), diagnostics)
+	_check("active_source_marks_workspace_invalid", String(mod_loader.get("active_content_source")) == "workspace-invalid")
 
-	# (c) A workspace directory without a selection document is also diagnosed.
+	# (c) A workspace directory without a selection document refuses the same way.
 	DirAccess.remove_absolute(workspace_root.path_join("selection.json"))
 	roots = mod_loader.list_pack_roots()
 	diagnostics = _joined_diagnostics(mod_loader)
 	_check("selectionless_workspace_diagnosed", diagnostics.contains("has no selection.json"), diagnostics)
-	_check("selectionless_workspace_still_falls_back", roots.has(durable_pack), str(roots))
+	_check("selectionless_workspace_fails_closed", roots.is_empty(), str(roots))
+
+	# (c2) With NO workspace at all (an installed build), the durable cache IS
+	# the explicit installed selection and mounts normally.
+	ProjectSettings.set_setting(mod_loader.WORKSPACE_CONTENT_SETTING, null)
+	ProjectSettings.set_setting(mod_loader.PACK_CACHE_SETTING, durable_root)
+	ProjectSettings.set_setting(mod_loader.PACK_SELECTION_SETTING, durable_root.path_join("selection.json"))
+	roots = mod_loader.list_pack_roots()
+	_check("install_without_workspace_uses_durable", roots.has(durable_pack), str(roots))
+	_check("active_source_is_durable_on_install", String(mod_loader.get("active_content_source")) == "durable")
+	ProjectSettings.set_setting(mod_loader.WORKSPACE_CONTENT_SETTING, workspace_root)
 
 	# (d) An explicit OPENBFME_CONTENT override still beats the workspace.
 	_write_json(workspace_root.path_join("selection.json"), {
