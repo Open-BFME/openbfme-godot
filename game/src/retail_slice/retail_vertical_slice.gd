@@ -6052,6 +6052,22 @@ func _configure_simulation_skirmish_ai(sim = null) -> void:
 			+ "the AI keeps its manifest production plan (stale-pack limitation, Q83)"
 		)
 		return
+	# EDITION SCOPE: the document is authored for ONE edition's balance
+	# (game=rotwk today). Only a match that actually mounts the pack shipping
+	# it may consume it — a BFME2 match must never run RotWK army math.
+	var document_root := String(document.get("_pack_root", "")).replace("\\", "/").trim_suffix("/")
+	var match_mounts_document := false
+	for root_value in faction_manifest.get("faction_pack_roots", []) as Array:
+		if String(root_value).replace("\\", "/").trim_suffix("/") == document_root:
+			match_mounts_document = true
+			break
+	if not match_mounts_document:
+		push_warning(
+			"skirmish-ai: document belongs to %s (game=%s) which this match does not mount; "
+			% [document_root, String(document.get("game", "?"))]
+			+ "the AI keeps its manifest production plan"
+		)
+		return
 	sim.configure_skirmish_ai(document)
 
 

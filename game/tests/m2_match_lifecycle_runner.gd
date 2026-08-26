@@ -21,7 +21,11 @@ var _runner_watchdog := RunnerWatchdogScript.new()
 
 func _initialize() -> void:
 	_runner_watchdog.start(self, "M2_MATCH_LIFECYCLE_RUNNER")
-	create_timer(180.0, true, false, true).timeout.connect(_fail.bind("match lifecycle watchdog timeout"))
+	# 480s: the Q81 module carve trades ~1.6x tick cost for modularity (bench:
+	# 7.2 -> 11.5 ms per tick at 250 units); three full matches no longer fit
+	# the original 180s wall. Reclaiming the indirection cost is queue Q100 -
+	# when it lands, tighten this back.
+	create_timer(480.0, true, false, true).timeout.connect(_fail.bind("match lifecycle watchdog timeout"))
 	call_deferred("_run")
 
 
