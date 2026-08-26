@@ -54,88 +54,14 @@ func ensure_ai_state(team: int) -> Dictionary:
 
 
 func run_ai_for_team(team: int, profile: Dictionary, ai_state: Dictionary) -> void:
+	## Phase conductor only — each phase body lives in its own `_ai_run_*`
+	## helper below (pure code moves, extracted for the complexity gate).
 	var _sim = sim
-	if _sim.base_loop_enabled and not bool(ai_state.get("construction_attempted", false)):
-		ai_state["construction_attempted"] = true
-		if not start_ai_farm(team, ai_state):
-			ai_state["construction_resolved"] = true
-		else:
-			ai_state["build_order_index"] = 1
-	if _sim.base_loop_enabled and not bool(ai_state.get("construction_resolved", false)) and not ai_construction_is_viable(team):
-		abandon_ai_construction(team)
-		ai_state["construction_resolved"] = true
-	if _sim.base_loop_enabled and not bool(ai_state.get("construction_resolved", false)):
+	if not _ai_run_construction_phase(team, ai_state):
 		return
 	if _sim.base_loop_enabled:
 		step_ai_base_building(team, ai_state)
-	var queue_interval := maxi(15, int(_sim._rules.get("ai_queue_interval_ticks", 60)) * int(profile.get("queue_interval_permille", 1000)) / 1000)
-	if _sim.base_loop_enabled and _sim.tick_index % queue_interval == 0:
-		# The manifest plan runs EVERY window — it is the proven baseline the
-		# whole battery is pinned to, and it must never get weaker.
-		var plan: Array = _sim.ai_production_plan_for_team(team)
-		if plan.is_empty():
-			# Q80: no AI_PRODUCTION_PLAN constant fallback — an empty
-			# manifest plan means this AI queues nothing, honestly.
-			plan = _sim._ai_production_plan
-		var team_rules: Dictionary = _sim.unit_production_rules_for_team(team)
-		for unit_type in plan:
-			var production_rule: Dictionary = team_rules.get(unit_type, {})
-			if production_rule.is_empty():
-				continue
-			var producer := int(_sim.producer_id(team, String(production_rule.get("producer_kind", ""))))
-			if producer != 0:
-				_sim.queue_unit(team, producer, unit_type)
-		# Q83b (OPT-IN via use_authored_skirmish_ai): retail's authored
-		# ArmyDefinition composition fills whatever headroom the baseline
-		# left — deficit-first picks that count living AND queued units. The
-		# authored layer strictly ADDS strength on top of the baseline; the
-		# proven plan above is untouched. Full replacement (baseline off)
-		# stays future work once economy/CP semantics reach retail scale.
-		if bool(_sim.skirmish_ai_configured) and bool(_sim._rules.get("use_authored_skirmish_ai", false)):
-			# HeroBuildOrder first, like retail: the next authored hero not yet
-			# fielded gets a queue attempt each window; when the treasury can't
-			# pay, queue_unit refuses and the hero simply waits for gold.
-			var hero_choice: Dictionary = _sim._skirmish_ai_subsystem().authored_hero_choice(team)
-			if bool(hero_choice.get("ok", false)):
-				var hero_rule: Dictionary = _sim.unit_production_rules_for_team(team).get(String(hero_choice["unit_type"]), {})
-				var hero_producer := int(_sim.producer_id(team, String(hero_rule.get("producer_kind", ""))))
-				if hero_producer != 0:
-					_sim.queue_unit(team, hero_producer, String(hero_choice["unit_type"]))
-			var choices: Array = _sim._skirmish_ai_subsystem().authored_ai_queue_choices(team)
-			var first: Dictionary = {} if choices.is_empty() else choices[0] as Dictionary
-			if bool(first.get("ok", false)):
-				for choice_value in choices:
-					var choice := choice_value as Dictionary
-					var choice_rule: Dictionary = team_rules.get(String(choice.get("unit_type", "")), {})
-					if choice_rule.is_empty():
-						continue
-					var choice_producer := int(_sim.producer_id(team, String(choice_rule.get("producer_kind", ""))))
-					if choice_producer == 0:
-						continue
-					# Refusals (cost/command points/producer busy) skip THIS
-					# pick and still try the rest; a cheaper pick may fit.
-					_sim.queue_unit(team, choice_producer, String(choice["unit_type"]))
-			elif not bool(ai_state.get("authored_queue_refusal_reported", false)):
-				# A side the authored document cannot serve keeps the baseline
-				# alone — LOUDLY, once per team, never silently.
-				ai_state["authored_queue_refusal_reported"] = true
-				push_warning(
-					"skirmish-ai team %d runs the baseline plan only: %s"
-					% [team, String(first.get("reason", ""))]
-				)
-			# EconomyUpgradeProbability (Q83c): each window the authored
-			# 'a : b' pair rolls on the deterministic stream exactly like the
-			# special-power gate (fail when the draw exceeds a); a successful
-			# roll buys ONE income-structure level step with leftover gold —
-			# units queued above keep treasury priority, like retail. The RNG
-			# draw happens every window regardless of economy state so the
-			# stream never depends on treasury contents.
-			var economy_odds: Array = _sim._skirmish_ai_subsystem().authored_difficulty_odds(team, "EconomyUpgradeProbability")
-			if economy_odds.size() == 2 and float(economy_odds[1]) > 0.0:
-				if _sim.logic_random_int(1, int(economy_odds[1])) <= int(economy_odds[0]):
-					var economy_choice: Dictionary = _sim._skirmish_ai_subsystem().authored_economy_upgrade_choice(team)
-					if bool(economy_choice.get("ok", false)):
-						_sim.queue_structure_upgrade(team, int(economy_choice["structure_id"]), String(economy_choice["upgrade_id"]))
+	_ai_run_production_window(team, profile, ai_state)
 	# Give hostiles one full production window before the first wave. Economy and
 	# production still advance during the preparation time. Higher tiers commit
 	# sooner (shorter attack delay), lower tiers later.
@@ -152,38 +78,144 @@ func run_ai_for_team(team: int, profile: Dictionary, ai_state: Dictionary) -> vo
 	var enemy_fortress := ai_primary_hostile_fortress(team, weakest) if _sim.base_loop_enabled else 0
 	if hostiles.is_empty() and enemy_fortress == 0:
 		return
-	# Fresh units mass into a wave at the fortress muster point and strike
-	# together instead of trickling one battalion at a time.
 	if _sim.base_loop_enabled:
-		var wave_size := maxi(2, int(_sim._rules.get("ai_wave_size", 4)) + int(profile.get("wave_size_delta", 0)))
-		var mustering: Array[int] = []
-		for id in _sim.living_ids(team):
-			var row: Dictionary = _sim.entities[id]
-			if bool(row.get("is_builder", false)) or bool(row.get("ai_in_wave", false)):
-				continue
-			if int(row["target_id"]) != 0:
-				continue
-			mustering.append(id)
-		# A stalled economy must not hold the last understrength group at the
-		# muster point forever — after the patience window it attacks anyway.
-		var patience := int(_sim._rules.get("ai_wave_patience_ticks", 1200)) * int(profile.get("wave_patience_permille", 1000)) / 1000
-		var wave_ready := mustering.size() >= wave_size
-		if not wave_ready and not mustering.is_empty() and _sim.tick_index - int(ai_state.get("last_wave_tick", 0)) > patience:
-			wave_ready = true
-		if wave_ready and not mustering.is_empty():
-			ai_state["last_wave_tick"] = _sim.tick_index
-			for id in mustering:
-				(_sim.entities[id] as Dictionary)["ai_in_wave"] = true
+		_ai_run_wave_muster(team, profile, ai_state)
+	_ai_run_wave_targeting(team, profile, hostiles, enemy_fortress)
+
+
+func _ai_run_construction_phase(team: int, ai_state: Dictionary) -> bool:
+	## Construction bootstrap: first farm attempt, viability re-check, abandon.
+	## Returns false when construction is still unresolved (caller stops here).
+	var _sim = sim
+	if _sim.base_loop_enabled and not bool(ai_state.get("construction_attempted", false)):
+		ai_state["construction_attempted"] = true
+		if not start_ai_farm(team, ai_state):
+			ai_state["construction_resolved"] = true
 		else:
-			var muster: Vector2 = _sim._fallback_rally_position(team)
-			var muster_fortress := int(_sim.fortress_id(team))
-			if muster_fortress != 0:
-				muster = Vector2((_sim.structures[muster_fortress] as Dictionary).get("rally", muster))
-			for id in mustering:
-				var row: Dictionary = _sim.entities[id]
-				if (row["route"] as Array).is_empty() and Vector2(row["position"]).distance_to(muster) > 6.0:
-					if _sim._assign_route(row, muster):
-						row["state"] = "run"
+			ai_state["build_order_index"] = 1
+	if _sim.base_loop_enabled and not bool(ai_state.get("construction_resolved", false)) and not ai_construction_is_viable(team):
+		abandon_ai_construction(team)
+		ai_state["construction_resolved"] = true
+	if _sim.base_loop_enabled and not bool(ai_state.get("construction_resolved", false)):
+		return false
+	return true
+
+
+func _ai_run_production_window(team: int, profile: Dictionary, ai_state: Dictionary) -> void:
+	var _sim = sim
+	var queue_interval := maxi(15, int(_sim._rules.get("ai_queue_interval_ticks", 60)) * int(profile.get("queue_interval_permille", 1000)) / 1000)
+	if not (_sim.base_loop_enabled and _sim.tick_index % queue_interval == 0):
+		return
+	# The manifest plan runs EVERY window — it is the proven baseline the
+	# whole battery is pinned to, and it must never get weaker.
+	var plan: Array = _sim.ai_production_plan_for_team(team)
+	if plan.is_empty():
+		# Q80: no AI_PRODUCTION_PLAN constant fallback — an empty
+		# manifest plan means this AI queues nothing, honestly.
+		plan = _sim._ai_production_plan
+	var team_rules: Dictionary = _sim.unit_production_rules_for_team(team)
+	for unit_type in plan:
+		var production_rule: Dictionary = team_rules.get(unit_type, {})
+		if production_rule.is_empty():
+			continue
+		var producer := int(_sim.producer_id(team, String(production_rule.get("producer_kind", ""))))
+		if producer != 0:
+			_sim.queue_unit(team, producer, unit_type)
+	# Q83b (OPT-IN via use_authored_skirmish_ai): retail's authored
+	# ArmyDefinition composition fills whatever headroom the baseline
+	# left — deficit-first picks that count living AND queued units. The
+	# authored layer strictly ADDS strength on top of the baseline; the
+	# proven plan above is untouched. Full replacement (baseline off)
+	# stays future work once economy/CP semantics reach retail scale.
+	if bool(_sim.skirmish_ai_configured) and bool(_sim._rules.get("use_authored_skirmish_ai", false)):
+		_ai_run_authored_production(team, ai_state, team_rules)
+
+
+func _ai_run_authored_production(team: int, ai_state: Dictionary, team_rules: Dictionary) -> void:
+	var _sim = sim
+	# HeroBuildOrder first, like retail: the next authored hero not yet
+	# fielded gets a queue attempt each window; when the treasury can't
+	# pay, queue_unit refuses and the hero simply waits for gold.
+	var hero_choice: Dictionary = _sim._skirmish_ai_subsystem().authored_hero_choice(team)
+	if bool(hero_choice.get("ok", false)):
+		var hero_rule: Dictionary = _sim.unit_production_rules_for_team(team).get(String(hero_choice["unit_type"]), {})
+		var hero_producer := int(_sim.producer_id(team, String(hero_rule.get("producer_kind", ""))))
+		if hero_producer != 0:
+			_sim.queue_unit(team, hero_producer, String(hero_choice["unit_type"]))
+	var choices: Array = _sim._skirmish_ai_subsystem().authored_ai_queue_choices(team)
+	var first: Dictionary = {} if choices.is_empty() else choices[0] as Dictionary
+	if bool(first.get("ok", false)):
+		for choice_value in choices:
+			var choice := choice_value as Dictionary
+			var choice_rule: Dictionary = team_rules.get(String(choice.get("unit_type", "")), {})
+			if choice_rule.is_empty():
+				continue
+			var choice_producer := int(_sim.producer_id(team, String(choice_rule.get("producer_kind", ""))))
+			if choice_producer == 0:
+				continue
+			# Refusals (cost/command points/producer busy) skip THIS
+			# pick and still try the rest; a cheaper pick may fit.
+			_sim.queue_unit(team, choice_producer, String(choice["unit_type"]))
+	elif not bool(ai_state.get("authored_queue_refusal_reported", false)):
+		# A side the authored document cannot serve keeps the baseline
+		# alone — LOUDLY, once per team, never silently.
+		ai_state["authored_queue_refusal_reported"] = true
+		push_warning(
+			"skirmish-ai team %d runs the baseline plan only: %s"
+			% [team, String(first.get("reason", ""))]
+		)
+	# EconomyUpgradeProbability (Q83c): each window the authored
+	# 'a : b' pair rolls on the deterministic stream exactly like the
+	# special-power gate (fail when the draw exceeds a); a successful
+	# roll buys ONE income-structure level step with leftover gold —
+	# units queued above keep treasury priority, like retail. The RNG
+	# draw happens every window regardless of economy state so the
+	# stream never depends on treasury contents.
+	var economy_odds: Array = _sim._skirmish_ai_subsystem().authored_difficulty_odds(team, "EconomyUpgradeProbability")
+	if economy_odds.size() == 2 and float(economy_odds[1]) > 0.0:
+		if _sim.logic_random_int(1, int(economy_odds[1])) <= int(economy_odds[0]):
+			var economy_choice: Dictionary = _sim._skirmish_ai_subsystem().authored_economy_upgrade_choice(team)
+			if bool(economy_choice.get("ok", false)):
+				_sim.queue_structure_upgrade(team, int(economy_choice["structure_id"]), String(economy_choice["upgrade_id"]))
+
+
+func _ai_run_wave_muster(team: int, profile: Dictionary, ai_state: Dictionary) -> void:
+	## Fresh units mass into a wave at the fortress muster point and strike
+	## together instead of trickling one battalion at a time.
+	var _sim = sim
+	var wave_size := maxi(2, int(_sim._rules.get("ai_wave_size", 4)) + int(profile.get("wave_size_delta", 0)))
+	var mustering: Array[int] = []
+	for id in _sim.living_ids(team):
+		var row: Dictionary = _sim.entities[id]
+		if bool(row.get("is_builder", false)) or bool(row.get("ai_in_wave", false)):
+			continue
+		if int(row["target_id"]) != 0:
+			continue
+		mustering.append(id)
+	# A stalled economy must not hold the last understrength group at the
+	# muster point forever — after the patience window it attacks anyway.
+	var patience := int(_sim._rules.get("ai_wave_patience_ticks", 1200)) * int(profile.get("wave_patience_permille", 1000)) / 1000
+	var wave_ready := mustering.size() >= wave_size
+	if not wave_ready and not mustering.is_empty() and _sim.tick_index - int(ai_state.get("last_wave_tick", 0)) > patience:
+		wave_ready = true
+	if wave_ready and not mustering.is_empty():
+		ai_state["last_wave_tick"] = _sim.tick_index
+		for id in mustering:
+			(_sim.entities[id] as Dictionary)["ai_in_wave"] = true
+	else:
+		var muster: Vector2 = _sim._fallback_rally_position(team)
+		var muster_fortress := int(_sim.fortress_id(team))
+		if muster_fortress != 0:
+			muster = Vector2((_sim.structures[muster_fortress] as Dictionary).get("rally", muster))
+		for id in mustering:
+			var row: Dictionary = _sim.entities[id]
+			if (row["route"] as Array).is_empty() and Vector2(row["position"]).distance_to(muster) > 6.0:
+				if _sim._assign_route(row, muster):
+					row["state"] = "run"
+
+
+func _ai_run_wave_targeting(team: int, profile: Dictionary, hostiles: Array, enemy_fortress: int) -> void:
+	var _sim = sim
 	for id in _sim.living_ids(team):
 		var row: Dictionary = _sim.entities[id]
 		# Builders construct; they are not combat battalions and have no weapon.
