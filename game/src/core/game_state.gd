@@ -68,6 +68,9 @@ var retail_map_id: String = ""
 ## retail_player_faction / retail_enemy_faction pair, so that path stays
 ## byte-identical. OPENBFME_SLICE_FACTION still overrides everything.
 var retail_team_setup: Array = []
+## LOAD GAME handoff (Q84): a save file path the freshly booted slice restores
+## from exactly once, then clears. Empty = a normal fresh match.
+var retail_pending_restore_path: String = ""
 ## The human row's picked Create-a-Hero document(s) from the skirmish setup —
 ## retail fields exactly one created hero per player (the picked one). Null when
 ## the launch did not go through the setup; the slice then falls back to the

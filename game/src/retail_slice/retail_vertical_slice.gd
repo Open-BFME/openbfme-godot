@@ -752,6 +752,8 @@ func _initialize_content_and_match() -> void:
 		and audio_system.has_complete_roster_audio_closure()
 		and hud.retail_train_commands_bound
 	)
+	if ready_ok:
+		_consume_pending_restore()
 	if not ready_ok:
 		var failed_capabilities: Array[String] = []
 		if battalion_nodes.size() != simulation.initial_battalion_count():
@@ -6036,6 +6038,108 @@ func _configure_simulation_spellbook(sim = null) -> void:
 	sim.configure_spellbook_runtime(_faction_spellbook_document())
 
 
+const SaveGamesScript = preload("res://src/retail_slice/retail_save_games.gd")
+var _pending_restore_consumed := false
+
+
+func launch_facts() -> Dictionary:
+	## The shell handoff facts this match booted from — exactly what a save
+	## must carry for the load path to reboot the same match (Q84).
+	var state = get_node_or_null("/root/GameState")
+	var facts := {
+		"pack_root": String(selected_pack_root),
+		"player_faction": "",
+		"map_id": "",
+		"game_state": {},
+	}
+	if state == null:
+		return facts
+	# Every launch key the skirmish setup writes, captured VERBATIM so the load
+	# path replays the exact configuration (restore() replaces state, not the
+	# rules the boot compiled from these).
+	var replayed: Dictionary = {}
+	for key in [
+		"retail_player_faction", "retail_enemy_faction", "retail_map_id",
+		"retail_initial_resources", "retail_command_point_factor",
+		"retail_build_plots_only", "retail_allow_ring_heroes",
+		"retail_logic_random_seed", "retail_team_setup",
+		"retail_picked_created_hero_documents", "retail_player_start_index",
+	]:
+		var value: Variant = state.get(key)
+		if value == null:
+			continue
+		if typeof(value) == TYPE_ARRAY:
+			replayed[key] = (value as Array).duplicate(true)
+		elif typeof(value) == TYPE_DICTIONARY:
+			replayed[key] = (value as Dictionary).duplicate(true)
+		else:
+			replayed[key] = value
+	facts["game_state"] = replayed
+	facts["player_faction"] = String(replayed.get("retail_player_faction", ""))
+	facts["map_id"] = String(replayed.get("retail_map_id", ""))
+	return facts
+
+
+func save_match(save_name := "") -> Dictionary:
+	## Write the current match to user://saves. Named refusals, never partial.
+	if simulation == null or not ready_ok:
+		return {"ok": false, "reason": "the match is not ready to save"}
+	if _mp_mode != "":
+		# A lockstep save needs every peer to agree on the file's tick; that
+		# coordination does not exist yet, so multiplayer refuses by name.
+		return {"ok": false, "reason": "multiplayer matches cannot be saved yet"}
+	var effective_name := save_name
+	if effective_name.strip_edges() == "":
+		effective_name = "%s_%s_tick%d" % [
+			String(launch_facts()["player_faction"]),
+			String(launch_facts()["map_id"]).get_file(),
+			int(simulation.tick_index),
+		]
+	return SaveGamesScript.write_save(effective_name, launch_facts(), simulation)
+
+
+func _on_save_requested() -> void:
+	var receipt := save_match()
+	if bool(receipt.get("ok", false)):
+		hud.set_feedback("Saved: %s" % String(receipt.get("path", "")).get_file())
+	else:
+		hud.set_feedback("Save refused: %s" % String(receipt.get("reason", "")))
+
+
+func _consume_pending_restore() -> void:
+	## The LOAD GAME path boots a fresh match, then restores the saved
+	## authoritative snapshot exactly once when the boot is ready. Presentation
+	## needs no special handling: _sync_presentation reconciles nodes from
+	## authoritative ids every frame (the same contract production and deaths
+	## already rely on).
+	if _pending_restore_consumed:
+		return
+	_pending_restore_consumed = true
+	var state = get_node_or_null("/root/GameState")
+	if state == null:
+		return
+	var path := String(state.get("retail_pending_restore_path"))
+	if path == "":
+		return
+	state.set("retail_pending_restore_path", "")
+	var payload: Dictionary = SaveGamesScript.read_snapshot(path)
+	if not bool(payload.get("ok", false)):
+		push_error("load-game restore refused: %s" % String(payload.get("reason", "")))
+		hud.set_feedback("Load refused: %s" % String(payload.get("reason", "")))
+		return
+	var saved_pack := String((payload.get("header", {}) as Dictionary).get("packRoot", ""))
+	if saved_pack != "" and saved_pack != String(selected_pack_root):
+		# A snapshot only replays against the pack whose rules produced it.
+		push_error("load-game restore refused: save is from pack %s, mounted pack is %s" % [saved_pack, selected_pack_root])
+		hud.set_feedback("Load refused: this save belongs to another content pack")
+		return
+	if not bool(simulation.restore(payload["bytes"] as PackedByteArray)):
+		push_error("load-game restore refused: the snapshot did not restore")
+		hud.set_feedback("Load refused: the snapshot did not restore")
+		return
+	hud.set_feedback("Loaded save at tick %d." % int(simulation.tick_index))
+
+
 func _configure_simulation_skirmish_ai(sim = null) -> void:
 	## Retail's authored skirmish-AI facts (openbfme.skirmish-ai) travel from the
 	## selected pack into the sim's interpreter. A pack without the document is a
@@ -8105,6 +8209,7 @@ func _build_hud() -> void:
 		get_tree().paused = false
 		get_tree().change_scene_to_file("res://scenes/boot.tscn"))
 	hud.quit_requested.connect(func() -> void: get_tree().quit())
+	hud.save_requested.connect(_on_save_requested)
 	hud.group_assign_requested.connect(_assign_group)
 	hud.group_recall_requested.connect(_recall_group)
 	hud.train_requested.connect(_queue_selected_producer)

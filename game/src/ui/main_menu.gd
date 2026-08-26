@@ -188,8 +188,8 @@ const SOLO_TAIL_ITEMS: Array = [
 		"tooltip": "No campaign missions have been converted"},
 	{"id": "good_campaign", "label": "GOOD CAMPAIGN", "enabled": false,
 		"tooltip": "No campaign missions have been converted"},
-	{"id": "load_game", "label": "LOAD GAME", "enabled": false,
-		"tooltip": "Saved games exist in the simulation but no load browser is wired into the shell yet"},
+	{"id": "load_game", "label": "LOAD GAME", "enabled": true,
+		"tooltip": "Resume a saved skirmish"},
 ]
 const OPTIONS_FLYOUT_ITEMS: Array = [
 	{"id": "settings", "label": "SETTINGS", "enabled": true,
@@ -1276,6 +1276,9 @@ func _on_shell_flyout_item(item_id: String, bar_id: String) -> void:
 		["solo", "wotr"]:
 			_close_shell_flyouts()
 			_on_wotr_pressed()
+		["solo", "load_game"]:
+			_close_shell_flyouts()
+			_show_load_game_browser()
 		["options", "settings"]:
 			_close_shell_flyouts()
 			_on_options()
@@ -4800,3 +4803,74 @@ func toggle_fullscreen() -> String:
 	print("[MainMenu] F11: window mode %s -> %s (persisted; startup_boot applies it next launch)" % [
 		current, wanted])
 	return wanted
+
+
+## ---------------------------------------------------------------------------
+## LOAD GAME browser (Q84). Saves are written by the slice's pause panel into
+## user://saves; this lists them and reboots the saved match: the launch keys
+## replay onto GameState verbatim, the slice restores the snapshot when ready.
+## Fetched at runtime, not preloaded - see the preload rule at the top.
+
+var _load_game_dialog: AcceptDialog = null
+var _load_game_list: ItemList = null
+var _load_game_rows: Array = []
+
+
+func _show_load_game_browser() -> void:
+	if _load_game_dialog == null:
+		_load_game_dialog = AcceptDialog.new()
+		_load_game_dialog.title = "LOAD GAME"
+		_load_game_dialog.ok_button_text = "Load"
+		_load_game_dialog.add_cancel_button("Cancel")
+		_load_game_dialog.min_size = Vector2i(560, 420)
+		_load_game_list = ItemList.new()
+		_load_game_list.custom_minimum_size = Vector2(540, 340)
+		_load_game_list.item_activated.connect(func(_index: int) -> void:
+			_load_game_dialog.hide()
+			_launch_selected_save())
+		_load_game_dialog.add_child(_load_game_list)
+		_load_game_dialog.confirmed.connect(_launch_selected_save)
+		add_child(_load_game_dialog)
+	var save_games = load("res://src/retail_slice/retail_save_games.gd")
+	_load_game_rows = save_games.list_saves()
+	_load_game_list.clear()
+	if _load_game_rows.is_empty():
+		_load_game_list.add_item("No saved games yet - save from the in-match pause menu.")
+		_load_game_list.set_item_disabled(0, true)
+	else:
+		for row_value in _load_game_rows:
+			var row := row_value as Dictionary
+			if bool(row.get("loadable", false)):
+				var when := Time.get_datetime_string_from_unix_time(int(row.get("savedAtUnixMs", 0)) / 1000)
+				_load_game_list.add_item("%s | %s on %s | tick %d | %s" % [
+					String(row.get("name", row.get("fileName", "?"))),
+					String(row.get("playerFaction", "?")),
+					String(row.get("mapId", "?")).get_file(),
+					int(row.get("tick", 0)), when,
+				])
+			else:
+				var index := _load_game_list.add_item("%s | UNLOADABLE: %s" % [
+					String(row.get("fileName", "?")), String(row.get("reason", ""))])
+				_load_game_list.set_item_disabled(index, true)
+	_load_game_dialog.popup_centered()
+
+
+func _launch_selected_save() -> void:
+	var selected := _load_game_list.get_selected_items()
+	if selected.is_empty() or _load_game_rows.is_empty():
+		return
+	var row := _load_game_rows[selected[0]] as Dictionary
+	if not bool(row.get("loadable", false)):
+		return
+	if _launch_in_progress:
+		return
+	var replayed := row.get("gameState", {}) as Dictionary
+	if replayed.is_empty():
+		push_warning("load-game: save %s carries no launch keys; refusing" % String(row.get("path", "")))
+		return
+	_game_state.set("retail_mp_mode", "")
+	for key in replayed:
+		_game_state.set(String(key), replayed[key])
+	_game_state.set("retail_pending_restore_path", String(row.get("path", "")))
+	_launch_in_progress = true
+	get_tree().change_scene_to_file("res://scenes/retail_loading_boot.tscn")

@@ -7,6 +7,7 @@ signal pause_requested
 signal restart_requested
 signal main_menu_requested
 signal quit_requested
+signal save_requested
 signal group_recall_requested(group: int)
 signal group_assign_requested(group: int)
 signal train_requested(unit_id: String)
@@ -5194,6 +5195,7 @@ func _build_pause_panel() -> void:
 		# same OPENBFME_DEV_HUD gate as the console it sits next to.
 		_add_action_button(column, "Playtest Tools", func() -> void: show_playtest(true))
 	_add_action_button(column, "Resume", func() -> void: pause_requested.emit())
+	_add_action_button(column, "Save Game", func() -> void: save_requested.emit())
 	_add_action_button(column, "Restart Battle", func() -> void: restart_requested.emit())
 	_add_action_button(column, "Return to Main Menu", func() -> void: main_menu_requested.emit())
 	_add_action_button(column, "Quit", func() -> void: quit_requested.emit())
