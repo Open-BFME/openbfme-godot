@@ -1,14 +1,8 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Construction and sell carved out of retail_slice_sim.gd (drawer 20): structure sell/rally, command slots, construct validation and placement, per-tick construction stepping.
 ## State stays on the sim; the sim keeps one-line delegates under the original names.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 func structure_sell_command(structure_id: int) -> Dictionary:
 	## Compiled Command_Sell row for this structure, or {} if the mounted docs

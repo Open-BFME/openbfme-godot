@@ -1,14 +1,8 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Setup-time configuration compiler carved out of retail_slice_sim.gd (drawer 17): faction manifest admission, armor/damage-scalar/weapon-upgrade/banner/castle-behavior compilation, playable unit runtime contracts, ranger/trebuchet contracts, structure upgrade chains and research contracts.
 ## State stays on the sim; the sim keeps one-line delegates under the original names.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 func _configure_faction_manifest() -> bool:
 	## Every faction-scoped table flows through the manifest. The 8 core

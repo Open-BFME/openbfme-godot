@@ -7,7 +7,7 @@ extends SceneTree
 ## exact selected Men pack and derives every combat-facing fixture constant from
 ## its compiled playable-unit documents:
 ##
-##   rotwk-men-vslice/13e31f6b964d1d5453e2cd0031f4b9d663a002363e1e61074f6f0b5c1b0b75f4/
+##   rotwk-men-vslice/3087b869a7e8b5183f32b0de75137c5c4ac43e7be676ae1fe2ac0eb22c55b0f6/
 ##     data/playable-units/gondorarcherhorde.json
 ##       objectId GondorArcherHorde; primary member GondorArcher; attack range
 ##       300; pre-attack 1000 ms; projectile GondorArcherArrow at 321 units/s;
@@ -50,7 +50,7 @@ static func _fixture_manifest() -> Dictionary:
 	manifest["spawn_roster"] = []
 	return manifest
 
-const SELECTED_MEN_PACK := "rotwk-men-vslice/13e31f6b964d1d5453e2cd0031f4b9d663a002363e1e61074f6f0b5c1b0b75f4"
+const SELECTED_MEN_PACK := "rotwk-men-vslice/3087b869a7e8b5183f32b0de75137c5c4ac43e7be676ae1fe2ac0eb22c55b0f6"
 const ARCHER_SOURCE_ID := "GondorArcherHorde"
 const TREBUCHET_SOURCE_ID := "GondorTrebuchet"
 const TARGET_SOURCE_ID := "GondorFighterHorde"

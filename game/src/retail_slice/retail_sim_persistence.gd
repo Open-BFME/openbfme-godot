@@ -1,17 +1,11 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Persistence core extracted from retail_slice_sim.gd (Q81 strangler-fig
 ## extraction #6): authoritative state assembly, canonical hashing,
 ## snapshot/restore. Verbatim move, compiler-guided sim. prefixes,
 ## pin-verified byte-identical.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 
 func state_signature() -> String:

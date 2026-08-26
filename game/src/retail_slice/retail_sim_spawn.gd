@@ -1,14 +1,8 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Match seeding carved out of retail_slice_sim.gd (drawer 21): base-loop initialization, home layouts, spawn anchors, battalion creation.
 ## State stays on the sim; the sim keeps one-line delegates under the original names.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 func _initialize_base_loop() -> void:
 	sim.structures.clear()

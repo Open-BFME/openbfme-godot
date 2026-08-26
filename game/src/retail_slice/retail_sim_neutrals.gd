@@ -1,14 +1,8 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Map seeding carved out of retail_slice_sim.gd (drawer 19): scenario map placements, capturable neutrals, capture-flag linking, castle fixtures and their garrisons.
 ## State stays on the sim; the sim keeps one-line delegates under the original names.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 func _seed_scenario_map_placements() -> void:
 	## Resolve every authored map type against the selected registries. Unknown

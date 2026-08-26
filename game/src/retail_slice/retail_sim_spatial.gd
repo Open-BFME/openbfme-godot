@@ -1,14 +1,8 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Spatial index carved out of retail_slice_sim.gd (drawer 21): cell hashing, rebuild/sync, hostile gathering, nearest-hostile ring search, structure spatial index.
 ## State stays on the sim; the sim keeps one-line delegates under the original names.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 func _spatial_axis_cell(value: float) -> int:
 	return clampi(floori(value / sim.SPATIAL_CELL_SIZE), -sim.SPATIAL_CELL_LIMIT, sim.SPATIAL_CELL_LIMIT)

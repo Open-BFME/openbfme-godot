@@ -1,4 +1,4 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Experience/veterancy subsystem extracted from retail_slice_sim.gd (Q81
 ## strangler-fig extraction #3). Pure code move: XP state lives on entity
 ## rows and sim._unit_experience_rules stays on the sim; this class is stateless
@@ -15,14 +15,8 @@ extends RefCounted
 # sim (which holds this subsystem), leaking freed sims as zombies — the
 # script_wiring orphan-refusal contracts catch exactly that. The getter
 # keeps plain `sim.` syntax working everywhere below.
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 
 func attach_experience_state(row: Dictionary) -> void:

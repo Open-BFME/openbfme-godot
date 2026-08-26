@@ -1,4 +1,4 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Damage-resolution core extracted from retail_slice_sim.gd (Q81
 ## strangler-fig extraction #5). Verbatim move: function names unchanged;
 ## sim state/services reached through the weak back-reference (compiler-
@@ -6,14 +6,8 @@ extends RefCounted
 
 # Weak back-reference: a strong ref would form a RefCounted cycle with the
 # sim (which holds this subsystem), leaking freed sims as zombies.
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 
 func _apply_damage(attacker_id: int, target_id: int, amount: int, target_kind: String = "battalion", death_type: String = "NORMAL", damage_type_override: String = "") -> void:

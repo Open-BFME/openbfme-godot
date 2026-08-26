@@ -1,14 +1,8 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Fog of war carved out of retail_slice_sim.gd (drawer 19): shroud grid stepping, clearing radii, vision-driven fog refresh.
 ## State stays on the sim; the sim keeps one-line delegates under the original names.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 func fog_of_war():
 	## The retail shroud grid for this match. Always returns a model - a match

@@ -1,14 +1,8 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Transport/container/garrison/ship subsystem carved out of retail_slice_sim.gd (drawer 14).
 ## State stays on the sim; the sim keeps one-line delegates under the original names.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 func _attach_siege_engine_contain_contract(row: Dictionary, contract: Dictionary) -> void:
 	if String(contract.get("extraction", "")) != "typed" or row.has("horde_transport"):

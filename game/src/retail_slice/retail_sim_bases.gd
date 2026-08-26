@@ -1,17 +1,11 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Base-building subsystem extracted from retail_slice_sim.gd (Q81
 ## strangler-fig extraction #12): structure weapons, construct-site
 ## validation, expansion pads, build plots, castle behavior unpack,
 ## unpackable bases. Verbatim move, pin-verified.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 
 func _step_structure_weapons() -> void:

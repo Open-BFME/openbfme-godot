@@ -1,14 +1,8 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Movement collision carved out of retail_slice_sim.gd (drawer 20): structure footprints, castle pass-through, gate discs, deflection and tangential slides, eviction, reform/turn-rate/heading, route stepping, crush/trample, knockback recovery.
 ## State stays on the sim; the sim keeps one-line delegates under the original names.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 func _structure_footprint_radius(structure_row: Dictionary) -> float:
 	## The structure's BOUNDING-CIRCLE radius in sim units — SAGE's

@@ -1,14 +1,8 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Order API carved out of retail_slice_sim.gd (drawer 21): move/attack/stop/stance/formation orders, group speed caps, formation toggles and modifiers.
 ## State stays on the sim; the sim keeps one-line delegates under the original names.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 func issue_move(ids: Array[int], destination: Vector2, ack_kind: String = "order.move", team: int = sim.PLAYER_TEAM) -> int:
 	var accepted_ids: Array[int] = []

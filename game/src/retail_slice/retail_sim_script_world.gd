@@ -1,14 +1,8 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Map-script world subsystem carved out of retail_slice_sim.gd (drawer 15): named-object namespace, building permissions, script teams/references, sequential scripts, executors, entity flags/status, diplomacy, logic random, object-type queries.
 ## State stays on the sim; the sim keeps one-line delegates under the original names.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 func configure_map_named_object_namespace(names: Array) -> void:
 	## Declare the installed map's complete named-object table. Sorted before

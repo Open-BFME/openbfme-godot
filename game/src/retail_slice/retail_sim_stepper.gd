@@ -1,14 +1,8 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Per-entity state machine carved out of retail_slice_sim.gd (drawer 20): the _step_entity tick core (movement, orders, engagement, recovery phases).
 ## State stays on the sim; the sim keeps one-line delegates under the original names.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 func _step_entity(id: int) -> void:
 	var row: Dictionary = sim.entities[id]

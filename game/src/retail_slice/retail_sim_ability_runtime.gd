@@ -1,14 +1,8 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Hero-ability runtime carved out of retail_slice_sim.gd (drawer 18): cast_ability dispatch, activate-module graphs, special-power validation, deploy/disguise/dominate/grab/volley/capture channels, timed modifiers, leadership auras, per-tick hero ability stepper.
 ## State stays on the sim; the sim keeps one-line delegates under the original names.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 func ability_rules_for_unit(unit_type: String) -> Array:
 	return (sim._unit_ability_rules.get(unit_type, []) as Array).duplicate(true)

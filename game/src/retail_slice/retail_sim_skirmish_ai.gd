@@ -1,4 +1,4 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Skirmish-AI interpreter (Q83 phase 2): compiles the raw authored
 ## `openbfme.skirmish-ai` document (retail aidata.ini + skirmishaidata.ini,
 ## fact-for-fact with provenance) into typed per-side runtime plans the sim's
@@ -8,13 +8,7 @@ extends RefCounted
 ## State stays on the sim (sim.skirmish_ai_*); this module holds logic only.
 ## configure refuses loudly by name and configures NOTHING on refusal.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 
 func configure_skirmish_ai(document: Dictionary) -> Dictionary:

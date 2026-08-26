@@ -37,8 +37,36 @@ var _team_spellbooks: Dictionary = {}
 var clock_paused := false
 
 const UpgradesSystemScript = preload("res://src/retail_slice/retail_sim_upgrades.gd")
+const PowerCastsSystemScript = preload("res://src/retail_slice/retail_sim_power_casts.gd")
+var _power_casts_system = null
+func _power_casts_subsystem():
+	if _power_casts_system == null:
+		_power_casts_system = PowerCastsSystemScript.new(self)
+	return _power_casts_system
+
+const SpellbookCompileSystemScript = preload("res://src/retail_slice/retail_sim_spellbook_compile.gd")
+var _spellbook_compile_system = null
+func _spellbook_compile_subsystem():
+	if _spellbook_compile_system == null:
+		_spellbook_compile_system = SpellbookCompileSystemScript.new(self)
+	return _spellbook_compile_system
+
 const PowersSystemScript = preload("res://src/retail_slice/retail_sim_powers.gd")
 const BasesSystemScript = preload("res://src/retail_slice/retail_sim_bases.gd")
+const ContractsBehaviorsSystemScript = preload("res://src/retail_slice/retail_sim_contracts_behaviors.gd")
+var _contracts_behaviors_system = null
+func _contracts_behaviors_subsystem():
+	if _contracts_behaviors_system == null:
+		_contracts_behaviors_system = ContractsBehaviorsSystemScript.new(self)
+	return _contracts_behaviors_system
+
+const ContractsAbilitiesSystemScript = preload("res://src/retail_slice/retail_sim_contracts_abilities.gd")
+var _contracts_abilities_system = null
+func _contracts_abilities_subsystem():
+	if _contracts_abilities_system == null:
+		_contracts_abilities_system = ContractsAbilitiesSystemScript.new(self)
+	return _contracts_abilities_system
+
 const ContractsSystemScript = preload("res://src/retail_slice/retail_sim_module_contracts.gd")
 const FogOfWarScript = preload("res://src/retail_slice/retail_fog_of_war.gd")
 const CommandScript = preload("res://src/retail_slice/retail_command.gd")
@@ -2606,114 +2634,114 @@ var _summon_aura_source_ids: Dictionary = {}
 
 
 func _spellbook_effect_support(power_row: Dictionary, fields: Array, references: Dictionary, modifier_leaves: Dictionary, object_leaves: Dictionary, ocl_leaves: Dictionary, weapon_leaves: Dictionary) -> Dictionary:
-	return _powers_subsystem()._spellbook_effect_support(power_row, fields, references, modifier_leaves, object_leaves, ocl_leaves, weapon_leaves)
+	return _spellbook_compile_subsystem()._spellbook_effect_support(power_row, fields, references, modifier_leaves, object_leaves, ocl_leaves, weapon_leaves)
 
 
 func _spellbook_field_float(fields: Dictionary, key: String, fallback: float) -> float:
-	return _powers_subsystem()._spellbook_field_float(fields, key, fallback)
+	return _spellbook_compile_subsystem()._spellbook_field_float(fields, key, fallback)
 
 
 func _parse_modifier_row(value: String) -> Dictionary:
-	return _powers_subsystem()._parse_modifier_row(value)
+	return _spellbook_compile_subsystem()._parse_modifier_row(value)
 
 
 func _spellbook_ocl_support(power_row: Dictionary, references: Dictionary, modifier_leaves: Dictionary, object_leaves: Dictionary, ocl_leaves: Dictionary, weapon_leaves: Dictionary, create_location: String = "", secondary_object_filter: String = "") -> Dictionary:
-	return _powers_subsystem()._spellbook_ocl_support(power_row, references, modifier_leaves, object_leaves, ocl_leaves, weapon_leaves, create_location, secondary_object_filter)
+	return _spellbook_compile_subsystem()._spellbook_ocl_support(power_row, references, modifier_leaves, object_leaves, ocl_leaves, weapon_leaves, create_location, secondary_object_filter)
 
 
 func _spellbook_has_unconverted_hatch_payload(leaf: Dictionary, object_leaves: Dictionary, ocl_leaves: Dictionary) -> bool:
-	return _powers_subsystem()._spellbook_has_unconverted_hatch_payload(leaf, object_leaves, ocl_leaves)
+	return _spellbook_compile_subsystem()._spellbook_has_unconverted_hatch_payload(leaf, object_leaves, ocl_leaves)
 
 
 func _spellbook_hatch_payload_leaves(leaf: Dictionary, object_leaves: Dictionary, ocl_leaves: Dictionary) -> Array:
-	return _powers_subsystem()._spellbook_hatch_payload_leaves(leaf, object_leaves, ocl_leaves)
+	return _spellbook_compile_subsystem()._spellbook_hatch_payload_leaves(leaf, object_leaves, ocl_leaves)
 
 
 func _spellbook_ocl_named_gap(spawns: Array, object_leaves: Dictionary, ocl_leaves: Dictionary, create_location: String, secondary_object_filter: String) -> Dictionary:
-	return _powers_subsystem()._spellbook_ocl_named_gap(spawns, object_leaves, ocl_leaves, create_location, secondary_object_filter)
+	return _spellbook_compile_subsystem()._spellbook_ocl_named_gap(spawns, object_leaves, ocl_leaves, create_location, secondary_object_filter)
 
 
 var _weather_effects: Array[Dictionary] = []
 
 
 func _spellbook_weather_modifier_support(field_values: Dictionary, field_resolved: Dictionary, modifier_leaves: Dictionary) -> Dictionary:
-	return _powers_subsystem()._spellbook_weather_modifier_support(field_values, field_resolved, modifier_leaves)
+	return _spellbook_compile_subsystem()._spellbook_weather_modifier_support(field_values, field_resolved, modifier_leaves)
 
 
 func _spellbook_weather_anticategory_support(field_values: Dictionary, field_resolved: Dictionary) -> Dictionary:
-	return _powers_subsystem()._spellbook_weather_anticategory_support(field_values, field_resolved)
+	return _spellbook_compile_subsystem()._spellbook_weather_anticategory_support(field_values, field_resolved)
 
 
 func _spellbook_untamed_allegiance_support(field_values: Dictionary, field_resolved: Dictionary) -> Dictionary:
-	return _powers_subsystem()._spellbook_untamed_allegiance_support(field_values, field_resolved)
+	return _spellbook_compile_subsystem()._spellbook_untamed_allegiance_support(field_values, field_resolved)
 
 
 func _spellbook_fire_weapon_support(spawns: Array, weapon_leaves: Dictionary) -> Dictionary:
-	return _powers_subsystem()._spellbook_fire_weapon_support(spawns, weapon_leaves)
+	return _spellbook_compile_subsystem()._spellbook_fire_weapon_support(spawns, weapon_leaves)
 
 
 func _spellbook_weapon_damage_nuggets(weapon: Dictionary, weapon_leaves: Dictionary) -> Array:
-	return _powers_subsystem()._spellbook_weapon_damage_nuggets(weapon, weapon_leaves)
+	return _spellbook_compile_subsystem()._spellbook_weapon_damage_nuggets(weapon, weapon_leaves)
 
 
 func _spellbook_weapon_field(weapon: Dictionary, key: String) -> float:
-	return _powers_subsystem()._spellbook_weapon_field(weapon, key)
+	return _spellbook_compile_subsystem()._spellbook_weapon_field(weapon, key)
 
 
 func _spellbook_structure_summon_support(spawn: Dictionary, weapon_leaves: Dictionary) -> Dictionary:
-	return _powers_subsystem()._spellbook_structure_summon_support(spawn, weapon_leaves)
+	return _spellbook_compile_subsystem()._spellbook_structure_summon_support(spawn, weapon_leaves)
 
 
 func _spellbook_direct_summon_support(spawns: Array, modifier_leaves: Dictionary, object_leaves: Dictionary, weapon_leaves: Dictionary) -> Dictionary:
-	return _powers_subsystem()._spellbook_direct_summon_support(spawns, modifier_leaves, object_leaves, weapon_leaves)
+	return _spellbook_compile_subsystem()._spellbook_direct_summon_support(spawns, modifier_leaves, object_leaves, weapon_leaves)
 
 
 func _spellbook_create_pick_count(create: Dictionary, multiplier: int = 1) -> int:
-	return _powers_subsystem()._spellbook_create_pick_count(create, multiplier)
+	return _spellbook_compile_subsystem()._spellbook_create_pick_count(create, multiplier)
 
 
 func _spellbook_create_enabled(create: Dictionary, owned_upgrades: Dictionary = {}) -> bool:
-	return _powers_subsystem()._spellbook_create_enabled(create, owned_upgrades)
+	return _spellbook_compile_subsystem()._spellbook_create_enabled(create, owned_upgrades)
 
 
 func _spellbook_summon_support(spawns: Array, modifier_leaves: Dictionary, object_leaves: Dictionary, ocl_leaves: Dictionary, weapon_leaves: Dictionary) -> Dictionary:
-	return _powers_subsystem()._spellbook_summon_support(spawns, modifier_leaves, object_leaves, ocl_leaves, weapon_leaves)
+	return _spellbook_compile_subsystem()._spellbook_summon_support(spawns, modifier_leaves, object_leaves, ocl_leaves, weapon_leaves)
 
 
 func _spellbook_summon_literal_preview(spawns: Array, object_leaves: Dictionary, ocl_leaves: Dictionary) -> Dictionary:
-	return _powers_subsystem()._spellbook_summon_literal_preview(spawns, object_leaves, ocl_leaves)
+	return _spellbook_compile_subsystem()._spellbook_summon_literal_preview(spawns, object_leaves, ocl_leaves)
 
 
 func _spellbook_summon_rule(target_leaf: Dictionary, modifier_leaves: Dictionary, object_leaves: Dictionary, weapon_leaves: Dictionary) -> Dictionary:
-	return _powers_subsystem()._spellbook_summon_rule(target_leaf, modifier_leaves, object_leaves, weapon_leaves)
+	return _spellbook_compile_subsystem()._spellbook_summon_rule(target_leaf, modifier_leaves, object_leaves, weapon_leaves)
 
 
 func _spellbook_summon_aura_rules(member: Dictionary, modifier_leaves: Dictionary) -> Dictionary:
-	return _powers_subsystem()._spellbook_summon_aura_rules(member, modifier_leaves)
+	return _spellbook_compile_subsystem()._spellbook_summon_aura_rules(member, modifier_leaves)
 
 
 func _spellbook_one_summon_aura_rule(member: Dictionary, aura: Dictionary, modifier_leaves: Dictionary, allow_marker_modifiers: bool = false) -> Dictionary:
-	return _powers_subsystem()._spellbook_one_summon_aura_rule(member, aura, modifier_leaves, allow_marker_modifiers)
+	return _spellbook_compile_subsystem()._spellbook_one_summon_aura_rule(member, aura, modifier_leaves, allow_marker_modifiers)
 
 
 func _spellbook_grove_chain(references: Dictionary, object_leaves: Dictionary, ocl_leaves: Dictionary) -> Dictionary:
-	return _powers_subsystem()._spellbook_grove_chain(references, object_leaves, ocl_leaves)
+	return _spellbook_compile_subsystem()._spellbook_grove_chain(references, object_leaves, ocl_leaves)
 
 
 func _spellbook_grove_support(field_values: Dictionary, field_resolved: Dictionary, references: Dictionary, modifier_leaves: Dictionary, object_leaves: Dictionary, ocl_leaves: Dictionary = {}, object_field: String = "ElvenGroveObject") -> Dictionary:
-	return _powers_subsystem()._spellbook_grove_support(field_values, field_resolved, references, modifier_leaves, object_leaves, ocl_leaves, object_field)
+	return _spellbook_compile_subsystem()._spellbook_grove_support(field_values, field_resolved, references, modifier_leaves, object_leaves, ocl_leaves, object_field)
 
 
 func _spellbook_field_ping_support(spawns: Array, modifier_leaves: Dictionary) -> Dictionary:
-	return _powers_subsystem()._spellbook_field_ping_support(spawns, modifier_leaves)
+	return _spellbook_compile_subsystem()._spellbook_field_ping_support(spawns, modifier_leaves)
 
 
 func _spellbook_ping_invisibility_rules(leaf: Dictionary) -> Dictionary:
-	return _powers_subsystem()._spellbook_ping_invisibility_rules(leaf)
+	return _spellbook_compile_subsystem()._spellbook_ping_invisibility_rules(leaf)
 
 
 func _spellbook_cloudbreak_support(field_values: Dictionary, field_resolved: Dictionary) -> Dictionary:
-	return _powers_subsystem()._spellbook_cloudbreak_support(field_values, field_resolved)
+	return _spellbook_compile_subsystem()._spellbook_cloudbreak_support(field_values, field_resolved)
 
 
 func spellbook_available() -> bool:
@@ -2877,7 +2905,7 @@ func _science_prerequisites_met(team: int, row: Dictionary) -> bool:
 
 
 func _cast_spellbook_scavenger(team: int, effect: Dictionary) -> Dictionary:
-	return _powers_subsystem()._cast_spellbook_scavenger(team, effect)
+	return _power_casts_subsystem()._cast_spellbook_scavenger(team, effect)
 
 
 func _award_scavenger_bounty(attacker_id: int, victim: Dictionary, victim_kind: String) -> int:
@@ -2885,135 +2913,135 @@ func _award_scavenger_bounty(attacker_id: int, victim: Dictionary, victim_kind: 
 
 
 func cast_power(team: int, power_id: String, point: Vector2) -> Dictionary:
-	return _powers_subsystem().cast_power(team, power_id, point)
+	return _power_casts_subsystem().cast_power(team, power_id, point)
 
 
 func cast_heal(team: int, point: Vector2) -> Dictionary:
-	return _powers_subsystem().cast_heal(team, point)
+	return _power_casts_subsystem().cast_heal(team, point)
 
 
 func cast_rally(team: int, point: Vector2) -> Dictionary:
-	return _powers_subsystem().cast_rally(team, point)
+	return _power_casts_subsystem().cast_rally(team, point)
 
 
 func _spellbook_object_kinds(row: Dictionary) -> Array:
-	return _powers_subsystem()._spellbook_object_kinds(row)
+	return _power_casts_subsystem()._spellbook_object_kinds(row)
 
 
 func _spellbook_affects(row: Dictionary, filter_text: String) -> bool:
-	return _powers_subsystem()._spellbook_affects(row, filter_text)
+	return _power_casts_subsystem()._spellbook_affects(row, filter_text)
 
 
 func _spellbook_filter_has_kind_terms(filter_text: String) -> bool:
-	return _powers_subsystem()._spellbook_filter_has_kind_terms(filter_text)
+	return _power_casts_subsystem()._spellbook_filter_has_kind_terms(filter_text)
 
 
 func _cast_spellbook_heal(team: int, effect: Dictionary, point: Vector2) -> Dictionary:
-	return _powers_subsystem()._cast_spellbook_heal(team, effect, point)
+	return _power_casts_subsystem()._cast_spellbook_heal(team, effect, point)
 
 
 func _cast_spellbook_structure_heal(team: int, effect: Dictionary, point: Vector2, radius: float) -> Dictionary:
-	return _powers_subsystem()._cast_spellbook_structure_heal(team, effect, point, radius)
+	return _power_casts_subsystem()._cast_spellbook_structure_heal(team, effect, point, radius)
 
 
 func _cast_spellbook_attribute_modifier(team: int, effect: Dictionary, point: Vector2) -> Dictionary:
-	return _powers_subsystem()._cast_spellbook_attribute_modifier(team, effect, point)
+	return _power_casts_subsystem()._cast_spellbook_attribute_modifier(team, effect, point)
 
 
 func _cast_spellbook_fire_weapon(team: int, effect: Dictionary, point: Vector2) -> Dictionary:
-	return _powers_subsystem()._cast_spellbook_fire_weapon(team, effect, point)
+	return _power_casts_subsystem()._cast_spellbook_fire_weapon(team, effect, point)
 
 
 func _cast_spellbook_summon(team: int, effect: Dictionary, point: Vector2) -> Dictionary:
-	return _powers_subsystem()._cast_spellbook_summon(team, effect, point)
+	return _power_casts_subsystem()._cast_spellbook_summon(team, effect, point)
 
 
 func _terminal_visible_summon_count(targets: Array) -> int:
-	return _powers_subsystem()._terminal_visible_summon_count(targets)
+	return _power_casts_subsystem()._terminal_visible_summon_count(targets)
 
 
 func _spellbook_resolve_summon_targets(target_groups: Array) -> Array:
-	return _powers_subsystem()._spellbook_resolve_summon_targets(target_groups)
+	return _power_casts_subsystem()._spellbook_resolve_summon_targets(target_groups)
 
 
 func _cast_spellbook_structure_summon(team: int, effect: Dictionary, point: Vector2) -> Dictionary:
-	return _powers_subsystem()._cast_spellbook_structure_summon(team, effect, point)
+	return _power_casts_subsystem()._cast_spellbook_structure_summon(team, effect, point)
 
 
 func _cast_spellbook_grove(team: int, effect: Dictionary, point: Vector2) -> Dictionary:
-	return _powers_subsystem()._cast_spellbook_grove(team, effect, point)
+	return _power_casts_subsystem()._cast_spellbook_grove(team, effect, point)
 
 
 func _cast_spellbook_field_ping(team: int, power_id: String, effect: Dictionary, point: Vector2) -> Dictionary:
-	return _powers_subsystem()._cast_spellbook_field_ping(team, power_id, effect, point)
+	return _power_casts_subsystem()._cast_spellbook_field_ping(team, power_id, effect, point)
 
 
 func team_revealed_regions(team: int) -> Array:
-	return _powers_subsystem().team_revealed_regions(team)
+	return _power_casts_subsystem().team_revealed_regions(team)
 
 
 func field_ping_count() -> int:
-	return _powers_subsystem().field_ping_count()
+	return _power_casts_subsystem().field_ping_count()
 
 
 func _step_field_pings() -> void:
-	_powers_subsystem()._step_field_pings()
+	_power_casts_subsystem()._step_field_pings()
 
 
 func _revoke_field_ping_invisibility(ping: Dictionary) -> void:
-	_powers_subsystem()._revoke_field_ping_invisibility(ping)
+	_power_casts_subsystem()._revoke_field_ping_invisibility(ping)
 
 
 func _cast_spellbook_cloudbreak(team: int, effect: Dictionary, point: Vector2) -> Dictionary:
-	return _powers_subsystem()._cast_spellbook_cloudbreak(team, effect, point)
+	return _power_casts_subsystem()._cast_spellbook_cloudbreak(team, effect, point)
 
 
 func _revoke_opposing_weather_for_cloudbreak(team: int) -> void:
-	_powers_subsystem()._revoke_opposing_weather_for_cloudbreak(team)
+	_power_casts_subsystem()._revoke_opposing_weather_for_cloudbreak(team)
 
 
 func _cast_spellbook_weather_modifier(team: int, power_id: String, effect: Dictionary) -> Dictionary:
-	return _powers_subsystem()._cast_spellbook_weather_modifier(team, power_id, effect)
+	return _power_casts_subsystem()._cast_spellbook_weather_modifier(team, power_id, effect)
 
 
 func _cast_spellbook_weather_anticategory(team: int, power_id: String, effect: Dictionary) -> Dictionary:
-	return _powers_subsystem()._cast_spellbook_weather_anticategory(team, power_id, effect)
+	return _power_casts_subsystem()._cast_spellbook_weather_anticategory(team, power_id, effect)
 
 
 func _apply_weather_modifier(entry: Dictionary) -> int:
-	return _powers_subsystem()._apply_weather_modifier(entry)
+	return _power_casts_subsystem()._apply_weather_modifier(entry)
 
 
 func _set_leadership_suppression_source(row: Dictionary, source_key: String, expire_tick: int) -> void:
-	_powers_subsystem()._set_leadership_suppression_source(row, source_key, expire_tick)
+	_power_casts_subsystem()._set_leadership_suppression_source(row, source_key, expire_tick)
 
 
 func _erase_leadership_suppression_source(row: Dictionary, source_key: String) -> void:
-	_powers_subsystem()._erase_leadership_suppression_source(row, source_key)
+	_power_casts_subsystem()._erase_leadership_suppression_source(row, source_key)
 
 
 func _refresh_leadership_suppression(row: Dictionary) -> int:
-	return _powers_subsystem()._refresh_leadership_suppression(row)
+	return _power_casts_subsystem()._refresh_leadership_suppression(row)
 
 
 func _apply_weather_anticategory(entry: Dictionary) -> int:
-	return _powers_subsystem()._apply_weather_anticategory(entry)
+	return _power_casts_subsystem()._apply_weather_anticategory(entry)
 
 
 func _step_weather_effects() -> void:
-	_powers_subsystem()._step_weather_effects()
+	_power_casts_subsystem()._step_weather_effects()
 
 
 func active_weather_effects() -> Array:
-	return _powers_subsystem().active_weather_effects()
+	return _power_casts_subsystem().active_weather_effects()
 
 
 func _migrate_restored_weather_sources() -> void:
-	_powers_subsystem()._migrate_restored_weather_sources()
+	_power_casts_subsystem()._migrate_restored_weather_sources()
 
 
 func _cast_spellbook_creep_allegiance(team: int, effect: Dictionary, point: Vector2) -> Dictionary:
-	return _powers_subsystem()._cast_spellbook_creep_allegiance(team, effect, point)
+	return _power_casts_subsystem()._cast_spellbook_creep_allegiance(team, effect, point)
 
 
 
@@ -3046,61 +3074,61 @@ func _refresh_team_command_set_upgrades(team: int) -> void:
 
 
 func _step_pending_power_effects() -> void:
-	_powers_subsystem()._step_pending_power_effects()
+	_power_casts_subsystem()._step_pending_power_effects()
 
 
 func _fire_death_weapon(effect: Dictionary) -> void:
-	_powers_subsystem()._fire_death_weapon(effect)
+	_power_casts_subsystem()._fire_death_weapon(effect)
 
 
 func _fire_power_strike(effect: Dictionary) -> void:
-	_powers_subsystem()._fire_power_strike(effect)
+	_power_casts_subsystem()._fire_power_strike(effect)
 
 
 func _apply_area_damage_to_battalion(id: int, amount: float, damage_type: String) -> void:
-	_powers_subsystem()._apply_area_damage_to_battalion(id, amount, damage_type)
+	_power_casts_subsystem()._apply_area_damage_to_battalion(id, amount, damage_type)
 
 
 func _apply_area_damage_to_structure(structure_id: int, amount: float, damage_type: String) -> void:
-	_powers_subsystem()._apply_area_damage_to_structure(structure_id, amount, damage_type)
+	_power_casts_subsystem()._apply_area_damage_to_structure(structure_id, amount, damage_type)
 
 
 func _fire_power_summon(effect: Dictionary) -> void:
-	_powers_subsystem()._fire_power_summon(effect)
+	_power_casts_subsystem()._fire_power_summon(effect)
 
 
 func _spawn_summon_targets(team: int, point: Vector2, targets: Array) -> Array:
-	return _powers_subsystem()._spawn_summon_targets(team, point, targets)
+	return _power_casts_subsystem()._spawn_summon_targets(team, point, targets)
 
 
 func spawn_script_object(object_type: String, team: int, at: Vector2, ring_fallback := false, scenario_surface: String = "script-spawn") -> int:
-	return _powers_subsystem().spawn_script_object(object_type, team, at, ring_fallback, scenario_surface)
+	return _power_casts_subsystem().spawn_script_object(object_type, team, at, ring_fallback, scenario_surface)
 
 
 func _step_summon_despawns() -> void:
-	_powers_subsystem()._step_summon_despawns()
+	_power_casts_subsystem()._step_summon_despawns()
 
 
 func _step_summon_auras() -> void:
-	_powers_subsystem()._step_summon_auras()
+	_power_casts_subsystem()._step_summon_auras()
 
 
 func _refresh_one_summon_aura(source_id: int, source: Dictionary, aura: Dictionary) -> void:
-	_powers_subsystem()._refresh_one_summon_aura(source_id, source, aura)
+	_power_casts_subsystem()._refresh_one_summon_aura(source_id, source, aura)
 
 
 func _summon_aura_allows_relation(aura: Dictionary, same_team: bool) -> bool:
-	return _powers_subsystem()._summon_aura_allows_relation(aura, same_team)
+	return _power_casts_subsystem()._summon_aura_allows_relation(aura, same_team)
 
 
 func _step_grove_auras() -> void:
-	_powers_subsystem()._step_grove_auras()
+	_power_casts_subsystem()._step_grove_auras()
 
 
 func _spellbook_member_affects(
 	row: Dictionary, filter_text: String, same_team: Variant = null
 ) -> bool:
-	return _powers_subsystem()._spellbook_member_affects(row, filter_text, same_team)
+	return _power_casts_subsystem()._spellbook_member_affects(row, filter_text, same_team)
 
 
 func _step_structure_weapons() -> void:
@@ -4239,887 +4267,887 @@ func trigger_horde_cower(entity_id: int) -> Dictionary:
 
 
 func _attach_pickup_stuff_update_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_pickup_stuff_update_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_pickup_stuff_update_contract(row, contract)
 
 
 func register_pickup_object(kind_of: Array, position: Vector2, object_id: String = "") -> int:
-	return _contracts_subsystem().register_pickup_object(kind_of, position, object_id)
+	return _contracts_abilities_subsystem().register_pickup_object(kind_of, position, object_id)
 
 
 func remove_pickup_object(pickup_id: int) -> void:
-	_contracts_subsystem().remove_pickup_object(pickup_id)
+	_contracts_abilities_subsystem().remove_pickup_object(pickup_id)
 
 
 func _step_pickup_stuff_updates() -> void:
-	_contracts_subsystem()._step_pickup_stuff_updates()
+	_contracts_abilities_subsystem()._step_pickup_stuff_updates()
 
 
 func _nearest_pickup_for(row: Dictionary, policy: Dictionary) -> int:
-	return _contracts_subsystem()._nearest_pickup_for(row, policy)
+	return _contracts_abilities_subsystem()._nearest_pickup_for(row, policy)
 
 
 func _attach_auto_ability_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_auto_ability_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_auto_ability_contract(row, contract)
 
 
 func _resolve_auto_ability_range(value: Variant) -> float:
-	return _contracts_subsystem()._resolve_auto_ability_range(value)
+	return _contracts_abilities_subsystem()._resolve_auto_ability_range(value)
 
 
 func set_auto_ability_active(entity_id: int, special_ability: String, active: bool) -> Dictionary:
-	return _contracts_subsystem().set_auto_ability_active(entity_id, special_ability, active)
+	return _contracts_abilities_subsystem().set_auto_ability_active(entity_id, special_ability, active)
 
 
 func _step_auto_abilities() -> void:
-	_contracts_subsystem()._step_auto_abilities()
+	_contracts_abilities_subsystem()._step_auto_abilities()
 
 
 func _ability_id_for_special_power(row: Dictionary, special_power: String) -> String:
-	return _contracts_subsystem()._ability_id_for_special_power(row, special_power)
+	return _contracts_abilities_subsystem()._ability_id_for_special_power(row, special_power)
 
 
 func _auto_ability_query_target(source: Dictionary, behavior: Dictionary, minimum: float, maximum: float) -> int:
-	return _contracts_subsystem()._auto_ability_query_target(source, behavior, minimum, maximum)
+	return _contracts_abilities_subsystem()._auto_ability_query_target(source, behavior, minimum, maximum)
 
 
 func _auto_ability_filter_accepts(source: Dictionary, candidate: Dictionary, tokens: Array) -> bool:
-	return _contracts_subsystem()._auto_ability_filter_accepts(source, candidate, tokens)
+	return _contracts_abilities_subsystem()._auto_ability_filter_accepts(source, candidate, tokens)
 
 
 func _attach_ai_special_power_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_ai_special_power_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_ai_special_power_contract(row, contract)
 
 
 func _resolve_ai_special_power_expression(value: Variant) -> Dictionary:
-	return _contracts_subsystem()._resolve_ai_special_power_expression(value)
+	return _contracts_abilities_subsystem()._resolve_ai_special_power_expression(value)
 
 
 func _ai_special_power_type_supported(ai_type: String) -> bool:
-	return _contracts_subsystem()._ai_special_power_type_supported(ai_type)
+	return _contracts_abilities_subsystem()._ai_special_power_type_supported(ai_type)
 
 
 func _step_ai_special_power_updates() -> void:
-	_contracts_subsystem()._step_ai_special_power_updates()
+	_contracts_abilities_subsystem()._step_ai_special_power_updates()
 
 
 func _ability_auto_blocked_model_condition(row: Dictionary, rule: Dictionary) -> String:
-	return _contracts_subsystem()._ability_auto_blocked_model_condition(row, rule)
+	return _contracts_abilities_subsystem()._ability_auto_blocked_model_condition(row, rule)
 
 
 func _ai_special_power_cast(entity_id: int, row: Dictionary, policy: Dictionary, point: Vector2) -> Dictionary:
-	return _contracts_subsystem()._ai_special_power_cast(entity_id, row, policy, point)
+	return _contracts_abilities_subsystem()._ai_special_power_cast(entity_id, row, policy, point)
 
 
 func _ai_special_power_stance(ai_type: String) -> String:
-	return _contracts_subsystem()._ai_special_power_stance(ai_type)
+	return _contracts_abilities_subsystem()._ai_special_power_stance(ai_type)
 
 
 func _ai_special_power_desired_stance(row: Dictionary) -> String:
-	return _contracts_subsystem()._ai_special_power_desired_stance(row)
+	return _contracts_abilities_subsystem()._ai_special_power_desired_stance(row)
 
 
 func _ai_special_power_target(source: Dictionary, policy: Dictionary) -> Dictionary:
-	return _contracts_subsystem()._ai_special_power_target(source, policy)
+	return _contracts_abilities_subsystem()._ai_special_power_target(source, policy)
 
 
 func _ai_special_power_ability_rule(source: Dictionary, command: String) -> Dictionary:
-	return _contracts_subsystem()._ai_special_power_ability_rule(source, command)
+	return _contracts_abilities_subsystem()._ai_special_power_ability_rule(source, command)
 
 
 func _ai_special_power_is_self(ai_type: String) -> bool:
-	return _contracts_subsystem()._ai_special_power_is_self(ai_type)
+	return _contracts_abilities_subsystem()._ai_special_power_is_self(ai_type)
 
 
 func _ai_special_power_targets_allies(ai_type: String) -> bool:
-	return _contracts_subsystem()._ai_special_power_targets_allies(ai_type)
+	return _contracts_abilities_subsystem()._ai_special_power_targets_allies(ai_type)
 
 
 func _ai_special_power_targets_structure(ai_type: String) -> bool:
-	return _contracts_subsystem()._ai_special_power_targets_structure(ai_type)
+	return _contracts_abilities_subsystem()._ai_special_power_targets_structure(ai_type)
 
 
 func _ai_special_power_cluster_score(source: Dictionary, point: Vector2, radius: float, allies: bool) -> int:
-	return _contracts_subsystem()._ai_special_power_cluster_score(source, point, radius, allies)
+	return _contracts_abilities_subsystem()._ai_special_power_cluster_score(source, point, radius, allies)
 
 
 func _ai_special_power_structure_site_clear(point: Vector2, radius: float) -> bool:
-	return _contracts_subsystem()._ai_special_power_structure_site_clear(point, radius)
+	return _contracts_abilities_subsystem()._ai_special_power_structure_site_clear(point, radius)
 
 
 func _attach_respawn_update_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_respawn_update_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_respawn_update_contract(row, contract)
 
 
 func _schedule_respawn_update(entity_id: int, row: Dictionary, death_type:String="NORMAL", attacker_id:int=0) -> void:
-	_contracts_subsystem()._schedule_respawn_update(entity_id, row, death_type, attacker_id)
+	_contracts_abilities_subsystem()._schedule_respawn_update(entity_id, row, death_type, attacker_id)
 
 
 func request_respawn(entity_id: int) -> Dictionary:
-	return _contracts_subsystem().request_respawn(entity_id)
+	return _contracts_abilities_subsystem().request_respawn(entity_id)
 
 
 func _step_respawn_updates() -> void:
-	_contracts_subsystem()._step_respawn_updates()
+	_contracts_abilities_subsystem()._step_respawn_updates()
 
 
 func _respawn_anchor(team: int, filter: Array) -> int:
-	return _contracts_subsystem()._respawn_anchor(team, filter)
+	return _contracts_abilities_subsystem()._respawn_anchor(team, filter)
 
 
 func _attach_fire_weapon_update_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_fire_weapon_update_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_fire_weapon_update_contract(row, contract)
 
 
 func _step_fire_weapon_updates() -> void:
-	_contracts_subsystem()._step_fire_weapon_updates()
+	_contracts_abilities_subsystem()._step_fire_weapon_updates()
 
 
 func _attach_deletion_update_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_deletion_update_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_deletion_update_contract(row, contract)
 
 
 func _resolve_deletion_bound(value: Variant) -> Dictionary:
-	return _contracts_subsystem()._resolve_deletion_bound(value)
+	return _contracts_abilities_subsystem()._resolve_deletion_bound(value)
 
 
 func _step_deletion_updates() -> void:
-	_contracts_subsystem()._step_deletion_updates()
+	_contracts_abilities_subsystem()._step_deletion_updates()
 
 
 func _attach_production_update_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_production_update_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_production_update_contract(row, contract)
 
 
 func _attach_getting_built_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_getting_built_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_getting_built_contract(row, contract)
 
 
 func _resolve_build_seconds(value:Variant)->Dictionary:
-	return _contracts_subsystem()._resolve_build_seconds(value)
+	return _contracts_abilities_subsystem()._resolve_build_seconds(value)
 
 
 func _attach_building_behavior_contract(row:Dictionary,contract:Dictionary)->void:
-	_contracts_subsystem()._attach_building_behavior_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_building_behavior_contract(row, contract)
 
 
 func _attach_queue_production_exit_contract(row:Dictionary,contract:Dictionary)->void:
-	_contracts_subsystem()._attach_queue_production_exit_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_queue_production_exit_contract(row, contract)
 
 
 func _attach_rebuild_hole_expose_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_rebuild_hole_expose_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_rebuild_hole_expose_contract(row, contract)
 
 
 func _attach_rebuild_hole_behavior_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_rebuild_hole_behavior_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_rebuild_hole_behavior_contract(row, contract)
 
 
 func _expose_rebuild_hole(owner_id: int, owner: Dictionary, attacker_id: int) -> int:
-	return _contracts_subsystem()._expose_rebuild_hole(owner_id, owner, attacker_id)
+	return _contracts_abilities_subsystem()._expose_rebuild_hole(owner_id, owner, attacker_id)
 
 
 func _step_rebuild_holes() -> void:
-	_contracts_subsystem()._step_rebuild_holes()
+	_contracts_abilities_subsystem()._step_rebuild_holes()
 
 
 func _typed_contract_numbers(fields:Dictionary,key:String)->Array[float]:
-	return _contracts_subsystem()._typed_contract_numbers(fields, key)
+	return _contracts_abilities_subsystem()._typed_contract_numbers(fields, key)
 
 
 func _attach_banner_carrier_update_contract(row:Dictionary,contract:Dictionary)->void:
-	_contracts_subsystem()._attach_banner_carrier_update_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_banner_carrier_update_contract(row, contract)
 
 
 func _resolve_respawn_body_expression(field:Variant)->Dictionary:
-	return _contracts_subsystem()._resolve_respawn_body_expression(field)
+	return _contracts_abilities_subsystem()._resolve_respawn_body_expression(field)
 
 
 func _attach_respawn_body_contract(row:Dictionary,contract:Dictionary)->void:
-	_contracts_subsystem()._attach_respawn_body_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_respawn_body_contract(row, contract)
 
 
 func _resolve_contract_milliseconds(field:Variant,define_key:String)->Dictionary:
-	return _contracts_subsystem()._resolve_contract_milliseconds(field, define_key)
+	return _contracts_abilities_subsystem()._resolve_contract_milliseconds(field, define_key)
 
 
 func _attach_give_upgrade_contract(row:Dictionary,contract:Dictionary)->void:
-	_contracts_subsystem()._attach_give_upgrade_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_give_upgrade_contract(row, contract)
 
 
 func request_give_upgrade(source_id:int,target_id:int,upgrade_id:String,special_power:String="")->Dictionary:
-	return _contracts_subsystem().request_give_upgrade(source_id, target_id, upgrade_id, special_power)
+	return _contracts_abilities_subsystem().request_give_upgrade(source_id, target_id, upgrade_id, special_power)
 
 
 func _step_give_upgrade_updates()->void:
-	_contracts_subsystem()._step_give_upgrade_updates()
+	_contracts_abilities_subsystem()._step_give_upgrade_updates()
 
 
 func _attach_gate_open_close_contract(row:Dictionary,contract:Dictionary)->void:
-	_contracts_subsystem()._attach_gate_open_close_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_gate_open_close_contract(row, contract)
 
 
 func _attach_ai_gate_contract(row:Dictionary,contract:Dictionary)->void:
-	_contracts_subsystem()._attach_ai_gate_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_ai_gate_contract(row, contract)
 
 
 func _attach_fake_pathfind_portal_contract(row:Dictionary,contract:Dictionary)->void:
-	_contracts_subsystem()._attach_fake_pathfind_portal_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_fake_pathfind_portal_contract(row, contract)
 
 
 func request_gate_open(structure_id:int,requester_id:int=0)->Dictionary:
-	return _contracts_subsystem().request_gate_open(structure_id, requester_id)
+	return _contracts_abilities_subsystem().request_gate_open(structure_id, requester_id)
 
 
 func _sync_gate_passage(structure_id: int) -> void:
-	_contracts_subsystem()._sync_gate_passage(structure_id)
+	_contracts_abilities_subsystem()._sync_gate_passage(structure_id)
 
 
 func gate_portal_allows(structure_id:int,requester_id:int)->bool:
-	return _contracts_subsystem().gate_portal_allows(structure_id, requester_id)
+	return _contracts_abilities_subsystem().gate_portal_allows(structure_id, requester_id)
 
 
 func _step_gate_updates()->void:
-	_contracts_subsystem()._step_gate_updates()
+	_contracts_abilities_subsystem()._step_gate_updates()
 
 
 func _typed_effect_graph(contract: Dictionary, kind: String, target_mode: String) -> Dictionary:
-	return _contracts_subsystem()._typed_effect_graph(contract, kind, target_mode)
+	return _contracts_abilities_subsystem()._typed_effect_graph(contract, kind, target_mode)
 
 
 func _attach_stop_special_power_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_stop_special_power_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_stop_special_power_contract(row, contract)
 
 
 func _active_special_power_channel_key(row: Dictionary, target_template: String) -> String:
-	return _contracts_subsystem()._active_special_power_channel_key(row, target_template)
+	return _contracts_abilities_subsystem()._active_special_power_channel_key(row, target_template)
 
 
 func activate_stop_special_power(entity_id: int, special_power_template: String, team: int = -1) -> Dictionary:
-	return _contracts_subsystem().activate_stop_special_power(entity_id, special_power_template, team)
+	return _contracts_abilities_subsystem().activate_stop_special_power(entity_id, special_power_template, team)
 
 
 func _attach_unleash_special_power_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_unleash_special_power_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_unleash_special_power_contract(row, contract)
 
 
 func _unleash_owned_slave(owner_id: int, owner: Dictionary, policy: Dictionary) -> int:
-	return _contracts_subsystem()._unleash_owned_slave(owner_id, owner, policy)
+	return _contracts_abilities_subsystem()._unleash_owned_slave(owner_id, owner, policy)
 
 
 func activate_unleash_special_power(owner_id: int, special_power_template: String, team: int = -1) -> Dictionary:
-	return _contracts_subsystem().activate_unleash_special_power(owner_id, special_power_template, team)
+	return _contracts_abilities_subsystem().activate_unleash_special_power(owner_id, special_power_template, team)
 
 
 func _attach_special_enemy_sense_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_special_enemy_sense_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_special_enemy_sense_contract(row, contract)
 
 
 func _special_enemy_sense_filter_accepts(target: Dictionary, filter: Array) -> bool:
-	return _contracts_subsystem()._special_enemy_sense_filter_accepts(target, filter)
+	return _contracts_abilities_subsystem()._special_enemy_sense_filter_accepts(target, filter)
 
 
 func _step_special_enemy_sense_updates() -> void:
-	_contracts_subsystem()._step_special_enemy_sense_updates()
+	_contracts_abilities_subsystem()._step_special_enemy_sense_updates()
 
 
 func _resolve_invisibility_expression(field: Variant, key: String) -> Dictionary:
-	return _contracts_subsystem()._resolve_invisibility_expression(field, key)
+	return _contracts_abilities_subsystem()._resolve_invisibility_expression(field, key)
 
 
 func _attach_invisibility_update_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_invisibility_update_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_invisibility_update_contract(row, contract)
 
 
 func set_invisibility_update_active(object_id: int, enabled: bool, tag: String = "") -> Dictionary:
-	return _contracts_subsystem().set_invisibility_update_active(object_id, enabled, tag)
+	return _contracts_abilities_subsystem().set_invisibility_update_active(object_id, enabled, tag)
 
 
 func _invisibility_upgrade_gate(row: Dictionary, policy: Dictionary) -> bool:
-	return _contracts_subsystem()._invisibility_upgrade_gate(row, policy)
+	return _contracts_abilities_subsystem()._invisibility_upgrade_gate(row, policy)
 
 
 func _invisibility_condition_set(row: Dictionary) -> Dictionary:
-	return _contracts_subsystem()._invisibility_condition_set(row)
+	return _contracts_abilities_subsystem()._invisibility_condition_set(row)
 
 
 func _invisibility_source_key(object_id: int, policy: Dictionary, prefix: String = "module") -> String:
-	return _contracts_subsystem()._invisibility_source_key(object_id, policy, prefix)
+	return _contracts_abilities_subsystem()._invisibility_source_key(object_id, policy, prefix)
 
 
 func _invisibility_source_active(row: Dictionary, source_key: String) -> bool:
-	return _contracts_subsystem()._invisibility_source_active(row, source_key)
+	return _contracts_abilities_subsystem()._invisibility_source_active(row, source_key)
 
 
 func _set_invisibility_source(target: Dictionary, source_key: String, policy: Dictionary, enabled: bool, source_id: int) -> void:
-	_contracts_subsystem()._set_invisibility_source(target, source_key, policy, enabled, source_id)
+	_contracts_abilities_subsystem()._set_invisibility_source(target, source_key, policy, enabled, source_id)
 
 
 func _revoke_invisibility_policy_sources(object_id: int, row: Dictionary, policy: Dictionary) -> void:
-	_contracts_subsystem()._revoke_invisibility_policy_sources(object_id, row, policy)
+	_contracts_abilities_subsystem()._revoke_invisibility_policy_sources(object_id, row, policy)
 
 
 func _step_invisibility_updates() -> void:
-	_contracts_subsystem()._step_invisibility_updates()
+	_contracts_abilities_subsystem()._step_invisibility_updates()
 
 
 func _step_invisibility_broadcast(source_id: int, source: Dictionary, policy: Dictionary, blocked: bool) -> void:
-	_contracts_subsystem()._step_invisibility_broadcast(source_id, source, policy, blocked)
+	_contracts_abilities_subsystem()._step_invisibility_broadcast(source_id, source, policy, blocked)
 
 
 func _attach_stealth_detector_contract(row:Dictionary,contract:Dictionary)->void:
-	_contracts_subsystem()._attach_stealth_detector_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_stealth_detector_contract(row, contract)
 
 
 func _step_stealth_detectors()->void:
-	_contracts_subsystem()._step_stealth_detectors()
+	_contracts_abilities_subsystem()._step_stealth_detectors()
 
 
 func _attach_slaved_update_contract(row:Dictionary,contract:Dictionary)->void:
-	_contracts_subsystem()._attach_slaved_update_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_slaved_update_contract(row, contract)
 
 
 func bind_slave(slave_id:int,master_id:int)->Dictionary:
-	return _contracts_subsystem().bind_slave(slave_id, master_id)
+	return _contracts_abilities_subsystem().bind_slave(slave_id, master_id)
 
 
 func _step_slaved_updates()->void:
-	_contracts_subsystem()._step_slaved_updates()
+	_contracts_abilities_subsystem()._step_slaved_updates()
 
 
 func _kill_slave_for_master_death(slave_id:int,slave:Dictionary)->void:
-	_contracts_subsystem()._kill_slave_for_master_death(slave_id, slave)
+	_contracts_abilities_subsystem()._kill_slave_for_master_death(slave_id, slave)
 
 
 func _attach_castle_upgrade_contract(row:Dictionary,contract:Dictionary)->void:
-	_contracts_subsystem()._attach_castle_upgrade_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_castle_upgrade_contract(row, contract)
 
 
 func apply_castle_upgrade_trigger(structure_id:int,trigger_upgrade_id:String)->Dictionary:
-	return _contracts_subsystem().apply_castle_upgrade_trigger(structure_id, trigger_upgrade_id)
+	return _contracts_abilities_subsystem().apply_castle_upgrade_trigger(structure_id, trigger_upgrade_id)
 
 
 func _attach_spawn_behavior_contract(row:Dictionary,contract:Dictionary)->void:
-	_contracts_subsystem()._attach_spawn_behavior_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_spawn_behavior_contract(row, contract)
 
 
 func _step_spawn_behaviors()->void:
-	_contracts_subsystem()._step_spawn_behaviors()
+	_contracts_abilities_subsystem()._step_spawn_behaviors()
 
 
 func _spawn_behavior_member(owner_id:int,owner:Dictionary,policy:Dictionary)->int:
-	return _contracts_subsystem()._spawn_behavior_member(owner_id, owner, policy)
+	return _contracts_abilities_subsystem()._spawn_behavior_member(owner_id, owner, policy)
 
 
 func _spawn_behavior_reclaim_orphan(owner_id:int,owner:Dictionary,policy:Dictionary)->int:
-	return _contracts_subsystem()._spawn_behavior_reclaim_orphan(owner_id, owner, policy)
+	return _contracts_abilities_subsystem()._spawn_behavior_reclaim_orphan(owner_id, owner, policy)
 
 
 func _spawn_behavior_closest_orphan(owner:Dictionary,template:String)->int:
-	return _contracts_subsystem()._spawn_behavior_closest_orphan(owner, template)
+	return _contracts_abilities_subsystem()._spawn_behavior_closest_orphan(owner, template)
 
 
 func _spawn_behavior_template_equivalent(candidate:Dictionary,template:String)->bool:
-	return _contracts_subsystem()._spawn_behavior_template_equivalent(candidate, template)
+	return _contracts_abilities_subsystem()._spawn_behavior_template_equivalent(candidate, template)
 
 
 func _attach_stealth_update_contract(row:Dictionary,contract:Dictionary)->void:
-	_contracts_subsystem()._attach_stealth_update_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_stealth_update_contract(row, contract)
 
 
 func set_stealth_update_active(entity_id:int,enabled:bool)->Dictionary:
-	return _contracts_subsystem().set_stealth_update_active(entity_id, enabled)
+	return _contracts_abilities_subsystem().set_stealth_update_active(entity_id, enabled)
 
 
 func _step_stealth_updates()->void:
-	_contracts_subsystem()._step_stealth_updates()
+	_contracts_abilities_subsystem()._step_stealth_updates()
 
 
 func _attach_object_creation_upgrade_contract(row:Dictionary,contract:Dictionary)->void:
-	_contracts_subsystem()._attach_object_creation_upgrade_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_object_creation_upgrade_contract(row, contract)
 
 
 func _attach_attribute_modifier_upgrade_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_attribute_modifier_upgrade_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_attribute_modifier_upgrade_contract(row, contract)
 
 
 func _attribute_modifier_upgrade_owned(row: Dictionary, upgrade_id: String) -> bool:
-	return _contracts_subsystem()._attribute_modifier_upgrade_owned(row, upgrade_id)
+	return _contracts_abilities_subsystem()._attribute_modifier_upgrade_owned(row, upgrade_id)
 
 
 func _attribute_modifier_upgrade_should_activate(row: Dictionary, policy: Dictionary) -> bool:
-	return _contracts_subsystem()._attribute_modifier_upgrade_should_activate(row, policy)
+	return _contracts_abilities_subsystem()._attribute_modifier_upgrade_should_activate(row, policy)
 
 
 func _attribute_modifier_upgrade_key(policy: Dictionary) -> String:
-	return _contracts_subsystem()._attribute_modifier_upgrade_key(policy)
+	return _contracts_abilities_subsystem()._attribute_modifier_upgrade_key(policy)
 
 
 func _reconcile_attribute_modifier_upgrades(row: Dictionary) -> void:
-	_contracts_subsystem()._reconcile_attribute_modifier_upgrades(row)
+	_contracts_abilities_subsystem()._reconcile_attribute_modifier_upgrades(row)
 
 
 func _step_attribute_modifier_upgrades() -> void:
-	_contracts_subsystem()._step_attribute_modifier_upgrades()
+	_contracts_abilities_subsystem()._step_attribute_modifier_upgrades()
 
 
 func _attach_geometry_upgrade_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_geometry_upgrade_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_geometry_upgrade_contract(row, contract)
 
 
 func _geometry_upgrade_should_activate(row: Dictionary, policy: Dictionary) -> bool:
-	return _contracts_subsystem()._geometry_upgrade_should_activate(row, policy)
+	return _contracts_abilities_subsystem()._geometry_upgrade_should_activate(row, policy)
 
 
 func _reconcile_geometry_upgrades(row: Dictionary) -> void:
-	_contracts_subsystem()._reconcile_geometry_upgrades(row)
+	_contracts_abilities_subsystem()._reconcile_geometry_upgrades(row)
 
 
 func _step_geometry_upgrades() -> void:
-	_contracts_subsystem()._step_geometry_upgrades()
+	_contracts_abilities_subsystem()._step_geometry_upgrades()
 
 
 func _emotion_expression_value(fields: Dictionary, key: String, unsupported: Array[String]) -> float:
-	return _contracts_subsystem()._emotion_expression_value(fields, key, unsupported)
+	return _contracts_abilities_subsystem()._emotion_expression_value(fields, key, unsupported)
 
 
 func _attach_emotion_tracker_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_emotion_tracker_contract(row, contract)
+	_contracts_abilities_subsystem()._attach_emotion_tracker_contract(row, contract)
 
 
 func trigger_entity_emotion(entity_id: int, emotion_name: String, duration_ticks: int = -1) -> Dictionary:
-	return _contracts_subsystem().trigger_entity_emotion(entity_id, emotion_name, duration_ticks)
+	return _contracts_abilities_subsystem().trigger_entity_emotion(entity_id, emotion_name, duration_ticks)
 
 
 func _step_emotion_trackers() -> void:
-	_contracts_subsystem()._step_emotion_trackers()
+	_contracts_abilities_subsystem()._step_emotion_trackers()
 
 
 func _attach_castle_member_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_castle_member_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_castle_member_contract(row, contract)
 
 
 func _dispatch_castle_member_destroyed(structure_id: int, member: Dictionary, attacker_id: int, reason: String) -> void:
-	_contracts_subsystem()._dispatch_castle_member_destroyed(structure_id, member, attacker_id, reason)
+	_contracts_behaviors_subsystem()._dispatch_castle_member_destroyed(structure_id, member, attacker_id, reason)
 
 
 func _attach_inactive_body_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_inactive_body_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_inactive_body_contract(row, contract)
 
 
 func _attach_squish_collide_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_squish_collide_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_squish_collide_contract(row, contract)
 
 
 func _squish_collision_admitted(victim: Dictionary) -> bool:
-	return _contracts_subsystem()._squish_collision_admitted(victim)
+	return _contracts_behaviors_subsystem()._squish_collision_admitted(victim)
 
 
 func _attach_horde_member_collide_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_horde_member_collide_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_horde_member_collide_contract(row, contract)
 
 
 func _attach_notify_crushing_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_notify_crushing_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_notify_crushing_contract(row, contract)
 
 
 func _attach_flammable_update_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_flammable_update_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_flammable_update_contract(row, contract)
 
 
 func record_flame_damage(object_id: int, amount: float) -> Dictionary:
-	return _contracts_subsystem().record_flame_damage(object_id, amount)
+	return _contracts_behaviors_subsystem().record_flame_damage(object_id, amount)
 
 
 func _step_flammable_updates() -> void:
-	_contracts_subsystem()._step_flammable_updates()
+	_contracts_behaviors_subsystem()._step_flammable_updates()
 
 
 func _set_row_object_status(row: Dictionary, status: String, enabled: bool) -> void:
-	_contracts_subsystem()._set_row_object_status(row, status, enabled)
+	_contracts_behaviors_subsystem()._set_row_object_status(row, status, enabled)
 
 
 func _attach_dynamic_portal_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_dynamic_portal_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_dynamic_portal_contract(row, contract)
 
 
 func _step_dynamic_portals() -> void:
-	_contracts_subsystem()._step_dynamic_portals()
+	_contracts_behaviors_subsystem()._step_dynamic_portals()
 
 
 func request_dynamic_portal_route(portal_id: int, entity_id: int, from_index: int, to_index: int) -> Dictionary:
-	return _contracts_subsystem().request_dynamic_portal_route(portal_id, entity_id, from_index, to_index)
+	return _contracts_behaviors_subsystem().request_dynamic_portal_route(portal_id, entity_id, from_index, to_index)
 
 
 func _attach_foundation_ai_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_foundation_ai_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_foundation_ai_contract(row, contract)
 
 
 func foundation_build_variation(structure_id: int) -> Dictionary:
-	return _contracts_subsystem().foundation_build_variation(structure_id)
+	return _contracts_behaviors_subsystem().foundation_build_variation(structure_id)
 
 
 func _attach_dual_weapon_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_dual_weapon_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_dual_weapon_contract(row, contract)
 
 
 func _attach_refund_die_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_refund_die_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_refund_die_contract(row, contract)
 
 
 func _cache_refund_die_build_cost(row: Dictionary) -> void:
-	_contracts_subsystem()._cache_refund_die_build_cost(row)
+	_contracts_behaviors_subsystem()._cache_refund_die_build_cost(row)
 
 
 func _attach_wall_hub_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_wall_hub_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_wall_hub_contract(row, contract)
 
 
 func _wall_hub_distance(field: Dictionary, defines: Dictionary) -> Dictionary:
-	return _contracts_subsystem()._wall_hub_distance(field, defines)
+	return _contracts_behaviors_subsystem()._wall_hub_distance(field, defines)
 
 
 func request_wall_hub_plan(structure_id: int, option: String, endpoint: Vector2) -> Dictionary:
-	return _contracts_subsystem().request_wall_hub_plan(structure_id, option, endpoint)
+	return _contracts_behaviors_subsystem().request_wall_hub_plan(structure_id, option, endpoint)
 
 
 func _attach_attach_update_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_attach_update_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_attach_update_contract(row, contract)
 
 
 func request_attach_update(child_id: int, parent_id: int, parent_kind: String = "entity") -> Dictionary:
-	return _contracts_subsystem().request_attach_update(child_id, parent_id, parent_kind)
+	return _contracts_behaviors_subsystem().request_attach_update(child_id, parent_id, parent_kind)
 
 
 func _step_attach_updates() -> void:
-	_contracts_subsystem()._step_attach_updates()
+	_contracts_behaviors_subsystem()._step_attach_updates()
 
 
 func _detach_attach_update(child: Dictionary, reason: String) -> void:
-	_contracts_subsystem()._detach_attach_update(child, reason)
+	_contracts_behaviors_subsystem()._detach_attach_update(child, reason)
 
 
 func _attach_filter_probe(row: Dictionary, kind: String) -> Dictionary:
-	return _contracts_subsystem()._attach_filter_probe(row, kind)
+	return _contracts_behaviors_subsystem()._attach_filter_probe(row, kind)
 
 
 func _set_attach_parent_status(parent: Dictionary, child_id: int, statuses: Array, enabled: bool) -> void:
-	_contracts_subsystem()._set_attach_parent_status(parent, child_id, statuses, enabled)
+	_contracts_behaviors_subsystem()._set_attach_parent_status(parent, child_id, statuses, enabled)
 
 
 func _attach_monitor_condition_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_monitor_condition_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_monitor_condition_contract(row, contract)
 
 
 func _monitor_condition_route(value: Variant) -> Dictionary:
-	return _contracts_subsystem()._monitor_condition_route(value)
+	return _contracts_behaviors_subsystem()._monitor_condition_route(value)
 
 
 func _step_monitor_condition_updates() -> void:
-	_contracts_subsystem()._step_monitor_condition_updates()
+	_contracts_behaviors_subsystem()._step_monitor_condition_updates()
 
 
 func _step_monitor_condition_row(object_id: int, row: Dictionary) -> void:
-	_contracts_subsystem()._step_monitor_condition_row(object_id, row)
+	_contracts_behaviors_subsystem()._step_monitor_condition_row(object_id, row)
 
 
 func _upper_token_set(value: Variant) -> Dictionary:
-	return _contracts_subsystem()._upper_token_set(value)
+	return _contracts_behaviors_subsystem()._upper_token_set(value)
 
 
 func _monitor_flags_match(active: Dictionary, required: Array) -> bool:
-	return _contracts_subsystem()._monitor_flags_match(active, required)
+	return _contracts_behaviors_subsystem()._monitor_flags_match(active, required)
 
 
 func set_entity_upgrade_state(entity_id: int, upgrade_id: String, installed: bool) -> Dictionary:
-	return _contracts_subsystem().set_entity_upgrade_state(entity_id, upgrade_id, installed)
+	return _contracts_behaviors_subsystem().set_entity_upgrade_state(entity_id, upgrade_id, installed)
 
 
 func set_team_upgrade_state(team: int, upgrade_id: String, installed: bool) -> Dictionary:
-	return _contracts_subsystem().set_team_upgrade_state(team, upgrade_id, installed)
+	return _contracts_behaviors_subsystem().set_team_upgrade_state(team, upgrade_id, installed)
 
 
 func _step_object_creation_upgrades()->void:
-	_contracts_subsystem()._step_object_creation_upgrades()
+	_contracts_behaviors_subsystem()._step_object_creation_upgrades()
 
 
 func _consume_object_creation_upgrade(owner_id:int,owner:Dictionary,policy:Dictionary)->void:
-	_contracts_subsystem()._consume_object_creation_upgrade(owner_id, owner, policy)
+	_contracts_behaviors_subsystem()._consume_object_creation_upgrade(owner_id, owner, policy)
 
 
 func _attach_replace_self_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_replace_self_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_replace_self_contract(row, contract)
 
 
 func apply_replace_self_upgrade(structure_id: int, trigger_upgrade_id: String) -> Dictionary:
-	return _contracts_subsystem().apply_replace_self_upgrade(structure_id, trigger_upgrade_id)
+	return _contracts_behaviors_subsystem().apply_replace_self_upgrade(structure_id, trigger_upgrade_id)
 
 
 func _step_replace_self_upgrades() -> void:
-	_contracts_subsystem()._step_replace_self_upgrades()
+	_contracts_behaviors_subsystem()._step_replace_self_upgrades()
 
 
 func _apply_due_replace_self_policy(structure_id: int, row: Dictionary, trigger_upgrade_id: String) -> Dictionary:
-	return _contracts_subsystem()._apply_due_replace_self_policy(structure_id, row, trigger_upgrade_id)
+	return _contracts_behaviors_subsystem()._apply_due_replace_self_policy(structure_id, row, trigger_upgrade_id)
 
 
 func _replace_self_structure_spec(team: int, object_id: String) -> Dictionary:
-	return _contracts_subsystem()._replace_self_structure_spec(team, object_id)
+	return _contracts_behaviors_subsystem()._replace_self_structure_spec(team, object_id)
 
 
 func _playable_structure_runtime_document(object_id: String) -> Dictionary:
-	return _contracts_subsystem()._playable_structure_runtime_document(object_id)
+	return _contracts_behaviors_subsystem()._playable_structure_runtime_document(object_id)
 
 
 func _structure_attack_from_combat(combat: Dictionary) -> Dictionary:
-	return _contracts_subsystem()._structure_attack_from_combat(combat)
+	return _contracts_behaviors_subsystem()._structure_attack_from_combat(combat)
 
 
 func _replacement_structure_row(structure_id: int, previous: Dictionary, object_id: String, spec: Dictionary, preserve_state: bool) -> Dictionary:
-	return _contracts_subsystem()._replacement_structure_row(structure_id, previous, object_id, spec, preserve_state)
+	return _contracts_behaviors_subsystem()._replacement_structure_row(structure_id, previous, object_id, spec, preserve_state)
 
 
 func _reconcile_replacement_containment(structure_id: int, replacement: Dictionary) -> void:
-	_contracts_subsystem()._reconcile_replacement_containment(structure_id, replacement)
+	_contracts_behaviors_subsystem()._reconcile_replacement_containment(structure_id, replacement)
 
 
 func _replace_self_receipt(policy: Dictionary, receipt: String) -> void:
-	_contracts_subsystem()._replace_self_receipt(policy, receipt)
+	_contracts_behaviors_subsystem()._replace_self_receipt(policy, receipt)
 
 
 func _attach_citadel_slaughter_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_citadel_slaughter_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_citadel_slaughter_contract(row, contract)
 
 
 func enter_citadel_slaughter(structure_id: int, entity_id: int) -> Dictionary:
-	return _contracts_subsystem().enter_citadel_slaughter(structure_id, entity_id)
+	return _contracts_behaviors_subsystem().enter_citadel_slaughter(structure_id, entity_id)
 
 
 func _consume_citadel_ring_entry(structure_id: int, entity_id: int, citadel: Dictionary, passenger: Dictionary, policy: Dictionary) -> Dictionary:
-	return _contracts_subsystem()._consume_citadel_ring_entry(structure_id, entity_id, citadel, passenger, policy)
+	return _contracts_behaviors_subsystem()._consume_citadel_ring_entry(structure_id, entity_id, citadel, passenger, policy)
 
 
 func _resolve_citadel_slaughter_death(structure_id: int, citadel: Dictionary) -> void:
-	_contracts_subsystem()._resolve_citadel_slaughter_death(structure_id, citadel)
+	_contracts_behaviors_subsystem()._resolve_citadel_slaughter_death(structure_id, citadel)
 
 
 func _attach_ocl_update_contract(row:Dictionary,contract:Dictionary)->void:
-	_contracts_subsystem()._attach_ocl_update_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_ocl_update_contract(row, contract)
 
 
 func _step_ocl_updates()->void:
-	_contracts_subsystem()._step_ocl_updates()
+	_contracts_behaviors_subsystem()._step_ocl_updates()
 
 
 func _attach_stances_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_stances_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_stances_contract(row, contract)
 
 
 func set_entity_stance(entity_id: int, stance: String) -> Dictionary:
-	return _contracts_subsystem().set_entity_stance(entity_id, stance)
+	return _contracts_behaviors_subsystem().set_entity_stance(entity_id, stance)
 
 
 func toggle_entity_stance(entity_id: int) -> Dictionary:
-	return _contracts_subsystem().toggle_entity_stance(entity_id)
+	return _contracts_behaviors_subsystem().toggle_entity_stance(entity_id)
 
 
 func _normalize_stance_name(stance: String) -> String:
-	return _contracts_subsystem()._normalize_stance_name(stance)
+	return _contracts_behaviors_subsystem()._normalize_stance_name(stance)
 
 
 func _apply_stance_modifier(row: Dictionary) -> void:
-	_contracts_subsystem()._apply_stance_modifier(row)
+	_contracts_behaviors_subsystem()._apply_stance_modifier(row)
 
 
 func _attach_attribute_modifier_aura_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_attribute_modifier_aura_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_attribute_modifier_aura_contract(row, contract)
 
 
 func _resolve_lifetime_bound(field: Variant) -> Dictionary:
-	return _contracts_subsystem()._resolve_lifetime_bound(field)
+	return _contracts_behaviors_subsystem()._resolve_lifetime_bound(field)
 
 
 func _attach_lifetime_update_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_lifetime_update_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_lifetime_update_contract(row, contract)
 
 
 func _arm_lifetime(row: Dictionary) -> bool:
-	return _contracts_subsystem()._arm_lifetime(row)
+	return _contracts_behaviors_subsystem()._arm_lifetime(row)
 
 
 func wake_lifetime(object_id: int, object_kind: String = "entity") -> Dictionary:
-	return _contracts_subsystem().wake_lifetime(object_id, object_kind)
+	return _contracts_behaviors_subsystem().wake_lifetime(object_id, object_kind)
 
 
 func _step_lifetime_updates() -> void:
-	_contracts_subsystem()._step_lifetime_updates()
+	_contracts_behaviors_subsystem()._step_lifetime_updates()
 
 
 func _expire_lifetime_entity(entity_id: int, row: Dictionary, death_type: String) -> void:
-	_contracts_subsystem()._expire_lifetime_entity(entity_id, row, death_type)
+	_contracts_behaviors_subsystem()._expire_lifetime_entity(entity_id, row, death_type)
 
 
 func _expire_lifetime_structure(structure_id: int, row: Dictionary, death_type: String) -> void:
-	_contracts_subsystem()._expire_lifetime_structure(structure_id, row, death_type)
+	_contracts_behaviors_subsystem()._expire_lifetime_structure(structure_id, row, death_type)
 
 
 func _step_attribute_modifier_auras() -> void:
-	_contracts_subsystem()._step_attribute_modifier_auras()
+	_contracts_behaviors_subsystem()._step_attribute_modifier_auras()
 
 
 func _step_attribute_modifier_aura_source(source: Dictionary) -> void:
-	_contracts_subsystem()._step_attribute_modifier_aura_source(source)
+	_contracts_behaviors_subsystem()._step_attribute_modifier_aura_source(source)
 
 
 func _aura_source_active(source: Dictionary, rule: Dictionary) -> bool:
-	return _contracts_subsystem()._aura_source_active(source, rule)
+	return _contracts_behaviors_subsystem()._aura_source_active(source, rule)
 
 
 func _aura_has_upgrade(upgrades: Array, applied: Dictionary, sought: String) -> bool:
-	return _contracts_subsystem()._aura_has_upgrade(upgrades, applied, sought)
+	return _contracts_behaviors_subsystem()._aura_has_upgrade(upgrades, applied, sought)
 
 
 func _apply_typed_aura_to_target(source_id: int, target: Dictionary, rule: Dictionary, modifier: Dictionary, refresh_ticks: int) -> void:
-	_contracts_subsystem()._apply_typed_aura_to_target(source_id, target, rule, modifier, refresh_ticks)
+	_contracts_behaviors_subsystem()._apply_typed_aura_to_target(source_id, target, rule, modifier, refresh_ticks)
 
 
 func _attach_model_condition_sound_selector(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_model_condition_sound_selector(row, contract)
+	_contracts_behaviors_subsystem()._attach_model_condition_sound_selector(row, contract)
 
 
 func _attach_random_sound_selector(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_random_sound_selector(row, contract)
+	_contracts_behaviors_subsystem()._attach_random_sound_selector(row, contract)
 
 
 func _attach_upgrade_sound_selector(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_upgrade_sound_selector(row, contract)
+	_contracts_behaviors_subsystem()._attach_upgrade_sound_selector(row, contract)
 
 
 func _attach_large_group_audio_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_large_group_audio_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_large_group_audio_contract(row, contract)
 
 
 func emit_typed_audio_intent(entity_id: int, sound_role: String) -> Dictionary:
-	return _contracts_subsystem().emit_typed_audio_intent(entity_id, sound_role)
+	return _contracts_behaviors_subsystem().emit_typed_audio_intent(entity_id, sound_role)
 
 
 func emit_large_group_audio_intent(entity_ids_value: Array, sound_role: String) -> Dictionary:
-	return _contracts_subsystem().emit_large_group_audio_intent(entity_ids_value, sound_role)
+	return _contracts_behaviors_subsystem().emit_large_group_audio_intent(entity_ids_value, sound_role)
 
 
 func _audio_sequence_roll(entity_id: int, role: String) -> float:
-	return _contracts_subsystem()._audio_sequence_roll(entity_id, role)
+	return _contracts_behaviors_subsystem()._audio_sequence_roll(entity_id, role)
 
 
 func _attach_fire_spread_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_fire_spread_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_fire_spread_contract(row, contract)
 
 
 func set_fire_spread_active(object_id: int, active: bool) -> Dictionary:
-	return _contracts_subsystem().set_fire_spread_active(object_id, active)
+	return _contracts_behaviors_subsystem().set_fire_spread_active(object_id, active)
 
 
 func _fire_spread_delay(object_id: int, policy: Dictionary) -> int:
-	return _contracts_subsystem()._fire_spread_delay(object_id, policy)
+	return _contracts_behaviors_subsystem()._fire_spread_delay(object_id, policy)
 
 
 func _step_fire_spread_updates() -> void:
-	_contracts_subsystem()._step_fire_spread_updates()
+	_contracts_behaviors_subsystem()._step_fire_spread_updates()
 
 
 func _audio_active_conditions(row: Dictionary) -> Dictionary:
-	return _contracts_subsystem()._audio_active_conditions(row)
+	return _contracts_behaviors_subsystem()._audio_active_conditions(row)
 
 
 func _audio_sound_field(role: String) -> String:
-	return _contracts_subsystem()._audio_sound_field(role)
+	return _contracts_behaviors_subsystem()._audio_sound_field(role)
 
 
 func _attach_radiate_fear_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_radiate_fear_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_radiate_fear_contract(row, contract)
 
 
 func activate_radiate_fear(entity_id: int, special_power: int) -> Dictionary:
-	return _contracts_subsystem().activate_radiate_fear(entity_id, special_power)
+	return _contracts_behaviors_subsystem().activate_radiate_fear(entity_id, special_power)
 
 
 func _step_radiate_fear_updates() -> void:
-	_contracts_subsystem()._step_radiate_fear_updates()
+	_contracts_behaviors_subsystem()._step_radiate_fear_updates()
 
 
 func _fear_victim_filter_accepts(target: Dictionary, tokens: Array) -> bool:
-	return _contracts_subsystem()._fear_victim_filter_accepts(target, tokens)
+	return _contracts_behaviors_subsystem()._fear_victim_filter_accepts(target, tokens)
 
 
 func _attach_poisoned_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_poisoned_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_poisoned_contract(row, contract)
 
 
 func apply_poison(entity_id: int, damage_per_pulse: float) -> Dictionary:
-	return _contracts_subsystem().apply_poison(entity_id, damage_per_pulse)
+	return _contracts_behaviors_subsystem().apply_poison(entity_id, damage_per_pulse)
 
 
 func _step_poisoned_behaviors() -> void:
-	_contracts_subsystem()._step_poisoned_behaviors()
+	_contracts_behaviors_subsystem()._step_poisoned_behaviors()
 
 
 func _attach_damage_field_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_damage_field_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_damage_field_contract(row, contract)
 
 
 func _step_damage_fields() -> void:
-	_contracts_subsystem()._step_damage_fields()
+	_contracts_behaviors_subsystem()._step_damage_fields()
 
 
 func _attach_spawn_unit_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_spawn_unit_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_spawn_unit_contract(row, contract)
 
 
 func request_spawn_unit_command(owner_id: int, command: String) -> Dictionary:
-	return _contracts_subsystem().request_spawn_unit_command(owner_id, command)
+	return _contracts_behaviors_subsystem().request_spawn_unit_command(owner_id, command)
 
 
 func _step_spawn_unit_behaviors() -> void:
-	_contracts_subsystem()._step_spawn_unit_behaviors()
+	_contracts_behaviors_subsystem()._step_spawn_unit_behaviors()
 
 
 func _attach_hit_reaction_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_hit_reaction_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_hit_reaction_contract(row, contract)
 
 
 func record_hit_reaction(entity_id: int, damage: float) -> Dictionary:
-	return _contracts_subsystem().record_hit_reaction(entity_id, damage)
+	return _contracts_behaviors_subsystem().record_hit_reaction(entity_id, damage)
 
 
 func _step_hit_reactions() -> void:
-	_contracts_subsystem()._step_hit_reactions()
+	_contracts_behaviors_subsystem()._step_hit_reactions()
 
 
 func _attach_animal_ai_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_animal_ai_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_animal_ai_contract(row, contract)
 
 
 func _step_animal_ai_updates() -> void:
-	_contracts_subsystem()._step_animal_ai_updates()
+	_contracts_behaviors_subsystem()._step_animal_ai_updates()
 
 
 func _attach_threat_finder_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_threat_finder_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_threat_finder_contract(row, contract)
 
 
 func _step_threat_finders() -> void:
-	_contracts_subsystem()._step_threat_finders()
+	_contracts_behaviors_subsystem()._step_threat_finders()
 
 
 func _nearest_hostile_entity(source_id: int, radius_source: float) -> int:
-	return _contracts_subsystem()._nearest_hostile_entity(source_id, radius_source)
+	return _contracts_behaviors_subsystem()._nearest_hostile_entity(source_id, radius_source)
 
 
 func _attach_large_group_bonus_contract(row: Dictionary, contract: Dictionary) -> void:
-	_contracts_subsystem()._attach_large_group_bonus_contract(row, contract)
+	_contracts_behaviors_subsystem()._attach_large_group_bonus_contract(row, contract)
 
 
 func _step_large_group_bonus_updates() -> void:
-	_contracts_subsystem()._step_large_group_bonus_updates()
+	_contracts_behaviors_subsystem()._step_large_group_bonus_updates()
 
 
 const TransportSystemScript = preload("res://src/retail_slice/retail_sim_transport.gd")

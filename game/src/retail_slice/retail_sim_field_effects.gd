@@ -1,14 +1,8 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Field effects carved out of retail_slice_sim.gd (drawer 22): fire-weapon-when-dead contracts, death-weapon rules, passive area heals/modifiers, banner carrier spawn/step/defeat/replenishment.
 ## State stays on the sim; the sim keeps one-line delegates under the original names.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 func _attach_fire_weapon_when_dead_contract(row: Dictionary, contract: Dictionary) -> void:
 	## Normalize the typed importer row once at materialization. Opaque rows from

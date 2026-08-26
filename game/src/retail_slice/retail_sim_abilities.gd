@@ -1,16 +1,10 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Ability-effect subsystem extracted from retail_slice_sim.gd (Q81
 ## strangler-fig extraction #9): the 23 _apply_ability_* effect resolvers.
 ## Verbatim move, compiler-guided sim. prefixes, pin-verified.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 
 func _apply_ability_activate_module_graph(row: Dictionary, ability_id: String, effect: Dictionary, target_point: Vector2, targeting: String) -> Dictionary:

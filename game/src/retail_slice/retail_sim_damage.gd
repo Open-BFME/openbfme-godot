@@ -1,14 +1,8 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Damage and death core carved out of retail_slice_sim.gd (drawer 20): damage application, armor/flanking factors, knockback, battalion/structure death, slow-death core, death weapons, create/keep/destroy-die policies, corpse cleanup.
 ## State stays on the sim; the sim keeps one-line delegates under the original names.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 func _keep_object_die_matches(row: Dictionary, death_type: String) -> bool:
 	if not bool(row.get("keep_object_die", false)):

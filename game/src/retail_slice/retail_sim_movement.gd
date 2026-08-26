@@ -1,17 +1,11 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Movement/locomotion subsystem extracted from retail_slice_sim.gd (Q81
 ## strangler-fig extraction #8): authored heading-bounded stepping, route
 ## assignment/query, arrival bookkeeping. Verbatim move, compiler-guided
 ## sim. prefixes, pin-verified byte-identical.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 
 func _retail_reform_threshold_degrees(row: Dictionary) -> float:

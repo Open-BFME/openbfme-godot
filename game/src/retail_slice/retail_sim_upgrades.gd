@@ -1,17 +1,11 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Upgrade subsystem extracted from retail_slice_sim.gd (Q81 strangler-fig
 ## extraction #10): structure/battalion upgrade queues, stepping, granted/
 ## inherited application. Verbatim move, compiler-guided sim. prefixes,
 ## pin-verified byte-identical.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 
 func queue_structure_upgrade(team: int, structure_id: int, upgrade_id: String) -> Dictionary:

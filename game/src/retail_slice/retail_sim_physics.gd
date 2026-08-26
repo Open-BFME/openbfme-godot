@@ -1,14 +1,8 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Physics objects carved out of retail_slice_sim.gd (drawer 22): fling/airborne physics spawns, gravity stepping, landings, recovery phases, radius damage taper.
 ## State stays on the sim; the sim keeps one-line delegates under the original names.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 func spawn_physics_object(
 	source_object_id: String,

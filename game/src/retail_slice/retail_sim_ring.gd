@@ -1,14 +1,8 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## One-Ring mechanic subsystem carved out of retail_slice_sim.gd (drawer 16): ring runtime contract, Gollum spawn/step, ring drop/pickup, delivery sim.structures, presentation contract.
 ## State stays on the sim; the sim keeps one-line delegates under the original names.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 func _configure_ring_mechanic_contract() -> void:
 	sim._ring_contract = (sim._rules.get("ring_system", {}) as Dictionary).duplicate(true)

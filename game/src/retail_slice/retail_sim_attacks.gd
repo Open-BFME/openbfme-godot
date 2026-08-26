@@ -1,14 +1,8 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Member attacks carved out of retail_slice_sim.gd (drawer 20): auto-targeting, member attack scheduling, projectile launches, weapon modes and condition tokens, member target assignment.
 ## State stays on the sim; the sim keeps one-line delegates under the original names.
 
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 func _nearest_attack_move_target(row: Dictionary) -> int:
 	var origin := Vector2(row.get("position", Vector2.ZERO))

@@ -1,4 +1,4 @@
-extends RefCounted
+extends "res://src/retail_slice/retail_sim_subsystem.gd"
 ## Skirmish-AI controller subsystem extracted from retail_slice_sim.gd (Q81
 ## strangler-fig extraction #4). Pure code move, extracted AS-IS including
 ## its known invented-behavior debt (hand-written build order, permille
@@ -15,14 +15,8 @@ extends RefCounted
 # sim (which holds this subsystem), leaking freed sims as zombies — the
 # script_wiring orphan-refusal contracts catch exactly that. The getter
 # keeps plain `sim.` syntax working everywhere below.
-var _sim_ref: WeakRef
-var sim:
-	get:
-		return _sim_ref.get_ref()
 
 
-func _init(owning_sim) -> void:
-	_sim_ref = weakref(owning_sim)
 
 
 func update_ai_controllers() -> void:
