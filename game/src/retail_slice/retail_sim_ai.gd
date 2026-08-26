@@ -70,43 +70,50 @@ func run_ai_for_team(team: int, profile: Dictionary, ai_state: Dictionary) -> vo
 		step_ai_base_building(team, ai_state)
 	var queue_interval := maxi(15, int(_sim._rules.get("ai_queue_interval_ticks", 60)) * int(profile.get("queue_interval_permille", 1000)) / 1000)
 	if _sim.base_loop_enabled and _sim.tick_index % queue_interval == 0:
-		var authored_queued := false
-		# Q83b: authored consumption is OPT-IN (use_authored_skirmish_ai rule)
-		# until it reaches parity strength — live m2 evidence: the one-choice-
-		# per-window plan leaves the AI weaker than the proven manifest plan
-		# (fortress never falls; base razes it by tick ~7832).
+		# The manifest plan runs EVERY window — it is the proven baseline the
+		# whole battery is pinned to, and it must never get weaker.
+		var plan: Array = _sim.ai_production_plan_for_team(team)
+		if plan.is_empty():
+			# Q80: no AI_PRODUCTION_PLAN constant fallback — an empty
+			# manifest plan means this AI queues nothing, honestly.
+			plan = _sim._ai_production_plan
+		var team_rules: Dictionary = _sim.unit_production_rules_for_team(team)
+		for unit_type in plan:
+			var production_rule: Dictionary = team_rules.get(unit_type, {})
+			if production_rule.is_empty():
+				continue
+			var producer := int(_sim.producer_id(team, String(production_rule.get("producer_kind", ""))))
+			if producer != 0:
+				_sim.queue_unit(team, producer, unit_type)
+		# Q83b (OPT-IN via use_authored_skirmish_ai): retail's authored
+		# ArmyDefinition composition fills whatever headroom the baseline
+		# left — deficit-first picks that count living AND queued units. The
+		# authored layer strictly ADDS strength on top of the baseline; the
+		# proven plan above is untouched. Full replacement (baseline off)
+		# stays future work once economy/CP semantics reach retail scale.
 		if bool(_sim.skirmish_ai_configured) and bool(_sim._rules.get("use_authored_skirmish_ai", false)):
-			var choice: Dictionary = _sim._skirmish_ai_subsystem().authored_ai_queue_choice(team)
-			if bool(choice.get("ok", false)):
-				authored_queued = true
-				var choice_rules: Dictionary = _sim.unit_production_rules_for_team(team)
-				var choice_rule: Dictionary = choice_rules.get(String(choice["unit_type"]), {})
-				if not choice_rule.is_empty():
+			var choices: Array = _sim._skirmish_ai_subsystem().authored_ai_queue_choices(team)
+			var first: Dictionary = {} if choices.is_empty() else choices[0] as Dictionary
+			if bool(first.get("ok", false)):
+				for choice_value in choices:
+					var choice := choice_value as Dictionary
+					var choice_rule: Dictionary = team_rules.get(String(choice.get("unit_type", "")), {})
+					if choice_rule.is_empty():
+						continue
 					var choice_producer := int(_sim.producer_id(team, String(choice_rule.get("producer_kind", ""))))
-					if choice_producer != 0:
-						_sim.queue_unit(team, choice_producer, String(choice["unit_type"]))
+					if choice_producer == 0:
+						continue
+					# Refusals (cost/command points/producer busy) skip THIS
+					# pick and still try the rest; a cheaper pick may fit.
+					_sim.queue_unit(team, choice_producer, String(choice["unit_type"]))
 			elif not bool(ai_state.get("authored_queue_refusal_reported", false)):
-				# A side the authored document cannot serve falls back to the
-				# manifest plan below — LOUDLY, once per team, never silently.
+				# A side the authored document cannot serve keeps the baseline
+				# alone — LOUDLY, once per team, never silently.
 				ai_state["authored_queue_refusal_reported"] = true
 				push_warning(
-					"skirmish-ai team %d falls back to the manifest plan: %s"
-					% [team, String(choice.get("reason", ""))]
+					"skirmish-ai team %d runs the baseline plan only: %s"
+					% [team, String(first.get("reason", ""))]
 				)
-		if not authored_queued:
-			var plan: Array = _sim.ai_production_plan_for_team(team)
-			if plan.is_empty():
-				# Q80: no AI_PRODUCTION_PLAN constant fallback — an empty
-				# manifest plan means this AI queues nothing, honestly.
-				plan = _sim._ai_production_plan
-			var team_rules: Dictionary = _sim.unit_production_rules_for_team(team)
-			for unit_type in plan:
-				var production_rule: Dictionary = team_rules.get(unit_type, {})
-				if production_rule.is_empty():
-					continue
-				var producer := int(_sim.producer_id(team, String(production_rule.get("producer_kind", ""))))
-				if producer != 0:
-					_sim.queue_unit(team, producer, unit_type)
 	# Give hostiles one full production window before the first wave. Economy and
 	# production still advance during the preparation time. Higher tiers commit
 	# sooner (shorter attack delay), lower tiers later.

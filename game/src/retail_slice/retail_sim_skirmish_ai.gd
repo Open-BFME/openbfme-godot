@@ -137,6 +137,72 @@ func authored_ai_queue_choice(team: int) -> Dictionary:
 	}
 
 
+func authored_ai_queue_choices(team: int, max_picks: int = 6) -> Array:
+	## The window's production ORDERS, deficit-first: repeatedly pick the most
+	## under-represented authored member, counting BOTH living units and units
+	## already sitting in production queues (so one window diversifies instead
+	## of asking for the same horde N times). The caller queues each pick and
+	## stops at the first economy/CP refusal — matching the manifest plan's
+	## whole-list-per-window aggression with authored composition.
+	var _sim = sim
+	var picks: Array = []
+	var first_choice: Dictionary = authored_ai_queue_choice(team)
+	if not bool(first_choice.get("ok", false)):
+		return [first_choice]
+	# Working counts: living + queued per unit_type.
+	var counts: Dictionary = {}
+	var total := 0
+	for id in _sim.living_ids(team):
+		var row: Dictionary = _sim.entities[id]
+		if bool(row.get("is_builder", false)):
+			continue
+		var unit_type := String(row.get("unit_type", ""))
+		counts[unit_type] = int(counts.get(unit_type, 0)) + 1
+		total += 1
+	for structure_id in _sim.structure_ids(team):
+		for item_value in (_sim.structures[structure_id] as Dictionary).get("queue", []) as Array:
+			var queued_type := String((item_value as Dictionary).get("unit_type", ""))
+			counts[queued_type] = int(counts.get(queued_type, 0)) + 1
+			total += 1
+	var side := String(_sim.team_retail_side(team).get("side", ""))
+	var plan := skirmish_ai_plan_for_side(side)
+	var phase := current_army_phase(plan)
+	var team_rules: Dictionary = _sim.unit_production_rules_for_team(team)
+	var candidates: Array = []
+	var total_percentage := 0.0
+	for member_value in plan.get("members", []) as Array:
+		var member := member_value as Dictionary
+		var percentage := float((member.get("phase_percentages", []) as Array)[phase - 1])
+		if percentage <= 0.0:
+			continue
+		var unit_type := String(_sim.trainable_unit_type_for(team, String(member.get("unit", ""))))
+		if unit_type == "" or not team_rules.has(unit_type):
+			continue
+		candidates.append({"unit_type": unit_type, "percentage": percentage})
+		total_percentage += percentage
+	if candidates.is_empty() or total_percentage <= 0.0:
+		return [first_choice]
+	for _pick_index in max_picks:
+		var best := ""
+		var best_deficit := -1.0e12
+		for candidate_value in candidates:
+			var candidate := candidate_value as Dictionary
+			var desired := float(candidate["percentage"]) / total_percentage
+			var current := 0.0
+			if total > 0:
+				current = float(int(counts.get(String(candidate["unit_type"]), 0))) / float(total)
+			var deficit := desired - current
+			if deficit > best_deficit + 0.000001:
+				best_deficit = deficit
+				best = String(candidate["unit_type"])
+		if best == "":
+			break
+		picks.append({"ok": true, "unit_type": best, "phase": phase})
+		counts[best] = int(counts.get(best, 0)) + 1
+		total += 1
+	return picks
+
+
 func current_army_phase(plan: Dictionary) -> int:
 	## Phase 1 (Rush) until PhaseDuration_Rush seconds, phase 2 (MidGame)
 	## until rush+mid, then phase 3 (EndGame). Unmeasured durations keep the

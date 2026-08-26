@@ -1628,6 +1628,10 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 		unit_rules[extra_builder_id] = extra_unit_rules[extra_builder_id]
 	var rules := {
 		"game": "rotwk",
+		# Q83b: retail's authored ArmyDefinition composition layers ON TOP of the
+		# proven baseline plan (strictly additive - m2 gate green both ways).
+		# Default ON; OPENBFME_AUTHORED_AI=0 is the explicit opt-out.
+		"use_authored_skirmish_ai": OS.get_environment("OPENBFME_AUTHORED_AI") != "0",
 		"enable_base_loop": true,
 		"starting_resources": 1200,
 		"command_point_cap": 200,

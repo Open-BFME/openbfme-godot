@@ -68,6 +68,13 @@ func _run() -> void:
 			_fail("match %d mounted another bundle" % [match_index + 1])
 			return
 
+		# ONE driver only (Q101 root cause): the slice's real-time _process and
+		# this runner's step_for_test chunks used to advance the SAME sim with
+		# a wall-time-dependent interleave — two boots could land the killing
+		# blow one tick apart and fail the cross-match signature check. Pausing
+		# the real-time driver makes the lifecycle purely runner-driven; a
+		# two-boot probe then repeats byte-identically (winner tick 7800).
+		slice.simulation_paused = true
 		var player_fortress_id := int(slice.simulation.fortress_id(0))
 		var defeat_chain := {
 			"constructionStartedSequence": 0,
