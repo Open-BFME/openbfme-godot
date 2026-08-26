@@ -572,9 +572,12 @@ function Invoke-BundleLaunchProbe {
     # it refused a perfectly healthy build (2026-08-26). Fall back to the old
     # match only when no playable census printed, so a build that never reaches
     # the playable census still fails loudly on whatever census it did print.
-    $contentDb = @($lines | Where-Object { $_ -like '*[ContentDB] playable:*units=*' } | Select-Object -First 1)
+    # -match, NOT -like: in a wildcard pattern '[ContentDB]' is a character
+    # CLASS matching one letter, so the playable-census pattern silently never
+    # matched and the legacy-demo fallback kept refusing healthy builds.
+    $contentDb = @($lines | Where-Object { $_ -match '\[ContentDB\] playable:.*units=' } | Select-Object -First 1)
     if ($contentDb.Count -eq 0) {
-        $contentDb = @($lines | Where-Object { $_ -like '*[ContentDB]*packs=*' } | Select-Object -First 1)
+        $contentDb = @($lines | Where-Object { $_ -match '\[ContentDB\].*packs=' } | Select-Object -First 1)
     }
     $censusLine = ''
     if ($contentDb.Count -gt 0) { $censusLine = $contentDb[0].Trim() }
