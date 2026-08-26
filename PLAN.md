@@ -36,6 +36,9 @@ needs: importer
 - [x] Port retail's skirmish AI — authored army composition drives production by default {#sim-ai}
   by: claude (codex compiled the data; claude shipped the pack, loader, interpreter, and consumption: retail ArmyDefinition composition layers over the proven baseline, never weaker, m2 3/3 both ways; 3442dbeb. Q83c holds the rest: difficulty odds, hero build order, full replacement)
   from: roadmap (queue Q83/Q83b; owner: #1 UX lever)
+- [x] Stop drawing retail's hidden placeholder meshes — the flat gray tower tops are gone {#sim-w3d-hidden}
+  by: claude (owner bug 2026-08-26 "trebuchets not on the walls": the gray octagon caps were W3D HIDDEN pad/ramp meshes (P1/R1/R2) the converter preserved in GLB extras but the runtime rendered anyway; AssetFactory now honors the flag at every GLB load site, w3d_hidden_mesh_runner 23/0. The trebuchet itself is a pack gap, NOT a runtime bug: retail mounts MenTrebuchetFortress (model GUFSgTreb_SKN, trebuchet.ini:854 ChildObject) on the tower deck and no pack has ever converted that model — pinned by retail_expansion_turret_mount_runner as EXPECTED_MISSING_TURRET_VISUALS; needs an importer recook of GUFSgTreb_SKN from w3d.big into the men pack)
+  from: agent
 - [ ] Grow map-script vocabulary opportunistically (135/609 actions handled) {#sim-scripts}
   from: roadmap (queue Q85)
 - [ ] Retire the hand-authored synthetic pack game/data/base (after fallback tables die) {#sim-retire-synthetic}

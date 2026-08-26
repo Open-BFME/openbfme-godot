@@ -36,6 +36,16 @@ const FORDS_TRANSFORM_SCALE := 0.02649232738129
 ## both Men trebuchet towers with MenTrebuchetFortress and neither the active nor
 ## any supplemental pack converts it, so the tower renders bare however correct
 ## the mount offset is. EMPTY THIS LIST when the importer ships the visual.
+##
+## EXACT RECOOK SOURCE (verified 2026-08-26, workspace/retail-extract):
+##   data/ini/object/goodfaction/units/men/trebuchet.ini:854
+##       ChildObject MenTrebuchetFortress GondorTrebuchet
+##           Draw = W3DTruckDraw ...  Model = GUFSgTreb_SKN  (DYING: GUFSgTreb_DIEA)
+##   The skin W3D lives in the layered install's w3d.big (art/w3d/gu/). Only the
+##   death anim was ever converted (gufsgtreb_diea.glb sits in the
+##   missing-physical batch packs); no pack carries gufsgtreb_skn or a
+##   MenTrebuchetFortress bundle-object row, so
+##   ContentDB.get_bundle_object("bfme2.object.men-trebuchet-fortress") is empty.
 const EXPECTED_MISSING_TURRET_VISUALS: Array[String] = [
 	"bfme2.object.men-trebuchet-fortress",
 ]

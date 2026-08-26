@@ -335,6 +335,7 @@ static func preload_models_threaded(paths: Array) -> void:
 		if node == null:
 			push_error("[AssetFactory] GLB parsed but generated no scene: %s" % threaded[index])
 			continue
+		hide_w3d_hidden_meshes(node)
 		_cache_model(threaded[index], node)
 		# _cache_model stores a duplicate; the generated original is never
 		# parented on this warm path and must be freed or it leaks at exit.
@@ -445,14 +446,49 @@ static func _load_gltf(path: String) -> Node3D:
 	if ResourceLoader.exists(path):
 		var res = load(path)
 		if res is PackedScene:
-			return (res as PackedScene).instantiate() as Node3D
+			var instance := (res as PackedScene).instantiate() as Node3D
+			if instance != null:
+				hide_w3d_hidden_meshes(instance)
+			return instance
 	var doc := GLTFDocument.new()
 	var state := GLTFState.new()
 	var err := doc.append_from_file(path, state)
 	if err != OK:
 		return null
 	W3DTextureMappersScript.tag_gltf_materials(state)
-	return doc.generate_scene(state) as Node3D
+	var scene := doc.generate_scene(state) as Node3D
+	if scene != null:
+		hide_w3d_hidden_meshes(scene)
+	return scene
+
+
+## Honor the authored W3D per-mesh HIDDEN flag.
+##
+## Retail W3D models carry placeholder meshes the engine never renders: the
+## build-plot pads and ramp reference surfaces (P1 / R1 / R2 on the Gondor
+## castle wall towers and the fortress trebuchet expansion towers). The
+## converter preserves the W3D hidden attribute as GLB node extras
+## (`{"hidden": true}`), and Godot's GLTFDocument imports node extras as node
+## metadata — but nothing consumed it, so every pad rendered as a flat
+## untextured gray cap on the tower tops (owner playtest 2026-08-26). Retail
+## additionally authors these meshes' shaders with color writes disabled;
+## hiding the node is the same picture retail draws. Sub-object upgrade states
+## (ShowSubObject) address meshes by name and still re-show anything an
+## upgrade authors visible.
+static func hide_w3d_hidden_meshes(root: Node3D) -> int:
+	var hidden_count := 0
+	var stack: Array[Node] = [root]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		for child in node.get_children():
+			stack.append(child)
+		if not (node is Node3D):
+			continue
+		var extras: Variant = node.get_meta("extras", {})
+		if typeof(extras) == TYPE_DICTIONARY and bool((extras as Dictionary).get("hidden", false)):
+			(node as Node3D).visible = false
+			hidden_count += 1
+	return hidden_count
 
 
 static func load_texture_asset(path: String) -> Texture2D:
