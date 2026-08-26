@@ -366,6 +366,17 @@ func _step_ai_special_power_updates() -> void:
 			if _sim.tick_index < int(policy.get("next_check_tick", 0)):
 				continue
 			policy["next_check_tick"] = _sim.tick_index + 1
+			# Q83c: retail's authored SpecialPowerActivationProbability gates
+			# each evaluation — "a : b" reads as a chances in b (deterministic
+			# logic_random draw, identical on every lockstep peer). Unauthored
+			# or unconfigured tiers keep the always-evaluate behavior.
+			if bool(_sim._rules.get("use_authored_skirmish_ai", false)):
+				var odds: Array = _sim._skirmish_ai_subsystem().authored_special_power_odds(int(row.get("team", -1)))
+				if odds.size() == 2 and float(odds[1]) > 0.0:
+					if _sim.logic_random_int(1, int(odds[1])) > int(odds[0]):
+						policy["last_result"] = "authored-difficulty-roll-failed:%d/%d" % [int(odds[0]), int(odds[1])]
+						policies[index] = policy
+						continue
 			if not (policy.get("unsupported_semantics", []) as Array).is_empty():
 				policy["last_result"] = String((policy.get("unsupported_semantics", []) as Array)[0])
 				policies[index] = policy

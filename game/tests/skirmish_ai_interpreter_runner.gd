@@ -114,6 +114,17 @@ func _run() -> void:
 		"hero order: an exhausted order refuses by name"
 	)
 
+	# --- authored difficulty odds ----------------------------------------
+	_check(
+		ai_sim._skirmish_ai_subsystem().authored_special_power_odds(0) == [10.0, 150.0],
+		"difficulty odds: the NORMAL tier's special-power pair reaches the AI"
+	)
+	var odds_less = SimScript.new()
+	_check(
+		(odds_less._skirmish_ai_subsystem().authored_special_power_odds(0) as Array).is_empty(),
+		"difficulty odds: an unconfigured sim answers no odds"
+	)
+
 	var sideless_sim = SimScript.new()
 	sideless_sim.configure_skirmish_ai(_consumption_document())
 	var refused: Dictionary = sideless_sim._skirmish_ai_subsystem().authored_ai_queue_choice(0)
@@ -171,6 +182,7 @@ func _fixture_document() -> Dictionary:
 				"fields": {
 					"Difficulty": {"value": "NORMAL"},
 					"EconomyUpgradeProbability": {"value": "10 : 100"},
+					"SpecialPowerActivationProbability": {"value": "10 : 150"},
 				},
 			},
 		},

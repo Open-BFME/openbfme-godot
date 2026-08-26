@@ -203,6 +203,20 @@ func authored_ai_queue_choices(team: int, max_picks: int = 6) -> Array:
 	return picks
 
 
+func authored_special_power_odds(team: int) -> Array:
+	## The authored SpecialPowerActivationProbability pair [a, b] for this
+	## team's difficulty tier, or [] when unconfigured/unauthored. Tier
+	## mapping: easy -> EASY, everything medium and above -> NORMAL (the only
+	## rows retail authors for skirmish; harder tiers use the strongest row).
+	var _sim = sim
+	if not bool(_sim.skirmish_ai_configured):
+		return []
+	var label := "EASY" if String(_sim.team_difficulty(team)).to_lower() == "easy" else "NORMAL"
+	var tier := (_sim.skirmish_ai_difficulty as Dictionary).get(label, {}) as Dictionary
+	var pair := tier.get("SpecialPowerActivationProbability", []) as Array
+	return pair if pair.size() == 2 else []
+
+
 func authored_hero_choice(team: int) -> Dictionary:
 	## Retail's HeroBuildOrder, consumed in authored order: the FIRST hero the
 	## mounted pack can train that is not already fielded, queued, or living
