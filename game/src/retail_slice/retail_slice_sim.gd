@@ -8244,1575 +8244,71 @@ func _step_production() -> void:
 	_production_subsystem()._step_production()
 
 
-func _step_entity(id: int) -> void:
-	var row: Dictionary = entities[id]
-	# The carrier is a real damageable simulation entity, but its movement and
-	# presentation are owned by its horde; it never runs independent orders/AI.
-	if bool(row.get("is_banner_carrier", false)):
-		return
-	if int(row["health"]) <= 0:
-		row["state"] = "death"
-		_clear_pending_route(row, true)
-		_rearm_mood_idle_cadence(row)
-		return
-	if row.has("grab_passenger_channel") or row.has("fling_passenger_channel") or row.has("repair_structure_channel"):
-		row["current_speed"] = 0.0
-		row["state"] = "ability"
-		_rearm_mood_idle_cadence(row)
-		return
-	if not (row.get("dominate_enemy_channel", {}) as Dictionary).is_empty():
-		# DominateEnemySpecialPower owns locomotion for unpack/preparation and
-		# the authored post-trigger AI freeze. The ability step resolves its
-		# interrupt/trigger/finish boundary deterministically after this pass.
-		row["current_speed"] = 0.0
-		row["state"] = "ability"
-		_rearm_mood_idle_cadence(row)
-		return
-	if tick_index < int(row.get("cower_until_tick", -1)):
-		row["current_speed"] = 0.0
-		row["state"] = "cower"
-		_rearm_mood_idle_cadence(row)
-		return
-	elif row.has("cower_until_tick"):
-		row.erase("cower_until_tick")
-		row["state"] = "idle"
-	if entity_container.has(id):
-		var horde_ai := row.get("horde_ai_update", {}) as Dictionary
-		if horde_ai.is_empty():
-			_attach_module_contracts(row)
-			horde_ai = row.get("horde_ai_update", {}) as Dictionary
-		# Contained hordes are position-owned by the carrier. They may execute
-		# weapon logic only when retail authors the opt-in; otherwise they are
-		# inert. Route clearing prevents independent movement in either case.
-		_clear_pending_route(row, true)
-		row["attack_move"] = false
-		row["current_speed"] = 0.0
-		var carrier_id := int(entity_container.get(id, 0))
-		if structures.has(carrier_id):
-			row["position"] = Vector2((structures[carrier_id] as Dictionary).get("position", row.get("position", Vector2.ZERO)))
-		if not bool(row.get("contained_can_attack", false)) and not bool(horde_ai.get("can_attack_while_contained", false)):
-			row["state"] = "contained"
-			return
-	if tick_index < int(row.get("stun_until_tick", -1)):
-		# Cloud Break disruption: the battalion holds position and cannot act
-		# until the authored weather duration elapses.
-		row["current_speed"] = 0.0
-		_rearm_mood_idle_cadence(row)
-		return
-	var knockdown_ticks := int(row.get("knockdown_ticks", 0))
-	if knockdown_ticks > 0:
-		# Knocked-down battalions lie incapacitated: no movement, attacks, or
-		# ability steps until the counter drains, then they stand back up.
-		# Being bowled over interrupts a capture channel outright.
-		if not (row.get("capture_channel", {}) as Dictionary).is_empty():
-			var channel: Dictionary = row.get("capture_channel", {}) as Dictionary
-			row.erase("capture_channel")
-			_emit_event("structure.capture_cancelled", id, int(channel.get("structure_id", 0)), {"team": int(row.get("team", -1))})
-		knockdown_ticks -= 1
-		row["knockdown_ticks"] = knockdown_ticks
-		row["current_speed"] = 0.0
-		if knockdown_ticks <= 0:
-			row["knocked_down"] = false
-			_emit_event("combat.stand_up", id, 0)
-			# Standing back up resumes the order the charge interrupted, from
-			# the spot the battalion was thrown to. Without this a trampled
-			# battalion stands up ownerless and idle, so the player's attack
-			# order is destroyed by the first hoof that touches it.
-			if not _resume_order_after_knockdown(row):
-				row["state"] = "idle"
-		else:
-			row["state"] = "knocked_down"
-		_rearm_mood_idle_cadence(row)
-		return
-	row["attack_cooldown"] = maxi(0, int(row["attack_cooldown"]) - 1)
-	if not (row.get("activate_module_channel", {}) as Dictionary).is_empty():
-		# ActivateModuleSpecialPower owns locomotion through its authored
-		# unpack/prep/duration/pack envelope. A voluntary order is observed and
-		# resolved by _step_activate_module_graph after this entity pass; a
-		# MustFinish graph keeps the order queued and resumes it after finish.
-		row["current_speed"] = 0.0
-		row["state"] = "ability"
-		_rearm_mood_idle_cadence(row)
-		return
-	if not (row.get("siege_deploy_channel", {}) as Dictionary).is_empty():
-		row["current_speed"] = 0.0
-		row["state"] = "deployed" if String((row.get("siege_deploy_channel", {}) as Dictionary).get("phase", "")) == "deployed" else "ability"
-		_rearm_mood_idle_cadence(row)
-		return
-	if _step_capture_channel(row):
-		_rearm_mood_idle_cadence(row)
-		return
-	if _step_volley_channel(row):
-		_rearm_mood_idle_cadence(row)
-		return
-	if tick_index < int(row.get("ability_hold_until_tick", -1)):
-		# Authored post-ability busy envelope (teleport BusyForDuration): the
-		# hero holds this tick; accepted orders resume once the hold expires.
-		row["current_speed"] = 0.0
-		row["state"] = "idle"
-		_rearm_mood_idle_cadence(row)
-		return
-	if _step_production_exit(row):
-		_rearm_mood_idle_cadence(row)
-		return
-	if bool(row.get("is_builder", false)):
-		_rearm_mood_idle_cadence(row)
-		var construction_id := int(row.get("construction_id", 0))
-		if construction_id != 0 and structures.has(construction_id):
-			var site: Dictionary = structures[construction_id]
-			if float(site.get("construction_progress", 1.0)) < 1.0:
-				var site_position := Vector2(site.get("position", row["position"]))
-				# A successful navigation query may end at the closest walkable
-				# perimeter cell rather than the structure's obstructed center.
-				# Exhausting that accepted route is arrival; requiring another
-				# invented center-distance strands real-map construction sites.
-				# Arrival is the FOOTPRINT EDGE, not a flat 2.0 from the centre: a
-				# route that ends at the centre (no nav-grid obstruction for the
-				# fresh site) leaves the porter pressed against the site's own
-				# collision disc - placement radius plus its body - and a
-				# centre-distance rule strands it there forever with the order
-				# still armed (Angmar porter, second fortress: stuck 5.2 out).
-				# Retail porters build from the foundation's edge.
-				var footprint := _structure_placement_radius(String(site.get("structure_kind", "")))
-				var arrival_reach := maxf(2.0, footprint + 2.0)
-				if String(row.get("order_kind", "")) == "construct" and ((row["route"] as Array).is_empty() or Vector2(row["position"]).distance_to(site_position) <= arrival_reach):
-					_clear_pending_route(row, true)
-					row["state"] = "construct"
-					return
-		if not (row["route"] as Array).is_empty():
-			_step_route(row)
-		else:
-			row["state"] = "idle"
-		return
-	var target_id := int(row["target_id"])
-	if (
-		target_id != 0
-		or not (row["route"] as Array).is_empty()
-		or bool(row.get("attack_move", false))
-	):
-		_rearm_mood_idle_cadence(row)
-	if target_id == 0 and (row["route"] as Array).is_empty() and not bool(row.get("attack_move", false)):
-		var scan_now := true
-		var mood_rate := int(row.get("mood_attack_check_rate_ticks", 0))
-		if mood_rate > 0:
-			var policy_allows_idle_scan := (
-				bool(row.get("auto_acquire_enabled", true))
-				and (
-					not _stealth_active(row)
-					or bool(row.get("auto_acquire_while_stealthed", true))
-				)
-			)
-			scan_now = (
-				policy_allows_idle_scan
-				and tick_index >= int(row.get("mood_next_check_tick", -1))
-			)
-		if scan_now:
-			var auto_target := _nearest_auto_target(row)
-			if mood_rate > 0:
-				var interval := mood_rate
-				if bool(row.get("mood_randomize_next_check", true)):
-					var half_rate := mood_rate >> 1
-					interval += logic_random_int(-half_rate, half_rate)
-					row["mood_randomize_next_check"] = false
-				row["mood_next_check_tick"] = tick_index + maxi(1, interval)
-			if not auto_target.is_empty():
-				target_id = int(auto_target["id"])
-				row["target_id"] = target_id
-				row["target_kind"] = String(auto_target["kind"])
-				row["order_kind"] = "auto_attack"
-				row["auto_attack_origin"] = row.get("position", Vector2.ZERO)
-	if target_id == 0 and bool(row.get("attack_move", false)) and not (row["route"] as Array).is_empty():
-		var acquired := _nearest_attack_move_target(row)
-		if acquired != 0:
-			row["target_id"] = acquired
-			row["target_kind"] = "battalion"
-			target_id = acquired
-	if target_id != 0:
-		var target_kind := String(row.get("target_kind", "battalion"))
-		if String(row.get("order_kind", "")) == "auto_attack":
-			var ai_policy := row.get("ai_update_interface", {}) as Dictionary
-			var stop_source := float(ai_policy.get("stop_chase_distance_source", 0.0))
-			var source_scale := float(_rules.get("source_map_transform_scale", 1.0))
-			var stop_distance := stop_source * (source_scale if source_scale > 0.0 else 1.0)
-			if stop_distance > 0.0 and Vector2(row.get("position", Vector2.ZERO)).distance_to(Vector2(row.get("auto_attack_origin", row.get("position", Vector2.ZERO)))) > stop_distance:
-				row["target_id"] = 0
-				row["target_kind"] = "battalion"
-				row["order_kind"] = ""
-				row.erase("auto_attack_origin")
-				_clear_pending_route(row, true)
-				row["state"] = "idle"
-				return
-		if not _target_alive(target_id, target_kind):
-			row["target_id"] = 0
-			row["target_kind"] = "battalion"
-			row["attack_windup"] = 0
-			_clear_member_attack_schedule(row)
-			_clear_member_targets(row)
-			if bool(row.get("attack_move", false)) and _assign_route(row, Vector2(row.get("attack_move_destination", row["position"]))):
-				row["state"] = "run"
-			else:
-				_clear_pending_route(row, true)
-				row["state"] = "idle"
-			return
-		var auto_target_invalid := (
-			String(row.get("order_kind", "")) == "auto_attack"
-			and (
-				not bool(row.get("auto_acquire_enabled", true))
-				or (
-					_stealth_active(row)
-					and not bool(row.get("auto_acquire_while_stealthed", true))
-				)
-				or (
-					target_kind == "battalion"
-					and _stealth_active(entities[target_id] as Dictionary)
-				)
-				or (
-					target_kind == "structure"
-					and not bool(row.get("auto_acquire_attack_buildings", true))
-				)
-			)
-		)
-		if auto_target_invalid:
-			# Re-evaluate an AUTO target for temporal policy changes (source or
-			# target cloaking) without touching explicit attack/retaliation
-			# orders. A later tick may reacquire after the condition clears.
-			row["target_id"] = 0
-			row["target_kind"] = "battalion"
-			row["attack_windup"] = 0
-			_clear_member_attack_schedule(row)
-			_clear_member_targets(row)
-			_clear_pending_route(row, true)
-			row["state"] = "idle"
-			return
-		if target_kind == "battalion" and not _can_engage_battalion(row, entities[target_id] as Dictionary):
-			# Safety net for targets acquired through paths other than the
-			# guarded acquisition funnels (e.g. retaliation): melee cannot
-			# chase an airborne battalion it can never reach.
-			row["target_id"] = 0
-			row["target_kind"] = "battalion"
-			row["attack_windup"] = 0
-			_clear_member_attack_schedule(row)
-			_clear_member_targets(row)
-			_clear_pending_route(row, true)
-			row["state"] = "idle"
-			return
-		var target_position := _target_position(target_id, target_kind)
-		# SURFACE-TO-SURFACE against a structure; centre-to-centre otherwise.
-		#
-		# This used to be centre-to-centre unconditionally, copied from a partial
-		# open-source reimplementation that compares raw translation distance
-		# against AttackRange with no bounding-radius expansion. The original
-		# engine instead asks its partition manager for a bounding-sphere-to-
-		# bounding-sphere distance, i.e. the GAP between the two footprints.
-		#
-		# MEASURED consequence of the simplification, in the live slice: a melee
-		# horde ordered onto the enemy fortress ended in state `attack` at d=0.24
-		# and then d=0.00 — standing ON the fortress centre — because a 0.305
-		# AttackRange against a 1.96-radius footprint is only satisfiable at the
-		# centre. Melee is supposed to stand at the wall and swing. Bracketed
-		# from both sides by _test_structure_surface_range in
-		# game/tests/banner_castle_sim_runner.gd.
-		#
-		# See _target_footprint_radius for why the attacker's own radius is NOT
-		# subtracted (it is a horde centre, not a soldier).
-		var distance := maxf(
-			0.0,
-			Vector2(row["position"]).distance_to(target_position)
-			- _target_footprint_radius(target_id, target_kind)
-		)
-		var selected_weapon_mode := _weapon_mode_for_distance(row, distance)
-		if selected_weapon_mode == "unsupported-close":
-			row["state"] = "idle"
-			row["attack_windup"] = 0
-			_clear_pending_route(row, true)
-			_clear_member_attack_schedule(row)
-			return
-		_apply_weapon_mode(row, selected_weapon_mode)
-		var minimum_range := float(row.get("minimum_attack_range", 0.0))
-		if distance <= float(row["attack_range"]) and (minimum_range <= 0.0 or distance >= minimum_range):
-			row["state"] = "attack"
-			_clear_pending_route(row, true)
-			_step_member_attacks(id, row, target_id, target_kind)
-			return
-		row["attack_windup"] = 0
-		_clear_member_attack_schedule(row)
-		if (
-			String(row.get("stance", "Battle")) == "HoldGround"
-			and String(row.get("order_kind", "")) in ["", "auto_attack"]
-		):
-			# HoldGround never leaves its post to chase: an auto-acquired or
-			# retaliation target that steps out of weapon range is dropped
-			# instead of pursued. Explicit player attack orders still pursue.
-			row["target_id"] = 0
-			row["target_kind"] = "battalion"
-			_clear_pending_route(row, true)
-			row["state"] = "idle"
-			return
-		if minimum_range > 0.0 and distance < minimum_range:
-			if entity_container.has(id):
-				row["state"] = "contained"
-				return
-			# Inside minimum range: back away to re-establish the firing ring.
-			# Routing toward the target here walked min-range units (trebuchets)
-			# into their attacker and jammed them permanently.
-			var away := Vector2(row["position"]) - target_position
-			var direction := away / away.length() if away.length() > 0.001 else Vector2.RIGHT
-			var fallback := Vector2(row["position"]) + direction * (minimum_range - distance + 1.0)
-			_clear_pending_route(row, true)
-			if not _assign_route(row, fallback):
-				row["state"] = "idle"
-				return
-			row["state"] = "run"
-			_step_route(row)
-			return
-		if (row["route"] as Array).is_empty():
-			if entity_container.has(id):
-				row["state"] = "contained"
-				return
-			if not _assign_target_route(row, target_position):
-				row["target_id"] = 0
-				_clear_pending_route(row, true)
-				row["state"] = "idle"
-				return
-		row["state"] = "run"
-		_step_route(row)
-		return
-	if not (row["route"] as Array).is_empty():
-		row["state"] = "run"
-		_step_route(row)
-	else:
-		row["attack_move"] = false
-		row["state"] = "idle"
+const StepperSystemScript = preload("res://src/retail_slice/retail_sim_stepper.gd")
+var _stepper_system = null
+func _stepper_subsystem():
+	if _stepper_system == null:
+		_stepper_system = StepperSystemScript.new(self)
+	return _stepper_system
 
+func _step_entity(id: int) -> void:
+	_stepper_subsystem()._step_entity(id)
 
 func set_structure_rally(team: int, structure_id: int, position: Vector2) -> Dictionary:
-	if not structures.has(structure_id):
-		return {"ok": false, "reason": "unknown-structure"}
-	var row: Dictionary = structures[structure_id]
-	if int(row.get("team", -1)) != team:
-		return {"ok": false, "reason": "not-owned"}
-	if int(row.get("health", 0)) <= 0:
-		return {"ok": false, "reason": "structure-destroyed"}
-	if playable_outline.size() >= 3 and not Geometry2D.is_point_in_polygon(position, playable_outline):
-		return {"ok": false, "reason": "outside-playable-area"}
-	row["rally"] = position
-	_emit_event("structure.rally_set", 0, structure_id, {"team": team})
-	return {"ok": true}
+	return _stepper_subsystem().set_structure_rally(team, structure_id, position)
 
+const ConstructionSystemScript = preload("res://src/retail_slice/retail_sim_construction.gd")
+var _construction_system = null
+func _construction_subsystem():
+	if _construction_system == null:
+		_construction_system = ConstructionSystemScript.new(self)
+	return _construction_system
 
 func structure_sell_command(structure_id: int) -> Dictionary:
-	## Compiled Command_Sell row for this structure, or {} if the mounted docs
-	## do not author a sell slot. Command_Sell is slot 6 of every Men production
-	## set and the whole of SellableCommandSet (commandset.ini:5771).
-	if not structures.has(structure_id):
-		return {}
-	var building: Dictionary = structures[structure_id]
-	if int(building.get("health", 0)) <= 0:
-		return {}
-	# farm.ini:34 authors CommandSet = SellableCommandSet on the object with
-	# no under-construction override. SAGE exposes SELL for the building's
-	# whole life; refund is still SellPercentage of the already-paid cost.
-	var slot := _compiled_sell_slot_for(building)
-	if slot.is_empty():
-		return {}
-	var kind := String(building.get("structure_kind", ""))
-	var team := int(building.get("team", -1))
-	var cost := int((structure_build_rules_for_team(team).get(kind, {}) as Dictionary).get("cost", 0))
-	if cost <= 0:
-		cost = int((_expansion_build_rules.get(kind, {}) as Dictionary).get("cost", 0))
-	# gamedata.ini:8973 SellPercentage = 50%.
-	var refund := int(cost / 2)
-	return {
-		"command_id": String(slot.get("commandId", "Command_Sell")),
-		"slot": int(slot.get("slot", 6)),
-		"refund": refund,
-	}
-
+	return _construction_subsystem().structure_sell_command(structure_id)
 
 func sell_structure(team: int, structure_id: int) -> Dictionary:
-	## Retail SELL (commandbutton.ini:3554): raze the building and refund
-	## SellPercentage of its authored build cost. Presentation follows the
-	## ordinary health=0 / structure.destroyed path.
-	if not base_loop_enabled or winner != -1:
-		return {"ok": false, "reason": "match-unavailable"}
-	if not structures.has(structure_id):
-		return {"ok": false, "reason": "unknown-structure"}
-	var building: Dictionary = structures[structure_id]
-	if int(building.get("team", -1)) != team:
-		return {"ok": false, "reason": "wrong-owner"}
-	if int(building.get("health", 0)) <= 0:
-		return {"ok": false, "reason": "structure-unavailable"}
-	var sell: Dictionary = structure_sell_command(structure_id)
-	if sell.is_empty():
-		return {"ok": false, "reason": "no-sell-command"}
-	var refund := int(sell.get("refund", 0))
-	team_resources[team] = resources_for_team(team) + refund
-	building["health"] = 0
-	building["queue"] = []
-	building["upgrade_queue"] = []
-	# Detach the porter so a later construct does not treat this husk as a
-	# cancellable site (that path refunds the full build cost).
-	var builder_id := int(building.get("builder_id", 0))
-	if builder_id != 0 and entities.has(builder_id):
-		var builder: Dictionary = entities[builder_id]
-		if int(builder.get("construction_id", 0)) == structure_id:
-			builder["construction_id"] = 0
-			if String(builder.get("order_kind", "")) == "construct":
-				builder["order_kind"] = ""
-			if String(builder.get("state", "")) == "construct":
-				builder["state"] = "idle"
-	building["builder_id"] = 0
-	_clear_expansion_pad_occupant(structure_id)
-	var structure_kind := String(building.get("structure_kind", ""))
-	_emit_event("structure.sold", 0, structure_id, {
-		"team": team,
-		"refund": refund,
-		"structure_kind": structure_kind,
-	})
-	_emit_event("structure.destroyed", 0, structure_id, {
-		"reason": "sold",
-		"structure_kind": structure_kind,
-		"team": team,
-	})
-	return {"ok": true, "refund": refund, "structure_id": structure_id}
-
+	return _construction_subsystem().sell_structure(team, structure_id)
 
 func structure_command_slot(structure_id: int, command_id: String) -> int:
-	## Authored palantir slot for a command on this building's current compiled
-	## command set, or 0 when the docs do not place it.
-	if command_id == "" or not structures.has(structure_id):
-		return 0
-	for slot_value in _compiled_command_slots_for(structures[structure_id]):
-		if typeof(slot_value) != TYPE_DICTIONARY:
-			continue
-		var slot: Dictionary = slot_value
-		if String(slot.get("commandId", "")) == command_id:
-			return int(slot.get("slot", 0))
-	return 0
-
+	return _construction_subsystem().structure_command_slot(structure_id, command_id)
 
 func _compiled_sell_slot_for(building: Dictionary) -> Dictionary:
-	for slot_value in _compiled_command_slots_for(building):
-		if typeof(slot_value) != TYPE_DICTIONARY:
-			continue
-		var slot: Dictionary = slot_value
-		if String(slot.get("commandId", "")) == "Command_Sell":
-			return slot
-	return {}
-
+	return _construction_subsystem()._compiled_sell_slot_for(building)
 
 func _compiled_command_slots_for(building: Dictionary) -> Array:
-	# Scenario structures carry the exact selected-pack command-set projection on
-	# the instance. It stays outside the faction structure registry, but ownership
-	# transitions still expose the authored defected-lair command surface.
-	var scenario_sets := building.get("scenario_trained_command_sets", []) as Array
-	if not scenario_sets.is_empty():
-		var active_id := String(building.get("command_set_id", building.get("default_command_set_id", "")))
-		for set_value in scenario_sets:
-			if typeof(set_value) != TYPE_DICTIONARY:
-				continue
-			var command_set := set_value as Dictionary
-			if String(command_set.get("id", "")) == active_id:
-				return command_set.get("slots", []) as Array
-		return []
-	var candidates: Array[String] = []
-	var stamped := String(building.get("source_object_id", ""))
-	if stamped != "":
-		candidates.append(stamped)
-	var kind := String(building.get("structure_kind", ""))
-	var aliases: Variant = structure_source_object_ids_for_team(int(building.get("team", -1))).get(kind, [])
-	if typeof(aliases) == TYPE_ARRAY:
-		for alias_value in aliases as Array:
-			var alias_id := String(alias_value)
-			if alias_id != "" and not candidates.has(alias_id):
-				candidates.append(alias_id)
-	elif typeof(aliases) in [TYPE_STRING, TYPE_STRING_NAME]:
-		var alias_id := String(aliases)
-		if alias_id != "" and not candidates.has(alias_id):
-			candidates.append(alias_id)
-	var db = _content_db_ref()
-	if db == null or not db.has_method("get_playable_structure_runtime"):
-		return []
-	for object_id in candidates:
-		var document: Dictionary = db.get_playable_structure_runtime(object_id)
-		if document.is_empty():
-			continue
-		var sets: Array = (
-			((document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)
-			.get("trainedCommandSets", [])
-		) as Array
-		var slots := _direct_or_first_command_set_slots(sets)
-		if not slots.is_empty():
-			return slots
-	return []
-
+	return _construction_subsystem()._compiled_command_slots_for(building)
 
 func _direct_or_first_command_set_slots(sets: Array) -> Array:
-	for set_value in sets:
-		if typeof(set_value) != TYPE_DICTIONARY:
-			continue
-		var row: Dictionary = set_value
-		if String(row.get("kind", "")) == "direct":
-			return row.get("slots", []) as Array
-	if sets.is_empty() or typeof(sets[0]) != TYPE_DICTIONARY:
-		return []
-	return (sets[0] as Dictionary).get("slots", []) as Array
-
+	return _construction_subsystem()._direct_or_first_command_set_slots(sets)
 
 func _clear_expansion_pad_occupant(structure_id: int) -> void:
-	for fortress_id_value in expansion_pads.keys():
-		var pads: Array = expansion_pads[fortress_id_value] as Array
-		for pad_value in pads:
-			if typeof(pad_value) != TYPE_DICTIONARY:
-				continue
-			var pad: Dictionary = pad_value
-			if int(pad.get("expansion_structure_id", 0)) == structure_id:
-				pad["expansion_structure_id"] = 0
-
+	_construction_subsystem()._clear_expansion_pad_occupant(structure_id)
 
 func issue_construct(ids: Array[int], structure_kind: String, position: Vector2, dry_run: bool = false, team: int = PLAYER_TEAM) -> Dictionary:
-	return _issue_construct_for_team(team, ids, structure_kind, position, dry_run)
-
-
-# Approximate footprint radii in local units (world scale ~0.0265/source unit).
-# Placement is legal when the two footprints plus a small working margin do
-# not overlap — the previous flat 7.0-unit exclusion wasted most of the base.
-const STRUCTURE_PLACEMENT_RADII := {
-	"fortress": 4.0,
-	"stable": 2.6,
-	"barracks": 2.4,
-	"archery_range": 2.4,
-	"workshop": 2.4,
-	"farm": 2.2,
-}
-const PLACEMENT_CLEARANCE_MARGIN := 0.4
-const MAX_STRUCTURE_PLACEMENT_RADIUS := 4.0
-
+	return _construction_subsystem().issue_construct(ids, structure_kind, position, dry_run, team)
 
 func _structure_placement_radius(structure_kind: String) -> float:
-	return float(STRUCTURE_PLACEMENT_RADII.get(structure_kind, 2.4))
-
+	return _construction_subsystem()._structure_placement_radius(structure_kind)
 
 func _authored_structure_placement_radius(team: int, structure_kind: String) -> float:
-	var sources: Variant = structure_source_object_ids_for_team(team).get(structure_kind, [])
-	var source_object_id := ""
-	if typeof(sources) == TYPE_ARRAY and not (sources as Array).is_empty():
-		source_object_id = String((sources as Array)[0])
-	elif typeof(sources) in [TYPE_STRING, TYPE_STRING_NAME]:
-		source_object_id = String(sources)
-	if source_object_id != "":
-		var authored_radius := _structure_footprint_radius({
-			"source_object_id": source_object_id,
-			"structure_kind": structure_kind,
-		})
-		if authored_radius > 0.0:
-			return authored_radius
-	return _structure_placement_radius(structure_kind)
-
+	return _construction_subsystem()._authored_structure_placement_radius(team, structure_kind)
 
 func _authored_site_foundation_fixture_contains(fixture: Dictionary, site: Vector2) -> bool:
-	# An authored site may coincide with its own foundation/build-plot marker,
-	# but never gets a blanket exemption from the surrounding keep. Both the
-	# fixture identity and its actual compiled footprint must prove occupancy.
-	var role := String(fixture.get("castle_fixture_role", "")).to_lower()
-	var fixture_type := String(fixture.get("castle_fixture_type", "")).to_lower()
-	var is_foundation := (
-		role.contains("foundation")
-		or role.contains("build-plot")
-		or role.contains("build_plot")
-		or fixture_type.contains("foundation")
-		or fixture_type.contains("buildplot")
-		or fixture_type.contains("build_plot")
-	)
-	if not is_foundation:
-		return false
-	var footprint := _structure_footprint_radius(fixture)
-	return footprint > 0.0 and Vector2(fixture.get("position", Vector2.ZERO)).distance_to(site) <= footprint
+	return _construction_subsystem()._authored_site_foundation_fixture_contains(fixture, site)
 
-
-func _issue_construct_for_team(
-	team: int,
-	ids: Array[int],
-	structure_kind: String,
-	position: Vector2,
-	dry_run: bool = false,
-	authored_castle_site: bool = false
-) -> Dictionary:
-	if not base_loop_enabled or winner != -1:
-		return {"ok": false, "reason": "match-unavailable"}
-	if team != PLAYER_TEAM and team != ENEMY_TEAM:
-		return {"ok": false, "reason": "invalid-team"}
-	# The constructing team's OWN faction tables (identical to the globals in
-	# the default single-manifest match; a cross-faction guest builds its own
-	# faction's structures at its own costs).
-	var team_structure_build_rules := structure_build_rules_for_team(team)
-	var team_structure_max_health := structure_max_health_for_team(team)
-	if not team_structure_build_rules.has(structure_kind):
-		return {"ok": false, "reason": "unsupported-structure"}
-	var permission := building_permission_for_kind(team, structure_kind)
-	if not bool(permission.get("known", false)):
-		return {
-			"ok": false,
-			"reason": "building-permission-identity-unresolved",
-			"detail": String(permission.get("reason", "")),
-		}
-	if not bool(permission.get("allowed", false)):
-		return {
-			"ok": false,
-			"reason": "building-disallowed",
-			"object_type": String(permission.get("object_type", "")),
-		}
-	# BFME1 build-plots-only: construction is restricted to designated empty
-	# plots. The click must land on a free plot; the build then snaps to the
-	# plot's center and skips the freeform geometry checks (plot positions are
-	# predetermined and valid). Occupancy is claimed after the site is created.
-	var build_plot_index := -1
-	if build_plots_only:
-		build_plot_index = _free_build_plot_index_near(team, position)
-		if build_plot_index < 0:
-			return {"ok": false, "reason": "build-plots-only: pick an empty plot"}
-		position = Vector2((build_plots[team] as Array)[build_plot_index].get("position", position))
-	else:
-		if playable_outline.size() >= 3 and not Geometry2D.is_point_in_polygon(position, playable_outline):
-			return {"ok": false, "reason": "outside-playable-area"}
-		var new_radius := (
-			_authored_structure_placement_radius(team, structure_kind)
-			if authored_castle_site
-			else _structure_placement_radius(structure_kind)
-		)
-		# The spatial query is exact: no existing footprint farther away than the
-		# two maximum authored radii plus the authored clearance can overlap this
-		# site. This matters on castle maps, whose hundreds of wall fixtures made
-		# every fallback candidate repeat a full structure-table scan.
-		var gather_radius := new_radius + MAX_STRUCTURE_PLACEMENT_RADIUS + PLACEMENT_CLEARANCE_MARGIN
-		var exempted_foundation_id := 0
-		for existing_id in _structure_ids_within_gather_radius(position, gather_radius):
-			var existing_row: Dictionary = structures[existing_id] as Dictionary
-			# Exempt at most the one foundation marker whose own footprint contains
-			# the authored point. Walls, gates, towers, other foundations, and every
-			# live/dynamic structure retain normal clearance.
-			if (
-				authored_castle_site
-				and exempted_foundation_id == 0
-				and existing_id >= CASTLE_FIXTURE_FIRST_ID
-				and _authored_site_foundation_fixture_contains(existing_row, position)
-			):
-				exempted_foundation_id = existing_id
-				continue
-			var existing_position := Vector2(existing_row.get("position", Vector2.ZERO))
-			var existing_radius := _structure_placement_radius(String(existing_row.get("structure_kind", "")))
-			var clearance_margin := PLACEMENT_CLEARANCE_MARGIN
-			if existing_id >= CASTLE_FIXTURE_FIRST_ID:
-				var fixture_radius := _structure_footprint_radius(existing_row)
-				if fixture_radius > 0.0:
-					existing_radius = fixture_radius
-				# Imported fixtures have exact authored footprints and no builder
-				# working apron. The margin remains for live/dynamic structures.
-				clearance_margin = 0.0
-			var clearance := new_radius + existing_radius + clearance_margin
-			if existing_position.distance_to(position) < clearance:
-				return {
-					"ok": false,
-					"reason": "site-obstructed",
-					"obstruction_id": existing_id,
-					"obstruction_type": String(existing_row.get("castle_fixture_type", existing_row.get("structure_kind", ""))),
-					"obstruction_role": String(existing_row.get("castle_fixture_role", "")),
-					"obstruction_distance": existing_position.distance_to(position),
-					"required_clearance": clearance,
-				}
-	var builder_id := 0
-	for value in ids:
-		var id := int(value)
-		if not entities.has(id):
-			continue
-		var row: Dictionary = entities[id]
-		if int(row.get("team", -1)) != team or int(row.get("health", 0)) <= 0 or not bool(row.get("is_builder", false)):
-			continue
-		builder_id = id
-		break
-	if builder_id == 0:
-		return {"ok": false, "reason": "builder-required"}
-	var build_rule: Dictionary = team_structure_build_rules[structure_kind]
-	var cost := int(build_rule["cost"])
-	if resources_for_team(team) < cost:
-		return {"ok": false, "reason": "insufficient-resources", "cost": cost}
-	if dry_run:
-		return {"ok": true, "reason": "", "dry_run": true, "cost": cost}
-	var structure_id := _next_dynamic_structure_id
-	_next_dynamic_structure_id += 1
-	var maximum_health := int(team_structure_max_health[structure_kind])
-	var production: Array[String] = []
-	var construct_production_order := production_unit_order_for_team(team)
-	var construct_production_rules := unit_production_rules_for_team(team)
-	var construct_scope := production_scope_for_team(team)
-	for unit_type in construct_production_order:
-		if not construct_scope.is_empty() and not construct_scope.has(String(unit_type)):
-			continue
-		var production_rule: Dictionary = construct_production_rules.get(unit_type, {}) as Dictionary
-		var producer_kinds_for_rule: Array = production_rule.get("producer_kinds", [String(production_rule.get("producer_kind", ""))])
-		if producer_kinds_for_rule.has(structure_kind):
-			production.append(unit_type)
-	var build_ticks := maxi(1, roundi(float(build_rule["seconds"]) / TICK_SECONDS))
-	_note_structure_table_mutation()
-	structures[structure_id] = {
-		"id": structure_id,
-		"team": team,
-		"kind": "structure",
-		"structure_kind": structure_kind,
-		"name": structure_kind.replace("_", " ").capitalize(),
-		"position": position,
-		"rally": position + Vector2(4.0, 0.0),
-		"health": maximum_health,
-		"maximum_health": maximum_health,
-		"construction_progress": 0.0,
-		"level": 1,
-		"completed_upgrades": [],
-		"upgrade_queue": [],
-		"construction_build_ticks": build_ticks,
-		"construction_elapsed_ticks": 0,
-		"builder_id": builder_id,
-		"production": production,
-		"queue": [],
-		"damage_remainders": {},
-		"income_per_payout": int(_rules.get("farm_income", 25)) if structure_kind == "farm" else 0,
-	}
-	# A building the player RAISES is the same retail object as the one the map
-	# seeds (_seed_structures) or a flag unpacks (unpack_base): both of those
-	# stamp the faction's authored source id and this path did not, so a
-	# constructed structure came up with no retail identity at all -- which is
-	# what left a built fortress unable to unpack its castle and therefore
-	# showing an empty command wheel.
-	#
-	# Snapshot-inert (state_signature carries no source id), so the
-	# cross-platform pin is untouched. It is NOT inert in general -- the id also
-	# feeds _structure_footprint_radius and object-id script queries -- but the
-	# footprint half is measured to be a no-op on the mounted packs; see the
-	# note in _seed_structures.
-	var constructed_sources: Variant = structure_source_object_ids_for_team(team).get(structure_kind, [])
-	if typeof(constructed_sources) == TYPE_ARRAY and not (constructed_sources as Array).is_empty():
-		structures[structure_id]["source_object_id"] = String((constructed_sources as Array)[0])
-	elif typeof(constructed_sources) in [TYPE_STRING, TYPE_STRING_NAME]:
-		structures[structure_id]["source_object_id"] = String(constructed_sources)
-	_stamp_refund_die_creation_cost(structures[structure_id] as Dictionary, cost)
-	_mark_ring_delivery_structure(structures[structure_id] as Dictionary)
-	if bool(build_rule.get("highlander_body", false)):
-		structures[structure_id]["highlander_body"] = true
-	team_resources[team] = resources_for_team(team) - cost
-	var builder: Dictionary = entities[builder_id]
-	var previous_site_id := int(builder.get("construction_id", 0))
-	if previous_site_id != 0 and structures.has(previous_site_id):
-		# Redirecting a busy builder cancels its unfinished site with a full
-		# refund; otherwise the site would linger as unfinishable scaffolding.
-		var previous_site: Dictionary = structures[previous_site_id]
-		if float(previous_site.get("construction_progress", 1.0)) < 1.0:
-			var previous_team := int(previous_site.get("team", team))
-			team_resources[previous_team] = resources_for_team(previous_team) + int(structure_build_rules_for_team(previous_team).get(String(previous_site.get("structure_kind", "")), {}).get("cost", 0))
-			structures.erase(previous_site_id)
-			_note_structure_table_mutation()
-			_emit_event("construction.cancelled", builder_id, previous_site_id, {"team": previous_team})
-	builder["construction_id"] = structure_id
-	builder["order_kind"] = "construct"
-	builder["target_id"] = 0
-	_clear_member_targets(builder)
-	if not _assign_route(builder, position):
-		structures.erase(structure_id)
-		_note_structure_table_mutation()
-		team_resources[team] = resources_for_team(team) + cost
-		builder["construction_id"] = 0
-		return {"ok": false, "reason": last_route_rejection if last_route_rejection != "" else "route-rejected"}
-	_apply_structure_inherit_upgrades(structures[structure_id] as Dictionary)
-	_initialize_structure_auto_deposit(structures[structure_id] as Dictionary)
-	_unpack_castle_behavior_for_structure(structure_id)
-	if build_plots_only and build_plot_index >= 0:
-		(build_plots[team] as Array)[build_plot_index]["occupant_structure_id"] = structure_id
-	_emit_event("construction.started", builder_id, structure_id, {"team": team, "structure_kind": structure_kind, "cost": cost, "build_ticks": build_ticks, "object_id": String(builder.get("object_id", ""))})
-	return {"ok": true, "builder_id": builder_id, "structure_id": structure_id, "cost": cost, "build_ticks": build_ticks}
-
-
-# --- Dev playtest cheats -----------------------------------------------------
-# Direct state mutation for the dev HUD (OPENBFME_DEV_HUD). Never routed
-# through the lockstep command codec — the presentation layer blocks these in
-# multiplayer, where a one-sided mutation would desync the peers.
-
+func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: String, position: Vector2, dry_run: bool = false, authored_castle_site: bool = false) -> Dictionary:
+	return _construction_subsystem()._issue_construct_for_team(team, ids, structure_kind, position, dry_run, authored_castle_site)
 
 func debug_finish_team_work(team: int) -> Dictionary:
-	## Fast-forwards every in-progress job the team owns: construction sites,
-	## production queues, structure/battalion upgrade queues, spellbook power
-	## cooldowns, and hero ability cooldowns. Jobs are only rescheduled to
-	## complete now — the REAL step paths still run, so every authored side
-	## effect (pad seeding, events, upgrade effects) fires normally.
-	var constructions := 0
-	var jobs := 0
-	for structure_id in structure_ids():
-		var building: Dictionary = structures[structure_id]
-		if int(building.get("team", -1)) != team:
-			continue
-		if float(building.get("construction_progress", 1.0)) < 1.0:
-			building["construction_elapsed_ticks"] = maxi(0, int(building.get("construction_build_ticks", 1)) - 1)
-			constructions += 1
-		for item_value in building.get("queue", []) as Array:
-			(item_value as Dictionary)["complete_tick"] = tick_index
-			jobs += 1
-		for item_value in building.get("upgrade_queue", []) as Array:
-			(item_value as Dictionary)["complete_tick"] = tick_index
-			jobs += 1
-	_power_cooldown_until[team] = {}
-	for id in entity_ids():
-		var row: Dictionary = entities[id]
-		if int(row.get("team", -1)) != team:
-			continue
-		for item_value in row.get("upgrade_queue", []) as Array:
-			(item_value as Dictionary)["complete_tick"] = tick_index
-			jobs += 1
-		var states: Dictionary = row.get("ability_states", {}) as Dictionary
-		for ability_id in states:
-			(states[ability_id] as Dictionary)["cooldown_ready_tick"] = 0
-	return {"constructions": constructions, "jobs": jobs}
-
+	return _construction_subsystem().debug_finish_team_work(team)
 
 func debug_level_up_battalions(ids: Array) -> Dictionary:
-	## +1 authored rank per selected battalion/hero: awards exactly the XP
-	## delta to the next authored threshold through the real experience
-	## pipeline, so every authored level effect applies at true magnitudes.
-	var leveled := 0
-	var capped := 0
-	var unauthored := 0
-	for id_value in ids:
-		var id := int(id_value)
-		if not entities.has(id):
-			continue
-		var row: Dictionary = entities[id]
-		if int(row.get("health", 0)) <= 0:
-			continue
-		var rule: Dictionary = _unit_experience_rules.get(String(row.get("unit_type", "")), {})
-		if rule.is_empty():
-			unauthored += 1
-			continue
-		var level := int(row.get("level", 1))
-		var next_row: Dictionary = {}
-		for row_value in Array(rule.get("levels", [])):
-			var candidate := row_value as Dictionary
-			if int(candidate.get("rank", 0)) > level:
-				next_row = candidate
-				break
-		if level >= int(rule.get("max_level", 1)) or next_row.is_empty():
-			capped += 1
-			continue
-		var needed := int(next_row.get("required_experience", 0)) - int(row.get("experience_xp", 0))
-		_award_experience(row, maxi(1, needed))
-		leveled += 1
-	return {"leveled": leveled, "capped": capped, "unauthored": unauthored}
-
+	return _construction_subsystem().debug_level_up_battalions(ids)
 
 func _step_construction() -> void:
-	for structure_id in structure_ids():
-		var site: Dictionary = structures[structure_id]
-		if float(site.get("construction_progress", 1.0)) >= 1.0:
-			continue
-		if bool(site.get("builder_free", false)):
-			# Foundation behavior: plot-built expansions rise without a porter.
-			var elapsed := int(site.get("construction_elapsed_ticks", 0)) + 1
-			var build_ticks := maxi(1, int(site.get("construction_build_ticks", 1)))
-			site["construction_elapsed_ticks"] = elapsed
-			site["construction_progress"] = minf(1.0, float(elapsed) / float(build_ticks))
-			if elapsed >= build_ticks:
-				var foundation_team := int(site.get("team", -1))
-				if _team_ai_state.has(foundation_team):
-					(_team_ai_state[foundation_team] as Dictionary)["construction_resolved"] = true
-				_apply_structure_create_grants(site, false, true)
-				_emit_event("construction.completed", 0, structure_id, {"team": int(site.get("team", -1)), "structure_kind": String(site.get("structure_kind", ""))})
-			continue
-		var builder_id := int(site.get("builder_id", 0))
-		if builder_id != 0 and (not entities.has(builder_id) or int((entities[builder_id] as Dictionary).get("health", 0)) <= 0):
-			# A dead builder can never finish its site. The husk is destroyed
-			# instead of stalling forever; the builder's assignment clears too.
-			if entities.has(builder_id):
-				(entities[builder_id] as Dictionary)["construction_id"] = 0
-			site["builder_id"] = 0
-			if int(site.get("health", 0)) > 0:
-				site["health"] = 0
-				_emit_event("structure.destroyed", 0, structure_id, {"reason": "construction-builder-unavailable"})
-			continue
-		if not entities.has(builder_id):
-			continue
-		var builder: Dictionary = entities[builder_id]
-		if int(builder.get("health", 0)) <= 0 or String(builder.get("state", "")) != "construct":
-			continue
-		# The builder only advances the site it is currently assigned to. An
-		# abandoned site sharing the same builder id must not leech progress
-		# from (and then hijack completion of) the active build.
-		if int(builder.get("construction_id", 0)) != structure_id:
-			continue
-		var elapsed := int(site.get("construction_elapsed_ticks", 0)) + 1
-		var build_ticks := maxi(1, int(site.get("construction_build_ticks", 1)))
-		site["construction_elapsed_ticks"] = elapsed
-		site["construction_progress"] = minf(1.0, float(elapsed) / float(build_ticks))
-		if elapsed >= build_ticks:
-			builder["construction_id"] = 0
-			builder["order_kind"] = ""
-			builder["state"] = "idle"
-			var site_team := int(site.get("team", -1))
-			if _team_ai_state.has(site_team):
-				(_team_ai_state[site_team] as Dictionary)["construction_resolved"] = true
-			if String(site.get("structure_kind", "")) == "fortress":
-				_seed_expansion_pads_for(structure_id)
-			_apply_structure_create_grants(site, false, true)
-			_emit_event("construction.completed", builder_id, structure_id, {"team": int(site.get("team", -1)), "structure_kind": String(site.get("structure_kind", ""))})
-func _nearest_attack_move_target(row: Dictionary) -> int:
-	var origin := Vector2(row.get("position", Vector2.ZERO))
-	var limit := maxf(float(row.get("attack_range", 1.0)), float(row.get("vision_range", 17.5)) * _ability_vision_multiplier(row))
-	return _spatial_nearest_hostile(
-		row, int(row.get("team", PLAYER_TEAM)), origin, limit,
-		SPATIAL_FILTER_ENGAGE | SPATIAL_FILTER_STEALTH
-	)
+	_construction_subsystem()._step_construction()
 
-
-func _nearest_auto_target(row: Dictionary) -> Dictionary:
-	if not bool(row.get("auto_acquire_enabled", true)):
-		return {}
-	if _stealth_active(row) and not bool(row.get("auto_acquire_while_stealthed", true)):
-		return {}
-	var self_team := int(row.get("team", PLAYER_TEAM))
-	var origin := Vector2(row.get("position", Vector2.ZERO))
-	var stance := String(row.get("stance", "Battle"))
-	var stance_state := _stance_state(row, stance)
-	var limit := float(row.get("vision_range", 0.0)) * float(stance_state.get("visionMultiplier", 1.0)) * _ability_vision_multiplier(row)
-	if stance == "HoldGround":
-		var modes: Dictionary = row.get("weapon_modes", {}) as Dictionary
-		var default_mode: Dictionary = modes.get(String(row.get("default_weapon_mode", "default")), {}) as Dictionary
-		limit = float(default_mode.get("attack_range", row.get("attack_range", 0.0)))
-	if limit <= 0.0:
-		return {}
-	var best_id := 0
-	var best_kind := ""
-	var best_distance := limit
-	# InvisibilityUpdate: a cloaked battalion is never auto-acquired, so the
-	# stealth filter travels with the neighbourhood query.
-	var nearest_battalion := _spatial_nearest_hostile(
-		row, self_team, origin, limit, SPATIAL_FILTER_ENGAGE | SPATIAL_FILTER_STEALTH
-	)
-	if nearest_battalion != 0:
-		best_distance = origin.distance_to(
-			Vector2((entities[nearest_battalion] as Dictionary).get("position", Vector2.ZERO))
-		)
-		best_id = nearest_battalion
-		best_kind = "battalion"
-	# Structures are not indexed: their count does not grow with army size, so
-	# this loop is linear in map furniture rather than in units. It still runs
-	# against the battalion result above, preserving the original precedence
-	# where an equidistant structure examined later wins the tie.
-	if not bool(row.get("auto_acquire_attack_buildings", true)):
-		return {"id": best_id, "kind": best_kind} if best_id != 0 else {}
-	for candidate in _hostile_living_structure_ids(self_team):
-		if bool((structures[candidate] as Dictionary).get("not_auto_acquirable", false)):
-			# holes.ini NOT_AUTOACQUIRABLE: an exposed rebuild hole is only ever
-			# destroyed by an explicit attack order, never by idle acquisition.
-			continue
-		# SURFACE-TO-SURFACE, the same semantic the RANGE gate uses. Round 20
-		# made firing at a structure subtract the target's authored bounding
-		# circle (SAGE getDistanceSquared(..., FROM_BOUNDINGSPHERE_2D); see
-		# _target_footprint_radius and the range test in _step_attacks) but left
-		# ACQUISITION centre-to-centre. The two halves then disagreed, and the
-		# disagreement was not academic:
-		#
-		#   A HoldGround melee horde standing at a fortress wall clamps `limit`
-		#   to its own AttackRange (~0.305 sim units, see the HoldGround branch
-		#   above). The Men fortress footprint is 1.9604. Centre-to-centre, that
-		#   horde is ~2.0 units from the fortress centre — SIX TIMES its
-		#   acquisition limit — so it never acquired a building it was already
-		#   in weapon range of and could hit the instant it was ordered to.
-		#
-		#   The same subtraction also decides ties. `distance <= best_distance`
-		#   lets a structure win an equal-distance comparison against a
-		#   battalion; measured centre-to-centre a structure's distance is
-		#   inflated by its whole footprint, so a structure lost every tie it
-		#   should have won.
-		#
-		# Only the CANDIDATE's radius is subtracted, never the acquirer's, for
-		# exactly the reason spelled out at _target_footprint_radius: this sim's
-		# unit position is the horde centre, not a soldier bounding sphere.
-		var distance := maxf(
-			0.0,
-			origin.distance_to(Vector2((structures[candidate] as Dictionary).get("position", Vector2.ZERO)))
-			- _target_footprint_radius(candidate, "structure")
-		)
-		if distance <= best_distance:
-			best_distance = distance
-			best_id = candidate
-			best_kind = "structure"
-	return {"id": best_id, "kind": best_kind} if best_id != 0 else {}
-
-
-func _rearm_mood_idle_cadence(row: Dictionary) -> void:
-	if int(row.get("mood_attack_check_rate_ticks", 0)) <= 0:
-		return
-	row.erase("mood_next_check_tick")
-	row["mood_randomize_next_check"] = true
-
-
-func _step_production_exit(row: Dictionary) -> bool:
-	return _production_subsystem()._step_production_exit(row)
-
-
-func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, target_kind: String) -> void:
-	var member_health_values: Array = row.get("member_health", [])
-	var start_ticks: Array = row.get("member_attack_start_ticks", [])
-	var hit_ticks: Array = row.get("member_attack_hit_ticks", [])
-	var tokens: Array = row.get("member_attack_tokens", [])
-	var target_indices: Array = row.get("member_target_indices", [])
-	var weapon_modes: Array = row.get("member_weapon_modes", [])
-	var release_tokens: Array = row.get("member_attack_release_tokens", [])
-	if member_health_values.is_empty() or start_ticks.size() != member_health_values.size() or hit_ticks.size() != member_health_values.size() or tokens.size() != member_health_values.size() or target_indices.size() != member_health_values.size() or weapon_modes.size() != member_health_values.size() or release_tokens.size() != member_health_values.size():
-		return
-	if target_kind == "battalion":
-		_ensure_member_target_assignments(row, entities[target_id] as Dictionary)
-		target_indices = row.get("member_target_indices", [])
-	if int(row.get("attack_cooldown", 0)) == 0:
-		var pre_attack_ticks := maxi(0, int(row.get("pre_attack_ticks", 0)))
-		var maximum_stagger := maxi(0, MEMBER_ATTACK_STAGGER_WINDOW_TICKS - 1)
-		var coast_ticks := maxi(0, int(row.get("continuous_fire_coast_ticks", 0)))
-		var expiration_tick := int(row.get("continuous_fire_expiration_tick", -1))
-		if expiration_tick < 0 or tick_index >= expiration_tick:
-			row["continuous_fire_count"] = 0
-		var continuous_threshold := maxi(0, int(row.get("continuous_fire_one", 0)))
-		var rate_multiplier := maxf(1.0, float(row.get("continuous_fire_rate_multiplier", 1.0)))
-		var base_reload_or_delay_ms := float(row.get("delay_between_shots_ms", 0.0))
-		if int(row.get("clip_size", 0)) == 1:
-			base_reload_or_delay_ms = float(row.get("clip_reload_time_ms", base_reload_or_delay_ms))
-		# SAGE captures the possible-next-shot frame before FiringTracker promotes
-		# the shot count into the next continuous-fire tier.
-		var coast_anchor_ms := base_reload_or_delay_ms
-		if continuous_threshold > 0 and int(row.get("continuous_fire_count", 0)) > continuous_threshold:
-			coast_anchor_ms = floorf(coast_anchor_ms / rate_multiplier)
-		# PreAttackType (weapon.ini:4233 GondorArcherBow = PER_POSITION;
-		# :10808 HaradrimBow = PER_SHOT). PER_POSITION charges PreAttackDelay
-		# only when the attacker acquires a NEW target/attack position (and
-		# on the first shot of an engagement). Sustained fire on a stationary
-		# target cycles at firing + clip reload only. PER_SHOT (and PER_ATTACK
-		# until it has its own rule) keeps the every-shot windup.
-		# PreAttackRandomAmount is compiled but not applied (deferred).
-		var pre_attack_type := String(row.get("pre_attack_type", "PER_SHOT")).to_upper()
-		var last_target_id := int(row.get("pre_attack_last_target_id", 0))
-		var last_target_kind := String(row.get("pre_attack_last_target_kind", ""))
-		var same_engagement := (
-			last_target_id == target_id
-			and last_target_kind == target_kind
-			and last_target_id != 0
-		)
-		var charge_pre_attack := pre_attack_type != "PER_POSITION" or not same_engagement
-		var windup_ticks := pre_attack_ticks if charge_pre_attack else 0
-		var windup_ms := float(row.get("pre_attack_delay_ms", 0.0)) if charge_pre_attack else 0.0
-		row["attack_sequence"] = int(row.get("attack_sequence", 0)) + 1
-		row["continuous_fire_count"] = int(row.get("continuous_fire_count", 0)) + 1
-		# Persist last-target only for PER_POSITION. Writing these keys on the
-		# pin harness (PER_SHOT default, synthetic rules) would move the
-		# 3000-tick state hash.
-		if pre_attack_type == "PER_POSITION":
-			row["pre_attack_last_target_id"] = target_id
-			row["pre_attack_last_target_kind"] = target_kind
-		var attack_sequence := int(row["attack_sequence"])
-		for member_index in range(member_health_values.size()):
-			if int(member_health_values[member_index]) <= 0:
-				start_ticks[member_index] = -1
-				hit_ticks[member_index] = -1
-				continue
-			var stagger := posmod(attacker_id + member_index * 3 + attack_sequence, MEMBER_ATTACK_STAGGER_WINDOW_TICKS)
-			weapon_modes[member_index] = String(row.get("active_weapon_mode", "default"))
-			start_ticks[member_index] = tick_index + stagger
-			# Every member owns its attack boundary. This avoids the old whole-
-			# horde structure impact while preserving deterministic replay.
-			hit_ticks[member_index] = tick_index + stagger + windup_ticks
-		var reload_or_delay_ms := base_reload_or_delay_ms
-		if continuous_threshold > 0 and int(row["continuous_fire_count"]) > continuous_threshold:
-			reload_or_delay_ms = floorf(reload_or_delay_ms / rate_multiplier)
-		var cadence_ms := (
-			windup_ms
-			+ float(row.get("firing_duration_ms", 0.0))
-			+ reload_or_delay_ms
-		)
-		var cadence_ticks := maxi(1, roundi(cadence_ms / (TICK_SECONDS * 1000.0)))
-		var coast_anchor_ticks := maxi(1, roundi(coast_anchor_ms / (TICK_SECONDS * 1000.0)))
-		row["continuous_fire_expiration_tick"] = tick_index + coast_anchor_ticks + coast_ticks
-		row["attack_cooldown"] = maxi(
-			cadence_ticks,
-			windup_ticks + maximum_stagger + 1
-		)
-		row["attack_windup"] = windup_ticks + maximum_stagger
-		_emit_event("combat.swing", attacker_id, target_id, {
-			"attack_sequence": attack_sequence,
-			"living_members": _living_member_count(row),
-			"object_id": String(row.get("object_id", "")),
-			"charged_pre_attack": charge_pre_attack,
-		})
-	for member_index in range(member_health_values.size()):
-		if int(member_health_values[member_index]) <= 0:
-			continue
-		if int(start_ticks[member_index]) == tick_index:
-			tokens[member_index] = int(tokens[member_index]) + 1
-			start_ticks[member_index] = -1
-			_emit_event("combat.member_swing", attacker_id, target_id, {
-				"member_index": member_index,
-				"target_member_index": int(target_indices[member_index]),
-				"weapon_mode": String(weapon_modes[member_index]),
-				"member_attack_token": int(tokens[member_index]),
-				"attack_sequence": int(row.get("attack_sequence", 0)),
-			})
-		if int(hit_ticks[member_index]) == tick_index:
-			hit_ticks[member_index] = -1
-			# The weapon-release instant for EVERY mode (a melee swing releases
-			# too); the projectile-only bookkeeping below is a separate question.
-			_mark_member_release(attacker_id, member_index)
-			if String(weapon_modes[member_index]) != "close":
-				release_tokens[member_index] = int(release_tokens[member_index]) + 1
-				_emit_event("combat.member_fire", attacker_id, target_id, {
-					"member_index": member_index,
-					"target_member_index": int(target_indices[member_index]),
-					"weapon_mode": String(weapon_modes[member_index]),
-					"member_release_token": int(release_tokens[member_index]),
-				})
-			if _target_alive(target_id, target_kind):
-				var forced_target := int(target_indices[member_index]) if target_kind == "battalion" else -1
-				# A recorded WeaponSetUpgrade replaces the horde's base weapon
-				# damage with the compiled upgraded damage (no invented
-				# multipliers); its target-filtered DamageScalars apply per hit
-				# inside _apply_member_damage.
-				var weapon_effect := _applied_weapon_effect(row)
-				var outgoing_damage := float(row.get("member_damage", 1))
-				if float(weapon_effect.get("damage", 0.0)) > 0.0:
-					outgoing_damage = float(weapon_effect.get("damage"))
-				var swing_damage := maxi(1, roundi(outgoing_damage * float(_stance_state(row).get("damageMultiplier", 1.0)) * _ability_outgoing_multiplier(row)))
-				if target_kind == "battalion" and entities.has(target_id):
-					swing_damage = maxi(
-						1,
-						roundi(float(swing_damage) * _flanking_outgoing_multiplier(row, entities[target_id]))
-					)
-				if _member_weapon_has_projectile(row):
-					_launch_member_projectile(
-						attacker_id,
-						member_index,
-						row,
-						target_id,
-						target_kind,
-						forced_target,
-						swing_damage,
-						weapon_effect,
-						int(release_tokens[member_index])
-					)
-				else:
-					_apply_member_damage(
-						attacker_id,
-						member_index,
-						target_id,
-						swing_damage,
-						target_kind,
-						int(row.get("attack_sequence", 0)),
-						forced_target
-					)
-					# Upgrade-gated bonus nuggets remain instant only on an instant
-					# weapon; projectile-capable weapons carry them to impact below.
-					_apply_member_bonus_nuggets(
-						attacker_id, member_index, row, target_id, target_kind,
-						forced_target, weapon_effect
-					)
-	row["member_attack_start_ticks"] = start_ticks
-	row["member_attack_hit_ticks"] = hit_ticks
-	row["member_attack_tokens"] = tokens
-	row["member_target_indices"] = target_indices
-	row["member_weapon_modes"] = weapon_modes
-	row["member_attack_release_tokens"] = release_tokens
-	row["attack_windup"] = maxi(0, int(row.get("attack_windup", 0)) - 1)
-
-
-func _member_weapon_has_projectile(row: Dictionary) -> bool:
-	return _projectiles_subsystem().member_weapon_has_projectile(row)
-
-
-func _scaled_projectile_components(components: Array, outgoing_amount: int) -> Array:
-	return _projectiles_subsystem().scaled_projectile_components(components, outgoing_amount)
-
-
-func _launch_member_projectile(
-	attacker_id: int,
-	member_index: int,
-	row: Dictionary,
-	target_id: int,
-	target_kind: String,
-	forced_target: int,
-	swing_damage: int,
-	weapon_effect: Dictionary,
-	release_token: int
-) -> void:
-	_projectiles_subsystem().launch_member_projectile(attacker_id, member_index, row, target_id, target_kind, forced_target, swing_damage, weapon_effect, release_token)
-
-
-func _apply_member_bonus_nuggets(
-	attacker_id: int,
-	member_index: int,
-	row: Dictionary,
-	target_id: int,
-	target_kind: String,
-	forced_target: int,
-	weapon_effect: Dictionary
-) -> void:
-	_combat_subsystem()._apply_member_bonus_nuggets(attacker_id, member_index, row, target_id, target_kind, forced_target, weapon_effect)
-
-
-func _clear_member_attack_schedule(row: Dictionary) -> void:
-	var start_ticks: Array = row.get("member_attack_start_ticks", [])
-	var hit_ticks: Array = row.get("member_attack_hit_ticks", [])
-	for index in range(start_ticks.size()):
-		start_ticks[index] = -1
-	for index in range(hit_ticks.size()):
-		hit_ticks[index] = -1
-	row["member_attack_start_ticks"] = start_ticks
-	row["member_attack_hit_ticks"] = hit_ticks
-	# Leaving the engagement (or swapping weapon sets) ends the firing span, so
-	# the derived FIRING_*/RELOADING window goes with the schedule.
-	_member_fire_ticks.erase(int(row.get("id", 0)))
-	# Leaving the firing engagement drops the PER_POSITION last-target so the
-	# next acquire (including the same unit after an idle) charges windup.
-	# Only touch the keys if they already exist — adding them on the pin
-	# harness (which never fires) would move the state hash.
-	if row.has("pre_attack_last_target_id"):
-		row["pre_attack_last_target_id"] = 0
-		row["pre_attack_last_target_kind"] = ""
-
-
-func _clear_member_targets(row: Dictionary) -> void:
-	var targets: Array = row.get("member_target_indices", [])
-	for index in range(targets.size()):
-		targets[index] = -1
-	row["member_target_indices"] = targets
-
-
-func _weapon_mode_for_distance(row: Dictionary, distance: float) -> String:
-	# An engaged TOGGLE_WEAPONSET pins the battalion to its toggled compiled
-	# profile: retail's WEAPONSET_TOGGLE_1 condition overrides the range-based
-	# selection entirely until the player toggles back.
-	var toggle_mode := String(row.get("weapon_toggle_mode", ""))
-	if toggle_mode != "" and (row.get("weapon_modes", {}) as Dictionary).has(toggle_mode):
-		return toggle_mode
-	var close_mode := String(row.get("close_weapon_mode", ""))
-	var switch_distance := float(row.get("close_weapon_switch_distance", 0.0))
-	if bool(row.get("unsupported_close_weapon", false)) and switch_distance > 0.0 and distance <= switch_distance:
-		return "unsupported-close"
-	if close_mode != "" and switch_distance > 0.0 and distance <= switch_distance:
-		return close_mode
-	return String(row.get("default_weapon_mode", "default"))
-
-
-# Formations carry real combat behavior, not just spacing (provisional
-# magnitudes; retail per-formation modifiers are an M3 INI extraction item).
-# Block reads as the braced shield-wall stance: tighter, tougher, slower, and
-# resistant to cavalry impact.
-const FORMATION_EFFECTS := {
-	"Block": {
-		"incoming_damage_multiplier": 0.85,
-		"speed_multiplier": 0.85,
-		"trample_damage_multiplier": 0.5,
-	},
-}
-
-
-func _formation_effects(row: Dictionary) -> Dictionary:
-	return FORMATION_EFFECTS.get(String(row.get("formation_mode", "Line")), {}) as Dictionary
-
-
-func _stance_state(row: Dictionary, requested: String = "") -> Dictionary:
-	var contract: Dictionary = row.get("stance_contract", {}) as Dictionary
-	var states: Dictionary = contract.get("states", {}) as Dictionary
-	var stance := requested if requested != "" else String(row.get("stance", "Battle"))
-	var selected: Dictionary = states.get(stance, {}) as Dictionary
-	if not selected.is_empty():
-		return selected
-	return {
-		"damageMultiplier": 1.0,
-		"incomingDamageMultiplier": 1.0,
-		"visionMultiplier": 1.0,
-		"speedMultiplier": 1.0,
-	}
-
-
-func _apply_weapon_mode(row: Dictionary, mode: String) -> bool:
-	var modes: Dictionary = row.get("weapon_modes", {}) as Dictionary
-	var selected: Dictionary = modes.get(mode, {}) as Dictionary
-	if selected.is_empty():
-		return false
-	var prior := String(row.get("active_weapon_mode", ""))
-	if (
-		prior != ""
-		and prior != mode
-		and not (row.get("permanent_weapon_locks", []) as Array).is_empty()
-	):
-		# WeaponSet::updateWeaponSet implicitly releases even a permanent lock
-		# before installing a different template set unless the incoming set
-		# authors WeaponLockSharedAcrossSets. Neither BFME2 nor RotWK retail
-		# authors that field, so every current-corpus mode transition releases.
-		row["permanent_weapon_locks"] = []
-	row["active_weapon_mode"] = mode
-	for optional_projectile_field in [
-		"projectile_object_id", "projectile_speed", "projectile_speed_source",
-		"radius_damage_affects",
-	]:
-		if not selected.has(optional_projectile_field):
-			row.erase(optional_projectile_field)
-	# damage_components stay on the row unless the selected mode compiles
-	# its own mix. Blanking here wiped the unit-rule mix on every attack tick.
-	for field in [
-		"attack_range", "attack_range_source", "minimum_attack_range",
-		"minimum_attack_range_source", "delay_between_shots_ms",
-		"pre_attack_delay_ms", "pre_attack_type", "pre_attack_random_amount_ms",
-		"firing_duration_ms", "attack_period_ticks",
-		"pre_attack_ticks", "firing_duration_ticks", "member_damage", "clip_size",
-		"clip_reload_time_ms", "continuous_fire_one", "continuous_fire_coast_ticks",
-		"continuous_fire_rate_multiplier", "projectile_object_id", "projectile_speed",
-		"projectile_speed_source", "radius_damage_affects", "damage_components",
-		"damage_type",
-	]:
-		if selected.has(field):
-			row[field] = selected[field]
-	if prior != "" and prior != mode:
-		_clear_member_attack_schedule(row)
-	return true
-
-
-## Retail WeaponSlot -> the letter SAGE suffixes onto the weapon-cycle model
-## conditions (PREATTACK_A, FIRING_B, ...). The retail corpus authors exactly
-## three slots (playable_unit_compiler._WEAPON_SLOT_NAMES: PRIMARY, SECONDARY,
-## TERTIARY), so the `_D` family has no source in this game's data and is never
-## produced here — see `weapon_condition_deferred_reasons`.
-const WEAPON_SLOT_CONDITION_LETTERS := {
-	"primary": "A",
-	"secondary": "B",
-	"tertiary": "C",
-}
-
-## Live WeaponSet condition -> its model-condition token. The compiled weapon
-## mode keys ARE the authored WeaponSet condition, lower-cased
-## (playable_unit_compiler._conditional_weapon_modes), so this table only
-## restates which of them retail also raises as a model condition. A live mode
-## that is not listed is receipted, never uppercased into an invented token.
-const LIVE_WEAPON_SET_CONDITION_MODES := {
-	"weaponset_toggle_1": "WEAPONSET_TOGGLE_1",
-	"weaponset_toggle_2": "WEAPONSET_TOGGLE_2",
-	"weaponset_toggle_3": "WEAPONSET_TOGGLE_3",
-	"weaponset_toggle_4": "WEAPONSET_TOGGLE_4",
-	"mounted": "MOUNTED",
-	"close_range": "CLOSE_RANGE",
-}
-
-## Tick each member last RELEASED its weapon: entity id -> member index -> tick.
-##
-## Everything else the weapon cycle needs is already authoritative —
-## `member_attack_start_ticks` / `member_attack_hit_ticks` bracket the windup —
-## but the release tick is destroyed the moment it is used: `_step_member_attacks`
-## sets `member_attack_hit_ticks[i] = -1` on the firing tick, so afterwards
-## "firing" and "idle" look identical on the row.
-##
-## That one fact is recorded HERE and not on the entity row on purpose: every row
-## key is walked by `_authoritative_state()`, so a new per-member array would move
-## the pinned 3000-tick hash (`tests/retail_state_pin_runner.gd`) for a value no
-## rule reads. This table is tick-derived observation, exactly like `events`.
-##
-## Stated rather than hidden (AGENTS.md rule 5): `restore()` clears it, so a
-## member that was inside its FiringDuration when the snapshot was taken reports
-## no FIRING_* until its next release. PREATTACK_*, the pre-attack half of the
-## composites and every weapon-set condition read authoritative keys and survive.
-var _member_fire_ticks: Dictionary = {}
-
-
-func member_weapon_condition_tokens(entity_id: int) -> Array:
-	## Live SAGE weapon-cycle model conditions, one token Array per battalion
-	## member, index-aligned with `member_health`. The presenter unions these into
-	## the condition set it hands `AnimationStateSelect.select()`; retail binds
-	## PREATTACK_A -> ATKF1 and FIRING_OR_RELOADING_A -> ATKF2 on the archer
-	## (gondorarcher.ini:236-288).
-	##
-	## Derived on demand from the authoritative combat schedule — nothing here is
-	## stored on the entity row. A member with no resolvable weapon slot, or a
-	## battalion that is not attacking, yields the weapon-set conditions only;
-	## `weapon_condition_deferred_reasons` says why.
-	var out: Array = []
-	if not entities.has(entity_id):
-		return out
-	var row := entities[entity_id] as Dictionary
-	var member_health_values: Array = row.get("member_health", [])
-	var start_ticks: Array = row.get("member_attack_start_ticks", [])
-	var hit_ticks: Array = row.get("member_attack_hit_ticks", [])
-	var member_modes: Array = row.get("member_weapon_modes", [])
-	var modes := row.get("weapon_modes", {}) as Dictionary
-	var attacking := String(row.get("state", "")) == "attack"
-	var set_tokens := _live_weapon_set_condition_tokens(row)
-	var marks := _member_fire_ticks.get(entity_id, {}) as Dictionary
-	for member_index in range(member_health_values.size()):
-		var tokens: Array = []
-		if int(member_health_values[member_index]) <= 0:
-			out.append(tokens)
-			continue
-		for token in set_tokens:
-			tokens.append(token)
-		if not attacking:
-			out.append(tokens)
-			continue
-		var mode_key := String(row.get("active_weapon_mode", ""))
-		if member_index < member_modes.size():
-			# The mode this member's in-flight shot was scheduled with, which is
-			# what its slot letter must name.
-			mode_key = String(member_modes[member_index])
-		var mode := modes.get(mode_key, {}) as Dictionary
-		var letter := String(WEAPON_SLOT_CONDITION_LETTERS.get(String(mode.get("weapon_slot", "")), ""))
-		if letter == "":
-			out.append(tokens)
-			continue
-		var start := int(start_ticks[member_index]) if member_index < start_ticks.size() else -1
-		var hit := int(hit_ticks[member_index]) if member_index < hit_ticks.size() else -1
-		var firing_ticks := maxi(0, int(mode.get("firing_duration_ticks", row.get("firing_duration_ticks", 0))))
-		var fire_tick := int(marks.get(member_index, -1))
-		var since_release := tick_index - fire_tick if fire_tick >= 0 else -1
-		# The swing has begun (its start tick was consumed) and the release tick
-		# is still ahead: PreAttackDelay is running for this member.
-		var preattack := start < 0 and hit > tick_index
-		var firing := since_release >= 0 and since_release < firing_ticks
-		# The third segment of the sim's cadence (windup + FiringDuration +
-		# DelayBetweenShots-or-ClipReloadTime): released, done firing, waiting for
-		# the next swing. Retail folds it into FIRING_OR_RELOADING.
-		var reloading := since_release >= firing_ticks and fire_tick >= 0 and not preattack
-		if preattack:
-			tokens.append("PREATTACK_%s" % letter)
-		if firing:
-			tokens.append("FIRING_%s" % letter)
-		if preattack or firing:
-			tokens.append("FIRING_OR_PREATTACK_%s" % letter)
-		if firing or reloading:
-			tokens.append("FIRING_OR_RELOADING_%s" % letter)
-		out.append(tokens)
-	return out
-
-
-func weapon_condition_deferred_reasons(entity_id: int) -> Array:
-	## Why a weapon-cycle model condition is NOT being raised. Fail-loud
-	## companion to `member_weapon_condition_tokens`: a consumer that sees no
-	## PREATTACK_A must be able to tell "not winding up" from "this unit's data
-	## cannot name a slot".
-	var out: Array = []
-	if not entities.has(entity_id):
-		return ["entity-missing"]
-	var row := entities[entity_id] as Dictionary
-	var active := String(row.get("active_weapon_mode", ""))
-	var mode := (row.get("weapon_modes", {}) as Dictionary).get(active, {}) as Dictionary
-	if not WEAPON_SLOT_CONDITION_LETTERS.has(String(mode.get("weapon_slot", ""))):
-		# No authored WeaponSlot means no letter, and a guessed PRIMARY would be
-		# an invented animation state.
-		out.append("weapon-slot-unauthored:%s" % active)
-	if maxi(0, int(mode.get("firing_duration_ticks", row.get("firing_duration_ticks", 0)))) <= 0:
-		out.append("firing-duration-zero:%s" % active)
-	if (
-		active != ""
-		and active != String(row.get("default_weapon_mode", ""))
-		and active != String(row.get("close_weapon_mode", ""))
-		and not LIVE_WEAPON_SET_CONDITION_MODES.has(active)
-	):
-		out.append("weapon-set-condition-unmapped:%s" % active)
-	# Structural, not per-unit: `_apply_weapon_mode` installs a set in one tick
-	# and clears the member schedule, so there is no swap-in-progress span for
-	# SWAPPING_TO_WEAPONSET_* to describe.
-	out.append("swapping-to-weaponset-not-modelled")
-	# PRIMARY/SECONDARY/TERTIARY is the whole retail slot corpus.
-	out.append("weapon-slot-d-absent-from-retail-corpus")
-	return out
-
-
-func _live_weapon_set_condition_tokens(row: Dictionary) -> Array:
-	var out: Array = []
-	var active := String(row.get("active_weapon_mode", ""))
-	var close := String(row.get("close_weapon_mode", ""))
-	if active != "" and active == close:
-		# The close profile is built from the WeaponSet conditioned on
-		# CLOSE_RANGE (retail_vertical_slice._retail_unit_rule), whatever the
-		# rule chose to key it under.
-		out.append("CLOSE_RANGE")
-	elif LIVE_WEAPON_SET_CONDITION_MODES.has(active):
-		out.append(String(LIVE_WEAPON_SET_CONDITION_MODES[active]))
-	for flag_value in row.get("weapon_set_flags", []) as Array:
-		var flag := String(flag_value).to_upper()
-		if flag != "" and not out.has(flag):
-			out.append(flag)
-	return out
-
-
-func _mark_member_release(attacker_id: int, member_index: int) -> void:
-	var marks := _member_fire_ticks.get(attacker_id, {}) as Dictionary
-	marks[member_index] = tick_index
-	_member_fire_ticks[attacker_id] = marks
-	if _member_fire_ticks.size() > entities.size():
-		# Entities are removed from a dozen places with no shared hook, so the
-		# observation table is pruned here instead. Self-limiting: after one pass
-		# it cannot exceed the live entity count again until another id dies.
-		for key in _member_fire_ticks.keys():
-			if not entities.has(int(key)):
-				_member_fire_ticks.erase(key)
-
-
-func _ensure_member_target_assignments(attacker: Dictionary, target: Dictionary) -> void:
-	var attacker_health: Array = attacker.get("member_health", [])
-	var target_health: Array = target.get("member_health", [])
-	var assignments: Array = attacker.get("member_target_indices", [])
-	if assignments.size() != attacker_health.size() or target_health.is_empty():
-		return
-	var use_counts: Array[int] = []
-	use_counts.resize(target_health.size())
-	use_counts.fill(0)
-	for member_index in range(assignments.size()):
-		var candidate := int(assignments[member_index])
-		if int(attacker_health[member_index]) <= 0 or candidate < 0 or candidate >= target_health.size() or int(target_health[candidate]) <= 0:
-			assignments[member_index] = -1
-		else:
-			use_counts[candidate] += 1
-	for member_index in range(assignments.size()):
-		if int(attacker_health[member_index]) <= 0 or int(assignments[member_index]) >= 0:
-			continue
-		var attacker_position := _member_world_position(attacker, member_index)
-		var best_index := -1
-		var best_score := INF
-		for target_index in range(target_health.size()):
-			if int(target_health[target_index]) <= 0:
-				continue
-			var target_position := _member_world_position(target, target_index)
-			var score := float(use_counts[target_index]) * 10000.0 + attacker_position.distance_squared_to(target_position)
-			if score < best_score:
-				best_score = score
-				best_index = target_index
-		if best_index >= 0:
-			assignments[member_index] = best_index
-			use_counts[best_index] += 1
-	attacker["member_target_indices"] = assignments
-
-
-func _member_world_position(row: Dictionary, member_index: int) -> Vector2:
-	var origin := Vector2(row.get("position", Vector2.ZERO))
-	var positions: Array = row.get("formation_positions", [])
-	if member_index < 0 or member_index >= positions.size() or typeof(positions[member_index]) != TYPE_VECTOR3:
-		return origin
-	var slot: Vector3 = positions[member_index]
-	var local := Vector2(slot.x, slot.z)
-	var facing := Vector2(row.get("facing", Vector2.RIGHT))
-	if facing.length_squared() <= 0.000001:
-		return origin + local
-	return origin + local.rotated(facing.angle())
-
-
-func _living_member_count(row: Dictionary) -> int:
-	var result := 0
-	for health_value in Array(row.get("member_health", [])):
-		if int(health_value) > 0:
-			result += 1
-	return result
-
-
-# Movement blocking hugs the placement footprints (STRUCTURE_PLACEMENT_RADII
-# + a step of walkway). Oversized rings strand builders parked at a finished
-# site inside the "wall" of the building they just raised and block the
-# approach to tightly-packed neighbor sites.
 const STRUCTURE_BLOCK_RADIUS := {
 	"fortress": 4.6,
 	"stable": 3.0,
@@ -9827,1813 +8323,261 @@ const STRUCTURE_BLOCK_RADIUS := {
 	"battle_tower": 2.2,
 	"wall_hub": 2.2,
 }
-
-
-## Source-object-id -> authored footprint radius in retail SOURCE units. Pack
-## documents never change inside a match, so this is a pure memo of a read-only
-## lookup: identical on every lockstep peer, order-independent, never part of the
-## hashed state.
+const COMBAT_FALLBACK_STRUCTURE_SOURCE_RADIUS := 5.0
+## Attack/footprint state (owned by the sim; logic lives in retail_sim_attacks.gd)
+var _member_fire_ticks: Dictionary = {}
 var _structure_footprint_source_cache: Dictionary = {}
-## Structure id -> resolved footprint radius in SIM units. Same memo contract as
-## the table above (pure function of read-only inputs, never hashed), one level
-## further down so the per-tick attack path allocates no key string at all.
-## Cleared wherever the structure table is replaced wholesale.
 var _structure_footprint_radius_cache: Dictionary = {}
-## Source object ids whose missing geometry has already been reported, so the
-## fallback warning fires once per id instead of once per call.
 var _footprint_fallback_reported: Dictionary = {}
 
+const AttacksSystemScript = preload("res://src/retail_slice/retail_sim_attacks.gd")
+var _attacks_system = null
+func _attacks_subsystem():
+	if _attacks_system == null:
+		_attacks_system = AttacksSystemScript.new(self)
+	return _attacks_system
+
+func _nearest_attack_move_target(row: Dictionary) -> int:
+	return _attacks_subsystem()._nearest_attack_move_target(row)
+
+func _nearest_auto_target(row: Dictionary) -> Dictionary:
+	return _attacks_subsystem()._nearest_auto_target(row)
+
+func _rearm_mood_idle_cadence(row: Dictionary) -> void:
+	_attacks_subsystem()._rearm_mood_idle_cadence(row)
+
+func _step_production_exit(row: Dictionary) -> bool:
+	return _attacks_subsystem()._step_production_exit(row)
+
+func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, target_kind: String) -> void:
+	_attacks_subsystem()._step_member_attacks(attacker_id, row, target_id, target_kind)
+
+func _member_weapon_has_projectile(row: Dictionary) -> bool:
+	return _attacks_subsystem()._member_weapon_has_projectile(row)
+
+func _scaled_projectile_components(components: Array, outgoing_amount: int) -> Array:
+	return _attacks_subsystem()._scaled_projectile_components(components, outgoing_amount)
+
+func _launch_member_projectile(attacker_id: int, member_index: int, row: Dictionary, target_id: int, target_kind: String, forced_target: int, swing_damage: int, weapon_effect: Dictionary, release_token: int) -> void:
+	_attacks_subsystem()._launch_member_projectile(attacker_id, member_index, row, target_id, target_kind, forced_target, swing_damage, weapon_effect, release_token)
+
+func _apply_member_bonus_nuggets(attacker_id: int, member_index: int, row: Dictionary, target_id: int, target_kind: String, forced_target: int, weapon_effect: Dictionary) -> void:
+	_attacks_subsystem()._apply_member_bonus_nuggets(attacker_id, member_index, row, target_id, target_kind, forced_target, weapon_effect)
+
+func _clear_member_attack_schedule(row: Dictionary) -> void:
+	_attacks_subsystem()._clear_member_attack_schedule(row)
+
+func _clear_member_targets(row: Dictionary) -> void:
+	_attacks_subsystem()._clear_member_targets(row)
+
+func _weapon_mode_for_distance(row: Dictionary, distance: float) -> String:
+	return _attacks_subsystem()._weapon_mode_for_distance(row, distance)
+
+func _formation_effects(row: Dictionary) -> Dictionary:
+	return _attacks_subsystem()._formation_effects(row)
+
+func _stance_state(row: Dictionary, requested: String = "") -> Dictionary:
+	return _attacks_subsystem()._stance_state(row, requested)
+
+func _apply_weapon_mode(row: Dictionary, mode: String) -> bool:
+	return _attacks_subsystem()._apply_weapon_mode(row, mode)
+
+func member_weapon_condition_tokens(entity_id: int) -> Array:
+	return _attacks_subsystem().member_weapon_condition_tokens(entity_id)
+
+func weapon_condition_deferred_reasons(entity_id: int) -> Array:
+	return _attacks_subsystem().weapon_condition_deferred_reasons(entity_id)
+
+func _live_weapon_set_condition_tokens(row: Dictionary) -> Array:
+	return _attacks_subsystem()._live_weapon_set_condition_tokens(row)
+
+func _mark_member_release(attacker_id: int, member_index: int) -> void:
+	_attacks_subsystem()._mark_member_release(attacker_id, member_index)
+
+func _ensure_member_target_assignments(attacker: Dictionary, target: Dictionary) -> void:
+	_attacks_subsystem()._ensure_member_target_assignments(attacker, target)
+
+func _member_world_position(row: Dictionary, member_index: int) -> Vector2:
+	return _attacks_subsystem()._member_world_position(row, member_index)
+
+func _living_member_count(row: Dictionary) -> int:
+	return _attacks_subsystem()._living_member_count(row)
+
+## Structure eviction advances by the same per-tick push as battalion separation:
+## displacement makes that eviction a walk, not a jump (state constant used by the collision module).
+const STRUCTURE_EVICTION_STEP = BATTALION_SEPARATION_PUSH
+
+const CollisionSystemScript = preload("res://src/retail_slice/retail_sim_collision.gd")
+var _collision_system = null
+func _collision_subsystem():
+	if _collision_system == null:
+		_collision_system = CollisionSystemScript.new(self)
+	return _collision_system
 
 func _structure_footprint_radius(structure_row: Dictionary) -> float:
-	## The structure's BOUNDING-CIRCLE radius in sim units — SAGE's
-	## `FROM_BOUNDINGSPHERE_2D` radius, not the movement block radius.
-	##
-	## THE TWO RADII ARE DIFFERENT NUMBERS AND BOTH ARE CORRECT.
-	## STRUCTURE_BLOCK_RADIUS is a MOVEMENT footprint: placement radius plus a
-	## step of walkway, so units path politely around finished buildings (a
-	## fortress is 4.6). This is the AUTHORED Geometry block: MenFortress is
-	## `Geometry = BOX / GeometryMajorRadius = 64` plus four AdditionalGeometry
-	## plot pieces of radius 10 at GeometryOffset 64/-64
-	## (object/goodfaction/structures/men/fortress.ini:1254-1265), which the
-	## importer projects into a union `footprint.radius` of 74 source units —
-	## 1.9604 sim at the Fords of Isen II transform 0.02649232738129. Using the
-	## movement radius here would hand every weapon in the game 2.6 extra units of
-	## reach against a fortress.
-	##
-	## RESOLUTION ORDER: an explicit row value (fixtures, and any future seeding
-	## that wants to pin a footprint) -> the selected pack's compiled geometry via
-	## ContentDB -> a fallback, see COMBAT_FALLBACK_STRUCTURE_SOURCE_RADIUS.
-	##
-	## Returns 0.0 (no expansion, i.e. the old centre-to-centre behaviour) when
-	## the map carries no source transform, so a fixture that never set one is
-	## never handed a 74-SIM-unit disc.
-	##
-	## MEMOISED PER STRUCTURE ID. This is on the per-tick attack path — the range
-	## gate calls it for every attacker against every structure target, every
-	## tick — and the resolution underneath it built a formatted string key on
-	## every call. The inputs (the row's authored value, its source object id,
-	## its kind, and the map transform) are all fixed for a structure's lifetime,
-	## so the result is cached against the integer structure id, which allocates
-	## nothing. Cleared by setup() and by _restore_authoritative_state(), the two
-	## places the structure table is replaced wholesale.
-	if structure_row.is_empty():
-		return 0.0
-	var structure_id := int(structure_row.get("id", 0))
-	if structure_id != 0 and _structure_footprint_radius_cache.has(structure_id):
-		return float(_structure_footprint_radius_cache[structure_id])
-	var scale := float(_rules.get("source_map_transform_scale", 0.0))
-	if not is_finite(scale) or scale <= 0.0:
-		return 0.0
-	var source_radius := float(structure_row.get("footprint_radius_source", 0.0))
-	if not is_finite(source_radius) or source_radius <= 0.0:
-		source_radius = _resolved_footprint_source_radius(
-			String(structure_row.get("source_object_id", "")),
-			String(structure_row.get("structure_kind", "")),
-		)
-	if not is_finite(source_radius) or source_radius <= 0.0:
-		return 0.0
-	var radius := source_radius * scale
-	if structure_id != 0:
-		_structure_footprint_radius_cache[structure_id] = radius
-	return radius
-
-
-## Source-unit footprint used when a structure document carries no compiled
-## geometry at all. NON-FORTRESS ONLY; a fortress keeps
-## SelectionPick.DEFAULT_FORTRESS_SOURCE_RADIUS (64.0), which is MenFortress's
-## authored GeometryMajorRadius verbatim.
-##
-## WHY IT IS NOT 50.0 ANY MORE. The selection round published 50.0 "roughly a
-## Gondor barracks", and for SELECTION that direction is forgiving: an oversized
-## pick radius makes a building easier to click. On the COMBAT path the same
-## number is a gift of free weapon reach and free acquisition range against
-## exactly the structures whose real size is unknown. Censused across every
-## playable-structure document in every pack on disk
-## (workspace/scratch/opus29-footprint-census.txt, 196 documents that carry
-## geometry): the median authored radius is 48, the 10th percentile is 15, and
-## 104 of the 196 are BELOW 50. A 50.0 fallback over-expands most of them.
-##
-## 5.0 IS A FLOOR WITH A DERIVATION, not a smaller guess. The fallback must
-## never exceed a structure's true footprint, or it hands out reach the geometry
-## does not support; the greatest value that satisfies that for every structure
-## the packs ship is the SMALLEST authored radius, and that is 5.0 — the
-## fortress expansion pads (Dwarven/Isengard/Men/Mordor/Wild
-## FortressExpansionPad{Corner,Side}, same census). Erring small degrades toward
-## the pre-round-20 centre-to-centre behaviour, which is the safe direction.
-##
-## HOW OFTEN IT FIRES, measured rather than assumed: 6 of the 182 structure
-## documents in the current workspace selection carry no geometry — MenWallGate,
-## DwarvenCastleWallGate, Isengard/Mordor/Wild LumberMill. The stale
-## bfme2-men-vslice supplemental has 22 more, all superseded by rotwk-men-vslice.
-const COMBAT_FALLBACK_STRUCTURE_SOURCE_RADIUS := 5.0
-
+	return _collision_subsystem()._structure_footprint_radius(structure_row)
 
 func _resolved_footprint_source_radius(source_object_id: String, structure_kind: String) -> float:
-	## MEMO KEY IS THE EXACT ID, not a lowered one. ContentDB's registry lookup
-	## is an exact Dictionary hit (see get_playable_structure_runtime), so a
-	## lowered memo key answered for a DIFFERENT string than the one the lookup
-	## would have used: two ids differing only in case shared one memo entry
-	## while resolving differently — one hitting the document, one missing it and
-	## taking the fallback. Keying on the same string the lookup uses makes the
-	## memo incapable of disagreeing with the thing it memoises.
-	var key := "%s|%s" % [source_object_id, structure_kind]
-	if _structure_footprint_source_cache.has(key):
-		return float(_structure_footprint_source_cache[key])
-	var resolved := 0.0
-	if source_object_id != "":
-		var db = _content_db_ref()
-		if db != null and db.has_method("get_playable_structure_runtime"):
-			var document: Variant = db.get_playable_structure_runtime(source_object_id)
-			if typeof(document) == TYPE_DICTIONARY:
-				var gameplay: Dictionary = (
-					((document as Dictionary).get("registration", {}) as Dictionary)
-					.get("gameplay", {}) as Dictionary
-				)
-				var geometry: Variant = gameplay.get("geometry", {})
-				if typeof(geometry) == TYPE_DICTIONARY:
-					resolved = SelectionPick.source_footprint_radius(geometry as Dictionary)
-	if not is_finite(resolved) or resolved <= 0.0:
-		# NAMED, ONCE PER OBJECT ID. The fallback used to fire in total silence,
-		# so a pack shipped without geometry looked exactly like a pack with it.
-		# Once per id (not per call) keeps a per-tick path from flooding the log.
-		if source_object_id != "" and not _footprint_fallback_reported.has(source_object_id):
-			_footprint_fallback_reported[source_object_id] = true
-			push_warning(
-				"structure footprint: '%s' (kind=%s) carries no compiled geometry; using the %s source-unit fallback"
-				% [
-					source_object_id,
-					structure_kind,
-					"fortress" if structure_kind == "fortress" else "non-fortress",
-				]
-			)
-		resolved = (
-			SelectionPick.DEFAULT_FORTRESS_SOURCE_RADIUS
-			if structure_kind == "fortress"
-			else COMBAT_FALLBACK_STRUCTURE_SOURCE_RADIUS
-		)
-	_structure_footprint_source_cache[key] = resolved
-	return resolved
-
+	return _collision_subsystem()._resolved_footprint_source_radius(source_object_id, structure_kind)
 
 func _target_footprint_radius(target_id: int, target_kind: String) -> float:
-	## The radius to subtract from a centre-to-centre distance before comparing it
-	## with a weapon range.
-	##
-	## STRUCTURES ONLY, DELIBERATELY. Real SAGE subtracts BOTH objects' bounding
-	## radii, and every horde member in the selected pack authors
-	## `GeometryMajorRadius = 8.0` (measured across every
-	## data/playable-units/*.json in the men pack). It is not applied here, for a
-	## reason that is about this sim's model rather than about SAGE:
-	##
-	##   The sim's authoritative unit position is the HORDE CENTRE, and the range
-	##   gate is horde-centre to horde-centre. SAGE's bounding-sphere test is
-	##   between two individual SOLDIER objects. Subtracting 2 x 8 source units
-	##   from a horde-centre distance applies a soldier-scale correction to a
-	##   horde-scale measurement — it would move every engagement 0.42 sim units
-	##   earlier without matching anything retail does. `_step_member_attacks`
-	##   (this file) never range-tests a member at all; members exist in the
-	##   combat path only through `_member_world_position`, and only to assign
-	##   victims. Doing this properly means moving the gate itself down to the
-	##   member level, which is its own change with its own failing-first evidence
-	##   and its own re-derivation of the member-combat suite's 98 authored
-	##   expectations.
-	##
-	## A structure has no such gap: it is a single object, its authoritative
-	## position IS its centre, and its authored Geometry IS the bounding circle
-	## SAGE measures from. The correction applies exactly.
-	if target_kind != "structure":
-		return 0.0
-	return _structure_footprint_radius(structures.get(target_id, {}) as Dictionary)
-
-
-## Hysteresis width added to a castle member's own block radius when deciding
-## whether the walking line crosses it. The corridor is recomputed every tick
-## from the unit's current position, so a zero-width test would let a member
-## flip to BLOCKING while the unit is still inside its disc — it would close on
-## top of the unit rather than behind it.
-##
-## OWN CONSTANT, WITH ITS OWN DERIVATION. Round 18 wrote this as an alias of
-## BATTALION_SEPARATION_PUSH, which made the two move together for no reason:
-## the separation push is a per-tick displacement between two battalions, this
-## is a geometric tolerance on a segment/disc test. They are numerically equal
-## by coincidence, and the alias hid the actual bound.
-##
-## DERIVED from the one castle the pack ships (MenFortress on Fords of Isen II,
-## measured in workspace/scratch/opus24-probe1.out.log): every castle piece
-## carries the default 2.8 STRUCTURE_BLOCK_RADIUS; attacking the fortress centre
-## from outside puts the furthest corner pad 2.398 off the walking line, and
-## attacking an east corner pad from the east puts the two west pads 3.392 off
-## it (recomputed to full precision this round: 3.391 and the corner spacing
-## 4.796 — see _test_castle_corridor_is_bounded). The margin must therefore
-## satisfy
-##     2.398 - 2.8 < margin < 3.391 - 2.8   i.e.   (negative) < margin < 0.591
-## — the lower bound is already met by any non-negative value because 2.398 is
-## inside the bare radius, so the binding constraint is the upper one. It must
-## also exceed one tick of travel or the hysteresis buys nothing.
-##
-## ONE TICK OF TRAVEL, RECONCILED (round 21). This file carried two different
-## answers to that question — "~0.03" here and "0.55" at the transit budget in
-## _deflect_around_structures — and neither was right. 0.55 was the castle
-## fixture's mis-scaled step; 0.03 is a factor of ten under the real figure, and
-## reads like a per-tick value derived from an already-per-tick speed. The
-## measured answer, from every playable-unit document in the workspace selection
-## (159 rows with a resolved speed): median 55 source units/second = 0.1457 sim
-## per tick, ceiling 115 source = 0.3047 sim per tick. Both derivations now cite
-## this same census.
-##
-## 0.35 still holds, and now for a stated reason: it clears the 0.3047 ceiling
-## (so the corridor cannot close on a unit mid-step even at the game's top
-## authored speed) while sitting 0.24 under the 0.591 geometric ceiling above.
-const CASTLE_CORRIDOR_MARGIN := 0.35
-
+	return _collision_subsystem()._target_footprint_radius(target_id, target_kind)
 
 func _point_segment_distance(point: Vector2, a: Vector2, b: Vector2) -> float:
-	var ab := b - a
-	var length_squared := ab.length_squared()
-	if length_squared <= 0.000001:
-		return point.distance_to(a)
-	var t := clampf((point - a).dot(ab) / length_squared, 0.0, 1.0)
-	return point.distance_to(a + ab * t)
-
+	return _collision_subsystem()._point_segment_distance(point, a, b)
 
 func _castle_footprint_pass_through(position: Vector2, attack_target_id: int, attack_target_kind: String) -> Dictionary:
-	## The set of structure ids a battalion standing at `position` and attacking
-	## `attack_target_id` may walk through: the target itself, plus exactly those
-	## members of the target's castle whose footprint the WALKING LINE from the
-	## unit to the target actually crosses.
-	##
-	## BOUNDED, not blanket. Round 17 opened the ENTIRE castle group on any
-	## attack order onto any member of it, which made a far-side attack dissolve
-	## the near wall as well and left the group open for as long as the order
-	## lasted. This model opens only what is in the way, is recomputed every tick
-	## from the unit's current position, and closes behind it.
-	##
-	## WHY THE WHOLE CASTLE, NOT JUST THE TARGET. CastleBehavior authors its
-	## pieces INSIDE the fortress footprint, not around it: MenFortressCitadel
-	## sits on the fortress origin (offset_source 0,0) and the six expansion
-	## pads within 64 source units of it. At the Fords of Isen II transform
-	## (0.02649232738129) that is a citadel exactly on the fortress centre and
-	## pads 1.64-2.40 sim units out — measured live, every enemy castle piece in
-	## workspace/scratch/opus24-probe1.out.log. Each piece carries the default
-	## 2.8 STRUCTURE_BLOCK_RADIUS, so exempting only the ordered target left the
-	## fortress ringed by a ~5.2-unit wall of its own sub-structures. Retail melee
-	## ranges are ~11.5 source units = 0.305 sim, and the MOVEMENT ring is 5.2, so
-	## no melee horde could ever reach a fortress or a pad — that gap is far wider
-	## than the 1.9604 footprint the range gate now subtracts (round 20), so the
-	## corridor is still required: they parked on the ring at distance 4.4-5.1 in state
-	## `run` and only ranged units ever landed a blow
-	## (workspace/scratch/opus09-live1.out.log:35,52 — 17,521 ticks to kill a
-	## fortress, all of it archer damage).
-	##
-	## THE RULE: a member is passable only if the segment [unit -> target centre]
-	## comes within `member block radius + CASTLE_CORRIDOR_MARGIN` of that
-	## member's centre — i.e. the walking line actually crosses its footprint.
-	## The target itself is always passable (that is the order). Everything
-	## outside the group deflects normally, and a battalion with no STRUCTURE
-	## attack target (every plain move order, friendly castles included) gets an
-	## empty set on the first line, so that path stays byte-identical.
-	##
-	## MEASURED against the one castle the pack ships (MenFortress on Fords of
-	## Isen II, workspace/scratch/opus24-probe1.out.log: fortress radius 4.6 at
-	## the origin, citadel radius 2.8 exactly on it, two side pads 1.643 out and
-	## four corner pads 2.398 out, all radius 2.8):
-	##   attacking the fortress centre from outside  -> every piece is on the
-	##     line (0.000-2.398 <= 2.8 + 0.35), so the whole group opens, which is
-	##     correct: they genuinely overlap the target.
-	##   attacking the EAST corner pad from the east -> the two WEST pads sit
-	##     3.391 and 4.796 off the line, above the 3.15 threshold, and stay
-	##     BLOCKING. Under round 17 they opened too.
-	## Those numbers are the bound: 2.398 passes, 3.391 does not.
-	##
-	## CORRECTION (round 19): round 18 reported BOTH west pads at "3.392". They
-	## are not equidistant and neither figure was exact. At the retail transform
-	## 0.02649232738129 a 64-source pad offset is 1.6955090 sim units, so a corner
-	## pad sits 2.3978 out along its diagonal. With the attacker on the
-	## fortress->east-corner ray, the SW pad's nearest point on the SEGMENT is the
-	## east pad endpoint at 2 * 1.6955090 = 3.3910179; the NW pad lies on the
-	## infinite line but on the far side of the fortress, so the segment clamps to
-	## the same endpoint and it measures 3.3910179 * sqrt(2) = 4.7956. Both are
-	## now asserted to 0.001 in _test_castle_corridor_is_bounded instead of being
-	## quoted from a report.
-	##
-	## ID-ALIAS GUARD: battalion ids and structure ids come from the same counter
-	## space but are separate tables, so a battalion target whose id happens to
-	## match a structure id would have opened that structure. The caller passes
-	## the row's `target_kind` and anything but "structure" returns empty.
-	var passable: Dictionary = {}
-	if attack_target_kind != "structure" or attack_target_id == 0 or not structures.has(attack_target_id):
-		return passable
-	passable[attack_target_id] = true
-	var target_row: Dictionary = structures[attack_target_id]
-	var target_center := Vector2(target_row.get("position", Vector2.ZERO))
-	# Three ways into the same group: the castle owner itself, one of its
-	# CastleBehavior pieces, or an expansion raised on one of its pads.
-	var castle_id := int(target_row.get("castle_piece_of_fortress", 0))
-	if castle_id == 0:
-		castle_id = int(target_row.get("expansion_of_fortress", 0))
-	if castle_id == 0 and (
-		target_row.has("castle_piece_structure_ids")
-		or String(target_row.get("structure_kind", "")) == "fortress"
-	):
-		castle_id = attack_target_id
-	if castle_id == 0 or not structures.has(castle_id):
-		return passable
-	var members: Array[int] = [castle_id]
-	for piece_value in (structures[castle_id] as Dictionary).get("castle_piece_structure_ids", []) as Array:
-		members.append(int(piece_value))
-	for pad_value in expansion_pads.get(castle_id, []) as Array:
-		var expansion_structure_id := int((pad_value as Dictionary).get("expansion_structure_id", 0))
-		if expansion_structure_id != 0:
-			members.append(expansion_structure_id)
-	for member_id in members:
-		if passable.has(member_id) or not structures.has(member_id):
-			continue
-		var member_row: Dictionary = structures[member_id]
-		var member_radius := float(STRUCTURE_BLOCK_RADIUS.get(
-			String(member_row.get("structure_kind", "")), 2.8
-		))
-		var member_center := Vector2(member_row.get("position", Vector2.ZERO))
-		if _point_segment_distance(member_center, position, target_center) <= member_radius + CASTLE_CORRIDOR_MARGIN:
-			passable[member_id] = true
-	return passable
-
-
-## The furthest a footprint may move a unit in one tick. Deflection used to
-## SNAP: a unit sitting on a fortress centre was projected 4.6 units in a single
-## step, which is a teleport, and a unit sitting EXACTLY on the centre was
-## skipped entirely by the `distance > 0.001` guard and stayed clipped forever.
-## Both are reachable now that an attack order can put a melee horde inside a
-## castle footprint and then end (stop, retarget, target death), at which point
-## the exemption disappears and the unit has to be evicted. Bounding the
-## displacement makes that eviction a walk, not a jump; the unit keeps being
-## pushed every tick until it is clear.
-const STRUCTURE_EVICTION_STEP := BATTALION_SEPARATION_PUSH
-
+	return _collision_subsystem()._castle_footprint_pass_through(position, attack_target_id, attack_target_kind)
 
 func _castle_gate_blocking_discs(structure_row: Dictionary, mover: Dictionary) -> Array[Dictionary]:
-	var policy: Dictionary = structure_row.get("gate_behavior", {})
-	var geometries: Dictionary = structure_row.get("gate_geometries", {})
-	if policy.is_empty() or geometries.is_empty():
-		return []
-	var use_open_geometry := bool(policy.get("pathing_open", false))
-	var same_team := int(mover.get("team", -1)) == int(structure_row.get("team", -2))
-	if structure_row.has("fake_pathfind_portal"):
-		var portal: Dictionary = structure_row.get("fake_pathfind_portal", {})
-		if use_open_geometry and not same_team and not bool(portal.get("allow_enemies", false)):
-			# FakePathfindPortalBehaviour AllowEnemies=No: hostiles never get
-			# the passage even while open; they must destroy the gate (L3 pin).
-			use_open_geometry = false
-		elif not use_open_geometry:
-			# Retail's fake pathfind PORTAL is a shortcut THROUGH a closed
-			# gate: qualified movers path as if it were open and AIGateUpdate
-			# swings it before they arrive. AllowNonSkirmishAIUnits=No
-			# (helmsdeepbuildings.ini:6288) reserves that shortcut for
-			# skirmish-AI-controlled friendlies; a human owner's troops wait
-			# for the doors like retail. An OPEN gate is never impassable for
-			# its owner - the rule only widens closed-gate passage.
-			if same_team and (bool(portal.get("allow_non_skirmish_ai", false)) or (ai_enabled and team_is_ai(int(mover.get("team", -1))))):
-				use_open_geometry = true
-			elif not same_team and bool(portal.get("allow_enemies", false)):
-				use_open_geometry = true
-	var geometry_names: Array[String] = []
-	if use_open_geometry:
-		geometry_names.assign(["OpenLeft", "OpenRight"])
-	else:
-		geometry_names.append("Closed")
-	var scale := float(_rules.get("source_map_transform_scale", 0.1))
-	var facing := float(structure_row.get("facing_radians", 0.0))
-	var origin := Vector2(structure_row.get("position", Vector2.ZERO))
-	var discs: Array[Dictionary] = []
-	for geometry_name in geometry_names:
-		var geometry: Dictionary = geometries.get(geometry_name, {})
-		if geometry.is_empty() or String(geometry.get("shape", "")).to_upper() != "BOX":
-			continue
-		var major := float(geometry.get("majorRadius", 0.0)) * scale
-		var minor := float(geometry.get("minorRadius", 0.0)) * scale
-		if major <= 0.0 or minor <= 0.0:
-			continue
-		var long_radius := maxf(major, minor)
-		var authored_short_radius := minf(major, minor)
-		# Minkowski-expand the authored box by the battalion's collision body;
-		# otherwise a centre-point test lets the formation clip through the leaf.
-		var disc_radius := authored_short_radius + BATTALION_SEPARATION_PUSH
-		var local_axis := Vector2.RIGHT if major >= minor else Vector2.DOWN
-		var axis := local_axis.rotated(facing)
-		var offset_value: Array = geometry.get("offset", [])
-		var local_offset := Vector2.ZERO
-		if offset_value.size() == 3:
-			local_offset = Vector2(float(offset_value[0]), float(offset_value[1])) * scale
-		var center := origin + local_offset.rotated(facing)
-		# A long authored BOX is represented by a deterministic chain of discs,
-		# never by the old single tiny structure disc. Adjacent discs overlap.
-		var span := maxf(0.0, long_radius - authored_short_radius)
-		var disc_count := maxi(2, int(ceili(span / maxf(disc_radius, 0.001))) + 1)
-		for disc_index in range(disc_count):
-			var along := 0.0 if disc_count == 1 else lerpf(-span, span, float(disc_index) / float(disc_count - 1))
-			discs.append({"center": center + axis * along, "radius": disc_radius})
-	return discs
+	return _collision_subsystem()._castle_gate_blocking_discs(structure_row, mover)
 
+func _deflect_around_structures(position: Vector2, row: Dictionary, travel_step: Vector2 = Vector2.ZERO, structure_id_list: Array[int] = []) -> Vector2:
+	return _collision_subsystem()._deflect_around_structures(position, row, travel_step, structure_id_list)
 
-func _deflect_around_structures(
-	position: Vector2,
-	row: Dictionary,
-	travel_step: Vector2 = Vector2.ZERO,
-	structure_id_list: Array[int] = []
-) -> Vector2:
-	# Battalions slide around building footprints instead of clipping through
-	# them. The battalion's own attack target — and, when that target is part of
-	# a castle, the members of that castle the walking line actually crosses —
-	# is exempt so melee can close in. See _castle_footprint_pass_through.
-	#
-	# `travel_step` is the displacement this tick ALREADY applied to `position`
-	# by _step_route. A non-zero value selects the TANGENTIAL SLIDE below; the
-	# stationary eviction pass passes zero and keeps the radial push.
-	#
-	# `structure_id_list` used to let a caller hoist structure_ids() out of a
-	# multi-entity pass. The spatial-hash gather is a complete, cheaper
-	# substitute for that full list (a centre outside the gathered box cannot
-	# overlap any blocking disc), so a provided list is ignored — honouring
-	# it would let the eviction hoist bypass the broad-phase.
-	var attack_target_id := int(row.get("target_id", 0))
-	var attack_target_kind := String(row.get("target_kind", "battalion"))
-	var passable := _castle_footprint_pass_through(
-		position,
-		attack_target_id,
-		attack_target_kind,
-	)
-	# BROAD-PHASE (lane L2b item 6): only structures whose blocking disc can
-	# overlap `position` are visited, in the same ascending id order the full
-	# scan used. A centre outside the gathered box is further than the maximum
-	# block radius away, and the loop below skips such rows with no side
-	# effects, so this is byte-identical to scanning structure_ids().
-	var ids: Array[int] = _structure_ids_near(position)
-	# TOTAL push bound. Round 18 clamped each structure's push to
-	# STRUCTURE_EVICTION_STEP separately, so N overlapping discs could compound
-	# into an N * step jump in one tick — and overlapping discs are the NORMAL
-	# case inside a castle, where the citadel sits exactly on the fortress centre
-	# and six pads sit 1.64-2.40 out with 2.8 radii. A unit on the fortress
-	# origin is inside four of them at once. The budget below is spent across all
-	# of them, so eviction is one step per tick however many footprints claim it.
-	#
-	# The budget bounds the OUTWARD (radial) component only. A tangential slide
-	# is not displacement the sim is inventing — it is the unit's own travel
-	# step redirected along the disc — and charging it to the eviction budget
-	# left a unit that walked in at full speed unable to recover its clearance in
-	# the same tick.
-	#
-	# A TRANSIT step raises the budget to its own length. STRUCTURE_EVICTION_STEP
-	# exists so a unit that is already deep inside a footprint WALKS out instead
-	# of teleporting; it was never meant to stop a moving unit from undoing the
-	# penetration it just created. Recovering at most exactly what this tick
-	# moved is still not a teleport.
-	#
-	# RE-DERIVED FROM A CORRECTED MEASUREMENT (round 21). Round 19 justified this
-	# with "a slice melee steps 0.55 per tick at the retail transform". That
-	# number was WRONG, and wrong by 3.8x: it came from banner_castle_sim_runner's
-	# castle fixture, which swapped the map transform to retail but left its unit
-	# rules at the 0.1 scale they were authored for (see _rescale_unit_rules
-	# there, fixed in the same round). The AUTHORED ceiling, censused across every
-	# playable-unit document in every pack in the workspace selection (159 rows
-	# with a resolved speed): the fastest unit in the game authors 115 source
-	# units/second — Rivendell Lancers, Haradrim Riders, Warg riders, Knights of
-	# Dol Amroth — which at 0.02649232738129 and TICK_SECONDS 0.1 is 0.3047 sim
-	# units per tick. The median is 55 source = 0.1457. NOT ONE authored base
-	# speed exceeds STRUCTURE_EVICTION_STEP (0.35).
-	#
-	# SO WHY KEEP IT. Because `travel_step` is not a base speed: _step_route
-	# composes it as base * stance speedMultiplier * formation speed_multiplier *
-	# ability SPEED modifiers (see the max_speed line there). A mounted or
-	# leadership-boosted lancer at any multiplier above 1.149 clears 0.35, and
-	# those multipliers are authored data, not a hypothetical. The rule is
-	# therefore inert for every unit at base speed and binding exactly where a
-	# boosted one would otherwise be left clipped inside a wall it walked into.
-	# Deleting it would trade a measured no-op for an unmeasured regression.
-	var push_budget := maxf(STRUCTURE_EVICTION_STEP, travel_step.length())
-	for structure_id in ids:
-		if not structures.has(structure_id):
-			continue
-		var structure_row: Dictionary = structures[structure_id]
-		if int(structure_row.get("health", 0)) <= 0:
-			continue
-		# Construction sites do not block movement: builders must reach their
-		# own site, and scaffolding is passable until the structure completes.
-		if float(structure_row.get("construction_progress", 1.0)) < 1.0:
-			continue
-		var gate_discs := _castle_gate_blocking_discs(structure_row, row)
-		if not gate_discs.is_empty():
-			for disc in gate_discs:
-				var gate_center := Vector2(disc.get("center", Vector2.ZERO))
-				var gate_radius := float(disc.get("radius", 0.0))
-				var gate_offset := position - gate_center
-				var gate_distance := gate_offset.length()
-				# Sweep the just-applied travel segment as well as testing its end;
-				# fast battalions must not tunnel through a thin Closed door slab.
-				if gate_distance >= gate_radius and travel_step.length_squared() > 0.000001:
-					var gate_start := position - travel_step
-					var gate_t := clampf((gate_center - gate_start).dot(travel_step) / travel_step.length_squared(), 0.0, 1.0)
-					var gate_closest := gate_start + travel_step * gate_t
-					var closest_offset := gate_closest - gate_center
-					if closest_offset.length() < gate_radius:
-						position = gate_closest
-						gate_offset = closest_offset
-						gate_distance = closest_offset.length()
-				if gate_distance >= gate_radius:
-					continue
-				var incoming_offset := position - travel_step - gate_center
-				var gate_direction := incoming_offset.normalized() if incoming_offset.length_squared() > 0.000001 else (gate_offset / gate_distance if gate_distance > 0.001 else _eviction_fallback_direction(row))
-				var gate_applied := minf(gate_radius - gate_distance, push_budget)
-				push_budget -= gate_applied
-				var gate_seated_radius := gate_distance + gate_applied
-				position = gate_center + gate_direction * gate_seated_radius
-				if push_budget <= 0.0:
-					break
-			continue
-		var radius := float(STRUCTURE_BLOCK_RADIUS.get(String(structure_row.get("structure_kind", "")), 2.8))
-		if String(row.get("order_kind", "")) == "construct" and structure_id >= CASTLE_FIXTURE_FIRST_ID:
-			# Castle props sit densely around their authored build plots. A porter
-			# travelling to one uses each fixture's compiled footprint, not the
-			# generic 2.8-unit dynamic-building walkway disc that seals the keep.
-			var fixture_radius := _structure_footprint_radius(structure_row)
-			if fixture_radius > 0.0:
-				radius = fixture_radius
-		if passable.has(structure_id):
-			# THE TARGET'S OWN FOOTPRINT STILL STOPS THE ATTACKER AT ITS WALL.
-			#
-			# The corridor exists because the MOVEMENT block radius is an inflated
-			# walkway ring (a fortress is 4.6 against an authored footprint of
-			# 1.9604) and a castle's pieces are authored INSIDE it, so leaving it
-			# up walled melee out of every fortress it was ordered onto. But
-			# opening it completely let the attacker walk to the target's CENTRE —
-			# measured d=0.24 then d=0.00 in the live slice
-			# (workspace/scratch/opus24-probe2.out.log).
-			#
-			# Now that the range gate is surface-to-surface the wall is reachable
-			# and standing off it is correct, so the target reasserts its OWN
-			# authored footprint. `minf` keeps this a strict relaxation of the
-			# ordinary rule: the corridor can never block harder than the plain
-			# movement disc would have (relevant for wall towers, whose 98-source
-			# geometry projects wider than their 2.2 block radius).
-			#
-			# CROSSED CASTLE MEMBERS STAY FULLY OPEN. Only the ordered target is
-			# re-blocked. A pad or citadel the walking line happens to cross is
-			# not what the unit is trying to hit, and re-blocking those would put
-			# the fortress's own 1.96 disc between an attacker and a pad standing
-			# 1.64 from the fortress centre — unreachable from outside.
-			if structure_id != attack_target_id or attack_target_kind != "structure":
-				continue
-			radius = minf(radius, _structure_footprint_radius(structure_row))
-			if radius <= 0.0:
-				continue
-		var center := Vector2(structure_row.get("position", Vector2.ZERO))
-		var offset := position - center
-		var distance := offset.length()
-		if distance >= radius:
-			continue
-		var direction := offset / distance if distance > 0.001 else _eviction_fallback_direction(row)
-		# Bounded: keep walking out, one step per tick, instead of teleporting to
-		# the ring. Ordinary deflection never reaches the clamp — a unit moving at
-		# slice speeds penetrates far less than one step per tick — so it only
-		# bites on the eviction case it exists for.
-		var applied := minf(radius - distance, push_budget)
-		push_budget -= applied
-		var seated_radius := distance + applied
-		position = center + direction * seated_radius
-		if travel_step.length_squared() > 0.000001:
-			var slide_dest := Vector2(row.get("destination", position))
-			var live_route: Array = row.get("route", [])
-			if not live_route.is_empty():
-				slide_dest = Vector2(live_route[0])
-			position = _tangential_slide_point(
-				center, seated_radius, direction, travel_step, slide_dest
-			)
-		if push_budget <= 0.0:
-			break
-	return position
-
-
-func _tangential_slide_point(
-	center: Vector2,
-	radius: float,
-	radial_direction: Vector2,
-	travel_step: Vector2,
-	destination: Vector2 = Vector2.INF
-) -> Vector2:
-	## TANGENTIAL SLIDE. The radial push alone deadlocks whenever a blocking
-	## structure's centre sits on the line of travel: the push
-	## `center + offset/|offset| * radius` is then exactly ANTI-PARALLEL to the
-	## step, so every tick moves the unit forward by one step and shoves it back
-	## onto the same ring point. Measured on the seeded fixture: an attacker at
-	## (80, 200) ordered onto a fortress at (100, 200) with a barracks at
-	## (90, 200) parks at (87.2, 200.0) — exactly barracks + (-2.8, 0) — with its
-	## route still length 1 after 600 ticks. _step_route's 3-tick stall escape
-	## never fires because the attack state re-assigns the route every tick,
-	## which resets route_stall_ticks before it can reach the threshold.
-	##
-	## The fix walks the unit AROUND the disc instead of standing it off:
-	## project the step onto the tangent at the unit's current bearing and
-	## re-seat the result on the ring, so the unit keeps its clearance while
-	## making angular progress toward the far side.
-	##
-	## DETERMINISTIC SIDE CHOICE. Which way round is decided by the sign of the
-	## 2-D cross product of the OBSTACLE OFFSET (centre -> unit) with the travel
-	## direction. Off-axis that sign is the side the unit is already drifting
-	## toward, so the slide never fights the approach. ON-AXIS — the deadlock
-	## case — the cross product is zero and a fixed fallback side takes over.
-	##
-	## WHY A FIXED FALLBACK IS THE RIGHT ANSWER, stated correctly. An earlier
-	## version of this comment justified it as "any position-derived tie-break
-	## would make two lockstep peers disagree". That is wrong on its face:
-	## position IS replicated state, every peer holds the same value, and a
-	## position-derived choice would replicate fine. The real reason is
-	## NUMERICAL: near the axis the cross product is a difference of two nearly
-	## equal products, so its SIGN is the least trustworthy bit in the whole
-	## computation — it is exactly the quantity that a fused multiply-add
-	## contracts differently on different CPUs, and that ordinary rounding flips
-	## from tick to tick on a single CPU. A fixed side is stable under both.
-	##
-	## THE NEAR-ZERO BAND IS PART OF THE FIX, not padding. Snapping only the
-	## exact 0.0 left a band around the axis where |cross| is nonzero but its
-	## sign is FMA-dependent: two peers on different microarchitectures compute
-	## the same inputs, contract `x1*y2 - y1*x2` differently, and pick opposite
-	## sides — the unit walks round the disc clockwise on one peer and
-	## counter-clockwise on the other, and the sim desyncs. The lockstep runners
-	## cannot catch this: both peers in those tests are the SAME binary on the
-	## SAME machine, so they always contract identically and always agree. The
-	## band is therefore a hazard that only a heterogeneous match exposes, which
-	## is why it is closed by construction rather than by test.
-	##
-	## 1e-6 is the same tolerance this file already uses for "this vector is
-	## degenerate" (`length_squared() <= 0.000001`, both in this function and in
-	## _deflect_around_structures), so the geometry has one epsilon, not two.
-	## Inside the band the fixed side (+1, counter-clockwise in the sim's X/Z
-	## frame) applies; it is a pure function of the two vectors, so every peer
-	## computes it identically.
-	## Dest-side when a remaining waypoint is known: both lockstep peers hold
-	## the same destination, so this does not re-open the FMA sign hazard that
-	## forced a fixed +1 on-axis. Walking a 1-point LOS through a building
-	## is exactly on-axis; +1 then orbits the long way. The shorter remaining
-	## distance is the short side of the disc.
-	var cross := radial_direction.cross(travel_step)
-	var side := signf(cross) if absf(cross) > 0.000001 else 1.0
-	if destination != Vector2.INF:
-		var perp := Vector2(-radial_direction.y, radial_direction.x)
-		var left := center + radial_direction * radius + perp * travel_step.length()
-		var right := center + radial_direction * radius - perp * travel_step.length()
-		var left_gap := left.distance_squared_to(destination)
-		var right_gap := right.distance_squared_to(destination)
-		if absf(left_gap - right_gap) > 0.000001:
-			side = 1.0 if left_gap < right_gap else -1.0
-	var tangent := Vector2(-radial_direction.y, radial_direction.x) * side
-	var slid := center + radial_direction * radius + tangent * travel_step.length()
-	var seated := slid - center
-	if seated.length_squared() <= 0.000001:
-		return center + radial_direction * radius
-	return center + seated.normalized() * radius
-
+func _tangential_slide_point(center: Vector2, radius: float, radial_direction: Vector2, travel_step: Vector2, destination: Vector2 = Vector2.INF) -> Vector2:
+	return _collision_subsystem()._tangential_slide_point(center, radius, radial_direction, travel_step, destination)
 
 func _step_structure_eviction() -> void:
-	## Standing still is exactly when a footprint has to reassert itself.
-	##
-	## The castle pass-through ends with the ORDER, not with the route, and
-	## `_step_entity` only reaches `_step_route` while a unit is moving: an
-	## attacking, idle, stopped, or freshly-untargeted battalion never touches the
-	## deflection at all. A melee horde that walked inside a castle to attack it
-	## and then stopped, retargeted, or outlived its target therefore sat clipped
-	## inside the wall for the rest of the match. This pass runs every tick for
-	## every living battalion and pushes it back out at
-	## STRUCTURE_EVICTION_STEP per tick.
-	##
-	## It consults the SAME pass-through set as movement, so a battalion whose
-	## order still opens a corridor is not fought against while it is attacking —
-	## only once the order ends does the set empty and the walk-out begin.
-	##
-	## Deterministic: ascending entity id, fixed step, no wall clock, no RNG.
-	##
-	## HOISTED. structure_ids() allocates a new array and SORTS it on every call;
-	## calling it once per entity made this pass O(entities * structures) with a
-	## sort inside the entity loop. Structures are neither added nor removed by
-	## this pass (it only moves entities), so the id list is stable for its whole
-	## duration and _deflect_around_structures re-checks structures.has() anyway.
-	var ids: Array[int] = structure_ids()
-	if ids.is_empty():
-		return
-	for id in entity_ids():
-		var row: Dictionary = entities[id]
-		if int(row.get("health", 0)) <= 0 or bool(row.get("flying", false)) or entity_container.has(id):
-			continue
-		if bool(row.get("is_banner_carrier", false)):
-			# A BANNER CARRIER HAS NO POSITION OF ITS OWN. It is glued to its
-			# parent horde by _sync_banner_entity_transform, which runs in
-			# _step_banner_carriers — the pass IMMEDIATELY BEFORE this one, in
-			# the same tick (see the tick order at _step_banner_carriers /
-			# _step_structure_eviction). Evicting it therefore fights a value
-			# that is not the eviction pass's to own: the nudge is overwritten
-			# by the next tick's glue, and in the window between the two the
-			# authoritative banner position is wrong for the spatial index and
-			# for presentation.
-			#
-			# It is not hypothetical. A horde parked against its own castle wall
-			# — the ordinary defensive posture — puts its banner inside a
-			# structure footprint, so this pass nudged it EVERY TICK for as long
-			# as the horde stood there, and every one of those nudges was
-			# discarded by the following tick's glue.
-			#
-			# The parent horde is still evicted normally; the banner follows it
-			# out because it follows it everywhere.
-			continue
-		if not (row.get("route", []) as Array).is_empty():
-			continue  # already deflected this tick inside _step_route
-		if int(row.get("production_exit_start_tick", -1)) >= 0:
-			# THE DOORWAY IS INSIDE THE FOOTPRINT, BY CONTRACT. QueueProductionExit
-			# creates a horde at production_origin + PRODUCTION_DOOR_INSET_RADIUS
-			# (0.9) along the exit direction and walks it out to
-			# PRODUCTION_EXIT_RADIUS (4.25) — see _step_production. A producer's
-			# block radius is 2.6-3.0, so the authored create point is 1.7-2.1
-			# units INSIDE its own disc and _step_production_exit owns the unit's
-			# position for the whole animation (it lerps origin -> destination
-			# every tick and leaves route empty with state "run"). Round 18's pass
-			# therefore fought the doorway on every single unit the game produced.
-			#
-			# MEASURED, and measured PRECISELY — the effect is real but bounded,
-			# and overstating it would be as wrong as missing it. In the
-			# retail_state_pin fixture the produced horde's AUTHORITATIVE
-			# end-of-tick position is exactly STRUCTURE_EVICTION_STEP (0.35) off
-			# the authored lerp for the whole time it is inside the producer's
-			# disc, and then the two reconverge byte for byte
-			# (workspace/scratch/opus26-pin-positions-{new,revert-prodexit}.json.tick*):
-			#   t=211  penetration 1.7851 vs 1.4351   (0.3500 apart)
-			#   t=214  penetration 1.2681 vs 0.9181   (0.3500 apart)
-			#   t=217  penetration 0.5030 vs 0.1530   (0.3500 apart)
-			#   t=220  identical, and identical at every later sample
-			# It does NOT accumulate, because the next tick's lerp overwrites the
-			# nudge — which is exactly why neither pinned hash moves. What it does
-			# corrupt is the end-of-tick state everything else reads inside that
-			# window: the spatial index, presentation, and any query against the
-			# authoritative position while a unit is emerging.
-			#
-			# The exit is a bounded, self-terminating animation that ends OUTSIDE
-			# the footprint; eviction resumes the tick it completes.
-			continue
-		if _is_engaged_in_range(row):
-			# A unit that is attacking something it can actually hit must not be
-			# shoved out of its own weapon range. The castle corridor only exempts
-			# STRUCTURE targets in the target's own castle group, so a melee horde
-			# fighting an enemy BATTALION that happens to stand on a footprint —
-			# defenders backed against their own barracks, a fight spilling onto a
-			# wall — was evicted out of contact and had to walk back in, every tick.
-			continue
-		var position := Vector2(row.get("position", Vector2.ZERO))
-		# An IDLE battalion is not executing its order, whatever `target_id` still
-		# says, so it gets no corridor. Measured need: the live slice parks a unit
-		# with attack_range 0.0 in state `idle` at d=0.00 on the enemy fortress
-		# CENTRE while still holding it as a target
-		# (workspace/scratch/opus25-probe1.out.log:`3:idle:t2001:d0.00`) — the
-		# weapon-mode gate returns "unsupported-close", drops the route and idles,
-		# but never clears the target, so a permanent corridor kept a unit clipped
-		# inside the wall for the whole match. Gating on state, not on target,
-		# is what makes "the exemption ends with the order" actually true.
-		var executing := String(row.get("state", "")) in ["run", "attack"]
-		var evicted := _deflect_around_structures(
-			position,
-			row if executing else {"facing": row.get("facing", Vector2.ZERO)},
-			Vector2.ZERO,
-			ids
-		)
-		if evicted == position:
-			continue
-		row["position"] = evicted
-		_spatial_sync(row)
-
+	_collision_subsystem()._step_structure_eviction()
 
 func _is_engaged_in_range(row: Dictionary) -> bool:
-	## True when this battalion is in the attack state against a LIVING target it
-	## is currently within weapon range of — of ANY kind, battalion or structure.
-	## It must use EXACTLY the test _step_attacks uses to enter the state, or a
-	## unit that is legitimately engaged gets evicted out of its own weapon range
-	## every tick: surface-to-surface against a structure (the target's authored
-	## bounding circle subtracted), centre-to-centre against a battalion. See the
-	## citation block at that range test.
-	if String(row.get("state", "")) != "attack":
-		return false
-	var target_id := int(row.get("target_id", 0))
-	if target_id == 0:
-		return false
-	var target_kind := String(row.get("target_kind", "battalion"))
-	var target_row: Dictionary = (
-		structures.get(target_id, {}) if target_kind == "structure" else entities.get(target_id, {})
-	)
-	if target_row.is_empty() or int(target_row.get("health", 0)) <= 0:
-		return false
-	var attack_range := float(row.get("attack_range", 0.0))
-	if attack_range <= 0.0:
-		return false
-	var distance := maxf(
-		0.0,
-		Vector2(row.get("position", Vector2.ZERO)).distance_to(
-			Vector2(target_row.get("position", Vector2.ZERO))
-		) - _target_footprint_radius(target_id, target_kind)
-	)
-	return distance <= attack_range
-
+	return _collision_subsystem()._is_engaged_in_range(row)
 
 func _eviction_fallback_direction(row: Dictionary) -> Vector2:
-	## A unit standing EXACTLY on a footprint centre has no radial direction to
-	## be pushed along, and the old code left it there permanently (the
-	## `distance > 0.001` guard skipped it). Push it along its own facing, which
-	## is deterministic state already replicated in lockstep; a zero facing falls
-	## back to a fixed axis so the result never depends on iteration order, wall
-	## clock, or RNG.
-	var facing := Vector2(row.get("facing", Vector2.ZERO))
-	if facing.length_squared() > 0.000001:
-		return facing.normalized()
-	return Vector2.RIGHT
-
-
-## Locomotion has no invented constants. Every number below comes from the
-## authored Locomotor template the object's LocomotorSet binds, compiled by
-## importer/openbfme_importer/locomotor_compiler.py and carried on the row.
-
+	return _collision_subsystem()._eviction_fallback_direction(row)
 
 func _should_honor_turn_rate(row: Dictionary) -> bool:
-	## Authored TurnTime reaches the row as a positive
-	## turn_rate_degrees_per_second. Old/synthetic fixtures also carry the
-	## positive field explicitly, so they exercise the same arithmetic. A zero or
-	## absent value is the only missing-data sentinel and retains snap/direct
-	## movement; no provenance label or category can fabricate a rate.
-	if float(row.get("turn_rate_degrees_per_second", 0.0)) <= 0.0:
-		_report_turn_rate_fallback(row)
-		return false
-	return true
-
+	return _collision_subsystem()._should_honor_turn_rate(row)
 
 func _report_turn_rate_fallback(row: Dictionary) -> void:
-	var unit_type := String(row.get(
-		"unit_type", row.get("source_object_id", row.get("horde_id", "<unknown>"))
-	))
-	if _turn_rate_fallback_unit_types.has(unit_type):
-		return
-	_turn_rate_fallback_unit_types[unit_type] = true
-	print(
-		"RETAIL_TURN_MODEL missing_authored_turn_rate unit_type=%s fallback=pre_change_snap_direct"
-		% unit_type
-	)
-
+	_collision_subsystem()._report_turn_rate_fallback(row)
 
 func _should_reform(row: Dictionary) -> bool:
-	## The reform gate exists only where retail authors MaxTurnWithoutReform.
-	## Absence means "no reform gate", not a guessed arc.
-	if retail_formation_movement:
-		return true
-	return float(row.get("max_turn_without_reform_degrees", 0.0)) > 0.0
-
+	return _collision_subsystem()._should_reform(row)
 
 func _retail_reform_threshold_degrees(row: Dictionary) -> float:
-	return _movement_subsystem()._retail_reform_threshold_degrees(row)
-
+	return _collision_subsystem()._retail_reform_threshold_degrees(row)
 
 func _retail_turn_rate_degrees(row: Dictionary) -> float:
-	return _movement_subsystem()._retail_turn_rate_degrees(row)
+	return _collision_subsystem()._retail_turn_rate_degrees(row)
 
-
-func _step_retail_heading(
-	row: Dictionary,
-	movement_direction: Vector2,
-	braking: float,
-	effective_turn_rate_degrees_per_second: float
-) -> bool:
-	return _movement_subsystem()._step_retail_heading(row, movement_direction, braking, effective_turn_rate_degrees_per_second)
-
+func _step_retail_heading(row: Dictionary, movement_direction: Vector2, braking: float, effective_turn_rate_degrees_per_second: float) -> bool:
+	return _collision_subsystem()._step_retail_heading(row, movement_direction, braking, effective_turn_rate_degrees_per_second)
 
 func _step_route(row: Dictionary) -> void:
-	_movement_subsystem()._step_route(row)
-
+	_collision_subsystem()._step_route(row)
 
 func _consume_route_point_layer(row: Dictionary) -> void:
-	if not row.has("route_point_layers"):
-		return
-	var layers: Array = row.get("route_point_layers", []) as Array
-	if layers.is_empty():
-		return
-	var layer := String(layers.pop_front())
-	row["route_point_layers"] = layers
-	var elevations: Array = row.get("route_point_elevations", []) as Array
-	var elevation := 0.0
-	if not elevations.is_empty():
-		elevation = float(elevations.pop_front())
-		row["route_point_elevations"] = elevations
-	if layer in ["ground", "ramp", "deck"]:
-		row["pathing_layer"] = layer
-		if layer == "ground":
-			row.erase("pathing_elevation")
-		else:
-			row["pathing_elevation"] = elevation
-
+	_collision_subsystem()._consume_route_point_layer(row)
 
 func _should_attempt_crush(row: Dictionary, translation_speed: float, max_speed: float) -> bool:
-	if max_speed <= 0.0:
-		return false
-	if row.has("crush_damage") and int(row.get("crush_damage", 0)) > 0:
-		var min_percent := float(row.get("min_crush_velocity_percent", 40.0))
-		return translation_speed + 0.0001 >= max_speed * (min_percent / 100.0)
-	# Descriptor-backed units must supply their retail CrusherLevel/CrushWeapon
-	# inputs. The category fallback exists only for old synthetic fixtures whose
-	# rules predate the compiled crush fields.
-	if row.has("module_contracts"):
-		return false
-	return String(row.get("category", "")) == "cavalry" and translation_speed > max_speed * 0.4
-
+	return _collision_subsystem()._should_attempt_crush(row, translation_speed, max_speed)
 
 func _try_cavalry_trample(row: Dictionary) -> void:
-	## Authored crush when crush_damage/crusher_level are present. Otherwise
-	## the legacy cavalry 0.5 pulse so the pin and slice trample checks stay
-	## put on packs that predate the fields.
-	var cooldown := int(row.get("trample_cooldown", 0))
-	if cooldown > 0:
-		row["trample_cooldown"] = cooldown - 1
-		return
-	var authored_damage := int(row.get("crush_damage", 0))
-	var has_authored := row.has("crush_damage") and authored_damage > 0
-	if has_authored:
-		var max_speed := float(row.get("speed", 0.0))
-		var min_percent := float(row.get("min_crush_velocity_percent", 40.0))
-		if max_speed > 0.0 and float(row.get("current_speed", 0.0)) + 0.0001 < max_speed * (min_percent / 100.0):
-			return
-	elif row.has("module_contracts") or String(row.get("category", "")) != "cavalry":
-		return
-	var team := int(row.get("team", PLAYER_TEAM))
-	var origin := Vector2(row.get("position", Vector2.ZERO))
-	var best_id := _spatial_nearest_hostile(
-		row, team, origin, TRAMPLE_COLLISION_RADIUS, SPATIAL_FILTER_NOT_FLYING
-	)
-	if best_id == 0:
-		return
-	var victim: Dictionary = entities[best_id] as Dictionary
-	if not _squish_collision_admitted(victim):
-		_emit_event("combat.crush_refused", int(row.get("id", 0)), best_id, {"reason": "victim-missing-squish-collide"})
-		return
-	if has_authored:
-		var crusher_level := int(row.get("crusher_level", 0))
-		var victim_level := int(victim.get("crushable_level", 0))
-		if crusher_level <= victim_level:
-			return
-	var damage := 0
-	if has_authored:
-		damage = maxi(
-			1,
-			int(round(float(authored_damage) * _timed_modifier_product(row, "CRUSH")))
-		)
-	else:
-		damage = maxi(1, int(round(float(row.get("member_damage", 1)) * float(row.get("member_count", 1)) * TRAMPLE_DAMAGE_FACTOR * _timed_modifier_product(row, "CRUSH"))))
-	# A braced shield wall blunts the charge (retail pike/shield counterplay).
-	damage = maxi(1, roundi(float(damage) * float(_formation_effects(victim).get("trample_damage_multiplier", 1.0))))
-	_apply_damage(int(row.get("id", 0)), best_id, damage, "battalion")
-	row["trample_cooldown"] = TRAMPLE_COOLDOWN_TICKS
-	var payload := {
-		"amount": damage,
-		"category": String(row.get("category", "cavalry")),
-	}
-	if has_authored:
-		payload["weapon"] = String(row.get("crush_weapon_id", ""))
-		_emit_event("combat.crush", int(row.get("id", 0)), best_id, payload)
-	# Alias kept so existing slice/knockback listeners still see a pulse.
-	_emit_event("combat.trample", int(row.get("id", 0)), best_id, payload)
-	_apply_crush_deceleration(row, victim)
-	# CrushRevengeWeapon: victim reflects authored nugget damage at the
-	# crusher. Weapon id without authored damage is fail-closed (no invent).
-	if victim.has("crush_revenge_damage"):
-		var revenge := int(victim.get("crush_revenge_damage", 0))
-		if revenge > 0 and int(row.get("health", 0)) > 0:
-			_apply_damage(best_id, int(row.get("id", 0)), revenge, "battalion")
-			_emit_event("combat.crush_revenge", best_id, int(row.get("id", 0)), {
-				"amount": revenge,
-				"weapon": String(victim.get("crush_revenge_weapon_id", "")),
-			})
-	var knockback_strength := TRAMPLE_KNOCKBACK_STRENGTH
-	if has_authored and row.has("crush_knockback"):
-		knockback_strength = maxf(0.0, float(row.get("crush_knockback", TRAMPLE_KNOCKBACK_STRENGTH)))
-	_apply_knockback(origin, TRAMPLE_COLLISION_RADIUS, knockback_strength, team, 0, "trample", int(row.get("id", 0)))
-
+	_collision_subsystem()._try_cavalry_trample(row)
 
 func _apply_crush_deceleration(crusher: Dictionary, victim: Dictionary) -> void:
-	## The crusher pays for the crush in speed, and a braced formation makes it
-	## pay much more.
-	##
-	## RETAIL ORACLE, two halves:
-	##  * the crusher's locomotor authors `CrushDecelerationPercent`, and retail
-	##    annotates the number itself:
-	##    object/cinematic/cinematicobjects.ini:2264
-	##    `CrushDecelerationPercent = 20 ; Lose 80 percent of max velocity when
-	##    crushing.` -- so the authored percent is the fraction of speed KEPT
-	##    and (100 - percent) is the loss.
-	##  * the victim's FORMATION ModifierList authors `CRUSHED_DECELERATE`, and
-	##    attributemodifier.ini:49 documents it as "Multiplicitive. The
-	##    percentage that things crushing you slow" -- it scales that loss. A
-	##    porcupine horde authors `CRUSHED_DECELERATE 1000%`
-	##    (attributemodifier.ini:762), i.e. ten times the loss, which stops the
-	##    charge dead.
-	##
-	## No authored CrushDecelerationPercent means no deceleration term at all:
-	## absent stays absent, never a default. Until this landed, the compiled
-	## `crush_deceleration_percent` was stored on the row and read by nothing.
-	if not crusher.has("crush_deceleration_percent"):
-		return
-	var kept := clampf(float(crusher.get("crush_deceleration_percent", 100.0)) / 100.0, 0.0, 1.0)
-	var scale := maxf(0.0, _timed_modifier_product(victim, "CRUSHED_DECELERATE"))
-	var loss := clampf((1.0 - kept) * scale, 0.0, 1.0)
-	if loss <= 0.0:
-		return
-	crusher["current_speed"] = maxf(0.0, float(crusher.get("current_speed", 0.0)) * (1.0 - loss))
-
+	_collision_subsystem()._apply_crush_deceleration(crusher, victim)
 
 func _resume_order_after_knockdown(row: Dictionary) -> bool:
-	## Re-path a battalion that just stood up back onto the order it was
-	## carrying when it was knocked down: its live attack target first, then a
-	## pending move destination. Returns false when there is nothing left to
-	## resume (order complete, target dead, or the route is now unreachable),
-	## in which case the caller settles it into idle.
-	var target_id := int(row.get("target_id", 0))
-	if target_id != 0:
-		var target: Dictionary = {}
-		if String(row.get("target_kind", "battalion")) == "structure":
-			target = structures.get(target_id, {}) as Dictionary
-		else:
-			target = entities.get(target_id, {}) as Dictionary
-		if not target.is_empty() and int(target.get("health", 0)) > 0:
-			if _assign_target_route(row, Vector2(target["position"])):
-				row["state"] = "run"
-				return true
-		row["target_id"] = 0
-		row["target_kind"] = "battalion"
-	var destination := Vector2(row.get("destination", row["position"]))
-	if destination.distance_to(Vector2(row["position"])) > 0.001 and _assign_route(row, destination):
-		row["state"] = "run"
-		return true
-	_clear_pending_route(row, true)
-	return false
-
+	return _collision_subsystem()._resume_order_after_knockdown(row)
 
 func _apply_knockback(center: Vector2, radius: float, strength: float, source_team: int, damage: int, damage_reason: String, source_id: int = 0, taper_off: float = 0.0, z_mult: float = 1.0) -> int:
-	## Deterministic radial knockback: sweep enemy battalions in ascending id
-	## order, throw each away from the center (clamped to walkable ground),
-	## knock them down for KNOCKDOWN_DURATION_TICKS, and apply the optional
-	## damage through the existing damage path. Allies and flyers are immune.
-	var affected := 0
-	# Only battalions inside the blast disc can be thrown, so the old full sweep
-	# is a neighbourhood query. Sorted to keep the documented ascending-id order,
-	# which damage application and event emission both observe.
-	for id in _spatial_gather_sorted(center, radius):
-		if not entities.has(id):
-			continue
-		var row: Dictionary = entities[id]
-		if int(row.get("team", -1)) == source_team or int(row.get("health", 0)) <= 0:
-			continue
-		if bool(row.get("flying", false)):
-			# Airborne units cannot be bowled over by ground shockwaves.
-			continue
-		var position := Vector2(row.get("position", Vector2.ZERO))
-		var distance := position.distance_to(center)
-		if distance > radius:
-			continue
-		if int(row.get("knockdown_ticks", 0)) > 0:
-			# Already sprawled on the ground: a charge cannot fling a battalion
-			# that is still lying there, and it cannot refresh the timer either.
-			# KNOCKDOWN_DURATION_TICKS(25) outlives TRAMPLE_COOLDOWN_TICKS(10)
-			# and TRAMPLE_KNOCKBACK_STRENGTH(2.0) throws the victim less far
-			# than TRAMPLE_COLLISION_RADIUS(2.5), so without this guard a single
-			# cavalry battalion re-downs the same clump every 10 ticks forever:
-			# the victims never stand, never retaliate, and are ground to dust
-			# for free. Damage still lands on a prone target.
-			if damage > 0:
-				_apply_damage(source_id, id, damage, "battalion")
-			continue
-		var direction := (position - center) / distance if distance > 0.001 else Vector2.RIGHT
-		# The generic deterministic MetaImpact representation applies the proven
-		# radial amount. ShockWaveTaperOff and ShockWaveZMult are retained in the
-		# event receipt, but their retail force curve is not projected into this
-		# 2D sim until the remaining engine helper semantics are proven.
-		var applied_strength := strength
-		# Try the full throw first, then shorter deterministic fractions so a
-		# victim near water/cliff lands on the nearest walkable spot instead
-		# of being stranded on unwalkable cells.
-		var landed := position
-		for fraction in [1.0, 0.5, 0.25]:
-			var candidate := position + direction * applied_strength * float(fraction)
-			if _position_walkable(candidate):
-				landed = candidate
-				break
-		row["position"] = landed
-		_spatial_sync(row)
-		row["knockdown_ticks"] = KNOCKDOWN_DURATION_TICKS
-		row["knocked_down"] = true
-		row["current_speed"] = 0.0
-		row["attack_windup"] = 0
-		# The order survives the fall. Being bowled over interrupts a battalion,
-		# it does not make it forget what it was told to do; the route is
-		# dropped (the victim was displaced) and re-pathed on stand-up. Wiping
-		# target_id/destination here made every knockdown a permanent
-		# disarm, because nothing ever re-issues the player's order.
-		_clear_member_attack_schedule(row)
-		_clear_member_targets(row)
-		_clear_pending_route(row, false)
-		row["state"] = "knocked_down"
-		if damage > 0:
-			_apply_damage(source_id, id, damage, "battalion")
-		var knockback_event := {
-			"reason": damage_reason,
-			"center": [snappedf(center.x, 0.001), snappedf(center.y, 0.001)],
-			"landed": [snappedf(landed.x, 0.001), snappedf(landed.y, 0.001)],
-			"knockdown_ticks": KNOCKDOWN_DURATION_TICKS,
-		}
-		if taper_off > 0.0:
-			knockback_event["shockwave_taper_off"] = taper_off
-			knockback_event["shockwave_z_mult"] = z_mult
-			knockback_event["generic_metaimpact_projection"] = true
-		_emit_event("combat.knockback", source_id, id, knockback_event)
-		affected += 1
-	return affected
-
+	return _collision_subsystem()._apply_knockback(center, radius, strength, source_team, damage, damage_reason, source_id, taper_off, z_mult)
 
 func _apply_damage(attacker_id: int, target_id: int, amount: int, target_kind: String = "battalion", death_type: String = "NORMAL", damage_type_override: String = "") -> void:
-	_combat_subsystem()._apply_damage(attacker_id, target_id, amount, target_kind, death_type, damage_type_override)
-
+	_damage_subsystem()._apply_damage(attacker_id, target_id, amount, target_kind, death_type, damage_type_override)
 
 func _incoming_damage_factor(attacker_id: int, target: Dictionary, target_kind: String, damage_type: String, components: Array = []) -> float:
-	## The full compiled multiplier an incoming hit applies before rounding:
-	## weapon DamageScalar target filters, the armor.ini set (with recorded
-	## applied armor upgrades), stance, formation, and ability/aura factors.
-	var weapon_factor := 1.0
-	if entities.has(attacker_id):
-		var attacker_effect := _applied_weapon_effect(entities[attacker_id] as Dictionary)
-		if not attacker_effect.is_empty():
-			weapon_factor = _damage_scalar_factor(attacker_effect.get("scalars", []) as Array, target, target_kind)
-	var factor := weapon_factor * _member_body_damage_factor(
-		target, damage_type, components
-	)
-	if target_kind == "battalion" and _is_flanking_hit(attacker_id, target):
-		factor *= _flanked_penalty_multiplier(target)
-	return factor
-
+	return _damage_subsystem()._incoming_damage_factor(attacker_id, target, target_kind, damage_type, components)
 
 func _active_armor_table(target: Dictionary) -> Dictionary:
-	var rule: Dictionary = _unit_armor.get(String(target.get("object_id", "")), {})
-	if rule.is_empty() or bool(rule.get("passthrough", false)):
-		return {}
-	var table := rule
-	var active := String(target.get("active_armor_upgrade", ""))
-	if active != "":
-		var upgrades: Dictionary = rule.get("upgrades", {})
-		if (target.get("applied_upgrades", {}) as Dictionary).has(active) and upgrades.has(active):
-			table = upgrades[active]
-	return table
-
+	return _damage_subsystem()._active_armor_table(target)
 
 func _flanked_penalty_multiplier(target: Dictionary) -> float:
-	## armor.ini FlankedPenalty is extra incoming damage when hit from behind
-	## the facing hemisphere. SoldierArmor authors 50% → 1.5x. No field → 1.0.
-	var table := _active_armor_table(target)
-	var penalty := float(table.get("flanked_penalty", 0.0))
-	if not is_finite(penalty) or penalty <= 0.0:
-		return 1.0
-	return 1.0 + penalty
-
+	return _damage_subsystem()._flanked_penalty_multiplier(target)
 
 func _flanking_outgoing_multiplier(attacker: Dictionary, target: Dictionary) -> float:
-	## weapon.ini FlankingBonus is extra outgoing damage when the hit is
-	## behind the target facing. GondorSword 50% → 1.5x. Absent → 1.0.
-	var bonus := float(attacker.get("flanking_bonus", 0.0))
-	if bonus <= 0.0 or not is_finite(bonus):
-		return 1.0
-	if not _is_flanking_hit(int(attacker.get("id", 0)), target):
-		return 1.0
-	return 1.0 + bonus / 100.0
-
+	return _damage_subsystem()._flanking_outgoing_multiplier(attacker, target)
 
 func _is_flanking_hit(attacker_id: int, target: Dictionary) -> bool:
-	if not entities.has(attacker_id):
-		return false
-	var facing := Vector2(target.get("facing", Vector2.ZERO))
-	if facing.length_squared() <= 0.000001:
-		return false
-	var origin := Vector2(target.get("position", Vector2.ZERO))
-	var attacker_at := Vector2((entities[attacker_id] as Dictionary).get("position", Vector2.ZERO))
-	var from_target := attacker_at - origin
-	if from_target.length_squared() <= 0.000001:
-		return false
-	return facing.normalized().dot(from_target.normalized()) < 0.0
+	return _damage_subsystem()._is_flanking_hit(attacker_id, target)
 
+func _member_body_damage_factor(target: Dictionary, damage_type: String, components: Array = []) -> float:
+	return _damage_subsystem()._member_body_damage_factor(target, damage_type, components)
 
-func _member_body_damage_factor(
-	target: Dictionary, damage_type: String, components: Array = []
-) -> float:
-	## ActiveBody-side factors only. Outgoing weapon/ability scalars have
-	## already formed DamageInfo.in.m_amount before Body::attemptDamage.
-	return (
-		_member_armor_scalar(target, damage_type, components)
-		# INNATE_ARMOR: a damage-TAKEN scalar the object carries for its whole
-		# life, as against the timed ability/aura grants above it. Retail's
-		# Create-a-Hero armour ladder is authored exactly this way, so a HIGHER
-		# step means MORE damage taken and the number arrives already inverted.
-		# Absent on every retail unit, which keeps this factor exactly 1.0 there.
-		* float(target.get("innate_armor_scalar", 1.0))
-		* float(_stance_state(target).get("incomingDamageMultiplier", 1.0))
-		* float(_formation_effects(target).get("incoming_damage_multiplier", 1.0))
-		* _ability_incoming_multiplier(target)
-	)
-
-
-func _highlander_raw_damage_amount(
-	raw_amount: float,
-	current_health: int,
-	damage_type: String,
-	damage_components: Array
-) -> float:
-	## HighlanderBody mutates raw DamageInfo before ActiveBody applies armor.
-	## Only exact DAMAGE_UNRESISTABLE bypasses the clamp. A mixed aggregate
-	## cannot preserve the source engine's per-DamageInfo ordering, so refuse
-	## it explicitly rather than silently choosing immortal or lethal.
-	if damage_type.to_lower() == "unresistable":
-		return maxf(0.0, raw_amount)
-	var has_unresistable := false
-	var has_other := false
-	for component_value in damage_components:
-		if typeof(component_value) != TYPE_DICTIONARY:
-			continue
-		var component_type := String(
-			(component_value as Dictionary).get("damage_type", "")
-		).to_lower()
-		if component_type == "unresistable":
-			has_unresistable = true
-		else:
-			has_other = true
-	if has_unresistable and has_other:
-		return -1
-	if has_unresistable:
-		return maxf(0.0, raw_amount)
-	return minf(maxf(0.0, raw_amount), float(maxi(0, current_health - 1)))
-
+func _highlander_raw_damage_amount(raw_amount: float, current_health: int, damage_type: String, damage_components: Array) -> float:
+	return _damage_subsystem()._highlander_raw_damage_amount(raw_amount, current_health, damage_type, damage_components)
 
 func _structure_uses_highlander_body(target: Dictionary) -> bool:
-	return bool(target.get("highlander_body", false))
+	return _damage_subsystem()._structure_uses_highlander_body(target)
 
+func _apply_member_damage(attacker_id: int, attacker_member_index: int, target_id: int, amount: int, target_kind: String, attack_sequence: int, forced_target_member: int = -1, damage_type_override: String = "", death_type: String = "NORMAL", damage_components_override: Variant = null) -> void:
+	_damage_subsystem()._apply_member_damage(attacker_id, attacker_member_index, target_id, amount, target_kind, attack_sequence, forced_target_member, damage_type_override, death_type, damage_components_override)
 
-func _apply_member_damage(
-	attacker_id: int,
-	attacker_member_index: int,
-	target_id: int,
-	amount: int,
-	target_kind: String,
-	attack_sequence: int,
-	forced_target_member: int = -1,
-	damage_type_override: String = "",
-	death_type: String = "NORMAL",
-	damage_components_override: Variant = null
-) -> void:
-	_combat_subsystem()._apply_member_damage(attacker_id, attacker_member_index, target_id, amount, target_kind, attack_sequence, forced_target_member, damage_type_override, death_type, damage_components_override)
-
-
-func _bookkeep_battalion_death(
-	entity_id: int, row: Dictionary, death_type: String, defeated_members: Array[int],
-	attacker_id: int = 0
-) -> Dictionary:
-	## Shared authoritative bookkeeping for every battalion lethal path. Callers
-	## retain path-specific kill credit/events, but lifetime, corpse policy,
-	## selection, routing, and command-point release cannot drift apart.
-	_schedule_respawn_update(entity_id, row, death_type, attacker_id)
-	_on_ring_entity_death(entity_id, row)
-	_summon_despawn_ticks.erase(entity_id)
-	_summon_aura_source_ids.erase(entity_id)
-	# A produced hero's death releases its identity on every lethal path, not
-	# only ordinary member combat. Spawn-roster heroes were never registered.
-	var defeated_identity := "%d:%s" % [
-		int(row.get("team", -1)), String(row.get("unit_type", ""))
-	]
-	if _completed_hero_identities.has(defeated_identity):
-		_completed_hero_identities.erase(defeated_identity)
-		_emit_event(
-			"hero.identity_released", entity_id, 0,
-			{"unit_type": String(row.get("unit_type", ""))}
-		)
-	if entities.has(attacker_id) and not bool(row.get("is_banner_carrier", false)):
-		award_power_kill(int((entities[attacker_id] as Dictionary).get("team", -1)))
-	var death_policy := _apply_playable_unit_death_policy(
-		row, death_type, defeated_members
-	)
-	row["state"] = "death"
-	row["target_id"] = 0
-	_clear_pending_route(row, true)
-	selected_ids.erase(entity_id)
-	_release_command_points_once(row)
-	prune_control_groups()
-	return death_policy
-
+func _bookkeep_battalion_death(entity_id: int, row: Dictionary, death_type: String, defeated_members: Array[int], attacker_id: int = 0) -> Dictionary:
+	return _damage_subsystem()._bookkeep_battalion_death(entity_id, row, death_type, defeated_members, attacker_id)
 
 func _release_command_points_once(row: Dictionary) -> void:
-	_production_subsystem()._release_command_points_once(row)
-
+	_damage_subsystem()._release_command_points_once(row)
 
 func _entity_command_point_commitment(row: Dictionary) -> int:
-	return _production_subsystem()._entity_command_point_commitment(row)
+	return _damage_subsystem()._entity_command_point_commitment(row)
 
-
-func _apply_playable_unit_death_policy(
-	row: Dictionary, death_type: String, defeated_members: Array[int]
-) -> Dictionary:
-	## The single policy boundary for every materialized playable-unit lethal
-	## path. Executable container/object DestroyDie removes the authoritative
-	## battalion object. primaryMember remains descriptor evidence only because
-	## this simulation has no independently materialized member-corpse object.
-	## Callers retain their path-specific kill credit and event bookkeeping.
-	var member_ticks: Array = row.get("member_corpse_expire_ticks", [])
-	for member_index in defeated_members:
-		if member_index >= 0 and member_index < member_ticks.size():
-			member_ticks[member_index] = tick_index + CORPSE_LIFETIME_TICKS
-	if not defeated_members.is_empty():
-		row["member_corpse_expire_ticks"] = member_ticks
-		_award_own_guys_die_experience(row, defeated_members.size())
-	var destroy_object := (
-		int(row.get("health", 0)) <= 0
-		and (
-			_destroy_die_matches(row, "container", death_type)
-			or _destroy_die_matches(row, "object", death_type)
-		)
-	)
-	# KeepObjectDie module contract: destroyOnDeath=false keeps a readable
-	# corpse when the death type matches the attached policy (excluded types
-	# do not keep — TOPPLED under ALL -TOPPLED still erases if DestroyDie says so).
-	if _keep_object_die_matches(row, death_type):
-		destroy_object = false
-	if int(row.get("health", 0)) <= 0:
-		# RefundDie is a generic Object DieMux behavior (MordorTributeCart is the
-		# retail non-structure carrier), so battalion/object deaths share the same
-		# once-only dispatch as structures.
-		_apply_refund_die_on_death(row)
-		_schedule_fire_weapon_when_dead(row, death_type, "entity")
-		var slow_death_started := _begin_slow_death_core(row, death_type)
-		# A matched DestroyDie used to erase the object on the SAME tick, which
-		# handed the simulation an effective fade window of 0. Retail authors
-		# that window as SlowDeathBehavior DestructionDelay on a
-		# `DeathTypes = NONE +FADED` module (pure-retail range 1000..10000 ms).
-		# When the pack carries the authored delay for THIS death type, the
-		# object stays until it elapses; with no authored delay the immediate
-		# removal is unchanged, so a pack that predates the emission behaves
-		# exactly as before.
-		if slow_death_started:
-			# SlowDeath owns destruction even when DestroyDie also matched; do not
-			# let the caller erase the object in the death callback.
-			destroy_object = false
-		else:
-			var fade_ticks := _slow_death_fade_ticks(row, death_type) if destroy_object else 0
-			row["corpse_expire_tick"] = (
-				tick_index + fade_ticks if destroy_object else tick_index + CORPSE_LIFETIME_TICKS
-			)
-		_consume_create_object_die(row, death_type)
-	return {
-		"destroy_object": destroy_object,
-	}
-
+func _apply_playable_unit_death_policy(row: Dictionary, death_type: String, defeated_members: Array[int]) -> Dictionary:
+	return _damage_subsystem()._apply_playable_unit_death_policy(row, death_type, defeated_members)
 
 func _slow_death_core_matches(policy: Dictionary, death_type: String) -> bool:
-	var folded := death_type.strip_edges().to_upper()
-	if folded == "":
-		folded = "NORMAL"
-	var mode := String(policy.get("death_types", "")).to_upper()
-	if mode == "ALL":
-		for excluded_value in policy.get("excluded_death_types", []) as Array:
-			if String(excluded_value).to_upper() == folded:
-				return false
-		return true
-	if mode == "NONE":
-		for included_value in policy.get("included_death_types", []) as Array:
-			if String(included_value).to_upper() == folded:
-				return true
-	return false
-
+	return _damage_subsystem()._slow_death_core_matches(policy, death_type)
 
 func _slow_death_delay_ticks(milliseconds: float) -> int:
-	if milliseconds <= 0.0:
-		return 0
-	# Retail parseDurationUnsignedInt rounds partial logic frames upward.
-	return maxi(1, ceili(milliseconds / 1000.0 / TICK_SECONDS))
-
+	return _damage_subsystem()._slow_death_delay_ticks(milliseconds)
 
 func _begin_slow_death_core(row: Dictionary, death_type: String) -> bool:
-	if row.has("slow_death_state"):
-		return true
-	if not row.has("slow_death_core_contracts"):
-		_attach_module_contracts(row)
-	var applicable: Array[Dictionary] = []
-	var total_weight := 0
-	for policy_value in row.get("slow_death_core_contracts", []) as Array:
-		if typeof(policy_value) != TYPE_DICTIONARY:
-			continue
-		var policy := policy_value as Dictionary
-		if not _slow_death_core_matches(policy, death_type):
-			continue
-		var weight := maxi(0, int(policy.get("probability_weight", 0)))
-		if weight <= 0:
-			continue
-		applicable.append(policy)
-		total_weight += weight
-	if applicable.is_empty() or total_weight <= 0:
-		return false
-	# Retail always draws 1..total, including a single applicable row.
-	var roll := logic_random_int(1, total_weight)
-	var selected: Dictionary = applicable[-1]
-	for policy_value in applicable:
-		var policy := policy_value as Dictionary
-		roll -= int(policy.get("probability_weight", 0))
-		if roll <= 0:
-			selected = policy
-			break
-	# Retail also executes both zero-variance draws before its midpoint draw.
-	var sink_delay_ms := float(selected.get("sink_delay_ms", 0.0))
-	var destruction_delay_ms := float(selected.get("destruction_delay_ms", 0.0))
-	logic_random_int(0, 0)
-	logic_random_int(0, 0)
-	var sink_ticks := _slow_death_delay_ticks(sink_delay_ms)
-	var destruction_ticks := _slow_death_delay_ticks(destruction_delay_ms)
-	var midpoint_offset := int(logic_random_real(
-		0.35 * float(destruction_ticks),
-		0.65 * float(destruction_ticks)
-	))
-	var state := {
-		"death_type": death_type.strip_edges().to_upper(),
-		"selected_tag": String(selected.get("tag", "")),
-		"selected_source_ini": String(selected.get("source_ini", "")),
-		"selected_line": int(selected.get("line", 0)),
-		"initial_tick": tick_index,
-		"sink_start_tick": tick_index + sink_ticks,
-		"midpoint_tick": tick_index + midpoint_offset,
-		"destruction_tick": tick_index + destruction_ticks,
-		"sink_rate_source_per_second": float(
-			selected.get("sink_rate_source_per_second", 0.0)
-		),
-		"sink_depth_source": 0.0,
-		"executed_phases": [],
-		"presentation_receipts": (
-			selected.get("presentation_receipts", []) as Array
-		).duplicate(true),
-	}
-	row["slow_death_state"] = state
-	row["corpse_expire_tick"] = tick_index + destruction_ticks
-	_record_slow_death_phase(row, "INITIAL")
-	return true
-
+	return _damage_subsystem()._begin_slow_death_core(row, death_type)
 
 func _record_slow_death_phase(row: Dictionary, phase: String) -> void:
-	var state := row.get("slow_death_state", {}) as Dictionary
-	if state.is_empty():
-		return
-	var phases := state.get("executed_phases", []) as Array
-	if phases.has(phase):
-		return
-	phases.append(phase)
-	state["executed_phases"] = phases
-	# Retail chooses one FX vector entry with the logic stream at each phase.
-	# Preserve that deterministic choice as a receipt, but do not emit an FX.
-	var fx_candidates: Array[String] = []
-	for receipt_value in state.get("presentation_receipts", []) as Array:
-		if typeof(receipt_value) != TYPE_DICTIONARY:
-			continue
-		var receipt := receipt_value as Dictionary
-		if (
-			String(receipt.get("kind", "")) == "FX"
-			and String(receipt.get("phase", "")) == phase
-		):
-			for reference_value in receipt.get("references", []) as Array:
-				fx_candidates.append(String(reference_value))
-	if not fx_candidates.is_empty():
-		var choice_index := logic_random_int(0, fx_candidates.size() - 1)
-		var choices := state.get("presentation_choices", []) as Array
-		choices.append({
-			"kind": "FX",
-			"phase": phase,
-			"selected_reference": fx_candidates[choice_index],
-			"runtime_status": "deferred-presentation",
-		})
-		state["presentation_choices"] = choices
-	row["slow_death_state"] = state
-	_emit_event("slow_death.phase_receipt", int(row.get("id", 0)), 0, {
-		"phase": phase,
-		"presentation_status": "deferred",
-		"selected_tag": String(state.get("selected_tag", "")),
-	})
-
+	_damage_subsystem()._record_slow_death_phase(row, phase)
 
 func _step_slow_death_core() -> void:
-	for entity_id in entity_ids():
-		if not entities.has(entity_id):
-			continue
-		var row := entities[entity_id] as Dictionary
-		var state := row.get("slow_death_state", {}) as Dictionary
-		if state.is_empty() or int(row.get("health", 0)) > 0:
-			continue
-		var rate := float(state.get("sink_rate_source_per_second", 0.0))
-		if rate > 0.0 and tick_index >= int(state.get("sink_start_tick", 0)):
-			state["sink_depth_source"] = (
-				float(state.get("sink_depth_source", 0.0)) + rate * TICK_SECONDS
-			)
-			row["slow_death_state"] = state
-		if tick_index >= int(state.get("midpoint_tick", 0)):
-			_record_slow_death_phase(row, "MIDPOINT")
-		if tick_index >= int(state.get("destruction_tick", 0)):
-			_record_slow_death_phase(row, "FINAL")
-
+	_damage_subsystem()._step_slow_death_core()
 
 func _award_own_guys_die_experience(row: Dictionary, defeated_count: int) -> void:
-	_experience_subsystem().award_own_guys_die_experience(row, defeated_count)
-
+	_damage_subsystem()._award_own_guys_die_experience(row, defeated_count)
 
 func _slow_death_fade_ticks(row: Dictionary, death_type: String) -> int:
-	## Authored DestructionDelay for this death type, in ticks, or 0.
-	##
-	## Fail-closed by construction: the adapter only projects rows whose delay
-	## retail actually authored and whose expression resolved to a number, so an
-	## absent or unresolvable delay reaches here as no row at all and the
-	## removal stays immediate. The longest matching authored window wins when
-	## an object stacks several modules on one death type.
-	var rows: Array = row.get("slow_death_fades", []) as Array
-	if rows.is_empty():
-		return 0
-	var death_folded := death_type.strip_edges().to_upper()
-	if death_folded == "":
-		death_folded = "NORMAL"
-	var delay_ms := 0.0
-	for policy_value in rows:
-		if typeof(policy_value) != TYPE_DICTIONARY:
-			continue
-		var policy := policy_value as Dictionary
-		if String(policy.get("death_types", "")).to_upper() != "NONE":
-			continue
-		for included_value in policy.get("included_death_types", []) as Array:
-			if String(included_value).to_upper() == death_folded:
-				delay_ms = maxf(delay_ms, float(policy.get("destruction_delay_ms", 0.0)))
-				break
-	if delay_ms <= 0.0:
-		return 0
-	return maxi(1, roundi(delay_ms / 1000.0 / TICK_SECONDS))
-
+	return _damage_subsystem()._slow_death_fade_ticks(row, death_type)
 
 func _schedule_fire_weapon_when_dead(row: Dictionary, death_type: String, source_kind: String) -> void:
-	var policies: Array = row.get("fire_weapon_when_dead", []) as Array
-	if policies.is_empty():
-		return
-	var scheduled: Dictionary = row.get("fire_weapon_when_dead_scheduled", {}) as Dictionary
-	for policy_value in policies:
-		if typeof(policy_value) != TYPE_DICTIONARY:
-			continue
-		var policy := policy_value as Dictionary
-		var once_key := "%s:%d" % [String(policy.get("tag", "")), int(policy.get("line", 0))]
-		if scheduled.has(once_key):
-			continue
-		if not _death_mux_matches(policy, death_type):
-			continue
-		if not _death_status_mux_matches(row, policy):
-			continue
-		if (
-			source_kind == "structure"
-			and float(row.get("construction_progress", 1.0)) < 1.0
-			and not bool(policy.get("active_during_construction", false))
-		):
-			continue
-		var facing := Vector2(row.get("facing", Vector2.RIGHT))
-		if facing.length_squared() <= 0.000001:
-			facing = Vector2.RIGHT
-		var local_offset := _retail_source_to_sim_offset(
-			Vector2(policy.get("weapon_offset_source", Vector2.ZERO))
-		)
-		var point := Vector2(row.get("position", Vector2.ZERO)) + local_offset.rotated(facing.angle())
-		var weapon_id := String(policy.get("death_weapon", ""))
-		_pending_power_effects.append({
-			"kind": "death_weapon",
-			"fire_tick": tick_index + maxi(0, int(policy.get("delay_ticks", 0))),
-			"team": int(row.get("team", -1)),
-			"source_id": int(row.get("id", 0)),
-			"source_kind": source_kind,
-			"death_type": death_type.to_upper(),
-			"weapon_id": weapon_id,
-			"point": point,
-			"height_source": float(policy.get("weapon_offset_z_source", 0.0)),
-			"weapon_rule": (_death_weapon_rules.get(weapon_id, {}) as Dictionary).duplicate(true),
-		})
-		scheduled[once_key] = true
-		_emit_event("module.death_weapon_scheduled", int(row.get("id", 0)), 0, {
-			"weapon_id": weapon_id,
-			"fire_tick": tick_index + maxi(0, int(policy.get("delay_ticks", 0))),
-			"point": [snappedf(point.x, 0.001), snappedf(point.y, 0.001)],
-			"height_source": float(policy.get("weapon_offset_z_source", 0.0)),
-			"death_type": death_type.to_upper(),
-		})
-	row["fire_weapon_when_dead_scheduled"] = scheduled
+	_damage_subsystem()._schedule_fire_weapon_when_dead(row, death_type, source_kind)
 
+func _death_mux_matches(policy: Dictionary, death_type: String) -> bool: # de-static'd: moved to subsystem
+	return _damage_subsystem()._death_mux_matches(policy, death_type)
 
-static func _death_mux_matches(policy: Dictionary, death_type: String) -> bool:
-	var folded := death_type.strip_edges().to_upper()
-	if folded == "":
-		folded = "NORMAL"
-	var mode := String(policy.get("death_types", "ALL")).to_upper()
-	if mode == "ALL":
-		for excluded_value in policy.get("excluded_death_types", []) as Array:
-			if String(excluded_value).to_upper() == folded:
-				return false
-		return true
-	if mode == "NONE":
-		for included_value in policy.get("included_death_types", []) as Array:
-			if String(included_value).to_upper() == folded:
-				return true
-	return false
-
-
-static func _death_status_mux_matches(row: Dictionary, policy: Dictionary) -> bool:
-	var statuses: Dictionary = row.get("object_status", {}) as Dictionary
-	for required_value in policy.get("required_status", []) as Array:
-		if not bool(statuses.get(String(required_value), false)):
-			return false
-	for exempt_value in policy.get("exempt_status", []) as Array:
-		if bool(statuses.get(String(exempt_value), false)):
-			return false
-	return true
-
+func _death_status_mux_matches(row: Dictionary, policy: Dictionary) -> bool: # de-static'd: moved to subsystem
+	return _damage_subsystem()._death_status_mux_matches(row, policy)
 
 func _create_object_die_matches(row: Dictionary, death_type: String) -> bool:
-	if not bool(row.get("create_object_die", false)):
-		return false
-	var policy: Dictionary = row.get("create_object_die_policy", {}) as Dictionary
-	if policy.is_empty():
-		return false
-	var death_folded := death_type.strip_edges().to_upper()
-	if death_folded == "":
-		death_folded = "NORMAL"
-	var mode := String(policy.get("death_types", "ALL")).to_upper()
-	if mode == "ALL":
-		for excluded_value in policy.get("excluded_death_types", []) as Array:
-			if String(excluded_value).to_upper() == death_folded:
-				return false
-	elif mode == "NONE":
-		var included: Array = policy.get("included_death_types", []) as Array
-		var hit := false
-		for included_value in included:
-			if String(included_value).to_upper() == death_folded:
-				hit = true
-				break
-		if not hit:
-			return false
-	else:
-		return false
-	return String(policy.get("creation_list", "")) != ""
-
+	return _damage_subsystem()._create_object_die_matches(row, death_type)
 
 func _consume_create_object_die(row: Dictionary, death_type: String) -> void:
-	## Queue CreationList spawn intent, then hatch through registered OCL leaves
-	## when present (same machinery as spellbook summon chains).
-	if not _create_object_die_matches(row, death_type):
-		return
-	var policy: Dictionary = row.get("create_object_die_policy", {}) as Dictionary
-	var entry := {
-		"team": int(row.get("team", -1)),
-		"position": row.get("position", Vector2.ZERO),
-		"creation_list": String(policy.get("creation_list", "")),
-		"source_entity": int(row.get("id", 0)),
-		"source_unit_type": String(row.get("unit_type", "")),
-		"death_type": death_type,
-		"tick": tick_index,
-	}
-	create_object_die_pending.append(entry)
-	_emit_event(
-		"module.create_object_die",
-		int(row.get("id", 0)),
-		0,
-		{
-			"creation_list": entry["creation_list"],
-			"team": entry["team"],
-		}
-	)
-	var hatch := hatch_create_object_die_entry(entry)
-	entry["hatch"] = hatch
-	create_object_die_pending[create_object_die_pending.size() - 1] = entry
-
+	_damage_subsystem()._consume_create_object_die(row, death_type)
 
 func hatch_create_object_die_entry(entry: Dictionary) -> Dictionary:
-	## Resolve OCL_id -> createObjects -> script_spawn_entity for each converted
-	## object type. Unconverted leaves stay pending with reason (fail-closed).
-	var ocl_id := String(entry.get("creation_list", ""))
-	var team := int(entry.get("team", -1))
-	var at: Vector2 = entry.get("position", Vector2.ZERO)
-	if ocl_id == "" or team < 0:
-		return {"ok": false, "reason": "invalid-entry"}
-	var ocl: Dictionary = {}
-	if parity != null:
-		ocl = (parity.ocl_leaves as Dictionary).get(ocl_id, {}) as Dictionary
-	if ocl.is_empty():
-		# Try spellbook leaf tables already loaded on this sim.
-		ocl = _ocl_leaf_lookup(ocl_id)
-	if ocl.is_empty():
-		return {"ok": false, "reason": "ocl-not-registered:%s" % ocl_id}
-	var spawned: Array = []
-	var ordinal := 0
-	for create_value in Array(ocl.get("createObjects", [])):
-		if typeof(create_value) != TYPE_DICTIONARY:
-			continue
-		var create := create_value as Dictionary
-		var count := 1
-		for field_value in Array(create.get("fields", [])):
-			if typeof(field_value) == TYPE_DICTIONARY and String(
-				(field_value as Dictionary).get("key", "")
-			) == "Count":
-				count = maxi(1, int((field_value as Dictionary).get("resolved", 1)))
-		for object_name_value in Array(create.get("objects", [])):
-			var object_name := String(object_name_value)
-			for _i in range(count):
-				ordinal += 1
-				var offset := Vector2(8.0 * float(ordinal), 0.0)
-				var result: Dictionary = spawn_scenario_object(
-					object_name, team, at + offset, "object-creation-list"
-				)
-				if not bool(result.get("ok", false)):
-					result = script_spawn_entity(
-						object_name, team, at + offset, "object-creation-list"
-					)
-				if bool(result.get("ok", false)):
-					var spawned_id := int(result.get("id", result.get("entity_id", 0)))
-					spawned.append(spawned_id)
-					_emit_event(
-						"module.create_object_die.hatch",
-						spawned_id,
-						int(entry.get("source_entity", 0)),
-						{
-							"ocl": ocl_id,
-							"object": object_name,
-							"kind": String(result.get("kind", "unit")),
-						}
-					)
-				else:
-					# Fail-closed for this object; continue other creates.
-					_emit_event(
-						"module.create_object_die.hatch_failed",
-						int(entry.get("source_entity", 0)),
-						0,
-						{
-							"ocl": ocl_id,
-							"object": object_name,
-							"reason": String(result.get("reason", "")),
-						}
-					)
-	if spawned.is_empty():
-		return {"ok": false, "reason": "no-spawns", "ocl": ocl_id}
-	return {"ok": true, "spawned": spawned, "ocl": ocl_id}
-
+	return _damage_subsystem().hatch_create_object_die_entry(entry)
 
 func _ocl_leaf_lookup(ocl_id: String) -> Dictionary:
-	if parity != null and (parity.ocl_leaves as Dictionary).has(ocl_id):
-		return (parity.ocl_leaves as Dictionary)[ocl_id]
-	return {}
-
+	return _damage_subsystem()._ocl_leaf_lookup(ocl_id)
 
 func register_ocl_leaf(ocl_id: String, leaf: Dictionary) -> void:
-	_ensure_parity()
-	parity.register_ocl_leaf(ocl_id, leaf)
-
+	_damage_subsystem().register_ocl_leaf(ocl_id, leaf)
 
 func register_object_leaf(object_id: String, leaf: Dictionary) -> void:
-	_ensure_parity()
-	parity.register_object_leaf(object_id, leaf)
-
+	_damage_subsystem().register_object_leaf(object_id, leaf)
 
 func ingest_ocl_leaves_from_document(document: Dictionary) -> int:
-	## Register ObjectCreationList leaves from a spellbook/summon/pack document
-	## so CreateObjectDie hatch can resolve CreationList ids without inventing
-	## createObjects. Returns the number of OCL ids registered.
-	_ensure_parity()
-	var registered := 0
-	var leaves: Dictionary = document.get("leaves", {}) as Dictionary
-	for ocl_value in Array(leaves.get("objectCreationLists", [])):
-		if typeof(ocl_value) != TYPE_DICTIONARY:
-			continue
-		var ocl := ocl_value as Dictionary
-		var ocl_id := String(ocl.get("id", ""))
-		if ocl_id == "":
-			continue
-		register_ocl_leaf(ocl_id, ocl)
-		registered += 1
-	# Top-level array form used by some converters.
-	for ocl_value2 in Array(document.get("objectCreationLists", [])):
-		if typeof(ocl_value2) != TYPE_DICTIONARY:
-			continue
-		var ocl2 := ocl_value2 as Dictionary
-		var ocl_id2 := String(ocl2.get("id", ""))
-		if ocl_id2 == "":
-			continue
-		register_ocl_leaf(ocl_id2, ocl2)
-		registered += 1
-	return registered
-
-
-const FogSystemScript = preload("res://src/retail_slice/retail_sim_fog.gd")
-var _fog_system = null
-func _fog_subsystem():
-	if _fog_system == null:
-		_fog_system = FogSystemScript.new(self)
-	return _fog_system
+	return _damage_subsystem().ingest_ocl_leaves_from_document(document)
 
 func fog_of_war():
 	return _fog_subsystem().fog_of_war()
@@ -11656,108 +8600,48 @@ func _structure_shroud_clearing_radius(srow: Dictionary) -> float:
 func _step_fog_from_vision() -> void:
 	_fog_subsystem()._step_fog_from_vision()
 
-func _keep_object_die_matches(row: Dictionary, death_type: String) -> bool:
-	if not bool(row.get("keep_object_die", false)):
-		return false
-	var policy: Dictionary = row.get("keep_object_die_policy", {}) as Dictionary
-	if policy.is_empty():
-		return true
-	var death_folded := death_type.strip_edges().to_upper()
-	var mode := String(policy.get("death_types", "ALL")).to_upper()
-	if mode == "ALL":
-		for excluded_value in policy.get("excluded_death_types", []) as Array:
-			if String(excluded_value).to_upper() == death_folded:
-				return false
-		return true
-	if mode == "NONE":
-		for included_value in policy.get("included_death_types", []) as Array:
-			if String(included_value).to_upper() == death_folded:
-				return true
-	return false
-
-
-func _destroy_die_matches(
-	row: Dictionary, owner_role: String, death_type: String
-) -> bool:
-	for policy_value in row.get("destroy_die", []) as Array:
-		if typeof(policy_value) != TYPE_DICTIONARY:
-			continue
-		var policy := policy_value as Dictionary
-		if String(policy.get("owner_role", "")) != owner_role:
-			continue
-		var mode := String(policy.get("death_types", "")).to_upper()
-		var death_folded := death_type.strip_edges().to_upper()
-		var excluded: Array = policy.get("excluded_death_types", []) as Array
-		if mode == "ALL" and not excluded.any(
-			func(value: Variant) -> bool: return String(value).to_upper() == death_folded
-		):
-			return true
-		if mode == "NONE":
-			for included_value in policy.get("included_death_types", []) as Array:
-				if String(included_value).to_upper() == death_folded:
-					return true
-	return false
-
-
-func _cleanup_expired_corpses() -> void:
-	var expired: Array[int] = []
-	for id in entity_ids():
-		var row: Dictionary = entities[id]
-		var expire_tick := int(row.get("corpse_expire_tick", -1))
-		if int(row.get("health", 0)) <= 0 and expire_tick >= 0 and tick_index >= expire_tick:
-			expired.append(id)
-	for id in expired:
-		entities.erase(id)
-		selected_ids.erase(id)
-		_emit_event("battalion.corpse_expired", id, 0)
-	if not expired.is_empty():
-		prune_control_groups()
-
-
-func _choose_target_member(
-	target: Dictionary,
-	attacker_id: int,
-	attacker_member_index: int,
-	attack_sequence: int
-) -> int:
-	var health_values: Array = target.get("member_health", [])
-	if health_values.is_empty():
-		return -1
-	var start := posmod(attacker_id * 31 + maxi(0, attacker_member_index) * 17 + attack_sequence * 13, health_values.size())
-	for offset in range(health_values.size()):
-		var candidate := posmod(start + offset, health_values.size())
-		if int(health_values[candidate]) > 0:
-			return candidate
-	return -1
-
-
-func _apply_structure_damage(
-	attacker_id: int,
-	target_id: int,
-	amount: int,
-	damage_type_override: String = "",
-	damage_components_override: Variant = null
-) -> void:
-	_combat_subsystem()._apply_structure_damage(attacker_id, target_id, amount, damage_type_override, damage_components_override)
-
-
-func _target_alive(target_id: int, target_kind: String) -> bool:
-	if target_kind == "structure":
-		return structures.has(target_id) and int((structures[target_id] as Dictionary).get("health", 0)) > 0
-	return entities.has(target_id) and not entity_container.has(target_id) and int((entities[target_id] as Dictionary).get("health", 0)) > 0
-
-
-func _target_position(target_id: int, target_kind: String) -> Vector2:
-	var row: Dictionary = structures.get(target_id, {}) if target_kind == "structure" else entities.get(target_id, {})
-	return Vector2(row.get("position", Vector2.ZERO))
-
-
 const NeutralsSystemScript = preload("res://src/retail_slice/retail_sim_neutrals.gd")
 var _neutrals_system = null
 func _neutrals_subsystem():
 	if _neutrals_system == null:
 		_neutrals_system = NeutralsSystemScript.new(self)
 	return _neutrals_system
+
+
+const FogSystemScript = preload("res://src/retail_slice/retail_sim_fog.gd")
+var _fog_system = null
+func _fog_subsystem():
+	if _fog_system == null:
+		_fog_system = FogSystemScript.new(self)
+	return _fog_system
+
+const DamageSystemScript = preload("res://src/retail_slice/retail_sim_damage.gd")
+var _damage_system = null
+func _damage_subsystem():
+	if _damage_system == null:
+		_damage_system = DamageSystemScript.new(self)
+	return _damage_system
+
+func _keep_object_die_matches(row: Dictionary, death_type: String) -> bool:
+	return _damage_subsystem()._keep_object_die_matches(row, death_type)
+
+func _destroy_die_matches(row: Dictionary, owner_role: String, death_type: String) -> bool:
+	return _damage_subsystem()._destroy_die_matches(row, owner_role, death_type)
+
+func _cleanup_expired_corpses() -> void:
+	_damage_subsystem()._cleanup_expired_corpses()
+
+func _choose_target_member(target: Dictionary, attacker_id: int, attacker_member_index: int, attack_sequence: int) -> int:
+	return _damage_subsystem()._choose_target_member(target, attacker_id, attacker_member_index, attack_sequence)
+
+func _apply_structure_damage(attacker_id: int, target_id: int, amount: int, damage_type_override: String = "", damage_components_override: Variant = null) -> void:
+	_damage_subsystem()._apply_structure_damage(attacker_id, target_id, amount, damage_type_override, damage_components_override)
+
+func _target_alive(target_id: int, target_kind: String) -> bool:
+	return _damage_subsystem()._target_alive(target_id, target_kind)
+
+func _target_position(target_id: int, target_kind: String) -> Vector2:
+	return _damage_subsystem()._target_position(target_id, target_kind)
 
 func _seed_scenario_map_placements() -> void:
 	_neutrals_subsystem()._seed_scenario_map_placements()
