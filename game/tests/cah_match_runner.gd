@@ -50,17 +50,19 @@ const LEVEL_FOUR_UPGRADE := "Upgrade_CreateAHeroGloriousCharge"
 ## structure pack, so the fortress has no presentation evidence. Pinned exactly,
 ## so any other refusal - including one from a created hero - fails the check.
 const PROBE_STRUCTURE_EVIDENCE := "bfme2.object.men-fortress escaped the selected and faction packs"
-## The Uruk subclass ships no battlefield skin in the mounted pack (CHSS_UK_C_SKN
-## is published, CHSS_UK_U_SKN is not), which makes it the live case for the
-## graceful exclusion - a hero the pack cannot show must be left off the roster
-## with its reason, never admitted and then fatal at the presentation proof.
+## 2026-08-26 PREMISE UPDATE: the rebuilt men pack now ships BOTH Uruk skins
+## (CHSS_UK_C_SKN.glb AND CHSS_UK_U_SKN.glb in assets/models/cah), so the Uruk
+## hero is legitimately ADMITTED. The graceful-exclusion branch is still
+## exercised - on a mutated system document naming a fixture skin no pack can
+## ever ship, where no future recook can shadow the test again.
 const UNSHIPPABLE_CLASS_INDEX := 4
 const UNSHIPPABLE_SUB_INDEX := 1
 const UNSHIPPABLE_FACTION := "isengard"
+const MISSING_SKIN_FIXTURE := "CHSS_FIXTURE_NEVER_SHIPPED_SKN"
 
 ## LIVENESS. A GDScript runtime error aborts its function without propagating,
 ## so a broken run would print zero failures. Raise deliberately; never lower.
-const EXPECTED_CHECKS := 75
+const EXPECTED_CHECKS := 77
 
 var passed := 0
 var failed := 0
@@ -696,6 +698,13 @@ func _test_every_subclass_passes_presentation(system: Dictionary) -> void:
 	slice.faction_manifest = manifest_script.from_registries(
 		FACTION, fieldable, content_db.call("get_playable_structure_runtimes")
 	)
+	# Mirror the real boot order: the slice projects its manifest's structure
+	# documents into bundle objects BEFORE the presentation proof (boot does
+	# this at _project_faction_structure_definitions). The probe used to skip
+	# this and only passed because EARLIER tests in this same process had
+	# already projected the Men structures into the shared ContentDB - an
+	# order-dependent accident, not a modelled contract.
+	slice._project_manifest_structure_definitions(slice.faction_manifest)
 	# The proof is asked about EVERY fieldable unit, so this detached probe slice
 	# trips on structure evidence it was never given. That one refusal is named
 	# EXACTLY rather than filtered by substring: "does not mention a created
@@ -827,9 +836,37 @@ func _test_unshippable_subclass_is_excluded_not_fatal(system: Dictionary) -> voi
 		UNSHIPPABLE_FACTION, {}, {}, {}, null, system, root.get_node_or_null("ContentDB")
 	)
 	_check(
+		(slice.fieldable_unit_runtimes as Dictionary).has(object_id),
+		"the Uruk hero is admitted now that the pack ships its battlefield skin"
+	)
+	slice.free()
+	# THE GRACEFUL BRANCH, still exercised: mutate a COPY of the system
+	# document so this subclass names a skin no pack ships; the hero must be
+	# left off the roster with the skin named, and the match must still run.
+	var broken_system: Dictionary = system.duplicate(true)
+	var mutated := false
+	for class_value in ((broken_system.get("registration", {}) as Dictionary).get("classes", []) as Array):
+		var mutate_class := class_value as Dictionary
+		if int(mutate_class.get("classIndex", -1)) != UNSHIPPABLE_CLASS_INDEX:
+			continue
+		for sub_value in (mutate_class.get("subClasses", []) as Array):
+			var mutate_sub := sub_value as Dictionary
+			if int(mutate_sub.get("subClassIndex", -1)) != UNSHIPPABLE_SUB_INDEX:
+				continue
+			((mutate_sub.get("models", {}) as Dictionary).get("battlefield", {}) as Dictionary)["model"] = MISSING_SKIN_FIXTURE
+			mutated = true
+	_check(mutated, "the fixture found the Uruk subclass battlefield model to mutate")
+	slice = slice_script.new()
+	var broken_map = load("res://src/retail_slice/retail_map_data.gd").new()
+	broken_map.local_transform_scale = MAP_SCALE
+	slice.source_map_data = broken_map
+	slice._classify_faction_units(
+		UNSHIPPABLE_FACTION, {}, {}, {}, null, broken_system, root.get_node_or_null("ContentDB")
+	)
+	_check(
 		not (slice.producible_unit_runtimes as Dictionary).has(object_id)
 			and not (slice.fieldable_unit_runtimes as Dictionary).has(object_id),
-		"a hero whose skin the pack cannot ship stays off the roster"
+		"a hero whose skin no pack ships stays off the roster"
 	)
 	var named := ""
 	for exclusion_value in (slice.unit_roster_exclusions as Array):
@@ -837,7 +874,7 @@ func _test_unshippable_subclass_is_excluded_not_fatal(system: Dictionary) -> voi
 		if String(exclusion.get("object_id", "")) == object_id:
 			named = String(exclusion.get("reason", ""))
 	_check(
-		named.contains("CHSS_UK_U_SKN") and named.contains("does not ship"),
+		named.contains(MISSING_SKIN_FIXTURE) and named.contains("does not ship"),
 		"the exclusion names the skin the pack does not ship: %s" % named
 	)
 	# AND THE MATCH STILL RUNS. The whole point of excluding rather than
