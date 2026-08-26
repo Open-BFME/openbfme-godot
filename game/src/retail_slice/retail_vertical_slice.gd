@@ -8387,9 +8387,7 @@ func _update_camera(delta: float) -> void:
 				input_direction.y += 1.0
 	if input_direction.length_squared() > 0.0:
 		var forward := _camera_forward_local()
-		# Screen-right after the sage Y flip. `(-fz, fx)` is the other
-		# horizontal and made A/D (and edge scroll) run backwards.
-		var right := Vector2(forward.y, -forward.x)
+		var right := camera_screen_right(forward)
 		var movement := right * input_direction.x - forward * input_direction.y
 		camera_focus += movement.normalized() * delta * OPENBFME_KEYBOARD_SCROLL_BASE_LOCAL_PER_SECOND * keyboard_scroll_speed_scale * FORDS_CAMERA_SCROLL_SPEED_SCALAR
 		_clamp_camera_focus()
@@ -8837,6 +8835,15 @@ func _bounded_camera_ground_local() -> float:
 	var source_ground := source_map_data.reference_elevation + local_ground / source_map_data.local_transform_scale
 	var bounded_source_ground := clampf(source_ground, FORDS_CAMERA_GROUND_MIN_SOURCE, FORDS_CAMERA_GROUND_MAX_SOURCE)
 	return (bounded_source_ground - source_map_data.reference_elevation) * source_map_data.local_transform_scale
+
+
+static func camera_screen_right(forward: Vector2) -> Vector2:
+	## Screen-right = view-forward x up in the LOCAL Godot frame: for a
+	## ground-plane forward (fx, fz) with Y up that is (-fz, fx). The mirror
+	## `(fz, -fx)` shipped for a while and made A pan right and D pan left
+	## (owner playtest 2026-08-26); keyboard scroll AND edge scroll share this
+	## vector, so both were mirrored together.
+	return Vector2(-forward.y, forward.x)
 
 
 func _camera_forward_local() -> Vector2:

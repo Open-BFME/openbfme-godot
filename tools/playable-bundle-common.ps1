@@ -566,7 +566,16 @@ function Invoke-BundleLaunchProbe {
     }
 
     $lines = @(($stdoutText + "`n" + $stderrText) -split "`r?`n")
-    $contentDb = @($lines | Where-Object { $_ -like '*[ContentDB]*packs=*' } | Select-Object -First 1)
+    # The judged census is the PLAYABLE line ("[ContentDB] playable: factions=7
+    # ... units=137 ..."). The legacy-demo line also matches '*packs=*' but has
+    # reported units=0 since the legacy tables emptied (Q80/Q86), and judging
+    # it refused a perfectly healthy build (2026-08-26). Fall back to the old
+    # match only when no playable census printed, so a build that never reaches
+    # the playable census still fails loudly on whatever census it did print.
+    $contentDb = @($lines | Where-Object { $_ -like '*[ContentDB] playable:*units=*' } | Select-Object -First 1)
+    if ($contentDb.Count -eq 0) {
+        $contentDb = @($lines | Where-Object { $_ -like '*[ContentDB]*packs=*' } | Select-Object -First 1)
+    }
     $censusLine = ''
     if ($contentDb.Count -gt 0) { $censusLine = $contentDb[0].Trim() }
     $errorLines = @($lines | Where-Object { $_ -cmatch '^(ERROR|SCRIPT ERROR|USER ERROR|FATAL):' } | Select-Object -First 20)
