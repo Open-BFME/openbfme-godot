@@ -41,6 +41,9 @@ signal powers_reset_requested
 signal powers_closed
 signal construct_requested(structure_kind: String)
 signal hero_recall_requested(hero_id: int)
+## Owner round 12: one seat that always finds a worker. Each press hands the
+## slice the NEXT builder so repeated clicks cycle the whole crew.
+signal builder_cycle_requested
 ## Double-click on a hero portrait: select him AND put the camera on him.
 signal hero_focus_requested(hero_id: int)
 signal expansion_requested(expansion_kind: String)
@@ -745,6 +748,7 @@ var _dish_level_caption := ""
 ## health bars (REF-24/41).
 var hero_bar: Control
 var _hero_bar_buttons: Dictionary = {}
+var _builder_cycle_button: Button
 ## Q38: `NonCommand_SelectAllHeroes` (commandbutton.ini:3494) and the faction
 ## icon that rides to its left.
 var _hero_select_all_button: Button
@@ -4914,6 +4918,32 @@ func _build_hero_bar() -> void:
 	_hero_select_all_button.pressed.connect(_emit_select_all_heroes)
 	_hero_select_all_button.visible = false
 	hero_bar.add_child(_hero_select_all_button)
+	# BUILDER SEAT (owner round 12: "the builder should populate with the hero
+	# icons so I can always click them and find one; when clicked it should
+	# cycle through each builder I have"). It rides the same authored strip,
+	# one seat left of the faction icon, and is visible whenever the player
+	# owns a builder - the count rides its label so an empty crew is obvious.
+	_builder_cycle_button = Button.new()
+	_builder_cycle_button.name = "CycleBuilders"
+	_builder_cycle_button.position = (
+		_hero_select_all_button.position - Vector2(select_all_size.x * 2.2, 0.0)
+	)
+	_builder_cycle_button.size = select_all_size
+	_builder_cycle_button.custom_minimum_size = select_all_size
+	_builder_cycle_button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	_builder_cycle_button.expand_icon = true
+	_builder_cycle_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_builder_cycle_button.add_theme_font_size_override("font_size", 11)
+	_builder_cycle_button.add_theme_color_override("font_color", Color("f1d06e"))
+	_builder_cycle_button.set_meta("tooltip_group", "hero_bar_cycle_builders")
+	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+		_builder_cycle_button.add_theme_stylebox_override(state, StyleBoxEmpty.new())
+	_builder_cycle_button.pressed.connect(func() -> void:
+		ui_sound_requested.emit("Gui_PalantirButtonClick")
+		builder_cycle_requested.emit()
+	)
+	_builder_cycle_button.visible = false
+	hero_bar.add_child(_builder_cycle_button)
 	_hero_faction_icon = TextureRect.new()
 	_hero_faction_icon.name = "HeroBarFactionIcon"
 	_hero_faction_icon.position = _hero_select_all_button.position - Vector2(select_all_size.x + 4.0, 0.0)
@@ -6798,3 +6828,30 @@ func _bind_authored_dish_plates() -> void:
 		strip.position = RETAIL_ORB_STRIP_RECT.position
 		strip.size = RETAIL_ORB_STRIP_RECT.size
 		strip.visible = true
+
+
+## The builder seat's live state: how many builders the player owns and the
+## art to show (the first builder's own portrait, so the seat looks like the
+## crew it selects). Zero builders hides it - retail never shows a dead seat.
+func set_builder_cycle_state(builder_count: int, icon: Texture2D) -> void:
+	if _builder_cycle_button == null:
+		return
+	# NOT gated on hero_bar.visible: the diagnostic showed the seat dark in a
+	# match with a porter but no hero, which is exactly when the owner needs
+	# it. The bar itself is shown for the seat's sake when heroes are absent.
+	_builder_cycle_button.visible = builder_count > 0
+	if hero_bar != null and builder_count > 0:
+		hero_bar.visible = true
+	if builder_count <= 0:
+		return
+	_builder_cycle_button.icon = icon
+	_builder_cycle_button.text = "" if icon != null else "%d" % builder_count
+	_builder_cycle_button.tooltip_text = (
+		"Select builder (%d)" % builder_count if builder_count > 1 else "Select builder"
+	)
+
+
+## The validated select-portrait for a unit id, or null. Used by the builder
+## seat so it wears the worker's own face rather than invented art.
+func retail_portrait_texture_for_unit(unit_type: String) -> Texture2D:
+	return _retail_portrait_textures.get(unit_type) as Texture2D

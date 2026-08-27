@@ -3177,7 +3177,10 @@ func _sync_scenario_unit_visual(id: int, entity: Dictionary) -> void:
 	var row := entity.duplicate(true)
 	var position2 := Vector2(entity.get("position", Vector2.ZERO))
 	row["presentation_height"] = _presentation_height_for_entity(entity, position2)
-	visual.visible = shroud_overlay.unit_visible(position2)
+	# BEFORE sync_state: that call re-decides `visible` from the animation
+	# state, so setting the gate afterwards was silently overwritten
+	# (proven by hud_diagnostic_runner, owner round 12).
+	visual.shroud_visible = shroud_overlay.unit_visible(position2)
 	visual.sync_state(row)
 
 
@@ -3207,7 +3210,7 @@ func _sync_scenario_prop_visuals() -> void:
 		var sync_row := row.duplicate(true)
 		var position2 := Vector2(row.get("position", Vector2.ZERO))
 		sync_row["presentation_height"] = _presentation_height(position2)
-		visual.visible = shroud_overlay.structure_visible(position2)
+		visual.shroud_visible = shroud_overlay.structure_visible(position2)
 		visual.sync_state(sync_row)
 	_remove_absent_scenario_visuals(scenario_prop_nodes, simulation.scenario_props, true)
 
@@ -5323,6 +5326,15 @@ func _sync_hero_bar() -> void:
 			"selected": simulation.selected_ids.has(id),
 		})
 	hud.sync_hero_bar(heroes)
+	# The builder seat rides the same strip and is fed here, so it appears
+	# the moment a worker exists - heroes or not (owner round 12).
+	var builders := _local_builder_ids()
+	var builder_icon: Texture2D = null
+	if not builders.is_empty():
+		builder_icon = hud.retail_portrait_texture_for_unit(
+			String(simulation.entity(builders[0]).get("unit_type", ""))
+		)
+	hud.set_builder_cycle_state(builders.size(), builder_icon)
 
 
 func _on_hero_recall_requested(hero_id: int) -> void:
@@ -8320,6 +8332,7 @@ func _build_hud() -> void:
 	hud.construct_requested.connect(_arm_construction)
 	hud.hero_recall_requested.connect(_on_hero_recall_requested)
 	hud.hero_focus_requested.connect(_on_hero_focus_requested)
+	hud.builder_cycle_requested.connect(_on_builder_cycle_requested)
 	hud.expansion_requested.connect(_on_expansion_requested)
 	hud.structure_sell_requested.connect(_sell_selected_structure)
 	hud.gate_toggle_requested.connect(_toggle_selected_gate)
@@ -8986,3 +8999,50 @@ func _release_script_runtimes() -> void:
 				world._release_facets()
 			world.sim = null
 	script_runtimes.clear()
+
+
+
+## Owner round 12: one seat that always finds a worker. Every press selects
+## the NEXT living builder the local player owns (ascending sim id, wrapping)
+## and centres the camera on it, so repeated presses walk the whole crew.
+## Builder identity comes from the faction manifest's own builder unit list,
+## never a name test.
+var _builder_cycle_index := 0
+
+
+func _local_builder_ids() -> Array[int]:
+	var builders: Array[int] = []
+	if simulation == null:
+		return builders
+	var builder_ids: Array = faction_manifest.get("builder_unit_ids", []) as Array
+	if builder_ids.is_empty():
+		return builders
+	var local_team := _local_player_team()
+	var ids: Array = simulation.entity_ids()
+	ids.sort()
+	for id_value in ids:
+		var id := int(id_value)
+		var entity: Dictionary = simulation.entity(id)
+		if int(entity.get("team", -1)) != local_team or int(entity.get("health", 0)) <= 0:
+			continue
+		var unit_type := String(entity.get("unit_type", ""))
+		for builder_value in builder_ids:
+			var builder_id := String(builder_value)
+			if unit_type == builder_id or unit_type.ends_with(
+				PlayableUnitAdapter._runtime_id(builder_id)
+			):
+				builders.append(id)
+				break
+	return builders
+
+
+func _on_builder_cycle_requested() -> void:
+	var builders := _local_builder_ids()
+	if builders.is_empty():
+		return
+	_builder_cycle_index = (_builder_cycle_index + 1) % builders.size()
+	var target := builders[_builder_cycle_index]
+	selected_structure_id = 0
+	simulation.select_only(target)
+	_center_camera_on(Vector2(simulation.entity(target).get("position", camera_focus)))
+	_sync_presentation()

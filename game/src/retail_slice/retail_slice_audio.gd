@@ -1485,6 +1485,18 @@ func _consume_event(event: Dictionary) -> void:
 	elif kind == "order.move" or kind == "voice.move":
 		_play_routed(route_roster_voice(_object_id_for_event(event, entity_id), "move", sequence, String(event.get("form", ""))), voice_player)
 	elif kind == "voice.attack":
+		# SHROUD GATE (owner round 12: "I can hear the wild mobs being
+		# attacked"). Combat SFX already obey retail's ST_SHROUDED rule; this
+		# acknowledgement lane did not, so a creep fight in unexplored fog
+		# still shouted. A speaker on non-CLEAR ground is refused, exactly
+		# like its swing sounds.
+		var voice_at: Variant = _spatial_event_position([entity_id])
+		if (
+			voice_at != null
+			and spatial_visibility_probe.is_valid()
+			and not bool(spatial_visibility_probe.call(voice_at))
+		):
+			return
 		var attacker_object_id := _object_id_for_event(event, entity_id)
 		var form := String(event.get("form", ""))
 		var ack_kind := "attack_structure" if String(event.get("target_kind", "")) == "structure" else "attack"

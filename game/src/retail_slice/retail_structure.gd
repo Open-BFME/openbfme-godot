@@ -436,9 +436,12 @@ func set_authoritative_lifecycle_phase(phase: String, progress: float = 1.0) -> 
 
 func attack_presentation_height() -> float:
 	## Source presentation height is already normalized into Godot world units.
-	## Aim into the visible body instead of attaching arrows at the structure's
-	## ground pivot; exact DamageFX attachment policy remains oracle-gated.
-	return maxf(0.25, _target_height * 0.55)
+	## Aim into the LOW BODY, not the silhouette middle: `_target_height` is
+	## the whole intact AABB, spires included, so 0.55 of it put every arrow
+	## on the fortress roof (owner round 12). Retail's impacts land on the
+	## wall face just above the base, so this takes a quarter of the body and
+	## caps it - a tall keep and a small farm both get hit near the ground.
+	return clampf(_target_height * 0.22, 0.25, 2.0)
 
 
 func request_declared_lifecycle_transition() -> bool:

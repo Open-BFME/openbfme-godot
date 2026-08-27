@@ -13,6 +13,14 @@ var source_index := -1
 var source_yaw := 0.0
 var source_scale := 1.0
 var converted_paths: Array[String] = []
+## SHROUD OWNERSHIP (owner round 12, proven by hud_diagnostic_runner: a creep
+## wolf reported shroud_says_visible=false while its node was visible=true).
+## `sync_state` decides visibility from the animation/presentation state and
+## used to overwrite the caller's shroud gate, so scenario units - creeps,
+## lairs, props - rendered through unexplored fog while battalions did not.
+## The caller sets this flag before syncing; every visibility write below is
+## ANDed with it, so state logic and fog cannot fight each other.
+var shroud_visible := true
 var presentation_binding := ""
 var semantic_state := "idle"
 var active_animation_identifier := ""
@@ -388,18 +396,20 @@ func _apply_semantic_presentation(state: String) -> void:
 					active_animation_identifier = identifier
 					active_animation_name = played
 					presentation_binding = "authored-animation"
-					visible = true
+					visible = shroud_visible
 					return
 	var presentations: Variant = _visual_recipe.get("corePresentations")
 	if typeof(presentations) == TYPE_DICTIONARY and typeof((presentations as Dictionary).get(state)) == TYPE_DICTIONARY:
 		var receipt := (presentations as Dictionary).get(state) as Dictionary
 		presentation_binding = String(receipt.get("binding", ""))
-		visible = not (state == "death" and presentation_binding == "object-removal")
+		visible = shroud_visible and not (
+			state == "death" and presentation_binding == "object-removal"
+		)
 		return
 	# A converted default model with no semantic clip is deliberately static.
 	# This is a receipt, not a fabricated animation fallback.
 	presentation_binding = "static-converted-model"
-	visible = true
+	visible = shroud_visible
 
 
 func _play_identifier(identifier: String, loop: bool) -> String:
