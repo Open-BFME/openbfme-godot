@@ -73,12 +73,26 @@ static func placement_dock(name: String, viewport: Vector2 = DESIGN_VIEWPORT) ->
 	return to_dock(placement, viewport)
 
 
+## MEASURED registration correction for every seat `CommandButtons` (sprite
+## character 114) carries. The movie's translations for the glass/subMenu
+## children register the imported art's corner, not its centre: blob-centroiding
+## the six empty sockets in BOTH retail 2560x1440 captures
+## (reference/in game ui.jpg and reference/game.dat_5VsCUnKZ04.jpg — identical
+## within 0.2 px of each other) puts every socket centre at authored
+## + (32.42, 24.38) dock px with a per-slot spread under 0.7 px. One uniform
+## offset across all six slots is a parent-registration correction, so it
+## applies to the whole seat family (glass0..5 AND the subMenu0..3 ring), in
+## stage units so every viewport recomputes it the same way.
+const COMMAND_SEAT_REGISTRATION_STAGE := Vector2(17.29, 17.34)
+
+
 ## Authored command-socket CENTRE `index` (0..5) in dock-local pixels: the
-## `CommandButtons` stage placement plus the authored local offset.
+## `CommandButtons` stage placement plus the measured registration correction
+## plus the authored local offset.
 static func command_slot_center_dock(index: int, viewport: Vector2 = DESIGN_VIEWPORT) -> Vector2:
 	var origin: Vector2 = APT_RUNTIME.PALANTIR_STAGE_PLACEMENTS["CommandButtons"]
 	var local: Vector2 = APT_RUNTIME.PALANTIR_COMMAND_SLOT_LOCAL[index]
-	return to_dock(origin + local, viewport)
+	return to_dock(origin + COMMAND_SEAT_REGISTRATION_STAGE + local, viewport)
 
 
 ## Authored command-socket TOP-LEFT for a button of `button_size`, in
@@ -103,7 +117,9 @@ static func submenu_slot_center_dock(
 	index: int, viewport: Vector2 = DESIGN_VIEWPORT
 ) -> Vector2:
 	var origin: Vector2 = APT_RUNTIME.PALANTIR_STAGE_PLACEMENTS["CommandButtons"]
-	return to_dock(origin + submenu_slot_local(index), viewport)
+	return to_dock(
+		origin + COMMAND_SEAT_REGISTRATION_STAGE + submenu_slot_local(index), viewport
+	)
 
 
 ## Authored SUB-MENU ring seat `index` in `CommandButtons`-local STAGE units.

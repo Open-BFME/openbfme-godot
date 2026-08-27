@@ -3204,6 +3204,580 @@ def _reconstruct_timeline(
     return contract, failures
 
 
+def _geometry_primitives(
+    movie: _Movie,
+    geometry_id: int,
+    transform: _Transform,
+    draw_count_start: int = 0,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Emit the triangles of one authored geometry under one transform.
+
+    Returns ``(draw_rows, receipts)``.  Draw rows carry the sealed
+    solid/textured triangle schema minus ``displayOrder``/``movie``/``path``,
+    which every caller assigns for its own contract section.  Receipts carry
+    the exact blocker code plus evidence, minus ``movie``/``path``.
+    """
+
+    groups = movie.geometry.get(geometry_id)
+    if groups is None:
+        return [], [{"code": "geometry-missing", "geometryId": geometry_id}]
+    rows: list[dict[str, Any]] = []
+    receipts: list[dict[str, Any]] = []
+    for group_index, group in enumerate(groups):
+        style = str(group["style"])
+        values = [float(value) for value in group["values"]]
+        primitives = group["primitives"]
+        if style == "l":
+            receipts.append(
+                {
+                    "code": "line-geometry-not-converted",
+                    "geometryId": geometry_id,
+                    "styleIndex": group_index,
+                }
+            )
+            continue
+        color = tuple(value / 255.0 for value in values[:4])
+        if style == "s":
+            for primitive in primitives:
+                if draw_count_start + len(rows) >= MAX_DRAWS:
+                    raise HudAptConvertError("HUD draw count exceeds bounds")
+                rows.append(
+                    {
+                        "kind": "solid-triangle",
+                        "geometryId": geometry_id,
+                        "points": [
+                            transform.point((float(point[0]), float(point[1])))
+                            for point in primitive
+                        ],
+                        "color": transform.color(color),
+                    }
+                )
+            continue
+        image_id = int(values[4])
+        texture_id = movie.image_map.get(image_id)
+        atlas = movie.atlases.get(texture_id) if texture_id is not None else None
+        if atlas is None:
+            receipts.append(
+                {
+                    "code": "texture-assignment-unresolved",
+                    "geometryId": geometry_id,
+                    "imageId": image_id,
+                    "textureId": texture_id,
+                }
+            )
+            continue
+        width = int(atlas["width"])
+        height = int(atlas["height"])
+        uv_matrix = values[5:9]
+        uv_translation = values[9:11]
+        for primitive in primitives:
+            if draw_count_start + len(rows) >= MAX_DRAWS:
+                raise HudAptConvertError("HUD draw count exceeds bounds")
+            uvs = []
+            for point in primitive:
+                x, y = float(point[0]), float(point[1])
+                u = x * uv_matrix[0] + y * uv_matrix[2] + uv_translation[0]
+                v = x * uv_matrix[1] + y * uv_matrix[3] + uv_translation[1]
+                uvs.append([u / width, v / height])
+            rows.append(
+                {
+                    "kind": "textured-triangle",
+                    "geometryId": geometry_id,
+                    "points": [
+                        transform.point((float(point[0]), float(point[1])))
+                        for point in primitive
+                    ],
+                    "uvs": uvs,
+                    "color": transform.color((1.0, 1.0, 1.0, 1.0)),
+                    "atlas": str(atlas["cookedPng"]),
+                    "atlasSha256": str(atlas["sha256"]),
+                }
+            )
+    return rows, receipts
+
+
+# ---------------------------------------------------------------------------
+# Stage pieces: named authored HUD assemblies with their retail art.
+#
+# The static scene subset above flattens only the bounded InitialSetup frame,
+# which leaves every named dock piece whose sprite is authored hidden at frame
+# 0 (radar backing, spectral highlights, socket rings, resource cartouche,
+# rope/ornament strips) without pixels a runtime can composite.  This pass
+# emits, for every NAMED PlaceObject row on a root layer's frame 0, every
+# DISTINCT authored content state of that piece (state identity = the
+# depth/characterId/name display-list signature, so tween motion does not
+# multiply states) flattened to stage-space triangles against the shipped
+# atlases.  Placement, scale and depth all come from the movie's own records.
+# Pieces or children without authored image art stay NAMED receipts, never
+# invented pixels.
+# ---------------------------------------------------------------------------
+
+_STAGE_PIECE_STATE_SIGNATURE = "depth-characterId-name-display-list"
+_STAGE_PIECE_NESTED_POLICY = "nested-first-populated-frame"
+
+
+def _place_row_transform(row: Mapping[str, Any]) -> _Transform:
+    flags = int(row["flags"])
+    matrix = (
+        tuple(float(value) for value in row["matrix"])
+        if flags & 0x04
+        else (1.0, 0.0, 0.0, 1.0)
+    )
+    translation = (
+        tuple(float(value) for value in row["translation"])
+        if flags & 0x04
+        else (0.0, 0.0)
+    )
+    tint = (
+        tuple(float(value) for value in row["tint"])
+        if flags & 0x08
+        else (1.0, 1.0, 1.0, 1.0)
+    )
+    additive = (
+        tuple(float(value) for value in row["additive"])
+        if flags & 0x08
+        else (0.0, 0.0, 0.0, 0.0)
+    )
+    return _Transform(matrix, translation, tint, additive)  # type: ignore[arg-type]
+
+
+def _display_row_transform(row: Mapping[str, Any]) -> _Transform:
+    return _Transform(
+        tuple(float(value) for value in row["matrix"]),  # type: ignore[arg-type]
+        tuple(float(value) for value in row["translation"]),  # type: ignore[arg-type]
+        tuple(float(value) for value in row["tint"]),  # type: ignore[arg-type]
+        tuple(float(value) for value in row["additive"]),  # type: ignore[arg-type]
+    )
+
+
+def _compose_authored(parent: _Transform, child: _Transform) -> _Transform:
+    """Exact affine composition (child placed under parent).
+
+    ``_Transform.combine`` is the sealed static-scene composition; every one
+    of its production uses runs under identity parents so its unrotated
+    translation never mattered.  Stage pieces place children under SCALED
+    parents (the dish globe anchors scale 0.64/0.69, the region ring 1.31), so
+    this pass composes with the exact SWF semantics: the child translation is
+    transformed by the parent matrix.
+    """
+
+    a, b, c, d = parent.matrix
+    e, f, g, h = child.matrix
+    matrix = (
+        e * a + f * c,
+        e * b + f * d,
+        g * a + h * c,
+        g * b + h * d,
+    )
+    translation = tuple(parent.point(child.translation))
+    tint = tuple(parent.tint[i] * child.tint[i] for i in range(4))
+    additive = tuple(
+        parent.additive[i] * child.tint[i] + child.additive[i] for i in range(4)
+    )
+    return _Transform(matrix, translation, tint, additive)  # type: ignore[arg-type]
+
+
+def _resolve_stage_character(
+    movies: Mapping[str, _Movie], movie: _Movie, character_id: int
+) -> tuple[_Movie, int] | dict[str, Any]:
+    """Resolve one placed character or return the exact refusal receipt."""
+
+    if not 0 <= character_id < len(movie.characters):
+        return {
+            "code": "character-id-out-of-range",
+            "movie": movie.name,
+            "characterId": character_id,
+        }
+    character = movie.characters[character_id]
+    if character["kind"] != "null":
+        return movie, character_id
+    edge = movie.imports.get(character_id)
+    if edge is None:
+        return {
+            "code": "unresolved-null-character",
+            "movie": movie.name,
+            "characterId": character_id,
+        }
+    target = movies.get(edge[0].casefold())
+    if target is None:
+        return {
+            "code": "unresolved-import-movie",
+            "movie": movie.name,
+            "characterId": character_id,
+            "targetMovie": edge[0],
+            "symbol": edge[1],
+        }
+    exported = sorted(set(target.exports.get(edge[1].casefold(), [])))
+    if len(exported) != 1:
+        return {
+            "code": (
+                "unresolved-import-symbol"
+                if not exported
+                else "ambiguous-import-symbol"
+            ),
+            "movie": movie.name,
+            "characterId": character_id,
+            "targetMovie": edge[0],
+            "symbol": edge[1],
+        }
+    return target, exported[0]
+
+
+class _StagePieceCollector:
+    """Flatten named root placements into authored per-state stage draws."""
+
+    def __init__(self, movies: Mapping[str, _Movie]) -> None:
+        self.movies = movies
+        self.timeline_cache: dict[tuple[str, int], dict[str, Any]] = {}
+        self.draw_total = 0
+
+    def _timeline(
+        self, movie: _Movie, character_id: int, frames: list[list[dict[str, Any]]]
+    ) -> dict[str, Any]:
+        key = (movie.name.casefold(), character_id)
+        cached = self.timeline_cache.get(key)
+        if cached is None:
+            timeline, failures = _reconstruct_timeline(
+                movie.name, character_id, frames
+            )
+            cached = {"timeline": timeline, "failures": failures}
+            self.timeline_cache[key] = cached
+        return cached
+
+    @staticmethod
+    def _new_state(frame_index: int, labels: list[str]) -> dict[str, Any]:
+        return {
+            "firstFrameIndex": frame_index,
+            "labels": labels,
+            "draws": [],
+            "nestedTimelineSelections": [],
+            "receipts": [],
+        }
+
+    def _collect(
+        self,
+        movie: _Movie,
+        character_id: int,
+        transform: _Transform,
+        stack: tuple[tuple[str, int], ...],
+        path: str,
+        state: dict[str, Any],
+    ) -> None:
+        resolved = _resolve_stage_character(self.movies, movie, character_id)
+        if isinstance(resolved, dict):
+            state["receipts"].append({**resolved, "path": path})
+            return
+        target, resolved_id = resolved
+        key = (target.name, resolved_id)
+        if key in stack or len(stack) >= MAX_RECURSION:
+            state["receipts"].append(
+                {
+                    "code": "recursive-character",
+                    "movie": target.name,
+                    "characterId": resolved_id,
+                    "path": path,
+                }
+            )
+            return
+        character = target.characters[resolved_id]
+        kind = str(character["kind"])
+        if kind == "shape":
+            self._collect_shape(target, character, transform, path, state)
+            return
+        if kind in ("sprite", "movie"):
+            self._collect_sprite(
+                target, resolved_id, character, kind, transform, stack + (key,),
+                path, state,
+            )
+            return
+        if kind == "button":
+            self._collect_button(
+                target, resolved_id, character, transform, stack + (key,),
+                path, state,
+            )
+            return
+        state["receipts"].append(
+            {
+                "code": "character-kind-not-piece-art",
+                "movie": target.name,
+                "characterId": resolved_id,
+                "characterKind": kind,
+                "path": path,
+            }
+        )
+
+    def _collect_button(
+        self,
+        target: _Movie,
+        resolved_id: int,
+        character: Mapping[str, Any],
+        transform: _Transform,
+        stack: tuple[tuple[str, int], ...],
+        path: str,
+        state: dict[str, Any],
+    ) -> None:
+        """Flatten a button character's UP-state records as static piece art.
+
+        Retail parks static ornament art inside button characters —
+        ``PalantirBack`` (the rope/frame behind the radar and dish) is one —
+        and the idle HUD shows the authored up state.  Records compose exactly
+        like display rows: record matrix/translation under the parent
+        transform, record color as the tint, drawn in authored depth order.
+        Hit-only records carry the invisible hit polygon, never art, and fall
+        out via the state mask.  A button with no up-state record is a named
+        receipt, not silence.
+        """
+        up_records = [
+            record
+            for record in character["records"]
+            if "up" in record["states"]
+        ]
+        if not up_records:
+            state["receipts"].append(
+                {
+                    "code": "button-has-no-up-state-art",
+                    "movie": target.name,
+                    "characterId": resolved_id,
+                    "path": path,
+                }
+            )
+            return
+        for record in sorted(up_records, key=lambda item: int(item["depth"])):
+            child = _compose_authored(
+                transform,
+                _Transform(
+                    tuple(float(value) for value in record["matrix"]),
+                    tuple(float(value) for value in record["translation"]),
+                    tuple(float(value) for value in record["color"]),
+                    (0.0, 0.0, 0.0, 0.0),
+                ),
+            )
+            child_path = f"{path}/up:{int(record['recordIndex'])}"
+            self._collect(
+                target, int(record["characterId"]), child, stack, child_path,
+                state,
+            )
+
+    def _collect_shape(
+        self,
+        target: _Movie,
+        character: Mapping[str, Any],
+        transform: _Transform,
+        path: str,
+        state: dict[str, Any],
+    ) -> None:
+        rows, receipts = _geometry_primitives(
+            target, int(character["geometryId"]), transform, self.draw_total
+        )
+        for receipt in receipts:
+            state["receipts"].append(
+                {**receipt, "movie": target.name, "path": path}
+            )
+        for row in rows:
+            row["movie"] = target.name
+            row["path"] = path
+            row["pieceOrder"] = len(state["draws"])
+            state["draws"].append(row)
+            self.draw_total += 1
+
+    def _collect_sprite(
+        self,
+        target: _Movie,
+        resolved_id: int,
+        character: Mapping[str, Any],
+        kind: str,
+        transform: _Transform,
+        stack: tuple[tuple[str, int], ...],
+        path: str,
+        state: dict[str, Any],
+    ) -> None:
+        frames = target.frames if kind == "movie" else character.get("frames", [])
+        if not frames:
+            state["receipts"].append(
+                {
+                    "code": "sprite-has-no-populated-frame",
+                    "movie": target.name,
+                    "characterId": resolved_id,
+                    "path": path,
+                }
+            )
+            return
+        entry = self._timeline(target, resolved_id, frames)
+        frame_rows = entry["timeline"]["frames"]
+        chosen = next(
+            (frame for frame in frame_rows if frame["displayList"]), None
+        )
+        if chosen is None:
+            state["receipts"].append(
+                {
+                    "code": "sprite-has-no-populated-frame",
+                    "movie": target.name,
+                    "characterId": resolved_id,
+                    "path": path,
+                }
+            )
+            return
+        if len(frame_rows) > 1:
+            state["nestedTimelineSelections"].append(
+                {
+                    "movie": target.name,
+                    "characterId": resolved_id,
+                    "chosenFrameIndex": int(chosen["frameIndex"]),
+                    "frameCount": len(frame_rows),
+                    "policy": _STAGE_PIECE_NESTED_POLICY,
+                }
+            )
+        self._flatten_display(
+            target, chosen["displayList"], transform, stack, path, state
+        )
+
+    def _flatten_display(
+        self,
+        movie: _Movie,
+        display_list: list[dict[str, Any]],
+        transform: _Transform,
+        stack: tuple[tuple[str, int], ...],
+        path: str,
+        state: dict[str, Any],
+    ) -> None:
+        for row in sorted(display_list, key=lambda item: int(item["depth"])):
+            child = _compose_authored(transform, _display_row_transform(row))
+            name = str(row.get("name", "") or "")
+            child_path = f"{path}/{int(row['depth'])}" + (
+                f":{name}" if name else ""
+            )
+            self._collect(
+                movie, int(row["characterId"]), child, stack, child_path, state
+            )
+
+    def piece(
+        self, movie: _Movie, layer_index: int, row: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        piece_name = str(row["name"])
+        base_path = f"piece:{layer_index}:{movie.name}/{piece_name}"
+        placement = _place_row_transform(row)
+        piece: dict[str, Any] = {
+            "movie": movie.name,
+            "layer": layer_index,
+            "name": piece_name,
+            "rootDepth": int(row["depth"]),
+            "characterId": int(row["characterId"]),
+            "placement": {
+                "matrix": list(placement.matrix),
+                "translation": list(placement.translation),
+                "tint": list(placement.tint),
+                "additive": list(placement.additive),
+            },
+            "stateSignature": _STAGE_PIECE_STATE_SIGNATURE,
+            "nestedPolicy": _STAGE_PIECE_NESTED_POLICY,
+            "labels": {},
+            "states": [],
+            "receipts": [],
+        }
+        resolved = _resolve_stage_character(
+            self.movies, movie, int(row["characterId"])
+        )
+        if isinstance(resolved, dict):
+            piece["receipts"].append({**resolved, "path": base_path})
+            piece["artless"] = True
+            return piece
+        target, resolved_id = resolved
+        piece["resolvedMovie"] = target.name
+        piece["resolvedCharacterId"] = resolved_id
+        character = target.characters[resolved_id]
+        kind = str(character["kind"])
+        frames: list[list[dict[str, Any]]] | None
+        if kind == "sprite":
+            frames = character.get("frames", [])
+        elif kind == "movie":
+            frames = target.frames
+        else:
+            frames = None
+        if not frames:
+            state = self._new_state(0, [])
+            self._collect(
+                movie, int(row["characterId"]), placement, (), base_path, state
+            )
+            piece["states"].append(state)
+        else:
+            self._piece_sprite_states(
+                piece, target, resolved_id, frames, placement, base_path
+            )
+        piece["artless"] = not any(
+            state["draws"] for state in piece["states"]
+        )
+        return piece
+
+    def _piece_sprite_states(
+        self,
+        piece: dict[str, Any],
+        target: _Movie,
+        resolved_id: int,
+        frames: list[list[dict[str, Any]]],
+        placement: _Transform,
+        base_path: str,
+    ) -> None:
+        entry = self._timeline(target, resolved_id, frames)
+        for failure in entry["failures"]:
+            piece["receipts"].append(
+                {"code": "timeline-reconstruction-failure", **failure}
+            )
+        labels: dict[str, int] = {}
+        for frame in entry["timeline"]["frames"]:
+            for label in frame.get("labels", []):
+                labels[str(label["name"])] = int(frame["frameIndex"])
+        piece["labels"] = labels
+        seen_signatures: set[tuple[tuple[int, int, str], ...]] = set()
+        for frame in entry["timeline"]["frames"]:
+            signature = tuple(
+                sorted(
+                    (
+                        int(item["depth"]),
+                        int(item["characterId"]),
+                        str(item.get("name", "") or ""),
+                    )
+                    for item in frame["displayList"]
+                )
+            )
+            if signature in seen_signatures:
+                continue
+            seen_signatures.add(signature)
+            frame_index = int(frame["frameIndex"])
+            state = self._new_state(
+                frame_index,
+                sorted(
+                    name for name, index in labels.items() if index == frame_index
+                ),
+            )
+            self._flatten_display(
+                target,
+                frame["displayList"],
+                placement,
+                ((target.name, resolved_id),),
+                base_path,
+                state,
+            )
+            piece["states"].append(state)
+
+
+def _stage_pieces_contract(
+    movies: Mapping[str, _Movie],
+) -> list[dict[str, Any]]:
+    """Emit every named root-layer piece with its authored per-state art."""
+
+    collector = _StagePieceCollector(movies)
+    pieces: list[dict[str, Any]] = []
+    for layer_index, name in enumerate(MOVIE_ORDER):
+        movie = movies.get(name.casefold())
+        if movie is None or not movie.frames:
+            continue
+        for row in movie.frames[0]:
+            if row.get("kind") != "place-object" or not row.get("name"):
+                continue
+            pieces.append(collector.piece(movie, layer_index, row))
+    return pieces
+
+
 class _Flattener:
     def __init__(
         self,
@@ -3877,88 +4451,20 @@ class _Flattener:
     def _geometry(
         self, movie: _Movie, geometry_id: int, transform: _Transform, path: str
     ) -> None:
-        groups = movie.geometry.get(geometry_id)
-        if groups is None:
-            self.block(
-                "geometry-missing", movie.name, geometryId=geometry_id, path=path
-            )
-            return
-        for group_index, group in enumerate(groups):
-            style = str(group["style"])
-            values = [float(value) for value in group["values"]]
-            primitives = group["primitives"]
-            if style == "l":
-                self.block(
-                    "line-geometry-not-converted",
-                    movie.name,
-                    geometryId=geometry_id,
-                    styleIndex=group_index,
-                    path=path,
-                )
-                continue
-            color = tuple(value / 255.0 for value in values[:4])
-            if style == "s":
-                for primitive in primitives:
-                    if len(self.draws) >= MAX_DRAWS:
-                        raise HudAptConvertError("HUD draw count exceeds bounds")
-                    self.draws.append(
-                        {
-                            "kind": "solid-triangle",
-                            "displayOrder": self._next_display_order(),
-                            "movie": movie.name,
-                            "geometryId": geometry_id,
-                            "points": [
-                                transform.point((float(point[0]), float(point[1])))
-                                for point in primitive
-                            ],
-                            "color": transform.color(color),
-                            "path": path,
-                        }
-                    )
-                continue
-            image_id = int(values[4])
-            texture_id = movie.image_map.get(image_id)
-            atlas = movie.atlases.get(texture_id) if texture_id is not None else None
-            if atlas is None:
-                self.block(
-                    "texture-assignment-unresolved",
-                    movie.name,
-                    geometryId=geometry_id,
-                    imageId=image_id,
-                    textureId=texture_id,
-                    path=path,
-                )
-                continue
-            width = int(atlas["width"])
-            height = int(atlas["height"])
-            uv_matrix = values[5:9]
-            uv_translation = values[9:11]
-            for primitive in primitives:
-                if len(self.draws) >= MAX_DRAWS:
-                    raise HudAptConvertError("HUD draw count exceeds bounds")
-                uvs = []
-                for point in primitive:
-                    x, y = float(point[0]), float(point[1])
-                    u = x * uv_matrix[0] + y * uv_matrix[2] + uv_translation[0]
-                    v = x * uv_matrix[1] + y * uv_matrix[3] + uv_translation[1]
-                    uvs.append([u / width, v / height])
-                self.draws.append(
-                    {
-                        "kind": "textured-triangle",
-                        "displayOrder": self._next_display_order(),
-                        "movie": movie.name,
-                        "geometryId": geometry_id,
-                        "points": [
-                            transform.point((float(point[0]), float(point[1])))
-                            for point in primitive
-                        ],
-                        "uvs": uvs,
-                        "color": transform.color((1.0, 1.0, 1.0, 1.0)),
-                        "atlas": str(atlas["cookedPng"]),
-                        "atlasSha256": str(atlas["sha256"]),
-                        "path": path,
-                    }
-                )
+        rows, receipts = _geometry_primitives(
+            movie, geometry_id, transform, len(self.draws)
+        )
+        for receipt in receipts:
+            code = str(receipt["code"])
+            detail = {
+                key: value for key, value in receipt.items() if key != "code"
+            }
+            self.block(code, movie.name, **detail, path=path)
+        for row in rows:
+            row["displayOrder"] = self._next_display_order()
+            row["movie"] = movie.name
+            row["path"] = path
+            self.draws.append(row)
 
     def _character(
         self,
@@ -5154,6 +5660,10 @@ def _make_contract(
             ],
         }
     vm_constants = {key: vm_constants[key] for key in sorted(vm_constants)}
+    stage_pieces = _stage_pieces_contract(movies)
+    stage_piece_states = [
+        state for piece in stage_pieces for state in piece["states"]
+    ]
     contract: dict[str, Any] = {
         "schema": OUTPUT_SCHEMA,
         "schemaVersion": 0,
@@ -5227,6 +5737,7 @@ def _make_contract(
         },
         "atlases": atlas_paths,
         "draws": flattener.draws,
+        "stagePieces": stage_pieces,
         "timelines": timelines,
         "timelineInstances": sorted(
             flattener.timeline_instances,
@@ -5305,6 +5816,18 @@ def _make_contract(
             "wndRequiredMessageCallbackCount": 5 if wnd_companion is not None else 0,
             "wndRequiredMessageUnimplementedCount": 0,
             "wndUnresolvedBuiltinCount": 4 if wnd_companion is not None else 0,
+            "stagePieceCount": len(stage_pieces),
+            "stagePieceStateCount": len(stage_piece_states),
+            "stagePieceDrawCount": sum(
+                len(state["draws"]) for state in stage_piece_states
+            ),
+            "stagePieceArtlessCount": sum(
+                bool(piece["artless"]) for piece in stage_pieces
+            ),
+            "stagePieceReceiptCount": sum(
+                len(piece["receipts"]) for piece in stage_pieces
+            )
+            + sum(len(state["receipts"]) for state in stage_piece_states),
             "staticSubsetReady": bool(flattener.draws),
             "parityReady": not blockers and bool(flattener.draws),
         },

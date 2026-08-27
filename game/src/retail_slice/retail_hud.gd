@@ -210,11 +210,24 @@ const RETAIL_POWER_DOCK_SIZE := Vector2(76, 76)
 # the stage stretch is non-uniform. The colour is the dish-glass value the
 # shipped pre-Q37 composition used. Drawn FIRST so every authored pixel of the
 # frame sheet still lands on top of it.
+# The dish interior of the AUTHORED frame sheet: opening circle centre
+# (286, 148) radius 74 in sheet px (the alpha scan above), through the same
+# 1.875 x 1.40625 sheet->dock transform as the frame piece. This — not the
+# `EmptyGlobe` placement — is where the visible dish glass sits: EmptyGlobe is
+# an imported-character registration point ~18 px left of the glass centre
+# (measured reference/in game ui.jpg: dark-glass centroid dock (543.3, 207.2)
+# vs the opening centre (536.25, 208.1); the sheet-derived value wins because
+# it is authored art, not a capture). The selection portrait / level arc fill
+# this opening so the painting lands exactly in the hole retail composites the
+# glass into (owner 2026-08-26: dish painting rode the EmptyGlobe point and
+# sat small + off-centre in the opening).
+const RETAIL_DISH_GLASS_CENTER := Vector2(286.0 * 1.875, 148.0 * 1.40625)
+const RETAIL_DISH_GLASS_HALF_EXTENTS := Vector2(74.0 * 1.875, 74.0 * 1.40625)
 const RETAIL_FRAME_PIECES := [
 	{
 		"kind": "disc",
-		"center": Vector2(286.0 * 1.875, 148.0 * 1.40625),
-		"half_extents": Vector2(74.0 * 1.875, 74.0 * 1.40625),
+		"center": RETAIL_DISH_GLASS_CENTER,
+		"half_extents": RETAIL_DISH_GLASS_HALF_EXTENTS,
 		"color": Color(0.035, 0.04, 0.03, 1.0),
 	},
 	{"region": Rect2(0, 0, 512, 256), "dest": Rect2(0, 0, 960, 360)},
@@ -236,9 +249,19 @@ const RETAIL_ORB_RECTS := {
 #     - Vector2(360, 0)          # the command panel's dock origin
 # at the 1920x1080 design viewport, i.e. the authored socket CENTRE minus half
 # a button. `retail_four_unit_hud_runner` recomputes all six from the movie.
+#
+# 2026-08-26 (owner playtest "icons outside the circle"): the movie translations
+# register the imported socket art's corner, not its centre — every seat drew
+# half a socket up-left of where retail draws it, poking the ring's top seats
+# above the frame silhouette. All six seats now carry the MEASURED
+# +(17.29, 17.34) stage registration correction
+# (`RetailHudStage.COMMAND_SEAT_REGISTRATION_STAGE`, blob-centroided from
+# reference/in game ui.jpg + reference/game.dat_5VsCUnKZ04.jpg at 2560x1440;
+# per-slot spread < 0.7 px). The runner still recomputes all six from the movie
+# through the same helper.
 const RETAIL_COMMAND_SLOT_SOURCE := [
-	Vector2(115.2812, 37.8203), Vector2(205.2812, 61.7266), Vector2(254.0312, 119.3828),
-	Vector2(250.2812, 189.6953), Vector2(190.2812, 244.5391), Vector2(102.1562, 260.0078),
+	Vector2(147.7000, 62.2047), Vector2(237.7000, 86.1109), Vector2(286.4500, 143.7672),
+	Vector2(282.7000, 214.0797), Vector2(222.7000, 268.9234), Vector2(134.5750, 284.3922),
 ]
 const RETAIL_COMMAND_SLOT_SIZE := Vector2(64, 64)
 # Q39: MEASURED, not authored. InGameRadialMenuStage.apt authors the radial
@@ -260,7 +283,11 @@ const WORLD_RADIAL_STAGE_RADIUS := 39.0
 # ring (`Palantir.apt` sprite 114), whose right-most seat `subMenu2` reaches
 # panel-local x 436.3 at a 64px button. Authored seats cannot move; the chips
 # can, so they do. 445 + 36 = 481 still ends well inside the 520px panel.
-const RETAIL_QUEUE_CHIP_ORIGIN := Vector2(445, 56)
+# 2026-08-26: and again, 445 -> 474. The measured seat registration correction
+# (RetailHudStage.COMMAND_SEAT_REGISTRATION_STAGE) moved every authored seat
+# +32.42 x, so subMenu2's 64px span now reaches panel-local x 468.8; the chip
+# column steps right past it. 474 + 36 = 510 still ends inside the 520px panel.
+const RETAIL_QUEUE_CHIP_ORIGIN := Vector2(474, 56)
 const RETAIL_QUEUE_CHIP_SIZE := Vector2(36, 36)
 const RETAIL_QUEUE_CHIP_PITCH := 40.0
 ## Chips built up front. Retail's palantir queue art is NINE slots
@@ -2606,6 +2633,12 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 			return "Private retail HUD APT did not expose the Palantir UI atlas."
 		var frame_pieces: Array[Dictionary] = []
 		for piece_value in RETAIL_FRAME_PIECES:
+			# The dish backing ellipse STAYS even now that stage pieces ship:
+			# the piece that owns the idle dish interior is `EmptyGlobe`, and
+			# it is a NAMED receipt (its `ElvenEffect` sprite never places
+			# anything — retail's engine composites the glass at runtime). The
+			# ellipse retires the day that art exists, not before; without it
+			# the idle dish showed grass again (probe capture 2026-08-26).
 			frame_pieces.append((piece_value as Dictionary).duplicate())
 		retail_control_bar_bound = retail_control_bar_frame.bind_retail_composition(
 			frame_texture,
@@ -4081,15 +4114,7 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 		old_portrait_parent.remove_child(selection_portrait)
 		command_grid.add_child(selection_portrait)
 	command_grid.move_child(selection_portrait, 0)
-	selection_portrait.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
-	selection_portrait.custom_minimum_size = Vector2.ZERO
-	var dish_panel_center := RETAIL_DISH_CENTER - Vector2(360, 0)
-	# The dish is an OVAL on a 16:9 screen: the authored globe is a circle in
-	# stage space and the stage is exact-fit stretched (RetailHudStage).
-	selection_portrait.position = dish_panel_center - RETAIL_DISH_HALF_EXTENTS
-	selection_portrait.size = RETAIL_DISH_HALF_EXTENTS * 2.0
-	selection_portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	selection_portrait.stretch_mode = TextureRect.STRETCH_SCALE
+	_layout_selection_portrait()
 	_circle_masked(selection_portrait)
 	# Retail-style production queue chips under the palantir dish.
 	_ensure_production_queue_chips()
@@ -4177,7 +4202,12 @@ func _set_powers_palette_visible(open: bool) -> void:
 	if command_panel != null:
 		command_panel.visible = cluster_visible
 	if retail_side_command_bar != null and not cluster_visible:
-		retail_side_command_bar.visible = false
+		# Through the widget's own state, not a raw `visible = false`: the raw
+		# write left `_shown` true, so the next per-frame selection refresh
+		# re-showed the builder strip OVER the open spellbook (a persistent
+		# side bar the selection rule never authorized). The per-frame refresh
+		# also checks `powers_palette_open()` so it cannot re-show it either.
+		retail_side_command_bar.set_builder_visible(false)
 	if powers_dock != null:
 		powers_dock.visible = cluster_visible
 	if open:
@@ -4400,14 +4430,36 @@ func _build_dish_level_caption() -> void:
 	_layout_dish_level_caption()
 
 
+func _layout_selection_portrait() -> void:
+	if selection_portrait == null:
+		return
+	# The portrait fills the frame sheet's dish OPENING (RETAIL_DISH_GLASS_*),
+	# not an ellipse around the EmptyGlobe registration point: retail's dish
+	# painting spans the whole hole in the frame art (reference
+	# game.dat_1BPoQ6ZkR0.jpg, armory selected). The VBox it is born in stamps
+	# SIZE_FILL + a 76px minimum; those have to die or Godot restores 76x76 at
+	# the next layout pass and the painting never covers the opening.
+	selection_portrait.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	selection_portrait.size_flags_horizontal = 0
+	selection_portrait.size_flags_vertical = 0
+	selection_portrait.custom_minimum_size = Vector2.ZERO
+	var dish_panel_center := RETAIL_DISH_GLASS_CENTER - Vector2(360, 0)
+	selection_portrait.position = dish_panel_center - RETAIL_DISH_GLASS_HALF_EXTENTS
+	selection_portrait.size = RETAIL_DISH_GLASS_HALF_EXTENTS * 2.0
+	selection_portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	selection_portrait.stretch_mode = TextureRect.STRETCH_SCALE
+
+
 func _layout_dish_level_caption() -> void:
+	_layout_selection_portrait()
 	if _dish_level_label == null or command_panel == null:
 		return
-	# Dish centre in command-panel coordinates: the authored `EmptyGlobe` stage
-	# placement through RetailHudStage, minus the panel origin (360, 0). The
-	# caption rides the dish's lower interior like retail ("Level: 2" in the
-	# owner's RotWK capture), with the level arc hugging the dish rim under it.
-	var dish_panel_center := RETAIL_DISH_CENTER - Vector2(360, 0)
+	# Dish centre in command-panel coordinates: the frame sheet's dish OPENING
+	# (RETAIL_DISH_GLASS_CENTER, the same anchor the selection portrait fills),
+	# minus the panel origin (360, 0). The caption rides the dish's lower
+	# interior like retail ("Level: 2" in the owner's RotWK capture), with the
+	# level arc hugging the opening rim under it.
+	var dish_panel_center := RETAIL_DISH_GLASS_CENTER - Vector2(360, 0)
 	_dish_level_label.position = dish_panel_center + Vector2(-60, 30)
 	_dish_level_label.size = Vector2(120, 20)
 	_dish_level_bar.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
@@ -4415,7 +4467,7 @@ func _layout_dish_level_caption() -> void:
 	_dish_level_bar.size = command_panel.size
 	_dish_level_bar.configure(
 		dish_panel_center,
-		RETAIL_DISH_HALF_EXTENTS - Vector2(6.0, 6.0),
+		RETAIL_DISH_GLASS_HALF_EXTENTS - Vector2(6.0, 6.0),
 		5.0,
 		StageScript.hero_health_arc_half_angle()
 	)
@@ -4897,25 +4949,58 @@ func sync_radial_commands(anchor: Vector2, entries: Array) -> void:
 	# to this fixed HUD wheel, not to a second ring floating over the building.
 	# This also keeps the authored icons legible while the camera moves.
 	# Palantir sockets 1-6 map to authored command-set slots (commandset.ini
-	# :4053). Overflow pages (fortress 8-icon leftover) keep the expanded arc.
-	var hide_all_empty := count > RETAIL_COMMAND_SLOT_SOURCE.size()
+	# :4053). OWNER 2026-08-26: the palantir NEVER spills past its six glass
+	# sockets — the subMenu ring rendered over bare grass in our composition
+	# ("the icons are outside of the circle"). An overflow page seats its first
+	# five entries plus the back arrow in the six sockets; the rest stay
+	# reachable on the WORLD ring, which always carries the full set (Q45).
+	var sockets := RETAIL_COMMAND_SLOT_SOURCE.size()
+	var overflow := count > sockets
+	var hide_all_empty := overflow
+	var palantir_seats := {}
+	if overflow:
+		# The last socket belongs to the back arrow when the page carries one;
+		# a back-less page seats a sixth command there instead.
+		var back_present := false
+		for seat_value in entries:
+			if String((seat_value as Dictionary).get("command_kind", "")) == "back":
+				back_present = true
+		var seat_cap := sockets - 1 if back_present else sockets
+		var seats_used := 0
+		for index in count:
+			var seat_entry: Dictionary = entries[index]
+			if String(seat_entry.get("command_kind", "")) == "back":
+				palantir_seats[index] = sockets - 1
+			elif seats_used < seat_cap:
+				palantir_seats[index] = seats_used
+				seats_used += 1
 	var occupied := {}
 	for index in count:
 		var placed_entry: Dictionary = entries[index]
 		var placed_slot := int(placed_entry.get("slot", 0))
 		var socket_index := index
-		if not hide_all_empty and placed_slot >= 1 and placed_slot <= RETAIL_COMMAND_SLOT_SOURCE.size():
+		if overflow:
+			socket_index = int(palantir_seats.get(index, -1))
+		elif placed_slot >= 1 and placed_slot <= sockets:
 			socket_index = placed_slot - 1
-		if socket_index >= 0 and socket_index < RETAIL_COMMAND_SLOT_SOURCE.size():
+		if socket_index >= 0 and socket_index < sockets:
 			occupied[socket_index] = true
 	_set_radial_socket_surface_active(count > 0, occupied, hide_all_empty)
 	for index in count:
 		var button := _radial_buttons[index]
 		var entry: Dictionary = entries[index]
+		var seat := int(palantir_seats.get(index, -1)) if overflow else index
+		if overflow and seat < 0:
+			# No palantir socket left: this entry lives on the world ring only.
+			button.visible = false
+			continue
 		button.visible = true
 		button.disabled = not bool(entry.get("enabled", false))
 		button.modulate.a = 1.0 if bool(entry.get("enabled", false)) else 0.45
-		button.position = _radial_button_position(index, count, button.size, int(entry.get("slot", 0)))
+		if overflow:
+			button.position = command_panel.position + RETAIL_COMMAND_SLOT_SOURCE[seat]
+		else:
+			button.position = _radial_button_position(index, count, button.size, int(entry.get("slot", 0)))
 		# Live training dial + countdown on the radial menu's training icons
 		# (owner: the queue-chip CCW sweep, everywhere a unit trains). Updated
 		# here in the per-frame layout pass so the buttons are not rebuilt
@@ -6200,7 +6285,10 @@ func _refresh_side_command_bar(builders_only: bool) -> void:
 						side_button.set_meta("tooltip_desc", String(entry.get("description", "")))
 				_register_button_tooltip(side_button)
 				_wire_button_feel(side_button)
-	retail_side_command_bar.set_builder_visible(builders_only)
+	# Retail rule (REF-29/32, game.dat_5VsCUnKZ04.jpg): the strip exists ONLY
+	# while the selection is the builder — no selection, troops, or a structure
+	# show NO side strip — and never over the spellbook screen.
+	retail_side_command_bar.set_builder_visible(builders_only and not powers_palette_open())
 
 
 class RankPipsOverlay:

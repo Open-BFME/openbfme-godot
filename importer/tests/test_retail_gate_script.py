@@ -92,7 +92,7 @@ def test_neutral_structure_evidence_is_wired_at_exact_selection_and_floors() -> 
     text = _gate_text()
     assert (
         '$expectedSelectionSha256 = '
-        '"85b798173c22370da359f961c1612c91254e6f34c5981256c56fa8ef5d4542bb"'
+        '"56f556cf2319cb443bba85fb50d30e9661ae642a577bd1b4879138a628a16c3c"'
         in text
     )
     assert (

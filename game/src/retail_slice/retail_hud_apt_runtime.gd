@@ -572,6 +572,13 @@ var diagnostics: Array[Dictionary] = []
 
 var _authored_resolution := Vector2(1024.0, 768.0)
 var _draws: Array[Dictionary] = []
+var _stage_piece_draws: Array[Dictionary] = []
+var _stage_piece_count := 0
+var _stage_piece_state_count := 0
+## EVERY authored state's draw rows, counted for the summary cross-check.
+## `_stage_piece_draws` binds only the idle-chosen state per piece, so the
+## contract's stagePieceDrawCount (all states) must be checked against this.
+var _stage_piece_total_draw_count := 0
 var _textures: Dictionary = {}
 var _action_scripts: Dictionary = {}
 var _clip_action_programs: Dictionary = {}
@@ -868,6 +875,8 @@ func _validate_contract(document: Dictionary, pack_root: String) -> bool:
 	for value in values:
 		if typeof(value) != TYPE_DICTIONARY or not _validate_draw(value as Dictionary, pack_root):
 			return false
+	if not _validate_stage_pieces(document.get("stagePieces", []), pack_root):
+		return false
 	_display_items.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.displayOrder) < int(b.displayOrder))
 	var summary_value: Variant = document.get("summary", {})
 	if typeof(summary_value) != TYPE_DICTIONARY:
@@ -909,10 +918,26 @@ func _validate_contract(document: Dictionary, pack_root: String) -> bool:
 		or int(summary.get("wndUnresolvedBuiltinCount", -1)) != (4 if wnd_companion_ready else 0)
 		or bool(summary.get("staticSubsetReady", false)) != (_draws.size() > 0)
 		or bool(summary.get("parityReady", true)) != (blocker_count == 0 and _draws.size() > 0)
+		or (
+			summary.has("stagePieceCount")
+			and (
+				int(summary.get("stagePieceCount", -1)) != _stage_piece_count
+				or int(summary.get("stagePieceStateCount", -1)) != _stage_piece_state_count
+				or int(summary.get("stagePieceDrawCount", -1)) != _stage_piece_total_draw_count
+			)
+		)
 	):
 		return _fail("Palantir summary does not match its executable inventory")
 	draw_count = _draws.size()
 	return true
+
+
+func stage_piece_draws_bound() -> int:
+	## How many idle stage-piece rows this runtime will composite. Zero on a
+	## pre-stage-piece pack; the HUD keeps its measured dish stand-in exactly
+	## until this is non-zero (owner 2026-08-26: compose from retail's own
+	## pieces, never keep the invented ellipse over authored art).
+	return _stage_piece_draws.size()
 
 
 func wnd_companion_runtime() -> RefCounted:
@@ -4027,6 +4052,99 @@ func _validate_button_instance(instance: Dictionary) -> bool:
 	return true
 
 
+func _validate_stage_pieces(value: Variant, pack_root: String) -> bool:
+	# Current selected packs omit this section (pre-stage-piece cook). A recook
+	# that emits it is optional extra art: missing/empty is valid, a present
+	# array must be well-typed and every textured draw must resolve.
+	_stage_piece_draws.clear()
+	_stage_piece_count = 0
+	_stage_piece_state_count = 0
+	_stage_piece_total_draw_count = 0
+	if typeof(value) == TYPE_NIL:
+		return true
+	if typeof(value) != TYPE_ARRAY:
+		return _fail("Palantir stagePieces inventory is invalid")
+	var pieces := value as Array
+	if pieces.is_empty():
+		return true
+	if pieces.size() > MAX_DRAWS:
+		return _fail("Palantir stagePieces inventory exceeds bounds")
+	for piece_value in pieces:
+		if typeof(piece_value) != TYPE_DICTIONARY:
+			return _fail("Palantir stage piece is invalid")
+		var piece := piece_value as Dictionary
+		if String(piece.get("name", "")) == "":
+			return _fail("Palantir stage piece is unnamed")
+		_stage_piece_count += 1
+		var states_value: Variant = piece.get("states", [])
+		if typeof(states_value) != TYPE_ARRAY:
+			return _fail("Palantir stage piece states are invalid")
+		var states := states_value as Array
+		_stage_piece_state_count += states.size()
+		# Idle HUD uses the first populated state (typically `_show` / frame 0
+		# content). Named receipts stay named; they never invent pixels. Every
+		# state's rows still count toward the summary cross-check, artless or
+		# not, because the contract's stagePieceDrawCount spans all states.
+		var chosen: Dictionary = {}
+		for state_value in states:
+			if typeof(state_value) != TYPE_DICTIONARY:
+				return _fail("Palantir stage piece state is invalid")
+			var state := state_value as Dictionary
+			var draws_value: Variant = state.get("draws", [])
+			if typeof(draws_value) != TYPE_ARRAY:
+				return _fail("Palantir stage piece draws are invalid")
+			_stage_piece_total_draw_count += (draws_value as Array).size()
+			if chosen.is_empty() and not (draws_value as Array).is_empty():
+				chosen = state
+		if bool(piece.get("artless", false)):
+			continue
+		if chosen.is_empty():
+			continue
+		for draw_value in chosen.get("draws", []) as Array:
+			if typeof(draw_value) != TYPE_DICTIONARY:
+				return _fail("Palantir stage piece draw is invalid")
+			if not _bind_stage_piece_draw(draw_value as Dictionary, pack_root):
+				return false
+	return true
+
+
+func _bind_stage_piece_draw(row: Dictionary, pack_root: String) -> bool:
+	var kind := String(row.get("kind", ""))
+	if not ["solid-triangle", "textured-triangle"].has(kind):
+		return _fail("Palantir stage piece draw kind is unsupported")
+	var points := _vector2_array(row.get("points", []))
+	var color := _color(row.get("color", []))
+	if points.size() != 3 or color.a < 0.0:
+		return _fail("Palantir stage piece geometry or color is invalid")
+	var normalized := row.duplicate(true)
+	normalized["pointsRuntime"] = points
+	normalized["colorRuntime"] = color
+	if kind == "textured-triangle":
+		var uvs := _vector2_array(row.get("uvs", []))
+		if uvs.size() != 3:
+			return _fail("Palantir stage piece UVs are invalid")
+		var relative := String(row.get("atlas", ""))
+		var mod_loader = get_node_or_null("/root/ModLoader")
+		if mod_loader == null:
+			return _fail("HUD APT runtime requires the ModLoader autoload")
+		var path: String = mod_loader.resolve_pack_path(pack_root, relative)
+		if not _safe_file(pack_root, path, "png") or not _is_sha256(String(row.get("atlasSha256", ""))):
+			return _fail("Palantir stage piece atlas is missing, escaped, or unattested")
+		var texture: Texture2D = _textures.get(path)
+		if texture == null:
+			texture = ASSET_FACTORY.load_texture_asset(path)
+			if texture == null:
+				return _fail("Palantir stage piece atlas could not be loaded")
+			_textures[path] = texture
+		_textures[relative] = texture
+		normalized["uvsRuntime"] = uvs
+		normalized["textureRuntime"] = texture
+	if _stage_piece_draws.size() >= MAX_DRAWS:
+		return _fail("Palantir stage piece draw count exceeds bounds")
+	_stage_piece_draws.append(normalized)
+	return true
+
+
 func _validate_draw(row: Dictionary, pack_root: String) -> bool:
 	var kind := String(row.get("kind", ""))
 	if not ["solid-triangle", "textured-triangle"].has(kind):
@@ -4122,22 +4240,31 @@ func _draw() -> void:
 	if not presentation_ready:
 		return
 	var scale := Vector2(size.x / _authored_resolution.x, size.y / _authored_resolution.y)
+	# Stage-piece art (EmptyGlobe glass, radar backing, rope/ornament) sits
+	# under the static InitialSetup subset so the frame sheet still owns the
+	# bezel. Current packs have none; a HUD recook fills this array.
+	for row in _stage_piece_draws:
+		_draw_triangle_row(row, scale)
 	for row in _display_items:
 		if String(row.get("displayKind", "")) == "text":
 			_draw_live_text(row, scale)
 			continue
-		var source_points := row.get("pointsRuntime", PackedVector2Array()) as PackedVector2Array
-		var points := PackedVector2Array()
-		for point in source_points:
-			points.append(point * scale)
-		var color := row.get("colorRuntime", Color.TRANSPARENT) as Color
-		if String(row.get("kind", "")) == "solid-triangle":
-			draw_colored_polygon(points, color)
-		else:
-			var colors := PackedColorArray([color, color, color])
-			var uvs := row.get("uvsRuntime", PackedVector2Array()) as PackedVector2Array
-			var texture := row.get("textureRuntime") as Texture2D
-			draw_polygon(points, colors, uvs, texture)
+		_draw_triangle_row(row, scale)
+
+
+func _draw_triangle_row(row: Dictionary, scale: Vector2) -> void:
+	var source_points := row.get("pointsRuntime", PackedVector2Array()) as PackedVector2Array
+	var points := PackedVector2Array()
+	for point in source_points:
+		points.append(point * scale)
+	var color := row.get("colorRuntime", Color.TRANSPARENT) as Color
+	if String(row.get("kind", "")) == "solid-triangle":
+		draw_colored_polygon(points, color)
+		return
+	var colors := PackedColorArray([color, color, color])
+	var uvs := row.get("uvsRuntime", PackedVector2Array()) as PackedVector2Array
+	var texture := row.get("textureRuntime") as Texture2D
+	draw_polygon(points, colors, uvs, texture)
 
 
 func _draw_live_text(instance: Dictionary, scale: Vector2) -> void:
@@ -4367,6 +4494,10 @@ func _reset() -> void:
 	_side_command_fade_state.clear()
 	diagnostics.clear()
 	_draws.clear()
+	_stage_piece_draws.clear()
+	_stage_piece_count = 0
+	_stage_piece_state_count = 0
+	_stage_piece_total_draw_count = 0
 	_textures.clear()
 	_action_scripts.clear()
 	_clip_action_programs.clear()

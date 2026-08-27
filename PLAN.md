@@ -54,9 +54,9 @@ needs: sim
   by: claude (user://saves JSON with verbatim launch keys + full snapshot; named refusals for MP/cross-pack; round-trip runner 8/0 proves identical restore + deterministic advance; 6bebea1e)
   from: roadmap (queue Q84; retail-parity browser chrome rides the Q90 lane)
 - [~] UI parity: render EA's authored APT layouts everywhere, hand-measured constants are bugs; screenshot-vs-reference/ gates per screen; recover ~760 HUD text labels {#shell-ui-parity}
-  by: claude
+  by: grok
   from: roadmap (queue Q90; oracle = owner's retail capture library in reference/)
-  tech: round 1 shipped 1d232d27 — labels claim was stale (739/764 already recovered by recooks; 25 residuals are importer coverage gaps); per-screen structural gate live (67 pass / 7 honest reds); constants audit ranks ~890 literals into a 5-lane burn-down (workspace/review/q90-hand-measured-constants.md)
+  tech: round 1 shipped 1d232d27 — labels claim was stale (739/764 already recovered by recooks; 25 residuals are importer coverage gaps); per-screen structural gate live (67 pass / 7 honest reds); constants audit ranks ~890 literals into a 5-lane burn-down (workspace/review/q90-hand-measured-constants.md). Owner 2026-08-26: palantir/radar is sloppy vs retail — icons sit outside the dish, idle side-build strip must stay hidden, rope/feather ornament is missing; Fable started stage-piece APT conversion + seat registration, spend-limited mid-lane.
 
 ## Cook, gate, and ship builds {#pipeline-tools}
 tech: tools/ (40 scripts), gate-retail.ps1, publish-durable-pack.ps1, dist/v0.2.12
@@ -113,6 +113,7 @@ links: importer, sim, shell, pipeline-tools
   by: claude
 
 ## decisions
+- 2026-08-26 HUD oracle (owner playtest + retail captures): palantir/radar compositing uses converted Palantir.apt / palantirexport.big pixels at the movie's own placements. Idle has empty sockets and no side-build strip; the strip appears only for a builder selection. Command icons stay in the six glass sockets (overflow uses the authored subMenu seats after the corner-registration correction). Rope/ornament art is an imported character the static InitialSetup flatten skipped — stagePieces is the named pass, and needs a HUD recook to reach the selected pack.
 - 2026-08-25 Q83 RAW-FIELDS RULE (owner ratified): `ai/skirmish.json` preserves authored values verbatim with source provenance. The importer must not derive or pre-bake runtime decisions; Phase 2 interprets ArmyDefinition phases, CombatChain target priorities, and DifficultyTuning in the lockstep sim. `BrutalDifficultyCheats` is the only authored cheat.
 - 2026-08-25 OWNER RATIFICATION (the six-crack program): fix all four Crack-1 items (traffic ranking, module framework, per-module oracles, lane discipline); delete fallback tables; strangler-fig the sim into class files; PARK the C# engine (not delete — owner corrected after learning GDScript lockstep already ships hash-identical cross-OS); retire synthetic pack after fallback deletion; trust week WITHOUT a nightly self-hosted runner; ONE good pack set + prune (disk pressure); AI port, save/load, script vocabulary all greenlit; facts-not-decisions pack rule + 6→2 content sources; UI gates use the owner's retail capture library in reference/. Filed as queue Q78-Q90.
 - 2026-08-25: release criterion ratified in spirit — a stranger plays three skirmishes as three factions vs the AI and can't name what's missing. Campaigns/cinematics explicitly out of playable-release scope.

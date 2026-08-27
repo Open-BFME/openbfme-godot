@@ -122,6 +122,11 @@ func _draw() -> void:
 		for index in retail_pieces.size():
 			var piece := retail_pieces[index]
 			var kind := String(piece.get("kind", ""))
+			if bool(piece.get("shield_only", false)):
+				# The piece still click-shields (shields_point walks every
+				# piece) but paints nothing: the recooked pack's stage-piece
+				# art owns these pixels (owner 2026-08-26).
+				continue
 			if kind == "disc":
 				# APT-style solid vector geometry: the dish void behind the
 				# ring, matching retail's flat dark backing shape. A piece with

@@ -51,12 +51,16 @@ $publishRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot "workspace\content-pa
 # SILENTLY is not. When the selection legitimately moves, re-measure and update
 # these constants in the same change that moves it, and say so - the same
 # conscious-update pattern the state pins use.
-# RE-MEASURED 2026-08-19 v0.2.7 (castle lanes recook + playable-maps republish abc27325: gates/garrison/walkSurfaces/ai_bases/scripts)
-$expectedSelectionSha256 = "85b798173c22370da359f961c1612c91254e6f34c5981256c56fa8ef5d4542bb"
-$expectedSelectionActivePack = "rotwk-men-vslice/13e31f6b964d1d5453e2cd0031f4b9d663a002363e1e61074f6f0b5c1b0b75f4"
-# RE-MEASURED 2026-08-19 v0.2.7 (castle lanes recook + playable-maps republish abc27325: gates/garrison/walkSurfaces/ai_bases/scripts)
+# RE-MEASURED 2026-08-26 HUD-APT stage-piece recook: bfme2-men republished
+# (7de517bf -> 5a294cd3) so scene-contract.json carries stagePieces (29 pieces
+# / 5496 authored draws); active pack pin also corrected to the selection the
+# 85b79817 sha actually hashed (rotwk-men 3087b869, Q83c) - the previous
+# activePack line still named 13e31f6b and disagreed with its own sha.
+$expectedSelectionSha256 = "56f556cf2319cb443bba85fb50d30e9661ae642a577bd1b4879138a628a16c3c"
+$expectedSelectionActivePack = "rotwk-men-vslice/3087b869a7e8b5183f32b0de75137c5c4ac43e7be676ae1fe2ac0eb22c55b0f6"
+# RE-MEASURED 2026-08-26 (same recook)
 $expectedSelectionSupplementalPacks = @(
-    "bfme2-men-vslice/7de517bf146582f10741750b50d63f9955c42d1fe2aa13200757fc6fb29f217a",
+    "bfme2-men-vslice/5a294cd3691d9151ca88eaa2a4ff3847920ee6bf400b60e1e74dc7b47dfa4b8b",
     "bfme2-skirmish-maps-private/f9c14cfa4c25e68509373390741fc82e5892f050a2305a19fa3efaca0f39a5b0",
     "rotwk-elves-vslice/8ae6efd5d211730e6c0f1104fe2330e31b025b228409c0a8410f37bf0b669423",
     "rotwk-dwarves-vslice/7693e95218127805a28bff2d5a1bcb09724621d033c086ab0feb801507b7c08b",

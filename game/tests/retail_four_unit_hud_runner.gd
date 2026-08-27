@@ -376,6 +376,7 @@ func _run() -> void:
 	_check_authored_stage_layout(hud)
 	_check_authored_hero_bar(hud)
 	_check_paged_command_page_layout(hud)
+	_check_measured_seat_parity_and_containment(hud)
 
 	hud.free()
 	_cleanup_fixture()
@@ -1009,24 +1010,34 @@ func _check_paged_command_page_layout(hud) -> void:
 			glass_ok = false
 			glass_detail += "b%d actual=%s authored=%s; " % [index, str(actual), str(expected)]
 	_check("paged_page_keeps_the_six_authored_glass_sockets", glass_ok, glass_detail)
-	var ring_ok := true
-	var ring_detail := ""
+	# OWNER 2026-08-26: the palantir never spills past its six glass sockets —
+	# in our composition the subMenu ring rendered over bare grass ("the icons
+	# are outside of the circle"). Overflow entries hide on the palantir and
+	# stay reachable on the WORLD ring, which always carries the full page.
+	var hidden_ok := true
+	var hidden_detail := ""
 	for index in range(hud.RETAIL_COMMAND_SLOT_SOURCE.size(), buttons.size()):
-		var ring_index: int = index - hud.RETAIL_COMMAND_SLOT_SOURCE.size()
-		var expected: Vector2 = panel_origin + stage.submenu_slot_dock(
-			ring_index, hud.RETAIL_COMMAND_SLOT_SIZE
-		) - Vector2(360.0, 0.0)
-		var actual: Vector2 = (buttons[index] as Button).position
-		if not actual.is_equal_approx(expected):
-			ring_ok = false
-			ring_detail += "b%d actual=%s authored=%s; " % [index, str(actual), str(expected)]
-	_check("paged_overflow_uses_the_authored_submenu_ring", ring_ok, ring_detail)
-	# The first four ring seats ARE the authored subMenu placements, verbatim.
+		if (buttons[index] as Button).visible:
+			hidden_ok = false
+			hidden_detail += "b%d still visible on the palantir; " % index
+	_check("paged_overflow_stays_hidden_on_the_palantir", hidden_ok, hidden_detail)
+	var world_live := 0
+	for world_button_value in hud._world_radial_buttons:
+		if (world_button_value as Button).visible:
+			world_live += 1
+	_check(
+		"world_ring_carries_the_full_overflow_page",
+		world_live == entries.size(),
+		"world=%d entries=%d" % [world_live, entries.size()]
+	)
+	# The first four ring seats ARE the authored subMenu placements plus the
+	# same parent-registration correction the six glass sockets carry.
 	var verbatim_ok := true
 	var verbatim_detail := ""
 	for ring_index in apt.PALANTIR_SUBMENU_SLOT_LOCAL.size():
 		var authored: Vector2 = stage.to_dock(
 			(apt.PALANTIR_STAGE_PLACEMENTS["CommandButtons"] as Vector2)
+			+ stage.COMMAND_SEAT_REGISTRATION_STAGE
 			+ (apt.PALANTIR_SUBMENU_SLOT_LOCAL[ring_index] as Vector2)
 		)
 		var derived: Vector2 = stage.submenu_slot_center_dock(ring_index)
@@ -1049,6 +1060,8 @@ func _check_paged_command_page_layout(hud) -> void:
 	var radar_detail := ""
 	for index in buttons.size():
 		var button := buttons[index] as Button
+		if not button.visible:
+			continue  # palantir-hidden overflow renders nothing to overlap
 		var centre: Vector2 = button.position + button.size * 0.5
 		var distance := centre.distance_to(radar_centre)
 		if distance < float(hud.RETAIL_RADAR_RADIUS):
@@ -1067,6 +1080,8 @@ func _check_paged_command_page_layout(hud) -> void:
 	var dish_detail := ""
 	for index in buttons.size():
 		var button := buttons[index] as Button
+		if not button.visible:
+			continue  # palantir-hidden overflow renders nothing to overlap
 		var centre: Vector2 = button.position + button.size * 0.5
 		var offset: Vector2 = (centre - dish_centre) / dish_extents
 		if offset.length() < 1.0:
@@ -1074,6 +1089,133 @@ func _check_paged_command_page_layout(hud) -> void:
 			dish_detail += "b%d centre=%s norm=%.2f; " % [index, str(centre), offset.length()]
 	_check("no_paged_command_button_sits_inside_the_dish", clear_of_dish, dish_detail)
 	hud.hide_radial_commands()
+
+
+## Owner playtest 2026-08-26 ("the icons are outside of the circle for the
+## palantir"): the movie's seat translations register the imported socket art's
+## corner, so every seat drew half a socket up-left of retail — the ring's top
+## seats poked above the frame silhouette. The fix is the MEASURED registration
+## correction `RetailHudStage.COMMAND_SEAT_REGISTRATION_STAGE`; this gate pins
+## the corrected seats to the centroids measured off the retail captures and
+## sweeps every visible command-surface button for containment.
+func _check_measured_seat_parity_and_containment(hud) -> void:
+	var stage: Script = load("res://src/retail_slice/retail_hud_stage.gd")
+	# MEASURED (reference/in game ui.jpg AND reference/game.dat_5VsCUnKZ04.jpg,
+	# 2560x1440, scaled 0.75 into the 1080p dock): centroids of the six
+	# near-black empty-socket blobs; the two captures agree within 0.2 px.
+	var measured_socket_centers_dock: Array[Vector2] = [
+		Vector2(539.9, 94.1), Vector2(629.5, 117.8), Vector2(678.4, 176.1),
+		Vector2(674.5, 246.4), Vector2(615.1, 300.5), Vector2(526.5, 316.5),
+	]
+	var measured_ok := true
+	var measured_detail := ""
+	for index in measured_socket_centers_dock.size():
+		var derived: Vector2 = stage.command_slot_center_dock(index)
+		var distance: float = derived.distance_to(measured_socket_centers_dock[index])
+		if distance > 1.5:
+			measured_ok = false
+			measured_detail += "socket%d derived=%s measured=%s d=%.2f; " % [
+				index, str(derived), str(measured_socket_centers_dock[index]), distance
+			]
+	_check(
+		"six_socket_centres_match_the_measured_retail_captures",
+		measured_ok, measured_detail
+	)
+	# The three orb buttons ride the radar's top arc INSIDE the gold frame:
+	# their centres stay within the radar disc.
+	var orbs_ok := true
+	var orbs_detail := ""
+	for orb_id in hud.orb_buttons.keys():
+		var orb := hud.orb_buttons[orb_id] as Button
+		var orb_centre: Vector2 = orb.position + orb.size * 0.5
+		var orb_distance: float = orb_centre.distance_to(hud.RETAIL_RADAR_CENTER as Vector2)
+		if orb_distance > float(hud.RETAIL_RADAR_RADIUS):
+			orbs_ok = false
+			orbs_detail += "%s centre=%s d=%.1f>%.1f; " % [
+				str(orb_id), str(orb_centre), orb_distance, float(hud.RETAIL_RADAR_RADIUS)
+			]
+	_check("orb_buttons_sit_inside_the_radar_disc", orbs_ok, orbs_detail)
+	# The dish portrait fills the authored frame sheet's dish OPENING exactly —
+	# the painting lands in the hole the frame art leaves for the glass.
+	var opening_position: Vector2 = (
+		(hud.RETAIL_DISH_GLASS_CENTER as Vector2) - Vector2(360, 0)
+		- (hud.RETAIL_DISH_GLASS_HALF_EXTENTS as Vector2)
+	)
+	_check(
+		"dish_portrait_fills_the_authored_frame_opening",
+		hud.selection_portrait.position.is_equal_approx(opening_position)
+			and hud.selection_portrait.size.is_equal_approx(
+				(hud.RETAIL_DISH_GLASS_HALF_EXTENTS as Vector2) * 2.0
+			),
+		"pos=%s size=%s" % [str(hud.selection_portrait.position), str(hud.selection_portrait.size)]
+	)
+	# Containment sweep: with the fortress hero page open (the widest live
+	# range), every palantir command button rides an authored seat centre.
+	# The radial layer is a HUD-root sibling of the command panel, so this
+	# inspects `_radial_buttons` rather than walking panel descendants.
+	var entries: Array = []
+	for index in 10:
+		entries.append({
+			"command_kind": "hero", "id": "sweep.%d" % index, "icon": null,
+			"text": "S%d" % index, "enabled": true, "label": "Sweep %d" % index,
+			"tooltip": "", "slot": 14 + index,
+		})
+	hud.sync_radial_commands(Vector2(900.0, 400.0), entries)
+	# OWNER 2026-08-26: the palantir seats at most its SIX glass sockets; a
+	# back-less ten-entry page shows exactly six, and each visible button
+	# rides an authored socket centre — never the subMenu ring over the grass.
+	var seat_centers: Array = stage.command_seat_centers_dock(
+		hud.RETAIL_COMMAND_SLOT_SOURCE.size()
+	)
+	var panel_origin: Vector2 = hud.command_panel.position
+	var sweep_ok := true
+	var sweep_detail := ""
+	var swept := 0
+	for button_value in hud._radial_buttons:
+		var button := button_value as Button
+		if button == null or not button.visible:
+			continue
+		var centre: Vector2 = button.position + button.size * 0.5
+		var nearest := INF
+		for seat_value in seat_centers:
+			var seat_panel: Vector2 = panel_origin + (seat_value as Vector2) - Vector2(360.0, 0.0)
+			nearest = minf(nearest, centre.distance_to(seat_panel))
+		swept += 1
+		if nearest > 1.0:
+			sweep_ok = false
+			sweep_detail += "%s centre=%s nearest_seat=%.1f; " % [button.name, str(centre), nearest]
+	_check(
+		"every_visible_command_button_rides_an_authored_seat",
+		sweep_ok and swept == hud.RETAIL_COMMAND_SLOT_SOURCE.size(),
+		"swept=%d %s" % [swept, sweep_detail]
+	)
+	hud.hide_radial_commands()
+	# The queue chip column dodges every authored seat AND stays inside the
+	# panel; the seats moved +32.42/+24.38 dock px with the measured
+	# registration, so the old x=445 column would now sit under subMenu2.
+	var chip_clear := true
+	var chip_detail := ""
+	for chip_index in 5:
+		var chip_rect := Rect2(
+			(hud.RETAIL_QUEUE_CHIP_ORIGIN as Vector2)
+				+ Vector2(0.0, float(chip_index) * float(hud.RETAIL_QUEUE_CHIP_PITCH)),
+			hud.RETAIL_QUEUE_CHIP_SIZE as Vector2
+		)
+		if chip_rect.end.x > 520.0 or chip_rect.end.y > 360.0:
+			chip_clear = false
+			chip_detail += "chip%d %s leaves the panel; " % [chip_index, str(chip_rect)]
+		for seat_index in seat_centers.size():
+			var seat_rect := Rect2(
+				(seat_centers[seat_index] as Vector2) - Vector2(360.0, 0.0)
+					- (hud.RETAIL_COMMAND_SLOT_SIZE as Vector2) * 0.5,
+				hud.RETAIL_COMMAND_SLOT_SIZE as Vector2
+			)
+			if chip_rect.intersects(seat_rect):
+				chip_clear = false
+				chip_detail += "chip%d %s x seat%d %s; " % [
+					chip_index, str(chip_rect), seat_index, str(seat_rect)
+				]
+	_check("queue_chips_dodge_every_authored_seat", chip_clear, chip_detail)
 
 
 func _check_structure_portrait(hud) -> void:

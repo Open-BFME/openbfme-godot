@@ -222,7 +222,15 @@ func _on_side_button_pressed(kind: String) -> void:
 ## Shown only while the selection includes the builder; hidden otherwise. The
 ## visible alpha transition mirrors the documented fade-in/out timing.
 func set_builder_visible(builder_selected: bool) -> void:
-	if _shown == builder_selected and (visible == builder_selected):
+	# Early-return when the state already matches AND either the end state is
+	# applied or a fade tween is still driving it there. The old
+	# `visible == builder_selected`-only guard re-entered on every per-frame
+	# refresh during the 0.33 s fade-out, killing and restarting the tween each
+	# frame: alpha decayed asymptotically but the completion callback never
+	# fired, so the bar stayed `visible = true` (and its buttons clickable)
+	# forever at near-zero alpha.
+	if _shown == builder_selected \
+			and (visible == builder_selected or (_tween != null and _tween.is_valid())):
 		return
 	if OS.get_environment("OPENBFME_UI_PROBE") == "1":
 		print("[sidebar] set_builder_visible ", builder_selected, " (was shown=", _shown, " visible=", visible, " alpha=", modulate.a, ")")
