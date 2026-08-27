@@ -1140,17 +1140,29 @@ func _check_measured_seat_parity_and_containment(hud) -> void:
 	# and palantirmainglass over the RADAR. The subglass tucks ~8px under the
 	# radar ring's art on its left, exactly as retail composites it — the
 	# 2026-08-26 "globe clears the radar" pin was wrong and is retired.
-	var opening_position: Vector2 = (
+	# The dish art is INSET inside the authored subglass rect so the six
+	# authored socket cups stay visible around it, exactly as retail's own
+	# fortress capture shows (owner round 10). Pinned: centred on the
+	# authored glass (minus the measured leftward nudge off the socket arc)
+	# and strictly SMALLER than that glass.
+	var glass_centre: Vector2 = (
 		(hud.RETAIL_DISH_SUBGLASS_CENTER as Vector2) - Vector2(360, 0)
-		- (hud.RETAIL_DISH_SUBGLASS_HALF_EXTENTS as Vector2)
 	)
+	var art_centre: Vector2 = (
+		hud.selection_portrait.position + hud.selection_portrait.size * 0.5
+	)
+	var glass_size: Vector2 = (hud.RETAIL_DISH_SUBGLASS_HALF_EXTENTS as Vector2) * 2.0
 	_check(
-		"dish_portrait_fills_the_authored_subglass",
-		hud.selection_portrait.position.is_equal_approx(opening_position)
-			and hud.selection_portrait.size.is_equal_approx(
-				(hud.RETAIL_DISH_SUBGLASS_HALF_EXTENTS as Vector2) * 2.0
-			),
-		"pos=%s size=%s" % [str(hud.selection_portrait.position), str(hud.selection_portrait.size)]
+		"dish_art_is_inset_inside_the_authored_subglass",
+		hud.selection_portrait.size.x < glass_size.x
+			and hud.selection_portrait.size.y < glass_size.y
+			and absf(art_centre.y - glass_centre.y) < 1.0
+			and art_centre.x < glass_centre.x
+			and absf(art_centre.x - glass_centre.x) < 24.0,
+		"pos=%s size=%s glass=%s" % [
+			str(hud.selection_portrait.position), str(hud.selection_portrait.size),
+			str(glass_size)
+		]
 	)
 	_check(
 		"radar_paper_and_glass_are_the_authored_placements",

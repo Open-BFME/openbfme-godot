@@ -4800,11 +4800,17 @@ func _layout_selection_portrait() -> void:
 	selection_portrait.size_flags_horizontal = 0
 	selection_portrait.size_flags_vertical = 0
 	selection_portrait.custom_minimum_size = Vector2.ZERO
-	# The portrait fills the authored SUBGLASS rect - the movie's own dish
-	# glass placement (see the const block).
-	var dish_panel_center := RETAIL_DISH_SUBGLASS_CENTER - Vector2(360, 0)
-	selection_portrait.position = dish_panel_center - RETAIL_DISH_SUBGLASS_HALF_EXTENTS
-	selection_portrait.size = RETAIL_DISH_SUBGLASS_HALF_EXTENTS * 2.0
+	# INSET inside the authored subglass rect. MEASURED (reference
+	# game.dat_1BPoQ6ZkR0.jpg): retail's dish art sits clear of the socket
+	# arc - the six cups stay visible around it - while a rect-filling
+	# portrait buried them (owner round 10 "some ui elements are missing").
+	# 0.80 of the authored glass, nudged left off the right-hand arc.
+	var dish_panel_center := (
+		RETAIL_DISH_SUBGLASS_CENTER - Vector2(360, 0) - Vector2(14.0, 0.0)
+	)
+	var dish_art_extents := RETAIL_DISH_SUBGLASS_HALF_EXTENTS * 0.80
+	selection_portrait.position = dish_panel_center - dish_art_extents
+	selection_portrait.size = dish_art_extents * 2.0
 	selection_portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	selection_portrait.stretch_mode = TextureRect.STRETCH_SCALE
 
@@ -5196,7 +5202,7 @@ func _sync_world_radial(anchor: Vector2, entries: Array) -> void:
 		button.disabled = twin.disabled
 		button.modulate = twin.modulate
 		button.tooltip_text = twin.tooltip_text
-		button.add_theme_constant_override("icon_max_width", int(size * 0.92))
+		button.add_theme_constant_override("icon_max_width", int(size * 0.82))
 		for state in ["normal", "hover", "pressed", "disabled", "focus"]:
 			var box := twin.get_theme_stylebox(state)
 			if box != null:
@@ -5271,10 +5277,11 @@ func sync_radial_commands(anchor: Vector2, entries: Array) -> void:
 			button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 			button.icon = entry.get("icon") as Texture2D
 			button.expand_icon = true
-			# Owner round 6: "the pics dont quite fill the bubbles" — the
-			# portrait fills the authored glass socket, the ring art overlaps
-			# its edge, exactly like retail's rim-clipped portraits.
-			button.add_theme_constant_override("icon_max_width", 60)
+			# 52, not 60: at 60 on a 64px seat the icon covered the authored
+			# black cup and its gold rim, which read as a pale disc behind
+			# every command (owner round 10). 52 keeps the cup visible and
+			# still fills more of the bubble than the original 48.
+			button.add_theme_constant_override("icon_max_width", 52)
 			button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			button.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 			if button.icon == null and String(entry.get("text", "")) != "":
@@ -5290,10 +5297,13 @@ func sync_radial_commands(anchor: Vector2, entries: Array) -> void:
 			# when these buttons exist). Authored art first (abilitybuttonframe,
 			# the piece the movie places on the dish sockets); the measured
 			# palantir crop stays the named fallback.
+			# NOT abilitybuttonframe: that piece is the WHOLE six-ring column
+			# (130x200, one image), already drawn once at its authored rect by
+			# the CommandButtons top-layer rows. Stretching it into each 64px
+			# button is what produced the pale discs behind the icons (owner
+			# round 10). Per-button art stays the single authored socket crop.
 			var ring_texture: Texture2D = null
-			if retail_apt_runtime != null:
-				ring_texture = retail_apt_runtime.atlas_piece_texture("abilitybuttonframe.tga")
-			if ring_texture == null and _retail_palantir_atlas != null:
+			if _retail_palantir_atlas != null:
 				ring_texture = _atlas_region(_retail_palantir_atlas, RETAIL_EMPTY_SOCKET_REGION)
 			if ring_texture != null:
 				var socket_box := StyleBoxTexture.new()
