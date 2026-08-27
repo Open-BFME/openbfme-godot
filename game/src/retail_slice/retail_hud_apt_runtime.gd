@@ -580,7 +580,15 @@ var _stage_piece_draws: Array[Dictionary] = []
 ## (owner round 7). `_top_layer` re-draws them above it.
 var _stage_piece_top_draws: Array[Dictionary] = []
 var _top_layer: Control = null
-const STAGE_PIECE_TOP_PIECES := ["palantirframe", "palantirspectralhighlight"]
+## Authored depth order says the dish CONTENT (CommandUI portrait, depth 17)
+## sits UNDER the socket ring (CommandButtons, depth 44), the metal (42) and
+## the glass (116). Our portrait is a Godot control at z 4, so every one of
+## those authored pieces must ride the top layer or the portrait hides them —
+## that is why the six black sockets vanished from the dish rim when a
+## fortress was selected (owner round 9 vs reference/game.dat_1BPoQ6ZkR0.jpg).
+const STAGE_PIECE_TOP_PIECES := [
+	"palantirframe", "palantirspectralhighlight", "commandbuttons",
+]
 var _stage_piece_count := 0
 var _stage_piece_state_count := 0
 ## EVERY authored state's draw rows, counted for the summary cross-check.
