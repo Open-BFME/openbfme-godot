@@ -347,11 +347,26 @@ func _check_radar_is_a_complete_disc(hud) -> void:
 		not hud.minimap.has_method("_draw_shroud"),
 		"the opaque-black shroud layer over the parchment was removed; blip gating stays"
 	)
-	_check(
-		"radar_disc_geometry_closes_the_full_circle",
-		hud.minimap._radar_disc().size() == hud.minimap.RADAR_DISC_SEGMENTS,
-		str(hud.minimap._radar_disc().size())
-	)
+	# 2026-08-26: the interior clips to the AUTHORED opening polygon supplied
+	# by the HUD (48 rays alpha-scanned from the frame sheet — the ring's void
+	# is lopsided, not a circle; clipping to a circle cut see-through grass
+	# crescents). A legacy caller with no polygon keeps the 72-segment circle.
+	var authored_opening: PackedVector2Array = hud.minimap.bezel_opening_polygon
+	if authored_opening.is_empty():
+		_check(
+			"radar_disc_geometry_closes_the_full_circle",
+			hud.minimap._radar_disc().size() == hud.minimap.RADAR_DISC_SEGMENTS,
+			str(hud.minimap._radar_disc().size())
+		)
+	else:
+		_check(
+			"radar_disc_is_the_authored_opening_polygon",
+			hud.minimap._radar_disc() == authored_opening
+				and authored_opening.size() == hud.RETAIL_RADAR_OPENING_OFFSETS.size(),
+			"disc=%d authored=%d" % [
+				hud.minimap._radar_disc().size(), authored_opening.size()
+			]
+		)
 
 
 ## Q39: a selected structure gets its command set as a WORLD-SPACE ring around

@@ -136,6 +136,14 @@ const VIEW_BOX_FALLBACK_GOLD := Color(Color8(252, 215, 91), 0.9)
 const BEZEL_RADIUS_RATIO := 0.4475
 const RADAR_DISC_SEGMENTS := 72
 
+## THE AUTHORED opening, set by `retail_hud.gd` as node-local points
+## alpha-scanned from the frame sheet itself (RETAIL_RADAR_OPENING_OFFSETS —
+## the ring's void is not a centred circle OR ellipse: wider left, flat where
+## the authored resource band crosses it). Empty means the legacy measured
+## circle, whose clipping cut see-through grass crescents into the ring's
+## wider sides (owner 2026-08-26: "gaps on the inside radar").
+var bezel_opening_polygon := PackedVector2Array()
+
 var simulation: RefCounted
 ## The local player's shroud, or null for a fog-off match / a legacy caller.
 var shroud_overlay: RefCounted = null
@@ -486,14 +494,28 @@ func bezel_radius() -> float:
 	return minf(size.x, size.y) * BEZEL_RADIUS_RATIO
 
 
+func bezel_extents() -> Vector2:
+	## The opening's half-extents: the scanned polygon's reach from the node
+	## centre when the HUD supplied it, else the legacy measured circle.
+	if bezel_opening_polygon.is_empty():
+		return Vector2(bezel_radius(), bezel_radius())
+	var center := Rect2(Vector2.ZERO, size).get_center()
+	var extents := Vector2.ZERO
+	for point in bezel_opening_polygon:
+		extents = extents.max((point - center).abs())
+	return extents
+
+
 func _paper_square() -> Rect2:
 	## Where retail's parchment bitmap lands. NOT the square that circumscribes
 	## the opening: the sheet is drawn `RETAIL_PARCHMENT_DISC_SCALE` wider than
-	## the bezel radius and the ring crops its authored rim shadow, which is what
-	## the retail capture measures. See the constant.
-	var radius := bezel_radius() * RETAIL_PARCHMENT_DISC_SCALE
+	## the bezel opening and the ring crops its authored rim shadow, which is
+	## what the retail capture measures. See the constant. Per-axis, so the
+	## parchment fills the authored opening rather than leaving see-through
+	## crescents at its wide sides.
+	var extents := bezel_extents() * RETAIL_PARCHMENT_DISC_SCALE
 	var center := Rect2(Vector2.ZERO, size).get_center()
-	return Rect2(center - Vector2(radius, radius), Vector2(radius, radius) * 2.0)
+	return Rect2(center - extents, extents * 2.0)
 
 
 func ink_sheet(arena: Rect2) -> Rect2:
@@ -511,6 +533,8 @@ func _radar_disc() -> PackedVector2Array:
 	## left/right edges inside the oval) so everything outside this disc has to
 	## be cut, or the map's corners hang over the frame - which is exactly how
 	## the photographic preview used to spill past the ring.
+	if not bezel_opening_polygon.is_empty():
+		return bezel_opening_polygon
 	var rect := Rect2(Vector2.ZERO, size)
 	var center := rect.get_center()
 	var radius := bezel_radius()
@@ -529,7 +553,9 @@ func _draw() -> void:
 	# Retail's bezel interior is opaque dark glass, not a hole: the ring atlas
 	# ships a transparent middle, so the battlefield would otherwise show through
 	# the ring around the paper. Measured off the capture at (58,42,21).
-	draw_colored_polygon(disc, BEZEL_GLASS)
+	var glass := _sanitized_radar_polygon(disc)
+	if not glass.is_empty():
+		draw_colored_polygon(glass, BEZEL_GLASS)
 	# RETAIL'S OWN PARCHMENT, straight out of the palantir atlas. It carries its
 	# lit centre AND its rim falloff, so there are no synthetic vignette arcs
 	# over it any more - the darkening at the metal is authored.
@@ -545,7 +571,9 @@ func _draw() -> void:
 		# edge runs a couple of percent past its own opaque disc, which at the
 		# bezel's scale put a faint ring of paper OUTSIDE the ring opening.
 		for piece in Geometry2D.intersect_polygons(paper_quad, disc):
-			var polygon: PackedVector2Array = piece
+			var polygon := _sanitized_radar_polygon(piece)
+			if polygon.is_empty():
+				continue  # clip sliver: the concave authored opening yields some
 			var paper_uvs := PackedVector2Array()
 			for point in polygon:
 				paper_uvs.append((point - paper.position) / paper.size)
@@ -567,7 +595,9 @@ func _draw() -> void:
 			Vector2(sheet.position.x, sheet.end.y),
 		])
 		for piece in Geometry2D.intersect_polygons(ink_quad, disc):
-			var polygon: PackedVector2Array = piece
+			var polygon := _sanitized_radar_polygon(piece)
+			if polygon.is_empty():
+				continue  # clip sliver against the concave authored opening
 			var uvs := PackedVector2Array()
 			for point in polygon:
 				uvs.append((point - sheet.position) / sheet.size)
@@ -808,7 +838,7 @@ func _draw_camera_footprint(arena: Rect2, disc: PackedVector2Array) -> void:
 			projected.append(_radar_to_canvas(point, arena))
 		if projected.size() == 4:
 			_draw_footprint_outline(projected, disc)
-			if center.distance_to(Rect2(Vector2.ZERO, size).get_center()) <= bezel_radius():
+			if Geometry2D.is_point_in_polygon(center, disc):
 				draw_circle(center, 1.8, Color("f0d47c"))
 			return
 	var visible_bounds := _visible_bounds()

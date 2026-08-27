@@ -159,6 +159,29 @@ const RETAIL_RADAR_CENTER := Vector2(243.4688, 180.2109)
 # horizontal distance 115.85 does not agree, so the shipping radar keeps the
 # capture-measured 181 px rather than inventing one of the two.
 const RETAIL_RADAR_RADIUS := 181.0
+# AUTHORED-SHEET GEOMETRY, alpha-scanned (2026-08-26, same technique as the
+# dish backing): 48 rays from the radar centre (sheet (129.85, 128.15)) across
+# `apt-palantirexport-17` to the first opaque ring pixel, pulled in half a
+# sheet pixel and mapped through the 1.875 x 1.40625 sheet->dock transform.
+# The opening is NOT a centred ellipse: wider on the left, flat-bottomed where
+# the authored resource band crosses it, apex ~128px above centre. Clipping
+# the radar interior to a 181px CIRCLE inside this void is what cut the
+# see-through grass crescents (owner 2026-08-26: "gaps on the inside radar").
+# Offsets are dock px relative to RETAIL_RADAR_CENTER, CCW from screen-right.
+const RETAIL_RADAR_OPENING_OFFSETS: Array[Vector2] = [
+	Vector2(166.4, 0.0), Vector2(162.7, 16.1), Vector2(157.1, 31.6), Vector2(151.6, 47.1),
+	Vector2(138.4, 59.9), Vector2(130.9, 75.3), Vector2(111.7, 83.8), Vector2(100.2, 97.9),
+	Vector2(77.3, 100.5), Vector2(55.6, 100.7), Vector2(35.9, 100.5), Vector2(17.6, 100.4),
+	Vector2(0.0, 100.5), Vector2(-17.6, 100.4), Vector2(-35.9, 100.5), Vector2(-55.6, 100.7),
+	Vector2(-77.3, 100.5), Vector2(-102.4, 100.1), Vector2(-119.3, 89.5), Vector2(-133.5, 76.8),
+	Vector2(-147.4, 63.8), Vector2(-156.8, 48.7), Vector2(-163.9, 32.9), Vector2(-169.6, 16.7),
+	Vector2(-171.6, 0.0), Vector2(-169.6, -16.7), Vector2(-163.9, -32.9), Vector2(-158.5, -49.2),
+	Vector2(-147.4, -63.8), Vector2(-136.1, -78.3), Vector2(-121.0, -90.7), Vector2(-104.2, -101.8),
+	Vector2(-85.3, -110.8), Vector2(-65.1, -117.9), Vector2(-44.2, -123.6), Vector2(-22.1, -126.2),
+	Vector2(-0.0, -127.6), Vector2(22.1, -126.2), Vector2(43.6, -121.9), Vector2(64.4, -116.6),
+	Vector2(84.1, -109.3), Vector2(101.9, -99.6), Vector2(118.0, -88.5), Vector2(131.6, -75.8),
+	Vector2(142.9, -61.9), Vector2(153.3, -47.6), Vector2(158.9, -31.9), Vector2(162.7, -16.1),
+]
 const RETAIL_DISH_CENTER := Vector2(525.375, 209.3906)
 # DERIVED: the radar globe and the command dish are the SAME character placed
 # twice - scale 1.3114 and (0.6401, 0.6907) respectively - so the dish is
@@ -2631,15 +2654,19 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 		_retail_palantir_atlas = retail_apt_runtime.exact_atlas_texture(RETAIL_PALANTIR_ATLAS)
 		if _retail_palantir_atlas == null:
 			return "Private retail HUD APT did not expose the Palantir UI atlas."
+		# THE DISH GLASS IS `palantirmainglass` — retail's own sprite, found by
+		# the authored sheet split (libInGameImagesMain image 7; the owner
+		# pointed at these sheets 2026-08-26). When the mounted pack ships the
+		# split, the backing ellipse draws that art stretched over the dish
+		# opening; a pre-split pack keeps the flat dish-glass colour as the
+		# named stand-in. The ellipse's click shield is identical either way.
+		var dish_glass := retail_apt_runtime.atlas_piece_texture("palantirmainglass")
 		var frame_pieces: Array[Dictionary] = []
 		for piece_value in RETAIL_FRAME_PIECES:
-			# The dish backing ellipse STAYS even now that stage pieces ship:
-			# the piece that owns the idle dish interior is `EmptyGlobe`, and
-			# it is a NAMED receipt (its `ElvenEffect` sprite never places
-			# anything — retail's engine composites the glass at runtime). The
-			# ellipse retires the day that art exists, not before; without it
-			# the idle dish showed grass again (probe capture 2026-08-26).
-			frame_pieces.append((piece_value as Dictionary).duplicate())
+			var frame_piece := (piece_value as Dictionary).duplicate()
+			if String(frame_piece.get("kind", "")) == "disc" and dish_glass != null:
+				frame_piece["texture"] = dish_glass
+			frame_pieces.append(frame_piece)
 		retail_control_bar_bound = retail_control_bar_frame.bind_retail_composition(
 			frame_texture,
 			"PalantirFrame_GoodDouble",
@@ -3403,11 +3430,15 @@ func _build_palantir() -> void:
 	dock.add_child(synthetic_palantir_frame)
 	minimap = MinimapScript.new()
 	minimap.name = "PalantirRadar"
-	# Radar interior circle measured from the retail reference capture:
-	# center (225, 198), radius 181 in the 1080p dock.
+	# The node stays the measured square (it anchors input and every legacy
+	# layout constant); the INTERIOR clips to the authored elliptical opening.
 	minimap.position = RETAIL_RADAR_CENTER - Vector2(RETAIL_RADAR_RADIUS, RETAIL_RADAR_RADIUS)
 	minimap.size = Vector2(RETAIL_RADAR_RADIUS, RETAIL_RADAR_RADIUS) * 2.0
 	minimap.custom_minimum_size = minimap.size
+	var opening := PackedVector2Array()
+	for offset in RETAIL_RADAR_OPENING_OFFSETS:
+		opening.append(minimap.size * 0.5 + offset)
+	minimap.bezel_opening_polygon = opening
 	minimap.mouse_filter = Control.MOUSE_FILTER_STOP
 	dock.add_child(minimap)
 	_build_orb_buttons(dock)

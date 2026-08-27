@@ -133,11 +133,25 @@ func _draw() -> void:
 				# "half_extents" is an ELLIPSE: the authored opening is a circle
 				# in sheet/stage space and the stage transform is non-uniform
 				# (1.875 x 1.40625), so its dock-space footprint is not round.
+				# A piece carrying "texture" draws retail's OWN glass sprite
+				# (palantirmainglass, from the authored sheet split) stretched
+				# over the opening instead of the flat stand-in colour.
 				if piece.has("half_extents"):
 					var half_extents := piece["half_extents"] as Vector2
 					draw_set_transform(piece["center"] as Vector2, 0.0, half_extents)
 					draw_circle(Vector2.ZERO, 1.0, piece["color"] as Color)
 					draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+					# The authored glass is SEMI-TRANSPARENT (retail layers it
+					# over the dark swirl render), so it draws OVER the dark
+					# backing, never instead of it.
+					var glass_texture := piece.get("texture") as Texture2D
+					if glass_texture != null:
+						var glass_center := piece["center"] as Vector2
+						draw_texture_rect(
+							glass_texture,
+							Rect2(glass_center - half_extents, half_extents * 2.0),
+							false
+						)
 				else:
 					draw_circle(piece["center"] as Vector2, float(piece["radius"]), piece["color"] as Color)
 			elif kind == "dish_ring" and _masked_textures.has(index):

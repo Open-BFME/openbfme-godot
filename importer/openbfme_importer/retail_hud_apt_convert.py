@@ -124,7 +124,9 @@ PRODUCTION_DRAW_COUNT = 28
 # nondefault Palantir selector and generic timeline-playback blockers remain.
 PRODUCTION_BLOCKER_COUNT = 19
 PRODUCTION_SOURCE_COUNT = 261
-PRODUCTION_OUTPUT_COUNT = 26
+# 24 atlases + contract + font, plus the 157 authored per-image piece crops
+# (atlasPieces — the sheet split by UV footprint, 2026-08-26).
+PRODUCTION_OUTPUT_COUNT = 183
 
 PRODUCTION_MEN_FORDS_RETAIL_INI_SHA256 = {
     "data/ini/commandset.ini": "3d57ff841b93428ce2118d4bff1871684003bb9eacd8d48865f03ce23e4c5300",
@@ -3778,6 +3780,123 @@ def _stage_pieces_contract(
     return pieces
 
 
+def _atlas_piece_manifest(movies: Mapping[str, _Movie]) -> list[dict[str, Any]]:
+    """One row per authored IMAGE of the palantir movie family.
+
+    The shipped atlases are packed sprite sheets; nothing about their layout
+    is guessed here.  Every textured geometry group maps its shape into ATLAS
+    PIXELS through the authored UV affine, so the union of those pixel bounds
+    per image id is that image's authored footprint on its sheet — the exact
+    split the owner asked for ("each icon or asset gets its own thing"),
+    read from the movie's own tables rather than classified visually.
+
+    Names come from the movies' export symbols: an exported shape names its
+    geometry's images; an exported sprite names the images of the shapes its
+    first populated frame places (one level deep — deeper nesting keeps the
+    movie/imageId identity, which is still exact).  The cropped PNG path is
+    rect-derived so the contract stays deterministic before pixels exist;
+    ``convert_hud_apt_bundle`` writes the crop and stamps its sha256.
+    """
+
+    rows: list[dict[str, Any]] = []
+    for movie_key in sorted(movies):
+        movie = movies[movie_key]
+        # authored pixel bounds per image id, plus the geometry ids that use it
+        bounds: dict[int, list[float]] = {}
+        atlas_by_image: dict[int, Mapping[str, Any]] = {}
+        geometry_images: dict[int, set[int]] = {}
+        for geometry_id, groups in movie.geometry.items():
+            for group in groups:
+                if str(group["style"]) != "tc":
+                    continue
+                values = [float(value) for value in group["values"]]
+                image_id = int(values[4])
+                texture_id = movie.image_map.get(image_id)
+                atlas = (
+                    movie.atlases.get(texture_id)
+                    if texture_id is not None
+                    else None
+                )
+                if atlas is None:
+                    continue  # already a texture-assignment-unresolved receipt
+                uv_matrix = values[5:9]
+                uv_translation = values[9:11]
+                box = bounds.setdefault(
+                    image_id, [float("inf"), float("inf"), float("-inf"), float("-inf")]
+                )
+                atlas_by_image[image_id] = atlas
+                geometry_images.setdefault(int(geometry_id), set()).add(image_id)
+                for primitive in group["primitives"]:
+                    for point in primitive:
+                        x, y = float(point[0]), float(point[1])
+                        u = x * uv_matrix[0] + y * uv_matrix[2] + uv_translation[0]
+                        v = x * uv_matrix[1] + y * uv_matrix[3] + uv_translation[1]
+                        box[0] = min(box[0], u)
+                        box[1] = min(box[1], v)
+                        box[2] = max(box[2], u)
+                        box[3] = max(box[3], v)
+        # export symbols -> image ids, shallowly through shapes and sprites
+        names: dict[int, set[str]] = {}
+
+        def _name_shape(character: Mapping[str, Any], symbol: str) -> None:
+            for named_image in geometry_images.get(
+                int(character.get("geometryId", -1)), ()
+            ):
+                names.setdefault(named_image, set()).add(symbol)
+
+        for symbol, character_ids in movie.exports.items():
+            for character_id in character_ids:
+                if not 0 <= int(character_id) < len(movie.characters):
+                    continue
+                character = movie.characters[int(character_id)]
+                kind = str(character.get("kind", ""))
+                if kind == "shape":
+                    _name_shape(character, str(symbol))
+                elif kind == "sprite":
+                    for frame in character.get("frames", []):
+                        placed = [
+                            row
+                            for row in frame
+                            if row.get("kind") == "place-object"
+                        ]
+                        if not placed:
+                            continue
+                        for row in placed:
+                            child_id = int(row.get("characterId", -1))
+                            if 0 <= child_id < len(movie.characters):
+                                child = movie.characters[child_id]
+                                if str(child.get("kind", "")) == "shape":
+                                    _name_shape(child, str(symbol))
+                        break
+        slug = re.sub(r"[^a-z0-9]+", "", movie.name.casefold())
+        for image_id in sorted(bounds):
+            box = bounds[image_id]
+            atlas = atlas_by_image[image_id]
+            width = int(atlas["width"])
+            height = int(atlas["height"])
+            x0 = max(0, math.floor(box[0]))
+            y0 = max(0, math.floor(box[1]))
+            x1 = min(width, math.ceil(box[2]))
+            y1 = min(height, math.ceil(box[3]))
+            if x1 <= x0 or y1 <= y0:
+                continue
+            rows.append(
+                {
+                    "movie": movie.name,
+                    "imageId": image_id,
+                    "atlas": str(atlas["cookedPng"]),
+                    "atlasSha256": str(atlas["sha256"]),
+                    "rect": [x0, y0, x1 - x0, y1 - y0],
+                    "names": sorted(names.get(image_id, ())),
+                    "croppedPng": (
+                        "assets/ui/palantir/pieces/"
+                        f"apt-{slug}-i{image_id}-{x0}x{y0}-{x1 - x0}x{y1 - y0}.png"
+                    ),
+                }
+            )
+    return rows
+
+
 class _Flattener:
     def __init__(
         self,
@@ -5664,6 +5783,7 @@ def _make_contract(
     stage_piece_states = [
         state for piece in stage_pieces for state in piece["states"]
     ]
+    atlas_pieces = _atlas_piece_manifest(movies)
     contract: dict[str, Any] = {
         "schema": OUTPUT_SCHEMA,
         "schemaVersion": 0,
@@ -5736,6 +5856,7 @@ def _make_contract(
             "flaggedNullClipActionPointers": flagged_null_records,
         },
         "atlases": atlas_paths,
+        "atlasPieces": atlas_pieces,
         "draws": flattener.draws,
         "stagePieces": stage_pieces,
         "timelines": timelines,
@@ -5828,6 +5949,10 @@ def _make_contract(
                 len(piece["receipts"]) for piece in stage_pieces
             )
             + sum(len(state["receipts"]) for state in stage_piece_states),
+            "atlasPieceCount": len(atlas_pieces),
+            "atlasPieceNamedCount": sum(
+                bool(piece["names"]) for piece in atlas_pieces
+            ),
             "staticSubsetReady": bool(flattener.draws),
             "parityReady": not blockers and bool(flattener.draws),
         },
@@ -6199,6 +6324,21 @@ def convert_hud_apt_bundle(
             opened.convert("RGBA").save(
                 target, format="PNG", compress_level=9, optimize=False
             )
+        outputs.append(target)
+    for piece in contract.get("atlasPieces", []):
+        # The authored per-image split: one PNG per image, cropped to the
+        # movie's own UV footprint on its sheet (owner 2026-08-26: "each icon
+        # or asset gets its own thing"). The crop's content hash is stamped
+        # into the contract row it came from.
+        atlas_source = output / Path(*str(piece["atlas"]).split("/"))
+        target = output / Path(*str(piece["croppedPng"]).split("/"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        x, y, w, h = (int(value) for value in piece["rect"])
+        with Image.open(atlas_source) as opened:
+            opened.convert("RGBA").crop((x, y, x + w, y + h)).save(
+                target, format="PNG", compress_level=9, optimize=False
+            )
+        piece["sha256"] = _sha(target.read_bytes())
         outputs.append(target)
     for binding in font_bindings:
         target = output / Path(*str(binding["cookedFont"]).split("/"))

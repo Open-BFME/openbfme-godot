@@ -56,11 +56,12 @@ $publishRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot "workspace\content-pa
 # / 5496 authored draws); active pack pin also corrected to the selection the
 # 85b79817 sha actually hashed (rotwk-men 3087b869, Q83c) - the previous
 # activePack line still named 13e31f6b and disagreed with its own sha.
-$expectedSelectionSha256 = "56f556cf2319cb443bba85fb50d30e9661ae642a577bd1b4879138a628a16c3c"
+$expectedSelectionSha256 = "3eeb86046df6463772901e7cd4991038da3e21e026d4ecded37ac2b57c89d6ed"
 $expectedSelectionActivePack = "rotwk-men-vslice/3087b869a7e8b5183f32b0de75137c5c4ac43e7be676ae1fe2ac0eb22c55b0f6"
-# RE-MEASURED 2026-08-26 (same recook)
+# RE-MEASURED 2026-08-26 atlas-piece split (bfme2-men 5a294cd3 -> 2c12c480:
+# 157 authored per-image piece crops + atlasPieces contract section)
 $expectedSelectionSupplementalPacks = @(
-    "bfme2-men-vslice/5a294cd3691d9151ca88eaa2a4ff3847920ee6bf400b60e1e74dc7b47dfa4b8b",
+    "bfme2-men-vslice/2c12c480b258c11fcb2c96504667e564749f7a6d955969c986541101748066ac",
     "bfme2-skirmish-maps-private/f9c14cfa4c25e68509373390741fc82e5892f050a2305a19fa3efaca0f39a5b0",
     "rotwk-elves-vslice/8ae6efd5d211730e6c0f1104fe2330e31b025b228409c0a8410f37bf0b669423",
     "rotwk-dwarves-vslice/7693e95218127805a28bff2d5a1bcb09724621d033c086ab0feb801507b7c08b",

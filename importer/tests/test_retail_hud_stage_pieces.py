@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 from openbfme_importer.retail_hud_apt_convert import (
     _Transform,
+    _atlas_piece_manifest,
     _compose_authored,
     _geometry_primitives,
     _stage_pieces_contract,
@@ -383,6 +384,67 @@ def test_button_without_up_state_is_a_named_receipt() -> None:
     assert [receipt["code"] for receipt in state["receipts"]] == [
         "button-has-no-up-state-art"
     ]
+
+
+def test_atlas_piece_manifest_splits_by_authored_uv_footprint() -> None:
+    """Each image's crop rect is the union of its authored UV pixel bounds —
+    the sheet split comes from the movie's own tables, never from visual
+    classification (owner 2026-08-26). An export symbol that resolves to a
+    shape (or a sprite placing one) names the images that shape draws."""
+
+    geometry = {
+        7: [
+            {
+                "style": "tc",
+                # identity UV affine: shape-local points ARE atlas pixels
+                "values": [255.0] * 4 + [3.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+                "primitives": [
+                    [(10.0, 20.0), (10.0, 52.0), (42.0, 52.0)],
+                    [(42.0, 20.0), (10.0, 20.0), (42.0, 52.0)],
+                ],
+            }
+        ],
+        9: [
+            {
+                "style": "tc",
+                "values": [255.0] * 4 + [6.0, 1.0, 0.0, 0.0, 1.0, 100.0, 60.0],
+                "primitives": [[(0.0, 0.0), (0.0, 8.0), (8.0, 8.0)]],
+            }
+        ],
+    }
+    characters = [
+        {"kind": "null"},
+        {"kind": "shape", "characterId": 1, "geometryId": 7},
+        {
+            "kind": "sprite",
+            "characterId": 2,
+            "frames": [[_place(1, 1, offset=100)]],
+        },
+        {"kind": "shape", "characterId": 3, "geometryId": 9},
+    ]
+    movie = _movie(
+        "Palantir",
+        characters,
+        [[]],
+        geometry=geometry,
+        image_map={3: 9, 6: 9},
+        atlases=_ATLASES,
+        exports={"palantirmainglass": [2]},
+    )
+    pieces = _atlas_piece_manifest({"palantir": movie})
+    assert [piece["imageId"] for piece in pieces] == [3, 6]
+    named, unnamed = pieces
+    # image 3: union of both triangles, named through the exported sprite's
+    # placed shape.
+    assert named["rect"] == [10, 20, 32, 32]
+    assert named["names"] == ["palantirmainglass"]
+    assert named["croppedPng"] == (
+        "assets/ui/palantir/pieces/apt-palantir-i3-10x20-32x32.png"
+    )
+    assert named["atlas"].endswith("apt-palantir-9-abcdefabcdef.png")
+    # image 6: the UV translation offsets the footprint; nothing exports it.
+    assert unnamed["rect"] == [100, 60, 8, 8]
+    assert unnamed["names"] == []
 
 
 def test_compose_authored_transforms_child_translation() -> None:

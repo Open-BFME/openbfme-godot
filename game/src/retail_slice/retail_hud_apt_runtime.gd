@@ -579,6 +579,9 @@ var _stage_piece_state_count := 0
 ## `_stage_piece_draws` binds only the idle-chosen state per piece, so the
 ## contract's stagePieceDrawCount (all states) must be checked against this.
 var _stage_piece_total_draw_count := 0
+## Authored rows Godot's triangulator refuses (sub-pixel tween slivers) —
+## dropped at bind, never silently: this counter is the receipt.
+var _stage_piece_degenerate_draws := 0
 var _textures: Dictionary = {}
 var _action_scripts: Dictionary = {}
 var _clip_action_programs: Dictionary = {}
@@ -877,6 +880,7 @@ func _validate_contract(document: Dictionary, pack_root: String) -> bool:
 			return false
 	if not _validate_stage_pieces(document.get("stagePieces", []), pack_root):
 		return false
+	_index_atlas_pieces(document.get("atlasPieces"))
 	_display_items.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.displayOrder) < int(b.displayOrder))
 	var summary_value: Variant = document.get("summary", {})
 	if typeof(summary_value) != TYPE_DICTIONARY:
@@ -930,6 +934,53 @@ func _validate_contract(document: Dictionary, pack_root: String) -> bool:
 		return _fail("Palantir summary does not match its executable inventory")
 	draw_count = _draws.size()
 	return true
+
+
+## The authored per-image sheet split (`atlasPieces`): retail names its own
+## sprites (palantirmainglass, sidecommandbar01..12, spellframe01..06) and the
+## importer crops each to its authored UV footprint. Keyed by every authored
+## name; rows without names stay reachable by "<movie>:<imageId>".
+var _atlas_pieces_by_key: Dictionary = {}
+
+
+func _index_atlas_pieces(value: Variant) -> void:
+	_atlas_pieces_by_key.clear()
+	if typeof(value) != TYPE_ARRAY:
+		return
+	for row_value in value as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			continue
+		var row := row_value as Dictionary
+		_atlas_pieces_by_key["%s:%d" % [
+			String(row.get("movie", "")).to_lower(), int(row.get("imageId", -1))
+		]] = row
+		for name_value in row.get("names", []) as Array:
+			_atlas_pieces_by_key[String(name_value).to_lower()] = row
+
+
+func atlas_piece_texture(piece_name: String) -> Texture2D:
+	## The cropped authored sprite by its retail name (or "<movie>:<imageId>"),
+	## or null with no invention when the mounted pack predates the split.
+	var row_value: Variant = _atlas_pieces_by_key.get(piece_name.to_lower())
+	if typeof(row_value) != TYPE_DICTIONARY:
+		return null
+	var row := row_value as Dictionary
+	var relative := String(row.get("croppedPng", ""))
+	if relative == "" or not _is_sha256(String(row.get("sha256", ""))):
+		return null
+	var cached: Variant = _textures.get(relative)
+	if cached is Texture2D:
+		return cached
+	var mod_loader = get_node_or_null("/root/ModLoader")
+	if mod_loader == null:
+		return null
+	var path: String = mod_loader.resolve_pack_path(_configured_pack_root, relative)
+	if not _safe_file(_configured_pack_root, path, "png"):
+		return null
+	var texture := ASSET_FACTORY.load_texture_asset(path)
+	if texture != null:
+		_textures[relative] = texture
+	return texture
 
 
 func stage_piece_draws_bound() -> int:
@@ -4060,6 +4111,7 @@ func _validate_stage_pieces(value: Variant, pack_root: String) -> bool:
 	_stage_piece_count = 0
 	_stage_piece_state_count = 0
 	_stage_piece_total_draw_count = 0
+	_stage_piece_degenerate_draws = 0
 	if typeof(value) == TYPE_NIL:
 		return true
 	if typeof(value) != TYPE_ARRAY:
@@ -4116,6 +4168,14 @@ func _bind_stage_piece_draw(row: Dictionary, pack_root: String) -> bool:
 	var color := _color(row.get("color", []))
 	if points.size() != 3 or color.a < 0.0:
 		return _fail("Palantir stage piece geometry or color is invalid")
+	if _degenerate_triangle(points):
+		# Authored sub-pixel slivers (the side bar's flashEffects tween through
+		# near-collinear frames, all at tint alpha 0) — the rasterizer would
+		# refuse each with "Invalid polygon data" EVERY FRAME (36k log lines
+		# per capture run). They paint nothing in retail either; drop the row
+		# at bind, counted so the summary check stays honest.
+		_stage_piece_degenerate_draws += 1
+		return true
 	var normalized := row.duplicate(true)
 	normalized["pointsRuntime"] = points
 	normalized["colorRuntime"] = color
@@ -4156,6 +4216,11 @@ func _validate_draw(row: Dictionary, pack_root: String) -> bool:
 	var normalized := row.duplicate(true)
 	normalized["pointsRuntime"] = points
 	normalized["colorRuntime"] = color
+	# Sub-pixel tween slivers the rasterizer refuses ("Invalid polygon data",
+	# once per row per FRAME). The row stays bound — every summary count is
+	# pinned — but the draw pass skips it; retail rasterizes nothing there
+	# either. Flagged here once instead of asking the rasterizer per frame.
+	normalized["degenerateRuntime"] = _degenerate_triangle(points)
 	if kind == "textured-triangle":
 		var uvs := _vector2_array(row.get("uvs", []))
 		if uvs.size() != 3:
@@ -4252,7 +4317,22 @@ func _draw() -> void:
 		_draw_triangle_row(row, scale)
 
 
+static func _degenerate_triangle(points: PackedVector2Array) -> bool:
+	## True for triangles the float32 rasterizer cannot triangulate: anything
+	## under half a square pixel of area (the flashEffects tween slivers run
+	## 0.008..0.4 px²) or with a non-finite corner. Godot's own float64
+	## triangulate_polygon ACCEPTS some of these, so the area cut is the test
+	## that matches what canvas_item_add_polygon will actually do.
+	if points.size() != 3:
+		return true
+	if not (points[0].is_finite() and points[1].is_finite() and points[2].is_finite()):
+		return true
+	return absf((points[1] - points[0]).cross(points[2] - points[0])) < 1.0
+
+
 func _draw_triangle_row(row: Dictionary, scale: Vector2) -> void:
+	if bool(row.get("degenerateRuntime", false)):
+		return
 	var source_points := row.get("pointsRuntime", PackedVector2Array()) as PackedVector2Array
 	var points := PackedVector2Array()
 	for point in source_points:
@@ -4498,6 +4578,8 @@ func _reset() -> void:
 	_stage_piece_count = 0
 	_stage_piece_state_count = 0
 	_stage_piece_total_draw_count = 0
+	_stage_piece_degenerate_draws = 0
+	_atlas_pieces_by_key.clear()
 	_textures.clear()
 	_action_scripts.clear()
 	_clip_action_programs.clear()
