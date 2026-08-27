@@ -573,6 +573,14 @@ var diagnostics: Array[Dictionary] = []
 var _authored_resolution := Vector2(1024.0, 768.0)
 var _draws: Array[Dictionary] = []
 var _stage_piece_draws: Array[Dictionary] = []
+## Rows that must paint ABOVE the dish content (portrait, level plate, socket
+## icons): the authored metal frame (depth 42) and the glass pair (depth 116).
+## Retail composites those over the globe; drawn in this node's own _draw they
+## landed UNDER the HUD's portrait control and the portrait "cut over" the ring
+## (owner round 7). `_top_layer` re-draws them above it.
+var _stage_piece_top_draws: Array[Dictionary] = []
+var _top_layer: Control = null
+const STAGE_PIECE_TOP_PIECES := ["palantirframe", "palantirspectralhighlight"]
 var _stage_piece_count := 0
 var _stage_piece_state_count := 0
 ## EVERY authored state's draw rows, counted for the summary cross-check.
@@ -4187,6 +4195,11 @@ const STAGE_PIECE_IDLE_STATE := {
 	"radarbackground": "_show",
 	"radar": "_show",
 	"radarpings": "_show",
+	# NOTE: the `_single` / `_double` labels live on the NESTED `Buttons`
+	# child, not on this root, so the root table cannot select the three-orb
+	# family; the flatten took `_single` (two orbs, backing image 140). The
+	# HUD therefore paints the orbs itself from the authored `_double` ids
+	# (backing 181, seats below) and this root piece stays hidden.
 	"palantirbuttons": "_show",
 	"commandbuttons": "_show",
 	"movieplayback": "frame0",
@@ -4223,6 +4236,7 @@ func _validate_stage_pieces(value: Variant, pack_root: String) -> bool:
 	_stage_piece_state_count = 0
 	_stage_piece_total_draw_count = 0
 	_stage_piece_degenerate_draws = 0
+	_stage_piece_top_draws.clear()
 	if typeof(value) == TYPE_NIL:
 		return true
 	if typeof(value) != TYPE_ARRAY:
@@ -4297,6 +4311,7 @@ func _validate_stage_pieces(value: Variant, pack_root: String) -> bool:
 			continue
 		if STAGE_PIECE_IDLE_HIDDEN.has(idle_key) or chosen.is_empty():
 			continue
+		var to_top := STAGE_PIECE_TOP_PIECES.has(idle_key)
 		for draw_value in chosen.get("draws", []) as Array:
 			if typeof(draw_value) != TYPE_DICTIONARY:
 				return _fail("Palantir stage piece draw is invalid")
@@ -4309,12 +4324,12 @@ func _validate_stage_pieces(value: Variant, pack_root: String) -> bool:
 					break
 			if excluded:
 				continue
-			if not _bind_stage_piece_draw(row, pack_root):
+			if not _bind_stage_piece_draw(row, pack_root, to_top):
 				return false
 	return true
 
 
-func _bind_stage_piece_draw(row: Dictionary, pack_root: String) -> bool:
+func _bind_stage_piece_draw(row: Dictionary, pack_root: String, to_top: bool = false) -> bool:
 	var kind := String(row.get("kind", ""))
 	if not ["solid-triangle", "textured-triangle"].has(kind):
 		return _fail("Palantir stage piece draw kind is unsupported")
@@ -4369,9 +4384,12 @@ func _bind_stage_piece_draw(row: Dictionary, pack_root: String) -> bool:
 		_textures[relative] = texture
 		normalized["uvsRuntime"] = uvs
 		normalized["textureRuntime"] = texture
-	if _stage_piece_draws.size() >= MAX_DRAWS:
+	if _stage_piece_draws.size() + _stage_piece_top_draws.size() >= MAX_DRAWS:
 		return _fail("Palantir stage piece draw count exceeds bounds")
-	_stage_piece_draws.append(normalized)
+	if to_top:
+		_stage_piece_top_draws.append(normalized)
+	else:
+		_stage_piece_draws.append(normalized)
 	return true
 
 
@@ -4493,6 +4511,7 @@ func _draw() -> void:
 			_draw_triangle_row(row, scale)
 	for row in _stage_piece_draws:
 		_draw_triangle_row(row, scale)
+	_ensure_top_layer()
 	for row in _display_items:
 		if String(row.get("displayKind", "")) == "text":
 			_draw_live_text(row, scale)
@@ -4760,6 +4779,7 @@ func _reset() -> void:
 	_stage_piece_state_count = 0
 	_stage_piece_total_draw_count = 0
 	_stage_piece_degenerate_draws = 0
+	_stage_piece_top_draws.clear()
 	_atlas_pieces_by_key.clear()
 	_atlas_piece_rows.clear()
 	_textures.clear()
@@ -4822,3 +4842,58 @@ func _set_runtime_metadata() -> void:
 	set_meta("wnd_companion_ready", wnd_companion_ready)
 	set_meta("wnd_typed_callback_count", wnd_typed_callback_count)
 	set_meta("error", error)
+
+
+func _ensure_top_layer() -> void:
+	## The authored metal + glass, re-drawn ABOVE the HUD's dish content.
+	if _top_layer != null and is_instance_valid(_top_layer):
+		_top_layer.queue_redraw()
+		return
+	_top_layer = TopLayer.new()
+	_top_layer.name = "PalantirTopLayer"
+	_top_layer.owner_runtime = self
+	_top_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_top_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Above the command panel (4) and the hero bar (5); below the radial
+	# command buttons (7) so a selected building's icons stay clickable art.
+	_top_layer.z_index = 6
+	add_child(_top_layer)
+
+
+class TopLayer:
+	extends Control
+	var owner_runtime = null
+
+	func _draw() -> void:
+		if owner_runtime == null or not is_instance_valid(owner_runtime):
+			return
+		owner_runtime.draw_top_rows(self)
+
+
+func draw_top_rows(target: Control) -> void:
+	if not presentation_ready:
+		return
+	var scale := Vector2(
+		target.size.x / _authored_resolution.x, target.size.y / _authored_resolution.y
+	)
+	for row in _stage_piece_top_draws:
+		if bool(row.get("degenerateRuntime", false)):
+			continue
+		var source_points := row.get("pointsRuntime", PackedVector2Array()) as PackedVector2Array
+		var points := PackedVector2Array()
+		for point in source_points:
+			points.append(point * scale)
+		var color := row.get("colorRuntime", Color.TRANSPARENT) as Color
+		if String(row.get("kind", "")) == "solid-triangle":
+			target.draw_colored_polygon(points, color)
+			continue
+		target.draw_polygon(
+			points,
+			PackedColorArray([color, color, color]),
+			row.get("uvsRuntime", PackedVector2Array()) as PackedVector2Array,
+			row.get("textureRuntime") as Texture2D
+		)
+
+
+func stage_piece_top_draws_bound() -> int:
+	return _stage_piece_top_draws.size()

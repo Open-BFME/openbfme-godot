@@ -270,6 +270,31 @@ const RETAIL_RADAR_GLASS_CENTER := Vector2(
 const RETAIL_RADAR_GLASS_HALF_EXTENTS := Vector2(
 	(236.8 - 17.8) * 0.5 * 1.875, (714.9 - 529.9) * 0.5 * 1.40625
 )
+# AUTHORED RANK PLATE (owner round 7: "have this as the default
+# background"): CommandUI image 67 sits at stage (230.5,679.6)-
+# (344.2,721.6) - the Level plate under the dish portrait, not a full
+# dish fill. Bound at its own authored rect, behind the caption.
+const RETAIL_DISH_RANK_PLATE_RECT := Rect2(
+	230.5 * 1.875, (679.6 - 512.0) * 1.40625,
+	(344.2 - 230.5) * 1.875, (721.6 - 679.6) * 1.40625
+)
+# THE THREE-ORB `_double` FAMILY, authored (round-7 consult read of the
+# movie): PalantirButtons sits at stage (79, 538); its `_double` state draws
+# backing image 181 at stage (51,528)-(206,592) and seats Options (70,544)
+# 31x31, PlayerMagic (110,534.1) 37x37, Objectives (156,544) 31x31. The
+# earlier 59-unit pitch came from `_single` (the TWO-orb variant, whose
+# second seat is PlayerPowerCap, not the flag) - that is why the flag sat 43
+# stage units too far right, on the radar/dish joint, where the command panel
+# ate its clicks.
+const RETAIL_ORB_STRIP_RECT := Rect2(
+	51.0 * 1.875, (528.0 - 512.0) * 1.40625,
+	(206.0 - 51.0) * 1.875, (592.0 - 528.0) * 1.40625
+)
+const RETAIL_ORB_SEATS_STAGE := {
+	"options": Rect2(70.0, 544.0, 31.0, 31.0),
+	"powers": Rect2(110.0, 534.1, 37.0, 37.0),
+	"score": Rect2(156.0, 544.0, 31.0, 31.0),
+}
 const RETAIL_FRAME_PIECES := [
 	{
 		"kind": "disc",
@@ -3473,7 +3498,12 @@ func _build_palantir() -> void:
 	dock.offset_right = RETAIL_PALANTIR_DISPLAY_SIZE.x
 	dock.offset_bottom = 0
 	dock.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	dock.z_index = 2
+	# ABOVE the command panel (z 4). The third orb's authored seat starts at
+	# dock x 373 and the command panel begins at x 360 with MOUSE_FILTER_STOP,
+	# so at z 2 the panel swallowed every click on the flag orb (owner round 7
+	# "I cannot click on the flag"). The minimap keeps its own z -2 (relative
+	# 3), so the radar still passes UNDER the panel exactly as before.
+	dock.z_index = 5
 	add_child(dock)
 	# The ornamental control paints the Palantir backing and bezel. Keep it
 	# behind the radar; drawing it afterward would cover the source map with its
@@ -3523,6 +3553,9 @@ func _build_palantir() -> void:
 		command_points_rect.end.x - resource_strip.position.x, money_rect.size.y
 	)
 	resource_strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Above the authored frame/glass top layer (z 6): the metal would
+	# otherwise cover the resource numbers (owner round 7 capture).
+	resource_strip.z_index = 3
 	resource_strip.add_theme_stylebox_override("panel", _panel)
 	dock.add_child(resource_strip)
 	var resource_icon := Label.new()
@@ -3534,6 +3567,9 @@ func _build_palantir() -> void:
 	resource_icon.add_theme_color_override("font_color", Color("d6aa55"))
 	resource_icon.add_theme_font_size_override("font_size", 20)
 	resource_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Above the authored frame/glass top layer (z 6): the metal would
+	# otherwise cover the resource numbers (owner round 7 capture).
+	resource_icon.z_index = 3
 	dock.add_child(resource_icon)
 	resource_label = Label.new()
 	resource_label.name = "Resources"
@@ -3544,6 +3580,7 @@ func _build_palantir() -> void:
 	resource_label.add_theme_color_override("font_color", Color("f1d06e"))
 	resource_label.add_theme_font_size_override("font_size", 18)
 	resource_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	resource_label.z_index = 3
 	dock.add_child(resource_label)
 	command_points_label = Label.new()
 	command_points_label.name = "CommandPoints"
@@ -3553,6 +3590,7 @@ func _build_palantir() -> void:
 	command_points_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	command_points_label.add_theme_color_override("font_color", Color("d5e5ed"))
 	command_points_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	command_points_label.z_index = 3
 	dock.add_child(command_points_label)
 
 
@@ -4249,6 +4287,7 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 				(label as Label).add_theme_font_override("font", ui_font)
 		if retail_tooltip != null:
 			retail_tooltip.set_retail_font(ui_font)
+	_bind_authored_dish_plates()
 	if retail_side_command_bar != null:
 		# The side build sockets ride the authored ability-button frame piece
 		# (owner 2026-08-26); the palantir empty-socket crop is the pre-split
@@ -4292,12 +4331,7 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 			# button carries the family's authored IDLE art at the authored
 			# 39x39 stage seat: options (81,539), powers (140,539), score
 			# continues the authored 59-unit pitch at (199,539).
-			var seat_stage: Dictionary = {
-				"options": Rect2(81.0, 539.0, 37.0, 37.0),
-				"powers": Rect2(140.0, 539.0, 37.0, 37.0),
-				"score": Rect2(199.0, 539.0, 37.0, 37.0),
-			}
-			var seat: Rect2 = seat_stage.get(id, Rect2())
+			var seat: Rect2 = RETAIL_ORB_SEATS_STAGE.get(id, Rect2())
 			if seat.size.x > 0.0:
 				orb.position = Vector2(
 					seat.position.x * 1.875, (seat.position.y - 512.0) * 1.40625
@@ -5247,9 +5281,20 @@ func sync_radial_commands(anchor: Vector2, entries: Array) -> void:
 				button.add_theme_color_override("font_color", Color("e6d9ae"))
 				button.add_theme_color_override("font_hover_color", Color("fff3c8"))
 				button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-			if _retail_palantir_atlas != null:
+			# The RING under each live command (owner round 7: 100% opacity, and
+			# only while something with commands is selected - which is exactly
+			# when these buttons exist). Authored art first (abilitybuttonframe,
+			# the piece the movie places on the dish sockets); the measured
+			# palantir crop stays the named fallback.
+			var ring_texture: Texture2D = null
+			if retail_apt_runtime != null:
+				ring_texture = retail_apt_runtime.atlas_piece_texture("abilitybuttonframe.tga")
+			if ring_texture == null and _retail_palantir_atlas != null:
+				ring_texture = _atlas_region(_retail_palantir_atlas, RETAIL_EMPTY_SOCKET_REGION)
+			if ring_texture != null:
 				var socket_box := StyleBoxTexture.new()
-				socket_box.texture = _atlas_region(_retail_palantir_atlas, RETAIL_EMPTY_SOCKET_REGION)
+				socket_box.texture = ring_texture
+				button.self_modulate = Color.WHITE
 				for state in ["normal", "hover", "pressed", "disabled", "focus"]:
 					button.add_theme_stylebox_override(state, socket_box)
 			else:
@@ -6677,3 +6722,46 @@ class RankPipsOverlay:
 				]),
 				Color(0.95, 0.85, 0.35, 0.95)
 			)
+
+
+## Authored plates that ride the dock behind live content (owner round 7):
+## the CommandUI rank plate under the "Level" caption, and the PalantirButtons
+## backing strip behind the three orbs. Both use their AUTHORED rects; a pack
+## without the pieces simply gets no plate - nothing is invented.
+func _bind_authored_dish_plates() -> void:
+	if retail_apt_runtime == null or command_panel == null:
+		return
+	var rank_texture: Texture2D = retail_apt_runtime.atlas_piece_texture("commandui-rankui")
+	if rank_texture != null:
+		var plate := command_panel.get_node_or_null("DishRankPlate") as TextureRect
+		if plate == null:
+			plate = TextureRect.new()
+			plate.name = "DishRankPlate"
+			plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			plate.stretch_mode = TextureRect.STRETCH_SCALE
+			plate.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			command_panel.add_child(plate)
+			command_panel.move_child(plate, 0)
+		plate.texture = rank_texture
+		plate.position = RETAIL_DISH_RANK_PLATE_RECT.position - Vector2(360.0, 0.0)
+		plate.size = RETAIL_DISH_RANK_PLATE_RECT.size
+		plate.visible = true
+	var strip_texture: Texture2D = retail_apt_runtime.atlas_piece_texture("palantir:181")
+	var orb_dock: Control = null
+	for orb_value in orb_buttons.values():
+		orb_dock = (orb_value as Button).get_parent() as Control
+		break
+	if strip_texture != null and orb_dock != null:
+		var strip := orb_dock.get_node_or_null("OrbBackingStrip") as TextureRect
+		if strip == null:
+			strip = TextureRect.new()
+			strip.name = "OrbBackingStrip"
+			strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			strip.stretch_mode = TextureRect.STRETCH_SCALE
+			strip.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			orb_dock.add_child(strip)
+			orb_dock.move_child(strip, 0)
+		strip.texture = strip_texture
+		strip.position = RETAIL_ORB_STRIP_RECT.position
+		strip.size = RETAIL_ORB_STRIP_RECT.size
+		strip.visible = true
