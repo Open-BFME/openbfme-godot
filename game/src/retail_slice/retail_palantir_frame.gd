@@ -152,6 +152,16 @@ func _draw() -> void:
 							Rect2(glass_center - half_extents, half_extents * 2.0),
 							false
 						)
+					# The authored soft highlight sheet rides ON the glass
+					# (owner 2026-08-26); its own alpha keeps it subtle.
+					var overlay_texture := piece.get("overlay_texture") as Texture2D
+					if overlay_texture != null:
+						var overlay_center := piece["center"] as Vector2
+						draw_texture_rect(
+							overlay_texture,
+							Rect2(overlay_center - half_extents, half_extents * 2.0),
+							false
+						)
 				else:
 					draw_circle(piece["center"] as Vector2, float(piece["radius"]), piece["color"] as Color)
 			elif kind == "dish_ring" and _masked_textures.has(index):

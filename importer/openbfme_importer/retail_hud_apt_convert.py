@@ -4008,6 +4008,16 @@ def _atlas_piece_manifest(
             y1 = min(height, math.ceil(box[3]))
             if x1 <= x0 or y1 <= y0:
                 continue
+            # One texel of margin on every side. The authored UV footprints
+            # sample half a texel inside the art (standard bilinear inset),
+            # so a bare floor/ceil crop cut the soft outer edge of pieces
+            # (owner 2026-08-26: the ability-button frame and the orb strip
+            # lost their edges). The sheets pack with a one-texel gutter, so
+            # one texel of margin cannot pull in a neighbour sprite.
+            x0 = max(0, x0 - 1)
+            y0 = max(0, y0 - 1)
+            x1 = min(width, x1 + 1)
+            y1 = min(height, y1 + 1)
             export_names = sorted(names.get(image_id, ()))
             hierarchy_names = sorted(
                 (usage_names or {}).get((movie_key, image_id), ())

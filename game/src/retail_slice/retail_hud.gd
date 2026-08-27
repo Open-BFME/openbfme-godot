@@ -2649,6 +2649,7 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 	_hero_select_all_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_hero_select_all_button.set_meta("retail_image_id", _hero_select_all_image_id())
 	_hero_select_all_button.set_meta("retail_image_path", String(hero_select_all_validation["path"]))
+	_bind_faction_hero_select_pieces()
 	if use_apt:
 		var frame_texture := retail_apt_runtime.exact_atlas_texture(RETAIL_PALANTIR_FRAME_ATLAS)
 		_retail_palantir_atlas = retail_apt_runtime.exact_atlas_texture(RETAIL_PALANTIR_ATLAS)
@@ -2661,11 +2662,17 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 		# opening; a pre-split pack keeps the flat dish-glass colour as the
 		# named stand-in. The ellipse's click shield is identical either way.
 		var dish_glass := retail_apt_runtime.atlas_piece_texture("palantirmainglass")
+		# Owner 2026-08-26: the softer authored highlight sheet overlays the
+		# dish glass ("the glass overlay ... goes on the right side").
+		var dish_overlay := retail_apt_runtime.atlas_piece_texture("abilitieshighlight")
 		var frame_pieces: Array[Dictionary] = []
 		for piece_value in RETAIL_FRAME_PIECES:
 			var frame_piece := (piece_value as Dictionary).duplicate()
-			if String(frame_piece.get("kind", "")) == "disc" and dish_glass != null:
-				frame_piece["texture"] = dish_glass
+			if String(frame_piece.get("kind", "")) == "disc":
+				if dish_glass != null:
+					frame_piece["texture"] = dish_glass
+				if dish_overlay != null:
+					frame_piece["overlay_texture"] = dish_overlay
 			frame_pieces.append(frame_piece)
 		retail_control_bar_bound = retail_control_bar_frame.bind_retail_composition(
 			frame_texture,
@@ -3760,6 +3767,50 @@ func _layout_command_sockets() -> void:
 		occupied[slot] = true
 
 
+## Per-faction select-all-heroes art from the authored piece split (owner
+## 2026-08-26): idle shows `<faction>heroselection.tga`, a press swaps to the
+## `_reg` variant while held. The split ships three factions' art today
+## (dwarf, elven, goblin); a faction whose art is not in the split keeps the
+## validated UCCommon icon — a named fallback, never borrowed art.
+const RETAIL_HERO_SELECT_PIECE_PREFIXES := {
+	"dwarves": "dwarfheroselection",
+	"elves": "elvenheroselection",
+	"wild": "goblinheroselection",
+}
+
+
+func _bind_faction_hero_select_pieces() -> void:
+	if retail_apt_runtime == null or _hero_select_all_button == null:
+		return
+	var prefix := String(
+		RETAIL_HERO_SELECT_PIECE_PREFIXES.get(_faction_surface.to_lower(), "")
+	)
+	if prefix == "":
+		return
+	var idle := retail_apt_runtime.atlas_piece_texture(prefix + ".tga")
+	var pressed := retail_apt_runtime.atlas_piece_texture(prefix + "_reg.tga")
+	if idle == null:
+		return
+	_hero_select_all_button.icon = idle
+	_hero_select_all_button.set_meta("retail_image_id", prefix)
+	if pressed != null and not bool(_hero_select_all_button.get_meta("piece_states_wired", false)):
+		_hero_select_all_button.set_meta("piece_states_wired", true)
+		_hero_select_all_button.button_down.connect(func() -> void:
+			var down: Texture2D = retail_apt_runtime.atlas_piece_texture(
+				String(RETAIL_HERO_SELECT_PIECE_PREFIXES.get(_faction_surface.to_lower(), "")) + "_reg.tga"
+			)
+			if down != null:
+				_hero_select_all_button.icon = down
+		)
+		_hero_select_all_button.button_up.connect(func() -> void:
+			var up: Texture2D = retail_apt_runtime.atlas_piece_texture(
+				String(RETAIL_HERO_SELECT_PIECE_PREFIXES.get(_faction_surface.to_lower(), "")) + ".tga"
+			)
+			if up != null:
+				_hero_select_all_button.icon = up
+		)
+
+
 func _build_orb_buttons(dock: Control) -> void:
 	for id in ["options", "powers", "score"]:
 		var rect := RETAIL_ORB_RECTS[id] as Rect2
@@ -4051,10 +4102,15 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 	# below the dock). Dropping the radar beneath it puts the ring bevel over
 	# the map edge while orbs, sockets, labels, and the portrait stay on top.
 	minimap.z_index = -2
-	# Retail's authored radar sheet. The minimap owns the region constant and the
-	# crop; this pass only hands it the atlas the HUD already loaded for the orbs
-	# and sockets. Without it the radar falls back to one flat disc.
-	minimap.bind_retail_parchment(_retail_palantir_atlas)
+	# Retail's authored radar sheet. Piece-first (owner 2026-08-26): the split
+	# pack ships `RadarBackground` as its own authored file, which covers the
+	# whole opening; the hand-measured region crop stays only as the pre-split
+	# fallback, and a missing piece never invents anything.
+	var radar_piece: Texture2D = null
+	if retail_apt_runtime != null:
+		radar_piece = retail_apt_runtime.atlas_piece_texture("RadarBackground")
+	if radar_piece == null or not minimap.bind_retail_parchment_texture(radar_piece):
+		minimap.bind_retail_parchment(_retail_palantir_atlas)
 	_bind_retail_radar_view_box_edge(content_db, expected_pack_root)
 	var ui_font := _retail_ui_font(expected_pack_root)
 	if ui_font != null and ui_font != _retail_ui_font_cached:
@@ -4068,12 +4124,52 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 		if retail_tooltip != null:
 			retail_tooltip.set_retail_font(ui_font)
 	if retail_side_command_bar != null:
-		retail_side_command_bar.bind_socket_texture(_atlas_region(_retail_palantir_atlas, RETAIL_EMPTY_SOCKET_REGION))
+		# The side build sockets ride the authored ability-button frame piece
+		# (owner 2026-08-26); the palantir empty-socket crop is the pre-split
+		# fallback.
+		var side_socket: Texture2D = null
+		if retail_apt_runtime != null:
+			side_socket = retail_apt_runtime.atlas_piece_texture("abilitybuttonframe.tga")
+		if side_socket == null:
+			side_socket = _atlas_region(_retail_palantir_atlas, RETAIL_EMPTY_SOCKET_REGION)
+		retail_side_command_bar.bind_socket_texture(side_socket)
+	# Orb state clips (owner 2026-08-26): each orb's authored ButtonClip family
+	# carries its highlight frames. The owner identified the Objectives family's
+	# states by image id — default 248, click 250, hover 252 — which are the
+	# LAST THREE of the family in ascending authored order; the same authored
+	# ordering rule is applied to the other two families. The idle art stays
+	# the painted composition (no default icon), so only hover/click overlay.
+	var orb_clip_families := {
+		"options": "buttons-options",
+		"powers": "playermagic-buttonclip",
+		"score": "objectives-buttonclip",
+	}
 	for id in orb_buttons.keys():
 		var orb := orb_buttons[id] as Button
 		orb.icon = _atlas_region(_retail_palantir_atlas, RETAIL_ORB_REGIONS[id])
 		orb.expand_icon = true
 		orb.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		if retail_apt_runtime == null:
+			continue
+		var clip_rows: Array = retail_apt_runtime.atlas_piece_rows_matching(
+			String(orb_clip_families.get(id, ""))
+		)
+		if clip_rows.size() < 3:
+			continue  # pre-split pack: the flat orb keeps working, no invention
+		var click_texture: Texture2D = retail_apt_runtime.atlas_piece_texture_for_row(
+			clip_rows[clip_rows.size() - 2]
+		)
+		var hover_texture: Texture2D = retail_apt_runtime.atlas_piece_texture_for_row(
+			clip_rows[clip_rows.size() - 1]
+		)
+		if hover_texture != null:
+			var hover_box := StyleBoxTexture.new()
+			hover_box.texture = hover_texture
+			orb.add_theme_stylebox_override("hover", hover_box)
+		if click_texture != null:
+			var click_box := StyleBoxTexture.new()
+			click_box.texture = click_texture
+			orb.add_theme_stylebox_override("pressed", click_box)
 	command_points_label.add_theme_color_override("font_color", Color("f1d06e"))
 	var power_socket := StyleBoxTexture.new()
 	power_socket.texture = _atlas_region(_retail_palantir_atlas, RETAIL_EMPTY_SOCKET_REGION)
@@ -4661,6 +4757,54 @@ func sync_hero_bar(heroes: Array) -> void:
 				StageScript.hero_health_arc_half_angle()
 			)
 			button.add_child(health)
+			# Owner 2026-08-26: the hero health bar is AUTHORED art
+			# (hero1-healthbar): frame i69 carries the level circle and the
+			# empty bar; i79/i76/i73 are the green/yellow/red fill stages. When
+			# the split ships them, the procedural arc hides and the pieces
+			# draw; a pre-split pack keeps the arc (named fallback).
+			var health_rows: Array = (
+				retail_apt_runtime.atlas_piece_rows_matching("hero1-healthbar")
+				if retail_apt_runtime != null
+				else []
+			)
+			if health_rows.size() == 4:
+				var bar_center := StageScript.scale_size(
+					AptRuntimeScript.HERO_CELL_HEALTH_BAR_LOCAL
+				)
+				var bar_size := StageScript.scale_size(
+					AptRuntimeScript.HERO_CELL_HEALTH_BAR_QUAD
+				)
+				var bar_frame := TextureRect.new()
+				bar_frame.name = "HealthBarArt"
+				bar_frame.texture = retail_apt_runtime.atlas_piece_texture_for_row(
+					health_rows[0] as Dictionary
+				)
+				bar_frame.stretch_mode = TextureRect.STRETCH_SCALE
+				bar_frame.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+				bar_frame.position = bar_center - bar_size * 0.5
+				bar_frame.size = bar_size
+				bar_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				button.add_child(bar_frame)
+				var fill_clip := Control.new()
+				fill_clip.name = "HealthFillClip"
+				fill_clip.clip_contents = true
+				fill_clip.position = bar_frame.position
+				fill_clip.size = bar_size
+				fill_clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				var fill := TextureRect.new()
+				fill.name = "HealthFill"
+				fill.stretch_mode = TextureRect.STRETCH_SCALE
+				fill.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+				fill.position = Vector2.ZERO
+				fill.size = bar_size
+				fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				fill_clip.add_child(fill)
+				button.add_child(fill_clip)
+				# authored ids ascend frame(69), red(73), yellow(76), green(79)
+				fill_clip.set_meta("fill_red", health_rows[1])
+				fill_clip.set_meta("fill_yellow", health_rows[2])
+				fill_clip.set_meta("fill_green", health_rows[3])
+				health.visible = false
 			var badge := Label.new()
 			badge.name = "LevelBadge"
 			badge.position = StageScript.scale_size(
@@ -4697,10 +4841,31 @@ func sync_hero_bar(heroes: Array) -> void:
 		var portrait_rect := button.get_node("Portrait") as TextureRect
 		portrait_rect.texture = _retail_portrait_textures.get(String(hero.get("unit_type", ""))) as Texture2D
 		(button.get_node("LevelBadge") as Label).text = "%d" % int(hero.get("level", 1))
-		var health_arc := button.get_node("HealthArc") as RetailHudArcGauge
-		health_arc.set_value(
+		var health_fraction := (
 			float(hero.get("health", 0)) / float(maxi(1, int(hero.get("maximum_health", 1))))
 		)
+		var health_arc := button.get_node("HealthArc") as RetailHudArcGauge
+		health_arc.set_value(health_fraction)
+		var fill_clip := button.get_node_or_null("HealthFillClip") as Control
+		if fill_clip != null and retail_apt_runtime != null:
+			# Authored stages (owner 2026-08-26): green, then yellow, then red.
+			# Thresholds 2/3 and 1/3 are the documented convention until an
+			# authored cutover value is found in the movie's scripts.
+			var stage := "fill_green"
+			if health_fraction <= 1.0 / 3.0:
+				stage = "fill_red"
+			elif health_fraction <= 2.0 / 3.0:
+				stage = "fill_yellow"
+			var stage_row: Variant = fill_clip.get_meta(stage, null)
+			var fill_rect := fill_clip.get_node_or_null("HealthFill") as TextureRect
+			if typeof(stage_row) == TYPE_DICTIONARY and fill_rect != null:
+				fill_rect.texture = retail_apt_runtime.atlas_piece_texture_for_row(
+					stage_row as Dictionary
+				)
+				fill_clip.size = Vector2(
+					fill_rect.size.x * clampf(health_fraction, 0.0, 1.0),
+					fill_clip.size.y
+				)
 		# Retail rings the selected hero's portrait with a CIRCLE highlight
 		# (`SelectedHighlight` in the authored cell), not a rectangular tint.
 		(button.get_node("SelectedHighlight") as Control).visible = bool(hero.get("selected", false))

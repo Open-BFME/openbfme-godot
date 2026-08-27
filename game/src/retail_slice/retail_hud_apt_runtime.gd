@@ -941,16 +941,19 @@ func _validate_contract(document: Dictionary, pack_root: String) -> bool:
 ## importer crops each to its authored UV footprint. Keyed by every authored
 ## name; rows without names stay reachable by "<movie>:<imageId>".
 var _atlas_pieces_by_key: Dictionary = {}
+var _atlas_piece_rows: Array[Dictionary] = []
 
 
 func _index_atlas_pieces(value: Variant) -> void:
 	_atlas_pieces_by_key.clear()
+	_atlas_piece_rows.clear()
 	if typeof(value) != TYPE_ARRAY:
 		return
 	for row_value in value as Array:
 		if typeof(row_value) != TYPE_DICTIONARY:
 			continue
 		var row := row_value as Dictionary
+		_atlas_piece_rows.append(row)
 		_atlas_pieces_by_key["%s:%d" % [
 			String(row.get("movie", "")).to_lower(), int(row.get("imageId", -1))
 		]] = row
@@ -958,13 +961,25 @@ func _index_atlas_pieces(value: Variant) -> void:
 			_atlas_pieces_by_key[String(name_value).to_lower()] = row
 
 
-func atlas_piece_texture(piece_name: String) -> Texture2D:
-	## The cropped authored sprite by its retail name (or "<movie>:<imageId>"),
-	## or null with no invention when the mounted pack predates the split.
-	var row_value: Variant = _atlas_pieces_by_key.get(piece_name.to_lower())
-	if typeof(row_value) != TYPE_DICTIONARY:
-		return null
-	var row := row_value as Dictionary
+func atlas_piece_rows_matching(name_fragment: String) -> Array[Dictionary]:
+	## Every piece row whose name set contains the fragment, ordered by
+	## authored image id. State families (button clips) live on consecutive
+	## authored ids, so callers can pick states deterministically.
+	var fragment := name_fragment.to_lower()
+	var matched: Array[Dictionary] = []
+	for row in _atlas_piece_rows:
+		for name_value in row.get("names", []) as Array:
+			if String(name_value).to_lower().contains(fragment):
+				matched.append(row)
+				break
+	matched.sort_custom(
+		func(a: Dictionary, b: Dictionary) -> bool:
+			return int(a.get("imageId", 0)) < int(b.get("imageId", 0))
+	)
+	return matched
+
+
+func atlas_piece_texture_for_row(row: Dictionary) -> Texture2D:
 	var relative := String(row.get("croppedPng", ""))
 	if relative == "" or not _is_sha256(String(row.get("sha256", ""))):
 		return null
@@ -981,6 +996,15 @@ func atlas_piece_texture(piece_name: String) -> Texture2D:
 	if texture != null:
 		_textures[relative] = texture
 	return texture
+
+
+func atlas_piece_texture(piece_name: String) -> Texture2D:
+	## The cropped authored sprite by its retail name (or "<movie>:<imageId>"),
+	## or null with no invention when the mounted pack predates the split.
+	var row_value: Variant = _atlas_pieces_by_key.get(piece_name.to_lower())
+	if typeof(row_value) != TYPE_DICTIONARY:
+		return null
+	return atlas_piece_texture_for_row(row_value as Dictionary)
 
 
 func stage_piece_draws_bound() -> int:
@@ -4580,6 +4604,7 @@ func _reset() -> void:
 	_stage_piece_total_draw_count = 0
 	_stage_piece_degenerate_draws = 0
 	_atlas_pieces_by_key.clear()
+	_atlas_piece_rows.clear()
 	_textures.clear()
 	_action_scripts.clear()
 	_clip_action_programs.clear()

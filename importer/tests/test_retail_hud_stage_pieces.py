@@ -436,7 +436,9 @@ def test_atlas_piece_manifest_splits_by_authored_uv_footprint() -> None:
     named, unnamed = pieces
     # image 3: union of both triangles, named through the exported sprite's
     # placed shape.
-    assert named["rect"] == [10, 20, 32, 32]
+    # UV footprint (10,20)-(42,52) plus the one-texel edge margin that keeps
+    # the bilinear-inset soft edges (owner 2026-08-26: edges were cut).
+    assert named["rect"] == [9, 19, 34, 34]
     assert named["names"] == ["palantirmainglass"]
     assert named["derivedName"] == "palantirmainglass"
     assert named["croppedPng"] == (
@@ -444,12 +446,12 @@ def test_atlas_piece_manifest_splits_by_authored_uv_footprint() -> None:
     )
     assert named["atlas"].endswith("apt-palantir-9-abcdefabcdef.png")
     # image 6: the UV translation offsets the footprint; nothing exports it,
-    # so its file keeps the rect identity.
-    assert unnamed["rect"] == [100, 60, 8, 8]
+    # so its file keeps the rect identity (margin included).
+    assert unnamed["rect"] == [99, 59, 10, 10]
     assert unnamed["names"] == []
     assert unnamed["derivedName"] == ""
     assert unnamed["croppedPng"] == (
-        "assets/ui/palantir/pieces/apt-palantir-i6-100x60-8x8.png"
+        "assets/ui/palantir/pieces/apt-palantir-i6-99x59-10x10.png"
     )
 
 

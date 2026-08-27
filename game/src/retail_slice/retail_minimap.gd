@@ -242,6 +242,27 @@ func bind_retail_view_box_edge(texture: Texture2D) -> bool:
 	return true
 
 
+func bind_retail_parchment_texture(piece: Texture2D) -> bool:
+	## Bind the AUTHORED RadarBackground piece directly (the per-image sheet
+	## split, owner 2026-08-26: "radarbackground should be the background
+	## default and cover the entire circle"). No hand-measured crop rect is
+	## involved; the importer already cut the piece to its authored footprint.
+	if piece == null:
+		return false
+	var image := piece.get_image()
+	if image == null or image.is_empty():
+		return false
+	image = image.duplicate()
+	if image.is_compressed():
+		image.decompress()
+	image.convert(Image.FORMAT_RGBA8)
+	radar_paper = ImageTexture.create_from_image(image)
+	uses_retail_parchment = true
+	parchment_source = "atlas-piece:RadarBackground"
+	queue_redraw()
+	return true
+
+
 func bind_retail_parchment(atlas: Texture2D) -> bool:
 	## Crop retail's authored radar sheet out of the cooked palantir atlas.
 	## Called once from the HUD's art pass; the sheet does not depend on the map,
