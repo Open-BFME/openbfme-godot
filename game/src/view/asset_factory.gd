@@ -5,6 +5,7 @@ extends RefCounted
 const RetailHouseColorScript = preload("res://src/retail_slice/retail_house_color.gd")
 const PackCapability = preload("res://src/content/pack_capability.gd")
 const W3DTextureMappersScript = preload("res://src/view/w3d_texture_mappers.gd")
+const W3DShaderMaterialsScript = preload("res://src/view/w3d_shader_materials.gd")
 
 static var _mesh_cache: Dictionary = {}
 static var _private_retail_pack_cache: Dictionary = {}
@@ -331,6 +332,9 @@ static func preload_models_threaded(paths: Array) -> void:
 		# Animated W3D texture mappers (flags, torches, waterfalls) ride the
 		# GLB material extras; tag on the main thread before the scene exists.
 		W3DTextureMappersScript.tag_gltf_materials(entry["state"] as GLTFState)
+		# Authored W3D One/One additive state (fortress brazier flame + halo);
+		# glTF cannot carry it, the preserved shader extras can.
+		W3DShaderMaterialsScript.tag_gltf_materials(entry["state"] as GLTFState)
 		var node: Node3D = (entry["document"] as GLTFDocument).generate_scene(entry["state"] as GLTFState) as Node3D
 		if node == null:
 			push_error("[AssetFactory] GLB parsed but generated no scene: %s" % threaded[index])
@@ -456,6 +460,7 @@ static func _load_gltf(path: String) -> Node3D:
 	if err != OK:
 		return null
 	W3DTextureMappersScript.tag_gltf_materials(state)
+	W3DShaderMaterialsScript.tag_gltf_materials(state)
 	var scene := doc.generate_scene(state) as Node3D
 	if scene != null:
 		hide_w3d_hidden_meshes(scene)
