@@ -1012,6 +1012,18 @@ func atlas_piece_texture(piece_name: String) -> Texture2D:
 ## {"center": Vector2, "half_extents": Vector2, "color": Color} in authored
 ## stage-draw viewport space.
 var stage_underlays: Array[Dictionary] = []
+## The PalantirButtons `_show` rows (not drawn — the orb buttons render this
+## art): the authority for which family variant is the good-faction idle.
+var _palantir_buttons_reference_rows: Array[Dictionary] = []
+
+
+func palantir_buttons_show_image_ids() -> Array[int]:
+	var ids: Array[int] = []
+	for row in _palantir_buttons_reference_rows:
+		var image_id := int(row.get("imageId", -1))
+		if image_id >= 0 and not ids.has(image_id):
+			ids.append(image_id)
+	return ids
 
 
 func stage_piece_row_bounds(piece_name: String, image_id: int) -> Rect2:
@@ -4188,6 +4200,11 @@ const STAGE_PIECE_IDLE_HIDDEN := [
 	"observerstuff", "messengerbutton", "sidecommandbar",
 	"commandpointsflash", "heroselectui", "helpbox", "althelpboxlocation",
 	"planningmodeui", "autoabilityoverlays",
+	# The three orb buttons render as Godot buttons ABOVE the whole dock
+	# (retail draws them above the glass too); the stage copy sat UNDER the
+	# minimap's glass and its image-140 backing bled a light patch onto the
+	# radar (owner 2026-08-26 "part of the ui is hidden").
+	"palantirbuttons",
 ]
 ## Nested tween families that are ACTIVE effects, never idle art, even inside
 ## a shown piece (flash sweeps, sub-menu trays, level-up bursts).
@@ -4268,6 +4285,14 @@ func _validate_stage_pieces(value: Variant, pack_root: String) -> bool:
 				# Unlisted piece: keep the historical first-populated pick so
 				# a future movie addition degrades visibly, never silently.
 				chosen = state
+		if idle_key == "palantirbuttons" and not chosen.is_empty():
+			# Not drawn (the orb BUTTONS render this art above the dock), but
+			# its `_show` rows are the authority for WHICH family variant is
+			# the good-faction idle art — recorded for the HUD's orb binding.
+			_palantir_buttons_reference_rows.clear()
+			for reference_value in chosen.get("draws", []) as Array:
+				if typeof(reference_value) == TYPE_DICTIONARY:
+					_palantir_buttons_reference_rows.append(reference_value as Dictionary)
 		if bool(piece.get("artless", false)):
 			continue
 		if STAGE_PIECE_IDLE_HIDDEN.has(idle_key) or chosen.is_empty():
@@ -4307,14 +4332,22 @@ func _bind_stage_piece_draw(row: Dictionary, pack_root: String) -> bool:
 		return true
 	var normalized := row.duplicate(true)
 	normalized["pointsRuntime"] = points
-	# UNBAKE the placement alpha for TEXTURED art only: the Cxform bakes
-	# alpha 0 into rows the movie shows via `_alpha` at runtime (both consult
-	# reads 2026-08-26 flagged this) — a chosen idle state is shown, so its
-	# authored PIXELS render. SOLID rows keep their baked alpha: those are the
-	# movie's invisible placeholder fills (hit shapes, tween anchors) and
-	# unbaking them painted cyan/blue placeholder quads over the whole dock.
-	if kind == "textured-triangle" and color.a == 0.0:
-		color.a = 1.0
+	# UNBAKE the placement alpha for TEXTURED art, and for the SOLID rows of
+	# the two authored backing pieces: the Cxform bakes alpha 0 into rows the
+	# movie shows via `_alpha` at runtime (both consult reads 2026-08-26).
+	# CommandBackground / RegionBackground author the dark socket cups and
+	# dish fill as black solids — without the unbake the sockets sat on
+	# see-through rings. Every OTHER solid keeps its baked alpha: those are
+	# placeholder fills (hit shapes, tween anchors) whose unbake painted
+	# cyan/blue quads over the dock.
+	if color.a == 0.0:
+		var row_path := String(row.get("path", "")).to_lower()
+		if (
+			kind == "textured-triangle"
+			or row_path.contains("commandbackground")
+			or row_path.contains("regionbackground")
+		):
+			color.a = 1.0
 	normalized["colorRuntime"] = color
 	if kind == "textured-triangle":
 		var uvs := _vector2_array(row.get("uvs", []))

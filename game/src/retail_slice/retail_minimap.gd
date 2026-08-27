@@ -153,6 +153,11 @@ var paper_half_extents := Vector2.ZERO
 ## rect is node-local, supplied by the HUD from the authored stage placement.
 var glass_overlay: Texture2D = null
 var glass_overlay_rect := Rect2()
+## True when the APT stage pieces below this node already paint the paper and
+## the dark backing (owner 2026-08-26: painting them here too was "the old ui"
+## covering the authored one). This node then draws only the LIVE content —
+## ink, blips, view box — plus the glass overlay above them.
+var authored_composition := false
 
 var simulation: RefCounted
 ## The local player's shroud, or null for a fog-off match / a legacy caller.
@@ -588,13 +593,18 @@ func _draw() -> void:
 	# Retail's bezel interior is opaque dark glass, not a hole: the ring atlas
 	# ships a transparent middle, so the battlefield would otherwise show through
 	# the ring around the paper. Measured off the capture at (58,42,21).
-	var glass := _sanitized_radar_polygon(disc)
-	if not glass.is_empty():
-		draw_colored_polygon(glass, BEZEL_GLASS)
+	# When the authored stage pieces below already paint backing + paper,
+	# repainting them here covered the authored art (owner: "the old ui").
+	if not authored_composition:
+		var glass := _sanitized_radar_polygon(disc)
+		if not glass.is_empty():
+			draw_colored_polygon(glass, BEZEL_GLASS)
 	# RETAIL'S OWN PARCHMENT, straight out of the palantir atlas. It carries its
 	# lit centre AND its rim falloff, so there are no synthetic vignette arcs
 	# over it any more - the darkening at the metal is authored.
-	if radar_paper != null:
+	if authored_composition:
+		pass  # the stage pieces below own the paper
+	elif radar_paper != null:
 		var paper := _paper_square()
 		var paper_quad := PackedVector2Array([
 			paper.position,

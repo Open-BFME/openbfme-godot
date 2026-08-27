@@ -2710,14 +2710,19 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 			# Runtime underlays are in STAGE units (the runtime scales its
 			# rows itself): the authored subglass rect back through the
 			# 1.875 x 1.40625 dock transform.
+			# The whole sheet HOLE plus the socket band: an underlay stopping
+			# at the subglass left the sockets on see-through rings (owner
+			# round 6). The socket ring rides the hole edge, so the backing
+			# reaches half a socket beyond the hole; the frame's outer ring
+			# art covers the overshoot.
 			retail_apt_runtime.stage_underlays = [{
 				"center": Vector2(
-					RETAIL_DISH_SUBGLASS_CENTER.x / 1.875,
-					RETAIL_DISH_SUBGLASS_CENTER.y / 1.40625 + 512.0
+					RETAIL_DISH_GLASS_CENTER.x / 1.875,
+					RETAIL_DISH_GLASS_CENTER.y / 1.40625 + 512.0
 				),
 				"half_extents": Vector2(
-					RETAIL_DISH_SUBGLASS_HALF_EXTENTS.x / 1.875,
-					RETAIL_DISH_SUBGLASS_HALF_EXTENTS.y / 1.40625
+					RETAIL_DISH_GLASS_HALF_EXTENTS.x / 1.875 + 22.0,
+					RETAIL_DISH_GLASS_HALF_EXTENTS.y / 1.40625 + 20.0
 				),
 				"color": Color(0.035, 0.04, 0.03, 1.0),
 			}]
@@ -4217,6 +4222,9 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 		# and the map fills the whole sphere (owner 2026-08-26). The radar's
 		# glass sphere (palantirmainglass - the movie places it over the
 		# RADAR, not the dish) layers on top for the retail marble look.
+		# When the stage pieces own the composition, this node stops
+		# repainting paper/backing (that double paint was "the old ui").
+		minimap.authored_composition = _stage_art_owns_sockets
 		minimap.paper_half_extents = RETAIL_RADAR_PAPER_HALF_EXTENTS
 		minimap.glass_overlay = retail_apt_runtime.atlas_piece_texture("palantirmainglass")
 		var minimap_center: Vector2 = (minimap.size as Vector2) * 0.5
@@ -4278,26 +4286,50 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 				String(orb_clip_families.get(id, ""))
 			)
 		if _stage_art_owns_sockets and clip_rows.size() >= 3:
-			# CONSULT VERDICT 2026-08-26: the authored PalantirButtons `_show`
-			# rows PAINT the orbs — the button is a transparent hit area moved
-			# onto the authored socket rect (read from the bound stage rows of
-			# the family's idle image), and only hover/click overlay art.
-			orb.icon = null
-			orb.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
-			var idle_image := int(
-				(clip_rows[clip_rows.size() - 3] as Dictionary).get("imageId", -1)
-			)
-			var stage_rect: Rect2 = retail_apt_runtime.stage_piece_row_bounds(
-				"palantirbuttons", idle_image
-			)
-			if stage_rect.size.x > 0.0:
+			# CONSULT VERDICT 2026-08-26 + owner round 6: the orb renders as
+			# THIS button, above the dock (retail draws the orbs above the
+			# glass; the stage copy sat under the minimap's marble). The
+			# button carries the family's authored IDLE art at the authored
+			# 39x39 stage seat: options (81,539), powers (140,539), score
+			# continues the authored 59-unit pitch at (199,539).
+			var seat_stage: Dictionary = {
+				"options": Rect2(81.0, 539.0, 37.0, 37.0),
+				"powers": Rect2(140.0, 539.0, 37.0, 37.0),
+				"score": Rect2(199.0, 539.0, 37.0, 37.0),
+			}
+			var seat: Rect2 = seat_stage.get(id, Rect2())
+			if seat.size.x > 0.0:
 				orb.position = Vector2(
-					stage_rect.position.x * 1.875,
-					(stage_rect.position.y - 512.0) * 1.40625
+					seat.position.x * 1.875, (seat.position.y - 512.0) * 1.40625
 				)
-				orb.size = Vector2(
-					stage_rect.size.x * 1.875, stage_rect.size.y * 1.40625
-				)
+				orb.size = Vector2(seat.size.x * 1.875, seat.size.y * 1.40625)
+			orb.icon = null
+			# WHICH family variant is the good-faction idle: the movie's own
+			# PalantirButtons `_show` state names it (each family carries good
+			# AND evil art; last-three guessing picked the red evil flag).
+			# Click and hover are the next two family ids after the idle one.
+			var show_ids: Array[int] = retail_apt_runtime.palantir_buttons_show_image_ids()
+			var idle_index := -1
+			for row_index in clip_rows.size():
+				if show_ids.has(int((clip_rows[row_index] as Dictionary).get("imageId", -1))):
+					idle_index = row_index
+					break
+			if idle_index < 0 or idle_index + 2 >= clip_rows.size():
+				# Families order their good/evil triples differently; when the
+				# `_show` reference cannot say, the measured per-orb pick is:
+				# Objectives good = FIRST triple (the last triple rendered the
+				# red evil flag), the others = last triple.
+				idle_index = 0 if id == "score" else clip_rows.size() - 3
+			clip_rows = clip_rows.slice(idle_index, idle_index + 3)
+			var idle_texture: Texture2D = retail_apt_runtime.atlas_piece_texture_for_row(
+				clip_rows[0]
+			)
+			if idle_texture != null:
+				var idle_box := StyleBoxTexture.new()
+				idle_box.texture = idle_texture
+				orb.add_theme_stylebox_override("normal", idle_box)
+			else:
+				orb.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
 		else:
 			# Pre-split pack: the validated measured crops keep working.
 			if orb_strip != null and orb_order.has(id):
@@ -5126,7 +5158,7 @@ func _sync_world_radial(anchor: Vector2, entries: Array) -> void:
 		button.disabled = twin.disabled
 		button.modulate = twin.modulate
 		button.tooltip_text = twin.tooltip_text
-		button.add_theme_constant_override("icon_max_width", int(size * 0.75))
+		button.add_theme_constant_override("icon_max_width", int(size * 0.92))
 		for state in ["normal", "hover", "pressed", "disabled", "focus"]:
 			var box := twin.get_theme_stylebox(state)
 			if box != null:
@@ -5201,7 +5233,10 @@ func sync_radial_commands(anchor: Vector2, entries: Array) -> void:
 			button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 			button.icon = entry.get("icon") as Texture2D
 			button.expand_icon = true
-			button.add_theme_constant_override("icon_max_width", 48)
+			# Owner round 6: "the pics dont quite fill the bubbles" — the
+			# portrait fills the authored glass socket, the ring art overlaps
+			# its edge, exactly like retail's rim-clipped portraits.
+			button.add_theme_constant_override("icon_max_width", 60)
 			button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			button.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 			if button.icon == null and String(entry.get("text", "")) != "":
