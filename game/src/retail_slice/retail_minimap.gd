@@ -148,6 +148,11 @@ var bezel_opening_polygon := PackedVector2Array()
 ## draws at exactly this authored size — its own rim falloff then lands at
 ## the ring like retail — instead of the measured 1.29x overfill.
 var paper_half_extents := Vector2.ZERO
+## The radar's authored glass sphere (palantirmainglass), layered over the
+## paper and the ink for retail's marble look. Null on pre-split packs. The
+## rect is node-local, supplied by the HUD from the authored stage placement.
+var glass_overlay: Texture2D = null
+var glass_overlay_rect := Rect2()
 
 var simulation: RefCounted
 ## The local player's shroud, or null for a fog-off match / a legacy caller.
@@ -642,6 +647,26 @@ func _draw() -> void:
 	# schematic would only double-print them.
 	if source_geometry_loaded and not uses_map_ink_art:
 		_draw_source_geometry(arena, disc)
+	# Retail's marble: the authored radar glass sphere (palantirmainglass)
+	# layers over the paper and the ink at its authored placement, clipped to
+	# the opening; blips and the view box stay readable above it.
+	if glass_overlay != null and glass_overlay_rect.size.x > 0.0:
+		var glass_quad := PackedVector2Array([
+			glass_overlay_rect.position,
+			Vector2(glass_overlay_rect.end.x, glass_overlay_rect.position.y),
+			glass_overlay_rect.end,
+			Vector2(glass_overlay_rect.position.x, glass_overlay_rect.end.y),
+		])
+		for piece in Geometry2D.intersect_polygons(glass_quad, disc):
+			var polygon := _sanitized_radar_polygon(piece)
+			if polygon.is_empty():
+				continue
+			var glass_uvs := PackedVector2Array()
+			for point in polygon:
+				glass_uvs.append(
+					(point - glass_overlay_rect.position) / glass_overlay_rect.size
+				)
+			draw_colored_polygon(polygon, Color.WHITE, glass_uvs, glass_overlay)
 	# THE RADAR MAP IS FULLY DRAWN, SHROUD OR NOT. Retail's [hud] captures are
 	# unambiguous: at match start (reference/in game ui.jpg, REF-52) the whole
 	# parchment disc shows the full map ink with zero black fog, and the
