@@ -143,6 +143,11 @@ const RADAR_DISC_SEGMENTS := 72
 ## circle, whose clipping cut see-through grass crescents into the ring's
 ## wider sides (owner 2026-08-26: "gaps on the inside radar").
 var bezel_opening_polygon := PackedVector2Array()
+## AUTHORED paper half-extents (the RadarBackground globe character at its
+## placed scale), set by the HUD with the piece binding. When set, the paper
+## draws at exactly this authored size — its own rim falloff then lands at
+## the ring like retail — instead of the measured 1.29x overfill.
+var paper_half_extents := Vector2.ZERO
 
 var simulation: RefCounted
 ## The local player's shroud, or null for a fog-off match / a legacy caller.
@@ -534,7 +539,11 @@ func _paper_square() -> Rect2:
 	## what the retail capture measures. See the constant. Per-axis, so the
 	## parchment fills the authored opening rather than leaving see-through
 	## crescents at its wide sides.
-	var extents := bezel_extents() * RETAIL_PARCHMENT_DISC_SCALE
+	var extents := (
+		paper_half_extents
+		if paper_half_extents.x > 0.0 and paper_half_extents.y > 0.0
+		else bezel_extents() * RETAIL_PARCHMENT_DISC_SCALE
+	)
 	var center := Rect2(Vector2.ZERO, size).get_center()
 	return Rect2(center - extents, extents * 2.0)
 

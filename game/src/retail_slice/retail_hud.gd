@@ -246,6 +246,19 @@ const RETAIL_POWER_DOCK_SIZE := Vector2(76, 76)
 # sat small + off-centre in the opening).
 const RETAIL_DISH_GLASS_CENTER := Vector2(286.0 * 1.875, 148.0 * 1.40625)
 const RETAIL_DISH_GLASS_HALF_EXTENTS := Vector2(74.0 * 1.875, 74.0 * 1.40625)
+# THE GLOBE IS SMALLER THAN THE HOLE (owner 2026-08-26: "the black circle you
+# have on the right clips into the left"). The frame sheet's dish HOLE
+# (scanned, 138.75 x 104.06 half-extents) includes the socket ring band; the
+# GLASS GLOBE inside it is the authored dish character at (0.6401, 0.6907)
+# scale = RETAIL_DISH_HALF_EXTENTS (94.4 x 76.4) around RETAIL_DISH_CENTER.
+# The portrait and the glass art fill the GLOBE; the hole keeps the dark
+# backing under the socket band. The globe's left edge (525.4 - 94.4 = 431)
+# clears the radar opening's right edge (243.5 + 171.6 = 415) - retail's
+# radar and dish never overlap.
+# The radar PAPER is the same globe character at uniform scale 1.3114:
+const RETAIL_RADAR_GLOBE_HALF_EXTENTS := Vector2(
+	94.402 * 1.3114 / 0.6401, 76.399 * 1.3114 / 0.6907
+)
 const RETAIL_FRAME_PIECES := [
 	{
 		"kind": "disc",
@@ -2673,6 +2686,10 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 					frame_piece["texture"] = dish_glass
 				if dish_overlay != null:
 					frame_piece["overlay_texture"] = dish_overlay
+				# Glass art fills the GLOBE; the disc's own extents stay the
+				# HOLE so the dark backing still covers the socket band.
+				frame_piece["glass_center"] = RETAIL_DISH_CENTER
+				frame_piece["glass_half_extents"] = RETAIL_DISH_HALF_EXTENTS
 			frame_pieces.append(frame_piece)
 		retail_control_bar_bound = retail_control_bar_frame.bind_retail_composition(
 			frame_texture,
@@ -3767,6 +3784,60 @@ func _layout_command_sockets() -> void:
 		occupied[slot] = true
 
 
+## Owner 2026-08-26: the hero health bar is AUTHORED art (hero1-healthbar):
+## frame i69 carries the level circle and the empty bar; i73/i76/i79 are the
+## red/yellow/green fill stages. When the split ships them, the procedural
+## arc hides and the pieces draw; a pre-split pack keeps the arc (named
+## fallback). Attach is lazy: called at cell build AND at every update so the
+## art also lands on cells built before the APT pack bound.
+func _attach_hero_health_pieces(button: Button, health_arc: Control) -> void:
+	if retail_apt_runtime == null or button.get_node_or_null("HealthFillClip") != null:
+		return
+	var health_rows: Array = retail_apt_runtime.atlas_piece_rows_matching(
+		"hero1-healthbar"
+	)
+	if health_rows.size() != 4:
+		return
+	var bar_center := StageScript.scale_size(
+		AptRuntimeScript.HERO_CELL_HEALTH_BAR_LOCAL
+	)
+	var bar_size := StageScript.scale_size(
+		AptRuntimeScript.HERO_CELL_HEALTH_BAR_QUAD
+	)
+	var bar_frame := TextureRect.new()
+	bar_frame.name = "HealthBarArt"
+	bar_frame.texture = retail_apt_runtime.atlas_piece_texture_for_row(
+		health_rows[0] as Dictionary
+	)
+	bar_frame.stretch_mode = TextureRect.STRETCH_SCALE
+	bar_frame.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bar_frame.position = bar_center - bar_size * 0.5
+	bar_frame.size = bar_size
+	bar_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	button.add_child(bar_frame)
+	var fill_clip := Control.new()
+	fill_clip.name = "HealthFillClip"
+	fill_clip.clip_contents = true
+	fill_clip.position = bar_frame.position
+	fill_clip.size = bar_size
+	fill_clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var fill := TextureRect.new()
+	fill.name = "HealthFill"
+	fill.stretch_mode = TextureRect.STRETCH_SCALE
+	fill.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	fill.position = Vector2.ZERO
+	fill.size = bar_size
+	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fill_clip.add_child(fill)
+	button.add_child(fill_clip)
+	# authored ids ascend: frame(69), red(73), yellow(76), green(79)
+	fill_clip.set_meta("fill_red", health_rows[1])
+	fill_clip.set_meta("fill_yellow", health_rows[2])
+	fill_clip.set_meta("fill_green", health_rows[3])
+	if health_arc != null:
+		health_arc.visible = false
+
+
 ## Per-faction select-all-heroes art from the authored piece split (owner
 ## 2026-08-26): idle shows `<faction>heroselection.tga`, a press swaps to the
 ## `_reg` variant while held. The split ships three factions' art today
@@ -4109,7 +4180,12 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 	var radar_piece: Texture2D = null
 	if retail_apt_runtime != null:
 		radar_piece = retail_apt_runtime.atlas_piece_texture("RadarBackground")
-	if radar_piece == null or not minimap.bind_retail_parchment_texture(radar_piece):
+	if radar_piece != null and minimap.bind_retail_parchment_texture(radar_piece):
+		# The paper draws at the globe character's authored size, so its own
+		# rim falloff meets the ring exactly (owner 2026-08-26: the map must
+		# fill the whole sphere).
+		minimap.paper_half_extents = RETAIL_RADAR_GLOBE_HALF_EXTENTS
+	else:
 		minimap.bind_retail_parchment(_retail_palantir_atlas)
 	_bind_retail_radar_view_box_edge(content_db, expected_pack_root)
 	var ui_font := _retail_ui_font(expected_pack_root)
@@ -4144,8 +4220,30 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 		"powers": "playermagic-buttonclip",
 		"score": "objectives-buttonclip",
 	}
+	# The three orb icons come from the authored strip (Palantir image 181,
+	# owner 2026-08-26): key, ring, flag in left-to-right authored order, one
+	# third of the strip each. The measured per-orb crops from the palantir
+	# sheet stay as the pre-split fallback.
+	var orb_strip: Texture2D = null
+	if retail_apt_runtime != null:
+		orb_strip = retail_apt_runtime.atlas_piece_texture("palantir:181")
+	var orb_order := ["options", "powers", "score"]
 	for id in orb_buttons.keys():
 		var orb := orb_buttons[id] as Button
+		# The strip is the authored SOCKET art (three dark rings); it rides
+		# BEHIND the icon as the button's normal background. The icon (key /
+		# ring / flag) stays the validated crop on top.
+		if orb_strip != null and orb_order.has(id):
+			var third := float(orb_strip.get_width()) / 3.0
+			var socket_third := AtlasTexture.new()
+			socket_third.atlas = orb_strip
+			socket_third.region = Rect2(
+				third * float(orb_order.find(id)), 0.0,
+				third, float(orb_strip.get_height())
+			)
+			var socket_box := StyleBoxTexture.new()
+			socket_box.texture = socket_third
+			orb.add_theme_stylebox_override("normal", socket_box)
 		orb.icon = _atlas_region(_retail_palantir_atlas, RETAIL_ORB_REGIONS[id])
 		orb.expand_icon = true
 		orb.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
@@ -4570,9 +4668,12 @@ func _layout_selection_portrait() -> void:
 	selection_portrait.size_flags_horizontal = 0
 	selection_portrait.size_flags_vertical = 0
 	selection_portrait.custom_minimum_size = Vector2.ZERO
-	var dish_panel_center := RETAIL_DISH_GLASS_CENTER - Vector2(360, 0)
-	selection_portrait.position = dish_panel_center - RETAIL_DISH_GLASS_HALF_EXTENTS
-	selection_portrait.size = RETAIL_DISH_GLASS_HALF_EXTENTS * 2.0
+	# The portrait fills the GLOBE, not the hole: the hole's extra band holds
+	# the sockets, and a hole-sized portrait bulged left over the radar ring
+	# (owner 2026-08-26).
+	var dish_panel_center := RETAIL_DISH_CENTER - Vector2(360, 0)
+	selection_portrait.position = dish_panel_center - RETAIL_DISH_HALF_EXTENTS
+	selection_portrait.size = RETAIL_DISH_HALF_EXTENTS * 2.0
 	selection_portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	selection_portrait.stretch_mode = TextureRect.STRETCH_SCALE
 
@@ -4586,7 +4687,7 @@ func _layout_dish_level_caption() -> void:
 	# minus the panel origin (360, 0). The caption rides the dish's lower
 	# interior like retail ("Level: 2" in the owner's RotWK capture), with the
 	# level arc hugging the opening rim under it.
-	var dish_panel_center := RETAIL_DISH_GLASS_CENTER - Vector2(360, 0)
+	var dish_panel_center := RETAIL_DISH_CENTER - Vector2(360, 0)
 	_dish_level_label.position = dish_panel_center + Vector2(-60, 30)
 	_dish_level_label.size = Vector2(120, 20)
 	_dish_level_bar.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
@@ -4594,7 +4695,7 @@ func _layout_dish_level_caption() -> void:
 	_dish_level_bar.size = command_panel.size
 	_dish_level_bar.configure(
 		dish_panel_center,
-		RETAIL_DISH_GLASS_HALF_EXTENTS - Vector2(6.0, 6.0),
+		RETAIL_DISH_HALF_EXTENTS - Vector2(6.0, 6.0),
 		5.0,
 		StageScript.hero_health_arc_half_angle()
 	)
@@ -4757,54 +4858,7 @@ func sync_hero_bar(heroes: Array) -> void:
 				StageScript.hero_health_arc_half_angle()
 			)
 			button.add_child(health)
-			# Owner 2026-08-26: the hero health bar is AUTHORED art
-			# (hero1-healthbar): frame i69 carries the level circle and the
-			# empty bar; i79/i76/i73 are the green/yellow/red fill stages. When
-			# the split ships them, the procedural arc hides and the pieces
-			# draw; a pre-split pack keeps the arc (named fallback).
-			var health_rows: Array = (
-				retail_apt_runtime.atlas_piece_rows_matching("hero1-healthbar")
-				if retail_apt_runtime != null
-				else []
-			)
-			if health_rows.size() == 4:
-				var bar_center := StageScript.scale_size(
-					AptRuntimeScript.HERO_CELL_HEALTH_BAR_LOCAL
-				)
-				var bar_size := StageScript.scale_size(
-					AptRuntimeScript.HERO_CELL_HEALTH_BAR_QUAD
-				)
-				var bar_frame := TextureRect.new()
-				bar_frame.name = "HealthBarArt"
-				bar_frame.texture = retail_apt_runtime.atlas_piece_texture_for_row(
-					health_rows[0] as Dictionary
-				)
-				bar_frame.stretch_mode = TextureRect.STRETCH_SCALE
-				bar_frame.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-				bar_frame.position = bar_center - bar_size * 0.5
-				bar_frame.size = bar_size
-				bar_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
-				button.add_child(bar_frame)
-				var fill_clip := Control.new()
-				fill_clip.name = "HealthFillClip"
-				fill_clip.clip_contents = true
-				fill_clip.position = bar_frame.position
-				fill_clip.size = bar_size
-				fill_clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-				var fill := TextureRect.new()
-				fill.name = "HealthFill"
-				fill.stretch_mode = TextureRect.STRETCH_SCALE
-				fill.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-				fill.position = Vector2.ZERO
-				fill.size = bar_size
-				fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-				fill_clip.add_child(fill)
-				button.add_child(fill_clip)
-				# authored ids ascend frame(69), red(73), yellow(76), green(79)
-				fill_clip.set_meta("fill_red", health_rows[1])
-				fill_clip.set_meta("fill_yellow", health_rows[2])
-				fill_clip.set_meta("fill_green", health_rows[3])
-				health.visible = false
+			_attach_hero_health_pieces(button, health)
 			var badge := Label.new()
 			badge.name = "LevelBadge"
 			badge.position = StageScript.scale_size(
@@ -4846,6 +4900,7 @@ func sync_hero_bar(heroes: Array) -> void:
 		)
 		var health_arc := button.get_node("HealthArc") as RetailHudArcGauge
 		health_arc.set_value(health_fraction)
+		_attach_hero_health_pieces(button, health_arc)
 		var fill_clip := button.get_node_or_null("HealthFillClip") as Control
 		if fill_clip != null and retail_apt_runtime != null:
 			# Authored stages (owner 2026-08-26): green, then yellow, then red.

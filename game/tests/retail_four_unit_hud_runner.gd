@@ -1135,19 +1135,33 @@ func _check_measured_seat_parity_and_containment(hud) -> void:
 				str(orb_id), str(orb_centre), orb_distance, float(hud.RETAIL_RADAR_RADIUS)
 			]
 	_check("orb_buttons_sit_inside_the_radar_disc", orbs_ok, orbs_detail)
-	# The dish portrait fills the authored frame sheet's dish OPENING exactly —
-	# the painting lands in the hole the frame art leaves for the glass.
+	# The dish portrait fills the authored GLOBE (owner 2026-08-26): the frame
+	# sheet's HOLE is wider — it holds the socket band — and a hole-sized
+	# portrait bulged left over the radar ring. The globe's left edge clears
+	# the radar opening's right edge, which the second check pins.
 	var opening_position: Vector2 = (
-		(hud.RETAIL_DISH_GLASS_CENTER as Vector2) - Vector2(360, 0)
-		- (hud.RETAIL_DISH_GLASS_HALF_EXTENTS as Vector2)
+		(hud.RETAIL_DISH_CENTER as Vector2) - Vector2(360, 0)
+		- (hud.RETAIL_DISH_HALF_EXTENTS as Vector2)
 	)
 	_check(
-		"dish_portrait_fills_the_authored_frame_opening",
+		"dish_portrait_fills_the_authored_globe",
 		hud.selection_portrait.position.is_equal_approx(opening_position)
 			and hud.selection_portrait.size.is_equal_approx(
-				(hud.RETAIL_DISH_GLASS_HALF_EXTENTS as Vector2) * 2.0
+				(hud.RETAIL_DISH_HALF_EXTENTS as Vector2) * 2.0
 			),
 		"pos=%s size=%s" % [str(hud.selection_portrait.position), str(hud.selection_portrait.size)]
+	)
+	var radar_right := 0.0
+	for offset_value in hud.RETAIL_RADAR_OPENING_OFFSETS as Array:
+		radar_right = maxf(radar_right, (hud.RETAIL_RADAR_CENTER as Vector2).x + (offset_value as Vector2).x)
+	_check(
+		"dish_globe_clears_the_radar_opening",
+		(hud.RETAIL_DISH_CENTER as Vector2).x - (hud.RETAIL_DISH_HALF_EXTENTS as Vector2).x
+			>= radar_right,
+		"globe_left=%.1f radar_right=%.1f" % [
+			(hud.RETAIL_DISH_CENTER as Vector2).x - (hud.RETAIL_DISH_HALF_EXTENTS as Vector2).x,
+			radar_right
+		]
 	)
 	# Containment sweep: with the fortress hero page open (the widest live
 	# range), every palantir command button rides an authored seat centre.

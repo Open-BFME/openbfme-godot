@@ -144,22 +144,28 @@ func _draw() -> void:
 					# The authored glass is SEMI-TRANSPARENT (retail layers it
 					# over the dark swirl render), so it draws OVER the dark
 					# backing, never instead of it.
+					# Glass art fills the authored GLOBE (piece "glass_*" keys);
+					# without them it falls back to the disc's own extents.
+					var glass_center: Vector2 = piece.get(
+						"glass_center", piece["center"]
+					)
+					var glass_half: Vector2 = piece.get(
+						"glass_half_extents", half_extents
+					)
 					var glass_texture := piece.get("texture") as Texture2D
 					if glass_texture != null:
-						var glass_center := piece["center"] as Vector2
 						draw_texture_rect(
 							glass_texture,
-							Rect2(glass_center - half_extents, half_extents * 2.0),
+							Rect2(glass_center - glass_half, glass_half * 2.0),
 							false
 						)
 					# The authored soft highlight sheet rides ON the glass
 					# (owner 2026-08-26); its own alpha keeps it subtle.
 					var overlay_texture := piece.get("overlay_texture") as Texture2D
 					if overlay_texture != null:
-						var overlay_center := piece["center"] as Vector2
 						draw_texture_rect(
 							overlay_texture,
-							Rect2(overlay_center - half_extents, half_extents * 2.0),
+							Rect2(glass_center - glass_half, glass_half * 2.0),
 							false
 						)
 				else:
