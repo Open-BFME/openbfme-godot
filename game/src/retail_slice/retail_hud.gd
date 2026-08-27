@@ -3970,6 +3970,10 @@ func _build_orb_buttons(dock: Control) -> void:
 		button.add_theme_stylebox_override("disabled", StyleBoxEmpty.new())
 		button.add_theme_font_size_override("font_size", 17)
 		button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		# ABOVE the authored top layer (frame + glass, z 6). Retail draws the
+		# three orbs on top of the radar glass; under it they read dim and
+		# hazed (owner round 8 zoom).
+		button.z_index = 3
 		button.mouse_entered.connect(func() -> void:
 			ui_sound_requested.emit("Gui_UpgradeButtonGlow")
 		)
@@ -6756,6 +6760,9 @@ func _bind_authored_dish_plates() -> void:
 		if strip == null:
 			strip = TextureRect.new()
 			strip.name = "OrbBackingStrip"
+			# The rings ride WITH the orbs, above the glass (z 3 relative to
+			# the dock's 5 = 8), else the glass sheet washes them out.
+			strip.z_index = 3
 			strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			strip.stretch_mode = TextureRect.STRETCH_SCALE
 			strip.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
