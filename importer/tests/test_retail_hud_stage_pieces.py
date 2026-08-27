@@ -438,13 +438,67 @@ def test_atlas_piece_manifest_splits_by_authored_uv_footprint() -> None:
     # placed shape.
     assert named["rect"] == [10, 20, 32, 32]
     assert named["names"] == ["palantirmainglass"]
+    assert named["derivedName"] == "palantirmainglass"
     assert named["croppedPng"] == (
-        "assets/ui/palantir/pieces/apt-palantir-i3-10x20-32x32.png"
+        "assets/ui/palantir/pieces/apt-palantir-palantirmainglass-i3.png"
     )
     assert named["atlas"].endswith("apt-palantir-9-abcdefabcdef.png")
-    # image 6: the UV translation offsets the footprint; nothing exports it.
+    # image 6: the UV translation offsets the footprint; nothing exports it,
+    # so its file keeps the rect identity.
     assert unnamed["rect"] == [100, 60, 8, 8]
     assert unnamed["names"] == []
+    assert unnamed["derivedName"] == ""
+    assert unnamed["croppedPng"] == (
+        "assets/ui/palantir/pieces/apt-palantir-i6-100x60-8x8.png"
+    )
+
+
+def test_atlas_piece_hierarchy_names_fill_unexported_images() -> None:
+    """An image no symbol exports is still named when a NAMED placement draws
+    it: root piece name plus the deepest named child on the draw path."""
+
+    stage_pieces = [
+        {
+            "name": "CommandButtons",
+            "states": [
+                {
+                    "draws": [
+                        {
+                            "movie": "Palantir",
+                            "imageId": 6,
+                            "path": "piece:1:Palantir/CommandButtons/3:glass1/2",
+                        }
+                    ]
+                }
+            ],
+        }
+    ]
+    from openbfme_importer.retail_hud_apt_convert import _stage_piece_usage_names
+
+    usage = _stage_piece_usage_names(stage_pieces)
+    assert usage == {("palantir", 6): {"CommandButtons-glass1"}}
+    geometry = {
+        9: [
+            {
+                "style": "tc",
+                "values": [255.0] * 4 + [6.0, 1.0, 0.0, 0.0, 1.0, 100.0, 60.0],
+                "primitives": [[(0.0, 0.0), (0.0, 8.0), (8.0, 8.0)]],
+            }
+        ]
+    }
+    movie = _movie(
+        "Palantir",
+        [{"kind": "null"}, {"kind": "shape", "characterId": 1, "geometryId": 9}],
+        [[]],
+        geometry=geometry,
+        image_map={6: 9},
+        atlases=_ATLASES,
+    )
+    (piece,) = _atlas_piece_manifest({"palantir": movie}, usage)
+    assert piece["derivedName"] == "CommandButtons-glass1"
+    assert piece["croppedPng"] == (
+        "assets/ui/palantir/pieces/apt-palantir-commandbuttons-glass1-i6.png"
+    )
 
 
 def test_compose_authored_transforms_child_translation() -> None:

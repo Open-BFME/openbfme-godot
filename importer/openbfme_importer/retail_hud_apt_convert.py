@@ -3285,6 +3285,7 @@ def _geometry_primitives(
                 {
                     "kind": "textured-triangle",
                     "geometryId": geometry_id,
+                    "imageId": image_id,
                     "points": [
                         transform.point((float(point[0]), float(point[1])))
                         for point in primitive
@@ -3780,7 +3781,134 @@ def _stage_pieces_contract(
     return pieces
 
 
-def _atlas_piece_manifest(movies: Mapping[str, _Movie]) -> list[dict[str, Any]]:
+def _stage_piece_usage_names(
+    stage_pieces: Iterable[Mapping[str, Any]],
+) -> dict[tuple[str, int], set[str]]:
+    """Image names read from the movie's own placement hierarchy.
+
+    Every flattened stage draw carries the image it samples and the path of
+    NAMED instances above it (``PalantirBack``, ``glass3``, ``toggleFlash`` -
+    all authored strings). An image a named part draws is named after that
+    part: root piece name, joined with the deepest named child when one
+    exists. Purely numeric path segments (depths, button record indices) are
+    not names and are skipped.
+    """
+
+    usage: dict[tuple[str, int], set[str]] = {}
+    for piece in stage_pieces:
+        for state in piece.get("states", []):
+            for row in state.get("draws", []):
+                image_id = row.get("imageId")
+                if image_id is None:
+                    continue
+                segments = [str(piece.get("name", ""))]
+                for token in str(row.get("path", "")).split("/")[2:]:
+                    if ":" not in token:
+                        continue
+                    child = token.split(":", 1)[1]
+                    if child and not child.isdigit():
+                        segments.append(child)
+                segments = [segment for segment in segments if segment]
+                if not segments:
+                    continue
+                name = (
+                    segments[0]
+                    if len(segments) == 1 or segments[-1] == segments[0]
+                    else f"{segments[0]}-{segments[-1]}"
+                )
+                usage.setdefault(
+                    (str(row.get("movie", "")).casefold(), int(image_id)), set()
+                ).add(name)
+    return usage
+
+
+def _placement_usage_names(
+    movies: Mapping[str, _Movie],
+) -> dict[tuple[str, int], set[str]]:
+    """Image names read from NAMED PlaceObject rows anywhere in the family.
+
+    The stage-piece pass only walks the root movies' layer-0 placements; the
+    hero-select and planning-mode movies keep their names on inner display
+    rows instead. Every named placement names the images of the character it
+    places — a shape directly, or a sprite's placed shapes one level deep.
+    All strings are the movie's own; nothing is invented.
+    """
+
+    usage: dict[tuple[str, int], set[str]] = {}
+
+    def _shape_images(movie: _Movie, character: Mapping[str, Any]) -> list[int]:
+        images: list[int] = []
+        for group in movie.geometry.get(int(character.get("geometryId", -1)), []):
+            if str(group["style"]) == "tc":
+                images.append(int(float(group["values"][4])))
+        return images
+
+    def _name_images(
+        movie: _Movie,
+        character_id: int,
+        symbol: str,
+        visited: set[int] | None = None,
+    ) -> None:
+        # Recursive: a named placement names EVERY image the placed subtree
+        # draws (all frames, all button states), so deep unnamed sprite
+        # nesting cannot orphan its art. The visited set breaks cycles.
+        if visited is None:
+            visited = set()
+        if character_id in visited or not 0 <= character_id < len(movie.characters):
+            return
+        visited.add(character_id)
+        character = movie.characters[character_id]
+        kind = str(character.get("kind", ""))
+        if kind == "shape":
+            for image_id in _shape_images(movie, character):
+                usage.setdefault(
+                    (movie.name.casefold(), image_id), set()
+                ).add(symbol)
+            return
+        if kind == "button":
+            for record in character.get("records", []):
+                _name_images(
+                    movie, int(record.get("characterId", -1)), symbol, visited
+                )
+            return
+        if kind == "sprite":
+            for frame in character.get("frames", []):
+                for row in frame:
+                    if row.get("kind") != "place-object":
+                        continue
+                    child_name = str(row.get("name", "") or "")
+                    child_symbol = symbol
+                    if child_name and not child_name.isdigit():
+                        # A named child refines the name: Hero1 -> Hero1-portrait.
+                        child_symbol = f"{symbol}-{child_name}"
+                    _name_images(
+                        movie,
+                        int(row.get("characterId", -1)),
+                        child_symbol,
+                        visited,
+                    )
+
+    for movie in movies.values():
+        frame_sources: list[list[list[dict[str, Any]]]] = [movie.frames]
+        for character in movie.characters:
+            if str(character.get("kind", "")) == "sprite":
+                frame_sources.append(character.get("frames", []))
+        for frames in frame_sources:
+            for frame in frames:
+                for row in frame:
+                    if row.get("kind") != "place-object":
+                        continue
+                    name = str(row.get("name", "") or "")
+                    if not name or name.isdigit():
+                        continue
+                    _name_images(movie, int(row.get("characterId", -1)), name)
+    return usage
+
+
+def _atlas_piece_manifest(
+    movies: Mapping[str, _Movie],
+    usage_names: Mapping[tuple[str, int], set[str]] | None = None,
+) -> list[dict[str, Any]]:
     """One row per authored IMAGE of the palantir movie family.
 
     The shipped atlases are packed sprite sheets; nothing about their layout
@@ -3880,6 +4008,32 @@ def _atlas_piece_manifest(movies: Mapping[str, _Movie]) -> list[dict[str, Any]]:
             y1 = min(height, math.ceil(box[3]))
             if x1 <= x0 or y1 <= y0:
                 continue
+            export_names = sorted(names.get(image_id, ()))
+            hierarchy_names = sorted(
+                (usage_names or {}).get((movie_key, image_id), ())
+            )
+            # The file name carries the best authored name: an export symbol
+            # first (retail's own asset name), else the shortest placement-
+            # hierarchy name. Only a truly anonymous image keeps the rect id.
+            derived = ""
+            if export_names:
+                derived = min(export_names, key=lambda value: (len(value), value))
+            elif hierarchy_names:
+                # Most specific placement name first (more named segments),
+                # then shortest, then alphabetical - all deterministic.
+                derived = min(
+                    hierarchy_names,
+                    key=lambda value: (-value.count("-"), len(value), value),
+                )
+            derived_slug = re.sub(r"[^a-z0-9]+", "-", derived.casefold()).strip("-")
+            cropped = (
+                f"assets/ui/palantir/pieces/apt-{slug}-{derived_slug}-i{image_id}.png"
+                if derived_slug
+                else (
+                    "assets/ui/palantir/pieces/"
+                    f"apt-{slug}-i{image_id}-{x0}x{y0}-{x1 - x0}x{y1 - y0}.png"
+                )
+            )
             rows.append(
                 {
                     "movie": movie.name,
@@ -3887,11 +4041,9 @@ def _atlas_piece_manifest(movies: Mapping[str, _Movie]) -> list[dict[str, Any]]:
                     "atlas": str(atlas["cookedPng"]),
                     "atlasSha256": str(atlas["sha256"]),
                     "rect": [x0, y0, x1 - x0, y1 - y0],
-                    "names": sorted(names.get(image_id, ())),
-                    "croppedPng": (
-                        "assets/ui/palantir/pieces/"
-                        f"apt-{slug}-i{image_id}-{x0}x{y0}-{x1 - x0}x{y1 - y0}.png"
-                    ),
+                    "names": sorted({*export_names, *hierarchy_names}),
+                    "derivedName": derived,
+                    "croppedPng": cropped,
                 }
             )
     return rows
@@ -5783,7 +5935,10 @@ def _make_contract(
     stage_piece_states = [
         state for piece in stage_pieces for state in piece["states"]
     ]
-    atlas_pieces = _atlas_piece_manifest(movies)
+    piece_usage_names = _stage_piece_usage_names(stage_pieces)
+    for key, symbols in _placement_usage_names(movies).items():
+        piece_usage_names.setdefault(key, set()).update(symbols)
+    atlas_pieces = _atlas_piece_manifest(movies, piece_usage_names)
     contract: dict[str, Any] = {
         "schema": OUTPUT_SCHEMA,
         "schemaVersion": 0,
