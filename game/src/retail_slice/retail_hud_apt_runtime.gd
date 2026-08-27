@@ -1007,6 +1007,35 @@ func atlas_piece_texture(piece_name: String) -> Texture2D:
 	return atlas_piece_texture_for_row(row_value as Dictionary)
 
 
+## Solid underlays the HUD asks this runtime to paint FIRST (the dish-hole
+## backing standing in for the engine-composited EmptyGlobe marble). Each is
+## {"center": Vector2, "half_extents": Vector2, "color": Color} in authored
+## stage-draw viewport space.
+var stage_underlays: Array[Dictionary] = []
+
+
+func stage_piece_row_bounds(piece_name: String, image_id: int) -> Rect2:
+	## Bounding rect (authored viewport space, pre-scale) of the bound rows of
+	## `piece_name` that sample `image_id`. Zero rect when absent — callers
+	## keep their fallback, nothing is invented.
+	var low := Vector2(INF, INF)
+	var high := Vector2(-INF, -INF)
+	var found := false
+	var folded := piece_name.to_lower()
+	for row in _stage_piece_draws:
+		if int(row.get("imageId", -1)) != image_id:
+			continue
+		if not String(row.get("path", "")).to_lower().contains(folded):
+			continue
+		for point in row.get("pointsRuntime", PackedVector2Array()) as PackedVector2Array:
+			low = low.min(point)
+			high = high.max(point)
+			found = true
+	if not found:
+		return Rect2()
+	return Rect2(low, high - low)
+
+
 func stage_piece_draws_bound() -> int:
 	## How many idle stage-piece rows this runtime will composite. Zero on a
 	## pre-stage-piece pack; the HUD keeps its measured dish stand-in exactly
@@ -4127,6 +4156,47 @@ func _validate_button_instance(instance: Dictionary) -> bool:
 	return true
 
 
+## AUTHORED IDLE STATE per root piece, for a GOOD-faction skirmish (both
+## external consult reads of the movie agree, 2026-08-26): the frame and the
+## backing rings show their `_good` (double-sphere) family, the glass pair is
+## `_double`, the `_show` pieces show, and everything selection- or
+## host-driven is HIDDEN at idle rather than flattened from its first
+## populated tween frame. "frame0" = the state that starts at frame 0.
+const STAGE_PIECE_IDLE_STATE := {
+	"palantirback": "_good",
+	"palantirframe": "_good",
+	"palantirspectralhighlight": "_double",
+	"commandbackground": "_show",
+	"regionbackground": "_show",
+	"globeswirlrender": "_show",
+	"bigglobeswirlrender": "_show",
+	"emptyglobe": "_show",
+	"commandui": "_show",
+	"radarbackground": "_show",
+	"radar": "_show",
+	"radarpings": "_show",
+	"palantirbuttons": "_show",
+	"commandbuttons": "_show",
+	"movieplayback": "frame0",
+	"resourcebar": "frame0",
+}
+## Root pieces retail keeps OFF the idle HUD (selection-, host- or
+## event-driven): drawing their flattened frames painted level-up bursts,
+## side-bar chrome and observer buttons over the match.
+const STAGE_PIECE_IDLE_HIDDEN := [
+	"buttonset", "buttonflashstage", "spellbookui", "moviebutton",
+	"observerstuff", "messengerbutton", "sidecommandbar",
+	"commandpointsflash", "heroselectui", "helpbox", "althelpboxlocation",
+	"planningmodeui", "autoabilityoverlays",
+]
+## Nested tween families that are ACTIVE effects, never idle art, even inside
+## a shown piece (flash sweeps, sub-menu trays, level-up bursts).
+const STAGE_PIECE_IDLE_ROW_EXCLUDES := [
+	"flasheffects", "submenu", "levelupbackground", "levelupforeground",
+	"toggleflash",
+]
+
+
 func _validate_stage_pieces(value: Variant, pack_root: String) -> bool:
 	# Current selected packs omit this section (pre-stage-piece cook). A recook
 	# that emits it is optional extra art: missing/empty is valid, a present
@@ -4145,11 +4215,21 @@ func _validate_stage_pieces(value: Variant, pack_root: String) -> bool:
 		return true
 	if pieces.size() > MAX_DRAWS:
 		return _fail("Palantir stagePieces inventory exceeds bounds")
+	# Authored paint order: root layer, then root depth.
+	var ordered: Array[Dictionary] = []
 	for piece_value in pieces:
 		if typeof(piece_value) != TYPE_DICTIONARY:
 			return _fail("Palantir stage piece is invalid")
-		var piece := piece_value as Dictionary
-		if String(piece.get("name", "")) == "":
+		ordered.append(piece_value as Dictionary)
+	ordered.sort_custom(
+		func(a: Dictionary, b: Dictionary) -> bool:
+			if int(a.get("layer", 0)) != int(b.get("layer", 0)):
+				return int(a.get("layer", 0)) < int(b.get("layer", 0))
+			return int(a.get("rootDepth", 0)) < int(b.get("rootDepth", 0))
+	)
+	for piece in ordered:
+		var piece_name := String(piece.get("name", ""))
+		if piece_name == "":
 			return _fail("Palantir stage piece is unnamed")
 		_stage_piece_count += 1
 		var states_value: Variant = piece.get("states", [])
@@ -4157,10 +4237,16 @@ func _validate_stage_pieces(value: Variant, pack_root: String) -> bool:
 			return _fail("Palantir stage piece states are invalid")
 		var states := states_value as Array
 		_stage_piece_state_count += states.size()
-		# Idle HUD uses the first populated state (typically `_show` / frame 0
-		# content). Named receipts stay named; they never invent pixels. Every
-		# state's rows still count toward the summary cross-check, artless or
-		# not, because the contract's stagePieceDrawCount spans all states.
+		# Every state's rows count toward the summary cross-check whether the
+		# idle table shows the piece or not.
+		var labels: Dictionary = piece.get("labels", {}) as Dictionary
+		var idle_key := piece_name.to_lower()
+		var idle_label := String(STAGE_PIECE_IDLE_STATE.get(idle_key, ""))
+		var idle_frame := -1
+		if idle_label == "frame0":
+			idle_frame = 0
+		elif idle_label != "" and labels.has(idle_label):
+			idle_frame = int(labels[idle_label])
 		var chosen: Dictionary = {}
 		for state_value in states:
 			if typeof(state_value) != TYPE_DICTIONARY:
@@ -4170,16 +4256,35 @@ func _validate_stage_pieces(value: Variant, pack_root: String) -> bool:
 			if typeof(draws_value) != TYPE_ARRAY:
 				return _fail("Palantir stage piece draws are invalid")
 			_stage_piece_total_draw_count += (draws_value as Array).size()
-			if chosen.is_empty() and not (draws_value as Array).is_empty():
+			if idle_frame >= 0:
+				if int(state.get("firstFrameIndex", -1)) == idle_frame:
+					chosen = state
+			elif (
+				idle_label == ""
+				and not STAGE_PIECE_IDLE_HIDDEN.has(idle_key)
+				and chosen.is_empty()
+				and not (draws_value as Array).is_empty()
+			):
+				# Unlisted piece: keep the historical first-populated pick so
+				# a future movie addition degrades visibly, never silently.
 				chosen = state
 		if bool(piece.get("artless", false)):
 			continue
-		if chosen.is_empty():
+		if STAGE_PIECE_IDLE_HIDDEN.has(idle_key) or chosen.is_empty():
 			continue
 		for draw_value in chosen.get("draws", []) as Array:
 			if typeof(draw_value) != TYPE_DICTIONARY:
 				return _fail("Palantir stage piece draw is invalid")
-			if not _bind_stage_piece_draw(draw_value as Dictionary, pack_root):
+			var row := draw_value as Dictionary
+			var row_path := String(row.get("path", "")).to_lower()
+			var excluded := false
+			for fragment in STAGE_PIECE_IDLE_ROW_EXCLUDES:
+				if row_path.contains(String(fragment)):
+					excluded = true
+					break
+			if excluded:
+				continue
+			if not _bind_stage_piece_draw(row, pack_root):
 				return false
 	return true
 
@@ -4202,6 +4307,14 @@ func _bind_stage_piece_draw(row: Dictionary, pack_root: String) -> bool:
 		return true
 	var normalized := row.duplicate(true)
 	normalized["pointsRuntime"] = points
+	# UNBAKE the placement alpha for TEXTURED art only: the Cxform bakes
+	# alpha 0 into rows the movie shows via `_alpha` at runtime (both consult
+	# reads 2026-08-26 flagged this) — a chosen idle state is shown, so its
+	# authored PIXELS render. SOLID rows keep their baked alpha: those are the
+	# movie's invisible placeholder fills (hit shapes, tween anchors) and
+	# unbaking them painted cyan/blue placeholder quads over the whole dock.
+	if kind == "textured-triangle" and color.a == 0.0:
+		color.a = 1.0
 	normalized["colorRuntime"] = color
 	if kind == "textured-triangle":
 		var uvs := _vector2_array(row.get("uvs", []))
@@ -4329,16 +4442,27 @@ func _draw() -> void:
 	if not presentation_ready:
 		return
 	var scale := Vector2(size.x / _authored_resolution.x, size.y / _authored_resolution.y)
-	# Stage-piece art (EmptyGlobe glass, radar backing, rope/ornament) sits
-	# under the static InitialSetup subset so the frame sheet still owns the
-	# bezel. Current packs have none; a HUD recook fills this array.
+	# Backing underlays first: the dish hole's dark marble stand-in (the real
+	# fill is EmptyGlobe, an engine composite retail renders live).
+	for underlay in stage_underlays:
+		var underlay_center := (underlay.get("center", Vector2.ZERO) as Vector2) * scale
+		var underlay_half := (underlay.get("half_extents", Vector2.ZERO) as Vector2) * scale
+		draw_set_transform(underlay_center, 0.0, underlay_half)
+		draw_circle(Vector2.ZERO, 1.0, underlay.get("color", Color.BLACK) as Color)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	# Paint order (consult verdict 2026-08-26): static InitialSetup art first
+	# (its frame-sheet triangles duplicate stage art and must not cover the
+	# glasses), then the stage pieces in authored (layer, rootDepth) order —
+	# the frame IS one of these pieces, and the glass pair draws above it at
+	# its authored depth — then the live text labels on top.
+	for row in _display_items:
+		if String(row.get("displayKind", "")) != "text":
+			_draw_triangle_row(row, scale)
 	for row in _stage_piece_draws:
 		_draw_triangle_row(row, scale)
 	for row in _display_items:
 		if String(row.get("displayKind", "")) == "text":
 			_draw_live_text(row, scale)
-			continue
-		_draw_triangle_row(row, scale)
 
 
 static func _degenerate_triangle(points: PackedVector2Array) -> bool:

@@ -692,6 +692,10 @@ var _data_driven_train_surface := false
 ## fallback (specs marked "authored_fallback": true) is logged here during
 ## bind_retail_train_commands. Missing localized strings otherwise fail closed.
 var retail_bind_diagnostics: Array[String] = []
+## True when the bound pack's stage pieces own the palantir composition (the
+## authored CommandButtons socket art then replaces the hand-stamped empty
+## sockets and orb crops).
+var _stage_art_owns_sockets := false
 ## Named receipts for authored-string lookups that MISS the mounted string
 ## table. Each entry names the call site and the id ("<context> -> '<id>'"),
 ## recorded once per id: the render path keeps its documented honest behaviour
@@ -2685,25 +2689,39 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 		# split, the backing ellipse draws that art stretched over the dish
 		# opening; a pre-split pack keeps the flat dish-glass colour as the
 		# named stand-in. The ellipse's click shield is identical either way.
-		# THE DISH GLASS IS palantirSUBglass (the movie places mainglass over
-		# the RADAR, subglass over the dish - read from the stage draws).
-		var dish_glass := retail_apt_runtime.atlas_piece_texture("palantirsubglass")
-		# Owner 2026-08-26: the softer authored highlight sheet overlays the
-		# dish glass ("the glass overlay ... goes on the right side").
-		var dish_overlay := retail_apt_runtime.atlas_piece_texture("abilitieshighlight")
+		# CONSULT VERDICT 2026-08-26 (both external reads of the movie agree):
+		# the stage pieces themselves are the composition — PalantirFrame's
+		# `_good` state IS the metal at authored depth 42, and the glass pair
+		# (PalantirSpectralHighlight `_double`) draws ABOVE it at depth 116.
+		# Stamping the sheet here as well painted the frame twice and put the
+		# glasses under the metal. With stage pieces bound, every hand piece
+		# becomes a pure CLICK SHIELD; the dish hole's dark marble stand-in
+		# (EmptyGlobe is an engine composite, artless in the contract) moves
+		# under the stage rows as a runtime underlay at the subglass rect.
+		var stage_art_owns_composition := retail_apt_runtime.stage_piece_draws_bound() > 0
 		var frame_pieces: Array[Dictionary] = []
 		for piece_value in RETAIL_FRAME_PIECES:
 			var frame_piece := (piece_value as Dictionary).duplicate()
-			if String(frame_piece.get("kind", "")) == "disc":
-				if dish_glass != null:
-					frame_piece["texture"] = dish_glass
-				if dish_overlay != null:
-					frame_piece["overlay_texture"] = dish_overlay
-				# Glass art fills the authored subglass rect; the disc's own
-				# extents stay the sheet hole for the dark backing.
-				frame_piece["glass_center"] = RETAIL_DISH_SUBGLASS_CENTER
-				frame_piece["glass_half_extents"] = RETAIL_DISH_SUBGLASS_HALF_EXTENTS
+			if stage_art_owns_composition:
+				frame_piece["shield_only"] = true
 			frame_pieces.append(frame_piece)
+		retail_apt_runtime.stage_underlays = []
+		if stage_art_owns_composition:
+			# Runtime underlays are in STAGE units (the runtime scales its
+			# rows itself): the authored subglass rect back through the
+			# 1.875 x 1.40625 dock transform.
+			retail_apt_runtime.stage_underlays = [{
+				"center": Vector2(
+					RETAIL_DISH_SUBGLASS_CENTER.x / 1.875,
+					RETAIL_DISH_SUBGLASS_CENTER.y / 1.40625 + 512.0
+				),
+				"half_extents": Vector2(
+					RETAIL_DISH_SUBGLASS_HALF_EXTENTS.x / 1.875,
+					RETAIL_DISH_SUBGLASS_HALF_EXTENTS.y / 1.40625
+				),
+				"color": Color(0.035, 0.04, 0.03, 1.0),
+			}]
+		_stage_art_owns_sockets = stage_art_owns_composition
 		retail_control_bar_bound = retail_control_bar_frame.bind_retail_composition(
 			frame_texture,
 			"PalantirFrame_GoodDouble",
@@ -4254,28 +4272,48 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 	var orb_order := ["options", "powers", "score"]
 	for id in orb_buttons.keys():
 		var orb := orb_buttons[id] as Button
-		# The strip is the authored SOCKET art (three dark rings); it rides
-		# BEHIND the icon as the button's normal background. The icon (key /
-		# ring / flag) stays the validated crop on top.
-		if orb_strip != null and orb_order.has(id):
-			var third := float(orb_strip.get_width()) / 3.0
-			var socket_third := AtlasTexture.new()
-			socket_third.atlas = orb_strip
-			socket_third.region = Rect2(
-				third * float(orb_order.find(id)), 0.0,
-				third, float(orb_strip.get_height())
+		var clip_rows: Array = []
+		if retail_apt_runtime != null:
+			clip_rows = retail_apt_runtime.atlas_piece_rows_matching(
+				String(orb_clip_families.get(id, ""))
 			)
-			var socket_box := StyleBoxTexture.new()
-			socket_box.texture = socket_third
-			orb.add_theme_stylebox_override("normal", socket_box)
-		orb.icon = _atlas_region(_retail_palantir_atlas, RETAIL_ORB_REGIONS[id])
-		orb.expand_icon = true
+		if _stage_art_owns_sockets and clip_rows.size() >= 3:
+			# CONSULT VERDICT 2026-08-26: the authored PalantirButtons `_show`
+			# rows PAINT the orbs — the button is a transparent hit area moved
+			# onto the authored socket rect (read from the bound stage rows of
+			# the family's idle image), and only hover/click overlay art.
+			orb.icon = null
+			orb.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
+			var idle_image := int(
+				(clip_rows[clip_rows.size() - 3] as Dictionary).get("imageId", -1)
+			)
+			var stage_rect: Rect2 = retail_apt_runtime.stage_piece_row_bounds(
+				"palantirbuttons", idle_image
+			)
+			if stage_rect.size.x > 0.0:
+				orb.position = Vector2(
+					stage_rect.position.x * 1.875,
+					(stage_rect.position.y - 512.0) * 1.40625
+				)
+				orb.size = Vector2(
+					stage_rect.size.x * 1.875, stage_rect.size.y * 1.40625
+				)
+		else:
+			# Pre-split pack: the validated measured crops keep working.
+			if orb_strip != null and orb_order.has(id):
+				var third := float(orb_strip.get_width()) / 3.0
+				var socket_third := AtlasTexture.new()
+				socket_third.atlas = orb_strip
+				socket_third.region = Rect2(
+					third * float(orb_order.find(id)), 0.0,
+					third, float(orb_strip.get_height())
+				)
+				var socket_box := StyleBoxTexture.new()
+				socket_box.texture = socket_third
+				orb.add_theme_stylebox_override("normal", socket_box)
+			orb.icon = _atlas_region(_retail_palantir_atlas, RETAIL_ORB_REGIONS[id])
+			orb.expand_icon = true
 		orb.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-		if retail_apt_runtime == null:
-			continue
-		var clip_rows: Array = retail_apt_runtime.atlas_piece_rows_matching(
-			String(orb_clip_families.get(id, ""))
-		)
 		if clip_rows.size() < 3:
 			continue  # pre-split pack: the flat orb keeps working, no invention
 		var click_texture: Texture2D = retail_apt_runtime.atlas_piece_texture_for_row(
@@ -5360,6 +5398,15 @@ func _set_empty_command_sockets_visible(value: bool) -> void:
 
 func _sync_empty_command_sockets(radial_active: bool, occupied: Dictionary, hide_all_empty: bool) -> void:
 	if command_grid == null:
+		return
+	if _stage_art_owns_sockets:
+		# The authored CommandButtons `_show` art owns the socket holes and
+		# glass; the stamped crops would sit ON the metal as extra buttons
+		# (consult finding 2026-08-26).
+		for slot in RETAIL_COMMAND_SLOT_SOURCE.size():
+			var stamped := command_grid.get_node_or_null("RetailEmptySocket%d" % slot) as CanvasItem
+			if stamped != null:
+				stamped.visible = false
 		return
 	for slot in RETAIL_COMMAND_SLOT_SOURCE.size():
 		var socket := command_grid.get_node_or_null("RetailEmptySocket%d" % slot) as CanvasItem
