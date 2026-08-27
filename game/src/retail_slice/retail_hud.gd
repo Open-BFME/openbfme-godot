@@ -3917,42 +3917,52 @@ func _attach_hero_health_pieces(button: Button, health_arc: Control) -> void:
 ## `_reg` variant while held. The split ships three factions' art today
 ## (dwarf, elven, goblin); a faction whose art is not in the split keeps the
 ## validated UCCommon icon — a named fallback, never borrowed art.
+## [idle, pressed] authored piece names. Two families ship: `<race>heroselection`
+## (.tga / _reg.tga) and the Gondor/Isengard/Mordor `herorally<race>` pair
+## (_reg = idle, _mo = rollover) - the owner named herorallygon for Men.
 const RETAIL_HERO_SELECT_PIECE_PREFIXES := {
-	"dwarves": "dwarfheroselection",
-	"elves": "elvenheroselection",
-	"wild": "goblinheroselection",
+	"dwarves": ["dwarfheroselection.tga", "dwarfheroselection_reg.tga"],
+	"elves": ["elvenheroselection.tga", "elvenheroselection_reg.tga"],
+	"wild": ["goblinheroselection.tga", "goblinheroselection_reg.tga"],
+	"men": ["herorallygon_reg.tga", "herorallygon_mo.tga"],
+	"isengard": ["herorallyisen_reg.tga", "herorallyisen_mo.tga"],
+	"mordor": ["herorallymor_reg.tga", "herorallymor_mo.tga"],
 }
 
 
 func _bind_faction_hero_select_pieces() -> void:
 	if retail_apt_runtime == null or _hero_select_all_button == null:
 		return
-	var prefix := String(
-		RETAIL_HERO_SELECT_PIECE_PREFIXES.get(_faction_surface.to_lower(), "")
+	var names: Array = RETAIL_HERO_SELECT_PIECE_PREFIXES.get(
+		_faction_surface.to_lower(), []
 	)
-	if prefix == "":
+	if names.size() != 2:
 		return
-	var idle := retail_apt_runtime.atlas_piece_texture(prefix + ".tga")
-	var pressed := retail_apt_runtime.atlas_piece_texture(prefix + "_reg.tga")
+	var idle := retail_apt_runtime.atlas_piece_texture(String(names[0]))
+	var pressed := retail_apt_runtime.atlas_piece_texture(String(names[1]))
 	if idle == null:
 		return
 	_hero_select_all_button.icon = idle
-	_hero_select_all_button.set_meta("retail_image_id", prefix)
+	_hero_select_all_button.set_meta("retail_image_id", String(names[0]))
 	if pressed != null and not bool(_hero_select_all_button.get_meta("piece_states_wired", false)):
 		_hero_select_all_button.set_meta("piece_states_wired", true)
 		_hero_select_all_button.button_down.connect(func() -> void:
-			var down: Texture2D = retail_apt_runtime.atlas_piece_texture(
-				String(RETAIL_HERO_SELECT_PIECE_PREFIXES.get(_faction_surface.to_lower(), "")) + "_reg.tga"
+			var pair: Array = RETAIL_HERO_SELECT_PIECE_PREFIXES.get(
+				_faction_surface.to_lower(), []
 			)
-			if down != null:
-				_hero_select_all_button.icon = down
+			if pair.size() == 2:
+				var down: Texture2D = retail_apt_runtime.atlas_piece_texture(String(pair[1]))
+				if down != null:
+					_hero_select_all_button.icon = down
 		)
 		_hero_select_all_button.button_up.connect(func() -> void:
-			var up: Texture2D = retail_apt_runtime.atlas_piece_texture(
-				String(RETAIL_HERO_SELECT_PIECE_PREFIXES.get(_faction_surface.to_lower(), "")) + ".tga"
+			var pair: Array = RETAIL_HERO_SELECT_PIECE_PREFIXES.get(
+				_faction_surface.to_lower(), []
 			)
-			if up != null:
-				_hero_select_all_button.icon = up
+			if pair.size() == 2:
+				var up: Texture2D = retail_apt_runtime.atlas_piece_texture(String(pair[0]))
+				if up != null:
+					_hero_select_all_button.icon = up
 		)
 
 
@@ -5404,7 +5414,7 @@ func sync_radial_commands(anchor: Vector2, entries: Array) -> void:
 		button.disabled = not bool(entry.get("enabled", false))
 		button.modulate.a = 1.0 if bool(entry.get("enabled", false)) else 0.45
 		if overflow:
-			button.position = command_panel.position + RETAIL_COMMAND_SLOT_SOURCE[seat]
+			button.position = command_panel.position + _command_seat_offset(seat)
 		else:
 			button.position = _radial_button_position(index, count, button.size, int(entry.get("slot", 0)))
 		# Live training dial + countdown on the radial menu's training icons
@@ -5438,6 +5448,17 @@ func hide_radial_commands() -> void:
 	_set_radial_socket_surface_active(false)
 
 
+## The authored socket seat in command-panel space, INCLUDING the measured
+## parent-registration correction. RETAIL_COMMAND_SLOT_SOURCE is a frozen
+## literal that predates that correction, so buttons placed from it sat up-left
+## of their own cups and the outer two spilled toward the radar (owner round
+## 11). Both the buttons and the authored cup art now use the corrected seat.
+func _command_seat_offset(index: int) -> Vector2:
+	return StageScript.command_slot_dock(
+		index, RETAIL_COMMAND_SLOT_SIZE
+	) - Vector2(360.0, 0.0)
+
+
 func _radial_button_position(index: int, count: int, button_size: Vector2, slot: int = 0) -> Vector2:
 	if command_panel == null:
 		return Vector2.ZERO
@@ -5447,7 +5468,7 @@ func _radial_button_position(index: int, count: int, button_size: Vector2, slot:
 		var socket := index
 		if slot >= 1 and slot <= RETAIL_COMMAND_SLOT_SOURCE.size():
 			socket = slot - 1
-		return command_panel.position + RETAIL_COMMAND_SLOT_SOURCE[socket]
+		return command_panel.position + _command_seat_offset(socket)
 	# A PAGED range longer than six keeps the six authored glass sockets and
 	# spills onto the authored sub-menu ring - `Palantir.apt` sprite character
 	# 114 places `subMenu0..subMenu3` around the same `CommandButtons` origin as
@@ -5460,7 +5481,7 @@ func _radial_button_position(index: int, count: int, button_size: Vector2, slot:
 	# a fortress hero page on a ~163px wheel that overlapped the radar globe and
 	# left the command dish empty - the defect in the v0.2.8 capture.
 	if index < RETAIL_COMMAND_SLOT_SOURCE.size():
-		return command_panel.position + RETAIL_COMMAND_SLOT_SOURCE[index]
+		return command_panel.position + _command_seat_offset(index)
 	# Anchored exactly as the glass sockets are: RETAIL_COMMAND_SLOT_SOURCE is
 	# the authored centre minus half an authored socket, and production places a
 	# button at that point whatever `button_size` a theme hands it. The ring uses
@@ -5493,15 +5514,10 @@ func _set_empty_command_sockets_visible(value: bool) -> void:
 func _sync_empty_command_sockets(radial_active: bool, occupied: Dictionary, hide_all_empty: bool) -> void:
 	if command_grid == null:
 		return
-	if _stage_art_owns_sockets:
-		# The authored CommandButtons `_show` art owns the socket holes and
-		# glass; the stamped crops would sit ON the metal as extra buttons
-		# (consult finding 2026-08-26).
-		for slot in RETAIL_COMMAND_SLOT_SOURCE.size():
-			var stamped := command_grid.get_node_or_null("RetailEmptySocket%d" % slot) as CanvasItem
-			if stamped != null:
-				stamped.visible = false
-		return
+	# Owner round 11: unoccupied seats must read BLACK while a selection is
+	# up, like retail's own capture - the authored ring art alone left thin
+	# outlines. The stamped black cup fills them; the authored ring column
+	# still draws over it from the top layer.
 	for slot in RETAIL_COMMAND_SLOT_SOURCE.size():
 		var socket := command_grid.get_node_or_null("RetailEmptySocket%d" % slot) as CanvasItem
 		if socket == null:

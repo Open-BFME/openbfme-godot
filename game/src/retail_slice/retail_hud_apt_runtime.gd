@@ -32,6 +32,7 @@ const EXPECTED_VM_BYTECODE_VERSION := 1
 const MAX_VM_BYTE_SPACE := 4 * 1024 * 1024
 const MAX_VM_CONSTANT_ENTRIES := 65_536
 const VM_CONSTANT_KINDS := {1: true, 3: true, 4: true, 5: true, 6: true, 7: true, 8: true}
+const STAGE_SCRIPT := preload("res://src/retail_slice/retail_hud_stage.gd")
 const ASSET_FACTORY := preload("res://src/view/asset_factory.gd")
 const WND_RUNTIME_SCRIPT := preload("res://src/retail_slice/retail_hud_wnd_runtime.gd")
 const APT_VM_SCRIPT := preload("res://src/apt/apt_vm.gd")
@@ -4320,6 +4321,17 @@ func _validate_stage_pieces(value: Variant, pack_root: String) -> bool:
 		if STAGE_PIECE_IDLE_HIDDEN.has(idle_key) or chosen.is_empty():
 			continue
 		var to_top := STAGE_PIECE_TOP_PIECES.has(idle_key)
+		# The seat family carries a measured parent-registration correction
+		# (RetailHudStage.COMMAND_SEAT_REGISTRATION_STAGE): the movie's
+		# translations register the imported socket art's corner, not its
+		# centre. Our command BUTTONS already ride the corrected seats, so the
+		# authored cup ART must move with them or every icon sits up-left of
+		# its cup and the outer ones spill onto the radar (owner round 11).
+		# NOTE: no seat shift. RETAIL_COMMAND_SLOT_SOURCE already carries the
+		# measured registration correction, so shifting the authored cup art
+		# by it again moved every cup down-right of its icon (owner round 11,
+		# proven by capture and reverted in-round).
+		var seat_shift := Vector2.ZERO
 		for draw_value in chosen.get("draws", []) as Array:
 			if typeof(draw_value) != TYPE_DICTIONARY:
 				return _fail("Palantir stage piece draw is invalid")
@@ -4332,12 +4344,15 @@ func _validate_stage_pieces(value: Variant, pack_root: String) -> bool:
 					break
 			if excluded:
 				continue
-			if not _bind_stage_piece_draw(row, pack_root, to_top):
+			if not _bind_stage_piece_draw(row, pack_root, to_top, seat_shift):
 				return false
 	return true
 
 
-func _bind_stage_piece_draw(row: Dictionary, pack_root: String, to_top: bool = false) -> bool:
+func _bind_stage_piece_draw(
+	row: Dictionary, pack_root: String, to_top: bool = false,
+	seat_shift: Vector2 = Vector2.ZERO
+) -> bool:
 	var kind := String(row.get("kind", ""))
 	if not ["solid-triangle", "textured-triangle"].has(kind):
 		return _fail("Palantir stage piece draw kind is unsupported")
@@ -4345,6 +4360,11 @@ func _bind_stage_piece_draw(row: Dictionary, pack_root: String, to_top: bool = f
 	var color := _color(row.get("color", []))
 	if points.size() != 3 or color.a < 0.0:
 		return _fail("Palantir stage piece geometry or color is invalid")
+	if seat_shift != Vector2.ZERO:
+		var shifted := PackedVector2Array()
+		for point in points:
+			shifted.append(point + seat_shift)
+		points = shifted
 	if _degenerate_triangle(points):
 		# Authored sub-pixel slivers (the side bar's flashEffects tween through
 		# near-collinear frames, all at tint alpha 0) — the rasterizer would
