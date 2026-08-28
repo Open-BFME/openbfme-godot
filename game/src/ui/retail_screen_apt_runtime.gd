@@ -70,6 +70,51 @@ var _display_items: Array = []
 var _button_regions: Array = []
 
 
+## Mount a cooked screen behind an existing hand-built one, additively.
+##
+## This is the shape `main_menu.gd::_configure_shell_apt_presentation` proved
+## for the shell, generalised so hosting a screen is three lines instead of
+## forty: try each candidate pack, keep the first that PRESENTS, and free the
+## node otherwise so a missing or rejected contract never removes the fallback
+## the player already has. Returns null when no pack ships the screen, which is
+## the normal state until a pack carries the cooked contracts.
+##
+## The caller keeps ownership of interaction: every cooked screen reports
+## `parityReady == false` because its blockers are named rather than executed,
+## so the authored controls stay the interactive surface.
+static func mount_behind(
+	host: Control, movie: String, pack_roots: Array, sibling_index := 0
+) -> Control:
+	if host == null or pack_roots.is_empty():
+		return null
+	# Constructed through the script resource rather than the class_name: a
+	# static function cannot reference its own class_name at compile time.
+	var script := load("res://src/ui/retail_screen_apt_runtime.gd") as GDScript
+	if script == null:
+		return null
+	var runtime: Control = script.new()
+	runtime.name = "RetailScreenApt_" + movie
+	runtime.set_anchors_preset(Control.PRESET_FULL_RECT)
+	runtime.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	runtime.visible = false
+	host.add_child(runtime)
+	host.move_child(runtime, maxi(0, sibling_index))
+	for pack_root in pack_roots:
+		if not runtime.configure_from_pack(String(pack_root), movie, true):
+			continue
+		if not runtime.presentation_ready:
+			continue
+		runtime.visible = true
+		return runtime
+	# Detach BEFORE freeing. `queue_free()` alone leaves an abandoned node
+	# parented to the host until the next idle frame, which in a headless run
+	# is never - and in a real one is a hidden child of a screen that decided
+	# not to present.
+	host.remove_child(runtime)
+	runtime.free()
+	return null
+
+
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	resized.connect(queue_redraw)

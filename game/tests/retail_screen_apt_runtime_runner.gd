@@ -28,8 +28,12 @@ func _initialize() -> void:
 
 func _run() -> void:
 	runtime_script = load("res://src/ui/retail_screen_apt_runtime.gd")
-	_check("runtime_script_compiles", runtime_script != null)
-	if runtime_script == null:
+	# `!= null` is not a compile check: a script that fails to compile still
+	# loads, and its instances come back as a bare Control. Ask for the API.
+	var probe = runtime_script.new() if runtime_script != null else null
+	var compiles: bool = probe != null and probe.has_method("configure_from_pack")
+	_check("runtime_script_compiles", compiles, "probe=%s" % [probe])
+	if not compiles:
 		_finish()
 		return
 
@@ -228,6 +232,42 @@ func _run() -> void:
 		)
 	)
 
+	# 5. The host helper is additive: it presents when a pack ships the screen
+	#    and leaves the caller's own UI alone when no pack does.
+	var host := Control.new()
+	root.add_child(host)
+	var existing := Control.new()
+	existing.name = "HandBuiltScreen"
+	host.add_child(existing)
+	var mounted = runtime_script.mount_behind(host, "SpellStore", [fixture_root])
+	_check("mount_behind_presents_a_cooked_screen", mounted != null)
+	if mounted != null:
+		_check("mounted_screen_is_visible_and_ready", bool(mounted.visible) and bool(mounted.presentation_ready))
+		_check("mounted_screen_sits_behind_the_authored_ui", mounted.get_index() < existing.get_index())
+		_check("mounted_screen_never_eats_input", mounted.mouse_filter == Control.MOUSE_FILTER_IGNORE)
+		# Parity is never claimed, so the authored controls stay interactive.
+		_check("mounted_screen_never_claims_parity", not bool(mounted.parity_ready))
+
+	var bare_host := Control.new()
+	root.add_child(bare_host)
+	var absent_mount = runtime_script.mount_behind(bare_host, "ScoreScreen", [fixture_root])
+	_check("a_pack_without_the_screen_mounts_nothing", absent_mount == null)
+	# A mount that does not present must leave NOTHING behind - not a hidden
+	# child, not a node waiting on a deferred free.
+	_check(
+		"a_failed_mount_leaves_no_orphan_node",
+		bare_host.get_child_count() == 0,
+		"children=%s" % [bare_host.get_child_count()]
+	)
+	_check("mount_behind_refuses_an_empty_pack_list", runtime_script.mount_behind(host, "SpellStore", []) == null)
+	# Free what this section created; the shell runner exits clean and this one
+	# should too, so a real leak is never lost in expected noise.
+	host.free()
+	bare_host.free()
+	for node in [absent, strict, runtime, dropped]:
+		if is_instance_valid(node):
+			node.free()
+
 	_finish()
 
 
@@ -245,7 +285,7 @@ func _configures(document: Dictionary) -> bool:
 		bool(runtime.configure_from_pack(mutated_root, "SpellStore", true))
 		and bool(runtime.presentation_ready)
 	)
-	runtime.queue_free()
+	runtime.free()
 	return ok
 
 
