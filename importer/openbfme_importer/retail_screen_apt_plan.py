@@ -50,6 +50,8 @@ _ATLAS_DIRECTORY = "art/Textures"
 #: TGA bound is the one `parse_tga_identity` already enforces (2048x2048x4).
 MAX_SCREEN_ATLAS_BYTES = 8 * 1024 * 1024
 MAX_SCREEN_ATLASES = 64
+#: Measured: the widest screen closure in the tree is 4 movies deep-and-wide.
+MAX_SCREEN_CLOSURE = 32
 
 
 class ScreenAptPlanError(ValueError):
@@ -261,3 +263,53 @@ def _screen_atlases(root: Path, movie: str) -> list[dict[str, Any]]:
         )
         atlases.append(parsed)
     return atlases
+
+
+def build_screen_closure_plans(
+    effective_assets_root: Path | str, movie: str
+) -> dict[str, Any]:
+    """Plan a screen AND every movie it imports, transitively.
+
+    A screen alone is not a scene.  MainMenu draws 20 primitives on its own and
+    32 with `MenuFrameAndBg` loaded; ScoreScreen goes from 184 to 770.  The
+    converter already resolves imported characters through `movie.imports`, so
+    all it needs is the imported movies present in the same dict - the same
+    service `MOVIE_CLOSURE` performs for the Palantir, computed rather than
+    hardcoded.
+
+    A movie that cannot be planned is NAMED in ``unplannable`` and its reason
+    carried with it.  It is never dropped silently: the caller still sees the
+    converter's own `unresolved-import-movie` blocker for whatever it leaves
+    out, and now it also knows WHY the movie is missing.
+    """
+
+    root = Path(effective_assets_root)
+    plans: dict[str, dict[str, Any]] = {}
+    unplannable: list[dict[str, str]] = []
+    pending = [movie]
+    while pending:
+        name = pending.pop(0)
+        if name.casefold() in {key.casefold() for key in plans}:
+            continue
+        if any(row["movie"].casefold() == name.casefold() for row in unplannable):
+            continue
+        if len(plans) >= MAX_SCREEN_CLOSURE:
+            raise ScreenAptPlanError(f"{movie} closure exceeds its stated bound")
+        try:
+            plan = build_screen_apt_plan(root, name)
+        except (ScreenAptPlanError, AptParseError) as error:
+            if name.casefold() == movie.casefold():
+                raise
+            unplannable.append({"movie": name, "reason": str(error)})
+            continue
+        plans[name] = plan
+        pending.extend(
+            str(item["movie"]) for item in plan["apt"].get("imports", [])
+        )
+    return {
+        "schema": "openbfme.retail-screen-closure-plan",
+        "schemaVersion": 0,
+        "movie": movie,
+        "plans": plans,
+        "unplannable": sorted(unplannable, key=lambda row: row["movie"].casefold()),
+    }

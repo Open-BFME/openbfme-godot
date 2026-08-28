@@ -224,3 +224,71 @@ def test_an_empty_function_body_is_authored_data_not_corruption() -> None:
     assert len(flattener.draws) == 20
     assert len(flattener.text_instances) == 10
     assert len(flattener.button_instances) == 5
+
+
+@pytest.mark.skipif(
+    not (REPO / "workspace/retail-work/cache/effective-assets").is_dir(),
+    reason="private effective-assets oracle is not present",
+)
+def test_the_import_closure_is_what_makes_a_screen_a_scene() -> None:
+    """A screen alone is not a scene; its imports carry most of the pixels.
+
+    ScoreScreen draws 184 primitives by itself and 770 with MenuExport and
+    GameWindowGadgets loaded.  The converter already resolves imported
+    characters through `movie.imports` - it only needs those movies present in
+    the same dict, which is the service `MOVIE_CLOSURE` hardcodes for the
+    Palantir and this computes.
+    """
+
+    from openbfme_importer import retail_hud_apt_convert as convert
+    from openbfme_importer.retail_screen_apt_plan import build_screen_closure_plans
+
+    root = REPO / "workspace/retail-work/cache/effective-assets"
+    closure = build_screen_closure_plans(root, "ScoreScreen")
+    assert sorted(closure["plans"]) == [
+        "GameWindowGadgets",
+        "MenuExport",
+        "ScoreScreen",
+    ]
+    assert closure["unplannable"] == []
+
+    movies = {}
+    for plan in closure["plans"].values():
+        convert.register_expected_flagged_null_clip_actions(
+            (row["virtualPath"], row["recordOffset"], row["flags"])
+            for row in plan["flaggedNullClipActions"]
+        )
+        loaded = convert._movie_from_plan(plan, asset_root=root)
+        movies[loaded.name.casefold()] = loaded
+
+    flattener = convert._Flattener(movies, {}, ())
+    flattener.flatten_screen([("ScoreScreen", 9)])
+    assert len(flattener.draws) == 770
+    codes = {str(row["code"]) for row in flattener.blockers}
+    assert "unresolved-import-movie" not in codes
+
+
+@pytest.mark.skipif(
+    not (REPO / "workspace/retail-work/cache/effective-assets").is_dir(),
+    reason="private effective-assets oracle is not present",
+)
+def test_an_unplannable_import_is_named_never_dropped_silently() -> None:
+    """SaveLoad imports MpGameSetup, which the parser refuses.
+
+    The refusal is real (`MpGameSetup.apt has duplicate imports`, the same
+    over-strictness species as Q27), so SaveLoad genuinely cannot have all of
+    its imports.  What must never happen is the movie vanishing quietly - the
+    closure carries the name and the reason, and the flatten still raises the
+    converter's own `unresolved-import-movie` blocker for it.
+    """
+
+    from openbfme_importer.retail_screen_apt_plan import build_screen_closure_plans
+
+    root = REPO / "workspace/retail-work/cache/effective-assets"
+    closure = build_screen_closure_plans(root, "SaveLoad")
+    assert [row["movie"] for row in closure["unplannable"]] == ["MpGameSetup"]
+    assert "duplicate imports" in closure["unplannable"][0]["reason"]
+
+    # A screen whose own plan fails raises rather than reporting itself absent.
+    with pytest.raises(ScreenAptPlanError, match="duplicate imports"):
+        build_screen_closure_plans(root, "MpGameSetup")
