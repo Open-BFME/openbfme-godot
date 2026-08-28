@@ -1803,7 +1803,7 @@ def test_restore_authored_emissive_strength_only_lifts_a_lit_colour() -> None:
     authored W3D emissive and every self-lit retail surface lost its colour.
     The fortress halo material ``LightGrow`` authors emissive 161/15/0."""
 
-    def _material(name, colour, strength):
+    def _material(name, colour, strength, material_type="VERTEX_MATERIAL"):
         socket_colour = types.SimpleNamespace(name="Emission Color", default_value=list(colour))
         socket_strength = types.SimpleNamespace(name="Emission Strength", default_value=strength)
         node = types.SimpleNamespace(
@@ -1811,18 +1811,37 @@ def test_restore_authored_emissive_strength_only_lifts_a_lit_colour() -> None:
         )
         return types.SimpleNamespace(
             name=name, use_nodes=True, node_tree=types.SimpleNamespace(nodes=[node]),
+            material_type=material_type,
             _colour=socket_colour, _strength=socket_strength,
         )
 
     halo = _material("FIREGLOW.LightGrow", (161 / 255, 15 / 255, 0.0, 1.0), 0.0)
     unlit = _material("GBFORTRESS.NormalMapped.fx", (0.0, 0.0, 0.0, 1.0), 0.0)
     already = _material("Already.Lit", (1.0, 1.0, 1.0, 1.0), 1.0)
-    report = ADAPTER.restore_authored_emissive_strength([halo, unlit, already, None])
+    # The fortress BODY is a `NormalMapped.fx` SHADER material the W3D never
+    # gives an emissive, so its socket still holds Blender's default white.
+    # Lifting that lit the whole building in the first cook of this pass.
+    body = _material(
+        "GBFORTRESS.NormalMapped.fx", (1.0, 1.0, 1.0, 1.0), 0.0, "SHADER_MATERIAL"
+    )
+    # A VERTEX material's emission is always written from the file, so a white
+    # one there IS authored (GBFFLAG authors 144/144/144).
+    flag = _material("GBFFLAG.Material #60", (144 / 255,) * 3 + (1.0,), 0.0)
+    report = ADAPTER.restore_authored_emissive_strength(
+        [halo, unlit, already, body, flag, None]
+    )
 
-    assert report["restored_materials"] == 1
-    assert report["materials"][0]["name"] == "FIREGLOW.LightGrow"
+    assert report["restored_materials"] == 2
+    assert sorted(row["name"] for row in report["materials"]) == [
+        "FIREGLOW.LightGrow",
+        "GBFFLAG.Material #60",
+    ]
+    assert report["skipped_default_white_shader_materials"] == 1
     assert halo._strength.default_value == 1.0
-    # A black emission stays black, and a material already carrying strength is
-    # left exactly as the plugin wrote it.
+    assert flag._strength.default_value == 1.0
+    # A black emission stays black; a material already carrying strength is left
+    # exactly as the plugin wrote it; and Blender's default white on a shader
+    # material is not mistaken for data.
     assert unlit._strength.default_value == 0.0
     assert already._strength.default_value == 1.0
+    assert body._strength.default_value == 0.0

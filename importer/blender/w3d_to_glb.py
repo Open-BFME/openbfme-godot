@@ -2903,7 +2903,11 @@ def restore_authored_emissive_strength(materials: Iterable[Any]) -> dict[str, An
     invented, and a material the plugin never touched is not modified.
     """
 
-    report: dict[str, Any] = {"restored_materials": 0, "materials": []}
+    report: dict[str, Any] = {
+        "restored_materials": 0,
+        "skipped_default_white_shader_materials": 0,
+        "materials": [],
+    }
     unique: dict[tuple[str, int], Any] = {}
     for material in materials:
         if material is not None:
@@ -2933,6 +2937,25 @@ def restore_authored_emissive_strength(materials: Iterable[Any]) -> dict[str, An
             continue
         colour = list(getattr(colour_socket, "default_value", []) or [])[:3]
         if not colour or all(float(channel) <= 0.0 for channel in colour):
+            continue
+        # WHITE ON A SHADER MATERIAL IS BLENDER'S DEFAULT, NOT AUTHORED DATA.
+        #
+        # For a VERTEX material the plugin writes `vm_info.emissive`
+        # unconditionally (material_import.py:110), so whatever colour is on the
+        # socket came from the file - white included. For a SHADER material it
+        # writes only when the W3D carries `EmissiveColor`/`ColorEmissive`
+        # (material_import.py:172-174), so an untouched socket still holds the
+        # Principled default of pure white. Lifting that made GBFortress's own
+        # `NormalMapped.fx` body and `GBFFLAMING` fully self-lit white in the
+        # first cook of this pass - the whole fortress glowing. A shader
+        # material whose W3D really does author pure white emissive is
+        # indistinguishable from the default here and is skipped; that is a
+        # named limitation, not an oversight.
+        material_type = str(getattr(material, "material_type", "VERTEX_MATERIAL"))
+        if material_type != "VERTEX_MATERIAL" and all(
+            float(channel) >= 1.0 for channel in colour
+        ):
+            report["skipped_default_white_shader_materials"] += 1
             continue
         if float(getattr(strength_socket, "default_value", 0.0)) > 0.0:
             continue
