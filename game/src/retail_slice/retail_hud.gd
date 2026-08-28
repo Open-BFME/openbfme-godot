@@ -339,6 +339,9 @@ const RETAIL_COMMAND_SLOT_SOURCE := [
 	Vector2(282.7000, 214.0797), Vector2(222.7000, 268.9234), Vector2(134.5750, 284.3922),
 ]
 const RETAIL_COMMAND_SLOT_SIZE := Vector2(64, 64)
+## 52, not 60: at 60 on a 64px seat the icon covered the authored black cup and
+## its gold rim, which read as a pale disc behind every command (owner round 10).
+const RETAIL_RADIAL_ICON_MAX_WIDTH := 52
 # Q39: MEASURED, not authored. InGameRadialMenuStage.apt authors the radial
 # BUTTON but not the ring radius; this is the owner's retail RotWK capture
 # (four barracks icons on a ~97 px radius at 2560x1440 = ~39 stage units).
@@ -609,6 +612,8 @@ var cancel_production_button: Button
 var _battalion_upgrade_buttons: Dictionary = {}
 var _doc_upgrade_buttons: Dictionary = {}
 var selection_portrait: TextureRect
+## The authored ResourceBar currency icon; art binds from the pack.
+var _resource_icon: TextureRect
 var _selection_rank_pips: RankPipsOverlay
 var synthetic_palantir_frame: RetailPalantirFrame
 var retail_control_bar_frame: RetailPalantirFrame
@@ -2685,6 +2690,9 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 	_hero_select_all_button.set_meta("retail_image_id", _hero_select_all_image_id())
 	_hero_select_all_button.set_meta("retail_image_path", String(hero_select_all_validation["path"]))
 	_bind_faction_hero_select_pieces()
+	var resource_icon_error := _bind_resource_icon(content_db, expected_pack_root)
+	if resource_icon_error != "":
+		return resource_icon_error
 	if use_apt:
 		var frame_texture := retail_apt_runtime.exact_atlas_texture(RETAIL_PALANTIR_FRAME_ATLAS)
 		_retail_palantir_atlas = retail_apt_runtime.exact_atlas_texture(RETAIL_PALANTIR_ATLAS)
@@ -3444,19 +3452,28 @@ func _button_box(background: Color, border: Color) -> StyleBoxFlat:
 ## public shell keeps the plain styled button. Doc upgrades, battalion upgrades
 ## and hero abilities all seat in the SAME six sockets, so they all go through
 ## here and cannot drift apart again.
-func _apply_authored_command_socket_style(button: Button) -> void:
+func _apply_authored_command_socket_style(
+	button: Button, icon_max_width: int = 48
+) -> void:
 	if not private_parity_mode_active:
 		_style_button(button)
 		return
+	var socket_texture: Texture2D = null
 	if _retail_palantir_atlas != null:
-		var socket_box := StyleBoxTexture.new()
-		socket_box.texture = _atlas_region(
+		socket_texture = _atlas_region(
 			_retail_palantir_atlas, RETAIL_EMPTY_SOCKET_REGION
 		)
-		for state in ["normal", "hover", "pressed", "disabled", "focus"]:
-			button.add_theme_stylebox_override(state, socket_box)
+	# No authored cup means NO cup: an empty box, never Godot's default panel.
+	var socket_box: StyleBox = StyleBoxEmpty.new()
+	if socket_texture != null:
+		var textured := StyleBoxTexture.new()
+		textured.texture = socket_texture
+		socket_box = textured
+		button.self_modulate = Color.WHITE
+	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+		button.add_theme_stylebox_override(state, socket_box)
 	button.expand_icon = true
-	button.add_theme_constant_override("icon_max_width", 48)
+	button.add_theme_constant_override("icon_max_width", icon_max_width)
 	button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	button.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 
@@ -3582,19 +3599,31 @@ func _build_palantir() -> void:
 	resource_strip.z_index = 3
 	resource_strip.add_theme_stylebox_override("panel", _panel)
 	dock.add_child(resource_strip)
-	var resource_icon := Label.new()
+	# THE CURRENCY ICON IS RETAIL ART, NOT A GLYPH.
+	#
+	# This used to be a Label reading "◆". Retail draws a keg:
+	# `Palantir.apt` places a `ResourceIcon` child (character 127) inside
+	# `ResourceBar` whose ~Enabled shape is an UNTEXTURED 18 x 20 quad, and the
+	# engine fills it from `ResourceBarIcons.tga` through the `Resource_Icon`
+	# and `ResourceBar_<faction>` MappedImages. No Object or CommandButton
+	# names those ids, so the interface-art lane's object-driven scope dropped
+	# them until they joined ENGINE_UI_IMAGE_REFERENCES beside the radar view
+	# box. The authored quad gives the seat and the size; the art binds at pack
+	# bind. Until a pack ships the crop the seat stays EMPTY - a named absence,
+	# never a stand-in shape.
+	var resource_icon := TextureRect.new()
 	resource_icon.name = "ResourceIcon"
-	resource_icon.text = "◆"
-	resource_icon.position = StageScript.resource_child_dock("ResourceIcon")
-	resource_icon.size = Vector2(24, money_rect.size.y)
-	resource_icon.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	resource_icon.add_theme_color_override("font_color", Color("d6aa55"))
-	resource_icon.add_theme_font_size_override("font_size", 20)
+	var icon_rect := StageScript.resource_icon_rect_dock()
+	resource_icon.position = icon_rect.position
+	resource_icon.size = icon_rect.size
+	resource_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	resource_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	resource_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	# Above the authored frame/glass top layer (z 6): the metal would
 	# otherwise cover the resource numbers (owner round 7 capture).
 	resource_icon.z_index = 3
 	dock.add_child(resource_icon)
+	_resource_icon = resource_icon
 	resource_label = Label.new()
 	resource_label.name = "Resources"
 	resource_label.text = "0"
@@ -3895,6 +3924,49 @@ func _layout_command_sockets() -> void:
 ## arc hides and the pieces draw; a pre-split pack keeps the arc (named
 ## fallback). Attach is lazy: called at cell build AND at every update so the
 ## art also lands on cells built before the APT pack bound.
+## The selection ring is AUTHORED ART, not a drawn arc.
+##
+## `InGameHeroSelect` character 101 places `SelectedHighlight -> HeroSelect` on
+## the portrait centre, and the split ships that image as
+## `hero1-selectedhighlight-heroselect` (i28): a soft gold halo, which is what
+## retail's own capture shows around a selected hero
+## (reference/game.dat_6rULTVkae1.jpg). Our RetailHudArcGauge drew a thin
+## 3 px ring in colour f2d98a instead - an approximation an audit correctly
+## called out (2026-08-28). The arc stays as the NAMED fallback for a pre-split
+## pack, exactly like the health-bar pieces beside it. Attach is lazy: called at
+## cell build AND at every update, so cells built before the pack bound get it.
+func _attach_hero_selected_highlight_piece(button: Button, highlight: Control) -> void:
+	if retail_apt_runtime == null or button.get_node_or_null("SelectedHighlightArt") != null:
+		return
+	var texture: Texture2D = retail_apt_runtime.atlas_piece_texture(
+		"hero1-selectedhighlight-heroselect"
+	)
+	if texture == null:
+		return
+	var art := TextureRect.new()
+	art.name = "SelectedHighlightArt"
+	# The authored highlight sits at cell-local [-29.5, -29.5] about the portrait
+	# centre [28, 28], i.e. the 59-unit box the portrait itself fills.
+	var centre := StageScript.hero_scale_size(
+		AptRuntimeScript.HERO_CELL_PORTRAIT_CENTER_LOCAL
+	)
+	var radius := StageScript.hero_scale_size(
+		Vector2.ONE * AptRuntimeScript.HERO_CELL_PORTRAIT_RADIUS
+	)
+	art.position = centre - radius
+	art.size = radius * 2.0
+	art.texture = texture
+	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	art.stretch_mode = TextureRect.STRETCH_SCALE
+	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	art.visible = highlight.visible
+	button.add_child(art)
+	button.move_child(art, 0)
+	# The drawn arc is now the fallback only; the authored piece owns the ring.
+	highlight.visible = false
+	highlight.set_meta("superseded_by_authored_piece", true)
+
+
 func _attach_hero_health_pieces(button: Button, health_arc: Control) -> void:
 	if retail_apt_runtime == null or button.get_node_or_null("HealthFillClip") != null:
 		return
@@ -3959,6 +4031,48 @@ const RETAIL_HERO_SELECT_PIECE_PREFIXES := {
 	"isengard": ["herorallyisen_reg.tga", "herorallyisen_mo.tga"],
 	"mordor": ["herorallymor_reg.tga", "herorallymor_mo.tga"],
 }
+
+
+## The palantir money icon is the GENERIC KEG, `Resource_Icon`, on every side.
+##
+## `ResourceBarIcons.tga` also cuts `ResourceBar_Gondor/Rohan/Mordor/Isengard/
+## Fellowship` (handcreatedmappedimages.ini:1549-1594) and a first pass here
+## preferred the player's own side. Rendering them proved that wrong: those five
+## are FACTION BADGES - a white tree, a horse, the red eye, the white hand, a
+## star - and they belong to a different surface. Retail's own in-game capture
+## (reference/in game ui.jpg) shows the keg beside the money, whatever side you
+## play. One id, no per-faction guess.
+const RETAIL_RESOURCE_ICON_IMAGE_ID := "Resource_Icon"
+
+
+func _bind_resource_icon(content_db, expected_pack_root: String) -> String:
+	## Bind the authored currency icon into the authored quad. Returns "" when
+	## the seat is filled or when the pack simply does not carry the crop yet;
+	## a MALFORMED row is an error, because that is a broken pack, not a gap.
+	if _resource_icon == null:
+		return ""
+	var wanted: Array[String] = [RETAIL_RESOURCE_ICON_IMAGE_ID]
+	var absent := true
+	for image_id in wanted:
+		if content_db.get_retail_ui_image(image_id).is_empty():
+			continue
+		absent = false
+		var validation := _validate_retail_image(
+			content_db, expected_pack_root, image_id, Vector2i.ZERO
+		)
+		if String(validation.get("error", "")) != "":
+			return "Resource icon '%s': %s" % [image_id, validation["error"]]
+		_resource_icon.texture = validation["texture"] as Texture2D
+		_resource_icon.set_meta("retail_image_id", image_id)
+		_resource_icon.set_meta("retail_image_path", String(validation.get("path", "")))
+		return ""
+	if not absent:
+		return ""
+	# Named absence: the seat stays empty and the reason is on the record.
+	retail_bind_diagnostics.append(
+		"resource-icon-absent: the pack ships no %s crop, so the authored ResourceIcon quad is empty" % " / ".join(wanted)
+	)
+	return ""
 
 
 func _bind_faction_hero_select_pieces() -> void:
@@ -5035,6 +5149,7 @@ func sync_hero_bar(heroes: Array) -> void:
 			highlight.arc_fill_color = Color("f2d98a")
 			highlight.visible = false
 			button.add_child(highlight)
+			_attach_hero_selected_highlight_piece(button, highlight)
 			var portrait := TextureRect.new()
 			portrait.name = "Portrait"
 			portrait.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
@@ -5127,7 +5242,17 @@ func sync_hero_bar(heroes: Array) -> void:
 				)
 		# Retail rings the selected hero's portrait with a CIRCLE highlight
 		# (`SelectedHighlight` in the authored cell), not a rectangular tint.
-		(button.get_node("SelectedHighlight") as Control).visible = bool(hero.get("selected", false))
+		# The authored halo owns it when the pack ships the split; the drawn arc
+		# is the named fallback and stays hidden whenever the art is present.
+		var selected_ring: Control = button.get_node("SelectedHighlight")
+		_attach_hero_selected_highlight_piece(button, selected_ring)
+		var selected := bool(hero.get("selected", false))
+		var ring_art: Control = button.get_node_or_null("SelectedHighlightArt")
+		if ring_art != null:
+			ring_art.visible = selected
+			selected_ring.visible = false
+		else:
+			selected_ring.visible = selected
 		# REF-41 hero hover: retail tooltip panel, not a native tooltip.
 		button.tooltip_text = ""
 		button.set_meta("tooltip_group", "hero_bar")
@@ -5348,7 +5473,9 @@ func sync_radial_commands(anchor: Vector2, entries: Array) -> void:
 			# black cup and its gold rim, which read as a pale disc behind
 			# every command (owner round 10). 52 keeps the cup visible and
 			# still fills more of the bubble than the original 48.
-			button.add_theme_constant_override("icon_max_width", 52)
+			button.add_theme_constant_override(
+				"icon_max_width", RETAIL_RADIAL_ICON_MAX_WIDTH
+			)
 			button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			button.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 			if button.icon == null and String(entry.get("text", "")) != "":
@@ -5369,18 +5496,11 @@ func sync_radial_commands(anchor: Vector2, entries: Array) -> void:
 			# the CommandButtons top-layer rows. Stretching it into each 64px
 			# button is what produced the pale discs behind the icons (owner
 			# round 10). Per-button art stays the single authored socket crop.
-			var ring_texture: Texture2D = null
-			if _retail_palantir_atlas != null:
-				ring_texture = _atlas_region(_retail_palantir_atlas, RETAIL_EMPTY_SOCKET_REGION)
-			if ring_texture != null:
-				var socket_box := StyleBoxTexture.new()
-				socket_box.texture = ring_texture
-				button.self_modulate = Color.WHITE
-				for state in ["normal", "hover", "pressed", "disabled", "focus"]:
-					button.add_theme_stylebox_override(state, socket_box)
-			else:
-				for state in ["normal", "hover", "pressed", "disabled", "focus"]:
-					button.add_theme_stylebox_override(state, StyleBoxEmpty.new())
+			# Same owner as every other command seat. This block used to be a
+			# fourth copy of the crop logic; an audit (2026-08-28) refuted the
+			# "one shared function" claim on exactly that basis, which is the
+			# same drift that left hero abilities without a cup at all.
+			_apply_authored_command_socket_style(button, RETAIL_RADIAL_ICON_MAX_WIDTH)
 			button.tooltip_text = String(entry.get("tooltip", ""))
 			var command_kind := String(entry.get("command_kind", ""))
 			var command_id := String(entry.get("id", ""))

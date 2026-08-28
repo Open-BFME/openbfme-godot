@@ -199,6 +199,16 @@ static func resource_child_dock(name: String, viewport: Vector2 = DESIGN_VIEWPOR
 	return to_dock(origin + local, viewport)
 
 
+## The authored `ResourceIcon` quad, in dock-local pixels. The movie authors the
+## SHAPE (18 x 20.04 stage units at the bar's left end); the engine binds the
+## art, so this is where the retail currency icon goes and how big it is.
+static func resource_icon_rect_dock(viewport: Vector2 = DESIGN_VIEWPORT) -> Rect2:
+	var quad: Rect2 = APT_RUNTIME.PALANTIR_RESOURCE_ICON_QUAD
+	return Rect2(
+		to_dock(quad.position, viewport), scale_size(quad.size, viewport)
+	)
+
+
 ## The authored text box of a `ResourceBar` text child, in dock-local pixels.
 static func resource_text_rect_dock(name: String, viewport: Vector2 = DESIGN_VIEWPORT) -> Rect2:
 	var spec: Dictionary = APT_RUNTIME.PALANTIR_RESOURCE_TEXT[name]

@@ -207,6 +207,13 @@ const PALANTIR_RESOURCE_TEXT := {
 ## 70-unit pitch starting at x 23.95, then a second row at y -70, and the
 ## `SelectAllHeroesBttn` (commandbutton.ini:3494 NonCommand_SelectAllHeroes) at
 ## [-5, 42] scale 0.678 — to the LEFT of and below the first portrait.
+## Palantir.apt `ResourceBar/3:ResourceIcon/1:~Enabled/1` (libInGameUI geometry
+## 45), flattened: the STAGE quad (37.45, 720.4)..(55.4508, 740.4423). The shape
+## is untextured - retail's engine binds `ResourceBarIcons.tga` into it via the
+## `Resource_Icon` / `ResourceBar_<faction>` MappedImages
+## (data/ini/mappedimages/handcreated/handcreatedmappedimages.ini:1549-1594), so
+## the SIZE is authored here and the ART comes from the interface-art lane.
+const PALANTIR_RESOURCE_ICON_QUAD := Rect2(37.45, 720.4, 18.0008, 20.0403)
 const HERO_SELECT_FIRST_LOCAL := Vector2(23.95, 0.0)
 const HERO_SELECT_PITCH := 70.0
 const HERO_SELECT_ROW_OFFSET := -70.0

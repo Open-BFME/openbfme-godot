@@ -1441,6 +1441,7 @@ func _check_hero_ability_sockets(content_db, selected_pack_root: String) -> void
 	)
 	_check("hero_ability_hud_binds", bind_error == "", bind_error)
 	_check_command_seat_buttons_wear_the_authored_socket(hud)
+	_check_hero_cell_uses_authored_chrome(hud)
 	hud.free()
 
 
@@ -1488,3 +1489,57 @@ func _check_command_seat_buttons_wear_the_authored_socket(hud) -> void:
 			ability_sized, ability_total, widest, str(hud.RETAIL_COMMAND_SLOT_SIZE)
 		]
 	)
+
+
+func _check_hero_cell_uses_authored_chrome(hud) -> void:
+	## The selection ring and the currency icon are AUTHORED ART, not drawn
+	## approximations. An audit (2026-08-28) called out both: a 3 px
+	## RetailHudArcGauge where `InGameHeroSelect` ships a soft gold halo
+	## (`hero1-selectedhighlight-heroselect`, i28), and a Unicode diamond where
+	## retail draws a keg from `ResourceBarIcons.tga`.
+	hud.sync_hero_bar([
+		{"id": 21, "unit_type": "hero.a", "name": "Hero A", "level": 1,
+			"health": 100, "maximum_health": 100, "selected": true},
+	])
+	var cell: Button = hud._hero_bar_buttons.get(21)
+	var piece_available: bool = hud.retail_apt_runtime != null and (
+		hud.retail_apt_runtime.atlas_piece_texture(
+			"hero1-selectedhighlight-heroselect"
+		) != null
+	)
+	if piece_available:
+		var art: Control = cell.get_node_or_null("SelectedHighlightArt") if cell != null else null
+		_check(
+			"selected_hero_wears_the_authored_halo_not_a_drawn_arc",
+			art != null and art.visible
+				and not (cell.get_node("SelectedHighlight") as Control).visible,
+			"art=%s" % str(art)
+		)
+	else:
+		print("RETAIL_FOUR_UNIT_HUD NOTE hero-halo piece absent from this pack; drawn arc is the named fallback")
+	## The currency icon seat: authored quad, and a TextureRect rather than the
+	## glyph Label it used to be. The ART is a pack question - a pack without the
+	## crop leaves the seat empty and says so - but the SEAT is authored and must
+	## always match `PALANTIR_RESOURCE_ICON_QUAD`.
+	var stage: Script = load("res://src/retail_slice/retail_hud_stage.gd")
+	var icon: TextureRect = hud._resource_icon
+	var expected: Rect2 = stage.resource_icon_rect_dock()
+	_check(
+		"resource_icon_sits_in_its_authored_quad",
+		icon != null and icon.position.is_equal_approx(expected.position)
+			and icon.size.is_equal_approx(expected.size),
+		"icon=%s expected=%s" % [
+			str(Rect2(icon.position, icon.size)) if icon != null else "<null>",
+			str(expected)
+		]
+	)
+	if icon != null and icon.texture != null:
+		_check(
+			"resource_icon_binds_authored_retail_art",
+			String(icon.get_meta("retail_image_id", "")) != "",
+			str(icon.get_meta("retail_image_id", ""))
+		)
+	else:
+		print("RETAIL_FOUR_UNIT_HUD NOTE resource icon seat empty: %s" % (
+			"pack ships no Resource_Icon / ResourceBar_<faction> crop yet"
+		))

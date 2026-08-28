@@ -245,6 +245,48 @@ End
     assert radar[0].field == "ViewBoxEdge"
 
 
+def test_collect_image_references_includes_the_resource_bar_icons(
+    oracle: Path,
+) -> None:
+    """The palantir money icon is engine-bound, so no Object names it.
+
+    ``Palantir.apt`` places a child called ``ResourceIcon`` inside ``ResourceBar``
+    whose shape is an untextured 18 x 20 quad; retail fills it from
+    ``ResourceBarIcons.tga``.  Before this roster the object-driven scope dropped
+    the whole family and the runtime drew an invented glyph in its place.
+    """
+
+    _write(
+        oracle / "data/ini/mappedimages/handcreated/resourcebar.ini",
+        """
+MappedImage Resource_Icon
+  Texture = ResourceBarIcons.tga
+  TextureWidth = 128
+  TextureHeight = 32
+  Coords = Left:0 Top:0 Right:19 Bottom:21
+End
+
+MappedImage ResourceBar_Gondor
+  Texture = ResourceBarIcons.tga
+  TextureWidth = 128
+  TextureHeight = 32
+  Coords = Left:73 Top:0 Right:91 Bottom:19
+End
+""",
+    )
+    references = collect_image_references(oracle)
+    rows = {
+        row.image_id: row
+        for row in references
+        if row.kind == "EngineUI" and row.owner == "ResourceBar"
+    }
+    assert sorted(rows) == ["ResourceBar_Gondor", "Resource_Icon"]
+    for row in rows.values():
+        assert row.field == "ResourceIcon"
+    # An id the oracle does not define stays out rather than becoming a gap.
+    assert "ResourceBar_Mordor" not in {row.image_id for row in references}
+
+
 def test_commandset_scope_restricts_the_universe(oracle: Path) -> None:
     scoped = collect_image_references(oracle, object_path_tokens=("structures/men",))
     ids = sorted({reference.image_id for reference in scoped})

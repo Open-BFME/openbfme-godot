@@ -129,14 +129,23 @@ class ImageReference:
 # MappedImages consumed directly by the SAGE engine rather than named from an
 # Object or CommandButton field. They still have authored atlas coordinates and
 # belong in the same deterministic crop/index lane when retail defines them.
+_HANDCREATED = "data/ini/mappedimages/handcreated/handcreatedmappedimages.ini"
+
+#: The palantir resource bar's currency icon.  ``Palantir.apt`` authors a child
+#: named ``ResourceIcon`` (character 127, local [-4, 2] inside the ``ResourceBar``
+#: sprite at stage [42.45, 719.4]) whose ~Enabled shape is an untextured 18 x 20
+#: quad: the engine binds the art.  The art is ``ResourceBarIcons.tga``, cut by
+#: ``Resource_Icon`` and one ``ResourceBar_<faction>`` crop per side.  No Object
+#: and no CommandButton names any of them, so the object-driven scope dropped
+#: the whole family and the runtime had nothing to draw.
 ENGINE_UI_IMAGE_REFERENCES: tuple[ImageReference, ...] = (
-    ImageReference(
-        "EngineUI",
-        "Radar",
-        "ViewBoxEdge",
-        "RadarViewBoxEdge",
-        "data/ini/mappedimages/handcreated/handcreatedmappedimages.ini",
-    ),
+    ImageReference("EngineUI", "Radar", "ViewBoxEdge", "RadarViewBoxEdge", _HANDCREATED),
+    ImageReference("EngineUI", "ResourceBar", "ResourceIcon", "Resource_Icon", _HANDCREATED),
+    ImageReference("EngineUI", "ResourceBar", "ResourceIcon", "ResourceBar_Gondor", _HANDCREATED),
+    ImageReference("EngineUI", "ResourceBar", "ResourceIcon", "ResourceBar_Rohan", _HANDCREATED),
+    ImageReference("EngineUI", "ResourceBar", "ResourceIcon", "ResourceBar_Mordor", _HANDCREATED),
+    ImageReference("EngineUI", "ResourceBar", "ResourceIcon", "ResourceBar_Isengard", _HANDCREATED),
+    ImageReference("EngineUI", "ResourceBar", "ResourceIcon", "ResourceBar_Fellowship", _HANDCREATED),
 )
 
 
