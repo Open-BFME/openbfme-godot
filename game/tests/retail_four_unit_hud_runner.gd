@@ -270,6 +270,7 @@ func _run() -> void:
 		_check_control_bar_click_shield(game_hud)
 		_check_command_hotkeys(game_hud)
 	game_hud.free()
+	_check_hero_ability_sockets(content_db, selected_pack_root)
 
 	_fixture_root = "user://retail-four-unit-hud-%d" % Time.get_ticks_usec()
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(_fixture_root.path_join("assets")))
@@ -1408,3 +1409,82 @@ func _check_command_hotkeys(hud) -> void:
 	var reserved := InputEventKey.new()
 	reserved.physical_keycode = KEY_W
 	_check("camera_letters_stay_reserved", bool(hud.hotkey_is_reserved(reserved)))
+
+
+func _check_hero_ability_sockets(content_db, selected_pack_root: String) -> void:
+	## Hero ability buttons only exist when the pack's playableUnit runtimes are
+	## fed in BEFORE build(), exactly as retail_vertical_slice.gd does
+	## (enable_playable_unit_content, then build, then bind). A HUD built the
+	## short way has none, which is why this defect could hide.
+	# One faction's worth, the way the live slice feeds it: every faction at
+	# once trips the UI-evidence guard on another pack's unit and proves nothing
+	# about Men.
+	var runtimes: Dictionary = {}
+	for key_value in content_db.get_playable_unit_runtimes().keys():
+		var runtime: Dictionary = content_db.get_playable_unit_runtimes()[key_value]
+		if String(runtime.get("_pack_root", "")) == selected_pack_root:
+			runtimes[key_value] = runtime
+	var hud = HudScript.new()
+	var configure_error: String = hud.enable_playable_unit_content(runtimes, {})
+	# NOT asserted clean: feeding every Men runtime trips a pre-existing pack
+	# gap (GondorCavalryBanner has incomplete UI evidence) that the live slice
+	# never hits because it feeds only PRODUCIBLE units. The ability buttons are
+	# still seated, which is what this gate is about, so the error is reported
+	# rather than hidden - and rather than failing on someone else's defect.
+	print("RETAIL_FOUR_UNIT_HUD NOTE hero_ability_runtimes=%d configure=%s" % [
+		runtimes.size(), configure_error if configure_error != "" else "<clean>"
+	])
+	root.add_child(hud)
+	hud.build()
+	var bind_error: String = hud.bind_retail_train_commands(
+		content_db, selected_pack_root, true, Array(content_db.pack_roots)
+	)
+	_check("hero_ability_hud_binds", bind_error == "", bind_error)
+	_check_command_seat_buttons_wear_the_authored_socket(hud)
+	hud.free()
+
+
+func _check_command_seat_buttons_wear_the_authored_socket(hud) -> void:
+	## EVERY family that seats in the six authored glass sockets wears the
+	## authored cup. Hero abilities were the one that did not (owner 2026-08-27:
+	## a selected hero's ability drew on a plain square panel while the icons
+	## below it sat in their cups), because that family alone still called
+	## `_style_button`. The seat was never wrong - the diagnostic put the tile at
+	## authored socket 1 (597.7, 806.1) exactly - only the chrome was.
+	var ability_total := 0
+	var ability_socketed := 0
+	var ability_sized := 0
+	var widest := 0.0
+	for unit_value in hud.hero_ability_buttons.keys():
+		for button_value in (hud.hero_ability_buttons[unit_value] as Dictionary).values():
+			var ability: Button = button_value
+			ability_total += 1
+			var box: StyleBox = ability.get_theme_stylebox("normal")
+			if box is StyleBoxTexture and (box as StyleBoxTexture).texture != null:
+				ability_socketed += 1
+			if ability.size.is_equal_approx(hud.RETAIL_COMMAND_SLOT_SIZE):
+				ability_sized += 1
+			widest = maxf(widest, ability.size.x)
+	_check(
+		"the_pack_fields_hero_abilities_to_check",
+		ability_total > 0,
+		"hero ability buttons=%d" % ability_total
+	)
+	_check(
+		"hero_ability_buttons_wear_the_authored_glass_socket",
+		ability_total > 0 and ability_socketed == ability_total,
+		"%d of %d hero ability buttons carry the authored socket texture" % [
+			ability_socketed, ability_total
+		]
+	)
+	## Built with the ability's fallback label, so Godot clamped `size` up to the
+	## text width (141 px in a 64 px socket) and the bind that clears the text
+	## could not shrink it back. The stretched cup is the round-11 overspill
+	## defect in a family that pass never touched.
+	_check(
+		"hero_ability_buttons_fit_the_authored_socket",
+		ability_total > 0 and ability_sized == ability_total,
+		"%d of %d fit; widest=%.1f (socket %s)" % [
+			ability_sized, ability_total, widest, str(hud.RETAIL_COMMAND_SLOT_SIZE)
+		]
+	)

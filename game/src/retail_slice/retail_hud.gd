@@ -1859,20 +1859,9 @@ func _update_doc_upgrade_buttons(commands: Array, completed_upgrades: Array, upg
 		button.name = "DocUpgrade_%s" % String(upgrade_id_value).trim_prefix("Upgrade_")
 		button.custom_minimum_size = Vector2(54, 54)
 		button.set_meta("action_id", "doc_upgrade:%s" % upgrade_id_value)
-		if private_parity_mode_active:
-			# Retail chrome: the palantir socket art + validated icon, never the
-			# public blue text button (owner: research rendered as plain bars).
-			if _retail_palantir_atlas != null:
-				var socket_box := StyleBoxTexture.new()
-				socket_box.texture = _atlas_region(_retail_palantir_atlas, RETAIL_EMPTY_SOCKET_REGION)
-				for state in ["normal", "hover", "pressed", "disabled", "focus"]:
-					button.add_theme_stylebox_override(state, socket_box)
-			button.expand_icon = true
-			button.add_theme_constant_override("icon_max_width", 48)
-			button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			button.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-		else:
-			_style_button(button)
+		# Retail chrome: the palantir socket art + validated icon, never the
+		# public blue text button (owner: research rendered as plain bars).
+		_apply_authored_command_socket_style(button)
 		button.pressed.connect(func() -> void: structure_upgrade_requested.emit(String(upgrade_id_value)))
 		_place_command_button(button, clampi(slot - 1, 0, RETAIL_COMMAND_SLOT_SOURCE.size() - 1))
 		button.visible = not _radial_socket_surface_active
@@ -1986,18 +1975,7 @@ func _make_battalion_upgrade_button(upgrade_id: String, command: Dictionary) -> 
 	button.custom_minimum_size = Vector2(54, 54)
 	button.set_meta("action_id", "battalion_upgrade:%s" % upgrade_id)
 	button.set_meta("battalion_upgrade_slot", int(command.get("slot", 0)))
-	if private_parity_mode_active:
-		if _retail_palantir_atlas != null:
-			var socket_box := StyleBoxTexture.new()
-			socket_box.texture = _atlas_region(_retail_palantir_atlas, RETAIL_EMPTY_SOCKET_REGION)
-			for state in ["normal", "hover", "pressed", "disabled", "focus"]:
-				button.add_theme_stylebox_override(state, socket_box)
-		button.expand_icon = true
-		button.add_theme_constant_override("icon_max_width", 48)
-		button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		button.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-	else:
-		_style_button(button)
+	_apply_authored_command_socket_style(button)
 	button.pressed.connect(func() -> void: battalion_upgrade_requested.emit(upgrade_id))
 	_place_command_button(button, clampi(int(command.get("slot", 1)) - 1, 0, RETAIL_COMMAND_SLOT_SOURCE.size() - 1))
 	_rebind_order_action_button(
@@ -2785,6 +2763,25 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 		var first_unit := String(_retail_command_specs[0]["unit_id"])
 		_retail_train_label = String(_retail_train_labels.get(first_unit, ""))
 		retail_train_icon_aspect_ratio = float(train_button.get_meta("retail_icon_aspect_ratio", 0.0))
+	# HERO ABILITY BUTTONS ARE BUILT BEFORE THE PACK BINDS.
+	#
+	# `_build_command_panel()` seats them from the playableUnit runtimes fed in
+	# before `build()`, so at construction there is no palantir atlas to cut a
+	# socket from and they kept the plain styled button. Every other command
+	# family in the same six sockets is built during THIS call and gets the cup.
+	# That asymmetry is the square blue tile in the owner's 2026-08-27 hero
+	# screenshot. Restyle them now that the atlas exists.
+	# The same buttons also carried a TEXT-driven width: they are built with the
+	# ability's fallback label, Godot clamps `size` up to that minimum, and the
+	# bind that clears the text cannot shrink a size that is already set. A
+	# 141 px button in a 64 px socket stretches the cup art across the dish -
+	# the round-11 "icons overspill" defect, one family later. Reseat both.
+	for ability_unit_value in hero_ability_buttons.keys():
+		for ability_button_value in (hero_ability_buttons[ability_unit_value] as Dictionary).values():
+			var ability_button: Button = ability_button_value
+			_apply_authored_command_socket_style(ability_button)
+			ability_button.custom_minimum_size = RETAIL_COMMAND_SLOT_SIZE
+			ability_button.size = RETAIL_COMMAND_SLOT_SIZE
 	# Seed the stance icon to its default retail art after pack bind. The
 	# formation button has no default art to seed: it binds from the
 	# selection's own authored CommandButton and stays hidden until a horde
@@ -3441,6 +3438,29 @@ func _button_box(background: Color, border: Color) -> StyleBoxFlat:
 	return box
 
 
+## The authored palantir glass socket, applied to a command-seat button.
+##
+## Parity mode wears the authored cup crop plus the retail icon treatment; the
+## public shell keeps the plain styled button. Doc upgrades, battalion upgrades
+## and hero abilities all seat in the SAME six sockets, so they all go through
+## here and cannot drift apart again.
+func _apply_authored_command_socket_style(button: Button) -> void:
+	if not private_parity_mode_active:
+		_style_button(button)
+		return
+	if _retail_palantir_atlas != null:
+		var socket_box := StyleBoxTexture.new()
+		socket_box.texture = _atlas_region(
+			_retail_palantir_atlas, RETAIL_EMPTY_SOCKET_REGION
+		)
+		for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+			button.add_theme_stylebox_override(state, socket_box)
+	button.expand_icon = true
+	button.add_theme_constant_override("icon_max_width", 48)
+	button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	button.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+
+
 func _style_button(button: Button) -> void:
 	button.add_theme_stylebox_override("normal", _normal_button)
 	button.add_theme_stylebox_override("hover", _hover_button)
@@ -3732,7 +3752,14 @@ func _build_command_panel() -> void:
 			ability_button.set_meta("targeting", String(ability.get("targeting", "self")))
 			ability_button.set_meta("ability_label", String(ability.get("fallback_label", ability_id)))
 			ability_button.set_meta("ability_tooltip_base", String(ability.get("fallback_tooltip", "")))
-			_style_button(ability_button)
+			# HERO ABILITIES SIT IN THE SAME AUTHORED GLASS SOCKETS as every
+			# other command, so they wear the same authored cup. This family was
+			# the ONE that still called `_style_button` unconditionally, so a
+			# selected hero's ability drew on the plain panel while the doc- and
+			# battalion-upgrade buttons beside it wore the socket - the square
+			# blue tile in the owner's 2026-08-27 screenshot, seated correctly at
+			# authored socket 1 (597.7, 806.1) but wearing the wrong chrome.
+			_apply_authored_command_socket_style(ability_button)
 			ability_button.pressed.connect(_emit_ability_cast_requested.bind(ability_unit_id, ability_id))
 			var sweep := TextureProgressBar.new()
 			sweep.name = "CooldownSweep"
