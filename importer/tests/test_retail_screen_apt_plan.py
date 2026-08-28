@@ -292,3 +292,47 @@ def test_an_unplannable_import_is_named_never_dropped_silently() -> None:
     # A screen whose own plan fails raises rather than reporting itself absent.
     with pytest.raises(ScreenAptPlanError, match="duplicate imports"):
         build_screen_closure_plans(root, "MpGameSetup")
+
+
+@pytest.mark.skipif(
+    not (REPO / "workspace/retail-work/cache/effective-assets").is_dir(),
+    reason="private effective-assets oracle is not present",
+)
+def test_an_authored_null_clip_action_pointer_is_named_not_fatal() -> None:
+    """Admitting the flagged-null records exposed the next honest question.
+
+    Once a PlaceObject with a null clip-action pointer PARSES, the flatten
+    reaches it and finds no event list to bind - by construction, not by
+    failure.  Raising there took down CahAppearance, CahManager, InGameChat and
+    TimeLine entirely.  The record is already carried verbatim into the
+    contract's `source-flagged-null-clip-action-pointer` evidence, so the
+    flatten names it at the exact display path and keeps going.
+    """
+
+    from openbfme_importer import retail_hud_apt_convert as convert
+    from openbfme_importer.retail_screen_apt_plan import build_screen_closure_plans
+
+    root = REPO / "workspace/retail-work/cache/effective-assets"
+    closure = build_screen_closure_plans(root, "CahAppearance")
+    movies = {}
+    for plan in closure["plans"].values():
+        convert.register_expected_flagged_null_clip_actions(
+            (row["virtualPath"], row["recordOffset"], row["flags"])
+            for row in plan["flaggedNullClipActions"]
+        )
+        loaded = convert._movie_from_plan(plan, asset_root=root)
+        movies[loaded.name.casefold()] = loaded
+
+    flattener = convert._Flattener(movies, {}, ())
+    flattener.flatten_screen([("CahAppearance", 0)])
+    named = [
+        row
+        for row in flattener.blockers
+        if str(row["code"]) == "clip-action-pointer-authored-null"
+    ]
+    assert named, "the authored-null records must stay visible, not vanish"
+    # Every one carries the evidence needed to find it again in the bytes.
+    for row in named:
+        assert int(row["sourceOffset"]) > 0
+        assert len(str(row["recordSha256"])) == 64
+    assert flattener.draws

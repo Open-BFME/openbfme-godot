@@ -4170,6 +4170,23 @@ class _Flattener:
         path: str,
         depth: int,
     ) -> None:
+        if row.get("clipActionsPointerState") == "source-flagged-null":
+            # Retail sets the clip-action FLAG while authoring a null pointer.
+            # There is no event list to bind - by construction, not by failure -
+            # and the record is already carried verbatim by
+            # `_flagged_null_clip_action_records` into the contract's
+            # `source-flagged-null-clip-action-pointer` evidence.  Naming it
+            # here per instance keeps the gap visible at the exact display path
+            # instead of taking the whole screen down.
+            self.block(
+                "clip-action-pointer-authored-null",
+                movie.name,
+                sourceOffset=int(row["sourceOffset"]),
+                depth=depth,
+                path=path,
+                recordSha256=str(row.get("clipActionsRecordSha256", "")),
+            )
+            return
         value = row.get("clipActions", {})
         if not isinstance(value, Mapping):
             raise HudAptConvertError("clip-action record is missing")
