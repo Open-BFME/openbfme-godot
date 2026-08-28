@@ -120,3 +120,37 @@ def test_flatten_screen_refuses_a_frame_the_movie_does_not_have() -> None:
         "root-target-frame-out-of-range"
     ]
     assert flattener.draws == []
+
+
+@pytest.mark.skipif(
+    not (REPO / "workspace/retail-work/cache/effective-assets").is_dir(),
+    reason="private effective-assets oracle is not present",
+)
+def test_flagged_null_clip_actions_match_the_hand_measured_identities() -> None:
+    """The enumerator agrees with two independently hand-measured closures.
+
+    `retail_hud_apt_convert` fails closed on a PlaceObject whose clip-action
+    flag is set while its pointer is null, admitting only exact
+    (path, offset, flags) identities.  The Men-HUD closure hand-measured ONE -
+    `InGameHeroSelect.apt` at offset 166756, flags 0xB6 - and the RotWK
+    strategic closure hand-measured EIGHT in `TimeLine.apt`.  Walking the frame
+    tables generically reproduces both numbers exactly, which is what makes the
+    enumeration evidence rather than a rubber stamp on whatever the file holds.
+    """
+
+    from openbfme_importer.retail_hud_apt_convert import (
+        _EXPECTED_FLAGGED_NULL_CLIP_ACTIONS,
+    )
+
+    root = REPO / "workspace/retail-work/cache/effective-assets"
+    hero = build_screen_apt_plan(root, "InGameHeroSelect")["flaggedNullClipActions"]
+    assert [
+        (row["virtualPath"], row["recordOffset"], row["flags"]) for row in hero
+    ] == [("ingameheroselect.apt", 166756, 0xB6)]
+    assert ("ingameheroselect.apt", 166756, 0xB6) in _EXPECTED_FLAGGED_NULL_CLIP_ACTIONS
+    timeline = build_screen_apt_plan(root, "TimeLine")["flaggedNullClipActions"]
+    assert len(timeline) == 8
+    assert {row["virtualPath"] for row in timeline} == {"timeline.apt"}
+
+    # A screen that authors none reports none rather than an absent key.
+    assert build_screen_apt_plan(root, "SpellStore")["flaggedNullClipActions"] == []

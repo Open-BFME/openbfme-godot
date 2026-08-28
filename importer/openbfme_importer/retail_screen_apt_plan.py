@@ -146,7 +146,83 @@ def build_screen_apt_plan(
         "imageMap": image_map,
         "geometry": geometry,
         "atlases": _screen_atlases(root, movie),
+        "flaggedNullClipActions": _flagged_null_clip_actions(
+            apt_bytes, summary, apt_path.name
+        ),
     }
+
+
+def _flagged_null_clip_actions(
+    data: bytes, summary: dict[str, Any], virtual_path: str
+) -> list[dict[str, Any]]:
+    """Enumerate the screen's flagged-null PlaceObject records, by identity.
+
+    Retail authors PlaceObject records whose clip-action FLAG is set while the
+    pointer is zero.  `retail_hud_apt_convert` fails closed on those unless the
+    exact (path, record offset, flags) identity is registered, which is right:
+    a null pointer must never be read as "no clip actions" by accident.  Eleven
+    screens hit it, so the screen lane measures its own identities the same way
+    the strategic closure measured TimeLine's eight - by walking the SAME frame
+    tables the converter walks, never by pattern-matching bytes.
+
+    The identity list is evidence, not permission: the plan also hashes the
+    .apt, and the converter re-verifies that digest, so a tree that has moved
+    is refused before any of these offsets is trusted.
+    """
+
+    def u32(offset: int) -> int:
+        if not 0 <= offset <= len(data) - 4:
+            raise ScreenAptPlanError(f"{virtual_path} pointer is out of bounds")
+        return int.from_bytes(data[offset : offset + 4], "little")
+
+    def i32(offset: int) -> int:
+        return int.from_bytes(
+            data[offset : offset + 4], "little", signed=True
+        ) if 0 <= offset <= len(data) - 4 else _out_of_bounds(virtual_path)
+
+    def frame_table_records(table: int, count: int) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for frame_index in range(count):
+            header = table + frame_index * 8
+            item_count = i32(header)
+            item_table = u32(header + 4)
+            if not 0 <= item_count <= 16_384:
+                raise ScreenAptPlanError(f"{virtual_path} frame item count is out of bounds")
+            for item_index in range(item_count):
+                pointer = u32(item_table + item_index * 4)
+                if u32(pointer) != 3:
+                    continue
+                flags = u32(pointer + 4)
+                if not flags & 0x80 or u32(pointer + 60) != 0:
+                    continue
+                rows.append(
+                    {
+                        "virtualPath": virtual_path.casefold(),
+                        "recordOffset": pointer,
+                        "flags": flags,
+                        "sha256": _digest(data[pointer : pointer + 64]),
+                    }
+                )
+        return rows
+
+    root = summary["root"]
+    movie_offset = int(root["entryOffset"]) + 8
+    records = frame_table_records(u32(movie_offset + 4), i32(movie_offset))
+    character_count = i32(movie_offset + 12)
+    character_table = u32(movie_offset + 16)
+    for character_id in range(character_count):
+        entry = summary["characters"][character_id]
+        if str(entry.get("kind")) != "sprite":
+            continue
+        pointer = u32(character_table + character_id * 4)
+        if not pointer:
+            continue
+        records.extend(frame_table_records(u32(pointer + 12), i32(pointer + 8)))
+    return sorted(records, key=lambda row: int(row["recordOffset"]))
+
+
+def _out_of_bounds(virtual_path: str) -> int:
+    raise ScreenAptPlanError(f"{virtual_path} pointer is out of bounds")
 
 
 def _screen_atlases(root: Path, movie: str) -> list[dict[str, Any]]:
