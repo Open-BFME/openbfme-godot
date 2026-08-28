@@ -4871,6 +4871,50 @@ class _Flattener:
             if len(self.draws) == before:
                 self.block("required-root-layer-has-no-draws", movie.name)
 
+    def flatten_screen(self, roots: Iterable[tuple[str, int]]) -> None:
+        """Flatten arbitrary root movies at an AUTHORED frame, additively.
+
+        `flatten` above is the Palantir instrument: fixed MOVIE_ORDER, always
+        frame 0.  It stays byte-for-byte so every Palantir pin keeps its
+        meaning.  The retail SCREENS need something else, because they are
+        script-driven state machines - `ScoreScreen` places nothing on frame 0
+        and reaches its authored open state at its own `_open` label.  So this
+        sibling replays the root timeline from frame 0 up to and including the
+        target frame, which is exactly what feeding `_frame` the concatenated
+        rows does: place-with-character sets a depth, remove-object clears it,
+        and a bare move over a depth placed in an EARLIER frame still raises
+        `move-without-local-placement` rather than being silently merged.  That
+        blocker is the honest edge of this reconstruction, not a papered gap.
+        """
+
+        for layer_index, (name, target_frame) in enumerate(roots):
+            movie = self.movies.get(name.casefold())
+            if movie is None:
+                self.block("required-root-movie-missing", name)
+                continue
+            if not 0 <= target_frame < len(movie.frames):
+                self.block(
+                    "root-target-frame-out-of-range",
+                    movie.name,
+                    targetFrame=int(target_frame),
+                    frameCount=len(movie.frames),
+                )
+                continue
+            rows = [
+                row for frame in movie.frames[: target_frame + 1] for row in frame
+            ]
+            before = len(self.draws)
+            self._frame(
+                movie,
+                rows,
+                _Transform(),
+                ((movie.name, target_frame),),
+                f"layer:{layer_index}:{name}",
+                (),
+            )
+            if len(self.draws) == before:
+                self.block("required-root-layer-has-no-draws", movie.name)
+
 
 def _validated_external_font_bindings(
     value: Iterable[Mapping[str, Any]],

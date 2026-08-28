@@ -31,6 +31,7 @@ from .sage_apt import (
     parse_apt_dat,
     parse_apt_geometry,
     parse_apt_movie,
+    parse_tga_identity,
 )
 
 #: A screen is one movie plus its constants, image assignments and geometry.
@@ -41,6 +42,14 @@ MAX_SCREEN_APT_BYTES = 1_048_576
 MAX_SCREEN_EXPORTS = 8192
 #: `MenuExport.apt` exports 1,334 symbols in BFME2 and 4,574 in RotWK.
 _GEOMETRY_NAME = re.compile(r"^(\d+)\.ru$")
+#: Every screen keeps its atlases where the retail tree puts them:
+#: ``art/Textures/apt_<Movie>_<textureId>.tga``.  That is the SAME naming the
+#: Men-HUD plan feeds the converter (`_movie_from_plan` keys atlases off the
+#: trailing ``_<n>.tga``), so nothing about the shape is screen-specific.
+_ATLAS_DIRECTORY = "art/Textures"
+#: TGA bound is the one `parse_tga_identity` already enforces (2048x2048x4).
+MAX_SCREEN_ATLAS_BYTES = 8 * 1024 * 1024
+MAX_SCREEN_ATLASES = 64
 
 
 class ScreenAptPlanError(ValueError):
@@ -136,8 +145,43 @@ def build_screen_apt_plan(
         "constants": constants,
         "imageMap": image_map,
         "geometry": geometry,
-        # Screens reference their atlases through the .dat image map; the
-        # converter resolves the TGA rows, and a screen that ships none is a
-        # screen with no atlas, not a broken plan.
-        "atlases": [],
+        "atlases": _screen_atlases(root, movie),
     }
+
+
+def _screen_atlases(root: Path, movie: str) -> list[dict[str, Any]]:
+    """The screen's own ``apt_<Movie>_<n>.tga`` atlases, hashed and bounded.
+
+    A screen with no atlas is a screen that draws only solid geometry, not a
+    broken plan - but a screen whose geometry names an image id the atlases do
+    not cover is left to fail loudly downstream as
+    ``texture-assignment-unresolved``.  Nothing here fills a gap by guessing.
+    """
+
+    directory = root / _ATLAS_DIRECTORY
+    if not directory.is_dir():
+        raise ScreenAptPlanError(f"atlas directory is missing: {_ATLAS_DIRECTORY}")
+    pattern = re.compile(rf"^apt_{re.escape(movie)}_(\d+)\.tga$", re.IGNORECASE)
+    found: list[tuple[int, Path]] = []
+    for entry in directory.iterdir():
+        match = pattern.match(entry.name)
+        if match is not None:
+            found.append((int(match.group(1)), entry))
+    if len(found) > MAX_SCREEN_ATLASES:
+        raise ScreenAptPlanError(f"{movie} exceeds its stated atlas count bound")
+    atlases: list[dict[str, Any]] = []
+    for texture_id, entry in sorted(found):
+        data = _read(entry, MAX_SCREEN_ATLAS_BYTES)
+        virtual_path = f"{_ATLAS_DIRECTORY}/{entry.name}"
+        try:
+            parsed = parse_tga_identity(data, virtual_path)
+        except AptParseError as error:
+            raise ScreenAptPlanError(f"{movie}: {error}") from error
+        digest = str(parsed["sha256"])
+        stem = entry.stem.casefold().replace("_", "-")
+        parsed["textureId"] = texture_id
+        parsed["cookedPng"] = (
+            f"assets/ui/screens/{movie.casefold()}/{stem}-{digest[:12]}.png"
+        )
+        atlases.append(parsed)
+    return atlases
