@@ -95,6 +95,12 @@ static func command_slot_center_dock(index: int, viewport: Vector2 = DESIGN_VIEW
 	return to_dock(origin + COMMAND_SEAT_REGISTRATION_STAGE + local, viewport)
 
 
+## The authored glass socket size in viewport pixels (per-axis, like the rest of
+## the dock): 67.6 x 50.6 at 1920x1080.
+static func command_slot_size(viewport: Vector2 = DESIGN_VIEWPORT) -> Vector2:
+	return scale_size(APT_RUNTIME.PALANTIR_COMMAND_SLOT_STAGE_SIZE, viewport)
+
+
 ## Authored command-socket TOP-LEFT for a button of `button_size`, in
 ## dock-local pixels.
 static func command_slot_dock(

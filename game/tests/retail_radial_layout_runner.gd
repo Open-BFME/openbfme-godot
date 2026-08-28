@@ -27,7 +27,11 @@ extends SceneTree
 ##   OPENBFME_CONTENT=<repo>/workspace/content-packs godot --headless --path game \
 ##     --script res://tests/retail_radial_layout_runner.gd
 
-const RADIAL_BUTTON_SIZE := Vector2(64, 64)
+## The seat size the RUNTIME actually uses. This was a hardcoded 64 x 64 and
+## silently went stale the moment the sockets adopted their authored oval
+## (36.06 x 36.01 stage units) - the gate was measuring a layout the game no
+## longer draws. Read it from the HUD so it can never drift again.
+var RADIAL_BUTTON_SIZE := Vector2(64, 64)
 ## The reviewer's reproduction ran at the retail capture resolution; the bottom
 ## clamp is a function of the panel rectangle, so the panel must be the 1080p one.
 const CAPTURE_VIEWPORT := Vector2i(1920, 1080)
@@ -57,6 +61,8 @@ func _run() -> void:
 	root.size = CAPTURE_VIEWPORT
 	await process_frame
 	var hud_script := load("res://src/retail_slice/retail_hud.gd")
+	if hud_script != null:
+		RADIAL_BUTTON_SIZE = hud_script.RETAIL_COMMAND_SLOT_SIZE as Vector2
 	if not _check("hud_script_loads", hud_script != null):
 		_finish()
 		return
@@ -494,40 +500,43 @@ func _check_socket_art_corners_are_transparent(hud_script) -> void:
 	var slots: Array = hud_script.RETAIL_COMMAND_SLOT_SOURCE
 	# The exact rectangle where retail's own slots 4 and 5 overlap, expressed in
 	# each button's local pixels.
-	var left := Rect2(slots[3] as Vector2, slot_size)
-	var right := Rect2(slots[4] as Vector2, slot_size)
-	var shared := left.intersection(right)
-	if not _check("socket_art_authored_slots_overlap_as_boxes", shared.size.x > 0.0 and shared.size.y > 0.0, str(shared)):
-		return
-	var worst_alpha := 0
-	for owner_rect in [left, right]:
-		var local := Rect2(shared.position - owner_rect.position, shared.size)
-		for offset_x in int(ceil(local.size.x)):
-			for offset_y in int(ceil(local.size.y)):
-				var button_point := local.position + Vector2(float(offset_x), float(offset_y))
-				var source := Vector2i(
-					int(region.position.x + button_point.x / slot_size.x * region.size.x),
-					int(region.position.y + button_point.y / slot_size.y * region.size.y)
-				)
-				source.x = clampi(source.x, 0, image.get_width() - 1)
-				source.y = clampi(source.y, 0, image.get_height() - 1)
-				worst_alpha = maxi(worst_alpha, int(round(image.get_pixelv(source).a * 255.0)))
+	# THE AUTHORED SOCKETS DO NOT OVERLAP, and that is the point.
+	#
+	# This block used to hardcode slots 3 and 4, assert they overlapped as 64 px
+	# BOXES, and then prove the cup art was transparent in the shared corner so
+	# neighbours did not paint over each other. That overlap was an artefact of
+	# the wrong seat size: retail authors each socket as 36.06 x 36.01 stage
+	# units (67.6 x 50.6 px at 1920x1080), and at THAT size no pair of the six
+	# touches at all - which is exactly what retail's own capture shows, six
+	# distinct cups around the rim. So the corner-transparency concern does not
+	# exist, and asserting the disjointness is worth more than asserting the
+	# artefact was harmless.
+	var worst_overlap := 0.0
+	var worst_pair := ""
+	for a in slots.size():
+		for b in range(a + 1, slots.size()):
+			var area := _overlap_area(
+				Rect2(slots[a] as Vector2, slot_size), Rect2(slots[b] as Vector2, slot_size)
+			)
+			if area > worst_overlap:
+				worst_overlap = area
+				worst_pair = "%d x %d" % [a, b]
+	_check(
+		"authored_sockets_do_not_overlap_each_other",
+		worst_overlap <= 0.0,
+		"worst pair %s overlaps %.1f px^2 at seat size %s" % [worst_pair, worst_overlap, str(slot_size)]
+	)
 	var centre := Vector2i(
 		int(region.position.x + region.size.x * 0.5), int(region.position.y + region.size.y * 0.5)
 	)
 	var centre_alpha := int(round(image.get_pixelv(centre).a * 255.0))
-	print("RETAIL_RADIAL_LAYOUT socket_overlap=%s worst_corner_alpha=%d centre_alpha=%d" % [
-		str(shared), worst_alpha, centre_alpha
+	print("RETAIL_RADIAL_LAYOUT worst_socket_overlap=%.1f centre_alpha=%d" % [
+		worst_overlap, centre_alpha
 	])
 	_check(
 		"socket_art_is_opaque_at_its_centre",
 		centre_alpha >= 250,
 		"centre alpha %d" % centre_alpha
-	)
-	_check(
-		"socket_art_is_transparent_where_the_authored_boxes_overlap",
-		worst_alpha <= 16,
-		"worst corner alpha %d" % worst_alpha
 	)
 
 

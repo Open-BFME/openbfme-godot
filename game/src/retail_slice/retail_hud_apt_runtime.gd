@@ -214,6 +214,17 @@ const PALANTIR_RESOURCE_TEXT := {
 ## (data/ini/mappedimages/handcreated/handcreatedmappedimages.ini:1549-1594), so
 ## the SIZE is authored here and the ART comes from the interface-art lane.
 const PALANTIR_RESOURCE_ICON_QUAD := Rect2(37.45, 720.4, 18.0008, 20.0403)
+## The authored size of one palantir glass socket, in STAGE units.
+##
+## Measured off the flattened movie, not off a screenshot: the six
+## `CommandButtons/25:glass0 .. 35:glass5` draw sets each span exactly
+## 36.06 x 36.01 stage units. Their authored CENTRES agree with
+## `RETAIL_COMMAND_SLOT_SOURCE` to within a pixel, so only the SIZE was ever
+## wrong - we drew a 64 x 64 square where the movie authors a socket that comes
+## out 67.6 x 50.6 px at 1920x1080 under the dock's per-axis scale. Retail's own
+## capture measures ~65 x 52, and that ellipse is why our cups read as two
+## overlapping discs (owner-visible; both 2026-08-28 audits flagged it).
+const PALANTIR_COMMAND_SLOT_STAGE_SIZE := Vector2(36.06, 36.01)
 const HERO_SELECT_FIRST_LOCAL := Vector2(23.95, 0.0)
 const HERO_SELECT_PITCH := 70.0
 const HERO_SELECT_ROW_OFFSET := -70.0

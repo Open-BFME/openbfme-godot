@@ -334,14 +334,32 @@ const RETAIL_ORB_RECTS := {
 # reference/in game ui.jpg + reference/game.dat_5VsCUnKZ04.jpg at 2560x1440;
 # per-slot spread < 0.7 px). The runner still recomputes all six from the movie
 # through the same helper.
+# THESE ARE TOP-LEFTS, SO THEY DEPEND ON THE SOCKET SIZE. They were frozen when
+# the seat was a 64 x 64 square; adopting the authored 36.06 x 36.01 stage
+# socket moved every top-left by (-1.81, +6.68) while leaving the CENTRE exactly
+# where the movie puts it, and the runner caught the stale literal immediately.
+# Re-frozen here against the authored size. If the socket size ever changes
+# again, these move again - that is what `command_slot_arc_equals_the_authored_
+# apt_table` is for.
 const RETAIL_COMMAND_SLOT_SOURCE := [
-	Vector2(147.7000, 62.2047), Vector2(237.7000, 86.1109), Vector2(286.4500, 143.7672),
-	Vector2(282.7000, 214.0797), Vector2(222.7000, 268.9234), Vector2(134.5750, 284.3922),
+	Vector2(145.8938, 68.8852), Vector2(235.8937, 92.7914), Vector2(284.6437, 150.4476),
+	Vector2(280.8937, 220.7601), Vector2(220.8937, 275.6039), Vector2(132.7688, 291.0727),
 ]
-const RETAIL_COMMAND_SLOT_SIZE := Vector2(64, 64)
-## 52, not 60: at 60 on a 64px seat the icon covered the authored black cup and
-## its gold rim, which read as a pale disc behind every command (owner round 10).
-const RETAIL_RADIAL_ICON_MAX_WIDTH := 52
+## The AUTHORED socket size, not a square. `CommandButtons/25:glass0 ..
+## 35:glass5` each span 36.06 x 36.01 stage units, which is 67.6 x 50.6 px at
+## 1920x1080 - an oval, exactly as retail's capture measures (~65 x 52). We drew
+## a 64 x 64 square, which stretched the cup crop and made every socket read as
+## two overlapping discs. The authored CENTRES were already right, and this
+## keeps them: `command_slot_dock` seats from centre minus half the size.
+static var RETAIL_COMMAND_SLOT_SIZE: Vector2 = StageScript.command_slot_size()
+## The icon keeps round 10's proportion of the seat (52 of 64 = 0.8125), so it
+## still fills the bubble without covering the authored cup and its gold rim.
+## The SEAT is what changed, not that ratio.
+const RETAIL_COMMAND_ICON_SEAT_RATIO := 0.8125
+static var RETAIL_RADIAL_ICON_MAX_WIDTH: int = int(round(
+	minf(StageScript.command_slot_size().x, StageScript.command_slot_size().y)
+	* RETAIL_COMMAND_ICON_SEAT_RATIO
+))
 # Q39: MEASURED, not authored. InGameRadialMenuStage.apt authors the radial
 # BUTTON but not the ring radius; this is the owner's retail RotWK capture
 # (four barracks icons on a ~97 px radius at 2560x1440 = ~39 stage units).
@@ -4605,6 +4623,19 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 	# socket buttons must draw above the empty-socket art in the grid.
 	if command_socket_layer != null and command_socket_layer.get_parent() == command_panel:
 		command_panel.move_child(command_socket_layer, command_panel.get_child_count() - 1)
+	# TWO CUP FAMILIES, AND THEY ARE COMPLEMENTARY - NOT DUPLICATES.
+	#
+	# An audit (2026-08-28) read these TextureRects as a second cup family
+	# painting over the authored `CommandButtons` rows, offset by the
+	# registration correction, and blamed them for the doubled rim. I tried
+	# dropping them when the stage art owns the composition and the cups lost
+	# their BLACK FILL entirely: the authored rows draw the RIM, this crop draws
+	# the cup. Keeping both, with the finding recorded rather than "fixed".
+	#
+	# WHAT IS ACTUALLY WRONG, still open: the two rims disagree in position by
+	# roughly the registration correction, so each socket reads as two offset
+	# discs. Reconciling them needs the authored `CommandButtons` row
+	# translations measured against these seats - not a guess at which one moves.
 	for slot in RETAIL_COMMAND_SLOT_SOURCE.size():
 		var socket := TextureRect.new()
 		socket.name = "RetailEmptySocket%d" % slot
@@ -4674,7 +4705,7 @@ func _make_retail_icon_only(button: Button) -> void:
 		button.add_theme_stylebox_override(state, socket_box)
 	button.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	button.expand_icon = true
-	button.add_theme_constant_override("icon_max_width", int(RETAIL_COMMAND_SLOT_SIZE.x) - 10)
+	button.add_theme_constant_override("icon_max_width", RETAIL_RADIAL_ICON_MAX_WIDTH)
 	button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	button.mouse_entered.connect(func() -> void:
 		ui_sound_requested.emit("Gui_UpgradeButtonGlow")
@@ -5464,8 +5495,8 @@ func sync_radial_commands(anchor: Vector2, entries: Array) -> void:
 			var entry: Dictionary = entry_value
 			var button := Button.new()
 			button.name = "Radial_%s_%s" % [String(entry.get("command_kind", "")), String(entry.get("id", "")).get_slice(".", -1)]
-			button.custom_minimum_size = Vector2(64, 64)
-			button.size = Vector2(64, 64)
+			button.custom_minimum_size = RETAIL_COMMAND_SLOT_SIZE
+			button.size = RETAIL_COMMAND_SLOT_SIZE
 			button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 			button.icon = entry.get("icon") as Texture2D
 			button.expand_icon = true
@@ -5630,10 +5661,14 @@ func hide_radial_commands() -> void:
 ## literal that predates that correction, so buttons placed from it sat up-left
 ## of their own cups and the outer two spilled toward the radar (owner round
 ## 11). Both the buttons and the authored cup art now use the corrected seat.
-func _command_seat_offset(index: int) -> Vector2:
-	return StageScript.command_slot_dock(
-		index, RETAIL_COMMAND_SLOT_SIZE
-	) - Vector2(360.0, 0.0)
+func _command_seat_offset(
+	index: int, button_size: Vector2 = RETAIL_COMMAND_SLOT_SIZE
+) -> Vector2:
+	# The seat is an authored CENTRE; the top-left depends on how big the thing
+	# being seated is. This used to hardcode the socket size, so
+	# `_radial_button_position` took a `button_size` and silently ignored it -
+	# a probe at any other size sat lower than its own centre.
+	return StageScript.command_slot_dock(index, button_size) - Vector2(360.0, 0.0)
 
 
 func _radial_button_position(index: int, count: int, button_size: Vector2, slot: int = 0) -> Vector2:
@@ -5645,7 +5680,7 @@ func _radial_button_position(index: int, count: int, button_size: Vector2, slot:
 		var socket := index
 		if slot >= 1 and slot <= RETAIL_COMMAND_SLOT_SOURCE.size():
 			socket = slot - 1
-		return command_panel.position + _command_seat_offset(socket)
+		return command_panel.position + _command_seat_offset(socket, button_size)
 	# A PAGED range longer than six keeps the six authored glass sockets and
 	# spills onto the authored sub-menu ring - `Palantir.apt` sprite character
 	# 114 places `subMenu0..subMenu3` around the same `CommandButtons` origin as
@@ -5658,13 +5693,13 @@ func _radial_button_position(index: int, count: int, button_size: Vector2, slot:
 	# a fortress hero page on a ~163px wheel that overlapped the radar globe and
 	# left the command dish empty - the defect in the v0.2.8 capture.
 	if index < RETAIL_COMMAND_SLOT_SOURCE.size():
-		return command_panel.position + _command_seat_offset(index)
+		return command_panel.position + _command_seat_offset(index, button_size)
 	# Anchored exactly as the glass sockets are: RETAIL_COMMAND_SLOT_SOURCE is
 	# the authored centre minus half an authored socket, and production places a
 	# button at that point whatever `button_size` a theme hands it. The ring uses
 	# the same authored socket size so the two seat families stay in one frame.
 	return command_panel.position + StageScript.submenu_slot_dock(
-		index - RETAIL_COMMAND_SLOT_SOURCE.size(), RETAIL_COMMAND_SLOT_SIZE
+		index - RETAIL_COMMAND_SLOT_SOURCE.size(), button_size
 	) - Vector2(command_panel.offset_left, 0.0)
 
 
