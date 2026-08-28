@@ -1070,6 +1070,12 @@ def test_effective_bfme2_neutral_recipe_blockers_are_closed(
         "game": "bfme2",
         "neutralMobs": [real_row],
         "catalogSha256": "d" * 64,
+        # `summary` became a required part of the neutral catalog after this
+        # fixture was written. The validator computes
+        # `expected = EXPECTED_COUNTS[game] + mapPlacementAddedCount`, and the
+        # baseline is monkeypatched to 1 below against this single row, so the
+        # added count is 0 - derived from the validator, not chosen.
+        "summary": {"mapPlacementAddedCount": 0},
     }
     monkeypatch.setitem(neutral_profile_subject.EXPECTED_COUNTS, "bfme2", 1)
     monkeypatch.setattr(
@@ -1173,9 +1179,25 @@ def test_effective_bfme2_neutral_audio_routes_resolve_exactly() -> None:
     assert "FireDrakeVoxCreated" in roots_by_target["FireDrake_Slaved"]
 
 
-def test_scenario_source_resolution_rejects_missing_and_ambiguous_images(
+def test_scenario_source_resolution_rejects_missing_and_honours_last_definition(
     tmp_path: Path,
 ) -> None:
+    """A missing mapped image is a refusal; a DUPLICATE one is not.
+
+    This test used to assert that a duplicate `MappedImage` definition was
+    "ambiguous". Retail does not work that way, and the resolver was corrected
+    against the decompile oracle: `INI::parseMappedImageDefinition` looks the
+    name up and, when it already exists, re-runs `initFromINI` on the SAME
+    image object, so the LAST parsed definition wins
+    (Code/GameEngine/Source/Common/INI/INIMappedImage.cpp). Retail authors this
+    for real - `BPCastleWall` is defined twice in `buildingradialbuttons.ini`
+    with different textures.
+
+    So the duplicate half now pins the retail rule instead of a rule we
+    invented: the second definition wins, and the refusal that follows names
+    ITS texture (Wolf2.tga), not the first one's.
+    """
+
     descriptor = {
         "presentation": {
             "ui": {"portraitImageIds": ["WolfPortrait"], "commands": []},
@@ -1209,7 +1231,7 @@ MappedImage WolfPortrait
  Coords = Left:0 Top:0 Right:1 Bottom:1
 End
 """
-    ambiguous = SimpleNamespace(
+    duplicated = SimpleNamespace(
         source=duplicate_source,
         virtual_path="data/ini/mappedimages/test.ini",
         sha256="b" * 64,
@@ -1217,8 +1239,10 @@ End
     )
     with mock.patch(
         "openbfme_importer.playable_unit_import._mapped_image_documents",
-        return_value=[ambiguous],
-    ), pytest.raises(ValueError, match="mapped image is ambiguous"):
+        return_value=[duplicated],
+    ), pytest.raises(
+        ValueError, match=r"mapped image texture is unresolved: Wolf2\.tga"
+    ):
         _scenario_source_resolution(catalog, descriptor, effective_root=tmp_path)
 
 

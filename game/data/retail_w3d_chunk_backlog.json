@@ -25,9 +25,9 @@
 			"provenance": {
 				"status": "fresh",
 				"rootModule": "openbfme_importer.w3d_decode_corpus",
-				"recordedFingerprintSha256": "9513ce227a7833c87ff7e863b204ff99eafe4c1edd60c82cd6f7ffabd57fd295",
-				"currentFingerprintSha256": "9513ce227a7833c87ff7e863b204ff99eafe4c1edd60c82cd6f7ffabd57fd295",
-				"recordedGitCommit": "b1577b444e8df08982140193bfc7e21c411a7fd7",
+				"recordedFingerprintSha256": "37e4d2a28549236bfcf9c52b9a65f1ede62c4452895275875f1cdd97bffbc487",
+				"currentFingerprintSha256": "37e4d2a28549236bfcf9c52b9a65f1ede62c4452895275875f1cdd97bffbc487",
+				"recordedGitCommit": "73383c29f0e718524192c8b138e26943e4481885",
 				"staleModules": []
 			}
 		}
@@ -757,7 +757,7 @@
 		"modules": [
 			{
 				"module": "paths",
-				"sha256": "65633f720b67c646e1ddaafd95ca8e85b1ad718c878c40b213e96d62001ef070"
+				"sha256": "0b71e8d61be165f273016125b22ac089446127be1868b59bf1fb188f11cc72ec"
 			},
 			{
 				"module": "w3d_catalog",
@@ -784,8 +784,8 @@
 				"sha256": "3a6c064ee17ef3a8f1d84ffbb74f69420c9898c1a0e9b51c97dbf52c29267da0"
 			}
 		],
-		"fingerprintSha256": "debd2d99b7439eeac714c46f9a68bc0e17042fbdd7a7c066b0d6600c6afbd094",
-		"gitCommit": "b1577b444e8df08982140193bfc7e21c411a7fd7",
-		"gitWorktreeClean": false
+		"fingerprintSha256": "eb4c316aefae804ed8105d8c57f9e8edbfc5bfa67f3d6230098e748d8adf12db",
+		"gitCommit": "adc63749a6c7de7e5737c5bc9493b302ffc8cf94",
+		"gitWorktreeClean": true
 	}
 }
