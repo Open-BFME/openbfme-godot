@@ -127,3 +127,70 @@ def test_a_tree_cook_names_every_refusal(tmp_path: Path) -> None:
     assert result["totals"] == {"cooked": 2, "refused": 1, "draws": 920}
     assert [row["movie"] for row in result["refused"]] == ["libInGameUI"]
     assert "reconstructed nothing" in result["refused"][0]["reason"]
+
+
+def test_the_source_bundle_is_stated_before_anything_is_read(tmp_path: Path) -> None:
+    """The pipeline resolves converter inputs by virtual path, so a screen
+    lane has to declare its whole source set up front - and a screen is not a
+    scene without its imports, so the bundle spans the closure.
+    """
+
+    from openbfme_importer.retail_screen_apt_convert import (
+        screen_bundle_virtual_paths,
+    )
+    from openbfme_importer.retail_screen_apt_plan import (
+        ScreenAptPlanError,
+        screen_source_virtual_paths,
+    )
+
+    own = screen_source_virtual_paths(ASSETS, "SpellStore")
+    assert own[:3] == ("SpellStore.apt", "SpellStore.const", "SpellStore.dat")
+    assert own[-1] == "art/Textures/apt_SpellStore_1.tga"
+    assert all(path.startswith("SpellStore_geometry/") for path in own[3:-1])
+
+    # SpellStore imports nothing, so its bundle is its own sources.
+    assert screen_bundle_virtual_paths(ASSETS, "SpellStore") == own
+    # ScoreScreen does, so its bundle is strictly larger and covers them.
+    bundle = screen_bundle_virtual_paths(ASSETS, "ScoreScreen")
+    assert len(bundle) > len(screen_source_virtual_paths(ASSETS, "ScoreScreen"))
+    for name in ("GameWindowGadgets", "MenuExport", "ScoreScreen"):
+        assert f"{name}.apt" in bundle
+    assert len(bundle) == len(set(bundle))
+
+    with pytest.raises(ScreenAptPlanError, match="screen source is missing"):
+        screen_source_virtual_paths(tmp_path, "SpellStore")
+
+
+def test_cooking_from_a_source_mapping_matches_cooking_from_the_tree(
+    tmp_path: Path,
+) -> None:
+    """The pipeline hands over extracted archive entries, not a tree.
+
+    Staging that mapping into the retail layout and running the SAME code path
+    keeps one honest reader instead of two, and this pins that the two entry
+    points genuinely agree - identical source aggregate, identical draws.
+    """
+
+    from openbfme_importer.retail_screen_apt_convert import (
+        convert_screen_apt_bundle,
+        screen_bundle_virtual_paths,
+    )
+
+    from_tree = convert_screen_apt(ASSETS, "SpellStore", tmp_path / "tree")
+    sources = {
+        path: ASSETS.joinpath(*path.split("/"))
+        for path in screen_bundle_virtual_paths(ASSETS, "SpellStore")
+    }
+    from_bundle = convert_screen_apt_bundle(sources, "SpellStore", tmp_path / "bundle")
+
+    assert (
+        from_bundle["sourceAggregateSha256"] == from_tree["sourceAggregateSha256"]
+    )
+    assert from_bundle["totals"] == from_tree["totals"]
+    assert from_bundle["draws"] == from_tree["draws"]
+    assert (tmp_path / "bundle" / "data/ui/screens/spellstore/scene-contract.json").is_file()
+
+    with pytest.raises(ScreenAptConvertError, match="unsafe"):
+        convert_screen_apt_bundle(
+            {"../escape.apt": b"stub"}, "SpellStore", tmp_path / "unsafe"
+        )

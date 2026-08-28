@@ -26,12 +26,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import tempfile
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from . import retail_hud_apt_convert as hud
-from .retail_screen_apt_plan import ScreenAptPlanError, build_screen_closure_plans
+from .retail_screen_apt_plan import (
+    ScreenAptPlanError,
+    build_screen_closure_plans,
+    screen_movie_names,
+    screen_source_virtual_paths,
+)
 
 #: The authored state a screen is shown in, most specific first.  `_open` and
 #: `_show` are the two names retail actually uses for "the screen is up";
@@ -262,3 +268,60 @@ def convert_screen_apt_tree(
             "draws": sum(int(row["totals"]["draws"]) for row in cooked.values()),
         },
     }
+
+
+def screen_bundle_virtual_paths(
+    effective_assets_root: Path | str, movie: str
+) -> tuple[str, ...]:
+    """Every virtual path a screen AND its import closure consume.
+
+    The pipeline resolves converter inputs by virtual path out of extracted
+    archives, so a screen lane has to be able to state its whole source set up
+    front.  A screen is not a scene without its imports, so the bundle is the
+    union across the closure - MainMenu needs MenuExport and GameWindowGadgets
+    too - deduplicated and ordered.
+    """
+
+    root = Path(effective_assets_root)
+    closure = build_screen_closure_plans(root, movie)
+    paths: list[str] = []
+    for name in sorted(closure["plans"], key=str.casefold):
+        for path in screen_source_virtual_paths(root, name):
+            if path not in paths:
+                paths.append(path)
+    return tuple(paths)
+
+
+def convert_screen_apt_bundle(
+    sources: Mapping[str, Path | str | bytes | bytearray],
+    movie: str,
+    output_directory: Path | str,
+    *,
+    frame: int | None = None,
+) -> dict[str, Any]:
+    """Cook a screen from an explicit source mapping, not from a tree.
+
+    This is the shape the pipeline speaks: it hands a converter the extracted
+    archive entries keyed by virtual path.  Rather than teach the plan builder
+    a second way to read bytes - which would double the surface that has to
+    stay honest - the mapping is staged into a temporary tree in EXACTLY the
+    layout the retail tree uses, and the same code path runs against it.  The
+    digests in the resulting plan therefore attest the archive bytes, because
+    those are the only bytes that were ever read.
+    """
+
+    with tempfile.TemporaryDirectory(prefix="openbfme-screen-apt-") as staged:
+        root = Path(staged)
+        for virtual_path, value in sources.items():
+            relative = str(virtual_path).replace("\\", "/").strip("/")
+            if not relative or relative.startswith("../") or "/../" in relative:
+                raise ScreenAptConvertError(
+                    f"screen source path is unsafe: {virtual_path}"
+                )
+            target = root.joinpath(*relative.split("/"))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if isinstance(value, (bytes, bytearray)):
+                target.write_bytes(bytes(value))
+            else:
+                target.write_bytes(Path(value).read_bytes())
+        return convert_screen_apt(root, movie, output_directory, frame=frame)

@@ -313,3 +313,56 @@ def build_screen_closure_plans(
         "plans": plans,
         "unplannable": sorted(unplannable, key=lambda row: row["movie"].casefold()),
     }
+
+
+def screen_source_virtual_paths(
+    effective_assets_root: Path | str, movie: str
+) -> tuple[str, ...]:
+    """Every virtual path ONE screen needs, in a stable order.
+
+    This is the screen equivalent of `retail_shell_apt_convert
+    .shell_source_virtual_paths`, and it exists for the pipeline: a converter
+    resolves its inputs from extracted archive entries by virtual path, so the
+    lane that cooks screens into a content pack has to be able to state exactly
+    which paths a screen consumes before any of them is read.
+
+    It enumerates from the tree rather than guessing a pattern - a screen with
+    no geometry directory or no atlas simply contributes fewer paths - and it
+    refuses a movie whose required trio is absent, because a screen missing its
+    own constants is not a screen with fewer sources.
+    """
+
+    if not movie or not re.fullmatch(r"[A-Za-z0-9_]{1,64}", movie):
+        raise ScreenAptPlanError("screen movie name is not a bare identifier")
+    root = Path(effective_assets_root)
+    paths: list[str] = []
+    for suffix in (".apt", ".const", ".dat"):
+        if not (root / f"{movie}{suffix}").is_file():
+            raise ScreenAptPlanError(f"screen source is missing: {movie}{suffix}")
+        paths.append(f"{movie}{suffix}")
+
+    geometry_dir = root / f"{movie}_geometry"
+    if geometry_dir.is_dir():
+        rows = []
+        for entry in geometry_dir.iterdir():
+            match = _GEOMETRY_NAME.match(entry.name)
+            if match is None:
+                raise ScreenAptPlanError(
+                    f"{movie} geometry holds a non-RU file: {entry.name}"
+                )
+            rows.append((int(match.group(1)), entry.name))
+        paths.extend(
+            f"{geometry_dir.name}/{name}" for _index, name in sorted(rows)
+        )
+
+    directory = root / _ATLAS_DIRECTORY
+    if not directory.is_dir():
+        raise ScreenAptPlanError(f"atlas directory is missing: {_ATLAS_DIRECTORY}")
+    pattern = re.compile(rf"^apt_{re.escape(movie)}_(\d+)\.tga$", re.IGNORECASE)
+    atlases = []
+    for entry in directory.iterdir():
+        match = pattern.match(entry.name)
+        if match is not None:
+            atlases.append((int(match.group(1)), entry.name))
+    paths.extend(f"{_ATLAS_DIRECTORY}/{name}" for _index, name in sorted(atlases))
+    return tuple(paths)
