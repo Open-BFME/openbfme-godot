@@ -4623,19 +4623,21 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 	# socket buttons must draw above the empty-socket art in the grid.
 	if command_socket_layer != null and command_socket_layer.get_parent() == command_panel:
 		command_panel.move_child(command_socket_layer, command_panel.get_child_count() - 1)
-	# TWO CUP FAMILIES, AND THEY ARE COMPLEMENTARY - NOT DUPLICATES.
+	# THE CUP FILLS ITS AUTHORED SOCKET, so the authored highlight sits ON it.
 	#
-	# An audit (2026-08-28) read these TextureRects as a second cup family
-	# painting over the authored `CommandButtons` rows, offset by the
-	# registration correction, and blamed them for the doubled rim. I tried
-	# dropping them when the stage art owns the composition and the cups lost
-	# their BLACK FILL entirely: the authored rows draw the RIM, this crop draws
-	# the cup. Keeping both, with the finding recorded rather than "fixed".
+	# There was never a position bug here, though two audits and I all guessed
+	# there was. The authored `CommandButtons/glass0..5` rows are textured
+	# triangles carrying image 46 `abilitieshighlight` - a faint crescent SHEEN,
+	# not a cup - drawn at the socket rect. This crop is the black cup the sheen
+	# belongs on. Both land on the same authored rect, within about a pixel
+	# (authored glass0 centre is stage 288.55, 578.83; ours computes 287.8,
+	# 579.0).
 	#
-	# WHAT IS ACTUALLY WRONG, still open: the two rims disagree in position by
-	# roughly the registration correction, so each socket reads as two offset
-	# discs. Reconciling them needs the authored `CommandButtons` row
-	# translations measured against these seats - not a guess at which one moves.
+	# What made every socket read as two offset discs is that the crop was fitted
+	# KEEP_ASPECT into a rect that is no longer square: at the authored
+	# 67.6 x 50.6 socket a 56 x 53 crop letterboxes to ~53.5 wide and sits inside
+	# its own seat, leaving the crescent hanging outside the cup edge. Scaling it
+	# to the authored rect puts the cup rim and the sheen back on each other.
 	for slot in RETAIL_COMMAND_SLOT_SOURCE.size():
 		var socket := TextureRect.new()
 		socket.name = "RetailEmptySocket%d" % slot
@@ -4643,7 +4645,7 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 		socket.position = RETAIL_COMMAND_SLOT_SOURCE[slot]
 		socket.size = RETAIL_COMMAND_SLOT_SIZE
 		socket.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		socket.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		socket.stretch_mode = TextureRect.STRETCH_SCALE
 		socket.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		command_grid.add_child(socket)
 		command_grid.move_child(socket, slot)
