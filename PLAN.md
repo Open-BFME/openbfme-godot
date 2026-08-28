@@ -56,6 +56,10 @@ needs: sim
 - [x] Fortress fire burns again — retail's authored additive W3D materials survive the GLB import {#shell-w3d-additive}
   by: claude
   tech: owner playtest "the fortress also doesnt have the smoke particles coming form it". Two consults (sol + grok) agreed retail authors NO idle ParticleSysBone on MenFortress/MenFortressCitadel — every live row is boiling-oil, construction dust or door dust, and the shipped pack carries all of them. The brazier is MODEL geometry: GBFortress.FLAMES + FIREGLOW, authored src=One/dest=One with the depth mask off. glTF has no additive mode, so Godot imported them as lit alpha-blend and they drew black. game/src/view/w3d_shader_materials.gd now reads the preserved extras.shader at GLB load; runner 20/0, fails 2/2 with the pass disabled.
+- [x] Hero portraits are round again, at retail's own size {#shell-hero-cell}
+  by: claude
+  tech: owner 2026-08-27 "this ui for heros is broken". InGameHeroSelect authors each cell as a CIRCLE (highlight art square about local [28,28], every Hero1..Hero16 PlaceObject matrix [1,0,0,1], 70-unit pitch - InGameHeroSelect.apt offsets 27240..28200). We fed that circle the dock's PER-AXIS stage scale and got a 111x83 ellipse. Retail's own 2560x1440 capture (reference/game.dat_6rULTVkae1.jpg) puts the cell-0 highlight at ~110px = 59 units at the HEIGHT scale, so the cell is 83x83 at 1920x1080 and the portrait centre stays on the dock anchor (800.5, 1023.8) it already matched. New RetailHudStage.hero_cell_scale / hero_scale_size / hero_cell_anchor; four_unit 157->160/0.
+  STILL OPEN from this round: with a hero selected, the command icon in authored socket 1 draws on a plain square panel instead of its black cup (seat verified at 597.7,806.1 - the button IS correctly seated, the art is not landing). Not diagnosed; the men fixture fields no hero so the harness cannot see it.
 - [~] UI parity: render EA's authored APT layouts everywhere, hand-measured constants are bugs; screenshot-vs-reference/ gates per screen; recover ~760 HUD text labels {#shell-ui-parity}
   by: grok
   from: roadmap (queue Q90; oracle = owner's retail capture library in reference/)

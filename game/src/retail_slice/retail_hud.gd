@@ -3876,10 +3876,10 @@ func _attach_hero_health_pieces(button: Button, health_arc: Control) -> void:
 	)
 	if health_rows.size() != 4:
 		return
-	var bar_center := StageScript.scale_size(
+	var bar_center := StageScript.hero_scale_size(
 		AptRuntimeScript.HERO_CELL_HEALTH_BAR_LOCAL
 	)
-	var bar_size := StageScript.scale_size(
+	var bar_size := StageScript.hero_scale_size(
 		AptRuntimeScript.HERO_CELL_HEALTH_BAR_QUAD
 	)
 	var bar_frame := TextureRect.new()
@@ -4899,7 +4899,7 @@ func _build_hero_bar() -> void:
 	# portrait; the faction icon sits to ITS left.
 	_hero_select_all_button = Button.new()
 	_hero_select_all_button.name = "SelectAllHeroes"
-	var select_all_size := StageScript.scale_size(
+	var select_all_size := StageScript.hero_scale_size(
 		Vector2.ONE * AptRuntimeScript.HERO_CELL_PORTRAIT_RADIUS
 		* AptRuntimeScript.HERO_SELECT_ALL_BUTTON_SCALE
 	)
@@ -4983,10 +4983,10 @@ func sync_hero_bar(heroes: Array) -> void:
 			# and sprites 3/6/9 put the highlight art at [-29.5, -29.5], which
 			# is the portrait radius.
 			var cell_size := StageScript.hero_cell_size()
-			var portrait_center := StageScript.scale_size(
+			var portrait_center := StageScript.hero_scale_size(
 				AptRuntimeScript.HERO_CELL_PORTRAIT_CENTER_LOCAL
 			)
-			var portrait_radius := StageScript.scale_size(
+			var portrait_radius := StageScript.hero_scale_size(
 				Vector2.ONE * AptRuntimeScript.HERO_CELL_PORTRAIT_RADIUS
 			)
 			button = Button.new()
@@ -5026,10 +5026,10 @@ func sync_hero_bar(heroes: Array) -> void:
 			health.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			health.configure(
 				portrait_center,
-				portrait_radius + StageScript.scale_size(
+				portrait_radius + StageScript.hero_scale_size(
 					Vector2.ONE * AptRuntimeScript.HERO_CELL_HEALTH_FILL_QUAD.y * 0.5
 				),
-				StageScript.scale_size(
+				StageScript.hero_scale_size(
 					Vector2.ONE * AptRuntimeScript.HERO_CELL_HEALTH_FILL_QUAD.y
 				).y * 0.5,
 				StageScript.hero_health_arc_half_angle()
@@ -5038,16 +5038,16 @@ func sync_hero_bar(heroes: Array) -> void:
 			_attach_hero_health_pieces(button, health)
 			var badge := Label.new()
 			badge.name = "LevelBadge"
-			badge.position = StageScript.scale_size(
+			badge.position = StageScript.hero_scale_size(
 				AptRuntimeScript.HERO_CELL_LEVEL_BADGE_LOCAL
-			) - StageScript.scale_size(Vector2(9.0, 9.0))
-			badge.size = StageScript.scale_size(Vector2(18.0, 18.0))
+			) - StageScript.hero_scale_size(Vector2(9.0, 9.0))
+			badge.size = StageScript.hero_scale_size(Vector2(18.0, 18.0))
 			badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 			badge.add_theme_font_size_override(
 				"font_size",
 				int(round(
-					StageScript.scale_size(
+					StageScript.hero_scale_size(
 						Vector2.ONE * AptRuntimeScript.HERO_CELL_LEVEL_BADGE_FONT_HEIGHT
 					).y
 				))

@@ -212,20 +212,62 @@ static func resource_text_rect_dock(name: String, viewport: Vector2 = DESIGN_VIE
 ## Hero roster cell `index` (0-based) origin in VIEWPORT pixels: the authored
 ## `HeroSelectUI` stage placement [375, 700] plus the authored 70-unit pitch.
 static func hero_cell_viewport(index: int, viewport: Vector2 = DESIGN_VIEWPORT) -> Vector2:
-	var origin: Vector2 = APT_RUNTIME.PALANTIR_STAGE_PLACEMENTS["HeroSelectUI"]
 	var row := index / APT_RUNTIME.HERO_SELECT_ROW_LENGTH
 	var column := index % APT_RUNTIME.HERO_SELECT_ROW_LENGTH
-	var local: Vector2 = APT_RUNTIME.HERO_SELECT_FIRST_LOCAL + Vector2(
+	var scale := hero_cell_scale(viewport)
+	return hero_cell_anchor(viewport) + Vector2(
 		APT_RUNTIME.HERO_SELECT_PITCH * float(column),
 		APT_RUNTIME.HERO_SELECT_ROW_OFFSET * float(row)
+	) * scale - APT_RUNTIME.HERO_CELL_PORTRAIT_CENTER_LOCAL * scale
+
+
+## The FIRST cell's portrait CENTRE in viewport pixels — the one point of the
+## hero roster that is pinned to the dock's own transform, so the row keeps
+## sitting where the owner and the retail capture both have it.
+static func hero_cell_anchor(viewport: Vector2 = DESIGN_VIEWPORT) -> Vector2:
+	var origin: Vector2 = APT_RUNTIME.PALANTIR_STAGE_PLACEMENTS["HeroSelectUI"]
+	return to_viewport(
+		origin
+		+ APT_RUNTIME.HERO_SELECT_FIRST_LOCAL
+		+ APT_RUNTIME.HERO_CELL_PORTRAIT_CENTER_LOCAL,
+		viewport
 	)
-	return to_viewport(origin + local, viewport)
+
+
+## InGameHeroSelect composes UNIFORMLY, so the hero cell keeps ONE scale on
+## both axes.
+##
+## The movie authors the cell as a CIRCLE: `SelectedHighlight` and
+## `AttackedFlash` both centre on local [28, 28] and the highlight art is the
+## square [-29.5, -29.5]..[29.5, 29.5] about it, with every `Hero1..Hero16`
+## placement at matrix [1, 0, 0, 1] and a 70-unit pitch
+## (InGameHeroSelect.apt PlaceObject records at offsets 27240..28200).
+## Feeding that circle the dock's PER-AXIS stage scale (1.875 x / 1.40625 y at
+## 1920x1080) stretched it into a 111 x 83 ellipse — the owner's 2026-08-27
+## playtest, "this ui for heros is broken". Retail's own capture settles which
+## axis is right: in reference/game.dat_6rULTVkae1.jpg (2560x1440) the cell-0
+## highlight measures ~110 px across, i.e. 59 authored units at the HEIGHT
+## scale 1440/768, with the 1024-wide stage centred. So the uniform scale is
+## the height scale, and the cell is 83 x 83 at 1920x1080 — exactly retail's
+## 110 px scaled to that viewport.
+static func hero_cell_scale(viewport: Vector2 = DESIGN_VIEWPORT) -> float:
+	return scale_for(viewport).y
+
+
+## A hero-cell stage length in viewport pixels, uniformly scaled.
+static func hero_scale_size(stage_size: Vector2, viewport: Vector2 = DESIGN_VIEWPORT) -> Vector2:
+	return stage_size * hero_cell_scale(viewport)
 
 
 ## The `SelectAllHeroesBttn` origin in VIEWPORT pixels.
 static func hero_select_all_viewport(viewport: Vector2 = DESIGN_VIEWPORT) -> Vector2:
-	var origin: Vector2 = APT_RUNTIME.PALANTIR_STAGE_PLACEMENTS["HeroSelectUI"]
-	return to_viewport(origin + APT_RUNTIME.HERO_SELECT_ALL_BUTTON_LOCAL, viewport)
+	# Local to the same cell-0 anchor the portraits use, so the button keeps
+	# its authored offset from the first portrait under the uniform scale.
+	return hero_cell_anchor(viewport) + (
+		APT_RUNTIME.HERO_SELECT_ALL_BUTTON_LOCAL
+		- APT_RUNTIME.HERO_SELECT_FIRST_LOCAL
+		- APT_RUNTIME.HERO_CELL_PORTRAIT_CENTER_LOCAL
+	) * hero_cell_scale(viewport)
 
 
 ## The authored hero cell size in viewport pixels: the portrait circle plus the
@@ -237,7 +279,7 @@ static func hero_cell_size(viewport: Vector2 = DESIGN_VIEWPORT) -> Vector2:
 		APT_RUNTIME.HERO_CELL_HEALTH_BAR_LOCAL.y
 		+ APT_RUNTIME.HERO_CELL_HEALTH_BAR_QUAD.y * 0.5
 	)
-	return scale_size(Vector2(width, height), viewport)
+	return hero_scale_size(Vector2(width, height), viewport)
 
 
 ## Half-angle (radians) of the hero health arc.

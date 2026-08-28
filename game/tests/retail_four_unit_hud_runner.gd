@@ -576,13 +576,43 @@ func _check_authored_hero_bar(hud) -> void:
 		str(arc)
 	)
 	var badge: Label = first.get_node_or_null("LevelBadge")
-	var portrait_centre: Vector2 = stage.scale_size(apt.HERO_CELL_PORTRAIT_CENTER_LOCAL)
+	var portrait_centre: Vector2 = stage.hero_scale_size(apt.HERO_CELL_PORTRAIT_CENTER_LOCAL)
 	_check(
 		"level_badge_is_bottom_left_of_the_portrait",
 		badge != null and badge.text == "3"
 			and badge.get_rect().get_center().x < portrait_centre.x
 			and badge.get_rect().get_center().y > portrait_centre.y,
 		"badge=%s centre=%s" % [str(badge.get_rect()), str(portrait_centre)]
+	)
+	# The movie authors the cell as a CIRCLE (highlight art square about local
+	# [28, 28], every Hero1..Hero16 placement matrix [1, 0, 0, 1]). Feeding it
+	# the dock's per-axis scale stretched it to 111 x 83 - owner 2026-08-27,
+	# "this ui for heros is broken". Retail's own 2560x1440 capture puts the
+	# cell-0 highlight at ~110 px, i.e. 59 units at the HEIGHT scale, so at
+	# 1920x1080 the cell is 83 x 83 and the portrait centre still lands where
+	# the dock's transform puts it.
+	var cell_size: Vector2 = stage.hero_cell_size()
+	var uniform: float = stage.hero_cell_scale()
+	_check(
+		"hero_cell_is_square_not_an_ellipse",
+		is_equal_approx(cell_size.x, apt.HERO_CELL_PORTRAIT_RADIUS * 2.0 * uniform)
+			and is_equal_approx(
+				stage.hero_scale_size(Vector2.ONE * apt.HERO_CELL_PORTRAIT_RADIUS).x,
+				stage.hero_scale_size(Vector2.ONE * apt.HERO_CELL_PORTRAIT_RADIUS).y
+			),
+		"cell=%s uniform=%f" % [str(cell_size), uniform]
+	)
+	_check(
+		"hero_cell_matches_the_retail_capture_size",
+		is_equal_approx(cell_size.x, 82.96875),
+		str(cell_size)
+	)
+	_check(
+		"first_hero_portrait_keeps_the_dock_anchor",
+		(stage.hero_cell_viewport(0)
+			+ stage.hero_scale_size(apt.HERO_CELL_PORTRAIT_CENTER_LOCAL)
+		).is_equal_approx(stage.hero_cell_anchor()),
+		str(stage.hero_cell_anchor())
 	)
 	_check(
 		"selection_is_a_circle_highlight",

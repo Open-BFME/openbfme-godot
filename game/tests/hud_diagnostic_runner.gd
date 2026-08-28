@@ -6,6 +6,11 @@ extends SceneTree
 ## authored particle attachments (fortress smoke), builder roster (cycle seat).
 ## Writes workspace/logs/hud-diagnostic.json and prints a summary.
 
+## Loaded AFTER the tree is up: these scripts depend on the ContentDB autoload,
+## which does not exist while a SceneTree script is being compiled.
+var StageScript_: GDScript = null
+var AptRuntime_: GDScript = null
+
 var _out := {}
 
 
@@ -31,6 +36,8 @@ func _control_row(node: Node) -> Dictionary:
 func _run() -> void:
 	await process_frame
 	await process_frame
+	StageScript_ = load("res://src/retail_slice/retail_hud_stage.gd")
+	AptRuntime_ = load("res://src/retail_slice/retail_hud_apt_runtime.gd")
 	OS.set_environment("OPENBFME_SLICE_FACTION", "men")
 	var slice = (load("res://scenes/retail_vertical_slice.tscn") as PackedScene).instantiate()
 	root.add_child(slice)
@@ -135,6 +142,65 @@ func _run() -> void:
 		})
 	_out["particles"] = particle_rows
 
+	# --- 7. HERO UI geometry (owner 2026-08-27: "this ui for heros is broken")
+	# Select every hero the roster carries, then measure the cell the movie
+	# authors as a CIRCLE (radius 29.5 about local [28, 28]) against what we
+	# actually lay out, plus every command seat the selection produced.
+	var hero_rows: Array = []
+	for id_value in simulation.entity_ids():
+		var id := int(id_value)
+		var entity: Dictionary = simulation.entity(id)
+		if int(entity.get("health", 0)) <= 0 or not bool(entity.get("is_hero", false)):
+			continue
+		hero_rows.append({"id": id, "unit": String(entity.get("unit_type", ""))})
+	_out["heroes"] = hero_rows
+	var cell_rows: Array = []
+	for hero_id_value in (hud.get("_hero_bar_buttons") as Dictionary).keys():
+		var cell: Button = (hud.get("_hero_bar_buttons") as Dictionary)[hero_id_value]
+		var row := _control_row(cell)
+		row["hero_id"] = int(hero_id_value)
+		row["children"] = []
+		for child in cell.get_children():
+			var child_row := _control_row(child)
+			if not child_row.is_empty():
+				(row["children"] as Array).append(child_row)
+		cell_rows.append(row)
+	_out["hero_cells"] = cell_rows
+	_out["hero_cell_geometry"] = {
+		"cell_size": [StageScript_.hero_cell_size().x, StageScript_.hero_cell_size().y],
+		"cell_origin_0": [StageScript_.hero_cell_viewport(0).x, StageScript_.hero_cell_viewport(0).y],
+		"portrait_center": [
+			StageScript_.hero_scale_size(AptRuntime_.HERO_CELL_PORTRAIT_CENTER_LOCAL).x,
+			StageScript_.hero_scale_size(AptRuntime_.HERO_CELL_PORTRAIT_CENTER_LOCAL).y,
+		],
+		"portrait_radius": [
+			StageScript_.hero_scale_size(Vector2.ONE * AptRuntime_.HERO_CELL_PORTRAIT_RADIUS).x,
+			StageScript_.hero_scale_size(Vector2.ONE * AptRuntime_.HERO_CELL_PORTRAIT_RADIUS).y,
+		],
+		"hero_cell_scale": StageScript_.hero_cell_scale(),
+		"command_seats": [
+			[StageScript_.command_slot_dock(0, Vector2(64, 64)).x, StageScript_.command_slot_dock(0, Vector2(64, 64)).y],
+			[StageScript_.command_slot_dock(1, Vector2(64, 64)).x, StageScript_.command_slot_dock(1, Vector2(64, 64)).y],
+			[StageScript_.command_slot_dock(2, Vector2(64, 64)).x, StageScript_.command_slot_dock(2, Vector2(64, 64)).y],
+			[StageScript_.command_slot_dock(3, Vector2(64, 64)).x, StageScript_.command_slot_dock(3, Vector2(64, 64)).y],
+			[StageScript_.command_slot_dock(4, Vector2(64, 64)).x, StageScript_.command_slot_dock(4, Vector2(64, 64)).y],
+			[StageScript_.command_slot_dock(5, Vector2(64, 64)).x, StageScript_.command_slot_dock(5, Vector2(64, 64)).y],
+		],
+		"submenu_seats": [
+			[StageScript_.submenu_slot_dock(0, Vector2(64, 64)).x, StageScript_.submenu_slot_dock(0, Vector2(64, 64)).y],
+			[StageScript_.submenu_slot_dock(1, Vector2(64, 64)).x, StageScript_.submenu_slot_dock(1, Vector2(64, 64)).y],
+			[StageScript_.submenu_slot_dock(2, Vector2(64, 64)).x, StageScript_.submenu_slot_dock(2, Vector2(64, 64)).y],
+			[StageScript_.submenu_slot_dock(3, Vector2(64, 64)).x, StageScript_.submenu_slot_dock(3, Vector2(64, 64)).y],
+		],
+		"stage_scale": [StageScript_.scale_for(Vector2(1920, 1080)).x, StageScript_.scale_for(Vector2(1920, 1080)).y],
+	}
+	var radial_rows: Array = []
+	for button in (hud.get("_radial_buttons") as Array):
+		var row := _control_row(button)
+		row["icon"] = str((button as Button).icon)
+		row["has_cup"] = (button as Button).get_theme_stylebox("normal") != null
+		radial_rows.append(row)
+	_out["radial_buttons"] = radial_rows
 	var file := FileAccess.open("user://hud-diagnostic.json", FileAccess.WRITE)
 	file.store_string(JSON.stringify(_out, "  ", true))
 	file.close()
