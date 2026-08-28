@@ -29,21 +29,26 @@
 			"m3_pack_expansion",
 			"pipeline"
 		],
-		"consumerFileCount": 78,
+		"consumerFileCount": 85,
 		"consumerFiles": [
 			"armor_compiler",
 			"big",
 			"bootstrap",
+			"castle_ai_bases",
 			"castle_behavior",
 			"castle_capabilities",
 			"castle_fixtures",
 			"catalog",
+			"corpus_warm_cache",
 			"diagnostics",
 			"effective_assets_catalog",
 			"effective_assets_identity",
 			"faction_census",
+			"faction_census_cache",
+			"faction_coverage_cache",
 			"faction_import",
 			"faction_object_cache",
+			"faction_plan_cache",
 			"faction_policy",
 			"game",
 			"incremental_rebuild",
@@ -78,6 +83,8 @@
 			"retail_hud_frame_selection",
 			"retail_men_damage_effects",
 			"retail_men_lifecycle_profile",
+			"retail_screen_apt_convert",
+			"retail_screen_apt_plan",
 			"retail_shell_apt_convert",
 			"retail_unit_rules",
 			"retail_visual_closure",
@@ -122,6 +129,7 @@
 			"status": "consumed",
 			"consumedBy": [
 				"m3_pack_expansion.py",
+				"playable_structure_compiler.py",
 				"playable_unit_pack_compiler.py"
 			],
 			"refusedBy": [],
@@ -3093,6 +3101,7 @@
 			"classificationNote": "AI/movement runtime system (movement is engine-baked in retail)",
 			"status": "consumed",
 			"consumedBy": [
+				"castle_fixtures.py",
 				"module_contracts.py"
 			],
 			"refusedBy": [],
@@ -3120,6 +3129,7 @@
 			"classificationNote": "structure lifecycle runtime (build/collapse/rebuild/topple)",
 			"status": "consumed",
 			"consumedBy": [
+				"castle_fixtures.py",
 				"module_contracts.py"
 			],
 			"refusedBy": [],

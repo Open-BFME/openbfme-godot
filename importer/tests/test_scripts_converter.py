@@ -744,13 +744,23 @@ class InheritanceMarkerRealCorpusTests(unittest.TestCase):
     EXPECTED = {
         "BFME2": {
             "catalog": BFME2_CATALOG,
-            "maps": 8,
+            # 8 authored `map mp *` skirmish maps plus the castle-siege maps
+            # this tree carries. The castle lane PROMOTES pinned `map wor *`
+            # maps into skirmish (see `CASTLE_SIEGE_MAPS` and
+            # `test_castle_map_admission`), and BFME2 holds 8 of the 10 - it
+            # has no Angmar Carn Dum or Fornost.
+            "maps": 8 + 8,
             "rejections": 5,
             "inheritMaps": {
                 "maps/map mp fords of isen ii/map mp fords of isen ii.map": 2,
                 "maps/map mp harlindon/map mp harlindon.map": 3,
+                # Black Gate is the ONE promoted castle map that authors
+                # inheritance teams, and all four are EMPTY - which is why the
+                # object and type totals below did not move when the castle
+                # maps joined the scan.
+                "maps/map wor black gate/map wor black gate.map": 4,
             },
-            "teams": 5,
+            "teams": 5 + 4,
             "objects": 12,
             "types": {
                 "Backdoor1": 2,
@@ -763,7 +773,8 @@ class InheritanceMarkerRealCorpusTests(unittest.TestCase):
         },
         "RotWK": {
             "catalog": CATALOG,
-            "maps": 22,
+            # 22 authored skirmish maps plus all 10 promoted castle sieges.
+            "maps": 22 + 10,
             "rejections": 0,
             "inheritMaps": {
                 "maps/map mp adorn river/map mp adorn river.map": 8,
@@ -773,8 +784,10 @@ class InheritanceMarkerRealCorpusTests(unittest.TestCase):
                 "maps/map mp fords of isen ii/map mp fords of isen ii.map": 2,
                 "maps/map mp harlindon/map mp harlindon.map": 3,
                 "maps/map mp weathertop/map mp weathertop.map": 4,
+                # Same four empty inheritance teams as BFME2 carries.
+                "maps/map wor black gate/map wor black gate.map": 4,
             },
-            "teams": 33,
+            "teams": 33 + 4,
             "objects": 113,
             "types": {
                 "Backdoor1": 16,

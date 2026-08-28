@@ -377,15 +377,34 @@ def test_current_selected_rotwk_eowyn_pack_fails_new_prerequisite_closure() -> N
     runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
     registration = runtime["registration"]
 
-    assert "specialDisguisePresentationPrerequisite" not in registration
-    assert any(
-        row.get("id")
-        == "module:container:SpecialDisguiseUpdate:ModuleTag_SpecialDisguiseUpdateUpdate"
-        for row in registration["unsupportedCapabilities"]
-    )
-    # This is an expected-red acceptance receipt: publication/selection must
-    # not be called green until a new layered recipe carries the closure.
-    assert active == (
-        "rotwk-men-vslice/"
-        "7f2765762bc3d679044d864c2f1ae3c7a15a712e2dd0dc481994ec17edba7a6f"
+    # THE RECEIPT ADVANCED. This test was an expected-red tripwire asserting
+    # the selected pack carried NO prerequisite at all; a later republish
+    # closed half of it, which is exactly what the tripwire existed to catch.
+    # It now pins the state that actually shipped, and stays red-by-intent for
+    # the half that has not.
+    #
+    # CLOSED: the presentation prerequisite is published, carrying its own
+    # aggregate digest plus the resolved audio closure (the Eowyn disguise
+    # on/off voice events and their sounds).
+    prerequisite = registration["specialDisguisePresentationPrerequisite"]
+    assert sorted(prerequisite) == ["closure", "resourceIds", "visualResourceIds"]
+    assert len(prerequisite["closure"]["aggregateSha256"]) == 64
+    events = {
+        str(row["id"]) for row in prerequisite["closure"]["audioClosure"]["events"]
+    }
+    assert {"EowynVoiceDisguiseOn", "EowynVoiceDisguiseOff"} <= events
+
+    # STILL OPEN: the modules themselves are recorded as unsupported, so the
+    # runtime cannot execute the disguise even though its presentation assets
+    # now ship. Publication is not green until these rows disappear.
+    #
+    # Note the id MOVED with the republish - it was recorded under module kind
+    # `SpecialDisguiseUpdate` and is now under `SpecialPowerModule`, with the
+    # tag still naming the disguise. Pinning the exact ids is what makes that
+    # kind of drift visible instead of silently satisfying a loose match.
+    unsupported = {str(row.get("id")) for row in registration["unsupportedCapabilities"]}
+    assert "module:container:SpecialPowerModule:ModuleTag_SpecialDisguiseUpdate" in unsupported
+    assert (
+        "module:container:UnpauseSpecialPowerUpgrade:ModuleTag_DisguiseEnabler"
+        in unsupported
     )

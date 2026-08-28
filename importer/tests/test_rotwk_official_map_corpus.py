@@ -24,7 +24,10 @@ from openbfme_importer.map_census import (
     resolve_map_display_name,
 )
 from openbfme_importer.map_profile import (
+    CASTLE_SIEGE_MAPS,
     MAP_SETS,
+    _map_directory,
+    classify_map_directory,
     discover_catalog_only_map_targets,
     discover_registry_map_targets,
 )
@@ -78,7 +81,22 @@ class OfficialRotwkMapCorpusTests(unittest.TestCase):
         ]
         cls.display_names = load_map_display_names(cls.catalog)
 
-    def test_official_corpus_is_72_maps_split_22_skirmish_50_wotr(self) -> None:
+    def test_official_corpus_is_72_maps_split_32_skirmish_40_wotr(self) -> None:
+        """72 official MP maps, split 22 authored skirmish + 10 castle sieges.
+
+        The split was 22/50 until the castle-siege lane shipped.  That lane
+        PROMOTES the ten pinned retail castle maps - every one of them a
+        `map wor *` directory, so classified `wotr-battle` by the shipped
+        naming convention - into the skirmish lobby, which is what makes Helm's
+        Deep and Minas Tirith playable outside War of the Ring.
+        `test_castle_map_admission` asserts the same thing from the other side.
+
+        So this asserts the RELATIONSHIP rather than two bare numbers: the
+        promotion moves exactly the castle table, no more and no less.  A
+        castle map that stopped being promoted, or a WOTR map that started
+        being promoted without joining that table, both fail here.
+        """
+
         targets, rejections = discover_registry_map_targets(
             self.catalog, categories=MAP_SETS["playable"]
         )
@@ -88,7 +106,23 @@ class OfficialRotwkMapCorpusTests(unittest.TestCase):
         categories = {}
         for target in targets:
             categories[target.category] = categories.get(target.category, 0) + 1
-        self.assertEqual(categories, {"skirmish": 22, "wotr-battle": 50})
+        self.assertEqual(len(CASTLE_SIEGE_MAPS), 10)
+        self.assertEqual(
+            categories,
+            {
+                "skirmish": 22 + len(CASTLE_SIEGE_MAPS),
+                "wotr-battle": 50 - len(CASTLE_SIEGE_MAPS),
+            },
+        )
+        # The promoted set IS the castle table, exactly.
+        promoted = {
+            target.virtual_path.replace("\\", "/").casefold()
+            for target in targets
+            if target.category == "skirmish"
+            and classify_map_directory(_map_directory(target.virtual_path))
+            == "wotr-battle"
+        }
+        self.assertEqual(promoted, set(CASTLE_SIEGE_MAPS))
 
     def test_every_official_map_resolves_an_authored_display_name(self) -> None:
         # derivedFromDirectoryCount == 0 for the official corpus: a catalog row
