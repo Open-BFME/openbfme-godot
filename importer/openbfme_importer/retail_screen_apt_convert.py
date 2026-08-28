@@ -93,6 +93,37 @@ def select_open_frame(labels: Mapping[str, int]) -> dict[str, Any]:
     }
 
 
+def _nested_sprite_selection(
+    movies: Mapping[str, Any]
+) -> dict[tuple[str, int], int]:
+    """Apply the SAME authored-label policy to nested sprites as to roots.
+
+    A screen's sprites are script-driven state machines too, and defaulting
+    every one of them to frame 0 is a choice, not a neutral act: measured on
+    RotWK, 105 nested sprites author an open label past frame 0 and 69 of those
+    place nothing at all on frame 0, so they contributed no pixels at all.
+
+    Only a sprite that AUTHORS one of `OPEN_LABEL_PRIORITY` gets a selection;
+    everything else keeps frame 0, which is its authored initial state.  The
+    Palantir lane is untouched by this because it supplies its own proven
+    selection and never calls here.
+    """
+
+    selection: dict[tuple[str, int], int] = {}
+    for movie in movies.values():
+        for character_id, character in enumerate(movie.characters):
+            if str(character.get("kind")) != "sprite":
+                continue
+            frames = character.get("frames") or []
+            if len(frames) <= 1:
+                continue
+            chosen = select_open_frame(hud._timeline_labels(frames))
+            frame = int(chosen["frame"])
+            if frame > 0:
+                selection[(movie.name.casefold(), character_id)] = frame
+    return selection
+
+
 def build_screen_scene(
     effective_assets_root: Path | str,
     movie: str,
@@ -128,7 +159,8 @@ def build_screen_scene(
             raise ScreenAptConvertError(f"{movie}: frame {frame} is out of range")
         selection = {**selection, "frame": int(frame), "rule": "caller-supplied-frame"}
 
-    flattener = hud._Flattener(movies, {}, ())
+    nested = _nested_sprite_selection(movies)
+    flattener = hud._Flattener(movies, nested, ())
     try:
         flattener.flatten_screen([(root_movie.name, int(selection["frame"]))])
     except hud.HudAptConvertError as error:
@@ -168,6 +200,10 @@ def build_screen_scene(
         "closure": sorted(closure["plans"], key=str.casefold),
         "unplannableImports": closure["unplannable"],
         "frameSelection": selection,
+        "nestedSpriteSelection": {
+            f"{movie_key}:{character_id}": frame
+            for (movie_key, character_id), frame in sorted(nested.items())
+        },
         "stage": {
             "width": int(stage["width"]),
             "height": int(stage["height"]),
@@ -190,6 +226,7 @@ def build_screen_scene(
             "textInstances": len(flattener.text_instances),
             "buttonInstances": len(flattener.button_instances),
             "timelines": len(flattener.timelines),
+            "nestedSpriteSelections": len(nested),
             "blockers": len(flattener.blockers),
         },
     }

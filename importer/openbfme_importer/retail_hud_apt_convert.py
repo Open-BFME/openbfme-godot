@@ -4874,9 +4874,19 @@ class _Flattener:
                         "additive": list(transform.additive),
                     }
                 )
+            # A selected frame is a POSITION on the sprite's timeline, not a
+            # self-contained scene, so replay 0..selected the same way
+            # `flatten_screen` replays a root.  For a state-switcher this is
+            # identical to the single frame - Palantir's character 105 removes
+            # depth 1 and places one character in each of its labelled states,
+            # so frames 0..19 collapse to exactly what frame 19 alone yields -
+            # but for a sprite that BUILDS UP, the single frame silently lost
+            # everything placed before it.  Measured on RotWK: 105 nested
+            # sprites author an open label past frame 0 and 69 of those place
+            # nothing at all on frame 0.
             self._frame(
                 movie,
-                frames[selected_frame],
+                [row for frame in frames[: selected_frame + 1] for row in frame],
                 transform,
                 nested,
                 path,

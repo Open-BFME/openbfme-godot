@@ -194,3 +194,63 @@ def test_cooking_from_a_source_mapping_matches_cooking_from_the_tree(
         convert_screen_apt_bundle(
             {"../escape.apt": b"stub"}, "SpellStore", tmp_path / "unsafe"
         )
+
+
+def test_nested_sprites_get_the_same_authored_policy_as_the_root() -> None:
+    """Defaulting every nested sprite to frame 0 is a choice, not neutrality.
+
+    A screen's sprites are script-driven state machines too. Measured on RotWK,
+    105 of them author an open label past frame 0, and 69 of those place
+    nothing at all on frame 0 - so they contributed no pixels while their
+    author had named a state where they are visible. Applying the same declared
+    policy to them roughly doubles what the tree reconstructs.
+
+    `InGameHeroSelect` is the case worth naming: it is the hero dock, and it
+    reconstructs only because its `_show` state is nested-sprite driven.
+    """
+
+    contract = build_screen_scene(ASSETS, "InGameHeroSelect")
+    assert contract["frameSelection"]["label"] == "_show"
+    assert contract["totals"]["draws"] > 0
+    assert contract["totals"]["nestedSpriteSelections"] > 0
+    # The choice is recorded per sprite, so it can be audited rather than
+    # inferred from the pixel count.
+    assert contract["nestedSpriteSelection"]
+    for key, frame in contract["nestedSpriteSelection"].items():
+        assert ":" in key and int(frame) > 0
+
+
+def test_the_palantir_switcher_sprite_is_unchanged_by_cumulative_replay() -> None:
+    """The proof that made the cumulative change safe for the shipped HUD.
+
+    `Palantir` character 105 is a state switcher: each labelled state removes
+    depth 1 and places exactly one character, so replaying frames 0..19
+    collapses to precisely what frame 19 alone yields. That is why turning a
+    selected sprite frame into a cumulative replay left every Palantir pin
+    untouched, and it is worth pinning so nobody has to re-derive it.
+    """
+
+    from openbfme_importer import retail_hud_apt_convert as convert
+    from openbfme_importer.retail_screen_apt_plan import build_screen_apt_plan
+
+    movie = convert._movie_from_plan(
+        build_screen_apt_plan(ASSETS, "Palantir"), asset_root=ASSETS
+    )
+    frames = movie.characters[105]["frames"]
+    assert convert._timeline_labels(frames) == {
+        "_hide": 0,
+        "_goodSingle": 9,
+        "_good": 19,
+        "_evilSingle": 29,
+        "_evil": 39,
+    }
+    # Every state clears the one depth it uses before placing into it, so no
+    # earlier frame can survive into a later state.
+    display: dict[int, int] = {}
+    for frame in frames[:20]:
+        for row in frame:
+            if row["kind"] == "remove-object":
+                display.pop(int(row["depth"]), None)
+            elif row["kind"] == "place-object" and int(row["flags"]) & 0x02:
+                display[int(row["depth"])] = int(row["characterId"])
+    assert display == {1: 102}

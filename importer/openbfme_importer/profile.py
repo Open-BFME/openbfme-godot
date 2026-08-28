@@ -78,7 +78,7 @@ MAX_TERRAIN_MATERIAL_PATTERNS = 4_097
 #: not a smaller cook, it is a wrong one - the same reason the terrain-material
 #: table above has a ceiling of its own. MEASURED on ROTWK, the shipping
 #: edition: the widest bundle is OnlineStrategic at 760 virtual paths and 32 of
-#: its 62 cookable screens exceed 256. Measuring on BFME2 would have understated
+#: its 65 cookable screens exceed 256. Measuring on BFME2 would have understated
 #: this badly (widest there is SaveLoad at 491), which is exactly why the
 #: edition is named here rather than left implicit.
 MAX_SCREEN_APT_PATTERNS = 1_024

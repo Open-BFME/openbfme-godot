@@ -47,20 +47,20 @@ EDITIONS = {
         ROTWK_ASSETS,
         {
             "movieCount": 86,
-            "screenCount": 62,
-            "refusedCount": 24,
-            "drawCount": 11769,
-            "sourceCount": 16922,
+            "screenCount": 65,
+            "refusedCount": 21,
+            "drawCount": 21410,
+            "sourceCount": 17173,
         },
     ),
     "bfme2": (
         BFME2_ASSETS,
         {
             "movieCount": 84,
-            "screenCount": 62,
-            "refusedCount": 22,
-            "drawCount": 13233,
-            "sourceCount": 11664,
+            "screenCount": 65,
+            "refusedCount": 19,
+            "drawCount": 22164,
+            "sourceCount": 11899,
         },
     ),
 }
@@ -100,7 +100,7 @@ def test_every_resource_names_the_screen_it_cooks(plan) -> None:
     """A screen cooked into another screen's slot is the quiet failure here."""
 
     resources = plan["profileFragment"]["resources"]
-    assert len(resources) == 62
+    assert len(resources) == 65
     ids = [row["id"] for row in resources]
     assert len(set(ids)) == len(ids)
     for row in resources:
@@ -132,13 +132,13 @@ def test_the_frame_state_is_recorded_per_screen(plan) -> None:
 def test_the_generated_profile_is_catalog_loadable(plan, tmp_path: Path) -> None:
     profile = generated_import_profile(plan)
     assert profile["pack"]["dataPolicy"]["redistributable"] is False
-    assert len(profile["resources"]) == 62
+    assert len(profile["resources"]) == 65
     path = tmp_path / "profile.json"
     import json
 
     path.write_text(json.dumps(profile), encoding="utf-8")
     loaded = ImportProfile.load(path)
-    assert len(loaded.resources) == 62
+    assert len(loaded.resources) == 65
     assert {rule.converter for rule in loaded.resources} == {SCREEN_APT_CONVERTER}
 
 
@@ -164,7 +164,7 @@ def test_a_screen_bundle_may_exceed_the_ordinary_pattern_ceiling(plan) -> None:
     Cooking a screen from partial sources is not a smaller cook, it is a wrong
     one - the same reason the terrain-material table has its own ceiling.  In
     RotWK - the shipping edition - the widest bundle is OnlineStrategic at 760
-    paths and 32 of the 62 admitted screens exceed the ordinary 256.  Measuring
+    paths and 32 of the 65 admitted screens exceed the ordinary 256.  Measuring
     this on BFME2 instead would have understated it badly: there the widest is
     SaveLoad at 491, so a ceiling sized to that edition would have been only
     2x the true worst case rather than comfortably above it.
