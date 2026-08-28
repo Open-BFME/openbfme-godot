@@ -76,3 +76,6 @@ importer/.ruff_cache/
 
 # scratch artifact from the carve pipeline; must never ride into a commit
 game/src/retail_slice/*.pending
+
+# Transient test-run logs (pytest/godot runners), never part of the repo.
+*.log
