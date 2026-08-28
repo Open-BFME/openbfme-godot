@@ -211,6 +211,16 @@ def test_conversion_produces_the_bounded_retail_draw_contract(tmp_path: Path) ->
     assert contract["sceneId"] == "bfme2.ui.shell.mainmenu"
     assert contract["authoredResolution"] == [1024, 768]
     assert contract["layers"] == ["Background", "MainMenu"]
+    # Each layer is cooked at the frame its own author NAMED, not frame 0.
+    # `Background` places nothing on frame 0 - that frame's label is literally
+    # `_no_BG` / "Used to hide other background if shown" - so cooking frame 0
+    # shipped a main menu whose authored backdrop art was missing.  Its
+    # front-end state `_show_FE_BG` adds `MenuFrameAndBg::BackgroundShow` plus
+    # a full-stage button: 32 draws / 5 buttons became 36 / 6.
+    assert convert.MOVIE_LAYERS == (
+        ("Background", "_show_FE_BG"),
+        ("MainMenu", "_show"),
+    )
 
     policy = contract["renderPolicy"]
     assert policy["actionScriptExecuted"] is False
@@ -224,7 +234,7 @@ def test_conversion_produces_the_bounded_retail_draw_contract(tmp_path: Path) ->
     # Parity is never claimed: the shell backdrop is a native 3D shellmap and
     # timeline playback is unbound.
     assert summary["parityReady"] is False
-    assert summary["drawCount"] > 0
+    assert summary["drawCount"] == 36
     assert summary["atlasCount"] == 6
     assert summary["movieCount"] == 6
 

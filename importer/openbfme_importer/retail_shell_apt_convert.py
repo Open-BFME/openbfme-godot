@@ -28,6 +28,7 @@ from .retail_hud_apt_convert import (
     HudAptConvertError,
     MAX_TIMELINE_FRAMES,
     _Flattener,
+    _timeline_labels,
     _Movie,
     _Transform,
     _canonical_bytes,
@@ -51,9 +52,24 @@ SCENE_ID = "bfme2.ui.shell.mainmenu"
 RUNTIME_OUTPUT_PATH = "data/ui/shell/scene-contract.json"
 ATLAS_DIRECTORY = "assets/ui/shell/atlases"
 
-#: Root scene layers, drawn back to front.  ``Background`` is the retail
-#: backdrop stage (native View3D host); ``MainMenu`` is the shell chrome.
-MOVIE_ORDER = ("Background", "MainMenu")
+#: Root scene layers, drawn back to front, each with the AUTHORED frame label
+#: that names its shown state.  ``Background`` is the retail backdrop stage
+#: (native View3D host); ``MainMenu`` is the shell chrome.
+#:
+#: The label matters and frame 0 is wrong for the backdrop.  ``Background``
+#: places NOTHING on frame 0 - its frame 0 label is literally
+#: ``_no_BG`` / "Used to hide other background if shown".  Its front-end state
+#: is ``_show_FE_BG`` at frame 29, which places `MenuFrameAndBg::BackgroundShow`
+#: at depth 5, `MenuFrameAndBg::InGameBackgroundHide` at depth 1 and a
+#: full-stage button at depth 3.  Cooking frame 0 therefore shipped a main menu
+#: with its authored backdrop art missing.  ``MainMenu``'s own `_show`@1 places
+#: nothing frame 0 did not, so naming it changes no pixel - it only makes the
+#: state explicit instead of incidental.
+MOVIE_LAYERS: tuple[tuple[str, str], ...] = (
+    ("Background", "_show_FE_BG"),
+    ("MainMenu", "_show"),
+)
+MOVIE_ORDER = tuple(name for name, _label in MOVIE_LAYERS)
 
 #: The exact six-movie shell closure.  ``role`` mirrors the HUD lane's
 #: scene/library split.
@@ -275,19 +291,19 @@ class _ShellFlattener(_Flattener):
             return program_id
 
     def flatten(self) -> None:
-        for layer_index, name in enumerate(MOVIE_ORDER):
+        roots: list[tuple[str, int]] = []
+        for name, label in MOVIE_LAYERS:
             movie = self.movies.get(name.casefold())
             if movie is None:
                 self.block("required-root-movie-missing", name)
                 continue
-            self._frame(
-                movie,
-                movie.frames[0],
-                _Transform(),
-                ((movie.name, 0),),
-                f"layer:{layer_index}:{name}",
-                (),
-            )
+            labels = _timeline_labels(movie.frames)
+            if label not in labels:
+                raise ShellAptConvertError(
+                    f"{name} no longer authors the {label} state"
+                )
+            roots.append((movie.name, int(labels[label])))
+        self.flatten_screen(roots)
 
 
 def _native_gadget_bindings(movies: Mapping[str, _Movie]) -> list[dict[str, Any]]:
