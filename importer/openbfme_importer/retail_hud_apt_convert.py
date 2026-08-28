@@ -335,6 +335,16 @@ _EXTERNAL_ATTACHMENT_GATES = (
     },
 )
 
+# The opcode assignment below is the published SWF AVM1 one; SAGE extends it in
+# the 0xAE-0xB9 range but never reassigns the base block, which the table itself
+# demonstrates (0x30 random, 0x17 pop, 0x62 bitwise-xor all sit where the SWF
+# spec puts them).  The five entries added for the retail SCREEN lane (queue
+# Q117) - 0x13, 0x18, 0x37, 0x60, 0x64 - are all ZERO-OPERAND stack ops, so
+# admitting them cannot shift a stream's decode alignment: a mis-assignment
+# would derail into the existing bounded-end refusal rather than decode
+# silently.  Naming an opcode makes it DECODABLE, not executable; anything
+# outside `_ACTION_TIMELINE_OPS` still surfaces as an
+# `action-script-unsupported-opcodes` blocker.
 _ACTION_NAMES = {
     0x00: "end",
     0x04: "next-frame",
@@ -349,7 +359,9 @@ _ACTION_NAMES = {
     0x10: "and",
     0x11: "or",
     0x12: "not",
+    0x13: "string-equals",
     0x17: "pop",
+    0x18: "to-integer",
     0x1C: "get-variable",
     0x1D: "set-variable",
     0x20: "set-target2",
@@ -358,6 +370,7 @@ _ACTION_NAMES = {
     0x23: "set-property",
     0x26: "trace",
     0x30: "random",
+    0x37: "mb-ascii-to-char",
     0x3A: "delete",
     0x3B: "delete2",
     0x3C: "define-local",
@@ -388,7 +401,9 @@ _ACTION_NAMES = {
     0x5B: "call-function-pop",
     0x5D: "call-method-pop",
     0x5E: "call-method-ea",
+    0x60: "bitwise-and",
     0x62: "bitwise-xor",
+    0x64: "bitwise-right-shift",
     0x66: "strict-equal",
     0x67: "greater",
     0x69: "extends",

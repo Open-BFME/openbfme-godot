@@ -154,3 +154,39 @@ def test_flagged_null_clip_actions_match_the_hand_measured_identities() -> None:
 
     # A screen that authors none reports none rather than an absent key.
     assert build_screen_apt_plan(root, "SpellStore")["flaggedNullClipActions"] == []
+
+
+@pytest.mark.skipif(
+    not (REPO / "workspace/retail-work/cache/effective-assets").is_dir(),
+    reason="private effective-assets oracle is not present",
+)
+def test_the_swf_base_block_opcodes_let_the_options_screen_reconstruct() -> None:
+    """Five zero-operand SWF opcodes were the whole difference for 11 screens.
+
+    The converter's opcode table follows the published SWF AVM1 assignment -
+    which the table demonstrates about itself, since 0x30 random, 0x17 pop and
+    0x62 bitwise-xor all sit where that spec puts them - and SAGE extends it
+    only in the 0xAE-0xB9 range.  The five the retail screens needed are all
+    zero-operand stack ops, so a mis-assignment could not decode silently: it
+    would derail into the existing bounded-end refusal.  Options is the proof
+    that it does not - it decodes and reconstructs its authored `_open` state.
+    """
+
+    from openbfme_importer import retail_hud_apt_convert as convert
+
+    for opcode in (0x13, 0x18, 0x37, 0x60, 0x64):
+        assert opcode in convert._ACTION_NAMES
+        # Decodable is not executable: none of them joins the timeline subset.
+        assert convert._ACTION_NAMES[opcode] not in convert._ACTION_TIMELINE_OPS
+
+    root = REPO / "workspace/retail-work/cache/effective-assets"
+    movie = convert._movie_from_plan(
+        build_screen_apt_plan(root, "Options"), asset_root=root
+    )
+    assert convert._timeline_labels(movie.frames)["_open"] == 5
+    flattener = convert._Flattener({movie.name.casefold(): movie}, {}, ())
+    flattener.flatten_screen([("Options", 5)])
+    assert len(flattener.draws) == 104
+    assert {str(row["code"]) for row in flattener.blockers}.isdisjoint(
+        {"texture-assignment-unresolved", "move-without-local-placement"}
+    )
