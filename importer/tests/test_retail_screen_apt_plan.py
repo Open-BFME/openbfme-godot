@@ -190,3 +190,37 @@ def test_the_swf_base_block_opcodes_let_the_options_screen_reconstruct() -> None
     assert {str(row["code"]) for row in flattener.blockers}.isdisjoint(
         {"texture-assignment-unresolved", "move-without-local-placement"}
     )
+
+
+@pytest.mark.skipif(
+    not (REPO / "workspace/retail-work/cache/effective-assets").is_dir(),
+    reason="private effective-assets oracle is not present",
+)
+def test_an_empty_function_body_is_authored_data_not_corruption() -> None:
+    """`function f() {}` compiles to a DefineFunction with body size zero.
+
+    Eleven retail screens author one, and refusing them cost the game its MAIN
+    MENU.  The bound is still enforced - a bounded range that ends anywhere
+    other than its declared end is still a refusal - so this only stops an
+    EMPTY body from being read as a truncated one.  MainMenu is the proof: it
+    reconstructs its authored `_show`@1 state with real buttons and text.
+    """
+
+    from openbfme_importer import retail_hud_apt_convert as convert
+
+    root = REPO / "workspace/retail-work/cache/effective-assets"
+    plan = build_screen_apt_plan(root, "MainMenu")
+    movie = convert._movie_from_plan(plan, asset_root=root)
+
+    # The empty body MainMenu actually authors, decoded directly.
+    assert convert._decode_action_sequence(movie, 144280, 144280) == ([], 144280)
+    # A bounded range that stops short of its declared end is still refused.
+    with pytest.raises(convert.HudAptConvertError):
+        convert._decode_action_sequence(movie, 142340, 142341)
+
+    assert convert._timeline_labels(movie.frames)["_show"] == 1
+    flattener = convert._Flattener({movie.name.casefold(): movie}, {}, ())
+    flattener.flatten_screen([("MainMenu", 1)])
+    assert len(flattener.draws) == 20
+    assert len(flattener.text_instances) == 10
+    assert len(flattener.button_instances) == 5

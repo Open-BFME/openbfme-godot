@@ -1446,8 +1446,13 @@ def _decode_action_sequence(
             break
     if end is not None and position != end:
         raise HudAptConvertError("ActionScript bounded body ended at the wrong offset")
-    if not instructions or (end is None and instructions[-1]["name"] != "end"):
+    if end is None and (not instructions or instructions[-1]["name"] != "end"):
         raise HudAptConvertError("ActionScript stream lacks a bounded end instruction")
+    # An EMPTY bounded body is authored, not corrupt: `function f() {}` compiles
+    # to a DefineFunction whose declared body size is zero, and eleven retail
+    # screens (MainMenu, Connections, VerticalScrollBar, ...) author one.  The
+    # bound itself is still enforced above by `position != end`, so nothing is
+    # loosened - a truncated body is still a refusal, an empty one is data.
     boundaries = {int(item["offset"]) for item in instructions}
     boundaries.add(position)
     for item in instructions:
